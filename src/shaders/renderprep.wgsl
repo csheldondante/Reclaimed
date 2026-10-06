@@ -8,7 +8,13 @@
 // Instance (vec4<u32>):
 //   x: x | y<<12 | (sx-1)<<24 | (sy-1)<<28
 //   y: bitcast z0 (f32)   z: bitcast z1 (f32)
-//   w: material | flags<<8   (flags: 1 = top of column, 2 = vegetation)
+//   w: material | flags<<8
+//      flags: 1 = top of column, 2 = vegetation,
+//             4/8/16/32 = side face toward +x/-x/+y/-y hidden, 64 = top face hidden
+// Visibility: a side face is hidden when the neighbour's solid ground stack
+// (contiguous from z=0) reaches the interval's top; a top face is hidden when
+// the next interval sits directly on it. Fully hidden intervals are not
+// emitted at all (camera-independent, so rotation stays correct).
 @group(0) @binding(3) var<storage, read> layers: array<u32>;
 @group(0) @binding(4) var<storage, read> surface: array<u32>;
 @group(0) @binding(5) var<storage, read> water: array<f32>;
@@ -20,6 +26,31 @@
 
 const FLAG_TOP: u32 = 1u;
 const FLAG_VEG: u32 = 2u;
+const HIDE_TOP: u32 = 64u;
+const HIDE_ALL: u32 = 4u | 8u | 16u | 32u | 64u;
+
+/** z of the top of the contiguous stack starting at the ground (0 outside the map). */
+fn groundTop(q: vec2<i32>) -> u32 {
+  if (!inMap(q)) { return 0u; }
+  let cs = colSlots(u32(q.x), u32(q.y));
+  var t = 0u;
+  for (var i = 0u; i < cs.y; i++) {
+    let v = layers[cs.x + i];
+    if (v == 0u || ivZ0(v) != t) { break; }
+    t = ivZ1(v);
+  }
+  return t;
+}
+
+fn hideFlags(gt: vec4<u32>, z1: u32, nextZ0: u32) -> u32 {
+  var f = 0u;
+  if (gt.x >= z1) { f |= 4u; }
+  if (gt.y >= z1) { f |= 8u; }
+  if (gt.z >= z1) { f |= 16u; }
+  if (gt.w >= z1) { f |= 32u; }
+  if (nextZ0 == z1) { f |= HIDE_TOP; }
+  return f;
+}
 const WATER_MIN: f32 = 0.012;
 
 var<workgroup> wgO: atomic<u32>;
@@ -60,6 +91,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var top = 0.0;
   var d = 0.0;
   var pl = VegPlan(false, false, 0.0, 0.0);
+  var gt = vec4<u32>(0u);
+  var nVis = 0u;
   if (inside) {
     let i = colIdx(id.x, id.y);
     cs = colSlots(id.x, id.y);
@@ -68,7 +101,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     top = f32(sfZ(s));
     d = water[i];
     pl = vegPlan(id.x, id.y, veg[i]);
-    nO = nSlots + select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree);
+    let p = vec2<i32>(id.xy);
+    gt = vec4<u32>(groundTop(p + DIRS[0]), groundTop(p + DIRS[1]), groundTop(p + DIRS[2]), groundTop(p + DIRS[3]));
+    for (var k = 0u; k < nSlots; k++) {
+      let v = layers[cs.x + k];
+      var nz = 9999u;
+      if (k + 1u < nSlots) { nz = ivZ0(layers[cs.x + k + 1u]); }
+      if (hideFlags(gt, ivZ1(v), nz) != HIDE_ALL) { nVis += 1u; }
+    }
+    nO = nVis + select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree);
     nW = select(0u, 1u, d > WATER_MIN);
   }
   let offO = atomicAdd(&wgO, nO);
@@ -84,7 +125,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var o = baseO + offO;
   for (var k = 0u; k < nSlots; k++) {
     let v = layers[cs.x + k];
-    let flags = select(0u, FLAG_TOP, k + 1u == nSlots);
+    var nz = 9999u;
+    if (k + 1u < nSlots) { nz = ivZ0(layers[cs.x + k + 1u]); }
+    let hide = hideFlags(gt, ivZ1(v), nz);
+    if (hide == HIDE_ALL) { continue; }
+    let flags = select(0u, FLAG_TOP, k + 1u == nSlots) | hide;
     instOpaque[o] = mkInst(id.x, id.y, 1u, 1u, f32(ivZ0(v)), f32(ivZ1(v)), ivMat(v), flags);
     o += 1u;
   }

@@ -199,3 +199,28 @@ storm.
 
 **Dam groan.** Occasional low structural groan whose volume scales with camera
 proximity to the dam and stored water — the sparse attention cue §3 asks for.
+
+## 2026-10-06 — M5 (first profile): render-prep visibility culling
+
+Measured draw-pass GPU time (Intel Xe-LPG iGPU, headless Chrome/D3D11):
+
+| render size | draw before | draw after |
+|---|---|---|
+| 800×450 (low) | 5.8 ms | 2.0 ms |
+| 1600×900 (high) | 12.3 ms | 3.0 ms |
+
+Before: the low/high split showed ~4.5 ms resolution-independent cost
+(vertex/raster for ~430k faces) plus ~7.5 ms of per-pixel cost at high.
+
+Changes, both behind the existing render-prep → draw contract:
+1. **Visibility in render-prep.** A side face is hidden when the neighbour's
+   contiguous ground stack reaches the interval's top; a top face is hidden
+   when the next interval sits directly on it. Per-face hide bits ride in the
+   instance flags; intervals with everything hidden are not emitted. This is
+   camera-independent (rotation stays correct) and removed ~50 % of instances
+   (131k → 67k) — every column's buried bedrock interval, mostly.
+2. **Large-scale ground tint per vertex** instead of per pixel (it's
+   low-frequency; 12 hashes/pixel saved).
+
+No visual change. Remaining per-pixel cost is the sub-cell texture hashes and
+storm cloud/rain noise; not worth touching at 3 ms.

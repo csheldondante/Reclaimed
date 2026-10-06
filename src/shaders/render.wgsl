@@ -27,6 +27,8 @@ struct VOut {
   @location(0) wpos: vec3<f32>,
   @location(1) @interpolate(flat) nrm: vec3<f32>,
   @location(2) @interpolate(flat) info: vec2<u32>, // material, flags
+  // large-scale ground patchiness; smooth, so evaluated per vertex (was per pixel)
+  @location(3) tint: f32,
 };
 
 struct Box { x: f32, y: f32, sx: f32, sy: f32, z0: f32, z1: f32, mat: u32, flags: u32 };
@@ -60,8 +62,13 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   (*out).pos = CAM.viewProj * vec4<f32>(p, 1.0);
   (*out).wpos = p;
   (*out).nrm = n;
+  (*out).tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
   (*out).info = vec2<u32>(b.mat, b.flags);
-  return b.z1 > b.z0;
+  // per-face visibility computed in render-prep
+  var hideBit = 64u;
+  if (face == 1u) { hideBit = select(8u, 4u, sxn > 0.0); }
+  if (face == 2u) { hideBit = select(32u, 16u, syn > 0.0); }
+  return b.z1 > b.z0 && (b.flags & hideBit) == 0u;
 }
 
 @vertex
@@ -156,7 +163,7 @@ fn fsBox(in: VOut) -> FOut {
   let n2 = randv(sub + vec3<i32>(71, 13, 5));
   alb *= 0.9 + 0.12 * randv(vc) + 0.08 * n1;
   // large-scale patchiness so open ground is not one flat colour
-  alb *= 0.82 + 0.36 * fbm2(in.wpos.xy * 0.045 + vec2<f32>(in.wpos.z * 0.02));
+  alb *= in.tint;
 
   if (mat == MAT_TRASH) {
     // faded plastics, paper, glass and rust specks
