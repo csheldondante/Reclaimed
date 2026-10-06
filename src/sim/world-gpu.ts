@@ -1,0 +1,116 @@
+// GPU-resident world state: every buffer that forms a contract between
+// systems is allocated (and documented) here. Systems never allocate shared
+// state themselves, so replacing one system's implementation cannot silently
+// change what another system sees.
+
+import type { Profiler } from '../gpu/profiler';
+import type { PackedWorld } from '../world/layout';
+import type { MapData } from '../world/mapgen';
+import { packMaterialTable } from '../world/materials';
+import { GLOBALS_BYTES } from './globals';
+
+export const STATS_COUNT = 16;
+
+const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+
+export class WorldGpu {
+  readonly w: number;
+  readonly h: number;
+  readonly cells: number;
+  readonly zMax: number;
+  readonly maxK: number;
+
+  // shared, read by nearly every shader
+  readonly globals: GPUBuffer;
+  readonly materials: GPUBuffer;
+  readonly chunks: GPUBuffer;
+
+  // canonical layered world (material physics owns writes)
+  readonly layers: GPUBuffer;
+  readonly layersNext: GPUBuffer;
+  /** per column: top z | top mat << 8 | slot count << 16 (surface system) */
+  readonly surface: GPUBuffer;
+
+  // water contract (water system owns writes)
+  readonly water: GPUBuffer;
+  readonly waterNext: GPUBuffer;
+  readonly waterPrev: GPUBuffer;
+  /** vec4 volume leaving toward +x,-x,+y,-y this tick */
+  readonly flux: GPUBuffer;
+  readonly waterSource: GPUBuffer;
+
+  // environmental fields
+  /** vec2: soil-bound, dissolved */
+  readonly contam: GPUBuffer;
+  readonly contamNext: GPUBuffer;
+  readonly moisture: GPUBuffer;
+  readonly moistureNext: GPUBuffer;
+  /** succession stage 0..5 */
+  readonly veg: GPUBuffer;
+  readonly vegNext: GPUBuffer;
+
+  // render preparation
+  readonly shadow: GPUBuffer;
+
+  /** u32 aggregate counters, see src/sim/stats.ts */
+  readonly stats: GPUBuffer;
+
+  constructor(
+    private device: GPUDevice,
+    private profiler: Profiler,
+    packed: PackedWorld,
+    map: MapData,
+  ) {
+    const { w, h, zMax } = packed.dims;
+    this.w = w;
+    this.h = h;
+    this.cells = w * h;
+    this.zMax = zMax;
+    this.maxK = packed.maxK;
+    const N = this.cells;
+
+    this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    const mats = packMaterialTable();
+    this.materials = this.buf('materials', mats.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    device.queue.writeBuffer(this.materials, 0, mats);
+    this.chunks = this.buf('chunks', packed.chunkTable.byteLength, S);
+    device.queue.writeBuffer(this.chunks, 0, packed.chunkTable);
+
+    this.layers = this.buf('layers', packed.slots.byteLength, S);
+    this.layersNext = this.buf('layersNext', packed.slots.byteLength, S);
+    device.queue.writeBuffer(this.layers, 0, packed.slots);
+    this.surface = this.buf('surface', N * 4, S);
+
+    this.water = this.buf('water', N * 4, S);
+    this.waterNext = this.buf('waterNext', N * 4, S);
+    this.waterPrev = this.buf('waterPrev', N * 4, S);
+    this.flux = this.buf('flux', N * 16, S);
+    this.waterSource = this.buf('waterSource', N * 4, S);
+    device.queue.writeBuffer(this.water, 0, map.water);
+    device.queue.writeBuffer(this.waterSource, 0, map.waterSource);
+
+    this.contam = this.buf('contam', N * 8, S);
+    this.contamNext = this.buf('contamNext', N * 8, S);
+    device.queue.writeBuffer(this.contam, 0, map.contam);
+    this.moisture = this.buf('moisture', N * 4, S);
+    this.moistureNext = this.buf('moistureNext', N * 4, S);
+    device.queue.writeBuffer(this.moisture, 0, map.moisture);
+    this.veg = this.buf('veg', N * 4, S);
+    this.vegNext = this.buf('vegNext', N * 4, S);
+    device.queue.writeBuffer(this.veg, 0, map.vegetation);
+
+    this.shadow = this.buf('shadow', N * 4, S);
+    this.stats = this.buf('stats', STATS_COUNT * 4, S);
+  }
+
+  buf(label: string, size: number, usage: GPUBufferUsageFlags): GPUBuffer {
+    const b = this.device.createBuffer({ label, size: Math.ceil(size / 4) * 4, usage });
+    this.profiler.trackMemory(label, size);
+    return b;
+  }
+
+  /** Workgroup counts for an 8×8 per-column dispatch. */
+  get groups(): [number, number] {
+    return [Math.ceil(this.w / 8), Math.ceil(this.h / 8)];
+  }
+}

@@ -1,0 +1,97 @@
+// ---- common.wgsl -------------------------------------------------------
+// Shared by every shader. Binding conventions (group 0):
+//   0 = Globals (uniform)        — always present
+//   1 = chunk table (storage)    — layers.wgsl
+//   2 = material table (uniform) — materials.wgsl
+//   3+ = per-shader buffers
+// Keep in sync with src/sim/globals.ts.
+
+struct Globals {
+  mapW: u32, mapH: u32, tick: u32, chunkSize: u32,
+  chunksX: u32, zMax: u32, numStorms: u32, seed: u32,
+  time: f32, dt: f32, windX: f32, windY: f32,
+  sunX: f32, sunY: f32, sunZ: f32, pollution: f32,
+  // per storm: x, y, radius, intensity(0..1)
+  storms: array<vec4<f32>, 4>,
+  // per storm: velocity x, y, downpour boost, lightning flash 0..1
+  stormsB: array<vec4<f32>, 4>,
+};
+
+@group(0) @binding(0) var<uniform> G: Globals;
+
+const DIRS = array<vec2<i32>, 4>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
+
+fn colIdx(x: u32, y: u32) -> u32 { return y * G.mapW + x; }
+fn colIdxI(p: vec2<i32>) -> u32 { return u32(p.y) * G.mapW + u32(p.x); }
+fn inMap(p: vec2<i32>) -> bool { return p.x >= 0 && p.y >= 0 && p.x < i32(G.mapW) && p.y < i32(G.mapH); }
+fn clampCell(p: vec2<i32>) -> vec2<i32> { return clamp(p, vec2<i32>(0), vec2<i32>(i32(G.mapW) - 1, i32(G.mapH) - 1)); }
+
+// ---- interval packing (see src/world/layout.ts) ----
+fn ivZ0(v: u32) -> u32 { return v & 0xffu; }
+fn ivZ1(v: u32) -> u32 { return (v >> 8u) & 0xffu; }
+fn ivMat(v: u32) -> u32 { return (v >> 16u) & 0xffu; }
+fn ivAux(v: u32) -> u32 { return v >> 24u; }
+fn ivPack(z0: u32, z1: u32, mat: u32, aux: u32) -> u32 {
+  return (z0 & 0xffu) | ((z1 & 0xffu) << 8u) | ((mat & 0xffu) << 16u) | ((aux & 0xffu) << 24u);
+}
+
+// ---- surface packing (written by the surface system) ----
+// bits 0..7 top z, 8..15 top material, 16..23 valid slot count
+fn sfZ(s: u32) -> u32 { return s & 0xffu; }
+fn sfMat(s: u32) -> u32 { return (s >> 8u) & 0xffu; }
+
+// ---- hashing / noise ----
+fn pcg(v: u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (w >> 22u) ^ w;
+}
+fn hash3(x: u32, y: u32, z: u32) -> u32 { return pcg(x ^ pcg(y ^ pcg(z))); }
+fn rand3(x: u32, y: u32, z: u32) -> f32 { return f32(hash3(x, y, z) >> 8u) / 16777216.0; }
+fn randv(p: vec3<i32>) -> f32 { return rand3(bitcast<u32>(p.x), bitcast<u32>(p.y), bitcast<u32>(p.z)); }
+
+fn vnoise(p: vec2<f32>) -> f32 {
+  let i = vec2<i32>(floor(p));
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = randv(vec3<i32>(i, 911));
+  let b = randv(vec3<i32>(i + vec2<i32>(1, 0), 911));
+  let c = randv(vec3<i32>(i + vec2<i32>(0, 1), 911));
+  let d = randv(vec3<i32>(i + vec2<i32>(1, 1), 911));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+fn fbm2(p: vec2<f32>) -> f32 {
+  return vnoise(p) * 0.55 + vnoise(p * 2.03 + 17.0) * 0.3 + vnoise(p * 4.1 + 41.0) * 0.15;
+}
+
+// ---- weather fields (analytic from storm uniforms; see src/weather) ----
+fn stormCover(p: vec2<f32>) -> f32 {
+  var c = 0.0;
+  for (var i = 0u; i < G.numStorms; i++) {
+    let s = G.storms[i];
+    let d = length(p - s.xy) / s.z;
+    c = max(c, s.w * smoothstep(1.25, 0.55, d));
+  }
+  return c;
+}
+
+/** Rain intensity 0..~2 at a world position. */
+fn rainAt(p: vec2<f32>) -> f32 {
+  var r = 0.0;
+  for (var i = 0u; i < G.numStorms; i++) {
+    let s = G.storms[i];
+    let b = G.stormsB[i];
+    let d = length(p - s.xy) / s.z;
+    let n = fbm2(p * 0.045 + vec2<f32>(G.time * 0.05, -G.time * 0.03) + f32(i) * 13.0);
+    r += s.w * (1.0 + b.z) * smoothstep(1.0, 0.35, d) * (0.45 + 0.9 * n);
+  }
+  return r;
+}
+
+/** Cloud shadow 0..1 (drifting noise inside storm cover). */
+fn cloudShade(p: vec2<f32>) -> f32 {
+  let cov = stormCover(p);
+  if (cov <= 0.0) { return 0.0; }
+  let n = fbm2(p * 0.03 + vec2<f32>(G.time * G.windX, G.time * G.windY) * 0.02);
+  return cov * smoothstep(0.25, 0.65, n + cov * 0.35);
+}

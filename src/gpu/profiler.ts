@@ -1,0 +1,102 @@
+// Lightweight instrumentation (design doc §9 "benchmark before escalating").
+// - GPU time per named pass via timestamp queries (when the adapter supports them).
+// - Draw/dispatch counts, buffer/texture memory tracked at allocation time.
+// Readbacks are asynchronous and ring-buffered so they never stall the frame.
+
+const MAX_QUERIES = 128; // 64 passes per frame
+const RING = 3;
+
+export class Profiler {
+  readonly enabled: boolean;
+  private querySet?: GPUQuerySet;
+  private resolveBuf?: GPUBuffer;
+  private staging: { buf: GPUBuffer; busy: boolean }[] = [];
+  private names: string[] = [];
+  private next = 0;
+
+  /** Smoothed GPU ms per pass name. */
+  readonly passMs = new Map<string, number>();
+  gpuFrameMs = 0;
+  dispatches = 0;
+  draws = 0;
+  memory = new Map<string, number>();
+
+  constructor(device: GPUDevice, hasTimestamps: boolean) {
+    this.enabled = hasTimestamps;
+    if (!hasTimestamps) return;
+    this.querySet = device.createQuerySet({ type: 'timestamp', count: MAX_QUERIES });
+    this.resolveBuf = device.createBuffer({
+      size: MAX_QUERIES * 8,
+      usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC,
+    });
+    for (let i = 0; i < RING; i++) {
+      this.staging.push({
+        buf: device.createBuffer({ size: MAX_QUERIES * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+        busy: false,
+      });
+    }
+  }
+
+  beginFrame(): void {
+    this.names = [];
+    this.next = 0;
+    this.dispatches = 0;
+    this.draws = 0;
+  }
+
+  /** Timestamp writes for a pass, or undefined when unsupported / out of slots. */
+  timestamps(name: string): GPUComputePassTimestampWrites | undefined {
+    if (!this.querySet || this.next + 2 > MAX_QUERIES) return undefined;
+    const i = this.next;
+    this.next += 2;
+    this.names.push(name);
+    return { querySet: this.querySet, beginningOfPassWriteIndex: i, endOfPassWriteIndex: i + 1 };
+  }
+
+  /** Resolve this frame's queries into a free staging buffer (skipped if all are in flight). */
+  endFrame(encoder: GPUCommandEncoder): (() => void) | undefined {
+    if (!this.querySet || this.next === 0) return undefined;
+    const slot = this.staging.find((s) => !s.busy);
+    if (!slot) return undefined;
+    const count = this.next;
+    const names = this.names.slice();
+    encoder.resolveQuerySet(this.querySet, 0, count, this.resolveBuf!, 0);
+    encoder.copyBufferToBuffer(this.resolveBuf!, 0, slot.buf, 0, count * 8);
+    slot.busy = true;
+    // Caller invokes this after queue.submit.
+    return () => {
+      slot.buf.mapAsync(GPUMapMode.READ, 0, count * 8).then(() => {
+        const t = new BigInt64Array(slot.buf.getMappedRange(0, count * 8));
+        let first = t[0];
+        let last = t[1];
+        const perName = new Map<string, number>();
+        for (let p = 0; p < names.length; p++) {
+          const a = t[p * 2];
+          const b = t[p * 2 + 1];
+          if (a < first) first = a;
+          if (b > last) last = b;
+          const ms = Number(b - a) / 1e6;
+          perName.set(names[p], (perName.get(names[p]) ?? 0) + ms);
+        }
+        for (const [n, ms] of perName) {
+          const prev = this.passMs.get(n);
+          this.passMs.set(n, prev === undefined ? ms : prev * 0.9 + ms * 0.1);
+        }
+        const frame = Number(last - first) / 1e6;
+        this.gpuFrameMs = this.gpuFrameMs * 0.9 + frame * 0.1;
+        slot.buf.unmap();
+        slot.busy = false;
+      });
+    };
+  }
+
+  trackMemory(label: string, bytes: number): void {
+    this.memory.set(label, bytes);
+  }
+
+  totalMemoryBytes(): number {
+    let s = 0;
+    for (const v of this.memory.values()) s += v;
+    return s;
+  }
+}
