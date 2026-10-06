@@ -52,3 +52,21 @@ culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are
 analytic functions of the storm uniforms. A `r32uint` pick target gives exact
 column picking via a 1-pixel async readback.
+
+## Derived helpers
+
+- `flow.wgsl::netFlow(p)` — net volume/tick through a column from `flux`.
+  Anything reacting to *moving* water (erosion, flood damage, scouring, foam)
+  must use it; gross flux is large even in still water.
+
+## Instance flags (render-prep → draw)
+
+`w = material | flags << 8`; flags: 1 top-of-column, 2 vegetation,
+4/8/16/32 side face toward +x/−x/+y/−y hidden, 64 top face hidden.
+Fully hidden intervals are not emitted.
+
+## Events
+
+`Globals.events` (≤4, one tick): x, y, radius, strength + kind
+(`EV_LIGHTNING`). The CPU queues them; `Simulation.step` clears them after
+the tick that consumes them.

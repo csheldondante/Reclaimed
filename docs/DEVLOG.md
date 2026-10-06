@@ -224,3 +224,11 @@ Changes, both behind the existing render-prep → draw contract:
 
 No visual change. Remaining per-pixel cost is the sub-cell texture hashes and
 storm cloud/rain noise; not worth touching at 3 ms.
+
+## 2026-10-06 — onboarding hints, end-to-end smoke test
+
+Two one-time contextual hints (after the first storm: lightning; after the
+first strike: cascades) — the minimum to make the leverage discoverable
+without a tutorial. `shot.mjs --clicks` gained `wait:ms` tokens; a real-mouse
+run (intro → Storm → tap → wait → Lightning → tap) spends 30 + 10 Nature with
+no page errors and audio running (audio itself still not verified by ear).

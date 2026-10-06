@@ -42,9 +42,10 @@ try {
     const r = await page.evaluate(args.eval);
     if (r !== undefined) console.log(`[eval] ${JSON.stringify(r)}`);
   }
-  // --clicks "x,y;x,y"  (CSS px)  --drag "x0,y0,x1,y1"
+  // --clicks "x,y;wait:ms;x,y"  (CSS px)  --drag "x0,y0,x1,y1"
   if (args.clicks) {
     for (const c of args.clicks.split(';')) {
+      if (c.startsWith('wait:')) { await new Promise((r) => setTimeout(r, Number(c.slice(5)))); continue; }
       const [x, y] = c.split(',').map(Number);
       await page.mouse.click(x, y);
       await new Promise((r) => setTimeout(r, 400));

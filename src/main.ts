@@ -202,10 +202,16 @@ async function main() {
         // storms gather upwind of the chosen point so they pass over it
         weather.spawn(x - weather.params.windX * 6, y - weather.params.windY * 6);
         hud.setTool('none');
+        if (!told.lightning) {
+          told.lightning = true;
+          setTimeout(() => hud.say('While it rains, Lightning can be called down beneath the storm.', 7), 6000);
+        }
       });
     }
   };
   let lastStrike = -10;
+  /** One-time contextual hints already shown. */
+  const told = { lightning: false, cascade: false };
   /**
    * Lightning seeks the highest point near where the player asked for it
    * (score = height − 0.4·distance within 7 cells), read from a one-off
@@ -240,6 +246,10 @@ async function main() {
     const [sx, sy] = camera.project(bx + 0.5, by + 0.5, bz);
     hud.bolt(sx, sy);
     audio.thunder(1);
+    if (!told.cascade) {
+      told.cascade = true;
+      setTimeout(() => hud.say('Damaged structures can fail on their own. Water and gravity do the rest.', 7), 2500);
+    }
   };
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
