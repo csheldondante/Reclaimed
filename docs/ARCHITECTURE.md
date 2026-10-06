@@ -29,7 +29,7 @@ more per frame for rendering (time, storms).
 
 | buffer | type | written by | read by |
 |---|---|---|---|
-| layers | u32 slots (aux = support<<4 | damage) | structure, material | structure, surface, renderprep |
+| layers | u32 slots (aux = support·16 + damage) | structure, material | structure, surface, renderprep |
 | surface | u32 (z, mat, count) | surface | water, material, ecology, shadow, render |
 | water / waterPrev | f32 depth | water | contamination, moisture, ecology, render, stats |
 | flux | vec4 volume/tick to ±x ±y | water | contamination, render, stats |

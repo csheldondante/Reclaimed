@@ -12,6 +12,19 @@
 @group(0) @binding(5) var<storage, read> surface: array<u32>;
 @group(0) @binding(6) var<storage, read> moisture: array<f32>;
 @group(0) @binding(7) var<storage, read_write> stats: array<atomic<u32>>;
+@group(0) @binding(8) var<storage, read> flux: array<vec4<f32>>;
+@group(0) @binding(9) var<storage, read> water: array<f32>;
+
+// Piping: loose material holding back a large water-level difference is
+// pushed toward the low side (how embankments and rubble plugs breach).
+const PIPE_HEAD: f32 = 2.5;
+const PIPE_RATE: f32 = 0.02;
+
+// Flow-driven transport (erosion): fast water drags loose top material one
+// cell downstream, probability rising with flow. Direction 4..7 means "carried
+// off the map edge" (the donor loses it, nobody receives it).
+const ERODE_FLOW: f32 = 0.15;
+const ERODE_RATE: f32 = 0.6;
 
 const STAT_OVERFLOW: u32 = 15u;
 
@@ -33,6 +46,36 @@ fn donorDir(p: vec2<i32>) -> i32 {
     if (drop > bestDrop) {
       bestDrop = drop;
       best = i32(d);
+    }
+  }
+  if (best < 0) {
+    var hi = -1.0;
+    var lo = 1e9;
+    var loDir = 0u;
+    for (var k = 0u; k < 4u; k++) {
+      let q = p + DIRS[k];
+      if (!inMap(q)) { continue; }
+      let j = colIdxI(q);
+      let lvl = f32(sfZ(surface[j])) + water[j];
+      if (water[j] > 0.05) { hi = max(hi, lvl); }
+      if (lvl < lo) { lo = lvl; loDir = k; }
+    }
+    // only when the water actually presses against this column's loose top
+    if (hi > f32(h) - 4.0 && hi - lo > PIPE_HEAD && lo < f32(h)) {
+      let chance = (hi - lo - PIPE_HEAD) * PIPE_RATE * (1.0 - MATS[m].sim.w);
+      if (rand3(u32(p.x), u32(p.y), G.tick ^ 0x9119u) < chance) { best = i32(loDir); }
+    }
+  }
+  if (best < 0) {
+    let v = netFlow(p);
+    let sp = length(v);
+    if (sp > ERODE_FLOW) {
+      let chance = (sp - ERODE_FLOW) * ERODE_RATE * (1.0 - MATS[m].sim.w);
+      if (rand3(u32(p.x), u32(p.y), G.tick ^ 0xe20du) < chance) {
+        var d = select(1u, 0u, v.x > 0.0);
+        if (abs(v.y) > abs(v.x)) { d = select(3u, 2u, v.y > 0.0); }
+        best = select(i32(d) + 4, i32(d), inMap(p + DIRS[d]));
+      }
     }
   }
   return best;
@@ -89,9 +132,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var topZ = 0u;
     if (n > 0u) { topZ = ivZ1(arr[n - 1u]); }
     let newTop = min(topZ + cnt, G.zMax);
-    if (n > 0u && ivMat(arr[n - 1u]) == rmat) {
+    // Same material, or loose material landing on loose material with few
+    // slots left: just grow the top interval (material mixes into the top).
+    // Keeps deposits from fragmenting columns into many thin intervals.
+    let topGranular = n > 0u && matState(ivMat(arr[n - 1u])) == ST_GRANULAR;
+    if (n > 0u && (ivMat(arr[n - 1u]) == rmat || (topGranular && n + 2u > cs.y))) {
       let v = arr[n - 1u];
-      arr[n - 1u] = ivPack(ivZ0(v), newTop, rmat, ivAux(v));
+      arr[n - 1u] = ivPack(ivZ0(v), newTop, ivMat(v), ivAux(v));
     } else if (n < cs.y) {
       arr[n] = ivPack(topZ, newTop, rmat, 0u);
       n += 1u;

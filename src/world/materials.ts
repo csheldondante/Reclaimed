@@ -43,6 +43,7 @@ export const MAT = {
   Leaves: 9,
   Wood: 10,
   Brick: 11,
+  Trash: 12,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -69,6 +70,8 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'leaves', albedo: [0.25, 0.45, 0.18], state: MatState.Vegetation, strength: 0.1 },
   { ...NONE, name: 'wood', albedo: [0.36, 0.25, 0.15], state: MatState.Vegetation, strength: 0.4 },
   { ...NONE, name: 'brick', albedo: [0.58, 0.34, 0.27], state: MatState.Solid, strength: 0.6, growthCap: 1.5, suitability: 0.3, porosity: 0.4 },
+  // landfill waste: light, loose, easily carried by floods; rendered as multicoloured specks
+  { ...NONE, name: 'trash', albedo: [0.52, 0.5, 0.47], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.1, growthCap: 1, suitability: 0.15, porosity: 0.2 },
 ];
 
 export const MAX_MATERIALS = 32;

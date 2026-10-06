@@ -201,6 +201,40 @@ export class Ambience {
     }
   }
 
+  /** Deep structural groan (stressed concrete) — used sparingly to point at leverage. */
+  groan(volume: number): void {
+    const ctx = this.ctx;
+    if (!ctx || volume <= 0.01) return;
+    const t0 = ctx.currentTime + 0.05;
+    const dur = 1.6 + Math.random() * 1.4;
+    const pan = this.panner();
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    const f0 = 42 + Math.random() * 20;
+    o.frequency.setValueAtTime(f0, t0);
+    o.frequency.linearRampToValueAtTime(f0 * (0.8 + Math.random() * 0.15), t0 + dur);
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 180;
+    lp.Q.value = 6;
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.18 * volume, t0 + 0.4);
+    g.gain.linearRampToValueAtTime(0.1 * volume, t0 + dur * 0.6);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    // slow tremble
+    const trem = ctx.createOscillator();
+    trem.frequency.value = 5 + Math.random() * 4;
+    const tg = ctx.createGain();
+    tg.gain.value = 0.04 * volume;
+    trem.connect(tg).connect(g.gain);
+    o.connect(lp).connect(g).connect(pan);
+    o.start(t0);
+    trem.start(t0);
+    o.stop(t0 + dur + 0.1);
+    trem.stop(t0 + dur + 0.1);
+  }
+
   /** Concrete giving way: gritty mid crumble, sized by how much collapsed. */
   crumble(amount: number): void {
     const ctx = this.ctx;

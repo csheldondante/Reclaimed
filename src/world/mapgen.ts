@@ -41,6 +41,8 @@ const DAM: P = [94, 96];
 const SITE = { x0: 138, y0: 70, x1: 214, y1: 136 };
 const POND: P = [150, 124];
 const HEALTHY: P = [44, 198];
+/** Old landfill on the river's floodplain: too heavy for rain, scoured by a flood. */
+const LANDFILL: P = [120, 114];
 
 export function generateMap(dims: WorldDims, seed = 1): MapData {
   const { w, h } = dims;
@@ -86,11 +88,13 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
   damDir[0] /= dl;
   damDir[1] /= dl;
   const damBed = nearestRiver(DAM[0], DAM[1]).z;
-  const damTop = Math.round(damBed + 10);
+  const damTop = Math.round(damBed + 13);
   const waterLevel = damTop - 1.5;
-  const resFloor = nearestRiver(RESERVOIR[0], RESERVOIR[1]).z - 5;
+  const resFloor = nearestRiver(RESERVOIR[0], RESERVOIR[1]).z - 7;
 
   const padZ = Math.round(baseAt((SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2));
+  const resDirL = Math.hypot(DAM[0] - RESERVOIR[0], DAM[1] - RESERVOIR[1]);
+  const resDir: P = [(DAM[0] - RESERVOIR[0]) / resDirL, (DAM[1] - RESERVOIR[1]) / resDirL];
 
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -101,17 +105,27 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       z = z + (rv.z - z) * smoothstep(5, 1.5, rv.d);
       // reservoir bowl
       const dr = Math.hypot(x - RESERVOIR[0], y - RESERVOIR[1]);
-      const bowl = resFloor + Math.pow(dr / 30, 2) * 16;
+      const bowl = resFloor + Math.pow(dr / 38, 2) * 22;
       z = Math.min(z, bowl + fbm(x / 9, y / 9, 2, seed + 3) * 1.2);
       // dam shoulders: keep the banks beside the dam above the water line
       const along = (x - DAM[0]) * damDir[0] + (y - DAM[1]) * damDir[1];
       const across = (x - DAM[0]) * -damDir[1] + (y - DAM[1]) * damDir[0];
-      if (Math.abs(along) < 10 && Math.abs(across) > 6 && Math.abs(across) < 30) {
-        z = Math.max(z, damTop + 1 - smoothstep(18, 30, Math.abs(across)) * 4);
+      if (Math.abs(along) < 10 && Math.abs(across) > 6 && Math.abs(across) < 34) {
+        z = Math.max(z, damTop + 1 - smoothstep(22, 34, Math.abs(across)) * 1.5);
+      }
+      // basin rim: the reservoir may only leave through the dam valley
+      const toDam = ((x - RESERVOIR[0]) * resDir[0] + (y - RESERVOIR[1]) * resDir[1]);
+      const damValley = rv.d < 8 && toDam > 0;
+      if (!damValley) {
+        const rimW = smoothstep(26, 33, dr) * (1 - smoothstep(46, 56, dr));
+        z = Math.max(z, z + (waterLevel + 2.5 - z) * rimW);
       }
       // industrial pad: flatten
       const padW = Math.min(x - SITE.x0, SITE.x1 - x, y - SITE.y0, SITE.y1 - y);
       z = z + (padZ - z) * smoothstep(-10, 2, padW);
+      // landfill: a low bench on the floodplain, gently draining to the river
+      const dlf = Math.hypot(x - LANDFILL[0], y - LANDFILL[1]);
+      z = z + (rv.z + 2.5 + rv.d * 0.04 - z) * smoothstep(20, 9, dlf);
       // toxic pond depression
       const dp = Math.hypot(x - POND[0], y - POND[1]);
       z -= 3 * smoothstep(8, 3, dp);
@@ -178,7 +192,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       seen[i] = 1;
       const x = i % w;
       const y = (i / w) | 0;
-      if (Math.hypot(x - RESERVOIR[0], y - RESERVOIR[1]) > 48) continue;
+      if (Math.hypot(x - RESERVOIR[0], y - RESERVOIR[1]) > 40) continue;
       const g = grid.top(x, y);
       if (g >= waterLevel) continue;
       water[i] = waterLevel - g;
@@ -266,6 +280,21 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     }
   }
 
+  // Landfill: heaps of waste with rusting drums
+  {
+    const d = rng(seed * 131 + 5);
+    for (let y = LANDFILL[1] - 18; y <= LANDFILL[1] + 18; y++)
+      for (let x = LANDFILL[0] - 18; x <= LANDFILL[0] + 18; x++) {
+        const dl = Math.hypot(x - LANDFILL[0], y - LANDFILL[1]);
+        const n = fbm(x / 6, y / 6, 2, seed + 41) * 0.5 + 0.5;
+        const hgt = Math.round((1 - dl / 13) * 3.5 * n + (n > 0.55 ? 1 : 0));
+        if (dl > 13 || hgt <= 0 || nearestRiver(x, y).d < 3) continue;
+        const g = grid.top(x, y);
+        grid.push(x, y, g, g + hgt, MAT.Trash);
+        if (d() < 0.04) grid.push(x, y, g + hgt, g + hgt + 1, MAT.Rust);
+      }
+  }
+
   // Fields
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -275,6 +304,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       let c = 0.24 + fbm(x / 20, y / 20, 3, seed + 21) * 0.12;
       c += 1.3 * Math.exp(-((ds / 38) ** 2)) * (0.8 + 0.4 * hash2(x >> 2, y >> 2, 3));
       c *= smoothstep(6, 22, dh);
+      c += 1.8 * smoothstep(16, 6, Math.hypot(x - LANDFILL[0], y - LANDFILL[1]));
       contam[i * 2] = Math.max(0, c);
       moisture[i] = 0.06 + 0.4 * smoothstep(18, 4, dh);
       const dp = Math.hypot(x - POND[0], y - POND[1]);
@@ -309,6 +339,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       dam: DAM,
       site: [(SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2],
       healthy: HEALTHY,
+      landfill: LANDFILL,
     },
   };
 }

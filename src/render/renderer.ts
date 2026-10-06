@@ -11,6 +11,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
 import renderWgsl from '../shaders/render.wgsl?raw';
 import rainWgsl from '../shaders/rain.wgsl?raw';
+import flowWgsl from '../shaders/flow.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
 
@@ -114,7 +115,7 @@ export class Renderer {
       },
       VF,
     );
-    const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, renderWgsl]);
+    const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, renderWgsl, flowWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [drawLayout] });
     const depthStencil = (write: boolean): GPUDepthStencilState => ({
       format: DEPTH_FORMAT,

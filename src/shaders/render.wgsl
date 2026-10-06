@@ -158,6 +158,18 @@ fn fsBox(in: VOut) -> FOut {
   // large-scale patchiness so open ground is not one flat colour
   alb *= 0.82 + 0.36 * fbm2(in.wpos.xy * 0.045 + vec2<f32>(in.wpos.z * 0.02));
 
+  if (mat == MAT_TRASH) {
+    // faded plastics, paper, glass and rust specks
+    let k = u32(n2 * 6.0);
+    var tc = vec3<f32>(0.45, 0.43, 0.40);
+    if (k == 0u) { tc = vec3<f32>(0.42, 0.52, 0.62); }
+    else if (k == 1u) { tc = vec3<f32>(0.78, 0.76, 0.70); }
+    else if (k == 2u) { tc = vec3<f32>(0.66, 0.38, 0.34); }
+    else if (k == 3u) { tc = vec3<f32>(0.38, 0.48, 0.34); }
+    else if (k == 4u) { tc = vec3<f32>(0.50, 0.33, 0.20); }
+    alb = toLinear(tc) * (0.75 + 0.35 * n1);
+  }
+
   let v = veg[ci];
   let isVeg = (flags & 2u) != 0u;
   if (isVeg) {
@@ -214,8 +226,7 @@ fn fsWater(in: VOut) -> FOut {
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
   let d = water[ci];
-  let f = flux[ci];
-  let flow = f.x + f.y + f.z + f.w;
+  let flow = length(netFlow(cell));
   let deep = 1.0 - exp(-d * 0.45);
   var c = mix(vec3<f32>(0.30, 0.45, 0.44), vec3<f32>(0.07, 0.19, 0.25), deep);
   let conc = contam[ci].y / max(d, 0.05);

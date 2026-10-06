@@ -17,6 +17,45 @@
 @group(0) @binding(3) var<storage, read> layersIn: array<u32>;
 @group(0) @binding(4) var<storage, read_write> layersOut: array<u32>;
 @group(0) @binding(5) var<storage, read_write> stats: array<atomic<u32>>;
+@group(0) @binding(6) var<storage, read> surface: array<u32>;
+@group(0) @binding(7) var<storage, read> water: array<f32>;
+@group(0) @binding(8) var<storage, read> flux: array<vec4<f32>>;
+
+// Hydraulic loading (the dam-breach mechanic, but generic):
+//  * A *cracked* (damage > 0) solid interval holding back water of head H
+//    (neighbour water surface above the interval's base) gains damage with
+//    probability ∝ H per tick. Intact structures hold indefinitely, so the
+//    player must first crack one (lightning) and the water does the rest.
+//  * Fast flow alongside any solid erodes it; violent flow (floods) damages
+//    even intact weak materials.
+const HEAD_MIN: f32 = 2.0;
+const HEAD_RATE: f32 = 0.006;
+const FLOW_RATE: f32 = 0.06;
+
+fn hydraulicDamage(p: vec2<i32>, z0: u32, z1: u32, dmg: u32, m: u32, salt: u32) -> u32 {
+  var head = 0.0;
+  var flow = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    let q = p + DIRS[k];
+    if (!inMap(q)) { continue; }
+    let j = colIdxI(q);
+    let d = water[j];
+    if (d < 0.05) { continue; }
+    let g = f32(sfZ(surface[j]));
+    let H = g + d;
+    // water must actually touch this interval's face
+    if (H <= f32(z0) || g >= f32(z1)) { continue; }
+    head = max(head, H - max(f32(z0), g));
+    flow = max(flow, length(netFlow(q)));
+  }
+  let strength = MATS[m].sim.w;
+  var chance = 0.0;
+  if (dmg > 0u && head > HEAD_MIN) { chance += (head - HEAD_MIN) * HEAD_RATE; }
+  let flowLimit = select(0.5, 0.1, dmg > 0u);
+  if (flow > flowLimit) { chance += (flow - flowLimit) * FLOW_RATE * (1.2 - strength); }
+  let r = rand3(u32(p.x) * 16u + salt, u32(p.y), G.tick);
+  return select(dmg, min(15u, dmg + 1u), r < chance);
+}
 
 const MAT_RUBBLE: u32 = 4u;
 const STAT_COLLAPSED: u32 = 14u;
@@ -25,6 +64,8 @@ const GROUND: u32 = 15u;
 fn auxDmg(a: u32) -> u32 { return a & 15u; }
 fn auxSup(a: u32) -> u32 { return (a >> 4u) & 15u; }
 fn isSolid(m: u32) -> bool { return matState(m) == ST_SOLID; }
+/** Bedrock (strength 1) is terrain, not structure: never damaged or collapsed. */
+fn isStructural(m: u32) -> bool { return isSolid(m) && MATS[m].sim.w < 1.0; }
 fn spanCost(m: u32) -> u32 { return max(1u, u32(round((1.0 - MATS[m].sim.w) * 10.0))); }
 fn dmgLimit(m: u32) -> u32 { return u32(4.0 + MATS[m].sim.w * 11.0); }
 
@@ -77,7 +118,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let touching = z0 == prevTop;
     var s = 0u;
     if (touching) { s = prevSup; }
-    if (!isSolid(m)) {
+    if (!isStructural(m)) {
+      if (isSolid(m)) { s = GROUND; }
       layersOut[cs.x + i] = v;
       prevTop = z1;
       prevSup = s;
@@ -88,6 +130,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let depth = f32(colTop - z1);
       dmg = min(15u, dmg + u32(hit * exp(-depth / 8.0)));
     }
+    dmg = hydraulicDamage(p, z0, z1, dmg, m, i);
     if (!touching) {
       var lat = 0u;
       for (var k = 0u; k < 4u; k++) { lat = max(lat, lateral(p + DIRS[k], z0, z1)); }

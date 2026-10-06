@@ -16,7 +16,9 @@ const DISSOLVE: f32 = 0.0016;
 const DISSOLVE_FLOW: f32 = 0.004;
 const WATER_DECAY: f32 = 0.0002;
 const REMEDIATE: f32 = 0.00004;
-const RAIN_LEACH: f32 = 0.0005;
+// absolute amount per tick at rain 1: one storm (~1 min) removes ~0.4, enough
+// for lightly polluted ground; heavy deposits need floods or many storms.
+const RAIN_LEACH: f32 = 0.00012;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -40,7 +42,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let d = water[i];
   if (d > 0.003) {
-    let rate = DISSOLVE * min(d, 1.0) + DISSOLVE_FLOW * min(out * 10.0, 1.0);
+    let rate = DISSOLVE * min(d, 1.0) + DISSOLVE_FLOW * min(length(netFlow(p)) * 10.0, 1.0);
     let a = min(cs, rate * cs + rate * 0.02);
     cs -= a;
     cw += a;
@@ -53,6 +55,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // rain leaches/dilutes surface contamination directly, so a passing storm
   // visibly cleans lightly polluted ground; heavy industrial deposits still
   // need sustained water (floods, repeated storms) to clear.
-  cs *= 1.0 - RAIN_LEACH * rainAt(vec2<f32>(p) + 0.5);
+  cs = max(0.0, cs - RAIN_LEACH * rainAt(vec2<f32>(p) + 0.5));
   contamOut[i] = vec2<f32>(max(cs, 0.0), max(cw, 0.0));
 }

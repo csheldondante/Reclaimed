@@ -153,3 +153,49 @@ lighting, procedural thunder (crack + layered low rumble) and a crumble
 sound driven by the collapsed-count delta from stats readback (so it also
 plays for collapses the player didn't directly cause). Rubble darkened so
 collapse reads against intact concrete.
+
+## 2026-10-06 — M4: dam breach leverage (hydraulics, erosion, piping, landfill)
+
+Goal (§7, §25 M4): spending a little Nature on the right lever beats brute
+force. Result, measured at 2× speed: one 10-Nature lightning strike on the
+dam → reservoir mean depth 9.8 → 6.2, flood down the valley, landfill soil
+contamination 2.0 → 0.07 within ~12 s real time. Rain alone removes ≤0.4 per
+storm (30 Nature), so the same cleanup would cost ~5 storms (~150 Nature).
+Baseline without the strike is stable (reservoir 9.87 → 9.78 over 20 s,
+landfill unchanged).
+
+**Net flow, not gross flux.** First erosion attempt keyed off total outflow
+and produced 7.5k slot overflows and a constantly "eroding" lake: the pipes
+model sloshes volume back and forth (mean gross flux 0.52/tick in still
+water). `flow.wgsl::netFlow` (outflow − inflow per face) is ~0.04 in still
+water; erosion, flood damage, flow-driven dissolving and foam all use it.
+
+**Generic mechanisms (no dam script):**
+- *Hydraulic loading* (structure): cracked solids holding back water head
+  > 2 gain damage stochastically ∝ head; fast net flow damages cracked solids
+  (>0.1) and even intact weak ones in floods (>0.5). Intact structures hold
+  forever — the player has to crack one first.
+- *Bedrock is not structure*: stone (strength 1) is never damaged. Found when
+  a probe showed the stone under the dam at damage 13 from lightning +
+  pressure — the whole valley floor would eventually have turned to rubble.
+- *Piping* (material): loose top material with a water-level difference > 2.5
+  across it is pushed to the low side. Without it the collapsed dam became an
+  8-high rubble plug that held the reservoir just below its crest.
+- *Flow erosion* (material): net flow > 0.15 drags loose top material one cell
+  downstream (off the map at edges). Deposits onto loose material merge into
+  the top interval when a column is near its slot limit — overflow back to 0.
+
+**Map.** Reservoir enlarged/deepened and dam raised (+3) so a breach carries
+real volume; a basin rim (except the dam valley) and taller dam shoulders
+stop it leaking around the dam — the first enlarged version pre-flooded the
+industrial site during warmup. New *landfill* (trash material, granular,
+rendered as multicoloured specks; contamination 1.8) on a low floodplain bench
+just below the dam — first placed 80 cells downstream, where the flood never
+left the channel.
+
+**Rain leaching made absolute** (0.00012/tick at rain 1, ≈0.4 per storm) so
+heavy deposits genuinely need leverage while light ground still clears in one
+storm.
+
+**Dam groan.** Occasional low structural groan whose volume scales with camera
+proximity to the dam and stored water — the sparse attention cue §3 asks for.

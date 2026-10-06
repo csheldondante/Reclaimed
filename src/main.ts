@@ -292,6 +292,7 @@ async function main() {
   let ticksAvg = 1;
   let initialContam = 0;
   let lastCollapsed = -1;
+  let nextGroan = 20;
   let pollution = 1;
   let life = 0;
   const t0 = performance.now();
@@ -372,6 +373,15 @@ async function main() {
           })()
         : undefined,
     );
+    // The dam groans now and then while it still holds water back: a sparse,
+    // diegetic pointer at the map's main leverage (§3, §7).
+    if (globals.time > nextGroan) {
+      nextGroan = globals.time + 14 + Math.random() * 16;
+      const [dx, dy] = map.poi.dam;
+      const near = 1 - Math.min(1, Math.hypot(camera.target[0] - dx, camera.target[1] - dy) / 120);
+      const holding = stats ? Math.min(1, stats.waterVolume / 20000) : 1;
+      audio.groan(near * holding);
+    }
     audio.update({
       pollution,
       life,
@@ -425,7 +435,7 @@ async function main() {
       }
     return s / n;
   };
-  (window as unknown as { reclaimed: unknown }).reclaimed = { sim, world, weather, camera, nature, renderer, map, readBuffer, probe, strike, globals };
+  (window as unknown as { reclaimed: unknown }).reclaimed = { sim, world, weather, camera, nature, renderer, map, readBuffer, probe, strike, globals, packed };
 }
 
 main().catch((e) => {

@@ -9,6 +9,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import surfaceWgsl from '../shaders/surface.wgsl?raw';
 import materialWgsl from '../shaders/material.wgsl?raw';
 import structureWgsl from '../shaders/structure.wgsl?raw';
+import flowWgsl from '../shaders/flow.wgsl?raw';
 import waterFluxWgsl from '../shaders/water_flux.wgsl?raw';
 import waterDepthWgsl from '../shaders/water_depth.wgsl?raw';
 import contamWgsl from '../shaders/contamination.wgsl?raw';
@@ -62,9 +63,9 @@ export class StructureSystem implements SimSystem {
       device,
       world,
       'structure',
-      structureWgsl,
-      { 3: 'read', 4: 'rw', 5: 'rw' },
-      { 3: world.layers, 4: world.layersNext, 5: world.stats },
+      structureWgsl + flowWgsl,
+      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read' },
+      { 3: world.layers, 4: world.layersNext, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -82,9 +83,9 @@ export class MaterialSystem implements SimSystem {
       device,
       world,
       'material',
-      materialWgsl,
-      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'rw' },
-      { 3: world.layers, 4: world.layersNext, 5: world.surface, 6: world.moisture, 7: world.stats },
+      materialWgsl + flowWgsl,
+      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read' },
+      { 3: world.layers, 4: world.layersNext, 5: world.surface, 6: world.moisture, 7: world.stats, 8: world.flux, 9: world.water },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -132,7 +133,7 @@ export class ContaminationSystem implements SimSystem {
       device,
       world,
       'contamination',
-      contamWgsl,
+      contamWgsl + flowWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read' },
       { 3: world.waterPrev, 4: world.water, 5: world.flux, 6: world.contam, 7: world.contamNext, 8: world.veg },
     );
