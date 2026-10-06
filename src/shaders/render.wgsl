@@ -117,7 +117,7 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sky = mix(vec3<f32>(0.34, 0.33, 0.31), vec3<f32>(0.30, 0.38, 0.50), clear);
   let ambient = sky * (0.5 + 0.5 * nrm.z) * (1.0 - cloud * 0.35);
   // warm bounce light from the opposite side keeps shaded faces readable
-  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.30, 0.25, 0.20);
+  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29);
   return ambient + fill + sunCol * ndl * lit * (1.0 - cloud * 0.8);
 }
 

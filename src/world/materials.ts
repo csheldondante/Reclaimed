@@ -58,7 +58,7 @@ const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
 
 export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'air', albedo: [0, 0, 0], state: MatState.Empty },
-  { ...NONE, name: 'stone', albedo: [0.47, 0.45, 0.42], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.25 },
+  { ...NONE, name: 'stone', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.25 },
   { ...NONE, name: 'soil', albedo: [0.45, 0.36, 0.27], state: MatState.Granular, reposeDry: 3, reposeWet: 1, strength: 0.2, growthCap: 5, suitability: 1, porosity: 0.6 },
   { ...NONE, name: 'sand', albedo: [0.72, 0.65, 0.5], state: MatState.Granular, reposeDry: 1, reposeWet: 1, strength: 0.1, growthCap: 2.5, suitability: 0.4, porosity: 0.5 },
   { ...NONE, name: 'rubble', albedo: [0.55, 0.53, 0.5], state: MatState.Granular, reposeDry: 4, reposeWet: 3, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3 },

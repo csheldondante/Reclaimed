@@ -36,6 +36,37 @@ export class Hud {
     root.appendChild(this.hint);
   }
 
+  private svg?: SVGSVGElement;
+
+  /**
+   * Storm handles + nudge arrow. `storms` are screen positions with a strength
+   * 0..1; `drag` is the current nudge arrow (screen from → to) if any.
+   */
+  drawStorms(storms: { x: number; y: number; a: number }[], drag?: { x0: number; y0: number; x1: number; y1: number }): void {
+    if (!this.svg) {
+      const ns = 'http://www.w3.org/2000/svg';
+      this.svg = document.createElementNS(ns, 'svg');
+      this.svg.setAttribute('class', 'overlay');
+      this.hint.parentElement!.appendChild(this.svg);
+    }
+    let html = '';
+    for (const s of storms) {
+      html += `<circle cx="${s.x}" cy="${s.y}" r="26" class="storm-handle" style="opacity:${(0.25 + s.a * 0.45).toFixed(2)}"/>`;
+    }
+    if (drag) {
+      const dx = drag.x1 - drag.x0;
+      const dy = drag.y1 - drag.y0;
+      const l = Math.hypot(dx, dy) || 1;
+      const ux = dx / l;
+      const uy = dy / l;
+      const hx = drag.x1 - ux * 12;
+      const hy = drag.y1 - uy * 12;
+      html += `<line x1="${drag.x0}" y1="${drag.y0}" x2="${hx}" y2="${hy}" class="nudge"/>`;
+      html += `<polygon class="nudge-head" points="${drag.x1},${drag.y1} ${hx - uy * 7},${hy + ux * 7} ${hx + uy * 7},${hy - ux * 7}"/>`;
+    }
+    this.svg.innerHTML = html;
+  }
+
   setTool(t: Tool): void {
     this.tool = t;
     this.stormBtn.classList.toggle('active', t === 'storm');

@@ -101,7 +101,7 @@ async function main() {
 
   // ---- input ----
   const pointers = new Map<number, { x: number; y: number }>();
-  let drag: { kind: 'pan' | 'storm'; x0: number; y0: number; moved: boolean; storm?: ReturnType<Weather['nearest']>; sx?: number; sy?: number } | null = null;
+  let drag: { kind: 'pan' | 'storm'; x0: number; y0: number; cx?: number; cy?: number; moved: boolean; storm?: ReturnType<Weather['nearest']>; sx?: number; sy?: number } | null = null;
   let pinchDist = 0;
 
   const stormAtScreen = (x: number, y: number) => {
@@ -150,6 +150,8 @@ async function main() {
     }
     if (!drag) return;
     if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 6) drag.moved = true;
+    drag.cx = e.clientX;
+    drag.cy = e.clientY;
     if (drag.kind === 'pan') {
       const [wx, wy] = camera.screenDeltaToWorld(dx, dy);
       camera.target[0] -= wx;
@@ -297,6 +299,18 @@ async function main() {
     afterProfile?.();
 
     hud.update(nature.value, nature.max);
+    hud.drawStorms(
+      weather.storms.map((s) => {
+        const [x, y] = camera.project(s.x, s.y, 20);
+        return { x, y, a: s.intensity };
+      }),
+      drag?.kind === 'storm' && drag.moved && drag.storm
+        ? (() => {
+            const [x0, y0] = camera.project(drag.storm.x, drag.storm.y, 20);
+            return { x0, y0, x1: drag.cx ?? drag.x0, y1: drag.cy ?? drag.y0 };
+          })()
+        : undefined,
+    );
     audio.update({
       pollution,
       life,

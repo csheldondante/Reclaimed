@@ -94,3 +94,24 @@ ecology tests; `window.reclaimed.probe` reads field means back.
 (M3) and dam breach (M4) not started (dam + reservoir already exist in the
 map). Audio unverified. The dam shoulders render as a comb of concrete
 columns where terrain dips below the dam top.
+
+## 2026-10-06 — M2 polish: readable barren world, storm feedback
+
+- **Bug: intro swallowed clicks for 1.3 s** after dismissal: `#ui > *`
+  (id specificity) overrode `.intro.gone { pointer-events: none }`. Found via
+  scripted UI test (`shot.mjs --clicks`) — the Storm button never activated.
+- **Surface debris + rock outcrops.** Barren ground read as one flat beige.
+  Added ~600 scattered concrete/rust/brick/rubble chunks (denser near the
+  industrial site) and fbm-driven bare-stone patches. This sells "remains of
+  an old world" (§2) for almost no cost: +~1k instances.
+- **Dam wings trimmed** to the valley (|across| ≤ 19); the wall used to poke
+  above lower ground on both sides.
+- **Stone darkened** (outcrops read as snow), **fill light raised** so shaded
+  step faces aren't near-black.
+- **Storm handles + nudge arrow** (SVG overlay): storms show a faint dashed
+  ring; dragging shows the nudge direction. §6 asks for influence that feels
+  responsive without feeling unconstrained — the arrow makes the player's
+  intent visible while the storm's actual path stays the simulation's.
+- Verified via scripted input: storm spawn through the real UI (pick target →
+  spawn upwind, −30 Nature), drag-nudge (screen-left drag → +x,−y nudge, no
+  camera pan).

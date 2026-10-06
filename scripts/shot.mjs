@@ -42,6 +42,24 @@ try {
     const r = await page.evaluate(args.eval);
     if (r !== undefined) console.log(`[eval] ${JSON.stringify(r)}`);
   }
+  // --clicks "x,y;x,y"  (CSS px)  --drag "x0,y0,x1,y1"
+  if (args.clicks) {
+    for (const c of args.clicks.split(';')) {
+      const [x, y] = c.split(',').map(Number);
+      await page.mouse.click(x, y);
+      await new Promise((r) => setTimeout(r, 400));
+    }
+  }
+  if (args.drag) {
+    const [x0, y0, x1, y1] = args.drag.split(',').map(Number);
+    await page.mouse.move(x0, y0);
+    await page.mouse.down();
+    for (let i = 1; i <= 20; i++) {
+      await page.mouse.move(x0 + ((x1 - x0) * i) / 20, y0 + ((y1 - y0) * i) / 20);
+      await new Promise((r) => setTimeout(r, 30));
+    }
+    await page.mouse.up();
+  }
   if (args.then) await new Promise((r) => setTimeout(r, Number(args.then)));
   await page.screenshot({ path: args.out ?? 'shot.png' });
   console.log(`saved ${args.out ?? 'shot.png'}`);

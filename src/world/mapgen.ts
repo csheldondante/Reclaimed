@@ -138,6 +138,8 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       let soil = Math.round(Math.max(0, 3.2 + fbm(x / 11, y / 11, 2, seed + 11) * 2 - slope * 1.6));
       const inPad = x >= SITE.x0 && x < SITE.x1 && y >= SITE.y0 && y < SITE.y1;
       const dh = Math.hypot(x - HEALTHY[0], y - HEALTHY[1]);
+      // bare rock outcrops break up the open ground
+      if (fbm(x / 16, y / 16, 3, seed + 13) > 0.3 + smoothstep(30, 10, dh)) soil = 0;
       if (dh < 16) soil = Math.max(soil, 4);
       if (inPad) soil = Math.max(soil, 2); // room for the asphalt cap
       soil = Math.min(soil, top - 1);
@@ -158,7 +160,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     for (let x = 0; x < w; x++) {
       const along = (x - DAM[0]) * damDir[0] + (y - DAM[1]) * damDir[1];
       const across = (x - DAM[0]) * -damDir[1] + (y - DAM[1]) * damDir[0];
-      if (Math.abs(along) <= 1.6 && Math.abs(across) <= 26) {
+      if (Math.abs(along) <= 1.6 && Math.abs(across) <= 19) {
         const g = grid.top(x, y);
         const notch = Math.abs(across) < 2.5 ? 2 : 0;
         if (g < damTop - notch) grid.push(x, y, g, damTop - notch, MAT.Concrete);
@@ -236,6 +238,33 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
         } else t.mat = MAT.Asphalt;
       }
     }
+
+  // Scattered remains of the old world: concrete chunks, rusted scrap, rubble
+  // heaps. Denser toward the industrial site and the road, sparse elsewhere.
+  {
+    const d = rng(seed * 97 + 3);
+    const siteC: P = [(SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2];
+    for (let k = 0; k < 2600; k++) {
+      const x = 2 + Math.floor(d() * (w - 4));
+      const y = 2 + Math.floor(d() * (h - 4));
+      const near = Math.exp(-((Math.hypot(x - siteC[0], y - siteC[1]) / 70) ** 2));
+      if (d() > 0.18 + 0.8 * near) continue;
+      if (Math.hypot(x - HEALTHY[0], y - HEALTHY[1]) < 14) continue;
+      if (x >= SITE.x0 && x < SITE.x1 && y >= SITE.y0 && y < SITE.y1) continue;
+      if (water[y * w + x] > 0 || nearestRiver(x, y).d < 4) continue;
+      const roll = d();
+      const mat = roll < 0.45 ? MAT.Rubble : roll < 0.75 ? MAT.Concrete : roll < 0.95 ? MAT.Rust : MAT.Brick;
+      const sx = 1 + (d() < 0.35 ? 1 : 0);
+      const sy = 1 + (d() < 0.35 ? 1 : 0);
+      const hgt = mat === MAT.Rubble ? 1 + (d() < 0.3 ? 1 : 0) : 1;
+      for (let yy = y; yy < y + sy; yy++)
+        for (let xx = x; xx < x + sx; xx++) {
+          const g = grid.top(xx, yy);
+          if (grid.topMat(xx, yy) === MAT.Concrete) continue; // don't stack on the dam
+          grid.push(xx, yy, g, g + hgt, mat);
+        }
+    }
+  }
 
   // Fields
   for (let y = 0; y < h; y++) {
