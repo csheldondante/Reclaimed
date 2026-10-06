@@ -7,7 +7,7 @@ Current state of the system boundaries. Update when a contract changes.
 ```
 CPU: input → weather.update (storms) → nature.update (reads last stats)
 GPU per sim tick (60 Hz fixed, ≤ N ticks/frame by quality tier):
-   material → surface → water(flux, depth) → contamination → moisture
+   structure → material → surface → water(flux, depth) → contamination → moisture
    → ecology (every 15) → shadow (every 6) → stats (every 20, async readback)
 GPU per frame: renderprep (world → box instances, indirect args) → draw
    (opaque boxes, translucent water, rain streaks)
@@ -29,7 +29,7 @@ more per frame for rendering (time, storms).
 
 | buffer | type | written by | read by |
 |---|---|---|---|
-| layers | u32 slots | material | surface, renderprep |
+| layers | u32 slots (aux = support<<4 | damage) | structure, material | structure, surface, renderprep |
 | surface | u32 (z, mat, count) | surface | water, material, ecology, shadow, render |
 | water / waterPrev | f32 depth | water | contamination, moisture, ecology, render, stats |
 | flux | vec4 volume/tick to ±x ±y | water | contamination, render, stats |

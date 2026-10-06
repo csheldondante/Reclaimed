@@ -115,3 +115,41 @@ columns where terrain dips below the dam top.
 - Verified via scripted input: storm spawn through the real UI (pick target →
   spawn upwind, −30 Nature), drag-nudge (screen-left drag → +x,−y nudge, no
   camera pan).
+
+## 2026-10-06 — M3: lightning + structural failure + rubble
+
+**Structure system (new, runs before material each tick).** Per solid
+interval, aux bits hold support (4 bits) and damage (4 bits). Resting
+intervals inherit the support of what's below (ground = 15); floating ones
+take the best overlapping neighbour's support minus a span cost
+(`(1−strength)·10`, concrete 2, brick 4) minus damage/4. Support relaxes one
+cell per tick, so losing a pillar makes a slab's support bleed away over
+several ticks — progressive, readable collapse with no global connectivity
+solve, and the count-to-infinity problem resolves itself because every hop
+costs ≥1. Failed intervals become **rubble**, which is granular, so falling,
+piling and sliding come free from the existing material system (§15 "grid-
+aligned falling rubble first"). No rigid bodies.
+
+Support starts at 0 for everything, so collapse is disabled for the first
+120 warmup ticks while support converges; anything genuinely unsupported in
+the generated ruins falls during warmup, off-screen.
+
+**Events.** Globals grew a small one-tick event list (≤4: x, y, radius,
+strength, kind). Simulation clears it after the tick that consumes it.
+Structure reads lightning events as damage (√ falloff with distance,
+e^(−depth/8) below the column top). The same channel will carry quakes.
+
+**Lightning seeks high points.** First version damaged the tapped column;
+tapping a roof only broke interior slabs — 135 collapses, visually nothing
+(measured via the cumulative `collapsed` stat). Now the strike target is the
+best `height − 0.4·distance` within 7 cells of the tap (one-off 256 KB
+surface readback on strike — rare, async, acceptable per §10). Lightning
+needs a storm overhead (rain ≥ 0.15 at the tap), costs 10 Nature, 0.8 s
+cooldown. Result after 5 strikes on the warehouse: 288 intervals collapsed,
+upper walls visibly torn down into rubble heaps.
+
+**Feedback.** SVG bolt (jagged + fork, flicker-fade), global flash term in
+lighting, procedural thunder (crack + layered low rumble) and a crumble
+sound driven by the collapsed-count delta from stats readback (so it also
+plays for collapses the player didn't directly cause). Rubble darkened so
+collapse reads against intact concrete.

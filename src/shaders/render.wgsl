@@ -118,7 +118,8 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let ambient = sky * (0.5 + 0.5 * nrm.z) * (1.0 - cloud * 0.35);
   // warm bounce light from the opposite side keeps shaded faces readable
   let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29);
-  return ambient + fill + sunCol * ndl * lit * (1.0 - cloud * 0.8);
+  let flash = G.misc.z * vec3<f32>(1.1, 1.2, 1.5) * (0.6 + 0.4 * nrm.z);
+  return ambient + fill + flash + sunCol * ndl * lit * (1.0 - cloud * 0.8);
 }
 
 fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {

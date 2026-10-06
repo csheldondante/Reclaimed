@@ -5,6 +5,7 @@ import type { WorldStats } from '../sim/systems';
 
 export const COSTS = {
   storm: 30,
+  lightning: 10,
   downpour: 8,
 } as const;
 

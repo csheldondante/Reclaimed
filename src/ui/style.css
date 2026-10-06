@@ -145,3 +145,9 @@ canvas#world {
 .storm-handle { fill: rgba(236, 230, 216, 0.08); stroke: rgba(236, 230, 216, 0.95); stroke-width: 2; stroke-dasharray: 4 4; }
 .nudge { stroke: rgba(236, 230, 216, 0.85); stroke-width: 2; stroke-linecap: round; }
 .nudge-head { fill: rgba(236, 230, 216, 0.85); }
+.bolt { animation: bolt-fade 0.65s ease-out forwards; }
+.bolt-glow { fill: none; stroke: rgba(190, 210, 255, 0.45); stroke-width: 7; stroke-linejoin: round; filter: blur(3px); }
+.bolt-core { fill: none; stroke: #f4f7ff; stroke-width: 2; stroke-linejoin: round; }
+@keyframes bolt-fade {
+  0% { opacity: 1; } 15% { opacity: 0.35; } 25% { opacity: 1; } 100% { opacity: 0; }
+}

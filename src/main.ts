@@ -4,7 +4,7 @@ import { initGpu, showFatal, UnsupportedError } from './gpu/device';
 import { Profiler } from './gpu/profiler';
 import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
-import type { GlobalsState } from './sim/globals';
+import { EventKind, type GlobalsState } from './sim/globals';
 import { Simulation, TICK_DT } from './sim/simulation';
 import { WorldGpu } from './sim/world-gpu';
 import { Hud } from './ui/hud';
@@ -65,16 +65,26 @@ async function main() {
     sun: SUN,
     pollution: 1,
     storms: [],
+    events: [],
+    collapseEnabled: false,
+    flash: 0,
   };
 
   // Settle the generated world with the real systems (granular slopes, rivers
   // filling) before the player sees it. Ecology is excluded so nothing grows.
   sim.prime(globals);
-  for (let i = 0; i < WARMUP_TICKS; i++) sim.step(globals, (s) => s.name !== 'ecology');
+  // Structural support needs a few ticks to propagate before collapse can be
+  // judged; anything genuinely unsupported in the generated ruins falls during
+  // warmup, out of sight.
+  for (let i = 0; i < WARMUP_TICKS; i++) {
+    globals.collapseEnabled = i > 120;
+    sim.step(globals, (s) => s.name !== 'ecology');
+  }
   await device.queue.onSubmittedWorkDone();
 
   const hud = new Hud(ui, (t) => {
     if (t === 'storm') hud.say('Tap the land to gather a storm. Drag a storm to nudge it; tap it for a downpour.');
+    if (t === 'lightning') hud.say('Tap beneath a storm to call down lightning.');
   });
   const perf = new PerfOverlay(ui, params.get('perf') === '1');
 
@@ -131,7 +141,7 @@ async function main() {
       drag = null;
       return;
     }
-    const storm = e.button === 0 ? stormAtScreen(e.clientX, e.clientY) : null;
+    const storm = e.button === 0 && hud.tool !== 'lightning' ? stormAtScreen(e.clientX, e.clientY) : null;
     if (storm) drag = { kind: 'storm', x0: e.clientX, y0: e.clientY, moved: false, storm, sx: storm.x, sy: storm.y };
     else drag = { kind: 'pan', x0: e.clientX, y0: e.clientY, moved: false };
   });
@@ -174,6 +184,13 @@ async function main() {
       } else hud.say('Not enough Nature for a downpour.');
       return;
     }
+    if (hud.tool === 'lightning') {
+      const [rx, ry] = screenToRender(e.clientX, e.clientY);
+      renderer.pick(rx, ry).then((cell) => {
+        if (cell !== null) strike(cell);
+      });
+      return;
+    }
     if (hud.tool === 'storm') {
       const [rx, ry] = screenToRender(e.clientX, e.clientY);
       renderer.pick(rx, ry).then((cell) => {
@@ -187,6 +204,42 @@ async function main() {
         hud.setTool('none');
       });
     }
+  };
+  let lastStrike = -10;
+  /**
+   * Lightning seeks the highest point near where the player asked for it
+   * (score = height − 0.4·distance within 7 cells), read from a one-off
+   * surface readback. The bolt is drawn to that exact point.
+   */
+  const strike = async (cell: number) => {
+    const tx = cell % dims.w;
+    const ty = Math.floor(cell / dims.w);
+    if (weather.rainAt(tx + 0.5, ty + 0.5) < 0.15) return hud.say('Lightning needs a storm overhead.');
+    if (globals.time - lastStrike < 0.8) return;
+    if (!nature.trySpend(COSTS.lightning)) return hud.say('Not enough Nature for lightning.');
+    lastStrike = globals.time;
+    const surf = new Uint32Array((await readBuffer('surface')).buffer);
+    let bx = tx;
+    let by = ty;
+    let best = -Infinity;
+    const R = 7;
+    for (let y = Math.max(0, ty - R); y <= Math.min(dims.h - 1, ty + R); y++)
+      for (let x = Math.max(0, tx - R); x <= Math.min(dims.w - 1, tx + R); x++) {
+        const d = Math.hypot(x - tx, y - ty);
+        if (d > R) continue;
+        const score = (surf[y * dims.w + x] & 0xff) - 0.4 * d;
+        if (score > best) {
+          best = score;
+          bx = x;
+          by = y;
+        }
+      }
+    const bz = surf[by * dims.w + bx] & 0xff;
+    globals.events.push({ kind: EventKind.Lightning, x: bx + 0.5, y: by + 0.5, radius: 5, strength: 20 });
+    globals.flash = 1;
+    const [sx, sy] = camera.project(bx + 0.5, by + 0.5, bz);
+    hud.bolt(sx, sy);
+    audio.thunder(1);
   };
   canvas.addEventListener('pointerup', endPointer);
   canvas.addEventListener('pointercancel', endPointer);
@@ -215,6 +268,7 @@ async function main() {
     if (e.key === 'q') camera.rot = (camera.rot + 3) % 4;
     if (e.key === 'e') camera.rot = (camera.rot + 1) % 4;
     if (e.key === '1') hud.setTool(hud.tool === 'storm' ? 'none' : 'storm');
+    if (e.key === '2') hud.setTool(hud.tool === 'lightning' ? 'none' : 'lightning');
     if (e.key === 'Escape') hud.setTool('none');
   });
   window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
@@ -237,6 +291,7 @@ async function main() {
   let fps = 60;
   let ticksAvg = 1;
   let initialContam = 0;
+  let lastCollapsed = -1;
   let pollution = 1;
   let life = 0;
   const t0 = performance.now();
@@ -269,6 +324,11 @@ async function main() {
     weather.update(simDt);
     const stats = sim.stats.latest;
     if (stats && initialContam === 0) initialContam = stats.soilContam;
+    if (stats) {
+      // structural failures since the last stats readback → crumbling sound
+      if (lastCollapsed >= 0 && stats.collapsed > lastCollapsed) audio.crumble(stats.collapsed - lastCollapsed);
+      lastCollapsed = stats.collapsed;
+    }
     const health = worldHealth(stats, initialContam);
     pollution += (health.pollution - pollution) * Math.min(1, dt * 0.5);
     life += (health.life - life) * Math.min(1, dt * 0.5);
@@ -277,6 +337,7 @@ async function main() {
     globals.time = (now - t0) / 1000;
     globals.storms = weather.uniforms();
     globals.pollution = pollution;
+    globals.flash = Math.max(0, globals.flash - dt * 2.5);
 
     acc += simDt;
     let ticks = 0;
@@ -364,7 +425,7 @@ async function main() {
       }
     return s / n;
   };
-  (window as unknown as { reclaimed: unknown }).reclaimed = { sim, world, weather, camera, nature, renderer, map, readBuffer, probe };
+  (window as unknown as { reclaimed: unknown }).reclaimed = { sim, world, weather, camera, nature, renderer, map, readBuffer, probe, strike, globals };
 }
 
 main().catch((e) => {

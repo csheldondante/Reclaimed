@@ -1,7 +1,12 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 192;
+export const GLOBALS_BYTES = 288;
 export const MAX_STORMS = 4;
+export const MAX_EVENTS = 4;
+
+export const enum EventKind {
+  Lightning = 1,
+}
 
 export interface StormUniform {
   x: number;
@@ -12,6 +17,15 @@ export interface StormUniform {
   vy: number;
   downpour: number;
   flash: number;
+}
+
+/** A one-tick impulse into the world (lightning strike, later quakes, …). */
+export interface WorldEvent {
+  kind: EventKind;
+  x: number;
+  y: number;
+  radius: number;
+  strength: number;
 }
 
 export interface GlobalsState {
@@ -29,6 +43,9 @@ export interface GlobalsState {
   sun: [number, number, number];
   pollution: number;
   storms: StormUniform[];
+  events: WorldEvent[];
+  collapseEnabled: boolean;
+  flash: number;
 }
 
 export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
@@ -62,4 +79,20 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
       f.fill(0, b, b + 4);
     }
   }
+  const nEv = Math.min(s.events.length, MAX_EVENTS);
+  for (let i = 0; i < MAX_EVENTS; i++) {
+    const e = s.events[i];
+    const a = 48 + i * 4;
+    if (e && i < nEv) {
+      f.set([e.x, e.y, e.radius, e.strength], a);
+      f[64 + i] = e.kind;
+    } else {
+      f.fill(0, a, a + 4);
+      f[64 + i] = 0;
+    }
+  }
+  f[68] = nEv;
+  f[69] = s.collapseEnabled ? 1 : 0;
+  f[70] = s.flash;
+  f[71] = 0;
 }

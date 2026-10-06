@@ -15,7 +15,16 @@ struct Globals {
   storms: array<vec4<f32>, 4>,
   // per storm: velocity x, y, downpour boost, lightning flash 0..1
   stormsB: array<vec4<f32>, 4>,
+  // one-tick world events: x, y, radius, strength
+  events: array<vec4<f32>, 4>,
+  // per event kind (EV_*), as f32
+  eventKind: vec4<f32>,
+  // x: event count, y: structural collapse enabled (0/1), z: lightning flash 0..1, w: unused
+  misc: vec4<f32>,
 };
+
+const EV_LIGHTNING: u32 = 1u;
+fn numEvents() -> u32 { return u32(G.misc.x); }
 
 @group(0) @binding(0) var<uniform> G: Globals;
 

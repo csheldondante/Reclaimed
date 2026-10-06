@@ -162,6 +162,71 @@ export class Ambience {
     }
   }
 
+  /** Crack + long low rumble. `near` 0..1 shortens the delay and brightens the crack. */
+  thunder(near: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t0 = ctx.currentTime + 0.05 + (1 - near) * 1.2;
+    const pan = this.panner();
+    // crack
+    const crack = ctx.createBufferSource();
+    crack.buffer = this.noise!;
+    const hp = ctx.createBiquadFilter();
+    hp.type = 'highpass';
+    hp.frequency.value = 900;
+    const cg = ctx.createGain();
+    cg.gain.setValueAtTime(0, t0);
+    cg.gain.linearRampToValueAtTime(0.5 * near, t0 + 0.005);
+    cg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.35);
+    crack.connect(hp).connect(cg).connect(pan);
+    crack.start(t0, Math.random() * 2, 0.4);
+    // rumble: several overlapping low swells
+    for (let i = 0; i < 3; i++) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise!;
+      src.loop = true;
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = 120 + Math.random() * 160;
+      lp.Q.value = 0.8;
+      const g = ctx.createGain();
+      const s = t0 + 0.1 + i * (0.3 + Math.random() * 0.5);
+      const dur = 2 + Math.random() * 2.5;
+      g.gain.setValueAtTime(0, s);
+      g.gain.linearRampToValueAtTime(0.9 / (i + 1), s + 0.15 + Math.random() * 0.3);
+      g.gain.exponentialRampToValueAtTime(0.001, s + dur);
+      src.connect(lp).connect(g).connect(pan);
+      src.start(s, Math.random() * 2);
+      src.stop(s + dur + 0.1);
+    }
+  }
+
+  /** Concrete giving way: gritty mid crumble, sized by how much collapsed. */
+  crumble(amount: number): void {
+    const ctx = this.ctx;
+    if (!ctx || amount <= 0) return;
+    const t0 = ctx.currentTime + 0.02;
+    const pan = this.panner();
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 350 + Math.random() * 300;
+    bp.Q.value = 0.9;
+    bp.connect(pan);
+    const n = Math.min(14, 3 + Math.floor(amount / 6));
+    for (let i = 0; i < n; i++) {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise!;
+      const g = ctx.createGain();
+      const t = t0 + i * (0.03 + Math.random() * 0.09);
+      const v = Math.min(0.35, 0.05 + amount * 0.004) * (0.5 + Math.random() * 0.5);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(v, t + 0.01);
+      g.gain.exponentialRampToValueAtTime(0.001, t + 0.25 + Math.random() * 0.4);
+      src.connect(g).connect(bp);
+      src.start(t, Math.random() * 2, 0.7);
+    }
+  }
+
   private panner(): StereoPannerNode {
     const p = this.ctx!.createStereoPanner();
     p.pan.value = Math.random() * 1.6 - 0.8;

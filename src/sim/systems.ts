@@ -8,6 +8,7 @@ import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import surfaceWgsl from '../shaders/surface.wgsl?raw';
 import materialWgsl from '../shaders/material.wgsl?raw';
+import structureWgsl from '../shaders/structure.wgsl?raw';
 import waterFluxWgsl from '../shaders/water_flux.wgsl?raw';
 import waterDepthWgsl from '../shaders/water_depth.wgsl?raw';
 import contamWgsl from '../shaders/contamination.wgsl?raw';
@@ -49,6 +50,26 @@ export class SurfaceSystem implements SimSystem {
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+  }
+}
+
+export class StructureSystem implements SimSystem {
+  readonly name = 'structure';
+  readonly period = 1;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(
+      device,
+      world,
+      'structure',
+      structureWgsl,
+      { 3: 'read', 4: 'rw', 5: 'rw' },
+      { 3: world.layers, 4: world.layersNext, 5: world.stats },
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 
@@ -185,6 +206,7 @@ export const STAT = {
   cleanCells: 6,
   wetCells: 7,
   matureCells: 8,
+  collapsed: 14,
   overflow: 15,
 } as const;
 
@@ -198,6 +220,7 @@ export interface WorldStats {
   cleanCells: number;
   wetCells: number;
   matureCells: number;
+  collapsed: number;
   overflow: number;
   cells: number;
 }
@@ -251,6 +274,7 @@ export class StatsSystem implements SimSystem {
           cleanCells: u[STAT.cleanCells],
           wetCells: u[STAT.wetCells],
           matureCells: u[STAT.matureCells],
+          collapsed: u[STAT.collapsed],
           overflow: u[STAT.overflow],
           cells,
         };

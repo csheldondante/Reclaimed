@@ -11,6 +11,7 @@ import {
   MoistureSystem,
   ShadowSystem,
   StatsSystem,
+  StructureSystem,
   SurfaceSystem,
   WaterSystem,
 } from './systems';
@@ -39,6 +40,7 @@ export class Simulation {
     this.stats = new StatsSystem(device, world, profiler);
     // Order matters only through the contract buffers each system reads.
     this.systems = [
+      new StructureSystem(device, world, profiler),
       new MaterialSystem(device, world, profiler),
       this.surface,
       new WaterSystem(device, world, profiler),
@@ -66,6 +68,8 @@ export class Simulation {
   step(globals: GlobalsState, filter?: (s: SimSystem) => boolean): void {
     globals.tick = this.tick;
     this.uploadGlobals(globals);
+    // events are one-tick impulses: consumed by exactly this tick
+    globals.events = [];
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;

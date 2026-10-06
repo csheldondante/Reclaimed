@@ -61,7 +61,7 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'stone', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.25 },
   { ...NONE, name: 'soil', albedo: [0.45, 0.36, 0.27], state: MatState.Granular, reposeDry: 3, reposeWet: 1, strength: 0.2, growthCap: 5, suitability: 1, porosity: 0.6 },
   { ...NONE, name: 'sand', albedo: [0.72, 0.65, 0.5], state: MatState.Granular, reposeDry: 1, reposeWet: 1, strength: 0.1, growthCap: 2.5, suitability: 0.4, porosity: 0.5 },
-  { ...NONE, name: 'rubble', albedo: [0.55, 0.53, 0.5], state: MatState.Granular, reposeDry: 4, reposeWet: 3, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3 },
+  { ...NONE, name: 'rubble', albedo: [0.44, 0.41, 0.38], state: MatState.Granular, reposeDry: 4, reposeWet: 3, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3 },
   { ...NONE, name: 'concrete', albedo: [0.66, 0.65, 0.62], state: MatState.Solid, strength: 0.8, growthCap: 1.5, suitability: 0.25, porosity: 0.35 },
   { ...NONE, name: 'asphalt', albedo: [0.24, 0.24, 0.25], state: MatState.Solid, strength: 0.6, growthCap: 2, suitability: 0.3, specular: 0.1, porosity: 0.3 },
   { ...NONE, name: 'rust', albedo: [0.5, 0.29, 0.17], state: MatState.Solid, strength: 0.7, growthCap: 1, suitability: 0.2, specular: 0.2, porosity: 0.2 },
