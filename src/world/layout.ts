@@ -53,6 +53,13 @@ export class ColumnGrid {
     const c = this.col(x, y);
     return c.length ? c[c.length - 1].mat : 0;
   }
+  /** Remove everything above z (excavation). */
+  cut(x: number, y: number, z: number): void {
+    const c = this.col(x, y);
+    while (c.length && c[c.length - 1].z0 >= z) c.pop();
+    const last = c[c.length - 1];
+    if (last && last.z1 > z) last.z1 = z;
+  }
   /** Append an interval above the current top (merging with an identical material below it). */
   push(x: number, y: number, z0: number, z1: number, mat: number): void {
     if (z1 <= z0) return;

@@ -97,10 +97,20 @@ fn rainAt(p: vec2<f32>) -> f32 {
   return r;
 }
 
-/** Cloud shadow 0..1 (drifting noise inside storm cover). */
+/**
+ * Cloud shadow 0..1: one ragged-edged cloud mass per storm, drifting with the
+ * wind. Deliberately crisp-edged (narrow smoothstep) so storms read clearly
+ * from above even though we never render the cloud itself.
+ */
 fn cloudShade(p: vec2<f32>) -> f32 {
-  let cov = stormCover(p);
-  if (cov <= 0.0) { return 0.0; }
-  let n = fbm2(p * 0.03 + vec2<f32>(G.time * G.windX, G.time * G.windY) * 0.02);
-  return cov * smoothstep(0.25, 0.65, n + cov * 0.35);
+  var c = 0.0;
+  let drift = vec2<f32>(G.time * G.windX, G.time * G.windY) * 0.02;
+  for (var i = 0u; i < G.numStorms; i++) {
+    let s = G.storms[i];
+    let d = length(p - s.xy) / s.z;
+    let n = fbm2(p * 0.035 + drift + f32(i) * 7.0);
+    let edge = 1.08 - d + (n - 0.5) * 0.7;
+    c = max(c, s.w * smoothstep(0.0, 0.05, edge));
+  }
+  return c;
 }

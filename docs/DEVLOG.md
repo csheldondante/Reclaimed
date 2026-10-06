@@ -232,3 +232,23 @@ first strike: cascades) — the minimum to make the leverage discoverable
 without a tutorial. `shot.mjs --clicks` gained `wait:ms` tokens; a real-mouse
 run (intro → Storm → tap → wait → Lightning → tap) spends 30 + 10 Nature with
 no page errors and audio running (audio itself still not verified by ear).
+
+## 2026-10-06 — feedback round 1: foundations, crisp cloud shadows, rain visibility
+
+User feedback from screenshots: land under buildings too flat; buildings
+should have substructure sitting into the ground; cloud shadow should be
+sharper and more pronounced; wants to see rain in motion.
+
+- **Foundations.** The industrial pad now only partly levels the land
+  (45 % toward pad height + 4.5-cell fbm undulation), so the site has
+  terraces. `foundation()` seats every structure: base = mean ground over the
+  footprint, higher ground is excavated (`ColumnGrid.cut`), and each footprint
+  column gets concrete from 3 cells below base (2 for tanks) — on the downhill
+  side this shows as an exposed plinth/basement wall. Previously buildings
+  filled up to the *max* ground height, which looked like floating slabs.
+- **Cloud shadow.** Replaced the soft cover×noise product with one ragged-
+  edged mass per storm (`edge = 1.08 − d + noise`, 0.05-wide smoothstep).
+  Darkening raised: direct sun ×(1−0.93c), ambient and fill ×(1−0.5c).
+- **Rain.** Streaks 45 % longer, 50 % wider, more opaque. Motion can't be
+  judged from stills, so `shot.mjs --gif` now records animated captures
+  (gifenc + pngjs).

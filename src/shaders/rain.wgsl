@@ -38,16 +38,16 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   let z = span - phase * span;
   let slant = vec2<f32>(G.windX, G.windY) * 0.06;
   let bottom = vec3<f32>(base + slant * (span - z) * 0.05, z);
-  let top = bottom + vec3<f32>(slant, 2.2);
+  let top = bottom + vec3<f32>(slant, 3.2);
   let cb = CAM.viewProj * vec4<f32>(bottom, 1.0);
   let ct = CAM.viewProj * vec4<f32>(top, 1.0);
   let dir = normalize((ct.xy - cb.xy) * CAM.viewport.xy);
-  let perp = vec2<f32>(-dir.y, dir.x) / CAM.viewport.xy * 2.0 * 0.6;
+  let perp = vec2<f32>(-dir.y, dir.x) / CAM.viewport.xy * 2.0 * 0.9;
   let q = QUAD[vi];
   var c = mix(cb, ct, q.y);
   c = vec4<f32>(c.xy + perp * q.x, c.z, c.w);
   o.pos = c;
-  o.a = (1.0 - q.y * 0.7) * 0.32;
+  o.a = (1.0 - q.y * 0.7) * 0.5;
   return o;
 }
 

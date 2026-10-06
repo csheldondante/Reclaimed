@@ -122,7 +122,9 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       }
       // industrial pad: flatten
       const padW = Math.min(x - SITE.x0, SITE.x1 - x, y - SITE.y0, SITE.y1 - y);
-      z = z + (padZ - z) * smoothstep(-10, 2, padW);
+      // the pad only partly levels the land: ruins sit on varied ground with foundations
+      const padK = smoothstep(-10, 2, padW);
+      z = z + (padZ - z) * padK * 0.45 + fbm(x / 15, y / 15, 2, seed + 51) * 4.5 * padK;
       // landfill: a low bench on the floodplain, gently draining to the river
       const dlf = Math.hypot(x - LANDFILL[0], y - LANDFILL[1]);
       z = z + (rv.z + 2.5 + rv.d * 0.04 - z) * smoothstep(20, 9, dlf);
@@ -357,14 +359,12 @@ function buildRuin(
   r: () => number,
   decay: number,
 ) {
-  let base = 0;
-  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) base = Math.max(base, grid.top(x, y));
+  const cells: [number, number][] = [];
+  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) cells.push([x, y]);
+  const base = foundation(grid, cells, 3);
   const seed = Math.floor(r() * 1e6);
   for (let y = y0; y < y1; y++) {
     for (let x = x0; x < x1; x++) {
-      // fill any dip under the footprint so the building sits flat
-      const g = grid.top(x, y);
-      if (g < base) grid.push(x, y, g, base, MAT.Concrete);
       const edge = x === x0 || x === x1 - 1 || y === y0 || y === y1 - 1;
       const pillar = (x - x0) % 6 === 0 && (y - y0) % 6 === 0;
       // ruin height varies smoothly: upper storeys gone in patches
@@ -405,15 +405,31 @@ function buildRuin(
 }
 
 function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height: number) {
-  let base = 0;
-  for (let y = cy - rad; y <= cy + rad; y++) for (let x = cx - rad; x <= cx + rad; x++) base = Math.max(base, grid.top(x, y));
-  for (let y = cy - rad; y <= cy + rad; y++)
-    for (let x = cx - rad; x <= cx + rad; x++) {
-      const d = Math.hypot(x - cx, y - cy);
-      if (d > rad + 0.3) continue;
-      const g = grid.top(x, y);
-      if (g < base) grid.push(x, y, g, base, MAT.Concrete);
-      const dome = Math.round(Math.sqrt(Math.max(0, 1 - (d / (rad + 0.3)) ** 2)) * 2);
-      grid.push(x, y, base, base + height + dome, MAT.Rust);
-    }
+  const cells: [number, number][] = [];
+  for (let y = cy - rad - 1; y <= cy + rad + 1; y++)
+    for (let x = cx - rad - 1; x <= cx + rad + 1; x++) if (Math.hypot(x - cx, y - cy) <= rad + 1.3) cells.push([x, y]);
+  const base = foundation(grid, cells, 2);
+  for (const [x, y] of cells) {
+    const d = Math.hypot(x - cx, y - cy);
+    if (d > rad + 0.3) continue;
+    const dome = Math.round(Math.sqrt(Math.max(0, 1 - (d / (rad + 0.3)) ** 2)) * 2);
+    grid.push(x, y, base, base + height + dome, MAT.Rust);
+  }
+}
+
+/**
+ * Seat a structure into varied ground: base = mean ground height over the
+ * footprint; higher ground is excavated, and every footprint column gets a
+ * concrete substructure from `depth` below the base (deeper on the downhill
+ * side, where it shows as an exposed plinth/basement wall).
+ */
+function foundation(grid: ColumnGrid, cells: [number, number][], depth: number): number {
+  let sum = 0;
+  for (const [x, y] of cells) sum += grid.top(x, y);
+  const base = Math.round(sum / cells.length);
+  for (const [x, y] of cells) {
+    grid.cut(x, y, base - depth);
+    grid.push(x, y, grid.top(x, y), base, MAT.Concrete);
+  }
+  return base;
 }

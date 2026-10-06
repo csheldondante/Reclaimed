@@ -6,6 +6,10 @@
 //
 // Fails loudly (non-zero exit) on page errors or a missing adapter.
 import puppeteer from 'puppeteer-core';
+import gifenc from 'gifenc';
+import { PNG } from 'pngjs';
+import fs from 'node:fs';
+const { GIFEncoder, quantize, applyPalette } = gifenc;
 
 const args = Object.fromEntries(
   process.argv.slice(2).reduce((acc, a, i, arr) => {
@@ -67,6 +71,21 @@ try {
   if (args.eval2) {
     const r = await page.evaluate(args.eval2);
     if (r !== undefined) console.log(`[eval2] ${JSON.stringify(r)}`);
+  }
+  // --gif out.gif [--frames 40] [--every 60]  animated capture at the end
+  if (args.gif) {
+    const frames = Number(args.frames ?? 40);
+    const every = Number(args.every ?? 60);
+    const enc = GIFEncoder();
+    for (let i = 0; i < frames; i++) {
+      const png = PNG.sync.read(Buffer.from(await page.screenshot({ type: 'png' })));
+      const pal = quantize(png.data, 256);
+      enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: every });
+      await new Promise((r) => setTimeout(r, every));
+    }
+    enc.finish();
+    fs.writeFileSync(args.gif, enc.bytes());
+    console.log('saved ' + args.gif);
   }
   if (args.out2) {
     await new Promise((r) => setTimeout(r, Number(args.then2 ?? 3000)));
