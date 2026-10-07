@@ -256,6 +256,7 @@ async function main() {
     camera.update();
 
     const simDt = dt * speed;
+    weather.time = globals.time;
     weather.update(simDt);
     globals.windX = weather.windX;
     globals.windY = weather.windY;

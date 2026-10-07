@@ -1,6 +1,6 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 464;
+export const GLOBALS_BYTES = 528;
 export const MAX_GUSTS = 4;
 export const MAX_STORMS = 4;
 export const MAX_EVENTS = 4;
@@ -19,6 +19,8 @@ export interface StormUniform {
   vy: number;
   downpour: number;
   flash: number;
+  /** outline phases (3) and elongation along travel */
+  shape: [number, number, number, number];
 }
 
 /** A one-tick impulse into the world (lightning strike, later quakes, …). */
@@ -95,9 +97,11 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     if (st) {
       f.set([st.x, st.y, st.radius, st.intensity], a);
       f.set([st.vx, st.vy, st.downpour, st.flash], b);
+      f.set(st.shape, 116 + i * 4);
     } else {
       f.fill(0, a, a + 4);
       f.fill(0, b, b + 4);
+      f.set([0, 0, 0, 1], 116 + i * 4);
     }
   }
   const nEv = Math.min(s.events.length, MAX_EVENTS);

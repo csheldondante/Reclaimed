@@ -46,7 +46,7 @@ const K_RABBIT: u32 = 14u;
 const DT: f32 = 1.0 / 60.0;
 // storm cloud deck height (cells): low enough that clouds stay on screen near
 // their shadows in the fixed isometric view
-const CLOUD_BASE: f32 = 34.0;
+const CLOUD_BASE: f32 = 44.0;
 const FIX: f32 = 100000.0;
 const MAT_SOIL: u32 = 2u;
 const MAT_SAND: u32 = 3u;
@@ -130,7 +130,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   // cloud puffs born inside storms, high above the land
   for (var k = 0u; k < G.numStorms; k++) {
     let st = G.storms[k];
-    let d = length(vec2<f32>(p) - st.xy) / st.z;
+    let d = stormDist(vec2<f32>(p), k);
     if (d < 0.95 && rare(id.x, id.y, 0xc10du + k) < 0.0002 * st.w) {
       let z = CLOUD_BASE + r1 * 8.0;
       spawn(vec3<f32>(vec2<f32>(p) + 0.5, z), vec3<f32>(G.stormsB[k].xy, 0.0), 7.0 + r1 * 5.0, K_CLOUD, 0.0, h);

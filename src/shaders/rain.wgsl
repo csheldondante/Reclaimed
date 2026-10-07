@@ -31,8 +31,9 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   if (rand3(k, si, 3u) > s.w * (0.6 + 0.4 * b.z)) { return o; }
   let ang = rand3(k, si, 1u) * 6.2831853;
   let rad = sqrt(rand3(k, si, 2u)) * s.z * 0.9;
-  let base = s.xy + vec2<f32>(cos(ang), sin(ang)) * rad;
-  let span = 38.0; // rain falls from the cloud deck
+  let base = s.xy + vec2<f32>(cos(ang), sin(ang)) * rad * 1.3;
+  if (stormDist(base, si) > 0.95) { return o; } // follow the storm's irregular outline
+  let span = 48.0; // rain falls from the cloud deck
   let speed = 70.0 + rand3(k, si, 4u) * 25.0;
   let phase = fract(G.time * speed / span + rand3(k, si, 5u));
   let z = span - phase * span;

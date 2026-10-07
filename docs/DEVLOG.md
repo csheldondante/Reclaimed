@@ -495,3 +495,15 @@ only shows when they break.
   rabbits, deer and birds start in the healthy corner so life is visible from
   the first minute. **Every tap startles** animals nearby (taps emit a short
   breeze impulse; animals flee it — deer within 9 cells, rabbits within 7).
+
+## 2026-10-07 — round 3, batch 3: bigger, irregular storms; higher cloud deck
+
+- `stormDist()` (WGSL, mirrored on the CPU in `Weather.stormDist`): storms are
+  no longer discs — the outline wobbles with three slowly drifting angular
+  harmonics (per-storm random phases) and is stretched 1.2–1.65× along the
+  direction of travel. Cloud shadow, rain field, cloud-puff emission, rain
+  streak placement and the CPU's lightning cover / audio rain all use it.
+  Globals gained `stormsC` (528 bytes).
+- Radius 48 → 60–85. Cloud deck 34 → 44–52, rain falls from 48.
+- Clouds slightly thinner (alpha 0.24 → 0.19) — at the new size two storms
+  can cover most of the view. Taste call; flagged for review.

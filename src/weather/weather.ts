@@ -21,6 +21,8 @@ export interface Storm {
   pushY: number;
   downpour: number;
   flash: number;
+  /** outline phases (3) and elongation along travel (see stormDist) */
+  shape: [number, number, number, number];
 }
 
 export interface WeatherParams {
@@ -38,6 +40,8 @@ export class Weather {
   windX = 2.4;
   windY = 1.5;
   private t = 0;
+  /** render clock (Globals.time), so CPU storm shapes match the shader */
+  time = 0;
   private nextNatural = 70;
 
   constructor(
@@ -62,7 +66,7 @@ export class Weather {
     const uy = this.windY / sp;
     let x = tx;
     let y = ty;
-    const reach = fromEdge ? 1e9 : 48 * 1.15;
+    const reach = fromEdge ? 1e9 : 80;
     for (let i = 0; i < 400 && i < reach; i++) {
       if (x < -20 || y < -20 || x > this.w + 20 || y > this.h + 20) break;
       x -= ux;
@@ -78,13 +82,14 @@ export class Weather {
       y,
       vx: this.windX,
       vy: this.windY,
-      radius: 48,
+      radius: 60 + Math.random() * 25,
       intensity: 0,
       age: 0,
       pushX: 0,
       pushY: 0,
       downpour: 0,
       flash: 0,
+      shape: [Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28, 1.2 + Math.random() * 0.45],
     };
     this.storms.push(s);
     return s;
@@ -171,14 +176,30 @@ export class Weather {
       vy: s.vy,
       downpour: s.downpour,
       flash: s.flash,
+      shape: s.shape,
     }));
+  }
+
+  /** CPU twin of common.wgsl stormDist: normalised distance (1 = edge). */
+  stormDist(s: Storm, x: number, y: number): number {
+    const sp = Math.hypot(s.vx, s.vy);
+    const fx = sp > 1e-3 ? s.vx / sp : 1;
+    const fy = sp > 1e-3 ? s.vy / sp : 0;
+    const ox = x - s.x;
+    const oy = y - s.y;
+    const along = (ox * fx + oy * fy) / s.shape[3];
+    const across = ox * -fy + oy * fx;
+    const th = Math.atan2(across, along);
+    const t = this.time * 0.05;
+    const lobe = 1 + 0.22 * Math.sin(2 * th + s.shape[0] + t) + 0.15 * Math.sin(3 * th + s.shape[1] - t * 1.3) + 0.08 * Math.sin(5 * th + s.shape[2] + t * 0.7);
+    return Math.hypot(along, across) / (s.radius * lobe);
   }
 
   /** Rain intensity felt at a point (for audio), roughly matching the shader. */
   rainAt(x: number, y: number): number {
     let r = 0;
     for (const s of this.storms) {
-      const d = Math.hypot(x - s.x, y - s.y) / s.radius;
+      const d = this.stormDist(s, x, y);
       const t = Math.min(1, Math.max(0, (1.0 - d) / 0.65));
       r += s.intensity * (1 + s.downpour) * t * t * (3 - 2 * t);
     }
@@ -189,7 +210,7 @@ export class Weather {
   coverAt(x: number, y: number): number {
     let c = 0;
     for (const s of this.storms) {
-      const d = Math.hypot(x - s.x, y - s.y) / s.radius;
+      const d = this.stormDist(s, x, y);
       if (d < 1.05) c = Math.max(c, s.intensity);
     }
     return c;

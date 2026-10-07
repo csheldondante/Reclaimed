@@ -62,7 +62,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     soft = 1.0;
     let life = P.p.w;
     let a = clamp(life / 2.0, 0.0, 1.0) * clamp((12.0 - life) / 2.0, 0.0, 1.0);
-    col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.8, 0.81, 0.82), sr2), 0.24 * a);
+    col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.8, 0.81, 0.82), sr2), 0.19 * a);
   } else if (kind == 7u) { col = vec4<f32>(0.8, 0.86, 0.9, 0.7); size = 0.1; }
   else if (kind == 8u) { // smoke: grows and thins as it rises
     let age = clamp(1.0 - P.p.w / 11.0, 0.0, 1.0);
