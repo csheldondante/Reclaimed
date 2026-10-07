@@ -30,15 +30,46 @@ struct VOut {
   @location(3) tint: f32,
   // the box's z range (liquids derive depth from it)
   @location(4) @interpolate(flat) zr: vec2<f32>,
+  // box bounds and its sway offset (sub-voxel canopies march inside the box)
+  @location(5) @interpolate(flat) bmin: vec3<f32>,
+  @location(6) @interpolate(flat) bsize: vec3<f32>,
+  @location(7) @interpolate(flat) boff: vec3<f32>,
 };
+
+const FLAG_VEG_R: u32 = 2u;
+const FLAG_DETAIL: u32 = 128u;
 
 struct Box { x: f32, y: f32, sx: f32, sy: f32, z0: f32, z1: f32, mat: u32, flags: u32 };
 
 fn unpackBox(v: vec4<u32>) -> Box {
-  return Box(
+  var b = Box(
     f32(v.x & 0xfffu), f32((v.x >> 12u) & 0xfffu),
     f32(((v.x >> 24u) & 0xfu) + 1u), f32(((v.x >> 28u) & 0xfu) + 1u),
     bitcast<f32>(v.y), bitcast<f32>(v.z), v.w & 0xffu, (v.w >> 8u) & 0xffu);
+  // detail instances (grass tufts, flowers) are positioned in quarter cells
+  if ((b.flags & FLAG_DETAIL) != 0u) {
+    b.x *= 0.25; b.y *= 0.25; b.sx *= 0.25; b.sy *= 0.25;
+  }
+  return b;
+}
+
+/**
+ * Vegetation sway in the shared wind field (prevailing wind, storms, gusts and
+ * the cursor breeze): canopies shift rigidly, stems/shrubs/tufts bend (only
+ * their top moves). Returns the offset for a vertex at height fraction h.
+ */
+fn swayOffset(b: Box, h: f32) -> vec3<f32> {
+  let c = vec3<f32>(b.x + b.sx * 0.5, b.y + b.sy * 0.5, b.z1);
+  let w = windAt(c);
+  let ws = length(w);
+  let dir = w / max(ws, 1e-3);
+  let seed = fract(sin(dot(c.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+  let amp = clamp(ws / 6.0, 0.0, 1.6);
+  let lean = dir * amp * 0.28;
+  let flutter = dir * sin(G.time * (2.5 + amp * 5.0) + seed * 30.0) * 0.07 * (0.3 + amp);
+  var k = h;
+  if (b.mat == MAT_LEAVES && b.sx > 1.5) { k = 1.0; } // canopy: rigid
+  return vec3<f32>((lean + flutter) * k, 0.0);
 }
 
 fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
@@ -60,8 +91,17 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
     p = vec3<f32>(b.x + uv.x * b.sx, fy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(0.0, syn, 0.0);
   }
+  var off = vec3<f32>(0.0);
+  if ((b.flags & FLAG_VEG_R) != 0u) {
+    let h = clamp((p.z - b.z0) / max(b.z1 - b.z0, 1e-3), 0.0, 1.0);
+    off = swayOffset(b, h);
+    p += off;
+  }
   (*out).pos = CAM.viewProj * vec4<f32>(p, 1.0);
   (*out).wpos = p;
+  (*out).bmin = vec3<f32>(b.x, b.y, b.z0);
+  (*out).bsize = vec3<f32>(b.sx, b.sy, b.z1 - b.z0);
+  (*out).boff = swayOffsetRigid(b, off);
   (*out).nrm = n;
   (*out).tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
   (*out).info = vec2<u32>(b.mat, b.flags);
@@ -113,6 +153,12 @@ fn fragCell(wpos: vec3<f32>, nrm: vec3<f32>) -> vec2<i32> {
   return clampCell(vec2<i32>(floor(wpos.xy - nrm.xy * 0.01)));
 }
 
+/** The box offset used by the sub-voxel march (only meaningful for rigid canopies). */
+fn swayOffsetRigid(b: Box, off: vec3<f32>) -> vec3<f32> {
+  if (b.mat == MAT_LEAVES && b.sx > 1.5) { return off; }
+  return vec3<f32>(0.0);
+}
+
 fn sunDir() -> vec3<f32> { return normalize(vec3<f32>(G.sunX, G.sunY, G.sunZ)); }
 
 /** Direct + ambient light with heightfield shadow and storm cloud shade. */
@@ -157,10 +203,58 @@ fn gridLines(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
   return line * 0.16 * smoothstep(0.45, 0.12, w);
 }
 
+/**
+ * Sub-voxel canopy: march the view ray through a 4×4×4-per-cell grid inside
+ * the (swayed) leaf box; occupancy is a hash thinning toward the edges of an
+ * ellipsoid, so crowns are lumpy with gaps you can see through. Returns
+ * vec4(hit position, axis of the face hit + 1) or w = 0 for a miss.
+ */
+fn canopyMarch(in: VOut) -> vec4<f32> {
+  let res = 4.0;
+  let dims = in.bsize * res;
+  let local = (in.wpos - in.boff - in.bmin) * res;
+  let dir = -CAM.eye.xyz;
+  var cell = floor(local - in.nrm * 0.01);
+  let stepv = sign(dir);
+  let tDelta = abs(1.0 / dir);
+  var tMax = ((cell + max(stepv, vec3<f32>(0.0))) - local) / dir;
+  var axis = select(select(1.0, 2.0, abs(in.nrm.y) > 0.5), 3.0, abs(in.nrm.z) > 0.5);
+  let seed = vec3<i32>(floor(in.bmin * res));
+  for (var i = 0; i < 40; i++) {
+    if (any(cell < vec3<f32>(0.0)) || any(cell >= dims)) { break; }
+    let c = (cell + 0.5) / dims - 0.5;
+    let d = length(c * vec3<f32>(2.0, 2.0, 2.2));
+    let density = 0.85 - 0.75 * d * d;
+    if (randv(vec3<i32>(cell) + seed) < density) {
+      let hit = in.bmin + in.boff + (cell + 0.5) / res;
+      return vec4<f32>(hit, axis);
+    }
+    if (tMax.x < tMax.y && tMax.x < tMax.z) { cell.x += stepv.x; tMax.x += tDelta.x; axis = 1.0; }
+    else if (tMax.y < tMax.z) { cell.y += stepv.y; tMax.y += tDelta.y; axis = 2.0; }
+    else { cell.z += stepv.z; tMax.z += tDelta.z; axis = 3.0; }
+  }
+  return vec4<f32>(0.0);
+}
+
 @fragment
 fn fsBox(in: VOut) -> FOut {
+  // derivatives first: canopy fragments may discard below
+  let gl = gridLines(in.wpos, in.nrm);
   let mat = in.info.x;
   let flags = in.info.y;
+  var lpos = in.wpos;
+  var lnrm = in.nrm;
+  var canopyN = 0.0;
+  if ((flags & 2u) != 0u && mat == MAT_LEAVES) {
+    let h = canopyMarch(in);
+    if (h.w == 0.0) { discard; }
+    lpos = h.xyz;
+    let eye = CAM.eye.xyz;
+    if (h.w == 1.0) { lnrm = vec3<f32>(sign(eye.x), 0.0, 0.0); }
+    else if (h.w == 2.0) { lnrm = vec3<f32>(0.0, sign(eye.y), 0.0); }
+    else { lnrm = vec3<f32>(0.0, 0.0, 1.0); }
+    canopyN = randv(vec3<i32>(floor(h.xyz * 4.0)));
+  }
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
   var alb = toLinear(MATS[mat].albedo.rgb);
@@ -207,7 +301,21 @@ fn fsBox(in: VOut) -> FOut {
     // leaves/wood: hue jitter, lighter tips on top
     let fresh = vec3<f32>(0.30, 0.52, 0.18);
     if (mat == MAT_LEAVES) {
-      alb = toLinear(mix(vec3<f32>(0.16, 0.34, 0.12), fresh, n1 * 0.8 + 0.2 * in.nrm.z));
+      // per-leaf-cluster hue, lighter on top, a few autumn-tinted clumps
+      var lc = mix(vec3<f32>(0.14, 0.31, 0.11), fresh, canopyN * 0.8 + 0.25 * lnrm.z);
+      if (canopyN > 0.93) { lc = mix(lc, vec3<f32>(0.55, 0.45, 0.16), 0.6); }
+      alb = toLinear(lc);
+    }
+    if (mat == MAT_GRASS) {
+      let gv = randv(vec3<i32>(floor(in.bmin * 4.0)));
+      alb = toLinear(mix(vec3<f32>(0.28, 0.44, 0.15), vec3<f32>(0.46, 0.6, 0.22), gv) * (0.8 + 0.3 * smoothstep(in.zr.x, in.zr.y, in.wpos.z)));
+    }
+    if (mat == MAT_FLOWER) {
+      let fv = randv(vec3<i32>(floor(in.bmin * 4.0)) + vec3<i32>(3, 9, 1));
+      var petal = vec3<f32>(0.92, 0.9, 0.82);
+      if (fv > 0.75) { petal = vec3<f32>(0.95, 0.8, 0.25); } else if (fv > 0.5) { petal = vec3<f32>(0.62, 0.48, 0.82); } else if (fv > 0.3) { petal = vec3<f32>(0.85, 0.35, 0.3); }
+      let top = in.wpos.z > in.zr.y - 0.12;
+      alb = toLinear(select(vec3<f32>(0.3, 0.46, 0.17), petal, top));
     }
   } else {
     let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5;
@@ -237,14 +345,20 @@ fn fsBox(in: VOut) -> FOut {
         var g = mix(moss, grass, smoothstep(1.0, 2.0, v));
         g = mix(g, forest, smoothstep(3.0, 4.5, v));
         g *= 0.82 + 0.3 * n2;
+        // wind running through the grass: bright bands travel downwind
+        let w = windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5));
+        let ws = length(w);
+        let wd = w / max(ws, 1e-3);
+        let wave = sin(dot(in.wpos.xy, wd) * 0.7 - G.time * (1.5 + ws * 0.6));
+        g *= 1.0 + wave * 0.12 * clamp(ws / 4.0, 0.0, 1.5) * smoothstep(0.8, 1.8, v);
         alb = toLinear(g);
       }
     }
   }
 
-  var col = alb * lighting(in.wpos, in.nrm);
-  col *= 1.0 - gridLines(in.wpos, in.nrm);
-  col = haze(col, in.wpos);
+  var col = alb * lighting(lpos, lnrm);
+  col *= 1.0 - gl * select(1.0, 0.0, canopyN > 0.0);
+  col = haze(col, lpos);
 
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

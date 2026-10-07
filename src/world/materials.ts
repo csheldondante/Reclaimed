@@ -45,6 +45,8 @@ export const MAT = {
   Brick: 11,
   Trash: 12,
   Oil: 13,
+  Grass: 14,
+  Flower: 15,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -75,6 +77,9 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'trash', albedo: [0.52, 0.5, 0.47], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.1, growthCap: 1, suitability: 0.15, porosity: 0.2 },
   // render-only id for the oil liquid field (oil lives in its own buffer, not in layers)
   { ...NONE, name: 'oil', albedo: [0.07, 0.06, 0.05], state: MatState.Liquid, specular: 0.9 },
+  // render-only: grass tufts and wildflowers (vegetation detail instances)
+  { ...NONE, name: 'grass', albedo: [0.36, 0.54, 0.19], state: MatState.Vegetation },
+  { ...NONE, name: 'flower', albedo: [0.9, 0.85, 0.4], state: MatState.Vegetation },
 ];
 
 export const MAX_MATERIALS = 32;

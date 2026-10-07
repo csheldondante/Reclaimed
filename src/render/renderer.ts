@@ -17,8 +17,8 @@ import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
 
 const VERTS_PER_BOX = 18;
-/** Extra instances a column may emit beyond its slots (shrub or trunk+crown). */
-const VEG_INSTANCES = 2;
+/** Extra instances a column may emit beyond its slots (shrub/trunk+crown, tufts, flower). */
+const VEG_INSTANCES = 6;
 const PICK_FORMAT: GPUTextureFormat = 'rg32uint';
 
 /** What the pick target says is under a pixel. */

@@ -394,3 +394,24 @@ sharper and more pronounced; wants to see rain in motion.
   normal breezes the landfill was emptying itself into the air (~3k litter
   particles), cleaning itself with no leverage.
 - Audio: crackles and pops scale with burning cells.
+
+## 2026-10-07 — phase 5a: sub-voxel canopies, sway, grass tufts and flowers
+
+- **Canopies** keep their 3×3 box instance, but the fragment shader marches
+  the view ray through a 4×4×4-per-cell grid inside the box (DDA, ≤40 steps)
+  with hashed occupancy thinning toward an ellipsoid edge — lumpy crowns with
+  real gaps that show what's behind (discard). This is the user's "render it
+  like a sprite from the fixed view" idea done procedurally; depth stays at
+  the box face (small error, invisible so far). Derivatives (grid lines) are
+  now taken before any discard.
+- **Sway** in the vertex shader from the shared wind field (prevailing,
+  storms, gusts, cursor breeze): canopies shift rigidly, stems/shrubs/tufts
+  bend from the top; plus a speed-dependent flutter. Hovering over trees now
+  makes them lean with the cursor's motion.
+- **Grass waves**: bright bands travel downwind across grass cover.
+- **Detail instances** (flag 128: x/y/size in quarter cells): half-cell tree
+  trunks (full-cell trunks read as pillars), grass tufts (1–3 per grassy
+  column) and wildflowers (white, yellow, violet, red). Trees thinned (7 % →
+  4.5 % of mature columns). Instance budget per column raised to slots + 6.
+- Measured (iGPU, 1280×720, regrown forest): 85k instances, draw 3.5 ms.
+- Falling-leaf emission cut ×10 (a mature forest was shedding ~600/s).

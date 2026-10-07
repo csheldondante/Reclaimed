@@ -103,7 +103,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   // leaves shaken from trees
-  if (v >= 3.6 && r1 > 1.0 - (0.0003 + max(ws - 2.0, 0.0) * 0.0006)) {
+  if (v >= 3.6 && r1 > 1.0 - (0.00003 + max(ws - 2.0, 0.0) * 0.00008)) {
     spawn(base + vec3<f32>(r2 - 0.5, fract(r2 * 3.7) - 0.5, 3.0 + r2 * 3.0), vec3<f32>(wind * 0.5, 0.0), 12.0, K_LEAF, 0.0, h);
   }
   // fireflies over living land at night
