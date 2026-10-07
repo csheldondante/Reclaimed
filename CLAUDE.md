@@ -10,7 +10,8 @@ valley so life can return. Design authority: `.claude/docs/design/Reclaimed_Over
   architecture appends an entry to `docs/DEVLOG.md` explaining *why* (the
   benchmark, visual, or design reason), in the same commit. `docs/ARCHITECTURE.md`
   is kept current when contracts/system boundaries change.
-- Commit at each working milestone (local only, no remote).
+- Commit at each working milestone and push to `origin` (github.com/csheldondante/Reclaimed — the user shares it).
+- `docs/DECISIONS.md` holds the user's design answers; check it before changing controls, economy or look.
 - **Simplest implementation first, behind a clean interface.** Measure (perf
   overlay) before optimising. Record the measurement in the DEVLOG when an
   optimisation is made or deliberately deferred.
@@ -24,9 +25,9 @@ valley so life can return. Design authority: `.claude/docs/design/Reclaimed_Over
 
 - `npm run dev` — Vite dev server on http://localhost:5173
   - `?perf=1` perf overlay (or press `` ` ``), `?q=low|medium|high` quality tier,
-    `?speed=N` debug fast-forward of the simulation
+    `?speed=N` debug fast-forward of the simulation, `?day=<s>` day length, `?tod=0..1` time of day
 - `npm run typecheck` / `npm run build`
-- `node scripts/shot.mjs --out x.png [--url ...] [--wait ms] [--eval js] [--then ms] [--eval2 js --out2 y.png --then2 ms]`
+- `node scripts/shot.mjs --out x.png [--size WxH] [--clicks "x,y;wait:ms"] [--drag x0,y0,x1,y1] [--gif out.gif --frames N --every ms] [--url ...] [--wait ms] [--eval js] [--then ms] [--eval2 js --out2 y.png --then2 ms]`
   — headless Chrome (real GPU via D3D11) screenshot + console capture. Exits
   non-zero on page errors / fatal overlay. `window.reclaimed` exposes
   `{sim, world, weather, camera, nature, renderer, map, readBuffer, probe}` for scripted checks.
