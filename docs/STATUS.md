@@ -1,4 +1,4 @@
-# Reclaimed — status & stock-take (updated 2026-10-07, after round 2)
+# Reclaimed — status & stock-take (updated 2026-10-07, after round 3)
 
 What exists, how to try it, how it's built, and where your judgement is
 needed. Items needing a decision are marked **❓**. `docs/DECISIONS.md`
@@ -12,7 +12,9 @@ measurements; `docs/ARCHITECTURE.md` has the contracts.
 ```
 npm install && npm run dev      # → http://localhost:5173 (Chrome/Edge; WebGPU)
 ```
-URL options: `?perf=1` overlay · `?q=low|medium|high` · `?speed=8` fast-forward
+The game opens on the **menu diorama** (skull scene; its state follows your saved
+progress). **Begin/Continue** starts the valley. URL options: `?skipmenu=1` straight
+in · `?progress=0..1` preview a menu stage · `?perf=1` overlay · `?q=low|medium|high` · `?speed=8` fast-forward
 · `?day=60` day length in seconds · `?tod=0.75` start time of day (0.25 sunrise,
 0.5 noon, 0.75 sunset).
 
@@ -63,7 +65,10 @@ under a storm), pinch = zoom. No hover breeze on touch.
 | Ecology | succession 0–5; birds plant seeds |
 | Look | sub-voxel canopies with gaps, wind sway, grass waves, tufts, wildflowers, vines, stone/dirt variation |
 | Audio | procedural: wind, rain, water, leaves, insects, birds, thunder, crumble, dam groan, fire crackle, clang/chip/splash/flutter/strain — **still not heard by me** |
-| Not yet | main-menu skull scene (§4), earthquake/tornado, win/level structure, mobile verification |
+| Menu | live skull diorama driven by saved progress: trash → moss on bone → grass/flowers → a tree through the skull |
+| Goal | reclamation bar (living share of the map); level ends at 40 % (“The valley breathes”) |
+| Biomes | woodland (conifer, broadleaf, birch, old giants) on flat wet ground; meadows with flowers and fireflies elsewhere |
+| Not yet | earthquake/tornado, a second level, mobile verification |
 
 **Performance** (Intel Xe-LPG iGPU, 1600×900, storm + fire active): GPU ≈ 6.3 ms
 (draw 5.2 ms, all simulation ≈ 1 ms), 100 fps. A fully grown forest: ~85k

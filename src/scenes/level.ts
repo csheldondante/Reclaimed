@@ -222,8 +222,9 @@ export class LevelScene implements Scene {
     if (stats) {
       if (this.lastCollapsed >= 0 && stats.collapsed > this.lastCollapsed) audio.crumble(stats.collapsed - this.lastCollapsed);
       this.lastCollapsed = stats.collapsed;
-      // how much of the land (not under water) is alive
-      this.reclaimed = stats.vegCells / Math.max(1, stats.cells - stats.wetCells);
+      // how much of the map is alive (rain films made a water-excluding
+      // denominator swing wildly during storms)
+      this.reclaimed = stats.vegCells / stats.cells;
     }
     const health = worldHealth(stats, this.initialContam);
     core.pollution += (health.pollution - core.pollution) * Math.min(1, dt * 0.5);
