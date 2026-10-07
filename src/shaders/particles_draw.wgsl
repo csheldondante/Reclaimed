@@ -54,11 +54,11 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   } else if (kind == 4u) { col = vec4<f32>(0.3, 0.3, 0.3, 0.7); size = 0.12; }
   else if (kind == 5u) { col = vec4<f32>(0.64, 0.63, 0.6, 1.0); size = 0.14 + sr * 0.1; }
   else if (kind == 6u) { // cloud puff
-    size = 6.0 + sr * 6.0;
+    size = 3.5 + sr * 5.5;
     soft = 1.0;
     let life = P.p.w;
     let a = clamp(life / 2.0, 0.0, 1.0) * clamp((12.0 - life) / 2.0, 0.0, 1.0);
-    col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.78, 0.79, 0.8), sr2), 0.34 * a);
+    col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.8, 0.81, 0.82), sr2), 0.24 * a);
   } else if (kind == 7u) { col = vec4<f32>(0.8, 0.86, 0.9, 0.7); size = 0.1; }
   else if (kind == 8u) { col = vec4<f32>(0.35, 0.34, 0.33, 0.35); size = 0.5 + sr; soft = 1.0; }
   else if (kind == 9u) { col = vec4<f32>(1.0, 0.6, 0.2, 1.0); size = 0.09; }
@@ -83,7 +83,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
 
 struct FOut {
   @location(0) color: vec4<f32>,
-  @location(1) pick: u32,
+  @location(1) pick: vec2<u32>,
 };
 
 @fragment
@@ -92,9 +92,11 @@ fn fs(in: VOut) -> FOut {
   var a = in.col.a;
   if (in.soft > 0.5) {
     let r = length(in.uv);
-    a *= smoothstep(1.0, 0.25, r) * (0.7 + 0.3 * vnoise(in.uv * 3.0 + vec2<f32>(G.time * 0.2)));
+    // lumpy, broken-up puffs rather than discs
+    let n = vnoise(in.uv * 2.5 + vec2<f32>(G.time * 0.15)) * 0.6 + vnoise(in.uv * 6.0 - vec2<f32>(G.time * 0.1)) * 0.4;
+    a *= smoothstep(1.0, 0.2, r) * smoothstep(0.35, 0.7, n + (1.0 - r) * 0.35);
   }
   o.color = vec4<f32>(in.col.rgb, a);
-  o.pick = 0u;
+  o.pick = vec2<u32>(0u);
   return o;
 }

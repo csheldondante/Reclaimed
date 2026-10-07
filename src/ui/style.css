@@ -151,3 +151,25 @@ canvas#world {
 @keyframes bolt-fade {
   0% { opacity: 1; } 15% { opacity: 0.35; } 25% { opacity: 1; } 100% { opacity: 0; }
 }
+
+.summon {
+  --ready: 0;
+  appearance: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  color: var(--ink);
+  font-size: 18px;
+  display: grid;
+  place-items: center;
+  /* recharge ring */
+  background:
+    radial-gradient(circle, rgba(28, 26, 22, 0.75) 58%, transparent 60%),
+    conic-gradient(var(--leaf) calc(var(--ready) * 360deg), rgba(255, 255, 255, 0.12) 0);
+  opacity: 0.75;
+  transition: opacity 0.3s, transform 0.3s;
+}
+.summon.ready { opacity: 1; }
+.summon.ready:hover { transform: scale(1.06); }

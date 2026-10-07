@@ -1,10 +1,12 @@
 import { Ambience } from './audio/ambience';
-import { COSTS, Nature, worldHealth } from './game/nature';
+import { Nature, worldHealth } from './game/nature';
+import { Powers } from './game/powers';
+import { Controls } from './input/controls';
 import { initGpu, showFatal, UnsupportedError } from './gpu/device';
 import { Profiler } from './gpu/profiler';
 import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
-import { EventKind, type GlobalsState } from './sim/globals';
+import type { GlobalsState } from './sim/globals';
 import { Simulation, TICK_DT } from './sim/simulation';
 import { WorldGpu } from './sim/world-gpu';
 import { Hud } from './ui/hud';
@@ -60,8 +62,8 @@ async function main() {
     seed: 1,
     time: 0,
     dt: TICK_DT,
-    windX: weather.params.windX,
-    windY: weather.params.windY,
+    windX: weather.windX,
+    windY: weather.windY,
     sun: SUN,
     pollution: 1,
     storms: [],
@@ -85,10 +87,6 @@ async function main() {
   }
   await device.queue.onSubmittedWorkDone();
 
-  const hud = new Hud(ui, (t) => {
-    if (t === 'storm') hud.say('Tap the land to gather a storm. Drag a storm to nudge it; tap it for a downpour.');
-    if (t === 'lightning') hud.say('Tap beneath a storm to call down lightning.');
-  });
   const perf = new PerfOverlay(ui, params.get('perf') === '1');
 
   // ---- sizing ----
@@ -112,152 +110,36 @@ async function main() {
   camera.zoom = Math.max(1.5, Math.min(camera.viewportW, camera.viewportH * 1.6) / 300);
   new ResizeObserver(resize).observe(canvas);
 
-  // ---- input ----
-  const pointers = new Map<number, { x: number; y: number }>();
-  let drag: { kind: 'pan' | 'storm'; x0: number; y0: number; cx?: number; cy?: number; moved: boolean; storm?: ReturnType<Weather['nearest']>; sx?: number; sy?: number } | null = null;
-  let pinchDist = 0;
-
-  const stormAtScreen = (x: number, y: number) => {
-    let best: ReturnType<Weather['nearest']> = null;
-    let bd = 60;
-    for (const s of weather.storms) {
-      const [px, py] = camera.project(s.x, s.y, 20);
-      const d = Math.hypot(px - x, py - y);
-      if (d < bd) {
-        bd = d;
-        best = s;
-      }
-    }
-    return best;
+  // CPU copy of surface heights for cursor → ground mapping (refreshed ~1 Hz, async)
+  let surfaceCache: Uint32Array = new Uint32Array(dims.w * dims.h);
+  for (let i = 0; i < surfaceCache.length; i++) surfaceCache[i] = Math.round(map.surface[i]);
+  const heightAt = (x: number, y: number) => {
+    const ix = Math.max(0, Math.min(dims.w - 1, Math.floor(x)));
+    const iy = Math.max(0, Math.min(dims.h - 1, Math.floor(y)));
+    return surfaceCache[iy * dims.w + ix] & 0xff;
   };
+  const readSurface = async () => new Uint32Array((await readBuffer('surface')).buffer);
+  let surfaceRefresh = 0;
+
+  // ---- powers + diegetic controls ----
+  let powers!: Powers;
+  const hud = new Hud(ui, () => powers.summonStorm());
+  powers = new Powers({
+    weather,
+    nature,
+    audio,
+    hud,
+    particles: sim.particles,
+    globals,
+    camera,
+    dims,
+    readSurface,
+  });
   const screenToRender = (x: number, y: number): [number, number] => [
     (x / camera.viewportW) * renderW,
     (y / camera.viewportH) * renderH,
   ];
-
-  canvas.addEventListener('pointerdown', (e) => {
-    canvas.setPointerCapture(e.pointerId);
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 2) {
-      const [a, b] = [...pointers.values()];
-      pinchDist = Math.hypot(a.x - b.x, a.y - b.y);
-      drag = null;
-      return;
-    }
-    const storm = e.button === 0 && hud.tool !== 'lightning' ? stormAtScreen(e.clientX, e.clientY) : null;
-    if (storm) drag = { kind: 'storm', x0: e.clientX, y0: e.clientY, moved: false, storm, sx: storm.x, sy: storm.y };
-    else drag = { kind: 'pan', x0: e.clientX, y0: e.clientY, moved: false };
-  });
-  canvas.addEventListener('pointermove', (e) => {
-    const prev = pointers.get(e.pointerId);
-    if (!prev) return;
-    const dx = e.clientX - prev.x;
-    const dy = e.clientY - prev.y;
-    pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
-    if (pointers.size === 2) {
-      const [a, b] = [...pointers.values()];
-      const d = Math.hypot(a.x - b.x, a.y - b.y);
-      if (pinchDist > 0) zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / pinchDist);
-      pinchDist = d;
-      return;
-    }
-    if (!drag) return;
-    if (Math.hypot(e.clientX - drag.x0, e.clientY - drag.y0) > 6) drag.moved = true;
-    drag.cx = e.clientX;
-    drag.cy = e.clientY;
-    if (drag.kind === 'pan') {
-      const [wx, wy] = camera.screenDeltaToWorld(dx, dy);
-      camera.target[0] -= wx;
-      camera.target[1] -= wy;
-    } else if (drag.storm && drag.moved) {
-      const [wx, wy] = camera.screenDeltaToWorld(e.clientX - drag.x0, e.clientY - drag.y0);
-      weather.nudge(drag.storm, drag.sx! + wx, drag.sy! + wy);
-    }
-  });
-  const endPointer = (e: PointerEvent) => {
-    pointers.delete(e.pointerId);
-    if (pointers.size < 2) pinchDist = 0;
-    if (!drag) return;
-    const d = drag;
-    drag = null;
-    if (d.moved) return;
-    if (d.kind === 'storm' && d.storm) {
-      if (nature.trySpend(COSTS.downpour)) {
-        d.storm.downpour = Math.min(2, d.storm.downpour + 1.2);
-      } else hud.say('Not enough Nature for a downpour.');
-      return;
-    }
-    if (hud.tool === 'lightning') {
-      const [rx, ry] = screenToRender(e.clientX, e.clientY);
-      renderer.pick(rx, ry).then((cell) => {
-        if (cell !== null) strike(cell);
-      });
-      return;
-    }
-    if (hud.tool === 'storm') {
-      const [rx, ry] = screenToRender(e.clientX, e.clientY);
-      renderer.pick(rx, ry).then((cell) => {
-        if (cell === null) return;
-        if (!weather.canSpawn()) return hud.say('The sky can only hold a few storms at once.');
-        if (!nature.trySpend(COSTS.storm)) return hud.say('Not enough Nature. Living land restores it.');
-        const x = cell % dims.w;
-        const y = Math.floor(cell / dims.w);
-        // storms gather upwind of the chosen point so they pass over it
-        weather.spawn(x - weather.params.windX * 6, y - weather.params.windY * 6);
-        hud.setTool('none');
-        if (!told.lightning) {
-          told.lightning = true;
-          setTimeout(() => hud.say('While it rains, Lightning can be called down beneath the storm.', 7), 6000);
-        }
-      });
-    }
-  };
-  let lastStrike = -10;
-  /** One-time contextual hints already shown. */
-  const told = { lightning: false, cascade: false };
-  /**
-   * Lightning seeks the highest point near where the player asked for it
-   * (score = height − 0.4·distance within 7 cells), read from a one-off
-   * surface readback. The bolt is drawn to that exact point.
-   */
-  const strike = async (cell: number) => {
-    const tx = cell % dims.w;
-    const ty = Math.floor(cell / dims.w);
-    if (weather.rainAt(tx + 0.5, ty + 0.5) < 0.15) return hud.say('Lightning needs a storm overhead.');
-    if (globals.time - lastStrike < 0.8) return;
-    if (!nature.trySpend(COSTS.lightning)) return hud.say('Not enough Nature for lightning.');
-    lastStrike = globals.time;
-    const surf = new Uint32Array((await readBuffer('surface')).buffer);
-    let bx = tx;
-    let by = ty;
-    let best = -Infinity;
-    const R = 7;
-    for (let y = Math.max(0, ty - R); y <= Math.min(dims.h - 1, ty + R); y++)
-      for (let x = Math.max(0, tx - R); x <= Math.min(dims.w - 1, tx + R); x++) {
-        const d = Math.hypot(x - tx, y - ty);
-        if (d > R) continue;
-        const score = (surf[y * dims.w + x] & 0xff) - 0.4 * d;
-        if (score > best) {
-          best = score;
-          bx = x;
-          by = y;
-        }
-      }
-    const bz = surf[by * dims.w + bx] & 0xff;
-    globals.events.push({ kind: EventKind.Lightning, x: bx + 0.5, y: by + 0.5, radius: 5, strength: 20 });
-    globals.flash = 1;
-    const [sx, sy] = camera.project(bx + 0.5, by + 0.5, bz);
-    hud.bolt(sx, sy);
-    audio.thunder(1);
-    if (!told.cascade) {
-      told.cascade = true;
-      setTimeout(() => hud.say('Damaged structures can fail on their own. Water and gravity do the rest.', 7), 2500);
-    }
-  };
-  canvas.addEventListener('pointerup', endPointer);
-  canvas.addEventListener('pointercancel', endPointer);
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
-
+  let hoverWorld: [number, number] | null = null;
   const zoomAt = (sx: number, sy: number, factor: number) => {
     const before = camera.screenDeltaToWorld(sx - camera.viewportW / 2, sy - camera.viewportH / 2);
     camera.zoom = Math.max(0.8, Math.min(24, camera.zoom * factor));
@@ -265,22 +147,38 @@ async function main() {
     camera.target[0] += before[0] - after[0];
     camera.target[1] += before[1] - after[1];
   };
-  canvas.addEventListener(
-    'wheel',
-    (e) => {
-      e.preventDefault();
-      zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
+  new Controls(canvas, {
+    tap: (sx, sy) => {
+      const [wx, wy] = camera.groundAt(sx, sy, heightAt);
+      const [rx, ry] = screenToRender(sx, sy);
+      renderer.pick(rx, ry).then((hit) => powers.tap(hit, wx, wy, sx, sy));
     },
-    { passive: false },
-  );
+    dragStart: (sx, sy) => {
+      const [wx, wy] = camera.groundAt(sx, sy, heightAt);
+      return powers.gustStart(wx, wy);
+    },
+    dragMove: (sx, sy) => {
+      const [wx, wy] = camera.groundAt(sx, sy, heightAt);
+      powers.gustMove(wx, wy);
+    },
+    dragEnd: () => powers.gustEnd(),
+    hover: (sx, sy) => {
+      const [wx, wy] = camera.groundAt(sx, sy, heightAt);
+      hoverWorld = [wx, wy];
+    },
+    pan: (dx, dy) => {
+      const [wx, wy] = camera.screenDeltaToWorld(dx, dy);
+      camera.target[0] -= wx;
+      camera.target[1] -= wy;
+    },
+    zoomAt,
+  });
 
   const keys = new Set<string>();
   window.addEventListener('keydown', (e) => {
     keys.add(e.key.toLowerCase());
     if (e.key === '`') perf.toggle();
-    if (e.key === '1') hud.setTool(hud.tool === 'storm' ? 'none' : 'storm');
-    if (e.key === '2') hud.setTool(hud.tool === 'lightning' ? 'none' : 'lightning');
-    if (e.key === 'Escape') hud.setTool('none');
+    if (e.key.toLowerCase() === 'r') powers.summonStorm();
   });
   window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
 
@@ -293,7 +191,7 @@ async function main() {
     audio.start();
     intro.classList.add('gone');
     setTimeout(() => intro.remove(), 1300);
-    setTimeout(() => hud.say('The valley is quiet. Rain would wash it clean. Choose Storm.', 7), 1500);
+    setTimeout(() => hud.say('The valley is quiet. Touch things. Call a storm with ☁ or R. Right-drag to look around.', 8), 1500);
   });
 
   // ---- loop ----
@@ -334,6 +232,16 @@ async function main() {
 
     const simDt = dt * speed;
     weather.update(simDt);
+    globals.windX = weather.windX;
+    globals.windY = weather.windY;
+    if (hoverWorld) powers.hover(hoverWorld[0], hoverWorld[1], dt);
+    powers.update(dt);
+    // keep the cursor→ground height map roughly current as the world changes
+    surfaceRefresh -= dt;
+    if (surfaceRefresh <= 0) {
+      surfaceRefresh = 1;
+      void readSurface().then((s) => (surfaceCache = s));
+    }
     const stats = sim.stats.latest;
     if (stats && initialContam === 0) initialContam = stats.soilContam;
     if (stats) {
@@ -364,26 +272,20 @@ async function main() {
     sim.uploadGlobals(globals);
     const enc = device.createCommandEncoder({ label: 'frame' });
     renderer.encode(enc, gpu.context.getCurrentTexture().createView(), camera, {
-      rainParticles: globals.storms.length ? quality.rain * globals.storms.length : 0,
+      rainParticles: Math.round(weather.storms.reduce((a, st) => a + quality.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });
     const afterProfile = profiler.endFrame(enc);
     device.queue.submit([enc.finish()]);
     renderer.afterSubmit();
     afterProfile?.();
 
-    hud.update(nature.value, nature.max);
-    hud.drawStorms(
-      weather.storms.map((s) => {
-        const [x, y] = camera.project(s.x, s.y, 20);
-        return { x, y, a: s.intensity };
-      }),
-      drag?.kind === 'storm' && drag.moved && drag.storm
-        ? (() => {
-            const [x0, y0] = camera.project(drag.storm.x, drag.storm.y, 20);
-            return { x0, y0, x1: drag.cx ?? drag.x0, y1: drag.cy ?? drag.y0 };
-          })()
-        : undefined,
-    );
+    hud.update(nature.value, nature.max, powers.stormReady());
+    const arrow = powers.gustArrow();
+    if (arrow) {
+      const [x0, y0] = camera.project(arrow.x0, arrow.y0, heightAt(arrow.x0, arrow.y0));
+      const [x1, y1] = camera.project(arrow.x1, arrow.y1, heightAt(arrow.x0, arrow.y0));
+      hud.drawGust({ x0, y0, x1, y1 });
+    } else hud.drawGust();
     // The dam groans now and then while it still holds water back: a sparse,
     // diegetic pointer at the map's main leverage (§3, §7).
     if (globals.time > nextGroan) {
@@ -398,7 +300,7 @@ async function main() {
       life,
       rain: weather.rainAt(camera.target[0], camera.target[1]),
       flow: stats ? Math.min(1, stats.flow / 40) : 0,
-      wind: 0.45 + Math.min(0.55, weather.storms.reduce((a, s) => a + s.intensity * 0.4, 0)),
+      wind: Math.min(1, Math.hypot(weather.windX, weather.windY) / 6 + weather.storms.reduce((a, s) => a + s.intensity * 0.3, 0)),
     });
     perf.update(
       {
@@ -446,7 +348,7 @@ async function main() {
       }
     return s / n;
   };
-  (window as unknown as { reclaimed: unknown }).reclaimed = { sim, world, weather, camera, nature, renderer, map, readBuffer, probe, strike, globals, packed };
+  (window as unknown as { reclaimed: unknown }).reclaimed = { sim, world, weather, camera, nature, renderer, map, readBuffer, probe, powers, globals, packed };
 }
 
 main().catch((e) => {

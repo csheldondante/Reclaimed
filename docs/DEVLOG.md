@@ -323,3 +323,33 @@ sharper and more pronounced; wants to see rain in motion.
   was split — vegetation emission moved to `vegprep.wgsl` — so terrain/liquid
   prep stays within 8 storage buffers.
 - Dust emission halved (visually noisy at close zoom).
+
+## 2026-10-07 — phase 3a: diegetic controls, rolling storms, gusts, tactile clicks
+
+- **No tool buttons.** `input/controls.ts` only classifies gestures: LMB tap,
+  LMB drag (gesture if it starts beneath a storm; on touch otherwise pans),
+  RMB drag pan, MMB drag zoom, wheel/pinch zoom, hover. `game/powers.ts`
+  decides what they mean. HUD shows only the Nature meter and a summon
+  control (☁ / R) with a recharge ring (25 s cooldown + 30 Nature).
+- **Weather reworked.** Storms are large (r 48) and roll across the map on a
+  prevailing wind that wanders ±35° / ±30 % over minutes. Natural storms roll
+  in from the map edge every 150–260 s; summoned ones form ~55 cells upwind of
+  the cursor (≈15 s to arrive — forming at the map edge took over a minute).
+  They fade as they leave the map. No direct steering: gusts push them.
+- **Lightning** = tap anywhere under a storm's cloud cover (takes precedence
+  over touching things). Not enough Nature → metal-strain sound and a hard
+  local breeze instead of an error message.
+- **Gust** = drag beneath a storm: a wind impulse along the drag (≤16
+  cells/s, r 26, decays over 2.5 s) that also shoves the storm; costs 6 Nature
+  (a weak gust + strain if short). Arrow shows the gust while dragging.
+- **Cursor breeze**: a small wind impulse that follows cursor motion (≤4
+  cells/s, r 7) — it already lifts dust; plant sway will use it in phase 5.
+- **Touch responses** (cosmetic): rust → hollow clang + flakes; concrete,
+  brick, asphalt → chip particles + dry tile ticks; water/oil → splash;
+  plants → leaves (+ birds and wing flutter from tall canopy); ground → dust.
+- **Pick target** is now `rg32uint`: column + material/height/flags, so a tap
+  knows what it touched. Cursor→ground mapping is a CPU fixed-point solve
+  against a ~1 Hz async copy of surface heights.
+- Rain at storm scale became a white wall (~20k streaks); now density scales
+  with radius (not area) and streaks are dimmer. Clouds puffier and sparser.
+  Both remain taste calls for review.

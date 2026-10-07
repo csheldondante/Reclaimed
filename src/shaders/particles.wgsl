@@ -105,7 +105,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var k = 0u; k < G.numStorms; k++) {
     let st = G.storms[k];
     let d = length(vec2<f32>(p) - st.xy) / st.z;
-    if (d < 0.95 && r2 < 0.00035 * st.w) {
+    if (d < 0.95 && r2 < 0.0002 * st.w) {
       let z = CLOUD_BASE + r1 * 8.0;
       spawn(vec3<f32>(vec2<f32>(p) + 0.5, z), vec3<f32>(G.stormsB[k].xy, 0.0), 7.0 + r1 * 5.0, K_CLOUD, 0.0, h);
     }

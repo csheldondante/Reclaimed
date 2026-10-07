@@ -102,7 +102,8 @@ fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
 
 struct FOut {
   @location(0) color: vec4<f32>,
-  @location(1) pick: u32,
+  // pick: x = column+1 (0 = nothing), y = material | z<<8 | flags<<16
+  @location(1) pick: vec2<u32>,
 };
 
 fn toLinear(c: vec3<f32>) -> vec3<f32> { return pow(c, vec3<f32>(2.2)); }
@@ -242,7 +243,7 @@ fn fsBox(in: VOut) -> FOut {
 
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
-  o.pick = ci + 1u;
+  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
   return o;
 }
 
@@ -294,7 +295,7 @@ fn fsWater(in: VOut) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = ci + 1u;
+  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
   return o;
 }
 
@@ -318,6 +319,6 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), clamp(0.55 + d * 3.0, 0.55, 0.96));
-  o.pick = ci + 1u;
+  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
   return o;
 }

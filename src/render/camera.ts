@@ -85,6 +85,27 @@ export class Camera {
     return [rx * wx - hx * wy, ry * wx - hy * wy];
   }
 
+  /**
+   * CSS pixel → world point on the terrain, given a height lookup. Raising a
+   * point by dz moves it up the screen by dz·cos(elev)·zoom, so we solve for the
+   * ground under the cursor by fixed-point iteration on z.
+   */
+  groundAt(sx: number, sy: number, heightAt: (x: number, y: number) => number): [number, number, number] {
+    const [tx, ty, tz] = this.target;
+    const dx = sx - this.viewportW / 2;
+    const dy = sy - this.viewportH / 2;
+    let z = tz;
+    let x = tx;
+    let y = ty;
+    for (let i = 0; i < 6; i++) {
+      const [wx, wy] = this.screenDeltaToWorld(dx, dy + (z - tz) * Math.cos(ELEVATION) * this.zoom);
+      x = tx + wx;
+      y = ty + wy;
+      z = heightAt(x, y);
+    }
+    return [x, y, z];
+  }
+
   write(out: ArrayBuffer): void {
     const f = new Float32Array(out);
     f.set(this.viewProj, 0);

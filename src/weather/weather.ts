@@ -1,7 +1,9 @@
-// Weather system (design doc §20): storms are small CPU-side entities that
-// produce analytic fields on the GPU (rain, cloud shade) via the Globals
-// uniform. They drift with the prevailing wind, are slowed/deflected by high
-// terrain, and the player can only *nudge* them.
+// Weather (design doc §20, DECISIONS 2026-10-07): storms are large CPU-side
+// entities that roll across the map with a slowly wandering prevailing wind.
+// They produce analytic fields on the GPU (rain, cloud shade, wind swirl) via
+// the Globals uniform. Storms arrive on their own from time to time; the
+// player can also summon one (it forms at the upwind edge, aimed to pass over
+// a chosen point) and push it with gusts — never steer it directly.
 
 import { MAX_STORMS, type StormUniform } from '../sim/globals';
 
@@ -11,27 +13,32 @@ export interface Storm {
   vx: number;
   vy: number;
   radius: number;
-  /** 0..1, ramps up then decays over the storm's life */
+  /** 0..1: ramps up as it forms, fades as it leaves the map */
   intensity: number;
   age: number;
-  life: number;
-  /** Player steering offset added to the prevailing wind (bounded). */
-  nudgeX: number;
-  nudgeY: number;
+  /** extra velocity from player gusts, decays back to the prevailing wind */
+  pushX: number;
+  pushY: number;
   downpour: number;
   flash: number;
 }
 
 export interface WeatherParams {
-  windX: number;
-  windY: number;
-  /** Max nudge speed (cells/s) the player can add to the wind. */
-  maxNudge: number;
+  /** base prevailing wind (direction it blows toward), cells/s */
+  baseWindX: number;
+  baseWindY: number;
+  /** natural storm interval range (s) */
+  naturalEvery: [number, number];
 }
 
 export class Weather {
   storms: Storm[] = [];
-  params: WeatherParams = { windX: 2.2, windY: 1.4, maxNudge: 6 };
+  params: WeatherParams = { baseWindX: 3.0, baseWindY: 1.9, naturalEvery: [150, 260] };
+  /** current prevailing wind (wanders around the base direction) */
+  windX = 2.4;
+  windY = 1.5;
+  private t = 0;
+  private nextNatural = 70;
 
   constructor(
     private heights: Float32Array,
@@ -43,19 +50,39 @@ export class Weather {
     return this.storms.length < MAX_STORMS;
   }
 
+  /**
+   * A storm forming upwind so the wind carries it over (tx, ty).
+   * @param fromEdge natural weather rolls in from the map edge; summoned storms
+   *   gather just upwind of the target so they arrive in ~15 s.
+   */
+  spawnToward(tx: number, ty: number, fromEdge = false): Storm | null {
+    if (!this.canSpawn()) return null;
+    const sp = Math.hypot(this.windX, this.windY) || 1;
+    const ux = this.windX / sp;
+    const uy = this.windY / sp;
+    let x = tx;
+    let y = ty;
+    const reach = fromEdge ? 1e9 : 48 * 1.15;
+    for (let i = 0; i < 400 && i < reach; i++) {
+      if (x < -20 || y < -20 || x > this.w + 20 || y > this.h + 20) break;
+      x -= ux;
+      y -= uy;
+    }
+    return this.spawn(x, y);
+  }
+
   spawn(x: number, y: number): Storm | null {
     if (!this.canSpawn()) return null;
     const s: Storm = {
       x,
       y,
-      vx: this.params.windX,
-      vy: this.params.windY,
-      radius: 26,
+      vx: this.windX,
+      vy: this.windY,
+      radius: 48,
       intensity: 0,
       age: 0,
-      life: 55,
-      nudgeX: 0,
-      nudgeY: 0,
+      pushX: 0,
+      pushY: 0,
       downpour: 0,
       flash: 0,
     };
@@ -63,17 +90,15 @@ export class Weather {
     return s;
   }
 
-  /** Steer a storm toward a world point; the effect is bounded and decays. */
-  nudge(s: Storm, tx: number, ty: number): void {
-    let dx = tx - s.x;
-    let dy = ty - s.y;
-    const l = Math.hypot(dx, dy);
-    if (l < 1e-3) return;
-    const mag = Math.min(this.params.maxNudge, l * 0.25);
-    dx = (dx / l) * mag;
-    dy = (dy / l) * mag;
-    s.nudgeX = dx;
-    s.nudgeY = dy;
+  /** Player gust: shoves storms near (x, y) along (dx, dy), proportional to strength. */
+  gust(x: number, y: number, dx: number, dy: number, strength: number): void {
+    for (const s of this.storms) {
+      const d = Math.hypot(s.x - x, s.y - y) / s.radius;
+      if (d > 1.2) continue;
+      const k = strength * 0.12 * (1.2 - d);
+      s.pushX += dx * k;
+      s.pushY += dy * k;
+    }
   }
 
   private heightAt(x: number, y: number): number {
@@ -83,17 +108,26 @@ export class Weather {
   }
 
   update(dt: number): void {
+    this.t += dt;
+    // prevailing wind wanders ±35° and 70–130 % strength over minutes
+    const ang = Math.atan2(this.params.baseWindY, this.params.baseWindX) + Math.sin(this.t * 0.011) * 0.45 + Math.sin(this.t * 0.027 + 1.3) * 0.17;
+    const mag = Math.hypot(this.params.baseWindX, this.params.baseWindY) * (1 + 0.3 * Math.sin(this.t * 0.019 + 0.7));
+    this.windX = Math.cos(ang) * mag;
+    this.windY = Math.sin(ang) * mag;
+
+    // weather arrives on its own now and then
+    if (this.t > this.nextNatural) {
+      const [a, b] = this.params.naturalEvery;
+      this.nextNatural = this.t + a + Math.random() * (b - a);
+      this.spawnToward(this.w * (0.3 + Math.random() * 0.4), this.h * (0.3 + Math.random() * 0.4), true);
+    }
+
     for (const s of this.storms) {
       s.age += dt;
-      // envelope: build over 4s, hold, fade over last 10s
-      const up = Math.min(1, s.age / 4);
-      const down = Math.min(1, Math.max(0, (s.life - s.age) / 10));
-      s.intensity = up * down;
-      // target velocity = prevailing wind + player nudge
-      let tvx = this.params.windX + s.nudgeX;
-      let tvy = this.params.windY + s.nudgeY;
-      // terrain: storms slow climbing high ground and slide along contours
-      const ahead = 10;
+      let tvx = this.windX + s.pushX;
+      let tvy = this.windY + s.pushY;
+      // high ground slows a storm and deflects it along the contours
+      const ahead = 14;
       const sp = Math.hypot(tvx, tvy) || 1;
       const h0 = this.heightAt(s.x, s.y);
       const h1 = this.heightAt(s.x + (tvx / sp) * ahead, s.y + (tvy / sp) * ahead);
@@ -102,30 +136,29 @@ export class Weather {
         const gx = this.heightAt(s.x + 3, s.y) - this.heightAt(s.x - 3, s.y);
         const gy = this.heightAt(s.x, s.y + 3) - this.heightAt(s.x, s.y - 3);
         const gl = Math.hypot(gx, gy) || 1;
-        // remove part of the uphill component
-        const up2 = (tvx * gx + tvy * gy) / gl;
-        if (up2 > 0) {
+        const up = (tvx * gx + tvy * gy) / gl;
+        if (up > 0) {
           const k = Math.min(1, climb * 3);
-          tvx -= (gx / gl) * up2 * k;
-          tvy -= (gy / gl) * up2 * k;
+          tvx -= (gx / gl) * up * k;
+          tvy -= (gy / gl) * up * k;
         }
       }
-      const blend = 1 - Math.exp(-dt * 0.8);
+      const blend = 1 - Math.exp(-dt * 0.6);
       s.vx += (tvx - s.vx) * blend;
       s.vy += (tvy - s.vy) * blend;
       s.x += s.vx * dt;
       s.y += s.vy * dt;
-      // nudges fade so the storm returns to the prevailing wind
-      const fade = Math.exp(-dt * 0.25);
-      s.nudgeX *= fade;
-      s.nudgeY *= fade;
+      const fade = Math.exp(-dt * 0.3);
+      s.pushX *= fade;
+      s.pushY *= fade;
+      // intensity: forms over ~6 s, fades while leaving the map
+      const outside = Math.max(0, -s.x, -s.y, s.x - this.w, s.y - this.h);
+      const form = Math.min(1, s.age / 6);
+      s.intensity = form * Math.max(0, 1 - Math.max(0, outside - 4) / (s.radius * 0.6));
       s.downpour = Math.max(0, s.downpour - dt * 0.5);
       s.flash = Math.max(0, s.flash - dt * 4);
     }
-    const m = 40;
-    this.storms = this.storms.filter(
-      (s) => s.age < s.life && s.x > -m && s.y > -m && s.x < this.w + m && s.y < this.h + m,
-    );
+    this.storms = this.storms.filter((s) => s.age < 6 || s.intensity > 0.01);
   }
 
   uniforms(): StormUniform[] {
@@ -146,22 +179,19 @@ export class Weather {
     let r = 0;
     for (const s of this.storms) {
       const d = Math.hypot(x - s.x, y - s.y) / s.radius;
-      const t = Math.min(1, Math.max(0, (1.6 - d) / 1.2));
+      const t = Math.min(1, Math.max(0, (1.0 - d) / 0.65));
       r += s.intensity * (1 + s.downpour) * t * t * (3 - 2 * t);
     }
     return r;
   }
 
-  nearest(x: number, y: number, maxDist: number): Storm | null {
-    let best: Storm | null = null;
-    let bd = maxDist;
+  /** Cloud cover 0..1 at a point (CPU twin of the shader's cloud mask, without the ragged edge). */
+  coverAt(x: number, y: number): number {
+    let c = 0;
     for (const s of this.storms) {
-      const d = Math.hypot(x - s.x, y - s.y);
-      if (d < bd) {
-        bd = d;
-        best = s;
-      }
+      const d = Math.hypot(x - s.x, y - s.y) / s.radius;
+      if (d < 1.05) c = Math.max(c, s.intensity);
     }
-    return best;
+    return c;
   }
 }

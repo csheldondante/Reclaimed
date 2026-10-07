@@ -47,19 +47,19 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   var c = mix(cb, ct, q.y);
   c = vec4<f32>(c.xy + perp * q.x, c.z, c.w);
   o.pos = c;
-  o.a = (1.0 - q.y * 0.7) * 0.36;
+  o.a = (1.0 - q.y * 0.75) * 0.22;
   return o;
 }
 
 struct FOut {
   @location(0) color: vec4<f32>,
-  @location(1) pick: u32,
+  @location(1) pick: vec2<u32>,
 };
 
 @fragment
 fn fsRain(in: VOut) -> FOut {
   var o: FOut;
   o.color = vec4<f32>(0.78, 0.82, 0.86, in.a);
-  o.pick = 0u;
+  o.pick = vec2<u32>(0u);
   return o;
 }

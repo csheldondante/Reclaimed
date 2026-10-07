@@ -20,7 +20,16 @@ import { CAMERA_BYTES, type Camera } from './camera';
 const VERTS_PER_BOX = 18;
 /** Extra instances a column may emit beyond its slots (shrub or trunk+crown). */
 const VEG_INSTANCES = 2;
-const PICK_FORMAT: GPUTextureFormat = 'r32uint';
+const PICK_FORMAT: GPUTextureFormat = 'rg32uint';
+
+/** What the pick target says is under a pixel. */
+export interface PickHit {
+  cell: number;
+  mat: number;
+  z: number;
+  /** instance flags (2 = vegetation, …) */
+  flags: number;
+}
 const DEPTH_FORMAT: GPUTextureFormat = 'depth24plus';
 
 export interface RenderOptions {
@@ -49,8 +58,8 @@ export class Renderer {
   private pickTex?: GPUTexture;
   private pickBuf: GPUBuffer;
   private pickBusy = false;
-  private pickRequest?: { x: number; y: number; resolve: (cell: number | null) => void };
-  private pickPending?: (cell: number | null) => void;
+  private pickRequest?: { x: number; y: number; resolve: (hit: PickHit | null) => void };
+  private pickPending?: (hit: PickHit | null) => void;
   readonly opaqueCapacity: number;
   /** Last-known instance counts (async readback, for the perf overlay). */
   instanceCounts = { opaque: 0, water: 0 };
@@ -223,11 +232,11 @@ export class Renderer {
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
     });
     this.profiler.trackMemory('depth', w * h * 4);
-    this.profiler.trackMemory('pickTex', w * h * 4);
+    this.profiler.trackMemory('pickTex', w * h * 8);
   }
 
   /** Request the world column under a render-target pixel; resolves after the next frame. */
-  pick(x: number, y: number): Promise<number | null> {
+  pick(x: number, y: number): Promise<PickHit | null> {
     return new Promise((resolve) => {
       this.pickRequest?.resolve(null);
       this.pickRequest = { x, y, resolve };
@@ -302,11 +311,11 @@ export class Renderer {
     if (this.pickPending) {
       const resolve = this.pickPending;
       this.pickPending = undefined;
-      this.pickBuf.mapAsync(GPUMapMode.READ, 0, 4).then(() => {
-        const v = new Uint32Array(this.pickBuf.getMappedRange(0, 4))[0];
+      this.pickBuf.mapAsync(GPUMapMode.READ, 0, 8).then(() => {
+        const [v, info] = new Uint32Array(this.pickBuf.getMappedRange(0, 8));
         this.pickBuf.unmap();
         this.pickBusy = false;
-        resolve(v === 0 ? null : v - 1);
+        resolve(v === 0 ? null : { cell: v - 1, mat: info & 0xff, z: (info >> 8) & 0xff, flags: info >>> 16 });
       });
     }
     if (this.countNeeded) {
