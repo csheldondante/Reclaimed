@@ -660,3 +660,13 @@ plane. Two crossed long bones in front, an arm bone by the ribs. At full
 progress the tree grows out of the cranium (it used to rise up the face and
 hide it). Menu wind lowered (6.2 → 4.4 at p = 0) so the new haze threshold
 doesn't fog the figure.
+
+User follow-up: "use more voxels, make the ribs arc more, tilt the skull and
+sink it a bit". The figure is now defined in figure units and sampled 1.6×
+finer (`MENU_SCALE`; map 80×80, zMax 64; the menu camera scales with it).
+Skull yawed 0.18, rolled 0.24, pitched 0.1 and sunk 2.6 units into the
+mound, with a bone floor (the tilt exposed the dark-filled cranium from
+below). Ribs: seven tall elliptical arcs (height 1.3× width) leaning back as
+they rise, open only at the very top. Trash density halved (finer voxels
+doubled the speckle). The final-stage canopy is a solid lumpy crown with a
+few branches — per-voxel random leaves needed 17 layers in a column (> MAX_K).

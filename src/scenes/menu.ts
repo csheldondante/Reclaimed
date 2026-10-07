@@ -5,7 +5,7 @@
 import type { Ambience } from '../audio/ambience';
 import { loadProgress } from '../game/progress';
 import { PK } from '../sim/particles';
-import { generateMenuMap } from '../world/menumap';
+import { generateMenuMap, MENU_SCALE } from '../world/menumap';
 import { WorldCore, type Host, type Scene } from './world-core';
 
 const LINES: [number, string][] = [
@@ -47,7 +47,7 @@ export class MenuScene implements Scene {
     weather.params.naturalEvery = [1e9, 1e9];
     dayNight.dayLength = 1e9;
     dayNight.timeOfDay = 0.64;
-    camera.target = [24, 24, 14];
+    camera.target = [24 * MENU_SCALE, 24 * MENU_SCALE, 14 * MENU_SCALE];
     this.core.pollution = 1 - p;
     globals.collapseEnabled = false;
 
@@ -71,7 +71,7 @@ export class MenuScene implements Scene {
     host.canvas.addEventListener(
       'pointermove',
       (e) => {
-        this.cursor = this.core.camera.groundAt(e.clientX, e.clientY, () => 7).slice(0, 2) as [number, number];
+        this.cursor = this.core.camera.groundAt(e.clientX, e.clientY, () => 7 * MENU_SCALE).slice(0, 2) as [number, number];
       },
       { signal: this.abort.signal },
     );
@@ -83,7 +83,7 @@ export class MenuScene implements Scene {
 
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void {
     this.core.resize(renderW, renderH, cssW, cssH);
-    this.core.camera.zoom = (0.85 * Math.min(cssW, cssH * 1.7)) / 68;
+    this.core.camera.zoom = (0.85 * Math.min(cssW, cssH * 1.7)) / (68 * MENU_SCALE);
   }
 
   frame(now: number, dt: number): void {
@@ -95,14 +95,14 @@ export class MenuScene implements Scene {
       const vx = (this.cursor[0] - this.lastCursor[0]) / Math.max(dt, 1e-3);
       const vy = (this.cursor[1] - this.lastCursor[1]) / Math.max(dt, 1e-3);
       const sp = Math.hypot(vx, vy);
-      g.gusts = sp > 0.5 ? [{ x: this.cursor[0], y: this.cursor[1], radius: 6, strength: Math.min(sp * 0.1, 5), dx: vx / sp, dy: vy / sp }] : [];
+      g.gusts = sp > 0.5 ? [{ x: this.cursor[0], y: this.cursor[1], radius: 6 * MENU_SCALE, strength: Math.min(sp * 0.1, 5), dx: vx / sp, dy: vy / sp }] : [];
     }
     this.lastCursor = this.cursor;
     // birds visit once life has returned
     this.nextBirds -= dt;
     if (p >= 0.6 && this.nextBirds <= 0) {
       this.nextBirds = 6 + Math.random() * 8;
-      core.sim.particles.burst({ kind: PK.Bird, x: 4, y: 4 + Math.random() * 40, z: 20, count: 2 + Math.floor(Math.random() * 3), speed: 4, spread: 2 });
+      core.sim.particles.burst({ kind: PK.Bird, x: 4, y: (4 + Math.random() * 40) * MENU_SCALE, z: 20 * MENU_SCALE, count: 2 + Math.floor(Math.random() * 3), speed: 4, spread: 2 });
     }
     core.advance(now, dt, 1, (s) => MENU_SYSTEMS.has(s.name));
     core.render();
