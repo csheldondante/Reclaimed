@@ -110,6 +110,8 @@ export class Powers {
   /** Tactile, mostly cosmetic responses (chips are "decay", not demolition). */
   private touch(hit: PickHit, x: number, y: number): void {
     const { audio, particles } = this.d;
+    // every tap startles animals nearby (they flee the breeze impulse)
+    this.puff(x, y, 6);
     const z = hit.z + 0.6;
     const veg = (hit.flags & 2) !== 0;
     if (veg || hit.mat === MAT.Leaves || hit.mat === MAT.Wood) {

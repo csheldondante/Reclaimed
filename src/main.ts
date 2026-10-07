@@ -8,6 +8,7 @@ import { Camera } from './render/camera';
 import { Renderer } from './render/renderer';
 import type { GlobalsState } from './sim/globals';
 import { Simulation, TICK_DT } from './sim/simulation';
+import { PK } from './sim/particles';
 import { WorldGpu } from './sim/world-gpu';
 import { Hud } from './ui/hud';
 import { PerfOverlay } from './ui/perf-overlay';
@@ -141,6 +142,14 @@ async function main() {
     dims,
     readSurface,
   });
+  // a few animals already live in the one healthy corner when the level opens
+  {
+    const [hx, hy] = map.poi.healthy;
+    const hz = map.surface[hy * dims.w + hx];
+    sim.particles.burst({ kind: PK.Rabbit, x: hx, y: hy, z: hz + 0.3, count: 4, speed: 1, spread: 4 });
+    sim.particles.burst({ kind: PK.Deer, x: hx + 2, y: hy - 2, z: hz + 0.4, count: 2, speed: 1, spread: 3 });
+    sim.particles.burst({ kind: PK.Bird, x: hx, y: hy, z: hz + 6, count: 3, speed: 3, spread: 2 });
+  }
   const screenToRender = (x: number, y: number): [number, number] => [
     (x / camera.viewportW) * renderW,
     (y / camera.viewportH) * renderH,

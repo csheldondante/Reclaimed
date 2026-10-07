@@ -481,3 +481,17 @@ only shows when they break.
   consumes it; heat ruptures the shell; burning oil spills). Rust strength
   0.7 → 0.85 — at 0.7 the wide roofs couldn't span to the centre and
   collapsed during warmup (80 units of oil free at load).
+
+## 2026-10-07 — round 3, batch 2: settling dust, white birds, rabbits, startle
+
+- **Dust settles**: heavier (falls within seconds), lands, drops its payload
+  and lies on the ground (faint) for 20–45 s; strong wind (> 4.5 cells/s, e.g.
+  gusts, storm edges) occasionally sweeps it up again — and it picks up fresh
+  pollution from where it lay. Measured ~10k settled vs ~6k airborne. Rarer
+  and less yellow (it read as pollen).
+- **Birds** are white with V-shaped wings that flap (fragment-shader V with a
+  flapping wing angle); they lift from shrubs too, not only mature trees.
+- **Rabbits** (small, hopping, faster) on grassland; deer in woodland. A few
+  rabbits, deer and birds start in the healthy corner so life is visible from
+  the first minute. **Every tap startles** animals nearby (taps emit a short
+  breeze impulse; animals flee it — deer within 9 cells, rabbits within 7).

@@ -19,6 +19,8 @@ struct VOut {
   @location(0) col: vec4<f32>,
   @location(1) uv: vec2<f32>,
   @location(2) @interpolate(flat) soft: f32,
+  // x: 1 for birds (V-shaped wings), y: wing angle
+  @location(3) @interpolate(flat) shapeInfo: vec2<f32>,
 };
 
 const CORNERS = array<vec2<f32>, 6>(
@@ -39,8 +41,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   var soft = 0.0;
   let fade = clamp(P.p.w / 1.5, 0.0, 1.0);
   if (kind == 1u) { // dust: tan, darker/yellower when carrying pollution
-    size = 0.2 + sr * 0.12;
-    col = vec4<f32>(mix(vec3<f32>(0.86, 0.78, 0.62), vec3<f32>(0.55, 0.50, 0.22), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.75);
+    size = 0.16 + sr * 0.1;
+    col = vec4<f32>(mix(vec3<f32>(0.78, 0.71, 0.58), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.7);
+    // settled dust lies faintly on the ground
+    if ((P.m.z & 1u) != 0u) { col = vec4<f32>(col.rgb * 0.85, 0.45); }
   } else if (kind == 2u) { // litter: faded plastics, paper
     size = 0.28;
     let k = u32(sr * 5.0);
@@ -81,11 +85,13 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 0.3;
     col = vec4<f32>(mix(vec3<f32>(0.42, 0.28, 0.16), vec3<f32>(0.55, 0.38, 0.22), sr), 1.0);
   }
-  else if (kind == 10u) { // bird: dark, wings flicker
-    size = 0.22;
-    let flap = 0.5 + 0.5 * sin(G.time * 18.0 + sr * 60.0);
-    col = vec4<f32>(vec3<f32>(0.12, 0.11, 0.1), 1.0);
-    size *= 0.6 + 0.6 * flap;
+  else if (kind == 10u) { // bird: white, V-shaped wings that flap
+    size = 0.34;
+    col = vec4<f32>(0.95, 0.95, 0.92, 1.0);
+  }
+  else if (kind == 14u) { // rabbit: small, sandy brown
+    size = 0.17;
+    col = vec4<f32>(mix(vec3<f32>(0.5, 0.38, 0.26), vec3<f32>(0.6, 0.5, 0.38), sr), 1.0);
   }
   if (soft == 0.0) { col.a *= fade; }
   if (kind != 9u && kind != 11u && kind != 12u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w), col.a); }
@@ -95,11 +101,14 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   let px = max(size * CAM.viewport.z, select(1.0, 0.0, soft > 0.5));
   var shape = vec2<f32>(1.0);
   if (kind == 13u) { shape = vec2<f32>(1.7, 0.9); }
+  if (kind == 14u) { shape = vec2<f32>(1.3, 1.0); }
+  if (kind == 10u) { shape = vec2<f32>(1.6, 0.8); }
   let ndc = c * shape * px * 2.0 / CAM.viewport.xy;
   o.pos = vec4<f32>(center.xy + ndc, center.z - 0.0005, 1.0);
   o.col = col;
   o.uv = c;
   o.soft = soft;
+  o.shapeInfo = vec2<f32>(select(0.0, 1.0, kind == 10u), sin(G.time * 12.0 + sr * 60.0));
   return o;
 }
 
@@ -112,6 +121,11 @@ struct FOut {
 fn fs(in: VOut) -> FOut {
   var o: FOut;
   var a = in.col.a;
+  if (in.shapeInfo.x > 0.5) {
+    // a 'V' whose wing angle flaps: |y − |x|·k| thin
+    let k = in.shapeInfo.y * 0.9;
+    if (abs(in.uv.y + abs(in.uv.x) * k) > 0.32) { discard; }
+  }
   if (in.soft > 0.5) {
     let r = length(in.uv);
     // lumpy, broken-up puffs rather than discs

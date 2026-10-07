@@ -23,6 +23,7 @@ export const enum PK {
   Firefly = 11,
   Flame = 12,
   Deer = 13,
+  Rabbit = 14,
 }
 
 export interface Burst {

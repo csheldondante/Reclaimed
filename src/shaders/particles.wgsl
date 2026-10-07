@@ -41,6 +41,7 @@ const K_BIRD: u32 = 10u;
 const K_FIREFLY: u32 = 11u;
 const K_FLAME: u32 = 12u;
 const K_DEER: u32 = 13u;
+const K_RABBIT: u32 = 14u;
 
 const DT: f32 = 1.0 / 60.0;
 // storm cloud deck height (cells): low enough that clouds stay on screen near
@@ -89,7 +90,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let cs = contam[i].x;
     var dustiness = clamp(cs, 0.0, 1.5) * 0.7;
     if (m == MAT_SOIL || m == MAT_SAND) { dustiness += 0.12; }
-    let rate = max(ws - 2.0, 0.0) * 0.0006 * dustiness * dry * (1.0 - cover);
+    let rate = max(ws - 2.5, 0.0) * 0.0003 * dustiness * dry * (1.0 - cover);
     if (r1 < rate) {
       var payload = 0.0;
       if (cs > 0.03) {
@@ -112,11 +113,15 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     spawn(base + vec3<f32>(r2 - 0.5, fract(r2 * 3.7) - 0.5, 3.0 + r2 * 3.0), vec3<f32>(wind * 0.5, 0.0), 12.0, K_LEAF, 0.0, h);
   }
   // birds lift out of trees by day; deer wander out of mature woodland
-  if (G.sky.w < 0.4 && v >= 3.6 && rare(id.x, id.y, 0xb1du) < 0.000005) {
+  if (G.sky.w < 0.4 && v >= 2.6 && rare(id.x, id.y, 0xb1du) < 0.000005) {
     spawn(base + vec3<f32>(0.0, 0.0, 5.0), vec3<f32>(r1 - 0.5, fract(r1 * 7.0) - 0.5, 1.5) * 4.0, 16.0 + r1 * 10.0, K_BIRD, 0.0, h);
   }
   if (G.sky.w < 0.5 && v >= 3.0 && !wet && rare(id.x, id.y, 0xdee5u) < 0.00000006) {
     spawn(base + vec3<f32>(0.0, 0.0, 0.4), vec3<f32>(r2 - 0.5, fract(r2 * 5.0) - 0.5, 0.0), 80.0 + r2 * 60.0, K_DEER, 0.0, h);
+  }
+  // rabbits on grassland
+  if (G.sky.w < 0.5 && v >= 1.5 && v < 3.5 && !wet && rare(id.x, id.y, 0x4abu) < 0.000002) {
+    spawn(base + vec3<f32>(0.0, 0.0, 0.25), vec3<f32>(r1 - 0.5, fract(r1 * 3.0) - 0.5, 0.0), 60.0 + r1 * 60.0, K_RABBIT, 0.0, h);
   }
   // fireflies over living land at night
   if (G.sky.w > 0.6 && v >= 1.8 && !wet && rare(id.x, id.y, 0xf1f1u) < 0.0004 * G.sky.w) {
@@ -168,6 +173,7 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
     var life = 3.0 + r.x * 2.0;
     if (kind == K_BIRD) { life = 14.0; }
     if (kind == K_LEAF) { life = 10.0; }
+    if (kind == K_DEER || kind == K_RABBIT) { life = 90.0 + r.x * 60.0; }
     spawn(a.xyz + r * b.w, dir * b.y * (0.6 + 0.8 * fract(r.y * 9.1)), life, kind, b.z / f32(max(count, 1u)), h);
   }
 }
@@ -201,8 +207,24 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   var grav = 0.5;
   var resting = (P.m.z & 1u) != 0u;
   if (kind == K_DUST) {
-    drag = 1.6; grav = 0.35 + rain * 6.0; // rain knocks dust out of the air
-    vel.z += (vnoise(pos.xy * 0.3 + vec2<f32>(G.time * 2.0, sr * 10.0)) - 0.48) * 4.0 * DT;
+    drag = 1.6; grav = 1.1 + rain * 6.0; // drifts down; rain knocks it out of the air
+    if (resting) {
+      // settled dust waits for a strong breeze or gust to sweep it up again
+      if (length(w) > 4.5 && fract(sr * 17.0 + G.time * 0.37) < 0.01 && water[ci] < 0.02) {
+        resting = false;
+        vel = vec3<f32>(w * 0.5, 1.2 + sr * 1.5);
+        let cs = contam[ci].x;
+        if (cs > 0.03) {
+          let take = min(cs * 0.04, 0.015);
+          atomicSub(&contamDelta[ci], i32(take * FIX));
+          P.v.w += take;
+        }
+      } else {
+        vel = vec3<f32>(0.0);
+      }
+    } else {
+      vel.z += (vnoise(pos.xy * 0.3 + vec2<f32>(G.time * 2.0, sr * 10.0)) - 0.48) * 4.0 * DT;
+    }
   } else if (kind == K_LITTER) {
     drag = 1.2; grav = 4.0;
     if (resting) {
@@ -242,7 +264,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     if (life > 4.0) { vel.z += ((ground + 9.0 + sr * 4.0) - pos.z) * 0.8 * DT; }
     else { vel.z -= 4.0 * DT; }
     vel.z *= 0.98;
-  } else if (kind == K_DEER) {
+  } else if (kind == K_DEER || kind == K_RABBIT) {
     // ground-bound walker: wander, pause to graze, keep to living ground,
     // bolt from a fast cursor
     drag = 0.0; grav = 0.0;
@@ -255,15 +277,19 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     let ahead = clampCell(vec2<i32>(floor(pos.xy + hd * 1.5)));
     let aj = colIdxI(ahead);
     if (veg[aj] < 1.0 || water[aj] > 0.1 || abs(f32(sfZ(surface[aj])) - f32(sfZ(surface[ci]))) > 2.0) { hd = -hd; }
-    var speed = select(0.8, 0.0, graze);
+    let rabbit = kind == K_RABBIT;
+    var speed = select(select(0.8, 1.6, rabbit), 0.0, graze);
+    // startled by taps and fast cursor movement nearby (the cursor breeze)
     let b = G.gusts[0];
     let away = pos.xy - b.xy;
-    if (b.w > 1.5 && length(away) < 6.0) { hd = normalize(away + vec2<f32>(1e-3)); speed = 4.0; }
+    if (b.w > 1.5 && length(away) < select(9.0, 7.0, rabbit)) { hd = normalize(away + vec2<f32>(1e-3)); speed = select(4.5, 6.5, rabbit); }
     vel = vec3<f32>(hd * max(speed, 0.001), 0.0);
-    pos = vec3<f32>(pos.xy + vel.xy * DT, ground + 0.4);
+    var hop = 0.0;
+    if (rabbit && speed > 0.1) { hop = abs(sin(G.time * (6.0 + speed * 2.0) + sr * 20.0)) * 0.45; }
+    pos = vec3<f32>(pos.xy + vel.xy * DT, ground + select(0.4, 0.22 + hop, rabbit));
   }
 
-  if (!resting && kind != K_DEER) {
+  if (!resting && kind != K_DEER && kind != K_RABBIT) {
     vel = vec3<f32>(vel.xy + (w - vel.xy) * min(drag * DT, 1.0), vel.z - grav * DT);
     if (kind == K_DUST || kind == K_LEAF) { vel.z *= 0.995; }
     pos += vel * DT;
@@ -280,12 +306,16 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     pos.z = ground + 0.2;
     vel.z = abs(vel.z);
   }
-  if (kind != K_CLOUD && kind != K_BIRD && kind != K_DEER && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
+  if (kind != K_CLOUD && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
     if (kind == K_DUST) {
+      // lands: drops its pollution, then lies on the ground a while
       depositAt(pos, P.v.w);
-      parts[id.x].p.w = 0.0;
-      return;
-    }
+      P.v.w = 0.0;
+      if (water[ci] > 0.02) { parts[id.x].p.w = 0.0; return; }
+      pos.z = ground;
+      if (!resting) { life = max(life, 20.0 + sr * 25.0); }
+      resting = true;
+    } else
     if (kind == K_LITTER) {
       if (water[ci] > 0.05) {
         // swept into water: its pollution washes off into the stream
