@@ -6,6 +6,7 @@ import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import particlesWgsl from '../shaders/particles.wgsl?raw';
+import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import type { WorldGpu } from './world-gpu';
 
@@ -24,6 +25,7 @@ export const enum PK {
   Flame = 12,
   Deer = 13,
   Rabbit = 14,
+  Haze = 15,
 }
 
 export interface Burst {
@@ -60,7 +62,7 @@ export class ParticleSystem implements SimSystem {
     private world: WorldGpu,
     private prof: Profiler,
   ) {
-    const parts = [commonWgsl, materialsWgsl, particlesWgsl];
+    const parts = [commonWgsl, materialsWgsl, vegplanWgsl, particlesWgsl];
     const spec = {
       0: 'uniform',
       2: 'uniform',

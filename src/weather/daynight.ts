@@ -44,22 +44,29 @@ export class DayNight {
     const dayPhase = (t - 0.25) / 0.5; // 0 sunrise .. 1 sunset
     const elev = Math.sin(Math.PI * dayPhase) * (62 * Math.PI) / 180;
     const az = NOON_AZ + (dayPhase - 0.5) * 2.4;
-    const sunUp = smooth(-0.05, 0.12, elev);
-    const night = 1 - smooth(-0.18, 0.05, elev);
-    const low = 1 - smooth(0.05, 0.5, elev); // golden hour
+    // wide fades: the light dims through a long dusk instead of switching off
+    const sunUp = smooth(-0.04, 0.22, elev);
+    const night = 1 - smooth(-0.22, 0.08, elev);
+    const low = 1 - smooth(0.05, 0.6, elev); // golden hour
+    // the moon follows its own arc through the night half; it only rises once
+    // the sun's light is gone, so the shadow direction never jumps while lit
+    const nightPhase = (((t - 0.75 + 1) % 1) / 0.5); // 0 moonrise .. 1 moonset (when < 1)
+    const moonElev = nightPhase < 1 ? Math.sin(Math.PI * nightPhase) * (55 * Math.PI) / 180 : -1;
+    const moonUp = smooth(0.0, 0.3, moonElev) * (1 - sunUp);
     let dir: [number, number, number];
     let col: [number, number, number];
-    if (sunUp > 0.01) {
-      const e = Math.max(elev, 0.08);
+    if (sunUp >= moonUp) {
+      const e = Math.max(elev, 0.06);
       dir = [Math.cos(az) * Math.cos(e), Math.sin(az) * Math.cos(e), Math.sin(e)];
       const noonCol = mix([1.0, 0.84, 0.64], [1.0, 0.95, 0.86], 1 - pollution);
-      const c = mix(noonCol, [1.0, 0.55, 0.3], low * 0.85);
+      const c = mix(noonCol, [1.0, 0.5, 0.26], low * 0.9);
       const k = 2.4 * sunUp;
       col = [c[0] * k, c[1] * k, c[2] * k];
     } else {
-      // moonlight from a fixed high angle
-      dir = [0.35, -0.55, 0.76];
-      col = [0.16, 0.2, 0.32];
+      const maz = NOON_AZ + (nightPhase - 0.5) * 2.0;
+      const e = Math.max(moonElev, 0.06);
+      dir = [Math.cos(maz) * Math.cos(e), Math.sin(maz) * Math.cos(e), Math.sin(e)];
+      col = [0.16 * moonUp, 0.2 * moonUp, 0.32 * moonUp];
     }
     const daySky = mix([0.34, 0.33, 0.31], [0.3, 0.38, 0.5], 1 - pollution);
     const duskSky: [number, number, number] = [0.36, 0.26, 0.24];

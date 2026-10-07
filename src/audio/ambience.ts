@@ -2,16 +2,30 @@
 // voice is synthesised so the mix can respond continuously to world state.
 // Inputs are aggregate values only (AudioState), so the audio system is
 // independent of simulation internals.
+//
+// Two buses (DECISIONS round 4): the AMBIENT bed (wind, rain, water, birds,
+// insects, fire, distant thunder) is quieter overall, falls off as the camera
+// zooms out, and its positional sources are weighted by how near they are to
+// the view centre (the level supplies those levels); CLICK responses (clang,
+// chip, splash, flutter, rustle, strain, the player's own lightning) are
+// always under the cursor — the player's focus — so they stay at full volume
+// and are panned to where the click was.
 
 export interface AudioState {
   /** 0..1 how dead/polluted the world feels */
   pollution: number;
   /** 0..1 how much life has returned */
   life: number;
-  /** rain intensity near the camera */
+  /** rain heard from the view centre (storms nearby count, fading with distance) */
   rain: number;
-  /** 0..1 how much water is moving */
+  /** -1..1 where the nearest rain is, left to right */
+  rainPan: number;
+  /** 0..1 moving water heard from the view centre (river, spillway) */
   flow: number;
+  /** 0..1 woodland/meadow near the view centre (birdsong, insects, leaves) */
+  lifeNear: number;
+  /** 0..1 how close the camera is zoomed (1 = in close, 0 = whole map) */
+  zoom: number;
   /** wind strength 0..1 */
   wind: number;
   /** 0 day .. 1 night */
@@ -22,7 +36,8 @@ export interface AudioState {
 
 export class Ambience {
   private ctx?: AudioContext;
-  private master?: GainNode;
+  private ambient?: GainNode;
+  private fx?: GainNode;
   private windGain?: GainNode;
   private windFilter?: BiquadFilterNode;
   private whistleGain?: GainNode;
@@ -30,6 +45,9 @@ export class Ambience {
   private flowGain?: GainNode;
   private insectGain?: GainNode;
   private leavesGain?: GainNode;
+  private dragGain?: GainNode;
+  private dragFilter?: BiquadFilterNode;
+  private dragPan?: StereoPannerNode;
   private noise?: AudioBuffer;
   private nextBird = 0;
   private nextRattle = 0;
@@ -47,9 +65,16 @@ export class Ambience {
     const ctx = new AudioContext();
     this.ctx = ctx;
     const master = ctx.createGain();
-    master.gain.value = 0.42; // softer overall (user feedback)
+    master.gain.value = 0.5;
     master.connect(ctx.destination);
-    this.master = master;
+    // the ambient bed sits well under the click responses
+    this.ambient = ctx.createGain();
+    this.ambient.gain.value = 0.5;
+    this.ambient.connect(master);
+    this.fx = ctx.createGain();
+    this.fx.gain.value = 1;
+    this.fx.connect(master);
+    const bed = this.ambient;
 
     const len = ctx.sampleRate * 3;
     const buf = ctx.createBuffer(1, len, ctx.sampleRate);
@@ -72,14 +97,24 @@ export class Ambience {
     this.windFilter.Q.value = 0.6;
     this.windGain = ctx.createGain();
     this.windGain.gain.value = 0;
-    this.loopNoise().connect(this.windFilter).connect(this.windGain).connect(master);
+    this.loopNoise().connect(this.windFilter).connect(this.windGain).connect(bed);
     const whistle = ctx.createBiquadFilter();
     whistle.type = 'bandpass';
     whistle.frequency.value = 1100;
     whistle.Q.value = 12;
     this.whistleGain = ctx.createGain();
     this.whistleGain.gain.value = 0;
-    this.loopNoise().connect(whistle).connect(this.whistleGain).connect(master);
+    this.loopNoise().connect(whistle).connect(this.whistleGain).connect(bed);
+
+    // the player's own drag-wind: a whoosh that follows the stroke (fx bus)
+    this.dragFilter = ctx.createBiquadFilter();
+    this.dragFilter.type = 'bandpass';
+    this.dragFilter.frequency.value = 400;
+    this.dragFilter.Q.value = 0.9;
+    this.dragGain = ctx.createGain();
+    this.dragGain.gain.value = 0;
+    this.dragPan = ctx.createStereoPanner();
+    this.loopNoise().connect(this.dragFilter).connect(this.dragGain).connect(this.dragPan).connect(this.fx);
 
     // rain: bright hiss
     const rhp = ctx.createBiquadFilter();
@@ -90,7 +125,7 @@ export class Ambience {
     rlp.frequency.value = 6000;
     this.rainGain = ctx.createGain();
     this.rainGain.gain.value = 0;
-    this.loopNoise().connect(rhp).connect(rlp).connect(this.rainGain).connect(master);
+    this.loopNoise().connect(rhp).connect(rlp).connect(this.rainGain).connect(bed);
 
     // flowing water: mid band burble with slow modulation
     const fbp = ctx.createBiquadFilter();
@@ -105,7 +140,7 @@ export class Ambience {
     lfo.start();
     this.flowGain = ctx.createGain();
     this.flowGain.gain.value = 0;
-    this.loopNoise().connect(fbp).connect(this.flowGain).connect(master);
+    this.loopNoise().connect(fbp).connect(this.flowGain).connect(bed);
 
     // leaves: airy rustle that swells with wind over living land
     const lhp = ctx.createBiquadFilter();
@@ -121,7 +156,7 @@ export class Ambience {
     lmod.gain.value = 0.65;
     llfo.connect(llfoG).connect(lmod.gain);
     llfo.start();
-    this.loopNoise().connect(lhp).connect(lmod).connect(this.leavesGain).connect(master);
+    this.loopNoise().connect(lhp).connect(lmod).connect(this.leavesGain).connect(bed);
 
     // insects: amplitude-modulated high tone
     const ins = ctx.createOscillator();
@@ -140,7 +175,7 @@ export class Ambience {
     amOsc.connect(amDepth).connect(am.gain);
     this.insectGain = ctx.createGain();
     this.insectGain.gain.value = 0;
-    ins.connect(insBp).connect(am).connect(this.insectGain).connect(master);
+    ins.connect(insBp).connect(am).connect(this.insectGain).connect(bed);
     ins.start();
     amOsc.start();
   }
@@ -164,6 +199,8 @@ export class Ambience {
       this.nextGust = t + 1.5 + Math.random() * 3;
     }
     const wind = s.wind * this.gustTarget;
+    // zoomed out, the bed recedes (to ~30 %); zoomed in it is at its fullest
+    this.ambient!.gain.setTargetAtTime(0.5 * (0.3 + 0.7 * s.zoom), t, 0.5);
     // dead worlds: wind dominates; living worlds: wind softens
     this.windGain!.gain.setTargetAtTime(0.06 + wind * 0.2 * (1 - s.life * 0.5), t, 1.2);
     this.windFilter!.frequency.setTargetAtTime(260 + wind * 380, t, 1.2);
@@ -172,25 +209,26 @@ export class Ambience {
     const rain = Math.min(1, s.rain);
     this.rainGain!.gain.setTargetAtTime(rain * 0.13, t, k);
     if (rain > 0.02) {
-      const pan = this.panner();
+      const pan = this.panner(undefined, (s.rainPan + 1) / 2, 0.5);
       const drops = Math.floor(rain * 7 + Math.random());
       for (let i = 0; i < drops; i++) {
         this.noiseHit(pan, t + Math.random() * 0.03, 2500 + Math.random() * 5000, 6, 0.012 + Math.random() * 0.012, 0.02);
       }
     }
     // the river: a low, quiet murmur (was loud and hissy enough to pass for rain)
-    this.flowGain!.gain.setTargetAtTime(Math.min(1, s.flow) * 0.04, t, k * 2);
+    this.flowGain!.gain.setTargetAtTime(Math.min(1, s.flow) * 0.05, t, k * 2);
     // fair weather: wind and, now and then, thunder rumbling somewhere far off
     if (t > this.nextDistant) {
       this.nextDistant = t + 35 + Math.random() * 50;
       if (rain < 0.1) this.thunder(0, 0.35);
     }
-    this.leavesGain!.gain.setTargetAtTime(s.life * (0.03 + wind * 0.12) * (1 - Math.min(1, s.rain) * 0.6), t, 0.8);
+    this.leavesGain!.gain.setTargetAtTime(s.lifeNear * (0.03 + wind * 0.12) * (1 - Math.min(1, s.rain) * 0.6), t, 0.8);
     // insects carry the night; birds the day
-    this.insectGain!.gain.setTargetAtTime(Math.pow(s.life, 1.2) * (0.012 + 0.03 * s.night) * (1 - Math.min(1, s.rain)), t, 2);
+    this.insectGain!.gain.setTargetAtTime(Math.pow(s.lifeNear, 1.2) * (0.012 + 0.03 * s.night) * (1 - Math.min(1, s.rain)), t, 2);
 
     if (t > this.nextBird) {
-      const rate = s.life * s.life * 0.9 * (1 - Math.min(1, s.rain) * 0.8) * (1 - s.night * 0.9); // calls / s
+      // birdsong comes from the woods in view, not from the map as a whole
+      const rate = s.lifeNear * s.lifeNear * 1.2 * (1 - Math.min(1, s.rain) * 0.8) * (1 - s.night * 0.9); // calls / s
       if (rate > 0.01 && Math.random() < 0.85) this.birdCall();
       this.nextBird = t + (rate > 0.01 ? 0.4 + Math.random() * (2 / rate) : 2);
     }
@@ -208,14 +246,15 @@ export class Ambience {
   }
 
   /** Crack + long low rumble. `near` 0..1 shortens the delay and brightens the crack. */
-  thunder(near: number, volume = 1): void {
+  thunder(near: number, volume = 1, at?: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const vol = ctx.createGain();
     vol.gain.value = volume;
-    vol.connect(this.master!);
+    // the player's own strike is a click response; far-off rumbles are ambience
+    vol.connect(near > 0.5 ? this.fx! : this.ambient!);
     const t0 = ctx.currentTime + 0.05 + (1 - near) * 1.2;
-    const pan = this.panner(vol);
+    const pan = this.panner(vol, at);
     // crack
     const crack = ctx.createBufferSource();
     crack.buffer = this.noise!;
@@ -249,14 +288,24 @@ export class Ambience {
     }
   }
 
+  /** Drag-wind whoosh: strength 0..1 and screen x 0..1 of the gust. */
+  dragWind(strength: number, at: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t = ctx.currentTime;
+    this.dragGain!.gain.setTargetAtTime(strength * 0.16, t, 0.08);
+    this.dragFilter!.frequency.setTargetAtTime(300 + strength * 700, t, 0.1);
+    this.dragPan!.pan.setTargetAtTime((at * 2 - 1) * 0.8, t, 0.1);
+  }
+
   // ---- tactile responses to clicks ------------------------------------------
 
   /** Hollow metal tank: inharmonic partials with a long ring. */
-  clang(): void {
+  clang(at?: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
-    const pan = this.panner();
+    const pan = this.panner(this.fx, at);
     // hollow body: a short feedback delay acts as the tank's cavity echo
     const cavity = ctx.createDelay(0.5);
     cavity.delayTime.value = 0.045 + Math.random() * 0.02;
@@ -292,11 +341,11 @@ export class Ambience {
    * bouncing down (intervals shorten and pitch drops as they settle), then a
    * trickle of grit.
    */
-  chip(): void {
+  chip(at?: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
-    const pan = this.panner();
+    const pan = this.panner(this.fx, at);
     this.noiseHit(pan, t0, 2600, 1.4, 0.16, 0.07); // crack
     const stones = 2 + Math.floor(Math.random() * 3);
     for (let k = 0; k < stones; k++) {
@@ -315,11 +364,11 @@ export class Ambience {
     this.noiseHit(pan, t0 + 0.25, 1400, 1, 0.025, 0.6); // grit trickle
   }
 
-  splash(): void {
+  splash(at?: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
-    const pan = this.panner();
+    const pan = this.panner(this.fx, at);
     // plop: a falling-pitch bubble, then spray settling back
     const o = ctx.createOscillator();
     o.frequency.setValueAtTime(700, t0);
@@ -336,30 +385,30 @@ export class Ambience {
   }
 
   /** Wings: a burst of soft flaps as birds leave a tree. */
-  flutter(): void {
+  flutter(at?: number, volume = 1): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
-    const pan = this.panner();
-    for (let i = 0; i < 9; i++) this.noiseHit(pan, t0 + i * (0.04 + Math.random() * 0.03), 700 + Math.random() * 500, 1.5, 0.07, 0.05);
-    if (Math.random() < 0.7) setTimeout(() => this.birdCall(), 300);
+    const pan = this.panner(this.fx, at);
+    for (let i = 0; i < 9; i++) this.noiseHit(pan, t0 + i * (0.04 + Math.random() * 0.03), 700 + Math.random() * 500, 1.5, 0.08 * volume, 0.05);
+    if (Math.random() < 0.7) setTimeout(() => this.birdCall(this.fx, at), 300);
   }
 
   /** Leaves rustling (clicks on plants, gusts through trees). */
-  rustle(volume = 1): void {
+  rustle(volume = 1, at?: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
-    const pan = this.panner();
+    const pan = this.panner(this.fx, at);
     this.noiseHit(pan, t0, 3500, 0.8, 0.07 * volume, 0.45);
   }
 
   /** Metal straining under load — feedback when a power isn't ready yet. */
-  strain(): void {
+  strain(at?: number): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
-    const pan = this.panner();
+    const pan = this.panner(this.fx, at);
     const o = ctx.createOscillator();
     o.type = 'sawtooth';
     const f = 180 + Math.random() * 80;
@@ -455,17 +504,23 @@ export class Ambience {
     }
   }
 
-  private panner(dest?: AudioNode): StereoPannerNode {
+  /**
+   * @param dest bus (default: ambient)
+   * @param at screen x 0..1 of the source (default: somewhere random)
+   * @param spread random scatter around `at`
+   */
+  private panner(dest?: AudioNode, at?: number, spread = 0.15): StereoPannerNode {
     const p = this.ctx!.createStereoPanner();
-    p.pan.value = Math.random() * 1.6 - 0.8;
-    p.connect(dest ?? this.master!);
+    const base = at === undefined ? Math.random() * 1.6 - 0.8 : (at * 2 - 1) * 0.85;
+    p.pan.value = Math.max(-1, Math.min(1, base + (Math.random() - 0.5) * 2 * (at === undefined ? 0 : spread)));
+    p.connect(dest ?? this.ambient!);
     return p;
   }
 
-  private birdCall(): void {
+  private birdCall(dest?: AudioNode, at?: number): void {
     const ctx = this.ctx!;
     const t0 = ctx.currentTime + 0.02;
-    const pan = this.panner();
+    const pan = this.panner(dest, at, 0.25);
     const g = ctx.createGain();
     g.gain.value = 0;
     g.connect(pan);

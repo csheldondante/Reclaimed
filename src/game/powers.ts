@@ -1,7 +1,7 @@
 // What the player's gestures do in the world (DECISIONS 2026-10-07).
 //   Tap under a storm  → lightning (always takes precedence)
 //   Tap elsewhere      → tactile response from whatever was touched
-//   Drag under a storm → a big gust along the drag (also shoves the storm)
+//   Drag anywhere      → wind along the drag; near a storm it also steers it
 //   Hover              → a light breeze following the cursor
 //   Summon (R/button)  → a storm forms upwind and rolls over the view
 // Every power reads/writes only Weather, Nature, Globals (gusts/events) and
@@ -30,6 +30,8 @@ export interface PowersDeps {
   dims: { w: number; h: number };
   /** current surface heights (async readback, may be a frame or two old) */
   readSurface: () => Promise<Uint32Array>;
+  /** total birds ever flushed from a perch (GPU counter, async readback) */
+  birdsFlushed: () => Promise<number>;
 }
 
 export class Powers {
@@ -37,8 +39,8 @@ export class Powers {
   private lastSummon = -STORM_COOLDOWN;
   private breeze: Gust = { x: 0, y: 0, radius: 7, strength: 0, dx: 1, dy: 0 };
   private cursor?: { x: number; y: number };
-  private gust?: Gust & { sx: number; sy: number; ttl: number; weak: boolean };
-  private told = { lightning: false, gust: false };
+  private gust?: Gust & { lx: number; ly: number; vx: number; vy: number; t: number; ttl: number };
+  private told = { lightning: false };
 
   constructor(private d: PowersDeps) {}
 
@@ -47,10 +49,17 @@ export class Powers {
     const g = this.d.globals;
     this.breeze.strength *= Math.exp(-dt * 3);
     const gusts: Gust[] = [this.breeze];
-    if (this.gust) {
-      if (this.gust.ttl < 99) this.gust.ttl -= dt;
-      if (this.gust.ttl <= 0) this.gust = undefined;
-      else gusts.push({ ...this.gust, strength: this.gust.strength * Math.min(1, this.gust.ttl / 1.5) });
+    const gu = this.gust;
+    if (gu) {
+      if (gu.ttl < 99) gu.ttl -= dt;
+      else {
+        // a held drag that stops moving dies down
+        gu.strength *= Math.exp(-dt * 2.5);
+        // leaning on nearby storms while the drag lasts
+        this.d.weather.gust(gu.x, gu.y, gu.dx, gu.dy, gu.strength * dt * 2.2);
+      }
+      if (gu.ttl <= 0) this.gust = undefined;
+      else gusts.push({ ...gu, strength: gu.strength * Math.min(1, gu.ttl / 1.2) });
     }
     g.gusts = gusts;
   }
@@ -72,7 +81,7 @@ export class Powers {
     weather.spawnToward(tx, ty);
     if (!this.told.lightning) {
       this.told.lightning = true;
-      setTimeout(() => hud.say('A storm gathers upwind. Tap beneath it for lightning; drag beneath it to make the wind gust.', 8), 3000);
+      setTimeout(() => hud.say('A storm gathers upwind. Tap beneath it for lightning.', 8), 3000);
     }
   }
 
@@ -104,11 +113,11 @@ export class Powers {
       void this.lightning(hit.cell, sx, sy);
       return;
     }
-    this.touch(hit, x, y);
+    this.touch(hit, x, y, sx / Math.max(1, this.d.camera.viewportW));
   }
 
   /** Tactile, mostly cosmetic responses (chips are "decay", not demolition). */
-  private touch(hit: PickHit, x: number, y: number): void {
+  private touch(hit: PickHit, x: number, y: number, at: number): void {
     const { audio, particles } = this.d;
     // every tap startles animals nearby (they flee the breeze impulse)
     this.puff(x, y, 6);
@@ -116,22 +125,23 @@ export class Powers {
     const veg = (hit.flags & 2) !== 0;
     if (veg || hit.mat === MAT.Leaves || hit.mat === MAT.Wood) {
       particles.burst({ kind: PK.Leaf, x, y, z: z + 1, count: 14, speed: 3, spread: 1.2 });
-      if (hit.mat === MAT.Leaves && hit.z > 4) {
-        particles.burst({ kind: PK.Bird, x, y, z: z + 1, count: 3 + Math.floor(Math.random() * 4), speed: 7, spread: 0.8 });
-        audio.flutter();
-      } else audio.rustle();
+      audio.rustle(1, at);
+      // only a tree with birds in it gives up birds: startle any perched in
+      // its crown, and flap if some actually went (GPU counter readback)
+      this.d.globals.events.push({ kind: EventKind.Scare, x, y, radius: 3.2, strength: 1 });
+      void this.listenForWings(at);
       this.puff(x, y, 2.5);
       return;
     }
     switch (hit.mat) {
       case MAT.Rust:
-        audio.clang();
+        audio.clang(at);
         particles.burst({ kind: PK.Chip, x, y, z, count: 3, speed: 2.5, spread: 0.3 });
         break;
       case MAT.Concrete:
       case MAT.Brick:
       case MAT.Asphalt:
-        audio.chip();
+        audio.chip(at);
         particles.burst({ kind: PK.Chip, x, y, z, count: 7, speed: 3.5, spread: 0.4 });
         // real (small) decay: cracks show, and a dozen taps will bring a piece down
         if (hit.mat !== MAT.Asphalt) {
@@ -141,14 +151,22 @@ export class Powers {
         break;
       case MAT.Water:
       case MAT.Oil:
-        audio.splash();
+        audio.splash(at);
         // the picked z is floored: start the spray clearly above the surface
         particles.burst({ kind: PK.Splash, x, y, z: hit.z + 1.4, count: 24, speed: 4.5, spread: 0.25 });
         break;
       default:
         particles.burst({ kind: PK.Dust, x, y, z, count: 8, speed: 1.6, spread: 0.6 });
-        audio.rustle(0.4);
+        audio.rustle(0.4, at);
     }
+  }
+
+  private async listenForWings(at: number): Promise<void> {
+    const before = await this.d.birdsFlushed();
+    // the scare event is consumed on the next tick; give it a few frames
+    await new Promise((r) => setTimeout(r, 120));
+    const after = await this.d.birdsFlushed();
+    if (after > before) this.d.audio.flutter(at, Math.min(1.5, 0.6 + (after - before) * 0.15));
   }
 
   /** A short local breeze (makes nearby plants sway, lifts dust). */
@@ -195,54 +213,58 @@ export class Powers {
     globals.flash = 1;
     const [px, py] = this.d.camera.project(bx + 0.5, by + 0.5, bz);
     hud.bolt(px, py);
-    audio.thunder(1);
+    audio.thunder(1, 1, px / Math.max(1, this.d.camera.viewportW));
     this.d.particles.burst({ kind: PK.Chip, x: bx + 0.5, y: by + 0.5, z: bz + 0.5, count: 12, speed: 6, spread: 0.5 });
     void sx;
     void sy;
   }
 
-  // ---- gust gesture ----
-  /** Drag start: only beneath a storm. */
+  // ---- drag gesture: wind ----
+  // Every LMB drag is wind (DECISIONS round 4): a gust that follows the
+  // cursor, as strong as the drag is fast, rippling water, grass and leaves
+  // and lifting loose debris. Dragging under or near a storm also leans on
+  // it — there is no arrow or hint; players discover they can steer storms.
+
+  /** Drag start: always a wind gesture. */
   gustStart(wx: number, wy: number): boolean {
-    const { weather, nature, audio } = this.d;
-    if (weather.coverAt(wx, wy) < 0.25) return false;
-    const weak = !nature.trySpend(COSTS.gust);
-    if (weak) audio.strain();
-    this.gust = { x: wx, y: wy, sx: wx, sy: wy, radius: 26, strength: 0, dx: 1, dy: 0, ttl: 99, weak };
+    this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 11, strength: 0, dx: 1, dy: 0, ttl: 99 };
     return true;
   }
 
   gustMove(wx: number, wy: number): void {
     const g = this.gust;
     if (!g) return;
-    const dx = wx - g.sx;
-    const dy = wy - g.sy;
-    const l = Math.hypot(dx, dy);
-    if (l < 0.5) return;
-    g.dx = dx / l;
-    g.dy = dy / l;
-    g.x = g.sx + dx * 0.5;
-    g.y = g.sy + dy * 0.5;
-    g.strength = Math.min(16, l * 0.5) * (g.weak ? 0.3 : 1);
+    const now = performance.now();
+    const dt = Math.max(1e-3, (now - g.t) / 1000);
+    g.t = now;
+    // smoothed cursor velocity (cells/s): the gust's direction and strength
+    const k = Math.min(1, dt * 10);
+    g.vx += ((wx - g.lx) / dt - g.vx) * k;
+    g.vy += ((wy - g.ly) / dt - g.vy) * k;
+    g.lx = wx;
+    g.ly = wy;
+    const sp = Math.hypot(g.vx, g.vy);
+    if (sp > 0.5) {
+      g.dx = g.vx / sp;
+      g.dy = g.vy / sp;
+    }
+    // the gust sits a little behind the cursor, blowing along the stroke
+    g.x = wx - g.dx * 3;
+    g.y = wy - g.dy * 3;
+    g.strength = Math.min(14, sp * 0.12);
   }
 
   gustEnd(): void {
     const g = this.gust;
     if (!g) return;
-    this.d.weather.gust(g.x, g.y, g.dx, g.dy, g.strength);
-    this.d.audio.rustle(1.5);
-    g.ttl = 2.5;
-    if (!this.told.gust) {
-      this.told.gust = true;
-      this.d.hud.say('The wind carries dust, litter and smoke — and pushes storms.', 6);
-    }
+    g.ttl = 1.2;
+    if (g.strength > 4) this.d.audio.rustle(Math.min(1.5, g.strength / 8), this.d.camera.project(g.x, g.y, 0)[0] / this.d.camera.viewportW);
   }
 
-  /** Arrow for the HUD while dragging (world → screen done by the caller). */
-  gustArrow(): { x0: number; y0: number; x1: number; y1: number } | undefined {
+  /** The live drag-wind (for audio), if any. */
+  dragWind(): { strength: number; x: number; y: number } | undefined {
     const g = this.gust;
-    if (!g || g.ttl < 99 || g.strength <= 0) return undefined;
-    const len = g.strength * 1.5;
-    return { x0: g.sx, y0: g.sy, x1: g.sx + g.dx * len, y1: g.sy + g.dy * len };
+    if (!g) return undefined;
+    return { strength: g.strength * Math.min(1, g.ttl / 1.2), x: g.x, y: g.y };
   }
 }

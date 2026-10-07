@@ -6,6 +6,7 @@ import { Powers } from '../game/powers';
 import { LEVEL_GOAL, saveProgress } from '../game/progress';
 import { Controls } from '../input/controls';
 import { PK } from '../sim/particles';
+import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { generateMap } from '../world/mapgen';
@@ -38,6 +39,11 @@ export class LevelScene implements Scene {
   private speed: number;
   private fps = 60;
   private ticksAvg = 1;
+  /** slow readbacks of veg and water for positional audio (refreshed ~1 Hz) */
+  private vegCache?: Float32Array;
+  private waterCache?: Float32Array;
+  private audioRefresh = 0;
+  private nextFlock = 12;
 
   private constructor(
     private host: Host,
@@ -59,8 +65,11 @@ export class LevelScene implements Scene {
   /** Builds the level and settles it (rivers, slopes) before returning. */
   static async create(host: Host, audio: Ambience, perf: PerfOverlay, onExit: () => void): Promise<LevelScene> {
     const s = new LevelScene(host, audio, perf, onExit);
-    // ecology excluded so nothing grows during settling
+    // ecology excluded so nothing grows during settling; ground debris (dust,
+    // litter, fallen leaves) accumulates fast so the level opens with it lying about
+    s.core.globals.debrisBoost = 10;
     await s.core.warmup(WARMUP_TICKS, (sys) => sys.name !== 'ecology');
+    s.core.globals.debrisBoost = 1;
     s.attach();
     return s;
   }
@@ -88,6 +97,7 @@ export class LevelScene implements Scene {
       camera,
       dims,
       readSurface,
+      birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
     });
 
     // a few animals already live in the one healthy corner when the level opens
@@ -95,7 +105,11 @@ export class LevelScene implements Scene {
     const hz = map.surface[hy * dims.w + hx];
     sim.particles.burst({ kind: PK.Rabbit, x: hx, y: hy, z: hz + 0.3, count: 4, speed: 1, spread: 4 });
     sim.particles.burst({ kind: PK.Deer, x: hx + 2, y: hy - 2, z: hz + 0.4, count: 2, speed: 1, spread: 3 });
-    sim.particles.burst({ kind: PK.Bird, x: hx, y: hy, z: hz + 6, count: 3, speed: 3, spread: 2 });
+    // birds already perch in its trees (they look for crowns as they arrive)
+    sim.particles.burst({ kind: PK.Bird, x: hx, y: hy, z: hz + 8, count: 5, speed: 3, spread: 3 });
+    // dust storms roll across the dead valley as the level opens
+    weather.spawnDust(dims.w * 0.5, dims.h * 0.45);
+    weather.spawnDust(dims.w * 0.4, dims.h * 0.6, 70);
 
     const zoomAt = (sx: number, sy: number, factor: number) => {
       const before = camera.screenDeltaToWorld(sx - camera.viewportW / 2, sy - camera.viewportH / 2);
@@ -241,12 +255,8 @@ export class LevelScene implements Scene {
 
     hud.update(this.nature.value, this.nature.max, powers.stormReady());
     hud.setReclaim(this.reclaimed, LEVEL_GOAL);
-    const arrow = powers.gustArrow();
-    if (arrow) {
-      const [x0, y0] = camera.project(arrow.x0, arrow.y0, this.heightAt(arrow.x0, arrow.y0));
-      const [x1, y1] = camera.project(arrow.x1, arrow.y1, this.heightAt(arrow.x0, arrow.y0));
-      hud.drawGust({ x0, y0, x1, y1 });
-    } else hud.drawGust();
+    weather.dustiness = core.pollution;
+    this.birdArrivals(dt, stats);
 
     // progress feeds the menu scene; the level ends at the goal
     this.saveTimer -= dt;
@@ -268,11 +278,19 @@ export class LevelScene implements Scene {
       audio.groan(near * holding);
     }
     const light = core.light;
+    this.audioRefresh -= dt;
+    if (this.audioRefresh <= 0) {
+      this.audioRefresh = 1;
+      void core.readBuffer('veg').then((f) => (this.vegCache = f));
+      void core.readBuffer('water').then((f) => (this.waterCache = f));
+    }
+    const drag = powers.dragWind();
+    audio.dragWind(drag ? Math.min(1, drag.strength / 12) : 0, drag ? camera.project(drag.x, drag.y, 0)[0] / camera.viewportW : 0.5);
+    const heard = this.heard();
     audio.update({
       pollution: core.pollution,
       life: this.life,
-      rain: weather.rainAt(camera.target[0], camera.target[1]),
-      flow: stats ? Math.min(1, stats.flow / 40) : 0,
+      ...heard,
       night: light.night,
       fire: stats ? Math.min(1, stats.fireCells / 120) : 0,
       wind: Math.min(1, Math.hypot(weather.windX, weather.windY) / 6 + weather.storms.reduce((a, s) => a + s.intensity * 0.3, 0)),
@@ -293,6 +311,68 @@ export class LevelScene implements Scene {
       this.host.profiler,
       sim,
     );
+  }
+
+  /**
+   * What the ambient bed hears from the view centre (DECISIONS round 4): rain
+   * from storms in or near view, moving water nearby (the river, the dam's
+   * spillway), and living land for birdsong/insects — each fading with
+   * distance, within a hearing radius that grows as the camera zooms out.
+   */
+  private heard(): { rain: number; rainPan: number; flow: number; lifeNear: number; zoom: number } {
+    const { camera, weather, dims, map } = this.core;
+    const [cx, cy] = camera.target;
+    const R = Math.max(18, Math.min(160, camera.viewportW / camera.zoom / 2));
+    const zoom = Math.max(0, Math.min(1, Math.log(camera.zoom / 1.2) / Math.log(10)));
+    let rain = weather.rainAt(cx, cy);
+    let rainPan = 0;
+    for (const st of weather.storms) {
+      const d = Math.max(0, Math.hypot(st.x - cx, st.y - cy) - st.radius * 0.8);
+      const r = st.intensity * (1 + st.downpour) * Math.max(0, 1 - d / R);
+      if (r > rain * 0.5) rainPan = Math.max(-1, Math.min(1, (camera.project(st.x, st.y, 0)[0] / camera.viewportW) * 2 - 1));
+      rain = Math.max(rain, r * 0.8);
+    }
+    let water = 0;
+    let life = 0;
+    let n = 0;
+    const veg = this.vegCache;
+    const wat = this.waterCache;
+    for (let j = -4; j <= 4; j++)
+      for (let i = -4; i <= 4; i++) {
+        const x = Math.floor(cx + (i / 4) * R);
+        const y = Math.floor(cy + (j / 4) * R);
+        if (x < 0 || y < 0 || x >= dims.w || y >= dims.h) continue;
+        const fall = Math.max(0, 1 - Math.hypot(i, j) / 5.2);
+        const k = y * dims.w + x;
+        if (veg) life += fall * Math.min(1, Math.max(0, (veg[k] - 1.2) / 2.3));
+        if (wat) water += fall * Math.min(1, wat[k] / 0.6);
+        n += fall;
+      }
+    const [dx, dy] = map.poi.dam;
+    const dam = Math.max(0, 1 - Math.hypot(dx - cx, dy - cy) / (R * 1.2));
+    return {
+      rain,
+      rainPan,
+      flow: Math.min(1, (n ? (water / n) * 2.2 : 0) + dam * 0.6),
+      lifeNear: n ? Math.min(1, (life / n) * 1.6) : 0,
+      zoom,
+    };
+  }
+
+  /** Flocks fly in from the map edge by day once there are woods to settle in. */
+  private birdArrivals(dt: number, stats: WorldStats | undefined): void {
+    const { dims, sim } = this.core;
+    if (!stats || this.core.light.night > 0.4) return;
+    this.nextFlock -= dt * this.speed;
+    if (this.nextFlock > 0) return;
+    const woods = stats.matureCells / stats.cells;
+    this.nextFlock = woods > 0.002 ? Math.max(12, 40 - woods * 400) * (0.6 + Math.random() * 0.8) : 20;
+    if (woods <= 0.002) return;
+    const side = Math.floor(Math.random() * 4);
+    const t = 10 + Math.random() * (dims.w - 20);
+    const x = side === 0 ? 1.5 : side === 1 ? dims.w - 1.5 : t;
+    const y = side === 2 ? 1.5 : side === 3 ? dims.h - 1.5 : side < 2 ? t : 0;
+    sim.particles.burst({ kind: PK.Bird, x, y, z: this.heightAt(x, y) + 11, count: 2 + Math.floor(Math.random() * 4), speed: 5, spread: 1.5 });
   }
 
   private showComplete(): void {

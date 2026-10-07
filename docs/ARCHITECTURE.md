@@ -26,12 +26,27 @@ GPU per frame: renderprep (terrain + liquids) + vegprep (plants) → draw
    (opaque boxes incl. sub-voxel canopies, liquids, particles, rain)
 ```
 
-Globals (`common.wgsl` / `src/sim/globals.ts`, 528 bytes) carry storms (+ shape:
-`stormsC` lobe phases and elongation), one-tick events, gusts (player + cursor
-breeze; gusts[0] is the cursor/tap breeze that animals flee), day/night light
-and the life lens. Analytic fields derived from them: `windAt()`, `stormDist()`
-(irregular storm outline; CPU twin `Weather.stormDist`), `rainAt()`,
-`cloudShade()`.
+Globals (`common.wgsl` / `src/sim/globals.ts`, 576 bytes) carry storms (+ shape:
+`stormsC` lobe phases and elongation), one-tick events, gusts (gusts[0] is the
+cursor/tap breeze that animals flee; gusts[1] the player's drag-wind), day/night
+light, the life lens, `env` (x, y: prevailing wind integrated over time; z:
+debris seeding boost during warmup) and up to two dust storms. Analytic fields
+derived from them: `windAt()`, `gustField()` (smooth gust patches advected by
+`env.xy` — every wind noise term lives in that moving frame, so nothing
+flickers), `stormDist()` (irregular storm outline; CPU twin
+`Weather.stormDist`), `rainAt()`, `cloudShade()`.
+
+Particles: debris (dust, litter, leaves) is born *resting* on the ground and
+only lifted by wind over a per-kind threshold; strong wind over dusty ground
+(and dust storms) raises haze puffs. Birds are a small state machine in
+`Particle.m.w` (flee / seek / perch; a seeker keeps its target column in
+`v.w`); they find crowns with `vegPlan()` from the shared `vegplan.wgsl`
+(also used by vegprep), and count each flush in `particleCounters[1]` so the
+CPU can tell whether a tapped tree really had birds.
+
+Audio: two buses — ambient (attenuated by zoom; positional levels computed by
+the level from storms, slow veg/water readbacks and the dam's position) and
+click responses (full volume, panned to the click).
 
 ## Biomes
 
@@ -105,6 +120,6 @@ are shaded by a sub-voxel ray march inside the box (discard = gap).
 ## Events
 
 `Globals.events` (≤4, one tick): x, y, radius, strength + kind
-(`EV_LIGHTNING`, `EV_CHIP`; `eventKind` packs kind + 16·z for height-targeted
+(`EV_LIGHTNING`, `EV_CHIP`, `EV_SCARE` — flushes perched birds; `eventKind` packs kind + 16·z for height-targeted
 events). The CPU queues them; `Simulation.step` clears them after
 the tick that consumes them.

@@ -9,6 +9,7 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
+import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
 import vegprepWgsl from '../shaders/vegprep.wgsl?raw';
 import renderWgsl from '../shaders/render.wgsl?raw';
 import rainWgsl from '../shaders/rain.wgsl?raw';
@@ -113,7 +114,7 @@ export class Renderer {
       9: this.indirect,
     });
 
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegprepWgsl], {
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, vegprepWgsl], {
       0: 'uniform',
       2: 'uniform',
       3: 'read',

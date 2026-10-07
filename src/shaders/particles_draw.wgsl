@@ -44,7 +44,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 0.16 + sr * 0.1;
     col = vec4<f32>(mix(vec3<f32>(0.78, 0.71, 0.58), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.7);
     // settled dust lies faintly on the ground
-    if ((P.m.z & 1u) != 0u) { col = vec4<f32>(col.rgb * 0.85, 0.45); }
+    if ((P.m.z & 1u) != 0u) { col = vec4<f32>(col.rgb * 0.85, 0.3); size *= 0.8; }
   } else if (kind == 2u) { // litter: faded plastics, paper
     size = 0.28;
     let k = u32(sr * 5.0);
@@ -62,7 +62,8 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     soft = 1.0;
     let life = P.p.w;
     let a = clamp(life / 2.0, 0.0, 1.0) * clamp((12.0 - life) / 2.0, 0.0, 1.0);
-    col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.8, 0.81, 0.82), sr2), 0.19 * a);
+    // thin: the deck sits high and you look through it at the land
+    col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.8, 0.81, 0.82), sr2), 0.075 * a);
   } else if (kind == 7u) { col = vec4<f32>(0.8, 0.86, 0.9, 0.7); size = 0.1; }
   else if (kind == 8u) { // smoke: grows and thins as it rises
     let age = clamp(1.0 - P.p.w / 11.0, 0.0, 1.0);
@@ -89,12 +90,21 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 0.34;
     col = vec4<f32>(0.95, 0.95, 0.92, 1.0);
   }
+  else if (kind == 15u) { // dust haze kicked up by strong wind: grows and thins
+    let age = clamp(1.0 - P.p.w / 10.0, 0.0, 1.0);
+    size = 1.6 + age * 3.0 + sr * 1.5;
+    soft = 1.0;
+    col = vec4<f32>(mix(vec3<f32>(0.74, 0.65, 0.5), vec3<f32>(0.6, 0.53, 0.42), sr2), 0.2 * clamp(P.p.w / 2.0, 0.0, 1.0) * clamp(age * 6.0, 0.0, 1.0));
+  }
   else if (kind == 14u) { // rabbit: small, sandy brown
     size = 0.17;
     col = vec4<f32>(mix(vec3<f32>(0.5, 0.38, 0.26), vec3<f32>(0.6, 0.5, 0.38), sr), 1.0);
   }
   if (soft == 0.0) { col.a *= fade; }
-  if (kind != 9u && kind != 11u && kind != 12u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w), col.a); }
+  if (kind != 9u && kind != 11u && kind != 12u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w) + vec3<f32>(0.5, 0.55, 0.65) * G.misc.z, col.a); }
+  // perched birds sit with folded wings
+  let perched = kind == 10u && P.m.w == 2u;
+  if (perched) { size = 0.24; }
   let c = CORNERS[vi];
   let center = CAM.viewProj * vec4<f32>(P.p.xyz, 1.0);
   // world-size square in screen space: viewport.z = px per world unit
@@ -108,7 +118,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  o.shapeInfo = vec2<f32>(select(0.0, 1.0, kind == 10u), sin(G.time * 12.0 + sr * 60.0));
+  o.shapeInfo = vec2<f32>(select(0.0, 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   return o;
 }
 

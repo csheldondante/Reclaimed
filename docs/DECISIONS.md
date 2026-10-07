@@ -3,6 +3,33 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-07 — feedback round 4 (session 2)
+
+- Audio: everything quieter when zoomed out; some sounds are positional and
+  louder near their source (water at the dam, rain under storms, birds near
+  birds).
+- Lightning flashes light over the whole scene.
+- Sun shadows should visibly move across the terrain; smoother day/night
+  transition.
+- Particles (leaves, pollution, trash, dust) rest on the ground and are
+  stirred up by wind — they don't spawn in mid-air.
+- Storm clouds: **higher and thinner**; rain starts at the cloud *base* so the
+  land under a storm is seen mostly through rain.
+- Dust clouds roll across the map early in the level and act as weather when
+  wind picks up.
+- **One drag gesture**: any drag makes wind (strength from drag speed/length)
+  that ripples water, grass and leaves; dragging under/near a storm also
+  pushes its heading. No storm arrow — players discover steering.
+- Birds perch in trees and fly in from off the map; only trees with perched
+  birds flush birds.
+- Nature goal: a level should take **~5 minutes** of reasonable play (lower
+  goal and faster growth; measure).
+- Wind ripple must be smooth and wave-like, not jittery.
+- Starting pollution: **oil slicks, toxic sludge (new non-flammable liquid,
+  washes away / slowly broken down by plants) and trash heaps** (wind
+  scatters them).
+- Menu: a clearer skull, a ribcage, and a reddish-grey dust mound.
+
 ## 2026-10-07 — feedback round 2
 
 **Accepted direction**

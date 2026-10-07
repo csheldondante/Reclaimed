@@ -53,6 +53,7 @@ export class WorldCore {
   readonly dims: { w: number; h: number; zMax: number };
   private acc = 0;
   private t0 = performance.now();
+  private strikeAge = 99;
   pollution = 1;
   light!: Daylight;
 
@@ -90,6 +91,9 @@ export class WorldCore {
       sky: [0.34, 0.33, 0.31, 0],
       sunCol: [2.4, 2.0, 1.55, 0.35],
       lens: [0, 0, 0, 0],
+      windOff: [0, 0],
+      debrisBoost: 1,
+      dusts: [],
     };
     this.light = this.dayNight.light(1);
   }
@@ -116,7 +120,13 @@ export class WorldCore {
     g.time = (now - this.t0) / 1000;
     g.storms = this.weather.uniforms();
     g.pollution = this.pollution;
-    g.flash = Math.max(0, g.flash - (simDt / speed) * 2.5);
+    // lightning: powers set flash = 1 at the strike; it flickers and fades
+    // (a bright stroke, a brief dip, a re-strike, then a decay over ~1 s)
+    if (g.flash >= 1) this.strikeAge = 0;
+    this.strikeAge += simDt / speed;
+    g.flash = Math.min(0.999, flashEnvelope(this.strikeAge));
+    g.windOff = [g.windOff[0] + g.windX * simDt, g.windOff[1] + g.windY * simDt];
+    g.dusts = this.weather.dustUniforms();
     this.dayNight.update(simDt);
     this.light = this.dayNight.light(this.pollution);
     g.sun = this.light.dir;
@@ -143,7 +153,7 @@ export class WorldCore {
     const enc = device.createCommandEncoder({ label: 'frame' });
     const q = this.host.quality;
     this.renderer.encode(enc, context.getCurrentTexture().createView(), this.camera, {
-      clear: this.light.clear,
+      clear: flashSky(this.light.clear, this.globals.flash),
       rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });
     const afterProfile = prof.endFrame(enc);
@@ -191,4 +201,16 @@ export class WorldCore {
       }
     return s / n;
   }
+}
+
+/** Lightning brightness over time since the strike (0 after ~1 s). */
+function flashEnvelope(t: number): number {
+  if (t > 1.2) return 0;
+  const flicker = t < 0.07 ? 1 : t < 0.13 ? 0.2 : t < 0.2 ? 0.9 : t < 0.26 ? 0.35 : 1;
+  return Math.exp(-t * 3.2) * flicker;
+}
+
+/** The sky (clear colour) flares cold white with the flash. */
+function flashSky(c: [number, number, number], f: number): [number, number, number] {
+  return [c[0] + (0.85 - c[0]) * f, c[1] + (0.88 - c[1]) * f, c[2] + (0.98 - c[2]) * f];
 }

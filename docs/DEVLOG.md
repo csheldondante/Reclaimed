@@ -555,3 +555,67 @@ the map 0.01 → 0.43 after ~4 game-minutes, 0.6–0.8 after ~10 (it dips when
 fires or floods hit). 40 % ended the level in a few minutes; goal raised to
 60 % (~10 minutes of play). Moss counts as living (v ≥ 0.5), which is why it
 moves fast — a stricter definition (grass+) is a design option.
+
+## 2026-10-07 — session 2, round 4 batch 1: wind, weather, light, debris, birds, audio
+
+User feedback round 4 (DECISIONS). This batch:
+
+- **Wind jitter.** Two causes, both "phase = time × varying speed": the grass
+  wave `sin(... - time·(1.5 + ws·0.6))` and the sway flutter
+  `sin(time·(2.5 + amp·5))`. With time in the hundreds of seconds, any change
+  of local wind speed jumped the phase. Also the gust-strength noise scrolled
+  diagonally regardless of wind direction. Now every wind noise term is
+  sampled in a frame moving with the integrated prevailing wind
+  (`Globals.env.xy`, integrated on the CPU), so gust patches roll downwind
+  smoothly; flutter has a fixed frequency; grass shows gust patches plus fine
+  bands that travel with the same integral. Water ripples are advected the
+  same way and roughen with local wind (drags send catspaws across).
+- **Drag = wind, everywhere.** Any LMB drag is a gust following the cursor
+  (strength = smoothed cursor speed × 0.12, cap 14; radius 11). While the
+  drag lasts it leans on storms within 1.2 radii (`Weather.gust` with
+  strength × dt; storm push capped at 7 cells/s). No arrow, no hint, no
+  Nature cost — steering is for players to discover. Measured: a scripted
+  90 cells/s circular drag gives strength 7.1 and lifted ~700 dust / 100
+  litter particles plus haze within 1.5 s.
+- **Ground debris.** Dust, litter and leaves are now born resting on the
+  ground (dry dusty soil; dumps; woodland floor) and only wind over a per-kind
+  threshold lifts them (dust 4.5, litter 4.0, leaves 3.5 cells/s; chance per
+  tick ∝ excess). Nothing spawns in the air. Lifted dust/litter takes soil
+  contamination with it. The level seeds debris during warmup (`env.z` = 10).
+  First try spawned 37 k resting dust (speckled the whole map like noise);
+  rate cut 5× → ~6.5 k, drawn smaller and fainter.
+- **Dust storms.** `Weather.dusts` (≤2): patches of strong gusty wind rolling
+  downwind at 1.4× the prevailing wind. Two cross the map as the level opens;
+  more arrive while the land is dusty (`dustiness` = pollution). They lift
+  ground debris and raise haze puffs (new particle kind 15, tan, soft); strong
+  wind anywhere over dusty ground raises haze too.
+- **Storm clouds.** Deck moved from z 44 to 80, half the puffs, 0.075 alpha;
+  rain now falls from the deck base (span 78). The cloud shade was the main
+  thing hiding the land: sun reduction 0.93 → 0.72, ambient 0.5 → 0.25 — still
+  an obvious shadow (it marks where lightning works) but readable.
+- **Lightning flash.** Whole-scene cold light (≈2.6× on every face, all
+  particles, and the clear colour) with a stroke–dip–restrike flicker over
+  ~1 s (`flashEnvelope` in world-core).
+- **Day/night.** The moon now has its own arc and only rises once the sun's
+  light is gone (before, the light jumped from the sun's direction to a fixed
+  moon direction with a visible colour step at dusk). Wider fades. Sun shadows
+  on tops blend the four nearest columns' shadow tests (same level or a bit
+  lower only — including higher neighbours drew dark contour bands along every
+  terrace), so shadow edges slide smoothly as the sun moves.
+- **Birds.** Flocks fly in from a random map edge by day once there is
+  woodland (interval ~12–40 s depending on mature cover), glance around for
+  woods, pick a crown (`vegPlan`, shared with vegprep via `vegplan.wgsl`) and
+  perch with folded wings for minutes, dropping the odd seed nearby. A tap on
+  a tree sends `EV_SCARE`; perched birds within 3.2 cells flush (lightning
+  nearby too). Trees without birds give only leaves. Test: forced 29×29
+  woodland, 8 arrivals → 12 perched after 25 s; a scare flushed all 12
+  (counter 0 → 12).
+- **Audio.** Ambient and click buses. The ambient bed is quieter (0.5 × master)
+  and falls to 30 % when zoomed out; rain is heard from storms near the view
+  (panned toward them), water from wet columns near the view centre and the
+  dam, birdsong/insects/leaves from living land near the view (1 Hz veg/water
+  readbacks). Click responses are full volume and panned to the click; drags
+  have their own whoosh. **Unverified by ear** — the user should check.
+
+Perf (Xe-LPG, 1600×900, storm + dust storm in view): GPU 5.7 ms (was ~6 ms
+with storm + fire).

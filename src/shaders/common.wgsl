@@ -33,11 +33,18 @@ struct Globals {
   lens: vec4<f32>,
   // per storm shape: three outline phases + elongation along travel
   stormsC: array<vec4<f32>, 4>,
+  // x, y: prevailing wind integrated over time (cells) — advects gust patches
+  // and ripples so they travel smoothly downwind; z: debris seeding boost
+  env: vec4<f32>,
+  // dust storms: x, y, radius, strength (0 = none)
+  dusts: array<vec4<f32>, 2>,
 };
 
 const EV_LIGHTNING: u32 = 1u;
 // a tap on masonry: small damage to the interval at height evZ(e)
 const EV_CHIP: u32 = 2u;
+// a tap on a tree: perched birds within the radius take off
+const EV_SCARE: u32 = 3u;
 // eventKind packs kind (low 4 bits) and a z height (above): kind + 16·z
 fn evKind(e: u32) -> u32 { return u32(G.eventKind[e]) & 15u; }
 fn evZ(e: u32) -> u32 { return u32(G.eventKind[e]) >> 4u; }
@@ -153,10 +160,34 @@ fn cloudShade(p: vec2<f32>) -> f32 {
 }
 
 // ---- wind field (shared contract: particles, sway, dust pickup, fire) ----
-// Analytic: prevailing wind + storm swirl/outflow + player gusts + cursor
-// breeze + gentle turbulence. Stronger with height above the ground.
+// Analytic: prevailing wind + storm swirl/outflow + dust storms + player
+// gusts + cursor breeze + gentle turbulence.
+//
+// Every noise term is sampled in a frame that moves with the integrated
+// prevailing wind (G.env.xy), so gust patches roll smoothly downwind instead
+// of flickering. (Before, noise was scrolled by time along fixed axes and
+// phases were time × a varying speed, which read as jitter.)
+fn windDrift(p: vec2<f32>) -> vec2<f32> { return p - G.env.xy; }
+
+/** Smooth 0..1 gust patches travelling with the wind (also drives grass and water ripples). */
+fn gustField(p: vec2<f32>) -> f32 {
+  let q = windDrift(p) * 0.045;
+  return fbm2(q + vec2<f32>(G.time * 0.02, 0.0));
+}
+
 fn windAt(p: vec3<f32>) -> vec2<f32> {
-  var w = vec2<f32>(G.windX, G.windY);
+  let prevail = vec2<f32>(G.windX, G.windY);
+  let gf = gustField(p.xy);
+  var w = prevail * (0.55 + 0.9 * gf);
+  for (var i = 0u; i < 2u; i++) {
+    let d = G.dusts[i];
+    if (d.w <= 0.0) { continue; }
+    let r = length(p.xy - d.xy) / d.z;
+    if (r < 1.6) {
+      let dir = prevail / max(length(prevail), 1e-3);
+      w += dir * d.w * smoothstep(1.4, 0.3, r) * (0.5 + gf);
+    }
+  }
   for (var i = 0u; i < G.numStorms; i++) {
     let s = G.storms[i];
     let d = p.xy - s.xy;
@@ -173,9 +204,10 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
     let d = length(p.xy - g.xy) / g.z;
     w += G.gustDir[i].xy * g.w * exp(-d * d * 2.0);
   }
-  let tn = G.time * 0.35;
-  let turb = vec2<f32>(vnoise(p.xy * 0.05 + vec2<f32>(tn, 0.0)), vnoise(p.xy * 0.05 + vec2<f32>(0.0, tn) + 50.0)) - 0.5;
-  w = w * (0.75 + 0.5 * vnoise(p.xy * 0.03 - vec2<f32>(tn * 0.7))) + turb * 2.0;
-  return w;
+  // small eddies, carried with the wind and slowly evolving
+  let q = windDrift(p.xy) * 0.07;
+  let tn = G.time * 0.08;
+  let turb = vec2<f32>(vnoise(q + vec2<f32>(tn, 0.0)), vnoise(q + vec2<f32>(0.0, tn) + 50.0)) - 0.5;
+  return w + turb * 1.6;
 }
 

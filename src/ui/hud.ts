@@ -10,7 +10,6 @@ export class Hud {
   private stormBtn: HTMLButtonElement;
   private hint: HTMLElement;
   private hintTimer = 0;
-  private overlay: SVGSVGElement;
   private bolts: SVGSVGElement;
   private hudEl: HTMLElement;
   private reclaim: HTMLElement;
@@ -42,31 +41,11 @@ export class Hud {
     this.hint.className = 'hint';
     this.hint.style.opacity = '0';
     root.appendChild(this.hint);
-    this.overlay = document.createElementNS(NS, 'svg');
-    this.overlay.setAttribute('class', 'overlay');
-    root.appendChild(this.overlay);
     this.bolts = document.createElementNS(NS, 'svg');
     this.bolts.setAttribute('class', 'overlay');
     root.appendChild(this.bolts);
   }
 
-  /** Gust arrow while the player drags beneath a storm. */
-  drawGust(arrow?: { x0: number; y0: number; x1: number; y1: number }): void {
-    if (!arrow) {
-      if (this.overlay.childElementCount) this.overlay.innerHTML = '';
-      return;
-    }
-    const dx = arrow.x1 - arrow.x0;
-    const dy = arrow.y1 - arrow.y0;
-    const l = Math.hypot(dx, dy) || 1;
-    const ux = dx / l;
-    const uy = dy / l;
-    const hx = arrow.x1 - ux * 14;
-    const hy = arrow.y1 - uy * 14;
-    this.overlay.innerHTML =
-      `<line x1="${arrow.x0}" y1="${arrow.y0}" x2="${hx}" y2="${hy}" class="nudge"/>` +
-      `<polygon class="nudge-head" points="${arrow.x1},${arrow.y1} ${hx - uy * 8},${hy + ux * 8} ${hx + uy * 8},${hy - ux * 8}"/>`;
-  }
 
   /** A jagged lightning bolt from the sky to a screen point; fades by itself. */
   bolt(x: number, y: number): void {
@@ -116,7 +95,7 @@ export class Hud {
   }
 
   dispose(): void {
-    for (const el of [this.hudEl, this.hint, this.overlay, this.bolts, this.reclaim]) el.remove();
+    for (const el of [this.hudEl, this.hint, this.bolts, this.reclaim]) el.remove();
     clearTimeout(this.hintTimer);
   }
 

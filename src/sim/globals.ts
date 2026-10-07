@@ -1,13 +1,24 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 528;
+export const GLOBALS_BYTES = 576;
 export const MAX_GUSTS = 4;
 export const MAX_STORMS = 4;
 export const MAX_EVENTS = 4;
+export const MAX_DUSTS = 2;
 
 export const enum EventKind {
   Lightning = 1,
   Chip = 2,
+  /** startles perched birds within the radius */
+  Scare = 3,
+}
+
+/** A dust storm: a roaming patch of strong, gusty wind (no rain, no cloud). */
+export interface DustUniform {
+  x: number;
+  y: number;
+  radius: number;
+  strength: number;
 }
 
 export interface StormUniform {
@@ -69,6 +80,11 @@ export interface GlobalsState {
   sunCol: [number, number, number, number];
   /** life lens: x, y, radius, strength (0 = off) */
   lens: [number, number, number, number];
+  /** prevailing wind integrated over time (cells): gust patches and ripples are advected by it */
+  windOff: [number, number];
+  /** >1 while the level is being seeded: ground debris accumulates faster */
+  debrisBoost: number;
+  dusts: DustUniform[];
 }
 
 export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
@@ -133,4 +149,9 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   f.set(s.sky, 104);
   f.set(s.sunCol, 108);
   f.set(s.lens, 112);
+  f.set([s.windOff[0], s.windOff[1], s.debrisBoost, 0], 132);
+  for (let i = 0; i < MAX_DUSTS; i++) {
+    const d = s.dusts[i];
+    f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);
+  }
 }

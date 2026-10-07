@@ -42,19 +42,33 @@ const K_FIREFLY: u32 = 11u;
 const K_FLAME: u32 = 12u;
 const K_DEER: u32 = 13u;
 const K_RABBIT: u32 = 14u;
+// dust kicked up by strong wind: a low tan haze (dust storms, drags)
+const K_HAZE: u32 = 15u;
+
+// bird states (Particle.m.w); a seeking bird keeps its target column + 1 in v.w
+const B_FLEE: u32 = 0u;
+const B_SEEK: u32 = 1u;
+const B_PERCH: u32 = 2u;
 
 const DT: f32 = 1.0 / 60.0;
-// storm cloud deck height (cells): low enough that clouds stay on screen near
-// their shadows in the fixed isometric view
-const CLOUD_BASE: f32 = 44.0;
+// storm cloud deck height (cells): well above the land so storms don't hide
+// it (DECISIONS round 4); rain falls from the deck's base
+const CLOUD_BASE: f32 = 80.0;
 const FIX: f32 = 100000.0;
 const MAT_SOIL: u32 = 2u;
 const MAT_SAND: u32 = 3u;
 const MAT_TRASH_P: u32 = 12u;
 
-fn spawn(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, seed: u32) {
+fn spawnFull(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, seed: u32, flags: u32, state: u32) {
   let i = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
-  parts[i] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, payload), vec4<u32>(kind, seed, 0u, 0u));
+  parts[i] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, payload), vec4<u32>(kind, seed, flags, state));
+}
+fn spawn(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, seed: u32) {
+  spawnFull(pos, vel, life, kind, payload, seed, 0u, 0u);
+}
+/** Debris lying on the ground (resting) until the wind lifts it. */
+fn spawnResting(pos: vec3<f32>, life: f32, kind: u32, seed: u32) {
+  spawnFull(pos, vec3<f32>(0.0), life, kind, 0.0, seed, 1u, 0u);
 }
 
 /** Full 32-bit random in [0,1) for rare events (16-bit draws bottom out at 1.5e-5). */
@@ -65,7 +79,16 @@ fn depositAt(pos: vec3<f32>, payload: f32) {
   if (payload > 0.0 && inMap(c)) { atomicAdd(&contamDelta[colIdxI(c)], i32(payload * FIX)); }
 }
 
+/** How readily bare ground sheds dust: polluted soil most, then plain soil/sand. */
+fn dustinessOf(cs: f32, m: u32) -> f32 {
+  var d = clamp(cs, 0.0, 1.5) * 0.7;
+  if (m == MAT_SOIL || m == MAT_SAND) { d += 0.12; }
+  return d;
+}
+
 // ---- emission from the world (one thread per column, rare per tick) ----
+// Debris (dust, litter, leaves) is born lying on the ground and only the wind
+// lifts it (update(); DECISIONS round 4) — nothing blows in from mid-air.
 @compute @workgroup_size(8, 8)
 fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
@@ -84,37 +107,34 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   let wet = water[i] > 0.02;
   let dry = 1.0 - smoothstep(0.15, 0.45, moisture[i]);
   let cover = smoothstep(0.3, 1.5, v);
+  let boost = max(G.env.z, 1.0);
+  let onGround = base + vec3<f32>(r1 - 0.5, fract(r1 * 7.31) - 0.5, 0.0) * 0.9;
 
-  // wind-lifted dust; polluted dust carries contamination with it
   if (!wet) {
-    let cs = contam[i].x;
-    var dustiness = clamp(cs, 0.0, 1.5) * 0.7;
-    if (m == MAT_SOIL || m == MAT_SAND) { dustiness += 0.12; }
-    let rate = max(ws - 2.5, 0.0) * 0.0003 * dustiness * dry * (1.0 - cover);
-    if (r1 < rate) {
-      var payload = 0.0;
-      if (cs > 0.03) {
-        payload = min(cs * 0.05, 0.02);
-        atomicSub(&contamDelta[i], i32(payload * FIX));
-      }
-      let jit = vec3<f32>(r2 - 0.5, fract(r2 * 7.31) - 0.5, 0.1);
-      spawn(base + jit, vec3<f32>(wind * 0.6, 0.8 + r2 * 1.5), 6.0 + r2 * 6.0, K_DUST, payload, h);
+    let dusty = dustinessOf(contam[i].x, m) * dry * (1.0 - cover);
+    // dust settles out of the dry, dead ground
+    if (rare(id.x, id.y, 0xd057u) < 0.00002 * dusty * boost) {
+      spawnResting(onGround, 60.0 + r2 * 60.0, K_DUST, h);
     }
-    // loose waste blows about as litter
-    // only storm/gust-strength wind lifts litter, or the landfill would empty itself
-    if (m == MAT_TRASH_P && r2 < max(ws - 5.5, 0.0) * 0.0015 * dry) {
-      let payload = min(cs * 0.06, 0.03);
-      atomicSub(&contamDelta[i], i32(payload * FIX));
-      spawn(base + vec3<f32>(r1 - 0.5, 0.0, 0.3), vec3<f32>(wind * 0.4, 1.5 + r1 * 2.0), 40.0, K_LITTER, payload, h);
+    // strong wind over dusty ground raises a haze (hard drags, storm winds);
+    // a dust storm raises it over any dry bare ground in its path
+    var dstorm = 0.0;
+    for (var k = 0u; k < 2u; k++) {
+      let d = G.dusts[k];
+      if (d.w > 0.0) { dstorm = max(dstorm, d.w / 8.0 * smoothstep(1.1, 0.3, length(base.xy - d.xy) / d.z)); }
+    }
+    let hazeRate = min(max(ws - 6.0, 0.0) * 0.004 * dusty, 0.02) + dstorm * 0.0012 * dry * (1.0 - cover);
+    if (rare(id.x, id.y, 0x4a2eu) < hazeRate) {
+      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h);
+    }
+    // loose waste lies about on the dumps as litter
+    if (m == MAT_TRASH_P && rare(id.x, id.y, 0x7a54u) < 0.00015 * dry * boost) {
+      spawnResting(onGround, 90.0 + r2 * 60.0, K_LITTER, h);
     }
   }
-  // leaves shaken from trees
-  if (v >= 3.6 && rare(id.x, id.y, 0x1eafu) < 0.00003 + max(ws - 2.0, 0.0) * 0.00008) {
-    spawn(base + vec3<f32>(r2 - 0.5, fract(r2 * 3.7) - 0.5, 3.0 + r2 * 3.0), vec3<f32>(wind * 0.5, 0.0), 12.0, K_LEAF, 0.0, h);
-  }
-  // birds lift out of trees by day; deer wander out of mature woodland
-  if (G.sky.w < 0.4 && v >= 2.6 && rare(id.x, id.y, 0xb1du) < 0.000005) {
-    spawn(base + vec3<f32>(0.0, 0.0, 5.0), vec3<f32>(r1 - 0.5, fract(r1 * 7.0) - 0.5, 1.5) * 4.0, 16.0 + r1 * 10.0, K_BIRD, 0.0, h);
+  // fallen leaves gather on the woodland floor
+  if (v >= 3.6 && !wet && rare(id.x, id.y, 0x1eafu) < 0.00004 * boost) {
+    spawnResting(onGround, 50.0 + r2 * 40.0, K_LEAF, h);
   }
   if (G.sky.w < 0.5 && v >= 3.0 && !wet && rare(id.x, id.y, 0xdee5u) < 0.00000006) {
     spawn(base + vec3<f32>(0.0, 0.0, 0.4), vec3<f32>(r2 - 0.5, fract(r2 * 5.0) - 0.5, 0.0), 80.0 + r2 * 60.0, K_DEER, 0.0, h);
@@ -132,11 +152,50 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var k = 0u; k < G.numStorms; k++) {
     let st = G.storms[k];
     let d = stormDist(vec2<f32>(p), k);
-    if (d < 0.95 && rare(id.x, id.y, 0xc10du + k) < 0.0002 * st.w) {
-      let z = CLOUD_BASE + r1 * 8.0;
+    if (d < 0.95 && rare(id.x, id.y, 0xc10du + k) < 0.00009 * st.w) {
+      let z = CLOUD_BASE + r1 * 10.0;
       spawn(vec3<f32>(vec2<f32>(p) + 0.5, z), vec3<f32>(G.stormsB[k].xy, 0.0), 7.0 + r1 * 5.0, K_CLOUD, 0.0, h);
     }
   }
+}
+
+// ---- birds: perch in tree crowns, flush when the tree is tapped ----
+
+/** Height of the crown top of the tree standing on column q, or -1 if none. */
+fn crownTop(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return -1.0; }
+  let j = colIdxI(q);
+  let v = veg[j];
+  if (v < 3.6) { return -1.0; }
+  let s = surface[j];
+  let pl = vegPlan(u32(q.x), u32(q.y), v, sfMat(s));
+  if (!pl.tree) { return -1.0; }
+  return f32(sfZ(s)) + pl.trunk + pl.crown;
+}
+
+/** Look for a tree crown near p (7×7 cells); returns column + 1, or 0. */
+fn findTree(p: vec2<i32>, salt: u32) -> u32 {
+  let o = vec2<i32>(i32(salt % 7u), i32((salt / 7u) % 7u));
+  for (var k = 0; k < 49; k++) {
+    let d = (vec2<i32>(k % 7, k / 7) + o) % vec2<i32>(7) - vec2<i32>(3);
+    let q = p + d;
+    if (crownTop(q) > 0.0) { return colIdxI(q) + 1u; }
+  }
+  return 0u;
+}
+
+/** Was a perched bird at pos startled this tick (a tap on its tree, lightning nearby)? */
+fn startled(pos: vec3<f32>) -> vec2<f32> {
+  for (var e = 0u; e < numEvents(); e++) {
+    let k = evKind(e);
+    let ev = G.events[e];
+    var r = 0.0;
+    if (k == EV_SCARE) { r = ev.z; }
+    if (k == EV_LIGHTNING) { r = ev.z * 4.0; }
+    let d = pos.xy - ev.xy;
+    if (r > 0.0 && length(d) < r) { return normalize(d + vec2<f32>(0.01, 0.0)); }
+  }
+  return vec2<f32>(0.0);
 }
 
 // ---- flames, smoke and embers from burning columns ----
@@ -175,6 +234,15 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
     if (kind == K_BIRD) { life = 14.0; }
     if (kind == K_LEAF) { life = 10.0; }
     if (kind == K_DEER || kind == K_RABBIT) { life = 90.0 + r.x * 60.0; }
+    if (kind == K_BIRD) {
+      // birds arrive looking for a tree: fly in toward the middle of the map
+      // (or wherever they were released), then search for a crown to perch on
+      let pos = a.xyz + r * b.w;
+      let toMid = vec2<f32>(f32(G.mapW), f32(G.mapH)) * 0.5 - pos.xy;
+      let hd = normalize(toMid + r.xy * 40.0 + vec2<f32>(0.01, 0.0));
+      spawnFull(pos, vec3<f32>(hd * b.y, 0.0), 120.0 + r.z * 60.0, kind, 0.0, h, 0u, B_SEEK);
+      continue;
+    }
     spawn(a.xyz + r * b.w, dir * b.y * (0.6 + 0.8 * fract(r.y * 9.1)), life, kind, b.z / f32(max(count, 1u)), h);
   }
 }
@@ -207,13 +275,18 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   var drag = 1.5;
   var grav = 0.5;
   var resting = (P.m.z & 1u) != 0u;
+  var state = P.m.w;
+  // ground debris lies still until the wind is strong enough to lift it; the
+  // stronger the wind over its threshold, the sooner it goes
+  let ws = length(w);
+  let liftRoll = f32(hash3(id.x, G.tick, seed ^ 0x11f7u)) / 4294967296.0;
   if (kind == K_DUST) {
     drag = 1.6; grav = 1.1 + rain * 6.0; // drifts down; rain knocks it out of the air
     if (resting) {
-      // settled dust waits for a strong breeze or gust to sweep it up again
-      if (length(w) > 4.5 && fract(sr * 17.0 + G.time * 0.37) < 0.01 && water[ci] < 0.02) {
+      if (ws > 4.5 && liftRoll < (ws - 4.5) * 0.004 && water[ci] < 0.02) {
         resting = false;
         vel = vec3<f32>(w * 0.5, 1.2 + sr * 1.5);
+        // polluted dust carries its pollution with it (off the map, with luck)
         let cs = contam[ci].x;
         if (cs > 0.03) {
           let take = min(cs * 0.04, 0.015);
@@ -229,19 +302,36 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   } else if (kind == K_LITTER) {
     drag = 1.2; grav = 4.0;
     if (resting) {
-      // lies still until the wind is strong enough to lift it again
-      if (length(w) > 3.2 && fract(sr * 13.0 + G.time * 0.7) < 0.02) {
+      if (ws > 4.0 && liftRoll < (ws - 4.0) * 0.003) {
         resting = false;
         vel = vec3<f32>(w * 0.5, 2.0 + sr * 2.5);
+        // waste picked up off a dump takes some of its pollution along
+        let cs = contam[ci].x;
+        if (cs > 0.03) {
+          let take = min(cs * 0.05, 0.02);
+          atomicSub(&contamDelta[ci], i32(take * FIX));
+          P.v.w += take;
+        }
       } else {
         vel = vec3<f32>(0.0);
       }
     }
   } else if (kind == K_LEAF) {
     drag = 2.2; grav = 0.9;
-    vel.x += sin(G.time * 5.0 + sr * 40.0) * 2.0 * DT;
-    vel.y += cos(G.time * 4.3 + sr * 31.0) * 2.0 * DT;
-    if (resting) { vel = vec3<f32>(0.0); }
+    if (resting) {
+      if (ws > 3.5 && liftRoll < (ws - 3.5) * 0.004) {
+        resting = false;
+        vel = vec3<f32>(w * 0.5, 1.5 + sr * 2.0);
+        life = max(life, 12.0);
+      } else {
+        vel = vec3<f32>(0.0);
+      }
+    } else {
+      vel.x += sin(G.time * 5.0 + sr * 40.0) * 2.0 * DT;
+      vel.y += cos(G.time * 4.3 + sr * 31.0) * 2.0 * DT;
+    }
+  } else if (kind == K_HAZE) {
+    drag = 1.4; grav = -0.15;
   } else if (kind == K_CLOUD) {
     drag = 0.0; grav = 0.0;
   } else if (kind == K_SMOKE || kind == K_ASH) {
@@ -258,13 +348,87 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     vel += vec3<f32>(sin(G.time * 1.7 + sr * 31.0), cos(G.time * 1.3 + sr * 17.0), sin(G.time * 2.1 + sr * 7.0) * 0.6) * 1.5 * DT;
     vel *= 0.98;
   } else if (kind == K_BIRD) {
-    // climb to cruising height and wheel about; descend near the end of life
-    drag = 0.25; grav = 0.0;
-    vel.x += cos(G.time * 1.3 + sr * 20.0) * 3.0 * DT;
-    vel.y += sin(G.time * 1.1 + sr * 17.0) * 3.0 * DT;
-    if (life > 4.0) { vel.z += ((ground + 9.0 + sr * 4.0) - pos.z) * 0.8 * DT; }
-    else { vel.z -= 4.0 * DT; }
-    vel.z *= 0.98;
+    // birds (DECISIONS round 4): arrive from off the map, look for a tree
+    // crown and perch; a tap on their tree (or lightning) flushes them, and
+    // fleeing birds either settle in another tree or leave the map
+    drag = 0.0; grav = 0.0;
+    if (state == B_PERCH) {
+      vel = vec3<f32>(0.0);
+      let away = startled(pos);
+      let tgt = u32(P.v.w) - 1u;
+      var gone = false;
+      if ((G.tick + seed) % 30u == 0u) {
+        gone = crownTop(vec2<i32>(i32(tgt % G.mapW), i32(tgt / G.mapW))) < 0.0; // tree burned or died
+      }
+      if (length(away) > 0.0 || gone || life < 2.0) {
+        state = B_FLEE;
+        resting = false;
+        var hd = away;
+        if (length(hd) == 0.0) { hd = vec2<f32>(cos(sr * 6.28), sin(sr * 6.28)); }
+        vel = vec3<f32>(hd * (5.0 + sr * 2.0), 4.0);
+        life = 30.0 + sr * 20.0;
+        P.v.w = 0.0;
+        atomicAdd(&counters[1], 1u);
+      } else if (rare(id.x, seed, 0x5eedu) < 1.0 / (60.0 * 40.0)) {
+        // a perched bird drops a seed near its tree now and then
+        let hs = hash3(id.x, seed, G.tick);
+        let q = clampCell(cell + vec2<i32>(i32(hs % 9u) - 4, i32((hs >> 8u) % 9u) - 4));
+        let j = colIdxI(q);
+        if (veg[j] == 0.0 && contam[j].x < 0.15 && moisture[j] > 0.08 && water[j] < 0.05) { veg[j] = 0.3; }
+      }
+    } else if (state == B_SEEK) {
+      // cruise above the land, wandering a little; look for a crown below
+      var tgt = u32(P.v.w);
+      if (tgt == 0u && (G.tick + seed) % 8u == 0u && veg[ci] >= 3.0) {
+        tgt = findTree(cell, seed + G.tick);
+        P.v.w = f32(tgt);
+      }
+      if (tgt > 0u) {
+        let tc = vec2<i32>(i32((tgt - 1u) % G.mapW), i32((tgt - 1u) / G.mapW));
+        let top = crownTop(tc);
+        if (top < 0.0) {
+          P.v.w = 0.0;
+        } else {
+          let perch = vec3<f32>(vec2<f32>(tc) + 0.5 + (vec2<f32>(sr, fract(sr * 7.0)) - 0.5) * 1.6, top + 0.05);
+          let to = perch - pos;
+          let dh = length(to.xy);
+          // glide in high, then drop onto the crown
+          var aim = perch;
+          if (dh > 3.0) { aim.z = max(perch.z + 4.0, ground + 6.0); }
+          let want = normalize(aim - pos + vec3<f32>(0.0, 0.0, 1e-3)) * clamp(length(aim - pos) * 1.5, 1.0, 6.0);
+          vel += (want - vel) * min(3.0 * DT, 1.0);
+          if (length(to) < 0.35) {
+            state = B_PERCH;
+            resting = true;
+            pos = perch;
+            vel = vec3<f32>(0.0);
+            life = 150.0 + sr * 250.0;
+          }
+        }
+      } else {
+        // glance around: a random spot within ~30 cells; if it is woodland, turn toward it
+        if ((G.tick + seed) % 4u == 0u) {
+          let hs = hash3(id.x, seed, G.tick ^ 0xb12du);
+          let look = clampCell(cell + vec2<i32>(i32(hs % 61u) - 30, i32((hs >> 8u) % 61u) - 30));
+          if (veg[colIdxI(look)] >= 3.6) {
+            let to = vec2<f32>(look) + 0.5 - pos.xy;
+            vel = vec3<f32>(normalize(to) * max(length(vel.xy), 4.0), vel.z);
+          }
+        }
+        vel.x += cos(G.time * 0.9 + sr * 20.0) * 1.5 * DT;
+        vel.y += sin(G.time * 0.7 + sr * 17.0) * 1.5 * DT;
+        vel.z += ((ground + 9.0 + sr * 4.0) - pos.z) * 0.8 * DT;
+        vel.z *= 0.98;
+        let hs = length(vel.xy);
+        if (hs > 0.01) { vel = vec3<f32>(vel.xy / hs * clamp(hs, 3.5, 6.0), vel.z); }
+      }
+      if (life < 2.0) { state = B_FLEE; life = 30.0; }
+    } else {
+      // fleeing: climb and fly straight; after a while some look for another tree
+      vel.z += ((ground + 12.0 + sr * 4.0) - pos.z) * 0.8 * DT;
+      vel.z *= 0.97;
+      if (life < 22.0 && sr < 0.5) { state = B_SEEK; life = 60.0 + sr * 60.0; }
+    }
   } else if (kind == K_DEER || kind == K_RABBIT) {
     // ground-bound walker: wander, pause to graze, keep to living ground,
     // bolt from a fast cursor
@@ -298,16 +462,10 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
 
   if (kind == K_FIREFLY && pos.z <= ground + 0.3) { pos.z = ground + 0.3; vel.z = abs(vel.z); }
   if (kind == K_BIRD && pos.z <= ground + 0.2) {
-    // landing: a carried seed takes on clean, moist, bare ground
-    if (life < 4.0) {
-      if (veg[ci] == 0.0 && contam[ci].x < 0.15 && moisture[ci] > 0.08 && water[ci] < 0.05) { veg[ci] = 0.3; }
-      parts[id.x].p.w = 0.0;
-      return;
-    }
     pos.z = ground + 0.2;
     vel.z = abs(vel.z);
   }
-  if (kind != K_CLOUD && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
+  if (kind != K_CLOUD && kind != K_HAZE && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
     if (kind == K_DUST) {
       // lands: drops its pollution, then lies on the ground a while
       depositAt(pos, P.v.w);
@@ -327,9 +485,10 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       pos.z = ground;
       resting = true;
     } else if (kind == K_LEAF) {
+      // settles and waits for the next gust
+      if (!resting) { life = clamp(life, 20.0, 40.0); }
       pos.z = ground;
       resting = true;
-      life = min(life, 4.0);
     } else {
       parts[id.x].p.w = 0.0;
       return;
@@ -337,9 +496,10 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   if (life <= 0.0) {
-    depositAt(pos, P.v.w);
+    // (birds keep their perch target in v.w, not a payload)
+    if (kind == K_DUST || kind == K_LITTER) { depositAt(pos, P.v.w); }
     parts[id.x].p.w = 0.0;
     return;
   }
-  parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), vec4<u32>(kind, seed, select(0u, 1u, resting), 0u));
+  parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), vec4<u32>(kind, seed, select(0u, 1u, resting), state));
 }

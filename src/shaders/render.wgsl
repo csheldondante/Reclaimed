@@ -65,8 +65,10 @@ fn swayOffset(b: Box, h: f32) -> vec3<f32> {
   let dir = w / max(ws, 1e-3);
   let seed = fract(sin(dot(c.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453);
   let amp = clamp(ws / 6.0, 0.0, 1.6);
+  // lean follows the (smooth, advected) wind; the flutter has a fixed
+  // frequency — scaling time by a varying wind speed made phases jump (jitter)
   let lean = dir * amp * 0.28;
-  let flutter = dir * sin(G.time * (2.5 + amp * 5.0) + seed * 30.0) * 0.07 * (0.3 + amp);
+  let flutter = dir * sin(G.time * 3.4 + seed * 30.0) * 0.06 * (0.3 + amp);
   var k = h;
   if (b.mat == MAT_LEAVES && b.sx > 1.5) { k = 1.0; } // canopy: rigid
   return vec3<f32>((lean + flutter) * k, 0.0);
@@ -161,26 +163,62 @@ fn swayOffsetRigid(b: Box, off: vec3<f32>) -> vec3<f32> {
 
 fn sunDir() -> vec3<f32> { return normalize(vec3<f32>(G.sunX, G.sunY, G.sunZ)); }
 
+/**
+ * Direct-light visibility 0..1. Tops blend the shadow test of the four
+ * nearest columns of similar height (bilinear), so shadow edges are soft and
+ * slide smoothly across the ground as the sun moves instead of stepping a
+ * whole cell at a time. Side faces use their own column.
+ */
+fn sunLit(wpos: vec3<f32>, nrm: vec3<f32>, sc: vec2<i32>) -> f32 {
+  let own = select(0.0, 1.0, wpos.z >= fields[colIdxI(sc)].x - 0.05);
+  if (nrm.z < 0.5) { return own; }
+  let p = wpos.xy - 0.5;
+  let i0 = vec2<i32>(floor(p));
+  let f = fract(p);
+  var acc = 0.0;
+  var wsum = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let o = vec2<i32>(k & 1, k >> 1);
+    let q = clampCell(i0 + o);
+    let j = colIdxI(q);
+    // only neighbours at or a little below this height: a higher neighbour is
+    // a step/wall beside us (its own top is no shadow test for this point),
+    // and one far below is a different level
+    let nz = f32(sfZ(surface[j]));
+    if (nz > wpos.z + 0.05 || nz < wpos.z - 1.5) { continue; }
+    let wx = select(1.0 - f.x, f.x, o.x == 1);
+    let wy = select(1.0 - f.y, f.y, o.y == 1);
+    let wgt = wx * wy;
+    acc += wgt * select(0.0, 1.0, wpos.z >= fields[j].x - 0.05);
+    wsum += wgt;
+  }
+  if (wsum < 1e-3) { return own; }
+  return smoothstep(0.1, 0.9, acc / wsum);
+}
+
 /** Direct + ambient light with heightfield shadow and storm cloud shade. */
 fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sun = sunDir();
   let ndl = max(dot(nrm, sun), 0.0);
   let sc = clampCell(vec2<i32>(floor(wpos.xy + nrm.xy * 0.5)));
-  let lit = select(0.0, 1.0, wpos.z >= fields[colIdxI(sc)].x - 0.05);
+  let lit = sunLit(wpos, nrm, sc);
   let cloud = cloudShade(wpos.xy);
   // light comes from the day/night cycle (src/weather/daynight.ts)
   let sunCol = G.sunCol.rgb;
   let sky = G.sky.rgb;
   let day = 1.0 - G.sky.w;
-  let ambient = sky * (0.5 + 0.5 * nrm.z) * (1.0 - cloud * 0.5);
+  // storm shade: clearly a shadow (it marks where lightning can strike) but
+  // light enough that the land beneath stays readable (DECISIONS round 4)
+  let ambient = sky * (0.5 + 0.5 * nrm.z) * (1.0 - cloud * 0.25);
   // warm bounce light from the opposite side keeps shaded faces readable
-  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (1.0 - cloud * 0.5) * (0.15 + 0.85 * day);
-  let flash = G.misc.z * vec3<f32>(1.1, 1.2, 1.5) * (0.6 + 0.4 * nrm.z);
+  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (1.0 - cloud * 0.25) * (0.15 + 0.85 * day);
+  // lightning lights the whole scene, cold blue-white, every face
+  let flash = G.misc.z * vec3<f32>(2.4, 2.6, 3.3) * (0.75 + 0.25 * nrm.z);
   // firelight: flickering orange from nearby flames (render fields .z)
   let glow = fields[colIdxI(sc)].z;
   let flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y));
   let firelight = vec3<f32>(1.8, 0.75, 0.25) * glow * flick;
-  return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.93);
+  return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.72);
 }
 
 fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
@@ -367,12 +405,17 @@ fn fsBox(in: VOut) -> FOut {
         var g = mix(moss, grass, smoothstep(1.0, 2.0, v));
         g = mix(g, forest, smoothstep(3.0, 4.5, v));
         g *= 0.82 + 0.3 * n2;
-        // wind running through the grass: bright bands travel downwind
+        // wind running through the grass: gust patches roll downwind (advected
+        // with the integrated wind, so they move smoothly), with fine bands
+        // across them; stronger local wind (gusts, drags) deepens the waves
         let w = windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5));
         let ws = length(w);
-        let wd = w / max(ws, 1e-3);
-        let wave = sin(dot(in.wpos.xy, wd) * 0.7 - G.time * (1.5 + ws * 0.6));
-        g *= 1.0 + wave * 0.12 * clamp(ws / 4.0, 0.0, 1.5) * smoothstep(0.8, 1.8, v);
+        let pd = vec2<f32>(G.windX, G.windY);
+        let wd = pd / max(length(pd), 1e-3);
+        let gp = gustField(in.wpos.xy);
+        let band = sin(dot(windDrift(in.wpos.xy), wd) * 0.8);
+        let wave = (gp - 0.5) * 1.6 + band * 0.35;
+        g *= 1.0 + wave * 0.13 * clamp(ws / 4.0, 0.3, 1.6) * smoothstep(0.8, 1.8, v);
         alb = toLinear(g);
       }
     }
@@ -459,10 +502,14 @@ fn fsWater(in: VOut) -> FOut {
   if (in.nrm.z > 0.5) {
     // ripples + sun glint
     let t = G.time;
-    let rp = in.wpos.xy * 1.7;
+    // ripples ride the wind: the pattern is advected downwind and roughens
+    // with the local wind, so gusts and drags send catspaws across the water
+    let rp = windDrift(in.wpos.xy) * 1.7;
+    let lw = length(windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5)));
+    let rough = 0.5 + clamp(lw / 5.0, 0.0, 2.0);
     let rn = vec3<f32>(
-      vnoise(rp + vec2<f32>(t * 0.7, 0.0)) - vnoise(rp + vec2<f32>(0.0, t * 0.6) + 31.0),
-      vnoise(rp + vec2<f32>(0.0, -t * 0.8) + 7.0) - vnoise(rp + vec2<f32>(-t * 0.5, 0.0) + 19.0),
+      (vnoise(rp + vec2<f32>(t * 0.7, 0.0)) - vnoise(rp + vec2<f32>(0.0, t * 0.6) + 31.0)) * rough,
+      (vnoise(rp + vec2<f32>(0.0, -t * 0.8) + 7.0) - vnoise(rp + vec2<f32>(-t * 0.5, 0.0) + 19.0)) * rough,
       1.4);
     let nn = normalize(rn);
     // Stylised for the fixed view: ripple slopes facing the sun brighten, and the

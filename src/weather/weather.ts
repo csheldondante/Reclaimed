@@ -3,9 +3,10 @@
 // They produce analytic fields on the GPU (rain, cloud shade, wind swirl) via
 // the Globals uniform. Storms arrive on their own from time to time; the
 // player can also summon one (it forms at the upwind edge, aimed to pass over
-// a chosen point) and push it with gusts — never steer it directly.
+// a chosen point) and lean on it with drag-wind — steering is discovered, not
+// shown (DECISIONS round 4).
 
-import { MAX_STORMS, type StormUniform } from '../sim/globals';
+import { MAX_DUSTS, MAX_STORMS, type DustUniform, type StormUniform } from '../sim/globals';
 
 export interface Storm {
   x: number;
@@ -25,6 +26,24 @@ export interface Storm {
   shape: [number, number, number, number];
 }
 
+/**
+ * A dust storm (DECISIONS round 4): a roaming patch of strong, gusty wind that
+ * rolls downwind across the map, lifting the dust, litter and leaves lying on
+ * the ground. No rain or cloud; what you see is the debris it raises.
+ */
+export interface DustStorm {
+  x: number;
+  y: number;
+  radius: number;
+  /** peak extra wind (cells/s) */
+  strength: number;
+  age: number;
+  intensity: number;
+}
+
+/** cap on the drift a player can add to a storm (cells/s) */
+const MAX_PUSH = 7;
+
 export interface WeatherParams {
   /** base prevailing wind (direction it blows toward), cells/s */
   baseWindX: number;
@@ -43,6 +62,10 @@ export class Weather {
   /** render clock (Globals.time), so CPU storm shapes match the shader */
   time = 0;
   private nextNatural = 70;
+  dusts: DustStorm[] = [];
+  /** 0..1, set by the level from how dusty/polluted the land is: scales natural dust storms */
+  dustiness = 0;
+  private nextDust = 140;
 
   constructor(
     private heights: Float32Array,
@@ -95,7 +118,35 @@ export class Weather {
     return s;
   }
 
-  /** Player gust: shoves storms near (x, y) along (dx, dy), proportional to strength. */
+  /**
+   * A dust storm forming at the upwind edge, aimed to cross (tx, ty).
+   * @param lead cells upwind of the edge (stagger several storms)
+   */
+  spawnDust(tx: number, ty: number, lead = 0): DustStorm | null {
+    if (this.dusts.length >= MAX_DUSTS) return null;
+    const sp = Math.hypot(this.windX, this.windY) || 1;
+    let x = tx;
+    let y = ty;
+    for (let i = 0; i < 400; i++) {
+      if (x < -10 || y < -10 || x > this.w + 10 || y > this.h + 10) break;
+      x -= this.windX / sp;
+      y -= this.windY / sp;
+    }
+    x -= (this.windX / sp) * lead;
+    y -= (this.windY / sp) * lead;
+    const d: DustStorm = { x, y, radius: 26 + Math.random() * 14, strength: 6.5 + Math.random() * 2.5, age: 0, intensity: 0 };
+    this.dusts.push(d);
+    return d;
+  }
+
+  dustUniforms(): DustUniform[] {
+    return this.dusts.map((d) => ({ x: d.x, y: d.y, radius: d.radius, strength: d.strength * d.intensity }));
+  }
+
+  /**
+   * Player wind: shoves storms near (x, y) along (dx, dy), proportional to
+   * strength (called every frame while dragging, with strength × dt).
+   */
   gust(x: number, y: number, dx: number, dy: number, strength: number): void {
     for (const s of this.storms) {
       const d = Math.hypot(s.x - x, s.y - y) / s.radius;
@@ -103,6 +154,11 @@ export class Weather {
       const k = strength * 0.12 * (1.2 - d);
       s.pushX += dx * k;
       s.pushY += dy * k;
+      const p = Math.hypot(s.pushX, s.pushY);
+      if (p > MAX_PUSH) {
+        s.pushX *= MAX_PUSH / p;
+        s.pushY *= MAX_PUSH / p;
+      }
     }
   }
 
@@ -164,6 +220,21 @@ export class Weather {
       s.flash = Math.max(0, s.flash - dt * 4);
     }
     this.storms = this.storms.filter((s) => s.age < 6 || s.intensity > 0.01);
+
+    // dust storms: natural ones only while the land is still dusty
+    if (this.t > this.nextDust) {
+      this.nextDust = this.t + 110 + Math.random() * 120;
+      if (Math.random() < this.dustiness) this.spawnDust(this.w * (0.25 + Math.random() * 0.5), this.h * (0.25 + Math.random() * 0.5));
+    }
+    for (const d of this.dusts) {
+      d.age += dt;
+      // they run a little ahead of the prevailing wind
+      d.x += this.windX * 1.4 * dt;
+      d.y += this.windY * 1.4 * dt;
+      const outside = Math.max(0, -d.x, -d.y, d.x - this.w, d.y - this.h);
+      d.intensity = Math.min(1, d.age / 4) * Math.max(0, 1 - outside / d.radius);
+    }
+    this.dusts = this.dusts.filter((d) => d.age < 4 || d.intensity > 0.01);
   }
 
   uniforms(): StormUniform[] {
