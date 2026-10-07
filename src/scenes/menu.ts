@@ -40,13 +40,14 @@ export class MenuScene implements Scene {
     this.core = new WorldCore(host, generateMenuMap(p), 8192);
     const { weather, dayNight, camera, globals } = this.core;
     // a dead place is windy (scraps blow across); a living one is calm
-    const wind = 6.2 - p * 4;
+    // (kept under the haze threshold so the figure stays visible)
+    const wind = 4.4 - p * 3;
     weather.params.baseWindX = wind * 0.85;
     weather.params.baseWindY = wind * 0.5;
     weather.params.naturalEvery = [1e9, 1e9];
     dayNight.dayLength = 1e9;
     dayNight.timeOfDay = 0.64;
-    camera.target = [24, 24, 12];
+    camera.target = [24, 24, 14];
     this.core.pollution = 1 - p;
     globals.collapseEnabled = false;
 

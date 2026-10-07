@@ -48,6 +48,7 @@ export const MAT = {
   Grass: 14,
   Flower: 15,
   Bone: 16,
+  Ash: 17,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -83,6 +84,8 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'flower', albedo: [0.9, 0.85, 0.4], state: MatState.Vegetation },
   // old bone: ivory, weathered; hard and stable (never collapses), takes moss
   { ...NONE, name: 'bone', albedo: [0.84, 0.8, 0.7], state: MatState.Solid, strength: 1, growthCap: 1.4, suitability: 0.35, porosity: 0.3 },
+  // reddish-grey dust and ash (the menu's mound): loose, fertile once clean
+  { ...NONE, name: 'ash', albedo: [0.55, 0.42, 0.38], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.1, growthCap: 3, suitability: 0.6, porosity: 0.45 },
 ];
 
 export const MAX_MATERIALS = 32;

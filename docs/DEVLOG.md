@@ -643,3 +643,20 @@ with storm + fire).
   min, plateau, 60 % at 8 min. Storms every 5 min: 47 % at 3.2 min, 50 % at
   3.6, then a plateau around 50 until the next storm. Goal lowered 60 % → 45 %
   — reachable in ~3–5 minutes of reasonable play (DECISIONS: ~5 min).
+
+## 2026-10-07 — round 4 batch 3: menu skull
+
+The old skull lay on its side and read as a lump (user: "doesn't really look
+like a skull and bones"). New figure (`menumap.ts`): an upright skull facing
+the camera — domed cranium, brow ridge, big tilted eye sockets, a nasal hole,
+cheekbones, a row of teeth and an open lower jaw — half sunk in a mound of
+reddish-grey dust (new `ash` material, 17). The cranium is filled with dark
+matter (asphalt) so the sockets and nose read as black holes; with a hollow
+interior they were only mid-grey. A ribcage lies on its back to the right
+(spine with vertebrae, six arched ribs, open where the breastbone was): first
+laid diagonally in the camera frame, its hoops broke into disconnected voxel
+stair-steps, so it now runs along the grid's x axis and each rib is one voxel
+plane. Two crossed long bones in front, an arm bone by the ribs. At full
+progress the tree grows out of the cranium (it used to rise up the face and
+hide it). Menu wind lowered (6.2 → 4.4 at p = 0) so the new haze threshold
+doesn't fog the figure.
