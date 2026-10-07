@@ -211,6 +211,7 @@ fn gridLines(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
  */
 fn canopyMarch(in: VOut) -> vec4<f32> {
   let res = 4.0;
+  let species = (in.info.y >> 8u) & 15u;
   let dims = in.bsize * res;
   let local = (in.wpos - in.boff - in.bmin) * res;
   let dir = -CAM.eye.xyz;
@@ -223,8 +224,17 @@ fn canopyMarch(in: VOut) -> vec4<f32> {
   for (var i = 0; i < 40; i++) {
     if (any(cell < vec3<f32>(0.0)) || any(cell >= dims)) { break; }
     let c = (cell + 0.5) / dims - 0.5;
-    let d = length(c * vec3<f32>(2.0, 2.0, 2.2));
-    let density = 0.85 - 0.75 * d * d;
+    var density: f32;
+    if (species == 1u) {
+      // conifer: a cone, wide at the bottom, a point at the top
+      let zf = c.z + 0.5;
+      let rr = length(c.xy) * 2.0;
+      density = select(0.0, 0.92 - 0.3 * rr, rr < (1.0 - zf) * 0.95 + 0.08);
+    } else {
+      let d = length(c * vec3<f32>(2.0, 2.0, 2.2));
+      density = 0.85 - 0.75 * d * d;
+      if (species == 2u) { density -= 0.12; } // birch: airy
+    }
     if (randv(vec3<i32>(cell) + seed) < density) {
       let hit = in.bmin + in.boff + (cell + 0.5) / res;
       return vec4<f32>(hit, axis);
@@ -303,9 +313,20 @@ fn fsBox(in: VOut) -> FOut {
     let fresh = vec3<f32>(0.30, 0.52, 0.18);
     if (mat == MAT_LEAVES) {
       // per-leaf-cluster hue, lighter on top, a few autumn-tinted clumps
-      var lc = mix(vec3<f32>(0.14, 0.31, 0.11), fresh, canopyN * 0.8 + 0.25 * lnrm.z);
+      let species = (in.info.y >> 8u) & 15u;
+      var dark = vec3<f32>(0.14, 0.31, 0.11);
+      var light = fresh;
+      if (species == 1u) { dark = vec3<f32>(0.07, 0.2, 0.12); light = vec3<f32>(0.16, 0.34, 0.2); }
+      if (species == 2u) { dark = vec3<f32>(0.3, 0.46, 0.16); light = vec3<f32>(0.55, 0.66, 0.28); }
+      if (species == 3u) { dark = vec3<f32>(0.1, 0.24, 0.09); light = vec3<f32>(0.24, 0.42, 0.15); }
+      var lc = mix(dark, light, canopyN * 0.8 + 0.25 * lnrm.z);
       if (canopyN > 0.93) { lc = mix(lc, vec3<f32>(0.55, 0.45, 0.16), 0.6); }
       alb = toLinear(lc);
+    }
+    if (mat == MAT_WOOD && ((in.info.y >> 8u) & 15u) == 2u) {
+      // birch bark: pale with dark horizontal marks
+      let mark = randv(vec3<i32>(floor(in.wpos * vec3<f32>(4.0, 4.0, 6.0)))) < 0.18;
+      alb = toLinear(select(vec3<f32>(0.82, 0.8, 0.74), vec3<f32>(0.2, 0.18, 0.16), mark));
     }
     if (mat == MAT_GRASS) {
       let gv = randv(vec3<i32>(floor(in.bmin * 4.0)));

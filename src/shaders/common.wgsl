@@ -178,3 +178,4 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
   w = w * (0.75 + 0.5 * vnoise(p.xy * 0.03 - vec2<f32>(tn * 0.7))) + turb * 2.0;
   return w;
 }
+

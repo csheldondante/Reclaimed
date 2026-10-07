@@ -507,3 +507,18 @@ only shows when they break.
 - Radius 48 → 60–85. Cloud deck 34 → 44–52, rain falls from 48.
 - Clouds slightly thinner (alpha 0.24 → 0.19) — at the new size two storms
   can cover most of the view. Taste call; flagged for review.
+
+## 2026-10-07 — round 3, batch 4: biomes and tree variety
+
+- **Biomes**: `slope.wgsl` (flatness from ±2-cell height differences). Flat
+  ground holds moisture (dries at 35 %), slopes drain. Succession past stage
+  3.3 (trees) requires woodland conditions: flat × wet × a large-scale natural
+  patch noise; elsewhere it stops at **meadow** (grass, shrubs, ~30 % flowers).
+  First pass gated only on flatness + wetness and produced forest everywhere
+  — on this map almost everything is "gently sloped", so the patch noise
+  carries most of the variety. **Fireflies** now only appear over meadow.
+- **Tree species** (bits 16..19 of vegetation instances): broadleaf (varied
+  height and crown), **conifer** (short trunk, tall cone-shaped sub-voxel
+  crown, dark blue-green), **birch** (slender pale barked trunk, airy light
+  crown), **old giant** (on the oldest woodland: 4×4-quarter trunk, 5×5 crown,
+  tall). Heights vary per tree.

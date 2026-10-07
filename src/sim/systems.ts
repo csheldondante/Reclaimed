@@ -10,6 +10,7 @@ import surfaceWgsl from '../shaders/surface.wgsl?raw';
 import materialWgsl from '../shaders/material.wgsl?raw';
 import structureWgsl from '../shaders/structure.wgsl?raw';
 import flowWgsl from '../shaders/flow.wgsl?raw';
+import slopeWgsl from '../shaders/slope.wgsl?raw';
 import oilFluxWgsl from '../shaders/oil_flux.wgsl?raw';
 import oilDepthWgsl from '../shaders/oil_depth.wgsl?raw';
 import waterFluxWgsl from '../shaders/water_flux.wgsl?raw';
@@ -190,9 +191,9 @@ export class MoistureSystem implements SimSystem {
       device,
       world,
       'moisture',
-      moistureWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read' },
-      { 3: world.water, 4: world.moisture, 5: world.moistureNext, 6: world.veg },
+      moistureWgsl + slopeWgsl,
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read' },
+      { 3: world.water, 4: world.moisture, 5: world.moistureNext, 6: world.veg, 7: world.surface },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -210,7 +211,7 @@ export class EcologySystem implements SimSystem {
       device,
       world,
       'ecology',
-      ecologyWgsl,
+      ecologyWgsl + slopeWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 9: 'read', 10: 'read' },
       { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 9: world.oil, 10: world.fire },
     );

@@ -42,7 +42,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     v = max(0.0, v - 0.04);
   } else if (v > 0.0) {
     // pioneers (moss, grass) establish quickly; woody stages take much longer
-    let rate = 0.012 * suit * tox * mf * mix(1.2, 0.18, smoothstep(1.5, 3.5, v));
+    var rate = 0.012 * suit * tox * mf * mix(1.2, 0.18, smoothstep(1.5, 3.5, v));
+    // biomes: woodland only matures on flat, well-watered ground; elsewhere
+    // succession stops at meadow (grass, flowers, shrubs) — no dieback
+    // + large natural patches of open meadow (wildflower fields) between woods
+    let patchy = smoothstep(0.42, 0.58, fbm2(vec2<f32>(p) * 0.022 + 7.0));
+    let woodland = flatness(p) * smoothstep(0.3, 0.55, wet) * patchy;
+    if (v > 3.3 && woodland < 0.5) { rate = 0.0; }
     v += rate;
     if (v > cap) { v = max(cap, v - 0.02); }
     if (c > TOX_LIMIT * 2.5) { v -= 0.02; }
