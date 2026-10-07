@@ -415,3 +415,20 @@ sharper and more pronounced; wants to see rain in motion.
   4.5 % of mature columns). Instance budget per column raised to slots + 6.
 - Measured (iGPU, 1280×720, regrown forest): 85k instances, draw 3.5 ms.
 - Falling-leaf emission cut ×10 (a mature forest was shedding ~600/s).
+
+## 2026-10-07 — phase 5b: vines, life lens (growth blockers)
+
+- **Vines** climb wall faces from living ground in front of them; reach grows
+  with that ground's succession stage (up to ~16 cells), drawn as hashed
+  vertical strands with leafy gaps. Stateless — derived from `veg` + surface
+  at draw time, so no new storage.
+- **Life lens** (hold Space): within 24 cells of the cursor, top surfaces are
+  tinted by what limits life there, with a distinct pattern each:
+  green = growing, magenta = toxic soil, grey hatch = sealed (concrete,
+  asphalt, steel — low growth cap), amber dots = too dry, blue = ready for
+  life. Oil needs no lens (it's visibly black). This is the "indicate what
+  prevents plant growth so it can be cleared" request; shapes, not only
+  colours, so it reads for colour-blind players. Globals gained `lens`.
+- Seen in testing: after a long storm over the ruins, rainwater pools inside
+  the warehouse shell and vines + trees take over the site — the §2 "forest
+  over recognisable ruins" look emerging from the systems.

@@ -78,6 +78,7 @@ async function main() {
     gusts: [],
     sky: [0.34, 0.33, 0.31, 0],
     sunCol: [2.4, 2.0, 1.55, 0.35],
+    lens: [0, 0, 0, 0],
   };
 
   // Settle the generated world with the real systems (granular slopes, rivers
@@ -184,8 +185,18 @@ async function main() {
     keys.add(e.key.toLowerCase());
     if (e.key === '`') perf.toggle();
     if (e.key.toLowerCase() === 'r') powers.summonStorm();
+    if (e.key === ' ') {
+      e.preventDefault();
+      if (!lensOn) hud.say('Life lens — green: growing · magenta: toxic · grey: sealed · amber: too dry · blue: ready for life', 4);
+      lensOn = true;
+    }
   });
-  window.addEventListener('keyup', (e) => keys.delete(e.key.toLowerCase()));
+  window.addEventListener('keyup', (e) => {
+    keys.delete(e.key.toLowerCase());
+    if (e.key === ' ') lensOn = false;
+  });
+  let lensOn = false;
+  let lensK = 0;
 
   // ---- intro ----
   const intro = document.createElement('div');
@@ -263,6 +274,9 @@ async function main() {
     globals.storms = weather.uniforms();
     globals.pollution = pollution;
     globals.flash = Math.max(0, globals.flash - dt * 2.5);
+    lensK += ((lensOn ? 1 : 0) - lensK) * Math.min(1, dt * 8);
+    const lc = hoverWorld ?? [camera.target[0], camera.target[1]];
+    globals.lens = [lc[0], lc[1], 24, lensK < 0.01 ? 0 : lensK];
     dayNight.update(simDt);
     const light = dayNight.light(pollution);
     globals.sun = light.dir;

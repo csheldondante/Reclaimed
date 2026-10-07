@@ -354,9 +354,48 @@ fn fsBox(in: VOut) -> FOut {
         alb = toLinear(g);
       }
     }
+
+    // vines: climb walls from living ground in front of the face; the longer
+    // that ground has been green (higher succession stage) the higher they reach
+    if (!isTop && in.nrm.z < 0.5 && MATS[mat].sim.x == 1.0 && mat != 1u) {
+      let front = clampCell(cell + vec2<i32>(in.nrm.xy));
+      let fv = veg[colIdxI(front)];
+      let gz = f32(sfZ(surface[colIdxI(front)]));
+      let reach = clamp((fv - 1.4) * 3.2, 0.0, 16.0);
+      let rel = in.wpos.z - gz;
+      if (reach > 0.0 && rel >= 0.0) {
+        let along = select(in.wpos.x, in.wpos.y, abs(in.nrm.x) > 0.5);
+        let strand = i32(floor(along * 4.0));
+        let sh = randv(vec3<i32>(strand, cell.x * 7 + cell.y, 515));
+        let len = reach * (0.35 + 0.65 * sh);
+        let leafy = randv(vec3<i32>(strand, i32(floor(in.wpos.z * 4.0)), 919));
+        if (rel < len && sh > 0.25 && leafy < 0.8) {
+          let vg = mix(vec3<f32>(0.16, 0.32, 0.11), vec3<f32>(0.33, 0.5, 0.18), leafy);
+          alb = toLinear(vg * (0.85 + 0.25 * smoothstep(len - 1.0, len, rel)));
+        }
+      }
+    }
   }
 
   var col = alb * lighting(lpos, lnrm);
+  // life lens (hold Space): what keeps life out, around the cursor
+  if (G.lens.w > 0.0 && in.nrm.z > 0.5) {
+    let d = length(in.wpos.xy - G.lens.xy) / G.lens.z;
+    if (d < 1.0) {
+      let k = G.lens.w * smoothstep(1.0, 0.8, d);
+      let c = contam[ci].x;
+      let wet = fields[ci].y;
+      var lensCol = vec3<f32>(0.0);
+      var pattern = 1.0;
+      let q = vec2<i32>(floor(in.wpos.xy * 4.0));
+      if (v > 0.4) { lensCol = vec3<f32>(0.2, 0.9, 0.3); }
+      else if (c > 0.2) { lensCol = vec3<f32>(0.85, 0.15, 0.6); pattern = select(0.4, 1.0, ((q.x + q.y) & 3) == 0); }
+      else if (MATS[mat].eco.x < 1.6) { lensCol = vec3<f32>(0.55, 0.58, 0.65); pattern = select(0.3, 1.0, ((q.x - q.y) & 3) == 0); }
+      else if (wet < 0.06) { lensCol = vec3<f32>(0.95, 0.75, 0.3); pattern = select(0.3, 1.0, (q.x & 1) == 0 && (q.y & 1) == 0); }
+      else { lensCol = vec3<f32>(0.3, 0.6, 0.9); pattern = 0.5; }
+      col = mix(col, toLinear(lensCol) * 1.4, k * 0.55 * pattern);
+    }
+  }
   col *= 1.0 - gl * select(1.0, 0.0, canopyN > 0.0);
   col = haze(col, lpos);
 

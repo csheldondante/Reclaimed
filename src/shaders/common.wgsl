@@ -29,6 +29,8 @@ struct Globals {
   sky: vec4<f32>,
   // rgb sun colour × intensity, w = time of day 0..1
   sunCol: vec4<f32>,
+  // life lens around the cursor: x, y, radius, strength 0..1 (0 = off)
+  lens: vec4<f32>,
 };
 
 const EV_LIGHTNING: u32 = 1u;

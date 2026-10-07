@@ -1,6 +1,6 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 448;
+export const GLOBALS_BYTES = 464;
 export const MAX_GUSTS = 4;
 export const MAX_STORMS = 4;
 export const MAX_EVENTS = 4;
@@ -62,6 +62,8 @@ export interface GlobalsState {
   sky: [number, number, number, number];
   /** sun rgb×intensity + time of day 0..1 */
   sunCol: [number, number, number, number];
+  /** life lens: x, y, radius, strength (0 = off) */
+  lens: [number, number, number, number];
 }
 
 export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
@@ -123,4 +125,5 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   }
   f.set(s.sky, 104);
   f.set(s.sunCol, 108);
+  f.set(s.lens, 112);
 }
