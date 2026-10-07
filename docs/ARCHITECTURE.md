@@ -4,17 +4,10 @@ Current state of the system boundaries. Update when a contract changes.
 
 ## Frame
 
-```
-CPU: input → weather.update (storms) → nature.update (reads last stats)
-GPU per sim tick (60 Hz fixed, ≤ N ticks/frame by quality tier):
-   structure → material → surface → water(flux, depth) → contamination → moisture
-   → ecology (every 15) → shadow (every 6) → stats (every 20, async readback)
-GPU per frame: renderprep (world → box instances, indirect args) → draw
-   (opaque boxes, translucent water, rain streaks)
-```
-
-Globals (`common.wgsl` / `src/sim/globals.ts`) are uploaded per tick, and once
-more per frame for rendering (time, storms).
+\
+Globals ( / , 464 bytes) carry storms, one-tick
+events, gusts (player + cursor breeze), day/night light, and the life lens.
+The shared wind field  is analytic from these.
 
 ## World representation
 
@@ -30,18 +23,21 @@ more per frame for rendering (time, storms).
 | buffer | type | written by | read by |
 |---|---|---|---|
 | layers | u32 slots (aux = support·16 + damage) | structure, material | structure, surface, renderprep |
-| surface | u32 (z, mat, count) | surface | water, material, ecology, shadow, render |
-| water / waterPrev | f32 depth | water | contamination, moisture, ecology, render, stats |
-| flux | vec4 volume/tick to ±x ±y | water | contamination, render, stats |
+| surface | u32 (z, mat, count) | surface | most systems |
+| water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
-| contam | vec2 (soil, dissolved) | contamination | ecology, render, stats |
-| moisture | f32 0..1 | moisture | material (repose), ecology, render |
-| veg | f32 stage 0..5 | ecology | contamination, moisture, renderprep, render, stats |
-| shadow | f32 lit-from z | shadow | render |
-| stats | u32 sums | stats, material(overflow) | CPU (async) |
+| oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
+| contam | vec2 (soil, dissolved) | contamination | ecology, particles, draw, stats |
+| contamDelta | atomic i32 ×1e5 | particles (pick-up/drop), oil (soak) | contamination (folds in, zeroes) |
+| moisture | f32 0..1 | moisture | material, ecology, fire, particles, renderfields |
+| fire | f32 0..1 | fire | oil (burns), ecology (burns), structure (heat, waste), particles (flames), renderfields (glow), stats |
+| veg | f32 stage 0..5 | ecology (+ particles may plant 0 → 0.3: bird seeds) | most systems |
+| particles / particleCounters | 48-byte ring + atomic head | particles | draw |
+| renderFields | vec4 (shadow z, moisture, fire glow, flow) | renderfields | draw |
+| stats | u32 sums | stats, structure (collapsed), material (overflow) | CPU (async) |
 
-The water system can be replaced by anything that publishes `water`,
-`waterPrev` and `flux` with the same meaning.
+The water system can be replaced by anything that publishes ,
+ and  with the same meaning; oil likewise with .
 
 ## Rendering
 
@@ -63,7 +59,9 @@ column picking via a 1-pixel async readback.
 
 `w = material | flags << 8`; flags: 1 top-of-column, 2 vegetation,
 4/8/16/32 side face toward +x/−x/+y/−y hidden, 64 top face hidden.
-Fully hidden intervals are not emitted.
+Fully hidden intervals are not emitted. Flag 128 = detail instance (x/y/size in
+quarter cells: trunks, grass tufts, flowers). Leaf boxes with the vegetation flag
+are shaded by a sub-voxel ray march inside the box (discard = gap).
 
 ## Events
 

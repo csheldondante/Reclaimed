@@ -29,6 +29,7 @@ export class Ambience {
   private rainGain?: GainNode;
   private flowGain?: GainNode;
   private insectGain?: GainNode;
+  private leavesGain?: GainNode;
   private noise?: AudioBuffer;
   private nextBird = 0;
   private nextRattle = 0;
@@ -105,6 +106,22 @@ export class Ambience {
     this.flowGain.gain.value = 0;
     this.loopNoise().connect(fbp).connect(this.flowGain).connect(master);
 
+    // leaves: airy rustle that swells with wind over living land
+    const lhp = ctx.createBiquadFilter();
+    lhp.type = 'highpass';
+    lhp.frequency.value = 2600;
+    const llfo = ctx.createOscillator();
+    llfo.frequency.value = 0.7;
+    const llfoG = ctx.createGain();
+    llfoG.gain.value = 0.35;
+    this.leavesGain = ctx.createGain();
+    this.leavesGain.gain.value = 0;
+    const lmod = ctx.createGain();
+    lmod.gain.value = 0.65;
+    llfo.connect(llfoG).connect(lmod.gain);
+    llfo.start();
+    this.loopNoise().connect(lhp).connect(lmod).connect(this.leavesGain).connect(master);
+
     // insects: amplitude-modulated high tone
     const ins = ctx.createOscillator();
     ins.type = 'sawtooth';
@@ -152,6 +169,7 @@ export class Ambience {
     this.whistleGain!.gain.setTargetAtTime(wind * 0.05 * s.pollution, t, 1.5);
     this.rainGain!.gain.setTargetAtTime(Math.min(1, s.rain) * 0.28, t, k);
     this.flowGain!.gain.setTargetAtTime(Math.min(1, s.flow) * 0.18, t, k * 2);
+    this.leavesGain!.gain.setTargetAtTime(s.life * (0.03 + wind * 0.12) * (1 - Math.min(1, s.rain) * 0.6), t, 0.8);
     // insects carry the night; birds the day
     this.insectGain!.gain.setTargetAtTime(Math.pow(s.life, 1.2) * (0.012 + 0.03 * s.night) * (1 - Math.min(1, s.rain)), t, 2);
 

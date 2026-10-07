@@ -1,193 +1,127 @@
-# Reclaimed — status & stock-take (2026-10-06)
+# Reclaimed — status & stock-take (updated 2026-10-07, after round 2)
 
-A snapshot for review: what exists, how to try it, how it's built, what's
-hard, and where your guidance would change what happens next. Questions for
-you are marked **❓Qn**; places where I made a call you may want to overrule
-are marked **⚖️**.
-
-Companion docs: `docs/ARCHITECTURE.md` (contracts, kept current),
-`docs/DEVLOG.md` (why every change was made, with measurements).
+What exists, how to try it, how it's built, and where your judgement is
+needed. Items needing a decision are marked **❓**. `docs/DECISIONS.md`
+records your answers so far; `docs/DEVLOG.md` explains every change with
+measurements; `docs/ARCHITECTURE.md` has the contracts.
 
 ---
 
-## 1. Trying it yourself
+## 1. Trying it
 
 ```
-npm install        # once
-npm run dev        # → http://localhost:5173  (Chrome/Edge; WebGPU required)
+npm install && npm run dev      # → http://localhost:5173 (Chrome/Edge; WebGPU)
 ```
+URL options: `?perf=1` overlay · `?q=low|medium|high` · `?speed=8` fast-forward
+· `?day=60` day length in seconds · `?tod=0.75` start time of day (0.25 sunrise,
+0.5 noon, 0.75 sunset).
 
-URL options: `?perf=1` perf overlay · `?q=low|medium|high` quality tier
-(default high) · `?speed=4` fast-forward the simulation (debug).
+**Controls (no tool buttons)**
 
-**Controls**
-
-| input | action |
+| input | does |
 |---|---|
-| left-drag on land / WASD / arrows | pan |
-| wheel / pinch | zoom |
-| Q / E | rotate 90° (⚠ least-tested path) |
-| `1` or **Storm** button, then tap land | summon a storm (30 Nature); it forms upwind of the tap and drifts over it |
-| drag a storm's dashed ring | nudge it (arrow shows intent; nudge is bounded and fades) |
-| tap a storm's ring | downpour (8 Nature) |
-| `2` or **Lightning**, then tap under a storm | strike (10 Nature); seeks the tallest point within ~7 cells |
-| `` ` `` | perf overlay · `Esc` cancel tool |
+| **LMB tap** under a storm's shadow | lightning (seeks the tallest thing nearby; 10 Nature) |
+| **LMB tap** elsewhere | touch: trees shed leaves / birds flee, tanks clang, concrete chips, water splashes, ground puffs dust |
+| **LMB drag** under a storm | gust along the drag; also shoves the storm (6 Nature) |
+| hover | a light breeze follows the cursor (trees lean, dust lifts, deer bolt) |
+| **RMB drag** / WASD | pan |
+| **MMB drag** / wheel / pinch | zoom |
+| **R** or ☁ button | summon a storm upwind of the cursor (30 Nature + 25 s recharge ring) |
+| hold **Space** | life lens: what keeps plants out around the cursor |
+| `` ` `` | perf overlay |
 
-**A 3-minute test script**
-1. Click to start (audio begins). Listen: wind, debris rattle, a distant dam groan now and then.
-2. Storm over the industrial site (top-left of the river). Watch the cloud shadow, rain, runoff, and stains on the pad fading.
-3. While it rains, Lightning on the tall warehouse walls: collapse, rubble, thunder, crumble sounds.
-4. Storm toward the **dam** (where the reservoir narrows), then Lightning on the dam. Wait 10–30 s: piping → breach → flood scours the landfill (the speckled heap below the dam).
-5. Watch moss and grass appear where rain cleaned the ground and soil stays moist; Nature regenerates faster as land comes alive.
+Touch: tap = touch/lightning, one-finger drag = pan (or gust if it starts
+under a storm), pinch = zoom. No hover breeze on touch.
 
-**Debug from devtools**: `reclaimed.probe('contam', x, y, r, 2, 0)`,
-`reclaimed.readBuffer('veg')`, `reclaimed.weather.spawn(x, y)`,
-`reclaimed.globals.events.push({kind:1, x, y, radius:5, strength:20})`.
-
-### Connecting Claude in Chrome
-So that I can drive *your* Chrome (real GPU, real audio context) instead of
-headless screenshots:
-1. Install the **Claude** extension from the Chrome Web Store and sign in with the same Claude account you use for Claude Code.
-2. In this Claude Code session run **`/chrome`** (or start with `claude --chrome`) and follow the prompt to connect. `/chrome` also shows connection status. If the command isn't recognised, update Claude Code first.
-3. Keep Chrome open. I'll work in my own tab and you'll be asked to allow `localhost`.
-
-Even connected, I can't *hear* audio. Sound judgments need you.
+**A 5-minute tour**
+1. Hover over the land and tap things: listen for the clang, chips, splashes.
+2. **R** to summon a storm over the industrial site; watch dust and clouds,
+   rain, stains washing off the pad.
+3. Under the storm, tap an oil tank → it ignites; heat ruptures the wall;
+   burning oil spreads and burns off (smoke, embers, firelight; best at dusk:
+   `?tod=0.75`).
+4. Tap the dam (under a storm) → piping breach → flood scours the landfill.
+5. Hold **Space** to see blockers; watch moss → grass → flowers → trees, vines
+   climbing ruins, birds and the occasional deer. Stay for the night: fireflies.
 
 ---
 
-## 2. What exists (milestones 0–4 + first profile)
+## 2. What exists
 
-| system | status | how it works (one line) |
-|---|---|---|
-| World representation | ✅ | XY columns of ordered material intervals, chunked 16×16 with per-chunk slot count K |
-| Rendering | ✅ | render-prep compute → instanced boxes (3 visible faces), translucent water, rain streaks, heightfield sun shadows, cloud shadows |
-| Material physics | ✅ | granular gravity, angle of repose (lower when wet → slumps), flow erosion, piping |
-| Structure | ✅ | per-interval support (propagates 1 cell/tick) + damage → collapse to rubble |
-| Water | ✅ | column-volume "virtual pipes"; edges drain; springs |
-| Contamination | ✅ | soil-bound + dissolved; dissolve, advect with water, redeposit, rain leaching, plant remediation |
-| Moisture | ✅ | rain/water wet the soil; diffuses; plants retain it |
-| Ecology | ✅ | succession stage 0–5, conditions-driven growth + probabilistic spread |
-| Weather | ✅ | ≤4 CPU storms → analytic rain/cloud fields in a uniform |
-| Lightning / events | ✅ | one-tick event list consumed by the structure system |
-| Nature resource | ✅ (untuned) | base regen + living area; storm 30, lightning 10, downpour 8 |
-| Audio | ⚠️ unverified by ear | fully procedural WebAudio driven by aggregate world state |
-| Menu skull scene (§4) | ❌ | not started |
-| Fire, quake, cyclone | ❌ | not started (event channel and structure system are ready for quakes) |
-| Win/level structure | ❌ | none; the valley simply recovers |
+| area | state |
+|---|---|
+| World | layered column intervals, chunked K, procedural valley: dam/reservoir, continuous river (edge inflow → spillway → edge outflow), ruins on foundations, open oil tanks, landfill, debris |
+| Water | virtual pipes; edges drain; evaporation mostly from thin films |
+| Oil | second liquid: floats, viscous, carried by currents, soaks into loose ground as stain, smothers plants, burns, drains off-map |
+| Pollution | soil stain (washes under any water; plants remediate), dissolved in water, oil, dust/litter particles carrying it off the map |
+| Structure | support + damage, collapse → rubble; lightning, hydraulic loading, flood flow, **fire heat** |
+| Fire | fuel = oil/plants/waste; downwind gather-spread; rain/water/wet ground extinguish; burns oil, plants, waste |
+| Particles | GPU ring (16k–64k): dust, litter, leaves, clouds, rain splashes, chips, smoke, flames, embers, fireflies, birds, deer |
+| Wind | analytic field: wandering prevailing wind + storm swirl + gusts + cursor breeze |
+| Weather | big rolling storms (natural every 2.5–4.5 min + summoned), cloud deck particles, crisp cloud shadow, rain |
+| Day/night | 8-minute day, golden hour, moonlight, fireflies, insect/bird soundscape |
+| Ecology | succession 0–5; birds plant seeds |
+| Look | sub-voxel canopies with gaps, wind sway, grass waves, tufts, wildflowers, vines, stone/dirt variation |
+| Audio | procedural: wind, rain, water, leaves, insects, birds, thunder, crumble, dam groan, fire crackle, clang/chip/splash/flutter/strain — **still not heard by me** |
+| Not yet | main-menu skull scene (§4), earthquake/tornado, win/level structure, mobile verification |
 
-**Measured** (Intel Xe-LPG integrated GPU, 1600×900): draw ≈ 3 ms; all
-simulation passes ≈ 1–2 ms per tick (60 Hz); ~67k box instances; ~30 MB GPU
-memory. Nothing beyond this laptop's iGPU has been measured.
+**Performance** (Intel Xe-LPG iGPU, 1600×900, storm + fire active): GPU ≈ 6.3 ms
+(draw 5.2 ms, all simulation ≈ 1 ms), 100 fps. A fully grown forest: ~85k
+instances, draw 3.5 ms at 1280×720.
 
 ---
 
-## 3. Architecture in one page
+## 3. Architecture (one page)
 
 ```
-            CPU (TypeScript)                          GPU (WGSL compute + render)
- ┌──────────────────────────────┐         ┌────────────────────────────────────────────────┐
- │ input · camera · HUD · audio │ uniforms│ per tick (60 Hz fixed):                          │
- │ weather (storms) · Nature    │────────▶│ structure → material → surface → water →        │
- │ event queue (lightning)      │         │ contamination → moisture → ecology(/15) →        │
- │                              │◀────────│ shadow(/6) → stats(/20, async readback)          │
- │ reads ONLY aggregate stats   │  stats  │ per frame: render-prep → draw                    │
- └──────────────────────────────┘         └────────────────────────────────────────────────┘
+CPU: controls → powers (tap/gust/summon/hover) → weather + day/night → Nature
+     reads only aggregate stats; writes Globals (storms, gusts, events, light, lens)
+GPU per tick: structure → material → surface → water → oil → contamination
+     → moisture → fire → ecology(/15) → particles(emit, fire, bursts, update)
+     → renderfields(/2) → stats(/20)
+GPU per frame: renderprep (terrain + liquids) + vegprep → draw
+     (opaque boxes incl. sub-voxel canopies, liquids, particles, rain)
 ```
+Contracts are documented in `ARCHITECTURE.md`. Every system writes only its
+own buffers. Two exchange buffers keep that true across boundaries:
+- `contamDelta` (atomic) for particles and oil adding or removing soil stain;
+- the fire field, which each consumer burns its own resource from.
 
-The design rule from §9/§23: **systems talk only through contract buffers**
-(`src/sim/world-gpu.ts`, table in `ARCHITECTURE.md`): `layers`, `surface`,
-`water / waterPrev / flux`, `contam`, `moisture`, `veg`, `shadow`, `stats`.
-A replacement water solver only has to publish `water`, `waterPrev` and
-`flux` with the same meaning. Gameplay, HUD and audio never touch GPU
-internals; they read aggregates (`soilContam`, `vegCells`, `flow`,
-`collapsed`, …).
-
-Key choices and why (details in DEVLOG):
-- **Everything emergent goes through shared mechanisms.** The dam breach is
-  lightning damage + hydraulic loading + piping + flow erosion, the same rules
-  any wall or embankment obeys. No dam script.
-- **Rubble is just granular material**, so collapse needs no debris system.
-- **Net flow** (outflow − inflow) drives erosion, damage, scour and foam,
-  because the pipe model sloshes heavily even in still water.
-- **No fallbacks.** WebGPU missing, or a limit not met → clear message; GPU
-  validation errors → fatal overlay.
-
-⚖️ **Per-chunk variable slot count (K)** follows your suggestion; it costs one
-extra lookup per column. Overflow (material piling past K) is counted and
-shown in the perf overlay. Deposits merge into loose tops to avoid it.
+The draw shaders read one packed `renderFields` vec4 (shadow, moisture, fire
+glow, flow), which keeps them within 8 storage buffers.
 
 ---
 
-## 4. Challenges, known issues, risks
+## 4. Known issues / risks
 
-**Visual**
-1. **Water on slopes looks stair-stepped.** Flowing water shows dark vertical stripes, because each column's water box exposes side faces against lower neighbours. Options: slope the water top surface between neighbours (vertex-shader trick, cheap), or render water as a heightfield surface instead of boxes. → **❓Q1**
-2. **Terrain "dashes".** Gentle slopes produce 1-cell staircase edges whose shaded side faces read as dark dashes. It's the honest voxel look but busy. Options: soften side-face contrast more, add per-vertex AO, or bias terrain toward flat terraces.
-3. **Rubble falls at 60 cells/s**: effectively instant. A visual-only fall interpolation (or 1 cell per N ticks) would make collapses readable.
-4. **Dam wings** still look like a comb from some angles (a diagonal wall in a grid).
-5. Vegetation is mostly a top-surface tint plus box shrubs/trees. Ruins only get dithered moss on walls; no vines or roots yet, and §2's "forests over recognisable ruins" isn't there yet.
-
-**Simulation / gameplay**
-6. **Nature economy is untuned.** At start you can afford exactly storm + lightning. Regeneration: 0.35/s base + living-area term. → **❓Q3**
-7. **Rain is now fairly strong** (≈0.4 contamination removed per storm). Light pollution clears in one storm; the landfill and site need leverage. That's a pacing decision. → **❓Q4**
-8. **Spontaneous spores**: any clean, moist cell can sprout moss with tiny probability, so recovery isn't purely spread-from-seed. Easy to remove if you want recovery to radiate only from living patches.
-9. **Rotation (Q/E)** hasn't been visually verified since culling and lightning targeting landed.
-10. **Mobile** is untested beyond having touch handlers (pan, pinch, tap).
-11. **The site's heavy contamination** has no strong lever yet except repeated storms. Fire, tank ruptures or the river are the natural next levers.
-
-**Engineering**
-12. Headless testing only proves GPU behaviour on this machine. No discrete-GPU, Mac or mobile data.
-13. The simulation is deterministic per device but not bit-identical across GPUs (float math). Fine for single-player; matters only for replays/sharing.
-14. One hard-coded map in code. There's no level format yet; making levels data-driven is a choice point. → **❓Q6**
+1. Water flowing down slopes still shows stair-stepped side faces.
+2. Rubble falls effectively instantly (60 cells/s).
+3. Rainwater fills roofless building shells and stays (realistic; maybe not wanted).
+4. The canopy march keeps depth at the box face. Intersections are slightly off (not noticed yet).
+5. Litter only lifts at storm/gust strength, so cleaning the landfill by wind needs gusts.
+6. Fire burns spilled oil away completely (no soot residue). That makes fire a strong cleanup tool.
+7. Particles (rain, clouds, smoke) are alpha-blended unsorted: fine so far.
+8. Mobile and discrete GPUs are unmeasured; audio is unheard.
 
 ---
 
-## 5. Questions where your guidance would help most
+## 5. Judgement calls I made — please review
 
-**❓Q1 — Water look.** Keep honest voxel water boxes (blocky, stepped
-waterfalls), or smooth the water surface between cells (reads as liquid, less
-"voxel")? A middle option: smooth top surface, blocky sides.
+- ❓ **Rain and cloud look.** At storm scale the rain reads as a tall translucent column with a soft cloud deck above it. Too heavy? Too subtle? Should clouds be thicker but hide less of the land?
+- ❓ **Economy.** Storm 30 + 25 s recharge, lightning 10, gust 6; regen 0.35/s + living land. Natural storms every 150–260 s. Too stingy or too generous?
+- ❓ **Storms.** Radius 48. Summoned storms form about 55 cells upwind and arrive in about 15 s. The wind wanders ±35°.
+- ❓ **Day length** of 8 minutes, and how dark night gets (currently quite dark, moonlit blue).
+- ❓ **Fire strength.** It spreads readily through dry grass downwind and burns oil to nothing. Should it leave soot (stain) or ash (a fertile boost to regrowth)?
+- ❓ **Chipping** is purely cosmetic right now (particles + sound, no damage). Should repeated chipping slowly decay a structure?
+- ❓ **Lightning auto-targets** the tallest point within 7 cells. Keep, or strike exactly where tapped?
+- ❓ **Animal density**: about 4 deer per mature forest and a few dozen birds. Birds planting seeds is the only gameplay effect.
+- ❓ **Life lens** on Space with 5 categories. Colours and patterns OK? Should it be always-on near the cursor instead of held?
+- ❓ **Forest look.** Trees are fairly uniform in height and density; should mature forests vary more (clearings, old giants)?
+- ❓ **Touch**: one-finger drag pans unless it starts under a storm.
 
-**❓Q2 — Next big thing.** Candidates, roughly in my order of value:
-(a) **fire + industrial cascade** (lightning → fire → tank rupture →
-contaminated spill → rain/flood cleanup; the §8 example chain);
-(b) **menu skull scene** with persistent progression (§4); (c) **vegetation
-reclaiming ruins** visually (vines, roots, trees on rooftops); (d) earthquake
-(event channel + structure system make this cheap); (e) a second map / level
-format.
+## 6. Suggested next steps
 
-**❓Q3 — Economy feel.** Should the opening be tight (one meaningful move,
-then wait) or generous (experiment freely, learn the systems)? I lean
-generous early, since the leverage lesson works better with room to fail.
-
-**❓Q4 — Pacing.** Currently: storm ≈ 1 min, moss within ~30 s of rain,
-trees in a few minutes, dam breach 10–30 s. Is a level a 10-minute or a
-45-minute experience?
-
-**❓Q5 — Goal / end state.** Is a level "done" at a health threshold
-(e.g. 60 % living, contamination below X), or is it open-ended with the menu
-scene as the only progression signal? This changes the HUD (currently just
-the Nature bar).
-
-**❓Q6 — Content pipeline.** Keep generating maps in code, or move to data
-(heightmap + placed prefabs, maybe voxelised meshes as you mentioned) soon?
-
-**❓Q7 — Control granularity.** Lightning auto-targets the high point near
-your tap, and storms only nudge. Does that feel like "nudging nature" or like
-lost control? Should downpour stay (tap the storm), or become a separate tool?
-
-**❓Q8 — Audio direction.** Once you've listened: is procedural synthesis the
-right base, or should we bring in recorded field audio (wind, birds, water)
-and keep synthesis for dynamic events?
-
-**❓Q9 — Device targets.** Which devices must work for you (phone model,
-other laptops)? That decides whether `low` needs more aggressive scaling.
-
----
-
-## 6. Feedback that is easiest for me to act on
-
-- Screenshots/screen recordings with "this looks wrong / this feels good".
-- Where your attention went in the first 30 s, and what you *expected* a tap to do.
-- Anything that felt like a scripted animation rather than a system (§6).
-- Perf overlay numbers (`?perf=1`) from any other device.
+- The main-menu skull scene with persistent progression (§4). It's the last big piece of the handoff.
+- An earthquake (cheap: the event channel and structure system exist), then drag-to-tornado.
+- Level goal / end state, and a second map or data-driven map format.
+- A pass over water-on-slope rendering and a rubble fall animation.
