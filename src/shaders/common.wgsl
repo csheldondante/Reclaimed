@@ -34,6 +34,11 @@ struct Globals {
 };
 
 const EV_LIGHTNING: u32 = 1u;
+// a tap on masonry: small damage to the interval at height evZ(e)
+const EV_CHIP: u32 = 2u;
+// eventKind packs kind (low 4 bits) and a z height (above): kind + 16·z
+fn evKind(e: u32) -> u32 { return u32(G.eventKind[e]) & 15u; }
+fn evZ(e: u32) -> u32 { return u32(G.eventKind[e]) >> 4u; }
 fn numEvents() -> u32 { return u32(G.misc.x); }
 
 @group(0) @binding(0) var<uniform> G: Globals;

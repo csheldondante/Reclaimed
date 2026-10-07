@@ -115,7 +115,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let hide = hideFlags(gt, ivZ1(v), nz);
     if (hide == HIDE_ALL) { continue; }
     let flags = select(0u, FLAG_TOP, k + 1u == nSlots) | hide;
-    instOpaque[o] = mkInst(id.x, id.y, 1u, 1u, f32(ivZ0(v)), f32(ivZ1(v)), ivMat(v), flags);
+    var inst = mkInst(id.x, id.y, 1u, 1u, f32(ivZ0(v)), f32(ivZ1(v)), ivMat(v), flags);
+    inst.w |= (ivAux(v) & 15u) << 16u; // structural damage → cracks
+    instOpaque[o] = inst;
     o += 1u;
   }
   var w = baseW + offW;

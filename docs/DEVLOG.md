@@ -448,3 +448,36 @@ sharper and more pronounced; wants to see rain in motion.
   1/65536 — ~250× the intended deer rate (675 deer in a grown forest). Rare
   events now use a full 32-bit draw (`rare()`); measured 4 deer and 37 birds in
   the same forest.
+
+## 2026-10-07 — round 3, batch 1: audio, cracking taps, splashes, sealed tanks
+
+User feedback: audio too loud; a hiss "that doesn't sound like rain"; rain
+should be heard only under storms, otherwise wind and distant thunder; taps on
+structures neither cracked them nor made a falling-stone sound; no splash on
+water; tank tap should be deeper/more hollow; tanks should be closed so oil
+only shows when they break.
+
+- **Audio**: master 0.8 → 0.42. The constant "rain-like" noise was the river
+  layer (bandpassed pink noise at 650 Hz, loud): now a quiet low murmur. Rain
+  is heard only under a storm: a softer hiss plus individual drop ticks.
+  Fair weather: wind (softer) and a far-off thunder roll every 35–85 s.
+- **Taps on masonry** now do real, small decay: an `EV_CHIP` event (kind
+  packed with the tapped height: `kind + 16·z`) adds 1 damage to intervals at
+  that height within 1.8 cells; ~12 taps bring a piece down. **Cracks**:
+  render-prep passes structural damage in instance bits 16..19 and the draw
+  shader draws noise-traced cracks and chipped sub-voxels that grow with
+  damage — lightning, heat and water pressure now show too. Sound: sharp crack,
+  stones bouncing down (shortening intervals, falling pitch), grit trickle.
+  (Picking was fine — the response was just too subtle to notice.)
+- **Splash bug**: the picked height is floored, so spray spawned *below* the
+  water surface and died on its first frame. Now starts 1.4 above; bigger
+  droplets; plop + spray sound.
+- **Clang**: ~50 Hz fundamental with inharmonic partials up to 3 s, through a
+  short feedback delay (the tank's cavity) and a dull knuckle thump.
+- **Sealed tanks**: domed rust roofs; oil lives in a new `oilStored` (amount,
+  roof z) owned by the oil system and is released into the oil field when the
+  column top drops below the roof or a neighbouring wall falls. Sealed oil
+  counts as fire fuel (a strike lights the tank from inside; fire slowly
+  consumes it; heat ruptures the shell; burning oil spills). Rust strength
+  0.7 → 0.85 — at 0.7 the wide roofs couldn't span to the centre and
+  collapsed during warmup (80 units of oil free at load).

@@ -45,7 +45,7 @@ fn unpackBox(v: vec4<u32>) -> Box {
   var b = Box(
     f32(v.x & 0xfffu), f32((v.x >> 12u) & 0xfffu),
     f32(((v.x >> 24u) & 0xfu) + 1u), f32(((v.x >> 28u) & 0xfu) + 1u),
-    bitcast<f32>(v.y), bitcast<f32>(v.z), v.w & 0xffu, (v.w >> 8u) & 0xffu);
+    bitcast<f32>(v.y), bitcast<f32>(v.z), v.w & 0xffu, (v.w >> 8u) & 0xfffu);
   // detail instances (grass tufts, flowers) are positioned in quarter cells
   if ((b.flags & FLAG_DETAIL) != 0u) {
     b.x *= 0.25; b.y *= 0.25; b.sx *= 0.25; b.sy *= 0.25;
@@ -241,7 +241,8 @@ fn fsBox(in: VOut) -> FOut {
   // derivatives first: canopy fragments may discard below
   let gl = gridLines(in.wpos, in.nrm);
   let mat = in.info.x;
-  let flags = in.info.y;
+  let flags = in.info.y & 0xffu;
+  let damage = in.info.y >> 8u;
   var lpos = in.wpos;
   var lnrm = in.nrm;
   var canopyN = 0.0;
@@ -375,6 +376,19 @@ fn fsBox(in: VOut) -> FOut {
         }
       }
     }
+  }
+
+  // cracks and chipped edges grow with structural damage (taps, lightning,
+  // heat, water pressure) so decay is visible before anything fails
+  if (damage > 0u && (flags & 2u) == 0u) {
+    var fa: vec2<f32>;
+    if (abs(in.nrm.z) > 0.5) { fa = in.wpos.xy; } else if (abs(in.nrm.x) > 0.5) { fa = in.wpos.yz; } else { fa = in.wpos.xz; }
+    let dk = f32(damage);
+    let c1 = abs(vnoise(fa * 2.2 + vec2<f32>(f32(ci % 97u))) - 0.5);
+    let c2 = abs(vnoise(fa * 4.7 + 11.0) - 0.5);
+    let crack = c1 < 0.012 * dk || (dk > 4.0 && c2 < 0.007 * (dk - 4.0));
+    let chipped = randv(vec3<i32>(floor(in.wpos * 4.0 - in.nrm * 0.02)) + vec3<i32>(7, 1, 3)) < dk * 0.025;
+    if (crack) { alb *= 0.35; } else if (chipped) { alb *= 0.72; }
   }
 
   var col = alb * lighting(lpos, lnrm);

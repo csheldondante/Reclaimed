@@ -11,6 +11,9 @@
 // burning oil is consumed (that is how fire clears a slick)
 @group(0) @binding(9) var<storage, read> fire: array<f32>;
 const OIL_BURN: f32 = 0.002;
+// oil sealed in closed tanks: (amount, roof z). Released when the column top
+// drops below the roof (roof gone) or a neighbouring wall has fallen below it.
+@group(0) @binding(10) var<storage, read_write> stored: array<vec2<f32>>;
 
 const SOAK: f32 = 0.0004;
 const STAIN_PER_OIL: f32 = 1.5;
@@ -27,6 +30,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (inMap(q)) { o += oilFlux[colIdxI(q)][k ^ 1u]; }
   }
   o = max(o - fire[i] * OIL_BURN, 0.0);
+  var st = stored[i];
+  // a fire inside a sealed tank slowly consumes its contents
+  if (st.x > 0.0 && fire[i] > 0.0) {
+    st.x = max(0.0, st.x - fire[i] * OIL_BURN * 0.5);
+    stored[i] = st;
+  }
+  if (st.x > 0.0) {
+    var breach = f32(sfZ(surface[i])) < st.y;
+    for (var k = 0u; k < 4u; k++) {
+      let q = p + DIRS[k];
+      if (inMap(q) && stored[colIdxI(q)].x <= 0.0 && f32(sfZ(surface[colIdxI(q)])) < st.y - 1.0) { breach = true; }
+    }
+    if (breach) {
+      o += st.x;
+      stored[i] = vec2<f32>(0.0, st.y);
+    }
+  }
   // only loose, porous ground (soil, sand, rubble, waste) soaks oil up; tanks,
   // concrete and asphalt hold it
   let porous = matState(sfMat(surface[i])) == ST_GRANULAR;

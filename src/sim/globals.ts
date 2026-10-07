@@ -7,6 +7,7 @@ export const MAX_EVENTS = 4;
 
 export const enum EventKind {
   Lightning = 1,
+  Chip = 2,
 }
 
 export interface StormUniform {
@@ -23,6 +24,8 @@ export interface StormUniform {
 /** A one-tick impulse into the world (lightning strike, later quakes, …). */
 export interface WorldEvent {
   kind: EventKind;
+  /** height for height-targeted events (chips) */
+  z?: number;
   x: number;
   y: number;
   radius: number;
@@ -103,7 +106,7 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     const a = 48 + i * 4;
     if (e && i < nEv) {
       f.set([e.x, e.y, e.radius, e.strength], a);
-      f[64 + i] = e.kind;
+      f[64 + i] = e.kind + 16 * Math.max(0, Math.round(e.z ?? 0));
     } else {
       f.fill(0, a, a + 4);
       f[64 + i] = 0;

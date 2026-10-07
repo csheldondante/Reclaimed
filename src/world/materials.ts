@@ -68,7 +68,7 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'rubble', albedo: [0.44, 0.41, 0.38], state: MatState.Granular, reposeDry: 4, reposeWet: 3, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3 },
   { ...NONE, name: 'concrete', albedo: [0.66, 0.65, 0.62], state: MatState.Solid, strength: 0.8, growthCap: 1.5, suitability: 0.25, porosity: 0.35 },
   { ...NONE, name: 'asphalt', albedo: [0.24, 0.24, 0.25], state: MatState.Solid, strength: 0.6, growthCap: 2, suitability: 0.3, specular: 0.1, porosity: 0.3 },
-  { ...NONE, name: 'rust', albedo: [0.5, 0.29, 0.17], state: MatState.Solid, strength: 0.7, growthCap: 1, suitability: 0.2, specular: 0.2, porosity: 0.2 },
+  { ...NONE, name: 'rust', albedo: [0.5, 0.29, 0.17], state: MatState.Solid, strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.2, porosity: 0.2 },
   { ...NONE, name: 'water', albedo: [0.2, 0.33, 0.38], state: MatState.Liquid, specular: 0.8 },
   { ...NONE, name: 'leaves', albedo: [0.25, 0.45, 0.18], state: MatState.Vegetation, strength: 0.1 },
   { ...NONE, name: 'wood', albedo: [0.36, 0.25, 0.15], state: MatState.Vegetation, strength: 0.4 },

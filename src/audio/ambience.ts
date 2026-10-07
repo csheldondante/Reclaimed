@@ -35,6 +35,7 @@ export class Ambience {
   private nextRattle = 0;
   private gustTarget = 0.5;
   private nextGust = 0;
+  private nextDistant = 20;
 
   get started(): boolean {
     return !!this.ctx;
@@ -46,7 +47,7 @@ export class Ambience {
     const ctx = new AudioContext();
     this.ctx = ctx;
     const master = ctx.createGain();
-    master.gain.value = 0.8;
+    master.gain.value = 0.42; // softer overall (user feedback)
     master.connect(ctx.destination);
     this.master = master;
 
@@ -86,7 +87,7 @@ export class Ambience {
     rhp.frequency.value = 1400;
     const rlp = ctx.createBiquadFilter();
     rlp.type = 'lowpass';
-    rlp.frequency.value = 9000;
+    rlp.frequency.value = 6000;
     this.rainGain = ctx.createGain();
     this.rainGain.gain.value = 0;
     this.loopNoise().connect(rhp).connect(rlp).connect(this.rainGain).connect(master);
@@ -94,8 +95,8 @@ export class Ambience {
     // flowing water: mid band burble with slow modulation
     const fbp = ctx.createBiquadFilter();
     fbp.type = 'bandpass';
-    fbp.frequency.value = 650;
-    fbp.Q.value = 1.5;
+    fbp.frequency.value = 380;
+    fbp.Q.value = 2.2;
     const lfo = ctx.createOscillator();
     lfo.frequency.value = 0.3;
     const lfoGain = ctx.createGain();
@@ -164,11 +165,26 @@ export class Ambience {
     }
     const wind = s.wind * this.gustTarget;
     // dead worlds: wind dominates; living worlds: wind softens
-    this.windGain!.gain.setTargetAtTime(0.1 + wind * 0.32 * (1 - s.life * 0.5), t, 1.2);
+    this.windGain!.gain.setTargetAtTime(0.06 + wind * 0.2 * (1 - s.life * 0.5), t, 1.2);
     this.windFilter!.frequency.setTargetAtTime(260 + wind * 380, t, 1.2);
     this.whistleGain!.gain.setTargetAtTime(wind * 0.05 * s.pollution, t, 1.5);
-    this.rainGain!.gain.setTargetAtTime(Math.min(1, s.rain) * 0.28, t, k);
-    this.flowGain!.gain.setTargetAtTime(Math.min(1, s.flow) * 0.18, t, k * 2);
+    // rain only when a storm is overhead: soft hiss + individual drops
+    const rain = Math.min(1, s.rain);
+    this.rainGain!.gain.setTargetAtTime(rain * 0.13, t, k);
+    if (rain > 0.02) {
+      const pan = this.panner();
+      const drops = Math.floor(rain * 7 + Math.random());
+      for (let i = 0; i < drops; i++) {
+        this.noiseHit(pan, t + Math.random() * 0.03, 2500 + Math.random() * 5000, 6, 0.012 + Math.random() * 0.012, 0.02);
+      }
+    }
+    // the river: a low, quiet murmur (was loud and hissy enough to pass for rain)
+    this.flowGain!.gain.setTargetAtTime(Math.min(1, s.flow) * 0.04, t, k * 2);
+    // fair weather: wind and, now and then, thunder rumbling somewhere far off
+    if (t > this.nextDistant) {
+      this.nextDistant = t + 35 + Math.random() * 50;
+      if (rain < 0.1) this.thunder(0, 0.35);
+    }
     this.leavesGain!.gain.setTargetAtTime(s.life * (0.03 + wind * 0.12) * (1 - Math.min(1, s.rain) * 0.6), t, 0.8);
     // insects carry the night; birds the day
     this.insectGain!.gain.setTargetAtTime(Math.pow(s.life, 1.2) * (0.012 + 0.03 * s.night) * (1 - Math.min(1, s.rain)), t, 2);
@@ -192,11 +208,14 @@ export class Ambience {
   }
 
   /** Crack + long low rumble. `near` 0..1 shortens the delay and brightens the crack. */
-  thunder(near: number): void {
+  thunder(near: number, volume = 1): void {
     const ctx = this.ctx;
     if (!ctx) return;
+    const vol = ctx.createGain();
+    vol.gain.value = volume;
+    vol.connect(this.master!);
     const t0 = ctx.currentTime + 0.05 + (1 - near) * 1.2;
-    const pan = this.panner();
+    const pan = this.panner(vol);
     // crack
     const crack = ctx.createBufferSource();
     crack.buffer = this.noise!;
@@ -208,7 +227,7 @@ export class Ambience {
     cg.gain.linearRampToValueAtTime(0.5 * near, t0 + 0.005);
     cg.gain.exponentialRampToValueAtTime(0.001, t0 + 0.35);
     crack.connect(hp).connect(cg).connect(pan);
-    crack.start(t0, Math.random() * 2, 0.4);
+    if (near > 0.05) crack.start(t0, Math.random() * 2, 0.4);
     // rumble: several overlapping low swells
     for (let i = 0; i < 3; i++) {
       const src = ctx.createBufferSource();
@@ -238,33 +257,62 @@ export class Ambience {
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
     const pan = this.panner();
-    const base = 95 + Math.random() * 40;
-    for (const [ratio, amp, decay] of [[1, 0.22, 1.8], [2.76, 0.12, 1.2], [5.4, 0.07, 0.7], [8.93, 0.04, 0.4]] as const) {
+    // hollow body: a short feedback delay acts as the tank's cavity echo
+    const cavity = ctx.createDelay(0.5);
+    cavity.delayTime.value = 0.045 + Math.random() * 0.02;
+    const fb = ctx.createGain();
+    fb.gain.value = 0.55;
+    const cavLp = ctx.createBiquadFilter();
+    cavLp.type = 'lowpass';
+    cavLp.frequency.value = 700;
+    cavity.connect(cavLp).connect(fb).connect(cavity);
+    cavLp.connect(pan);
+    const dry = ctx.createGain();
+    dry.gain.value = 0.8;
+    dry.connect(pan);
+    dry.connect(cavity);
+    const base = 48 + Math.random() * 14;
+    for (const [ratio, amp, decay] of [[1, 0.28, 3.2], [1.51, 0.14, 2.4], [2.32, 0.1, 1.6], [3.7, 0.05, 0.9], [5.9, 0.025, 0.5]] as const) {
       const o = ctx.createOscillator();
       o.frequency.value = base * ratio * (0.99 + Math.random() * 0.02);
       const g = ctx.createGain();
       g.gain.setValueAtTime(0, t0);
-      g.gain.linearRampToValueAtTime(amp, t0 + 0.004);
+      g.gain.linearRampToValueAtTime(amp, t0 + 0.006);
       g.gain.exponentialRampToValueAtTime(0.0005, t0 + decay);
-      o.connect(g).connect(pan);
+      o.connect(g).connect(dry);
       o.start(t0);
       o.stop(t0 + decay + 0.05);
     }
-    // the thump of the strike
-    this.noiseHit(pan, t0, 400, 2, 0.25, 0.08);
+    // the dull thump of a knuckle on steel
+    this.noiseHit(dry, t0, 180, 1.5, 0.3, 0.12);
   }
 
-  /** Chipping masonry: a few dry, tile-like ticks and a little trickle. */
+  /**
+   * Masonry giving way under a tap: a sharp crack, then a few stones
+   * bouncing down (intervals shorten and pitch drops as they settle), then a
+   * trickle of grit.
+   */
   chip(): void {
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
     const pan = this.panner();
-    const n = 2 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < n; i++) {
-      this.noiseHit(pan, t0 + i * (0.05 + Math.random() * 0.12), 1800 + Math.random() * 2400, 8, 0.12, 0.05);
+    this.noiseHit(pan, t0, 2600, 1.4, 0.16, 0.07); // crack
+    const stones = 2 + Math.floor(Math.random() * 3);
+    for (let k = 0; k < stones; k++) {
+      let t = t0 + 0.12 + k * (0.08 + Math.random() * 0.15);
+      let gap = 0.16 + Math.random() * 0.08;
+      let f = 900 + Math.random() * 700;
+      let v = 0.09;
+      for (let b = 0; b < 4 + Math.floor(Math.random() * 3); b++) {
+        this.noiseHit(pan, t, f, 5, v, 0.05);
+        t += gap;
+        gap *= 0.62;
+        f *= 0.88;
+        v *= 0.7;
+      }
     }
-    this.noiseHit(pan, t0 + 0.15, 900, 2, 0.04, 0.35);
+    this.noiseHit(pan, t0 + 0.25, 1400, 1, 0.025, 0.6); // grit trickle
   }
 
   splash(): void {
@@ -272,16 +320,19 @@ export class Ambience {
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
     const pan = this.panner();
-    this.noiseHit(pan, t0, 1200, 1.2, 0.18, 0.3);
+    // plop: a falling-pitch bubble, then spray settling back
     const o = ctx.createOscillator();
-    o.frequency.setValueAtTime(900, t0);
-    o.frequency.exponentialRampToValueAtTime(300, t0 + 0.12);
+    o.frequency.setValueAtTime(700, t0);
+    o.frequency.exponentialRampToValueAtTime(180, t0 + 0.09);
     const g = ctx.createGain();
-    g.gain.setValueAtTime(0.06, t0);
-    g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.15);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.12, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.14);
     o.connect(g).connect(pan);
     o.start(t0);
     o.stop(t0 + 0.2);
+    this.noiseHit(pan, t0 + 0.01, 2200, 0.9, 0.12, 0.25);
+    for (let i = 0; i < 6; i++) this.noiseHit(pan, t0 + 0.2 + Math.random() * 0.35, 3000 + Math.random() * 3000, 5, 0.03, 0.03);
   }
 
   /** Wings: a burst of soft flaps as birds leave a tree. */
@@ -404,10 +455,10 @@ export class Ambience {
     }
   }
 
-  private panner(): StereoPannerNode {
+  private panner(dest?: AudioNode): StereoPannerNode {
     const p = this.ctx!.createStereoPanner();
     p.pan.value = Math.random() * 1.6 - 0.8;
-    p.connect(this.master!);
+    p.connect(dest ?? this.master!);
     return p;
   }
 

@@ -15,11 +15,13 @@
 @group(0) @binding(7) var<storage, read> moisture: array<f32>;
 @group(0) @binding(8) var<storage, read> water: array<f32>;
 @group(0) @binding(9) var<storage, read> surface: array<u32>;
+// oil sealed in closed tanks also burns (inside the shell) once lit
+@group(0) @binding(10) var<storage, read> stored: array<vec2<f32>>;
 
 const MAT_TRASH_F: u32 = 12u;
 
 fn fuelAt(i: u32) -> f32 {
-  var f = min(oil[i], 1.0) * 3.0;
+  var f = min(oil[i] + stored[i].x, 1.0) * 3.0;
   let v = veg[i];
   f += smoothstep(0.5, 2.0, v) * 0.6 + smoothstep(3.0, 5.0, v) * 0.6;
   if (sfMat(surface[i]) == MAT_TRASH_F) { f += 0.8; }
@@ -40,7 +42,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // lightning ignites fuel at the strike
   for (var e = 0u; e < numEvents(); e++) {
-    if (u32(G.eventKind[e]) != EV_LIGHTNING) { continue; }
+    if (evKind(e) != EV_LIGHTNING) { continue; }
     let ev = G.events[e];
     if (length(vec2<f32>(p) + 0.5 - ev.xy) < 2.5 && fuel > 0.2) { f = max(f, 0.9); }
   }

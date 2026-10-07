@@ -131,12 +131,17 @@ export class Powers {
       case MAT.Asphalt:
         audio.chip();
         particles.burst({ kind: PK.Chip, x, y, z, count: 7, speed: 3.5, spread: 0.4 });
+        // real (small) decay: cracks show, and a dozen taps will bring a piece down
+        if (hit.mat !== MAT.Asphalt) {
+          this.d.globals.events.push({ kind: EventKind.Chip, x, y, z: hit.z, radius: 1.8, strength: 1 });
+        }
         particles.burst({ kind: PK.Dust, x, y, z, count: 6, speed: 1.2, spread: 0.6 });
         break;
       case MAT.Water:
       case MAT.Oil:
         audio.splash();
-        particles.burst({ kind: PK.Splash, x, y, z, count: 10, speed: 4, spread: 0.3 });
+        // the picked z is floored: start the spray clearly above the surface
+        particles.burst({ kind: PK.Splash, x, y, z: hit.z + 1.4, count: 24, speed: 4.5, spread: 0.25 });
         break;
       default:
         particles.burst({ kind: PK.Dust, x, y, z, count: 8, speed: 1.6, spread: 0.6 });

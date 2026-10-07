@@ -104,7 +104,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // event damage reaching this column (falls off with distance and depth below the top)
   var hit = 0.0;
   for (var e = 0u; e < numEvents(); e++) {
-    if (u32(G.eventKind[e]) != EV_LIGHTNING) { continue; }
+    if (evKind(e) != EV_LIGHTNING) { continue; }
     let ev = G.events[e];
     let d = length(vec2<f32>(p) + 0.5 - ev.xy);
     let f = clamp(1.0 - d / ev.z, 0.0, 1.0);
@@ -150,6 +150,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       dmg = min(15u, dmg + u32(hit * exp(-depth / 8.0)));
     }
     dmg = hydraulicDamage(p, z0, z1, dmg, m, i);
+    // taps chip the interval they touched (cosmetic decay that adds up)
+    for (var e = 0u; e < numEvents(); e++) {
+      if (evKind(e) != EV_CHIP) { continue; }
+      let ev = G.events[e];
+      let ez = evZ(e);
+      if (length(vec2<f32>(p) + 0.5 - ev.xy) < ev.z && ez + 1u >= z0 && ez <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
+    }
     if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < HEAT_RATE * heat * (1.2 - MATS[m].sim.w)) {
       dmg = min(15u, dmg + 1u);
     }

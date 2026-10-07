@@ -17,8 +17,10 @@ export interface MapData {
   contam: Float32Array;
   moisture: Float32Array;
   vegetation: Float32Array;
-  /** Initial oil depth per column (stored in open tanks). */
+  /** Initial free oil depth per column. */
   oil: Float32Array;
+  /** Oil sealed inside closed tanks: per column [amount, roof z]; released when breached. */
+  oilStored: Float32Array;
   /** Water added per sim tick per column (springs). */
   waterSource: Float32Array;
   /** Initial surface height for CPU-side queries (storm steering, camera). */
@@ -147,6 +149,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
   const vegetation = new Float32Array(N);
   const waterSource = new Float32Array(N);
   const oil = new Float32Array(N);
+  const oilStored = new Float32Array(N * 2);
 
   // Terrain columns
   for (let y = 0; y < h; y++) {
@@ -223,9 +226,9 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
   buildRuin(grid, 146, 78, 172, 100, 3, 5, MAT.Concrete, ruinRand, 0.35);
   buildRuin(grid, 180, 80, 194, 94, 5, 4, MAT.Concrete, ruinRand, 0.5);
   buildRuin(grid, 150, 104, 162, 114, 2, 4, MAT.Brick, ruinRand, 0.3);
-  buildTank(grid, 186, 116, 6, 9, oil);
-  buildTank(grid, 200, 104, 5, 7, oil);
-  buildTank(grid, 202, 122, 4, 6, oil);
+  buildTank(grid, 186, 116, 6, 9, oilStored);
+  buildTank(grid, 200, 104, 5, 7, oilStored);
+  buildTank(grid, 202, 122, 4, 6, oilStored);
   // rubble mounds and wrecks
   for (let k = 0; k < 14; k++) {
     const cx = SITE.x0 + 4 + Math.floor(r() * (SITE.x1 - SITE.x0 - 8));
@@ -345,6 +348,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     vegetation,
     waterSource,
     oil,
+    oilStored,
     surface,
     poi: {
       reservoir: RESERVOIR,
@@ -415,11 +419,11 @@ function buildRuin(
 }
 
 /**
- * An open-topped storage tank: a rusting ring wall on a concrete foundation,
- * holding oil (the oil field sits on the tank floor). Rupture the wall and the
- * oil spills out through the liquid simulation.
+ * A closed storage tank: rusting ring wall and roof on a concrete foundation,
+ * full of oil that is invisible until the shell is breached (roof or wall
+ * fails); then the oil system releases it into the world.
  */
-function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height: number, oil: Float32Array) {
+function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height: number, stored: Float32Array) {
   const w = grid.dims.w;
   const cells: [number, number][] = [];
   for (let y = cy - rad - 1; y <= cy + rad + 1; y++)
@@ -428,11 +432,16 @@ function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height
   for (const [x, y] of cells) {
     const d = Math.hypot(x - cx, y - cy);
     if (d > rad + 0.3) continue;
+    // a slightly domed roof
+    const dome = Math.round(Math.sqrt(Math.max(0, 1 - (d / (rad + 0.3)) ** 2)) * 1.5);
     if (d > rad - 0.9) {
       grid.push(x, y, base, base + height, MAT.Rust); // wall
     } else {
       grid.push(x, y, base, base + 1, MAT.Rust); // floor
-      oil[y * w + x] = (height - 1) * 0.7;
+      grid.push(x, y, base + height - 1, base + height + dome, MAT.Rust); // roof
+      const i = y * w + x;
+      stored[i * 2] = (height - 2) * 0.75;
+      stored[i * 2 + 1] = base + height - 1; // breached if the column top drops below this
     }
   }
 }

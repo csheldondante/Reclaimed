@@ -44,6 +44,8 @@ export class WorldGpu {
   readonly oilNext: GPUBuffer;
   /** vec4 oil volume leaving toward +x,-x,+y,-y this tick */
   readonly oilFlux: GPUBuffer;
+  /** vec2 per column: oil sealed in a closed tank (amount, roof z) — oil system releases it on breach */
+  readonly oilStored: GPUBuffer;
 
   // environmental fields
   /** vec2: soil-bound, dissolved */
@@ -117,6 +119,8 @@ export class WorldGpu {
     this.oilNext = this.buf('oilNext', N * 4, S);
     this.oilFlux = this.buf('oilFlux', N * 16, S);
     device.queue.writeBuffer(this.oil, 0, map.oil);
+    this.oilStored = this.buf('oilStored', N * 8, S);
+    device.queue.writeBuffer(this.oilStored, 0, map.oilStored);
 
     this.contam = this.buf('contam', N * 8, S);
     this.contamNext = this.buf('contamNext', N * 8, S);
