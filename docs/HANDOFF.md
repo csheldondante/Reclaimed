@@ -1,4 +1,25 @@
-# Handoff — 2026-10-07 (end of session 1)
+# Handoff — 2026-10-07 (session 2)
+
+## Session 2 (round 4 feedback) — done, needs the user's eyes/ears
+
+All twelve round-4 items are implemented (DECISIONS round 4; DEVLOG has the
+measurements): advected smooth wind; drag-wind everywhere that steers storms
+(no arrow); ground debris lifted by wind; dust storms + haze; a high, thin
+storm deck with rain from its base and a lighter storm shade; whole-scene
+lightning flash; moon arc + soft sliding shadows; perching birds that flush
+only from trees they're in; ambient/click audio buses with zoom and
+distance falloff; sludge pools, oil slicks and trash heaps; goal 45 %; a new
+higher-resolution menu skull, ribcage and dust mound.
+
+To check with the user:
+- **Audio** (never heard by an agent): ambient level vs. clicks, zoom
+  falloff, drag whoosh, flutter only when birds really leave.
+- Wind feel: is the drag gust strong enough? (strength = cursor speed × 0.12)
+- Shadows do move with the sun, but an 8-minute day makes it slow to notice;
+  a shorter day (`?day=`) is a design call.
+- Dust storms at the start: two cross the map in the first ~minute.
+- Sludge is persistent until diluted/flushed; is the cleanup loop clear?
+
 
 For the next agent session. Read `CLAUDE.md` first (rules, commands, gotchas).
 
