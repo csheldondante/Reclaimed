@@ -367,3 +367,30 @@ sharper and more pronounced; wants to see rain in motion.
   current light (first pass left white sparkles on water/oil at night);
   **fireflies** (glowing, unlit particles) drift over living land; audio
   shifts from birds to insects.
+
+## 2026-10-07 — phase 4: fire and the industrial cascade
+
+- **Fire system** (`fire.wgsl`, every tick — at period 2 it missed one-tick
+  lightning events on odd ticks): intensity per column; fuel = oil (best),
+  vegetation (grass fast, forest hot), loose waste. Race-free gather spread:
+  a column catches from burning neighbours with chance ∝ their intensity ×
+  own fuel × dryness × wind blowing *from* them. Water, rain and wet soil
+  damp it. Lightning ignites fuel within 2.5 cells of the strike.
+- **Consumers burn their own resource** (contract: `fire` buffer): oil system
+  burns oil (that's how fire clears a slick); ecology burns plants (grass
+  instantly, trees slowly); structure takes heat damage near flames (steel
+  more than concrete) and burns loose waste down a cell at a time; particles
+  emit flames, smoke and embers (`fireEmit` kernel); render fields carry a
+  blurred fire glow that lights nearby walls with flickering orange.
+- **Render fields**: shadow, moisture, fire glow and net-flow speed are packed
+  into one vec4 per column (`renderfields.wgsl`, replaces `shadow.wgsl`) so
+  the draw shaders use 6 of 8 storage slots instead of 8+.
+- **Measured cascade** (strike into a full tank at dusk, no other input):
+  tank ignites → ~90 burning cells, smoke plume, embers → heat ruptures the
+  wall (collapses 15 → 167) → burning oil spills → oil 806 → 447 in 20 s →
+  burnt-out shell at 40 s. First pass burned out before heat could rupture
+  the tank; oil burn halved, steel heat damage ×2.7.
+- Litter now only lifts in storm/gust-strength wind (> 5.5 cells/s): at
+  normal breezes the landfill was emptying itself into the air (~3k litter
+  particles), cleaning itself with no leverage.
+- Audio: crackles and pops scale with burning cells.

@@ -16,6 +16,8 @@ export interface AudioState {
   wind: number;
   /** 0 day .. 1 night */
   night: number;
+  /** 0..1 how much is burning nearby */
+  fire: number;
 }
 
 export class Ambience {
@@ -157,6 +159,12 @@ export class Ambience {
       const rate = s.life * s.life * 0.9 * (1 - Math.min(1, s.rain) * 0.8) * (1 - s.night * 0.9); // calls / s
       if (rate > 0.01 && Math.random() < 0.85) this.birdCall();
       this.nextBird = t + (rate > 0.01 ? 0.4 + Math.random() * (2 / rate) : 2);
+    }
+    // fire: crackles and pops, denser the more is burning
+    if (s.fire > 0.01 && Math.random() < s.fire * 0.5) {
+      const pan = this.panner();
+      this.noiseHit(pan, t + Math.random() * 0.05, 1500 + Math.random() * 3000, 3, 0.04 + s.fire * 0.08, 0.04);
+      if (Math.random() < 0.15) this.noiseHit(pan, t, 300, 1, 0.05 * s.fire, 0.5);
     }
     if (t > this.nextRattle) {
       // debris rattle: lonely sound of a dead place

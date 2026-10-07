@@ -55,8 +55,13 @@ export class WorldGpu {
   readonly veg: GPUBuffer;
   readonly vegNext: GPUBuffer;
 
+  /** fire intensity 0..1 per column (fire system owns writes) */
+  readonly fire: GPUBuffer;
+  readonly fireNext: GPUBuffer;
+
   // render preparation
-  readonly shadow: GPUBuffer;
+  /** vec4 per column: shadow z, moisture, fire glow, flow speed (renderfields.wgsl) */
+  readonly renderFields: GPUBuffer;
 
   /** u32 aggregate counters, see src/sim/stats.ts */
   readonly stats: GPUBuffer;
@@ -123,7 +128,9 @@ export class WorldGpu {
     this.vegNext = this.buf('vegNext', N * 4, S);
     device.queue.writeBuffer(this.veg, 0, map.vegetation);
 
-    this.shadow = this.buf('shadow', N * 4, S);
+    this.fire = this.buf('fire', N * 4, S);
+    this.fireNext = this.buf('fireNext', N * 4, S);
+    this.renderFields = this.buf('renderFields', N * 16, S);
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
     this.particleCap = particleCap;

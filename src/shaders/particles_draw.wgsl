@@ -60,7 +60,17 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     let a = clamp(life / 2.0, 0.0, 1.0) * clamp((12.0 - life) / 2.0, 0.0, 1.0);
     col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.8, 0.81, 0.82), sr2), 0.24 * a);
   } else if (kind == 7u) { col = vec4<f32>(0.8, 0.86, 0.9, 0.7); size = 0.1; }
-  else if (kind == 8u) { col = vec4<f32>(0.35, 0.34, 0.33, 0.35); size = 0.5 + sr; soft = 1.0; }
+  else if (kind == 8u) { // smoke: grows and thins as it rises
+    let age = clamp(1.0 - P.p.w / 11.0, 0.0, 1.0);
+    col = vec4<f32>(vec3<f32>(0.22, 0.21, 0.2) + age * 0.15, 0.45 * (1.0 - age) * clamp(P.p.w, 0.0, 1.0));
+    size = 0.6 + age * 2.5 + sr;
+    soft = 1.0;
+  }
+  else if (kind == 12u) { // flame tongue: yellow core to red tip as it burns out
+    let t = clamp(P.p.w / 0.9, 0.0, 1.0);
+    col = vec4<f32>(mix(vec3<f32>(0.9, 0.25, 0.05), vec3<f32>(1.0, 0.85, 0.35), t), 0.9);
+    size = 0.18 + 0.22 * t;
+  }
   else if (kind == 9u) { col = vec4<f32>(1.0, 0.6, 0.2, 1.0); size = 0.09; }
   else if (kind == 11u) { // firefly: unlit glow, pulsing
     size = 0.13;
@@ -74,7 +84,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size *= 0.6 + 0.6 * flap;
   }
   if (soft == 0.0) { col.a *= fade; }
-  if (kind != 9u && kind != 11u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w), col.a); }
+  if (kind != 9u && kind != 11u && kind != 12u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w), col.a); }
   let c = CORNERS[vi];
   let center = CAM.viewProj * vec4<f32>(P.p.xyz, 1.0);
   // world-size square in screen space: viewport.z = px per world unit

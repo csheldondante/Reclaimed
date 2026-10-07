@@ -17,7 +17,8 @@ import waterDepthWgsl from '../shaders/water_depth.wgsl?raw';
 import contamWgsl from '../shaders/contamination.wgsl?raw';
 import moistureWgsl from '../shaders/moisture.wgsl?raw';
 import ecologyWgsl from '../shaders/ecology.wgsl?raw';
-import shadowWgsl from '../shaders/shadow.wgsl?raw';
+import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
+import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
@@ -68,8 +69,8 @@ export class StructureSystem implements SimSystem {
       world,
       'structure',
       structureWgsl + flowWgsl,
-      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read' },
-      { 3: world.layers, 4: world.layersNext, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux },
+      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
+      { 3: world.layers, 4: world.layersNext, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
       true,
     );
   }
@@ -149,8 +150,8 @@ export class OilSystem implements SimSystem {
       world,
       'oil-depth',
       oilDepthWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read' },
-      { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface },
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read', 9: 'read' },
+      { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface, 9: world.fire },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -210,8 +211,8 @@ export class EcologySystem implements SimSystem {
       world,
       'ecology',
       ecologyWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 9: 'read' },
-      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 9: world.oil },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 9: 'read', 10: 'read' },
+      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 9: world.oil, 10: world.fire },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -220,15 +221,44 @@ export class EcologySystem implements SimSystem {
   }
 }
 
-export class ShadowSystem implements SimSystem {
-  readonly name = 'shadow';
-  readonly period = 6;
+/** Packs render-only fields (shadow, moisture, fire glow, flow) for the draw shaders. */
+export class RenderFieldsSystem implements SimSystem {
+  readonly name = 'renderfields';
+  readonly period = 2;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'shadow', shadowWgsl, { 3: 'read', 4: 'rw' }, { 3: world.surface, 4: world.shadow });
+    this.s = kernel(
+      device,
+      world,
+      'renderfields',
+      renderFieldsWgsl + flowWgsl,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw' },
+      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields },
+    );
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+  }
+}
+
+export class FireSystem implements SimSystem {
+  readonly name = 'fire';
+  // every tick: it must see one-tick lightning events
+  readonly period = 1;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(
+      device,
+      world,
+      'fire',
+      fireWgsl,
+      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
+      { 3: world.fire, 4: world.fireNext, 5: world.oil, 6: world.veg, 7: world.moisture, 8: world.water, 9: world.surface },
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    enc.copyBufferToBuffer(this.world.fireNext, 0, this.world.fire, 0, this.world.fire.size);
   }
 }
 
@@ -244,6 +274,7 @@ export const STAT = {
   wetCells: 7,
   matureCells: 8,
   oil: 9,
+  fire: 10,
   collapsed: 14,
   overflow: 15,
 } as const;
@@ -259,6 +290,7 @@ export interface WorldStats {
   wetCells: number;
   matureCells: number;
   oilVolume: number;
+  fireCells: number;
   collapsed: number;
   overflow: number;
   cells: number;
@@ -279,8 +311,8 @@ export class StatsSystem implements SimSystem {
       world,
       'stats',
       statsWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read' },
-      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats, 8: world.oil },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read' },
+      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats, 8: world.oil, 9: world.fire },
     );
     for (let i = 0; i < 3; i++)
       this.staging.push({
@@ -314,6 +346,7 @@ export class StatsSystem implements SimSystem {
           wetCells: u[STAT.wetCells],
           matureCells: u[STAT.matureCells],
           oilVolume: u[STAT.oil] / 1000,
+          fireCells: u[STAT.fire],
           collapsed: u[STAT.collapsed],
           overflow: u[STAT.overflow],
           cells,

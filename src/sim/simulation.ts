@@ -10,7 +10,8 @@ import {
   MaterialSystem,
   MoistureSystem,
   OilSystem,
-  ShadowSystem,
+  RenderFieldsSystem,
+  FireSystem,
   StatsSystem,
   StructureSystem,
   SurfaceSystem,
@@ -26,7 +27,7 @@ export class Simulation {
   readonly systems: SimSystem[];
   readonly stats: StatsSystem;
   readonly surface: SurfaceSystem;
-  readonly shadow: ShadowSystem;
+  readonly shadow: RenderFieldsSystem;
   readonly particles: ParticleSystem;
   tick = 0;
   private globalsData = new ArrayBuffer(GLOBALS_BYTES);
@@ -39,7 +40,7 @@ export class Simulation {
     profiler: Profiler,
   ) {
     this.surface = new SurfaceSystem(device, world, profiler);
-    this.shadow = new ShadowSystem(device, world, profiler);
+    this.shadow = new RenderFieldsSystem(device, world, profiler);
     this.stats = new StatsSystem(device, world, profiler);
     this.particles = new ParticleSystem(device, world, profiler);
     // Order matters only through the contract buffers each system reads.
@@ -51,6 +52,7 @@ export class Simulation {
       new OilSystem(device, world, profiler),
       new ContaminationSystem(device, world, profiler),
       new MoistureSystem(device, world, profiler),
+      new FireSystem(device, world, profiler),
       new EcologySystem(device, world, profiler),
       this.particles,
       this.shadow,

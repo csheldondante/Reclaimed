@@ -10,11 +10,10 @@ struct Camera {
 
 @group(0) @binding(3) var<storage, read> instances: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> contam: array<vec2<f32>>;
-@group(0) @binding(5) var<storage, read> moisture: array<f32>;
 @group(0) @binding(6) var<storage, read> veg: array<f32>;
-@group(0) @binding(7) var<storage, read> shadow: array<f32>;
+// packed per-column render fields: x shadow z, y moisture, z fire glow, w flow speed
+@group(0) @binding(7) var<storage, read> fields: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read> water: array<f32>;
-@group(0) @binding(9) var<storage, read> flux: array<vec4<f32>>;
 @group(0) @binding(10) var<uniform> CAM: Camera;
 @group(0) @binding(11) var<storage, read> surface: array<u32>;
 
@@ -121,7 +120,7 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sun = sunDir();
   let ndl = max(dot(nrm, sun), 0.0);
   let sc = clampCell(vec2<i32>(floor(wpos.xy + nrm.xy * 0.5)));
-  let lit = select(0.0, 1.0, wpos.z >= shadow[colIdxI(sc)] - 0.05);
+  let lit = select(0.0, 1.0, wpos.z >= fields[colIdxI(sc)].x - 0.05);
   let cloud = cloudShade(wpos.xy);
   // light comes from the day/night cycle (src/weather/daynight.ts)
   let sunCol = G.sunCol.rgb;
@@ -131,7 +130,11 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // warm bounce light from the opposite side keeps shaded faces readable
   let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (1.0 - cloud * 0.5) * (0.15 + 0.85 * day);
   let flash = G.misc.z * vec3<f32>(1.1, 1.2, 1.5) * (0.6 + 0.4 * nrm.z);
-  return ambient + fill + flash + sunCol * ndl * lit * (1.0 - cloud * 0.93);
+  // firelight: flickering orange from nearby flames (render fields .z)
+  let glow = fields[colIdxI(sc)].z;
+  let flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y));
+  let firelight = vec3<f32>(1.8, 0.75, 0.25) * glow * flick;
+  return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.93);
 }
 
 fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
@@ -220,7 +223,7 @@ fn fsBox(in: VOut) -> FOut {
       alb = mix(alb, vec3<f32>(lum), 0.25 * G.pollution);
     }
     // wet surfaces darken
-    let m = moisture[ci];
+    let m = fields[ci].y;
     alb *= 1.0 - porosity * 0.5 * smoothstep(0.15, 0.9, m);
 
     // vegetation cover (dithered at sub-cell resolution)
@@ -257,7 +260,7 @@ fn fsWater(in: VOut) -> FOut {
   let gl = gridLines(in.wpos, in.nrm);
   if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
   let d = water[ci];
-  let flow = length(netFlow(cell));
+  let flow = fields[ci].w;
   let deep = 1.0 - exp(-d * 0.45);
   var c = mix(vec3<f32>(0.30, 0.45, 0.44), vec3<f32>(0.07, 0.19, 0.25), deep);
   let conc = contam[ci].y / max(d, 0.05);

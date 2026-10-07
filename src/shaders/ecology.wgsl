@@ -12,6 +12,7 @@
 @group(0) @binding(8) var<storage, read_write> vegOut: array<f32>;
 // oil smothers plants and blocks colonisation
 @group(0) @binding(9) var<storage, read> oil: array<f32>;
+@group(0) @binding(10) var<storage, read> fire: array<f32>;
 
 const TOX_LIMIT: f32 = 0.2;
 
@@ -32,7 +33,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var v = vegIn[i];
   let r = rand3(id.x, id.y, G.tick ^ 0x5eedu);
 
-  if (oiled) {
+  if (fire[i] > 0.15) {
+    // burning: grass goes in a moment, trees take longer
+    v = max(0.0, v - fire[i] * mix(0.6, 0.25, smoothstep(2.0, 4.0, v)));
+  } else if (oiled) {
     v = max(0.0, v - 0.06);
   } else if (d > 0.5) {
     v = max(0.0, v - 0.04);

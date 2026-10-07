@@ -312,6 +312,7 @@ async function main() {
       rain: weather.rainAt(camera.target[0], camera.target[1]),
       flow: stats ? Math.min(1, stats.flow / 40) : 0,
       night: light.night,
+      fire: stats ? Math.min(1, stats.fireCells / 120) : 0,
       wind: Math.min(1, Math.hypot(weather.windX, weather.windY) / 6 + weather.storms.reduce((a, s) => a + s.intensity * 0.3, 0)),
     });
     perf.update(

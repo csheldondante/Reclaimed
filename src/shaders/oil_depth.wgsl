@@ -8,6 +8,9 @@
 @group(0) @binding(6) var<storage, read> water: array<f32>;
 @group(0) @binding(7) var<storage, read_write> contamDelta: array<atomic<i32>>;
 @group(0) @binding(8) var<storage, read> surface: array<u32>;
+// burning oil is consumed (that is how fire clears a slick)
+@group(0) @binding(9) var<storage, read> fire: array<f32>;
+const OIL_BURN: f32 = 0.002;
 
 const SOAK: f32 = 0.0004;
 const STAIN_PER_OIL: f32 = 1.5;
@@ -23,7 +26,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = p + DIRS[k];
     if (inMap(q)) { o += oilFlux[colIdxI(q)][k ^ 1u]; }
   }
-  o = max(o, 0.0);
+  o = max(o - fire[i] * OIL_BURN, 0.0);
   // only loose, porous ground (soil, sand, rubble, waste) soaks oil up; tanks,
   // concrete and asphalt hold it
   let porous = matState(sfMat(surface[i])) == ST_GRANULAR;

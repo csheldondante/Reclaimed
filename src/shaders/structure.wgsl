@@ -20,6 +20,10 @@
 @group(0) @binding(6) var<storage, read> surface: array<u32>;
 @group(0) @binding(7) var<storage, read> water: array<f32>;
 @group(0) @binding(8) var<storage, read> flux: array<vec4<f32>>;
+// heat: fire weakens steel and concrete nearby, and burns loose waste away
+@group(0) @binding(9) var<storage, read> fire: array<f32>;
+const HEAT_RATE: f32 = 0.016;
+const MAT_TRASH_S: u32 = 12u;
 
 // Hydraulic loading (the dam-breach mechanic, but generic):
 //  * A *cracked* (damage > 0) solid interval holding back water of head H
@@ -107,6 +111,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     hit = max(hit, ev.w * sqrt(f));
   }
 
+  // heat reaching this column: its own fire or a burning neighbour
+  var heat = fire[colIdxI(p)];
+  for (var k = 0u; k < 4u; k++) {
+    let q = p + DIRS[k];
+    if (inMap(q)) { heat = max(heat, fire[colIdxI(q)] * 0.8); }
+  }
+  let selfFire = fire[colIdxI(p)];
+
   let collapseOn = G.misc.y > 0.5;
   var prevTop = 0u;
   var prevSup = GROUND;
@@ -120,6 +132,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (touching) { s = prevSup; }
     if (!isStructural(m)) {
       if (isSolid(m)) { s = GROUND; }
+      // loose waste on top burns down a cell at a time
+      if (m == MAT_TRASH_S && i + 1u == n && selfFire > 0.3 && rand3(id.x, id.y, G.tick ^ 0xa5u) < 0.03 * selfFire) {
+        layersOut[cs.x + i] = select(0u, ivPack(z0, z1 - 1u, m, ivAux(v)), z1 - 1u > z0);
+        prevTop = z1;
+        prevSup = s;
+        continue;
+      }
       layersOut[cs.x + i] = v;
       prevTop = z1;
       prevSup = s;
@@ -131,6 +150,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       dmg = min(15u, dmg + u32(hit * exp(-depth / 8.0)));
     }
     dmg = hydraulicDamage(p, z0, z1, dmg, m, i);
+    if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < HEAT_RATE * heat * (1.2 - MATS[m].sim.w)) {
+      dmg = min(15u, dmg + 1u);
+    }
     if (!touching) {
       var lat = 0u;
       for (var k = 0u; k < 4u; k++) { lat = max(lat, lateral(p + DIRS[k], z0, z1)); }

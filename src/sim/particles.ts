@@ -21,6 +21,7 @@ export const enum PK {
   Ember = 9,
   Bird = 10,
   Firefly = 11,
+  Flame = 12,
 }
 
 export interface Burst {
@@ -43,6 +44,8 @@ export class ParticleSystem implements SimSystem {
   private emitK: ComputeKernel;
   private burstK: ComputeKernel;
   private updateK: ComputeKernel;
+  private fireK: ComputeKernel;
+  private groupFire: GPUBindGroup;
   private group: GPUBindGroup;
   private groupBurst: GPUBindGroup;
   private groupUpdate: GPUBindGroup;
@@ -72,6 +75,7 @@ export class ParticleSystem implements SimSystem {
     this.emitK = makeCompute(device, 'particles-emit', parts, spec, 'emit');
     this.burstK = makeCompute(device, 'particles-burst', parts, spec, 'bursts');
     this.updateK = makeCompute(device, 'particles-update', parts, spec, 'update');
+    this.fireK = makeCompute(device, 'particles-fire', parts, { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read' }, 'fireEmit');
     this.reqBuf = world.buf('particleRequests', this.reqData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const bufs = {
       0: world.globals,
@@ -89,6 +93,14 @@ export class ParticleSystem implements SimSystem {
     this.group = makeBindGroup(device, 'particles', this.emitK.layout, bufs);
     this.groupBurst = makeBindGroup(device, 'particles', this.burstK.layout, bufs);
     this.groupUpdate = makeBindGroup(device, 'particles', this.updateK.layout, bufs);
+    this.groupFire = makeBindGroup(device, 'particles-fire', this.fireK.layout, {
+      0: world.globals,
+      2: world.materials,
+      3: world.particles,
+      4: world.particleCounters,
+      5: world.surface,
+      12: world.fire,
+    });
   }
 
   /** Queue a burst; spawned on the next tick. */
@@ -98,6 +110,7 @@ export class ParticleSystem implements SimSystem {
 
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, 'particles-emit', this.emitK, this.group, this.world.groups);
+    dispatch(enc, this.prof, 'particles-fire', this.fireK, this.groupFire, this.world.groups);
     if (this.queue.length) {
       const d = this.reqData;
       d.fill(0);

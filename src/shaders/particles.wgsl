@@ -24,6 +24,8 @@ struct Particle {
 @group(0) @binding(10) var<storage, read> moisture: array<f32>;
 // CPU bursts: [0].x = count; then pairs (x, y, z, n) (kind, speed, payload, spread)
 @group(0) @binding(11) var<uniform> requests: array<vec4<f32>, 129>;
+// only the fireEmit entry uses this
+@group(0) @binding(12) var<storage, read> fire: array<f32>;
 
 const K_DUST: u32 = 1u;
 const K_LITTER: u32 = 2u;
@@ -36,6 +38,7 @@ const K_SMOKE: u32 = 8u;
 const K_EMBER: u32 = 9u;
 const K_BIRD: u32 = 10u;
 const K_FIREFLY: u32 = 11u;
+const K_FLAME: u32 = 12u;
 
 const DT: f32 = 1.0 / 60.0;
 // storm cloud deck height (cells): low enough that clouds stay on screen near
@@ -92,7 +95,8 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       spawn(base + jit, vec3<f32>(wind * 0.6, 0.8 + r2 * 1.5), 6.0 + r2 * 6.0, K_DUST, payload, h);
     }
     // loose waste blows about as litter
-    if (m == MAT_TRASH_P && r2 < max(ws - 2.5, 0.0) * 0.004 * dry) {
+    // only storm/gust-strength wind lifts litter, or the landfill would empty itself
+    if (m == MAT_TRASH_P && r2 < max(ws - 5.5, 0.0) * 0.0015 * dry) {
       let payload = min(cs * 0.06, 0.03);
       atomicSub(&contamDelta[i], i32(payload * FIX));
       spawn(base + vec3<f32>(r1 - 0.5, 0.0, 0.3), vec3<f32>(wind * 0.4, 1.5 + r1 * 2.0), 40.0, K_LITTER, payload, h);
@@ -115,6 +119,25 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       spawn(vec3<f32>(vec2<f32>(p) + 0.5, z), vec3<f32>(G.stormsB[k].xy, 0.0), 7.0 + r1 * 5.0, K_CLOUD, 0.0, h);
     }
   }
+}
+
+// ---- flames, smoke and embers from burning columns ----
+@compute @workgroup_size(8, 8)
+fn fireEmit(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let i = colIdx(id.x, id.y);
+  let f = fire[i];
+  if (f < 0.08) { return; }
+  let h = hash3(id.x, id.y, G.tick ^ 0xf1a3u);
+  let r1 = f32(h & 1023u) / 1023.0;
+  let r2 = f32((h >> 10u) & 1023u) / 1023.0;
+  let r3 = f32((h >> 20u) & 1023u) / 1023.0;
+  let g = f32(sfZ(surface[i]));
+  let base = vec3<f32>(f32(id.x) + r2, f32(id.y) + r3, g + 0.2);
+  let w = windAt(base);
+  if (r1 < f * 0.35) { spawn(base, vec3<f32>(w * 0.15, 2.5 + r2 * 2.0), 0.45 + r3 * 0.5, K_FLAME, 0.0, h); }
+  if (r2 < f * 0.07) { spawn(base + vec3<f32>(0.0, 0.0, 1.5), vec3<f32>(w * 0.3, 1.2), 6.0 + r1 * 5.0, K_SMOKE, 0.0, h ^ 77u); }
+  if (r3 < f * 0.015) { spawn(base, vec3<f32>(w * 0.2 + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.0, 4.0 + r1 * 3.0), 2.0 + r2 * 1.5, K_EMBER, 0.0, h ^ 99u); }
 }
 
 // ---- CPU-requested bursts (clicks, strikes, chips, birds) ----
@@ -192,6 +215,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     drag = 1.2; grav = -0.4;
   } else if (kind == K_CHIP || kind == K_SPLASH) {
     drag = 0.3; grav = 14.0;
+  } else if (kind == K_FLAME) {
+    drag = 1.0; grav = -3.0;
   } else if (kind == K_FIREFLY) {
     // wander slowly, ignore most wind
     drag = 0.2; grav = 0.0;
@@ -211,7 +236,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   if (kind == K_FIREFLY && pos.z <= ground + 0.3) { pos.z = ground + 0.3; vel.z = abs(vel.z); }
-  if (kind != K_CLOUD && kind != K_BIRD && kind != K_FIREFLY && pos.z <= ground) {
+  if (kind != K_CLOUD && kind != K_BIRD && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
     if (kind == K_DUST) {
       depositAt(pos, P.v.w);
       parts[id.x].p.w = 0.0;
