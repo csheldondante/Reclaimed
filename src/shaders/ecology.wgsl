@@ -10,6 +10,8 @@
 @group(0) @binding(6) var<storage, read> water: array<f32>;
 @group(0) @binding(7) var<storage, read> vegIn: array<f32>;
 @group(0) @binding(8) var<storage, read_write> vegOut: array<f32>;
+// oil smothers plants and blocks colonisation
+@group(0) @binding(9) var<storage, read> oil: array<f32>;
 
 const TOX_LIMIT: f32 = 0.2;
 
@@ -22,14 +24,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let cap = MATS[m].eco.x;
   let suit = MATS[m].eco.y;
   let c = contam[i].x;
-  let tox = clamp(1.0 - c / TOX_LIMIT, 0.0, 1.0);
+  let oiled = oil[i] > 0.02;
+  let tox = select(clamp(1.0 - c / TOX_LIMIT, 0.0, 1.0), 0.0, oiled);
   let wet = moisture[i];
   let mf = smoothstep(0.06, 0.35, wet);
   let d = water[i];
   var v = vegIn[i];
   let r = rand3(id.x, id.y, G.tick ^ 0x5eedu);
 
-  if (d > 0.5) {
+  if (oiled) {
+    v = max(0.0, v - 0.06);
+  } else if (d > 0.5) {
     v = max(0.0, v - 0.04);
   } else if (v > 0.0) {
     // pioneers (moss, grass) establish quickly; woody stages take much longer

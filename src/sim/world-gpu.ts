@@ -39,6 +39,12 @@ export class WorldGpu {
   readonly flux: GPUBuffer;
   readonly waterSource: GPUBuffer;
 
+  // oil: second liquid, floats on water (oil system owns writes)
+  readonly oil: GPUBuffer;
+  readonly oilNext: GPUBuffer;
+  /** vec4 oil volume leaving toward +x,-x,+y,-y this tick */
+  readonly oilFlux: GPUBuffer;
+
   // environmental fields
   /** vec2: soil-bound, dissolved */
   readonly contam: GPUBuffer;
@@ -101,6 +107,11 @@ export class WorldGpu {
     this.waterSource = this.buf('waterSource', N * 4, S);
     device.queue.writeBuffer(this.water, 0, map.water);
     device.queue.writeBuffer(this.waterSource, 0, map.waterSource);
+
+    this.oil = this.buf('oil', N * 4, S);
+    this.oilNext = this.buf('oilNext', N * 4, S);
+    this.oilFlux = this.buf('oilFlux', N * 16, S);
+    device.queue.writeBuffer(this.oil, 0, map.oil);
 
     this.contam = this.buf('contam', N * 8, S);
     this.contamNext = this.buf('contamNext', N * 8, S);

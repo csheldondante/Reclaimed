@@ -17,5 +17,6 @@ const MAT_WATER: u32 = 8u;
 const MAT_LEAVES: u32 = 9u;
 const MAT_WOOD: u32 = 10u;
 const MAT_TRASH: u32 = 12u;
+const MAT_OIL: u32 = 13u;
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }

@@ -9,6 +9,7 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
+import vegprepWgsl from '../shaders/vegprep.wgsl?raw';
 import renderWgsl from '../shaders/render.wgsl?raw';
 import rainWgsl from '../shaders/rain.wgsl?raw';
 import flowWgsl from '../shaders/flow.wgsl?raw';
@@ -29,6 +30,8 @@ export interface RenderOptions {
 export class Renderer {
   private prep: ComputeKernel;
   private prepGroup: GPUBindGroup;
+  private vegPrep: ComputeKernel;
+  private vegPrepGroup: GPUBindGroup;
   private opaquePipe: GPURenderPipeline;
   private waterPipe: GPURenderPipeline;
   private rainPipe: GPURenderPipeline;
@@ -64,7 +67,8 @@ export class Renderer {
     const N = world.cells;
     this.opaqueCapacity = N * (world.maxK + VEG_INSTANCES);
     this.instOpaque = world.buf('instOpaque', this.opaqueCapacity * 16, GPUBufferUsage.STORAGE);
-    this.instWater = world.buf('instWater', N * 16, GPUBufferUsage.STORAGE);
+    // up to two liquid boxes per column (water + oil)
+    this.instWater = world.buf('instWater', N * 2 * 16, GPUBufferUsage.STORAGE);
     this.indirect = world.buf(
       'indirect',
       32,
@@ -93,10 +97,27 @@ export class Renderer {
       3: world.layers,
       4: world.surface,
       5: world.water,
-      6: world.veg,
+      6: world.oil,
       7: this.instOpaque,
       8: this.instWater,
       9: this.indirect,
+    });
+
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegprepWgsl], {
+      0: 'uniform',
+      2: 'uniform',
+      3: 'read',
+      4: 'read',
+      5: 'rw',
+      6: 'rw',
+    });
+    this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, {
+      0: world.globals,
+      2: world.materials,
+      3: world.surface,
+      4: world.veg,
+      5: this.instOpaque,
+      6: this.indirect,
     });
 
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
@@ -224,8 +245,11 @@ export class Renderer {
       pass.setBindGroup(0, this.prepGroup);
       const [gx, gy] = this.world.groups;
       pass.dispatchWorkgroups(gx, gy);
+      pass.setPipeline(this.vegPrep.pipeline);
+      pass.setBindGroup(0, this.vegPrepGroup);
+      pass.dispatchWorkgroups(gx, gy);
       pass.end();
-      this.profiler.dispatches++;
+      this.profiler.dispatches += 2;
     }
 
     const pass = enc.beginRenderPass({

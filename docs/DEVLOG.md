@@ -301,3 +301,25 @@ sharper and more pronounced; wants to see rain in motion.
   at z≈70, which projects ~360 px above their shadow (off-screen). Dust made
   bigger/lighter; cloud deck lowered to z 34–42 and rain now falls from it.
 - Cost (iGPU): emit 0.03 ms + update 0.09 ms per tick at 64k capacity.
+
+## 2026-10-07 — phase 2b: oil, the second liquid; open tanks that rupture
+
+- **Oil system** (`oil_flux.wgsl`, `oil_depth.wgsl`): the same virtual-pipes
+  model as water, run on H = ground + water + oil, with lower gain/higher
+  friction (viscous), plus a *current drag* term — the share of the water
+  column moving each way pulls oil with it, so a river carries a slick. Water
+  feels oil's weight (density 0.88). Edges drain oil off the map like water.
+- **Oil is pollution**: on loose porous ground (granular top material) without
+  water it soaks in and becomes soil stain via `contamDelta`; ecology treats
+  oil > 0.02 as smothering (dieback, no colonisation). Stats gained oil
+  volume. Bug caught: soaking first applied everywhere, so during warmup the
+  tanks drained into their own steel floors (oil volume 0 at load).
+- **Tanks** are now open rust rings on foundations with oil standing inside
+  (70 % full). Lightning that breaches a wall spills the oil across the pad
+  (measured: 806 → 786 volume after a strike, the rest pooling on asphalt and
+  soaking into rubble).
+- **Rendering**: liquids derive depth from the instance z-range (one less
+  storage binding); oil is near-black with a faint thin-film sheen. Render-prep
+  was split — vegetation emission moved to `vegprep.wgsl` — so terrain/liquid
+  prep stays within 8 storage buffers.
+- Dust emission halved (visually noisy at close zoom).

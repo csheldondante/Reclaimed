@@ -10,6 +10,8 @@ import surfaceWgsl from '../shaders/surface.wgsl?raw';
 import materialWgsl from '../shaders/material.wgsl?raw';
 import structureWgsl from '../shaders/structure.wgsl?raw';
 import flowWgsl from '../shaders/flow.wgsl?raw';
+import oilFluxWgsl from '../shaders/oil_flux.wgsl?raw';
+import oilDepthWgsl from '../shaders/oil_depth.wgsl?raw';
 import waterFluxWgsl from '../shaders/water_flux.wgsl?raw';
 import waterDepthWgsl from '../shaders/water_depth.wgsl?raw';
 import contamWgsl from '../shaders/contamination.wgsl?raw';
@@ -109,8 +111,8 @@ export class WaterSystem implements SimSystem {
       world,
       'water-flux',
       waterFluxWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw' },
-      { 3: world.surface, 4: world.water, 5: world.flux },
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read' },
+      { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil },
     );
     this.depth = kernel(
       device,
@@ -125,6 +127,36 @@ export class WaterSystem implements SimSystem {
     dispatch(enc, this.prof, 'water-flux', this.flux.k, this.flux.group, this.world.groups);
     dispatch(enc, this.prof, 'water-depth', this.depth.k, this.depth.group, this.world.groups);
     enc.copyBufferToBuffer(this.world.waterNext, 0, this.world.water, 0, this.world.water.size);
+  }
+}
+
+export class OilSystem implements SimSystem {
+  readonly name = 'oil';
+  readonly period = 1;
+  private flux;
+  private depth;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.flux = kernel(
+      device,
+      world,
+      'oil-flux',
+      oilFluxWgsl,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'read' },
+      { 3: world.surface, 4: world.water, 5: world.oil, 6: world.oilFlux, 7: world.flux },
+    );
+    this.depth = kernel(
+      device,
+      world,
+      'oil-depth',
+      oilDepthWgsl,
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read' },
+      { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface },
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, 'oil-flux', this.flux.k, this.flux.group, this.world.groups);
+    dispatch(enc, this.prof, 'oil-depth', this.depth.k, this.depth.group, this.world.groups);
+    enc.copyBufferToBuffer(this.world.oilNext, 0, this.world.oil, 0, this.world.oil.size);
   }
 }
 
@@ -178,8 +210,8 @@ export class EcologySystem implements SimSystem {
       world,
       'ecology',
       ecologyWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw' },
-      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 9: 'read' },
+      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 9: world.oil },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -211,6 +243,7 @@ export const STAT = {
   cleanCells: 6,
   wetCells: 7,
   matureCells: 8,
+  oil: 9,
   collapsed: 14,
   overflow: 15,
 } as const;
@@ -225,6 +258,7 @@ export interface WorldStats {
   cleanCells: number;
   wetCells: number;
   matureCells: number;
+  oilVolume: number;
   collapsed: number;
   overflow: number;
   cells: number;
@@ -245,8 +279,8 @@ export class StatsSystem implements SimSystem {
       world,
       'stats',
       statsWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw' },
-      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read' },
+      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats, 8: world.oil },
     );
     for (let i = 0; i < 3; i++)
       this.staging.push({
@@ -279,6 +313,7 @@ export class StatsSystem implements SimSystem {
           cleanCells: u[STAT.cleanCells],
           wetCells: u[STAT.wetCells],
           matureCells: u[STAT.matureCells],
+          oilVolume: u[STAT.oil] / 1000,
           collapsed: u[STAT.collapsed],
           overflow: u[STAT.overflow],
           cells,

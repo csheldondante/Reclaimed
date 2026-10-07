@@ -29,6 +29,8 @@ struct VOut {
   @location(2) @interpolate(flat) info: vec2<u32>, // material, flags
   // large-scale ground patchiness; smooth, so evaluated per vertex (was per pixel)
   @location(3) tint: f32,
+  // the box's z range (liquids derive depth from it)
+  @location(4) @interpolate(flat) zr: vec2<f32>,
 };
 
 struct Box { x: f32, y: f32, sx: f32, sy: f32, z0: f32, z1: f32, mat: u32, flags: u32 };
@@ -64,6 +66,7 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   (*out).nrm = n;
   (*out).tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
   (*out).info = vec2<u32>(b.mat, b.flags);
+  (*out).zr = vec2<f32>(b.z0, b.z1);
   // per-face visibility computed in render-prep
   var hideBit = 64u;
   if (face == 1u) { hideBit = select(8u, 4u, sxn > 0.0); }
@@ -86,7 +89,7 @@ fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   var ok = boxVertex(b, vi, &o);
   // hide side faces that are inside a continuous body of water
   let face = vi / 6u;
-  if (face > 0u) {
+  if (face > 0u && b.mat != MAT_OIL) {
     let q = vec2<i32>(i32(b.x), i32(b.y)) + vec2<i32>(o.nrm.xy);
     if (inMap(q)) {
       let j = colIdxI(q);
@@ -247,6 +250,9 @@ fn fsBox(in: VOut) -> FOut {
 fn fsWater(in: VOut) -> FOut {
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
+  // derivatives must be taken in uniform control flow, before any branch
+  let gl = gridLines(in.wpos, in.nrm);
+  if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
   let d = water[ci];
   let flow = length(netFlow(cell));
   let deep = 1.0 - exp(-d * 0.45);
@@ -284,7 +290,7 @@ fn fsWater(in: VOut) -> FOut {
     let rsub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 3.0, t * 10.0)));
     col += vec3<f32>(0.25) * step(1.0 - 0.06 * rain, randv(rsub));
   }
-  col *= 1.0 - gridLines(in.wpos, in.nrm) * 0.3;
+  col *= 1.0 - gl * 0.3;
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
@@ -293,3 +299,25 @@ fn fsWater(in: VOut) -> FOut {
 }
 
 const WATER_MIN_R: f32 = 0.012;
+
+
+/** Oil: near-black, glossy, with a slow thin-film rainbow sheen on top. */
+fn shadeOil(in: VOut, ci: u32) -> FOut {
+  let d = in.zr.y - in.zr.x;
+  var c = toLinear(vec3<f32>(0.08, 0.065, 0.05));
+  var col = c * lighting(in.wpos, in.nrm);
+  if (in.nrm.z > 0.5) {
+    let n = vnoise(in.wpos.xy * 0.45 + vec2<f32>(G.time * 0.04, -G.time * 0.03)) * 2.0 + vnoise(in.wpos.xy * 1.3) * 0.6;
+    // cosine palette ≈ thin-film interference colours
+    let film = 0.5 + 0.5 * cos(6.2831 * (vec3<f32>(n) + vec3<f32>(0.0, 0.33, 0.67)));
+    col += toLinear(film) * 0.035 * (1.0 - cloudShade(in.wpos.xy));
+    let h = normalize(normalize(sunDir() + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
+    let spec = pow(max(h.z, 0.0), 30.0) * 0.25;
+    col += vec3<f32>(spec);
+  }
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), clamp(0.55 + d * 3.0, 0.55, 0.96));
+  o.pick = ci + 1u;
+  return o;
+}

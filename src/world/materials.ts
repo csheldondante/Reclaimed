@@ -44,6 +44,7 @@ export const MAT = {
   Wood: 10,
   Brick: 11,
   Trash: 12,
+  Oil: 13,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -72,6 +73,8 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'brick', albedo: [0.58, 0.34, 0.27], state: MatState.Solid, strength: 0.6, growthCap: 1.5, suitability: 0.3, porosity: 0.4 },
   // landfill waste: light, loose, easily carried by floods; rendered as multicoloured specks
   { ...NONE, name: 'trash', albedo: [0.52, 0.5, 0.47], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.1, growthCap: 1, suitability: 0.15, porosity: 0.2 },
+  // render-only id for the oil liquid field (oil lives in its own buffer, not in layers)
+  { ...NONE, name: 'oil', albedo: [0.07, 0.06, 0.05], state: MatState.Liquid, specular: 0.9 },
 ];
 
 export const MAX_MATERIALS = 32;

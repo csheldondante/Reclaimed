@@ -80,7 +80,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let cs = contam[i].x;
     var dustiness = clamp(cs, 0.0, 1.5) * 0.7;
     if (m == MAT_SOIL || m == MAT_SAND) { dustiness += 0.12; }
-    let rate = max(ws - 2.0, 0.0) * 0.0012 * dustiness * dry * (1.0 - cover);
+    let rate = max(ws - 2.0, 0.0) * 0.0006 * dustiness * dry * (1.0 - cover);
     if (r1 < rate) {
       var payload = 0.0;
       if (cs > 0.03) {

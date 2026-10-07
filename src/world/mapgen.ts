@@ -17,6 +17,8 @@ export interface MapData {
   contam: Float32Array;
   moisture: Float32Array;
   vegetation: Float32Array;
+  /** Initial oil depth per column (stored in open tanks). */
+  oil: Float32Array;
   /** Water added per sim tick per column (springs). */
   waterSource: Float32Array;
   /** Initial surface height for CPU-side queries (storm steering, camera). */
@@ -144,6 +146,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
   const moisture = new Float32Array(N);
   const vegetation = new Float32Array(N);
   const waterSource = new Float32Array(N);
+  const oil = new Float32Array(N);
 
   // Terrain columns
   for (let y = 0; y < h; y++) {
@@ -220,9 +223,9 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
   buildRuin(grid, 146, 78, 172, 100, 3, 5, MAT.Concrete, ruinRand, 0.35);
   buildRuin(grid, 180, 80, 194, 94, 5, 4, MAT.Concrete, ruinRand, 0.5);
   buildRuin(grid, 150, 104, 162, 114, 2, 4, MAT.Brick, ruinRand, 0.3);
-  buildTank(grid, 186, 116, 6, 9);
-  buildTank(grid, 200, 104, 5, 7);
-  buildTank(grid, 202, 122, 4, 6);
+  buildTank(grid, 186, 116, 6, 9, oil);
+  buildTank(grid, 200, 104, 5, 7, oil);
+  buildTank(grid, 202, 122, 4, 6, oil);
   // rubble mounds and wrecks
   for (let k = 0; k < 14; k++) {
     const cx = SITE.x0 + 4 + Math.floor(r() * (SITE.x1 - SITE.x0 - 8));
@@ -341,6 +344,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     moisture,
     vegetation,
     waterSource,
+    oil,
     surface,
     poi: {
       reservoir: RESERVOIR,
@@ -410,7 +414,13 @@ function buildRuin(
   }
 }
 
-function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height: number) {
+/**
+ * An open-topped storage tank: a rusting ring wall on a concrete foundation,
+ * holding oil (the oil field sits on the tank floor). Rupture the wall and the
+ * oil spills out through the liquid simulation.
+ */
+function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height: number, oil: Float32Array) {
+  const w = grid.dims.w;
   const cells: [number, number][] = [];
   for (let y = cy - rad - 1; y <= cy + rad + 1; y++)
     for (let x = cx - rad - 1; x <= cx + rad + 1; x++) if (Math.hypot(x - cx, y - cy) <= rad + 1.3) cells.push([x, y]);
@@ -418,8 +428,12 @@ function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height
   for (const [x, y] of cells) {
     const d = Math.hypot(x - cx, y - cy);
     if (d > rad + 0.3) continue;
-    const dome = Math.round(Math.sqrt(Math.max(0, 1 - (d / (rad + 0.3)) ** 2)) * 2);
-    grid.push(x, y, base, base + height + dome, MAT.Rust);
+    if (d > rad - 0.9) {
+      grid.push(x, y, base, base + height, MAT.Rust); // wall
+    } else {
+      grid.push(x, y, base, base + 1, MAT.Rust); // floor
+      oil[y * w + x] = (height - 1) * 0.7;
+    }
   }
 }
 
