@@ -252,3 +252,26 @@ sharper and more pronounced; wants to see rain in motion.
 - **Rain.** Streaks 45 % longer, 50 % wider, more opaque. Motion can't be
   judged from stills, so `shot.mjs --gif` now records animated captures
   (gifenc + pngjs).
+
+## 2026-10-07 — round 2, phase 1: quick wins (see DECISIONS.md)
+
+- **Rotation removed** (Camera.azimuth fixed at 45°). Nothing else needed to
+  change: face choice and culling already used the eye direction.
+- **Water glint from the fixed view.** Diagnosis: ripple normals tilt ≤7°
+  while the sun/eye half-vector sat ~50° off vertical, so highlights only
+  appeared at the one rotation where they lined up. Now: ripple slopes facing
+  the sun brighten (diffuse-style ripple shading), and the half-vector is
+  biased toward vertical so ordinary ripples glint. First pass was far too
+  sparkly; toned down (exponent 160, ×0.7).
+- **Stone/dirt colour variation**: per-voxel warm/cool hue drift, fbm mineral
+  bands on stone and iron/clay patches on soil, sparse light/dark pebbles.
+- **Continuous river.** Inflow moved to the far map edge (15 cells ×
+  0.01/tick); the spillway is now 3 deep × 7 wide and the reservoir starts at
+  spill level, so inflow and spill balance from the start. Bug found:
+  evaporation (3e-5/tick on *every* wet cell) consumed the entire inflow over
+  the ~2.5k-cell lake, leaving the river dry. Deep water now evaporates 15×
+  slower than thin films. Warmup lengthened to 1800 ticks so the river
+  reaches equilibrium before the player looks. Measured: reservoir mean depth
+  8.77 → 8.80 over 20 s; river flowing below the dam.
+- **Stains wash under any water**: base dissolve rate saturates at 0.2 depth
+  instead of 1.0.

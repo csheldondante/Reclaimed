@@ -28,7 +28,8 @@ export interface MapData {
 type P = [number, number];
 
 const RIVER: P[] = [
-  [14, 24],
+  [0, 8],
+  [20, 28],
   [58, 62],
   [92, 94],
   [118, 140],
@@ -89,7 +90,9 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
   damDir[1] /= dl;
   const damBed = nearestRiver(DAM[0], DAM[1]).z;
   const damTop = Math.round(damBed + 13);
-  const waterLevel = damTop - 1.5;
+  // the reservoir starts at the spillway level: inflow and spill balance (equilibrium)
+  const SPILL_DEPTH = 3;
+  const waterLevel = damTop - SPILL_DEPTH + 0.15;
   const resFloor = nearestRiver(RESERVOIR[0], RESERVOIR[1]).z - 7;
 
   const padZ = Math.round(baseAt((SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2));
@@ -178,7 +181,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       const across = (x - DAM[0]) * -damDir[1] + (y - DAM[1]) * damDir[0];
       if (Math.abs(along) <= 1.6 && Math.abs(across) <= 19) {
         const g = grid.top(x, y);
-        const notch = Math.abs(across) < 2.5 ? 2 : 0;
+        const notch = Math.abs(across) < 3.5 ? SPILL_DEPTH : 0;
         if (g < damTop - notch) grid.push(x, y, g, damTop - notch, MAT.Concrete);
       }
     }
@@ -205,9 +208,12 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     }
   }
 
-  // Spring feeding the reservoir from the back of the map
+  // River inflow: water enters continuously at the far map edge (as if the
+  // river continues off-map), fills the reservoir to its spillway and leaves
+  // through the near edge. A few cells in from the edge so most of it heads
+  // downstream rather than straight back out.
   for (let dy = -2; dy <= 2; dy++)
-    for (let dx = -2; dx <= 2; dx++) waterSource[(RIVER[0][1] + dy) * w + RIVER[0][0] + dx] = 0.0025;
+    for (let dx = 2; dx <= 4; dx++) waterSource[(RIVER[0][1] + dy + 2) * w + RIVER[0][0] + dx] = 0.01;
 
   // Industrial ruins on the pad
   const ruinRand = rng(seed * 31 + 7);

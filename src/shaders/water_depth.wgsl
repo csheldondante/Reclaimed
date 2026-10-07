@@ -11,6 +11,7 @@
 
 const RAIN_RATE: f32 = 0.0012;
 const EVAP: f32 = 0.00003;
+const EVAP_DEEP: f32 = 0.000002;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -25,7 +26,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (inMap(q)) { nd += flux[colIdxI(q)][k ^ 1u]; }
   }
   nd += rainAt(vec2<f32>(p) + 0.5) * RAIN_RATE + waterSource[i];
-  nd = max(0.0, nd - EVAP);
+  // thin films (wet ground, puddles) evaporate; deep water barely does — otherwise
+  // a large lake evaporates the whole river inflow
+  nd = max(0.0, nd - select(EVAP_DEEP, EVAP, nd < 0.08));
   waterPrev[i] = d;
   waterOut[i] = nd;
 }

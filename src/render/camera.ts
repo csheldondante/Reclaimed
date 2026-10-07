@@ -1,5 +1,6 @@
 // Fixed-angle orthographic isometric camera (design doc §14).
-// Pan + zoom freely; rotation only in 90° steps so faces/lighting stay readable.
+// Pan + zoom only. Rotation was removed (user decision 2026-10-07): a single
+// fixed view keeps pixel art crisp and lets shading be stylised for one angle.
 
 export type Mat4 = Float32Array;
 
@@ -12,15 +13,13 @@ export class Camera {
   target: [number, number, number] = [128, 128, 10];
   /** Screen pixels per world unit (cell). */
   zoom = 4;
-  /** Azimuth step 0..3 (×90°), starting from the +x+y diagonal. */
-  rot = 0;
   viewportW = 1;
   viewportH = 1;
   readonly viewProj: Mat4 = new Float32Array(16);
   readonly eye: [number, number, number] = [0, 0, 0];
 
   get azimuth(): number {
-    return Math.PI / 4 + (this.rot * Math.PI) / 2;
+    return Math.PI / 4;
   }
 
   update(): void {

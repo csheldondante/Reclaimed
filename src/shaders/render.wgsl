@@ -164,6 +164,21 @@ fn fsBox(in: VOut) -> FOut {
   alb *= 0.9 + 0.12 * randv(vc) + 0.08 * n1;
   // large-scale patchiness so open ground is not one flat colour
   alb *= in.tint;
+  // natural materials: per-voxel hue drift (warm/cool, mineral streaks) and
+  // sub-voxel pebbles, so stone and dirt aren't a single flat colour
+  if (mat >= 1u && mat <= 4u) {
+    let hv = randv(vc + vec3<i32>(17, 3, 91));
+    let warm = vec3<f32>(1.08, 0.97, 0.88);
+    let cool = vec3<f32>(0.92, 0.98, 1.06);
+    alb *= mix(cool, warm, hv);
+    // large-scale mineral bands on stone / clay-iron patches on soil
+    let band = fbm2(in.wpos.xy * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
+    if (mat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
+    if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
+    // pebbles: occasional lighter/darker sub-voxels
+    let pb = randv(sub + vec3<i32>(5, 77, 13));
+    if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
+  }
 
   if (mat == MAT_TRASH) {
     // faded plastics, paper, glass and rust specks
@@ -248,11 +263,17 @@ fn fsWater(in: VOut) -> FOut {
     let rn = vec3<f32>(
       vnoise(rp + vec2<f32>(t * 0.7, 0.0)) - vnoise(rp + vec2<f32>(0.0, t * 0.6) + 31.0),
       vnoise(rp + vec2<f32>(0.0, -t * 0.8) + 7.0) - vnoise(rp + vec2<f32>(-t * 0.5, 0.0) + 19.0),
-      4.0);
+      1.4);
     let nn = normalize(rn);
-    let h = normalize(sunDir() + CAM.eye.xyz);
-    let spec = pow(max(dot(nn, h), 0.0), 60.0) * (1.0 - cloudShade(in.wpos.xy));
-    col += vec3<f32>(1.0, 0.92, 0.8) * spec * 1.5;
+    // Stylised for the fixed view: ripple slopes facing the sun brighten, and the
+    // half-vector is biased toward vertical so glints appear on ordinary
+    // ripples instead of only at one viewing angle.
+    let sunL = sunDir();
+    let shade = 1.0 + dot(nn.xy, normalize(sunL.xy)) * 0.45;
+    let h = normalize(normalize(sunL + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
+    let spec = pow(max(dot(nn, h), 0.0), 160.0) * (1.0 - cloudShade(in.wpos.xy));
+    col *= shade;
+    col += vec3<f32>(1.0, 0.94, 0.84) * spec * 0.7;
     // foam where flowing fast
     let sub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 4.0, t * 6.0)));
     let foam = smoothstep(0.03, 0.25, flow) * step(0.72, randv(sub));

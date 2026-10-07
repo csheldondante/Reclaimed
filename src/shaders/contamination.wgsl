@@ -42,7 +42,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let d = water[i];
   if (d > 0.003) {
-    let rate = DISSOLVE * min(d, 1.0) + DISSOLVE_FLOW * min(length(netFlow(p)) * 10.0, 1.0);
+    // any water standing or flowing over a stain washes it (not just rain)
+    let rate = DISSOLVE * min(d * 5.0, 1.0) + DISSOLVE_FLOW * min(length(netFlow(p)) * 10.0, 1.0);
     let a = min(cs, rate * cs + rate * 0.02);
     cs -= a;
     cw += a;

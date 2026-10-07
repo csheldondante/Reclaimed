@@ -21,7 +21,7 @@ const QUALITY = {
 } as const;
 type QualityName = keyof typeof QUALITY;
 
-const WARMUP_TICKS = 600;
+const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
 const SUN: [number, number, number] = [0.75, -0.3, 0.62];
 
 async function main() {
@@ -275,8 +275,6 @@ async function main() {
   window.addEventListener('keydown', (e) => {
     keys.add(e.key.toLowerCase());
     if (e.key === '`') perf.toggle();
-    if (e.key === 'q') camera.rot = (camera.rot + 3) % 4;
-    if (e.key === 'e') camera.rot = (camera.rot + 1) % 4;
     if (e.key === '1') hud.setTool(hud.tool === 'storm' ? 'none' : 'storm');
     if (e.key === '2') hud.setTool(hud.tool === 'lightning' ? 'none' : 'lightning');
     if (e.key === 'Escape') hud.setTool('none');
