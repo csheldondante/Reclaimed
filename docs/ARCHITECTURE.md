@@ -4,10 +4,20 @@ Current state of the system boundaries. Update when a contract changes.
 
 ## Frame
 
-\
-Globals ( / , 464 bytes) carry storms, one-tick
-events, gusts (player + cursor breeze), day/night light, and the life lens.
-The shared wind field  is analytic from these.
+```
+CPU: controls → powers → weather + day/night → Nature (reads last stats)
+GPU per sim tick (60 Hz fixed, ≤ N ticks/frame by quality tier):
+   structure → material → surface → water(flux, depth) → oil(flux, depth)
+   → contamination → moisture → fire → ecology (every 15)
+   → particles (emit, fireEmit, bursts, update) → renderfields (every 2)
+   → stats (every 20, async readback)
+GPU per frame: renderprep (terrain + liquids) + vegprep (plants) → draw
+   (opaque boxes incl. sub-voxel canopies, liquids, particles, rain)
+```
+
+Globals (`common.wgsl` / `src/sim/globals.ts`, 464 bytes) carry storms,
+one-tick events, gusts (player + cursor breeze), day/night light and the life
+lens. The shared wind field `windAt()` is analytic from these.
 
 ## World representation
 
@@ -36,8 +46,10 @@ The shared wind field  is analytic from these.
 | renderFields | vec4 (shadow z, moisture, fire glow, flow) | renderfields | draw |
 | stats | u32 sums | stats, structure (collapsed), material (overflow) | CPU (async) |
 
-The water system can be replaced by anything that publishes ,
- and  with the same meaning; oil likewise with .
+The water system can be replaced by anything that publishes `water`,
+`waterPrev` and `flux` with the same meaning; oil likewise with `oil`/`oilFlux`.
+Draw shaders read the packed `renderFields` instead of individual fields, so
+they stay within 8 storage buffers.
 
 ## Rendering
 
@@ -46,8 +58,8 @@ buffer; only the three camera-facing faces are emitted (18 verts/instance).
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are
-analytic functions of the storm uniforms. A `r32uint` pick target gives exact
-column picking via a 1-pixel async readback.
+analytic functions of the storm uniforms. An `rg32uint` pick target (column +
+material, height, flags) gives exact picking via a 1-pixel async readback.
 
 ## Derived helpers
 
