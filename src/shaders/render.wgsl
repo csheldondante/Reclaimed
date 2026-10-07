@@ -496,8 +496,14 @@ fn fsWater(in: VOut) -> FOut {
   var c = mix(vec3<f32>(0.30, 0.45, 0.44), vec3<f32>(0.07, 0.19, 0.25), deep);
   let conc = contam[ci].y / max(d, 0.05);
   c = mix(c, vec3<f32>(0.40, 0.37, 0.11), smoothstep(0.03, 0.8, conc) * 0.85);
+  // sludge: thick, opaque, sickly olive-brown with a scummy mottle (an
+  // obvious thing to wash away); fades back to water as it is diluted
+  let sludge = smoothstep(0.9, 2.2, conc);
+  let scum = smoothstep(0.55, 0.75, vnoise(in.wpos.xy * 1.3 + vec2<f32>(G.time * 0.03, 0.0)));
+  let murk = vnoise(in.wpos.xy * 0.4 + 9.0);
+  c = mix(c, mix(mix(vec3<f32>(0.13, 0.11, 0.06), vec3<f32>(0.2, 0.16, 0.08), murk), vec3<f32>(0.44, 0.42, 0.1), scum * 0.8), sludge);
   var col = toLinear(c) * lighting(in.wpos, in.nrm);
-  var alpha = mix(0.5, 0.9, deep) * smoothstep(WATER_MIN_R, 0.08, d);
+  var alpha = mix(mix(0.5, 0.9, deep), 0.97, sludge) * smoothstep(WATER_MIN_R, 0.08, d);
 
   if (in.nrm.z > 0.5) {
     // ripples + sun glint
@@ -518,9 +524,13 @@ fn fsWater(in: VOut) -> FOut {
     let sunL = sunDir();
     let shade = 1.0 + dot(nn.xy, normalize(sunL.xy)) * 0.45;
     let h = normalize(normalize(sunL + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
-    let spec = pow(max(dot(nn, h), 0.0), 160.0) * (1.0 - cloudShade(in.wpos.xy));
-    col *= shade;
+    let spec = pow(max(dot(nn, h), 0.0), 160.0) * (1.0 - cloudShade(in.wpos.xy)) * (1.0 - sludge * 0.8);
+    col *= mix(shade, 1.0, sludge * 0.7);
     col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.7;
+    // slow bubbles rising through the sludge
+    let bub = vec3<i32>(vec2<i32>(floor(in.wpos.xy * 2.5)), i32(floor(t * 0.8 + randv(vec3<i32>(vec2<i32>(floor(in.wpos.xy * 2.5)), 3)) * 7.0)));
+    let bf = fract(in.wpos.xy * 2.5) - 0.5;
+    col += vec3<f32>(0.05, 0.05, 0.01) * sludge * step(0.93, randv(bub)) * step(length(bf), 0.32) * (1.0 - 0.8 * G.sky.w);
     // foam where flowing fast
     let sub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 4.0, t * 6.0)));
     let foam = smoothstep(0.03, 0.25, flow) * step(0.72, randv(sub));

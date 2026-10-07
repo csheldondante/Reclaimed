@@ -24,4 +24,4 @@ export function saveProgress(p: number): void {
 }
 
 /** Living fraction of the map at which a level counts as reclaimed. */
-export const LEVEL_GOAL = 0.6;
+export const LEVEL_GOAL = 0.45;

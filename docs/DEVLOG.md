@@ -619,3 +619,27 @@ User feedback round 4 (DECISIONS). This batch:
 
 Perf (Xe-LPG, 1600×900, storm + dust storm in view): GPU 5.7 ms (was ~6 ms
 with storm + fire).
+
+## 2026-10-07 — round 4 batch 2: starting pollution, pacing
+
+- **Sludge pools.** Five hollows carved near the site (flat ground, away from
+  the river/healthy patch/landfill), filled to 0.3 below their lowest rim with
+  water carrying 3× its depth in dissolved waste over a fouled bed (soil 2.2);
+  two carry an oil film. First version dug only the top interval and four of
+  five pools came out dry (thin soil over stone); now `grid.cut` digs through
+  layers. Probed after 60 s: all five hold (depth 0.7–2.7, concentration
+  6–10); one seeps slowly downhill, spreading its stain.
+  Dissolved waste used to decay with a ~1-minute half-life, so any pool
+  would clean itself before the player saw it. Decay is now divided by
+  (1 + 6·conc²): thick sludge persists until diluted and flushed (rain,
+  floods); thin solutions still degrade as before. Rendered opaque, dark
+  murky brown with sickly yellow scum, slow bubbles, dull glints (first
+  try was olive-green and read as a lawn).
+- **Oil slicks** on the asphalt pad (asphalt doesn't soak oil), four blobs.
+- **Trash heaps:** twelve low mounds of waste (with the odd rusted drum) over
+  fouled ground, mostly around the site; their resting litter blows off in
+  strong wind.
+- **Pacing.** Measured at 8× with storms every 3 game-minutes: 45 % at 3.6
+  min, plateau, 60 % at 8 min. Storms every 5 min: 47 % at 3.2 min, 50 % at
+  3.6, then a plateau around 50 until the next storm. Goal lowered 60 % → 45 %
+  — reachable in ~3–5 minutes of reasonable play (DECISIONS: ~5 min).

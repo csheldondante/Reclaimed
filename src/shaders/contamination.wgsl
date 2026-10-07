@@ -53,7 +53,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     cs += cw;
     cw = 0.0;
   }
-  cw *= 1.0 - WATER_DECAY;
+  // thin solutions degrade; thick sludge barely does — it has to be diluted
+  // and flushed away (rain, floods) before it breaks down (DECISIONS round 4)
+  let conc = cw / max(d, 0.05);
+  cw *= 1.0 - WATER_DECAY / (1.0 + conc * conc * 6.0);
   cs *= 1.0 - REMEDIATE * clamp(veg[i], 0.0, 5.0);
   // rain leaches/dilutes surface contamination directly, so a passing storm
   // visibly cleans lightly polluted ground; heavy industrial deposits still

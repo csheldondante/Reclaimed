@@ -309,6 +309,69 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       }
   }
 
+  // Starting pollution to wash away (DECISIONS round 4): sludge pools in
+  // carved hollows (two with an oil film), oil slicks on the asphalt pad and
+  // trash heaps scattered over the valley. Placed here (terrain), filled in
+  // after the fields below.
+  const pools: { x: number; y: number; rad: number; oily: boolean }[] = [];
+  const heaps: P[] = [];
+  {
+    const d = rng(seed * 173 + 9);
+    const siteC: P = [(SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2];
+    const clear = (x: number, y: number, rad: number) =>
+      x - rad > 4 && y - rad > 4 && x + rad < w - 4 && y + rad < h - 4 &&
+      nearestRiver(x, y).d > rad + 5 &&
+      Math.hypot(x - HEALTHY[0], y - HEALTHY[1]) > rad + 18 &&
+      Math.hypot(x - LANDFILL[0], y - LANDFILL[1]) > rad + 15 &&
+      Math.hypot(x - POND[0], y - POND[1]) > rad + 10 &&
+      !(x + rad >= SITE.x0 && x - rad < SITE.x1 && y + rad >= SITE.y0 && y - rad < SITE.y1) &&
+      pools.every((p) => Math.hypot(x - p.x, y - p.y) > rad + p.rad + 8);
+    for (let k = 0; k < 400 && pools.length < 5; k++) {
+      const a = d() * Math.PI * 2;
+      const dist = 45 + d() * 50;
+      const x = Math.round(siteC[0] - 30 + Math.cos(a) * dist);
+      const y = Math.round(siteC[1] + 20 + Math.sin(a) * dist);
+      const rad = 3 + d() * 3;
+      if (!clear(x, y, rad)) continue;
+      // flattish ground only, so the hollow holds a level pool
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let yy = Math.floor(y - rad - 1); yy <= y + rad + 1; yy++)
+        for (let xx = Math.floor(x - rad - 1); xx <= x + rad + 1; xx++) {
+          const t = grid.top(xx, yy);
+          lo = Math.min(lo, t);
+          hi = Math.max(hi, t);
+        }
+      if (hi - lo > 2) continue;
+      for (let yy = Math.floor(y - rad); yy <= y + rad; yy++)
+        for (let xx = Math.floor(x - rad); xx <= x + rad; xx++) {
+          const dd = Math.hypot(xx - x, yy - y) / rad;
+          if (dd > 1) continue;
+          const dig = Math.round(2.4 * (1 - dd * dd) + 0.4);
+          if (dig > 0) grid.cut(xx, yy, Math.max(1, grid.top(xx, yy) - dig));
+        }
+      pools.push({ x, y, rad, oily: pools.length < 2 });
+    }
+    // trash heaps: dumped waste in low mounds, mostly near the site and roads
+    for (let k = 0; k < 300 && heaps.length < 12; k++) {
+      const x = Math.round(siteC[0] - 60 + d() * 120);
+      const y = Math.round(siteC[1] - 40 + d() * 120);
+      const rad = 2 + d() * 2.5;
+      if (!clear(x, y, rad) || heaps.some((q) => Math.hypot(x - q[0], y - q[1]) < 14)) continue;
+      for (let yy = Math.floor(y - rad); yy <= y + rad; yy++)
+        for (let xx = Math.floor(x - rad); xx <= x + rad; xx++) {
+          const dd = Math.hypot(xx - x, yy - y) / rad;
+          const n = hash2(xx, yy, 61);
+          const hgt = Math.round((1 - dd) * 2.2 * (0.6 + 0.6 * n));
+          if (dd > 1 || hgt <= 0) continue;
+          const g = grid.top(xx, yy);
+          grid.push(xx, yy, g, g + hgt, MAT.Trash);
+          if (n > 0.93) grid.push(xx, yy, g + hgt, g + hgt + 1, MAT.Rust);
+        }
+      heaps.push([x, y]);
+    }
+  }
+
   // Fields
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -334,6 +397,54 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     }
   }
 
+  // sludge: fill each hollow to just under its lowest rim with water thick
+  // with dissolved waste over a fouled bed; two also carry an oil film
+  for (const p of pools) {
+    let rim = Infinity;
+    for (let a = 0; a < 64; a++) {
+      const xx = Math.round(p.x + Math.cos((a / 64) * Math.PI * 2) * (p.rad + 1));
+      const yy = Math.round(p.y + Math.sin((a / 64) * Math.PI * 2) * (p.rad + 1));
+      rim = Math.min(rim, grid.top(xx, yy));
+    }
+    const lvl = rim - 0.3;
+    for (let yy = Math.floor(p.y - p.rad - 1); yy <= p.y + p.rad + 1; yy++)
+      for (let xx = Math.floor(p.x - p.rad - 1); xx <= p.x + p.rad + 1; xx++) {
+        const i = yy * w + xx;
+        const g = grid.top(xx, yy);
+        const dd = Math.hypot(xx - p.x, yy - p.y);
+        contam[i * 2] = Math.max(contam[i * 2], 2.2 * smoothstep(p.rad + 3, p.rad - 1, dd));
+        if (g >= lvl) continue;
+        water[i] = lvl - g;
+        contam[i * 2 + 1] = water[i] * 3;
+        if (p.oily) oil[i] = 0.25;
+        vegetation[i] = 0;
+      }
+  }
+  // oil slicks on the asphalt pad (asphalt doesn't soak oil up)
+  {
+    const d = rng(seed * 211 + 1);
+    for (let k = 0, n = 0; k < 200 && n < 4; k++) {
+      const x = SITE.x0 + 6 + Math.floor(d() * (SITE.x1 - SITE.x0 - 12));
+      const y = SITE.y0 + 6 + Math.floor(d() * (SITE.y1 - SITE.y0 - 12));
+      if (grid.topMat(x, y) !== MAT.Asphalt) continue;
+      const rad = 2.5 + d() * 3;
+      for (let yy = Math.floor(y - rad); yy <= y + rad; yy++)
+        for (let xx = Math.floor(x - rad); xx <= x + rad; xx++) {
+          const dd = Math.hypot(xx - x, yy - y) / rad + (hash2(xx, yy, 17) - 0.5) * 0.5;
+          if (dd < 1 && grid.topMat(xx, yy) === MAT.Asphalt) oil[yy * w + xx] = Math.max(oil[yy * w + xx], 0.15 + 0.25 * (1 - dd));
+        }
+      n++;
+    }
+  }
+  // the ground under the heaps is fouled
+  for (const [x, y] of heaps)
+    for (let yy = y - 5; yy <= y + 5; yy++)
+      for (let xx = x - 5; xx <= x + 5; xx++) {
+        const i = yy * w + xx;
+        contam[i * 2] = Math.max(contam[i * 2], 1.6 * smoothstep(5, 1.5, Math.hypot(xx - x, yy - y)));
+        vegetation[i] = 0;
+      }
+
   const surface = new Float32Array(N);
   for (let i = 0; i < N; i++) {
     const c = grid.cols[i];
@@ -356,6 +467,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       site: [(SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2],
       healthy: HEALTHY,
       landfill: LANDFILL,
+      ...Object.fromEntries(pools.map((q, i): [string, P] => [`sludge${i}`, [q.x, q.y]])),
     },
   };
 }
