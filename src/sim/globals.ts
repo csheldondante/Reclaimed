@@ -1,6 +1,7 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 288;
+export const GLOBALS_BYTES = 448;
+export const MAX_GUSTS = 4;
 export const MAX_STORMS = 4;
 export const MAX_EVENTS = 4;
 
@@ -28,6 +29,16 @@ export interface WorldEvent {
   strength: number;
 }
 
+/** A wind impulse: player gust under a storm, or the cursor breeze. */
+export interface Gust {
+  x: number;
+  y: number;
+  radius: number;
+  strength: number;
+  dx: number;
+  dy: number;
+}
+
 export interface GlobalsState {
   mapW: number;
   mapH: number;
@@ -46,6 +57,11 @@ export interface GlobalsState {
   events: WorldEvent[];
   collapseEnabled: boolean;
   flash: number;
+  gusts: Gust[];
+  /** ambient sky rgb + night factor */
+  sky: [number, number, number, number];
+  /** sun rgb×intensity + time of day 0..1 */
+  sunCol: [number, number, number, number];
 }
 
 export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
@@ -95,4 +111,16 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   f[69] = s.collapseEnabled ? 1 : 0;
   f[70] = s.flash;
   f[71] = 0;
+  for (let i = 0; i < MAX_GUSTS; i++) {
+    const g = s.gusts[i];
+    if (g) {
+      f.set([g.x, g.y, g.radius, g.strength], 72 + i * 4);
+      f.set([g.dx, g.dy, 0, 0], 88 + i * 4);
+    } else {
+      f.fill(0, 72 + i * 4, 76 + i * 4);
+      f.fill(0, 88 + i * 4, 92 + i * 4);
+    }
+  }
+  f.set(s.sky, 104);
+  f.set(s.sunCol, 108);
 }

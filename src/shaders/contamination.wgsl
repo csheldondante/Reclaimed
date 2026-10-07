@@ -11,6 +11,8 @@
 @group(0) @binding(6) var<storage, read> contamIn: array<vec2<f32>>;
 @group(0) @binding(7) var<storage, read_write> contamOut: array<vec2<f32>>;
 @group(0) @binding(8) var<storage, read> veg: array<f32>;
+// particle pickup/drop exchange (fixed point ×1e5), folded in and cleared here
+@group(0) @binding(9) var<storage, read_write> contamDelta: array<atomic<i32>>;
 
 const DISSOLVE: f32 = 0.0016;
 const DISSOLVE_FLOW: f32 = 0.004;
@@ -26,7 +28,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let c = contamIn[i];
-  var cs = c.x;
+  var cs = max(0.0, c.x + f32(atomicExchange(&contamDelta[i], 0)) / 100000.0);
   let dp = waterPrev[i];
   let f = flux[i];
   let out = f.x + f.y + f.z + f.w;

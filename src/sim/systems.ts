@@ -31,14 +31,16 @@ function kernel(
   src: string,
   spec: BindSpec,
   buffers: Record<number, GPUBuffer>,
+  /** Bind the chunk table (layers.wgsl). Off for kernels that never touch layers,
+   *  so they don't spend one of the 8 storage-buffer slots on it. */
+  useLayers = false,
 ) {
-  const k = makeCompute(device, label, [...WITH_ALL, src], { ...BASE, ...spec });
-  const group = makeBindGroup(device, label, k.layout, {
-    0: world.globals,
-    1: world.chunks,
-    2: world.materials,
-    ...buffers,
-  });
+  const parts = useLayers ? [...WITH_ALL, src] : [commonWgsl, materialsWgsl, src];
+  const base: BindSpec = useLayers ? BASE : { 0: 'uniform', 2: 'uniform' };
+  const k = makeCompute(device, label, parts, { ...base, ...spec });
+  const bound: Record<number, GPUBuffer> = { 0: world.globals, 2: world.materials, ...buffers };
+  if (useLayers) bound[1] = world.chunks;
+  const group = makeBindGroup(device, label, k.layout, bound);
   return { k, group };
 }
 
@@ -47,7 +49,7 @@ export class SurfaceSystem implements SimSystem {
   readonly period = 1;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'surface', surfaceWgsl, { 3: 'read', 4: 'rw' }, { 3: world.layers, 4: world.surface });
+    this.s = kernel(device, world, 'surface', surfaceWgsl, { 3: 'read', 4: 'rw' }, { 3: world.layers, 4: world.surface }, true);
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
@@ -66,6 +68,7 @@ export class StructureSystem implements SimSystem {
       structureWgsl + flowWgsl,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read' },
       { 3: world.layers, 4: world.layersNext, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux },
+      true,
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -86,6 +89,7 @@ export class MaterialSystem implements SimSystem {
       materialWgsl + flowWgsl,
       { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read' },
       { 3: world.layers, 4: world.layersNext, 5: world.surface, 6: world.moisture, 7: world.stats, 8: world.flux, 9: world.water },
+      true,
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -134,8 +138,8 @@ export class ContaminationSystem implements SimSystem {
       world,
       'contamination',
       contamWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read' },
-      { 3: world.waterPrev, 4: world.water, 5: world.flux, 6: world.contam, 7: world.contamNext, 8: world.veg },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'rw' },
+      { 3: world.waterPrev, 4: world.water, 5: world.flux, 6: world.contam, 7: world.contamNext, 8: world.veg, 9: world.contamDelta },
     );
   }
   encode(enc: GPUCommandEncoder): void {

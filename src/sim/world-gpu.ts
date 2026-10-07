@@ -55,11 +55,24 @@ export class WorldGpu {
   /** u32 aggregate counters, see src/sim/stats.ts */
   readonly stats: GPUBuffer;
 
+  // particles (contract: particles.wgsl Particle struct, 48 bytes)
+  readonly particleCap: number;
+  readonly particles: GPUBuffer;
+  /** [0] = ring head (monotonic), [1] = live estimate */
+  readonly particleCounters: GPUBuffer;
+  /**
+   * Fixed-point (×1e5) soil-contamination exchange per column. Particles
+   * atomically subtract when they pick pollution up and add when they drop it;
+   * the contamination system folds it into `contam` and zeroes it.
+   */
+  readonly contamDelta: GPUBuffer;
+
   constructor(
     private device: GPUDevice,
     private profiler: Profiler,
     packed: PackedWorld,
     map: MapData,
+    particleCap: number,
   ) {
     const { w, h, zMax } = packed.dims;
     this.w = w;
@@ -101,6 +114,11 @@ export class WorldGpu {
 
     this.shadow = this.buf('shadow', N * 4, S);
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
+
+    this.particleCap = particleCap;
+    this.particles = this.buf('particles', particleCap * 48, S);
+    this.particleCounters = this.buf('particleCounters', 16, S);
+    this.contamDelta = this.buf('contamDelta', N * 4, S);
   }
 
   buf(label: string, size: number, usage: GPUBufferUsageFlags): GPUBuffer {

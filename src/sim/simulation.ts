@@ -16,6 +16,7 @@ import {
   WaterSystem,
 } from './systems';
 import type { WorldGpu } from './world-gpu';
+import { ParticleSystem } from './particles';
 
 export const TICK_HZ = 60;
 export const TICK_DT = 1 / TICK_HZ;
@@ -25,6 +26,7 @@ export class Simulation {
   readonly stats: StatsSystem;
   readonly surface: SurfaceSystem;
   readonly shadow: ShadowSystem;
+  readonly particles: ParticleSystem;
   tick = 0;
   private globalsData = new ArrayBuffer(GLOBALS_BYTES);
   /** Per-system CPU encode time (ms, smoothed). */
@@ -38,6 +40,7 @@ export class Simulation {
     this.surface = new SurfaceSystem(device, world, profiler);
     this.shadow = new ShadowSystem(device, world, profiler);
     this.stats = new StatsSystem(device, world, profiler);
+    this.particles = new ParticleSystem(device, world, profiler);
     // Order matters only through the contract buffers each system reads.
     this.systems = [
       new StructureSystem(device, world, profiler),
@@ -47,6 +50,7 @@ export class Simulation {
       new ContaminationSystem(device, world, profiler),
       new MoistureSystem(device, world, profiler),
       new EcologySystem(device, world, profiler),
+      this.particles,
       this.shadow,
       this.stats,
     ];

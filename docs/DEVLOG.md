@@ -275,3 +275,29 @@ sharper and more pronounced; wants to see rain in motion.
   8.77 → 8.80 over 20 s; river flowing below the dam.
 - **Stains wash under any water**: base dissolve rate saturates at 0.2 depth
   instead of 1.0.
+
+## 2026-10-07 — phase 2a: GPU particles + shared wind field
+
+- **Wind field** (`common.wgsl::windAt`): analytic — prevailing wind, storm
+  swirl/outflow, up to 4 gust impulses (player gusts, cursor breeze; Globals
+  grew `gusts`/`gustDir`), low-frequency gustiness and turbulence. It is the
+  contract for anything wind-driven (particles now; sway, fire spread later).
+- **Particles**: fixed-capacity ring (16k/32k/64k by quality) with an atomic
+  head — oldest overwritten when full; no free list, no readback. Three
+  kernels: `emit` (one thread per column, rare probabilistic spawns: dust,
+  litter from trash, leaves from trees, cloud puffs inside storms), `bursts`
+  (≤64 CPU requests per tick via a uniform: clicks, strikes, birds), `update`
+  (integration in the wind field, ground collision against surface+water).
+- **Pollution as matter**: dust and litter carry a contamination payload. A new
+  fixed-point `contamDelta` buffer (atomic i32 ×1e5 per column) is the
+  exchange: emit subtracts, landing adds, and the contamination system folds
+  it in with `atomicExchange(…, 0)`. A particle that leaves the map takes its
+  payload out of the world; litter swept into water washes its payload into
+  the stream; rain knocks dust out of the air.
+- Kernels that don't read layers no longer bind the chunk table (frees one of
+  the 8 storage slots — particles use exactly 8).
+- **Drawing**: screen-aligned squares sized in world units (≥1 px), clouds as
+  soft puffs. First pass was invisible: dust ~2 px tan-on-tan; clouds spawned
+  at z≈70, which projects ~360 px above their shadow (off-screen). Dust made
+  bigger/lighter; cloud deck lowered to z 34–42 and rain now falls from it.
+- Cost (iGPU): emit 0.03 ms + update 0.09 ms per tick at 64k capacity.

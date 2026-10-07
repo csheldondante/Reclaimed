@@ -15,9 +15,9 @@ import { Weather } from './weather/weather';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY = {
-  low: { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2 },
-  medium: { renderScale: 0.75, maxDpr: 1.5, rain: 3000, maxTicksPerFrame: 3 },
-  high: { renderScale: 1, maxDpr: 2, rain: 6000, maxTicksPerFrame: 4 },
+  low: { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2, particles: 16384 },
+  medium: { renderScale: 0.75, maxDpr: 1.5, rain: 3000, maxTicksPerFrame: 3, particles: 32768 },
+  high: { renderScale: 1, maxDpr: 2, rain: 6000, maxTicksPerFrame: 4, particles: 65536 },
 } as const;
 type QualityName = keyof typeof QUALITY;
 
@@ -41,7 +41,7 @@ async function main() {
   const dims = { w: 256, h: 256, zMax: 64 };
   const map = generateMap(dims, 1);
   const packed = packColumns(map.grid);
-  const world = new WorldGpu(device, profiler, packed, map);
+  const world = new WorldGpu(device, profiler, packed, map, quality.particles);
   const sim = new Simulation(device, world, profiler);
   const renderer = new Renderer(device, gpu.format, world, profiler);
   const weather = new Weather(map.surface, dims.w, dims.h);
@@ -68,6 +68,9 @@ async function main() {
     events: [],
     collapseEnabled: false,
     flash: 0,
+    gusts: [],
+    sky: [0.34, 0.33, 0.31, 0],
+    sunCol: [2.4, 2.0, 1.55, 0.35],
   };
 
   // Settle the generated world with the real systems (granular slopes, rivers

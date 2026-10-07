@@ -12,6 +12,7 @@ import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
 import renderWgsl from '../shaders/render.wgsl?raw';
 import rainWgsl from '../shaders/rain.wgsl?raw';
 import flowWgsl from '../shaders/flow.wgsl?raw';
+import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
 
@@ -31,6 +32,8 @@ export class Renderer {
   private opaquePipe: GPURenderPipeline;
   private waterPipe: GPURenderPipeline;
   private rainPipe: GPURenderPipeline;
+  private partPipe: GPURenderPipeline;
+  private partGroup: GPUBindGroup;
   private opaqueGroup: GPUBindGroup;
   private waterGroup: GPUBindGroup;
   private rainGroup: GPUBindGroup;
@@ -175,6 +178,18 @@ export class Renderer {
       depthStencil: depthStencil(false),
     });
     this.rainGroup = makeBindGroup(device, 'rain', rainLayout, { 0: world.globals, 10: this.camBuf });
+
+    const partLayout = makeLayout(device, 'particles-draw', { 0: 'uniform', 3: 'read', 10: 'uniform' }, VF);
+    const partModule = makeModule(device, 'particles-draw', [commonWgsl, particlesDrawWgsl]);
+    this.partPipe = device.createRenderPipeline({
+      label: 'particles',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [partLayout] }),
+      vertex: { module: partModule, entryPoint: 'vs' },
+      fragment: { module: partModule, entryPoint: 'fs', targets: [{ format, blend }, { format: PICK_FORMAT, writeMask: 0 }] },
+      primitive: { topology: 'triangle-list' },
+      depthStencil: depthStencil(false),
+    });
+    this.partGroup = makeBindGroup(device, 'particles-draw', partLayout, { 0: world.globals, 3: world.particles, 10: this.camBuf });
   }
 
   resize(w: number, h: number): void {
@@ -228,6 +243,10 @@ export class Renderer {
     pass.setPipeline(this.waterPipe);
     pass.setBindGroup(0, this.waterGroup);
     pass.drawIndirect(this.indirect, 16);
+    pass.setPipeline(this.partPipe);
+    pass.setBindGroup(0, this.partGroup);
+    pass.draw(6, this.world.particleCap);
+    this.profiler.draws++;
     if (opts.rainParticles > 0) {
       pass.setPipeline(this.rainPipe);
       pass.setBindGroup(0, this.rainGroup);

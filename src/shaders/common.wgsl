@@ -21,6 +21,14 @@ struct Globals {
   eventKind: vec4<f32>,
   // x: event count, y: structural collapse enabled (0/1), z: lightning flash 0..1, w: unused
   misc: vec4<f32>,
+  // wind impulses (player gusts, cursor breeze): x, y, radius, strength
+  gusts: array<vec4<f32>, 4>,
+  // per gust: direction x, y (unit), falloff shape, unused
+  gustDir: array<vec4<f32>, 4>,
+  // sky / day-night: rgb ambient sky colour, w = night factor 0..1
+  sky: vec4<f32>,
+  // rgb sun colour × intensity, w = time of day 0..1
+  sunCol: vec4<f32>,
 };
 
 const EV_LIGHTNING: u32 = 1u;
@@ -113,4 +121,31 @@ fn cloudShade(p: vec2<f32>) -> f32 {
     c = max(c, s.w * smoothstep(0.0, 0.05, edge));
   }
   return c;
+}
+
+// ---- wind field (shared contract: particles, sway, dust pickup, fire) ----
+// Analytic: prevailing wind + storm swirl/outflow + player gusts + cursor
+// breeze + gentle turbulence. Stronger with height above the ground.
+fn windAt(p: vec3<f32>) -> vec2<f32> {
+  var w = vec2<f32>(G.windX, G.windY);
+  for (var i = 0u; i < G.numStorms; i++) {
+    let s = G.storms[i];
+    let d = p.xy - s.xy;
+    let r = length(d) / s.z;
+    if (r < 2.0) {
+      let t = vec2<f32>(-d.y, d.x) / max(length(d), 0.001);
+      let out = d / max(length(d), 0.001);
+      w += (t * 2.5 + out * 1.2) * s.w * exp(-r * r * 1.5) * r * 2.0;
+    }
+  }
+  for (var i = 0u; i < 4u; i++) {
+    let g = G.gusts[i];
+    if (g.w <= 0.0) { continue; }
+    let d = length(p.xy - g.xy) / g.z;
+    w += G.gustDir[i].xy * g.w * exp(-d * d * 2.0);
+  }
+  let tn = G.time * 0.35;
+  let turb = vec2<f32>(vnoise(p.xy * 0.05 + vec2<f32>(tn, 0.0)), vnoise(p.xy * 0.05 + vec2<f32>(0.0, tn) + 50.0)) - 0.5;
+  w = w * (0.75 + 0.5 * vnoise(p.xy * 0.03 - vec2<f32>(tn * 0.7))) + turb * 2.0;
+  return w;
 }

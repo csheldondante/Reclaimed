@@ -32,7 +32,7 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   let ang = rand3(k, si, 1u) * 6.2831853;
   let rad = sqrt(rand3(k, si, 2u)) * s.z * 0.9;
   let base = s.xy + vec2<f32>(cos(ang), sin(ang)) * rad;
-  let span = f32(G.zMax) + 30.0;
+  let span = 38.0; // rain falls from the cloud deck
   let speed = 70.0 + rand3(k, si, 4u) * 25.0;
   let phase = fract(G.time * speed / span + rand3(k, si, 5u));
   let z = span - phase * span;
@@ -47,7 +47,7 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   var c = mix(cb, ct, q.y);
   c = vec4<f32>(c.xy + perp * q.x, c.z, c.w);
   o.pos = c;
-  o.a = (1.0 - q.y * 0.7) * 0.5;
+  o.a = (1.0 - q.y * 0.7) * 0.36;
   return o;
 }
 
