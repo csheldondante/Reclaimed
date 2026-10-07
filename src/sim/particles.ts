@@ -22,6 +22,7 @@ export const enum PK {
   Bird = 10,
   Firefly = 11,
   Flame = 12,
+  Deer = 13,
 }
 
 export interface Burst {
@@ -68,7 +69,7 @@ export class ParticleSystem implements SimSystem {
       6: 'read',
       7: 'read',
       8: 'rw',
-      9: 'read',
+      9: 'rw',
       10: 'read',
       11: 'uniform',
     } as const;

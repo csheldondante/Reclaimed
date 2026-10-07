@@ -20,7 +20,8 @@ struct Particle {
 @group(0) @binding(6) var<storage, read> water: array<f32>;
 @group(0) @binding(7) var<storage, read> contam: array<vec2<f32>>;
 @group(0) @binding(8) var<storage, read_write> contamDelta: array<atomic<i32>>;
-@group(0) @binding(9) var<storage, read> veg: array<f32>;
+// read-write only so landing birds can plant a seed (0 → pioneer), see update()
+@group(0) @binding(9) var<storage, read_write> veg: array<f32>;
 @group(0) @binding(10) var<storage, read> moisture: array<f32>;
 // CPU bursts: [0].x = count; then pairs (x, y, z, n) (kind, speed, payload, spread)
 @group(0) @binding(11) var<uniform> requests: array<vec4<f32>, 129>;
@@ -39,6 +40,7 @@ const K_EMBER: u32 = 9u;
 const K_BIRD: u32 = 10u;
 const K_FIREFLY: u32 = 11u;
 const K_FLAME: u32 = 12u;
+const K_DEER: u32 = 13u;
 
 const DT: f32 = 1.0 / 60.0;
 // storm cloud deck height (cells): low enough that clouds stay on screen near
@@ -53,6 +55,9 @@ fn spawn(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, see
   let i = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
   parts[i] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, payload), vec4<u32>(kind, seed, 0u, 0u));
 }
+
+/** Full 32-bit random in [0,1) for rare events (16-bit draws bottom out at 1.5e-5). */
+fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0; }
 
 fn depositAt(pos: vec3<f32>, payload: f32) {
   let c = vec2<i32>(floor(pos.xy));
@@ -103,18 +108,25 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   // leaves shaken from trees
-  if (v >= 3.6 && r1 > 1.0 - (0.00003 + max(ws - 2.0, 0.0) * 0.00008)) {
+  if (v >= 3.6 && rare(id.x, id.y, 0x1eafu) < 0.00003 + max(ws - 2.0, 0.0) * 0.00008) {
     spawn(base + vec3<f32>(r2 - 0.5, fract(r2 * 3.7) - 0.5, 3.0 + r2 * 3.0), vec3<f32>(wind * 0.5, 0.0), 12.0, K_LEAF, 0.0, h);
   }
+  // birds lift out of trees by day; deer wander out of mature woodland
+  if (G.sky.w < 0.4 && v >= 3.6 && rare(id.x, id.y, 0xb1du) < 0.000005) {
+    spawn(base + vec3<f32>(0.0, 0.0, 5.0), vec3<f32>(r1 - 0.5, fract(r1 * 7.0) - 0.5, 1.5) * 4.0, 16.0 + r1 * 10.0, K_BIRD, 0.0, h);
+  }
+  if (G.sky.w < 0.5 && v >= 3.0 && !wet && rare(id.x, id.y, 0xdee5u) < 0.00000006) {
+    spawn(base + vec3<f32>(0.0, 0.0, 0.4), vec3<f32>(r2 - 0.5, fract(r2 * 5.0) - 0.5, 0.0), 80.0 + r2 * 60.0, K_DEER, 0.0, h);
+  }
   // fireflies over living land at night
-  if (G.sky.w > 0.6 && v >= 1.8 && !wet && r2 > 1.0 - 0.0004 * G.sky.w) {
+  if (G.sky.w > 0.6 && v >= 1.8 && !wet && rare(id.x, id.y, 0xf1f1u) < 0.0004 * G.sky.w) {
     spawn(base + vec3<f32>(r1 - 0.5, fract(r1 * 5.3) - 0.5, 0.6 + r1 * 2.0), vec3<f32>(0.0), 6.0 + r1 * 6.0, K_FIREFLY, 0.0, h);
   }
   // cloud puffs born inside storms, high above the land
   for (var k = 0u; k < G.numStorms; k++) {
     let st = G.storms[k];
     let d = length(vec2<f32>(p) - st.xy) / st.z;
-    if (d < 0.95 && r2 < 0.0002 * st.w) {
+    if (d < 0.95 && rare(id.x, id.y, 0xc10du + k) < 0.0002 * st.w) {
       let z = CLOUD_BASE + r1 * 8.0;
       spawn(vec3<f32>(vec2<f32>(p) + 0.5, z), vec3<f32>(G.stormsB[k].xy, 0.0), 7.0 + r1 * 5.0, K_CLOUD, 0.0, h);
     }
@@ -223,20 +235,52 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     vel += vec3<f32>(sin(G.time * 1.7 + sr * 31.0), cos(G.time * 1.3 + sr * 17.0), sin(G.time * 2.1 + sr * 7.0) * 0.6) * 1.5 * DT;
     vel *= 0.98;
   } else if (kind == K_BIRD) {
-    // flee upward, then wheel downwind
-    drag = 0.6; grav = -0.15;
+    // climb to cruising height and wheel about; descend near the end of life
+    drag = 0.25; grav = 0.0;
     vel.x += cos(G.time * 1.3 + sr * 20.0) * 3.0 * DT;
     vel.y += sin(G.time * 1.1 + sr * 17.0) * 3.0 * DT;
+    if (life > 4.0) { vel.z += ((ground + 9.0 + sr * 4.0) - pos.z) * 0.8 * DT; }
+    else { vel.z -= 4.0 * DT; }
+    vel.z *= 0.98;
+  } else if (kind == K_DEER) {
+    // ground-bound walker: wander, pause to graze, keep to living ground,
+    // bolt from a fast cursor
+    drag = 0.0; grav = 0.0;
+    let graze = sin(G.time * 0.45 + sr * 20.0) > 0.25;
+    var hd = vel.xy;
+    if (length(hd) < 0.01) { hd = vec2<f32>(cos(sr * 6.28), sin(sr * 6.28)); }
+    hd = normalize(hd);
+    let turn = (vnoise(vec2<f32>(G.time * 0.3, sr * 50.0)) - 0.5) * 2.0 * DT;
+    hd = vec2<f32>(hd.x * cos(turn) - hd.y * sin(turn), hd.x * sin(turn) + hd.y * cos(turn));
+    let ahead = clampCell(vec2<i32>(floor(pos.xy + hd * 1.5)));
+    let aj = colIdxI(ahead);
+    if (veg[aj] < 1.0 || water[aj] > 0.1 || abs(f32(sfZ(surface[aj])) - f32(sfZ(surface[ci]))) > 2.0) { hd = -hd; }
+    var speed = select(0.8, 0.0, graze);
+    let b = G.gusts[0];
+    let away = pos.xy - b.xy;
+    if (b.w > 1.5 && length(away) < 6.0) { hd = normalize(away + vec2<f32>(1e-3)); speed = 4.0; }
+    vel = vec3<f32>(hd * max(speed, 0.001), 0.0);
+    pos = vec3<f32>(pos.xy + vel.xy * DT, ground + 0.4);
   }
 
-  if (!resting) {
+  if (!resting && kind != K_DEER) {
     vel = vec3<f32>(vel.xy + (w - vel.xy) * min(drag * DT, 1.0), vel.z - grav * DT);
     if (kind == K_DUST || kind == K_LEAF) { vel.z *= 0.995; }
     pos += vel * DT;
   }
 
   if (kind == K_FIREFLY && pos.z <= ground + 0.3) { pos.z = ground + 0.3; vel.z = abs(vel.z); }
-  if (kind != K_CLOUD && kind != K_BIRD && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
+  if (kind == K_BIRD && pos.z <= ground + 0.2) {
+    // landing: a carried seed takes on clean, moist, bare ground
+    if (life < 4.0) {
+      if (veg[ci] == 0.0 && contam[ci].x < 0.15 && moisture[ci] > 0.08 && water[ci] < 0.05) { veg[ci] = 0.3; }
+      parts[id.x].p.w = 0.0;
+      return;
+    }
+    pos.z = ground + 0.2;
+    vel.z = abs(vel.z);
+  }
+  if (kind != K_CLOUD && kind != K_BIRD && kind != K_DEER && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
     if (kind == K_DUST) {
       depositAt(pos, P.v.w);
       parts[id.x].p.w = 0.0;

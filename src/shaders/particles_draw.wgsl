@@ -77,6 +77,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     let glow = 0.5 + 0.5 * sin(G.time * 3.0 + sr * 40.0);
     col = vec4<f32>(vec3<f32>(0.85, 1.0, 0.45) * (0.6 + 0.8 * glow), glow);
   }
+  else if (kind == 13u) { // deer: warm brown, longer than tall
+    size = 0.3;
+    col = vec4<f32>(mix(vec3<f32>(0.42, 0.28, 0.16), vec3<f32>(0.55, 0.38, 0.22), sr), 1.0);
+  }
   else if (kind == 10u) { // bird: dark, wings flicker
     size = 0.22;
     let flap = 0.5 + 0.5 * sin(G.time * 18.0 + sr * 60.0);
@@ -89,7 +93,9 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   let center = CAM.viewProj * vec4<f32>(P.p.xyz, 1.0);
   // world-size square in screen space: viewport.z = px per world unit
   let px = max(size * CAM.viewport.z, select(1.0, 0.0, soft > 0.5));
-  let ndc = c * px * 2.0 / CAM.viewport.xy;
+  var shape = vec2<f32>(1.0);
+  if (kind == 13u) { shape = vec2<f32>(1.7, 0.9); }
+  let ndc = c * shape * px * 2.0 / CAM.viewport.xy;
   o.pos = vec4<f32>(center.xy + ndc, center.z - 0.0005, 1.0);
   o.col = col;
   o.uv = c;

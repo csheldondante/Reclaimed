@@ -432,3 +432,19 @@ sharper and more pronounced; wants to see rain in motion.
 - Seen in testing: after a long storm over the ruins, rainwater pools inside
   the warehouse shell and vines + trees take over the site — the §2 "forest
   over recognisable ruins" look emerging from the systems.
+
+## 2026-10-07 — phase 5c: birds and deer (theme, plus one small systemic touch)
+
+- **Birds** lift out of mature trees by day (and from tapped trees), climb to
+  cruising height, wheel about and land again. Landing on clean, moist, bare
+  ground plants a pioneer (veg 0 → 0.3): seed dispersal. The particle update
+  binds `veg` read-write for exactly this "plant only" write (documented
+  exception to single-writer ownership; the only possible race is two birds
+  writing the same 0.3).
+- **Deer** are ground-bound particles: wander, pause to graze, turn back from
+  barren ground, water and cliffs, and bolt from a fast-moving cursor (the
+  cursor-breeze gust). Drawn as small 1.7:0.9 brown blocks.
+- Bug: rare spawns used 16-bit randoms, whose smallest non-zero chance is
+  1/65536 — ~250× the intended deer rate (675 deer in a grown forest). Rare
+  events now use a full 32-bit draw (`rare()`); measured 4 deer and 37 birds in
+  the same forest.
