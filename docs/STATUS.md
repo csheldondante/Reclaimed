@@ -66,7 +66,7 @@ under a storm), pinch = zoom. No hover breeze on touch.
 | Look | sub-voxel canopies with gaps, wind sway, grass waves, tufts, wildflowers, vines, stone/dirt variation |
 | Audio | procedural: wind, rain, water, leaves, insects, birds, thunder, crumble, dam groan, fire crackle, clang/chip/splash/flutter/strain — **still not heard by me** |
 | Menu | live skull diorama driven by saved progress: trash → moss on bone → grass/flowers → a tree through the skull |
-| Goal | reclamation bar (living share of the map); level ends at 40 % (“The valley breathes”) |
+| Goal | reclamation bar (living share of the map); level ends at 60 % (“The valley breathes”) |
 | Biomes | woodland (conifer, broadleaf, birch, old giants) on flat wet ground; meadows with flowers and fireflies elsewhere |
 | Not yet | earthquake/tornado, a second level, mobile verification |
 

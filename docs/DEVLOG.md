@@ -547,3 +547,11 @@ only shows when they break.
   to localStorage every 5 s and drives the menu; reaching the goal shows
   "THE VALLEY BREATHES" with *Keep watching* / *Return*. `?skipmenu=1` jumps
   straight into the level (scripted tests).
+
+## 2026-10-07 — goal tuning
+
+Measured at 8× with a storm summoned every ~4 game-minutes: living share of
+the map 0.01 → 0.43 after ~4 game-minutes, 0.6–0.8 after ~10 (it dips when
+fires or floods hit). 40 % ended the level in a few minutes; goal raised to
+60 % (~10 minutes of play). Moss counts as living (v ≥ 0.5), which is why it
+moves fast — a stricter definition (grass+) is a design option.
