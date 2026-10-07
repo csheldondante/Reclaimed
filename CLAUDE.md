@@ -25,7 +25,8 @@ valley so life can return. Design authority: `.claude/docs/design/Reclaimed_Over
 
 - `npm run dev` — Vite dev server on http://localhost:5173
   - `?perf=1` perf overlay (or press `` ` ``), `?q=low|medium|high` quality tier,
-    `?speed=N` debug fast-forward of the simulation, `?day=<s>` day length, `?tod=0..1` time of day
+    `?speed=N` debug fast-forward of the simulation, `?day=<s>` day length, `?tod=0..1` time of day,
+    `?skipmenu=1` straight into the level (use for scripted tests), `?progress=0..1` preview a menu stage
 - `npm run typecheck` / `npm run build`
 - `node scripts/shot.mjs --out x.png [--size WxH] [--clicks "x,y;wait:ms"] [--drag x0,y0,x1,y1] [--gif out.gif --frames N --every ms] [--url ...] [--wait ms] [--eval js] [--then ms] [--eval2 js --out2 y.png --then2 ms]`
   — headless Chrome (real GPU via D3D11) screenshot + console capture. Exits
@@ -37,6 +38,7 @@ valley so life can return. Design authority: `.claude/docs/design/Reclaimed_Over
 - `src/world/` — map generation, CPU authoring grid, chunked column packing, material table
 - `src/sim/` — GPU world buffers (contracts), system wrappers, fixed-step scheduler, globals uniform
 - `src/shaders/` — WGSL; `common.wgsl` (+`layers.wgsl`, `materials.wgsl`) are concatenated in front of each kernel
+- `src/scenes/` — world-core (one live world), level, menu; `main.ts` only boots and switches scenes
 - `src/render/` — camera, render-prep + draw
 - `src/weather/`, `src/game/`, `src/audio/`, `src/ui/`
 - `scripts/` — dev tooling (headless verification)

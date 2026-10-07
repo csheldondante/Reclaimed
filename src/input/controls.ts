@@ -34,9 +34,15 @@ interface Press {
 export class Controls {
   private presses = new Map<number, Press>();
   private pinch = 0;
+  private abort = new AbortController();
+
+  dispose(): void {
+    this.abort.abort();
+  }
 
   constructor(el: HTMLElement, h: ControlHandlers) {
-    el.addEventListener('contextmenu', (e) => e.preventDefault());
+    const signal = this.abort.signal;
+    el.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
     el.addEventListener('pointerdown', (e) => {
       el.setPointerCapture(e.pointerId);
       if (e.button === 1) e.preventDefault(); // no autoscroll on middle click
@@ -60,7 +66,7 @@ export class Controls {
         for (const t of this.touches()) if (t.gesture) h.dragEnd(t.x, t.y);
         for (const t of this.touches()) t.gesture = t.panning = false;
       }
-    });
+    }, { signal });
     el.addEventListener('pointermove', (e) => {
       const p = this.presses.get(e.pointerId);
       if (!p) {
@@ -92,7 +98,7 @@ export class Controls {
       if (p.button === 2 || p.panning) h.pan(dx, dy);
       else if (p.button === 1) h.zoomAt(p.x0, p.y0, Math.exp(-dy * 0.01));
       else if (p.gesture) h.dragMove(p.x, p.y);
-    });
+    }, { signal });
     const end = (e: PointerEvent) => {
       const p = this.presses.get(e.pointerId);
       if (!p) return;
@@ -106,15 +112,15 @@ export class Controls {
       if (!p.moved) h.tap(p.x, p.y);
       else if (p.gesture) h.dragEnd(p.x, p.y);
     };
-    el.addEventListener('pointerup', end);
-    el.addEventListener('pointercancel', end);
+    el.addEventListener('pointerup', end, { signal });
+    el.addEventListener('pointercancel', end, { signal });
     el.addEventListener(
       'wheel',
       (e) => {
         e.preventDefault();
         h.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
       },
-      { passive: false },
+      { passive: false, signal },
     );
   }
 

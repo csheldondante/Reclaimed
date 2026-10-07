@@ -42,3 +42,19 @@ each was implemented.
   start; the dam has an outflow (spillway) so it doesn't overtop.
 - Order: quick wins → particles + oil → storms/controls/wind/day-night →
   fire → life & look.
+
+## 2026-10-07 — feedback round 3
+
+- Dust should drift down, settle, and get swept up again by new breezes.
+- Build the menu screen (skull diorama, §4).
+- Clouds higher; storms larger and less uniformly shaped.
+- A bar for how much nature is on the map; the level ends above a threshold.
+- White birds that flap (low fidelity is fine); deer or small brown animals
+  that roam and scatter when you click.
+- Taps on structures should visibly crack them with a stone-falling sound.
+- Audio softer overall; rain sound only under storms; otherwise wind and
+  distant rumbling thunder (the constant "not-quite-rain" noise must go).
+- Biomes: trees on flatter, wetter ground; open fields; fireflies only in fields.
+- More tree variety and height variety.
+- Tank tap: deeper, more hollow. Tanks closed so oil only shows when they break.
+- Clicking water should splash (with sound).

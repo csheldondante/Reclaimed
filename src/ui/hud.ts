@@ -12,6 +12,8 @@ export class Hud {
   private hintTimer = 0;
   private overlay: SVGSVGElement;
   private bolts: SVGSVGElement;
+  private hudEl: HTMLElement;
+  private reclaim: HTMLElement;
 
   constructor(root: HTMLElement, onSummon: () => void) {
     const hud = document.createElement('div');
@@ -22,6 +24,13 @@ export class Hud {
       </div>
       <button class="summon" title="Summon a storm (R)"><span>☁</span></button>`;
     root.appendChild(hud);
+    this.hudEl = hud;
+    // how much of the land is alive, with the level goal marked
+    this.reclaim = document.createElement('div');
+    this.reclaim.className = 'reclaim';
+    this.reclaim.title = 'Living land — the valley is reclaimed when it reaches the mark';
+    this.reclaim.innerHTML = '<span>❧</span><div class="track"><div class="fill"></div><div class="goal"></div></div><span class="pct"></span>';
+    root.appendChild(this.reclaim);
     this.fill = hud.querySelector('.fill')!;
     this.val = hud.querySelector('.val')!;
     this.stormBtn = hud.querySelector('.summon')!;
@@ -96,6 +105,19 @@ export class Hud {
     this.val.textContent = String(Math.floor(nature));
     this.stormBtn.style.setProperty('--ready', String(Math.min(1, stormReady)));
     this.stormBtn.classList.toggle('ready', stormReady >= 1);
+  }
+
+  /** @param frac living fraction of the land; @param goal level threshold (shown at 80 % of the track) */
+  setReclaim(frac: number, goal: number): void {
+    const shown = Math.min(1.25, frac / goal) * 0.8;
+    (this.reclaim.querySelector('.fill') as HTMLElement).style.width = `${(shown * 100).toFixed(1)}%`;
+    (this.reclaim.querySelector('.pct') as HTMLElement).textContent = `${Math.round((frac / goal) * 100)}%`;
+    this.reclaim.classList.toggle('done', frac >= goal);
+  }
+
+  dispose(): void {
+    for (const el of [this.hudEl, this.hint, this.overlay, this.bolts, this.reclaim]) el.remove();
+    clearTimeout(this.hintTimer);
   }
 
   say(text: string, seconds = 5): void {

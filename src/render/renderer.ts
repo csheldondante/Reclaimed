@@ -3,7 +3,7 @@
 // Renders directly from the canonical representation; no meshing/LOD yet
 // (design doc §14: one straightforward path until profiling says otherwise).
 
-import { makeBindGroup, makeCompute, makeLayout, makeModule, type ComputeKernel } from '../gpu/pipeline';
+import { ignoreTeardown, makeBindGroup, makeCompute, makeLayout, makeModule, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
@@ -85,8 +85,8 @@ export class Renderer {
       GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     );
     this.camBuf = world.buf('camera', CAMERA_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.pickBuf = device.createBuffer({ label: 'pick', size: 256, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    this.countBuf = device.createBuffer({ label: 'counts', size: 32, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.countBuf = world.buf('counts', 32, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, renderprepWgsl], {
       0: 'uniform',
@@ -219,6 +219,12 @@ export class Renderer {
     this.partGroup = makeBindGroup(device, 'particles-draw', partLayout, { 0: world.globals, 3: world.particles, 10: this.camBuf });
   }
 
+  /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
+  destroy(): void {
+    this.depth?.destroy();
+    this.pickTex?.destroy();
+  }
+
   resize(w: number, h: number): void {
     this.depth?.destroy();
     this.pickTex?.destroy();
@@ -313,7 +319,7 @@ export class Renderer {
         this.pickBuf.unmap();
         this.pickBusy = false;
         resolve(v === 0 ? null : { cell: v - 1, mat: info & 0xff, z: (info >> 8) & 0xff, flags: info >>> 16 });
-      });
+      }, ignoreTeardown);
     }
     if (this.countNeeded) {
       this.countNeeded = false;
@@ -323,7 +329,7 @@ export class Renderer {
         this.countBuf.unmap();
         // throttle: allow another readback in a little while
         setTimeout(() => (this.countBusy = false), 250);
-      });
+      }, ignoreTeardown);
     }
   }
 }

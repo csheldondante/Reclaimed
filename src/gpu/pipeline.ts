@@ -68,3 +68,13 @@ export function makeCompute(
   });
   return { pipeline, layout };
 }
+
+/**
+ * For readbacks of buffers owned by a world: when the scene is disposed while
+ * a map is in flight, the buffer is destroyed and mapAsync rejects with an
+ * AbortError. That is expected teardown; anything else is a real error.
+ */
+export function ignoreTeardown(e: unknown): void {
+  if (e instanceof DOMException && e.name === 'AbortError') return;
+  throw e;
+}

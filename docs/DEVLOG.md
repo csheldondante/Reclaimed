@@ -522,3 +522,28 @@ only shows when they break.
   crown, dark blue-green), **birch** (slender pale barked trunk, airy light
   crown), **old giant** (on the oldest woodland: 4×4-quarter trunk, 5×5 crown,
   tall). Heights vary per tree.
+
+## 2026-10-07 — round 3, batch 5: menu diorama, reclamation goal, scenes
+
+- **Scenes.** `main.ts` is now a thin boot + scene switcher. `scenes/world-core.ts`
+  bundles one live world (WorldGpu, Simulation, Renderer, Weather, DayNight,
+  Camera, Globals, warmup/advance/render, readbacks). `LevelScene` is the old
+  main loop; `MenuScene` is new. Scenes dispose cleanly: WorldGpu frees every
+  buffer allocated through `buf()`, renderer frees its textures, Controls/keys
+  use AbortControllers, HUD removes its DOM. Readbacks still in flight when a
+  world is destroyed reject with AbortError — `ignoreTeardown` swallows only
+  that (seen in the first scene-switch test), anything else still throws.
+- **Menu** (design doc §4): a 48×48 live diorama — a voxel skull lying on its
+  side (hollow cranium, eye sockets, nose, teeth), jaw, femur, arm bone, ribs,
+  trash and debris. Its state is a pure function of persistent progress p:
+  trash and contamination fade, moss/lichen on bone (~0.45), grass and
+  flowers (~0.7), and at p ≥ 0.95 a tree grows up through the eye socket.
+  Wind is strong when dead (scraps and dust blow across), calm when alive;
+  birds visit once alive; the cursor stirs a breeze. Only surface, particles,
+  render fields and stats run — a tableau, not a simulation. One line of text
+  per stage. `?progress=0..1` previews any stage.
+- **Reclamation goal**: HUD bar = living land ÷ land not under water, goal
+  40 % (marked at 80 % of the track). Progress (best fraction ÷ goal) is saved
+  to localStorage every 5 s and drives the menu; reaching the goal shows
+  "THE VALLEY BREATHES" with *Keep watching* / *Return*. `?skipmenu=1` jumps
+  straight into the level (scripted tests).

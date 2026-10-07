@@ -47,6 +47,7 @@ export const MAT = {
   Oil: 13,
   Grass: 14,
   Flower: 15,
+  Bone: 16,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -80,6 +81,8 @@ export const MATERIALS: MaterialDef[] = [
   // render-only: grass tufts and wildflowers (vegetation detail instances)
   { ...NONE, name: 'grass', albedo: [0.36, 0.54, 0.19], state: MatState.Vegetation },
   { ...NONE, name: 'flower', albedo: [0.9, 0.85, 0.4], state: MatState.Vegetation },
+  // old bone: ivory, weathered; hard and stable (never collapses), takes moss
+  { ...NONE, name: 'bone', albedo: [0.84, 0.8, 0.7], state: MatState.Solid, strength: 1, growthCap: 1.4, suitability: 0.35, porosity: 0.3 },
 ];
 
 export const MAX_MATERIALS = 32;

@@ -1,7 +1,7 @@
 // First (simplest) implementations of each simulation system. Each one is a
 // thin wrapper binding a WGSL kernel to WorldGpu contract buffers.
 
-import { makeBindGroup, makeCompute, type BindSpec } from '../gpu/pipeline';
+import { ignoreTeardown, makeBindGroup, makeCompute, type BindSpec } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
@@ -317,7 +317,7 @@ export class StatsSystem implements SimSystem {
     );
     for (let i = 0; i < 3; i++)
       this.staging.push({
-        buf: device.createBuffer({ label: 'stats-staging', size: STATS_COUNT * 4, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
+        buf: world.buf('stats-staging', STATS_COUNT * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST),
         busy: false,
       });
   }
@@ -352,7 +352,7 @@ export class StatsSystem implements SimSystem {
           overflow: u[STAT.overflow],
           cells,
         };
-      });
+      }, ignoreTeardown);
     });
   }
 

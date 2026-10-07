@@ -143,8 +143,17 @@ export class WorldGpu {
     this.contamDelta = this.buf('contamDelta', N * 4, S);
   }
 
+  private owned: GPUBuffer[] = [];
+
+  /** Free every GPU buffer this world (and anything allocated through buf()) owns. */
+  destroy(): void {
+    for (const b of this.owned) b.destroy();
+    this.owned = [];
+  }
+
   buf(label: string, size: number, usage: GPUBufferUsageFlags): GPUBuffer {
     const b = this.device.createBuffer({ label, size: Math.ceil(size / 4) * 4, usage });
+    this.owned.push(b);
     this.profiler.trackMemory(label, size);
     return b;
   }
