@@ -123,12 +123,13 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sc = clampCell(vec2<i32>(floor(wpos.xy + nrm.xy * 0.5)));
   let lit = select(0.0, 1.0, wpos.z >= shadow[colIdxI(sc)] - 0.05);
   let cloud = cloudShade(wpos.xy);
-  let clear = 1.0 - G.pollution;
-  let sunCol = mix(vec3<f32>(1.0, 0.84, 0.64), vec3<f32>(1.0, 0.95, 0.86), clear) * 2.4;
-  let sky = mix(vec3<f32>(0.34, 0.33, 0.31), vec3<f32>(0.30, 0.38, 0.50), clear);
+  // light comes from the day/night cycle (src/weather/daynight.ts)
+  let sunCol = G.sunCol.rgb;
+  let sky = G.sky.rgb;
+  let day = 1.0 - G.sky.w;
   let ambient = sky * (0.5 + 0.5 * nrm.z) * (1.0 - cloud * 0.5);
   // warm bounce light from the opposite side keeps shaded faces readable
-  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (1.0 - cloud * 0.5);
+  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (1.0 - cloud * 0.5) * (0.15 + 0.85 * day);
   let flash = G.misc.z * vec3<f32>(1.1, 1.2, 1.5) * (0.6 + 0.4 * nrm.z);
   return ambient + fill + flash + sunCol * ndl * lit * (1.0 - cloud * 0.93);
 }
@@ -136,7 +137,8 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
 fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
   let dirty = vec3<f32>(0.62, 0.57, 0.48);
   let clean = vec3<f32>(0.62, 0.70, 0.78);
-  let h = mix(clean, dirty, G.pollution);
+  // haze darkens with the sky at night
+  let h = mix(clean, dirty, G.pollution) * mix(1.0, 0.15, G.sky.w);
   let lowFog = smoothstep(24.0, 0.0, wpos.z) * 0.06;
   return mix(c, toLinear(h), 0.03 + 0.1 * G.pollution + lowFog);
 }
@@ -280,7 +282,7 @@ fn fsWater(in: VOut) -> FOut {
     let h = normalize(normalize(sunL + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
     let spec = pow(max(dot(nn, h), 0.0), 160.0) * (1.0 - cloudShade(in.wpos.xy));
     col *= shade;
-    col += vec3<f32>(1.0, 0.94, 0.84) * spec * 0.7;
+    col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.7;
     // foam where flowing fast
     let sub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 4.0, t * 6.0)));
     let foam = smoothstep(0.03, 0.25, flow) * step(0.72, randv(sub));
@@ -289,7 +291,7 @@ fn fsWater(in: VOut) -> FOut {
     // rain rings
     let rain = rainAt(in.wpos.xy);
     let rsub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 3.0, t * 10.0)));
-    col += vec3<f32>(0.25) * step(1.0 - 0.06 * rain, randv(rsub));
+    col += vec3<f32>(0.25) * (1.0 - 0.8 * G.sky.w) * step(1.0 - 0.06 * rain, randv(rsub));
   }
   col *= 1.0 - gl * 0.3;
   col = haze(col, in.wpos);
@@ -314,7 +316,7 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
     col += toLinear(film) * 0.035 * (1.0 - cloudShade(in.wpos.xy));
     let h = normalize(normalize(sunDir() + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
     let spec = pow(max(h.z, 0.0), 30.0) * 0.25;
-    col += vec3<f32>(spec);
+    col += G.sunCol.rgb * (1.0 / 2.4) * spec;
   }
   col = haze(col, in.wpos);
   var o: FOut;

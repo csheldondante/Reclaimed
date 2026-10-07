@@ -14,6 +14,8 @@ export interface AudioState {
   flow: number;
   /** wind strength 0..1 */
   wind: number;
+  /** 0 day .. 1 night */
+  night: number;
 }
 
 export class Ambience {
@@ -148,10 +150,11 @@ export class Ambience {
     this.whistleGain!.gain.setTargetAtTime(wind * 0.05 * s.pollution, t, 1.5);
     this.rainGain!.gain.setTargetAtTime(Math.min(1, s.rain) * 0.28, t, k);
     this.flowGain!.gain.setTargetAtTime(Math.min(1, s.flow) * 0.18, t, k * 2);
-    this.insectGain!.gain.setTargetAtTime(Math.pow(s.life, 1.5) * 0.02 * (1 - Math.min(1, s.rain)), t, 2);
+    // insects carry the night; birds the day
+    this.insectGain!.gain.setTargetAtTime(Math.pow(s.life, 1.2) * (0.012 + 0.03 * s.night) * (1 - Math.min(1, s.rain)), t, 2);
 
     if (t > this.nextBird) {
-      const rate = s.life * s.life * 0.9 * (1 - Math.min(1, s.rain) * 0.8); // calls / s
+      const rate = s.life * s.life * 0.9 * (1 - Math.min(1, s.rain) * 0.8) * (1 - s.night * 0.9); // calls / s
       if (rate > 0.01 && Math.random() < 0.85) this.birdCall();
       this.nextBird = t + (rate > 0.01 ? 0.4 + Math.random() * (2 / rate) : 2);
     }

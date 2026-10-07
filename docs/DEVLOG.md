@@ -353,3 +353,17 @@ sharper and more pronounced; wants to see rain in motion.
 - Rain at storm scale became a white wall (~20k streaks); now density scales
   with radius (not area) and streaks are dimmer. Clouds puffier and sparser.
   Both remain taste calls for review.
+
+## 2026-10-07 — phase 3b: day/night cycle
+
+- `weather/daynight.ts` drives the light: sun sweeps from front-left
+  (morning) through the hand-tuned M0 noon direction to back-right (evening);
+  golden-hour warmth at low elevation; at night a dim cool moon from a fixed
+  high angle so shadows still read. Outputs sun direction, sun colour ×
+  intensity, ambient sky and a night factor into Globals (`sunCol`, `sky`);
+  the renderer no longer hard-codes light. Pollution still warms/dims daylight.
+- Default day = 8 minutes, starting mid-morning. Debug: `?day=60`, `?tod=0.9`.
+- Night: background, haze and lit particles darken; glints scale with the
+  current light (first pass left white sparkles on water/oil at night);
+  **fireflies** (glowing, unlit particles) drift over living land; audio
+  shifts from birds to insects.

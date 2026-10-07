@@ -34,6 +34,8 @@ const DEPTH_FORMAT: GPUTextureFormat = 'depth24plus';
 
 export interface RenderOptions {
   rainParticles: number;
+  /** sRGB background */
+  clear: [number, number, number];
 }
 
 export class Renderer {
@@ -264,7 +266,7 @@ export class Renderer {
     const pass = enc.beginRenderPass({
       label: 'world',
       colorAttachments: [
-        { view: target, clearValue: { r: 0.36, g: 0.34, b: 0.31, a: 1 }, loadOp: 'clear', storeOp: 'store' },
+        { view: target, clearValue: { r: opts.clear[0], g: opts.clear[1], b: opts.clear[2], a: 1 }, loadOp: 'clear', storeOp: 'store' },
         { view: this.pickTex!.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
       ],
       depthStencilAttachment: { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },

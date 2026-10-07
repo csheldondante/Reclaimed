@@ -35,6 +35,7 @@ const K_SPLASH: u32 = 7u;
 const K_SMOKE: u32 = 8u;
 const K_EMBER: u32 = 9u;
 const K_BIRD: u32 = 10u;
+const K_FIREFLY: u32 = 11u;
 
 const DT: f32 = 1.0 / 60.0;
 // storm cloud deck height (cells): low enough that clouds stay on screen near
@@ -100,6 +101,10 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   // leaves shaken from trees
   if (v >= 3.6 && r1 > 1.0 - (0.0003 + max(ws - 2.0, 0.0) * 0.0006)) {
     spawn(base + vec3<f32>(r2 - 0.5, fract(r2 * 3.7) - 0.5, 3.0 + r2 * 3.0), vec3<f32>(wind * 0.5, 0.0), 12.0, K_LEAF, 0.0, h);
+  }
+  // fireflies over living land at night
+  if (G.sky.w > 0.6 && v >= 1.8 && !wet && r2 > 1.0 - 0.0004 * G.sky.w) {
+    spawn(base + vec3<f32>(r1 - 0.5, fract(r1 * 5.3) - 0.5, 0.6 + r1 * 2.0), vec3<f32>(0.0), 6.0 + r1 * 6.0, K_FIREFLY, 0.0, h);
   }
   // cloud puffs born inside storms, high above the land
   for (var k = 0u; k < G.numStorms; k++) {
@@ -187,6 +192,11 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     drag = 1.2; grav = -0.4;
   } else if (kind == K_CHIP || kind == K_SPLASH) {
     drag = 0.3; grav = 14.0;
+  } else if (kind == K_FIREFLY) {
+    // wander slowly, ignore most wind
+    drag = 0.2; grav = 0.0;
+    vel += vec3<f32>(sin(G.time * 1.7 + sr * 31.0), cos(G.time * 1.3 + sr * 17.0), sin(G.time * 2.1 + sr * 7.0) * 0.6) * 1.5 * DT;
+    vel *= 0.98;
   } else if (kind == K_BIRD) {
     // flee upward, then wheel downwind
     drag = 0.6; grav = -0.15;
@@ -200,7 +210,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     pos += vel * DT;
   }
 
-  if (kind != K_CLOUD && kind != K_BIRD && pos.z <= ground) {
+  if (kind == K_FIREFLY && pos.z <= ground + 0.3) { pos.z = ground + 0.3; vel.z = abs(vel.z); }
+  if (kind != K_CLOUD && kind != K_BIRD && kind != K_FIREFLY && pos.z <= ground) {
     if (kind == K_DUST) {
       depositAt(pos, P.v.w);
       parts[id.x].p.w = 0.0;

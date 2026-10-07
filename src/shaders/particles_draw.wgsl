@@ -62,6 +62,11 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   } else if (kind == 7u) { col = vec4<f32>(0.8, 0.86, 0.9, 0.7); size = 0.1; }
   else if (kind == 8u) { col = vec4<f32>(0.35, 0.34, 0.33, 0.35); size = 0.5 + sr; soft = 1.0; }
   else if (kind == 9u) { col = vec4<f32>(1.0, 0.6, 0.2, 1.0); size = 0.09; }
+  else if (kind == 11u) { // firefly: unlit glow, pulsing
+    size = 0.13;
+    let glow = 0.5 + 0.5 * sin(G.time * 3.0 + sr * 40.0);
+    col = vec4<f32>(vec3<f32>(0.85, 1.0, 0.45) * (0.6 + 0.8 * glow), glow);
+  }
   else if (kind == 10u) { // bird: dark, wings flicker
     size = 0.22;
     let flap = 0.5 + 0.5 * sin(G.time * 18.0 + sr * 60.0);
@@ -69,6 +74,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size *= 0.6 + 0.6 * flap;
   }
   if (soft == 0.0) { col.a *= fade; }
+  if (kind != 9u && kind != 11u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w), col.a); }
   let c = CORNERS[vi];
   let center = CAM.viewProj * vec4<f32>(P.p.xyz, 1.0);
   // world-size square in screen space: viewport.z = px per world unit

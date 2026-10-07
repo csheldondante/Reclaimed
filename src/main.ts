@@ -14,6 +14,7 @@ import { PerfOverlay } from './ui/perf-overlay';
 import { CHUNK, packColumns } from './world/layout';
 import { generateMap } from './world/mapgen';
 import { Weather } from './weather/weather';
+import { DayNight } from './weather/daynight';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY = {
@@ -50,6 +51,10 @@ async function main() {
   const nature = new Nature();
   const audio = new Ambience();
   const camera = new Camera();
+  const dayNight = new DayNight();
+  // ?day=<seconds> sets the day length (debug: ?day=60 to watch a full cycle)
+  if (params.get('day')) dayNight.dayLength = Math.max(10, Number(params.get('day')));
+  if (params.get('tod')) dayNight.timeOfDay = Number(params.get('tod')) % 1;
   camera.target = [dims.w * 0.55, dims.h * 0.5, 14];
 
   const globals: GlobalsState = {
@@ -258,6 +263,11 @@ async function main() {
     globals.storms = weather.uniforms();
     globals.pollution = pollution;
     globals.flash = Math.max(0, globals.flash - dt * 2.5);
+    dayNight.update(simDt);
+    const light = dayNight.light(pollution);
+    globals.sun = light.dir;
+    globals.sunCol = [light.col[0], light.col[1], light.col[2], light.timeOfDay];
+    globals.sky = [light.sky[0], light.sky[1], light.sky[2], light.night];
 
     acc += simDt;
     let ticks = 0;
@@ -272,6 +282,7 @@ async function main() {
     sim.uploadGlobals(globals);
     const enc = device.createCommandEncoder({ label: 'frame' });
     renderer.encode(enc, gpu.context.getCurrentTexture().createView(), camera, {
+      clear: light.clear,
       rainParticles: Math.round(weather.storms.reduce((a, st) => a + quality.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });
     const afterProfile = profiler.endFrame(enc);
@@ -300,6 +311,7 @@ async function main() {
       life,
       rain: weather.rainAt(camera.target[0], camera.target[1]),
       flow: stats ? Math.min(1, stats.flow / 40) : 0,
+      night: light.night,
       wind: Math.min(1, Math.hypot(weather.windX, weather.windY) / 6 + weather.storms.reduce((a, s) => a + s.intensity * 0.3, 0)),
     });
     perf.update(
