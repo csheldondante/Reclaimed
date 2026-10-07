@@ -2,6 +2,17 @@
 
 Current state of the system boundaries. Update when a contract changes.
 
+## Scenes
+
+`main.ts` boots WebGPU and switches scenes. `scenes/world-core.ts` (WorldCore) is one
+live world: WorldGpu + Simulation + Renderer + Weather + DayNight + Camera +
+Globals, with warmup/advance/render and readbacks. `LevelScene` (the valley:
+powers, HUD, goal) and `MenuScene` (48×48 skull diorama from `world/menumap.ts`,
+state = f(saved progress); runs only surface/particles/renderfields/stats) each
+own one and dispose it on exit (WorldGpu.destroy frees every buffer made via
+`buf()`; in-flight readbacks reject with AbortError, swallowed by
+`ignoreTeardown`).
+
 ## Frame
 
 ```
@@ -15,9 +26,18 @@ GPU per frame: renderprep (terrain + liquids) + vegprep (plants) → draw
    (opaque boxes incl. sub-voxel canopies, liquids, particles, rain)
 ```
 
-Globals (`common.wgsl` / `src/sim/globals.ts`, 464 bytes) carry storms,
-one-tick events, gusts (player + cursor breeze), day/night light and the life
-lens. The shared wind field `windAt()` is analytic from these.
+Globals (`common.wgsl` / `src/sim/globals.ts`, 528 bytes) carry storms (+ shape:
+`stormsC` lobe phases and elongation), one-tick events, gusts (player + cursor
+breeze; gusts[0] is the cursor/tap breeze that animals flee), day/night light
+and the life lens. Analytic fields derived from them: `windAt()`, `stormDist()`
+(irregular storm outline; CPU twin `Weather.stormDist`), `rainAt()`,
+`cloudShade()`.
+
+## Biomes
+
+Moisture dries slower on flat ground; ecology only lets succession pass stage
+3.3 (trees) where flat × wet × a large-scale patch noise (woodland); elsewhere
+it stops at meadow. Fireflies only over meadow.
 
 ## World representation
 
@@ -37,6 +57,7 @@ lens. The shared wind field `windAt()` is analytic from these.
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
 | oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
+| oilStored | vec2 (amount, roof z) sealed in closed tanks | oil (releases on breach, burns inside) | fire (fuel) |
 | contam | vec2 (soil, dissolved) | contamination | ecology, particles, draw, stats |
 | contamDelta | atomic i32 ×1e5 | particles (pick-up/drop), oil (soak) | contamination (folds in, zeroes) |
 | moisture | f32 0..1 | moisture | material, ecology, fire, particles, renderfields |
@@ -61,6 +82,10 @@ from a heightfield sun-march compute pass. Cloud shadows/rain field are
 analytic functions of the storm uniforms. An `rg32uint` pick target (column +
 material, height, flags) gives exact picking via a 1-pixel async readback.
 
+## Snippets (concatenated after a kernel that declares their inputs)
+
+- `flow.wgsl::netFlow(p)` needs `flux`; `slope.wgsl::slopeAt/flatness` needs `surface`.
+
 ## Derived helpers
 
 - `flow.wgsl::netFlow(p)` — net volume/tick through a column from `flux`.
@@ -71,12 +96,15 @@ material, height, flags) gives exact picking via a 1-pixel async readback.
 
 `w = material | flags << 8`; flags: 1 top-of-column, 2 vegetation,
 4/8/16/32 side face toward +x/−x/+y/−y hidden, 64 top face hidden.
-Fully hidden intervals are not emitted. Flag 128 = detail instance (x/y/size in
+Fully hidden intervals are not emitted. Bits 16..19 of `w`: structural damage
+(terrain: drawn as cracks) or tree species (vegetation: 0 broadleaf, 1 conifer,
+2 birch, 3 giant). Flag 128 = detail instance (x/y/size in
 quarter cells: trunks, grass tufts, flowers). Leaf boxes with the vegetation flag
 are shaded by a sub-voxel ray march inside the box (discard = gap).
 
 ## Events
 
 `Globals.events` (≤4, one tick): x, y, radius, strength + kind
-(`EV_LIGHTNING`). The CPU queues them; `Simulation.step` clears them after
+(`EV_LIGHTNING`, `EV_CHIP`; `eventKind` packs kind + 16·z for height-targeted
+events). The CPU queues them; `Simulation.step` clears them after
 the tick that consumes them.
