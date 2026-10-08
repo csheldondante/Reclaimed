@@ -41,9 +41,9 @@ Order: D4, D5, D6 → D7 → D2 → D3 → D1 → then back to C6, C7, C9, C8.
 | D1 | Title screen plants at diorama scale: flowers with petals and leaves, grass blades, moss, roots of the tree growing out of the skull | M | next |
 | D2 | Wind blows decaying (browned) plants away as dust/flakes | S | next |
 | D3 | Cyclones from a tight circular drag: carry dust, cross the map destructively (free, cooldown; ruins/junk, spare grown plants) — supersedes C10 | M–L | next |
-| D4 | The squeaks under rain/storms (raindrop ticks / birdsong in rain) — remove | S | next |
-| D5 | Grow sound: something unfurling, not a charging sound | S | next |
-| D6 | Drag wind 2–3× louder relative to other sounds | S | next |
+| D4 | The squeaks under rain/storms (raindrop ticks / birdsong in rain) — remove | S | done `b4df5f8` |
+| D5 | Grow sound: something unfurling, not a charging sound | S | done `b4df5f8` |
+| D6 | Drag wind 2–3× louder relative to other sounds | S | done `b4df5f8` |
 | D7 | Rounder edges on drifts / water / smoothed surfaces (cheap SDF-style edges) | S–M | next |
 
 ## Round 11 (2026-10-08)
