@@ -115,6 +115,12 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     let t = clamp(P.p.w / 1.5, 0.0, 1.0);
     col = select(vec4<f32>(mix(vec3<f32>(0.55, 0.9, 0.35), vec3<f32>(1.0, 0.95, 0.55), sr), t), vec4<f32>(0.42, 0.3, 0.14, t), P.m.w == 1u);
   }
+  else if (kind == 20u) { // cyclone funnel puff: dusty grey-tan, thicker low down
+    let h = P.v.y;
+    size = 0.35 + h * 0.06 + sr * 0.15;
+    soft = 1.0;
+    col = vec4<f32>(mix(vec3<f32>(0.34, 0.3, 0.25), vec3<f32>(0.5, 0.45, 0.38), sr2), 0.8 * clamp(1.0 - h / 20.0, 0.3, 1.0) * clamp(h * 2.0, 0.0, 1.0));
+  }
   else if (kind == 19u) { // glow: a soft light that swells and fades
     let age = clamp(1.0 - P.p.w / 1.4, 0.0, 1.0);
     size = 1.2 + age * 1.6;

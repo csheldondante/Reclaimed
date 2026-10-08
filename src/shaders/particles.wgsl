@@ -59,6 +59,18 @@ const K_PETAL: u32 = 18u;
 // a brief soft light where something happens (round 11): state 0 growth
 // (green-gold), 1 wind (pale blue)
 const K_GLOW: u32 = 19u;
+// the cyclone's funnel (round 12): kinematic — each puff rides the cone at
+// its height, spiralling up (v.x angle, v.y height, v.z ground at the base)
+const K_FUNNEL: u32 = 20u;
+const FUNNEL_TOP: f32 = 20.0;
+
+/** Centre of the funnel at height h above its base: it leans downwind and snakes. */
+fn funnelCentre(h: f32) -> vec2<f32> {
+  let wd = vec2<f32>(G.windX, G.windY);
+  let side = vec2<f32>(-wd.y, wd.x) / max(length(wd), 1e-3);
+  let snake = sin(G.time * 1.1 + h * 0.28) * 0.08 + sin(G.time * 0.53 + h * 0.13) * 0.06;
+  return G.cyclone.xy + wd * 0.07 * h + side * snake * h;
+}
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
 // left to settle, it falls as soot (DECISIONS round 5)
@@ -138,12 +150,13 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let dusty = dustinessOf(contam[i].x, m) * dry * (1.0 - cover);
     // the cyclone sucks dust off the ground into its column
     let inCy = cycloneAt(base.xy);
-    if (inCy > 0.05 && rare(id.x, id.y, 0xc7c1u) < inCy * 0.02) {
+    if (inCy > 0.05 && rare(id.x, id.y, 0xc7c1u) < inCy * 0.0015) {
       spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.6, 2.0 + r2 * 2.0), 3.0 + r1 * 3.0, select(K_DUST, K_HAZE, r1 < 0.3), 0.0, h ^ 0xc7u);
     }
     // drifts losing dust to the wind stream it downwind (drift.wgsl .y)
     let blown = textureLoad(driftTex, p, 0).y;
-    if (blown > 0.0005 && rare(id.x, id.y, 0xd21fu) < blown * 6.0) {
+    // (inside the cyclone the funnel shows it instead of a haze)
+    if (blown > 0.0005 && inCy <= 0.0 && rare(id.x, id.y, 0xd21fu) < blown * 6.0) {
       spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.2), vec3<f32>(wind * 0.7, 0.6 + r2), 2.5 + r1 * 2.0, K_DUST, 0.0, h ^ 0xd2u);
     }
     // dust settles out of the dry, dead ground
@@ -166,7 +179,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // (capped low: a hard drag should show what it moves, not bury it in haze)
     let hazeRate = min(max(ws - 6.0, 0.0) * 0.0005 * dusty, 0.0012) + dstorm * 0.0012 * dry * (1.0 - cover);
-    if (rare(id.x, id.y, 0x4a2eu) < hazeRate) {
+    if (rare(id.x, id.y, 0x4a2eu) < hazeRate * (1.0 - cycloneAt(base.xy))) {
       spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h);
     }
     // scattered litter torn off the ground by strong wind (removed by the
@@ -220,6 +233,14 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       if (r1 < 0.35 * fall) { spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(0.0, 0.0, 1.2 + r2), 1.4 + r1, K_SPARK, 0.0, h, 0u, 0u); }
     } else if (r1 < 0.3 * fall) {
       spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>((r2 - 0.5) * 0.6, (r1 - 0.5) * 0.6, 0.6), 1.6 + r1, K_SPARK, 0.0, h, 0u, 1u);
+    }
+  }
+  // the funnel: puffs are born at its tip, under the cyclone's centre
+  if (G.cyclone.w != 0.0 && all(vec2<u32>(floor(G.cyclone.xy)) == id.xy)) {
+    for (var k = 0u; k < 10u; k++) {
+      let hk = hash3(id.x, id.y, G.tick * 7u + k);
+      let a0 = f32(hk & 1023u) / 1023.0 * 6.2832;
+      spawnFull(base + vec3<f32>(cos(a0), sin(a0), 0.0) * 0.6, vec3<f32>(a0, f32((hk >> 10u) & 255u) / 255.0 * 0.5, g), 12.0, K_FUNNEL, 0.0, hk, 0u, 0u);
     }
   }
   // fallen leaves gather on the woodland floor
@@ -482,6 +503,18 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     drag = 2.4; grav = 0.6;
     vel.x += sin(G.time * 6.0 + sr * 40.0) * 2.5 * DT;
     vel.y += cos(G.time * 5.0 + sr * 31.0) * 2.5 * DT;
+  } else if (kind == K_FUNNEL) {
+    // ride the cone: spin faster near the narrow tip, climb, widen; gone at
+    // the top or when the cyclone dies
+    if (G.cyclone.w == 0.0) { parts[id.x].p.w = 0.0; return; }
+    let h = vel.y + (2.6 + sr) * DT;
+    let rad = 0.5 + h * 0.2;
+    let ang = vel.x + sign(G.cyclone.w) * (2.2 + 3.0 / rad) * DT;
+    if (h > FUNNEL_TOP) { parts[id.x].p.w = 0.0; return; }
+    let c = funnelCentre(h);
+    pos = vec3<f32>(c + vec2<f32>(cos(ang), sin(ang)) * rad, vel.z + h);
+    parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(ang, h, vel.z, 0.0), vec4<u32>(kind, seed, 0u, 0u));
+    return;
   } else if (kind == K_GLOW) {
     drag = 0.0; grav = 0.0; vel = vec3<f32>(0.0);
   } else if (kind == K_SPARK) {
@@ -627,10 +660,17 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   // inside the cyclone, anything loose rises in a spiral
-  let cyl = cycloneAt(pos.xy);
-  if (cyl > 0.0 && !resting && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_GLOW) {
-    vel.z += cyl * (6.0 - max(pos.z - ground - 14.0, 0.0)) * DT;
-    grav *= 1.0 - cyl;
+  // only the core lifts (the funnel is drawn by its own puffs); elsewhere loose
+  // debris whirls round in a low skirt at the base
+  if (G.cyclone.w != 0.0 && !resting && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_GLOW) {
+    let rr = length(pos.xy - G.cyclone.xy) / G.cyclone.z;
+    let core = abs(G.cyclone.w) * smoothstep(0.9, 0.3, rr);
+    vel.z += core * (5.0 - max(pos.z - ground - 10.0, 0.0)) * DT;
+    let skirt = abs(G.cyclone.w) * smoothstep(2.0, 0.8, rr) * (1.0 - core);
+    // loose dust caught in the vortex is drawn into the funnel (it would
+    // otherwise whirl out into a broad cloud that hides the cone)
+    if (kind == K_DUST || kind == K_HAZE) { life -= (core + skirt) * 2.5 * DT; }
+    if (pos.z > ground + 2.5) { vel.z -= skirt * 6.0 * DT; }
   }
   if (!resting && kind != K_DEER && kind != K_RABBIT) {
     vel = vec3<f32>(vel.xy + (w - vel.xy) * min(drag * DT, 1.0), vel.z - grav * DT);

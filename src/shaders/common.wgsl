@@ -292,7 +292,9 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
     let r = dist / cy.z;
     if (r < 3.5) {
       let tang = vec2<f32>(-o.y, o.x) / dist * sign(cy.w);
-      let prof = r * exp(1.0 - r);
+      // tight: full strength at the eye wall, fading fast beyond it (a wide
+      // profile lifted a ring of dust that hid the funnel)
+      let prof = r * exp((1.0 - r * r) * 0.5);
       w = w * (1.0 - 0.6 * smoothstep(1.5, 0.5, r)) + (tang * 26.0 - o / dist * 4.0) * abs(cy.w) * prof + G.cycloneB.xy * smoothstep(2.0, 0.5, r);
     }
   }

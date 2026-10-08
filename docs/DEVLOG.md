@@ -1135,3 +1135,19 @@ four petals and a yellow heart (render.wgsl: one colour per plant, the
 centre box yellow); low moss cushions on bone. At full progress roots creep
 down the cranium from the tree: five wavy strands hugging its surface around
 the back and sides (skull frame), clear of the face.
+
+## 2026-10-08 — cyclone funnel
+
+User: "cyclones should make a visible narrow cone that meanders with wind".
+- **Funnel particles** (kind 20, kinematic): born at the cyclone's centre,
+  they ride a cone — radius 0.5 + 0.2·height, up to 20 cells — spinning
+  with the cyclone's sense (faster near the tip) and climbing ~3 cells/s.
+  The cone's centre at each height leans downwind (0.07·wind·h) and snakes
+  with two slow sines, so the column sways as it travels. Darker grey-tan,
+  thicker low down. ~2900 puffs; mean radius 2.1, max 5.4.
+- The broad cloud that hid it (≈2300 airborne dust at ~16 cells out) came
+  from the vortex's wide wind profile (r·e^(1−r): still ~14 cells/s at 2.5
+  radii, lifting resting dust and drift streams in a ring). Profile is now
+  r·e^((1−r²)/2) (≈11 at 2 r, ~1.5 at 3 r); updraft only in the core, a low
+  debris skirt around it; loose dust in the vortex is drawn into the funnel
+  (fades); drift streams don't emit inside its reach.
