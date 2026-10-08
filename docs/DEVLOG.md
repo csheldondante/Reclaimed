@@ -1032,3 +1032,13 @@ Not yet: water surfaces (still boxes; B8), particles resting on slopes
 - **Howl** (user: "should sound more like a howl"): three narrow resonances
   (300 / 452 / 610 Hz, Q 26–34 — tonal, not hissy), whose pitch bends up as
   each gust rises and sags as it falls (0.82–1.22×), louder overall.
+
+## 2026-10-08 — round 11 batch 2 (C2 smooth water)
+
+The render-fields pass also writes a water corner height into the corners
+texture (`.y`): the mean water level (ground + depth) of the wet columns
+touching each grid corner, or −1 if none. Water boxes take their top corners
+(and a flat face normal) from it, and their visible sides' top edges follow,
+so rivers run down slopes as one sheet instead of stair-steps and pool edges
+round off. Ripples, glints, foam and the rain rings under storms are
+unchanged (fragment shader). Draw 2.9 ms at 1400×800 (+0.3 ms).

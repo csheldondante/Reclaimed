@@ -258,8 +258,8 @@ export class RenderFieldsSystem implements SimSystem {
       world,
       'renderfields',
       terrainShapeWgsl + renderFieldsWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 16: 'stex' },
-      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 16: world.cornerView },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 16: 'stex' },
+      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 16: world.cornerView },
     );
   }
   encode(enc: GPUCommandEncoder): void {

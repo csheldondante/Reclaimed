@@ -12,6 +12,23 @@
 @group(0) @binding(5) var<storage, read> fire: array<f32>;
 @group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> fields: array<vec4<f32>>;
+@group(0) @binding(8) var<storage, read> waterDepth: array<f32>;
+
+/** Water surface height at grid corner v: mean level of the wet columns touching it, or -1. */
+fn waterCornerZ(v: vec2<i32>) -> f32 {
+  var sum = 0.0;
+  var n = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
+    if (!inMap(q)) { continue; }
+    let j = colIdxI(q);
+    let d = waterDepth[j];
+    if (d < 0.012) { continue; }
+    sum += f32(sfZ(surface[j])) + d;
+    n += 1.0;
+  }
+  return select(-1.0, sum / max(n, 1.0), n > 0.0);
+}
 // smoothed corner heights for soft ground (terrainshape.wgsl), x = height or -1
 @group(0) @binding(16) var cornerOut: texture_storage_2d<rgba32float, write>;
 
@@ -50,5 +67,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   fields[i] = vec4<f32>(sz, moisture[i], glow, length(netFlow(p)));
-  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), 0.0, 0.0, 0.0));
+  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), waterCornerZ(p), 0.0, 0.0));
 }

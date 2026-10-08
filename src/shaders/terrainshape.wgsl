@@ -66,6 +66,12 @@ fn computeCornerZ(v: vec2<i32>) -> f32 {
   return clamp(sum / wsum, lo, hi);
 }
 
+/** Water surface height at corner v (smooth water, round 11), or -1. */
+fn waterCornerAt(v: vec2<i32>) -> f32 {
+  if (!inMap(v)) { return -1.0; }
+  return textureLoad(cornerTex, v, 0).y;
+}
+
 /** Drawn height at the corner v of a column whose own top is z. */
 fn cornerOr(v: vec2<i32>, z: f32) -> f32 {
   let c = cornerZ(v);
