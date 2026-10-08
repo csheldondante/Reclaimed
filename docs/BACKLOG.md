@@ -21,7 +21,7 @@ user) · `deferred` (agreed for later).
 | A3 | Drag audio: whoosh starts when the drag starts; no snap/rustle at mouse-up — wind only | S | done `a8d51c0` |
 | A4 | Player gusts sound deeper than the desolate ambient wind | S | done `a8d51c0` |
 | A5 | No birds on the title screen (they make the skull look giant) | S | done `a8d51c0` |
-| A6 | Blown dust piles up against things (drifts, lee of walls) | M–L | → C1 |
+| A6 | Blown dust piles up against things (drifts, lee of walls) | M–L | done `5995426` |
 | A7 | Tutorial builds skills: (1) growth and death of flowers, (2) wind blowing, (3) free play to demonstrate it, (4) something new: a pile of pollution the wind can't move, (5) a storm forms and lightning destroys it | M | done `6e03680` |
 | A8 | Wind is more powerful under storms | S | done `a8d51c0` |
 | A9 | Difficulty setting: easy (green never re-pollutes), medium (green resists), hard (green easily killed by blown trash, strong wind, too much water) | M | done `5866665` |
@@ -30,7 +30,7 @@ user) · `deferred` (agreed for later).
 | A12 | Map wind: a steady prevailing flow one way across the map; only minor noise, also mixed into the player field | S | done `a8d51c0` |
 | A13 | Storm shadows swirl erratically — make their shape steadier | S | done `a8d51c0` |
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
-| A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | render slopes done `a015f55`; sediment layer next (with A6) |
+| A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
 ## Round 11 (2026-10-08)
 
@@ -38,7 +38,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 
 | id | item | size | status |
 |---|---|---|---|
-| C1 | Dust drifts (fractional sediment layer) that bury things — uncover them with wind (objects, seed beds); supersedes A6 | L | next |
+| C1 | Dust drifts (fractional sediment layer) that bury things — uncover them with wind (objects, seed beds); supersedes A6 | L | done `5995426` |
 | C2 | Smooth water surfaces (keep the rain rings / storm glints) | M | done `0c20e47` |
 | C3 | Grow sound: a wet sprouting "opening", then the current shimmer | S | done `031b78c` |
 | C4 | Audio debug: see and mute each sound (find the high whine under storms / on Nature gains) | S | done `031b78c` |
