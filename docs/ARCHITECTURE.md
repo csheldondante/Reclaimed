@@ -182,18 +182,20 @@ the tick that consumes them.
 
 ## Levels and the sandbox
 
- is the level registry: id, name, blurb, title-screen model,
-map generator (absent = not built yet), goal, intro, sandbox. takes a level id ( startLevel; ). Progress
-is per level (; the valley keeps the original storage key); the
-title diorama reflects the best of the real levels.  builds a
+`game/levels.ts` is the level registry: id, name, blurb, title-screen model,
+map generator (absent = not built yet), goal, intro, sandbox. `LevelScene`
+takes a level id (`main.ts` startLevel; `?skipmenu=1&level=<id>`). Progress
+is per level (`progress.ts`; the valley keeps the original storage key); the
+title diorama reflects the best of the real levels. `menumap.ts` builds a
 small model per level around the diorama and returns its position as poi
-; a tap near one selects that level (Begin/Continue/Play, or
+`level:<id>`; a tap near one selects that level (Begin/Continue/Play, or
 "coming").
 
-Sandbox ( map +  panel): brush tools send
- events (z = op·32 + material) every frame while held; the edit
-system (, first each tick, only when an edit is pending) deposits/
+Sandbox (`world/sandbox.ts` map + `ui/editor.ts` panel): brush tools send
+`EV_EDIT` events (z = op·32 + material) every frame while held; the edit
+system (`edit.wgsl`, first each tick, only when an edit is pending) deposits/
 digs whole cells probabilistically by brush falloff and adds/removes water,
-oil, pollution and plants; drift dust goes through  (folded in by
+oil, pollution and plants; drift dust goes through `driftDelta` (folded in by
 the drift system, which owns the drift texture). Spawn tools call Weather
-(, , ). Time: speed 0 (pause) … 8×.
+(`spawn`, `placeDust`, `spawnCyclone`). Time: speed 0 (pause) … 8×.
+
