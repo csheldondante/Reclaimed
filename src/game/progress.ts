@@ -14,6 +14,15 @@ export function loadProgress(): number {
   }
 }
 
+/** Forget all progress (the title screen's reset). */
+export function resetProgress(): void {
+  try {
+    localStorage.removeItem(KEY);
+  } catch {
+    /* storage unavailable: nothing to forget */
+  }
+}
+
 /** Keeps the maximum ever reached. */
 export function saveProgress(p: number): void {
   try {

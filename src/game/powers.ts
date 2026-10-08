@@ -24,7 +24,8 @@ export interface PowersDeps {
   weather: Weather;
   nature: Nature;
   audio: Ambience;
-  hud: Hud;
+  /** absent on the title screen */
+  hud?: Hud;
   particles: ParticleSystem;
   globals: GlobalsState;
   camera: Camera;
@@ -138,7 +139,7 @@ export class Powers {
     }
     if (!this.told.lightning) {
       this.told.lightning = true;
-      setTimeout(() => hud.say('A storm gathers at the edge of the valley, upwind. Tap beneath it for lightning.', 8), 3000);
+      setTimeout(() => hud?.say('A storm gathers at the edge of the valley, upwind. Tap beneath it for lightning.', 8), 3000);
     }
   }
 
@@ -275,7 +276,7 @@ export class Powers {
     globals.events.push({ kind: EventKind.Lightning, x: bx + 0.5, y: by + 0.5, radius: 5, strength: 20 });
     globals.flash = 1;
     const [px, py] = this.d.camera.project(bx + 0.5, by + 0.5, bz);
-    hud.bolt(px, py);
+    hud?.bolt(px, py);
     audio.thunder(1, 1, px / Math.max(1, this.d.camera.viewportW));
     this.d.particles.burst({ kind: PK.Chip, x: bx + 0.5, y: by + 0.5, z: bz + 0.5, count: 12, speed: 6, spread: 0.5 });
     void sx;

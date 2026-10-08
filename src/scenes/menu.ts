@@ -1,9 +1,16 @@
 // Main menu (design doc §4): a small live diorama — a skull in barren soil —
-// whose state reflects persistent progress. Same engine as the level: wind,
-// dust and litter particles, light, sway; no simulation of change.
+// whose state reflects persistent progress. Same engine and the same hands as
+// the level (DECISIONS round 9): tap to grow (it withers in the dust), drag to
+// make wind (it strips litter and lifts grime). It opens by showing a flower
+// trying to grow out of the dust and withering. Not a full simulation:
+// ecology, water and structure don't run here.
 
 import type { Ambience } from '../audio/ambience';
-import { loadProgress } from '../game/progress';
+import { Nature } from '../game/nature';
+import { Powers } from '../game/powers';
+import { loadProgress, resetProgress } from '../game/progress';
+import { ignoreTeardown } from '../gpu/pipeline';
+import { Controls } from '../input/controls';
 import { PK } from '../sim/particles';
 import { generateMenuMap, MENU_SCALE } from '../world/menumap';
 import { WorldCore, type Host, type Scene } from './world-core';
@@ -16,17 +23,20 @@ const LINES: [number, string][] = [
   [0, 'Dust, wind, and what was left behind.'],
 ];
 
-// only these systems run on the diorama: it is a tableau, not a simulation
-const MENU_SYSTEMS = new Set(['windfield', 'surface', 'particles', 'sway', 'renderfields', 'stats']);
+// only these systems run on the diorama: enough for the player's hands (wind,
+// litter stripping, grow/wither) — no ecology, water or structure
+const MENU_SYSTEMS = new Set(['windfield', 'material', 'surface', 'particles', 'wilt', 'sway', 'renderfields', 'stats']);
 
 export class MenuScene implements Scene {
   readonly core: WorldCore;
   private el: HTMLElement;
   private progress: number;
   private abort = new AbortController();
-  private cursor: [number, number] | null = null;
-  private lastCursor: [number, number] | null = null;
   private nextBirds = 3;
+  private powers!: Powers;
+  private controls!: Controls;
+  private showT = 1.2;
+  private shown = 0;
   private starting = false;
 
   constructor(
@@ -57,7 +67,9 @@ export class MenuScene implements Scene {
     const label = p > 0 ? 'Continue' : 'Begin';
     this.el.innerHTML = `<div><h1>RECLAIMED</h1><p class="line">${line}</p></div>
       <div class="actions"><button data-a="play">${label}</button>
-      <span class="small">${p > 0 ? `the valley: ${Math.round(Math.min(1, p) * 100)}% reclaimed` : 'sound on'}</span></div>`;
+      <span class="small">${p > 0 ? `the valley: ${Math.round(Math.min(1, p) * 100)}% reclaimed` : 'sound on'}</span>
+      <span class="small hands">touch the ground · drag to make wind</span>
+      ${p > 0 ? '<button class="reset" data-a="reset">reset progress</button>' : ''}</div>`;
     host.ui.appendChild(this.el);
     const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
     btn.addEventListener('click', async () => {
@@ -68,14 +80,69 @@ export class MenuScene implements Scene {
       btn.disabled = true;
       await this.onPlay();
     });
-    host.canvas.addEventListener(
-      'pointermove',
-      (e) => {
-        this.cursor = this.core.camera.groundAt(e.clientX, e.clientY, () => 7 * MENU_SCALE).slice(0, 2) as [number, number];
-      },
-      { signal: this.abort.signal },
-    );
+    this.el.querySelector('[data-a="reset"]')?.addEventListener('click', () => {
+      resetProgress();
+      // back to the dusty start (drop a ?progress= preview too)
+      const u = new URL(location.href);
+      u.searchParams.delete('progress');
+      location.href = u.toString();
+    });
+    this.attachHands();
   }
+
+  /** The level's hands on the diorama: taps grow (or wither), drags paint wind. */
+  private attachHands(): void {
+    const core = this.core;
+    const { camera } = core;
+    const ground = () => 7 * MENU_SCALE;
+    this.powers = new Powers({
+      weather: core.weather,
+      nature: new Nature(),
+      audio: this.audio,
+      particles: core.sim.particles,
+      globals: core.globals,
+      camera,
+      dims: core.dims,
+      readSurface: async () => new Uint32Array((await core.readBuffer('surface')).buffer),
+      birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
+    });
+    let renderW = 1;
+    let renderH = 1;
+    this.renderSize = (w, h) => {
+      renderW = w;
+      renderH = h;
+    };
+    const wake = () => this.audio.start();
+    this.controls = new Controls(this.host.canvas, {
+      tap: (sx, sy) => {
+        wake();
+        const [wx, wy] = camera.groundAt(sx, sy, ground);
+        core.renderer
+          .pick((sx / camera.viewportW) * renderW, (sy / camera.viewportH) * renderH)
+          .then((hit) => this.powers.tap(hit, wx, wy, sx, sy), ignoreTeardown);
+      },
+      dragStart: (sx, sy) => {
+        wake();
+        const [wx, wy] = camera.groundAt(sx, sy, ground);
+        return this.powers.gustStart(wx, wy);
+      },
+      dragMove: (sx, sy) => {
+        const [wx, wy] = camera.groundAt(sx, sy, ground);
+        this.powers.gustMove(wx, wy);
+      },
+      dragEnd: () => this.powers.gustEnd(),
+      hover: (sx, sy) => {
+        const [wx, wy] = camera.groundAt(sx, sy, ground);
+        this.hoverAt = [wx, wy];
+      },
+      // the diorama's view is fixed
+      pan: () => undefined,
+      zoomAt: () => undefined,
+    });
+  }
+
+  private renderSize: (w: number, h: number) => void = () => undefined;
+  private hoverAt?: [number, number];
 
   async init(): Promise<void> {
     await this.core.warmup(30, (s) => MENU_SYSTEMS.has(s.name));
@@ -83,21 +150,27 @@ export class MenuScene implements Scene {
 
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void {
     this.core.resize(renderW, renderH, cssW, cssH);
+    this.renderSize(renderW, renderH);
     this.core.camera.zoom = (0.85 * Math.min(cssW, cssH * 1.7)) / (68 * MENU_SCALE);
   }
 
   frame(now: number, dt: number): void {
     const { core, progress: p } = this;
     this.host.profiler.beginFrame();
-    // the cursor stirs a breeze over the diorama
-    const g = core.globals;
-    if (this.cursor && this.lastCursor) {
-      const vx = (this.cursor[0] - this.lastCursor[0]) / Math.max(dt, 1e-3);
-      const vy = (this.cursor[1] - this.lastCursor[1]) / Math.max(dt, 1e-3);
-      const sp = Math.hypot(vx, vy);
-      g.gusts = sp > 0.5 ? [{ x: this.cursor[0], y: this.cursor[1], radius: 6 * MENU_SCALE, strength: Math.min(sp * 0.1, 5), dx: vx / sp, dy: vy / sp }] : [];
+    // the cursor stirs a breeze; drags paint wind; taps grow
+    if (this.hoverAt) this.powers.hover(this.hoverAt[0], this.hoverAt[1], dt);
+    this.powers.update(dt);
+    // first, show what the dust does: a tree tries to grow beside the skull
+    // and withers; then flowers a little further off
+    this.showT -= dt;
+    if (this.shown < 2 && this.showT <= 0 && p < 0.5) {
+      const [sx, sy] = core.map.poi.skull;
+      const spot: [number, number] = this.shown === 0 ? [sx + 9 * MENU_SCALE, sy - 4 * MENU_SCALE] : [sx + 6 * MENU_SCALE, sy + 9 * MENU_SCALE];
+      const taps = this.shown === 0 ? 3 : 2;
+      for (let k = 0; k < taps; k++) setTimeout(() => this.powers.scriptTap(spot[0], spot[1]), k * 350);
+      this.shown++;
+      this.showT = 7;
     }
-    this.lastCursor = this.cursor;
     // birds visit once life has returned
     this.nextBirds -= dt;
     if (p >= 0.6 && this.nextBirds <= 0) {
@@ -122,6 +195,7 @@ export class MenuScene implements Scene {
 
   dispose(): void {
     this.abort.abort();
+    this.controls.dispose();
     this.el.remove();
     this.core.destroy();
   }

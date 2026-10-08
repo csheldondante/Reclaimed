@@ -216,7 +216,7 @@ export function generateMenuMap(p: number): MapData {
       // debris and garbage, fading with progress
       if (grid.top(x, y) === top) {
         const h = hash2(x, y, 31);
-        if (h < 0.05 * (1 - p) ** 1.5 && mound[i] < 3) grid.push(x, y, top, top + 1, MAT.Trash);
+        if (h < 0.05 * (1 - p) ** 1.5 && mound[i] < 3) grid.push(x, y, top, top + 1, MAT.Litter);
         else if (h > 0.99) grid.push(x, y, top, top + 1, h > 0.995 ? MAT.Concrete : MAT.Rust);
       }
     }
@@ -234,12 +234,13 @@ export function generateMenuMap(p: number): MapData {
       surface[i] = c[c.length - 1].z1;
       const top = c[c.length - 1].mat;
       const n = fbm(x / (7 * K), y / (7 * K), 2, 77) * 0.5 + 0.5;
-      contam[i * 2] = Math.max(0, (1 - p) * (0.45 + n * 0.3));
+      // the dust is foul; old bone is clean (grime would speckle the skull)
+      contam[i * 2] = top === MAT.Bone || top === MAT.Asphalt ? 0 : Math.max(0, (1 - p) * (0.45 + n * 0.3));
       moisture[i] = 0.08 + p * 0.55;
       // succession on the diorama as progress grows
       let v = 0;
       if (top === MAT.Bone) v = smoothstep(0.35, 0.6, p) * (0.6 + 0.6 * hash2(x, y, 4)); // moss/lichen on bone
-      else if (top === MAT.Soil || top === MAT.Trash || top === MAT.Ash) {
+      else if (top === MAT.Soil || top === MAT.Litter || top === MAT.Ash) {
         const grassy = smoothstep(0.45, 0.8, p) * (n > 1.1 - p ? 1 : 0);
         v = grassy * (1.3 + 1.6 * hash2(x, y, 9));
         if (p >= 0.7 && hash2(x, y, 13) < (p - 0.6) * 0.12) v = Math.max(v, 2.9); // shrubs

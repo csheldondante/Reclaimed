@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-08 — round 9: intro, title screen, tap tiers (session 2)
+
+- Tutorial/camera: a system that can limit pan and zoom. Intro: show the
+  map, zoom in on a flower trying to grow out of dust and wilting; wind
+  blows the dirt away and a tiny patch of green forms and persists (green
+  ground slightly resistant to pollution drifting in); the player clicks to
+  make flowers, clicks a polluted area to see them wither; zoom out.
+- The title screen has the same mechanics, shows withering first, and has a
+  reset button (to see it dusty again).
+- Taps tier up: one click grass (withers on bad ground), two flowers or
+  shrubs, three a tree (which on bad ground grows, darkens and withers).
+- The wind field is what storms ride; painted wind modifies it. Storms must
+  reliably appear: the storm button gives distant thunder at once, then the
+  storm forms and rolls in from the edge soon after.
+
 ## 2026-10-08 — round 8 (session 2)
 
 - Storms always form upwind (at the map edge) and drift across the map.

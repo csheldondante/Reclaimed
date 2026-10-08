@@ -893,3 +893,15 @@ Bug found while testing: when a flight landed, the previous lock clamped the
 camera straight back before the script set the new one — flights now drop
 the old limits. The intro also waits for the first resize (it is attached
 before the viewport has a size).
+
+## 2026-10-08 — round 9 part 3: the title screen has hands
+
+The menu runs the level's gestures through the same Powers/Controls (taps
+grow or wither, drags paint wind; the view stays fixed) plus the systems they
+need (windfield, material for litter stripping, wilt) — still no ecology,
+water or structure. Its loose scraps are now litter the wind strips. It opens
+by showing what the dust does: a tree grows beside the skull and withers,
+then flowers try a little further off. A "touch the ground · drag to make
+wind" line, and a "reset progress" link (when there is progress) that clears
+it and reloads to the dusty start. Bones and dark matter carry no pollution
+(grime had speckled the skull). Powers' HUD dependency became optional.
