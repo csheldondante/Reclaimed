@@ -4,6 +4,7 @@ struct Material {
   albedo: vec4<f32>, // rgb (sRGB), emissive
   sim: vec4<f32>,    // state, reposeDry, reposeWet, strength
   eco: vec4<f32>,    // growthCap, suitability, specular, porosity
+  look: vec4<f32>,   // smooth (cells; 0 = hard steps), unused ×3
 };
 @group(0) @binding(2) var<uniform> MATS: array<Material, 32>;
 

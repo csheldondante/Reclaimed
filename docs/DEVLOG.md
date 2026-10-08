@@ -988,3 +988,29 @@ Two mechanics changed to make the lesson true:
 
 Driven headlessly end to end with a script that reads each hint and plays
 the move: complete in 86 s (lightning → ash in 2 s; four drags cleared it).
+
+## 2026-10-08 — round 10 batch 5 (A15 smooth soft surfaces, render part)
+
+Column heights stay whole cells; soft materials are *drawn* sloped. New
+material property `smooth` (cells; soil/sand/ash 2, litter 1.5, rubble 1,
+others 0 — `MATS[m].look.x`; the material uniform grew to 4 vec4s).
+`terrainshape.wgsl`: each grid corner gets one height shared by the four
+columns touching it — a tent-weighted mean over the 4×4 columns around it —
+when the four are all soft and within the smallest threshold of each other
+(else each keeps its own height there: a sheer step). Shared corners keep
+the surface watertight; side faces still cover real steps. The top box of a
+soft column takes its corners from this (and a flat face normal from them),
+its visible side faces' top edges follow, plants sit on the sloped surface
+(vegprep, cell centre).
+
+Measured/iterated:
+- 2×2-column corners only bevelled step edges (flat terraces remained,
+  banding at low sun) → 4×4 tent kernel.
+- Evaluating corners per vertex doubled draw time (3.3 → 6.1 ms at
+  1400×800) → they are computed once per render-fields pass into a
+  `corners` texture (rgba32f, binding 14) and looked up: draw 2.6 ms.
+- Sun shadows: slopes dip up to ~1 cell below the whole-cell shadow field,
+  which drew dark bands; the shadow test has 0.9 cells of slack on tops and
+  soft occluders cast from 0.9 lower.
+Not yet: water surfaces (still boxes; B8), particles resting on slopes
+(they sit at whole-cell height), the fractional sediment layer (A6).

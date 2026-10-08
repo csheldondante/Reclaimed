@@ -84,7 +84,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   if (inside) {
     let i = colIdx(id.x, id.y);
     let s = surface[i];
-    top = f32(sfZ(s));
+    // plants stand on the drawn (possibly sloped) ground at the cell centre
+    top = groundZAt(vec2<i32>(id.xy), vec2<f32>(0.5), f32(sfZ(s)));
     pl = vegPlan(id.x, id.y, veg[i], sfMat(s));
     tap = wilt[i];
     n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree) + pl.tufts + select(0u, 1u, pl.flower);

@@ -10,6 +10,7 @@ import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import renderprepWgsl from '../shaders/renderprep.wgsl?raw';
 import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
+import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import vegprepWgsl from '../shaders/vegprep.wgsl?raw';
 import renderWgsl from '../shaders/render.wgsl?raw';
 import rainWgsl from '../shaders/rain.wgsl?raw';
@@ -115,7 +116,7 @@ export class Renderer {
       9: this.indirect,
     });
 
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, vegprepWgsl], {
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, vegprepWgsl], {
       0: 'uniform',
       2: 'uniform',
       3: 'read',
@@ -124,6 +125,7 @@ export class Renderer {
       6: 'rw',
       7: 'read',
       8: 'read',
+      14: 'tex',
     });
     this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, {
       0: world.globals,
@@ -134,6 +136,7 @@ export class Renderer {
       6: this.indirect,
       7: world.wilt,
       8: world.petals,
+      14: world.cornerView,
     });
 
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
@@ -152,11 +155,12 @@ export class Renderer {
         11: 'read',
         12: 'read',
         13: 'read',
+        14: 'tex',
         15: 'tex',
       },
       VF,
     );
-    const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, renderWgsl]);
+    const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [drawLayout] });
     const depthStencil = (write: boolean): GPUDepthStencilState => ({
       format: DEPTH_FORMAT,
@@ -197,6 +201,7 @@ export class Renderer {
         11: world.surface,
         12: world.bend,
         13: world.wilt,
+        14: world.cornerView,
         15: world.windFieldView,
       });
     this.opaqueGroup = groupFor(this.instOpaque);

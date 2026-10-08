@@ -83,24 +83,40 @@ fn swayOffset(b: Box, h: f32) -> vec3<f32> {
   return vec3<f32>((lean + flutter) * k, 0.0);
 }
 
+const FLAG_TOP_R: u32 = 1u;
+
 fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let face = vi / 6u;
   let uv = QUAD[vi % 6u];
   let sxn = select(-1.0, 1.0, CAM.eye.x > 0.0);
   let syn = select(-1.0, 1.0, CAM.eye.y > 0.0);
+  // soft ground: the column's top is drawn sloped (terrainshape.wgsl)
+  let soft = (b.flags & FLAG_TOP_R) != 0u && (b.flags & (FLAG_VEG_R | FLAG_DETAIL)) == 0u && MATS[b.mat].look.x > 0.0;
+  let c0 = vec2<i32>(i32(b.x), i32(b.y));
   var p: vec3<f32>;
   var n: vec3<f32>;
   if (face == 0u) {
     p = vec3<f32>(b.x + uv.x * b.sx, b.y + uv.y * b.sy, b.z1);
     n = vec3<f32>(0.0, 0.0, 1.0);
+    if (soft) {
+      p.z = cornerOr(c0 + vec2<i32>(uv), b.z1);
+      // one flat normal for the whole face (nrm is flat-interpolated)
+      let h00 = cornerOr(c0, b.z1);
+      let h10 = cornerOr(c0 + vec2<i32>(1, 0), b.z1);
+      let h01 = cornerOr(c0 + vec2<i32>(0, 1), b.z1);
+      let h11 = cornerOr(c0 + vec2<i32>(1, 1), b.z1);
+      n = normalize(vec3<f32>(-((h10 + h11) - (h00 + h01)) * 0.5, -((h01 + h11) - (h00 + h10)) * 0.5, 1.0));
+    }
   } else if (face == 1u) {
     let fx = select(b.x, b.x + b.sx, sxn > 0.0);
     p = vec3<f32>(fx, b.y + uv.x * b.sy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(sxn, 0.0, 0.0);
+    if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(fx), i32(p.y)), b.z1); }
   } else {
     let fy = select(b.y, b.y + b.sy, syn > 0.0);
     p = vec3<f32>(b.x + uv.x * b.sx, fy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(0.0, syn, 0.0);
+    if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(p.x), i32(fy)), b.z1); }
   }
   var off = vec3<f32>(0.0);
   if ((b.flags & FLAG_VEG_R) != 0u) {
@@ -194,11 +210,12 @@ fn sunLit(wpos: vec3<f32>, nrm: vec3<f32>, sc: vec2<i32>) -> f32 {
     // a step/wall beside us (its own top is no shadow test for this point),
     // and one far below is a different level
     let nz = f32(sfZ(surface[j]));
-    if (nz > wpos.z + 0.05 || nz < wpos.z - 1.5) { continue; }
+    // (slack: soft ground is drawn sloped up to ~1 cell from its whole-cell top)
+    if (nz > wpos.z + 1.05 || nz < wpos.z - 1.5) { continue; }
     let wx = select(1.0 - f.x, f.x, o.x == 1);
     let wy = select(1.0 - f.y, f.y, o.y == 1);
     let wgt = wx * wy;
-    acc += wgt * select(0.0, 1.0, wpos.z >= fields[j].x - 0.05);
+    acc += wgt * select(0.0, 1.0, wpos.z >= fields[j].x - 0.9);
     wsum += wgt;
   }
   if (wsum < 1e-3) { return own; }

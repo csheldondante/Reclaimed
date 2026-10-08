@@ -12,6 +12,8 @@
 @group(0) @binding(5) var<storage, read> fire: array<f32>;
 @group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> fields: array<vec4<f32>>;
+// smoothed corner heights for soft ground (terrainshape.wgsl), x = height or -1
+@group(0) @binding(16) var cornerOut: texture_storage_2d<rgba32float, write>;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -30,7 +32,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (f32(G.zMax) - drop <= sz) { break; }
     let q = vec2<i32>(floor(p0 + dir * f32(k)));
     if (!inMap(q)) { break; }
-    sz = max(sz, f32(sfZ(surface[colIdxI(q)])) - drop);
+    // soft ground is drawn sloped (terrainshape.wgsl): it casts from about a
+    // cell lower than its whole-cell top, so gentle slopes throw no saw-tooth
+    let sq = surface[colIdxI(q)];
+    let soft = select(0.0, 0.9, MATS[sfMat(sq)].look.x > 0.0);
+    sz = max(sz, f32(sfZ(sq)) - soft - drop);
   }
 
   var glow = fire[i];
@@ -44,4 +50,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   fields[i] = vec4<f32>(sz, moisture[i], glow, length(netFlow(p)));
+  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), 0.0, 0.0, 0.0));
 }

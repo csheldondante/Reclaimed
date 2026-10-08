@@ -19,6 +19,7 @@ import contamWgsl from '../shaders/contamination.wgsl?raw';
 import moistureWgsl from '../shaders/moisture.wgsl?raw';
 import ecologyWgsl from '../shaders/ecology.wgsl?raw';
 import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
+import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
 import swayWgsl from '../shaders/sway.wgsl?raw';
@@ -256,9 +257,9 @@ export class RenderFieldsSystem implements SimSystem {
       device,
       world,
       'renderfields',
-      renderFieldsWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw' },
-      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields },
+      terrainShapeWgsl + renderFieldsWgsl + flowWgsl,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 16: 'stex' },
+      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 16: world.cornerView },
     );
   }
   encode(enc: GPUCommandEncoder): void {

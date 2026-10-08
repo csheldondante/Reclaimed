@@ -73,6 +73,9 @@ export class WorldGpu {
   readonly windFieldNext: GPUTexture;
   readonly windFieldView: GPUTextureView;
   readonly windFieldNextView: GPUTextureView;
+  /** smoothed soft-ground corner heights (rgba32float, one texel per grid point; x = height or -1) */
+  readonly cornerTex: GPUTexture;
+  readonly cornerView: GPUTextureView;
   /** f32 per column: 1 = flowers in bloom, < 1 = shed by the wind and regrowing (particles.wgsl petalEmit) */
   readonly petals: GPUBuffer;
   /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
@@ -160,6 +163,9 @@ export class WorldGpu {
     this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.windField, this.windFieldNext);
     this.windFieldView = this.windField.createView();
+    this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
+    this.textures.push(this.cornerTex);
+    this.cornerView = this.cornerTex.createView();
     this.windFieldNextView = this.windFieldNext.createView();
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
