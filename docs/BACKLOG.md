@@ -39,7 +39,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | id | item | size | status |
 |---|---|---|---|
 | C1 | Dust drifts (fractional sediment layer) that bury things — uncover them with wind (objects, seed beds); supersedes A6 | L | next |
-| C2 | Smooth water surfaces (keep the rain rings / storm glints) | M | next |
+| C2 | Smooth water surfaces (keep the rain rings / storm glints) | M | done `0c20e47` |
 | C3 | Grow sound: a wet sprouting "opening", then the current shimmer | S | done `031b78c` |
 | C4 | Audio debug: see and mute each sound (find the high whine under storms / on Nature gains) | S | done `031b78c` |
 | C5 | A little light where growth and wind happen | S | done `031b78c` |
@@ -60,7 +60,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | B5 | Event camera beyond the intro: pan/zoom to firsts (animals arrive, a seed sprouts and dies, wind clears trash and a plant takes) | round 6 | M | deferred |
 | B6 | Earthquake; drag-to-tornado | rounds 2–3 | M | deferred |
 | B7 | Second level / data-driven map format | session 1 | M–L | deferred |
-| B8 | Water on slopes renders stair-stepped; rubble falls instantly (no fall animation) | session 1 | M | deferred (A15 may cover the first) |
+| B8 | Water on slopes renders stair-stepped; rubble falls instantly (no fall animation) | session 1 | M | water part done `0c20e47`; rubble animation open |
 | B9 | Audio has never been heard by an agent — every sound needs the user's ear | ongoing | — | open |
 | B10 | Open judgement calls in STATUS.md §5 (economy, day length, night darkness, fire residue, lens UX, forest look) — several are stale; re-ask when relevant | session 1 | — | open |
 
