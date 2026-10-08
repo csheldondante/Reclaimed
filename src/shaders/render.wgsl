@@ -18,8 +18,7 @@ struct Camera {
 @group(0) @binding(11) var<storage, read> surface: array<u32>;
 // vegetation lean spring per column (sway.wgsl): xy lean, zw velocity
 @group(0) @binding(12) var<storage, read> bend: array<vec4<f32>>;
-// plant health (wilt.wgsl): y = brownness of plants here (withering, scorched),
-// w = doomed-sprout timer (MAT_SPROUT colour)
+// plant health (wilt.wgsl): y = brownness of plants here (withering, scorched)
 @group(0) @binding(13) var<storage, read> wilt: array<vec4<f32>>;
 
 /** Withering plants dry out to straw and brown. */
@@ -389,12 +388,6 @@ fn fsBox(in: VOut) -> FOut {
       alb = toLinear(select(vec3<f32>(0.3, 0.46, 0.17), petal, top));
     }
     if (mat != MAT_WOOD) { alb = wither(alb, wilt[ci].y, n1); }
-    if (mat == MAT_SPROUT) {
-      // fresh green, then browning as the hostile ground kills it
-      let ph = 1.0 - wilt[ci].w;
-      let green = mix(vec3<f32>(0.3, 0.55, 0.18), vec3<f32>(0.5, 0.72, 0.28), smoothstep(in.zr.x, in.zr.y, in.wpos.z));
-      alb = toLinear(mix(green, vec3<f32>(0.42, 0.3, 0.14), smoothstep(0.22, 0.6, ph)));
-    }
   } else {
     let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5;
     let porosity = MATS[mat].eco.w;

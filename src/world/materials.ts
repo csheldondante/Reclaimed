@@ -50,7 +50,6 @@ export const MAT = {
   Bone: 16,
   Ash: 17,
   Litter: 18,
-  Sprout: 19,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -93,8 +92,6 @@ export const MATERIALS: MaterialDef[] = [
   // scattered litter lying on the land: loose; strong wind strips it a cell at a
   // time (litterStrip in common.wgsl), water carries it; nothing grows on it
   { ...NONE, name: 'litter', albedo: [0.55, 0.52, 0.47], state: MatState.Granular, reposeDry: 1, reposeWet: 1, strength: 0.05, growthCap: 1, suitability: 0.15, porosity: 0.2 },
-  // render-only: the sprout a grow-tap raises on hostile ground (lives ~7 s)
-  { ...NONE, name: 'sprout', albedo: [0.4, 0.62, 0.22], state: MatState.Vegetation },
 ];
 
 export const MAX_MATERIALS = 32;

@@ -8,7 +8,8 @@
 @group(0) @binding(4) var<storage, read> veg: array<f32>;
 @group(0) @binding(5) var<storage, read_write> instOpaque: array<vec4<u32>>;
 @group(0) @binding(6) var<storage, read_write> indirect: array<atomic<u32>>;
-// tap responses (wilt.wgsl): z = bloom (flowers open at once), w = doomed sprout timer
+// the player's plantings (wilt.wgsl): z = on good ground (tier + growth),
+// w = on hostile ground (tier + phase: grows, browns, withers)
 @group(0) @binding(7) var<storage, read> wilt: array<vec4<f32>>;
 
 const FLAG_VEG: u32 = 2u;
@@ -21,6 +22,49 @@ fn mkInst(x: u32, y: u32, sx: u32, sy: u32, z0: f32, z1: f32, mat: u32, flags: u
   return vec4<u32>(x | (y << 12u) | ((sx - 1u) << 24u) | ((sy - 1u) << 28u), bitcast<u32>(z0), bitcast<u32>(z1), mat | (flags << 8u));
 }
 
+
+/** Instances a planting of this tier needs (see planting). */
+fn plantingCount(tier: f32) -> u32 {
+  if (tier < 1.0) { return 0u; }
+  return 2u + select(0u, 2u, tier >= 2.0) + select(0u, 2u, tier >= 3.0);
+}
+
+/** Grass tufts; + flowers or a shrub; + a tree. grow 0..1, wither 0..1 shrinks it. */
+fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) -> u32 {
+  var o = o0;
+  let qx = c.x * 4u;
+  let qy = c.y * 4u;
+  for (var k = 0u; k < 2u; k++) {
+    let hx = hash3(c.x, c.y, 461u + k);
+    let th = (0.35 + f32((hx >> 4u) & 7u) * 0.05) * grow * (1.0 - 0.7 * wither);
+    instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + th, MAT_GRASS, FLAG_VEG | FLAG_DETAIL);
+    o += 1u;
+  }
+  if (tier >= 2.0) {
+    for (var k = 0u; k < 2u; k++) {
+      let hx = hash3(c.x, c.y, 401u + k);
+      if (k == 1u && (hx & 1u) == 1u) {
+        // a shrub (sub-voxel leaf box)
+        instOpaque[o] = mkInst(c.x, c.y, 1u, 1u, top, top + 1.1 * grow * (1.0 - 0.5 * wither), MAT_LEAVES, FLAG_VEG);
+      } else {
+        instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + 0.9 * grow * (1.0 - 0.6 * wither), MAT_FLOWER, FLAG_VEG | FLAG_DETAIL);
+      }
+      o += 1u;
+    }
+  }
+  if (tier >= 3.0 && c.x > 0u && c.y > 0u) {
+    let trunk = 2.5 * grow;
+    instOpaque[o] = mkInst(qx + 1u, qy + 1u, 2u, 2u, top, top + trunk + 0.5, MAT_WOOD, FLAG_VEG | FLAG_DETAIL);
+    instOpaque[o + 1u] = mkInst(c.x - 1u, c.y - 1u, 3u, 3u, top + trunk, top + trunk + 2.6 * grow * (1.0 - 0.6 * wither), MAT_LEAVES, FLAG_VEG);
+    o += 2u;
+  } else if (tier >= 3.0) {
+    // (map edge: no room for a crown; keep the count honest)
+    instOpaque[o] = mkInst(c.x, c.y, 1u, 1u, top, top, MAT_GRASS, FLAG_VEG);
+    instOpaque[o + 1u] = mkInst(c.x, c.y, 1u, 1u, top, top, MAT_GRASS, FLAG_VEG);
+    o += 2u;
+  }
+  return o;
+}
 
 // vegPlan(): vegplan.wgsl (prepended)
 @compute @workgroup_size(8, 8)
@@ -39,7 +83,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     pl = vegPlan(id.x, id.y, veg[i], sfMat(s));
     tap = wilt[i];
     n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree) + pl.tufts + select(0u, 1u, pl.flower);
-    n += select(0u, 2u, tap.z > 0.0) + select(0u, 2u, tap.w > 0.0);
+    n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
   }
   let off = atomicAdd(&wgO, n);
   workgroupBarrier();
@@ -77,25 +121,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     instOpaque[o] = mkInst(tx, ty, 1u, 1u, top, top + th, MAT_GRASS, FLAG_VEG | FLAG_DETAIL);
     o += 1u;
   }
-  // a grow-tap on good ground: two flowers open right away, tall enough to see
-  if (tap.z > 0.0) {
-    for (var k = 0u; k < 2u; k++) {
-      let hx = hash3(id.x, id.y, 401u + k);
-      let open = smoothstep(0.0, 0.03, 1.0 - tap.z) * 0.5 + 0.5; // pops up, then stands
-      instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + 0.9 * open, MAT_FLOWER, FLAG_VEG | FLAG_DETAIL);
-      o += 1u;
-    }
+  // the player's plantings: one tap grass, two flowers or a shrub, three a
+  // tree. On good ground they grow in and stay; on hostile ground they come
+  // up, then shrink as they brown (the browning is wilt.y) and are gone
+  if (tap.z >= 1.0) {
+    o = planting(o, id.xy, top, floor(tap.z), 0.25 + 0.75 * smoothstep(0.0, 0.7, fract(tap.z)), 0.0);
   }
-  // a grow-tap on hostile ground: a sprout shoots up (~1 s), browns, then
-  // droops and is gone (~7 s) — the ground has to be cleared first
-  if (tap.w > 0.0) {
-    let ph = 1.0 - tap.w;
-    let h = 0.2 + 1.2 * smoothstep(0.0, 0.14, ph) * (1.0 - 0.85 * smoothstep(0.62, 1.0, ph));
-    for (var k = 0u; k < 2u; k++) {
-      let hx = hash3(id.x, id.y, 433u + k);
-      instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + h, MAT_SPROUT, FLAG_VEG | FLAG_DETAIL);
-      o += 1u;
-    }
+  if (tap.w >= 1.0) {
+    let ph = fract(tap.w);
+    o = planting(o, id.xy, top, floor(tap.w), 0.25 + 0.75 * smoothstep(0.0, 0.2, ph), smoothstep(0.6, 1.0, ph));
   }
   if (pl.flower) {
     let hx = hash3(id.x, id.y, 77u);

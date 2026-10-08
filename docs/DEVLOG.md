@@ -851,3 +851,19 @@ Perf: GPU 5.5 ms with a storm in view (Xe-LPG, 1600×900).
   thunder immediately, panned toward that edge; summoned storms aim at the
   middle of the view (the cursor sits on the button when it's clicked).
   Tracked: formed at (8, 4), over the middle by ~30 s.
+
+## 2026-10-08 — round 9 part 1: tap tiers
+
+DECISIONS round 9: one tap grass, two flowers or a shrub, three a tree; on
+bad ground each grows and then withers (the tree darkens and shrinks).
+`wilt.z`/`wilt.w` now hold tier + growth (good ground; stays while the
+ground stays good — player-planted trees persist) and tier + phase (hostile
+ground; 6 / 8 / 11 s by tier, browning from 25 % of the phase, shrinking
+from 60 %). A tap steps a cell up one tier: the tree only at the tap's own
+cell, flowers/shrubs within ~1.4 cells, grass to 2.5. Established green
+ground tolerates more poison (limit 0.2 → 0.5 as grass takes hold) so a
+cleared patch holds when a little grime drifts in. Vegprep draws plantings
+(grass tufts and flowers half a cell wide, a sub-voxel shrub, trunk +
+crown); the short-lived sprout material is gone. Checked on clean soil
+(grass / flowers / a lasting tree) and on the landfill (a tree at 2 s,
+browned and shrunk at 6 s, gone at 11 s).

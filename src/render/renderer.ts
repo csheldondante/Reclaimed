@@ -19,8 +19,8 @@ import { CAMERA_BYTES, type Camera } from './camera';
 
 const VERTS_PER_BOX = 18;
 /** Extra instances a column may emit beyond its slots (shrub/trunk+crown, tufts, flower). */
-// per cell worst case: tree 2 + tufts 3 + flower 1 + tap bloom 2 (or tap sprout 2)
-const VEG_INSTANCES = 8;
+// per cell worst case: plan (tree 2 + tufts 3 + flower 1) + a planting (6)
+const VEG_INSTANCES = 12;
 const PICK_FORMAT: GPUTextureFormat = 'rg32uint';
 
 /** What the pick target says is under a pixel. */
