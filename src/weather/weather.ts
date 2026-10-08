@@ -63,7 +63,7 @@ export class Weather {
   time = 0;
   private nextNatural = 70;
   dusts: DustStorm[] = [];
-  /** latest CPU copy of the player's wind field (texel = 2×2 columns), if any */
+  /** latest CPU copy of the wind field (texel = 2×2 columns; rgba: painted xy, whole wind zw) */
   windField?: { data: Float32Array; w: number; h: number };
   /** 0..1, set by the level from how dusty/polluted the land is: scales natural dust storms */
   dustiness = 0;
@@ -92,7 +92,8 @@ export class Weather {
     let x = tx;
     let y = ty;
     for (let i = 0; i < 400; i++) {
-      if (x < -20 || y < -20 || x > this.w + 20 || y > this.h + 20) break;
+      // form right at the upwind edge, where it can be seen gathering
+      if (x < 4 || y < 4 || x > this.w - 4 || y > this.h - 4) break;
       x -= ux;
       y -= uy;
     }
@@ -163,10 +164,14 @@ export class Weather {
     }
   }
 
-  /** Mean painted wind over a disc (cells/s), sampled on a coarse grid. */
+  /**
+   * Mean wind over a disc (cells/s) from the wind field (whole wind), on a
+   * coarse grid. Off the map, and before the first readback: the prevailing
+   * wind.
+   */
   private fieldOver(cx: number, cy: number, r: number): [number, number] {
     const f = this.windField;
-    if (!f) return [0, 0];
+    if (!f) return [this.windX, this.windY];
     let sx = 0;
     let sy = 0;
     let n = 0;
@@ -176,9 +181,13 @@ export class Weather {
         const tx = Math.floor((cx + (i / 3) * r) / 2);
         const ty = Math.floor((cy + (j / 3) * r) / 2);
         n++;
-        if (tx < 0 || ty < 0 || tx >= f.w || ty >= f.h) continue;
-        sx += f.data[(ty * f.w + tx) * 2];
-        sy += f.data[(ty * f.w + tx) * 2 + 1];
+        if (tx < 0 || ty < 0 || tx >= f.w || ty >= f.h) {
+          sx += this.windX;
+          sy += this.windY;
+          continue;
+        }
+        sx += f.data[(ty * f.w + tx) * 4 + 2];
+        sy += f.data[(ty * f.w + tx) * 4 + 3];
       }
     return [sx / n, sy / n];
   }
@@ -206,11 +215,12 @@ export class Weather {
 
     for (const s of this.storms) {
       s.age += dt;
-      // the wind the player has painted moves storms too (DECISIONS round 8):
-      // averaged over the storm's body, so it takes a broad or repeated push
+      // storms ride the wind field — the map's wind plus whatever the player
+      // has painted (DECISIONS round 8), averaged over the storm's body so it
+      // takes a broad or repeated push to turn one
       const [fx, fy] = this.fieldOver(s.x, s.y, s.radius * 0.6);
-      let tvx = this.windX + s.pushX + fx * 1.4;
-      let tvy = this.windY + s.pushY + fy * 1.4;
+      let tvx = fx + s.pushX;
+      let tvy = fy + s.pushY;
       // high ground slows a storm and deflects it along the contours
       const ahead = 14;
       const sp = Math.hypot(tvx, tvy) || 1;

@@ -832,3 +832,22 @@ Perf: GPU 5.5 ms with a storm in view (Xe-LPG, 1600×900).
   woodland (0.06/cell), grime washed, oil smoke dispersed, with a "+N" on the
   meter. Starting score 6.7 % (clean 13 %, almost no life). 8× with a storm
   every 5 game-min: 25 % at 1.2 min, 47 % at 2.8, 59 % at 5 — goal 55 %.
+
+## 2026-10-08 — one wind field; storms that reliably arrive
+
+- **One wind field.** The field texture now holds the whole wind (rgba: painted
+  part + map wind + painted), written by the windfield system; `windAt` reads
+  it (cheaper too: the gust/eddy noise is evaluated once per texel per tick
+  instead of per caller). Storms take their target velocity from the field's
+  mean over their body — the map's own gust patches move them, and painted
+  wind steers them through the same field. Measured: painted 7.1 / 12.6 /
+  16.9 / 20.2 → whole wind 10.6 / 15.7 / 19.8 / 23.1 cells/s after 1–4
+  passes; relaxes to 8.0 after 6 s. A painted push across a storm turned it
+  from (2.8, 2.8) to (−2.2, 7.8).
+- **Storms reliably arrive.** User: "storms do not seem to reliably form".
+  They did form, but beyond the map corner (spawned 20 cells outside), with
+  no sign for ~40 s. Now they gather just inside the upwind edge (full
+  strength in ~6 s, half on the map at once) and summoning plays distant
+  thunder immediately, panned toward that edge; summoned storms aim at the
+  middle of the view (the cursor sits on the button when it's clicked).
+  Tracked: formed at (8, 4), over the middle by ~30 s.

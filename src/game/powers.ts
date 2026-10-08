@@ -91,8 +91,14 @@ export class Powers {
     }
     nature.trySpend(COSTS.storm);
     this.lastSummon = globals.time;
-    const [tx, ty] = this.cursor ? [this.cursor.x, this.cursor.y] : [this.d.camera.target[0], this.d.camera.target[1]];
-    weather.spawnToward(tx, ty);
+    // aimed to roll over the middle of the view; it gathers at the upwind
+    // edge and announces itself at once with distant thunder from that side
+    const [tx, ty] = [this.d.camera.target[0], this.d.camera.target[1]];
+    const st = weather.spawnToward(tx, ty);
+    if (st) {
+      const at = this.d.camera.project(st.x, st.y, 0)[0] / Math.max(1, this.d.camera.viewportW);
+      audio.thunder(0.1, 0.8, Math.max(0, Math.min(1, at)));
+    }
     if (!this.told.lightning) {
       this.told.lightning = true;
       setTimeout(() => hud.say('A storm gathers at the edge of the valley, upwind. Tap beneath it for lightning.', 8), 3000);

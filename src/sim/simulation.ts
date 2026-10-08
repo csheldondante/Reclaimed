@@ -30,6 +30,7 @@ export class Simulation {
   readonly systems: SimSystem[];
   readonly stats: StatsSystem;
   readonly surface: SurfaceSystem;
+  readonly wind: WindFieldSystem;
   readonly shadow: RenderFieldsSystem;
   readonly particles: ParticleSystem;
   tick = 0;
@@ -43,12 +44,13 @@ export class Simulation {
     profiler: Profiler,
   ) {
     this.surface = new SurfaceSystem(device, world, profiler);
+    this.wind = new WindFieldSystem(device, world, profiler);
     this.shadow = new RenderFieldsSystem(device, world, profiler);
     this.stats = new StatsSystem(device, world, profiler);
     this.particles = new ParticleSystem(device, world, profiler);
     // Order matters only through the contract buffers each system reads.
     this.systems = [
-      new WindFieldSystem(device, world, profiler),
+      this.wind,
       new StructureSystem(device, world, profiler),
       new MaterialSystem(device, world, profiler),
       this.surface,
@@ -70,6 +72,8 @@ export class Simulation {
   prime(globals: GlobalsState): void {
     this.uploadGlobals(globals);
     const enc = this.device.createCommandEncoder({ label: 'prime' });
+    // the wind field starts as the map's own wind, before anything reads it
+    this.wind.encode(enc);
     this.surface.encode(enc);
     this.shadow.encode(enc);
     this.device.queue.submit([enc.finish()]);

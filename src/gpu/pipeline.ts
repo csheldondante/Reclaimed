@@ -1,14 +1,14 @@
 // Explicit bind-group-layout helpers. We use explicit layouts (not 'auto') so a
 // shader can include shared WGSL snippets that declare bindings it does not use.
 
-/** 'tex' = sampled rg32float (textureLoad), 'stex' = write-only rg32float storage texture */
+/** 'tex' = sampled float texture (textureLoad), 'stex' = write-only rgba32float storage texture */
 export type BindKind = 'uniform' | 'read' | 'rw' | 'tex' | 'stex';
 export type BindSpec = Record<number, BindKind>;
 
 function layoutEntries(spec: BindSpec, visibility: GPUShaderStageFlags): GPUBindGroupLayoutEntry[] {
   return Object.entries(spec).map(([b, kind]): GPUBindGroupLayoutEntry => {
     if (kind === 'tex') return { binding: Number(b), visibility, texture: { sampleType: 'unfilterable-float' } };
-    if (kind === 'stex') return { binding: Number(b), visibility, storageTexture: { access: 'write-only', format: 'rg32float' } };
+    if (kind === 'stex') return { binding: Number(b), visibility, storageTexture: { access: 'write-only', format: 'rgba32float' } };
     return {
       binding: Number(b),
       visibility,

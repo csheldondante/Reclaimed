@@ -51,19 +51,19 @@ Vegetation sway has state: `bend` (vec4 per column: lean xy, velocity zw) is
 a damped spring updated by the sway system (stiff while the wind pushes,
 soft and lightly damped on the way back); the draw shaders read it.
 
-Player wind field: `windField` (rg32float texture, one texel per 2×2
-columns) is the wind the player paints on top of the map's own wind. The
-windfield system (every tick) advects it at 30 % of its own speed, spreads
-it, relaxes it back to zero (e-folding 7 s) and *adds* the stroke segment
-drawn since the last tick (gusts[1..3], gustDir.z = segment length; stroke
-segments are one-tick impulses like events — `Simulation.step` zeroes them
-and sets `strokeSent` so Powers re-anchors). Passes stack (≈ 7 / 12 / 16
-cells/s: breeze, gust, gale). The level reads the field back ~4 Hz
-(`WorldCore.readWindField`); storms add 1.4 × its mean over their body to
-their target velocity — indirect steering.
-`windAt()` adds it everywhere; pipelines that sample wind bind it at 15 as a
-texture (it doesn't use one of the 8 storage-buffer slots). gusts[0] (cursor/
-tap breeze) stays analytic.
+Wind field:  (rgba32float texture, one texel per 2×2 columns) is
+the one wind everything feels. rg = the wind the player has painted; ba = the
+whole wind =  (prevailing wind in advected gust patches, dust
+storms, eddies) + painted. The windfield system (every tick; also at prime)
+advects the painted part at 30 % of its own speed, spreads it, relaxes it to
+zero (e-folding 7 s), adds the stroke segment drawn since the last tick
+(gusts[1..3], gustDir.z = segment length; one-tick impulses like events —
+ zeroes them and sets  so Powers re-anchors),
+and writes both. Passes stack (≈ 7 / 12 / 17 cells/s painted: breeze, gust,
+gale).  = field ba + storm swirl + the cursor/tap breeze
+(gusts[0]). The level reads the field back ~4 Hz ();
+each storm's target velocity is the field's mean whole wind over its body.
+Pipelines that sample wind bind the texture at 15 (not a storage slot).
 
 Plant health: the wilt system (period 15, just before ecology) writes
 `wilt` (vec4: ground hostility to plants from poison/oil/trash/litter/

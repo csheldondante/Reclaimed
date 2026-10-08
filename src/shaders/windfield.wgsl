@@ -1,14 +1,16 @@
-// ---- player wind field --------------------------------------------------------
-// The wind the player paints by dragging, on top of the map's own wind
-// (windAt adds the two): it blends slowly back to the map wind by decaying
-// to zero (e-folding ~7 s). One texel per 2×2 columns, cells/s.
+// ---- wind field ---------------------------------------------------------------
+// The one wind field everything feels (DECISIONS round 8): rg holds the wind
+// the player has painted by dragging, ba the whole wind = the map's own wind
+// (mapWind) + the painted wind. The painted part blends slowly back to the
+// map wind by decaying to zero (e-folding ~7 s). One texel per 2×2 columns,
+// cells/s.
 // Each tick: carry the field along itself (semi-Lagrangian), spread it a
 // little, let it relax, then add the current stroke segments (gusts[1..3]:
 // x,y = segment end, gustDir.xy = direction, gustDir.z = segment length,
 // z = radius, w = wind one pass adds). Passes stack (DECISIONS round 8): one
 // pass ≈ a breeze, two a gust, three a gale. The add is scaled by segment
 // length / stroke width so a pass adds the same whatever its speed.
-@group(0) @binding(16) var windOut: texture_storage_2d<rg32float, write>;
+@group(0) @binding(16) var windOut: texture_storage_2d<rgba32float, write>;
 
 const DT_W: f32 = 1.0 / 60.0;
 const DECAY_S: f32 = 7.0;
@@ -49,5 +51,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let m = length(v);
   if (m > MAX_W) { v *= MAX_W / m; }
-  textureStore(windOut, t, vec4<f32>(v, 0.0, 0.0));
+  textureStore(windOut, t, vec4<f32>(v, mapWind(c) + v));
 }

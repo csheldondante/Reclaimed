@@ -188,24 +188,25 @@ export class WorldCore {
   }
 
   /**
-   * Read back the player wind field (rg32float, one texel per 2×2 columns)
-   * for CPU consumers (storms). Rows are padded to 256 bytes on the GPU side.
+   * Read back the wind field (rgba32float, one texel per 2×2 columns: rg
+   * painted, ba whole wind) for CPU consumers (storms). Rows are padded to
+   * 256 bytes on the GPU side.
    */
   async readWindField(): Promise<{ data: Float32Array; w: number; h: number }> {
     const { device } = this.host.gpu;
     const tex = this.world.windField;
     const w = tex.width;
     const h = tex.height;
-    const rowBytes = Math.ceil((w * 8) / 256) * 256;
+    const rowBytes = Math.ceil((w * 16) / 256) * 256;
     const tmp = device.createBuffer({ size: rowBytes * h, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = device.createCommandEncoder();
     enc.copyTextureToBuffer({ texture: tex }, { buffer: tmp, bytesPerRow: rowBytes }, [w, h]);
     device.queue.submit([enc.finish()]);
     await tmp.mapAsync(GPUMapMode.READ);
     const raw = new Float32Array(tmp.getMappedRange());
-    const data = new Float32Array(w * h * 2);
+    const data = new Float32Array(w * h * 4);
     const rowF = rowBytes / 4;
-    for (let y = 0; y < h; y++) data.set(raw.subarray(y * rowF, y * rowF + w * 2), y * w * 2);
+    for (let y = 0; y < h; y++) data.set(raw.subarray(y * rowF, y * rowF + w * 4), y * w * 4);
     tmp.unmap();
     tmp.destroy();
     return { data, w, h };

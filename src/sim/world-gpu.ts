@@ -65,9 +65,9 @@ export class WorldGpu {
   /** vec4 per column: shadow z, moisture, fire glow, flow speed (renderfields.wgsl) */
   readonly renderFields: GPUBuffer;
   /**
-   * Player wind field: rg32float, one texel per 2×2 columns (cells/s). Strokes
-   * are stamped in and it advects, spreads and decays (windfield.wgsl);
-   * windAt() adds it everywhere. `windField` is read, `windFieldNext` written.
+   * Wind field: rgba32float, one texel per 2×2 columns (cells/s): rg painted
+   * wind, ba whole wind (map wind + painted; windfield.wgsl). Everything that
+   * feels wind reads it. `windField` is read, `windFieldNext` written.
    */
   readonly windField: GPUTexture;
   readonly windFieldNext: GPUTexture;
@@ -152,8 +152,8 @@ export class WorldGpu {
     this.wilt = this.buf('wilt', N * 16, S);
     const wsize = { width: Math.ceil(this.w / 2), height: Math.ceil(this.h / 2) };
     const tusage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
-    this.windField = device.createTexture({ label: 'windField', size: wsize, format: 'rg32float', usage: tusage });
-    this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rg32float', usage: tusage });
+    this.windField = device.createTexture({ label: 'windField', size: wsize, format: 'rgba32float', usage: tusage });
+    this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.windField, this.windFieldNext);
     this.windFieldView = this.windField.createView();
     this.windFieldNextView = this.windFieldNext.createView();
