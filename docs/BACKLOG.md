@@ -7,6 +7,8 @@ move it to **Done** with the commit; when the user changes their mind, note
 it here. Agents: read this before starting work and keep it current in the
 same commit as the change.
 
+Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 → A15 render slopes → A6 + A15 sediment layer. Answers: A15 render first then sediment; A7 the player taps the lightning; A9 on the title screen, default Medium.
+
 Status: `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
@@ -14,27 +16,27 @@ user) · `deferred` (agreed for later).
 
 | id | item | size | status |
 |---|---|---|---|
-| A1 | Title screen: howling desolate wind + periodic gusts while it is barren (softening as it greens) | S | open |
-| A2 | Level: barren map → more desolate wind sound (and gentler as it greens) | S | open |
-| A3 | Drag audio: whoosh starts when the drag starts; no snap/rustle at mouse-up — wind only | S | open |
-| A4 | Player gusts sound deeper than the desolate ambient wind | S | open |
-| A5 | No birds on the title screen (they make the skull look giant) | S | open |
-| A6 | Blown dust piles up against things (drifts, lee of walls) | M–L | open |
-| A7 | Tutorial builds skills: (1) growth and death of flowers, (2) wind blowing, (3) free play to demonstrate it, (4) something new: a pile of pollution the wind can't move, (5) a storm forms and lightning destroys it | M | open |
-| A8 | Wind is more powerful under storms | S | open |
-| A9 | Difficulty setting: easy (green never re-pollutes), medium (green resists), hard (green easily killed by blown trash, strong wind, too much water) | M | open |
-| A10 | Seeds that land greenify their spot and clean a little pollution (makes birds and wind over plants matter) | S–M | open |
-| A11 | Wind over flowering plants sheds the flowers (petals blow off); they take time to regrow | M | open |
-| A12 | Map wind: a steady prevailing flow one way across the map; only minor noise, also mixed into the player field | S | open |
-| A13 | Storm shadows swirl erratically — make their shape steadier | S | open |
-| A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | open |
-| A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | open |
+| A1 | Title screen: howling desolate wind + periodic gusts while it is barren (softening as it greens) | S | next |
+| A2 | Level: barren map → more desolate wind sound (and gentler as it greens) | S | next |
+| A3 | Drag audio: whoosh starts when the drag starts; no snap/rustle at mouse-up — wind only | S | next |
+| A4 | Player gusts sound deeper than the desolate ambient wind | S | next |
+| A5 | No birds on the title screen (they make the skull look giant) | S | next |
+| A6 | Blown dust piles up against things (drifts, lee of walls) | M–L | next |
+| A7 | Tutorial builds skills: (1) growth and death of flowers, (2) wind blowing, (3) free play to demonstrate it, (4) something new: a pile of pollution the wind can't move, (5) a storm forms and lightning destroys it | M | next |
+| A8 | Wind is more powerful under storms | S | next |
+| A9 | Difficulty setting: easy (green never re-pollutes), medium (green resists), hard (green easily killed by blown trash, strong wind, too much water) | M | next |
+| A10 | Seeds that land greenify their spot and clean a little pollution (makes birds and wind over plants matter) | S–M | next |
+| A11 | Wind over flowering plants sheds the flowers (petals blow off); they take time to regrow | M | next |
+| A12 | Map wind: a steady prevailing flow one way across the map; only minor noise, also mixed into the player field | S | next |
+| A13 | Storm shadows swirl erratically — make their shape steadier | S | next |
+| A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | next |
+| A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | next |
 
 ## Carried over (deferred earlier — still wanted)
 
 | id | item | from | size | status |
 |---|---|---|---|---|
-| B1 | **Phone testing**: pick hosting (GitHub Pages / local HTTPS / tunnel); Android Chrome; touch controls are in, but untested on a device | round 6 | S | asked |
+| B1 | **Phone testing**: pick hosting (GitHub Pages / local HTTPS / tunnel); Android Chrome; touch controls are in, but untested on a device | round 6 | S | deferred (user: later) |
 | B2 | Sandbox / level-edit mode (deposit/remove-layer brushes, place water/oil/trash/plants, spawn storms, time controls) | round 6 | M–L | deferred |
 | B3 | Water life: fish in clean water, reeds/lilies in shallows | round 6 | S–M | deferred |
 | B4 | Wind waves on water (shaded cheap; true height harder) | round 6 | S / M–L | deferred |

@@ -3,6 +3,30 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-08 — round 10 (session 2) — items A1–A15 in BACKLOG.md
+
+- Sound: howling desolate wind with periodic gusts on the title screen while
+  barren, and in the level the more barren the more desolate; drag sound is
+  wind only (starts with the drag, no snap at mouse-up), deeper than the
+  desolate wind.
+- No birds on the title screen (they make the skull look giant).
+- Blown dust piles up on things. Wind is stronger under storms. Map wind is a
+  steady prevailing flow with minor noise (also in the player field). Storm
+  shadows steadier. Light fair-weather clouds pass to show the wind.
+- Seeds that land greenify their spot and clean a little pollution. Wind over
+  flowering plants sheds the flowers; they regrow slowly.
+- Difficulty (chosen on the title screen, default Medium): easy — green
+  never re-pollutes; medium — green resists; hard — blown trash, strong wind
+  and too much water kill green easily.
+- Tutorial builds skills: growth/death → wind → free play demonstrating it →
+  a pollution pile wind can't move → a storm forms and the **player taps**
+  to strike it with lightning.
+- Smooth soft surfaces: **render slopes first** (per-material: under a gap
+  smooth, over it a sheer drop), **then a fractional sediment layer** for
+  dust drifts.
+- The user wants a running list of suggestions so nothing is lost:
+  docs/BACKLOG.md. Phone testing: later (B1).
+
 ## 2026-10-08 — round 9: intro, title screen, tap tiers (session 2)
 
 - Tutorial/camera: a system that can limit pan and zoom. Intro: show the
