@@ -52,9 +52,15 @@ a damped spring updated by the sway system (stiff while the wind pushes,
 soft and lightly damped on the way back); the draw shaders read it.
 
 Player wind field: `windField` (rg32float texture, one texel per 2×2
-columns) is the wind the player paints. The windfield system (every tick)
-advects it along itself, spreads it, decays it (e-folding 3 s) and stamps the
-current stroke segments (gusts[1..3] with gustDir.z = segment length).
+columns) is the wind the player paints on top of the map's own wind. The
+windfield system (every tick) advects it at 30 % of its own speed, spreads
+it, relaxes it back to zero (e-folding 7 s) and *adds* the stroke segment
+drawn since the last tick (gusts[1..3], gustDir.z = segment length; stroke
+segments are one-tick impulses like events — `Simulation.step` zeroes them
+and sets `strokeSent` so Powers re-anchors). Passes stack (≈ 7 / 12 / 16
+cells/s: breeze, gust, gale). The level reads the field back ~4 Hz
+(`WorldCore.readWindField`); storms add 1.4 × its mean over their body to
+their target velocity — indirect steering.
 `windAt()` adds it everywhere; pipelines that sample wind bind it at 15 as a
 texture (it doesn't use one of the 8 storage-buffer slots). gusts[0] (cursor/
 tap breeze) stays analytic.
@@ -72,6 +78,11 @@ Litter (material 18) is stripped by `litterStrip()` (common.wgsl): the
 material system removes the cell at tick t, the particle system spawns the
 flying scrap evaluating the same roll for tick t + 1 while the cell still
 exists.
+
+Reclamation (HUD bar, level goal) = ½ clean land (stat 12: no poison,
+oil, trash or litter) + ½ life (mean stage / 4.2, so woodland counts fully).
+Nature pays out on deltas between stats readbacks: soil contamination
+removed, litter stripped (stat 13), new mature cells.
 
 Nature consequences come from stats: free oil volume and drowning living
 cells (stat 11: veg ≥ 0.5 under > 0.4 water) drain it (`HARM` in

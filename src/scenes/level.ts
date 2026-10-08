@@ -1,7 +1,7 @@
 // The playable valley: world + diegetic powers + HUD + level goal.
 
 import type { Ambience } from '../audio/ambience';
-import { Nature, worldHealth } from '../game/nature';
+import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
 import { LEVEL_GOAL, saveProgress } from '../game/progress';
 import { Controls } from '../input/controls';
@@ -46,6 +46,7 @@ export class LevelScene implements Scene {
   private audioRefresh = 0;
   private nextFlock = 12;
   private smokeSeen = -1;
+  private fieldRefresh = 0;
   private washedSeen = -1;
   private smokeRefresh = 0;
 
@@ -249,15 +250,20 @@ export class LevelScene implements Scene {
     if (stats) {
       if (this.lastCollapsed >= 0 && stats.collapsed > this.lastCollapsed) audio.crumble(stats.collapsed - this.lastCollapsed);
       this.lastCollapsed = stats.collapsed;
-      // how much of the map is alive (rain films made a water-excluding
-      // denominator swing wildly during storms)
-      this.reclaimed = stats.vegCells / stats.cells;
+      // clean land + life weighted by stage (round 8)
+      this.reclaimed = reclamation(stats);
     }
     const health = worldHealth(stats, this.initialContam);
     core.pollution += (health.pollution - core.pollution) * Math.min(1, dt * 0.5);
     this.life += (health.life - this.life) * Math.min(1, dt * 0.5);
     this.nature.update(simDt, stats);
     // oil smoke the wind has torn apart pays Nature back (GPU counter, ~2 Hz)
+    // storms feel the painted wind (CPU copy of the field, ~4 Hz)
+    this.fieldRefresh -= dt;
+    if (this.fieldRefresh <= 0) {
+      this.fieldRefresh = 0.25;
+      void core.readWindField().then((f) => (core.weather.windField = f), ignoreTeardown);
+    }
     this.smokeRefresh -= dt;
     if (this.smokeRefresh <= 0) {
       this.smokeRefresh = 0.5;
@@ -284,6 +290,11 @@ export class LevelScene implements Scene {
     core.render();
 
     hud.update(this.nature.value, this.nature.max, powers.stormReady(), this.nature.rate);
+    if (this.nature.gained >= 0.5) {
+      hud.gain(this.nature.gained);
+      this.nature.gained = 0;
+    }
+    hud.setWind(powers.windTier());
     hud.setReclaim(this.reclaimed, LEVEL_GOAL);
     weather.dustiness = core.pollution;
     this.birdArrivals(dt, stats);
@@ -315,7 +326,7 @@ export class LevelScene implements Scene {
       void core.readBuffer('water').then((f) => (this.waterCache = f));
     }
     const drag = powers.dragWind();
-    audio.dragWind(drag ? Math.min(1, drag.strength / 12) : 0, drag ? camera.project(drag.x, drag.y, 0)[0] / camera.viewportW : 0.5);
+    audio.dragWind(drag ? Math.min(1, drag.strength / 15) : 0, drag ? camera.project(drag.x, drag.y, 0)[0] / camera.viewportW : 0.5);
     const heard = this.heard();
     audio.update({
       pollution: core.pollution,

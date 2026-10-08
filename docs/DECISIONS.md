@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-08 — round 8 (session 2)
+
+- Storms always form upwind (at the map edge) and drift across the map.
+- The wind field is what strokes modify; it blends back slowly to the
+  map's own wind. Storms are moved by the field (indirect steering).
+- Strokes over the same place stack: one pass a breeze, two a gust, three
+  a gale.
+- The nature score should be clearly tied to clearing pollution and growing
+  forests.
+- (round 7) Taps never cost Nature; fun of the basic mechanics over pacing.
+
 ## 2026-10-07 — round 6: clearer objective, diegetic clues (session 2)
 
 The player mostly *is* the wind; wind should do meaningful things, and the

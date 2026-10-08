@@ -804,3 +804,31 @@ cost Nature. Pacing is not the focus — fun mechanics are.
   4–5).
 
 Perf: GPU 5.5 ms with a storm in view (Xe-LPG, 1600×900).
+
+## 2026-10-08 — round 8: stacking wind, storms on the field, score tied to deeds
+
+- **Strokes stack.** A pass now *adds* to the field (≈ 0.7 × 4.5–8 along
+  its centre line; normalised by segment length / stroke width so speed
+  doesn't change it). Measured at a point after repeated passes: 7.0 → 12.2
+  → 15.9 → 18.8 cells/s on top of the map wind — breeze, gust, gale (the HUD
+  shows the word; the whoosh follows a CPU estimate of how many recent
+  strokes overlap). Stroke segments became one-tick impulses: at 120 fps
+  only ~half the frames run a tick, so per-frame segments were half lost.
+- **Relaxes slowly.** The field decays toward the map wind (e-folding 7 s)
+  and only drifts at 30 % of its own speed — at full speed it carried itself
+  off the painted spot within ~2 s (field at the point 5.1 after 2 s; now
+  8.1 after 2 s with 5 s decay, longer with 7 s).
+- **Storms on the field.** The CPU reads the field back at ~4 Hz; each
+  storm adds 1.4 × the field's mean over 60 % of its radius to its target
+  velocity. Test: five passes × five lanes across a storm turned its
+  velocity from (3.0, 2.8) to (−4.3, 9.6) and carried it ~65 cells off its
+  course before it eased back to the map wind. The old direct "push" on
+  storms is gone; steering is through the field only.
+- **Storms always form at the upwind map edge** (summoned ones too) and
+  drift across.
+- **Score tied to deeds.** Reclamation = ½ clean land + ½ life weighted by
+  stage (woodland counts fully, moss a little). Nature pays out on
+  pollution removed (0.015/unit), litter stripped (0.04/cell), new mature
+  woodland (0.06/cell), grime washed, oil smoke dispersed, with a "+N" on the
+  meter. Starting score 6.7 % (clean 13 %, almost no life). 8× with a storm
+  every 5 game-min: 25 % at 1.2 min, 47 % at 2.8, 59 % at 5 — goal 55 %.

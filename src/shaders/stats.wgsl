@@ -7,6 +7,7 @@
 @group(0) @binding(7) var<storage, read_write> stats: array<atomic<u32>>;
 @group(0) @binding(8) var<storage, read> oil: array<f32>;
 @group(0) @binding(9) var<storage, read> fire: array<f32>;
+@group(0) @binding(10) var<storage, read> surface: array<u32>;
 
 // indices — keep in sync with src/sim/stats.ts
 // 0 soil contamination x1000   1 dissolved x1000   2 vegetated cells (v>=0.5)
@@ -14,8 +15,10 @@
 // 6 clean cells (c<0.2)        7 wet cells           8 mature cells (v>=3)
 // 9 oil volume x1000         10 burning cells (fire > 0.1)
 // 11 drowning cells (living, under > 0.4 water)
-const N_STATS: u32 = 12u;
-var<workgroup> acc: array<atomic<u32>, 12>;
+// 12 clean land: no soil poison (< 0.2), no oil, no trash or litter on top
+// 13 litter cells (scattered litter on top)
+const N_STATS: u32 = 14u;
+var<workgroup> acc: array<atomic<u32>, 14>;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -39,6 +42,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     atomicAdd(&acc[9], u32(oil[i] * 1000.0));
     atomicAdd(&acc[10], select(0u, 1u, fire[i] > 0.1));
     atomicAdd(&acc[11], select(0u, 1u, v >= 0.5 && d > 0.4));
+    let m = sfMat(surface[i]);
+    let junk = m == 12u || m == MAT_LITTER;
+    atomicAdd(&acc[12], select(0u, 1u, c.x < 0.2 && oil[i] < 0.02 && !junk));
+    atomicAdd(&acc[13], select(0u, 1u, m == MAT_LITTER));
   }
   workgroupBarrier();
   if (li < N_STATS) { atomicAdd(&stats[li], atomicLoad(&acc[li])); }

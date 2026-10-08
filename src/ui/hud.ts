@@ -99,7 +99,34 @@ export class Hud {
     this.stormBtn.classList.toggle('ready', stormReady >= 1);
   }
 
-  /** @param frac living fraction of the land; @param goal level threshold (shown at 80 % of the track) */
+  private windWord?: HTMLElement;
+  private shownTier = 0;
+
+  /** "+N" rising off the Nature meter when deeds pay out (cleaning, forests, washing). */
+  gain(n: number): void {
+    const pop = document.createElement('span');
+    pop.className = 'gain-pop';
+    pop.textContent = `+${Math.round(n)}`;
+    this.hudEl.querySelector('.nature')!.appendChild(pop);
+    setTimeout(() => pop.remove(), 1400);
+  }
+
+  /** The player's painted wind: 0 none, 1 breeze, 2 gust, 3 gale (fades out). */
+  setWind(tier: number): void {
+    if (tier === this.shownTier) return;
+    this.shownTier = tier;
+    if (!this.windWord) {
+      this.windWord = document.createElement('div');
+      this.windWord.className = 'wind-word';
+      this.hudEl.appendChild(this.windWord);
+    }
+    const el = this.windWord;
+    if (tier > 0) el.textContent = ['', 'breeze', 'gust', 'gale'][Math.min(3, tier)];
+    el.dataset.tier = String(tier);
+    el.classList.toggle('on', tier > 0);
+  }
+
+  /** @param frac reclamation 0..1; @param goal level threshold (shown at 80 % of the track) */
   setReclaim(frac: number, goal: number): void {
     const shown = Math.min(1.25, frac / goal) * 0.8;
     (this.reclaim.querySelector('.fill') as HTMLElement).style.width = `${(shown * 100).toFixed(1)}%`;

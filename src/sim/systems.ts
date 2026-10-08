@@ -330,6 +330,8 @@ export const STAT = {
   oil: 9,
   fire: 10,
   drowning: 11,
+  cleanLand: 12,
+  litter: 13,
   collapsed: 14,
   overflow: 15,
 } as const;
@@ -348,6 +350,9 @@ export interface WorldStats {
   fireCells: number;
   /** living cells under standing water (they die back; Nature pays) */
   drowningCells: number;
+  /** cells with no poison, oil, trash or litter */
+  cleanLand: number;
+  litterCells: number;
   collapsed: number;
   overflow: number;
   cells: number;
@@ -368,8 +373,8 @@ export class StatsSystem implements SimSystem {
       world,
       'stats',
       statsWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read' },
-      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats, 8: world.oil, 9: world.fire },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read' },
+      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats, 8: world.oil, 9: world.fire, 10: world.surface },
     );
     for (let i = 0; i < 3; i++)
       this.staging.push({
@@ -380,7 +385,7 @@ export class StatsSystem implements SimSystem {
 
   encode(enc: GPUCommandEncoder): void {
     // clear the per-pass sums but keep cumulative counters (overflow) at the end
-    enc.clearBuffer(this.world.stats, 0, 12 * 4);
+    enc.clearBuffer(this.world.stats, 0, 14 * 4);
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
     const slot = this.staging.find((s) => !s.busy);
     if (!slot) return;
@@ -405,6 +410,8 @@ export class StatsSystem implements SimSystem {
           oilVolume: u[STAT.oil] / 1000,
           fireCells: u[STAT.fire],
           drowningCells: u[STAT.drowning],
+          cleanLand: u[STAT.cleanLand],
+          litterCells: u[STAT.litter],
           collapsed: u[STAT.collapsed],
           overflow: u[STAT.overflow],
           cells,

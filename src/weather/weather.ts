@@ -63,6 +63,8 @@ export class Weather {
   time = 0;
   private nextNatural = 70;
   dusts: DustStorm[] = [];
+  /** latest CPU copy of the player's wind field (texel = 2×2 columns), if any */
+  windField?: { data: Float32Array; w: number; h: number };
   /** 0..1, set by the level from how dusty/polluted the land is: scales natural dust storms */
   dustiness = 0;
   private nextDust = 140;
@@ -78,19 +80,18 @@ export class Weather {
   }
 
   /**
-   * A storm forming upwind so the wind carries it over (tx, ty).
-   * @param fromEdge natural weather rolls in from the map edge; summoned storms
-   *   gather just upwind of the target so they arrive in ~15 s.
+   * A storm forming at the upwind edge of the map, aimed so the wind carries
+   * it over (tx, ty) — every storm drifts across the map (DECISIONS round 8);
+   * the player can lean on it with painted wind on the way.
    */
-  spawnToward(tx: number, ty: number, fromEdge = false): Storm | null {
+  spawnToward(tx: number, ty: number): Storm | null {
     if (!this.canSpawn()) return null;
     const sp = Math.hypot(this.windX, this.windY) || 1;
     const ux = this.windX / sp;
     const uy = this.windY / sp;
     let x = tx;
     let y = ty;
-    const reach = fromEdge ? 1e9 : 80;
-    for (let i = 0; i < 400 && i < reach; i++) {
+    for (let i = 0; i < 400; i++) {
       if (x < -20 || y < -20 || x > this.w + 20 || y > this.h + 20) break;
       x -= ux;
       y -= uy;
@@ -162,6 +163,26 @@ export class Weather {
     }
   }
 
+  /** Mean painted wind over a disc (cells/s), sampled on a coarse grid. */
+  private fieldOver(cx: number, cy: number, r: number): [number, number] {
+    const f = this.windField;
+    if (!f) return [0, 0];
+    let sx = 0;
+    let sy = 0;
+    let n = 0;
+    for (let j = -3; j <= 3; j++)
+      for (let i = -3; i <= 3; i++) {
+        if (i * i + j * j > 9) continue;
+        const tx = Math.floor((cx + (i / 3) * r) / 2);
+        const ty = Math.floor((cy + (j / 3) * r) / 2);
+        n++;
+        if (tx < 0 || ty < 0 || tx >= f.w || ty >= f.h) continue;
+        sx += f.data[(ty * f.w + tx) * 2];
+        sy += f.data[(ty * f.w + tx) * 2 + 1];
+      }
+    return [sx / n, sy / n];
+  }
+
   private heightAt(x: number, y: number): number {
     const ix = Math.max(0, Math.min(this.w - 1, Math.floor(x)));
     const iy = Math.max(0, Math.min(this.h - 1, Math.floor(y)));
@@ -180,13 +201,16 @@ export class Weather {
     if (this.t > this.nextNatural) {
       const [a, b] = this.params.naturalEvery;
       this.nextNatural = this.t + a + Math.random() * (b - a);
-      this.spawnToward(this.w * (0.3 + Math.random() * 0.4), this.h * (0.3 + Math.random() * 0.4), true);
+      this.spawnToward(this.w * (0.3 + Math.random() * 0.4), this.h * (0.3 + Math.random() * 0.4));
     }
 
     for (const s of this.storms) {
       s.age += dt;
-      let tvx = this.windX + s.pushX;
-      let tvy = this.windY + s.pushY;
+      // the wind the player has painted moves storms too (DECISIONS round 8):
+      // averaged over the storm's body, so it takes a broad or repeated push
+      const [fx, fy] = this.fieldOver(s.x, s.y, s.radius * 0.6);
+      let tvx = this.windX + s.pushX + fx * 1.4;
+      let tvy = this.windY + s.pushY + fy * 1.4;
       // high ground slows a storm and deflects it along the contours
       const ahead = 14;
       const sp = Math.hypot(tvx, tvy) || 1;

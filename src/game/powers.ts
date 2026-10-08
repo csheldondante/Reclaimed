@@ -41,7 +41,7 @@ export class Powers {
   private breeze: Gust = { x: 0, y: 0, radius: 7, strength: 0, dx: 1, dy: 0 };
   private cursor?: { x: number; y: number };
   /** the drag in progress: the segment drawn since the last frame is stamped into the wind field */
-  private gust?: Gust & { lx: number; ly: number; vx: number; vy: number; t: number; moved: boolean };
+  private gust?: Gust & { lx: number; ly: number; vx: number; vy: number; t: number; ax: number; ay: number; sentX: number; sentY: number };
   /** how hard the player's wind is blowing, for audio (fades after a drag) */
   private windLevel = { strength: 0, x: 0, y: 0 };
   private told = { lightning: false };
@@ -55,19 +55,26 @@ export class Powers {
     const gusts: Gust[] = [this.breeze];
     const gu = this.gust;
     if (gu) {
-      // a held drag that stops moving keeps blowing where it is, dying down
-      if (!gu.moved) {
-        gu.strength *= Math.exp(-dt * 2);
-        gu.len = 0;
+      // the stroke since the last tick took it: one segment, stamped once
+      if (g.strokeSent) {
+        gu.ax = gu.sentX;
+        gu.ay = gu.sentY;
       }
-      gu.moved = false;
-      gusts.push({ ...gu });
-      // leaning on nearby storms while the drag lasts
-      this.d.weather.gust(gu.x, gu.y, gu.dx, gu.dy, gu.strength * dt * 2.2);
-      this.windLevel = { strength: Math.max(gu.strength, this.windLevel.strength), x: gu.x, y: gu.y };
+      const sx = gu.x - gu.ax;
+      const sy = gu.y - gu.ay;
+      const len = Math.hypot(sx, sy);
+      if (len > 0.05) {
+        gu.dx = sx / len;
+        gu.dy = sy / len;
+      }
+      gusts.push({ x: gu.x, y: gu.y, radius: gu.radius, strength: gu.strength, dx: gu.dx, dy: gu.dy, len });
+      gu.sentX = gu.x;
+      gu.sentY = gu.y;
+      this.windLevel = { strength: Math.max(this.stackedAt(gu.x, gu.y), this.windLevel.strength * 0.98), x: gu.x, y: gu.y };
     }
-    // the stroke itself lives on in the wind field (~3 s); the audio follows it
-    this.windLevel.strength *= Math.exp(-dt / 1.5);
+    g.strokeSent = false;
+    // the stroke itself lives on in the wind field; the audio follows it
+    this.windLevel.strength *= Math.exp(-dt / 2.5);
     g.gusts = gusts;
   }
 
@@ -88,7 +95,7 @@ export class Powers {
     weather.spawnToward(tx, ty);
     if (!this.told.lightning) {
       this.told.lightning = true;
-      setTimeout(() => hud.say('A storm gathers upwind. Tap beneath it for lightning.', 8), 3000);
+      setTimeout(() => hud.say('A storm gathers at the edge of the valley, upwind. Tap beneath it for lightning.', 8), 3000);
     }
   }
 
@@ -236,9 +243,32 @@ export class Powers {
   // and lifting loose debris. Dragging under or near a storm also leans on
   // it — there is no arrow or hint; players discover they can steer storms.
 
+  /** recent stroke points (CPU twin of what was painted) — to tell breeze from gust from gale */
+  private trail: { x: number; y: number; t: number; stroke: number }[] = [];
+  private strokeId = 0;
+
+  /**
+   * Roughly how hard the painted wind blows at (x, y): one more tier for each
+   * recent stroke (last ~5 s, as the field relaxes) that passed nearby.
+   * Feeds the whoosh and the HUD's breeze/gust/gale word.
+   */
+  private stackedAt(x: number, y: number): number {
+    const now = performance.now() / 1000;
+    this.trail = this.trail.filter((p) => now - p.t < 6);
+    const strokes = new Set<number>();
+    for (const p of this.trail) if (Math.hypot(p.x - x, p.y - y) < 7) strokes.add(p.stroke);
+    return Math.min(3, strokes.size) * 5;
+  }
+
+  /** 0 none, 1 breeze, 2 gust, 3 gale — the player's wind where it is blowing now. */
+  windTier(): number {
+    return Math.round(this.windLevel.strength / 5);
+  }
+
   /** Drag start: always a wind gesture. */
   gustStart(wx: number, wy: number): boolean {
-    this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 7, strength: 0, dx: 1, dy: 0, len: 0, moved: false };
+    this.strokeId++;
+    this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 7, strength: 4.5, dx: 1, dy: 0, len: 0, ax: wx, ay: wy, sentX: wx, sentY: wy };
     return true;
   }
 
@@ -250,24 +280,19 @@ export class Powers {
     g.t = now;
     const mx = wx - g.lx;
     const my = wy - g.ly;
-    const step = Math.hypot(mx, my);
-    // smoothed cursor velocity (cells/s) sets the strength
+    // smoothed cursor velocity (cells/s)
     const k = Math.min(1, dt * 10);
     g.vx += (mx / dt - g.vx) * k;
     g.vy += (my / dt - g.vy) * k;
     const sp = Math.hypot(g.vx, g.vy);
-    if (step > 0.05) {
-      g.dx = mx / step;
-      g.dy = my / step;
-    }
-    // this frame's piece of the stroke: from where the cursor was to where it is
     g.x = wx;
     g.y = wy;
-    g.len = step;
-    g.strength = Math.min(24, sp * 0.22);
+    // what one pass adds to the field (passes stack: breeze → gust → gale);
+    // a faster flick adds a little more
+    g.strength = Math.min(8, 4.5 + sp * 0.03);
     g.lx = wx;
     g.ly = wy;
-    g.moved = true;
+    this.trail.push({ x: wx, y: wy, t: performance.now() / 1000, stroke: this.strokeId });
   }
 
   gustEnd(): void {

@@ -62,6 +62,34 @@ canvas#world {
   overflow: hidden;
 }
 .nature .fill { height: 100%; background: var(--leaf); transition: width 0.3s, background 0.6s; }
+/* deeds paying out: "+N" floats up off the meter */
+.nature { position: relative; }
+.gain-pop {
+  position: absolute;
+  right: 4px;
+  top: -4px;
+  color: var(--leaf);
+  font-weight: 600;
+  pointer-events: none;
+  animation: gain-rise 1.4s ease-out forwards;
+}
+@keyframes gain-rise {
+  0% { opacity: 0; transform: translateY(4px); }
+  15% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-26px); }
+}
+/* the player's painted wind: breeze / gust / gale */
+.wind-word {
+  font-size: 13px;
+  letter-spacing: 0.12em;
+  color: var(--ink-dim);
+  opacity: 0;
+  transition: opacity 0.6s, color 0.3s;
+  text-transform: uppercase;
+}
+.wind-word.on { opacity: 0.9; }
+.wind-word[data-tier='2'] { color: var(--ink); }
+.wind-word[data-tier='3'] { color: #f0e3c4; font-weight: 600; }
 /* oil lying about or plants drowning: the meter sours */
 .nature.draining .fill { background: #a8683f; }
 .nature .val { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-dim); }

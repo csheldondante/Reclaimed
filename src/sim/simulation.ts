@@ -82,8 +82,13 @@ export class Simulation {
   step(globals: GlobalsState, filter?: (s: SimSystem) => boolean): void {
     globals.tick = this.tick;
     this.uploadGlobals(globals);
-    // events are one-tick impulses: consumed by exactly this tick
+    // events are one-tick impulses: consumed by exactly this tick; so are the
+    // stroke segments stamped into the wind field (gusts[1..])
     globals.events = [];
+    if (globals.gusts.length > 1) {
+      for (const gg of globals.gusts.slice(1)) gg.len = 0;
+      globals.strokeSent = true;
+    }
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;

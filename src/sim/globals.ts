@@ -89,6 +89,8 @@ export interface GlobalsState {
   /** >1 while the level is being seeded: ground debris accumulates faster */
   debrisBoost: number;
   dusts: DustUniform[];
+  /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
+  strokeSent?: boolean;
 }
 
 export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
