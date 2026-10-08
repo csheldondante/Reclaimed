@@ -310,3 +310,5 @@ canvas#world {
   border-radius: 999px;
 }
 .menu .difficulty button.on { color: var(--ink); border-color: rgba(236, 230, 216, 0.35); }
+/* small title-screen text sits over the diorama: keep it legible */
+.menu .small, .menu .difficulty button, .menu button.reset { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7); color: #d8d0bf; }
