@@ -40,7 +40,7 @@ Order: D4, D5, D6 → D7 → D2 → D3 → D1 → then back to C6, C7, C9, C8.
 |---|---|---|---|
 | D1 | Title screen plants at diorama scale: flowers with petals and leaves, grass blades, moss, roots of the tree growing out of the skull | M | next |
 | D2 | Wind blows decaying (browned) plants away as dust/flakes | S | done `38514ee` |
-| D3 | Cyclones from a tight circular drag: carry dust, cross the map destructively (free, cooldown; ruins/junk, spare grown plants) — supersedes C10 | M–L | next |
+| D3 | Cyclones from a tight circular drag: carry dust, cross the map destructively (free, cooldown; ruins/junk, spare grown plants) — supersedes C10 | M–L | done `fc954d8` |
 | D4 | The squeaks under rain/storms (raindrop ticks / birdsong in rain) — remove | S | done `b4df5f8` |
 | D5 | Grow sound: something unfurling, not a charging sound | S | done `b4df5f8` |
 | D6 | Drag wind 2–3× louder relative to other sounds | S | done `b4df5f8` |
@@ -60,7 +60,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | C6 | Multiple levels; title screen shows clickable objects for each level | M–L | next |
 | C7 | Level: highway covered in ruined cars | M | next |
 | C8 | Level: port with tankers washed ashore and a seawall; ocean waves and sea swell | L | next |
-| C10 | Swirling the mouse while dragging paints a vortex; a sustained swirl summons a cyclone (with B6 tornado) | M | → D3 |
+| C10 | Swirling the mouse while dragging paints a vortex; a sustained swirl summons a cyclone (with B6 tornado) | M | done `fc954d8` (D3) |
 | C9 | Level: ruined city with a blast crater and hospital tents (an outbreak) | M–L | next |
 
 ## Carried over (deferred earlier — still wanted)
