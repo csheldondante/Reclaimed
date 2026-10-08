@@ -26,7 +26,7 @@ fn driftCornerZ(v: vec2<i32>) -> f32 {
     sum += f32(sfZ(surface[colIdxI(q)])) + d;
     n += 1.0;
   }
-  return select(-1.0, sum / max(n, 1.0), n > 0.0);
+  return taperCorner(v, sum, n, 0);
 }
 
 /** Water surface height at grid corner v: mean level of the wet columns touching it, or -1. */
@@ -42,7 +42,31 @@ fn waterCornerZ(v: vec2<i32>) -> f32 {
     sum += f32(sfZ(surface[j])) + d;
     n += 1.0;
   }
-  return select(-1.0, sum / max(n, 1.0), n > 0.0);
+  return taperCorner(v, sum, n, 1);
+}
+
+/**
+ * Corner level of a sheet (drift or water): the mean of the covered columns,
+ * pulled down toward the dry ground of the uncovered columns touching the
+ * corner when it is close by (within 1.5) — so sheets taper into the ground
+ * at their edges instead of ending in square box sides (round 12). -1 if no
+ * covered column touches the corner.
+ */
+fn taperCorner(v: vec2<i32>, sum0: f32, n0: f32, kind: u32) -> f32 {
+  if (n0 < 1.0) { return -1.0; }
+  let level = sum0 / n0;
+  var sum = sum0;
+  var n = n0;
+  for (var k = 0; k < 4; k++) {
+    let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
+    if (!inMap(q)) { continue; }
+    let j = colIdxI(q);
+    let covered = select(driftAt(q) >= 0.03, waterDepth[j] >= 0.012, kind == 1u);
+    if (covered) { continue; }
+    let g = f32(sfZ(surface[j]));
+    if (abs(g - level) < 1.5) { sum += g; n += 1.0; }
+  }
+  return sum / n;
 }
 // smoothed corner heights for soft ground (terrainshape.wgsl), x = height or -1
 @group(0) @binding(16) var cornerOut: texture_storage_2d<rgba32float, write>;

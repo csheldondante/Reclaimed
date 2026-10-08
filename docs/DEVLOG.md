@@ -1078,3 +1078,15 @@ unchanged (fragment shader). Draw 2.9 ms at 1400×800 (+0.3 ms).
   swelling and fading (0.8 s), with six faint leafy crinkles.
 - **D6:** the drag whoosh is 2.5× louder relative to everything else.
 Unheard by an agent (`?audio=1` to compare).
+
+## 2026-10-08 — round 12 batch 2 (D7 rounder edges)
+
+Drift and water sheets: corner levels now taper toward nearby dry ground
+(uncovered columns within 1.5 of the sheet's level count at their ground
+height) instead of holding the sheet's height to the cell edge, and the
+fragment shaders take a smooth depth — bilinear over the four nearest
+column centres (`sheetDepth`) — and discard below a threshold (drift: 0.07
+± a little per-sub-voxel raggedness; water: 0.02). The outline is an
+isoline of a smooth field — rounded blobs and shorelines rather than
+squares, at no measurable cost. Drift boxes no longer draw side faces (the
+sheet tapers into the ground). Water alpha uses the smooth depth too.

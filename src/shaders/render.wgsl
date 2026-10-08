@@ -21,6 +21,23 @@ struct Camera {
 // plant health (wilt.wgsl): y = brownness of plants here (withering, scorched)
 @group(0) @binding(13) var<storage, read> wilt: array<vec4<f32>>;
 
+/**
+ * Smooth depth of a sheet at a world point: bilinear over the four nearest
+ * column centres, so its outline (an isoline) is rounded rather than square
+ * (round 12). kind 0 drift, 1 water.
+ */
+fn sheetDepth(p: vec2<f32>, kind: u32) -> f32 {
+  let t = p - 0.5;
+  let i0 = vec2<i32>(floor(t));
+  let f = fract(t);
+  var v: array<f32, 4>;
+  for (var k = 0; k < 4; k++) {
+    let q = clampCell(i0 + vec2<i32>(k & 1, k >> 1));
+    v[k] = select(driftAt(q), water[colIdxI(q)], kind == 1u);
+  }
+  return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
+}
+
 /** Withering plants dry out to straw and brown. */
 fn wither(c: vec3<f32>, b: f32, n: f32) -> vec3<f32> {
   let dry = mix(vec3<f32>(0.55, 0.45, 0.22), vec3<f32>(0.36, 0.25, 0.13), smoothstep(0.5, 1.0, b) * (0.6 + 0.4 * n));
@@ -108,6 +125,8 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let soft = (b.flags & FLAG_TOP_R) != 0u && (b.flags & (FLAG_VEG_R | FLAG_DETAIL)) == 0u && MATS[b.mat].look.x > 0.0;
   // water and drifted dust: smooth sheets through their corner levels
   let liquid = b.mat == MAT_WATER || b.mat == MAT_DRIFT;
+  // a drift sheet tapers into the ground: no box sides
+  if (b.mat == MAT_DRIFT && face > 0u) { return false; }
   let c0 = vec2<i32>(i32(b.x), i32(b.y));
   var p: vec3<f32>;
   var n: vec3<f32>;
@@ -343,6 +362,11 @@ fn fsBox(in: VOut) -> FOut {
   let mat = in.info.x;
   let flags = in.info.y & 0xffu;
   let damage = in.info.y >> 8u;
+  // drifted dust: cut a rounded, slightly ragged outline from the smooth depth
+  if (mat == MAT_DRIFT) {
+    let rag = (randv(vec3<i32>(vec2<i32>(floor(in.wpos.xy * 4.0)), 7)) - 0.5) * 0.04;
+    if (sheetDepth(in.wpos.xy, 0u) < 0.07 + rag) { discard; }
+  }
   var lpos = in.wpos;
   var lnrm = in.nrm;
   var canopyN = 0.0;
@@ -551,7 +575,9 @@ fn fsWater(in: VOut) -> FOut {
   // derivatives must be taken in uniform control flow, before any branch
   let gl = gridLines(in.wpos, in.nrm);
   if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
-  let d = water[ci];
+  // smooth depth: rounded shorelines (round 12)
+  let d = sheetDepth(in.wpos.xy, 1u);
+  if (in.nrm.z > 0.5 && d < 0.02) { discard; }
   let flow = fields[ci].w;
   let deep = 1.0 - exp(-d * 0.45);
   var c = mix(vec3<f32>(0.30, 0.45, 0.44), vec3<f32>(0.07, 0.19, 0.25), deep);
