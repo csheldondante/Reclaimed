@@ -136,6 +136,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // compacted waste only yields to fire (DECISIONS round 5): a burning heap
       // goes down a cell at a time and its last cell is left as loose ash,
       // which wind and water can then carry away
+      // a lightning strike blasts compacted waste straight to ash (round 10:
+      // the storm is how the heap the wind can't move is cleared)
+      if (m == MAT_TRASH_S && hit > 8.0) {
+        layersOut[cs.x + i] = ivPack(z0, z1, MAT_ASH_S, 0u);
+        prevTop = z1;
+        prevSup = s;
+        continue;
+      }
       if (m == MAT_TRASH_S && i + 1u == n && selfFire > 0.3 && rand3(id.x, id.y, G.tick ^ 0xa5u) < 0.03 * selfFire) {
         layersOut[cs.x + i] = select(ivPack(z0, z1, MAT_ASH_S, 0u), ivPack(z0, z1 - 1u, m, ivAux(v)), z1 - 1u > z0);
         prevTop = z1;

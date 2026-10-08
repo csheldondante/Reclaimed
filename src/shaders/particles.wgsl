@@ -158,6 +158,12 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // scattered litter torn off the ground by strong wind (removed by the
     // material system next tick; see litterStrip)
+    if (m == MAT_ASH_P && litterStrip(p, G.tick + 1u)) {
+      // ash goes up in a grey puff and away
+      for (var k = 0u; k < 3u; k++) {
+        spawn(base + vec3<f32>(r1 - 0.5, fract(r2 * f32(k + 3u)) - 0.5, 0.3), vec3<f32>(wind * 0.6, 0.8 + r1), 3.0 + r2 * 2.0, K_ASH, 0.0, h ^ (0x45u + k));
+      }
+    }
     if (m == MAT_LITTER && litterStrip(p, G.tick + 1u)) {
       let cs = contam[i].x;
       let payload = min(cs * 0.06, 0.03);

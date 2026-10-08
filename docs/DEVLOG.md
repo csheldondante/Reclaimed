@@ -964,3 +964,27 @@ Test: the healthy patch (veg 1.12) dosed with 0.4 poison for 25 s — easy
 1.29 (kept growing), medium 1.06 (held), hard 0.01 (died); medium at 0.9 →
 0.01. First medium rule (tolerance by grass stage) let the mossy patch die
 at 0.4; it now keys off the established flag.
+
+## 2026-10-08 — round 10 batch 4 (A7 staged tutorial)
+
+The intro now builds skills (DECISIONS round 10): growth/withering →
+wind → the player's first taps and drag → **show you've got it**: clear the
+scraps around the green (≥ 55 % of the litter within 13 cells gone) and grow
+something on cleared ground → **something new**: a heap of compacted waste
+(fixed spot `poi.heap` beside the tutorial patch) the wind can't move — "try
+it" → a storm is called in from the upwind edge (thunder first; free), the
+camera widens to watch it come → "tap beneath the storm" — the player's
+lightning → "fire leaves ash; blow it away" (half the ash gone) → out to the
+valley. Each step times out so nobody gets stuck.
+
+Two mechanics changed to make the lesson true:
+- **Wind strips ash** like litter (`isStrippable`): ash cells go up in grey
+  puffs. (Ash used to be permanent unless water carried it.) The menu's
+  reddish mound is ash too, so gales on the title screen can wear it down.
+- **Lightning blasts compacted waste to ash** where it strikes (structure
+  kernel, strike strength > 8 ≈ within ~4 cells). Fire alone burns a heap
+  slowly — and under the storm the rain kept damping it (the first run
+  waited the full 45 s).
+
+Driven headlessly end to end with a script that reads each hint and plays
+the move: complete in 86 s (lightning → ash in 2 s; four drags cleared it).

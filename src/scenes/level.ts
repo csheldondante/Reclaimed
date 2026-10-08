@@ -497,6 +497,41 @@ export class LevelScene implements Scene {
     hud.say('Drag across the dust to blow it away. Drag again for a gust, again for a gale.', 30);
     await d.waitFor(() => stroked, 25);
     await d.hold(2.5);
+    // show you've got it: clear the litter around the green and grow there
+    const litterNear = () => this.countSurface(tx, ty, 13, 18);
+    const litter0 = Math.max(1, litterNear());
+    hud.say('Clear the scraps from around the green, then grow something where they were.', 60);
+    await d.waitFor(() => litterNear() <= litter0 * 0.45, 60);
+    const grown0 = grows.length;
+    await d.waitFor(() => grows.length > grown0 && !this.hostileAt(grows[grows.length - 1]) && Math.hypot(grows[grows.length - 1][0] - tx, grows[grows.length - 1][1] - ty) > 3, 30);
+    hud.say('The valley will remember that.', 3);
+    await d.hold(3);
+    // something new: waste the wind can't move
+    const [hx, hy] = map.poi.heap;
+    await d.fly(hx, hy, 13, 2);
+    d.confine(hx, hy, 14, 9, 18);
+    hud.say('Some waste is packed too hard for wind. Try it.', 20);
+    stroked = false;
+    await d.waitFor(() => stroked, 12);
+    await d.hold(2.5);
+    // …but fire can take it: a storm comes (the player brings the lightning)
+    const storm = this.core.weather.spawnToward(hx, hy);
+    if (storm) {
+      const at = camera.project(storm.x, storm.y, 0)[0] / Math.max(1, camera.viewportW);
+      this.audio.thunder(0.1, 0.8, Math.max(0, Math.min(1, at)));
+    }
+    this.nature.value = Math.max(this.nature.value, 40);
+    hud.say('Thunder. A storm is coming — wait for it, or lean on it with the wind.', 40);
+    d.confine(hx, hy, 40, 3, 18);
+    await d.fly(hx, hy, 5, 2.5);
+    await d.waitFor(() => this.core.weather.coverAt(hx, hy) > 0.3, 70);
+    await d.fly(hx, hy, 11, 1.5);
+    d.confine(hx, hy, 12, 9, 16);
+    hud.say('Tap beneath the storm: lightning will find the heap.', 40);
+    await d.waitFor(() => this.countSurface(hx, hy, 4, 12) === 0, 45);
+    hud.say('Fire leaves ash — and ash rides the wind. Blow it away.', 40);
+    const ash0 = Math.max(1, this.countSurface(hx, hy, 6, 17));
+    await d.waitFor(() => this.countSurface(hx, hy, 6, 17) <= ash0 * 0.5, 40);
     powers.onGrowTap = undefined;
     powers.onStroke = undefined;
     // the valley is theirs
@@ -505,6 +540,18 @@ export class LevelScene implements Scene {
     d.free();
     this.intro = false;
     this.openValley();
+  }
+
+  /** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */
+  private countSurface(x: number, y: number, r: number, mat: number): number {
+    const { dims } = this.core;
+    let n = 0;
+    for (let yy = Math.floor(y - r); yy <= y + r; yy++)
+      for (let xx = Math.floor(x - r); xx <= x + r; xx++) {
+        if (xx < 0 || yy < 0 || xx >= dims.w || yy >= dims.h || Math.hypot(xx - x, yy - y) > r) continue;
+        if (((this.surfaceCache[yy * dims.w + xx] >> 8) & 0xff) === mat) n++;
+      }
+    return n;
   }
 
   /** CPU guess at whether a tapped spot is hostile ground (polluted or littered/trashed). */

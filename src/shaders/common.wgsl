@@ -272,6 +272,9 @@ fn wiltHostility(x: f32) -> f32 { return select(x, x - 2.0, x >= 2.0); }
 // the same roll for tick t + 1 while the litter is still there and throws up
 // the flying scrap — so what you see leave is what was removed.
 const MAT_LITTER: u32 = 18u;
+const MAT_ASH_C: u32 = 17u;
+/** Loose enough for a strong wind to strip a cell at a time: litter, ash (round 10). */
+fn isStrippable(m: u32) -> bool { return m == MAT_LITTER || m == MAT_ASH_C; }
 fn litterStrip(p: vec2<i32>, tick: u32) -> bool {
   let ws = length(windAt(vec3<f32>(vec2<f32>(p) + 0.5, 0.0)));
   return ws > 5.0 && rand3(u32(p.x), u32(p.y), tick ^ 0x1177u) < (ws - 5.0) * 0.004;

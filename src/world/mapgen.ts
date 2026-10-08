@@ -52,6 +52,8 @@ const HEALTHY: P = [44, 198];
  * it, the wind clears it, and green takes hold.
  */
 const TUTORIAL: P = [HEALTHY[0] + 12, HEALTHY[1] - 6];
+/** The intro's second lesson: a heap of compacted waste the wind can't move (fire can). */
+const TUT_HEAP: P = [TUTORIAL[0] + 9, TUTORIAL[1] + 8];
 /** Old landfill on the river's floodplain: too heavy for rain, scoured by a flood. */
 const LANDFILL: P = [120, 114];
 
@@ -405,6 +407,16 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       if (grid.topMat(x, y) !== MAT.Litter) grid.push(x, y, grid.top(x, y), grid.top(x, y) + 1, MAT.Litter);
     }
 
+  // the intro's heap: a compact mound of waste on clean ground
+  for (let y = TUT_HEAP[1] - 3; y <= TUT_HEAP[1] + 3; y++)
+    for (let x = TUT_HEAP[0] - 3; x <= TUT_HEAP[0] + 3; x++) {
+      const dd = Math.hypot(x - TUT_HEAP[0], y - TUT_HEAP[1]) / 2.8;
+      const hgt = Math.round((1 - dd) * 3.2 + 0.4);
+      if (dd > 1 || hgt <= 0) continue;
+      const g = grid.top(x, y);
+      grid.push(x, y, g, g + hgt, MAT.Trash);
+    }
+
   // Fields
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -512,6 +524,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       healthy: HEALTHY,
       landfill: LANDFILL,
       tutorial: TUTORIAL,
+      heap: TUT_HEAP,
       ...Object.fromEntries(pools.map((q, i): [string, P] => [`sludge${i}`, [q.x, q.y]])),
     },
   };

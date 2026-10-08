@@ -117,8 +117,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     else { arr[n - 1u] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v)); }
   }
 
-  // 2c. strong wind strips loose litter off the top (see litterStrip)
-  if (n > 0u && donorDir(p) < 0 && ivMat(arr[n - 1u]) == MAT_LITTER && litterStrip(p, G.tick)) {
+  // 2c. strong wind strips loose litter and ash off the top (see litterStrip)
+  if (n > 0u && donorDir(p) < 0 && isStrippable(ivMat(arr[n - 1u])) && litterStrip(p, G.tick)) {
     let v = arr[n - 1u];
     let z1 = ivZ1(v) - 1u;
     if (z1 <= ivZ0(v)) { n -= 1u; arr[n] = 0u; }
