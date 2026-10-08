@@ -1,20 +1,20 @@
 // ---- ecology / succession -------------------------------------------------
 // veg = continuous succession stage per column:
 //   0 bare · 1 lichen/moss · 2 grass · 3 shrubs · 4 young trees · 5 mature
-// Growth depends on local conditions (substrate, contamination, moisture,
-// flooding) — not on a timer. Bare cells are colonised probabilistically
-// from neighbours, plus a tiny spore rain so isolated clean areas recover.
+// Growth depends on local conditions (substrate, moisture, and the ground's
+// hostility from the wilt system: poison, oil, trash, flooding, drought) —
+// not on a timer. Bare cells are colonised probabilistically from
+// neighbours, plus a tiny spore rain so isolated clean areas recover.
+// Seeds take even on hostile ground and the sprouts grow for a while, then
+// brown (wilt.y) and wither: the clue to what must be cleared (round 6).
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
-@group(0) @binding(4) var<storage, read> contam: array<vec2<f32>>;
+// x hostility 0..1, y brownness 0..1 (wilt.wgsl)
+@group(0) @binding(4) var<storage, read> wilt: array<vec2<f32>>;
 @group(0) @binding(5) var<storage, read> moisture: array<f32>;
 @group(0) @binding(6) var<storage, read> water: array<f32>;
 @group(0) @binding(7) var<storage, read> vegIn: array<f32>;
 @group(0) @binding(8) var<storage, read_write> vegOut: array<f32>;
-// oil smothers plants and blocks colonisation
-@group(0) @binding(9) var<storage, read> oil: array<f32>;
 @group(0) @binding(10) var<storage, read> fire: array<f32>;
-
-const TOX_LIMIT: f32 = 0.2;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -24,9 +24,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let m = sfMat(surface[i]);
   let cap = MATS[m].eco.x;
   let suit = MATS[m].eco.y;
-  let c = contam[i].x;
-  let oiled = oil[i] > 0.02;
-  let tox = select(clamp(1.0 - c / TOX_LIMIT, 0.0, 1.0), 0.0, oiled);
+  let wl = wilt[i];
+  let tox = 1.0 - wl.x;
   let wet = moisture[i];
   let mf = smoothstep(0.06, 0.35, wet);
   let d = water[i];
@@ -36,13 +35,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (fire[i] > 0.15) {
     // burning: grass goes in a moment, trees take longer
     v = max(0.0, v - fire[i] * mix(0.6, 0.12, smoothstep(2.0, 4.0, v)));
-  } else if (oiled) {
-    v = max(0.0, v - 0.06);
-  } else if (d > 0.5) {
-    v = max(0.0, v - 0.04);
+  } else if (wl.y > 0.4) {
+    // browned: withers away
+    v = max(0.0, v - 0.04 * wl.y);
+    if (v < 0.05) { v = 0.0; }
   } else if (v > 0.0) {
-    // pioneers (moss, grass) establish quickly; woody stages take much longer
-    var rate = 0.012 * suit * tox * mf * mix(1.2, 0.18, smoothstep(1.5, 3.5, v));
+    // pioneers (moss, grass) establish quickly; woody stages take much longer.
+    // A fresh sprout grows even on hostile ground — until it browns.
+    let health = select(tox, 1.0, v < 0.9);
+    var rate = 0.012 * suit * health * mf * mix(1.2, 0.18, smoothstep(1.5, 3.5, v));
     // biomes: woodland only matures on flat, well-watered ground; elsewhere
     // succession stops at meadow (grass, flowers, shrubs) — no dieback
     // + large natural patches of open meadow (wildflower fields) between woods
@@ -51,7 +52,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (v > 3.3 && woodland < 0.5) { rate = 0.0; }
     v += rate;
     if (v > cap) { v = max(cap, v - 0.02); }
-    if (c > TOX_LIMIT * 2.5) { v -= 0.02; }
     if (wet < 0.04) { v -= 0.003; }
     if (v < 0.05) { v = 0.0; }
   } else {
@@ -64,7 +64,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let o = vec2<i32>(i32(hash3(id.x, id.y, G.tick) % 9u) - 4, i32(hash3(id.y, id.x, G.tick + 7u) % 9u) - 4);
     let q2 = clampCell(p + o);
     neigh += 0.6 * smoothstep(2.5, 4.0, vegIn[colIdxI(q2)]);
-    let chance = (neigh * 0.1 + 0.0003) * suit * tox * mf;
+    // spreading plants also try their luck on bad ground (and wither there)
+    let chance = (neigh * 0.1 * (0.3 + 0.7 * tox) + 0.0003 * tox) * suit * mf;
     if (cap > 0.0 && r < chance) { v = 0.25; }
   }
   vegOut[i] = clamp(v, 0.0, 5.0);

@@ -1,4 +1,5 @@
-// What the player's gestures do in the world (DECISIONS 2026-10-07).
+// What the player's gestures do in the world (DECISIONS 2026-10-07, round 6).
+//   Tap ground/plants  → small growth boost (or a visible wilt on bad ground)
 //   Tap under a storm  → lightning (always takes precedence)
 //   Tap elsewhere      → tactile response from whatever was touched
 //   Drag anywhere      → wind along the drag; near a storm it also steers it
@@ -131,6 +132,9 @@ export class Powers {
       // its crown, and flap if some actually went (GPU counter readback)
       this.d.globals.events.push({ kind: EventKind.Scare, x, y, radius: 3.2, strength: 1 });
       void this.listenForWings(at);
+      // and the living ground around it gets a little boost (round 6)
+      this.d.globals.events.push({ kind: EventKind.Grow, x, y, radius: 2.5, strength: 1 });
+      audio.grow(at);
       this.puff(x, y, 2.5);
       return;
     }
@@ -159,6 +163,10 @@ export class Powers {
       default:
         particles.burst({ kind: PK.Dust, x, y, z, count: 8, speed: 1.6, spread: 0.6 });
         audio.rustle(0.4, at);
+        // a tap on open ground: growth where life can take, a wilt where it
+        // can't (green sparkles vs brown flecks — round 6)
+        this.d.globals.events.push({ kind: EventKind.Grow, x, y, radius: 2.5, strength: 1 });
+        audio.grow(at);
     }
   }
 

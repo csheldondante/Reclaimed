@@ -3,6 +3,25 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-07 — round 6: clearer objective, diegetic clues (session 2)
+
+The player mostly *is* the wind; wind should do meaningful things, and the
+world should show what needs clearing and how.
+- Plants wither as well as grow: a seed sprouts on trash, chemicals or
+  oil, grows, turns brown and dies — a diegetic clue to what blocks life.
+- Trees release seeds; wind carries them further. Flushed birds drop seeds
+  as they fly (showing where plants will and won't take).
+- Tapping living ground gives a small, free growth boost (on bad ground it
+  shows a wilt instead).
+- Wind scatters loose trash; land cleared enough lets plants keep growing.
+- Fire turns hard-to-clear things (oil, dumps) into clouds/ash the wind
+  takes away (round 5).
+- Later (with the user): camera that pans/zooms to firsts (animals arrive,
+  seed sprouts and dies, wind clears trash and a plant takes), a built-in
+  diegetic tutorial, sandbox/level-edit mode, water life, true wind waves.
+- Phone testing: Android Chrome. Hosting (Pages / local HTTPS / tunnel) to
+  be decided together.
+
 ## 2026-10-07 — feedback round 5 (session 2)
 
 - Motion: springier but slower to bounce back; everything a bit slower and

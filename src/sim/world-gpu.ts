@@ -64,6 +64,8 @@ export class WorldGpu {
   // render preparation
   /** vec4 per column: shadow z, moisture, fire glow, flow speed (renderfields.wgsl) */
   readonly renderFields: GPUBuffer;
+  /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
+  readonly wilt: GPUBuffer;
   /** vec4 per column: vegetation lean xy + its velocity (sway.wgsl spring) */
   readonly bend: GPUBuffer;
 
@@ -138,6 +140,7 @@ export class WorldGpu {
     this.fireNext = this.buf('fireNext', N * 4, S);
     this.renderFields = this.buf('renderFields', N * 16, S);
     this.bend = this.buf('bend', N * 16, S);
+    this.wilt = this.buf('wilt', N * 8, S);
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
     this.particleCap = particleCap;

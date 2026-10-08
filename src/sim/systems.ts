@@ -22,6 +22,7 @@ import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
 import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
 import swayWgsl from '../shaders/sway.wgsl?raw';
+import wiltWgsl from '../shaders/wilt.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -203,6 +204,26 @@ export class MoistureSystem implements SimSystem {
   }
 }
 
+/** Plant health: ground hostility + brownness (wilt.wgsl); runs just before ecology. */
+export class WiltSystem implements SimSystem {
+  readonly name = 'wilt';
+  readonly period = 15;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(
+      device,
+      world,
+      'wilt',
+      wiltWgsl,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'rw' },
+      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.oil, 9: world.fire, 10: world.wilt },
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+  }
+}
+
 export class EcologySystem implements SimSystem {
   readonly name = 'ecology';
   readonly period = 15;
@@ -213,8 +234,8 @@ export class EcologySystem implements SimSystem {
       world,
       'ecology',
       ecologyWgsl + slopeWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 9: 'read', 10: 'read' },
-      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 9: world.oil, 10: world.fire },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read' },
+      { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire },
     );
   }
   encode(enc: GPUCommandEncoder): void {

@@ -45,6 +45,8 @@ const EV_LIGHTNING: u32 = 1u;
 const EV_CHIP: u32 = 2u;
 // a tap on a tree: perched birds within the radius take off
 const EV_SCARE: u32 = 3u;
+// a tap on the ground: growth boost (or a wilt where nothing can take)
+const EV_GROW: u32 = 4u;
 // eventKind packs kind (low 4 bits) and a z height (above): kind + 16·z
 fn evKind(e: u32) -> u32 { return u32(G.eventKind[e]) & 15u; }
 fn evZ(e: u32) -> u32 { return u32(G.eventKind[e]) >> 4u; }
@@ -211,3 +213,14 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
   return w + turb * 1.6;
 }
 
+
+// ---- litter stripping (shared contract: material system ↔ particles) ----
+// Strong wind tears loose litter off the ground one cell at a time. The
+// material system removes the cell at tick t; the particle system evaluates
+// the same roll for tick t + 1 while the litter is still there and throws up
+// the flying scrap — so what you see leave is what was removed.
+const MAT_LITTER: u32 = 18u;
+fn litterStrip(p: vec2<i32>, tick: u32) -> bool {
+  let ws = length(windAt(vec3<f32>(vec2<f32>(p) + 0.5, 0.0)));
+  return ws > 5.0 && rand3(u32(p.x), u32(p.y), tick ^ 0x1177u) < (ws - 5.0) * 0.004;
+}

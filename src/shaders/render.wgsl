@@ -18,6 +18,14 @@ struct Camera {
 @group(0) @binding(11) var<storage, read> surface: array<u32>;
 // vegetation lean spring per column (sway.wgsl): xy lean, zw velocity
 @group(0) @binding(12) var<storage, read> bend: array<vec4<f32>>;
+// plant health (wilt.wgsl): y = brownness of plants here (withering, scorched)
+@group(0) @binding(13) var<storage, read> wilt: array<vec2<f32>>;
+
+/** Withering plants dry out to straw and brown. */
+fn wither(c: vec3<f32>, b: f32, n: f32) -> vec3<f32> {
+  let dry = mix(vec3<f32>(0.55, 0.45, 0.22), vec3<f32>(0.36, 0.25, 0.13), smoothstep(0.5, 1.0, b) * (0.6 + 0.4 * n));
+  return mix(c, toLinear(dry), smoothstep(0.05, 0.7, b));
+}
 
 const QUAD = array<vec2<f32>, 6>(
   vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0),
@@ -333,8 +341,8 @@ fn fsBox(in: VOut) -> FOut {
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
 
-  if (mat == MAT_TRASH) {
-    // faded plastics, paper, glass and rust specks
+  if (mat == MAT_TRASH || mat == MAT_LITTER) {
+    // faded plastics, paper, glass and rust specks (litter: scraps on dirt)
     let k = u32(n2 * 6.0);
     var tc = vec3<f32>(0.45, 0.43, 0.40);
     if (k == 0u) { tc = vec3<f32>(0.42, 0.52, 0.62); }
@@ -343,6 +351,7 @@ fn fsBox(in: VOut) -> FOut {
     else if (k == 3u) { tc = vec3<f32>(0.38, 0.48, 0.34); }
     else if (k == 4u) { tc = vec3<f32>(0.50, 0.33, 0.20); }
     alb = toLinear(tc) * (0.75 + 0.35 * n1);
+    if (mat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
   }
 
   let v = veg[ci];
@@ -378,6 +387,7 @@ fn fsBox(in: VOut) -> FOut {
       let top = in.wpos.z > in.zr.y - 0.12;
       alb = toLinear(select(vec3<f32>(0.3, 0.46, 0.17), petal, top));
     }
+    if (mat != MAT_WOOD) { alb = wither(alb, wilt[ci].y, n1); }
   } else {
     let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5;
     let porosity = MATS[mat].eco.w;
@@ -417,7 +427,7 @@ fn fsBox(in: VOut) -> FOut {
         let band = sin(dot(windDrift(in.wpos.xy), wd) * 0.8);
         let wave = (gp - 0.5) * 1.6 + band * 0.35;
         g *= 1.0 + wave * 0.13 * clamp(ws / 4.0, 0.3, 1.6) * smoothstep(0.8, 1.8, v);
-        alb = toLinear(g);
+        alb = wither(toLinear(g), wilt[ci].y, n2);
       }
     }
 

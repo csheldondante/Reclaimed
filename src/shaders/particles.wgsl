@@ -45,6 +45,12 @@ const K_DEER: u32 = 13u;
 const K_RABBIT: u32 = 14u;
 // dust kicked up by strong wind: a low tan haze (dust storms, drags)
 const K_HAZE: u32 = 15u;
+// tree seeds: fluff that floats on the wind and sprouts where it lands —
+// on bad ground the sprout withers (the wilt system), a clue (round 6)
+const K_SEED: u32 = 16u;
+// grow-tap response: state 0 = green sparkle (it took), 1 = brown fleck (the
+// ground is hostile here)
+const K_SPARK: u32 = 17u;
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
 // left to settle, it falls as soot (DECISIONS round 5)
@@ -132,9 +138,47 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     if (rare(id.x, id.y, 0x4a2eu) < hazeRate) {
       spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h);
     }
+    // scattered litter torn off the ground by strong wind (removed by the
+    // material system next tick; see litterStrip)
+    if (m == MAT_LITTER && litterStrip(p, G.tick + 1u)) {
+      let cs = contam[i].x;
+      let payload = min(cs * 0.06, 0.03);
+      atomicSub(&contamDelta[i], i32(payload * FIX));
+      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.5, 2.0 + r1 * 2.0), 40.0 + r2 * 30.0, K_LITTER, payload, h ^ 0x51u);
+    }
     // loose waste lies about on the dumps as litter
     if (m == MAT_TRASH_P && rare(id.x, id.y, 0x7a54u) < 0.00015 * dry * boost) {
       spawnResting(onGround, 90.0 + r2 * 60.0, K_LITTER, h);
+    }
+  }
+  // trees let their seeds go in pulses (each tree its own rhythm), and wind
+  // shakes more loose
+  if (v >= 3.6) {
+    let pl = vegPlan(id.x, id.y, v, m);
+    if (pl.tree) {
+      let pulse = sin(G.time * 0.12 + rand3(id.x, id.y, 5u) * 6.2832) > 0.93;
+      let rate = select(0.0, 0.03, pulse) + max(ws - 4.0, 0.0) * 0.006;
+      if (rare(id.x, id.y, 0x5eedu) < rate) {
+        let top = g + pl.trunk + pl.crown;
+        spawn(vec3<f32>(base.xy + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.4, top - r1), vec3<f32>(wind * 0.5, 0.6), 40.0, K_SEED, 0.0, h ^ 0x5eu);
+      }
+    }
+  }
+  // grow-tap: a small boost to living ground; a fresh sprout on bare ground;
+  // on hostile ground only a wilt (brown flecks) to show it won't take
+  for (var e = 0u; e < numEvents(); e++) {
+    if (evKind(e) != EV_GROW) { continue; }
+    let ev = G.events[e];
+    let dd = length(base.xy - ev.xy) / ev.z;
+    if (dd >= 1.0) { continue; }
+    let fall = 1.0 - dd;
+    let hostile = contam[i].x > 0.2 || wet || m == MAT_TRASH_P || m == MAT_LITTER || moisture[i] < 0.04;
+    let cap = MATS[m].eco.x;
+    if (!hostile && cap > 0.0) {
+      veg[i] = min(max(v, 0.3) + 0.35 * fall, max(cap, v));
+      if (r1 < 0.35 * fall) { spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(0.0, 0.0, 1.2 + r2), 1.4 + r1, K_SPARK, 0.0, h, 0u, 0u); }
+    } else if (r1 < 0.3 * fall) {
+      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>((r2 - 0.5) * 0.6, (r1 - 0.5) * 0.6, 0.6), 1.6 + r1, K_SPARK, 0.0, h, 0u, 1u);
     }
   }
   // fallen leaves gather on the woodland floor
@@ -331,6 +375,13 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       vel.x += sin(G.time * 5.0 + sr * 40.0) * 2.0 * DT;
       vel.y += cos(G.time * 4.3 + sr * 31.0) * 2.0 * DT;
     }
+  } else if (kind == K_SEED) {
+    // fluff: rides the wind, sinks slowly — slower still in a strong wind
+    drag = 2.0; grav = 0.35 / (1.0 + ws * 0.35);
+    vel.x += sin(G.time * 3.0 + sr * 40.0) * 0.8 * DT;
+    vel.y += cos(G.time * 2.6 + sr * 31.0) * 0.8 * DT;
+  } else if (kind == K_SPARK) {
+    drag = 0.5; grav = select(-0.6, 1.2, state == 1u);
   } else if (kind == K_HAZE) {
     drag = 1.4; grav = -0.15;
   } else if (kind == K_CLOUD) {
@@ -385,11 +436,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
         P.v.w = 0.0;
         atomicAdd(&counters[1], 1u);
       } else if (rare(id.x, seed, 0x5eedu) < 1.0 / (60.0 * 40.0)) {
-        // a perched bird drops a seed near its tree now and then
-        let hs = hash3(id.x, seed, G.tick);
-        let q = clampCell(cell + vec2<i32>(i32(hs % 9u) - 4, i32((hs >> 8u) % 9u) - 4));
-        let j = colIdxI(q);
-        if (veg[j] == 0.0 && contam[j].x < 0.15 && moisture[j] > 0.08 && water[j] < 0.05) { veg[j] = 0.3; }
+        // a perched bird drops a seed now and then
+        spawn(pos + vec3<f32>(0.0, 0.0, -0.3), vec3<f32>((sr - 0.5) * 2.0, (fract(sr * 7.0) - 0.5) * 2.0, 0.0), 30.0, K_SEED, 0.0, seed ^ G.tick);
       }
     } else if (state == B_SEEK) {
       // cruise above the land, wandering a little; look for a crown below
@@ -439,7 +487,12 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       if (life < 2.0) { state = B_FLEE; life = 30.0; }
     } else {
-      // fleeing: climb and fly straight; after a while some look for another tree
+      // fleeing: climb and fly straight, shedding seeds on the way (they show
+      // where plants will and won't take); after a while some look for
+      // another tree
+      if (rare(id.x, seed, 0xd20bu) < 1.0 / 45.0) {
+        spawn(pos, vec3<f32>(vel.xy * 0.3, 0.0), 30.0, K_SEED, 0.0, seed ^ G.tick ^ 0x99u);
+      }
       vel.z += ((ground + 12.0 + sr * 4.0) - pos.z) * 0.8 * DT;
       vel.z *= 0.97;
       if (life < 22.0 && sr < 0.5) { state = B_SEEK; life = 60.0 + sr * 60.0; }
@@ -499,6 +552,11 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       pos.z = ground;
       resting = true;
+    } else if (kind == K_SEED) {
+      // lands: bare ground takes the seed — whatever the ground is like
+      if (water[ci] < 0.05 && veg[ci] == 0.0 && moisture[ci] > 0.05) { veg[ci] = 0.3; }
+      parts[id.x].p.w = 0.0;
+      return;
     } else if (kind == K_LEAF) {
       // settles and waits for the next gust
       if (!resting) { life = clamp(life, 20.0, 40.0); }

@@ -372,6 +372,26 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     }
   }
 
+  // Scattered litter (round 6): a thin layer of scraps over patches of dead
+  // ground, thickest near the site and roads, and in a ring around the
+  // healthy patch so the first thing the wind can do is clear the way for it.
+  // Nothing grows on litter; strong wind strips it a cell at a time.
+  {
+    const siteC: P = [(SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2];
+    for (let y = 2; y < h - 2; y++)
+      for (let x = 2; x < w - 2; x++) {
+        const m = grid.topMat(x, y);
+        if (m !== MAT.Soil && m !== MAT.Sand && m !== MAT.Rubble) continue;
+        if (nearestRiver(x, y).d < 4) continue;
+        const dh = Math.hypot(x - HEALTHY[0], y - HEALTHY[1]);
+        if (dh < 11) continue;
+        const near = Math.exp(-((Math.hypot(x - siteC[0], y - siteC[1]) / 60) ** 2));
+        const ring = Math.exp(-(((dh - 18) / 7) ** 2));
+        const n = fbm(x / 7, y / 7, 2, seed + 71) * 0.5 + 0.5;
+        if (n + 0.35 * near + 0.45 * ring > 0.82 && hash2(x, y, 83) > 0.18) grid.push(x, y, grid.top(x, y), grid.top(x, y) + 1, MAT.Litter);
+      }
+  }
+
   // Fields
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {

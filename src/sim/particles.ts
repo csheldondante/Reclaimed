@@ -26,6 +26,8 @@ export const enum PK {
   Deer = 13,
   Rabbit = 14,
   Haze = 15,
+  Seed = 16,
+  Spark = 17,
 }
 
 export interface Burst {

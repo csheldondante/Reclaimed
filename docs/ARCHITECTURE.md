@@ -51,6 +51,18 @@ Vegetation sway has state: `bend` (vec4 per column: lean xy, velocity zw) is
 a damped spring updated by the sway system (stiff while the wind pushes,
 soft and lightly damped on the way back); the draw shaders read it.
 
+Plant health: the wilt system (period 15, just before ecology) writes
+`wilt` (vec2: ground hostility to plants from poison/oil/trash/litter/
+drowning/drought; brownness of what grows there). Ecology reads it instead of
+contamination and oil (young sprouts grow anywhere, browned plants wither);
+the renderer tints plants with it. Seeds (particle 16) come from trees in
+pulses, from wind, and from birds; they sprout on any bare dry-land cell.
+Grow taps are `EV_GROW` events handled in the particle emit pass (period 1).
+Litter (material 18) is stripped by `litterStrip()` (common.wgsl): the
+material system removes the cell at tick t, the particle system spawns the
+flying scrap evaluating the same roll for tick t + 1 while the cell still
+exists.
+
 Nature consequences come from stats: free oil volume and drowning living
 cells (stat 11: veg ≥ 0.5 under > 0.4 water) drain it (`HARM` in
 `game/nature.ts`). Compacted waste (trash) is solid and only fire removes it:

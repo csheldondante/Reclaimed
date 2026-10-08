@@ -49,6 +49,7 @@ export const MAT = {
   Flower: 15,
   Bone: 16,
   Ash: 17,
+  Litter: 18,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -88,6 +89,9 @@ export const MATERIALS: MaterialDef[] = [
   // reddish-grey dust and ash (the menu's mound; what burned waste leaves):
   // loose, blown about by wind and carried by water, fertile once clean
   { ...NONE, name: 'ash', albedo: [0.55, 0.42, 0.38], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.1, growthCap: 3, suitability: 0.6, porosity: 0.45 },
+  // scattered litter lying on the land: loose; strong wind strips it a cell at a
+  // time (litterStrip in common.wgsl), water carries it; nothing grows on it
+  { ...NONE, name: 'litter', albedo: [0.55, 0.52, 0.47], state: MatState.Granular, reposeDry: 1, reposeWet: 1, strength: 0.05, growthCap: 1, suitability: 0.15, porosity: 0.2 },
 ];
 
 export const MAX_MATERIALS = 32;

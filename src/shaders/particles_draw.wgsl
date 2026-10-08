@@ -102,12 +102,21 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     soft = 1.0;
     col = vec4<f32>(mix(vec3<f32>(0.74, 0.65, 0.5), vec3<f32>(0.6, 0.53, 0.42), sr2), 0.2 * clamp(P.p.w / 2.0, 0.0, 1.0) * clamp(age * 6.0, 0.0, 1.0));
   }
+  else if (kind == 16u) { // seed fluff: soft cream, a touch luminous so it reads in flight
+    size = 0.11 + sr * 0.05;
+    col = vec4<f32>(vec3<f32>(0.97, 0.95, 0.86) * (0.85 + 0.15 * sin(G.time * 6.0 + sr * 40.0)), 0.95);
+  }
+  else if (kind == 17u) { // grow-tap: green-gold sparkle (it took) or a brown fleck (it won't)
+    size = 0.1;
+    let t = clamp(P.p.w / 1.5, 0.0, 1.0);
+    col = select(vec4<f32>(mix(vec3<f32>(0.55, 0.9, 0.35), vec3<f32>(1.0, 0.95, 0.55), sr), t), vec4<f32>(0.42, 0.3, 0.14, t), P.m.w == 1u);
+  }
   else if (kind == 14u) { // rabbit: small, sandy brown
     size = 0.17;
     col = vec4<f32>(mix(vec3<f32>(0.5, 0.38, 0.26), vec3<f32>(0.6, 0.5, 0.38), sr), 1.0);
   }
   if (soft == 0.0) { col.a *= fade; }
-  if (kind != 9u && kind != 11u && kind != 12u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w) + vec3<f32>(0.5, 0.55, 0.65) * G.misc.z, col.a); }
+  if (kind != 9u && kind != 11u && kind != 12u && kind != 17u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w) + vec3<f32>(0.5, 0.55, 0.65) * G.misc.z, col.a); }
   // perched birds sit with folded wings
   let perched = kind == 10u && P.m.w == 2u;
   if (perched) { size = 0.24; }

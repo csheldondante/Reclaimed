@@ -384,6 +384,28 @@ export class Ambience {
     for (let i = 0; i < 6; i++) this.noiseHit(pan, t0 + 0.2 + Math.random() * 0.35, 3000 + Math.random() * 3000, 5, 0.03, 0.03);
   }
 
+  /** Growth tap: a soft, rising, airy shimmer. */
+  grow(at?: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const t0 = ctx.currentTime + 0.01;
+    const pan = this.panner(this.fx, at);
+    for (let i = 0; i < 3; i++) {
+      const o = ctx.createOscillator();
+      o.type = 'sine';
+      const f = 520 * [1, 1.5, 2][i] * (0.98 + Math.random() * 0.04);
+      o.frequency.setValueAtTime(f, t0 + i * 0.07);
+      o.frequency.exponentialRampToValueAtTime(f * 1.18, t0 + i * 0.07 + 0.5);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t0 + i * 0.07);
+      g.gain.linearRampToValueAtTime(0.035, t0 + i * 0.07 + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0005, t0 + i * 0.07 + 0.6);
+      o.connect(g).connect(pan);
+      o.start(t0 + i * 0.07);
+      o.stop(t0 + i * 0.07 + 0.65);
+    }
+  }
+
   /** Wings: a burst of soft flaps as birds leave a tree. */
   flutter(at?: number, volume = 1): void {
     const ctx = this.ctx;

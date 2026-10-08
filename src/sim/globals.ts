@@ -11,6 +11,8 @@ export const enum EventKind {
   Chip = 2,
   /** startles perched birds within the radius */
   Scare = 3,
+  /** a tap on the ground: growth boost, or a visible wilt on hostile ground */
+  Grow = 4,
 }
 
 /** A dust storm: a roaming patch of strong, gusty wind (no rain, no cloud). */

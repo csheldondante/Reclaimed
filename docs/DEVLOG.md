@@ -719,3 +719,39 @@ DECISIONS round 5.
   surface cells to ash in 16 s; the wind then lifted ash plumes.
 
 Perf (Xe-LPG, 1600×900, storm in view): GPU 5.9 ms.
+
+## 2026-10-07 — round 6 batch 1: withering, seeds, grow-tap, litter
+
+Goal (DECISIONS round 6): give the wind and taps a clearer purpose and let
+the world show what has to be cleared.
+
+- **Withering.** New `wilt` system/buffer (x hostility, y brownness).
+  Hostility = soil poison (contam / 0.2), oil, trash or litter underfoot,
+  drowning (> 0.5 water), drought (moisture < 0.04 → 0.8). Brownness rises
+  while plants stand on ground with hostility > 0.7 (oil fast, fire at once),
+  fades otherwise. Ecology no longer reads contamination/oil directly: fresh
+  sprouts (< 0.9) grow regardless, then stall by hostility; anything browned
+  past 0.4 dies back. Plants spreading from neighbours now also try hostile
+  ground (at 30 % of the rate), so the edge of what life can reach shows as
+  a brown fringe. First threshold (browning from hostility 0.5, i.e. contam
+  0.1) killed plants on lightly polluted ground that used to grow slowly; it
+  now starts where growth stops (0.7). Plants render toward straw/brown.
+  Ecology freed two storage bindings (contam, oil → wilt).
+- **Seeds.** Trees release floating seed fluff in pulses (own rhythm per
+  tree) and more in wind over 4 cells/s; seeds ride the wind, sink slower the
+  stronger it blows, and sprout on bare dry land wherever they land — taking
+  or withering. Flushed birds shed seeds as they fly; perched birds drop
+  them visibly. Test (21×21 forced wood, 60 s at 2×): ~30 seeds in flight per
+  pulse; 26–33 sprouts beyond the wood, the ones on hostile ground browning.
+- **Grow-tap.** Tapping plants or open ground sends `EV_GROW` (r 2.5): living
+  or bare clean ground gets +0.35 (a sprout if bare) with green sparkles and a
+  soft rising chime; hostile ground only gives brown flecks. Test: clean soil
+  0 → 0.51.
+- **Litter.** New loose material 18 scattered over dead ground (≈3000
+  cells), thickest near the site/roads and in a ring around the healthy
+  patch. Nothing grows on it; wind over 5 cells/s strips it a cell at a time
+  (material system) and throws the scrap into the air (particles, same
+  deterministic roll one tick ahead) carrying some contamination. Test: a
+  5 s drag over the ring stripped 726 → 280 litter cells.
+- Pacing re-measured (8×, storm every 5 game-min): 44 % at 3.2 min, 51 % at
+  4.0 — unchanged.
