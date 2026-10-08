@@ -94,12 +94,12 @@ canvas#world {
   color: var(--ink-dim);
   background: var(--panel);
   padding: 6px 14px;
-  border-radius: 999px;
   transition: opacity 1s;
-  white-space: nowrap;
-  max-width: calc(100vw - 32px);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  /* wraps on narrow (phone) screens instead of being cut off */
+  max-width: min(640px, calc(100vw - 32px));
+  width: max-content;
+  text-align: center;
+  border-radius: 14px;
 }
 
 .perf {
@@ -172,6 +172,23 @@ canvas#world {
   transition: opacity 0.3s, transform 0.3s;
 }
 .summon.ready { opacity: 1; }
+/* the life lens has a key (Space) on desktop; touch screens get a hold button */
+.lens {
+  appearance: none;
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  color: var(--ink);
+  font-size: 18px;
+  display: none;
+  place-items: center;
+  background: rgba(28, 26, 22, 0.75);
+  opacity: 0.8;
+}
+@media (pointer: coarse) {
+  .lens { display: grid; }
+}
 .summon.ready:hover { transform: scale(1.06); }
 
 .reclaim {

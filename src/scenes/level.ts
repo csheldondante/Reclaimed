@@ -89,7 +89,11 @@ export class LevelScene implements Scene {
     const { camera, sim, weather, globals, map, dims } = core;
     const readSurface = async () => new Uint32Array((await core.readBuffer('surface')).buffer);
 
-    this.hud = new Hud(host.ui, () => this.powers.summonStorm());
+    this.hud = new Hud(
+      host.ui,
+      () => this.powers.summonStorm(),
+      (on) => (this.lensOn = on),
+    );
     this.powers = new Powers({
       weather,
       nature: this.nature,
@@ -174,7 +178,10 @@ export class LevelScene implements Scene {
       { signal },
     );
 
-    setTimeout(() => this.hud.say('The valley is quiet. Touch things. Call a storm with ☁ or R. Right-drag to look around.', 8), 800);
+    // touch screens: one finger is wind (drag) or touch (tap); two fingers move the view
+    const touch = matchMedia('(pointer: coarse)').matches;
+    const look = touch ? 'Two fingers to look around.' : 'Right-drag to look around.';
+    setTimeout(() => this.hud.say(`The valley is quiet. Touch things; drag to make wind. Call a storm with ☁${touch ? '' : ' or R'}. ${look}`, 8), 800);
     (window as unknown as { reclaimed: unknown }).reclaimed = {
       core,
       sim,
@@ -198,7 +205,9 @@ export class LevelScene implements Scene {
     this.renderH = renderH;
     const first = this.core.camera.viewportW <= 1;
     this.core.resize(renderW, renderH, cssW, cssH);
-    if (first) this.core.camera.zoom = Math.max(1.5, Math.min(cssW, cssH * 1.6) / 300);
+    // open framed on the valley; portrait phones get closer than the width
+    // alone would allow (the map is a diamond, its middle is what matters)
+    if (first) this.core.camera.zoom = Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300);
   }
 
   frame(now: number, dt: number): void {

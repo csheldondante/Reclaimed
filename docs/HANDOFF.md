@@ -1,4 +1,26 @@
-# Handoff — 2026-10-07 (session 2)
+# Handoff — 2026-10-08 morning (session 2, overnight)
+
+## Overnight (round 6 batch) — for the morning
+
+Done (DECISIONS round 6, DEVLOG): withering plants (wilt system), tree seeds
+on the wind + birds shedding seeds, free grow-tap (sparkles / brown flecks),
+wind-strippable litter (ring around the healthy patch), phone-ready touch
+controls and layout.
+
+To decide together:
+- **Phone hosting** (Android Chrome): WebGPU needs a secure context, so
+  `http://192.168.1.3:5173` won't work from the phone. Options: GitHub Pages
+  (public https build), local HTTPS dev server (self-signed cert, home Wi-Fi
+  only), or a tunnel (cloudflared/ngrok). Then open with `?q=low`.
+- **Next features (deferred by agreement):** event camera that pans/zooms to
+  firsts + a diegetic tutorial built on withering/seeds/litter; sandbox mode
+  (deposit/remove-layer brushes — fits the column-interval format; needs
+  same-material merging and occasional CPU repack because chunk K is fixed
+  at load + 2 headroom); water life (fish, reeds/lilies); wind waves
+  (shaded cheap, true height harder).
+- Tuning to confirm by eye: wither speed, seed amounts, grow-tap strength,
+  litter density, fire spread.
+
 
 ## Session 2 (round 4 feedback) — done, needs the user's eyes/ears
 

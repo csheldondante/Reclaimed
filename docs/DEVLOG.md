@@ -755,3 +755,15 @@ the world show what has to be cleared.
   5 s drag over the ring stripped 726 → 280 litter cells.
 - Pacing re-measured (8×, storm every 5 game-min): 44 % at 3.2 min, 51 % at
   4.0 — unchanged.
+
+## 2026-10-07 — round 6 batch 2: phone-ready controls (no hosting yet)
+
+Touch already mapped one finger to the gesture (tap = touch/grow, drag =
+wind) and two fingers to pan + pinch zoom; the page blocks browser gestures
+(`touch-action: none`). Added for phones: a hold-to-see life-lens button on
+coarse pointers (Space has no touch equivalent), a touch-specific opening hint
+(no keys, "two fingers to look around"), hints that wrap instead of being cut
+off, and a closer opening zoom in portrait (min(w·1.9, h·1.6)/300 — at
+412×900 the valley went from a small diamond to filling the width). Quality
+stays explicit (`?q=low` on phones; no auto-detection, design doc §10).
+Hosting (WebGPU needs https off localhost) is for the morning.

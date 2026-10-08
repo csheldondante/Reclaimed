@@ -14,14 +14,16 @@ export class Hud {
   private hudEl: HTMLElement;
   private reclaim: HTMLElement;
 
-  constructor(root: HTMLElement, onSummon: () => void) {
+  /** @param onLens hold-to-see life lens (the touch stand-in for Space) */
+  constructor(root: HTMLElement, onSummon: () => void, onLens: (on: boolean) => void = () => undefined) {
     const hud = document.createElement('div');
     hud.className = 'hud';
     hud.innerHTML = `
       <div class="nature" title="Nature — regenerates from living, healthy land">
         <span>❦</span><div class="bar"><div class="fill"></div></div><span class="val"></span>
       </div>
-      <button class="summon" title="Summon a storm (R)"><span>☁</span></button>`;
+      <button class="summon" title="Summon a storm (R)"><span>☁</span></button>
+      <button class="lens" title="Hold to see what keeps life out (Space)"><span>◎</span></button>`;
     root.appendChild(hud);
     this.hudEl = hud;
     // how much of the land is alive, with the level goal marked
@@ -37,6 +39,15 @@ export class Hud {
       e.stopPropagation();
       onSummon();
     });
+    const lensBtn = hud.querySelector('.lens') as HTMLButtonElement;
+    const lensOff = () => onLens(false);
+    lensBtn.addEventListener('pointerdown', (e) => {
+      e.stopPropagation();
+      onLens(true);
+    });
+    lensBtn.addEventListener('pointerup', lensOff);
+    lensBtn.addEventListener('pointercancel', lensOff);
+    lensBtn.addEventListener('pointerleave', lensOff);
     this.hint = document.createElement('div');
     this.hint.className = 'hint';
     this.hint.style.opacity = '0';
