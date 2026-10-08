@@ -1195,3 +1195,25 @@ the dust fog (as under normal wind) only in a tighter cone; subtle is fine.
 - Tries along the way: dark soft motes read as a fat blob; radii scaled by
   the base radius caught debris ~37 radii out.
 Typical load ~1900 caught (mostly dust, ~200 fog, dozens of litter).
+
+## 2026-10-08 — levels and the sandbox (C6, B2)
+
+- **Level registry** (`game/levels.ts`): the Dam Valley (built), the
+  Highway, the City, the Port (coming), and the Sandbox. LevelScene builds
+  whichever is chosen; goals, intro and progress are per level (the valley
+  keeps its old save key). `?skipmenu=1&level=sandbox` for testing.
+- **Title screen:** a small model per level stands around the diorama — a
+  curved dam with water behind it, a rusted car, a field-hospital tent with
+  a red stripe, a beached tanker, a wooden signpost. Clicking one selects it
+  (a glow on the model; name, blurb, its own progress; Begin / Continue /
+  Play / "coming"). First placed along the front edge they hid behind the
+  title text; moved round the sides, 1.35× larger; car and tanker side-on.
+- **Sandbox:** open rolling ground with a pond, a ruin, a trash heap, an oil
+  pool, a poisoned patch with litter, dunes and a green patch. Editor panel:
+  ✋ hands (normal gestures), raise (chosen material: soil, sand, stone,
+  concrete, brick, rubble, trash, litter, ash, rust), dig, water, drain, oil,
+  drift dust, poison, clean, plant, place storm / dust storm / cyclone; brush
+  size and strength; pause, 1–8×. Natural weather is off. Edits go through
+  a new edit system (see ARCHITECTURE). First rates were absurd (a 1.5 s
+  raise built a 49-cell tower); ground edits are now ~2–3 cells/s at the
+  centre at half strength, water ~0.6 depth/s.

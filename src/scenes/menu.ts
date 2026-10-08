@@ -8,7 +8,9 @@
 import type { Ambience } from '../audio/ambience';
 import { Nature } from '../game/nature';
 import { Powers } from '../game/powers';
-import { loadDifficulty, loadProgress, resetProgress, saveDifficulty, type Difficulty } from '../game/progress';
+import { LEVELS, levelById, type LevelDef } from '../game/levels';
+import { loadDifficulty, loadLevelProgress, loadProgress, resetProgress, saveDifficulty, type Difficulty } from '../game/progress';
+import { PK } from '../sim/particles';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { Controls } from '../input/controls';
 import { generateMenuMap, MENU_SCALE } from '../world/menumap';
@@ -36,16 +38,18 @@ export class MenuScene implements Scene {
   private showT = 1.2;
   private shown = 0;
   private starting = false;
+  /** the level Begin/Continue will open (picked by clicking its model) */
+  private selected: LevelDef = LEVELS[0];
 
   constructor(
     private host: Host,
     private audio: Ambience,
-    private onPlay: () => Promise<void>,
+    private onPlay: (levelId: string) => Promise<void>,
   ) {
     this.progress = Number(host.params.get('progress') ?? NaN);
     if (!Number.isFinite(this.progress)) this.progress = loadProgress();
     const p = this.progress;
-    this.core = new WorldCore(host, generateMenuMap(p), 8192);
+    this.core = new WorldCore(host, generateMenuMap(p, LEVELS.map((l) => ({ id: l.id, model: l.model }))), 8192);
     const { weather, dayNight, camera, globals } = this.core;
     // a dead place is windy (scraps blow across); a living one is calm
     // (kept under the haze threshold so the figure stays visible)
@@ -64,23 +68,24 @@ export class MenuScene implements Scene {
     this.el = document.createElement('div');
     this.el.className = 'menu';
     const line = LINES.find(([t]) => p >= t)![1];
-    const label = p > 0 ? 'Continue' : 'Begin';
     this.el.innerHTML = `<div><h1>RECLAIMED</h1><p class="line">${line}</p></div>
-      <div class="actions"><button data-a="play">${label}</button>
-      <span class="small">${p > 0 ? `the valley: ${Math.round(Math.min(1, p) * 100)}% reclaimed` : 'sound on'}</span>
+      <div class="actions"><span class="level-name"></span><button data-a="play"></button>
+      <span class="small level-info"></span>
+      <span class="small">pick a place: click its model · sound on</span>
       <span class="small hands">touch the ground · drag to make wind</span>
       <span class="difficulty" title="Easy: green ground never fails. Medium: green resists pollution. Hard: blown waste, gales and floods kill green easily.">${(['easy', 'medium', 'hard'] as const).map((d) => `<button data-d="${d}">${d}</button>`).join('')}</span>
       ${p > 0 ? '<button class="reset" data-a="reset">reset progress</button>' : ''}</div>`;
     host.ui.appendChild(this.el);
     const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
     btn.addEventListener('click', async () => {
-      if (this.starting) return;
+      if (this.starting || !this.selected.generate) return;
       this.starting = true;
       audio.start();
       btn.textContent = 'gathering…';
       btn.disabled = true;
-      await this.onPlay();
+      await this.onPlay(this.selected.id);
     });
+    this.select(levelById(host.params.get('level')));
     const pick = (d: Difficulty) => {
       saveDifficulty(d);
       for (const b of this.el.querySelectorAll<HTMLButtonElement>('[data-d]')) b.classList.toggle('on', b.dataset.d === d);
@@ -127,7 +132,22 @@ export class MenuScene implements Scene {
         const [wx, wy] = camera.groundAt(sx, sy, ground);
         core.renderer
           .pick((sx / camera.viewportW) * renderW, (sy / camera.viewportH) * renderH)
-          .then((hit) => this.powers.tap(hit, wx, wy, sx, sy), ignoreTeardown);
+          .then((hit) => {
+            // a level's model? select it
+            if (hit) {
+              const hx = (hit.cell % core.dims.w) + 0.5;
+              const hy = Math.floor(hit.cell / core.dims.w) + 0.5;
+              const lv = LEVELS.find((l) => {
+                const at = core.map.poi[`level:${l.id}`];
+                return at && Math.hypot(at[0] - hx, at[1] - hy) < 4.2 * MENU_SCALE;
+              });
+              if (lv) {
+                this.select(lv);
+                return;
+              }
+            }
+            this.powers.tap(hit, wx, wy, sx, sy);
+          }, ignoreTeardown);
       },
       dragStart: (sx, sy) => {
         wake();
@@ -150,6 +170,20 @@ export class MenuScene implements Scene {
   }
 
   private renderSize: (w: number, h: number) => void = () => undefined;
+
+  /** Select a level: its name, progress and Begin/Continue (or "coming"), and a glow on its model. */
+  private select(lv: LevelDef): void {
+    this.selected = lv;
+    const prog = loadLevelProgress(lv.id);
+    const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
+    (this.el.querySelector('.level-name') as HTMLElement).textContent = lv.name;
+    btn.textContent = !lv.generate ? 'coming' : lv.sandbox ? 'Play' : prog > 0 ? 'Continue' : 'Begin';
+    btn.disabled = !lv.generate;
+    (this.el.querySelector('.level-info') as HTMLElement).textContent =
+      lv.blurb + (lv.generate && !lv.sandbox && prog > 0 ? ` — ${Math.round(prog * 100)}% reclaimed` : '');
+    const at = this.core.map.poi[`level:${lv.id}`];
+    if (at) this.core.sim.particles.burst({ kind: PK.Glow, x: at[0], y: at[1], z: 9 * MENU_SCALE, count: 1, speed: 0, payload: 0, spread: 0 });
+  }
   private hoverAt?: [number, number];
 
   async init(): Promise<void> {

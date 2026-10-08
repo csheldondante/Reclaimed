@@ -13,6 +13,8 @@ export const enum EventKind {
   Scare = 3,
   /** a tap on the ground: growth boost, or a visible wilt on hostile ground */
   Grow = 4,
+  /** sandbox brush: z = op * 32 + material (edit.wgsl) */
+  Edit = 5,
 }
 
 /** A dust storm: a roaming patch of strong, gusty wind (no rain, no cloud). */

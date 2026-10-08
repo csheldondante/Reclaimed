@@ -4,14 +4,16 @@ import type { Ambience } from '../audio/ambience';
 import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
 import { Director } from '../game/director';
-import { DIFFICULTY_LEVEL, LEVEL_GOAL, loadDifficulty, loadProgress, saveProgress, type Difficulty } from '../game/progress';
+import { levelById, type LevelDef } from '../game/levels';
+import { DIFFICULTY_LEVEL, loadDifficulty, loadLevelProgress, saveProgress, type Difficulty } from '../game/progress';
+import { EventKind } from '../sim/globals';
+import { EDIT_OP, Editor } from '../ui/editor';
 import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { PK } from '../sim/particles';
 import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
-import { generateMap } from '../world/mapgen';
 import { WorldCore, type Host, type Scene } from './world-core';
 
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
@@ -54,14 +56,21 @@ export class LevelScene implements Scene {
   private washedSeen = -1;
   private smokeRefresh = 0;
 
+  /** sandbox only */
+  private editor?: Editor;
+  /** brush currently being dragged (sandbox) */
+  private brushAt?: [number, number];
+
   private constructor(
     private host: Host,
     private audio: Ambience,
     private perf: PerfOverlay,
+    readonly level: LevelDef,
     private onExit: () => void,
   ) {
     const dims = { w: 256, h: 256, zMax: 64 };
-    this.core = new WorldCore(host, generateMap(dims, 1), host.quality.particles);
+    if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
+    this.core = new WorldCore(host, level.generate(dims), host.quality.particles);
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
     const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();
@@ -75,8 +84,8 @@ export class LevelScene implements Scene {
   }
 
   /** Builds the level and settles it (rivers, slopes) before returning. */
-  static async create(host: Host, audio: Ambience, perf: PerfOverlay, onExit: () => void): Promise<LevelScene> {
-    const s = new LevelScene(host, audio, perf, onExit);
+  static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void): Promise<LevelScene> {
+    const s = new LevelScene(host, audio, perf, levelById(levelId), onExit);
     // ecology excluded so nothing grows during settling; ground debris (dust,
     // litter, fallen leaves) accumulates fast so the level opens with it lying about
     s.core.globals.debrisBoost = 10;
@@ -126,7 +135,11 @@ export class LevelScene implements Scene {
     sim.particles.burst({ kind: PK.Bird, x: hx, y: hy, z: hz + 8, count: 5, speed: 3, spread: 3 });
     this.director = new Director(camera);
     const p = host.params;
-    this.intro = p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadProgress() === 0);
+    this.intro = !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
+    if (this.level.sandbox) {
+      this.editor = new Editor(host.ui, (sp) => (this.speed = sp));
+      weather.holdNatural(1e9);
+    }
 
     const zoomAt = (sx: number, sy: number, factor: number) => {
       const before = camera.screenDeltaToWorld(sx - camera.viewportW / 2, sy - camera.viewportH / 2);
@@ -142,18 +155,24 @@ export class LevelScene implements Scene {
     this.controls = new Controls(host.canvas, {
       tap: (sx, sy) => {
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
+        if (this.editTool(wx, wy, true)) return;
         const [rx, ry] = toRender(sx, sy);
         core.renderer.pick(rx, ry).then((hit) => this.powers.tap(hit, wx, wy, sx, sy));
       },
       dragStart: (sx, sy) => {
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
+        if (this.editTool(wx, wy, false)) return true;
         return this.powers.gustStart(wx, wy);
       },
       dragMove: (sx, sy) => {
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
-        this.powers.gustMove(wx, wy);
+        if (this.brushAt) this.brushAt = [wx, wy];
+        else this.powers.gustMove(wx, wy);
       },
-      dragEnd: () => this.powers.gustEnd(),
+      dragEnd: () => {
+        if (this.brushAt) this.brushAt = undefined;
+        else this.powers.gustEnd();
+      },
       hover: (sx, sy) => {
         this.hoverWorld = camera.groundAt(sx, sy, this.heightAt).slice(0, 2) as [number, number];
       },
@@ -215,6 +234,10 @@ export class LevelScene implements Scene {
   /** The valley without the intro (or after it): dust storms roll in, the usual hint. */
   private openValley(): void {
     const { weather, dims } = this.core;
+    if (this.level.sandbox) {
+      setTimeout(() => this.hud.say('Sandbox: pick a tool on the right — build, pour, plant, spill, place weather. ✋ is the normal hands.', 9), 800);
+      return;
+    }
     // dust storms roll across the dead valley as the level opens
     weather.spawnDust(dims.w * 0.5, dims.h * 0.45);
     weather.spawnDust(dims.w * 0.4, dims.h * 0.6, 70);
@@ -318,19 +341,22 @@ export class LevelScene implements Scene {
       this.nature.gained = 0;
     }
     hud.setWind(powers.windTier());
-    hud.setReclaim(this.reclaimed, LEVEL_GOAL);
+    const goal = this.level.goal ?? 1;
+    hud.setReclaim(this.reclaimed, goal);
+    // the brush paints every frame while held
+    if (this.brushAt && this.editor) this.brush(this.brushAt[0], this.brushAt[1]);
     weather.dustiness = core.pollution;
     this.birdArrivals(dt, stats);
 
     // progress feeds the menu scene; the level ends at the goal
     this.saveTimer -= dt;
-    if (this.saveTimer <= 0) {
+    if (this.saveTimer <= 0 && this.level.goal) {
       this.saveTimer = 5;
-      saveProgress((this.reclaimed / LEVEL_GOAL) * 0.95);
+      saveProgress(this.level.id, (this.reclaimed / this.level.goal) * 0.95);
     }
-    if (!this.completed && this.reclaimed >= LEVEL_GOAL) {
+    if (!this.completed && this.level.goal && this.reclaimed >= this.level.goal) {
       this.completed = true;
-      saveProgress(1);
+      saveProgress(this.level.id, 1);
       this.showComplete();
     }
 
@@ -548,6 +574,35 @@ export class LevelScene implements Scene {
     this.openValley();
   }
 
+  /**
+   * Sandbox: if an editor tool is active, handle the press — a brush starts
+   * painting (or paints once for a tap), a spawn tool places its weather.
+   * Returns false for the normal hands.
+   */
+  private editTool(wx: number, wy: number, tap: boolean): boolean {
+    const ed = this.editor;
+    if (!ed || ed.tool === 'wind') return false;
+    const w = this.core.weather;
+    if (ed.tool === 'storm') {
+      const s = w.spawn(wx, wy);
+      if (s) s.age = 5;
+    } else if (ed.tool === 'duststorm') w.placeDust(wx, wy);
+    else if (ed.tool === 'cyclone') {
+      w.cyclone = undefined;
+      w.spawnCyclone(wx, wy, 1);
+    } else if (tap) this.brush(wx, wy);
+    else this.brushAt = [wx, wy];
+    return true;
+  }
+
+  /** One frame of the brush: an EV_EDIT event for edit.wgsl. */
+  private brush(x: number, y: number): void {
+    const ed = this.editor!;
+    const op = EDIT_OP[ed.tool];
+    if (!op) return;
+    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: op * 32 + ed.material, radius: ed.radius, strength: ed.strength });
+  }
+
   /** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */
   private countSurface(x: number, y: number, r: number, mat: number): number {
     const { dims } = this.core;
@@ -588,6 +643,7 @@ export class LevelScene implements Scene {
   dispose(): void {
     this.abort.abort();
     this.controls.dispose();
+    this.editor?.dispose();
     this.hud.dispose();
     this.core.destroy();
     for (const el of this.host.ui.querySelectorAll('.complete')) el.remove();

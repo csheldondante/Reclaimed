@@ -26,6 +26,7 @@ import swayWgsl from '../shaders/sway.wgsl?raw';
 import wiltWgsl from '../shaders/wilt.wgsl?raw';
 import windFieldWgsl from '../shaders/windfield.wgsl?raw';
 import driftWgsl from '../shaders/drift.wgsl?raw';
+import editWgsl from '../shaders/edit.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -284,6 +285,33 @@ export class WindFieldSystem implements SimSystem {
   }
 }
 
+/** The sandbox editor's brush (edit.wgsl): applies EV_EDIT events to layers and fields. */
+export class EditSystem implements SimSystem {
+  readonly name = 'edit';
+  // every tick: brush strokes are one-tick events
+  readonly period = 1;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(
+      device,
+      world,
+      'edit',
+      editWgsl,
+      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw' },
+      { 3: world.layers, 4: world.layersNext, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.driftDelta },
+      true,
+    );
+  }
+  /** Only when the tick carries an edit (skipping saves a full layer copy). */
+  pending = false;
+  encode(enc: GPUCommandEncoder): void {
+    if (!this.pending) return;
+    this.pending = false;
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+  }
+}
+
 /** Drifting dust (drift.wgsl): the wind carries it, shelter piles it, water washes it. */
 export class DriftSystem implements SimSystem {
   readonly name = 'drift';
@@ -295,8 +323,8 @@ export class DriftSystem implements SimSystem {
       world,
       'drift',
       driftWgsl,
-      { 3: 'read', 4: 'read', 15: 'tex', 16: 'stex', 17: 'tex' },
-      { 3: world.surface, 4: world.water, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
+      { 3: 'read', 4: 'read', 5: 'rw', 15: 'tex', 16: 'stex', 17: 'tex' },
+      { 3: world.surface, 4: world.water, 5: world.driftDelta, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {

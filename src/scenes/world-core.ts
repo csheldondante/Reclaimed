@@ -127,7 +127,7 @@ export class WorldCore {
     // lightning: powers set flash = 1 at the strike; it flickers and fades
     // (a bright stroke, a brief dip, a re-strike, then a decay over ~1 s)
     if (g.flash >= 1) this.strikeAge = 0;
-    this.strikeAge += simDt / speed;
+    this.strikeAge += speed > 0 ? simDt / speed : 1 / 60;
     g.flash = Math.min(0.999, flashEnvelope(this.strikeAge));
     g.windOff = [g.windOff[0] + g.windX * simDt, g.windOff[1] + g.windY * simDt];
     g.dusts = this.weather.dustUniforms();

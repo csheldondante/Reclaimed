@@ -179,3 +179,21 @@ are shaded by a sub-voxel ray march inside the box (discard = gap).
 (`EV_LIGHTNING`, `EV_CHIP`, `EV_SCARE` — flushes perched birds; `eventKind` packs kind + 16·z for height-targeted
 events). The CPU queues them; `Simulation.step` clears them after
 the tick that consumes them.
+
+## Levels and the sandbox
+
+ is the level registry: id, name, blurb, title-screen model,
+map generator (absent = not built yet), goal, intro, sandbox. takes a level id ( startLevel; ). Progress
+is per level (; the valley keeps the original storage key); the
+title diorama reflects the best of the real levels.  builds a
+small model per level around the diorama and returns its position as poi
+; a tap near one selects that level (Begin/Continue/Play, or
+"coming").
+
+Sandbox ( map +  panel): brush tools send
+ events (z = op·32 + material) every frame while held; the edit
+system (, first each tick, only when an edit is pending) deposits/
+digs whole cells probabilistically by brush falloff and adds/removes water,
+oil, pollution and plants; drift dust goes through  (folded in by
+the drift system, which owns the drift texture). Spawn tools call Weather
+(, , ). Time: speed 0 (pause) … 8×.

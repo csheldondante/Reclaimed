@@ -12,6 +12,8 @@
 // .y = dust this cell lost to the wind this pass (particles show it streaming).
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
+// dust added or removed by the editor (edit.wgsl), folded in and zeroed here
+@group(0) @binding(5) var<storage, read_write> driftDelta: array<f32>;
 @group(0) @binding(16) var driftOut: texture_storage_2d<rgba32float, write>;
 // driftTex (binding 17) is declared in common.wgsl (driftAt)
 
@@ -104,6 +106,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let r = length(vec2<f32>(p) + 0.5 - G.cyclone.xy) / G.cyclone.z;
     d += smoothstep(1.6, 0.0, r) * 0.6 * DT_D;
   }
+  // the editor's brush
+  d += driftDelta[i];
+  driftDelta[i] = 0.0;
   // water washes it away
   if (water[i] > 0.05) { d *= 0.97; }
   textureStore(driftOut, p, vec4<f32>(max(d, 0.0), lost, 0.0, 0.0));

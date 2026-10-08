@@ -59,18 +59,18 @@ async function main() {
     scene.resize(size.rw, size.rh, size.cw, size.ch);
   };
 
-  const startLevel = async () => {
-    const level = await LevelScene.create(host, audio, perf, () => void startMenu());
+  const startLevel = async (levelId: string) => {
+    const level = await LevelScene.create(host, audio, perf, levelId, () => void startMenu());
     show(level);
   };
   const startMenu = async () => {
-    const menu = new MenuScene(host, audio, startLevel);
+    const menu = new MenuScene(host, audio, (id) => startLevel(id));
     await menu.init();
     show(menu);
   };
 
   // ?skipmenu=1 goes straight to the level (debugging, scripted tests)
-  if (params.get('skipmenu') === '1') await startLevel();
+  if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
 
   let last = performance.now();

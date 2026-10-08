@@ -2,7 +2,7 @@
 // Systems run in the documented order; each has its own period.
 
 import type { Profiler } from '../gpu/profiler';
-import { writeGlobals, GLOBALS_BYTES, type GlobalsState } from './globals';
+import { EventKind, writeGlobals, GLOBALS_BYTES, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
@@ -15,6 +15,7 @@ import {
   StatsSystem,
   SwaySystem,
   WindFieldSystem,
+  EditSystem,
   DriftSystem,
   WiltSystem,
   StructureSystem,
@@ -32,6 +33,7 @@ export class Simulation {
   readonly stats: StatsSystem;
   readonly surface: SurfaceSystem;
   readonly wind: WindFieldSystem;
+  readonly edit: EditSystem;
   readonly shadow: RenderFieldsSystem;
   readonly particles: ParticleSystem;
   tick = 0;
@@ -46,11 +48,13 @@ export class Simulation {
   ) {
     this.surface = new SurfaceSystem(device, world, profiler);
     this.wind = new WindFieldSystem(device, world, profiler);
+    this.edit = new EditSystem(device, world, profiler);
     this.shadow = new RenderFieldsSystem(device, world, profiler);
     this.stats = new StatsSystem(device, world, profiler);
     this.particles = new ParticleSystem(device, world, profiler);
     // Order matters only through the contract buffers each system reads.
     this.systems = [
+      this.edit,
       this.wind,
       new StructureSystem(device, world, profiler),
       new MaterialSystem(device, world, profiler),
@@ -90,6 +94,7 @@ export class Simulation {
     this.uploadGlobals(globals);
     // events are one-tick impulses: consumed by exactly this tick; so are the
     // stroke segments stamped into the wind field (gusts[1..])
+    this.edit.pending = globals.events.some((e) => e.kind === EventKind.Edit);
     globals.events = [];
     if (globals.gusts.length > 1) {
       for (const gg of globals.gusts.slice(1)) gg.len = 0;

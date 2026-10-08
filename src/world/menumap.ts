@@ -29,7 +29,17 @@ const H = W;
 const ZMAX = 64;
 const SQ = Math.SQRT1_2;
 
-export function generateMenuMap(p: number): MapData {
+/** A level's model on the diorama (game/levels.ts LevelModel). */
+export interface MenuModel {
+  id: string;
+  model: 'dam' | 'car' | 'tent' | 'ship' | 'sign';
+}
+
+/**
+ * @param models one small model per level, set out along the front of the
+ *   diorama; their positions come back as poi `level:<id>` (voxel cells)
+ */
+export function generateMenuMap(p: number, models: MenuModel[] = []): MapData {
   const dims = { w: W, h: H, zMax: ZMAX };
   const N = W * H;
   const grid = new ColumnGrid(dims);
@@ -146,6 +156,56 @@ export function generateMenuMap(p: number): MapData {
     return false;
   };
   // ---- two long bones crossed in front of the skull, a loose one by the ribs ----
+  // ---- the level models: small, along the front edge ----
+  // places around the sides of the diorama (clear of the title text below)
+  const PLACES: [number, number][] = [[-4, -17], [6, -18], [15, -14], [13, 13], [3, 20]];
+  const SZ = 1.35; // model scale
+  const slots = models.map((m, k) => {
+    const [a, s] = PLACES[k % PLACES.length];
+    const [x, y] = toXY(a, s);
+    return { ...m, x, y, g: 0 };
+  });
+  for (const sl of slots) sl.g = gAt(sl.x, sl.y);
+  /** material of the level model at this point, or 0 */
+  const levelModel = (px: number, py: number, pz: number): number => {
+    for (const sl of slots) {
+      const [a0, s0] = frame(px, py);
+      const [ca, cs] = frame(sl.x, sl.y);
+      // (car and tanker lie side-on to the camera: their length along screen-x)
+      const side = sl.model === 'car' || sl.model === 'ship';
+      const a = (side ? s0 - cs : a0 - ca) / SZ;
+      const s = (side ? a0 - ca : s0 - cs) / SZ;
+      const z = (pz - sl.g) / SZ;
+      if (Math.abs(a) > 3 || Math.abs(s) > 3 || z > 4 || z < -0.5) continue;
+      switch (sl.model) {
+        case 'dam': // a curved concrete wall with a spillway notch, water behind
+          if (Math.abs(a + s * s * 0.08) < 0.55 && Math.abs(s) < 2.6 && z < 2.6 && !(Math.abs(s) < 0.5 && z > 1.6)) return MAT.Concrete;
+          if (a + s * s * 0.08 < -0.55 && a > -2.4 && Math.abs(s) < 2.4 && z < 1.4) return MAT.Water;
+          break;
+        case 'car': // a rusted car: body and cabin, sitting in the dust
+          if (Math.abs(s) < 1.0 && Math.abs(a) < 1.9 && z < 0.9) return MAT.Rust;
+          if (Math.abs(s) < 0.9 && Math.abs(a + 0.2) < 1.0 && z >= 0.9 && z < 1.6) return MAT.Rust;
+          break;
+        case 'tent': { // a field hospital tent, with a red cross stripe
+          const half = 1.5 * (1 - z / 2.2);
+          if (z < 2.2 && Math.abs(s) < half && Math.abs(a) < 2.0) return Math.abs(a) < 0.35 && z > 0.9 ? MAT.Brick : MAT.Bone;
+          break;
+        }
+        case 'ship': { // a beached tanker hull with a white bridge
+          const taper = 1.0 - Math.max(0, a - 1.2) * 0.45;
+          if (Math.abs(s) < taper && Math.abs(a) < 2.8 && z < 1.1) return MAT.Rust;
+          if (Math.abs(s) < 0.7 && a > -2.6 && a < -1.4 && z >= 1.1 && z < 2.3) return MAT.Concrete;
+          break;
+        }
+        case 'sign': // a wooden signpost with a board
+          if (Math.abs(s) < 0.3 && Math.abs(a) < 0.3 && z < 2.6) return MAT.Wood;
+          if (Math.abs(s) < 1.6 && Math.abs(a) < 0.25 && z >= 1.6 && z < 2.5) return MAT.Wood;
+          break;
+      }
+    }
+    return 0;
+  };
+
   const longBones = (px: number, py: number, pz: number): boolean => {
     const seg = (a0: number, s0: number, a1: number, s1: number, r: number, lift: number) => {
       const [ax, ay] = toXY(a0, s0);
@@ -224,7 +284,7 @@ export function generateMenuMap(p: number): MapData {
         if (z < ZMAX) {
           const pz = (z + 0.5) / K;
           const sk = skull(px, py, pz);
-          m = tree(px, py, pz) || (roots(px, py, pz) ? MAT.Wood : 0) || (sk === 1 || jaw(px, py, pz) || ribs(px, py, pz) || longBones(px, py, pz) ? MAT.Bone : sk === 2 ? MAT.Asphalt : 0);
+          m = levelModel(px, py, pz) || tree(px, py, pz) || (roots(px, py, pz) ? MAT.Wood : 0) || (sk === 1 || jaw(px, py, pz) || ribs(px, py, pz) || longBones(px, py, pz) ? MAT.Bone : sk === 2 ? MAT.Asphalt : 0);
         }
         if (m !== run) {
           if (run) grid.push(x, y, runStart, z, run);
@@ -280,6 +340,14 @@ export function generateMenuMap(p: number): MapData {
     drift: new Float32Array(N),
     oilStored: new Float32Array(N * 2),
     surface,
-    poi: { skull: sk, healthy: sk, dam: [0, 0], site: sk, reservoir: [0, 0], landfill: [0, 0] },
+    poi: {
+      skull: sk,
+      healthy: sk,
+      dam: [0, 0],
+      site: sk,
+      reservoir: [0, 0],
+      landfill: [0, 0],
+      ...Object.fromEntries(slots.map((sl): [string, [number, number]] => [`level:${sl.id}`, [sl.x * K, sl.y * K]])),
+    },
   };
 }

@@ -322,3 +322,22 @@ canvas#world {
 }
 .audio-debug b { margin-top: 6px; color: #fff; }
 .audio-debug .lvl { color: #9c9; }
+
+/* sandbox editor panel */
+.editor {
+  position: absolute; right: 12px; top: 60px; z-index: 20; pointer-events: auto;
+  background: var(--panel); border-radius: 12px; padding: 8px; width: 168px;
+  display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--ink-dim);
+}
+.editor .tools, .editor .speed { display: flex; flex-wrap: wrap; gap: 4px; }
+.editor button {
+  appearance: none; border: 1px solid transparent; border-radius: 8px; background: rgba(255, 255, 255, 0.06);
+  color: var(--ink); min-width: 30px; height: 30px; font-size: 14px; cursor: pointer;
+}
+.editor button.on { border-color: var(--leaf); background: rgba(150, 190, 90, 0.2); }
+.editor label { display: flex; justify-content: space-between; align-items: center; gap: 6px; }
+.editor input[type=range] { width: 90px; }
+.editor select { background: #2a2722; color: var(--ink); border: none; border-radius: 6px; }
+
+/* title screen: the selected level */
+.menu .level-name { font-size: 15px; letter-spacing: 0.18em; text-transform: uppercase; color: #efe6d2; text-shadow: 0 1px 3px rgba(0,0,0,0.9); }

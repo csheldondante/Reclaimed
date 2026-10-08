@@ -184,6 +184,14 @@ export class Weather {
     return d;
   }
 
+  /** A dust storm right here (the sandbox editor). */
+  placeDust(x: number, y: number): DustStorm | null {
+    if (this.dusts.length >= MAX_DUSTS) this.dusts.shift();
+    const d: DustStorm = { x, y, radius: 30, strength: 8, age: 4, intensity: 1 };
+    this.dusts.push(d);
+    return d;
+  }
+
   spawnCyclone(x: number, y: number, spin: number): Cyclone | null {
     if (this.cyclone) return null;
     const g = this.heightAt(x, y);

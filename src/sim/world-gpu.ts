@@ -73,6 +73,8 @@ export class WorldGpu {
   readonly windFieldNext: GPUTexture;
   readonly windFieldView: GPUTextureView;
   readonly windFieldNextView: GPUTextureView;
+  /** dust the editor adds/removes, folded into the drift by drift.wgsl */
+  readonly driftDelta: GPUBuffer;
   /** drifted dust depth (.x) and wind loss (.y) per column; drift.wgsl reads `drift`, writes `driftNext` */
   readonly drift: GPUTexture;
   readonly driftNext: GPUTexture;
@@ -189,6 +191,7 @@ export class WorldGpu {
     this.particles = this.buf('particles', particleCap * 48, S);
     this.particleCounters = this.buf('particleCounters', 16, S);
     this.contamDelta = this.buf('contamDelta', N * 4, S);
+    this.driftDelta = this.buf('driftDelta', N * 4, S);
   }
 
   private owned: GPUBuffer[] = [];

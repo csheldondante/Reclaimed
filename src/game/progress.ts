@@ -4,14 +4,24 @@
 // (private mode, blocked storage) — then progress simply starts at 0.
 
 const KEY = 'reclaimed.progress.v1';
+/** Per level (the valley keeps the original key so old saves carry over). */
+const keyFor = (level: string) => (level === 'valley' ? KEY : `${KEY}.${level}`);
+/** Levels whose progress the title diorama reflects (the sandbox doesn't count). */
+const REAL_LEVELS = ['valley', 'highway', 'city', 'port'];
 
-export function loadProgress(): number {
+/** Best reclamation reached in one level, 0..1 (1 = completed). */
+export function loadLevelProgress(level: string): number {
   try {
-    const v = Number(localStorage.getItem(KEY) ?? 0);
+    const v = Number(localStorage.getItem(keyFor(level)) ?? 0);
     return Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 0;
   } catch {
     return 0;
   }
+}
+
+/** Overall progress (the title diorama): the best of any level so far. */
+export function loadProgress(): number {
+  return Math.max(...REAL_LEVELS.map(loadLevelProgress));
 }
 
 const DIFF_KEY = 'reclaimed.difficulty.v1';
@@ -39,20 +49,18 @@ export function saveDifficulty(d: Difficulty): void {
 /** Forget all progress (the title screen's reset). */
 export function resetProgress(): void {
   try {
-    localStorage.removeItem(KEY);
+    for (const l of REAL_LEVELS) localStorage.removeItem(keyFor(l));
   } catch {
     /* storage unavailable: nothing to forget */
   }
 }
 
-/** Keeps the maximum ever reached. */
-export function saveProgress(p: number): void {
+/** Keeps the maximum ever reached in that level. */
+export function saveProgress(level: string, p: number): void {
   try {
-    if (p > loadProgress()) localStorage.setItem(KEY, String(Math.min(1, p)));
+    if (p > loadLevelProgress(level)) localStorage.setItem(keyFor(level), String(Math.min(1, p)));
   } catch {
     /* storage unavailable: progress lasts for this session only */
   }
 }
 
-/** Reclamation (clean land + staged life, game/nature.ts) at which a level counts as reclaimed. */
-export const LEVEL_GOAL = 0.55;
