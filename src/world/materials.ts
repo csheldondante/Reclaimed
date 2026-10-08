@@ -75,8 +75,9 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'leaves', albedo: [0.25, 0.45, 0.18], state: MatState.Vegetation, strength: 0.1 },
   { ...NONE, name: 'wood', albedo: [0.36, 0.25, 0.15], state: MatState.Vegetation, strength: 0.4 },
   { ...NONE, name: 'brick', albedo: [0.58, 0.34, 0.27], state: MatState.Solid, strength: 0.6, growthCap: 1.5, suitability: 0.3, porosity: 0.4 },
-  // landfill waste: light, loose, easily carried by floods; rendered as multicoloured specks
-  { ...NONE, name: 'trash', albedo: [0.52, 0.5, 0.47], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.1, growthCap: 1, suitability: 0.15, porosity: 0.2 },
+  // compacted waste: holds together against water until it is burned (it
+  // then leaves ash — DECISIONS round 5); rendered as multicoloured specks
+  { ...NONE, name: 'trash', albedo: [0.52, 0.5, 0.47], state: MatState.Solid, strength: 1, growthCap: 1, suitability: 0.15, porosity: 0.2 },
   // render-only id for the oil liquid field (oil lives in its own buffer, not in layers)
   { ...NONE, name: 'oil', albedo: [0.07, 0.06, 0.05], state: MatState.Liquid, specular: 0.9 },
   // render-only: grass tufts and wildflowers (vegetation detail instances)
@@ -84,7 +85,8 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'flower', albedo: [0.9, 0.85, 0.4], state: MatState.Vegetation },
   // old bone: ivory, weathered; hard and stable (never collapses), takes moss
   { ...NONE, name: 'bone', albedo: [0.84, 0.8, 0.7], state: MatState.Solid, strength: 1, growthCap: 1.4, suitability: 0.35, porosity: 0.3 },
-  // reddish-grey dust and ash (the menu's mound): loose, fertile once clean
+  // reddish-grey dust and ash (the menu's mound; what burned waste leaves):
+  // loose, blown about by wind and carried by water, fertile once clean
   { ...NONE, name: 'ash', albedo: [0.55, 0.42, 0.38], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.1, growthCap: 3, suitability: 0.6, porosity: 0.45 },
 ];
 

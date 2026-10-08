@@ -47,8 +47,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       stored[i] = vec2<f32>(0.0, st.y);
     }
   }
-  // only loose, porous ground (soil, sand, rubble, waste) soaks oil up; tanks,
-  // concrete and asphalt hold it
+  // only loose, porous ground (soil, sand, rubble, ash) soaks oil up; tanks,
+  // concrete, asphalt and compacted waste hold it
   let porous = matState(sfMat(surface[i])) == ST_GRANULAR;
   if (o > 0.0 && water[i] < 0.01 && porous) {
     let s = min(o, SOAK + o * 0.0005);

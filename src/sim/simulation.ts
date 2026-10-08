@@ -13,6 +13,7 @@ import {
   RenderFieldsSystem,
   FireSystem,
   StatsSystem,
+  SwaySystem,
   StructureSystem,
   SurfaceSystem,
   WaterSystem,
@@ -55,6 +56,7 @@ export class Simulation {
       new FireSystem(device, world, profiler),
       new EcologySystem(device, world, profiler),
       this.particles,
+      new SwaySystem(device, world, profiler),
       this.shadow,
       this.stats,
     ];

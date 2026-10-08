@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-07 — feedback round 5 (session 2)
+
+- Motion: springier but slower to bounce back; everything a bit slower and
+  more relaxed. Trees bend and *stay* bent in wind, then spring back.
+- A drag makes wind that lasts a second or two after it — longer and
+  stronger the faster the drag.
+- Storm cloud shadow darker. No cloud puffs: rain fades in from a height.
+- More negative consequences: spilled oil drains Nature; burning it makes a
+  smoke cloud that raises Nature once wind disperses it. Oil on water burns.
+  Forests can catch fire and burn. Drowning plants drains Nature.
+- Some things only yield to fire (or need burning before they can easily be
+  removed) — e.g. trash heaps.
+- Audio direction (round 4 follow-up): ambience quieter and distance-based;
+  clicks always loud (they're under the cursor, the player's focus).
+
 ## 2026-10-07 — feedback round 4 (session 2)
 
 - Audio: everything quieter when zoomed out; some sounds are positional and

@@ -42,7 +42,20 @@ only lifted by wind over a per-kind threshold; strong wind over dusty ground
 `Particle.m.w` (flee / seek / perch; a seeker keeps its target column in
 `v.w`); they find crowns with `vegPlan()` from the shared `vegplan.wgsl`
 (also used by vegprep), and count each flush in `particleCounters[1]` so the
-CPU can tell whether a tapped tree really had birds.
+CPU can tell whether a tapped tree really had birds. Oil smoke (smoke with
+`m.w = 1`) counts each puff the wind disperses (or carries off the map) in
+`particleCounters[2]`; the level reads it ~2 Hz and pays Nature for it. Puffs
+that die in calm air drop their soot payload as soil contamination.
+
+Vegetation sway has state: `bend` (vec4 per column: lean xy, velocity zw) is
+a damped spring updated by the sway system (stiff while the wind pushes,
+soft and lightly damped on the way back); the draw shaders read it.
+
+Nature consequences come from stats: free oil volume and drowning living
+cells (stat 11: veg ≥ 0.5 under > 0.4 water) drain it (`HARM` in
+`game/nature.ts`). Compacted waste (trash) is solid and only fire removes it:
+a burning heap loses a cell at a time and its last cell turns to loose ash
+(material 17), which wind (dust) and water then carry.
 
 Audio: two buses — ambient (attenuated by zoom; positional levels computed by
 the level from storms, slow veg/water readbacks and the dam's position) and

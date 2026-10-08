@@ -145,6 +145,7 @@ export class Renderer {
         8: 'read',
         10: 'uniform',
         11: 'read',
+        12: 'read',
       },
       VF,
     );
@@ -187,6 +188,7 @@ export class Renderer {
         8: world.water,
         10: this.camBuf,
         11: world.surface,
+        12: world.bend,
       });
     this.opaqueGroup = groupFor(this.instOpaque);
     this.waterGroup = groupFor(this.instWater);

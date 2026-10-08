@@ -39,7 +39,9 @@ export class Powers {
   private lastSummon = -STORM_COOLDOWN;
   private breeze: Gust = { x: 0, y: 0, radius: 7, strength: 0, dx: 1, dy: 0 };
   private cursor?: { x: number; y: number };
-  private gust?: Gust & { lx: number; ly: number; vx: number; vy: number; t: number; ttl: number };
+  private gust?: Gust & { lx: number; ly: number; vx: number; vy: number; t: number; ttl: number; dropT: number };
+  /** wind left behind along a drag stroke; each fades over its own lifetime */
+  private puffs: (Gust & { ttl: number; life: number })[] = [];
   private told = { lightning: false };
 
   constructor(private d: PowersDeps) {}
@@ -51,16 +53,15 @@ export class Powers {
     const gusts: Gust[] = [this.breeze];
     const gu = this.gust;
     if (gu) {
-      if (gu.ttl < 99) gu.ttl -= dt;
-      else {
-        // a held drag that stops moving dies down
-        gu.strength *= Math.exp(-dt * 2.5);
-        // leaning on nearby storms while the drag lasts
-        this.d.weather.gust(gu.x, gu.y, gu.dx, gu.dy, gu.strength * dt * 2.2);
-      }
-      if (gu.ttl <= 0) this.gust = undefined;
-      else gusts.push({ ...gu, strength: gu.strength * Math.min(1, gu.ttl / 1.2) });
+      // a held drag that stops moving dies down slowly
+      gu.strength *= Math.exp(-dt * 0.8);
+      gusts.push({ ...gu });
     }
+    for (const pf of this.puffs) pf.ttl -= dt;
+    this.puffs = this.puffs.filter((pf) => pf.ttl > 0);
+    for (const pf of this.puffs) gusts.push({ ...pf, strength: pf.strength * Math.min(1, pf.ttl / (pf.life * 0.6)) });
+    // all of the player's wind leans on nearby storms while it blows
+    for (const w of gusts.slice(1)) this.d.weather.gust(w.x, w.y, w.dx, w.dy, w.strength * dt * 2.2);
     g.gusts = gusts;
   }
 
@@ -220,14 +221,22 @@ export class Powers {
   }
 
   // ---- drag gesture: wind ----
-  // Every LMB drag is wind (DECISIONS round 4): a gust that follows the
-  // cursor, as strong as the drag is fast, rippling water, grass and leaves
+  // Every LMB drag is wind (DECISIONS rounds 4–5): a gust that follows the
+  // cursor, as strong as the drag is fast, lingering 1–2.5 s after it, rippling water, grass and leaves
   // and lifting loose debris. Dragging under or near a storm also leans on
   // it — there is no arrow or hint; players discover they can steer storms.
 
+  /**
+   * How long wind lingers after it is let go (s): a second for a lazy drag,
+   * up to ~2.5 s for a fast one (DECISIONS round 5).
+   */
+  private static linger(strength: number): number {
+    return 1 + 1.5 * Math.min(1, strength / 16);
+  }
+
   /** Drag start: always a wind gesture. */
   gustStart(wx: number, wy: number): boolean {
-    this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 11, strength: 0, dx: 1, dy: 0, ttl: 99 };
+    this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 11, strength: 0, dx: 1, dy: 0, ttl: 99, dropT: 0 };
     return true;
   }
 
@@ -248,23 +257,39 @@ export class Powers {
       g.dx = g.vx / sp;
       g.dy = g.vy / sp;
     }
-    // the gust sits a little behind the cursor, blowing along the stroke
+    // the gust sits a little behind the cursor, blowing along the stroke; it
+    // builds with speed and only eases off slowly (update)
     g.x = wx - g.dx * 3;
     g.y = wy - g.dy * 3;
-    g.strength = Math.min(14, sp * 0.12);
+    g.strength = Math.max(g.strength, Math.min(18, sp * 0.16));
+    // leave wind behind along the stroke
+    g.dropT -= dt;
+    if (g.dropT <= 0 && g.strength > 2) {
+      g.dropT = 0.3;
+      this.dropPuff(g);
+    }
+  }
+
+  private dropPuff(g: Gust): void {
+    const life = Powers.linger(g.strength);
+    this.puffs.push({ x: g.x, y: g.y, radius: g.radius, strength: g.strength, dx: g.dx, dy: g.dy, ttl: life, life });
+    // three gust slots besides the cursor breeze: the live gust + two puffs
+    if (this.puffs.length > (this.gust ? 2 : 3)) this.puffs.shift();
   }
 
   gustEnd(): void {
     const g = this.gust;
     if (!g) return;
-    g.ttl = 1.2;
+    this.gust = undefined;
+    if (g.strength > 1) this.dropPuff(g);
     if (g.strength > 4) this.d.audio.rustle(Math.min(1.5, g.strength / 8), this.d.camera.project(g.x, g.y, 0)[0] / this.d.camera.viewportW);
   }
 
-  /** The live drag-wind (for audio), if any. */
+  /** The strongest live drag-wind (for audio), if any. */
   dragWind(): { strength: number; x: number; y: number } | undefined {
-    const g = this.gust;
-    if (!g) return undefined;
-    return { strength: g.strength * Math.min(1, g.ttl / 1.2), x: g.x, y: g.y };
+    const all = [...(this.gust ? [this.gust] : []), ...this.puffs.map((pf) => ({ ...pf, strength: pf.strength * Math.min(1, pf.ttl / (pf.life * 0.6)) }))];
+    if (!all.length) return undefined;
+    const w = all.reduce((a, b) => (b.strength > a.strength ? b : a));
+    return { strength: w.strength, x: w.x, y: w.y };
   }
 }

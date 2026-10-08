@@ -65,6 +65,12 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     // thin: the deck sits high and you look through it at the land
     col = vec4<f32>(mix(vec3<f32>(0.42, 0.44, 0.47), vec3<f32>(0.8, 0.81, 0.82), sr2), 0.075 * a);
   } else if (kind == 7u) { col = vec4<f32>(0.8, 0.86, 0.9, 0.7); size = 0.1; }
+  else if (kind == 8u && P.m.w == 1u) { // oil smoke: a big dark lingering cloud
+    let age = clamp(1.0 - P.p.w / 40.0, 0.0, 1.0);
+    col = vec4<f32>(vec3<f32>(0.14, 0.13, 0.12) + age * 0.1, 0.3 * clamp(P.p.w / 3.0, 0.0, 1.0) * clamp(age * 8.0, 0.0, 1.0));
+    size = 1.2 + age * 2.6 + sr * 1.2;
+    soft = 1.0;
+  }
   else if (kind == 8u) { // smoke: grows and thins as it rises
     let age = clamp(1.0 - P.p.w / 11.0, 0.0, 1.0);
     col = vec4<f32>(vec3<f32>(0.22, 0.21, 0.2) + age * 0.15, 0.45 * (1.0 - age) * clamp(P.p.w, 0.0, 1.0));

@@ -21,6 +21,7 @@ import ecologyWgsl from '../shaders/ecology.wgsl?raw';
 import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
 import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
+import swayWgsl from '../shaders/sway.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -242,6 +243,19 @@ export class RenderFieldsSystem implements SimSystem {
   }
 }
 
+/** Vegetation sway springs (render-only state with memory; sway.wgsl). */
+export class SwaySystem implements SimSystem {
+  readonly name = 'sway';
+  readonly period = 1;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(device, world, 'sway', swayWgsl, { 3: 'read', 4: 'rw' }, { 3: world.surface, 4: world.bend });
+  }
+  encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+  }
+}
+
 export class FireSystem implements SimSystem {
   readonly name = 'fire';
   // every tick: it must see one-tick lightning events
@@ -276,6 +290,7 @@ export const STAT = {
   matureCells: 8,
   oil: 9,
   fire: 10,
+  drowning: 11,
   collapsed: 14,
   overflow: 15,
 } as const;
@@ -292,6 +307,8 @@ export interface WorldStats {
   matureCells: number;
   oilVolume: number;
   fireCells: number;
+  /** living cells under standing water (they die back; Nature pays) */
+  drowningCells: number;
   collapsed: number;
   overflow: number;
   cells: number;
@@ -348,6 +365,7 @@ export class StatsSystem implements SimSystem {
           matureCells: u[STAT.matureCells],
           oilVolume: u[STAT.oil] / 1000,
           fireCells: u[STAT.fire],
+          drowningCells: u[STAT.drowning],
           collapsed: u[STAT.collapsed],
           overflow: u[STAT.overflow],
           cells,

@@ -33,9 +33,9 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   let rad = sqrt(rand3(k, si, 2u)) * s.z * 0.9;
   let base = s.xy + vec2<f32>(cos(ang), sin(ang)) * rad * 1.3;
   if (stormDist(base, si) > 0.95) { return o; } // follow the storm's irregular outline
-  // rain falls out of the base of the cloud deck (CLOUD_BASE = 80 in
-  // particles.wgsl), so below a storm you see the land through rain
-  let span = 78.0;
+  // no cloud deck: streaks fade in from nothing as they fall from height,
+  // so the land under a storm is seen through rain (DECISIONS round 5)
+  let span = 56.0;
   let speed = 70.0 + rand3(k, si, 4u) * 25.0;
   let phase = fract(G.time * speed / span + rand3(k, si, 5u));
   let z = span - phase * span;
@@ -50,7 +50,7 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   var c = mix(cb, ct, q.y);
   c = vec4<f32>(c.xy + perp * q.x, c.z, c.w);
   o.pos = c;
-  o.a = (1.0 - q.y * 0.75) * 0.22;
+  o.a = (1.0 - q.y * 0.75) * 0.22 * smoothstep(span, span - 26.0, z);
   return o;
 }
 

@@ -61,7 +61,9 @@ canvas#world {
   background: rgba(255, 255, 255, 0.12);
   overflow: hidden;
 }
-.nature .fill { height: 100%; background: var(--leaf); transition: width 0.3s; }
+.nature .fill { height: 100%; background: var(--leaf); transition: width 0.3s, background 0.6s; }
+/* oil lying about or plants drowning: the meter sours */
+.nature.draining .fill { background: #a8683f; }
 .nature .val { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-dim); }
 
 .tool {

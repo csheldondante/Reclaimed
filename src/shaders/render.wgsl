@@ -16,6 +16,8 @@ struct Camera {
 @group(0) @binding(8) var<storage, read> water: array<f32>;
 @group(0) @binding(10) var<uniform> CAM: Camera;
 @group(0) @binding(11) var<storage, read> surface: array<u32>;
+// vegetation lean spring per column (sway.wgsl): xy lean, zw velocity
+@group(0) @binding(12) var<storage, read> bend: array<vec4<f32>>;
 
 const QUAD = array<vec2<f32>, 6>(
   vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0),
@@ -59,16 +61,15 @@ fn unpackBox(v: vec4<u32>) -> Box {
  * their top moves). Returns the offset for a vertex at height fraction h.
  */
 fn swayOffset(b: Box, h: f32) -> vec3<f32> {
-  let c = vec3<f32>(b.x + b.sx * 0.5, b.y + b.sy * 0.5, b.z1);
-  let w = windAt(c);
-  let ws = length(w);
-  let dir = w / max(ws, 1e-3);
-  let seed = fract(sin(dot(c.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453);
-  let amp = clamp(ws / 6.0, 0.0, 1.6);
-  // lean follows the (smooth, advected) wind; the flutter has a fixed
-  // frequency — scaling time by a varying wind speed made phases jump (jitter)
-  let lean = dir * amp * 0.28;
-  let flutter = dir * sin(G.time * 3.4 + seed * 30.0) * 0.06 * (0.3 + amp);
+  let c = vec2<f32>(b.x + b.sx * 0.5, b.y + b.sy * 0.5);
+  // the lean is a per-column spring (sway.wgsl): plants bend with the wind,
+  // hold it, and spring back slowly when it drops
+  let lean = bend[colIdxI(clampCell(vec2<i32>(floor(c))))].xy;
+  let amp = length(lean) / 0.3;
+  let dir = lean / max(length(lean), 1e-4);
+  let seed = fract(sin(dot(c, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+  // a slow, relaxed flutter on top (fixed frequency: no phase jumps)
+  let flutter = dir * sin(G.time * 2.2 + seed * 30.0) * 0.05 * (0.3 + amp);
   var k = h;
   if (b.mat == MAT_LEAVES && b.sx > 1.5) { k = 1.0; } // canopy: rigid
   return vec3<f32>((lean + flutter) * k, 0.0);
@@ -207,18 +208,18 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sunCol = G.sunCol.rgb;
   let sky = G.sky.rgb;
   let day = 1.0 - G.sky.w;
-  // storm shade: clearly a shadow (it marks where lightning can strike) but
-  // light enough that the land beneath stays readable (DECISIONS round 4)
-  let ambient = sky * (0.5 + 0.5 * nrm.z) * (1.0 - cloud * 0.25);
+  // storm shade: a dark, unmistakable shadow (it marks where lightning can
+  // strike; DECISIONS round 5 asked for it darker again)
+  let ambient = sky * (0.5 + 0.5 * nrm.z) * (1.0 - cloud * 0.42);
   // warm bounce light from the opposite side keeps shaded faces readable
-  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (1.0 - cloud * 0.25) * (0.15 + 0.85 * day);
+  let fill = max(dot(nrm, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (1.0 - cloud * 0.42) * (0.15 + 0.85 * day);
   // lightning lights the whole scene, cold blue-white, every face
   let flash = G.misc.z * vec3<f32>(2.4, 2.6, 3.3) * (0.75 + 0.25 * nrm.z);
   // firelight: flickering orange from nearby flames (render fields .z)
   let glow = fields[colIdxI(sc)].z;
   let flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y));
   let firelight = vec3<f32>(1.8, 0.75, 0.25) * glow * flick;
-  return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.72);
+  return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9);
 }
 
 fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {

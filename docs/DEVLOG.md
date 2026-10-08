@@ -670,3 +670,52 @@ below). Ribs: seven tall elliptical arcs (height 1.3× width) leaning back as
 they rise, open only at the very top. Trash density halved (finer voxels
 doubled the speckle). The final-stage canopy is a solid lumpy crown with a
 few branches — per-voxel random leaves needed 17 layers in a column (> MAX_K).
+
+## 2026-10-07 — round 5: springy relaxed motion, lingering drag wind, consequences
+
+DECISIONS round 5.
+
+- **Sway with memory.** New `sway` system: a damped spring per column
+  (`bend` buffer) driven by the wind at canopy height. Pushing into the lean
+  it is stiff and well damped (k 7, c 4.2) so plants bend readily and hold;
+  easing back it is soft and lightly damped (k 1.6, c 1.1) so they spring
+  back slowly with a little overshoot. Draw shaders read the spring instead
+  of evaluating wind per vertex; flutter slowed (3.4 → 2.2 rad/s). Measured
+  at one column through a 1 s drag: lean 0.23 (calm) → 0.41 → 0.46 held for
+  ~1 s after release → back to 0.21 by 2.4 s, settling at 0.22.
+- **Drag wind lingers.** Strength builds with speed (0.16 × cursor speed, cap
+  18) and eases off slowly when the cursor stops. The stroke leaves gust
+  puffs every 0.3 s and on release, each living 1–2.5 s (longer for faster
+  drags). All of it leans on nearby storms while it blows.
+- **Storms.** Cloud puffs removed; rain streaks fade in over the top 26 of a
+  56-cell fall. Storm shade darker again (sun −90 %, ambient −42 %).
+- **Oil was effectively unburnable** (pre-existing): a spill spreads into a
+  film within a second, and fuel was 3 × depth, so a thin film couldn't
+  sustain fire (trace: lit at 0.9, out in ~25 ticks with oil 0.08 → 0).
+  Any film over 0.004 is now strong fuel. Lightning ignites within its
+  radius (≤ 4) rather than 2.5 cells, since it lands on the highest point
+  near the tap, not necessarily on the slick. Oil on water burns (the water
+  no longer damps or blocks fire where oil floats).
+- **Oil consequences.** Free oil drains Nature (0.004 per unit volume per
+  second; the starting slicks ≈ 33 → −0.13/s; a 13×13 spill ≈ 277 → −0.7/s,
+  the HUD meter turns rust-coloured while net-negative). Burning oil makes
+  oil smoke: long-lived dark puffs that hover 8–14 cells up and drift. Wind
+  over 4 cells/s tears them apart faster; each dispersed puff gives 0.012
+  Nature; puffs that die in calm air fall as soot (contamination). Test: a
+  burned spill + one 4 s drag dispersed 139 puffs (+1.7 Nature).
+- **Forests burn.** Woodland grows on wet ground, which used to make it
+  nearly fireproof (dryness factor and wet-ground damping). Under a canopy
+  both are mostly ignored. Spread was then far too fast (a 29×29 wood
+  burned out in < 10 s); plant ignition is now 0.006 × heat (oil 0.11, waste
+  0.05) and trees lose stage at 0.12 × fire per ecology update: the test wood
+  burns with 30–50 cells alight at a time and loses ~60 % in 30 s.
+- **Drowning** living cells (under > 0.4 water; new stat) drain 0.02 Nature
+  each per second.
+- **Burn-only trash.** Trash is now solid (strength 1: never structural) —
+  floods no longer scour dumps; fire burns a heap down a cell at a time and
+  leaves loose ash (material 17), which counts as very dusty ground (wind
+  lifts it with its contamination) and which water can carry. Waste fire
+  spread 0.05. Test: one strike on the landfill turned 296 of 355 trash
+  surface cells to ash in 16 s; the wind then lifted ash plumes.
+
+Perf (Xe-LPG, 1600×900, storm in view): GPU 5.9 ms.

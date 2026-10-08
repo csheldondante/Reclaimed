@@ -13,8 +13,9 @@
 // 3 sum veg x100               4 water volume x100  5 flow x1000
 // 6 clean cells (c<0.2)        7 wet cells           8 mature cells (v>=3)
 // 9 oil volume x1000         10 burning cells (fire > 0.1)
-const N_STATS: u32 = 11u;
-var<workgroup> acc: array<atomic<u32>, 11>;
+// 11 drowning cells (living, under > 0.4 water)
+const N_STATS: u32 = 12u;
+var<workgroup> acc: array<atomic<u32>, 12>;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -37,6 +38,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     atomicAdd(&acc[8], select(0u, 1u, v >= 3.0));
     atomicAdd(&acc[9], u32(oil[i] * 1000.0));
     atomicAdd(&acc[10], select(0u, 1u, fire[i] > 0.1));
+    atomicAdd(&acc[11], select(0u, 1u, v >= 0.5 && d > 0.4));
   }
   workgroupBarrier();
   if (li < N_STATS) { atomicAdd(&stats[li], atomicLoad(&acc[li])); }

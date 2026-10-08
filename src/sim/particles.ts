@@ -79,7 +79,7 @@ export class ParticleSystem implements SimSystem {
     this.emitK = makeCompute(device, 'particles-emit', parts, spec, 'emit');
     this.burstK = makeCompute(device, 'particles-burst', parts, spec, 'bursts');
     this.updateK = makeCompute(device, 'particles-update', parts, spec, 'update');
-    this.fireK = makeCompute(device, 'particles-fire', parts, { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read' }, 'fireEmit');
+    this.fireK = makeCompute(device, 'particles-fire', parts, { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read', 13: 'read' }, 'fireEmit');
     this.reqBuf = world.buf('particleRequests', this.reqData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const bufs = {
       0: world.globals,
@@ -104,6 +104,7 @@ export class ParticleSystem implements SimSystem {
       4: world.particleCounters,
       5: world.surface,
       12: world.fire,
+      13: world.oil,
     });
   }
 

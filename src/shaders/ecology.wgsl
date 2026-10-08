@@ -35,7 +35,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   if (fire[i] > 0.15) {
     // burning: grass goes in a moment, trees take longer
-    v = max(0.0, v - fire[i] * mix(0.6, 0.25, smoothstep(2.0, 4.0, v)));
+    v = max(0.0, v - fire[i] * mix(0.6, 0.12, smoothstep(2.0, 4.0, v)));
   } else if (oiled) {
     v = max(0.0, v - 0.06);
   } else if (d > 0.5) {

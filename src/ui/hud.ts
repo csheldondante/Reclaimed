@@ -79,8 +79,10 @@ export class Hud {
   }
 
   /** @param stormReady 0..1 recharge of the summon control */
-  update(nature: number, max: number, stormReady: number): void {
+  /** @param rate Nature's net change per second (negative = the land is suffering) */
+  update(nature: number, max: number, stormReady: number, rate = 0): void {
     this.fill.style.width = `${(nature / max) * 100}%`;
+    this.hudEl.querySelector('.nature')!.classList.toggle('draining', rate < 0);
     this.val.textContent = String(Math.floor(nature));
     this.stormBtn.style.setProperty('--ready', String(Math.min(1, stormReady)));
     this.stormBtn.classList.toggle('ready', stormReady >= 1);

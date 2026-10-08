@@ -17,7 +17,7 @@ const LINES: [number, string][] = [
 ];
 
 // only these systems run on the diorama: it is a tableau, not a simulation
-const MENU_SYSTEMS = new Set(['surface', 'particles', 'renderfields', 'stats']);
+const MENU_SYSTEMS = new Set(['surface', 'particles', 'sway', 'renderfields', 'stats']);
 
 export class MenuScene implements Scene {
   readonly core: WorldCore;

@@ -64,6 +64,8 @@ export class WorldGpu {
   // render preparation
   /** vec4 per column: shadow z, moisture, fire glow, flow speed (renderfields.wgsl) */
   readonly renderFields: GPUBuffer;
+  /** vec4 per column: vegetation lean xy + its velocity (sway.wgsl spring) */
+  readonly bend: GPUBuffer;
 
   /** u32 aggregate counters, see src/sim/stats.ts */
   readonly stats: GPUBuffer;
@@ -135,6 +137,7 @@ export class WorldGpu {
     this.fire = this.buf('fire', N * 4, S);
     this.fireNext = this.buf('fireNext', N * 4, S);
     this.renderFields = this.buf('renderFields', N * 16, S);
+    this.bend = this.buf('bend', N * 16, S);
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
     this.particleCap = particleCap;

@@ -25,8 +25,9 @@ struct Particle {
 @group(0) @binding(10) var<storage, read> moisture: array<f32>;
 // CPU bursts: [0].x = count; then pairs (x, y, z, n) (kind, speed, payload, spread)
 @group(0) @binding(11) var<uniform> requests: array<vec4<f32>, 129>;
-// only the fireEmit entry uses this
+// only the fireEmit entry uses these
 @group(0) @binding(12) var<storage, read> fire: array<f32>;
+@group(0) @binding(13) var<storage, read> oilDepth: array<f32>;
 
 const K_DUST: u32 = 1u;
 const K_LITTER: u32 = 2u;
@@ -44,6 +45,11 @@ const K_DEER: u32 = 13u;
 const K_RABBIT: u32 = 14u;
 // dust kicked up by strong wind: a low tan haze (dust storms, drags)
 const K_HAZE: u32 = 15u;
+// smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
+// disperses it (counted in counters[2]; the level turns that into Nature);
+// left to settle, it falls as soot (DECISIONS round 5)
+const SMOKE_OILY: u32 = 1u;
+const SOOT: f32 = 0.03;
 
 // bird states (Particle.m.w); a seeking bird keeps its target column + 1 in v.w
 const B_FLEE: u32 = 0u;
@@ -51,13 +57,11 @@ const B_SEEK: u32 = 1u;
 const B_PERCH: u32 = 2u;
 
 const DT: f32 = 1.0 / 60.0;
-// storm cloud deck height (cells): well above the land so storms don't hide
-// it (DECISIONS round 4); rain falls from the deck's base
-const CLOUD_BASE: f32 = 80.0;
 const FIX: f32 = 100000.0;
 const MAT_SOIL: u32 = 2u;
 const MAT_SAND: u32 = 3u;
 const MAT_TRASH_P: u32 = 12u;
+const MAT_ASH_P: u32 = 17u;
 
 fn spawnFull(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, seed: u32, flags: u32, state: u32) {
   let i = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
@@ -83,6 +87,7 @@ fn depositAt(pos: vec3<f32>, payload: f32) {
 fn dustinessOf(cs: f32, m: u32) -> f32 {
   var d = clamp(cs, 0.0, 1.5) * 0.7;
   if (m == MAT_SOIL || m == MAT_SAND) { d += 0.12; }
+  if (m == MAT_ASH_P) { d += 0.6; } // burned waste: fine, light, blows away
   return d;
 }
 
@@ -148,15 +153,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   if (G.sky.w > 0.6 && v >= 1.8 && v < 3.4 && !wet && rare(id.x, id.y, 0xf1f1u) < 0.0004 * G.sky.w) {
     spawn(base + vec3<f32>(r1 - 0.5, fract(r1 * 5.3) - 0.5, 0.6 + r1 * 2.0), vec3<f32>(0.0), 6.0 + r1 * 6.0, K_FIREFLY, 0.0, h);
   }
-  // cloud puffs born inside storms, high above the land
-  for (var k = 0u; k < G.numStorms; k++) {
-    let st = G.storms[k];
-    let d = stormDist(vec2<f32>(p), k);
-    if (d < 0.95 && rare(id.x, id.y, 0xc10du + k) < 0.00009 * st.w) {
-      let z = CLOUD_BASE + r1 * 10.0;
-      spawn(vec3<f32>(vec2<f32>(p) + 0.5, z), vec3<f32>(G.stormsB[k].xy, 0.0), 7.0 + r1 * 5.0, K_CLOUD, 0.0, h);
-    }
-  }
+  // (storms have no cloud puffs: rain fades in from a height — DECISIONS round 5)
 }
 
 // ---- birds: perch in tree crowns, flush when the tree is tapped ----
@@ -213,7 +210,10 @@ fn fireEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   let base = vec3<f32>(f32(id.x) + r2, f32(id.y) + r3, g + 0.2);
   let w = windAt(base);
   if (r1 < f * 0.35) { spawn(base, vec3<f32>(w * 0.15, 2.5 + r2 * 2.0), 0.45 + r3 * 0.5, K_FLAME, 0.0, h); }
-  if (r2 < f * 0.07) { spawn(base + vec3<f32>(0.0, 0.0, 1.5), vec3<f32>(w * 0.3, 1.2), 6.0 + r1 * 5.0, K_SMOKE, 0.0, h ^ 77u); }
+  if (oilDepth[i] > 0.03) {
+    // burning oil: thick, slow smoke that gathers into a cloud
+    if (r2 < f * 0.03) { spawnFull(base + vec3<f32>(0.0, 0.0, 1.5), vec3<f32>(w * 0.2, 1.5), 32.0 + r1 * 16.0, K_SMOKE, SOOT, h ^ 77u, 0u, SMOKE_OILY); }
+  } else if (r2 < f * 0.07) { spawn(base + vec3<f32>(0.0, 0.0, 1.5), vec3<f32>(w * 0.3, 1.2), 6.0 + r1 * 5.0, K_SMOKE, 0.0, h ^ 77u); }
   if (r3 < f * 0.015) { spawn(base, vec3<f32>(w * 0.2 + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.0, 4.0 + r1 * 3.0), 2.0 + r2 * 1.5, K_EMBER, 0.0, h ^ 99u); }
 }
 
@@ -264,6 +264,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
 
   if (!inMap(cell)) {
     // left the world: its payload is gone for good (pollution carried away)
+    if (P.m.x == K_SMOKE && P.m.w == SMOKE_OILY) { atomicAdd(&counters[2], 1u); }
     parts[id.x].p.w = 0.0;
     return;
   }
@@ -334,6 +335,20 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     drag = 1.4; grav = -0.15;
   } else if (kind == K_CLOUD) {
     drag = 0.0; grav = 0.0;
+  } else if (kind == K_SMOKE && state == SMOKE_OILY) {
+    // a heavy cloud: rises to a low ceiling and hangs there, drifting with
+    // the wind; strong wind tears it apart (it thins out much faster)
+    drag = 0.7; grav = 0.0;
+    vel.z += ((ground + 8.0 + sr * 6.0) - pos.z) * 0.4 * DT;
+    vel.z *= 0.98;
+    if (ws > 4.0) {
+      life -= DT * (ws - 4.0) * 1.5;
+      if (life <= 0.0) {
+        atomicAdd(&counters[2], 1u);
+        parts[id.x].p.w = 0.0;
+        return;
+      }
+    }
   } else if (kind == K_SMOKE || kind == K_ASH) {
     drag = 1.0; grav = -0.8;
   } else if (kind == K_EMBER) {
@@ -496,8 +511,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   if (life <= 0.0) {
-    // (birds keep their perch target in v.w, not a payload)
-    if (kind == K_DUST || kind == K_LITTER) { depositAt(pos, P.v.w); }
+    // (birds keep their perch target in v.w, not a payload); oil smoke that
+    // hung about until it died settles as soot
+    if (kind == K_DUST || kind == K_LITTER || kind == K_SMOKE) { depositAt(pos, P.v.w); }
     parts[id.x].p.w = 0.0;
     return;
   }

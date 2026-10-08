@@ -5,6 +5,7 @@ import { Nature, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
 import { LEVEL_GOAL, saveProgress } from '../game/progress';
 import { Controls } from '../input/controls';
+import { ignoreTeardown } from '../gpu/pipeline';
 import { PK } from '../sim/particles';
 import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
@@ -44,6 +45,8 @@ export class LevelScene implements Scene {
   private waterCache?: Float32Array;
   private audioRefresh = 0;
   private nextFlock = 12;
+  private smokeSeen = -1;
+  private smokeRefresh = 0;
 
   private constructor(
     private host: Host,
@@ -244,6 +247,16 @@ export class LevelScene implements Scene {
     core.pollution += (health.pollution - core.pollution) * Math.min(1, dt * 0.5);
     this.life += (health.life - this.life) * Math.min(1, dt * 0.5);
     this.nature.update(simDt, stats);
+    // oil smoke the wind has torn apart pays Nature back (GPU counter, ~2 Hz)
+    this.smokeRefresh -= dt;
+    if (this.smokeRefresh <= 0) {
+      this.smokeRefresh = 0.5;
+      void core.readBuffer('particleCounters').then((f) => {
+        const n = new Uint32Array(f.buffer)[2];
+        if (this.smokeSeen >= 0 && n > this.smokeSeen) this.nature.smokeDispersed(n - this.smokeSeen);
+        this.smokeSeen = n;
+      }, ignoreTeardown);
+    }
 
     this.lensK += ((this.lensOn ? 1 : 0) - this.lensK) * Math.min(1, dt * 8);
     const lc = this.hoverWorld ?? [camera.target[0], camera.target[1]];
@@ -253,7 +266,7 @@ export class LevelScene implements Scene {
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     core.render();
 
-    hud.update(this.nature.value, this.nature.max, powers.stormReady());
+    hud.update(this.nature.value, this.nature.max, powers.stormReady(), this.nature.rate);
     hud.setReclaim(this.reclaimed, LEVEL_GOAL);
     weather.dustiness = core.pollution;
     this.birdArrivals(dt, stats);
