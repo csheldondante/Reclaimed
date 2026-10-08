@@ -258,6 +258,7 @@ export function generateMenuMap(p: number): MapData {
     vegetation,
     waterSource: new Float32Array(N),
     oil: new Float32Array(N),
+    drift: new Float32Array(N),
     oilStored: new Float32Array(N * 2),
     surface,
     poi: { skull: sk, healthy: sk, dam: [0, 0], site: sk, reservoir: [0, 0], landfill: [0, 0] },

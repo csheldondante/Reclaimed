@@ -136,6 +136,11 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
 
   if (!wet) {
     let dusty = dustinessOf(contam[i].x, m) * dry * (1.0 - cover);
+    // drifts losing dust to the wind stream it downwind (drift.wgsl .y)
+    let blown = textureLoad(driftTex, p, 0).y;
+    if (blown > 0.0005 && rare(id.x, id.y, 0xd21fu) < blown * 6.0) {
+      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.2), vec3<f32>(wind * 0.7, 0.6 + r2), 2.5 + r1 * 2.0, K_DUST, 0.0, h ^ 0xd2u);
+    }
     // dust settles out of the dry, dead ground
     if (rare(id.x, id.y, 0xd057u) < 0.00002 * dusty * boost) {
       spawnResting(onGround, 60.0 + r2 * 60.0, K_DUST, h);

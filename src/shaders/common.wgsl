@@ -243,6 +243,17 @@ fn mapWind(p: vec2<f32>) -> vec2<f32> {
 }
 
 /** Wind felt at a point: the wind field + storm swirl + the cursor/tap breeze. */
+// Drifts (drift.wgsl): loose dust depth per column (.x), dust lost to the
+// wind this pass (.y). A texture so it doesn't use a storage slot; bound at 17
+// by the pipelines that read it.
+@group(0) @binding(17) var driftTex: texture_2d<f32>;
+
+/** Depth of drifted dust on column q (0 off the map). */
+fn driftAt(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return 0.0; }
+  return textureLoad(driftTex, q, 0).x;
+}
+
 fn windAt(p: vec3<f32>) -> vec2<f32> {
   var w = windSample(p.xy).zw;
   for (var i = 0u; i < G.numStorms; i++) {

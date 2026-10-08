@@ -73,6 +73,11 @@ export class WorldGpu {
   readonly windFieldNext: GPUTexture;
   readonly windFieldView: GPUTextureView;
   readonly windFieldNextView: GPUTextureView;
+  /** drifted dust depth (.x) and wind loss (.y) per column; drift.wgsl reads `drift`, writes `driftNext` */
+  readonly drift: GPUTexture;
+  readonly driftNext: GPUTexture;
+  readonly driftView: GPUTextureView;
+  readonly driftNextView: GPUTextureView;
   /** smoothed soft-ground corner heights (rgba32float, one texel per grid point; x = height or -1) */
   readonly cornerTex: GPUTexture;
   readonly cornerView: GPUTextureView;
@@ -167,6 +172,17 @@ export class WorldGpu {
     this.textures.push(this.cornerTex);
     this.cornerView = this.cornerTex.createView();
     this.windFieldNextView = this.windFieldNext.createView();
+    const dsize = { width: this.w, height: this.h };
+    this.drift = device.createTexture({ label: 'drift', size: dsize, format: 'rgba32float', usage: tusage });
+    this.driftNext = device.createTexture({ label: 'driftNext', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.drift, this.driftNext);
+    this.driftView = this.drift.createView();
+    this.driftNextView = this.driftNext.createView();
+    {
+      const init = new Float32Array(N * 4);
+      for (let k = 0; k < N; k++) init[k * 4] = map.drift[k];
+      device.queue.writeTexture({ texture: this.drift }, init, { bytesPerRow: this.w * 16 }, dsize);
+    }
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
     this.particleCap = particleCap;

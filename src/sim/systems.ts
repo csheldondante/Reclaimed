@@ -25,6 +25,7 @@ import statsWgsl from '../shaders/stats.wgsl?raw';
 import swayWgsl from '../shaders/sway.wgsl?raw';
 import wiltWgsl from '../shaders/wilt.wgsl?raw';
 import windFieldWgsl from '../shaders/windfield.wgsl?raw';
+import driftWgsl from '../shaders/drift.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -218,8 +219,8 @@ export class WiltSystem implements SimSystem {
       world,
       'wilt',
       wiltWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'rw', 15: 'tex' },
-      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.oil, 9: world.fire, 10: world.wilt, 15: world.windFieldView },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'rw', 15: 'tex', 17: 'tex' },
+      { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.oil, 9: world.fire, 10: world.wilt, 15: world.windFieldView, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -237,8 +238,8 @@ export class EcologySystem implements SimSystem {
       world,
       'ecology',
       ecologyWgsl + slopeWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read' },
-      { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read', 17: 'tex' },
+      { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -258,8 +259,8 @@ export class RenderFieldsSystem implements SimSystem {
       world,
       'renderfields',
       terrainShapeWgsl + renderFieldsWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 16: 'stex' },
-      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 16: world.cornerView },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 16: 'stex', 17: 'tex' },
+      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 16: world.cornerView, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -280,6 +281,27 @@ export class WindFieldSystem implements SimSystem {
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.groups);
     enc.copyTextureToTexture({ texture: this.world.windFieldNext }, { texture: this.world.windField }, [this.world.windField.width, this.world.windField.height]);
+  }
+}
+
+/** Drifting dust (drift.wgsl): the wind carries it, shelter piles it, water washes it. */
+export class DriftSystem implements SimSystem {
+  readonly name = 'drift';
+  readonly period = 2;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(
+      device,
+      world,
+      'drift',
+      driftWgsl,
+      { 3: 'read', 4: 'read', 15: 'tex', 16: 'stex', 17: 'tex' },
+      { 3: world.surface, 4: world.water, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    enc.copyTextureToTexture({ texture: this.world.driftNext }, { texture: this.world.drift }, [this.world.w, this.world.h]);
   }
 }
 

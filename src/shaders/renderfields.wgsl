@@ -14,6 +14,21 @@
 @group(0) @binding(7) var<storage, read_write> fields: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read> waterDepth: array<f32>;
 
+/** Drift surface height at grid corner v: mean (ground + dust) of the dusty columns touching it, or -1. */
+fn driftCornerZ(v: vec2<i32>) -> f32 {
+  var sum = 0.0;
+  var n = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
+    if (!inMap(q)) { continue; }
+    let d = driftAt(q);
+    if (d < 0.03) { continue; }
+    sum += f32(sfZ(surface[colIdxI(q)])) + d;
+    n += 1.0;
+  }
+  return select(-1.0, sum / max(n, 1.0), n > 0.0);
+}
+
 /** Water surface height at grid corner v: mean level of the wet columns touching it, or -1. */
 fn waterCornerZ(v: vec2<i32>) -> f32 {
   var sum = 0.0;
@@ -67,5 +82,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   fields[i] = vec4<f32>(sz, moisture[i], glow, length(netFlow(p)));
-  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), waterCornerZ(p), 0.0, 0.0));
+  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), waterCornerZ(p), driftCornerZ(p), 0.0));
 }

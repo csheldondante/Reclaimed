@@ -14,6 +14,9 @@
 // flowers shed by the wind (< 1) stand as bare stems until they regrow
 @group(0) @binding(8) var<storage, read> petals: array<f32>;
 
+/** Drifted dust deeper than this is drawn (as a smooth sheet). */
+const DRIFT_SHOW: f32 = 0.03;
+
 /** A flower, or a bare stem if the wind has stripped it. */
 fn flowerMat(c: vec2<u32>) -> u32 { return select(MAT_GRASS, MAT_FLOWER, petals[colIdx(c.x, c.y)] >= 1.0); }
 
@@ -90,6 +93,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     tap = wilt[i];
     n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree) + pl.tufts + select(0u, 1u, pl.flower);
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
+    n += select(0u, 1u, driftAt(vec2<i32>(id.xy)) > DRIFT_SHOW);
   }
   let off = atomicAdd(&wgO, n);
   workgroupBarrier();
@@ -99,6 +103,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var o = baseO + off;
   let qx = id.x * 4u;
   let qy = id.y * 4u;
+  // drifted dust: a box from the ground up to the dust's surface; its top
+  // corners follow the smooth drift sheet (render.wgsl). Plants under it are
+  // buried (dormant: wilt/ecology).
+  let dd = driftAt(vec2<i32>(id.xy));
+  if (dd > DRIFT_SHOW) {
+    let g = f32(sfZ(surface[colIdx(id.x, id.y)]));
+    instOpaque[o] = mkInst(id.x, id.y, 1u, 1u, g, g + dd, MAT_DRIFT, 1u);
+    o += 1u;
+  }
   if (pl.shrub) {
     instOpaque[o] = mkInst(id.x, id.y, 1u, 1u, top, top + 1.0, MAT_LEAVES, FLAG_VEG);
     o += 1u;

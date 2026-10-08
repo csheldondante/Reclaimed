@@ -3,6 +3,23 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-08 — round 11 (session 2) — items C1–C10 in BACKLOG.md
+
+- Dust drifts that bury things you uncover with wind. Smooth water (keep the
+  storm specular jitter). Grow sound: wet sprouting, then the shimmer. A way
+  to debug and see sounds (a high-pitched sound under storms / on Nature
+  gains). A little light where growth and wind happen.
+- The desolate wind should sound like a howl.
+- Wind follows the mouse so swirling paints a vortex; a swirl could summon a
+  cyclone.
+- Overall map wind low outside storms; it dies down when no storm and no
+  player wind. The field biases direction; magnitude is raised/lowered.
+- Multiple levels; the title screen shows clickable objects per level. Maps:
+  the dam/industrial valley; a highway covered in ruined cars; a port with
+  tankers ashore, a seawall, ocean waves and swell; a ruined city with a
+  blast crater and hospital tents (an outbreak).
+- Order (agent's call): C4, C3, C5 → C2 → C1 → C6 → C7 → C9 → C8.
+
 ## 2026-10-08 — round 10 (session 2) — items A1–A15 in BACKLOG.md
 
 - Sound: howling desolate wind with periodic gusts on the title screen while

@@ -20,8 +20,8 @@ import { CAMERA_BYTES, type Camera } from './camera';
 
 const VERTS_PER_BOX = 18;
 /** Extra instances a column may emit beyond its slots (shrub/trunk+crown, tufts, flower). */
-// per cell worst case: plan (tree 2 + tufts 3 + flower 1) + a planting (6)
-const VEG_INSTANCES = 12;
+// per cell worst case: plan (tree 2 + tufts 3 + flower 1) + a planting (6) + drift (1)
+const VEG_INSTANCES = 13;
 const PICK_FORMAT: GPUTextureFormat = 'rg32uint';
 
 /** What the pick target says is under a pixel. */
@@ -126,6 +126,7 @@ export class Renderer {
       7: 'read',
       8: 'read',
       14: 'tex',
+      17: 'tex',
     });
     this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, {
       0: world.globals,
@@ -137,6 +138,7 @@ export class Renderer {
       7: world.wilt,
       8: world.petals,
       14: world.cornerView,
+      17: world.driftView,
     });
 
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;

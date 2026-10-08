@@ -66,6 +66,12 @@ fn computeCornerZ(v: vec2<i32>) -> f32 {
   return clamp(sum / wsum, lo, hi);
 }
 
+/** Drift surface height at corner v (round 11), or -1. */
+fn driftCornerAt(v: vec2<i32>) -> f32 {
+  if (!inMap(v)) { return -1.0; }
+  return textureLoad(cornerTex, v, 0).z;
+}
+
 /** Water surface height at corner v (smooth water, round 11), or -1. */
 fn waterCornerAt(v: vec2<i32>) -> f32 {
   if (!inMap(v)) { return -1.0; }

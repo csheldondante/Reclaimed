@@ -65,6 +65,16 @@ gale). `windAt()` = field ba + storm swirl + the cursor/tap breeze
 each storm's target velocity is the field's mean whole wind over its body.
 Pipelines that sample wind bind the texture at 15 (not a storage slot).
 
+Drifts: `drift` (rgba32float texture, x = loose dust depth per column, y = dust lost to the
+wind this pass; read at binding 17 via `driftAt()`) is owned by the drift
+system (period 2): wind above 9 cells/s (reduced by shelter from taller
+ground upwind) carries dust downwind (40 % goes airborne), walls bank it,
+steep dust slumps, water washes it, dust storms drop it in sheltered spots.
+Rendered as a smooth sheet (vegprep emits a MAT_DRIFT box; corners from
+cornersTex.z computed in render-fields). Under > 0.5 dust, plants are
+dormant (wilt, ecology). Map wind magnitude is scaled by `Weather.windScale`
+(0.3 calm … 1 with storms/dust storms about).
+
 Plant health: the wilt system (period 15, just before ecology) writes
 `wilt` (vec4: ground hostility to plants from poison/oil/trash/litter/
 drowning/drought; brownness of what grows there; tap bloom; doomed-sprout

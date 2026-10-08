@@ -89,6 +89,15 @@ fn waterOr(v: vec2<i32>, z: f32) -> f32 {
   let c = waterCornerAt(v);
   return select(c, z, c < 0.0);
 }
+fn driftOr(v: vec2<i32>, z: f32) -> f32 {
+  let c = driftCornerAt(v);
+  return select(c, z, c < 0.0);
+}
+/** Corner height of a smooth sheet (water or drift box). */
+fn sheetOr(m: u32, v: vec2<i32>, z: f32) -> f32 {
+  if (m == MAT_DRIFT) { return driftOr(v, z); }
+  return waterOr(v, z);
+}
 
 fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let face = vi / 6u;
@@ -97,8 +106,8 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let syn = select(-1.0, 1.0, CAM.eye.y > 0.0);
   // soft ground: the column's top is drawn sloped (terrainshape.wgsl)
   let soft = (b.flags & FLAG_TOP_R) != 0u && (b.flags & (FLAG_VEG_R | FLAG_DETAIL)) == 0u && MATS[b.mat].look.x > 0.0;
-  // water: its surface is a smooth sheet through the corner water levels
-  let liquid = b.mat == MAT_WATER;
+  // water and drifted dust: smooth sheets through their corner levels
+  let liquid = b.mat == MAT_WATER || b.mat == MAT_DRIFT;
   let c0 = vec2<i32>(i32(b.x), i32(b.y));
   var p: vec3<f32>;
   var n: vec3<f32>;
@@ -106,11 +115,11 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
     p = vec3<f32>(b.x + uv.x * b.sx, b.y + uv.y * b.sy, b.z1);
     n = vec3<f32>(0.0, 0.0, 1.0);
     if (liquid) {
-      p.z = waterOr(c0 + vec2<i32>(uv), b.z1);
-      let h00 = waterOr(c0, b.z1);
-      let h10 = waterOr(c0 + vec2<i32>(1, 0), b.z1);
-      let h01 = waterOr(c0 + vec2<i32>(0, 1), b.z1);
-      let h11 = waterOr(c0 + vec2<i32>(1, 1), b.z1);
+      p.z = sheetOr(b.mat, c0 + vec2<i32>(uv), b.z1);
+      let h00 = sheetOr(b.mat, c0, b.z1);
+      let h10 = sheetOr(b.mat, c0 + vec2<i32>(1, 0), b.z1);
+      let h01 = sheetOr(b.mat, c0 + vec2<i32>(0, 1), b.z1);
+      let h11 = sheetOr(b.mat, c0 + vec2<i32>(1, 1), b.z1);
       n = normalize(vec3<f32>(-((h10 + h11) - (h00 + h01)) * 0.5, -((h01 + h11) - (h00 + h10)) * 0.5, 1.0));
     } else if (soft) {
       p.z = cornerOr(c0 + vec2<i32>(uv), b.z1);
@@ -126,13 +135,13 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
     p = vec3<f32>(fx, b.y + uv.x * b.sy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(sxn, 0.0, 0.0);
     if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(fx), i32(p.y)), b.z1); }
-    if (liquid && uv.y > 0.5) { p.z = waterOr(vec2<i32>(i32(fx), i32(p.y)), b.z1); }
+    if (liquid && uv.y > 0.5) { p.z = sheetOr(b.mat, vec2<i32>(i32(fx), i32(p.y)), b.z1); }
   } else {
     let fy = select(b.y, b.y + b.sy, syn > 0.0);
     p = vec3<f32>(b.x + uv.x * b.sx, fy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(0.0, syn, 0.0);
     if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(p.x), i32(fy)), b.z1); }
-    if (liquid && uv.y > 0.5) { p.z = waterOr(vec2<i32>(i32(p.x), i32(fy)), b.z1); }
+    if (liquid && uv.y > 0.5) { p.z = sheetOr(b.mat, vec2<i32>(i32(p.x), i32(fy)), b.z1); }
   }
   var off = vec3<f32>(0.0);
   if ((b.flags & FLAG_VEG_R) != 0u) {
@@ -423,7 +432,9 @@ fn fsBox(in: VOut) -> FOut {
     }
     if (mat != MAT_WOOD) { alb = wither(alb, wilt[ci].y, n1); }
   } else {
-    let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5;
+    // drifted dust is plain dust: no stains or plant cover painted on it (what
+    // lies under it is buried)
+    let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5 && mat != MAT_DRIFT;
     let porosity = MATS[mat].eco.w;
     if (isTop) {
       // contamination stains: oily black-brown with sickly yellow-green streaks
@@ -445,7 +456,7 @@ fn fsBox(in: VOut) -> FOut {
     alb *= 1.0 - porosity * 0.5 * smoothstep(0.15, 0.9, m);
 
     // vegetation cover (dithered at sub-cell resolution)
-    if (v > 0.0) {
+    if (v > 0.0 && mat != MAT_DRIFT) {
       var cover: f32;
       if (isTop) { cover = smoothstep(0.0, 1.2, v); } else { cover = smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2); }
       if (n1 < cover) {

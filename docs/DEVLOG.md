@@ -1042,3 +1042,27 @@ touching each grid corner, or −1 if none. Water boxes take their top corners
 so rivers run down slopes as one sheet instead of stair-steps and pool edges
 round off. Ripples, glints, foam and the rain rings under storms are
 unchanged (fragment shader). Draw 2.9 ms at 1400×800 (+0.3 ms).
+
+## 2026-10-08 — round 11 batch 3 (C1 drifts and burial; calm wind)
+
+- **Drift layer** (see ARCHITECTURE): fractional loose-dust depth in a
+  texture (no storage slot left), moved by a race-free gather kernel every
+  other tick. Mapgen lays dunes over open dead ground (fbm, 0–2.6 deep),
+  banks dust over scattered wrecks, and buries three **lost gardens** (grass
+  and flowers, veg 1.8–3.0) under 1.6–2.7 cells of dust. Plants under > 0.5
+  dust are dormant; uncovered, they are alive. Drifting dust streams off as
+  dust particles; drift tops show no stains or plant cover.
+- **Tuning by measurement.** First carry rate (0.06) — 24 gale strokes moved
+  a garden's cover 2.23 → 1.91 (in a solid dune what leaves a cell is
+  replaced from upwind). With carry 0.25 and 40 % of what is lifted going
+  airborne: 8 strokes cleared it — but natural weather then erased half of
+  all drifts in the first minute (opening dust storms + the first storm:
+  15 k → 6 k cells·depth). Lift threshold 5 → 9 cells/s (a gust, not a
+  breeze) and dust storms now drop dust in sheltered spots as they pass:
+  ~70 % of drifts survive two minutes of weather (15 k → 10.5 k), and a
+  garden takes 10–16 strokes to uncover (2.23 → 0.82 after 8, 0.02 after 16;
+  veg 2.62 underneath).
+- **Calm wind** (user): the map wind's magnitude scales 0.3 (calm) → 1 as
+  storms/dust storms arrive (6 s smoothing); direction unchanged.
+- Draw cost with drifts on screen: 4.6 ms at 1400×800 (+~1.5 ms: ~24 k drift
+  boxes).

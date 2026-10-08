@@ -19,6 +19,8 @@ export interface MapData {
   vegetation: Float32Array;
   /** Initial free oil depth per column. */
   oil: Float32Array;
+  /** Initial drifted dust depth per column (cells, fractional; drift.wgsl). */
+  drift: Float32Array;
   /** Oil sealed inside closed tanks: per column [amount, roof z]; released when breached. */
   oilStored: Float32Array;
   /** Water added per sim tick per column (springs). */
@@ -501,6 +503,62 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
         vegetation[i] = 0;
       }
 
+  // Drifts (round 11): dunes of loose dust over the open dead ground, deeper
+  // in hollows; half-buried junk; and three lost gardens — patches of grass
+  // and flowers buried under the dust, waiting for the wind to uncover them.
+  const drift = new Float32Array(N);
+  const gardens: P[] = [];
+  {
+    const d = rng(seed * 251 + 3);
+    for (let y = 2; y < h - 2; y++)
+      for (let x = 2; x < w - 2; x++) {
+        const i = y * w + x;
+        if (water[i] > 0 || nearestRiver(x, y).d < 5) continue;
+        if (Math.hypot(x - HEALTHY[0], y - HEALTHY[1]) < 16) continue;
+        if (Math.hypot(x - TUTORIAL[0], y - TUTORIAL[1]) < 10) continue;
+        const m = grid.topMat(x, y);
+        if (m !== MAT.Soil && m !== MAT.Sand && m !== MAT.Rubble && m !== MAT.Litter) continue;
+        const dune = fbm(x / 13, y / 9, 3, seed + 91) * 0.5 + 0.5;
+        drift[i] = Math.max(0, (dune - 0.52) * 5.5);
+      }
+    // lost gardens
+    for (let k = 0; k < 200 && gardens.length < 3; k++) {
+      const x = 20 + Math.floor(d() * (w - 40));
+      const y = 20 + Math.floor(d() * (h - 40));
+      if (nearestRiver(x, y).d < 10 || water[y * w + x] > 0) continue;
+      if (Math.hypot(x - HEALTHY[0], y - HEALTHY[1]) < 30 || Math.hypot(x - TUTORIAL[0], y - TUTORIAL[1]) < 20) continue;
+      if (x >= SITE.x0 - 6 && x < SITE.x1 + 6 && y >= SITE.y0 - 6 && y < SITE.y1 + 6) continue;
+      if (gardens.some((g) => Math.hypot(g[0] - x, g[1] - y) < 40)) continue;
+      const m = grid.topMat(x, y);
+      if (m !== MAT.Soil && m !== MAT.Sand) continue;
+      gardens.push([x, y]);
+      for (let yy = y - 7; yy <= y + 7; yy++)
+        for (let xx = x - 7; xx <= x + 7; xx++) {
+          const dd = Math.hypot(xx - x, yy - y);
+          if (dd > 6.5) continue;
+          const i = yy * w + xx;
+          const c = grid.col(xx, yy);
+          if (c[c.length - 1].mat === MAT.Litter) c.pop();
+          contam[i * 2] = Math.min(contam[i * 2], 0.05);
+          moisture[i] = Math.max(moisture[i], 0.35);
+          if (dd < 4.5) vegetation[i] = 1.8 + 1.2 * hash2(xx, yy, 5);
+          drift[i] = Math.max(drift[i], 1.6 + 1.1 * Math.cos((dd / 6.5) * Math.PI * 0.5));
+        }
+    }
+    // junk half-buried: dust banked over the scattered wrecks and drums
+    for (let y = 2; y < h - 2; y++)
+      for (let x = 2; x < w - 2; x++) {
+        const m = grid.topMat(x, y);
+        if (m !== MAT.Rust || water[y * w + x] > 0) continue;
+        for (let yy = y - 2; yy <= y + 2; yy++)
+          for (let xx = x - 2; xx <= x + 2; xx++) {
+            const i = yy * w + xx;
+            if (water[i] > 0) continue;
+            drift[i] = Math.max(drift[i], 1.2 - 0.35 * Math.hypot(xx - x, yy - y));
+          }
+      }
+  }
+
   const surface = new Float32Array(N);
   for (let i = 0; i < N; i++) {
     const c = grid.cols[i];
@@ -516,6 +574,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
     waterSource,
     oil,
     oilStored,
+    drift,
     surface,
     poi: {
       reservoir: RESERVOIR,
@@ -524,6 +583,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       healthy: HEALTHY,
       landfill: LANDFILL,
       tutorial: TUTORIAL,
+      ...Object.fromEntries(gardens.map((g, i): [string, P] => [`garden${i}`, g])),
       heap: TUT_HEAP,
       ...Object.fromEntries(pools.map((q, i): [string, P] => [`sludge${i}`, [q.x, q.y]])),
     },

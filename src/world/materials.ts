@@ -56,6 +56,7 @@ export const MAT = {
   Bone: 16,
   Ash: 17,
   Litter: 18,
+  Drift: 19,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -99,6 +100,8 @@ export const MATERIALS: MaterialDef[] = [
   // scattered litter lying on the land: loose; strong wind strips it a cell at a
   // time (litterStrip in common.wgsl), water carries it; nothing grows on it
   { ...NONE, name: 'litter', albedo: [0.55, 0.52, 0.47], state: MatState.Granular, reposeDry: 1, reposeWet: 1, strength: 0.05, growthCap: 1, suitability: 0.15, porosity: 0.2, smooth: 1.5 },
+  // render-only: drifted dust (its depth lives in the drift texture, not in layers)
+  { ...NONE, name: 'drift', albedo: [0.6, 0.5, 0.39], state: MatState.Granular, porosity: 0.4 },
 ];
 
 export const MAX_MATERIALS = 32;

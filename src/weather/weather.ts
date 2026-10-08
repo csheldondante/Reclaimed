@@ -58,6 +58,12 @@ export class Weather {
   /** current prevailing wind (wanders around the base direction) */
   windX = 2.4;
   windY = 1.5;
+  /**
+   * How strongly the map's own wind blows, 0.3..1 (round 11): calm when no
+   * storm or dust storm is about, rising as one arrives. Direction is kept —
+   * only the magnitude is raised and lowered.
+   */
+  windScale = 0.3;
   private t = 0;
   /** render clock (Globals.time), so CPU storm shapes match the shader */
   time = 0;
@@ -210,8 +216,11 @@ export class Weather {
     // ±10° and 88–112 % in strength over minutes
     const ang = Math.atan2(this.params.baseWindY, this.params.baseWindX) + Math.sin(this.t * 0.011) * 0.13 + Math.sin(this.t * 0.027 + 1.3) * 0.05;
     const mag = Math.hypot(this.params.baseWindX, this.params.baseWindY) * (1 + 0.12 * Math.sin(this.t * 0.019 + 0.7));
-    this.windX = Math.cos(ang) * mag;
-    this.windY = Math.sin(ang) * mag;
+    const weather = this.storms.reduce((a, st) => a + st.intensity, 0) + this.dusts.reduce((a, d) => a + d.intensity * 0.7, 0);
+    const target = 0.3 + 0.7 * Math.min(1, weather);
+    this.windScale += (target - this.windScale) * (1 - Math.exp(-dt / 6));
+    this.windX = Math.cos(ang) * mag * this.windScale;
+    this.windY = Math.sin(ang) * mag * this.windScale;
 
     // weather arrives on its own now and then
     if (this.t > this.nextNatural) {
