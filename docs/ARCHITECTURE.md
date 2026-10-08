@@ -51,17 +51,17 @@ Vegetation sway has state: `bend` (vec4 per column: lean xy, velocity zw) is
 a damped spring updated by the sway system (stiff while the wind pushes,
 soft and lightly damped on the way back); the draw shaders read it.
 
-Wind field:  (rgba32float texture, one texel per 2×2 columns) is
+Wind field: `windField` (rgba32float texture, one texel per 2×2 columns) is
 the one wind everything feels. rg = the wind the player has painted; ba = the
-whole wind =  (prevailing wind in advected gust patches, dust
+whole wind = `mapWind()` (prevailing wind in advected gust patches, dust
 storms, eddies) + painted. The windfield system (every tick; also at prime)
 advects the painted part at 30 % of its own speed, spreads it, relaxes it to
 zero (e-folding 7 s), adds the stroke segment drawn since the last tick
 (gusts[1..3], gustDir.z = segment length; one-tick impulses like events —
- zeroes them and sets  so Powers re-anchors),
+`Simulation.step` zeroes them and sets `strokeSent` so Powers re-anchors),
 and writes both. Passes stack (≈ 7 / 12 / 17 cells/s painted: breeze, gust,
-gale).  = field ba + storm swirl + the cursor/tap breeze
-(gusts[0]). The level reads the field back ~4 Hz ();
+gale). `windAt()` = field ba + storm swirl + the cursor/tap breeze
+(gusts[0]). The level reads the field back ~4 Hz (`WorldCore.readWindField`);
 each storm's target velocity is the field's mean whole wind over its body.
 Pipelines that sample wind bind the texture at 15 (not a storage slot).
 
