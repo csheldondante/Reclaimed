@@ -142,8 +142,10 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let dusty = dustinessOf(contam[i].x, m) * dry * (1.0 - cover);
     // the cyclone sucks dust off the ground into its column
     let inCy = cycloneAt(base.xy);
-    if (inCy > 0.05 && rare(id.x, id.y, 0xc7c1u) < inCy * 0.0015) {
-      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.6, 2.0 + r2 * 2.0), 3.0 + r1 * 3.0, select(K_DUST, K_HAZE, r1 < 0.3), 0.0, h ^ 0xc7u);
+    // (it takes up what is there: dusty or drifted ground feeds it most)
+    let feed = max(dustinessOf(contam[i].x, m) * dry * (1.0 - cover), min(driftAt(p), 1.0));
+    if (inCy > 0.05 && rare(id.x, id.y, 0xc7c1u) < inCy * 0.008 * feed) {
+      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.6, 2.0 + r2 * 2.0), 6.0 + r1 * 3.0, select(K_DUST, K_HAZE, r1 < 0.25), 0.0, h ^ 0xc7u);
     }
     // drifts losing dust to the wind stream it downwind (drift.wgsl .y)
     let blown = textureLoad(driftTex, p, 0).y;
@@ -225,16 +227,6 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       if (r1 < 0.35 * fall) { spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(0.0, 0.0, 1.2 + r2), 1.4 + r1, K_SPARK, 0.0, h, 0u, 0u); }
     } else if (r1 < 0.3 * fall) {
       spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>((r2 - 0.5) * 0.6, (r1 - 0.5) * 0.6, 0.6), 1.6 + r1, K_SPARK, 0.0, h, 0u, 1u);
-    }
-  }
-  // the funnel: puffs are born at its tip, under the cyclone's centre
-  if (G.cyclone.w != 0.0 && all(vec2<u32>(floor(G.cyclone.xy)) == id.xy)) {
-    for (var k = 0u; k < 10u; k++) {
-      let hk = hash3(id.x, id.y, G.tick * 7u + k);
-      let a0 = f32(hk & 1023u) / 1023.0 * 6.2832;
-      // born out wide at the base (2.5–6 funnel radii), they spiral inward
-      let r0 = 2.5 + f32((hk >> 10u) & 255u) / 255.0 * 3.5;
-      spawnFull(base, vec3<f32>(a0, 0.0, r0), 12.0, K_FUNNEL, 0.0, hk, 0u, 0u);
     }
   }
   // fallen leaves gather on the woodland floor
@@ -440,25 +432,28 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       // near the base (within ~3 funnel radii, low down)?
       let b = spineAt(0.0);
       let d = length(pos.xy - b.xy);
-      let near = smoothstep(9.0, 3.0, d) * smoothstep(b.z + 12.0, b.z + 3.0, pos.z) * abs(G.cyclone.w);
-      if (near > 0.0 && roll < near * 0.15) {
+      let near = smoothstep(13.0, 4.0, d) * smoothstep(b.z + 14.0, b.z + 3.0, pos.z) * abs(G.cyclone.w);
+      if (near > 0.0 && roll < near * 0.25) {
         let o = pos.xy - b.xy;
         let t0 = clamp((pos.z - b.z) / 26.0, 0.0, 0.3);
-        parts[id.x] = Particle(P.p, vec4<f32>(atan2(o.y, o.x), t0, max(d / max(b.w, 0.3), 1.2), P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
+        parts[id.x] = Particle(P.p, vec4<f32>(atan2(o.y, o.x), t0, clamp(d / max(b.w, 0.3), 1.2, 4.0), P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
         return;
       }
     } else {
       var rm = vel.z;
       let t = vel.y + (0.1 + 0.08 * sr) * DT;
-      rm = max(1.0 + (sr - 0.5) * 0.5, rm - 1.0 * DT * rm);
+      // fog keeps to a tight inner cone; debris rides the outer cone, spread
+      // evenly around and up it
+      let ring = select(1.0 + sr * 0.6, 0.35 + sr * 0.3, kind == K_HAZE);
+      rm = max(ring, rm - 1.8 * DT * rm);
       let sp = spineAt(min(t, 1.0));
       let r = sp.w * rm;
       let ang = vel.x + sign(G.cyclone.w) * (1.6 + 5.0 / max(r, 0.5)) * DT;
       let q = sp.xy + vec2<f32>(cos(ang), sin(ang)) * r;
-      // thrown out: a small chance every second, and always at the top
-      if (t >= 1.0 || roll < 0.25 * DT) {
+      // spat out high up at the top (rarely sooner), flung wide to fall downwind
+      if (t >= 1.0 || roll < 0.03 * DT) {
         let tang = vec2<f32>(-sin(ang), cos(ang)) * sign(G.cyclone.w);
-        let out = vec3<f32>(tang * 9.0 + normalize(q - sp.xy + vec2<f32>(1e-3)) * 4.0, 2.0);
+        let out = vec3<f32>(tang * 8.0 + normalize(q - sp.xy + vec2<f32>(1e-3)) * 6.0, 3.0);
         parts[id.x] = Particle(vec4<f32>(q, sp.z, max(life, 6.0)), vec4<f32>(out, P.v.w), vec4<u32>(kind, seed, 0u, P.m.w));
         return;
       }

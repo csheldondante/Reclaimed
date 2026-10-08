@@ -204,7 +204,7 @@ export class Weather {
     const c = this.cyclone;
     if (!c) return Array.from({ length: SPINE_N }, () => [0, 0, 0, 0] as [number, number, number, number]);
     // narrow at the ground, flaring toward the top; it thins as it dies
-    return c.spine.map((n, i) => [n.x, n.y, n.z, (0.35 + 0.5 * i) * (0.4 + 0.6 * c.strength)] as [number, number, number, number]);
+    return c.spine.map((n, i) => [n.x, n.y, n.z, (0.45 + 0.6 * i) * (0.4 + 0.6 * c.strength)] as [number, number, number, number]);
   }
 
   dustUniforms(): DustUniform[] {

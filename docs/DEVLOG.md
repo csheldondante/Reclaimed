@@ -1176,3 +1176,22 @@ caught in it and constrained into the cone with some chance of falling out".
   top); when the cyclone dies, whatever it holds falls. Dust stripped from
   drifts inside the vortex now rises as particles again (to be caught). Test:
   ~180 caught at once (154 dust, 21 haze, 4 litter).
+
+## 2026-10-08 — cyclone made of what it carries
+
+User: only dust and debris in the funnel should make it visible; it should
+pull in more as it goes and spit it out high up; particles evenly spread;
+the dust fog (as under normal wind) only in a tighter cone; subtle is fine.
+- The synthetic funnel puffs are gone. Under the cyclone, dusty or drifted
+  ground is lifted as dust/haze (rate ∝ dustiness or drift depth), and
+  loose debris within ~13 cells of the base is caught (25 %/tick ×
+  closeness), so it fills up as it travels over dusty ground.
+- On the cone: haze (the fog) settles to a tight core (0.35–0.65 funnel
+  radii, drawn fainter); dust, litter, leaves, petals, ash ride the outer
+  cone (1–1.6 radii) as crisp motes, a little larger and darker than loose.
+  Caught from up to 4 radii out, gathering in at 1.8/s.
+- Out at the top (rarely sooner, 3 %/s): flung wide (tangential 8 +
+  outward 6, up 3 cells/s) to fall downwind.
+- Tries along the way: dark soft motes read as a fat blob; radii scaled by
+  the base radius caught debris ~37 radii out.
+Typical load ~1900 caught (mostly dust, ~200 fog, dozens of litter).

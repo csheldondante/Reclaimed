@@ -143,6 +143,13 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   }
   if (soft == 0.0) { col.a *= fade; }
   if (kind != 9u && kind != 11u && kind != 12u && kind != 17u && kind != 19u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w) + vec3<f32>(0.5, 0.55, 0.65) * G.misc.z, col.a); }
+  // caught in the cyclone: drawn as a larger, denser mote so the funnel reads
+  if ((P.m.z & 2u) != 0u) {
+    // debris funnelling up: crisp motes a little larger and darker than when
+    // loose; the dust fog in the core stays faint
+    if (kind == 15u) { size = min(size, 0.8); col.a = col.a * 0.6; }
+    else { size = size * 1.5 + 0.05; col = vec4<f32>(col.rgb * 0.7, max(col.a, 0.9)); }
+  }
   // perched birds sit with folded wings
   let perched = kind == 10u && P.m.w == 2u;
   if (perched) { size = 0.24; }
