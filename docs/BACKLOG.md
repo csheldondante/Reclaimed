@@ -57,7 +57,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | C3 | Grow sound: a wet sprouting "opening", then the current shimmer | S | done `031b78c` |
 | C4 | Audio debug: see and mute each sound (find the high whine under storms / on Nature gains) | S | done `031b78c` |
 | C5 | A little light where growth and wind happen | S | done `031b78c` |
-| C6 | Multiple levels; title screen shows clickable objects for each level | M–L | next |
+| C6 | Multiple levels; title screen shows clickable objects for each level | M–L | done `fd5b5a3` (valley + sandbox; highway/city/port are 'coming') |
 | C7 | Level: highway covered in ruined cars | M | next |
 | C8 | Level: port with tankers washed ashore and a seawall; ocean waves and sea swell | L | next |
 | C10 | Swirling the mouse while dragging paints a vortex; a sustained swirl summons a cyclone (with B6 tornado) | M | done `fc954d8` (D3) |
@@ -68,7 +68,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | id | item | from | size | status |
 |---|---|---|---|---|
 | B1 | **Phone testing**: pick hosting (GitHub Pages / local HTTPS / tunnel); Android Chrome; touch controls are in, but untested on a device | round 6 | S | deferred (user: later) |
-| B2 | Sandbox / level-edit mode (deposit/remove-layer brushes, place water/oil/trash/plants, spawn storms, time controls) | round 6 | M–L | deferred |
+| B2 | Sandbox / level-edit mode (deposit/remove-layer brushes, place water/oil/trash/plants, spawn storms, time controls) | round 6 | M–L | done `fd5b5a3` |
 | B3 | Water life: fish in clean water, reeds/lilies in shallows | round 6 | S–M | deferred |
 | B4 | Wind waves on water (shaded cheap; true height harder) | round 6 | S / M–L | deferred |
 | B5 | Event camera beyond the intro: pan/zoom to firsts (animals arrive, a seed sprouts and dies, wind clears trash and a plant takes) | round 6 | M | deferred |
