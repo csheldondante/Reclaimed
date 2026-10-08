@@ -56,6 +56,11 @@ const K_SPARK: u32 = 17u;
 // left to settle, it falls as soot (DECISIONS round 5)
 const SMOKE_OILY: u32 = 1u;
 const SOOT: f32 = 0.03;
+// dust state (Particle.m.w): 1 = grime — a clump of the ground's pollution.
+// It holds its contamination (taken from the soil when it formed) wherever it
+// goes; blown into water it washes away (counters[3]; the level turns that
+// into a splash, a sound and a little Nature) — the cleaning game (round 7)
+const DUST_GRIME: u32 = 1u;
 
 // bird states (Particle.m.w); a seeking bird keeps its target column + 1 in v.w
 const B_FLEE: u32 = 0u;
@@ -127,6 +132,13 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     if (rare(id.x, id.y, 0xd057u) < 0.00002 * dusty * boost) {
       spawnResting(onGround, 60.0 + r2 * 60.0, K_DUST, h);
     }
+    // polluted ground clumps into grime that the wind can push about
+    let cg = contam[i].x;
+    if (cg > 0.25 && rare(id.x, id.y, 0x9e1au) < 0.00001 * min(cg, 1.5) * boost) {
+      let take = min(cg * 0.08, 0.06);
+      atomicSub(&contamDelta[i], i32(take * FIX));
+      spawnFull(onGround, vec3<f32>(0.0), 500.0 + r2 * 200.0, K_DUST, take, h ^ 0x9eu, 1u, DUST_GRIME);
+    }
     // strong wind over dusty ground raises a haze (hard drags, storm winds);
     // a dust storm raises it over any dry bare ground in its path
     var dstorm = 0.0;
@@ -134,7 +146,8 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       let d = G.dusts[k];
       if (d.w > 0.0) { dstorm = max(dstorm, d.w / 8.0 * smoothstep(1.1, 0.3, length(base.xy - d.xy) / d.z)); }
     }
-    let hazeRate = min(max(ws - 6.0, 0.0) * 0.004 * dusty, 0.02) + dstorm * 0.0012 * dry * (1.0 - cover);
+    // (capped low: a hard drag should show what it moves, not bury it in haze)
+    let hazeRate = min(max(ws - 6.0, 0.0) * 0.0005 * dusty, 0.0012) + dstorm * 0.0012 * dry * (1.0 - cover);
     if (rare(id.x, id.y, 0x4a2eu) < hazeRate) {
       spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h);
     }
@@ -175,7 +188,8 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let hostile = contam[i].x > 0.2 || wet || m == MAT_TRASH_P || m == MAT_LITTER || moisture[i] < 0.04;
     let cap = MATS[m].eco.x;
     if (!hostile && cap > 0.0) {
-      veg[i] = min(max(v, 0.3) + 0.35 * fall, max(cap, v));
+      // near the tap grass comes up at once (tufts show from 1.2); around it a boost
+      veg[i] = min(max(max(v, 0.3) + 0.35 * fall, select(0.0, 1.5, fall > 0.45)), max(cap, v));
       if (r1 < 0.35 * fall) { spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(0.0, 0.0, 1.2 + r2), 1.4 + r1, K_SPARK, 0.0, h, 0u, 0u); }
     } else if (r1 < 0.3 * fall) {
       spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>((r2 - 0.5) * 0.6, (r1 - 0.5) * 0.6, 0.6), 1.6 + r1, K_SPARK, 0.0, h, 0u, 1u);
@@ -327,13 +341,15 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   let liftRoll = f32(hash3(id.x, G.tick, seed ^ 0x11f7u)) / 4294967296.0;
   if (kind == K_DUST) {
     drag = 1.6; grav = 1.1 + rain * 6.0; // drifts down; rain knocks it out of the air
+    // grime is light, flaky stuff: it sails further on a good gust
+    if (state == DUST_GRIME) { grav = 0.55 + rain * 6.0; }
     if (resting) {
       if (ws > 4.5 && liftRoll < (ws - 4.5) * 0.004 && water[ci] < 0.02) {
         resting = false;
         vel = vec3<f32>(w * 0.5, 1.2 + sr * 1.5);
         // polluted dust carries its pollution with it (off the map, with luck)
         let cs = contam[ci].x;
-        if (cs > 0.03) {
+        if (cs > 0.03 && state != DUST_GRIME) {
           let take = min(cs * 0.04, 0.015);
           atomicSub(&contamDelta[ci], i32(take * FIX));
           P.v.w += take;
@@ -534,7 +550,19 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     vel.z = abs(vel.z);
   }
   if (kind != K_CLOUD && kind != K_HAZE && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
-    if (kind == K_DUST) {
+    if (kind == K_DUST && state == DUST_GRIME) {
+      if (water[ci] > 0.02) {
+        // into the water: washed off and carried away by the stream
+        depositAt(pos, P.v.w);
+        atomicAdd(&counters[3], 1u);
+        spawn(vec3<f32>(pos.xy, ground + 0.2), vec3<f32>(0.0, 0.0, 3.0), 0.6, K_SPLASH, 0.0, seed ^ 0x5au);
+        parts[id.x].p.w = 0.0;
+        return;
+      }
+      // grime keeps its pollution and lies where it lands
+      pos.z = ground;
+      resting = true;
+    } else if (kind == K_DUST) {
       // lands: drops its pollution, then lies on the ground a while
       depositAt(pos, P.v.w);
       P.v.w = 0.0;

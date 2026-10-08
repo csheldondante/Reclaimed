@@ -1,17 +1,20 @@
 // Explicit bind-group-layout helpers. We use explicit layouts (not 'auto') so a
 // shader can include shared WGSL snippets that declare bindings it does not use.
 
-export type BindKind = 'uniform' | 'read' | 'rw';
+/** 'tex' = sampled rg32float (textureLoad), 'stex' = write-only rg32float storage texture */
+export type BindKind = 'uniform' | 'read' | 'rw' | 'tex' | 'stex';
 export type BindSpec = Record<number, BindKind>;
 
 function layoutEntries(spec: BindSpec, visibility: GPUShaderStageFlags): GPUBindGroupLayoutEntry[] {
-  return Object.entries(spec).map(([b, kind]) => ({
-    binding: Number(b),
-    visibility,
-    buffer: {
-      type: kind === 'uniform' ? 'uniform' : kind === 'read' ? 'read-only-storage' : 'storage',
-    },
-  }));
+  return Object.entries(spec).map(([b, kind]): GPUBindGroupLayoutEntry => {
+    if (kind === 'tex') return { binding: Number(b), visibility, texture: { sampleType: 'unfilterable-float' } };
+    if (kind === 'stex') return { binding: Number(b), visibility, storageTexture: { access: 'write-only', format: 'rg32float' } };
+    return {
+      binding: Number(b),
+      visibility,
+      buffer: { type: kind === 'uniform' ? 'uniform' : kind === 'read' ? 'read-only-storage' : 'storage' },
+    };
+  });
 }
 
 export function makeLayout(device: GPUDevice, label: string, spec: BindSpec, visibility: GPUShaderStageFlags) {
@@ -22,12 +25,15 @@ export function makeBindGroup(
   device: GPUDevice,
   label: string,
   layout: GPUBindGroupLayout,
-  buffers: Record<number, GPUBuffer>,
+  resources: Record<number, GPUBuffer | GPUTextureView>,
 ): GPUBindGroup {
   return device.createBindGroup({
     label,
     layout,
-    entries: Object.entries(buffers).map(([b, buffer]) => ({ binding: Number(b), resource: { buffer } })),
+    entries: Object.entries(resources).map(([b, r]) => ({
+      binding: Number(b),
+      resource: r instanceof GPUTextureView ? r : { buffer: r },
+    })),
   });
 }
 

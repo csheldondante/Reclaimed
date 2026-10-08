@@ -767,3 +767,40 @@ off, and a closer opening zoom in portrait (min(w·1.9, h·1.6)/300 — at
 412×900 the valley went from a small diamond to filling the width). Quality
 stays explicit (`?q=low` on phones; no auto-detection, design doc §10).
 Hosting (WebGPU needs https off localhost) is for the morning.
+
+## 2026-10-08 — round 7: wind field, the cleaning game, immediate plant feedback
+
+User: wind too weak; how does the wind work and how long do strokes last?
+Polluted ground should look grimy and blow away like a cleaning game. Plants
+too slow / not obvious; a tap should grow something at once. Taps must never
+cost Nature. Pacing is not the focus — fun mechanics are.
+
+- **Wind field.** Before: strokes were three Gaussian stamps (live gust + two
+  trail puffs, radius ~11, ~1–2.5 s) added analytically in `windAt`. Now the
+  player paints into a persistent texture field (see ARCHITECTURE): every
+  frame the segment the cursor moved along is stamped (radius 7, strength
+  0.22 × cursor speed, cap 24 cells/s), and the field carries itself along,
+  spreads and fades over ~3 s. Measured with plant lean along a 1 s stroke:
+  the whole path stays windy 3–4 s after release, the gust rolls on
+  downwind, gone by ~5 s. Plant lean cap raised (2.6 × 0.3) so strong wind
+  bends harder. Haze from player wind cut to a wisp (it hid the action).
+  Cost: windfield 0.024 ms.
+- **Taps never need Nature.** A tap under a storm is lightning only if Nature
+  can pay; otherwise it is the ordinary touch (clink, crack, grow).
+- **Grime (the cleaning game).** Polluted ground (contam > 0.25) forms
+  clumps of grime — resting dust particles that *hold* some of the ground's
+  pollution (up to 0.06 each) — and the ground under them shows tarry blobs
+  and sickly/rusty flecks. Wind lifts grime (lighter than dust, so it
+  sails); where it lands it keeps its pollution, and in water it washes away
+  (splash, plinks, +0.04 Nature each, `particleCounters[3]`). ≈3000 grime at
+  start. Six strokes from the landfill toward the river washed 5–23 clumps
+  (the channel below the dam carries little water there; pools/reservoir
+  take it too).
+- **Immediate plant feedback.** `wilt` became vec4 and runs every tick. A
+  grow-tap on good ground raises grass at once (veg ≥ 1.5 near the tap) and
+  opens flowers (half-cell, 0.9 tall) that last ~90 s; on hostile ground a
+  sprout shoots up in ~1 s, browns by ~4 s and droops away by 7 s.
+  Woody growth ×3 faster (trees from bare ground in ~1.5–2 min instead of
+  4–5).
+
+Perf: GPU 5.5 ms with a storm in view (Xe-LPG, 1600×900).

@@ -18,8 +18,9 @@ struct Camera {
 @group(0) @binding(11) var<storage, read> surface: array<u32>;
 // vegetation lean spring per column (sway.wgsl): xy lean, zw velocity
 @group(0) @binding(12) var<storage, read> bend: array<vec4<f32>>;
-// plant health (wilt.wgsl): y = brownness of plants here (withering, scorched)
-@group(0) @binding(13) var<storage, read> wilt: array<vec2<f32>>;
+// plant health (wilt.wgsl): y = brownness of plants here (withering, scorched),
+// w = doomed-sprout timer (MAT_SPROUT colour)
+@group(0) @binding(13) var<storage, read> wilt: array<vec4<f32>>;
 
 /** Withering plants dry out to straw and brown. */
 fn wither(c: vec3<f32>, b: f32, n: f32) -> vec3<f32> {
@@ -384,10 +385,16 @@ fn fsBox(in: VOut) -> FOut {
       let fv = randv(vec3<i32>(floor(in.bmin * 4.0)) + vec3<i32>(3, 9, 1));
       var petal = vec3<f32>(0.92, 0.9, 0.82);
       if (fv > 0.75) { petal = vec3<f32>(0.95, 0.8, 0.25); } else if (fv > 0.5) { petal = vec3<f32>(0.62, 0.48, 0.82); } else if (fv > 0.3) { petal = vec3<f32>(0.85, 0.35, 0.3); }
-      let top = in.wpos.z > in.zr.y - 0.12;
+      let top = in.wpos.z > in.zr.y - max(0.12, (in.zr.y - in.zr.x) * 0.3);
       alb = toLinear(select(vec3<f32>(0.3, 0.46, 0.17), petal, top));
     }
     if (mat != MAT_WOOD) { alb = wither(alb, wilt[ci].y, n1); }
+    if (mat == MAT_SPROUT) {
+      // fresh green, then browning as the hostile ground kills it
+      let ph = 1.0 - wilt[ci].w;
+      let green = mix(vec3<f32>(0.3, 0.55, 0.18), vec3<f32>(0.5, 0.72, 0.28), smoothstep(in.zr.x, in.zr.y, in.wpos.z));
+      alb = toLinear(mix(green, vec3<f32>(0.42, 0.3, 0.14), smoothstep(0.22, 0.6, ph)));
+    }
   } else {
     let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5;
     let porosity = MATS[mat].eco.w;
@@ -397,6 +404,11 @@ fn fsBox(in: VOut) -> FOut {
       let stain = smoothstep(0.12, 1.1, c);
       let oil = mix(vec3<f32>(0.10, 0.09, 0.06), vec3<f32>(0.42, 0.40, 0.12), smoothstep(0.55, 0.95, n2));
       alb = mix(alb, toLinear(oil), stain * 0.8);
+      // grime texture: tarry blobs and sickly/rusty flecks at sub-voxel scale,
+      // thicker the worse the ground (the same stuff the wind lifts as grime)
+      let clump = randv(sub + vec3<i32>(31, 7, 59));
+      if (clump < stain * 0.32) { alb = toLinear(vec3<f32>(0.05, 0.045, 0.04)) * (0.8 + 0.4 * n1); }
+      else if (clump > 1.0 - stain * 0.1) { alb = toLinear(select(vec3<f32>(0.55, 0.5, 0.15), vec3<f32>(0.5, 0.27, 0.14), n1 > 0.5)); }
       // desaturate when dead/dry
       let lum = dot(alb, vec3<f32>(0.3, 0.55, 0.15));
       alb = mix(alb, vec3<f32>(lum), 0.25 * G.pollution);

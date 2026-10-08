@@ -77,11 +77,12 @@ export class ParticleSystem implements SimSystem {
       9: 'rw',
       10: 'read',
       11: 'uniform',
+      15: 'tex',
     } as const;
     this.emitK = makeCompute(device, 'particles-emit', parts, spec, 'emit');
     this.burstK = makeCompute(device, 'particles-burst', parts, spec, 'bursts');
     this.updateK = makeCompute(device, 'particles-update', parts, spec, 'update');
-    this.fireK = makeCompute(device, 'particles-fire', parts, { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read', 13: 'read' }, 'fireEmit');
+    this.fireK = makeCompute(device, 'particles-fire', parts, { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read', 13: 'read', 15: 'tex' }, 'fireEmit');
     this.reqBuf = world.buf('particleRequests', this.reqData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const bufs = {
       0: world.globals,
@@ -95,6 +96,7 @@ export class ParticleSystem implements SimSystem {
       9: world.veg,
       10: world.moisture,
       11: this.reqBuf,
+      15: world.windFieldView,
     };
     this.group = makeBindGroup(device, 'particles', this.emitK.layout, bufs);
     this.groupBurst = makeBindGroup(device, 'particles', this.burstK.layout, bufs);
@@ -107,6 +109,7 @@ export class ParticleSystem implements SimSystem {
       5: world.surface,
       12: world.fire,
       13: world.oil,
+      15: world.windFieldView,
     });
   }
 

@@ -18,7 +18,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let c = vec3<f32>(f32(id.x) + 0.5, f32(id.y) + 0.5, f32(sfZ(surface[i])) + 2.5);
   let w = windAt(c);
   let ws = length(w);
-  let aim = w / max(ws, 1e-3) * clamp(ws / 6.0, 0.0, 1.6) * 0.3;
+  // strong player wind bends plants hard (cap raised in round 7)
+  let aim = w / max(ws, 1e-3) * clamp(ws / 6.0, 0.0, 2.6) * 0.3;
   let b = bend[i];
   let pos = b.xy;
   let vel = b.zw;

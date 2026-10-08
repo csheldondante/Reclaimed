@@ -40,7 +40,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   var col = vec4<f32>(0.62, 0.56, 0.45, 0.55);
   var soft = 0.0;
   let fade = clamp(P.p.w / 1.5, 0.0, 1.0);
-  if (kind == 1u) { // dust: tan, darker/yellower when carrying pollution
+  if (kind == 1u && P.m.w == 1u) { // grime: dark tarry clumps with sickly flecks
+    size = 0.19 + sr * 0.09;
+    col = vec4<f32>(mix(vec3<f32>(0.11, 0.1, 0.08), vec3<f32>(0.34, 0.31, 0.12), sr2 * sr2), 0.95);
+  } else if (kind == 1u) { // dust: tan, darker/yellower when carrying pollution
     size = 0.16 + sr * 0.1;
     col = vec4<f32>(mix(vec3<f32>(0.78, 0.71, 0.58), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.7);
     // settled dust lies faintly on the ground

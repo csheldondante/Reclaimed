@@ -8,8 +8,8 @@
 // Seeds take even on hostile ground and the sprouts grow for a while, then
 // brown (wilt.y) and wither: the clue to what must be cleared (round 6).
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
-// x hostility 0..1, y brownness 0..1 (wilt.wgsl)
-@group(0) @binding(4) var<storage, read> wilt: array<vec2<f32>>;
+// x hostility 0..1, y brownness 0..1, z bloom, w doomed sprout (wilt.wgsl)
+@group(0) @binding(4) var<storage, read> wilt: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read> moisture: array<f32>;
 @group(0) @binding(6) var<storage, read> water: array<f32>;
 @group(0) @binding(7) var<storage, read> vegIn: array<f32>;
@@ -43,7 +43,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // pioneers (moss, grass) establish quickly; woody stages take much longer.
     // A fresh sprout grows even on hostile ground — until it browns.
     let health = select(tox, 1.0, v < 0.9);
-    var rate = 0.012 * suit * health * mf * mix(1.2, 0.18, smoothstep(1.5, 3.5, v));
+    var rate = 0.012 * suit * health * mf * mix(1.2, 0.55, smoothstep(1.5, 3.5, v));
     // biomes: woodland only matures on flat, well-watered ground; elsewhere
     // succession stops at meadow (grass, flowers, shrubs) — no dieback
     // + large natural patches of open meadow (wildflower fields) between woods

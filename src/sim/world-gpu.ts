@@ -64,6 +64,15 @@ export class WorldGpu {
   // render preparation
   /** vec4 per column: shadow z, moisture, fire glow, flow speed (renderfields.wgsl) */
   readonly renderFields: GPUBuffer;
+  /**
+   * Player wind field: rg32float, one texel per 2×2 columns (cells/s). Strokes
+   * are stamped in and it advects, spreads and decays (windfield.wgsl);
+   * windAt() adds it everywhere. `windField` is read, `windFieldNext` written.
+   */
+  readonly windField: GPUTexture;
+  readonly windFieldNext: GPUTexture;
+  readonly windFieldView: GPUTextureView;
+  readonly windFieldNextView: GPUTextureView;
   /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
   readonly wilt: GPUBuffer;
   /** vec4 per column: vegetation lean xy + its velocity (sway.wgsl spring) */
@@ -140,7 +149,14 @@ export class WorldGpu {
     this.fireNext = this.buf('fireNext', N * 4, S);
     this.renderFields = this.buf('renderFields', N * 16, S);
     this.bend = this.buf('bend', N * 16, S);
-    this.wilt = this.buf('wilt', N * 8, S);
+    this.wilt = this.buf('wilt', N * 16, S);
+    const wsize = { width: Math.ceil(this.w / 2), height: Math.ceil(this.h / 2) };
+    const tusage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
+    this.windField = device.createTexture({ label: 'windField', size: wsize, format: 'rg32float', usage: tusage });
+    this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rg32float', usage: tusage });
+    this.textures.push(this.windField, this.windFieldNext);
+    this.windFieldView = this.windField.createView();
+    this.windFieldNextView = this.windFieldNext.createView();
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
     this.particleCap = particleCap;
@@ -150,11 +166,14 @@ export class WorldGpu {
   }
 
   private owned: GPUBuffer[] = [];
+  private textures: GPUTexture[] = [];
 
   /** Free every GPU buffer this world (and anything allocated through buf()) owns. */
   destroy(): void {
     for (const b of this.owned) b.destroy();
+    for (const t of this.textures) t.destroy();
     this.owned = [];
+    this.textures = [];
   }
 
   buf(label: string, size: number, usage: GPUBufferUsageFlags): GPUBuffer {

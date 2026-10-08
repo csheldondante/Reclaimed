@@ -23,6 +23,7 @@ import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
 import swayWgsl from '../shaders/sway.wgsl?raw';
 import wiltWgsl from '../shaders/wilt.wgsl?raw';
+import windFieldWgsl from '../shaders/windfield.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -36,7 +37,7 @@ function kernel(
   label: string,
   src: string,
   spec: BindSpec,
-  buffers: Record<number, GPUBuffer>,
+  buffers: Record<number, GPUBuffer | GPUTextureView>,
   /** Bind the chunk table (layers.wgsl). Off for kernels that never touch layers,
    *  so they don't spend one of the 8 storage-buffer slots on it. */
   useLayers = false,
@@ -44,7 +45,7 @@ function kernel(
   const parts = useLayers ? [...WITH_ALL, src] : [commonWgsl, materialsWgsl, src];
   const base: BindSpec = useLayers ? BASE : { 0: 'uniform', 2: 'uniform' };
   const k = makeCompute(device, label, parts, { ...base, ...spec });
-  const bound: Record<number, GPUBuffer> = { 0: world.globals, 2: world.materials, ...buffers };
+  const bound: Record<number, GPUBuffer | GPUTextureView> = { 0: world.globals, 2: world.materials, ...buffers };
   if (useLayers) bound[1] = world.chunks;
   const group = makeBindGroup(device, label, k.layout, bound);
   return { k, group };
@@ -93,8 +94,8 @@ export class MaterialSystem implements SimSystem {
       world,
       'material',
       materialWgsl + flowWgsl,
-      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read' },
-      { 3: world.layers, 4: world.layersNext, 5: world.surface, 6: world.moisture, 7: world.stats, 8: world.flux, 9: world.water },
+      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 15: 'tex' },
+      { 3: world.layers, 4: world.layersNext, 5: world.surface, 6: world.moisture, 7: world.stats, 8: world.flux, 9: world.water, 15: world.windFieldView },
       true,
     );
   }
@@ -207,7 +208,8 @@ export class MoistureSystem implements SimSystem {
 /** Plant health: ground hostility + brownness (wilt.wgsl); runs just before ecology. */
 export class WiltSystem implements SimSystem {
   readonly name = 'wilt';
-  readonly period = 15;
+  // every tick: grow-taps are one-tick events
+  readonly period = 1;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
@@ -264,13 +266,29 @@ export class RenderFieldsSystem implements SimSystem {
   }
 }
 
+/** The player's persistent wind field (windfield.wgsl): advect, spread, decay, stamp strokes. */
+export class WindFieldSystem implements SimSystem {
+  readonly name = 'windfield';
+  readonly period = 1;
+  private s;
+  private groups: [number, number];
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(device, world, 'windfield', windFieldWgsl, { 15: 'tex', 16: 'stex' }, { 15: world.windFieldView, 16: world.windFieldNextView });
+    this.groups = [Math.ceil(world.windField.width / 8), Math.ceil(world.windField.height / 8)];
+  }
+  encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.groups);
+    enc.copyTextureToTexture({ texture: this.world.windFieldNext }, { texture: this.world.windField }, [this.world.windField.width, this.world.windField.height]);
+  }
+}
+
 /** Vegetation sway springs (render-only state with memory; sway.wgsl). */
 export class SwaySystem implements SimSystem {
   readonly name = 'sway';
   readonly period = 1;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'sway', swayWgsl, { 3: 'read', 4: 'rw' }, { 3: world.surface, 4: world.bend });
+    this.s = kernel(device, world, 'sway', swayWgsl, { 3: 'read', 4: 'rw', 15: 'tex' }, { 3: world.surface, 4: world.bend, 15: world.windFieldView });
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
@@ -288,8 +306,8 @@ export class FireSystem implements SimSystem {
       world,
       'fire',
       fireWgsl,
-      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'read' },
-      { 3: world.fire, 4: world.fireNext, 5: world.oil, 6: world.veg, 7: world.moisture, 8: world.water, 9: world.surface, 10: world.oilStored },
+      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'read', 15: 'tex' },
+      { 3: world.fire, 4: world.fireNext, 5: world.oil, 6: world.veg, 7: world.moisture, 8: world.water, 9: world.surface, 10: world.oilStored, 15: world.windFieldView },
     );
   }
   encode(enc: GPUCommandEncoder): void {

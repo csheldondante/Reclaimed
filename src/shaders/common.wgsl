@@ -177,6 +177,23 @@ fn gustField(p: vec2<f32>) -> f32 {
   return fbm2(q + vec2<f32>(G.time * 0.02, 0.0));
 }
 
+// Player wind field (windfield.wgsl): rg32float, one texel per 2×2 columns.
+// Only pipelines whose entry points sample the wind bind it (binding 15).
+@group(0) @binding(15) var windTex: texture_2d<f32>;
+
+/** Bilinear sample of the player wind field at a world position (cells/s). */
+fn windField(p: vec2<f32>) -> vec2<f32> {
+  let dims = vec2<i32>(textureDimensions(windTex));
+  let t = p * 0.5 - 0.5;
+  let i0 = vec2<i32>(floor(t));
+  let f = fract(t);
+  let a = textureLoad(windTex, clamp(i0, vec2<i32>(0), dims - 1), 0).xy;
+  let b = textureLoad(windTex, clamp(i0 + vec2<i32>(1, 0), vec2<i32>(0), dims - 1), 0).xy;
+  let c = textureLoad(windTex, clamp(i0 + vec2<i32>(0, 1), vec2<i32>(0), dims - 1), 0).xy;
+  let d = textureLoad(windTex, clamp(i0 + vec2<i32>(1, 1), vec2<i32>(0), dims - 1), 0).xy;
+  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
 fn windAt(p: vec3<f32>) -> vec2<f32> {
   let prevail = vec2<f32>(G.windX, G.windY);
   let gf = gustField(p.xy);
@@ -200,12 +217,14 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
       w += (t * 2.5 + out * 1.2) * s.w * exp(-r * r * 1.5) * r * 2.0;
     }
   }
-  for (var i = 0u; i < 4u; i++) {
-    let g = G.gusts[i];
-    if (g.w <= 0.0) { continue; }
-    let d = length(p.xy - g.xy) / g.z;
-    w += G.gustDir[i].xy * g.w * exp(-d * d * 2.0);
+  // the cursor/tap breeze (gusts[0]) is a light analytic puff; the player's
+  // drag strokes live in the persistent wind field
+  let g0 = G.gusts[0];
+  if (g0.w > 0.0) {
+    let d = length(p.xy - g0.xy) / g0.z;
+    w += G.gustDir[0].xy * g0.w * exp(-d * d * 2.0);
   }
+  w += windField(p.xy);
   // small eddies, carried with the wind and slowly evolving
   let q = windDrift(p.xy) * 0.07;
   let tn = G.time * 0.08;

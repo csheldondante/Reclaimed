@@ -51,9 +51,19 @@ Vegetation sway has state: `bend` (vec4 per column: lean xy, velocity zw) is
 a damped spring updated by the sway system (stiff while the wind pushes,
 soft and lightly damped on the way back); the draw shaders read it.
 
+Player wind field: `windField` (rg32float texture, one texel per 2×2
+columns) is the wind the player paints. The windfield system (every tick)
+advects it along itself, spreads it, decays it (e-folding 3 s) and stamps the
+current stroke segments (gusts[1..3] with gustDir.z = segment length).
+`windAt()` adds it everywhere; pipelines that sample wind bind it at 15 as a
+texture (it doesn't use one of the 8 storage-buffer slots). gusts[0] (cursor/
+tap breeze) stays analytic.
+
 Plant health: the wilt system (period 15, just before ecology) writes
-`wilt` (vec2: ground hostility to plants from poison/oil/trash/litter/
-drowning/drought; brownness of what grows there). Ecology reads it instead of
+`wilt` (vec4: ground hostility to plants from poison/oil/trash/litter/
+drowning/drought; brownness of what grows there; tap bloom; doomed-sprout
+timer — the last two are drawn by vegprep). It runs every tick (grow-taps
+are one-tick events). Ecology reads it instead of
 contamination and oil (young sprouts grow anywhere, browned plants wither);
 the renderer tints plants with it. Seeds (particle 16) come from trees in
 pulses, from wind, and from birds; they sprout on any bare dry-land cell.

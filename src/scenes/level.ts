@@ -46,6 +46,7 @@ export class LevelScene implements Scene {
   private audioRefresh = 0;
   private nextFlock = 12;
   private smokeSeen = -1;
+  private washedSeen = -1;
   private smokeRefresh = 0;
 
   private constructor(
@@ -261,9 +262,16 @@ export class LevelScene implements Scene {
     if (this.smokeRefresh <= 0) {
       this.smokeRefresh = 0.5;
       void core.readBuffer('particleCounters').then((f) => {
-        const n = new Uint32Array(f.buffer)[2];
+        const u = new Uint32Array(f.buffer);
+        const n = u[2];
         if (this.smokeSeen >= 0 && n > this.smokeSeen) this.nature.smokeDispersed(n - this.smokeSeen);
         this.smokeSeen = n;
+        // grime blown into water washes away: plinks and a little Nature
+        if (this.washedSeen >= 0 && u[3] > this.washedSeen) {
+          this.nature.grimeWashed(u[3] - this.washedSeen);
+          this.audio.wash(u[3] - this.washedSeen);
+        }
+        this.washedSeen = u[3];
       }, ignoreTeardown);
     }
 

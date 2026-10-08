@@ -14,6 +14,7 @@ import {
   FireSystem,
   StatsSystem,
   SwaySystem,
+  WindFieldSystem,
   WiltSystem,
   StructureSystem,
   SurfaceSystem,
@@ -47,6 +48,7 @@ export class Simulation {
     this.particles = new ParticleSystem(device, world, profiler);
     // Order matters only through the contract buffers each system reads.
     this.systems = [
+      new WindFieldSystem(device, world, profiler),
       new StructureSystem(device, world, profiler),
       new MaterialSystem(device, world, profiler),
       this.surface,

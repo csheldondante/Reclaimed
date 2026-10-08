@@ -17,6 +17,8 @@ export const HARM = {
   drowning: 0.02,
   /** per oil-smoke puff the wind disperses */
   smokeReward: 0.012,
+  /** per clump of grime blown into water */
+  washReward: 0.04,
 } as const;
 
 export class Nature {
@@ -38,6 +40,11 @@ export class Nature {
     }
     this.rate = base + living * 25 - harm;
     this.value = Math.max(0, Math.min(this.max, this.value + this.rate * dt));
+  }
+
+  /** Grime blown into water (count of clumps) gives a little Nature back. */
+  grimeWashed(clumps: number): void {
+    this.value = Math.min(this.max, this.value + clumps * HARM.washReward);
   }
 
   /** Oil smoke dispersed by wind (count of puffs) gives Nature back. */

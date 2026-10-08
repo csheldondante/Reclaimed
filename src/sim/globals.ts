@@ -55,6 +55,8 @@ export interface Gust {
   strength: number;
   dx: number;
   dy: number;
+  /** stroke segment length behind (x, y) along -(dx, dy) — player drags (wind field) */
+  len?: number;
 }
 
 export interface GlobalsState {
@@ -142,7 +144,7 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     const g = s.gusts[i];
     if (g) {
       f.set([g.x, g.y, g.radius, g.strength], 72 + i * 4);
-      f.set([g.dx, g.dy, 0, 0], 88 + i * 4);
+      f.set([g.dx, g.dy, g.len ?? 0, 0], 88 + i * 4);
     } else {
       f.fill(0, 72 + i * 4, 76 + i * 4);
       f.fill(0, 88 + i * 4, 92 + i * 4);
