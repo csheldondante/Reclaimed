@@ -89,7 +89,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var bad = s.w;
   if (bad > 0.0) {
     let tier = floor(bad);
-    let ph = fract(bad) + 1.0 / (doomTime(tier) * 60.0);
+    var ph = fract(bad) + 1.0 / (doomTime(tier) * 60.0);
+    // once it has browned, a gust breaks it up early (round 12; flakes: particles)
+    if (ph > 0.25) {
+      let gw = length(windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, f32(sfZ(surface[i])) + 0.5)));
+      ph += max(gw - 7.0, 0.0) * 0.0015;
+    }
     bad = select(tier + ph, 0.0, ph >= 0.999);
     b = max(b, smoothstep(0.25, 0.6, ph)); // it browns as it dies
   }

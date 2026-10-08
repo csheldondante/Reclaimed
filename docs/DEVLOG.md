@@ -1090,3 +1090,12 @@ column centres (`sheetDepth`) — and discard below a threshold (drift: 0.07
 isoline of a smooth field — rounded blobs and shorelines rather than
 squares, at no measurable cost. Drift boxes no longer draw side faces (the
 sheet tapers into the ground). Water alpha uses the smooth depth too.
+
+## 2026-10-08 — round 12 batch 3 (D2 withered plants blow away)
+
+Gusts (> 7 cells/s) over withered growth — browned vegetation (wilt.y > 0.5)
+or a doomed tap-planting past its browning point — break it up: dry brown
+flakes (leaf particles flagged by seed) blow off, browned vegetation loses
+0.2 stage per break, and a doomed planting's remaining life runs out faster
+(wilt.wgsl). Test: four gusts over withering plantings on the landfill — all
+gone, 51 flakes in the air.

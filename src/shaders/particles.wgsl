@@ -302,6 +302,27 @@ fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   }
+  // withered plants (browned, wilt.y) break up in a gust: brown flakes blow
+  // off and the dead growth goes faster (round 12)
+  let v = veg[i];
+  let wl = wiltP[i];
+  let deadGrowth = v > 0.05 && wl.y > 0.5;
+  let deadPlanting = wl.w >= 1.0 && fract(wl.w) > 0.25;
+  if (deadGrowth || deadPlanting) {
+    let g = f32(sfZ(s));
+    let w = windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, g + 0.5));
+    let ws = length(w);
+    let h = hash3(id.x, id.y, G.tick ^ 0xdeadu);
+    if (ws > 7.0 && f32(h & 0xffffu) / 65536.0 < (ws - 7.0) * 0.02) {
+      if (deadGrowth) { veg[i] = max(0.0, v - 0.2); }
+      for (var k = 0u; k < 3u; k++) {
+        let hk = hash3(id.x, id.y, G.tick + k * 29u);
+        let r = vec2<f32>(f32(hk & 255u), f32((hk >> 8u) & 255u)) / 255.0 - 0.5;
+        // (a leaf with the top bits of its seed set draws dry brown)
+        spawn(vec3<f32>(vec2<f32>(id.xy) + 0.5 + r, g + 0.4), vec3<f32>(w * 0.5, 0.8 + f32((hk >> 16u) & 255u) / 255.0), 8.0, K_LEAF, 0.0, 0xffff0000u | (hk & 0xffffu));
+      }
+    }
+  }
   petals[i] = pt;
 }
 
