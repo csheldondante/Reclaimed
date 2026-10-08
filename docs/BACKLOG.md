@@ -40,9 +40,9 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 |---|---|---|---|
 | C1 | Dust drifts (fractional sediment layer) that bury things — uncover them with wind (objects, seed beds); supersedes A6 | L | next |
 | C2 | Smooth water surfaces (keep the rain rings / storm glints) | M | next |
-| C3 | Grow sound: a wet sprouting "opening", then the current shimmer | S | next |
-| C4 | Audio debug: see and mute each sound (find the high whine under storms / on Nature gains) | S | next |
-| C5 | A little light where growth and wind happen | S | next |
+| C3 | Grow sound: a wet sprouting "opening", then the current shimmer | S | done `031b78c` |
+| C4 | Audio debug: see and mute each sound (find the high whine under storms / on Nature gains) | S | done `031b78c` |
+| C5 | A little light where growth and wind happen | S | done `031b78c` |
 | C6 | Multiple levels; title screen shows clickable objects for each level | M–L | next |
 | C7 | Level: highway covered in ruined cars | M | next |
 | C8 | Level: port with tankers washed ashore and a seawall; ocean waves and sea swell | L | next |
