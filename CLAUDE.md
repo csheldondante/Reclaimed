@@ -7,7 +7,7 @@ clean a ruined industrial valley so life can return. Design authority:
 
 ## Start here
 
-`docs/HANDOFF.md` (current state, known issues, next steps) →
+`docs/BACKLOG.md` (every open suggestion) → `docs/HANDOFF.md` (current state, known issues, next steps) →
 `docs/DECISIONS.md` (the user's answers — check before changing controls,
 economy or look) → `docs/ARCHITECTURE.md` (contracts) → `docs/DEVLOG.md` (why
 each change was made, with measurements). `docs/STATUS.md` is the user-facing
@@ -15,6 +15,9 @@ stock-take.
 
 ## Working rules
 
+- **Nothing gets lost.** `docs/BACKLOG.md` is the running list of every open
+  suggestion and deferred item. Read it first; add new feedback to it before
+  working; mark items done (with the commit) in the same commit as the change.
 - **Notes travel with code.** Every commit that changes behaviour or
   architecture appends an entry to `docs/DEVLOG.md` explaining *why* (the
   benchmark, visual, or design reason), in the same commit. Keep
