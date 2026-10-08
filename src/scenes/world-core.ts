@@ -97,6 +97,7 @@ export class WorldCore {
       dusts: [],
       cyclone: [0, 0, 1, 0],
       cycloneB: [0, 0, 0, 0],
+      spine: [],
     };
     this.light = this.dayNight.light(1);
   }
@@ -133,6 +134,7 @@ export class WorldCore {
     const cy = this.weather.cycloneUniform();
     g.cyclone = cy.a;
     g.cycloneB = cy.b;
+    g.spine = this.weather.spineUniform();
     this.dayNight.update(simDt);
     this.light = this.dayNight.light(this.pollution);
     g.sun = this.light.dir;

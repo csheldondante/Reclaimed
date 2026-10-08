@@ -44,7 +44,23 @@ struct Globals {
   cyclone: vec4<f32>,
   // cyclone: velocity x, y, dust-dropping rate as it dies, unused
   cycloneB: vec4<f32>,
+  // the funnel's spine (Weather.spine): x, y, z, funnel radius at each node
+  spine: array<vec4<f32>, 6>,
 };
+
+/** Point on the funnel's spine at t in 0..1 (Catmull-Rom through the nodes); w = radius. */
+fn spineAt(t: f32) -> vec4<f32> {
+  let u = clamp(t, 0.0, 1.0) * 5.0;
+  let i = min(u32(floor(u)), 4u);
+  let f = u - f32(i);
+  let p0 = G.spine[max(i, 1u) - 1u];
+  let p1 = G.spine[i];
+  let p2 = G.spine[i + 1u];
+  let p3 = G.spine[min(i + 2u, 5u)];
+  let f2 = f * f;
+  let f3 = f2 * f;
+  return 0.5 * ((2.0 * p1) + (-p0 + p2) * f + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * f2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * f3);
+}
 
 /** 0..1 how deep in the cyclone p is (1 inside its eye wall, 0 beyond ~2 radii). */
 fn cycloneAt(p: vec2<f32>) -> f32 {

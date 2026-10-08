@@ -1151,3 +1151,28 @@ User: "cyclones should make a visible narrow cone that meanders with wind".
   r·e^((1−r²)/2) (≈11 at 2 r, ~1.5 at 3 r); updraft only in the core, a low
   debris skirt around it; loose dust in the vortex is drawn into the funnel
   (fades); drift streams don't emit inside its reach.
+
+## 2026-10-08 — cyclone: spline funnel + caught debris
+
+User: "a funnel controlled with a spline, and particles swirl about it and
+gather in as a separate system that interacts with wind"; "particles get
+caught in it and constrained into the cone with some chance of falling out".
+- **Spine** (Weather, CPU): 6 nodes, 4.4 cells apart. Node 0 is the cyclone;
+  each node above is pushed by the wind field at its height (relative to
+  the cyclone's travel; more strongly higher up) and springs back over the
+  node below (stiffer low down), damped, sideways offset capped. So the
+  column bends, lags and meanders with the wind — painted strokes included.
+  Uploaded as `Globals.spine` (x, y, z, funnel radius; 704 bytes);
+  `spineAt(t)` = Catmull-Rom through it.
+- **Funnel puffs** (kind 20): born wide at the base (2.5–6 funnel radii),
+  creep in along the ground, then climb the spine (~5–7 s) while spiralling
+  in to the funnel radius (narrow at the base, flaring up); outer puffs are
+  smeared by the local crosswind. First radii (0.6 + 0.85·i) spread them
+  too thin to read; 0.35 + 0.5·i and darker puffs make a clear cone.
+- **Caught debris:** loose dust, grime, litter, leaves, petals, ash and haze
+  within ~9 cells of the base (low down) are caught (15 %/tick × closeness),
+  flagged, and held on the cone — climbing, spiralling in, carried along —
+  with a 25 %/s chance of being flung out tangentially (and always at the
+  top); when the cyclone dies, whatever it holds falls. Dust stripped from
+  drifts inside the vortex now rises as particles again (to be caught). Test:
+  ~180 caught at once (154 dust, 21 haze, 4 litter).

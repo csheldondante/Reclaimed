@@ -58,7 +58,18 @@ export interface Cyclone {
   age: number;
   life: number;
   strength: number;
+  /**
+   * The funnel's spine (round 12): SPINE_N nodes from the ground up. Node 0 is
+   * the cyclone; each node above is pushed by the wind field at its height
+   * (more, higher up) and springs back over the node below, so the column
+   * bends, lags and meanders with the wind — and with the player's strokes.
+   */
+  spine: { x: number; y: number; z: number; vx: number; vy: number }[];
 }
+
+export const SPINE_N = 6;
+/** height between spine nodes (cells) */
+const SPINE_SEG = 4.4;
 
 /** cap on the drift a player can add to a storm (cells/s) */
 const MAX_PUSH = 7;
@@ -175,7 +186,9 @@ export class Weather {
 
   spawnCyclone(x: number, y: number, spin: number): Cyclone | null {
     if (this.cyclone) return null;
-    this.cyclone = { x, y, vx: 0, vy: 0, radius: 6, spin: Math.sign(spin) || 1, age: 0, life: 20, strength: 0 };
+    const g = this.heightAt(x, y);
+    const spine = Array.from({ length: SPINE_N }, (_, i) => ({ x, y, z: g + i * SPINE_SEG, vx: 0, vy: 0 }));
+    this.cyclone = { x, y, vx: 0, vy: 0, radius: 6, spin: Math.sign(spin) || 1, age: 0, life: 20, strength: 0, spine };
     return this.cyclone;
   }
 
@@ -184,6 +197,14 @@ export class Weather {
     if (!c) return { a: [0, 0, 1, 0], b: [0, 0, 0, 0] };
     const dropping = c.age > c.life - 3 ? 1 : 0;
     return { a: [c.x, c.y, c.radius, c.strength * c.spin], b: [c.vx, c.vy, dropping, 0] };
+  }
+
+  /** Spine nodes for the GPU: x, y, z, funnel radius at that node. */
+  spineUniform(): [number, number, number, number][] {
+    const c = this.cyclone;
+    if (!c) return Array.from({ length: SPINE_N }, () => [0, 0, 0, 0] as [number, number, number, number]);
+    // narrow at the ground, flaring toward the top; it thins as it dies
+    return c.spine.map((n, i) => [n.x, n.y, n.z, (0.35 + 0.5 * i) * (0.4 + 0.6 * c.strength)] as [number, number, number, number]);
   }
 
   dustUniforms(): DustUniform[] {
@@ -334,6 +355,33 @@ export class Weather {
       cy.y += cy.vy * dt;
       cy.strength = Math.min(1, cy.age / 1.5) * Math.min(1, Math.max(0, (cy.life - cy.age) / 3));
       cy.radius = 6 + 1.5 * Math.sin(this.t * 0.7);
+      // the spine: wind at each height pushes its node; a spring holds it over
+      // the node below (stiffer low down), damped
+      const sp = cy.spine;
+      sp[0].x = cy.x;
+      sp[0].y = cy.y;
+      sp[0].z = this.heightAt(cy.x, cy.y);
+      for (let i = 1; i < sp.length; i++) {
+        const n = sp[i];
+        const below = sp[i - 1];
+        const [wx, wy] = this.fieldOver(n.x, n.y, 3);
+        const lift = 0.35 + 0.22 * i; // wind bites harder higher up
+        const k = 2.6 - 0.3 * i;      // and the column is looser there
+        n.vx += ((wx - cy.vx) * lift + (below.x - n.x) * k - n.vx * 1.6) * dt;
+        n.vy += ((wy - cy.vy) * lift + (below.y - n.y) * k - n.vy * 1.6) * dt;
+        n.x += (n.vx + cy.vx) * dt;
+        n.y += (n.vy + cy.vy) * dt;
+        // keep each segment from stretching sideways past ~60°
+        const ox = n.x - below.x;
+        const oy = n.y - below.y;
+        const o = Math.hypot(ox, oy);
+        const lim = SPINE_SEG * 1.7;
+        if (o > lim) {
+          n.x = below.x + (ox / o) * lim;
+          n.y = below.y + (oy / o) * lim;
+        }
+        n.z = below.z + SPINE_SEG;
+      }
       const off = cy.x < -10 || cy.y < -10 || cy.x > this.w + 10 || cy.y > this.h + 10;
       if (cy.age >= cy.life || off) this.cyclone = undefined;
     }
