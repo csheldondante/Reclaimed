@@ -32,6 +32,20 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 12 (2026-10-08)
+
+Order: D4, D5, D6 → D7 → D2 → D3 → D1 → then back to C6, C7, C9, C8.
+
+| id | item | size | status |
+|---|---|---|---|
+| D1 | Title screen plants at diorama scale: flowers with petals and leaves, grass blades, moss, roots of the tree growing out of the skull | M | next |
+| D2 | Wind blows decaying (browned) plants away as dust/flakes | S | next |
+| D3 | Cyclones from a tight circular drag: carry dust, cross the map destructively (free, cooldown; ruins/junk, spare grown plants) — supersedes C10 | M–L | next |
+| D4 | The squeaks under rain/storms (raindrop ticks / birdsong in rain) — remove | S | next |
+| D5 | Grow sound: something unfurling, not a charging sound | S | next |
+| D6 | Drag wind 2–3× louder relative to other sounds | S | next |
+| D7 | Rounder edges on drifts / water / smoothed surfaces (cheap SDF-style edges) | S–M | next |
+
 ## Round 11 (2026-10-08)
 
 Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 → C9 → C8.
@@ -46,7 +60,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | C6 | Multiple levels; title screen shows clickable objects for each level | M–L | next |
 | C7 | Level: highway covered in ruined cars | M | next |
 | C8 | Level: port with tankers washed ashore and a seawall; ocean waves and sea swell | L | next |
-| C10 | Swirling the mouse while dragging paints a vortex; a sustained swirl summons a cyclone (with B6 tornado) | M | open |
+| C10 | Swirling the mouse while dragging paints a vortex; a sustained swirl summons a cyclone (with B6 tornado) | M | → D3 |
 | C9 | Level: ruined city with a blast crater and hospital tents (an outbreak) | M–L | next |
 
 ## Carried over (deferred earlier — still wanted)

@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-08 — round 12 (session 2) — items D1–D7 in BACKLOG.md
+
+- Title screen plants detailed for its scale (petals, leaves, grass, moss,
+  roots of the tree out of the skull). Wind blows decaying plants away as
+  dust. Cyclones from spinning the wind in a tight circle: they pick up and
+  hold dust and cross the map destructively — **free with a cooldown**,
+  **damage ruins and junk but spare grown plants**. No squeaks with rain.
+  Grow sound like something unfurling. Drag wind 2–3× louder. Rounder edges
+  on smoothed surfaces.
+
 ## 2026-10-08 — round 11 (session 2) — items C1–C10 in BACKLOG.md
 
 - Dust drifts that bury things you uncover with wind. Smooth water (keep the
