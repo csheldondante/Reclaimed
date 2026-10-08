@@ -25,6 +25,9 @@ struct Particle {
 @group(0) @binding(10) var<storage, read> moisture: array<f32>;
 // CPU bursts: [0].x = count; then pairs (x, y, z, n) (kind, speed, payload, spread)
 @group(0) @binding(11) var<uniform> requests: array<vec4<f32>, 129>;
+// only the petalEmit entry uses these
+@group(0) @binding(14) var<storage, read> wiltP: array<vec4<f32>>;
+@group(0) @binding(16) var<storage, read_write> petals: array<f32>;
 // only the fireEmit entry uses these
 @group(0) @binding(12) var<storage, read> fire: array<f32>;
 @group(0) @binding(13) var<storage, read> oilDepth: array<f32>;
@@ -51,6 +54,8 @@ const K_SEED: u32 = 16u;
 // grow-tap response: state 0 = green sparkle (it took), 1 = brown fleck (the
 // ground is hostile here)
 const K_SPARK: u32 = 17u;
+// petals torn off flowers by the wind (round 10); seed = colour
+const K_PETAL: u32 = 18u;
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
 // left to settle, it falls as soot (DECISIONS round 5)
@@ -253,6 +258,36 @@ fn startled(pos: vec3<f32>) -> vec2<f32> {
   return vec2<f32>(0.0);
 }
 
+// ---- petals: wind over flowering plants sheds their flowers (round 10) ----
+// A column has flowers if its plan says so or the player planted them. A gust
+// (local wind over 9 cells/s) strips them: petals blow away as particles and
+// the plants stand as bare stems (vegprep) until they regrow over ~45 s.
+@compute @workgroup_size(8, 8)
+fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let i = colIdx(id.x, id.y);
+  var pt = petals[i];
+  pt = min(1.0, pt + 1.0 / (45.0 * 60.0));
+  let s = surface[i];
+  let pl = vegPlan(id.x, id.y, veg[i], sfMat(s));
+  let flowery = pl.flower || floor(wiltP[i].z) >= 2.0;
+  if (flowery && pt >= 1.0) {
+    let g = f32(sfZ(s));
+    let w = windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, g + 0.5));
+    let ws = length(w);
+    let h = hash3(id.x, id.y, G.tick ^ 0x9e7au);
+    if (ws > 9.0 && f32(h & 0xffffu) / 65536.0 < (ws - 9.0) * 0.01) {
+      pt = 0.0;
+      for (var k = 0u; k < 4u; k++) {
+        let hk = hash3(id.x, id.y, G.tick + k * 17u);
+        let r = vec2<f32>(f32(hk & 255u), f32((hk >> 8u) & 255u)) / 255.0 - 0.5;
+        spawn(vec3<f32>(vec2<f32>(id.xy) + 0.5 + r, g + 0.6), vec3<f32>(w * 0.5, 1.0 + f32((hk >> 16u) & 255u) / 255.0), 6.0 + f32(k), K_PETAL, 0.0, hash3(id.x, id.y, 77u));
+      }
+    }
+  }
+  petals[i] = pt;
+}
+
 // ---- flames, smoke and embers from burning columns ----
 @compute @workgroup_size(8, 8)
 fn fireEmit(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -396,6 +431,10 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     drag = 2.0; grav = 0.35 / (1.0 + ws * 0.35);
     vel.x += sin(G.time * 3.0 + sr * 40.0) * 0.8 * DT;
     vel.y += cos(G.time * 2.6 + sr * 31.0) * 0.8 * DT;
+  } else if (kind == K_PETAL) {
+    drag = 2.4; grav = 0.6;
+    vel.x += sin(G.time * 6.0 + sr * 40.0) * 2.5 * DT;
+    vel.y += cos(G.time * 5.0 + sr * 31.0) * 2.5 * DT;
   } else if (kind == K_SPARK) {
     drag = 0.5; grav = select(-0.6, 1.2, state == 1u);
   } else if (kind == K_HAZE) {
@@ -581,8 +620,21 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       pos.z = ground;
       resting = true;
     } else if (kind == K_SEED) {
-      // lands: bare ground takes the seed — whatever the ground is like
-      if (water[ci] < 0.05 && veg[ci] == 0.0 && moisture[ci] > 0.05) { veg[ci] = 0.3; }
+      // lands: the seed takes (whatever the ground is like — on bad ground it
+      // will wither) and its roots work the soil a little: a pinch of poison
+      // around it is broken down (round 10: seeds that clean, so wind over
+      // trees and flowers, and birds, matter)
+      if (water[ci] < 0.05 && moisture[ci] > 0.05) {
+        veg[ci] = max(veg[ci], select(veg[ci] + 0.15, 0.5, veg[ci] == 0.0));
+        for (var k = 0u; k < 5u; k++) {
+          let q = select(cell + DIRS[min(k, 3u)], cell, k == 4u);
+          if (!inMap(q)) { continue; }
+          let j = colIdxI(q);
+          let take = min(contam[j].x * 0.25, 0.05);
+          if (take > 0.001) { atomicSub(&contamDelta[j], i32(take * FIX)); }
+        }
+        spawnFull(vec3<f32>(pos.xy, ground + 0.2), vec3<f32>(0.0, 0.0, 1.0), 1.0, K_SPARK, 0.0, seed ^ 0x5eu, 0u, 0u);
+      }
       parts[id.x].p.w = 0.0;
       return;
     } else if (kind == K_LEAF) {

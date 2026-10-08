@@ -114,6 +114,13 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     let t = clamp(P.p.w / 1.5, 0.0, 1.0);
     col = select(vec4<f32>(mix(vec3<f32>(0.55, 0.9, 0.35), vec3<f32>(1.0, 0.95, 0.55), sr), t), vec4<f32>(0.42, 0.3, 0.14, t), P.m.w == 1u);
   }
+  else if (kind == 18u) { // petal: flower colours, fluttering
+    size = 0.1;
+    let fv = sr2;
+    var c = vec3<f32>(0.92, 0.9, 0.82);
+    if (fv > 0.75) { c = vec3<f32>(0.95, 0.8, 0.25); } else if (fv > 0.5) { c = vec3<f32>(0.62, 0.48, 0.82); } else if (fv > 0.3) { c = vec3<f32>(0.85, 0.35, 0.3); }
+    col = vec4<f32>(c * (0.75 + 0.25 * abs(sin(G.time * 8.0 + sr * 50.0))), 1.0);
+  }
   else if (kind == 14u) { // rabbit: small, sandy brown
     size = 0.17;
     col = vec4<f32>(mix(vec3<f32>(0.5, 0.38, 0.26), vec3<f32>(0.6, 0.5, 0.38), sr), 1.0);

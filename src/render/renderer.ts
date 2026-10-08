@@ -123,6 +123,7 @@ export class Renderer {
       5: 'rw',
       6: 'rw',
       7: 'read',
+      8: 'read',
     });
     this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, {
       0: world.globals,
@@ -132,6 +133,7 @@ export class Renderer {
       5: this.instOpaque,
       6: this.indirect,
       7: world.wilt,
+      8: world.petals,
     });
 
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;

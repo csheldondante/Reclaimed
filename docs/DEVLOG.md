@@ -931,3 +931,21 @@ it and reloads to the dusty start. Bones and dark matter carry no pollution
   class as the round-4 jitter). It now lives in the storm's own frame and
   evolves slowly; the outline lobes drift at 0.015 rad/s (was 0.05). Two
   shots 6 s apart: same shape, translated.
+
+## 2026-10-08 — round 10 batch 2 (A10, A11, A14)
+
+- **A10 seeds that clean.** A landing seed now raises its cell to at least
+  0.5 (or +0.15 if already growing), breaks down a quarter of the poison
+  (≤ 0.05) in its cell and the four neighbours, and gives a green sparkle.
+  Wind over trees and flowering plants, and birds, now slowly clean.
+- **A11 petals.** New `petals` buffer (1 = in bloom). A gust over 9 cells/s
+  across flowering cells (plan flowers or player-planted tier ≥ 2) strips
+  them: four petal particles in flower colours flutter away and the flowers
+  stand as bare stems (vegprep draws them as grass) until they regrow over
+  ~45 s. Test: three gust passes over freshly planted flowers shed 8 cells,
+  32 petals in the air.
+- **A14 fair-weather clouds.** Light, soft shadows (≤ 22 % sun reduction,
+  storms 90 %) advected 1.3× with the integrated prevailing wind, so the sky
+  shows the wind direction. First scale gave ~3 clouds across the map
+  (invisible in practice); now ~6–8. They are not storm cover (no
+  lightning, no rain).

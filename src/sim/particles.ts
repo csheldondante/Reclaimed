@@ -28,6 +28,7 @@ export const enum PK {
   Haze = 15,
   Seed = 16,
   Spark = 17,
+  Petal = 18,
 }
 
 export interface Burst {
@@ -51,6 +52,8 @@ export class ParticleSystem implements SimSystem {
   private burstK: ComputeKernel;
   private updateK: ComputeKernel;
   private fireK: ComputeKernel;
+  private petalK: ComputeKernel;
+  private groupPetal: GPUBindGroup;
   private groupFire: GPUBindGroup;
   private group: GPUBindGroup;
   private groupBurst: GPUBindGroup;
@@ -83,6 +86,18 @@ export class ParticleSystem implements SimSystem {
     this.burstK = makeCompute(device, 'particles-burst', parts, spec, 'bursts');
     this.updateK = makeCompute(device, 'particles-update', parts, spec, 'update');
     this.fireK = makeCompute(device, 'particles-fire', parts, { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read', 13: 'read', 15: 'tex' }, 'fireEmit');
+    this.petalK = makeCompute(device, 'particles-petals', parts, { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 9: 'rw', 14: 'read', 15: 'tex', 16: 'rw' }, 'petalEmit');
+    this.groupPetal = makeBindGroup(device, 'particles-petals', this.petalK.layout, {
+      0: world.globals,
+      2: world.materials,
+      3: world.particles,
+      4: world.particleCounters,
+      5: world.surface,
+      9: world.veg,
+      14: world.wilt,
+      15: world.windFieldView,
+      16: world.petals,
+    });
     this.reqBuf = world.buf('particleRequests', this.reqData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const bufs = {
       0: world.globals,
@@ -121,6 +136,7 @@ export class ParticleSystem implements SimSystem {
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, 'particles-emit', this.emitK, this.group, this.world.groups);
     dispatch(enc, this.prof, 'particles-fire', this.fireK, this.groupFire, this.world.groups);
+    dispatch(enc, this.prof, 'particles-petals', this.petalK, this.groupPetal, this.world.groups);
     if (this.queue.length) {
       const d = this.reqData;
       d.fill(0);

@@ -211,7 +211,8 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let ndl = max(dot(nrm, sun), 0.0);
   let sc = clampCell(vec2<i32>(floor(wpos.xy + nrm.xy * 0.5)));
   let lit = sunLit(wpos, nrm, sc);
-  let cloud = cloudShade(wpos.xy);
+  // storm shade, and the light shadow of passing fair-weather clouds
+  let cloud = max(cloudShade(wpos.xy), fairCloud(wpos.xy) * 0.22);
   // light comes from the day/night cycle (src/weather/daynight.ts)
   let sunCol = G.sunCol.rgb;
   let sky = G.sky.rgb;

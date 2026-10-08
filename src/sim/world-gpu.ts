@@ -73,6 +73,8 @@ export class WorldGpu {
   readonly windFieldNext: GPUTexture;
   readonly windFieldView: GPUTextureView;
   readonly windFieldNextView: GPUTextureView;
+  /** f32 per column: 1 = flowers in bloom, < 1 = shed by the wind and regrowing (particles.wgsl petalEmit) */
+  readonly petals: GPUBuffer;
   /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
   readonly wilt: GPUBuffer;
   /** vec4 per column: vegetation lean xy + its velocity (sway.wgsl spring) */
@@ -150,6 +152,8 @@ export class WorldGpu {
     this.renderFields = this.buf('renderFields', N * 16, S);
     this.bend = this.buf('bend', N * 16, S);
     this.wilt = this.buf('wilt', N * 16, S);
+    this.petals = this.buf('petals', N * 4, S);
+    device.queue.writeBuffer(this.petals, 0, new Float32Array(N).fill(1));
     const wsize = { width: Math.ceil(this.w / 2), height: Math.ceil(this.h / 2) };
     const tusage = GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
     this.windField = device.createTexture({ label: 'windField', size: wsize, format: 'rgba32float', usage: tusage });

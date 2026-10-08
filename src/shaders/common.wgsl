@@ -164,6 +164,18 @@ fn cloudShade(p: vec2<f32>) -> f32 {
   return c;
 }
 
+/**
+ * Fair-weather clouds (round 10): large, soft, *light* shadows drifting with
+ * the prevailing wind (advected by the integrated wind, a little faster than
+ * the ground wind), so the sky shows which way the wind blows. 0..1 cover;
+ * the renderer dims sunlight by ~15 % under them. They are not storms: no
+ * rain, no lightning.
+ */
+fn fairCloud(p: vec2<f32>) -> f32 {
+  let q = (p - G.env.xy * 1.3) * 0.022 + vec2<f32>(G.time * 0.004, 31.0);
+  return smoothstep(0.47, 0.6, fbm2(q));
+}
+
 // ---- wind field (shared contract: particles, sway, dust pickup, fire) ----
 // Analytic: prevailing wind + storm swirl/outflow + dust storms + player
 // gusts + cursor breeze + gentle turbulence.

@@ -11,6 +11,11 @@
 // the player's plantings (wilt.wgsl): z = on good ground (tier + growth),
 // w = on hostile ground (tier + phase: grows, browns, withers)
 @group(0) @binding(7) var<storage, read> wilt: array<vec4<f32>>;
+// flowers shed by the wind (< 1) stand as bare stems until they regrow
+@group(0) @binding(8) var<storage, read> petals: array<f32>;
+
+/** A flower, or a bare stem if the wind has stripped it. */
+fn flowerMat(c: vec2<u32>) -> u32 { return select(MAT_GRASS, MAT_FLOWER, petals[colIdx(c.x, c.y)] >= 1.0); }
 
 const FLAG_VEG: u32 = 2u;
 const FLAG_DETAIL: u32 = 128u;
@@ -47,7 +52,7 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
         // a shrub (sub-voxel leaf box)
         instOpaque[o] = mkInst(c.x, c.y, 1u, 1u, top, top + 1.1 * grow * (1.0 - 0.5 * wither), MAT_LEAVES, FLAG_VEG);
       } else {
-        instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + 0.9 * grow * (1.0 - 0.6 * wither), MAT_FLOWER, FLAG_VEG | FLAG_DETAIL);
+        instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + 0.9 * grow * (1.0 - 0.6 * wither), flowerMat(c), FLAG_VEG | FLAG_DETAIL);
       }
       o += 1u;
     }
@@ -133,6 +138,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   }
   if (pl.flower) {
     let hx = hash3(id.x, id.y, 77u);
-    instOpaque[o] = mkInst(qx + (hx & 3u), qy + ((hx >> 2u) & 3u), 1u, 1u, top, top + 0.45, MAT_FLOWER, FLAG_VEG | FLAG_DETAIL);
+    instOpaque[o] = mkInst(qx + (hx & 3u), qy + ((hx >> 2u) & 3u), 1u, 1u, top, top + 0.45, flowerMat(id.xy), FLAG_VEG | FLAG_DETAIL);
   }
 }
