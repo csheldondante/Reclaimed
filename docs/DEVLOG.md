@@ -905,3 +905,29 @@ then flowers try a little further off. A "touch the ground · drag to make
 wind" line, and a "reset progress" link (when there is progress) that clears
 it and reloads to the dusty start. Bones and dark matter carry no pollution
 (grime had speckled the skull). Powers' HUD dependency became optional.
+
+## 2026-10-08 — round 10 batch 1 (A1–A5, A8, A12, A13)
+
+- **A1/A2 desolate wind.** New ambient voice: noise through two narrow
+  resonances (430 / 660 Hz, Q 11–14) whose pitch drifts on slow LFOs — a
+  hollow howl — swelling in periodic gusts (rise 2–4.5 s, lull 3–9 s). Its
+  level is barrenness² × (0.05 + 0.06 × wind): title screen barrenness =
+  1 − progress; level = 0.7 × (1 − living land in view) + 0.3 × pollution.
+  Unheard by an agent.
+- **A3/A4 drag sound.** The whoosh starts with the drag (not after the first
+  stroke tier registers) and the rustle "snap" at mouse-up is gone; the
+  whoosh is lower (bandpass 110–350 Hz, was 300–1000) so it sits under the
+  howl.
+- **A5.** No birds on the title screen.
+- **A8.** Painted wind under a storm stamps up to 1.8× stronger (by storm
+  cover at the texel).
+- **A12.** Prevailing wind wanders ±10° and 88–112 % (was ±35°, 70–130 %);
+  gust patches 0.8–1.2× (was 0.55–1.45×); eddies halved. Painted strokes get
+  a little noise: ±14° and 85–115 % strength from a slow noise field.
+  Stacking re-measured: whole wind 11.2 / 16.7 / 21.0 / 24.1 after 1–4
+  passes.
+- **A13 storm shadow swirl.** The ragged edge was fbm scrolled by
+  `time × current wind` — every wind shift jumped the pattern (the same bug
+  class as the round-4 jitter). It now lives in the storm's own frame and
+  evolves slowly; the outline lobes drift at 0.015 rad/s (was 0.05). Two
+  shots 6 s apart: same shape, translated.

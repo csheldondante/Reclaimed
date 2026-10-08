@@ -351,6 +351,8 @@ export class LevelScene implements Scene {
       pollution: core.pollution,
       life: this.life,
       ...heard,
+      // barren land howls; living land in view quiets it
+      barren: Math.min(1, (1 - heard.lifeNear) * 0.7 + core.pollution * 0.3),
       night: light.night,
       fire: stats ? Math.min(1, stats.fireCells / 120) : 0,
       wind: Math.min(1, Math.hypot(weather.windX, weather.windY) / 6 + weather.storms.reduce((a, s) => a + s.intensity * 0.3, 0)),

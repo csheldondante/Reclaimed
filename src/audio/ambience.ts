@@ -32,6 +32,8 @@ export interface AudioState {
   night: number;
   /** 0..1 how much is burning nearby */
   fire: number;
+  /** 0..1 how barren the land in view is: drives the desolate howl (round 10) */
+  barren: number;
 }
 
 export class Ambience {
@@ -41,6 +43,10 @@ export class Ambience {
   private windGain?: GainNode;
   private windFilter?: BiquadFilterNode;
   private whistleGain?: GainNode;
+  private howlGain?: GainNode;
+  private howlFilters: BiquadFilterNode[] = [];
+  private howlSwell = 0.3;
+  private nextHowl = 0;
   private rainGain?: GainNode;
   private flowGain?: GainNode;
   private insectGain?: GainNode;
@@ -106,11 +112,33 @@ export class Ambience {
     this.whistleGain.gain.value = 0;
     this.loopNoise().connect(whistle).connect(this.whistleGain).connect(bed);
 
-    // the player's own drag-wind: a whoosh that follows the stroke (fx bus)
+    // desolation: a hollow howl — noise through two narrow resonances whose
+    // pitch drifts slowly — that swells in periodic gusts over barren land
+    // (DECISIONS round 10). Higher than the player's own gusts.
+    this.howlGain = ctx.createGain();
+    this.howlGain.gain.value = 0;
+    this.howlGain.connect(bed);
+    for (const [f, q, rate] of [[430, 11, 0.09], [660, 14, 0.13]] as const) {
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.frequency.value = f;
+      bp.Q.value = q;
+      const lfo = ctx.createOscillator();
+      lfo.frequency.value = rate;
+      const depth = ctx.createGain();
+      depth.gain.value = f * 0.18;
+      lfo.connect(depth).connect(bp.frequency);
+      lfo.start();
+      this.loopNoise().connect(bp).connect(this.howlGain);
+      this.howlFilters.push(bp);
+    }
+
+    // the player's own drag-wind: a deep whoosh that follows the stroke (fx
+    // bus) — lower than the desolate howl so the two are told apart
     this.dragFilter = ctx.createBiquadFilter();
     this.dragFilter.type = 'bandpass';
-    this.dragFilter.frequency.value = 400;
-    this.dragFilter.Q.value = 0.9;
+    this.dragFilter.frequency.value = 160;
+    this.dragFilter.Q.value = 0.7;
     this.dragGain = ctx.createGain();
     this.dragGain.gain.value = 0;
     this.dragPan = ctx.createStereoPanner();
@@ -205,6 +233,13 @@ export class Ambience {
     this.windGain!.gain.setTargetAtTime(0.06 + wind * 0.2 * (1 - s.life * 0.5), t, 1.2);
     this.windFilter!.frequency.setTargetAtTime(260 + wind * 380, t, 1.2);
     this.whistleGain!.gain.setTargetAtTime(wind * 0.05 * s.pollution, t, 1.5);
+    // the howl: periodic gusts that rise slowly and fall away, over barren land
+    if (t > this.nextHowl) {
+      const rising = this.howlSwell < 0.6;
+      this.howlSwell = rising ? 0.75 + Math.random() * 0.25 : 0.15 + Math.random() * 0.2;
+      this.nextHowl = t + (rising ? 2 + Math.random() * 2.5 : 3 + Math.random() * 6);
+    }
+    this.howlGain!.gain.setTargetAtTime(s.barren * s.barren * this.howlSwell * (0.05 + s.wind * 0.06), t, 1.4);
     // rain only when a storm is overhead: soft hiss + individual drops
     const rain = Math.min(1, s.rain);
     this.rainGain!.gain.setTargetAtTime(rain * 0.13, t, k);
@@ -294,7 +329,7 @@ export class Ambience {
     if (!ctx) return;
     const t = ctx.currentTime;
     this.dragGain!.gain.setTargetAtTime(strength * 0.16, t, 0.08);
-    this.dragFilter!.frequency.setTargetAtTime(300 + strength * 700, t, 0.1);
+    this.dragFilter!.frequency.setTargetAtTime(110 + strength * 240, t, 0.1);
     this.dragPan!.pan.setTargetAtTime((at * 2 - 1) * 0.8, t, 0.1);
   }
 

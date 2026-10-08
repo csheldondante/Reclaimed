@@ -206,9 +206,10 @@ export class Weather {
 
   update(dt: number): void {
     this.t += dt;
-    // prevailing wind wanders ±35° and 70–130 % strength over minutes
-    const ang = Math.atan2(this.params.baseWindY, this.params.baseWindX) + Math.sin(this.t * 0.011) * 0.45 + Math.sin(this.t * 0.027 + 1.3) * 0.17;
-    const mag = Math.hypot(this.params.baseWindX, this.params.baseWindY) * (1 + 0.3 * Math.sin(this.t * 0.019 + 0.7));
+    // a steady prevailing flow across the map (round 10): it only wanders
+    // ±10° and 88–112 % in strength over minutes
+    const ang = Math.atan2(this.params.baseWindY, this.params.baseWindX) + Math.sin(this.t * 0.011) * 0.13 + Math.sin(this.t * 0.027 + 1.3) * 0.05;
+    const mag = Math.hypot(this.params.baseWindX, this.params.baseWindY) * (1 + 0.12 * Math.sin(this.t * 0.019 + 0.7));
     this.windX = Math.cos(ang) * mag;
     this.windY = Math.sin(ang) * mag;
 
@@ -301,7 +302,7 @@ export class Weather {
     const along = (ox * fx + oy * fy) / s.shape[3];
     const across = ox * -fy + oy * fx;
     const th = Math.atan2(across, along);
-    const t = this.time * 0.05;
+    const t = this.time * 0.015;
     const lobe = 1 + 0.22 * Math.sin(2 * th + s.shape[0] + t) + 0.15 * Math.sin(3 * th + s.shape[1] - t * 1.3) + 0.08 * Math.sin(5 * th + s.shape[2] + t * 0.7);
     return Math.hypot(along, across) / (s.radius * lobe);
   }

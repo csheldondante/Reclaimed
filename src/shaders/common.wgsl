@@ -115,7 +115,8 @@ fn stormDist(p: vec2<f32>, i: u32) -> f32 {
   let along = dot(o, fwd) / c.w;
   let across = dot(o, vec2<f32>(-fwd.y, fwd.x));
   let th = atan2(across, along);
-  let t = G.time * 0.05;
+  // the outline's lobes drift slowly (CPU twin: Weather.stormDist)
+  let t = G.time * 0.015;
   let lobe = 1.0 + 0.22 * sin(2.0 * th + c.x + t) + 0.15 * sin(3.0 * th + c.y - t * 1.3) + 0.08 * sin(5.0 * th + c.z + t * 0.7);
   return length(vec2<f32>(along, across)) / (s.z * lobe);
 }
@@ -150,11 +151,13 @@ fn rainAt(p: vec2<f32>) -> f32 {
  */
 fn cloudShade(p: vec2<f32>) -> f32 {
   var c = 0.0;
-  let drift = vec2<f32>(G.time * G.windX, G.time * G.windY) * 0.02;
   for (var i = 0u; i < G.numStorms; i++) {
     let s = G.storms[i];
     let d = stormDist(p, i);
-    let n = fbm2(p * 0.035 + drift + f32(i) * 7.0);
+    // the ragged edge lives in the storm's own frame (it travels with the
+    // storm and evolves slowly); scrolling it by time × wind made the shadow
+    // jump whenever the wind shifted (round 10)
+    let n = fbm2((p - s.xy) * 0.035 + f32(i) * 7.0 + vec2<f32>(G.time * 0.01, 0.0));
     let edge = 1.08 - d + (n - 0.5) * 0.7;
     c = max(c, s.w * smoothstep(0.0, 0.05, edge));
   }
@@ -208,7 +211,8 @@ fn windField(p: vec2<f32>) -> vec2<f32> { return windSample(p).xy; }
 fn mapWind(p: vec2<f32>) -> vec2<f32> {
   let prevail = vec2<f32>(G.windX, G.windY);
   let gf = gustField(p);
-  var w = prevail * (0.55 + 0.9 * gf);
+  // a steady flow one way with gentle gust patches (round 10)
+  var w = prevail * (0.8 + 0.4 * gf);
   for (var i = 0u; i < 2u; i++) {
     let d = G.dusts[i];
     if (d.w <= 0.0) { continue; }
@@ -222,7 +226,7 @@ fn mapWind(p: vec2<f32>) -> vec2<f32> {
   let q = windDrift(p) * 0.07;
   let tn = G.time * 0.08;
   let turb = vec2<f32>(vnoise(q + vec2<f32>(tn, 0.0)), vnoise(q + vec2<f32>(0.0, tn) + 50.0)) - 0.5;
-  return w + turb * 1.6;
+  return w + turb * 0.8;
 }
 
 /** Wind felt at a point: the wind field + storm swirl + the cursor/tap breeze. */

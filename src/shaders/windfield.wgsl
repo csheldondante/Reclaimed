@@ -37,17 +37,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   v = mix(v, avg, 0.06);
   // die down
   v *= exp(-DT_W / DECAY_S);
+  // painted wind is wilder under a storm (round 10), and never quite
+  // mechanical: a little noise in its direction and strength
+  let stormBoost = 1.0 + 0.8 * stormCover(c);
+  let wob = vnoise(c * 0.15 + vec2<f32>(G.time * 0.6, 3.0)) - 0.5;
+  let ca = cos(wob * 0.5);
+  let sa = sin(wob * 0.5);
   // stamp the strokes being drawn right now
   for (var k = 1u; k < 4u; k++) {
     let g = G.gusts[k];
     if (g.w <= 0.0) { continue; }
-    let dir = G.gustDir[k].xy;
+    let d0 = G.gustDir[k].xy;
+    let dir = vec2<f32>(d0.x * ca - d0.y * sa, d0.x * sa + d0.y * ca);
     let len = G.gustDir[k].z;
-    let a = g.xy - dir * len;
-    let s = clamp(dot(c - a, dir), 0.0, len);
-    let d = length(c - (a + dir * s));
+    let a = g.xy - d0 * len;
+    let s = clamp(dot(c - a, d0), 0.0, len);
+    let d = length(c - (a + d0 * s));
     let f = smoothstep(g.z, g.z * 0.35, d);
-    v += dir * g.w * f * min(1.0, len / (1.3 * g.z));
+    v += dir * g.w * stormBoost * (0.85 + 0.3 * (wob + 0.5)) * f * min(1.0, len / (1.3 * g.z));
   }
   let m = length(v);
   if (m > MAX_W) { v *= MAX_W / m; }

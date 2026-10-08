@@ -11,7 +11,6 @@ import { Powers } from '../game/powers';
 import { loadProgress, resetProgress } from '../game/progress';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { Controls } from '../input/controls';
-import { PK } from '../sim/particles';
 import { generateMenuMap, MENU_SCALE } from '../world/menumap';
 import { WorldCore, type Host, type Scene } from './world-core';
 
@@ -32,7 +31,6 @@ export class MenuScene implements Scene {
   private el: HTMLElement;
   private progress: number;
   private abort = new AbortController();
-  private nextBirds = 3;
   private powers!: Powers;
   private controls!: Controls;
   private showT = 1.2;
@@ -171,12 +169,7 @@ export class MenuScene implements Scene {
       this.shown++;
       this.showT = 7;
     }
-    // birds visit once life has returned
-    this.nextBirds -= dt;
-    if (p >= 0.6 && this.nextBirds <= 0) {
-      this.nextBirds = 6 + Math.random() * 8;
-      core.sim.particles.burst({ kind: PK.Bird, x: 4, y: (4 + Math.random() * 40) * MENU_SCALE, z: 20 * MENU_SCALE, count: 2 + Math.floor(Math.random() * 3), speed: 4, spread: 2 });
-    }
+    // (no birds here: next to them the skull would read as a giant's — round 10)
     core.advance(now, dt, 1, (s) => MENU_SYSTEMS.has(s.name));
     core.render();
     this.audio.update({
@@ -189,6 +182,7 @@ export class MenuScene implements Scene {
       zoom: 0.8,
       night: 0,
       fire: 0,
+      barren: 1 - p,
       wind: Math.min(1, Math.hypot(core.weather.windX, core.weather.windY) / 6),
     });
   }

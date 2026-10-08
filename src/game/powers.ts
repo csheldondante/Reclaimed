@@ -315,6 +315,8 @@ export class Powers {
   gustStart(wx: number, wy: number): boolean {
     this.strokeId++;
     this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 7, strength: 4.5, dx: 1, dy: 0, len: 0, ax: wx, ay: wy, sentX: wx, sentY: wy };
+    // the whoosh starts with the drag (round 10)
+    this.windLevel = { strength: Math.max(5, this.windLevel.strength), x: wx, y: wy };
     return true;
   }
 
@@ -347,7 +349,7 @@ export class Powers {
     if (!g) return;
     this.gust = undefined;
     if (!scripted) this.onStroke?.();
-    if (g.strength > 4) this.d.audio.rustle(Math.min(1.5, g.strength / 8), this.d.camera.project(g.x, g.y, 0)[0] / this.d.camera.viewportW);
+    // (no rustle at the end: the drag sounds only as wind — round 10)
   }
 
   /** How hard the player's wind is blowing (for audio), if at all. */
