@@ -44,7 +44,7 @@ Order: D4, D5, D6 → D7 → D2 → D3 → D1 → then back to C6, C7, C9, C8.
 | D4 | The squeaks under rain/storms (raindrop ticks / birdsong in rain) — remove | S | done `b4df5f8` |
 | D5 | Grow sound: something unfurling, not a charging sound | S | done `b4df5f8` |
 | D6 | Drag wind 2–3× louder relative to other sounds | S | done `b4df5f8` |
-| D7 | Rounder edges on drifts / water / smoothed surfaces (cheap SDF-style edges) | S–M | next |
+| D7 | Rounder edges on drifts / water / smoothed surfaces (cheap SDF-style edges) | S–M | done `fc2c534` |
 
 ## Round 11 (2026-10-08)
 
