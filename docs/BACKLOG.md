@@ -30,7 +30,7 @@ user) · `deferred` (agreed for later).
 | A12 | Map wind: a steady prevailing flow one way across the map; only minor noise, also mixed into the player field | S | done `a8d51c0` |
 | A13 | Storm shadows swirl erratically — make their shape steadier | S | done `a8d51c0` |
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
-| A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | next |
+| A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | render slopes done `a015f55`; sediment layer next (with A6) |
 
 ## Carried over (deferred earlier — still wanted)
 
