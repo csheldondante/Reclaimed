@@ -136,6 +136,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // compacted waste only yields to fire (DECISIONS round 5): a burning heap
       // goes down a cell at a time and its last cell is left as loose ash,
       // which wind and water can then carry away
+      // the cyclone tears compacted waste apart into loose litter it can strip
+      if (m == MAT_TRASH_S && i + 1u == n && cycloneAt(vec2<f32>(p) + 0.5) > 0.4 && rand3(id.x, id.y, G.tick ^ 0x7c1u) < 0.01) {
+        layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
+        prevTop = z1;
+        prevSup = s;
+        continue;
+      }
       // a lightning strike blasts compacted waste straight to ash (round 10:
       // the storm is how the heap the wind can't move is cleared)
       if (m == MAT_TRASH_S && hit > 8.0) {
@@ -169,6 +176,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (length(vec2<f32>(p) + 0.5 - ev.xy) < ev.z && ez + 1u >= z0 && ez <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
     }
     if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < HEAT_RATE * heat * (1.2 - MATS[m].sim.w)) {
+      dmg = min(15u, dmg + 1u);
+    }
+    // the cyclone batters what stands in it (round 12: ruins and wrecks — not plants)
+    let cyc = cycloneAt(vec2<f32>(p) + 0.5);
+    if (cyc > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0xc1c1u) < cyc * 0.02 * (1.3 - MATS[m].sim.w)) {
       dmg = min(15u, dmg + 1u);
     }
     if (!touching) {

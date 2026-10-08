@@ -377,6 +377,32 @@ export class Ambience {
     }
   }
 
+  private cycloneGain?: GainNode;
+  private cyclonePan?: StereoPannerNode;
+  private cycloneFilter?: BiquadFilterNode;
+
+  /** The cyclone's roar: level 0..1 (strength × nearness), screen x 0..1. */
+  cyclone(level: number, at: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (!this.cycloneGain) {
+      this.cycloneFilter = ctx.createBiquadFilter();
+      this.cycloneFilter.type = 'bandpass';
+      this.cycloneFilter.frequency.value = 120;
+      this.cycloneFilter.Q.value = 0.6;
+      this.cycloneGain = ctx.createGain();
+      this.cycloneGain.gain.value = 0;
+      this.cyclonePan = ctx.createStereoPanner();
+      this.loopNoise().connect(this.cycloneFilter).connect(this.cycloneGain);
+      this.voice('cyclone roar', this.cycloneGain, this.cyclonePan);
+      this.cyclonePan.connect(this.fx!);
+    }
+    const t = ctx.currentTime;
+    this.cycloneGain.gain.setTargetAtTime(level * 0.5, t, 0.3);
+    this.cycloneFilter!.frequency.setTargetAtTime(90 + level * 160 + Math.sin(t * 3.1) * 25, t, 0.2);
+    this.cyclonePan!.pan.setTargetAtTime((at * 2 - 1) * 0.8, t, 0.2);
+  }
+
   /** Drag-wind whoosh: strength 0..1 and screen x 0..1 of the gust. */
   dragWind(strength: number, at: number): void {
     const ctx = this.ctx;

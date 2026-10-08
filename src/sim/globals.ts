@@ -1,6 +1,6 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 576;
+export const GLOBALS_BYTES = 608;
 export const MAX_GUSTS = 4;
 export const MAX_STORMS = 4;
 export const MAX_EVENTS = 4;
@@ -91,6 +91,10 @@ export interface GlobalsState {
   /** 0 easy, 1 medium, 2 hard (round 10): how easily green ground is lost */
   difficulty: number;
   dusts: DustUniform[];
+  /** the cyclone (round 12): x, y, radius, strength × spin (0 = none) */
+  cyclone: [number, number, number, number];
+  /** cyclone extras: velocity x, y, dust-dropping rate (as it dies), unused */
+  cycloneB: [number, number, number, number];
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }
@@ -158,6 +162,8 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   f.set(s.sunCol, 108);
   f.set(s.lens, 112);
   f.set([s.windOff[0], s.windOff[1], s.debrisBoost, s.difficulty], 132);
+  f.set(s.cyclone, 144);
+  f.set(s.cycloneB, 148);
   for (let i = 0; i < MAX_DUSTS; i++) {
     const d = s.dusts[i];
     f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);

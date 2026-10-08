@@ -39,7 +39,18 @@ struct Globals {
   env: vec4<f32>,
   // dust storms: x, y, radius, strength (0 = none)
   dusts: array<vec4<f32>, 2>,
+  // the cyclone (round 12): x, y, radius, strength × spin sign (0 = none)
+  cyclone: vec4<f32>,
+  // cyclone: velocity x, y, dust-dropping rate as it dies, unused
+  cycloneB: vec4<f32>,
 };
+
+/** 0..1 how deep in the cyclone p is (1 inside its eye wall, 0 beyond ~2 radii). */
+fn cycloneAt(p: vec2<f32>) -> f32 {
+  let c = G.cyclone;
+  if (c.w == 0.0) { return 0.0; }
+  return abs(c.w) * smoothstep(2.0, 0.8, length(p - c.xy) / c.z);
+}
 
 const EV_LIGHTNING: u32 = 1u;
 // a tap on masonry: small damage to the interval at height evZ(e)
@@ -270,6 +281,19 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
   if (g0.w > 0.0) {
     let d = length(p.xy - g0.xy) / g0.z;
     w += G.gustDir[0].xy * g0.w * exp(-d * d * 2.0);
+  }
+  // the cyclone: a fierce vortex (peak ~26 cells/s at its eye wall) that
+  // pulls a little inward; it carries everything it spins along with it
+  let cy = G.cyclone;
+  if (cy.w != 0.0) {
+    let o = p.xy - cy.xy;
+    let dist = max(length(o), 1e-3);
+    let r = dist / cy.z;
+    if (r < 3.5) {
+      let tang = vec2<f32>(-o.y, o.x) / dist * sign(cy.w);
+      let prof = r * exp(1.0 - r);
+      w = w * (1.0 - 0.6 * smoothstep(1.5, 0.5, r)) + (tang * 26.0 - o / dist * 4.0) * abs(cy.w) * prof + G.cycloneB.xy * smoothstep(2.0, 0.5, r);
+    }
   }
   return w;
 }

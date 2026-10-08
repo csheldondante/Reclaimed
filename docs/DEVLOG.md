@@ -1099,3 +1099,29 @@ flakes (leaf particles flagged by seed) blow off, browned vegetation loses
 0.2 stage per break, and a doomed planting's remaining life runs out faster
 (wilt.wgsl). Test: four gusts over withering plantings on the landfill — all
 gone, 51 flakes in the air.
+
+## 2026-10-08 — round 12 batch 4 (D3 cyclones)
+
+DECISIONS round 12 (free with a cooldown; ruins and junk, not grown plants).
+- **Spin-up:** Powers watches the drag's path over the last 2.5 s; ≥ 2 full
+  turns the same way around a centre 2–14 cells away spawns a cyclone there
+  (one at a time, 20 s cooldown, a distant thunder clap).
+- **Entity:** `Weather.cyclone` — radius ~6, spins up in 1.5 s, lives 20 s,
+  fades over the last 3 s; travels with the wind field's mean over its
+  body (+ a little wander). Globals `cyclone`/`cycloneB` (608 bytes).
+- **Wind:** `windAt` adds a Rankine-like vortex (peak ~26 cells/s at the
+  eye wall, slight inflow) that also damps the ambient wind inside and
+  drags along at the cyclone's velocity — so everything that reads wind
+  responds: drifts erode (gust threshold 9), litter strips, petals and
+  withered plants go, storms nearby get shoved.
+- **Column:** particles emit dust/haze off the ground under it; loose
+  particles inside rise in a spiral (updraft to ~14 cells).
+- **Damage:** structure kernel adds damage to structural intervals inside
+  it (scaled by weakness) — ruins and wrecks crack and topple; compacted
+  waste on top breaks into litter (which it then strips). Plants: untouched.
+- **Drop:** as it dies it lays down dust around its eye (drift).
+- **Roar:** a low filtered-noise voice on the fx bus following its level ×
+  nearness and pan.
+Test: three scripted turns (r 6, 2 s) beside the factory ruins → cyclone at
+the circle's centre; it crossed the ruins in 16 s; 66 cells collapsed (the
+brick building in its path came down).

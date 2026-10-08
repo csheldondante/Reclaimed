@@ -41,6 +41,25 @@ export interface DustStorm {
   intensity: number;
 }
 
+/**
+ * A cyclone (round 12): spun up by the player's tight circular drag. It
+ * travels with the wind field for ~20 s, a fierce vortex that strips drifts
+ * and litter, lifts dust into a spinning column, cracks ruins and breaks
+ * junk, spares grown plants, and drops the dust it carried where it dies.
+ */
+export interface Cyclone {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  /** +1 counter-clockwise, -1 clockwise (from the player's spin) */
+  spin: number;
+  age: number;
+  life: number;
+  strength: number;
+}
+
 /** cap on the drift a player can add to a storm (cells/s) */
 const MAX_PUSH = 7;
 
@@ -69,6 +88,7 @@ export class Weather {
   time = 0;
   private nextNatural = 70;
   dusts: DustStorm[] = [];
+  cyclone?: Cyclone;
   /** latest CPU copy of the wind field (texel = 2×2 columns; rgba: painted xy, whole wind zw) */
   windField?: { data: Float32Array; w: number; h: number };
   /** 0..1, set by the level from how dusty/polluted the land is: scales natural dust storms */
@@ -151,6 +171,19 @@ export class Weather {
     const d: DustStorm = { x, y, radius: 26 + Math.random() * 14, strength: 6.5 + Math.random() * 2.5, age: 0, intensity: 0 };
     this.dusts.push(d);
     return d;
+  }
+
+  spawnCyclone(x: number, y: number, spin: number): Cyclone | null {
+    if (this.cyclone) return null;
+    this.cyclone = { x, y, vx: 0, vy: 0, radius: 6, spin: Math.sign(spin) || 1, age: 0, life: 20, strength: 0 };
+    return this.cyclone;
+  }
+
+  cycloneUniform(): { a: [number, number, number, number]; b: [number, number, number, number] } {
+    const c = this.cyclone;
+    if (!c) return { a: [0, 0, 1, 0], b: [0, 0, 0, 0] };
+    const dropping = c.age > c.life - 3 ? 1 : 0;
+    return { a: [c.x, c.y, c.radius, c.strength * c.spin], b: [c.vx, c.vy, dropping, 0] };
   }
 
   dustUniforms(): DustUniform[] {
@@ -285,6 +318,25 @@ export class Weather {
       d.intensity = Math.min(1, d.age / 4) * Math.max(0, 1 - outside / d.radius);
     }
     this.dusts = this.dusts.filter((d) => d.age < 4 || d.intensity > 0.01);
+
+    // the cyclone: spins up, wanders along with the wind field, dies down
+    const cy = this.cyclone;
+    if (cy) {
+      cy.age += dt;
+      const [fx, fy] = this.fieldOver(cy.x, cy.y, cy.radius * 2.5);
+      const wob = Math.sin(this.t * 0.9 + cy.spin) * 1.5;
+      const tvx = fx * 0.9 + wob * -fy * 0.15;
+      const tvy = fy * 0.9 + wob * fx * 0.15;
+      const k = 1 - Math.exp(-dt * 0.8);
+      cy.vx += (tvx - cy.vx) * k;
+      cy.vy += (tvy - cy.vy) * k;
+      cy.x += cy.vx * dt;
+      cy.y += cy.vy * dt;
+      cy.strength = Math.min(1, cy.age / 1.5) * Math.min(1, Math.max(0, (cy.life - cy.age) / 3));
+      cy.radius = 6 + 1.5 * Math.sin(this.t * 0.7);
+      const off = cy.x < -10 || cy.y < -10 || cy.x > this.w + 10 || cy.y > this.h + 10;
+      if (cy.age >= cy.life || off) this.cyclone = undefined;
+    }
   }
 
   uniforms(): StormUniform[] {

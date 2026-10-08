@@ -95,6 +95,8 @@ export class WorldCore {
       debrisBoost: 1,
       difficulty: 1,
       dusts: [],
+      cyclone: [0, 0, 1, 0],
+      cycloneB: [0, 0, 0, 0],
     };
     this.light = this.dayNight.light(1);
   }
@@ -128,6 +130,9 @@ export class WorldCore {
     g.flash = Math.min(0.999, flashEnvelope(this.strikeAge));
     g.windOff = [g.windOff[0] + g.windX * simDt, g.windOff[1] + g.windY * simDt];
     g.dusts = this.weather.dustUniforms();
+    const cy = this.weather.cycloneUniform();
+    g.cyclone = cy.a;
+    g.cycloneB = cy.b;
     this.dayNight.update(simDt);
     this.light = this.dayNight.light(this.pollution);
     g.sun = this.light.dir;

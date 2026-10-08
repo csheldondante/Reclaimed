@@ -136,6 +136,11 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
 
   if (!wet) {
     let dusty = dustinessOf(contam[i].x, m) * dry * (1.0 - cover);
+    // the cyclone sucks dust off the ground into its column
+    let inCy = cycloneAt(base.xy);
+    if (inCy > 0.05 && rare(id.x, id.y, 0xc7c1u) < inCy * 0.02) {
+      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.6, 2.0 + r2 * 2.0), 3.0 + r1 * 3.0, select(K_DUST, K_HAZE, r1 < 0.3), 0.0, h ^ 0xc7u);
+    }
     // drifts losing dust to the wind stream it downwind (drift.wgsl .y)
     let blown = textureLoad(driftTex, p, 0).y;
     if (blown > 0.0005 && rare(id.x, id.y, 0xd21fu) < blown * 6.0) {
@@ -621,6 +626,12 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     pos = vec3<f32>(pos.xy + vel.xy * DT, ground + select(0.4, 0.22 + hop, rabbit));
   }
 
+  // inside the cyclone, anything loose rises in a spiral
+  let cyl = cycloneAt(pos.xy);
+  if (cyl > 0.0 && !resting && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_GLOW) {
+    vel.z += cyl * (6.0 - max(pos.z - ground - 14.0, 0.0)) * DT;
+    grav *= 1.0 - cyl;
+  }
   if (!resting && kind != K_DEER && kind != K_RABBIT) {
     vel = vec3<f32>(vel.xy + (w - vel.xy) * min(drag * DT, 1.0), vel.z - grav * DT);
     if (kind == K_DUST || kind == K_LEAF) { vel.z *= 0.995; }
