@@ -1066,3 +1066,15 @@ unchanged (fragment shader). Draw 2.9 ms at 1400×800 (+0.3 ms).
   storms/dust storms arrive (6 s smoothing); direction unchanged.
 - Draw cost with drifts on screen: 4.6 ms at 1400×800 (+~1.5 ms: ~24 k drift
   boxes).
+
+## 2026-10-08 — round 12 batch 1 (D4, D5, D6 audio)
+
+- **D4 squeaks:** raindrops were 20 ms bursts through a narrow (Q 6)
+  2.5–7.5 kHz band — squeaky ticks. Now soft broad patters (Q 0.8,
+  0.9–2.3 kHz, 30 ms). Birdsong (sine chirps) now stops entirely while it
+  rains instead of thinning to 20 %.
+- **D5 grow:** the rising sine shimmer read as "charging". Now an unfurling
+  rustle: noise whose band opens from 500 Hz to 2.6 kHz over half a second,
+  swelling and fading (0.8 s), with six faint leafy crinkles.
+- **D6:** the drag whoosh is 2.5× louder relative to everything else.
+Unheard by an agent (`?audio=1` to compare).

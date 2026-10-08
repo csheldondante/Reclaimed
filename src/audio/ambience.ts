@@ -294,11 +294,12 @@ export class Ambience {
     // rain only when a storm is overhead: soft hiss + individual drops
     const rain = Math.min(1, s.rain);
     this.rainGain!.gain.setTargetAtTime(rain * 0.13, t, k);
-    if (rain > 0.02 && !this.shot('raindrops (2.5–7.5 kHz)')) {
+    if (rain > 0.02 && !this.shot('raindrops')) {
       const pan = this.panner(undefined, (s.rainPan + 1) / 2, 0.5);
       const drops = Math.floor(rain * 7 + Math.random());
       for (let i = 0; i < drops; i++) {
-        this.noiseHit(pan, t + Math.random() * 0.03, 2500 + Math.random() * 5000, 6, 0.012 + Math.random() * 0.012, 0.02);
+        // soft, broad patters (narrow high bursts read as squeaks — round 12)
+        this.noiseHit(pan, t + Math.random() * 0.03, 900 + Math.random() * 1400, 0.8, 0.01 + Math.random() * 0.01, 0.03);
       }
     }
     // the river: a low, quiet murmur (was loud and hissy enough to pass for rain)
@@ -314,7 +315,8 @@ export class Ambience {
 
     if (t > this.nextBird) {
       // birdsong comes from the woods in view, not from the map as a whole
-      const rate = s.lifeNear * s.lifeNear * 1.2 * (1 - Math.min(1, s.rain) * 0.8) * (1 - s.night * 0.9); // calls / s
+      // birds fall silent in the rain (their chirps sounded like squeaks in storms)
+      const rate = s.rain > 0.05 ? 0 : s.lifeNear * s.lifeNear * 1.2 * (1 - s.night * 0.9); // calls / s
       if (rate > 0.01 && Math.random() < 0.85) this.birdCall();
       this.nextBird = t + (rate > 0.01 ? 0.4 + Math.random() * (2 / rate) : 2);
     }
@@ -380,7 +382,8 @@ export class Ambience {
     const ctx = this.ctx;
     if (!ctx) return;
     const t = ctx.currentTime;
-    this.dragGain!.gain.setTargetAtTime(strength * 0.16, t, 0.08);
+    // the player's wind sits well above the bed (round 12: ~2.5× louder)
+    this.dragGain!.gain.setTargetAtTime(strength * 0.4, t, 0.08);
     this.dragFilter!.frequency.setTargetAtTime(110 + strength * 240, t, 0.1);
     this.dragPan!.pan.setTargetAtTime((at * 2 - 1) * 0.8, t, 0.1);
   }
@@ -498,55 +501,35 @@ export class Ambience {
   }
 
   /** Growth tap: a soft, rising, airy shimmer. */
+  /**
+   * Growth tap: something unfurling — a soft leafy rustle that swells and
+   * opens (its band widening upward) with a few faint crinkles, no pitch rise
+   * (round 12: the rising tones read as a charging sound).
+   */
   grow(at?: number): void {
     if (this.ctx && this.shot('grow')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
     const pan = this.panner(this.fx, at);
-    // first a wet sprouting "opening": a soft squelch (filtered noise whose
-    // band sweeps up) and a little rising plip, then the airy shimmer (round 11)
-    {
-      const src = ctx.createBufferSource();
-      src.buffer = this.noise!;
-      const bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass';
-      bp.Q.value = 4;
-      bp.frequency.setValueAtTime(220, t0);
-      bp.frequency.exponentialRampToValueAtTime(1400, t0 + 0.12);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0, t0);
-      g.gain.linearRampToValueAtTime(0.16, t0 + 0.015);
-      g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.16);
-      src.connect(bp).connect(g).connect(pan);
-      src.start(t0, Math.random() * 2, 0.2);
-      const o = ctx.createOscillator();
-      o.frequency.setValueAtTime(320, t0 + 0.05);
-      o.frequency.exponentialRampToValueAtTime(900, t0 + 0.11);
-      const og = ctx.createGain();
-      og.gain.setValueAtTime(0, t0 + 0.05);
-      og.gain.linearRampToValueAtTime(0.07, t0 + 0.06);
-      og.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.13);
-      o.connect(og).connect(pan);
-      o.start(t0 + 0.05);
-      o.stop(t0 + 0.15);
-    }
-    for (let i = 0; i < 3; i++) {
-      const o = ctx.createOscillator();
-      o.type = 'sine';
-      const f = 520 * [1, 1.5, 2][i] * (0.98 + Math.random() * 0.04);
-      const ts = t0 + 0.14 + i * 0.07;
-      o.frequency.setValueAtTime(f, ts);
-      o.frequency.exponentialRampToValueAtTime(f * 1.18, ts + 0.5);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0, ts);
-      g.gain.linearRampToValueAtTime(0.03, ts + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0005, ts + 0.6);
-      o.connect(g).connect(pan);
-      o.start(ts);
-      o.stop(ts + 0.65);
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise!;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.Q.value = 1.1;
+    bp.frequency.setValueAtTime(500, t0);
+    bp.frequency.exponentialRampToValueAtTime(2600, t0 + 0.55);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(0.09, t0 + 0.22);
+    g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.8);
+    src.connect(bp).connect(g).connect(pan);
+    src.start(t0, Math.random() * 2, 0.85);
+    for (let i = 0; i < 6; i++) {
+      this.noiseHit(pan, t0 + 0.08 + i * (0.06 + Math.random() * 0.05), 2800 + Math.random() * 1800, 2.5, 0.012 + Math.random() * 0.008, 0.025);
     }
   }
+
 
   /** Wings: a burst of soft flaps as birds leave a tree. */
   flutter(at?: number, volume = 1): void {
