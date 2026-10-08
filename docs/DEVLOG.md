@@ -867,3 +867,29 @@ cleared patch holds when a little grime drifts in. Vegprep draws plantings
 crown); the short-lived sprout material is gone. Checked on clean soil
 (grass / flowers / a lasting tree) and on the landfill (a tree at 2 s,
 browned and shrunk at 6 s, gone at 11 s).
+
+## 2026-10-08 — round 9 part 2: camera director + first-play intro
+
+`game/director.ts`: camera limits (zoom range + target box, applied each
+frame after input), eased camera flights (zoom in log space), holds and
+waits on predicates — a tiny step-script runtime. It drives only the camera
+and simulates the player through Powers (`scriptTap`, `scriptStroke`, which
+draw real wind strokes); Powers gained hooks (`onGrowTap`, `onStroke`) so the
+script can wait on what the player does. Esc cancels (`cancel()` frees the
+camera).
+
+The intro (first play: progress 0 and not `?skipmenu`; force with
+`?tutorial=1`, suppress with `?tutorial=0`), on a guaranteed spot — a litter
+patch on clean, moist soil just beside the healthy patch (`poi.tutorial`):
+whole valley (3 s) → fly in (3 s) → two scripted taps: flowers sprout from
+the litter and brown away → three scripted wind strokes strip the litter →
+two taps: grass and flowers take and hold → the player's turn, confined to a
+32-cell box, zoom 9–20: touch the green (2 grow taps), touch the dust (a
+tap on hostile ground), drag (a stroke; "again for a gust, again for a
+gale") — each step times out after 25 s → fly out, camera free, dust storms
+roll in and natural weather resumes (held back during the intro).
+
+Bug found while testing: when a flight landed, the previous lock clamped the
+camera straight back before the script set the new one — flights now drop
+the old limits. The intro also waits for the first resize (it is attached
+before the viewport has a size).

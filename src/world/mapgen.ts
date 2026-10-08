@@ -46,6 +46,12 @@ const DAM: P = [94, 96];
 const SITE = { x0: 138, y0: 70, x1: 214, y1: 136 };
 const POND: P = [150, 124];
 const HEALTHY: P = [44, 198];
+/**
+ * Where the first-play intro looks (DECISIONS round 9): a small patch of
+ * litter on clean soil just beside the healthy patch — a sprout withers in
+ * it, the wind clears it, and green takes hold.
+ */
+const TUTORIAL: P = [HEALTHY[0] + 12, HEALTHY[1] - 6];
 /** Old landfill on the river's floodplain: too heavy for rain, scoured by a flood. */
 const LANDFILL: P = [120, 114];
 
@@ -392,6 +398,13 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       }
   }
 
+  // the intro's patch: litter on top, nothing living under it
+  for (let y = TUTORIAL[1] - 4; y <= TUTORIAL[1] + 4; y++)
+    for (let x = TUTORIAL[0] - 4; x <= TUTORIAL[0] + 4; x++) {
+      if (Math.hypot(x - TUTORIAL[0], y - TUTORIAL[1]) > 3.2) continue;
+      if (grid.topMat(x, y) !== MAT.Litter) grid.push(x, y, grid.top(x, y), grid.top(x, y) + 1, MAT.Litter);
+    }
+
   // Fields
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
@@ -416,6 +429,17 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       if (dh < 9 && hash2(x, y, 77) > 0.35) vegetation[i] = 0.5 + (1 - dh / 9) * 2.6 * hash2(x, y, 78);
     }
   }
+
+  // the intro's patch sits on clean ground, so it holds once cleared
+  for (let y = TUTORIAL[1] - 7; y <= TUTORIAL[1] + 7; y++)
+    for (let x = TUTORIAL[0] - 7; x <= TUTORIAL[0] + 7; x++) {
+      const d = Math.hypot(x - TUTORIAL[0], y - TUTORIAL[1]);
+      if (d > 6.5) continue;
+      const i = y * w + x;
+      contam[i * 2] = Math.min(contam[i * 2], 0.05);
+      moisture[i] = Math.max(moisture[i], 0.3);
+      if (d < 4) vegetation[i] = 0;
+    }
 
   // sludge: fill each hollow to just under its lowest rim with water thick
   // with dissolved waste over a fouled bed; two also carry an oil film
@@ -487,6 +511,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
       site: [(SITE.x0 + SITE.x1) / 2, (SITE.y0 + SITE.y1) / 2],
       healthy: HEALTHY,
       landfill: LANDFILL,
+      tutorial: TUTORIAL,
       ...Object.fromEntries(pools.map((q, i): [string, P] => [`sludge${i}`, [q.x, q.y]])),
     },
   };

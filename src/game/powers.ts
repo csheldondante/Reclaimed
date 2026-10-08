@@ -45,11 +45,48 @@ export class Powers {
   /** how hard the player's wind is blowing, for audio (fades after a drag) */
   private windLevel = { strength: 0, x: 0, y: 0 };
   private told = { lightning: false };
+  /** a stroke the director is drawing for the player (intro), advanced per frame */
+  private scripted?: { pts: [number, number][]; t: number; dur: number; done: () => void };
+  /** player-action hooks (the intro waits on these) */
+  onGrowTap?: (x: number, y: number) => void;
+  onStroke?: () => void;
 
   constructor(private d: PowersDeps) {}
 
+  /** Draw a wind stroke along a polyline over `seconds`, as if the player dragged it. */
+  scriptStroke(pts: [number, number][], seconds: number): Promise<void> {
+    return new Promise((done) => {
+      this.gustStart(pts[0][0], pts[0][1]);
+      this.scripted = { pts, t: 0, dur: seconds, done };
+    });
+  }
+
+  private advanceScripted(dt: number): void {
+    const sc = this.scripted;
+    if (!sc) return;
+    sc.t += dt;
+    const u = Math.min(1, sc.t / sc.dur) * (sc.pts.length - 1);
+    const i = Math.min(sc.pts.length - 2, Math.floor(u));
+    const f = u - i;
+    const [ax, ay] = sc.pts[i];
+    const [bx, by] = sc.pts[i + 1];
+    this.gustMove(ax + (bx - ax) * f, ay + (by - ay) * f);
+    if (sc.t >= sc.dur) {
+      this.scripted = undefined;
+      this.gustEnd(true);
+      sc.done();
+    }
+  }
+
+  /** A scripted grow-tap at a cell (the intro showing what a tap does). */
+  scriptTap(x: number, y: number): void {
+    this.d.globals.events.push({ kind: EventKind.Grow, x: x + 0.5, y: y + 0.5, radius: 2.5, strength: 1 });
+    this.d.audio.grow(0.5);
+  }
+
   // ---- per frame ----
   update(dt: number): void {
+    this.advanceScripted(dt);
     const g = this.d.globals;
     this.breeze.strength *= Math.exp(-dt * 3);
     const gusts: Gust[] = [this.breeze];
@@ -157,6 +194,7 @@ export class Powers {
       // and the living ground around it gets a little boost (round 6)
       this.d.globals.events.push({ kind: EventKind.Grow, x, y, radius: 2.5, strength: 1 });
       audio.grow(at);
+      this.onGrowTap?.(x, y);
       this.puff(x, y, 2.5);
       return;
     }
@@ -189,6 +227,7 @@ export class Powers {
         // can't (green sparkles vs brown flecks — round 6)
         this.d.globals.events.push({ kind: EventKind.Grow, x, y, radius: 2.5, strength: 1 });
         audio.grow(at);
+        this.onGrowTap?.(x, y);
     }
   }
 
@@ -301,10 +340,12 @@ export class Powers {
     this.trail.push({ x: wx, y: wy, t: performance.now() / 1000, stroke: this.strokeId });
   }
 
-  gustEnd(): void {
+  /** @param scripted the director drew it (doesn't count as the player's stroke) */
+  gustEnd(scripted = false): void {
     const g = this.gust;
     if (!g) return;
     this.gust = undefined;
+    if (!scripted) this.onStroke?.();
     if (g.strength > 4) this.d.audio.rustle(Math.min(1.5, g.strength / 8), this.d.camera.project(g.x, g.y, 0)[0] / this.d.camera.viewportW);
   }
 

@@ -3,7 +3,8 @@
 import type { Ambience } from '../audio/ambience';
 import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
-import { LEVEL_GOAL, saveProgress } from '../game/progress';
+import { Director } from '../game/director';
+import { LEVEL_GOAL, loadProgress, saveProgress } from '../game/progress';
 import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { PK } from '../sim/particles';
@@ -45,6 +46,9 @@ export class LevelScene implements Scene {
   private waterCache?: Float32Array;
   private audioRefresh = 0;
   private nextFlock = 12;
+  private director!: Director;
+  /** the first-play intro is running (camera directed, weather held back) */
+  private intro = false;
   private smokeSeen = -1;
   private fieldRefresh = 0;
   private washedSeen = -1;
@@ -116,9 +120,9 @@ export class LevelScene implements Scene {
     sim.particles.burst({ kind: PK.Deer, x: hx + 2, y: hy - 2, z: hz + 0.4, count: 2, speed: 1, spread: 3 });
     // birds already perch in its trees (they look for crowns as they arrive)
     sim.particles.burst({ kind: PK.Bird, x: hx, y: hy, z: hz + 8, count: 5, speed: 3, spread: 3 });
-    // dust storms roll across the dead valley as the level opens
-    weather.spawnDust(dims.w * 0.5, dims.h * 0.45);
-    weather.spawnDust(dims.w * 0.4, dims.h * 0.6, 70);
+    this.director = new Director(camera);
+    const p = host.params;
+    this.intro = p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadProgress() === 0);
 
     const zoomAt = (sx: number, sy: number, factor: number) => {
       const before = camera.screenDeltaToWorld(sx - camera.viewportW / 2, sy - camera.viewportH / 2);
@@ -163,6 +167,7 @@ export class LevelScene implements Scene {
       (e) => {
         this.keys.add(e.key.toLowerCase());
         if (e.key.toLowerCase() === 'r') this.powers.summonStorm();
+        if (e.key === 'Escape' && this.intro) this.director.cancel();
         if (e.key === ' ') {
           e.preventDefault();
           if (!this.lensOn) this.hud.say('Life lens — green: growing · magenta: toxic · grey: sealed · amber: too dry · blue: ready for life', 4);
@@ -180,10 +185,6 @@ export class LevelScene implements Scene {
       { signal },
     );
 
-    // touch screens: one finger is wind (drag) or touch (tap); two fingers move the view
-    const touch = matchMedia('(pointer: coarse)').matches;
-    const look = touch ? 'Two fingers to look around.' : 'Right-drag to look around.';
-    setTimeout(() => this.hud.say(`The valley is quiet. Touch things; drag to make wind. Call a storm with ☁${touch ? '' : ' or R'}. ${look}`, 8), 800);
     (window as unknown as { reclaimed: unknown }).reclaimed = {
       core,
       sim,
@@ -200,6 +201,23 @@ export class LevelScene implements Scene {
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       scene: this,
     };
+
+    if (this.intro) {
+      weather.holdNatural(600);
+      void this.runIntro();
+    } else this.openValley();
+  }
+
+  /** The valley without the intro (or after it): dust storms roll in, the usual hint. */
+  private openValley(): void {
+    const { weather, dims } = this.core;
+    // dust storms roll across the dead valley as the level opens
+    weather.spawnDust(dims.w * 0.5, dims.h * 0.45);
+    weather.spawnDust(dims.w * 0.4, dims.h * 0.6, 70);
+    weather.holdNatural(70);
+    const touch = matchMedia('(pointer: coarse)').matches;
+    const look = touch ? 'Two fingers to look around.' : 'Right-drag to look around.';
+    setTimeout(() => this.hud.say(`The valley is quiet. Touch things; drag to make wind. Call a storm with ☁${touch ? '' : ' or R'}. ${look}`, 8), 800);
   }
 
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void {
@@ -235,6 +253,7 @@ export class LevelScene implements Scene {
     }
     camera.target[0] = Math.max(0, Math.min(dims.w, camera.target[0]));
     camera.target[1] = Math.max(0, Math.min(dims.h, camera.target[1]));
+    this.director.update(dt);
 
     const simDt = dt * this.speed;
     if (this.hoverWorld) powers.hover(this.hoverWorld[0], this.hoverWorld[1], dt);
@@ -414,6 +433,81 @@ export class LevelScene implements Scene {
     const x = side === 0 ? 1.5 : side === 1 ? dims.w - 1.5 : t;
     const y = side === 2 ? 1.5 : side === 3 ? dims.h - 1.5 : side < 2 ? t : 0;
     sim.particles.burst({ kind: PK.Bird, x, y, z: this.heightAt(x, y) + 11, count: 2 + Math.floor(Math.random() * 4), speed: 5, spread: 1.5 });
+  }
+
+  /**
+   * The diegetic first-play intro (DECISIONS round 9): the whole valley;
+   * closer, where something tries to grow out of the dust and withers; the
+   * wind clears the dust and a patch of green takes and holds; the player
+   * tries it (grow on the green, wither on the dust, a drag); then the valley
+   * is theirs. Esc skips.
+   */
+  private async runIntro(): Promise<void> {
+    const { camera, dims, map } = this.core;
+    const d = this.director;
+    const hud = this.hud;
+    const powers = this.powers;
+    const [tx, ty] = map.poi.tutorial;
+    // (the scene is attached before its first resize)
+    await d.waitFor(() => camera.viewportW > 1, 5);
+    const wide = Math.max(1.5, Math.min(camera.viewportW * 1.9, camera.viewportH * 1.6) / 300);
+    camera.target = [dims.w * 0.5, dims.h * 0.5, 14];
+    camera.zoom = wide;
+    d.lock();
+    hud.say('A valley, dead a long time.', 4);
+    await d.hold(3);
+    await d.fly(tx, ty, 14, 3);
+    d.lock();
+    // something tries to grow out of the dust…
+    powers.scriptTap(tx, ty);
+    await d.hold(0.4);
+    powers.scriptTap(tx, ty);
+    hud.say('Life keeps trying — but the dust and waste smother it.', 6);
+    await d.hold(6.5);
+    // …the wind clears it…
+    hud.say('Wind can carry the dust away.', 5);
+    for (let k = 0; k < 3; k++) {
+      await powers.scriptStroke([[tx - 9, ty - 2 + k], [tx + 9, ty + 2 - k]], 0.9);
+    }
+    await d.hold(2.5);
+    // …and on clear ground, green takes and holds
+    powers.scriptTap(tx, ty);
+    await d.hold(0.6);
+    powers.scriptTap(tx, ty);
+    hud.say('Where the ground is clear, life holds.', 5);
+    await d.hold(4);
+    // the player's turn
+    d.confine(tx, ty, 16, 9, 20);
+    const grows: [number, number][] = [];
+    powers.onGrowTap = (x, y) => grows.push([x, y]);
+    hud.say('Your turn. Touch the green — again, and again.', 30);
+    await d.waitFor(() => grows.length >= 2, 25);
+    await d.hold(1.5);
+    hud.say('Now touch the dust.', 30);
+    const before = grows.length;
+    await d.waitFor(() => grows.length > before && this.hostileAt(grows[grows.length - 1]), 25);
+    await d.hold(2);
+    let stroked = false;
+    powers.onStroke = () => (stroked = true);
+    hud.say('Drag across the dust to blow it away. Drag again for a gust, again for a gale.', 30);
+    await d.waitFor(() => stroked, 25);
+    await d.hold(2.5);
+    powers.onGrowTap = undefined;
+    powers.onStroke = undefined;
+    // the valley is theirs
+    d.lock();
+    await d.fly(dims.w * 0.5, dims.h * 0.5, wide, 3);
+    d.free();
+    this.intro = false;
+    this.openValley();
+  }
+
+  /** CPU guess at whether a tapped spot is hostile ground (polluted or littered/trashed). */
+  private hostileAt([x, y]: [number, number]): boolean {
+    const { dims, map } = this.core;
+    const i = Math.floor(y) * dims.w + Math.floor(x);
+    const top = this.surfaceCache[i] >> 8 & 0xff;
+    return top === 12 || top === 18 || map.contam[i * 2] > 0.2;
   }
 
   private showComplete(): void {

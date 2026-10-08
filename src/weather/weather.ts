@@ -79,6 +79,12 @@ export class Weather {
     return this.storms.length < MAX_STORMS;
   }
 
+  /** Keep natural weather (storms, dust storms) away for `seconds` (the intro). */
+  holdNatural(seconds: number): void {
+    this.nextNatural = Math.max(this.nextNatural, this.t + seconds);
+    this.nextDust = Math.max(this.nextDust, this.t + seconds);
+  }
+
   /**
    * A storm forming at the upwind edge of the map, aimed so the wind carries
    * it over (tx, ty) — every storm drifts across the map (DECISIONS round 8);
