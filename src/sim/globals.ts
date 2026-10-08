@@ -88,6 +88,8 @@ export interface GlobalsState {
   windOff: [number, number];
   /** >1 while the level is being seeded: ground debris accumulates faster */
   debrisBoost: number;
+  /** 0 easy, 1 medium, 2 hard (round 10): how easily green ground is lost */
+  difficulty: number;
   dusts: DustUniform[];
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
@@ -155,7 +157,7 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   f.set(s.sky, 104);
   f.set(s.sunCol, 108);
   f.set(s.lens, 112);
-  f.set([s.windOff[0], s.windOff[1], s.debrisBoost, 0], 132);
+  f.set([s.windOff[0], s.windOff[1], s.debrisBoost, s.difficulty], 132);
   for (let i = 0; i < MAX_DUSTS; i++) {
     const d = s.dusts[i];
     f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);

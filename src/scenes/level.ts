@@ -4,7 +4,7 @@ import type { Ambience } from '../audio/ambience';
 import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
 import { Director } from '../game/director';
-import { LEVEL_GOAL, loadProgress, saveProgress } from '../game/progress';
+import { DIFFICULTY_LEVEL, LEVEL_GOAL, loadDifficulty, loadProgress, saveProgress, type Difficulty } from '../game/progress';
 import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { PK } from '../sim/particles';
@@ -63,6 +63,9 @@ export class LevelScene implements Scene {
     const dims = { w: 256, h: 256, zMax: 64 };
     this.core = new WorldCore(host, generateMap(dims, 1), host.quality.particles);
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
+    const dq = host.params.get('difficulty');
+    const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();
+    this.core.globals.difficulty = DIFFICULTY_LEVEL[diff];
     const p = host.params;
     if (p.get('day')) this.core.dayNight.dayLength = Math.max(10, Number(p.get('day')));
     if (p.get('tod')) this.core.dayNight.timeOfDay = Number(p.get('tod')) % 1;

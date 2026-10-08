@@ -8,7 +8,7 @@
 import type { Ambience } from '../audio/ambience';
 import { Nature } from '../game/nature';
 import { Powers } from '../game/powers';
-import { loadProgress, resetProgress } from '../game/progress';
+import { loadDifficulty, loadProgress, resetProgress, saveDifficulty, type Difficulty } from '../game/progress';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { Controls } from '../input/controls';
 import { generateMenuMap, MENU_SCALE } from '../world/menumap';
@@ -67,6 +67,7 @@ export class MenuScene implements Scene {
       <div class="actions"><button data-a="play">${label}</button>
       <span class="small">${p > 0 ? `the valley: ${Math.round(Math.min(1, p) * 100)}% reclaimed` : 'sound on'}</span>
       <span class="small hands">touch the ground · drag to make wind</span>
+      <span class="difficulty" title="Easy: green ground never fails. Medium: green resists pollution. Hard: blown waste, gales and floods kill green easily.">${(['easy', 'medium', 'hard'] as const).map((d) => `<button data-d="${d}">${d}</button>`).join('')}</span>
       ${p > 0 ? '<button class="reset" data-a="reset">reset progress</button>' : ''}</div>`;
     host.ui.appendChild(this.el);
     const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
@@ -78,6 +79,12 @@ export class MenuScene implements Scene {
       btn.disabled = true;
       await this.onPlay();
     });
+    const pick = (d: Difficulty) => {
+      saveDifficulty(d);
+      for (const b of this.el.querySelectorAll<HTMLButtonElement>('[data-d]')) b.classList.toggle('on', b.dataset.d === d);
+    };
+    for (const b of this.el.querySelectorAll<HTMLButtonElement>('[data-d]')) b.addEventListener('click', () => pick(b.dataset.d as Difficulty));
+    pick(loadDifficulty());
     this.el.querySelector('[data-a="reset"]')?.addEventListener('click', () => {
       resetProgress();
       // back to the dusty start (drop a ?progress= preview too)

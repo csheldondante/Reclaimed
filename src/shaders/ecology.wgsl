@@ -25,7 +25,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let cap = MATS[m].eco.x;
   let suit = MATS[m].eco.y;
   let wl = wilt[i];
-  let tox = 1.0 - wl.x;
+  let tox = 1.0 - wiltHostility(wl.x);
   let wet = moisture[i];
   let mf = smoothstep(0.06, 0.35, wet);
   let d = water[i];

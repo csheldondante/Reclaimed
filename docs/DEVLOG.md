@@ -949,3 +949,18 @@ it and reloads to the dusty start. Bones and dark matter carry no pollution
   shows the wind direction. First scale gave ~3 clouds across the map
   (invisible in practice); now ~6–8. They are not storm cover (no
   lightning, no rain).
+
+## 2026-10-08 — round 10 batch 3 (A9 difficulty)
+
+`Globals.env.w` = difficulty (0 easy, 1 medium, 2 hard), chosen on the title
+screen (three quiet buttons under Begin, remembered; `?difficulty=` overrides
+for testing). The wilt system keeps an "established" flag (+2 on wilt.x,
+read through `wiltHostility()`) once a column has been green (veg ≥ 0.6):
+- easy: established ground ignores poison, oil and litter for good;
+- medium: established ground tolerates poison up to 0.55 (fresh 0.2);
+- hard: no extra tolerance, water over 0.25 (not 0.5) drowns, and gales
+  (> 15 cells/s) brown what grows.
+Test: the healthy patch (veg 1.12) dosed with 0.4 poison for 25 s — easy
+1.29 (kept growing), medium 1.06 (held), hard 0.01 (died); medium at 0.9 →
+0.01. First medium rule (tolerance by grass stage) let the mossy patch die
+at 0.4; it now keys off the established flag.

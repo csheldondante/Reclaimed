@@ -1,7 +1,11 @@
 // ---- wilt: plant health and tap responses (diegetic clues; rounds 6–9) --------
 // wilt.x = hostility 0..1 of the ground here to plants: soil poison, oil,
-//          trash/litter underfoot, drowning, drought. Established green
-//          ground tolerates more poison (it holds once it has turned green).
+//          trash/litter underfoot, drowning, drought — plus 2 once the
+//          column has been properly green (an "established" flag; read
+//          hostility with wiltHostility()). How established ground fares
+//          depends on difficulty (G.env.w, round 10): easy — pollution never
+//          touches it again; medium — it tolerates more poison; hard — no
+//          extra tolerance, gales brown plants, shallower water drowns them.
 // wilt.y = brownness 0..1 of whatever grows here: rises while plants stand on
 //          hostile ground (fast under oil, at once when scorched), fades when
 //          conditions are good or once the plants are gone.
@@ -38,14 +42,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = colIdx(id.x, id.y);
   let m = sfMat(surface[i]);
   let v = veg[i];
+  let s = wilt[i];
+  let diff = u32(G.env.w + 0.5);
+  let established = s.x >= 2.0 || v >= 0.6;
   let oiled = oil[i] > 0.02;
   // green ground that has taken hold shrugs off a little drifting poison
-  let tolerance = TOX_LIMIT_W + 0.3 * smoothstep(1.0, 2.0, v);
+  // (medium); on hard it doesn't
+  let tolerance = TOX_LIMIT_W + select(0.0, 0.35, diff == 1u && established);
   var h = clamp(contam[i].x / tolerance, 0.0, 1.0);
-  if (oiled || m == MAT_TRASH_W || m == MAT_LITTER || water[i] > 0.5) { h = 1.0; }
+  let drown = select(0.5, 0.25, diff == 2u);
+  if (oiled || m == MAT_TRASH_W || m == MAT_LITTER) { h = 1.0; }
+  // easy: ground once green is never poisoned again
+  if (diff == 0u && established) { h = 0.0; }
+  if (water[i] > drown) { h = 1.0; }
   if (moisture[i] < 0.04) { h = max(h, 0.8); } // drought
+  // hard: a gale strips and browns what grows
+  var galeBrown = 0.0;
+  if (diff == 2u && v > 0.05) {
+    let ws = length(windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, f32(sfZ(surface[i])) + 1.0)));
+    galeBrown = max(ws - 15.0, 0.0) * 0.004;
+  }
 
-  let s = wilt[i];
   var b = s.y;
   if (fire[i] > 0.15) {
     b = 1.0; // scorched
@@ -56,6 +73,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   } else {
     b -= 0.08 * PER_TICK;
   }
+  b += galeBrown;
 
   // the player's plantings
   var good = s.z;
@@ -91,5 +109,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       good = select(t, good, good > 0.0 && t == floor(good));
     }
   }
-  wilt[i] = vec4<f32>(h, clamp(b, 0.0, 1.0), good, bad);
+  wilt[i] = vec4<f32>(h + select(0.0, 2.0, established), clamp(b, 0.0, 1.0), good, bad);
 }

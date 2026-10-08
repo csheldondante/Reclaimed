@@ -93,6 +93,7 @@ export class WorldCore {
       lens: [0, 0, 0, 0],
       windOff: [0, 0],
       debrisBoost: 1,
+      difficulty: 1,
       dusts: [],
     };
     this.light = this.dayNight.light(1);

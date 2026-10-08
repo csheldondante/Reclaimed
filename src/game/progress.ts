@@ -14,6 +14,28 @@ export function loadProgress(): number {
   }
 }
 
+const DIFF_KEY = 'reclaimed.difficulty.v1';
+export type Difficulty = 'easy' | 'medium' | 'hard';
+export const DIFFICULTY_LEVEL: Record<Difficulty, number> = { easy: 0, medium: 1, hard: 2 };
+
+/** The chosen difficulty (title screen; default medium). */
+export function loadDifficulty(): Difficulty {
+  try {
+    const v = localStorage.getItem(DIFF_KEY);
+    return v === 'easy' || v === 'hard' ? v : 'medium';
+  } catch {
+    return 'medium';
+  }
+}
+
+export function saveDifficulty(d: Difficulty): void {
+  try {
+    localStorage.setItem(DIFF_KEY, d);
+  } catch {
+    /* storage unavailable: lasts for this session only */
+  }
+}
+
 /** Forget all progress (the title screen's reset). */
 export function resetProgress(): void {
   try {

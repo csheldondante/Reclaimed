@@ -298,3 +298,15 @@ canvas#world {
   opacity: 0.7;
 }
 .menu button.reset:hover { opacity: 1; border: none; }
+
+/* difficulty: three quiet choices under Begin */
+.menu .difficulty { display: flex; gap: 2px; }
+.menu .difficulty button {
+  background: none;
+  border: 1px solid transparent;
+  padding: 2px 10px;
+  font-size: 12px;
+  color: var(--ink-dim);
+  border-radius: 999px;
+}
+.menu .difficulty button.on { color: var(--ink); border-color: rgba(236, 230, 216, 0.35); }

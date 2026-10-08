@@ -34,7 +34,8 @@ struct Globals {
   // per storm shape: three outline phases + elongation along travel
   stormsC: array<vec4<f32>, 4>,
   // x, y: prevailing wind integrated over time (cells) — advects gust patches
-  // and ripples so they travel smoothly downwind; z: debris seeding boost
+  // and ripples so they travel smoothly downwind; z: debris seeding boost;
+  // w: difficulty 0 easy, 1 medium, 2 hard
   env: vec4<f32>,
   // dust storms: x, y, radius, strength (0 = none)
   dusts: array<vec4<f32>, 2>,
@@ -261,6 +262,9 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
   }
   return w;
 }
+
+/** Hostility 0..1 from wilt.x (which carries +2 when the column is established). */
+fn wiltHostility(x: f32) -> f32 { return select(x, x - 2.0, x >= 2.0); }
 
 // ---- litter stripping (shared contract: material system ↔ particles) ----
 // Strong wind tears loose litter off the ground one cell at a time. The
