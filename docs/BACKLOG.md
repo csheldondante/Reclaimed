@@ -21,7 +21,7 @@ user) · `deferred` (agreed for later).
 | A3 | Drag audio: whoosh starts when the drag starts; no snap/rustle at mouse-up — wind only | S | done `a8d51c0` |
 | A4 | Player gusts sound deeper than the desolate ambient wind | S | done `a8d51c0` |
 | A5 | No birds on the title screen (they make the skull look giant) | S | done `a8d51c0` |
-| A6 | Blown dust piles up against things (drifts, lee of walls) | M–L | next |
+| A6 | Blown dust piles up against things (drifts, lee of walls) | M–L | → C1 |
 | A7 | Tutorial builds skills: (1) growth and death of flowers, (2) wind blowing, (3) free play to demonstrate it, (4) something new: a pile of pollution the wind can't move, (5) a storm forms and lightning destroys it | M | done `6e03680` |
 | A8 | Wind is more powerful under storms | S | done `a8d51c0` |
 | A9 | Difficulty setting: easy (green never re-pollutes), medium (green resists), hard (green easily killed by blown trash, strong wind, too much water) | M | done `5866665` |
@@ -31,6 +31,22 @@ user) · `deferred` (agreed for later).
 | A13 | Storm shadows swirl erratically — make their shape steadier | S | done `a8d51c0` |
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | render slopes done `a015f55`; sediment layer next (with A6) |
+
+## Round 11 (2026-10-08)
+
+Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 → C9 → C8.
+
+| id | item | size | status |
+|---|---|---|---|
+| C1 | Dust drifts (fractional sediment layer) that bury things — uncover them with wind (objects, seed beds); supersedes A6 | L | next |
+| C2 | Smooth water surfaces (keep the rain rings / storm glints) | M | next |
+| C3 | Grow sound: a wet sprouting "opening", then the current shimmer | S | next |
+| C4 | Audio debug: see and mute each sound (find the high whine under storms / on Nature gains) | S | next |
+| C5 | A little light where growth and wind happen | S | next |
+| C6 | Multiple levels; title screen shows clickable objects for each level | M–L | next |
+| C7 | Level: highway covered in ruined cars | M | next |
+| C8 | Level: port with tankers washed ashore and a seawall; ocean waves and sea swell | L | next |
+| C9 | Level: ruined city with a blast crater and hospital tents (an outbreak) | M–L | next |
 
 ## Carried over (deferred earlier — still wanted)
 
