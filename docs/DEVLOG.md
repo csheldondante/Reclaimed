@@ -1125,3 +1125,13 @@ DECISIONS round 12 (free with a cooldown; ruins and junk, not grown plants).
 Test: three scripted turns (r 6, 2 s) beside the factory ruins → cyclone at
 the circle's centre; it crossed the ruins in 16 s; 66 cells collapsed (the
 brick building in its path came down).
+
+## 2026-10-08 — round 12 batch 5 (D1 title-screen plants)
+
+The title screen sets `Globals.misc.w` (fineVeg): vegprep then draws plants
+at diorama scale instead of the level's tufts/shrubs — four grass blades a
+quarter-cell wide; flowers (55 % of meadow cells) with a stem, two leaves,
+four petals and a yellow heart (render.wgsl: one colour per plant, the
+centre box yellow); low moss cushions on bone. At full progress roots creep
+down the cranium from the tree: five wavy strands hugging its surface around
+the back and sides (skull frame), clear of the face.

@@ -17,6 +17,59 @@
 /** Drifted dust deeper than this is drawn (as a smooth sheet). */
 const DRIFT_SHOW: f32 = 0.03;
 
+// ---- fine plants (title screen, G.misc.w = 1): diorama-scale plants ----
+const MAT_BONE_V: u32 = 16u;
+
+fn fineCount(v: f32, m: u32, c: vec2<u32>) -> u32 {
+  if (v < 0.3) { return 0u; }
+  if (m == MAT_BONE_V) { return 3u; } // moss cushions
+  var n = 0u;
+  if (v >= 1.2) { n += 4u; } // grass blades
+  if (v >= 2.0 && rand3(c.x, c.y, 811u) < 0.55) { n += 8u; } // a flower: stem, 2 leaves, 4 petals, centre
+  return n;
+}
+
+/** Grass blades, a flower with leaves and petals, or moss on bone. */
+fn fineEmit(o0: u32, c: vec2<u32>, top: f32, v: f32, m: u32) -> u32 {
+  var o = o0;
+  let qx = c.x * 4u;
+  let qy = c.y * 4u;
+  let F = FLAG_VEG | FLAG_DETAIL;
+  if (v < 0.3) { return o; }
+  if (m == MAT_BONE_V) {
+    for (var k = 0u; k < 3u; k++) {
+      let hx = hash3(c.x, c.y, 851u + k);
+      instOpaque[o] = mkInst(qx + (hx & 3u), qy + ((hx >> 2u) & 3u), 1u + ((hx >> 4u) & 1u), 1u, top, top + 0.06 + f32((hx >> 6u) & 3u) * 0.03, MAT_GRASS, F);
+      o += 1u;
+    }
+    return o;
+  }
+  if (v >= 1.2) {
+    for (var k = 0u; k < 4u; k++) {
+      let hx = hash3(c.x, c.y, 821u + k);
+      let hgt = 0.35 + f32((hx >> 4u) & 15u) * 0.04;
+      instOpaque[o] = mkInst(qx + (hx & 3u), qy + ((hx >> 2u) & 3u), 1u, 1u, top, top + hgt, MAT_GRASS, F);
+      o += 1u;
+    }
+  }
+  if (v >= 2.0 && rand3(c.x, c.y, 811u) < 0.55) {
+    let st = top + 0.85 + rand3(c.x, c.y, 812u) * 0.3;
+    // stem
+    instOpaque[o] = mkInst(qx + 1u, qy + 1u, 1u, 1u, top, st, MAT_GRASS, F);
+    // two leaves part-way up
+    instOpaque[o + 1u] = mkInst(qx, qy + 1u, 1u, 1u, top + 0.3, top + 0.38, MAT_GRASS, F);
+    instOpaque[o + 2u] = mkInst(qx + 2u, qy + 1u, 1u, 1u, top + 0.45, top + 0.53, MAT_GRASS, F);
+    // four petals around a centre (render.wgsl colours the centre yellow)
+    instOpaque[o + 3u] = mkInst(qx, qy + 1u, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
+    instOpaque[o + 4u] = mkInst(qx + 2u, qy + 1u, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
+    instOpaque[o + 5u] = mkInst(qx + 1u, qy, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
+    instOpaque[o + 6u] = mkInst(qx + 1u, qy + 2u, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
+    instOpaque[o + 7u] = mkInst(qx + 1u, qy + 1u, 1u, 1u, st, st + 0.14, MAT_FLOWER, F);
+    o += 8u;
+  }
+  return o;
+}
+
 /** A flower, or a bare stem if the wind has stripped it. */
 fn flowerMat(c: vec2<u32>) -> u32 { return select(MAT_GRASS, MAT_FLOWER, petals[colIdx(c.x, c.y)] >= 1.0); }
 
@@ -92,6 +145,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     pl = vegPlan(id.x, id.y, veg[i], sfMat(s));
     tap = wilt[i];
     n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree) + pl.tufts + select(0u, 1u, pl.flower);
+    if (G.misc.w > 0.5) { n = fineCount(veg[i], sfMat(s), id.xy); }
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
     n += select(0u, 1u, driftAt(vec2<i32>(id.xy)) > DRIFT_SHOW);
   }
@@ -112,11 +166,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     instOpaque[o] = mkInst(id.x, id.y, 1u, 1u, g, g + dd, MAT_DRIFT, 1u);
     o += 1u;
   }
-  if (pl.shrub) {
+  if (G.misc.w > 0.5) {
+    o = fineEmit(o, id.xy, top, veg[colIdx(id.x, id.y)], sfMat(surface[colIdx(id.x, id.y)]));
+  }
+  if (pl.shrub && G.misc.w < 0.5) {
     instOpaque[o] = mkInst(id.x, id.y, 1u, 1u, top, top + 1.0, MAT_LEAVES, FLAG_VEG);
     o += 1u;
   }
-  if (pl.tree) {
+  if (pl.tree && G.misc.w < 0.5) {
     // half-cell trunk, then the canopy box (sub-voxel crown) above it
     let sp = pl.species << 16u;
     var trunk = mkInst(qx + 1u, qy + 1u, 2u, 2u, top, top + pl.trunk + 0.5, MAT_WOOD, FLAG_VEG | FLAG_DETAIL);
@@ -132,7 +189,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     instOpaque[o + 1u] = crown;
     o += 2u;
   }
-  for (var k = 0u; k < pl.tufts; k++) {
+  for (var k = 0u; k < select(pl.tufts, 0u, G.misc.w > 0.5); k++) {
     let hx = hash3(id.x, id.y, 31u + k);
     let tx = qx + (hx & 3u);
     let ty = qy + ((hx >> 2u) & 3u);
@@ -150,7 +207,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let ph = fract(tap.w);
     o = planting(o, id.xy, top, floor(tap.w), 0.25 + 0.75 * smoothstep(0.0, 0.2, ph), smoothstep(0.6, 1.0, ph));
   }
-  if (pl.flower) {
+  if (pl.flower && G.misc.w < 0.5) {
     let hx = hash3(id.x, id.y, 77u);
     instOpaque[o] = mkInst(qx + (hx & 3u), qy + ((hx >> 2u) & 3u), 1u, 1u, top, top + 0.45, flowerMat(id.xy), FLAG_VEG | FLAG_DETAIL);
   }

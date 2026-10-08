@@ -95,6 +95,8 @@ export interface GlobalsState {
   cyclone: [number, number, number, number];
   /** cyclone extras: velocity x, y, dust-dropping rate (as it dies), unused */
   cycloneB: [number, number, number, number];
+  /** draw plants at diorama scale (the title screen: petals, blades, moss) */
+  fineVeg?: boolean;
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }
@@ -147,7 +149,7 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   f[68] = nEv;
   f[69] = s.collapseEnabled ? 1 : 0;
   f[70] = s.flash;
-  f[71] = 0;
+  f[71] = s.fineVeg ? 1 : 0;
   for (let i = 0; i < MAX_GUSTS; i++) {
     const g = s.gusts[i];
     if (g) {

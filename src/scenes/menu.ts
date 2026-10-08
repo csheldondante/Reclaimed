@@ -58,6 +58,8 @@ export class MenuScene implements Scene {
     camera.target = [24 * MENU_SCALE, 24 * MENU_SCALE, 14 * MENU_SCALE];
     this.core.pollution = 1 - p;
     globals.collapseEnabled = false;
+    // plants at this scale get petals, leaves and blades (round 12)
+    globals.fineVeg = true;
 
     this.el = document.createElement('div');
     this.el.className = 'menu';

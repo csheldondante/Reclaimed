@@ -448,11 +448,13 @@ fn fsBox(in: VOut) -> FOut {
       alb = toLinear(mix(vec3<f32>(0.28, 0.44, 0.15), vec3<f32>(0.46, 0.6, 0.22), gv) * (0.8 + 0.3 * smoothstep(in.zr.x, in.zr.y, in.wpos.z)));
     }
     if (mat == MAT_FLOWER) {
-      let fv = randv(vec3<i32>(floor(in.bmin * 4.0)) + vec3<i32>(3, 9, 1));
+      // one colour per plant (fine flowers are several boxes); a yellow heart
+      let fv = randv(vec3<i32>(floor(in.bmin)) + vec3<i32>(3, 9, 1));
+      let heart = G.misc.w > 0.5 && all(abs(fract(in.bmin.xy) - 0.25) < vec2<f32>(0.01)) && in.zr.y - in.zr.x > 0.12;
       var petal = vec3<f32>(0.92, 0.9, 0.82);
       if (fv > 0.75) { petal = vec3<f32>(0.95, 0.8, 0.25); } else if (fv > 0.5) { petal = vec3<f32>(0.62, 0.48, 0.82); } else if (fv > 0.3) { petal = vec3<f32>(0.85, 0.35, 0.3); }
       let top = in.wpos.z > in.zr.y - max(0.12, (in.zr.y - in.zr.x) * 0.3);
-      alb = toLinear(select(vec3<f32>(0.3, 0.46, 0.17), petal, top));
+      alb = toLinear(select(select(vec3<f32>(0.3, 0.46, 0.17), petal, top), vec3<f32>(0.95, 0.78, 0.2), heart));
     }
     if (mat != MAT_WOOD) { alb = wither(alb, wilt[ci].y, n1); }
   } else {

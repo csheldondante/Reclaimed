@@ -185,6 +185,25 @@ export function generateMenuMap(p: number): MapData {
     return 0;
   };
 
+  // roots of the tree creep down over the cranium (round 12): five wavy
+  // strands hugging its surface, around the back and sides (clear of the face)
+  const roots = (px: number, py: number, pz: number): boolean => {
+    if (!treeOn) return false;
+    const [a, s, zz] = skullFrame(px, py, pz);
+    if (zz < 3 || a > 2.2) return false;
+    const cran = ((a + 0.6) / 6.2) ** 2 + (s / 5.6) ** 2 + ((zz - 8.4) / 5.8) ** 2;
+    if (cran < 0.97 || cran > 1.16) return false;
+    const th = Math.atan2(s, a + 0.6);
+    const ring = Math.max(1, Math.hypot(a + 0.6, s));
+    for (let k = 0; k < 5; k++) {
+      const tk = 1.2 + k * 0.95 + 0.35 * Math.sin(zz * 0.8 + k * 1.7);
+      let d = Math.abs(th - tk);
+      d = Math.min(d, Math.abs(d - 2 * Math.PI));
+      if (d * ring < 0.55 - (14 - zz) * 0.02) return true;
+    }
+    return false;
+  };
+
   const mound = new Float32Array(N);
   for (let y = 0; y < H; y++) {
     for (let x = 0; x < W; x++) {
@@ -205,7 +224,7 @@ export function generateMenuMap(p: number): MapData {
         if (z < ZMAX) {
           const pz = (z + 0.5) / K;
           const sk = skull(px, py, pz);
-          m = tree(px, py, pz) || (sk === 1 || jaw(px, py, pz) || ribs(px, py, pz) || longBones(px, py, pz) ? MAT.Bone : sk === 2 ? MAT.Asphalt : 0);
+          m = tree(px, py, pz) || (roots(px, py, pz) ? MAT.Wood : 0) || (sk === 1 || jaw(px, py, pz) || ribs(px, py, pz) || longBones(px, py, pz) ? MAT.Bone : sk === 2 ? MAT.Asphalt : 0);
         }
         if (m !== run) {
           if (run) grid.push(x, y, runStart, z, run);
