@@ -108,6 +108,7 @@ export class MenuScene implements Scene {
       globals: core.globals,
       camera,
       dims: core.dims,
+      heightAt: () => 7 * MENU_SCALE,
       readSurface: async () => new Uint32Array((await core.readBuffer('surface')).buffer),
       birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
     });

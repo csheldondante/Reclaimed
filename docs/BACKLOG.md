@@ -46,6 +46,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | C6 | Multiple levels; title screen shows clickable objects for each level | M–L | next |
 | C7 | Level: highway covered in ruined cars | M | next |
 | C8 | Level: port with tankers washed ashore and a seawall; ocean waves and sea swell | L | next |
+| C10 | Swirling the mouse while dragging paints a vortex; a sustained swirl summons a cyclone (with B6 tornado) | M | open |
 | C9 | Level: ruined city with a blast crater and hospital tents (an outbreak) | M–L | next |
 
 ## Carried over (deferred earlier — still wanted)

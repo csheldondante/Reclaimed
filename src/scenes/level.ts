@@ -113,6 +113,7 @@ export class LevelScene implements Scene {
       camera,
       dims,
       readSurface,
+      heightAt: this.heightAt,
       birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
     });
 

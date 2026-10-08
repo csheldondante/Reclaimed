@@ -7,6 +7,7 @@ import { Profiler } from './gpu/profiler';
 import { LevelScene } from './scenes/level';
 import { MenuScene } from './scenes/menu';
 import type { Host, Quality, Scene } from './scenes/world-core';
+import { AudioDebug } from './ui/audio-debug';
 import { PerfOverlay } from './ui/perf-overlay';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
@@ -28,6 +29,7 @@ async function main() {
   const profiler = new Profiler(gpu.device, gpu.hasTimestamps);
   const host: Host = { gpu, profiler, quality, qualityName, params, canvas, ui };
   const audio = new Ambience();
+  if (params.get('audio') === '1') new AudioDebug(ui, audio);
   const perf = new PerfOverlay(ui, params.get('perf') === '1');
   window.addEventListener('keydown', (e) => {
     if (e.key === '`') perf.toggle();

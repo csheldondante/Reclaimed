@@ -61,6 +61,46 @@ export class Ambience {
   private nextGust = 0;
   private nextDistant = 20;
 
+  /**
+   * Audio debugging (round 11, `?audio=1` shows the panel): every continuous
+   * voice passes through a named mute gain; every one-shot is logged by name
+   * and can be muted. Lets the user find a sound they dislike.
+   */
+  readonly debug = {
+    voices: new Map<string, { level: GainNode; mute: GainNode }>(),
+    log: [] as { t: number; name: string; n: number }[],
+    muted: new Set<string>(),
+  };
+
+  /** Route a continuous voice through its debug mute to `dest`. */
+  private voice(name: string, level: GainNode, dest: AudioNode): void {
+    const mute = this.ctx!.createGain();
+    level.connect(mute).connect(dest);
+    this.debug.voices.set(name, { level, mute });
+  }
+
+  /** Mute/unmute a voice or a one-shot kind by name. */
+  setMuted(name: string, muted: boolean): void {
+    if (muted) this.debug.muted.add(name);
+    else this.debug.muted.delete(name);
+    const v = this.debug.voices.get(name);
+    if (v) v.mute.gain.value = muted ? 0 : 1;
+  }
+
+  /** Log a one-shot (repeats within 0.5 s are counted); true if it is muted. */
+  private shot(name: string): boolean {
+    const now = performance.now() / 1000;
+    const last = this.debug.log[this.debug.log.length - 1];
+    if (last && last.name === name && now - last.t < 0.5) {
+      last.n++;
+      last.t = now;
+    } else {
+      this.debug.log.push({ t: now, name, n: 1 });
+      if (this.debug.log.length > 40) this.debug.log.shift();
+    }
+    return this.debug.muted.has(name);
+  }
+
   get started(): boolean {
     return !!this.ctx;
   }
@@ -103,22 +143,25 @@ export class Ambience {
     this.windFilter.Q.value = 0.6;
     this.windGain = ctx.createGain();
     this.windGain.gain.value = 0;
-    this.loopNoise().connect(this.windFilter).connect(this.windGain).connect(bed);
+    this.loopNoise().connect(this.windFilter).connect(this.windGain);
+    this.voice('wind', this.windGain, bed);
     const whistle = ctx.createBiquadFilter();
     whistle.type = 'bandpass';
     whistle.frequency.value = 1100;
     whistle.Q.value = 12;
     this.whistleGain = ctx.createGain();
     this.whistleGain.gain.value = 0;
-    this.loopNoise().connect(whistle).connect(this.whistleGain).connect(bed);
+    this.loopNoise().connect(whistle).connect(this.whistleGain);
+    this.voice('whistle (1.1 kHz, pollution)', this.whistleGain, bed);
 
     // desolation: a hollow howl — noise through two narrow resonances whose
     // pitch drifts slowly — that swells in periodic gusts over barren land
     // (DECISIONS round 10). Higher than the player's own gusts.
     this.howlGain = ctx.createGain();
     this.howlGain.gain.value = 0;
-    this.howlGain.connect(bed);
-    for (const [f, q, rate] of [[430, 11, 0.09], [660, 14, 0.13]] as const) {
+    this.voice('howl', this.howlGain, bed);
+    // narrow, tonal resonances (a moan through gaps, not a hiss)
+    for (const [f, q, rate] of [[300, 34, 0.07], [452, 30, 0.11], [610, 26, 0.05]] as const) {
       const bp = ctx.createBiquadFilter();
       bp.type = 'bandpass';
       bp.frequency.value = f;
@@ -126,7 +169,7 @@ export class Ambience {
       const lfo = ctx.createOscillator();
       lfo.frequency.value = rate;
       const depth = ctx.createGain();
-      depth.gain.value = f * 0.18;
+      depth.gain.value = f * 0.06; // a slow waver; the gusts bend the pitch (update)
       lfo.connect(depth).connect(bp.frequency);
       lfo.start();
       this.loopNoise().connect(bp).connect(this.howlGain);
@@ -142,7 +185,9 @@ export class Ambience {
     this.dragGain = ctx.createGain();
     this.dragGain.gain.value = 0;
     this.dragPan = ctx.createStereoPanner();
-    this.loopNoise().connect(this.dragFilter).connect(this.dragGain).connect(this.dragPan).connect(this.fx);
+    this.loopNoise().connect(this.dragFilter).connect(this.dragGain);
+    this.voice('drag whoosh', this.dragGain, this.dragPan);
+    this.dragPan.connect(this.fx);
 
     // rain: bright hiss
     const rhp = ctx.createBiquadFilter();
@@ -153,7 +198,8 @@ export class Ambience {
     rlp.frequency.value = 6000;
     this.rainGain = ctx.createGain();
     this.rainGain.gain.value = 0;
-    this.loopNoise().connect(rhp).connect(rlp).connect(this.rainGain).connect(bed);
+    this.loopNoise().connect(rhp).connect(rlp).connect(this.rainGain);
+    this.voice('rain hiss', this.rainGain, bed);
 
     // flowing water: mid band burble with slow modulation
     const fbp = ctx.createBiquadFilter();
@@ -168,7 +214,8 @@ export class Ambience {
     lfo.start();
     this.flowGain = ctx.createGain();
     this.flowGain.gain.value = 0;
-    this.loopNoise().connect(fbp).connect(this.flowGain).connect(bed);
+    this.loopNoise().connect(fbp).connect(this.flowGain);
+    this.voice('water flow', this.flowGain, bed);
 
     // leaves: airy rustle that swells with wind over living land
     const lhp = ctx.createBiquadFilter();
@@ -184,7 +231,8 @@ export class Ambience {
     lmod.gain.value = 0.65;
     llfo.connect(llfoG).connect(lmod.gain);
     llfo.start();
-    this.loopNoise().connect(lhp).connect(lmod).connect(this.leavesGain).connect(bed);
+    this.loopNoise().connect(lhp).connect(lmod).connect(this.leavesGain);
+    this.voice('leaves', this.leavesGain, bed);
 
     // insects: amplitude-modulated high tone
     const ins = ctx.createOscillator();
@@ -203,7 +251,8 @@ export class Ambience {
     amOsc.connect(amDepth).connect(am.gain);
     this.insectGain = ctx.createGain();
     this.insectGain.gain.value = 0;
-    ins.connect(insBp).connect(am).connect(this.insectGain).connect(bed);
+    ins.connect(insBp).connect(am).connect(this.insectGain);
+    this.voice('insects (4.3 kHz)', this.insectGain, bed);
     ins.start();
     amOsc.start();
   }
@@ -239,11 +288,13 @@ export class Ambience {
       this.howlSwell = rising ? 0.75 + Math.random() * 0.25 : 0.15 + Math.random() * 0.2;
       this.nextHowl = t + (rising ? 2 + Math.random() * 2.5 : 3 + Math.random() * 6);
     }
-    this.howlGain!.gain.setTargetAtTime(s.barren * s.barren * this.howlSwell * (0.05 + s.wind * 0.06), t, 1.4);
+    // each gust bends the howl up as it rises and lets it sag as it falls away
+    this.howlFilters.forEach((bp, k) => bp.frequency.setTargetAtTime([300, 452, 610][k] * (0.82 + 0.4 * this.howlSwell), t, 1.6));
+    this.howlGain!.gain.setTargetAtTime(s.barren * s.barren * this.howlSwell * (0.09 + s.wind * 0.1), t, 1.4);
     // rain only when a storm is overhead: soft hiss + individual drops
     const rain = Math.min(1, s.rain);
     this.rainGain!.gain.setTargetAtTime(rain * 0.13, t, k);
-    if (rain > 0.02) {
+    if (rain > 0.02 && !this.shot('raindrops (2.5–7.5 kHz)')) {
       const pan = this.panner(undefined, (s.rainPan + 1) / 2, 0.5);
       const drops = Math.floor(rain * 7 + Math.random());
       for (let i = 0; i < drops; i++) {
@@ -268,7 +319,7 @@ export class Ambience {
       this.nextBird = t + (rate > 0.01 ? 0.4 + Math.random() * (2 / rate) : 2);
     }
     // fire: crackles and pops, denser the more is burning
-    if (s.fire > 0.01 && Math.random() < s.fire * 0.5) {
+    if (s.fire > 0.01 && Math.random() < s.fire * 0.5 && !this.shot('fire crackle')) {
       const pan = this.panner();
       this.noiseHit(pan, t + Math.random() * 0.05, 1500 + Math.random() * 3000, 3, 0.04 + s.fire * 0.08, 0.04);
       if (Math.random() < 0.15) this.noiseHit(pan, t, 300, 1, 0.05 * s.fire, 0.5);
@@ -282,6 +333,7 @@ export class Ambience {
 
   /** Crack + long low rumble. `near` 0..1 shortens the delay and brightens the crack. */
   thunder(near: number, volume = 1, at?: number): void {
+    if (this.ctx && this.shot('thunder')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const vol = ctx.createGain();
@@ -337,6 +389,7 @@ export class Ambience {
 
   /** Hollow metal tank: inharmonic partials with a long ring. */
   clang(at?: number): void {
+    if (this.ctx && this.shot('clang')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
@@ -377,6 +430,7 @@ export class Ambience {
    * trickle of grit.
    */
   chip(at?: number): void {
+    if (this.ctx && this.shot('chip')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
@@ -400,6 +454,7 @@ export class Ambience {
   }
 
   splash(at?: number): void {
+    if (this.ctx && this.shot('splash')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
@@ -421,6 +476,7 @@ export class Ambience {
 
   /** Grime washed into water: a few soft plinks (up to ~6 per call). */
   wash(count: number): void {
+    if (this.ctx && this.shot('wash plinks')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
@@ -443,28 +499,58 @@ export class Ambience {
 
   /** Growth tap: a soft, rising, airy shimmer. */
   grow(at?: number): void {
+    if (this.ctx && this.shot('grow')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
     const pan = this.panner(this.fx, at);
+    // first a wet sprouting "opening": a soft squelch (filtered noise whose
+    // band sweeps up) and a little rising plip, then the airy shimmer (round 11)
+    {
+      const src = ctx.createBufferSource();
+      src.buffer = this.noise!;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass';
+      bp.Q.value = 4;
+      bp.frequency.setValueAtTime(220, t0);
+      bp.frequency.exponentialRampToValueAtTime(1400, t0 + 0.12);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0, t0);
+      g.gain.linearRampToValueAtTime(0.16, t0 + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.16);
+      src.connect(bp).connect(g).connect(pan);
+      src.start(t0, Math.random() * 2, 0.2);
+      const o = ctx.createOscillator();
+      o.frequency.setValueAtTime(320, t0 + 0.05);
+      o.frequency.exponentialRampToValueAtTime(900, t0 + 0.11);
+      const og = ctx.createGain();
+      og.gain.setValueAtTime(0, t0 + 0.05);
+      og.gain.linearRampToValueAtTime(0.07, t0 + 0.06);
+      og.gain.exponentialRampToValueAtTime(0.0005, t0 + 0.13);
+      o.connect(og).connect(pan);
+      o.start(t0 + 0.05);
+      o.stop(t0 + 0.15);
+    }
     for (let i = 0; i < 3; i++) {
       const o = ctx.createOscillator();
       o.type = 'sine';
       const f = 520 * [1, 1.5, 2][i] * (0.98 + Math.random() * 0.04);
-      o.frequency.setValueAtTime(f, t0 + i * 0.07);
-      o.frequency.exponentialRampToValueAtTime(f * 1.18, t0 + i * 0.07 + 0.5);
+      const ts = t0 + 0.14 + i * 0.07;
+      o.frequency.setValueAtTime(f, ts);
+      o.frequency.exponentialRampToValueAtTime(f * 1.18, ts + 0.5);
       const g = ctx.createGain();
-      g.gain.setValueAtTime(0, t0 + i * 0.07);
-      g.gain.linearRampToValueAtTime(0.035, t0 + i * 0.07 + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0005, t0 + i * 0.07 + 0.6);
+      g.gain.setValueAtTime(0, ts);
+      g.gain.linearRampToValueAtTime(0.03, ts + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0005, ts + 0.6);
       o.connect(g).connect(pan);
-      o.start(t0 + i * 0.07);
-      o.stop(t0 + i * 0.07 + 0.65);
+      o.start(ts);
+      o.stop(ts + 0.65);
     }
   }
 
   /** Wings: a burst of soft flaps as birds leave a tree. */
   flutter(at?: number, volume = 1): void {
+    if (this.ctx && this.shot('flutter')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
@@ -475,6 +561,7 @@ export class Ambience {
 
   /** Leaves rustling (clicks on plants, gusts through trees). */
   rustle(volume = 1, at?: number): void {
+    if (this.ctx && this.shot('rustle')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
@@ -484,6 +571,7 @@ export class Ambience {
 
   /** Metal straining under load — feedback when a power isn't ready yet. */
   strain(at?: number): void {
+    if (this.ctx && this.shot('strain')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
@@ -525,6 +613,7 @@ export class Ambience {
 
   /** Deep structural groan (stressed concrete) — used sparingly to point at leverage. */
   groan(volume: number): void {
+    if (this.ctx && this.shot('groan (dam)')) return;
     const ctx = this.ctx;
     if (!ctx || volume <= 0.01) return;
     const t0 = ctx.currentTime + 0.05;
@@ -559,6 +648,7 @@ export class Ambience {
 
   /** Concrete giving way: gritty mid crumble, sized by how much collapsed. */
   crumble(amount: number): void {
+    if (this.ctx && this.shot('crumble')) return;
     const ctx = this.ctx;
     if (!ctx || amount <= 0) return;
     const t0 = ctx.currentTime + 0.02;
@@ -597,6 +687,7 @@ export class Ambience {
   }
 
   private birdCall(dest?: AudioNode, at?: number): void {
+    if (this.ctx && this.shot('bird call')) return;
     const ctx = this.ctx!;
     const t0 = ctx.currentTime + 0.02;
     const pan = this.panner(dest, at, 0.25);
@@ -624,6 +715,7 @@ export class Ambience {
   }
 
   private rattle(): void {
+    if (this.ctx && this.shot('debris rattle')) return;
     const ctx = this.ctx!;
     const t0 = ctx.currentTime + 0.01;
     const pan = this.panner();

@@ -1014,3 +1014,21 @@ Measured/iterated:
   soft occluders cast from 0.9 lower.
 Not yet: water surfaces (still boxes; B8), particles resting on slopes
 (they sit at whole-cell height), the fractional sediment layer (A6).
+
+## 2026-10-08 — round 11 batch 1 (C3, C4, C5; howl)
+
+- **C4 audio debug** (`?audio=1`): every continuous voice is routed through a
+  named mute gain and listed with its live level (dB bar) and a mute box;
+  every one-shot is logged by name (repeats counted) and can be muted by
+  name too. For the user's "high-pitched sound under storms or on Nature
+  gains": candidates are raindrops (2.5–7.5 kHz bursts), the pollution
+  whistle (1.1 kHz, Q 12), insects (4.3 kHz), wash plinks, the grow chime.
+- **C3 grow sound:** a wet sprouting "opening" first — a squelch (noise with a
+  band sweeping 220 → 1400 Hz) and a little rising plip — then the airy
+  shimmer (a touch quieter).
+- **C5 light:** a brief soft glow (particle 19, unlit, swells and fades
+  ~1.3 s) at grow taps (green-gold), where seeds take (smaller), and where a
+  drag begins (pale blue).
+- **Howl** (user: "should sound more like a howl"): three narrow resonances
+  (300 / 452 / 610 Hz, Q 26–34 — tonal, not hissy), whose pitch bends up as
+  each gust rises and sags as it falls (0.82–1.22×), louder overall.

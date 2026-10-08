@@ -114,6 +114,13 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     let t = clamp(P.p.w / 1.5, 0.0, 1.0);
     col = select(vec4<f32>(mix(vec3<f32>(0.55, 0.9, 0.35), vec3<f32>(1.0, 0.95, 0.55), sr), t), vec4<f32>(0.42, 0.3, 0.14, t), P.m.w == 1u);
   }
+  else if (kind == 19u) { // glow: a soft light that swells and fades
+    let age = clamp(1.0 - P.p.w / 1.4, 0.0, 1.0);
+    size = 1.2 + age * 1.6;
+    soft = 1.0;
+    let c = select(vec3<f32>(0.85, 1.0, 0.55), vec3<f32>(0.75, 0.88, 1.0), P.m.w == 1u);
+    col = vec4<f32>(c, 0.32 * clamp(P.p.w / 0.6, 0.0, 1.0) * clamp(age * 8.0, 0.0, 1.0));
+  }
   else if (kind == 18u) { // petal: flower colours, fluttering
     size = 0.1;
     let fv = sr2;
@@ -126,7 +133,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     col = vec4<f32>(mix(vec3<f32>(0.5, 0.38, 0.26), vec3<f32>(0.6, 0.5, 0.38), sr), 1.0);
   }
   if (soft == 0.0) { col.a *= fade; }
-  if (kind != 9u && kind != 11u && kind != 12u && kind != 17u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w) + vec3<f32>(0.5, 0.55, 0.65) * G.misc.z, col.a); }
+  if (kind != 9u && kind != 11u && kind != 12u && kind != 17u && kind != 19u) { col = vec4<f32>(col.rgb * mix(1.0, 0.22, G.sky.w) + vec3<f32>(0.5, 0.55, 0.65) * G.misc.z, col.a); }
   // perched birds sit with folded wings
   let perched = kind == 10u && P.m.w == 2u;
   if (perched) { size = 0.24; }

@@ -312,3 +312,13 @@ canvas#world {
 .menu .difficulty button.on { color: var(--ink); border-color: rgba(236, 230, 216, 0.35); }
 /* small title-screen text sits over the diorama: keep it legible */
 .menu .small, .menu .difficulty button, .menu button.reset { text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9), 0 0 10px rgba(0, 0, 0, 0.7); color: #d8d0bf; }
+
+/* audio debug panel (?audio=1) */
+.audio-debug {
+  position: absolute; left: 12px; top: 12px; z-index: 50;
+  background: rgba(20, 18, 16, 0.85); color: #ddd; font: 11px/1.5 ui-monospace, monospace;
+  padding: 8px 10px; border-radius: 8px; max-height: 80vh; overflow: auto; pointer-events: auto;
+  display: flex; flex-direction: column; min-width: 280px;
+}
+.audio-debug b { margin-top: 6px; color: #fff; }
+.audio-debug .lvl { color: #9c9; }

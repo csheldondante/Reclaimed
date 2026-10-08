@@ -56,6 +56,9 @@ const K_SEED: u32 = 16u;
 const K_SPARK: u32 = 17u;
 // petals torn off flowers by the wind (round 10); seed = colour
 const K_PETAL: u32 = 18u;
+// a brief soft light where something happens (round 11): state 0 growth
+// (green-gold), 1 wind (pale blue)
+const K_GLOW: u32 = 19u;
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
 // left to settle, it falls as soot (DECISIONS round 5)
@@ -195,6 +198,9 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let ev = G.events[e];
     let dd = length(base.xy - ev.xy) / ev.z;
     if (dd >= 1.0) { continue; }
+    if (all(vec2<u32>(floor(ev.xy)) == id.xy)) {
+      spawnFull(base + vec3<f32>(0.0, 0.0, 0.6), vec3<f32>(0.0), 1.4, K_GLOW, 0.0, h ^ 0x6100u, 0u, 0u);
+    }
     let fall = 1.0 - dd;
     let hostile = contam[i].x > 0.2 || wet || m == MAT_TRASH_P || m == MAT_LITTER || moisture[i] < 0.04;
     let cap = MATS[m].eco.x;
@@ -333,6 +339,10 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
     if (kind == K_BIRD) { life = 14.0; }
     if (kind == K_LEAF) { life = 10.0; }
     if (kind == K_DEER || kind == K_RABBIT) { life = 90.0 + r.x * 60.0; }
+    if (kind == K_GLOW) {
+      spawnFull(a.xyz, vec3<f32>(0.0), 1.3, kind, 0.0, h, 0u, u32(b.z));
+      continue;
+    }
     if (kind == K_BIRD) {
       // birds arrive looking for a tree: fly in toward the middle of the map
       // (or wherever they were released), then search for a crown to perch on
@@ -441,6 +451,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     drag = 2.4; grav = 0.6;
     vel.x += sin(G.time * 6.0 + sr * 40.0) * 2.5 * DT;
     vel.y += cos(G.time * 5.0 + sr * 31.0) * 2.5 * DT;
+  } else if (kind == K_GLOW) {
+    drag = 0.0; grav = 0.0; vel = vec3<f32>(0.0);
   } else if (kind == K_SPARK) {
     drag = 0.5; grav = select(-0.6, 1.2, state == 1u);
   } else if (kind == K_HAZE) {
@@ -594,7 +606,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     pos.z = ground + 0.2;
     vel.z = abs(vel.z);
   }
-  if (kind != K_CLOUD && kind != K_HAZE && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
+  if (kind != K_CLOUD && kind != K_HAZE && kind != K_GLOW && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
     if (kind == K_DUST && state == DUST_GRIME) {
       if (water[ci] > 0.02) {
         // into the water: washed off and carried away by the stream
@@ -640,6 +652,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
           if (take > 0.001) { atomicSub(&contamDelta[j], i32(take * FIX)); }
         }
         spawnFull(vec3<f32>(pos.xy, ground + 0.2), vec3<f32>(0.0, 0.0, 1.0), 1.0, K_SPARK, 0.0, seed ^ 0x5eu, 0u, 0u);
+        spawnFull(vec3<f32>(pos.xy, ground + 0.5), vec3<f32>(0.0), 0.9, K_GLOW, 0.0, seed ^ 0x61u, 0u, 0u);
       }
       parts[id.x].p.w = 0.0;
       return;

@@ -29,6 +29,7 @@ export const enum PK {
   Seed = 16,
   Spark = 17,
   Petal = 18,
+  Glow = 19,
 }
 
 export interface Burst {
