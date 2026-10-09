@@ -16,6 +16,8 @@ import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import type { MapData } from '../world/mapgen';
+import { columnSlots, packInterval, readColumn } from '../world/layout';
+import { modelById, modelColumns, restingBase, seatColumn } from '../world/models';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -24,6 +26,8 @@ export interface LevelOptions {
   onLoadMap?: (map: MapData | undefined) => void;
 }
 
+/** sandbox: column slots per chunk, so placed models and strata have room */
+const SANDBOX_K = 10;
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
 
 export class LevelScene implements Scene {
@@ -83,7 +87,7 @@ export class LevelScene implements Scene {
   ) {
     const dims = { w: 256, h: 256, zMax: 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
-    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles);
+    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined);
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
     const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();
@@ -221,6 +225,7 @@ export class LevelScene implements Scene {
           this.undo();
           return;
         }
+        if (e.key.toLowerCase() === 'e' && this.editor?.tool === 'place') this.editor.rotate();
         if (e.key.toLowerCase() === 'r') this.powers.summonStorm();
         if (e.key === 'Escape' && this.intro) this.director.cancel();
         if (e.key === ' ') {
@@ -630,6 +635,10 @@ export class LevelScene implements Scene {
       w.spawnCyclone(wx, wy, 1);
       return true;
     }
+    if (ed.tool === 'place') {
+      void this.placeModel(wx, wy);
+      return true;
+    }
     // each press can be undone
     if (EDIT_OP[ed.tool]) this.core.snapshot();
     this.strokeStart = true;
@@ -644,11 +653,22 @@ export class LevelScene implements Scene {
     const ring = this.ring;
     if (!ed || !ring) return;
     const at = this.brushAt ?? this.hoverWorld;
-    const on = !!at && !!EDIT_OP[ed.tool];
+    const on = !!at && (!!EDIT_OP[ed.tool] || ed.tool === 'place');
     ring.parentElement!.style.display = on ? '' : 'none';
     if (!on) return;
     const { camera } = this.core;
     const pts: string[] = [];
+    if (ed.tool === 'place') {
+      // the model's footprint where it would land
+      const [fw, fd] = this.placeRect(at[0], at[1]);
+      const c: [number, number][] = [[fw[0], fd[0]], [fw[1], fd[0]], [fw[1], fd[1]], [fw[0], fd[1]], [fw[0], fd[0]]];
+      for (const [x, y] of c) {
+        const [sx, sy] = camera.project(x, y, this.heightAt(Math.min(x, fw[1] - 0.5), Math.min(y, fd[1] - 0.5)) + 0.1);
+        pts.push(`${sx.toFixed(1)},${sy.toFixed(1)}`);
+      }
+      ring.setAttribute('points', pts.join(' '));
+      return;
+    }
     for (let k = 0; k <= 48; k++) {
       const a = (k / 48) * Math.PI * 2;
       const x = at[0] + Math.cos(a) * ed.radius;
@@ -657,6 +677,73 @@ export class LevelScene implements Scene {
       pts.push(`${sx.toFixed(1)},${sy.toFixed(1)}`);
     }
     ring.setAttribute('points', pts.join(' '));
+  }
+
+  /** Sandbox place tool: the footprint [x0, x1], [y0, y1] centred on (wx, wy). */
+  private placeRect(wx: number, wy: number): [[number, number], [number, number]] {
+    const ed = this.editor!;
+    const m = modelById(ed.model)!;
+    const fw = ed.rot % 2 ? m.size[1] : m.size[0];
+    const fd = ed.rot % 2 ? m.size[0] : m.size[1];
+    const x0 = Math.round(wx - fw / 2);
+    const y0 = Math.round(wy - fd / 2);
+    return [[x0, x0 + fw], [y0, y0 + fd]];
+  }
+
+  /**
+   * Sandbox: stamp the chosen model into the live world. Reads the layers
+   * back, merges the model's runs into the footprint's columns on the CPU
+   * (models.ts mergeColumn: it replaces what it overlaps) and writes those
+   * columns back. Refused (nothing changes) if a column would need more slots
+   * than its chunk has.
+   */
+  private async placeModel(wx: number, wy: number): Promise<void> {
+    const ed = this.editor!;
+    const m = modelById(ed.model)!;
+    const { core } = this;
+    const { dims, packed } = core;
+    const { fw, fd, cols } = modelColumns(m, ed.rot);
+    const [[x0], [y0]] = this.placeRect(wx, wy);
+    core.snapshot();
+    const slots = new Uint32Array((await core.readBuffer('layers')).buffer);
+    const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < dims.w && y < dims.h;
+    const topAt = (x: number, y: number) => {
+      if (!inMap(x, y)) return 0;
+      const c = readColumn(packed, slots, x, y);
+      return c.length ? c[c.length - 1].z1 : 0;
+    };
+    const base = restingBase(topAt, x0, y0, fw, fd, ed.bury);
+    if (base + m.size[2] >= dims.zMax - 1) {
+      this.hud.say('Too high to place that here.', 2);
+      return;
+    }
+    const writes: { at: number; data: Uint32Array }[] = [];
+    for (let fy = 0; fy < fd; fy++)
+      for (let fx = 0; fx < fw; fx++) {
+        const x = x0 + fx;
+        const y = y0 + fy;
+        const runs = cols[fx + fw * fy];
+        if (!runs.length || !inMap(x, y)) continue;
+        const merged = seatColumn(
+          readColumn(packed, slots, x, y),
+          runs.map((r) => ({ z0: r.z0 + base, z1: r.z1 + base, mat: r.mat })),
+          base,
+          // placed at full support: the structure system bleeds it away only
+          // where something is really unsupported (starting at 0, every
+          // overhang would collapse before support could spread to it)
+          15 << 4,
+        );
+        const { base: at, k } = columnSlots(packed, x, y);
+        if (merged.length > k) {
+          this.hud.say('Too many layers here to fit that model.', 2);
+          return;
+        }
+        const data = new Uint32Array(k);
+        merged.forEach((iv, s) => (data[s] = packInterval(iv.z0, iv.z1, iv.mat, iv.aux ?? 0)));
+        writes.push({ at, data });
+      }
+    const { device } = this.host.gpu;
+    for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * 4, w.data);
   }
 
   /** Sandbox: put the world back as it was before the last brush press. */

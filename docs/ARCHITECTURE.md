@@ -218,3 +218,14 @@ restarts the level with `LevelOptions.map` (30-tick prime, no settling).
 Undo: `WorldCore.snapshot()` (each brush press) copies layers, water, oil,
 oilStored, contam, moisture, veg and the drift texture into a GPU ring of 8;
 `undo()` copies the last back and clears pours in flight.
+
+Model atlas (`world/models.ts`): voxel models (material per voxel) built by
+code, turned into per-column runs (`modelColumns`, 4 rotations) and seated
+into a column with `seatColumn` (base = mean ground under the footprint −
+sink; the model replaces what it overlaps; dips below the base fill with the
+column's top material). Map generators call `stampGrid`; the sandbox's place
+tool (`LevelScene.placeModel`) reads the layers back, seats the footprint's
+columns on the CPU and writes them back with full structural support (aux
+support 15) so the structure rule only removes what is really unsupported.
+Sandbox chunks are packed with K ≥ 10 (`packColumns(grid, minK)`) to leave
+room. Thumbnails: `ui/thumbs.ts` (2D-canvas isometric, exposed faces only).

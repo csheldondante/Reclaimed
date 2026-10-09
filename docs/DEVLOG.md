@@ -1341,3 +1341,27 @@ Measured: build 3 layers + pour, undo → the row of heights returns exactly
 to the post-build state; capture+encode+decode 71 ms, 242 KB, 0 columns and
 0 field values differ after the round trip; loading into a new scene shows
 the same heights.
+
+## 2026-10-09 — model atlas: placeable voxel models (F5)
+
+User: did you build an atlas of layered models that can be instanced? (No —
+everything was authored procedurally into the grid.) Wants thumbnails of
+ruins, tankers and ruined cars to place.
+- `world/models.ts`: ruined car, burnt-out car, bus, tanker truck, beached
+  tanker ship (48×12, bridge and funnel), ruined house, broken wall,
+  field-hospital tent (ridged canvas, red cross), pylon, oil tank, barrels,
+  seawall. Two new materials: steel (faded paint) and canvas.
+- They become real matter (column intervals): drifts bury them, cyclones
+  batter them, lightning breaks them. The sandbox "place" tool (🚗) has a
+  thumbnail palette, E rotates, "bury" sinks them; undo works. Map
+  generators get the same models through `stampGrid` (for C7/C9/C8).
+- Two things the structure rule taught us: placed runs must start at full
+  support (at 0 every roof collapsed on the first tick, before support could
+  spread), and models must be seated, not perched — the tanker rested on the
+  highest sand under its footprint (z 13 over z 11) and its hull, hanging
+  over the dips, correctly collapsed into a rubble heap. Now: base = mean
+  ground height, dips filled with the local ground material. The pylon's
+  legs and the tent's roof were reshaped so their parts touch face to face
+  (support only flows between 4-neighbours overlapping in z).
+Measured: all twelve placed side by side, 8 s later 16 cells had collapsed
+in total (the ruined house's broken corner); the rest stand.

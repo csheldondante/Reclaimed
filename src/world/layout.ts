@@ -34,6 +34,8 @@ export interface Interval {
   z0: number;
   z1: number;
   mat: number;
+  /** aux byte (support·16 + damage) when read back from the GPU; 0 if absent */
+  aux?: number;
 }
 
 /** CPU-side authoring representation used by map generation only. */
@@ -81,7 +83,8 @@ export interface PackedWorld {
   maxK: number;
 }
 
-export function packColumns(grid: ColumnGrid): PackedWorld {
+/** @param minK slots every chunk gets at least (the sandbox wants room to stack models) */
+export function packColumns(grid: ColumnGrid, minK = MIN_K): PackedWorld {
   const { w, h, zMax } = grid.dims;
   if (w % CHUNK || h % CHUNK) throw new Error(`map size must be a multiple of ${CHUNK}`);
   if (zMax > 255) throw new Error('zMax must fit in 8 bits');
@@ -95,7 +98,7 @@ export function packColumns(grid: ColumnGrid): PackedWorld {
       let need = 0;
       for (let ly = 0; ly < CHUNK; ly++)
         for (let lx = 0; lx < CHUNK; lx++) need = Math.max(need, grid.col(cx * CHUNK + lx, cy * CHUNK + ly).length);
-      const k = Math.max(MIN_K, need + K_HEADROOM);
+      const k = Math.max(minK, need + K_HEADROOM);
       if (k > MAX_K) throw new Error(`chunk ${cx},${cy} needs ${k} slots (> MAX_K ${MAX_K})`);
       const ci = cy * chunksX + cx;
       chunkTable[ci * 2] = offset;
@@ -117,4 +120,23 @@ export function packColumns(grid: ColumnGrid): PackedWorld {
     }
   }
   return { dims: grid.dims, chunksX, chunksY, chunkTable, slots, maxK };
+}
+
+/** Where column (x, y) lives in packed slots: first slot and slot count K. */
+export function columnSlots(p: PackedWorld, x: number, y: number): { base: number; k: number } {
+  const ci = Math.floor(y / CHUNK) * p.chunksX + Math.floor(x / CHUNK);
+  const k = p.chunkTable[ci * 2 + 1];
+  return { base: p.chunkTable[ci * 2] + ((y % CHUNK) * CHUNK + (x % CHUNK)) * k, k };
+}
+
+/** The intervals of column (x, y) in packed slots (e.g. read back from the GPU). */
+export function readColumn(p: PackedWorld, slots: Uint32Array, x: number, y: number): Interval[] {
+  const { base, k } = columnSlots(p, x, y);
+  const out: Interval[] = [];
+  for (let s = 0; s < k; s++) {
+    const v = slots[base + s];
+    if (v === 0) break;
+    out.push({ z0: v & 0xff, z1: (v >>> 8) & 0xff, mat: (v >>> 16) & 0xff, aux: v >>> 24 });
+  }
+  return out;
 }

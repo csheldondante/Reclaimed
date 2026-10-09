@@ -62,10 +62,11 @@ export class WorldCore {
     private host: Host,
     readonly map: MapData,
     particleCap: number,
+    minK?: number,
   ) {
     const { device } = host.gpu;
     this.dims = map.grid.dims;
-    this.packed = packColumns(map.grid);
+    this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     this.sim = new Simulation(device, this.world, host.profiler);
     this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler);

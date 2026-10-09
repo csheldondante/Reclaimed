@@ -345,3 +345,6 @@ canvas#world {
 /* sandbox brush footprint */
 .brush-ring { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .brush-ring polyline { fill: rgba(240, 230, 200, 0.06); stroke: rgba(250, 245, 225, 0.75); stroke-width: 1.5; stroke-dasharray: 5 4; }
+.editor .models { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
+.editor .models button { padding: 1px; height: auto; min-width: 0; }
+.editor .models img { width: 100%; height: auto; display: block; }

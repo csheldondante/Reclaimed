@@ -12,6 +12,8 @@
 import { MAT } from '../world/materials';
 import type { MapData } from '../world/mapgen';
 import { decodeMap, encodeMap, savedMaps } from '../world/mapfile';
+import { MODELS } from '../world/models';
+import { thumbnail } from './thumbs';
 
 /** What the panel's map buttons do (the level implements them). */
 export interface EditorMaps {
@@ -28,6 +30,7 @@ export type EditTool =
   | 'build'
   | 'bedrock'
   | 'dig'
+  | 'place'
   | 'water'
   | 'drain'
   | 'oil'
@@ -81,6 +84,7 @@ const TOOLS: [EditTool, string, string][] = [
   ['build', '▲', 'Build: lay hard material (a layer per press)'],
   ['bedrock', '⛰', 'Bedrock: raise stone from below, lifting everything on it'],
   ['dig', '▼', 'Dig: take a layer off the top'],
+  ['place', '🚗', 'Place a model: cars, ruins, a tanker… (E rotates)'],
   ['water', '💧', 'Pour water'],
   ['drain', '◌', 'Drain water and oil'],
   ['oil', '⬤', 'Spill oil'],
@@ -103,6 +107,10 @@ export class Editor {
   layers = 1;
   /** simulation speed (0 = paused) */
   speed = 1;
+  /** place tool: the model, its quarter turns, and how deep it sits in the ground */
+  model = MODELS[0].id;
+  rot = 0;
+  bury = MODELS[0].sink;
   private el: HTMLElement;
   private picked = { pour: MAT.Soil as number, build: MAT.Stone as number };
 
@@ -114,6 +122,8 @@ export class Editor {
       <label data-ml>material <select data-m></select></label>
       <label>size <input data-r type="range" min="1" max="16" value="${this.radius}"></label>
       <label data-ll>layers <input data-l type="range" min="1" max="4" value="${this.layers}"></label>
+      <div class="models" data-models>${MODELS.map((m) => `<button data-mod="${m.id}" title="${m.name}"><img alt="${m.name}" src="${thumbnail(m)}"></button>`).join('')}</div>
+      <label data-bl>bury <input data-b type="range" min="0" max="4" value="${this.bury}"></label>
       <label data-sl>strength <input data-s type="range" min="5" max="100" value="${this.strength * 100}"></label>
       <div class="speed">${[0, 1, 2, 4, 8].map((s) => `<button data-sp="${s}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}</div>
       <div class="maps">
@@ -138,6 +148,8 @@ export class Editor {
       show('[data-ml]', !!list);
       show('[data-ll]', LAYER_TOOLS.has(t));
       show('[data-sl]', !!EDIT_OP[t] && !LAYER_TOOLS.has(t));
+      show('[data-models]', t === 'place');
+      show('[data-bl]', t === 'place');
       if (list) {
         const cur = this.picked[t as 'pour' | 'build'];
         matSel.innerHTML = list.map(([n, m]) => `<option value="${m}"${m === cur ? ' selected' : ''}>${n}</option>`).join('');
@@ -149,6 +161,16 @@ export class Editor {
       this.material = Number(matSel.value);
       if (this.tool === 'pour' || this.tool === 'build') this.picked[this.tool] = this.material;
     });
+    const bury = el.querySelector<HTMLInputElement>('[data-b]')!;
+    bury.addEventListener('input', () => (this.bury = Number(bury.value)));
+    const pickModel = (id: string) => {
+      this.model = id;
+      this.bury = MODELS.find((m) => m.id === id)!.sink;
+      bury.value = String(this.bury);
+      for (const b of el.querySelectorAll<HTMLButtonElement>('[data-mod]')) b.classList.toggle('on', b.dataset.mod === id);
+    };
+    for (const b of el.querySelectorAll<HTMLButtonElement>('[data-mod]')) b.addEventListener('click', () => pickModel(b.dataset.mod!));
+    pickModel(this.model);
     sel('wind');
     el.querySelector<HTMLInputElement>('[data-r]')!.addEventListener('input', (e) => (this.radius = Number((e.target as HTMLInputElement).value)));
     el.querySelector<HTMLInputElement>('[data-l]')!.addEventListener('input', (e) => (this.layers = Number((e.target as HTMLInputElement).value)));
@@ -205,6 +227,11 @@ export class Editor {
       }
     });
     act('new', () => maps.fresh());
+  }
+
+  /** Turn the model to place a quarter turn. */
+  rotate(): void {
+    this.rot = (this.rot + 1) % 4;
   }
 
   /** Select a tool (and optionally a material) from code: scripted tests. */

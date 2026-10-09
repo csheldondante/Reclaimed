@@ -57,6 +57,8 @@ export const MAT = {
   Ash: 17,
   Litter: 18,
   Drift: 19,
+  Steel: 20,
+  Canvas: 21,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -102,6 +104,10 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'litter', albedo: [0.55, 0.52, 0.47], state: MatState.Granular, reposeDry: 1, reposeWet: 1, strength: 0.05, growthCap: 1, suitability: 0.15, porosity: 0.2, smooth: 1.5 },
   // render-only: drifted dust (its depth lives in the drift texture, not in layers)
   { ...NONE, name: 'drift', albedo: [0.6, 0.5, 0.39], state: MatState.Granular, porosity: 0.4 },
+  // faded painted metal: car bodies, ship hulls, pylons (models.ts; round 13 F5)
+  { ...NONE, name: 'steel', albedo: [0.44, 0.48, 0.5], state: MatState.Solid, strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.25, porosity: 0.15 },
+  // tent fabric: weathered off-white canvas, weak
+  { ...NONE, name: 'canvas', albedo: [0.78, 0.75, 0.66], state: MatState.Solid, strength: 0.3, growthCap: 1, suitability: 0.2, porosity: 0.5 },
 ];
 
 export const MAX_MATERIALS = 32;

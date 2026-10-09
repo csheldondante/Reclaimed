@@ -39,6 +39,12 @@ each was implemented.
   from a small link.
 - Order: agent's proposal in BACKLOG (quick fixes → brushes → save/load →
   model atlas → title → toppling → C7, C9, C8).
+- Later in round 13: download Creative Commons assets (skulls etc.) and
+  voxelize them by tracing rays through them — a clean pipeline for adding
+  models; clean them up (tanks hollow, then filled with liquid) (F12).
+- The structure rule: the user is open to talking it through and isn't sure
+  the current rule is the best way to do physics — discuss before F7
+  (toppling chunks).
 
 ## 2026-10-09 — end of session 2
 
