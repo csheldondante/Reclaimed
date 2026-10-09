@@ -31,8 +31,8 @@ const MAT_ASH_S: u32 = 17u;
 //    (neighbour water surface above the interval's base) gains damage with
 //    probability ∝ H per tick. Intact structures hold indefinitely, so the
 //    player must first crack one (lightning) and the water does the rest.
-//  * Fast flow alongside any solid erodes it; violent flow (floods) damages
-//    even intact weak materials.
+//  * Fast flow alongside a cracked solid erodes it further; intact solids
+//    hold (round 15: concrete and asphalt need lightning or a cyclone first).
 const HEAD_MIN: f32 = 2.0;
 const HEAD_RATE: f32 = 0.006;
 const FLOW_RATE: f32 = 0.06;
@@ -56,8 +56,9 @@ fn hydraulicDamage(p: vec2<i32>, z0: u32, z1: u32, dmg: u32, m: u32, salt: u32) 
   let strength = MATS[m].sim.w;
   var chance = 0.0;
   if (dmg > 0u && head > HEAD_MIN) { chance += (head - HEAD_MIN) * HEAD_RATE; }
-  let flowLimit = select(0.5, 0.1, dmg > 0u);
-  if (flow > flowLimit) { chance += (flow - flowLimit) * FLOW_RATE * (1.2 - strength); }
+  // only what is already cracked (lightning, cyclones, heat) wears in fast
+  // water: intact concrete and asphalt hold (round 15)
+  if (dmg > 0u && flow > 0.1) { chance += (flow - 0.1) * FLOW_RATE * (1.2 - strength); }
   let r = rand3(u32(p.x) * 16u + salt, u32(p.y), G.tick);
   return select(dmg, min(15u, dmg + 1u), r < chance);
 }
@@ -142,6 +143,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         prevTop = z1;
         prevSup = s;
         continue;
+      }
+      // moving water tears a packed heap apart a cell at a time into loose
+      // litter, which the water then carries off (round 15: wash away the
+      // trash heaps)
+      if (m == MAT_TRASH_S && i + 1u == n) {
+        let flow = length(netFlow(p));
+        if (flow > 0.02 && rand3(id.x, id.y, G.tick ^ 0x3a5u) < (flow - 0.02) * 0.5) {
+          // (the top interval: split off its top cell as litter, then stop)
+          if (z1 - 1u <= z0 || i + 1u >= cs.y) {
+            layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
+          } else {
+            layersOut[cs.x + i] = ivPack(z0, z1 - 1u, m, ivAux(v));
+            layersOut[cs.x + i + 1u] = ivPack(z1 - 1u, z1, MAT_LITTER, 0u);
+            n += 1u;
+          }
+          break;
+        }
       }
       // a lightning strike blasts compacted waste straight to ash (round 10:
       // the storm is how the heap the wind can't move is cleared)

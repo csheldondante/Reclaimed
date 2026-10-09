@@ -1563,3 +1563,19 @@ senders whose wind differs a little from the receiver's aren't missed).
 Measured (a 65-cell dust pile in the sandbox, eight strong strokes across
 it): before, 65 → 0.2 inside the region — it vanished; now 65 → 65 with
 its centre of mass carried 35 cells downwind. Drift pass 0.10 → 0.11 ms.
+
+## 2026-10-09 — water washes trash heaps; concrete needs cracking first (H4)
+
+User: water should loosen loose materials and carry them away — wash away
+the packed trash heaps or dirt; blow away dust; asphalt and concrete need
+lightning or tornadoes to crack them and break them down first.
+- Already so: moving water erodes loose ground (soil, sand, rubble, ash,
+  litter) and carries it downstream; dust is the wind's.
+- New: moving water over a trash heap tears its top cell off as loose
+  litter (chance ∝ net flow above 0.02), which water and wind then carry.
+  (Round 5's "trash only yields to fire" now also yields to water.)
+- Changed: violent flow no longer damages intact concrete/asphalt/brick —
+  only cracked solids wear in fast water; lightning, cyclones and heat do
+  the cracking.
+Measured: 10 s of heavy water poured on the sandbox heap → 73 of its 156
+trash cells became litter; conversion stops when the water does.
