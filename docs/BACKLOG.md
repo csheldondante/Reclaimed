@@ -32,6 +32,18 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 14 (2026-10-09, session 3)
+
+Order: G1–G4 (quick) → G5 with F7 (destruction prototyped in the sandbox) → F12 → C7, C9, C8.
+
+| id | item | size | status |
+|---|---|---|---|
+| G1 | Fireflies sparser, in small patches | S | open |
+| G2 | Sandbox reachable from the start, plainly (a real button, not a footnote link) | S | open |
+| G3 | No cap on summoning cyclones (no cooldown); several at once is a follow-up (one cyclone slot in Globals today) | S (cooldown) / M (several) | open |
+| G4 | Title screen: repeated taps grow a diorama-scale sapling, not the level's tree | S | open |
+| G5 | The sandbox as the physics playground: test and play with physics, placing things and every mechanic (F7 lands there first) | ongoing | open |
+
 ## Round 13 (2026-10-09, session 3)
 
 Proposed order: F1, F8, F9 (quick fixes) → F2, F4, F3 (brushes) → F6 (save/load, E8) → F5 (model atlas) → F11, F10 (title) → F7 (toppling) → C7, C9, C8 (which reuse F5's models).

@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-09 — round 14 (session 3) — items G1–G5 in BACKLOG.md
+
+- Fireflies less dense, only popping up in small patches.
+- Sandbox visible from the start: the user wants to test the updated
+  physics. The sandbox should be **a place to test and play with physics,
+  placing things and the other mechanics**.
+- Remove the cap on summoning tornadoes (cyclones) — very fun to do.
+- Title screen: tapping several times still grows the normal (level-scale)
+  tree, which looks silly next to the skull.
+
 ## 2026-10-09 — round 13 (session 3) — items F1–F11 in BACKLOG.md
 
 - Dust sitting on top of water is wrong: water and oil lie above the other
