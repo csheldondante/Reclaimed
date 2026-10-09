@@ -38,14 +38,14 @@ Proposed order: H5, H6, H1 (quick) → H8 → H2 → H4 → H3 → H7 (with F12)
 
 | id | item | size | status |
 |---|---|---|---|
-| H1 | Title screen: random low gusts now and then (grass waves, dust blows) | S | done |
-| H2 | Airborne dust settles back into drifts downwind (mass kept) instead of vanishing | S–M | done |
+| H1 | Title screen: random low gusts now and then (grass waves, dust blows) | S | done `dd81319` |
+| H2 | Airborne dust settles back into drifts downwind (mass kept) instead of vanishing | S–M | done `f500cb6` |
 | H3 | Loose surfaces (dirt, ash, sand) behave like dust: fractional loose layer, steeper repose, higher wind to lift (dirt maybe never); stone stays stepped | L | done in the sandbox (a `2101762`, b+c strata); valley later |
-| H4 | Water loosens and carries loose material (dirt, packed trash); asphalt/concrete need lightning or cyclones to crack and break down first | M | done |
-| H5 | Oil keeps burning in rain (trees still go out) | S | done |
-| H6 | Storm outlines steadier (shape changes too fast) | S | done |
-| H7 | Larger models to place: tall buildings (ties to F12) | M | done |
-| H8 | Green over loose material binds it: dust under established plants can't be swept out and slowly becomes soil | S–M | done |
+| H4 | Water loosens and carries loose material (dirt, packed trash); asphalt/concrete need lightning or cyclones to crack and break down first | M | done `dc50fc3` |
+| H5 | Oil keeps burning in rain (trees still go out) | S | done `6c6ffc6` |
+| H6 | Storm outlines steadier (shape changes too fast) | S | done `59ca6ed` |
+| H7 | Larger models to place: tall buildings (ties to F12) | M | done `e5e420c` |
+| H8 | Green over loose material binds it: dust under established plants can't be swept out and slowly becomes soil | S–M | done `bd89f13` |
 | F7b | Break tool for anything + physics garden in the sandbox | S | done `d062a54` |
 
 ## Round 14 (2026-10-09, session 3)
