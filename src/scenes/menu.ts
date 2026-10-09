@@ -76,10 +76,10 @@ export class MenuScene implements Scene {
     this.el.className = 'menu';
     const line = LINES.find(([t]) => p >= t)![1];
     this.el.innerHTML = `<div><h1>RECLAIMED</h1><p class="line">${line}</p></div>
-      <div class="actions"><span class="level-name"></span><button data-a="play"></button>
+      <div class="actions"><span class="level-name"></span>
+      <span class="play-row"><button data-a="play"></button><button data-a="sandbox" title="Build, pour, place and break things; summon weather — the physics playground">Sandbox</button></span>
       <span class="small level-info"></span>
       <span class="small">pick a place: click its model · some lie under the dust · sound on</span>
-      <button class="reset" data-a="sandbox">sandbox</button>
       <span class="small hands">touch the ground · drag to make wind</span>
       <span class="difficulty" title="Easy: green ground never fails. Medium: green resists pollution. Hard: blown waste, gales and floods kill green easily.">${(['easy', 'medium', 'hard'] as const).map((d) => `<button data-d="${d}">${d}</button>`).join('')}</span>
       ${p > 0 ? '<button class="reset" data-a="reset">reset progress</button>' : ''}</div>`;

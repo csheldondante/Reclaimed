@@ -1405,3 +1405,9 @@ Emission over meadow is now gated by a slowly wandering patch mask
 meadow, a few cells across each). Measured with the whole sandbox set to
 meadow at night (worst case): 11 748 fireflies before, 885 with the
 0.8–0.9 mask (then tightened further), in visible clusters.
+
+## 2026-10-09 — Sandbox button on the title screen (G2)
+
+User: wants the sandbox visible from the start to test the physics. It was
+a small footnote link under the instructions; now a "Sandbox" button sits
+beside Begin/Continue, whatever level is selected or buried.
