@@ -1396,3 +1396,12 @@ off with the wind (to encourage exploring).
 Measured: idle 40 s on the windiest (barren) title: dust over the car and
 tent unchanged (1.75 / 2.84), tanker −0.1. Seventy fast strokes over the
 car: 1.75 → 0.39 in 3 s → uncovered (saved, selected) at ~4 s.
+
+## 2026-10-09 — fireflies in small patches (G1)
+
+User: fireflies should be less dense and only pop up in small patches.
+Emission over meadow is now gated by a slowly wandering patch mask
+(value noise at 9-cell scale, smoothstep 0.84–0.92: a few percent of the
+meadow, a few cells across each). Measured with the whole sandbox set to
+meadow at night (worst case): 11 748 fireflies before, 885 with the
+0.8–0.9 mask (then tightened further), in visible clusters.

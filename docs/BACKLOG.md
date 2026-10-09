@@ -38,7 +38,7 @@ Order: G1–G4 (quick) → G5 with F7 (destruction prototyped in the sandbox) �
 
 | id | item | size | status |
 |---|---|---|---|
-| G1 | Fireflies sparser, in small patches | S | open |
+| G1 | Fireflies sparser, in small patches | S | done |
 | G2 | Sandbox reachable from the start, plainly (a real button, not a footnote link) | S | open |
 | G3 | No cap on summoning cyclones (no cooldown); several at once is a follow-up (one cyclone slot in Globals today) | S (cooldown) / M (several) | open |
 | G4 | Title screen: repeated taps grow a diorama-scale sapling, not the level's tree | S | open |

@@ -263,8 +263,10 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     spawn(base + vec3<f32>(0.0, 0.0, 0.25), vec3<f32>(r1 - 0.5, fract(r1 * 3.0) - 0.5, 0.0), 60.0 + r1 * 60.0, K_RABBIT, 0.0, h);
   }
   // fireflies over living land at night
-  // fireflies belong to meadows, not woodland
-  if (G.sky.w > 0.6 && v >= 1.8 && v < 3.4 && !wet && rare(id.x, id.y, 0xf1f1u) < 0.0004 * G.sky.w) {
+  // fireflies belong to meadows, not woodland — and only in a few small
+  // patches that wander slowly over the night (round 14: they were everywhere)
+  let ffPatch = smoothstep(0.84, 0.92, vnoise(vec2<f32>(p) / 9.0 + vec2<f32>(G.time * 0.004, 17.0)));
+  if (G.sky.w > 0.6 && v >= 1.8 && v < 3.4 && !wet && ffPatch > 0.0 && rare(id.x, id.y, 0xf1f1u) < 0.0005 * G.sky.w * ffPatch) {
     spawn(base + vec3<f32>(r1 - 0.5, fract(r1 * 5.3) - 0.5, 0.6 + r1 * 2.0), vec3<f32>(0.0), 6.0 + r1 * 6.0, K_FIREFLY, 0.0, h);
   }
   // (storms have no cloud puffs: rain fades in from a height — DECISIONS round 5)
