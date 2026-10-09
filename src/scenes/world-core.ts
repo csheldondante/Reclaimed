@@ -12,6 +12,7 @@ import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
 import { CHUNK, packColumns, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
+import { unpackColumns } from '../world/mapfile';
 import { DayNight, type Daylight } from '../weather/daynight';
 import { Weather } from '../weather/weather';
 
@@ -201,8 +202,12 @@ export class WorldCore {
    * 256 bytes on the GPU side.
    */
   async readWindField(): Promise<{ data: Float32Array; w: number; h: number }> {
+    return this.readTexture(this.world.windField);
+  }
+
+  /** Read back an rgba32float texture, rows unpadded (4 floats per texel). */
+  async readTexture(tex: GPUTexture): Promise<{ data: Float32Array; w: number; h: number }> {
     const { device } = this.host.gpu;
-    const tex = this.world.windField;
     const w = tex.width;
     const h = tex.height;
     const rowBytes = Math.ceil((w * 16) / 256) * 256;
@@ -218,6 +223,93 @@ export class WorldCore {
     tmp.unmap();
     tmp.destroy();
     return { data, w, h };
+  }
+
+  /** The live world as map data (saving a sandbox map: world/mapfile.ts). */
+  async captureMap(): Promise<MapData> {
+    const N = this.dims.w * this.dims.h;
+    const [layers, water, contam, moisture, veg, oil, oilStored, waterSource, drift] = await Promise.all([
+      this.readBuffer('layers'),
+      this.readBuffer('water'),
+      this.readBuffer('contam'),
+      this.readBuffer('moisture'),
+      this.readBuffer('veg'),
+      this.readBuffer('oil'),
+      this.readBuffer('oilStored'),
+      this.readBuffer('waterSource'),
+      this.readTexture(this.world.drift),
+    ]);
+    const grid = unpackColumns(this.packed, new Uint32Array(layers.buffer));
+    const surface = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const c = grid.cols[i];
+      surface[i] = c.length ? c[c.length - 1].z1 : 0;
+    }
+    const d = new Float32Array(N);
+    for (let i = 0; i < N; i++) d[i] = drift.data[i * 4];
+    return {
+      grid,
+      water: water.slice(0, N),
+      contam: contam.slice(0, N * 2),
+      moisture: moisture.slice(0, N),
+      vegetation: veg.slice(0, N),
+      oil: oil.slice(0, N),
+      oilStored: oilStored.slice(0, N * 2),
+      waterSource: waterSource.slice(0, N),
+      drift: d,
+      surface,
+      poi: this.map.poi,
+    };
+  }
+
+  // ---- undo (sandbox): GPU-side copies of the editable world state ----------
+  private undoRing: { bufs: GPUBuffer[]; tex: GPUTexture }[] = [];
+  private undoNext = 0;
+  private undoCount = 0;
+  private static readonly UNDO_DEPTH = 8;
+  private undoSources(): GPUBuffer[] {
+    const w = this.world;
+    return [w.layers, w.water, w.oil, w.oilStored, w.contam, w.moisture, w.veg];
+  }
+
+  /** Remember the world as it is now (called at the start of each brush press). */
+  snapshot(): void {
+    const { device } = this.host.gpu;
+    const src = this.undoSources();
+    if (this.undoRing.length < WorldCore.UNDO_DEPTH && this.undoRing.length <= this.undoNext) {
+      this.undoRing.push({
+        bufs: src.map((b) => this.world.buf(`undo:${b.label}`, b.size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST)),
+        tex: this.world.texture('undo:drift', this.world.drift),
+      });
+    }
+    const slot = this.undoRing[this.undoNext];
+    const enc = device.createCommandEncoder({ label: 'snapshot' });
+    src.forEach((b, k) => enc.copyBufferToBuffer(b, 0, slot.bufs[k], 0, b.size));
+    enc.copyTextureToTexture({ texture: this.world.drift }, { texture: slot.tex }, [this.dims.w, this.dims.h]);
+    device.queue.submit([enc.finish()]);
+    this.undoNext = (this.undoNext + 1) % WorldCore.UNDO_DEPTH;
+    this.undoCount = Math.min(this.undoCount + 1, WorldCore.UNDO_DEPTH);
+  }
+
+  /** Put back the last snapshot; false when there is none. */
+  undo(): boolean {
+    if (this.undoCount === 0) return false;
+    const { device } = this.host.gpu;
+    this.undoNext = (this.undoNext + WorldCore.UNDO_DEPTH - 1) % WorldCore.UNDO_DEPTH;
+    this.undoCount--;
+    const slot = this.undoRing[this.undoNext];
+    const src = this.undoSources();
+    const enc = device.createCommandEncoder({ label: 'undo' });
+    src.forEach((b, k) => enc.copyBufferToBuffer(slot.bufs[k], 0, b, 0, b.size));
+    enc.copyTextureToTexture({ texture: slot.tex }, { texture: this.world.drift }, [this.dims.w, this.dims.h]);
+    // pours in flight would land on the restored ground: drop them
+    enc.clearBuffer(this.world.driftDelta);
+    device.queue.submit([enc.finish()]);
+    const zero = new Float32Array(this.dims.w * this.dims.h * 4);
+    for (const t of [this.world.editState, this.world.editStateNext]) {
+      device.queue.writeTexture({ texture: t }, zero, { bytesPerRow: this.dims.w * 16 }, [this.dims.w, this.dims.h]);
+    }
+    return true;
   }
 
   /** Debug: mean of a per-column field over a square region. */

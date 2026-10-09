@@ -15,6 +15,14 @@ import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
+import type { MapData } from '../world/mapgen';
+
+export interface LevelOptions {
+  /** play this map instead of generating the level's (a loaded sandbox map) */
+  map?: MapData;
+  /** sandbox: restart with a loaded map, or a fresh one (undefined) */
+  onLoadMap?: (map: MapData | undefined) => void;
+}
 
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
 
@@ -62,6 +70,8 @@ export class LevelScene implements Scene {
   private brushAt?: [number, number];
   /** the next brush event starts a new press (layer tools: a fresh layer) */
   private strokeStart = false;
+  /** sandbox: the brush's footprint drawn on the ground under the cursor */
+  private ring?: SVGPolylineElement;
 
   private constructor(
     private host: Host,
@@ -69,10 +79,11 @@ export class LevelScene implements Scene {
     private perf: PerfOverlay,
     readonly level: LevelDef,
     private onExit: () => void,
+    private opts: LevelOptions,
   ) {
     const dims = { w: 256, h: 256, zMax: 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
-    this.core = new WorldCore(host, level.generate(dims), host.quality.particles);
+    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles);
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
     const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();
@@ -86,12 +97,13 @@ export class LevelScene implements Scene {
   }
 
   /** Builds the level and settles it (rivers, slopes) before returning. */
-  static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void): Promise<LevelScene> {
-    const s = new LevelScene(host, audio, perf, levelById(levelId), onExit);
+  static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void, opts: LevelOptions = {}): Promise<LevelScene> {
+    const s = new LevelScene(host, audio, perf, levelById(levelId), onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
-    // litter, fallen leaves) accumulates fast so the level opens with it lying about
-    s.core.globals.debrisBoost = 10;
-    await s.core.warmup(WARMUP_TICKS, (sys) => sys.name !== 'ecology');
+    // litter, fallen leaves) accumulates fast so the level opens with it lying about.
+    // A saved map was settled when it was saved: a short prime only.
+    s.core.globals.debrisBoost = opts.map ? 1 : 10;
+    await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology');
     s.core.globals.debrisBoost = 1;
     s.attach();
     return s;
@@ -139,7 +151,18 @@ export class LevelScene implements Scene {
     const p = host.params;
     this.intro = !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     if (this.level.sandbox) {
-      this.editor = new Editor(host.ui, (sp) => (this.speed = sp));
+      this.editor = new Editor(host.ui, (sp) => (this.speed = sp), {
+        undo: () => this.undo(),
+        capture: () => this.core.captureMap(),
+        load: (map) => this.opts.onLoadMap?.(map),
+        fresh: () => this.opts.onLoadMap?.(undefined),
+        say: (t) => this.hud.say(t, 3),
+      });
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('class', 'brush-ring');
+      this.ring = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      svg.appendChild(this.ring);
+      host.ui.appendChild(svg);
       // pours keep landing after the press: the edit pass runs every tick
       core.sim.edit.always = true;
       weather.holdNatural(1e9);
@@ -193,6 +216,11 @@ export class LevelScene implements Scene {
       'keydown',
       (e) => {
         this.keys.add(e.key.toLowerCase());
+        if (e.key.toLowerCase() === 'z' && (e.ctrlKey || e.metaKey) && this.editor) {
+          e.preventDefault();
+          this.undo();
+          return;
+        }
         if (e.key.toLowerCase() === 'r') this.powers.summonStorm();
         if (e.key === 'Escape' && this.intro) this.director.cancel();
         if (e.key === ' ') {
@@ -349,6 +377,7 @@ export class LevelScene implements Scene {
     hud.setReclaim(this.reclaimed, goal);
     // the brush paints every frame while held
     if (this.brushAt && this.editor) this.brush(this.brushAt[0], this.brushAt[1]);
+    this.drawRing();
     weather.dustiness = core.pollution;
     this.birdArrivals(dt, stats);
 
@@ -601,10 +630,39 @@ export class LevelScene implements Scene {
       w.spawnCyclone(wx, wy, 1);
       return true;
     }
+    // each press can be undone
+    if (EDIT_OP[ed.tool]) this.core.snapshot();
     this.strokeStart = true;
     if (tap) this.brush(wx, wy);
     else this.brushAt = [wx, wy];
     return true;
+  }
+
+  /** Sandbox: outline the brush on the ground (follows the terrain). */
+  private drawRing(): void {
+    const ed = this.editor;
+    const ring = this.ring;
+    if (!ed || !ring) return;
+    const at = this.brushAt ?? this.hoverWorld;
+    const on = !!at && !!EDIT_OP[ed.tool];
+    ring.parentElement!.style.display = on ? '' : 'none';
+    if (!on) return;
+    const { camera } = this.core;
+    const pts: string[] = [];
+    for (let k = 0; k <= 48; k++) {
+      const a = (k / 48) * Math.PI * 2;
+      const x = at[0] + Math.cos(a) * ed.radius;
+      const y = at[1] + Math.sin(a) * ed.radius;
+      const [sx, sy] = camera.project(x, y, this.heightAt(x, y) + 0.1);
+      pts.push(`${sx.toFixed(1)},${sy.toFixed(1)}`);
+    }
+    ring.setAttribute('points', pts.join(' '));
+  }
+
+  /** Sandbox: put the world back as it was before the last brush press. */
+  private undo(): void {
+    this.brushAt = undefined;
+    if (!this.core.undo()) this.hud.say('Nothing to undo.', 2);
   }
 
   /** One frame of the brush: an EV_EDIT event for edit.wgsl. */
@@ -659,6 +717,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.controls.dispose();
     this.editor?.dispose();
+    this.ring?.parentElement?.remove();
     this.hud.dispose();
     this.core.destroy();
     for (const el of this.host.ui.querySelectorAll('.complete')) el.remove();

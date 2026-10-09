@@ -1322,3 +1322,22 @@ Measured (row of 17 columns through the brush, radius 6): one dirt tap
 +1 over the middle 6; four taps a +4 mound with sloped sides (repose); a
 1.5 s drag scrubbing one spot with build = exactly +1; bedrock ×2 lifts
 the mound by 2. 840 grains in flight 0.4 s into a radius-7 two-layer pour.
+
+## 2026-10-09 — map building: save/load, undo, brush ring (F6, E8)
+
+User: wants time to just build cool maps and play with the physics. Making
+that real needs keeping what you build and taking back mistakes.
+- **Save/load**: the editor's map row — save (IndexedDB, named), load…
+  (list), ⤓ download / ⤒ open a `.reclaimed` file, new (fresh sandbox).
+  The file is gzip of a JSON header + the raw arrays; a loaded map plays
+  as-is (30-tick prime instead of the 30 s settling warmup). A file format
+  also means maps the user builds can become levels (B7).
+- **Undo** (↶ or Ctrl+Z): a GPU snapshot of the editable state at the start
+  of every brush press, ring of 8 (~4.5 MB each at 256²); undo copies it
+  back and drops pours still in flight.
+- **Brush ring**: a dashed SVG outline of the brush radius, projected onto
+  the terrain under the cursor, for every brush tool.
+Measured: build 3 layers + pour, undo → the row of heights returns exactly
+to the post-build state; capture+encode+decode 71 ms, 242 KB, 0 columns and
+0 field values differ after the round trip; loading into a new scene shows
+the same heights.

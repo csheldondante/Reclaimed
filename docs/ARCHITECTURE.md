@@ -207,3 +207,14 @@ the column. Drift dust goes through `driftDelta` (folded in by the drift
 system, which owns the drift texture). Spawn tools call Weather
 (`spawn`, `placeDust`, `spawnCyclone`). Time: speed 0 (pause) … 8×.
 
+
+Saved maps (`world/mapfile.ts`): `WorldCore.captureMap()` reads the live
+world back (layers unpacked to a ColumnGrid via the chunk table, the float
+fields, the drift texture) into a `MapData`; `encodeMap` writes it as gzip
+(CompressionStream) of "RCLM" + u32 header length + JSON header (version,
+dims, poi, field sizes, chunk table) + slots + fields (~250 KB for 256²).
+Kept in IndexedDB (`savedMaps`) or downloaded as `.reclaimed`; loading
+restarts the level with `LevelOptions.map` (30-tick prime, no settling).
+Undo: `WorldCore.snapshot()` (each brush press) copies layers, water, oil,
+oilStored, contam, moisture, veg and the drift texture into a GPU ring of 8;
+`undo()` copies the last back and clears pours in flight.

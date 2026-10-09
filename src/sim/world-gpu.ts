@@ -222,6 +222,13 @@ export class WorldGpu {
     return b;
   }
 
+  /** A texture shaped like `like` (copies of world textures, e.g. undo), freed with the world. */
+  texture(label: string, like: GPUTexture): GPUTexture {
+    const t = this.device.createTexture({ label, size: [like.width, like.height], format: like.format, usage: GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST });
+    this.textures.push(t);
+    return t;
+  }
+
   /** Workgroup counts for an 8×8 per-column dispatch. */
   get groups(): [number, number] {
     return [Math.ceil(this.w / 8), Math.ceil(this.h / 8)];

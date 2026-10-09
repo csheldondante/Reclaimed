@@ -10,6 +10,17 @@
 // raises stone from below.
 
 import { MAT } from '../world/materials';
+import type { MapData } from '../world/mapgen';
+import { decodeMap, encodeMap, savedMaps } from '../world/mapfile';
+
+/** What the panel's map buttons do (the level implements them). */
+export interface EditorMaps {
+  undo: () => void;
+  capture: () => Promise<MapData>;
+  load: (map: MapData) => void;
+  fresh: () => void;
+  say: (text: string) => void;
+}
 
 export type EditTool =
   | 'wind' // the normal hands: taps grow, drags paint wind
@@ -95,7 +106,7 @@ export class Editor {
   private el: HTMLElement;
   private picked = { pour: MAT.Soil as number, build: MAT.Stone as number };
 
-  constructor(root: HTMLElement, onSpeed: (s: number) => void) {
+  constructor(root: HTMLElement, onSpeed: (s: number) => void, private maps: EditorMaps) {
     const el = document.createElement('div');
     el.className = 'editor';
     el.innerHTML = `
@@ -104,7 +115,16 @@ export class Editor {
       <label>size <input data-r type="range" min="1" max="16" value="${this.radius}"></label>
       <label data-ll>layers <input data-l type="range" min="1" max="4" value="${this.layers}"></label>
       <label data-sl>strength <input data-s type="range" min="5" max="100" value="${this.strength * 100}"></label>
-      <div class="speed">${[0, 1, 2, 4, 8].map((s) => `<button data-sp="${s}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}</div>`;
+      <div class="speed">${[0, 1, 2, 4, 8].map((s) => `<button data-sp="${s}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}</div>
+      <div class="maps">
+        <button data-a="undo" title="Undo the last brush press (Ctrl+Z)">↶</button>
+        <button data-a="save" title="Save this map in the browser">save</button>
+        <select data-saved title="Load a saved map"><option value="">load…</option></select>
+        <button data-a="down" title="Download this map as a file">⤓</button>
+        <button data-a="up" title="Open a map file">⤒</button>
+        <button data-a="new" title="Start again from the sandbox map">new</button>
+        <input data-file type="file" accept=".reclaimed" hidden>
+      </div>`;
     root.appendChild(el);
     this.el = el;
     // the panel is UI: keep its pointer events away from the world
@@ -140,6 +160,51 @@ export class Editor {
     };
     for (const b of el.querySelectorAll<HTMLButtonElement>('[data-sp]')) b.addEventListener('click', () => speed(Number(b.dataset.sp)));
     speed(1);
+    this.wireMaps();
+  }
+
+  private wireMaps(): void {
+    const { el, maps } = this;
+    const saved = el.querySelector<HTMLSelectElement>('[data-saved]')!;
+    const refresh = () =>
+      savedMaps.list().then((names) => {
+        saved.innerHTML = '<option value="">load…</option>' + names.map((n) => `<option>${n.replace(/</g, '&lt;')}</option>`).join('');
+      });
+    void refresh();
+    const act = (a: string, f: () => unknown) => el.querySelector<HTMLButtonElement>(`[data-a="${a}"]`)!.addEventListener('click', f);
+    act('undo', () => maps.undo());
+    act('save', async () => {
+      const name = prompt('Save map as:', `map ${new Date().toLocaleString()}`)?.trim();
+      if (!name) return;
+      await savedMaps.save(name, await encodeMap(await maps.capture()));
+      await refresh();
+      maps.say(`Saved "${name}".`);
+    });
+    saved.addEventListener('change', async () => {
+      const name = saved.value;
+      if (!name) return;
+      maps.load(await decodeMap(await savedMaps.load(name)));
+    });
+    act('down', async () => {
+      const blob = await encodeMap(await maps.capture());
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'sandbox.reclaimed';
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+    const file = el.querySelector<HTMLInputElement>('[data-file]')!;
+    act('up', () => file.click());
+    file.addEventListener('change', async () => {
+      const f = file.files?.[0];
+      if (!f) return;
+      try {
+        maps.load(await decodeMap(f));
+      } catch (e) {
+        maps.say(`Couldn't open ${f.name}: ${(e as Error).message}`);
+      }
+    });
+    act('new', () => maps.fresh());
   }
 
   /** Select a tool (and optionally a material) from code: scripted tests. */

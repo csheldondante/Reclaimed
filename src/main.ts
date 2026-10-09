@@ -6,6 +6,7 @@ import { initGpu, showFatal, UnsupportedError } from './gpu/device';
 import { Profiler } from './gpu/profiler';
 import { LevelScene } from './scenes/level';
 import { MenuScene } from './scenes/menu';
+import type { MapData } from './world/mapgen';
 import type { Host, Quality, Scene } from './scenes/world-core';
 import { AudioDebug } from './ui/audio-debug';
 import { PerfOverlay } from './ui/perf-overlay';
@@ -59,8 +60,11 @@ async function main() {
     scene.resize(size.rw, size.rh, size.cw, size.ch);
   };
 
-  const startLevel = async (levelId: string) => {
-    const level = await LevelScene.create(host, audio, perf, levelId, () => void startMenu());
+  const startLevel = async (levelId: string, map?: MapData) => {
+    const level = await LevelScene.create(host, audio, perf, levelId, () => void startMenu(), {
+      map,
+      onLoadMap: (m) => void startLevel(levelId, m),
+    });
     show(level);
   };
   const startMenu = async () => {
