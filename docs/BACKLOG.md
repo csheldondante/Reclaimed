@@ -63,6 +63,19 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | C10 | Swirling the mouse while dragging paints a vortex; a sustained swirl summons a cyclone (with B6 tornado) | M | done `fc954d8` (D3) |
 | C9 | Level: ruined city with a blast crater and hospital tents (an outbreak) | M–L | next |
 
+## Loose ends noticed in session 2 (not yet asked for, but worth doing)
+
+| id | item | size | status |
+|---|---|---|---|
+| E1 | Sandbox still shows the reclamation bar (no goal there) — hide it or repurpose | S | open |
+| E2 | Dust particles are unlit while the ground is lit/shaded: colour match drifts at dusk / under storms — apply sun/sky light to dust colour | S | open |
+| E3 | Resting particles sit at whole-cell height; on smoothed slopes and drifts they float/sink — use the drawn surface height (groundZAt / drift corners) | S | open |
+| E4 | Rubble falls instantly (no fall animation) — the remaining half of B8 | M | open |
+| E5 | Draw cost rose to ~4.6 ms at 1400×800 with drifts on screen (Xe-LPG); check the low tier / phones before adding level content | S | open |
+| E6 | The tutorial doesn't teach drifts/buried gardens, cyclones or petals/seeds; consider short optional "firsts" (ties to B5) | M | open |
+| E7 | STATUS.md (user-facing stock-take) is stale since session 1 — refresh | S | open |
+| E8 | Editor: no undo, no save/load of a sandbox map; brush shows no cursor ring | M | open |
+
 ## Carried over (deferred earlier — still wanted)
 
 | id | item | from | size | status |
@@ -72,8 +85,8 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | B3 | Water life: fish in clean water, reeds/lilies in shallows | round 6 | S–M | deferred |
 | B4 | Wind waves on water (shaded cheap; true height harder) | round 6 | S / M–L | deferred |
 | B5 | Event camera beyond the intro: pan/zoom to firsts (animals arrive, a seed sprouts and dies, wind clears trash and a plant takes) | round 6 | M | deferred |
-| B6 | Earthquake; drag-to-tornado | rounds 2–3 | M | deferred |
-| B7 | Second level / data-driven map format | session 1 | M–L | deferred |
+| B6 | Earthquake; drag-to-tornado | rounds 2–3 | M | tornado done as the cyclone (D3); earthquake still open |
+| B7 | Second level / data-driven map format | session 1 | M–L | registry done (C6); a data-driven map format still open |
 | B8 | Water on slopes renders stair-stepped; rubble falls instantly (no fall animation) | session 1 | M | water part done `0c20e47`; rubble animation open |
 | B9 | Audio has never been heard by an agent — every sound needs the user's ear | ongoing | — | open |
 | B10 | Open judgement calls in STATUS.md §5 (economy, day length, night darkness, fire residue, lens UX, forest look) — several are stale; re-ask when relevant | session 1 | — | open |
