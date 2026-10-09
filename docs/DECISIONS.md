@@ -3,6 +3,32 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-09 — round 16 (session 3) — items I1–I4 in BACKLOG.md
+
+- The settling dust doesn't look like it should. Eight layers of dust with
+  the tool made a bunch of dirt-like ground underneath with only a thin
+  dust layer on top (the packing into "silt" cells).
+- Landed particles settle and persist; they should fade as the dust layer
+  beneath forms or grows.
+- Soft materials (dirt, dust, ash) should be smooth, with no step drops;
+  only stone, concrete and other solids have steps.
+- Soft dust and dirt should wash into water, travel in it, and deposit under
+  it or be carried off the map.
+- Then talk through rigid bodies (don't build yet). The user's ideas: the
+  rigid-body → voxels → back transition is too finicky. Objects could keep
+  their own object-aligned grids, so a toppled item stays toppled and just
+  intersects the dust and dirt layer — buried, broken up until it turns back
+  into layers that add to the ground. A fallen skewed grid could still
+  project into the map cells (imperfectly) so the terrain marks them
+  occupied and new layers form on top (once at rest). Rigid bodies may
+  crumble more, breaking on impact into aligned voxels over a threshold.
+  Terrain is the default; things built into it are terrain-aligned; rigid
+  bodies live in their own frame and can end up skewed and buried.
+  (Agent: yes — sketch in the reply: sleeping bodies keep their grid, are
+  rasterised into a per-column occupied range the GPU systems read; impacts
+  and damage split them; small pieces become aligned voxels or loose
+  material.)
+
 ## 2026-10-09 — round 15 (session 3) — items H1–H8 in BACKLOG.md
 
 - Sandbox: a simple break tool to punch holes and make things collapse;

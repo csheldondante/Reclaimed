@@ -32,6 +32,17 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 16 (2026-10-09, session 3)
+
+Order: I2 → I1 → I3, then talk I4 through with the user.
+
+| id | item | size | status |
+|---|---|---|---|
+| I1 | Soft ground is all loose and smooth: no packing of loose layers into cells; up to four stacked loose layers per column (strata); soft cells (soil, sand, ash, silt) become loose layers when a map loads; only solids are stepped. The surface's material is the top loose layer's | L | open |
+| I2 | Dust grains that land put their dust down and fade within a second or two (no long-lying grains) | S | open |
+| I3 | Water carries soft material: what lies at the water's edge or under flowing water (rain runoff too) washes in, travels with the flow, settles where it slows, or leaves the map | M | open |
+| I4 | Rigid bodies in their own frame: sleeping bodies stay skewed, rasterised into a per-column occupied range so layers bury them; impacts/damage split them; small pieces become aligned voxels or loose material | L | talk first |
+
 ## Round 15 (2026-10-09, session 3)
 
 Proposed order: H5, H6, H1 (quick) → H8 → H2 → H4 → H3 → H7 (with F12); F7's remaining polish after.
