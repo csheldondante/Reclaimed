@@ -9,7 +9,7 @@ same commit as the change.
 
 Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 → A15 render slopes → A6 + A15 sediment layer. Answers: A15 render first then sediment; A7 the player taps the lightning; A9 on the title screen, default Medium.
 
-Status: `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
+Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
 ## Round 10 (2026-10-08) — new batch
@@ -85,7 +85,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | B3 | Water life: fish in clean water, reeds/lilies in shallows | round 6 | S–M | deferred |
 | B4 | Wind waves on water (shaded cheap; true height harder) | round 6 | S / M–L | deferred |
 | B5 | Event camera beyond the intro: pan/zoom to firsts (animals arrive, a seed sprouts and dies, wind clears trash and a plant takes) | round 6 | M | deferred |
-| B6 | Earthquake; drag-to-tornado | rounds 2–3 | M | tornado done as the cyclone (D3); earthquake still open |
+| B6 | Earthquake; drag-to-tornado | rounds 2–3 | M | tornado done as the cyclone (D3); earthquake **won't do** (user, 2026-10-09: "you essentially play as the wind") |
 | B7 | Second level / data-driven map format | session 1 | M–L | registry done (C6); a data-driven map format still open |
 | B8 | Water on slopes renders stair-stepped; rubble falls instantly (no fall animation) | session 1 | M | water part done `0c20e47`; rubble animation open |
 | B9 | Audio has never been heard by an agent — every sound needs the user's ear | ongoing | — | open |

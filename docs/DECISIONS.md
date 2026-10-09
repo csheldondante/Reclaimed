@@ -3,6 +3,11 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-09 — end of session 2
+
+- No earthquakes (won't do): the controls make sense as they are — the
+  player essentially plays as the wind.
+
 ## 2026-10-08 — round 12 (session 2) — items D1–D7 in BACKLOG.md
 
 - Title screen plants detailed for its scale (petals, leaves, grass, moss,
