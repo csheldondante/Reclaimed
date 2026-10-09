@@ -32,6 +32,24 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 13 (2026-10-09, session 3)
+
+Proposed order: F1, F8, F9 (quick fixes) → F2, F4, F3 (brushes) → F6 (save/load, E8) → F5 (model atlas) → F11, F10 (title) → F7 (toppling) → C7, C9, C8 (which reuse F5's models).
+
+| id | item | size | status |
+|---|---|---|---|
+| F1 | Dust drifts sink under water and oil: liquids lie on top of the dust (water/oil see drift as ground), so dust is never drawn over a pond | S–M | open |
+| F2 | Layer brushes: one press = one layer with a soft edge (fractional per column, so repeat clicks build a smooth mound); dragging over the same place in one press adds nothing more. Calmer sandbox base map (lower-frequency patches) | S–M | open |
+| F3 | Deposit brushes drop material from above (falling grains you can see) that lands and settles by angle of repose: dirt, sand, gravel, dust — real strata | M | open |
+| F4 | Bedrock brush: stone rises from below, lifting the layers above it | S | open |
+| F5 | Model atlas: layered voxel models (ruined cars, tankers, ruins, tents, …) stamped into the world as real matter (buryable, breakable); editor palette with thumbnails. Feeds C7/C9/C8 | M–L | open |
+| F6 | Map building: save/load sandbox maps, undo, brush cursor ring (absorbs E8) | M | open |
+| F7 | Destruction prototype: chunks of structures that topple and fall as pieces, then shatter to rubble (absorbs E4) | L | open |
+| F8 | Dust particles softer: more transparent, rounded | S | open |
+| F9 | Day/night: longer transitions; redder/golden dawn and dusk | S | open |
+| F10 | Title screen: plants and tree at a scale that makes sense with the bones | S–M | open |
+| F11 | Title screen: level models buried in dust, one unburied at the start; the rest unburied as the title progresses | M | open |
+
 ## Round 12 (2026-10-08)
 
 Order: D4, D5, D6 → D7 → D2 → D3 → D1 → then back to C6, C7, C9, C8.
@@ -70,11 +88,11 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | E1 | Sandbox still shows the reclamation bar (no goal there) — hide it or repurpose | S | open |
 | E2 | Dust particles are unlit while the ground is lit/shaded: colour match drifts at dusk / under storms — apply sun/sky light to dust colour | S | open |
 | E3 | Resting particles sit at whole-cell height; on smoothed slopes and drifts they float/sink — use the drawn surface height (groundZAt / drift corners) | S | open |
-| E4 | Rubble falls instantly (no fall animation) — the remaining half of B8 | M | open |
+| E4 | Rubble falls instantly (no fall animation) — the remaining half of B8 | M | folded into F7 |
 | E5 | Draw cost rose to ~4.6 ms at 1400×800 with drifts on screen (Xe-LPG); check the low tier / phones before adding level content | S | open |
 | E6 | The tutorial doesn't teach drifts/buried gardens, cyclones or petals/seeds; consider short optional "firsts" (ties to B5) | M | open |
 | E7 | STATUS.md (user-facing stock-take) is stale since session 1 — refresh | S | open |
-| E8 | Editor: no undo, no save/load of a sandbox map; brush shows no cursor ring | M | open |
+| E8 | Editor: no undo, no save/load of a sandbox map; brush shows no cursor ring | M | folded into F6 |
 
 ## Carried over (deferred earlier — still wanted)
 

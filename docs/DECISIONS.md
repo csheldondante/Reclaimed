@@ -3,6 +3,33 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-09 — round 13 (session 3) — items F1–F11 in BACKLOG.md
+
+- Dust sitting on top of water is wrong: water and oil lie above the other
+  layers (those sink), except air or things built over the water.
+- Sandbox drawing is too noisy and makes weird landscapes. Treat drawing as
+  layers with a falloff at the brush edge: a press raises the land by one
+  unit, each click raises the centre by as much, and drawing over the same
+  place doesn't raise it again until you release and click again.
+- Brushes should drop material onto the surface from above and let it
+  settle by the rules, so you can make layers of stone, dust and dirt.
+  Another brush raises bedrock from below; dirt and dust deposited on top
+  with an angle of repose would be best.
+- Asked whether there is an atlas of layered models that can be instanced
+  (answer: no — every model is authored procedurally into the column grid).
+  Wants thumbnails of ruins, tankers and ruined cars to place.
+- Wants time to just build cool maps and play with the physics ("the basic
+  particles and other things look great"); a chance to prototype more
+  physics-based destruction with chunks or things that topple.
+- Dust particles: more transparent or rounded.
+- Day/night transition still jarring: interpolate for longer. Dawn and dusk
+  redder / more golden.
+- The tree and plants on the title screen still don't make sense with the
+  size of the bones.
+- The level objects on the title screen are not recognisable: bury them in
+  dust with only one unburied at the start, and unbury the rest as part of
+  the title-screen progression.
+
 ## 2026-10-09 — end of session 2
 
 - No earthquakes (won't do): the controls make sense as they are — the
