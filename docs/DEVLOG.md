@@ -1217,3 +1217,10 @@ Typical load ~1900 caught (mostly dust, ~200 fog, dozens of litter).
   a new edit system (see ARCHITECTURE). First rates were absurd (a 1.5 s
   raise built a 49-cell tower); ground edits are now ~2–3 cells/s at the
   centre at half strength, water ~0.6 depth/s.
+
+## 2026-10-09 — cyclone motes
+
+User: particles in the funnel smaller (not resized), slightly more
+transparent, matching the dust colour. Caught debris is now drawn at its
+loose size and colour, 80 % of its alpha (fog 60 %). Very subtle in a still;
+it reads through the swirling motion.
