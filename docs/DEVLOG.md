@@ -1424,3 +1424,12 @@ over them; a caught grain remembers which funnel holds it (m.z bits 4..5).
 The roar follows the loudest one.
 Measured: five spawned in the sandbox → four alive, each holding its own
 debris (133 / 1075 / 198 / 262 caught particles), no GPU errors.
+
+## 2026-10-09 — title screen: taps grow a sapling (G4)
+
+User: on the title screen, tapping several times still grows the normal
+tree, which looks silly. A third tap on the diorama now grows a sapling at
+the skull's scale — a quarter-cell stem ~7 cells tall with three small leaf
+clusters — instead of the level's trunk and 3×3 crown; it browns and
+shrinks the same way on bad ground. (Instance count per planting: +4 on
+the diorama, +2 in levels.)

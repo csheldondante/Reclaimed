@@ -114,7 +114,8 @@ fn mkInst(x: u32, y: u32, sx: u32, sy: u32, z0: f32, z1: f32, mat: u32, flags: u
 /** Instances a planting of this tier needs (see planting). */
 fn plantingCount(tier: f32) -> u32 {
   if (tier < 1.0) { return 0u; }
-  return 2u + select(0u, 2u, tier >= 2.0) + select(0u, 2u, tier >= 3.0);
+  // (on the diorama a tree is a sapling: a stem and three leaf clusters)
+  return 2u + select(0u, 2u, tier >= 2.0) + select(0u, select(2u, 4u, G.misc.w > 0.5), tier >= 3.0);
 }
 
 /** Grass tufts; + flowers or a shrub; + a tree. grow 0..1, wither 0..1 shrinks it. */
@@ -143,16 +144,26 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
       o += 1u;
     }
   }
-  if (tier >= 3.0 && c.x > 0u && c.y > 0u) {
+  if (tier >= 3.0 && c.x > 0u && c.y > 0u && G.misc.w > 0.5) {
+    // the diorama (round 14): a sapling at the skull's scale, not the
+    // level's tree — a quarter-cell stem and three small leaf clusters
+    let stem = 7.0 * grow * (1.0 - 0.3 * wither);
+    let leaf = 0.5 * (1.0 - 0.6 * wither);
+    instOpaque[o] = mkInst(qx + 1u, qy + 1u, 1u, 1u, top, top + stem, MAT_WOOD, FLAG_VEG | FLAG_DETAIL);
+    instOpaque[o + 1u] = mkInst(qx - 1u, qy - 1u, 6u, 6u, top + stem - 0.3, top + stem - 0.3 + leaf, MAT_GRASS, FLAG_VEG | FLAG_DETAIL);
+    instOpaque[o + 2u] = mkInst(qx - 3u, qy + 1u, 5u, 4u, top + stem * 0.62, top + stem * 0.62 + leaf, MAT_GRASS, FLAG_VEG | FLAG_DETAIL);
+    instOpaque[o + 3u] = mkInst(qx + 2u, qy - 2u, 4u, 5u, top + stem * 0.78, top + stem * 0.78 + leaf, MAT_GRASS, FLAG_VEG | FLAG_DETAIL);
+    o += 4u;
+  } else if (tier >= 3.0 && c.x > 0u && c.y > 0u) {
     let trunk = 2.5 * TS * grow;
     instOpaque[o] = mkInst(qx + 1u, qy + 1u, 2u, 2u, top, top + trunk + 0.5, MAT_WOOD, FLAG_VEG | FLAG_DETAIL);
     instOpaque[o + 1u] = mkInst(c.x - 1u, c.y - 1u, 3u, 3u, top + trunk, top + trunk + 2.6 * TS * grow * (1.0 - 0.6 * wither), MAT_LEAVES, FLAG_VEG);
     o += 2u;
   } else if (tier >= 3.0) {
     // (map edge: no room for a crown; keep the count honest)
-    instOpaque[o] = mkInst(c.x, c.y, 1u, 1u, top, top, MAT_GRASS, FLAG_VEG);
-    instOpaque[o + 1u] = mkInst(c.x, c.y, 1u, 1u, top, top, MAT_GRASS, FLAG_VEG);
-    o += 2u;
+    let n = select(2u, 4u, G.misc.w > 0.5);
+    for (var k = 0u; k < n; k++) { instOpaque[o + k] = mkInst(c.x, c.y, 1u, 1u, top, top, MAT_GRASS, FLAG_VEG); }
+    o += n;
   }
   return o;
 }
