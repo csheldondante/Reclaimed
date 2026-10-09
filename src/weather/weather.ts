@@ -24,6 +24,12 @@ export interface Storm {
   flash: number;
   /** outline phases (3) and elongation along travel (see stormDist) */
   shape: [number, number, number, number];
+  /**
+   * Direction the outline is stretched along (radians): the travel direction
+   * smoothed over ~10 s. The raw velocity swings whenever the wind field
+   * steers the storm, which spun the whole outline (round 15: erratic).
+   */
+  heading: number;
 }
 
 /**
@@ -158,6 +164,7 @@ export class Weather {
       downpour: 0,
       flash: 0,
       shape: [Math.random() * 6.28, Math.random() * 6.28, Math.random() * 6.28, 1.2 + Math.random() * 0.45],
+      heading: Math.atan2(this.windY, this.windX),
     };
     this.storms.push(s);
     return s;
@@ -293,6 +300,12 @@ export class Weather {
 
     for (const s of this.storms) {
       s.age += dt;
+      // the outline turns slowly toward the way the storm travels
+      if (Math.hypot(s.vx, s.vy) > 0.3) {
+        let dh = Math.atan2(s.vy, s.vx) - s.heading;
+        dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+        s.heading += dh * (1 - Math.exp(-dt / 10));
+      }
       // storms ride the wind field — the map's wind plus whatever the player
       // has painted (DECISIONS round 8), averaged over the storm's body so it
       // takes a broad or repeated push to turn one
@@ -403,22 +416,22 @@ export class Weather {
       vy: s.vy,
       downpour: s.downpour,
       flash: s.flash,
-      shape: s.shape,
+      // (the GPU gets the smoothed heading in place of the third lobe phase)
+      shape: [s.shape[0], s.shape[1], s.heading, s.shape[3]] as [number, number, number, number],
     }));
   }
 
   /** CPU twin of common.wgsl stormDist: normalised distance (1 = edge). */
   stormDist(s: Storm, x: number, y: number): number {
-    const sp = Math.hypot(s.vx, s.vy);
-    const fx = sp > 1e-3 ? s.vx / sp : 1;
-    const fy = sp > 1e-3 ? s.vy / sp : 0;
+    const fx = Math.cos(s.heading);
+    const fy = Math.sin(s.heading);
     const ox = x - s.x;
     const oy = y - s.y;
     const along = (ox * fx + oy * fy) / s.shape[3];
     const across = ox * -fy + oy * fx;
     const th = Math.atan2(across, along);
     const t = this.time * 0.015;
-    const lobe = 1 + 0.22 * Math.sin(2 * th + s.shape[0] + t) + 0.15 * Math.sin(3 * th + s.shape[1] - t * 1.3) + 0.08 * Math.sin(5 * th + s.shape[2] + t * 0.7);
+    const lobe = 1 + 0.22 * Math.sin(2 * th + s.shape[0] + t) + 0.15 * Math.sin(3 * th + s.shape[1] - t * 1.3) + 0.08 * Math.sin(5 * th + s.shape[0] * 1.7 + t * 0.7);
     return Math.hypot(along, across) / (s.radius * lobe);
   }
 

@@ -43,7 +43,8 @@ struct Globals {
   sunCol: vec4<f32>,
   // life lens around the cursor: x, y, radius, strength 0..1 (0 = off)
   lens: vec4<f32>,
-  // per storm shape: three outline phases + elongation along travel
+  // per storm shape: two outline phases, the smoothed heading (radians) the
+  // outline is stretched along, and the elongation
   stormsC: array<vec4<f32>, 4>,
   // x, y: prevailing wind integrated over time (cells) — advects gust patches
   // and ripples so they travel smoothly downwind; z: debris seeding boost;
@@ -149,15 +150,15 @@ fn fbm2(p: vec2<f32>) -> f32 {
 fn stormDist(p: vec2<f32>, i: u32) -> f32 {
   let s = G.storms[i];
   let c = G.stormsC[i];
-  let v = G.stormsB[i].xy;
-  let fwd = select(vec2<f32>(1.0, 0.0), normalize(v), length(v) > 1e-3);
+  // stretched along its smoothed heading (stormsC.z; Weather.Storm.heading)
+  let fwd = vec2<f32>(cos(c.z), sin(c.z));
   let o = p - s.xy;
   let along = dot(o, fwd) / c.w;
   let across = dot(o, vec2<f32>(-fwd.y, fwd.x));
   let th = atan2(across, along);
   // the outline's lobes drift slowly (CPU twin: Weather.stormDist)
   let t = G.time * 0.015;
-  let lobe = 1.0 + 0.22 * sin(2.0 * th + c.x + t) + 0.15 * sin(3.0 * th + c.y - t * 1.3) + 0.08 * sin(5.0 * th + c.z + t * 0.7);
+  let lobe = 1.0 + 0.22 * sin(2.0 * th + c.x + t) + 0.15 * sin(3.0 * th + c.y - t * 1.3) + 0.08 * sin(5.0 * th + c.x * 1.7 + t * 0.7);
   return length(vec2<f32>(along, across)) / (s.z * lobe);
 }
 

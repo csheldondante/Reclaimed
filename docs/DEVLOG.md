@@ -1514,3 +1514,16 @@ by 4 s (stage 4.0 → 3.6); without rain the grove burns down (→ 0.4).
 Noticed: a spill on sand spreads into a film and soaks in within ~2 s
 (SOAK, by design — it stains the ground); slicks last on water, concrete
 and asphalt. Flagged for the user rather than changed.
+
+## 2026-10-09 — steadier storm outlines (H6)
+
+User: storms' outlines still change erratically, too quickly; they should
+be more stable in shadow. Cause: the outline is stretched along the storm's
+travel direction, taken from its instantaneous velocity — which swings every
+time the wind field (or a player stroke) steers it, spinning the whole
+shape. The lobes themselves were already slow. Now each storm keeps a
+heading smoothed over ~10 s (CPU), sent in stormsC.z in place of the third
+lobe phase (that lobe now derives its phase from the first).
+Measured (16 rays round one storm, sampled every 0.5 s for 12 s while
+random strong gusts push it): mean outline change 22 % of the radius per
+half second before → 3.8 % after; worst 54 % → 8.6 %.
