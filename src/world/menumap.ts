@@ -19,6 +19,7 @@ import { ColumnGrid } from './layout';
 import { MAT } from './materials';
 import type { MapData } from './mapgen';
 import { fbm, hash2, smoothstep } from './noise';
+import { halfScale, modelById, modelColumns, stampGrid, type VoxelModel } from './models';
 
 /** Voxels per figure unit. The menu scene scales its camera by this. */
 export const MENU_SCALE = 1.6;
@@ -33,6 +34,17 @@ const SQ = Math.SQRT1_2;
 export interface MenuModel {
   id: string;
   model: 'dam' | 'car' | 'tent' | 'ship' | 'sign';
+  /** under a mound of dust (round 13 F11): uncovered by finishing the level
+   *  before it, or by the player's wind */
+  buried?: boolean;
+}
+
+/** The atlas model shown for a level on the diorama (the dam is drawn here; the sandbox has no model). */
+function atlasModel(kind: MenuModel['model']): VoxelModel | undefined {
+  if (kind === 'car') return modelById('car');
+  if (kind === 'tent') return modelById('tent');
+  if (kind === 'ship') return halfScale(modelById('tanker')!);
+  return undefined;
 }
 
 /**
@@ -160,7 +172,7 @@ export function generateMenuMap(p: number, models: MenuModel[] = []): MapData {
   // places around the sides of the diorama (clear of the title text below)
   const PLACES: [number, number][] = [[-4, -17], [6, -18], [15, -14], [13, 13], [3, 20]];
   const SZ = 1.35; // model scale
-  const slots = models.map((m, k) => {
+  const slots = models.filter((m) => m.model !== 'sign').map((m, k) => {
     const [a, s] = PLACES[k % PLACES.length];
     const [x, y] = toXY(a, s);
     return { ...m, x, y, g: 0 };
@@ -182,25 +194,7 @@ export function generateMenuMap(p: number, models: MenuModel[] = []): MapData {
           if (Math.abs(a + s * s * 0.08) < 0.55 && Math.abs(s) < 2.6 && z < 2.6 && !(Math.abs(s) < 0.5 && z > 1.6)) return MAT.Concrete;
           if (a + s * s * 0.08 < -0.55 && a > -2.4 && Math.abs(s) < 2.4 && z < 1.4) return MAT.Water;
           break;
-        case 'car': // a rusted car: body and cabin, sitting in the dust
-          if (Math.abs(s) < 1.0 && Math.abs(a) < 1.9 && z < 0.9) return MAT.Rust;
-          if (Math.abs(s) < 0.9 && Math.abs(a + 0.2) < 1.0 && z >= 0.9 && z < 1.6) return MAT.Rust;
-          break;
-        case 'tent': { // a field hospital tent, with a red cross stripe
-          const half = 1.5 * (1 - z / 2.2);
-          if (z < 2.2 && Math.abs(s) < half && Math.abs(a) < 2.0) return Math.abs(a) < 0.35 && z > 0.9 ? MAT.Brick : MAT.Bone;
-          break;
-        }
-        case 'ship': { // a beached tanker hull with a white bridge
-          const taper = 1.0 - Math.max(0, a - 1.2) * 0.45;
-          if (Math.abs(s) < taper && Math.abs(a) < 2.8 && z < 1.1) return MAT.Rust;
-          if (Math.abs(s) < 0.7 && a > -2.6 && a < -1.4 && z >= 1.1 && z < 2.3) return MAT.Concrete;
-          break;
-        }
-        case 'sign': // a wooden signpost with a board
-          if (Math.abs(s) < 0.3 && Math.abs(a) < 0.3 && z < 2.6) return MAT.Wood;
-          if (Math.abs(s) < 1.6 && Math.abs(a) < 0.25 && z >= 1.6 && z < 2.5) return MAT.Wood;
-          break;
+        // (car, tent and tanker are atlas models, stamped in below)
       }
     }
     return 0;
@@ -228,20 +222,30 @@ export function generateMenuMap(p: number, models: MenuModel[] = []): MapData {
   // used to be"), clear of the face
   const treeOn = p >= 0.95;
   const [tx, ty] = toXY(-1.5, 0);
-  const trunkTop = zc + 15;
-  // canopy: a solid, lumpy crown (per-voxel random leaves made too many
-  // layers per column at this resolution); a few branches reach into it
+  // a sapling at the skull's own scale (round 13: the skull is a human one):
+  // a thin stem out of the cranium, a few twigs, and leaves about the size of
+  // the eye sockets in small clusters — not a crown that dwarfs the bones
+  const trunkTop = zc + 19;
+  const TWIGS: [number, number, number, number][] = [
+    // start height on the stem (from zc), direction x, y, rise over the twig
+    [12.5, 2.2, 0.6, 2.0],
+    [14.5, -1.6, 1.7, 2.2],
+    [16, 0.8, -2.2, 1.8],
+    [17.5, -2.0, -0.8, 1.4],
+  ];
+  const tips: [number, number, number][] = [[tx, ty, trunkTop + 0.6]];
+  for (const [h, bx, by, rise] of TWIGS) tips.push([tx + bx, ty + by, zc + h + rise], [tx + bx * 0.55, ty + by * 0.55, zc + h + rise * 0.55]);
   const tree = (px: number, py: number, pz: number): number => {
     if (!treeOn) return 0;
-    const d = Math.hypot(px - tx, py - ty);
-    if (d < 1.0 && pz > zc + 5 && pz < trunkTop) return MAT.Wood;
-    for (const [bx, by] of [[2.5, 1], [-2, 2], [0.5, -2.5]]) {
-      const t = (pz - (trunkTop - 5)) / 5;
-      if (t > 0 && t < 1 && Math.hypot(px - tx - bx * t, py - ty - by * t) < 0.6) return MAT.Wood;
+    if (Math.hypot(px - tx, py - ty) < 0.42 && pz > zc + 5 && pz < trunkTop) return MAT.Wood;
+    for (const [h, bx, by, rise] of TWIGS) {
+      const t = (pz - (zc + h)) / rise;
+      if (t > 0 && t < 1 && Math.hypot(px - tx - bx * t, py - ty - by * t) < 0.32) return MAT.Wood;
     }
-    const lump = fbm(px / 2.2, py / 2.2 + pz / 3, 2, 91) * 2.2;
-    const c = Math.hypot(px - tx + 1, py - ty - 1, (pz - (trunkTop + 2.5)) * 1.3);
-    if (c < 6.3 + lump) return MAT.Leaves;
+    // leaves: flattened clusters, each about an eye socket across
+    for (const [lx, ly, lz] of tips) {
+      if (Math.hypot((px - lx) / 1.7, (py - ly) / 1.7, (pz - lz) / 0.8) < 1) return MAT.Leaves;
+    }
     return 0;
   };
 
@@ -301,6 +305,36 @@ export function generateMenuMap(p: number, models: MenuModel[] = []): MapData {
     }
   }
 
+  // the atlas models (round 13 F5/F11): the same ruined car, hospital tent
+  // and (half-size) tanker as in the levels; a locked level's model lies
+  // under a mound of dust, gentler than the dust's angle of repose so it
+  // holds until the wind takes it
+  const drift = new Float32Array(N);
+  const rects: [string, [number, number], [number, number]][] = [];
+  for (const sl of slots) {
+    const m = atlasModel(sl.model);
+    if (!m) continue;
+    const { fw, fd } = modelColumns(m, 0);
+    const x0 = Math.round(sl.x * K - fw / 2);
+    const y0 = Math.round(sl.y * K - fd / 2);
+    stampGrid(grid, m, x0, y0, 0, 0);
+    rects.push([sl.id, [x0, y0], [x0 + fw, y0 + fd]]);
+    if (!sl.buried) continue;
+    // the dust follows the model's own shape about a cell deep (a mound over
+    // its tallest part would bury the low parts far too deep to blow clear),
+    // falling away around it at a slope it holds
+    const R = 7;
+    for (let y = y0 - R; y < y0 + fd + R; y++)
+      for (let x = x0 - R; x < x0 + fw + R; x++) {
+        if (x < 0 || y < 0 || x >= W || y >= H) continue;
+        let crest = 0;
+        for (let my = y0; my < y0 + fd; my++)
+          for (let mx = x0; mx < x0 + fw; mx++) crest = Math.max(crest, grid.top(mx, my) + 1.0 - Math.hypot(x - mx, y - my) * 0.72);
+        crest += fbm(x / 5, y / 5, 2, 61) * 0.4;
+        drift[y * W + x] = Math.max(drift[y * W + x], crest - grid.top(x, y));
+      }
+  }
+
   const water = new Float32Array(N);
   const contam = new Float32Array(N * 2);
   const moisture = new Float32Array(N);
@@ -337,7 +371,7 @@ export function generateMenuMap(p: number, models: MenuModel[] = []): MapData {
     vegetation,
     waterSource: new Float32Array(N),
     oil: new Float32Array(N),
-    drift: new Float32Array(N),
+    drift,
     oilStored: new Float32Array(N * 2),
     surface,
     poi: {
@@ -348,6 +382,8 @@ export function generateMenuMap(p: number, models: MenuModel[] = []): MapData {
       reservoir: [0, 0],
       landfill: [0, 0],
       ...Object.fromEntries(slots.map((sl): [string, [number, number]] => [`level:${sl.id}`, [sl.x * K, sl.y * K]])),
+      // each atlas model's footprint (cells): the menu watches the dust on it
+      ...Object.fromEntries(rects.flatMap(([id, a, b]): [string, [number, number]][] => [[`levelMin:${id}`, a], [`levelMax:${id}`, b]])),
     },
   };
 }

@@ -50,6 +50,7 @@ export function saveDifficulty(d: Difficulty): void {
 export function resetProgress(): void {
   try {
     for (const l of REAL_LEVELS) localStorage.removeItem(keyFor(l));
+    localStorage.removeItem(UNCOVER_KEY);
   } catch {
     /* storage unavailable: nothing to forget */
   }
@@ -64,3 +65,43 @@ export function saveProgress(level: string, p: number): void {
   }
 }
 
+
+// ---- the title screen's buried level models (round 13, F11) ----------------
+// Only the first level's model starts uncovered. The next one is uncovered
+// by finishing the level before it — or by the player blowing the dust off it
+// on the title screen (to encourage exploring), which is remembered.
+
+const UNCOVER_KEY = 'reclaimed.uncovered.v1';
+
+function uncoveredSet(): Set<string> {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(UNCOVER_KEY) ?? '[]') as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+/** The player blew the dust off this level's model. */
+export function saveUncovered(level: string): void {
+  try {
+    const s = uncoveredSet();
+    s.add(level);
+    localStorage.setItem(UNCOVER_KEY, JSON.stringify([...s]));
+  } catch {
+    /* storage unavailable: lasts for this visit only */
+  }
+}
+
+/** Is this level's model uncovered on the title screen? */
+export function levelUncovered(level: string): boolean {
+  const k = REAL_LEVELS.indexOf(level);
+  if (k < 0) return true; // not part of the chain (the sandbox)
+  if (k === 0) return true;
+  return uncoveredSet().has(level) || loadLevelProgress(REAL_LEVELS[k - 1]) >= 1;
+}
+
+/** The level before this one in the chain (whose completion uncovers it). */
+export function previousLevel(level: string): string | undefined {
+  const k = REAL_LEVELS.indexOf(level);
+  return k > 0 ? REAL_LEVELS[k - 1] : undefined;
+}

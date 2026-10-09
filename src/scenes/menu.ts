@@ -9,7 +9,7 @@ import type { Ambience } from '../audio/ambience';
 import { Nature } from '../game/nature';
 import { Powers } from '../game/powers';
 import { LEVELS, levelById, type LevelDef } from '../game/levels';
-import { loadDifficulty, loadLevelProgress, loadProgress, resetProgress, saveDifficulty, type Difficulty } from '../game/progress';
+import { levelUncovered, loadDifficulty, loadLevelProgress, loadProgress, previousLevel, resetProgress, saveDifficulty, saveUncovered, type Difficulty } from '../game/progress';
 import { PK } from '../sim/particles';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { Controls } from '../input/controls';
@@ -25,8 +25,9 @@ const LINES: [number, string][] = [
 ];
 
 // only these systems run on the diorama: enough for the player's hands (wind,
-// litter stripping, grow/wither) — no ecology, water or structure
-const MENU_SYSTEMS = new Set(['windfield', 'material', 'surface', 'particles', 'wilt', 'sway', 'renderfields', 'stats']);
+// litter stripping, grow/wither, blowing the dust off buried models) — no
+// ecology, water or structure
+const MENU_SYSTEMS = new Set(['windfield', 'material', 'surface', 'drift', 'particles', 'wilt', 'sway', 'renderfields', 'stats']);
 
 export class MenuScene implements Scene {
   readonly core: WorldCore;
@@ -40,6 +41,10 @@ export class MenuScene implements Scene {
   private starting = false;
   /** the level Begin/Continue will open (picked by clicking its model) */
   private selected: LevelDef = LEVELS[0];
+  /** levels whose model is still under the dust (round 13 F11) */
+  private buried = new Set<string>();
+  private dustCheckT = 1;
+  private dustChecking = false;
 
   constructor(
     private host: Host,
@@ -49,7 +54,9 @@ export class MenuScene implements Scene {
     this.progress = Number(host.params.get('progress') ?? NaN);
     if (!Number.isFinite(this.progress)) this.progress = loadProgress();
     const p = this.progress;
-    this.core = new WorldCore(host, generateMenuMap(p, LEVELS.map((l) => ({ id: l.id, model: l.model }))), 8192);
+    const all = host.params.get('unlock') === 'all';
+    for (const l of LEVELS) if (!all && !levelUncovered(l.id)) this.buried.add(l.id);
+    this.core = new WorldCore(host, generateMenuMap(p, LEVELS.map((l) => ({ id: l.id, model: l.model, buried: this.buried.has(l.id) }))), 8192);
     const { weather, dayNight, camera, globals } = this.core;
     // a dead place is windy (scraps blow across); a living one is calm
     // (kept under the haze threshold so the figure stays visible)
@@ -71,7 +78,8 @@ export class MenuScene implements Scene {
     this.el.innerHTML = `<div><h1>RECLAIMED</h1><p class="line">${line}</p></div>
       <div class="actions"><span class="level-name"></span><button data-a="play"></button>
       <span class="small level-info"></span>
-      <span class="small">pick a place: click its model · sound on</span>
+      <span class="small">pick a place: click its model · some lie under the dust · sound on</span>
+      <button class="reset" data-a="sandbox">sandbox</button>
       <span class="small hands">touch the ground · drag to make wind</span>
       <span class="difficulty" title="Easy: green ground never fails. Medium: green resists pollution. Hard: blown waste, gales and floods kill green easily.">${(['easy', 'medium', 'hard'] as const).map((d) => `<button data-d="${d}">${d}</button>`).join('')}</span>
       ${p > 0 ? '<button class="reset" data-a="reset">reset progress</button>' : ''}</div>`;
@@ -84,6 +92,12 @@ export class MenuScene implements Scene {
       btn.textContent = 'gathering…';
       btn.disabled = true;
       await this.onPlay(this.selected.id);
+    });
+    this.el.querySelector('[data-a="sandbox"]')!.addEventListener('click', async () => {
+      if (this.starting) return;
+      this.starting = true;
+      audio.start();
+      await this.onPlay('sandbox');
     });
     this.select(levelById(host.params.get('level')));
     const pick = (d: Difficulty) => {
@@ -100,6 +114,8 @@ export class MenuScene implements Scene {
       location.href = u.toString();
     });
     this.attachHands();
+    // scripted tests reach the title screen through this (like window.reclaimed in a level)
+    (window as unknown as { reclaimedMenu: MenuScene }).reclaimedMenu = this;
   }
 
   /** The level's hands on the diorama: taps grow (or wither), drags paint wind. */
@@ -176,6 +192,14 @@ export class MenuScene implements Scene {
     this.selected = lv;
     const prog = loadLevelProgress(lv.id);
     const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
+    if (this.buried.has(lv.id)) {
+      const prev = levelById(previousLevel(lv.id));
+      (this.el.querySelector('.level-name') as HTMLElement).textContent = 'Under the dust';
+      btn.textContent = 'buried';
+      btn.disabled = true;
+      (this.el.querySelector('.level-info') as HTMLElement).textContent = `Something lies buried here. Blow the dust away — or reclaim ${prev.name}.`;
+      return;
+    }
     (this.el.querySelector('.level-name') as HTMLElement).textContent = lv.name;
     btn.textContent = !lv.generate ? 'coming' : lv.sandbox ? 'Play' : prog > 0 ? 'Continue' : 'Begin';
     btn.disabled = !lv.generate;
@@ -214,6 +238,7 @@ export class MenuScene implements Scene {
       this.showT = 7;
     }
     // (no birds here: next to them the skull would read as a giant's — round 10)
+    this.watchDust(dt);
     core.advance(now, dt, 1, (s) => MENU_SYSTEMS.has(s.name));
     core.render();
     this.audio.update({
@@ -229,6 +254,34 @@ export class MenuScene implements Scene {
       barren: 1 - p,
       wind: Math.min(1, Math.hypot(core.weather.windX, core.weather.windY) / 6),
     });
+  }
+
+  /**
+   * About once a second, look at the dust over each buried model: once the
+   * wind has blown it mostly clear, the model is uncovered for good (saved)
+   * and its level selected.
+   */
+  private watchDust(dt: number): void {
+    this.dustCheckT -= dt;
+    if (!this.buried.size || this.dustChecking || this.dustCheckT > 0) return;
+    this.dustCheckT = 1;
+    this.dustChecking = true;
+    const { core } = this;
+    core.readTexture(core.world.drift).then(({ data, w }) => {
+      this.dustChecking = false;
+      for (const id of [...this.buried]) {
+        const a = core.map.poi[`levelMin:${id}`];
+        const b = core.map.poi[`levelMax:${id}`];
+        if (!a || !b) continue;
+        let sum = 0;
+        let n = 0;
+        for (let y = a[1]; y < b[1]; y++) for (let x = a[0]; x < b[0]; x++, n++) sum += data[(y * w + x) * 4];
+        if (sum / n > 0.35) continue;
+        this.buried.delete(id);
+        saveUncovered(id);
+        this.select(levelById(id));
+      }
+    }, ignoreTeardown);
   }
 
   dispose(): void {

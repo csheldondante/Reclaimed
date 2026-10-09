@@ -1365,3 +1365,34 @@ ruins, tankers and ruined cars to place.
   (support only flows between 4-neighbours overlapping in z).
 Measured: all twelve placed side by side, 8 s later 16 cells had collapsed
 in total (the ruined house's broken corner); the rest stand.
+
+## 2026-10-09 — title screen: life at the skull's scale; buried level models (F10, F11)
+
+User: the tree and plants on the title screen don't make sense with the size
+of the bones; it's a human skull — grass blades (sub-voxel) reach about half
+way up it, flowers about the size of its eye sockets. And the level models
+aren't recognisable: bury them in dust, one uncovered at the start, the rest
+uncovered by finishing the level before — or by the player blowing the dust
+off with the wind (to encourage exploring).
+- F10 (vegprep fine mode): grass blades 3–8 cells tall, a quarter cell
+  wide, each three stacked boxes stepping over so the blade curves; flowers
+  (3 % of grassy columns) on 5–9-cell stems with two long leaves and a head
+  five cells across (eight petals round a yellow heart), one colour per
+  flower via the instance species bits. Tap plantings on the diorama scale
+  ×5 (grass/flowers) and ×2.5 (shrub/tree). The final-stage tree is now a
+  sapling: a one-cell stem out of the cranium, four twigs and flattened
+  leaf clusters an eye socket across.
+- F11: the diorama shows the atlas models (ruined car, hospital tent, a
+  half-scale tanker via `halfScale`); the dam stays; the sandbox's sign is
+  replaced by a small "sandbox" link. A locked model lies under drift dust
+  that follows its shape about a cell deep and falls away at 0.72 (under
+  the dust's repose, so it holds). The drift system now runs on the title
+  screen, with diorama-scale lift/carry (a cell there is ~1 cm: lift 4
+  instead of 9 cells/s, carry ×4.8). The menu reads the drift back once a
+  second; when the mean dust over a model's footprint drops under 0.35 it
+  is uncovered for good (`saveUncovered`) and its level selected. Clicking a
+  buried one says what lies there and how to free it. `?unlock=all` shows
+  everything; reset progress re-buries.
+Measured: idle 40 s on the windiest (barren) title: dust over the car and
+tent unchanged (1.75 / 2.84), tanker −0.1. Seventy fast strokes over the
+car: 1.75 → 0.39 in 3 s → uncovered (saved, selected) at ~4 s.

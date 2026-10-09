@@ -376,3 +376,38 @@ export function stampGrid(grid: ColumnGrid, m: VoxelModel, x0: number, y0: numbe
       c.push(...merged);
     }
 }
+
+/**
+ * The model at half size (each 2×2×2 block → its most common material, kept
+ * if at least 3 of its 8 voxels are solid): small copies, e.g. the title
+ * screen's level models.
+ */
+export function halfScale(m: VoxelModel): VoxelModel {
+  const [w, d, h] = m.size;
+  const W = Math.ceil(w / 2);
+  const D = Math.ceil(d / 2);
+  const Hh = Math.ceil(h / 2);
+  const vox = new Uint8Array(W * D * Hh);
+  for (let z = 0; z < Hh; z++)
+    for (let y = 0; y < D; y++)
+      for (let x = 0; x < W; x++) {
+        const count = new Map<number, number>();
+        let solid = 0;
+        for (let k = 0; k < 8; k++) {
+          const xx = x * 2 + (k & 1);
+          const yy = y * 2 + ((k >> 1) & 1);
+          const zz = z * 2 + (k >> 2);
+          if (xx >= w || yy >= d || zz >= h) continue;
+          const v = m.vox[xx + w * (yy + d * zz)];
+          if (!v) continue;
+          solid++;
+          count.set(v, (count.get(v) ?? 0) + 1);
+        }
+        if (solid < 3) continue;
+        let best = 0;
+        let bestN = 0;
+        for (const [v, n] of count) if (n > bestN) [best, bestN] = [v, n];
+        vox[x + W * (y + D * z)] = best;
+      }
+  return { id: `${m.id}-half`, name: m.name, size: [W, D, Hh], vox, sink: Math.round(m.sink / 2) };
+}

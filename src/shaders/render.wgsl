@@ -449,11 +449,14 @@ fn fsBox(in: VOut) -> FOut {
     }
     if (mat == MAT_FLOWER) {
       // one colour per plant (fine flowers are several boxes); a yellow heart
-      let fv = randv(vec3<i32>(floor(in.bmin)) + vec3<i32>(3, 9, 1));
-      let heart = G.misc.w > 0.5 && all(abs(fract(in.bmin.xy) - 0.25) < vec2<f32>(0.01)) && in.zr.y - in.zr.x > 0.12;
+      // (diorama flowers carry their colour in the species bits: 1..4, 8 = heart)
+      let sp = (in.info.y >> 8u) & 15u;
+      var fv = randv(vec3<i32>(floor(in.bmin)) + vec3<i32>(3, 9, 1));
+      if (sp >= 1u && sp <= 4u) { fv = f32(sp) * 0.25 - 0.1; }
+      let heart = sp == 8u;
       var petal = vec3<f32>(0.92, 0.9, 0.82);
       if (fv > 0.75) { petal = vec3<f32>(0.95, 0.8, 0.25); } else if (fv > 0.5) { petal = vec3<f32>(0.62, 0.48, 0.82); } else if (fv > 0.3) { petal = vec3<f32>(0.85, 0.35, 0.3); }
-      let top = in.wpos.z > in.zr.y - max(0.12, (in.zr.y - in.zr.x) * 0.3);
+      let top = sp != 0u || in.wpos.z > in.zr.y - max(0.12, (in.zr.y - in.zr.x) * 0.3);
       alb = toLinear(select(select(vec3<f32>(0.3, 0.46, 0.17), petal, top), vec3<f32>(0.95, 0.78, 0.2), heart));
     }
     if (mat != MAT_WOOD) { alb = wither(alb, wilt[ci].y, n1); }

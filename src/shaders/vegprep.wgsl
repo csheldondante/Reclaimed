@@ -24,9 +24,14 @@ fn fineCount(v: f32, m: u32, c: vec2<u32>) -> u32 {
   if (v < 0.3) { return 0u; }
   if (m == MAT_BONE_V) { return 3u; } // moss cushions
   var n = 0u;
-  if (v >= 1.2) { n += 4u; } // grass blades
-  if (v >= 2.0 && rand3(c.x, c.y, 811u) < 0.55) { n += 8u; } // a flower: stem, 2 leaves, 4 petals, centre
+  if (v >= 1.2) { n += 6u; } // two curving grass blades, three boxes each
+  if (fineFlower(v, c)) { n += 12u; } // a flower: stem, 2 leaves, 8 petals, heart
   return n;
+}
+
+/** A diorama flower stands on this column (sparse: each head is ~5 cells across). */
+fn fineFlower(v: f32, c: vec2<u32>) -> bool {
+  return v >= 2.0 && c.x >= 3u && c.y >= 3u && rand3(c.x, c.y, 811u) < 0.03;
 }
 
 /** Grass blades, a flower with leaves and petals, or moss on bone. */
@@ -44,28 +49,50 @@ fn fineEmit(o0: u32, c: vec2<u32>, top: f32, v: f32, m: u32) -> u32 {
     }
     return o;
   }
+  // Sized against the skull (a human one; round 13): grass reaches about
+  // half way up it (3–8 cells), flower heads are about the size of its eye
+  // sockets (5 cells across) on tall stems.
   if (v >= 1.2) {
-    for (var k = 0u; k < 4u; k++) {
+    for (var k = 0u; k < 2u; k++) {
       let hx = hash3(c.x, c.y, 821u + k);
-      let hgt = 0.35 + f32((hx >> 4u) & 15u) * 0.04;
-      instOpaque[o] = mkInst(qx + (hx & 3u), qy + ((hx >> 2u) & 3u), 1u, 1u, top, top + hgt, MAT_GRASS, F);
-      o += 1u;
+      let hgt = (3.0 + f32((hx >> 4u) & 15u) * 0.33) * min(1.0, (v - 0.9) * 1.5);
+      // a blade curves over: three stacked boxes stepping a quarter cell
+      // each way it leans
+      let bx = qx + (hx & 3u);
+      let by = qy + ((hx >> 2u) & 3u);
+      let lx = select(0u, 1u, ((hx >> 9u) & 1u) == 1u);
+      let ly = 1u - lx;
+      instOpaque[o] = mkInst(bx, by, 1u, 1u, top, top + hgt * 0.55, MAT_GRASS, F);
+      instOpaque[o + 1u] = mkInst(bx + lx, by + ly, 1u, 1u, top + hgt * 0.55, top + hgt * 0.85, MAT_GRASS, F);
+      instOpaque[o + 2u] = mkInst(bx + 2u * lx, by + 2u * ly, 1u, 1u, top + hgt * 0.85, top + hgt, MAT_GRASS, F);
+      o += 3u;
     }
   }
-  if (v >= 2.0 && rand3(c.x, c.y, 811u) < 0.55) {
-    let st = top + 0.85 + rand3(c.x, c.y, 812u) * 0.3;
-    // stem
-    instOpaque[o] = mkInst(qx + 1u, qy + 1u, 1u, 1u, top, st, MAT_GRASS, F);
-    // two leaves part-way up
-    instOpaque[o + 1u] = mkInst(qx, qy + 1u, 1u, 1u, top + 0.3, top + 0.38, MAT_GRASS, F);
-    instOpaque[o + 2u] = mkInst(qx + 2u, qy + 1u, 1u, 1u, top + 0.45, top + 0.53, MAT_GRASS, F);
-    // four petals around a centre (render.wgsl colours the centre yellow)
-    instOpaque[o + 3u] = mkInst(qx, qy + 1u, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
-    instOpaque[o + 4u] = mkInst(qx + 2u, qy + 1u, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
-    instOpaque[o + 5u] = mkInst(qx + 1u, qy, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
-    instOpaque[o + 6u] = mkInst(qx + 1u, qy + 2u, 1u, 1u, st, st + 0.1, MAT_FLOWER, F);
-    instOpaque[o + 7u] = mkInst(qx + 1u, qy + 1u, 1u, 1u, st, st + 0.14, MAT_FLOWER, F);
-    o += 8u;
+  if (fineFlower(v, c)) {
+    let st = top + 5.0 + rand3(c.x, c.y, 812u) * 4.0;
+    let hx = hash3(c.x, c.y, 813u);
+    // one colour for the whole flower (render.wgsl reads the species bits):
+    // 1..4 petal colours, 8 the yellow heart
+    let col = (1u + (hx & 3u)) << 16u;
+    let FC = F | (col >> 8u);
+    let cx = qx + 1u; // the stem, a quarter cell wide
+    let cy = qy + 1u;
+    instOpaque[o] = mkInst(cx, cy, 1u, 1u, top, st, MAT_GRASS, F);
+    // two long leaves part-way up
+    instOpaque[o + 1u] = mkInst(cx - 3u, cy, 3u, 1u, top + (st - top) * 0.3, top + (st - top) * 0.3 + 0.2, MAT_GRASS, F);
+    instOpaque[o + 2u] = mkInst(cx + 1u, cy, 3u, 1u, top + (st - top) * 0.5, top + (st - top) * 0.5 + 0.2, MAT_GRASS, F);
+    // four petals (2 × 1 cells) around a 1-cell heart: 5 cells across
+    instOpaque[o + 3u] = mkInst(cx - 10u, cy - 2u, 8u, 4u, st, st + 0.3, MAT_FLOWER, FC);
+    instOpaque[o + 4u] = mkInst(cx + 2u, cy - 2u, 8u, 4u, st, st + 0.3, MAT_FLOWER, FC);
+    instOpaque[o + 5u] = mkInst(cx - 2u, cy - 10u, 4u, 8u, st, st + 0.3, MAT_FLOWER, FC);
+    instOpaque[o + 6u] = mkInst(cx - 2u, cy + 2u, 4u, 8u, st, st + 0.3, MAT_FLOWER, FC);
+    instOpaque[o + 7u] = mkInst(cx - 2u, cy - 2u, 4u, 4u, st, st + 0.5, MAT_FLOWER, F | (8u << 8u));
+    // four smaller petals on the diagonals round the head off
+    instOpaque[o + 8u] = mkInst(cx - 7u, cy - 7u, 5u, 5u, st, st + 0.25, MAT_FLOWER, FC);
+    instOpaque[o + 9u] = mkInst(cx + 2u, cy - 7u, 5u, 5u, st, st + 0.25, MAT_FLOWER, FC);
+    instOpaque[o + 10u] = mkInst(cx - 7u, cy + 2u, 5u, 5u, st, st + 0.25, MAT_FLOWER, FC);
+    instOpaque[o + 11u] = mkInst(cx + 2u, cy + 2u, 5u, 5u, st, st + 0.25, MAT_FLOWER, FC);
+    o += 12u;
   }
   return o;
 }
@@ -95,9 +122,12 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
   var o = o0;
   let qx = c.x * 4u;
   let qy = c.y * 4u;
+  // on the diorama plants are at the skull's scale (round 13): much taller
+  let FS = select(1.0, 5.0, G.misc.w > 0.5);
+  let TS = select(1.0, 2.5, G.misc.w > 0.5);
   for (var k = 0u; k < 2u; k++) {
     let hx = hash3(c.x, c.y, 461u + k);
-    let th = (0.35 + f32((hx >> 4u) & 7u) * 0.05) * grow * (1.0 - 0.7 * wither);
+    let th = (0.35 + f32((hx >> 4u) & 7u) * 0.05) * grow * (1.0 - 0.7 * wither) * FS;
     instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + th, MAT_GRASS, FLAG_VEG | FLAG_DETAIL);
     o += 1u;
   }
@@ -106,17 +136,17 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
       let hx = hash3(c.x, c.y, 401u + k);
       if (k == 1u && (hx & 1u) == 1u) {
         // a shrub (sub-voxel leaf box)
-        instOpaque[o] = mkInst(c.x, c.y, 1u, 1u, top, top + 1.1 * grow * (1.0 - 0.5 * wither), MAT_LEAVES, FLAG_VEG);
+        instOpaque[o] = mkInst(c.x, c.y, 1u, 1u, top, top + 1.1 * TS * grow * (1.0 - 0.5 * wither), MAT_LEAVES, FLAG_VEG);
       } else {
-        instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + 0.9 * grow * (1.0 - 0.6 * wither), flowerMat(c), FLAG_VEG | FLAG_DETAIL);
+        instOpaque[o] = mkInst(qx + (hx % 3u), qy + ((hx >> 2u) % 3u), 2u, 2u, top, top + 0.9 * FS * grow * (1.0 - 0.6 * wither), flowerMat(c), FLAG_VEG | FLAG_DETAIL);
       }
       o += 1u;
     }
   }
   if (tier >= 3.0 && c.x > 0u && c.y > 0u) {
-    let trunk = 2.5 * grow;
+    let trunk = 2.5 * TS * grow;
     instOpaque[o] = mkInst(qx + 1u, qy + 1u, 2u, 2u, top, top + trunk + 0.5, MAT_WOOD, FLAG_VEG | FLAG_DETAIL);
-    instOpaque[o + 1u] = mkInst(c.x - 1u, c.y - 1u, 3u, 3u, top + trunk, top + trunk + 2.6 * grow * (1.0 - 0.6 * wither), MAT_LEAVES, FLAG_VEG);
+    instOpaque[o + 1u] = mkInst(c.x - 1u, c.y - 1u, 3u, 3u, top + trunk, top + trunk + 2.6 * TS * grow * (1.0 - 0.6 * wither), MAT_LEAVES, FLAG_VEG);
     o += 2u;
   } else if (tier >= 3.0) {
     // (map edge: no room for a crown; keep the count honest)

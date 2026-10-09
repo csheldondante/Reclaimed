@@ -58,7 +58,13 @@ fn outflow(q: vec2<i32>) -> vec4<f32> {
   let here = levelAt(q);
   let w = windAt(vec3<f32>(vec2<f32>(q) + 0.5, here + 0.5));
   let ws = length(w) * (1.0 - shelter(q, w));
-  if (ws < LIFT) { return vec4<f32>(0.0); }
+  // on the title diorama (fine scale, G.misc.w) a cell is about a centimetre:
+  // a breath of wind moves dust there, so the player can blow the dust off
+  // the buried level models (round 13 F11)
+  let fine = G.misc.w > 0.5;
+  let lift = select(LIFT, 4.0, fine);
+  let carry = select(CARRY, 1.2, fine);
+  if (ws < lift) { return vec4<f32>(0.0); }
   var wt = vec4<f32>(max(w.x, 0.0), max(-w.x, 0.0), max(w.y, 0.0), max(-w.y, 0.0));
   // it can't be pushed up into a wall: it banks against it instead
   for (var k = 0u; k < 4u; k++) {
@@ -67,7 +73,7 @@ fn outflow(q: vec2<i32>) -> vec4<f32> {
   }
   let sum = wt.x + wt.y + wt.z + wt.w;
   if (sum < 1e-4) { return vec4<f32>(0.0); }
-  let total = min(d * 0.5, CARRY * (ws - LIFT) * DT_D);
+  let total = min(d * 0.5, carry * (ws - lift) * DT_D);
   return wt / sum * total;
 }
 
