@@ -43,9 +43,9 @@ const OP_CLEAN: u32 = 8u;
 const OP_DRAIN: u32 = 9u;
 const OP_POUR: u32 = 10u;
 const OP_BEDROCK: u32 = 11u;
-// knock a hole in structures (round 14, F7): structural solids inside a
-// sphere of the brush radius centred at height w are removed; terrain
-// (strength-1 solids, loose ground) is left alone
+// break (round 14, F7): punch a hole — everything inside a sphere of the
+// brush radius centred at height w is removed, structures and terrain alike
+// (only the bottom two cells of bedrock stay, so the map keeps a floor)
 const OP_SMASH: u32 = 12u;
 const STROKE_START: u32 = 512u;
 const DT_E: f32 = 1.0 / 60.0;
@@ -111,10 +111,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let mt = ivMat(v);
         let z0 = ivZ0(v);
         let z1 = ivZ1(v);
-        let structural = matState(mt) == ST_SOLID && MATS[mt].sim.w < 1.0;
-        if (!structural || z1 <= lo || z0 >= hi) { out[m] = v; m += 1u; continue; }
+        let hole0 = max(lo, 2u);
+        if (z1 <= hole0 || z0 >= hi || hi <= hole0) { out[m] = v; m += 1u; continue; }
         // keep what lies below and above the hole (room permitting)
-        if (z0 < lo) { out[m] = ivPack(z0, lo, mt, ivAux(v)); m += 1u; }
+        if (z0 < hole0) { out[m] = ivPack(z0, hole0, mt, ivAux(v)); m += 1u; }
         if (z1 > hi && m < cs.y) { out[m] = ivPack(hi, z1, mt, ivAux(v)); m += 1u; }
       }
       if (m <= cs.y) {

@@ -304,7 +304,7 @@ export class LevelScene implements Scene {
   private openValley(): void {
     const { weather, dims } = this.core;
     if (this.level.sandbox) {
-      setTimeout(() => this.hud.say('Sandbox: pick a tool on the right — build, pour, plant, spill, place weather. ✋ is the normal hands.', 9), 800);
+      setTimeout(() => this.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left).', 10), 800);
       return;
     }
     // dust storms roll across the dead valley as the level opens

@@ -1487,3 +1487,17 @@ spawn the voxels at the height of the mouse pick.
   ring sets pointer-events: none inline; four clicks → four placements.
 - The place tool now picks: the model goes on the clicked column at the
   picked surface height (a roof, a wreck, the ground), minus "bury".
+
+## 2026-10-09 — Break tool and the physics garden (F7, G5)
+
+User: wants a simple break tool to punch holes and make things collapse,
+and something with an overhang to break off, or a tall thing with a base to
+destroy. 💥 is now **Break**: it punches a hole in anything (structures and
+terrain; only the bottom two cells of bedrock stay). The sandbox map has a
+physics garden, bottom left: a 3×3×24 concrete tower, a 4×4×18 brick
+chimney, a pillar with a 6-cell diving-board slab, and a 16-cell concrete
+bridge on two brick pillars, each on a levelled stone plinth.
+Measured: analysing the untouched garden → nothing breaks. Breaking the
+tower's foot → it topples and lands in two pieces; the slab's root → the
+board snaps and falls; a bridge pillar → the deck tips and comes to rest
+leaning on the other pillar (7 bodies, all settled within ~7 s).

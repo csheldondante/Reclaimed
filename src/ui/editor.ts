@@ -87,7 +87,7 @@ const TOOLS: [EditTool, string, string][] = [
   ['bedrock', '⛰', 'Bedrock: raise stone from below, lifting everything on it'],
   ['dig', '▼', 'Dig: take a layer off the top'],
   ['place', '🚗', 'Place a model: cars, ruins, a tanker… (E rotates)'],
-  ['smash', '💥', 'Smash: knock a hole in a structure where you click (terrain is untouched)'],
+  ['smash', '💥', 'Break: punch a hole where you click — what loses its support falls'],
   ['water', '💧', 'Pour water'],
   ['drain', '◌', 'Drain water and oil'],
   ['oil', '⬤', 'Spill oil'],

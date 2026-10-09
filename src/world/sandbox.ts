@@ -96,6 +96,39 @@ export function generateSandbox(dims: WorldDims): MapData {
       moisture[y * w + x] = 0.45;
     }
 
+  // the physics garden (round 14, F7/G5): things to break with 💥 and watch
+  // fall — a tall tower, a brick chimney, a diving-board overhang and a
+  // bridge on two pillars. Each stands on a stone plinth levelled to the
+  // highest ground under it.
+  const plinth = (x0: number, y0: number, w: number, d: number): number => {
+    let top = 0;
+    for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) top = Math.max(top, grid.top(x, y));
+    for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) if (grid.top(x, y) < top) grid.push(x, y, grid.top(x, y), top, MAT.Stone);
+    return top;
+  };
+  const block = (x0: number, y0: number, z0: number, w: number, d: number, h: number, mat: number) => {
+    for (let y = y0; y < y0 + d; y++) for (let x = x0; x < x0 + w; x++) grid.push(x, y, Math.max(z0, grid.top(x, y)), z0 + h, mat);
+  };
+  const GX = 56;
+  const GY = 196;
+  {
+    // a tall thin tower: break its base and it topples
+    const b = plinth(GX, GY, 5, 5);
+    block(GX + 1, GY + 1, b, 3, 3, 24, MAT.Concrete);
+    // a brick chimney
+    const c = plinth(GX + 10, GY, 6, 6);
+    block(GX + 11, GY + 1, c, 4, 4, 18, MAT.Brick);
+    // a diving board: a pillar with a slab reaching out over the sand
+    const p = plinth(GX + 20, GY, 4, 4);
+    block(GX + 20, GY, p, 4, 4, 9, MAT.Concrete);
+    block(GX + 24, GY + 1, p + 8, 6, 2, 1, MAT.Concrete);
+    // a bridge: two pillars and a deck; break a pillar and the deck snaps
+    const q = plinth(GX + 34, GY, 16, 4);
+    block(GX + 34, GY, q, 3, 4, 7, MAT.Brick);
+    block(GX + 47, GY, q, 3, 4, 7, MAT.Brick);
+    block(GX + 34, GY, q + 7, 16, 4, 2, MAT.Concrete);
+  }
+
   const surface = new Float32Array(N);
   for (let i = 0; i < N; i++) {
     const col = grid.cols[i];
@@ -112,6 +145,6 @@ export function generateSandbox(dims: WorldDims): MapData {
     oilStored: new Float32Array(N * 2),
     drift,
     surface,
-    poi: { healthy: GREEN, dam: POND, site: RUIN, landfill: HEAP, reservoir: POND, tutorial: GREEN, heap: HEAP },
+    poi: { garden: [GX + 25, GY + 2], healthy: GREEN, dam: POND, site: RUIN, landfill: HEAP, reservoir: POND, tutorial: GREEN, heap: HEAP },
   };
 }
