@@ -1433,3 +1433,16 @@ the skull's scale — a quarter-cell stem ~7 cells tall with three small leaf
 clusters — instead of the level's trunk and 3×3 crown; it browns and
 shrinks the same way on bad ground. (Instance count per planting: +4 on
 the diorama, +2 in levels.)
+
+## 2026-10-09 — F7 step A: the smash tool
+
+The physics playground (G5) needs a way to break things exactly where you
+mean to. 💥 Smash (sandbox): a tap or drag picks the exact point under the
+cursor (pick buffer: column + height) and removes structural solids
+(solid, strength < 1) inside a sphere of the brush radius there, leaving
+terrain alone, with a spray of chips; each press is an undo step. The edit
+kernel splits intervals around the hole (op 12, height in the event's w).
+Check: a placed pylon with two legs cut at the foot — the cut columns lose
+exactly the sphere; the pylon still stands (the span rule lets the other
+legs carry it through the braces: 11 cells collapsed). Making it topple is
+F7's torque/rigid-body work, next.

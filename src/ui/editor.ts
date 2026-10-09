@@ -31,6 +31,7 @@ export type EditTool =
   | 'bedrock'
   | 'dig'
   | 'place'
+  | 'smash'
   | 'water'
   | 'drain'
   | 'oil'
@@ -53,6 +54,7 @@ export const EDIT_OP: Partial<Record<EditTool, number>> = {
   drain: 9,
   pour: 10,
   bedrock: 11,
+  smash: 12,
 };
 
 /** Tools that work in whole layers (strength = cells per press). */
@@ -85,6 +87,7 @@ const TOOLS: [EditTool, string, string][] = [
   ['bedrock', '⛰', 'Bedrock: raise stone from below, lifting everything on it'],
   ['dig', '▼', 'Dig: take a layer off the top'],
   ['place', '🚗', 'Place a model: cars, ruins, a tanker… (E rotates)'],
+  ['smash', '💥', 'Smash: knock a hole in a structure where you click (terrain is untouched)'],
   ['water', '💧', 'Pour water'],
   ['drain', '◌', 'Drain water and oil'],
   ['oil', '⬤', 'Spill oil'],
@@ -147,7 +150,7 @@ export class Editor {
       const list = t === 'pour' ? LOOSE : t === 'build' ? HARD : undefined;
       show('[data-ml]', !!list);
       show('[data-ll]', LAYER_TOOLS.has(t));
-      show('[data-sl]', !!EDIT_OP[t] && !LAYER_TOOLS.has(t));
+      show('[data-sl]', !!EDIT_OP[t] && !LAYER_TOOLS.has(t) && t !== 'smash');
       show('[data-models]', t === 'place');
       show('[data-bl]', t === 'place');
       if (list) {

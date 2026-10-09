@@ -74,6 +74,8 @@ export class LevelScene implements Scene {
   private brushAt?: [number, number];
   /** the next brush event starts a new press (layer tools: a fresh layer) */
   private strokeStart = false;
+  /** sandbox: a smash drag in progress */
+  private smashing = false;
   /** sandbox: the brush's footprint drawn on the ground under the cursor */
   private ring?: SVGPolylineElement;
 
@@ -185,22 +187,30 @@ export class LevelScene implements Scene {
     ];
     this.controls = new Controls(host.canvas, {
       tap: (sx, sy) => {
+        if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, true)) return;
         const [rx, ry] = toRender(sx, sy);
         core.renderer.pick(rx, ry).then((hit) => this.powers.tap(hit, wx, wy, sx, sy));
       },
       dragStart: (sx, sy) => {
+        if (this.editor?.tool === 'smash') {
+          this.smashAt(sx, sy, true);
+          this.smashing = true;
+          return true;
+        }
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, false)) return true;
         return this.powers.gustStart(wx, wy);
       },
       dragMove: (sx, sy) => {
+        if (this.smashing) return void this.smashAt(sx, sy, false);
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.brushAt) this.brushAt = [wx, wy];
         else this.powers.gustMove(wx, wy);
       },
       dragEnd: () => {
+        this.smashing = false;
         if (this.brushAt) this.brushAt = undefined;
         else this.powers.gustEnd();
       },
@@ -750,6 +760,27 @@ export class LevelScene implements Scene {
       }
     const { device } = this.host.gpu;
     for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * 4, w.data);
+  }
+
+  /**
+   * Sandbox smash (F7): knock a hole in whatever structure is under the
+   * cursor — at the exact point picked, so a pylon's leg can be cut at its
+   * foot — with a spray of chips. `press` starts an undo step.
+   */
+  private smashAt(sx: number, sy: number, press: boolean): void {
+    const ed = this.editor!;
+    const { core } = this;
+    const { camera } = core;
+    if (press) core.snapshot();
+    const rx = (sx / camera.viewportW) * this.renderW;
+    const ry = (sy / camera.viewportH) * this.renderH;
+    core.renderer.pick(rx, ry).then((hit) => {
+      if (!hit) return;
+      const x = (hit.cell % core.dims.w) + 0.5;
+      const y = Math.floor(hit.cell / core.dims.w) + 0.5;
+      core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
+      core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
+    }, ignoreTeardown);
   }
 
   /** Sandbox: put the world back as it was before the last brush press. */

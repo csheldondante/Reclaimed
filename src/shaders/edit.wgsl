@@ -43,6 +43,10 @@ const OP_CLEAN: u32 = 8u;
 const OP_DRAIN: u32 = 9u;
 const OP_POUR: u32 = 10u;
 const OP_BEDROCK: u32 = 11u;
+// knock a hole in structures (round 14, F7): structural solids inside a
+// sphere of the brush radius centred at height w are removed; terrain
+// (strength-1 solids, loose ground) is left alone
+const OP_SMASH: u32 = 12u;
 const STROKE_START: u32 = 512u;
 const DT_E: f32 = 1.0 / 60.0;
 const UPLIFT_RATE: f32 = 3.0; // cells/s bedrock rises
@@ -96,6 +100,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let fall = 1.0 - d * d;
     let amt = ev.w * fall;
+    if (op == OP_SMASH) {
+      let hz = ev.z * sqrt(fall);
+      let lo = u32(max(ev.w - hz, 0.0) + 0.5);
+      let hi = u32(max(ev.w + hz, 0.0) + 0.5);
+      var out: array<u32, MAX_K>;
+      var m = 0u;
+      for (var k = 0u; k < n; k++) {
+        let v = arr[k];
+        let mt = ivMat(v);
+        let z0 = ivZ0(v);
+        let z1 = ivZ1(v);
+        let structural = matState(mt) == ST_SOLID && MATS[mt].sim.w < 1.0;
+        if (!structural || z1 <= lo || z0 >= hi) { out[m] = v; m += 1u; continue; }
+        // keep what lies below and above the hole (room permitting)
+        if (z0 < lo) { out[m] = ivPack(z0, lo, mt, ivAux(v)); m += 1u; }
+        if (z1 > hi && m < cs.y) { out[m] = ivPack(hi, z1, mt, ivAux(v)); m += 1u; }
+      }
+      if (m <= cs.y) {
+        for (var k = 0u; k < MAX_K; k++) { arr[k] = select(0u, out[k], k < m); }
+        n = m;
+      }
+      continue;
+    }
     if (op == OP_WATER) {
       water[i] += amt * 0.02;
     } else if (op == OP_DRAIN) {
