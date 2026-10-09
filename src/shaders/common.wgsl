@@ -6,6 +6,16 @@
 //   3+ = per-shader buffers
 // Keep in sync with src/sim/globals.ts.
 
+// a cyclone (round 12; several at once since round 14): a = x, y, radius,
+// strength × spin sign (0 = none); b = velocity x, y, dust-dropping rate as
+// it dies, unused; spine = the funnel's nodes (Weather.spine): x, y, z, radius
+struct CycloneU {
+  a: vec4<f32>,
+  b: vec4<f32>,
+  spine: array<vec4<f32>, 6>,
+};
+const MAX_CYCLONES: u32 = 4u;
+
 struct Globals {
   mapW: u32, mapH: u32, tick: u32, chunkSize: u32,
   chunksX: u32, zMax: u32, numStorms: u32, seed: u32,
@@ -40,33 +50,33 @@ struct Globals {
   env: vec4<f32>,
   // dust storms: x, y, radius, strength (0 = none)
   dusts: array<vec4<f32>, 2>,
-  // the cyclone (round 12): x, y, radius, strength × spin sign (0 = none)
-  cyclone: vec4<f32>,
-  // cyclone: velocity x, y, dust-dropping rate as it dies, unused
-  cycloneB: vec4<f32>,
-  // the funnel's spine (Weather.spine): x, y, z, funnel radius at each node
-  spine: array<vec4<f32>, 6>,
+  // the cyclones (no cap on summoning them: round 14)
+  cyclones: array<CycloneU, 4>,
 };
 
-/** Point on the funnel's spine at t in 0..1 (Catmull-Rom through the nodes); w = radius. */
-fn spineAt(t: f32) -> vec4<f32> {
+/** Point on cyclone c's funnel spine at t in 0..1 (Catmull-Rom through the nodes); w = radius. */
+fn spineAt(c: u32, t: f32) -> vec4<f32> {
   let u = clamp(t, 0.0, 1.0) * 5.0;
   let i = min(u32(floor(u)), 4u);
   let f = u - f32(i);
-  let p0 = G.spine[max(i, 1u) - 1u];
-  let p1 = G.spine[i];
-  let p2 = G.spine[i + 1u];
-  let p3 = G.spine[min(i + 2u, 5u)];
+  let p0 = G.cyclones[c].spine[max(i, 1u) - 1u];
+  let p1 = G.cyclones[c].spine[i];
+  let p2 = G.cyclones[c].spine[i + 1u];
+  let p3 = G.cyclones[c].spine[min(i + 2u, 5u)];
   let f2 = f * f;
   let f3 = f2 * f;
   return 0.5 * ((2.0 * p1) + (-p0 + p2) * f + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * f2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * f3);
 }
 
-/** 0..1 how deep in the cyclone p is (1 inside its eye wall, 0 beyond ~2 radii). */
+/** 0..1 how deep in a cyclone p is (1 inside an eye wall, 0 beyond ~2 radii). */
 fn cycloneAt(p: vec2<f32>) -> f32 {
-  let c = G.cyclone;
-  if (c.w == 0.0) { return 0.0; }
-  return abs(c.w) * smoothstep(2.0, 0.8, length(p - c.xy) / c.z);
+  var k = 0.0;
+  for (var i = 0u; i < MAX_CYCLONES; i++) {
+    let c = G.cyclones[i].a;
+    if (c.w == 0.0) { continue; }
+    k = max(k, abs(c.w) * smoothstep(2.0, 0.8, length(p - c.xy) / c.z));
+  }
+  return k;
 }
 
 const EV_LIGHTNING: u32 = 1u;
@@ -305,10 +315,11 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
     let d = length(p.xy - g0.xy) / g0.z;
     w += G.gustDir[0].xy * g0.w * exp(-d * d * 2.0);
   }
-  // the cyclone: a fierce vortex (peak ~26 cells/s at its eye wall) that
-  // pulls a little inward; it carries everything it spins along with it
-  let cy = G.cyclone;
-  if (cy.w != 0.0) {
+  // the cyclones: fierce vortices (peak ~26 cells/s at the eye wall) that
+  // pull a little inward; each carries everything it spins along with it
+  for (var i = 0u; i < MAX_CYCLONES; i++) {
+    let cy = G.cyclones[i].a;
+    if (cy.w == 0.0) { continue; }
     let o = p.xy - cy.xy;
     let dist = max(length(o), 1e-3);
     let r = dist / cy.z;
@@ -317,7 +328,7 @@ fn windAt(p: vec3<f32>) -> vec2<f32> {
       // tight: full strength at the eye wall, fading fast beyond it (a wide
       // profile lifted a ring of dust that hid the funnel)
       let prof = r * exp((1.0 - r * r) * 0.5);
-      w = w * (1.0 - 0.6 * smoothstep(1.5, 0.5, r)) + (tang * 26.0 - o / dist * 4.0) * abs(cy.w) * prof + G.cycloneB.xy * smoothstep(2.0, 0.5, r);
+      w = w * (1.0 - 0.6 * smoothstep(1.5, 0.5, r)) + (tang * 26.0 - o / dist * 4.0) * abs(cy.w) * prof + G.cyclones[i].b.xy * smoothstep(2.0, 0.5, r);
     }
   }
   return w;

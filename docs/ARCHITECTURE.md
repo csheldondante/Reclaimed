@@ -30,7 +30,10 @@ Globals (`common.wgsl` / `src/sim/globals.ts`, 576 bytes) carry storms (+ shape:
 `stormsC` lobe phases and elongation), one-tick events, gusts (gusts[0] is the
 cursor/tap breeze that animals flee; gusts[1] the player's drag-wind), day/night
 light, the life lens, `env` (x, y: prevailing wind integrated over time; z:
-debris seeding boost during warmup) and up to two dust storms. Analytic fields
+debris seeding boost during warmup), up to two dust storms and up to four
+cyclones (`cyclones: array<CycloneU, 4>`: position/strength, motion, six
+spine nodes; `cycloneAt`, `windAt` and the particle capture loop over them;
+caught debris keeps its cyclone's index in `m.z` bits 4..5). Analytic fields
 derived from them: `windAt()`, `gustField()` (smooth gust patches advected by
 `env.xy` — every wind noise term lives in that moving frame, so nothing
 flickers), `stormDist()` (irregular storm outline; CPU twin

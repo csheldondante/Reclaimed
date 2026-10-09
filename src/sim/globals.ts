@@ -1,6 +1,18 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 704;
+export const GLOBALS_BYTES = 1088;
+/** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
+export const MAX_CYCLONES = 4;
+
+/** One cyclone for the GPU (common.wgsl CycloneU). */
+export interface CycloneUniform {
+  /** x, y, radius, strength × spin sign */
+  a: [number, number, number, number];
+  /** velocity x, y, dust-dropping rate (as it dies), unused */
+  b: [number, number, number, number];
+  /** the funnel's spine nodes: x, y, z, funnel radius (Weather.SPINE_N = 6) */
+  spine: [number, number, number, number][];
+}
 export const MAX_GUSTS = 4;
 export const MAX_STORMS = 4;
 export const MAX_EVENTS = 4;
@@ -93,12 +105,8 @@ export interface GlobalsState {
   /** 0 easy, 1 medium, 2 hard (round 10): how easily green ground is lost */
   difficulty: number;
   dusts: DustUniform[];
-  /** the cyclone (round 12): x, y, radius, strength × spin (0 = none) */
-  cyclone: [number, number, number, number];
-  /** cyclone extras: velocity x, y, dust-dropping rate (as it dies), unused */
-  cycloneB: [number, number, number, number];
-  /** the funnel's spine nodes: x, y, z, funnel radius (Weather.SPINE_N = 6) */
-  spine: [number, number, number, number][];
+  /** the live cyclones (round 12; several at once since round 14) */
+  cyclones: CycloneUniform[];
   /** draw plants at diorama scale (the title screen: petals, blades, moss) */
   fineVeg?: boolean;
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
@@ -168,9 +176,13 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   f.set(s.sunCol, 108);
   f.set(s.lens, 112);
   f.set([s.windOff[0], s.windOff[1], s.debrisBoost, s.difficulty], 132);
-  f.set(s.cyclone, 144);
-  f.set(s.cycloneB, 148);
-  for (let i = 0; i < 6; i++) f.set(s.spine[i] ?? [0, 0, 0, 0], 152 + i * 4);
+  for (let c = 0; c < MAX_CYCLONES; c++) {
+    const cy = s.cyclones[c];
+    const o = 144 + c * 32;
+    f.set(cy ? cy.a : [0, 0, 1, 0], o);
+    f.set(cy ? cy.b : [0, 0, 0, 0], o + 4);
+    for (let i = 0; i < 6; i++) f.set(cy?.spine[i] ?? [0, 0, 0, 0], o + 8 + i * 4);
+  }
   for (let i = 0; i < MAX_DUSTS; i++) {
     const d = s.dusts[i];
     f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);

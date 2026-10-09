@@ -300,14 +300,16 @@ export class Powers {
   /**
    * A tight circular drag spins up a cyclone (round 12): over the last ~2.5 s
    * the stroke has turned ≥ 2 full turns the same way, around a centre it
-   * stayed within 2–14 cells of. Free; one at a time; 20 s cooldown.
+   * stayed within 2–14 cells of. Free, and no cooldown (round 14): swirl
+   * again for another (Weather keeps up to four at once).
    */
   private checkSwirl(x: number, y: number): void {
     const now = performance.now() / 1000;
     this.swirl.push({ x, y, t: now });
     this.swirl = this.swirl.filter((p) => now - p.t < 2.5);
     const pts = this.swirl;
-    if (pts.length < 12 || now - this.lastCyclone < 20 || this.d.weather.cyclone) return;
+    // (lastCyclone only stops one swirl from spawning twice)
+    if (pts.length < 12 || now - this.lastCyclone < 1) return;
     let turn = 0;
     let prev: number | undefined;
     for (let i = 1; i < pts.length; i++) {

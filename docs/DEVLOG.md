@@ -1411,3 +1411,16 @@ meadow at night (worst case): 11 748 fireflies before, 885 with the
 User: wants the sandbox visible from the start to test the physics. It was
 a small footnote link under the instructions; now a "Sandbox" button sits
 beside Begin/Continue, whatever level is selected or buried.
+
+## 2026-10-09 — no cap on cyclones (G3)
+
+User: remove the cap on summoning tornadoes — it is very fun to do. The cap
+was a 20 s cooldown plus one cyclone at a time (one slot in Globals). Now:
+no cooldown (a 1 s guard so one swirl can't spawn two), and up to four
+cyclones at once (a fifth replaces the oldest). Globals carries
+`cyclones: array<CycloneU, 4>` (704 → 1088 bytes); wind, drift drop-off,
+structure battering (`cycloneAt`), lofting and the debris capture all loop
+over them; a caught grain remembers which funnel holds it (m.z bits 4..5).
+The roar follows the loudest one.
+Measured: five spawned in the sandbox → four alive, each holding its own
+debris (133 / 1075 / 198 / 262 caught particles), no GPU errors.

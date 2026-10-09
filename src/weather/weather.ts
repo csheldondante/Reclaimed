@@ -6,7 +6,7 @@
 // a chosen point) and lean on it with drag-wind — steering is discovered, not
 // shown (DECISIONS round 4).
 
-import { MAX_DUSTS, MAX_STORMS, type DustUniform, type StormUniform } from '../sim/globals';
+import { MAX_CYCLONES, MAX_DUSTS, MAX_STORMS, type CycloneUniform, type DustUniform, type StormUniform } from '../sim/globals';
 
 export interface Storm {
   x: number;
@@ -99,7 +99,7 @@ export class Weather {
   time = 0;
   private nextNatural = 70;
   dusts: DustStorm[] = [];
-  cyclone?: Cyclone;
+  cyclones: Cyclone[] = [];
   /** latest CPU copy of the wind field (texel = 2×2 columns; rgba: painted xy, whole wind zw) */
   windField?: { data: Float32Array; w: number; h: number };
   /** 0..1, set by the level from how dusty/polluted the land is: scales natural dust storms */
@@ -192,27 +192,27 @@ export class Weather {
     return d;
   }
 
-  spawnCyclone(x: number, y: number, spin: number): Cyclone | null {
-    if (this.cyclone) return null;
+  /**
+   * A new cyclone here. No cap on summoning them (round 14: "very fun"): up
+   * to MAX_CYCLONES spin at once; one more and the oldest gives way.
+   */
+  spawnCyclone(x: number, y: number, spin: number): Cyclone {
+    if (this.cyclones.length >= MAX_CYCLONES) this.cyclones.shift();
     const g = this.heightAt(x, y);
     const spine = Array.from({ length: SPINE_N }, (_, i) => ({ x, y, z: g + i * SPINE_SEG, vx: 0, vy: 0 }));
-    this.cyclone = { x, y, vx: 0, vy: 0, radius: 6, spin: Math.sign(spin) || 1, age: 0, life: 20, strength: 0, spine };
-    return this.cyclone;
+    const c: Cyclone = { x, y, vx: 0, vy: 0, radius: 6, spin: Math.sign(spin) || 1, age: 0, life: 20, strength: 0, spine };
+    this.cyclones.push(c);
+    return c;
   }
 
-  cycloneUniform(): { a: [number, number, number, number]; b: [number, number, number, number] } {
-    const c = this.cyclone;
-    if (!c) return { a: [0, 0, 1, 0], b: [0, 0, 0, 0] };
-    const dropping = c.age > c.life - 3 ? 1 : 0;
-    return { a: [c.x, c.y, c.radius, c.strength * c.spin], b: [c.vx, c.vy, dropping, 0] };
-  }
-
-  /** Spine nodes for the GPU: x, y, z, funnel radius at that node. */
-  spineUniform(): [number, number, number, number][] {
-    const c = this.cyclone;
-    if (!c) return Array.from({ length: SPINE_N }, () => [0, 0, 0, 0] as [number, number, number, number]);
-    // narrow at the ground, flaring toward the top; it thins as it dies
-    return c.spine.map((n, i) => [n.x, n.y, n.z, (0.45 + 0.6 * i) * (0.4 + 0.6 * c.strength)] as [number, number, number, number]);
+  /** The cyclones for the GPU: position/strength, motion, and spine nodes (x, y, z, funnel radius). */
+  cycloneUniforms(): CycloneUniform[] {
+    return this.cyclones.map((c) => ({
+      a: [c.x, c.y, c.radius, c.strength * c.spin],
+      b: [c.vx, c.vy, c.age > c.life - 3 ? 1 : 0, 0],
+      // narrow at the ground, flaring toward the top; it thins as it dies
+      spine: c.spine.map((n, i) => [n.x, n.y, n.z, (0.45 + 0.6 * i) * (0.4 + 0.6 * c.strength)] as [number, number, number, number]),
+    }));
   }
 
   dustUniforms(): DustUniform[] {
@@ -348,9 +348,8 @@ export class Weather {
     }
     this.dusts = this.dusts.filter((d) => d.age < 4 || d.intensity > 0.01);
 
-    // the cyclone: spins up, wanders along with the wind field, dies down
-    const cy = this.cyclone;
-    if (cy) {
+    // the cyclones: spin up, wander along with the wind field, die down
+    for (const cy of this.cyclones) {
       cy.age += dt;
       const [fx, fy] = this.fieldOver(cy.x, cy.y, cy.radius * 2.5);
       const wob = Math.sin(this.t * 0.9 + cy.spin) * 1.5;
@@ -390,9 +389,8 @@ export class Weather {
         }
         n.z = below.z + SPINE_SEG;
       }
-      const off = cy.x < -10 || cy.y < -10 || cy.x > this.w + 10 || cy.y > this.h + 10;
-      if (cy.age >= cy.life || off) this.cyclone = undefined;
     }
+    this.cyclones = this.cyclones.filter((cy) => cy.age < cy.life && cy.x > -10 && cy.y > -10 && cy.x < this.w + 10 && cy.y < this.h + 10);
   }
 
   uniforms(): StormUniform[] {

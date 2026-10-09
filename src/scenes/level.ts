@@ -414,11 +414,18 @@ export class LevelScene implements Scene {
     }
     const drag = powers.dragWind();
     audio.dragWind(drag ? Math.min(1, drag.strength / 15) : 0, drag ? camera.project(drag.x, drag.y, 0)[0] / camera.viewportW : 0.5);
-    const cy = weather.cyclone;
-    if (cy) {
+    // one roar: the loudest cyclone (nearest and strongest) sets it
+    let roar = 0;
+    let roarPan = 0.5;
+    for (const cy of weather.cyclones) {
       const near = Math.max(0, 1 - Math.hypot(cy.x - camera.target[0], cy.y - camera.target[1]) / (camera.viewportW / camera.zoom));
-      audio.cyclone(cy.strength * (0.3 + 0.7 * near), camera.project(cy.x, cy.y, 0)[0] / camera.viewportW);
-    } else audio.cyclone(0, 0.5);
+      const level = cy.strength * (0.3 + 0.7 * near);
+      if (level > roar) {
+        roar = level;
+        roarPan = camera.project(cy.x, cy.y, 0)[0] / camera.viewportW;
+      }
+    }
+    audio.cyclone(roar, roarPan);
     const heard = this.heard();
     audio.update({
       pollution: core.pollution,
@@ -631,7 +638,6 @@ export class LevelScene implements Scene {
       return true;
     }
     if (ed.tool === 'cyclone') {
-      w.cyclone = undefined;
       w.spawnCyclone(wx, wy, 1);
       return true;
     }

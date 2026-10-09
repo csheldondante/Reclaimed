@@ -111,8 +111,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     d += ds.w / 8.0 * smoothstep(1.2, 0.4, r) * 0.06 * DT_D * (0.15 + 0.85 * sh);
   }
   // a dying cyclone drops the dust it carried in a pile around its eye
-  if (G.cycloneB.z > 0.0) {
-    let r = length(vec2<f32>(p) + 0.5 - G.cyclone.xy) / G.cyclone.z;
+  for (var c = 0u; c < MAX_CYCLONES; c++) {
+    if (G.cyclones[c].b.z <= 0.0) { continue; }
+    let r = length(vec2<f32>(p) + 0.5 - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
     d += smoothstep(1.6, 0.0, r) * 0.6 * DT_D;
   }
   // the editor's brush

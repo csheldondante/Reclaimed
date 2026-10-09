@@ -455,51 +455,62 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // ---- caught by the cyclone (round 12): loose debris near the funnel is
   // pulled in and held on the cone (flag 2; while caught v.x angle, v.y t along
-  // the spine, v.z radius in funnel radii), carried with it, and now and then
-  // flung back out
+  // the spine, v.z radius in funnel radii; m.z bits 4..5 which cyclone),
+  // carried with it, and now and then flung back out
   let catchable = kind == K_DUST || kind == K_LITTER || kind == K_LEAF || kind == K_ASH || kind == K_PETAL || kind == K_HAZE;
-  if (catchable && G.cyclone.w != 0.0) {
-    let caught = (P.m.z & 2u) != 0u;
+  let caught = (P.m.z & 2u) != 0u;
+  var cyi = (P.m.z >> 4u) & 3u;
+  if (!caught) {
+    // the nearest live cyclone's base
+    var best = 1e9;
+    for (var c = 0u; c < MAX_CYCLONES; c++) {
+      if (G.cyclones[c].a.w == 0.0) { continue; }
+      let dc = length(pos.xy - G.cyclones[c].spine[0].xy);
+      if (dc < best) { best = dc; cyi = c; }
+    }
+  }
+  let cyc = G.cyclones[cyi].a;
+  if (catchable && cyc.w != 0.0) {
     let roll = f32(hash3(id.x, G.tick, seed ^ 0xca7cu)) / 4294967296.0;
     if (!caught) {
       // near the base (within ~3 funnel radii, low down)?
-      let b = spineAt(0.0);
+      let b = spineAt(cyi, 0.0);
       let d = length(pos.xy - b.xy);
-      let near = smoothstep(13.0, 4.0, d) * smoothstep(b.z + 14.0, b.z + 3.0, pos.z) * abs(G.cyclone.w);
+      let near = smoothstep(13.0, 4.0, d) * smoothstep(b.z + 14.0, b.z + 3.0, pos.z) * abs(cyc.w);
       if (near > 0.0 && roll < near * 0.25) {
         // caught where it is: same angle, distance and height (the spine is
         // ~22 cells tall); from here it spirals in and up
         let o = pos.xy - b.xy;
         let t0 = clamp((pos.z - b.z) / 22.0, 0.0, 0.9);
-        parts[id.x] = Particle(P.p, vec4<f32>(atan2(o.y, o.x), t0, d, P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
+        parts[id.x] = Particle(P.p, vec4<f32>(atan2(o.y, o.x), t0, d, P.v.w), vec4<u32>(kind, seed, 2u | (cyi << 4u), P.m.w));
         return;
       }
     } else {
       // (v.z: distance from the spine in cells)
       var rc = vel.z;
       // far out it is dragged in along the ground; close in it climbs
-      let sp0 = spineAt(min(vel.y, 1.0));
+      let sp0 = spineAt(cyi, min(vel.y, 1.0));
       let t = vel.y + mix(0.02, 0.1 + 0.08 * sr, smoothstep(sp0.w * 3.0, sp0.w * 1.5, rc)) * DT;
-      let sp = spineAt(min(t, 1.0));
+      let sp = spineAt(cyi, min(t, 1.0));
       // fog keeps to a tight inner cone; debris rides the outer cone, spread
       // evenly around and up it
       let ring = sp.w * select(1.0 + sr * 0.6, 0.35 + sr * 0.3, kind == K_HAZE);
       rc = rc + (ring - rc) * min(1.6 * DT, 1.0);
       let r = rc;
-      let ang = vel.x + sign(G.cyclone.w) * (1.6 + 5.0 / max(r, 0.5)) * DT;
+      let ang = vel.x + sign(cyc.w) * (1.6 + 5.0 / max(r, 0.5)) * DT;
       let q = sp.xy + vec2<f32>(cos(ang), sin(ang)) * r;
       // spat out high up at the top (rarely sooner), flung wide to fall downwind
       if (t >= 1.0 || roll < 0.03 * DT) {
-        let tang = vec2<f32>(-sin(ang), cos(ang)) * sign(G.cyclone.w);
+        let tang = vec2<f32>(-sin(ang), cos(ang)) * sign(cyc.w);
         let out = vec3<f32>(tang * 8.0 + normalize(q - sp.xy + vec2<f32>(1e-3)) * 6.0, 3.0);
         parts[id.x] = Particle(vec4<f32>(q, sp.z, max(life, 6.0)), vec4<f32>(out, P.v.w), vec4<u32>(kind, seed, 0u, P.m.w));
         return;
       }
-      parts[id.x] = Particle(vec4<f32>(q, max(sp.z + 0.2, pos.z - 6.0 * DT), max(life, 2.0)), vec4<f32>(ang, t, rc, P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
+      parts[id.x] = Particle(vec4<f32>(q, max(sp.z + 0.2, pos.z - 6.0 * DT), max(life, 2.0)), vec4<f32>(ang, t, rc, P.v.w), vec4<u32>(kind, seed, 2u | (cyi << 4u), P.m.w));
       return;
     }
-  } else if ((P.m.z & 2u) != 0u) {
-    // the cyclone died: whatever it held falls
+  } else if (caught) {
+    // its cyclone died: whatever it held falls
     parts[id.x] = Particle(P.p, vec4<f32>(0.0, 0.0, 1.0, P.v.w), vec4<u32>(kind, seed, 0u, P.m.w));
     return;
   }
@@ -721,11 +732,13 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   // inside the cyclone, anything loose rises in a spiral
   // only the core lifts (the funnel is drawn by its own puffs); elsewhere loose
   // debris whirls round in a low skirt at the base
-  if (G.cyclone.w != 0.0 && !resting && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_GLOW) {
-    let rr = length(pos.xy - G.cyclone.xy) / G.cyclone.z;
-    let core = abs(G.cyclone.w) * smoothstep(0.9, 0.3, rr);
+  for (var c = 0u; c < MAX_CYCLONES; c++) {
+    let cy = G.cyclones[c].a;
+    if (cy.w == 0.0 || resting || kind == K_BIRD || kind == K_DEER || kind == K_RABBIT || kind == K_GLOW) { continue; }
+    let rr = length(pos.xy - cy.xy) / cy.z;
+    let core = abs(cy.w) * smoothstep(0.9, 0.3, rr);
     vel.z += core * (5.0 - max(pos.z - ground - 10.0, 0.0)) * DT;
-    let skirt = abs(G.cyclone.w) * smoothstep(2.0, 0.8, rr) * (1.0 - core);
+    let skirt = abs(cy.w) * smoothstep(2.0, 0.8, rr) * (1.0 - core);
     if (pos.z > ground + 2.5) { vel.z -= skirt * 6.0 * DT; }
   }
   if (!resting && kind != K_DEER && kind != K_RABBIT) {
