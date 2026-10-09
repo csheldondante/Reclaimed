@@ -3,6 +3,28 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-09 — round 15 (session 3) — items H1–H8 in BACKLOG.md
+
+- Sandbox: a simple break tool to punch holes and make things collapse;
+  structures with an overhang to break off, or a tall one with a base to
+  destroy (done: 💥 Break + the physics garden).
+- Title screen: random low gusts now and then so the grass waves and dust
+  blows.
+- Asked whether dust particles settle back and pile up like the other loose
+  materials (answer: no — the airborne share is lost; to fix).
+- Smooth gradients vs steps: steps make sense for stone; loose surfaces
+  (dirt, ash, sand) should behave like dust — with a steeper angle of
+  repose and needing higher winds to be picked up (if at all).
+- Water loosens and carries loose materials: wash away packed trash heaps
+  or dirt; blow away dust; asphalt and concrete need lightning or tornadoes
+  to crack and break them down first. (Changes round 5's "trash only yields
+  to fire": water now washes trash too.)
+- Oil burns even in the rain (trees still go out).
+- Storm outlines still change erratically (too quickly): steadier in shadow.
+- Larger structures to place, like tall buildings.
+- Green growing over loose things like dust should turn them into soil, or
+  at least stop them being swept out from under the green.
+
 ## 2026-10-09 — round 14 (session 3) — items G1–G5 in BACKLOG.md
 
 - Fireflies less dense, only popping up in small patches.
