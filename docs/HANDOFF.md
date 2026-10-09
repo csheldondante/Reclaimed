@@ -1,115 +1,83 @@
-# Handoff — 2026-10-08 morning (session 2, overnight)
+# Handoff — 2026-10-09 (end of session 2)
 
-## Overnight (round 6 batch) — for the morning
-
-Done (DECISIONS round 6, DEVLOG): withering plants (wilt system), tree seeds
-on the wind + birds shedding seeds, free grow-tap (sparkles / brown flecks),
-wind-strippable litter (ring around the healthy patch), phone-ready touch
-controls and layout.
-
-To decide together:
-- **Phone hosting** (Android Chrome): WebGPU needs a secure context, so
-  `http://192.168.1.3:5173` won't work from the phone. Options: GitHub Pages
-  (public https build), local HTTPS dev server (self-signed cert, home Wi-Fi
-  only), or a tunnel (cloudflared/ngrok). Then open with `?q=low`.
-- **Next features (deferred by agreement):** event camera that pans/zooms to
-  firsts + a diegetic tutorial built on withering/seeds/litter; sandbox mode
-  (deposit/remove-layer brushes — fits the column-interval format; needs
-  same-material merging and occasional CPU repack because chunk K is fixed
-  at load + 2 headroom); water life (fish, reeds/lilies); wind waves
-  (shaded cheap, true height harder).
-- Tuning to confirm by eye: wither speed, seed amounts, grow-tap strength,
-  litter density, fire spread.
-
-
-## Session 2 (round 4 feedback) — done, needs the user's eyes/ears
-
-All twelve round-4 items are implemented (DECISIONS round 4; DEVLOG has the
-measurements): advected smooth wind; drag-wind everywhere that steers storms
-(no arrow); ground debris lifted by wind; dust storms + haze; a high, thin
-storm deck with rain from its base and a lighter storm shade; whole-scene
-lightning flash; moon arc + soft sliding shadows; perching birds that flush
-only from trees they're in; ambient/click audio buses with zoom and
-distance falloff; sludge pools, oil slicks and trash heaps; goal 45 %; a new
-higher-resolution menu skull, ribcage and dust mound.
-
-To check with the user:
-- **Audio** (never heard by an agent): ambient level vs. clicks, zoom
-  falloff, drag whoosh, flutter only when birds really leave.
-- Wind feel: is the drag gust strong enough? (strength = cursor speed × 0.12)
-- Shadows do move with the sun, but an 8-minute day makes it slow to notice;
-  a shorter day (`?day=`) is a design call.
-- Dust storms at the start: two cross the map in the first ~minute.
-- Sludge is persistent until diluted/flushed; is the cleanup loop clear?
-
-
-For the next agent session. Read `CLAUDE.md` first (rules, commands, gotchas).
+For the next agent session. Read in this order: `CLAUDE.md` (rules,
+commands, gotchas) → **`docs/BACKLOG.md`** (every open suggestion, with
+status — the source of truth for "what's next") → `docs/DECISIONS.md` (the
+user's own words, rounds 1–12) → `docs/ARCHITECTURE.md` (contracts) →
+`docs/DEVLOG.md` (why each change was made, with measurements).
 
 ## Where things stand
 
-The design doc's milestones M0–M4, plus three rounds of user feedback, are
-implemented, committed and pushed (`main` on github.com/csheldondante/Reclaimed).
-The user called the current state "a good checkpoint, but it still has issues",
-and has **new feedback ready for the next session**. Start by asking for it.
-Don't assume the open questions below are the priority.
+`main` on github.com/csheldondante/Reclaimed, all pushed. Session 2 worked
+through user feedback rounds 4–12 (≈ 60 commits). The user's last verdict:
+"this is all much improved… it's looking great overall."
 
-What's playable (details in `docs/STATUS.md` §2):
+What exists now (beyond session 1's valley, water, oil, fire, ecology,
+structures, storms, day/night):
 
-- **Menu:** a skull diorama whose state follows saved progress. Begin/Continue
-  opens the 256×256 valley.
-- **Controls** (diegetic, no tool buttons):
-  - LMB tap under a storm's shadow → lightning; elsewhere → tactile responses
-    (cracks + stone sounds on masonry, clang on tanks, splash, leaves/birds).
-  - LMB drag under a storm → gust. Hover → breeze.
-  - RMB pan, MMB/wheel zoom, **R**/☁ summon a storm, **Space** life lens.
-- **Systems:** layered voxel columns; granular material + structural collapse;
-  water; oil (sealed in tanks until breached); contamination; moisture; fire;
-  ecology with biomes; GPU particles; analytic wind and storms; day/night;
-  procedural audio.
-- **Goal:** reclamation bar (living share of the map). The level ends at 60 %,
-  and progress is saved for the menu.
+- **Wind:** one wind field texture (map wind + painted wind). Drags paint
+  stacking strokes (breeze → gust → gale) that relax back over ~7 s; storms
+  and the cyclone ride the field. Map wind is calm (30 %) unless a storm or
+  dust storm is about. Tight circular drag → **cyclone**: a spline funnel
+  that bends with the wind, made only of real debris it catches (dust
+  coloured by the ground it came from), spat out at the top; batters ruins
+  and junk, spares plants. Free, 20 s cooldown.
+- **Ground:** soft materials and water drawn as smooth slopes (corner
+  heights precomputed into a texture), rounded drift/water outlines. **Dust
+  drifts** (fractional dust layer) that wind moves and shelter piles up;
+  lost gardens and junk buried under them, uncovered by wind. Litter, ash
+  and grime the wind strips and carries; grime blown into water washes away.
+- **Life:** wilt/hostility per column (withering on bad ground), tap tiers
+  (grass → flowers/shrub → tree; doomed versions wither on bad ground),
+  seeds on the wind that green and clean, perching birds, petals shed in
+  gusts, withered plants blowing away as flakes. Difficulty easy/medium/hard.
+- **Consequences/score:** spilled oil and drowning drain Nature; burning oil
+  makes smoke that pays back when dispersed; reclamation = ½ clean land +
+  ½ staged life; Nature pays for deeds. Fire on oil films / oil on water /
+  forests; trash only yields to fire or lightning (→ ash).
+- **Intro/tutorial** (valley, first play): camera director with limits and
+  flights; staged lessons ending in "a storm comes — strike the heap".
+- **Title screen:** skull, ribcage and bones on a dust mound with
+  diorama-scale plants; the same hands as the game; difficulty, reset;
+  **a clickable model per level** (dam, car, tent, tanker, signpost).
+- **Levels:** registry with per-level progress — the Dam Valley (built),
+  Sandbox (built: editor brushes, weather placement, pause/speed), Highway,
+  City, Port (shown as "coming"). `?skipmenu=1&level=sandbox`.
+- **Audio:** ambient vs click buses, positional/zoom falloff, desolate howl,
+  deep drag whoosh, unfurling grow, cyclone roar; `?audio=1` debug panel
+  (levels, mutes, one-shot log). **No agent has heard any of it.**
 
-Performance (Intel Xe-LPG iGPU, 1600×900, storm + fire): ~6 ms GPU, ~100 fps.
+Perf (Xe-LPG iGPU, 1400×800): ~3–4.6 ms draw depending on drifts on screen,
+GPU total ~5.5 ms, 120 fps.
 
-## Verification you can do (and can't)
+## What's next (agreed order, BACKLOG)
 
-- `node scripts/shot.mjs` with `?skipmenu=1` gives screenshots, GIFs, scripted
-  clicks/drags and buffer probes (see CLAUDE.md). Claude in Chrome was never
-  connected in session 1.
-- **Audio has never been heard by an agent.** Every sound decision is unverified
-  except through the user's comments.
-- Mobile/touch and discrete GPUs are untested.
+1. **C7 Highway** level — ruined cars along a road, half-buried in drifts
+   (use the drift system and litter); oil from wrecks.
+2. **C9 City** — blast crater, ruined blocks, field-hospital tents (an
+   outbreak; theme handled with restraint).
+3. **C8 Port** — tankers ashore, a seawall, **ocean waves and swell** (needs
+   new water tech: a tide/swell boundary + wave shading/height; ties to B4).
+Then the loose ends E1–E8 and the deferred B-items (phone hosting B1 is the
+user's call — they said "later").
 
-## Known issues and rough edges
+## Things to check with the user
 
-1. Water running down slopes renders stair-stepped (box side faces).
-2. Rubble falls effectively instantly (one cell per tick at 60 Hz).
-3. Rainwater fills roofless building shells and stays there.
-4. The canopy sub-voxel march keeps depth at the box face (intersections are slightly off).
-5. The menu skull is low-fidelity voxel art; its readability is unconfirmed.
-6. Big storms (r 60–85) can dominate the view; cloud density is a taste call.
-7. Living share counts moss (veg ≥ 0.5), so the bar moves fast early. The goal
-   is 60 % (~10 game-minutes with regular storms).
-8. Fire burns spilled oil away completely (no soot/ash residue).
-9. Tap-chipping now really damages masonry (~12 taps topple a piece). The user
-   asked for cosmetic decay plus a falling-stone feel; check this is wanted.
-10. A few judgement calls are still open in `docs/STATUS.md` §5 (economy, storm
-    size, day length, lightning auto-targeting, lens UX).
+- Every sound (B9): howl, drag whoosh, grow, wash plops, rain patter (the
+  squeak was the old wash plink — fixed in `cea9df4`), cyclone roar.
+- Cyclone look: deliberately subtle ("the motion will make it readable").
+- Whether the sandbox editor covers what they want (undo/save are E8).
 
-## Suggested next steps (if the user's feedback doesn't redirect)
+## Process notes (session 2)
 
-- Act on the user's new feedback first.
-- Earthquake (event channel + structure system make it cheap), then
-  drag-to-tornado (DECISIONS round 2).
-- A second level / data-driven map format; the menu's progress already
-  supports more levels.
-- Water-on-slope rendering, and a rubble fall animation.
-- Touch-specific controls pass (DECISIONS: may differ from PC).
-
-## Process notes from session 1
-
-- The user prefers being asked clarifying questions before big pivots, then
-  autonomous work while they're away, with screenshots/GIFs sent as progress.
-- Every change is explained in `docs/DEVLOG.md` in the same commit. Keep that up.
-- Several bugs were only caught by measuring (probes, particle counts, stats).
-  Visual inspection alone missed them. Measure.
+- The user gives feedback in batches, often mid-task; record each in
+  DECISIONS and BACKLOG, ask only when a choice is genuinely theirs, then
+  work through autonomously with screenshots/GIFs (SendUserFile).
+- Measure before claiming: many fixes this session came from probing
+  buffers (particle kind counts, drift totals, wind field readbacks). Visual
+  checks alone missed several (e.g. the dust ring hiding the funnel).
+- Windows shell: inline `node -e` with backticks or `${}` mangles silently —
+  write scripts to the scratchpad and run them, or use Edit/Write. Twice this
+  session ARCHITECTURE.md got mangled code spans this way.
+- Storage-buffer budget: fields added late are textures (wind field, drift,
+  corners) bound at 14–17, to stay within 8 storage buffers per stage.
