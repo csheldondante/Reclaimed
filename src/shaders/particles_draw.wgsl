@@ -19,7 +19,7 @@ struct VOut {
   @location(0) col: vec4<f32>,
   @location(1) uv: vec2<f32>,
   @location(2) @interpolate(flat) soft: f32,
-  // x: 1 for birds (V-shaped wings), y: wing angle
+  // x: 1 for birds (V-shaped wings), 2 for round soft motes (dust); y: wing angle
   @location(3) @interpolate(flat) shapeInfo: vec2<f32>,
 };
 
@@ -48,14 +48,15 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   var col = vec4<f32>(0.62, 0.56, 0.45, 0.55);
   var soft = 0.0;
   let fade = clamp(P.p.w / 1.5, 0.0, 1.0);
-  if (kind == 1u && P.m.w == 1u) { // grime: dark tarry clumps with sickly flecks
-    size = 0.19 + sr * 0.09;
-    col = vec4<f32>(mix(vec3<f32>(0.11, 0.1, 0.08), vec3<f32>(0.34, 0.31, 0.12), sr2 * sr2), 0.95);
+  if (kind == 1u && P.m.w == 1u) { // grime: dark tarry clumps with sickly flecks (round, slightly see-through)
+    size = 0.22 + sr * 0.1;
+    col = vec4<f32>(mix(vec3<f32>(0.11, 0.1, 0.08), vec3<f32>(0.34, 0.31, 0.12), sr2 * sr2), 0.78);
   } else if (kind == 1u) { // dust: the colour of the ground it came from, darker when carrying pollution
-    size = 0.16 + sr * 0.1;
-    col = vec4<f32>(mix(dustColour(P.m.w), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.7);
+    // round, soft-edged and see-through (round 13: square opaque grains read as gravel)
+    size = 0.2 + sr * 0.12;
+    col = vec4<f32>(mix(dustColour(P.m.w), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.42);
     // settled dust lies faintly on the ground
-    if ((P.m.z & 1u) != 0u) { col = vec4<f32>(col.rgb * 0.85, 0.3); size *= 0.8; }
+    if ((P.m.z & 1u) != 0u) { col = vec4<f32>(col.rgb * 0.85, 0.2); size *= 0.8; }
   } else if (kind == 2u) { // litter: faded plastics, paper
     size = 0.28;
     let k = u32(sr * 5.0);
@@ -173,7 +174,8 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  o.shapeInfo = vec2<f32>(select(0.0, 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
+  let mote = kind == 1u;
+  o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   return o;
 }
 
@@ -186,7 +188,11 @@ struct FOut {
 fn fs(in: VOut) -> FOut {
   var o: FOut;
   var a = in.col.a;
-  if (in.shapeInfo.x > 0.5) {
+  if (in.shapeInfo.x > 1.5) {
+    // a round mote: dense centre, soft rim
+    a *= smoothstep(1.0, 0.3, length(in.uv));
+    if (a < 0.01) { discard; }
+  } else if (in.shapeInfo.x > 0.5) {
     // a 'V' whose wing angle flaps: |y − |x|·k| thin
     let k = in.shapeInfo.y * 0.9;
     if (abs(in.uv.y + abs(in.uv.x) * k) > 0.32) { discard; }

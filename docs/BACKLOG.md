@@ -38,14 +38,14 @@ Proposed order: F1, F8, F9 (quick fixes) → F2, F4, F3 (brushes) → F6 (save/l
 
 | id | item | size | status |
 |---|---|---|---|
-| F1 | Dust drifts sink under water and oil: liquids lie on top of the dust (water/oil see drift as ground), so dust is never drawn over a pond | S–M | done |
+| F1 | Dust drifts sink under water and oil: liquids lie on top of the dust (water/oil see drift as ground), so dust is never drawn over a pond | S–M | done `f7c2acb` |
 | F2 | Layer brushes: one press = one layer with a soft edge (fractional per column, so repeat clicks build a smooth mound); dragging over the same place in one press adds nothing more. Calmer sandbox base map (lower-frequency patches) | S–M | open |
 | F3 | Deposit brushes drop material from above (falling grains you can see) that lands and settles by angle of repose: dirt, sand, gravel, dust — real strata | M | open |
 | F4 | Bedrock brush: stone rises from below, lifting the layers above it | S | open |
 | F5 | Model atlas: layered voxel models (ruined cars, tankers, ruins, tents, …) stamped into the world as real matter (buryable, breakable); editor palette with thumbnails. Feeds C7/C9/C8 | M–L | open |
 | F6 | Map building: save/load sandbox maps, undo, brush cursor ring (absorbs E8) | M | open |
 | F7 | Destruction prototype: chunks of structures that topple and fall as pieces, then shatter to rubble (absorbs E4) | L | open |
-| F8 | Dust particles softer: more transparent, rounded | S | open |
+| F8 | Dust particles softer: more transparent, rounded | S | done |
 | F9 | Day/night: longer transitions; redder/golden dawn and dusk | S | open |
 | F10 | Title screen: plants and tree at a scale that makes sense with the bones | S–M | open |
 | F11 | Title screen: level models buried in dust, one unburied at the start; the rest unburied as the title progresses | M | open |

@@ -1267,3 +1267,13 @@ under any water); moving water scours it in proportion to the net flow
 (`netFlow`, max 5 %/pass), so rivers still carry drifts off.
 Check (sandbox pond, 0.8 s dust brush): a submerged mound under clear
 water; a 4 s pour makes an island and pushes the pond outward.
+
+## 2026-10-09 — softer dust (F8)
+
+User: dust particles would look better more transparent or rounded. Dust
+and grime were opaque screen-aligned squares (alpha 0.7 / 0.95), which at
+close zoom read as gravel — the grime especially, as black pixels. Both are
+now round motes (fragment: alpha × smoothstep(1, 0.3, r), discard the
+corners), slightly larger to keep the same visual weight: dust alpha 0.42
+(settled 0.2), grime 0.78. Litter, leaves, petals and seeds keep the crisp
+sub-voxel squares (they are things, not powder).
