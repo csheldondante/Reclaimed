@@ -146,6 +146,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     if (fv > 0.75) { c = vec3<f32>(0.95, 0.8, 0.25); } else if (fv > 0.5) { c = vec3<f32>(0.62, 0.48, 0.82); } else if (fv > 0.3) { c = vec3<f32>(0.85, 0.35, 0.3); }
     col = vec4<f32>(c * (0.75 + 0.25 * abs(sin(G.time * 8.0 + sr * 50.0))), 1.0);
   }
+  else if (kind == 21u) { // poured grain: the material's colour
+    size = 0.12 + sr * 0.06;
+    col = vec4<f32>(dustColour(P.m.w) * (0.8 + 0.2 * sr2), 1.0);
+  }
   else if (kind == 14u) { // rabbit: small, sandy brown
     size = 0.17;
     col = vec4<f32>(mix(vec3<f32>(0.5, 0.38, 0.26), vec3<f32>(0.6, 0.5, 0.38), sr), 1.0);
@@ -174,7 +178,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  let mote = kind == 1u;
+  let mote = kind == 1u || kind == 21u;
   o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   return o;
 }

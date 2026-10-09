@@ -59,6 +59,11 @@ const K_PETAL: u32 = 18u;
 // a brief soft light where something happens (round 11): state 0 growth
 // (green-gold), 1 wind (pale blue)
 const K_GLOW: u32 = 19u;
+// a grain of material poured by the sandbox brush (edit.wgsl), falling to
+// where it lands; m.w carries the material (dustTag) for its colour
+const K_GRAIN: u32 = 21u;
+const GRAIN_DROP: f32 = 12.0; // cells above the ground it starts falling
+const GRAIN_G: f32 = 2.0 * GRAIN_DROP / (POUR_FALL * POUR_FALL); // lands in POUR_FALL
 // (the funnel follows the spine: spineAt() in common.wgsl)
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
@@ -142,6 +147,18 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   let cover = smoothstep(0.3, 1.5, v);
   let boost = max(G.env.z, 1.0);
   let onGround = base + vec3<f32>(r1 - 0.5, fract(r1 * 7.31) - 0.5, 0.0) * 0.9;
+
+  // the sandbox pour: grains fall while there is material that will land
+  // after a full fall (what lands sooner is already in the air)
+  let ed = textureLoad(editTex, p, 0);
+  if (ed.z > 0.0) {
+    let opm = u32(floor(ed.w / 4.0));
+    let left = ed.w - f32(opm) * 4.0;
+    if (opm / 32u == 10u && ed.z > POUR_RATE * (POUR_FALL - left) && r1 < 0.35) {
+      let at = vec3<f32>(base.xy + vec2<f32>(r2 - 0.5, fract(r2 * 7.31) - 0.5) * 0.9, g + driftAt(p) + GRAIN_DROP);
+      spawnFull(at, vec3<f32>(0.0), POUR_FALL + 0.5, K_GRAIN, 0.0, h ^ 0x67a1u, 0u, dustTag(opm % 32u));
+    }
+  }
 
   if (!wet) {
     let dusty = dustinessOf(contam[i].x, m) * dry * (1.0 - cover);
@@ -422,6 +439,15 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let ci = colIdxI(cell);
   let ground = f32(sfZ(surface[ci])) + driftAt(cell) + water[ci];
+  if (kind == K_GRAIN) {
+    // straight down under gravity, gone where it lands (the cell it brings
+    // lands with it: edit.wgsl times the deposit to the fall)
+    vel.z -= GRAIN_G * DT;
+    pos += vel * DT;
+    if (pos.z <= ground || life <= 0.0) { parts[id.x].p.w = 0.0; return; }
+    parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), P.m);
+    return;
+  }
   let w = windAt(pos);
   let rain = rainAt(pos.xy);
 

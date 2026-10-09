@@ -282,6 +282,12 @@ fn driftAt(q: vec2<i32>) -> f32 {
   return textureLoad(driftTex, q, 0).x;
 }
 
+// The sandbox brush state per column (edit.wgsl writes it; the particle
+// system reads it to show poured grains falling). Bound at 18 by those two.
+@group(0) @binding(18) var editTex: texture_2d<f32>;
+const POUR_FALL: f32 = 0.8; // s from release to landing (grains drop ~12 cells)
+const POUR_RATE: f32 = 4.0; // cells/s a pour lands at
+
 fn windAt(p: vec3<f32>) -> vec2<f32> {
   var w = windSample(p.xy).zw;
   for (var i = 0u; i < G.numStorms; i++) {

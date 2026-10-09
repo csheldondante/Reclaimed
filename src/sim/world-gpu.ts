@@ -80,6 +80,11 @@ export class WorldGpu {
   readonly driftNext: GPUTexture;
   readonly driftView: GPUTextureView;
   readonly driftNextView: GPUTextureView;
+  /** sandbox brush state per column (edit.wgsl reads `editState`, writes `editStateNext`; particles read it) */
+  readonly editState: GPUTexture;
+  readonly editStateNext: GPUTexture;
+  readonly editStateView: GPUTextureView;
+  readonly editStateNextView: GPUTextureView;
   /** smoothed soft-ground corner heights (rgba32float, one texel per grid point; x = height or -1) */
   readonly cornerTex: GPUTexture;
   readonly cornerView: GPUTextureView;
@@ -180,6 +185,11 @@ export class WorldGpu {
     this.textures.push(this.drift, this.driftNext);
     this.driftView = this.drift.createView();
     this.driftNextView = this.driftNext.createView();
+    this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
+    this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.editState, this.editStateNext);
+    this.editStateView = this.editState.createView();
+    this.editStateNextView = this.editStateNext.createView();
     {
       const init = new Float32Array(N * 4);
       for (let k = 0; k < N; k++) init[k * 4] = map.drift[k];

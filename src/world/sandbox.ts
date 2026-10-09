@@ -40,7 +40,8 @@ export function generateSandbox(dims: WorldDims): MapData {
       const i = y * w + x;
       const top = height(x, y);
       grid.push(x, y, 0, top - 3, MAT.Stone);
-      const sandy = fbm(x / 18, y / 18, 2, 3) > 0.25;
+      // broad sand and soil patches (round 13: small ones made the land busy)
+      const sandy = fbm(x / 55, y / 55, 2, 3) > 0.2;
       grid.push(x, y, top - 3, top, sandy ? MAT.Sand : MAT.Soil);
       moisture[i] = 0.25;
       contam[i * 2] = 0.05;

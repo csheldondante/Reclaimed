@@ -297,18 +297,22 @@ export class EditSystem implements SimSystem {
       world,
       'edit',
       editWgsl,
-      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw' },
-      { 3: world.layers, 4: world.layersNext, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.driftDelta },
+      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 18: 'tex' },
+      { 3: world.layers, 4: world.layersNext, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.driftDelta, 16: world.editStateNextView, 18: world.editStateView },
       true,
     );
   }
-  /** Only when the tick carries an edit (skipping saves a full layer copy). */
+  /** The tick carries an edit. */
   pending = false;
+  /** Run every tick (the sandbox: pours keep landing after the press). */
+  always = false;
   encode(enc: GPUCommandEncoder): void {
-    if (!this.pending) return;
+    if (!this.pending && !this.always) return;
     this.pending = false;
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
     enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+    const size = [this.world.w, this.world.h];
+    enc.copyTextureToTexture({ texture: this.world.editStateNext }, { texture: this.world.editState }, size);
   }
 }
 

@@ -192,10 +192,18 @@ small model per level around the diorama and returns its position as poi
 "coming").
 
 Sandbox (`world/sandbox.ts` map + `ui/editor.ts` panel): brush tools send
-`EV_EDIT` events (z = op·32 + material) every frame while held; the edit
-system (`edit.wgsl`, first each tick, only when an edit is pending) deposits/
-digs whole cells probabilistically by brush falloff and adds/removes water,
-oil, pollution and plants; drift dust goes through `driftDelta` (folded in by
-the drift system, which owns the drift texture). Spawn tools call Weather
+`EV_EDIT` events (z = op·32 + material, +512 on the first event of a press)
+every frame while held; the edit system (`edit.wgsl`, first each tick, every
+tick in the sandbox) adds/removes water, oil, pollution and plants, and does
+the ground in layers (round 13): per column `editState` (rgba32float
+ping-pong texture, read at binding 18 as `editTex`) holds what this press has
+given (x; reset by the press flag), the fraction of a cell owed (y), cells
+still to pour (z) and op·32+mat ×4 + fall time left (w). A press gives at
+most `layers` cells, soft at the rim; build/dig apply at once, pour lands
+after `POUR_FALL` at `POUR_RATE` (the particle emit pass reads `editTex` and
+drops K_GRAIN particles timed to land with it; the material system then
+settles the cells by repose), bedrock inserts stone at the bottom and lifts
+the column. Drift dust goes through `driftDelta` (folded in by the drift
+system, which owns the drift texture). Spawn tools call Weather
 (`spawn`, `placeDust`, `spawnCyclone`). Time: speed 0 (pause) … 8×.
 

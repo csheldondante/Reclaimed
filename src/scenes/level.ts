@@ -7,7 +7,7 @@ import { Director } from '../game/director';
 import { levelById, type LevelDef } from '../game/levels';
 import { DIFFICULTY_LEVEL, loadDifficulty, loadLevelProgress, saveProgress, type Difficulty } from '../game/progress';
 import { EventKind } from '../sim/globals';
-import { EDIT_OP, Editor } from '../ui/editor';
+import { EDIT_OP, Editor, LAYER_TOOLS } from '../ui/editor';
 import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { PK } from '../sim/particles';
@@ -60,6 +60,8 @@ export class LevelScene implements Scene {
   private editor?: Editor;
   /** brush currently being dragged (sandbox) */
   private brushAt?: [number, number];
+  /** the next brush event starts a new press (layer tools: a fresh layer) */
+  private strokeStart = false;
 
   private constructor(
     private host: Host,
@@ -138,6 +140,8 @@ export class LevelScene implements Scene {
     this.intro = !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     if (this.level.sandbox) {
       this.editor = new Editor(host.ui, (sp) => (this.speed = sp));
+      // pours keep landing after the press: the edit pass runs every tick
+      core.sim.edit.always = true;
       weather.holdNatural(1e9);
     }
 
@@ -586,11 +590,19 @@ export class LevelScene implements Scene {
     if (ed.tool === 'storm') {
       const s = w.spawn(wx, wy);
       if (s) s.age = 5;
-    } else if (ed.tool === 'duststorm') w.placeDust(wx, wy);
-    else if (ed.tool === 'cyclone') {
+      return true;
+    }
+    if (ed.tool === 'duststorm') {
+      w.placeDust(wx, wy);
+      return true;
+    }
+    if (ed.tool === 'cyclone') {
       w.cyclone = undefined;
       w.spawnCyclone(wx, wy, 1);
-    } else if (tap) this.brush(wx, wy);
+      return true;
+    }
+    this.strokeStart = true;
+    if (tap) this.brush(wx, wy);
     else this.brushAt = [wx, wy];
     return true;
   }
@@ -600,7 +612,10 @@ export class LevelScene implements Scene {
     const ed = this.editor!;
     const op = EDIT_OP[ed.tool];
     if (!op) return;
-    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: op * 32 + ed.material, radius: ed.radius, strength: ed.strength });
+    const layered = LAYER_TOOLS.has(ed.tool);
+    const z = op * 32 + ed.material + (this.strokeStart ? 512 : 0);
+    this.strokeStart = false;
+    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z, radius: ed.radius, strength: layered ? ed.layers : ed.strength });
   }
 
   /** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */

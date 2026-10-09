@@ -14,6 +14,7 @@ const ST_GRANULAR: u32 = 2u;
 const ST_LIQUID: u32 = 3u;
 const ST_VEG: u32 = 4u;
 
+const MAT_STONE: u32 = 1u;
 const MAT_WATER: u32 = 8u;
 const MAT_LEAVES: u32 = 9u;
 const MAT_WOOD: u32 = 10u;

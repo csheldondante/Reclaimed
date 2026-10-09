@@ -1289,3 +1289,36 @@ over 0…0.75. The sun's colour goes noon → gold (1, 0.66, 0.32) through the
 low hours → red (1, 0.36, 0.18) as it touches the horizon; the sky ambient
 and the background go rosy gold, deepening to red-violet. Stills at
 tod 0.25/0.29/0.70/0.74/0.78 checked.
+
+## 2026-10-09 — layer brushes: pour, build, bedrock, dig (F2, F3, F4)
+
+User: sandbox drawing is too noisy (weird landscapes); treat drawing as
+layers with a soft edge — a press raises the land a unit, each click the
+centre by as much, and painting over the same place adds nothing until the
+next press. Brushes should drop material from above and let it settle, so
+you can make strata of stone, dust and dirt; another brush raises bedrock
+from below.
+Cause of the noise: the old brush deposited a whole cell per column at
+random (chance ∝ falloff) every tick while held.
+- Each column remembers what the current press gave it (`editState.x`, reset
+  by a press-start flag on the event), so a press lays at most `layers`
+  cells (smoothstep(1, 0.5, d): full over the inner half, soft at the rim);
+  the fraction at the rim accumulates (`.y`), so repeated clicks build a
+  smooth mound — deterministic rings, no per-cell dice.
+- Tools: **pour** (dirt, sand, gravel, dust, ash, litter) drops grains from
+  12 cells up; the cells land 0.8 s later at 4 cells/s and the material
+  system's repose rules settle them (dust goes into the drift layer).
+  **Build** (stone, concrete, brick, asphalt, rust, trash) lays at once.
+  **Bedrock** grows stone at the bottom at 3 cells/s, lifting everything on
+  it. **Dig** takes a layer off. Liquids/fields keep per-tick strength.
+- The brush state is a texture (the edit kernel already uses 8 storage
+  buffers incl. the chunk table); the particle emit pass reads it and spawns
+  K_GRAIN particles only while material that will land after a full fall
+  remains, so the falling cloud and the landing agree.
+- The edit pass now runs every tick in the sandbox (pours land after the
+  press): 0.076 ms GPU at 256² (Xe-LPG).
+- Sandbox base map: sand/soil patches 3× larger (fbm /55 instead of /18).
+Measured (row of 17 columns through the brush, radius 6): one dirt tap
++1 over the middle 6; four taps a +4 mound with sloped sides (repose); a
+1.5 s drag scrubbing one spot with build = exactly +1; bedrock ×2 lifts
+the mound by 2. 840 grains in flight 0.4 s into a radius-7 two-layer pour.
