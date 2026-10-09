@@ -1277,3 +1277,15 @@ now round motes (fragment: alpha × smoothstep(1, 0.3, r), discard the
 corners), slightly larger to keep the same visual weight: dust alpha 0.42
 (settled 0.2), grime 0.78. Litter, leaves, petals and seeds keep the crisp
 sub-voxel squares (they are things, not powder).
+
+## 2026-10-09 — longer, warmer dawn and dusk (F9)
+
+User: the day/night transition is still jarring and should be interpolated
+for longer; dawn and dusk redder / more golden. On the default 480 s day the
+sun's elevation changes ~0.014 rad/s near the horizon, so the old fade bands
+(sun −0.04…0.22 rad, night −0.22…0.08) lasted ~20 s each. Now the sun fades
+over −0.12…0.45 (~40 s), night over −0.62…0.15 (~55 s) and the golden hour
+over 0…0.75. The sun's colour goes noon → gold (1, 0.66, 0.32) through the
+low hours → red (1, 0.36, 0.18) as it touches the horizon; the sky ambient
+and the background go rosy gold, deepening to red-violet. Stills at
+tod 0.25/0.29/0.70/0.74/0.78 checked.

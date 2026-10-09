@@ -44,10 +44,13 @@ export class DayNight {
     const dayPhase = (t - 0.25) / 0.5; // 0 sunrise .. 1 sunset
     const elev = Math.sin(Math.PI * dayPhase) * (62 * Math.PI) / 180;
     const az = NOON_AZ + (dayPhase - 0.5) * 2.4;
-    // wide fades: the light dims through a long dusk instead of switching off
-    const sunUp = smooth(-0.04, 0.22, elev);
-    const night = 1 - smooth(-0.22, 0.08, elev);
-    const low = 1 - smooth(0.05, 0.6, elev); // golden hour
+    // wide fades: the light dims through a long dusk instead of switching off.
+    // The sun climbs ~0.014 rad/s on the default 480 s day, so these spans are
+    // ~40 s (sun fade) and ~55 s (into night) — was ~20 s each (round 13: jarring)
+    const sunUp = smooth(-0.12, 0.45, elev);
+    const night = 1 - smooth(-0.62, 0.15, elev);
+    const low = 1 - smooth(0.0, 0.75, elev); // golden hour
+    const horizon = 1 - smooth(-0.1, 0.25, elev); // the last of it: red
     // the moon follows its own arc through the night half; it only rises once
     // the sun's light is gone, so the shadow direction never jumps while lit
     const nightPhase = (((t - 0.75 + 1) % 1) / 0.5); // 0 moonrise .. 1 moonset (when < 1)
@@ -59,7 +62,9 @@ export class DayNight {
       const e = Math.max(elev, 0.06);
       dir = [Math.cos(az) * Math.cos(e), Math.sin(az) * Math.cos(e), Math.sin(e)];
       const noonCol = mix([1.0, 0.84, 0.64], [1.0, 0.95, 0.86], 1 - pollution);
-      const c = mix(noonCol, [1.0, 0.5, 0.26], low * 0.9);
+      // golden through the low hours, red as it touches the horizon
+      const gold = mix(noonCol, [1.0, 0.66, 0.32], low * 0.9);
+      const c = mix(gold, [1.0, 0.36, 0.18], horizon * 0.85);
       const k = 2.4 * sunUp;
       col = [c[0] * k, c[1] * k, c[2] * k];
     } else {
@@ -69,12 +74,13 @@ export class DayNight {
       col = [0.16 * moonUp, 0.2 * moonUp, 0.32 * moonUp];
     }
     const daySky = mix([0.34, 0.33, 0.31], [0.3, 0.38, 0.5], 1 - pollution);
-    const duskSky: [number, number, number] = [0.36, 0.26, 0.24];
+    // dawn/dusk sky: rosy gold, deepening toward red-violet as the sun goes
+    const duskSky = mix([0.42, 0.31, 0.24], [0.4, 0.22, 0.24], horizon);
     const nightSky: [number, number, number] = [0.05, 0.07, 0.13];
     let sky = mix(daySky, duskSky, low * (1 - night));
     sky = mix(sky, nightSky, night);
     const clearDay = mix([0.36, 0.34, 0.31], [0.4, 0.44, 0.48], 1 - pollution);
-    let clear = mix(clearDay, [0.42, 0.3, 0.26], low * (1 - night));
+    let clear = mix(clearDay, mix([0.5, 0.38, 0.28], [0.45, 0.3, 0.29], horizon), low * (1 - night));
     clear = mix(clear, [0.04, 0.05, 0.09], night);
     return { dir, col, sky, night, timeOfDay: t, clear };
   }

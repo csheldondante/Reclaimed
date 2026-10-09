@@ -45,8 +45,8 @@ Proposed order: F1, F8, F9 (quick fixes) → F2, F4, F3 (brushes) → F6 (save/l
 | F5 | Model atlas: layered voxel models (ruined cars, tankers, ruins, tents, …) stamped into the world as real matter (buryable, breakable); editor palette with thumbnails. Feeds C7/C9/C8 | M–L | open |
 | F6 | Map building: save/load sandbox maps, undo, brush cursor ring (absorbs E8) | M | open |
 | F7 | Destruction prototype: chunks of structures that topple and fall as pieces, then shatter to rubble (absorbs E4) | L | open |
-| F8 | Dust particles softer: more transparent, rounded | S | done |
-| F9 | Day/night: longer transitions; redder/golden dawn and dusk | S | open |
+| F8 | Dust particles softer: more transparent, rounded | S | done `de35b4c` |
+| F9 | Day/night: longer transitions; redder/golden dawn and dusk | S | done |
 | F10 | Title screen: plants and tree at a scale that makes sense with the bones | S–M | open |
 | F11 | Title screen: level models buried in dust, one unburied at the start; the rest unburied as the title progresses | M | open |
 
