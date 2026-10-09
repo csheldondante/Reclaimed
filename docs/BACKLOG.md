@@ -40,9 +40,9 @@ Proposed order: H5, H6, H1 (quick) → H8 → H2 → H4 → H3 → H7 (with F12)
 |---|---|---|---|
 | H1 | Title screen: random low gusts now and then (grass waves, dust blows) | S | open |
 | H2 | Airborne dust settles back into drifts downwind (mass kept) instead of vanishing | S–M | open |
-| H3 | Loose surfaces (dirt, ash, sand) behave like dust: fractional loose layer, steeper repose, higher wind to lift (dirt maybe never); stone stays stepped | L | asked |
+| H3 | Loose surfaces (dirt, ash, sand) behave like dust: fractional loose layer, steeper repose, higher wind to lift (dirt maybe never); stone stays stepped | L | open (answered: loose top layer) |
 | H4 | Water loosens and carries loose material (dirt, packed trash); asphalt/concrete need lightning or cyclones to crack and break down first | M | open |
-| H5 | Oil keeps burning in rain (trees still go out) | S | open |
+| H5 | Oil keeps burning in rain (trees still go out) | S | done |
 | H6 | Storm outlines steadier (shape changes too fast) | S | open |
 | H7 | Larger models to place: tall buildings (ties to F12) | M | open |
 | H8 | Green over loose material binds it: dust under established plants can't be swept out and slowly becomes soil | S–M | open |

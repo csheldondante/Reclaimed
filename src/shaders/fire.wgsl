@@ -59,7 +59,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   if (f > 0.0) {
     // burns while there is fuel; damped by water, rain, damp ground
-    let damp = select(0.0, 1.0, wetGround > 0.08) + rain * 0.35 + smoothstep(0.4, 0.9, wet) * 0.15 * (1.0 - 0.8 * forest);
+    // burning oil shrugs off rain (round 15: oil burns even in the rain;
+    // trees still go out)
+    let oilFire = smoothstep(0.004, 0.03, oil[i]);
+    let damp = select(0.0, 1.0, wetGround > 0.08) + (rain * 0.35 + smoothstep(0.4, 0.9, wet) * 0.15 * (1.0 - 0.8 * forest)) * (1.0 - oilFire);
     f += (min(fuel, 1.0) * 0.04 - 0.015) - damp * 0.125;
     if (fuel < 0.05) { f -= 0.04; }
   } else if (fuel > 0.1 && wetGround < 0.05) {
@@ -80,7 +83,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // a wildfire creeps (round 5: relaxed)
     var rate = select(0.006, 0.11, oil[i] > 0.004);
     if (sfMat(surface[i]) == MAT_TRASH_F) { rate = max(rate, 0.05); } // dumps smoulder across
-    let chance = heat * min(fuel, 1.5) * dry * (1.0 - min(rain, 1.0)) * rate;
+    // (rain doesn't stop flames spreading across oil either)
+    let rainStop = select(min(rain, 1.0), 0.0, oil[i] > 0.004);
+    let chance = heat * min(fuel, 1.5) * select(dry, 1.0, oil[i] > 0.004) * (1.0 - rainStop) * rate;
     if (r < chance) { f = 0.5; }
   }
   fireOut[i] = clamp(f, 0.0, 1.0);

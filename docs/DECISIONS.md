@@ -24,6 +24,9 @@ each was implemented.
 - Larger structures to place, like tall buildings.
 - Green growing over loose things like dust should turn them into soil, or
   at least stop them being swept out from under the green.
+- H3 answered: a loose **top layer** per column (dust, sand, ash, dirt —
+  fractional depth, carried by wind and water, own angle of repose); the
+  ground below stays whole cells. The dust drifts become this layer.
 
 ## 2026-10-09 — round 14 (session 3) — items G1–G5 in BACKLOG.md
 

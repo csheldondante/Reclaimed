@@ -1501,3 +1501,16 @@ Measured: analysing the untouched garden → nothing breaks. Breaking the
 tower's foot → it topples and lands in two pieces; the slab's root → the
 board snaps and falls; a bridge pillar → the deck tips and comes to rest
 leaning on the other pillar (7 bodies, all settled within ~7 s).
+
+## 2026-10-09 — oil burns in the rain (H5)
+
+User: oil should burn even in the rain, though trees go out. Rain and damp
+ground no longer damp a fire where oil is burning (scaled by the slick's
+depth), and rain doesn't stop flames spreading across oil; the water-under-
+oil rule (a slick on water burns) was already there.
+Measured (sandbox pond, a thick slick beside a grove, both struck): under a
+storm the oil still burns at 10 s (fire 0.15) while the grove's fire is out
+by 4 s (stage 4.0 → 3.6); without rain the grove burns down (→ 0.4).
+Noticed: a spill on sand spreads into a film and soaks in within ~2 s
+(SOAK, by design — it stains the ground); slicks last on water, concrete
+and asphalt. Flagged for the user rather than changed.
