@@ -1579,3 +1579,18 @@ lightning or tornadoes to crack them and break them down first.
   the cracking.
 Measured: 10 s of heavy water poured on the sandbox heap → 73 of its 156
 trash cells became litter; conversion stops when the water does.
+
+## 2026-10-09 — tall buildings to place (H7)
+
+User: larger structures like tall buildings to place. New atlas models: a
+ruined apartment block (12×9×30: a floor every 4 cells, window bays, a
+broken crown), an office tower (8×8×40, lift core, steel-and-concrete
+skin), a water tower (a rust tank on four braced steel legs) and a brick
+smokestack (36 tall, tapering hollow ring). Sandbox chunks now get 14 slots
+per column (floors stack runs). Every model now drops voxels not connected
+to its base when built (ruined tops left loose fragments that fell the
+moment they were placed — the ruined house's too).
+Check: all thirteen-plus models placed intact → nothing breaks free (one
+overstrained voxel on the apartment block's broken crown crumbles). A
+radius-3 notch in the smokestack's foot doesn't topple it — its weight is
+still over the rest of the ring; a wider break does.

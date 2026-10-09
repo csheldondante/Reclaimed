@@ -66,7 +66,42 @@ class Builder {
       }
   }
   done(id: string, name: string, sink = 0): VoxelModel {
+    this.dropIslands();
     return { id, name, size: [this.w, this.d, this.h], vox: this.vox, sink };
+  }
+
+  /** Remove voxels not connected (face to face) to the bottom layer: ruined
+   *  tops leave loose fragments that would only fall the moment it's placed. */
+  private dropIslands(): void {
+    const { w, d, h } = this;
+    const keep = new Uint8Array(this.vox.length);
+    const stack: number[] = [];
+    for (let y = 0; y < d; y++)
+      for (let x = 0; x < w; x++) {
+        const i = x + w * y;
+        if (this.vox[i]) {
+          keep[i] = 1;
+          stack.push(i);
+        }
+      }
+    while (stack.length) {
+      const i = stack.pop()!;
+      const x = i % w;
+      const y = Math.floor(i / w) % d;
+      const z = Math.floor(i / (w * d));
+      for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+        const nx = x + dx;
+        const ny = y + dy;
+        const nz = z + dz;
+        if (nx < 0 || ny < 0 || nz < 0 || nx >= w || ny >= d || nz >= h) continue;
+        const j = nx + w * (ny + d * nz);
+        if (this.vox[j] && !keep[j]) {
+          keep[j] = 1;
+          stack.push(j);
+        }
+      }
+    }
+    for (let i = 0; i < this.vox.length; i++) if (!keep[i]) this.vox[i] = 0;
   }
 }
 
@@ -248,6 +283,85 @@ function seawall(): VoxelModel {
   return b.done('seawall', 'Seawall');
 }
 
+/** A ruined apartment block: a concrete frame, a floor every 4 cells, window bays, a broken crown. */
+function apartments(): VoxelModel {
+  const W = 12;
+  const D = 9;
+  const H = 30;
+  const b = new Builder(W, D, H);
+  for (let z = 0; z < H - 2; z++)
+    for (let y = 0; y < D; y++)
+      for (let x = 0; x < W; x++) {
+        const edge = x === 0 || x === W - 1 || y === 0 || y === D - 1;
+        const floor = z % 4 === 0;
+        if (floor) b.set(x, y, z, MAT.Concrete);
+        else if (edge) {
+          // window bays between pillars every third cell
+          const pillar = (x % 3 === 0 || y % 3 === 0) && (x === 0 || x === W - 1 || y === 0 || y === D - 1);
+          const sill = z % 4 === 1;
+          if (pillar || sill) b.set(x, y, z, MAT.Concrete);
+        }
+      }
+  b.box(1, 1, H - 2, W - 1, D - 1, H - 1, MAT.Concrete);
+  b.ruin(6, 71);
+  b.weather(MAT.Brick, 0.08, 72, MAT.Concrete);
+  return b.done('apartments', 'Apartment block');
+}
+
+/** A narrow office tower in steel and concrete. */
+function officeTower(): VoxelModel {
+  const S = 8;
+  const H = 40;
+  const b = new Builder(S, S, H);
+  for (let z = 0; z < H; z++)
+    for (let y = 0; y < S; y++)
+      for (let x = 0; x < S; x++) {
+        const edge = x === 0 || x === S - 1 || y === 0 || y === S - 1;
+        const corner = (x === 0 || x === S - 1) && (y === 0 || y === S - 1);
+        if (z % 5 === 0) b.set(x, y, z, MAT.Concrete);
+        else if (corner) b.set(x, y, z, MAT.Concrete);
+        else if (edge && (x + y) % 2 === 0) b.set(x, y, z, MAT.Steel);
+      }
+  // a lift core
+  b.box(3, 3, 0, 5, 5, H, MAT.Concrete);
+  b.ruin(3, 81);
+  return b.done('office', 'Office tower');
+}
+
+/** A water tower: a tank on four legs. */
+function waterTower(): VoxelModel {
+  const b = new Builder(9, 9, 22);
+  for (const [x, y] of [[1, 1], [6, 1], [1, 6], [6, 6]]) b.box(x, y, 0, x + 2, y + 2, 14, MAT.Steel);
+  for (const z of [4, 9]) {
+    b.box(1, 1, z, 8, 3, z + 1, MAT.Steel);
+    b.box(1, 6, z, 8, 8, z + 1, MAT.Steel);
+  }
+  for (let y = 0; y < 9; y++)
+    for (let x = 0; x < 9; x++) {
+      const d = Math.hypot(x - 4, y - 4);
+      if (d > 4.4) continue;
+      b.box(x, y, 14, x + 1, y + 1, d > 3.4 ? 20 : 15, MAT.Rust);
+      b.set(x, y, 20, MAT.Rust);
+    }
+  b.box(4, 4, 21, 5, 5, 22, MAT.Rust);
+  return b.done('watertower', 'Water tower');
+}
+
+/** A brick smokestack. */
+function smokestack(): VoxelModel {
+  const b = new Builder(7, 7, 36);
+  for (let z = 0; z < 36; z++) {
+    const r = 3.3 - (z / 36) * 1.1;
+    for (let y = 0; y < 7; y++)
+      for (let x = 0; x < 7; x++) {
+        const d = Math.hypot(x - 3, y - 3);
+        if (d <= r && d > r - 1.3) b.set(x, y, z, z > 30 && (x + y + z) % 5 === 0 ? MAT.Concrete : MAT.Brick);
+      }
+  }
+  b.box(0, 0, 0, 7, 7, 2, MAT.Concrete);
+  return b.done('smokestack', 'Smokestack');
+}
+
 export const MODELS: VoxelModel[] = [
   car('car', 'Ruined car', false, 1),
   car('carburnt', 'Burnt-out car', true, 2),
@@ -261,6 +375,10 @@ export const MODELS: VoxelModel[] = [
   oilTank(),
   barrels(),
   seawall(),
+  apartments(),
+  officeTower(),
+  waterTower(),
+  smokestack(),
 ];
 
 export function modelById(id: string): VoxelModel | undefined {

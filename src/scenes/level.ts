@@ -28,7 +28,7 @@ export interface LevelOptions {
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
-const SANDBOX_K = 10;
+const SANDBOX_K = 14;
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
 
 export class LevelScene implements Scene {
