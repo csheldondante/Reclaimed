@@ -327,8 +327,8 @@ export class DriftSystem implements SimSystem {
       world,
       'drift',
       driftWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex' },
-      { 3: world.surface, 4: world.water, 5: world.driftDelta, 6: world.flux, 7: world.veg, 18: world.editStateView, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 8: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex' },
+      { 3: world.surface, 4: world.water, 5: world.driftDelta, 6: world.flux, 7: world.veg, 8: world.contamDelta, 18: world.editStateView, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {

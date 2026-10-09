@@ -106,9 +106,20 @@ fn spawnResting(pos: vec3<f32>, life: f32, kind: u32, seed: u32) {
 // pale, soil brown (and a cyclone's column like whatever it picked up).
 fn dustTag(mat: u32) -> u32 { return (mat & 255u) << 8u; }
 /** The ground material at column i as dust: drifted dust if any lies there. */
-fn groundDustMat(p: vec2<i32>, m: u32) -> u32 { return select(m, driftMatAt(p), driftAt(p) > 0.1); }
+fn groundDustMat(p: vec2<i32>, m: u32) -> u32 {
+  if (driftFilmAt(p) > 0.1) { return MAT_DRIFT; }
+  return select(m, driftMatAt(p), driftAt(p) > 0.1);
+}
 
 /** Full 32-bit random in [0,1) for rare events (16-bit draws bottom out at 1.5e-5). */
+// dust a grain carries off the loose layer (drift .w), in m.w bits 16..31 as
+// units of 1e-5 cells; dropped into the layer where it lands (round 15)
+const DUST_UNIT: f32 = 100000.0;
+fn dustLoad(mw: u32) -> f32 { return f32(mw >> 16u) / DUST_UNIT; }
+fn dropDust(pos: vec3<f32>, amount: f32) {
+  let c = vec2<i32>(floor(pos.xy));
+  if (amount > 0.0 && inMap(c)) { atomicAdd(&contamDelta[G.mapW * G.mapH + colIdxI(c)], i32(amount * DUST_UNIT)); }
+}
 fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0; }
 
 fn depositAt(pos: vec3<f32>, payload: f32) {
@@ -169,12 +180,19 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     if (inCy > 0.05 && rare(id.x, id.y, 0xc7c1u) < inCy * 0.008 * feed) {
       spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.6, 2.0 + r2 * 2.0), 6.0 + r1 * 3.0, select(K_DUST, K_HAZE, r1 < 0.25), 0.0, h ^ 0xc7u, 0u, dustTag(groundDustMat(p, m)));
     }
-    // drifts losing dust to the wind stream it downwind (drift.wgsl .y)
-    let blown = textureLoad(driftTex, p, 0).y;
-    // (inside the cyclone this dust is soon caught up into the funnel)
-    if (blown > 0.0005 && rare(id.x, id.y, 0xd21fu) < blown * 6.0) {
-      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.2), vec3<f32>(wind * 0.7, 0.6 + r2), 2.5 + r1 * 2.0, K_DUST, 0.0, h ^ 0xd2u, 0u, dustTag(driftMatAt(p)));
+    // what the wind sent up into the air off the loose layer (drift .w) goes
+    // as dust grains that each carry a share and set it down where they land
+    // (round 15: what you see blowing is what piles up again). The drift pass
+    // runs every other tick, so each tick takes half of it.
+    let dtx = textureLoad(driftTex, p, 0);
+    if (dtx.w > 0.0) {
+      let c = min(dtx.w * 60.0, 1.0);
+      if (rare(id.x, id.y, 0xd31fu) < c) {
+        let load = min(u32(dtx.w * 0.5 / c * DUST_UNIT), 65535u) << 16u;
+        spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.3), vec3<f32>(wind * 0.8, 1.2 + r2), 4.0 + r1 * 3.0, K_DUST, 0.0, h ^ 0xd3u, 0u, dustTag(driftMatAt(p)) | load);
+      }
     }
+
     // dust settles out of the dry, dead ground
     if (rare(id.x, id.y, 0xd057u) < 0.00002 * dusty * boost) {
       spawnFull(onGround, vec3<f32>(0.0), 60.0 + r2 * 60.0, K_DUST, 0.0, h, 1u, dustTag(groundDustMat(p, m)));
@@ -520,6 +538,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   var resting = (P.m.z & 1u) != 0u;
   // (low byte: the kind's state; high bits: e.g. a dust grain's source material)
   var state = P.m.w & 255u;
+  // the high bits travel with the particle (source material, carried dust)
+  var mw = P.m.w;
   // ground debris lies still until the wind is strong enough to lift it; the
   // stronger the wind over its threshold, the sooner it goes
   let ws = length(w);
@@ -771,9 +791,12 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       pos.z = ground;
       resting = true;
     } else if (kind == K_DUST) {
-      // lands: drops its pollution, then lies on the ground a while
+      // lands: drops its pollution and the dust it carried (into the loose
+      // layer, even under water — it sinks), then lies on the ground a while
       depositAt(pos, P.v.w);
       P.v.w = 0.0;
+      dropDust(pos, dustLoad(mw));
+      mw = mw & 0xffffu;
       if (water[ci] > 0.02) { parts[id.x].p.w = 0.0; return; }
       pos.z = ground;
       if (!resting) { life = max(life, 20.0 + sr * 25.0); }
@@ -822,8 +845,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     // (birds keep their perch target in v.w, not a payload); oil smoke that
     // hung about until it died settles as soot
     if (kind == K_DUST || kind == K_LITTER || kind == K_SMOKE) { depositAt(pos, P.v.w); }
+    if (kind == K_DUST) { dropDust(pos, dustLoad(mw)); }
     parts[id.x].p.w = 0.0;
     return;
   }
-  parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), vec4<u32>(kind, seed, select(0u, 1u, resting), state | (P.m.w & 0xffffff00u)));
+  parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), vec4<u32>(kind, seed, select(0u, 1u, resting), state | (mw & 0xffffff00u)));
 }

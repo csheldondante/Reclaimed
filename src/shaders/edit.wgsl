@@ -212,8 +212,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   // a deep loose layer packs down: all but its top ~1 cell becomes ground
-  // cells of its material (deep dust becomes packed dust)
-  let dl = driftAt(p);
+  // cells of its material (deep dust becomes packed dust); a dust film on top
+  // stays loose
+  let dl = driftAt(p) - driftFilmAt(p);
   if (packN == 0u && dl > 1.75 && driftDelta[i] > -0.01) {
     packN = u32(floor(dl - 0.75));
     packMat = packedOf(driftMatAt(p));

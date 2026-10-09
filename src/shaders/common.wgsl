@@ -294,11 +294,19 @@ fn driftAt(q: vec2<i32>) -> f32 {
   return textureLoad(driftTex, q, 0).x;
 }
 
-/** Plants are buried (dormant) under deep blown dust or ash; sand and dirt
- *  layers are ground they grow in, on top (round 15). */
+/** Depth of the dust film lying on top of q's loose layer (drift .y; part of driftAt). */
+fn driftFilmAt(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return 0.0; }
+  let t = textureLoad(driftTex, q, 0);
+  return clamp(t.y, 0.0, t.x);
+}
+
+/** Plants are buried (dormant) under deep blown dust or ash — a dust film over
+ *  anything, or a dust/ash layer; sand and dirt layers are ground they grow
+ *  in, on top (round 15). */
 fn buriedAt(q: vec2<i32>) -> bool {
   let m = driftMatAt(q);
-  return driftAt(q) > 0.5 && (m == 19u || m == 17u);
+  return driftFilmAt(q) > 0.5 || (driftAt(q) > 0.5 && (m == 19u || m == 17u));
 }
 
 /** The loose layer's material on column q (drift .z; 0 = dust → 19, MAT_DRIFT —

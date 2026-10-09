@@ -203,7 +203,10 @@ export class WorldGpu {
     this.particleCap = particleCap;
     this.particles = this.buf('particles', particleCap * 48, S);
     this.particleCounters = this.buf('particleCounters', 16, S);
-    this.contamDelta = this.buf('contamDelta', N * 4, S);
+    // two halves: [0, N) contamination, [N, 2N) dust landing from the air
+    // (particles carry what the wind lifts off the loose layer; drift.wgsl
+    // folds it back in where they land — round 15)
+    this.contamDelta = this.buf('contamDelta', N * 8, S);
     this.driftDelta = this.buf('driftDelta', N * 4, S);
   }
 

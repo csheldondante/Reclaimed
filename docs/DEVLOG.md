@@ -1643,3 +1643,25 @@ loose dust (slumped thin at the centre).
 Cost: the sheet now covers the whole sandbox — draw 2.3 → 4.2 ms at
 1400×800 (Xe-LPG), still 120 fps; worth optimising (ties to E5). The valley
 keeps its whole-cell ground for now (it's tuned; to be moved over later).
+
+## 2026-10-09 — blown dust is carried by its particles and settles as a film
+
+User: do the particles settle and become layers now? I'm having trouble
+seeing that. They didn't, in a way anyone could see: the dust particles
+were only a picture (they landed, rested and faded), the airborne share
+"hopped" 5 cells inside the field, and dust arriving on a sand or dirt
+column joined that layer — it turned into sand.
+- The particles carry it now: the drift pass reports what went airborne
+  (drift .w); the particle emit pass spawns dust grains, each holding a
+  share (m.w bits 16..31, 1e-5 cells), and a grain that lands (or dies, or
+  is spat out of a cyclone) adds its share to a second half of the exchange
+  buffer, which the drift pass folds back in. What you see blowing is what
+  piles up.
+- Dust settles as a **film** on top of any loose layer (drift .y): the wind
+  takes the film first, at dust's threshold; a film over 0.5 buries plants;
+  it's drawn as a greyer, darker silt over the sand or dirt beneath; packing
+  only packs the layer below it.
+Measured (sandbox, a 12×12 dust film 1.2 deep on sand, five strong strokes):
+the patch 170.9 → 123.4; dust in the box 647.5 before, 613.4 on the ground
++ 31.4 in the air mid-wind, 645.0 settled (−0.4 %); a visible film trail
+downwind with grains settling at its tip.
