@@ -1665,3 +1665,11 @@ Measured (sandbox, a 12×12 dust film 1.2 deep on sand, five strong strokes):
 the patch 170.9 → 123.4; dust in the box 647.5 before, 613.4 on the ground
 + 31.4 in the air mid-wind, 645.0 settled (−0.4 %); a visible film trail
 downwind with grains settling at its tip.
+
+## 2026-10-09 — landed dust fades into the layer (I2)
+
+User: the particles settle and persist; they should fade and the dust
+layer beneath form or grow. A dust grain coming down (with or without a
+load) now puts its dust into the layer and fades out within 1.2–1.8 s,
+instead of lying 20–45 s. (Dust born resting on dry ground as surface
+debris is unchanged until the wind lifts it.)

@@ -799,7 +799,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       mw = mw & 0xffffu;
       if (water[ci] > 0.02) { parts[id.x].p.w = 0.0; return; }
       pos.z = ground;
-      if (!resting) { life = max(life, 20.0 + sr * 25.0); }
+      // a grain that comes down joins the ground: it fades in a moment and
+      // the layer beneath grows (round 16: they lay about for half a minute)
+      if (!resting) { life = min(life, 1.2 + sr * 0.6); }
       resting = true;
     } else
     if (kind == K_LITTER) {
