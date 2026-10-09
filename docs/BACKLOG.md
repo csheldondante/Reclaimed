@@ -47,8 +47,8 @@ Proposed order: F1, F8, F9 (quick fixes) → F2, F4, F3 (brushes) → F6 (save/l
 | F7 | Destruction: Noita-style rigid-body chunks + crumble particles; breaks where moment (carried mass × lever, relaxed along support paths) exceeds strength × thickness² (thickness from a JFA distance field); islands cut from the ground fall; bodies re-voxelize at rest by inverse sampling; terrain keeps a column rule (absorbs E4) | L+ | next (design agreed) |
 | F8 | Dust particles softer: more transparent, rounded | S | done `de35b4c` |
 | F9 | Day/night: longer transitions; redder/golden dawn and dusk | S | done `f8b019d` |
-| F10 | Title screen: plants and tree at a scale that makes sense with the bones | S–M | done |
-| F11 | Title screen: level models buried in dust, one unburied at the start; the rest unburied as the title progresses | M | done |
+| F10 | Title screen: plants and tree at a scale that makes sense with the bones | S–M | done `46898aa` |
+| F11 | Title screen: level models buried in dust, one unburied at the start; the rest unburied as the title progresses | M | done `46898aa` |
 | F12 | Model import pipeline: download Creative Commons (prefer CC0) meshes — skulls, vehicles, ruins — and voxelize them by ray casting (inside/outside), map colours to materials, clean up (hollow tanks/hulls, fill with oil/water via oilStored), output into the F5 atlas; credits file | M–L | open |
 
 ## Round 12 (2026-10-08)
