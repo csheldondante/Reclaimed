@@ -38,7 +38,7 @@ Proposed order: F1, F8, F9 (quick fixes) → F2, F4, F3 (brushes) → F6 (save/l
 
 | id | item | size | status |
 |---|---|---|---|
-| F1 | Dust drifts sink under water and oil: liquids lie on top of the dust (water/oil see drift as ground), so dust is never drawn over a pond | S–M | open |
+| F1 | Dust drifts sink under water and oil: liquids lie on top of the dust (water/oil see drift as ground), so dust is never drawn over a pond | S–M | done |
 | F2 | Layer brushes: one press = one layer with a soft edge (fractional per column, so repeat clicks build a smooth mound); dragging over the same place in one press adds nothing more. Calmer sandbox base map (lower-frequency patches) | S–M | open |
 | F3 | Deposit brushes drop material from above (falling grains you can see) that lands and settles by angle of repose: dirt, sand, gravel, dust — real strata | M | open |
 | F4 | Bedrock brush: stone rises from below, lifting the layers above it | S | open |

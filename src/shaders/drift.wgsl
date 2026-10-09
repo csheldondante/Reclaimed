@@ -4,7 +4,8 @@
 // downwind (split over the four faces by the wind's components), sheltered
 // cells — behind taller ground upwind — feel less wind, so dust piles up in
 // their lee; it can't be pushed up into a wall, so it banks on the windward
-// side too. Steep dust slumps to an angle of repose; water washes it away;
+// side too. Steep dust slumps to an angle of repose; dust sinks under water
+// (the liquids lie on top of it) and moving water scours it away;
 // dust blown off the map edge is gone. Plants under deep dust lie dormant
 // (wilt/ecology) and come back when the wind uncovers them.
 // Race-free gather: every cell recomputes its neighbours' outflow from the
@@ -14,6 +15,8 @@
 @group(0) @binding(4) var<storage, read> water: array<f32>;
 // dust added or removed by the editor (edit.wgsl), folded in and zeroed here
 @group(0) @binding(5) var<storage, read_write> driftDelta: array<f32>;
+// water flux (flow.wgsl netFlow): moving water scours dust, still water lets it settle
+@group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
 @group(0) @binding(16) var driftOut: texture_storage_2d<rgba32float, write>;
 // driftTex (binding 17) is declared in common.wgsl (driftAt)
 
@@ -109,7 +112,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // the editor's brush
   d += driftDelta[i];
   driftDelta[i] = 0.0;
-  // water washes it away
-  if (water[i] > 0.05) { d *= 0.97; }
+  // dust sinks: still water lets it settle on the bed (the water lies on top
+  // of it, round 13); moving water scours it away downstream
+  if (water[i] > 0.05) { d *= 1.0 - min(length(netFlow(p)) * 0.5, 0.05); }
   textureStore(driftOut, p, vec4<f32>(max(d, 0.0), lost, 0.0, 0.0));
 }

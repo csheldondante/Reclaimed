@@ -29,6 +29,16 @@ each was implemented.
 - The level objects on the title screen are not recognisable: bury them in
   dust with only one unburied at the start, and unbury the rest as part of
   the title-screen progression.
+- Answers: the skull reads as a **human skull** — shrink the life to match
+  (moss, lichen, fine grass, tiny flowers; the tree becomes a sapling
+  rooted in the skull). Concretely: grass blades are sub-voxel and reach
+  about **half way up the skull**; flowers are sub-voxel and about **the
+  size of the eye sockets**. A buried level model is uncovered **either by
+  finishing the previous level or by the player blowing the dust off it
+  with the wind** (to encourage exploring). The sandbox stays reachable
+  from a small link.
+- Order: agent's proposal in BACKLOG (quick fixes → brushes → save/load →
+  model atlas → title → toppling → C7, C9, C8).
 
 ## 2026-10-09 — end of session 2
 

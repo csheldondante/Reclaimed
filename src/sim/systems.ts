@@ -119,8 +119,8 @@ export class WaterSystem implements SimSystem {
       world,
       'water-flux',
       waterFluxWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read' },
-      { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil },
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex' },
+      { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView },
     );
     this.depth = kernel(
       device,
@@ -149,8 +149,8 @@ export class OilSystem implements SimSystem {
       world,
       'oil-flux',
       oilFluxWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'read' },
-      { 3: world.surface, 4: world.water, 5: world.oil, 6: world.oilFlux, 7: world.flux },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'read', 17: 'tex' },
+      { 3: world.surface, 4: world.water, 5: world.oil, 6: world.oilFlux, 7: world.flux, 17: world.driftView },
     );
     this.depth = kernel(
       device,
@@ -322,9 +322,9 @@ export class DriftSystem implements SimSystem {
       device,
       world,
       'drift',
-      driftWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 15: 'tex', 16: 'stex', 17: 'tex' },
-      { 3: world.surface, 4: world.water, 5: world.driftDelta, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
+      driftWgsl + flowWgsl,
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 15: 'tex', 16: 'stex', 17: 'tex' },
+      { 3: world.surface, 4: world.water, 5: world.driftDelta, 6: world.flux, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {

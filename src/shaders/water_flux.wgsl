@@ -2,6 +2,7 @@
 // Column-volume "virtual pipes" model. flux[i] holds the volume (cells^3)
 // leaving column i this tick toward +x, -x, +y, -y (DIRS order).
 // Columns at the map edge drain outward (the world continues downhill).
+// Loose dust (drift) is part of the bed: water lies on top of it (round 13).
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
 @group(0) @binding(5) var<storage, read_write> flux: array<vec4<f32>>;
@@ -19,7 +20,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = colIdxI(p);
   let d = water[i];
   if (d <= 1e-5) { flux[i] = vec4<f32>(0.0); return; }
-  let g = f32(sfZ(surface[i]));
+  let g = f32(sfZ(surface[i])) + driftAt(p);
   let H = g + d + oil[i] * OIL_DENSITY;
   var f = flux[i];
   for (var k = 0u; k < 4u; k++) {
@@ -27,7 +28,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var Hn = g;
     if (inMap(q)) {
       let j = colIdxI(q);
-      Hn = f32(sfZ(surface[j])) + water[j] + oil[j] * OIL_DENSITY;
+      Hn = f32(sfZ(surface[j])) + driftAt(q) + water[j] + oil[j] * OIL_DENSITY;
     }
     f[k] = max(0.0, f[k] * FRICTION + GAIN * (H - Hn));
   }

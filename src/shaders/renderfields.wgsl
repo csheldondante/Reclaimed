@@ -39,7 +39,7 @@ fn waterCornerZ(v: vec2<i32>) -> f32 {
     let j = colIdxI(q);
     let d = waterDepth[j];
     if (d < 0.012) { continue; }
-    sum += f32(sfZ(surface[j])) + d;
+    sum += f32(sfZ(surface[j])) + driftAt(q) + d;
     n += 1.0;
   }
   return taperCorner(v, sum, n, 1);
@@ -63,7 +63,7 @@ fn taperCorner(v: vec2<i32>, sum0: f32, n0: f32, kind: u32) -> f32 {
     let j = colIdxI(q);
     let covered = select(driftAt(q) >= 0.03, waterDepth[j] >= 0.012, kind == 1u);
     if (covered) { continue; }
-    let g = f32(sfZ(surface[j]));
+    let g = f32(sfZ(surface[j])) + driftAt(q);
     if (abs(g - level) < 1.5) { sum += g; n += 1.0; }
   }
   return sum / n;

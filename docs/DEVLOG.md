@@ -1251,3 +1251,19 @@ water counts (splash, sound, Nature); grime under rising water dissolves
 silently (test: 3 s of flooding a grime patch → 0 counted). And the sound
 is a soft low watery plop (filtered noise, 260–440 Hz), at most three per
 readback. Debug name: "wash plops".
+
+## 2026-10-09 — session 3: dust sinks under water (F1)
+
+User (round 13): dust can sit on top of water; water and oil should lie
+above the other layers, which sink. Cause: liquids measured their level
+from the column's solid top (`sfZ`) and ignored the drift layer, so a drift
+under a pond was drawn up through the water. Now drift is part of the bed
+for both liquids: water/oil flux heads, the water/oil boxes (renderprep),
+inner water side-face culling, water corner heights (and their taper to the
+shore), and the height particles rest/float at all use `sfZ + driftAt`.
+Dust that blows into a pond displaces it (the level rises) and lies on the
+bottom. Still water no longer dissolves it (it used to lose 3 % per pass
+under any water); moving water scours it in proportion to the net flow
+(`netFlow`, max 5 %/pass), so rivers still carry drifts off.
+Check (sandbox pond, 0.8 s dust brush): a submerged mound under clear
+water; a 4 s pour makes an island and pushes the pond outward.

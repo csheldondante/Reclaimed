@@ -421,7 +421,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   let ci = colIdxI(cell);
-  let ground = f32(sfZ(surface[ci])) + water[ci];
+  let ground = f32(sfZ(surface[ci])) + driftAt(cell) + water[ci];
   let w = windAt(pos);
   let rain = rainAt(pos.xy);
 

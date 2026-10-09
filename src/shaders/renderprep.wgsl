@@ -121,13 +121,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     o += 1u;
   }
   var w = baseW + offW;
+  // liquids lie on top of drifted dust (it sinks; round 13)
+  let bed = top + driftAt(vec2<i32>(id.xy));
   if (d > WATER_MIN) {
-    instWater[w] = mkInst(id.x, id.y, 1u, 1u, top, top + d, MAT_WATER, 0u);
+    instWater[w] = mkInst(id.x, id.y, 1u, 1u, bed, bed + d, MAT_WATER, 0u);
     w += 1u;
   }
   if (ol > OIL_MIN) {
     // oil floats on whatever water is here (even a thin film)
-    let base = top + max(d, 0.0);
+    let base = bed + max(d, 0.0);
     instWater[w] = mkInst(id.x, id.y, 1u, 1u, base, base + max(ol, 0.06), MAT_OIL, 0u);
   }
 }

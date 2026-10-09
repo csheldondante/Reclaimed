@@ -203,7 +203,7 @@ fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
     let q = vec2<i32>(i32(b.x), i32(b.y)) + vec2<i32>(o.nrm.xy);
     if (inMap(q)) {
       let j = colIdxI(q);
-      if (f32(sfZ(surface[j])) + water[j] >= b.z1 - 0.02) { ok = false; }
+      if (f32(sfZ(surface[j])) + driftAt(q) + water[j] >= b.z1 - 0.02) { ok = false; }
     }
   }
   if (!ok) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
