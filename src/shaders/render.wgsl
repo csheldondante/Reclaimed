@@ -463,9 +463,11 @@ fn fsBox(in: VOut) -> FOut {
     }
     if (mat != MAT_WOOD) { alb = wither(alb, wilt[ci].y, n1); }
   } else {
-    // drifted dust is plain dust: no stains or plant cover painted on it (what
-    // lies under it is buried)
-    let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5 && mat != MAT_DRIFT;
+    // drifted dust (or ash) is plain: no stains or plant cover painted on it
+    // (what lies under it is buried); a loose layer of sand or dirt is ground
+    // like any other — it shows its plants and stains (round 15)
+    let plainSheet = mat == MAT_DRIFT && buriedAt(cell);
+    let isTop = (flags & 1u) != 0u && in.nrm.z > 0.5 && !plainSheet;
     let porosity = MATS[mat].eco.w;
     if (isTop) {
       // contamination stains: oily black-brown with sickly yellow-green streaks
@@ -487,7 +489,7 @@ fn fsBox(in: VOut) -> FOut {
     alb *= 1.0 - porosity * 0.5 * smoothstep(0.15, 0.9, m);
 
     // vegetation cover (dithered at sub-cell resolution)
-    if (v > 0.0 && mat != MAT_DRIFT) {
+    if (v > 0.0 && !plainSheet) {
       var cover: f32;
       if (isTop) { cover = smoothstep(0.0, 1.2, v); } else { cover = smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2); }
       if (n1 < cover) {

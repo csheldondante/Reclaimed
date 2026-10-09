@@ -59,6 +59,7 @@ export const MAT = {
   Drift: 19,
   Steel: 20,
   Canvas: 21,
+  Silt: 22,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -108,6 +109,8 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'steel', albedo: [0.44, 0.48, 0.5], state: MatState.Solid, strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.25, porosity: 0.15 },
   // tent fabric: weathered off-white canvas, weak
   { ...NONE, name: 'canvas', albedo: [0.78, 0.75, 0.66], state: MatState.Solid, strength: 0.3, growthCap: 1, suitability: 0.2, porosity: 0.5 },
+  // packed dust: a deep dust layer compacted into ground (round 15, H3)
+  { ...NONE, name: 'silt', albedo: [0.56, 0.47, 0.37], state: MatState.Granular, reposeDry: 2, reposeWet: 1, strength: 0.15, growthCap: 3.5, suitability: 0.7, porosity: 0.5, smooth: 2 },
 ];
 
 export const MAX_MATERIALS = 32;

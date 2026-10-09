@@ -32,29 +32,38 @@ export function generateSandbox(dims: WorldDims): MapData {
     let z = 12 + fbm(x / 40, y / 40, 3, 7) * 5;
     z -= 4 * smoothstep(14, 4, Math.hypot(x - POND[0], y - POND[1]));
     z -= 1.5 * smoothstep(9, 3, Math.hypot(x - OILP[0], y - OILP[1]));
-    return Math.round(z);
+    return z;
   };
+  // the loose layer (round 15, H3): sand and dirt lie loose on top, so the
+  // surface keeps its real height; the ground below is whole cells
+  const driftMat = new Float32Array(N);
 
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
-      const top = height(x, y);
+      const hf = height(x, y);
+      const top = Math.floor(hf - 0.5);
       grid.push(x, y, 0, top - 3, MAT.Stone);
       // broad sand and soil patches (round 13: small ones made the land busy)
       const sandy = fbm(x / 55, y / 55, 2, 3) > 0.2;
       grid.push(x, y, top - 3, top, sandy ? MAT.Sand : MAT.Soil);
+      drift[i] = hf - top;
+      driftMat[i] = sandy ? MAT.Sand : MAT.Soil;
       moisture[i] = 0.25;
       contam[i * 2] = 0.05;
-      // a few dunes in one corner
+      // a few dust dunes in one corner
       const dune = fbm(x / 10, y / 7, 2, 11) * 0.5 + 0.5;
-      if (x > w * 0.6 && y < h * 0.45) drift[i] = Math.max(0, (dune - 0.45) * 5);
+      if (x > w * 0.6 && y < h * 0.45 && dune > 0.45) {
+        drift[i] += (dune - 0.45) * 5;
+        driftMat[i] = 0;
+      }
     }
 
   // the pond
   for (let y = POND[1] - 16; y <= POND[1] + 16; y++)
     for (let x = POND[0] - 16; x <= POND[0] + 16; x++) {
       const i = y * w + x;
-      const g = grid.top(x, y);
+      const g = grid.top(x, y) + drift[i];
       const lvl = 10.5;
       if (g < lvl) water[i] = lvl - g;
     }
@@ -129,6 +138,17 @@ export function generateSandbox(dims: WorldDims): MapData {
     block(GX + 34, GY, q + 7, 16, 4, 2, MAT.Concrete);
   }
 
+  // where something stands on the ground (ruin, heap, litter, plinths), no
+  // loose layer over it
+  for (let i = 0; i < N; i++) {
+    const col = grid.cols[i];
+    const m = col[col.length - 1].mat;
+    if (m !== MAT.Sand && m !== MAT.Soil) {
+      drift[i] = 0;
+      driftMat[i] = 0;
+    }
+  }
+
   const surface = new Float32Array(N);
   for (let i = 0; i < N; i++) {
     const col = grid.cols[i];
@@ -144,6 +164,7 @@ export function generateSandbox(dims: WorldDims): MapData {
     oil,
     oilStored: new Float32Array(N * 2),
     drift,
+    driftMat,
     surface,
     poi: { garden: [GX + 25, GY + 2], healthy: GREEN, dam: POND, site: RUIN, landfill: HEAP, reservoir: POND, tutorial: GREEN, heap: HEAP },
   };

@@ -184,11 +184,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let r = length(vec2<f32>(p) + 0.5 - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
     dustIn += smoothstep(1.6, 0.0, r) * 0.6 * DT_D;
   }
-  // the editor's brush (dust)
-  dustIn += driftDelta[i];
+  // the editor's brush: dust, or whatever loose material is being poured here
+  // (edit.wgsl packs the old layer into cells first when it differs)
+  let delta = driftDelta[i];
   driftDelta[i] = 0.0;
-  d += dustIn;
+  d += dustIn + delta;
   if (dustIn > bestIn) { bestIn = dustIn; bestMat = MAT_DRIFT; }
+  let ed = u32(floor(textureLoad(editTex, p, 0).w / 4.0));
+  var poured = false;
+  if (delta > 0.0 && ed / 32u == 10u) {
+    bestMat = ed % 32u;
+    bestIn = 1e9;
+    poured = true;
+  } else if (delta > bestIn) { bestIn = delta; bestMat = MAT_DRIFT; }
   // airborne material coming down here: from the cells around the spot HOP
   // upwind (along my own wind) whose lifted share lands on me (round 15:
   // it used to vanish; now it settles and piles up again)
@@ -211,6 +219,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // what is left of my own is the material, unless almost nothing is
   let own = d0 - lost - ow.x - ow.y - ow.z - ow.w;
   var m = m0;
-  if (own < 0.05 && bestIn > 0.0) { m = bestMat; }
+  if ((own < 0.05 || poured) && bestIn > 0.0) { m = bestMat; }
   textureStore(driftOut, p, vec4<f32>(max(d, 0.0), lost, f32(m), 0.0));
 }

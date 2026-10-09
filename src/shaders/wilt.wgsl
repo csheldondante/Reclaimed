@@ -65,7 +65,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   var b = s.y;
   // under deep drifted dust, plants lie dormant: no browning, nothing new
-  let buried = driftAt(vec2<i32>(id.xy)) > 0.5 && driftMatAt(vec2<i32>(id.xy)) != 2u;
+  let buried = buriedAt(vec2<i32>(id.xy));
   if (buried) { h = 1.0; }
   if (buried) {
   } else if (fire[i] > 0.15) {

@@ -806,6 +806,15 @@ export class LevelScene implements Scene {
       }
     const { device } = this.host.gpu;
     for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * 4, w.data);
+    // the loose layer under it is taken into the ground it now sits on (the
+    // seat filled up to the picked surface); otherwise it would ride on the roof
+    const cx0 = Math.max(0, x0);
+    const cy0 = Math.max(0, y0);
+    const cw = Math.min(dims.w, x0 + fw) - cx0;
+    const ch = Math.min(dims.h, y0 + fd) - cy0;
+    if (cw > 0 && ch > 0) {
+      device.queue.writeTexture({ texture: core.world.drift, origin: [cx0, cy0] }, new Float32Array(cw * ch * 4), { bytesPerRow: cw * 16 }, [cw, ch]);
+    }
     this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
   }
 

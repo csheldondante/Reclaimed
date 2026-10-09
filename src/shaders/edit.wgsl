@@ -49,6 +49,12 @@ const OP_BEDROCK: u32 = 11u;
 const OP_SMASH: u32 = 12u;
 const STROKE_START: u32 = 512u;
 const DT_E: f32 = 1.0 / 60.0;
+const MAT_SILT_E: u32 = 22u;
+
+/** Materials that pour into the loose layer (drift.wgsl) rather than as cells. */
+fn isLoose(m: u32) -> bool { return m == 2u || m == 3u || m == 4u || m == 17u || m == MAT_DRIFT; }
+/** What a loose material becomes when packed into ground cells (dust → packed dust). */
+fn packedOf(m: u32) -> u32 { return select(m, MAT_SILT_E, m == MAT_DRIFT); }
 const UPLIFT_RATE: f32 = 3.0; // cells/s bedrock rises
 
 @compute @workgroup_size(8, 8)
@@ -144,6 +150,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   let op = opmat / 32u;
   let mat = opmat % 32u;
+  // loose layer packed into ground cells this tick (count, material)
+  var packN = 0u;
+  var packMat = 0u;
   // pours land after the fall; bedrock rises steadily
   if (pending > 0.0) {
     if (timer > 0.0) {
@@ -152,7 +161,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let r = min(pending, select(POUR_RATE, UPLIFT_RATE, op == OP_BEDROCK) * DT_E);
       pending -= r;
       // dust lands in the drift layer (fractional); everything else as cells
-      if (mat == MAT_DRIFT) { driftDelta[i] += r; } else { owed += r; }
+      if (isLoose(mat)) {
+        // loose material pours into the loose layer (round 15, H3). A
+        // different material arriving packs the old layer into ground cells
+        // first, so pours make strata (only once: driftDelta < 0 means a
+        // packing the drift pass hasn't folded in yet)
+        let dd = driftAt(p);
+        let dm = driftMatAt(p);
+        if (dm != mat && dd > 0.05 && driftDelta[i] >= 0.0) {
+          packN = u32(round(dd));
+          packMat = packedOf(dm);
+          driftDelta[i] -= dd;
+        }
+        driftDelta[i] += r;
+      } else { owed += r; }
     }
   }
   // one whole cell per tick at most
@@ -188,6 +210,23 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       else if (n < cs.y) { arr[n] = ivPack(z1, z1 + 1u, mat, 0u); n += 1u; }
       else { arr[n - 1u] = ivPack(ivZ0(top), z1 + 1u, ivMat(top), ivAux(top)); }
     }
+  }
+  // a deep loose layer packs down: all but its top ~1 cell becomes ground
+  // cells of its material (deep dust becomes packed dust)
+  let dl = driftAt(p);
+  if (packN == 0u && dl > 1.75 && driftDelta[i] > -0.01) {
+    packN = u32(floor(dl - 0.75));
+    packMat = packedOf(driftMatAt(p));
+    driftDelta[i] -= f32(packN);
+  }
+  for (var k = 0u; k < packN; k++) {
+    if (n == 0u) { break; }
+    let top = arr[n - 1u];
+    let z1 = ivZ1(top);
+    if (z1 + 2u >= G.zMax) { break; }
+    if (ivMat(top) == packMat) { arr[n - 1u] = ivPack(ivZ0(top), z1 + 1u, packMat, ivAux(top)); }
+    else if (n < cs.y) { arr[n] = ivPack(z1, z1 + 1u, packMat, 0u); n += 1u; }
+    else { arr[n - 1u] = ivPack(ivZ0(top), z1 + 1u, ivMat(top), ivAux(top)); }
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }
   textureStore(editOut, p, vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));

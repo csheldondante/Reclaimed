@@ -1620,3 +1620,26 @@ Measured (sandbox, 1-cell patches of each, 12×10): repeated single gusts
 stacked gale moves sand too (120 → 88.7), dirt still unmoved.
 Next: maps generate their loose surfaces as this layer (b), and a different
 material arriving compacts the old one into strata (c).
+
+## 2026-10-09 — loose surfaces in the sandbox; pours make strata (H3, parts b, c)
+
+- The sandbox's ground is generated from real-valued heights: whole cells
+  up to ~half a cell under the surface, the rest a loose layer of sand or
+  dirt (the dunes are dust). The surface keeps its true height — no more
+  stepped-and-smoothed loose ground. Things built on the ground (ruin,
+  heap, plinths) have no layer over them; a placed model takes in the layer
+  under its footprint.
+- Pouring a loose material (dirt, sand, gravel, ash, dust) goes into the
+  loose layer. A different material arriving packs the old layer into
+  ground cells first; a layer deeper than 1.75 packs all but its top ~cell
+  down (deep dust becomes "silt", packed dust — new material). So pours
+  build strata. (The edit pass does this; it runs every tick in the sandbox.)
+- Plants are buried only under blown dust or ash; on a sand or dirt layer
+  they stand on top and the layer shows their ground cover and stains.
+Measured (one column, radius-5 pours): start stone 0–10, sand 10–13, loose
+sand 0.80 → sand ×3: sand to 16, loose 0.81 → dirt ×2: sand packed to 17,
+dirt 17–18, loose dirt 0.87 → dust ×3: dirt packed to 19, silt 19–20,
+loose dust (slumped thin at the centre).
+Cost: the sheet now covers the whole sandbox — draw 2.3 → 4.2 ms at
+1400×800 (Xe-LPG), still 120 fps; worth optimising (ties to E5). The valley
+keeps its whole-cell ground for now (it's tuned; to be moved over later).

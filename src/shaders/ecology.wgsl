@@ -32,9 +32,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var v = vegIn[i];
   let r = rand3(id.x, id.y, G.tick ^ 0x5eedu);
 
-  if (driftAt(p) > 0.5 && driftMatAt(p) != 2u) {
-    // buried under drifted dust (or sand, ash): dormant until uncovered —
-    // a loose layer of dirt is just ground to grow in
+  if (buriedAt(p)) {
+    // buried under drifted dust or ash: dormant until uncovered — a loose
+    // layer of sand or dirt is ground to grow in
   } else if (fire[i] > 0.15) {
     // burning: grass goes in a moment, trees take longer
     v = max(0.0, v - fire[i] * mix(0.6, 0.12, smoothstep(2.0, 4.0, v)));
