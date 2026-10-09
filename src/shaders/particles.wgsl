@@ -59,9 +59,6 @@ const K_PETAL: u32 = 18u;
 // a brief soft light where something happens (round 11): state 0 growth
 // (green-gold), 1 wind (pale blue)
 const K_GLOW: u32 = 19u;
-// the cyclone's funnel (round 12): kinematic — each puff rides the cone at
-// its height, spiralling up (v.x angle, v.y height, v.z ground at the base)
-const K_FUNNEL: u32 = 20u;
 // (the funnel follows the spine: spineAt() in common.wgsl)
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
@@ -97,6 +94,14 @@ fn spawn(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, see
 fn spawnResting(pos: vec3<f32>, life: f32, kind: u32, seed: u32) {
   spawnFull(pos, vec3<f32>(0.0), life, kind, 0.0, seed, 1u, 0u);
 }
+
+// Dust and haze remember the ground they came from: its material id rides in
+// Particle.m.w bits 8..15 (the low byte stays the kind's own state), so the
+// draw shader colours them like that ground — ash reddish-grey, drift sand
+// pale, soil brown (and a cyclone's column like whatever it picked up).
+fn dustTag(mat: u32) -> u32 { return (mat & 255u) << 8u; }
+/** The ground material at column i as dust: drifted dust if any lies there. */
+fn groundDustMat(p: vec2<i32>, m: u32) -> u32 { return select(m, MAT_DRIFT, driftAt(p) > 0.1); }
 
 /** Full 32-bit random in [0,1) for rare events (16-bit draws bottom out at 1.5e-5). */
 fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0; }
@@ -145,17 +150,17 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     // (it takes up what is there: dusty or drifted ground feeds it most)
     let feed = max(dustinessOf(contam[i].x, m) * dry * (1.0 - cover), min(driftAt(p), 1.0));
     if (inCy > 0.05 && rare(id.x, id.y, 0xc7c1u) < inCy * 0.008 * feed) {
-      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.6, 2.0 + r2 * 2.0), 6.0 + r1 * 3.0, select(K_DUST, K_HAZE, r1 < 0.25), 0.0, h ^ 0xc7u);
+      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.6, 2.0 + r2 * 2.0), 6.0 + r1 * 3.0, select(K_DUST, K_HAZE, r1 < 0.25), 0.0, h ^ 0xc7u, 0u, dustTag(groundDustMat(p, m)));
     }
     // drifts losing dust to the wind stream it downwind (drift.wgsl .y)
     let blown = textureLoad(driftTex, p, 0).y;
     // (inside the cyclone this dust is soon caught up into the funnel)
     if (blown > 0.0005 && rare(id.x, id.y, 0xd21fu) < blown * 6.0) {
-      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.2), vec3<f32>(wind * 0.7, 0.6 + r2), 2.5 + r1 * 2.0, K_DUST, 0.0, h ^ 0xd2u);
+      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.2), vec3<f32>(wind * 0.7, 0.6 + r2), 2.5 + r1 * 2.0, K_DUST, 0.0, h ^ 0xd2u, 0u, dustTag(MAT_DRIFT));
     }
     // dust settles out of the dry, dead ground
     if (rare(id.x, id.y, 0xd057u) < 0.00002 * dusty * boost) {
-      spawnResting(onGround, 60.0 + r2 * 60.0, K_DUST, h);
+      spawnFull(onGround, vec3<f32>(0.0), 60.0 + r2 * 60.0, K_DUST, 0.0, h, 1u, dustTag(groundDustMat(p, m)));
     }
     // polluted ground clumps into grime that the wind can push about
     let cg = contam[i].x;
@@ -174,7 +179,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     // (capped low: a hard drag should show what it moves, not bury it in haze)
     let hazeRate = min(max(ws - 6.0, 0.0) * 0.0005 * dusty, 0.0012) + dstorm * 0.0012 * dry * (1.0 - cover);
     if (rare(id.x, id.y, 0x4a2eu) < hazeRate * (1.0 - cycloneAt(base.xy))) {
-      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h);
+      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h, 0u, dustTag(groundDustMat(p, m)));
     }
     // scattered litter torn off the ground by strong wind (removed by the
     // material system next tick; see litterStrip)
@@ -434,20 +439,25 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       let d = length(pos.xy - b.xy);
       let near = smoothstep(13.0, 4.0, d) * smoothstep(b.z + 14.0, b.z + 3.0, pos.z) * abs(G.cyclone.w);
       if (near > 0.0 && roll < near * 0.25) {
+        // caught where it is: same angle, distance and height (the spine is
+        // ~22 cells tall); from here it spirals in and up
         let o = pos.xy - b.xy;
-        let t0 = clamp((pos.z - b.z) / 26.0, 0.0, 0.3);
-        parts[id.x] = Particle(P.p, vec4<f32>(atan2(o.y, o.x), t0, clamp(d / max(b.w, 0.3), 1.2, 4.0), P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
+        let t0 = clamp((pos.z - b.z) / 22.0, 0.0, 0.9);
+        parts[id.x] = Particle(P.p, vec4<f32>(atan2(o.y, o.x), t0, d, P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
         return;
       }
     } else {
-      var rm = vel.z;
-      let t = vel.y + (0.1 + 0.08 * sr) * DT;
+      // (v.z: distance from the spine in cells)
+      var rc = vel.z;
+      // far out it is dragged in along the ground; close in it climbs
+      let sp0 = spineAt(min(vel.y, 1.0));
+      let t = vel.y + mix(0.02, 0.1 + 0.08 * sr, smoothstep(sp0.w * 3.0, sp0.w * 1.5, rc)) * DT;
+      let sp = spineAt(min(t, 1.0));
       // fog keeps to a tight inner cone; debris rides the outer cone, spread
       // evenly around and up it
-      let ring = select(1.0 + sr * 0.6, 0.35 + sr * 0.3, kind == K_HAZE);
-      rm = max(ring, rm - 1.8 * DT * rm);
-      let sp = spineAt(min(t, 1.0));
-      let r = sp.w * rm;
+      let ring = sp.w * select(1.0 + sr * 0.6, 0.35 + sr * 0.3, kind == K_HAZE);
+      rc = rc + (ring - rc) * min(1.6 * DT, 1.0);
+      let r = rc;
       let ang = vel.x + sign(G.cyclone.w) * (1.6 + 5.0 / max(r, 0.5)) * DT;
       let q = sp.xy + vec2<f32>(cos(ang), sin(ang)) * r;
       // spat out high up at the top (rarely sooner), flung wide to fall downwind
@@ -457,7 +467,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
         parts[id.x] = Particle(vec4<f32>(q, sp.z, max(life, 6.0)), vec4<f32>(out, P.v.w), vec4<u32>(kind, seed, 0u, P.m.w));
         return;
       }
-      parts[id.x] = Particle(vec4<f32>(q, sp.z + 0.2, max(life, 2.0)), vec4<f32>(ang, t, rm, P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
+      parts[id.x] = Particle(vec4<f32>(q, max(sp.z + 0.2, pos.z - 6.0 * DT), max(life, 2.0)), vec4<f32>(ang, t, rc, P.v.w), vec4<u32>(kind, seed, 2u, P.m.w));
       return;
     }
   } else if ((P.m.z & 2u) != 0u) {
@@ -469,7 +479,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   var drag = 1.5;
   var grav = 0.5;
   var resting = (P.m.z & 1u) != 0u;
-  var state = P.m.w;
+  // (low byte: the kind's state; high bits: e.g. a dust grain's source material)
+  var state = P.m.w & 255u;
   // ground debris lies still until the wind is strong enough to lift it; the
   // stronger the wind over its threshold, the sooner it goes
   let ws = length(w);
@@ -535,28 +546,6 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     drag = 2.4; grav = 0.6;
     vel.x += sin(G.time * 6.0 + sr * 40.0) * 2.5 * DT;
     vel.y += cos(G.time * 5.0 + sr * 31.0) * 2.5 * DT;
-  } else if (kind == K_FUNNEL) {
-    // ride the cone: spin faster near the narrow tip, climb, widen; gone at
-    // the top or when the cyclone dies
-    // (v.x angle, v.y t along the spine, v.z radius as a multiple of the
-    // funnel's radius there) — swirl about the spine, climb, gather in
-    if (G.cyclone.w == 0.0) { parts[id.x].p.w = 0.0; return; }
-    var rm = vel.z;
-    // far out, they creep along the ground toward the funnel; close in, they climb
-    let climb = mix(0.02, 0.17 + 0.05 * sr, smoothstep(2.2, 1.1, rm));
-    let t = vel.y + climb * DT;
-    if (t > 1.0) { parts[id.x].p.w = 0.0; return; }
-    rm = max(1.0 + (sr - 0.5) * 0.3, rm - (1.2 + 0.8 * sr) * DT * rm);
-    let sp = spineAt(t);
-    let r = sp.w * rm;
-    let ang = vel.x + sign(G.cyclone.w) * (1.6 + 5.0 / max(r, 0.5)) * DT;
-    var q = sp.xy + vec2<f32>(cos(ang), sin(ang)) * r;
-    // the outer swirl answers to the wind: a crosswind smears it off the funnel
-    let wloc = windAt(vec3<f32>(q, sp.z));
-    q += (wloc - G.cycloneB.xy) * 0.06 * smoothstep(1.2, 3.0, rm);
-    pos = vec3<f32>(q, sp.z + 0.3);
-    parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(ang, t, rm, 0.0), vec4<u32>(kind, seed, 0u, 0u));
-    return;
   } else if (kind == K_GLOW) {
     drag = 0.0; grav = 0.0; vel = vec3<f32>(0.0);
   } else if (kind == K_SPARK) {
@@ -790,5 +779,5 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     parts[id.x].p.w = 0.0;
     return;
   }
-  parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), vec4<u32>(kind, seed, select(0u, 1u, resting), state));
+  parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), vec4<u32>(kind, seed, select(0u, 1u, resting), state | (P.m.w & 0xffffff00u)));
 }

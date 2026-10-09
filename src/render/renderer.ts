@@ -227,8 +227,8 @@ export class Renderer {
     });
     this.rainGroup = makeBindGroup(device, 'rain', rainLayout, { 0: world.globals, 10: this.camBuf });
 
-    const partLayout = makeLayout(device, 'particles-draw', { 0: 'uniform', 3: 'read', 10: 'uniform' }, VF);
-    const partModule = makeModule(device, 'particles-draw', [commonWgsl, particlesDrawWgsl]);
+    const partLayout = makeLayout(device, 'particles-draw', { 0: 'uniform', 2: 'uniform', 3: 'read', 10: 'uniform' }, VF);
+    const partModule = makeModule(device, 'particles-draw', [commonWgsl, materialsWgsl, particlesDrawWgsl]);
     this.partPipe = device.createRenderPipeline({
       label: 'particles',
       layout: device.createPipelineLayout({ bindGroupLayouts: [partLayout] }),
@@ -237,7 +237,7 @@ export class Renderer {
       primitive: { topology: 'triangle-list' },
       depthStencil: depthStencil(false),
     });
-    this.partGroup = makeBindGroup(device, 'particles-draw', partLayout, { 0: world.globals, 3: world.particles, 10: this.camBuf });
+    this.partGroup = makeBindGroup(device, 'particles-draw', partLayout, { 0: world.globals, 2: world.materials, 3: world.particles, 10: this.camBuf });
   }
 
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */

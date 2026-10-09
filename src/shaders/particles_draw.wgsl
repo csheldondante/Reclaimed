@@ -27,6 +27,14 @@ const CORNERS = array<vec2<f32>, 6>(
   vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
   vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
 
+/** Colour of a dust grain / haze puff from its source material (m.w bits 8..15), or plain tan. */
+fn dustColour(mw: u32) -> vec3<f32> {
+  let mat = (mw >> 8u) & 255u;
+  if (mat == 0u) { return vec3<f32>(0.78, 0.71, 0.58); }
+  // a little lighter than the ground: fine dust catches the light
+  return min(MATS[mat].albedo.rgb * 1.12 + 0.04, vec3<f32>(1.0));
+}
+
 @vertex
 fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   var o: VOut;
@@ -43,9 +51,9 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   if (kind == 1u && P.m.w == 1u) { // grime: dark tarry clumps with sickly flecks
     size = 0.19 + sr * 0.09;
     col = vec4<f32>(mix(vec3<f32>(0.11, 0.1, 0.08), vec3<f32>(0.34, 0.31, 0.12), sr2 * sr2), 0.95);
-  } else if (kind == 1u) { // dust: tan, darker/yellower when carrying pollution
+  } else if (kind == 1u) { // dust: the colour of the ground it came from, darker when carrying pollution
     size = 0.16 + sr * 0.1;
-    col = vec4<f32>(mix(vec3<f32>(0.78, 0.71, 0.58), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.7);
+    col = vec4<f32>(mix(dustColour(P.m.w), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.7);
     // settled dust lies faintly on the ground
     if ((P.m.z & 1u) != 0u) { col = vec4<f32>(col.rgb * 0.85, 0.3); size *= 0.8; }
   } else if (kind == 2u) { // litter: faded plastics, paper
@@ -104,7 +112,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     let age = clamp(1.0 - P.p.w / 10.0, 0.0, 1.0);
     size = 1.6 + age * 3.0 + sr * 1.5;
     soft = 1.0;
-    col = vec4<f32>(mix(vec3<f32>(0.74, 0.65, 0.5), vec3<f32>(0.6, 0.53, 0.42), sr2), 0.2 * clamp(P.p.w / 2.0, 0.0, 1.0) * clamp(age * 6.0, 0.0, 1.0));
+    col = vec4<f32>(dustColour(P.m.w) * mix(1.0, 0.85, sr2), 0.2 * clamp(P.p.w / 2.0, 0.0, 1.0) * clamp(age * 6.0, 0.0, 1.0));
   }
   else if (kind == 16u) { // seed fluff: soft cream, a touch luminous so it reads in flight
     size = 0.11 + sr * 0.05;

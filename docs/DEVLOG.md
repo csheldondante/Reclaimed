@@ -1224,3 +1224,19 @@ User: particles in the funnel smaller (not resized), slightly more
 transparent, matching the dust colour. Caught debris is now drawn at its
 loose size and colour, 80 % of its alpha (fog 60 %). Very subtle in a still;
 it reads through the swirling motion.
+
+## 2026-10-09 — dust the colour of its ground; real pull-in
+
+User: are the column's particles real, pulled in from the ground? Their
+colour should match what the cyclone picks up. (Yes, since a175238 — but
+all dust was one generic tan, and a caught grain jumped onto the cone.)
+- Dust and haze carry their source material in `Particle.m.w` bits 8..15
+  (low byte keeps the kind's state; the update loop masks/preserves it):
+  the ground's top material, or drift where dust lies deep. The draw shader
+  (now with the material table bound) colours them from it, a touch lighter
+  than the ground. Resting dust, wind-lifted dust and haze everywhere follow
+  the ground they came from; a cyclone over drifts is pale sand, over ash
+  reddish-grey, over soil brown.
+- Capture keeps the grain's real angle, distance (cells) and height (the
+  spine is ~22 cells tall): it is dragged in along the ground, then climbs
+  as it nears the cone — no jump. The dead synthetic funnel kind is gone.
