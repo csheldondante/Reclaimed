@@ -664,3 +664,59 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
   o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
   return o;
 }
+
+// ---- rigid bodies (round 14, F7): broken-off chunks tumbling free ----------
+// The body-voxel list is bound where the box instances usually are: two
+// vec4<u32> per voxel — (centre xyz as f32 bits, material) and the body's
+// rotation quaternion (xyzw as f32 bits). Each voxel is a whole rotated cube
+// (36 vertices, back faces culled), lit like the world; not pickable.
+
+fn quatRotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
+  let t = 2.0 * cross(q.xyz, v);
+  return v + q.w * t + cross(q.xyz, t);
+}
+
+const CUBE_N = array<vec3<f32>, 6>(
+  vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(-1.0, 0.0, 0.0), vec3<f32>(0.0, 1.0, 0.0),
+  vec3<f32>(0.0, -1.0, 0.0), vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(0.0, 0.0, -1.0));
+
+@vertex
+fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
+  var o: VOut;
+  let a = instances[ii * 2u];
+  let qb = instances[ii * 2u + 1u];
+  let c = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z));
+  let q = vec4<f32>(bitcast<f32>(qb.x), bitcast<f32>(qb.y), bitcast<f32>(qb.z), bitcast<f32>(qb.w));
+  let face = vi / 6u;
+  let n = CUBE_N[face];
+  // two axes spanning the face, ordered so the triangles wind outward
+  var u = vec3<f32>(n.y, n.z, n.x);
+  var v = cross(n, u);
+  let k = QUAD[vi % 6u] * 2.0 - 1.0;
+  let local = (n + u * k.x + v * k.y) * 0.5;
+  let wp = c + quatRotate(q, local);
+  o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
+  o.wpos = wp;
+  o.nrm = quatRotate(q, n);
+  o.info = vec2<u32>(a.w, 0u);
+  o.tint = 0.0;
+  o.zr = vec2<f32>(wp.z - 0.5, wp.z + 0.5);
+  o.bmin = c;
+  o.bsize = vec3<f32>(1.0);
+  o.boff = vec3<f32>(0.0);
+  return o;
+}
+
+@fragment
+fn fsBody(in: VOut) -> FOut {
+  let mat = in.info.x;
+  // a little per-voxel variation so a tumbling slab doesn't read as one block
+  let r = randv(vec3<i32>(floor(in.bmin * 3.0)));
+  let alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
+  var col = alb * lighting(in.wpos, normalize(in.nrm));
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), 1.0);
+  o.pick = vec2<u32>(0u);
+  return o;
+}

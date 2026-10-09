@@ -18,6 +18,7 @@ import { WorldCore, type Host, type Scene } from './world-core';
 import type { MapData } from '../world/mapgen';
 import { columnSlots, packInterval, readColumn } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn } from '../world/models';
+import { Integrity } from '../game/integrity';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -74,6 +75,8 @@ export class LevelScene implements Scene {
   private brushAt?: [number, number];
   /** the next brush event starts a new press (layer tools: a fresh layer) */
   private strokeStart = false;
+  /** sandbox: structural integrity and falling pieces (F7) */
+  private integrity?: Integrity;
   /** sandbox: a smash drag in progress */
   private smashing = false;
   /** sandbox: the brush's footprint drawn on the ground under the cursor */
@@ -171,6 +174,14 @@ export class LevelScene implements Scene {
       host.ui.appendChild(svg);
       // pours keep landing after the press: the edit pass runs every tick
       core.sim.edit.always = true;
+      // the physics playground (F7, G5): what breaks free falls as rigid
+      // pieces; the structure system only collapses damage
+      this.integrity = new Integrity(core);
+      this.integrity.onChips = (x, y, z, count) => {
+        core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: 3, spread: 0.8 });
+        this.audio.chip(camera.project(x, y, z)[0] / camera.viewportW);
+      };
+      core.globals.spanCollapse = false;
       weather.holdNatural(1e9);
     }
 
@@ -269,6 +280,7 @@ export class LevelScene implements Scene {
       powers: this.powers,
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
+      integrity: () => this.integrity,
       scene: this,
     };
 
@@ -393,6 +405,11 @@ export class LevelScene implements Scene {
     // the brush paints every frame while held
     if (this.brushAt && this.editor) this.brush(this.brushAt[0], this.brushAt[1]);
     this.drawRing();
+    if (this.integrity) {
+      // cyclones batter what they pass: look there
+      for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
+      this.integrity.update(dt * this.speed);
+    }
     weather.dustiness = core.pollution;
     this.birdArrivals(dt, stats);
 
@@ -760,6 +777,7 @@ export class LevelScene implements Scene {
       }
     const { device } = this.host.gpu;
     for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * 4, w.data);
+    this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
   }
 
   /**
@@ -779,6 +797,7 @@ export class LevelScene implements Scene {
       const x = (hit.cell % core.dims.w) + 0.5;
       const y = Math.floor(hit.cell / core.dims.w) + 0.5;
       core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
+      this.integrity?.markDirty(x, y, ed.radius + 14);
       core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
     }, ignoreTeardown);
   }
@@ -786,6 +805,7 @@ export class LevelScene implements Scene {
   /** Sandbox: put the world back as it was before the last brush press. */
   private undo(): void {
     this.brushAt = undefined;
+    this.integrity?.clear();
     if (!this.core.undo()) this.hud.say('Nothing to undo.', 2);
   }
 

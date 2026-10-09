@@ -52,6 +52,12 @@ export class Renderer {
   private partGroup: GPUBindGroup;
   private opaqueGroup: GPUBindGroup;
   private waterGroup: GPUBindGroup;
+  /** rigid bodies (F7): rotated voxels, 2 × vec4<u32> each (render.wgsl vsBody) */
+  private bodyBuf: GPUBuffer;
+  private bodyGroup: GPUBindGroup;
+  private bodyPipe: GPURenderPipeline;
+  private bodyCount = 0;
+  static readonly MAX_BODY_VOXELS = 16384;
   private rainGroup: GPUBindGroup;
   readonly instOpaque: GPUBuffer;
   readonly instWater: GPUBuffer;
@@ -212,6 +218,16 @@ export class Renderer {
       });
     this.opaqueGroup = groupFor(this.instOpaque);
     this.waterGroup = groupFor(this.instWater);
+    this.bodyBuf = world.buf('bodyVoxels', Renderer.MAX_BODY_VOXELS * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    this.bodyGroup = groupFor(this.bodyBuf);
+    this.bodyPipe = device.createRenderPipeline({
+      label: 'bodies',
+      layout: pl,
+      vertex: { module: drawModule, entryPoint: 'vsBody' },
+      fragment: { module: drawModule, entryPoint: 'fsBody', targets: [{ format }, { format: PICK_FORMAT }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depthStencil(true),
+    });
 
     const rainLayout = makeLayout(device, 'rain', { 0: 'uniform', 10: 'uniform' }, VF);
     const rainModule = makeModule(device, 'rain', [commonWgsl, rainWgsl]);
@@ -240,6 +256,15 @@ export class Renderer {
       depthStencil: depthStencil(false),
     });
     this.partGroup = makeBindGroup(device, 'particles-draw', partLayout, { 0: world.globals, 2: world.materials, 3: world.particles, 10: this.camBuf });
+  }
+
+  /**
+   * The rigid bodies' voxels for this frame: per voxel centre xyz, material,
+   * rotation quaternion xyzw (f32 bits; Bodies.pack writes them).
+   */
+  setBodies(data: Uint32Array, count: number): void {
+    this.bodyCount = Math.min(count, Renderer.MAX_BODY_VOXELS);
+    if (this.bodyCount > 0) this.device.queue.writeBuffer(this.bodyBuf, 0, data, 0, this.bodyCount * 8);
   }
 
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
@@ -299,6 +324,12 @@ export class Renderer {
     pass.setPipeline(this.opaquePipe);
     pass.setBindGroup(0, this.opaqueGroup);
     pass.drawIndirect(this.indirect, 0);
+    if (this.bodyCount > 0) {
+      pass.setPipeline(this.bodyPipe);
+      pass.setBindGroup(0, this.bodyGroup);
+      pass.draw(36, this.bodyCount);
+      this.profiler.draws++;
+    }
     pass.setPipeline(this.waterPipe);
     pass.setBindGroup(0, this.waterGroup);
     pass.drawIndirect(this.indirect, 16);

@@ -29,7 +29,8 @@ struct Globals {
   events: array<vec4<f32>, 4>,
   // per event kind (EV_*), as f32
   eventKind: vec4<f32>,
-  // x: event count, y: structural collapse enabled (0/1), z: lightning flash 0..1,
+  // x: event count, y: structural collapse (0 off, 1 on, 2 damage only — the
+  // sandbox's rigid bodies take the rest), z: lightning flash 0..1,
   // w: fine plants (1 = diorama-scale plants, the title screen)
   misc: vec4<f32>,
   // wind impulses (player gusts, cursor breeze): x, y, radius, strength

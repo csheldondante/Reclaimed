@@ -59,7 +59,7 @@ export class WorldCore {
   light!: Daylight;
 
   constructor(
-    private host: Host,
+    readonly host: Host,
     readonly map: MapData,
     particleCap: number,
     minK?: number,

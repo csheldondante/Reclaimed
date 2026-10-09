@@ -1446,3 +1446,31 @@ Check: a placed pylon with two legs cut at the foot — the cut columns lose
 exactly the sphere; the pylon still stands (the span rule lets the other
 legs carry it through the braces: 11 cells collapsed). Making it topple is
 F7's torque/rigid-body work, next.
+
+## 2026-10-09 — F7 step B: pieces break free, tumble and land as voxels
+
+The design the user agreed (round 13/14): Noita-style rigid chunks; break
+where a cheap torque estimate beats strength × thickness (a distance field
+in place of a medial axis); bodies back to voxels at rest; terrain keeps
+its column rule. In the sandbox (the physics playground, G5):
+- `fracture.ts`: islands fall; tipping (centre of mass outside the
+  footprint hull) drops the whole piece; snapping crumbles the cross-section
+  where moment > 40 · strength · thickness³. First version routed every
+  voxel's load to the nearest ground contact, which made intact models
+  "snap" (the pylon's leg joint, the tent's eaves, the tanker's keel took
+  the whole hull's load sideways). Fixed by counting voxels on an unbroken
+  stack down to the ground as anchors: walls carry their load straight down,
+  only overhangs bend. Check: every atlas model placed intact → nothing
+  breaks except the ruined house's genuinely loose 8-voxel fragment.
+- `bodies.ts`: impulse-based rigid bodies on exposed voxel corners against
+  the voxel world (CPU mirror of the layers), restitution 0.15, friction
+  0.6, 22 cells/s² gravity; when slow, a nudge toward the nearest face-down
+  orientation; at rest, inverse sampling back into voxels.
+- `integrity.ts`: dirty boxes (each looked at in two passes, since an edit
+  reaches the GPU a tick after it's queued), passes every 0.35 s, chips and
+  a chip sound where things crumble or hit hard.
+- Rendering: rotated cubes lit like the world (no new storage slot: the
+  body buffer binds where box instances do).
+Measured: a pylon with two legs cut at the foot tips over its remaining
+legs as one body within ~2 s and lands lying on the sand as voxels;
+analysis passes 1–4 ms.

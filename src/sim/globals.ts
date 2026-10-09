@@ -90,6 +90,9 @@ export interface GlobalsState {
   storms: StormUniform[];
   events: WorldEvent[];
   collapseEnabled: boolean;
+  /** false: the structure system only collapses damage (the sandbox's rigid
+   *  bodies — game/integrity.ts — handle what loses support); default true */
+  spanCollapse?: boolean;
   flash: number;
   gusts: Gust[];
   /** ambient sky rgb + night factor */
@@ -159,7 +162,7 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     }
   }
   f[68] = nEv;
-  f[69] = s.collapseEnabled ? 1 : 0;
+  f[69] = s.collapseEnabled ? (s.spanCollapse === false ? 2 : 1) : 0;
   f[70] = s.flash;
   f[71] = s.fineVeg ? 1 : 0;
   for (let i = 0; i < MAX_GUSTS; i++) {

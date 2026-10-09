@@ -232,3 +232,20 @@ columns on the CPU and writes them back with full structural support (aux
 support 15) so the structure rule only removes what is really unsupported.
 Sandbox chunks are packed with K ≥ 10 (`packColumns(grid, minK)`) to leave
 room. Thumbnails: `ui/thumbs.ts` (2D-canvas isometric, exposed faces only).
+
+Structural integrity and rigid bodies (sandbox; F7): `game/integrity.ts`
+marks boxes dirty (smash, place, cyclones, landings), reads the layers back
+a few times a second and runs `game/fracture.ts` `analyse()` on them: pieces
+of structural voxels (solid, strength < 1) that no longer touch terrain fall;
+a piece whose centre of mass lies outside the hull of its footprint tips
+over whole; otherwise load (mass, first moments) is passed from the far
+voxels toward the ground along shortest paths (voxels on an unbroken stack
+down to the ground are anchors) and where moment > 40 · strength ·
+thickness³ (thickness = distance to the piece's skin) that cross-section
+crumbles to chips. Pieces are cut out of the columns (CPU mirror + GPU
+writeBuffer) and become `game/bodies.ts` rigid bodies (impulse contacts on
+exposed voxel corners against the voxel world, friction, a nudge toward
+face-down when slow); at rest they are inverse-sampled back into voxels
+(occupied cells → rubble on top). Bodies draw as rotated cubes
+(`render.wgsl` vsBody/fsBody, buffer bound at 3). In the sandbox the GPU
+structure rule collapses damage only (`Globals.misc.y` = 2).

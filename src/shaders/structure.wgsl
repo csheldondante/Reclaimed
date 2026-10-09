@@ -189,7 +189,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let loss = spanCost(m) + dmg / 4u;
       s = select(0u, lat - loss, lat > loss);
     }
-    let fails = collapseOn && ((!touching && s == 0u) || dmg >= dmgLimit(m));
+    let spanRule = G.misc.y < 1.5;
+    let fails = collapseOn && ((spanRule && !touching && s == 0u) || dmg >= dmgLimit(m));
     if (fails) {
       layersOut[cs.x + i] = ivPack(z0, z1, MAT_RUBBLE, 0u);
       atomicAdd(&stats[STAT_COLLAPSED], 1u);
