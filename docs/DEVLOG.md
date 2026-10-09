@@ -1240,3 +1240,14 @@ all dust was one generic tan, and a caught grain jumped onto the cone.)
 - Capture keeps the grain's real angle, distance (cells) and height (the
   spine is ~22 cells tall): it is dragged in along the ground, then climbs
   as it nears the cone — no jump. The dead synthetic funnel kind is gone.
+
+## 2026-10-09 — the squeak (water)
+
+User: the squeak comes with water — flooding some areas in the sandbox, and
+worse in storms. Cause: the wash sound (grime into water) — falling sine
+plinks at 0.9–1.6 kHz — fired for *resting* grime whenever water reached it,
+so floods and rain films washed hundreds at once. Now only grime blown into
+water counts (splash, sound, Nature); grime under rising water dissolves
+silently (test: 3 s of flooding a grime patch → 0 counted). And the sound
+is a soft low watery plop (filtered noise, 260–440 Hz), at most three per
+readback. Debug name: "wash plops".

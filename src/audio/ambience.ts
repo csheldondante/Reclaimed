@@ -503,28 +503,23 @@ export class Ambience {
     for (let i = 0; i < 6; i++) this.noiseHit(pan, t0 + 0.2 + Math.random() * 0.35, 3000 + Math.random() * 3000, 5, 0.03, 0.03);
   }
 
-  /** Grime washed into water: a few soft plinks (up to ~6 per call). */
+  /**
+   * Grime washed into water: a soft, low watery plop — filtered noise, no
+   * pitch (the old 0.9–1.6 kHz falling plinks were the user's "squeaks";
+   * round 12). At most three per call.
+   */
   wash(count: number): void {
-    if (this.ctx && this.shot('wash plinks')) return;
+    if (this.ctx && this.shot('wash plops')) return;
     const ctx = this.ctx;
     if (!ctx) return;
     const t0 = ctx.currentTime + 0.01;
-    const n = Math.min(6, count);
+    const n = Math.min(3, count);
     for (let i = 0; i < n; i++) {
-      const t = t0 + i * (0.05 + Math.random() * 0.12);
-      const o = ctx.createOscillator();
-      const f = 900 + Math.random() * 700;
-      o.frequency.setValueAtTime(f, t);
-      o.frequency.exponentialRampToValueAtTime(f * 0.55, t + 0.08);
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0, t);
-      g.gain.linearRampToValueAtTime(0.05, t + 0.004);
-      g.gain.exponentialRampToValueAtTime(0.0005, t + 0.12);
-      o.connect(g).connect(this.panner(this.fx));
-      o.start(t);
-      o.stop(t + 0.15);
+      const t = t0 + i * (0.08 + Math.random() * 0.15);
+      this.noiseHit(this.panner(this.fx), t, 260 + Math.random() * 180, 1.2, 0.05, 0.14);
     }
   }
+
 
   /** Growth tap: a soft, rising, airy shimmer. */
   /**

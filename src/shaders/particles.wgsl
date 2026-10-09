@@ -714,10 +714,15 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   if (kind != K_CLOUD && kind != K_HAZE && kind != K_GLOW && kind != K_BIRD && kind != K_DEER && kind != K_RABBIT && kind != K_FIREFLY && kind != K_FLAME && kind != K_SMOKE && kind != K_EMBER && pos.z <= ground) {
     if (kind == K_DUST && state == DUST_GRIME) {
       if (water[ci] > 0.02) {
-        // into the water: washed off and carried away by the stream
+        // into the water: washed off and carried away by the stream. Only
+        // grime *blown* in counts (the cleaning game: splash, sound, Nature);
+        // grime the water rises over just dissolves quietly (floods and rain
+        // films washed hundreds at once — a stream of squeaky plinks)
         depositAt(pos, P.v.w);
-        atomicAdd(&counters[3], 1u);
-        spawn(vec3<f32>(pos.xy, ground + 0.2), vec3<f32>(0.0, 0.0, 3.0), 0.6, K_SPLASH, 0.0, seed ^ 0x5au);
+        if (!resting) {
+          atomicAdd(&counters[3], 1u);
+          spawn(vec3<f32>(pos.xy, ground + 0.2), vec3<f32>(0.0, 0.0, 3.0), 0.6, K_SPLASH, 0.0, seed ^ 0x5au);
+        }
         parts[id.x].p.w = 0.0;
         return;
       }
