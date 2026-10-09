@@ -383,6 +383,8 @@ fn fsBox(in: VOut) -> FOut {
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
   var alb = toLinear(MATS[mat].albedo.rgb);
+  // the loose layer is drawn in its own material's colour (dust, sand, ash, dirt)
+  if (mat == MAT_DRIFT) { alb = toLinear(MATS[driftMatAt(cell)].albedo.rgb); }
 
   // voxel texture: per-cell and per-subcell (4x4) variation
   let vc = vec3<i32>(floor(in.wpos - in.nrm * 0.01));

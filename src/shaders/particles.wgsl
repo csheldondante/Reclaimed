@@ -106,7 +106,7 @@ fn spawnResting(pos: vec3<f32>, life: f32, kind: u32, seed: u32) {
 // pale, soil brown (and a cyclone's column like whatever it picked up).
 fn dustTag(mat: u32) -> u32 { return (mat & 255u) << 8u; }
 /** The ground material at column i as dust: drifted dust if any lies there. */
-fn groundDustMat(p: vec2<i32>, m: u32) -> u32 { return select(m, MAT_DRIFT, driftAt(p) > 0.1); }
+fn groundDustMat(p: vec2<i32>, m: u32) -> u32 { return select(m, driftMatAt(p), driftAt(p) > 0.1); }
 
 /** Full 32-bit random in [0,1) for rare events (16-bit draws bottom out at 1.5e-5). */
 fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0; }
@@ -173,7 +173,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let blown = textureLoad(driftTex, p, 0).y;
     // (inside the cyclone this dust is soon caught up into the funnel)
     if (blown > 0.0005 && rare(id.x, id.y, 0xd21fu) < blown * 6.0) {
-      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.2), vec3<f32>(wind * 0.7, 0.6 + r2), 2.5 + r1 * 2.0, K_DUST, 0.0, h ^ 0xd2u, 0u, dustTag(MAT_DRIFT));
+      spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.2), vec3<f32>(wind * 0.7, 0.6 + r2), 2.5 + r1 * 2.0, K_DUST, 0.0, h ^ 0xd2u, 0u, dustTag(driftMatAt(p)));
     }
     // dust settles out of the dry, dead ground
     if (rare(id.x, id.y, 0xd057u) < 0.00002 * dusty * boost) {

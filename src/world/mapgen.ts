@@ -19,8 +19,10 @@ export interface MapData {
   vegetation: Float32Array;
   /** Initial free oil depth per column. */
   oil: Float32Array;
-  /** Initial drifted dust depth per column (cells, fractional; drift.wgsl). */
+  /** Initial loose-layer depth per column (cells, fractional; drift.wgsl). */
   drift: Float32Array;
+  /** The loose layer's material per column (MAT id; 0 or absent = dust). */
+  driftMat?: Float32Array;
   /** Oil sealed inside closed tanks: per column [amount, roof z]; released when breached. */
   oilStored: Float32Array;
   /** Water added per sim tick per column (springs). */

@@ -11,7 +11,7 @@ const MAGIC = 'RCLM';
 const VERSION = 1;
 
 /** Float fields saved per map, in file order. */
-const FIELDS = ['water', 'contam', 'moisture', 'vegetation', 'oil', 'drift', 'oilStored', 'waterSource', 'surface'] as const;
+const FIELDS = ['water', 'contam', 'moisture', 'vegetation', 'oil', 'drift', 'oilStored', 'waterSource', 'surface', 'driftMat'] as const;
 
 interface Header {
   version: number;
@@ -74,7 +74,7 @@ export async function encodeMap(map: MapData): Promise<Blob> {
     dims: { ...map.grid.dims },
     poi: map.poi,
     slots: slots.byteLength,
-    fields: Object.fromEntries(FIELDS.map((f) => [f, map[f].length])),
+    fields: Object.fromEntries(FIELDS.map((f) => [f, (map[f] ?? new Float32Array(map.drift.length)).length])),
     chunkTable: table,
   };
   const head = new TextEncoder().encode(JSON.stringify(header));
@@ -83,7 +83,7 @@ export async function encodeMap(map: MapData): Promise<Blob> {
   new DataView(pre.buffer).setUint32(4, head.byteLength, true);
   // float arrays need 4-byte alignment when read back: pad the header
   const pad = new Uint8Array((4 - ((8 + head.byteLength) % 4)) % 4);
-  const parts: BlobPart[] = [pre, head, pad, slots as Uint32Array<ArrayBuffer>, ...FIELDS.map((f) => map[f] as Float32Array<ArrayBuffer>)];
+  const parts: BlobPart[] = [pre, head, pad, slots as Uint32Array<ArrayBuffer>, ...FIELDS.map((f) => (map[f] ?? new Float32Array(map.drift.length)) as Float32Array<ArrayBuffer>)];
   const raw = new Blob(parts);
   return new Response(raw.stream().pipeThrough(new CompressionStream('gzip'))).blob();
 }
@@ -111,7 +111,8 @@ export async function decodeMap(blob: Blob): Promise<MapData> {
   const grid = unpackColumns(packed, slots);
   const fields: Record<string, Float32Array> = {};
   for (const f of FIELDS) {
-    const n = header.fields[f];
+    // (files from before a field existed simply lack it)
+    const n = header.fields[f] ?? 0;
     fields[f] = new Float32Array(buf.slice(off, off + n * 4));
     off += n * 4;
   }
@@ -123,6 +124,7 @@ export async function decodeMap(blob: Blob): Promise<MapData> {
     vegetation: fields.vegetation,
     oil: fields.oil,
     drift: fields.drift,
+    driftMat: fields.driftMat.length ? fields.driftMat : undefined,
     oilStored: fields.oilStored,
     waterSource: fields.waterSource,
     surface: fields.surface,

@@ -242,7 +242,11 @@ export class WorldCore {
       surface[i] = c.length ? c[c.length - 1].z1 : 0;
     }
     const d = new Float32Array(N);
-    for (let i = 0; i < N; i++) d[i] = drift.data[i * 4];
+    const dm = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      d[i] = drift.data[i * 4];
+      dm[i] = drift.data[i * 4 + 2];
+    }
     return {
       grid,
       water: water.slice(0, N),
@@ -253,6 +257,7 @@ export class WorldCore {
       oilStored: oilStored.slice(0, N * 2),
       waterSource: waterSource.slice(0, N),
       drift: d,
+      driftMat: dm,
       surface,
       poi: this.map.poi,
     };

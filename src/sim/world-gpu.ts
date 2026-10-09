@@ -192,7 +192,10 @@ export class WorldGpu {
     this.editStateNextView = this.editStateNext.createView();
     {
       const init = new Float32Array(N * 4);
-      for (let k = 0; k < N; k++) init[k * 4] = map.drift[k];
+      for (let k = 0; k < N; k++) {
+        init[k * 4] = map.drift[k];
+        init[k * 4 + 2] = map.driftMat?.[k] ?? 0;
+      }
       device.queue.writeTexture({ texture: this.drift }, init, { bytesPerRow: this.w * 16 }, dsize);
     }
     this.stats = this.buf('stats', STATS_COUNT * 4, S);

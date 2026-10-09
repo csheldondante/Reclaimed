@@ -1594,3 +1594,29 @@ Check: all thirteen-plus models placed intact → nothing breaks free (one
 overstrained voxel on the apartment block's broken crown crumbles). A
 radius-3 notch in the smokestack's foot doesn't topple it — its weight is
 still over the rest of the ring; a wider break does.
+
+## 2026-10-09 — the loose layer: dust, sand, ash, dirt (H3, part a)
+
+User: smooth/stepped surfaces make sense for stone, but loose surfaces
+(dirt, ash, sand) should behave like dust — with a steeper angle of repose
+and needing higher winds to be picked up (if at all). Answer to the design
+question: a loose **top layer** per column; the ground below stays cells.
+The drift layer now carries its material (drift .z; 0 = dust):
+| material | wind to lift (cells/s) | repose | airborne | water |
+|---|---|---|---|---|
+| dust | 9 | 0.8 | 0.4 | 1.0 |
+| ash | 10 | 0.9 | 0.5 | 1.0 |
+| sand | 14 | 1.0 | 0.15 | 1.0 |
+| dirt | never | 1.4 | — | 0.8 |
+| gravel | never | 1.7 | — | 0.25 |
+Moving water now carries the layer downstream (it used to dissolve dust
+that sat under flowing water). A cell keeps its material unless almost all
+of it left and something else arrived (largest inflow wins). The layer is
+drawn in its material's colour; plants are buried under dust/sand/ash but
+grow in a loose layer of dirt; particles take the layer's colour. Saved
+maps carry the material (older files load as dust).
+Measured (sandbox, 1-cell patches of each, 12×10): repeated single gusts
+(~12 cells/s) → dust 116.6 → 10.1, sand 120 → 120, dirt unmoved; a
+stacked gale moves sand too (120 → 88.7), dirt still unmoved.
+Next: maps generate their loose surfaces as this layer (b), and a different
+material arriving compacts the old one into strata (c).

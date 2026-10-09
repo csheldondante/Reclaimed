@@ -294,6 +294,14 @@ fn driftAt(q: vec2<i32>) -> f32 {
   return textureLoad(driftTex, q, 0).x;
 }
 
+/** The loose layer's material on column q (drift .z; 0 = dust → 19, MAT_DRIFT —
+ *  a literal here: not every kernel includes materials.wgsl). */
+fn driftMatAt(q: vec2<i32>) -> u32 {
+  if (!inMap(q)) { return 19u; }
+  let m = u32(textureLoad(driftTex, q, 0).z + 0.5);
+  return select(m, 19u, m == 0u);
+}
+
 // The sandbox brush state per column (edit.wgsl writes it; the particle
 // system reads it to show poured grains falling). Bound at 18 by those two.
 @group(0) @binding(18) var editTex: texture_2d<f32>;
