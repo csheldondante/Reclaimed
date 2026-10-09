@@ -1538,3 +1538,15 @@ grass sways, litter and specks lift — but gentle: peak painted wind
 4.2 cells/s. Measured over 60 s on the barren title: the dust over the
 three buried models is unchanged (1.17 / 1.69 / 1.76), so gusts don't
 uncover them for the player.
+
+## 2026-10-09 — green binds the dust it grows through (H8)
+
+User: when green grows over loose things like dust it should turn them into
+soil, or at least stop them being swept out from under the green. The drift
+pass now reads the plants: where growth ≥ ~1.5 (established) dust is not
+lifted, carried or slumped, and it turns to soil at 0.03 cells/s (the drift
+thins; the plants grow on in the ground below).
+Measured (sandbox, 0.8 cells of dust over the green patch and over bare
+sand, then twelve strong strokes across both): bare 0.86 → 0 (stripped);
+green 0.8 → 0.41 during the wind (all of it binding, none blown) → 0.04
+twenty seconds later.

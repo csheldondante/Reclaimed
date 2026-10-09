@@ -17,6 +17,13 @@
 @group(0) @binding(5) var<storage, read_write> driftDelta: array<f32>;
 // water flux (flow.wgsl netFlow): moving water scours dust, still water lets it settle
 @group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
+// plants: established green holds the dust it grows through (round 15)
+@group(0) @binding(7) var<storage, read> vegD: array<f32>;
+/** 0..1 how firmly the plants on column j hold its dust */
+fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
+// dust under established plants turns to soil, cells/s (the drift thins;
+// the plants grow on in the ground beneath)
+const BIND: f32 = 0.03;
 @group(0) @binding(16) var driftOut: texture_storage_2d<rgba32float, write>;
 // driftTex (binding 17) is declared in common.wgsl (driftAt)
 
@@ -54,7 +61,7 @@ fn outflow(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
   let d = driftAt(q);
-  if (d < 0.001 || water[j] > 0.05) { return vec4<f32>(0.0); }
+  if (d < 0.001 || water[j] > 0.05 || rooted(j) > 0.5) { return vec4<f32>(0.0); }
   let here = levelAt(q);
   let w = windAt(vec3<f32>(vec2<f32>(q) + 0.5, here + 0.5));
   let ws = length(w) * (1.0 - shelter(q, w));
@@ -95,8 +102,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!inMap(n)) { continue; }
     // slumping: steep dust slides down to the lower side
     let there = levelAt(n);
-    d -= min(d0 * 0.2, max(here - there - REPOSE, 0.0) * SLUMP);
-    d += min(driftAt(n) * 0.2, max(there - here - REPOSE, 0.0) * SLUMP);
+    // (dust held by roots doesn't slide either)
+    let hold = rooted(i);
+    let holdN = rooted(colIdxI(n));
+    d -= min(d0 * 0.2, max(here - there - REPOSE, 0.0) * SLUMP) * (1.0 - hold);
+    d += min(driftAt(n) * 0.2, max(there - here - REPOSE, 0.0) * SLUMP) * (1.0 - holdN);
   }
   // dust storms carry dust: as they pass they drop it where the wind is
   // broken (sheltered spots, hollows), so they rearrange drifts rather than
@@ -116,6 +126,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let r = length(vec2<f32>(p) + 0.5 - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
     d += smoothstep(1.6, 0.0, r) * 0.6 * DT_D;
   }
+  // green binds it: under established plants the dust becomes soil
+  d -= rooted(i) * BIND * DT_D;
   // the editor's brush
   d += driftDelta[i];
   driftDelta[i] = 0.0;

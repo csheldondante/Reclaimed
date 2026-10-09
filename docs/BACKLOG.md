@@ -45,7 +45,7 @@ Proposed order: H5, H6, H1 (quick) → H8 → H2 → H4 → H3 → H7 (with F12)
 | H5 | Oil keeps burning in rain (trees still go out) | S | done |
 | H6 | Storm outlines steadier (shape changes too fast) | S | done |
 | H7 | Larger models to place: tall buildings (ties to F12) | M | open |
-| H8 | Green over loose material binds it: dust under established plants can't be swept out and slowly becomes soil | S–M | open |
+| H8 | Green over loose material binds it: dust under established plants can't be swept out and slowly becomes soil | S–M | done |
 | F7b | Break tool for anything + physics garden in the sandbox | S | done `d062a54` |
 
 ## Round 14 (2026-10-09, session 3)
