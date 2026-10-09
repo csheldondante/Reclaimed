@@ -42,9 +42,17 @@ each was implemented.
 - Later in round 13: download Creative Commons assets (skulls etc.) and
   voxelize them by tracing rays through them — a clean pipeline for adding
   models; clean them up (tanks hollow, then filled with liquid) (F12).
-- The structure rule: the user is open to talking it through and isn't sure
-  the current rule is the best way to do physics — discuss before F7
-  (toppling chunks).
+- F7 destruction (answered): **rigid-body chunks like Noita** — once a piece
+  breaks free it becomes a rigid body, plus particles where it crumbles.
+  Open question raised by the user: how to return a body to voxels when it
+  is no longer grid-aligned (agent's answer: inverse-sample the world cells
+  in its bounds when it comes to rest, after a gentle nudge toward a stable
+  face-down pose; occupied cells → rubble on top; leftovers → dust).
+- Breaking (answered): for models, something like **JFA / a medial axis** to
+  get thickness; a cheap but passable **torque** estimate so large overhangs
+  snap where the strain is too great — "more physicsy will make things feel
+  better". For terrain, the current support rule or a variant (how much
+  column material is connected).
 
 ## 2026-10-09 — end of session 2
 

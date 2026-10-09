@@ -44,7 +44,7 @@ Proposed order: F1, F8, F9 (quick fixes) → F2, F4, F3 (brushes) → F6 (save/l
 | F4 | Bedrock brush: stone rises from below, lifting the layers above it | S | done `3baa5fc` |
 | F5 | Model atlas: layered voxel models (ruined cars, tankers, ruins, tents, …) stamped into the world as real matter (buryable, breakable); editor palette with thumbnails. Feeds C7/C9/C8 | M–L | done |
 | F6 | Map building: save/load sandbox maps, undo, brush cursor ring (absorbs E8) | M | done `98f7f58` |
-| F7 | Destruction prototype: chunks of structures that topple and fall as pieces, then shatter to rubble (absorbs E4) | L | open |
+| F7 | Destruction: Noita-style rigid-body chunks + crumble particles; breaks where moment (carried mass × lever, relaxed along support paths) exceeds strength × thickness² (thickness from a JFA distance field); islands cut from the ground fall; bodies re-voxelize at rest by inverse sampling; terrain keeps a column rule (absorbs E4) | L+ | next (design agreed) |
 | F8 | Dust particles softer: more transparent, rounded | S | done `de35b4c` |
 | F9 | Day/night: longer transitions; redder/golden dawn and dusk | S | done `f8b019d` |
 | F10 | Title screen: plants and tree at a scale that makes sense with the bones | S–M | open |
