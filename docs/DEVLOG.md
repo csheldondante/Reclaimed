@@ -1527,3 +1527,14 @@ lobe phase (that lobe now derives its phase from the first).
 Measured (16 rays round one storm, sampled every 0.5 s for 12 s while
 random strong gusts push it): mean outline change 22 % of the radius per
 half second before → 3.8 % after; worst 54 % → 8.6 %.
+
+## 2026-10-09 — title screen: low gusts now and then (H1)
+
+User: the title should have random wind in low gusts periodically so the
+grass waves or dust blows. Every 7–13 s (unless the player is dragging) a
+slow, slightly curved stroke crosses the diorama roughly with the prevailing
+wind — painted into the same wind field the player's drags use, so the
+grass sways, litter and specks lift — but gentle: peak painted wind
+4.2 cells/s. Measured over 60 s on the barren title: the dust over the
+three buried models is unchanged (1.17 / 1.69 / 1.76), so gusts don't
+uncover them for the player.

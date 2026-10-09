@@ -44,6 +44,8 @@ export class MenuScene implements Scene {
   /** levels whose model is still under the dust (round 13 F11) */
   private buried = new Set<string>();
   private dustCheckT = 1;
+  /** seconds to the next ambient gust (round 15: grass waves, dust blows) */
+  private gustT = 3;
   private dustChecking = false;
 
   constructor(
@@ -239,6 +241,7 @@ export class MenuScene implements Scene {
     }
     // (no birds here: next to them the skull would read as a giant's — round 10)
     this.watchDust(dt);
+    this.ambientGust(dt);
     core.advance(now, dt, 1, (s) => MENU_SYSTEMS.has(s.name));
     core.render();
     this.audio.update({
@@ -254,6 +257,32 @@ export class MenuScene implements Scene {
       barren: 1 - p,
       wind: Math.min(1, Math.hypot(core.weather.windX, core.weather.windY) / 6),
     });
+  }
+
+  /**
+   * Now and then a low gust crosses the diorama, roughly with the prevailing
+   * wind (round 15): the grass waves and a little dust lifts. A slow stroke
+   * painted into the wind field, so it is the same wind the player makes —
+   * only gentler (it must not blow the buried models clear by itself).
+   */
+  private ambientGust(dt: number): void {
+    this.gustT -= dt;
+    if (this.gustT > 0) return;
+    this.gustT = 7 + Math.random() * 6;
+    if (this.powers.dragWind()) return; // the player is making their own
+    const { dims, weather } = this.core;
+    const base = Math.atan2(weather.params.baseWindY, weather.params.baseWindX);
+    const a = base + (Math.random() - 0.5) * 0.9;
+    const cx = dims.w * (0.3 + Math.random() * 0.4);
+    const cy = dims.h * (0.3 + Math.random() * 0.4);
+    const L = dims.w * 0.45;
+    const pts: [number, number][] = [];
+    for (let k = 0; k <= 4; k++) {
+      const t = k / 4 - 0.5;
+      // a slight curve, so it reads as a gust and not a ruler line
+      pts.push([cx + Math.cos(a) * L * t - Math.sin(a) * 4 * Math.sin(t * Math.PI), cy + Math.sin(a) * L * t + Math.cos(a) * 4 * Math.sin(t * Math.PI)]);
+    }
+    void this.powers.scriptStroke(pts, 4.5);
   }
 
   /**
