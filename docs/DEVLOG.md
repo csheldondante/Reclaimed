@@ -1550,3 +1550,16 @@ Measured (sandbox, 0.8 cells of dust over the green patch and over bare
 sand, then twelve strong strokes across both): bare 0.86 → 0 (stripped);
 green 0.8 → 0.41 during the wind (all of it binding, none blown) → 0.04
 twenty seconds later.
+
+## 2026-10-09 — airborne dust comes back down (H2)
+
+User: do dust particles ever settle back down and pile up like the other
+loose materials? They didn't: of the dust the wind lifts off a drift, 40 %
+"went airborne" (shown as particles) and simply left the world, so any
+sustained wind ate drifts away. Now the airborne share lands HOP = 5 cells
+downwind of where it rose: each cell gathers from the senders around the
+spot upwind of it whose own wind lands their dust on it (a 3×3 search, so
+senders whose wind differs a little from the receiver's aren't missed).
+Measured (a 65-cell dust pile in the sandbox, eight strong strokes across
+it): before, 65 → 0.2 inside the region — it vanished; now 65 → 65 with
+its centre of mass carried 35 cells downwind. Drift pass 0.10 → 0.11 ms.

@@ -31,8 +31,17 @@ const DT_D: f32 = 2.0 / 60.0; // the system runs every other tick
 const LIFT: f32 = 9.0;        // cells/s of (sheltered) wind before dust moves: a gust, not a breeze
 const CARRY: f32 = 0.25;      // cells of depth lifted per second per cell/s over LIFT
 // share of what the wind lifts that goes up into the air (shown as dust
-// particles) instead of landing in the next cell — strong wind wears drifts down
+// particles) and lands HOP cells downwind instead of in the next cell
+// (round 15: it used to vanish; now it settles and piles up again)
 const AIRBORNE: f32 = 0.4;
+const HOP: f32 = 5.0;
+
+/** Where dust lifted off q comes down (q + HOP along its wind), or (-1, -1). */
+fn landing(q: vec2<i32>) -> vec2<i32> {
+  let w = windAt(vec3<f32>(vec2<f32>(q) + 0.5, levelAt(q) + 0.5));
+  if (length(w) < 0.5) { return vec2<i32>(-1); }
+  return vec2<i32>(floor(vec2<f32>(q) + 0.5 + normalize(w) * HOP));
+}
 const REPOSE: f32 = 0.8;      // steepest dust slope (cells per cell)
 const SLUMP: f32 = 0.08;
 
@@ -125,6 +134,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (G.cyclones[c].b.z <= 0.0) { continue; }
     let r = length(vec2<f32>(p) + 0.5 - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
     d += smoothstep(1.6, 0.0, r) * 0.6 * DT_D;
+  }
+  // airborne dust coming down here: from the cell HOP upwind (along my own
+  // wind) whose lifted share lands on me
+  let wp = windAt(vec3<f32>(vec2<f32>(p) + 0.5, here + 0.5));
+  if (length(wp) > 0.5) {
+    // (the senders' winds differ a little from mine: look around that spot)
+    let q0 = vec2<i32>(floor(vec2<f32>(p) + 0.5 - normalize(wp) * HOP));
+    for (var k = 0; k < 9; k++) {
+      let q = q0 + vec2<i32>(k % 3 - 1, k / 3 - 1);
+      if (inMap(q) && driftAt(q) > 0.001 && all(landing(q) == p)) {
+        let oq = outflow(q);
+        d += (oq.x + oq.y + oq.z + oq.w) * AIRBORNE;
+      }
+    }
   }
   // green binds it: under established plants the dust becomes soil
   d -= rooted(i) * BIND * DT_D;
