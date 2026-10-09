@@ -38,10 +38,10 @@ Order: G1–G4 (quick) → G5 with F7 (destruction prototyped in the sandbox) �
 
 | id | item | size | status |
 |---|---|---|---|
-| G1 | Fireflies sparser, in small patches | S | done |
-| G2 | Sandbox reachable from the start, plainly (a real button, not a footnote link) | S | done |
-| G3 | No cap on summoning cyclones (no cooldown); several at once is a follow-up (one cyclone slot in Globals today) | S (cooldown) / M (several) | done |
-| G4 | Title screen: repeated taps grow a diorama-scale sapling, not the level's tree | S | done |
+| G1 | Fireflies sparser, in small patches | S | done `efb6b3e` |
+| G2 | Sandbox reachable from the start, plainly (a real button, not a footnote link) | S | done `e7a961b` |
+| G3 | No cap on summoning cyclones (no cooldown); several at once is a follow-up (one cyclone slot in Globals today) | S (cooldown) / M (several) | done `66025c2` |
+| G4 | Title screen: repeated taps grow a diorama-scale sapling, not the level's tree | S | done `6768d10` |
 | G5 | The sandbox as the physics playground: test and play with physics, placing things and every mechanic (F7 lands there first) | ongoing | open |
 
 ## Round 13 (2026-10-09, session 3)
