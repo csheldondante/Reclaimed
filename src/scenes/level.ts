@@ -169,6 +169,10 @@ export class LevelScene implements Scene {
       });
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'brush-ring');
+      // inline: the UI layer's own rules give its children pointer events, and
+      // a full-screen overlay that takes them swallows every click after the
+      // ring first appears (round 14: "it doesn't let me place objects")
+      svg.style.pointerEvents = 'none';
       this.ring = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       svg.appendChild(this.ring);
       host.ui.appendChild(svg);
@@ -199,6 +203,7 @@ export class LevelScene implements Scene {
     this.controls = new Controls(host.canvas, {
       tap: (sx, sy) => {
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
+        if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, true)) return;
         const [rx, ry] = toRender(sx, sy);
@@ -208,6 +213,11 @@ export class LevelScene implements Scene {
         if (this.editor?.tool === 'smash') {
           this.smashAt(sx, sy, true);
           this.smashing = true;
+          return true;
+        }
+        // (a press that turns into a drag still places, once)
+        if (this.editor?.tool === 'place') {
+          this.placeAtPick(sx, sy);
           return true;
         }
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
@@ -730,7 +740,26 @@ export class LevelScene implements Scene {
    * columns back. Refused (nothing changes) if a column would need more slots
    * than its chunk has.
    */
-  private async placeModel(wx: number, wy: number): Promise<void> {
+  /**
+   * Place the chosen model on whatever is under the cursor: the picked column
+   * and its surface height (round 14: "spawn those voxels at the height of
+   * the mouse pick") — on the ground, a roof, another wreck.
+   */
+  private placeAtPick(sx: number, sy: number): void {
+    const { core } = this;
+    const { camera } = core;
+    const rx = (sx / camera.viewportW) * this.renderW;
+    const ry = (sy / camera.viewportH) * this.renderH;
+    core.renderer.pick(rx, ry).then((hit) => {
+      if (!hit) return;
+      const x = (hit.cell % core.dims.w) + 0.5;
+      const y = Math.floor(hit.cell / core.dims.w) + 0.5;
+      void this.placeModel(x, y, hit.z);
+    }, ignoreTeardown);
+  }
+
+  /** @param atZ the height to sit on (a pick); otherwise the mean ground under the footprint */
+  private async placeModel(wx: number, wy: number, atZ?: number): Promise<void> {
     const ed = this.editor!;
     const m = modelById(ed.model)!;
     const { core } = this;
@@ -745,7 +774,7 @@ export class LevelScene implements Scene {
       const c = readColumn(packed, slots, x, y);
       return c.length ? c[c.length - 1].z1 : 0;
     };
-    const base = restingBase(topAt, x0, y0, fw, fd, ed.bury);
+    const base = atZ !== undefined ? Math.max(1, atZ - ed.bury) : restingBase(topAt, x0, y0, fw, fd, ed.bury);
     if (base + m.size[2] >= dims.zMax - 1) {
       this.hud.say('Too high to place that here.', 2);
       return;

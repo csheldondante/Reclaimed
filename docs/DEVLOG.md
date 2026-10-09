@@ -1474,3 +1474,16 @@ its column rule. In the sandbox (the physics playground, G5):
 Measured: a pylon with two legs cut at the foot tips over its remaining
 legs as one body within ~2 s and lands lying on the sand as voxels;
 analysis passes 1–4 ms.
+
+## 2026-10-09 — fix: sandbox clicks swallowed; place at the mouse pick
+
+User: the sandbox is broken, it doesn't let me place objects; it should
+spawn the voxels at the height of the mouse pick.
+- Cause: the brush ring (F6) is a full-screen SVG in #ui, and `#ui > *`
+  gives every direct child pointer events — so once the ring first showed,
+  it swallowed every later click for every brush tool (only the first press
+  worked). My scripted tests called the functions directly and missed it;
+  this time it was reproduced with real clicks (one of four landed). Now the
+  ring sets pointer-events: none inline; four clicks → four placements.
+- The place tool now picks: the model goes on the clicked column at the
+  picked surface height (a roof, a wreck, the ground), minus "bury".
