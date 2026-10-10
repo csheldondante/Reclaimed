@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-09 — round 17 (session 3)
+
+- The loose ground rework looks better (validated; pushed).
+- New: loose layers "fight" and end up in a checkered pattern, especially
+  during wind — make it more stable (J1).
+- Rigid bodies in their own rotated, shifted frames so things can be buried:
+  talk it through and check in before starting — it's risky.
+
 ## 2026-10-09 — round 16 (session 3) — items I1–I4 in BACKLOG.md
 
 - The settling dust doesn't look like it should. Eight layers of dust with
