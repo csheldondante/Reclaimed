@@ -205,7 +205,11 @@ export class Powers {
     }
     switch (hit.mat) {
       case MAT.Rust:
-        audio.clang(at);
+      case MAT.Steel:
+        // metal rings by its size (round 20): the level counts the connected
+        // metal; without it, a generic clang
+        if (this.metalSize) void this.metalSize(Math.floor(x), Math.floor(y), hit.z).then((n) => audio.clang(at, n));
+        else audio.clang(at);
         particles.burst({ kind: PK.Chip, x, y, z, count: 3, speed: 2.5, spread: 0.3 });
         break;
       case MAT.Concrete:
@@ -318,6 +322,8 @@ export class Powers {
   private lastCyclone = -99;
   /** called when the player's swirl spins up a cyclone */
   onCyclone?: (x: number, y: number) => void;
+  /** how many metal voxels are connected to the one tapped at (x, y, z) — the size of the drum or tank */
+  metalSize?: (x: number, y: number, z: number) => Promise<number>;
   /** the visible top of a column (loose ground, fallen bodies) for lightning to seek; default: the solid top */
   topAt?: (x: number, y: number) => number;
   /** lightning struck here (x, y, the visible top): the level breaks fallen bodies there */

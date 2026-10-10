@@ -443,8 +443,13 @@ export class Ambience {
 
   // ---- tactile responses to clicks ------------------------------------------
 
-  /** Hollow metal tank: inharmonic partials with a long ring. */
-  clang(at?: number): void {
+  /**
+   * Hollow metal: inharmonic partials with a long ring. With a size (metal
+   * voxels connected to the one tapped; round 20) the pitch follows it —
+   * bigger rings lower and longer — snapped to a pentatonic scale, so a row
+   * of drums and tanks plays notes that sit together.
+   */
+  clang(at?: number, size?: number): void {
     if (this.ctx && this.shot('clang')) return;
     const ctx = this.ctx;
     if (!ctx) return;
@@ -464,17 +469,25 @@ export class Ambience {
     dry.gain.value = 0.8;
     dry.connect(pan);
     dry.connect(cavity);
-    const base = 48 + Math.random() * 14;
+    let base = 48 + Math.random() * 14;
+    let ring = 1;
+    if (size !== undefined && size > 0) {
+      // ~330 Hz for a single panel, ~110 for a barrel cluster, ~40 for a tank
+      const f = Math.max(30, Math.min(400, 330 / Math.cbrt(size)));
+      base = pentatonic(f);
+      ring = Math.min(2, 0.6 + Math.cbrt(size) / 6);
+      cavity.delayTime.value = Math.min(0.12, 0.02 + Math.cbrt(size) * 0.006);
+    }
     for (const [ratio, amp, decay] of [[1, 0.28, 3.2], [1.51, 0.14, 2.4], [2.32, 0.1, 1.6], [3.7, 0.05, 0.9], [5.9, 0.025, 0.5]] as const) {
       const o = ctx.createOscillator();
-      o.frequency.value = base * ratio * (0.99 + Math.random() * 0.02);
+      o.frequency.value = base * ratio * (0.995 + Math.random() * 0.01);
       const g = ctx.createGain();
       g.gain.setValueAtTime(0, t0);
       g.gain.linearRampToValueAtTime(amp, t0 + 0.006);
-      g.gain.exponentialRampToValueAtTime(0.0005, t0 + decay);
+      g.gain.exponentialRampToValueAtTime(0.0005, t0 + decay * ring);
       o.connect(g).connect(dry);
       o.start(t0);
-      o.stop(t0 + decay + 0.05);
+      o.stop(t0 + decay * ring + 0.05);
     }
     // the dull thump of a knuckle on steel
     this.noiseHit(dry, t0, 180, 1.5, 0.3, 0.12);
@@ -854,4 +867,21 @@ export class Ambience {
       src.start(t, Math.random() * 2, 0.06);
     }
   }
+}
+
+/** Snap a frequency to the nearest note of A major pentatonic (A, B, C♯, E, F♯). */
+function pentatonic(f: number): number {
+  const semis = 12 * Math.log2(f / 55);
+  const oct = Math.floor(semis / 12);
+  let best = 0;
+  let bd = Infinity;
+  for (const o of [oct - 1, oct, oct + 1])
+    for (const d of [0, 2, 4, 7, 9]) {
+      const s = o * 12 + d;
+      if (Math.abs(s - semis) < bd) {
+        bd = Math.abs(s - semis);
+        best = s;
+      }
+    }
+  return 55 * Math.pow(2, best / 12);
 }

@@ -1856,3 +1856,17 @@ User: owls and crickets instead of birds at night; frogs near greened water.
 Check (headless, audio started, sandbox pond greened, midnight, 20 s): the
 debug log shows frogs ×5 and crickets, no birdsong. Unheard by an agent —
 listed for the user.
+
+## 2026-10-10 — metal rings by its size, in tune (M6)
+
+User: the sound of clicking metal drums should depend on their volume —
+not real computation, but something almost musical. A tap on rust or steel
+(steel was silent before) asks the level how much metal is connected to the
+tapped voxel (a flood fill on a read-back of the layers, capped at 3000);
+the clang's fundamental is 330 / ∛size Hz (≈330 for a panel, ≈110 for a
+barrel cluster, ≈45 for a tank, 30 floor), snapped to A major pentatonic,
+with a longer ring and a deeper cavity echo for bigger bodies — so a row of
+drums and tanks plays notes that sit together.
+Check (sandbox): a placed oil tank → 337 voxels (≈47 Hz → A1 region), the
+tanker ship → the 3000 cap (30 Hz floor). Unheard by an agent — listed for
+the user.

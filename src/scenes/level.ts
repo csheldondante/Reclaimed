@@ -19,6 +19,8 @@ import type { MapData } from '../world/mapgen';
 import { columnSlots, packInterval, readColumn } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn } from '../world/models';
 import { Integrity } from '../game/integrity';
+import { WorldVox } from '../game/fracture';
+import { MAT } from '../world/materials';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -148,6 +150,27 @@ export class LevelScene implements Scene {
       heightAt: this.heightAt,
       birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
     });
+    // tapped metal rings by its size: count the metal voxels connected to the
+    // tapped one (a capped flood fill on a read-back of the layers; round 20)
+    this.powers.metalSize = async (x, y, z) => {
+      const w = new WorldVox(core.packed, new Uint32Array((await core.readBuffer('layers')).buffer));
+      const metal = (m: number) => m === MAT.Rust || m === MAT.Steel;
+      let start: [number, number, number] | undefined;
+      for (const zz of [z, z - 1, z + 1]) if (metal(w.matAt(x, y, zz))) start = [x, y, zz];
+      if (!start) return 1;
+      const seen = new Set<string>([start.join(',')]);
+      const stack = [start];
+      while (stack.length && seen.size < 3000) {
+        const [a, b, c] = stack.pop()!;
+        for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+          const k = `${a + dx},${b + dy},${c + dz}`;
+          if (seen.has(k) || !metal(w.matAt(a + dx, b + dy, c + dz))) continue;
+          seen.add(k);
+          stack.push([a + dx, b + dy, c + dz]);
+        }
+      }
+      return seen.size;
+    };
 
     // a few animals already live in the one healthy corner when the level opens
     const [hx, hy] = map.poi.healthy;

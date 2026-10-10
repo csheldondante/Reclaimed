@@ -43,7 +43,7 @@ The batch now (M), then the larger work (N) after an architecture review.
 | M3 | Lightning: small radius around the click (rolling sphere), biased to metal within ~40 cells; a branching chain from what it hits to near the cursor, setting fires | S–M | done |
 | M4 | Night sounds: crickets and owls instead of birdsong | S | done |
 | M5 | Frogs near water with green around it | S | done |
-| M6 | Metal drums ring by their size (connected metal voxels), snapped to a pentatonic scale | M | open |
+| M6 | Metal drums ring by their size (connected metal voxels), snapped to a pentatonic scale | M | done |
 | M7 | Handoff + memory for the remaining work | S | open |
 | N1 | Architecture review: consolidate (solid intervals; one loose stack for everything soft — rubble, litter, the valley's soil; liquids carry it; wind-borne particles settle into it) | M | next session |
 | N2 | The valley onto the loose ground (reshaped rock, river erosion matched to the old rates) | M–L | after N1 |
