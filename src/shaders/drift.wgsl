@@ -98,6 +98,16 @@ fn topOf(q: vec2<i32>) -> f32 {
   return clamp(t.y, 0.0, t.x);
 }
 
+/**
+ * 0..1 how firmly q's plants hold its top layer: only what lies within their
+ * reach. A top layer a cell or two deep has buried them, and moves like any
+ * other (round 21: held tops took in all the sand blown at them and shed
+ * none, so planted columns in a cyclone's wind grew into spires).
+ */
+fn held(q: vec2<i32>) -> f32 {
+  return rooted(colIdxI(q)) * (1.0 - smoothstep(1.0, 2.0, topOf(q)));
+}
+
 /** 0..1 how sheltered q is from the wind w by taller ground up to 4 cells upwind. */
 fn shelter(q: vec2<i32>, w: vec2<f32>) -> f32 {
   let ws = length(w);
@@ -118,7 +128,7 @@ fn windOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
   let top = topOf(q);
-  if (top < 0.001 || water[j] > 0.05 || rooted(j) > 0.5 || underBody(q)) { return vec4<f32>(0.0); }
+  if (top < 0.001 || water[j] > 0.05 || held(q) > 0.5 || underBody(q)) { return vec4<f32>(0.0); }
   let lo = looseOf(driftMatAt(q));
   // on the title diorama (fine scale, G.misc.w) a cell is about a centimetre:
   // a breath of wind moves dust there, so the player can blow the dust off
@@ -156,7 +166,7 @@ fn waterOut(q: vec2<i32>) -> vec4<f32> {
   let sp = length(v);
   let thr = washOf(m);
   if (sp < thr) { return vec4<f32>(0.0); }
-  let mob = looseOf(m).w * (1.0 - 0.8 * rooted(j));
+  let mob = looseOf(m).w * (1.0 - 0.8 * held(q));
   let total = min(top * 0.2, (sp - thr) * 1.5 * mob * DT_D * 30.0);
   let wt = vec4<f32>(max(v.x, 0.0), max(-v.x, 0.0), max(v.y, 0.0), max(-v.y, 0.0));
   let sum = wt.x + wt.y + wt.z + wt.w;
@@ -187,7 +197,7 @@ fn slumpOut(q: vec2<i32>) -> vec4<f32> {
     let n = q + DIRS[k];
     if (!inMap(n)) { continue; }
     let diff = here - levelAt(n);
-    o[k] = max(diff - rep, 0.0) * SLUMP * (1.0 - rooted(j));
+    o[k] = max(diff - rep, 0.0) * SLUMP * (1.0 - held(q));
   }
   let s = o.x + o.y + o.z + o.w;
   if (s > top * 0.8) { o *= top * 0.8 / s; }
@@ -206,7 +216,7 @@ fn smoothOut(q: vec2<i32>) -> vec4<f32> {
   for (var k = 0u; k < 4u; k++) {
     let n = q + DIRS[k];
     if (!inMap(n)) { continue; }
-    o[k] = max(here - levelAt(n), 0.0) * WIND_SMOOTH * (1.0 - rooted(j));
+    o[k] = max(here - levelAt(n), 0.0) * WIND_SMOOTH * (1.0 - held(q));
   }
   let s = o.x + o.y + o.z + o.w;
   if (s > top * 0.6) { o *= top * 0.6 / s; }

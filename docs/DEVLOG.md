@@ -1903,3 +1903,18 @@ shatters; peaks 4 cells/s, 0.55 rad/s, ≤ 6.3 cells/s at a point. Tuning
 went through 400 (the whole tower turned to rubble within 5 s) and 900
 (2–3 chunks, few crumbs) before 700. Knobs: SHATTER, IMPACT_BREAK,
 IMPACT_CRUMB, impactRadius in integrity.ts; MAX_* in bodies.ts.
+
+## 2026-10-10 — planted columns no longer grow into spires (O3)
+
+User: during storms, huge columns of material build up into the sky.
+Reproduced in the sandbox (two rain storms, a cyclone, a dust storm at
+4× speed): within 20 s single sand columns near the cyclone reached 15–18
+cells deep beside neighbours of ~10, and stayed that way. All had plant
+density 2.5 (fully rooted). Rooted columns turned off their own wind
+erosion, wash, slumping and wind smoothing, but sand still arrived, so they
+took in everything blown at them and shed nothing.
+Fix (`drift.wgsl` held()): plants hold only what lies within their reach;
+the hold fades as the top layer over them goes from 1 to 2 cells deep (it
+has buried them), and beyond that it moves and slumps like any other.
+Measured, same scenario, 80 s: the deepest column stays at the map's
+pre-existing 6.9–7.4 (it was 17.7–18.1).

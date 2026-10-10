@@ -9,6 +9,10 @@ each was implemented.
   easily and break up more; impacts should make dust and chips; damp the
   collision response further (it can still move them too fast); a max
   speed, about 50 % faster than they topple now.
+- Then: better by a good bit; add see-through dust clouds and particles to
+  hide what is still a little janky; the switch from static to rigid body
+  sometimes jumps rather than moving smoothly.
+- Bug report: during storms, huge columns of material build up into the sky.
 
 ## 2026-10-10 — round 20 (session 3) — items M1–M7, N1–N8 in BACKLOG.md
 
