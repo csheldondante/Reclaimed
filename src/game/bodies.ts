@@ -105,11 +105,21 @@ export class Bodies {
 
   /** A body from world voxels (they must already be removed from the world). */
   spawn(cells: Voxel[], kick: V3 = [0, 0, 0]): Body | null {
-    if (!cells.length) return null;
+    const vox = cells.map((v) => ({ p: [v.x + 0.5, v.y + 0.5, v.z + 0.5] as V3, mat: v.mat }));
+    return this.build(vox, [0, 0, 0], [0, 0, 0, 1], kick);
+  }
+
+  /**
+   * A body from voxels given in some frame (q, with its origin at `origin` in
+   * the world): voxel centres p on that frame's unit lattice. Used for world
+   * cells (identity frame) and for the pieces of a broken body (its frame).
+   */
+  build(vox: { p: V3; mat: number }[], origin: V3, q: Q, kick: V3 = [0, 0, 0]): Body | null {
+    if (!vox.length) return null;
     let c: V3 = [0, 0, 0];
-    for (const v of cells) c = add(c, [v.x + 0.5, v.y + 0.5, v.z + 0.5]);
-    c = scale(c, 1 / cells.length);
-    const local = cells.map((v) => ({ p: sub([v.x + 0.5, v.y + 0.5, v.z + 0.5], c), mat: v.mat }));
+    for (const v of vox) c = add(c, v.p);
+    c = scale(c, 1 / vox.length);
+    const local = vox.map((v) => ({ p: sub(v.p, c), mat: v.mat }));
     // inertia of unit cubes of unit mass about the centre of mass
     const I = [0, 0, 0, 0, 0, 0, 0, 0, 0];
     for (const { p } of local) {
@@ -124,11 +134,14 @@ export class Bodies {
     I[3] = I[1];
     I[6] = I[2];
     I[7] = I[5];
-    // collision points: corners of voxels on the surface (deduplicated)
-    const occ = new Set(cells.map((v) => `${v.x},${v.y},${v.z}`));
+    // collision points: corners of voxels on the surface (deduplicated), found
+    // on the integer lattice the voxels sit on
+    const o = vox[0].p;
+    const key = (p: V3) => sub(p, o).map(Math.round).join(',');
+    const occ = new Set(vox.map((v) => key(v.p)));
     const seen = new Set<string>();
     let points: V3[] = [];
-    for (const v of cells) {
+    for (const v of vox) {
       const exposed = [
         [1, 0, 0],
         [-1, 0, 0],
@@ -136,20 +149,73 @@ export class Bodies {
         [0, -1, 0],
         [0, 0, 1],
         [0, 0, -1],
-      ].some(([dx, dy, dz]) => !occ.has(`${v.x + dx},${v.y + dy},${v.z + dz}`));
+      ].some(([dx, dy, dz]) => !occ.has(key(add(v.p, [dx, dy, dz]))));
       if (!exposed) continue;
       for (let k = 0; k < 8; k++) {
-        const p: V3 = [v.x + (k & 1), v.y + ((k >> 1) & 1), v.z + (k >> 2)];
-        const key = p.join(',');
-        if (seen.has(key)) continue;
-        seen.add(key);
+        const p: V3 = add(v.p, [(k & 1) - 0.5, ((k >> 1) & 1) - 0.5, (k >> 2) - 0.5]);
+        const kk = sub(p, o).map((x) => Math.round(x * 2)).join(',');
+        if (seen.has(kk)) continue;
+        seen.add(kk);
         points.push(sub(p, c));
       }
     }
     if (points.length > 600) points = points.filter((_, i) => i % Math.ceil(points.length / 600) === 0);
-    const b: Body = { local, points, pos: c, q: [0, 0, 0, 1], v: kick, w: [0, 0, 0], invMass: 1 / cells.length, invI: invert3(I), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0 };
+    const pos = add(origin, rotate(q, c));
+    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0 };
     this.list.push(b);
     return b;
+  }
+
+  /**
+   * Break bodies at a world point (round 18): their voxels within radius are
+   * removed, in each body's own frame; what's left splits into its connected
+   * pieces, which wake (and fall if nothing holds them). Pieces of `crumb`
+   * voxels or fewer are returned as crumbs (the caller turns them into loose
+   * ground). Returns the removed and crumbled voxels (world centres).
+   */
+  breakAt(at: V3, radius: number, crumb = 3): { removed: { p: V3; mat: number }[]; crumbs: { p: V3; mat: number }[] } {
+    const removed: { p: V3; mat: number }[] = [];
+    const crumbs: { p: V3; mat: number }[] = [];
+    const r2 = radius * radius;
+    for (const b of [...this.list]) {
+      const world = b.local.map((v) => add(b.pos, rotate(b.q, v.p)));
+      const keep: number[] = [];
+      for (let i = 0; i < world.length; i++) {
+        const d = sub(world[i], at);
+        if (dot(d, d) <= r2) removed.push({ p: world[i], mat: b.local[i].mat });
+        else keep.push(i);
+      }
+      if (keep.length === b.local.length) continue;
+      this.list = this.list.filter((x) => x !== b);
+      // connected pieces of what's left (face neighbours on the body's lattice)
+      const o = b.local[0].p;
+      const lat = (i: number) => sub(b.local[i].p, o).map(Math.round) as V3;
+      const at3 = new Map<string, number>();
+      for (const i of keep) at3.set(lat(i).join(','), i);
+      const seen = new Set<number>();
+      for (const start of keep) {
+        if (seen.has(start)) continue;
+        const piece: number[] = [start];
+        seen.add(start);
+        for (let h = 0; h < piece.length; h++) {
+          const [x, y, z] = lat(piece[h]);
+          for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+            const j = at3.get(`${x + dx},${y + dy},${z + dz}`);
+            if (j !== undefined && !seen.has(j)) {
+              seen.add(j);
+              piece.push(j);
+            }
+          }
+        }
+        if (piece.length <= crumb) {
+          for (const i of piece) crumbs.push({ p: world[i], mat: b.local[i].mat });
+          continue;
+        }
+        // a new body in the parent's frame (it wakes and settles again)
+        this.build(piece.map((i) => b.local[i]), b.pos, b.q);
+      }
+    }
+    return { removed, crumbs };
   }
 
   /** Is there solid world at this point? (cells, off-map = air) */

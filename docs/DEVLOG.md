@@ -1748,3 +1748,18 @@ Measured: the garden tower with its foot broken topples and falls asleep
 skewed (quaternion −0.69, −0.05, 0.10, 0.71), 189 voxels, projected over
 92–104 columns (top 16); crumbling it adds 178 cells of loose gravel where
 it lay.
+
+## 2026-10-09 — breaking bodies in their own frame (K1b)
+
+User: still be able to break the voxels of a body in its skewed frame.
+Bodies are now pickable (the body fragment shader writes the column under
+it, its height and a 0x8000 "body" flag), and Break on a body removes the
+body voxels within the brush radius — in world space, so in the body's own
+skewed frame — then splits what's left into its face-connected pieces on the
+body's lattice; each piece becomes a new body in the parent's frame (awake:
+it falls or settles again), pieces of three voxels or fewer crumble into
+loose ground. Body creation is generalised to voxels in any frame
+(`Bodies.build`).
+Measured: the toppled garden tower (189 voxels, asleep) — a pick at its
+centre reports a body; breaking its middle (radius 2.2) leaves two 80-voxel
+pieces, which wake, shift and fall asleep again.

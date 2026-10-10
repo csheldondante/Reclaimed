@@ -127,9 +127,30 @@ export class Integrity {
    * dust). Through the looseAdd buffer, which the drift pass folds in.
    */
   crumble(b: Body): void {
+    this.toLoose(this.bodies.worldVoxels(b));
+    this.bodies.list = this.bodies.list.filter((x) => x !== b);
+    this.stats.crumbledBodies++;
+  }
+
+  /**
+   * Break bodies at a world point (the Break tool, round 18): voxels within
+   * the radius go (chips), the rest splits into pieces that wake and fall;
+   * crumbs become loose ground. True if a body was hit.
+   */
+  breakBodies(at: [number, number, number], radius: number): boolean {
+    const { removed, crumbs } = this.bodies.breakAt(at, radius);
+    if (!removed.length) return false;
+    for (const v of removed) this.onChips?.(v.p[0], v.p[1], v.p[2], 1);
+    this.toLoose(crumbs);
+    this.project();
+    return true;
+  }
+
+  /** Voxels (world centres) into loose ground at the columns under them. */
+  private toLoose(vox: { p: [number, number, number]; mat: number }[]): void {
     const { w: W, h: H } = this.core.dims;
     const add = new Map<number, { amount: number; mats: Map<number, number> }>();
-    for (const v of this.bodies.worldVoxels(b)) {
+    for (const v of vox) {
       const x = Math.floor(v.p[0]);
       const y = Math.floor(v.p[1]);
       if (x < 0 || y < 0 || x >= W || y >= H) continue;
@@ -148,8 +169,6 @@ export class Integrity {
       for (const [m, c] of e.mats) if (c > n) [best, n] = [m, c];
       dev.queue.writeBuffer(this.core.world.looseAdd, i * 8, new Float32Array([e.amount, best]));
     }
-    this.bodies.list = this.bodies.list.filter((x) => x !== b);
-    this.stats.crumbledBodies++;
   }
 
   update(dt: number): void {

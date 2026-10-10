@@ -745,6 +745,9 @@ fn fsBody(in: VOut) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
-  o.pick = vec2<u32>(0u);
+  // pickable (the Break tool hits bodies): the column under the fragment, its
+  // height, and flag 0x8000 ("a body") in the instance-flags field
+  let bc = clampCell(vec2<i32>(floor(in.wpos.xy)));
+  o.pick = vec2<u32>(colIdxI(bc) + 1u, mat | (u32(max(in.wpos.z, 0.0)) << 8u) | (0x8000u << 16u));
   return o;
 }

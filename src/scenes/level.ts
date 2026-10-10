@@ -834,6 +834,11 @@ export class LevelScene implements Scene {
       if (!hit) return;
       const x = (hit.cell % core.dims.w) + 0.5;
       const y = Math.floor(hit.cell / core.dims.w) + 0.5;
+      // a fallen body under the cursor: break it in its own frame (round 18)
+      if (hit.flags & 0x8000) {
+        this.integrity?.breakBodies([x, y, hit.z + 0.5], ed.radius);
+        return;
+      }
       core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
       this.integrity?.markDirty(x, y, ed.radius + 14);
       core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
