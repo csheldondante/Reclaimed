@@ -15,6 +15,17 @@ struct Camera {
 @group(0) @binding(7) var<storage, read> fields: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read> water: array<f32>;
 @group(0) @binding(10) var<uniform> CAM: Camera;
+// the loose layers beneath the top one (drift.wgsl strata): a thin top layer
+// is drawn blended with the layer under it
+@group(0) @binding(19) var strataTexR: texture_2d<f32>;
+
+/** Material of the loose layer just beneath the top on q (0 if none). */
+fn looseBelowAt(q: vec2<i32>) -> u32 {
+  let s = textureLoad(strataTexR, q, 0);
+  var m = 0u;
+  for (var k = 0; k < 3; k++) { if (s[k] > 0.0) { m = u32(floor(s[k] / 1000.0)); } }
+  return m;
+}
 @group(0) @binding(11) var<storage, read> surface: array<u32>;
 // vegetation lean spring per column (sway.wgsl): xy lean, zw velocity
 @group(0) @binding(12) var<storage, read> bend: array<vec4<f32>>;
@@ -389,6 +400,14 @@ fn fsBox(in: VOut) -> FOut {
     // blown dust on top is drawn a greyer, darker silt than sand or dirt, so
     // what the wind lays down reads where it lands
     if (driftMatAt(cell) == MAT_DRIFT) { alb = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+    // a thin top layer shows the one beneath through it (a trace of blown dust
+    // doesn't flip a cell's colour — round 17)
+    let below = looseBelowAt(cell);
+    if (below != 0u) {
+      var bc = toLinear(MATS[below].albedo.rgb);
+      if (below == MAT_DRIFT) { bc = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+      alb = mix(bc, alb, smoothstep(0.02, 0.2, driftTopAt(cell)));
+    }
   }
 
   // voxel texture: per-cell and per-subcell (4x4) variation

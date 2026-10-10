@@ -46,6 +46,10 @@ fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
 const DT_D: f32 = 2.0 / 60.0; // the system runs every other tick
 const CARRY: f32 = 0.25;      // cells of depth lifted per second per cell/s over the threshold
 const SLUMP: f32 = 0.08;
+// where the wind is moving loose ground, level differences between
+// neighbours ease out a little each pass, so the transport can't see-saw
+// into a checkerboard (round 17); still ground keeps its shape
+const WIND_SMOOTH: f32 = 0.15;
 const NEVER: f32 = 1e9;
 const MAT_SOIL_L: u32 = 2u;
 const MAT_SAND_L: u32 = 3u;
@@ -127,7 +131,9 @@ fn windOut(q: vec2<i32>) -> vec4<f32> {
   }
   let sum = wt.x + wt.y + wt.z + wt.w;
   if (sum < 1e-4) { return vec4<f32>(0.0); }
-  let total = min(top * 0.5, carry * (ws - lift) * DT_D);
+  // (at most a quarter of the top per pass: larger steps made neighbouring
+  // columns over-correct each other into a checkerboard — round 17)
+  let total = min(top * 0.25, carry * (ws - lift) * DT_D);
   return wt / sum * total;
 }
 
@@ -150,7 +156,17 @@ fn waterOut(q: vec2<i32>) -> vec4<f32> {
   return wt / sum * total;
 }
 
-/** What slides off q's top layer to each neighbour this pass (steeper than its repose). */
+/** Is the wind strong enough to move q's top material right now? */
+fn windActive(q: vec2<i32>) -> bool {
+  let j = colIdxI(q);
+  if (water[j] > 0.05) { return false; }
+  let lift = looseOf(driftMatAt(q)).x * select(1.0, 0.45, G.misc.w > 0.5);
+  if (lift >= NEVER * 0.4) { return false; }
+  let w = windAt(vec3<f32>(vec2<f32>(q) + 0.5, levelAt(q) + 0.5));
+  return length(w) > lift;
+}
+
+/** What slides off q's top layer to each neighbour this pass (steeper than its repose; eased where the wind works). */
 fn slumpOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let top = topOf(q);
@@ -162,10 +178,30 @@ fn slumpOut(q: vec2<i32>) -> vec4<f32> {
   for (var k = 0u; k < 4u; k++) {
     let n = q + DIRS[k];
     if (!inMap(n)) { continue; }
-    o[k] = max(here - levelAt(n) - rep, 0.0) * SLUMP * (1.0 - rooted(j));
+    let diff = here - levelAt(n);
+    o[k] = max(diff - rep, 0.0) * SLUMP * (1.0 - rooted(j));
   }
   let s = o.x + o.y + o.z + o.w;
   if (s > top * 0.8) { o *= top * 0.8 / s; }
+  return o;
+}
+
+/** The easing where the wind works: what q's top gives each lower neighbour (it blends in there). */
+fn smoothOut(q: vec2<i32>) -> vec4<f32> {
+  if (!inMap(q)) { return vec4<f32>(0.0); }
+  let top = topOf(q);
+  if (top < 0.001) { return vec4<f32>(0.0); }
+  let j = colIdxI(q);
+  if (!(textureLoad(driftTex, q, 0).w > 0.0 || windActive(q))) { return vec4<f32>(0.0); }
+  let here = levelAt(q);
+  var o = vec4<f32>(0.0);
+  for (var k = 0u; k < 4u; k++) {
+    let n = q + DIRS[k];
+    if (!inMap(n)) { continue; }
+    o[k] = max(here - levelAt(n), 0.0) * WIND_SMOOTH * (1.0 - rooted(j));
+  }
+  let s = o.x + o.y + o.z + o.w;
+  if (s > top * 0.6) { o *= top * 0.6 / s; }
   return o;
 }
 
@@ -230,7 +266,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let lost = o.x + o.y + o.z + o.w;
   let ow = waterOut(p);
   let so = slumpOut(p);
-  s.top -= lost + ow.x + ow.y + ow.z + ow.w + so.x + so.y + so.z + so.w;
+  let sm = smoothOut(p);
+  s.top -= lost + ow.x + ow.y + ow.z + ow.w + so.x + so.y + so.z + so.w + sm.x + sm.y + sm.z + sm.w;
   let here = levelAt(p);
   // what arrives, by material: the same as my top joins it; the largest
   // other arrival starts a new layer (and takes the rest with it)
@@ -244,6 +281,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!inMap(n)) { continue; }
     let mn = driftMatAt(n);
     let a = windOut(n)[k ^ 1u] * (1.0 - looseOf(mn).z) + waterOut(n)[k ^ 1u] + slumpOut(n)[k ^ 1u];
+    // (the wind's easing just blends into my top, whatever it is)
+    same += smoothOut(n)[k ^ 1u];
     if (mn == m0) { same += a; } else {
       other += a;
       if (a > otherMax) { otherMax = a; otherMat = mn; }
@@ -286,7 +325,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     s.top += pour;
   }
   if (other > 0.0) {
-    if (otherMat != s.mat) { pushTop(&s, otherMat); }
+    // a trace of something else blends in; a real amount starts a layer
+    if (otherMat != s.mat && other >= 0.01) { pushTop(&s, otherMat); }
     s.top += other;
   }
   // taken away: from the top layer, then those beneath

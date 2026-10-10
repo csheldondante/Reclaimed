@@ -1706,3 +1706,23 @@ Measured (sandbox): 8 layers of dust → loose dust 7.03 over the sand 3.80
 (no silt); sand ×2, dirt ×2, dust ×2 on one column → strata sand 4.23 /
 dirt 2.00 / dust 1.52; 8 s of water poured above 2 layers of dust on the
 pond's slope → dust on land 56.95 → 50.0, under the pond 0.71 → 3.26.
+
+## 2026-10-09 — steadier loose ground in wind (J1)
+
+User: loose layers "fight" into a checkered pattern, especially in wind.
+Two sources: (1) a column could hand half its top to its neighbours in one
+pass, all computed from the same snapshot, so neighbours over-corrected
+each other; (2) any trace of a different material arriving started a new
+top layer, which the wind then stripped — the colour flickered cell by cell.
+- Wind takes at most a quarter of the top per pass.
+- Where the wind is moving material, level differences ease out between
+  neighbours (WIND_SMOOTH 0.15); that easing just blends into the receiving
+  column's top layer, whatever it is. Still ground keeps its shape.
+- A different material starts a new layer only from 0.01 cells per pass;
+  less blends in. A thin top layer is drawn blended with the layer beneath
+  (the draw shader now reads the strata texture).
+Measured (sandbox dunes, sustained gale): columns whose top material differs
+from both side neighbours 6.0 % → 1.2 % (calm 0.4 %); the surface roughness
+number under the gale stays ~0.12 (it's mostly real ripples — a first try
+that "fixed" it to 0.07 only did so by starving the wind with flicker). The
+before/after images: the speckled dust/sand patch is now one coherent patch.

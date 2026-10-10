@@ -168,6 +168,7 @@ export class Renderer {
         14: 'tex',
         15: 'tex',
         17: 'tex',
+        19: 'tex',
       },
       VF,
     );
@@ -215,6 +216,7 @@ export class Renderer {
         14: world.cornerView,
         15: world.windFieldView,
         17: world.driftView,
+        19: world.strataView,
       });
     this.opaqueGroup = groupFor(this.instOpaque);
     this.waterGroup = groupFor(this.instWater);
