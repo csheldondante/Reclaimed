@@ -3,7 +3,42 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
-## 2026-10-09 — round 19 (session 3)
+## 2026-10-10 — round 20 (session 3) — items M1–M7, N1–N8 in BACKLOG.md
+
+- Rigid bodies: fall more slowly, much more inertia (feel bigger); turn the
+  collision response down — better to sink into each other slightly than
+  spring back; the crumbling threshold can be lower; maybe deformation
+  later (like World of Goo).
+- Sound: owls and crickets at night instead of birds; frogs near greened
+  water; tapping metal drums sounds by their size — almost musical.
+- Every click makes a little ripple of wind pushing out from the cursor
+  (you are the wind).
+- Lightning: smaller radius around the click, but biased toward metal
+  things within ~40 m, so mostly it listens closely and sometimes goes
+  elsewhere; it chains from the top thing it hits to near the cursor (looks
+  cool, sets fires).
+- Gameplay redesign (to talk through before building): taps only grow from
+  existing green, or fertile ground with a seed on it; green spreads outward
+  from a start seed — grow, then blow seeds onto cleared, moist soil. Puzzle
+  mode opening with the camera constraint (start at the origin: wind exposes
+  a tiny green patch that grows; a blown seed followed to where it sprouts).
+  Barriers to growth (things to burn or knock down with water) introduce the
+  other mechanics. Wind strength, cyclones and storms unlock as green
+  spreads. Ancient seeds buried on the map to uncover, plant or send down
+  the river to the next level (every level has a river).
+- Story through the environment: the first level becomes a biological
+  research base (an obvious biohazard sign, a lab) — the same valley
+  re-themed; the highway shows barricades (a failed quarantine); the city
+  shows tents (a plague).
+- Architecture: revisit for consolidation and simplification before the
+  next big push (one model: solid intervals; a loose stack for everything
+  soft; liquids that carry the loose stack; wind particles that settle into
+  it).
+- Order (user): the cheap, low-risk batch now (body feel, crumb threshold,
+  click ripple, lightning tuning, night sounds, frogs, musical drums), then a
+  handoff for the rest.
+
+## 2026-10-10 — round 19 (session 3)
 
 - K1b/K2 OK (pushed). Minor tweak: lightning should destroy even stone and
   whatever it strikes (L1).

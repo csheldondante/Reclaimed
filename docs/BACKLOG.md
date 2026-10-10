@@ -32,7 +32,30 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
-## Round 19 (2026-10-09, session 3)
+## Round 20 (2026-10-10, session 3)
+
+The batch now (M), then the larger work (N) after an architecture review.
+
+| id | item | size | status |
+|---|---|---|---|
+| M1 | Rigid bodies feel bigger: slower fall (lower gravity, air drag), more rotational inertia, soft contacts (no bounce, sink in slightly, gentle push-out); crumbs up to ~12 voxels become loose ground | S | open |
+| M2 | Every click: a little ring of wind pushing out from the cursor | S–M | open |
+| M3 | Lightning: small radius around the click (rolling sphere), biased to metal within ~40 cells; a branching chain from what it hits to near the cursor, setting fires | S–M | open |
+| M4 | Night sounds: crickets and owls instead of birdsong | S | open |
+| M5 | Frogs near water with green around it | S | open |
+| M6 | Metal drums ring by their size (connected metal voxels), snapped to a pentatonic scale | M | open |
+| M7 | Handoff + memory for the remaining work | S | open |
+| N1 | Architecture review: consolidate (solid intervals; one loose stack for everything soft — rubble, litter, the valley's soil; liquids carry it; wind-borne particles settle into it) | M | next session |
+| N2 | The valley onto the loose ground (reshaped rock, river erosion matched to the old rates) | M–L | after N1 |
+| N3 | Growth redesign: taps grow only from green or seeded fertile ground; seeds spread it; fertility = clean + moist + uncovered | M–L | talk first |
+| N4 | Puzzle-mode opening on the camera director; barriers to growth as level gates; wind/cyclone/storm unlocks by green | M–L | after N3 |
+| N5 | Ancient seeds buried, uncovered, planted or sent down the river to the next level; every level has a river | M | after N3 |
+| N6 | Story through environment: the valley re-themed as a biological research base (biohazard sign, lab); highway barricades (quarantine); city tents (plague) | M | with C7/C9 |
+| N7 | Red sludge: a third liquid (dense, toxic) | M | open |
+| N8 | Body deformation (spring-linked voxel clusters, World of Goo-like) | L+ | later |
+| F7c | Bodies step 3: impacts split bodies; structures resting on fallen bodies are held by them | M | open |
+
+## Round 19 (2026-10-10, session 3)
 
 | id | item | size | status |
 |---|---|---|---|
