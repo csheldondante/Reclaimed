@@ -1798,3 +1798,19 @@ Measured (sandbox): a strike on flat sand: loose 3.80 → 1.20; on a 4-layer
 bedrock mound: stone top 14 → 11 and loose 3.80 → 1.70; struck beside the
 garden tower it seeks the tower's top: concrete 11–35 → rubble 11–24 (the
 cracked column collapses), chips flying.
+
+## 2026-10-10 — heavier, softer rigid bodies; bigger crumbs (M1)
+
+User: bodies should fall more slowly with much more inertia (feel bigger);
+better to sink into each other slightly than spring back; the crumbling
+threshold can be lower.
+- Gravity 22 → 10 cells/s², air drag 0.35/s, rotational inertia ×3, no
+  bounce; soft contacts: each iteration takes away 40 % of the approach
+  speed, overlap pushed out 8 % per iteration past a 0.15-cell slop.
+- Sleep only when really still (< 0.15 cells/s, < 0.06 rad/s for 1.5 s;
+  the old 0.5/0.5/0.5 s froze slow tips half-way — a tower once fell asleep
+  upright mid-tip); give up after 24 s.
+- Pieces of up to 12 voxels (was 3) crumble into loose ground when broken.
+Measured: the garden tower with one edge of its foot broken teeters ~7 s,
+goes over in ~7 s more and comes to rest lying on its side at 21.6 s (it
+used to slam down in ~2 s). A tower broken evenly at its foot stands.

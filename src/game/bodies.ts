@@ -11,17 +11,27 @@ import type { Voxel, WorldVox } from './fracture';
 type V3 = [number, number, number];
 type Q = [number, number, number, number]; // x, y, z, w
 
-const G = 22; // cells/s² (a little floatier than 1 g at a metre a cell)
-const RESTITUTION = 0.15;
+// Feel (round 20: "fall more slowly, much more inertia to feel bigger; better
+// to sink into each other slightly than spring back"): low gravity with air
+// drag, a rotational inertia scaled up so big pieces turn slowly, no bounce,
+// and soft contacts — each iteration resolves only part of the approach
+// speed, and overlap is pushed out gently past a small slop.
+const G = 10; // cells/s²
+const AIR_DRAG = 0.35; // 1/s on linear speed
+const INERTIA_SCALE = 3;
+const RESTITUTION = 0;
 const FRICTION = 0.6;
+const SOFTNESS = 0.4; // share of the approach speed each iteration takes away
+const SLOP = 0.15; // cells of overlap allowed before pushing out
+const PUSH = 0.08; // share of the overlap past the slop pushed out per iteration
 const SUBSTEPS = 2;
 const ITERATIONS = 4;
 /** below these speeds (cells/s, rad/s) for SLEEP_T a body settles */
-const SLEEP_V = 0.5;
-const SLEEP_W = 0.5;
-const SLEEP_T = 0.5;
+const SLEEP_V = 0.15;
+const SLEEP_W = 0.06;
+const SLEEP_T = 1.5;
 /** bodies settle regardless after this long (s) */
-const MAX_AGE = 14;
+const MAX_AGE = 24;
 
 export interface Body {
   /** voxels relative to the centre of mass (offsets of voxel centres) */
@@ -169,7 +179,7 @@ export class Bodies {
     }
     if (points.length > 600) points = points.filter((_, i) => i % Math.ceil(points.length / 600) === 0);
     const pos = add(origin, rotate(q, c));
-    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0, id: this.nextId++ };
+    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I.map((x) => x * INERTIA_SCALE)), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0, id: this.nextId++ };
     this.list.push(b);
     return b;
   }
@@ -178,10 +188,10 @@ export class Bodies {
    * Break bodies at a world point (round 18): their voxels within radius are
    * removed, in each body's own frame; what's left splits into its connected
    * pieces, which wake (and fall if nothing holds them). Pieces of `crumb`
-   * voxels or fewer are returned as crumbs (the caller turns them into loose
+   * voxels or fewer (round 20: 12) are returned as crumbs (the caller turns them into loose
    * ground). Returns the removed and crumbled voxels (world centres).
    */
-  breakAt(at: V3, radius: number, crumb = 3): { removed: { p: V3; mat: number }[]; crumbs: { p: V3; mat: number }[] } {
+  breakAt(at: V3, radius: number, crumb = 12): { removed: { p: V3; mat: number }[]; crumbs: { p: V3; mat: number }[] } {
     const removed: { p: V3; mat: number }[] = [];
     const crumbs: { p: V3; mat: number }[] = [];
     const r2 = radius * radius;
@@ -365,7 +375,7 @@ export class Bodies {
         if (it === 0) b.impact = Math.max(b.impact, -vn);
         const rn = cross(r, c.n);
         const k = b.invMass + dot(cross(applyInvI(b, rn), r), c.n);
-        const j = (-(1 + RESTITUTION) * vn) / k;
+        const j = ((-(1 + RESTITUTION) * vn) / k) * SOFTNESS;
         let imp = scale(c.n, j);
         // friction against the sliding velocity
         const vt = sub(vp, scale(c.n, vn));
@@ -381,9 +391,9 @@ export class Bodies {
         b.w = add(b.w, applyInvI(b, cross(r, imp)));
       }
       // push out of the deepest penetration a little each iteration
-      if (pushD > 0.01) b.pos = add(b.pos, scale(pushN, pushD * 0.3));
+      if (pushD > SLOP) b.pos = add(b.pos, scale(pushN, (pushD - SLOP) * PUSH));
     }
-    b.v = scale(b.v, 0.999);
+    b.v = scale(b.v, Math.exp(-AIR_DRAG * h));
     b.w = scale(b.w, 0.985);
     b.pos = add(b.pos, scale(b.v, h));
     const wq: Q = [b.w[0], b.w[1], b.w[2], 0];
