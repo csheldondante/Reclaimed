@@ -37,6 +37,9 @@ user) · `deferred` (agreed for later).
 | id | item | size | status |
 |---|---|---|---|
 | J1 | Loose layers checkerboard (neighbouring columns see-saw), worst in wind: stabilise the transport and the top-material switching | S–M | open |
+| K1 | Bodies step 1: sleeping bodies keep their frame (no re-voxelising); projection of sleeping bodies into a per-column body-top texture; cap ~64 bodies / 16k voxels (oldest small ones crumble to loose ground) | M–L | next (check in after) |
+| K2 | Bodies step 2: loose ground, water and integrity read the projection (pile on, slide off, bury); bodies wake when disturbed | M | after K1 |
+| K3 | Bodies step 3: impacts and damage split bodies along their own grid; small pieces become loose ground by material | M | after K2 |
 
 ## Round 16 (2026-10-09, session 3)
 

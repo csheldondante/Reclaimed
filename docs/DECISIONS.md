@@ -9,7 +9,16 @@ each was implemented.
 - New: loose layers "fight" and end up in a checkered pattern, especially
   during wind — make it more stable (J1).
 - Rigid bodies in their own rotated, shifted frames so things can be buried:
-  talk it through and check in before starting — it's risky.
+  talk it through and check in before starting — it's risky. Plan agreed:
+  bodies keep their own frame and sleep at rest; a sleeping body is
+  rasterised into a per-column "body top" the loose ground uses as its floor
+  (it piles on, slides off, buries it); impacts/damage split bodies along
+  their own grid. Answers: **a cap** (~64 bodies / 16k voxels) — over budget
+  the oldest small bodies crumble into loose ground; a body **wakes when
+  disturbed** (hit, undermined or washed out, a cyclone, a smash); the
+  smallest pieces become **loose ground** (concrete/brick → gravel, metal →
+  gravel/scrap, wood → ash); order: **checkerboard first, then bodies**,
+  checking in after each of the three body steps.
 
 ## 2026-10-09 — round 16 (session 3) — items I1–I4 in BACKLOG.md
 
