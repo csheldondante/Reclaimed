@@ -92,8 +92,9 @@ need `--wait 30000`.
 - Every sound (B9 + this session): howl, drag whoosh, grow, wash plops,
   rain, cyclone roar, chips on crumbles, crickets, owls, frogs, pitched
   metal.
-- Body feel after M1 (slow, heavy — a tipped tower takes ~14 s; constants
-  at the top of `game/bodies.ts`).
+- Body shattering after O1/O2 (session 4): impacts break bodies into
+  pieces + rubble with dust; speeds capped at ~1.5× the topple. Knobs:
+  SHATTER / IMPACT_* in `game/integrity.ts`, MAX_* in `game/bodies.ts`.
 - Lightning: the metal pull (bonus 6 − 0.15·distance within 40 cells).
 
 ## Known issues

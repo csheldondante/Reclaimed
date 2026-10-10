@@ -216,6 +216,7 @@ export class LevelScene implements Scene {
         core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: 3, spread: 0.8 });
         this.audio.chip(camera.project(x, y, z)[0] / camera.viewportW);
       };
+      this.integrity.onDust = (x, y, z, count, spread) => core.sim.particles.burst({ kind: PK.Dust, x, y, z, count, speed: 1.4, spread });
       core.globals.spanCollapse = false;
       weather.holdNatural(1e9);
     }

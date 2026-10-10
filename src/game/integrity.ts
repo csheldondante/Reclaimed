@@ -19,6 +19,19 @@ import { ignoreTeardown } from '../gpu/pipeline';
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 
+// Impacts (round 21: "crumble much more easily, break up more; impacts make
+// dust"): a body that hits something at IMPACT_BREAK cells/s or more
+// shatters into about weakness · speed² · voxels / SHATTER pieces (the small
+// ones near the point hit), then loses the voxels within a radius growing
+// with the speed around that point (to loose ground, with dust and chips);
+// pieces of up to IMPACT_CRUMB voxels crumble too. Metal breaks far less than
+// stone. Softer hits only puff dust.
+const IMPACT_BREAK = 1.2; // cells/s
+const SHATTER = 700;
+const IMPACT_CRUMB = 16; // voxels
+const impactRadius = (speed: number) => Math.min(2.5, 0.5 + 0.3 * speed);
+const impactReach = (m: number) => (m === MAT.Steel || m === MAT.Rust ? 0.4 : m === MAT.Wood ? 0.7 : 1);
+
 export class Integrity {
   readonly bodies: Bodies;
   private world: WorldVox;
@@ -29,8 +42,10 @@ export class Integrity {
   private busy = false;
   /** chips where something crumbles or a body hits hard */
   onChips?: (x: number, y: number, z: number, count: number) => void;
+  /** a puff of dust where a body hits something (count, spread in cells) */
+  onDust?: (x: number, y: number, z: number, count: number, spread: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, lastMs: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -51,7 +66,7 @@ export class Integrity {
       this.project();
     };
     this.bodies.onWake = () => this.project();
-    this.bodies.onImpact = (speed, at) => this.onChips?.(at[0], at[1], at[2], Math.min(12, Math.round(speed / 3)));
+    this.bodies.onImpact = (b, speed, at) => this.impact(b, speed, at);
   }
 
   /** Structures around (x, y) within r may have changed. */
@@ -72,6 +87,7 @@ export class Integrity {
   /** Forget every falling piece (undo restores the world beneath them). */
   clear(): void {
     this.bodies.list = [];
+    this.pendingLoose.clear();
     this.dirty = [];
     this.project();
   }
@@ -157,10 +173,32 @@ export class Integrity {
     return true;
   }
 
+  /** A body hit something at `speed` (cells/s) at world point `at`. */
+  private impact(b: Body, speed: number, at: [number, number, number]): void {
+    this.stats.impacts++;
+    this.onDust?.(at[0], at[1], at[2], Math.min(40, Math.round(4 + speed * 4)), 0.6 + speed * 0.2);
+    if (speed < IMPACT_BREAK) return;
+    const weak = b.local.reduce((s, v) => s + impactReach(v.mat), 0) / b.local.length;
+    const k = Math.min(8, Math.floor((weak * speed * speed * b.local.length) / SHATTER));
+    const shards = this.bodies.shatter(b, at, k, IMPACT_CRUMB);
+    const { removed, crumbs } = this.bodies.breakAt(at, impactRadius(speed), IMPACT_CRUMB, impactReach);
+    crumbs.push(...shards);
+    if (k >= 2) this.stats.shatters++;
+    if (!removed.length && !crumbs.length) return;
+    this.stats.shattered += removed.length + crumbs.length;
+    this.onDust?.(at[0], at[1], at[2], Math.min(60, removed.length * 3), impactRadius(speed));
+    this.toLoose([...removed, ...crumbs]);
+    this.project();
+  }
+
+  /** loose ground waiting to go to the GPU: column → amount and material votes */
+  private pendingLoose = new Map<number, { amount: number; mats: Map<number, number> }>();
+  private looseFlushedAt = -Infinity;
+
   /** Voxels (world centres) into loose ground at the columns under them. */
   private toLoose(vox: { p: [number, number, number]; mat: number }[]): void {
     const { w: W, h: H } = this.core.dims;
-    const add = new Map<number, { amount: number; mats: Map<number, number> }>();
+    const add = this.pendingLoose;
     for (const v of vox) {
       const x = Math.floor(v.p[0]);
       const y = Math.floor(v.p[1]);
@@ -173,13 +211,26 @@ export class Integrity {
       add.set(i, e);
       this.onChips?.(v.p[0], v.p[1], v.p[2], 1);
     }
+    this.flushLoose();
+  }
+
+  /**
+   * looseAdd is overwritten, not added to, so a column is only written again
+   * once the drift pass (period 2) has folded the last write in: at most one
+   * flush per two sim ticks; in between, crumbs gather here.
+   */
+  private flushLoose(): void {
+    const tick = this.core.globals.tick;
+    if (!this.pendingLoose.size || tick - this.looseFlushedAt < 2) return;
+    this.looseFlushedAt = tick;
     const dev = this.core.host.gpu.device;
-    for (const [i, e] of add) {
+    for (const [i, e] of this.pendingLoose) {
       let best: number = MAT.Rubble;
       let n = -1;
       for (const [m, c] of e.mats) if (c > n) [best, n] = [m, c];
       dev.queue.writeBuffer(this.core.world.looseAdd, i * 8, new Float32Array([e.amount, best]));
     }
+    this.pendingLoose.clear();
   }
 
   /** cyclones on the map this frame (Weather.cyclones): they wake bodies and carry the small ones */
@@ -190,6 +241,7 @@ export class Integrity {
       this.cycloneForces(dt);
       this.bodies.update(dt);
     }
+    this.flushLoose();
     const { data, count } = this.bodies.pack();
     this.core.renderer.setBodies(data, count);
     this.t -= dt;

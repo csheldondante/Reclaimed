@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-10 — round 21 (session 4) — items O1–O2 in BACKLOG.md
+
+- Body speed after M1 is much better, but bodies should crumble much more
+  easily and break up more; impacts should make dust and chips; damp the
+  collision response further (it can still move them too fast); a max
+  speed, about 50 % faster than they topple now.
+
 ## 2026-10-10 — round 20 (session 3) — items M1–M7, N1–N8 in BACKLOG.md
 
 - Rigid bodies: fall more slowly, much more inertia (feel bigger); turn the

@@ -21,9 +21,17 @@ const AIR_DRAG = 0.35; // 1/s on linear speed
 const INERTIA_SCALE = 3;
 const RESTITUTION = 0;
 const FRICTION = 0.6;
-const SOFTNESS = 0.4; // share of the approach speed each iteration takes away
+const SOFTNESS = 0.25; // share of the approach speed each iteration takes away
 const SLOP = 0.15; // cells of overlap allowed before pushing out
 const PUSH = 0.08; // share of the overlap past the slop pushed out per iteration
+// Speed limits (round 21: "a max speed, ~50 % faster than they topple now"):
+// the garden tower tipping over peaked at 2.6 cells/s at its centre, 0.36
+// rad/s and 6.7 cells/s at its tip; nothing — gravity, a contact, a push out
+// of an overlap — moves a body faster than 1.5× that.
+const MAX_V = 4; // cells/s, centre of mass
+const MAX_W = 0.55; // rad/s
+const MAX_POINT = 10; // cells/s, any point of the body
+const MAX_PUSH = 1.5; // cells/s of push out of an overlap
 const SUBSTEPS = 2;
 const ITERATIONS = 4;
 /** below these speeds (cells/s, rad/s) for SLEEP_T a body settles */
@@ -47,8 +55,13 @@ export interface Body {
   invI: number[];
   slow: number;
   age: number;
-  /** strongest impact this step (cells/s), for crumbling and sound */
+  /** strongest impact this frame (cells/s) and where (world), for crumbling, dust and sound */
   impact: number;
+  hitAt: V3;
+  /** s before an impact can break it (again) */
+  grace: number;
+  /** distance from the centre of mass to the farthest collision point */
+  reach: number;
   /** at rest: no physics, projected into the terrain grid */
   asleep: boolean;
   /** when it fell asleep (s, Bodies clock): the oldest go first over budget */
@@ -59,6 +72,10 @@ export interface Body {
 
 /** Impact speed (cells/s) of a falling body that wakes a sleeping one it hits. */
 const WAKE_IMPACT = 3;
+/** Impacts at least this hard (cells/s) are reported (onImpact). */
+const IMPACT_V = 1;
+/** s between impacts that can break a body (its pieces inherit it) */
+const IMPACT_GRACE = 0.35;
 
 // ---- small vector helpers -----------------------------------------------------
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -116,8 +133,8 @@ export class Bodies {
   onWake?: (body: Body) => void;
   private clock = 0;
   private nextId = 1;
-  /** called when a body hits hard (impact speed, world point) */
-  onImpact?: (speed: number, at: V3) => void;
+  /** called once a frame for each body that hit something at IMPACT_V or more and is out of its grace (body, impact speed, world point) */
+  onImpact?: (body: Body, speed: number, at: V3) => void;
 
   constructor(public world: WorldVox) {}
 
@@ -179,7 +196,8 @@ export class Bodies {
     }
     if (points.length > 600) points = points.filter((_, i) => i % Math.ceil(points.length / 600) === 0);
     const pos = add(origin, rotate(q, c));
-    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I.map((x) => x * INERTIA_SCALE)), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0, id: this.nextId++ };
+    const reach = points.reduce((m, p) => Math.max(m, len(p)), 0.5);
+    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I.map((x) => x * INERTIA_SCALE)), slow: 0, age: 0, impact: 0, hitAt: [0, 0, 0], grace: 0, reach, asleep: false, sleptAt: 0, id: this.nextId++ };
     this.list.push(b);
     return b;
   }
@@ -190,8 +208,10 @@ export class Bodies {
    * pieces, which wake (and fall if nothing holds them). Pieces of `crumb`
    * voxels or fewer (round 20: 12) are returned as crumbs (the caller turns them into loose
    * ground). Returns the removed and crumbled voxels (world centres).
+   * `reach` scales the radius per material (impacts chip stone more than
+   * steel). Pieces carry on with the parent's motion (round 21).
    */
-  breakAt(at: V3, radius: number, crumb = 12): { removed: { p: V3; mat: number }[]; crumbs: { p: V3; mat: number }[] } {
+  breakAt(at: V3, radius: number, crumb = 12, reach: (mat: number) => number = () => 1): { removed: { p: V3; mat: number }[]; crumbs: { p: V3; mat: number }[] } {
     const removed: { p: V3; mat: number }[] = [];
     const crumbs: { p: V3; mat: number }[] = [];
     const r2 = radius * radius;
@@ -200,40 +220,85 @@ export class Bodies {
       const keep: number[] = [];
       for (let i = 0; i < world.length; i++) {
         const d = sub(world[i], at);
-        if (dot(d, d) <= r2) removed.push({ p: world[i], mat: b.local[i].mat });
+        if (dot(d, d) <= r2 * reach(b.local[i].mat) ** 2) removed.push({ p: world[i], mat: b.local[i].mat });
         else keep.push(i);
       }
       if (keep.length === b.local.length) continue;
       this.list = this.list.filter((x) => x !== b);
-      // connected pieces of what's left (face neighbours on the body's lattice)
-      const o = b.local[0].p;
-      const lat = (i: number) => sub(b.local[i].p, o).map(Math.round) as V3;
-      const at3 = new Map<string, number>();
-      for (const i of keep) at3.set(lat(i).join(','), i);
-      const seen = new Set<number>();
-      for (const start of keep) {
-        if (seen.has(start)) continue;
-        const piece: number[] = [start];
-        seen.add(start);
-        for (let h = 0; h < piece.length; h++) {
-          const [x, y, z] = lat(piece[h]);
-          for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
-            const j = at3.get(`${x + dx},${y + dy},${z + dz}`);
-            if (j !== undefined && !seen.has(j)) {
-              seen.add(j);
-              piece.push(j);
-            }
-          }
-        }
-        if (piece.length <= crumb) {
-          for (const i of piece) crumbs.push({ p: world[i], mat: b.local[i].mat });
-          continue;
-        }
-        // a new body in the parent's frame (it wakes and settles again)
-        this.build(piece.map((i) => b.local[i]), b.pos, b.q);
-      }
+      this.pieces(b, keep, crumb, world, crumbs);
     }
     return { removed, crumbs };
+  }
+
+  /**
+   * Shatter a body into about k pieces (round 21: impacts break bodies up):
+   * k seeds among its voxels, picked with a pull toward the point hit (so the
+   * pieces near it are small and the far ones big); each voxel goes with its
+   * nearest seed. Pieces carry on with the body's motion; pieces of `crumb`
+   * voxels or fewer are returned (world centres) as crumbs.
+   */
+  shatter(b: Body, at: V3, k: number, crumb: number): { p: V3; mat: number }[] {
+    const crumbs: { p: V3; mat: number }[] = [];
+    k = Math.min(k, b.local.length);
+    if (k < 2 || !this.list.includes(b)) return crumbs;
+    const hit = rotate(conj(b.q), sub(at, b.pos));
+    const seeds: V3[] = [];
+    for (let s = 0; s < k; s++) {
+      let best = b.local[Math.floor(Math.random() * b.local.length)].p;
+      for (let t = 0; t < 2; t++) {
+        const c = b.local[Math.floor(Math.random() * b.local.length)].p;
+        if (len(sub(c, hit)) < len(sub(best, hit))) best = c;
+      }
+      seeds.push(best);
+    }
+    const cells: number[][] = seeds.map(() => []);
+    b.local.forEach((v, i) => {
+      let j = 0;
+      for (let s = 1; s < k; s++) if (len(sub(v.p, seeds[s])) < len(sub(v.p, seeds[j]))) j = s;
+      cells[j].push(i);
+    });
+    const world = b.local.map((v) => add(b.pos, rotate(b.q, v.p)));
+    this.list = this.list.filter((x) => x !== b);
+    for (const cell of cells) if (cell.length) this.pieces(b, cell, crumb, world, crumbs);
+    return crumbs;
+  }
+
+  /**
+   * The connected pieces (face neighbours on b's lattice) of b's voxels
+   * `idx` become new bodies in b's frame, moving as that part of b moved;
+   * pieces of `crumb` voxels or fewer go to `crumbs` instead.
+   */
+  private pieces(b: Body, idx: number[], crumb: number, world: V3[], crumbs: { p: V3; mat: number }[]): void {
+    const o = b.local[0].p;
+    const lat = (i: number) => sub(b.local[i].p, o).map(Math.round) as V3;
+    const at3 = new Map<string, number>();
+    for (const i of idx) at3.set(lat(i).join(','), i);
+    const seen = new Set<number>();
+    for (const start of idx) {
+      if (seen.has(start)) continue;
+      const piece: number[] = [start];
+      seen.add(start);
+      for (let h = 0; h < piece.length; h++) {
+        const [x, y, z] = lat(piece[h]);
+        for (const [dx, dy, dz] of [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]]) {
+          const j = at3.get(`${x + dx},${y + dy},${z + dz}`);
+          if (j !== undefined && !seen.has(j)) {
+            seen.add(j);
+            piece.push(j);
+          }
+        }
+      }
+      if (piece.length <= crumb) {
+        for (const i of piece) crumbs.push({ p: world[i], mat: b.local[i].mat });
+        continue;
+      }
+      // a new body in the parent's frame (it wakes and settles again),
+      // moving as that part of the parent moved
+      const nb = this.build(piece.map((i) => b.local[i]), b.pos, b.q)!;
+      nb.v = add(b.v, cross(b.w, sub(nb.pos, b.pos)));
+      nb.w = [...b.w];
+      nb.grace = IMPACT_GRACE;
+    }
   }
 
   /** Is there solid world at this point? (cells, off-map = air) */
@@ -304,7 +369,18 @@ export class Bodies {
   update(dt: number): void {
     this.clock += dt;
     const h = dt / SUBSTEPS;
+    for (const b of this.list) b.impact = 0;
     for (let s = 0; s < SUBSTEPS; s++) for (const b of this.list) if (!b.asleep) this.step(b, h);
+    // impacts are reported after the step (the handler may break bodies)
+    const hits: Body[] = [];
+    for (const b of this.list) {
+      b.grace = Math.max(0, b.grace - dt);
+      if (!b.asleep && b.impact >= IMPACT_V && b.grace <= 0) hits.push(b);
+    }
+    for (const b of hits) {
+      b.grace = IMPACT_GRACE;
+      this.onImpact?.(b, b.impact, b.hitAt);
+    }
     const done: Body[] = [];
     for (const b of this.list) {
       if (b.asleep) continue;
@@ -351,7 +427,6 @@ export class Bodies {
 
   private step(b: Body, h: number): void {
     b.v[2] -= G * h;
-    b.impact = 0;
     for (let it = 0; it < ITERATIONS; it++) {
       let pushN: V3 = [0, 0, 0];
       let pushD = 0;
@@ -372,7 +447,10 @@ export class Bodies {
           pushN = c.n;
         }
         if (vn >= 0) continue;
-        if (it === 0) b.impact = Math.max(b.impact, -vn);
+        if (it === 0 && -vn > b.impact) {
+          b.impact = -vn;
+          b.hitAt = p;
+        }
         const rn = cross(r, c.n);
         const k = b.invMass + dot(cross(applyInvI(b, rn), r), c.n);
         const j = ((-(1 + RESTITUTION) * vn) / k) * SOFTNESS;
@@ -391,15 +469,24 @@ export class Bodies {
         b.w = add(b.w, applyInvI(b, cross(r, imp)));
       }
       // push out of the deepest penetration a little each iteration
-      if (pushD > SLOP) b.pos = add(b.pos, scale(pushN, (pushD - SLOP) * PUSH));
+      if (pushD > SLOP) b.pos = add(b.pos, scale(pushN, Math.min((pushD - SLOP) * PUSH, (MAX_PUSH * h) / ITERATIONS)));
     }
     b.v = scale(b.v, Math.exp(-AIR_DRAG * h));
     b.w = scale(b.w, 0.985);
+    // speed limits: the centre, the spin, and the fastest point
+    const vl = len(b.v);
+    if (vl > MAX_V) b.v = scale(b.v, MAX_V / vl);
+    const wl = len(b.w);
+    if (wl > MAX_W) b.w = scale(b.w, MAX_W / wl);
+    const pt = len(b.v) + len(b.w) * b.reach;
+    if (pt > MAX_POINT) {
+      b.v = scale(b.v, MAX_POINT / pt);
+      b.w = scale(b.w, MAX_POINT / pt);
+    }
     b.pos = add(b.pos, scale(b.v, h));
     const wq: Q = [b.w[0], b.w[1], b.w[2], 0];
     const dq = qmul(wq, b.q);
     b.q = qnorm([b.q[0] + dq[0] * 0.5 * h, b.q[1] + dq[1] * 0.5 * h, b.q[2] + dq[2] * 0.5 * h, b.q[3] + dq[3] * 0.5 * h]);
-    if (b.impact > 10) this.onImpact?.(b.impact, b.pos);
   }
 
   /** Voxels for the renderer: centre xyz, material, quaternion (f32 bits). */

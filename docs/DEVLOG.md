@@ -1870,3 +1870,36 @@ drums and tanks plays notes that sit together.
 Check (sandbox): a placed oil tank → 337 voxels (≈47 Hz → A1 region), the
 tanker ship → the 3000 cap (30 Hz floor). Unheard by an agent — listed for
 the user.
+
+## 2026-10-10 — bodies shatter on impact, with a speed limit (O1, O2)
+
+User: speed much better, but crumble much more easily and break up more;
+impacts should make dust; damp the collision response further; a max speed
+about 50 % above today's topple.
+- Measured first (garden tower, 216 voxels, foot cut on one side): the topple
+  peaks at 2.6 cells/s at the centre, 0.36 rad/s, 6.7 cells/s at the tip.
+  Contact impacts are only 1–3.5 cells/s, so the old chip threshold
+  (10 cells/s) never fired: no chips or dust at all.
+- Limits (`game/bodies.ts`): centre ≤ 4 cells/s, spin ≤ 0.55 rad/s, any
+  point ≤ 10 cells/s, push out of an overlap ≤ 1.5 cells/s (the uncapped
+  push could teleport a deep overlap ~0.9 cells in one frame, which is what
+  read as "too fast"); softness 0.4 → 0.25.
+- Impacts (`game/integrity.ts`): each body reports its hardest contact once
+  a frame (0.35 s grace). ≥ 1 cell/s puffs dust. ≥ 1.2 cells/s shatters
+  it into ⌊weakness·speed²·voxels/700⌋ pieces (≤ 8). Voronoi cells round
+  seeds pulled toward the point hit, so the near pieces are small and the far
+  ones big. Then a crater of radius 0.5 + 0.3·speed (≤ 2.5) round the
+  contact. Metal reaches 0.4 of that, wood 0.7. Craters and pieces of ≤ 16
+  voxels go to loose ground with chips and dust. Pieces keep their parent's
+  motion (they used to start at rest, which also applied to Break-tool
+  splits).
+- Fixed in passing: `looseAdd` is overwritten, not added to, so two crumbles
+  into one column before the drift pass (period 2) folded the first lost
+  it. Crumbs now gather CPU-side and flush at most once per 2 ticks.
+Measured (two runs): the tower breaks free, cracks at the foot, tips and
+lands as one or two slabs (61–91 voxels, a 26-voxel piece in one run) with
+~125 of its 216 voxels as a rubble heap at the foot; 19–22 impacts, 3–4
+shatters; peaks 4 cells/s, 0.55 rad/s, ≤ 6.3 cells/s at a point. Tuning
+went through 400 (the whole tower turned to rubble within 5 s) and 900
+(2–3 chunks, few crumbs) before 700. Knobs: SHATTER, IMPACT_BREAK,
+IMPACT_CRUMB, impactRadius in integrity.ts; MAX_* in bodies.ts.

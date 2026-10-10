@@ -32,6 +32,13 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 21 (2026-10-10, session 4)
+
+| id | item | size | status |
+|---|---|---|---|
+| O1 | Bodies crumble much more easily on impact and break up into pieces; impacts make dust and chips | S–M | done (this commit) |
+| O2 | Speed limit on bodies (~1.5× the topple speed), collision response damped further | S | done (this commit) |
+
 ## Round 20 (2026-10-10, session 3)
 
 The batch now (M), then the larger work (N) after an architecture review.
@@ -53,7 +60,7 @@ The batch now (M), then the larger work (N) after an architecture review.
 | N6 | Story through environment: the valley re-themed as a biological research base (biohazard sign, lab); highway barricades (quarantine); city tents (plague) | M | with C7/C9 |
 | N7 | Red sludge: a third liquid (dense, toxic) | M | open |
 | N8 | Body deformation (spring-linked voxel clusters, World of Goo-like) | L+ | later |
-| F7c | Bodies step 3: impacts split bodies; structures resting on fallen bodies are held by them | M | open |
+| F7c | Bodies step 3: impacts split bodies (done by O1); structures resting on fallen bodies are held by them | M | open (holding part) |
 
 ## Round 19 (2026-10-10, session 3)
 
