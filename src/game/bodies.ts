@@ -1,10 +1,10 @@
-// Rigid bodies (round 14, BACKLOG F7): pieces of structures that broke free
-// tumble as rigid voxel bodies (Noita-style), collide with the voxel world (a
-// CPU read-back of the layers), and when they come to rest are turned back
-// into voxels by inverse sampling — every world cell in the body's bounds
-// looks up the body voxel it falls in, so a tilted slab lands as a jaggy
-// tilted slab with no holes. Just before that, a nudge toward the nearest
-// face-down orientation keeps most landings clean.
+// Rigid bodies (round 14, BACKLOG F7; round 17 K1): pieces of structures that
+// broke free tumble as rigid voxel bodies (Noita-style) in their own frame,
+// collide with the voxel world (a CPU read-back of the layers), the loose
+// ground on it, and bodies already at rest — and when they come to rest they
+// stay as they are, skewed, asleep (no physics; only drawn). Integrity
+// projects the sleeping ones into the terrain grid (the per-column body
+// top/bottom the ground systems read) and keeps them within a budget.
 
 import type { Voxel, WorldVox } from './fracture';
 
@@ -39,6 +39,10 @@ export interface Body {
   age: number;
   /** strongest impact this step (cells/s), for crumbling and sound */
   impact: number;
+  /** at rest: no physics, projected into the terrain grid */
+  asleep: boolean;
+  /** when it fell asleep (s, Bodies clock): the oldest go first over budget */
+  sleptAt: number;
 }
 
 // ---- small vector helpers -----------------------------------------------------
@@ -85,32 +89,15 @@ function applyInvI(b: Body, v: V3): V3 {
   return rotate(b.q, mat3mul(b.invI, rotate(conj(b.q), v)));
 }
 
-/** The 24 axis-aligned orientations (for settling face-down). */
-const AXIS_QS: Q[] = (() => {
-  const out: Q[] = [];
-  const h = Math.SQRT1_2;
-  const base: Q[] = [
-    [0, 0, 0, 1],
-    [h, 0, 0, h],
-    [1, 0, 0, 0],
-    [-h, 0, 0, h],
-    [0, h, 0, h],
-    [0, -h, 0, h],
-  ];
-  const spins: Q[] = [
-    [0, 0, 0, 1],
-    [0, 0, h, h],
-    [0, 0, 1, 0],
-    [0, 0, -h, h],
-  ];
-  for (const s of spins) for (const b of base) out.push(qnorm(qmul(s, b)));
-  return out;
-})();
-
 export class Bodies {
   list: Body[] = [];
-  /** called with the voxels (world cells) of a body that has come to rest */
-  onSettle?: (cells: Voxel[], body: Body) => void;
+  /** called when a body comes to rest (it stays a body, asleep) */
+  onSleep?: (body: Body) => void;
+  /** the loose ground's depth per column (drift .x; CPU read-back) */
+  loose?: Float32Array;
+  /** sleeping bodies projected per column: 4 floats (top, bottom, −, −); top < 0 = none */
+  proj?: Float32Array;
+  private clock = 0;
   /** called when a body hits hard (impact speed, world point) */
   onImpact?: (speed: number, at: V3) => void;
 
@@ -160,7 +147,7 @@ export class Bodies {
       }
     }
     if (points.length > 600) points = points.filter((_, i) => i % Math.ceil(points.length / 600) === 0);
-    const b: Body = { local, points, pos: c, q: [0, 0, 0, 1], v: kick, w: [0, 0, 0], invMass: 1 / cells.length, invI: invert3(I), slow: 0, age: 0, impact: 0 };
+    const b: Body = { local, points, pos: c, q: [0, 0, 0, 1], v: kick, w: [0, 0, 0], invMass: 1 / cells.length, invI: invert3(I), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0 };
     this.list.push(b);
     return b;
   }
@@ -170,12 +157,30 @@ export class Bodies {
     return this.world.matAt(Math.floor(p[0]), Math.floor(p[1]), Math.floor(p[2]));
   }
 
-  /** The way out of the solid cell a point is in: normal and depth. */
+  /** Bodies settle a little way into loose ground (they lie in it, not on it). */
+  private static readonly SINK = 0.35;
+
+  /** The way out of whatever a point is in (solid cells, loose ground, a sleeping body): normal and depth. */
   private contact(p: V3): { n: V3; depth: number } | null {
     const x = Math.floor(p[0]);
     const y = Math.floor(p[1]);
     const z = Math.floor(p[2]);
     if (z < 0) return { n: [0, 0, 1], depth: -p[2] };
+    const W = this.world.w;
+    if (x >= 0 && y >= 0 && x < W && y < this.world.h && !this.solid(p)) {
+      const i = y * W + x;
+      // a sleeping body here: out over its top
+      const pr = this.proj;
+      if (pr && pr[i * 4] >= 0 && p[2] < pr[i * 4] && p[2] >= pr[i * 4 + 1]) return { n: [0, 0, 1], depth: pr[i * 4] - p[2] };
+      // loose ground over the column's solid top
+      const l = this.loose?.[i] ?? 0;
+      if (l > 0.05) {
+        const top = this.world.colTop(x, y);
+        const surf = top + Math.max(0, l - Bodies.SINK);
+        if (p[2] >= top && p[2] < surf) return { n: [0, 0, 1], depth: surf - p[2] };
+      }
+      return null;
+    }
     if (!this.solid(p)) return null;
     // up, out of the top of this solid run; or sideways into open air
     let best: { n: V3; depth: number } = { n: [0, 0, 1], depth: this.world.runTop(x, y, z) - p[2] };
@@ -192,32 +197,56 @@ export class Bodies {
   }
 
   update(dt: number): void {
+    this.clock += dt;
     const h = dt / SUBSTEPS;
-    for (let s = 0; s < SUBSTEPS; s++) for (const b of this.list) this.step(b, h);
+    for (let s = 0; s < SUBSTEPS; s++) for (const b of this.list) if (!b.asleep) this.step(b, h);
     const done: Body[] = [];
     for (const b of this.list) {
+      if (b.asleep) continue;
       b.age += dt;
       const resting = len(b.v) < SLEEP_V && len(b.w) < SLEEP_W;
       b.slow = resting ? b.slow + dt : 0;
       if (b.pos[2] < -20) done.push(b); // fell off the world
       else if (b.slow > SLEEP_T || b.age > MAX_AGE) {
-        this.settle(b);
-        done.push(b);
+        // at rest: it stays as it lies (round 17: no snapping back to the grid)
+        b.asleep = true;
+        b.v = [0, 0, 0];
+        b.w = [0, 0, 0];
+        b.sleptAt = this.clock;
+        this.onSleep?.(b);
       }
     }
     if (done.length) this.list = this.list.filter((b) => !done.includes(b));
   }
 
+  /** Is anything still moving? */
+  get anyAwake(): boolean {
+    return this.list.some((b) => !b.asleep);
+  }
+
+  /** The body's voxels in the world: centre and material. */
+  worldVoxels(b: Body): { p: V3; mat: number }[] {
+    return b.local.map((v) => ({ p: add(b.pos, rotate(b.q, v.p)), mat: v.mat }));
+  }
+
+  /** Each voxel's world bounds (its rotated cube's box), for projection. */
+  voxelBounds(b: Body, f: (lo: V3, hi: V3) => void): void {
+    // a unit cube rotated by q: its box half-size is Σ|R col|·0.5 per axis
+    const ex = rotate(b.q, [0.5, 0, 0]);
+    const ey = rotate(b.q, [0, 0.5, 0]);
+    const ez = rotate(b.q, [0, 0, 0.5]);
+    const hx = Math.abs(ex[0]) + Math.abs(ey[0]) + Math.abs(ez[0]);
+    const hy = Math.abs(ex[1]) + Math.abs(ey[1]) + Math.abs(ez[1]);
+    const hz = Math.abs(ex[2]) + Math.abs(ey[2]) + Math.abs(ez[2]);
+    for (const v of b.local) {
+      const c = add(b.pos, rotate(b.q, v.p));
+      f([c[0] - hx, c[1] - hy, c[2] - hz], [c[0] + hx, c[1] + hy, c[2] + hz]);
+    }
+  }
+
   private step(b: Body, h: number): void {
     b.v[2] -= G * h;
     b.impact = 0;
-    // a slow body is nudged toward lying face-down (clean landings)
-    if (len(b.v) < 2 && len(b.w) < 2) {
-      const target = nearestAxis(b.q);
-      const dq = qmul(target, conj(b.q));
-      const sgn = dq[3] < 0 ? -1 : 1;
-      b.w = add(b.w, scale([dq[0] * sgn, dq[1] * sgn, dq[2] * sgn], 4 * h));
-    }
     for (let it = 0; it < ITERATIONS; it++) {
       let pushN: V3 = [0, 0, 0];
       let pushD = 0;
@@ -263,48 +292,6 @@ export class Bodies {
     if (b.impact > 10) this.onImpact?.(b.impact, b.pos);
   }
 
-  /**
-   * Back to voxels: snap to the nearest face-down orientation, inverse-sample
-   * the world cells in the bounds, then drop the set until it rests on
-   * something (snapping can leave it a fraction above the ground).
-   */
-  private settle(b: Body): void {
-    const q = nearestAxis(b.q);
-    const inv = conj(q);
-    // body voxels sit on an integer lattice offset from the centre of mass by o
-    const o = b.local[0].p;
-    const lookup = new Map<string, number>();
-    for (const v of b.local) lookup.set(sub(v.p, o).map(Math.round).join(','), v.mat);
-    let lo: V3 = [Infinity, Infinity, Infinity];
-    let hi: V3 = [-Infinity, -Infinity, -Infinity];
-    for (const v of b.local) {
-      const p = add(b.pos, rotate(q, v.p));
-      lo = [Math.min(lo[0], p[0]), Math.min(lo[1], p[1]), Math.min(lo[2], p[2])];
-      hi = [Math.max(hi[0], p[0]), Math.max(hi[1], p[1]), Math.max(hi[2], p[2])];
-    }
-    const cells: Voxel[] = [];
-    for (let z = Math.floor(lo[2] - 1); z <= Math.ceil(hi[2] + 1); z++)
-      for (let y = Math.floor(lo[1] - 1); y <= Math.ceil(hi[1] + 1); y++)
-        for (let x = Math.floor(lo[0] - 1); x <= Math.ceil(hi[0] + 1); x++) {
-          // the body-space point this world cell's centre maps to
-          const l = rotate(inv, sub([x + 0.5, y + 0.5, z + 0.5], b.pos));
-          const key = sub(l, o).map(Math.round).join(',');
-          const m = lookup.get(key);
-          if (m !== undefined) cells.push({ x, y, z, mat: m });
-        }
-    if (!cells.length) return;
-    // drop until some cell has solid world directly under it
-    const occ = new Set(cells.map((c) => `${c.x},${c.y},${c.z}`));
-    for (let drop = 0; drop < 8; drop++) {
-      const resting = cells.some((c) => c.z <= 0 || (!occ.has(`${c.x},${c.y},${c.z - 1}`) && this.world.matAt(c.x, c.y, c.z - 1)));
-      if (resting) break;
-      for (const c of cells) c.z--;
-      occ.clear();
-      for (const c of cells) occ.add(`${c.x},${c.y},${c.z}`);
-    }
-    this.onSettle?.(cells, b);
-  }
-
   /** Voxels for the renderer: centre xyz, material, quaternion (f32 bits). */
   pack(): { data: Uint32Array; count: number } {
     let n = 0;
@@ -328,18 +315,4 @@ export class Bodies {
     }
     return { data: u, count: n };
   }
-}
-
-/** The axis-aligned orientation nearest q. */
-function nearestAxis(q: Q): Q {
-  let best = AXIS_QS[0];
-  let bd = -1;
-  for (const a of AXIS_QS) {
-    const d = Math.abs(a[0] * q[0] + a[1] * q[1] + a[2] * q[2] + a[3] * q[3]);
-    if (d > bd) {
-      bd = d;
-      best = a;
-    }
-  }
-  return best;
 }

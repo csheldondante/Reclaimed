@@ -1,5 +1,6 @@
-// Structural integrity and falling pieces (round 14, BACKLOG F7) — the
-// sandbox's physics playground. Places where structures changed (a smash, a
+// Structural integrity and falling pieces (round 14, BACKLOG F7; round 17
+// K1: bodies sleep where they lie, projected into the terrain grid, within a
+// budget) — the sandbox's physics playground. Places where structures changed (a smash, a
 // placed model, a cyclone passing, a body landing) are marked dirty; a few
 // times a second the layers are read back, the dirty boxes analysed
 // (fracture.ts), what breaks free is cut out of the world and becomes a
@@ -10,10 +11,9 @@
 // span-support rule would turn overhangs to rubble before this sees them).
 
 import { packInterval, readColumn, columnSlots, type Interval } from '../world/layout';
-import { mergeColumn } from '../world/models';
 import { MAT } from '../world/materials';
 import { analyse, WorldVox, type Voxel } from './fracture';
-import { Bodies } from './bodies';
+import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
 import { ignoreTeardown } from '../gpu/pipeline';
 
@@ -30,17 +30,25 @@ export class Integrity {
   /** chips where something crumbles or a body hits hard */
   onChips?: (x: number, y: number, z: number, count: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, lastMs: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, lastMs: 0 };
+  /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
+   *  GPU's bodyProj texture and the bodies' own collision share it */
+  readonly proj: Float32Array;
+  /** budget for sleeping bodies (DECISIONS round 17) */
+  static readonly MAX_SLEEPING = 64;
+  static readonly MAX_SLEEP_VOXELS = 16384;
 
   constructor(private core: WorldCore) {
     this.world = new WorldVox(core.packed, new Uint32Array(0));
     this.bodies = new Bodies(this.world);
-    this.bodies.onSettle = (cells) => {
+    const N = core.dims.w * core.dims.h;
+    this.proj = new Float32Array(N * 4);
+    this.resetProjection();
+    this.bodies.proj = this.proj;
+    this.bodies.onSleep = () => {
       this.stats.settled++;
-      this.addCells(cells);
-      const xs = cells.map((c) => c.x);
-      const ys = cells.map((c) => c.y);
-      this.markBox(Math.min(...xs) - 3, Math.min(...ys) - 3, Math.max(...xs) + 4, Math.max(...ys) + 4);
+      this.keepBudget();
+      this.project();
     };
     this.bodies.onImpact = (speed, at) => this.onChips?.(at[0], at[1], at[2], Math.min(12, Math.round(speed / 3)));
   }
@@ -57,6 +65,91 @@ export class Integrity {
   clear(): void {
     this.bodies.list = [];
     this.dirty = [];
+    this.project();
+  }
+
+  private resetProjection(): void {
+    for (let i = 0; i < this.proj.length; i += 4) {
+      this.proj[i] = -1;
+      this.proj[i + 1] = 0;
+    }
+  }
+
+  /**
+   * Rasterise every sleeping body into the terrain grid: per column, the top
+   * and bottom of any body voxel over it (each voxel's rotated-cube box, so a
+   * little generous at skewed edges). Written to the bodyProj texture.
+   */
+  private project(): void {
+    this.resetProjection();
+    const { w: W, h: H } = this.core.dims;
+    const P = this.proj;
+    for (const b of this.bodies.list) {
+      if (!b.asleep) continue;
+      this.bodies.voxelBounds(b, (lo, hi) => {
+        for (let y = Math.max(0, Math.floor(lo[1] + 0.15)); y <= Math.min(H - 1, Math.floor(hi[1] - 0.15)); y++)
+          for (let x = Math.max(0, Math.floor(lo[0] + 0.15)); x <= Math.min(W - 1, Math.floor(hi[0] - 0.15)); x++) {
+            const i = (y * W + x) * 4;
+            if (P[i] < 0) {
+              P[i] = hi[2];
+              P[i + 1] = lo[2];
+            } else {
+              P[i] = Math.max(P[i], hi[2]);
+              P[i + 1] = Math.min(P[i + 1], lo[2]);
+            }
+          }
+      });
+    }
+    const dev = this.core.host.gpu.device;
+    dev.queue.writeTexture({ texture: this.core.world.bodyProj }, P as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
+  }
+
+  /**
+   * Over budget (DECISIONS round 17: about 64 sleeping bodies, 16k voxels):
+   * the oldest small sleeping bodies crumble into loose ground where they lie
+   * (the oldest of all if none is small).
+   */
+  private keepBudget(): void {
+    for (;;) {
+      const sleeping = this.bodies.list.filter((b) => b.asleep);
+      const voxels = sleeping.reduce((s, b) => s + b.local.length, 0);
+      if (sleeping.length <= Integrity.MAX_SLEEPING && voxels <= Integrity.MAX_SLEEP_VOXELS) return;
+      const byAge = sleeping.sort((a, b) => a.sleptAt - b.sleptAt);
+      const victim = byAge.find((b) => b.local.length < 200) ?? byAge[0];
+      this.crumble(victim);
+    }
+  }
+
+  /**
+   * A body turns into loose ground where it lies: each voxel's volume goes to
+   * the column under it, as the loose material its own material breaks down
+   * to (concrete, brick, stone, metal → gravel; wood, canvas → ash; bone →
+   * dust). Through the looseAdd buffer, which the drift pass folds in.
+   */
+  crumble(b: Body): void {
+    const { w: W, h: H } = this.core.dims;
+    const add = new Map<number, { amount: number; mats: Map<number, number> }>();
+    for (const v of this.bodies.worldVoxels(b)) {
+      const x = Math.floor(v.p[0]);
+      const y = Math.floor(v.p[1]);
+      if (x < 0 || y < 0 || x >= W || y >= H) continue;
+      const i = y * W + x;
+      const m = looseFrom(v.mat);
+      const e = add.get(i) ?? { amount: 0, mats: new Map() };
+      e.amount += 1;
+      e.mats.set(m, (e.mats.get(m) ?? 0) + 1);
+      add.set(i, e);
+      this.onChips?.(v.p[0], v.p[1], v.p[2], 1);
+    }
+    const dev = this.core.host.gpu.device;
+    for (const [i, e] of add) {
+      let best: number = MAT.Rubble;
+      let n = -1;
+      for (const [m, c] of e.mats) if (c > n) [best, n] = [m, c];
+      dev.queue.writeBuffer(this.core.world.looseAdd, i * 8, new Float32Array([e.amount, best]));
+    }
+    this.bodies.list = this.bodies.list.filter((x) => x !== b);
+    this.stats.crumbledBodies++;
   }
 
   update(dt: number): void {
@@ -64,12 +157,17 @@ export class Integrity {
     const { data, count } = this.bodies.pack();
     this.core.renderer.setBodies(data, count);
     this.t -= dt;
-    if (this.busy || this.t > 0 || (!this.dirty.length && !this.bodies.list.length && this.world.slots.length)) return;
+    if (this.busy || this.t > 0 || (!this.dirty.length && !this.bodies.anyAwake && this.world.slots.length)) return;
     this.t = PASS;
     this.busy = true;
-    void this.core.readBuffer('layers').then((f) => {
+    // the layers (structures, solid ground) and the loose ground's depth
+    // (bodies lie on it) — read back together
+    void Promise.all([this.core.readBuffer('layers'), this.core.readTexture(this.core.world.drift)]).then(([f, d]) => {
       this.busy = false;
       this.world.slots = new Uint32Array(f.buffer);
+      const loose = new Float32Array(d.w * d.h);
+      for (let i = 0; i < loose.length; i++) loose[i] = d.data[i * 4];
+      this.bodies.loose = loose;
       this.pass();
     }, ignoreTeardown);
   }
@@ -126,44 +224,6 @@ export class Integrity {
     }
   }
 
-  /**
-   * Write a settled body's cells into the world. A cell already taken (the
-   * body came to rest a little into something) is put on the top of its
-   * column as rubble instead.
-   */
-  private addCells(cells: Voxel[]): void {
-    const byCol = new Map<number, Voxel[]>();
-    const { w: W, h: H, zMax } = this.core.dims;
-    for (const c of cells) {
-      if (c.x < 0 || c.y < 0 || c.x >= W || c.y >= H || c.z < 0 || c.z >= zMax - 1) continue;
-      const k = c.y * W + c.x;
-      if (!byCol.has(k)) byCol.set(k, []);
-      byCol.get(k)!.push(c);
-    }
-    for (const [k, cs] of byCol) {
-      const x = k % W;
-      const y = (k - x) / W;
-      const col = readColumn(this.core.packed, this.world.slots, x, y);
-      const runs: Interval[] = [];
-      let displaced = 0;
-      for (const c of cs.sort((a, b) => a.z - b.z)) {
-        if (this.world.matAt(x, y, c.z)) {
-          displaced++;
-          continue;
-        }
-        const last = runs[runs.length - 1];
-        if (last && last.z1 === c.z && last.mat === c.mat) last.z1++;
-        else runs.push({ z0: c.z, z1: c.z + 1, mat: c.mat, aux: 15 << 4 });
-      }
-      let merged = mergeColumn(col, runs);
-      if (displaced) {
-        const top = merged.length ? merged[merged.length - 1].z1 : 0;
-        if (top + displaced < zMax - 1) merged = mergeColumn(merged, [{ z0: top, z1: top + displaced, mat: MAT.Rubble }]);
-      }
-      this.writeColumn(x, y, merged);
-    }
-  }
-
   private writeColumn(x: number, y: number, col: Interval[]): void {
     const { base, k } = columnSlots(this.core.packed, x, y);
     if (col.length > k) {
@@ -179,4 +239,11 @@ export class Integrity {
     this.world.slots.set(data, base);
     this.core.host.gpu.device.queue.writeBuffer(this.core.world.layers, base * 4, data);
   }
+}
+
+/** What a body voxel of material m crumbles to (a loose material). */
+function looseFrom(m: number): number {
+  if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves) return MAT.Ash;
+  if (m === MAT.Bone) return MAT.Drift;
+  return MAT.Rubble;
 }

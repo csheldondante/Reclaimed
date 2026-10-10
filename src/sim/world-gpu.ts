@@ -80,6 +80,11 @@ export class WorldGpu {
   readonly driftNext: GPUTexture;
   readonly driftView: GPUTextureView;
   readonly driftNextView: GPUTextureView;
+  /** sleeping rigid bodies projected per column: top, bottom (top < 0: none) — game/integrity.ts writes it */
+  readonly bodyProj: GPUTexture;
+  readonly bodyProjView: GPUTextureView;
+  /** loose material added from the CPU (a crumbled body): per column amount, material — drift.wgsl folds and zeroes it */
+  readonly looseAdd: GPUBuffer;
   /** the loose layers beneath the top one (drift.wgsl; three packed mat·1000 + depth) */
   readonly strata: GPUTexture;
   readonly strataNext: GPUTexture;
@@ -190,6 +195,14 @@ export class WorldGpu {
     this.textures.push(this.drift, this.driftNext);
     this.driftView = this.drift.createView();
     this.driftNextView = this.driftNext.createView();
+    this.bodyProj = device.createTexture({ label: 'bodyProj', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.bodyProj);
+    this.bodyProjView = this.bodyProj.createView();
+    {
+      const none = new Float32Array(N * 4);
+      for (let k = 0; k < N; k++) none[k * 4] = -1;
+      device.queue.writeTexture({ texture: this.bodyProj }, none, { bytesPerRow: this.w * 16 }, dsize);
+    }
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
     this.strataNext = device.createTexture({ label: 'strataNext', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.strata, this.strataNext);
@@ -221,6 +234,7 @@ export class WorldGpu {
     // folds it back in where they land — round 15)
     this.contamDelta = this.buf('contamDelta', N * 8, S);
     this.driftDelta = this.buf('driftDelta', N * 4, S);
+    this.looseAdd = this.buf('looseAdd', N * 8, S);
   }
 
   private owned: GPUBuffer[] = [];

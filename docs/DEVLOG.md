@@ -1726,3 +1726,25 @@ from both side neighbours 6.0 % → 1.2 % (calm 0.4 %); the surface roughness
 number under the gale stays ~0.12 (it's mostly real ripples — a first try
 that "fixed" it to 0.07 only did so by starving the wind with flicker). The
 before/after images: the speckled dust/sand patch is now one coherent patch.
+
+## 2026-10-09 — K1: bodies sleep in their own frame, projected into the grid
+
+Agreed with the user (round 17): rigid bodies keep their own rotated frame;
+the transition back to voxels was too finicky.
+- A body that comes to rest stays a body, as it lies (no snapping to the
+  grid, no nudge toward face-down), asleep: no physics, only drawn.
+- Sleeping bodies are rasterised into the terrain grid: per column the top
+  and bottom of any body voxel over it (each voxel's rotated-cube box), in
+  the bodyProj texture (for K2: loose ground, water) and on the CPU, where
+  moving bodies now collide with sleeping ones (they can pile up).
+- Bodies also lie on the loose ground now (CPU read-back of its depth with
+  the layers), settling 0.35 cells into it — not through it to the rock.
+- Budget (user: a cap, oldest crumbles): over 64 sleeping bodies or 16k
+  voxels the oldest small ones (< 200 voxels; else the oldest) crumble into
+  loose ground where they lie — concrete, brick, stone, metal → gravel;
+  wood, canvas → ash; bone → dust — through a CPU-written looseAdd buffer
+  the drift pass folds in.
+Measured: the garden tower with its foot broken topples and falls asleep
+skewed (quaternion −0.69, −0.05, 0.10, 0.71), 189 voxels, projected over
+92–104 columns (top 16); crumbling it adds 178 cells of loose gravel where
+it lay.

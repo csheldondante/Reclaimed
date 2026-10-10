@@ -35,6 +35,8 @@
 // dust that came down here from the air (particles.wgsl), the second half of
 // the exchange buffer, ×1e5
 @group(0) @binding(8) var<storage, read_write> exchange: array<atomic<i32>>;
+// loose material added from the CPU (a crumbled rigid body): amount, material
+@group(0) @binding(9) var<storage, read_write> looseAdd: array<vec2<f32>>;
 @group(0) @binding(16) var driftOut: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(19) var strataTex: texture_2d<f32>;
 @group(0) @binding(20) var strataOut: texture_storage_2d<rgba32float, write>;
@@ -323,6 +325,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (pour > 0.0) {
     if (pourMat != s.mat) { pushTop(&s, pourMat); }
     s.top += pour;
+  }
+  // a rigid body that crumbled here (game/integrity.ts)
+  let la = looseAdd[i];
+  if (la.x > 0.0) {
+    let lm = u32(la.y + 0.5);
+    if (lm != s.mat) { pushTop(&s, lm); }
+    s.top += la.x;
+    looseAdd[i] = vec2<f32>(0.0);
   }
   if (other > 0.0) {
     // a trace of something else blends in; a real amount starts a layer

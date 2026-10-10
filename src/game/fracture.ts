@@ -60,6 +60,19 @@ export class WorldVox {
     return 0;
   }
 
+  /** Top of the column's highest solid run (0 if empty or off the map). */
+  colTop(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return 0;
+    const { base, k } = columnSlots(this.packed, x, y);
+    let top = 0;
+    for (let s = 0; s < k; s++) {
+      const v = this.slots[base + s];
+      if (v === 0) break;
+      top = (v >>> 8) & 0xff;
+    }
+    return top;
+  }
+
   /** Top of the solid run containing (x, y, z) (z itself must be solid). */
   runTop(x: number, y: number, z: number): number {
     const { base, k } = columnSlots(this.packed, x, y);
