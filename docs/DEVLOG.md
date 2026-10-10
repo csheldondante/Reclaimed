@@ -1918,3 +1918,29 @@ the hold fades as the top layer over them goes from 1 to 2 cells deep (it
 has buried them), and beyond that it moves and slumps like any other.
 Measured, same scenario, 80 s: the deepest column stays at the map's
 pre-existing 6.9–7.4 (it was 17.7–18.1).
+
+## 2026-10-10 — dust clouds at breaks; no jump when a piece breaks free (O4, O5)
+
+User: better by a good bit; add see-through dust clouds and particles to
+hide what's still janky; the static → rigid-body switch sometimes jumps.
+- The jump, measured: tracking each new body's first 12 frames, the garden
+  tower and the diving board rose steadily at exactly the 1.5 cells/s
+  push-out cap from frame one. Their collision points (voxel corners) sat
+  exactly on their outer faces, so floor() put them in the neighbouring
+  column. Sand banked 3.5–4 cells deep against the structure there, and the
+  points read as buried 0.15–0.8 deep. Before today's push cap that was an
+  instant pop upward. Points now sit 0.04 cells inside their voxel. After
+  the change: no false contacts at spawn, and all three pieces start from
+  rest.
+- Clouds: bursts can now spawn the wind-haze particle (big, soft,
+  see-through; it swells, drifts and thins over 4–7 s), tinted by a
+  material passed in the payload slot. One puff per five dust grains,
+  wherever dust is made: every impact, every shatter or crater, the Break
+  tool and lightning on bodies, and where a piece tears free (at its
+  lowest cells).
+- Chips now go out as one burst per column instead of one per voxel. The
+  particle queue holds 64 bursts a tick and drops the rest; a crumble of
+  dozens of voxels was filling it and crowding out its own dust cloud.
+Checked headlessly (garden: tower, diving board and bridge pillar cut at
+once): grey clouds round the shattering tower and the falling diving
+board, a faint brick-red one at the bridge pillar.

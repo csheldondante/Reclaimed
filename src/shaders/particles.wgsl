@@ -424,6 +424,12 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
       spawnFull(a.xyz, vec3<f32>(0.0), 1.3, kind, 0.0, h, 0u, u32(b.z));
       continue;
     }
+    if (kind == K_HAZE) {
+      // a dust cloud where something broke (round 21): the payload slot names
+      // the material, which tints it; it swells, drifts and thins over ~5 s
+      spawnFull(a.xyz + r * b.w, dir * b.y * (0.4 + 0.6 * fract(r.y * 9.1)), 4.0 + (r.x + 0.5) * 3.0, kind, 0.0, h, 0u, dustTag(u32(b.z)));
+      continue;
+    }
     if (kind == K_BIRD) {
       // birds arrive looking for a tree: fly in toward the middle of the map
       // (or wherever they were released), then search for a crown to perch on

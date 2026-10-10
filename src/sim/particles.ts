@@ -41,7 +41,7 @@ export interface Burst {
   z: number;
   count: number;
   speed: number;
-  /** total contamination payload split across the burst */
+  /** total contamination payload split across the burst (Haze: the material that tints it) */
   payload?: number;
   spread?: number;
 }

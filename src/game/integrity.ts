@@ -42,8 +42,8 @@ export class Integrity {
   private busy = false;
   /** chips where something crumbles or a body hits hard */
   onChips?: (x: number, y: number, z: number, count: number) => void;
-  /** a puff of dust where a body hits something (count, spread in cells) */
-  onDust?: (x: number, y: number, z: number, count: number, spread: number) => void;
+  /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
+  onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
   stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
@@ -167,7 +167,8 @@ export class Integrity {
   breakBodies(at: [number, number, number], radius: number): boolean {
     const { removed, crumbs } = this.bodies.breakAt(at, radius);
     if (!removed.length) return false;
-    for (const v of removed) this.onChips?.(v.p[0], v.p[1], v.p[2], 1);
+    this.chips(removed.map((v) => v.p), 1);
+    this.onDust?.(at[0], at[1], at[2], Math.min(50, 8 + removed.length * 2), radius, mainMat(removed));
     this.toLoose(crumbs);
     this.project();
     return true;
@@ -176,7 +177,8 @@ export class Integrity {
   /** A body hit something at `speed` (cells/s) at world point `at`. */
   private impact(b: Body, speed: number, at: [number, number, number]): void {
     this.stats.impacts++;
-    this.onDust?.(at[0], at[1], at[2], Math.min(40, Math.round(4 + speed * 4)), 0.6 + speed * 0.2);
+    const mat = mainMat(b.local);
+    this.onDust?.(at[0], at[1], at[2], Math.min(40, Math.round(4 + speed * 4)), 0.6 + speed * 0.2, mat);
     if (speed < IMPACT_BREAK) return;
     const weak = b.local.reduce((s, v) => s + impactReach(v.mat), 0) / b.local.length;
     const k = Math.min(8, Math.floor((weak * speed * speed * b.local.length) / SHATTER));
@@ -186,7 +188,7 @@ export class Integrity {
     if (k >= 2) this.stats.shatters++;
     if (!removed.length && !crumbs.length) return;
     this.stats.shattered += removed.length + crumbs.length;
-    this.onDust?.(at[0], at[1], at[2], Math.min(60, removed.length * 3), impactRadius(speed));
+    this.onDust?.(at[0], at[1], at[2], Math.min(60, 10 + removed.length * 3), impactRadius(speed) + 0.5, mat);
     this.toLoose([...removed, ...crumbs]);
     this.project();
   }
@@ -209,9 +211,27 @@ export class Integrity {
       e.amount += 1;
       e.mats.set(m, (e.mats.get(m) ?? 0) + 1);
       add.set(i, e);
-      this.onChips?.(v.p[0], v.p[1], v.p[2], 1);
     }
+    this.chips(vox.map((v) => v.p), 1);
     this.flushLoose();
+  }
+
+  /**
+   * Chips at some points, `each` per point, as one burst per column (the
+   * particle queue holds 64 bursts a tick; one per voxel crowded out the
+   * dust clouds).
+   */
+  private chips(pts: [number, number, number][], each: number): void {
+    const cols = new Map<string, { p: [number, number, number]; n: number }>();
+    for (const p of pts) {
+      const k = `${Math.floor(p[0])},${Math.floor(p[1])}`;
+      const e = cols.get(k);
+      if (e) {
+        e.n += each;
+        e.p[2] = Math.max(e.p[2], p[2]);
+      } else cols.set(k, { p: [...p], n: each });
+    }
+    for (const { p, n } of cols.values()) this.onChips?.(p[0], p[1], p[2], Math.min(12, n));
   }
 
   /**
@@ -299,13 +319,19 @@ export class Integrity {
       if (r.crumble.length) {
         this.removeCells(r.crumble);
         this.stats.crumbled += r.crumble.length;
-        for (const c of r.crumble) this.onChips?.(c.x + 0.5, c.y + 0.5, c.z + 0.5, 4);
+        this.chips(r.crumble.map((c) => [c.x + 0.5, c.y + 0.5, c.z + 0.5]), 4);
         // what the cut held is looked at again next pass (it now hangs free)
         this.markBox(x0, y0, x1, y1);
       }
       for (const cells of r.bodies) {
         this.removeCells(cells);
         this.bodies.spawn(cells);
+        // a cloud where it tore free (its lowest cells), to soften the moment
+        const z0 = Math.min(...cells.map((c) => c.z));
+        const foot = cells.filter((c) => c.z <= z0 + 1);
+        const fx = foot.reduce((s, c) => s + c.x, 0) / foot.length + 0.5;
+        const fy = foot.reduce((s, c) => s + c.y, 0) / foot.length + 0.5;
+        this.onDust?.(fx, fy, z0 + 0.5, Math.min(40, 10 + foot.length), Math.sqrt(foot.length) * 0.6 + 0.5, mainMat(cells));
         this.stats.bodies++;
       }
     }
@@ -362,4 +388,17 @@ function looseFrom(m: number): number {
   if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves) return MAT.Ash;
   if (m === MAT.Bone) return MAT.Drift;
   return MAT.Rubble;
+}
+
+/** The commonest material among some voxels. */
+function mainMat(vox: { mat: number }[]): number {
+  const n = new Map<number, number>();
+  let best = 0;
+  let most = 0;
+  for (const v of vox) {
+    const c = (n.get(v.mat) ?? 0) + 1;
+    n.set(v.mat, c);
+    if (c > most) [best, most] = [v.mat, c];
+  }
+  return best;
 }

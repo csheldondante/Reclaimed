@@ -38,9 +38,9 @@ user) · `deferred` (agreed for later).
 |---|---|---|---|
 | O1 | Bodies crumble much more easily on impact and break up into pieces; impacts make dust and chips | S–M | done `1011af2` |
 | O2 | Speed limit on bodies (~1.5× the topple speed), collision response damped further | S | done `1011af2` |
-| O3 | Bug: in storms, columns of loose ground rise into the sky | S | done (this commit) |
-| O4 | See-through dust clouds and debris particles where bodies break and land (hide the remaining jank) | S | open |
-| O5 | The switch from static structure to rigid body sometimes jumps instead of moving smoothly | S–M | open |
+| O3 | Bug: in storms, columns of loose ground rise into the sky | S | done `5cad379` |
+| O4 | See-through dust clouds and debris particles where bodies break and land (hide the remaining jank) | S | done (this commit) |
+| O5 | The switch from static structure to rigid body sometimes jumps instead of moving smoothly | S–M | done (this commit) |
 
 ## Round 20 (2026-10-10, session 3)
 

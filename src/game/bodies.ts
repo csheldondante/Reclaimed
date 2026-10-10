@@ -70,6 +70,8 @@ export interface Body {
   id: number;
 }
 
+/** How far (cells) collision points sit inside the voxels' corners. */
+const POINT_INSET = 0.04;
 /** Impact speed (cells/s) of a falling body that wakes a sleeping one it hits. */
 const WAKE_IMPACT = 3;
 /** Impacts at least this hard (cells/s) are reported (onImpact). */
@@ -187,11 +189,14 @@ export class Bodies {
       ].some(([dx, dy, dz]) => !occ.has(key(add(v.p, [dx, dy, dz]))));
       if (!exposed) continue;
       for (let k = 0; k < 8; k++) {
-        const p: V3 = add(v.p, [(k & 1) - 0.5, ((k >> 1) & 1) - 0.5, (k >> 2) - 0.5]);
-        const kk = sub(p, o).map((x) => Math.round(x * 2)).join(',');
+        const corner: V3 = [(k & 1) - 0.5, ((k >> 1) & 1) - 0.5, (k >> 2) - 0.5];
+        const kk = sub(add(v.p, corner), o).map((x) => Math.round(x * 2)).join(',');
         if (seen.has(kk)) continue;
         seen.add(kk);
-        points.push(sub(p, c));
+        // a little inside the voxel: a corner exactly on a face belongs to the
+        // neighbouring column too (floor), so a freshly cut piece "touched"
+        // the sand banked against it and was pushed up out of it (round 21)
+        points.push(sub(add(v.p, scale(corner, 1 - 2 * POINT_INSET)), c));
       }
     }
     if (points.length > 600) points = points.filter((_, i) => i % Math.ceil(points.length / 600) === 0);
