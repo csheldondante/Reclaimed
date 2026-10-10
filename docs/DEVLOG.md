@@ -1841,3 +1841,18 @@ cursor (looks cool, sets fires).
 Measured (sandbox, a pylon placed): a tap 15 cells from the pylon strikes
 the pylon's top (z 32) and arcs back; a tap 60 cells away strikes within 4
 cells of the click.
+
+## 2026-10-10 — night callers and frogs (M4, M5)
+
+User: owls and crickets instead of birds at night; frogs near greened water.
+- Birdsong fades out with the night (fully silent past half-dark; it used
+  to keep a tenth of its daytime rate). After dark, crickets (bursts of 3–5
+  short 4.6–5 kHz chirps) where there's life in view, and now and then an
+  owl ("hoo … hoo-hoo", ~380 Hz, gliding down) where there are woods.
+- Frogs: the level's audio sampling counts water with green (growth ≥ 1.5)
+  two cells around it near the view centre; frogs croak (a low buzzy
+  sawtooth through a low-pass, pulsing ~35 Hz, two pulses) by day, more at
+  dusk/night and in rain.
+Check (headless, audio started, sandbox pond greened, midnight, 20 s): the
+debug log shows frogs ×5 and crickets, no birdsong. Unheard by an agent —
+listed for the user.

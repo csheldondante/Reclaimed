@@ -41,8 +41,8 @@ The batch now (M), then the larger work (N) after an architecture review.
 | M1 | Rigid bodies feel bigger: slower fall (lower gravity, air drag), more rotational inertia, soft contacts (no bounce, sink in slightly, gentle push-out); crumbs up to ~12 voxels become loose ground | S | done |
 | M2 | Every click: a little ring of wind pushing out from the cursor | S–M | done |
 | M3 | Lightning: small radius around the click (rolling sphere), biased to metal within ~40 cells; a branching chain from what it hits to near the cursor, setting fires | S–M | done |
-| M4 | Night sounds: crickets and owls instead of birdsong | S | open |
-| M5 | Frogs near water with green around it | S | open |
+| M4 | Night sounds: crickets and owls instead of birdsong | S | done |
+| M5 | Frogs near water with green around it | S | done |
 | M6 | Metal drums ring by their size (connected metal voxels), snapped to a pentatonic scale | M | open |
 | M7 | Handoff + memory for the remaining work | S | open |
 | N1 | Architecture review: consolidate (solid intervals; one loose stack for everything soft — rubble, litter, the valley's soil; liquids carry it; wind-borne particles settle into it) | M | next session |

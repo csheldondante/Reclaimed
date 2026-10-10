@@ -34,6 +34,8 @@ export interface AudioState {
   fire: number;
   /** 0..1 how barren the land in view is: drives the desolate howl (round 10) */
   barren: number;
+  /** 0..1 water with green around it near the view centre: frogs (round 20) */
+  frogs?: number;
 }
 
 export class Ambience {
@@ -56,6 +58,10 @@ export class Ambience {
   private dragPan?: StereoPannerNode;
   private noise?: AudioBuffer;
   private nextBird = 0;
+  /** night callers (crickets, owls) and frogs: next call times */
+  private nextCricket = 0;
+  private nextOwl = 0;
+  private nextFrog = 0;
   private nextRattle = 0;
   private gustTarget = 0.5;
   private nextGust = 0;
@@ -316,9 +322,30 @@ export class Ambience {
     if (t > this.nextBird) {
       // birdsong comes from the woods in view, not from the map as a whole
       // birds fall silent in the rain (their chirps sounded like squeaks in storms)
-      const rate = s.rain > 0.05 ? 0 : s.lifeNear * s.lifeNear * 1.2 * (1 - s.night * 0.9); // calls / s
+      // (night: the birds sleep; crickets and owls take over — round 20)
+      const rate = s.rain > 0.05 ? 0 : s.lifeNear * s.lifeNear * 1.2 * Math.max(0, 1 - s.night * 1.6); // calls / s
       if (rate > 0.01 && Math.random() < 0.85) this.birdCall();
       this.nextBird = t + (rate > 0.01 ? 0.4 + Math.random() * (2 / rate) : 2);
+    }
+    const dark = Math.max(0, (s.night - 0.35) / 0.65);
+    if (t > this.nextCricket) {
+      // crickets in the grass after dark
+      const rate = s.rain > 0.1 ? 0 : s.lifeNear * dark * 2.5;
+      if (rate > 0.02) this.cricket();
+      this.nextCricket = t + (rate > 0.02 ? 0.15 + Math.random() * (1.2 / rate) : 2);
+    }
+    if (t > this.nextOwl) {
+      // now and then an owl, where there are woods
+      const rate = s.lifeNear * s.lifeNear * dark * 0.12;
+      if (rate > 0.005 && Math.random() < 0.7) this.owl();
+      this.nextOwl = t + (rate > 0.005 ? 4 + Math.random() * (1 / rate) : 6);
+    }
+    if (t > this.nextFrog) {
+      // frogs where the water has green around it — more at dusk and in rain
+      const f = s.frogs ?? 0;
+      const rate = f * (0.6 + 1.2 * s.night + Math.min(1, s.rain));
+      if (rate > 0.03) this.frog();
+      this.nextFrog = t + (rate > 0.03 ? 0.3 + Math.random() * (1.5 / rate) : 2);
     }
     // fire: crackles and pops, denser the more is burning
     if (s.fire > 0.01 && Math.random() < s.fire * 0.5 && !this.shot('fire crackle')) {
@@ -688,6 +715,92 @@ export class Ambience {
     p.pan.value = Math.max(-1, Math.min(1, base + (Math.random() - 0.5) * 2 * (at === undefined ? 0 : spread)));
     p.connect(dest ?? this.ambient!);
     return p;
+  }
+
+  /** A cricket: a short burst of high chirps. */
+  private cricket(): void {
+    if (this.ctx && this.shot('cricket')) return;
+    const ctx = this.ctx!;
+    const t0 = ctx.currentTime + 0.02;
+    const pan = this.panner(undefined, undefined, 0.6);
+    const o = ctx.createOscillator();
+    o.frequency.value = 4600 + Math.random() * 400;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    o.connect(g).connect(pan);
+    const pulses = 3 + Math.floor(Math.random() * 3);
+    const vol = 0.008 + Math.random() * 0.006;
+    let t = t0;
+    for (let i = 0; i < pulses; i++) {
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.004);
+      g.gain.linearRampToValueAtTime(0, t + 0.018);
+      t += 0.032;
+    }
+    o.start(t0);
+    o.stop(t + 0.05);
+  }
+
+  /** An owl: "hoo … hoo-hoo", soft and low. */
+  private owl(): void {
+    if (this.ctx && this.shot('owl')) return;
+    const ctx = this.ctx!;
+    const t0 = ctx.currentTime + 0.05;
+    const pan = this.panner(undefined, undefined, 0.4);
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    o.connect(g).connect(pan);
+    const f = 360 + Math.random() * 60;
+    const vol = 0.03;
+    const hoots: [number, number][] = [[0, 0.42], [0.75, 0.18], [1.0, 0.5]];
+    for (const [at, dur] of hoots) {
+      const t = t0 + at;
+      o.frequency.setValueAtTime(f * 1.04, t);
+      o.frequency.exponentialRampToValueAtTime(f * 0.94, t + dur);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(vol, t + 0.07);
+      g.gain.setValueAtTime(vol, t + dur - 0.08);
+      g.gain.linearRampToValueAtTime(0, t + dur);
+    }
+    o.start(t0);
+    o.stop(t0 + 1.6);
+  }
+
+  /** A frog: a low, buzzy two-pulse croak. */
+  private frog(): void {
+    if (this.ctx && this.shot('frog')) return;
+    const ctx = this.ctx!;
+    const t0 = ctx.currentTime + 0.02;
+    const pan = this.panner(undefined, undefined, 0.6);
+    const o = ctx.createOscillator();
+    o.type = 'sawtooth';
+    o.frequency.value = 150 + Math.random() * 110;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 900;
+    const g = ctx.createGain();
+    g.gain.value = 0;
+    // the buzz: amplitude pulsing ~35 times a second
+    const am = ctx.createOscillator();
+    am.frequency.value = 30 + Math.random() * 12;
+    const amDepth = ctx.createGain();
+    amDepth.gain.value = 0.5;
+    const body = ctx.createGain();
+    body.gain.value = 0.5;
+    am.connect(amDepth).connect(body.gain);
+    o.connect(lp).connect(body).connect(g).connect(pan);
+    const vol = 0.035 + Math.random() * 0.02;
+    for (const [at, dur] of [[0, 0.11], [0.17, 0.14]] as const) {
+      g.gain.setValueAtTime(0, t0 + at);
+      g.gain.linearRampToValueAtTime(vol, t0 + at + 0.015);
+      g.gain.linearRampToValueAtTime(0, t0 + at + dur);
+    }
+    o.start(t0);
+    am.start(t0);
+    o.stop(t0 + 0.4);
+    am.stop(t0 + 0.4);
   }
 
   private birdCall(dest?: AudioNode, at?: number): void {

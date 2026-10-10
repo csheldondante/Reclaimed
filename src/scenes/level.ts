@@ -507,7 +507,7 @@ export class LevelScene implements Scene {
    * spillway), and living land for birdsong/insects — each fading with
    * distance, within a hearing radius that grows as the camera zooms out.
    */
-  private heard(): { rain: number; rainPan: number; flow: number; lifeNear: number; zoom: number } {
+  private heard(): { rain: number; rainPan: number; flow: number; lifeNear: number; zoom: number; frogs: number } {
     const { camera, weather, dims, map } = this.core;
     const [cx, cy] = camera.target;
     const R = Math.max(18, Math.min(160, camera.viewportW / camera.zoom / 2));
@@ -523,6 +523,8 @@ export class LevelScene implements Scene {
     let water = 0;
     let life = 0;
     let n = 0;
+    // water with green around it (frogs; round 20)
+    let frogs = 0;
     const veg = this.vegCache;
     const wat = this.waterCache;
     for (let j = -4; j <= 4; j++)
@@ -534,6 +536,14 @@ export class LevelScene implements Scene {
         const k = y * dims.w + x;
         if (veg) life += fall * Math.min(1, Math.max(0, (veg[k] - 1.2) / 2.3));
         if (wat) water += fall * Math.min(1, wat[k] / 0.6);
+        if (wat && veg && wat[k] > 0.1) {
+          let green = 0;
+          for (const o of [2, -2, 2 * dims.w, -2 * dims.w]) {
+            const q = k + o;
+            if (q >= 0 && q < veg.length && veg[q] >= 1.5) green++;
+          }
+          frogs += fall * (green / 4);
+        }
         n += fall;
       }
     const [dx, dy] = map.poi.dam;
@@ -544,6 +554,7 @@ export class LevelScene implements Scene {
       flow: Math.min(1, (n ? (water / n) * 2.2 : 0) + dam * 0.6),
       lifeNear: n ? Math.min(1, (life / n) * 1.6) : 0,
       zoom,
+      frogs: n ? Math.min(1, (frogs / n) * 6) : 0,
     };
   }
 
