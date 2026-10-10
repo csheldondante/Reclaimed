@@ -89,6 +89,39 @@ export class Hud {
     setTimeout(() => g.remove(), 700);
   }
 
+  /**
+   * A jagged arc between two screen points (lightning chaining from where it
+   * struck to near the cursor; round 20), with a small fork.
+   */
+  arc(x0: number, y0: number, x1: number, y1: number): void {
+    const pts: [number, number][] = [];
+    const steps = 10;
+    const len = Math.hypot(x1 - x0, y1 - y0);
+    const nx = -(y1 - y0) / Math.max(len, 1);
+    const ny = (x1 - x0) / Math.max(len, 1);
+    for (let i = 0; i <= steps; i++) {
+      const t = i / steps;
+      const j = i === 0 || i === steps ? 0 : (Math.random() - 0.5) * Math.min(40, len * 0.25);
+      pts.push([x0 + (x1 - x0) * t + nx * j, y0 + (y1 - y0) * t + ny * j]);
+    }
+    const d = pts.map(([a, b]) => `${a.toFixed(1)},${b.toFixed(1)}`).join(' ');
+    const g = document.createElementNS(NS, 'g');
+    g.setAttribute('class', 'bolt');
+    g.innerHTML = `<polyline points="${d}" class="bolt-glow"/><polyline points="${d}" class="bolt-core"/>`;
+    const [fx, fy] = pts[3 + Math.floor(Math.random() * 4)];
+    let fpts = `${fx},${fy}`;
+    let px = fx;
+    let py = fy;
+    for (let i = 0; i < 3; i++) {
+      px += (Math.random() - 0.5) * 30;
+      py += 10 + Math.random() * 14;
+      fpts += ` ${px.toFixed(1)},${py.toFixed(1)}`;
+    }
+    g.innerHTML += `<polyline points="${fpts}" class="bolt-core" style="stroke-width:1"/>`;
+    this.bolts.appendChild(g);
+    setTimeout(() => g.remove(), 700);
+  }
+
   /** @param stormReady 0..1 recharge of the summon control */
   /** @param rate Nature's net change per second (negative = the land is suffering) */
   update(nature: number, max: number, stormReady: number, rate = 0): void {

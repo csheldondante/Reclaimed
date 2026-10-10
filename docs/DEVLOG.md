@@ -1825,3 +1825,19 @@ painted wind, which relaxes away like any stroke.
 Measured (sandbox, one tap): painted wind 2.0–3.3 cells/s pointing outward
 at 3–4 cells from the click on every side, nothing at 8 cells — a breath
 (grass sways, light specks stir), well below dust's lifting threshold.
+
+## 2026-10-10 — lightning listens closely, but metal draws it (M3)
+
+User: a smaller radius around the click, but biased toward metal things
+within ~40 m — so it mostly listens closely and in some places goes
+elsewhere; and it should chain from the top thing it hits to near the
+cursor (looks cool, sets fires).
+- Target: the highest point within 4 cells of the tap; a metal top (rust,
+  steel) within 40 cells scores a bonus of 6 − 0.15·distance, so tall metal
+  nearby wins and far or low metal doesn't.
+- Drawn off to something else (> 2.5 cells away), it chains back: a jagged
+  arc from the strike to the tap (HUD), and a small strike at the tap that
+  sets fuel there alight (no crater).
+Measured (sandbox, a pylon placed): a tap 15 cells from the pylon strikes
+the pylon's top (z 32) and arcs back; a tap 60 cells away strikes within 4
+cells of the click.

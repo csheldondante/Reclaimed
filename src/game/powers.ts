@@ -259,17 +259,25 @@ export class Powers {
     const ty = Math.floor(cell / dims.w);
     nature.trySpend(COSTS.lightning);
     this.lastStrike = globals.time;
-    // lightning seeks the highest point near the tap
+    // where it strikes (round 20): it listens closely — the highest point
+    // within a few cells of the tap — but tall metal within ~40 cells draws
+    // it (a bonus fading with distance), so near a pylon or a tanker it goes
+    // there instead
     const surf = await this.d.readSurface();
+    const top = (x: number, y: number) => (this.topAt ? this.topAt(x, y) : surf[y * dims.w + x] & 0xff);
     let bx = tx;
     let by = ty;
     let best = -Infinity;
-    const R = 7;
-    for (let y = Math.max(0, ty - R); y <= Math.min(dims.h - 1, ty + R); y++)
-      for (let x = Math.max(0, tx - R); x <= Math.min(dims.w - 1, tx + R); x++) {
+    const NEAR = 4;
+    const METAL = 40;
+    for (let y = Math.max(0, ty - METAL); y <= Math.min(dims.h - 1, ty + METAL); y++)
+      for (let x = Math.max(0, tx - METAL); x <= Math.min(dims.w - 1, tx + METAL); x++) {
         const d = Math.hypot(x - tx, y - ty);
-        if (d > R) continue;
-        const score = (this.topAt ? this.topAt(x, y) : surf[y * dims.w + x] & 0xff) - 0.4 * d;
+        if (d > METAL) continue;
+        const m = (surf[y * dims.w + x] >> 8) & 0xff;
+        const metal = m === MAT.Rust || m === MAT.Steel;
+        if (d > NEAR && !metal) continue;
+        const score = top(x, y) + (metal ? 6 - 0.15 * d : 0);
         if (score > best) {
           best = score;
           bx = x;
@@ -285,6 +293,14 @@ export class Powers {
     globals.flash = 1;
     const [px, py] = this.d.camera.project(bx + 0.5, by + 0.5, bz);
     hud?.bolt(px, py);
+    // drawn off to something else: it chains back from there to the tap,
+    // and sets what's there alight (round 20)
+    if (Math.hypot(bx - tx, by - ty) > 2.5) {
+      const tz = top(tx, ty);
+      const [qx, qy] = this.d.camera.project(tx + 0.5, ty + 0.5, tz);
+      hud?.arc(px, py, qx, qy);
+      globals.events.push({ kind: EventKind.Lightning, x: tx + 0.5, y: ty + 0.5, radius: 2, strength: 4 });
+    }
     audio.thunder(1, 1, px / Math.max(1, this.d.camera.viewportW));
     this.d.particles.burst({ kind: PK.Chip, x: bx + 0.5, y: by + 0.5, z: bz + 0.5, count: 12, speed: 6, spread: 0.5 });
     void sx;
