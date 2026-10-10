@@ -1,43 +1,35 @@
-// Rigid bodies (round 14, BACKLOG F7; round 17 K1): pieces of structures that
-// broke free tumble as rigid voxel bodies (Noita-style) in their own frame,
-// collide with the voxel world (a CPU read-back of the layers), the loose
-// ground on it, and bodies already at rest — and when they come to rest they
-// stay as they are, skewed, asleep (no physics; only drawn). Integrity
-// projects the sleeping ones into the terrain grid (the per-column body
-// top/bottom the ground systems read) and keeps them within a budget.
+// Falling pieces (round 14, BACKLOG F7; round 17 K1; round 21): pieces of
+// structures that broke free, as voxel bodies in their own frame. They only
+// fall — straight down, no tumbling, sliding or bouncing (round 21: "only let
+// the building chunks fall… the rigid-body collision response breaks the
+// illusion of scale") — onto the voxel world (a CPU read-back of the
+// layers), the loose ground on it and bodies already at rest, and break up
+// when they land hard (integrity.ts). At rest they sleep as they lie (no
+// physics; only drawn). Integrity projects the sleeping ones into the
+// terrain grid (the per-column body top/bottom the ground systems read) and
+// keeps them within a budget.
 
 import type { Voxel, WorldVox } from './fracture';
 
 type V3 = [number, number, number];
 type Q = [number, number, number, number]; // x, y, z, w
 
-// Feel (round 20: "fall more slowly, much more inertia to feel bigger; better
-// to sink into each other slightly than spring back"): low gravity with air
-// drag, a rotational inertia scaled up so big pieces turn slowly, no bounce,
-// and soft contacts — each iteration resolves only part of the approach
-// speed, and overlap is pushed out gently past a small slop.
+// Feel (round 20: "fall more slowly… feel bigger; better to sink into each
+// other slightly than spring back"): low gravity with air drag and a top
+// speed (round 21: ~1.5× the old topple); landing takes most of the speed
+// away each substep, so a piece settles a little into what it lands on, and
+// overlap past a small slop is pushed out gently.
 const G = 10; // cells/s²
-const AIR_DRAG = 0.35; // 1/s on linear speed
-const INERTIA_SCALE = 3;
-const RESTITUTION = 0;
-const FRICTION = 0.6;
-const SOFTNESS = 0.25; // share of the approach speed each iteration takes away
+const AIR_DRAG = 0.35; // 1/s
+const MAX_V = 4; // cells/s
+const LANDING = 0.6; // share of the falling speed a contact takes away per substep
 const SLOP = 0.15; // cells of overlap allowed before pushing out
-const PUSH = 0.08; // share of the overlap past the slop pushed out per iteration
-// Speed limits (round 21: "a max speed, ~50 % faster than they topple now"):
-// the garden tower tipping over peaked at 2.6 cells/s at its centre, 0.36
-// rad/s and 6.7 cells/s at its tip; nothing — gravity, a contact, a push out
-// of an overlap — moves a body faster than 1.5× that.
-const MAX_V = 4; // cells/s, centre of mass
-const MAX_W = 0.55; // rad/s
-const MAX_POINT = 10; // cells/s, any point of the body
+const PUSH = 0.3; // share of the overlap past the slop pushed out per substep
 const MAX_PUSH = 1.5; // cells/s of push out of an overlap
 const SUBSTEPS = 2;
-const ITERATIONS = 4;
-/** below these speeds (cells/s, rad/s) for SLEEP_T a body settles */
+/** below this falling speed (cells/s) for SLEEP_T a body settles */
 const SLEEP_V = 0.15;
-const SLEEP_W = 0.06;
-const SLEEP_T = 1.5;
+const SLEEP_T = 1;
 /** bodies settle regardless after this long (s) */
 const MAX_AGE = 24;
 
@@ -48,11 +40,8 @@ export interface Body {
   points: V3[];
   pos: V3;
   q: Q;
-  v: V3;
-  w: V3;
-  invMass: number;
-  /** inverse inertia tensor in body space (row-major 3×3) */
-  invI: number[];
+  /** vertical speed (cells/s; ≤ 0: it only falls) */
+  vz: number;
   slow: number;
   age: number;
   /** strongest impact this frame (cells/s) and where (world), for crumbling, dust and sound */
@@ -60,8 +49,6 @@ export interface Body {
   hitAt: V3;
   /** s before an impact can break it (again) */
   grace: number;
-  /** distance from the centre of mass to the farthest collision point */
-  reach: number;
   /** at rest: no physics, projected into the terrain grid */
   asleep: boolean;
   /** when it fell asleep (s, Bodies clock): the oldest go first over budget */
@@ -95,34 +82,6 @@ export function rotate(q: Q, v: V3): V3 {
 function conj(q: Q): Q {
   return [-q[0], -q[1], -q[2], q[3]];
 }
-function qmul(a: Q, b: Q): Q {
-  return [
-    a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
-    a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
-    a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
-    a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
-  ];
-}
-function qnorm(q: Q): Q {
-  const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
-  return [q[0] / l, q[1] / l, q[2] / l, q[3] / l];
-}
-function mat3mul(m: number[], v: V3): V3 {
-  return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2], m[3] * v[0] + m[4] * v[1] + m[5] * v[2], m[6] * v[0] + m[7] * v[1] + m[8] * v[2]];
-}
-function invert3(m: number[]): number[] {
-  const [a, b, c, d, e, f, g, h, i] = m;
-  const A = e * i - f * h;
-  const B = -(d * i - f * g);
-  const C = d * h - e * g;
-  const det = a * A + b * B + c * C || 1e-9;
-  return [A / det, -(b * i - c * h) / det, (b * f - c * e) / det, B / det, (a * i - c * g) / det, -(a * f - c * d) / det, C / det, -(a * h - b * g) / det, (a * e - b * d) / det];
-}
-/** world-space inverse inertia applied to a vector: R · I⁻¹ · Rᵀ · v */
-function applyInvI(b: Body, v: V3): V3 {
-  return rotate(b.q, mat3mul(b.invI, rotate(conj(b.q), v)));
-}
-
 export class Bodies {
   list: Body[] = [];
   /** called when a body comes to rest (it stays a body, asleep) */
@@ -141,9 +100,9 @@ export class Bodies {
   constructor(public world: WorldVox) {}
 
   /** A body from world voxels (they must already be removed from the world). */
-  spawn(cells: Voxel[], kick: V3 = [0, 0, 0]): Body | null {
+  spawn(cells: Voxel[]): Body | null {
     const vox = cells.map((v) => ({ p: [v.x + 0.5, v.y + 0.5, v.z + 0.5] as V3, mat: v.mat }));
-    return this.build(vox, [0, 0, 0], [0, 0, 0, 1], kick);
+    return this.build(vox, [0, 0, 0], [0, 0, 0, 1]);
   }
 
   /**
@@ -151,26 +110,12 @@ export class Bodies {
    * the world): voxel centres p on that frame's unit lattice. Used for world
    * cells (identity frame) and for the pieces of a broken body (its frame).
    */
-  build(vox: { p: V3; mat: number }[], origin: V3, q: Q, kick: V3 = [0, 0, 0]): Body | null {
+  build(vox: { p: V3; mat: number }[], origin: V3, q: Q): Body | null {
     if (!vox.length) return null;
     let c: V3 = [0, 0, 0];
     for (const v of vox) c = add(c, v.p);
     c = scale(c, 1 / vox.length);
     const local = vox.map((v) => ({ p: sub(v.p, c), mat: v.mat }));
-    // inertia of unit cubes of unit mass about the centre of mass
-    const I = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-    for (const { p } of local) {
-      const r2 = dot(p, p);
-      I[0] += r2 - p[0] * p[0] + 1 / 6;
-      I[4] += r2 - p[1] * p[1] + 1 / 6;
-      I[8] += r2 - p[2] * p[2] + 1 / 6;
-      I[1] -= p[0] * p[1];
-      I[2] -= p[0] * p[2];
-      I[5] -= p[1] * p[2];
-    }
-    I[3] = I[1];
-    I[6] = I[2];
-    I[7] = I[5];
     // collision points: corners of voxels on the surface (deduplicated), found
     // on the integer lattice the voxels sit on
     const o = vox[0].p;
@@ -201,8 +146,7 @@ export class Bodies {
     }
     if (points.length > 600) points = points.filter((_, i) => i % Math.ceil(points.length / 600) === 0);
     const pos = add(origin, rotate(q, c));
-    const reach = points.reduce((m, p) => Math.max(m, len(p)), 0.5);
-    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I.map((x) => x * INERTIA_SCALE)), slow: 0, age: 0, impact: 0, hitAt: [0, 0, 0], grace: 0, reach, asleep: false, sleptAt: 0, id: this.nextId++ };
+    const b: Body = { local, points, pos, q: [...q] as Q, vz: 0, slow: 0, age: 0, impact: 0, hitAt: [0, 0, 0], grace: 0, asleep: false, sleptAt: 0, id: this.nextId++ };
     this.list.push(b);
     return b;
   }
@@ -214,7 +158,7 @@ export class Bodies {
    * voxels or fewer (round 20: 12) are returned as crumbs (the caller turns them into loose
    * ground). Returns the removed and crumbled voxels (world centres).
    * `reach` scales the radius per material (impacts chip stone more than
-   * steel). Pieces carry on with the parent's motion (round 21).
+   * steel). Pieces carry on falling (round 21).
    */
   breakAt(at: V3, radius: number, crumb = 12, reach: (mat: number) => number = () => 1): { removed: { p: V3; mat: number }[]; crumbs: { p: V3; mat: number }[] } {
     const removed: { p: V3; mat: number }[] = [];
@@ -239,7 +183,7 @@ export class Bodies {
    * Shatter a body into about k pieces (round 21: impacts break bodies up):
    * k seeds among its voxels, picked with a pull toward the point hit (so the
    * pieces near it are small and the far ones big); each voxel goes with its
-   * nearest seed. Pieces carry on with the body's motion; pieces of `crumb`
+   * nearest seed. Pieces carry on falling; pieces of `crumb`
    * voxels or fewer are returned (world centres) as crumbs.
    */
   shatter(b: Body, at: V3, k: number, crumb: number): { p: V3; mat: number }[] {
@@ -270,7 +214,7 @@ export class Bodies {
 
   /**
    * The connected pieces (face neighbours on b's lattice) of b's voxels
-   * `idx` become new bodies in b's frame, moving as that part of b moved;
+   * `idx` become new bodies in b's frame, falling as b fell;
    * pieces of `crumb` voxels or fewer go to `crumbs` instead.
    */
   private pieces(b: Body, idx: number[], crumb: number, world: V3[], crumbs: { p: V3; mat: number }[]): void {
@@ -297,11 +241,10 @@ export class Bodies {
         for (const i of piece) crumbs.push({ p: world[i], mat: b.local[i].mat });
         continue;
       }
-      // a new body in the parent's frame (it wakes and settles again),
-      // moving as that part of the parent moved
+      // a new body in the parent's frame (it wakes and settles again), still
+      // falling as the parent fell
       const nb = this.build(piece.map((i) => b.local[i]), b.pos, b.q)!;
-      nb.v = add(b.v, cross(b.w, sub(nb.pos, b.pos)));
-      nb.w = [...b.w];
+      nb.vz = b.vz;
       nb.grace = IMPACT_GRACE;
     }
   }
@@ -357,18 +300,9 @@ export class Bodies {
       return null;
     }
     if (!this.solid(p)) return null;
-    // up, out of the top of this solid run; or sideways into open air
-    let best: { n: V3; depth: number } = { n: [0, 0, 1], depth: this.world.runTop(x, y, z) - p[2] };
-    const sides: [V3, number][] = [
-      [[1, 0, 0], x + 1 - p[0]],
-      [[-1, 0, 0], p[0] - x],
-      [[0, 1, 0], y + 1 - p[1]],
-      [[0, -1, 0], p[1] - y],
-    ];
-    for (const [n, d] of sides) {
-      if (d < best.depth && !this.world.matAt(x + n[0], y + n[1], z)) best = { n, depth: d };
-    }
-    return best;
+    // up, out of the top of this solid run (pieces only fall, so they only
+    // ever come into things from above)
+    return { n: [0, 0, 1], depth: this.world.runTop(x, y, z) - p[2] };
   }
 
   update(dt: number): void {
@@ -390,14 +324,13 @@ export class Bodies {
     for (const b of this.list) {
       if (b.asleep) continue;
       b.age += dt;
-      const resting = len(b.v) < SLEEP_V && len(b.w) < SLEEP_W;
+      const resting = Math.abs(b.vz) < SLEEP_V;
       b.slow = resting ? b.slow + dt : 0;
       if (b.pos[2] < -20) done.push(b); // fell off the world
       else if (b.slow > SLEEP_T || b.age > MAX_AGE) {
         // at rest: it stays as it lies (round 17: no snapping back to the grid)
         b.asleep = true;
-        b.v = [0, 0, 0];
-        b.w = [0, 0, 0];
+        b.vz = 0;
         b.sleptAt = this.clock;
         this.onSleep?.(b);
       }
@@ -431,67 +364,31 @@ export class Bodies {
   }
 
   private step(b: Body, h: number): void {
-    b.v[2] -= G * h;
-    for (let it = 0; it < ITERATIONS; it++) {
-      let pushN: V3 = [0, 0, 0];
-      let pushD = 0;
-      for (const pl of b.points) {
-        const r = rotate(b.q, pl);
-        const p = add(b.pos, r);
-        const c = this.contact(p, b.id);
-        if (!c) continue;
-        const vp = add(b.v, cross(b.w, r));
-        const vn = dot(vp, c.n);
-        // landing hard on a sleeping body wakes it
-        if (c.body !== undefined && -vn > WAKE_IMPACT) {
-          const other = this.list.find((x) => x.id === c.body);
-          if (other) this.wake(other);
-        }
-        if (c.depth > pushD) {
-          pushD = c.depth;
-          pushN = c.n;
-        }
-        if (vn >= 0) continue;
-        if (it === 0 && -vn > b.impact) {
-          b.impact = -vn;
+    b.vz = Math.max(-MAX_V, (b.vz - G * h) * Math.exp(-AIR_DRAG * h));
+    // what it rests on: the deepest overlap among its points
+    let deep = -1;
+    for (const pl of b.points) {
+      const p = add(b.pos, rotate(b.q, pl));
+      const c = this.contact(p, b.id);
+      if (!c) continue;
+      // landing hard on a sleeping body wakes it
+      if (c.body !== undefined && -b.vz > WAKE_IMPACT) {
+        const other = this.list.find((x) => x.id === c.body);
+        if (other) this.wake(other);
+      }
+      if (c.depth > deep) {
+        deep = c.depth;
+        if (-b.vz > b.impact) {
+          b.impact = -b.vz;
           b.hitAt = p;
         }
-        const rn = cross(r, c.n);
-        const k = b.invMass + dot(cross(applyInvI(b, rn), r), c.n);
-        const j = ((-(1 + RESTITUTION) * vn) / k) * SOFTNESS;
-        let imp = scale(c.n, j);
-        // friction against the sliding velocity
-        const vt = sub(vp, scale(c.n, vn));
-        const vtl = len(vt);
-        if (vtl > 1e-4) {
-          const t = scale(vt, 1 / vtl);
-          const rt = cross(r, t);
-          const kt = b.invMass + dot(cross(applyInvI(b, rt), r), t);
-          const jt = Math.min(vtl / kt, FRICTION * j);
-          imp = sub(imp, scale(t, jt));
-        }
-        b.v = add(b.v, scale(imp, b.invMass));
-        b.w = add(b.w, applyInvI(b, cross(r, imp)));
       }
-      // push out of the deepest penetration a little each iteration
-      if (pushD > SLOP) b.pos = add(b.pos, scale(pushN, Math.min((pushD - SLOP) * PUSH, (MAX_PUSH * h) / ITERATIONS)));
     }
-    b.v = scale(b.v, Math.exp(-AIR_DRAG * h));
-    b.w = scale(b.w, 0.985);
-    // speed limits: the centre, the spin, and the fastest point
-    const vl = len(b.v);
-    if (vl > MAX_V) b.v = scale(b.v, MAX_V / vl);
-    const wl = len(b.w);
-    if (wl > MAX_W) b.w = scale(b.w, MAX_W / wl);
-    const pt = len(b.v) + len(b.w) * b.reach;
-    if (pt > MAX_POINT) {
-      b.v = scale(b.v, MAX_POINT / pt);
-      b.w = scale(b.w, MAX_POINT / pt);
+    if (deep >= 0) {
+      b.vz *= 1 - LANDING;
+      if (deep > SLOP) b.pos[2] += Math.min((deep - SLOP) * PUSH, MAX_PUSH * h);
     }
-    b.pos = add(b.pos, scale(b.v, h));
-    const wq: Q = [b.w[0], b.w[1], b.w[2], 0];
-    const dq = qmul(wq, b.q);
-    b.q = qnorm([b.q[0] + dq[0] * 0.5 * h, b.q[1] + dq[1] * 0.5 * h, b.q[2] + dq[2] * 0.5 * h, b.q[3] + dq[3] * 0.5 * h]);
+    b.pos[2] += b.vz * h;
   }
 
   /** Voxels for the renderer: centre xyz, material, quaternion (f32 bits). */

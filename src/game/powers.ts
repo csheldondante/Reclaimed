@@ -38,6 +38,9 @@ export interface PowersDeps {
   birdsFlushed: () => Promise<number>;
 }
 
+/** s between cyclones spun up within one drag */
+const SWIRL_COOLDOWN = 1.5;
+
 export class Powers {
   private lastStrike = -10;
   private lastSummon = -STORM_COOLDOWN;
@@ -332,16 +335,17 @@ export class Powers {
   /**
    * A tight circular drag spins up a cyclone (round 12): over the last ~2.5 s
    * the stroke has turned ≥ 2 full turns the same way, around a centre it
-   * stayed within 2–14 cells of. Free, and no cooldown (round 14): swirl
-   * again for another (Weather keeps up to four at once).
+   * stayed within 2–14 cells of. Free (round 14): swirl again for another
+   * (Weather keeps up to four at once). Within one drag a second one needs
+   * SWIRL_COOLDOWN s (round 21: one long swirl spawned several by accident);
+   * a fresh press resets it.
    */
   private checkSwirl(x: number, y: number): void {
     const now = performance.now() / 1000;
     this.swirl.push({ x, y, t: now });
     this.swirl = this.swirl.filter((p) => now - p.t < 2.5);
     const pts = this.swirl;
-    // (lastCyclone only stops one swirl from spawning twice)
-    if (pts.length < 12 || now - this.lastCyclone < 1) return;
+    if (pts.length < 12 || now - this.lastCyclone < SWIRL_COOLDOWN) return;
     let turn = 0;
     let prev: number | undefined;
     for (let i = 1; i < pts.length; i++) {
@@ -396,6 +400,7 @@ export class Powers {
   gustStart(wx: number, wy: number): boolean {
     this.strokeId++;
     this.swirl = [];
+    this.lastCyclone = -99;
     this.gust = { x: wx, y: wy, lx: wx, ly: wy, vx: 0, vy: 0, t: performance.now(), radius: 7, strength: 4.5, dx: 1, dy: 0, len: 0, ax: wx, ay: wy, sentX: wx, sentY: wy };
     // a soft pale light where the wind is called up (round 11)
     this.d.particles.burst({ kind: PK.Glow, x: wx, y: wy, z: (this.d.heightAt?.(wx, wy) ?? 0) + 0.8, count: 1, speed: 0, payload: 1, spread: 0 });

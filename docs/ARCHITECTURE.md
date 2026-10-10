@@ -243,10 +243,11 @@ voxels toward the ground along shortest paths (voxels on an unbroken stack
 down to the ground are anchors) and where moment > 40 · strength ·
 thickness³ (thickness = distance to the piece's skin) that cross-section
 crumbles to chips. Pieces are cut out of the columns (CPU mirror + GPU
-writeBuffer) and become `game/bodies.ts` rigid bodies (impulse contacts on
-exposed voxel corners against the voxel world, friction, a nudge toward
-face-down when slow); at rest they are inverse-sampled back into voxels
-(occupied cells → rubble on top). Bodies draw as rotated cubes
+writeBuffer) and become `game/bodies.ts` falling bodies (round 21: they
+only fall straight down — no rotation, sliding or bounce; collision points
+just inside the exposed voxel corners find the deepest overlap below them
+(solid run top, loose ground, a sleeping body's top); landing hard shatters
+them, `game/integrity.ts` impact()). Bodies draw as rotated cubes
 (`render.wgsl` vsBody/fsBody, buffer bound at 3). In the sandbox the GPU
 structure rule collapses damage only (`Globals.misc.y` = 2).
 

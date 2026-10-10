@@ -87,10 +87,11 @@ need `--wait 30000`.
 
 - Every sound (B9 + this session): howl, drag whoosh, grow, wash plops,
   rain, cyclone roar, chips on crumbles, crickets, owls, frogs, pitched
-  metal.
-- Body shattering after O1/O2 (session 4): impacts break bodies into
-  pieces + rubble with dust; speeds capped at ~1.5× the topple. Knobs:
-  SHATTER / IMPACT_* in `game/integrity.ts`, MAX_* in `game/bodies.ts`.
+  metal, the bass collapse crash.
+- Falling pieces after O6 (session 4): they only fall straight down and
+  shatter on landing (demolition look); the bass crash (O7, unheard); the
+  cyclone cooldown (O8). Knobs: SHATTER / IMPACT_* in `game/integrity.ts`,
+  G / MAX_V / LANDING in `game/bodies.ts`, SWIRL_COOLDOWN in `game/powers.ts`.
 - Lightning: the metal pull (bonus 6 − 0.15·distance within 40 cells).
 
 ## Known issues

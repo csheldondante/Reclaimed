@@ -13,6 +13,11 @@ each was implemented.
   hide what is still a little janky; the switch from static to rigid body
   sometimes jumps rather than moving smoothly.
 - Bug report: during storms, huge columns of material build up into the sky.
+- Then (checked, pushed): broken building chunks should only fall — downward
+  motion only — to look like collapsing structures; rigid-body collision
+  response is too bouncy and breaks the illusion of scale. A deeper bass
+  crumbling sound. A small cooldown (a second or two) on spawning cyclones
+  so one swirl doesn't make several, reset when you release and press again.
 
 ## 2026-10-10 — round 20 (session 3) — items M1–M7, N1–N8 in BACKLOG.md
 

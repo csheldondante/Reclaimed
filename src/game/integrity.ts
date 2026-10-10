@@ -42,6 +42,8 @@ export class Integrity {
   private busy = false;
   /** chips where something crumbles or a body hits hard */
   onChips?: (x: number, y: number, z: number, count: number) => void;
+  /** something came down here: the low crash (voxels broken or landing) */
+  onCollapse?: (x: number, y: number, z: number, amount: number) => void;
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
@@ -179,13 +181,17 @@ export class Integrity {
     this.stats.impacts++;
     const mat = mainMat(b.local);
     this.onDust?.(at[0], at[1], at[2], Math.min(40, Math.round(4 + speed * 4)), 0.6 + speed * 0.2, mat);
-    if (speed < IMPACT_BREAK) return;
+    if (speed < IMPACT_BREAK) {
+      this.onCollapse?.(at[0], at[1], at[2], b.local.length * speed * 0.05);
+      return;
+    }
     const weak = b.local.reduce((s, v) => s + impactReach(v.mat), 0) / b.local.length;
     const k = Math.min(8, Math.floor((weak * speed * speed * b.local.length) / SHATTER));
     const shards = this.bodies.shatter(b, at, k, IMPACT_CRUMB);
     const { removed, crumbs } = this.bodies.breakAt(at, impactRadius(speed), IMPACT_CRUMB, impactReach);
     crumbs.push(...shards);
     if (k >= 2) this.stats.shatters++;
+    this.onCollapse?.(at[0], at[1], at[2], removed.length + crumbs.length + b.local.length * speed * 0.05);
     if (!removed.length && !crumbs.length) return;
     this.stats.shattered += removed.length + crumbs.length;
     this.onDust?.(at[0], at[1], at[2], Math.min(60, 10 + removed.length * 3), impactRadius(speed) + 0.5, mat);
@@ -253,12 +259,8 @@ export class Integrity {
     this.pendingLoose.clear();
   }
 
-  /** cyclones on the map this frame (Weather.cyclones): they wake bodies and carry the small ones */
-  cyclones: { x: number; y: number; radius: number; strength: number; spin: number }[] = [];
-
   update(dt: number): void {
     if (this.world.slots.length && dt > 0) {
-      this.cycloneForces(dt);
       this.bodies.update(dt);
     }
     this.flushLoose();
@@ -279,31 +281,6 @@ export class Integrity {
       this.bodies.loose = loose;
       this.pass();
     }, ignoreTeardown);
-  }
-
-  /**
-   * A cyclone passing over bodies wakes them and drags them round and up —
-   * the small ones fly, big wrecks only shift (round 17: bodies wake when
-   * disturbed).
-   */
-  private cycloneForces(dt: number): void {
-    for (const cy of this.cyclones) {
-      if (cy.strength <= 0.05) continue;
-      for (const b of this.bodies.list) {
-        const dx = b.pos[0] - cy.x;
-        const dy = b.pos[1] - cy.y;
-        const d = Math.hypot(dx, dy);
-        const r = d / cy.radius;
-        if (r > 1.6) continue;
-        this.bodies.wake(b);
-        const mass = b.local.length;
-        const k = cy.strength * Math.exp(-r * r) * 60 / (6 + mass);
-        const t: [number, number] = [(-dy / Math.max(d, 0.5)) * cy.spin, (dx / Math.max(d, 0.5)) * cy.spin];
-        b.v[0] += (t[0] * 1.0 - (dx / Math.max(d, 0.5)) * 0.4) * k * dt * 10;
-        b.v[1] += (t[1] * 1.0 - (dy / Math.max(d, 0.5)) * 0.4) * k * dt * 10;
-        b.v[2] += k * dt * 14;
-      }
-    }
   }
 
   private pass(): void {
@@ -332,6 +309,7 @@ export class Integrity {
         const fx = foot.reduce((s, c) => s + c.x, 0) / foot.length + 0.5;
         const fy = foot.reduce((s, c) => s + c.y, 0) / foot.length + 0.5;
         this.onDust?.(fx, fy, z0 + 0.5, Math.min(40, 10 + foot.length), Math.sqrt(foot.length) * 0.6 + 0.5, mainMat(cells));
+        this.onCollapse?.(fx, fy, z0 + 0.5, foot.length + r.crumble.length);
         this.stats.bodies++;
       }
     }

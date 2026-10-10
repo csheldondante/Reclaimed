@@ -39,8 +39,11 @@ user) · `deferred` (agreed for later).
 | O1 | Bodies crumble much more easily on impact and break up into pieces; impacts make dust and chips | S–M | done `1011af2` |
 | O2 | Speed limit on bodies (~1.5× the topple speed), collision response damped further | S | done `1011af2` |
 | O3 | Bug: in storms, columns of loose ground rise into the sky | S | done `5cad379` |
-| O4 | See-through dust clouds and debris particles where bodies break and land (hide the remaining jank) | S | done (this commit) |
-| O5 | The switch from static structure to rigid body sometimes jumps instead of moving smoothly | S–M | done (this commit) |
+| O4 | See-through dust clouds and debris particles where bodies break and land (hide the remaining jank) | S | done `b337f3e` |
+| O5 | The switch from static structure to rigid body sometimes jumps instead of moving smoothly | S–M | done `b337f3e` |
+| O6 | Broken chunks only fall straight down (no rigid-body tumbling/bounce: it breaks the illusion of scale) | S | done (this commit) |
+| O7 | A deeper bass crumbling sound | S | done (this commit; unheard) |
+| O8 | Cyclone spawn cooldown of a second or two within one drag; a fresh press resets it | S | done (this commit) |
 
 ## Round 20 (2026-10-10, session 3)
 

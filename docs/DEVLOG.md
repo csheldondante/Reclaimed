@@ -1944,3 +1944,30 @@ hide what's still janky; the static → rigid-body switch sometimes jumps.
 Checked headlessly (garden: tower, diving board and bridge pillar cut at
 once): grey clouds round the shattering tower and the falling diving
 board, a faint brick-red one at the bridge pillar.
+
+## 2026-10-10 — pieces only fall; a bass crash; a cyclone cooldown (O6–O8)
+
+User: chunks should only fall (downward motion only) so they read as
+collapsing structures; the rigid-body collision response is too bouncy for
+the scale. A deeper crumbling sound. A small cyclone cooldown that a fresh
+press resets.
+- `game/bodies.ts` is no longer a rigid-body solver: a body has a vertical
+  speed only (gravity, air drag, ≤ 4 cells/s down) and keeps its frame, so
+  nothing rotates, slides or bounces. Collision points find the deepest
+  overlap below them (a solid run's top, loose ground, a sleeping body's
+  top); in contact a piece loses 60 % of its falling speed per substep, so
+  it settles slightly into what it lands on, and overlap past the 0.15
+  slop is pushed out ≤ 1.5 cells/s. The impulse solver, inertia, friction
+  and spin limits went with it. Cyclones no longer drag bodies (with
+  falling only, that would just be lift); they still crack structures.
+  The impact shattering (O1) does the rest: a cut tower now drops into its
+  foot and crushes down into a rubble cone with its top resting on it, a
+  demolition rather than a topple.
+- `audio.collapse(amount, at)`: a sine thump falling from ~45–70 Hz to half
+  that, a low-passed rumble (110–170 Hz, 1–3 s) and a few low-mid crunches,
+  sized by √(voxels/60). It plays on shatters, hard landings and pieces
+  tearing free, and calls within 0.15 s merge. Not heard by an agent.
+- Cyclones: a second one within one drag needs 1.5 s (it was 1 s, kept
+  across drags); a new press resets it.
+Checked headlessly: garden tower, diving board and bridge cut at once; no
+errors; 4 impacts, 2 shatters, 81 voxels to rubble in 14 s.

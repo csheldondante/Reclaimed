@@ -216,6 +216,7 @@ export class LevelScene implements Scene {
         core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: 3, spread: 0.8 });
         this.audio.chip(camera.project(x, y, z)[0] / camera.viewportW);
       };
+      this.integrity.onCollapse = (x, y, z, amount) => this.audio.collapse(amount, camera.project(x, y, z)[0] / camera.viewportW);
       // dust grains, and a see-through cloud of the material (one puff per five grains)
       this.integrity.onDust = (x, y, z, count, spread, mat) => {
         core.sim.particles.burst({ kind: PK.Dust, x, y, z, count, speed: 1.4, spread });
@@ -454,7 +455,6 @@ export class LevelScene implements Scene {
     if (this.integrity) {
       // cyclones batter what they pass: look there
       for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
-      this.integrity.cyclones = weather.cyclones;
       this.integrity.update(dt * this.speed);
     }
     weather.dustiness = core.pollution;

@@ -690,6 +690,57 @@ export class Ambience {
     trem.stop(t0 + dur + 0.1);
   }
 
+  private lastCollapse = 0;
+
+  /**
+   * Something big coming down (round 21: "a deeper bass crumbling sound"): a
+   * low thump falling in pitch, a long rumble and a little grit, all sized
+   * by `amount` (voxels broken or landing). Calls within 0.15 s merge into
+   * the first (impacts come in clusters).
+   */
+  collapse(amount: number, at?: number): void {
+    const ctx = this.ctx;
+    if (!ctx || amount <= 0) return;
+    const now = ctx.currentTime;
+    if (now - this.lastCollapse < 0.15) return;
+    this.lastCollapse = now;
+    if (this.shot('collapse')) return;
+    const t0 = now + 0.02;
+    const k = Math.min(1, Math.sqrt(amount / 60));
+    const pan = this.panner(this.fx, at);
+    // the thump
+    const o = ctx.createOscillator();
+    o.type = 'sine';
+    const f0 = 62 - 18 * k + Math.random() * 8;
+    o.frequency.setValueAtTime(f0, t0);
+    o.frequency.exponentialRampToValueAtTime(f0 * 0.5, t0 + 0.5 + 0.5 * k);
+    const og = ctx.createGain();
+    og.gain.setValueAtTime(0, t0);
+    og.gain.linearRampToValueAtTime(0.25 + 0.45 * k, t0 + 0.015);
+    og.gain.exponentialRampToValueAtTime(0.001, t0 + 0.6 + 0.8 * k);
+    o.connect(og).connect(pan);
+    o.start(t0);
+    o.stop(t0 + 1.5 + 0.8 * k);
+    // the rumble: low noise swelling and dying away
+    const src = ctx.createBufferSource();
+    src.buffer = this.noise!;
+    src.loop = true;
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 110 + Math.random() * 60;
+    lp.Q.value = 1.2;
+    const rg = ctx.createGain();
+    const dur = 1 + 2 * k;
+    rg.gain.setValueAtTime(0, t0);
+    rg.gain.linearRampToValueAtTime(0.35 + 0.65 * k, t0 + 0.06);
+    rg.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    src.connect(lp).connect(rg).connect(pan);
+    src.start(t0, Math.random() * 2);
+    src.stop(t0 + dur + 0.1);
+    // grit: a few low-mid crunches over the first moments
+    for (let i = 0; i < 3 + Math.round(5 * k); i++) this.noiseHit(pan, t0 + i * (0.04 + Math.random() * 0.1), 260 + Math.random() * 260, 1.2, 0.05 + 0.08 * k, 0.3 + Math.random() * 0.3);
+  }
+
   /** Concrete giving way: gritty mid crumble, sized by how much collapsed. */
   crumble(amount: number): void {
     if (this.ctx && this.shot('crumble')) return;
