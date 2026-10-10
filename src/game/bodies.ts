@@ -43,7 +43,12 @@ export interface Body {
   asleep: boolean;
   /** when it fell asleep (s, Bodies clock): the oldest go first over budget */
   sleptAt: number;
+  /** identity (the projection names which body covers a column) */
+  id: number;
 }
+
+/** Impact speed (cells/s) of a falling body that wakes a sleeping one it hits. */
+const WAKE_IMPACT = 3;
 
 // ---- small vector helpers -----------------------------------------------------
 const add = (a: V3, b: V3): V3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
@@ -95,9 +100,12 @@ export class Bodies {
   onSleep?: (body: Body) => void;
   /** the loose ground's depth per column (drift .x; CPU read-back) */
   loose?: Float32Array;
-  /** sleeping bodies projected per column: 4 floats (top, bottom, −, −); top < 0 = none */
+  /** sleeping bodies projected per column: 4 floats (top, bottom, body id, −); top < 0 = none */
   proj?: Float32Array;
+  /** called when a sleeping body wakes (it leaves the projection) */
+  onWake?: (body: Body) => void;
   private clock = 0;
+  private nextId = 1;
   /** called when a body hits hard (impact speed, world point) */
   onImpact?: (speed: number, at: V3) => void;
 
@@ -161,7 +169,7 @@ export class Bodies {
     }
     if (points.length > 600) points = points.filter((_, i) => i % Math.ceil(points.length / 600) === 0);
     const pos = add(origin, rotate(q, c));
-    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0 };
+    const b: Body = { local, points, pos, q: [...q] as Q, v: kick, w: [0, 0, 0], invMass: 1 / vox.length, invI: invert3(I), slow: 0, age: 0, impact: 0, asleep: false, sleptAt: 0, id: this.nextId++ };
     this.list.push(b);
     return b;
   }
@@ -226,8 +234,29 @@ export class Bodies {
   /** Bodies settle a little way into loose ground (they lie in it, not on it). */
   private static readonly SINK = 0.35;
 
-  /** The way out of whatever a point is in (solid cells, loose ground, a sleeping body): normal and depth. */
-  private contact(p: V3): { n: V3; depth: number } | null {
+  /** Wake a sleeping body (it moves again and leaves the projection). */
+  wake(b: Body): void {
+    if (!b.asleep) return;
+    b.asleep = false;
+    b.slow = 0;
+    b.age = 0;
+    this.onWake?.(b);
+  }
+
+  /** Is anything (world, loose ground, another body) holding b up? */
+  supported(b: Body): boolean {
+    let lo = Infinity;
+    const pts = b.points.map((pl) => add(b.pos, rotate(b.q, pl)));
+    for (const p of pts) lo = Math.min(lo, p[2]);
+    for (const p of pts) {
+      if (p[2] > lo + 0.6) continue;
+      if (this.contact([p[0], p[1], p[2] - 0.15], b.id)) return true;
+    }
+    return false;
+  }
+
+  /** The way out of whatever a point is in (solid cells, loose ground, a sleeping body other than `ignore`): normal, depth, and the body hit. */
+  private contact(p: V3, ignore = 0): { n: V3; depth: number; body?: number } | null {
     const x = Math.floor(p[0]);
     const y = Math.floor(p[1]);
     const z = Math.floor(p[2]);
@@ -237,7 +266,7 @@ export class Bodies {
       const i = y * W + x;
       // a sleeping body here: out over its top
       const pr = this.proj;
-      if (pr && pr[i * 4] >= 0 && p[2] < pr[i * 4] && p[2] >= pr[i * 4 + 1]) return { n: [0, 0, 1], depth: pr[i * 4] - p[2] };
+      if (pr && pr[i * 4] >= 0 && pr[i * 4 + 2] !== ignore && p[2] < pr[i * 4] && p[2] >= pr[i * 4 + 1]) return { n: [0, 0, 1], depth: pr[i * 4] - p[2], body: pr[i * 4 + 2] };
       // loose ground over the column's solid top
       const l = this.loose?.[i] ?? 0;
       if (l > 0.05) {
@@ -319,10 +348,15 @@ export class Bodies {
       for (const pl of b.points) {
         const r = rotate(b.q, pl);
         const p = add(b.pos, r);
-        const c = this.contact(p);
+        const c = this.contact(p, b.id);
         if (!c) continue;
         const vp = add(b.v, cross(b.w, r));
         const vn = dot(vp, c.n);
+        // landing hard on a sleeping body wakes it
+        if (c.body !== undefined && -vn > WAKE_IMPACT) {
+          const other = this.list.find((x) => x.id === c.body);
+          if (other) this.wake(other);
+        }
         if (c.depth > pushD) {
           pushD = c.depth;
           pushN = c.n;

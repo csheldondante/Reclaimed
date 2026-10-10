@@ -82,7 +82,13 @@ fn washOf(m: u32) -> f32 {
 
 fn levelAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
-  return f32(sfZ(surface[colIdxI(q)])) + driftAt(q);
+  // a body lying here is ground too: things bank against it and slide off it
+  return max(f32(sfZ(surface[colIdxI(q)])) + driftAt(q), bodyTopAt(q));
+}
+
+/** Is q's loose ground under a body lying over it (sheltered: it doesn't move)? */
+fn underBody(q: vec2<i32>) -> bool {
+  return bodyTopAt(q) > f32(sfZ(surface[colIdxI(q)])) + driftAt(q);
 }
 
 /** The top layer's depth on q (what the wind, water and slumping can take). */
@@ -112,7 +118,7 @@ fn windOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
   let top = topOf(q);
-  if (top < 0.001 || water[j] > 0.05 || rooted(j) > 0.5) { return vec4<f32>(0.0); }
+  if (top < 0.001 || water[j] > 0.05 || rooted(j) > 0.5 || underBody(q)) { return vec4<f32>(0.0); }
   let lo = looseOf(driftMatAt(q));
   // on the title diorama (fine scale, G.misc.w) a cell is about a centimetre:
   // a breath of wind moves dust there, so the player can blow the dust off
@@ -144,7 +150,7 @@ fn waterOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
   let top = topOf(q);
-  if (top < 0.001 || water[j] < 0.02) { return vec4<f32>(0.0); }
+  if (top < 0.001 || water[j] < 0.02 || underBody(q)) { return vec4<f32>(0.0); }
   let m = driftMatAt(q);
   let v = netFlow(q);
   let sp = length(v);
@@ -172,7 +178,7 @@ fn windActive(q: vec2<i32>) -> bool {
 fn slumpOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let top = topOf(q);
-  if (top < 0.001) { return vec4<f32>(0.0); }
+  if (top < 0.001 || underBody(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
   let here = levelAt(q);
   let rep = looseOf(driftMatAt(q)).y;
@@ -192,7 +198,7 @@ fn slumpOut(q: vec2<i32>) -> vec4<f32> {
 fn smoothOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let top = topOf(q);
-  if (top < 0.001) { return vec4<f32>(0.0); }
+  if (top < 0.001 || underBody(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
   if (!(textureLoad(driftTex, q, 0).w > 0.0 || windActive(q))) { return vec4<f32>(0.0); }
   let here = levelAt(q);

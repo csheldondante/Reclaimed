@@ -50,6 +50,7 @@ export class Integrity {
       this.keepBudget();
       this.project();
     };
+    this.bodies.onWake = () => this.project();
     this.bodies.onImpact = (speed, at) => this.onChips?.(at[0], at[1], at[2], Math.min(12, Math.round(speed / 3)));
   }
 
@@ -72,6 +73,7 @@ export class Integrity {
     for (let i = 0; i < this.proj.length; i += 4) {
       this.proj[i] = -1;
       this.proj[i + 1] = 0;
+      this.proj[i + 2] = 0;
     }
   }
 
@@ -93,7 +95,9 @@ export class Integrity {
             if (P[i] < 0) {
               P[i] = hi[2];
               P[i + 1] = lo[2];
+              P[i + 2] = b.id;
             } else {
+              if (hi[2] > P[i]) P[i + 2] = b.id;
               P[i] = Math.max(P[i], hi[2]);
               P[i + 1] = Math.min(P[i + 1], lo[2]);
             }
@@ -171,13 +175,20 @@ export class Integrity {
     }
   }
 
+  /** cyclones on the map this frame (Weather.cyclones): they wake bodies and carry the small ones */
+  cyclones: { x: number; y: number; radius: number; strength: number; spin: number }[] = [];
+
   update(dt: number): void {
-    if (this.world.slots.length && dt > 0) this.bodies.update(dt);
+    if (this.world.slots.length && dt > 0) {
+      this.cycloneForces(dt);
+      this.bodies.update(dt);
+    }
     const { data, count } = this.bodies.pack();
     this.core.renderer.setBodies(data, count);
     this.t -= dt;
-    if (this.busy || this.t > 0 || (!this.dirty.length && !this.bodies.anyAwake && this.world.slots.length)) return;
-    this.t = PASS;
+    if (this.busy || this.t > 0 || (!this.dirty.length && !this.bodies.list.length && this.world.slots.length)) return;
+    // (with only sleeping bodies about, a slower pass still checks they're held up)
+    this.t = this.dirty.length || this.bodies.anyAwake ? PASS : 1.0;
     this.busy = true;
     // the layers (structures, solid ground) and the loose ground's depth
     // (bodies lie on it) — read back together
@@ -191,8 +202,35 @@ export class Integrity {
     }, ignoreTeardown);
   }
 
+  /**
+   * A cyclone passing over bodies wakes them and drags them round and up —
+   * the small ones fly, big wrecks only shift (round 17: bodies wake when
+   * disturbed).
+   */
+  private cycloneForces(dt: number): void {
+    for (const cy of this.cyclones) {
+      if (cy.strength <= 0.05) continue;
+      for (const b of this.bodies.list) {
+        const dx = b.pos[0] - cy.x;
+        const dy = b.pos[1] - cy.y;
+        const d = Math.hypot(dx, dy);
+        const r = d / cy.radius;
+        if (r > 1.6) continue;
+        this.bodies.wake(b);
+        const mass = b.local.length;
+        const k = cy.strength * Math.exp(-r * r) * 60 / (6 + mass);
+        const t: [number, number] = [(-dy / Math.max(d, 0.5)) * cy.spin, (dx / Math.max(d, 0.5)) * cy.spin];
+        b.v[0] += (t[0] * 1.0 - (dx / Math.max(d, 0.5)) * 0.4) * k * dt * 10;
+        b.v[1] += (t[1] * 1.0 - (dy / Math.max(d, 0.5)) * 0.4) * k * dt * 10;
+        b.v[2] += k * dt * 14;
+      }
+    }
+  }
+
   private pass(): void {
     const t0 = performance.now();
+    // a sleeping body with nothing left under it (broken, dug, washed out) wakes
+    for (const b of this.bodies.list) if (b.asleep && !this.bodies.supported(b)) this.bodies.wake(b);
     const boxes = this.dirty;
     this.dirty = [];
     this.stats.passes++;

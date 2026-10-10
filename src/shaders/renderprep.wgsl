@@ -122,7 +122,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   }
   var w = baseW + offW;
   // liquids lie on top of drifted dust (it sinks; round 13)
-  let bed = top + driftAt(vec2<i32>(id.xy));
+  let bed = max(top + driftAt(vec2<i32>(id.xy)), bodyTopAt(vec2<i32>(id.xy)));
   if (d > WATER_MIN) {
     instWater[w] = mkInst(id.x, id.y, 1u, 1u, bed, bed + d, MAT_WATER, 0u);
     w += 1u;

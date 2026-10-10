@@ -109,6 +109,7 @@ export class Renderer {
       8: 'rw',
       9: 'rw',
       17: 'tex',
+      21: 'tex',
     });
     this.prepGroup = makeBindGroup(device, 'renderprep', this.prep.layout, {
       0: world.globals,
@@ -122,6 +123,7 @@ export class Renderer {
       8: this.instWater,
       9: this.indirect,
       17: world.driftView,
+      21: world.bodyProjView,
     });
 
     this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, vegprepWgsl], {

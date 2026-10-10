@@ -20,7 +20,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = colIdxI(p);
   let d = water[i];
   if (d <= 1e-5) { flux[i] = vec4<f32>(0.0); return; }
-  let g = f32(sfZ(surface[i])) + driftAt(p);
+  // (a body lying here is ground to the water: round 17)
+  let g = max(f32(sfZ(surface[i])) + driftAt(p), bodyTopAt(p));
   let H = g + d + oil[i] * OIL_DENSITY;
   var f = flux[i];
   for (var k = 0u; k < 4u; k++) {
@@ -28,7 +29,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var Hn = g;
     if (inMap(q)) {
       let j = colIdxI(q);
-      Hn = f32(sfZ(surface[j])) + driftAt(q) + water[j] + oil[j] * OIL_DENSITY;
+      Hn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q)) + water[j] + oil[j] * OIL_DENSITY;
     }
     f[k] = max(0.0, f[k] * FRICTION + GAIN * (H - Hn));
   }

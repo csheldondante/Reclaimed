@@ -294,6 +294,17 @@ fn driftAt(q: vec2<i32>) -> f32 {
   return textureLoad(driftTex, q, 0).x;
 }
 
+// Sleeping rigid bodies projected into the terrain grid (game/integrity.ts):
+// per column the top (x; < 0 = none) and bottom (y) of any body over it. The
+// loose ground, water and particles treat a body's top as ground (round 17).
+@group(0) @binding(21) var bodyProjTex: texture_2d<f32>;
+
+/** Top of a sleeping body over column q, or −1. */
+fn bodyTopAt(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return -1.0; }
+  return textureLoad(bodyProjTex, q, 0).x;
+}
+
 /** Depth of the top loose layer on q (drift .y; part of driftAt). */
 fn driftTopAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }

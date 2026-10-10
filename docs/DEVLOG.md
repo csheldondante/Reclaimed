@@ -1763,3 +1763,23 @@ loose ground. Body creation is generalised to voxels in any frame
 Measured: the toppled garden tower (189 voxels, asleep) — a pick at its
 centre reports a body; breaking its middle (radius 2.2) leaves two 80-voxel
 pieces, which wake, shift and fall asleep again.
+
+## 2026-10-09 — K2: the ground knows where bodies lie; bodies wake when disturbed
+
+- The loose ground's level is the higher of its surface and a sleeping
+  body's top (bodyProj): drifts bank against a fallen piece and slide off
+  its top; loose ground under a body stays put; pour or blow enough and the
+  level rises past the top — it's buried. Water and dust grains treat a body
+  as ground too.
+- Waking (user: when disturbed): a falling body landing hard (> 3 cells/s)
+  on a sleeping one; nothing holding it up any more (each integrity pass
+  checks a sleeping body's lowest points against the world, the loose
+  surface and other bodies, ignoring its own projection; ~1 s when all are
+  asleep); a cyclone over it — it's dragged round and up, the small pieces
+  carried far, big wrecks only shifted.
+Measured (sandbox, the garden tower toppled, 189 voxels, asleep):
+- four 4-layer dust pours over it: 0 → 84 of its 107 columns covered, it
+  stays asleep (the screenshot: a dust mound with both ends showing);
+- a pit under its middle: it stays (both ends still hold it); the loose
+  ground removed under its whole footprint: it wakes and drops 2 cells in 3 s;
+- a cyclone on it: it wakes and is shifted 3.4 cells.

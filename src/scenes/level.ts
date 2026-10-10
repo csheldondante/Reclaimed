@@ -418,6 +418,7 @@ export class LevelScene implements Scene {
     if (this.integrity) {
       // cyclones batter what they pass: look there
       for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
+      this.integrity.cyclones = weather.cyclones;
       this.integrity.update(dt * this.speed);
     }
     weather.dustiness = core.pollution;

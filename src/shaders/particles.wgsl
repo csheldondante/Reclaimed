@@ -459,7 +459,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   let ci = colIdxI(cell);
-  let ground = f32(sfZ(surface[ci])) + driftAt(cell) + water[ci];
+  // (grains land on a body lying here too)
+  let ground = max(f32(sfZ(surface[ci])) + driftAt(cell), bodyTopAt(cell)) + water[ci];
   if (kind == K_GRAIN) {
     // straight down under gravity, gone where it lands (the cell it brings
     // lands with it: edit.wgsl times the deposit to the fall)

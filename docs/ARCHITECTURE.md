@@ -249,3 +249,17 @@ face-down when slow); at rest they are inverse-sampled back into voxels
 (occupied cells → rubble on top). Bodies draw as rotated cubes
 (`render.wgsl` vsBody/fsBody, buffer bound at 3). In the sandbox the GPU
 structure rule collapses damage only (`Globals.misc.y` = 2).
+
+Rigid bodies (round 17, K1–K2): bodies keep their own frame; at rest they
+sleep (no physics, only drawn) and are projected into the terrain grid —
+`bodyProj` texture (binding 21, `bodyTopAt()` in common.wgsl): per column the
+top and bottom of any sleeping body over it (CPU copy also carries the body
+id). The loose ground treats a body's top as ground (banks against it,
+slides off it; material under a body doesn't move) and buries it once its
+level rises past the top; water and dust grains treat it as ground too.
+Bodies collide with solid cells, the loose surface (settling 0.35 into it)
+and sleeping bodies. A sleeping body wakes when hit hard by a falling one,
+when nothing holds it up any more (checked each integrity pass, ~1 s when
+all are asleep), or when a cyclone passes (small bodies are carried). Break
+on a body removes voxels in its frame and splits it; a budget (64 bodies /
+16k voxels) crumbles the oldest small ones into loose ground (`looseAdd`).
