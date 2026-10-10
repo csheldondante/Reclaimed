@@ -53,8 +53,7 @@ const MAT_SILT_E: u32 = 22u;
 
 /** Materials that pour into the loose layer (drift.wgsl) rather than as cells. */
 fn isLoose(m: u32) -> bool { return m == 2u || m == 3u || m == 4u || m == 17u || m == MAT_DRIFT; }
-/** What a loose material becomes when packed into ground cells (dust → packed dust). */
-fn packedOf(m: u32) -> u32 { return select(m, MAT_SILT_E, m == MAT_DRIFT); }
+
 const UPLIFT_RATE: f32 = 3.0; // cells/s bedrock rises
 
 @compute @workgroup_size(8, 8)
@@ -150,9 +149,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   let op = opmat / 32u;
   let mat = opmat % 32u;
-  // loose layer packed into ground cells this tick (count, material)
-  var packN = 0u;
-  var packMat = 0u;
   // pours land after the fall; bedrock rises steadily
   if (pending > 0.0) {
     if (timer > 0.0) {
@@ -162,17 +158,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       pending -= r;
       // dust lands in the drift layer (fractional); everything else as cells
       if (isLoose(mat)) {
-        // loose material pours into the loose layer (round 15, H3). A
-        // different material arriving packs the old layer into ground cells
-        // first, so pours make strata (only once: driftDelta < 0 means a
-        // packing the drift pass hasn't folded in yet)
-        let dd = driftAt(p);
-        let dm = driftMatAt(p);
-        if (dm != mat && dd > 0.05 && driftDelta[i] >= 0.0) {
-          packN = u32(round(dd));
-          packMat = packedOf(dm);
-          driftDelta[i] -= dd;
-        }
+        // loose material pours into the loose ground (drift.wgsl): a
+        // different material starts a new layer on top, so pours make strata
         driftDelta[i] += r;
       } else { owed += r; }
     }
@@ -182,7 +169,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     owed -= 1.0;
     let top = arr[n - 1u];
     let z1 = ivZ1(top);
-    if (op == OP_DIG) {
+    if (op == OP_DIG && driftAt(p) > 0.05) {
+      // loose ground first: a cell's worth of it
+      driftDelta[i] -= 1.0;
+    } else if (op == OP_DIG) {
       if (!(n == 1u && z1 <= 2u)) {
         if (z1 - 1u <= ivZ0(top)) { n -= 1u; arr[n] = 0u; }
         else { arr[n - 1u] = ivPack(ivZ0(top), z1 - 1u, ivMat(top), ivAux(top)); }
@@ -205,29 +195,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
     } else if (z1 + 2u < G.zMax) {
+      // building on loose ground: the loose ground under it packs into cells
+      // first (otherwise it would ride up onto the new block's top)
+      let dl = driftAt(p);
+      if (op == OP_BUILD && dl > 0.05 && driftDelta[i] > -0.01) {
+        let pm = driftMatAt(p);
+        let k = u32(round(dl));
+        for (var c = 0u; c < k; c++) {
+          let t = arr[n - 1u];
+          let tz = ivZ1(t);
+          if (tz + 3u >= G.zMax) { break; }
+          if (ivMat(t) == pm) { arr[n - 1u] = ivPack(ivZ0(t), tz + 1u, pm, ivAux(t)); }
+          else if (n < cs.y) { arr[n] = ivPack(tz, tz + 1u, pm, 0u); n += 1u; }
+          else { arr[n - 1u] = ivPack(ivZ0(t), tz + 1u, ivMat(t), ivAux(t)); }
+        }
+        driftDelta[i] -= dl;
+      }
       // build / pour: a cell of the material on top
-      if (ivMat(top) == mat) { arr[n - 1u] = ivPack(ivZ0(top), z1 + 1u, mat, ivAux(top)); }
-      else if (n < cs.y) { arr[n] = ivPack(z1, z1 + 1u, mat, 0u); n += 1u; }
-      else { arr[n - 1u] = ivPack(ivZ0(top), z1 + 1u, ivMat(top), ivAux(top)); }
+      let t2 = arr[n - 1u];
+      let z2 = ivZ1(t2);
+      if (ivMat(t2) == mat) { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1u, mat, ivAux(t2)); }
+      else if (n < cs.y) { arr[n] = ivPack(z2, z2 + 1u, mat, 0u); n += 1u; }
+      else { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1u, ivMat(t2), ivAux(t2)); }
     }
-  }
-  // a deep loose layer packs down: all but its top ~1 cell becomes ground
-  // cells of its material (deep dust becomes packed dust); a dust film on top
-  // stays loose
-  let dl = driftAt(p) - driftFilmAt(p);
-  if (packN == 0u && dl > 1.75 && driftDelta[i] > -0.01) {
-    packN = u32(floor(dl - 0.75));
-    packMat = packedOf(driftMatAt(p));
-    driftDelta[i] -= f32(packN);
-  }
-  for (var k = 0u; k < packN; k++) {
-    if (n == 0u) { break; }
-    let top = arr[n - 1u];
-    let z1 = ivZ1(top);
-    if (z1 + 2u >= G.zMax) { break; }
-    if (ivMat(top) == packMat) { arr[n - 1u] = ivPack(ivZ0(top), z1 + 1u, packMat, ivAux(top)); }
-    else if (n < cs.y) { arr[n] = ivPack(z1, z1 + 1u, packMat, 0u); n += 1u; }
-    else { arr[n - 1u] = ivPack(ivZ0(top), z1 + 1u, ivMat(top), ivAux(top)); }
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }
   textureStore(editOut, p, vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));

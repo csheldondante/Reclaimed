@@ -23,6 +23,10 @@ export interface MapData {
   drift: Float32Array;
   /** The loose layer's material per column (MAT id; 0 or absent = dust). */
   driftMat?: Float32Array;
+  /** The top loose layer's depth (absent = all of drift). */
+  driftTop?: Float32Array;
+  /** The loose layers beneath the top: per column 4 floats, three used (mat·1000 + depth). */
+  strata?: Float32Array;
   /** Oil sealed inside closed tanks: per column [amount, roof z]; released when breached. */
   oilStored: Float32Array;
   /** Water added per sim tick per column (springs). */

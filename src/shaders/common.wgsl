@@ -294,19 +294,27 @@ fn driftAt(q: vec2<i32>) -> f32 {
   return textureLoad(driftTex, q, 0).x;
 }
 
-/** Depth of the dust film lying on top of q's loose layer (drift .y; part of driftAt). */
-fn driftFilmAt(q: vec2<i32>) -> f32 {
+/** Depth of the top loose layer on q (drift .y; part of driftAt). */
+fn driftTopAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
   let t = textureLoad(driftTex, q, 0);
   return clamp(t.y, 0.0, t.x);
 }
 
-/** Plants are buried (dormant) under deep blown dust or ash — a dust film over
- *  anything, or a dust/ash layer; sand and dirt layers are ground they grow
- *  in, on top (round 15). */
-fn buriedAt(q: vec2<i32>) -> bool {
+/** Depth of blown dust or ash lying on top of q (0 if the top layer is something else). */
+fn driftFilmAt(q: vec2<i32>) -> f32 {
   let m = driftMatAt(q);
-  return driftFilmAt(q) > 0.5 || (driftAt(q) > 0.5 && (m == 19u || m == 17u));
+  return select(0.0, driftTopAt(q), m == 19u || m == 17u);
+}
+
+/** Plants are buried (dormant) under more than half a cell of blown dust or
+ *  ash on top; sand and dirt are ground they grow in (rounds 15–16). */
+fn buriedAt(q: vec2<i32>) -> bool { return driftFilmAt(q) > 0.5; }
+
+/** What the ground under q is made of for life and soaking: the top loose
+ *  layer's material where there's a fair depth of it, else the top cell's. */
+fn groundMatAt(q: vec2<i32>, cellMat: u32) -> u32 {
+  return select(cellMat, driftMatAt(q), driftAt(q) > 0.3);
 }
 
 /** The loose layer's material on column q (drift .z; 0 = dust → 19, MAT_DRIFT —

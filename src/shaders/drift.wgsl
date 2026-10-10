@@ -1,46 +1,47 @@
-// ---- the loose layer: dust, sand, ash, dirt lying on the land ----------------
-// (round 11 drifts, generalised in round 15 — BACKLOG H3: "loose surfaces
-// should behave like dust, with a steeper angle of repose and needing higher
-// winds"). drift (texture): .x depth of loose material on top of each column
-// in cells (fractional), .y what the wind took this pass (particles stream
-// it), .z the material (0 = dust), .w what went up into the air this pass (the
-// particle system carries it off as dust grains and drops it where they land,
-// so what you see blowing is what settles and piles up again). Below it the
-// ground stays whole cells.
-// Each material has its own wind threshold, repose and share that goes
-// airborne (looseOf): dust moves in a gust, sand and ash in strong wind, dirt
-// and gravel only with water. Above its threshold a cell sends material
+// ---- the loose ground: dust, sand, ash, dirt lying on the land ----------------
+// (round 11 drifts → round 15 per-material loose layer → round 16: all soft
+// ground is loose, smooth and layered; only solids are whole cells with steps.)
+// Each column holds a stack of up to four loose layers on its solid ground:
+//   drift (texture): .x total depth (cells, fractional), .y the top layer's
+//     depth, .z the top layer's material, .w what the wind sent up into the
+//     air this pass (the particle system carries it as dust grains and sets it
+//     down where they land);
+//   strata (texture): the three layers beneath the top, bottom first, each
+//     packed as material·1000 + depth (0 = none).
+// Wind, water and slumping take from the top layer; what arrives joins the
+// top layer if it's the same material, otherwise it starts a new layer on
+// top (so pours and drifts make strata). Each material has its own wind
+// threshold, repose, airborne share and readiness to wash away (looseOf,
+// washOf): dust moves in a gust, ash and sand in stronger wind, dirt and
+// gravel only with water. Above its threshold a cell sends material
 // downwind (split over the four faces by the wind's components); sheltered
 // cells — behind taller ground upwind — feel less wind, so it piles up in
-// their lee; it can't be pushed up into a wall, so it banks on the windward
-// side too; what goes airborne lands HOP cells downwind. Steep slopes slump
-// to the material's angle of repose. It lies under still water (the liquids
-// sit on top of it) and moving water carries it downstream. Material blown
-// off the map edge is gone. Plants under deep dust/sand/ash lie dormant
-// (wilt/ecology) and come back when it's uncovered; established plants hold
-// what they grow through and turn dust to soil.
+// their lee; it can't be pushed up into a wall, so it banks there. It lies
+// under still water (the liquids sit on top of it) and moving water carries
+// it downstream, settling where the flow slows; material carried off the map
+// edge is gone. Plants under a deep top layer of dust or ash lie dormant;
+// established plants hold what they grow through and turn dust to soil.
 // Race-free gather: every cell recomputes its neighbours' outflow from the
-// same read-only inputs, so what leaves one cell arrives in the next. A cell
-// keeps its material unless almost all of it left and something else came
-// in (then it takes the material of the largest inflow).
+// same read-only inputs, so what leaves one cell arrives in the next.
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
-// dust added or removed by the editor (edit.wgsl), folded in and zeroed here
+// loose material added (pours, dust) or removed (dig, clean) by the editor
+// (edit.wgsl); the pour's material comes from the brush state (editTex)
 @group(0) @binding(5) var<storage, read_write> driftDelta: array<f32>;
 // water flux (flow.wgsl netFlow): moving water carries the layer downstream
 @group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
 // plants: established green holds the layer it grows through (round 15)
 @group(0) @binding(7) var<storage, read> vegD: array<f32>;
-/** 0..1 how firmly the plants on column j hold its loose layer */
-fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
-// dust under established plants turns to soil, cells/s (the drift thins;
-// the plants grow on in the ground beneath)
-const BIND: f32 = 0.03;
 // dust that came down here from the air (particles.wgsl), the second half of
 // the exchange buffer, ×1e5
 @group(0) @binding(8) var<storage, read_write> exchange: array<atomic<i32>>;
 @group(0) @binding(16) var driftOut: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(19) var strataTex: texture_2d<f32>;
+@group(0) @binding(20) var strataOut: texture_storage_2d<rgba32float, write>;
 // driftTex (binding 17) is declared in common.wgsl (driftAt, driftMatAt)
+
+/** 0..1 how firmly the plants on column j hold its loose layer */
+fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
 
 const DT_D: f32 = 2.0 / 60.0; // the system runs every other tick
 const CARRY: f32 = 0.25;      // cells of depth lifted per second per cell/s over the threshold
@@ -50,6 +51,7 @@ const MAT_SOIL_L: u32 = 2u;
 const MAT_SAND_L: u32 = 3u;
 const MAT_GRAVEL_L: u32 = 4u;
 const MAT_ASH_L: u32 = 17u;
+const MAT_SILT_L: u32 = 22u;
 
 /**
  * How a loose material behaves: x wind (cells/s, sheltered) needed to move
@@ -59,14 +61,29 @@ const MAT_ASH_L: u32 = 17u;
 fn looseOf(m: u32) -> vec4<f32> {
   if (m == MAT_SAND_L) { return vec4<f32>(14.0, 1.0, 0.15, 1.0); }
   if (m == MAT_ASH_L) { return vec4<f32>(10.0, 0.9, 0.5, 1.0); }
-  if (m == MAT_SOIL_L) { return vec4<f32>(NEVER, 1.4, 0.0, 0.8); }
+  if (m == MAT_SOIL_L || m == MAT_SILT_L) { return vec4<f32>(NEVER, 1.4, 0.0, 0.6); }
   if (m == MAT_GRAVEL_L) { return vec4<f32>(NEVER, 1.7, 0.0, 0.25); }
   return vec4<f32>(9.0, 0.8, 0.4, 1.0); // dust
+}
+
+/** Net water flow (volume/tick through the column) below which it doesn't carry m. */
+fn washOf(m: u32) -> f32 {
+  if (m == MAT_SOIL_L || m == MAT_SILT_L) { return 0.12; }
+  if (m == MAT_GRAVEL_L) { return 0.3; }
+  if (m == MAT_SAND_L) { return 0.08; }
+  return 0.03; // dust, ash
 }
 
 fn levelAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
   return f32(sfZ(surface[colIdxI(q)])) + driftAt(q);
+}
+
+/** The top layer's depth on q (what the wind, water and slumping can take). */
+fn topOf(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return 0.0; }
+  let t = textureLoad(driftTex, q, 0);
+  return clamp(t.y, 0.0, t.x);
 }
 
 /** 0..1 how sheltered q is from the wind w by taller ground up to 4 cells upwind. */
@@ -84,32 +101,13 @@ fn shelter(q: vec2<i32>, w: vec2<f32>) -> f32 {
   return clamp(s * 0.9, 0.0, 1.0);
 }
 
-// A dust film can lie on top of any loose layer (round 15: dust blown onto
-// sand or dirt settles on it and shows, instead of turning into sand): drift
-// .y is the film's depth (part of .x, the total). The wind takes the film
-// first, at dust's threshold; only bare loose ground moves at its own.
-
-/** Depth of the dust film on q (≤ the total). */
-fn filmOf(q: vec2<i32>) -> f32 {
-  if (!inMap(q)) { return 0.0; }
-  let t = textureLoad(driftTex, q, 0);
-  return clamp(t.y, 0.0, t.x);
-}
-
-/** What the wind moves on q: the dust film if there is one, else the layer itself. */
-fn movingMat(q: vec2<i32>) -> u32 {
-  return select(driftMatAt(q), MAT_DRIFT, filmOf(q) > 0.001);
-}
-
-/** What the wind sends from q to its +x, -x, +y, -y neighbours this pass. */
+/** What the wind sends from q's top layer to its +x, -x, +y, -y neighbours this pass. */
 fn windOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
-  let d = driftAt(q);
-  if (d < 0.001 || water[j] > 0.05 || rooted(j) > 0.5) { return vec4<f32>(0.0); }
-  let film = filmOf(q);
-  let movable = select(d, film, film > 0.001);
-  let lo = looseOf(movingMat(q));
+  let top = topOf(q);
+  if (top < 0.001 || water[j] > 0.05 || rooted(j) > 0.5) { return vec4<f32>(0.0); }
+  let lo = looseOf(driftMatAt(q));
   // on the title diorama (fine scale, G.misc.w) a cell is about a centimetre:
   // a breath of wind moves dust there, so the player can blow the dust off
   // the buried level models (round 13 F11)
@@ -125,29 +123,87 @@ fn windOut(q: vec2<i32>) -> vec4<f32> {
   // it can't be pushed up into a wall: it banks against it instead
   for (var k = 0u; k < 4u; k++) {
     let n = q + DIRS[k];
-    if (inMap(n) && f32(sfZ(surface[colIdxI(n)])) >= here + 1.5) { wt[k] = 0.0; }
+    if (inMap(n) && levelAt(n) >= here + 1.5) { wt[k] = 0.0; }
   }
   let sum = wt.x + wt.y + wt.z + wt.w;
   if (sum < 1e-4) { return vec4<f32>(0.0); }
-  let total = min(movable * 0.5, carry * (ws - lift) * DT_D);
+  let total = min(top * 0.5, carry * (ws - lift) * DT_D);
   return wt / sum * total;
 }
 
-/** What moving water carries from q to its neighbours this pass (downstream; film and layer alike). */
+/** What moving water carries from q's top layer downstream this pass. */
 fn waterOut(q: vec2<i32>) -> vec4<f32> {
   if (!inMap(q)) { return vec4<f32>(0.0); }
   let j = colIdxI(q);
-  let d = driftAt(q);
-  if (d < 0.001 || water[j] < 0.05) { return vec4<f32>(0.0); }
+  let top = topOf(q);
+  if (top < 0.001 || water[j] < 0.02) { return vec4<f32>(0.0); }
+  let m = driftMatAt(q);
   let v = netFlow(q);
   let sp = length(v);
-  if (sp < 0.02) { return vec4<f32>(0.0); }
-  let mob = looseOf(driftMatAt(q)).w * (1.0 - 0.8 * rooted(j));
-  let total = min(d * 0.25, d * (sp - 0.02) * 3.0 * mob);
+  let thr = washOf(m);
+  if (sp < thr) { return vec4<f32>(0.0); }
+  let mob = looseOf(m).w * (1.0 - 0.8 * rooted(j));
+  let total = min(top * 0.2, (sp - thr) * 1.5 * mob * DT_D * 30.0);
   let wt = vec4<f32>(max(v.x, 0.0), max(-v.x, 0.0), max(v.y, 0.0), max(-v.y, 0.0));
   let sum = wt.x + wt.y + wt.z + wt.w;
   if (sum < 1e-6) { return vec4<f32>(0.0); }
   return wt / sum * total;
+}
+
+/** What slides off q's top layer to each neighbour this pass (steeper than its repose). */
+fn slumpOut(q: vec2<i32>) -> vec4<f32> {
+  if (!inMap(q)) { return vec4<f32>(0.0); }
+  let top = topOf(q);
+  if (top < 0.001) { return vec4<f32>(0.0); }
+  let j = colIdxI(q);
+  let here = levelAt(q);
+  let rep = looseOf(driftMatAt(q)).y;
+  var o = vec4<f32>(0.0);
+  for (var k = 0u; k < 4u; k++) {
+    let n = q + DIRS[k];
+    if (!inMap(n)) { continue; }
+    o[k] = max(here - levelAt(n) - rep, 0.0) * SLUMP * (1.0 - rooted(j));
+  }
+  let s = o.x + o.y + o.z + o.w;
+  if (s > top * 0.8) { o *= top * 0.8 / s; }
+  return o;
+}
+
+// ---- the stack ----------------------------------------------------------------
+struct Stack {
+  top: f32,
+  mat: u32,
+  // lower layers, bottom first: depth and material (n of them)
+  d: array<f32, 3>,
+  m: array<u32, 3>,
+  n: u32,
+};
+
+fn unpackLayer(v: f32) -> vec2<f32> {
+  if (v <= 0.0) { return vec2<f32>(0.0); }
+  let m = floor(v / 1000.0);
+  return vec2<f32>(v - m * 1000.0, m);
+}
+
+/** A new material arrives on top: start a layer (the old top goes under). */
+fn pushTop(s: ptr<function, Stack>, mat: u32) {
+  if ((*s).top < 0.02) {
+    // nothing much left of the old top: it just becomes the new material
+    (*s).mat = mat;
+    return;
+  }
+  if ((*s).n == 3u) {
+    // full: the two bottom layers merge (the lower one is buried deepest)
+    (*s).d[0] += (*s).d[1];
+    (*s).d[1] = (*s).d[2];
+    (*s).m[1] = (*s).m[2];
+    (*s).n = 2u;
+  }
+  (*s).d[(*s).n] = (*s).top;
+  (*s).m[(*s).n] = (*s).mat;
+  (*s).n += 1u;
+  (*s).top = 0.0;
+  (*s).mat = mat;
 }
 
 @compute @workgroup_size(8, 8)
@@ -155,52 +211,43 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
-  let d0 = driftAt(p);
-  let f0 = filmOf(p);
-  let m0 = driftMatAt(p);
-  var m = m0;
-  var base = d0 - f0;
-  var film = f0;
-  // what leaves: the wind takes the film first; water takes both alike
+  let st = textureLoad(strataTex, p, 0);
+  var s: Stack;
+  s.top = topOf(p);
+  s.mat = driftMatAt(p);
+  s.n = 0u;
+  for (var k = 0u; k < 3u; k++) {
+    let l = unpackLayer(st[k]);
+    if (l.x > 0.0) {
+      s.d[s.n] = l.x;
+      s.m[s.n] = u32(l.y);
+      s.n += 1u;
+    }
+  }
+  let m0 = s.mat;
+  // what leaves the top layer: wind, water, slumping
   let o = windOut(p);
   let lost = o.x + o.y + o.z + o.w;
-  let movedMat = movingMat(p);
-  if (f0 > 0.001) { film -= lost; } else { base -= lost; }
   let ow = waterOut(p);
-  let lw = ow.x + ow.y + ow.z + ow.w;
-  let ff = f0 / max(d0, 1e-6);
-  film -= lw * ff;
-  base -= lw * (1.0 - ff);
+  let so = slumpOut(p);
+  s.top -= lost + ow.x + ow.y + ow.z + ow.w + so.x + so.y + so.z + so.w;
   let here = levelAt(p);
-  // what arrives: dust settles on the film (unless this is a dust column);
-  // the same loose material joins the layer; a different one joins it too,
-  // unless the layer is all but gone (then it becomes that material)
-  var dustIn = 0.0;
-  var otherIn = 0.0;
+  // what arrives, by material: the same as my top joins it; the largest
+  // other arrival starts a new layer (and takes the rest with it)
+  var same = 0.0;
+  var other = 0.0;
   var otherMat = m0;
+  var otherMax = 0.0;
+  var dust = 0.0;
   for (var k = 0u; k < 4u; k++) {
     let n = p + DIRS[k];
     if (!inMap(n)) { continue; }
-    let mn = movingMat(n);
-    let a = windOut(n)[k ^ 1u] * (1.0 - looseOf(mn).z);
-    if (mn == MAT_DRIFT) { dustIn += a; } else { otherIn += a; otherMat = mn; }
-    let wn = waterOut(n)[k ^ 1u];
-    let fShare = filmOf(n) / max(driftAt(n), 1e-6);
-    dustIn += wn * fShare;
-    otherIn += wn * (1.0 - fShare);
-    if (wn * (1.0 - fShare) > 0.0) { otherMat = driftMatAt(n); }
-    // slumping: steep material slides down to the lower side at its own angle
-    // (held by roots, it doesn't); the film slides first
-    let there = levelAt(n);
-    let out = min(d0 * 0.2, max(here - there - looseOf(m0).y, 0.0) * SLUMP) * (1.0 - rooted(i));
-    let fromFilm = min(out, max(film, 0.0));
-    film -= fromFilm;
-    base -= out - fromFilm;
-    let inn = min(driftAt(n) * 0.2, max(there - here - looseOf(driftMatAt(n)).y, 0.0) * SLUMP) * (1.0 - rooted(colIdxI(n)));
-    let nf = filmOf(n) / max(driftAt(n), 1e-6);
-    dustIn += inn * nf;
-    otherIn += inn * (1.0 - nf);
-    if (inn * (1.0 - nf) > 0.0) { otherMat = driftMatAt(n); }
+    let mn = driftMatAt(n);
+    let a = windOut(n)[k ^ 1u] * (1.0 - looseOf(mn).z) + waterOut(n)[k ^ 1u] + slumpOut(n)[k ^ 1u];
+    if (mn == m0) { same += a; } else {
+      other += a;
+      if (a > otherMax) { otherMax = a; otherMat = mn; }
+    }
   }
   // dust storms drop dust where the wind is broken (sheltered spots, hollows)
   for (var k = 0u; k < 2u; k++) {
@@ -209,62 +256,65 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let r = length(vec2<f32>(p) + 0.5 - ds.xy) / ds.z;
     if (r > 1.2) { continue; }
     let w = windAt(vec3<f32>(vec2<f32>(p) + 0.5, here + 0.5));
-    dustIn += ds.w / 8.0 * smoothstep(1.2, 0.4, r) * 0.06 * DT_D * (0.15 + 0.85 * shelter(p, w));
+    dust += ds.w / 8.0 * smoothstep(1.2, 0.4, r) * 0.06 * DT_D * (0.15 + 0.85 * shelter(p, w));
   }
   // a dying cyclone drops the dust it carried in a pile around its eye
   for (var c = 0u; c < MAX_CYCLONES; c++) {
     if (G.cyclones[c].b.z <= 0.0) { continue; }
     let r = length(vec2<f32>(p) + 0.5 - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
-    dustIn += smoothstep(1.6, 0.0, r) * 0.6 * DT_D;
+    dust += smoothstep(1.6, 0.0, r) * 0.6 * DT_D;
   }
   // dust that came down from the air here (carried by particles)
-  dustIn += f32(atomicExchange(&exchange[G.mapW * G.mapH + i], 0)) / 100000.0;
-  // the editor: dust brushed on or cleaned off, packing, and pours of loose
-  // material (edit.wgsl packs the old layer into cells first when it differs)
+  dust += f32(atomicExchange(&exchange[G.mapW * G.mapH + i], 0)) / 100000.0;
+  // the editor: a pour of loose material (its material from the brush state),
+  // dust brushed on, or something taken away (dig, clean)
   let delta = driftDelta[i];
   driftDelta[i] = 0.0;
-  let ed = u32(floor(textureLoad(editTex, p, 0).w / 4.0));
-  if (delta != 0.0 && ed / 32u == 10u && ed % 32u != MAT_DRIFT) {
-    let pm = ed % 32u;
-    if (pm != m) {
-      // the old layer was packed into cells (delta = the pour − the old
-      // layer): what's left is the new material
-      base = max(base + film + delta, 0.0);
-      film = 0.0;
-    } else { base += delta; }
-    m = pm;
-  } else if (delta > 0.0) {
-    dustIn += delta;
-  } else {
-    // taken away (packing, clean): from the layer first, then the film
-    let take = min(-delta, max(base, 0.0));
-    base -= take;
-    film += delta + take;
+  var pour = 0.0;
+  var pourMat = MAT_DRIFT;
+  if (delta > 0.0) {
+    let ed = u32(floor(textureLoad(editTex, p, 0).w / 4.0));
+    if (ed / 32u == 10u) { pour = delta; pourMat = ed % 32u; } else { dust += delta; }
   }
-  // arrivals
-  if (m == MAT_DRIFT) { base += dustIn; } else { film += dustIn; }
-  if (otherIn > 0.0) {
-    if (base < 0.05 && otherMat != m) { m = otherMat; }
-    base += otherIn;
+  if (MAT_DRIFT == m0) { same += dust; } else {
+    other += dust;
+    if (dust > otherMax) { otherMax = dust; otherMat = MAT_DRIFT; }
   }
-  // green binds the dust it grows through: it becomes soil
-  let bind = rooted(i) * BIND * DT_D;
-  let fromF = min(bind, max(film, 0.0));
-  film -= fromF;
-  if (m == MAT_DRIFT || m == MAT_ASH_L) { base -= bind - fromF; }
-  film = max(film, 0.0);
-  base = max(base, 0.0);
-  // a column with nothing but dust is a dust column
-  if (base < 0.001 && film > 0.0) {
-    m = MAT_DRIFT;
-    base = film;
-    film = 0.0;
+  s.top = max(s.top, 0.0) + same;
+  if (pour > 0.0) {
+    if (pourMat != s.mat) { pushTop(&s, pourMat); }
+    s.top += pour;
   }
-  if (m == MAT_DRIFT) {
-    base += film;
-    film = 0.0;
+  if (other > 0.0) {
+    if (otherMat != s.mat) { pushTop(&s, otherMat); }
+    s.top += other;
+  }
+  // taken away: from the top layer, then those beneath
+  var take = max(-delta, 0.0);
+  let fromTop = min(take, s.top);
+  s.top -= fromTop;
+  take -= fromTop;
+  // a spent top layer uncovers the one beneath it
+  for (var k = 0u; k < 3u; k++) {
+    if (s.top > 0.001 || s.n == 0u) { break; }
+    s.n -= 1u;
+    s.top += s.d[s.n];
+    s.mat = s.m[s.n];
+    let t = min(take, s.top);
+    s.top -= t;
+    take -= t;
+  }
+  // green binds dust and ash it grows through: they become soil
+  if (rooted(i) > 0.8 && (s.mat == MAT_DRIFT || s.mat == MAT_ASH_L) && s.top < 1.0) { s.mat = MAT_SOIL_L; }
+  if (s.top <= 0.001 && s.n == 0u) { s.top = 0.0; s.mat = MAT_DRIFT; }
+  var total = s.top;
+  var packed = vec4<f32>(0.0);
+  for (var k = 0u; k < s.n; k++) {
+    total += s.d[k];
+    packed[k] = f32(s.m[k]) * 1000.0 + min(s.d[k], 999.0);
   }
   // what this cell's wind sent up into the air (the particles take it from here)
-  let air = lost * looseOf(movedMat).z;
-  textureStore(driftOut, p, vec4<f32>(base + film, film, f32(m), air));
+  let air = lost * looseOf(m0).z;
+  textureStore(driftOut, p, vec4<f32>(total, s.top, f32(s.mat), air));
+  textureStore(strataOut, p, packed);
 }

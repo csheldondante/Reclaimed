@@ -4,11 +4,11 @@
 //   var<storage, read> surface: array<u32>;
 // Biomes: flat ground holds water and grows woodland; slopes drain, stay meadow.
 fn slopeAt(p: vec2<i32>) -> f32 {
-  let z = f32(sfZ(surface[colIdxI(p)]));
+  let z = f32(sfZ(surface[colIdxI(p)])) + driftAt(p);
   var m = 0.0;
   for (var k = 0u; k < 4u; k++) {
     let q = clampCell(p + DIRS[k] * 2);
-    m = max(m, abs(f32(sfZ(surface[colIdxI(q)])) - z));
+    m = max(m, abs(f32(sfZ(surface[colIdxI(q)])) + driftAt(q) - z));
   }
   return m * 0.5;
 }

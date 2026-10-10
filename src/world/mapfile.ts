@@ -11,7 +11,7 @@ const MAGIC = 'RCLM';
 const VERSION = 1;
 
 /** Float fields saved per map, in file order. */
-const FIELDS = ['water', 'contam', 'moisture', 'vegetation', 'oil', 'drift', 'oilStored', 'waterSource', 'surface', 'driftMat'] as const;
+const FIELDS = ['water', 'contam', 'moisture', 'vegetation', 'oil', 'drift', 'oilStored', 'waterSource', 'surface', 'driftMat', 'driftTop', 'strata'] as const;
 
 interface Header {
   version: number;
@@ -125,6 +125,8 @@ export async function decodeMap(blob: Blob): Promise<MapData> {
     oil: fields.oil,
     drift: fields.drift,
     driftMat: fields.driftMat.length ? fields.driftMat : undefined,
+    driftTop: fields.driftTop.length ? fields.driftTop : undefined,
+    strata: fields.strata.length === fields.drift.length * 4 ? fields.strata : undefined,
     oilStored: fields.oilStored,
     waterSource: fields.waterSource,
     surface: fields.surface,

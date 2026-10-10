@@ -92,7 +92,7 @@ export class LevelScene implements Scene {
   ) {
     const dims = { w: 256, h: 256, zMax: 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
-    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined);
+    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, !!level.sandbox);
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
     const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();

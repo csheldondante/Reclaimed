@@ -144,8 +144,9 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let s = surface[i];
-  let g = f32(sfZ(s));
-  let m = sfMat(s);
+  // the ground's surface: solid top plus the loose layers on it
+  let g = f32(sfZ(s)) + driftAt(p);
+  let m = groundMatAt(p, sfMat(s));
   let base = vec3<f32>(vec2<f32>(p) + 0.5, g);
   let wind = windAt(base + vec3<f32>(0.0, 0.0, 1.0));
   let ws = length(wind);
@@ -166,7 +167,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let opm = u32(floor(ed.w / 4.0));
     let left = ed.w - f32(opm) * 4.0;
     if (opm / 32u == 10u && ed.z > POUR_RATE * (POUR_FALL - left) && r1 < 0.35) {
-      let at = vec3<f32>(base.xy + vec2<f32>(r2 - 0.5, fract(r2 * 7.31) - 0.5) * 0.9, g + driftAt(p) + GRAIN_DROP);
+      let at = vec3<f32>(base.xy + vec2<f32>(r2 - 0.5, fract(r2 * 7.31) - 0.5) * 0.9, g + GRAIN_DROP);
       spawnFull(at, vec3<f32>(0.0), POUR_FALL + 0.5, K_GRAIN, 0.0, h ^ 0x67a1u, 0u, dustTag(opm % 32u));
     }
   }
@@ -189,7 +190,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       let c = min(dtx.w * 60.0, 1.0);
       if (rare(id.x, id.y, 0xd31fu) < c) {
         let load = min(u32(dtx.w * 0.5 / c * DUST_UNIT), 65535u) << 16u;
-        spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, driftAt(p) + 0.3), vec3<f32>(wind * 0.8, 1.2 + r2), 4.0 + r1 * 3.0, K_DUST, 0.0, h ^ 0xd3u, 0u, dustTag(driftMatAt(p)) | load);
+        spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.8, 1.2 + r2), 4.0 + r1 * 3.0, K_DUST, 0.0, h ^ 0xd3u, 0u, dustTag(driftMatAt(p)) | load);
       }
     }
 

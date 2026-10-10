@@ -18,15 +18,22 @@
 fn driftCornerZ(v: vec2<i32>) -> f32 {
   var sum = 0.0;
   var n = 0.0;
+  var solid = -1.0;
   for (var k = 0; k < 4; k++) {
     let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
     if (!inMap(q)) { continue; }
     let d = driftAt(q);
     if (d < 0.03) { continue; }
-    sum += f32(sfZ(surface[colIdxI(q)])) + d;
+    let g = f32(sfZ(surface[colIdxI(q)]));
+    sum += g + d;
     n += 1.0;
+    solid = max(solid, g);
   }
-  return taperCorner(v, sum, n, 0);
+  let c = taperCorner(v, sum, n, 0);
+  // never below the solid top of a covered column it touches: soft ground
+  // drapes over a step in the rock beneath instead of the rock poking
+  // through it along every step (round 16)
+  return select(c, max(c, solid + 0.04), c >= 0.0);
 }
 
 /** Water surface height at grid corner v: mean level of the wet columns touching it, or -1. */
@@ -82,7 +89,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let dir = sun.xy / horiz;
   let tanE = sun.z / horiz;
   let p0 = vec2<f32>(p) + 0.5;
-  var sz = f32(sfZ(surface[i]));
+  // (the loose ground's depth counts: it's part of the surface — drawn
+  // smoothed, so across the cell it dips below the column's level: start a
+  // little lower or the downhill half of every cell shadows itself)
+  var sz = f32(sfZ(surface[i])) + driftAt(p) - select(0.0, 0.9, driftAt(p) >= 0.05);
   for (var k = 1; k < 160; k++) {
     let drop = f32(k) * tanE;
     if (f32(G.zMax) - drop <= sz) { break; }
@@ -91,8 +101,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // soft ground is drawn sloped (terrainshape.wgsl): it casts from about a
     // cell lower than its whole-cell top, so gentle slopes throw no saw-tooth
     let sq = surface[colIdxI(q)];
-    let soft = select(0.0, 0.9, MATS[sfMat(sq)].look.x > 0.0);
-    sz = max(sz, f32(sfZ(sq)) - soft - drop);
+    // (loose ground is drawn smoothed between columns too)
+    let soft = select(0.0, 0.9, MATS[sfMat(sq)].look.x > 0.0 || driftAt(q) >= 0.05);
+    sz = max(sz, f32(sfZ(sq)) + driftAt(q) - soft - drop);
   }
 
   var glow = fire[i];

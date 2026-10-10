@@ -1673,3 +1673,36 @@ layer beneath form or grow. A dust grain coming down (with or without a
 load) now puts its dust into the layer and fades out within 1.2–1.8 s,
 instead of lying 20–45 s. (Dust born resting on dry ground as surface
 debris is unchanged until the wind lifts it.)
+
+## 2026-10-09 — soft ground all loose, smooth and layered; water carries it (I1, I3)
+
+User: eight layers of dust made "a bunch of dirt underneath" with a thin
+dust layer on top (the packing into silt cells); soft materials should be
+smooth with no step drops — only solids stepped; dust and dirt should wash
+into water, travel and settle under it or leave the map.
+- Loose ground is a stack of up to four layers per column (drift: total,
+  top depth, top material, airborne; strata texture: three layers beneath,
+  packed material·1000 + depth). Wind, water and slumping take from the top
+  layer; a different material arriving starts a new layer on top; a spent
+  top uncovers the one beneath. No more packing into cells. Pours make
+  strata; dig takes loose ground first; building on loose ground packs it
+  under the new block (or it would ride up onto the roof).
+- When the sandbox loads, the soft cells (soil, sand, ash, silt) on every
+  column become that stack; only solid ground stays as cells. Plants, wilt,
+  ecology and oil soaking read the loose layer's material (groundMatAt);
+  shadows and slope measurement include its depth. The sheet's corners never
+  sit below the rock top of a covered column (soft ground drapes over a step
+  instead of the rock poking through) and the shadow pass gives loose
+  columns the same soft margin as soft cells (otherwise the downhill half of
+  every cell shadowed itself — a fish-scale pattern).
+- Water carries the top layer when the net flow beats a per-material
+  threshold (dust/ash 0.03, sand 0.08, dirt 0.12, gravel 0.3), settling
+  where it slows; at the map edge it's gone.
+- The valley keeps its cell ground for now: converted, its terraced rock
+  showed through as contour stripes and its river carved a canyon during
+  warmup — it needs reshaped rock and river erosion matched to the old
+  rates first.
+Measured (sandbox): 8 layers of dust → loose dust 7.03 over the sand 3.80
+(no silt); sand ×2, dirt ×2, dust ×2 on one column → strata sand 4.23 /
+dirt 2.00 / dust 1.52; 8 s of water poured above 2 layers of dust on the
+pond's slope → dust on land 56.95 → 50.0, under the pond 0.71 → 3.26.

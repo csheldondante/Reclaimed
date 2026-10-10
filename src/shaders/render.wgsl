@@ -386,9 +386,9 @@ fn fsBox(in: VOut) -> FOut {
   // the loose layer is drawn in its own material's colour (dust, sand, ash, dirt)
   if (mat == MAT_DRIFT) {
     alb = toLinear(MATS[driftMatAt(cell)].albedo.rgb);
-    // a dust film settling on it shows: a greyer, darker silt than the sand or
-    // dirt beneath, so what the wind lays down reads where it lands
-    alb = mix(alb, toLinear(vec3<f32>(0.5, 0.44, 0.37)), smoothstep(0.03, 0.35, driftFilmAt(cell)));
+    // blown dust on top is drawn a greyer, darker silt than sand or dirt, so
+    // what the wind lays down reads where it lands
+    if (driftMatAt(cell) == MAT_DRIFT) { alb = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
   }
 
   // voxel texture: per-cell and per-subcell (4x4) variation

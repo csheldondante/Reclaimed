@@ -40,7 +40,7 @@ fn doomTime(tier: f32) -> f32 { return select(select(11.0, 8.0, tier < 2.5), 6.0
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let i = colIdx(id.x, id.y);
-  let m = sfMat(surface[i]);
+  let m = groundMatAt(vec2<i32>(id.xy), sfMat(surface[i]));
   let v = veg[i];
   let s = wilt[i];
   let diff = u32(G.env.w + 0.5);

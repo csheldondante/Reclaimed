@@ -80,6 +80,11 @@ export class WorldGpu {
   readonly driftNext: GPUTexture;
   readonly driftView: GPUTextureView;
   readonly driftNextView: GPUTextureView;
+  /** the loose layers beneath the top one (drift.wgsl; three packed mat·1000 + depth) */
+  readonly strata: GPUTexture;
+  readonly strataNext: GPUTexture;
+  readonly strataView: GPUTextureView;
+  readonly strataNextView: GPUTextureView;
   /** sandbox brush state per column (edit.wgsl reads `editState`, writes `editStateNext`; particles read it) */
   readonly editState: GPUTexture;
   readonly editStateNext: GPUTexture;
@@ -185,6 +190,12 @@ export class WorldGpu {
     this.textures.push(this.drift, this.driftNext);
     this.driftView = this.drift.createView();
     this.driftNextView = this.driftNext.createView();
+    this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
+    this.strataNext = device.createTexture({ label: 'strataNext', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.strata, this.strataNext);
+    this.strataView = this.strata.createView();
+    this.strataNextView = this.strataNext.createView();
+    if (map.strata) device.queue.writeTexture({ texture: this.strata }, map.strata as Float32Array<ArrayBuffer>, { bytesPerRow: this.w * 16 }, dsize);
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
     this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.editState, this.editStateNext);
@@ -194,6 +205,8 @@ export class WorldGpu {
       const init = new Float32Array(N * 4);
       for (let k = 0; k < N; k++) {
         init[k * 4] = map.drift[k];
+        // the top layer's depth (all of it, for maps without strata)
+        init[k * 4 + 1] = map.driftTop?.[k] ?? map.drift[k];
         init[k * 4 + 2] = map.driftMat?.[k] ?? 0;
       }
       device.queue.writeTexture({ texture: this.drift }, init, { bytesPerRow: this.w * 16 }, dsize);

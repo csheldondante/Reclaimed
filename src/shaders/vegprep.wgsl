@@ -187,10 +187,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     top = groundZAt(vec2<i32>(id.xy), vec2<f32>(0.5), f32(sfZ(s)));
     let lay = driftAt(vec2<i32>(id.xy));
     if (lay > 0.0 && !buriedAt(vec2<i32>(id.xy))) { top = f32(sfZ(s)) + lay; }
-    pl = vegPlan(id.x, id.y, veg[i], sfMat(s));
+    let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));
+    pl = vegPlan(id.x, id.y, veg[i], gm);
     tap = wilt[i];
     n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree) + pl.tufts + select(0u, 1u, pl.flower);
-    if (G.misc.w > 0.5) { n = fineCount(veg[i], sfMat(s), id.xy); }
+    if (G.misc.w > 0.5) { n = fineCount(veg[i], gm, id.xy); }
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
     n += select(0u, 1u, driftAt(vec2<i32>(id.xy)) > DRIFT_SHOW);
   }
@@ -212,7 +213,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     o += 1u;
   }
   if (G.misc.w > 0.5) {
-    o = fineEmit(o, id.xy, top, veg[colIdx(id.x, id.y)], sfMat(surface[colIdx(id.x, id.y)]));
+    o = fineEmit(o, id.xy, top, veg[colIdx(id.x, id.y)], groundMatAt(vec2<i32>(id.xy), sfMat(surface[colIdx(id.x, id.y)])));
   }
   if (pl.shrub && G.misc.w < 0.5) {
     instOpaque[o] = mkInst(id.x, id.y, 1u, 1u, top, top + 1.0, MAT_LEAVES, FLAG_VEG);

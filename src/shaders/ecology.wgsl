@@ -21,7 +21,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
-  let m = sfMat(surface[i]);
+  // what it grows in: the loose ground's material where there's a fair depth
+  let m = groundMatAt(p, sfMat(surface[i]));
   let cap = MATS[m].eco.x;
   let suit = MATS[m].eco.y;
   let wl = wilt[i];

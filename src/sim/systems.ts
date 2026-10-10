@@ -157,8 +157,8 @@ export class OilSystem implements SimSystem {
       world,
       'oil-depth',
       oilDepthWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'rw' },
-      { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface, 9: world.fire, 10: world.oilStored },
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'rw', 17: 'tex' },
+      { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface, 9: world.fire, 10: world.oilStored, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -198,8 +198,8 @@ export class MoistureSystem implements SimSystem {
       world,
       'moisture',
       moistureWgsl + slopeWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read' },
-      { 3: world.water, 4: world.moisture, 5: world.moistureNext, 6: world.veg, 7: world.surface },
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 17: 'tex' },
+      { 3: world.water, 4: world.moisture, 5: world.moistureNext, 6: world.veg, 7: world.surface, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -327,13 +327,14 @@ export class DriftSystem implements SimSystem {
       world,
       'drift',
       driftWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 8: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex' },
-      { 3: world.surface, 4: world.water, 5: world.driftDelta, 6: world.flux, 7: world.veg, 8: world.contamDelta, 18: world.editStateView, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 8: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 20: 'stex' },
+      { 3: world.surface, 4: world.water, 5: world.driftDelta, 6: world.flux, 7: world.veg, 8: world.contamDelta, 18: world.editStateView, 19: world.strataView, 20: world.strataNextView, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
     enc.copyTextureToTexture({ texture: this.world.driftNext }, { texture: this.world.drift }, [this.world.w, this.world.h]);
+    enc.copyTextureToTexture({ texture: this.world.strataNext }, { texture: this.world.strata }, [this.world.w, this.world.h]);
   }
 }
 
