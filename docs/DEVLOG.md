@@ -1783,3 +1783,18 @@ Measured (sandbox, the garden tower toppled, 189 voxels, asleep):
 - a pit under its middle: it stays (both ends still hold it); the loose
   ground removed under its whole footprint: it wakes and drops 2 cells in 3 s;
 - a cyclone on it: it wakes and is shifted 3.4 cells.
+
+## 2026-10-10 — lightning blasts a crater in whatever it strikes (L1)
+
+User: lightning should destroy even stone and whatever it strikes. A strike
+now also sends the edit pass's break op: a sphere (radius 2.6) at the strike
+point removes everything in it — stone and bedrock included (only the
+bottom two cells stay) — and the break op now also takes the loose ground
+inside its sphere (so Break digs into sand too). In the sandbox lightning
+seeks the highest visible point (loose ground and fallen bodies count) and
+breaks any fallen body it hits. (Its structural damage is as before: the
+struck structure cracks and may collapse to rubble.)
+Measured (sandbox): a strike on flat sand: loose 3.80 → 1.20; on a 4-layer
+bedrock mound: stone top 14 → 11 and loose 3.80 → 1.70; struck beside the
+garden tower it seeks the tower's top: concrete 11–35 → rubble 11–24 (the
+cracked column collapses), chips flying.

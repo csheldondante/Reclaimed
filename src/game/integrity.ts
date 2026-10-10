@@ -62,6 +62,13 @@ export class Integrity {
     this.dirty.push([x0, y0, x1, y1, 2]);
   }
 
+  /** The visible top of a column: solid ground plus loose ground, or a fallen body's top. */
+  topAt(x: number, y: number): number {
+    const i = y * this.core.dims.w + x;
+    const ground = this.world.slots.length ? this.world.colTop(x, y) + (this.bodies.loose?.[i] ?? 0) : 0;
+    return Math.max(ground, this.proj[i * 4]);
+  }
+
   /** Forget every falling piece (undo restores the world beneath them). */
   clear(): void {
     this.bodies.list = [];

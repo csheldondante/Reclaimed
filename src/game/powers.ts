@@ -267,15 +267,19 @@ export class Powers {
       for (let x = Math.max(0, tx - R); x <= Math.min(dims.w - 1, tx + R); x++) {
         const d = Math.hypot(x - tx, y - ty);
         if (d > R) continue;
-        const score = (surf[y * dims.w + x] & 0xff) - 0.4 * d;
+        const score = (this.topAt ? this.topAt(x, y) : surf[y * dims.w + x] & 0xff) - 0.4 * d;
         if (score > best) {
           best = score;
           bx = x;
           by = y;
         }
       }
-    const bz = surf[by * dims.w + bx] & 0xff;
+    const bz = this.topAt ? this.topAt(bx, by) : surf[by * dims.w + bx] & 0xff;
     globals.events.push({ kind: EventKind.Lightning, x: bx + 0.5, y: by + 0.5, radius: 5, strength: 20 });
+    // it blasts a crater in whatever it strikes — stone too (round 19): a
+    // sphere at the strike point through the edit pass's break op
+    globals.events.push({ kind: EventKind.Edit, x: bx + 0.5, y: by + 0.5, z: 12 * 32, radius: 2.6, strength: bz });
+    this.onStrike?.(bx + 0.5, by + 0.5, bz);
     globals.flash = 1;
     const [px, py] = this.d.camera.project(bx + 0.5, by + 0.5, bz);
     hud?.bolt(px, py);
@@ -296,6 +300,10 @@ export class Powers {
   private lastCyclone = -99;
   /** called when the player's swirl spins up a cyclone */
   onCyclone?: (x: number, y: number) => void;
+  /** the visible top of a column (loose ground, fallen bodies) for lightning to seek; default: the solid top */
+  topAt?: (x: number, y: number) => number;
+  /** lightning struck here (x, y, the visible top): the level breaks fallen bodies there */
+  onStrike?: (x: number, y: number, z: number) => void;
 
   /**
    * A tight circular drag spins up a cyclone (round 12): over the last ~2.5 s

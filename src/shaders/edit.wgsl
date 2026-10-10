@@ -107,6 +107,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let amt = ev.w * fall;
     if (op == OP_SMASH) {
       let hz = ev.z * sqrt(fall);
+      // the loose ground inside the sphere goes too (it lies on the solid top)
+      if (n > 0u) {
+        let gTop = f32(ivZ1(arr[n - 1u]));
+        let over = min(ev.w + hz, gTop + driftAt(p)) - max(ev.w - hz, gTop);
+        if (over > 0.0) { driftDelta[i] -= over; }
+      }
       let lo = u32(max(ev.w - hz, 0.0) + 0.5);
       let hi = u32(max(ev.w + hz, 0.0) + 0.5);
       var out: array<u32, MAX_K>;

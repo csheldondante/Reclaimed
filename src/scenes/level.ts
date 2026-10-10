@@ -180,7 +180,15 @@ export class LevelScene implements Scene {
       core.sim.edit.always = true;
       // the physics playground (F7, G5): what breaks free falls as rigid
       // pieces; the structure system only collapses damage
-      this.integrity = new Integrity(core);
+      const integ = new Integrity(core);
+      this.integrity = integ;
+      // lightning seeks what you see (loose ground, fallen bodies) and breaks
+      // the bodies it strikes (round 19)
+      this.powers.topAt = (x, y) => integ.topAt(x, y);
+      this.powers.onStrike = (x, y, z) => {
+        integ.breakBodies([x, y, z], 2.6);
+        integ.markDirty(x, y, 16);
+      };
       this.integrity.onChips = (x, y, z, count) => {
         core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: 3, spread: 0.8 });
         this.audio.chip(camera.project(x, y, z)[0] / camera.viewportW);

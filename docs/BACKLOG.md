@@ -36,7 +36,7 @@ user) · `deferred` (agreed for later).
 
 | id | item | size | status |
 |---|---|---|---|
-| L1 | Lightning blasts a crater in whatever it strikes — stone too, loose ground, fallen bodies | S | open |
+| L1 | Lightning blasts a crater in whatever it strikes — stone too, loose ground, fallen bodies | S | done |
 
 ## Round 17 (2026-10-09, session 3)
 
