@@ -3,6 +3,11 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-09 — round 19 (session 3)
+
+- K1b/K2 OK (pushed). Minor tweak: lightning should destroy even stone and
+  whatever it strikes (L1).
+
 ## 2026-10-09 — round 18 (session 3)
 
 - J1 and K1 look good (pushed). Also wanted: still be able to break the

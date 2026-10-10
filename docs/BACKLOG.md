@@ -32,6 +32,12 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 19 (2026-10-09, session 3)
+
+| id | item | size | status |
+|---|---|---|---|
+| L1 | Lightning blasts a crater in whatever it strikes — stone too, loose ground, fallen bodies | S | open |
+
 ## Round 17 (2026-10-09, session 3)
 
 | id | item | size | status |
@@ -39,7 +45,7 @@ user) · `deferred` (agreed for later).
 | J1 | Loose layers checkerboard (neighbouring columns see-saw), worst in wind: stabilise the transport and the top-material switching | S–M | done `c208a2d` |
 | K1 | Bodies step 1: sleeping bodies keep their frame (no re-voxelising); projection of sleeping bodies into a per-column body-top texture; cap ~64 bodies / 16k voxels (oldest small ones crumble to loose ground) | M–L | done `a6d40a5` |
 | K1b | Break works on bodies too: the Break tool removes voxels in a body's own frame; what's left splits into its connected pieces (they wake and fall); crumbs become loose ground | M | done `3273598` |
-| K2 | Bodies step 2: loose ground, water and integrity read the projection (pile on, slide off, bury); bodies wake when disturbed | M | done (checking in) |
+| K2 | Bodies step 2: loose ground, water and integrity read the projection (pile on, slide off, bury); bodies wake when disturbed | M | done `b60e6fe` |
 | K3 | Bodies step 3: impacts and damage split bodies along their own grid; small pieces become loose ground by material | M | after K2 |
 
 ## Round 16 (2026-10-09, session 3)
