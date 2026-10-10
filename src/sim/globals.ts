@@ -27,6 +27,8 @@ export const enum EventKind {
   Grow = 4,
   /** sandbox brush: z = op * 32 + material (edit.wgsl) */
   Edit = 5,
+  /** every click: a ring of wind pushing out from it (windfield.wgsl; round 20) */
+  Ripple = 6,
 }
 
 /** A dust storm: a roaming patch of strong, gusty wind (no rain, no cloud). */

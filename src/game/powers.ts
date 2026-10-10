@@ -169,6 +169,8 @@ export class Powers {
     if (hit === null) return;
     const x = (hit.cell % this.d.dims.w) + 0.5;
     const y = Math.floor(hit.cell / this.d.dims.w) + 0.5;
+    // every click is a little breath of wind pushing out from it (round 20)
+    this.d.globals.events.push({ kind: EventKind.Ripple, x: wx, y: wy, radius: 6, strength: 5 });
     // under a storm a tap is lightning — when Nature can pay for it. Taps
     // never depend on Nature: otherwise it is an ordinary touch (clink, crack,
     // grow; DECISIONS round 7)

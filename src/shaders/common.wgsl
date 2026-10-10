@@ -88,6 +88,8 @@ const EV_CHIP: u32 = 2u;
 const EV_SCARE: u32 = 3u;
 // a tap on the ground: growth boost (or a wilt where nothing can take)
 const EV_GROW: u32 = 4u;
+// a click: a ring of wind pushing outward from it (windfield.wgsl)
+const EV_RIPPLE: u32 = 6u;
 // eventKind packs kind (low 4 bits) and a z height (above): kind + 16·z
 fn evKind(e: u32) -> u32 { return u32(G.eventKind[e]) & 15u; }
 fn evZ(e: u32) -> u32 { return u32(G.eventKind[e]) >> 4u; }

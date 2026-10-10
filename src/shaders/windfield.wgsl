@@ -56,6 +56,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let f = smoothstep(g.z, g.z * 0.35, d);
     v += dir * g.w * stormBoost * (0.85 + 0.3 * (wob + 0.5)) * f * min(1.0, len / (1.3 * g.z));
   }
+  // a click's ripple: wind pushing out from it in a ring (round 20: every
+  // click is a breath of wind — you are the wind); it relaxes away like any
+  // painted wind
+  for (var e = 0u; e < numEvents(); e++) {
+    if (evKind(e) != EV_RIPPLE) { continue; }
+    let ev = G.events[e];
+    let o = c - ev.xy;
+    let d = length(o);
+    if (d < 0.01 || d > ev.z) { continue; }
+    v += o / d * ev.w * smoothstep(ev.z, ev.z * 0.45, d) * smoothstep(0.0, ev.z * 0.3, d);
+  }
   let m = length(v);
   if (m > MAX_W) { v *= MAX_W / m; }
   textureStore(windOut, t, vec4<f32>(v, mapWind(c) + v));

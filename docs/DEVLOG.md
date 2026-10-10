@@ -1814,3 +1814,14 @@ threshold can be lower.
 Measured: the garden tower with one edge of its foot broken teeters ~7 s,
 goes over in ~7 s more and comes to rest lying on its side at 21.6 s (it
 used to slam down in ~2 s). A tower broken evenly at its foot stands.
+
+## 2026-10-10 — every click is a breath of wind (M2)
+
+User: clicking should always make a little ripple of wind pushing out from
+the cursor (you are the wind/nature). A tap now also sends a one-tick
+Ripple event (kind 6); the wind field pass adds an outward push in a ring
+around it (radius 6, zero at the centre, strongest 2–3 cells out) into the
+painted wind, which relaxes away like any stroke.
+Measured (sandbox, one tap): painted wind 2.0–3.3 cells/s pointing outward
+at 3–4 cells from the click on every side, nothing at 8 cells — a breath
+(grass sways, light specks stir), well below dust's lifting threshold.
