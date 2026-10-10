@@ -10,9 +10,15 @@ user's own words, rounds 1–20) → `docs/ARCHITECTURE.md` (contracts) →
 
 Session 3 worked through feedback rounds 13–20 (~90 commits). The user's
 latest verdict: "Overall I do think this current state is very good."
-Everything is on `main` at github.com/csheldondante/Reclaimed (check
-`git status -sb`: the user validates larger work before it's pushed — ask
-before pushing anything new).
+**Unpushed at the end of session 3 (local `main`, awaiting the user's
+check — do not push until they say so):** `78deeb6` lightning craters (L1),
+`adc7e32` round-20 notes, `d81ad6e` body feel (M1), `6c1b7d8` click ripple
+(M2), `533c384` lightning targeting + chain (M3), `a783c51` night sounds +
+frogs (M4/M5), `3ab876b` pitched metal (M6), and this handoff. The user has
+**not checked lightning yet** (L1 + M3) nor the body feel / click ripple.
+First thing next session: ask them to try these, then push
+(`git push`). Everything before `78deeb6` is on
+github.com/csheldondante/Reclaimed.
 
 New this session, on top of session 2:
 
