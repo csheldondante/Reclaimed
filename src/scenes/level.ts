@@ -19,6 +19,7 @@ import type { MapData } from '../world/mapgen';
 import { columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn } from '../world/models';
 import { Integrity } from '../game/integrity';
+import { initPhysics } from '../game/physics';
 import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
 
@@ -109,7 +110,10 @@ export class LevelScene implements Scene {
 
   /** Builds the level and settles it (rivers, slopes) before returning. */
   static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void, opts: LevelOptions = {}): Promise<LevelScene> {
-    const s = new LevelScene(host, audio, perf, levelById(levelId), onExit, opts);
+    const level = levelById(levelId);
+    // the sandbox's falling pieces move with Rapier (loaded only for it)
+    if (level.sandbox) await initPhysics();
+    const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
     // litter, fallen leaves) accumulates fast so the level opens with it lying about.
     // A saved map was settled when it was saved: a short prime only.
@@ -205,6 +209,8 @@ export class LevelScene implements Scene {
       // pieces; the structure system only collapses damage
       const integ = new Integrity(core);
       this.integrity = integ;
+      // strong cyclones lift light pieces and shove heavier ones (round 24)
+      integ.bodies.wind = (p) => weather.cycloneWind(p[0], p[1], p[2]);
       // lightning seeks what you see (loose ground, fallen bodies) and breaks
       // the bodies it strikes (round 19)
       this.powers.topAt = (x, y) => integ.topAt(x, y);
@@ -454,7 +460,10 @@ export class LevelScene implements Scene {
     this.drawRing();
     if (this.integrity) {
       // cyclones batter what they pass: look there
-      for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
+      for (const cy of weather.cyclones) {
+        this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
+        if (cy.strength > 0.3) this.integrity.stir(cy.x, cy.y, cy.radius * 2);
+      }
       this.integrity.update(dt * this.speed);
     }
     weather.dustiness = core.pollution;
@@ -942,6 +951,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.controls.dispose();
     this.editor?.dispose();
+    this.integrity?.dispose();
     this.ring?.parentElement?.remove();
     this.hud.dispose();
     this.core.destroy();

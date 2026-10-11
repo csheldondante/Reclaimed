@@ -29,6 +29,16 @@ cracking once undercut relies on the existing structure/fracture rules
 To compare: a second checkout of main can run beside it
 (`git worktree add ../Reclaimed-main main`, `npx vite --port 5174`).
 
+## Branch `rapier` (off `strata`, round 24) — real rigid bodies, for the user to try
+
+Falling pieces move with Rapier (DEVLOG "branch rapier"): they tip, topple,
+tumble, stack and sleep skewed; no bounce — hard hits shatter them and
+smash structures they hit (as rubble, Q3); cyclones lift light pieces. The
+user said it can be rolled back out if it looks bad: it is its own branch.
+Knobs: `game/bodies.ts` (G, MAX_V, drag, FRICTION, LOOSE_HALF, TIP_START,
+WIND_DRAG, DENSITY), `game/integrity.ts` (IMPACT_BREAK, SHATTER,
+WORLD_BREAK), `Weather` CYCLONE_UPDRAFT.
+
 ## Where things stand
 
 Session 3 worked through feedback rounds 13–20 (~90 commits). The user's

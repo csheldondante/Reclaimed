@@ -2132,3 +2132,47 @@ litter, everything else → rubble.
 Checked headlessly: Break into the stone under the sand plain leaves 2 cells
 of rubble where 2 of stone were (sand around slumps onto it); Break at the
 garden tower's base drops the tower into the hole as before.
+
+## 2026-10-11 — branch rapier: falling pieces as real rigid bodies (Q5)
+
+The user's goals for the physics (DECISIONS round 24): a believable,
+responsive collapse is the juice; some pieces persist (skewed, buried);
+strong cyclones lift light pieces; pieces break each other and the world;
+they fall and only crumble on impact. The hand-written solver (contact
+points, push-out) was what kept going wrong, so the motion now comes from
+Rapier 0.21 (`@dimforge/rapier3d-compat`, WASM inlined; a lazy 4.3 MB chunk,
+1.7 MB gzipped, loaded only when the sandbox starts). Ours on top:
+- shapes: a body's voxels merged greedily into boxes; the world near every
+  moving body as one static box per column interval, cached per column and
+  rebuilt when its intervals change (re-read only after a new read-back —
+  that took the step from 1.37 to 0.83 ms mean);
+- no bounce (restitution 0), gravity 10, drag, a top falling speed of 7;
+- impact = the jump in velocity a contact caused, minus gravity, drag and
+  wind; integrity.ts breaks the body at the contact (shatter/breakAt as
+  before) and, at 6 cells/s or more on a structure, smashes a hole in the
+  world there (the edit pass's break op, so it turns to rubble);
+- cyclones: `Weather.cycloneWind()` mirrors the GPU swirl (26 at the eye
+  wall, pull inward, the funnel's spine at that height) plus a 12 cells/s
+  updraft; drag 1.4 · voxels^(2/3) · (wind − v) against mass = voxels ×
+  density (steel 3 … canvas 0.3). Sleeping pieces under a cyclone wake.
+Tuning that came out of the tests (headless, scratchpad topple2.js,
+cyclift.js, physperf.js):
+- The garden tower with two of its three foot columns cut didn't tip: sand
+  banked round its foot counted as a wall it was keyed into (fracture.ts).
+  Loose ground now only holds what stands on it, not what it leans against.
+- It then broke free but stood: the solver's boxes for the sand beside the
+  foot were flush with it and their friction held the side faces. Loose
+  ground's boxes are 0.84 wide (friction 0.5): it carries, it doesn't grip.
+- Barely off balance (a third of a cell), a 24-tall tower took seconds to
+  begin to lean and fell asleep first: a piece tipping over its foot starts
+  with 0.3 rad/s toward the overhang, and nothing sleeps in its first 1.5 s.
+  Now it leans, topples and lands across the sand basin's wall.
+- The old impact rule (break at 1.2 cells/s, shatter 700) was tuned for
+  falls capped at 4: a 1-cell drop crumbled every small piece. Now break at
+  5 (about a 1.25-cell drop), radius 0.2 · speed, shatter 2500.
+- Cyclone: two small wooden pieces and a canvas sheet lift (one to ~21
+  cells) and are flung round the funnel; a 32-voxel concrete slab slid and
+  tumbled at drag 2, so 1.4 (it should only creep).
+Perf (Xe-LPG, the tower, chimney and bridge broken together): physics mean
+0.83 ms a frame, p95 2 ms, worst 14.5 ms (building a tall body's first
+boxes). Undo, Break on a body and a new map (the solver is freed) checked.

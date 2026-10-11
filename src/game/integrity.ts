@@ -11,7 +11,8 @@
 // span-support rule would turn overhangs to rubble before this sees them).
 
 import { packColumn, readColumn, columnSlots, SLOT_WORDS, type Interval } from '../world/layout';
-import { MAT } from '../world/materials';
+import { MAT, MATERIALS, MatState } from '../world/materials';
+import { EventKind } from '../sim/globals';
 import { analyse, WorldVox, type Voxel } from './fracture';
 import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
@@ -26,11 +27,18 @@ const PASS = 0.35; // s between analyses while anything is dirty or moving
 // with the speed around that point (to loose ground, with dust and chips);
 // pieces of up to IMPACT_CRUMB voxels crumble too. Metal breaks far less than
 // stone. Softer hits only puff dust.
-const IMPACT_BREAK = 1.2; // cells/s
-const SHATTER = 700;
+const IMPACT_BREAK = 5; // cells/s (round 24: about a 1.25-cell drop; real tumbling hits harder than the old capped falls)
+const SHATTER = 2500;
 const IMPACT_CRUMB = 16; // voxels
-const impactRadius = (speed: number) => Math.min(2.5, 0.5 + 0.3 * speed);
+const impactRadius = (speed: number) => Math.min(2.5, 0.2 * speed);
 const impactReach = (m: number) => (m === MAT.Steel || m === MAT.Rust ? 0.4 : m === MAT.Wood ? 0.7 : 1);
+// Pieces break the world too (round 24, Q5: "they should break each other
+// and the world"): a hit of WORLD_BREAK cells/s or more on a structure (not
+// bedrock, not loose ground) smashes a hole there — through the edit pass's
+// break op, so what it breaks becomes rubble (Q3) and what it held is
+// analysed again.
+const WORLD_BREAK = 6; // cells/s
+const worldRadius = (speed: number) => Math.min(2, 0.3 + 0.2 * speed);
 
 export class Integrity {
   readonly bodies: Bodies;
@@ -69,6 +77,20 @@ export class Integrity {
     };
     this.bodies.onWake = () => this.project();
     this.bodies.onImpact = (b, speed, at) => this.impact(b, speed, at);
+    this.bodies.onHitWorld = (at, speed, mat) => this.hitWorld(at, speed, mat);
+  }
+
+  /** A piece hit the world hard: smash a hole in a structure there. */
+  private hitWorld(at: [number, number, number], speed: number, mat: number): void {
+    if (speed < WORLD_BREAK || mat === MAT.Stone || MATERIALS[mat]?.state !== MatState.Solid) return;
+    const r = worldRadius(speed);
+    this.core.globals.events.push({ kind: EventKind.Edit, x: at[0], y: at[1], z: 12 * 32, radius: r, strength: at[2] });
+    this.markDirty(Math.floor(at[0]), Math.floor(at[1]), 8);
+  }
+
+  /** Wind strong enough to move them here: the sleeping pieces within r of (x, y) wake. */
+  stir(x: number, y: number, r: number): void {
+    for (const b of this.bodies.list) if (b.asleep && Math.hypot(b.pos[0] - x, b.pos[1] - y) < r + b.radius) this.bodies.wake(b);
   }
 
   /** Structures around (x, y) within r may have changed. */
@@ -87,9 +109,14 @@ export class Integrity {
     return Math.max(ground, this.proj[i * 4]);
   }
 
+  /** The scene is going: free the solver. */
+  dispose(): void {
+    this.bodies.dispose();
+  }
+
   /** Forget every falling piece (undo restores the world beneath them). */
   clear(): void {
-    this.bodies.list = [];
+    this.bodies.clear();
     this.pendingLoose.clear();
     this.dirty = [];
     this.project();
@@ -158,7 +185,7 @@ export class Integrity {
    */
   crumble(b: Body): void {
     this.toLoose(this.bodies.worldVoxels(b));
-    this.bodies.list = this.bodies.list.filter((x) => x !== b);
+    this.bodies.remove(b);
     this.stats.crumbledBodies++;
   }
 
@@ -272,14 +299,10 @@ export class Integrity {
     // (with only sleeping bodies about, a slower pass still checks they're held up)
     this.t = this.dirty.length || this.bodies.anyAwake ? PASS : 1.0;
     this.busy = true;
-    // the layers (structures, solid ground) and the loose ground's depth
-    // (bodies lie on it) — read back together
-    void Promise.all([this.core.readBuffer('layers'), this.core.readTexture(this.core.world.drift)]).then(([f, d]) => {
+    // the layers (structures, solid and loose ground)
+    void this.core.readBuffer('layers').then((f) => {
       this.busy = false;
       this.world.slots = new Uint32Array(f.buffer);
-      const loose = new Float32Array(d.w * d.h);
-      for (let i = 0; i < loose.length; i++) loose[i] = d.data[i * 4];
-      this.bodies.loose = loose;
       this.pass();
     }, ignoreTeardown);
   }
@@ -395,6 +418,7 @@ export class Integrity {
     }
     const data = packColumn(col, k);
     this.world.slots.set(data, base * SLOT_WORDS);
+    this.bodies.changed(x, y);
     this.core.host.gpu.device.queue.writeBuffer(this.core.world.layers, base * SLOT_WORDS * 4, data);
   }
 }

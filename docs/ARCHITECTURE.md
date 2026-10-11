@@ -304,12 +304,24 @@ over whole; otherwise load (mass, first moments) is passed from the far
 voxels toward the ground along shortest paths (voxels on an unbroken stack
 down to the ground are anchors) and where moment > 40 · strength ·
 thickness³ (thickness = distance to the piece's skin) that cross-section
-crumbles to chips. Pieces are cut out of the columns (CPU mirror + GPU
-writeBuffer) and become `game/bodies.ts` falling bodies (round 21: they
-only fall straight down — no rotation, sliding or bounce; collision points
-just inside the exposed voxel corners find the deepest overlap below them
-(solid run top, loose ground, a sleeping body's top); landing hard shatters
-them, `game/integrity.ts` impact()). Bodies draw as rotated cubes
+crumbles (its cells squeeze out as rubble beside it, round 23). Only solid
+terrain beside a piece, or any terrain under it, holds it — loose ground
+banked against it doesn't (round 24). Pieces are cut out of the columns (CPU
+mirror + GPU writeBuffer) and become `game/bodies.ts` rigid bodies (round 24,
+branch `rapier`: Rapier, `game/physics.ts`, loaded only for the sandbox). Each
+body is its voxels merged into boxes (density by material); the world around
+every moving body is static boxes, one per column interval (loose ground a
+little narrower and 0.35 lower), cached per column and rebuilt when the
+column changes (a new read-back, or `Bodies.changed()` from the CPU edits).
+Restitution 0, gentle gravity and drag, a top falling speed. A piece that
+tips over its foot gets a small start toward the overhang. Impacts are the
+jump in a body's velocity a contact caused (gravity, drag and wind taken
+out); at IMPACT_BREAK or more it shatters/loses voxels near the contact
+(`integrity.ts` impact()), and a hit at WORLD_BREAK or more on a structure
+smashes a hole in the world there (the edit pass's break op). Cyclones push
+pieces with drag against their exposed surface over their mass
+(`Weather.cycloneWind`, a CPU mirror of the GPU swirl plus an updraft), so
+light pieces fly. Bodies draw as rotated cubes
 (`render.wgsl` vsBody/fsBody, buffer bound at 3). In the sandbox the GPU
 structure rule collapses damage only (`Globals.misc.y` = 2).
 
@@ -320,9 +332,9 @@ top and bottom of any sleeping body over it (CPU copy also carries the body
 id). The loose ground treats a body's top as ground (banks against it,
 slides off it; material under a body doesn't move) and buries it once its
 level rises past the top; water and dust grains treat it as ground too.
-Bodies collide with solid cells, the loose surface (settling 0.35 into it)
-and sleeping bodies. A sleeping body wakes when hit hard by a falling one,
-when nothing holds it up any more (checked each integrity pass, ~1 s when
-all are asleep), or when a cyclone passes (small bodies are carried). Break
+Sleeping bodies stay in the solver (asleep there too); one wakes when the
+solver wakes it (hit by another), when a column under it dropped since it
+fell asleep (checked each integrity pass, ~1 s when all are asleep), when a
+body it lay on goes, or when a cyclone passes over it. Break
 on a body removes voxels in its frame and splits it; a budget (64 bodies /
 16k voxels) crumbles the oldest small ones into loose ground (`deposit` .yz).

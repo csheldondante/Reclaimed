@@ -16,5 +16,8 @@
     "puppeteer-core": "^25.12.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.3"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0"
   }
 }

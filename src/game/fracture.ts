@@ -143,6 +143,12 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
     }
   const structural = new Uint8Array(256);
   for (let m = 0; m < MATERIALS.length; m++) structural[m] = isStructural(m) ? 1 : 0;
+  // what holds a structure: terrain under it, or solid terrain beside it —
+  // loose ground banked against it doesn't (round 24: a tower with sand
+  // drifted round its foot was "keyed in" and never tipped)
+  const loose = new Uint8Array(256);
+  for (let m = 0; m < MATERIALS.length; m++) loose[m] = MATERIALS[m].state === MatState.Granular ? 1 : 0;
+  const holds = (m: number, dz: number) => m !== 0 && !structural[m] && (dz < 0 || !loose[m]);
   const comp = new Int32Array(N).fill(-1);
   const result: Fracture = { bodies: [], crumble: [] };
   const NB = [
@@ -184,7 +190,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
         const m = mat[j];
         if (!m) continue;
         if (!structural[m]) {
-          anchored = true;
+          if (holds(m, dz)) anchored = true;
           continue;
         }
         if (comp[j] < 0) {
@@ -231,7 +237,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
         const ny = y + dy;
         if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1) continue;
         const m = mat[idx(nx, ny, z)];
-        if (m && !structural[m]) sideAnchored = true;
+        if (holds(m, 0)) sideAnchored = true;
       }
     }
     cx /= cells.length;
@@ -260,7 +266,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
         const nz = z + dz;
         if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1 || nz < 0 || nz >= H) continue;
         const m = mat[idx(nx, ny, nz)];
-        if (m && !structural[m]) anchor = true;
+        if (holds(m, dz)) anchor = true;
       }
       if (anchor) {
         dist.set(i, 0);

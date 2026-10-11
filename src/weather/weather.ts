@@ -77,6 +77,9 @@ export const SPINE_N = 6;
 /** height between spine nodes (cells) */
 const SPINE_SEG = 4.4;
 
+/** a cyclone's updraft inside its funnel (cells/s), lifting light pieces */
+const CYCLONE_UPDRAFT = 12;
+
 /** cap on the drift a player can add to a storm (cells/s) */
 const MAX_PUSH = 7;
 
@@ -210,6 +213,44 @@ export class Weather {
     const c: Cyclone = { x, y, vx: 0, vy: 0, radius: 6, spin: Math.sign(spin) || 1, age: 0, life: 20, strength: 0, spine };
     this.cyclones.push(c);
     return c;
+  }
+
+  /**
+   * The cyclones' wind at a point (cells/s), for the falling pieces (round
+   * 24: strong cyclones lift light pieces). Mirrors windAt() in common.wgsl
+   * — the swirl (26 at the eye wall) and a slight pull inward round the
+   * funnel's spine at that height — plus an updraft inside the funnel.
+   * Null where no cyclone reaches.
+   */
+  cycloneWind(x: number, y: number, z: number): [number, number, number] | null {
+    let w: [number, number, number] | null = null;
+    for (const cy of this.cyclones) {
+      if (cy.strength <= 0) continue;
+      // the spine's centre at this height (linear between nodes)
+      const sp = cy.spine;
+      let cx = sp[0].x;
+      let cyy = sp[0].y;
+      for (let i = 0; i + 1 < sp.length; i++) {
+        if (z < sp[i + 1].z || i + 2 === sp.length) {
+          const t = Math.min(1, Math.max(0, (z - sp[i].z) / Math.max(1e-3, sp[i + 1].z - sp[i].z)));
+          cx = sp[i].x + (sp[i + 1].x - sp[i].x) * t;
+          cyy = sp[i].y + (sp[i + 1].y - sp[i].y) * t;
+          break;
+        }
+      }
+      const ox = x - cx;
+      const oy = y - cyy;
+      const dist = Math.max(Math.hypot(ox, oy), 1e-3);
+      const r = dist / cy.radius;
+      if (r >= 3.5) continue;
+      const prof = r * Math.exp((1 - r * r) * 0.5) * cy.strength;
+      const core = Math.min(1, Math.max(0, (2 - r) / 1.5)) * cy.strength;
+      w ??= [0, 0, 0];
+      w[0] += ((-oy / dist) * cy.spin * 26 - (ox / dist) * 4) * prof + cy.vx * core;
+      w[1] += ((ox / dist) * cy.spin * 26 - (oy / dist) * 4) * prof + cy.vy * core;
+      w[2] += CYCLONE_UPDRAFT * core;
+    }
+    return w;
   }
 
   /** The cyclones for the GPU: position/strength, motion, and spine nodes (x, y, z, funnel radius). */
