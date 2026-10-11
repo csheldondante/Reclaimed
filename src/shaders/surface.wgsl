@@ -3,7 +3,8 @@
 // understand the slot layout:
 //  * surface: the base of the loose ground on top (the run of touching
 //    granular intervals at the top of the column; the column's top if there
-//    is none), the material under that run, and the slot count;
+//    is none), the material under that run, the slot count, whether
+//    there's air between two intervals and loose ground buried under something;
 //  * drift (texture): x the run's depth, y its top interval's depth, z that
 //    interval's material, w what the wind sent up off it (sediment.wgsl's
 //    air output) — base + x is the ground's surface;
@@ -43,7 +44,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   var under = 0u;
   if (r > 0u) { under = ivMat(arr[r - 1u]); }
-  surface[colIdx(id.x, id.y)] = sfPack(base, under, n);
+  // (air between two intervals: loose ground beside it can spill into it)
+  var gap = false;
+  for (var i = 1u; i < n; i++) { gap = gap || ivZ0(arr[i]) > ivZ1(arr[i - 1u]) + 1e-3; }
+  // (loose ground under something else: it may spill out of a face)
+  var buried = false;
+  for (var i = 0u; i < r; i++) { buried = buried || matState(ivMat(arr[i])) == ST_GRANULAR; }
+  surface[colIdx(id.x, id.y)] = sfPack(base, under, n) | select(0u, 1u << 31u, gap) | select(0u, 1u << 30u, buried);
   textureStore(driftOut, p, vec4<f32>(top - base, topDepth, f32(topMat), textureLoad(airTex, p, 0).x));
   var st = vec4<f32>(0.0, 0.0, 0.0, base);
   // the (up to) three intervals just beneath the top one, bottom first

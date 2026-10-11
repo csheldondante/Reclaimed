@@ -80,7 +80,7 @@ export class WorldGpu {
    * from the CPU (a crumbled body; game/integrity.ts writes them)
    */
   readonly deposit: GPUBuffer;
-  /** sediment.wgsl's outflows per column (3 vec4: to each neighbour, the wind's easing, totals) */
+  /** sediment.wgsl's outflows per column (7 vec4: to each neighbour, the wind's easing, totals, spills out of exposed faces) */
   readonly sedOut: GPUBuffer;
   /**
    * The loose ground as seen from above (a view derived from the layers by
@@ -230,7 +230,7 @@ export class WorldGpu {
     // folds it back in where they land — round 15)
     this.contamDelta = this.buf('contamDelta', N * 8, S);
     this.deposit = this.buf('deposit', N * 16, S);
-    this.sedOut = this.buf('sedOut', N * 48, S);
+    this.sedOut = this.buf('sedOut', N * 7 * 16, S);
   }
 
   private owned: GPUBuffer[] = [];

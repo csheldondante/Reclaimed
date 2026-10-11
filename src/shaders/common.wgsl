@@ -119,12 +119,16 @@ fn ivPack(z0: f32, z1: f32, mat: u32, aux: u32) -> vec4<u32> {
 const IV_NONE: vec4<u32> = vec4<u32>(0u);
 
 // ---- surface packing (written by the surface system) ----
-// bits 0..15 top z (8.8 fixed point), 16..23 top material, 24..31 valid slot count
+// bits 0..15 top z (8.8 fixed point), 16..23 top material, 24..28 valid slot
+// count, 30 there's loose ground buried under something else, 31 the column
+// has air between two of its intervals (an overhang)
 fn sfZ(s: u32) -> f32 { return f32(s & 0xffffu) / 256.0; }
 fn sfMat(s: u32) -> u32 { return (s >> 16u) & 0xffu; }
-fn sfCount(s: u32) -> u32 { return s >> 24u; }
+fn sfCount(s: u32) -> u32 { return (s >> 24u) & 0x1fu; }
+fn sfBuried(s: u32) -> bool { return ((s >> 30u) & 1u) != 0u; }
+fn sfGap(s: u32) -> bool { return (s >> 31u) != 0u; }
 fn sfPack(z: f32, mat: u32, n: u32) -> u32 {
-  return min(u32(round(max(z, 0.0) * 256.0)), 0xffffu) | ((mat & 0xffu) << 16u) | ((n & 0xffu) << 24u);
+  return min(u32(round(max(z, 0.0) * 256.0)), 0xffffu) | ((mat & 0xffu) << 16u) | ((n & 0x1fu) << 24u);
 }
 
 // ---- hashing / noise ----

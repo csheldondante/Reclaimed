@@ -39,10 +39,14 @@
 @group(0) @binding(8) var<storage, read_write> exchange: array<atomic<i32>>;
 // wet ground holds a lower slope (rain brings slumps and mudslides)
 @group(0) @binding(9) var<storage, read> moisture: array<f32>;
-// per column: [0] what arrives at each neighbour (+x, -x, +y, -y), [1] the
-// wind's easing toward each (it blends into whatever is there), [2] x what
-// the wind took off the top, y everything that left it
+// per column (SED vec4s): [0] what arrives at each neighbour (+x, -x, +y,
+// -y), [1] the wind's easing toward each (it blends into whatever is there),
+// [2] x what the wind took off the top, y everything that left it; a spill
+// out of an exposed face toward each neighbour: [3] amount, [4] the floor it
+// lands on (z), [5] material, [6] which of this column's slots it leaves
 @group(0) @binding(10) var<storage, read_write> sedOut: array<vec4<f32>>;
+// (outflow only) which neighbours have air inside them (surface bit 31)
+@group(0) @binding(11) var<storage, read> surface: array<u32>;
 // what the wind sent up into the air off each column this pass (the
 // particles carry it as dust grains and set it down where they land)
 @group(0) @binding(16) var airOut: texture_storage_2d<rgba32float, write>;
@@ -66,6 +70,10 @@ const FALL: f32 = 2.0;
 // pushed toward the low side (cells per pass per cell of head over PIPE_HEAD)
 const PIPE_HEAD: f32 = 2.5;
 const PIPE_RATE: f32 = 0.04;
+const SED: u32 = 7u;
+// a buried granular interval with air beside it spills out of the face
+// (share of its height over the repose, per pass), like a slump
+const FACE: f32 = 0.08;
 const MAT_SOIL_L: u32 = 2u;
 const MAT_ASH_L: u32 = 17u;
 
@@ -310,6 +318,91 @@ fn takeTop(s: ptr<function, Stack>, amount: f32) -> f32 {
   return take;
 }
 
+
+// ---- spilling out of exposed faces (round 22) ------------------------------------
+// Loose ground buried under something (sand under a cap rock, soil under a
+// slab) with air beside it in a neighbouring column runs out into that air:
+// it lands on the neighbour's floor there, and keeps going until the face
+// stands at its angle of repose. What lies on top doesn't hold it, so the
+// sand under a rock shelf is undercut and leaves a pocket of air beneath it;
+// the structure pass then sees the shelf's support go. Only intervals
+// beneath the loose run on top spill this way (the run slumps by levels).
+struct Spill {
+  amt: vec4<f32>,
+  z: vec4<f32>,
+  mat: vec4<f32>,
+  src: vec4<f32>,
+};
+
+fn spillOut(p: vec2<i32>) -> Spill {
+  var sp: Spill;
+  if (!sfBuried(surface[colIdxI(p)])) { return sp; }
+  let cs = colSlots(u32(p.x), u32(p.y));
+  var n = 0u;
+  for (var k = 0u; k < cs.y; k++) {
+    if (ivEmpty(layers[cs.x + k])) { break; }
+    n = k + 1u;
+  }
+  // the loose run on top (it slumps by levels instead)
+  var r = n;
+  while (r > 0u) {
+    let v = layers[cs.x + r - 1u];
+    if (matState(ivMat(v)) != ST_GRANULAR) { break; }
+    if (r < n && abs(ivZ1(v) - ivZ0(layers[cs.x + r])) > 1e-3) { break; }
+    r -= 1u;
+  }
+  for (var si = 0u; si < r; si++) {
+    let v = layers[cs.x + si];
+    let m = ivMat(v);
+    if (matState(m) != ST_GRANULAR) { continue; }
+    let a = ivZ0(v);
+    let b = ivZ1(v);
+    let rep = reposeAt(p, m);
+    for (var k = 0u; k < 4u; k++) {
+      let q = p + DIRS[k];
+      if (!inMap(q)) { continue; }
+      // (a neighbour as high as this interval's top with no air inside it
+      // has no face here: most of them — skip reading its intervals)
+      if (!sfGap(surface[colIdxI(q)]) && baseAt(q) + driftAt(q) >= b) { continue; }
+      let qs = colSlots(u32(q.x), u32(q.y));
+      // the lowest air gap in q beside [a, b) that has a floor under it
+      var g0 = -1.0;
+      var g1 = 0.0;
+      var fl = IV_NONE;
+      var qn = 0u;
+      var prev = IV_NONE;
+      for (var t = 0u; t < qs.y; t++) {
+        let u = layers[qs.x + t];
+        if (ivEmpty(u)) { break; }
+        qn = t + 1u;
+        if (g0 < 0.0 && t > 0u && ivZ0(u) > ivZ1(prev) + 1e-3 && ivZ0(u) > a && ivZ1(prev) < b) {
+          g0 = ivZ1(prev);
+          g1 = ivZ0(u);
+          fl = prev;
+        }
+        prev = u;
+      }
+      // (or the open air over its top)
+      if (g0 < 0.0 && qn > 0u && ivZ1(prev) < b) { g0 = ivZ1(prev); g1 = 1e9; fl = prev; }
+      if (g0 < 0.0) { continue; }
+      let drop = min(b, g1) - g0;
+      if (drop <= rep) { continue; }
+      // it needs a slot there, unless it joins the floor
+      let joins = ivMat(fl) == m;
+      if (qn >= qs.y && !joins) { continue; }
+      var amt = min((drop - rep) * FACE, (b - a) * 0.25);
+      if (g1 < 1e8) { amt = min(amt, (g1 - g0) * 0.5); }
+      if (amt > sp.amt[k]) {
+        sp.amt[k] = amt;
+        sp.z[k] = g0;
+        sp.mat[k] = f32(m);
+        sp.src[k] = f32(si);
+      }
+    }
+  }
+  return sp;
+}
+
 /** Pass 1: what leaves each column's top this pass, and where it goes. */
 @compute @workgroup_size(8, 8)
 fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -326,9 +419,17 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   // (what the wind lifts partly goes up into the air: the particles carry it)
   let send = o * (1.0 - MATS[mat].loose.y) + ow + so + po;
   let out = lost + dot(ow + so + sm + po, vec4<f32>(1.0));
-  sedOut[i * 3u] = send;
-  sedOut[i * 3u + 1u] = sm;
-  sedOut[i * 3u + 2u] = vec4<f32>(lost, out, 0.0, 0.0);
+  sedOut[i * SED] = send;
+  sedOut[i * SED + 1u] = sm;
+  sedOut[i * SED + 2u] = vec4<f32>(lost, out, 0.0, 0.0);
+  let sp = spillOut(p);
+  sedOut[i * SED + 3u] = sp.amt;
+  // (the rest is only read where there's a spill)
+  if (any(sp.amt > vec4<f32>(0.0))) {
+    sedOut[i * SED + 4u] = sp.z;
+    sedOut[i * SED + 5u] = sp.mat;
+    sedOut[i * SED + 6u] = sp.src;
+  }
 }
 
 /** Pass 2: each column's run takes its own outflow off and gathers its neighbours'. */
@@ -340,7 +441,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let cs = colSlots(id.x, id.y);
   // the top's material, as the view sees it (dust when there's no loose ground)
   let m0 = driftMatAt(p);
-  let own = sedOut[i * 3u + 2u];
+  let own = sedOut[i * SED + 2u];
   // what the wind sent up into the air (the particles take it from here)
   textureStore(airOut, p, vec4<f32>(own.x * MATS[m0].loose.y, 0.0, 0.0, 0.0));
   let here = levelAt(p);
@@ -356,9 +457,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!inMap(nb)) { continue; }
     let j = colIdxI(nb);
     let mn = driftMatAt(nb);
-    let a = sedOut[j * 3u][k ^ 1u];
+    let a = sedOut[j * SED][k ^ 1u];
     // (the wind's easing just blends into my top, whatever it is)
-    same += sedOut[j * 3u + 1u][k ^ 1u];
+    same += sedOut[j * SED + 1u][k ^ 1u];
     if (mn == m0) { same += a; } else {
       other += a;
       if (a > otherMax) { otherMax = a; otherMat = mn; }
@@ -419,11 +520,79 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (matState(ivMat(v)) == ST_GRANULAR && ivZ0(v) > floorZ + 1e-4) { hangs = true; }
     floorZ = ivZ1(v);
   }
-  let moves = own.y > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || dep.y > 0.0 || delta < 0.0 || strip > 0u || bind;
+  // spills out of exposed faces: mine, and my neighbours' landing here
+  let mySpill = sedOut[i * SED + 3u];
+  var inSpill = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    let nb = p + DIRS[k];
+    if (inMap(nb)) { inSpill += sedOut[colIdxI(nb) * SED + 3u][k ^ 1u]; }
+  }
+  let spills = dot(mySpill, vec4<f32>(1.0)) > 0.0 || inSpill > 0.0;
+  let moves = own.y > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || dep.y > 0.0 || delta < 0.0 || strip > 0u || bind || spills;
   if (!moves && !hangs) { return; }
 
   var arr: array<vec4<u32>, MAX_K>;
   for (var k = 0u; k < n; k++) { arr[k] = layers[cs.x + k]; }
+  if (spills) {
+    // (floors are found by their height before anything ran out of them)
+    var z1o: array<f32, MAX_K>;
+    for (var k = 0u; k < n; k++) { z1o[k] = ivZ1(arr[k]); }
+    // what runs out of my faces leaves the top of its interval
+    let src = sedOut[i * SED + 6u];
+    for (var k = 0u; k < 4u; k++) {
+      if (mySpill[k] <= 0.0) { continue; }
+      let si = u32(src[k]);
+      let v = arr[si];
+      arr[si] = ivPack(ivZ0(v), max(ivZ1(v) - mySpill[k], ivZ0(v)), ivMat(v), ivAux(v));
+    }
+    // what runs in lands on my floor at that height
+    for (var k = 0u; k < 4u; k++) {
+      let nb = p + DIRS[k];
+      if (!inMap(nb)) { continue; }
+      let j = colIdxI(nb);
+      let amt = sedOut[j * SED + 3u][k ^ 1u];
+      if (amt <= 0.0) { continue; }
+      let fz = sedOut[j * SED + 4u][k ^ 1u];
+      let fm = u32(sedOut[j * SED + 5u][k ^ 1u] + 0.5);
+      for (var f = 0u; f < n; f++) {
+        if (abs(z1o[f] - fz) > 1e-3) { continue; }
+        let v = arr[f];
+        // (the gap above the floor: up to the next interval, if any)
+        var room = 1e9;
+        if (f + 1u < n) { room = ivZ0(arr[f + 1u]) - fz; }
+        let add = min(amt, room);
+        if (ivMat(v) == fm) {
+          arr[f] = ivPack(ivZ0(v), ivZ1(v) + add, fm, ivAux(v));
+        } else if (n < cs.y) {
+          for (var t = n; t > f + 1u; t--) { arr[t] = arr[t - 1u]; z1o[t] = z1o[t - 1u]; }
+          // (on the floor as it is now: something may have run out of it)
+          let fz1 = ivZ1(v);
+          arr[f + 1u] = ivPack(fz1, fz1 + add, fm, 0u);
+          z1o[f + 1u] = -1.0;
+          n += 1u;
+        }
+        break;
+      }
+    }
+    // spent intervals go; touching loose intervals of one material join
+    var w = 0u;
+    for (var k = 0u; k < n; k++) {
+      let v = arr[k];
+      if (ivZ1(v) - ivZ0(v) <= 1e-4) { continue; }
+      if (w > 0u) {
+        let u = arr[w - 1u];
+        if (ivMat(u) == ivMat(v) && matState(ivMat(v)) == ST_GRANULAR && abs(ivZ1(u) - ivZ0(v)) < 1e-3) {
+          arr[w - 1u] = ivPack(ivZ0(u), ivZ1(v), ivMat(v), 0u);
+          continue;
+        }
+      }
+      arr[w] = v;
+      w += 1u;
+    }
+    for (var k = w; k < n; k++) { arr[k] = IV_NONE; }
+    n = w;
+    hangs = true;
+  }
   // granular intervals with air under them fall (rubble a collapse left
   // hanging, sand whose support was dug away)
   if (hangs) {

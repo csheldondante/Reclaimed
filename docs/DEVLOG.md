@@ -2064,3 +2064,30 @@ sheet's thinning edges), so rock under soil is culled again: instances
 (main 6.93).
 Mass: a 173-cell sand pour on the sandbox, calm weather — total loose
 volume in the layers 267226.16 at every sample over 17.5 s after it landed.
+
+## 2026-10-11 — strata stage 3: loose ground spills out of exposed faces (P4)
+
+The rule the user agreed (round 22): loose ground buried under something —
+sand under a cap rock, soil under a slab — with air beside it in a
+neighbouring column runs out into that air, landing on the neighbour's
+floor at that height (inserted mid-column when the air is under an
+overhang), until the face stands at its angle of repose; what lies on top
+doesn't hold it. `outflow` finds, per buried granular interval and
+direction, the lowest air gap beside it that has a floor (or the open air
+over a lower neighbour) and sends (height over the repose) × 0.08 a pass,
+capped at a quarter of the interval and half the gap; `main` takes it off
+the interval's top and lands what its neighbours send on the floor it was
+aimed at (found by its height before this pass), then compacts and merges
+touching loose intervals of one material. Two bits in `surface` (30: loose
+ground buried under something; 31: air between intervals) let `outflow`
+skip every column with nothing buried and every neighbour with no face.
+Checked: a 20×12 concrete slab on 4 cells of sand on the sandbox plain —
+the sand runs out at the edges into an apron, leaving an air pocket under
+the slab 1.5 cells high at the edge and 0.4 a column in, and stops there
+(the face at repose); more undercutting needs the apron carried away (wind,
+water). The valley, settled: 1–3 columns spilling. Cost, averaged over 12 s
+(perf overlay sampled every 0.5 s; single samples vary ±40% on this iGPU):
+sediment 0.55 + outflow 0.33 ms a pass with spills, 0.53 + 0.29 without;
+main's drift + material 0.57. Per tick the branch also pays structure +0.2
+and surface +0.17 ms (bigger slots, the derived view) and saves ~0.7 ms of
+draw.

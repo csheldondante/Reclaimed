@@ -315,8 +315,8 @@ export class SedimentSystem implements SimSystem {
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, sedimentWgsl + flowWgsl];
     const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView };
-    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 2: 'uniform', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex' }, 'outflow');
-    this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 2: world.materials, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, ...tex }) };
+    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex' }, 'outflow');
+    this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex }) };
     this.s = kernel(
       device,
       world,
