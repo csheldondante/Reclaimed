@@ -4,11 +4,12 @@
 // browser (IndexedDB) or as files (".reclaimed"), and load them back as a
 // level (and so they can later become real levels: B7).
 
-import { CHUNK, ColumnGrid, type PackedWorld } from './layout';
+import { CHUNK, ColumnGrid, columnSlots, readSlot, SLOT_WORDS, writeSlot, type PackedWorld } from './layout';
 import type { MapData } from './mapgen';
 
 const MAGIC = 'RCLM';
-const VERSION = 1;
+// 2: fractional intervals, four words per slot (branch strata)
+const VERSION = 2;
 
 /** Float fields saved per map, in file order. */
 const FIELDS = ['water', 'contam', 'moisture', 'vegetation', 'oil', 'drift', 'oilStored', 'waterSource', 'surface', 'driftMat', 'driftTop', 'strata'] as const;
@@ -30,17 +31,24 @@ export function unpackColumns(packed: PackedWorld, slots: Uint32Array): ColumnGr
   const { w, h } = packed.dims;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
-      const ci = Math.floor(y / CHUNK) * packed.chunksX + Math.floor(x / CHUNK);
-      const k = packed.chunkTable[ci * 2 + 1];
-      const base = packed.chunkTable[ci * 2] + ((y % CHUNK) * CHUNK + (x % CHUNK)) * k;
+      const { base, k } = columnSlots(packed, x, y);
       const col = grid.col(x, y);
       for (let s = 0; s < k; s++) {
-        const v = slots[base + s];
-        if (v === 0) break;
-        col.push({ z0: v & 0xff, z1: (v >>> 8) & 0xff, mat: (v >>> 16) & 0xff });
+        const iv = readSlot(slots, base + s);
+        if (!iv) break;
+        col.push({ z0: iv.z0, z1: iv.z1, mat: iv.mat });
       }
     }
   return grid;
+}
+
+/** Version-1 files: one u32 per slot (z0, z1 whole cells, material bytes) → the current layout. */
+function slotsFromV1(old: Uint32Array): Uint32Array {
+  const out = new Uint32Array(old.length * SLOT_WORDS);
+  old.forEach((v, i) => {
+    if (v !== 0) writeSlot(out, i, v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff);
+  });
+  return out;
 }
 
 /** Pack a grid back into one slot per interval, chunk by chunk (layout.ts order). */
@@ -57,12 +65,12 @@ function flatSlots(grid: ColumnGrid): { table: number[]; slots: Uint32Array } {
       table.push(off, k);
       off += k * CHUNK * CHUNK;
     }
-  const slots = new Uint32Array(off);
+  const slots = new Uint32Array(off * SLOT_WORDS);
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const ci = Math.floor(y / CHUNK) * cx + Math.floor(x / CHUNK);
       const base = table[ci * 2] + ((y % CHUNK) * CHUNK + (x % CHUNK)) * table[ci * 2 + 1];
-      grid.col(x, y).forEach((iv, s) => (slots[base + s] = ((iv.z0 & 0xff) | ((iv.z1 & 0xff) << 8) | ((iv.mat & 0xff) << 16)) >>> 0));
+      grid.col(x, y).forEach((iv, s) => writeSlot(slots, base + s, iv.z0, iv.z1, iv.mat));
     }
   return { table, slots };
 }
@@ -94,10 +102,11 @@ export async function decodeMap(blob: Blob): Promise<MapData> {
   if (magic !== MAGIC) throw new Error('not a Reclaimed map file');
   const headLen = new DataView(buf).getUint32(4, true);
   const header = JSON.parse(new TextDecoder().decode(new Uint8Array(buf, 8, headLen))) as Header;
-  if (header.version !== VERSION) throw new Error(`map file version ${header.version} (this build reads ${VERSION})`);
+  if (header.version !== VERSION && header.version !== 1) throw new Error(`map file version ${header.version} (this build reads ${VERSION})`);
   let off = 8 + headLen;
   off += (4 - (off % 4)) % 4;
-  const slots = new Uint32Array(buf, off, header.slots / 4);
+  const raw = new Uint32Array(buf, off, header.slots / 4);
+  const slots = header.version === 1 ? slotsFromV1(raw) : raw;
   off += header.slots;
   const { w, h } = header.dims;
   const packed: PackedWorld = {

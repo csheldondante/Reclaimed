@@ -14,8 +14,8 @@
 //    separate debris simulation.
 //  * One-tick events (lightning) add damage near the strike, strongest at the
 //    top of the struck column.
-@group(0) @binding(3) var<storage, read> layersIn: array<u32>;
-@group(0) @binding(4) var<storage, read_write> layersOut: array<u32>;
+@group(0) @binding(3) var<storage, read> layersIn: array<vec4<u32>>;
+@group(0) @binding(4) var<storage, read_write> layersOut: array<vec4<u32>>;
 @group(0) @binding(5) var<storage, read_write> stats: array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read> surface: array<u32>;
 @group(0) @binding(7) var<storage, read> water: array<f32>;
@@ -37,7 +37,7 @@ const HEAD_MIN: f32 = 2.0;
 const HEAD_RATE: f32 = 0.006;
 const FLOW_RATE: f32 = 0.06;
 
-fn hydraulicDamage(p: vec2<i32>, z0: u32, z1: u32, dmg: u32, m: u32, salt: u32) -> u32 {
+fn hydraulicDamage(p: vec2<i32>, z0: f32, z1: f32, dmg: u32, m: u32, salt: u32) -> u32 {
   var head = 0.0;
   var flow = 0.0;
   for (var k = 0u; k < 4u; k++) {
@@ -49,8 +49,8 @@ fn hydraulicDamage(p: vec2<i32>, z0: u32, z1: u32, dmg: u32, m: u32, salt: u32) 
     let g = f32(sfZ(surface[j]));
     let H = g + d;
     // water must actually touch this interval's face
-    if (H <= f32(z0) || g >= f32(z1)) { continue; }
-    head = max(head, H - max(f32(z0), g));
+    if (H <= z0 || g >= z1) { continue; }
+    head = max(head, H - max(z0, g));
     flow = max(flow, length(netFlow(q)));
   }
   let strength = MATS[m].sim.w;
@@ -76,13 +76,13 @@ fn spanCost(m: u32) -> u32 { return max(1u, u32(round((1.0 - MATS[m].sim.w) * 10
 fn dmgLimit(m: u32) -> u32 { return u32(4.0 + MATS[m].sim.w * 11.0); }
 
 /** Best support a neighbouring column offers to the z-range [z0, z1). */
-fn lateral(q: vec2<i32>, z0: u32, z1: u32) -> u32 {
+fn lateral(q: vec2<i32>, z0: f32, z1: f32) -> u32 {
   if (!inMap(q)) { return 0u; }
   let cs = colSlots(u32(q.x), u32(q.y));
   var best = 0u;
   for (var i = 0u; i < cs.y; i++) {
     let v = layersIn[cs.x + i];
-    if (v == 0u) { break; }
+    if (ivEmpty(v)) { break; }
     if (!isSolid(ivMat(v))) { continue; }
     if (ivZ0(v) < z1 && ivZ1(v) > z0) { best = max(best, auxSup(ivAux(v))); }
   }
@@ -95,10 +95,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let cs = colSlots(id.x, id.y);
   var n = 0u;
-  var colTop = 0u;
+  var colTop = 0.0;
   for (var i = 0u; i < cs.y; i++) {
     let v = layersIn[cs.x + i];
-    if (v == 0u) { break; }
+    if (ivEmpty(v)) { break; }
     n = i + 1u;
     colTop = ivZ1(v);
   }
@@ -122,14 +122,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let selfFire = fire[colIdxI(p)];
 
   let collapseOn = G.misc.y > 0.5;
-  var prevTop = 0u;
+  var prevTop = 0.0;
   var prevSup = GROUND;
   for (var i = 0u; i < n; i++) {
     let v = layersIn[cs.x + i];
     let m = ivMat(v);
     let z0 = ivZ0(v);
     let z1 = ivZ1(v);
-    let touching = z0 == prevTop;
+    // (heights are fractional: an interval laid on loose ground starts where it ends)
+    let touching = abs(z0 - prevTop) < 1e-3;
     var s = 0u;
     if (touching) { s = prevSup; }
     if (!isStructural(m)) {
@@ -151,11 +152,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let flow = length(netFlow(p));
         if (flow > 0.02 && rand3(id.x, id.y, G.tick ^ 0x3a5u) < (flow - 0.02) * 0.5) {
           // (the top interval: split off its top cell as litter, then stop)
-          if (z1 - 1u <= z0 || i + 1u >= cs.y) {
+          if (z1 - 1.0 <= z0 || i + 1u >= cs.y) {
             layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
           } else {
-            layersOut[cs.x + i] = ivPack(z0, z1 - 1u, m, ivAux(v));
-            layersOut[cs.x + i + 1u] = ivPack(z1 - 1u, z1, MAT_LITTER, 0u);
+            layersOut[cs.x + i] = ivPack(z0, z1 - 1.0, m, ivAux(v));
+            layersOut[cs.x + i + 1u] = ivPack(z1 - 1.0, z1, MAT_LITTER, 0u);
             n += 1u;
           }
           break;
@@ -170,7 +171,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         continue;
       }
       if (m == MAT_TRASH_S && i + 1u == n && selfFire > 0.3 && rand3(id.x, id.y, G.tick ^ 0xa5u) < 0.03 * selfFire) {
-        layersOut[cs.x + i] = select(ivPack(z0, z1, MAT_ASH_S, 0u), ivPack(z0, z1 - 1u, m, ivAux(v)), z1 - 1u > z0);
+        layersOut[cs.x + i] = select(ivPack(z0, z1, MAT_ASH_S, 0u), ivPack(z0, z1 - 1.0, m, ivAux(v)), z1 - 1.0 > z0);
         prevTop = z1;
         prevSup = s;
         continue;
@@ -182,7 +183,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     var dmg = auxDmg(ivAux(v));
     if (hit > 0.0) {
-      let depth = f32(colTop - z1);
+      let depth = colTop - z1;
       dmg = min(15u, dmg + u32(hit * exp(-depth / 8.0)));
     }
     dmg = hydraulicDamage(p, z0, z1, dmg, m, i);
@@ -191,7 +192,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (evKind(e) != EV_CHIP) { continue; }
       let ev = G.events[e];
       let ez = evZ(e);
-      if (length(vec2<f32>(p) + 0.5 - ev.xy) < ev.z && ez + 1u >= z0 && ez <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
+      if (length(vec2<f32>(p) + 0.5 - ev.xy) < ev.z && f32(ez) + 1.0 >= z0 && f32(ez) <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
     }
     if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < HEAT_RATE * heat * (1.2 - MATS[m].sim.w)) {
       dmg = min(15u, dmg + 1u);
@@ -219,5 +220,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     prevTop = z1;
     prevSup = s;
   }
-  for (var i = n; i < cs.y; i++) { layersOut[cs.x + i] = 0u; }
+  for (var i = n; i < cs.y; i++) { layersOut[cs.x + i] = IV_NONE; }
 }

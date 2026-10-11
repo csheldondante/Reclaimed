@@ -1990,3 +1990,22 @@ errors; 4 impacts, 2 shatters, 81 voxels to rubble in 14 s.
   5–9 outward) instead of dropped. Headless: a 9 s cyclone leaves a
   ~10-cell-wide haze cloud settling, not a column.
 
+
+## 2026-10-11 — branch strata, stage 1: fractional intervals (P4)
+
+First step of the consolidation (ARCHITECTURE "Consolidation in progress"):
+a layer slot is now `vec4<u32>` — z0 and z1 as f32 bits, material | aux << 8,
+one spare word — so loose ground can later live in the same intervals as
+rock (it needs heights finer than a cell; fixed point 8.8 was considered and
+dropped because small deposits — a grain of dust per pass — would round away
+and break mass conservation). `surface` packs z as 8.8 fixed point (bits
+0..15), material (16..23), slot count (24..31); `sfZ` returns f32. Kernels
+that walk layers (surface, structure, material, renderprep, edit) and the CPU
+side (layout, fracture, integrity, model placement, map files — version 2,
+version-1 files still load) were ported; whole cells stay whole, so nothing
+behaves differently yet. Fracture voxelises an interval into the cells whose
+centres it covers.
+Checked headlessly against main (a second checkout on port 5174): valley and
+sandbox look identical, no errors; the garden cut (tower, diving board,
+bridge) breaks, falls and shatters as before (25 bodies, 3 shatters, nothing
+moves up). The layer buffers are 4× larger (16 B a slot).

@@ -10,7 +10,7 @@
 // place tool); the GPU structure rule only collapses damage here (its
 // span-support rule would turn overhangs to rubble before this sees them).
 
-import { packInterval, readColumn, columnSlots, type Interval } from '../world/layout';
+import { packColumn, readColumn, columnSlots, SLOT_WORDS, type Interval } from '../world/layout';
 import { MAT } from '../world/materials';
 import { analyse, WorldVox, type Voxel } from './fracture';
 import { Bodies, type Body } from './bodies';
@@ -354,10 +354,9 @@ export class Integrity {
       keep.push({ z0: top, z1: Math.min(top + rest, this.core.dims.zMax - 1), mat: MAT.Rubble });
       col = keep;
     }
-    const data = new Uint32Array(k);
-    col.forEach((iv, s) => (data[s] = packInterval(iv.z0, iv.z1, iv.mat, iv.aux ?? 0)));
-    this.world.slots.set(data, base);
-    this.core.host.gpu.device.queue.writeBuffer(this.core.world.layers, base * 4, data);
+    const data = packColumn(col, k);
+    this.world.slots.set(data, base * SLOT_WORDS);
+    this.core.host.gpu.device.queue.writeBuffer(this.core.world.layers, base * SLOT_WORDS * 4, data);
   }
 }
 

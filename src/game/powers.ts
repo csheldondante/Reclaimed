@@ -15,6 +15,7 @@ import { EventKind, type Gust, type GlobalsState } from '../sim/globals';
 import { PK, type ParticleSystem } from '../sim/particles';
 import type { Hud } from '../ui/hud';
 import { MAT } from '../world/materials';
+import { sfMat, sfZ } from '../world/layout';
 import type { Weather } from '../weather/weather';
 import { COSTS, type Nature } from './nature';
 
@@ -271,7 +272,7 @@ export class Powers {
     // it (a bonus fading with distance), so near a pylon or a tanker it goes
     // there instead
     const surf = await this.d.readSurface();
-    const top = (x: number, y: number) => (this.topAt ? this.topAt(x, y) : surf[y * dims.w + x] & 0xff);
+    const top = (x: number, y: number) => (this.topAt ? this.topAt(x, y) : sfZ(surf[y * dims.w + x]));
     let bx = tx;
     let by = ty;
     let best = -Infinity;
@@ -281,7 +282,7 @@ export class Powers {
       for (let x = Math.max(0, tx - METAL); x <= Math.min(dims.w - 1, tx + METAL); x++) {
         const d = Math.hypot(x - tx, y - ty);
         if (d > METAL) continue;
-        const m = (surf[y * dims.w + x] >> 8) & 0xff;
+        const m = sfMat(surf[y * dims.w + x]);
         const metal = m === MAT.Rust || m === MAT.Steel;
         if (d > NEAR && !metal) continue;
         const score = top(x, y) + (metal ? 6 - 0.15 * d : 0);
@@ -291,7 +292,7 @@ export class Powers {
           by = y;
         }
       }
-    const bz = this.topAt ? this.topAt(bx, by) : surf[by * dims.w + bx] & 0xff;
+    const bz = this.topAt ? this.topAt(bx, by) : sfZ(surf[by * dims.w + bx]);
     globals.events.push({ kind: EventKind.Lightning, x: bx + 0.5, y: by + 0.5, radius: 5, strength: 20 });
     // it blasts a crater in whatever it strikes — stone too (round 19): a
     // sphere at the strike point through the edit pass's break op

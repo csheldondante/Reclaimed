@@ -105,18 +105,27 @@ fn inMap(p: vec2<i32>) -> bool { return p.x >= 0 && p.y >= 0 && p.x < i32(G.mapW
 fn clampCell(p: vec2<i32>) -> vec2<i32> { return clamp(p, vec2<i32>(0), vec2<i32>(i32(G.mapW) - 1, i32(G.mapH) - 1)); }
 
 // ---- interval packing (see src/world/layout.ts) ----
-fn ivZ0(v: u32) -> u32 { return v & 0xffu; }
-fn ivZ1(v: u32) -> u32 { return (v >> 8u) & 0xffu; }
-fn ivMat(v: u32) -> u32 { return (v >> 16u) & 0xffu; }
-fn ivAux(v: u32) -> u32 { return v >> 24u; }
-fn ivPack(z0: u32, z1: u32, mat: u32, aux: u32) -> u32 {
-  return (z0 & 0xffu) | ((z1 & 0xffu) << 8u) | ((mat & 0xffu) << 16u) | ((aux & 0xffu) << 24u);
+// A slot is vec4<u32>: x z0 and y z1 (f32 bits, fractional heights), z
+// material | aux << 8, w spare. An empty slot has y == 0 (no interval ends
+// at 0). Valid slots are contiguous from slot 0, bottom to top.
+fn ivZ0(v: vec4<u32>) -> f32 { return bitcast<f32>(v.x); }
+fn ivZ1(v: vec4<u32>) -> f32 { return bitcast<f32>(v.y); }
+fn ivMat(v: vec4<u32>) -> u32 { return v.z & 0xffu; }
+fn ivAux(v: vec4<u32>) -> u32 { return (v.z >> 8u) & 0xffu; }
+fn ivEmpty(v: vec4<u32>) -> bool { return v.y == 0u; }
+fn ivPack(z0: f32, z1: f32, mat: u32, aux: u32) -> vec4<u32> {
+  return vec4<u32>(bitcast<u32>(z0), bitcast<u32>(z1), (mat & 0xffu) | ((aux & 0xffu) << 8u), 0u);
 }
+const IV_NONE: vec4<u32> = vec4<u32>(0u);
 
 // ---- surface packing (written by the surface system) ----
-// bits 0..7 top z, 8..15 top material, 16..23 valid slot count
-fn sfZ(s: u32) -> u32 { return s & 0xffu; }
-fn sfMat(s: u32) -> u32 { return (s >> 8u) & 0xffu; }
+// bits 0..15 top z (8.8 fixed point), 16..23 top material, 24..31 valid slot count
+fn sfZ(s: u32) -> f32 { return f32(s & 0xffffu) / 256.0; }
+fn sfMat(s: u32) -> u32 { return (s >> 16u) & 0xffu; }
+fn sfCount(s: u32) -> u32 { return s >> 24u; }
+fn sfPack(z: f32, mat: u32, n: u32) -> u32 {
+  return min(u32(round(max(z, 0.0) * 256.0)), 0xffffu) | ((mat & 0xffu) << 16u) | ((n & 0xffu) << 24u);
+}
 
 // ---- hashing / noise ----
 fn pcg(v: u32) -> u32 {

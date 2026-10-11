@@ -20,8 +20,8 @@
 // goes through driftDelta (folded in by the drift system, which owns the
 // drift texture). Runs first each tick in the sandbox, so every system sees
 // the edit.
-@group(0) @binding(3) var<storage, read> layersIn: array<u32>;
-@group(0) @binding(4) var<storage, read_write> layersOut: array<u32>;
+@group(0) @binding(3) var<storage, read> layersIn: array<vec4<u32>>;
+@group(0) @binding(4) var<storage, read_write> layersOut: array<vec4<u32>>;
 @group(0) @binding(5) var<storage, read_write> water: array<f32>;
 @group(0) @binding(6) var<storage, read_write> oilE: array<f32>;
 @group(0) @binding(7) var<storage, read_write> contamE: array<vec2<f32>>;
@@ -62,11 +62,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let cs = colSlots(id.x, id.y);
-  var arr: array<u32, MAX_K>;
+  var arr: array<vec4<u32>, MAX_K>;
   var n = 0u;
   for (var k = 0u; k < cs.y; k++) {
     let v = layersIn[cs.x + k];
-    if (v == 0u) { break; }
+    if (ivEmpty(v)) { break; }
     arr[k] = v;
     n = k + 1u;
   }
@@ -109,27 +109,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let hz = ev.z * sqrt(fall);
       // the loose ground inside the sphere goes too (it lies on the solid top)
       if (n > 0u) {
-        let gTop = f32(ivZ1(arr[n - 1u]));
+        let gTop = ivZ1(arr[n - 1u]);
         let over = min(ev.w + hz, gTop + driftAt(p)) - max(ev.w - hz, gTop);
         if (over > 0.0) { driftDelta[i] -= over; }
       }
-      let lo = u32(max(ev.w - hz, 0.0) + 0.5);
-      let hi = u32(max(ev.w + hz, 0.0) + 0.5);
-      var out: array<u32, MAX_K>;
+      let lo = floor(max(ev.w - hz, 0.0) + 0.5);
+      let hi = floor(max(ev.w + hz, 0.0) + 0.5);
+      var out: array<vec4<u32>, MAX_K>;
       var m = 0u;
       for (var k = 0u; k < n; k++) {
         let v = arr[k];
         let mt = ivMat(v);
         let z0 = ivZ0(v);
         let z1 = ivZ1(v);
-        let hole0 = max(lo, 2u);
+        let hole0 = max(lo, 2.0);
         if (z1 <= hole0 || z0 >= hi || hi <= hole0) { out[m] = v; m += 1u; continue; }
         // keep what lies below and above the hole (room permitting)
         if (z0 < hole0) { out[m] = ivPack(z0, hole0, mt, ivAux(v)); m += 1u; }
         if (z1 > hi && m < cs.y) { out[m] = ivPack(hi, z1, mt, ivAux(v)); m += 1u; }
       }
       if (m <= cs.y) {
-        for (var k = 0u; k < MAX_K; k++) { arr[k] = select(0u, out[k], k < m); }
+        for (var k = 0u; k < MAX_K; k++) { arr[k] = select(IV_NONE, out[k], k < m); }
         n = m;
       }
       continue;
@@ -179,28 +179,28 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // loose ground first: a cell's worth of it
       driftDelta[i] -= 1.0;
     } else if (op == OP_DIG) {
-      if (!(n == 1u && z1 <= 2u)) {
-        if (z1 - 1u <= ivZ0(top)) { n -= 1u; arr[n] = 0u; }
-        else { arr[n - 1u] = ivPack(ivZ0(top), z1 - 1u, ivMat(top), ivAux(top)); }
+      if (!(n == 1u && z1 <= 2.0)) {
+        if (z1 - 1.0 <= ivZ0(top) + 1e-3) { n -= 1u; arr[n] = IV_NONE; }
+        else { arr[n - 1u] = ivPack(ivZ0(top), z1 - 1.0, ivMat(top), ivAux(top)); }
       }
     } else if (op == OP_BEDROCK) {
       // stone grows at the bottom; everything above moves up a cell
-      if (z1 + 2u < G.zMax) {
+      if (z1 + 2.0 < f32(G.zMax)) {
         for (var k = 1u; k < n; k++) {
           let v = arr[k];
-          arr[k] = ivPack(ivZ0(v) + 1u, ivZ1(v) + 1u, ivMat(v), ivAux(v));
+          arr[k] = ivPack(ivZ0(v) + 1.0, ivZ1(v) + 1.0, ivMat(v), ivAux(v));
         }
         let b = arr[0];
         if (ivMat(b) == MAT_STONE || n >= cs.y) {
-          arr[0] = ivPack(ivZ0(b), ivZ1(b) + 1u, ivMat(b), ivAux(b));
+          arr[0] = ivPack(ivZ0(b), ivZ1(b) + 1.0, ivMat(b), ivAux(b));
         } else {
           for (var k = n; k > 0u; k--) { arr[k] = arr[k - 1u]; }
-          arr[0] = ivPack(0u, 1u, MAT_STONE, 0u);
-          arr[1] = ivPack(ivZ0(b) + 1u, ivZ1(b) + 1u, ivMat(b), ivAux(b));
+          arr[0] = ivPack(0.0, 1.0, MAT_STONE, 0u);
+          arr[1] = ivPack(ivZ0(b) + 1.0, ivZ1(b) + 1.0, ivMat(b), ivAux(b));
           n += 1u;
         }
       }
-    } else if (z1 + 2u < G.zMax) {
+    } else if (z1 + 2.0 < f32(G.zMax)) {
       // building on loose ground: the loose ground under it packs into cells
       // first (otherwise it would ride up onto the new block's top)
       let dl = driftAt(p);
@@ -210,22 +210,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var c = 0u; c < k; c++) {
           let t = arr[n - 1u];
           let tz = ivZ1(t);
-          if (tz + 3u >= G.zMax) { break; }
-          if (ivMat(t) == pm) { arr[n - 1u] = ivPack(ivZ0(t), tz + 1u, pm, ivAux(t)); }
-          else if (n < cs.y) { arr[n] = ivPack(tz, tz + 1u, pm, 0u); n += 1u; }
-          else { arr[n - 1u] = ivPack(ivZ0(t), tz + 1u, ivMat(t), ivAux(t)); }
+          if (tz + 3.0 >= f32(G.zMax)) { break; }
+          if (ivMat(t) == pm) { arr[n - 1u] = ivPack(ivZ0(t), tz + 1.0, pm, ivAux(t)); }
+          else if (n < cs.y) { arr[n] = ivPack(tz, tz + 1.0, pm, 0u); n += 1u; }
+          else { arr[n - 1u] = ivPack(ivZ0(t), tz + 1.0, ivMat(t), ivAux(t)); }
         }
         driftDelta[i] -= dl;
       }
       // build / pour: a cell of the material on top
       let t2 = arr[n - 1u];
       let z2 = ivZ1(t2);
-      if (ivMat(t2) == mat) { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1u, mat, ivAux(t2)); }
-      else if (n < cs.y) { arr[n] = ivPack(z2, z2 + 1u, mat, 0u); n += 1u; }
-      else { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1u, ivMat(t2), ivAux(t2)); }
+      if (ivMat(t2) == mat) { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1.0, mat, ivAux(t2)); }
+      else if (n < cs.y) { arr[n] = ivPack(z2, z2 + 1.0, mat, 0u); n += 1u; }
+      else { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1.0, ivMat(t2), ivAux(t2)); }
     }
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }
   textureStore(editOut, p, vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));
-  for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = select(0u, arr[k], k < n); }
+  for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = select(IV_NONE, arr[k], k < n); }
 }
