@@ -3,6 +3,25 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-11 — round 24 (session 4) — items Q3–Q5 in BACKLOG.md
+
+- Destroyed blocks keep the same volume as rubble; step 1 (a new material
+  in place) approved.
+- "The current wind and erosion are quite fun." Visual artifacts (water
+  flowing under rain): note them, "let me know before you decide to fix it".
+- Physics goals (asked: is the rigid body a library or custom? — custom):
+  1. "seeing something topple in a way that feels responsive and plausible
+     feels fun. It's fantastic juice" — not the aftermath or the falling
+     animation, "just that there is a good believable collapse". Finding
+     buried things that are skewed feels cool.
+  2. Some solids persist; "very cool if some could be lifted by strong
+     tornado winds".
+  3. Pieces break each other and the world.
+  4. Falling looks better; crumbling only on impact.
+- "Nothing goes up" means no fake push-outs or bounces, not no upward motion
+  (tumbling and cyclone lift are fine). A physics dependency (Rapier) is
+  fine; try it on a branch and roll it back out if it looks bad.
+
 ## 2026-10-11 — round 23 (session 4) — items Q1–Q3 in BACKLOG.md
 
 - Water: the scrolling noise "looks good on deep water but looks weird for

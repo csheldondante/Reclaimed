@@ -2111,3 +2111,24 @@ a fan at the sand's repose (~1 per cell) — within ~3 s, ~25 cells of sand
 out, then still (the same at 10 s and 20 s). The rest stays held by the
 walls. Break (💥) on a wall also smashes the sand in its radius, so in play
 the gap is a crater plus the fan.
+
+## 2026-10-11 — strata: destroyed solids become rubble, same volume (Q3 step 1)
+
+The user: destroyed blocks "turn into a new material (stone to gravel)" and
+keep their volume. `rubbleOf()` (materials.wgsl, mirrored by integrity.ts
+`looseFrom`): wood/canvas/leaves → ash, bone → dust, compacted waste →
+litter, everything else → rubble.
+- Break and lightning (edit.wgsl smash): a solid's share of the hole becomes
+  its rubble in place — but only where the hole is open above. A first try
+  kept it under what was left too, and the garden tower then stood on a
+  pedestal of its own crushed base (granular ground anchors structures in
+  the fracture analysis, rightly — a slab on sand rests). Under something,
+  the hole is still emptied; that volume wants grains that carry it out
+  (step 2).
+- A cross-section that gives way (fracture `crumble`) used to vanish; its
+  cells now squeeze out as rubble onto the lowest open column beside each
+  one (`spillRubble`, through the deposit buffer), so what it held still
+  falls.
+Checked headlessly: Break into the stone under the sand plain leaves 2 cells
+of rubble where 2 of stone were (sand around slumps onto it); Break at the
+garden tower's base drops the tower into the hole as before.

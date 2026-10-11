@@ -296,6 +296,7 @@ export class Integrity {
       const r = analyse(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
       if (r.crumble.length) {
         this.removeCells(r.crumble);
+        this.spillRubble(r.crumble);
         this.stats.crumbled += r.crumble.length;
         this.chips(r.crumble.map((c) => [c.x + 0.5, c.y + 0.5, c.z + 0.5]), 4);
         // what the cut held is looked at again next pass (it now hangs free)
@@ -315,6 +316,43 @@ export class Integrity {
       }
     }
     this.stats.lastMs = performance.now() - t0;
+  }
+
+  /**
+   * Crushed cells (a cross-section that gave way) don't vanish (round 23,
+   * Q3): each one's volume squeezes out as its rubble (looseFrom) onto the
+   * lowest open ground beside it — not where it was, where the rubble would
+   * go on holding up what the section held.
+   */
+  private spillRubble(cells: Voxel[]): void {
+    const { w: W, h: H } = this.core.dims;
+    const gone = new Set(cells.map((c) => c.y * W + c.x));
+    const tops = new Map<number, number>();
+    const topAt = (x: number, y: number): number => {
+      const k = y * W + x;
+      let t = tops.get(k);
+      if (t === undefined) {
+        const col = readColumn(this.core.packed, this.world.slots, x, y);
+        t = col.length ? col[col.length - 1].z1 : 0;
+        tops.set(k, t);
+      }
+      return t;
+    };
+    const out: { p: [number, number, number]; mat: number }[] = [];
+    for (const c of cells) {
+      let best: [number, number] = [c.x, c.y];
+      let low = Infinity;
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const x = c.x + dx;
+          const y = c.y + dy;
+          if (x < 0 || y < 0 || x >= W || y >= H || gone.has(y * W + x)) continue;
+          const t = topAt(x, y);
+          if (t < low) [best, low] = [[x, y], t];
+        }
+      out.push({ p: [best[0] + 0.5, best[1] + 0.5, c.z + 0.5], mat: c.mat });
+    }
+    this.toLoose(out);
   }
 
   /** Cut single cells out of their columns (CPU mirror + GPU). */
@@ -365,6 +403,7 @@ export class Integrity {
 function looseFrom(m: number): number {
   if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves) return MAT.Ash;
   if (m === MAT.Bone) return MAT.Drift;
+  if (m === MAT.Trash) return MAT.Litter;
   return MAT.Rubble;
 }
 

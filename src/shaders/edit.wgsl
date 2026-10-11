@@ -43,9 +43,13 @@ const OP_CLEAN: u32 = 8u;
 const OP_DRAIN: u32 = 9u;
 const OP_POUR: u32 = 10u;
 const OP_BEDROCK: u32 = 11u;
-// break (round 14, F7): punch a hole — everything inside a sphere of the
-// brush radius centred at height w is removed, structures and terrain alike
-// (only the bottom two cells of bedrock stay, so the map keeps a floor)
+// break (round 14, F7): punch a hole in a sphere of the brush radius centred
+// at height w, structures and terrain alike (only the bottom two cells of
+// bedrock stay, so the map keeps a floor). Since round 23 (Q3) solids in it
+// turn to their rubble in place (rubbleOf, the same volume) where the hole
+// is open to the sky, which then slumps and spills; under what's left above
+// the hole (a wall's window, a tower's base) and for loose ground, liquids
+// and plants the hole is emptied (to become grains that carry it: step 2).
 const OP_SMASH: u32 = 12u;
 const STROKE_START: u32 = 512u;
 const DT_E: f32 = 1.0 / 60.0;
@@ -111,6 +115,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let hi = floor(max(ev.w + hz, 0.0) + 0.5);
       var out: array<vec4<u32>, MAX_K>;
       var m = 0u;
+      // rubble only where the hole is open above: under what's left it would
+      // go on holding that up (a tower on a pedestal of its own base)
+      let open = n == 0u || ivZ1(arr[n - 1u]) <= hi;
       for (var k = 0u; k < n; k++) {
         let v = arr[k];
         let mt = ivMat(v);
@@ -118,8 +125,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         let z1 = ivZ1(v);
         let hole0 = max(lo, 2.0);
         if (z1 <= hole0 || z0 >= hi || hi <= hole0) { out[m] = v; m += 1u; continue; }
-        // keep what lies below and above the hole (room permitting)
+        // keep what lies below and above the hole (room permitting); a solid's
+        // share of the hole becomes its rubble
         if (z0 < hole0) { out[m] = ivPack(z0, hole0, mt, ivAux(v)); m += 1u; }
+        if (open && matState(mt) == ST_SOLID && m < cs.y) { out[m] = ivPack(max(z0, hole0), min(z1, hi), rubbleOf(mt), 0u); m += 1u; }
         if (z1 > hi && m < cs.y) { out[m] = ivPack(hi, z1, mt, ivAux(v)); m += 1u; }
       }
       if (m <= cs.y) {
