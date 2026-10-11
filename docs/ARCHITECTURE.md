@@ -122,6 +122,48 @@ it stops at meadow. Fireflies only over meadow.
   K is counted (`stats[15]`) and shown in the perf overlay, never silent.
 - **Material table**: uniform array of 32 materials × 3 vec4 (render, sim, eco).
 
+### Consolidation in progress (branch `strata`, BACKLOG P4/N1)
+
+Goal (user, round 22): one representation for everything that lies on the
+land — material intervals — so that intervals and particles are the only two
+things that carry material, with fluids moving it between them. Fewer
+systems, fewer seams, fewer bugs (the spires, banked sand popping bodies and
+the body projection all came from the seam between the layers and the
+separate loose stack). Done on the GPU in stages, each one testable:
+
+1. **Fractional intervals.** A slot becomes `vec4<u32>`: z0, z1 as f32 bits,
+   material | aux << 8, spare. Empty slot: z1 bits = 0. `surface` packs z as
+   8.8 fixed point (bits 0..15), material (16..23), slot count (24..31);
+   `sfZ` returns f32. Behaviour unchanged.
+2. **Loose ground lives in the intervals.** The drift kernel becomes the
+   sediment kernel and works on the layers: the contiguous granular run on
+   top of a column is what the drift stack used to be (wind, water, slumping
+   take from its top interval; arrivals of a new material start a new
+   interval). Two passes: outflows per column → `sedFlux`, then each column
+   gathers its neighbours' outflows and rewrites its intervals. It also
+   takes over gravity for granular intervals from `material.wgsl`, which is
+   removed. The drift and strata textures stay as a *derived view* written
+   by the surface pass (depth of the granular run on top, top interval's
+   depth and material, the intervals beneath), so their readers don't change
+   yet; `surface` z is the base of that run.
+3. **Spill from exposed faces.** A granular interval with air beside it in a
+   neighbouring column spills into the neighbour (landing on that column's
+   support at that height, inserted mid-column if needed) until the face is
+   at its angle of repose; rock above doesn't hold it, so sand under a cap
+   rock is undercut and leaves an air pocket. Granular material carries load
+   (only air removes support), so the structure pass sees the pocket grow
+   and cracks the cap when its span is too long.
+4. **Readers simplified**: `surface` z becomes the full top, the derived view
+   is dropped where nothing needs it, fractional solids (the valley's
+   reshaped rock, N2).
+
+Storage stays a buffer (not a texture): per-chunk depth K is already
+variable; a full chunk is counted (stats[15]) and can be given a deeper page.
+At this map size the layers stay in cache, so the in-chunk order (column-major
+now; slot-major is a one-line change in `colSlots`) is measured before it is
+changed. Bodies (rigid pieces) are left as they are; a destruction model
+where pieces turn to particles on impact is P3.
+
 ## Contract buffers (src/sim/world-gpu.ts)
 
 | buffer | type | written by | read by |
