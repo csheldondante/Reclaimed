@@ -137,6 +137,22 @@ export function generateSandbox(dims: WorldDims): MapData {
     block(GX + 47, GY, q, 3, 4, 7, MAT.Brick);
     block(GX + 34, GY, q + 7, 16, 4, 2, MAT.Concrete);
   }
+  // a concrete basin full of sand (round 23): break a wall and the sand
+  // should pour out of the gap down to its angle of repose
+  const BX = GX - 16;
+  const BY = GY + 10;
+  const basin: number[] = [];
+  {
+    const S = 12;
+    const b = plinth(BX, BY, S, S);
+    block(BX, BY, b, S, S, 1, MAT.Concrete);
+    for (let y = BY; y < BY + S; y++)
+      for (let x = BX; x < BX + S; x++) {
+        const wall = x === BX || y === BY || x === BX + S - 1 || y === BY + S - 1;
+        grid.push(x, y, b + 1, b + 7, wall ? MAT.Concrete : MAT.Sand);
+        if (!wall) basin.push(y * w + x);
+      }
+  }
 
   // where something stands on the ground (ruin, heap, litter, plinths), no
   // loose layer over it
@@ -148,6 +164,7 @@ export function generateSandbox(dims: WorldDims): MapData {
       driftMat[i] = 0;
     }
   }
+  for (const i of basin) drift[i] = 0;
 
   const surface = new Float32Array(N);
   for (let i = 0; i < N; i++) {

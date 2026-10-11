@@ -37,7 +37,7 @@ user) · `deferred` (agreed for later).
 | id | item | size | status |
 |---|---|---|---|
 | Q1 | The scrolling ripple noise looks right on deep water but odd on shallow water (the little puddles left behind): fade it out where the water is shallow | S | done (this commit) |
-| Q2 | Test on `strata`: a concrete basin full of sand — blow down a wall, does the sand spill out? | S | basin added to the sandbox garden on `strata` |
+| Q2 | Test on `strata`: a concrete basin full of sand — blow down a wall, does the sand spill out? | S | done on `strata` (this commit): a 12×12 concrete basin of sand by the physics garden; a 4-wide gap lets ~25 cells of sand out in ~3 s, a fan at repose |
 | Q3 | Destroyed blocks either become a new material in place (stone → gravel) or become particles (gravel → sand grains) — refines P3 | M | talk first |
 
 ## Round 22 (2026-10-11, session 4)

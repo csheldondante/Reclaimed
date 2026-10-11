@@ -2099,3 +2099,15 @@ depth, so the thin puddles left after a flood shimmered like open water.
 Its amplitude now scales by `smoothstep(0.1, 0.7, depth)`: puddles are flat
 (their glint and shade go with it), ponds and the river are unchanged.
 Checked headlessly on the sandbox pond (no errors; the rim calms).
+
+## 2026-10-11 — strata: a sand basin to test the spill-out (Q2)
+
+The user's test: a concrete basin full of sand — blow down a wall, does the
+sand spill out? The sandbox garden now has one (`sandbox.ts`, 12×12 on a
+plinth, walls 6 high, sand to the rim). Headless (scratchpad `basin.js`):
+dropping a 4-wide section of the south wall, the middle row's profile goes
+from a flat 20.0 to 19.2 18.2 17.2 16.2 15.2 14.2 over the ground at 13.8 —
+a fan at the sand's repose (~1 per cell) — within ~3 s, ~25 cells of sand
+out, then still (the same at 10 s and 20 s). The rest stays held by the
+walls. Break (💥) on a wall also smashes the sand in its radius, so in play
+the gap is a crater plus the fan.
