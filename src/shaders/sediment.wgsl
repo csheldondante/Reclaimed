@@ -20,11 +20,12 @@
 // Plants under a deep top layer of dust or ash lie dormant; established
 // plants hold what they grow through and turn dust to soil.
 //
-// Race-free gather: every column recomputes its neighbours' outflow from
-// the same read-only view of the loose ground (the drift/strata textures and
-// surface, derived from the layers by the surface pass just before), so what
-// leaves one column arrives in the next. A column's own intervals are only
-// touched by its own thread, so the layers are updated in place.
+// Two passes, race-free: `outflow` works out what leaves every column (from
+// the read-only view of the loose ground the surface pass derived from the
+// layers just before) into `sedOut`; `main` takes its own outflow off its top
+// and gathers what its neighbours sent it, so what leaves one column arrives
+// in the next. A column's own intervals are only touched by its own thread,
+// so the layers are updated in place.
 @group(0) @binding(3) var<storage, read_write> layers: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
 // loose material arriving (edit.wgsl: x; game/integrity.ts: y amount, z material)
@@ -38,6 +39,10 @@
 @group(0) @binding(8) var<storage, read_write> exchange: array<atomic<i32>>;
 // wet ground holds a lower slope (rain brings slumps and mudslides)
 @group(0) @binding(9) var<storage, read> moisture: array<f32>;
+// per column: [0] what arrives at each neighbour (+x, -x, +y, -y), [1] the
+// wind's easing toward each (it blends into whatever is there), [2] x what
+// the wind took off the top, y everything that left it
+@group(0) @binding(10) var<storage, read_write> sedOut: array<vec4<f32>>;
 // what the wind sent up into the air off each column this pass (the
 // particles carry it as dust grains and set it down where they land)
 @group(0) @binding(16) var airOut: texture_storage_2d<rgba32float, write>;
@@ -305,69 +310,39 @@ fn takeTop(s: ptr<function, Stack>, amount: f32) -> f32 {
   return take;
 }
 
+/** Pass 1: what leaves each column's top this pass, and where it goes. */
+@compute @workgroup_size(8, 8)
+fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  let i = colIdxI(p);
+  let mat = driftMatAt(p);
+  let o = windOut(p);
+  let ow = waterOut(p);
+  let so = slumpOut(p);
+  let sm = smoothOut(p);
+  let po = pipeOut(p);
+  let lost = o.x + o.y + o.z + o.w;
+  // (what the wind lifts partly goes up into the air: the particles carry it)
+  let send = o * (1.0 - MATS[mat].loose.y) + ow + so + po;
+  let out = lost + dot(ow + so + sm + po, vec4<f32>(1.0));
+  sedOut[i * 3u] = send;
+  sedOut[i * 3u + 1u] = sm;
+  sedOut[i * 3u + 2u] = vec4<f32>(lost, out, 0.0, 0.0);
+}
+
+/** Pass 2: each column's run takes its own outflow off and gathers its neighbours'. */
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let cs = colSlots(id.x, id.y);
-  var arr: array<vec4<u32>, MAX_K>;
-  var n = 0u;
-  for (var k = 0u; k < cs.y; k++) {
-    let v = layers[cs.x + k];
-    if (ivEmpty(v)) { break; }
-    arr[k] = v;
-    n = k + 1u;
-  }
-
-  // granular intervals with air under them fall (rubble a collapse left
-  // hanging, sand whose support was dug away)
-  var floorZ = 0.0;
-  for (var k = 0u; k < n; k++) {
-    let v = arr[k];
-    var z0 = ivZ0(v);
-    var z1 = ivZ1(v);
-    if (matState(ivMat(v)) == ST_GRANULAR && z0 > floorZ + 1e-4) {
-      let f = min(FALL, z0 - floorZ);
-      z0 -= f;
-      z1 -= f;
-      arr[k] = ivPack(z0, z1, ivMat(v), ivAux(v));
-    }
-    floorZ = z1;
-  }
-
-  // the run on top, as a stack (touching granular intervals of the same
-  // material count as one)
-  let r = looseRun(&arr, n);
-  var s: Stack;
-  s.n = 0u;
-  s.cap = max(cs.y - r, 1u);
-  var base = 0.0;
-  if (n > 0u) { base = ivZ1(arr[n - 1u]); }
-  if (r < n) { base = ivZ0(arr[r]); }
-  for (var k = r; k < n; k++) {
-    let v = arr[k];
-    let d = ivZ1(v) - ivZ0(v);
-    if (s.n > 0u && s.m[s.n - 1u] == ivMat(v)) { s.d[s.n - 1u] += d; continue; }
-    s.d[s.n] = d;
-    s.m[s.n] = ivMat(v);
-    s.n += 1u;
-  }
-  // (with no room for loose ground at all, nothing can land here)
-  let room = r < cs.y;
-
-  let m0 = topMat(&s);
-  // what leaves the top layer: wind, water, slumping, piping
-  let o = windOut(p);
-  let lost = o.x + o.y + o.z + o.w;
-  let ow = waterOut(p);
-  let so = slumpOut(p);
-  let sm = smoothOut(p);
-  let po = pipeOut(p);
-  let out = lost + ow.x + ow.y + ow.z + ow.w + so.x + so.y + so.z + so.w + sm.x + sm.y + sm.z + sm.w + po.x + po.y + po.z + po.w;
-  if (s.n > 0u) {
-    s.d[s.n - 1u] = max(s.d[s.n - 1u] - out, 0.0);
-  }
+  // the top's material, as the view sees it (dust when there's no loose ground)
+  let m0 = driftMatAt(p);
+  let own = sedOut[i * 3u + 2u];
+  // what the wind sent up into the air (the particles take it from here)
+  textureStore(airOut, p, vec4<f32>(own.x * MATS[m0].loose.y, 0.0, 0.0, 0.0));
   let here = levelAt(p);
   // what arrives, by material: the same as my top joins it; the largest
   // other arrival starts a new layer (and takes the rest with it)
@@ -379,10 +354,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var k = 0u; k < 4u; k++) {
     let nb = p + DIRS[k];
     if (!inMap(nb)) { continue; }
+    let j = colIdxI(nb);
     let mn = driftMatAt(nb);
-    let a = windOut(nb)[k ^ 1u] * (1.0 - MATS[mn].loose.y) + waterOut(nb)[k ^ 1u] + slumpOut(nb)[k ^ 1u] + pipeOut(nb)[k ^ 1u];
+    let a = sedOut[j * 3u][k ^ 1u];
     // (the wind's easing just blends into my top, whatever it is)
-    same += smoothOut(nb)[k ^ 1u];
+    same += sedOut[j * 3u + 1u][k ^ 1u];
     if (mn == m0) { same += a; } else {
       other += a;
       if (a > otherMax) { otherMax = a; otherMat = mn; }
@@ -408,7 +384,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // the editor: a pour of loose material (its material from the brush state),
   // dust brushed on, or something taken away (dig, clean); a crumbled body
   let dep = deposit[i];
-  deposit[i] = vec4<f32>(0.0);
+  let anyDep = any(dep != vec4<f32>(0.0));
+  if (anyDep) { deposit[i] = vec4<f32>(0.0); }
   let delta = dep.x;
   var pour = 0.0;
   var pourMat = MAT_DRIFT;
@@ -419,6 +396,74 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (MAT_DRIFT == m0) { same += dust; } else {
     other += dust;
     if (dust > otherMax) { otherMax = dust; otherMat = MAT_DRIFT; }
+  }
+  // strong wind tears litter off the top a cell at a time (the particles
+  // throw up the scrap for the same rolls — see litterStrip; this pass runs
+  // every other tick, so it takes both ticks' rolls); ash isn't stripped: the
+  // wind lifts it like any loose ground, as dust grains
+  let topNow = topOf(p);
+  let litter = m0 == MAT_LITTER && topNow > 0.0;
+  let strip = select(0u, 1u, litter && litterStrip(p, G.tick)) + select(0u, 1u, litter && litterStrip(p, G.tick - 1u));
+  // green binds dust and ash it grows through: they become soil
+  let bind = topNow > 0.0 && topNow < 1.0 && rooted(i) > 0.8 && (m0 == MAT_DRIFT || m0 == MAT_ASH_L);
+
+  // most columns are still: nothing leaves, nothing arrives, nothing hangs
+  // over air — leave their intervals alone
+  var n = 0u;
+  var hangs = false;
+  var floorZ = 0.0;
+  for (var k = 0u; k < cs.y; k++) {
+    let v = layers[cs.x + k];
+    if (ivEmpty(v)) { break; }
+    n = k + 1u;
+    if (matState(ivMat(v)) == ST_GRANULAR && ivZ0(v) > floorZ + 1e-4) { hangs = true; }
+    floorZ = ivZ1(v);
+  }
+  let moves = own.y > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || dep.y > 0.0 || delta < 0.0 || strip > 0u || bind;
+  if (!moves && !hangs) { return; }
+
+  var arr: array<vec4<u32>, MAX_K>;
+  for (var k = 0u; k < n; k++) { arr[k] = layers[cs.x + k]; }
+  // granular intervals with air under them fall (rubble a collapse left
+  // hanging, sand whose support was dug away)
+  if (hangs) {
+    floorZ = 0.0;
+    for (var k = 0u; k < n; k++) {
+      let v = arr[k];
+      var z0 = ivZ0(v);
+      var z1 = ivZ1(v);
+      if (matState(ivMat(v)) == ST_GRANULAR && z0 > floorZ + 1e-4) {
+        let f = min(FALL, z0 - floorZ);
+        z0 -= f;
+        z1 -= f;
+        arr[k] = ivPack(z0, z1, ivMat(v), ivAux(v));
+      }
+      floorZ = z1;
+    }
+  }
+
+  // the run on top, as a stack (touching granular intervals of the same
+  // material count as one)
+  let r = looseRun(&arr, n);
+  var s: Stack;
+  s.n = 0u;
+  s.cap = max(cs.y - r, 1u);
+  var base = 0.0;
+  if (n > 0u) { base = ivZ1(arr[n - 1u]); }
+  if (r < n) { base = ivZ0(arr[r]); }
+  for (var k = r; k < n; k++) {
+    let v = arr[k];
+    let d = ivZ1(v) - ivZ0(v);
+    if (s.n > 0u && s.m[s.n - 1u] == ivMat(v)) { s.d[s.n - 1u] += d; continue; }
+    s.d[s.n] = d;
+    s.m[s.n] = ivMat(v);
+    s.n += 1u;
+  }
+  // (with no room for loose ground at all, nothing can land here)
+  let room = r < cs.y;
+
+  if (s.n > 0u) {
+    s.d[s.n - 1u] = max(s.d[s.n - 1u] - own.y, 0.0);
   }
   // (a column already full of other intervals has no room for loose ground:
   // what would land there is lost — rare; the chunk table gives ruins room)
@@ -433,18 +478,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   // taken away: from the top layer, then those beneath
   _ = takeTop(&s, max(-delta, 0.0));
-  // strong wind tears litter off the top a cell at a time (the particles
-  // throw up the scrap for the same rolls — see litterStrip; this pass runs
-  // every other tick, so it takes both ticks' rolls)
-  // (ash isn't: the wind lifts it like any loose ground, as dust grains)
-  if (s.n > 0u && topMat(&s) == MAT_LITTER) {
-    if (litterStrip(p, G.tick)) { _ = takeTop(&s, min(1.0, topDepth(&s))); }
-    if (s.n > 0u && topMat(&s) == MAT_LITTER && litterStrip(p, G.tick - 1u)) { _ = takeTop(&s, min(1.0, topDepth(&s))); }
+  for (var k = 0u; k < strip; k++) {
+    if (s.n > 0u && topMat(&s) == MAT_LITTER) { _ = takeTop(&s, min(1.0, topDepth(&s))); }
   }
   // a spent top uncovers what's beneath it
   while (s.n > 0u && s.d[s.n - 1u] <= 0.001) { s.n -= 1u; }
-  // green binds dust and ash it grows through: they become soil
-  if (s.n > 0u && rooted(i) > 0.8 && (topMat(&s) == MAT_DRIFT || topMat(&s) == MAT_ASH_L) && topDepth(&s) < 1.0) {
+  if (bind && s.n > 0u && (topMat(&s) == MAT_DRIFT || topMat(&s) == MAT_ASH_L)) {
     s.m[s.n - 1u] = MAT_SOIL_L;
     if (s.n > 1u && s.m[s.n - 2u] == MAT_SOIL_L) { s.d[s.n - 2u] += s.d[s.n - 1u]; s.n -= 1u; }
   }
@@ -460,8 +499,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     z = z1;
     w += 1u;
   }
-  n = w;
-  for (var k = 0u; k < cs.y; k++) { layers[cs.x + k] = select(IV_NONE, arr[k], k < n); }
-  // what this column's wind sent up into the air (the particles take it from here)
-  textureStore(airOut, p, vec4<f32>(lost * MATS[m0].loose.y, 0.0, 0.0, 0.0));
+  let n1 = w;
+  for (var k = 0u; k < max(n, n1); k++) { layers[cs.x + k] = select(IV_NONE, arr[k], k < n1); }
 }

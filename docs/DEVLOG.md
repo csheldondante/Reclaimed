@@ -2048,3 +2048,19 @@ a judgement call for the user). Cost (valley, Xe-LPG): sediment 1.40 ms a
 pass (every other tick) vs drift 0.39 + material 0.13; structure 0.31 vs
 0.12 and surface 0.18 vs 0.01 (bigger slots, the derived view). Next: split
 the sediment pass so neighbours' outflows aren't recomputed five times.
+
+## 2026-10-11 — strata stage 2b: sediment in two passes, still columns skipped; covered tops culled
+
+Measured first (valley, Xe-LPG, 1600×900): sediment 1.40 ms/pass. Splitting
+it into `outflow` (each column's outflows once, into `sedOut`: what reaches
+each neighbour, the wind's easing, totals) and the gather barely helped
+(0.26 + 1.07 ms): the cost was unpacking every column into registers. Now
+the gather leaves a column's intervals alone when nothing leaves, arrives,
+falls, is stripped or bound there (most of the map): 0.16 + 0.28 ms (old
+drift + material: 0.52 ms). Renderprep hides the top face of the box under
+a loose run at least 0.3 deep (the sheet covers it; it only shows at the
+sheet's thinning edges), so rock under soil is culled again: instances
+69k (main 93k, stage 2 121k), draw 4.42 ms (main 5.23), GPU span 5.98 ms
+(main 6.93).
+Mass: a 173-cell sand pour on the sandbox, calm weather — total loose
+volume in the layers 267226.16 at every sample over 17.5 s after it landed.

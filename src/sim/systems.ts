@@ -310,19 +310,25 @@ export class EditSystem implements SimSystem {
 export class SedimentSystem implements SimSystem {
   readonly name = 'sediment';
   readonly period = 2;
+  private out;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, sedimentWgsl + flowWgsl];
+    const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView };
+    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 2: 'uniform', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex' }, 'outflow');
+    this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 2: world.materials, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, ...tex }) };
     this.s = kernel(
       device,
       world,
       'sediment',
       sedimentWgsl + flowWgsl,
-      { 3: 'rw', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 8: 'rw', 9: 'read', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex' },
-      { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.flux, 7: world.veg, 8: world.contamDelta, 9: world.moisture, 15: world.windFieldView, 16: world.airView, 17: world.driftView, 18: world.editStateView, 19: world.strataView, 21: world.bodyProjView },
+      { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex' },
+      { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
       true,
     );
   }
   encode(enc: GPUCommandEncoder): void {
+    dispatch(enc, this.prof, 'sediment-out', this.out.k, this.out.group, this.world.groups);
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
   }
 }
