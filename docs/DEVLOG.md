@@ -2091,3 +2091,11 @@ sediment 0.55 + outflow 0.33 ms a pass with spills, 0.53 + 0.29 without;
 main's drift + material 0.57. Per tick the branch also pays structure +0.2
 and surface +0.17 ms (bigger slots, the derived view) and saves ~0.7 ms of
 draw.
+
+## 2026-10-11 — shallow water lies still (Q1)
+
+The ripple normal (wind-advected value noise) was the same strength at any
+depth, so the thin puddles left after a flood shimmered like open water.
+Its amplitude now scales by `smoothstep(0.1, 0.7, depth)`: puddles are flat
+(their glint and shade go with it), ponds and the river are unchanged.
+Checked headlessly on the sandbox pond (no errors; the rim calms).
