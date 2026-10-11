@@ -2009,3 +2009,42 @@ Checked headlessly against main (a second checkout on port 5174): valley and
 sandbox look identical, no errors; the garden cut (tower, diving board,
 bridge) breaks, falls and shatters as before (25 bodies, 3 shatters, nothing
 moves up). The layer buffers are 4× larger (16 B a slot).
+
+## 2026-10-11 — branch strata, stage 2: the loose ground lives in the layers (P4)
+
+The drift system's separate four-layer stack (drift + strata textures) is
+gone as state: every granular interval in the layers is loose ground, and
+`sediment.wgsl` (was drift.wgsl) works on the run of touching granular
+intervals on top of each column — wind, water, slumping and now piping take
+from its top interval, arrivals of a new material start an interval, and
+granular intervals over air fall (2 cells a pass). `material.wgsl` (whole-cell
+falling sand: gravity, repose, piping, erosion, litter stripping) is
+removed; the sediment pass does all of it, for the valley and the title too.
+- The surface pass derives a view from the layers each tick — `surface`
+  z = the base of the loose run, the drift texture (run depth, top interval's
+  depth and material, air) and strata (the intervals beneath the top; w =
+  exact base) — so every reader of `sfZ + driftAt` is unchanged. Neighbours
+  are read only through that view, so the sediment pass updates the layers
+  in place (no copy) and stays within 8 storage buffers.
+- Loose behaviour moved into the material table (`loose` vec4: wind lift,
+  airborne share, water mobility, wash flow; repose dry/wet from `sim`,
+  with moisture: rain lowers it). Repose values take the sandbox's (soil
+  1.4, rubble 1.7, ash 0.9; they were 3, 4, 2 in the old whole-cell rules).
+- Edit: pours, digs and cleaning go through one `deposit` vec4 per column
+  (x editor, y/z a crumbled body from the CPU; was driftDelta + looseAdd);
+  building on loose ground just stacks on it (the loose ground stays under
+  the block); Break cuts loose intervals like any other.
+- Render: renderprep skips the loose run (drawn as the sheet); the sheet
+  now shows its top material's surface detail (litter specks, pebbles,
+  hue drift) as the old whole-cell boxes did.
+- Maps: a map's drift/strata stacks are folded into intervals on load
+  (`looseIntoGrid`); saved maps no longer carry them.
+- Bodies treat granular cells as not solid (they sink into loose ground as
+  before, measured from the run's base).
+Checked headlessly against main: sandbox and valley look the same (the
+valley's soil is now the smooth sheet over its rock); the title diorama's
+ash mound is drawn plain (deep ash counts as a film that buries plants —
+a judgement call for the user). Cost (valley, Xe-LPG): sediment 1.40 ms a
+pass (every other tick) vs drift 0.39 + material 0.13; structure 0.31 vs
+0.12 and surface 0.18 vs 0.01 (bigger slots, the derived view). Next: split
+the sediment pass so neighbours' outflows aren't recomputed five times.

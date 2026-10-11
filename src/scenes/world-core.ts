@@ -13,7 +13,7 @@ import { WorldGpu } from '../sim/world-gpu';
 import { CHUNK, packColumns, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { unpackColumns } from '../world/mapfile';
-import { looseFromGrid } from '../world/loose';
+import { looseIntoGrid } from '../world/loose';
 import { DayNight, type Daylight } from '../weather/daynight';
 import { Weather } from '../weather/weather';
 
@@ -64,14 +64,14 @@ export class WorldCore {
     readonly map: MapData,
     particleCap: number,
     minK?: number,
-    /** soft ground as loose layers (round 16; the sandbox for now) */
-    looseGround = false,
+    /** (unused since round 22: all soft ground is loose ground in the layers) */
+    _looseGround = false,
   ) {
     const { device } = host.gpu;
     this.dims = map.grid.dims;
-    // soft ground becomes loose layers on the solid ground (round 16; the
-    // valley's terraced rock needs reshaping before it can follow)
-    if (looseGround) looseFromGrid(map);
+    // a map's loose stacks (drift, strata) go into the layers as intervals
+    // (round 22: one representation for everything on the land)
+    looseIntoGrid(map);
     this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     this.sim = new Simulation(device, this.world, host.profiler);
@@ -230,7 +230,7 @@ export class WorldCore {
   /** The live world as map data (saving a sandbox map: world/mapfile.ts). */
   async captureMap(): Promise<MapData> {
     const N = this.dims.w * this.dims.h;
-    const [layers, water, contam, moisture, veg, oil, oilStored, waterSource, drift] = await Promise.all([
+    const [layers, water, contam, moisture, veg, oil, oilStored, waterSource] = await Promise.all([
       this.readBuffer('layers'),
       this.readBuffer('water'),
       this.readBuffer('contam'),
@@ -239,23 +239,15 @@ export class WorldCore {
       this.readBuffer('oil'),
       this.readBuffer('oilStored'),
       this.readBuffer('waterSource'),
-      this.readTexture(this.world.drift),
     ]);
-    const strataTex = await this.readTexture(this.world.strata);
     const grid = unpackColumns(this.packed, new Uint32Array(layers.buffer));
     const surface = new Float32Array(N);
     for (let i = 0; i < N; i++) {
       const c = grid.cols[i];
       surface[i] = c.length ? c[c.length - 1].z1 : 0;
     }
+    // (the loose ground is in the layers: no separate stacks to save)
     const d = new Float32Array(N);
-    const dm = new Float32Array(N);
-    const dt = new Float32Array(N);
-    for (let i = 0; i < N; i++) {
-      d[i] = drift.data[i * 4];
-      dt[i] = drift.data[i * 4 + 1];
-      dm[i] = drift.data[i * 4 + 2];
-    }
     return {
       grid,
       water: water.slice(0, N),
@@ -266,16 +258,13 @@ export class WorldCore {
       oilStored: oilStored.slice(0, N * 2),
       waterSource: waterSource.slice(0, N),
       drift: d,
-      driftMat: dm,
-      driftTop: dt,
-      strata: strataTex.data,
       surface,
       poi: this.map.poi,
     };
   }
 
   // ---- undo (sandbox): GPU-side copies of the editable world state ----------
-  private undoRing: { bufs: GPUBuffer[]; tex: GPUTexture; strata: GPUTexture }[] = [];
+  private undoRing: { bufs: GPUBuffer[] }[] = [];
   private undoNext = 0;
   private undoCount = 0;
   private static readonly UNDO_DEPTH = 8;
@@ -291,15 +280,11 @@ export class WorldCore {
     if (this.undoRing.length < WorldCore.UNDO_DEPTH && this.undoRing.length <= this.undoNext) {
       this.undoRing.push({
         bufs: src.map((b) => this.world.buf(`undo:${b.label}`, b.size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST)),
-        tex: this.world.texture('undo:drift', this.world.drift),
-        strata: this.world.texture('undo:strata', this.world.strata),
       });
     }
     const slot = this.undoRing[this.undoNext];
     const enc = device.createCommandEncoder({ label: 'snapshot' });
     src.forEach((b, k) => enc.copyBufferToBuffer(b, 0, slot.bufs[k], 0, b.size));
-    enc.copyTextureToTexture({ texture: this.world.drift }, { texture: slot.tex }, [this.dims.w, this.dims.h]);
-    enc.copyTextureToTexture({ texture: this.world.strata }, { texture: slot.strata }, [this.dims.w, this.dims.h]);
     device.queue.submit([enc.finish()]);
     this.undoNext = (this.undoNext + 1) % WorldCore.UNDO_DEPTH;
     this.undoCount = Math.min(this.undoCount + 1, WorldCore.UNDO_DEPTH);
@@ -315,10 +300,9 @@ export class WorldCore {
     const src = this.undoSources();
     const enc = device.createCommandEncoder({ label: 'undo' });
     src.forEach((b, k) => enc.copyBufferToBuffer(slot.bufs[k], 0, b, 0, b.size));
-    enc.copyTextureToTexture({ texture: slot.tex }, { texture: this.world.drift }, [this.dims.w, this.dims.h]);
-    enc.copyTextureToTexture({ texture: slot.strata }, { texture: this.world.strata }, [this.dims.w, this.dims.h]);
+    // (the loose ground lives in the layers; its view is derived each tick)
     // pours in flight would land on the restored ground: drop them
-    enc.clearBuffer(this.world.driftDelta);
+    enc.clearBuffer(this.world.deposit);
     device.queue.submit([enc.finish()]);
     const zero = new Float32Array(this.dims.w * this.dims.h * 4);
     for (const t of [this.world.editState, this.world.editStateNext]) {

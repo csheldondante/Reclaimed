@@ -73,23 +73,30 @@ export class WorldGpu {
   readonly windFieldNext: GPUTexture;
   readonly windFieldView: GPUTextureView;
   readonly windFieldNextView: GPUTextureView;
-  /** dust the editor adds/removes, folded into the drift by drift.wgsl */
-  readonly driftDelta: GPUBuffer;
-  /** drifted dust depth (.x) and wind loss (.y) per column; drift.wgsl reads `drift`, writes `driftNext` */
+  /**
+   * Loose material arriving per column, vec4 (sediment.wgsl folds it into the
+   * layers and zeroes it): x what the editor adds (+, its material from the
+   * brush state) or takes away (−; edit.wgsl); y, z an amount and material
+   * from the CPU (a crumbled body; game/integrity.ts writes them)
+   */
+  readonly deposit: GPUBuffer;
+  /**
+   * The loose ground as seen from above (a view derived from the layers by
+   * the surface pass, round 22): x depth of the granular run on top of the
+   * column, y its top interval's depth, z that interval's material, w what
+   * the wind sent up into the air off it (from `air`)
+   */
   readonly drift: GPUTexture;
-  readonly driftNext: GPUTexture;
   readonly driftView: GPUTextureView;
-  readonly driftNextView: GPUTextureView;
+  /** what the sediment pass's wind lifted into the air per column (copied into drift .w) */
+  readonly air: GPUTexture;
+  readonly airView: GPUTextureView;
   /** sleeping rigid bodies projected per column: top, bottom (top < 0: none) — game/integrity.ts writes it */
   readonly bodyProj: GPUTexture;
   readonly bodyProjView: GPUTextureView;
-  /** loose material added from the CPU (a crumbled body): per column amount, material — drift.wgsl folds and zeroes it */
-  readonly looseAdd: GPUBuffer;
-  /** the loose layers beneath the top one (drift.wgsl; three packed mat·1000 + depth) */
+  /** derived by the surface pass: xyz the granular intervals beneath the top one in the run on top (bottom first, packed mat·1000 + depth), w the run's base z */
   readonly strata: GPUTexture;
-  readonly strataNext: GPUTexture;
   readonly strataView: GPUTextureView;
-  readonly strataNextView: GPUTextureView;
   /** sandbox brush state per column (edit.wgsl reads `editState`, writes `editStateNext`; particles read it) */
   readonly editState: GPUTexture;
   readonly editStateNext: GPUTexture;
@@ -191,10 +198,10 @@ export class WorldGpu {
     this.windFieldNextView = this.windFieldNext.createView();
     const dsize = { width: this.w, height: this.h };
     this.drift = device.createTexture({ label: 'drift', size: dsize, format: 'rgba32float', usage: tusage });
-    this.driftNext = device.createTexture({ label: 'driftNext', size: dsize, format: 'rgba32float', usage: tusage });
-    this.textures.push(this.drift, this.driftNext);
+    this.air = device.createTexture({ label: 'air', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.drift, this.air);
     this.driftView = this.drift.createView();
-    this.driftNextView = this.driftNext.createView();
+    this.airView = this.air.createView();
     this.bodyProj = device.createTexture({ label: 'bodyProj', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.bodyProj);
     this.bodyProjView = this.bodyProj.createView();
@@ -204,26 +211,13 @@ export class WorldGpu {
       device.queue.writeTexture({ texture: this.bodyProj }, none, { bytesPerRow: this.w * 16 }, dsize);
     }
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
-    this.strataNext = device.createTexture({ label: 'strataNext', size: dsize, format: 'rgba32float', usage: tusage });
-    this.textures.push(this.strata, this.strataNext);
+    this.textures.push(this.strata);
     this.strataView = this.strata.createView();
-    this.strataNextView = this.strataNext.createView();
-    if (map.strata) device.queue.writeTexture({ texture: this.strata }, map.strata as Float32Array<ArrayBuffer>, { bytesPerRow: this.w * 16 }, dsize);
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
     this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.editState, this.editStateNext);
     this.editStateView = this.editState.createView();
     this.editStateNextView = this.editStateNext.createView();
-    {
-      const init = new Float32Array(N * 4);
-      for (let k = 0; k < N; k++) {
-        init[k * 4] = map.drift[k];
-        // the top layer's depth (all of it, for maps without strata)
-        init[k * 4 + 1] = map.driftTop?.[k] ?? map.drift[k];
-        init[k * 4 + 2] = map.driftMat?.[k] ?? 0;
-      }
-      device.queue.writeTexture({ texture: this.drift }, init, { bytesPerRow: this.w * 16 }, dsize);
-    }
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
     this.particleCap = particleCap;
@@ -233,8 +227,7 @@ export class WorldGpu {
     // (particles carry what the wind lifts off the loose layer; drift.wgsl
     // folds it back in where they land — round 15)
     this.contamDelta = this.buf('contamDelta', N * 8, S);
-    this.driftDelta = this.buf('driftDelta', N * 4, S);
-    this.looseAdd = this.buf('looseAdd', N * 8, S);
+    this.deposit = this.buf('deposit', N * 16, S);
   }
 
   private owned: GPUBuffer[] = [];

@@ -72,6 +72,24 @@ export class WorldVox {
     return top;
   }
 
+  /** Base of the loose ground on top of the column (its top if there is none): granular intervals touching from the top. */
+  baseTop(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return 0;
+    const { base, k } = columnSlots(this.packed, x, y);
+    const col: { z0: number; z1: number; mat: number }[] = [];
+    for (let s = 0; s < k; s++) {
+      const iv = readSlot(this.slots, base + s);
+      if (!iv) break;
+      col.push(iv);
+    }
+    let z = col.length ? col[col.length - 1].z1 : 0;
+    for (let s = col.length - 1; s >= 0; s--) {
+      if (MATERIALS[col[s].mat]?.state !== MatState.Granular || Math.abs(col[s].z1 - z) > 1e-3) break;
+      z = col[s].z0;
+    }
+    return z;
+  }
+
   /** Top of the run containing cell (x, y, z) (z itself must be inside one). */
   runTop(x: number, y: number, z: number): number {
     const { base, k } = columnSlots(this.packed, x, y);

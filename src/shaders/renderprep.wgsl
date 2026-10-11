@@ -78,6 +78,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var ol = 0.0;
   var gt = vec4<f32>(0.0);
   var nVis = 0u;
+  // the loose ground on top is drawn as the smooth sheet (vegprep.wgsl), not as boxes
+  var run = 0u;
   if (inside) {
     let i = colIdx(id.x, id.y);
     cs = colSlots(id.x, id.y);
@@ -88,10 +90,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     ol = oil[i];
     let p = vec2<i32>(id.xy);
     gt = vec4<f32>(groundTop(p + DIRS[0]), groundTop(p + DIRS[1]), groundTop(p + DIRS[2]), groundTop(p + DIRS[3]));
-    for (var k = 0u; k < nSlots; k++) {
+    var col: array<vec4<u32>, MAX_K>;
+    for (var k = 0u; k < nSlots; k++) { col[k] = layers[cs.x + k]; }
+    run = looseRun(&col, nSlots);
+    for (var k = 0u; k < run; k++) {
       let v = layers[cs.x + k];
       var nz = 9999.0;
-      if (k + 1u < nSlots) { nz = ivZ0(layers[cs.x + k + 1u]); }
+      if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); }
       if (hideFlags(gt, ivZ1(v), nz) != HIDE_ALL) { nVis += 1u; }
     }
     nO = nVis;
@@ -108,13 +113,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   if (!inside) { return; }
 
   var o = baseO + offO;
-  for (var k = 0u; k < nSlots; k++) {
+  for (var k = 0u; k < run; k++) {
     let v = layers[cs.x + k];
     var nz = 9999.0;
-    if (k + 1u < nSlots) { nz = ivZ0(layers[cs.x + k + 1u]); }
+    if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); }
     let hide = hideFlags(gt, ivZ1(v), nz);
     if (hide == HIDE_ALL) { continue; }
-    let flags = select(0u, FLAG_TOP, k + 1u == nSlots) | hide;
+    let flags = select(0u, FLAG_TOP, k + 1u == run) | hide;
     var inst = mkInst(id.x, id.y, 1u, 1u, ivZ0(v), ivZ1(v), ivMat(v), flags);
     inst.w |= (ivAux(v) & 15u) << 16u; // structural damage → cracks
     instOpaque[o] = inst;

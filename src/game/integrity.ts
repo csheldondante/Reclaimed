@@ -82,7 +82,8 @@ export class Integrity {
   /** The visible top of a column: solid ground plus loose ground, or a fallen body's top. */
   topAt(x: number, y: number): number {
     const i = y * this.core.dims.w + x;
-    const ground = this.world.slots.length ? this.world.colTop(x, y) + (this.bodies.loose?.[i] ?? 0) : 0;
+    // (the layers hold the loose ground too)
+    const ground = this.world.slots.length ? this.world.colTop(x, y) : 0;
     return Math.max(ground, this.proj[i * 4]);
   }
 
@@ -153,7 +154,7 @@ export class Integrity {
    * A body turns into loose ground where it lies: each voxel's volume goes to
    * the column under it, as the loose material its own material breaks down
    * to (concrete, brick, stone, metal → gravel; wood, canvas → ash; bone →
-   * dust). Through the looseAdd buffer, which the drift pass folds in.
+   * dust). Through the deposit buffer (y, z), which the sediment pass folds into the layers.
    */
   crumble(b: Body): void {
     this.toLoose(this.bodies.worldVoxels(b));
@@ -241,7 +242,7 @@ export class Integrity {
   }
 
   /**
-   * looseAdd is overwritten, not added to, so a column is only written again
+   * the deposit's y, z are overwritten, not added to, so a column is only written again
    * once the drift pass (period 2) has folded the last write in: at most one
    * flush per two sim ticks; in between, crumbs gather here.
    */
@@ -254,7 +255,7 @@ export class Integrity {
       let best: number = MAT.Rubble;
       let n = -1;
       for (const [m, c] of e.mats) if (c > n) [best, n] = [m, c];
-      dev.queue.writeBuffer(this.core.world.looseAdd, i * 8, new Float32Array([e.amount, best]));
+      dev.queue.writeBuffer(this.core.world.deposit, i * 16 + 4, new Float32Array([e.amount, best]));
     }
     this.pendingLoose.clear();
   }

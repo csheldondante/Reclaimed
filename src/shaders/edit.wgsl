@@ -16,9 +16,8 @@
 //    angle of repose
 //  - bedrock: stone rising from below, lifting every layer above it
 //  - dig: one layer off the top
-// Liquids/fields add or remove amounts per tick while held. Dust for drifts
-// goes through driftDelta (folded in by the drift system, which owns the
-// drift texture). Runs first each tick in the sandbox, so every system sees
+// Liquids/fields add or remove amounts per tick while held. Loose material
+// goes through `deposit` (folded into the layers by sediment.wgsl). Runs first each tick in the sandbox, so every system sees
 // the edit.
 @group(0) @binding(3) var<storage, read> layersIn: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read_write> layersOut: array<vec4<u32>>;
@@ -26,7 +25,8 @@
 @group(0) @binding(6) var<storage, read_write> oilE: array<f32>;
 @group(0) @binding(7) var<storage, read_write> contamE: array<vec2<f32>>;
 @group(0) @binding(8) var<storage, read_write> vegE: array<f32>;
-@group(0) @binding(9) var<storage, read_write> driftDelta: array<f32>;
+// loose material arriving (x; sediment.wgsl folds it into the layers)
+@group(0) @binding(9) var<storage, read_write> deposit: array<vec4<f32>>;
 // brush state per column (editTex, binding 18, declared in common.wgsl):
 // x given by this press, y fraction of a cell owed, z cells still to pour,
 // w = op·32 + material (×4) + fall time left (s)
@@ -107,12 +107,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let amt = ev.w * fall;
     if (op == OP_SMASH) {
       let hz = ev.z * sqrt(fall);
-      // the loose ground inside the sphere goes too (it lies on the solid top)
-      if (n > 0u) {
-        let gTop = ivZ1(arr[n - 1u]);
-        let over = min(ev.w + hz, gTop + driftAt(p)) - max(ev.w - hz, gTop);
-        if (over > 0.0) { driftDelta[i] -= over; }
-      }
       let lo = floor(max(ev.w - hz, 0.0) + 0.5);
       let hi = floor(max(ev.w + hz, 0.0) + 0.5);
       var out: array<vec4<u32>, MAX_K>;
@@ -146,7 +140,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     } else if (op == OP_CLEAN) {
       contamE[i] = contamE[i] * (1.0 - min(amt * 0.15, 1.0));
       oilE[i] = oilE[i] * (1.0 - min(amt * 0.15, 1.0));
-      driftDelta[i] -= amt * 0.06;
+      deposit[i].x -= amt * 0.06;
     } else if (op == OP_PLANT) {
       vegE[i] = max(vegE[i], min(vegE[i] + amt * 0.08, 4.6));
       contamE[i].x = contamE[i].x * (1.0 - min(amt * 0.05, 1.0));
@@ -166,7 +160,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (isLoose(mat)) {
         // loose material pours into the loose ground (drift.wgsl): a
         // different material starts a new layer on top, so pours make strata
-        driftDelta[i] += r;
+        deposit[i].x += r;
       } else { owed += r; }
     }
   }
@@ -177,7 +171,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let z1 = ivZ1(top);
     if (op == OP_DIG && driftAt(p) > 0.05) {
       // loose ground first: a cell's worth of it
-      driftDelta[i] -= 1.0;
+      deposit[i].x -= 1.0;
     } else if (op == OP_DIG) {
       if (!(n == 1u && z1 <= 2.0)) {
         if (z1 - 1.0 <= ivZ0(top) + 1e-3) { n -= 1u; arr[n] = IV_NONE; }
@@ -201,23 +195,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
     } else if (z1 + 2.0 < f32(G.zMax)) {
-      // building on loose ground: the loose ground under it packs into cells
-      // first (otherwise it would ride up onto the new block's top)
-      let dl = driftAt(p);
-      if (op == OP_BUILD && dl > 0.05 && driftDelta[i] > -0.01) {
-        let pm = driftMatAt(p);
-        let k = u32(round(dl));
-        for (var c = 0u; c < k; c++) {
-          let t = arr[n - 1u];
-          let tz = ivZ1(t);
-          if (tz + 3.0 >= f32(G.zMax)) { break; }
-          if (ivMat(t) == pm) { arr[n - 1u] = ivPack(ivZ0(t), tz + 1.0, pm, ivAux(t)); }
-          else if (n < cs.y) { arr[n] = ivPack(tz, tz + 1.0, pm, 0u); n += 1u; }
-          else { arr[n - 1u] = ivPack(ivZ0(t), tz + 1.0, ivMat(t), ivAux(t)); }
-        }
-        driftDelta[i] -= dl;
-      }
-      // build / pour: a cell of the material on top
+      // build: a cell of the material on top (on loose ground it sits on the
+      // loose ground, which stays under it in the layers)
       let t2 = arr[n - 1u];
       let z2 = ivZ1(t2);
       if (ivMat(t2) == mat) { arr[n - 1u] = ivPack(ivZ0(t2), z2 + 1.0, mat, ivAux(t2)); }

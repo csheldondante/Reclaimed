@@ -5,6 +5,7 @@ struct Material {
   sim: vec4<f32>,    // state, reposeDry, reposeWet, strength
   eco: vec4<f32>,    // growthCap, suitability, specular, porosity
   look: vec4<f32>,   // smooth (cells; 0 = hard steps), unused ×3
+  loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash flow
 };
 @group(0) @binding(2) var<uniform> MATS: array<Material, 32>;
 

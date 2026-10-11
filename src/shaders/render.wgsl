@@ -410,6 +410,11 @@ fn fsBox(in: VOut) -> FOut {
     }
   }
 
+  // the material whose surface detail is drawn (the loose sheet: its top
+  // interval's — loose ground looks like that material however thin it is)
+  var dmat = mat;
+  if (mat == MAT_DRIFT) { dmat = driftMatAt(cell); }
+
   // voxel texture: per-cell and per-subcell (4x4) variation
   let vc = vec3<i32>(floor(in.wpos - in.nrm * 0.01));
   let sub = vec3<i32>(floor(in.wpos * 4.0 - in.nrm * 0.02));
@@ -420,21 +425,21 @@ fn fsBox(in: VOut) -> FOut {
   alb *= in.tint;
   // natural materials: per-voxel hue drift (warm/cool, mineral streaks) and
   // sub-voxel pebbles, so stone and dirt aren't a single flat colour
-  if (mat >= 1u && mat <= 4u) {
+  if (dmat >= 1u && dmat <= 4u) {
     let hv = randv(vc + vec3<i32>(17, 3, 91));
     let warm = vec3<f32>(1.08, 0.97, 0.88);
     let cool = vec3<f32>(0.92, 0.98, 1.06);
     alb *= mix(cool, warm, hv);
     // large-scale mineral bands on stone / clay-iron patches on soil
     let band = fbm2(in.wpos.xy * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
-    if (mat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
-    if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
+    if (dmat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
+    if (dmat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     // pebbles: occasional lighter/darker sub-voxels
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
 
-  if (mat == MAT_TRASH || mat == MAT_LITTER) {
+  if (dmat == MAT_TRASH || dmat == MAT_LITTER) {
     // faded plastics, paper, glass and rust specks (litter: scraps on dirt)
     let k = u32(n2 * 6.0);
     var tc = vec3<f32>(0.45, 0.43, 0.40);
@@ -444,7 +449,7 @@ fn fsBox(in: VOut) -> FOut {
     else if (k == 3u) { tc = vec3<f32>(0.38, 0.48, 0.34); }
     else if (k == 4u) { tc = vec3<f32>(0.50, 0.33, 0.20); }
     alb = toLinear(tc) * (0.75 + 0.35 * n1);
-    if (mat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
+    if (dmat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
   }
 
   let v = veg[ci];

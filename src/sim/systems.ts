@@ -7,7 +7,6 @@ import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import surfaceWgsl from '../shaders/surface.wgsl?raw';
-import materialWgsl from '../shaders/material.wgsl?raw';
 import structureWgsl from '../shaders/structure.wgsl?raw';
 import flowWgsl from '../shaders/flow.wgsl?raw';
 import slopeWgsl from '../shaders/slope.wgsl?raw';
@@ -25,7 +24,7 @@ import statsWgsl from '../shaders/stats.wgsl?raw';
 import swayWgsl from '../shaders/sway.wgsl?raw';
 import wiltWgsl from '../shaders/wilt.wgsl?raw';
 import windFieldWgsl from '../shaders/windfield.wgsl?raw';
-import driftWgsl from '../shaders/drift.wgsl?raw';
+import sedimentWgsl from '../shaders/sediment.wgsl?raw';
 import editWgsl from '../shaders/edit.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
@@ -59,7 +58,15 @@ export class SurfaceSystem implements SimSystem {
   readonly period = 1;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'surface', surfaceWgsl, { 3: 'read', 4: 'rw' }, { 3: world.layers, 4: world.surface }, true);
+    this.s = kernel(
+      device,
+      world,
+      'surface',
+      surfaceWgsl,
+      { 3: 'read', 4: 'rw', 16: 'stex', 19: 'tex', 20: 'stex' },
+      { 3: world.layers, 4: world.surface, 16: world.driftView, 19: world.airView, 20: world.strataView },
+      true,
+    );
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
@@ -78,27 +85,6 @@ export class StructureSystem implements SimSystem {
       structureWgsl + flowWgsl,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
       { 3: world.layers, 4: world.layersNext, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
-      true,
-    );
-  }
-  encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
-  }
-}
-
-export class MaterialSystem implements SimSystem {
-  readonly name = 'material';
-  readonly period = 1;
-  private s;
-  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(
-      device,
-      world,
-      'material',
-      materialWgsl + flowWgsl,
-      { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 15: 'tex' },
-      { 3: world.layers, 4: world.layersNext, 5: world.surface, 6: world.moisture, 7: world.stats, 8: world.flux, 9: world.water, 15: world.windFieldView },
       true,
     );
   }
@@ -298,7 +284,7 @@ export class EditSystem implements SimSystem {
       'edit',
       editWgsl,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex' },
-      { 3: world.layers, 4: world.layersNext, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.driftDelta, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView },
+      { 3: world.layers, 4: world.layersNext, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView },
       true,
     );
   }
@@ -316,25 +302,28 @@ export class EditSystem implements SimSystem {
   }
 }
 
-/** Drifting dust (drift.wgsl): the wind carries it, shelter piles it, water washes it. */
-export class DriftSystem implements SimSystem {
-  readonly name = 'drift';
+/**
+ * The loose ground in the layers (sediment.wgsl): wind carries it, shelter
+ * piles it, water washes and pipes through it, slopes slump to their repose,
+ * granular intervals over air fall. Reads the view the surface pass derives.
+ */
+export class SedimentSystem implements SimSystem {
+  readonly name = 'sediment';
   readonly period = 2;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
-      'drift',
-      driftWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 8: 'rw', 9: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 20: 'stex', 21: 'tex' },
-      { 3: world.surface, 4: world.water, 5: world.driftDelta, 6: world.flux, 7: world.veg, 8: world.contamDelta, 9: world.looseAdd, 21: world.bodyProjView, 18: world.editStateView, 19: world.strataView, 20: world.strataNextView, 15: world.windFieldView, 16: world.driftNextView, 17: world.driftView },
+      'sediment',
+      sedimentWgsl + flowWgsl,
+      { 3: 'rw', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 8: 'rw', 9: 'read', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex' },
+      { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.flux, 7: world.veg, 8: world.contamDelta, 9: world.moisture, 15: world.windFieldView, 16: world.airView, 17: world.driftView, 18: world.editStateView, 19: world.strataView, 21: world.bodyProjView },
+      true,
     );
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyTextureToTexture({ texture: this.world.driftNext }, { texture: this.world.drift }, [this.world.w, this.world.h]);
-    enc.copyTextureToTexture({ texture: this.world.strataNext }, { texture: this.world.strata }, [this.world.w, this.world.h]);
   }
 }
 
@@ -429,8 +418,8 @@ export class StatsSystem implements SimSystem {
       world,
       'stats',
       statsWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read' },
-      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats, 8: world.oil, 9: world.fire, 10: world.surface },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 17: 'tex' },
+      { 3: world.contam, 4: world.veg, 5: world.water, 6: world.flux, 7: world.stats, 8: world.oil, 9: world.fire, 10: world.surface, 17: world.driftView },
     );
     for (let i = 0; i < 3; i++)
       this.staging.push({

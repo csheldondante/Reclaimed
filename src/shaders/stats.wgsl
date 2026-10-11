@@ -42,7 +42,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     atomicAdd(&acc[9], u32(oil[i] * 1000.0));
     atomicAdd(&acc[10], select(0u, 1u, fire[i] > 0.1));
     atomicAdd(&acc[11], select(0u, 1u, v >= 0.5 && d > 0.4));
-    let m = sfMat(surface[i]);
+    // (what lies on top: the loose ground's material where there's a fair depth of it)
+    let m = groundMatAt(vec2<i32>(id.xy), sfMat(surface[i]));
     let junk = m == 12u || m == MAT_LITTER;
     atomicAdd(&acc[12], select(0u, 1u, c.x < 0.2 && oil[i] < 0.02 && !junk));
     atomicAdd(&acc[13], select(0u, 1u, m == MAT_LITTER));
