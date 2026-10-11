@@ -632,7 +632,8 @@ fn fsWater(in: VOut) -> FOut {
     // with the local wind, so gusts and drags send catspaws across the water
     let rp = windDrift(in.wpos.xy) * 1.7;
     let lw = length(windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5)));
-    let rough = 0.5 + clamp(lw / 5.0, 0.0, 2.0);
+    // (shallow puddles lie still: the ripples fade out below ~0.7 deep)
+    let rough = (0.5 + clamp(lw / 5.0, 0.0, 2.0)) * smoothstep(0.1, 0.7, d);
     let rn = vec3<f32>(
       (vnoise(rp + vec2<f32>(t * 0.7, 0.0)) - vnoise(rp + vec2<f32>(0.0, t * 0.6) + 31.0)) * rough,
       (vnoise(rp + vec2<f32>(0.0, -t * 0.8) + 7.0) - vnoise(rp + vec2<f32>(-t * 0.5, 0.0) + 19.0)) * rough,

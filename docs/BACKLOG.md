@@ -32,12 +32,20 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 23 (2026-10-11, session 4)
+
+| id | item | size | status |
+|---|---|---|---|
+| Q1 | The scrolling ripple noise looks right on deep water but odd on shallow water (the little puddles left behind): fade it out where the water is shallow | S | done (this commit) |
+| Q2 | Test on `strata`: a concrete basin full of sand — blow down a wall, does the sand spill out? | S | basin added to the sandbox garden on `strata` |
+| Q3 | Destroyed blocks either become a new material in place (stone → gravel) or become particles (gravel → sand grains) — refines P3 | M | talk first |
+
 ## Round 22 (2026-10-11, session 4)
 
 | id | item | size | status |
 |---|---|---|---|
-| P1 | Falling pieces still sometimes push back up: no block ever moves up (only the particles a destroyed block emits) | S | done (this commit) |
-| P2 | A dying cyclone drops its dust where the column stood: it should lose power and fall while spreading out | S | done (this commit) |
+| P1 | Falling pieces still sometimes push back up: no block ever moves up (only the particles a destroyed block emits) | S | done `5ca2c24` |
+| P2 | A dying cyclone drops its dust where the column stood: it should lose power and fall while spreading out | S | done `5ca2c24` |
 | P3 | Destruction, the fun version (iterate later, not now): a broken structure is a rigid body supported from its base that tilts and falls; every impact destroys the blocks that intersect and turns them into material particles (stone → gravel/sand, brick → dust); nothing but particles goes up | M–L | later (user: "eventually") |
 | P4 | Consolidate to three systems: interval sediment (the interval layers replace the loose-ground stack and the separate interval systems), particles, fluids — refines N1; on its own branch, merged when ready | L | talk first; don't start yet |
 

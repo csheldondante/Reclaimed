@@ -1990,3 +1990,10 @@ errors; 4 impacts, 2 shatters, 81 voxels to rubble in 14 s.
   5–9 outward) instead of dropped. Headless: a 9 s cyclone leaves a
   ~10-cell-wide haze cloud settling, not a column.
 
+## 2026-10-11 — shallow water lies still (Q1)
+
+The ripple normal (wind-advected value noise) was the same strength at any
+depth, so the thin puddles left after a flood shimmered like open water.
+Its amplitude now scales by `smoothstep(0.1, 0.7, depth)`: puddles are flat
+(their glint and shade go with it), ponds and the river are unchanged.
+Checked headlessly on the sandbox pond (no errors; the rim calms).

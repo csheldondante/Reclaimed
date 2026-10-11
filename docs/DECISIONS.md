@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-11 — round 23 (session 4) — items Q1–Q3 in BACKLOG.md
+
+- Water: the scrolling noise "looks good on deep water but looks weird for
+  shallow water" — fade it out for shallow water (little puddles left).
+- Strata branch: fractional heights make sense; the loose ground in the
+  layers is "good but it's hard to see the difference"; the user wants to
+  test the spill-out more themselves — "if we have a concrete basin full of
+  sand and we blow down a wall does the sand spill out? That's a good test."
+  They like the direction but aren't yet convinced it's better overall:
+  don't merge yet, keep running with it.
+- Destruction: "when we destroy blocks they should either turn into a new
+  material (stone to gravel) or turn into particles (gravel into sand
+  particles)."
+
 ## 2026-10-11 — round 22 (session 4) — items P1–P4 in BACKLOG.md
 
 User: still better but pieces sometimes push back up, which looks bad;
