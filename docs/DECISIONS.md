@@ -18,6 +18,20 @@ separate interval systems — interval sediment, particles and fluids as
 the three systems; don't start yet, and do it on a separate branch to
 merge.
 
+## 2026-10-11 — round 22, consolidation talk (P4)
+
+User, on the architecture: redo the intervals to always allow fractional
+heights; stacked layers in an n×m×d table where d can vary ("don't follow my
+design dogmatically if buffers are better or easier" — agent: a buffer with
+per-chunk depth, which the layout already had); no separate system for loose
+vs solid — just material intervals; the goal is simpler and less buggy.
+Sand under rock: it tumbles out and leaves a hill of sand with pockets of
+air under the rock — agreed, with experiments to validate before sweeping
+changes to the product ("which is pretty good now"). Don't prototype on the
+CPU: make a consolidated strata branch and do it on the GPU so the user can
+test. "Material intervals and particles are the two things that carry
+material"; solid-body physics may get its own system later.
+
 ## 2026-10-10 — round 21 (session 4) — items O1–O2 in BACKLOG.md
 
 - Body speed after M1 is much better, but bodies should crumble much more

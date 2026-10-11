@@ -6,6 +6,29 @@ status — the source of truth for "what's next") → `docs/DECISIONS.md` (the
 user's own words, rounds 1–20) → `docs/ARCHITECTURE.md` (contracts) →
 `docs/DEVLOG.md` (why each change was made, with measurements).
 
+## Branch `strata` (session 4, round 22) — the consolidation, for the user to test
+
+`main` has round 21 + P1/P2 (pieces never move up; dying cyclones spread
+their dust) — local commits `aa774ed`, `5ca2c24`, not yet pushed (the user
+hadn't confirmed). The branch `strata` (from `5ca2c24`) does P4: one
+material-interval model. Stages, each tested against main headlessly:
+1. fractional intervals (`vec4<u32>` slots, f32 z0/z1; 8.8 surface height);
+2. the loose ground lives in the layers — `sediment.wgsl` (was drift) works
+   on the granular run on top, `material.wgsl` is gone, the surface pass
+   derives the old drift/strata textures as a view so readers didn't change;
+   loose behaviour is in the material table;
+3. buried loose ground spills out of exposed faces to its repose
+   (undercutting a slab on sand leaves an air pocket under its edge).
+Mass is conserved to the hundredth over a pour; perf is about even with
+main (sim a little more, draw less — DEVLOG). Judgement calls for the user:
+BACKLOG P5–P8. Not done yet: readers still use `sfZ + driftAt` (stage 4:
+surface z = full top, drop the view where nothing needs it), solids are
+still whole cells in practice (fractional solids for N2), the cap rock
+cracking once undercut relies on the existing structure/fracture rules
+(stone is terrain and never cracks — use concrete/brick to see it).
+To compare: a second checkout of main can run beside it
+(`git worktree add ../Reclaimed-main main`, `npx vite --port 5174`).
+
 ## Where things stand
 
 Session 3 worked through feedback rounds 13–20 (~90 commits). The user's

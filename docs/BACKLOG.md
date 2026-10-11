@@ -36,10 +36,19 @@ user) · `deferred` (agreed for later).
 
 | id | item | size | status |
 |---|---|---|---|
-| P1 | Falling pieces still sometimes push back up: no block ever moves up (only the particles a destroyed block emits) | S | done (this commit) |
-| P2 | A dying cyclone drops its dust where the column stood: it should lose power and fall while spreading out | S | done (this commit) |
+| P1 | Falling pieces still sometimes push back up: no block ever moves up (only the particles a destroyed block emits) | S | done `5ca2c24` |
+| P2 | A dying cyclone drops its dust where the column stood: it should lose power and fall while spreading out | S | done `5ca2c24` |
 | P3 | Destruction, the fun version (iterate later, not now): a broken structure is a rigid body supported from its base that tilts and falls; every impact destroys the blocks that intersect and turns them into material particles (stone → gravel/sand, brick → dust); nothing but particles goes up | M–L | later (user: "eventually") |
-| P4 | Consolidate to three systems: interval sediment (the interval layers replace the loose-ground stack and the separate interval systems), particles, fluids — refines N1; on its own branch, merged when ready | L | talk first; don't start yet |
+| P4 | Consolidate: one material-interval model (fractional heights; loose and solid in the same layers), intervals and particles the only carriers, fluids move material between them — refines N1; on its own branch, merged when ready | L | wip on branch `strata`: stages 1–3 done (`a4accd5` fractional intervals, `abfcfef`/`ee23953` loose ground in the layers, `8a67864` spill from exposed faces); waiting for the user to test |
+
+Agent notes from P4 (judgement calls for the user, not yet asked):
+
+| id | item | size | status |
+|---|---|---|---|
+| P5 | Valley soil now slumps at the sandbox's repose (soil 1.4, rubble 1.7, ash 0.9 — the old whole-cell rules had 3, 4, 2); the valley still looks close but may need N2's reshaping | S | asked |
+| P6 | Thick ash counts as a blown film: the title diorama's ash mound is drawn plain and plants on it would be dormant | S | asked |
+| P7 | Layer slots are 4× larger (16 B): undo ring (8 copies of the layers) ~100 MB on the sandbox; structure/surface passes ~0.2 ms slower — a 2-word slot (f16 or 12.4 fixed heights + pending accumulator) would win it back | S–M | open |
+| P8 | The loose sheet has no side faces: a deep loose run at a cliff edge shows a gap under its edge (seen before only in the sandbox) | S | open |
 
 ## Round 21 (2026-10-10, session 4)
 
