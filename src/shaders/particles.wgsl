@@ -520,15 +520,18 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       let sp = spineAt(cyi, min(t, 1.0));
       // fog keeps to a tight inner cone; debris rides the outer cone, spread
       // evenly around and up it
-      let ring = sp.w * select(1.0 + sr * 0.6, 0.35 + sr * 0.3, kind == K_HAZE);
+      // as it dies (b.z) the funnel thins but what it holds spreads outward,
+      // and is let go a little at a time over the fade (round 22)
+      let fade = G.cyclones[cyi].b.z * (1.0 - abs(cyc.w));
+      let ring = sp.w * select(1.0 + sr * 0.6, 0.35 + sr * 0.3, kind == K_HAZE) * (1.0 + 2.5 * fade);
       rc = rc + (ring - rc) * min(1.6 * DT, 1.0);
       let r = rc;
       let ang = vel.x + sign(cyc.w) * (1.6 + 5.0 / max(r, 0.5)) * DT;
       let q = sp.xy + vec2<f32>(cos(ang), sin(ang)) * r;
       // spat out high up at the top (rarely sooner), flung wide to fall downwind
-      if (t >= 1.0 || roll < 0.03 * DT) {
+      if (t >= 1.0 || roll < (0.03 + 1.2 * fade) * DT) {
         let tang = vec2<f32>(-sin(ang), cos(ang)) * sign(cyc.w);
-        let out = vec3<f32>(tang * 8.0 + normalize(q - sp.xy + vec2<f32>(1e-3)) * 6.0, 3.0);
+        let out = vec3<f32>(tang * 8.0 + normalize(q - sp.xy + vec2<f32>(1e-3)) * (6.0 + 6.0 * fade), 3.0 * (1.0 - fade));
         parts[id.x] = Particle(vec4<f32>(q, sp.z, max(life, 6.0)), vec4<f32>(out, P.v.w), vec4<u32>(kind, seed, 0u, P.m.w));
         return;
       }
@@ -536,8 +539,11 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       return;
     }
   } else if (caught) {
-    // its cyclone died: whatever it held falls
-    parts[id.x] = Particle(P.p, vec4<f32>(0.0, 0.0, 1.0, P.v.w), vec4<u32>(kind, seed, 0u, P.m.w));
+    // its cyclone died: whatever it still held is thrown outward along its
+    // spin and falls as it spreads (v.x angle, v.z radius while caught)
+    let o = vec2<f32>(cos(vel.x), sin(vel.x));
+    let fl = vec2<f32>(-o.y, o.x) * 4.0 + o * (5.0 + 4.0 * sr);
+    parts[id.x] = Particle(P.p, vec4<f32>(fl, 0.0, P.v.w), vec4<u32>(kind, seed, 0u, P.m.w));
     return;
   }
 

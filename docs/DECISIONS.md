@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-11 — round 22 (session 4) — items P1–P4 in BACKLOG.md
+
+User: still better but pieces sometimes push back up, which looks bad;
+don't burn many more cycles on physics now, but iterate later — a
+structure as a rigid body supported from its base that tilts and falls,
+with every impact destroying the intersecting blocks into material
+particles (gravel/sand for stone, dust for brick). It needn't go straight
+down; the rule is no block goes back up (only particles from destroyed
+blocks). The sound is improved. A dying cyclone's dust should lose power
+and fall but spread out, not drop where the column stood. Consolidation:
+the intervals system in place of the loose-material system and the
+separate interval systems — interval sediment, particles and fluids as
+the three systems; don't start yet, and do it on a separate branch to
+merge.
+
 ## 2026-10-10 — round 21 (session 4) — items O1–O2 in BACKLOG.md
 
 - Body speed after M1 is much better, but bodies should crumble much more

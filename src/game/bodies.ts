@@ -23,9 +23,7 @@ const G = 10; // cells/s²
 const AIR_DRAG = 0.35; // 1/s
 const MAX_V = 4; // cells/s
 const LANDING = 0.6; // share of the falling speed a contact takes away per substep
-const SLOP = 0.15; // cells of overlap allowed before pushing out
-const PUSH = 0.3; // share of the overlap past the slop pushed out per substep
-const MAX_PUSH = 1.5; // cells/s of push out of an overlap
+const SLOP = 0.15; // cells of overlap a landing piece sinks before it stops
 const SUBSTEPS = 2;
 /** below this falling speed (cells/s) for SLEEP_T a body settles */
 const SLEEP_V = 0.15;
@@ -386,7 +384,8 @@ export class Bodies {
     }
     if (deep >= 0) {
       b.vz *= 1 - LANDING;
-      if (deep > SLOP) b.pos[2] += Math.min((deep - SLOP) * PUSH, MAX_PUSH * h);
+      // never pushed back up (round 22): sunk past the slop, it just stops
+      if (deep > SLOP) b.vz = 0;
     }
     b.pos[2] += b.vz * h;
   }

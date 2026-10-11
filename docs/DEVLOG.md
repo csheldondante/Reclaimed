@@ -1971,3 +1971,22 @@ press resets.
   across drags); a new press resets it.
 Checked headlessly: garden tower, diving board and bridge cut at once; no
 errors; 4 impacts, 2 shatters, 81 voxels to rubble in 14 s.
+
+## 2026-10-11 — round 22: nothing pushes back up; dying cyclones scatter (P1, P2)
+
+- `game/bodies.ts`: the overlap push-out was the only thing that could move
+  a piece up (loose ground banking under a resting piece, or a landing
+  deeper than the slop). It is gone: past the 0.15 slop a piece just stops
+  (vz = 0) and stays sunk; vz itself never becomes positive. Measured on
+  the garden (tower, diving board, bridge cut at once, 29 bodies over
+  12 s): the largest per-update rise of any body is 0 (it was the source of
+  the visible pops).
+- `particles.wgsl`: a cyclone's spine radius shrinks with its strength, so
+  over the 3 s fade the held dust was drawn into a tight column and then
+  dropped with zero velocity. Now, while it dies (b.z), held particles ride
+  a ring that widens up to 3.5× and are let go a little at a time
+  (1.2·fade/s), flung outward faster and with less lift; anything still
+  held when it ends is thrown out along its spin (4 cells/s tangential,
+  5–9 outward) instead of dropped. Headless: a 9 s cyclone leaves a
+  ~10-cell-wide haze cloud settling, not a column.
+

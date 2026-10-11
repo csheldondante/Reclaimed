@@ -32,6 +32,15 @@ user) · `deferred` (agreed for later).
 | A14 | Light (not dark) fair-weather clouds/shadows drift over to show the wind | S–M | done `e8b2efe` |
 | A15 | Smooth tops for soft surfaces (dirt, dust, sand, water) vs hard steps for stone; sub-cell height; "over a gap = sheer drop, under = smooth" as a surface property | M (render) / L (data) | done (render `a015f55`, sediment `5995426`) |
 
+## Round 22 (2026-10-11, session 4)
+
+| id | item | size | status |
+|---|---|---|---|
+| P1 | Falling pieces still sometimes push back up: no block ever moves up (only the particles a destroyed block emits) | S | done (this commit) |
+| P2 | A dying cyclone drops its dust where the column stood: it should lose power and fall while spreading out | S | done (this commit) |
+| P3 | Destruction, the fun version (iterate later, not now): a broken structure is a rigid body supported from its base that tilts and falls; every impact destroys the blocks that intersect and turns them into material particles (stone → gravel/sand, brick → dust); nothing but particles goes up | M–L | later (user: "eventually") |
+| P4 | Consolidate to three systems: interval sediment (the interval layers replace the loose-ground stack and the separate interval systems), particles, fluids — refines N1; on its own branch, merged when ready | L | talk first; don't start yet |
+
 ## Round 21 (2026-10-10, session 4)
 
 | id | item | size | status |
@@ -41,9 +50,9 @@ user) · `deferred` (agreed for later).
 | O3 | Bug: in storms, columns of loose ground rise into the sky | S | done `5cad379` |
 | O4 | See-through dust clouds and debris particles where bodies break and land (hide the remaining jank) | S | done `b337f3e` |
 | O5 | The switch from static structure to rigid body sometimes jumps instead of moving smoothly | S–M | done `b337f3e` |
-| O6 | Broken chunks only fall straight down (no rigid-body tumbling/bounce: it breaks the illusion of scale) | S | done (this commit) |
-| O7 | A deeper bass crumbling sound | S | done (this commit; unheard) |
-| O8 | Cyclone spawn cooldown of a second or two within one drag; a fresh press resets it | S | done (this commit) |
+| O6 | Broken chunks only fall straight down (no rigid-body tumbling/bounce: it breaks the illusion of scale) | S | done `aa774ed` |
+| O7 | A deeper bass crumbling sound | S | done `aa774ed` (unheard; user: improved) |
+| O8 | Cyclone spawn cooldown of a second or two within one drag; a fresh press resets it | S | done `aa774ed` |
 
 ## Round 20 (2026-10-10, session 3)
 
@@ -58,7 +67,7 @@ The batch now (M), then the larger work (N) after an architecture review.
 | M5 | Frogs near water with green around it | S | done `a783c51` |
 | M6 | Metal drums ring by their size (connected metal voxels), snapped to a pentatonic scale | M | done `3ab876b` |
 | M7 | Handoff + memory for the remaining work | S | done |
-| N1 | Architecture review: consolidate (solid intervals; one loose stack for everything soft — rubble, litter, the valley's soil; liquids carry it; wind-borne particles settle into it) | M | next session |
+| N1 | Architecture review: consolidate (solid intervals; one loose stack for everything soft — rubble, litter, the valley's soil; liquids carry it; wind-borne particles settle into it) | M | next; see P4 (user's three-system version, own branch) |
 | N2 | The valley onto the loose ground (reshaped rock, river erosion matched to the old rates) | M–L | after N1 |
 | N3 | Growth redesign: taps grow only from green or seeded fertile ground; seeds spread it; fertility = clean + moist + uncovered | M–L | talk first |
 | N4 | Puzzle-mode opening on the camera director; barriers to growth as level gates; wind/cyclone/storm unlocks by green | M–L | after N3 |
