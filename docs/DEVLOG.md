@@ -2145,3 +2145,25 @@ anchoring, side anchoring and snap anchors), so sand drifted round a
 tower's foot no longer keys it in. Checked: the garden tower with two of its
 three foot columns cut breaks free, drops and shatters (7 impacts, 2
 shatters), no errors.
+
+## 2026-10-11 — strata: no sand walls off tall tops; no dark blocks in running water (Q4)
+
+Two render bugs from the user's screenshots (DECISIONS round 25):
+- Water and drift sheets give each grid corner one height, the mean of the
+  covered columns touching it, and a drift corner is never below the solid
+  top of a column it touches. So a dust skin (or puddle) on a tower top and
+  the dust at its foot made a corner at the tower's top: a slanted sheet
+  from top to base, popping as the thin skin came and went. Now a corner
+  isn't shared where one covered column's solid top (water: its bed) stands
+  more than SHEET_STEP = 3 over another's surface; each keeps its own level.
+  A first try at 1.5 on the levels themselves broke steep sand gullies open
+  (diagonal neighbours ~2 apart, and drift sheets have no sides).
+- Every water box drew all four side walls. Running down a slope, a
+  column's wall stood inside its neighbour's water and showed through it as
+  a dark block. Render-prep now hides a water side where the neighbour is
+  wet and the sheet joins them (same SHEET_STEP rule), or where the ground
+  beside rises over the water. Foam and rain rings are unchanged (the user
+  likes them).
+Checked headlessly on the sandbox garden under two storms and dust (3×
+speed, 25 s): the dark blocks in the run-off are gone, the eroded gully is
+unchanged; a sand skin on the garden tower stays on its top.

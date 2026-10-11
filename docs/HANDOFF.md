@@ -10,7 +10,8 @@ user's own words, rounds 1–20) → `docs/ARCHITECTURE.md` (contracts) →
 
 Round 25: the user dropped rigid-body physics (branch `rapier`, unmerged,
 kept for reference) — collapse mechanics with strict grid alignment only.
-Q4 visual bugs are diagnosed in BACKLOG; fix only once the user says go.
+Q4 visual bugs fixed (sheet corners, water side walls) — the user should
+look at storms over tall structures and run-off under rain.
 
 `main` has round 21 + P1/P2 (pieces never move up; dying cyclones spread
 their dust) — local commits `aa774ed`, `5ca2c24`, not yet pushed (the user

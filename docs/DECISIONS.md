@@ -13,7 +13,9 @@ each was implemented.
 - Visual bugs: sediment deposits on and around things in storms; jitter
   makes sand look like it interpolates from the top of a tall structure to
   its base, a wall of sand appearing and disappearing (deposits on slopes
-  would be fine without that). Water under rain shows a white speckle.
+  would be fine without that). Water under rain: the bright patches from
+  rain/foam are the user's favourite water effect (good at showing flow) —
+  keep them; what's wrong is weird blocky dark patches.
 
 ## 2026-10-11 — round 24 (session 4) — items Q3–Q5 in BACKLOG.md
 

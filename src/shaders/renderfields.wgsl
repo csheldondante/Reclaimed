@@ -19,6 +19,7 @@ fn driftCornerZ(v: vec2<i32>) -> f32 {
   var sum = 0.0;
   var n = 0.0;
   var solid = -1.0;
+  var lo = 1e9;
   for (var k = 0; k < 4; k++) {
     let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
     if (!inMap(q)) { continue; }
@@ -28,7 +29,10 @@ fn driftCornerZ(v: vec2<i32>) -> f32 {
     sum += g + d;
     n += 1.0;
     solid = max(solid, g);
+    lo = min(lo, g + d);
   }
+  // a solid top standing well over another column's dust: no shared sheet
+  if (solid - lo > SHEET_STEP) { return -1.0; }
   let c = taperCorner(v, sum, n, 0);
   // never below the solid top of a covered column it touches: soft ground
   // drapes over a step in the rock beneath instead of the rock poking
@@ -40,15 +44,22 @@ fn driftCornerZ(v: vec2<i32>) -> f32 {
 fn waterCornerZ(v: vec2<i32>) -> f32 {
   var sum = 0.0;
   var n = 0.0;
+  var lo = 1e9;
+  var hi = -1e9;
   for (var k = 0; k < 4; k++) {
     let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
     let d = waterDepth[j];
     if (d < 0.012) { continue; }
-    sum += f32(sfZ(surface[j])) + driftAt(q) + d;
+    let bed = f32(sfZ(surface[j])) + driftAt(q);
+    sum += bed + d;
     n += 1.0;
+    lo = min(lo, bed + d);
+    hi = max(hi, bed);
   }
+  // a wet bed standing well over another column's water: no shared sheet
+  if (hi - lo > SHEET_STEP) { return -1.0; }
   return taperCorner(v, sum, n, 1);
 }
 

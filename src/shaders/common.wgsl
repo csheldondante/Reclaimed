@@ -303,6 +303,15 @@ fn mapWind(p: vec2<f32>) -> vec2<f32> {
 // by the pipelines that read it.
 @group(0) @binding(17) var driftTex: texture_2d<f32>;
 
+// Where one covered column's solid top (or wet bed) stands more than this
+// over another's surface at a corner (a dust skin or puddle on a tower top
+// beside the ground at its foot) they don't share a sheet
+// (renderfields.wgsl): each keeps its own level there. Averaging them drew a
+// slanted wall from the top to the base that popped as the skin came and
+// went (round 25); steep sand still shares one. Water boxes hide the sides
+// the sheet joins (renderprep.wgsl).
+const SHEET_STEP: f32 = 3.0;
+
 /** Depth of drifted dust on column q (0 off the map). */
 fn driftAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
