@@ -8,6 +8,10 @@ user's own words, rounds 1–20) → `docs/ARCHITECTURE.md` (contracts) →
 
 ## Branch `strata` (session 4, round 22) — the consolidation, for the user to test
 
+Round 25: the user dropped rigid-body physics (branch `rapier`, unmerged,
+kept for reference) — collapse mechanics with strict grid alignment only.
+Q4 visual bugs are diagnosed in BACKLOG; fix only once the user says go.
+
 `main` has round 21 + P1/P2 (pieces never move up; dying cyclones spread
 their dust) — local commits `aa774ed`, `5ca2c24`, not yet pushed (the user
 hadn't confirmed). The branch `strata` (from `5ca2c24`) does P4: one

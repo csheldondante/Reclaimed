@@ -2132,3 +2132,16 @@ litter, everything else → rubble.
 Checked headlessly: Break into the stone under the sand plain leaves 2 cells
 of rubble where 2 of stone were (sand around slumps onto it); Break at the
 garden tower's base drops the tower into the hole as before.
+
+## 2026-10-11 — strata: drop Rapier; loose ground doesn't brace structures (Q5)
+
+The user tried branch `rapier` and decided against rigid-body physics for
+this project (DECISIONS round 25): it jerks too much at times, and throwing
+pieces in cyclones isn't worth it. `strata` keeps its grid-aligned bodies
+(straight-down falls, shatter on landing); `rapier` stays unmerged. One fix
+from it is independent of the solver and comes over: in fracture.ts
+`analyse`, loose ground only holds what stands on it (`holds()`: island
+anchoring, side anchoring and snap anchors), so sand drifted round a
+tower's foot no longer keys it in. Checked: the garden tower with two of its
+three foot columns cut breaks free, drops and shatters (7 impacts, 2
+shatters), no errors.

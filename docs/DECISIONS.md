@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-11 — round 25 (session 4) — Q4, Q5
+
+- Rapier physics: decent, but things jerk too much at times. For this
+  project: just the collapse mechanics and strict grid alignment — not worth
+  having rigid-body physics even for cyclones throwing pieces. (A general
+  map with multiple grids and arbitrarily aligned models is a separate
+  follow-up project.)
+- Visual bugs: sediment deposits on and around things in storms; jitter
+  makes sand look like it interpolates from the top of a tall structure to
+  its base, a wall of sand appearing and disappearing (deposits on slopes
+  would be fine without that). Water under rain shows a white speckle.
+
 ## 2026-10-11 — round 24 (session 4) — items Q3–Q5 in BACKLOG.md
 
 - Destroyed blocks keep the same volume as rubble; step 1 (a new material
