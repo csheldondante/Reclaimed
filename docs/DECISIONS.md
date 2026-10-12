@@ -3,6 +3,12 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-12 — round 29 (session 4) — Q15
+
+- Faceted rock "looks great", but in profile it's totally straight: vary it
+  for rendering so it cuts a jagged silhouette (an example in the river).
+  The carved result: "This looks good please push".
+
 ## 2026-10-12 — round 28 (session 4) — Q11–Q14
 
 - Stone smooth too; only rises above a threshold (1–3 blocks) ragged.

@@ -473,19 +473,113 @@ fn voronoi2(p: vec2<f32>, salt: i32) -> vec4<f32> {
 }
 
 /** Rock facets: the tilted normal and how much to darken (cracks, facet tone). */
-fn rockFacet(wpos: vec3<f32>, nrm: vec3<f32>) -> vec4<f32> {
+fn rockFacet(wpos: vec3<f32>, nrm: vec3<f32>, tiltK: f32) -> vec4<f32> {
   // the face's own 2D coordinates (tops: xy; sides: along the wall and up)
   var a: vec2<f32>;
   var salt = 301;
   if (abs(nrm.z) > 0.5) { a = wpos.xy; } else if (abs(nrm.x) > 0.5) { a = vec2<f32>(wpos.y, wpos.z * 1.3); salt = 333; } else { a = vec2<f32>(wpos.x, wpos.z * 1.3); salt = 367; }
   let v = voronoi2(a * 1.25, salt);
   let fid = vec3<i32>(vec2<i32>(v.zw), salt);
-  let tilt = vec3<f32>(randv(fid + vec3<i32>(0, 0, 5)) - 0.5, randv(fid + vec3<i32>(0, 0, 9)) - 0.5, randv(fid + vec3<i32>(0, 0, 13)) - 0.5) * 0.7;
+  let tilt = vec3<f32>(randv(fid + vec3<i32>(0, 0, 5)) - 0.5, randv(fid + vec3<i32>(0, 0, 9)) - 0.5, randv(fid + vec3<i32>(0, 0, 13)) - 0.5) * 0.7 * tiltK;
   let n = normalize(nrm + tilt - nrm * dot(tilt, nrm));
   // a crack where two facets meet; each facet a slightly different tone
   let crack = 1.0 - smoothstep(0.02, 0.09, v.y - v.x);
   let tone = 0.9 + 0.2 * randv(fid + vec3<i32>(0, 0, 21));
   return vec4<f32>(n, tone * (1.0 - 0.45 * crack));
+}
+
+// ---- carved rock (round 29) ----------------------------------------------------
+// Faceted shading alone left rock dead straight in profile. Stone is carved:
+// its surface lies a noisy depth (0..ROCK_CARVE) inside the box's exposed
+// faces — the top (smoothed slope included) and the sides open to the air;
+// faces against a neighbour aren't carved, so stone columns join without
+// gaps. Each stone fragment marches the view ray into its box to that
+// surface; a ray that leaves through an exposed face missed the rock and is
+// discarded, so what's behind shows through and the silhouette is jagged.
+// Rock is only ever removed, so everything behind is already drawn and no
+// depth needs writing (the face's depth is at most ROCK_CARVE in front).
+const ROCK_CARVE: f32 = 0.45;
+/** px per cell below which rock isn't carved (too small to see) */
+const ROCK_ZOOM: f32 = 10.0;
+
+fn vnoise3(p: vec3<f32>) -> f32 {
+  let i = vec3<i32>(floor(p));
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = mix(randv(i), randv(i + vec3<i32>(1, 0, 0)), u.x);
+  let b = mix(randv(i + vec3<i32>(0, 1, 0)), randv(i + vec3<i32>(1, 1, 0)), u.x);
+  let c = mix(randv(i + vec3<i32>(0, 0, 1)), randv(i + vec3<i32>(1, 0, 1)), u.x);
+  let d = mix(randv(i + vec3<i32>(0, 1, 1)), randv(i + vec3<i32>(1, 1, 1)), u.x);
+  return mix(mix(a, b, u.y), mix(c, d, u.y), u.z);
+}
+
+/** How deep the rock is cut away at p (0..ROCK_CARVE): lumpy, with sharper chips. */
+fn rockCut(p: vec3<f32>) -> f32 {
+  // (one octave: the facets add the fine detail; two cost too much)
+  return ROCK_CARVE * smoothstep(0.2, 0.85, vnoise3(p * 1.1));
+}
+
+struct RockBox { lo: vec3<f32>, hi: vec3<f32>, open: u32, h: vec4<f32> };
+
+/** Inside the carved rock by this much at p (< 0: in the air cut away). */
+fn rockIn(rb: RockBox, p: vec3<f32>) -> f32 {
+  var d = 1e3;
+  if ((rb.open & 1u) != 0u) {
+    let f = clamp(p.xy - rb.lo.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+    d = min(d, mix(mix(rb.h.x, rb.h.y, f.x), mix(rb.h.z, rb.h.w, f.x), f.y) - p.z);
+  }
+  if ((rb.open & 4u) != 0u) { d = min(d, rb.hi.x - p.x); }
+  if ((rb.open & 8u) != 0u) { d = min(d, p.x - rb.lo.x); }
+  if ((rb.open & 16u) != 0u) { d = min(d, rb.hi.y - p.y); }
+  if ((rb.open & 32u) != 0u) { d = min(d, p.y - rb.lo.y); }
+  return d - rockCut(p);
+}
+
+/** March into a stone box from the face point: vec4(hit, 1) or w = 0 (missed: the air). */
+fn rockMarch(in: VOut, flags: u32) -> vec4<f32> {
+  var rb: RockBox;
+  rb.lo = in.bmin;
+  rb.hi = in.bmin + in.bsize;
+  // exposed: the top if it's the column's top and nothing sits on it; the sides not hidden
+  var open = (~flags) & (4u | 8u | 16u | 32u);
+  if ((flags & 1u) != 0u && (flags & 64u) == 0u) { open |= 1u; }
+  rb.open = open;
+  let c = vec2<i32>(i32(rb.lo.x), i32(rb.lo.y));
+  rb.h = vec4<f32>(cornerOr(c, rb.hi.z), cornerOr(c + vec2<i32>(1, 0), rb.hi.z), cornerOr(c + vec2<i32>(0, 1), rb.hi.z), cornerOr(c + vec2<i32>(1, 1), rb.hi.z));
+  let dir = -normalize(CAM.eye.xyz);
+  var t = 0.0;
+  for (var i = 0; i < 20; i++) {
+    let p = in.wpos + dir * t;
+    // left the box: into the air through an open face, or into solid stuff
+    // (a neighbour, the ground) through a closed one
+    if (p.x > rb.hi.x) { if ((open & 4u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    if (p.x < rb.lo.x) { if ((open & 8u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    if (p.y > rb.hi.y) { if ((open & 16u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    if (p.y < rb.lo.y) { if ((open & 32u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    if (p.z < rb.lo.z) { return vec4<f32>(p, 2.0); }
+    let s = rockIn(rb, p);
+    if (s >= 0.0) { return vec4<f32>(p, select(1.0, 2.0, i > 0)); }
+    t += max(-s * 0.8, 0.02);
+  }
+  return vec4<f32>(in.wpos + dir * t, 2.0);
+}
+
+/** The carved surface's normal at p (outward). */
+fn rockNormal(in: VOut, flags: u32, p: vec3<f32>) -> vec3<f32> {
+  var rb: RockBox;
+  rb.lo = in.bmin;
+  rb.hi = in.bmin + in.bsize;
+  var open = (~flags) & (4u | 8u | 16u | 32u);
+  if ((flags & 1u) != 0u && (flags & 64u) == 0u) { open |= 1u; }
+  rb.open = open;
+  let c = vec2<i32>(i32(rb.lo.x), i32(rb.lo.y));
+  rb.h = vec4<f32>(cornerOr(c, rb.hi.z), cornerOr(c + vec2<i32>(1, 0), rb.hi.z), cornerOr(c + vec2<i32>(0, 1), rb.hi.z), cornerOr(c + vec2<i32>(1, 1), rb.hi.z));
+  let e = 0.04;
+  let s0 = rockIn(rb, p);
+  let g = vec3<f32>(rockIn(rb, p + vec3<f32>(e, 0.0, 0.0)) - s0, rockIn(rb, p + vec3<f32>(0.0, e, 0.0)) - s0, rockIn(rb, p + vec3<f32>(0.0, 0.0, e)) - s0);
+  // (inside grows inward: the outward normal is against the gradient)
+  let l = length(g);
+  return select(in.nrm, -g / l, l > 1e-5);
 }
 
 @fragment
@@ -512,6 +606,17 @@ fn fsBox(in: VOut) -> FOut {
     else if (h.w == 2.0) { lnrm = vec3<f32>(0.0, sign(eye.y), 0.0); }
     else { lnrm = vec3<f32>(0.0, 0.0, 1.0); }
     canopyN = randv(vec3<i32>(floor(h.xyz * 4.0)));
+  }
+  // rock: carved to a jagged surface inside its box (round 29) — only when
+  // zoomed in far enough to see it (ROCK_ZOOM px per cell): it doubled the
+  // draw of the whole valley at the default zoom, where a cell is a few px
+  let carved = mat == MAT_STONE && (flags & 2u) == 0u && CAM.viewport.z > ROCK_ZOOM;
+  if (carved) {
+    let h = rockMarch(in, flags);
+    if (h.w == 0.0) { discard; }
+    lpos = h.xyz;
+    // (an uncut face keeps its own normal)
+    if (h.w > 1.5) { lnrm = rockNormal(in, flags, h.xyz); }
   }
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
@@ -714,7 +819,8 @@ fn fsBox(in: VOut) -> FOut {
 
   // rock: Voronoi facets catch the light at their own tilt (round 28)
   if (dmat == MAT_STONE && (flags & 2u) == 0u) {
-    let rf = rockFacet(in.wpos, in.nrm);
+    // (carved rock already has its shape: the facets only nudge it)
+    let rf = rockFacet(lpos, lnrm, select(1.0, 0.4, carved));
     lnrm = rf.xyz;
     alb *= rf.w;
   }
@@ -737,7 +843,8 @@ fn fsBox(in: VOut) -> FOut {
       col = mix(col, toLinear(lensCol) * 1.4, k * 0.55 * pattern);
     }
   }
-  col *= 1.0 - gl * select(1.0, 0.0, canopyN > 0.0);
+  // (no straight grid lines across carved rock or canopies)
+  col *= 1.0 - gl * select(1.0, 0.0, canopyN > 0.0 || carved);
   col = haze(col, lpos);
 
   var o: FOut;

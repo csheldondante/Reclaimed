@@ -2243,3 +2243,26 @@ Strata merged into main (the user validated it). Then:
   forest fires.
 - Debris (Q14): litter 0.28 → 0.18 half-size, grime clumps and ground dust
   about a third smaller.
+
+## 2026-10-12 — round 29: carved rock silhouettes (Q15)
+
+Facets shade rock but its outline was still the voxel box. Stone is now
+carved in the fragment shader: the rock surface lies rockCut(p) inside the
+box's *exposed* faces (top — following the smoothed slope — and the sides
+not hidden by a neighbour), rockCut = 0.45 · smoothstep(0.2, 0.85,
+value-noise3(p · 1.1)). Each stone fragment sphere-marches the view ray
+from its face into the box (≤ 20 steps of 0.8 · depth); leaving through an
+open face means it missed — discard, so what's behind shows and the edge
+is jagged; leaving through a closed face or the bottom means it met a
+neighbour or the ground (a hit). Only rock is ever removed, so everything
+behind is already drawn and no frag_depth is needed (keeps the opaque pass
+as it was; the face depth is ≤ 0.45 in front of the true surface). Normal:
+forward differences of the depth (3 extra samples) where the surface was
+cut; facets then tilt it 40 % as much as on uncut stone. Grid lines are
+off on carved rock.
+Cost (Xe-LPG 1600×900): the first version doubled the default valley view
+(draw 5.2 → 11.4 ms — the map's stone skirt and gorge, at a few px per cell
+where the jag can't be seen). Now it only carves above ROCK_ZOOM = 10 px
+per cell (default view: unchanged within noise), with one noise octave and
+3-sample normals: zoomed onto the river gorge cliffs, draw 7.7 → 9.4 ms
+(two octaves + 6-sample normals: 13.8).
