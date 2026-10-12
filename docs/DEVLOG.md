@@ -1990,6 +1990,108 @@ errors; 4 impacts, 2 shatters, 81 voxels to rubble in 14 s.
   5–9 outward) instead of dropped. Headless: a 9 s cyclone leaves a
   ~10-cell-wide haze cloud settling, not a column.
 
+
+## 2026-10-11 — branch strata, stage 1: fractional intervals (P4)
+
+First step of the consolidation (ARCHITECTURE "Consolidation in progress"):
+a layer slot is now `vec4<u32>` — z0 and z1 as f32 bits, material | aux << 8,
+one spare word — so loose ground can later live in the same intervals as
+rock (it needs heights finer than a cell; fixed point 8.8 was considered and
+dropped because small deposits — a grain of dust per pass — would round away
+and break mass conservation). `surface` packs z as 8.8 fixed point (bits
+0..15), material (16..23), slot count (24..31); `sfZ` returns f32. Kernels
+that walk layers (surface, structure, material, renderprep, edit) and the CPU
+side (layout, fracture, integrity, model placement, map files — version 2,
+version-1 files still load) were ported; whole cells stay whole, so nothing
+behaves differently yet. Fracture voxelises an interval into the cells whose
+centres it covers.
+Checked headlessly against main (a second checkout on port 5174): valley and
+sandbox look identical, no errors; the garden cut (tower, diving board,
+bridge) breaks, falls and shatters as before (25 bodies, 3 shatters, nothing
+moves up). The layer buffers are 4× larger (16 B a slot).
+
+## 2026-10-11 — branch strata, stage 2: the loose ground lives in the layers (P4)
+
+The drift system's separate four-layer stack (drift + strata textures) is
+gone as state: every granular interval in the layers is loose ground, and
+`sediment.wgsl` (was drift.wgsl) works on the run of touching granular
+intervals on top of each column — wind, water, slumping and now piping take
+from its top interval, arrivals of a new material start an interval, and
+granular intervals over air fall (2 cells a pass). `material.wgsl` (whole-cell
+falling sand: gravity, repose, piping, erosion, litter stripping) is
+removed; the sediment pass does all of it, for the valley and the title too.
+- The surface pass derives a view from the layers each tick — `surface`
+  z = the base of the loose run, the drift texture (run depth, top interval's
+  depth and material, air) and strata (the intervals beneath the top; w =
+  exact base) — so every reader of `sfZ + driftAt` is unchanged. Neighbours
+  are read only through that view, so the sediment pass updates the layers
+  in place (no copy) and stays within 8 storage buffers.
+- Loose behaviour moved into the material table (`loose` vec4: wind lift,
+  airborne share, water mobility, wash flow; repose dry/wet from `sim`,
+  with moisture: rain lowers it). Repose values take the sandbox's (soil
+  1.4, rubble 1.7, ash 0.9; they were 3, 4, 2 in the old whole-cell rules).
+- Edit: pours, digs and cleaning go through one `deposit` vec4 per column
+  (x editor, y/z a crumbled body from the CPU; was driftDelta + looseAdd);
+  building on loose ground just stacks on it (the loose ground stays under
+  the block); Break cuts loose intervals like any other.
+- Render: renderprep skips the loose run (drawn as the sheet); the sheet
+  now shows its top material's surface detail (litter specks, pebbles,
+  hue drift) as the old whole-cell boxes did.
+- Maps: a map's drift/strata stacks are folded into intervals on load
+  (`looseIntoGrid`); saved maps no longer carry them.
+- Bodies treat granular cells as not solid (they sink into loose ground as
+  before, measured from the run's base).
+Checked headlessly against main: sandbox and valley look the same (the
+valley's soil is now the smooth sheet over its rock); the title diorama's
+ash mound is drawn plain (deep ash counts as a film that buries plants —
+a judgement call for the user). Cost (valley, Xe-LPG): sediment 1.40 ms a
+pass (every other tick) vs drift 0.39 + material 0.13; structure 0.31 vs
+0.12 and surface 0.18 vs 0.01 (bigger slots, the derived view). Next: split
+the sediment pass so neighbours' outflows aren't recomputed five times.
+
+## 2026-10-11 — strata stage 2b: sediment in two passes, still columns skipped; covered tops culled
+
+Measured first (valley, Xe-LPG, 1600×900): sediment 1.40 ms/pass. Splitting
+it into `outflow` (each column's outflows once, into `sedOut`: what reaches
+each neighbour, the wind's easing, totals) and the gather barely helped
+(0.26 + 1.07 ms): the cost was unpacking every column into registers. Now
+the gather leaves a column's intervals alone when nothing leaves, arrives,
+falls, is stripped or bound there (most of the map): 0.16 + 0.28 ms (old
+drift + material: 0.52 ms). Renderprep hides the top face of the box under
+a loose run at least 0.3 deep (the sheet covers it; it only shows at the
+sheet's thinning edges), so rock under soil is culled again: instances
+69k (main 93k, stage 2 121k), draw 4.42 ms (main 5.23), GPU span 5.98 ms
+(main 6.93).
+Mass: a 173-cell sand pour on the sandbox, calm weather — total loose
+volume in the layers 267226.16 at every sample over 17.5 s after it landed.
+
+## 2026-10-11 — strata stage 3: loose ground spills out of exposed faces (P4)
+
+The rule the user agreed (round 22): loose ground buried under something —
+sand under a cap rock, soil under a slab — with air beside it in a
+neighbouring column runs out into that air, landing on the neighbour's
+floor at that height (inserted mid-column when the air is under an
+overhang), until the face stands at its angle of repose; what lies on top
+doesn't hold it. `outflow` finds, per buried granular interval and
+direction, the lowest air gap beside it that has a floor (or the open air
+over a lower neighbour) and sends (height over the repose) × 0.08 a pass,
+capped at a quarter of the interval and half the gap; `main` takes it off
+the interval's top and lands what its neighbours send on the floor it was
+aimed at (found by its height before this pass), then compacts and merges
+touching loose intervals of one material. Two bits in `surface` (30: loose
+ground buried under something; 31: air between intervals) let `outflow`
+skip every column with nothing buried and every neighbour with no face.
+Checked: a 20×12 concrete slab on 4 cells of sand on the sandbox plain —
+the sand runs out at the edges into an apron, leaving an air pocket under
+the slab 1.5 cells high at the edge and 0.4 a column in, and stops there
+(the face at repose); more undercutting needs the apron carried away (wind,
+water). The valley, settled: 1–3 columns spilling. Cost, averaged over 12 s
+(perf overlay sampled every 0.5 s; single samples vary ±40% on this iGPU):
+sediment 0.55 + outflow 0.33 ms a pass with spills, 0.53 + 0.29 without;
+main's drift + material 0.57. Per tick the branch also pays structure +0.2
+and surface +0.17 ms (bigger slots, the derived view) and saves ~0.7 ms of
+draw.
+
 ## 2026-10-11 — shallow water lies still (Q1)
 
 The ripple normal (wind-advected value noise) was the same strength at any
@@ -1997,3 +2099,95 @@ depth, so the thin puddles left after a flood shimmered like open water.
 Its amplitude now scales by `smoothstep(0.1, 0.7, depth)`: puddles are flat
 (their glint and shade go with it), ponds and the river are unchanged.
 Checked headlessly on the sandbox pond (no errors; the rim calms).
+
+## 2026-10-11 — strata: a sand basin to test the spill-out (Q2)
+
+The user's test: a concrete basin full of sand — blow down a wall, does the
+sand spill out? The sandbox garden now has one (`sandbox.ts`, 12×12 on a
+plinth, walls 6 high, sand to the rim). Headless (scratchpad `basin.js`):
+dropping a 4-wide section of the south wall, the middle row's profile goes
+from a flat 20.0 to 19.2 18.2 17.2 16.2 15.2 14.2 over the ground at 13.8 —
+a fan at the sand's repose (~1 per cell) — within ~3 s, ~25 cells of sand
+out, then still (the same at 10 s and 20 s). The rest stays held by the
+walls. Break (💥) on a wall also smashes the sand in its radius, so in play
+the gap is a crater plus the fan.
+
+## 2026-10-11 — strata: destroyed solids become rubble, same volume (Q3 step 1)
+
+The user: destroyed blocks "turn into a new material (stone to gravel)" and
+keep their volume. `rubbleOf()` (materials.wgsl, mirrored by integrity.ts
+`looseFrom`): wood/canvas/leaves → ash, bone → dust, compacted waste →
+litter, everything else → rubble.
+- Break and lightning (edit.wgsl smash): a solid's share of the hole becomes
+  its rubble in place — but only where the hole is open above. A first try
+  kept it under what was left too, and the garden tower then stood on a
+  pedestal of its own crushed base (granular ground anchors structures in
+  the fracture analysis, rightly — a slab on sand rests). Under something,
+  the hole is still emptied; that volume wants grains that carry it out
+  (step 2).
+- A cross-section that gives way (fracture `crumble`) used to vanish; its
+  cells now squeeze out as rubble onto the lowest open column beside each
+  one (`spillRubble`, through the deposit buffer), so what it held still
+  falls.
+Checked headlessly: Break into the stone under the sand plain leaves 2 cells
+of rubble where 2 of stone were (sand around slumps onto it); Break at the
+garden tower's base drops the tower into the hole as before.
+
+## 2026-10-11 — strata: drop Rapier; loose ground doesn't brace structures (Q5)
+
+The user tried branch `rapier` and decided against rigid-body physics for
+this project (DECISIONS round 25): it jerks too much at times, and throwing
+pieces in cyclones isn't worth it. `strata` keeps its grid-aligned bodies
+(straight-down falls, shatter on landing); `rapier` stays unmerged. One fix
+from it is independent of the solver and comes over: in fracture.ts
+`analyse`, loose ground only holds what stands on it (`holds()`: island
+anchoring, side anchoring and snap anchors), so sand drifted round a
+tower's foot no longer keys it in. Checked: the garden tower with two of its
+three foot columns cut breaks free, drops and shatters (7 impacts, 2
+shatters), no errors.
+
+## 2026-10-11 — strata: no sand walls off tall tops; no dark blocks in running water (Q4)
+
+Two render bugs from the user's screenshots (DECISIONS round 25):
+- Water and drift sheets give each grid corner one height, the mean of the
+  covered columns touching it, and a drift corner is never below the solid
+  top of a column it touches. So a dust skin (or puddle) on a tower top and
+  the dust at its foot made a corner at the tower's top: a slanted sheet
+  from top to base, popping as the thin skin came and went. Now a corner
+  isn't shared where one covered column's solid top (water: its bed) stands
+  more than SHEET_STEP = 3 over another's surface; each keeps its own level.
+  A first try at 1.5 on the levels themselves broke steep sand gullies open
+  (diagonal neighbours ~2 apart, and drift sheets have no sides).
+- Every water box drew all four side walls. Running down a slope, a
+  column's wall stood inside its neighbour's water and showed through it as
+  a dark block. Render-prep now hides a water side where the neighbour is
+  wet and the sheet joins them (same SHEET_STEP rule), or where the ground
+  beside rises over the water. Foam and rain rings are unchanged (the user
+  likes them).
+Checked headlessly on the sandbox garden under two storms and dust (3×
+speed, 25 s): the dark blocks in the run-off are gone, the eroded gully is
+unchanged; a sand skin on the garden tower stays on its top.
+
+## 2026-10-12 — strata: soft borders between ground materials (Q6)
+
+The user found the square, on-the-grid borders between dirt, sand etc.
+artificial and floated an SDF. Chosen instead (DECISIONS round 26): a
+per-pixel vote. A top face's pixel takes the material that wins over the
+four nearest columns — bilinear weights (the trick behind the rounded
+shorelines), plus world-space value noise per material (0.28) and the
+material's relief (rubble/litter pebbles 0.4, stone 0.3, soil/ash/silt 0.2,
+sand/dust 0.1 — so pebbles poke through sand and sand fills hollows). Both
+sides of an edge see the same columns and noise, so it's seamless; a lone
+cell becomes a blob. Only ground takes part (soft materials and stone) at
+within 0.9 of the pixel's height, so cliffs, concrete and brick stay crisp.
+Plant cover on tops is smoothed the same way, so grass edges dither along a
+rounded line. An SDF would need the material across the border too, and a
+rebuild whenever erosion moves sand; the vote reads the live columns.
+Cost: render-fields marks the grid corners where the four columns differ
+(material or cover; corner texture .w), so most pixels do one texture read
+and skip the vote. Draw on the valley's default view (Xe-LPG, 1600×900,
+alternating runs, noisy): 4.0 → 4.8–4.9 ms; with the vote skipped
+everywhere 4.4 — about half the cost is the vote, half the bigger shader.
+Render-fields gains a veg read (binding 9). Not done: side walls under a
+softened edge keep their own material; stains and wetness are still per
+cell.

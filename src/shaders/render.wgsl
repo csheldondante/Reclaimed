@@ -366,6 +366,89 @@ fn canopyMarch(in: VOut) -> vec4<f32> {
   return vec4<f32>(0.0);
 }
 
+// ---- soft borders between ground materials (round 26) ----------------------
+// A top face doesn't switch material at the cell edge: each point takes the
+// material that wins a vote over the four nearest columns (bilinear weights,
+// like the rounded shorelines), nudged by world-space noise and by each
+// material's relief (pebbly rubble pokes up through sand, sand fills the
+// low spots of dirt). Both sides of an edge see the same columns and the same
+// noise, so the border is seamless. Only ground materials at about the same
+// height take part: cliffs, concrete and brick keep crisp edges.
+
+/** What a column's top is made of and how high it is (the loose sheet's material where there's a fair depth of it). */
+fn topLookAt(q: vec2<i32>) -> vec2<f32> {
+  let s = surface[colIdxI(q)];
+  let t = textureLoad(driftTex, q, 0); // (one load: driftAt + driftMatAt)
+  if (t.x >= 0.07) {
+    let m = u32(t.z + 0.5);
+    return vec2<f32>(f32(select(m, MAT_DRIFT, m == 0u)), sfZ(s) + t.x);
+  }
+  return vec2<f32>(f32(sfMat(s)), sfZ(s));
+}
+
+/** Ground that blends with its neighbours: the soft materials and natural stone. */
+fn blends(m: u32) -> bool { return MATS[m].look.x > 0.0 || m == MAT_STONE; }
+
+/** A material's relief at p, centred on 0: who shows where two meet. */
+fn relief(m: u32, p: vec2<f32>) -> f32 {
+  if (m == 4u || m == 18u) { return 0.4 * (randv(vec3<i32>(vec2<i32>(floor(p * 4.0)), 41)) - 0.5); } // rubble, litter: pebbles, scraps
+  if (m == 3u || m == MAT_DRIFT) { return 0.1 * (vnoise(p * 0.9 + 3.0) - 0.5); } // sand, dust: smooth, fills hollows
+  if (m == MAT_STONE) { return 0.3 * (vnoise(p * 1.6 + 11.0) - 0.5); }
+  return 0.2 * (vnoise(p * 2.3 + 5.0) - 0.5); // soil, ash, silt
+}
+
+/** Albedo a top of material m is drawn in (blown dust: a greyer silt). */
+fn topAlbedo(m: u32) -> vec3<f32> {
+  if (m == MAT_DRIFT) { return toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+  return toLinear(MATS[m].albedo.rgb);
+}
+
+struct EdgeLook { m: u32, v: f32 };
+
+/**
+ * The material shown at a point of a top face whose own material is `own`,
+ * and the plant cover there smoothed the same way (so grass edges aren't
+ * square either). Columns that don't take part count as `own`.
+ */
+fn edgeLook(p: vec3<f32>, own: u32, ownV: f32) -> EdgeLook {
+  // (render-fields marks the corners where anything differs: elsewhere, one
+  // texture read and done)
+  if (textureLoad(cornerTex, clampCell(vec2<i32>(floor(p.xy + 0.5))), 0).w < 0.5) { return EdgeLook(own, ownV); }
+  let t = p.xy - 0.5;
+  let i0 = vec2<i32>(floor(t));
+  let f = fract(t);
+  var ms: array<u32, 4>;
+  var ws: array<f32, 4>;
+  var vs = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let o = vec2<i32>(k & 1, k >> 1);
+    let q = clampCell(i0 + o);
+    let tl = topLookAt(q);
+    var m = u32(tl.x + 0.5);
+    var v = veg[colIdxI(q)];
+    if (!blends(m) || abs(tl.y - p.z) > 0.9) { m = own; v = ownV; }
+    ms[k] = m;
+    ws[k] = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+    vs += ws[k] * v;
+  }
+  // (most of the ground: one material all round, nothing to vote on)
+  if (ms[0] == own && ms[1] == own && ms[2] == own && ms[3] == own) { return EdgeLook(own, vs); }
+  var best = own;
+  var bestS = -1e9;
+  for (var k = 0; k < 4; k++) {
+    let m = ms[k];
+    // each material once
+    var seen = false;
+    for (var j = 0; j < k; j++) { if (ms[j] == m) { seen = true; } }
+    if (seen) { continue; }
+    var w = 0.0;
+    for (var j = 0; j < 4; j++) { if (ms[j] == m) { w += ws[j]; } }
+    let s = w + 0.28 * (vnoise(p.xy * 1.1 + vec2<f32>(f32(m) * 7.3, f32(m) * 3.1)) - 0.5) + relief(m, p.xy);
+    if (s > bestS) { bestS = s; best = m; }
+  }
+  return EdgeLook(best, vs);
+}
+
 @fragment
 fn fsBox(in: VOut) -> FOut {
   // derivatives first: canopy fragments may discard below
@@ -410,6 +493,21 @@ fn fsBox(in: VOut) -> FOut {
     }
   }
 
+  // the material whose surface detail is drawn (the loose sheet: its top
+  // interval's — loose ground looks like that material however thin it is)
+  var dmat = mat;
+  if (mat == MAT_DRIFT) { dmat = driftMatAt(cell); }
+  // soft borders: near an edge the neighbour's ground may show instead
+  var vTop = veg[ci];
+  if (in.nrm.z > 0.5 && (flags & 2u) == 0u && blends(dmat)) {
+    let e = edgeLook(in.wpos, dmat, vTop);
+    vTop = e.v;
+    if (e.m != dmat) {
+      dmat = e.m;
+      alb = topAlbedo(e.m);
+    }
+  }
+
   // voxel texture: per-cell and per-subcell (4x4) variation
   let vc = vec3<i32>(floor(in.wpos - in.nrm * 0.01));
   let sub = vec3<i32>(floor(in.wpos * 4.0 - in.nrm * 0.02));
@@ -420,21 +518,21 @@ fn fsBox(in: VOut) -> FOut {
   alb *= in.tint;
   // natural materials: per-voxel hue drift (warm/cool, mineral streaks) and
   // sub-voxel pebbles, so stone and dirt aren't a single flat colour
-  if (mat >= 1u && mat <= 4u) {
+  if (dmat >= 1u && dmat <= 4u) {
     let hv = randv(vc + vec3<i32>(17, 3, 91));
     let warm = vec3<f32>(1.08, 0.97, 0.88);
     let cool = vec3<f32>(0.92, 0.98, 1.06);
     alb *= mix(cool, warm, hv);
     // large-scale mineral bands on stone / clay-iron patches on soil
     let band = fbm2(in.wpos.xy * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
-    if (mat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
-    if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
+    if (dmat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
+    if (dmat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     // pebbles: occasional lighter/darker sub-voxels
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
 
-  if (mat == MAT_TRASH || mat == MAT_LITTER) {
+  if (dmat == MAT_TRASH || dmat == MAT_LITTER) {
     // faded plastics, paper, glass and rust specks (litter: scraps on dirt)
     let k = u32(n2 * 6.0);
     var tc = vec3<f32>(0.45, 0.43, 0.40);
@@ -444,7 +542,7 @@ fn fsBox(in: VOut) -> FOut {
     else if (k == 3u) { tc = vec3<f32>(0.38, 0.48, 0.34); }
     else if (k == 4u) { tc = vec3<f32>(0.50, 0.33, 0.20); }
     alb = toLinear(tc) * (0.75 + 0.35 * n1);
-    if (mat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
+    if (dmat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
   }
 
   let v = veg[ci];
@@ -513,15 +611,17 @@ fn fsBox(in: VOut) -> FOut {
     alb *= 1.0 - porosity * 0.5 * smoothstep(0.15, 0.9, m);
 
     // vegetation cover (dithered at sub-cell resolution)
-    if (v > 0.0 && !plainSheet) {
+    // (tops use the cover smoothed across the edges, like the material)
+    let vCov = select(v, vTop, isTop);
+    if (vCov > 0.0 && !plainSheet) {
       var cover: f32;
-      if (isTop) { cover = smoothstep(0.0, 1.2, v); } else { cover = smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2); }
+      if (isTop) { cover = smoothstep(0.0, 1.2, vCov); } else { cover = smoothstep(0.8, 3.0, vCov) * 0.55 * (0.5 + 0.5 * n2); }
       if (n1 < cover) {
         let moss = vec3<f32>(0.33, 0.40, 0.17);
         let grass = vec3<f32>(0.36, 0.54, 0.19);
         let forest = vec3<f32>(0.17, 0.33, 0.12);
-        var g = mix(moss, grass, smoothstep(1.0, 2.0, v));
-        g = mix(g, forest, smoothstep(3.0, 4.5, v));
+        var g = mix(moss, grass, smoothstep(1.0, 2.0, vCov));
+        g = mix(g, forest, smoothstep(3.0, 4.5, vCov));
         g *= 0.82 + 0.3 * n2;
         // wind running through the grass: gust patches roll downwind (advected
         // with the integrated wind, so they move smoothly), with fine bands
@@ -533,7 +633,7 @@ fn fsBox(in: VOut) -> FOut {
         let gp = gustField(in.wpos.xy);
         let band = sin(dot(windDrift(in.wpos.xy), wd) * 0.8);
         let wave = (gp - 0.5) * 1.6 + band * 0.35;
-        g *= 1.0 + wave * 0.13 * clamp(ws / 4.0, 0.3, 1.6) * smoothstep(0.8, 1.8, v);
+        g *= 1.0 + wave * 0.13 * clamp(ws / 4.0, 0.3, 1.6) * smoothstep(0.8, 1.8, vCov);
         alb = wither(toLinear(g), wilt[ci].y, n2);
       }
     }

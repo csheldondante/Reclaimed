@@ -68,15 +68,31 @@ gale). `windAt()` = field ba + storm swirl + the cursor/tap breeze
 each storm's target velocity is the field's mean whole wind over its body.
 Pipelines that sample wind bind the texture at 15 (not a storage slot).
 
-Drifts: `drift` (rgba32float texture, x = loose dust depth per column, y = dust lost to the
-wind this pass; read at binding 17 via `driftAt()`) is owned by the drift
-system (period 2): wind above 9 cells/s (reduced by shelter from taller
-ground upwind) carries dust downwind (40 % goes airborne), walls bank it,
-steep dust slumps, water washes it, dust storms drop it in sheltered spots.
-Rendered as a smooth sheet (vegprep emits a MAT_DRIFT box; corners from
-cornersTex.z computed in render-fields). Under > 0.5 dust, plants are
-dormant (wilt, ecology). Map wind magnitude is scaled by `Weather.windScale`
-(0.3 calm … 1 with storms/dust storms about).
+Loose ground (round 22, branch strata): every granular interval in the
+layers is loose ground — soil, sand, gravel (rubble), ash, litter, silt and
+blown dust (material 19) — with fractional heights. The sediment system
+(`sediment.wgsl`, period 2, two passes) works on the run of touching
+granular intervals on top of each column: wind above the material's lift
+threshold (reduced by shelter from taller ground upwind) carries its top
+interval downwind (its airborne share goes up as dust grains the particles
+carry), walls bank it, slopes steeper than its repose (lower when wet) slump,
+moving water washes it, water held back by it pipes through, dust storms
+and dying cyclones drop dust; what arrives joins the top interval or starts
+a new one (strata). Granular intervals with air under them fall; buried
+ones with air beside them spill out of the face to their repose
+(undercutting). Behaviour per material is in the material table (`loose`
+vec4 + repose in `sim`). Pass 1 (`outflow`) writes each column's outflows
+to `sedOut`; pass 2 (`main`) takes its own off and gathers its
+neighbours', updating its intervals in place (still columns are skipped).
+The surface pass derives a view each tick: `surface` z = the base of the
+loose run, the drift texture (x run depth, y top interval depth, z its
+material, w the air output), strata (the intervals beneath the top; w the
+exact base) — so readers use `sfZ + driftAt` for the ground's surface.
+Rendered as a smooth sheet (vegprep emits a MAT_DRIFT box from the base;
+corners from cornersTex.z computed in render-fields; renderprep skips the
+run's intervals and culls a covered top). Under > 0.5 of blown dust or ash
+on top, plants are dormant (wilt, ecology). Map wind magnitude is scaled by
+`Weather.windScale` (0.3 calm … 1 with storms/dust storms about).
 
 Plant health: the wilt system (period 15, just before ecology) writes
 `wilt` (vec4: ground hostility to plants from poison/oil/trash/litter/
@@ -88,9 +104,9 @@ the renderer tints plants with it. Seeds (particle 16) come from trees in
 pulses, from wind, and from birds; they sprout on any bare dry-land cell.
 Grow taps are `EV_GROW` events handled in the particle emit pass (period 1).
 Litter (material 18) is stripped by `litterStrip()` (common.wgsl): the
-material system removes the cell at tick t, the particle system spawns the
-flying scrap evaluating the same roll for tick t + 1 while the cell still
-exists.
+sediment pass takes a cell off a litter top for the rolls of ticks t and
+t − 1 (it runs every other tick), the particle system spawns the flying
+scrap evaluating the roll for tick t + 1 while the litter is still there.
 
 Reclamation (HUD bar, level goal) = ½ clean land (stat 12: no poison,
 oil, trash or litter) + ½ life (mean stage / 4.2, so woodland counts fully).
@@ -122,12 +138,57 @@ it stops at meadow. Fireflies only over meadow.
   K is counted (`stats[15]`) and shown in the perf overlay, never silent.
 - **Material table**: uniform array of 32 materials × 3 vec4 (render, sim, eco).
 
+### Consolidation in progress (branch `strata`, BACKLOG P4/N1)
+
+Goal (user, round 22): one representation for everything that lies on the
+land — material intervals — so that intervals and particles are the only two
+things that carry material, with fluids moving it between them. Fewer
+systems, fewer seams, fewer bugs (the spires, banked sand popping bodies and
+the body projection all came from the seam between the layers and the
+separate loose stack). Done on the GPU in stages, each one testable:
+
+1. **Fractional intervals.** A slot becomes `vec4<u32>`: z0, z1 as f32 bits,
+   material | aux << 8, spare. Empty slot: z1 bits = 0. `surface` packs z as
+   8.8 fixed point (bits 0..15), material (16..23), slot count (24..31);
+   `sfZ` returns f32. Behaviour unchanged.
+2. **Loose ground lives in the intervals.** The drift kernel becomes the
+   sediment kernel and works on the layers: the contiguous granular run on
+   top of a column is what the drift stack used to be (wind, water, slumping
+   take from its top interval; arrivals of a new material start a new
+   interval). Two passes: outflows per column → `sedFlux`, then each column
+   gathers its neighbours' outflows and rewrites its intervals. It also
+   takes over gravity for granular intervals from `material.wgsl`, which is
+   removed. The drift and strata textures stay as a *derived view* written
+   by the surface pass (depth of the granular run on top, top interval's
+   depth and material, the intervals beneath), so their readers don't change
+   yet; `surface` z is the base of that run.
+3. **Spill from exposed faces.** A granular interval with air beside it in a
+   neighbouring column spills into the neighbour (landing on that column's
+   support at that height, inserted mid-column if needed) until the face is
+   at its angle of repose; rock above doesn't hold it, so sand under a cap
+   rock is undercut and leaves an air pocket. Granular material carries load
+   (only air removes support), so the structure pass sees the pocket grow
+   and cracks the cap when its span is too long.
+4. **Readers simplified**: `surface` z becomes the full top, the derived view
+   is dropped where nothing needs it, fractional solids (the valley's
+   reshaped rock, N2).
+
+Storage stays a buffer (not a texture): per-chunk depth K is already
+variable; a full chunk is counted (stats[15]) and can be given a deeper page.
+At this map size the layers stay in cache, so the in-chunk order (column-major
+now; slot-major is a one-line change in `colSlots`) is measured before it is
+changed. Bodies (rigid pieces) are left as they are; a destruction model
+where pieces turn to particles on impact is P3.
+
 ## Contract buffers (src/sim/world-gpu.ts)
 
 | buffer | type | written by | read by |
 |---|---|---|---|
-| layers | u32 slots (aux = support·16 + damage) | structure, material | structure, surface, renderprep |
-| surface | u32 (z, mat, count) | surface | most systems |
+| layers | vec4<u32> slots: z0, z1 (f32), mat \| aux << 8 (aux = support·16 + damage) | structure, sediment, edit | structure, sediment, surface, renderprep, edit |
+| surface | u32: base of the loose run (8.8), material under it, slot count, bits 30/31 buried loose / air gap | surface | most systems |
+| drift, strata (textures) | the loose run as seen from above (derived from layers) | surface | sediment, particles, water, oil, ecology, wilt, render… |
+| deposit | vec4 per column: editor ±, a crumbled body's amount + material | edit, CPU (integrity) | sediment (folds in, zeroes) |
+| sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
 | oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
@@ -137,9 +198,10 @@ it stops at meadow. Fireflies only over meadow.
 | moisture | f32 0..1 | moisture | material, ecology, fire, particles, renderfields |
 | fire | f32 0..1 | fire | oil (burns), ecology (burns), structure (heat, waste), particles (flames), renderfields (glow), stats |
 | veg | f32 stage 0..5 | ecology (+ particles may plant 0 → 0.3: bird seeds) | most systems |
+| cornerTex | rgba32f per grid point: x soft-ground height, y water, z drift (−1 = not smoothed), w 1 where the four columns differ in top material or plant cover (soft borders, render.wgsl `edgeLook`) | renderfields | draw |
 | particles / particleCounters | 48-byte ring + atomic head | particles | draw |
 | renderFields | vec4 (shadow z, moisture, fire glow, flow) | renderfields | draw |
-| stats | u32 sums | stats, structure (collapsed), material (overflow) | CPU (async) |
+| stats | u32 sums | stats, structure (collapsed) | CPU (async) |
 
 The water system can be replaced by anything that publishes `water`,
 `waterPrev` and `flux` with the same meaning; oil likewise with `oil`/`oilFlux`.
@@ -204,22 +266,23 @@ given (x; reset by the press flag), the fraction of a cell owed (y), cells
 still to pour (z) and op·32+mat ×4 + fall time left (w). A press gives at
 most `layers` cells, soft at the rim; build/dig apply at once, pour lands
 after `POUR_FALL` at `POUR_RATE` (the particle emit pass reads `editTex` and
-drops K_GRAIN particles timed to land with it; the material system then
-settles the cells by repose), bedrock inserts stone at the bottom and lifts
-the column. Drift dust goes through `driftDelta` (folded in by the drift
-system, which owns the drift texture). Spawn tools call Weather
+drops K_GRAIN particles timed to land with it), bedrock inserts stone at
+the bottom and lifts the column. Loose pours, dust, digs of loose ground and
+cleaning go through `deposit` (.x; folded into the layers by the sediment
+pass). Spawn tools call Weather
 (`spawn`, `placeDust`, `spawnCyclone`). Time: speed 0 (pause) … 8×.
 
 
 Saved maps (`world/mapfile.ts`): `WorldCore.captureMap()` reads the live
-world back (layers unpacked to a ColumnGrid via the chunk table, the float
-fields, the drift texture) into a `MapData`; `encodeMap` writes it as gzip
+world back (layers unpacked to a ColumnGrid via the chunk table — the
+loose ground is in them — and the float fields) into a `MapData`; `encodeMap` writes it as gzip
 (CompressionStream) of "RCLM" + u32 header length + JSON header (version,
 dims, poi, field sizes, chunk table) + slots + fields (~250 KB for 256²).
 Kept in IndexedDB (`savedMaps`) or downloaded as `.reclaimed`; loading
 restarts the level with `LevelOptions.map` (30-tick prime, no settling).
 Undo: `WorldCore.snapshot()` (each brush press) copies layers, water, oil,
-oilStored, contam, moisture, veg and the drift texture into a GPU ring of 8;
+oilStored, contam, moisture and veg into a GPU ring of 8 (the loose ground's
+view is derived from the layers);
 `undo()` copies the last back and clears pours in flight.
 
 Model atlas (`world/models.ts`): voxel models (material per voxel) built by
@@ -263,4 +326,4 @@ and sleeping bodies. A sleeping body wakes when hit hard by a falling one,
 when nothing holds it up any more (checked each integrity pass, ~1 s when
 all are asleep), or when a cyclone passes (small bodies are carried). Break
 on a body removes voxels in its frame and splits it; a budget (64 bodies /
-16k voxels) crumbles the oldest small ones into loose ground (`looseAdd`).
+16k voxels) crumbles the oldest small ones into loose ground (`deposit` .yz).

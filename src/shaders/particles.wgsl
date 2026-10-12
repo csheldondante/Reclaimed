@@ -300,7 +300,7 @@ fn crownTop(q: vec2<i32>) -> f32 {
   let v = veg[j];
   if (v < 3.6) { return -1.0; }
   let s = surface[j];
-  let pl = vegPlan(u32(q.x), u32(q.y), v, sfMat(s));
+  let pl = vegPlan(u32(q.x), u32(q.y), v, groundMatAt(q, sfMat(s)));
   if (!pl.tree) { return -1.0; }
   return f32(sfZ(s)) + pl.trunk + pl.crown;
 }
@@ -341,7 +341,7 @@ fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   var pt = petals[i];
   pt = min(1.0, pt + 1.0 / (45.0 * 60.0));
   let s = surface[i];
-  let pl = vegPlan(id.x, id.y, veg[i], sfMat(s));
+  let pl = vegPlan(id.x, id.y, veg[i], groundMatAt(vec2<i32>(id.xy), sfMat(s)));
   let flowery = pl.flower || floor(wiltP[i].z) >= 2.0;
   if (flowery && pt >= 1.0) {
     let g = f32(sfZ(s));

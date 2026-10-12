@@ -16,7 +16,7 @@ import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import type { MapData } from '../world/mapgen';
-import { columnSlots, packInterval, readColumn } from '../world/layout';
+import { columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn } from '../world/models';
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -104,7 +104,7 @@ export class LevelScene implements Scene {
     if (p.get('tod')) this.core.dayNight.timeOfDay = Number(p.get('tod')) % 1;
     this.core.camera.target = [dims.w * 0.55, dims.h * 0.5, 14];
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
-    for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = Math.round(this.core.map.surface[i]);
+    for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
   }
 
   /** Builds the level and settles it (rivers, slopes) before returning. */
@@ -124,7 +124,7 @@ export class LevelScene implements Scene {
     const { w, h } = this.core.dims;
     const ix = Math.max(0, Math.min(w - 1, Math.floor(x)));
     const iy = Math.max(0, Math.min(h - 1, Math.floor(y)));
-    return this.surfaceCache[iy * w + ix] & 0xff;
+    return sfZ(this.surfaceCache[iy * w + ix]);
   };
 
   private attach(): void {
@@ -341,7 +341,7 @@ export class LevelScene implements Scene {
   private openValley(): void {
     const { weather, dims } = this.core;
     if (this.level.sandbox) {
-      setTimeout(() => this.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left).', 10), 800);
+      setTimeout(() => this.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left), or on a wall of the sand basin.', 10), 800);
       return;
     }
     // dust storms roll across the dead valley as the level opens
@@ -848,21 +848,11 @@ export class LevelScene implements Scene {
           this.hud.say('Too many layers here to fit that model.', 2);
           return;
         }
-        const data = new Uint32Array(k);
-        merged.forEach((iv, s) => (data[s] = packInterval(iv.z0, iv.z1, iv.mat, iv.aux ?? 0)));
-        writes.push({ at, data });
+        writes.push({ at, data: packColumn(merged, k) });
       }
     const { device } = this.host.gpu;
-    for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * 4, w.data);
-    // the loose layer under it is taken into the ground it now sits on (the
-    // seat filled up to the picked surface); otherwise it would ride on the roof
-    const cx0 = Math.max(0, x0);
-    const cy0 = Math.max(0, y0);
-    const cw = Math.min(dims.w, x0 + fw) - cx0;
-    const ch = Math.min(dims.h, y0 + fd) - cy0;
-    if (cw > 0 && ch > 0) {
-      device.queue.writeTexture({ texture: core.world.drift, origin: [cx0, cy0] }, new Float32Array(cw * ch * 4), { bytesPerRow: cw * 16 }, [cw, ch]);
-    }
+    for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * SLOT_WORDS * 4, w.data);
+    // (the loose ground under it stays in the layers, under the model)
     this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
   }
 
@@ -918,7 +908,7 @@ export class LevelScene implements Scene {
     for (let yy = Math.floor(y - r); yy <= y + r; yy++)
       for (let xx = Math.floor(x - r); xx <= x + r; xx++) {
         if (xx < 0 || yy < 0 || xx >= dims.w || yy >= dims.h || Math.hypot(xx - x, yy - y) > r) continue;
-        if (((this.surfaceCache[yy * dims.w + xx] >> 8) & 0xff) === mat) n++;
+        if (sfMat(this.surfaceCache[yy * dims.w + xx]) === mat) n++;
       }
     return n;
   }
@@ -927,7 +917,7 @@ export class LevelScene implements Scene {
   private hostileAt([x, y]: [number, number]): boolean {
     const { dims, map } = this.core;
     const i = Math.floor(y) * dims.w + Math.floor(x);
-    const top = this.surfaceCache[i] >> 8 & 0xff;
+    const top = sfMat(this.surfaceCache[i]);
     return top === 12 || top === 18 || map.contam[i * 2] > 0.2;
   }
 

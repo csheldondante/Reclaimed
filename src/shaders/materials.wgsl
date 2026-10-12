@@ -5,6 +5,7 @@ struct Material {
   sim: vec4<f32>,    // state, reposeDry, reposeWet, strength
   eco: vec4<f32>,    // growthCap, suitability, specular, porosity
   look: vec4<f32>,   // smooth (cells; 0 = hard steps), unused ×3
+  loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash flow
 };
 @group(0) @binding(2) var<uniform> MATS: array<Material, 32>;
 
@@ -25,3 +26,16 @@ const MAT_FLOWER: u32 = 15u;
 const MAT_DRIFT: u32 = 19u;
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
+
+/**
+ * What a destroyed solid becomes, the same volume where it was (round 23,
+ * Q3: "stone to gravel"): wood, canvas and leaves burn down to ash, bone to
+ * dust, compacted waste to litter, the rest (stone, concrete, brick, metal,
+ * asphalt) to rubble. Mirrors integrity.ts looseFrom().
+ */
+fn rubbleOf(m: u32) -> u32 {
+  if (m == MAT_WOOD || m == 21u || m == MAT_LEAVES) { return 17u; }
+  if (m == 16u) { return MAT_DRIFT; }
+  if (m == MAT_TRASH) { return 18u; }
+  return 4u;
+}

@@ -15,7 +15,7 @@
 // Structural = solid and weaker than bedrock (strength < 1); everything else
 // that isn't air (stone, soil, sand, trash, rubble…) is terrain and anchors.
 
-import { columnSlots, type PackedWorld } from '../world/layout';
+import { cellRange, columnSlots, readSlot, type PackedWorld } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
 
 export interface Voxel {
@@ -45,42 +45,59 @@ export class WorldVox {
     return this.packed.dims.h;
   }
 
-  /** Material at cell (x, y, z), 0 for air or off the map. */
+  /** Material at cell (x, y, z) (its centre z + 0.5), 0 for air or off the map. */
   matAt(x: number, y: number, z: number): number {
     if (x < 0 || y < 0 || x >= this.w || y >= this.h || z < 0) return 0;
     const { base, k } = columnSlots(this.packed, x, y);
+    const c = z + 0.5;
     for (let s = 0; s < k; s++) {
-      const v = this.slots[base + s];
-      if (v === 0) return 0;
-      const z0 = v & 0xff;
-      const z1 = (v >>> 8) & 0xff;
-      if (z < z0) return 0;
-      if (z < z1) return (v >>> 16) & 0xff;
+      const iv = readSlot(this.slots, base + s);
+      if (!iv) return 0;
+      if (c < iv.z0) return 0;
+      if (c < iv.z1) return iv.mat;
     }
     return 0;
   }
 
-  /** Top of the column's highest solid run (0 if empty or off the map). */
+  /** Top of the column's highest run (0 if empty or off the map). */
   colTop(x: number, y: number): number {
     if (x < 0 || y < 0 || x >= this.w || y >= this.h) return 0;
     const { base, k } = columnSlots(this.packed, x, y);
     let top = 0;
     for (let s = 0; s < k; s++) {
-      const v = this.slots[base + s];
-      if (v === 0) break;
-      top = (v >>> 8) & 0xff;
+      const iv = readSlot(this.slots, base + s);
+      if (!iv) break;
+      top = iv.z1;
     }
     return top;
   }
 
-  /** Top of the solid run containing (x, y, z) (z itself must be solid). */
+  /** Base of the loose ground on top of the column (its top if there is none): granular intervals touching from the top. */
+  baseTop(x: number, y: number): number {
+    if (x < 0 || y < 0 || x >= this.w || y >= this.h) return 0;
+    const { base, k } = columnSlots(this.packed, x, y);
+    const col: { z0: number; z1: number; mat: number }[] = [];
+    for (let s = 0; s < k; s++) {
+      const iv = readSlot(this.slots, base + s);
+      if (!iv) break;
+      col.push(iv);
+    }
+    let z = col.length ? col[col.length - 1].z1 : 0;
+    for (let s = col.length - 1; s >= 0; s--) {
+      if (MATERIALS[col[s].mat]?.state !== MatState.Granular || Math.abs(col[s].z1 - z) > 1e-3) break;
+      z = col[s].z0;
+    }
+    return z;
+  }
+
+  /** Top of the run containing cell (x, y, z) (z itself must be inside one). */
   runTop(x: number, y: number, z: number): number {
     const { base, k } = columnSlots(this.packed, x, y);
+    const c = z + 0.5;
     for (let s = 0; s < k; s++) {
-      const v = this.slots[base + s];
-      if (v === 0) break;
-      const z1 = (v >>> 8) & 0xff;
-      if (z >= (v & 0xff) && z < z1) return z1;
+      const iv = readSlot(this.slots, base + s);
+      if (!iv) break;
+      if (c >= iv.z0 && c < iv.z1) return iv.z1;
     }
     return z + 1;
   }
@@ -118,14 +135,20 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
     for (let x = x0; x < x1; x++) {
       const { base, k } = columnSlots(world.packed, x, y);
       for (let s = 0; s < k; s++) {
-        const v = world.slots[base + s];
-        if (v === 0) break;
-        const m = (v >>> 16) & 0xff;
-        for (let z = v & 0xff; z < ((v >>> 8) & 0xff) && z < H; z++) mat[idx(x, y, z)] = m;
+        const iv = readSlot(world.slots, base + s);
+        if (!iv) break;
+        const [c0, c1] = cellRange(iv.z0, iv.z1);
+        for (let z = Math.max(c0, 0); z < c1 && z < H; z++) mat[idx(x, y, z)] = iv.mat;
       }
     }
   const structural = new Uint8Array(256);
   for (let m = 0; m < MATERIALS.length; m++) structural[m] = isStructural(m) ? 1 : 0;
+  // what holds a structure: terrain under it, or solid terrain beside it —
+  // loose ground banked against it doesn't (round 24: a tower with sand
+  // drifted round its foot was "keyed in" and never tipped)
+  const loose = new Uint8Array(256);
+  for (let m = 0; m < MATERIALS.length; m++) loose[m] = MATERIALS[m].state === MatState.Granular ? 1 : 0;
+  const holds = (m: number, dz: number) => m !== 0 && !structural[m] && (dz < 0 || !loose[m]);
   const comp = new Int32Array(N).fill(-1);
   const result: Fracture = { bodies: [], crumble: [] };
   const NB = [
@@ -167,7 +190,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
         const m = mat[j];
         if (!m) continue;
         if (!structural[m]) {
-          anchored = true;
+          if (holds(m, dz)) anchored = true;
           continue;
         }
         if (comp[j] < 0) {
@@ -214,7 +237,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
         const ny = y + dy;
         if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1) continue;
         const m = mat[idx(nx, ny, z)];
-        if (m && !structural[m]) sideAnchored = true;
+        if (holds(m, 0)) sideAnchored = true;
       }
     }
     cx /= cells.length;
@@ -243,7 +266,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
         const nz = z + dz;
         if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1 || nz < 0 || nz >= H) continue;
         const m = mat[idx(nx, ny, nz)];
-        if (m && !structural[m]) anchor = true;
+        if (holds(m, dz)) anchor = true;
       }
       if (anchor) {
         dist.set(i, 0);

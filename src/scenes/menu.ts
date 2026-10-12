@@ -27,7 +27,7 @@ const LINES: [number, string][] = [
 // only these systems run on the diorama: enough for the player's hands (wind,
 // litter stripping, grow/wither, blowing the dust off buried models) — no
 // ecology, water or structure
-const MENU_SYSTEMS = new Set(['windfield', 'material', 'surface', 'drift', 'particles', 'wilt', 'sway', 'renderfields', 'stats']);
+const MENU_SYSTEMS = new Set(['windfield', 'surface', 'sediment', 'particles', 'wilt', 'sway', 'renderfields', 'stats']);
 
 export class MenuScene implements Scene {
   readonly core: WorldCore;

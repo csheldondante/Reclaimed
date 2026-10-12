@@ -37,8 +37,11 @@ user) · `deferred` (agreed for later).
 | id | item | size | status |
 |---|---|---|---|
 | Q1 | The scrolling ripple noise looks right on deep water but odd on shallow water (the little puddles left behind): fade it out where the water is shallow | S | done (this commit) |
-| Q2 | Test on `strata`: a concrete basin full of sand — blow down a wall, does the sand spill out? | S | basin added to the sandbox garden on `strata` |
-| Q3 | Destroyed blocks either become a new material in place (stone → gravel) or become particles (gravel → sand grains) — refines P3 | M | talk first |
+| Q2 | Test on `strata`: a concrete basin full of sand — blow down a wall, does the sand spill out? | S | done on `strata` (this commit): a 12×12 concrete basin of sand by the physics garden; a 4-wide gap lets ~25 cells of sand out in ~3 s, a fan at repose |
+| Q3 | Destroyed blocks either become a new material in place (stone → gravel) or become particles (gravel → sand grains) — refines P3; same volume (user) | M | step 1 done on `strata` (this commit): Break/lightning turn solids to rubble in place where the hole is open above, crushed cross-sections squeeze out as rubble beside them; step 2 (grains that carry it — and the volume Break still removes under what's left above) open |
+| Q4 | Visual artifacts: sand/dust in storms looks like a wall interpolating from the top of a tall structure to its base, popping in and out; blocky dark patches in water running under rain (the bright rain/foam patches are the user's favourite water effect — keep them) | S | done (this commit): sheets aren't shared where a covered column's solid top (or wet bed) stands > 3 over another's surface; water boxes hide side walls the sheet joins (they showed through the neighbour's water as dark blocks) |
+| Q5 | Physics goals: a believable, responsive collapse is the juice; some solids persist (skewed, buried finds); strong cyclones lift light pieces; pieces break each other and the world; they fall and only crumble on impact. Plan: Rapier (WASM) for the motion on its own branch off `strata`, zero bounce, impacts destroy the overlapping voxels into rubble + dust (Q3) instead of pushing apart; cyclone drag on bodies | L | dropped (round 25): the user tried `rapier` — decent but jerks too much at times; not worth it even for cyclones throwing pieces. Keep the collapse mechanics with strict grid alignment (strata's straight-down falls); `rapier` stays unmerged as a reference. Ported to `strata`: loose ground banked against a structure doesn't hold it (fracture.ts `holds`). Arbitrary orientations / multiple grids = a future project |
+| Q6 | Borders between ground materials (dirt / sand / rubble / grass) look artificial: square, on the cell grid. User suggested an SDF; other techniques welcome | M | done on `strata` (this commit, round 26): bilinear vote over the four nearest columns + world-space noise + per-material relief, plant cover smoothed the same way; only ground at about the same height (cliffs, concrete keep crisp edges); for the user's visual pass. Not done: column side walls under an edge, stains and wetness still per cell |
 
 ## Round 22 (2026-10-11, session 4)
 
@@ -47,7 +50,16 @@ user) · `deferred` (agreed for later).
 | P1 | Falling pieces still sometimes push back up: no block ever moves up (only the particles a destroyed block emits) | S | done `5ca2c24` |
 | P2 | A dying cyclone drops its dust where the column stood: it should lose power and fall while spreading out | S | done `5ca2c24` |
 | P3 | Destruction, the fun version (iterate later, not now): a broken structure is a rigid body supported from its base that tilts and falls; every impact destroys the blocks that intersect and turns them into material particles (stone → gravel/sand, brick → dust); nothing but particles goes up | M–L | later (user: "eventually") |
-| P4 | Consolidate to three systems: interval sediment (the interval layers replace the loose-ground stack and the separate interval systems), particles, fluids — refines N1; on its own branch, merged when ready | L | talk first; don't start yet |
+| P4 | Consolidate: one material-interval model (fractional heights; loose and solid in the same layers), intervals and particles the only carriers, fluids move material between them — refines N1; on its own branch, merged when ready | L | wip on branch `strata`: stages 1–3 done (`a4accd5` fractional intervals, `abfcfef`/`ee23953` loose ground in the layers, `8a67864` spill from exposed faces); waiting for the user to test |
+
+Agent notes from P4 (judgement calls for the user, not yet asked):
+
+| id | item | size | status |
+|---|---|---|---|
+| P5 | Valley soil now slumps at the sandbox's repose (soil 1.4, rubble 1.7, ash 0.9 — the old whole-cell rules had 3, 4, 2); the valley still looks close but may need N2's reshaping | S | asked |
+| P6 | Thick ash counts as a blown film: the title diorama's ash mound is drawn plain and plants on it would be dormant | S | asked |
+| P7 | Layer slots are 4× larger (16 B): undo ring (8 copies of the layers) ~100 MB on the sandbox; structure/surface passes ~0.2 ms slower — a 2-word slot (f16 or 12.4 fixed heights + pending accumulator) would win it back | S–M | open |
+| P8 | The loose sheet has no side faces: a deep loose run at a cliff edge shows a gap under its edge (seen before only in the sandbox) | S | open |
 
 ## Round 21 (2026-10-10, session 4)
 

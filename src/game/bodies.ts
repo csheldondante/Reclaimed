@@ -10,6 +10,7 @@
 // keeps them within a budget.
 
 import type { Voxel, WorldVox } from './fracture';
+import { MATERIALS, MatState } from '../world/materials';
 
 type V3 = [number, number, number];
 type Q = [number, number, number, number]; // x, y, z, w
@@ -247,9 +248,10 @@ export class Bodies {
     }
   }
 
-  /** Is there solid world at this point? (cells, off-map = air) */
+  /** Is there solid world at this point? (cells, off-map = air; loose ground isn't: bodies sink a little into it) */
   private solid(p: V3): number {
-    return this.world.matAt(Math.floor(p[0]), Math.floor(p[1]), Math.floor(p[2]));
+    const m = this.world.matAt(Math.floor(p[0]), Math.floor(p[1]), Math.floor(p[2]));
+    return MATERIALS[m]?.state === MatState.Granular ? 0 : m;
   }
 
   /** Bodies settle a little way into loose ground (they lie in it, not on it). */
@@ -291,7 +293,7 @@ export class Bodies {
       // loose ground over the column's solid top
       const l = this.loose?.[i] ?? 0;
       if (l > 0.05) {
-        const top = this.world.colTop(x, y);
+        const top = this.world.baseTop(x, y);
         const surf = top + Math.max(0, l - Bodies.SINK);
         if (p[2] >= top && p[2] < surf) return { n: [0, 0, 1], depth: surf - p[2] };
       }
