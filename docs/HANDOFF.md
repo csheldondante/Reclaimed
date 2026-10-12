@@ -11,7 +11,10 @@ user's own words, rounds 1–20) → `docs/ARCHITECTURE.md` (contracts) →
 Round 25: the user dropped rigid-body physics (branch `rapier`, unmerged,
 kept for reference) — collapse mechanics with strict grid alignment only.
 Q4 visual bugs fixed (sheet corners, water side walls) — the user should
-look at storms over tall structures and run-off under rain.
+look at storms over tall structures and run-off under rain. Round 26: soft
+borders between ground materials (Q6, render.wgsl `edgeLook`; knobs: the
+0.28 noise, `relief()`, the 0.9 height gate). All three branches pushed; the
+user merges strata into main after testing it, then takes a visual pass.
 
 `main` has round 21 + P1/P2 (pieces never move up; dying cyclones spread
 their dust) — local commits `aa774ed`, `5ca2c24`, not yet pushed (the user

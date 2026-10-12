@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-12 — round 26 (session 4) — Q6
+
+- Push main, strata and rapier (done). Strata will be merged into main once
+  the user has tested and validated it ("it seems like an improvement").
+- Soft material borders (Q6): build it on strata for the user to test; the
+  user takes a pass at the visuals after this. Their SDF idea was
+  speculative — the bilinear vote was chosen (no precompute, follows the
+  live sim).
+
 ## 2026-10-11 — round 25 (session 4) — Q4, Q5
 
 - Rapier physics: decent, but things jerk too much at times. For this

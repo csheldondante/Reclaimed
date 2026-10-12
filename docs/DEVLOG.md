@@ -2167,3 +2167,27 @@ Two render bugs from the user's screenshots (DECISIONS round 25):
 Checked headlessly on the sandbox garden under two storms and dust (3×
 speed, 25 s): the dark blocks in the run-off are gone, the eroded gully is
 unchanged; a sand skin on the garden tower stays on its top.
+
+## 2026-10-12 — strata: soft borders between ground materials (Q6)
+
+The user found the square, on-the-grid borders between dirt, sand etc.
+artificial and floated an SDF. Chosen instead (DECISIONS round 26): a
+per-pixel vote. A top face's pixel takes the material that wins over the
+four nearest columns — bilinear weights (the trick behind the rounded
+shorelines), plus world-space value noise per material (0.28) and the
+material's relief (rubble/litter pebbles 0.4, stone 0.3, soil/ash/silt 0.2,
+sand/dust 0.1 — so pebbles poke through sand and sand fills hollows). Both
+sides of an edge see the same columns and noise, so it's seamless; a lone
+cell becomes a blob. Only ground takes part (soft materials and stone) at
+within 0.9 of the pixel's height, so cliffs, concrete and brick stay crisp.
+Plant cover on tops is smoothed the same way, so grass edges dither along a
+rounded line. An SDF would need the material across the border too, and a
+rebuild whenever erosion moves sand; the vote reads the live columns.
+Cost: render-fields marks the grid corners where the four columns differ
+(material or cover; corner texture .w), so most pixels do one texture read
+and skip the vote. Draw on the valley's default view (Xe-LPG, 1600×900,
+alternating runs, noisy): 4.0 → 4.8–4.9 ms; with the vote skipped
+everywhere 4.4 — about half the cost is the vote, half the bigger shader.
+Render-fields gains a veg read (binding 9). Not done: side walls under a
+softened edge keep their own material; stains and wetness are still per
+cell.

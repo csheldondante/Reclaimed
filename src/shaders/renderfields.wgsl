@@ -13,6 +13,29 @@
 @group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
 @group(0) @binding(7) var<storage, read_write> fields: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read> waterDepth: array<f32>;
+@group(0) @binding(9) var<storage, read> veg: array<f32>;
+
+/**
+ * 1 where the four columns around grid corner v differ in top material
+ * (the loose sheet's where there's a fair depth of it) or in plant cover:
+ * only there do draw shaders vote on soft borders (render.wgsl edgeLook).
+ */
+fn mixedCorner(v: vec2<i32>) -> f32 {
+  var m0 = 0xffffffffu;
+  var lo = 1e9;
+  var hi = -1e9;
+  for (var k = 0; k < 4; k++) {
+    let q = clampCell(v - vec2<i32>(1 - (k & 1), 1 - (k >> 1)));
+    let t = textureLoad(driftTex, q, 0);
+    var m = sfMat(surface[colIdxI(q)]);
+    if (t.x >= 0.07) { m = select(u32(t.z + 0.5), 19u, u32(t.z + 0.5) == 0u); }
+    if (k == 0) { m0 = m; } else if (m != m0) { return 1.0; }
+    let g = veg[colIdxI(q)];
+    lo = min(lo, g);
+    hi = max(hi, g);
+  }
+  return select(0.0, 1.0, hi - lo > 0.02);
+}
 
 /** Drift surface height at grid corner v: mean (ground + dust) of the dusty columns touching it, or -1. */
 fn driftCornerZ(v: vec2<i32>) -> f32 {
@@ -128,5 +151,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   fields[i] = vec4<f32>(sz, moisture[i], glow, length(netFlow(p)));
-  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), waterCornerZ(p), driftCornerZ(p), 0.0));
+  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), waterCornerZ(p), driftCornerZ(p), mixedCorner(p)));
 }
