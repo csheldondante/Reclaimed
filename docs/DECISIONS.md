@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-12 — round 27 (session 4) — Q7–Q10
+
+- Strata validated: "looks decent, feel free to merge… good enough for
+  now" — merged into main.
+- Lightning: no Nature cost ("that mechanic is bad"), a short cooldown of a
+  second or so. Clicks pick the actual 3D voxel; it strikes within a few
+  voxels of it — the highest point in a radius-6 sphere whose lowest point is
+  the clicked block (a column above the hemisphere); drawn more to metal,
+  less to stone, but still preferring them to air. It still hits tall things
+  near the click and arcs.
+- Break tool: highlight centred on the mouse pick, not a ring from above.
+- Storms: no button — swirling (the tornado action) mostly over water
+  summons the lightning storm. No buttons or Nature meter to worry about.
+
 ## 2026-10-12 — round 26 (session 4) — Q6
 
 - Push main, strata and rapier (done). Strata will be merged into main once

@@ -1,13 +1,11 @@
 // Minimal HUD (DECISIONS 2026-10-07): no tool buttons — interaction is by
-// gesture on the world. The UI only shows recharge: the Nature meter and a
-// summon-storm control (clickable, key R) whose ring fills as it recharges.
+// gesture on the world. Round 27: no Nature meter or summon button either
+// (storms are raised by swirling over water); what's left is the living-land
+// bar, the life lens and hints.
 
 const NS = 'http://www.w3.org/2000/svg';
 
 export class Hud {
-  private fill: HTMLElement;
-  private val: HTMLElement;
-  private stormBtn: HTMLButtonElement;
   private hint: HTMLElement;
   private hintTimer = 0;
   private bolts: SVGSVGElement;
@@ -15,14 +13,10 @@ export class Hud {
   private reclaim: HTMLElement;
 
   /** @param onLens hold-to-see life lens (the touch stand-in for Space) */
-  constructor(root: HTMLElement, onSummon: () => void, onLens: (on: boolean) => void = () => undefined) {
+  constructor(root: HTMLElement, onLens: (on: boolean) => void = () => undefined) {
     const hud = document.createElement('div');
     hud.className = 'hud';
     hud.innerHTML = `
-      <div class="nature" title="Nature — regenerates from living, healthy land">
-        <span>❦</span><div class="bar"><div class="fill"></div></div><span class="val"></span>
-      </div>
-      <button class="summon" title="Summon a storm (R)"><span>☁</span></button>
       <button class="lens" title="Hold to see what keeps life out (Space)"><span>◎</span></button>`;
     root.appendChild(hud);
     this.hudEl = hud;
@@ -32,13 +26,6 @@ export class Hud {
     this.reclaim.title = 'Living land — the valley is reclaimed when it reaches the mark';
     this.reclaim.innerHTML = '<span>❧</span><div class="track"><div class="fill"></div><div class="goal"></div></div><span class="pct"></span>';
     root.appendChild(this.reclaim);
-    this.fill = hud.querySelector('.fill')!;
-    this.val = hud.querySelector('.val')!;
-    this.stormBtn = hud.querySelector('.summon')!;
-    this.stormBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      onSummon();
-    });
     const lensBtn = hud.querySelector('.lens') as HTMLButtonElement;
     const lensOff = () => onLens(false);
     lensBtn.addEventListener('pointerdown', (e) => {
@@ -122,27 +109,8 @@ export class Hud {
     setTimeout(() => g.remove(), 700);
   }
 
-  /** @param stormReady 0..1 recharge of the summon control */
-  /** @param rate Nature's net change per second (negative = the land is suffering) */
-  update(nature: number, max: number, stormReady: number, rate = 0): void {
-    this.fill.style.width = `${(nature / max) * 100}%`;
-    this.hudEl.querySelector('.nature')!.classList.toggle('draining', rate < 0);
-    this.val.textContent = String(Math.floor(nature));
-    this.stormBtn.style.setProperty('--ready', String(Math.min(1, stormReady)));
-    this.stormBtn.classList.toggle('ready', stormReady >= 1);
-  }
-
   private windWord?: HTMLElement;
   private shownTier = 0;
-
-  /** "+N" rising off the Nature meter when deeds pay out (cleaning, forests, washing). */
-  gain(n: number): void {
-    const pop = document.createElement('span');
-    pop.className = 'gain-pop';
-    pop.textContent = `+${Math.round(n)}`;
-    this.hudEl.querySelector('.nature')!.appendChild(pop);
-    setTimeout(() => pop.remove(), 1400);
-  }
 
   /** The player's painted wind: 0 none, 1 breeze, 2 gust, 3 gale (fades out). */
   setWind(tier: number): void {

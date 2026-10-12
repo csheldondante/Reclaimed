@@ -22,13 +22,13 @@ in · `?progress=0..1` preview a menu stage · `?perf=1` overlay · `?q=low|medi
 
 | input | does |
 |---|---|
-| **LMB tap** under a storm's shadow | lightning (seeks the tallest thing nearby; 10 Nature) |
+| **LMB tap** under a storm's shadow | lightning: the tallest thing within ~6 cells of the voxel tapped, drawn to metal (free, 1 s cooldown) |
 | **LMB tap** elsewhere | touch: trees shed leaves / birds flee, tanks clang, concrete chips, water splashes, ground puffs dust |
 | **LMB drag** under a storm | gust along the drag; also shoves the storm (6 Nature) |
 | hover | a light breeze follows the cursor (trees lean, dust lifts, deer bolt) |
 | **RMB drag** / WASD | pan |
 | **MMB drag** / wheel / pinch | zoom |
-| **R** or ☁ button | summon a storm upwind of the cursor (30 Nature + 25 s recharge ring) |
+| **swirl** (tight circles) | a cyclone; over water, a lightning storm |
 | hold **Space** | life lens: what keeps plants out around the cursor |
 | `` ` `` | perf overlay |
 
@@ -37,7 +37,7 @@ under a storm), pinch = zoom. No hover breeze on touch.
 
 **A 5-minute tour**
 1. Hover over the land and tap things: listen for the clang, chips, splashes.
-2. **R** to summon a storm over the industrial site; watch dust and clouds,
+2. Swirl over the reservoir to raise a storm; watch dust and clouds,
    rain, stains washing off the pad.
 3. Under the storm, tap an oil tank → it ignites; heat ruptures the wall;
    burning oil spreads and burns off (smoke, embers, firelight; best at dusk:

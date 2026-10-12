@@ -6,7 +6,6 @@
 // ecology, water and structure don't run here.
 
 import type { Ambience } from '../audio/ambience';
-import { Nature } from '../game/nature';
 import { Powers } from '../game/powers';
 import { LEVELS, levelById, type LevelDef } from '../game/levels';
 import { levelUncovered, loadDifficulty, loadLevelProgress, loadProgress, previousLevel, resetProgress, saveDifficulty, saveUncovered, type Difficulty } from '../game/progress';
@@ -127,7 +126,6 @@ export class MenuScene implements Scene {
     const ground = () => 7 * MENU_SCALE;
     this.powers = new Powers({
       weather: core.weather,
-      nature: new Nature(),
       audio: this.audio,
       particles: core.sim.particles,
       globals: core.globals,

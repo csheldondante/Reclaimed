@@ -83,6 +83,11 @@ export class LevelScene implements Scene {
   private smashing = false;
   /** sandbox: the brush's footprint drawn on the ground under the cursor */
   private ring?: SVGPolylineElement;
+  /** Break tool: the sphere's equator (the ring is its outline) */
+  private ring2?: SVGPolylineElement;
+  /** Break tool: the voxel under the cursor (x, y, z: the sphere's centre, as smashAt aims) */
+  private smashHover?: [number, number, number];
+  private smashPicking = false;
 
   private constructor(
     private host: Host,
@@ -132,14 +137,9 @@ export class LevelScene implements Scene {
     const { camera, sim, weather, globals, map, dims } = core;
     const readSurface = async () => new Uint32Array((await core.readBuffer('surface')).buffer);
 
-    this.hud = new Hud(
-      host.ui,
-      () => this.powers.summonStorm(),
-      (on) => (this.lensOn = on),
-    );
+    this.hud = new Hud(host.ui, (on) => (this.lensOn = on));
     this.powers = new Powers({
       weather,
-      nature: this.nature,
       audio,
       hud: this.hud,
       particles: sim.particles,
@@ -149,6 +149,10 @@ export class LevelScene implements Scene {
       readSurface,
       heightAt: this.heightAt,
       birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
+      waterAt: (x, y) => {
+        const i = Math.floor(y) * dims.w + Math.floor(x);
+        return x < 0 || y < 0 || x >= dims.w || y >= dims.h ? 0 : (this.waterCache?.[i] ?? 0);
+      },
     });
     // tapped metal rings by its size: count the metal voxels connected to the
     // tapped one (a capped flood fill on a read-back of the layers; round 20)
@@ -198,6 +202,9 @@ export class LevelScene implements Scene {
       svg.style.pointerEvents = 'none';
       this.ring = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       svg.appendChild(this.ring);
+      this.ring2 = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+      this.ring2.setAttribute('class', 'equator');
+      svg.appendChild(this.ring2);
       host.ui.appendChild(svg);
       // pours keep landing after the press: the edit pass runs every tick
       core.sim.edit.always = true;
@@ -262,7 +269,10 @@ export class LevelScene implements Scene {
         return this.powers.gustStart(wx, wy);
       },
       dragMove: (sx, sy) => {
-        if (this.smashing) return void this.smashAt(sx, sy, false);
+        if (this.smashing) {
+          this.pickSmash(sx, sy);
+          return void this.smashAt(sx, sy, false);
+        }
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.brushAt) this.brushAt = [wx, wy];
         else this.powers.gustMove(wx, wy);
@@ -274,6 +284,7 @@ export class LevelScene implements Scene {
       },
       hover: (sx, sy) => {
         this.hoverWorld = camera.groundAt(sx, sy, this.heightAt).slice(0, 2) as [number, number];
+        if (this.editor?.tool === 'smash') this.pickSmash(sx, sy);
       },
       pan: (dx, dy) => {
         const [wx, wy] = camera.screenDeltaToWorld(dx, dy);
@@ -294,7 +305,6 @@ export class LevelScene implements Scene {
           return;
         }
         if (e.key.toLowerCase() === 'e' && this.editor?.tool === 'place') this.editor.rotate();
-        if (e.key.toLowerCase() === 'r') this.powers.summonStorm();
         if (e.key === 'Escape' && this.intro) this.director.cancel();
         if (e.key === ' ') {
           e.preventDefault();
@@ -350,7 +360,7 @@ export class LevelScene implements Scene {
     weather.holdNatural(70);
     const touch = matchMedia('(pointer: coarse)').matches;
     const look = touch ? 'Two fingers to look around.' : 'Right-drag to look around.';
-    setTimeout(() => this.hud.say(`The valley is quiet. Touch things; drag to make wind. Call a storm with ☁${touch ? '' : ' or R'}. ${look}`, 8), 800);
+    setTimeout(() => this.hud.say(`The valley is quiet. Touch things; drag to make wind. Swirl over water to raise a storm. ${look}`, 8), 800);
   }
 
   resize(renderW: number, renderH: number, cssW: number, cssH: number): void {
@@ -441,11 +451,6 @@ export class LevelScene implements Scene {
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     core.render();
 
-    hud.update(this.nature.value, this.nature.max, powers.stormReady(), this.nature.rate);
-    if (this.nature.gained >= 0.5) {
-      hud.gain(this.nature.gained);
-      this.nature.gained = 0;
-    }
     hud.setWind(powers.windTier());
     const goal = this.level.goal ?? 1;
     hud.setReclaim(this.reclaimed, goal);
@@ -682,7 +687,6 @@ export class LevelScene implements Scene {
       const at = camera.project(storm.x, storm.y, 0)[0] / Math.max(1, camera.viewportW);
       this.audio.thunder(0.1, 0.8, Math.max(0, Math.min(1, at)));
     }
-    this.nature.value = Math.max(this.nature.value, 40);
     hud.say('Thunder. A storm is coming — wait for it, or lean on it with the wind.', 40);
     d.confine(hx, hy, 40, 3, 18);
     await d.fly(hx, hy, 5, 2.5);
@@ -738,16 +742,50 @@ export class LevelScene implements Scene {
     return true;
   }
 
-  /** Sandbox: outline the brush on the ground (follows the terrain). */
+  /** Break tool: find the voxel under the cursor for the sphere outline (one pick in flight at a time). */
+  private pickSmash(sx: number, sy: number): void {
+    if (this.smashPicking) return;
+    this.smashPicking = true;
+    const { core } = this;
+    const { camera } = core;
+    core.renderer.pick((sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH).then((hit) => {
+      this.smashPicking = false;
+      this.smashHover = hit ? [(hit.cell % core.dims.w) + 0.5, Math.floor(hit.cell / core.dims.w) + 0.5, hit.z] : undefined;
+    }, ignoreTeardown);
+  }
+
+  /** Sandbox: outline the brush on the ground (follows the terrain); Break: the sphere it smashes, round the voxel picked. */
   private drawRing(): void {
     const ed = this.editor;
     const ring = this.ring;
     if (!ed || !ring) return;
+    const { camera } = this.core;
+    const ring2 = this.ring2!;
+    if (ed.tool === 'smash') {
+      const c = this.smashHover;
+      ring.parentElement!.style.display = c ? '' : 'none';
+      if (!c) return;
+      // a sphere seen from any side is a circle: its outline, plus its
+      // equator so it reads as a ball sitting in the world
+      const [cx, cy] = camera.project(c[0], c[1], c[2]);
+      const r = ed.radius * camera.zoom;
+      const out: string[] = [];
+      const eq: string[] = [];
+      for (let k = 0; k <= 48; k++) {
+        const a = (k / 48) * Math.PI * 2;
+        out.push(`${(cx + Math.cos(a) * r).toFixed(1)},${(cy + Math.sin(a) * r).toFixed(1)}`);
+        const [ex, ey] = camera.project(c[0] + Math.cos(a) * ed.radius, c[1] + Math.sin(a) * ed.radius, c[2]);
+        eq.push(`${ex.toFixed(1)},${ey.toFixed(1)}`);
+      }
+      ring.setAttribute('points', out.join(' '));
+      ring2.setAttribute('points', eq.join(' '));
+      return;
+    }
+    ring2.setAttribute('points', '');
     const at = this.brushAt ?? this.hoverWorld;
     const on = !!at && (!!EDIT_OP[ed.tool] || ed.tool === 'place');
     ring.parentElement!.style.display = on ? '' : 'none';
     if (!on) return;
-    const { camera } = this.core;
     const pts: string[] = [];
     if (ed.tool === 'place') {
       // the model's footprint where it would land

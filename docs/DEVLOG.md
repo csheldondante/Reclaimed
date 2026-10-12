@@ -2191,3 +2191,28 @@ everywhere 4.4 — about half the cost is the vote, half the bigger shader.
 Render-fields gains a veg read (binding 9). Not done: side walls under a
 softened edge keep their own material; stains and wetness are still per
 cell.
+
+## 2026-10-12 — round 27: merge strata; lightning near the click; storms from water swirls (Q7–Q10)
+
+Strata merged into main (the user validated it). Then:
+- Lightning (Q7, Q8): it used to take the highest point within 4 cells or
+  any metal within 40 (a bonus fading with distance), then arc back to the
+  tap — so near a tanker it struck far across the view. Now the candidates
+  are the column tops inside a bowl on the picked voxel (radius 6, lowest
+  point at the voxel, open upward), score = top + material draw (steel 5,
+  rust 4, water 1, stone −2, concrete/brick −0.5) − 0.25 per cell from the
+  tap; the arc goes to the clicked voxel. Free, 1 s cooldown. Checked: 3
+  cells from the garden tower it hits the tower's top (z 35 from a tap at
+  8); 4 from the chimney, the chimney; valley metal 4 off draws it, 12 off
+  doesn't.
+- Storms (Q10): the swirl that spins up a cyclone raises a lightning storm
+  at its centre when at least half its points are over water deeper than
+  0.3 (the level's ~1 s water read-back). The summon button, R and the
+  Nature meter are gone; the first cyclone over land hints at it. Checked
+  in the sandbox: a swirl over the pond made a storm and no cyclone, one
+  over sand a cyclone.
+- Break highlight (Q9): the ring drawn on the ground round the cursor
+  didn't match the smash, which is centred on the voxel picked. The Break
+  tool now picks under the cursor as it hovers (one pick in flight) and
+  draws the sphere: its outline (a circle, radius · zoom) and a dashed
+  equator through the voxel.

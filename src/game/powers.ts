@@ -4,9 +4,10 @@
 //   Tap elsewhere      → tactile response from whatever was touched
 //   Drag anywhere      → wind along the drag; near a storm it also steers it
 //   Hover              → a light breeze following the cursor
-//   Summon (R/button)  → a storm forms upwind and rolls over the view
-// Every power reads/writes only Weather, Nature, Globals (gusts/events) and
-// particle bursts — never simulation internals.
+//   Swirl              → a cyclone; over water, a lightning storm (round 27)
+// Every power reads/writes only Weather, Globals (gusts/events) and particle
+// bursts — never simulation internals. Nothing costs anything (round 27: no
+// Nature meter, no summon button).
 
 import type { Ambience } from '../audio/ambience';
 import type { Camera } from '../render/camera';
@@ -17,13 +18,9 @@ import type { Hud } from '../ui/hud';
 import { MAT } from '../world/materials';
 import { sfMat, sfZ } from '../world/layout';
 import type { Weather } from '../weather/weather';
-import { COSTS, type Nature } from './nature';
-
-const STORM_COOLDOWN = 25; // s between summons, on top of the Nature cost
 
 export interface PowersDeps {
   weather: Weather;
-  nature: Nature;
   audio: Ambience;
   /** absent on the title screen */
   hud?: Hud;
@@ -37,21 +34,38 @@ export interface PowersDeps {
   heightAt?: (x: number, y: number) => number;
   /** total birds ever flushed from a perch (GPU counter, async readback) */
   birdsFlushed: () => Promise<number>;
+  /** water depth on a column (a cached read-back, ~1 s old); absent: no water anywhere */
+  waterAt?: (x: number, y: number) => number;
 }
+
+/** water depth under a swirl point that counts as "over water" */
+const WET = 0.3;
+/** s between lightning strikes the player calls down */
+const STRIKE_COOLDOWN = 1;
+/** how far from the voxel tapped lightning may strike (the bowl's radius) */
+const STRIKE_R = 6;
+/** how much a material draws lightning (added to its height): metal most, stone least */
+const STRIKE_DRAW: Partial<Record<number, number>> = {
+  [MAT.Steel]: 5,
+  [MAT.Rust]: 4,
+  [MAT.Water]: 1,
+  [MAT.Stone]: -2,
+  [MAT.Concrete]: -0.5,
+  [MAT.Brick]: -0.5,
+};
 
 /** s between cyclones spun up within one drag */
 const SWIRL_COOLDOWN = 1.5;
 
 export class Powers {
   private lastStrike = -10;
-  private lastSummon = -STORM_COOLDOWN;
   private breeze: Gust = { x: 0, y: 0, radius: 7, strength: 0, dx: 1, dy: 0 };
   private cursor?: { x: number; y: number };
   /** the drag in progress: the segment drawn since the last frame is stamped into the wind field */
   private gust?: Gust & { lx: number; ly: number; vx: number; vy: number; t: number; ax: number; ay: number; sentX: number; sentY: number };
   /** how hard the player's wind is blowing, for audio (fades after a drag) */
   private windLevel = { strength: 0, x: 0, y: 0 };
-  private told = { lightning: false };
+  private told = { lightning: false, cyclone: false };
   /** a stroke the director is drawing for the player (intro), advanced per frame */
   private scripted?: { pts: [number, number][]; t: number; dur: number; done: () => void };
   /** player-action hooks (the intro waits on these) */
@@ -122,33 +136,6 @@ export class Powers {
     g.gusts = gusts;
   }
 
-  stormReady(): number {
-    const t = this.d.globals.time;
-    return Math.min((t - this.lastSummon) / STORM_COOLDOWN, this.d.nature.value / COSTS.storm);
-  }
-
-  summonStorm(): void {
-    const { weather, nature, hud, audio, globals } = this.d;
-    if (this.stormReady() < 1 || !weather.canSpawn()) {
-      audio.strain();
-      return;
-    }
-    nature.trySpend(COSTS.storm);
-    this.lastSummon = globals.time;
-    // aimed to roll over the middle of the view; it gathers at the upwind
-    // edge and announces itself at once with distant thunder from that side
-    const [tx, ty] = [this.d.camera.target[0], this.d.camera.target[1]];
-    const st = weather.spawnToward(tx, ty);
-    if (st) {
-      const at = this.d.camera.project(st.x, st.y, 0)[0] / Math.max(1, this.d.camera.viewportW);
-      audio.thunder(0.1, 0.8, Math.max(0, Math.min(1, at)));
-    }
-    if (!this.told.lightning) {
-      this.told.lightning = true;
-      setTimeout(() => hud?.say('A storm gathers at the edge of the valley, upwind. Tap beneath it for lightning.', 8), 3000);
-    }
-  }
-
   // ---- hover ----
   hover(x: number, y: number, dt: number): void {
     if (this.cursor && dt > 0) {
@@ -175,12 +162,12 @@ export class Powers {
     const y = Math.floor(hit.cell / this.d.dims.w) + 0.5;
     // every click is a little breath of wind pushing out from it (round 20)
     this.d.globals.events.push({ kind: EventKind.Ripple, x: wx, y: wy, radius: 6, strength: 5 });
-    // under a storm a tap is lightning — when Nature can pay for it. Taps
-    // never depend on Nature: otherwise it is an ordinary touch (clink, crack,
-    // grow; DECISIONS round 7)
+    // under a storm a tap is lightning — free, with a short cooldown (round
+    // 27: it no longer costs Nature); otherwise it is an ordinary touch
+    // (clink, crack, grow; DECISIONS round 7)
     const underStorm = weather.coverAt(x, y) > 0.3 || weather.coverAt(wx, wy) > 0.3;
-    if (underStorm && this.d.nature.value >= COSTS.lightning && this.d.globals.time - this.lastStrike >= 0.8) {
-      void this.lightning(hit.cell, sx, sy);
+    if (underStorm && this.d.globals.time - this.lastStrike >= STRIKE_COOLDOWN) {
+      void this.lightning(hit);
       return;
     }
     this.touch(hit, x, y, sx / Math.max(1, this.d.camera.viewportW));
@@ -261,38 +248,43 @@ export class Powers {
   }
 
   // ---- lightning ----
-  private async lightning(cell: number, sx: number, sy: number): Promise<void> {
-    const { nature, globals, hud, audio, dims } = this.d;
-    const tx = cell % dims.w;
-    const ty = Math.floor(cell / dims.w);
-    nature.trySpend(COSTS.lightning);
+  /**
+   * Where a tap's lightning strikes (round 27): near the voxel clicked, not
+   * across the map. The candidates are the column tops inside a bowl resting
+   * on that voxel — a sphere of STRIKE_R whose lowest point is the voxel,
+   * open upward above its middle (so a tall thing nearby is in reach however
+   * high it stands). It takes the highest, drawn to metal and shying from
+   * stone (but always to something rather than the air), and a little to the
+   * tap: a pylon a few cells off wins over the ground you clicked, a pylon
+   * across the valley doesn't.
+   */
+  private async lightning(hit: PickHit): Promise<void> {
+    const { globals, hud, audio, dims } = this.d;
+    const tx = hit.cell % dims.w;
+    const ty = Math.floor(hit.cell / dims.w);
+    const hz = hit.z;
     this.lastStrike = globals.time;
-    // where it strikes (round 20): it listens closely — the highest point
-    // within a few cells of the tap — but tall metal within ~40 cells draws
-    // it (a bonus fading with distance), so near a pylon or a tanker it goes
-    // there instead
     const surf = await this.d.readSurface();
     const top = (x: number, y: number) => (this.topAt ? this.topAt(x, y) : sfZ(surf[y * dims.w + x]));
     let bx = tx;
     let by = ty;
     let best = -Infinity;
-    const NEAR = 4;
-    const METAL = 40;
-    for (let y = Math.max(0, ty - METAL); y <= Math.min(dims.h - 1, ty + METAL); y++)
-      for (let x = Math.max(0, tx - METAL); x <= Math.min(dims.w - 1, tx + METAL); x++) {
+    const R = STRIKE_R;
+    for (let y = Math.max(0, ty - R); y <= Math.min(dims.h - 1, ty + R); y++)
+      for (let x = Math.max(0, tx - R); x <= Math.min(dims.w - 1, tx + R); x++) {
         const d = Math.hypot(x - tx, y - ty);
-        if (d > METAL) continue;
-        const m = sfMat(surf[y * dims.w + x]);
-        const metal = m === MAT.Rust || m === MAT.Steel;
-        if (d > NEAR && !metal) continue;
-        const score = top(x, y) + (metal ? 6 - 0.15 * d : 0);
+        if (d > R) continue;
+        const t = top(x, y);
+        // the bowl: at d from the middle it starts this high above the voxel
+        if (t < hz + R - Math.sqrt(R * R - d * d) && d > 0) continue;
+        const score = t + (STRIKE_DRAW[sfMat(surf[y * dims.w + x])] ?? 0) - 0.25 * d;
         if (score > best) {
           best = score;
           bx = x;
           by = y;
         }
       }
-    const bz = this.topAt ? this.topAt(bx, by) : sfZ(surf[by * dims.w + bx]);
+    const bz = top(bx, by);
     globals.events.push({ kind: EventKind.Lightning, x: bx + 0.5, y: by + 0.5, radius: 5, strength: 20 });
     // it blasts a crater in whatever it strikes — stone too (round 19): a
     // sphere at the strike point through the edit pass's break op
@@ -301,18 +293,15 @@ export class Powers {
     globals.flash = 1;
     const [px, py] = this.d.camera.project(bx + 0.5, by + 0.5, bz);
     hud?.bolt(px, py);
-    // drawn off to something else: it chains back from there to the tap,
-    // and sets what's there alight (round 20)
-    if (Math.hypot(bx - tx, by - ty) > 2.5) {
-      const tz = top(tx, ty);
-      const [qx, qy] = this.d.camera.project(tx + 0.5, ty + 0.5, tz);
+    // drawn to something beside the tap: it chains on from there to the
+    // voxel clicked, and sets what's there alight (round 20)
+    if (Math.hypot(bx - tx, by - ty) > 1.5 || bz - hz > 3) {
+      const [qx, qy] = this.d.camera.project(tx + 0.5, ty + 0.5, hz + 1);
       hud?.arc(px, py, qx, qy);
       globals.events.push({ kind: EventKind.Lightning, x: tx + 0.5, y: ty + 0.5, radius: 2, strength: 4 });
     }
     audio.thunder(1, 1, px / Math.max(1, this.d.camera.viewportW));
     this.d.particles.burst({ kind: PK.Chip, x: bx + 0.5, y: by + 0.5, z: bz + 0.5, count: 12, speed: 6, spread: 0.5 });
-    void sx;
-    void sy;
   }
 
   // ---- drag gesture: wind ----
@@ -339,7 +328,8 @@ export class Powers {
    * stayed within 2–14 cells of. Free (round 14): swirl again for another
    * (Weather keeps up to four at once). Within one drag a second one needs
    * SWIRL_COOLDOWN s (round 21: one long swirl spawned several by accident);
-   * a fresh press resets it.
+   * a fresh press resets it. Swirled mostly over water (round 27) it raises
+   * a lightning storm there instead — the only way to call one.
    */
   private checkSwirl(x: number, y: number): void {
     const now = performance.now() / 1000;
@@ -367,11 +357,32 @@ export class Powers {
     const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
     const r = pts.reduce((s, p) => s + Math.hypot(p.x - cx, p.y - cy), 0) / pts.length;
     if (r < 2 || r > 14) return;
+    const at = this.d.camera.project(cx, cy, 0)[0] / Math.max(1, this.d.camera.viewportW);
+    const wet = this.d.waterAt ? pts.filter((p) => this.d.waterAt!(p.x, p.y) > WET).length / pts.length : 0;
+    if (wet >= 0.5) {
+      this.lastCyclone = now;
+      this.swirl = [];
+      const st = this.d.weather.spawn(cx, cy);
+      if (!st) {
+        this.d.audio.strain();
+        return;
+      }
+      this.d.audio.thunder(0.35, 0.9, at);
+      if (!this.told.lightning) {
+        this.told.lightning = true;
+        setTimeout(() => this.d.hud?.say('The water rises into a storm. Tap beneath it for lightning.', 7), 1500);
+      }
+      return;
+    }
     if (this.d.weather.spawnCyclone(cx, cy, Math.sign(turn))) {
       this.lastCyclone = now;
       this.swirl = [];
-      this.d.audio.thunder(0.2, 0.5, this.d.camera.project(cx, cy, 0)[0] / Math.max(1, this.d.camera.viewportW));
+      this.d.audio.thunder(0.2, 0.5, at);
       this.onCyclone?.(cx, cy);
+      if (!this.told.cyclone && this.d.waterAt) {
+        this.told.cyclone = true;
+        setTimeout(() => this.d.hud?.say('Swirl over water to raise a storm.', 6), 2500);
+      }
     }
   }
 
