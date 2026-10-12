@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-12 — round 28 (session 4) — Q11–Q14
+
+- Stone smooth too; only rises above a threshold (1–3 blocks) ragged.
+- Hex grid for stone: only if it doesn't un-unify the model (for this
+  project) — so render-only or not at all.
+- Embers should light flammable things where they land.
+- Trash particles smaller; dirt / dark-brown particles a bit smaller.
+- Render-only rock: more jagged and natural, e.g. Voronoi bumps that blend
+  to the neighbouring material's height outside them — "aesthetically it
+  could look cool", worth a test.
+
 ## 2026-10-12 — round 27 (session 4) — Q7–Q10
 
 - Strata validated: "looks decent, feel free to merge… good enough for

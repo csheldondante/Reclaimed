@@ -31,6 +31,9 @@ struct Particle {
 // only the fireEmit entry uses these
 @group(0) @binding(12) var<storage, read> fire: array<f32>;
 @group(0) @binding(13) var<storage, read> oilDepth: array<f32>;
+// embers that land mark their column (x = tick + 1); fire.wgsl lights fuel
+// there (round 28). Every write is the same value, so races don't matter.
+@group(0) @binding(22) var sparkOut: texture_storage_2d<rgba32float, write>;
 
 const K_DUST: u32 = 1u;
 const K_LITTER: u32 = 2u;
@@ -400,7 +403,7 @@ fn fireEmit(@builtin(global_invocation_id) id: vec3<u32>) {
     // burning oil: thick, slow smoke that gathers into a cloud
     if (r2 < f * 0.03) { spawnFull(base + vec3<f32>(0.0, 0.0, 1.5), vec3<f32>(w * 0.2, 1.5), 32.0 + r1 * 16.0, K_SMOKE, SOOT, h ^ 77u, 0u, SMOKE_OILY); }
   } else if (r2 < f * 0.07) { spawn(base + vec3<f32>(0.0, 0.0, 1.5), vec3<f32>(w * 0.3, 1.2), 6.0 + r1 * 5.0, K_SMOKE, 0.0, h ^ 77u); }
-  if (r3 < f * 0.015) { spawn(base, vec3<f32>(w * 0.2 + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.0, 4.0 + r1 * 3.0), 2.0 + r2 * 1.5, K_EMBER, 0.0, h ^ 99u); }
+  if (r3 < f * 0.015) { spawn(base, vec3<f32>(w * 0.2 + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.0, 4.0 + r1 * 3.0), 4.0 + r2 * 2.0, K_EMBER, 0.0, h ^ 99u); }
 }
 
 // ---- CPU-requested bursts (clicks, strikes, chips, birds) ----
@@ -644,7 +647,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   } else if (kind == K_SMOKE || kind == K_ASH) {
     drag = 1.0; grav = -0.8;
   } else if (kind == K_EMBER) {
-    drag = 1.2; grav = -0.4;
+    // buoyant while hot, then cooling they sink and ride the wind down
+    // (round 28: where they land they can light what burns)
+    drag = 1.2; grav = select(-0.4, 3.0, life < 3.0);
   } else if (kind == K_CHIP || kind == K_SPLASH) {
     drag = 0.3; grav = 14.0;
   } else if (kind == K_FLAME) {
@@ -778,10 +783,19 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   if (!resting && kind != K_DEER && kind != K_RABBIT) {
     vel = vec3<f32>(vel.xy + (w - vel.xy) * min(drag * DT, 1.0), vel.z - grav * DT);
     if (kind == K_DUST || kind == K_LEAF) { vel.z *= 0.995; }
+    // (embers: air holds them up and down too — they rise a few cells, then
+    // drift down on the wind instead of climbing forever)
+    if (kind == K_EMBER) { vel.z *= 1.0 - min(1.8 * DT, 1.0); }
     pos += vel * DT;
   }
 
   if (kind == K_FIREFLY && pos.z <= ground + 0.3) { pos.z = ground + 0.3; vel.z = abs(vel.z); }
+  if (kind == K_EMBER && vel.z < 0.0 && pos.z <= ground) {
+    // landed: out in water, otherwise a spark on whatever is here
+    if (water[ci] < 0.02) { textureStore(sparkOut, cell, vec4<f32>(f32(G.tick + 1u), 0.0, 0.0, 0.0)); }
+    parts[id.x].p.w = 0.0;
+    return;
+  }
   if (kind == K_BIRD && pos.z <= ground + 0.2) {
     pos.z = ground + 0.2;
     vel.z = abs(vel.z);

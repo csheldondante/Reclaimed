@@ -31,7 +31,8 @@ export interface MaterialDef {
   /**
    * Soft-surface smoothing (round 10): the top of this material is drawn as a
    * slope toward neighbours whose height differs by at most this many cells
-   * (all four columns at a corner must allow it); 0 = hard steps (stone).
+   * (all four columns at a corner must allow it); 0 = hard steps (concrete,
+   * brick). Stone smooths too (round 28): only rises of over 2 stay sheer.
    */
   smooth: number;
   /**
@@ -93,7 +94,7 @@ const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
 
 export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'air', albedo: [0, 0, 0], state: MatState.Empty },
-  { ...NONE, name: 'stone', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.25 },
+  { ...NONE, name: 'stone', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.25, smooth: 2 },
   { ...NONE, name: 'soil', albedo: [0.45, 0.36, 0.27], state: MatState.Granular, reposeDry: 1.4, reposeWet: 1, strength: 0.2, growthCap: 5, suitability: 1, porosity: 0.6, smooth: 2, washMobility: 0.6, washFlow: 0.12 },
   { ...NONE, name: 'sand', albedo: [0.72, 0.65, 0.5], state: MatState.Granular, reposeDry: 1, reposeWet: 1, strength: 0.1, growthCap: 2.5, suitability: 0.4, porosity: 0.5, smooth: 2, windLift: 14, airborne: 0.15, washMobility: 1, washFlow: 0.08 },
   { ...NONE, name: 'rubble', albedo: [0.44, 0.41, 0.38], state: MatState.Granular, reposeDry: 1.7, reposeWet: 1.5, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3, smooth: 1, washMobility: 0.25, washFlow: 0.3 },

@@ -87,6 +87,7 @@ export class ParticleSystem implements SimSystem {
       17: 'tex',
       18: 'tex',
       21: 'tex',
+      22: 'stex',
     } as const;
     this.emitK = makeCompute(device, 'particles-emit', parts, spec, 'emit');
     this.burstK = makeCompute(device, 'particles-burst', parts, spec, 'bursts');
@@ -122,6 +123,7 @@ export class ParticleSystem implements SimSystem {
       17: world.driftView,
       18: world.editStateView,
       21: world.bodyProjView,
+      22: world.sparkView,
     };
     this.group = makeBindGroup(device, 'particles', this.emitK.layout, bufs);
     this.groupBurst = makeBindGroup(device, 'particles', this.burstK.layout, bufs);

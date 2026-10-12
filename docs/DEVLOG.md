@@ -2216,3 +2216,30 @@ Strata merged into main (the user validated it). Then:
   tool now picks under the cursor as it hovers (one pick in flight) and
   draws the sphere: its outline (a circle, radius · zoom) and a dashed
   equator through the voxel.
+
+## 2026-10-12 — round 28: smooth faceted stone, embers that light fires, smaller debris (Q11–Q14)
+
+- Stone (Q11) joins the soft-surface smoothing with a threshold of 2: rises
+  of 1–2 cells become slopes, taller ones stay sheer. Render-only (the
+  smoothing reads `smooth`; nothing in the sim does).
+- Rock facets (Q14, step 1): stone faces are split into Voronoi cells
+  (scale 1.25 per cell, tops in xy, walls along-and-up) that each tilt the
+  lighting normal by up to ±0.35 and vary the tone ±10 %, with a dark crack
+  where two meet (F2 − F1 < 0.09). An outcrop that drew as stepped cubes now
+  reads as a cracked rock slab. Silhouettes are unchanged; bumps that rise
+  out of the surface would need a per-pixel height march (open).
+- Draw (valley default view, alternating runs): 4.2 → 4.65 ms for both.
+- Embers (Q13): drag was horizontal only, so an ember's launch speed was
+  never damped and its buoyancy kept it climbing (sampled at z ~30, still
+  rising 6–7 cells/s) until it died in the air — none ever landed. Now
+  vertical drag 1.8/s; buoyant for the first 1–3 s, then they sink (3
+  cells/s²) and ride the wind down (life 4–6 s). Particles and fire are
+  both at the 8-storage-buffer limit, so a landing is written to a new
+  storage texture `sparkTex` (x = tick + 1; idempotent, no atomics), and
+  fire.wgsl lights fuel where one landed last tick with chance
+  0.35 × fuel × dryness × (1 − rain). Checked: ~235 columns got embers
+  around a valley woodland fire; a spark written onto planted, dry ground
+  lit it at once. Not tuned against a real wildfire — watch for runaway
+  forest fires.
+- Debris (Q14): litter 0.28 → 0.18 half-size, grime clumps and ground dust
+  about a third smaller.

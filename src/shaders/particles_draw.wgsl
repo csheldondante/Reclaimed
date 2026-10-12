@@ -49,16 +49,16 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   var soft = 0.0;
   let fade = clamp(P.p.w / 1.5, 0.0, 1.0);
   if (kind == 1u && P.m.w == 1u) { // grime: dark tarry clumps with sickly flecks (round, slightly see-through)
-    size = 0.22 + sr * 0.1;
+    size = 0.14 + sr * 0.07; // (round 28: smaller)
     col = vec4<f32>(mix(vec3<f32>(0.11, 0.1, 0.08), vec3<f32>(0.34, 0.31, 0.12), sr2 * sr2), 0.78);
   } else if (kind == 1u) { // dust: the colour of the ground it came from, darker when carrying pollution
     // round, soft-edged and see-through (round 13: square opaque grains read as gravel)
-    size = 0.2 + sr * 0.12;
+    size = 0.15 + sr * 0.09; // (round 28: smaller)
     col = vec4<f32>(mix(dustColour(P.m.w), vec3<f32>(0.52, 0.48, 0.38), clamp(P.v.w * 60.0, 0.0, 1.0)), 0.42);
     // settled dust lies faintly on the ground
     if ((P.m.z & 1u) != 0u) { col = vec4<f32>(col.rgb * 0.85, 0.2); size *= 0.8; }
   } else if (kind == 2u) { // litter: faded plastics, paper
-    size = 0.28;
+    size = 0.18; // (round 28: was 0.28)
     let k = u32(sr * 5.0);
     var c = vec3<f32>(0.8, 0.78, 0.72);
     if (k == 1u) { c = vec3<f32>(0.42, 0.55, 0.68); } else if (k == 2u) { c = vec3<f32>(0.7, 0.36, 0.32); } else if (k == 3u) { c = vec3<f32>(0.45, 0.55, 0.38); }

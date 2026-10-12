@@ -198,6 +198,7 @@ where pieces turn to particles on impact is P3.
 | moisture | f32 0..1 | moisture | material, ecology, fire, particles, renderfields |
 | fire | f32 0..1 | fire | oil (burns), ecology (burns), structure (heat, waste), particles (flames), renderfields (glow), stats |
 | veg | f32 stage 0..5 | ecology (+ particles may plant 0 → 0.3: bird seeds) | most systems |
+| sparkTex | rgba32f per column: x = tick + 1 of the last ember landing | particles | fire |
 | cornerTex | rgba32f per grid point: x soft-ground height, y water, z drift (−1 = not smoothed), w 1 where the four columns differ in top material or plant cover (soft borders, render.wgsl `edgeLook`) | renderfields | draw |
 | particles / particleCounters | 48-byte ring + atomic head | particles | draw |
 | renderFields | vec4 (shadow z, moisture, fire glow, flow) | renderfields | draw |

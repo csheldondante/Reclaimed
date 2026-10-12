@@ -107,6 +107,9 @@ export class WorldGpu {
   /** smoothed soft-ground corner heights (rgba32float, one texel per grid point; x = height or -1) */
   readonly cornerTex: GPUTexture;
   readonly cornerView: GPUTextureView;
+  /** where embers landed (rgba32float per column, x = tick + 1 of the last landing; particles write, fire reads) */
+  readonly sparkTex: GPUTexture;
+  readonly sparkView: GPUTextureView;
   /** f32 per column: 1 = flowers in bloom, < 1 = shed by the wind and regrowing (particles.wgsl petalEmit) */
   readonly petals: GPUBuffer;
   /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
@@ -197,6 +200,9 @@ export class WorldGpu {
     this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
     this.textures.push(this.cornerTex);
     this.cornerView = this.cornerTex.createView();
+    this.sparkTex = device.createTexture({ label: 'sparks', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST });
+    this.textures.push(this.sparkTex);
+    this.sparkView = this.sparkTex.createView();
     this.windFieldNextView = this.windFieldNext.createView();
     const dsize = { width: this.w, height: this.h };
     this.drift = device.createTexture({ label: 'drift', size: dsize, format: 'rgba32float', usage: tusage });

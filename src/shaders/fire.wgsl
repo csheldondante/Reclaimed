@@ -6,7 +6,8 @@
 // dryness, and with the wind blowing *from* that neighbour. Water, rain and
 // wet ground put fire out — except oil floating on water, which burns on the
 // water. Woodland burns even on damp ground once lit (DECISIONS round 5).
-// Lightning ignites anything with fuel.
+// Lightning ignites anything with fuel; so, sometimes, does an ember landing
+// on it (round 28: sparkTex, written by particles).
 // Consumers (each burns its own resource from `fire`): oil system (oil),
 // ecology (plants), structure (trash; heat damage to concrete/steel),
 // particles (flames, embers, smoke), render fields (glow).
@@ -19,6 +20,9 @@
 @group(0) @binding(9) var<storage, read> surface: array<u32>;
 // oil sealed in closed tanks also burns (inside the shell) once lit
 @group(0) @binding(10) var<storage, read> stored: array<vec2<f32>>;
+@group(0) @binding(22) var sparkTex: texture_2d<f32>;
+/** chance an ember landing on dry fuel lights it (scaled by the fuel, less on damp ground) */
+const EMBER_CATCH: f32 = 0.35;
 
 const MAT_TRASH_F: u32 = 12u;
 
@@ -66,6 +70,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     f += (min(fuel, 1.0) * 0.04 - 0.015) - damp * 0.125;
     if (fuel < 0.05) { f -= 0.04; }
   } else if (fuel > 0.1 && wetGround < 0.05) {
+    // an ember landed here last tick
+    let sk = textureLoad(sparkTex, p, 0).x;
+    if (sk > 0.0 && f32(G.tick) - sk < 1.5 && r < EMBER_CATCH * min(fuel, 1.0) * (1.0 - smoothstep(0.3, 0.8, wet)) * (1.0 - rain)) { f = 0.5; }
     // catch from burning neighbours (wind carries flames downwind)
     var heat = 0.0;
     for (var k = 0u; k < 4u; k++) {

@@ -449,6 +449,45 @@ fn edgeLook(p: vec3<f32>, own: u32, ownV: f32) -> EdgeLook {
   return EdgeLook(best, vs);
 }
 
+// ---- faceted rock (round 28, a test) -----------------------------------------
+// Stone doesn't read as rock when every face is one flat plane: each face is
+// split into Voronoi facets (about a cell across) that catch the light at
+// their own small tilt, with dark cracks between them. Shading only — the
+// silhouette is still the voxels.
+
+/** Voronoi on a face: x = distance to the nearest seed, y = to the second, zw = the nearest seed's cell. */
+fn voronoi2(p: vec2<f32>, salt: i32) -> vec4<f32> {
+  let i0 = vec2<i32>(floor(p));
+  var f1 = 9.0;
+  var f2 = 9.0;
+  var id = vec2<f32>(0.0);
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let c = i0 + vec2<i32>(x, y);
+      let s = vec2<f32>(c) + vec2<f32>(randv(vec3<i32>(c, salt)), randv(vec3<i32>(c, salt + 17)));
+      let d = length(p - s);
+      if (d < f1) { f2 = f1; f1 = d; id = vec2<f32>(c); } else if (d < f2) { f2 = d; }
+    }
+  }
+  return vec4<f32>(f1, f2, id);
+}
+
+/** Rock facets: the tilted normal and how much to darken (cracks, facet tone). */
+fn rockFacet(wpos: vec3<f32>, nrm: vec3<f32>) -> vec4<f32> {
+  // the face's own 2D coordinates (tops: xy; sides: along the wall and up)
+  var a: vec2<f32>;
+  var salt = 301;
+  if (abs(nrm.z) > 0.5) { a = wpos.xy; } else if (abs(nrm.x) > 0.5) { a = vec2<f32>(wpos.y, wpos.z * 1.3); salt = 333; } else { a = vec2<f32>(wpos.x, wpos.z * 1.3); salt = 367; }
+  let v = voronoi2(a * 1.25, salt);
+  let fid = vec3<i32>(vec2<i32>(v.zw), salt);
+  let tilt = vec3<f32>(randv(fid + vec3<i32>(0, 0, 5)) - 0.5, randv(fid + vec3<i32>(0, 0, 9)) - 0.5, randv(fid + vec3<i32>(0, 0, 13)) - 0.5) * 0.7;
+  let n = normalize(nrm + tilt - nrm * dot(tilt, nrm));
+  // a crack where two facets meet; each facet a slightly different tone
+  let crack = 1.0 - smoothstep(0.02, 0.09, v.y - v.x);
+  let tone = 0.9 + 0.2 * randv(fid + vec3<i32>(0, 0, 21));
+  return vec4<f32>(n, tone * (1.0 - 0.45 * crack));
+}
+
 @fragment
 fn fsBox(in: VOut) -> FOut {
   // derivatives first: canopy fragments may discard below
@@ -673,6 +712,12 @@ fn fsBox(in: VOut) -> FOut {
     if (crack) { alb *= 0.35; } else if (chipped) { alb *= 0.72; }
   }
 
+  // rock: Voronoi facets catch the light at their own tilt (round 28)
+  if (dmat == MAT_STONE && (flags & 2u) == 0u) {
+    let rf = rockFacet(in.wpos, in.nrm);
+    lnrm = rf.xyz;
+    alb *= rf.w;
+  }
   var col = alb * lighting(lpos, lnrm);
   // life lens (hold Space): what keeps life out, around the cursor
   if (G.lens.w > 0.0 && in.nrm.z > 0.5) {
