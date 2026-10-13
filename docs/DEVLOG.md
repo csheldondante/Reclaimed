@@ -2299,3 +2299,30 @@ that it slumps as if unplanted. Columns standing over all four neighbours
 (pre-storm 13 by > 2.5, 3 by > 4, mostly built things): before 49 / 12,
 after 38 / 4 and 21 / 3 (two runs).
 
+## 2026-10-13 — round 30: holes through the ground (Q17)
+
+Measured by drawing with a magenta clear colour (wrap `core.dayNight.light`)
+and counting magenta pixels in four zoomed views (zoom 22, 900×700).
+Before: 4127 / 4311 / 6386 / 7957. Two causes:
+
+1. Dust/sand sheets (MAT_DRIFT boxes) drew no sides: they were assumed to
+   taper into the ground. Where a sheet ends at a step (its corner left at
+   the box height, SHEET_STEP) or beside ground drawn lower through its own
+   soft corner, the strip under the sheet's edge was empty — the zigzag
+   along cliff tops. Sheets now draw that side (`sheetGap`: corner -1, or the
+   cell across has no sheet of its own deeper than 0.12 and its drawn corner
+   is lower), up to the sheet's corner levels and never below its base.
+   Drawing every sheet side fixed it but tripled draw (5.6 → 16.2 ms default
+   view: hidden sides shaded at full cost); testing against the ground
+   *under* the sheet instead of the neighbour's surface cost 28 ms.
+2. Carved rock (round 29): a side is open if the neighbour is lower, but the
+   carve ran the full height of it; a ray leaving below the neighbour's
+   ground met that neighbour's facing side, which isn't drawn (hidden behind
+   this box), and showed the background. Sides now open only above the
+   neighbour's ground (`RockBox.nt`, from surface + driftTex), and a rise the
+   smoothing draws as a slope (≤ stone `smooth`) isn't carved at all.
+
+After: 210 / 58 / 461 / 235 (carving off: 197 / 43 / 452 / 235; the rest is
+mostly sky past the map edge and a few seams between soft tops). Draw
+(1600×900): default view 5.6 → 6.8 ms, zoomed gorge 6.8 → 8.1 ms.
+

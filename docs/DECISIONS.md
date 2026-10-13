@@ -10,6 +10,10 @@ each was implemented.
 - License: noncommercial only — PolyForm Noncommercial 1.0.0. The user may
   sell it later (cheap, or free with ads on phones) if it turns out fun.
 - Sediment spikes in rain storms again (seen on mobile): fix.
+- Tiles that don't render (see-through to the background; screenshot of a rock
+  outcrop on desktop): fix. Frame rate low on the phone (may be the hardware).
+- Plants raise the angle of repose — a planted hill whose plants die can
+  slide (the user liked this consequence of Q16).
 - Next serious goals: a puzzle variant (camera limited to the
   neighbourhood of green; green spreads only by seeds blown onto fertile
   ground), a skill for building puzzles (gates that need a skill, plus the

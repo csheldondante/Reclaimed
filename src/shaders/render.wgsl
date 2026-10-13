@@ -127,6 +127,18 @@ fn sheetOr(m: u32, v: vec2<i32>, z: f32) -> f32 {
   return waterOr(v, z);
 }
 
+/**
+ * Does a drift sheet's edge at corner v stand clear of the ground of the
+ * neighbour n beside it? Its corner was left at its box (a step), or n has no
+ * sheet of its own (sheets share their corners) and n's top is drawn lower there.
+ */
+fn sheetGap(v: vec2<i32>, n: vec2<i32>) -> bool {
+  let d = driftCornerAt(v);
+  if (d < 0.0) { return true; }
+  if (!inMap(n) || textureLoad(driftTex, n, 0).x > 0.12) { return false; }
+  return d > cornerOr(v, groundTopR(n)) + 0.02;
+}
+
 fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let face = vi / 6u;
   let uv = QUAD[vi % 6u];
@@ -136,8 +148,26 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let soft = (b.flags & FLAG_TOP_R) != 0u && (b.flags & (FLAG_VEG_R | FLAG_DETAIL)) == 0u && MATS[b.mat].look.x > 0.0;
   // water and drifted dust: smooth sheets through their corner levels
   let liquid = b.mat == MAT_WATER || b.mat == MAT_DRIFT;
-  // a drift sheet tapers into the ground: no box sides
-  if (b.mat == MAT_DRIFT && face > 0u) { return false; }
+  // a drift sheet tapers into the ground where it can (its corners meet the
+  // neighbour's: no sides there); where it stops at a step (a corner left at
+  // the box's height) it shows that side, up to its corner levels — without
+  // it the background showed through under the sheet's edge (round 30)
+  if (b.mat == MAT_DRIFT && face > 0u) {
+    // (sheets are one cell: the edge's corners and the cell across it)
+    var e0 = vec2<i32>(i32(b.x), i32(b.y));
+    var e1 = e0;
+    var nb = e0;
+    if (face == 1u) {
+      e0 = vec2<i32>(select(i32(b.x), i32(b.x) + 1, sxn > 0.0), i32(b.y));
+      e1 = e0 + vec2<i32>(0, 1);
+      nb = vec2<i32>(i32(b.x) + select(-1, 1, sxn > 0.0), i32(b.y));
+    } else {
+      e0 = vec2<i32>(i32(b.x), select(i32(b.y), i32(b.y) + 1, syn > 0.0));
+      e1 = e0 + vec2<i32>(1, 0);
+      nb = vec2<i32>(i32(b.x), i32(b.y) + select(-1, 1, syn > 0.0));
+    }
+    if (!sheetGap(e0, nb) && !sheetGap(e1, nb)) { return false; }
+  }
   let c0 = vec2<i32>(i32(b.x), i32(b.y));
   var p: vec3<f32>;
   var n: vec3<f32>;
@@ -165,13 +195,13 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
     p = vec3<f32>(fx, b.y + uv.x * b.sy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(sxn, 0.0, 0.0);
     if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(fx), i32(p.y)), b.z1); }
-    if (liquid && uv.y > 0.5) { p.z = sheetOr(b.mat, vec2<i32>(i32(fx), i32(p.y)), b.z1); }
+    if (liquid && uv.y > 0.5) { p.z = max(sheetOr(b.mat, vec2<i32>(i32(fx), i32(p.y)), b.z1), b.z0); }
   } else {
     let fy = select(b.y, b.y + b.sy, syn > 0.0);
     p = vec3<f32>(b.x + uv.x * b.sx, fy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(0.0, syn, 0.0);
     if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(p.x), i32(fy)), b.z1); }
-    if (liquid && uv.y > 0.5) { p.z = sheetOr(b.mat, vec2<i32>(i32(p.x), i32(fy)), b.z1); }
+    if (liquid && uv.y > 0.5) { p.z = max(sheetOr(b.mat, vec2<i32>(i32(p.x), i32(fy)), b.z1), b.z0); }
   }
   var off = vec3<f32>(0.0);
   if ((b.flags & FLAG_VEG_R) != 0u) {
@@ -519,24 +549,18 @@ fn rockCut(p: vec3<f32>) -> f32 {
   return ROCK_CARVE * smoothstep(0.2, 0.85, vnoise3(p * 1.1));
 }
 
-struct RockBox { lo: vec3<f32>, hi: vec3<f32>, open: u32, h: vec4<f32> };
+// nt: the top of the ground in each neighbour (+x, -x, +y, -y). A side is
+// only open to the air above it: below, the neighbour's facing side isn't
+// drawn (hidden behind this box), so a ray leaving there would show the
+// background through the rock (round 30: holes between stone columns)
+struct RockBox { lo: vec3<f32>, hi: vec3<f32>, open: u32, h: vec4<f32>, nt: vec4<f32> };
 
-/** Inside the carved rock by this much at p (< 0: in the air cut away). */
-fn rockIn(rb: RockBox, p: vec3<f32>) -> f32 {
-  var d = 1e3;
-  if ((rb.open & 1u) != 0u) {
-    let f = clamp(p.xy - rb.lo.xy, vec2<f32>(0.0), vec2<f32>(1.0));
-    d = min(d, mix(mix(rb.h.x, rb.h.y, f.x), mix(rb.h.z, rb.h.w, f.x), f.y) - p.z);
-  }
-  if ((rb.open & 4u) != 0u) { d = min(d, rb.hi.x - p.x); }
-  if ((rb.open & 8u) != 0u) { d = min(d, p.x - rb.lo.x); }
-  if ((rb.open & 16u) != 0u) { d = min(d, rb.hi.y - p.y); }
-  if ((rb.open & 32u) != 0u) { d = min(d, p.y - rb.lo.y); }
-  return d - rockCut(p);
+fn groundTopR(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return 0.0; }
+  return sfZ(surface[colIdxI(q)]) + textureLoad(driftTex, q, 0).x;
 }
 
-/** March into a stone box from the face point: vec4(hit, 1) or w = 0 (missed: the air). */
-fn rockMarch(in: VOut, flags: u32) -> vec4<f32> {
+fn rockBox(in: VOut, flags: u32) -> RockBox {
   var rb: RockBox;
   rb.lo = in.bmin;
   rb.hi = in.bmin + in.bsize;
@@ -546,16 +570,43 @@ fn rockMarch(in: VOut, flags: u32) -> vec4<f32> {
   rb.open = open;
   let c = vec2<i32>(i32(rb.lo.x), i32(rb.lo.y));
   rb.h = vec4<f32>(cornerOr(c, rb.hi.z), cornerOr(c + vec2<i32>(1, 0), rb.hi.z), cornerOr(c + vec2<i32>(0, 1), rb.hi.z), cornerOr(c + vec2<i32>(1, 1), rb.hi.z));
+  rb.nt = vec4<f32>(groundTopR(c + DIRS[0]), groundTopR(c + DIRS[1]), groundTopR(c + DIRS[2]), groundTopR(c + DIRS[3]));
+  // a rise the smoothing draws as a slope isn't a rock face: only sheer
+  // rises are carved (carving the slopes opened seams between the tops)
+  let sm = MATS[MAT_STONE].look.x;
+  for (var k = 0; k < 4; k++) { if (rb.hi.z - rb.nt[k] <= sm + 0.01) { rb.nt[k] = 1e9; } }
+  return rb;
+}
+
+/** Inside the carved rock by this much at p (< 0: in the air cut away). */
+fn rockIn(rb: RockBox, p: vec3<f32>) -> f32 {
+  var d = 1e3;
+  if ((rb.open & 1u) != 0u) {
+    let f = clamp(p.xy - rb.lo.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+    d = min(d, mix(mix(rb.h.x, rb.h.y, f.x), mix(rb.h.z, rb.h.w, f.x), f.y) - p.z);
+  }
+  if ((rb.open & 4u) != 0u && p.z > rb.nt.x) { d = min(d, rb.hi.x - p.x); }
+  if ((rb.open & 8u) != 0u && p.z > rb.nt.y) { d = min(d, p.x - rb.lo.x); }
+  if ((rb.open & 16u) != 0u && p.z > rb.nt.z) { d = min(d, rb.hi.y - p.y); }
+  if ((rb.open & 32u) != 0u && p.z > rb.nt.w) { d = min(d, p.y - rb.lo.y); }
+  return d - rockCut(p);
+}
+
+/** March into a stone box from the face point: vec4(hit, 1) or w = 0 (missed: the air). */
+fn rockMarch(in: VOut, flags: u32) -> vec4<f32> {
+  let rb = rockBox(in, flags);
+  let open = rb.open;
   let dir = -normalize(CAM.eye.xyz);
   var t = 0.0;
   for (var i = 0; i < 20; i++) {
     let p = in.wpos + dir * t;
     // left the box: into the air through an open face, or into solid stuff
     // (a neighbour, the ground) through a closed one
-    if (p.x > rb.hi.x) { if ((open & 4u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
-    if (p.x < rb.lo.x) { if ((open & 8u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
-    if (p.y > rb.hi.y) { if ((open & 16u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
-    if (p.y < rb.lo.y) { if ((open & 32u) != 0u) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    // (an open side only leads into the air above the neighbour's ground)
+    if (p.x > rb.hi.x) { if ((open & 4u) != 0u && p.z > rb.nt.x) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    if (p.x < rb.lo.x) { if ((open & 8u) != 0u && p.z > rb.nt.y) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    if (p.y > rb.hi.y) { if ((open & 16u) != 0u && p.z > rb.nt.z) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
+    if (p.y < rb.lo.y) { if ((open & 32u) != 0u && p.z > rb.nt.w) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
     if (p.z < rb.lo.z) { return vec4<f32>(p, 2.0); }
     let s = rockIn(rb, p);
     if (s >= 0.0) { return vec4<f32>(p, select(1.0, 2.0, i > 0)); }
@@ -566,14 +617,7 @@ fn rockMarch(in: VOut, flags: u32) -> vec4<f32> {
 
 /** The carved surface's normal at p (outward). */
 fn rockNormal(in: VOut, flags: u32, p: vec3<f32>) -> vec3<f32> {
-  var rb: RockBox;
-  rb.lo = in.bmin;
-  rb.hi = in.bmin + in.bsize;
-  var open = (~flags) & (4u | 8u | 16u | 32u);
-  if ((flags & 1u) != 0u && (flags & 64u) == 0u) { open |= 1u; }
-  rb.open = open;
-  let c = vec2<i32>(i32(rb.lo.x), i32(rb.lo.y));
-  rb.h = vec4<f32>(cornerOr(c, rb.hi.z), cornerOr(c + vec2<i32>(1, 0), rb.hi.z), cornerOr(c + vec2<i32>(0, 1), rb.hi.z), cornerOr(c + vec2<i32>(1, 1), rb.hi.z));
+  let rb = rockBox(in, flags);
   let e = 0.04;
   let s0 = rockIn(rb, p);
   let g = vec3<f32>(rockIn(rb, p + vec3<f32>(e, 0.0, 0.0)) - s0, rockIn(rb, p + vec3<f32>(0.0, e, 0.0)) - s0, rockIn(rb, p + vec3<f32>(0.0, 0.0, e)) - s0);
