@@ -54,6 +54,7 @@ user) · `deferred` (agreed for later).
 | Q16 | Sediment spikes again: columns get super high during rain storms (seen on mobile) | S | done (this commit): planted columns took in mud and never slumped — rain lays alternating thin layers (mud, dust from the air), so the top interval stayed ~1 deep and held() never let go; roots now hold a slope at most 1 cell steeper than the repose (HOLD_STEEP). Reproduced on desktop too |
 | Q17 | Some tiles don't render: you see straight through to the background (rock sections; on desktop too) | M | done (this commit): two causes. (1) Dust/sand sheets had no sides, assuming they always taper; where one ends at a step (or beside ground drawn lower) the strip under its edge was empty — sheets now show that side (sheetGap). (2) Carved rock: a ray leaving a side below the neighbour's ground, where that neighbour's facing side isn't drawn, now counts as a hit, and rises the smoothing draws as slopes aren't carved. Background pixels in 4 zoomed views: 4127 / 4311 / 6386 / 7957 → 210 / 58 / 461 / 235 (the rest is mostly sky past the map edge) |
 | Q18 | Frame rate is low on the phone | M | open: phones get the `high` tier like desktop; compare `?q=low` on the device and the perf overlay, then pick a default tier for phones |
+| Q19 | Loose ground lying higher than the rock beside it should erode/collapse down to the rock's top or below (Q17's sheet sides are a fine stopgap) | M | open |
 
 ## Round 22 (2026-10-11, session 4)
 

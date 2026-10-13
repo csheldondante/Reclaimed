@@ -14,6 +14,13 @@ each was implemented.
   outcrop on desktop): fix. Frame rate low on the phone (may be the hardware).
 - Plants raise the angle of repose — a planted hill whose plants die can
   slide (the user liked this consequence of Q16).
+- Story arc for the puzzle game, three levels: (1) the valley as a lab that
+  made a virus — biohazard signs on the tanks, ruined military vehicles
+  forming a quarantine barrier, evidence of flight/escape; (2) the virus
+  escaping quarantine; (3) the city wiped out by plague.
+- Proposed reach rule (user): influence extends around the green by a
+  range based on its size (~1.5× the dimension across it); growth only on
+  fertile soil and only by spreading seeds.
 - Next serious goals: a puzzle variant (camera limited to the
   neighbourhood of green; green spreads only by seeds blown onto fertile
   ground), a skill for building puzzles (gates that need a skill, plus the
