@@ -109,6 +109,8 @@ The batch now (M), then the larger work (N) after an architecture review.
 | R2 | Story levels keep a Free play mode (old rules); the built levels are in the sandbox's load list | S | done (this commit, branch `story`) |
 | R3 | A level teaches its skills through gates, then the goal: reach the lab / make the lab itself green | M | open (with N4) |
 | R4 | Buried bonus seeds to find: uncovered, washed downstream, carried to the next level's river to seed new green (N5) | M | open |
+| R6 | Gate library + validator: a level is a DAG of regions and gates (barrier prefab + key); headless tests per gate — the key opens it, ambient weather and every other ability don't; abilities are never locked, gates teach them | M | open (with R3/N4) |
+| X1 | Spin-off: disasters-only city game (meteors, floods, volcanoes, wind, fire, aliens), a full city reacting to disasters — a fork in its own repo | L+ | idea; awaiting go-ahead |
 | R5 | Story arc: valley = the lab that made the virus (biohazard signs on the tanks, ruined military vehicles as a quarantine barrier, signs of flight); then the escape from quarantine (highway); then the city wiped out by plague (N6, C7, C9) | L | open |
 | N6 | Story through environment: the valley re-themed as a biological research base (biohazard sign, lab); highway barricades (quarantine); city tents (plague) | M | with C7/C9 |
 | N7 | Red sludge: a third liquid (dense, toxic) | M | open |

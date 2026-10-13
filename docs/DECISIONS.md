@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-13 — round 31 (session 5) — gates and a spin-off
+
+- Levels are a DAG of gates: regions separated by barriers green can't
+  cross until a key clears them (dust → wind; packed trash / polluted soil
+  → water erodes and carries it off; a retaining wall → crack it to bury
+  the heap in soil). Keys are abilities or environmental features.
+- Abilities are never locked: every one works from the start, the player
+  just doesn't know them all yet. Gates teach them (discovery), so each
+  gate must hold against every ability but its key(s).
+- Spin-off idea: a disasters-only city game (meteors, floods, volcanoes,
+  wind, fire, maybe killer aliens) with a full city that responds to
+  disasters — a fork of this project, not part of Reclaimed.
+
 ## 2026-10-13 — round 30 (session 5) — story rules
 
 - Creep: slow, through the same seed system — light wind carries seeds onto
