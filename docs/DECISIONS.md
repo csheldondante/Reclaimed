@@ -10,11 +10,18 @@ each was implemented.
   → water erodes and carries it off; a retaining wall → crack it to bury
   the heap in soil). Keys are abilities or environmental features.
 - Abilities are never locked: every one works from the start, the player
-  just doesn't know them all yet. Gates teach them (discovery), so each
-  gate must hold against every ability but its key(s).
+  just doesn't know them all yet. It should feel like a toolkit of fun
+  abilities, with obstacles that teach the mechanics.
+- Not "only the intended key": a gate opens to anything that physically
+  clears it (a flood washes away what wind blows away). Abilities are
+  taught by obstacles only one of them can clear (only fire burns a
+  thicket, only a flood shifts packed trash). Gates still mustn't open by
+  themselves (ambient weather alone).
 - Spin-off idea: a disasters-only city game (meteors, floods, volcanoes,
   wind, fire, maybe killer aliens) with a full city that responds to
-  disasters — a fork of this project, not part of Reclaimed.
+  disasters — a fork of this project, not part of Reclaimed. It's the
+  arcade version: fun mayhem; Reclaimed stays chill and relaxing.
+  Working title: "FEMA Mayhem".
 
 ## 2026-10-13 — round 30 (session 5) — story rules
 
