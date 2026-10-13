@@ -4,6 +4,7 @@ import type { Ambience } from '../audio/ambience';
 import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
 import { Director } from '../game/director';
+import { Reach } from '../game/reach';
 import { levelById, type LevelDef } from '../game/levels';
 import { DIFFICULTY_LEVEL, loadDifficulty, loadLevelProgress, saveProgress, type Difficulty } from '../game/progress';
 import { EventKind } from '../sim/globals';
@@ -25,6 +26,8 @@ import { MAT } from '../world/materials';
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
   map?: MapData;
+  /** a story level played freely (the old rules: green grows anywhere, no reach) */
+  free?: boolean;
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
 }
@@ -71,6 +74,12 @@ export class LevelScene implements Scene {
   private washedSeen = -1;
   private smokeRefresh = 0;
 
+  /** story rules (round 30): green spreads only by seeds; the player works within its reach */
+  private story = false;
+  private reach?: Reach;
+  private reachRefresh = 0;
+  private reachBusy = false;
+
   /** sandbox only */
   private editor?: Editor;
   /** brush currently being dragged (sandbox) */
@@ -100,6 +109,8 @@ export class LevelScene implements Scene {
     const dims = { w: 256, h: 256, zMax: 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
     this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, !!level.sandbox);
+    this.story = !!level.story && !opts.free && host.params.get('mode') !== 'free';
+    this.core.globals.story = this.story;
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
     const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();
@@ -185,7 +196,7 @@ export class LevelScene implements Scene {
     sim.particles.burst({ kind: PK.Bird, x: hx, y: hy, z: hz + 8, count: 5, speed: 3, spread: 3 });
     this.director = new Director(camera);
     const p = host.params;
-    this.intro = !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
+    this.intro = !this.story && !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     if (this.level.sandbox) {
       this.editor = new Editor(host.ui, (sp) => (this.speed = sp), {
         undo: () => this.undo(),
@@ -250,6 +261,8 @@ export class LevelScene implements Scene {
         if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, true)) return;
+        // (story: nothing answers out in the fog beyond the green's reach)
+        if (this.reach && !this.reach.contains(wx, wy)) return;
         const [rx, ry] = toRender(sx, sy);
         core.renderer.pick(rx, ry).then((hit) => this.powers.tap(hit, wx, wy, sx, sy));
       },
@@ -266,6 +279,7 @@ export class LevelScene implements Scene {
         }
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, false)) return true;
+        if (this.reach && !this.reach.contains(wx, wy)) return false;
         return this.powers.gustStart(wx, wy);
       },
       dragMove: (sx, sy) => {
@@ -283,7 +297,8 @@ export class LevelScene implements Scene {
         else this.powers.gustEnd();
       },
       hover: (sx, sy) => {
-        this.hoverWorld = camera.groundAt(sx, sy, this.heightAt).slice(0, 2) as [number, number];
+        const hw = camera.groundAt(sx, sy, this.heightAt).slice(0, 2) as [number, number];
+        this.hoverWorld = this.reach && !this.reach.contains(hw[0], hw[1]) ? null : hw;
         if (this.editor?.tool === 'smash') this.pickSmash(sx, sy);
       },
       pan: (dx, dy) => {
@@ -341,15 +356,63 @@ export class LevelScene implements Scene {
       scene: this,
     };
 
+    if (this.story) {
+      // the story opens on the green that's left (game/reach.ts: the reach grows from it)
+      const [hx, hy] = map.poi.healthy;
+      this.reach = new Reach(dims.w, dims.h, [hx, hy]);
+      core.world.writeReach(this.reach.revealed);
+      camera.target = [hx, hy, 12];
+      void this.refreshReach();
+    }
     if (this.intro) {
       weather.holdNatural(600);
       void this.runIntro();
     } else this.openValley();
   }
 
+  /** Grow the reach from the green as it is now (story levels; ~1 Hz). */
+  private async refreshReach(): Promise<void> {
+    const reach = this.reach;
+    if (!reach || this.reachBusy) return;
+    this.reachBusy = true;
+    try {
+      const { core } = this;
+      const [veg, drift] = await Promise.all([core.readBuffer('veg'), core.readTexture(core.world.drift)]);
+      // green under blown dust or ash is dormant: it doesn't reach
+      const d = drift.data;
+      const buried = (i: number) => {
+        const m = Math.round(d[i * 4 + 2]);
+        return (m === 0 || m === MAT.Drift || m === MAT.Ash) && Math.min(d[i * 4 + 1], d[i * 4]) > 0.5;
+      };
+      if (reach.update(veg, buried)) core.world.writeReach(reach.revealed);
+    } catch (e) {
+      ignoreTeardown(e);
+    } finally {
+      this.reachBusy = false;
+    }
+  }
+
+  /** Keep the camera over the reach: pan within it, zoom out no wider than it. */
+  private confineToReach(): void {
+    const reach = this.reach;
+    if (!reach || this.director.flying) return;
+    const cam = this.core.camera;
+    const [x0, y0, x1, y1] = reach.bounds;
+    const extent = Math.max(x1 - x0, y1 - y0) + 24;
+    // (the iso view spans about twice as much across as up; a margin of fog shows around it)
+    const minZoom = Math.min(24, Math.max(0.8, Math.min(cam.viewportW, cam.viewportH * 2) / (extent * 2.5)));
+    this.director.limits = { minZoom, maxZoom: 24, bounds: [x0, y0, x1, y1] };
+  }
+
   /** The valley without the intro (or after it): dust storms roll in, the usual hint. */
   private openValley(): void {
     const { weather, dims } = this.core;
+    if (this.story) {
+      const touch = matchMedia('(pointer: coarse)').matches;
+      const look = touch ? 'Two fingers to look around.' : 'Right-drag to look around.';
+      setTimeout(() => this.hud.say(`Life clings on by the pond. Tap the green to loose its seeds; drag to make wind and carry them to ground that is ready (hold Space: blue). ${look}`, 10), 800);
+      return;
+    }
     if (this.level.sandbox) {
       setTimeout(() => this.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left), or on a wall of the sand basin.', 10), 800);
       return;
@@ -370,7 +433,8 @@ export class LevelScene implements Scene {
     this.core.resize(renderW, renderH, cssW, cssH);
     // open framed on the valley; portrait phones get closer than the width
     // alone would allow (the map is a diamond, its middle is what matters)
-    if (first) this.core.camera.zoom = Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300);
+    // (a story level opens close on its green)
+    if (first) this.core.camera.zoom = this.story ? 7 : Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300);
   }
 
   frame(now: number, dt: number): void {
@@ -396,6 +460,14 @@ export class LevelScene implements Scene {
     }
     camera.target[0] = Math.max(0, Math.min(dims.w, camera.target[0]));
     camera.target[1] = Math.max(0, Math.min(dims.h, camera.target[1]));
+    if (this.reach) {
+      this.reachRefresh -= dt;
+      if (this.reachRefresh <= 0) {
+        this.reachRefresh = 1;
+        void this.refreshReach();
+      }
+      this.confineToReach();
+    }
     this.director.update(dt);
 
     const simDt = dt * this.speed;

@@ -333,13 +333,35 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9);
 }
 
+// the player's reach on a story level (game/reach.ts): 1 inside, 0.5 at
+// its edge, 0 in the fog beyond; 1 everywhere elsewhere
+@group(0) @binding(23) var reachTex: texture_2d<f32>;
+
+fn reachAt(p: vec2<f32>) -> f32 {
+  let q = p - 0.5;
+  let c = vec2<i32>(floor(q));
+  let f = q - floor(q);
+  let a = textureLoad(reachTex, clampCell(c), 0).x;
+  let b = textureLoad(reachTex, clampCell(c + vec2<i32>(1, 0)), 0).x;
+  let d = textureLoad(reachTex, clampCell(c + vec2<i32>(0, 1)), 0).x;
+  let e = textureLoad(reachTex, clampCell(c + vec2<i32>(1, 1)), 0).x;
+  return mix(mix(a, b, f.x), mix(d, e, f.x), f.y);
+}
+
 fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
   let dirty = vec3<f32>(0.62, 0.57, 0.48);
   let clean = vec3<f32>(0.62, 0.70, 0.78);
   // haze darkens with the sky at night
   let h = mix(clean, dirty, G.pollution) * mix(1.0, 0.15, G.sky.w);
   let lowFog = smoothstep(24.0, 0.0, wpos.z) * 0.06;
-  return mix(c, toLinear(h), 0.03 + 0.1 * G.pollution + lowFog);
+  var o = mix(c, toLinear(h), 0.03 + 0.1 * G.pollution + lowFog);
+  // beyond the reach: a dim, colourless fog (the land not yet reached)
+  let fog = 1.0 - smoothstep(0.05, 0.5, reachAt(wpos.xy));
+  if (fog > 0.0) {
+    let g = dot(o, vec3<f32>(0.3, 0.59, 0.11));
+    o = mix(o, vec3<f32>(g) * 0.3 + toLinear(h) * 0.08, fog * 0.88);
+  }
+  return o;
 }
 
 /** Thin dark lines at cell boundaries so the voxel grid reads; fades out when cells are tiny. */

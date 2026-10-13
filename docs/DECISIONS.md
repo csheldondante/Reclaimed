@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-13 — round 30 (session 5) — story rules
+
+- Creep: slow, through the same seed system — light wind carries seeds onto
+  nearby fertile land; seeds improve the ground a little, so green spreads
+  by itself. (Agreed: reach min 8 cells past the edge, follows the patch's
+  outline, never shrinks.)
+- A level teaches its skills, then the goal: reach the lab / make the lab
+  green. Buried seeds to find as a bonus: they can be washed downstream and
+  used in the next level's river to seed new green.
+- Keep Free play for the valley; add the built levels to the sandbox's
+  selector. Build on a new `story` branch for now.
+
 ## 2026-10-13 — round 30 (session 5) — hosting and license
 
 - Host on GitHub Pages; the repo goes public (a portfolio / showcase of

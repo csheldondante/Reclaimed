@@ -60,15 +60,16 @@ async function main() {
     scene.resize(size.rw, size.rh, size.cw, size.ch);
   };
 
-  const startLevel = async (levelId: string, map?: MapData) => {
+  const startLevel = async (levelId: string, map?: MapData, free?: boolean) => {
     const level = await LevelScene.create(host, audio, perf, levelId, () => void startMenu(), {
       map,
+      free,
       onLoadMap: (m) => void startLevel(levelId, m),
     });
     show(level);
   };
   const startMenu = async () => {
-    const menu = new MenuScene(host, audio, (id) => startLevel(id));
+    const menu = new MenuScene(host, audio, (id, free) => startLevel(id, undefined, free));
     await menu.init();
     show(menu);
   };

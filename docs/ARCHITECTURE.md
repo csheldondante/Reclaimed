@@ -26,7 +26,7 @@ GPU per frame: renderprep (terrain + liquids) + vegprep (plants) → draw
    (opaque boxes incl. sub-voxel canopies, liquids, particles, rain)
 ```
 
-Globals (`common.wgsl` / `src/sim/globals.ts`, 576 bytes) carry storms (+ shape:
+Globals (`common.wgsl` / `src/sim/globals.ts`, 1104 bytes) carry storms (+ shape:
 `stormsC` lobe phases and elongation), one-tick events, gusts (gusts[0] is the
 cursor/tap breeze that animals flee; gusts[1] the player's drag-wind), day/night
 light, the life lens, `env` (x, y: prevailing wind integrated over time; z:
@@ -199,6 +199,7 @@ where pieces turn to particles on impact is P3.
 | fire | f32 0..1 | fire | oil (burns), ecology (burns), structure (heat, waste), particles (flames), renderfields (glow), stats |
 | veg | f32 stage 0..5 | ecology (+ particles may plant 0 → 0.3: bird seeds) | most systems |
 | sparkTex | rgba32f per column: x = tick + 1 of the last ember landing | particles | fire |
+| reachTex | r8unorm per column: the player's reach on a story level (1 inside, 0.5 at the edge, 0 in the fog; 1 everywhere elsewhere) | game/reach.ts (CPU, ~1 Hz) | render.wgsl haze() fog |
 | cornerTex | rgba32f per grid point: x soft-ground height, y water, z drift (−1 = not smoothed), w 1 where the four columns differ in top material or plant cover (soft borders, render.wgsl `edgeLook`) | renderfields | draw |
 | particles / particleCounters | 48-byte ring + atomic head | particles | draw |
 | renderFields | vec4 (shadow z, moisture, fire glow, flow) | renderfields | draw |
@@ -328,3 +329,17 @@ when nothing holds it up any more (checked each integrity pass, ~1 s when
 all are asleep), or when a cyclone passes (small bodies are carried). Break
 on a body removes voxels in its frame and splits it; a budget (64 bodies /
 16k voxels) crumbles the oldest small ones into loose ground (`deposit` .yz).
+
+## Story rules (round 30)
+
+`Globals.rules.x` = 1 on a story level (`LevelDef.story`, unless opened with
+Free play / `?mode=free`). Then bare ground is colonised only by seeds:
+ecology.wgsl skips its neighbour/spore colonisation; particles.wgsl lets
+established green (veg >= 1.2) shed seeds into the breeze (more in wind, life
+12 s), and a grow-tap on green lets go a puff of seeds instead of sprouting
+bare ground. `game/reach.ts` (CPU) labels the patches of green touching the
+reach from slow readbacks (veg + driftTex, buried green excluded) and floods
+each patch's reach (max(8, ¼ of its width) past its edge) outward; reach
+only grows. It is uploaded to reachTex; LevelScene confines the camera to it
+(Director.limits) and ignores taps, drags and hover outside it.
+

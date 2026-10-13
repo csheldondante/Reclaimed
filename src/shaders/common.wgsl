@@ -54,6 +54,8 @@ struct Globals {
   dusts: array<vec4<f32>, 2>,
   // the cyclones (no cap on summoning them: round 14)
   cyclones: array<CycloneU, 4>,
+  // x: story rules (round 30: green spreads only by seeds and sheds them), yzw unused
+  rules: vec4<f32>,
 };
 
 /** Point on cyclone c's funnel spine at t in 0..1 (Catmull-Rom through the nodes); w = radius. */

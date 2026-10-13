@@ -50,7 +50,7 @@ export class MenuScene implements Scene {
   constructor(
     private host: Host,
     private audio: Ambience,
-    private onPlay: (levelId: string) => Promise<void>,
+    private onPlay: (levelId: string, free?: boolean) => Promise<void>,
   ) {
     this.progress = Number(host.params.get('progress') ?? NaN);
     if (!Number.isFinite(this.progress)) this.progress = loadProgress();
@@ -78,7 +78,7 @@ export class MenuScene implements Scene {
     const line = LINES.find(([t]) => p >= t)![1];
     this.el.innerHTML = `<div><h1>RECLAIMED</h1><p class="line">${line}</p></div>
       <div class="actions"><span class="level-name"></span>
-      <span class="play-row"><button data-a="play"></button><button data-a="sandbox" title="Build, pour, place and break things; summon weather — the physics playground">Sandbox</button></span>
+      <span class="play-row"><button data-a="play"></button><button data-a="free" title="The old rules: green grows wherever you touch, the whole valley open">Free play</button><button data-a="sandbox" title="Build, pour, place and break things; summon weather — the physics playground">Sandbox</button></span>
       <span class="small level-info"></span>
       <span class="small">pick a place: click its model · some lie under the dust · sound on</span>
       <span class="small hands">touch the ground · drag to make wind</span>
@@ -93,6 +93,15 @@ export class MenuScene implements Scene {
       btn.textContent = 'gathering…';
       btn.disabled = true;
       await this.onPlay(this.selected.id);
+    });
+    const free = this.el.querySelector('[data-a="free"]') as HTMLButtonElement;
+    free.addEventListener('click', async () => {
+      if (this.starting || !this.selected.generate || !this.selected.story) return;
+      this.starting = true;
+      audio.start();
+      free.textContent = 'gathering…';
+      free.disabled = true;
+      await this.onPlay(this.selected.id, true);
     });
     this.el.querySelector('[data-a="sandbox"]')!.addEventListener('click', async () => {
       if (this.starting) return;
@@ -192,6 +201,7 @@ export class MenuScene implements Scene {
     this.selected = lv;
     const prog = loadLevelProgress(lv.id);
     const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
+    (this.el.querySelector('[data-a="free"]') as HTMLElement).style.display = lv.story && lv.generate && !this.buried.has(lv.id) ? '' : 'none';
     if (this.buried.has(lv.id)) {
       const prev = levelById(previousLevel(lv.id));
       (this.el.querySelector('.level-name') as HTMLElement).textContent = 'Under the dust';

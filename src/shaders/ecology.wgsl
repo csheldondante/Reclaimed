@@ -58,6 +58,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (v > cap) { v = max(cap, v - 0.02); }
     if (wet < 0.04) { v -= 0.003; }
     if (v < 0.05) { v = 0.0; }
+  } else if (G.rules.x > 0.5) {
+    // story rules (round 30): bare ground is only ever colonised by seeds
+    // (particles.wgsl) — green sheds them into the breeze, so it creeps onto
+    // fertile ground nearby by itself and the player blows it farther
   } else {
     var neigh = 0.0;
     for (var k = 0u; k < 4u; k++) {

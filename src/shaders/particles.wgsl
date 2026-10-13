@@ -51,6 +51,12 @@ const K_DEER: u32 = 13u;
 const K_RABBIT: u32 = 14u;
 // dust kicked up by strong wind: a low tan haze (dust storms, drags)
 const K_HAZE: u32 = 15u;
+// story rules: what green sheds (round 30) — established green (grass and
+// up) lets seeds go now and then, more in the wind; they fly at most this
+// long (so the wind carries them a bounded way)
+const SHED_V: f32 = 1.2;
+const SHED_RATE: f32 = 0.00025;
+const SEED_LIFE: f32 = 12.0;
 // tree seeds: fluff that floats on the wind and sprouts where it lands —
 // on bad ground the sprout withers (the wilt system), a clue (round 6)
 const K_SEED: u32 = 16u;
@@ -252,8 +258,16 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   }
+  // story rules (round 30): green sheds seeds into the breeze — a light wind
+  // carries them a few cells, so green creeps onto fertile ground by itself;
+  // a strong wind (the player's) carries them farther
+  if (G.rules.x > 0.5 && v >= SHED_V && !wet && rare(id.x, id.y, 0x5eedfu) < SHED_RATE * (1.0 + max(ws - 1.0, 0.0) * 0.6)) {
+    spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.5), vec3<f32>(wind * 0.5, 0.5), SEED_LIFE, K_SEED, 0.0, h ^ 0x5eeu);
+  }
   // grow-tap: a small boost to living ground; a fresh sprout on bare ground;
   // on hostile ground only a wilt (brown flecks) to show it won't take
+  // (story rules: no sprouts on bare ground — tapped green lets go a puff of
+  // seeds instead, for the wind to carry)
   for (var e = 0u; e < numEvents(); e++) {
     if (evKind(e) != EV_GROW) { continue; }
     let ev = G.events[e];
@@ -265,7 +279,13 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let fall = 1.0 - dd;
     let hostile = contam[i].x > 0.2 || wet || m == MAT_TRASH_P || m == MAT_LITTER || moisture[i] < 0.04;
     let cap = MATS[m].eco.x;
-    if (!hostile && cap > 0.0) {
+    let story = G.rules.x > 0.5;
+    if (story && v >= SHED_V && r2 < 0.5 * fall) {
+      spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.6), vec3<f32>(wind * 0.5 + vec2<f32>(r1 - 0.5, r2 - 0.5), 1.2 + r1), SEED_LIFE, K_SEED, 0.0, h ^ 0x7a9u);
+    }
+    if (story && v <= 0.0) {
+      // nothing to grow from here
+    } else if (!hostile && cap > 0.0) {
       // near the tap grass comes up at once (tufts show from 1.2); around it a boost
       veg[i] = min(max(max(v, 0.3) + 0.35 * fall, select(0.0, 1.5, fall > 0.45)), max(cap, v));
       if (r1 < 0.35 * fall) { spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(0.0, 0.0, 1.2 + r2), 1.4 + r1, K_SPARK, 0.0, h, 0u, 0u); }

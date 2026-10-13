@@ -2326,3 +2326,28 @@ After: 210 / 58 / 461 / 235 (carving off: 197 / 43 / 452 / 235; the rest is
 mostly sky past the map edge and a few seams between soft tops). Draw
 (1600×900): default view 5.6 → 6.8 ms, zoomed gorge 6.8 → 8.1 ms.
 
+## 2026-10-13 — round 30: story rules and reach (branch `story`; N3 step 1, R1, R2)
+
+- `Globals.rules.x` (Globals 1088 → 1104 bytes) turns on story rules on a
+  story level (`LevelDef.story`; Begin) — Free play and `?mode=free` keep the
+  old rules. Ecology stops colonising bare ground; only seeds do. Green
+  (veg >= 1.2) sheds a seed now and then (0.00025 per tick, more in wind;
+  12 s flight), so a breeze carries green onto fertile ground nearby; a
+  grow-tap on green lets go a puff of seeds and never sprouts bare ground.
+- Reach (game/reach.ts, CPU ~1 Hz from veg + driftTex readbacks): patches
+  of established green (veg >= 1, not buried under dust) touching the reach;
+  each reaches max(8, ¼ × the width of a disc of its area) past its edge,
+  flooded outward in a bucket queue (8-connected, √2 diagonals), with a
+  4-cell soft edge; it never shrinks. It starts as a 12-cell disc around the
+  valley's healthy oasis (`poi.healthy`). Only patches touching it count, so
+  the valley's other green is found, not given (the first version counted
+  everything and the reach spanned the map). reachTex fogs the draw (haze():
+  desaturated, dim); the camera is confined to its box and can zoom out to
+  about 2.5× its size; taps, drags and the hover breeze outside it do nothing.
+- Checked headlessly: the reach opens at 595 cells; idle 40 s → green 121 →
+  231 cells, reach 829; tapping the oasis and blowing east planted 73 new
+  sprouts. Draw with the fog (1600×900): 4.5 ms (story view), 5.4 ms (free).
+- Sandbox load list: "level: The Dam Valley" loads the built valley into the
+  editor (the options are written at once; they used to wait for the saved-
+  map list).
+

@@ -12,6 +12,7 @@
 import { MAT } from '../world/materials';
 import type { MapData } from '../world/mapgen';
 import { decodeMap, encodeMap, savedMaps } from '../world/mapfile';
+import { LEVELS } from '../game/levels';
 import { MODELS } from '../world/models';
 import { thumbnail } from './thumbs';
 
@@ -191,9 +192,13 @@ export class Editor {
   private wireMaps(): void {
     const { el, maps } = this;
     const saved = el.querySelector<HTMLSelectElement>('[data-saved]')!;
+    // the built levels first (round 30: edit them in the sandbox), then saved maps
+    const built = LEVELS.filter((l) => l.generate && !l.sandbox);
+    const head = '<option value="">load…</option>' + built.map((l) => `<option value="level:${l.id}">level: ${l.name}</option>`).join('');
+    saved.innerHTML = head;
     const refresh = () =>
       savedMaps.list().then((names) => {
-        saved.innerHTML = '<option value="">load…</option>' + names.map((n) => `<option>${n.replace(/</g, '&lt;')}</option>`).join('');
+        saved.innerHTML = head + names.map((n) => `<option>${n.replace(/</g, '&lt;')}</option>`).join('');
       });
     void refresh();
     const act = (a: string, f: () => unknown) => el.querySelector<HTMLButtonElement>(`[data-a="${a}"]`)!.addEventListener('click', f);
@@ -208,6 +213,8 @@ export class Editor {
     saved.addEventListener('change', async () => {
       const name = saved.value;
       if (!name) return;
+      const lv = name.startsWith('level:') ? built.find((l) => `level:${l.id}` === name) : undefined;
+      if (lv) return maps.load(lv.generate!({ w: 256, h: 256, zMax: 64 }));
       maps.load(await decodeMap(await savedMaps.load(name)));
     });
     act('down', async () => {

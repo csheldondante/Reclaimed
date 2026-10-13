@@ -110,6 +110,9 @@ export class WorldGpu {
   /** where embers landed (rgba32float per column, x = tick + 1 of the last landing; particles write, fire reads) */
   readonly sparkTex: GPUTexture;
   readonly sparkView: GPUTextureView;
+  /** r8unorm per column: how far inside the player's reach (game/reach.ts; 1 everywhere outside story levels) — the draw fogs the rest */
+  readonly reachTex: GPUTexture;
+  readonly reachView: GPUTextureView;
   /** f32 per column: 1 = flowers in bloom, < 1 = shed by the wind and regrowing (particles.wgsl petalEmit) */
   readonly petals: GPUBuffer;
   /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
@@ -203,6 +206,10 @@ export class WorldGpu {
     this.sparkTex = device.createTexture({ label: 'sparks', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST });
     this.textures.push(this.sparkTex);
     this.sparkView = this.sparkTex.createView();
+    this.reachTex = device.createTexture({ label: 'reach', size: { width: this.w, height: this.h }, format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.textures.push(this.reachTex);
+    this.reachView = this.reachTex.createView();
+    this.writeReach(new Uint8Array(this.w * this.h).fill(255));
     this.windFieldNextView = this.windFieldNext.createView();
     const dsize = { width: this.w, height: this.h };
     this.drift = device.createTexture({ label: 'drift', size: dsize, format: 'rgba32float', usage: tusage });
@@ -243,6 +250,11 @@ export class WorldGpu {
   private textures: GPUTexture[] = [];
 
   /** Free every GPU buffer this world (and anything allocated through buf()) owns. */
+  /** Upload the reach (one byte per column, 255 = inside). */
+  writeReach(data: Uint8Array): void {
+    this.device.queue.writeTexture({ texture: this.reachTex }, data, { bytesPerRow: this.w }, { width: this.w, height: this.h });
+  }
+
   destroy(): void {
     for (const b of this.owned) b.destroy();
     for (const t of this.textures) t.destroy();

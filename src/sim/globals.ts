@@ -1,6 +1,6 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 1088;
+export const GLOBALS_BYTES = 1104;
 /** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
 export const MAX_CYCLONES = 4;
 
@@ -114,6 +114,8 @@ export interface GlobalsState {
   cyclones: CycloneUniform[];
   /** draw plants at diorama scale (the title screen: petals, blades, moss) */
   fineVeg?: boolean;
+  /** story rules (round 30): green spreads only by seeds, and sheds them */
+  story?: boolean;
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }
@@ -192,4 +194,5 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     const d = s.dusts[i];
     f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);
   }
+  f.set([s.story ? 1 : 0, 0, 0, 0], 272);
 }

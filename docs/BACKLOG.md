@@ -102,9 +102,14 @@ The batch now (M), then the larger work (N) after an architecture review.
 | M7 | Handoff + memory for the remaining work | S | done |
 | N1 | Architecture review: consolidate (solid intervals; one loose stack for everything soft — rubble, litter, the valley's soil; liquids carry it; wind-borne particles settle into it) | M | next; see P4 (user's three-system version, own branch) |
 | N2 | The valley onto the loose ground (reshaped rock, river erosion matched to the old rates) | M–L | after N1 |
-| N3 | Growth redesign: taps grow only from green or seeded fertile ground; seeds spread it; fertility = clean + moist + uncovered | M–L | talk first |
+| N3 | Growth redesign: taps grow only from green or seeded fertile ground; seeds spread it; fertility = clean + moist + uncovered | M–L | step 1 done (this commit, branch `story`): story rules — seeds only; green sheds seeds into the breeze (slow creep), a tap on green lets go a puff of seeds; reach (R1) |
 | N4 | Puzzle-mode opening on the camera director; barriers to growth as level gates; wind/cyclone/storm unlocks by green | M–L | after N3 |
 | N5 | Ancient seeds buried, uncovered, planted or sent down the river to the next level; every level has a river | M | after N3 |
+| R1 | Reach: the camera is confined to the land around the green, by the green's size (~1.5× the width across it); touch and wind only work there; fog beyond | M | done (this commit, branch `story`): game/reach.ts — per patch max(8, ¼ width) past its edge, following its outline; only green touching the reach counts (wild patches are found); never shrinks |
+| R2 | Story levels keep a Free play mode (old rules); the built levels are in the sandbox's load list | S | done (this commit, branch `story`) |
+| R3 | A level teaches its skills through gates, then the goal: reach the lab / make the lab itself green | M | open (with N4) |
+| R4 | Buried bonus seeds to find: uncovered, washed downstream, carried to the next level's river to seed new green (N5) | M | open |
+| R5 | Story arc: valley = the lab that made the virus (biohazard signs on the tanks, ruined military vehicles as a quarantine barrier, signs of flight); then the escape from quarantine (highway); then the city wiped out by plague (N6, C7, C9) | L | open |
 | N6 | Story through environment: the valley re-themed as a biological research base (biohazard sign, lab); highway barricades (quarantine); city tents (plague) | M | with C7/C9 |
 | N7 | Red sludge: a third liquid (dense, toxic) | M | open |
 | N8 | Body deformation (spring-linked voxel clusters, World of Goo-like) | L+ | later |

@@ -24,6 +24,8 @@ export interface LevelDef {
   intro?: boolean;
   /** free play with the editor (no goal, no progress) */
   sandbox?: boolean;
+  /** a story level (round 30): green spreads only by seeds, within its reach; "Free play" opens it with the old rules */
+  story?: boolean;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -35,6 +37,7 @@ export const LEVELS: LevelDef[] = [
     generate: (dims) => generateMap(dims, 1),
     goal: 0.55,
     intro: true,
+    story: true,
   },
   { id: 'highway', name: 'The Highway', blurb: 'A road of ruined cars, buried in dust.', model: 'car' },
   { id: 'city', name: 'The City', blurb: 'A blast crater, and the tents where they tried to help.', model: 'tent' },
