@@ -2284,3 +2284,18 @@ per cell (default view: unchanged within noise), with one noise octave and
   session, for the dev server too — a machine state after a low-memory
   episode, not the build.
 
+## 2026-10-13 — round 30: rain spikes on planted columns (Q16)
+
+The user saw sediment spike very high in rain storms on a phone; it
+reproduces on desktop (4 storms over the valley for 60 s at speed 4). A
+spiked column: soil 6.0–19.3, a dust sliver, soil 19.3–20.3 — 8–11 cells
+over all four neighbours. Rain lays alternating thin layers (mud carried in,
+dust rained out of the air), so the top interval stays about 1 deep;
+held() lets go only when the *top interval* is 1–2 deep, so planted
+columns kept their full hold: they took in what water and wind brought
+and never slumped (round 21's spires, by another route). Roots now hold a
+slope at most HOLD_STEEP = 1 cell steeper than the material's repose; past
+that it slumps as if unplanted. Columns standing over all four neighbours
+(pre-storm 13 by > 2.5, 3 by > 4, mostly built things): before 49 / 12,
+after 38 / 4 and 21 / 3 (two runs).
+

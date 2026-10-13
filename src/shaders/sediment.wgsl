@@ -59,6 +59,7 @@ fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
 const DT_D: f32 = 2.0 / 60.0; // the system runs every other tick
 const CARRY: f32 = 0.25;      // cells of depth lifted per second per cell/s over the threshold
 const SLUMP: f32 = 0.08;
+const HOLD_STEEP: f32 = 1.0;
 // where the wind is moving loose ground, level differences between
 // neighbours ease out a little each pass, so the transport can't see-saw
 // into a checkerboard (round 17); still ground keeps its shape
@@ -224,12 +225,18 @@ fn slumpOut(q: vec2<i32>) -> vec4<f32> {
   if (top < 0.001 || underBody(q)) { return vec4<f32>(0.0); }
   let here = levelAt(q);
   let rep = reposeAt(q, driftMatAt(q));
+  let hd = held(q);
   var o = vec4<f32>(0.0);
   for (var k = 0u; k < 4u; k++) {
     let n = q + DIRS[k];
     if (!inMap(n)) { continue; }
     let diff = here - levelAt(n);
-    o[k] = max(diff - rep, 0.0) * SLUMP * (1.0 - held(q));
+    // roots hold a slope at most HOLD_STEEP steeper than the repose: in rain
+    // the arrivals alternate (mud, dust from the air), so the top interval
+    // stays thin and held() never lets go — planted columns grew into
+    // spikes 8+ cells over their neighbours (round 30)
+    let hk = hd * (1.0 - smoothstep(rep, rep + HOLD_STEEP, diff));
+    o[k] = max(diff - rep, 0.0) * SLUMP * (1.0 - hk);
   }
   let s = o.x + o.y + o.z + o.w;
   if (s > top * 0.8) { o *= top * 0.8 / s; }

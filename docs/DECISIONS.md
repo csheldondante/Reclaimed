@@ -9,6 +9,7 @@ each was implemented.
   fast game development).
 - License: noncommercial only — PolyForm Noncommercial 1.0.0. The user may
   sell it later (cheap, or free with ads on phones) if it turns out fun.
+- Sediment spikes in rain storms again (seen on mobile): fix.
 - Next serious goals: a puzzle variant (camera limited to the
   neighbourhood of green; green spreads only by seeds blown onto fertile
   ground), a skill for building puzzles (gates that need a skill, plus the
