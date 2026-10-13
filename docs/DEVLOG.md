@@ -2266,3 +2266,21 @@ where the jag can't be seen). Now it only carves above ROCK_ZOOM = 10 px
 per cell (default view: unchanged within noise), with one noise octave and
 3-sample normals: zoomed onto the river gorge cliffs, draw 7.7 → 9.4 ms
 (two octaves + 6-sample normals: 13.8).
+
+## 2026-10-13 — round 30: GitHub Pages, PolyForm Noncommercial license
+
+- `.github/workflows/pages.yml` builds (`npm ci && npm run build`) and
+  publishes `dist/` to GitHub Pages on every push to main.
+- `vite.config.ts` `base: './'`: relative asset paths, so the build runs from
+  the `/Reclaimed/` subpath (and any other folder). Nothing in the app needs
+  cross-origin isolation headers (no SharedArrayBuffer), which Pages can't set.
+- LICENSE: PolyForm Noncommercial 1.0.0, verbatim from the PolyForm repo
+  (tag 1.0.0), with a `Required Notice:` copyright line. README updated
+  (play link, current controls — the summon button and R key went in round
+  27 — and the license in plain words).
+- Checked: the build loads at http://localhost:4173/Reclaimed/ with every
+  request served (only the absent favicon 404s). The scene itself couldn't
+  be checked headlessly: requestAdapter() hung in headless Chrome this
+  session, for the dev server too — a machine state after a low-memory
+  episode, not the build.
+

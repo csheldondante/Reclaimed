@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-13 — round 30 (session 5) — hosting and license
+
+- Host on GitHub Pages; the repo goes public (a portfolio / showcase of
+  fast game development).
+- License: noncommercial only — PolyForm Noncommercial 1.0.0. The user may
+  sell it later (cheap, or free with ads on phones) if it turns out fun.
+- Next serious goals: a puzzle variant (camera limited to the
+  neighbourhood of green; green spreads only by seeds blown onto fertile
+  ground), a skill for building puzzles (gates that need a skill, plus the
+  features that make it possible, e.g. wind-blown embers to burn what
+  wind can't move), then hosting and phone testing. Plan discussed;
+  open questions in HANDOFF.
+
 ## 2026-10-12 — round 29 (session 4) — Q15
 
 - Faceted rock "looks great", but in profile it's totally straight: vary it
