@@ -14,9 +14,11 @@ each was implemented.
   abilities, with obstacles that teach the mechanics.
 - Not "only the intended key": a gate opens to anything that physically
   clears it (a flood washes away what wind blows away). Abilities are
-  taught by obstacles only one of them can clear (only fire burns a
-  thicket, only a flood shifts packed trash). Gates still mustn't open by
-  themselves (ambient weather alone).
+  taught by obstacles only one of them can clear. Gates still mustn't open
+  by themselves (ambient weather alone).
+- No thickets: they're nature, so a bad obstacle (obstacles are always
+  the ruin, never life). The fire obstacle is the compacted trash we already have
+  (holds against water until burned, leaves ash).
 - Spin-off idea: a disasters-only city game (meteors, floods, volcanoes,
   wind, fire, maybe killer aliens) with a full city that responds to
   disasters — a fork of this project, not part of Reclaimed. It's the
