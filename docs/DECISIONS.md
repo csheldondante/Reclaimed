@@ -16,6 +16,9 @@ each was implemented.
   clears it (a flood washes away what wind blows away). Abilities are
   taught by obstacles only one of them can clear. Gates still mustn't open
   by themselves (ambient weather alone).
+- Obstacles should be hard to break and hard to get past. But overgrown
+  concrete looks fantastic — keep concrete as something green covers,
+  not something the player has to destroy.
 - No thickets: they're nature, so a bad obstacle (obstacles are always
   the ruin, never life). The fire obstacle is the compacted trash we already have
   (holds against water until burned, leaves ash).
