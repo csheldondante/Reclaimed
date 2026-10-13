@@ -7,7 +7,7 @@
 
 import type { Ambience } from '../audio/ambience';
 import { Powers } from '../game/powers';
-import { LEVELS, levelById, type LevelDef } from '../game/levels';
+import { MENU_LEVELS as LEVELS, levelById, type LevelDef } from '../game/levels';
 import { levelUncovered, loadDifficulty, loadLevelProgress, loadProgress, previousLevel, resetProgress, saveDifficulty, saveUncovered, type Difficulty } from '../game/progress';
 import { PK } from '../sim/particles';
 import { ignoreTeardown } from '../gpu/pipeline';

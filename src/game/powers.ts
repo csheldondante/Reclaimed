@@ -99,6 +99,12 @@ export class Powers {
     }
   }
 
+  /** Scripted lightning called down on the column at (x, y), whose top is z (the gate validator). */
+  scriptStrike(x: number, y: number, z: number): void {
+    this.lastStrike = -10;
+    void this.lightning({ cell: Math.floor(y) * this.d.dims.w + Math.floor(x), mat: 0, z, flags: 0 });
+  }
+
   /** A scripted grow-tap at a cell (the intro showing what a tap does). */
   scriptTap(x: number, y: number): void {
     this.d.globals.events.push({ kind: EventKind.Grow, x: x + 0.5, y: y + 0.5, radius: 2.5, strength: 1 });

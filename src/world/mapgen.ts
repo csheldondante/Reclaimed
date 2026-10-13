@@ -597,7 +597,7 @@ export function generateMap(dims: WorldDims, seed = 1): MapData {
 }
 
 /** A partially collapsed multi-storey concrete shell: walls with windows, floor slabs with holes. */
-function buildRuin(
+export function buildRuin(
   grid: ColumnGrid,
   x0: number,
   y0: number,
@@ -659,7 +659,7 @@ function buildRuin(
  * full of oil that is invisible until the shell is breached (roof or wall
  * fails); then the oil system releases it into the world.
  */
-function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height: number, stored: Float32Array) {
+export function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height: number, stored: Float32Array) {
   const w = grid.dims.w;
   const cells: [number, number][] = [];
   for (let y = cy - rad - 1; y <= cy + rad + 1; y++)
@@ -688,7 +688,7 @@ function buildTank(grid: ColumnGrid, cx: number, cy: number, rad: number, height
  * concrete substructure from `depth` below the base (deeper on the downhill
  * side, where it shows as an exposed plinth/basement wall).
  */
-function foundation(grid: ColumnGrid, cells: [number, number][], depth: number): number {
+export function foundation(grid: ColumnGrid, cells: [number, number][], depth: number): number {
   let sum = 0;
   for (const [x, y] of cells) sum += grid.top(x, y);
   const base = Math.round(sum / cells.length);

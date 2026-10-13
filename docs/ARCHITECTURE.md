@@ -343,3 +343,24 @@ each patch's reach (max(8, ¼ of its width) past its edge) outward; reach
 only grows. It is uploaded to reachTex; LevelScene confines the camera to it
 (Director.limits) and ignores taps, drags and hover outside it.
 
+## Level kit and gate validator (round 31; docs/LEVELS.md)
+
+`world/kit.ts` builds a level from a short script (`levels/<id>.ts`): shape
+the land (height field: `land`, `sculpt`, `level`, `rock`, `river`, `pond`),
+`ground()` turns it into columns (stone, soil, a loose soil top), then
+features stamp onto the grid and the MapData fields (`green`, `poison`,
+`dust`, `litter`, `trash`, `slick`, `wall`, `plug`, `tank`, `ruin`, `model`,
+`cache`). Shapes are SDFs (`disc`, `ring`, `rect`, `band`, `union`,
+`subtract`, `wobble`). `gate(id, name, kind, shape, teaches)` records the
+columns of an obstacle; `build()` returns a `KitMap` (MapData + `gates`).
+Kit levels may be `hidden` (not on the title screen: `MENU_LEVELS`).
+
+`scripts/mapview.mjs` runs a generator on the CPU through Vite's SSR loader
+and writes a top-down PNG with the gates outlined. `game/trial.ts` is the
+page side of `scripts/gates.mjs`: `reclaimed.trial.run(ability, s, settle)`
+applies one ability to every gate through Powers / Weather / events (wind
+strokes one after another, cyclones, parked storms, scripted lightning
+(`Powers.scriptStrike`), poured water, focused chips; 'ambient' sends one
+natural storm and one dust storm), and measures each gate from readbacks
+(surface, contam, oil, moisture, water, driftTex): share closed, share
+fertile, amount of its stuff left.

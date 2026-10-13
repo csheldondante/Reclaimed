@@ -2351,3 +2351,66 @@ mostly sky past the map edge and a few seams between soft tops). Draw
   editor (the options are written at once; they used to wait for the saved-
   map list).
 
+
+## 2026-10-13 — round 31: level tools — kit, map preview, gate validator, the Trial Grounds (branch `story`; R7)
+
+Why: the user wants to churn out levels — regions joined by gates (ground
+green can't take until something clears it), with abilities never locked,
+any ability that physically clears an obstacle opening it, and obstacles the
+ruin, never nature (DECISIONS round 31). A level should be an afternoon's
+script, visible in seconds, and known to work without playing it through.
+
+- `world/kit.ts`: a builder (land → ground() → features → build()) with SDF
+  shapes; gates name an obstacle's columns, kind and what it should teach.
+  `mapgen.ts` exports buildRuin / buildTank / foundation for it. Ponds can
+  take a fixed level, filled last, so a `plug` wall can hold a reservoir;
+  `freeboard` leaves room for a storm's rain; a river with no inflow is a
+  dry gully.
+- `scripts/mapview.mjs`: the generator on the CPU via Vite's SSR loader → a
+  top-down PNG with the gates outlined and labelled (~150 ms per level).
+- `game/trial.ts` + `scripts/gates.mjs`: per ability a fresh world (story
+  rules), the ability applied the way a player would (wind strokes one after
+  another, cyclones, parked storms, `Powers.scriptStrike` lightning, poured
+  water, focused chips; 'ambient' = one natural storm + one dust storm),
+  80 s of sim at speed 2, each gate measured from readbacks.
+- `levels/trials.ts`: the Trial Grounds (hidden: `?skipmenu=1&level=trials`,
+  and the sandbox's load list): six obstacles around a spring.
+
+What the validator taught us (run 2; % of the gate cleared, 60 + 20 s):
+
+| gate | ambient | wind | gale | cyclone | rain | lightning | flood | chip |
+|---|---|---|---|---|---|---|---|---|
+| dust (1.4 deep) | 0 | 0 | 18 | 77 | 63 | 21 | 0 | 0 |
+| litter | 25 | 47 | 72 | 100 | 98 | 47 | 0 | 0 |
+| trash | 24 | 0 | 0 | 82 | 2 | 20 | 0 | 0 |
+| poison gully | 100 | 0 | 0 | 0 | 100 | 0 | 29 | 0 |
+| oil lake | 100 | 46 | 45 | 52 | 100 | 44 | 45 | 47 |
+| walled yard | 0 | 0 | 0 | 14 | 0 | 0 | 0 | 0 |
+
+- The measures had to follow the sim, not my assumptions: blown dust is
+  material 19 (Drift) in driftTex, and its depth is the top interval (y);
+  litter is loose (driftTex), trash solid (surface); standing water takes
+  soil poison up and drops it as it dries, so "closed" counts dissolved
+  poison too; oil on bare ground soaks in as soil poison, so the oil gate
+  counts its stain (fixed after run 2 — the 45% everywhere was the shore
+  soaking). Binary "closed" hid progress: a gale removed 18% of the dust in
+  12 s but no column dropped under the threshold — so the report also
+  gives the share of the stuff removed.
+- Scripted strokes: Powers holds one scripted stroke at a time, so strokes
+  for six gates at once overwrote each other (run 1: wind did nothing).
+  Wind, gale and cyclone are things a player does one place at a time:
+  they now run a fresh world per gate. A gale's field reaches 18 over the
+  dust (lift 9). Chips: 20 taps on one spot turn a wall cell to rubble; 240
+  spread over 84 cells did nothing — a player hammers one spot, so the
+  trial does.
+- Leaks the sim really has: storm runoff tears trash heaps into litter
+  (24% of the mound in one storm); a poisoned hollow is cleaned by rain
+  (it pools, takes the poison up, and diluted, it decays), and a poisoned
+  gully gathers every storm's runoff into a stream — a flood of its own.
+  The toxic obstacle is now poison on an open slope below the reservoir's
+  plug (no hollow, no channel). Moisture evens out within seconds of
+  loading, so "parched ground" can't be a gate; the plateau stays as
+  terrain with seeds hidden on top.
+- Run 3 (the fixes above, per-gate serial runs, three worlds at once) was
+  stopped by the system running low on memory before it reported; to rerun
+  with `--parallel 1`.

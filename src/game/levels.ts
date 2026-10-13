@@ -6,6 +6,8 @@ import type { WorldDims } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { generateMap } from '../world/mapgen';
 import { generateSandbox } from '../world/sandbox';
+import { generateTrials } from '../levels/trials';
+import type { GateSpec } from '../world/kit';
 
 /** What the title-screen model for a level looks like (menumap.ts builds it). */
 export type LevelModel = 'dam' | 'car' | 'tent' | 'ship' | 'sign';
@@ -26,6 +28,8 @@ export interface LevelDef {
   sandbox?: boolean;
   /** a story level (round 30): green spreads only by seeds, within its reach; "Free play" opens it with the old rules */
   story?: boolean;
+  /** not on the title screen (test beds: ?skipmenu=1&level=<id>, or the sandbox's load list) */
+  hidden?: boolean;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -43,6 +47,15 @@ export const LEVELS: LevelDef[] = [
   { id: 'city', name: 'The City', blurb: 'A blast crater, and the tents where they tried to help.', model: 'tent' },
   { id: 'port', name: 'The Port', blurb: 'Tankers on the shore, behind a broken seawall.', model: 'ship' },
   {
+    id: 'trials',
+    name: 'The Trial Grounds',
+    blurb: 'One of every obstacle, around a last green spring.',
+    model: 'sign',
+    generate: (dims) => generateTrials(dims),
+    story: true,
+    hidden: true,
+  },
+  {
     id: 'sandbox',
     name: 'Sandbox',
     blurb: 'Build, pour, plant and spill — then let the weather loose.',
@@ -51,6 +64,14 @@ export const LEVELS: LevelDef[] = [
     sandbox: true,
   },
 ];
+
+/** The levels on the title screen. */
+export const MENU_LEVELS = LEVELS.filter((l) => !l.hidden);
+
+/** A built level's gates (kit levels; none for hand-written maps). */
+export function gatesOf(map: MapData): GateSpec[] {
+  return (map as MapData & { gates?: GateSpec[] }).gates ?? [];
+}
 
 export function levelById(id: string | null | undefined): LevelDef {
   return LEVELS.find((l) => l.id === id) ?? LEVELS[0];

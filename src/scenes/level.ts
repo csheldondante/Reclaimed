@@ -5,7 +5,8 @@ import { Nature, reclamation, worldHealth } from '../game/nature';
 import { Powers } from '../game/powers';
 import { Director } from '../game/director';
 import { Reach } from '../game/reach';
-import { levelById, type LevelDef } from '../game/levels';
+import { gatesOf, levelById, type LevelDef } from '../game/levels';
+import { Trial } from '../game/trial';
 import { DIFFICULTY_LEVEL, loadDifficulty, loadLevelProgress, saveProgress, type Difficulty } from '../game/progress';
 import { EventKind } from '../sim/globals';
 import { EDIT_OP, Editor, LAYER_TOOLS } from '../ui/editor';
@@ -353,6 +354,7 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      trial: new Trial(core, this.powers, gatesOf(map), map.poi.healthy),
       scene: this,
     };
 
