@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-14 — round 32 (session 5) — gates only slow
+
+- The weather can keep slowly wearing gates down (storm runoff eroding
+  trash heaps is fine): a gate doesn't need to be hard, just something that
+  slows the player on the way to an objective. It mustn't open by itself
+  in the time a player spends getting there.
+
 ## 2026-10-13 — round 31 (session 5) — gates and a spin-off
 
 - Levels are a DAG of gates: regions separated by barriers green can't

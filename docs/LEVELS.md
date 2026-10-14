@@ -14,7 +14,9 @@ build them from, and the spin-off variants worth trying. The user's rules
   obstacles teach the mechanics.
 - **Any ability that physically clears an obstacle opens it** (a flood
   washes away what wind blows away). An ability is taught by an obstacle only
-  it can clear. A gate must never open by itself (ambient weather alone).
+  it can clear. A gate must never open by itself (ambient weather alone)
+  — though the weather may slowly wear it down: a gate only has to slow
+  the player on the way to an objective (round 32).
 - **Obstacles are the ruin, never nature** (no thickets). They're hard to
   break and hard to get past. Concrete is the canvas — green covers it; it
   isn't something the player must destroy.
@@ -31,11 +33,11 @@ Trial Grounds — the measurements corrected several of the first guesses
 |---|---|---|
 | Blown dust (drift, mat 0) | wind lifts it; water carries it | resettles downwind — it must be blown somewhere it can't come back from (water, off the map) |
 | Litter | a gale (wind > 5 strips a cell at a time, `litterStrip`); water carries it | |
-| Compacted trash | fire (burns to ash); a cyclone (strips it to litter); moving water (tears it into litter) | measured: cyclone 82%, lightning 20% in a minute; one storm's runoff tears off ~24% |
+| Compacted trash | fire (burns to ash); a cyclone (strips it to litter); moving water (tears it into litter) | measured: cyclone 92%, lightning 96% in a minute; one storm's runoff wears off 8–24% (fine: gates only slow, round 32) |
 | Ash | wind; water | very fertile once clean (growth cap 3) — the payoff of a burn |
-| Soil poison | rain leaches it; flowing water dissolves it faster; plants slowly | standing water takes it up (and drops it as it dries): a poisoned hollow is cleaned by rain, a gully by its own runoff — flood-only poison has to lie on an open slope |
-| Oil | fire (burns even in rain); it kills the shore it lies on | on bare ground it soaks in as soil poison; a storm's water carries a slick off |
-| Concrete, brick | taps chip it (a dozen taps bring a piece down); lightning craters it; water pressure on a cracked wall breaches it; heat cracks it | |
+| Soil poison | rain leaches it; flowing water dissolves it faster; plants slowly | standing water takes it up (and drops it as it dries): a poisoned hollow is cleaned by rain, a gully by its own runoff — flood-only poison has to lie on an open slope — and even there one passing storm takes it all today (BACKLOG R10) |
+| Oil | fire (burns even in rain); it kills the shore it lies on | on bare ground it soaks in as soil poison; a storm's water carries a slick off (one storm clears the lake, R10); measured: lightning 61%, a flood 93% |
+| Concrete, brick | taps chip it (a dozen taps bring a piece down); lightning craters it; water pressure on a cracked wall breaches it; heat cracks it | measured on a 6-high yard wall in a minute: taps 21%, lightning (a strike per 2 s) 95%, a cyclone 33% |
 | Stone | lightning only (craters) | effectively permanent |
 | Steel, rust | heat weakens it; lightning craters it | effectively permanent at gate scale |
 | Dry ground | water (rain, a river re-routed) | fertility needs moisture ≥ 0.04 — but moisture evens out within seconds, so it can't be a gate as things stand |

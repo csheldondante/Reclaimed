@@ -27,7 +27,8 @@ GPU per frame: renderprep (terrain + liquids) + vegprep (plants) → draw
 ```
 
 Globals (`common.wgsl` / `src/sim/globals.ts`, 1104 bytes) carry storms (+ shape:
-`stormsC` lobe phases and elongation), one-tick events, gusts (gusts[0] is the
+`stormsC` lobe phases and elongation), one-tick events (at most MAX_EVENTS = 4
+a tick; the overflow waits for the next tick), gusts (gusts[0] is the
 cursor/tap breeze that animals flee; gusts[1] the player's drag-wind), day/night
 light, the life lens, `env` (x, y: prevailing wind integrated over time; z:
 debris seeding boost during warmup), up to two dust storms and up to four

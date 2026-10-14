@@ -2414,3 +2414,44 @@ What the validator taught us (run 2; % of the gate cleared, 60 + 20 s):
 - Run 3 (the fixes above, per-gate serial runs, three worlds at once) was
   stopped by the system running low on memory before it reported; to rerun
   with `--parallel 1`.
+
+## 2026-10-14 — round 32: gates only slow; events no longer dropped
+
+The user: the weather may keep slowly wearing gates down (runoff eroding
+trash is fine) — a gate only has to slow the player. The validator now
+flags a leak only when the weather alone opens a gate within a run
+(LEAK = OPENS), not when it wears it.
+
+Runs 3 and 4 (`--parallel 1`, one world at a time) found that a tick
+carries at most MAX_EVENTS = 4 events and `step()` dropped the rest
+silently. With six gates, the oil and yard gates never got their chips or
+flood water, and most scripted strikes (two events each) were lost. That
+was why "chip opens nothing" in runs 2 and 3. It's a game bug too: fast
+taps (chip + ripple + grow) could lose events. Now the overflow waits for
+the next tick instead. The trial's per-tick abilities take turns round the
+gates, one per frame. Rain joins wind, gale and cyclone as one-gate-at-a-
+time (storms cap at 4). Chips aim at the ground as it stands now (the
+surface is re-read every 2 s), since a player taps what they see.
+
+Run 4 (% of the gate cleared / % of its stuff removed, 60 + 20 s, speed 2;
+chip from the re-run after the aim fix):
+
+| gate | ambient | wind | gale | cyclone | rain | lightning | flood | chip |
+|---|---|---|---|---|---|---|---|---|
+| dust | 0/4 | 52/64 | 62/73 | 90/93 | 3/15 | 15/14 | 0/2 | 0 |
+| litter (soft) | 22 | 86 | 93 | 100 | 77 | 47 | 0 | 0 |
+| trash | 8 | 0 | 0 | 92 | 1 | 96 | 0 | 0 |
+| poison slope | 98/100 | 0 | 0 | 0 | 97/98 | 0 | 3/18 | 0 |
+| oil lake | 100 | 1 | 0 | 1/6 | 100 | 61/74 | 93/95 | 0 |
+| walled yard | 0 | 0 | 0 | 33/30 | 0 | 95 | 0 | 21/24 |
+
+Dust, litter, trash and the yard behave as gates: none opens to the
+weather; trash teaches fire (cyclone too); the yard opens to taps,
+lightning and a cyclone. Poison and oil still leak. One passing storm takes
+the whole slope's poison and the lake's oil and stain, because any water
+film over 0.003 deep dissolves 0.16% of a cell's poison a tick
+(contamination.wgsl). That's exponential, independent of the deposit's
+depth, so a thicker deposit doesn't slow it and no layout can. The
+shader's own comment (heavy deposits need floods or many storms) wants a
+solubility limit; that's a balance change for the whole game, so it waits
+for the user (BACKLOG R10).

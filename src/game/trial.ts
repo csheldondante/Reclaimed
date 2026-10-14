@@ -179,12 +179,13 @@ export class Trial {
     const { weather, globals } = this.core;
     weather.holdNatural(seconds + settle + 600);
     const before = await this.measure();
-    const surf = (await this.snap()).surface;
+    let surf = (await this.snap()).surface;
     const topOf = (i: number) => sfZ(surf[i]);
     const w = this.core.dims.w;
     // (the ability goes only to these gates; all are measured)
     const gates = only ? this.gates.filter((g) => only.includes(g.id)) : this.gates;
     let next = 0;
+    let turn = 0;
     let done = false;
     const storms = new Map<string, { x: number; y: number }>();
     if (ability === 'ambient') {
@@ -194,6 +195,14 @@ export class Trial {
       weather.spawnToward(cx, cy);
       weather.spawnDust(cx, cy);
     }
+    // the ground as it stands now (a player taps and strikes what they see,
+    // not where a wall used to be)
+    void (async () => {
+      while (!done) {
+        await this.wait(2);
+        if (!done) surf = (await this.snap()).surface;
+      }
+    })();
     if (ability === 'wind' || ability === 'gale') {
       // strokes outward across each gate, one after another as a player
       // draws them: one per gate per pass (a breeze to a gust), or three
@@ -237,37 +246,38 @@ export class Trial {
             st.y = g.at[1];
           }
           break;
-        case 'lightning':
+        // (events: a tick carries MAX_EVENTS at most, so these take turns
+        // round the gates — one gate per frame, each at its own rate)
+        case 'lightning': {
           // a strike on a random column of each gate every 2 s
-          for (const g of gates) {
-            const i = g.cells[Math.floor(Math.random() * g.cells.length)];
-            this.powers.scriptStrike(i % w, Math.floor(i / w), topOf(i));
-          }
-          next = t + 2;
+          const g = gates[turn++ % gates.length];
+          const i = g.cells[Math.floor(Math.random() * g.cells.length)];
+          this.powers.scriptStrike(i % w, Math.floor(i / w), topOf(i));
+          next = t + 2 / gates.length;
           break;
+        }
         case 'flood': {
           // water poured onto each gate's highest ground for the first 40%,
           // as a flood from upstream would arrive
-          for (const g of gates) {
-            if (t > seconds * 0.4) break;
-            let hi = g.cells[0];
-            for (const i of g.cells) if (topOf(i) > topOf(hi)) hi = i;
-            globals.events.push({ kind: EventKind.Edit, x: (hi % w) + 0.5, y: Math.floor(hi / w) + 0.5, z: 3 * 32, radius: 4, strength: 1 });
-          }
+          if (t > seconds * 0.4) break;
+          const g = gates[turn++ % gates.length];
+          let hi = g.cells[0];
+          for (const i of g.cells) if (topOf(i) > topOf(hi)) hi = i;
+          globals.events.push({ kind: EventKind.Edit, x: (hi % w) + 0.5, y: Math.floor(hi / w) + 0.5, z: 3 * 32, radius: 4, strength: gates.length });
           break;
         }
-        case 'chip':
+        case 'chip': {
           // taps four a second, hammering one spot as a player breaching a
           // wall would: the tallest column and the few nearest it
-          for (const g of gates) {
-            const top = g.cells.reduce((a, b) => (topOf(b) > topOf(a) ? b : a));
-            const d = (i: number) => Math.hypot((i % w) - (top % w), Math.floor(i / w) - Math.floor(top / w));
-            const spot = [...g.cells].sort((a, b) => d(a) - d(b)).slice(0, 6);
-            const i = spot[Math.floor(Math.random() * spot.length)];
-            globals.events.push({ kind: EventKind.Chip, x: (i % w) + 0.5, y: Math.floor(i / w) + 0.5, z: Math.floor(topOf(i) - 0.5), radius: 1.8, strength: 1 });
-          }
-          next = t + 0.25;
+          const g = gates[turn++ % gates.length];
+          const top = g.cells.reduce((a, b) => (topOf(b) > topOf(a) ? b : a));
+          const d = (i: number) => Math.hypot((i % w) - (top % w), Math.floor(i / w) - Math.floor(top / w));
+          const spot = [...g.cells].sort((a, b) => d(a) - d(b)).slice(0, 6);
+          const i = spot[Math.floor(Math.random() * spot.length)];
+          globals.events.push({ kind: EventKind.Chip, x: (i % w) + 0.5, y: Math.floor(i / w) + 0.5, z: Math.floor(topOf(i) - 0.5), radius: 1.8, strength: 1 });
+          next = t + 0.25 / gates.length;
           break;
+        }
       }
     });
     done = true;

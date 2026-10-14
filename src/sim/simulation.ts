@@ -2,7 +2,7 @@
 // Systems run in the documented order; each has its own period.
 
 import type { Profiler } from '../gpu/profiler';
-import { EventKind, writeGlobals, GLOBALS_BYTES, type GlobalsState } from './globals';
+import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_BYTES, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
@@ -91,9 +91,11 @@ export class Simulation {
     globals.tick = this.tick;
     this.uploadGlobals(globals);
     // events are one-tick impulses: consumed by exactly this tick; so are the
-    // stroke segments stamped into the wind field (gusts[1..])
-    this.edit.pending = globals.events.some((e) => e.kind === EventKind.Edit);
-    globals.events = [];
+    // stroke segments stamped into the wind field (gusts[1..]). A tick
+    // carries MAX_EVENTS; the rest wait for the next tick rather than being lost
+    const sent = globals.events.slice(0, MAX_EVENTS);
+    this.edit.pending = sent.some((e) => e.kind === EventKind.Edit);
+    globals.events = globals.events.slice(MAX_EVENTS);
     if (globals.gusts.length > 1) {
       for (const gg of globals.gusts.slice(1)) gg.len = 0;
       globals.strokeSent = true;

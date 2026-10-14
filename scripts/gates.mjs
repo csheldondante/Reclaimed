@@ -24,8 +24,9 @@ const opt = (k, d) => {
 const OPENS = 0.5;
 /** a wall is open once this share of it is down: a breach is enough */
 const BREACH = 0.15;
-/** the weather alone must not clear this much */
-const LEAK = 0.2;
+/** the weather alone may wear a gate down (a gate only slows the player,
+ *  DECISIONS round 31) but must not open it within a run */
+const LEAK = OPENS;
 
 let run;
 const from = opt('from');
@@ -49,7 +50,7 @@ else {
   const errors = [];
   let ids = [];
   /** abilities a player applies one place at a time: a fresh world per gate */
-  const SERIAL = new Set(['wind', 'gale', 'cyclone']);
+  const SERIAL = new Set(['wind', 'gale', 'cyclone', 'rain']);
   const one = async ([ab, gate]) => {
     const page = await browser.newPage();
     page.on('pageerror', (e) => errors.push(`${ab}: ${e.message}`));
