@@ -10,7 +10,7 @@ clean a ruined industrial valley so life can return. Design authority:
 `docs/BACKLOG.md` (every open suggestion) → `docs/HANDOFF.md` (current state, known issues, next steps) →
 `docs/DECISIONS.md` (the user's answers — check before changing controls,
 economy or look) → `docs/ARCHITECTURE.md` (contracts) → `docs/DEVLOG.md` (why
-each change was made, with measurements). `docs/STATUS.md` is the user-facing
+each change was made, with measurements). `docs/BRANCHES.md` says which game each branch is (check which branch you're on). `docs/STATUS.md` is the user-facing
 stock-take.
 
 ## Working rules

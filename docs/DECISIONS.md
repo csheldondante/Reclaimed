@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-15 — round 33 (session 5) — one engine, five branches
+
+- Separate branches for each game: `ambient` (the chill game as it is
+  now), `puzzle` (the gate-DAG puzzle mode), `mayhem` (a SimCity-like
+  city that runs itself, disaster response automated; the player only
+  breaks things with weather), `sandbox` (a world editor: place and
+  modify prefab structures, raise mountains, shape the land with wind,
+  rain, meteor impacts, volcanic eruptions), and `hex` (an experimental
+  terrain engine: sediment and wind on a hex grid, and interlocking grids
+  that use each other's data both ways, so WFC can build structures on
+  irregular grids). Branches, not separate repos (supersedes X1's "a fork
+  in its own repo"). docs/BRANCHES.md has each charter.
+
 ## 2026-10-14 — round 32 (session 5) — gates only slow
 
 - The weather can keep slowly wearing gates down (storm runoff eroding
