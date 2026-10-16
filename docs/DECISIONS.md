@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-16 — round 34 (session 5) — worktrees; grids, not hexes
+
+- Each branch gets its own worktree, so work can go on in parallel.
+- Push a branch only once it has meaningful work of its own.
+- `hex` is renamed `grids`: the real intent is a more general map that
+  looks better and mixes terrain with non-terrain features. It supports
+  intersecting grids and their interactions, e.g. a hex nature grid of
+  material intervals, a rectangular grid for building voxel structures,
+  and an irregular grid for WFC buildings as in Townscaper.
+- Poison and oil (R10) are decided in the `puzzle` branch. The user's
+  lean: oil should be hard to get rid of without burning it (that makes
+  it fun), and limiting how much can dissolve in an amount of water
+  makes sense.
+
 ## 2026-10-15 — round 33 (session 5) — one engine, five branches
 
 - Separate branches for each game: `ambient` (the chill game as it is

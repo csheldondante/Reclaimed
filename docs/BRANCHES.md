@@ -6,7 +6,22 @@ rules + the level tools + the event fix). Fixes to the shared engine
 (sim, render, tooling) go to `ambient` first and are merged or
 cherry-picked into the others; each branch's own work stays on it. `main`
 is what GitHub Pages deploys: it follows `ambient` until the user says
-otherwise.
+otherwise. A branch is pushed once it has meaningful work of its own
+(round 34).
+
+## Worktrees
+
+Each branch has its own worktree (its own `npm install`; never a junction
+to another's node_modules) and its own dev-server port, so they can be
+worked on in parallel:
+
+| Branch | Folder | Dev server |
+|---|---|---|
+| `ambient` | `C:/Projects/Reclaimed` | `npm run dev` → 5173 |
+| `puzzle` | `C:/Projects/Reclaimed-puzzle` | `npm run dev -- --port 5174` |
+| `mayhem` | `C:/Projects/Reclaimed-mayhem` | `npm run dev -- --port 5175` |
+| `sandbox` | `C:/Projects/Reclaimed-sandbox` | `npm run dev -- --port 5176` |
+| `grids` | `C:/Projects/Reclaimed-grids` | `npm run dev -- --port 5177` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -14,7 +29,7 @@ otherwise.
 | `puzzle` | Puzzle mode: levels as a DAG of gates, abilities as a toolkit | the level kit, map preview, gate validator, the Trial Grounds | R6–R10, docs/LEVELS.md |
 | `mayhem` | FEMA Mayhem: an automated city that responds to disasters; the player only breaks things with weather | powers, structure collapse, fire, floods, people as agents | X1 |
 | `sandbox` | World editor: place and modify prefabs, raise mountains, shape the land with wind, rain, meteors, volcanoes | the sandbox brushes (edit.wgsl), stampGrid models, bedrock uplift | X4 |
-| `hex` | Experimental terrain engine: sediment and wind on a hex grid; interlocking grids that share data, so WFC can build on irregular grids | the sim systems and their contracts | X5 |
+| `grids` | The map engine generalised: intersecting grids (a hex nature grid of material intervals, a rectangular voxel grid for structures, an irregular grid for WFC buildings) that read and write each other's data | the sim systems and their contracts | X5 |
 
 ## ambient
 
@@ -32,7 +47,9 @@ Not hard, just satisfying; abilities never locked, any ability that
 clears an obstacle opens it, single-key obstacles teach (round 31); the
 weather may wear a gate down but mustn't open it (round 32). The
 validator (`scripts/gates.mjs`) checks every gate headlessly. Next: the
-poison/oil leak (R10), seed caches waking (R9), levels from the catalogue
+poison/oil leak (R10) — decided here; the user's lean: oil hard to get rid
+of without burning it (that's what makes it fun), and water dissolving
+only so much poison per amount of water; seed caches waking (R9), levels from the catalogue
 (R8), the valley's DAG towards the lab (R3).
 
 ## mayhem
@@ -60,31 +77,32 @@ prefab palette with placement and selection (stampGrid already places
 models), then meteors (lightning's crater edit, scaled up, with ejecta
 particles), then lava (a new liquid in the water/oil pattern).
 
-## hex
+## grids
 
-An experiment in the terrain engine itself, kept apart so the game
-branches don't depend on it until it proves out.
+The map engine, generalised: a world made of several grids that overlap
+and talk to each other, so it can mix terrain with things that aren't
+terrain and look better for it. Kept apart so the game branches don't
+depend on it until it proves out. (First called `hex`; renamed, round 34:
+hexes are one grid among several, not the point.)
 
-1. **Hex sim grid.** Sediment (slope relaxation, erosion, deposition) and
-   the wind field on a hex grid instead of the square columns. Six equal
-   neighbours remove the square grid's diagonal bias: dunes, talus and
-   wind shadows come out round instead of diamond-shaped. Axial
-   coordinates stored row-offset in flat GPU buffers; same kernel
-   structure, six fluxes per cell instead of four.
-2. **Interlocking grids.** Several grids over the same world, each good at
-   something: the hex grid for the sim, square voxel columns for
-   rendering and structures, and an irregular grid for buildings. Each
-   pair has a precomputed overlap (which cells of one cover which of the
-   other, with area weights), so any field can be read across: the
-   irregular grid samples height, slope, moisture and wind from the hex
-   grid (area-weighted), and writes back what it puts there (occupancy,
-   roughness that slows the wind, roofs that shed rain).
-3. **Irregular grid + WFC.** A Townscaper-style grid: hexes split into
-   triangles, merged into quads, relaxed into an organic mesh. Wave
-   function collapse on it places houses, walls, farmland and trees,
-   stacking upward where it's dense — driven by the fields it reads from
-   the hex grid (flat, dry, near water).
+1. **Intersecting grids.** Each grid suits what lives on it: a hex grid of
+   material intervals for nature (sediment, wind, water — six equal
+   neighbours, so dunes, talus and wind shadows come out round instead of
+   diamond-shaped); a rectangular voxel grid for building structures; an
+   irregular grid for WFC buildings, Townscaper-style. Any number of grids,
+   at any offset, rotation and scale.
+2. **Interactions both ways.** Each pair of grids has a precomputed
+   overlap (which cells of one cover which of the other, with area
+   weights), so any field reads across: a building on the irregular grid
+   samples height, slope, moisture and wind from the nature grid, and
+   writes back what it puts there (occupancy, roughness that slows the
+   wind, roofs that shed rain, foundations that hold the soil); a voxel
+   wall blocks the nature grid's water and sand; sand piles against it.
+3. **Irregular grid + WFC.** Hexes split into triangles, merged into quads,
+   relaxed into an organic mesh; wave function collapse on it places
+   houses, walls, farmland and trees, stacking upward where it's dense,
+   driven by the fields it reads (flat, dry, near water).
 
-Measure against the square grid at each step (the DEVLOG rule): frame
-time per system, and pictures of the same dune field and the same storm
-on both grids.
+Measure against today's square columns at each step (the DEVLOG rule):
+frame time per system, and pictures of the same dune field and the same
+storm on both.
