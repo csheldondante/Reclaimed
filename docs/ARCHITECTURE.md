@@ -211,10 +211,33 @@ The water system can be replaced by anything that publishes `water`,
 Draw shaders read the packed `renderFields` instead of individual fields, so
 they stay within 8 storage buffers.
 
+## The hex nature grid (branch `grids`, docs/GRIDS.md)
+
+The columns sit on a hex lattice: pointy-top hexes, centre to centre 1, rows
+√3/2 apart, odd rows shifted half a cell right (odd-r offset). Storage is
+unchanged — a w × h array indexed (column, row) — and kernels reach their six
+neighbours through `nbr(p, k)` (common.wgsl; TS mirror `world/lattice.ts`).
+Directions come in opposite pairs (E, W, NE, SW, NW, SE), so `k ^ 1` is the
+way back. World positions are `cellPos(p)`; `cellAt(w)` is the inverse; `triAt(w)`
+gives the three centres around a point with barycentric weights (smooth
+interpolation of per-cell fields). Per-direction buffers (`flux`, `oilFlux`,
+`sedOut` lanes) are `array<f32, 6>` per cell (`Dirs`, 24 bytes). Per-pipe
+rates (water and oil gain, slumping, wind easing) are 2/3 of the square
+grid's: the hex Laplacian's weighting, the same continuum rate. The wind
+field stays its own half-resolution square grid in world space. Levels and
+the kit still author in grid cells: a map laid onto the hex lattice row by
+row is ~13 % shorter in y and slightly sheared; points of interest convert
+with `poiWorld`. The world spans (w + 0.5) × h·√3/2.
+
 ## Rendering
 
-Single path: every interval is a box instance; vertex pulling from a storage
-buffer; only the three camera-facing faces are emitted (18 verts/instance).
+Single path: vertex pulling from a storage buffer, 36 vertices per instance.
+Column intervals (ground, water, oil, the loose sheet) are hex prisms: the top
+fanned from the centre with one flat normal (the plane through its corners)
+and the three sides toward the eye. Plants are axis-aligned boxes (top + two
+sides). Soft tops and sheets slope through hex corner heights: each corner
+touches three cells and each cell owns two (30° and 90°), so `cornerTex` is
+2w × h (terrainshape.wgsl).
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are
@@ -233,9 +256,10 @@ material, height, flags) gives exact picking via a 1-pixel async readback.
 
 ## Instance flags (render-prep → draw)
 
-`w = material | flags << 8`; flags: 1 top-of-column, 2 vegetation,
-4/8/16/32 side face toward +x/−x/+y/−y hidden, 64 top face hidden.
-Fully hidden intervals are not emitted. Bits 16..19 of `w`: structural damage
+`w = material | flags << 8 | sides << 20`; flags: 1 top-of-column, 2 vegetation,
+64 top face hidden; sides: bit k = the hex side toward neighbour k hidden.
+Fully hidden intervals are not emitted. Plant boxes are packed in storage
+cells (quarter cells for detail) and placed by their centre's cell. Bits 16..19 of `w`: structural damage
 (terrain: drawn as cracks) or tree species (vegetation: 0 broadleaf, 1 conifer,
 2 birch, 3 giant). Flag 128 = detail instance (x/y/size in
 quarter cells: trunks, grass tufts, flowers). Leaf boxes with the vegetation flag

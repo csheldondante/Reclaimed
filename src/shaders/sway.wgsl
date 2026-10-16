@@ -15,7 +15,7 @@ const DT_S: f32 = 1.0 / 60.0;
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let i = colIdx(id.x, id.y);
-  let c = vec3<f32>(f32(id.x) + 0.5, f32(id.y) + 0.5, f32(sfZ(surface[i])) + 2.5);
+  let c = vec3<f32>(cellPos(vec2<i32>(id.xy)), f32(sfZ(surface[i])) + 2.5);
   let w = windAt(c);
   let ws = length(w);
   // strong player wind bends plants hard (cap raised in round 7)

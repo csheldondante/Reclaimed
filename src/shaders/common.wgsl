@@ -99,7 +99,76 @@ fn numEvents() -> u32 { return u32(G.misc.x); }
 
 @group(0) @binding(0) var<uniform> G: Globals;
 
-const DIRS = array<vec2<i32>, 4>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
+// ---- the hex lattice (docs/GRIDS.md; mirrored in src/world/lattice.ts) ----
+// Pointy-top hexes, centre to centre 1, rows √3/2 apart, odd rows shifted
+// half a cell right ("odd-r" offset). Storage stays a w × h array indexed
+// (x, y) = (column, row); world positions are cellPos(). The six directions
+// come in opposite pairs, so k ^ 1 is the way back: E, W, NE, SW, NW, SE.
+const NDIR: u32 = 6u;
+const ROW_H: f32 = 0.8660254;
+/** unit vector of each direction in the world plane */
+const DIRV = array<vec2<f32>, 6>(
+  vec2<f32>(1.0, 0.0), vec2<f32>(-1.0, 0.0),
+  vec2<f32>(0.5, ROW_H), vec2<f32>(-0.5, -ROW_H),
+  vec2<f32>(-0.5, ROW_H), vec2<f32>(0.5, -ROW_H));
+// storage offsets to each neighbour, from an even row and from an odd row
+const DOFF_E = array<vec2<i32>, 6>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(-1, -1), vec2<i32>(-1, 1), vec2<i32>(0, -1));
+const DOFF_O = array<vec2<i32>, 6>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(1, 1), vec2<i32>(0, -1), vec2<i32>(0, 1), vec2<i32>(1, -1));
+/** the neighbour of cell p in direction k */
+fn nbr(p: vec2<i32>, k: u32) -> vec2<i32> {
+  if ((p.y & 1) == 0) { return p + DOFF_E[k]; }
+  return p + DOFF_O[k];
+}
+/** world position (x, y) of a cell's centre */
+fn cellPos(p: vec2<i32>) -> vec2<f32> {
+  return vec2<f32>(f32(p.x) + 0.5 + 0.5 * f32(p.y & 1), (f32(p.y) + 0.5) * ROW_H);
+}
+/** world position → fractional axial coordinates (q, r) on the triangle
+ *  lattice the cell centres form (cell (0, 0)'s centre at the origin) */
+fn axialOf(w: vec2<f32>) -> vec2<f32> {
+  let r = (w.y - 0.5 * ROW_H) / ROW_H;
+  return vec2<f32>(w.x - 0.5 - 0.5 * r, r);
+}
+/** integer axial (q, r) → storage cell */
+fn axialCell(a: vec2<i32>) -> vec2<i32> { return vec2<i32>(a.x + (a.y - (a.y & 1)) / 2, a.y); }
+/** the cell whose hexagon contains world point w (cube rounding) */
+fn cellAt(w: vec2<f32>) -> vec2<i32> {
+  let a = axialOf(w);
+  let c = vec3<f32>(a.x, a.y, -a.x - a.y);
+  var r = round(c);
+  let d = abs(r - c);
+  if (d.x > d.y && d.x > d.z) { r.x = -r.y - r.z; } else if (d.y > d.z) { r.y = -r.x - r.z; }
+  return axialCell(vec2<i32>(i32(r.x), i32(r.y)));
+}
+/** The three cell centres around world point w and their barycentric
+ *  weights: smooth interpolation of a per-cell field over the triangle
+ *  lattice of centres (exact at every centre). */
+struct Tri { c: array<vec2<i32>, 3>, w: vec3<f32> }
+fn triAt(w: vec2<f32>) -> Tri {
+  let a = axialOf(w);
+  let b = vec2<i32>(floor(a));
+  let f = a - floor(a);
+  var t: Tri;
+  if (f.x + f.y < 1.0) {
+    t.c = array<vec2<i32>, 3>(axialCell(b), axialCell(b + vec2<i32>(1, 0)), axialCell(b + vec2<i32>(0, 1)));
+    t.w = vec3<f32>(1.0 - f.x - f.y, f.x, f.y);
+  } else {
+    t.c = array<vec2<i32>, 3>(axialCell(b + vec2<i32>(1, 1)), axialCell(b + vec2<i32>(0, 1)), axialCell(b + vec2<i32>(1, 0)));
+    t.w = vec3<f32>(f.x + f.y - 1.0, 1.0 - f.x, 1.0 - f.y);
+  }
+  return t;
+}
+
+// Per-direction quantities (flux, sediment lanes): one f32 per direction.
+// Arrays have no arithmetic, so the few operations needed are functions.
+alias Dirs = array<f32, 6>;
+fn dZero() -> Dirs { return Dirs(0.0, 0.0, 0.0, 0.0, 0.0, 0.0); }
+fn dSum(a: Dirs) -> f32 { return a[0] + a[1] + a[2] + a[3] + a[4] + a[5]; }
+fn dScale(a: Dirs, s: f32) -> Dirs { var o = a; for (var k = 0u; k < NDIR; k++) { o[k] = a[k] * s; } return o; }
+fn dAdd(a: Dirs, b: Dirs) -> Dirs { var o = a; for (var k = 0u; k < NDIR; k++) { o[k] = a[k] + b[k]; } return o; }
+fn dAny(a: Dirs) -> bool { return a[0] > 0.0 || a[1] > 0.0 || a[2] > 0.0 || a[3] > 0.0 || a[4] > 0.0 || a[5] > 0.0; }
+/** a vector's share along each direction (its positive projections) */
+fn dSplit(v: vec2<f32>) -> Dirs { var o = dZero(); for (var k = 0u; k < NDIR; k++) { o[k] = max(dot(v, DIRV[k]), 0.0); } return o; }
 
 fn colIdx(x: u32, y: u32) -> u32 { return y * G.mapW + x; }
 fn colIdxI(p: vec2<i32>) -> u32 { return u32(p.y) * G.mapW + u32(p.x); }
@@ -417,6 +486,6 @@ const MAT_ASH_C: u32 = 17u;
 /** Loose enough for a strong wind to strip a cell at a time: litter, ash (round 10). */
 fn isStrippable(m: u32) -> bool { return m == MAT_LITTER || m == MAT_ASH_C; }
 fn litterStrip(p: vec2<i32>, tick: u32) -> bool {
-  let ws = length(windAt(vec3<f32>(vec2<f32>(p) + 0.5, 0.0)));
+  let ws = length(windAt(vec3<f32>(cellPos(p), 0.0)));
   return ws > 5.0 && rand3(u32(p.x), u32(p.y), tick ^ 0x1177u) < (ws - 5.0) * 0.004;
 }

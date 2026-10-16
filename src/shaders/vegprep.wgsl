@@ -184,7 +184,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     // plants stand on the drawn (possibly sloped) ground at the cell centre —
     // on top of a loose layer of sand or dirt (they grow in it; round 15),
     // under deep dust or ash (buried; the wind uncovers them)
-    top = groundZAt(vec2<i32>(id.xy), vec2<f32>(0.5), f32(sfZ(s)));
+    top = groundCentreZ(vec2<i32>(id.xy), f32(sfZ(s)));
     let lay = driftAt(vec2<i32>(id.xy));
     if (lay > 0.0 && !buriedAt(vec2<i32>(id.xy))) { top = f32(sfZ(s)) + lay; }
     let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));

@@ -6,8 +6,8 @@
 fn slopeAt(p: vec2<i32>) -> f32 {
   let z = f32(sfZ(surface[colIdxI(p)])) + driftAt(p);
   var m = 0.0;
-  for (var k = 0u; k < 4u; k++) {
-    let q = clampCell(p + DIRS[k] * 2);
+  for (var k = 0u; k < NDIR; k++) {
+    let q = clampCell(nbr(nbr(p, k), k));
     m = max(m, abs(f32(sfZ(surface[colIdxI(q)])) + driftAt(q) - z));
   }
   return m * 0.5;

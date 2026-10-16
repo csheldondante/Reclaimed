@@ -6,10 +6,10 @@
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
 @group(0) @binding(5) var<storage, read> oil: array<f32>;
-@group(0) @binding(6) var<storage, read_write> oilFlux: array<vec4<f32>>;
-@group(0) @binding(7) var<storage, read> flux: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read_write> oilFlux: array<Dirs>;
+@group(0) @binding(7) var<storage, read> flux: array<Dirs>;
 
-const OIL_GAIN: f32 = 0.06;
+const OIL_GAIN: f32 = 0.06 * 2.0 / 3.0; // per pipe (water_flux.wgsl)
 const OIL_FRICTION: f32 = 0.95;
 const CURRENT_DRAG: f32 = 0.6;
 
@@ -19,14 +19,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let o = oil[i];
-  if (o <= 1e-5) { oilFlux[i] = vec4<f32>(0.0); return; }
+  if (o <= 1e-5) { oilFlux[i] = dZero(); return; }
   let g = f32(sfZ(surface[i])) + driftAt(p) + water[i];
   let H = g + o;
   let d = max(water[i], 1e-4);
   let wf = flux[i];
   var f = oilFlux[i];
-  for (var k = 0u; k < 4u; k++) {
-    let q = p + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
     var Hn = g;
     var back = 0.0;
     if (inMap(q)) {
@@ -38,7 +38,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let current = max(0.0, wf[k] - back) / d;
     f[k] = max(0.0, f[k] * OIL_FRICTION + OIL_GAIN * (H - Hn) + CURRENT_DRAG * current * o);
   }
-  let total = f.x + f.y + f.z + f.w;
-  if (total > o) { f *= o / total; }
+  let total = dSum(f);
+  if (total > o) { f = dScale(f, o / total); }
   oilFlux[i] = f;
 }

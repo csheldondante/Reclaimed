@@ -14,6 +14,7 @@ import { ignoreTeardown } from '../gpu/pipeline';
 import { Controls } from '../input/controls';
 import { generateMenuMap, MENU_SCALE } from '../world/menumap';
 import { WorldCore, type Host, type Scene } from './world-core';
+import { cellPos, poiWorld, ROW_H } from '../world/lattice';
 
 const LINES: [number, string][] = [
   [0.95, 'A tree, where the thinking used to be.'],
@@ -67,7 +68,7 @@ export class MenuScene implements Scene {
     weather.params.naturalEvery = [1e9, 1e9];
     dayNight.dayLength = 1e9;
     dayNight.timeOfDay = 0.64;
-    camera.target = [24 * MENU_SCALE, 24 * MENU_SCALE, 14 * MENU_SCALE];
+    camera.target = [24 * MENU_SCALE, 24 * MENU_SCALE * ROW_H, 14 * MENU_SCALE];
     this.core.pollution = 1 - p;
     globals.collapseEnabled = false;
     // plants at this scale get petals, leaves and blades (round 12)
@@ -160,8 +161,7 @@ export class MenuScene implements Scene {
           .then((hit) => {
             // a level's model? select it
             if (hit) {
-              const hx = (hit.cell % core.dims.w) + 0.5;
-              const hy = Math.floor(hit.cell / core.dims.w) + 0.5;
+              const [hx, hy] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
               const lv = LEVELS.find((l) => {
                 const at = core.map.poi[`level:${l.id}`];
                 return at && Math.hypot(at[0] - hx, at[1] - hy) < 4.2 * MENU_SCALE;
@@ -240,7 +240,7 @@ export class MenuScene implements Scene {
     // and withers; then flowers a little further off
     this.showT -= dt;
     if (this.shown < 2 && this.showT <= 0 && p < 0.5) {
-      const [sx, sy] = core.map.poi.skull;
+      const [sx, sy] = poiWorld(core.map.poi.skull);
       const spot: [number, number] = this.shown === 0 ? [sx + 9 * MENU_SCALE, sy - 4 * MENU_SCALE] : [sx + 6 * MENU_SCALE, sy + 9 * MENU_SCALE];
       const taps = this.shown === 0 ? 3 : 2;
       for (let k = 0; k < taps; k++) setTimeout(() => this.powers.scriptTap(spot[0], spot[1]), k * 350);
@@ -282,7 +282,7 @@ export class MenuScene implements Scene {
     const base = Math.atan2(weather.params.baseWindY, weather.params.baseWindX);
     const a = base + (Math.random() - 0.5) * 0.9;
     const cx = dims.w * (0.3 + Math.random() * 0.4);
-    const cy = dims.h * (0.3 + Math.random() * 0.4);
+    const cy = dims.h * ROW_H * (0.3 + Math.random() * 0.4);
     const L = dims.w * 0.45;
     const pts: [number, number][] = [];
     for (let k = 0; k <= 4; k++) {

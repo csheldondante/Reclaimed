@@ -7,7 +7,7 @@
 // Only depends on the water contract (water, waterPrev, flux).
 @group(0) @binding(3) var<storage, read> waterPrev: array<f32>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
-@group(0) @binding(5) var<storage, read> flux: array<vec4<f32>>;
+@group(0) @binding(5) var<storage, read> flux: array<Dirs>;
 @group(0) @binding(6) var<storage, read> contamIn: array<vec2<f32>>;
 @group(0) @binding(7) var<storage, read_write> contamOut: array<vec2<f32>>;
 @group(0) @binding(8) var<storage, read> veg: array<f32>;
@@ -31,12 +31,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var cs = max(0.0, c.x + f32(atomicExchange(&contamDelta[i], 0)) / 100000.0);
   let dp = waterPrev[i];
   let f = flux[i];
-  let out = f.x + f.y + f.z + f.w;
+  let out = dSum(f);
   var frac = 0.0;
   if (dp > 1e-6) { frac = min(1.0, out / dp); }
   var cw = c.y * (1.0 - frac);
-  for (var k = 0u; k < 4u; k++) {
-    let q = p + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
     let dq = waterPrev[j];
@@ -61,6 +61,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // rain leaches/dilutes surface contamination directly, so a passing storm
   // visibly cleans lightly polluted ground; heavy industrial deposits still
   // need sustained water (floods, repeated storms) to clear.
-  cs = max(0.0, cs - RAIN_LEACH * rainAt(vec2<f32>(p) + 0.5));
+  cs = max(0.0, cs - RAIN_LEACH * rainAt(cellPos(p)));
   contamOut[i] = vec2<f32>(max(cs, 0.0), max(cw, 0.0));
 }

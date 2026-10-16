@@ -10,26 +10,26 @@
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
 @group(0) @binding(4) var<storage, read> moisture: array<f32>;
 @group(0) @binding(5) var<storage, read> fire: array<f32>;
-@group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read> flux: array<Dirs>;
 @group(0) @binding(7) var<storage, read_write> fields: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read> waterDepth: array<f32>;
 @group(0) @binding(9) var<storage, read> veg: array<f32>;
 
 /**
- * 1 where the four columns around grid corner v differ in top material
- * (the loose sheet's where there's a fair depth of it) or in plant cover:
- * only there do draw shaders vote on soft borders (render.wgsl edgeLook).
+ * 1 where cell p's top material (the loose sheet's where there's a fair
+ * depth of it) or plant cover differs from any neighbour's: only there do
+ * draw shaders vote on soft borders (render.wgsl edgeLook).
  */
-fn mixedCorner(v: vec2<i32>) -> f32 {
+fn mixedCell(p: vec2<i32>) -> f32 {
   var m0 = 0xffffffffu;
   var lo = 1e9;
   var hi = -1e9;
-  for (var k = 0; k < 4; k++) {
-    let q = clampCell(v - vec2<i32>(1 - (k & 1), 1 - (k >> 1)));
+  for (var k = 0u; k <= NDIR; k++) {
+    let q = clampCell(select(nbr(p, min(k, NDIR - 1u)), p, k == NDIR));
     let t = textureLoad(driftTex, q, 0);
     var m = sfMat(surface[colIdxI(q)]);
     if (t.x >= 0.07) { m = select(u32(t.z + 0.5), 19u, u32(t.z + 0.5) == 0u); }
-    if (k == 0) { m0 = m; } else if (m != m0) { return 1.0; }
+    if (k == 0u) { m0 = m; } else if (m != m0) { return 1.0; }
     let g = veg[colIdxI(q)];
     lo = min(lo, g);
     hi = max(hi, g);
@@ -37,14 +37,15 @@ fn mixedCorner(v: vec2<i32>) -> f32 {
   return select(0.0, 1.0, hi - lo > 0.02);
 }
 
-/** Drift surface height at grid corner v: mean (ground + dust) of the dusty columns touching it, or -1. */
-fn driftCornerZ(v: vec2<i32>) -> f32 {
+/** Drift surface height at owned corner `slot` of p: mean (ground + dust) of the dusty columns touching it, or -1. */
+fn driftCornerZ(p: vec2<i32>, slot: u32) -> f32 {
+  let ring = cornerRing(p, slot);
   var sum = 0.0;
   var n = 0.0;
   var solid = -1.0;
   var lo = 1e9;
-  for (var k = 0; k < 4; k++) {
-    let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
+  for (var k = 0u; k < 3u; k++) {
+    let q = ring[k];
     if (!inMap(q)) { continue; }
     let d = driftAt(q);
     if (d < 0.03) { continue; }
@@ -56,21 +57,22 @@ fn driftCornerZ(v: vec2<i32>) -> f32 {
   }
   // a solid top standing well over another column's dust: no shared sheet
   if (solid - lo > SHEET_STEP) { return -1.0; }
-  let c = taperCorner(v, sum, n, 0);
+  let c = taperCorner(ring, sum, n, 0u);
   // never below the solid top of a covered column it touches: soft ground
   // drapes over a step in the rock beneath instead of the rock poking
   // through it along every step (round 16)
   return select(c, max(c, solid + 0.04), c >= 0.0);
 }
 
-/** Water surface height at grid corner v: mean level of the wet columns touching it, or -1. */
-fn waterCornerZ(v: vec2<i32>) -> f32 {
+/** Water surface height at owned corner `slot` of p: mean level of the wet columns touching it, or -1. */
+fn waterCornerZ(p: vec2<i32>, slot: u32) -> f32 {
+  let ring = cornerRing(p, slot);
   var sum = 0.0;
   var n = 0.0;
   var lo = 1e9;
   var hi = -1e9;
-  for (var k = 0; k < 4; k++) {
-    let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
+  for (var k = 0u; k < 3u; k++) {
+    let q = ring[k];
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
     let d = waterDepth[j];
@@ -83,23 +85,23 @@ fn waterCornerZ(v: vec2<i32>) -> f32 {
   }
   // a wet bed standing well over another column's water: no shared sheet
   if (hi - lo > SHEET_STEP) { return -1.0; }
-  return taperCorner(v, sum, n, 1);
+  return taperCorner(ring, sum, n, 1u);
 }
 
 /**
  * Corner level of a sheet (drift or water): the mean of the covered columns,
  * pulled down toward the dry ground of the uncovered columns touching the
  * corner when it is close by (within 1.5) — so sheets taper into the ground
- * at their edges instead of ending in square box sides (round 12). -1 if no
+ * at their edges instead of ending in box sides (round 12). -1 if no
  * covered column touches the corner.
  */
-fn taperCorner(v: vec2<i32>, sum0: f32, n0: f32, kind: u32) -> f32 {
+fn taperCorner(ring: array<vec2<i32>, 6>, sum0: f32, n0: f32, kind: u32) -> f32 {
   if (n0 < 1.0) { return -1.0; }
   let level = sum0 / n0;
   var sum = sum0;
   var n = n0;
-  for (var k = 0; k < 4; k++) {
-    let q = v - vec2<i32>(1 - (k & 1), 1 - (k >> 1));
+  for (var k = 0u; k < 3u; k++) {
+    let q = ring[k];
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
     let covered = select(driftAt(q) >= 0.03, waterDepth[j] >= 0.012, kind == 1u);
@@ -109,7 +111,9 @@ fn taperCorner(v: vec2<i32>, sum0: f32, n0: f32, kind: u32) -> f32 {
   }
   return sum / n;
 }
-// smoothed corner heights for soft ground (terrainshape.wgsl), x = height or -1
+// hex corner values (terrainshape.wgsl; 2w × h, two owned corners per cell):
+// x ground height or -1, y water level or -1, z drift level or -1, w (slot 0
+// only) 1 where the cell's look differs from a neighbour's
 @group(0) @binding(16) var cornerOut: texture_storage_2d<rgba32float, write>;
 
 @compute @workgroup_size(8, 8)
@@ -122,7 +126,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let horiz = max(length(sun.xy), 1e-3);
   let dir = sun.xy / horiz;
   let tanE = sun.z / horiz;
-  let p0 = vec2<f32>(p) + 0.5;
+  let p0 = cellPos(p);
   // (the loose ground's depth counts: it's part of the surface — drawn
   // smoothed, so across the cell it dips below the column's level: start a
   // little lower or the downhill half of every cell shadows itself)
@@ -130,7 +134,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var k = 1; k < 160; k++) {
     let drop = f32(k) * tanE;
     if (f32(G.zMax) - drop <= sz) { break; }
-    let q = vec2<i32>(floor(p0 + dir * f32(k)));
+    let q = cellAt(p0 + dir * f32(k));
     if (!inMap(q)) { break; }
     // soft ground is drawn sloped (terrainshape.wgsl): it casts from about a
     // cell lower than its whole-cell top, so gentle slopes throw no saw-tooth
@@ -141,15 +145,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   var glow = fire[i];
+  // (the cells within two rings: the same 2.5-cell radius as before)
   for (var dy = -2; dy <= 2; dy++) {
-    for (var dx = -2; dx <= 2; dx++) {
+    for (var dx = -3; dx <= 3; dx++) {
       let q = p + vec2<i32>(dx, dy);
       if (!inMap(q)) { continue; }
-      let fall = 1.0 - length(vec2<f32>(f32(dx), f32(dy))) / 3.2;
-      glow = max(glow, fire[colIdxI(q)] * fall);
+      let dd = length(cellPos(q) - p0);
+      if (dd > 2.5) { continue; }
+      glow = max(glow, fire[colIdxI(q)] * (1.0 - dd / 3.2));
     }
   }
 
   fields[i] = vec4<f32>(sz, moisture[i], glow, length(netFlow(p)));
-  textureStore(cornerOut, p, vec4<f32>(computeCornerZ(p), waterCornerZ(p), driftCornerZ(p), mixedCorner(p)));
+  textureStore(cornerOut, vec2<i32>(p.x * 2, p.y), vec4<f32>(computeCornerZ(p, 0u), waterCornerZ(p, 0u), driftCornerZ(p, 0u), mixedCell(p)));
+  textureStore(cornerOut, vec2<i32>(p.x * 2 + 1, p.y), vec4<f32>(computeCornerZ(p, 1u), waterCornerZ(p, 1u), driftCornerZ(p, 1u), 0.0));
 }

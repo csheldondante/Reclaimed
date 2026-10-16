@@ -1,7 +1,8 @@
-// ---- renderer: box instances, opaque + water ------------------------------
-// One instanced draw per list. Each instance is an axis-aligned box; we emit
-// only the three faces that can face the fixed isometric camera
-// (top + the two sides toward the eye), 18 vertices per instance.
+// ---- renderer: hex prisms and boxes, opaque + water --------------------------
+// One instanced draw per list, 36 vertices per instance. Column intervals are
+// hex prisms on the nature grid (docs/GRIDS.md): the top fanned from the centre
+// and the three sides toward the eye. Plants are axis-aligned boxes: the top
+// and the two sides toward the eye.
 struct Camera {
   viewProj: mat4x4<f32>,
   eye: vec4<f32>,      // direction toward the eye (world), w unused
@@ -33,20 +34,19 @@ fn looseBelowAt(q: vec2<i32>) -> u32 {
 @group(0) @binding(13) var<storage, read> wilt: array<vec4<f32>>;
 
 /**
- * Smooth depth of a sheet at a world point: bilinear over the four nearest
- * column centres, so its outline (an isoline) is rounded rather than square
- * (round 12). kind 0 drift, 1 water.
+ * Smooth depth of a sheet at a world point: interpolated over the three
+ * nearest column centres (the hex lattice's triangles), so its outline (an
+ * isoline) is rounded rather than following the cells (round 12). kind 0
+ * drift, 1 water.
  */
 fn sheetDepth(p: vec2<f32>, kind: u32) -> f32 {
-  let t = p - 0.5;
-  let i0 = vec2<i32>(floor(t));
-  let f = fract(t);
-  var v: array<f32, 4>;
-  for (var k = 0; k < 4; k++) {
-    let q = clampCell(i0 + vec2<i32>(k & 1, k >> 1));
-    v[k] = select(driftAt(q), water[colIdxI(q)], kind == 1u);
+  let t = triAt(p);
+  var s = 0.0;
+  for (var k = 0; k < 3; k++) {
+    let q = clampCell(t.c[k]);
+    s += t.w[k] * select(driftAt(q), water[colIdxI(q)], kind == 1u);
   }
-  return mix(mix(v[0], v[1], f.x), mix(v[2], v[3], f.x), f.y);
+  return s;
 }
 
 /** Withering plants dry out to straw and brown. */
@@ -68,26 +68,47 @@ struct VOut {
   @location(3) tint: f32,
   // the box's z range (liquids derive depth from it)
   @location(4) @interpolate(flat) zr: vec2<f32>,
-  // box bounds and its sway offset (sub-voxel canopies march inside the box)
+  // box bounds and its sway offset (sub-voxel canopies march inside the box;
+  // a hex prism: its cell's centre - 0.5, and 1 x 1)
   @location(5) @interpolate(flat) bmin: vec3<f32>,
   @location(6) @interpolate(flat) bsize: vec3<f32>,
   @location(7) @interpolate(flat) boff: vec3<f32>,
+  // a hex prism's hidden sides (bit k: toward neighbour k), and PRISM
+  @location(8) @interpolate(flat) sides: u32,
 };
 
 const FLAG_VEG_R: u32 = 2u;
 const FLAG_DETAIL: u32 = 128u;
+const FLAG_TOP_R: u32 = 1u;
+const PRISM: u32 = 64u;
 
-struct Box { x: f32, y: f32, sx: f32, sy: f32, z0: f32, z1: f32, mat: u32, flags: u32 };
+// An instance: column intervals (water, oil, the loose sheet too) are hex
+// prisms on their cell; plants are axis-aligned boxes. x, y: a box's world
+// minimum corner; a prism's cell centre - 0.5.
+struct Box { x: f32, y: f32, sx: f32, sy: f32, z0: f32, z1: f32, mat: u32, flags: u32, cell: vec2<i32>, sides: u32, hex: bool };
 
 fn unpackBox(v: vec4<u32>) -> Box {
-  var b = Box(
-    f32(v.x & 0xfffu), f32((v.x >> 12u) & 0xfffu),
-    f32(((v.x >> 24u) & 0xfu) + 1u), f32(((v.x >> 28u) & 0xfu) + 1u),
-    bitcast<f32>(v.y), bitcast<f32>(v.z), v.w & 0xffu, (v.w >> 8u) & 0xfffu);
-  // detail instances (grass tufts, flowers) are positioned in quarter cells
-  if ((b.flags & FLAG_DETAIL) != 0u) {
-    b.x *= 0.25; b.y *= 0.25; b.sx *= 0.25; b.sy *= 0.25;
-  }
+  var b: Box;
+  let gx = f32(v.x & 0xfffu);
+  let gy = f32((v.x >> 12u) & 0xfffu);
+  b.sx = f32(((v.x >> 24u) & 0xfu) + 1u);
+  b.sy = f32(((v.x >> 28u) & 0xfu) + 1u);
+  b.z0 = bitcast<f32>(v.y);
+  b.z1 = bitcast<f32>(v.z);
+  b.mat = v.w & 0xffu;
+  b.flags = (v.w >> 8u) & 0xfffu;
+  b.sides = (v.w >> 20u) & 63u;
+  b.hex = (b.flags & (FLAG_VEG_R | FLAG_DETAIL)) == 0u;
+  // packed in storage cells (detail instances in quarter cells): place the
+  // box by its centre - the cell it's in, then that cell's world centre
+  let q = select(1.0, 0.25, (b.flags & FLAG_DETAIL) != 0u);
+  b.sx *= q;
+  b.sy *= q;
+  let cs = vec2<f32>(gx * q + b.sx * 0.5, gy * q + b.sy * 0.5);
+  b.cell = vec2<i32>(floor(cs));
+  let wc = cellPos(b.cell) + (fract(cs) - 0.5) * vec2<f32>(1.0, ROW_H);
+  b.x = wc.x - b.sx * 0.5;
+  b.y = wc.y - b.sy * 0.5;
   return b;
 }
 
@@ -100,7 +121,7 @@ fn swayOffset(b: Box, h: f32) -> vec3<f32> {
   let c = vec2<f32>(b.x + b.sx * 0.5, b.y + b.sy * 0.5);
   // the lean is a per-column spring (sway.wgsl): plants bend with the wind,
   // hold it, and spring back slowly when it drops
-  let lean = bend[colIdxI(clampCell(vec2<i32>(floor(c))))].xy;
+  let lean = bend[colIdxI(clampCell(b.cell))].xy;
   let amp = length(lean) / 0.3;
   let dir = lean / max(length(lean), 1e-4);
   let seed = fract(sin(dot(c, vec2<f32>(12.9898, 78.233))) * 43758.5453);
@@ -111,97 +132,141 @@ fn swayOffset(b: Box, h: f32) -> vec3<f32> {
   return vec3<f32>((lean + flutter) * k, 0.0);
 }
 
-const FLAG_TOP_R: u32 = 1u;
-
-fn waterOr(v: vec2<i32>, z: f32) -> f32 {
-  let c = waterCornerAt(v);
+/** Corner height of a smooth sheet (water or drift prism) at corner j of p. */
+fn sheetOr(m: u32, p: vec2<i32>, j: u32, z: f32) -> f32 {
+  let c = select(waterCornerAt(p, j), driftCornerAt(p, j), m == MAT_DRIFT);
   return select(c, z, c < 0.0);
-}
-fn driftOr(v: vec2<i32>, z: f32) -> f32 {
-  let c = driftCornerAt(v);
-  return select(c, z, c < 0.0);
-}
-/** Corner height of a smooth sheet (water or drift box). */
-fn sheetOr(m: u32, v: vec2<i32>, z: f32) -> f32 {
-  if (m == MAT_DRIFT) { return driftOr(v, z); }
-  return waterOr(v, z);
 }
 
 /**
- * Does a drift sheet's edge at corner v stand clear of the ground of the
- * neighbour n beside it? Its corner was left at its box (a step), or n has no
- * sheet of its own (sheets share their corners) and n's top is drawn lower there.
+ * Does a drift sheet's edge at corner j of p stand clear of the ground of the
+ * neighbour n beside it? Its corner was left at its prism (a step), or n has
+ * no sheet of its own (sheets share their corners) and n's top is drawn lower there.
  */
-fn sheetGap(v: vec2<i32>, n: vec2<i32>) -> bool {
-  let d = driftCornerAt(v);
-  if (d < 0.0) { return true; }
-  if (!inMap(n) || textureLoad(driftTex, n, 0).x > 0.12) { return false; }
-  return d > cornerOr(v, groundTopR(n)) + 0.02;
+fn sheetGap(p: vec2<i32>, j: u32, n: vec2<i32>) -> bool {
+  let d = driftCornerAt(p, j);
+  // (the map's edge always shows its side)
+  if (d < 0.0 || !inMap(n)) { return true; }
+  if (textureLoad(driftTex, n, 0).x > 0.12) { return false; }
+  return d > cornerOr(p, j, groundTopR(n)) + 0.02;
 }
 
+/** Hex side m (facing 60 deg * m, counter-clockwise from +x) -> its neighbour direction (NDIR order). */
+const SIDE_DIR = array<u32, 6>(0u, 2u, 4u, 1u, 3u, 5u);
+
+/** Drawn top height of a prism at its corner j. */
+fn prismCornerZ(b: Box, j: u32, soft: bool, liquid: bool) -> f32 {
+  if (liquid) { return sheetOr(b.mat, b.cell, j, b.z1); }
+  if (soft) { return cornerOr(b.cell, j, b.z1); }
+  return b.z1;
+}
+
+/**
+ * A hex prism (a column interval): 36 vertices - the top as six triangles
+ * fanned from the centre (soft ground and sheets slope through their shared
+ * corner heights), then the three sides facing the camera. The top takes one
+ * flat normal, the plane fitted through its corners (least squares: the
+ * gradient is (1 / 3R^2) sum h_j o_j): per-triangle normals showed every
+ * hexagon's fan wherever the smoothed corners aren't coplanar.
+ */
+fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
+  let c = cellPos(b.cell);
+  // soft ground: the column's top is drawn sloped (terrainshape.wgsl)
+  let soft = (b.flags & FLAG_TOP_R) != 0u && MATS[b.mat].look.x > 0.0;
+  // water and drifted dust: smooth sheets through their corner levels
+  let liquid = b.mat == MAT_WATER || b.mat == MAT_DRIFT;
+  var p: vec3<f32>;
+  var n: vec3<f32>;
+  var shown = true;
+  if (vi < 18u) {
+    let t = vi / 3u;
+    let h0 = prismCornerZ(b, t, soft, liquid);
+    let h1 = prismCornerZ(b, t + 1u, soft, liquid);
+    var hc = b.z1;
+    var g = vec2<f32>(0.0);
+    if (soft || liquid) {
+      hc = 0.0;
+      for (var j = 0u; j < 6u; j++) {
+        let h = prismCornerZ(b, j, soft, liquid);
+        hc += h;
+        g += h * cornerOffset(j);
+      }
+      hc /= 6.0;
+      g /= 3.0 * HEX_R * HEX_R;
+    }
+    let pc = vec3<f32>(c, hc);
+    let p0 = vec3<f32>(c + cornerOffset(t), h0);
+    let p1 = vec3<f32>(c + cornerOffset(t + 1u), h1);
+    let v = vi % 3u;
+    p = select(select(p1, p0, v == 1u), pc, v == 0u);
+    n = normalize(vec3<f32>(-g, 1.0));
+    shown = (b.flags & 64u) == 0u;
+  } else {
+    let s = (vi - 18u) / 6u;
+    let uv = QUAD[(vi - 18u) % 6u];
+    // the three sides facing the eye: the one most squarely toward it, and
+    // the one either side
+    let m0 = i32(round(atan2(CAM.eye.y, CAM.eye.x) / 1.0471976));
+    let m = u32((m0 - 1 + i32(s) + 12) % 6);
+    // side m runs from corner m - 1 to corner m
+    let j = select((m + 5u) % 6u, m, uv.x > 0.5);
+    let k = SIDE_DIR[m];
+    var top = b.z1;
+    if (soft) { top = cornerOr(b.cell, j, b.z1); }
+    if (liquid) { top = max(sheetOr(b.mat, b.cell, j, b.z1), b.z0); }
+    p = vec3<f32>(c + cornerOffset(j), mix(b.z0, top, uv.y));
+    n = vec3<f32>(DIRV[k], 0.0);
+    shown = ((b.sides >> k) & 1u) == 0u;
+    // a drift sheet tapers into the ground where it can (its corners meet the
+    // neighbour's: no side there); where it stops at a step (a corner left at
+    // the prism's height) it shows that side, up to its corner levels - without
+    // it the background showed through under the sheet's edge (round 30)
+    if (b.mat == MAT_DRIFT) {
+      let nb = nbr(b.cell, k);
+      if (!sheetGap(b.cell, (m + 5u) % 6u, nb) && !sheetGap(b.cell, m, nb)) { shown = false; }
+    }
+    // water: no side inside a continuous body of water
+    if (b.mat == MAT_WATER) {
+      let q = nbr(b.cell, k);
+      if (inMap(q)) {
+        let jq = colIdxI(q);
+        if (f32(sfZ(surface[jq])) + driftAt(q) + water[jq] >= b.z1 - 0.02) { shown = false; }
+      }
+    }
+  }
+  (*out).pos = CAM.viewProj * vec4<f32>(p, 1.0);
+  (*out).wpos = p;
+  (*out).bmin = vec3<f32>(c - 0.5, b.z0);
+  (*out).bsize = vec3<f32>(1.0, 1.0, b.z1 - b.z0);
+  (*out).boff = vec3<f32>(0.0);
+  (*out).nrm = n;
+  (*out).tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
+  (*out).info = vec2<u32>(b.mat, b.flags);
+  (*out).zr = vec2<f32>(b.z0, b.z1);
+  (*out).sides = b.sides | PRISM;
+  return b.z1 > b.z0 && shown;
+}
+
+/** A plant box: its top and the two sides toward the eye (18 of the 36 vertices). */
 fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
+  if (vi >= 18u) { return false; }
   let face = vi / 6u;
   let uv = QUAD[vi % 6u];
   let sxn = select(-1.0, 1.0, CAM.eye.x > 0.0);
   let syn = select(-1.0, 1.0, CAM.eye.y > 0.0);
-  // soft ground: the column's top is drawn sloped (terrainshape.wgsl)
-  let soft = (b.flags & FLAG_TOP_R) != 0u && (b.flags & (FLAG_VEG_R | FLAG_DETAIL)) == 0u && MATS[b.mat].look.x > 0.0;
-  // water and drifted dust: smooth sheets through their corner levels
-  let liquid = b.mat == MAT_WATER || b.mat == MAT_DRIFT;
-  // a drift sheet tapers into the ground where it can (its corners meet the
-  // neighbour's: no sides there); where it stops at a step (a corner left at
-  // the box's height) it shows that side, up to its corner levels — without
-  // it the background showed through under the sheet's edge (round 30)
-  if (b.mat == MAT_DRIFT && face > 0u) {
-    // (sheets are one cell: the edge's corners and the cell across it)
-    var e0 = vec2<i32>(i32(b.x), i32(b.y));
-    var e1 = e0;
-    var nb = e0;
-    if (face == 1u) {
-      e0 = vec2<i32>(select(i32(b.x), i32(b.x) + 1, sxn > 0.0), i32(b.y));
-      e1 = e0 + vec2<i32>(0, 1);
-      nb = vec2<i32>(i32(b.x) + select(-1, 1, sxn > 0.0), i32(b.y));
-    } else {
-      e0 = vec2<i32>(i32(b.x), select(i32(b.y), i32(b.y) + 1, syn > 0.0));
-      e1 = e0 + vec2<i32>(1, 0);
-      nb = vec2<i32>(i32(b.x), i32(b.y) + select(-1, 1, syn > 0.0));
-    }
-    if (!sheetGap(e0, nb) && !sheetGap(e1, nb)) { return false; }
-  }
-  let c0 = vec2<i32>(i32(b.x), i32(b.y));
   var p: vec3<f32>;
   var n: vec3<f32>;
   if (face == 0u) {
     p = vec3<f32>(b.x + uv.x * b.sx, b.y + uv.y * b.sy, b.z1);
     n = vec3<f32>(0.0, 0.0, 1.0);
-    if (liquid) {
-      p.z = sheetOr(b.mat, c0 + vec2<i32>(uv), b.z1);
-      let h00 = sheetOr(b.mat, c0, b.z1);
-      let h10 = sheetOr(b.mat, c0 + vec2<i32>(1, 0), b.z1);
-      let h01 = sheetOr(b.mat, c0 + vec2<i32>(0, 1), b.z1);
-      let h11 = sheetOr(b.mat, c0 + vec2<i32>(1, 1), b.z1);
-      n = normalize(vec3<f32>(-((h10 + h11) - (h00 + h01)) * 0.5, -((h01 + h11) - (h00 + h10)) * 0.5, 1.0));
-    } else if (soft) {
-      p.z = cornerOr(c0 + vec2<i32>(uv), b.z1);
-      // one flat normal for the whole face (nrm is flat-interpolated)
-      let h00 = cornerOr(c0, b.z1);
-      let h10 = cornerOr(c0 + vec2<i32>(1, 0), b.z1);
-      let h01 = cornerOr(c0 + vec2<i32>(0, 1), b.z1);
-      let h11 = cornerOr(c0 + vec2<i32>(1, 1), b.z1);
-      n = normalize(vec3<f32>(-((h10 + h11) - (h00 + h01)) * 0.5, -((h01 + h11) - (h00 + h10)) * 0.5, 1.0));
-    }
   } else if (face == 1u) {
     let fx = select(b.x, b.x + b.sx, sxn > 0.0);
     p = vec3<f32>(fx, b.y + uv.x * b.sy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(sxn, 0.0, 0.0);
-    if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(fx), i32(p.y)), b.z1); }
-    if (liquid && uv.y > 0.5) { p.z = max(sheetOr(b.mat, vec2<i32>(i32(fx), i32(p.y)), b.z1), b.z0); }
   } else {
     let fy = select(b.y, b.y + b.sy, syn > 0.0);
     p = vec3<f32>(b.x + uv.x * b.sx, fy, mix(b.z0, b.z1, uv.y));
     n = vec3<f32>(0.0, syn, 0.0);
-    if (soft && uv.y > 0.5) { p.z = cornerOr(vec2<i32>(i32(p.x), i32(fy)), b.z1); }
-    if (liquid && uv.y > 0.5) { p.z = max(sheetOr(b.mat, vec2<i32>(i32(p.x), i32(fy)), b.z1), b.z0); }
   }
   var off = vec3<f32>(0.0);
   if ((b.flags & FLAG_VEG_R) != 0u) {
@@ -218,18 +283,20 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   (*out).tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
   (*out).info = vec2<u32>(b.mat, b.flags);
   (*out).zr = vec2<f32>(b.z0, b.z1);
-  // per-face visibility computed in render-prep
-  var hideBit = 64u;
-  if (face == 1u) { hideBit = select(8u, 4u, sxn > 0.0); }
-  if (face == 2u) { hideBit = select(32u, 16u, syn > 0.0); }
-  return b.z1 > b.z0 && (b.flags & hideBit) == 0u;
+  (*out).sides = 0u;
+  return b.z1 > b.z0;
+}
+
+fn instVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
+  if (b.hex) { return prismVertex(b, vi, out); }
+  return boxVertex(b, vi, out);
 }
 
 @vertex
 fn vsBox(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   var o: VOut;
   let b = unpackBox(instances[ii]);
-  if (!boxVertex(b, vi, &o)) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
+  if (!instVertex(b, vi, &o)) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
   return o;
 }
 
@@ -237,17 +304,7 @@ fn vsBox(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO
 fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   var o: VOut;
   let b = unpackBox(instances[ii]);
-  var ok = boxVertex(b, vi, &o);
-  // hide side faces that are inside a continuous body of water
-  let face = vi / 6u;
-  if (face > 0u && b.mat != MAT_OIL) {
-    let q = vec2<i32>(i32(b.x), i32(b.y)) + vec2<i32>(o.nrm.xy);
-    if (inMap(q)) {
-      let j = colIdxI(q);
-      if (f32(sfZ(surface[j])) + driftAt(q) + water[j] >= b.z1 - 0.02) { ok = false; }
-    }
-  }
-  if (!ok) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
+  if (!instVertex(b, vi, &o)) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
   return o;
 }
 
@@ -262,7 +319,13 @@ fn toSrgb(c: vec3<f32>) -> vec3<f32> { return pow(clamp(c, vec3<f32>(0.0), vec3<
 
 /** Column whose fields describe this fragment (step slightly into the surface). */
 fn fragCell(wpos: vec3<f32>, nrm: vec3<f32>) -> vec2<i32> {
-  return clampCell(vec2<i32>(floor(wpos.xy - nrm.xy * 0.01)));
+  return clampCell(cellAt(wpos.xy - nrm.xy * 0.01));
+}
+
+/** A face's own 2D coordinates: tops their xy, sides along the wall and up. */
+fn faceUV(wpos: vec3<f32>, nrm: vec3<f32>) -> vec2<f32> {
+  if (abs(nrm.z) > 0.5) { return wpos.xy; }
+  return vec2<f32>(dot(wpos.xy, normalize(vec2<f32>(-nrm.y, nrm.x))), wpos.z);
 }
 
 /** The box offset used by the sub-voxel march (only meaningful for rigid canopies). */
@@ -274,22 +337,19 @@ fn swayOffsetRigid(b: Box, off: vec3<f32>) -> vec3<f32> {
 fn sunDir() -> vec3<f32> { return normalize(vec3<f32>(G.sunX, G.sunY, G.sunZ)); }
 
 /**
- * Direct-light visibility 0..1. Tops blend the shadow test of the four
- * nearest columns of similar height (bilinear), so shadow edges are soft and
+ * Direct-light visibility 0..1. Tops blend the shadow test of the three
+ * nearest columns of similar height (barycentric), so shadow edges are soft and
  * slide smoothly across the ground as the sun moves instead of stepping a
  * whole cell at a time. Side faces use their own column.
  */
 fn sunLit(wpos: vec3<f32>, nrm: vec3<f32>, sc: vec2<i32>) -> f32 {
   let own = select(0.0, 1.0, wpos.z >= fields[colIdxI(sc)].x - 0.05);
   if (nrm.z < 0.5) { return own; }
-  let p = wpos.xy - 0.5;
-  let i0 = vec2<i32>(floor(p));
-  let f = fract(p);
+  let t = triAt(wpos.xy);
   var acc = 0.0;
   var wsum = 0.0;
-  for (var k = 0; k < 4; k++) {
-    let o = vec2<i32>(k & 1, k >> 1);
-    let q = clampCell(i0 + o);
+  for (var k = 0; k < 3; k++) {
+    let q = clampCell(t.c[k]);
     let j = colIdxI(q);
     // only neighbours at or a little below this height: a higher neighbour is
     // a step/wall beside us (its own top is no shadow test for this point),
@@ -297,9 +357,7 @@ fn sunLit(wpos: vec3<f32>, nrm: vec3<f32>, sc: vec2<i32>) -> f32 {
     let nz = f32(sfZ(surface[j]));
     // (slack: soft ground is drawn sloped up to ~1 cell from its whole-cell top)
     if (nz > wpos.z + 1.05 || nz < wpos.z - 1.5) { continue; }
-    let wx = select(1.0 - f.x, f.x, o.x == 1);
-    let wy = select(1.0 - f.y, f.y, o.y == 1);
-    let wgt = wx * wy;
+    let wgt = t.w[k];
     acc += wgt * select(0.0, 1.0, wpos.z >= fields[j].x - 0.9);
     wsum += wgt;
   }
@@ -311,7 +369,7 @@ fn sunLit(wpos: vec3<f32>, nrm: vec3<f32>, sc: vec2<i32>) -> f32 {
 fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sun = sunDir();
   let ndl = max(dot(nrm, sun), 0.0);
-  let sc = clampCell(vec2<i32>(floor(wpos.xy + nrm.xy * 0.5)));
+  let sc = clampCell(cellAt(wpos.xy + nrm.xy * 0.5));
   let lit = sunLit(wpos, nrm, sc);
   // storm shade, and the light shadow of passing fair-weather clouds
   let cloud = max(cloudShade(wpos.xy), fairCloud(wpos.xy) * 0.22);
@@ -338,14 +396,10 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
 @group(0) @binding(23) var reachTex: texture_2d<f32>;
 
 fn reachAt(p: vec2<f32>) -> f32 {
-  let q = p - 0.5;
-  let c = vec2<i32>(floor(q));
-  let f = q - floor(q);
-  let a = textureLoad(reachTex, clampCell(c), 0).x;
-  let b = textureLoad(reachTex, clampCell(c + vec2<i32>(1, 0)), 0).x;
-  let d = textureLoad(reachTex, clampCell(c + vec2<i32>(0, 1)), 0).x;
-  let e = textureLoad(reachTex, clampCell(c + vec2<i32>(1, 1)), 0).x;
-  return mix(mix(a, b, f.x), mix(d, e, f.x), f.y);
+  let t = triAt(p);
+  var r = 0.0;
+  for (var k = 0; k < 3; k++) { r += t.w[k] * textureLoad(reachTex, clampCell(t.c[k]), 0).x; }
+  return r;
 }
 
 fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
@@ -364,12 +418,19 @@ fn haze(c: vec3<f32>, wpos: vec3<f32>) -> vec3<f32> {
   return o;
 }
 
-/** Thin dark lines at cell boundaries so the voxel grid reads; fades out when cells are tiny. */
+/** Thin dark lines at cell boundaries so the grid reads (hex edges on tops; prism corners and whole heights on sides); fades out when cells are tiny. */
 fn gridLines(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
-  var a: vec2<f32>;
-  if (abs(nrm.z) > 0.5) { a = wpos.xy; } else if (abs(nrm.x) > 0.5) { a = wpos.yz; } else { a = wpos.xz; }
-  let f = fract(a);
-  let e = min(min(f.x, 1.0 - f.x), min(f.y, 1.0 - f.y));
+  let d = wpos.xy - cellPos(cellAt(wpos.xy - nrm.xy * 0.01));
+  var e: f32;
+  if (abs(nrm.z) > 0.5) {
+    // distance to the hexagon's edge (inradius 0.5)
+    e = 0.5 - max(abs(d.x), max(abs(dot(d, DIRV[2])), abs(dot(d, DIRV[4]))));
+  } else {
+    let along = dot(d, normalize(vec2<f32>(-nrm.y, nrm.x)));
+    let fz = fract(wpos.z);
+    e = min(HEX_R * 0.5 - abs(along), min(fz, 1.0 - fz));
+  }
+  let a = faceUV(wpos, nrm);
   let w = max(fwidth(a.x), fwidth(a.y));
   let line = 1.0 - smoothstep(0.0, w * 1.2, e);
   return line * 0.16 * smoothstep(0.45, 0.12, w);
@@ -420,7 +481,7 @@ fn canopyMarch(in: VOut) -> vec4<f32> {
 
 // ---- soft borders between ground materials (round 26) ----------------------
 // A top face doesn't switch material at the cell edge: each point takes the
-// material that wins a vote over the four nearest columns (bilinear weights,
+// material that wins a vote over the three nearest columns (barycentric weights,
 // like the rounded shorelines), nudged by world-space noise and by each
 // material's relief (pebbly rubble pokes up through sand, sand fills the
 // low spots of dirt). Both sides of an edge see the same columns and the same
@@ -465,36 +526,36 @@ struct EdgeLook { m: u32, v: f32 };
 fn edgeLook(p: vec3<f32>, own: u32, ownV: f32) -> EdgeLook {
   // (render-fields marks the corners where anything differs: elsewhere, one
   // texture read and done)
-  if (textureLoad(cornerTex, clampCell(vec2<i32>(floor(p.xy + 0.5))), 0).w < 0.5) { return EdgeLook(own, ownV); }
-  let t = p.xy - 0.5;
-  let i0 = vec2<i32>(floor(t));
-  let f = fract(t);
-  var ms: array<u32, 4>;
-  var ws: array<f32, 4>;
+  // (a point lies in the triangles around its own cell: unless that cell
+  // differs from a neighbour, there is nothing to vote on)
+  let own0 = clampCell(cellAt(p.xy));
+  if (textureLoad(cornerTex, vec2<i32>(own0.x * 2, own0.y), 0).w < 0.5) { return EdgeLook(own, ownV); }
+  let t = triAt(p.xy);
+  var ms: array<u32, 3>;
+  var ws: array<f32, 3>;
   var vs = 0.0;
-  for (var k = 0; k < 4; k++) {
-    let o = vec2<i32>(k & 1, k >> 1);
-    let q = clampCell(i0 + o);
+  for (var k = 0; k < 3; k++) {
+    let q = clampCell(t.c[k]);
     let tl = topLookAt(q);
     var m = u32(tl.x + 0.5);
     var v = veg[colIdxI(q)];
     if (!blends(m) || abs(tl.y - p.z) > 0.9) { m = own; v = ownV; }
     ms[k] = m;
-    ws[k] = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+    ws[k] = t.w[k];
     vs += ws[k] * v;
   }
   // (most of the ground: one material all round, nothing to vote on)
-  if (ms[0] == own && ms[1] == own && ms[2] == own && ms[3] == own) { return EdgeLook(own, vs); }
+  if (ms[0] == own && ms[1] == own && ms[2] == own) { return EdgeLook(own, vs); }
   var best = own;
   var bestS = -1e9;
-  for (var k = 0; k < 4; k++) {
+  for (var k = 0; k < 3; k++) {
     let m = ms[k];
     // each material once
     var seen = false;
     for (var j = 0; j < k; j++) { if (ms[j] == m) { seen = true; } }
     if (seen) { continue; }
     var w = 0.0;
-    for (var j = 0; j < 4; j++) { if (ms[j] == m) { w += ws[j]; } }
+    for (var j = 0; j < 3; j++) { if (ms[j] == m) { w += ws[j]; } }
     let s = w + 0.28 * (vnoise(p.xy * 1.1 + vec2<f32>(f32(m) * 7.3, f32(m) * 3.1)) - 0.5) + relief(m, p.xy);
     if (s > bestS) { bestS = s; best = m; }
   }
@@ -527,9 +588,9 @@ fn voronoi2(p: vec2<f32>, salt: i32) -> vec4<f32> {
 /** Rock facets: the tilted normal and how much to darken (cracks, facet tone). */
 fn rockFacet(wpos: vec3<f32>, nrm: vec3<f32>, tiltK: f32) -> vec4<f32> {
   // the face's own 2D coordinates (tops: xy; sides: along the wall and up)
-  var a: vec2<f32>;
+  var a = faceUV(wpos, nrm);
   var salt = 301;
-  if (abs(nrm.z) > 0.5) { a = wpos.xy; } else if (abs(nrm.x) > 0.5) { a = vec2<f32>(wpos.y, wpos.z * 1.3); salt = 333; } else { a = vec2<f32>(wpos.x, wpos.z * 1.3); salt = 367; }
+  if (abs(nrm.z) <= 0.5) { a.y *= 1.3; salt = 333 + i32(round(atan2(nrm.y, nrm.x) * 3.0)); }
   let v = voronoi2(a * 1.25, salt);
   let fid = vec3<i32>(vec2<i32>(v.zw), salt);
   let tilt = vec3<f32>(randv(fid + vec3<i32>(0, 0, 5)) - 0.5, randv(fid + vec3<i32>(0, 0, 9)) - 0.5, randv(fid + vec3<i32>(0, 0, 13)) - 0.5) * 0.7 * tiltK;
@@ -542,7 +603,7 @@ fn rockFacet(wpos: vec3<f32>, nrm: vec3<f32>, tiltK: f32) -> vec4<f32> {
 
 // ---- carved rock (round 29) ----------------------------------------------------
 // Faceted shading alone left rock dead straight in profile. Stone is carved:
-// its surface lies a noisy depth (0..ROCK_CARVE) inside the box's exposed
+// its surface lies a noisy depth (0..ROCK_CARVE) inside the prism's exposed
 // faces — the top (smoothed slope included) and the sides open to the air;
 // faces against a neighbour aren't carved, so stone columns join without
 // gaps. Each stone fragment marches the view ray into its box to that
@@ -571,11 +632,11 @@ fn rockCut(p: vec3<f32>) -> f32 {
   return ROCK_CARVE * smoothstep(0.2, 0.85, vnoise3(p * 1.1));
 }
 
-// nt: the top of the ground in each neighbour (+x, -x, +y, -y). A side is
-// only open to the air above it: below, the neighbour's facing side isn't
-// drawn (hidden behind this box), so a ray leaving there would show the
+// nt: the top of the ground in each neighbour (NDIR order). A side is only
+// open to the air above it: below, the neighbour's facing side isn't drawn
+// (hidden behind this prism), so a ray leaving there would show the
 // background through the rock (round 30: holes between stone columns)
-struct RockBox { lo: vec3<f32>, hi: vec3<f32>, open: u32, h: vec4<f32>, nt: vec4<f32> };
+struct RockBox { c: vec2<f32>, z0: f32, z1: f32, open: u32, top: bool, nt: Dirs, h: array<f32, 6>, hc: f32 };
 
 fn groundTopR(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
@@ -584,52 +645,74 @@ fn groundTopR(q: vec2<i32>) -> f32 {
 
 fn rockBox(in: VOut, flags: u32) -> RockBox {
   var rb: RockBox;
-  rb.lo = in.bmin;
-  rb.hi = in.bmin + in.bsize;
+  rb.c = in.bmin.xy + 0.5;
+  let cell = cellAt(rb.c);
+  rb.z0 = in.bmin.z;
+  rb.z1 = in.bmin.z + in.bsize.z;
   // exposed: the top if it's the column's top and nothing sits on it; the sides not hidden
-  var open = (~flags) & (4u | 8u | 16u | 32u);
-  if ((flags & 1u) != 0u && (flags & 64u) == 0u) { open |= 1u; }
-  rb.open = open;
-  let c = vec2<i32>(i32(rb.lo.x), i32(rb.lo.y));
-  rb.h = vec4<f32>(cornerOr(c, rb.hi.z), cornerOr(c + vec2<i32>(1, 0), rb.hi.z), cornerOr(c + vec2<i32>(0, 1), rb.hi.z), cornerOr(c + vec2<i32>(1, 1), rb.hi.z));
-  rb.nt = vec4<f32>(groundTopR(c + DIRS[0]), groundTopR(c + DIRS[1]), groundTopR(c + DIRS[2]), groundTopR(c + DIRS[3]));
+  rb.open = (~in.sides) & 63u;
+  rb.top = (flags & 1u) != 0u && (flags & 64u) == 0u;
+  // the top as drawn: the fan through the corner heights
+  rb.hc = 0.0;
+  for (var j = 0u; j < 6u; j++) {
+    rb.h[j] = cornerOr(cell, j, rb.z1);
+    rb.hc += rb.h[j] / 6.0;
+  }
   // a rise the smoothing draws as a slope isn't a rock face: only sheer
   // rises are carved (carving the slopes opened seams between the tops)
   let sm = MATS[MAT_STONE].look.x;
-  for (var k = 0; k < 4; k++) { if (rb.hi.z - rb.nt[k] <= sm + 0.01) { rb.nt[k] = 1e9; } }
+  for (var k = 0u; k < NDIR; k++) {
+    // (the map's edge is no rock face: on the hex grid it zigzags, and rays
+    // left a prism through the notches into nothing)
+    let q = nbr(cell, k);
+    rb.nt[k] = select(1e9, groundTopR(q), inMap(q));
+    if (rb.z1 - rb.nt[k] <= sm + 0.01) { rb.nt[k] = 1e9; }
+  }
   return rb;
+}
+
+/** The drawn top's height at p (the triangle of the fan p is over). */
+fn rockTopZ(rb: RockBox, p: vec2<f32>) -> f32 {
+  let d = p - rb.c;
+  let t = u32(floor((atan2(d.y, d.x) - 0.5235988) / 1.0471976) + 6.0) % 6u;
+  let a = cornerOffset(t);
+  let b = cornerOffset(t + 1u);
+  // d = u a + v b
+  let det = a.x * b.y - a.y * b.x;
+  let u = (d.x * b.y - d.y * b.x) / det;
+  let v = (a.x * d.y - a.y * d.x) / det;
+  return rb.hc + u * (rb.h[t] - rb.hc) + v * (rb.h[(t + 1u) % 6u] - rb.hc);
 }
 
 /** Inside the carved rock by this much at p (< 0: in the air cut away). */
 fn rockIn(rb: RockBox, p: vec3<f32>) -> f32 {
   var d = 1e3;
-  if ((rb.open & 1u) != 0u) {
-    let f = clamp(p.xy - rb.lo.xy, vec2<f32>(0.0), vec2<f32>(1.0));
-    d = min(d, mix(mix(rb.h.x, rb.h.y, f.x), mix(rb.h.z, rb.h.w, f.x), f.y) - p.z);
+  if (rb.top) { d = min(d, rockTopZ(rb, p.xy) - p.z); }
+  let r = p.xy - rb.c;
+  for (var k = 0u; k < NDIR; k++) {
+    if (((rb.open >> k) & 1u) != 0u && p.z > rb.nt[k]) { d = min(d, 0.5 - dot(r, DIRV[k])); }
   }
-  if ((rb.open & 4u) != 0u && p.z > rb.nt.x) { d = min(d, rb.hi.x - p.x); }
-  if ((rb.open & 8u) != 0u && p.z > rb.nt.y) { d = min(d, p.x - rb.lo.x); }
-  if ((rb.open & 16u) != 0u && p.z > rb.nt.z) { d = min(d, rb.hi.y - p.y); }
-  if ((rb.open & 32u) != 0u && p.z > rb.nt.w) { d = min(d, p.y - rb.lo.y); }
   return d - rockCut(p);
 }
 
-/** March into a stone box from the face point: vec4(hit, 1) or w = 0 (missed: the air). */
+/** March into a stone prism from the face point: vec4(hit, 1) or w = 0 (missed: the air). */
 fn rockMarch(in: VOut, flags: u32) -> vec4<f32> {
   let rb = rockBox(in, flags);
-  let open = rb.open;
   let dir = -normalize(CAM.eye.xyz);
   var t = 0.0;
   for (var i = 0; i < 20; i++) {
     let p = in.wpos + dir * t;
-    // left the box: into the air through an open face, or into solid stuff
-    // (a neighbour, the ground) through a closed one
-    // (an open side only leads into the air above the neighbour's ground)
-    if (p.x > rb.hi.x) { if ((open & 4u) != 0u && p.z > rb.nt.x) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
-    if (p.x < rb.lo.x) { if ((open & 8u) != 0u && p.z > rb.nt.y) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
-    if (p.y > rb.hi.y) { if ((open & 16u) != 0u && p.z > rb.nt.z) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
-    if (p.y < rb.lo.y) { if ((open & 32u) != 0u && p.z > rb.nt.w) { return vec4<f32>(0.0); } return vec4<f32>(p, 2.0); }
-    if (p.z < rb.lo.z) { return vec4<f32>(p, 2.0); }
+    // left the prism: into the air through an open side, or into solid stuff
+    // (a neighbour, the ground) through a closed one (an open side only
+    // leads into the air above the neighbour's ground)
+    let r = p.xy - rb.c;
+    for (var k = 0u; k < NDIR; k++) {
+      if (dot(r, DIRV[k]) > 0.5) {
+        if (((rb.open >> k) & 1u) != 0u && p.z > rb.nt[k]) { return vec4<f32>(0.0); }
+        return vec4<f32>(p, 2.0);
+      }
+    }
+    if (p.z < rb.z0) { return vec4<f32>(p, 2.0); }
     let s = rockIn(rb, p);
     if (s >= 0.0) { return vec4<f32>(p, select(1.0, 2.0, i > 0)); }
     t += max(-s * 0.8, 0.02);
@@ -676,7 +759,7 @@ fn fsBox(in: VOut) -> FOut {
   // rock: carved to a jagged surface inside its box (round 29) — only when
   // zoomed in far enough to see it (ROCK_ZOOM px per cell): it doubled the
   // draw of the whole valley at the default zoom, where a cell is a few px
-  let carved = mat == MAT_STONE && (flags & 2u) == 0u && CAM.viewport.z > ROCK_ZOOM;
+  let carved = mat == MAT_STONE && (in.sides & PRISM) != 0u && CAM.viewport.z > ROCK_ZOOM;
   if (carved) {
     let h = rockMarch(in, flags);
     if (h.w == 0.0) { discard; }
@@ -718,8 +801,8 @@ fn fsBox(in: VOut) -> FOut {
     }
   }
 
-  // voxel texture: per-cell and per-subcell (4x4) variation
-  let vc = vec3<i32>(floor(in.wpos - in.nrm * 0.01));
+  // voxel texture: per-cell (the hex column, whole heights) and per-subcell (4x4) variation
+  let vc = vec3<i32>(cell, i32(floor(in.wpos.z - in.nrm.z * 0.01)));
   let sub = vec3<i32>(floor(in.wpos * 4.0 - in.nrm * 0.02));
   let n1 = randv(sub);
   let n2 = randv(sub + vec3<i32>(71, 13, 5));
@@ -851,13 +934,13 @@ fn fsBox(in: VOut) -> FOut {
     // vines: climb walls from living ground in front of the face; the longer
     // that ground has been green (higher succession stage) the higher they reach
     if (!isTop && in.nrm.z < 0.5 && MATS[mat].sim.x == 1.0 && mat != 1u) {
-      let front = clampCell(cell + vec2<i32>(in.nrm.xy));
+      let front = clampCell(cellAt(cellPos(cell) + in.nrm.xy));
       let fv = veg[colIdxI(front)];
       let gz = f32(sfZ(surface[colIdxI(front)]));
       let reach = clamp((fv - 1.4) * 3.2, 0.0, 16.0);
       let rel = in.wpos.z - gz;
       if (reach > 0.0 && rel >= 0.0) {
-        let along = select(in.wpos.x, in.wpos.y, abs(in.nrm.x) > 0.5);
+        let along = faceUV(in.wpos, in.nrm).x;
         let strand = i32(floor(along * 4.0));
         let sh = randv(vec3<i32>(strand, cell.x * 7 + cell.y, 515));
         let len = reach * (0.35 + 0.65 * sh);
@@ -873,8 +956,7 @@ fn fsBox(in: VOut) -> FOut {
   // cracks and chipped edges grow with structural damage (taps, lightning,
   // heat, water pressure) so decay is visible before anything fails
   if (damage > 0u && (flags & 2u) == 0u) {
-    var fa: vec2<f32>;
-    if (abs(in.nrm.z) > 0.5) { fa = in.wpos.xy; } else if (abs(in.nrm.x) > 0.5) { fa = in.wpos.yz; } else { fa = in.wpos.xz; }
+    let fa = faceUV(in.wpos, in.nrm);
     let dk = f32(damage);
     let c1 = abs(vnoise(fa * 2.2 + vec2<f32>(f32(ci % 97u))) - 0.5);
     let c2 = abs(vnoise(fa * 4.7 + 11.0) - 0.5);
@@ -1066,7 +1148,7 @@ fn fsBody(in: VOut) -> FOut {
   o.color = vec4<f32>(toSrgb(col), 1.0);
   // pickable (the Break tool hits bodies): the column under the fragment, its
   // height, and flag 0x8000 ("a body") in the instance-flags field
-  let bc = clampCell(vec2<i32>(floor(in.wpos.xy)));
+  let bc = clampCell(cellAt(in.wpos.xy));
   o.pick = vec2<u32>(colIdxI(bc) + 1u, mat | (u32(max(in.wpos.z, 0.0)) << 8u) | (0x8000u << 16u));
   return o;
 }

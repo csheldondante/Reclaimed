@@ -8,6 +8,7 @@ import type { PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
+import { DIRS_BYTES } from '../world/lattice';
 
 export const STATS_COUNT = 16;
 
@@ -165,14 +166,15 @@ export class WorldGpu {
     this.water = this.buf('water', N * 4, S);
     this.waterNext = this.buf('waterNext', N * 4, S);
     this.waterPrev = this.buf('waterPrev', N * 4, S);
-    this.flux = this.buf('flux', N * 16, S);
+    // per-direction quantities: one f32 per hex direction (common.wgsl Dirs)
+    this.flux = this.buf('flux', N * DIRS_BYTES, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
     device.queue.writeBuffer(this.water, 0, map.water);
     device.queue.writeBuffer(this.waterSource, 0, map.waterSource);
 
     this.oil = this.buf('oil', N * 4, S);
     this.oilNext = this.buf('oilNext', N * 4, S);
-    this.oilFlux = this.buf('oilFlux', N * 16, S);
+    this.oilFlux = this.buf('oilFlux', N * DIRS_BYTES, S);
     device.queue.writeBuffer(this.oil, 0, map.oil);
     this.oilStored = this.buf('oilStored', N * 8, S);
     device.queue.writeBuffer(this.oilStored, 0, map.oilStored);
@@ -200,7 +202,7 @@ export class WorldGpu {
     this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.windField, this.windFieldNext);
     this.windFieldView = this.windField.createView();
-    this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
+    this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w * 2, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
     this.textures.push(this.cornerTex);
     this.cornerView = this.cornerTex.createView();
     this.sparkTex = device.createTexture({ label: 'sparks', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST });
@@ -243,7 +245,7 @@ export class WorldGpu {
     // folds it back in where they land — round 15)
     this.contamDelta = this.buf('contamDelta', N * 8, S);
     this.deposit = this.buf('deposit', N * 16, S);
-    this.sedOut = this.buf('sedOut', N * 7 * 16, S);
+    this.sedOut = this.buf('sedOut', N * 7 * DIRS_BYTES, S);
   }
 
   private owned: GPUBuffer[] = [];

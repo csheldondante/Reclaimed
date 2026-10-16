@@ -64,8 +64,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // fertile ground nearby by itself and the player blows it farther
   } else {
     var neigh = 0.0;
-    for (var k = 0u; k < 4u; k++) {
-      let q = p + DIRS[k];
+    for (var k = 0u; k < NDIR; k++) {
+      let q = nbr(p, k);
       if (inMap(q)) { neigh += smoothstep(0.4, 1.2, vegIn[colIdxI(q)]); }
     }
     // occasional long-distance seed from established plants (wind / animals)

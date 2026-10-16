@@ -6,12 +6,14 @@
 // atomics) to avoid contention on the indirect-args counters.
 //
 // Instance (vec4<u32>):
-//   x: x | y<<12 | (sx-1)<<24 | (sy-1)<<28
+//   x: x | y<<12 | (sx-1)<<24 | (sy-1)<<28  (storage cells; quarter cells
+//      for detail instances)
 //   y: bitcast z0 (f32)   z: bitcast z1 (f32)
-//   w: material | flags<<8
-//      flags: 1 = top of column, 2 = vegetation,
-//             4/8/16/32 = side face toward +x/-x/+y/-y hidden, 64 = top face hidden
-// Visibility: a side face is hidden when the neighbour's solid ground stack
+//   w: material | flags<<8 | (damage or species)<<16 | sides<<20
+//      flags: 1 = top of column, 2 = vegetation, 64 = top face hidden,
+//             128 = detail instance
+//      sides: bit k = the hex side toward neighbour k (NDIR order) hidden
+// Column intervals are drawn as hex prisms; vegetation as boxes. Visibility: a side face is hidden when the neighbour's solid ground stack
 // (contiguous from z=0) reaches the interval's top; a top face is hidden when
 // the next interval sits directly on it. Fully hidden intervals are not
 // emitted at all (camera-independent, so rotation stays correct).
@@ -27,7 +29,7 @@
 const FLAG_TOP: u32 = 1u;
 const FLAG_VEG: u32 = 2u;
 const HIDE_TOP: u32 = 64u;
-const HIDE_ALL: u32 = 4u | 8u | 16u | 32u | 64u;
+const SIDES_ALL: u32 = 63u;
 
 /** z of the top of the contiguous stack starting at the ground (0 outside the map). */
 fn groundTop(q: vec2<i32>) -> f32 {
@@ -42,15 +44,16 @@ fn groundTop(q: vec2<i32>) -> f32 {
   return t;
 }
 
-fn hideFlags(gt: vec4<f32>, z1: f32, nextZ0: f32) -> u32 {
+/** Hidden faces: bits 0..5 the sides (NDIR order), bit 6 the top. */
+fn hideFaces(gt: Dirs, z1: f32, nextZ0: f32) -> u32 {
   var f = 0u;
-  if (gt.x >= z1) { f |= 4u; }
-  if (gt.y >= z1) { f |= 8u; }
-  if (gt.z >= z1) { f |= 16u; }
-  if (gt.w >= z1) { f |= 32u; }
-  if (abs(nextZ0 - z1) < 1e-3) { f |= HIDE_TOP; }
+  for (var k = 0u; k < NDIR; k++) { if (gt[k] >= z1) { f |= 1u << k; } }
+  if (abs(nextZ0 - z1) < 1e-3) { f |= 64u; }
   return f;
 }
+const HIDE_ALL: u32 = 127u;
+/** Hidden faces → the instance's flag bits (top) and side bits. */
+fn hideBits(h: u32) -> u32 { return ((h & 64u) << 8u) | ((h & SIDES_ALL) << 20u); }
 const WATER_MIN: f32 = 0.012;
 const OIL_MIN: f32 = 0.004;
 
@@ -76,7 +79,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var top = 0.0;
   var d = 0.0;
   var ol = 0.0;
-  var gt = vec4<f32>(0.0);
+  var gt = dZero();
   var nVis = 0u;
   // the loose ground on top is drawn as the smooth sheet (vegprep.wgsl), not as boxes
   var run = 0u;
@@ -90,7 +93,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     d = water[i];
     ol = oil[i];
     let p = vec2<i32>(id.xy);
-    gt = vec4<f32>(groundTop(p + DIRS[0]), groundTop(p + DIRS[1]), groundTop(p + DIRS[2]), groundTop(p + DIRS[3]));
+    for (var k = 0u; k < NDIR; k++) { gt[k] = groundTop(nbr(p, k)); }
     var col: array<vec4<u32>, MAX_K>;
     for (var k = 0u; k < nSlots; k++) { col[k] = layers[cs.x + k]; }
     run = looseRun(&col, nSlots);
@@ -101,7 +104,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
       let v = layers[cs.x + k];
       var nz = 9999.0;
       if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); } else if (coverZ >= 0.0) { nz = coverZ; }
-      if (hideFlags(gt, ivZ1(v), nz) != HIDE_ALL) { nVis += 1u; }
+      if (hideFaces(gt, ivZ1(v), nz) != HIDE_ALL) { nVis += 1u; }
     }
     nO = nVis;
     nW = select(0u, 1u, d > WATER_MIN) + select(0u, 1u, ol > OIL_MIN);
@@ -121,10 +124,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let v = layers[cs.x + k];
     var nz = 9999.0;
     if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); } else if (coverZ >= 0.0) { nz = coverZ; }
-    let hide = hideFlags(gt, ivZ1(v), nz);
+    let hide = hideFaces(gt, ivZ1(v), nz);
     if (hide == HIDE_ALL) { continue; }
-    let flags = select(0u, FLAG_TOP, k + 1u == run) | hide;
-    var inst = mkInst(id.x, id.y, 1u, 1u, ivZ0(v), ivZ1(v), ivMat(v), flags);
+    var inst = mkInst(id.x, id.y, 1u, 1u, ivZ0(v), ivZ1(v), ivMat(v), select(0u, FLAG_TOP, k + 1u == run));
+    inst.w |= hideBits(hide);
     inst.w |= (ivAux(v) & 15u) << 16u; // structural damage → cracks
     instOpaque[o] = inst;
     o += 1u;
@@ -139,15 +142,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     // wherever water ran down a slope (round 25)
     let lv = bed + d;
     var hide = 0u;
-    for (var k = 0u; k < 4u; k++) {
-      let q = vec2<i32>(id.xy) + DIRS[k];
+    for (var k = 0u; k < NDIR; k++) {
+      let q = nbr(vec2<i32>(id.xy), k);
       if (!inMap(q)) { continue; }
       let j = colIdxI(q);
       let nd = water[j];
       let nb = max(sfZ(surface[j]) + driftAt(q), bodyTopAt(q));
-      if ((nd > WATER_MIN && max(bed, nb) - min(lv, nb + nd) <= SHEET_STEP) || gt[k] >= lv) { hide |= 4u << k; }
+      if ((nd > WATER_MIN && max(bed, nb) - min(lv, nb + nd) <= SHEET_STEP) || gt[k] >= lv) { hide |= 1u << k; }
     }
-    instWater[w] = mkInst(id.x, id.y, 1u, 1u, bed, lv, MAT_WATER, hide);
+    var wi = mkInst(id.x, id.y, 1u, 1u, bed, lv, MAT_WATER, 0u);
+    wi.w |= hideBits(hide);
+    instWater[w] = wi;
     w += 1u;
   }
   if (ol > OIL_MIN) {

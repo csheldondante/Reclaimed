@@ -95,13 +95,12 @@ and moves smoother.
 
 ## Plan
 
-1. Lattice interface: neighbour count, neighbour of a cell, the opposite
-   direction, cell → world position and world → cell, in WGSL (and a TS
-   mirror for uniforms and picking). Square first, unchanged behaviour,
-   verified against today.
-2. The hex lattice behind it (`?grid=hex`), rendering hex prisms, picking.
-   Compare the same storm and dune field on both lattices: pictures and
-   frame time per system.
+1. ✓ Lattice interface: neighbour of a cell, the opposite direction,
+   cell → world and world → cell, smooth interpolation (WGSL, with a TS
+   mirror for uniforms and picking).
+2. ✓ The nature grid is hex (no switch: the `ambient` branch is the square
+   reference), rendered as hex prisms. Measured against square (DEVLOG
+   2026-10-16): sim 1.3×, draw 1.9× — next, cache each cell's top plane.
 3. Grid frames (full rotation) and a voxel structure on its own grid.
 4. Both projections, with normals.
 5. Sand, soil, water and wind reacting to the structure (piling, sliding

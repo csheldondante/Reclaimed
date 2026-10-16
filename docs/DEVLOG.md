@@ -2455,3 +2455,49 @@ depth, so a thicker deposit doesn't slow it and no layout can. The
 shader's own comment (heavy deposits need floods or many storms) wants a
 solubility limit; that's a balance change for the whole game, so it waits
 for the user (BACKLOG R10).
+
+## 2026-10-16 — grids: the nature grid goes hex (GRIDS plan steps 1–2)
+
+Branch `grids` (docs/GRIDS.md, DECISIONS round 35). The interval columns
+now sit on a hex lattice; every system runs on it, and it renders as hex
+prisms. No square/hex switch: the square reference is the `ambient`
+branch, run beside it (no fallback paths to keep alive).
+
+- Lattice in common.wgsl (`nbr`, `cellPos`, `cellAt`, `triAt`, `Dirs`),
+  mirrored for the CPU in world/lattice.ts. Directions in opposite pairs, so
+  every `k ^ 1` (the flux coming back) carried over unchanged.
+- Per-pipe rates × 2/3 (water and oil gain, slumping, wind easing): the
+  hex Laplacian weights six neighbours 2/3 as much as the square grid's
+  four, so things spread at the same continuum rate. `netFlow` normalises
+  by 2/NDIR (a uniform flow v puts dot(v, e_k) down each pipe; summed over
+  six directions that's 3v).
+- Wind is split over the six faces by its positive projections (`dSplit`);
+  upwind shelter walks world positions through `cellAt`.
+- Hex corners for soft ground and sheets: each cell owns its 30° and 90°
+  corners (`cornerTex` 2w × h); a corner's height is the three touching
+  columns (weight 2) and the three beyond (weight 1), the hex form of the
+  old 4 × 4 tent. Bilinear lookups (shadow, reach fog, shorelines, the
+  soft-border vote) became three-centre barycentric (`triAt`).
+- Prisms: top fanned from the centre, three sides toward the eye, 36
+  vertices. Per-triangle normals showed every hexagon's fan wherever the
+  smoothed corners weren't coplanar; the top takes one normal, the
+  least-squares plane through its corners. Per-cell colour noise keyed to
+  the hex cell (it was floor(world), a square pattern over the hexes).
+- Rock carving ported to the prism (six slab tests, the fanned top). The
+  map's edge zigzags on a hex grid, and carving rays left edge prisms
+  through the notches into nothing: off-map counts as closed. The loose
+  sheet's side at the map edge always shows (its corners there can belong
+  to a cell on the map, which had hidden it).
+- CPU: picks, taps, strikes and the trial's gates go through `cellPos`;
+  weather lives in world extent (w + 0.5) × h·√3/2 and samples heights via
+  `cellAt`; levels still author in cells (laid row by row: ~13 % shorter in
+  y, slightly sheared), points of interest converted with `poiWorld`.
+
+Measured (headless, real GPU, 1600 × 900, the Dam Valley story start;
+scripts/perfpass.mjs, new): draw 7.7 ms hex vs 4.0 ms square; the sim's
+passes 2.9 ms vs 2.3 ms (sediment 1.06 vs 0.80); 96 vs 120 fps. The sim
+costs about what six neighbours should. Draw is 1.9×: every top vertex
+reloads all six corner heights for the centre and the normal — next, a
+per-cell top plane cached once per frame. The same 40 s storm at speed 6
+leaves both at the same place (63 % vs 62 % green), water pooled in the
+basin on both.

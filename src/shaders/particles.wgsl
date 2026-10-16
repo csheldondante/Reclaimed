@@ -126,13 +126,13 @@ fn groundDustMat(p: vec2<i32>, m: u32) -> u32 {
 const DUST_UNIT: f32 = 100000.0;
 fn dustLoad(mw: u32) -> f32 { return f32(mw >> 16u) / DUST_UNIT; }
 fn dropDust(pos: vec3<f32>, amount: f32) {
-  let c = vec2<i32>(floor(pos.xy));
+  let c = cellAt(pos.xy);
   if (amount > 0.0 && inMap(c)) { atomicAdd(&contamDelta[G.mapW * G.mapH + colIdxI(c)], i32(amount * DUST_UNIT)); }
 }
 fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0; }
 
 fn depositAt(pos: vec3<f32>, payload: f32) {
-  let c = vec2<i32>(floor(pos.xy));
+  let c = cellAt(pos.xy);
   if (payload > 0.0 && inMap(c)) { atomicAdd(&contamDelta[colIdxI(c)], i32(payload * FIX)); }
 }
 
@@ -156,7 +156,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   // the ground's surface: solid top plus the loose layers on it
   let g = f32(sfZ(s)) + driftAt(p);
   let m = groundMatAt(p, sfMat(s));
-  let base = vec3<f32>(vec2<f32>(p) + 0.5, g);
+  let base = vec3<f32>(cellPos(p), g);
   let wind = windAt(base + vec3<f32>(0.0, 0.0, 1.0));
   let ws = length(wind);
   let h = hash3(id.x, id.y, G.tick);
@@ -273,7 +273,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let ev = G.events[e];
     let dd = length(base.xy - ev.xy) / ev.z;
     if (dd >= 1.0) { continue; }
-    if (all(vec2<u32>(floor(ev.xy)) == id.xy)) {
+    if (all(cellAt(ev.xy) == vec2<i32>(id.xy))) {
       spawnFull(base + vec3<f32>(0.0, 0.0, 0.6), vec3<f32>(0.0), 1.4, K_GLOW, 0.0, h ^ 0x6100u, 0u, 0u);
     }
     let fall = 1.0 - dd;
@@ -368,7 +368,7 @@ fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   let flowery = pl.flower || floor(wiltP[i].z) >= 2.0;
   if (flowery && pt >= 1.0) {
     let g = f32(sfZ(s));
-    let w = windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, g + 0.5));
+    let w = windAt(vec3<f32>(cellPos(vec2<i32>(id.xy)), g + 0.5));
     let ws = length(w);
     let h = hash3(id.x, id.y, G.tick ^ 0x9e7au);
     if (ws > 9.0 && f32(h & 0xffffu) / 65536.0 < (ws - 9.0) * 0.01) {
@@ -376,7 +376,7 @@ fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
       for (var k = 0u; k < 4u; k++) {
         let hk = hash3(id.x, id.y, G.tick + k * 17u);
         let r = vec2<f32>(f32(hk & 255u), f32((hk >> 8u) & 255u)) / 255.0 - 0.5;
-        spawn(vec3<f32>(vec2<f32>(id.xy) + 0.5 + r, g + 0.6), vec3<f32>(w * 0.5, 1.0 + f32((hk >> 16u) & 255u) / 255.0), 6.0 + f32(k), K_PETAL, 0.0, hash3(id.x, id.y, 77u));
+        spawn(vec3<f32>(cellPos(vec2<i32>(id.xy)) + r, g + 0.6), vec3<f32>(w * 0.5, 1.0 + f32((hk >> 16u) & 255u) / 255.0), 6.0 + f32(k), K_PETAL, 0.0, hash3(id.x, id.y, 77u));
       }
     }
   }
@@ -388,7 +388,7 @@ fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   let deadPlanting = wl.w >= 1.0 && fract(wl.w) > 0.25;
   if (deadGrowth || deadPlanting) {
     let g = f32(sfZ(s));
-    let w = windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, g + 0.5));
+    let w = windAt(vec3<f32>(cellPos(vec2<i32>(id.xy)), g + 0.5));
     let ws = length(w);
     let h = hash3(id.x, id.y, G.tick ^ 0xdeadu);
     if (ws > 7.0 && f32(h & 0xffffu) / 65536.0 < (ws - 7.0) * 0.02) {
@@ -397,7 +397,7 @@ fn petalEmit(@builtin(global_invocation_id) id: vec3<u32>) {
         let hk = hash3(id.x, id.y, G.tick + k * 29u);
         let r = vec2<f32>(f32(hk & 255u), f32((hk >> 8u) & 255u)) / 255.0 - 0.5;
         // (a leaf with the top bits of its seed set draws dry brown)
-        spawn(vec3<f32>(vec2<f32>(id.xy) + 0.5 + r, g + 0.4), vec3<f32>(w * 0.5, 0.8 + f32((hk >> 16u) & 255u) / 255.0), 8.0, K_LEAF, 0.0, 0xffff0000u | (hk & 0xffffu));
+        spawn(vec3<f32>(cellPos(vec2<i32>(id.xy)) + r, g + 0.4), vec3<f32>(w * 0.5, 0.8 + f32((hk >> 16u) & 255u) / 255.0), 8.0, K_LEAF, 0.0, 0xffff0000u | (hk & 0xffffu));
       }
     }
   }
@@ -416,7 +416,7 @@ fn fireEmit(@builtin(global_invocation_id) id: vec3<u32>) {
   let r2 = f32((h >> 10u) & 1023u) / 1023.0;
   let r3 = f32((h >> 20u) & 1023u) / 1023.0;
   let g = f32(sfZ(surface[i]));
-  let base = vec3<f32>(f32(id.x) + r2, f32(id.y) + r3, g + 0.2);
+  let base = vec3<f32>(cellPos(vec2<i32>(id.xy)) + vec2<f32>(r2 - 0.5, (r3 - 0.5) * ROW_H), g + 0.2);
   let w = windAt(base);
   if (r1 < f * 0.35) { spawn(base, vec3<f32>(w * 0.15, 2.5 + r2 * 2.0), 0.45 + r3 * 0.5, K_FLAME, 0.0, h); }
   if (oilDepth[i] > 0.03) {
@@ -457,7 +457,7 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
       // birds arrive looking for a tree: fly in toward the middle of the map
       // (or wherever they were released), then search for a crown to perch on
       let pos = a.xyz + r * b.w;
-      let toMid = vec2<f32>(f32(G.mapW), f32(G.mapH)) * 0.5 - pos.xy;
+      let toMid = vec2<f32>(f32(G.mapW), f32(G.mapH) * ROW_H) * 0.5 - pos.xy;
       let hd = normalize(toMid + r.xy * 40.0 + vec2<f32>(0.01, 0.0));
       spawnFull(pos, vec3<f32>(hd * b.y, 0.0), 120.0 + r.z * 60.0, kind, 0.0, h, 0u, B_SEEK);
       continue;
@@ -479,7 +479,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   let kind = P.m.x;
   let seed = P.m.y;
   let sr = f32(seed & 0xffffu) / 65536.0;
-  let cell = vec2<i32>(floor(pos.xy));
+  let cell = cellAt(pos.xy);
 
   if (!inMap(cell)) {
     // left the world: its payload is gone for good (pollution carried away)
@@ -718,7 +718,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
         if (top < 0.0) {
           P.v.w = 0.0;
         } else {
-          let perch = vec3<f32>(vec2<f32>(tc) + 0.5 + (vec2<f32>(sr, fract(sr * 7.0)) - 0.5) * 1.6, top + 0.05);
+          let perch = vec3<f32>(cellPos(tc) + (vec2<f32>(sr, fract(sr * 7.0)) - 0.5) * 1.6, top + 0.05);
           let to = perch - pos;
           let dh = length(to.xy);
           // glide in high, then drop onto the crown
@@ -740,7 +740,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
           let hs = hash3(id.x, seed, G.tick ^ 0xb12du);
           let look = clampCell(cell + vec2<i32>(i32(hs % 61u) - 30, i32((hs >> 8u) % 61u) - 30));
           if (veg[colIdxI(look)] >= 3.6) {
-            let to = vec2<f32>(look) + 0.5 - pos.xy;
+            let to = cellPos(look) - pos.xy;
             vel = vec3<f32>(normalize(to) * max(length(vel.xy), 4.0), vel.z);
           }
         }
@@ -773,7 +773,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     hd = normalize(hd);
     let turn = (vnoise(vec2<f32>(G.time * 0.3, sr * 50.0)) - 0.5) * 2.0 * DT;
     hd = vec2<f32>(hd.x * cos(turn) - hd.y * sin(turn), hd.x * sin(turn) + hd.y * cos(turn));
-    let ahead = clampCell(vec2<i32>(floor(pos.xy + hd * 1.5)));
+    let ahead = clampCell(cellAt(pos.xy + hd * 1.5));
     let aj = colIdxI(ahead);
     if (veg[aj] < 1.0 || water[aj] > 0.1 || abs(f32(sfZ(surface[aj])) - f32(sfZ(surface[ci]))) > 2.0) { hd = -hd; }
     let rabbit = kind == K_RABBIT;
@@ -868,8 +868,8 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       // trees and flowers, and birds, matter)
       if (water[ci] < 0.05 && moisture[ci] > 0.05) {
         veg[ci] = max(veg[ci], select(veg[ci] + 0.15, 0.5, veg[ci] == 0.0));
-        for (var k = 0u; k < 5u; k++) {
-          let q = select(cell + DIRS[min(k, 3u)], cell, k == 4u);
+        for (var k = 0u; k <= NDIR; k++) {
+          let q = select(nbr(cell, min(k, NDIR - 1u)), cell, k == NDIR);
           if (!inMap(q)) { continue; }
           let j = colIdxI(q);
           let take = min(contam[j].x * 0.25, 0.05);

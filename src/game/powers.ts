@@ -18,6 +18,7 @@ import type { Hud } from '../ui/hud';
 import { MAT } from '../world/materials';
 import { sfMat, sfZ } from '../world/layout';
 import type { Weather } from '../weather/weather';
+import { cellPos, ROW_H } from '../world/lattice';
 
 export interface PowersDeps {
   weather: Weather;
@@ -105,9 +106,9 @@ export class Powers {
     void this.lightning({ cell: Math.floor(y) * this.d.dims.w + Math.floor(x), mat: 0, z, flags: 0 });
   }
 
-  /** A scripted grow-tap at a cell (the intro showing what a tap does). */
+  /** A scripted grow-tap at world point (x, y) (the intro showing what a tap does). */
   scriptTap(x: number, y: number): void {
-    this.d.globals.events.push({ kind: EventKind.Grow, x: x + 0.5, y: y + 0.5, radius: 2.5, strength: 1 });
+    this.d.globals.events.push({ kind: EventKind.Grow, x, y, radius: 2.5, strength: 1 });
     this.d.audio.grow(0.5);
   }
 
@@ -164,8 +165,7 @@ export class Powers {
   tap(hit: PickHit | null, wx: number, wy: number, sx: number, sy: number): void {
     const { weather } = this.d;
     if (hit === null) return;
-    const x = (hit.cell % this.d.dims.w) + 0.5;
-    const y = Math.floor(hit.cell / this.d.dims.w) + 0.5;
+    const [x, y] = cellPos(hit.cell % this.d.dims.w, Math.floor(hit.cell / this.d.dims.w));
     // every click is a little breath of wind pushing out from it (round 20)
     this.d.globals.events.push({ kind: EventKind.Ripple, x: wx, y: wy, radius: 6, strength: 5 });
     // under a storm a tap is lightning — free, with a short cooldown (round
@@ -276,9 +276,13 @@ export class Powers {
     let by = ty;
     let best = -Infinity;
     const R = STRIKE_R;
-    for (let y = Math.max(0, ty - R); y <= Math.min(dims.h - 1, ty + R); y++)
-      for (let x = Math.max(0, tx - R); x <= Math.min(dims.w - 1, tx + R); x++) {
-        const d = Math.hypot(x - tx, y - ty);
+    // (distances in the world: the grid is hex — rows are ROW_H apart)
+    const [twx, twy] = cellPos(tx, ty);
+    const RY = Math.ceil(R / ROW_H);
+    for (let y = Math.max(0, ty - RY); y <= Math.min(dims.h - 1, ty + RY); y++)
+      for (let x = Math.max(0, tx - R - 1); x <= Math.min(dims.w - 1, tx + R + 1); x++) {
+        const [cx, cy] = cellPos(x, y);
+        const d = Math.hypot(cx - twx, cy - twy);
         if (d > R) continue;
         const t = top(x, y);
         // the bowl: at d from the middle it starts this high above the voxel
@@ -291,23 +295,24 @@ export class Powers {
         }
       }
     const bz = top(bx, by);
-    globals.events.push({ kind: EventKind.Lightning, x: bx + 0.5, y: by + 0.5, radius: 5, strength: 20 });
+    const [bwx, bwy] = cellPos(bx, by);
+    globals.events.push({ kind: EventKind.Lightning, x: bwx, y: bwy, radius: 5, strength: 20 });
     // it blasts a crater in whatever it strikes — stone too (round 19): a
     // sphere at the strike point through the edit pass's break op
-    globals.events.push({ kind: EventKind.Edit, x: bx + 0.5, y: by + 0.5, z: 12 * 32, radius: 2.6, strength: bz });
-    this.onStrike?.(bx + 0.5, by + 0.5, bz);
+    globals.events.push({ kind: EventKind.Edit, x: bwx, y: bwy, z: 12 * 32, radius: 2.6, strength: bz });
+    this.onStrike?.(bwx, bwy, bz);
     globals.flash = 1;
-    const [px, py] = this.d.camera.project(bx + 0.5, by + 0.5, bz);
+    const [px, py] = this.d.camera.project(bwx, bwy, bz);
     hud?.bolt(px, py);
     // drawn to something beside the tap: it chains on from there to the
     // voxel clicked, and sets what's there alight (round 20)
-    if (Math.hypot(bx - tx, by - ty) > 1.5 || bz - hz > 3) {
-      const [qx, qy] = this.d.camera.project(tx + 0.5, ty + 0.5, hz + 1);
+    if (Math.hypot(bwx - twx, bwy - twy) > 1.5 || bz - hz > 3) {
+      const [qx, qy] = this.d.camera.project(twx, twy, hz + 1);
       hud?.arc(px, py, qx, qy);
-      globals.events.push({ kind: EventKind.Lightning, x: tx + 0.5, y: ty + 0.5, radius: 2, strength: 4 });
+      globals.events.push({ kind: EventKind.Lightning, x: twx, y: twy, radius: 2, strength: 4 });
     }
     audio.thunder(1, 1, px / Math.max(1, this.d.camera.viewportW));
-    this.d.particles.burst({ kind: PK.Chip, x: bx + 0.5, y: by + 0.5, z: bz + 0.5, count: 12, speed: 6, spread: 0.5 });
+    this.d.particles.burst({ kind: PK.Chip, x: bwx, y: bwy, z: bz + 0.5, count: 12, speed: 6, spread: 0.5 });
   }
 
   // ---- drag gesture: wind ----

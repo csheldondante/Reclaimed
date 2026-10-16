@@ -3,7 +3,7 @@
 // in and becomes soil stain (via the particle/contamination exchange buffer),
 // so a spill that is never washed away leaves lasting damage.
 @group(0) @binding(3) var<storage, read> oil: array<f32>;
-@group(0) @binding(4) var<storage, read> oilFlux: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> oilFlux: array<Dirs>;
 @group(0) @binding(5) var<storage, read_write> oilOut: array<f32>;
 @group(0) @binding(6) var<storage, read> water: array<f32>;
 @group(0) @binding(7) var<storage, read_write> contamDelta: array<atomic<i32>>;
@@ -24,9 +24,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let f = oilFlux[i];
-  var o = oil[i] - (f.x + f.y + f.z + f.w);
-  for (var k = 0u; k < 4u; k++) {
-    let q = p + DIRS[k];
+  var o = oil[i] - (dSum(f));
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
     if (inMap(q)) { o += oilFlux[colIdxI(q)][k ^ 1u]; }
   }
   o = max(o - fire[i] * OIL_BURN, 0.0);
@@ -38,8 +38,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (st.x > 0.0) {
     var breach = f32(sfZ(surface[i])) < st.y;
-    for (var k = 0u; k < 4u; k++) {
-      let q = p + DIRS[k];
+    for (var k = 0u; k < NDIR; k++) {
+      let q = nbr(p, k);
       if (inMap(q) && stored[colIdxI(q)].x <= 0.0 && f32(sfZ(surface[colIdxI(q)])) < st.y - 1.0) { breach = true; }
     }
     if (breach) {

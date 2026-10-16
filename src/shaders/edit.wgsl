@@ -87,7 +87,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let ev = G.events[e];
     let code = evZ(e);
     if ((code & STROKE_START) != 0u) { given = 0.0; }
-    let d = length(vec2<f32>(p) + 0.5 - ev.xy) / ev.z;
+    let d = length(cellPos(p) - ev.xy) / ev.z;
     if (d >= 1.0) { continue; }
     let op = (code & 511u) / 32u;
     let mat = code % 32u;

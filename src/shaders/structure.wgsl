@@ -19,7 +19,7 @@
 @group(0) @binding(5) var<storage, read_write> stats: array<atomic<u32>>;
 @group(0) @binding(6) var<storage, read> surface: array<u32>;
 @group(0) @binding(7) var<storage, read> water: array<f32>;
-@group(0) @binding(8) var<storage, read> flux: array<vec4<f32>>;
+@group(0) @binding(8) var<storage, read> flux: array<Dirs>;
 // heat: fire weakens steel and concrete nearby, and burns loose waste away
 @group(0) @binding(9) var<storage, read> fire: array<f32>;
 const HEAT_RATE: f32 = 0.016;
@@ -40,8 +40,8 @@ const FLOW_RATE: f32 = 0.06;
 fn hydraulicDamage(p: vec2<i32>, z0: f32, z1: f32, dmg: u32, m: u32, salt: u32) -> u32 {
   var head = 0.0;
   var flow = 0.0;
-  for (var k = 0u; k < 4u; k++) {
-    let q = p + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
     let d = water[j];
@@ -108,15 +108,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var e = 0u; e < numEvents(); e++) {
     if (evKind(e) != EV_LIGHTNING) { continue; }
     let ev = G.events[e];
-    let d = length(vec2<f32>(p) + 0.5 - ev.xy);
+    let d = length(cellPos(p) - ev.xy);
     let f = clamp(1.0 - d / ev.z, 0.0, 1.0);
     hit = max(hit, ev.w * sqrt(f));
   }
 
   // heat reaching this column: its own fire or a burning neighbour
   var heat = fire[colIdxI(p)];
-  for (var k = 0u; k < 4u; k++) {
-    let q = p + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
     if (inMap(q)) { heat = max(heat, fire[colIdxI(q)] * 0.8); }
   }
   let selfFire = fire[colIdxI(p)];
@@ -139,7 +139,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // goes down a cell at a time and its last cell is left as loose ash,
       // which wind and water can then carry away
       // the cyclone tears compacted waste apart into loose litter it can strip
-      if (m == MAT_TRASH_S && i + 1u == n && cycloneAt(vec2<f32>(p) + 0.5) > 0.4 && rand3(id.x, id.y, G.tick ^ 0x7c1u) < 0.01) {
+      if (m == MAT_TRASH_S && i + 1u == n && cycloneAt(cellPos(p)) > 0.4 && rand3(id.x, id.y, G.tick ^ 0x7c1u) < 0.01) {
         layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
         prevTop = z1;
         prevSup = s;
@@ -192,19 +192,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (evKind(e) != EV_CHIP) { continue; }
       let ev = G.events[e];
       let ez = evZ(e);
-      if (length(vec2<f32>(p) + 0.5 - ev.xy) < ev.z && f32(ez) + 1.0 >= z0 && f32(ez) <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
+      if (length(cellPos(p) - ev.xy) < ev.z && f32(ez) + 1.0 >= z0 && f32(ez) <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
     }
     if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < HEAT_RATE * heat * (1.2 - MATS[m].sim.w)) {
       dmg = min(15u, dmg + 1u);
     }
     // the cyclone batters what stands in it (round 12: ruins and wrecks — not plants)
-    let cyc = cycloneAt(vec2<f32>(p) + 0.5);
+    let cyc = cycloneAt(cellPos(p));
     if (cyc > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0xc1c1u) < cyc * 0.02 * (1.3 - MATS[m].sim.w)) {
       dmg = min(15u, dmg + 1u);
     }
     if (!touching) {
       var lat = 0u;
-      for (var k = 0u; k < 4u; k++) { lat = max(lat, lateral(p + DIRS[k], z0, z1)); }
+      for (var k = 0u; k < NDIR; k++) { lat = max(lat, lateral(nbr(p, k), z0, z1)); }
       let loss = spanCost(m) + dmg / 4u;
       s = select(0u, lat - loss, lat > loss);
     }

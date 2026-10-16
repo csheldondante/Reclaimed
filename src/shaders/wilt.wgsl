@@ -59,7 +59,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // hard: a gale strips and browns what grows
   var galeBrown = 0.0;
   if (diff == 2u && v > 0.05) {
-    let ws = length(windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, f32(sfZ(surface[i])) + 1.0)));
+    let ws = length(windAt(vec3<f32>(cellPos(vec2<i32>(id.xy)), f32(sfZ(surface[i])) + 1.0)));
     galeBrown = max(ws - 15.0, 0.0) * 0.004;
   }
 
@@ -92,7 +92,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var ph = fract(bad) + 1.0 / (doomTime(tier) * 60.0);
     // once it has browned, a gust breaks it up early (round 12; flakes: particles)
     if (ph > 0.25) {
-      let gw = length(windAt(vec3<f32>(vec2<f32>(id.xy) + 0.5, f32(sfZ(surface[i])) + 0.5)));
+      let gw = length(windAt(vec3<f32>(cellPos(vec2<i32>(id.xy)), f32(sfZ(surface[i])) + 0.5)));
       ph += max(gw - 7.0, 0.0) * 0.0015;
     }
     bad = select(tier + ph, 0.0, ph >= 0.999);
@@ -102,7 +102,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var e = 0u; e < numEvents(); e++) {
     if (evKind(e) != EV_GROW) { continue; }
     let ev = G.events[e];
-    let dd = length(vec2<f32>(id.xy) + 0.5 - ev.xy) / ev.z;
+    let dd = length(cellPos(vec2<i32>(id.xy)) - ev.xy) / ev.z;
     if (dd >= 1.0) { continue; }
     // a tree only at the tap itself, flowers/shrubs close by, grass around
     let centre = all(vec2<u32>(floor(ev.xy)) == id.xy);

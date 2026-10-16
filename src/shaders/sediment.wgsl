@@ -10,8 +10,8 @@
 // threshold, airborne share, readiness to wash away (MATS[m].loose) and its
 // angle of repose dry and wet (MATS[m].sim.yz): dust moves in a gust, ash
 // and sand in stronger wind, soil and gravel only with water. Above its
-// threshold a column sends material downwind (split over the four faces by
-// the wind's components); sheltered columns — behind taller ground upwind —
+// threshold a column sends material downwind (split over the six faces by
+// the wind's components along them); sheltered columns — behind taller ground upwind —
 // feel less wind, so it piles up in their lee; it can't be pushed up into a
 // wall, so it banks there. It lies under still water (the liquids sit on
 // top of it), moving water carries it downstream, settling where the flow
@@ -31,7 +31,7 @@
 // loose material arriving (edit.wgsl: x; game/integrity.ts: y amount, z material)
 @group(0) @binding(5) var<storage, read_write> deposit: array<vec4<f32>>;
 // water flux (flow.wgsl netFlow): moving water carries the layer downstream
-@group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read> flux: array<Dirs>;
 // plants: established green holds the layer it grows through (round 15)
 @group(0) @binding(7) var<storage, read> vegD: array<f32>;
 // dust that came down here from the air (particles.wgsl), the second half of
@@ -39,12 +39,12 @@
 @group(0) @binding(8) var<storage, read_write> exchange: array<atomic<i32>>;
 // wet ground holds a lower slope (rain brings slumps and mudslides)
 @group(0) @binding(9) var<storage, read> moisture: array<f32>;
-// per column (SED vec4s): [0] what arrives at each neighbour (+x, -x, +y,
-// -y), [1] the wind's easing toward each (it blends into whatever is there),
+// per column (SED lanes of one value per direction, NDIR order): [0] what
+// arrives at each neighbour, [1] the wind's easing toward each (it blends into whatever is there),
 // [2] x what the wind took off the top, y everything that left it; a spill
 // out of an exposed face toward each neighbour: [3] amount, [4] the floor it
 // lands on (z), [5] material, [6] which of this column's slots it leaves
-@group(0) @binding(10) var<storage, read_write> sedOut: array<vec4<f32>>;
+@group(0) @binding(10) var<storage, read_write> sedOut: array<Dirs>;
 // (outflow only) which neighbours have air inside them (surface bit 31)
 @group(0) @binding(11) var<storage, read> surface: array<u32>;
 // what the wind sent up into the air off each column this pass (the
@@ -58,12 +58,14 @@ fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
 
 const DT_D: f32 = 2.0 / 60.0; // the system runs every other tick
 const CARRY: f32 = 0.25;      // cells of depth lifted per second per cell/s over the threshold
-const SLUMP: f32 = 0.08;
+// (per neighbour: the hex grid has six, each 2/3 the square grid's four —
+// the same continuum rate, water_flux.wgsl)
+const SLUMP: f32 = 0.08 * 2.0 / 3.0;
 const HOLD_STEEP: f32 = 1.0;
 // where the wind is moving loose ground, level differences between
 // neighbours ease out a little each pass, so the transport can't see-saw
 // into a checkerboard (round 17); still ground keeps its shape
-const WIND_SMOOTH: f32 = 0.15;
+const WIND_SMOOTH: f32 = 0.15 * 2.0 / 3.0;
 const NEVER: f32 = 1e8;
 // granular intervals with air under them fall this far per pass
 const FALL: f32 = 2.0;
@@ -125,75 +127,75 @@ fn shelter(q: vec2<i32>, w: vec2<f32>) -> f32 {
   let here = levelAt(q);
   var s = 0.0;
   for (var k = 1; k <= 4; k++) {
-    let u = vec2<i32>(floor(vec2<f32>(q) + 0.5 + up * f32(k)));
+    let u = cellAt(cellPos(q) + up * f32(k));
     if (!inMap(u)) { break; }
     s = max(s, (levelAt(u) - here) / f32(k));
   }
   return clamp(s * 0.9, 0.0, 1.0);
 }
 
-/** What the wind sends from q's top layer to its +x, -x, +y, -y neighbours this pass. */
-fn windOut(q: vec2<i32>) -> vec4<f32> {
-  if (!inMap(q)) { return vec4<f32>(0.0); }
+/** What the wind sends from q's top layer to each neighbour this pass. */
+fn windOut(q: vec2<i32>) -> Dirs {
+  if (!inMap(q)) { return dZero(); }
   let j = colIdxI(q);
   let top = topOf(q);
-  if (top < 0.001 || water[j] > 0.05 || held(q) > 0.5 || underBody(q)) { return vec4<f32>(0.0); }
+  if (top < 0.001 || water[j] > 0.05 || held(q) > 0.5 || underBody(q)) { return dZero(); }
   let m = driftMatAt(q);
   // on the title diorama (fine scale, G.misc.w) a cell is about a centimetre:
   // a breath of wind moves dust there, so the player can blow the dust off
   // the buried level models (round 13 F11)
   let fine = G.misc.w > 0.5;
   let lift = MATS[m].loose.x * select(1.0, 0.45, fine);
-  if (lift >= NEVER) { return vec4<f32>(0.0); }
+  if (lift >= NEVER) { return dZero(); }
   let carry = CARRY * select(1.0, 4.8, fine);
   let here = levelAt(q);
-  let w = windAt(vec3<f32>(vec2<f32>(q) + 0.5, here + 0.5));
+  let w = windAt(vec3<f32>(cellPos(q), here + 0.5));
   let ws = length(w) * (1.0 - shelter(q, w));
-  if (ws < lift) { return vec4<f32>(0.0); }
-  var wt = vec4<f32>(max(w.x, 0.0), max(-w.x, 0.0), max(w.y, 0.0), max(-w.y, 0.0));
+  if (ws < lift) { return dZero(); }
+  var wt = dSplit(w);
   // it can't be pushed up into a wall: it banks against it instead
-  for (var k = 0u; k < 4u; k++) {
-    let n = q + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let n = nbr(q, k);
     if (inMap(n) && levelAt(n) >= here + 1.5) { wt[k] = 0.0; }
   }
-  let sum = wt.x + wt.y + wt.z + wt.w;
-  if (sum < 1e-4) { return vec4<f32>(0.0); }
+  let sum = dSum(wt);
+  if (sum < 1e-4) { return dZero(); }
   // (at most a quarter of the top per pass: larger steps made neighbouring
   // columns over-correct each other into a checkerboard — round 17)
   let total = min(top * 0.25, carry * (ws - lift) * DT_D);
-  return wt / sum * total;
+  return dScale(wt, total / sum);
 }
 
 /** What moving water carries from q's top layer downstream this pass. */
-fn waterOut(q: vec2<i32>) -> vec4<f32> {
-  if (!inMap(q)) { return vec4<f32>(0.0); }
+fn waterOut(q: vec2<i32>) -> Dirs {
+  if (!inMap(q)) { return dZero(); }
   let j = colIdxI(q);
   let top = topOf(q);
-  if (top < 0.001 || water[j] < 0.02 || underBody(q)) { return vec4<f32>(0.0); }
+  if (top < 0.001 || water[j] < 0.02 || underBody(q)) { return dZero(); }
   let m = driftMatAt(q);
   let v = netFlow(q);
   let sp = length(v);
   let thr = MATS[m].loose.w;
-  if (sp < thr) { return vec4<f32>(0.0); }
+  if (sp < thr) { return dZero(); }
   let mob = MATS[m].loose.z * (1.0 - 0.8 * held(q));
   let total = min(top * 0.2, (sp - thr) * 1.5 * mob * DT_D * 30.0);
-  let wt = vec4<f32>(max(v.x, 0.0), max(-v.x, 0.0), max(v.y, 0.0), max(-v.y, 0.0));
-  let sum = wt.x + wt.y + wt.z + wt.w;
-  if (sum < 1e-6) { return vec4<f32>(0.0); }
-  return wt / sum * total;
+  let wt = dSplit(v);
+  let sum = dSum(wt);
+  if (sum < 1e-6) { return dZero(); }
+  return dScale(wt, total / sum);
 }
 
 /** Water held back by q's loose top pushes it toward the low side (piping). */
-fn pipeOut(q: vec2<i32>) -> vec4<f32> {
-  if (!inMap(q)) { return vec4<f32>(0.0); }
+fn pipeOut(q: vec2<i32>) -> Dirs {
+  if (!inMap(q)) { return dZero(); }
   let top = topOf(q);
-  if (top < 0.001 || underBody(q)) { return vec4<f32>(0.0); }
+  if (top < 0.001 || underBody(q)) { return dZero(); }
   let h = levelAt(q);
   var hi = -1.0;
   var lo = 1e9;
   var loDir = 0u;
-  for (var k = 0u; k < 4u; k++) {
-    let n = q + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let n = nbr(q, k);
     if (!inMap(n)) { continue; }
     let j = colIdxI(n);
     let lvl = levelAt(n) + water[j];
@@ -201,9 +203,9 @@ fn pipeOut(q: vec2<i32>) -> vec4<f32> {
     if (lvl < lo) { lo = lvl; loDir = k; }
   }
   // only when the water actually presses against this column's loose top
-  if (!(hi > h - 4.0 && hi - lo > PIPE_HEAD && lo < h)) { return vec4<f32>(0.0); }
+  if (!(hi > h - 4.0 && hi - lo > PIPE_HEAD && lo < h)) { return dZero(); }
   let m = driftMatAt(q);
-  var o = vec4<f32>(0.0);
+  var o = dZero();
   o[loDir] = min(top * 0.25, (hi - lo - PIPE_HEAD) * PIPE_RATE * (1.0 - MATS[m].sim.w * 0.5));
   return o;
 }
@@ -214,21 +216,21 @@ fn windActive(q: vec2<i32>) -> bool {
   if (water[j] > 0.05) { return false; }
   let lift = MATS[driftMatAt(q)].loose.x * select(1.0, 0.45, G.misc.w > 0.5);
   if (lift >= NEVER) { return false; }
-  let w = windAt(vec3<f32>(vec2<f32>(q) + 0.5, levelAt(q) + 0.5));
+  let w = windAt(vec3<f32>(cellPos(q), levelAt(q) + 0.5));
   return length(w) > lift;
 }
 
 /** What slides off q's top layer to each neighbour this pass (steeper than its repose; eased where the wind works). */
-fn slumpOut(q: vec2<i32>) -> vec4<f32> {
-  if (!inMap(q)) { return vec4<f32>(0.0); }
+fn slumpOut(q: vec2<i32>) -> Dirs {
+  if (!inMap(q)) { return dZero(); }
   let top = topOf(q);
-  if (top < 0.001 || underBody(q)) { return vec4<f32>(0.0); }
+  if (top < 0.001 || underBody(q)) { return dZero(); }
   let here = levelAt(q);
   let rep = reposeAt(q, driftMatAt(q));
   let hd = held(q);
-  var o = vec4<f32>(0.0);
-  for (var k = 0u; k < 4u; k++) {
-    let n = q + DIRS[k];
+  var o = dZero();
+  for (var k = 0u; k < NDIR; k++) {
+    let n = nbr(q, k);
     if (!inMap(n)) { continue; }
     let diff = here - levelAt(n);
     // roots hold a slope at most HOLD_STEEP steeper than the repose: in rain
@@ -238,26 +240,26 @@ fn slumpOut(q: vec2<i32>) -> vec4<f32> {
     let hk = hd * (1.0 - smoothstep(rep, rep + HOLD_STEEP, diff));
     o[k] = max(diff - rep, 0.0) * SLUMP * (1.0 - hk);
   }
-  let s = o.x + o.y + o.z + o.w;
-  if (s > top * 0.8) { o *= top * 0.8 / s; }
+  let s = dSum(o);
+  if (s > top * 0.8) { o = dScale(o, top * 0.8 / s); }
   return o;
 }
 
 /** The easing where the wind works: what q's top gives each lower neighbour (it blends in there). */
-fn smoothOut(q: vec2<i32>) -> vec4<f32> {
-  if (!inMap(q)) { return vec4<f32>(0.0); }
+fn smoothOut(q: vec2<i32>) -> Dirs {
+  if (!inMap(q)) { return dZero(); }
   let top = topOf(q);
-  if (top < 0.001 || underBody(q)) { return vec4<f32>(0.0); }
-  if (!(textureLoad(driftTex, q, 0).w > 0.0 || windActive(q))) { return vec4<f32>(0.0); }
+  if (top < 0.001 || underBody(q)) { return dZero(); }
+  if (!(textureLoad(driftTex, q, 0).w > 0.0 || windActive(q))) { return dZero(); }
   let here = levelAt(q);
-  var o = vec4<f32>(0.0);
-  for (var k = 0u; k < 4u; k++) {
-    let n = q + DIRS[k];
+  var o = dZero();
+  for (var k = 0u; k < NDIR; k++) {
+    let n = nbr(q, k);
     if (!inMap(n)) { continue; }
     o[k] = max(here - levelAt(n), 0.0) * WIND_SMOOTH * (1.0 - held(q));
   }
-  let s = o.x + o.y + o.z + o.w;
-  if (s > top * 0.6) { o *= top * 0.6 / s; }
+  let s = dSum(o);
+  if (s > top * 0.6) { o = dScale(o, top * 0.6 / s); }
   return o;
 }
 
@@ -335,10 +337,10 @@ fn takeTop(s: ptr<function, Stack>, amount: f32) -> f32 {
 // the structure pass then sees the shelf's support go. Only intervals
 // beneath the loose run on top spill this way (the run slumps by levels).
 struct Spill {
-  amt: vec4<f32>,
-  z: vec4<f32>,
-  mat: vec4<f32>,
-  src: vec4<f32>,
+  amt: Dirs,
+  z: Dirs,
+  mat: Dirs,
+  src: Dirs,
 };
 
 fn spillOut(p: vec2<i32>) -> Spill {
@@ -365,8 +367,8 @@ fn spillOut(p: vec2<i32>) -> Spill {
     let a = ivZ0(v);
     let b = ivZ1(v);
     let rep = reposeAt(p, m);
-    for (var k = 0u; k < 4u; k++) {
-      let q = p + DIRS[k];
+    for (var k = 0u; k < NDIR; k++) {
+      let q = nbr(p, k);
       if (!inMap(q)) { continue; }
       // (a neighbour as high as this interval's top with no air inside it
       // has no face here: most of them — skip reading its intervals)
@@ -422,17 +424,20 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   let so = slumpOut(p);
   let sm = smoothOut(p);
   let po = pipeOut(p);
-  let lost = o.x + o.y + o.z + o.w;
+  let lost = dSum(o);
   // (what the wind lifts partly goes up into the air: the particles carry it)
-  let send = o * (1.0 - MATS[mat].loose.y) + ow + so + po;
-  let out = lost + dot(ow + so + sm + po, vec4<f32>(1.0));
+  let send = dAdd(dAdd(dScale(o, 1.0 - MATS[mat].loose.y), ow), dAdd(so, po));
+  let out = lost + dSum(ow) + dSum(so) + dSum(sm) + dSum(po);
   sedOut[i * SED] = send;
   sedOut[i * SED + 1u] = sm;
-  sedOut[i * SED + 2u] = vec4<f32>(lost, out, 0.0, 0.0);
+  var own = dZero();
+  own[0] = lost;
+  own[1] = out;
+  sedOut[i * SED + 2u] = own;
   let sp = spillOut(p);
   sedOut[i * SED + 3u] = sp.amt;
   // (the rest is only read where there's a spill)
-  if (any(sp.amt > vec4<f32>(0.0))) {
+  if (dAny(sp.amt)) {
     sedOut[i * SED + 4u] = sp.z;
     sedOut[i * SED + 5u] = sp.mat;
     sedOut[i * SED + 6u] = sp.src;
@@ -450,7 +455,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let m0 = driftMatAt(p);
   let own = sedOut[i * SED + 2u];
   // what the wind sent up into the air (the particles take it from here)
-  textureStore(airOut, p, vec4<f32>(own.x * MATS[m0].loose.y, 0.0, 0.0, 0.0));
+  textureStore(airOut, p, vec4<f32>(own[0] * MATS[m0].loose.y, 0.0, 0.0, 0.0));
   let here = levelAt(p);
   // what arrives, by material: the same as my top joins it; the largest
   // other arrival starts a new layer (and takes the rest with it)
@@ -459,8 +464,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var otherMat = m0;
   var otherMax = 0.0;
   var dust = 0.0;
-  for (var k = 0u; k < 4u; k++) {
-    let nb = p + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let nb = nbr(p, k);
     if (!inMap(nb)) { continue; }
     let j = colIdxI(nb);
     let mn = driftMatAt(nb);
@@ -476,15 +481,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var k = 0u; k < 2u; k++) {
     let ds = G.dusts[k];
     if (ds.w <= 0.0) { continue; }
-    let rr = length(vec2<f32>(p) + 0.5 - ds.xy) / ds.z;
+    let rr = length(cellPos(p) - ds.xy) / ds.z;
     if (rr > 1.2) { continue; }
-    let w = windAt(vec3<f32>(vec2<f32>(p) + 0.5, here + 0.5));
+    let w = windAt(vec3<f32>(cellPos(p), here + 0.5));
     dust += ds.w / 8.0 * smoothstep(1.2, 0.4, rr) * 0.06 * DT_D * (0.15 + 0.85 * shelter(p, w));
   }
   // a dying cyclone drops the dust it carried in a pile around its eye
   for (var c = 0u; c < MAX_CYCLONES; c++) {
     if (G.cyclones[c].b.z <= 0.0) { continue; }
-    let rr = length(vec2<f32>(p) + 0.5 - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
+    let rr = length(cellPos(p) - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
     dust += smoothstep(1.6, 0.0, rr) * 0.6 * DT_D;
   }
   // dust that came down from the air here (carried by particles)
@@ -530,12 +535,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // spills out of exposed faces: mine, and my neighbours' landing here
   let mySpill = sedOut[i * SED + 3u];
   var inSpill = 0.0;
-  for (var k = 0u; k < 4u; k++) {
-    let nb = p + DIRS[k];
+  for (var k = 0u; k < NDIR; k++) {
+    let nb = nbr(p, k);
     if (inMap(nb)) { inSpill += sedOut[colIdxI(nb) * SED + 3u][k ^ 1u]; }
   }
-  let spills = dot(mySpill, vec4<f32>(1.0)) > 0.0 || inSpill > 0.0;
-  let moves = own.y > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || dep.y > 0.0 || delta < 0.0 || strip > 0u || bind || spills;
+  let spills = dSum(mySpill) > 0.0 || inSpill > 0.0;
+  let moves = own[1] > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || dep.y > 0.0 || delta < 0.0 || strip > 0u || bind || spills;
   if (!moves && !hangs) { return; }
 
   var arr: array<vec4<u32>, MAX_K>;
@@ -546,15 +551,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var k = 0u; k < n; k++) { z1o[k] = ivZ1(arr[k]); }
     // what runs out of my faces leaves the top of its interval
     let src = sedOut[i * SED + 6u];
-    for (var k = 0u; k < 4u; k++) {
+    for (var k = 0u; k < NDIR; k++) {
       if (mySpill[k] <= 0.0) { continue; }
       let si = u32(src[k]);
       let v = arr[si];
       arr[si] = ivPack(ivZ0(v), max(ivZ1(v) - mySpill[k], ivZ0(v)), ivMat(v), ivAux(v));
     }
     // what runs in lands on my floor at that height
-    for (var k = 0u; k < 4u; k++) {
-      let nb = p + DIRS[k];
+    for (var k = 0u; k < NDIR; k++) {
+      let nb = nbr(p, k);
       if (!inMap(nb)) { continue; }
       let j = colIdxI(nb);
       let amt = sedOut[j * SED + 3u][k ^ 1u];
@@ -639,7 +644,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let room = r < cs.y;
 
   if (s.n > 0u) {
-    s.d[s.n - 1u] = max(s.d[s.n - 1u] - own.y, 0.0);
+    s.d[s.n - 1u] = max(s.d[s.n - 1u] - own[1], 0.0);
   }
   // (a column already full of other intervals has no room for loose ground:
   // what would land there is lost — rare; the chunk table gives ruins room)

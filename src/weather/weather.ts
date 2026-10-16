@@ -7,6 +7,7 @@
 // shown (DECISIONS round 4).
 
 import { MAX_CYCLONES, MAX_DUSTS, MAX_STORMS, type CycloneUniform, type DustUniform, type StormUniform } from '../sim/globals';
+import { cellAt, worldSize } from '../world/lattice';
 
 export interface Storm {
   x: number;
@@ -112,11 +113,17 @@ export class Weather {
   dustiness = 0;
   private nextDust = 140;
 
+  /** the world's extent (the nature grid is hex: world.lattice) */
+  private w: number;
+  private h: number;
+
   constructor(
     private heights: Float32Array,
-    private w: number,
-    private h: number,
-  ) {}
+    private gw: number,
+    private gh: number,
+  ) {
+    [this.w, this.h] = worldSize(gw, gh);
+  }
 
   canSpawn(): boolean {
     return this.storms.length < MAX_STORMS;
@@ -274,9 +281,10 @@ export class Weather {
   }
 
   private heightAt(x: number, y: number): number {
-    const ix = Math.max(0, Math.min(this.w - 1, Math.floor(x)));
-    const iy = Math.max(0, Math.min(this.h - 1, Math.floor(y)));
-    return this.heights[iy * this.w + ix];
+    const [cx, cy] = cellAt(x, y);
+    const ix = Math.max(0, Math.min(this.gw - 1, cx));
+    const iy = Math.max(0, Math.min(this.gh - 1, cy));
+    return this.heights[iy * this.gw + ix];
   }
 
   update(dt: number): void {

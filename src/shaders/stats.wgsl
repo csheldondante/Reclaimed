@@ -3,7 +3,7 @@
 @group(0) @binding(3) var<storage, read> contam: array<vec2<f32>>;
 @group(0) @binding(4) var<storage, read> veg: array<f32>;
 @group(0) @binding(5) var<storage, read> water: array<f32>;
-@group(0) @binding(6) var<storage, read> flux: array<vec4<f32>>;
+@group(0) @binding(6) var<storage, read> flux: array<Dirs>;
 @group(0) @binding(7) var<storage, read_write> stats: array<atomic<u32>>;
 @group(0) @binding(8) var<storage, read> oil: array<f32>;
 @group(0) @binding(9) var<storage, read> fire: array<f32>;
@@ -35,7 +35,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     atomicAdd(&acc[2], select(0u, 1u, v >= 0.5));
     atomicAdd(&acc[3], u32(v * 100.0));
     atomicAdd(&acc[4], u32(d * 100.0));
-    atomicAdd(&acc[5], u32((f.x + f.y + f.z + f.w) * 1000.0));
+    atomicAdd(&acc[5], u32((dSum(f)) * 1000.0));
     atomicAdd(&acc[6], select(0u, 1u, c.x < 0.2));
     atomicAdd(&acc[7], select(0u, 1u, d > 0.02));
     atomicAdd(&acc[8], select(0u, 1u, v >= 3.0));

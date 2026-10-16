@@ -45,7 +45,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let fuel = fuelAt(i);
   let wet = moisture[i];
   let d = water[i];
-  let rain = rainAt(vec2<f32>(p) + 0.5);
+  let rain = rainAt(cellPos(p));
   var f = fireIn[i];
   // oil film on water: the fire sits on the oil, the water can't reach it
   let oily = oil[i] > 0.03;
@@ -58,7 +58,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var e = 0u; e < numEvents(); e++) {
     if (evKind(e) != EV_LIGHTNING) { continue; }
     let ev = G.events[e];
-    if (length(vec2<f32>(p) + 0.5 - ev.xy) < min(ev.z, 4.0) && fuel > 0.2) { f = max(f, 0.9); }
+    if (length(cellPos(p) - ev.xy) < min(ev.z, 4.0) && fuel > 0.2) { f = max(f, 0.9); }
   }
 
   if (f > 0.0) {
@@ -75,14 +75,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (sk > 0.0 && f32(G.tick) - sk < 1.5 && r < EMBER_CATCH * min(fuel, 1.0) * (1.0 - smoothstep(0.3, 0.8, wet)) * (1.0 - rain)) { f = 0.5; }
     // catch from burning neighbours (wind carries flames downwind)
     var heat = 0.0;
-    for (var k = 0u; k < 4u; k++) {
-      let q = p + DIRS[k];
+    for (var k = 0u; k < NDIR; k++) {
+      let q = nbr(p, k);
       if (!inMap(q)) { continue; }
       let nf = fireIn[colIdxI(q)];
       if (nf <= 0.0) { continue; }
-      let w = windAt(vec3<f32>(vec2<f32>(q) + 0.5, 1.0));
-      // DIRS[k] points from me to the neighbour; wind from it toward me helps
-      let toward = -dot(normalize(w + vec2<f32>(1e-4)), vec2<f32>(DIRS[k]));
+      let w = windAt(vec3<f32>(cellPos(q), 1.0));
+      // DIRV[k] points from me to the neighbour; wind from it toward me helps
+      let toward = -dot(normalize(w + vec2<f32>(1e-4)), DIRV[k]);
       heat += nf * (0.6 + 0.9 * max(toward, 0.0) * min(length(w) / 4.0, 1.5));
     }
     let dry = 1.0 - smoothstep(0.25, 0.75, wet) * (1.0 - 0.7 * forest);

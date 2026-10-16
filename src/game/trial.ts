@@ -23,6 +23,7 @@ import type { Ability, GateSpec, P } from '../world/kit';
 import { sfMat, sfZ } from '../world/layout';
 import { MAT } from '../world/materials';
 import type { Powers } from './powers';
+import { cellPos } from '../world/lattice';
 
 const DUST_DEEP = 0.4;
 
@@ -156,10 +157,16 @@ export class Trial {
     });
   }
 
+  /** a gate's place in the world (levels author in grid cells; the grid is hex) */
+  private at(g: GateSpec): P {
+    return cellPos(Math.floor(g.at[0]), Math.floor(g.at[1]));
+  }
+
   /** outward from the hub through the gate: unit direction */
   private out(g: GateSpec): P {
-    const dx = g.at[0] - this.hub[0];
-    const dy = g.at[1] - this.hub[1];
+    const [hx, hy] = cellPos(Math.floor(this.hub[0]), Math.floor(this.hub[1]));
+    const dx = this.at(g)[0] - hx;
+    const dy = this.at(g)[1] - hy;
     const L = Math.hypot(dx, dy) || 1;
     return [dx / L, dy / L];
   }
@@ -182,6 +189,10 @@ export class Trial {
     let surf = (await this.snap()).surface;
     const topOf = (i: number) => sfZ(surf[i]);
     const w = this.core.dims.w;
+    const xyOf = (i: number) => {
+      const [x, y] = cellPos(i % w, Math.floor(i / w));
+      return { x, y };
+    };
     // (the ability goes only to these gates; all are measured)
     const gates = only ? this.gates.filter((g) => only.includes(g.id)) : this.gates;
     let next = 0;
@@ -215,8 +226,8 @@ export class Trial {
             const R = this.radius(g) + 4;
             for (let k = 0; k < strokes && !done; k++) {
               const off = (k - (strokes - 1) / 2) * 3;
-              const a: P = [g.at[0] - ux * R - uy * off, g.at[1] - uy * R + ux * off];
-              const b: P = [g.at[0] + ux * R - uy * off, g.at[1] + uy * R + ux * off];
+              const a: P = [this.at(g)[0] - ux * R - uy * off, this.at(g)[1] - uy * R + ux * off];
+              const b: P = [this.at(g)[0] + ux * R - uy * off, this.at(g)[1] + uy * R + ux * off];
               await this.powers.scriptStroke([a, b], 0.4);
             }
           }
@@ -229,7 +240,7 @@ export class Trial {
           // one at a time per gate (four at most at once): a fresh one every 5 s, round the gates
           {
             const g = gates[Math.floor(t / 5) % gates.length];
-            weather.spawnCyclone(g.at[0], g.at[1], 1);
+            weather.spawnCyclone(this.at(g)[0], this.at(g)[1], 1);
             next = t + 5;
           }
           break;
@@ -237,13 +248,13 @@ export class Trial {
           // a storm parked over each gate (four at once at most: round the gates)
           for (const g of gates) {
             if (storms.has(g.id) || !weather.canSpawn()) continue;
-            const st = weather.spawn(g.at[0], g.at[1]);
+            const st = weather.spawn(this.at(g)[0], this.at(g)[1]);
             if (st) storms.set(g.id, st);
           }
           for (const [id, st] of storms) {
             const g = gates.find((q) => q.id === id)!;
-            st.x = g.at[0];
-            st.y = g.at[1];
+            st.x = this.at(g)[0];
+            st.y = this.at(g)[1];
           }
           break;
         // (events: a tick carries MAX_EVENTS at most, so these take turns
@@ -263,7 +274,7 @@ export class Trial {
           const g = gates[turn++ % gates.length];
           let hi = g.cells[0];
           for (const i of g.cells) if (topOf(i) > topOf(hi)) hi = i;
-          globals.events.push({ kind: EventKind.Edit, x: (hi % w) + 0.5, y: Math.floor(hi / w) + 0.5, z: 3 * 32, radius: 4, strength: gates.length });
+          globals.events.push({ kind: EventKind.Edit, ...xyOf(hi), z: 3 * 32, radius: 4, strength: gates.length });
           break;
         }
         case 'chip': {
@@ -274,7 +285,7 @@ export class Trial {
           const d = (i: number) => Math.hypot((i % w) - (top % w), Math.floor(i / w) - Math.floor(top / w));
           const spot = [...g.cells].sort((a, b) => d(a) - d(b)).slice(0, 6);
           const i = spot[Math.floor(Math.random() * spot.length)];
-          globals.events.push({ kind: EventKind.Chip, x: (i % w) + 0.5, y: Math.floor(i / w) + 0.5, z: Math.floor(topOf(i) - 0.5), radius: 1.8, strength: 1 });
+          globals.events.push({ kind: EventKind.Chip, ...xyOf(i), z: Math.floor(topOf(i) - 0.5), radius: 1.8, strength: 1 });
           next = t + 0.25 / gates.length;
           break;
         }

@@ -23,6 +23,7 @@ import { modelById, modelColumns, restingBase, seatColumn } from '../world/model
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
+import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -119,7 +120,7 @@ export class LevelScene implements Scene {
     const p = host.params;
     if (p.get('day')) this.core.dayNight.dayLength = Math.max(10, Number(p.get('day')));
     if (p.get('tod')) this.core.dayNight.timeOfDay = Number(p.get('tod')) % 1;
-    this.core.camera.target = [dims.w * 0.55, dims.h * 0.5, 14];
+    this.core.camera.target = [dims.w * 0.55, dims.h * ROW_H * 0.5, 14];
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
   }
@@ -139,8 +140,9 @@ export class LevelScene implements Scene {
 
   private heightAt = (x: number, y: number): number => {
     const { w, h } = this.core.dims;
-    const ix = Math.max(0, Math.min(w - 1, Math.floor(x)));
-    const iy = Math.max(0, Math.min(h - 1, Math.floor(y)));
+    const [cx, cy] = cellAt(x, y);
+    const ix = Math.max(0, Math.min(w - 1, cx));
+    const iy = Math.max(0, Math.min(h - 1, cy));
     return sfZ(this.surfaceCache[iy * w + ix]);
   };
 
@@ -162,8 +164,8 @@ export class LevelScene implements Scene {
       heightAt: this.heightAt,
       birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
       waterAt: (x, y) => {
-        const i = Math.floor(y) * dims.w + Math.floor(x);
-        return x < 0 || y < 0 || x >= dims.w || y >= dims.h ? 0 : (this.waterCache?.[i] ?? 0);
+        const [cx, cy] = cellAt(x, y);
+        return cx < 0 || cy < 0 || cx >= dims.w || cy >= dims.h ? 0 : (this.waterCache?.[cy * dims.w + cx] ?? 0);
       },
     });
     // tapped metal rings by its size: count the metal voxels connected to the
@@ -189,8 +191,8 @@ export class LevelScene implements Scene {
     };
 
     // a few animals already live in the one healthy corner when the level opens
-    const [hx, hy] = map.poi.healthy;
-    const hz = map.surface[hy * dims.w + hx];
+    const hz = map.surface[map.poi.healthy[1] * dims.w + map.poi.healthy[0]];
+    const [hx, hy] = poiWorld(map.poi.healthy);
     sim.particles.burst({ kind: PK.Rabbit, x: hx, y: hy, z: hz + 0.3, count: 4, speed: 1, spread: 4 });
     sim.particles.burst({ kind: PK.Deer, x: hx + 2, y: hy - 2, z: hz + 0.4, count: 2, speed: 1, spread: 3 });
     // birds already perch in its trees (they look for crowns as they arrive)
@@ -363,7 +365,7 @@ export class LevelScene implements Scene {
       const [hx, hy] = map.poi.healthy;
       this.reach = new Reach(dims.w, dims.h, [hx, hy]);
       core.world.writeReach(this.reach.revealed);
-      camera.target = [hx, hy, 12];
+      camera.target = [...poiWorld([hx, hy]), 12];
       void this.refreshReach();
     }
     if (this.intro) {
@@ -461,7 +463,7 @@ export class LevelScene implements Scene {
       camera.target[1] += wy;
     }
     camera.target[0] = Math.max(0, Math.min(dims.w, camera.target[0]));
-    camera.target[1] = Math.max(0, Math.min(dims.h, camera.target[1]));
+    camera.target[1] = Math.max(0, Math.min(dims.h * ROW_H, camera.target[1]));
     if (this.reach) {
       this.reachRefresh -= dt;
       if (this.reachRefresh <= 0) {
@@ -553,7 +555,7 @@ export class LevelScene implements Scene {
 
     if (globals.time > this.nextGroan) {
       this.nextGroan = globals.time + 14 + Math.random() * 16;
-      const [dx, dy] = map.poi.dam;
+      const [dx, dy] = poiWorld(map.poi.dam);
       const near = 1 - Math.min(1, Math.hypot(camera.target[0] - dx, camera.target[1] - dy) / 120);
       const holding = stats ? Math.min(1, stats.waterVolume / 20000) : 1;
       audio.groan(near * holding);
@@ -653,7 +655,7 @@ export class LevelScene implements Scene {
         }
         n += fall;
       }
-    const [dx, dy] = map.poi.dam;
+    const [dx, dy] = poiWorld(map.poi.dam);
     const dam = Math.max(0, 1 - Math.hypot(dx - cx, dy - cy) / (R * 1.2));
     return {
       rain,
@@ -677,7 +679,7 @@ export class LevelScene implements Scene {
     const side = Math.floor(Math.random() * 4);
     const t = 10 + Math.random() * (dims.w - 20);
     const x = side === 0 ? 1.5 : side === 1 ? dims.w - 1.5 : t;
-    const y = side === 2 ? 1.5 : side === 3 ? dims.h - 1.5 : side < 2 ? t : 0;
+    const y = side === 2 ? 1.5 : side === 3 ? dims.h * ROW_H - 1.5 : side < 2 ? t * ROW_H : 0;
     sim.particles.burst({ kind: PK.Bird, x, y, z: this.heightAt(x, y) + 11, count: 2 + Math.floor(Math.random() * 4), speed: 5, spread: 1.5 });
   }
 
@@ -693,11 +695,11 @@ export class LevelScene implements Scene {
     const d = this.director;
     const hud = this.hud;
     const powers = this.powers;
-    const [tx, ty] = map.poi.tutorial;
+    const [tx, ty] = poiWorld(map.poi.tutorial);
     // (the scene is attached before its first resize)
     await d.waitFor(() => camera.viewportW > 1, 5);
     const wide = Math.max(1.5, Math.min(camera.viewportW * 1.9, camera.viewportH * 1.6) / 300);
-    camera.target = [dims.w * 0.5, dims.h * 0.5, 14];
+    camera.target = [dims.w * 0.5, dims.h * ROW_H * 0.5, 14];
     camera.zoom = wide;
     d.lock();
     hud.say('A valley, dead a long time.', 4);
@@ -748,7 +750,7 @@ export class LevelScene implements Scene {
     hud.say('The valley will remember that.', 3);
     await d.hold(3);
     // something new: waste the wind can't move
-    const [hx, hy] = map.poi.heap;
+    const [hx, hy] = poiWorld(map.poi.heap);
     await d.fly(hx, hy, 13, 2);
     d.confine(hx, hy, 14, 9, 18);
     hud.say('Some waste is packed too hard for wind. Try it.', 20);
@@ -824,7 +826,7 @@ export class LevelScene implements Scene {
     const { camera } = core;
     core.renderer.pick((sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH).then((hit) => {
       this.smashPicking = false;
-      this.smashHover = hit ? [(hit.cell % core.dims.w) + 0.5, Math.floor(hit.cell / core.dims.w) + 0.5, hit.z] : undefined;
+      this.smashHover = hit ? [...cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w)), hit.z] : undefined;
     }, ignoreTeardown);
   }
 
@@ -912,8 +914,7 @@ export class LevelScene implements Scene {
     const ry = (sy / camera.viewportH) * this.renderH;
     core.renderer.pick(rx, ry).then((hit) => {
       if (!hit) return;
-      const x = (hit.cell % core.dims.w) + 0.5;
-      const y = Math.floor(hit.cell / core.dims.w) + 0.5;
+      const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
       void this.placeModel(x, y, hit.z);
     }, ignoreTeardown);
   }
@@ -982,8 +983,7 @@ export class LevelScene implements Scene {
     const ry = (sy / camera.viewportH) * this.renderH;
     core.renderer.pick(rx, ry).then((hit) => {
       if (!hit) return;
-      const x = (hit.cell % core.dims.w) + 0.5;
-      const y = Math.floor(hit.cell / core.dims.w) + 0.5;
+      const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
       // a fallen body under the cursor: break it in its own frame (round 18)
       if (hit.flags & 0x8000) {
         this.integrity?.breakBodies([x, y, hit.z + 0.5], ed.radius);
