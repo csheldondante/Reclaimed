@@ -2561,3 +2561,14 @@ sediment doesn't use them), air inside a structure (one span per column:
 an office tower's window grid reads as solid slabs; sand poured onto one
 beam slides off — correct, but a solid slab was the clearer test),
 structures that move (setPose exists; nothing drives it), breaking them.
+
+## grids: a tilt slider on the sandbox's Place tool
+
+The user found the structure demo hard to poke at (URL and console only).
+The sandbox's Place tool now has a tilt slider: at 0 it stamps the model
+into the columns as before; above 0 the model goes in as a structure grid
+of its own, toppled that far over its quarter turn (E), with a little roll
+so no face lines up with the hexes, resting on the ground (bury sinks it).
+Then pour, rain, wind and the weather tools act on it. Not undoable (the
+undo snapshot covers the layers, not the structure pool); 8 at most.
+Placed into the ground, it overlaps: nothing is displaced yet.

@@ -952,6 +952,14 @@ export class LevelScene implements Scene {
     const ed = this.editor!;
     const m = modelById(ed.model)!;
     const { core } = this;
+    if (ed.tilt > 0) {
+      // a tilted model is its own grid (docs/GRIDS.md): toppled over its
+      // quarter turn, with a little roll so no face lines up with the hexes
+      const r = Math.PI / 180;
+      const q = qYawPitchRoll(ed.rot * 90 * r + 0.3, ed.tilt * r, (ed.tilt / 9) * r);
+      if (!core.structures.place(m, wx, wy, q, this.heightAt, ed.bury)) this.hud.say('No room for more tilted structures (8 at most).', 3);
+      return;
+    }
     const { dims, packed } = core;
     const { fw, fd, cols } = modelColumns(m, ed.rot);
     const [[x0], [y0]] = this.placeRect(wx, wy);

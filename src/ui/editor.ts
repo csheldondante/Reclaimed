@@ -115,6 +115,8 @@ export class Editor {
   model = MODELS[0].id;
   rot = 0;
   bury = MODELS[0].sink;
+  /** place tool: degrees of tilt; above 0 the model goes in as a structure grid of its own (docs/GRIDS.md) */
+  tilt = 0;
   private el: HTMLElement;
   private picked = { pour: MAT.Soil as number, build: MAT.Stone as number };
 
@@ -128,6 +130,7 @@ export class Editor {
       <label data-ll>layers <input data-l type="range" min="1" max="4" value="${this.layers}"></label>
       <div class="models" data-models>${MODELS.map((m) => `<button data-mod="${m.id}" title="${m.name}"><img alt="${m.name}" src="${thumbnail(m)}"></button>`).join('')}</div>
       <label data-bl>bury <input data-b type="range" min="0" max="4" value="${this.bury}"></label>
+      <label data-tl title="Above 0: placed as its own tilted grid (sand buries it, moss grows on it)">tilt <input data-ti type="range" min="0" max="90" step="5" value="0"></label>
       <label data-sl>strength <input data-s type="range" min="5" max="100" value="${this.strength * 100}"></label>
       <div class="speed">${[0, 1, 2, 4, 8].map((s) => `<button data-sp="${s}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}</div>
       <div class="maps">
@@ -154,6 +157,7 @@ export class Editor {
       show('[data-sl]', !!EDIT_OP[t] && !LAYER_TOOLS.has(t) && t !== 'smash');
       show('[data-models]', t === 'place');
       show('[data-bl]', t === 'place');
+      show('[data-tl]', t === 'place');
       if (list) {
         const cur = this.picked[t as 'pour' | 'build'];
         matSel.innerHTML = list.map(([n, m]) => `<option value="${m}"${m === cur ? ' selected' : ''}>${n}</option>`).join('');
@@ -167,6 +171,8 @@ export class Editor {
     });
     const bury = el.querySelector<HTMLInputElement>('[data-b]')!;
     bury.addEventListener('input', () => (this.bury = Number(bury.value)));
+    const tilt = el.querySelector<HTMLInputElement>('[data-ti]')!;
+    tilt.addEventListener('input', () => (this.tilt = Number(tilt.value)));
     const pickModel = (id: string) => {
       this.model = id;
       this.bury = MODELS.find((m) => m.id === id)!.sink;
