@@ -24,6 +24,7 @@ import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
+import { qYawPitchRoll } from '../grids/structures';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -357,8 +358,35 @@ export class LevelScene implements Scene {
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
       trial: new Trial(core, this.powers, gatesOf(map), map.poi.healthy),
+      // structure grids: grids.place('officetower', x, y, yawDeg, pitchDeg, rollDeg) at world (x, y)
+      grids: {
+        list: core.structures.list,
+        place: (id: string, x: number, y: number, yaw = 0, pitch = 0, roll = 0, sink = 0) => {
+          const m = modelById(id);
+          if (!m) throw new Error(`no model "${id}"`);
+          const r = Math.PI / 180;
+          return core.structures.place(m, x, y, qYawPitchRoll(yaw * r, pitch * r, roll * r), this.heightAt, sink);
+        },
+      },
       scene: this,
     };
+    // ?structure=model,x,y,yaw,pitch,roll (grid cells, degrees): a structure grid
+    // placed at load (the grids branch's test hook)
+    const sp = host.params.get('structure');
+    if (sp) {
+      const [id, ...nums] = sp.split(',');
+      const [x, y, yaw, pitch, roll, sink] = nums.map(Number);
+      const m = modelById(id);
+      if (!m) throw new Error(`?structure: no model "${id}"`);
+      const [wx, wy] = poiWorld([x, y]);
+      const r = Math.PI / 180;
+      // (the ground's heights arrive with the first surface readback: wait for it)
+      const placeIt = () => {
+        if (!this.surfaceCache?.length) return void setTimeout(placeIt, 200);
+        core.structures.place(m, wx, wy, qYawPitchRoll((yaw || 0) * r, (pitch || 0) * r, (roll || 0) * r), this.heightAt, sink || 0);
+      };
+      placeIt();
+    }
 
     if (this.story) {
       // the story opens on the green that's left (game/reach.ts: the reach grows from it)

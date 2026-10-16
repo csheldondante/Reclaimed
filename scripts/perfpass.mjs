@@ -24,7 +24,7 @@ try {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(`${url}/?skipmenu=1&tutorial=0&perf=1`, { waitUntil: 'load' });
+  await page.goto(`${url}/?skipmenu=1&tutorial=0&perf=1${opt("extra", "")}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.reclaimed?.core, { timeout: 90000 });
   await new Promise((r) => setTimeout(r, wait));
   const r = await page.evaluate(async (secs, z) => {

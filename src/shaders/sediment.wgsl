@@ -605,16 +605,22 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     n = w;
     hangs = true;
   }
+  // a structure (or a body) over this column is ground for what lies on it
+  // (project.wgsl: its top, as the nature grid sees it; -1 none)
+  let fTop = bodyTopAt(p);
   // granular intervals with air under them fall (rubble a collapse left
-  // hanging, sand whose support was dug away)
+  // hanging, sand whose support was dug away) — onto the structure's top if
+  // they're above it
   if (hangs) {
     floorZ = 0.0;
     for (var k = 0u; k < n; k++) {
       let v = arr[k];
       var z0 = ivZ0(v);
       var z1 = ivZ1(v);
-      if (matState(ivMat(v)) == ST_GRANULAR && z0 > floorZ + 1e-4) {
-        let f = min(FALL, z0 - floorZ);
+      var fl = floorZ;
+      if (fTop > fl && z0 >= fTop - 1e-3) { fl = fTop; }
+      if (matState(ivMat(v)) == ST_GRANULAR && z0 > fl + 1e-4) {
+        let f = min(FALL, z0 - fl);
         z0 -= f;
         z1 -= f;
         arr[k] = ivPack(z0, z1, ivMat(v), ivAux(v));
@@ -625,13 +631,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // the run on top, as a stack (touching granular intervals of the same
   // material count as one)
-  let r = looseRun(&arr, n);
-  var s: Stack;
-  s.n = 0u;
-  s.cap = max(cs.y - r, 1u);
+  var r = looseRun(&arr, n);
   var base = 0.0;
   if (n > 0u) { base = ivZ1(arr[n - 1u]); }
   if (r < n) { base = ivZ0(arr[r]); }
+  // under a structure: what arrives lands on the structure, as a new run on
+  // its top (a run under it stays there, sheltered) — so drifts bury it
+  let runTop = select(base, ivZ1(arr[max(n, 1u) - 1u]), n > 0u);
+  if (fTop > max(base, runTop) + 1e-3) {
+    r = n;
+    base = fTop;
+  }
+  var s: Stack;
+  s.n = 0u;
+  s.cap = max(cs.y - r, 1u);
   for (var k = r; k < n; k++) {
     let v = arr[k];
     let d = ivZ1(v) - ivZ0(v);

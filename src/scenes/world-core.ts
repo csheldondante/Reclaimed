@@ -16,6 +16,7 @@ import { unpackColumns } from '../world/mapfile';
 import { looseIntoGrid } from '../world/loose';
 import { DayNight, type Daylight } from '../weather/daynight';
 import { Weather } from '../weather/weather';
+import { Structures } from '../grids/structures';
 
 export interface Quality {
   renderScale: number;
@@ -47,6 +48,8 @@ export class WorldCore {
   readonly world: WorldGpu;
   readonly sim: Simulation;
   readonly renderer: Renderer;
+  /** structure grids over the nature grid (docs/GRIDS.md) */
+  readonly structures: Structures;
   readonly weather: Weather;
   readonly dayNight = new DayNight();
   readonly camera = new Camera();
@@ -76,6 +79,7 @@ export class WorldCore {
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     this.sim = new Simulation(device, this.world, host.profiler);
     this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler);
+    this.structures = new Structures(device, this.world);
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h);
     this.globals = {
       mapW: this.dims.w,

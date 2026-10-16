@@ -1125,19 +1125,63 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   return o;
 }
 
+/**
+ * The loose ground's smooth surface at p on a structure's face: the nature
+ * grid's loose tops interpolated over the three nearest centres, counting
+ * only columns whose loose run reaches down to this height (a column whose
+ * run lies on the structure's own roof doesn't drape its walls); -1e9 none.
+ */
+fn drapeTop(p: vec3<f32>) -> f32 {
+  let t = triAt(p.xy);
+  var s = 0.0;
+  var wsum = 0.0;
+  for (var k = 0; k < 3; k++) {
+    let q = clampCell(t.c[k]);
+    let base = f32(sfZ(surface[colIdxI(q)]));
+    let d = driftAt(q);
+    if (d < 0.05 || base > p.z + 0.6) { continue; }
+    s += t.w[k] * (base + d);
+    wsum += t.w[k];
+  }
+  return select(-1e9, s / max(wsum, 1e-4), wsum > 0.3);
+}
+
 @fragment
 fn fsBody(in: VOut) -> FOut {
-  let mat = in.info.x;
+  let word = in.info.x;
+  let mat = word & 0xffu;
   // a little per-voxel variation so a tumbling slab doesn't read as one block
   let r = randv(vec3<i32>(floor(in.bmin * 3.0)));
-  let alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
-  var col = alb * lighting(in.wpos, normalize(in.nrm));
+  var alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
+  let nrm = normalize(in.nrm);
+  // a structure grid's voxel (structprep.wgsl): the growth it owns on its
+  // faces, and the nature grid's sand drawn over it where it's buried
+  if ((word >> 31u) != 0u) {
+    let moss = f32((word >> 8u) & 0xffu) / 255.0;
+    let sand = f32((word >> 16u) & 0xffu) / 255.0;
+    let sub = randv(vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02)) + vec3<i32>(13, 5, 71));
+    if (sub < moss * (0.55 + 0.45 * max(nrm.z, 0.0))) {
+      let mc = mix(vec3<f32>(0.2, 0.33, 0.12), vec3<f32>(0.36, 0.5, 0.2), randv(vec3<i32>(floor(in.wpos * 2.0)) + vec3<i32>(3, 1, 7)));
+      alb = toLinear(mc);
+    }
+    let cell = clampCell(cellAt(in.wpos.xy));
+    let dt = drapeTop(in.wpos);
+    let rag = (sub - 0.5) * 0.15;
+    if (in.wpos.z < dt + rag || sand > 0.7 + 0.3 * sub) {
+      var sc = toLinear(MATS[driftMatAt(cell)].albedo.rgb);
+      if (driftMatAt(cell) == MAT_DRIFT) { sc = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+      alb = sc * (0.9 + 0.2 * sub);
+    }
+  }
+  var col = alb * lighting(in.wpos, nrm);
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
   // pickable (the Break tool hits bodies): the column under the fragment, its
   // height, and flag 0x8000 ("a body") in the instance-flags field
   let bc = clampCell(cellAt(in.wpos.xy));
-  o.pick = vec2<u32>(colIdxI(bc) + 1u, mat | (u32(max(in.wpos.z, 0.0)) << 8u) | (0x8000u << 16u));
+  // (a structure grid's voxel picks as the ground beneath: they can't be broken yet)
+  let flag = select(0x8000u, 0u, (word >> 31u) != 0u);
+  o.pick = vec2<u32>(colIdxI(bc) + 1u, mat | (u32(max(in.wpos.z, 0.0)) << 8u) | (flag << 16u));
   return o;
 }

@@ -9,6 +9,7 @@ import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
 import { DIRS_BYTES } from '../world/lattice';
+import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS } from '../grids/structures';
 
 export const STATS_COUNT = 16;
 
@@ -97,6 +98,18 @@ export class WorldGpu {
   /** sleeping rigid bodies projected per column: top, bottom (top < 0: none) — game/integrity.ts writes it */
   readonly bodyProj: GPUTexture;
   readonly bodyProjView: GPUTextureView;
+  /** the CPU's sleeping bodies (integrity.ts writes it; project.wgsl merges it into bodyProj) */
+  readonly bodyCpu: GPUTexture;
+  readonly bodyCpuView: GPUTextureView;
+  /** what the nature grid sees of the structure grids beyond bodyProj (project.wgsl):
+   *  xy the top face's world normal, z structure + 1 (0 none), w its top material */
+  readonly foreign: GPUTexture;
+  readonly foreignView: GPUTextureView;
+  /** structure grids (grids.wgsl): frames, and the voxel pool */
+  readonly strFrames: GPUBuffer;
+  readonly strVox: GPUBuffer;
+  /** voxels of the pool in use (Structures keeps it): the per-voxel kernels' size */
+  strVoxels = 0;
   /** derived by the surface pass: xyz the granular intervals beneath the top one in the run on top (bottom first, packed mat·1000 + depth), w the run's base z */
   readonly strata: GPUTexture;
   readonly strataView: GPUTextureView;
@@ -226,7 +239,15 @@ export class WorldGpu {
       const none = new Float32Array(N * 4);
       for (let k = 0; k < N; k++) none[k * 4] = -1;
       device.queue.writeTexture({ texture: this.bodyProj }, none, { bytesPerRow: this.w * 16 }, dsize);
+      this.bodyCpu = device.createTexture({ label: 'bodyCpu', size: dsize, format: 'rgba32float', usage: tusage });
+      device.queue.writeTexture({ texture: this.bodyCpu }, none, { bytesPerRow: this.w * 16 }, dsize);
     }
+    this.bodyCpuView = this.bodyCpu.createView();
+    this.foreign = device.createTexture({ label: 'foreign', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.bodyCpu, this.foreign);
+    this.foreignView = this.foreign.createView();
+    this.strFrames = this.buf('strFrames', MAX_STRUCTS * FRAME_BYTES, S);
+    this.strVox = this.buf('strVox', POOL_VOXELS * 4, S);
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.strata);
     this.strataView = this.strata.createView();

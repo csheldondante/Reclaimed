@@ -23,6 +23,7 @@ import {
 } from './systems';
 import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
+import { ProjectSystem, StructTickSystem } from '../grids/systems';
 
 export const TICK_HZ = 60;
 export const TICK_DT = 1 / TICK_HZ;
@@ -55,6 +56,8 @@ export class Simulation {
     this.systems = [
       this.edit,
       this.wind,
+      // what the nature grid sees of the structure grids (bodyProj), first
+      new ProjectSystem(device, world, profiler),
       new StructureSystem(device, world, profiler),
       this.surface,
       new WaterSystem(device, world, profiler),
@@ -66,6 +69,7 @@ export class Simulation {
       new WiltSystem(device, world, profiler),
       new EcologySystem(device, world, profiler),
       this.particles,
+      new StructTickSystem(device, world, profiler),
       new SwaySystem(device, world, profiler),
       this.shadow,
       this.stats,

@@ -101,10 +101,12 @@ and moves smoother.
 2. ✓ The nature grid is hex (no switch: the `ambient` branch is the square
    reference), rendered as hex prisms. Measured against square (DEVLOG
    2026-10-16): sim 1.3×, draw 1.9× — next, cache each cell's top plane.
-3. Grid frames (full rotation) and a voxel structure on its own grid.
-4. Both projections, with normals.
-5. Sand, soil, water and wind reacting to the structure (piling, sliding
-   on tilted faces, wind shadows, water around it).
-6. Face growth ticking on the structure grid.
+3. ✓ Grid frames (full rotation) and voxel structures on their own grids.
+4. ✓ Both projections (first pass): structure → nature with the top face's
+   normal; nature → structure sampled per voxel (sand cover).
+5. Sand, soil, water and wind reacting to the structure: banking, landing
+   on it and burying it ✓ (bodyProj); sliding on tilted faces by the normal,
+   air inside a structure (more than one span per column) — next.
+6. ✓ Face growth (moss) ticking on the structure grid.
 7. Smoother rendering: the triangle-lattice surface, SDF blending between
    grids, dual contouring.

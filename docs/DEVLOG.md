@@ -2512,3 +2512,52 @@ centre point added) and plants in their own list at 18 vertices (prisms
 30): 6.7 ms against square's 4.0 — the ratio of the prism's vertices
 (30/18). A top-only list for prisms with every side hidden would take most
 of the rest; not now (the branch's point is the grids).
+
+## 2026-10-16 — grids: structure grids (GRIDS plan steps 3–4, first pass)
+
+A structure grid is a rigid voxel grid in its own frame — position and a
+full rotation (yaw, pitch, roll) — over the hex nature grid
+(src/grids/structures.ts, src/shaders/grids.wgsl). The CPU only places
+structures: it uploads a model's voxels once into a GPU pool and writes
+each frame (64 bytes: position, quaternion, dims + pool offset, world xy
+bounds). Everything grid-shaped is a kernel:
+
+- project.wgsl (structure → nature, every tick, first): each nature column
+  casts its world-vertical line through each structure's rotated voxels (a
+  3D DDA in local space) and keeps the top of the first solid run, the
+  bottom of the last, and the world normal of the face the line entered by
+  (exact for boxes: `foreign`, xy). Merged with the CPU's sleeping bodies
+  (integrity.ts now writes `bodyCpu`, rasterised over hex centres), it is
+  `bodyProj` — so every system that already respected bodies sees
+  structures unchanged: water stands on them, loose ground banks against
+  them, wind is sheltered by them. 0.05 ms.
+- Sediment (the burial): sand above a structure's top falls only to it,
+  and where a column's run is under a structure (or it has none), arrivals
+  start a new run on the structure's top — so drifts climb over it instead
+  of vanishing under it. Measured with a pour onto a 20°-tilted concrete
+  slab: the sand piles on it, runs off its low edge and buries it in a cone
+  — a round cone (the hex grid's repose relaxation; the square grid's are
+  pyramid-ish).
+- structtick.wgsl (the structure's own tick, every 4 ticks, 0.02 ms): per
+  voxel, samples the nature grid at its world centre (nature → structure):
+  sand cover (inside the loose run there), and moss on its faces open to
+  the air where the ground is damp — up-facing faces fastest, undersides
+  too; it creeps from green ground and mossy neighbours, rarely starts on
+  its own. First tuning grew full cover in under 20 s; now about four
+  minutes of damp weather.
+- structprep.wgsl: exposed voxels → rotated-cube instances in the body
+  format, drawn by the body pipeline (indirect). fsBody shades a structure
+  voxel's moss, and the sand drape redundantly: a face point inside the
+  nature grid's loose run there (interpolated over the three nearest
+  centres, counting only columns whose run reaches down to that height)
+  takes the sand's colour, so the sand line on a tilted wall follows the
+  drift smoothly rather than the cells.
+- Test hooks: `?structure=model,x,y,yaw,pitch,roll[,sink]` (cells,
+  degrees) and `reclaimed.grids.place(...)`; scripts/timelapse.mjs (shots
+  at marks of sim time after a JS setup).
+
+Not yet: sliding by the projected normal (the normals are there; the
+sediment doesn't use them), air inside a structure (one span per column:
+an office tower's window grid reads as solid slabs; sand poured onto one
+beam slides off — correct, but a solid slab was the clearer test),
+structures that move (setPose exists; nothing drives it), breaking them.

@@ -229,6 +229,16 @@ the kit still author in grid cells: a map laid onto the hex lattice row by
 row is ~13 % shorter in y and slightly sheared; points of interest convert
 with `poiWorld`. The world spans (w + 0.5) × h·√3/2.
 
+Structure grids (src/grids/, grids.wgsl): rigid voxel grids in their own
+frames (position + quaternion; `strFrames`, 8 × 64 bytes) over a shared voxel
+pool (`strVox`, u32: material, moss, sand cover). The CPU writes frames only.
+`project.wgsl` (first each tick) writes `bodyProj` — x top, y bottom, z body id
+(−1: a structure) — from the structures and the CPU's sleeping bodies
+(`bodyCpu`, written by integrity.ts), and `foreign` (xy the top face's world
+normal, z structure + 1, w its top material). `structtick.wgsl` is the
+structures' own tick; `structprep.wgsl` turns exposed voxels into body-format
+instances (bit 31 of the material word: a structure voxel).
+
 ## Rendering
 
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the

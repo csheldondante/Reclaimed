@@ -15,6 +15,9 @@ import vegprepWgsl from '../shaders/vegprep.wgsl?raw';
 import renderWgsl from '../shaders/render.wgsl?raw';
 import rainWgsl from '../shaders/rain.wgsl?raw';
 import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
+import gridsWgsl from '../shaders/grids.wgsl?raw';
+import structPrepWgsl from '../shaders/structprep.wgsl?raw';
+import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
 
@@ -60,6 +63,12 @@ export class Renderer {
   private bodyBuf: GPUBuffer;
   private bodyGroup: GPUBindGroup;
   private bodyPipe: GPURenderPipeline;
+  /** the structure grids' exposed voxels, as rotated cubes (structprep.wgsl → the body pipeline) */
+  private structPrep: ComputeKernel;
+  private structPrepGroup: GPUBindGroup;
+  private structInst: GPUBuffer;
+  private structIndirect: GPUBuffer;
+  private structGroup: GPUBindGroup;
   private bodyCount = 0;
   static readonly MAX_BODY_VOXELS = 16384;
   private rainGroup: GPUBindGroup;
@@ -238,6 +247,17 @@ export class Renderer {
     this.waterGroup = groupFor(this.instWater);
     this.bodyBuf = world.buf('bodyVoxels', Renderer.MAX_BODY_VOXELS * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
     this.bodyGroup = groupFor(this.bodyBuf);
+    this.structInst = world.buf('structInst', POOL_VOXELS * 32, GPUBufferUsage.STORAGE);
+    this.structIndirect = world.buf('structIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.structGroup = groupFor(this.structInst);
+    this.structPrep = makeCompute(device, 'structprep', [commonWgsl, gridsWgsl, structPrepWgsl], { 0: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw' });
+    this.structPrepGroup = makeBindGroup(device, 'structprep', this.structPrep.layout, {
+      0: world.globals,
+      3: world.strFrames,
+      4: world.strVox,
+      5: this.structInst,
+      6: this.structIndirect,
+    });
     this.bodyPipe = device.createRenderPipeline({
       label: 'bodies',
       layout: pl,
@@ -315,6 +335,7 @@ export class Renderer {
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
     cam.write(this.camData);
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
+    if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0]));
 
     {
@@ -326,6 +347,12 @@ export class Renderer {
       pass.setPipeline(this.vegPrep.pipeline);
       pass.setBindGroup(0, this.vegPrepGroup);
       pass.dispatchWorkgroups(gx, gy);
+      if (this.world.strVoxels > 0) {
+        pass.setPipeline(this.structPrep.pipeline);
+        pass.setBindGroup(0, this.structPrepGroup);
+        pass.dispatchWorkgroups(Math.ceil(this.world.strVoxels / 64));
+        this.profiler.dispatches++;
+      }
       pass.end();
       this.profiler.dispatches += 2;
     }
@@ -348,6 +375,12 @@ export class Renderer {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);
       pass.draw(36, this.bodyCount);
+      this.profiler.draws++;
+    }
+    if (this.world.strVoxels > 0) {
+      pass.setPipeline(this.bodyPipe);
+      pass.setBindGroup(0, this.structGroup);
+      pass.drawIndirect(this.structIndirect, 0);
       this.profiler.draws++;
     }
     pass.setPipeline(this.waterPipe);

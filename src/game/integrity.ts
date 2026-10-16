@@ -16,6 +16,7 @@ import { analyse, WorldVox, type Voxel } from './fracture';
 import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
 import { ignoreTeardown } from '../gpu/pipeline';
+import { cellPos, ROW_H } from '../world/lattice';
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 
@@ -115,8 +116,11 @@ export class Integrity {
     for (const b of this.bodies.list) {
       if (!b.asleep) continue;
       this.bodies.voxelBounds(b, (lo, hi) => {
-        for (let y = Math.max(0, Math.floor(lo[1] + 0.15)); y <= Math.min(H - 1, Math.floor(hi[1] - 0.15)); y++)
-          for (let x = Math.max(0, Math.floor(lo[0] + 0.15)); x <= Math.min(W - 1, Math.floor(hi[0] - 0.15)); x++) {
+        // (the cells whose centres the voxel's box covers: the grid is hex)
+        for (let y = Math.max(0, Math.floor((lo[1] + 0.15) / ROW_H - 0.5)); y <= Math.min(H - 1, Math.ceil((hi[1] - 0.15) / ROW_H - 0.5)); y++)
+          for (let x = Math.max(0, Math.floor(lo[0] - 1)); x <= Math.min(W - 1, Math.ceil(hi[0])); x++) {
+            const [cx, cy] = cellPos(x, y);
+            if (cx < lo[0] + 0.15 || cx > hi[0] - 0.15 || cy < lo[1] + 0.15 || cy > hi[1] - 0.15) continue;
             const i = (y * W + x) * 4;
             if (P[i] < 0) {
               P[i] = hi[2];
@@ -131,7 +135,7 @@ export class Integrity {
       });
     }
     const dev = this.core.host.gpu.device;
-    dev.queue.writeTexture({ texture: this.core.world.bodyProj }, P as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
+    dev.queue.writeTexture({ texture: this.core.world.bodyCpu }, P as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
   }
 
   /**
