@@ -2572,3 +2572,52 @@ so no face lines up with the hexes, resting on the ground (bury sinks it).
 Then pour, rain, wind and the weather tools act on it. Not undoable (the
 undo snapshot covers the layers, not the structure pool); 8 at most.
 Placed into the ground, it overlaps: nothing is displaced yet.
+
+## grids: air inside structures — projected intervals and the open air between them
+
+The user: the building should be able to hold air (and other materials)
+the way the terrain's columns do — use the same representation. The
+projection now keeps every solid stretch a column's vertical line crosses
+(project.wgsl), up to three per column, in the layers' own interval form
+(`projAt` in common.wgsl reads them as intervals). The surface pass adds the
+floor of each stretch of open air they leave (`levels`). The sediment pass
+then moves loose ground within one level: a column's run lies in one
+(`runLevel`); what a neighbour sends at height h comes into the level open at
+h, or steps up onto the solid there (`openAt`) — so a wall is just higher
+ground at that height, a doorway or the gap under a raised floor is open;
+arrivals in a level other than the run's land on its floor (`landAt`); what
+comes from the sky over a structure lands on its top; granular intervals fall
+onto the highest projected interval beneath them. The old single-span rule
+(everything arriving under a structure went onto its top) is gone.
+
+Wind under a structure: shelter is measured at the run's own height (the
+solid upwind at that height, not the tallest thing), and a run with a
+structure over it feels wind only if the open air upwind (a column with
+nothing over it) comes before a solid within 16 cells — inside a room it's
+still, along the line of a doorway or under an overhang's edge it blows.
+(The wind field itself doesn't see structures yet.) Nothing goes airborne
+from under a structure (it would come down on the roof). Smoothing now needs
+the wind to be felt (shelter applied, as for transport): a pile under a hole
+in a roof was being spread over the whole floor by the wind outside.
+
+Measured (scripts/roomtest.mjs: a 16 × 16 room, foundation, floor, roof with a
+4 × 4 hole, a doorway, slightly tilted, in the sandbox):
+- calm: 48 cells of sand dropped under the hole fall onto the floor and
+  slump out under the roof into a round cone at repose (peak 3.1); all the
+  sand within 26 cells goes 9515.7 → 9563.7 (exactly +48), then stays.
+- wind (60 base, 18 felt) along the doorway's line: sand banks against the
+  outside wall, blows into the gap under the raised floor (0 → 4.4 cells),
+  climbs onto the sill; the jet along the doorway's line spreads the pile
+  inside along that line. It stops at the sill when dust from the air
+  crusts it into soil (plants bind it), which doesn't blow — sandbox
+  behaviour, not the room's.
+- cost (Dam Valley, nothing projected): sediment 0.62 → 0.70 ms,
+  sediment-out 0.40 → 0.42, surface 0.16 → 0.18; project 0.05 (unchanged).
+- also: placing a tilted model rested it on the loose run's base, sunk into
+  the sand (heightAt is the base); the pick's height now says how deep the
+  sand lies.
+
+Known: water still has one sheet per column, on the top one; a column's
+plants are one value, so the ground's plants under a room show on sand that
+lands on its floor; nothing is displaced when a structure is placed into the
+ground (it overlaps).

@@ -13,6 +13,8 @@ export const MAX_STRUCTS = 8;
 export const FRAME_BYTES = 64;
 /** voxels in the pool, all structures together (4 bytes each) */
 export const POOL_VOXELS = 1 << 18;
+/** projected intervals per nature column (common.wgsl PROJ_K) */
+export const PROJ_K = 3;
 
 export type V3 = [number, number, number];
 /** quaternion x, y, z, w (local → world) */

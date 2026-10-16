@@ -235,7 +235,16 @@ pool (`strVox`, u32: material, moss, sand cover). The CPU writes frames only.
 `project.wgsl` (first each tick) writes `bodyProj` — x top, y bottom, z body id
 (−1: a structure) — from the structures and the CPU's sleeping bodies
 (`bodyCpu`, written by integrity.ts), and `foreign` (xy the top face's world
-normal, z structure + 1, w its top material). `structtick.wgsl` is the
+normal, z structure + 1, w its top material), and `proj` — every solid stretch
+a column's vertical line crosses, up to PROJ_K = 3 per column, top first, in
+the layers' own interval form (`projAt()` in common.wgsl, binding 28; texture
+3w × h). The surface pass adds `levels` (binding 29 in sediment.wgsl): the
+floor of each stretch of open air they leave — the sky over the top one, the
+air between them, the air under the lowest. The sediment pass moves loose
+ground within one level: a column's run lies in one (`runLevel`); what a
+neighbour sends at height h comes into the level open at h, or steps up onto
+the solid there (`openAt`); what comes from the sky lands on the top one; a
+run under a structure feels no wind or water, only slumps. `structtick.wgsl` is the
 structures' own tick; `structprep.wgsl` turns exposed voxels into body-format
 instances (bit 31 of the material word: a structure voxel).
 

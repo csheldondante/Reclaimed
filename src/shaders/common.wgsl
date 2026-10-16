@@ -400,6 +400,21 @@ fn bodyTopAt(q: vec2<i32>) -> f32 {
   return textureLoad(bodyProjTex, q, 0).x;
 }
 
+// The structure grids (and sleeping bodies) as each nature column sees them
+// (project.wgsl): up to PROJ_K solid intervals, top first, in the layers' own
+// interval form — so a structure's floors and the air between them read like
+// any other intervals of the column. Kernels that call projAt bind 28.
+@group(0) @binding(28) var projTex: texture_2d<f32>;
+const PROJ_K: u32 = 3u;
+
+/** Column q's k-th projected interval from the top (IV_NONE past the last; aux = structure + 1). */
+fn projAt(q: vec2<i32>, k: u32) -> vec4<u32> {
+  if (!inMap(q)) { return IV_NONE; }
+  let t = textureLoad(projTex, vec2<i32>(q.x * i32(PROJ_K) + i32(k), q.y), 0);
+  if (t.y <= t.x) { return IV_NONE; }
+  return ivPack(t.x, t.y, u32(t.z + 0.5), u32(t.w + 0.5));
+}
+
 /** Depth of the top loose layer on q (drift .y; part of driftAt). */
 fn driftTopAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }

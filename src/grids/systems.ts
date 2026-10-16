@@ -28,12 +28,13 @@ export class ProjectSystem implements SimSystem {
   readonly period = 1;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = gridKernel(device, world, 'project', projectWgsl, { 3: 'read', 4: 'read', 24: 'tex', 25: 'stex', 26: 'stex' }, {
+    this.s = gridKernel(device, world, 'project', projectWgsl, { 3: 'read', 4: 'read', 24: 'tex', 25: 'stex', 26: 'stex', 27: 'stex' }, {
       3: world.strFrames,
       4: world.strVox,
       24: world.bodyCpuView,
       25: world.bodyProjView,
       26: world.foreignView,
+      27: world.projView,
     });
   }
   encode(enc: GPUCommandEncoder): void {

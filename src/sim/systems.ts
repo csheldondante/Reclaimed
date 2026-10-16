@@ -63,8 +63,8 @@ export class SurfaceSystem implements SimSystem {
       world,
       'surface',
       surfaceWgsl,
-      { 3: 'read', 4: 'rw', 16: 'stex', 19: 'tex', 20: 'stex' },
-      { 3: world.layers, 4: world.surface, 16: world.driftView, 19: world.airView, 20: world.strataView },
+      { 3: 'read', 4: 'rw', 16: 'stex', 19: 'tex', 20: 'stex', 28: 'tex', 30: 'stex' },
+      { 3: world.layers, 4: world.surface, 16: world.driftView, 19: world.airView, 20: world.strataView, 28: world.projView, 30: world.levelsView },
       true,
     );
   }
@@ -314,15 +314,15 @@ export class SedimentSystem implements SimSystem {
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, sedimentWgsl + flowWgsl];
-    const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView };
-    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex' }, 'outflow');
+    const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView };
+    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex' }, 'outflow');
     this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex }) };
     this.s = kernel(
       device,
       world,
       'sediment',
       sedimentWgsl + flowWgsl,
-      { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex' },
+      { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex' },
       { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
       true,
     );

@@ -9,7 +9,7 @@ import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
 import { DIRS_BYTES } from '../world/lattice';
-import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS } from '../grids/structures';
+import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 
 export const STATS_COUNT = 16;
 
@@ -105,6 +105,12 @@ export class WorldGpu {
    *  xy the top face's world normal, z structure + 1 (0 none), w its top material */
   readonly foreign: GPUTexture;
   readonly foreignView: GPUTextureView;
+  /** each column's projected intervals (project.wgsl; common.wgsl projAt): PROJ_K texels per column */
+  readonly proj: GPUTexture;
+  readonly projView: GPUTextureView;
+  /** per column, the floor of the open air above each projected interval and below the lowest (surface.wgsl; sediment.wgsl openAt) */
+  readonly levels: GPUTexture;
+  readonly levelsView: GPUTextureView;
   /** structure grids (grids.wgsl): frames, and the voxel pool */
   readonly strFrames: GPUBuffer;
   readonly strVox: GPUBuffer;
@@ -246,6 +252,11 @@ export class WorldGpu {
     this.foreign = device.createTexture({ label: 'foreign', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.bodyCpu, this.foreign);
     this.foreignView = this.foreign.createView();
+    this.proj = device.createTexture({ label: 'proj', size: { width: this.w * PROJ_K, height: this.h }, format: 'rgba32float', usage: tusage });
+    this.levels = device.createTexture({ label: 'levels', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.proj, this.levels);
+    this.projView = this.proj.createView();
+    this.levelsView = this.levels.createView();
     this.strFrames = this.buf('strFrames', MAX_STRUCTS * FRAME_BYTES, S);
     this.strVox = this.buf('strVox', POOL_VOXELS * 4, S);
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });

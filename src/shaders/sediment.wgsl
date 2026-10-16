@@ -41,7 +41,7 @@
 @group(0) @binding(9) var<storage, read> moisture: array<f32>;
 // per column (SED lanes of one value per direction, NDIR order): [0] what
 // arrives at each neighbour, [1] the wind's easing toward each (it blends into whatever is there),
-// [2] x what the wind took off the top, y everything that left it; a spill
+// [2] x what the wind sent up into the air off the top, y everything that left it; a spill
 // out of an exposed face toward each neighbour: [3] amount, [4] the floor it
 // lands on (z), [5] material, [6] which of this column's slots it leaves
 @group(0) @binding(10) var<storage, read_write> sedOut: array<Dirs>;
@@ -92,9 +92,125 @@ fn levelAt(q: vec2<i32>) -> f32 {
   return max(baseAt(q) + driftAt(q), bodyTopAt(q));
 }
 
-/** Is q's loose ground under a body lying over it (sheltered: it doesn't move)? */
+// ---- the open air a structure leaves (docs/GRIDS.md) ----------------------------
+// A structure over a column (its projected intervals, common.wgsl projAt)
+// leaves stretches of open air: the sky over its top, the rooms between its
+// floors, the space under a tilted wall. Level j is the air under projected
+// interval j-1 (the sky for j = 0) and over interval j; its floor is the
+// highest of the column's own ground reaching into it and interval j
+// (surface.wgsl levels). The loose run on top of a column lies in one of them
+// (runLevel); what a neighbour sends at height h comes into the level of this
+// column open at that height, or steps up onto the solid in the way (openAt)
+// — so sand blows in under an overhang and through a doorway, and banks
+// against a wall. Under a structure there is no wind and no water (they work
+// on the open sky); the loose ground there only slumps.
+@group(0) @binding(29) var levelsTex: texture_2d<f32>;
+const SKY: u32 = 0u;
+/** a run inside a solid, or with no room over it */
+const SHUT: u32 = 99u;
+// the least room an opening needs for loose ground to pass
+const CLEAR: f32 = 0.75;
+
+/** The surface of q's own loose run (the top of its ground). */
+fn hereAt(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return 0.0; }
+  return baseAt(q) + driftAt(q);
+}
+
+/** Whether column q has anything projected over it (most don't: the fast path). */
+fn hasProj(q: vec2<i32>) -> bool { return bodyTopAt(q) >= 0.0; }
+
+/** The level q's own run lies in (SHUT: inside a solid, or no room over it). */
+fn runLevel(q: vec2<i32>) -> u32 {
+  if (!hasProj(q)) { return SKY; }
+  let g = hereAt(q);
+  var ceil = 1e9;
+  for (var j = 0u; j <= PROJ_K; j++) {
+    var below = IV_NONE;
+    if (j < PROJ_K) { below = projAt(q, j); }
+    if (ivEmpty(below) || g >= ivZ1(below) - 1e-3) {
+      if (j > 0u && g > ceil - CLEAR) { return SHUT; }
+      return j;
+    }
+    if (g > ivZ0(below) + 1e-3) { return SHUT; }
+    ceil = ivZ0(below);
+  }
+  return SHUT;
+}
+
+struct Open { j: u32, floor: f32 };
+
+/** The level of q open at height h — where something moving at h comes in — stepping up onto a solid in the way. */
+fn openAt(q: vec2<i32>, h: f32) -> Open {
+  if (!inMap(q)) { return Open(SKY, 0.0); }
+  if (!hasProj(q)) { return Open(SKY, hereAt(q)); }
+  let lv = textureLoad(levelsTex, q, 0);
+  let z = h + 0.5;
+  var ceil = 1e9;
+  for (var j = 0u; j <= PROJ_K; j++) {
+    let fl = lv[j];
+    var below = IV_NONE;
+    if (j < PROJ_K) { below = projAt(q, j); }
+    if (z >= fl || ivEmpty(below)) {
+      // in the solid over this level, or no room in it: onto that solid
+      if (j > 0u && (z >= ceil || ceil - fl < CLEAR)) { return Open(j - 1u, lv[j - 1u]); }
+      return Open(j, fl);
+    }
+    ceil = ivZ0(below);
+  }
+  return Open(SKY, lv[0]);
+}
+
+/** The floor of q something moving at height h meets (a solid in the way counts as its top). */
+fn seenAt(q: vec2<i32>, h: f32) -> f32 {
+  if (!inMap(q)) { return 0.0; }
+  return openAt(q, h).floor;
+}
+
+/** Is q's loose run under a structure or a body (no wind or water there)? */
 fn underBody(q: vec2<i32>) -> bool {
-  return bodyTopAt(q) > baseAt(q) + driftAt(q);
+  return runLevel(q) != SKY;
+}
+
+/**
+ * Loose material lands on the floor of level t of column p, whose n
+ * intervals arr holds (cap slots): it joins the interval it lands on if
+ * that's the same material, else starts one there. Returns the new count.
+ * (No room — a full column, a shut level — and it's lost: rare.)
+ */
+fn landAt(arr: ptr<function, array<vec4<u32>, MAX_K>>, n: u32, cap: u32, p: vec2<i32>, t: u32, amt: f32, mat: u32) -> u32 {
+  var ceil = 1e9;
+  var fl = 0.0;
+  if (t > 0u && t <= PROJ_K) {
+    let v = projAt(p, t - 1u);
+    if (!ivEmpty(v)) { ceil = ivZ0(v); }
+  }
+  if (t < PROJ_K) {
+    let v = projAt(p, t);
+    if (!ivEmpty(v)) { fl = ivZ1(v); }
+  }
+  for (var i = 0u; i < n; i++) {
+    let v = (*arr)[i];
+    if (ivZ0(v) < ceil) { fl = max(fl, min(ivZ1(v), ceil)); }
+  }
+  let add = min(amt, ceil - fl);
+  if (add <= 1e-4) { return n; }
+  var at = 0u;
+  while (at < n && ivZ1((*arr)[at]) <= fl + 1e-3) { at += 1u; }
+  if (at > 0u) {
+    let v = (*arr)[at - 1u];
+    // (on the same material it joins it; a trace of another on loose ground
+    // blends in, as on top — no hairline strata)
+    let onLoose = matState(ivMat(v)) == ST_GRANULAR;
+    if (abs(ivZ1(v) - fl) < 1e-3 && (ivMat(v) == mat || (onLoose && add < 0.02))) {
+      (*arr)[at - 1u] = ivPack(ivZ0(v), fl + add, ivMat(v), ivAux(v));
+      return n;
+    }
+  }
+  if (n >= cap) { return n; }
+  for (var i = n; i > at; i--) { (*arr)[i] = (*arr)[i - 1u]; }
+  (*arr)[at] = ivPack(fl, fl + add, mat, 0u);
+  return n + 1u;
 }
 
 /** The top interval's depth on q (what the wind, water and slumping can take). */
@@ -119,19 +235,48 @@ fn held(q: vec2<i32>) -> f32 {
   return rooted(colIdxI(q)) * (1.0 - smoothstep(1.0, 2.0, topOf(q)));
 }
 
-/** 0..1 how sheltered q is from the wind w by taller ground up to 4 cells upwind. */
+/**
+ * 0..1 how sheltered q is from the wind w by taller ground up to 4 cells
+ * upwind — at q's own height: a structure's solid there shelters it, the air
+ * under an overhang or through a doorway doesn't.
+ */
 fn shelter(q: vec2<i32>, w: vec2<f32>) -> f32 {
   let ws = length(w);
   if (ws < 1e-3) { return 0.0; }
   let up = -w / ws;
-  let here = levelAt(q);
+  let here = hereAt(q);
   var s = 0.0;
   for (var k = 1; k <= 4; k++) {
     let u = cellAt(cellPos(q) + up * f32(k));
     if (!inMap(u)) { break; }
-    s = max(s, (levelAt(u) - here) / f32(k));
+    s = max(s, (seenAt(u, here) - here) / f32(k));
   }
   return clamp(s * 0.9, 0.0, 1.0);
+}
+
+// how far upwind, at a run's own height, the open air is looked for
+const FETCH: i32 = 16;
+
+/**
+ * Is q (with a structure over it) closed in from the wind w? Upwind at q's
+ * height, the wind has to come from the open: a column with nothing over it
+ * (out past an overhang's edge, through a doorway) before it meets a solid
+ * (a wall, high ground). Inside a room, or in a pile under a hole in its
+ * roof, it doesn't — it is still air; along the line of a doorway it is not.
+ * (The wind field itself doesn't see structures yet: this stands in for the
+ * shelter they give.)
+ */
+fn enclosed(q: vec2<i32>, w: vec2<f32>) -> bool {
+  let ws = length(w);
+  if (ws < 1e-3) { return true; }
+  let up = -w / ws;
+  let here = hereAt(q);
+  for (var k = 1; k <= FETCH; k++) {
+    let u = cellAt(cellPos(q) + up * f32(k));
+    if (!inMap(u) || !hasProj(u)) { return false; }
+    if (seenAt(u, here) >= here + 1.5) { return true; }
+  }
+  return true;
 }
 
 /** What the wind sends from q's top layer to each neighbour this pass. */
@@ -139,7 +284,9 @@ fn windOut(q: vec2<i32>) -> Dirs {
   if (!inMap(q)) { return dZero(); }
   let j = colIdxI(q);
   let top = topOf(q);
-  if (top < 0.001 || water[j] > 0.05 || held(q) > 0.5 || underBody(q)) { return dZero(); }
+  // (under a structure too — through its doorways, under its overhangs —
+  // just not inside a solid)
+  if (top < 0.001 || water[j] > 0.05 || held(q) > 0.5 || runLevel(q) == SHUT) { return dZero(); }
   let m = driftMatAt(q);
   // on the title diorama (fine scale, G.misc.w) a cell is about a centimetre:
   // a breath of wind moves dust there, so the player can blow the dust off
@@ -148,15 +295,16 @@ fn windOut(q: vec2<i32>) -> Dirs {
   let lift = MATS[m].loose.x * select(1.0, 0.45, fine);
   if (lift >= NEVER) { return dZero(); }
   let carry = CARRY * select(1.0, 4.8, fine);
-  let here = levelAt(q);
+  let here = hereAt(q);
   let w = windAt(vec3<f32>(cellPos(q), here + 0.5));
+  if (hasProj(q) && enclosed(q, w)) { return dZero(); }
   let ws = length(w) * (1.0 - shelter(q, w));
   if (ws < lift) { return dZero(); }
   var wt = dSplit(w);
   // it can't be pushed up into a wall: it banks against it instead
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
-    if (inMap(n) && levelAt(n) >= here + 1.5) { wt[k] = 0.0; }
+    if (inMap(n) && seenAt(n, here) >= here + 1.5) { wt[k] = 0.0; }
   }
   let sum = dSum(wt);
   if (sum < 1e-4) { return dZero(); }
@@ -216,23 +364,27 @@ fn windActive(q: vec2<i32>) -> bool {
   if (water[j] > 0.05) { return false; }
   let lift = MATS[driftMatAt(q)].loose.x * select(1.0, 0.45, G.misc.w > 0.5);
   if (lift >= NEVER) { return false; }
-  let w = windAt(vec3<f32>(cellPos(q), levelAt(q) + 0.5));
-  return length(w) > lift;
+  let w = windAt(vec3<f32>(cellPos(q), hereAt(q) + 0.5));
+  // (as windOut feels it: sheltered ground isn't worked — inside a room
+  // under a hole in its roof, the wind outside spread a pile over the floor)
+  if (hasProj(q) && enclosed(q, w)) { return false; }
+  return length(w) * (1.0 - shelter(q, w)) > lift;
 }
 
 /** What slides off q's top layer to each neighbour this pass (steeper than its repose; eased where the wind works). */
 fn slumpOut(q: vec2<i32>) -> Dirs {
   if (!inMap(q)) { return dZero(); }
   let top = topOf(q);
-  if (top < 0.001 || underBody(q)) { return dZero(); }
-  let here = levelAt(q);
+  // (under a structure too, inside it: just not inside a solid)
+  if (top < 0.001 || runLevel(q) == SHUT) { return dZero(); }
+  let here = hereAt(q);
   let rep = reposeAt(q, driftMatAt(q));
   let hd = held(q);
   var o = dZero();
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
     if (!inMap(n)) { continue; }
-    let diff = here - levelAt(n);
+    let diff = here - seenAt(n, here);
     // roots hold a slope at most HOLD_STEEP steeper than the repose: in rain
     // the arrivals alternate (mud, dust from the air), so the top interval
     // stays thin and held() never lets go — planted columns grew into
@@ -249,14 +401,14 @@ fn slumpOut(q: vec2<i32>) -> Dirs {
 fn smoothOut(q: vec2<i32>) -> Dirs {
   if (!inMap(q)) { return dZero(); }
   let top = topOf(q);
-  if (top < 0.001 || underBody(q)) { return dZero(); }
+  if (top < 0.001 || runLevel(q) == SHUT) { return dZero(); }
   if (!(textureLoad(driftTex, q, 0).w > 0.0 || windActive(q))) { return dZero(); }
-  let here = levelAt(q);
+  let here = hereAt(q);
   var o = dZero();
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
     if (!inMap(n)) { continue; }
-    o[k] = max(here - levelAt(n), 0.0) * WIND_SMOOTH * (1.0 - held(q));
+    o[k] = max(here - seenAt(n, here), 0.0) * WIND_SMOOTH * (1.0 - held(q));
   }
   let s = dSum(o);
   if (s > top * 0.6) { o = dScale(o, top * 0.6 / s); }
@@ -425,13 +577,15 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   let sm = smoothOut(p);
   let po = pipeOut(p);
   let lost = dSum(o);
-  // (what the wind lifts partly goes up into the air: the particles carry it)
-  let send = dAdd(dAdd(dScale(o, 1.0 - MATS[mat].loose.y), ow), dAdd(so, po));
+  // (what the wind lifts partly goes up into the air: the particles carry it
+  // — not under a structure, where it would come down on the roof)
+  let air = select(0.0, MATS[mat].loose.y, runLevel(p) == SKY);
+  let send = dAdd(dAdd(dScale(o, 1.0 - air), ow), dAdd(so, po));
   let out = lost + dSum(ow) + dSum(so) + dSum(sm) + dSum(po);
   sedOut[i * SED] = send;
   sedOut[i * SED + 1u] = sm;
   var own = dZero();
-  own[0] = lost;
+  own[0] = lost * air;
   own[1] = out;
   sedOut[i * SED + 2u] = own;
   let sp = spillOut(p);
@@ -455,8 +609,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let m0 = driftMatAt(p);
   let own = sedOut[i * SED + 2u];
   // what the wind sent up into the air (the particles take it from here)
-  textureStore(airOut, p, vec4<f32>(own[0] * MATS[m0].loose.y, 0.0, 0.0, 0.0));
+  textureStore(airOut, p, vec4<f32>(own[0], 0.0, 0.0, 0.0));
   let here = levelAt(p);
+  // under a structure, the level my run lies in; what arrives in another
+  // level (sideways at its height, or from the sky over a structure's top)
+  // lands on that level's floor instead (landAt), by level: the largest
+  // arrival's material
+  let proj = hasProj(p);
+  let myL = runLevel(p);
+  var lvAmt = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+  var lvMat = array<u32, 4>(0u, 0u, 0u, 0u);
+  var lvMax = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+  var lvAny = false;
   // what arrives, by material: the same as my top joins it; the largest
   // other arrival starts a new layer (and takes the rest with it)
   var same = 0.0;
@@ -470,8 +634,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let j = colIdxI(nb);
     let mn = driftMatAt(nb);
     let a = sedOut[j * SED][k ^ 1u];
+    let e = sedOut[j * SED + 1u][k ^ 1u];
+    if (proj && a + e > 0.0) {
+      let t = openAt(p, hereAt(nb)).j;
+      if (t != myL) {
+        lvAmt[t] += a + e;
+        if (a + e > lvMax[t]) { lvMax[t] = a + e; lvMat[t] = mn; }
+        lvAny = true;
+        continue;
+      }
+    }
     // (the wind's easing just blends into my top, whatever it is)
-    same += sedOut[j * SED + 1u][k ^ 1u];
+    same += e;
     if (mn == m0) { same += a; } else {
       other += a;
       if (a > otherMax) { otherMax = a; otherMat = mn; }
@@ -505,6 +679,21 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (delta > 0.0) {
     let ed = u32(floor(textureLoad(editTex, p, 0).w / 4.0));
     if (ed / 32u == 10u) { pour = delta; pourMat = ed % 32u; } else { dust += delta; }
+  }
+  var depY = dep.y;
+  // under a structure, what comes from the sky lands on its top
+  if (myL != SKY) {
+    let fromSky = array<f32, 3>(dust, pour, depY);
+    let skyMat = array<u32, 3>(MAT_DRIFT, pourMat, u32(dep.z + 0.5));
+    for (var k = 0u; k < 3u; k++) {
+      if (fromSky[k] <= 0.0) { continue; }
+      lvAmt[SKY] += fromSky[k];
+      if (fromSky[k] > lvMax[SKY]) { lvMax[SKY] = fromSky[k]; lvMat[SKY] = skyMat[k]; }
+      lvAny = true;
+    }
+    dust = 0.0;
+    pour = 0.0;
+    depY = 0.0;
   }
   if (MAT_DRIFT == m0) { same += dust; } else {
     other += dust;
@@ -540,7 +729,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (inMap(nb)) { inSpill += sedOut[colIdxI(nb) * SED + 3u][k ^ 1u]; }
   }
   let spills = dSum(mySpill) > 0.0 || inSpill > 0.0;
-  let moves = own[1] > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || dep.y > 0.0 || delta < 0.0 || strip > 0u || bind || spills;
+  let moves = own[1] > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || depY > 0.0 || delta < 0.0 || strip > 0u || bind || spills || lvAny;
   if (!moves && !hangs) { return; }
 
   var arr: array<vec4<u32>, MAX_K>;
@@ -605,12 +794,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     n = w;
     hangs = true;
   }
-  // a structure (or a body) over this column is ground for what lies on it
-  // (project.wgsl: its top, as the nature grid sees it; -1 none)
-  let fTop = bodyTopAt(p);
   // granular intervals with air under them fall (rubble a collapse left
-  // hanging, sand whose support was dug away) — onto the structure's top if
-  // they're above it
+  // hanging, sand whose support was dug away) — onto the highest projected
+  // interval beneath them (a structure's floor, its top, a body)
   if (hangs) {
     floorZ = 0.0;
     for (var k = 0u; k < n; k++) {
@@ -618,7 +804,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       var z0 = ivZ0(v);
       var z1 = ivZ1(v);
       var fl = floorZ;
-      if (fTop > fl && z0 >= fTop - 1e-3) { fl = fTop; }
+      if (proj) {
+        for (var pk = 0u; pk < PROJ_K; pk++) {
+          let u = projAt(p, pk);
+          if (ivEmpty(u)) { break; }
+          if (ivZ1(u) > fl && z0 >= ivZ1(u) - 1e-3) { fl = ivZ1(u); }
+        }
+      }
       if (matState(ivMat(v)) == ST_GRANULAR && z0 > fl + 1e-4) {
         let f = min(FALL, z0 - fl);
         z0 -= f;
@@ -631,17 +823,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // the run on top, as a stack (touching granular intervals of the same
   // material count as one)
-  var r = looseRun(&arr, n);
+  let r = looseRun(&arr, n);
   var base = 0.0;
   if (n > 0u) { base = ivZ1(arr[n - 1u]); }
   if (r < n) { base = ivZ0(arr[r]); }
-  // under a structure: what arrives lands on the structure, as a new run on
-  // its top (a run under it stays there, sheltered) — so drifts bury it
-  let runTop = select(base, ivZ1(arr[max(n, 1u) - 1u]), n > 0u);
-  if (fTop > max(base, runTop) + 1e-3) {
-    r = n;
-    base = fTop;
-  }
   var s: Stack;
   s.n = 0u;
   s.cap = max(cs.y - r, 1u);
@@ -664,7 +849,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (room) {
     if (s.n > 0u) { s.d[s.n - 1u] += same; } else { addTop(&s, same, m0); }
     addTop(&s, pour, pourMat);
-    if (dep.y > 0.0) { addTop(&s, dep.y, u32(dep.z + 0.5)); }
+    if (depY > 0.0) { addTop(&s, depY, u32(dep.z + 0.5)); }
     if (other > 0.0) {
       // a trace of something else blends in; a real amount starts a layer
       if (other < 0.01 && s.n > 0u) { s.d[s.n - 1u] += other; } else { addTop(&s, other, otherMat); }
@@ -693,6 +878,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     z = z1;
     w += 1u;
   }
-  let n1 = w;
+  var n1 = w;
+  // what came into other levels lands on their floors
+  if (lvAny) {
+    for (var t = 0u; t < 4u; t++) {
+      if (lvAmt[t] > 0.0) { n1 = landAt(&arr, n1, cs.y, p, t, lvAmt[t], lvMat[t]); }
+    }
+  }
   for (var k = 0u; k < max(n, n1); k++) { layers[cs.x + k] = select(IV_NONE, arr[k], k < n1); }
 }

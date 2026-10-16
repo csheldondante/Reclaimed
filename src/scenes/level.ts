@@ -957,7 +957,12 @@ export class LevelScene implements Scene {
       // quarter turn, with a little roll so no face lines up with the hexes
       const r = Math.PI / 180;
       const q = qYawPitchRoll(ed.rot * 90 * r + 0.3, ed.tilt * r, (ed.tilt / 9) * r);
-      if (!core.structures.place(m, wx, wy, q, this.heightAt, ed.bury)) this.hud.say('No room for more tilted structures (8 at most).', 3);
+      // (heightAt is the loose run's base: the pick's height says how deep
+      // the sand lies over it here, and that depth is taken to hold under the
+      // whole footprint — otherwise it rests sunk into the drift)
+      const over = atZ === undefined ? 0 : Math.max(0, atZ - this.heightAt(wx, wy));
+      const ground = (x: number, y: number) => this.heightAt(x, y) + over;
+      if (!core.structures.place(m, wx, wy, q, ground, ed.bury)) this.hud.say('No room for more tilted structures (8 at most).', 3);
       return;
     }
     const { dims, packed } = core;

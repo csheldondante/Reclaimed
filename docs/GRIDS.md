@@ -105,8 +105,13 @@ and moves smoother.
 4. ✓ Both projections (first pass): structure → nature with the top face's
    normal; nature → structure sampled per voxel (sand cover).
 5. Sand, soil, water and wind reacting to the structure: banking, landing
-   on it and burying it ✓ (bodyProj); sliding on tilted faces by the normal,
-   air inside a structure (more than one span per column) — next.
+   on it and burying it ✓ (bodyProj); air inside a structure ✓ (up to three
+   projected intervals per column, in the layers' interval form, and the
+   open air between them as levels: sand falls through a hole in a roof onto
+   the floor, blows in under a raised floor and through a doorway at its
+   height, banks against walls); sliding on tilted faces by the normal —
+   next. Water still has one sheet per column (on the top one), and loose
+   ground inside a structure only slumps (no wind in there).
 6. ✓ Face growth (moss) ticking on the structure grid.
 7. Smoother rendering: the triangle-lattice surface, SDF blending between
    grids, dual contouring.
