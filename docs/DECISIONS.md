@@ -3,6 +3,35 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-16 — round 35 (session 5, `grids`) — how the grids work
+
+- All grid math and conversions run on the GPU; only uniforms (frames,
+  rotations) live on the CPU. Where something seems hard on the GPU,
+  find out why and find a GPU way rather than falling back to the CPU.
+- Hex lattice first (a neighbour-function change plus rendering), then
+  grid frames.
+- Full rotation (yaw, pitch and roll) from the start: a toppled
+  structure is the interesting case.
+- The hex grid owns loose sediment, but it samples a structure's
+  projected intervals *and normals* to decide whether sand slides, so
+  intervals gain normals (perhaps only in cells that intersect another
+  grid). The user is curious what normals do to the interval math.
+- Rendering: the triangle-lattice ground plus SDF blending where grids
+  meet is a fine first pass. For overhangs (air between intervals),
+  perhaps tetrahedral dual contouring. Start near today's look, but move
+  towards more general, smoother rendering.
+- No WFC yet. First a voxel structure like today's on its own grid,
+  rotated, with sand, soil, water and wind interacting with it correctly.
+  Other grids should have simulation ticks of their own: vegetation
+  should grow over toppled structures as well as bury them.
+- Columns stay roughly today's size for now.
+- Who owns vegetation on structures was left to Claude. Chosen: it
+  belongs to what it's rooted in. Plants in loose sediment (including
+  soil that has buried part of a structure) belong to the hex grid;
+  growth on structure faces (moss, vines, roof grass, undersides of
+  tilted walls) belongs to the structure grid, with its own tick and
+  the same shared growth rules.
+
 ## 2026-10-16 — round 34 (session 5) — worktrees; grids, not hexes
 
 - Each branch gets its own worktree, so work can go on in parallel.
