@@ -1,8 +1,8 @@
 // ---- renderer: hex prisms and boxes, opaque + water --------------------------
-// One instanced draw per list, 36 vertices per instance. Column intervals are
-// hex prisms on the nature grid (docs/GRIDS.md): the top fanned from the centre
-// and the three sides toward the eye. Plants are axis-aligned boxes: the top
-// and the two sides toward the eye.
+// One instanced draw per list. Column intervals are hex prisms on the nature
+// grid (docs/GRIDS.md), 30 vertices: the top in four triangles and the three
+// sides toward the eye. Plants are axis-aligned boxes, 18 vertices: the top
+// and the two sides toward the eye (their own list: renderer.ts).
 struct Camera {
   viewProj: mat4x4<f32>,
   eye: vec4<f32>,      // direction toward the eye (world), w unused
@@ -161,13 +161,17 @@ fn prismCornerZ(b: Box, j: u32, soft: bool, liquid: bool) -> f32 {
   return b.z1;
 }
 
+/** The top of a prism as four triangles over its corners (symmetric: the three ears and the middle). */
+const TOP_TRI = array<u32, 12>(0u, 1u, 2u, 2u, 3u, 4u, 4u, 5u, 0u, 0u, 2u, 4u);
+
 /**
- * A hex prism (a column interval): 36 vertices - the top as six triangles
- * fanned from the centre (soft ground and sheets slope through their shared
- * corner heights), then the three sides facing the camera. The top takes one
- * flat normal, the plane fitted through its corners (least squares: the
- * gradient is (1 / 3R^2) sum h_j o_j): per-triangle normals showed every
- * hexagon's fan wherever the smoothed corners aren't coplanar.
+ * A hex prism (a column interval): 30 vertices - the top as four triangles
+ * over its corners (soft ground and sheets slope through their shared corner
+ * heights), then the three sides facing the camera. The top takes one flat
+ * normal, the plane fitted through its corners (renderfields.wgsl caches it
+ * per cell): per-triangle normals showed every hexagon's facets wherever the
+ * smoothed corners aren't coplanar. (A fan from the centre cost six more
+ * vertices for nothing the flat normal shows; draw is vertex-bound.)
  */
 fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let c = cellPos(b.cell);
@@ -178,32 +182,18 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   var p: vec3<f32>;
   var n: vec3<f32>;
   var shown = true;
-  if (vi < 18u) {
-    let t = vi / 3u;
-    let h0 = prismCornerZ(b, t, soft, liquid);
-    let h1 = prismCornerZ(b, t + 1u, soft, liquid);
-    var hc = b.z1;
+  if (vi < 12u) {
+    let j = TOP_TRI[vi];
     var g = vec2<f32>(0.0);
     if (soft || liquid) {
-      hc = 0.0;
-      for (var j = 0u; j < 6u; j++) {
-        let h = prismCornerZ(b, j, soft, liquid);
-        hc += h;
-        g += h * cornerOffset(j);
-      }
-      hc /= 6.0;
-      g /= 3.0 * HEX_R * HEX_R;
+      g = planeAt(b.cell, select(select(0u, 1u, b.mat == MAT_WATER), 2u, b.mat == MAT_DRIFT)).g;
     }
-    let pc = vec3<f32>(c, hc);
-    let p0 = vec3<f32>(c + cornerOffset(t), h0);
-    let p1 = vec3<f32>(c + cornerOffset(t + 1u), h1);
-    let v = vi % 3u;
-    p = select(select(p1, p0, v == 1u), pc, v == 0u);
+    p = vec3<f32>(c + cornerOffset(j), prismCornerZ(b, j, soft, liquid));
     n = normalize(vec3<f32>(-g, 1.0));
     shown = (b.flags & 64u) == 0u;
   } else {
-    let s = (vi - 18u) / 6u;
-    let uv = QUAD[(vi - 18u) % 6u];
+    let s = (vi - 12u) / 6u;
+    let uv = QUAD[(vi - 12u) % 6u];
     // the three sides facing the eye: the one most squarely toward it, and
     // the one either side
     let m0 = i32(round(atan2(CAM.eye.y, CAM.eye.x) / 1.0471976));
@@ -247,9 +237,8 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   return b.z1 > b.z0 && shown;
 }
 
-/** A plant box: its top and the two sides toward the eye (18 of the 36 vertices). */
+/** A plant box: its top and the two sides toward the eye (18 vertices). */
 fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
-  if (vi >= 18u) { return false; }
   let face = vi / 6u;
   let uv = QUAD[vi % 6u];
   let sxn = select(-1.0, 1.0, CAM.eye.x > 0.0);
@@ -529,7 +518,7 @@ fn edgeLook(p: vec3<f32>, own: u32, ownV: f32) -> EdgeLook {
   // (a point lies in the triangles around its own cell: unless that cell
   // differs from a neighbour, there is nothing to vote on)
   let own0 = clampCell(cellAt(p.xy));
-  if (textureLoad(cornerTex, vec2<i32>(own0.x * 2, own0.y), 0).w < 0.5) { return EdgeLook(own, ownV); }
+  if (textureLoad(cornerTex, vec2<i32>(own0.x * CT, own0.y), 0).w < 0.5) { return EdgeLook(own, ownV); }
   let t = triAt(p.xy);
   var ms: array<u32, 3>;
   var ws: array<f32, 3>;

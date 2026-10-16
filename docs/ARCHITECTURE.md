@@ -231,13 +231,13 @@ with `poiWorld`. The world spans (w + 0.5) × h·√3/2.
 
 ## Rendering
 
-Single path: vertex pulling from a storage buffer, 36 vertices per instance.
-Column intervals (ground, water, oil, the loose sheet) are hex prisms: the top
-fanned from the centre with one flat normal (the plane through its corners)
-and the three sides toward the eye. Plants are axis-aligned boxes (top + two
-sides). Soft tops and sheets slope through hex corner heights: each corner
+Vertex pulling from storage buffers. Column intervals (ground, water, oil, the
+loose sheet) are hex prisms, 30 vertices: the top in four triangles with one
+flat normal (the plane through its corners, cached per cell by render-fields)
+and the three sides toward the eye. Plants are axis-aligned boxes from their
+own list (vegprep.wgsl → instPlant), 18 vertices: top + two sides. Soft tops and sheets slope through hex corner heights: each corner
 touches three cells and each cell owns two (30° and 90°), so `cornerTex` is
-2w × h (terrainshape.wgsl).
+5w × h with the planes (terrainshape.wgsl).
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are

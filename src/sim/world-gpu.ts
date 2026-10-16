@@ -202,7 +202,7 @@ export class WorldGpu {
     this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.windField, this.windFieldNext);
     this.windFieldView = this.windField.createView();
-    this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w * 2, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
+    this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w * 5, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
     this.textures.push(this.cornerTex);
     this.cornerView = this.cornerTex.createView();
     this.sparkTex = device.createTexture({ label: 'sparks', size: { width: this.w, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST });

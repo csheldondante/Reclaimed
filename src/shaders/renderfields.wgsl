@@ -157,6 +157,37 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   fields[i] = vec4<f32>(sz, moisture[i], glow, length(netFlow(p)));
-  textureStore(cornerOut, vec2<i32>(p.x * 2, p.y), vec4<f32>(computeCornerZ(p, 0u), waterCornerZ(p, 0u), driftCornerZ(p, 0u), mixedCell(p)));
-  textureStore(cornerOut, vec2<i32>(p.x * 2 + 1, p.y), vec4<f32>(computeCornerZ(p, 1u), waterCornerZ(p, 1u), driftCornerZ(p, 1u), 0.0));
+  // the six corners (my two, and the four my neighbours own — the same
+  // functions on the same inputs, so the same values they store), and the
+  // planes of my tops through them (terrainshape.wgsl); a corner that isn't
+  // shared stands at my own top there, as the prism draws it
+  let gTop = f32(sfZ(surface[i]));
+  let dTop = gTop + driftAt(p);
+  let wTop = dTop + waterDepth[i];
+  var cen = vec3<f32>(0.0);
+  var gG = vec2<f32>(0.0);
+  var gW = vec2<f32>(0.0);
+  var gD = vec2<f32>(0.0);
+  var own: array<vec3<f32>, 2>;
+  for (var j = 0u; j < 6u; j++) {
+    let o = cornerOwner(p, j);
+    var cv = vec3<f32>(-1.0);
+    if (o.x >= 0) {
+      let s = u32(o.z);
+      cv = vec3<f32>(computeCornerZ(o.xy, s), waterCornerZ(o.xy, s), driftCornerZ(o.xy, s));
+    }
+    if (j < 2u) { own[j] = cv; }
+    let h = select(cv, vec3<f32>(gTop, wTop, dTop), cv < vec3<f32>(0.0));
+    let off = cornerOffset(j);
+    cen += h;
+    gG += h.x * off;
+    gW += h.y * off;
+    gD += h.z * off;
+  }
+  let k = 1.0 / (3.0 * HEX_R * HEX_R);
+  textureStore(cornerOut, vec2<i32>(p.x * CT, p.y), vec4<f32>(own[0], mixedCell(p)));
+  textureStore(cornerOut, vec2<i32>(p.x * CT + 1, p.y), vec4<f32>(own[1], 0.0));
+  textureStore(cornerOut, vec2<i32>(p.x * CT + 2, p.y), vec4<f32>(cen / 6.0, 0.0));
+  textureStore(cornerOut, vec2<i32>(p.x * CT + 3, p.y), vec4<f32>(gG * k, gW * k));
+  textureStore(cornerOut, vec2<i32>(p.x * CT + 4, p.y), vec4<f32>(gD * k, 0.0, 0.0));
 }

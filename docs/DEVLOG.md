@@ -2501,3 +2501,14 @@ reloads all six corner heights for the centre and the normal — next, a
 per-cell top plane cached once per frame. The same 40 s storm at speed 6
 leaves both at the same place (63 % vs 62 % green), water pooled in the
 basin on both.
+
+Draw, following up (same view): 69k instances on both grids, so it was
+vertex-bound — 36 vertices a prism against 18 a box. Each cell's top plane
+(centre and fitted gradient, per ground / water / drift) is now cached by
+render-fields with its corners (cornerTex 5w × h: two corners and three
+plane texels per cell): 7.7 → 7.3 ms. The top in four triangles over its
+corners instead of a six-triangle fan (the flat normal shows nothing the
+centre point added) and plants in their own list at 18 vertices (prisms
+30): 6.7 ms against square's 4.0 — the ratio of the prism's vertices
+(30/18). A top-only list for prisms with every side hidden would take most
+of the rest; not now (the branch's point is the grids).

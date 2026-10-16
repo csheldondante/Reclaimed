@@ -18,8 +18,10 @@ import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
 
-// a hex prism: six top triangles + three sides (render.wgsl; plant boxes use 18)
-const VERTS_PER_BOX = 36;
+// a hex prism: the top in four triangles + three sides (render.wgsl)
+const VERTS_PER_PRISM = 30;
+// a plant box: the top + two sides
+const VERTS_PER_BOX = 18;
 /** Extra instances a column may emit beyond its slots (shrub/trunk+crown, tufts, flower). */
 // per cell worst case: plan (tree 2 + tufts 3 + flower 1) + a planting (6) + drift (1)
 const VEG_INSTANCES = 13;
@@ -52,6 +54,7 @@ export class Renderer {
   private partPipe: GPURenderPipeline;
   private partGroup: GPUBindGroup;
   private opaqueGroup: GPUBindGroup;
+  private plantGroup: GPUBindGroup;
   private waterGroup: GPUBindGroup;
   /** rigid bodies (F7): rotated voxels, 2 × vec4<u32> each (render.wgsl vsBody) */
   private bodyBuf: GPUBuffer;
@@ -61,6 +64,7 @@ export class Renderer {
   static readonly MAX_BODY_VOXELS = 16384;
   private rainGroup: GPUBindGroup;
   readonly instOpaque: GPUBuffer;
+  readonly instPlant: GPUBuffer;
   readonly instWater: GPUBuffer;
   readonly indirect: GPUBuffer;
   private camBuf: GPUBuffer;
@@ -85,18 +89,22 @@ export class Renderer {
     private profiler: Profiler,
   ) {
     const N = world.cells;
-    this.opaqueCapacity = N * (world.maxK + VEG_INSTANCES);
+    // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
+    // drawn with fewer vertices
+    this.opaqueCapacity = N * (world.maxK + 1);
     this.instOpaque = world.buf('instOpaque', this.opaqueCapacity * 16, GPUBufferUsage.STORAGE);
+    this.instPlant = world.buf('instPlant', N * VEG_INSTANCES * 16, GPUBufferUsage.STORAGE);
     // up to two liquid boxes per column (water + oil)
     this.instWater = world.buf('instWater', N * 2 * 16, GPUBufferUsage.STORAGE);
+    // draw args: [0..3] opaque prisms, [4..7] water, [8..11] plants
     this.indirect = world.buf(
       'indirect',
-      32,
+      48,
       GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     );
     this.camBuf = world.buf('camera', CAMERA_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
-    this.countBuf = world.buf('counts', 32, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.countBuf = world.buf('counts', 48, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, renderprepWgsl], {
       0: 'uniform',
@@ -136,6 +144,7 @@ export class Renderer {
       6: 'rw',
       7: 'read',
       8: 'read',
+      9: 'rw',
       14: 'tex',
       17: 'tex',
     });
@@ -148,6 +157,7 @@ export class Renderer {
       6: this.indirect,
       7: world.wilt,
       8: world.petals,
+      9: this.instPlant,
       14: world.cornerView,
       17: world.driftView,
     });
@@ -224,6 +234,7 @@ export class Renderer {
         23: world.reachView,
       });
     this.opaqueGroup = groupFor(this.instOpaque);
+    this.plantGroup = groupFor(this.instPlant);
     this.waterGroup = groupFor(this.instWater);
     this.bodyBuf = world.buf('bodyVoxels', Renderer.MAX_BODY_VOXELS * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
     this.bodyGroup = groupFor(this.bodyBuf);
@@ -304,7 +315,7 @@ export class Renderer {
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
     cam.write(this.camData);
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
-    this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_BOX, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0]));
+    this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0]));
 
     {
       const pass = enc.beginComputePass({ label: 'renderprep', timestampWrites: this.profiler.timestamps('renderprep') });
@@ -331,6 +342,8 @@ export class Renderer {
     pass.setPipeline(this.opaquePipe);
     pass.setBindGroup(0, this.opaqueGroup);
     pass.drawIndirect(this.indirect, 0);
+    pass.setBindGroup(0, this.plantGroup);
+    pass.drawIndirect(this.indirect, 32);
     if (this.bodyCount > 0) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);
@@ -364,7 +377,7 @@ export class Renderer {
       } else resolve(null);
     }
     if (!this.countBusy) {
-      enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 32);
+      enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 48);
       this.countBusy = true;
       this.countNeeded = true;
     }
@@ -386,7 +399,7 @@ export class Renderer {
       this.countNeeded = false;
       this.countBuf.mapAsync(GPUMapMode.READ).then(() => {
         const u = new Uint32Array(this.countBuf.getMappedRange());
-        this.instanceCounts = { opaque: u[1], water: u[5] };
+        this.instanceCounts = { opaque: u[1] + u[9], water: u[5] };
         this.countBuf.unmap();
         // throttle: allow another readback in a little while
         setTimeout(() => (this.countBusy = false), 250);

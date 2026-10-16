@@ -12,11 +12,17 @@
 //
 // Hex corners: corner j of a cell lies at 30° + 60°·j from its centre, HEX_R
 // out. Each corner touches three cells, and each cell owns two of them —
-// slot 0 at 30° (itself, E, NE) and slot 1 at 90° (itself, NE, NW) — so
-// the corner texture is 2w × h: cell (x, y)'s slot s is texel (2x + s, y).
+// slot 0 at 30° (itself, E, NE) and slot 1 at 90° (itself, NE, NW). The
+// corner texture holds CT texels per cell: (CT·x + s, y) are its two corners
+// (ground, water, drift, and in slot 0 whether its look differs from a
+// neighbour's); then its tops' planes, fitted through all six corners —
+// CT·x + 2 the centre heights (ground, water, drift), + 3 the ground and
+// water gradients, + 4 the drift gradient — so a prism's top vertices read
+// three texels instead of all six corners each (render.wgsl).
 @group(0) @binding(14) var cornerTex: texture_2d<f32>;
 
 const HEX_R: f32 = 0.57735027;
+const CT: i32 = 5;
 
 /** Offset of corner j from its cell's centre (world units). */
 fn cornerOffset(j: u32) -> vec2<f32> {
@@ -24,8 +30,8 @@ fn cornerOffset(j: u32) -> vec2<f32> {
   return vec2<f32>(cos(a), sin(a)) * HEX_R;
 }
 
-/** The texel holding corner j of cell p (x < 0 when its owner is off the map). */
-fn cornerTexel(p: vec2<i32>, j: u32) -> vec2<i32> {
+/** Corner j of cell p: (owner cell, its slot) — x < 0 when the owner is off the map. */
+fn cornerOwner(p: vec2<i32>, j: u32) -> vec3<i32> {
   var o = p;
   var s = 0;
   switch (j % 6u) {
@@ -36,8 +42,26 @@ fn cornerTexel(p: vec2<i32>, j: u32) -> vec2<i32> {
     case 4u: { o = nbr(p, 3u); s = 0; }  // SW's 30°
     default: { o = nbr(p, 5u); s = 1; }  // SE's 90°
   }
-  if (!inMap(o)) { return vec2<i32>(-1, 0); }
-  return vec2<i32>(o.x * 2 + s, o.y);
+  if (!inMap(o)) { return vec3<i32>(-1, 0, 0); }
+  return vec3<i32>(o, s);
+}
+
+/** The texel holding corner j of cell p (x < 0 when its owner is off the map). */
+fn cornerTexel(p: vec2<i32>, j: u32) -> vec2<i32> {
+  let o = cornerOwner(p, j);
+  if (o.x < 0) { return vec2<i32>(-1, 0); }
+  return vec2<i32>(o.x * CT + o.z, o.y);
+}
+
+/** A top's plane: its centre height and gradient. */
+struct Plane { c: f32, g: vec2<f32> };
+/** The plane of p's top of a kind: 0 ground (soft), 1 water, 2 drift. */
+fn planeAt(p: vec2<i32>, kind: u32) -> Plane {
+  let c = textureLoad(cornerTex, vec2<i32>(p.x * CT + 2, p.y), 0);
+  if (kind == 2u) { return Plane(c.z, textureLoad(cornerTex, vec2<i32>(p.x * CT + 4, p.y), 0).xy); }
+  let g = textureLoad(cornerTex, vec2<i32>(p.x * CT + 3, p.y), 0);
+  if (kind == 1u) { return Plane(c.y, g.zw); }
+  return Plane(c.x, g.xy);
 }
 
 /** The three cells around owned corner `slot` of p, then the three beyond it. */
