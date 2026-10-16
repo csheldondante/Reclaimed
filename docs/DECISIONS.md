@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-16 — round 36 (session 5, `grids`) — what the engine is for; momentum
+
+- The aim: build cool maps and simulate wind, water and plant growth, and
+  eventually construction and collapse — because it's fun and makes
+  interesting maps. What there is now looks fantastic: don't overdo it where
+  the performance cost is large.
+- Momentum for loose materials (the user: water, sand and dirt aren't so
+  different; mudslides later): worth having as an option per material, on
+  the top run only, if it's cheap. Water keeps its own model (pipes with
+  momentum); mud is wet soil coupled to it. BACKLOG G12.
+- Order agreed: sliding by the face normal, then the wind field seeing
+  structures, displacement, then water inside structures.
+
 ## 2026-10-16 — round 35 (session 5, `grids`) — how the grids work
 
 - All grid math and conversions run on the GPU; only uniforms (frames,
