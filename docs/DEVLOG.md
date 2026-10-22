@@ -2867,3 +2867,15 @@ Cost (Dam Valley, 1600 × 900, mesh, two runs each): draw 3.26 → 3.50 ms,
 all GPU 7.70 → 7.92 ms (the film's three water reads per fragment, and the
 waves).
 
+## 2026-10-22 — touch: a finger left over from a pinch pans
+
+First phone test of `grids` (round 41): after a pinch, pan and zoom went
+wrong. Lifting one finger of a pinch left the other as a fresh one-finger
+press (Controls kept no memory of the pinch): moved, it started a gust from
+where it had first landed; lifted, it tapped the world. A finger that took
+part in a two-finger pan or pinch now only pans until it lifts, and the
+pinch's span is measured afresh whenever a finger comes or goes (a third
+finger no longer leaves it stale). scripts/touchtest.mjs drives it with CDP
+touch events: before, the leftover finger gusted; now it pans. The story
+valley's hint says "hold ◎" on a phone (Space on a keyboard).
+

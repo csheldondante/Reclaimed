@@ -442,7 +442,9 @@ export class LevelScene implements Scene {
     if (this.story) {
       const touch = matchMedia('(pointer: coarse)').matches;
       const look = touch ? 'Two fingers to look around.' : 'Right-drag to look around.';
-      setTimeout(() => this.hud.say(`Life clings on by the pond. Tap the green to loose its seeds; drag to make wind and carry them to ground that is ready (hold Space: blue). ${look}`, 10), 800);
+      // (on a phone the life lens is the ◎ button, not Space)
+      const lens = touch ? 'hold ◎' : 'hold Space';
+      setTimeout(() => this.hud.say(`Life clings on by the pond. Tap the green to loose its seeds; drag to make wind and carry them to ground that is ready (${lens}: blue). ${look}`, 10), 800);
       return;
     }
     if (this.level.sandbox) {

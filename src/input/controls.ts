@@ -2,6 +2,8 @@
 //   LMB tap   → interact with whatever is under the cursor
 //   LMB drag  → gesture (gust beneath a storm); on touch, falls back to pan
 //   RMB drag  → pan        MMB drag → zoom        wheel / pinch → zoom
+//   two fingers → pan and pinch; a finger that took part in one only pans
+//   until it lifts (no tap, no gust from where it first landed)
 //   hover     → cursor breeze
 // This module knows nothing about the game; it only classifies gestures.
 
@@ -29,6 +31,8 @@ interface Press {
   moved: boolean;
   gesture: boolean;
   panning: boolean;
+  /** was part of a two-finger pan/pinch: never a tap or a gesture */
+  multi: boolean;
 }
 
 export class Controls {
@@ -57,14 +61,18 @@ export class Controls {
         moved: false,
         gesture: false,
         panning: false,
+        multi: false,
       };
       this.presses.set(e.pointerId, p);
-      if (this.touches().length === 2) {
-        const [a, b] = this.touches();
-        this.pinch = Math.hypot(a.x - b.x, a.y - b.y);
-        // a second finger cancels any one-finger gesture
+      if (this.touches().length >= 2) {
+        this.resetPinch();
+        // a second finger cancels any one-finger gesture; the fingers now pan
+        // and pinch, and keep panning one at a time until they lift
         for (const t of this.touches()) if (t.gesture) h.dragEnd(t.x, t.y);
-        for (const t of this.touches()) t.gesture = t.panning = false;
+        for (const t of this.touches()) {
+          t.gesture = false;
+          t.multi = t.panning = t.moved = true;
+        }
       }
     }, { signal });
     el.addEventListener('pointermove', (e) => {
@@ -79,7 +87,7 @@ export class Controls {
       p.y = e.clientY;
       if (e.pointerType === 'mouse') h.hover(p.x, p.y);
       const touches = this.touches();
-      if (touches.length === 2) {
+      if (touches.length >= 2) {
         const [a, b] = touches;
         const d = Math.hypot(a.x - b.x, a.y - b.y);
         if (this.pinch > 0) h.zoomAt((a.x + b.x) / 2, (a.y + b.y) / 2, d / this.pinch);
@@ -103,12 +111,13 @@ export class Controls {
       const p = this.presses.get(e.pointerId);
       if (!p) return;
       this.presses.delete(e.pointerId);
-      if (this.touches().length < 2) this.pinch = 0;
+      // (the pinch's span measured afresh from the fingers still down)
+      this.resetPinch();
       if (e.type === 'pointercancel') {
         if (p.gesture) h.dragEnd(p.x, p.y);
         return;
       }
-      if (p.button !== 0) return;
+      if (p.button !== 0 || p.multi) return;
       if (!p.moved) h.tap(p.x, p.y);
       else if (p.gesture) h.dragEnd(p.x, p.y);
     };
@@ -122,6 +131,11 @@ export class Controls {
       },
       { passive: false, signal },
     );
+  }
+
+  private resetPinch(): void {
+    const t = this.touches();
+    this.pinch = t.length >= 2 ? Math.hypot(t[0].x - t[1].x, t[0].y - t[1].y) : 0;
   }
 
   private touches(): Press[] {
