@@ -3073,3 +3073,17 @@ dust and ash clouds, and a small molten pool in the bowl. Headless
 steel bar 10 cells off loses 11 of 40 voxels, the crater shows with a
 glowing floor. Valley level loads clean.
 
+## 2026-10-22 — a voxel size per body instance (a game model API)
+
+The GameplayGM hover-bike experiment draws its bike through
+`Renderer.addVoxels` in the body format; the user wanted it in sub-cell
+detail like the trees. vsBody drew only whole cubes, and the detail boxes
+are axis-aligned and on the grid, so a fine model that turns could not be
+drawn. The material word's free bits 24-29 now carry a size (0 a whole
+cell, so every existing writer is unchanged; n is n/16 of a cell); vsBody
+scales the cube and its bounds, so it is lit and shadowed as before, with
+the field mesh or without. `addVoxels` and the format are documented as the
+public API (ARCHITECTURE.md), and WorldCore's last argument is named for
+what it does (the field mesh), not the sandbox. Headless: a 20x6x6 block of
+quarter voxels, turned 46 degrees, beside a whole one: the right size, lit,
+its shadow cast.

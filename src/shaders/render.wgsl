@@ -1359,6 +1359,15 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
 // vec4<u32> per voxel — (centre xyz as f32 bits, material) and the body's
 // rotation quaternion (xyzw as f32 bits). Each voxel is a whole rotated cube
 // (36 vertices, back faces culled), lit like the world; not pickable.
+// The material word: bits 0-7 material, 24-29 the voxel's size (0: a whole
+// cell; n: n/16 of a cell, so 4 is a quarter: a game model's fine voxels,
+// round 49), 30 a physics voxel, 31 a structure grid's.
+
+/** a body voxel's edge in cells (material word bits 24-29) */
+fn bodySize(word: u32) -> f32 {
+  let code = (word >> 24u) & 63u;
+  return select(f32(code) / 16.0, 1.0, code == 0u);
+}
 
 fn quatRotate(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let t = 2.0 * cross(q.xyz, v);
@@ -1382,16 +1391,17 @@ fn vsBody(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   var u = vec3<f32>(n.y, n.z, n.x);
   var v = cross(n, u);
   let k = QUAD[vi % 6u] * 2.0 - 1.0;
-  let local = (n + u * k.x + v * k.y) * 0.5;
+  let s = bodySize(a.w);
+  let local = (n + u * k.x + v * k.y) * (0.5 * s);
   let wp = c + quatRotate(q, local);
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
   o.nrm = quatRotate(q, n);
   o.info = vec2<u32>(a.w, 0u);
   o.tint = 0.0;
-  o.zr = vec2<f32>(wp.z - 0.5, wp.z + 0.5);
+  o.zr = vec2<f32>(wp.z - 0.5 * s, wp.z + 0.5 * s);
   o.bmin = c;
-  o.bsize = vec3<f32>(1.0);
+  o.bsize = vec3<f32>(s);
   o.boff = vec3<f32>(0.0);
   return o;
 }
