@@ -95,14 +95,23 @@ off at the limit (it holds on to the rest, still terrain).
 ## The ground sees them
 
 Each tick `prep` marks the columns under every live voxel (its centre and
-six points 0.3 round it, so a turned body leaves no holes) with the
-highest top and lowest bottom over them (`physCols`). The projection pass
-folds that into what the nature grid sees of structures (one stretch per
-column: a table's legs and the air between them read as solid), so poured
-sand lies on a body, water runs round it, and the loose ground under it
-can't slump out (it no longer sinks). Sand a body is nudged up into stays on
+six points 0.3 round it, so a turned body leaves no holes): one bit per
+cell of height (`physCols`, 8 words a column). The projection pass turns
+each run of marked cells into a stretch, merged with what the nature grid
+sees of structures, so poured sand lies on a body, water runs round it,
+the air under a table stays air, and the loose ground under a body can't
+slump out (it no longer sinks). Tops are whole cells (up to half a cell
+off). Sand a body is nudged up into stays on
 it (sediment: a projected interval the sand starts inside holds it); a body
 that moves away leaves its sand to fall.
+
+## Dust and air
+
+A voxel landing on something faster than 3 cells/s shoves the air out from
+under it (`physPuff`: the wind field pushes out from each wind texel by how
+hard it was hit, so a slab landing flat blows out from its edges; the wind
+lifts the sand round it like any gust) and may kick up a low dust cloud
+(haze particles). Every crumbled voxel puffs dust too.
 
 ## Using it
 

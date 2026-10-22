@@ -80,23 +80,29 @@ struct PhysU {
 // draw instances (render.wgsl vsBody) and their indirect args
 @group(0) @binding(19) var<storage, read_write> inst: array<vec4<u32>>;
 @group(0) @binding(20) var<storage, read_write> indirect: array<atomic<u32>>;
-// what each column sees of the voxels (prep; project.wgsl reads it): bitcast(top + 1),
-// 0xffffffff − bitcast(bottom + 1) — positive floats order as their bits
+// what each column sees of the voxels (prep; project.wgsl reads it): 8 words
+// per column, bit z set where a voxel's centre lies in cell z
 @group(0) @binding(26) var<storage, read_write> cols: array<atomic<u32>>;
+// air shoved by voxels landing (finalize; windfield.wgsl): per wind texel (2 cells), ×1000
+@group(0) @binding(27) var<storage, read_write> puff: array<atomic<u32>>;
 
-/** Mark the column under w as covered from z0 to z1. */
-fn splatCol(w: vec2<f32>, z0: f32, z1: f32) {
+/** Mark cell z of the column under w as holding a voxel. */
+fn splatCol(w: vec2<f32>, z: f32) {
   let c = cellAt(w);
-  if (!inMap(c)) { return; }
-  let ci = colIdxI(c);
-  atomicMax(&cols[2u * ci], bitcast<u32>(max(z1, 0.0) + 1.0));
-  atomicMax(&cols[2u * ci + 1u], 0xffffffffu - bitcast<u32>(max(z0, 0.0) + 1.0));
+  if (!inMap(c) || z < 0.0 || z >= 256.0) { return; }
+  let zc = u32(z);
+  atomicOr(&cols[colIdxI(c) * 8u + zc / 32u], 1u << (zc % 32u));
 }
+
+// a landing shoves the air from this speed (cells/s), and kicks up dust
+const PUFF_V: f32 = 3.0;
 
 struct PartP { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 const K_CHIP_P: u32 = 5u;
 const K_EMBER_P: u32 = 9u;
 const K_DUST_P: u32 = 1u;
+// a low cloud of dust (particles.wgsl K_HAZE)
+const K_HAZE_P: u32 = 15u;
 
 fn pmA(m: u32) -> vec4<f32> { return PM[m * 3u]; }
 fn pmB(m: u32) -> vec4<f32> { return PM[m * 3u + 1u]; }
@@ -436,6 +442,21 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     v = vt + n * vnNew;
     // (w, a touch, is the deaths pass's to report)
     pc[i] = vec4<f32>(0.0, 0.0, 0.0, ct.w);
+    // landing hard on something: it shoves the air out from under it (the
+    // wind lifts the loose ground round it) and kicks up dust (round 47)
+    let hit = -vnOld;
+    if (n.z > 0.5 && hit > PUFF_V) {
+      let wt = vec2<i32>(floor(x.xy * 0.5));
+      let ww = (G.mapW + 1u) / 2u;
+      if (all(wt >= vec2<i32>(0)) && u32(wt.x) < ww && u32(wt.y) < (G.mapH + 1u) / 2u) {
+        atomicAdd(&puff[u32(wt.y) * ww + u32(wt.x)], u32(min(hit - PUFF_V, 25.0) * 100.0));
+      }
+      let seed = hash3(i, PU.c.z, 0x2c1bu);
+      if (f32(seed >> 24u) < min((hit - PUFF_V) * 6.0, 120.0)) {
+        let r = vec3<f32>(f32(seed & 255u), f32((seed >> 8u) & 255u), f32((seed >> 16u) & 255u)) / 255.0 - 0.5;
+        spawnPart(x.xyz - vec3<f32>(0.0, 0.0, RAD), vec3<f32>(r.xy * 0.4 * hit, 0.6 + r.z), 3.0 + r.z * 2.0, K_HAZE_P, seed, (u32(pmC(m).w) & 255u) << 8u);
+      }
+    }
   }
   v *= 1.0 - AIR_DRAG * h;
   let sp = length(v);
@@ -567,8 +588,10 @@ fn deaths(@builtin(global_invocation_id) id: vec3<u32>) {
     atomicMax(&dep[2u * ci + 1u], u32(pmC(m).w));
   }
   spawnPart(x.xyz, vec3<f32>(r.xy * 6.0, 3.0 + r.z * 3.0), 1.4, K_CHIP_P, seed, (m & 255u) << 8u);
-  if ((seed >> 24u) < 96u) {
-    spawnPart(x.xyz, vec3<f32>(r.xy * 1.5, 0.8), 3.0, K_DUST_P, seed ^ 0x55u, (u32(pmC(m).w) & 255u) << 8u);
+  // and a puff of dust (round 47: more of it, so a collapse smokes)
+  spawnPart(x.xyz, vec3<f32>(r.xy * 1.5, 0.8), 3.0, K_DUST_P, seed ^ 0x55u, (u32(pmC(m).w) & 255u) << 8u);
+  if ((seed >> 24u) < 128u) {
+    spawnPart(x.xyz + r * 0.6, vec3<f32>(r.yx * 2.5, 1.2), 4.0, K_HAZE_P, seed ^ 0xa3u, (u32(pmC(m).w) & 255u) << 8u);
   }
 }
 
@@ -602,7 +625,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let xc = px[2u * i].xyz;
     for (var k = 0u; k <= NDIR; k++) {
       let o = select(DIRV[min(k, NDIR - 1u)] * 0.3, vec2<f32>(0.0), k == NDIR);
-      splatCol(xc.xy + o, xc.z - RAD, xc.z + RAD);
+      splatCol(xc.xy + o, xc.z);
     }
     // the six face neighbours are n26 4, 10, 12, 13, 15, 21
     let bonds = pb[i];

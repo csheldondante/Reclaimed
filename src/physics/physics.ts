@@ -180,6 +180,7 @@ export class Physics implements SimSystem {
       24: this.bodyTable,
       25: this.touches,
       26: world.physCols,
+      27: world.physPuff,
     };
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
@@ -193,7 +194,7 @@ export class Physics implements SimSystem {
     kernel('hashClear', { 9: 'rw' });
     kernel('hashInsert', { 3: 'rw', 9: 'rw' });
     kernel('collide', { 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'read' });
-    kernel('finalize', { 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 10: 'rw' });
+    kernel('finalize', { 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 27: 'rw' });
     kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' });
     kernel('deaths', { 3: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 14: 'rw', 25: 'rw' });
     kernel('fold', { 14: 'rw', 16: 'rw' });
@@ -360,7 +361,10 @@ export class Physics implements SimSystem {
 
   encode(enc: GPUCommandEncoder, tick: number): void {
     // the columns the voxels cover, refilled by prep (once more after the last body goes)
-    if (this.used || this.colsLive) enc.clearBuffer(this.world.physCols);
+    if (this.used || this.colsLive) {
+      enc.clearBuffer(this.world.physCols);
+      enc.clearBuffer(this.world.physPuff);
+    }
     this.colsLive = this.used > 0;
     if (!this.used) return;
     this.writeUniforms(tick);

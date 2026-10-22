@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 47 (session 5, `physics`) — air inside bodies; dust; next
+
+- Keep the air inside a body (gaps under a table) if the cost is fine.
+- Falls should kick up dust: wind when things land, and dust when they
+  crumble.
+- Next: the beam hitting the ground, then volcanoes — both on the same
+  molten-material physics.
+
 ## 2026-10-22 — round 46 (session 5, `physics`) — proceed
 
 - "Please proceed, this is looking really cool": next is the nature grid
