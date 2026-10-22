@@ -109,6 +109,8 @@ export class Renderer {
   private shadowMeshPipe?: GPURenderPipeline;
   /** more voxel instances drawn like the structures' (physics bodies): instances, indirect args, and their draw and shadow groups */
   private voxelSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
+  /** more prisms for the opaque pipeline (lava: sim/lava.ts) */
+  private prismSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
   private noShadowView?: GPUTextureView;
   private groupFor!: (inst: GPUBuffer, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
   private shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
@@ -439,6 +441,11 @@ export class Renderer {
     });
   }
 
+  /** Draw these prisms (renderprep's instance form) with the opaque pipeline too. */
+  addPrisms(inst: GPUBuffer, indirect: GPUBuffer): void {
+    this.prismSources.push({ indirect, group: this.groupFor(inst) });
+  }
+
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
   destroy(): void {
     this.shadowTex.destroy();
@@ -517,6 +524,11 @@ export class Renderer {
     pass.drawIndirect(this.indirect, 48);
     pass.setBindGroup(0, this.plantGroup);
     pass.drawIndirect(this.indirect, 32);
+    for (const s of this.prismSources) {
+      pass.setBindGroup(0, s.group);
+      pass.drawIndirect(s.indirect, 0);
+      this.profiler.draws++;
+    }
     if (this.meshPipe) {
       pass.setPipeline(this.meshPipe);
       pass.setBindGroup(0, this.meshGroup!);

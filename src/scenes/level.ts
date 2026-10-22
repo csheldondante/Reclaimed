@@ -14,6 +14,7 @@ import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { PK } from '../sim/particles';
 import { Physics } from '../physics/physics';
+import { LavaSystem } from '../sim/lava';
 import { box, table } from '../physics/shapes';
 import { BODIES } from '../ui/editor';
 import type { WorldStats } from '../sim/systems';
@@ -94,6 +95,8 @@ export class LevelScene implements Scene {
   private strokeStart = false;
   /** sandbox: physics voxels (docs/PHYSICS.md) */
   physics?: Physics;
+  /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
+  lava?: LavaSystem;
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
   private beamWoke = -Infinity;
@@ -219,6 +222,11 @@ export class LevelScene implements Scene {
       this.physics = phys;
       sim.systems.splice(sim.systems.indexOf(sim.particles), 0, phys);
       core.renderer.addVoxels(phys.inst, phys.indirect);
+      // lava, after the ground has settled this tick and before the bodies feel it
+      const lava = new LavaSystem(host.gpu.device, core.world, host.profiler);
+      this.lava = lava;
+      sim.systems.splice(sim.systems.indexOf(phys), 0, lava);
+      core.renderer.addPrisms(lava.inst, lava.indirect);
       // the map's own ruins stay terrain until something touches them (wake):
       // the beam, the break tool, a body hitting them (phys.wgsl reports those)
       phys.onTouch = (cols) => {
@@ -303,6 +311,7 @@ export class LevelScene implements Scene {
         if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
         if (this.editor?.tool === 'drop') return void this.dropAtPick(sx, sy);
         if (this.editor?.tool === 'beam') return;
+        if (this.editor?.tool === 'volcano') return void this.ventAtPick(sx, sy);
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, true)) return;
         // (story: nothing answers out in the fog beyond the green's reach)
@@ -349,6 +358,7 @@ export class LevelScene implements Scene {
         if (this.beamAt) {
           this.beamAt = undefined;
           if (this.physics) this.physics.beam = null;
+          if (this.lava) this.lava.beam = null;
           this.beamLine?.setAttribute('x1', '0');
           this.beamLine?.setAttribute('x2', '0');
           this.beamLine?.setAttribute('y1', '0');
@@ -1205,6 +1215,19 @@ export class LevelScene implements Scene {
     }
   }
 
+  /** Open a volcano vent where the pointer is (sim/lava.ts). */
+  private ventAtPick(sx: number, sy: number): void {
+    const { core } = this;
+    if (!this.lava) return;
+    const [rx, ry] = [(sx / core.camera.viewportW) * this.renderW, (sy / core.camera.viewportH) * this.renderH];
+    core.renderer.pick(rx, ry).then((hit) => {
+      if (!hit || !this.lava) return;
+      const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
+      this.lava.addVent(x, y);
+      core.sim.particles.burst({ kind: PK.Ember, x, y, z: hit.z + 1, count: 12, speed: 6, spread: 0.6 });
+    }, ignoreTeardown);
+  }
+
   /** Drop the chosen physics body over what's under the cursor (docs/PHYSICS.md). */
   private dropAtPick(sx: number, sy: number): void {
     const { core } = this;
@@ -1249,12 +1272,15 @@ export class LevelScene implements Scene {
       if (!this.beamAt || !this.physics) return;
       if (!hit) {
         this.physics.beam = null;
+        if (this.lava) this.lava.beam = null;
         return;
       }
       const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
       // (camera.eye is the unit direction toward the eye: the view runs down -eye)
       const z = hit.z + 0.5;
       this.physics.beam = { at: [x, y, z], dir: [-camera.eye[0], -camera.eye[1], -camera.eye[2]], radius: 1.6, power: 9000 };
+      // on the ground (not a body): it melts it (lava.wgsl)
+      if (this.lava) this.lava.beam = hit.flags & 0x8000 ? null : { at: [x, y, hit.z + 1], radius: 1.6, power: 9000 };
       // a ruin of the map's it touches comes alive
       // (at most a few times a second: each wake reads the layers back)
       if (!(hit.flags & 0x8000) && performance.now() - this.beamWoke > 300) {

@@ -13,11 +13,11 @@ struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32> };
 
 /**
  * Is an interval of material m part of the field (meshed), or built — a
- * solid other than rock and packed trash (concrete, brick, asphalt, steel,
+ * solid other than rock (stone, basalt) and packed trash (concrete, brick, asphalt, steel,
  * rust, bone, canvas) — and drawn as prisms, sharp, the way the structure
  * grids stay cubes? (Smoothed, a ruin's walls melted into cones.)
  */
-fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE || m == 12u; }
+fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE || m == 12u || m == 23u; }
 
 /** Smooth value noise 0..1 (trilinear between hashed lattice values). */
 fn warpNoise(p: vec3<f32>) -> f32 {

@@ -1,0 +1,46 @@
+// ---- lava (molten rock): flux pass (docs/PHYSICS.md "Lava") -------------------
+// The same virtual pipes as water and oil, but thick: lava flows only while
+// hot (fluidity falls to nothing at the setting point), slowly, and not at
+// all down a step smaller than its yield, so it runs in tongues and levees
+// instead of spreading into a film. It lies on the ground and on bodies
+// (bodyProj), ignores water (water over it boils away: lava.wgsl). Edges
+// drain.
+//   lava: x depth, y temperature, z the ground's heat at its top, w the
+//   lava's surface height (lava.wgsl writes it; physics reads it)
+@group(0) @binding(3) var<storage, read> surface: array<u32>;
+@group(0) @binding(4) var<storage, read> lava: array<vec4<f32>>;
+@group(0) @binding(5) var<storage, read_write> lavaFlux: array<Dirs>;
+
+const LAVA_GAIN: f32 = 0.012;
+const LAVA_FRICTION: f32 = 0.9;
+// it won't move for less of a step than this (cells)
+const LAVA_YIELD: f32 = 0.12;
+const LAVA_SET: f32 = 750.0;
+const LAVA_RUNNY: f32 = 1150.0;
+
+fn bedAt(q: vec2<i32>) -> f32 {
+  return max(f32(sfZ(surface[colIdxI(q)])) + driftAt(q), bodyTopAt(q));
+}
+
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let p = vec2<i32>(id.xy);
+  let i = colIdxI(p);
+  let L = lava[i];
+  if (L.x <= 1e-4) { lavaFlux[i] = dZero(); return; }
+  let fluid = smoothstep(LAVA_SET, LAVA_RUNNY, L.y);
+  let H = bedAt(p) + L.x;
+  var f = lavaFlux[i];
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
+    // (off the map: drains like a cliff)
+    var Hn = H - 4.0;
+    if (inMap(q)) { Hn = bedAt(q) + lava[colIdxI(q)].x; }
+    f[k] = max(0.0, f[k] * LAVA_FRICTION + LAVA_GAIN * fluid * (H - Hn - LAVA_YIELD));
+    if (fluid <= 0.0) { f[k] = 0.0; }
+  }
+  let total = dSum(f);
+  if (total > L.x) { f = dScale(f, L.x / total); }
+  lavaFlux[i] = f;
+}

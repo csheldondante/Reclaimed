@@ -265,6 +265,18 @@ under a table stays air. Voxels landing hard add to `physPuff` (u32 per wind
 texel, ×1000; cleared each tick by physics.ts), which windfield.wgsl turns
 into wind pushing out from it.
 
+Lava (sim/lava.ts, lava_flux.wgsl, lava.wgsl; sandbox, spliced before the
+physics): a third liquid in WorldGpu `lava` (vec4 per column: depth,
+temperature, the ground's heat at its top, the lava's surface height),
+`lavaNext`, `lavaFlux`. Its flux pass reads `surface`, drift and bodyProj
+like water; its depth pass edits the column's own layers in place (as
+sediment does: melting off the top interval, setting basalt, MAT 23) and
+takes water off the top (steam). The CPU sets only the beam and up to four
+vents (a uniform). It draws as prisms in renderprep's instance form through
+`Renderer.addPrisms` (the opaque pipeline; MAT 24, temperature in the
+damage bits); renderfields reads `lava` so it lights its surroundings like
+fire, and phys.wgsl `relax` reads it so voxels in it heat up.
+
 ## Rendering
 
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the

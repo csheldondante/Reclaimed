@@ -83,6 +83,10 @@ struct PhysU {
 // what each column sees of the voxels (prep; project.wgsl reads it): 8 words
 // per column, bit z set where a voxel's centre lies in cell z
 @group(0) @binding(26) var<storage, read_write> cols: array<atomic<u32>>;
+// molten rock (lava.wgsl): x depth, y temperature, w its surface height
+@group(0) @binding(28) var<storage, read> lava: array<vec4<f32>>;
+// how fast a voxel in lava takes its heat (share a second)
+const LAVA_HEAT: f32 = 1.5;
 // air shoved by voxels landing (finalize; windfield.wgsl): per wind texel (2 cells), ×1000
 @group(0) @binding(27) var<storage, read_write> puff: array<atomic<u32>>;
 
@@ -528,6 +532,12 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   var tn = t;
   if (n > 0.0) { tn += (sum / n - t) * min(1.0, 6.0 * h); }
   tn += (AMBIENT_T - tn) * min(1.0, 0.15 * h);
+  // lava it's in heats it toward the lava's temperature
+  let lc = cellAt(x.xy);
+  if (inMap(lc)) {
+    let L = lava[colIdxI(lc)];
+    if (L.x > 0.02 && x.z - RAD < L.w && L.y > tn) { tn += (L.y - tn) * min(LAVA_HEAT * pmC(m).z * h, 1.0); }
+  }
   // the beam
   if (PU.a.w > 0.5) {
     let rel = x.xyz - PU.b0.xyz;

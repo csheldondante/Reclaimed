@@ -14,6 +14,15 @@
 @group(0) @binding(7) var<storage, read_write> fields: array<vec4<f32>>;
 @group(0) @binding(8) var<storage, read> waterDepth: array<f32>;
 @group(0) @binding(9) var<storage, read> veg: array<f32>;
+// molten rock (lava.wgsl): x depth, y temperature, z the ground's heat
+@group(0) @binding(10) var<storage, read> lava: array<vec4<f32>>;
+
+/** How brightly column i's lava (or beam-hot ground) glows, 0..1. */
+fn lavaGlow(i: u32) -> f32 {
+  let L = lava[i];
+  let t = select(L.z * 0.8, max(L.y, L.z * 0.8), L.x > 0.02);
+  return smoothstep(500.0, 1300.0, t);
+}
 
 /**
  * 1 where cell p's top material (the loose sheet's where there's a fair
@@ -145,7 +154,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     sz = max(sz, f32(sfZ(sq)) + driftAt(q) - soft - drop);
   }
 
-  var glow = fire[i];
+  // lava (and ground the beam has made glow) lights what's round it like fire
+  var glow = max(fire[i], lavaGlow(i));
   // (the cells within two rings: the same 2.5-cell radius as before)
   for (var dy = -2; dy <= 2; dy++) {
     for (var dx = -3; dx <= 3; dx++) {
@@ -153,7 +163,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!inMap(q)) { continue; }
       let dd = length(cellPos(q) - p0);
       if (dd > 2.5) { continue; }
-      glow = max(glow, fire[colIdxI(q)] * (1.0 - dd / 3.2));
+      glow = max(glow, max(fire[colIdxI(q)], lavaGlow(colIdxI(q))) * (1.0 - dd / 3.2));
     }
   }
 

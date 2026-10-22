@@ -74,6 +74,10 @@ export const MAT = {
   Steel: 20,
   Canvas: 21,
   Silt: 22,
+  /** what lava sets into (sim/lava.ts) */
+  Basalt: 23,
+  /** molten rock: a liquid field (WorldGpu.lava), drawn as prisms; never in the layers */
+  Lava: 24,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -129,6 +133,10 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'canvas', albedo: [0.78, 0.75, 0.66], state: MatState.Solid, strength: 0.3, growthCap: 1, suitability: 0.2, porosity: 0.5 },
   // packed dust: a deep dust layer compacted into ground (round 15, H3)
   { ...NONE, name: 'silt', albedo: [0.56, 0.47, 0.37], state: MatState.Granular, reposeDry: 1.4, reposeWet: 1, strength: 0.15, growthCap: 3.5, suitability: 0.7, porosity: 0.5, smooth: 2, washMobility: 0.6, washFlow: 0.12 },
+  // set lava: dark, glassy-rough stone (round 47)
+  { ...NONE, name: 'basalt', albedo: [0.2, 0.19, 0.19], state: MatState.Solid, growthCap: 1.2, suitability: 0.35, specular: 0.12, porosity: 0.2 },
+  // molten rock (a field, like oil; its glow is drawn by temperature)
+  { ...NONE, name: 'lava', albedo: [0.9, 0.35, 0.08], state: MatState.Liquid, emissive: 1 },
 ];
 
 export const MAX_MATERIALS = 32;

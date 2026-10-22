@@ -2991,3 +2991,27 @@ one 30 × 30 × 12 block physics 2.0 ms, of which the column marks are under
 0.05 ms (2.03 with them, 1.98–2.03 with only the centre marked). `set` is a
 WGSL reserved word (CLAUDE.md gotchas).
 
+## 2026-10-22 — lava: the beam melts the ground, volcanoes pour it
+
+Round 47's next steps (the user: the beam hitting the ground, then
+volcanoes, both on the same molten material). Lava is a third liquid
+(WorldGpu `lava`: depth, temperature, the ground's heat, surface height)
+with its own flux and depth passes (sim/lava.ts): the oil kernel couldn't
+be reused (compile-time constants, it floats on water and is dragged by the
+current, ignores bodies). The depth pass edits its own column's layers in
+place like sediment: melting the top interval into lava when the beam's
+heat passes 1300, setting basalt when lava cools below 750. Lava draws
+through its own prism list (`Renderer.addPrisms`): renderprep already binds
+eight storage buffers. Headless (phystest melt, gbeam, quench, volcano): the
+beam tool held on sand for 4 s melts a pit 4 cells deep into stone, a pool
+of ~40 cells³ that crusts over and sets in ~15 s; water poured on it boils
+off as white steam and it sets in a few seconds; a vent pours ~120 cells³
+over 20 s into a spreading ring with a smoke plume, which sets into a basalt
+dome 1.5 cells high. Two fixes on the way: the beam overheated the pool
+(4800: capped at 1400), and setting under loose ground that slumped onto it
+first left thin basalt/soil slices, then lifted a whole 3.6-cell soil run
+onto the basalt (it sets under a skin of under 0.3 only). Basalt joined the
+field mesh (as prisms its dome cast a saw-tooth shadow). Cost: the three
+lava passes are under 0.2 ms each with a vent running (not in the top
+twelve passes).
+

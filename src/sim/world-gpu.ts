@@ -48,6 +48,12 @@ export class WorldGpu {
   readonly oilFlux: GPUBuffer;
   /** vec2 per column: oil sealed in a closed tank (amount, roof z) — oil system releases it on breach */
   readonly oilStored: GPUBuffer;
+  /** molten rock (sim/lava.ts, lava.wgsl): vec4 per column — x depth, y
+   *  temperature, z the ground's heat at its top, w the lava's surface
+   *  height; `lavaNext` the depth pass's output, `lavaFlux` its pipes */
+  readonly lava: GPUBuffer;
+  readonly lavaNext: GPUBuffer;
+  readonly lavaFlux: GPUBuffer;
 
   // environmental fields
   /** vec2: soil-bound, dissolved */
@@ -205,6 +211,9 @@ export class WorldGpu {
     this.oilFlux = this.buf('oilFlux', N * DIRS_BYTES, S);
     device.queue.writeBuffer(this.oil, 0, map.oil);
     this.oilStored = this.buf('oilStored', N * 8, S);
+    this.lava = this.buf('lava', N * 16, S);
+    this.lavaNext = this.buf('lavaNext', N * 16, S);
+    this.lavaFlux = this.buf('lavaFlux', N * 24, S);
     device.queue.writeBuffer(this.oilStored, 0, map.oilStored);
 
     this.contam = this.buf('contam', N * 8, S);

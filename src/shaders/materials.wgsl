@@ -24,6 +24,8 @@ const MAT_OIL: u32 = 13u;
 const MAT_GRASS: u32 = 14u;
 const MAT_FLOWER: u32 = 15u;
 const MAT_DRIFT: u32 = 19u;
+const MAT_BASALT_M: u32 = 23u;
+const MAT_LAVA_M: u32 = 24u;
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 
