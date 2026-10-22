@@ -7,7 +7,11 @@ rules + the level tools + the event fix). Fixes to the shared engine
 cherry-picked into the others; each branch's own work stays on it. `main`
 is what GitHub Pages deploys: it follows `ambient` until the user says
 otherwise. A branch is pushed once it has meaningful work of its own
-(round 34).
+(round 34). Pages holds every pushed branch: `main` at the root, the others
+under `/<branch>/` (e.g. https://csheldondante.github.io/Reclaimed/grids/),
+so each can be tried on a phone. A push to any of them rebuilds all of them
+from origin (.github/workflows/pages.yml); the workflow must be the same on
+every branch, or a push from a branch with the old one publishes only `main`.
 
 ## Worktrees
 

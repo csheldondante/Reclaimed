@@ -2621,3 +2621,12 @@ Known: water still has one sheet per column, on the top one; a column's
 plants are one value, so the ground's plants under a room show on sand that
 lands on its floor; nothing is displaced when a structure is placed into the
 ground (it overlaps).
+
+## 2026-10-22 — Pages publishes every pushed branch
+
+The user wants to try branches on a phone as work lands. Pages holds one
+site, so the workflow now builds each branch that is on origin and puts
+main at the root and the others under /<branch>/ (base './' already makes
+the build path-independent; checked by serving the build under /grids/ and
+loading the level headlessly). A push to any of the branches rebuilds all of
+them, so the root keeps showing origin/main whichever branch was pushed.

@@ -1,10 +1,13 @@
-# Build the game and publish it to GitHub Pages on every push to main.
+# Build the game and publish it to GitHub Pages. One site holds every branch:
+# main at the root, each other branch that is on origin under /<branch>/
+# (docs/BRANCHES.md), so any branch can be tried on a phone. A push to any of
+# them rebuilds them all from origin, so the workflow must be the same on each.
 # One-time setup: Settings → Pages → Source: "GitHub Actions".
 name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, ambient, puzzle, mayhem, sandbox, grids]
   workflow_dispatch:
 
 permissions:
@@ -21,15 +24,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-      - run: npm ci
-      - run: npm run build
+      - name: Build every branch
+        run: |
+          set -e
+          mkdir -p site
+          for b in main ambient puzzle mayhem sandbox grids; do
+            git rev-parse -q --verify "origin/$b" >/dev/null || continue
+            git worktree add -f "../wt-$b" "origin/$b"
+            (cd "../wt-$b" && npm ci && npm run build)
+            if [ "$b" = main ]; then cp -r "../wt-$b/dist/." site/; else mkdir -p "site/$b" && cp -r "../wt-$b/dist/." "site/$b/"; fi
+          done
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: dist
+          path: site
   deploy:
     needs: build
     runs-on: ubuntu-latest
