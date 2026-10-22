@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 45 (session 5, `physics`) — mesh in the sandbox; merge
+
+- The sandbox shows the field mesh (by default there; `?mesh=0` for the
+  prisms). Elsewhere it stays opt-in.
+- Metal a little easier to deform still; otherwise it looks great.
+- Merge `physics` into `grids`.
+
 ## 2026-10-22 — round 44 (session 5, `physics`) — first try on a phone
 
 - The brick looks great. What's already on the map didn't collapse.

@@ -2946,3 +2946,13 @@ Round 44, the user's first try on a phone:
   finger on touch screens. Held on a steel bar on two stone blocks it cut
   it in two in about 2 s, the hot ends sagging into the gap.
 
+## 2026-10-22 — physics: the sandbox in the field mesh; softer steel; merged into grids
+
+Round 45: the sandbox draws with the field mesh unless `?mesh=0` (WorldCore
+passes the sandbox flag to the renderer; FieldMesh takes it as its default
+when the URL says nothing); the rest of the game keeps the mesh opt-in.
+Steel deforms more easily still (stiffness 0.6, yield 0.025, tears at 25 %;
+rust 0.5, 0.02, 10 %): a concrete block dropped on a beam over two posts
+leaves it dented. With the mesh, the beam scene's GPU time: draw 2.9 ms,
+physics 1.0–1.2 ms. `physics` merged into `grids`.
+

@@ -132,6 +132,8 @@ export class Renderer {
     format: GPUTextureFormat,
     private world: WorldGpu,
     private profiler: Profiler,
+    /** the field mesh unless ?mesh=0 (the sandbox), rather than only with ?mesh=1 */
+    meshByDefault = false,
   ) {
     const N = world.cells;
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
@@ -156,7 +158,7 @@ export class Renderer {
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
-    this.fieldMesh = new FieldMesh(device, world, profiler);
+    this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault);
     // (a texel when there's no shadow pass: the draw shaders still bind one)
     const ss = this.fieldMesh.on ? SHADOW_SIZE : 1;
     this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });

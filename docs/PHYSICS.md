@@ -69,8 +69,8 @@ it never leaves faster than 0.3 cells/s otherwise.
 | | stiffness | yield | break strain | restitution | crumble (cells/s) | melt |
 |---|---|---|---|---|---|---|
 | stone, concrete, brick, bone | 1 | never | 0.025–0.04 | 0.1 | 11–14 | 1600 |
-| steel | 0.75 | 0.04 | 0.3 | 0.2 | 40 | 1400 |
-| rust | 0.6 | 0.03 | 0.12 | 0.1 | 18 | 1300 |
+| steel | 0.6 | 0.025 | 0.25 | 0.2 | 40 | 1400 |
+| rust | 0.5 | 0.02 | 0.1 | 0.1 | 18 | 1300 |
 | wood | 0.7 | 0.2 | 0.15 | 0.2 | 22 | 300 |
 | canvas, trash | 0.25–0.4 | 0.2–0.4 | 0.12–1 | 0.05 | 10–40 | 250–350 |
 
