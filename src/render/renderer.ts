@@ -17,6 +17,9 @@ import rainWgsl from '../shaders/rain.wgsl?raw';
 import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import structPrepWgsl from '../shaders/structprep.wgsl?raw';
+import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
+import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
+import { FieldMesh } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
@@ -74,6 +77,10 @@ export class Renderer {
   private structInst: GPUBuffer;
   private structIndirect: GPUBuffer;
   private structGroup: GPUBindGroup;
+  /** the field mesh over one region (G13 C, a prototype: ?mesh=1) */
+  readonly fieldMesh: FieldMesh;
+  private meshPipe?: GPURenderPipeline;
+  private meshGroup?: GPUBindGroup;
   private bodyCount = 0;
   static readonly MAX_BODY_VOXELS = 16384;
   private rainGroup: GPUBindGroup;
@@ -126,7 +133,8 @@ export class Renderer {
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
-    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderprepWgsl], {
+    this.fieldMesh = new FieldMesh(device, world, profiler);
+    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshRegionWgsl, renderprepWgsl], {
       0: 'uniform',
       1: 'read',
       2: 'uniform',
@@ -140,6 +148,7 @@ export class Renderer {
       14: 'tex',
       17: 'tex',
       21: 'tex',
+      30: 'uniform',
     });
     this.prepGroup = makeBindGroup(device, 'renderprep', this.prep.layout, {
       0: world.globals,
@@ -155,9 +164,10 @@ export class Renderer {
       14: world.cornerView,
       17: world.driftView,
       21: world.bodyProjView,
+      30: this.fieldMesh.region,
     });
 
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, vegprepWgsl], {
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshRegionWgsl, vegprepWgsl], {
       0: 'uniform',
       2: 'uniform',
       3: 'read',
@@ -169,6 +179,7 @@ export class Renderer {
       9: 'rw',
       14: 'tex',
       17: 'tex',
+      30: 'uniform',
     });
     this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, {
       0: world.globals,
@@ -182,6 +193,7 @@ export class Renderer {
       9: this.instPlant,
       14: world.cornerView,
       17: world.driftView,
+      30: this.fieldMesh.region,
     });
 
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
@@ -264,13 +276,14 @@ export class Renderer {
     this.structInst = world.buf('structInst', POOL_VOXELS * 32, GPUBufferUsage.STORAGE);
     this.structIndirect = world.buf('structIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.structGroup = groupFor(this.structInst);
-    this.structPrep = makeCompute(device, 'structprep', [commonWgsl, gridsWgsl, structPrepWgsl], { 0: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw' });
+    this.structPrep = makeCompute(device, 'structprep', [commonWgsl, gridsWgsl, meshRegionWgsl, structPrepWgsl], { 0: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 30: 'uniform' });
     this.structPrepGroup = makeBindGroup(device, 'structprep', this.structPrep.layout, {
       0: world.globals,
       3: world.strFrames,
       4: world.strVox,
       5: this.structInst,
       6: this.structIndirect,
+      30: this.fieldMesh.region,
     });
     this.bodyPipe = device.createRenderPipeline({
       label: 'bodies',
@@ -280,6 +293,42 @@ export class Renderer {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(true),
     });
+
+    if (this.fieldMesh.on) {
+      // the field mesh: its own layout (the intervals for the look, in place of
+      // the plants' sway and the corners)
+      const meshLayout = makeLayout(
+        device,
+        'mesh-draw',
+        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex' },
+        VF,
+      );
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshDrawWgsl]);
+      this.meshPipe = device.createRenderPipeline({
+        label: 'mesh',
+        layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
+        vertex: { module: meshModule, entryPoint: 'vsMesh' },
+        fragment: { module: meshModule, entryPoint: 'fsMesh', targets: [{ format }, { format: PICK_FORMAT }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: depthStencil(true),
+      });
+      this.meshGroup = makeBindGroup(device, 'mesh-draw', meshLayout, {
+        0: world.globals,
+        1: world.chunks,
+        2: world.materials,
+        3: this.fieldMesh.verts,
+        4: world.contam,
+        6: world.veg,
+        7: world.renderFields,
+        9: world.layers,
+        10: this.camBuf,
+        11: world.surface,
+        13: world.wilt,
+        15: world.windFieldView,
+        17: world.driftView,
+        23: world.reachView,
+      });
+    }
 
     const rainLayout = makeLayout(device, 'rain', { 0: 'uniform', 10: 'uniform' }, VF);
     const rainModule = makeModule(device, 'rain', [commonWgsl, rainWgsl]);
@@ -376,6 +425,7 @@ export class Renderer {
       pass.end();
       this.profiler.dispatches += 2;
     }
+    this.fieldMesh.encode(enc);
 
     const pass = enc.beginRenderPass({
       label: 'world',
@@ -393,6 +443,12 @@ export class Renderer {
     pass.drawIndirect(this.indirect, 48);
     pass.setBindGroup(0, this.plantGroup);
     pass.drawIndirect(this.indirect, 32);
+    if (this.meshPipe) {
+      pass.setPipeline(this.meshPipe);
+      pass.setBindGroup(0, this.meshGroup!);
+      this.fieldMesh.draw(pass);
+      this.profiler.draws++;
+    }
     if (this.bodyCount > 0) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);
@@ -440,6 +496,7 @@ export class Renderer {
 
   /** Call after submit to start async readbacks requested during encode. */
   afterSubmit(): void {
+    this.fieldMesh.afterSubmit();
     if (this.pickPending) {
       const resolve = this.pickPending;
       this.pickPending = undefined;

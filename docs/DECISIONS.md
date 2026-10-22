@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 38 (session 5, `grids`) — the field mesh
+
+- The intervals are storage — a fast, memory-efficient way to hold the
+  world — not a constraint on how it's drawn. The density field I'd
+  described is evaluated from them on the fly, never stored.
+- Prototype C: the terrain and the structure grids meshed from that field
+  (the user's own pick too). Later perhaps cache the top-down albedo and
+  normals and only relight when the light changes — but one optimisation at
+  a time.
+
 ## 2026-10-22 — round 37 (session 5, `grids`) — rendering; phone builds; the long road
 
 - Rendering next, before more simulation: the terrain as a continuous

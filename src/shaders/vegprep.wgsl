@@ -201,7 +201,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     if (G.misc.w > 0.5) { n = fineCount(veg[i], gm, id.xy); }
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
   }
-  var nS = select(0u, 1u, inside && driftAt(vec2<i32>(id.xy)) > DRIFT_SHOW);
+  // (no sheet where the field mesh draws the ground: meshregion.wgsl)
+  var nS = select(0u, 1u, inside && driftAt(vec2<i32>(id.xy)) > DRIFT_SHOW && !meshed(cellPos(vec2<i32>(id.xy))));
   // a sheet whose sides all meet the ground beside it is drawn as its top
   // alone, in the tops list (renderprep.wgsl)
   var hid = 0u;

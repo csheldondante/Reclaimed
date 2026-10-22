@@ -265,6 +265,16 @@ can't take a first instance without an optional feature). A soft top's side
 counts as hidden where both its corners are smoothed (shared, so the
 neighbour's top runs through them) and the neighbour is solid up to its loose
 run; a sheet's where `sheetGap` (terrainshape.wgsl) is false at both corners.
+The field mesh (G13 h, a prototype behind `?mesh=1`; fieldmesh.wgsl,
+meshdraw.wgsl, render/fieldmesh.ts): over one region (the `MeshRegion`
+uniform, meshregion.wgsl, binding 30) a signed field evaluated on the fly
+from the intervals (each column's vertical distance to its solid, blended
+over the three nearest centres) and the structures' voxels (box distance in
+their rotated frames), joined by a smooth minimum, is meshed by surface
+nets into an indexed list (drawIndexedIndirect). Renderprep, vegprep and
+structprep leave the region's columns, sheets and voxels to it; water and
+plants stay. The fragment shader takes its material from the interval the
+point lies in, so the look still comes from the intervals.
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are

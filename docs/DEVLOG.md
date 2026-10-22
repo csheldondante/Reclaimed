@@ -2672,3 +2672,52 @@ draw falls 5.7 → 2.6 ms, and with a flat-colour fragment shader to 2.4 ms —
 draw is now bound by fragment shading (~3.3 ms), not vertices (~1.6 ms).
 Emitting near cells first (front to back) didn't help (5.8 ms); storm and
 fair-weather cloud shadows and the sun-shadow test are each below the noise.
+
+## 2026-10-22 — grids: the field mesh, a prototype (G13 h, option C)
+
+Round 38: the intervals are storage, not a constraint on drawing. The
+"density field" is a function evaluated from them on the fly — nothing new
+is stored but the mesh (and a scratch grid while it's built).
+
+Behind `?mesh=1` (`?mesh=x,y,r` a region r cells each way round x, y;
+`?meshh=` the sample spacing, 0.5; `?meshevery=N`), one square region is
+drawn as a mesh instead of prisms, sheets and cubes. Three compute passes:
+- sampleField: the field at every sample. Terrain: each column's vertical
+  distance to its solid (touching intervals are one solid, below 0 is
+  bedrock), blended barycentrically over the three nearest centres.
+  Structures: the distance to their voxels' boxes in their own rotated frame
+  (the nearest of the 27 round it: solid outside, air inside — an
+  occupancy blend rounded the room's edges off). The two joined by a smooth
+  minimum (0.6), so sand against a wall makes a fillet.
+- makeVerts: surface nets — a vertex per crossed sample cell at the mean of
+  its edge crossings, its normal the field's own gradient (central
+  differences, so light runs smooth across cells), and how much it's
+  structure.
+- makeQuads: two triangles per crossed sample edge.
+The fragment shader finds the interval the point lies in (a step into the
+surface) and takes its material, so the layers and stains still come from
+the intervals; a structure's share shows its voxel (moss, sand cover).
+
+Measured (headless, real GPU, 1600 × 900, rebuilt every frame — the worst
+case, no dirty tracking yet; scripts/meshtest.mjs):
+
+| region (Dam Valley) | columns | rebuild | vertices | triangles |
+|---|---|---|---|---|
+| r 16, h 0.5 | ~1.2k | 0.43 ms | 6.3k | 12.2k |
+| r 24, h 0.5 | ~2.7k | 0.96 ms | 13.8k | 27.0k |
+| r 32, h 0.5 | ~4.7k | 1.77 ms | 24.1k | 47.6k |
+| r 24, h 1.0 | ~2.7k | 0.19 ms | 3.4k | 6.5k |
+
+So ~0.37 ms and ~5k vertices per 1000 columns at h 0.5 (~290 KB as stored
+now: 32-byte vertices, 32-bit indices), a quarter of that at h 1, which
+looks nearly the same at the default zoom. The sandbox room (r 24): 17k
+vertices, 1.07 ms. Draw didn't move outside the noise (5.7–6.2 ms against
+6.0 on the same view). Most samples lie above everything: skipping them, a
+compact vertex and rebuilding only dirty chunks are next.
+
+Seen: slopes read as terrain with no hex facets; the room keeps its edges
+and the sand banks against it in a fillet; rubble heaps soften into mounds.
+Not yet: the region's edge shows a faint seam against the prisms; plant
+cover is still per cell; rock facets, soft material borders and grid lines
+aren't drawn on the mesh.
+
