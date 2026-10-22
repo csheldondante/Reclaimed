@@ -45,8 +45,10 @@ struct PhysU {
   b0: vec4<f32>,
   // xyz its direction (into the surface), w heat per second at its centre
   b1: vec4<f32>,
-  // x particles in use, y bodies, z tick
+  // x particles in use, y bodies, z tick, w (as f32 bits) this tick's blast strength
   c: vec4<u32>,
+  // a blast: xyz centre, w radius (every substep of its tick)
+  d: vec4<f32>,
 };
 @group(0) @binding(22) var<uniform> PU: PhysU;
 // per material, 3 vec4 (physics.ts PHYS_MATS):
@@ -55,7 +57,7 @@ struct PhysU {
 //  [2] soften temperature, melt temperature (0: never), heat gain, loose material it crumbles to
 @group(0) @binding(23) var<uniform> PM: array<vec4<f32>, 96>;
 // bodies: x first particle, yzw lattice dims
-@group(0) @binding(24) var<uniform> PB: array<vec4<u32>, 64>;
+@group(0) @binding(24) var<uniform> PB: array<vec4<u32>, 256>;
 
 @group(0) @binding(3) var<storage, read_write> px: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read_write> pv: array<vec4<f32>>;
@@ -73,6 +75,8 @@ struct PhysU {
 // loose ground from crumbled voxels per column: amount ×1000, material (folded into deposit)
 @group(0) @binding(14) var<storage, read_write> dep: array<atomic<u32>>;
 @group(0) @binding(16) var<storage, read_write> deposit: array<vec4<f32>>;
+// map structures bodies ran into: [0] count, then columns (the host wakes them)
+@group(0) @binding(25) var<storage, read_write> touches: array<atomic<u32>>;
 // draw instances (render.wgsl vsBody) and their indirect args
 @group(0) @binding(19) var<storage, read_write> inst: array<vec4<u32>>;
 @group(0) @binding(20) var<storage, read_write> indirect: array<atomic<u32>>;
@@ -245,12 +249,13 @@ fn hashInsert(@builtin(global_invocation_id) id: vec3<u32>) {
   atomicStore(&hashT[HASH_N + i], prev);
 }
 
-/** The solid ground in column c: the top of what lies below z, and whether z is inside something (x: top, y: 1 inside, z: granular). */
-fn groundAt(c: vec2<i32>, z: f32) -> vec3<f32> {
-  if (!inMap(c)) { return vec3<f32>(-1e9, 0.0, 0.0); }
+/** The solid ground in column c: the top of what lies below z, and whether z is inside something (x: top, y: 1 inside, z: granular, w: its material). */
+fn groundAt(c: vec2<i32>, z: f32) -> vec4<f32> {
+  if (!inMap(c)) { return vec4<f32>(-1e9, 0.0, 0.0, 0.0); }
   let cs = colSlots(u32(c.x), u32(c.y));
   var top = -1e9;
   var gran = 0.0;
+  var mat = 0u;
   for (var s = 0u; s < cs.y; s++) {
     let v = layersIn[cs.x + s];
     if (ivEmpty(v)) { break; }
@@ -258,11 +263,15 @@ fn groundAt(c: vec2<i32>, z: f32) -> vec3<f32> {
     let z1 = ivZ1(v);
     if (z0 > z) { break; }
     top = z1;
-    gran = select(0.0, 1.0, matState(ivMat(v)) == ST_GRANULAR);
-    if (z < z1) { return vec3<f32>(z1, 1.0, gran); }
+    mat = ivMat(v);
+    gran = select(0.0, 1.0, matState(mat) == ST_GRANULAR);
+    if (z < z1) { return vec4<f32>(z1, 1.0, gran, f32(mat)); }
   }
-  return vec3<f32>(top, 0.0, gran);
+  return vec4<f32>(top, 0.0, gran, f32(mat));
 }
+
+/** A structure of the map's (the layers' concrete, brick, rust, steel, canvas): touched by a body, it wakes into one. */
+fn wakeable(m: u32) -> bool { return m == 5u || m == 11u || m == 7u || m == 20u || m == 21u; }
 
 @compute @workgroup_size(64)
 fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -284,6 +293,9 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   // a shove, which looks like energy from nowhere); one deeper than the
   // material can bear crumbles the voxel to its loose material.
   let p0 = px[2u * i + 1u].xyz;
+  // a structure of the map's it ran into (column + 1): the host wakes it
+  var touched = 0u;
+  let moving = length(v) > 0.8;
 
   // the ground under it
   let c = cellAt(x.xy);
@@ -296,6 +308,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
       x.z = p0.z;
     }
     nsum += vec3<f32>(0.0, 0.0, 1.0);
+    if (moving && wakeable(u32(g.w)) && inMap(c)) { touched = colIdxI(c) + 1u; }
   }
   // the columns around: a wall is one standing higher than a step up
   if (inMap(c)) {
@@ -306,6 +319,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
       if (gn.x - (x.z - RAD) <= STEP_UP) { continue; }
       if (gn.y < 0.5 && gn.x < x.z - RAD) { continue; }
       let into = dot(x.xy - p0.xy, DIRV[k]);
+      if (moving && wakeable(u32(gn.w)) && inMap(nbr(c, k))) { touched = colIdxI(nbr(c, k)) + 1u; }
       if (into > 0.0) {
         fastest = max(fastest, dot(v.xy, DIRV[k]) * (1.0 - 0.6 * gn.z));
         x -= vec3<f32>(DIRV[k] * into, 0.0);
@@ -377,7 +391,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   px[2u * i] = vec4<f32>(x, x0.w);
-  pc[i] = vec4<f32>(nsum, fastest);
+  pc[i] = vec4<f32>(nsum, bitcast<f32>(touched));
 }
 
 // ---- 5. velocities, bounce and friction, bonds that snap ------------------------------
@@ -408,7 +422,8 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     let jn = abs(vnNew - vnOld);
     if (lt > 1e-6) { vt *= max(0.0, 1.0 - pmB(m).z * jn / lt); }
     v = vt + n * vnNew;
-    pc[i] = vec4<f32>(0.0);
+    // (w, a touch, is the deaths pass's to report)
+    pc[i] = vec4<f32>(0.0, 0.0, 0.0, ct.w);
   }
   v *= 1.0 - AIR_DRAG * h;
   let sp = length(v);
@@ -485,12 +500,27 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
     let rel = x.xyz - PU.b0.xyz;
     let along = dot(rel, PU.b1.xyz);
     let off = length(rel - PU.b1.xyz * along);
-    if (along > -2.5 && along < 1.5 && off < PU.b0.w) {
+    // (all along its line in front of where it hits: through a hole it has
+    // cut it goes on heating the hole's sides, so it cuts through)
+    if (along < 1.5 && off < PU.b0.w) {
       let f = 1.0 - (off * off) / (PU.b0.w * PU.b0.w);
       tn += PU.b1.w * pmC(m).z * f * h;
     }
   }
-  pv[i] = vec4<f32>(pv[i].xyz, tn);
+  var vel = pv[i].xyz;
+  // a blast (the break tool, a meteor): what's inside crumbles, what's near is thrown out
+  let bs = bitcast<f32>(PU.c.w);
+  if (bs > 0.0 && PU.d.w > 0.0) {
+    let rel = x.xyz - PU.d.xyz;
+    let dist = length(rel);
+    if (dist < PU.d.w) {
+      px[2u * i] = vec4<f32>(x.xyz, PV_CRUMBLE);
+    } else if (dist < PU.d.w * 2.5 && x.w > 0.0) {
+      // (heavier voxels move less)
+      vel += rel / dist * bs * (1.0 - dist / (PU.d.w * 2.5)) * min(1.0, x.w * 2.5);
+    }
+  }
+  pv[i] = vec4<f32>(vel, tn);
 }
 
 // ---- 7. what crumbled or melted leaves the bodies -------------------------------------
@@ -498,6 +528,13 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
 fn deaths(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= PU.c.x) { return; }
+  // a map structure it touched: into the list the host reads (first 255 a tick)
+  let tc = bitcast<u32>(pc[i].w);
+  if (tc != 0u) {
+    pc[i].w = 0.0;
+    let k = atomicAdd(&touches[0], 1u);
+    if (k < 255u) { atomicStore(&touches[k + 1u], tc - 1u); }
+  }
   let x = px[2u * i];
   if (x.w > -1.5 || x.w < -3.5) { return; }
   let m = matOf(i);

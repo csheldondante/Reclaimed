@@ -2920,3 +2920,29 @@ lost its tip; the beam cut a steel bar on two stone blocks.
 Cost (Xe-LPG, 1400 × 900): 24 bodies, 1.5k voxels, 1.3 ms GPU a frame;
 10.8k voxels 1.5 ms (mostly the fixed ~60 dispatches a tick).
 
+## 2026-10-22 — physics: ruins wake when touched; softer metal; a beam you can see
+
+Round 44, the user's first try on a phone:
+- The map's own ruins stood fast while dropped things fell apart: they were
+  still the old layer structures. They stay terrain until something touches
+  them (the user: convert under interaction, keep it working well with the
+  terrain), then wake into physics bodies: the beam's hit, the break tool,
+  or a body running into one (collide reports the column, the host reads the
+  list four times a second). The wake floods through the cells they touch
+  (up to 6,000; the edge of a bigger piece stays pinned to the rest), one
+  body per connected piece, voxels where the cells stood; cells resting on
+  the ground are pinned foundations until their bonds break (unpinned, thin
+  walls on sand toppled the moment they woke). The break tool blasts bodies:
+  what's inside its radius crumbles, what's near is thrown.
+- Metal too springy and strong: steel yields at 0.04 (was 0.12), flows
+  plastically faster (0.85), tears at 30 % strain (was 60 %); rust weaker
+  still.
+- The beam was under the finger and too weak, and it pointed the wrong way:
+  camera.eye is the unit direction to the eye, not a position, so the beam
+  ran nearly level and stopped heating once the top voxels melted. Now it
+  runs down the view, heats everything along its line in front of the hit
+  (through its own hole it keeps eating the sides), at three times the
+  power, and is drawn: a glowing line from the sky to a dot, 80 px above the
+  finger on touch screens. Held on a steel bar on two stone blocks it cut
+  it in two in about 2 s, the hot ends sagging into the gap.
+

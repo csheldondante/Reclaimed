@@ -20,7 +20,7 @@ import { TICK_DT } from '../sim/simulation';
 
 /** particles, all bodies together */
 export const PV_CAP = 1 << 17;
-export const MAX_BODIES = 64;
+export const MAX_BODIES = 256;
 const HASH_N = 262144;
 
 /**
@@ -57,8 +57,8 @@ const PHYS: Partial<Record<number, PhysMat>> = {
   [MAT.Asphalt]: { ...ROCKY, density: 2.2, break: 0.05, crumble: 12, soften: 120, melt: 400, loose: MAT.Rubble },
   [MAT.Brick]: { ...ROCKY, density: 1.9, break: 0.025, crumble: 11 },
   [MAT.Bone]: { ...ROCKY, density: 1.9, break: 0.03, crumble: 12, loose: MAT.Drift },
-  [MAT.Steel]: { density: 7.8, stiffness: 0.9, yield: 0.12, plastic: 0.5, break: 0.6, restitution: 0.2, friction: 0.4, crumble: 40, soften: 450, melt: 1400, heat: 1.3, loose: MAT.Rubble },
-  [MAT.Rust]: { density: 7, stiffness: 0.75, yield: 0.07, plastic: 0.4, break: 0.25, restitution: 0.1, friction: 0.6, crumble: 18, soften: 400, melt: 1300, heat: 1.3, loose: MAT.Rubble },
+  [MAT.Steel]: { density: 7.8, stiffness: 0.75, yield: 0.04, plastic: 0.85, break: 0.3, restitution: 0.2, friction: 0.4, crumble: 40, soften: 450, melt: 1400, heat: 1.3, loose: MAT.Rubble },
+  [MAT.Rust]: { density: 7, stiffness: 0.6, yield: 0.03, plastic: 0.85, break: 0.12, restitution: 0.1, friction: 0.6, crumble: 18, soften: 400, melt: 1300, heat: 1.3, loose: MAT.Rubble },
   [MAT.Wood]: { density: 0.7, stiffness: 0.7, yield: 0.2, plastic: 0.2, break: 0.15, restitution: 0.2, friction: 0.5, crumble: 22, soften: 200, melt: 300, heat: 2, loose: MAT.Ash },
   [MAT.Canvas]: { density: 0.3, stiffness: 0.25, yield: 0.4, plastic: 0.3, break: 1, restitution: 0.05, friction: 0.8, crumble: 40, soften: 100, melt: 250, heat: 3, loose: MAT.Ash },
   [MAT.Trash]: { density: 1, stiffness: 0.4, yield: 0.2, plastic: 0.4, break: 0.12, restitution: 0.05, friction: 0.8, crumble: 10, soften: 200, melt: 350, heat: 2, loose: MAT.Litter },
@@ -79,7 +79,8 @@ export interface PhysBody {
   /** first particle */
   offset: number;
   dims: V3;
-  model: VoxelModel;
+  /** what it was made from (null: cut from the map's own structures) */
+  model: VoxelModel | null;
 }
 
 export interface Beam {
@@ -111,6 +112,12 @@ export class Physics implements SimSystem {
   private pc: GPUBuffer;
   private hash: GPUBuffer;
   private dep: GPUBuffer;
+  private touches: GPUBuffer;
+  private touchRead: GPUBuffer;
+  private touchBusy = false;
+  private touchAt = 0;
+  /** map structures (columns) that bodies ran into, a few times a second: the level wakes them */
+  onTouch?: (cols: number[]) => void;
   private uni: GPUBuffer;
   private mats: GPUBuffer;
   private bodyTable: GPUBuffer;
@@ -134,7 +141,9 @@ export class Physics implements SimSystem {
     this.pc = world.buf('physContact', PV_CAP * 16, S);
     this.hash = world.buf('physHash', (HASH_N + PV_CAP) * 4, S);
     this.dep = world.buf('physDeposit', world.cells * 8, S);
-    this.uni = world.buf('physU', 64, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.touches = world.buf('physTouches', 256 * 4, S);
+    this.touchRead = world.buf('physTouchRead', 256 * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+    this.uni = world.buf('physU', 80, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.mats = world.buf('physMats', 96 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.mats, 0, packPhysMats());
     this.bodyTable = world.buf('physBodies', MAX_BODIES * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
@@ -169,6 +178,7 @@ export class Physics implements SimSystem {
       22: this.uni,
       23: this.mats,
       24: this.bodyTable,
+      25: this.touches,
     };
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
@@ -184,7 +194,7 @@ export class Physics implements SimSystem {
     kernel('collide', { 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'read' });
     kernel('finalize', { 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 10: 'rw' });
     kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' });
-    kernel('deaths', { 3: 'rw', 5: 'rw', 8: 'rw', 12: 'rw', 13: 'rw', 14: 'rw' });
+    kernel('deaths', { 3: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 14: 'rw', 25: 'rw' });
     kernel('fold', { 14: 'rw', 16: 'rw' });
     kernel('prep', { 3: 'rw', 5: 'rw', 6: 'rw', 8: 'rw', 19: 'rw', 20: 'rw' });
   }
@@ -195,32 +205,61 @@ export class Physics implements SimSystem {
    */
   spawn(m: VoxelModel, pos: V3, q: Q, vel: V3 = [0, 0, 0]): PhysBody | null {
     const [w, d, h] = m.size;
+    return this.spawnLattice(
+      m.size,
+      (x, y, z) => m.vox[x + w * (y + d * z)],
+      (x, y, z) => {
+        const p = qRotate(q, [x + 0.5, y + 0.5, z + 0.5]);
+        return [pos[0] + p[0], pos[1] + p[1], pos[2] + p[2]];
+      },
+      { model: m, q, vel },
+    );
+    void h;
+  }
+
+  /**
+   * A body on a w × d × h lattice: matAt gives each cell's material (0 air),
+   * at its world position (also its rest shape: a map's hex columns go in
+   * where they stand, rows half a cell apart). pinned cells don't move (a
+   * ruin's foundation in the bedrock) until their bonds break.
+   */
+  spawnLattice(
+    dims: V3,
+    matAt: (x: number, y: number, z: number) => number,
+    at: (x: number, y: number, z: number) => V3,
+    opts: { model?: VoxelModel; q?: Q; vel?: V3; pinned?: (x: number, y: number, z: number) => boolean } = {},
+  ): PhysBody | null {
+    const [w, d, h] = dims;
     const n = w * d * h;
     if (this.bodies.length >= MAX_BODIES || this.used + n > PV_CAP) return null;
-    const body: PhysBody = { id: this.bodies.length, offset: this.used, dims: [w, d, h], model: m };
+    const q = opts.q ?? [0, 0, 0, 1];
+    const vel = opts.vel ?? [0, 0, 0];
+    const body: PhysBody = { id: this.bodies.length, offset: this.used, dims: [w, d, h], model: opts.model ?? null };
     const X = new Float32Array(n * 8);
     const V = new Float32Array(n * 4);
     const R = new Float32Array(n * 4);
     const RU = new Uint32Array(R.buffer);
     const Qb = new Float32Array(n * 4);
     const B = new Uint32Array(n);
-    const solid = (x: number, y: number, z: number) => x >= 0 && y >= 0 && z >= 0 && x < w && y < d && z < h && m.vox[x + w * (y + d * z)] !== 0;
+    const solid = (x: number, y: number, z: number) => x >= 0 && y >= 0 && z >= 0 && x < w && y < d && z < h && matAt(x, y, z) !== 0;
+    // rest positions in the body's own frame: the world positions turned back by q
+    const qi: Q = [-q[0], -q[1], -q[2], q[3]];
     for (let z = 0; z < h; z++)
       for (let y = 0; y < d; y++)
         for (let x = 0; x < w; x++) {
           const k = x + w * (y + d * z);
-          const mat = m.vox[k];
+          const mat = matAt(x, y, z);
           Qb.set(q, k * 4);
           if (!mat) {
             X[k * 8 + 3] = -1;
             continue;
           }
-          const r: V3 = [x + 0.5, y + 0.5, z + 0.5];
-          const p = qRotate(q, r);
+          const p = at(x, y, z);
           const dens = (PHYS[mat] ?? ROCKY).density;
-          X.set([pos[0] + p[0], pos[1] + p[1], pos[2] + p[2], 1 / dens, pos[0] + p[0], pos[1] + p[1], pos[2] + p[2], 0], k * 8);
+          const inv = opts.pinned?.(x, y, z) ? 0 : 1 / dens;
+          X.set([p[0], p[1], p[2], inv, p[0], p[1], p[2], 0], k * 8);
           V.set([vel[0], vel[1], vel[2], 0], k * 4);
-          R.set(r, k * 4);
+          R.set(qRotate(qi, p), k * 4);
           RU[k * 4 + 3] = (mat & 0xff) | (body.id << 8);
           // bonds to every solid lattice neighbour (phys.wgsl n26 order)
           let bits = 0;
@@ -247,6 +286,13 @@ export class Physics implements SimSystem {
     return body;
   }
 
+  /** A blast at a world point: voxels within `radius` crumble, those within 2.5× are thrown outward. */
+  blast(at: V3, radius: number, strength = 8): void {
+    this.blasts.push({ at, radius, strength });
+  }
+  private blasts: { at: V3; radius: number; strength: number }[] = [];
+  private blastNow = 0;
+
   /** Positions (xyz, inverse mass; then previous xyz, temperature) of the particles in use: tests and probes. */
   async readPositions(): Promise<Float32Array> {
     const n = Math.max(1, this.used) * 32;
@@ -260,6 +306,27 @@ export class Physics implements SimSystem {
     return out;
   }
 
+  private readTouches = false;
+
+  /** After the tick's submit: read the touches it copied, if any. */
+  afterSubmit(): void {
+    if (!this.readTouches) return;
+    this.readTouches = false;
+    this.touchRead.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const t = new Uint32Array(this.touchRead.getMappedRange().slice(0));
+        this.touchRead.unmap();
+        this.touchBusy = false;
+        const n = Math.min(255, t[0]);
+        if (!n) return;
+        // one per column, a handful at most
+        const cols = [...new Set(t.slice(1, 1 + n))].slice(0, 8);
+        this.onTouch?.(cols);
+      },
+      () => (this.touchBusy = false),
+    );
+  }
+
   /** Remove every body. */
   clear(): void {
     const empty = new Float32Array(this.used * 8);
@@ -270,7 +337,7 @@ export class Physics implements SimSystem {
   }
 
   private writeUniforms(tick: number): void {
-    const u = new ArrayBuffer(64);
+    const u = new ArrayBuffer(80);
     const f = new Float32Array(u);
     const ui = new Uint32Array(u);
     const b = this.beam;
@@ -280,6 +347,12 @@ export class Physics implements SimSystem {
       f.set([...b.dir, b.power], 8);
     }
     ui.set([this.used, this.bodies.length, tick, 0], 12);
+    // one blast a tick (the rest wait)
+    const bl = this.blasts.shift();
+    if (bl) f.set([...bl.at, bl.radius], 16);
+    this.blastNow = bl?.strength ?? 0;
+    ui[15] = 0;
+    f[15] = this.blastNow;
     this.device.queue.writeBuffer(this.uni, 0, u);
   }
 
@@ -313,5 +386,13 @@ export class Physics implements SimSystem {
     run('fold', this.world.groups);
     run('prep');
     pass.end();
+    // the touches, a few times a second (then cleared)
+    if (!this.touchBusy && ++this.touchAt >= 15) {
+      this.touchAt = 0;
+      this.touchBusy = true;
+      enc.copyBufferToBuffer(this.touches, 0, this.touchRead, 0, 1024);
+      enc.clearBuffer(this.touches);
+      this.readTouches = true;
+    }
   }
 }

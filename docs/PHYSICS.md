@@ -69,8 +69,8 @@ it never leaves faster than 0.3 cells/s otherwise.
 | | stiffness | yield | break strain | restitution | crumble (cells/s) | melt |
 |---|---|---|---|---|---|---|
 | stone, concrete, brick, bone | 1 | never | 0.025–0.04 | 0.1 | 11–14 | 1600 |
-| steel | 0.9 | 0.12 | 0.6 | 0.2 | 40 | 1400 |
-| rust | 0.75 | 0.07 | 0.25 | 0.1 | 18 | 1300 |
+| steel | 0.75 | 0.04 | 0.3 | 0.2 | 40 | 1400 |
+| rust | 0.6 | 0.03 | 0.12 | 0.1 | 18 | 1300 |
 | wood | 0.7 | 0.2 | 0.15 | 0.2 | 22 | 300 |
 | canvas, trash | 0.25–0.4 | 0.2–0.4 | 0.12–1 | 0.05 | 10–40 | 250–350 |
 
@@ -78,11 +78,29 @@ Heat between a material's soften and melt temperatures lowers its stiffness
 (to 8 %), its yield (to 0) and its break strain (to 30 %): hot steel sags.
 The beam heats steel about three times faster than stone.
 
+## The map's own structures
+
+They stay terrain (the layers) until something touches them (round 44):
+the beam, the break tool (💥), or a body running into them (collide
+reports the column — phys.wgsl `touches` — and the host reads the list a
+few times a second). Then `Level.wake` floods out from the cells near the
+touch through every structure cell they touch (concrete, brick, rust,
+steel, canvas: not stone, the bedrock; not asphalt, the roads), up to 6,000
+cells; those leave the layers and become bodies, one per connected piece,
+each voxel starting where its cell stood (rest positions are world
+positions: the hex rows half a cell apart). A cell resting on the ground is
+a foundation, pinned until its bonds break; so is the edge of a piece cut
+off at the limit (it holds on to the rest, still terrain).
+
 ## Using it
 
 - Sandbox tools: 🧱 **drop** (a body from the list: test shapes and every
-  model, a height above what's under the pointer) and 🔥 **beam** (hold on
-  something: it heats where the pointer is, down the camera's view).
+  model, a height above what's under the pointer), 🔥 **beam** (hold on
+  something: drawn from the sky to a dot, 80 px above the finger on a touch
+  screen; it heats everything along its line in front of where it hits, so
+  through a hole it has cut it keeps eating the sides and cuts through) and
+  💥 **break** (wakes what it hits, then a blast: what's inside crumbles,
+  what's near is thrown).
 - In the console: `reclaimed.phys.drop('steel', 18, 2, 2, x, y, above)`,
   `reclaimed.phys.spawn(model, x, y, above, yaw, pitch, roll)`,
   `reclaimed.phys.physics.readPositions()`.
@@ -101,10 +119,7 @@ one 30 × 30 × 12 block (10.8k voxels) 1.5 ms. Most of it is the fixed part
   bodies into `bodyProj` / `proj` so the ground treats them as solid.
 - Large bodies are only as stiff as 4 × 4 iterations allow (a 30-wide slab
   flexes a little): a cluster-level rigid pass for rigid materials.
-- The beam heats bodies only, not the ground; no beam drawn yet (embers at
-  the hit).
-- Layer structures (ruins in the map) aren't physics bodies: the old CPU
-  bodies (integrity.ts) still handle them. Next: turn a region of the layers
-  into physics voxels when something hits it.
+- The beam heats bodies only, not the ground (it wakes a map structure it
+  touches, then heats that).
 - Meteors, volcanoes (lava as a hot liquid that cools to stone).
 - Sleeping: every live voxel is solved every substep.

@@ -21,7 +21,7 @@ import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import type { MapData } from '../world/mapgen';
-import { columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
+import { cellRange, columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, type Interval } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -96,6 +96,9 @@ export class LevelScene implements Scene {
   physics?: Physics;
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
+  private beamWoke = -Infinity;
+  private beamLine?: SVGLineElement;
+  private beamDot?: SVGCircleElement;
   private beamPicking = false;
   /** sandbox: structural integrity and falling pieces (F7) */
   private integrity?: Integrity;
@@ -216,6 +219,14 @@ export class LevelScene implements Scene {
       this.physics = phys;
       sim.systems.splice(sim.systems.indexOf(sim.particles), 0, phys);
       core.renderer.addVoxels(phys.inst, phys.indirect);
+      // the map's own ruins stay terrain until something touches them (wake):
+      // the beam, the break tool, a body hitting them (phys.wgsl reports those)
+      phys.onTouch = (cols) => {
+        for (const c of cols) {
+          const [x, y] = cellPos(c % dims.w, Math.floor(c / dims.w));
+          void this.wake(x, y, -1, 1.5);
+        }
+      };
       this.editor = new Editor(host.ui, (sp) => (this.speed = sp), {
         undo: () => this.undo(),
         capture: () => this.core.captureMap(),
@@ -234,6 +245,19 @@ export class LevelScene implements Scene {
       this.ring2 = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
       this.ring2.setAttribute('class', 'equator');
       svg.appendChild(this.ring2);
+      // the heat beam: a line down from the sky to where it's aimed, and a dot there
+      // (its own overlay: the brush ring's hides when no brush is out)
+      const beamSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      beamSvg.setAttribute('class', 'brush-ring');
+      beamSvg.style.pointerEvents = 'none';
+      this.beamLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+      this.beamLine.setAttribute('class', 'heat-beam');
+      beamSvg.appendChild(this.beamLine);
+      this.beamDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+      this.beamDot.setAttribute('class', 'heat-beam-dot');
+      this.beamDot.setAttribute('r', '0');
+      beamSvg.appendChild(this.beamDot);
+      host.ui.appendChild(beamSvg);
       host.ui.appendChild(svg);
       // pours keep landing after the press: the edit pass runs every tick
       core.sim.edit.always = true;
@@ -298,7 +322,7 @@ export class LevelScene implements Scene {
         }
         // the heat beam: on while held, aimed at what's under the pointer (frame())
         if (this.editor?.tool === 'beam') {
-          this.beamAt = [sx, sy];
+          this.beamAt = this.beamAim(sx, sy);
           return true;
         }
         // (a press that turns into a drag still places, once)
@@ -312,7 +336,7 @@ export class LevelScene implements Scene {
         return this.powers.gustStart(wx, wy);
       },
       dragMove: (sx, sy) => {
-        if (this.beamAt) return void (this.beamAt = [sx, sy]);
+        if (this.beamAt) return void (this.beamAt = this.beamAim(sx, sy));
         if (this.smashing) {
           this.pickSmash(sx, sy);
           return void this.smashAt(sx, sy, false);
@@ -325,6 +349,11 @@ export class LevelScene implements Scene {
         if (this.beamAt) {
           this.beamAt = undefined;
           if (this.physics) this.physics.beam = null;
+          this.beamLine?.setAttribute('x1', '0');
+          this.beamLine?.setAttribute('x2', '0');
+          this.beamLine?.setAttribute('y1', '0');
+          this.beamLine?.setAttribute('y2', '0');
+          this.beamDot?.setAttribute('r', '0');
           return;
         }
         this.smashing = false;
@@ -1000,6 +1029,176 @@ export class LevelScene implements Scene {
    * columns back. Refused (nothing changes) if a column would need more slots
    * than its chunk has.
    */
+  /** wakes take turns: each reads the layers the one before wrote */
+  private waking: Promise<void> = Promise.resolve();
+
+  /**
+   * The map's structures near a point come alive as physics bodies
+   * (docs/PHYSICS.md; round 44: ruins stay terrain until something touches
+   * them). Every structure cell within r of (x, y) (and of z, if z ≥ 0)
+   * seeds a flood through the cells it touches (the 26 around); what it finds
+   * leaves the layers, one body per connected piece, its voxels starting
+   * where the cells stood (the hex rows half a cell apart: rest positions are
+   * world positions). A cell resting on the ground is a foundation, pinned
+   * until its bonds break; so is a cell at the edge of a piece cut off at
+   * WAKE_MAX (it holds on to the rest, which stays terrain).
+   */
+  wake(x: number, y: number, z: number, r: number): Promise<void> {
+    this.waking = this.waking.then(() => this.wakeNow(x, y, z, r)).catch(ignoreTeardown);
+    return this.waking;
+  }
+
+  private async wakeNow(wx: number, wy: number, wz: number, r: number): Promise<void> {
+    const { core } = this;
+    const { dims, packed } = core;
+    const phys = this.physics!;
+    const WAKE_MAX = 6000;
+    const slots = new Uint32Array((await core.readBuffer('layers')).buffer);
+    // (structural: what the structure system holds up — not stone, the bedrock; not asphalt, the roads)
+    const ADOPT = new Set<number>([MAT.Concrete, MAT.Brick, MAT.Rust, MAT.Steel, MAT.Canvas]);
+    const key = (x: number, y: number, z: number) => (z * dims.h + y) * dims.w + x;
+    const cols = new Map<number, Interval[]>();
+    const colAt = (x: number, y: number) => {
+      const k = y * dims.w + x;
+      let c = cols.get(k);
+      if (!c) cols.set(k, (c = readColumn(packed, slots, x, y)));
+      return c;
+    };
+    /** the structure cell at (x, y, z): its material, and whether it rests on the ground */
+    const structAt = (x: number, y: number, z: number): { mat: number; ground: boolean } | null => {
+      if (x < 0 || y < 0 || x >= dims.w || y >= dims.h || z < 0) return null;
+      const col = colAt(x, y);
+      for (let k = 0; k < col.length; k++) {
+        const iv = col[k];
+        if (!ADOPT.has(iv.mat)) continue;
+        const [c0, c1] = cellRange(iv.z0, iv.z1);
+        if (z < c0 || z >= c1) continue;
+        const below = k > 0 ? col[k - 1] : null;
+        // (on the ground, rock or loose: a foundation)
+        const ground = z === c0 && (!below || (Math.abs(below.z1 - iv.z0) < 1e-3 && !ADOPT.has(below.mat)));
+        return { mat: iv.mat, ground };
+      }
+      return null;
+    };
+    type Cell = { x: number; y: number; z: number; mat: number; pin: boolean };
+    const piece = new Map<number, Cell>();
+    const queue: number[] = [];
+    // seeds: the structure cells near the point
+    const [cx, cy] = cellAt(wx, wy);
+    const R = Math.ceil(r) + 1;
+    for (let y = cy - R; y <= cy + R; y++)
+      for (let x = cx - R; x <= cx + R; x++) {
+        if (x < 0 || y < 0 || x >= dims.w || y >= dims.h) continue;
+        const [px, py] = cellPos(x, y);
+        if (Math.hypot(px - wx, py - wy) > r + 0.5) continue;
+        for (const iv of colAt(x, y)) {
+          if (!ADOPT.has(iv.mat)) continue;
+          const [c0, c1] = cellRange(iv.z0, iv.z1);
+          for (let z = c0; z < c1; z++) {
+            if (wz >= 0 && Math.abs(z + 0.5 - wz) > r + 0.5) continue;
+            const k = key(x, y, z);
+            if (piece.has(k)) continue;
+            const c = structAt(x, y, z);
+            if (!c) continue;
+            piece.set(k, { x, y, z, mat: c.mat, pin: c.ground });
+            queue.push(k);
+          }
+        }
+      }
+    if (!piece.size) return;
+    // the flood: everything they touch, up to WAKE_MAX
+    for (let q = 0; q < queue.length; q++) {
+      const c = piece.get(queue[q])!;
+      for (let dz = -1; dz <= 1; dz++)
+        for (let dy = -1; dy <= 1; dy++)
+          for (let dx = -1; dx <= 1; dx++) {
+            const nk = key(c.x + dx, c.y + dy, c.z + dz);
+            if (piece.has(nk)) continue;
+            const n = structAt(c.x + dx, c.y + dy, c.z + dz);
+            if (!n) continue;
+            // (too big: this edge holds on to what stays behind)
+            if (piece.size >= WAKE_MAX) {
+              c.pin = true;
+              continue;
+            }
+            piece.set(nk, { x: c.x + dx, y: c.y + dy, z: c.z + dz, mat: n.mat, pin: n.ground });
+            queue.push(nk);
+          }
+    }
+    // out of the layers: each touched column keeps the parts of its intervals not taken
+    const dev = this.host.gpu.device;
+    const byCol = new Map<number, Set<number>>();
+    for (const c of piece.values()) {
+      const k = c.y * dims.w + c.x;
+      if (!byCol.has(k)) byCol.set(k, new Set());
+      byCol.get(k)!.add(c.z);
+    }
+    for (const [k, zs] of byCol) {
+      const x = k % dims.w;
+      const y = (k - x) / dims.w;
+      const out: Interval[] = [];
+      for (const iv of colAt(x, y)) {
+        if (!ADOPT.has(iv.mat)) {
+          out.push(iv);
+          continue;
+        }
+        const [c0, c1] = cellRange(iv.z0, iv.z1);
+        let run = -1;
+        for (let z = c0; z <= c1; z++) {
+          const keep = z < c1 && !zs.has(z);
+          if (keep && run < 0) run = z;
+          if (!keep && run >= 0) {
+            out.push({ ...iv, z0: run === c0 ? iv.z0 : run, z1: z === c1 ? iv.z1 : z });
+            run = -1;
+          }
+        }
+      }
+      const { base, k: K } = columnSlots(packed, x, y);
+      dev.queue.writeBuffer(core.world.layers, base * SLOT_WORDS * 4, packColumn(out, K));
+    }
+    // one body per connected piece (the seeds may have found several)
+    const seen = new Set<number>();
+    for (const [sk, start] of piece) {
+      if (seen.has(sk)) continue;
+      seen.add(sk);
+      const part = [start];
+      for (let q = 0; q < part.length; q++) {
+        const c = part[q];
+        for (let dz = -1; dz <= 1; dz++)
+          for (let dy = -1; dy <= 1; dy++)
+            for (let dx = -1; dx <= 1; dx++) {
+              const nk = key(c.x + dx, c.y + dy, c.z + dz);
+              const n = piece.get(nk);
+              if (n && !seen.has(nk)) {
+                seen.add(nk);
+                part.push(n);
+              }
+            }
+      }
+      let lo = [Infinity, Infinity, Infinity];
+      let hi = [-Infinity, -Infinity, -Infinity];
+      for (const c of part) {
+        lo = [Math.min(lo[0], c.x), Math.min(lo[1], c.y), Math.min(lo[2], c.z)];
+        hi = [Math.max(hi[0], c.x), Math.max(hi[1], c.y), Math.max(hi[2], c.z)];
+      }
+      const at = (x: number, y: number, z: number) => piece.get(key(lo[0] + x, lo[1] + y, lo[2] + z));
+      const mine = new Set(part);
+      const body = phys.spawnLattice(
+        [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1],
+        (x, y, z) => {
+          const c = at(x, y, z);
+          return c && mine.has(c) ? c.mat : 0;
+        },
+        (x, y, z) => {
+          const [px, py] = cellPos(lo[0] + x, lo[1] + y);
+          return [px, py, lo[2] + z + 0.5];
+        },
+        { pinned: (x, y, z) => !!at(x, y, z)?.pin },
+      );
+      if (!body) this.hud.say('No room for more bodies.', 2);
+    }
+  }
+
   /** Drop the chosen physics body over what's under the cursor (docs/PHYSICS.md). */
   private dropAtPick(sx: number, sy: number): void {
     const { core } = this;
@@ -1017,10 +1216,26 @@ export class LevelScene implements Scene {
     }, ignoreTeardown);
   }
 
+  /** Where the beam aims for a pointer at (sx, sy): on a touch screen a little above the finger, so it can be seen. */
+  private beamAim(sx: number, sy: number): [number, number] {
+    const touch = window.matchMedia('(pointer: coarse)').matches;
+    return [sx, sy - (touch ? 80 : 0)];
+  }
+
   /** Aim the heat beam at what's under the pointer: down the camera's view, into the surface hit. */
   private aimBeam([sx, sy]: [number, number]): void {
     const { core } = this;
     const { camera } = core;
+    // drawn from the top of the screen, leaning a little, to the aim point
+    const flick = 2 + Math.random() * 1.5;
+    this.beamLine?.setAttribute('x1', String(sx + 120));
+    this.beamLine?.setAttribute('y1', '-20');
+    this.beamLine?.setAttribute('x2', String(sx));
+    this.beamLine?.setAttribute('y2', String(sy));
+    this.beamLine?.setAttribute('stroke-width', String(flick));
+    this.beamDot?.setAttribute('cx', String(sx));
+    this.beamDot?.setAttribute('cy', String(sy));
+    this.beamDot?.setAttribute('r', String(4 + flick));
     this.beamPicking = true;
     const [rx, ry] = [(sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH];
     core.renderer.pick(rx, ry).then((hit) => {
@@ -1031,10 +1246,15 @@ export class LevelScene implements Scene {
         return;
       }
       const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
-      const f = [camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1], camera.target[2] - camera.eye[2]];
-      const l = Math.hypot(f[0], f[1], f[2]) || 1;
+      // (camera.eye is the unit direction toward the eye: the view runs down -eye)
       const z = hit.z + 0.5;
-      this.physics.beam = { at: [x, y, z], dir: [f[0] / l, f[1] / l, f[2] / l], radius: 1.5, power: 3000 };
+      this.physics.beam = { at: [x, y, z], dir: [-camera.eye[0], -camera.eye[1], -camera.eye[2]], radius: 1.6, power: 9000 };
+      // a ruin of the map's it touches comes alive
+      // (at most a few times a second: each wake reads the layers back)
+      if (!(hit.flags & 0x8000) && performance.now() - this.beamWoke > 300) {
+        this.beamWoke = performance.now();
+        void this.wake(x, y, z, 2);
+      }
       core.sim.particles.burst({ kind: PK.Ember, x, y, z: z + 0.3, count: 2, speed: 2.5, spread: 0.3 });
     }, ignoreTeardown);
   }
@@ -1116,7 +1336,7 @@ export class LevelScene implements Scene {
     const { device } = this.host.gpu;
     for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * SLOT_WORDS * 4, w.data);
     // (the loose ground under it stays in the layers, under the model)
-    this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
+    if (!this.physics) this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
   }
 
   /**
@@ -1134,9 +1354,23 @@ export class LevelScene implements Scene {
     core.renderer.pick(rx, ry).then((hit) => {
       if (!hit) return;
       const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
+      const at: [number, number, number] = [x, y, hit.z + 0.5];
+      // physics (docs/PHYSICS.md): a ruin hit comes alive first, then a blast
+      // where it hit — what's inside crumbles, what's near is thrown — and the
+      // ground there is smashed as before
+      if (this.physics) {
+        const phys = this.physics;
+        const body = (hit.flags & 0x8000) !== 0;
+        void (body ? Promise.resolve() : this.wake(x, y, at[2], ed.radius + 2)).then(() => {
+          phys.blast(at, Math.max(1, ed.radius * 0.5), 6);
+          if (!body) core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
+          core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
+        });
+        return;
+      }
       // a fallen body under the cursor: break it in its own frame (round 18)
       if (hit.flags & 0x8000) {
-        this.integrity?.breakBodies([x, y, hit.z + 0.5], ed.radius);
+        this.integrity?.breakBodies(at, ed.radius);
         return;
       }
       core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });

@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 44 (session 5, `physics`) — first try on a phone
+
+- The brick looks great. What's already on the map didn't collapse.
+- Metal is too springy and strong: it should deform and break more easily.
+- The heat beam is hard to use (it's under the finger) and doesn't get
+  things hot enough.
+- The map's structures become physics bodies when something interacts with
+  them, not all at once; past some size not everything needs to be a body.
+  Keep it working well with the terrain.
+
 ## 2026-10-22 — round 43 (session 5, `physics`) — a physics playground
 
 - The valley works better than the sandbox right now: fix the sandbox and

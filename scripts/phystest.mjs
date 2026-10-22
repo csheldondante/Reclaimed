@@ -69,6 +69,29 @@ try {
         made.push(await P.drop('stone', 3, 4, 3, x - 6, y, 0.05));
         made.push(await P.drop('stone', 3, 4, 3, x + 6, y, 0.05));
         made.push(await P.drop('steel', 18, 2, 2, x, y, 3.3));
+      } else if (scene === 'ruin') {
+        // a block dropped on the map's nearest ruin (it wakes on the hit)
+        const core = R.core;
+        const slots = new Uint32Array((await core.readBuffer('layers')).buffer);
+        const P2 = core.packed;
+        let best = null;
+        for (let yy = 0; yy < core.dims.h; yy++)
+          for (let xx = 0; xx < core.dims.w; xx++) {
+            const k = P2.chunkTable[(Math.floor(yy / 16) * P2.chunksX + Math.floor(xx / 16)) * 2 + 1];
+            const base = P2.chunkTable[(Math.floor(yy / 16) * P2.chunksX + Math.floor(xx / 16)) * 2] + ((yy % 16) * 16 + (xx % 16)) * k;
+            for (let q = 0; q < k; q++) {
+              const m = slots[(base + q) * 4 + 2] & 255;
+              if (slots[(base + q) * 4 + 1] === 0) break;
+              if (m !== 11 && m !== 5) continue;
+              const wx = xx + 0.5 + 0.5 * (yy & 1);
+              const wy = (yy + 0.5) * 0.8660254;
+              const d = Math.hypot(wx - x, wy - y);
+              if (!best || d < best[2]) best = [wx, wy, d];
+            }
+          }
+        R.camera.target[0] = best[0];
+        R.camera.target[1] = best[1];
+        made.push(await P.drop('concrete', 4, 4, 4, best[0], best[1], 10));
       } else if (scene === 'stress') {
         // many bodies at once: the solver's cost
         for (let k = 0; k < 24; k++) {
@@ -80,6 +103,7 @@ try {
       } else if (scene === 'heat') {
         made.push(await P.drop('steel', 18, 2, 2, x, y, 4.1));
       }
+      window.__made = made.filter(Boolean).map((b) => b.id);
       return { at: [x, y], made: made.map((b) => b && { id: b.id, n: b.dims[0] * b.dims[1] * b.dims[2] }) };
     },
     scene,
@@ -88,10 +112,10 @@ try {
   );
   console.log('setup', JSON.stringify(setup));
   const report = () =>
-    page.evaluate(async () => {
+    page.evaluate(async (scene) => {
       const P = window.reclaimed.phys.physics;
       const X = await P.readPositions();
-      return P.bodies.map((b) => {
+      return P.bodies.filter((b) => scene === 'ruin' || window.__made.includes(b.id)).map((b) => {
         let n = 0;
         let lo = Infinity;
         let hi = -Infinity;
@@ -103,9 +127,9 @@ try {
           hi = Math.max(hi, X[i * 8 + 2]);
           hot = Math.max(hot, X[i * 8 + 7]);
         }
-        return `${b.model.id}: ${n} live, z ${lo.toFixed(2)}..${hi.toFixed(2)}${hot > 1 ? `, max temp ${hot.toFixed(0)}` : ''}`;
+        return `${b.model?.id ?? 'map'}: ${n} live, z ${lo.toFixed(2)}..${hi.toFixed(2)}${hot > 1 ? `, max temp ${hot.toFixed(0)}` : ''}`;
       });
-    });
+    }, scene);
   let t = 0;
   for (const s of shots) {
     if (scene === 'cut' && t === 0) {
@@ -116,18 +140,17 @@ try {
         R.scene.editor.select('beam');
         // the steel's middle voxel, top row
         const P = R.phys.physics;
-        const b = P.bodies[2];
+        const b = P.bodies[window.__made[2]];
         const X = await P.readPositions();
         const i = b.offset + Math.floor(b.dims[0] / 2) + b.dims[0] * b.dims[1];
         return R.camera.project(X[i * 8], X[i * 8 + 1], X[i * 8 + 2] + 0.5);
       });
-      await page.mouse.move(xy[0], xy[1] - 6);
+      await page.mouse.move(xy[0], xy[1]);
       await page.mouse.down();
-      const steps = Math.round((s - t) * 10);
-      for (let k = 0; k < steps; k++) {
-        await page.mouse.move(xy[0], xy[1] - 6 + (k / steps) * 12);
-        await new Promise((r) => setTimeout(r, 100));
-      }
+      // (a drag, not a tap: the beam is a held tool)
+      for (let k = 1; k <= 6; k++) await page.mouse.move(xy[0] + k * 2, xy[1]);
+      await page.mouse.move(xy[0], xy[1]);
+      await new Promise((r) => setTimeout(r, (s - t) * 1000));
     } else if (scene === 'heat') {
       // the beam held on the middle of the steel, aimed like the tool's pick:
       // at the highest live voxel near the target, re-aimed every 0.2 s
@@ -138,7 +161,7 @@ try {
           const P = R.phys.physics;
           const X = await P.readPositions();
           // (the bar slides on sloping sand: aim at its middle, top row, wherever it is)
-          const b = P.bodies[0];
+          const b = P.bodies[window.__made[0]];
           const [w, d, h] = b.dims;
           let i = b.offset + Math.floor(w / 2) + w * (d * (h - 1));
           if (X[i * 8 + 3] < 0) i = b.offset + Math.floor(w / 2);
@@ -152,6 +175,7 @@ try {
     await page.screenshot({ path: `${out}-${scene}-${String(s).replace('.', '_')}s.png` });
     if (scene === 'cut' && s === shots[shots.length - 2]) await page.mouse.up();
     console.log(`t=${s}s`, (await report()).join(' | '));
+    if (scene === 'cut') console.log('  beam', await page.evaluate(() => JSON.stringify(window.reclaimed.phys.physics.beam)), await page.evaluate(() => JSON.stringify(window.reclaimed.scene.beamAt)));
   }
   if (perf) {
     const ms = await page.evaluate(async () => {
