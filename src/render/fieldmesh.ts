@@ -62,10 +62,11 @@ export class FieldMesh {
     private device: GPUDevice,
     private world: WorldGpu,
     private profiler: Profiler,
+    byDefault = false,
   ) {
     const q = new URLSearchParams(location.search);
     const arg = q.get('mesh');
-    this.on = arg !== null && arg !== '0';
+    this.on = arg === null ? byDefault : arg !== '0';
     this.region = world.meshRegion;
     if (!this.on) {
       device.queue.writeBuffer(this.region, 0, new ArrayBuffer(REGION_BYTES));

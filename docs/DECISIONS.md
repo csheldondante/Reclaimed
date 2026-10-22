@@ -3,6 +3,42 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 45 (session 5, `physics`) — mesh in the sandbox; merge
+
+- The sandbox shows the field mesh (by default there; `?mesh=0` for the
+  prisms). Elsewhere it stays opt-in.
+- Metal a little easier to deform still; otherwise it looks great.
+- Merge `physics` into `grids`.
+
+## 2026-10-22 — round 44 (session 5, `physics`) — first try on a phone
+
+- The brick looks great. What's already on the map didn't collapse.
+- Metal is too springy and strong: it should deform and break more easily.
+- The heat beam is hard to use (it's under the finger) and doesn't get
+  things hot enough.
+- The map's structures become physics bodies when something interacts with
+  them, not all at once; past some size not everything needs to be a body.
+  Keep it working well with the terrain.
+
+## 2026-10-22 — round 43 (session 5, `physics`) — a physics playground
+
+- The valley works better than the sandbox right now: fix the sandbox and
+  iterate on it. A new branch, `physics`, cut from `grids` (it's more
+  experimental). It is a playground to test destruction, and terrain for
+  other games.
+- Materials with properties: metal deforms like World of Goo, both
+  elastically and inelastically; stone fractures into bigger pieces that
+  then simulate as rigid bodies.
+- Energy: be conservative on the side of losing it, never gaining it. How
+  it looks matters more than not interpenetrating; an overlap crumbles to
+  the non-solid version of the material (dust, gravel, sand) rather than
+  being pushed out. Big things tend to crumble and collapse and rarely
+  bounce; bias them down, which conveys scale. Small debris can still be
+  thrown up.
+- One GPU solver for every material (chosen over extending the CPU bodies).
+- Destruction to play with: a heat beam that cuts (first), then meteor
+  impacts and volcanoes.
+
 ## 2026-10-22 — round 42 (session 5, `grids`) — free play by default; low on phones
 
 - On a phone the camera seemed to lock: the reach's fence is invisible and

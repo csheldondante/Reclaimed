@@ -2888,3 +2888,71 @@ so it now opens in free play (the whole valley, the old rules); the story's
 rules are behind `?mode=story` (the menu's Free play button shows only
 then; scripts/gates.mjs asks for it). Making the fence readable is R11.
 
+## 2026-10-22 — physics: one GPU solver for every material
+
+Round 43, a new branch `physics` cut from `grids`: the sandbox as a
+destruction playground (and terrain for other games). The old CPU bodies
+read the world back, worked in tens of bodies, and the user found the
+sandbox worse than the valley. Now every voxel of a physics body is a
+particle (docs/PHYSICS.md): lattice shape matching on the GPU, one solver
+for every material, so steel bends (and stays bent past its yield) and
+stone stays rigid until its bonds snap and it goes on as rigid pieces.
+Heat softens and melts; the 🔥 beam tool cuts steel (white-hot, sagging,
+gone in about 2 s held). The 🧱 drop tool drops test shapes or any model.
+
+Energy, the user's rule: lose it, never gain it. First runs blew up:
+bodies spawned inside the loose ground (heightAt is the run's base) and
+were shoved out; then crumbled voxels dropped rubble into the column under
+the body and the push out of it became speed (a 30 × 30 × 12 block
+"exploded" to z = 100). Contacts now never push out: they only stop a
+voxel moving further in, an overlap it already has stays, and one too deep
+(or an impact over the material's crumble speed) crumbles it into its loose
+material. Restitution is low (stone 0.1, steel 0.2): big things thud,
+crack and settle. The same 30 × 30 × 12 concrete block dropped 4 cells:
+10,563 of 10,800 voxels left after 6 s, nothing higher than where it
+started. Voxels of one body that started close (a squeeze, a crack's two
+faces) never crumble each other (they had been: interior pits).
+
+Scenes (scripts/phystest.mjs): a steel beam over two stone posts arched
+under a dropped concrete block; a stone pillar toppled on sloping sand and
+lost its tip; the beam cut a steel bar on two stone blocks.
+
+Cost (Xe-LPG, 1400 × 900): 24 bodies, 1.5k voxels, 1.3 ms GPU a frame;
+10.8k voxels 1.5 ms (mostly the fixed ~60 dispatches a tick).
+
+## 2026-10-22 — physics: ruins wake when touched; softer metal; a beam you can see
+
+Round 44, the user's first try on a phone:
+- The map's own ruins stood fast while dropped things fell apart: they were
+  still the old layer structures. They stay terrain until something touches
+  them (the user: convert under interaction, keep it working well with the
+  terrain), then wake into physics bodies: the beam's hit, the break tool,
+  or a body running into one (collide reports the column, the host reads the
+  list four times a second). The wake floods through the cells they touch
+  (up to 6,000; the edge of a bigger piece stays pinned to the rest), one
+  body per connected piece, voxels where the cells stood; cells resting on
+  the ground are pinned foundations until their bonds break (unpinned, thin
+  walls on sand toppled the moment they woke). The break tool blasts bodies:
+  what's inside its radius crumbles, what's near is thrown.
+- Metal too springy and strong: steel yields at 0.04 (was 0.12), flows
+  plastically faster (0.85), tears at 30 % strain (was 60 %); rust weaker
+  still.
+- The beam was under the finger and too weak, and it pointed the wrong way:
+  camera.eye is the unit direction to the eye, not a position, so the beam
+  ran nearly level and stopped heating once the top voxels melted. Now it
+  runs down the view, heats everything along its line in front of the hit
+  (through its own hole it keeps eating the sides), at three times the
+  power, and is drawn: a glowing line from the sky to a dot, 80 px above the
+  finger on touch screens. Held on a steel bar on two stone blocks it cut
+  it in two in about 2 s, the hot ends sagging into the gap.
+
+## 2026-10-22 — physics: the sandbox in the field mesh; softer steel; merged into grids
+
+Round 45: the sandbox draws with the field mesh unless `?mesh=0` (WorldCore
+passes the sandbox flag to the renderer; FieldMesh takes it as its default
+when the URL says nothing); the rest of the game keeps the mesh opt-in.
+Steel deforms more easily still (stiffness 0.6, yield 0.025, tears at 25 %;
+rust 0.5, 0.02, 10 %): a concrete block dropped on a beam over two posts
+leaves it dented. With the mesh, the beam scene's GPU time: draw 2.9 ms,
+physics 1.0–1.2 ms. `physics` merged into `grids`.
+

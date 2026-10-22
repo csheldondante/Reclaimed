@@ -115,6 +115,8 @@ export class Simulation {
     }
     this.device.queue.submit([enc.finish()]);
     this.stats.afterSubmit();
+    // (systems added later, e.g. the sandbox's physics, may read back too)
+    for (const sys of this.systems) if (sys !== this.stats) (sys as { afterSubmit?: () => void }).afterSubmit?.();
     this.tick++;
   }
 
