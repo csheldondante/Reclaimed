@@ -2971,3 +2971,23 @@ sediment pass's hanging check then saw no floor and dropped the sand
 through the table: a projected interval the sand starts inside now holds
 it. Stress scene (24 bodies): physics 1.35 ms (1.3 before).
 
+## 2026-10-22 — physics: the air in a body stays air; landings shove the air and raise dust
+
+Round 47. The projection kept one stretch per column (the gap under a table
+read as solid). The user asked whether the bodies keep intervals in their
+own grids: the structure grids do (the projection walks their rigid grid),
+but a physics body has no rigid frame to walk (each voxel is where it is,
+bent or not). So prep sets one bit per cell of height under each voxel
+(`physCols`, 8 words a column) and the projection makes a stretch of each
+run of set bits. The user also wanted falls to kick up dust and wind: a
+voxel landing faster than 3 cells/s adds (speed − 3) × 0.1 to its wind
+texel's shove (`physPuff`, read by the wind field the next tick: it pushes
+the wind out from shoved texels within two, so a flat slab blows out from
+its edges at ~15 cells/s, enough to lift sand at 14), and may spawn a haze
+puff; each crumbled voxel now puffs one or two. Headless: a 10 × 10 slab
+dropped from 10 shoves its texels by up to 18.8; tan haze streams out from
+under it. GPU (Intel Xe-LPG): stress scene physics 1.20 ms, project 0.19 ms;
+one 30 × 30 × 12 block physics 2.0 ms, of which the column marks are under
+0.05 ms (2.03 with them, 1.98–2.03 with only the centre marked). `set` is a
+WGSL reserved word (CLAUDE.md gotchas).
+

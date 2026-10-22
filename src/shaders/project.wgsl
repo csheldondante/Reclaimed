@@ -19,8 +19,8 @@
 //     material, structure + 1 (0 a CPU body); z1 ≤ z0 none
 @group(0) @binding(3) var<storage, read> frames: array<Frame>;
 @group(0) @binding(4) var<storage, read> vox: array<u32>;
-// the physics voxels over each column (physics.ts, last tick): bitcast(top + 1),
-// 0xffffffff − bitcast(bottom + 1); 0 none
+// the physics voxels over each column (physics.ts, last tick): 8 words, bit z
+// set where a voxel's centre lies in cell z
 @group(0) @binding(5) var<storage, read> physCols: array<u32>;
 @group(0) @binding(24) var bodyCpu: texture_2d<f32>;
 @group(0) @binding(25) var bodyOut: texture_storage_2d<rgba32float, write>;
@@ -142,14 +142,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var out = cpu;
   // (a CPU body is one stretch; its material isn't known here: stone)
   if (cpu.x >= 0.0) { addStretch(vec4<f32>(cpu.x, cpu.y, f32(MAT_STONE), 0.0)); }
-  // (the physics voxels over it: one stretch, as a CPU body)
-  let ci = colIdx(id.x, id.y);
-  let pt = physCols[2u * ci];
-  if (pt != 0u) {
-    let top = bitcast<f32>(pt) - 1.0;
-    let bot = bitcast<f32>(0xffffffffu - physCols[2u * ci + 1u]) - 1.0;
-    addStretch(vec4<f32>(top, bot, f32(MAT_STONE), 0.0));
-    if (out.x < top) { out.x = top; out.z = -1.0; }
+  // the physics voxels over it: each run of cells with one, a stretch (as a
+  // CPU body), so the air under a table or between two bodies stays air
+  let pbase = colIdx(id.x, id.y) * 8u;
+  var runTop = -1;
+  for (var w = 7; w >= 0; w--) {
+    let bits = physCols[pbase + u32(w)];
+    if (bits == 0u && runTop < 0) { continue; }
+    for (var b = 31; b >= 0; b--) {
+      let z = w * 32 + b;
+      let on = (bits & (1u << u32(b))) != 0u;
+      if (on && runTop < 0) { runTop = z + 1; }
+      if (!on && runTop >= 0) {
+        addStretch(vec4<f32>(f32(runTop), f32(z + 1), f32(MAT_STONE), 0.0));
+        if (out.x < f32(runTop)) { out.x = f32(runTop); out.z = -1.0; }
+        runTop = -1;
+      }
+    }
+  }
+  if (runTop >= 0) {
+    addStretch(vec4<f32>(f32(runTop), 0.0, f32(MAT_STONE), 0.0));
+    if (out.x < f32(runTop)) { out.x = f32(runTop); out.z = -1.0; }
   }
   var fo = vec4<f32>(0.0, 0.0, 0.0, 0.0);
   for (var s = 0u; s < MAX_STRUCTS; s++) {

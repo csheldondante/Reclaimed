@@ -11,6 +11,8 @@
 // pass ≈ a breeze, two a gust, three a gale. The add is scaled by segment
 // length / stroke width so a pass adds the same whatever its speed.
 @group(0) @binding(16) var windOut: texture_storage_2d<rgba32float, write>;
+// air shoved by physics voxels landing, per texel (×1000; physics.ts, last tick)
+@group(0) @binding(30) var<storage, read> puff: array<u32>;
 
 const DT_W: f32 = 1.0 / 60.0;
 const DECAY_S: f32 = 7.0;
@@ -66,6 +68,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let d = length(o);
     if (d < 0.01 || d > ev.z) { continue; }
     v += o / d * ev.w * smoothstep(ev.z, ev.z * 0.45, d) * smoothstep(0.0, ev.z * 0.3, d);
+  }
+  // things landing shove the air out from under them (round 47): each
+  // texel's shove pushes the wind away from it, out to two texels
+  for (var dy = -2; dy <= 2; dy++) {
+    for (var dx = -2; dx <= 2; dx++) {
+      let n = t + vec2<i32>(dx, dy);
+      if ((dx == 0 && dy == 0) || any(n < vec2<i32>(0)) || any(n >= vec2<i32>(dims))) { continue; }
+      let s = f32(puff[u32(n.y) * dims.x + u32(n.x)]) / 1000.0;
+      if (s <= 0.0) { continue; }
+      let o = vec2<f32>(f32(-dx), f32(-dy));
+      let d = length(o);
+      v += o / d * min(s, 12.0) * (1.0 - d / 3.0);
+    }
   }
   let m = length(v);
   if (m > MAX_W) { v *= MAX_W / m; }

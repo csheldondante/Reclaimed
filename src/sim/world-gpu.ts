@@ -116,9 +116,12 @@ export class WorldGpu {
   /** structure grids (grids.wgsl): frames, and the voxel pool */
   readonly strFrames: GPUBuffer;
   /** the physics voxels as each column sees them (physics.ts writes it each tick; project.wgsl
-   *  merges it into bodyProj / proj): 2 u32 per column, bitcast(top + 1) and
-   *  0xffffffff − bitcast(bottom + 1), both 0 for none */
+   *  merges it into bodyProj / proj): 8 u32 per column, bit z set where a voxel's
+   *  centre lies in cell z (0..255) */
   readonly physCols: GPUBuffer;
+  /** air the physics voxels shove as they land (physics.ts writes it each tick;
+   *  windfield.wgsl pushes the wind out from it): u32 per wind texel, ×1000 */
+  readonly physPuff: GPUBuffer;
   readonly strVox: GPUBuffer;
   /** voxels of the pool in use (Structures keeps it): the per-voxel kernels' size */
   strVoxels = 0;
@@ -228,6 +231,7 @@ export class WorldGpu {
     this.windFieldNext = device.createTexture({ label: 'windFieldNext', size: wsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.windField, this.windFieldNext);
     this.windFieldView = this.windField.createView();
+    this.physPuff = this.buf('physPuff', wsize.width * wsize.height * 4, S | GPUBufferUsage.COPY_DST);
     this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w * 5, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
     this.textures.push(this.cornerTex);
     this.cornerView = this.cornerTex.createView();
@@ -265,7 +269,7 @@ export class WorldGpu {
     this.projView = this.proj.createView();
     this.levelsView = this.levels.createView();
     this.strFrames = this.buf('strFrames', MAX_STRUCTS * FRAME_BYTES, S);
-    this.physCols = this.buf('physCols', this.cells * 8, S | GPUBufferUsage.COPY_DST);
+    this.physCols = this.buf('physCols', this.cells * 32, S | GPUBufferUsage.COPY_DST);
     this.strVox = this.buf('strVox', POOL_VOXELS * 4, S);
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.strata);

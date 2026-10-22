@@ -5,6 +5,9 @@
 //   node scripts/phystest.mjs [--url http://localhost:5178] [--out phys] [--scene drop|beam|heat]
 //     [--extra "&mesh=1"] [--zoom 3] [--shots 0.3,1,2.5,5]
 import puppeteer from 'puppeteer-core';
+import gifenc from 'gifenc';
+import { PNG } from 'pngjs';
+import fs from 'node:fs';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => {
@@ -103,6 +106,20 @@ try {
         }
       } else if (scene === 'heat') {
         made.push(await P.drop('steel', 18, 2, 2, x, y, 4.1));
+      } else if (scene === 'slam') {
+        // a wide slab dropped flat on sand: the dust and the air it shoves out
+        made.push(await P.drop('concrete', 10, 10, 2, x, y, 10));
+        made.push(await P.drop('stone', 3, 3, 8, x - 11, y + 3, 6, 0, 30, 0));
+        made.push(await P.drop('brick', 5, 5, 3, x - 4, y - 9, 14, 20));
+        // the most air any wind texel was shoved by, and how many shoved
+        window.__puff = { max: 0, n: 0 };
+        const poll = setInterval(async () => {
+          const a = new Uint32Array((await R.core.readBuffer('physPuff')).buffer);
+          let m = 0, n = 0;
+          for (const v of a) if (v) { n++; m = Math.max(m, v); }
+          if (m > window.__puff.max) window.__puff = { max: m / 1000, n };
+        }, 30);
+        setTimeout(() => clearInterval(poll), 3000);
       } else if (scene === 'sand') {
         // sand poured on a slab and a table: it should lie on them, not fall through
         made.push(await P.drop('concrete', 8, 8, 2, x - 5, y, 0.2));
@@ -145,6 +162,22 @@ try {
       });
     }, scene);
   let t = 0;
+  // --gif out.gif: the first --frames × 80 ms after setup, the middle of the view
+  const gif = opt('gif', '');
+  if (gif) {
+    const { GIFEncoder, quantize, applyPalette } = gifenc;
+    const enc = GIFEncoder();
+    const clip = { x: 350, y: 175, width: 700, height: 500 };
+    for (let i = 0, n = Number(opt('frames', '40')); i < n; i++) {
+      const png = PNG.sync.read(Buffer.from(await page.screenshot({ type: 'png', clip })));
+      const pal = quantize(png.data, 256);
+      enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: 80 });
+      await new Promise((r) => setTimeout(r, 80));
+    }
+    enc.finish();
+    fs.writeFileSync(gif, enc.bytes());
+    console.log('saved', gif);
+  }
   for (const s of shots) {
     if (scene === 'cut' && t === 0) {
       // the tool, as a player uses it: select it, hold the mouse on the beam's middle, sweep across it
@@ -189,6 +222,7 @@ try {
     await page.screenshot({ path: `${out}-${scene}-${String(s).replace('.', '_')}s.png` });
     if (scene === 'cut' && s === shots[shots.length - 2]) await page.mouse.up();
     console.log(`t=${s}s`, (await report()).join(' | '));
+    if (scene === 'slam') console.log('  puff', await page.evaluate(() => JSON.stringify(window.__puff)));
     if (scene === 'sand')
       for (const dx of [-5, 5])
         console.log(
@@ -209,7 +243,7 @@ try {
         await new Promise((r) => requestAnimationFrame(r));
         for (const [n, v] of prof.passMs) sums[n] = (sums[n] ?? 0) + v / 120;
       }
-      return Object.entries(sums).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([n, v]) => `${n} ${v.toFixed(2)}`).join(', ');
+      return Object.entries(sums).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([n, v]) => `${n} ${v.toFixed(2)}`).join(', ');
     });
     console.log('GPU ms:', ms);
   }

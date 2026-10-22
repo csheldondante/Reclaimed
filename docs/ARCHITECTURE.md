@@ -257,10 +257,13 @@ read the layers (ground contacts) and write crumbled voxels into `deposit`
 (y amount, z material, through their own per-column atomics) and chips,
 dust and embers into the particle ring; the renderer draws their instances
 with the body pipeline (`Renderer.addVoxels`). The nature grid sees them
-through `physCols` (WorldGpu: per column the top and bottom of the voxels
-over it, as ordered float bits, refilled by phys.wgsl `prep` each tick);
-project.wgsl merges that into `bodyProj` / `proj` as one stretch per column
-(like a CPU body: aux 0), so sand and water lie on them a tick later.
+through `physCols` (WorldGpu: 8 words per column, bit z set where a voxel's
+centre lies in cell z, refilled by phys.wgsl `prep` each tick); project.wgsl
+merges each run of set cells into `bodyProj` / `proj` as a stretch (like a
+CPU body: aux 0), so sand and water lie on them a tick later and the air
+under a table stays air. Voxels landing hard add to `physPuff` (u32 per wind
+texel, ×1000; cleared each tick by physics.ts), which windfield.wgsl turns
+into wind pushing out from it.
 
 ## Rendering
 
