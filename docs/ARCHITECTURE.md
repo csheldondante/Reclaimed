@@ -449,7 +449,18 @@ only fall straight down — no rotation, sliding or bounce; collision points
 just inside the exposed voxel corners find the deepest overlap below them
 (solid run top, loose ground, a sleeping body's top); landing hard shatters
 them, `game/integrity.ts` impact()). Bodies draw as rotated cubes
-(`render.wgsl` vsBody/fsBody, buffer bound at 3). In the sandbox the GPU
+(`render.wgsl` vsBody/fsBody, buffer bound at 3). Any system or game can
+draw voxels this way: `Renderer.addVoxels(inst, indirect)` takes a
+GPU-written instance buffer and drawIndirect args (36 vertices, one
+instance a voxel); per voxel two vec4<u32>, (centre xyz as f32 bits,
+material word) and the rotation quaternion xyzw as f32 bits. The word:
+bits 0-7 material, 24-29 size (0 a whole cell, n is n/16 of a cell: 4 a
+quarter, for a fine game model, round 49), 30 a physics voxel (8-15 its
+speckle, 16-23 its heat), 31 a structure grid's (8-15 moss, 16-23 sand); a
+game model leaves 30-31 clear. They are lit and cast shadows like the
+world, with the field mesh or without, and pick as bodies (flag 0x8000).
+`WorldCore`'s last argument turns the field mesh on (the sandbox passes
+it). In the sandbox the GPU
 structure rule collapses damage only (`Globals.misc.y` = 2).
 
 Rigid bodies (round 17, K1–K2): bodies keep their own frame; at rest they

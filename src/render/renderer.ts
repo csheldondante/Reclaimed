@@ -432,7 +432,16 @@ export class Renderer {
     if (this.bodyCount > 0) this.device.queue.writeBuffer(this.bodyBuf, 0, data, 0, this.bodyCount * 8);
   }
 
-  /** Draw more voxels in the body format (render.wgsl vsBody) from a GPU-written instance buffer and its indirect args. */
+  /**
+   * Draw more voxels in the body format (render.wgsl vsBody) from a
+   * GPU-written instance buffer and its indirect args (drawIndirect: 36
+   * vertices, one instance per voxel): lit, shadowed, with or without the
+   * field mesh. Per voxel two vec4<u32>: centre xyz (f32 bits) and the
+   * material word, then the rotation quaternion xyzw (f32 bits). The word:
+   * bits 0-7 material, 24-29 the voxel's size (0 a whole cell, n n/16 of a
+   * cell), 30 a physics voxel (8-15 speckle, 16-23 heat), 31 a structure
+   * grid's; leave 30 and 31 clear for a game model. See ARCHITECTURE.md.
+   */
   addVoxels(inst: GPUBuffer, indirect: GPUBuffer): void {
     this.voxelSources.push({
       indirect,

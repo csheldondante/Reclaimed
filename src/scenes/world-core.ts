@@ -67,8 +67,8 @@ export class WorldCore {
     readonly map: MapData,
     particleCap: number,
     minK?: number,
-    /** the sandbox: drawn with the field mesh unless ?mesh=0 (round 45) */
-    sandbox = false,
+    /** drawn with the field mesh unless ?mesh=0 (the sandbox, round 45; a game that wants it) */
+    fieldMesh = false,
   ) {
     const { device } = host.gpu;
     this.dims = map.grid.dims;
@@ -78,7 +78,7 @@ export class WorldCore {
     this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     this.sim = new Simulation(device, this.world, host.profiler);
-    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, sandbox);
+    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh);
     this.structures = new Structures(device, this.world);
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h);
     this.globals = {
