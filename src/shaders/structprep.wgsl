@@ -42,8 +42,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
       f = frames[u32(at.w)];
       c = at.xyz;
       w = vox[v];
-      // (none where the field mesh draws the structures: meshregion.wgsl)
-      if (voxMat(w) != 0u && !meshed(toWorld(f, vec3<f32>(c) + 0.5).xy)) {
+      if (voxMat(w) != 0u) {
         for (var k = 0u; k < 6u; k++) {
           let q = c + FACE6[k];
           if (!inGrid(f, q) || voxMat(vox[voxIndex(f, q)]) == 0u) { show = true; }

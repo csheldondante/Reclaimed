@@ -77,7 +77,7 @@ export class Renderer {
   private structInst: GPUBuffer;
   private structIndirect: GPUBuffer;
   private structGroup: GPUBindGroup;
-  /** the field mesh over one region (G13 C, a prototype: ?mesh=1) */
+  /** the field mesh (G13 h: ?mesh=1) */
   readonly fieldMesh: FieldMesh;
   private meshPipe?: GPURenderPipeline;
   private meshGroup?: GPUBindGroup;
@@ -276,14 +276,13 @@ export class Renderer {
     this.structInst = world.buf('structInst', POOL_VOXELS * 32, GPUBufferUsage.STORAGE);
     this.structIndirect = world.buf('structIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.structGroup = groupFor(this.structInst);
-    this.structPrep = makeCompute(device, 'structprep', [commonWgsl, gridsWgsl, meshRegionWgsl, structPrepWgsl], { 0: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 30: 'uniform' });
+    this.structPrep = makeCompute(device, 'structprep', [commonWgsl, gridsWgsl, structPrepWgsl], { 0: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw' });
     this.structPrepGroup = makeBindGroup(device, 'structprep', this.structPrep.layout, {
       0: world.globals,
       3: world.strFrames,
       4: world.strVox,
       5: this.structInst,
       6: this.structIndirect,
-      30: this.fieldMesh.region,
     });
     this.bodyPipe = device.createRenderPipeline({
       label: 'bodies',
@@ -316,7 +315,7 @@ export class Renderer {
         0: world.globals,
         1: world.chunks,
         2: world.materials,
-        3: this.fieldMesh.verts,
+        3: this.fieldMesh.vertexBuffer,
         4: world.contam,
         6: world.veg,
         7: world.renderFields,
@@ -446,7 +445,7 @@ export class Renderer {
     if (this.meshPipe) {
       pass.setPipeline(this.meshPipe);
       pass.setBindGroup(0, this.meshGroup!);
-      this.fieldMesh.draw(pass);
+      this.fieldMesh.draw(pass, cam);
       this.profiler.draws++;
     }
     if (this.bodyCount > 0) {

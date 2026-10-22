@@ -116,6 +116,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   // the loose ground on top is drawn as the coverSides sheet (vegprep.wgsl), not as boxes
   var run = 0u;
   var coverZ = -1.0;
+  var meshCol = false;
   if (inside) {
     let i = colIdx(id.x, id.y);
     cs = colSlots(id.x, id.y);
@@ -130,14 +131,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     var col: array<vec4<u32>, MAX_K>;
     for (var k = 0u; k < nSlots; k++) { col[k] = layers[cs.x + k]; }
     run = looseRun(&col, nSlots);
-    // (the field mesh draws this column: meshregion.wgsl)
-    if (meshed(cellPos(p))) { run = 0u; }
+    // (the field mesh draws this column but what's built: meshregion.wgsl)
+    meshCol = meshed(cellPos(p));
     // under a fair depth of loose ground the top face is covered by the sheet
     // (it only shows where the sheet thins out at its edges)
     if (run < nSlots && run > 0u && ivZ1(col[nSlots - 1u]) - ivZ0(col[run]) >= 0.3) { coverZ = ivZ1(col[run - 1u]); }
     topOnly = run;
     for (var k = 0u; k < run; k++) {
       let v = layers[cs.x + k];
+      if (meshCol && fieldMat(ivMat(v))) { continue; }
       var nz = 9999.0;
       if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); } else if (coverZ >= 0.0) { nz = coverZ; }
       var h = hideFaces(gt, ivZ1(v), nz);
@@ -163,6 +165,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var o = baseO + offO;
   for (var k = 0u; k < run; k++) {
     let v = layers[cs.x + k];
+    if (meshCol && fieldMat(ivMat(v))) { continue; }
     var nz = 9999.0;
     if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); } else if (coverZ >= 0.0) { nz = coverZ; }
     var hide = hideFaces(gt, ivZ1(v), nz);

@@ -2721,3 +2721,59 @@ Not yet: the region's edge shows a faint seam against the prisms; plant
 cover is still per cell; rock facets, soft material borders and grid lines
 aren't drawn on the mesh.
 
+## 2026-10-22 — grids: the field mesh over the whole map
+
+Round 39: the meshed ground looked right, the room didn't (surface nets
+bevel every edge by up to a sample), trash and rock wanted a rougher
+surface, and the goal is a phone.
+
+- Sharp things stay sharp: the structures are their cubes again, and the
+  mesh drops the quads whose four vertices are all structure, so what's left
+  of them in the mesh is the sand fillet against their walls. Built
+  materials (concrete, brick, asphalt, steel, rust, bone, canvas: solids but
+  rock and packed trash) aren't in the field at all; renderprep still draws
+  them as prisms. (Meshed, the sandbox's ruin walls melted into cones.)
+- A detail layer in the shading: rock takes the faceted normals of round 28,
+  rubble, trash, litter and ruins chips a quarter cell across, each tilted
+  its own way with a dark seam; sand, soil, ash and silt stay smooth. Only
+  where a chip is a few pixels across.
+- The whole map: 32-cell chunks of the world, each with room for its own
+  vertices and indices and one indexed indirect draw, culled to the view on
+  the CPU. A hash pass (0.12 ms) finds the chunks whose columns or
+  structures changed; up to 8 a frame are rebuilt. Samples lie on one
+  lattice over the map and a chunk computes the cells one sample past its
+  low edges, so neighbours compute their shared vertices identically and
+  there's no seam.
+- The look follows the intervals more closely: a top-facing point takes its
+  run's top layer however thin (looking a fixed step into the surface went
+  through thin dust and showed what was under it, in patches), blended with
+  the layer below as the sheets do; plants, stains and wetness blend over
+  the three nearest cells (they were hexagons); the cell a point takes its
+  material from is jittered a quarter cell, so borders between grounds are
+  ragged rather than hexagons; the shadow test is lifted 0.6 (the smoothed
+  surface dips under the columns' tops, and the heightfield shadow streaked
+  the slopes).
+
+Rebuilds were costlier than the region test suggested: every thread read
+its job, and claimed its vertex or index slot, with an atomic on the shared
+state, and atomics skip the caches — 8 chunks took 5.5 ms. The first thread
+of each workgroup now reads the job for it and claims its vertices with one
+atomic: 0.84 ms. The valley's sim changes 15–32 of its 64 chunks every
+frame (sediment creeping in the water), so heights are hashed to 1/16 of a
+cell: 0.38 ms on average.
+
+Measured (headless, real GPU, 1600 × 900, Dam Valley, scripts/perfpass.mjs,
+GPU time summed over passes, ms; fps is capped near 100 here):
+
+| | draw | field mesh | all GPU |
+|---|---|---|---|
+| prisms, high | 6.07 | — | 9.58 |
+| mesh, high | 3.01 | 0.92 | 7.34 |
+| mesh, medium | 2.08 | 0.93 | 6.37 |
+| mesh, low | 1.31 | 0.94 | 5.68 |
+| prisms, low | 2.87 | — | 6.21 |
+
+(field mesh before the 1/16 hash.) Mesh: 126k vertices, 221k triangles for
+the valley, ~10 MB with room to spare (vertices 32 bytes). Of what's left,
+the simulation is ~3.5 ms a frame: next for the phone.
+

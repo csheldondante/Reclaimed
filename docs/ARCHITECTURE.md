@@ -265,16 +265,28 @@ can't take a first instance without an optional feature). A soft top's side
 counts as hidden where both its corners are smoothed (shared, so the
 neighbour's top runs through them) and the neighbour is solid up to its loose
 run; a sheet's where `sheetGap` (terrainshape.wgsl) is false at both corners.
-The field mesh (G13 h, a prototype behind `?mesh=1`; fieldmesh.wgsl,
-meshdraw.wgsl, render/fieldmesh.ts): over one region (the `MeshRegion`
-uniform, meshregion.wgsl, binding 30) a signed field evaluated on the fly
-from the intervals (each column's vertical distance to its solid, blended
-over the three nearest centres) and the structures' voxels (box distance in
-their rotated frames), joined by a smooth minimum, is meshed by surface
-nets into an indexed list (drawIndexedIndirect). Renderprep, vegprep and
-structprep leave the region's columns, sheets and voxels to it; water and
-plants stay. The fragment shader takes its material from the interval the
-point lies in, so the look still comes from the intervals.
+The field mesh (G13 h, behind `?mesh=1`; fieldmesh.wgsl, meshdraw.wgsl,
+render/fieldmesh.ts): the terrain is a surface-nets mesh of a signed field
+evaluated on the fly from the intervals (each column's vertical distance to
+its solid, blended over the three nearest centres) and the structures'
+voxels (box distance in their rotated frames, joined by a smooth minimum:
+the fillets). The map is cut into 32-cell chunks of the world, each with
+room for its own vertices and indices and one indexed indirect draw (culled
+to the view on the CPU). Every frame `hashChunks` hashes each chunk's
+columns (heights to 1/16) and the frames over it; changed chunks are
+rebuilt, 8 a frame at most (3 at spacing 0.5), by sampleField, makeVerts
+and makeQuads into a per-slot scratch grid. Samples lie on one lattice over
+the map and each chunk computes the cells one sample past its low edges, so
+the seams close. Built materials (`fieldMat`: solids but rock and trash)
+aren't in the field — renderprep still draws them as prisms — and quads
+that are all structure are dropped (the cubes draw them), so both stay
+sharp. The layout is the `MeshRegion` uniform (meshregion.wgsl, binding 30;
+renderprep and vegprep read it). The fragment shader takes its material
+from the interval the point lies in (a top-facing point: its run's top
+layer, blended with the one below when thin), so the look still comes from
+the intervals; plants, stains and wetness are blended over the three
+nearest cells; rock gets facets and rubble, trash and ruins chips (the
+detail layer).
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are

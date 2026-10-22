@@ -3,8 +3,12 @@
 // two vec4<u32> each. The shape is the field's; the look is the intervals':
 // each fragment finds the interval it lies in (one step into the surface)
 // and takes that interval's material, so the layers show on a cut slope just
-// as they did on a prism's side. Where the structure share is high it's a
-// structure's voxel instead (its moss and the sand over it, as fsBody draws).
+// as they did on a prism's side. Where the structure share is high (a fillet
+// against a structure's face; its cubes draw the rest) it's that voxel's
+// look instead (its moss and the sand over it, as fsBody draws).
+// A detail layer gives the hard and broken materials a rough surface in
+// the shading: rock in facets (rockFacet), rubble, trash, litter and ruins in
+// chips, each tilted its own way; sand, soil, ash and silt stay smooth.
 @group(0) @binding(9) var<storage, read> meshLayers: array<vec4<u32>>;
 
 struct MOut {
@@ -32,21 +36,49 @@ fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
   return o;
 }
 
-/** The material of column q at height z: the interval holding it, else the nearest (x), and that interval's top (y as bits). */
-fn meshMatAt(q: vec2<i32>, z: f32) -> vec2<u32> {
+/** What a fragment of column q's surface is made of: x its material, y the
+ *  material under it (0 none), z how thick its layer is, w the top of its
+ *  solid run (both as bits). */
+struct Look { mat: u32, below: u32, thick: f32, top: f32 };
+
+/**
+ * The interval holding height z in column q (else the nearest). A top-facing
+ * fragment within a cell of its solid run's top takes the run's top layer
+ * however thin it is (the smoothed surface runs a little above or below the
+ * tops), and the layer under that one, which shows through a thin top layer
+ * as on the prisms' sheets.
+ */
+fn meshLook(q: vec2<i32>, z: f32, up: bool) -> Look {
   let cs = colSlots(u32(q.x), u32(q.y));
   var best = 1e9;
-  var out = vec2<u32>(MAT_STONE, 0u);
+  var at = 0u;
+  var n = 0u;
   for (var i = 0u; i < cs.y; i++) {
     let v = meshLayers[cs.x + i];
     if (ivEmpty(v)) { break; }
+    n = i + 1u;
     let d = max(ivZ0(v) - z, z - ivZ1(v));
     if (d < best) {
       best = d;
-      out = vec2<u32>(ivMat(v), bitcast<u32>(ivZ1(v)));
+      at = i;
     }
   }
-  return out;
+  if (n == 0u) { return Look(MAT_STONE, 0u, 1.0, 0.0); }
+  // up its run to the top (touching intervals)
+  var t = at;
+  while (t + 1u < n && abs(ivZ0(meshLayers[cs.x + t + 1u]) - ivZ1(meshLayers[cs.x + t])) < 1e-3) { t += 1u; }
+  let runTop = ivZ1(meshLayers[cs.x + t]);
+  if (up && z > runTop - 1.0) { at = t; }
+  let v = meshLayers[cs.x + at];
+  var below = 0u;
+  if (at > 0u && abs(ivZ0(v) - ivZ1(meshLayers[cs.x + at - 1u])) < 1e-3) { below = ivMat(meshLayers[cs.x + at - 1u]); }
+  return Look(ivMat(v), below, ivZ1(v) - ivZ0(v), runTop);
+}
+
+/** A material's ground colour (blown dust: a greyer silt). */
+fn groundAlbedo(m: u32) -> vec3<f32> {
+  if (m == MAT_DRIFT) { return toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+  return toLinear(MATS[m].albedo.rgb);
 }
 
 @fragment
@@ -54,14 +86,23 @@ fn fsMesh(in: MOut) -> FOut {
   let nrm = normalize(in.nrm);
   // one step into the surface: the interval this point of it belongs to
   let ip = in.wpos - nrm * 0.2;
-  let cell = clampCell(cellAt(ip.xy));
+  // (looked up a little off the point, a quarter cell at random: the borders
+  // between cells of different ground come out ragged, not hexagons)
+  let jit = vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02));
+  let jo = vec2<f32>(randv(jit + vec3<i32>(41, 0, 0)), randv(jit + vec3<i32>(0, 43, 0))) - 0.5;
+  let cell = clampCell(cellAt(ip.xy + jo * 0.6));
   let ci = colIdxI(cell);
-  let mz = meshMatAt(cell, ip.z);
-  var mat = mz.x;
-  let isTop = nrm.z > 0.55 && in.wpos.z > bitcast<f32>(mz.y) - 0.8;
-  var alb = toLinear(MATS[mat].albedo.rgb);
-  // the loose ground in its own colour (blown dust a greyer silt)
-  if (mat == MAT_DRIFT) { alb = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+  let up = nrm.z > 0.55;
+  let lk = meshLook(cell, ip.z, up);
+  var mat = lk.mat;
+  // the cells' own fields blended over the three nearest (no hexagons in
+  // the plants or stains): contamination, plants, wetness, withering
+  let cf = cellFields(in.wpos.xy);
+  let isTop = up && in.wpos.z > lk.top - 0.8;
+  var alb = groundAlbedo(mat);
+  // a thin top layer shows the one beneath through it (a trace of blown dust
+  // doesn't flip the ground's colour — round 17)
+  if (isTop && lk.below != 0u) { alb = mix(groundAlbedo(lk.below), alb, smoothstep(0.02, 0.2, lk.thick)); }
   // per-voxel and sub-voxel variation (cell, whole heights), as the prisms had
   let vc = vec3<i32>(cell, i32(floor(ip.z)));
   let sub = vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02));
@@ -89,21 +130,21 @@ fn fsMesh(in: MOut) -> FOut {
     if (mat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
   }
   if (isTop) {
-    let c = contam[ci].x;
+    let c = cf.x;
     let stain = smoothstep(0.12, 1.1, c);
     let oil = mix(vec3<f32>(0.10, 0.09, 0.06), vec3<f32>(0.42, 0.40, 0.12), smoothstep(0.55, 0.95, n2));
     alb = mix(alb, toLinear(oil), stain * 0.8);
   }
   // wet ground darkens
-  alb *= 1.0 - MATS[mat].eco.w * 0.5 * smoothstep(0.15, 0.9, fields[ci].y);
+  alb *= 1.0 - MATS[mat].eco.w * 0.5 * smoothstep(0.15, 0.9, cf.z);
   // plant cover on tops, a few tufts of it up the slopes
-  let v = veg[ci];
+  let v = cf.y;
   if (v > 0.0) {
     let cover = select(smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2), smoothstep(0.0, 1.2, v), isTop);
     if (n1 < cover) {
       var g = mix(vec3<f32>(0.33, 0.40, 0.17), vec3<f32>(0.36, 0.54, 0.19), smoothstep(1.0, 2.0, v));
       g = mix(g, vec3<f32>(0.17, 0.33, 0.12), smoothstep(3.0, 4.5, v));
-      alb = wither(toLinear(g * (0.82 + 0.3 * n2)), wilt[ci].y, n2);
+      alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
     }
   }
   // a structure's face: its moss, and the sand lying against it
@@ -126,7 +167,28 @@ fn fsMesh(in: MOut) -> FOut {
     alb = mix(alb, sa, sw);
     if (sw > 0.5) { mat = voxMatR(w); }
   }
-  var col = alb * lighting(in.wpos, nrm);
+  // the detail layer (only where a chip is a few pixels across)
+  var lnrm = nrm;
+  if (CAM.viewport.z > 4.0 && sw < 0.5) {
+    if (mat == MAT_STONE) {
+      let rf = rockFacet(in.wpos, nrm, 1.0);
+      lnrm = rf.xyz;
+      alb *= rf.w;
+    } else if (jagged(mat)) {
+      // chips a quarter cell across (the colour specks' own grid)
+      let chip = vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.1));
+      let t = vec3<f32>(randv(chip + vec3<i32>(1, 0, 0)), randv(chip + vec3<i32>(0, 1, 0)), randv(chip + vec3<i32>(0, 0, 1))) - 0.5;
+      lnrm = normalize(nrm + (t - nrm * dot(t, nrm)) * 1.3);
+      // a darker gap between chips
+      let f = fract(in.wpos * 4.0 - nrm * 0.1);
+      let edge = min(min(f.x, 1.0 - f.x), min(min(f.y, 1.0 - f.y), min(f.z, 1.0 - f.z)));
+      alb *= 0.8 + 0.2 * smoothstep(0.0, 0.12, edge);
+    }
+  }
+  // (the shadow test lifted: the heightfield's shadows are cast from the
+  // columns' whole tops, and the smoothed surface dips under them between
+  // centres, which streaked the slopes)
+  var col = alb * lighting(in.wpos + vec3<f32>(0.0, 0.0, 0.6), lnrm);
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
@@ -134,4 +196,20 @@ fn fsMesh(in: MOut) -> FOut {
   return o;
 }
 
+/** contamination, plant cover, wetness and withering at xy, blended barycentrically over the three nearest cells. */
+fn cellFields(xy: vec2<f32>) -> vec4<f32> {
+  let t = triAt(xy);
+  var o = vec4<f32>(0.0);
+  for (var k = 0; k < 3; k++) {
+    let j = colIdxI(clampCell(t.c[k]));
+    o += t.w[k] * vec4<f32>(contam[j].x, veg[j], fields[j].y, wilt[j].y);
+  }
+  return o;
+}
+
 fn voxMatR(w: u32) -> u32 { return w & 0xffu; }
+
+/** Broken or built: rubble, trash, litter, and every solid but stone (ruins: concrete, brick, asphalt, steel). */
+fn jagged(m: u32) -> bool {
+  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE);
+}

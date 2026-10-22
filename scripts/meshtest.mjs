@@ -1,10 +1,10 @@
-// The field mesh prototype (G13 C): the sandbox with the structure-grids test
-// room (scripts/roomtest.mjs) placed tilted, meshed over the region round it,
-// next to the same scene drawn as prisms and cubes. Writes screenshots
+// The field mesh (G13 h): a level (the sandbox by default, with the
+// structure-grids test room of scripts/roomtest.mjs placed tilted) drawn as
+// the mesh, next to the same scene drawn as prisms. Writes screenshots
 // (<out>-{prisms,mesh}-{wide,close,low}.png) and prints the mesh's size and
 // what it costs (rebuilt every frame: the worst case).
 //
-//   node scripts/meshtest.mjs [--url http://localhost:5177] [--out mesh] [--r 24] [--h 0.5]
+//   node scripts/meshtest.mjs [--url http://localhost:5177] [--out mesh] [--h 1]
 //     [--seconds 5] [--only mesh|prisms] [--extra "&q=high"] [--level sandbox] [--at 128,120] [--noroom]
 import puppeteer from 'puppeteer-core';
 
@@ -15,8 +15,7 @@ const opt = (k, d) => {
 };
 const url = opt('url', 'http://localhost:5177');
 const out = opt('out', 'mesh');
-const r = Number(opt('r', 24));
-const h = Number(opt('h', 0.5));
+const h = Number(opt('h', 1));
 const seconds = Number(opt('seconds', 5));
 const only = opt('only', '');
 const extra = opt('extra', '');
@@ -55,10 +54,9 @@ try {
     // the room: 16 × 16, a foundation, floor z 3, roof z 12 with a 4 × 4 hole,
     // a doorway in the x = 0 wall; tilted 6° and rolled 3°
     await page.evaluate(
-      (at, r, h, noRoom) => {
+      (at, noRoom) => {
         const R = window.reclaimed;
         const [RX, RY] = at ? at.split(',').map(Number) : R.camera.target;
-        if (R.renderer.fieldMesh.on) R.renderer.fieldMesh.setRegion(RX, RY, r, h);
         const qAxis = (ax, a) => [ax[0] * Math.sin(a / 2), ax[1] * Math.sin(a / 2), ax[2] * Math.sin(a / 2), Math.cos(a / 2)];
         const qMul = (a, b) => [
           a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
@@ -86,8 +84,6 @@ try {
         R.camera.target[1] = RY;
       },
       at,
-      r,
-      h,
       argv.includes('--noroom'),
     );
     await new Promise((res) => setTimeout(res, 1500));
@@ -113,12 +109,12 @@ try {
         for (const [k, v] of prof.passMs) sum.set(k, (sum.get(k) ?? 0) + v);
         n++;
       }
-      return { fps: n / secs, avg: [...sum].map(([k, v]) => [k, v / n]), stats: R.renderer.fieldMesh.stats, counts: R.renderer.instanceCounts };
+      return { fps: n / secs, avg: [...sum].map(([k, v]) => [k, v / n]), stats: R.renderer.fieldMesh.stats, drawn: R.renderer.fieldMesh.drawn, counts: R.renderer.instanceCounts };
     }, seconds);
     const pick = (k) => (res.avg.find((a) => a[0] === k)?.[1] ?? 0).toFixed(3);
     console.log(
-      `${mode}: ${res.fps.toFixed(0)} fps  draw ${pick('draw')} ms  renderprep ${pick('renderprep')} ms  fieldmesh ${pick('fieldmesh')} ms` +
-        `  mesh ${res.stats.verts} verts ${res.stats.indices / 3} tris  prisms ${res.counts.prisms} tops ${res.counts.tops}`,
+      `${mode}: ${res.fps.toFixed(0)} fps  draw ${pick('draw')} ms  renderprep ${pick('renderprep')} ms  fieldmesh ${['hash', 'sample', 'verts', 'quads'].map((k) => pick('fieldmesh-' + k)).join(' + ')} ms` +
+        `  mesh ${res.stats.verts} verts ${res.stats.indices / 3} tris, ${res.drawn} chunks drawn, ${res.stats.changed} changed, ${res.stats.full} full  prisms ${res.counts.prisms} tops ${res.counts.tops}`,
     );
     await page.close();
   }

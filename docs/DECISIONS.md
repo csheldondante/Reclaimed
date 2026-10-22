@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 39 (session 5, `grids`) — sharp buildings, rough rock; mobile
+
+- The meshed terrain looks good; the building didn't (surface nets bevelled
+  it): structures stay sharp.
+- A detail layer: trash piles and rock jagged in the shading, sand and dirt
+  smooth.
+- The goal: run well on a phone (the demo is fun there but slightly
+  choppy). Keep going on look and performance.
+
 ## 2026-10-22 — round 38 (session 5, `grids`) — the field mesh
 
 - The intervals are storage — a fast, memory-efficient way to hold the
