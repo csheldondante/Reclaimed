@@ -1056,6 +1056,18 @@ fn fsBox(in: VOut) -> FOut {
     alb *= rf.w;
   }
   var col = alb * lighting(lpos, lnrm);
+  // lava (sim/lava.ts): its own light, by temperature (the damage bits):
+  // a dark crust with glowing cracks as it cools, orange to yellow-white hot
+  if (mat == MAT_LAVA_M) {
+    let t = f32(damage & 15u) / 15.0;
+    let flow = G.time * 0.15;
+    let cr = fbm2(in.wpos.xy * 1.3 + vec2<f32>(flow, -flow * 0.7));
+    let crack = smoothstep(0.42, 0.5, abs(cr - 0.5) * 2.0 + (1.0 - t) * 0.6);
+    let hot = mix(vec3<f32>(0.9, 0.12, 0.02), vec3<f32>(1.0, 0.75, 0.3), smoothstep(0.6, 1.0, t)) * (1.1 + 1.6 * t);
+    let crust = toLinear(vec3<f32>(0.12, 0.1, 0.09)) * lighting(lpos, lnrm);
+    // hot: mostly glowing with a little crust; cooling: crust with glowing seams
+    col = mix(hot * (0.8 + 0.4 * n1), crust, crack * smoothstep(0.95, 0.45, t));
+  }
   // life lens (hold Space): what keeps life out, around the cursor
   if (G.lens.w > 0.0 && in.nrm.z > 0.5) {
     let d = length(in.wpos.xy - G.lens.xy) / G.lens.z;

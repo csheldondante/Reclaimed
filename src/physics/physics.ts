@@ -181,6 +181,7 @@ export class Physics implements SimSystem {
       25: this.touches,
       26: world.physCols,
       27: world.physPuff,
+      28: world.lava,
     };
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
@@ -195,7 +196,7 @@ export class Physics implements SimSystem {
     kernel('hashInsert', { 3: 'rw', 9: 'rw' });
     kernel('collide', { 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'read' });
     kernel('finalize', { 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 27: 'rw' });
-    kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' });
+    kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 28: 'read' });
     kernel('deaths', { 3: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 14: 'rw', 25: 'rw' });
     kernel('fold', { 14: 'rw', 16: 'rw' });
     kernel('prep', { 3: 'rw', 5: 'rw', 6: 'rw', 8: 'rw', 19: 'rw', 20: 'rw', 26: 'rw' });

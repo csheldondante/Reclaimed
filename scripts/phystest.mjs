@@ -106,6 +106,29 @@ try {
         }
       } else if (scene === 'heat') {
         made.push(await P.drop('steel', 18, 2, 2, x, y, 4.1));
+      } else if (scene === 'melt') {
+        // the beam held on bare ground for 4 s: it melts a pit, the lava runs and sets
+        const col = await P.column(x, y);
+        const top = col[col.length - 1].z1;
+        R.scene.lava.beam = { at: [x, y, top], radius: 1.6, power: 9000 };
+        setTimeout(() => (R.scene.lava.beam = null), 4000);
+      } else if (scene === 'quench') {
+        // a lava pool melted by the beam, then water poured on it: steam
+        const col = await P.column(x, y);
+        R.scene.lava.beam = { at: [x, y, col[col.length - 1].z1], radius: 2, power: 9000 };
+        setTimeout(() => (R.scene.lava.beam = null), 3000);
+        let k = 0;
+        setTimeout(() => {
+          const t = setInterval(() => {
+            R.globals.events.push({ kind: 5, x, y, z: 3 * 32 + (k++ === 0 ? 512 : 0), radius: 3, strength: 1 });
+            if (k > 40) clearInterval(t);
+          }, 50);
+        }, 3500);
+      } else if (scene === 'volcano') {
+        // a vent on open ground, a steel beam and a pond near it
+        R.scene.lava.addVent(x, y, 20);
+        made.push(await P.drop('steel', 10, 2, 2, x + 4, y - 6, 0.2));
+        R.globals.events.push({ kind: 5, x: x - 8, y: y + 4, z: 3 * 32 + 512, radius: 3, strength: 3 });
       } else if (scene === 'slam') {
         // a wide slab dropped flat on sand: the dust and the air it shoves out
         made.push(await P.drop('concrete', 10, 10, 2, x, y, 10));
@@ -198,6 +221,20 @@ try {
       for (let k = 1; k <= 6; k++) await page.mouse.move(xy[0] + k * 2, xy[1]);
       await page.mouse.move(xy[0], xy[1]);
       await new Promise((r) => setTimeout(r, (s - t) * 1000));
+    } else if (scene === 'gbeam' && t === 0) {
+      // the beam tool held on bare ground, as a player does: it melts a pit
+      const xy = await page.evaluate(async () => {
+        const R = window.reclaimed;
+        R.scene.editor.select('beam');
+        const [x, y] = window.__at;
+        const c = await R.phys.column(x, y);
+        return R.camera.project(x, y, c[c.length - 1].z1);
+      });
+      await page.mouse.move(xy[0], xy[1]);
+      await page.mouse.down();
+      for (let k = 1; k <= 6; k++) await page.mouse.move(xy[0] + k * 2, xy[1]);
+      await page.mouse.move(xy[0], xy[1]);
+      await new Promise((r) => setTimeout(r, (s - t) * 1000));
     } else if (scene === 'heat') {
       // the beam held on the middle of the steel, aimed like the tool's pick:
       // at the highest live voxel near the target, re-aimed every 0.2 s
@@ -220,8 +257,24 @@ try {
     } else await new Promise((r) => setTimeout(r, (s - t) * 1000));
     t = s;
     await page.screenshot({ path: `${out}-${scene}-${String(s).replace('.', '_')}s.png` });
-    if (scene === 'cut' && s === shots[shots.length - 2]) await page.mouse.up();
+    if ((scene === 'cut' || scene === 'gbeam') && s === shots[shots.length - 2]) await page.mouse.up();
     console.log(`t=${s}s`, (await report()).join(' | '));
+    if (scene === 'melt' || scene === 'volcano' || scene === 'quench' || scene === 'gbeam')
+      console.log(
+        '  lava',
+        await page.evaluate(async () => {
+          const [x, y] = window.__at;
+          const R = window.reclaimed;
+          const L = new Float32Array((await R.core.readBuffer('lava')).buffer);
+          let n = 0, vol = 0, tMax = 0, gMax = 0;
+          for (let i = 0; i < L.length; i += 4) {
+            if (L[i] > 0.02) { n++; vol += L[i]; tMax = Math.max(tMax, L[i + 1]); }
+            gMax = Math.max(gMax, L[i + 2]);
+          }
+          const c = await R.phys.column(x, y);
+          return `cols ${n}, volume ${vol.toFixed(1)}, hottest ${tMax.toFixed(0)}, ground heat ${gMax.toFixed(0)} | centre ${c.map((v) => `${v.z0.toFixed(2)}-${v.z1.toFixed(2)} m${v.mat}`).join(', ')}`;
+        }),
+      );
     if (scene === 'slam') console.log('  puff', await page.evaluate(() => JSON.stringify(window.__puff)));
     if (scene === 'sand')
       for (const dx of [-5, 5])

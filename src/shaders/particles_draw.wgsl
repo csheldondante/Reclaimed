@@ -84,6 +84,12 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 1.2 + age * 2.6 + sr * 1.2;
     soft = 1.0;
   }
+  else if (kind == 8u && P.m.w == 2u) { // steam (lava under water): white, swelling fast, gone soon
+    let age = clamp(1.0 - P.p.w / 7.0, 0.0, 1.0);
+    col = vec4<f32>(vec3<f32>(0.86, 0.88, 0.9), 0.5 * (1.0 - age) * clamp(P.p.w, 0.0, 1.0));
+    size = 0.5 + age * 3.0 + sr;
+    soft = 1.0;
+  }
   else if (kind == 8u) { // smoke: grows and thins as it rises
     let age = clamp(1.0 - P.p.w / 11.0, 0.0, 1.0);
     col = vec4<f32>(vec3<f32>(0.22, 0.21, 0.2) + age * 0.15, 0.45 * (1.0 - age) * clamp(P.p.w, 0.0, 1.0));

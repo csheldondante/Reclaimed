@@ -113,6 +113,33 @@ hard it was hit, so a slab landing flat blows out from its edges; the wind
 lifts the sand round it like any gust) and may kick up a low dust cloud
 (haze particles). Every crumbled voxel puffs dust too.
 
+## Lava
+
+One molten material for the beam and volcanoes (round 47; sim/lava.ts,
+lava_flux.wgsl, lava.wgsl). A liquid field like oil: per column its depth
+and temperature, and the heat of the ground at the column's top.
+
+- **The beam on the ground** heats the column it hits (within 2.5 cells of
+  its top); past 1300 the top of the layers melts into lava (4000 of heat
+  per cell melted), so a held beam digs a glowing pit through sand and
+  stone alike (never below z 1), and the lava pools in it. The lava on it
+  is kept molten (no hotter than 1400).
+- **Volcano** (🌋 tap): a vent pours 6 cells³/s at 1350 for 25 s (four at
+  most), with a smoke plume, ash and embers.
+- **Flow**: virtual pipes, slow (gain 0.012, friction 0.9), only while hot
+  (fluidity from 750 to 1150) and not over a step under 0.12, so it runs in
+  tongues and stops as it cools; the heat travels with it.
+- **Cooling**: e-folding 0.06 a second per cell of depth (thin lava sets
+  first); water over it boils off as steam and quenches it. Below 750 it
+  sets at 0.6 cells/s into basalt on top of the column (under a skin of
+  loose ground that slid onto it, so it doesn't leave sand and basalt
+  slices). Basalt is part of the field mesh.
+- **Fire**: hot lava spits embers, which light what they land on.
+- **Bodies**: a voxel in lava heats toward its temperature (steel fastest),
+  softens and melts.
+- **Drawn** as prisms, by temperature: yellow-white hot, orange, then a dark
+  crust with glowing seams; it lights what's round it like fire.
+
 ## Using it
 
 - Sandbox tools: 🧱 **drop** (a body from the list: test shapes and every
@@ -121,11 +148,12 @@ lifts the sand round it like any gust) and may kick up a low dust cloud
   screen; it heats everything along its line in front of where it hits, so
   through a hole it has cut it keeps eating the sides and cuts through) and
   💥 **break** (wakes what it hits, then a blast: what's inside crumbles,
-  what's near is thrown).
+  what's near is thrown). The beam on bare ground melts it into lava; 🌋
+  **volcano** opens a vent where you tap.
 - In the console: `reclaimed.phys.drop('steel', 18, 2, 2, x, y, above)`,
   `reclaimed.phys.spawn(model, x, y, above, yaw, pitch, roll)`,
   `reclaimed.phys.physics.readPositions()`.
-- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one [--one mat,w,d,h,above] [--perf 1]`.
+- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
 
 ## Cost
 
@@ -137,7 +165,7 @@ one 30 × 30 × 12 block (10.8k voxels) 1.5 ms. Most of it is the fixed part
 
 - Large bodies are only as stiff as 4 × 4 iterations allow (a 30-wide slab
   flexes a little): a cluster-level rigid pass for rigid materials.
-- The beam heats bodies only, not the ground (it wakes a map structure it
-  touches, then heats that).
-- Meteors, volcanoes (lava as a hot liquid that cools to stone).
+- Volcanoes: a cone (the vent's ground pushed up), lava bombs (hot physics
+  bodies, once spent bodies can be reused), eruptions that build and fade.
+- Meteors.
 - Sleeping: every live voxel is solved every substep.
