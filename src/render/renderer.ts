@@ -83,6 +83,8 @@ export class Renderer {
   readonly indirect: GPUBuffer;
   private camBuf: GPUBuffer;
   private camData = new ArrayBuffer(CAMERA_BYTES);
+  /** ?smooth=0: tops lit flat, a hexagon at a time (the look before G13). */
+  private flatTops = new URLSearchParams(location.search).get('smooth') === '0';
   private depth?: GPUTexture;
   private pickTex?: GPUTexture;
   private pickBuf: GPUBuffer;
@@ -346,6 +348,8 @@ export class Renderer {
 
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
     cam.write(this.camData);
+    // look flags (render.wgsl Camera.eye.w)
+    new Float32Array(this.camData)[19] = this.flatTops ? 1 : 0;
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
     if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
     this.device.queue.writeBuffer(

@@ -5,7 +5,7 @@
 // and the two sides toward the eye (their own list: renderer.ts).
 struct Camera {
   viewProj: mat4x4<f32>,
-  eye: vec4<f32>,      // direction toward the eye (world), w unused
+  eye: vec4<f32>,      // direction toward the eye (world), w look flags (1: flat-lit tops, ?smooth=0)
   viewport: vec4<f32>, // px w, px h, px per world unit, 0
 };
 
@@ -306,6 +306,29 @@ fn faceUV(wpos: vec3<f32>, nrm: vec3<f32>) -> vec2<f32> {
 fn swayOffsetRigid(b: Box, off: vec3<f32>) -> vec3<f32> {
   if (b.mat == MAT_LEAVES && b.sx > 1.5) { return off; }
   return vec3<f32>(0.0);
+}
+
+/**
+ * A smooth top's normal at xy: the fitted planes (renderfields.wgsl) of the
+ * three cells round it, blended barycentrically over the triangle lattice of
+ * centres — so light runs smoothly across the cells instead of each hexagon
+ * taking its own flat normal (which is what made the hexes read). A cell
+ * whose top of this kind stands far from mine (a step, another level) is left
+ * out: its slope isn't this surface's.
+ */
+fn smoothNormal(xy: vec2<f32>, cell: vec2<i32>, kind: u32) -> vec3<f32> {
+  let own = planeAt(cell, kind);
+  let t = triAt(xy);
+  var g = vec2<f32>(0.0);
+  var ws = 0.0;
+  for (var k = 0; k < 3; k++) {
+    let pl = planeAt(clampCell(t.c[k]), kind);
+    if (abs(pl.c - own.c) > 1.2) { continue; }
+    g += t.w[k] * pl.g;
+    ws += t.w[k];
+  }
+  if (ws < 1e-3) { return normalize(vec3<f32>(-own.g, 1.0)); }
+  return normalize(vec3<f32>(-g / ws, 1.0));
 }
 
 fn sunDir() -> vec3<f32> { return normalize(vec3<f32>(G.sunX, G.sunY, G.sunZ)); }
@@ -738,6 +761,11 @@ fn fsBox(in: VOut) -> FOut {
   }
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
+  // soft ground and drift sheets: lit smoothly across their cells
+  if (in.nrm.z > 0.5 && (flags & 2u) == 0u && !carved && (u32(CAM.eye.w) & 1u) == 0u) {
+    if (mat == MAT_DRIFT) { lnrm = smoothNormal(in.wpos.xy, cell, 2u); }
+    else if ((flags & 1u) != 0u && MATS[mat].look.x > 0.0) { lnrm = smoothNormal(in.wpos.xy, cell, 0u); }
+  }
   var alb = toLinear(MATS[mat].albedo.rgb);
   // the loose layer is drawn in its own material's colour (dust, sand, ash, dirt)
   if (mat == MAT_DRIFT) {

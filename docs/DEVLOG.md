@@ -2652,3 +2652,23 @@ on production builds): draw 7.0 → 5.2 ms, 96 → 102 fps. renderprep +0.1 ms
 (it reads the corners now). Checked against the previous build with the sim
 stopped, three zooms on Dam Valley and the sandbox: the only differences are
 particles and cloud shadows (they move while the sim is stopped), no holes.
+
+## 2026-10-22 — grids: smooth-lit tops
+
+Soft tops and drift sheets already pass through shared corner heights (a
+continuous surface), but each was lit with its one fitted plane, so every
+hexagon showed as a facet. Their normal is now blended per pixel from the
+planes of the three cells round the point (barycentric over the lattice of
+centres, `smoothNormal` in render.wgsl; a cell whose top stands > 1.2 from
+mine is left out, so steps stay sharp). The dunes and slopes read as
+terrain; the hex outlines that remain are the grid lines and the per-cell
+colour variation. `?smooth=0` keeps the flat look to compare (Camera.eye.w).
+
+Cost: none measurable (draw 6.4–6.6 ms smooth against 6.7–6.8 flat, run to
+run noise ±0.3 ms on this machine; three plane reads per top pixel).
+
+Also measured on the way (Dam Valley, 1600 × 900): at render scale 0.5
+draw falls 5.7 → 2.6 ms, and with a flat-colour fragment shader to 2.4 ms —
+draw is now bound by fragment shading (~3.3 ms), not vertices (~1.6 ms).
+Emitting near cells first (front to back) didn't help (5.8 ms); storm and
+fair-weather cloud shadows and the sun-shadow test are each below the noise.
