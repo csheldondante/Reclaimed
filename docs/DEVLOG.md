@@ -2956,3 +2956,18 @@ rust 0.5, 0.02, 10 %): a concrete block dropped on a beam over two posts
 leaves it dented. With the mesh, the beam scene's GPU time: draw 2.9 ms,
 physics 1.0–1.2 ms. `physics` merged into `grids`.
 
+## 2026-10-22 — physics: sand and water see the bodies
+
+Round 46 (the user: proceed). The nature grid passed through physics
+bodies: poured sand fell through them, and loose ground slumping from under
+a body let it sink. Now prep marks, per column, the top and bottom of the
+voxels over it (`physCols`, atomics on positive float bits), and the
+projection pass merges that like a sleeping CPU body, so sand piles on a
+slab and a table and water flows round them. One stretch per column is
+enough for now (a body's inner air reads as solid). Headless: sand poured
+on a concrete slab and a table stays on both; blowing the slab away drops
+its sand. A jostled body rises a few hundredths into its sand, and the
+sediment pass's hanging check then saw no floor and dropped the sand
+through the table: a projected interval the sand starts inside now holds
+it. Stress scene (24 bodies): physics 1.35 ms (1.3 before).
+

@@ -256,8 +256,11 @@ GPU. The CPU places bodies (uploads them once) and aims the beam. They
 read the layers (ground contacts) and write crumbled voxels into `deposit`
 (y amount, z material, through their own per-column atomics) and chips,
 dust and embers into the particle ring; the renderer draws their instances
-with the body pipeline (`Renderer.addVoxels`). The nature grid doesn't see
-them yet.
+with the body pipeline (`Renderer.addVoxels`). The nature grid sees them
+through `physCols` (WorldGpu: per column the top and bottom of the voxels
+over it, as ordered float bits, refilled by phys.wgsl `prep` each tick);
+project.wgsl merges that into `bodyProj` / `proj` as one stretch per column
+(like a CPU body: aux 0), so sand and water lie on them a tick later.
 
 ## Rendering
 

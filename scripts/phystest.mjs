@@ -18,6 +18,7 @@ const extra = opt('extra', '');
 const zoom = Number(opt('zoom', '3'));
 const one = opt('one', 'stone,3,3,10,3');
 const perf = opt('perf', '0') === '1';
+const blastAt = Number(opt('blast', '5000'));
 const shots = opt('shots', '0.3,1,2.5,5').split(',').map(Number);
 const browser = await puppeteer.launch({
   executablePath: opt('chrome', 'C:/Program Files/Google/Chrome/Application/chrome.exe'),
@@ -43,7 +44,7 @@ try {
   await page.waitForFunction(() => window.reclaimed?.core, { timeout: 90000 });
   await new Promise((r) => setTimeout(r, 5000));
   const setup = await page.evaluate(
-    async (scene, zoom, one) => {
+    async (scene, zoom, one, blastAt) => {
       const R = window.reclaimed;
       document.querySelectorAll('.hint, .toast').forEach((e) => e.remove());
       const [x, y] = R.camera.target;
@@ -102,13 +103,26 @@ try {
         }
       } else if (scene === 'heat') {
         made.push(await P.drop('steel', 18, 2, 2, x, y, 4.1));
+      } else if (scene === 'sand') {
+        // sand poured on a slab and a table: it should lie on them, not fall through
+        made.push(await P.drop('concrete', 8, 8, 2, x - 5, y, 0.2));
+        made.push(await P.spawn(P.shapes.table(5, 1), x + 5, y, 0.2));
+        setTimeout(() => {
+          const ev = R.globals.events;
+          ev.push({ kind: 5, x: x - 5, y, z: 10 * 32 + 3 + 512, radius: 3, strength: 3 });
+          ev.push({ kind: 5, x: x + 5, y, z: 10 * 32 + 3 + 512, radius: 3, strength: 3 });
+        }, 1500);
+        // then the slab blown away: its sand should fall, not float
+        if (blastAt > 0) setTimeout(() => P.physics.blast([x - 5, y, 15], 6, 12), blastAt);
       }
       window.__made = made.filter(Boolean).map((b) => b.id);
+      window.__at = [x, y];
       return { at: [x, y], made: made.map((b) => b && { id: b.id, n: b.dims[0] * b.dims[1] * b.dims[2] }) };
     },
     scene,
     zoom,
     one,
+    blastAt,
   );
   console.log('setup', JSON.stringify(setup));
   const report = () =>
@@ -175,6 +189,16 @@ try {
     await page.screenshot({ path: `${out}-${scene}-${String(s).replace('.', '_')}s.png` });
     if (scene === 'cut' && s === shots[shots.length - 2]) await page.mouse.up();
     console.log(`t=${s}s`, (await report()).join(' | '));
+    if (scene === 'sand')
+      for (const dx of [-5, 5])
+        console.log(
+          `  column x${dx > 0 ? '+' : ''}${dx}:`,
+          await page.evaluate(async (dx) => {
+            const [x, y] = window.__at;
+            const c = await window.reclaimed.phys.column(x + dx, y);
+            return c.map((v) => `${v.z0.toFixed(2)}-${v.z1.toFixed(2)} m${v.mat}`).join(', ');
+          }, dx),
+        );
     if (scene === 'cut') console.log('  beam', await page.evaluate(() => JSON.stringify(window.reclaimed.phys.physics.beam)), await page.evaluate(() => JSON.stringify(window.reclaimed.scene.beamAt)));
   }
   if (perf) {

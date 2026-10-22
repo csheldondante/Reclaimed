@@ -80,6 +80,18 @@ struct PhysU {
 // draw instances (render.wgsl vsBody) and their indirect args
 @group(0) @binding(19) var<storage, read_write> inst: array<vec4<u32>>;
 @group(0) @binding(20) var<storage, read_write> indirect: array<atomic<u32>>;
+// what each column sees of the voxels (prep; project.wgsl reads it): bitcast(top + 1),
+// 0xffffffff − bitcast(bottom + 1) — positive floats order as their bits
+@group(0) @binding(26) var<storage, read_write> cols: array<atomic<u32>>;
+
+/** Mark the column under w as covered from z0 to z1. */
+fn splatCol(w: vec2<f32>, z0: f32, z1: f32) {
+  let c = cellAt(w);
+  if (!inMap(c)) { return; }
+  let ci = colIdxI(c);
+  atomicMax(&cols[2u * ci], bitcast<u32>(max(z1, 0.0) + 1.0));
+  atomicMax(&cols[2u * ci + 1u], 0xffffffffu - bitcast<u32>(max(z0, 0.0) + 1.0));
+}
 
 struct PartP { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 const K_CHIP_P: u32 = 5u;
@@ -585,6 +597,13 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   let i = id.x;
   var show = false;
   if (i < PU.c.x && alive(i)) {
+    // the nature grid sees it (sand and water lie on it): the columns under it,
+    // its centre and a little round it so a turned body leaves no holes
+    let xc = px[2u * i].xyz;
+    for (var k = 0u; k <= NDIR; k++) {
+      let o = select(DIRV[min(k, NDIR - 1u)] * 0.3, vec2<f32>(0.0), k == NDIR);
+      splatCol(xc.xy + o, xc.z - RAD, xc.z + RAD);
+    }
     // the six face neighbours are n26 4, 10, 12, 13, 15, 21
     let bonds = pb[i];
     let faces = (1u << 4u) | (1u << 10u) | (1u << 12u) | (1u << 13u) | (1u << 15u) | (1u << 21u);

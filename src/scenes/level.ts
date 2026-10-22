@@ -446,6 +446,12 @@ export class LevelScene implements Scene {
           }
           return this.physics?.spawn(m, [x - cx, y - cy, ground + above - lowZ], q, vel) ?? null;
         },
+        /** the layers' intervals of the column at world (x, y) (tests) */
+        column: async (x: number, y: number) => {
+          const slots = new Uint32Array((await core.readBuffer('layers')).buffer);
+          const [gx, gy] = cellAt(x, y);
+          return readColumn(core.packed, slots, gx, gy);
+        },
         drop: (mat: string, w: number, d: number, h: number, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0) => {
           const id = MAT[(mat[0].toUpperCase() + mat.slice(1)) as keyof typeof MAT];
           if (id === undefined) throw new Error(`no material "${mat}"`);

@@ -19,6 +19,9 @@
 //     material, structure + 1 (0 a CPU body); z1 ≤ z0 none
 @group(0) @binding(3) var<storage, read> frames: array<Frame>;
 @group(0) @binding(4) var<storage, read> vox: array<u32>;
+// the physics voxels over each column (physics.ts, last tick): bitcast(top + 1),
+// 0xffffffff − bitcast(bottom + 1); 0 none
+@group(0) @binding(5) var<storage, read> physCols: array<u32>;
 @group(0) @binding(24) var bodyCpu: texture_2d<f32>;
 @group(0) @binding(25) var bodyOut: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(26) var foreignOut: texture_storage_2d<rgba32float, write>;
@@ -139,6 +142,15 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var out = cpu;
   // (a CPU body is one stretch; its material isn't known here: stone)
   if (cpu.x >= 0.0) { addStretch(vec4<f32>(cpu.x, cpu.y, f32(MAT_STONE), 0.0)); }
+  // (the physics voxels over it: one stretch, as a CPU body)
+  let ci = colIdx(id.x, id.y);
+  let pt = physCols[2u * ci];
+  if (pt != 0u) {
+    let top = bitcast<f32>(pt) - 1.0;
+    let bot = bitcast<f32>(0xffffffffu - physCols[2u * ci + 1u]) - 1.0;
+    addStretch(vec4<f32>(top, bot, f32(MAT_STONE), 0.0));
+    if (out.x < top) { out.x = top; out.z = -1.0; }
+  }
   var fo = vec4<f32>(0.0, 0.0, 0.0, 0.0);
   for (var s = 0u; s < MAX_STRUCTS; s++) {
     let f = frames[s];
