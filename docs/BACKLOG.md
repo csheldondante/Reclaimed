@@ -124,6 +124,7 @@ The batch now (M), then the larger work (N) after an architecture review.
 | R8 | Puzzle catalogue + easter eggs to build from (docs/LEVELS.md): dust sea, ember relay, lightning rod, flood flush, retaining-wall slump, quarantine line, plateau, oil lake, drought, wind tunnel, firebreak, cascade, windbreak, bird bridge, the lab shell; seed caches, buried spring, hidden meadow | L | open |
 | R9 | Seed caches found: when the reach reaches an uncovered cache, it wakes (flowers, a message, a count) — kit `cache()` places them | S | open |
 | R5 | Story arc: valley = the lab that made the virus (biohazard signs on the tanks, ruined military vehicles as a quarantine barrier, signs of flight); then the escape from quarantine (highway); then the city wiped out by plague (N6, C7, C9) | L | open |
+| R11 | The reach's fence readable (round 42): on a phone the camera seemed locked — nothing shows the edge or says the green's spread opens it; a soft edge at the boundary and a hint (on `ambient`, where the story lives) | S | open |
 | N6 | Story through environment: the valley re-themed as a biological research base (biohazard sign, lab); highway barricades (quarantine); city tents (plague) | M | with C7/C9 |
 | N7 | Red sludge: a third liquid (dense, toxic) | M | open |
 | N8 | Body deformation (spring-linked voxel clusters, World of Goo-like) | L+ | later |

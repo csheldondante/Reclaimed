@@ -2879,3 +2879,12 @@ finger no longer leaves it stale). scripts/touchtest.mjs drives it with CDP
 touch events: before, the leftover finger gusted; now it pans. The story
 valley's hint says "hold ◎" on a phone (Space on a keyboard).
 
+## 2026-10-22 — grids: free play by default
+
+Round 42: playing `grids` on a phone, the camera seemed to lock — the
+story's reach fences it to the land round the green, and nothing shows the
+fence or says the green's spread opens it. `grids` is the rendering branch,
+so it now opens in free play (the whole valley, the old rules); the story's
+rules are behind `?mode=story` (the menu's Free play button shows only
+then; scripts/gates.mjs asks for it). Making the fence readable is R11.
+

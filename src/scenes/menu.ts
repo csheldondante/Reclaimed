@@ -201,7 +201,7 @@ export class MenuScene implements Scene {
     this.selected = lv;
     const prog = loadLevelProgress(lv.id);
     const btn = this.el.querySelector('[data-a="play"]') as HTMLButtonElement;
-    (this.el.querySelector('[data-a="free"]') as HTMLElement).style.display = lv.story && lv.generate && !this.buried.has(lv.id) ? '' : 'none';
+    (this.el.querySelector('[data-a="free"]') as HTMLElement).style.display = lv.story && lv.generate && !this.buried.has(lv.id) && new URLSearchParams(location.search).get('mode') === 'story' ? '' : 'none';
     if (this.buried.has(lv.id)) {
       const prev = levelById(previousLevel(lv.id));
       (this.el.querySelector('.level-name') as HTMLElement).textContent = 'Under the dust';

@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 42 (session 5, `grids`) — free play by default; low on phones
+
+- On a phone the camera seemed to lock: the reach's fence is invisible and
+  nothing says the green opens it; zooms and actions don't release it.
+  `grids` (the rendering branch) opens in free play; `?mode=story` for the
+  story's rules. A fence you can read (R11) is for `ambient`.
+- Low quality looks perfectly good on mobile.
+
 ## 2026-10-22 — round 41 (session 5, `grids`) — the water's film, shores and wind
 
 - The thin film of water should show on the mesh, even if only as a

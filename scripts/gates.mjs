@@ -55,7 +55,7 @@ else {
     const page = await browser.newPage();
     page.on('pageerror', (e) => errors.push(`${ab}: ${e.message}`));
     const t0 = Date.now();
-    await page.goto(`${base}/?skipmenu=1&level=${level}&tutorial=0&speed=${speed}`, { waitUntil: 'load' });
+    await page.goto(`${base}/?skipmenu=1&level=${level}&tutorial=0&mode=story&speed=${speed}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.reclaimed?.trial, { timeout: 90000 });
     const fatal = await page.$eval('.fatal', (e) => e.textContent).catch(() => null);
     if (fatal) throw new Error(`fatal overlay: ${fatal}`);
@@ -68,7 +68,7 @@ else {
   try {
     // the gate ids (from a first, quick look at the level)
     const probe = await browser.newPage();
-    await probe.goto(`${base}/?skipmenu=1&level=${level}&tutorial=0`, { waitUntil: 'load' });
+    await probe.goto(`${base}/?skipmenu=1&level=${level}&tutorial=0&mode=story`, { waitUntil: 'load' });
     await probe.waitForFunction(() => window.reclaimed?.trial, { timeout: 90000 });
     ids = await probe.evaluate(() => window.reclaimed.trial.gates.map((g) => g.id));
     await probe.close();
