@@ -185,10 +185,7 @@ fn fsMesh(in: MOut) -> FOut {
       alb *= 0.8 + 0.2 * smoothstep(0.0, 0.12, edge);
     }
   }
-  // (the shadow test lifted: the heightfield's shadows are cast from the
-  // columns' whole tops, and the smoothed surface dips under them between
-  // centres, which streaked the slopes)
-  var col = alb * lighting(in.wpos + vec3<f32>(0.0, 0.0, 0.6), lnrm);
+  var col = alb * lighting(in.wpos, lnrm);
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

@@ -2812,3 +2812,29 @@ The storm's cost is mostly draw (rain, water, its shade) and the water's
 spread, not rebuilding. Known: a thin film in the valley's basin is hidden
 under the smoothed floor (drawn as prisms it showed).
 
+## 2026-10-22 — grids: the sun's shadow map
+
+Round 40 asked whether a normal shadow pass would do instead of the sun
+march. With the terrain a mesh it does, and better: the march cast from the
+columns' whole tops, so shadows stepped a cell at a time, and needed a lift
+on the smoothed surface to stop streaking the slopes. Now, with the mesh on,
+a 2048² depth map over the whole map along the sun is drawn every frame by
+the same vertex shaders (the field mesh's every built chunk, the prisms, the
+plant boxes, the structures' cubes, the bodies), depth only, through a
+camera buffer holding the sun's orthographic matrix; the draw shaders look
+it up with four filtered comparison taps, nudged off the surface along the
+normal. Shadows follow the real shapes — the tilted room, the arch, the
+pillars, the plants — and the march is skipped (renderfields 0.32 → 0.21
+ms).
+
+Measured (Dam Valley, 1600 × 900, scripts/perfpass.mjs, ms):
+
+| | draw | shadow | renderfields | all GPU |
+|---|---|---|---|---|
+| prisms, high | 5.60 | — | 0.41 | 8.87 |
+| mesh, high | 3.13 | 0.20 | 0.21 | 6.64 |
+| mesh, low | 1.54 | 0.22 | 0.25 | 5.36 |
+
+Storm over the valley's water (scripts/stormtest.mjs, mesh): 7.15 ms GPU in
+the storm (10.2 with prisms, before the shadow map). The map costs 16 MB.
+

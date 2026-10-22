@@ -6,8 +6,33 @@
 struct Camera {
   viewProj: mat4x4<f32>,
   eye: vec4<f32>,      // direction toward the eye (world), w look flags (1: flat-lit tops, ?smooth=0; 2: the field mesh draws the ground, ?mesh=1)
-  viewport: vec4<f32>, // px w, px h, px per world unit, 0
+  viewport: vec4<f32>, // px w, px h, px per world unit, the shadow lookup's depth bias (light clip units)
+  // world → the sun's shadow map (clip space; renderer.ts lightMatrix)
+  light: mat4x4<f32>,
 };
+
+// the sun's shadow map (with the field mesh: renderer.ts shadow pass)
+@group(0) @binding(25) var shadowMap: texture_depth_2d;
+@group(0) @binding(26) var shadowSamp: sampler_comparison;
+
+/**
+ * Direct-light visibility 0..1 from the shadow map: the point (nudged off its
+ * surface along its normal) in the sun's view, compared with the nearest
+ * depth there, over four filtered taps (soft edges).
+ */
+fn shadowLit(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
+  let lp = CAM.light * vec4<f32>(wpos + nrm * 0.15, 1.0);
+  let uv = vec2<f32>(lp.x * 0.5 + 0.5, 0.5 - lp.y * 0.5);
+  if (any(uv <= vec2<f32>(0.0)) || any(uv >= vec2<f32>(1.0))) { return 1.0; }
+  let t = 0.75 / vec2<f32>(textureDimensions(shadowMap));
+  let z = lp.z - CAM.viewport.w;
+  var s = 0.0;
+  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(-t.x, -t.y), z);
+  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(t.x, -t.y), z);
+  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(-t.x, t.y), z);
+  s += textureSampleCompareLevel(shadowMap, shadowSamp, uv + vec2<f32>(t.x, t.y), z);
+  return s * 0.25;
+}
 
 @group(0) @binding(3) var<storage, read> instances: array<vec4<u32>>;
 @group(0) @binding(4) var<storage, read> contam: array<vec2<f32>>;
@@ -426,7 +451,9 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sun = sunDir();
   let ndl = max(dot(nrm, sun), 0.0);
   let sc = clampCell(cellAt(wpos.xy + nrm.xy * 0.5));
-  let lit = sunLit(wpos, nrm, sc);
+  // (with the field mesh, from the shadow map; without, the heightfield march)
+  var lit: f32;
+  if ((u32(CAM.eye.w) & 2u) != 0u) { lit = shadowLit(wpos, nrm); } else { lit = sunLit(wpos, nrm, sc); }
   // storm shade, and the light shadow of passing fair-weather clouds
   let cloud = max(cloudShade(wpos.xy), fairCloud(wpos.xy) * 0.22);
   // light comes from the day/night cycle (src/weather/daynight.ts)

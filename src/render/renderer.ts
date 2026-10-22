@@ -24,6 +24,12 @@ import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
 
+/** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
+const CAM_BYTES = CAMERA_BYTES + 64;
+/** the sun's shadow map, texels a side (the whole map: ~0.15 cells a texel on 256²) */
+const SHADOW_SIZE = 2048;
+const SHADOW_FORMAT: GPUTextureFormat = 'depth32float';
+
 // a hex prism: the top in four triangles + three sides (render.wgsl)
 const VERTS_PER_PRISM = 30;
 // a plant box: the top + two sides
@@ -49,6 +55,8 @@ export interface RenderOptions {
   rainParticles: number;
   /** sRGB background */
   clear: [number, number, number];
+  /** toward the sun (world, unit) */
+  sun: [number, number, number];
 }
 
 export class Renderer {
@@ -89,7 +97,17 @@ export class Renderer {
   readonly instWater: GPUBuffer;
   readonly indirect: GPUBuffer;
   private camBuf: GPUBuffer;
-  private camData = new ArrayBuffer(CAMERA_BYTES);
+  private camData = new ArrayBuffer(CAM_BYTES);
+  /** the sun's view for the shadow pass (the same layout: its viewProj is the light's) */
+  private lightCamBuf: GPUBuffer;
+  private lightCamData = new ArrayBuffer(CAM_BYTES);
+  private shadowTex: GPUTexture;
+  private shadowView: GPUTextureView;
+  private shadowSampler: GPUSampler;
+  private shadowOpaquePipe?: GPURenderPipeline;
+  private shadowBodyPipe?: GPURenderPipeline;
+  private shadowMeshPipe?: GPURenderPipeline;
+  private shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
   /** ?smooth=0: tops lit flat, a hexagon at a time (the look before G13). */
   private flatTops = new URLSearchParams(location.search).get('smooth') === '0';
   private depth?: GPUTexture;
@@ -129,11 +147,18 @@ export class Renderer {
       80,
       GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     );
-    this.camBuf = world.buf('camera', CAMERA_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.camBuf = world.buf('camera', CAM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.lightCamBuf = world.buf('lightCamera', CAM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     this.fieldMesh = new FieldMesh(device, world, profiler);
+    // (a texel when there's no shadow pass: the draw shaders still bind one)
+    const ss = this.fieldMesh.on ? SHADOW_SIZE : 1;
+    this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    this.shadowView = this.shadowTex.createView();
+    this.shadowSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' });
+    profiler.trackMemory('shadow', ss * ss * 4);
     this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshRegionWgsl, renderprepWgsl], {
       0: 'uniform',
       1: 'read',
@@ -217,6 +242,8 @@ export class Renderer {
         17: 'tex',
         19: 'tex',
         23: 'tex',
+        25: 'depth',
+        26: 'csampler',
       },
       VF,
     );
@@ -248,7 +275,7 @@ export class Renderer {
       depthStencil: depthStencil(false),
     });
 
-    const groupFor = (inst: GPUBuffer | GPUBufferBinding) =>
+    const groupFor = (inst: GPUBuffer | GPUBufferBinding, cam: GPUBuffer = this.camBuf, shadow: GPUTextureView = this.shadowView) =>
       makeBindGroup(device, 'draw', drawLayout, {
         0: world.globals,
         2: world.materials,
@@ -257,7 +284,7 @@ export class Renderer {
         6: world.veg,
         7: world.renderFields,
         8: world.water,
-        10: this.camBuf,
+        10: cam,
         11: world.surface,
         12: world.bend,
         13: world.wilt,
@@ -266,6 +293,8 @@ export class Renderer {
         17: world.driftView,
         19: world.strataView,
         23: world.reachView,
+        25: shadow,
+        26: this.shadowSampler,
       });
     this.opaqueGroup = groupFor(this.instOpaque);
     this.topsGroup = groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 });
@@ -299,7 +328,7 @@ export class Renderer {
       const meshLayout = makeLayout(
         device,
         'mesh-draw',
-        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex' },
+        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler' },
         VF,
       );
       const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, meshDrawWgsl]);
@@ -311,7 +340,7 @@ export class Renderer {
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: depthStencil(true),
       });
-      this.meshGroup = makeBindGroup(device, 'mesh-draw', meshLayout, {
+      const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = this.shadowView) => makeBindGroup(device, 'mesh-draw', meshLayout, {
         0: world.globals,
         1: world.chunks,
         2: world.materials,
@@ -320,13 +349,35 @@ export class Renderer {
         6: world.veg,
         7: world.renderFields,
         9: world.layers,
-        10: this.camBuf,
+        10: cam,
         11: world.surface,
         13: world.wilt,
         15: world.windFieldView,
         17: world.driftView,
         23: world.reachView,
+        25: shadow,
+        26: this.shadowSampler,
       });
+      this.meshGroup = meshGroupFor(this.camBuf);
+      // the sun's shadow pass: the same vertex shaders, depth only, through the
+      // sun's camera (the prisms and plants draw the sides facing it)
+      const shadowDepth: GPUDepthStencilState = { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 };
+      const shadowPipe = (label: string, layout: GPUPipelineLayout, module: GPUShaderModule, entryPoint: string) =>
+        device.createRenderPipeline({ label, layout, vertex: { module, entryPoint }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
+      this.shadowOpaquePipe = shadowPipe('shadow-opaque', pl, drawModule, 'vsBox');
+      this.shadowBodyPipe = shadowPipe('shadow-bodies', pl, drawModule, 'vsBody');
+      this.shadowMeshPipe = shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMesh');
+      // (the pass draws into the map, so its groups bind a stand-in texel there)
+      const none = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
+      const L = this.lightCamBuf;
+      this.shadowGroups = {
+        opaque: groupFor(this.instOpaque, L, none),
+        tops: groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 }, L, none),
+        plants: groupFor(this.instPlant, L, none),
+        struct: groupFor(this.structInst, L, none),
+        bodies: groupFor(this.bodyBuf, L, none),
+        mesh: meshGroupFor(L, none),
+      };
     }
 
     const rainLayout = makeLayout(device, 'rain', { 0: 'uniform', 10: 'uniform' }, VF);
@@ -369,6 +420,7 @@ export class Renderer {
 
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
   destroy(): void {
+    this.shadowTex.destroy();
     this.depth?.destroy();
     this.pickTex?.destroy();
   }
@@ -398,6 +450,7 @@ export class Renderer {
     cam.write(this.camData);
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0);
+    if (this.fieldMesh.on) this.writeLight(opts.sun);
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
     if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
     this.device.queue.writeBuffer(
@@ -425,6 +478,7 @@ export class Renderer {
       this.profiler.dispatches += 2;
     }
     this.fieldMesh.encode(enc, cam);
+    if (this.shadowGroups) this.encodeShadow(enc);
 
     const pass = enc.beginRenderPass({
       label: 'world',
@@ -491,6 +545,86 @@ export class Renderer {
       this.countBusy = true;
       this.countNeeded = true;
     }
+  }
+
+  /**
+   * The sun's view: an orthographic box round the whole map (it's small
+   * enough for one map) looking along the light, into both cameras — the
+   * view's, to look shadows up, and the sun's own, to draw them.
+   */
+  private writeLight(sun: [number, number, number]): void {
+    const f = [-sun[0], -sun[1], -sun[2]];
+    const fl = Math.hypot(f[0], f[1], f[2]) || 1;
+    f[0] /= fl;
+    f[1] /= fl;
+    f[2] /= fl;
+    // (right and up across the light; a sun overhead takes y for its up)
+    const up = Math.abs(f[2]) > 0.99 ? [0, 1, 0] : [0, 0, 1];
+    let r = [f[1] * up[2] - f[2] * up[1], f[2] * up[0] - f[0] * up[2], f[0] * up[1] - f[1] * up[0]];
+    const rl = Math.hypot(r[0], r[1], r[2]);
+    r = r.map((v) => v / rl);
+    const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
+    const W = this.world.w + 0.5;
+    const H = this.world.h * (Math.sqrt(3) / 2);
+    const lo = [Infinity, Infinity, Infinity];
+    const hi = [-Infinity, -Infinity, -Infinity];
+    for (let k = 0; k < 8; k++) {
+      const p = [k & 1 ? W : 0, k & 2 ? H : 0, k & 4 ? this.world.zMax + 2 : -2];
+      const a = [r, u, f].map((ax) => ax[0] * p[0] + ax[1] * p[1] + ax[2] * p[2]);
+      for (let i = 0; i < 3; i++) {
+        lo[i] = Math.min(lo[i], a[i]);
+        hi[i] = Math.max(hi[i], a[i]);
+      }
+    }
+    // clip x, y ∈ [-1, 1] across the box, depth ∈ [0, 1] along the light
+    const sx = 2 / (hi[0] - lo[0]);
+    const sy = 2 / (hi[1] - lo[1]);
+    const sz = 1 / (hi[2] - lo[2]);
+    const m = new Float32Array(16);
+    m.set([r[0] * sx, u[0] * sy, f[0] * sz, 0, r[1] * sx, u[1] * sy, f[1] * sz, 0, r[2] * sx, u[2] * sy, f[2] * sz, 0]);
+    m.set([-(lo[0] + hi[0]) / 2 * sx, -(lo[1] + hi[1]) / 2 * sy, -lo[2] * sz, 1], 12);
+    const cf = new Float32Array(this.camData);
+    cf.set(m, CAMERA_BYTES / 4);
+    // the lookup's depth bias: a quarter of a cell along the light
+    cf[23] = 0.25 * sz;
+    // the sun's own camera: its matrix as the view, looking from the sun
+    const lf = new Float32Array(this.lightCamData);
+    lf.set(cf);
+    lf.set(m, 0);
+    lf.set([-f[0], -f[1], -f[2], cf[19]], 16);
+    this.device.queue.writeBuffer(this.lightCamBuf, 0, this.lightCamData);
+  }
+
+  /** The sun's shadow map: every built mesh chunk, the prisms, plants, structures and bodies, depth only. */
+  private encodeShadow(enc: GPUCommandEncoder): void {
+    const g = this.shadowGroups!;
+    const pass = enc.beginRenderPass({
+      label: 'shadow',
+      colorAttachments: [],
+      depthStencilAttachment: { view: this.shadowView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      timestampWrites: this.profiler.timestamps('shadow'),
+    });
+    pass.setPipeline(this.shadowMeshPipe!);
+    pass.setBindGroup(0, g.mesh);
+    this.fieldMesh.drawAll(pass);
+    pass.setPipeline(this.shadowOpaquePipe!);
+    pass.setBindGroup(0, g.opaque);
+    pass.drawIndirect(this.indirect, 0);
+    pass.setBindGroup(0, g.tops);
+    pass.drawIndirect(this.indirect, 48);
+    pass.setBindGroup(0, g.plants);
+    pass.drawIndirect(this.indirect, 32);
+    pass.setPipeline(this.shadowBodyPipe!);
+    if (this.world.strVoxels > 0) {
+      pass.setBindGroup(0, g.struct);
+      pass.drawIndirect(this.structIndirect, 0);
+    }
+    if (this.bodyCount > 0) {
+      pass.setBindGroup(0, g.bodies);
+      pass.draw(36, this.bodyCount);
+    }
+    pass.end();
+    this.profiler.draws += 4;
   }
 
   /** Call after submit to start async readbacks requested during encode. */

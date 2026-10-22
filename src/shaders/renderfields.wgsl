@@ -131,7 +131,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // smoothed, so across the cell it dips below the column's level: start a
   // little lower or the downhill half of every cell shadows itself)
   var sz = f32(sfZ(surface[i])) + driftAt(p) - select(0.0, 0.9, driftAt(p) >= 0.05);
-  for (var k = 1; k < 160; k++) {
+  // (with the field mesh the sun's shadow map gives the shadows: no march)
+  for (var k = 1; k < 160 && MR.n.w == 0u; k++) {
     let drop = f32(k) * tanE;
     if (f32(G.zMax) - drop <= sz) { break; }
     let q = cellAt(p0 + dir * f32(k));

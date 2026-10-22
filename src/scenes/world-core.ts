@@ -169,6 +169,7 @@ export class WorldCore {
     const q = this.host.quality;
     this.renderer.encode(enc, context.getCurrentTexture().createView(), this.camera, {
       clear: flashSky(this.light.clear, this.globals.flash),
+      sun: this.light.dir,
       rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });
     const afterProfile = prof.endFrame(enc);

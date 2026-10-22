@@ -297,7 +297,16 @@ is a sheet over the triangle lattice of the cell centres (render.wgsl
 its first wet corner; dry corners at the level or their ground below it,
 the ground's depth cutting the shore). With the mesh on, renderprep skips
 the neighbours of columns with nothing built and no water, and renderfields
-computes only water's corners (`world.meshRegion` says it's on).
+computes only water's corners and no sun march (`world.meshRegion` says
+it's on). Shadows with the mesh come from a shadow map: one 2048² depth32
+texture over the whole map along the sun (an orthographic box round it,
+renderer.ts `writeLight`), drawn each frame by the draw pipelines' own
+vertex shaders, depth only, through a second camera buffer holding the
+sun's matrix (so prisms and plants draw the sides facing the sun); every
+built chunk casts, not only those in view. The draw shaders' Camera carries
+the matrix after the view's (`light`) and the lookup's bias in
+`viewport.w`; `lighting()` takes four filtered comparison taps (bindings 25,
+26) when the mesh is on, the heightfield march otherwise.
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are

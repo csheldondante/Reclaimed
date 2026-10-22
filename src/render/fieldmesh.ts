@@ -217,6 +217,14 @@ export class FieldMesh {
     this.profiler.draws += n;
   }
 
+  /** Draw every chunk that has been built (the sun's shadow pass: what's out of view casts too). */
+  drawAll(pass: GPURenderPassEncoder): void {
+    if (!this.on) return;
+    pass.setIndexBuffer(this.indices, 'uint32');
+    for (let c = 0; c < this.nx * this.ny; c++) pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+    this.profiler.draws += this.nx * this.ny;
+  }
+
   afterSubmit(): void {
     if (!this.statNeeded) return;
     this.statNeeded = false;
