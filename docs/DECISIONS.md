@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 48 (session 5, `physics`) — after trying lava on the phone
+
+- "OK but not great." Concrete should crumble more when it falls and be
+  less elastic.
+- Physics sometimes leaves material floating after a delete.
+- Meteor: a smoky projectile from the sky; on impact a massive deletion
+  (everything there turns to dust) and wind out in every direction.
+- Volcano: far too short. It should rise out of the ground to a large
+  height, then spew lava down its sides.
+- Lava should be smooth like the other natural materials, not hex prisms.
+  Basalt columns are fine if intended; the magma must be smooth.
+- Next experiment: Reclaimed's terrain and world sim inside the phone
+  action-controller project (GameplayGM iso-adventure) as a submodule (pin
+  `grids`; a hover bike pushing air out and leaving a dust wake).
+
 ## 2026-10-22 — round 47 (session 5, `physics`) — air inside bodies; dust; next
 
 - Keep the air inside a body (gaps under a table) if the cost is fine.

@@ -35,9 +35,16 @@ beam.
    (the column under it and its six walls); other voxels it isn't bonded to.
 5. *finalize*: velocity from the move; a bounce at the material's
    restitution and Coulomb friction where it touched; bonds strained past
-   the material's break strain snap.
+   the material's break strain snap; damping takes a share of each bond's
+   stretching speed out (round 48: a knocked body doesn't ring; turning
+   stretches no bond, so spin isn't slowed).
 6. *relax*: past the yield, the rest shape follows the bend (plastic flow);
-   heat evens out along bonds, cools, and the beam adds it.
+   heat evens out along bonds, cools, and the beam adds it. Cracks (round
+   48): a bond whose end hit something faster than the material's crack
+   speed snaps by chance (more often the harder; both ends draw the same
+   random), and a voxel that lost three bonds that way may crumble, so a
+   hard landing breaks concrete into chunks with rubble and dust along the
+   breaks.
 7. *deaths*: what crumbled goes to the deposit buffer as its loose material
    (the sediment pass folds it into the layers) with a chip and some dust;
    what melted leaves as embers.
@@ -57,7 +64,9 @@ overlap reads as energy from nowhere). Crumbling replaces penetration:
 - deeper than 0.6 into solid ground, or 0.5 into a voxel of another body
   (the weaker of the two, by density × crumble speed): it crumbles;
 - an impact faster than the material's crumble speed (stone 14 cells/s,
-  steel 40): it crumbles;
+  concrete and brick 9, steel 40) crumbles some of the voxels that took it
+  (20–60 %, more the harder): the rest hold and stop the body, so a hard
+  landing crushes its face rather than every layer in turn;
 - voxels of one body that started within two lattice steps of each other
   (a squeeze, the two faces of a crack) only stop each other, never crumble.
 
@@ -68,7 +77,7 @@ it never leaves faster than 0.3 cells/s otherwise.
 
 | | stiffness | yield | break strain | restitution | crumble (cells/s) | melt |
 |---|---|---|---|---|---|---|
-| stone, concrete, brick, bone | 1 | never | 0.025–0.04 | 0.1 | 11–14 | 1600 |
+| stone, concrete, brick, bone | 1 | never | 0.02–0.04 | 0.1 | 9–14 | 1600 |
 | steel | 0.6 | 0.025 | 0.25 | 0.2 | 40 | 1400 |
 | rust | 0.5 | 0.02 | 0.1 | 0.1 | 18 | 1300 |
 | wood | 0.7 | 0.2 | 0.15 | 0.2 | 22 | 300 |
@@ -77,6 +86,11 @@ it never leaves faster than 0.3 cells/s otherwise.
 Heat between a material's soften and melt temperatures lowers its stiffness
 (to 8 %), its yield (to 0) and its break strain (to 30 %): hot steel sags.
 The beam heats steel about three times faster than stone.
+
+Damping (share of bond stretching speed per substep): rocky 0.5, steel 0.2,
+wood, rust, trash 0.25–0.3, canvas 0.15. Crack speed: concrete and brick 5
+cells/s, asphalt and bone 7, stone 9, rust 14, wood 16; steel, canvas and
+trash never crack.
 
 ## The map's own structures
 
@@ -91,6 +105,10 @@ each voxel starting where its cell stood (rest positions are world
 positions: the hex rows half a cell apart). A cell resting on the ground is
 a foundation, pinned until its bonds break; so is the edge of a piece cut
 off at the limit (it holds on to the rest, still terrain).
+
+A foundation (pinned where it stood on the ground) lets go once there is
+no ground under it (dug, blasted, melted away: round 48; it hung in the
+air before), and digging with physics on wakes the ruins round the brush.
 
 ## The ground sees them
 

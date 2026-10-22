@@ -100,6 +100,7 @@ export class LevelScene implements Scene {
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
   private beamWoke = -Infinity;
+  private digWoke = -Infinity;
   private beamLine?: SVGLineElement;
   private beamDot?: SVGCircleElement;
   private beamPicking = false;
@@ -1427,6 +1428,12 @@ export class LevelScene implements Scene {
     const z = op * 32 + ed.material + (this.strokeStart ? 512 : 0);
     this.strokeStart = false;
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z, radius: ed.radius, strength: layered ? ed.layers : ed.strength });
+    // digging under a ruin of the map's wakes it (round 48: it fell, rather
+    // than hanging over the hole); a few times a second, each wake reads the layers back
+    if (this.physics && ed.tool === 'dig' && performance.now() - this.digWoke > 300) {
+      this.digWoke = performance.now();
+      void this.wake(x, y, -1, ed.radius + 1);
+    }
   }
 
   /** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */
