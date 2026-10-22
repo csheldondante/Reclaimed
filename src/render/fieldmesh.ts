@@ -4,7 +4,8 @@
 // chunks of the world; the GPU finds the chunks that changed and rebuilds a
 // few a frame. ?mesh=1 turns it on; ?meshh= the sample spacing (1; 0.5 is
 // finer and four times the cost). This side writes the layout (a uniform),
-// dispatches, and culls the chunks' draws to the view.
+// dispatches, and culls to the view: the chunks drawn, and the chunks
+// rebuilt (near the view; the rest when they come into it).
 
 import { ignoreTeardown, makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
@@ -27,7 +28,7 @@ const CHUNK0 = 16;
 const CSTRIDE = 12;
 
 export class FieldMesh {
-  /** the layout uniform (bound by renderprep and vegprep too: off when the mesh is) */
+  /** the layout uniform (world.meshRegion: renderprep, vegprep and renderfields read it) */
   readonly region: GPUBuffer;
   readonly on: boolean;
   private verts!: GPUBuffer;
@@ -47,6 +48,9 @@ export class FieldMesh {
   private slots = 0;
   /** chunks drawn last frame (after culling) */
   drawn = 0;
+  /** per chunk: near the view (rebuilt when changed; written to the state), in it (drawn) */
+  private near = new Uint32Array(0);
+  private inView = new Uint8Array(0);
   /** last-known: chunks found changed that frame, the mesh's size, chunks out of room (async readback) */
   stats = { changed: 0, verts: 0, indices: 0, full: 0 };
   private statBuf?: GPUBuffer;
@@ -62,7 +66,7 @@ export class FieldMesh {
     const q = new URLSearchParams(location.search);
     const arg = q.get('mesh');
     this.on = arg !== null && arg !== '0';
-    this.region = world.buf('meshRegion', REGION_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.region = world.meshRegion;
     if (!this.on) {
       device.queue.writeBuffer(this.region, 0, new ArrayBuffer(REGION_BYTES));
       return;
@@ -94,7 +98,7 @@ export class FieldMesh {
 
     this.verts = world.buf('meshVerts', chunks * vertsPer * 32, GPUBufferUsage.STORAGE);
     this.indices = world.buf('meshIndices', chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
-    const stateWords = CHUNK0 + chunks * CSTRIDE;
+    const stateWords = CHUNK0 + chunks * (CSTRIDE + 1);
     this.state = world.buf('meshState', stateWords * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const init = new Uint32Array(stateWords);
     for (let c = 0; c < chunks; c++) init.set([0, 1, c * indicesPer, c * vertsPer, 0], CHUNK0 + c * CSTRIDE);
@@ -133,15 +137,18 @@ export class FieldMesh {
     return this.verts;
   }
 
-  /** Find the chunks that changed and rebuild a few of them. */
-  encode(enc: GPUCommandEncoder): void {
+  /** Find the chunks near the view that changed and rebuild a few of them. */
+  encode(enc: GPUCommandEncoder, cam: Camera): void {
     if (!this.on) return;
+    this.cull(cam);
+    const chunks = this.nx * this.ny;
     this.device.queue.writeBuffer(this.state, 0, new Uint32Array([0]));
+    this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, this.near);
     {
       const pass = enc.beginComputePass({ label: 'fieldmesh-hash', timestampWrites: this.profiler.timestamps('fieldmesh-hash') });
       pass.setPipeline(this.hash.pipeline);
       pass.setBindGroup(0, this.hashGroup);
-      pass.dispatchWorkgroups(this.nx * this.ny);
+      pass.dispatchWorkgroups(chunks);
       pass.end();
     }
     // (the threads of empty slots return at once)
@@ -163,29 +170,49 @@ export class FieldMesh {
     }
   }
 
-  /** Draw the chunks in view (one indexed indirect draw each). */
-  draw(pass: GPURenderPassEncoder, cam: Camera): void {
-    if (!this.on) return;
-    pass.setIndexBuffer(this.indices, 'uint32');
+  /**
+   * Which chunks are in view (drawn) and near it (rebuilt: a margin, so
+   * panning finds them current): each chunk's box in clip space against the
+   * screen's edges.
+   */
+  private cull(cam: Camera): void {
     const m = cam.viewProj;
     const zHi = this.world.zMax;
-    let n = 0;
+    const chunks = this.nx * this.ny;
+    if (this.near.length !== chunks) {
+      this.near = new Uint32Array(chunks);
+      this.inView = new Uint8Array(chunks);
+    }
     for (let cy = 0; cy < this.ny; cy++)
       for (let cx = 0; cx < this.nx; cx++) {
-        // the chunk's box in clip space: drawn unless all eight corners lie past one edge
-        let out = 15;
+        let lo = [Infinity, Infinity];
+        let hi = [-Infinity, -Infinity];
         for (let k = 0; k < 8; k++) {
           const x = (cx + (k & 1)) * CHUNK;
           const y = (cy + ((k >> 1) & 1)) * CHUNK;
           const z = k & 4 ? zHi : -1;
           const px = m[0] * x + m[4] * y + m[8] * z + m[12];
           const py = m[1] * x + m[5] * y + m[9] * z + m[13];
-          out &= (px < -1 ? 1 : 0) | (px > 1 ? 2 : 0) | (py < -1 ? 4 : 0) | (py > 1 ? 8 : 0);
+          lo = [Math.min(lo[0], px), Math.min(lo[1], py)];
+          hi = [Math.max(hi[0], px), Math.max(hi[1], py)];
         }
-        if (out) continue;
-        pass.drawIndexedIndirect(this.state, (CHUNK0 + (cy * this.nx + cx) * CSTRIDE) * 4);
-        n++;
+        const c = cy * this.nx + cx;
+        const within = (e: number) => hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e;
+        this.inView[c] = within(1) ? 1 : 0;
+        this.near[c] = within(1.5) ? 1 : 0;
       }
+  }
+
+  /** Draw the chunks in view (one indexed indirect draw each). */
+  draw(pass: GPURenderPassEncoder): void {
+    if (!this.on) return;
+    pass.setIndexBuffer(this.indices, 'uint32');
+    let n = 0;
+    for (let c = 0; c < this.nx * this.ny; c++) {
+      if (!this.inView[c]) continue;
+      pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+      n++;
+    }
     this.drawn = n;
     this.profiler.draws += n;
   }

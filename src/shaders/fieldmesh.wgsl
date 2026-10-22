@@ -47,7 +47,9 @@
 // per chunk (from CHUNK0, CSTRIDE each): [0..4] its drawIndexedIndirect args
 // (index count, 1, first index, base vertex, 0), [5] the hash it was built
 // from, [6] the hash it will be, [7] vertices so far, [8] its top (f32 bits),
-// [9] 1 when it ran out of room
+// [9] 1 when it ran out of room; after the chunks, one word each: 1 when it's
+// near the view (the CPU writes them; only those are rebuilt, the rest when
+// they come into view)
 @group(0) @binding(9) var<storage, read_write> state: array<atomic<u32>>;
 
 const NONE: u32 = 0xffffffffu;
@@ -88,7 +90,7 @@ fn colDist(q: vec2<i32>, z: f32) -> f32 {
 }
 
 fn terrainField(p: vec3<f32>) -> f32 {
-  let t = triAt(p.xy);
+  let t = triAt(terrainWarp(p));
   var d = 0.0;
   for (var k = 0; k < 3; k++) { d += t.w[k] * colDist(t.c[k], p.z); }
   return d;
@@ -170,7 +172,9 @@ fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_i
   let i0 = max(i32(floor(rc.x - 2.0)) - 1, 0);
   let i1 = min(i32(ceil(rc.z + 2.0)) + 1, i32(G.mapW) - 1);
   let w = u32(max(i1 - i0 + 1, 0));
-  let n = w * u32(max(j1 - j0 + 1, 0));
+  // (out of view: not looked at; its hash stays old, so it's rebuilt once it's in view)
+  let vis = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]) != 0u;
+  let n = select(0u, w * u32(max(j1 - j0 + 1, 0)), vis);
   var sum = 0u;
   var top = 0.0;
   for (var t = li; t < n; t += 64u) {
@@ -190,7 +194,7 @@ fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_i
   atomicAdd(&wgHash, sum);
   atomicMax(&wgTop, bitcast<u32>(top));
   workgroupBarrier();
-  if (li != 0u) { return; }
+  if (li != 0u || !vis) { return; }
   var h = atomicLoad(&wgHash);
   // and the structures over it (placed, moved)
   for (var s = 0u; s < MAX_STRUCTS; s++) {

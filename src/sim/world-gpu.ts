@@ -66,6 +66,8 @@ export class WorldGpu {
   // render preparation
   /** vec4 per column: shadow z, moisture, fire glow, flow speed (renderfields.wgsl) */
   readonly renderFields: GPUBuffer;
+  /** the field mesh's layout (meshregion.wgsl MeshRegion, 64 bytes; render/fieldmesh.ts writes it): what render preparation leaves to the mesh */
+  readonly meshRegion: GPUBuffer;
   /**
    * Wind field: rgba32float, one texel per 2×2 columns (cells/s): rg painted
    * wind, ba whole wind (map wind + painted; windfield.wgsl). Everything that
@@ -211,6 +213,7 @@ export class WorldGpu {
     this.fire = this.buf('fire', N * 4, S);
     this.fireNext = this.buf('fireNext', N * 4, S);
     this.renderFields = this.buf('renderFields', N * 16, S);
+    this.meshRegion = this.buf('meshRegion', 64, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.bend = this.buf('bend', N * 16, S);
     this.wilt = this.buf('wilt', N * 16, S);
     this.petals = this.buf('petals', N * 4, S);

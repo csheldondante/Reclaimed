@@ -174,7 +174,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var cv = vec3<f32>(-1.0);
     if (o.x >= 0) {
       let s = u32(o.z);
-      cv = vec3<f32>(computeCornerZ(o.xy, s), waterCornerZ(o.xy, s), driftCornerZ(o.xy, s));
+      // (the field mesh draws the ground and the dust: only water's corners)
+      if (MR.n.w != 0u) { cv.y = waterCornerZ(o.xy, s); }
+      else { cv = vec3<f32>(computeCornerZ(o.xy, s), waterCornerZ(o.xy, s), driftCornerZ(o.xy, s)); }
     }
     if (j < 2u) { own[j] = cv; }
     let h = select(cv, vec3<f32>(gTop, wTop, dTop), cv < vec3<f32>(0.0));
@@ -185,7 +187,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     gD += h.z * off;
   }
   let k = 1.0 / (3.0 * HEX_R * HEX_R);
-  textureStore(cornerOut, vec2<i32>(p.x * CT, p.y), vec4<f32>(own[0], mixedCell(p)));
+  textureStore(cornerOut, vec2<i32>(p.x * CT, p.y), vec4<f32>(own[0], select(mixedCell(p), 0.0, MR.n.w != 0u)));
   textureStore(cornerOut, vec2<i32>(p.x * CT + 1, p.y), vec4<f32>(own[1], 0.0));
   textureStore(cornerOut, vec2<i32>(p.x * CT + 2, p.y), vec4<f32>(cen / 6.0, 0.0));
   textureStore(cornerOut, vec2<i32>(p.x * CT + 3, p.y), vec4<f32>(gG * k, gW * k));

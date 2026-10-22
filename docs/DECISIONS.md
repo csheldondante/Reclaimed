@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 40 (session 5, `grids`) — no hexes in water; built things on their own grids; shadows
+
+- Water shouldn't keep its hexes on the mesh.
+- Built material as prisms is fine for now, but built things belong on
+  their own grids — square ones — and tanks would be good actually round.
+- The voxel/pixel look from the start is liked too: that's what the other
+  branches keep (the mesh stays `grids`' and opt-in).
+- Vertical terrain faces should have some noise and look less blocky.
+- Shadows: a normal shadow pass instead of the sun march, if cheaper.
+
 ## 2026-10-22 — round 39 (session 5, `grids`) — sharp buildings, rough rock; mobile
 
 - The meshed terrain looks good; the building didn't (surface nets bevelled

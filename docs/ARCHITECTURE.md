@@ -287,6 +287,17 @@ layer, blended with the one below when thin), so the look still comes from
 the intervals; plants, stains and wetness are blended over the three
 nearest cells; rock gets facets and rubble, trash and ruins chips (the
 detail layer).
+The terrain field is looked up 0.45 cells of 3D noise to the side
+(`terrainWarp`, meshregion.wgsl), so cliffs bulge and recede; the draw
+shader looks materials up at the same place. Only chunks near the view
+(their flags after the chunks in the state, written by the CPU) are hashed
+and rebuilt; the rest catch up when they come into view. Water over the mesh
+is a sheet over the triangle lattice of the cell centres (render.wgsl
+`waterSheetVertex`: six triangles round each wet column, each drawn once by
+its first wet corner; dry corners at the level or their ground below it,
+the ground's depth cutting the shore). With the mesh on, renderprep skips
+the neighbours of columns with nothing built and no water, and renderfields
+computes only water's corners (`world.meshRegion` says it's on).
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are

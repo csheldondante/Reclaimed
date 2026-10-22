@@ -90,7 +90,7 @@ fn fsMesh(in: MOut) -> FOut {
   // between cells of different ground come out ragged, not hexagons)
   let jit = vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02));
   let jo = vec2<f32>(randv(jit + vec3<i32>(41, 0, 0)), randv(jit + vec3<i32>(0, 43, 0))) - 0.5;
-  let cell = clampCell(cellAt(ip.xy + jo * 0.6));
+  let cell = clampCell(cellAt(terrainWarp(ip) + jo * 0.6));
   let ci = colIdxI(cell);
   let up = nrm.z > 0.55;
   let lk = meshLook(cell, ip.z, up);

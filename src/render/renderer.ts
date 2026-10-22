@@ -302,7 +302,7 @@ export class Renderer {
         { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex' },
         VF,
       );
-      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshDrawWgsl]);
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, meshDrawWgsl]);
       this.meshPipe = device.createRenderPipeline({
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
@@ -397,7 +397,7 @@ export class Renderer {
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
     cam.write(this.camData);
     // look flags (render.wgsl Camera.eye.w)
-    new Float32Array(this.camData)[19] = this.flatTops ? 1 : 0;
+    new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0);
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
     if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
     this.device.queue.writeBuffer(
@@ -424,7 +424,7 @@ export class Renderer {
       pass.end();
       this.profiler.dispatches += 2;
     }
-    this.fieldMesh.encode(enc);
+    this.fieldMesh.encode(enc, cam);
 
     const pass = enc.beginRenderPass({
       label: 'world',
@@ -445,7 +445,7 @@ export class Renderer {
     if (this.meshPipe) {
       pass.setPipeline(this.meshPipe);
       pass.setBindGroup(0, this.meshGroup!);
-      this.fieldMesh.draw(pass, cam);
+      this.fieldMesh.draw(pass);
       this.profiler.draws++;
     }
     if (this.bodyCount > 0) {

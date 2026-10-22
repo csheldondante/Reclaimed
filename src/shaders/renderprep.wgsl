@@ -126,13 +126,19 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     d = water[i];
     ol = oil[i];
     let p = vec2<i32>(id.xy);
-    for (var k = 0u; k < NDIR; k++) { gt[k] = groundTop(nbr(p, k)); }
-    coverSides = smoothSides(p, gt);
     var col: array<vec4<u32>, MAX_K>;
     for (var k = 0u; k < nSlots; k++) { col[k] = layers[cs.x + k]; }
     run = looseRun(&col, nSlots);
     // (the field mesh draws this column but what's built: meshregion.wgsl)
     meshCol = meshed(cellPos(p));
+    // (a meshed column with nothing built on it and no water draws nothing
+    // here: its neighbours needn't be looked at)
+    var needN = !meshCol || d > WATER_MIN;
+    if (meshCol) { for (var k = 0u; k < run; k++) { if (!fieldMat(ivMat(col[k]))) { needN = true; } } }
+    if (needN) {
+      for (var k = 0u; k < NDIR; k++) { gt[k] = groundTop(nbr(p, k)); }
+      coverSides = smoothSides(p, gt);
+    }
     // under a fair depth of loose ground the top face is covered by the sheet
     // (it only shows where the sheet thins out at its edges)
     if (run < nSlots && run > 0u && ivZ1(col[nSlots - 1u]) - ivZ0(col[run]) >= 0.3) { coverZ = ivZ1(col[run - 1u]); }

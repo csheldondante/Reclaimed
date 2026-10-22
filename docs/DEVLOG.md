@@ -2777,3 +2777,38 @@ GPU time summed over passes, ms; fps is capped near 100 here):
 the valley, ~10 MB with room to spare (vertices 32 bytes). Of what's left,
 the simulation is ~3.5 ms a frame: next for the phone.
 
+## 2026-10-22 — grids: mesh water, warped cliffs, rebuilds near the view; a storm
+
+Round 40.
+- Water on the mesh is one smooth sheet over the triangle lattice of the
+  cell centres instead of prisms: each wet column draws the six triangles
+  round its centre, each drawn once (by its wet corner first in storage
+  order — it's blended), a dry corner at the water's level or at its ground
+  where that's lower. The opaque ground's depth cuts the shoreline.
+- Cliffs: the terrain field is looked up up to 0.45 cells to the side by 3D
+  value noise, so walls bulge and recede, differently up their height;
+  flat ground is unchanged (moved sideways, it finds the same ground).
+- Only chunks near the view are hashed and rebuilt (the CPU's culling now
+  runs before the compute and writes a flag per chunk); the others keep
+  their old hash and are rebuilt once they come into view.
+- With the mesh on, renderprep skips the neighbours of columns with nothing
+  built and no water (0.42 → 0.30 ms), renderfields only computes water's
+  corners (0.45 → 0.32). (Marching a quarter of the columns' sun shadows a
+  run saved nothing measurable: reverted. The march goes when the shadow
+  pass comes.)
+
+A storm over the water (scripts/stormtest.mjs: the camera on the deepest
+water, a storm spawned over it, 10 s measured three seconds in; GPU summed
+over passes, ms):
+
+| | calm | storm | draw in the storm | field mesh in the storm |
+|---|---|---|---|---|
+| Dam Valley, prisms | 8.5 | 10.2 | 6.5 | — |
+| Dam Valley, mesh | 6.8 | 7.9 | 3.7 | 0.50 (1.7 chunks a frame) |
+| sandbox, prisms | 11.4 | 17.3 | 10.3 | — |
+| sandbox, mesh | 8.2 | 10.8 | 5.1 | 0.41 (1.4 chunks a frame) |
+
+The storm's cost is mostly draw (rain, water, its shade) and the water's
+spread, not rebuilding. Known: a thin film in the valley's basin is hidden
+under the smoothed floor (drawn as prisms it showed).
+

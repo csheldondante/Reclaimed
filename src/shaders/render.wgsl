@@ -5,7 +5,7 @@
 // and the two sides toward the eye (their own list: renderer.ts).
 struct Camera {
   viewProj: mat4x4<f32>,
-  eye: vec4<f32>,      // direction toward the eye (world), w look flags (1: flat-lit tops, ?smooth=0)
+  eye: vec4<f32>,      // direction toward the eye (world), w look flags (1: flat-lit tops, ?smooth=0; 2: the field mesh draws the ground, ?mesh=1)
   viewport: vec4<f32>, // px w, px h, px per world unit, 0
 };
 
@@ -278,8 +278,67 @@ fn vsBox(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VO
 fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   var o: VOut;
   let b = unpackBox(instances[ii]);
-  if (!instVertex(b, vi, &o)) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
+  var shown: bool;
+  if ((u32(CAM.eye.w) & 2u) != 0u && b.mat == MAT_WATER) { shown = waterSheetVertex(b, vi, &o); }
+  else { shown = instVertex(b, vi, &o); }
+  if (!shown) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
   return o;
+}
+
+/** The water's level on q if it's wet (x; y 1), else its ground (x; y 0). */
+fn waterLevelAt(q: vec2<i32>) -> vec2<f32> {
+  let j = colIdxI(clampCell(q));
+  let bed = f32(sfZ(surface[j])) + driftAt(clampCell(q));
+  let d = water[j];
+  if (inMap(q) && d > WATER_MIN_R) { return vec2<f32>(bed + d, 1.0); }
+  return vec2<f32>(bed, 0.0);
+}
+
+/**
+ * Water over the field mesh (?mesh=1): no prisms but one smooth sheet over
+ * the triangle lattice of the cell centres. A wet column draws the six
+ * triangles round its centre (18 vertices), each of them drawn once, by its
+ * wet corner first in storage order (it's blended: twice would show). A dry
+ * corner stands at the water's level, or at its own ground where that's
+ * lower: the sheet runs on into a bank, and the opaque ground's depth cuts
+ * the shore there; down a step it slopes to the ground below and thins out.
+ */
+fn waterSheetVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
+  if (vi >= 18u) { return false; }
+  let t = vi / 3u;
+  let p = b.cell;
+  // the triangle's corners: me and the neighbours across sides t and t + 1
+  let qa = nbr(p, SIDE_DIR[t]);
+  let qb = nbr(p, SIDE_DIR[(t + 1u) % 6u]);
+  let me = waterLevelAt(p);
+  let la = waterLevelAt(qa);
+  let lb = waterLevelAt(qb);
+  let ip = colIdxI(p);
+  if (la.y > 0.0 && colIdxI(qa) < ip) { return false; }
+  if (lb.y > 0.0 && colIdxI(qb) < ip) { return false; }
+  // the level of its wet corners; a dry corner at that level or its ground below it
+  let level = (me.x + la.x * la.y + lb.x * lb.y) / (1.0 + la.y + lb.y);
+  let za = select(min(level, la.x), la.x, la.y > 0.0);
+  let zb = select(min(level, lb.x), lb.x, lb.y > 0.0);
+  let pa = vec3<f32>(cellPos(qa), za);
+  let pb = vec3<f32>(cellPos(qb), zb);
+  let pm = vec3<f32>(cellPos(p), me.x);
+  let k = vi % 3u;
+  var v = pm;
+  if (k == 1u) { v = pa; } else if (k == 2u) { v = pb; }
+  var n = normalize(cross(pa - pm, pb - pm));
+  if (n.z < 0.0) { n = -n; }
+  (*out).pos = CAM.viewProj * vec4<f32>(v, 1.0);
+  (*out).wpos = v;
+  (*out).nrm = n;
+  (*out).info = vec2<u32>(MAT_WATER, 0u);
+  (*out).zr = vec2<f32>(b.z0, b.z1);
+  (*out).tint = 1.0;
+  (*out).bmin = vec3<f32>(cellPos(p) - 0.5, b.z0);
+  (*out).bsize = vec3<f32>(1.0, 1.0, b.z1 - b.z0);
+  (*out).boff = vec3<f32>(0.0);
+  (*out).sides = 0u;
+  return true;
 }
 
 struct FOut {

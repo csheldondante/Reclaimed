@@ -18,6 +18,7 @@ import contamWgsl from '../shaders/contamination.wgsl?raw';
 import moistureWgsl from '../shaders/moisture.wgsl?raw';
 import ecologyWgsl from '../shaders/ecology.wgsl?raw';
 import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
+import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
@@ -245,9 +246,9 @@ export class RenderFieldsSystem implements SimSystem {
       device,
       world,
       'renderfields',
-      terrainShapeWgsl + renderFieldsWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 16: 'stex', 17: 'tex' },
-      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 16: world.cornerView, 17: world.driftView },
+      terrainShapeWgsl + meshRegionWgsl + renderFieldsWgsl + flowWgsl,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 16: 'stex', 17: 'tex', 30: 'uniform' },
+      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 16: world.cornerView, 17: world.driftView, 30: world.meshRegion },
     );
   }
   encode(enc: GPUCommandEncoder): void {
