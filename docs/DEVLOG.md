@@ -2630,3 +2630,25 @@ main at the root and the others under /<branch>/ (base './' already makes
 the build path-independent; checked by serving the build under /grids/ and
 loading the level headlessly). A push to any of the branches rebuilds all of
 them, so the root keeps showing origin/main whichever branch was pushed.
+
+## 2026-10-22 — grids: tops alone (G13a)
+
+Draw is vertex-bound (DEVLOG 2026-10-16: 69k instances, 30 vertices a
+prism), and most of the map is a surface whose prisms' sides are buried. A
+prism whose six sides are hidden is now drawn as its top alone, 12 vertices,
+from a second list (the same vertex shader: the top is the prism's first 12).
+
+First cut: only intervals whose neighbours' flat stacks reach their top —
+7.4k of 69k instances on Dam Valley, and draw got slower (7.0 → 7.7 ms; an
+extra draw for little). On slopes nearly every column has a lower neighbour,
+but soft tops slope through corners shared with their neighbours, so a side
+whose two corners are smoothed is covered by the neighbour's top: counted as
+hidden (8.8k). Then the dust sheets, which cover most of this map: their
+side test (`sheetGap`) moved from render.wgsl to terrainshape.wgsl so
+vegprep can apply it — 57.8k tops, 11k prisms.
+
+Measured (headless, real GPU, 1600 × 900, Dam Valley, scripts/perfpass.mjs
+on production builds): draw 7.0 → 5.2 ms, 96 → 102 fps. renderprep +0.1 ms
+(it reads the corners now). Checked against the previous build with the sim
+stopped, three zooms on Dam Valley and the sandbox: the only differences are
+particles and cloud shadows (they move while the sim is stopped), no holes.

@@ -25,6 +25,8 @@ import { CAMERA_BYTES, type Camera } from './camera';
 const VERTS_PER_PRISM = 30;
 // a plant box: the top + two sides
 const VERTS_PER_BOX = 18;
+// a prism whose sides are all hidden: its top alone (the prism's first 12)
+const VERTS_PER_TOP = 12;
 /** Extra instances a column may emit beyond its slots (shrub/trunk+crown, tufts, flower). */
 // per cell worst case: plan (tree 2 + tufts 3 + flower 1) + a planting (6) + drift (1)
 const VEG_INSTANCES = 13;
@@ -58,6 +60,9 @@ export class Renderer {
   private partGroup: GPUBindGroup;
   private opaqueGroup: GPUBindGroup;
   private plantGroup: GPUBindGroup;
+  private topsGroup: GPUBindGroup;
+  /** First instance of the tops list in instOpaque. */
+  private topsBase: number;
   private waterGroup: GPUBindGroup;
   /** rigid bodies (F7): rotated voxels, 2 × vec4<u32> each (render.wgsl vsBody) */
   private bodyBuf: GPUBuffer;
@@ -86,7 +91,7 @@ export class Renderer {
   private pickPending?: (hit: PickHit | null) => void;
   readonly opaqueCapacity: number;
   /** Last-known instance counts (async readback, for the perf overlay). */
-  instanceCounts = { opaque: 0, water: 0 };
+  instanceCounts = { opaque: 0, water: 0, tops: 0, prisms: 0, plants: 0 };
   private countBuf: GPUBuffer;
   private countBusy = false;
   private countNeeded = false;
@@ -101,21 +106,25 @@ export class Renderer {
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
     // drawn with fewer vertices
     this.opaqueCapacity = N * (world.maxK + 1);
-    this.instOpaque = world.buf('instOpaque', this.opaqueCapacity * 16, GPUBufferUsage.STORAGE);
+    // + the tops list after it (renderprep.wgsl: two per column at most), from
+    // a storage-offset-aligned instance (256 bytes)
+    this.topsBase = Math.ceil(this.opaqueCapacity / 16) * 16;
+    this.instOpaque = world.buf('instOpaque', (this.topsBase + 2 * N) * 16, GPUBufferUsage.STORAGE);
     this.instPlant = world.buf('instPlant', N * VEG_INSTANCES * 16, GPUBufferUsage.STORAGE);
     // up to two liquid boxes per column (water + oil)
     this.instWater = world.buf('instWater', N * 2 * 16, GPUBufferUsage.STORAGE);
-    // draw args: [0..3] opaque prisms, [4..7] water, [8..11] plants
+    // draw args: [0..3] opaque prisms, [4..7] water, [8..11] plants, [12..15]
+    // tops alone; [16] where the tops start in instOpaque (renderprep.wgsl)
     this.indirect = world.buf(
       'indirect',
-      48,
+      80,
       GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     );
     this.camBuf = world.buf('camera', CAMERA_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
-    this.countBuf = world.buf('counts', 48, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
-    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, renderprepWgsl], {
+    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderprepWgsl], {
       0: 'uniform',
       1: 'read',
       2: 'uniform',
@@ -126,6 +135,7 @@ export class Renderer {
       7: 'rw',
       8: 'rw',
       9: 'rw',
+      14: 'tex',
       17: 'tex',
       21: 'tex',
     });
@@ -140,6 +150,7 @@ export class Renderer {
       7: this.instOpaque,
       8: this.instWater,
       9: this.indirect,
+      14: world.cornerView,
       17: world.driftView,
       21: world.bodyProjView,
     });
@@ -223,7 +234,7 @@ export class Renderer {
       depthStencil: depthStencil(false),
     });
 
-    const groupFor = (inst: GPUBuffer) =>
+    const groupFor = (inst: GPUBuffer | GPUBufferBinding) =>
       makeBindGroup(device, 'draw', drawLayout, {
         0: world.globals,
         2: world.materials,
@@ -243,6 +254,7 @@ export class Renderer {
         23: world.reachView,
       });
     this.opaqueGroup = groupFor(this.instOpaque);
+    this.topsGroup = groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 });
     this.plantGroup = groupFor(this.instPlant);
     this.waterGroup = groupFor(this.instWater);
     this.bodyBuf = world.buf('bodyVoxels', Renderer.MAX_BODY_VOXELS * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
@@ -336,7 +348,11 @@ export class Renderer {
     cam.write(this.camData);
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
     if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
-    this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0]));
+    this.device.queue.writeBuffer(
+      this.indirect,
+      0,
+      new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0, VERTS_PER_TOP, 0, 0, 0, this.topsBase]),
+    );
 
     {
       const pass = enc.beginComputePass({ label: 'renderprep', timestampWrites: this.profiler.timestamps('renderprep') });
@@ -369,6 +385,8 @@ export class Renderer {
     pass.setPipeline(this.opaquePipe);
     pass.setBindGroup(0, this.opaqueGroup);
     pass.drawIndirect(this.indirect, 0);
+    pass.setBindGroup(0, this.topsGroup);
+    pass.drawIndirect(this.indirect, 48);
     pass.setBindGroup(0, this.plantGroup);
     pass.drawIndirect(this.indirect, 32);
     if (this.bodyCount > 0) {
@@ -397,7 +415,7 @@ export class Renderer {
       this.profiler.draws++;
     }
     pass.end();
-    this.profiler.draws += 2;
+    this.profiler.draws += 3;
 
     if (this.pickRequest && !this.pickBusy) {
       const { x, y, resolve } = this.pickRequest;
@@ -410,7 +428,7 @@ export class Renderer {
       } else resolve(null);
     }
     if (!this.countBusy) {
-      enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 48);
+      enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 64);
       this.countBusy = true;
       this.countNeeded = true;
     }
@@ -432,7 +450,7 @@ export class Renderer {
       this.countNeeded = false;
       this.countBuf.mapAsync(GPUMapMode.READ).then(() => {
         const u = new Uint32Array(this.countBuf.getMappedRange());
-        this.instanceCounts = { opaque: u[1] + u[9], water: u[5] };
+        this.instanceCounts = { opaque: u[1] + u[9] + u[13], water: u[5], tops: u[13], prisms: u[1], plants: u[9] };
         this.countBuf.unmap();
         // throttle: allow another readback in a little while
         setTimeout(() => (this.countBusy = false), 250);

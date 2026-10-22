@@ -25,14 +25,14 @@ export function makeBindGroup(
   device: GPUDevice,
   label: string,
   layout: GPUBindGroupLayout,
-  resources: Record<number, GPUBuffer | GPUTextureView>,
+  resources: Record<number, GPUBuffer | GPUBufferBinding | GPUTextureView>,
 ): GPUBindGroup {
   return device.createBindGroup({
     label,
     layout,
     entries: Object.entries(resources).map(([b, r]) => ({
       binding: Number(b),
-      resource: r instanceof GPUTextureView ? r : { buffer: r },
+      resource: r instanceof GPUTextureView || !(r instanceof GPUBuffer) ? r : { buffer: r },
     })),
   });
 }

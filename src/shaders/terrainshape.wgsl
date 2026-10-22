@@ -144,3 +144,40 @@ fn computeCornerZ(p: vec2<i32>, slot: u32) -> f32 {
   // keep it within the three touching columns' range so nothing pokes out
   return clamp(sum / wsum, lo, hi);
 }
+
+// ---- hex sides (needs `surface` and driftTex: every module that takes this declares them)
+
+/** Drawn height of q's ground with its loose layer on (0 off the map). */
+fn groundTopR(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return 0.0; }
+  return sfZ(surface[colIdxI(q)]) + textureLoad(driftTex, q, 0).x;
+}
+
+/**
+ * Does a drift sheet's edge at corner j of p stand clear of the ground of the
+ * neighbour n beside it? Its corner was left at its prism (a step), or n has
+ * no sheet of its own (sheets share their corners) and n's top is drawn lower there.
+ */
+fn sheetGap(p: vec2<i32>, j: u32, n: vec2<i32>) -> bool {
+  let d = driftCornerAt(p, j);
+  // (the map's edge always shows its side)
+  if (d < 0.0 || !inMap(n)) { return true; }
+  if (textureLoad(driftTex, n, 0).x > 0.12) { return false; }
+  return d > cornerOr(p, j, groundTopR(n)) + 0.02;
+}
+
+/** Hex side m (facing 60 deg * m, counter-clockwise from +x) -> its neighbour direction (NDIR order). */
+const SIDE_DIR = array<u32, 6>(0u, 2u, 4u, 1u, 3u, 5u);
+/** NDIR direction k -> the hex side m facing it (SIDE_DIR inverted). */
+const DIR_SIDE = array<u32, 6>(0u, 3u, 1u, 4u, 2u, 5u);
+
+/** The sides of p's drift sheet that don't show (bit k: NDIR order): its edge meets the ground beside it on both corners. */
+fn sheetHidden(p: vec2<i32>) -> u32 {
+  var f = 0u;
+  for (var k = 0u; k < NDIR; k++) {
+    let m = DIR_SIDE[k];
+    let nb = nbr(p, k);
+    if (!sheetGap(p, (m + 5u) % 6u, nb) && !sheetGap(p, m, nb)) { f |= 1u << k; }
+  }
+  return f;
+}

@@ -257,6 +257,14 @@ and the three sides toward the eye. Plants are axis-aligned boxes from their
 own list (vegprep.wgsl → instPlant), 18 vertices: top + two sides. Soft tops and sheets slope through hex corner heights: each corner
 touches three cells and each cell owns two (30° and 90°), so `cornerTex` is
 5w × h with the planes (terrainshape.wgsl).
+An interval (renderprep) or drift sheet (vegprep) whose six sides are all
+hidden is drawn as its top alone — the prism's first 12 vertices — from a
+tops list after the opaque list in `instOpaque` (from the 256-byte-aligned
+instance `indirect[16]`, drawn through a binding offset: `drawIndirect`
+can't take a first instance without an optional feature). A soft top's side
+counts as hidden where both its corners are smoothed (shared, so the
+neighbour's top runs through them) and the neighbour is solid up to its loose
+run; a sheet's where `sheetGap` (terrainshape.wgsl) is false at both corners.
 Water is a second instance list drawn translucent; inner water side-faces are
 culled in the vertex shader. Rain is stateless hashed streaks. Shadows come
 from a heightfield sun-march compute pass. Cloud shadows/rain field are

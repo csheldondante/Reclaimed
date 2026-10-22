@@ -110,6 +110,8 @@ var<workgroup> wgO: atomic<u32>;
 var<workgroup> baseO: u32;
 var<workgroup> wgS: atomic<u32>;
 var<workgroup> baseS: u32;
+var<workgroup> wgT: atomic<u32>;
+var<workgroup> baseT: u32;
 
 fn mkInst(x: u32, y: u32, sx: u32, sy: u32, z0: f32, z1: f32, mat: u32, flags: u32) -> vec4<u32> {
   return vec4<u32>(x | (y << 12u) | ((sx - 1u) << 24u) | ((sy - 1u) << 28u), bitcast<u32>(z0), bitcast<u32>(z1), mat | (flags << 8u));
@@ -176,7 +178,7 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
 // vegPlan(): vegplan.wgsl (prepended)
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-  if (li == 0u) { atomicStore(&wgO, 0u); atomicStore(&wgS, 0u); }
+  if (li == 0u) { atomicStore(&wgO, 0u); atomicStore(&wgS, 0u); atomicStore(&wgT, 0u); }
   workgroupBarrier();
   let inside = id.x < G.mapW && id.y < G.mapH;
   var n = 0u;
@@ -199,16 +201,24 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     if (G.misc.w > 0.5) { n = fineCount(veg[i], gm, id.xy); }
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
   }
-  let nS = select(0u, 1u, inside && driftAt(vec2<i32>(id.xy)) > DRIFT_SHOW);
+  var nS = select(0u, 1u, inside && driftAt(vec2<i32>(id.xy)) > DRIFT_SHOW);
+  // a sheet whose sides all meet the ground beside it is drawn as its top
+  // alone, in the tops list (renderprep.wgsl)
+  var hid = 0u;
+  if (nS > 0u) { hid = sheetHidden(vec2<i32>(id.xy)); }
+  let nT = select(0u, 1u, nS > 0u && hid == 63u);
+  nS -= nT;
   let off = atomicAdd(&wgO, n);
   let offS = atomicAdd(&wgS, nS);
+  let offT = atomicAdd(&wgT, nT);
   workgroupBarrier();
   if (li == 0u) {
     baseO = atomicAdd(&indirect[9], atomicLoad(&wgO));
     baseS = atomicAdd(&indirect[1], atomicLoad(&wgS));
+    baseT = atomicLoad(&indirect[16]) + atomicAdd(&indirect[13], atomicLoad(&wgT));
   }
   workgroupBarrier();
-  if (!inside || n + nS == 0u) { return; }
+  if (!inside || n + nS + nT == 0u) { return; }
   var o = baseO + off;
   let qx = id.x * 4u;
   let qy = id.y * 4u;
@@ -218,7 +228,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   let dd = driftAt(vec2<i32>(id.xy));
   if (dd > DRIFT_SHOW) {
     let g = f32(sfZ(surface[colIdx(id.x, id.y)]));
-    instOpaque[baseS + offS] = mkInst(id.x, id.y, 1u, 1u, g, g + dd, MAT_DRIFT, 1u);
+    var si = mkInst(id.x, id.y, 1u, 1u, g, g + dd, MAT_DRIFT, 1u);
+    si.w |= hid << 20u;
+    if (nT > 0u) { instOpaque[baseT + offT] = si; } else { instOpaque[baseS + offS] = si; }
   }
   if (G.misc.w > 0.5) {
     o = fineEmit(o, id.xy, top, veg[colIdx(id.x, id.y)], groundMatAt(vec2<i32>(id.xy), sfMat(surface[colIdx(id.x, id.y)])));

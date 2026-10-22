@@ -3,6 +3,23 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 37 (session 5, `grids`) — rendering; phone builds; the long road
+
+- Rendering next, before more simulation: the terrain as a continuous
+  heightmap surface (prisms only for cliffs, overhangs and the air under
+  things), level of detail chosen by zoom (orthographic: one level fits the
+  whole view), a display heightmap finer than the hex grid it is filled
+  from, culling to the view; caching unchanged screen tiles only if those
+  aren't enough. Then the irregular grid on top of it.
+- Every branch can be tried on a phone: Pages publishes each pushed branch
+  under /<branch>/. Keep building, benchmarking and pushing on `grids`;
+  ask only when a question is interesting.
+- The long road (in this order): burying, slopes, multiple grids and
+  Townscaper-style structures working together first. Structures on both
+  regular and irregular grids (some cities look more rectangular), built by
+  WFC like Townscaper's. Much later: SDF-based flow fields and people as
+  particles who build and clear vegetation on their own.
+
 ## 2026-10-16 — round 36 (session 5, `grids`) — what the engine is for; momentum
 
 - The aim: build cool maps and simulate wind, water and plant growth, and
