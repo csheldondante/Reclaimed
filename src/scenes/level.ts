@@ -13,18 +13,21 @@ import { EDIT_OP, Editor, LAYER_TOOLS } from '../ui/editor';
 import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { PK } from '../sim/particles';
+import { Physics } from '../physics/physics';
+import { box, table } from '../physics/shapes';
+import { BODIES } from '../ui/editor';
 import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import type { MapData } from '../world/mapgen';
 import { columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
-import { modelById, modelColumns, restingBase, seatColumn } from '../world/models';
+import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
-import { qYawPitchRoll } from '../grids/structures';
+import { qRotate, qYawPitchRoll } from '../grids/structures';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -89,6 +92,11 @@ export class LevelScene implements Scene {
   private brushAt?: [number, number];
   /** the next brush event starts a new press (layer tools: a fresh layer) */
   private strokeStart = false;
+  /** sandbox: physics voxels (docs/PHYSICS.md) */
+  physics?: Physics;
+  /** sandbox: the heat beam's pointer while held */
+  private beamAt?: [number, number];
+  private beamPicking = false;
   /** sandbox: structural integrity and falling pieces (F7) */
   private integrity?: Integrity;
   /** sandbox: a smash drag in progress */
@@ -203,6 +211,11 @@ export class LevelScene implements Scene {
     const p = host.params;
     this.intro = !this.story && !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     if (this.level.sandbox) {
+      // the physics voxels: one GPU solver for every material (docs/PHYSICS.md)
+      const phys = new Physics(host.gpu.device, core.world, host.profiler);
+      this.physics = phys;
+      sim.systems.splice(sim.systems.indexOf(sim.particles), 0, phys);
+      core.renderer.addVoxels(phys.inst, phys.indirect);
       this.editor = new Editor(host.ui, (sp) => (this.speed = sp), {
         undo: () => this.undo(),
         capture: () => this.core.captureMap(),
@@ -264,6 +277,8 @@ export class LevelScene implements Scene {
       tap: (sx, sy) => {
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
         if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
+        if (this.editor?.tool === 'drop') return void this.dropAtPick(sx, sy);
+        if (this.editor?.tool === 'beam') return;
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, true)) return;
         // (story: nothing answers out in the fog beyond the green's reach)
@@ -277,6 +292,15 @@ export class LevelScene implements Scene {
           this.smashing = true;
           return true;
         }
+        if (this.editor?.tool === 'drop') {
+          this.dropAtPick(sx, sy);
+          return true;
+        }
+        // the heat beam: on while held, aimed at what's under the pointer (frame())
+        if (this.editor?.tool === 'beam') {
+          this.beamAt = [sx, sy];
+          return true;
+        }
         // (a press that turns into a drag still places, once)
         if (this.editor?.tool === 'place') {
           this.placeAtPick(sx, sy);
@@ -288,6 +312,7 @@ export class LevelScene implements Scene {
         return this.powers.gustStart(wx, wy);
       },
       dragMove: (sx, sy) => {
+        if (this.beamAt) return void (this.beamAt = [sx, sy]);
         if (this.smashing) {
           this.pickSmash(sx, sy);
           return void this.smashAt(sx, sy, false);
@@ -297,6 +322,11 @@ export class LevelScene implements Scene {
         else this.powers.gustMove(wx, wy);
       },
       dragEnd: () => {
+        if (this.beamAt) {
+          this.beamAt = undefined;
+          if (this.physics) this.physics.beam = null;
+          return;
+        }
         this.smashing = false;
         if (this.brushAt) this.brushAt = undefined;
         else this.powers.gustEnd();
@@ -343,7 +373,8 @@ export class LevelScene implements Scene {
       { signal },
     );
 
-    (window as unknown as { reclaimed: unknown }).reclaimed = {
+    const self = this;
+    const api = {
       core,
       sim,
       world: core.world,
@@ -358,6 +389,40 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // physics voxels (sandbox): phys.drop('steel', 5, 1, 10, x, y, 6) — a w × d × h box
+      // of a material, its centre at world (x, y), `above` cells over the ground
+      phys: {
+        get physics() {
+          return self.physics;
+        },
+        shapes: { box, table },
+        spawn: async (m: VoxelModel, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0, vel: [number, number, number] = [0, 0, 0], floor = 0) => {
+          const r = Math.PI / 180;
+          const q = qYawPitchRoll(yaw * r, pitch * r, roll * r);
+          const [w, d, h] = m.size;
+          // its lowest point `above` the highest ground (loose ground too) under its footprint
+          const pts: [number, number, number][] = [];
+          for (let k = 0; k <= 4; k++) for (let j = 0; j <= 4; j++) for (let i = 0; i <= 4; i++) pts.push(qRotate(q, [(w * i) / 4, (d * j) / 4, (h * k) / 4]));
+          const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+          const cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+          const lowZ = Math.min(...pts.map((p) => p[2]));
+          const slots = new Uint32Array((await core.readBuffer('layers')).buffer);
+          // (floor: something under it the layers don't hold, a body it was dropped on)
+          let ground = floor;
+          for (const p of pts) {
+            const [gx, gy] = cellAt(x - cx + p[0], y - cy + p[1]);
+            if (gx < 0 || gy < 0 || gx >= dims.w || gy >= dims.h) continue;
+            const col = readColumn(core.packed, slots, gx, gy);
+            if (col.length) ground = Math.max(ground, col[col.length - 1].z1);
+          }
+          return this.physics?.spawn(m, [x - cx, y - cy, ground + above - lowZ], q, vel) ?? null;
+        },
+        drop: (mat: string, w: number, d: number, h: number, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0) => {
+          const id = MAT[(mat[0].toUpperCase() + mat.slice(1)) as keyof typeof MAT];
+          if (id === undefined) throw new Error(`no material "${mat}"`);
+          return api.phys.spawn(box(id, w, d, h), x, y, above, yaw, pitch, roll);
+        },
+      },
       trial: new Trial(core, this.powers, gatesOf(map), map.poi.healthy),
       // structure grids: grids.place('officetower', x, y, yawDeg, pitchDeg, rollDeg) at world (x, y)
       grids: {
@@ -371,6 +436,7 @@ export class LevelScene implements Scene {
       },
       scene: this,
     };
+    (window as unknown as { reclaimed: unknown }).reclaimed = api;
     // ?structure=model,x,y,yaw,pitch,roll (grid cells, degrees): a structure grid
     // placed at load (the grids branch's test hook)
     const sp = host.params.get('structure');
@@ -564,6 +630,7 @@ export class LevelScene implements Scene {
     // the brush paints every frame while held
     if (this.brushAt && this.editor) this.brush(this.brushAt[0], this.brushAt[1]);
     this.drawRing();
+    if (this.beamAt && this.physics && !this.beamPicking) this.aimBeam(this.beamAt);
     if (this.integrity) {
       // cyclones batter what they pass: look there
       for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
@@ -933,6 +1000,45 @@ export class LevelScene implements Scene {
    * columns back. Refused (nothing changes) if a column would need more slots
    * than its chunk has.
    */
+  /** Drop the chosen physics body over what's under the cursor (docs/PHYSICS.md). */
+  private dropAtPick(sx: number, sy: number): void {
+    const { core } = this;
+    const ed = this.editor!;
+    const kind = BODIES.find((b) => b.id === ed.body);
+    if (!kind || !this.physics) return;
+    const [rx, ry] = [(sx / core.camera.viewportW) * this.renderW, (sy / core.camera.viewportH) * this.renderH];
+    core.renderer.pick(rx, ry).then(async (hit) => {
+      if (!hit) return;
+      const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
+      // (over a body already there: above it)
+      const api = (window as unknown as { reclaimed: { phys: { spawn: (m: VoxelModel, x: number, y: number, above: number, yaw: number, pitch: number, roll: number, vel: [number, number, number], floor: number) => Promise<unknown> } } }).reclaimed;
+      const b = await api.phys.spawn(kind.make(), x, y, ed.dropHeight, Math.random() * 360, 0, 0, [0, 0, 0], hit.z + 1);
+      if (!b) this.hud.say('No room for more bodies.', 2);
+    }, ignoreTeardown);
+  }
+
+  /** Aim the heat beam at what's under the pointer: down the camera's view, into the surface hit. */
+  private aimBeam([sx, sy]: [number, number]): void {
+    const { core } = this;
+    const { camera } = core;
+    this.beamPicking = true;
+    const [rx, ry] = [(sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH];
+    core.renderer.pick(rx, ry).then((hit) => {
+      this.beamPicking = false;
+      if (!this.beamAt || !this.physics) return;
+      if (!hit) {
+        this.physics.beam = null;
+        return;
+      }
+      const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
+      const f = [camera.target[0] - camera.eye[0], camera.target[1] - camera.eye[1], camera.target[2] - camera.eye[2]];
+      const l = Math.hypot(f[0], f[1], f[2]) || 1;
+      const z = hit.z + 0.5;
+      this.physics.beam = { at: [x, y, z], dir: [f[0] / l, f[1] / l, f[2] / l], radius: 1.5, power: 3000 };
+      core.sim.particles.burst({ kind: PK.Ember, x, y, z: z + 0.3, count: 2, speed: 2.5, spread: 0.3 });
+    }, ignoreTeardown);
+  }
+
   /**
    * Place the chosen model on whatever is under the cursor: the picked column
    * and its surface height (round 14: "spawn those voxels at the height of

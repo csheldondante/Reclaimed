@@ -26,6 +26,7 @@ worked on in parallel:
 | `mayhem` | `C:/Projects/Reclaimed-mayhem` | `npm run dev -- --port 5175` |
 | `sandbox` | `C:/Projects/Reclaimed-sandbox` | `npm run dev -- --port 5176` |
 | `grids` | `C:/Projects/Reclaimed-grids` | `npm run dev -- --port 5177` |
+| `physics` | `C:/Projects/Reclaimed-physics` | `npm run dev -- --port 5181` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -34,6 +35,7 @@ worked on in parallel:
 | `mayhem` | FEMA Mayhem: an automated city that responds to disasters; the player only breaks things with weather | powers, structure collapse, fire, floods, people as agents | X1 |
 | `sandbox` | World editor: place and modify prefabs, raise mountains, shape the land with wind, rain, meteors, volcanoes | the sandbox brushes (edit.wgsl), stampGrid models, bedrock uplift | X4 |
 | `grids` | The map engine generalised: intersecting grids (a hex nature grid of material intervals, a rectangular voxel grid for structures, an irregular grid for WFC buildings) that read and write each other's data | the sim systems and their contracts | X5 |
+| `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 
 ## ambient
 
@@ -110,3 +112,12 @@ hexes are one grid among several, not the point.)
 Measure against today's square columns at each step (the DEVLOG rule):
 frame time per system, and pictures of the same dune field and the same
 storm on both.
+
+## physics
+
+Cut from `grids` (round 43). The sandbox as a playground for destruction,
+and as terrain for other games: every voxel of a physics body is a particle
+(docs/PHYSICS.md). Metal bends and stays bent, stone cracks into rigid
+pieces, contacts lose energy and never gain it (deep overlaps crumble to
+loose ground). Tools: drop a body, the heat beam; next meteors and
+volcanoes. Merges from `grids` for the look.

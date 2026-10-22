@@ -1352,7 +1352,9 @@ fn fsBody(in: VOut) -> FOut {
   let word = in.info.x;
   let mat = word & 0xffu;
   // a little per-voxel variation so a tumbling slab doesn't read as one block
-  let r = randv(vec3<i32>(floor(in.bmin * 3.0)));
+  // (a physics voxel, bit 30, carries its own speckle: it bends and moves)
+  let physV = ((word >> 30u) & 1u) != 0u;
+  let r = select(randv(vec3<i32>(floor(in.bmin * 3.0))), f32((word >> 8u) & 0xffu) / 255.0, physV);
   var alb = toLinear(MATS[mat].albedo.rgb) * (0.88 + 0.24 * r);
   let nrm = normalize(in.nrm);
   // a structure grid's voxel (structprep.wgsl): the growth it owns on its
@@ -1375,6 +1377,12 @@ fn fsBody(in: VOut) -> FOut {
     }
   }
   var col = alb * lighting(in.wpos, nrm);
+  if (physV) {
+    // heat (bits 16..23, a share of its melting point): dull red, orange, then white
+    let heat = f32((word >> 16u) & 0xffu) / 255.0;
+    let glow = smoothstep(0.35, 1.0, heat);
+    col = col * (1.0 - 0.5 * glow) + vec3<f32>(1.0, 0.25, 0.04) * glow * 3.0 + vec3<f32>(1.0, 0.8, 0.5) * smoothstep(0.75, 1.0, heat) * 4.0;
+  }
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);

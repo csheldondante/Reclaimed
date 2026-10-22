@@ -107,6 +107,10 @@ export class Renderer {
   private shadowOpaquePipe?: GPURenderPipeline;
   private shadowBodyPipe?: GPURenderPipeline;
   private shadowMeshPipe?: GPURenderPipeline;
+  /** more voxel instances drawn like the structures' (physics bodies): instances, indirect args, and their draw and shadow groups */
+  private voxelSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
+  private noShadowView?: GPUTextureView;
+  private groupFor!: (inst: GPUBuffer, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
   private shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
   /** ?smooth=0: tops lit flat, a hexagon at a time (the look before G13). */
   private flatTops = new URLSearchParams(location.search).get('smooth') === '0';
@@ -296,6 +300,7 @@ export class Renderer {
         25: shadow,
         26: this.shadowSampler,
       });
+    this.groupFor = groupFor;
     this.opaqueGroup = groupFor(this.instOpaque);
     this.topsGroup = groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 });
     this.plantGroup = groupFor(this.instPlant);
@@ -373,6 +378,7 @@ export class Renderer {
       this.shadowMeshPipe = shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMesh');
       // (the pass draws into the map, so its groups bind a stand-in texel there)
       const none = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
+      this.noShadowView = none;
       const L = this.lightCamBuf;
       this.shadowGroups = {
         opaque: groupFor(this.instOpaque, L, none),
@@ -420,6 +426,15 @@ export class Renderer {
   setBodies(data: Uint32Array, count: number): void {
     this.bodyCount = Math.min(count, Renderer.MAX_BODY_VOXELS);
     if (this.bodyCount > 0) this.device.queue.writeBuffer(this.bodyBuf, 0, data, 0, this.bodyCount * 8);
+  }
+
+  /** Draw more voxels in the body format (render.wgsl vsBody) from a GPU-written instance buffer and its indirect args. */
+  addVoxels(inst: GPUBuffer, indirect: GPUBuffer): void {
+    this.voxelSources.push({
+      indirect,
+      group: this.groupFor(inst),
+      shadow: this.shadowGroups ? this.groupFor(inst, this.lightCamBuf, this.noShadowView!) : undefined,
+    });
   }
 
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
@@ -516,6 +531,12 @@ export class Renderer {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.structGroup);
       pass.drawIndirect(this.structIndirect, 0);
+      this.profiler.draws++;
+    }
+    for (const v of this.voxelSources) {
+      pass.setPipeline(this.bodyPipe);
+      pass.setBindGroup(0, v.group);
+      pass.drawIndirect(v.indirect, 0);
       this.profiler.draws++;
     }
     pass.setPipeline(this.waterPipe);
@@ -626,6 +647,11 @@ export class Renderer {
     if (this.bodyCount > 0) {
       pass.setBindGroup(0, g.bodies);
       pass.draw(36, this.bodyCount);
+    }
+    for (const v of this.voxelSources) {
+      if (!v.shadow) continue;
+      pass.setBindGroup(0, v.shadow);
+      pass.drawIndirect(v.indirect, 0);
     }
     pass.end();
     this.profiler.draws += 4;

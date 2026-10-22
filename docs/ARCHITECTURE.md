@@ -248,6 +248,17 @@ run under a structure feels no wind or water, only slumps. `structtick.wgsl` is 
 structures' own tick; `structprep.wgsl` turns exposed voxels into body-format
 instances (bit 31 of the material word: a structure voxel).
 
+Physics voxels (branch `physics`, docs/PHYSICS.md; src/physics/,
+phys.wgsl): bodies whose every voxel is a particle on its body's lattice
+(position, previous position and temperature, velocity, rest position,
+region rotation, 26 bond bits), solved by lattice shape matching on the
+GPU. The CPU places bodies (uploads them once) and aims the beam. They
+read the layers (ground contacts) and write crumbled voxels into `deposit`
+(y amount, z material, through their own per-column atomics) and chips,
+dust and embers into the particle ring; the renderer draws their instances
+with the body pipeline (`Renderer.addVoxels`). The nature grid doesn't see
+them yet.
+
 ## Rendering
 
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the

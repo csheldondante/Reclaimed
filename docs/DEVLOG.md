@@ -2888,3 +2888,35 @@ so it now opens in free play (the whole valley, the old rules); the story's
 rules are behind `?mode=story` (the menu's Free play button shows only
 then; scripts/gates.mjs asks for it). Making the fence readable is R11.
 
+## 2026-10-22 — physics: one GPU solver for every material
+
+Round 43, a new branch `physics` cut from `grids`: the sandbox as a
+destruction playground (and terrain for other games). The old CPU bodies
+read the world back, worked in tens of bodies, and the user found the
+sandbox worse than the valley. Now every voxel of a physics body is a
+particle (docs/PHYSICS.md): lattice shape matching on the GPU, one solver
+for every material, so steel bends (and stays bent past its yield) and
+stone stays rigid until its bonds snap and it goes on as rigid pieces.
+Heat softens and melts; the 🔥 beam tool cuts steel (white-hot, sagging,
+gone in about 2 s held). The 🧱 drop tool drops test shapes or any model.
+
+Energy, the user's rule: lose it, never gain it. First runs blew up:
+bodies spawned inside the loose ground (heightAt is the run's base) and
+were shoved out; then crumbled voxels dropped rubble into the column under
+the body and the push out of it became speed (a 30 × 30 × 12 block
+"exploded" to z = 100). Contacts now never push out: they only stop a
+voxel moving further in, an overlap it already has stays, and one too deep
+(or an impact over the material's crumble speed) crumbles it into its loose
+material. Restitution is low (stone 0.1, steel 0.2): big things thud,
+crack and settle. The same 30 × 30 × 12 concrete block dropped 4 cells:
+10,563 of 10,800 voxels left after 6 s, nothing higher than where it
+started. Voxels of one body that started close (a squeeze, a crack's two
+faces) never crumble each other (they had been: interior pits).
+
+Scenes (scripts/phystest.mjs): a steel beam over two stone posts arched
+under a dropped concrete block; a stone pillar toppled on sloping sand and
+lost its tip; the beam cut a steel bar on two stone blocks.
+
+Cost (Xe-LPG, 1400 × 900): 24 bodies, 1.5k voxels, 1.3 ms GPU a frame;
+10.8k voxels 1.5 ms (mostly the fixed ~60 dispatches a tick).
+

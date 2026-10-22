@@ -15,6 +15,10 @@ import { decodeMap, encodeMap, savedMaps } from '../world/mapfile';
 import { LEVELS } from '../game/levels';
 import { MODELS } from '../world/models';
 import { thumbnail } from './thumbs';
+import { bodyCatalogue } from '../physics/shapes';
+
+/** the drop tool's bodies */
+export const BODIES = bodyCatalogue(MODELS, MAT);
 
 /** What the panel's map buttons do (the level implements them). */
 export interface EditorMaps {
@@ -33,6 +37,8 @@ export type EditTool =
   | 'dig'
   | 'place'
   | 'smash'
+  | 'drop'
+  | 'beam'
   | 'water'
   | 'drain'
   | 'oil'
@@ -89,6 +95,8 @@ const TOOLS: [EditTool, string, string][] = [
   ['dig', '▼', 'Dig: take a layer off the top'],
   ['place', '🚗', 'Place a model: cars, ruins, a tanker… (E rotates)'],
   ['smash', '💥', 'Break: punch a hole where you click — what loses its support falls'],
+  ['drop', '🧱', 'Drop a physics body: steel bends, stone cracks into pieces, a hard hit crumbles it'],
+  ['beam', '🔥', 'Heat beam: hold on something — steel glows, softens and melts, so you can cut it'],
   ['water', '💧', 'Pour water'],
   ['drain', '◌', 'Drain water and oil'],
   ['oil', '⬤', 'Spill oil'],
@@ -117,6 +125,9 @@ export class Editor {
   bury = MODELS[0].sink;
   /** place tool: degrees of tilt; above 0 the model goes in as a structure grid of its own (docs/GRIDS.md) */
   tilt = 0;
+  /** drop tool: which body (physics/shapes.ts bodyCatalogue) and how high above the ground */
+  body = 'steel-beam';
+  dropHeight = 8;
   private el: HTMLElement;
   private picked = { pour: MAT.Soil as number, build: MAT.Stone as number };
 
@@ -131,6 +142,8 @@ export class Editor {
       <div class="models" data-models>${MODELS.map((m) => `<button data-mod="${m.id}" title="${m.name}"><img alt="${m.name}" src="${thumbnail(m)}"></button>`).join('')}</div>
       <label data-bl>bury <input data-b type="range" min="0" max="4" value="${this.bury}"></label>
       <label data-tl title="Above 0: placed as its own tilted grid (sand buries it, moss grows on it)">tilt <input data-ti type="range" min="0" max="90" step="5" value="0"></label>
+      <label data-pbl>body <select data-pb>${BODIES.map((b) => `<option value="${b.id}">${b.name}</option>`).join('')}</select></label>
+      <label data-dhl>height <input data-dh type="range" min="0" max="30" value="${this.dropHeight}"></label>
       <label data-sl>strength <input data-s type="range" min="5" max="100" value="${this.strength * 100}"></label>
       <div class="speed">${[0, 1, 2, 4, 8].map((s) => `<button data-sp="${s}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}</div>
       <div class="maps">
@@ -158,6 +171,8 @@ export class Editor {
       show('[data-models]', t === 'place');
       show('[data-bl]', t === 'place');
       show('[data-tl]', t === 'place');
+      show('[data-pbl]', t === 'drop');
+      show('[data-dhl]', t === 'drop');
       if (list) {
         const cur = this.picked[t as 'pour' | 'build'];
         matSel.innerHTML = list.map(([n, m]) => `<option value="${m}"${m === cur ? ' selected' : ''}>${n}</option>`).join('');
@@ -169,6 +184,8 @@ export class Editor {
       this.material = Number(matSel.value);
       if (this.tool === 'pour' || this.tool === 'build') this.picked[this.tool] = this.material;
     });
+    el.querySelector<HTMLSelectElement>('[data-pb]')!.addEventListener('change', (e) => (this.body = (e.target as HTMLSelectElement).value));
+    el.querySelector<HTMLInputElement>('[data-dh]')!.addEventListener('input', (e) => (this.dropHeight = Number((e.target as HTMLInputElement).value)));
     const bury = el.querySelector<HTMLInputElement>('[data-b]')!;
     bury.addEventListener('input', () => (this.bury = Number(bury.value)));
     const tilt = el.querySelector<HTMLInputElement>('[data-ti]')!;

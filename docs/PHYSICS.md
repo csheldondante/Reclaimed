@@ -1,0 +1,110 @@
+# Physics voxels
+
+The `physics` branch (cut from `grids`, DECISIONS round 43): the sandbox as
+a playground for destruction, and as terrain for other games. What the user
+asked for:
+
+- **Materials with properties.** Metal bends like World of Goo, both
+  elastically (springs back) and plastically (stays bent past its yield).
+  Stone fractures into bigger pieces that then move as rigid bodies.
+- **Lose energy, never gain it.** How it looks matters more than never
+  interpenetrating. Big things crumble and collapse and rarely bounce;
+  small debris may still fly. An overlap too deep turns the voxel into its
+  loose material (gravel, sand, dust) instead of being pushed out.
+- **Destruction tools to play with:** a heat beam that cuts (first), then
+  meteor impacts and volcanoes.
+
+## One solver, every material
+
+Every voxel of a physics body is a particle on its body's lattice, bonded
+to the 26 around it. All of it runs on the GPU (`src/shaders/phys.wgsl`,
+host `src/physics/physics.ts`); the CPU only places bodies and aims the
+beam.
+
+**Lattice shape matching** (Rivers & James 2007), solved per substep
+(4 substeps a tick, 4 iterations each):
+
+1. *predict*: gravity (20 cells/s²) and the move.
+2. *region*: each voxel's region is itself and what it's bonded to. Find the
+   rotation that best maps the region's rest shape onto where it is now
+   (the polar part of Σ m (x − c)(r − c0)ᵀ, Müller et al. 2016's iteration,
+   warm-started from last substep).
+3. *gather*: each voxel moves toward the mean of where its regions would
+   put it, by its material's stiffness (1: rigid; less: soft). Heat lowers it.
+4. *contacts*: a spatial hash (2¹⁸ buckets); the ground from the layers
+   (the column under it and its six walls); other voxels it isn't bonded to.
+5. *finalize*: velocity from the move; a bounce at the material's
+   restitution and Coulomb friction where it touched; bonds strained past
+   the material's break strain snap.
+6. *relax*: past the yield, the rest shape follows the bend (plastic flow);
+   heat evens out along bonds, cools, and the beam adds it.
+7. *deaths*: what crumbled goes to the deposit buffer as its loose material
+   (the sediment pass folds it into the layers) with a chip and some dust;
+   what melted leaves as embers.
+
+Then once a tick: *fold* (crumbled ground into `deposit`) and *prep* (each
+voxel with an open face becomes a rotated-cube instance for the body
+pipeline: bit 30 marks it, bits 8–15 a stable speckle, 16–23 its heat).
+
+### Contacts never push out
+
+A contact only stops a voxel moving further in: the ground resets its
+downward move this substep, a wall its move into the wall, another voxel
+the closing part of their moves (each its share by mass). An overlap it
+already has stays. That way no contact can add energy (a shove out of an
+overlap reads as energy from nowhere). Crumbling replaces penetration:
+
+- deeper than 0.6 into solid ground, or 0.5 into a voxel of another body
+  (the weaker of the two, by density × crumble speed): it crumbles;
+- an impact faster than the material's crumble speed (stone 14 cells/s,
+  steel 40): it crumbles;
+- voxels of one body that started within two lattice steps of each other
+  (a squeeze, the two faces of a crack) only stop each other, never crumble.
+
+A contact's bounce is capped at restitution × the speed it came in at, and
+it never leaves faster than 0.3 cells/s otherwise.
+
+### Materials (physics.ts PHYS)
+
+| | stiffness | yield | break strain | restitution | crumble (cells/s) | melt |
+|---|---|---|---|---|---|---|
+| stone, concrete, brick, bone | 1 | never | 0.025–0.04 | 0.1 | 11–14 | 1600 |
+| steel | 0.9 | 0.12 | 0.6 | 0.2 | 40 | 1400 |
+| rust | 0.75 | 0.07 | 0.25 | 0.1 | 18 | 1300 |
+| wood | 0.7 | 0.2 | 0.15 | 0.2 | 22 | 300 |
+| canvas, trash | 0.25–0.4 | 0.2–0.4 | 0.12–1 | 0.05 | 10–40 | 250–350 |
+
+Heat between a material's soften and melt temperatures lowers its stiffness
+(to 8 %), its yield (to 0) and its break strain (to 30 %): hot steel sags.
+The beam heats steel about three times faster than stone.
+
+## Using it
+
+- Sandbox tools: 🧱 **drop** (a body from the list: test shapes and every
+  model, a height above what's under the pointer) and 🔥 **beam** (hold on
+  something: it heats where the pointer is, down the camera's view).
+- In the console: `reclaimed.phys.drop('steel', 18, 2, 2, x, y, above)`,
+  `reclaimed.phys.spawn(model, x, y, above, yaw, pitch, roll)`,
+  `reclaimed.phys.physics.readPositions()`.
+- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one [--one mat,w,d,h,above] [--perf 1]`.
+
+## Cost
+
+Intel Xe-LPG, 1400 × 900: 24 bodies (1.5k voxels) 1.3 ms of GPU a frame;
+one 30 × 30 × 12 block (10.8k voxels) 1.5 ms. Most of it is the fixed part
+(about 60 dispatches a tick, the hash cleared four times).
+
+## Not yet
+
+- The nature grid doesn't see the bodies: sand and water pass through them,
+  and loose ground slumping under a body lets it sink. Next: splat the
+  bodies into `bodyProj` / `proj` so the ground treats them as solid.
+- Large bodies are only as stiff as 4 × 4 iterations allow (a 30-wide slab
+  flexes a little): a cluster-level rigid pass for rigid materials.
+- The beam heats bodies only, not the ground; no beam drawn yet (embers at
+  the hit).
+- Layer structures (ruins in the map) aren't physics bodies: the old CPU
+  bodies (integrity.ts) still handle them. Next: turn a region of the layers
+  into physics voxels when something hits it.
+- Meteors, volcanoes (lava as a hot liquid that cools to stone).
+- Sleeping: every live voxel is solved every substep.
