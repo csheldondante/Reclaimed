@@ -115,6 +115,10 @@ export class WorldGpu {
   readonly levelsView: GPUTextureView;
   /** structure grids (grids.wgsl): frames, and the voxel pool */
   readonly strFrames: GPUBuffer;
+  /** the physics voxels as each column sees them (physics.ts writes it each tick; project.wgsl
+   *  merges it into bodyProj / proj): 2 u32 per column, bitcast(top + 1) and
+   *  0xffffffff − bitcast(bottom + 1), both 0 for none */
+  readonly physCols: GPUBuffer;
   readonly strVox: GPUBuffer;
   /** voxels of the pool in use (Structures keeps it): the per-voxel kernels' size */
   strVoxels = 0;
@@ -261,6 +265,7 @@ export class WorldGpu {
     this.projView = this.proj.createView();
     this.levelsView = this.levels.createView();
     this.strFrames = this.buf('strFrames', MAX_STRUCTS * FRAME_BYTES, S);
+    this.physCols = this.buf('physCols', this.cells * 8, S | GPUBufferUsage.COPY_DST);
     this.strVox = this.buf('strVox', POOL_VOXELS * 4, S);
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.strata);

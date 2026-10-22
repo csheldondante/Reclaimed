@@ -92,6 +92,18 @@ positions: the hex rows half a cell apart). A cell resting on the ground is
 a foundation, pinned until its bonds break; so is the edge of a piece cut
 off at the limit (it holds on to the rest, still terrain).
 
+## The ground sees them
+
+Each tick `prep` marks the columns under every live voxel (its centre and
+six points 0.3 round it, so a turned body leaves no holes) with the
+highest top and lowest bottom over them (`physCols`). The projection pass
+folds that into what the nature grid sees of structures (one stretch per
+column: a table's legs and the air between them read as solid), so poured
+sand lies on a body, water runs round it, and the loose ground under it
+can't slump out (it no longer sinks). Sand a body is nudged up into stays on
+it (sediment: a projected interval the sand starts inside holds it); a body
+that moves away leaves its sand to fall.
+
 ## Using it
 
 - Sandbox tools: 🧱 **drop** (a body from the list: test shapes and every
@@ -114,9 +126,6 @@ one 30 × 30 × 12 block (10.8k voxels) 1.5 ms. Most of it is the fixed part
 
 ## Not yet
 
-- The nature grid doesn't see the bodies: sand and water pass through them,
-  and loose ground slumping under a body lets it sink. Next: splat the
-  bodies into `bodyProj` / `proj` so the ground treats them as solid.
 - Large bodies are only as stiff as 4 × 4 iterations allow (a 30-wide slab
   flexes a little): a cluster-level rigid pass for rigid materials.
 - The beam heats bodies only, not the ground (it wakes a map structure it

@@ -179,6 +179,7 @@ export class Physics implements SimSystem {
       23: this.mats,
       24: this.bodyTable,
       25: this.touches,
+      26: world.physCols,
     };
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
@@ -196,7 +197,7 @@ export class Physics implements SimSystem {
     kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' });
     kernel('deaths', { 3: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 14: 'rw', 25: 'rw' });
     kernel('fold', { 14: 'rw', 16: 'rw' });
-    kernel('prep', { 3: 'rw', 5: 'rw', 6: 'rw', 8: 'rw', 19: 'rw', 20: 'rw' });
+    kernel('prep', { 3: 'rw', 5: 'rw', 6: 'rw', 8: 'rw', 19: 'rw', 20: 'rw', 26: 'rw' });
   }
 
   /**
@@ -307,6 +308,7 @@ export class Physics implements SimSystem {
   }
 
   private readTouches = false;
+  private colsLive = false;
 
   /** After the tick's submit: read the touches it copied, if any. */
   afterSubmit(): void {
@@ -357,6 +359,9 @@ export class Physics implements SimSystem {
   }
 
   encode(enc: GPUCommandEncoder, tick: number): void {
+    // the columns the voxels cover, refilled by prep (once more after the last body goes)
+    if (this.used || this.colsLive) enc.clearBuffer(this.world.physCols);
+    this.colsLive = this.used > 0;
     if (!this.used) return;
     this.writeUniforms(tick);
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));

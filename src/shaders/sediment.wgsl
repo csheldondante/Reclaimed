@@ -808,7 +808,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var pk = 0u; pk < PROJ_K; pk++) {
           let u = projAt(p, pk);
           if (ivEmpty(u)) { break; }
-          if (ivZ1(u) > fl && z0 >= ivZ1(u) - 1e-3) { fl = ivZ1(u); }
+          // (one it starts inside holds it too: a body nudged up into its sand)
+          if (ivZ1(u) > fl && z0 >= ivZ0(u)) { fl = min(ivZ1(u), z0); }
         }
       }
       if (matState(ivMat(v)) == ST_GRANULAR && z0 > fl + 1e-4) {

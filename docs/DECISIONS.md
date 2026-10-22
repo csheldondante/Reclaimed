@@ -3,6 +3,11 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 46 (session 5, `physics`) — proceed
+
+- "Please proceed, this is looking really cool": next is the nature grid
+  seeing the bodies (sand and water treat them as solid).
+
 ## 2026-10-22 — round 45 (session 5, `physics`) — mesh in the sandbox; merge
 
 - The sandbox shows the field mesh (by default there; `?mesh=0` for the
