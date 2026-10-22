@@ -295,8 +295,66 @@ fn instVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
 fn vsBox(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut {
   var o: VOut;
   let b = unpackBox(instances[ii]);
-  if (!instVertex(b, vi, &o)) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
+  var shown: bool;
+  if ((u32(CAM.eye.w) & 2u) != 0u && b.mat == MAT_LAVA_M) { shown = lavaSheetVertex(b, ii, vi, &o); }
+  else { shown = instVertex(b, vi, &o); }
+  if (!shown) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
   return o;
+}
+
+/**
+ * Lava over the field mesh (round 48: smooth like the ground, not hex
+ * prisms): as waterSheetVertex, the six triangles round the column's centre
+ * over the cell-centre lattice, each drawn once (by its lowest lava corner).
+ * The levels round it come from lava.wgsl prep, after the prisms in the
+ * same buffer: by direction, a lava neighbour's level, a dry one's ground as
+ * -1 - ground. A dry corner stands at the lava's level or its ground below
+ * it, so the edge slopes down onto the ground.
+ */
+fn lavaSheetVertex(b: Box, ii: u32, vi: u32, out: ptr<function, VOut>) -> bool {
+  if (vi >= 18u) { return false; }
+  let t = vi / 3u;
+  let p = b.cell;
+  let da = SIDE_DIR[t];
+  let db = SIDE_DIR[(t + 1u) % 6u];
+  let qa = nbr(p, da);
+  let qb = nbr(p, db);
+  let o = arrayLength(&instances) / 3u + 2u * ii;
+  let l0 = instances[o];
+  let l1 = instances[o + 1u];
+  let lv = array<f32, 6>(bitcast<f32>(l0.x), bitcast<f32>(l0.y), bitcast<f32>(l0.z), bitcast<f32>(l0.w), bitcast<f32>(l1.x), bitcast<f32>(l1.y));
+  let me = b.z1;
+  let ra = lv[da];
+  let rb = lv[db];
+  let wa = ra >= 0.0;
+  let wb = rb >= 0.0;
+  let ip = colIdxI(p);
+  if (wa && colIdxI(qa) < ip) { return false; }
+  if (wb && colIdxI(qb) < ip) { return false; }
+  let level = (me + select(0.0, ra, wa) + select(0.0, rb, wb)) / (1.0 + f32(wa) + f32(wb));
+  // (a dry corner dips under its ground: the ground's smoothed mesh then cuts
+  // the edge along a curve, not the triangles' zigzag)
+  let za = select(min(level, -1.0 - ra) - 0.12, ra, wa);
+  let zb = select(min(level, -1.0 - rb) - 0.12, rb, wb);
+  let pa = vec3<f32>(cellPos(qa), za);
+  let pb = vec3<f32>(cellPos(qb), zb);
+  let pm = vec3<f32>(cellPos(p), me);
+  let k = vi % 3u;
+  var v = pm;
+  if (k == 1u) { v = pa; } else if (k == 2u) { v = pb; }
+  var n = normalize(cross(pa - pm, pb - pm));
+  if (n.z < 0.0) { n = -n; }
+  (*out).pos = CAM.viewProj * vec4<f32>(v, 1.0);
+  (*out).wpos = v;
+  (*out).nrm = n;
+  (*out).info = vec2<u32>(MAT_LAVA_M, b.flags);
+  (*out).zr = vec2<f32>(b.z0, b.z1);
+  (*out).tint = 1.0;
+  (*out).bmin = vec3<f32>(cellPos(p) - 0.5, b.z0);
+  (*out).bsize = vec3<f32>(1.0, 1.0, b.z1 - b.z0);
+  (*out).boff = vec3<f32>(0.0);
+  (*out).sides = 0u;
+  return true;
 }
 
 @vertex

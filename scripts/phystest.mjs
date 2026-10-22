@@ -144,6 +144,14 @@ try {
         R.scene.lava.addVent(x, y, 20);
         made.push(await P.drop('steel', 10, 2, 2, x + 4, y - 6, 0.2));
         R.globals.events.push({ kind: 5, x: x - 8, y: y + 4, z: 3 * 32 + 512, radius: 3, strength: 3 });
+      } else if (scene === 'meteor') {
+        // a meteor on open ground, with blocks round it to be thrown and crumbled
+        made.push(await P.drop('concrete', 4, 4, 4, x + 4, y + 2, 0.2));
+        made.push(await P.drop('stone', 3, 3, 6, x - 12, y + 6, 0.2));
+        made.push(await P.drop('steel', 10, 2, 2, x + 10, y - 9, 0.2));
+        const col = await P.column(x, y);
+        const top = col[col.length - 1].z1;
+        R.scene.meteors.push({ from: [x - 45, y + 35, top + 110], to: [x, y, top + 0.5], t: 0, dur: 1.6 });
       } else if (scene === 'slam') {
         // a wide slab dropped flat on sand: the dust and the air it shoves out
         made.push(await P.drop('concrete', 10, 10, 2, x, y, 10));
@@ -276,7 +284,7 @@ try {
     await page.screenshot({ path: `${out}-${scene}-${String(s).replace('.', '_')}s.png` });
     if ((scene === 'cut' || scene === 'gbeam') && s === shots[shots.length - 2]) await page.mouse.up();
     console.log(`t=${s}s`, (await report()).join(' | '));
-    if (scene === 'melt' || scene === 'volcano' || scene === 'quench' || scene === 'gbeam')
+    if (scene === 'melt' || scene === 'volcano' || scene === 'quench' || scene === 'gbeam' || scene === 'meteor')
       console.log(
         '  lava',
         await page.evaluate(async () => {

@@ -3042,3 +3042,34 @@ foundation over the dug hole fell into it, z 11.4 to 2.5), and the dig
 brush wakes the ruins round it. Cost (stress scene, 24 bodies): physics
 1.89 ms (1.20 before; the damping's bond loop in finalize).
 
+## 2026-10-22 — meteor, a volcano that rises, smooth lava
+
+Round 48's other points. **Smooth lava**: lava was drawn as hex prisms
+(renderprep's instance form, so it went through `addPrisms`). Over the
+field mesh it now draws like water's sheet: lava.wgsl prep writes, after
+each column's prism, the levels of its six neighbours (a dry one as -1 -
+its ground), and render.wgsl `lavaSheetVertex` draws the six triangles
+round the centre (each once: by its lowest lava corner); a dry corner
+stands just under the level at its ground, so the edge slopes in. The
+draw shader's vertex stage already binds eight storage buffers, so the
+levels travel in the lava's own instance buffer rather than a binding.
+**Volcano**: a vent was a flat spring that left a 1.5-cell dome; the user
+wanted it to rise out of the ground to a large height and spew lava down
+its sides. Now a cone rises first (30 cells over 10 s, radius 21, concave
+sides, a crater; ridges and gullies by angle) by growing each column's
+bedrock under its layers, so what's on it rises and loose ground slides
+off; then the vent pours into the crater. First try: the lava raced down
+the cone as a thin film (unseen under the mesh) and ringed its foot in
+1.5 s; thin lava now flows as (depth / 0.8)², so it gathers into streams
+that run down the gullies (phystest volcano: the crater rises 0 to 29 at
+the centre, the lava runs down the front gully, 47 columns still molten
+at 34 s, crusting). **Meteor**: a tap sends one in from the sky (1.6 s, a
+burning head of embers and a smoke trail); on impact OP_CRATER blows a
+bowl 12 in radius out of everything (gone to dust, ejecta as drift out to
+30 cells), the ruins there wake and a blast crumbles and throws bodies,
+six wind ripples push out every way (sand streams outward), a flash,
+dust and ash clouds, and a small molten pool in the bowl. Headless
+(phystest meteor): a 4×4×4 concrete block beside the impact is gone, a
+steel bar 10 cells off loses 11 of 40 voxels, the crater shows with a
+glowing floor. Valley level loads clean.
+

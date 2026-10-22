@@ -271,11 +271,18 @@ temperature, the ground's heat at its top, the lava's surface height),
 `lavaNext`, `lavaFlux`. Its flux pass reads `surface`, drift and bodyProj
 like water; its depth pass edits the column's own layers in place (as
 sediment does: melting off the top interval, setting basalt, MAT 23) and
-takes water off the top (steam). The CPU sets only the beam and up to four
-vents (a uniform). It draws as prisms in renderprep's instance form through
-`Renderer.addPrisms` (the opaque pipeline; MAT 24, temperature in the
-damage bits); renderfields reads `lava` so it lights its surroundings like
-fire, and phys.wgsl `relax` reads it so voxels in it heat up.
+takes water off the top (steam), and lifts the columns of a rising volcano
+cone (the bottom interval grows, the rest move up). The CPU sets only the
+beam and up to four vents with their cones (a uniform). It draws through
+`Renderer.addPrisms` (the opaque pipeline): one instance a column in
+renderprep's prism form (MAT 24, temperature in the damage bits), then
+after all of them (`lavaInst`, 3 vec4 a column) two vec4 of the six levels
+round each, from which render.wgsl `lavaSheetVertex` draws a smooth sheet
+when the field mesh is on. renderfields reads `lava` so it lights its
+surroundings like fire, and phys.wgsl `relax` reads it so voxels in it heat
+up. A meteor is the level's (particles on a path), then one EV_EDIT event
+(op 13, `OP_CRATER`: a bowl removed, ejecta into `deposit` as drift),
+ripples, bursts, a wake and a physics blast.
 
 ## Rendering
 

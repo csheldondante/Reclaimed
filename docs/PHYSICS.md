@@ -142,11 +142,27 @@ and temperature, and the heat of the ground at the column's top.
   per cell melted), so a held beam digs a glowing pit through sand and
   stone alike (never below z 1), and the lava pools in it. The lava on it
   is kept molten (no hotter than 1400).
-- **Volcano** (🌋 tap): a vent pours 6 cells³/s at 1350 for 25 s (four at
-  most), with a smoke plume, ash and embers.
+- **Volcano** (🌋 tap; round 48: it was far too short): first its cone
+  rises out of the ground, 30 cells over 10 s (radius 21, concave sides
+  with ridges and gullies, a crater 2.5 across): the column's bedrock grows,
+  lifting all that lies on it, and the loose ground slides off the steep
+  sides. Then its vent pours 9 cells³/s at 1350 into the crater for 30 s
+  (four at most), with a fountain of embers, a smoke plume and ash; the
+  lava overflows and runs down the gullies.
+- **Meteor** (☄️ tap; round 48): it comes in from the sky in 1.6 s, a
+  burning head and a smoke trail. On impact (edit.wgsl `OP_CRATER`) a bowl
+  12 cells in radius is blown out of everything there, ground and ruins
+  alike, and is gone to dust; ejecta land round it as drift out to 2.5
+  times the radius, thinning outward. The ruins there wake and a blast
+  (radius 12) crumbles the bodies in it and throws those near; six ripples
+  of wind push out every way (radius 55) and lift the loose ground; a
+  flash, clouds of dust and ash, chips, embers and smoke; a molten pool in
+  the bowl.
 - **Flow**: virtual pipes, slow (gain 0.012, friction 0.9), only while hot
-  (fluidity from 750 to 1150) and not over a step under 0.12, so it runs in
-  tongues and stops as it cools; the heat travels with it.
+  (fluidity from 750 to 1150), and not over a step under 0.12, so it runs in
+  tongues and stops as it cools; the heat travels with it. Thin lava barely
+  moves (round 48: it flows as (depth / 0.8)²), so it gathers into streams
+  rather than racing down a slope as an unseen film.
 - **Cooling**: e-folding 0.06 a second per cell of depth (thin lava sets
   first); water over it boils off as steam and quenches it. Below 750 it
   sets at 0.6 cells/s into basalt on top of the column (under a skin of
@@ -155,8 +171,13 @@ and temperature, and the heat of the ground at the column's top.
 - **Fire**: hot lava spits embers, which light what they land on.
 - **Bodies**: a voxel in lava heats toward its temperature (steel fastest),
   softens and melts.
-- **Drawn** as prisms, by temperature: yellow-white hot, orange, then a dark
-  crust with glowing seams; it lights what's round it like fire.
+- **Drawn** as a smooth sheet over the field mesh (round 48: it was hex
+  prisms; prisms still without the mesh), like water's: six triangles round
+  each column's centre at the lava's level, a dry neighbour's corner at its
+  ground just under the level, so the edge slopes into the ground. By
+  temperature: yellow-white hot, orange, then a dark crust with glowing
+  seams; it lights what's round it like fire. Basalt (set lava) is ground,
+  part of the field mesh; columnar basalt isn't modelled.
 
 ## Using it
 
@@ -167,11 +188,12 @@ and temperature, and the heat of the ground at the column's top.
   through a hole it has cut it keeps eating the sides and cuts through) and
   💥 **break** (wakes what it hits, then a blast: what's inside crumbles,
   what's near is thrown). The beam on bare ground melts it into lava; 🌋
-  **volcano** opens a vent where you tap.
+  **volcano** raises a cone where you tap and erupts; ☄️ **meteor** strikes
+  where you tap.
 - In the console: `reclaimed.phys.drop('steel', 18, 2, 2, x, y, above)`,
   `reclaimed.phys.spawn(model, x, y, above, yaw, pitch, roll)`,
   `reclaimed.phys.physics.readPositions()`.
-- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
+- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano|meteor|fall|dig [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
 
 ## Cost
 
@@ -183,7 +205,7 @@ one 30 × 30 × 12 block (10.8k voxels) 1.5 ms. Most of it is the fixed part
 
 - Large bodies are only as stiff as 4 × 4 iterations allow (a 30-wide slab
   flexes a little): a cluster-level rigid pass for rigid materials.
-- Volcanoes: a cone (the vent's ground pushed up), lava bombs (hot physics
-  bodies, once spent bodies can be reused), eruptions that build and fade.
-- Meteors.
+- Lava bombs (hot physics bodies, once spent bodies can be reused),
+  eruptions that build and fade; the meteor as a physics body that
+  tumbles in (it is particles on a straight path).
 - Sleeping: every live voxel is solved every substep.
