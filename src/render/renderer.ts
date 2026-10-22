@@ -328,8 +328,11 @@ export class Renderer {
       const meshLayout = makeLayout(
         device,
         'mesh-draw',
-        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler' },
+        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler' },
         VF,
+        // (a stage has eight storage buffers: the vertices are the vertex
+        // stage's, the look's and the water's (its film) the fragments')
+        { 3: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
       );
       const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, meshDrawWgsl]);
       this.meshPipe = device.createRenderPipeline({
@@ -348,6 +351,7 @@ export class Renderer {
         4: world.contam,
         6: world.veg,
         7: world.renderFields,
+        8: world.water,
         9: world.layers,
         10: cam,
         11: world.surface,

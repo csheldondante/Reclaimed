@@ -2838,3 +2838,32 @@ Measured (Dam Valley, 1600 × 900, scripts/perfpass.mjs, ms):
 Storm over the valley's water (scripts/stormtest.mjs, mesh): 7.15 ms GPU in
 the storm (10.2 with prisms, before the shadow map). The map costs 16 MB.
 
+## 2026-10-22 — grids: the water's film, shores, waves across the wind
+
+Round 41: the film of water running over the ground was hidden under the
+smoothed floor (the sheet sits at the columns' level, the mesh above it
+where it rounds a slope), and flowing water was one of the best parts of
+the original.
+- The film is now a material on the mesh: where the water (blended over
+  the three nearest cells) is thin, the ground takes a glaze of the water's
+  colour, darker the wetter, smoothed of its rock and rubble detail, with
+  the sun's glint and the sky in it, and streaks running with the flow.
+  With the mesh on, renderfields stores the flow's direction (no march
+  reads that slot any more); the streaks are noise stretched along it and
+  moved down it in two phases that take turns (a flow map), at the water's
+  speed. Fast water froths in the same streaks. Above the edge, a band of
+  wet ground, and the swash running up it and back (higher in the wind)
+  with a lip of foam.
+- On the sheet: waves whose crests lie across the local wind (three
+  travelling waves round its direction, broken into lengths by noise, set
+  in patches), the old advected noise now only catspaws; swell lines
+  running in to the shallows with foam where they break, more on a lee
+  shore and in a stronger wind (not in running streams); rain lands as
+  spreading rings. Foam on the mesh is smooth noise, not cells.
+- scripts/watertest.mjs frames the fastest thin water (or the most thin
+  water, or the deepest) in free mode, wide, close and closer, then a storm.
+
+Cost (Dam Valley, 1600 × 900, mesh, two runs each): draw 3.26 → 3.50 ms,
+all GPU 7.70 → 7.92 ms (the film's three water reads per fragment, and the
+waves).
+

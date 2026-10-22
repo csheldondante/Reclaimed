@@ -1084,17 +1084,90 @@ fn fsBox(in: VOut) -> FOut {
   return o;
 }
 
+/** The water's flow at column j: with the field mesh renderfields stores
+ *  its direction (x, w); without, only its speed (x here). */
+fn flowOf(j: u32) -> vec2<f32> {
+  if ((u32(CAM.eye.w) & 2u) != 0u) { return vec2<f32>(fields[j].x, fields[j].w); }
+  return vec2<f32>(fields[j].w, 0.0);
+}
+
+/**
+ * Streaks carried along by the flow v (column flux, blended) at p, 0..1:
+ * noise stretched along the flow and moved down it, in two phases half a
+ * cycle apart that take turns (a flow map: each phase is pulled back before
+ * it smears). The pace follows the water's speed, the flux over its depth.
+ */
+fn flowStreaks(p: vec2<f32>, v: vec2<f32>, d: f32) -> f32 {
+  let sp = length(v);
+  if (sp < 1e-4) { return 0.0; }
+  let dir = v / sp;
+  // cells a cycle: speed (flux / depth), held to a believable range
+  let pace = min(sp / max(d, 0.06) * 6.0, 5.0);
+  var s = 0.0;
+  for (var k = 0; k < 2; k++) {
+    let ph = fract(G.time * 0.5 + f32(k) * 0.5);
+    let q = p - dir * pace * ph;
+    let u = vec2<f32>(dot(q, dir), dot(q, vec2<f32>(-dir.y, dir.x)));
+    s += (1.0 - abs(2.0 * ph - 1.0)) * vnoise(u * vec2<f32>(0.6, 1.9) + f32(k) * 17.0);
+  }
+  return s;
+}
+
+/**
+ * Water's surface normal under the wind: a few travelling waves round the
+ * local wind's direction (crests across it, longer ones faster), their
+ * phases broken by noise, plus the catspaws of gusts (noise advected
+ * downwind). Calm air or shallow water lies flatter (rough).
+ */
+fn windWaves(p: vec2<f32>, z: f32, rough: f32) -> vec3<f32> {
+  let wv = windAt(vec3<f32>(p, z + 0.5));
+  let lw = length(wv);
+  let pw = vec2<f32>(G.windX, G.windY) + vec2<f32>(1e-4, 0.0);
+  let wd = select(normalize(pw), wv / max(lw, 1e-4), lw > 0.05);
+  let wp = vec2<f32>(-wd.y, wd.x);
+  let t = G.time;
+  // (in the wind's frame: a along it, c across)
+  let a = dot(p, wd);
+  let c = dot(p, wp);
+  var g = vec2<f32>(0.0);
+  let ang = vec3<f32>(-0.22, 0.0, 0.25);
+  let kk = vec3<f32>(1.3, 2.3, 3.9);
+  let amp = vec3<f32>(1.0, 0.6, 0.35);
+  for (var i = 0; i < 3; i++) {
+    let dir = vec2<f32>(cos(ang[i]), sin(ang[i]));
+    // crests broken into lengths along themselves, set in patches
+    let warp = vnoise(vec2<f32>(a * 0.25, c * 0.5) + f32(i) * 13.0) * 2.5;
+    let gang = smoothstep(0.25, 0.75, vnoise(vec2<f32>(a * 0.3 - t * 0.4, c * 0.6) + f32(i) * 29.0));
+    let ph = (a * dir.x + c * dir.y) * kk[i] - t * sqrt(kk[i]) * 2.2 + warp;
+    g += (wd * dir.x + wp * dir.y) * kk[i] * amp[i] * gang * cos(ph);
+  }
+  let rp = windDrift(p) * 1.7;
+  let cat = vec2<f32>(
+    vnoise(rp + vec2<f32>(t * 0.7, 0.0)) - vnoise(rp + vec2<f32>(0.0, t * 0.6) + 31.0),
+    vnoise(rp + vec2<f32>(0.0, -t * 0.8) + 7.0) - vnoise(rp + vec2<f32>(-t * 0.5, 0.0) + 19.0));
+  return normalize(vec3<f32>(-g * 0.11 * rough + cat * rough * 0.15, 1.4));
+}
+
 @fragment
 fn fsWater(in: VOut) -> FOut {
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
-  // derivatives must be taken in uniform control flow, before any branch
-  let gl = gridLines(in.wpos, in.nrm);
-  if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
   // smooth depth: rounded shorelines (round 12)
   let d = sheetDepth(in.wpos.xy, 1u);
+  // derivatives must be taken in uniform control flow, before any branch
+  let gl = gridLines(in.wpos, in.nrm);
+  // the depth's slope across the map (it's linear over each triangle of
+  // the centres): which way the shore is, and how far
+  let ex = dpdx(in.wpos.xy);
+  let ey = dpdy(in.wpos.xy);
+  let ddx = dpdx(d);
+  let ddy = dpdy(d);
+  if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
   if (in.nrm.z > 0.5 && d < 0.02) { discard; }
-  let flow = fields[ci].w;
+  let det = ex.x * ey.y - ex.y * ey.x;
+  let dg = select(vec2<f32>(0.0), vec2<f32>(ddx * ey.y - ddy * ex.y, ddy * ex.x - ddx * ey.x) / det, abs(det) > 1e-9);
+  let fv = flowOf(ci);
+  let flow = length(fv);
   let deep = 1.0 - exp(-d * 0.45);
   var c = mix(vec3<f32>(0.30, 0.45, 0.44), vec3<f32>(0.07, 0.19, 0.25), deep);
   let conc = contam[ci].y / max(d, 0.05);
@@ -1113,15 +1186,12 @@ fn fsWater(in: VOut) -> FOut {
     let t = G.time;
     // ripples ride the wind: the pattern is advected downwind and roughens
     // with the local wind, so gusts and drags send catspaws across the water
-    let rp = windDrift(in.wpos.xy) * 1.7;
-    let lw = length(windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5)));
+    let wv = windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5));
+    let lw = length(wv);
     // (shallow puddles lie still: the ripples fade out below ~0.7 deep)
     let rough = (0.5 + clamp(lw / 5.0, 0.0, 2.0)) * smoothstep(0.1, 0.7, d);
-    let rn = vec3<f32>(
-      (vnoise(rp + vec2<f32>(t * 0.7, 0.0)) - vnoise(rp + vec2<f32>(0.0, t * 0.6) + 31.0)) * rough,
-      (vnoise(rp + vec2<f32>(0.0, -t * 0.8) + 7.0) - vnoise(rp + vec2<f32>(-t * 0.5, 0.0) + 19.0)) * rough,
-      1.4);
-    let nn = normalize(rn);
+    // (the waves' crests lie across the wind: round 41)
+    let nn = windWaves(in.wpos.xy, in.wpos.z, rough);
     // Stylised for the fixed view: ripple slopes facing the sun brighten, and the
     // half-vector is biased toward vertical so glints appear on ordinary
     // ripples instead of only at one viewing angle.
@@ -1136,14 +1206,51 @@ fn fsWater(in: VOut) -> FOut {
     let bf = fract(in.wpos.xy * 2.5) - 0.5;
     col += vec3<f32>(0.05, 0.05, 0.01) * sludge * step(0.93, randv(bub)) * step(length(bf), 0.32) * (1.0 - 0.8 * G.sky.w);
     // foam where flowing fast
+    // (on the field mesh smooth, in streaks down the flow; on the prisms in cells)
+    let meshOn = (u32(CAM.eye.w) & 2u) != 0u;
     let sub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 4.0, t * 6.0)));
-    let foam = smoothstep(0.03, 0.25, flow) * step(0.72, randv(sub));
+    var fleck = step(0.72, randv(sub));
+    if (meshOn) { fleck = smoothstep(0.62, 0.85, flowStreaks(in.wpos.xy * 1.7, fv, d)); }
+    let foam = smoothstep(0.03, 0.25, flow) * fleck;
     col = mix(col, vec3<f32>(0.85, 0.85, 0.8), foam * 0.6);
     alpha = max(alpha, foam * 0.7);
+    // the flow's streaks (with the field mesh, which knows its direction)
+    if (meshOn && flow > 0.005) {
+      let st = flowStreaks(in.wpos.xy, fv, d) * smoothstep(0.005, 0.06, flow) * (1.0 - sludge);
+      col += vec3<f32>(0.10, 0.12, 0.12) * smoothstep(0.55, 0.9, st) * (1.0 - 0.7 * G.sky.w);
+    }
+    // the shore: swell lines running in to the shallows, foam where they
+    // break, more where the wind blows on shore and the stronger it is
+    let gl2 = length(dg);
+    let toShore = -dg / max(gl2, 1e-5);
+    let dist = d / max(gl2, 0.03);
+    let onshore = clamp(dot(wv / max(lw, 1e-3), toShore), 0.0, 1.0) * clamp(lw / 4.0, 0.0, 1.0);
+    let alongN = vnoise(in.wpos.xy * 0.6 + 5.0);
+    // (dist is only piecewise smooth, over the centres' triangles: broad
+    // soft crests, so the joins don't show)
+    let crest = sin(min(dist, 3.0) * 1.8 + t * (1.6 + onshore) + alongN * 5.0);
+    let near = smoothstep(2.6, 0.6, dist) * smoothstep(0.012, 0.03, d);
+    // (a running stream has no swell: its banks are all near)
+    let swell = near * smoothstep(0.55, 0.95, crest) * (0.2 + 0.6 * onshore) * (1.0 - smoothstep(0.01, 0.06, flow));
+    let froth = smoothstep(0.3, 0.65, vnoise(in.wpos.xy * 2.2 + vec2<f32>(t * 0.35, -t * 0.2)));
+    let sf = swell * (1.0 - sludge * 0.7) * froth;
+    col = mix(col, vec3<f32>(0.8, 0.82, 0.8) * (1.0 - 0.75 * G.sky.w), sf * 0.65);
+    alpha = max(alpha, sf * 0.8);
     // rain rings
     let rain = rainAt(in.wpos.xy);
-    let rsub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 3.0, t * 10.0)));
-    col += vec3<f32>(0.25) * (1.0 - 0.8 * G.sky.w) * step(1.0 - 0.06 * rain, randv(rsub));
+    if (meshOn) {
+      // (on the field mesh: rings spreading from each drop, a third of a
+      // cell apart, each cell's drops at its own times)
+      let rc = vec2<i32>(floor(in.wpos.xy * 3.0));
+      let rf = fract(in.wpos.xy * 3.0) - 0.5;
+      let rt = t * 2.5 + randv(vec3<i32>(rc, 5));
+      let rr = fract(rt) * 0.5;
+      let ring = smoothstep(0.07, 0.0, abs(length(rf) - rr)) * (1.0 - rr * 2.0);
+      col += vec3<f32>(0.3) * (1.0 - 0.8 * G.sky.w) * ring * step(1.0 - 0.25 * min(rain, 3.0), randv(vec3<i32>(rc, i32(floor(rt)))));
+    } else {
+      let rsub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 3.0, t * 10.0)));
+      col += vec3<f32>(0.25) * (1.0 - 0.8 * G.sky.w) * step(1.0 - 0.06 * rain, randv(rsub));
+    }
   }
   col *= 1.0 - gl * 0.3;
   col = haze(col, in.wpos);

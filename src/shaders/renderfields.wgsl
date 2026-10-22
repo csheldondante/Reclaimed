@@ -157,7 +157,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
 
-  fields[i] = vec4<f32>(sz, moisture[i], glow, length(netFlow(p)));
+  // (with the field mesh no march reads x: the flow's direction goes in x
+  // and w, for the water's streaks — render.wgsl flowOf)
+  let fv = netFlow(p);
+  if (MR.n.w != 0u) { fields[i] = vec4<f32>(fv.x, moisture[i], glow, fv.y); }
+  else { fields[i] = vec4<f32>(sz, moisture[i], glow, length(fv)); }
   // the six corners (my two, and the four my neighbours own — the same
   // functions on the same inputs, so the same values they store), and the
   // planes of my tops through them (terrainshape.wgsl); a corner that isn't

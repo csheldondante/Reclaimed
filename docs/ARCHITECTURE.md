@@ -298,7 +298,13 @@ its first wet corner; dry corners at the level or their ground below it,
 the ground's depth cutting the shore). With the mesh on, renderprep skips
 the neighbours of columns with nothing built and no water, and renderfields
 computes only water's corners and no sun march (`world.meshRegion` says
-it's on). Shadows with the mesh come from a shadow map: one 2048² depth32
+it's on). Renderfields then stores the flow's direction in x and w of the
+render fields (no march reads x), for the water's streaks (render.wgsl
+`flowOf`, `flowStreaks`). Water too thin to clear the smoothed ground is
+drawn on the ground itself (meshdraw.wgsl `cellWater`: depth, level and
+flow over the three nearest cells; a glaze, streaks, glint, the wet band
+and swash above the edge); the mesh layout gives the vertices to the vertex
+stage only and the look's buffers to the fragments' (eight a stage). Shadows with the mesh come from a shadow map: one 2048² depth32
 texture over the whole map along the sun (an orthographic box round it,
 renderer.ts `writeLight`), drawn each frame by the draw pipelines' own
 vertex shaders, depth only, through a second camera buffer holding the

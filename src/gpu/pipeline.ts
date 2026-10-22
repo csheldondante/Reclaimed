@@ -20,8 +20,10 @@ function layoutEntries(spec: BindSpec, visibility: GPUShaderStageFlags): GPUBind
   });
 }
 
-export function makeLayout(device: GPUDevice, label: string, spec: BindSpec, visibility: GPUShaderStageFlags) {
-  return device.createBindGroupLayout({ label, entries: layoutEntries(spec, visibility) });
+/** `stages` narrows single bindings' visibility (a stage has at most 8 storage buffers). */
+export function makeLayout(device: GPUDevice, label: string, spec: BindSpec, visibility: GPUShaderStageFlags, stages: Record<number, GPUShaderStageFlags> = {}) {
+  const entries = layoutEntries(spec, visibility).map((e) => (e.binding in stages ? { ...e, visibility: stages[e.binding] } : e));
+  return device.createBindGroupLayout({ label, entries });
 }
 
 export function makeBindGroup(

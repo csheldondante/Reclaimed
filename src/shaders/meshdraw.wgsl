@@ -167,6 +167,33 @@ fn fsMesh(in: MOut) -> FOut {
     alb = mix(alb, sa, sw);
     if (sw > 0.5) { mat = voxMatR(w); }
   }
+  // water on the ground: a film where it runs too thin to clear the
+  // smoothed ground (the sheet draws the rest), darker wet ground above the
+  // water's edge, and the swash running up and back (round 41)
+  let wt = cellWater(in.wpos.xy);
+  var film = 0.0;
+  var filmN = nrm;
+  if (wt.wet > 0.0 && nrm.z > 0.2 && sw < 0.5) {
+    film = smoothstep(WATER_MIN_R, 0.05, wt.d);
+    let above = in.wpos.z - wt.level;
+    let wv = windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5));
+    let lw = clamp(length(wv) / 4.0, 0.0, 1.5);
+    // the swash: how far up the waves run now (higher in the wind), ragged along the shore
+    let along = vnoise(in.wpos.xy * 0.7 + 3.0);
+    let run = (0.06 + 0.12 * lw) * (0.55 + 0.45 * sin(G.time * 1.3 + along * 9.0));
+    let damp = smoothstep(run + 0.35, run, above) * (1.0 - film);
+    alb *= 1.0 - 0.45 * max(film, damp * 0.75) * (0.4 + 0.6 * MATS[mat].eco.w);
+    // (a glaze of the water's own colour, more of it the deeper)
+    alb = mix(alb, toLinear(vec3<f32>(0.30, 0.45, 0.44)) * 0.75, film * mix(0.3, 0.6, smoothstep(0.05, 0.3, wt.d)));
+    // the film's streaks running with the flow, and foam where it's fast
+    let fl = length(wt.flow);
+    let st = flowStreaks(in.wpos.xy, wt.flow, wt.d) * smoothstep(0.003, 0.04, fl);
+    alb += toLinear(vec3<f32>(0.42, 0.48, 0.48)) * film * smoothstep(0.5, 0.9, st) * 0.3;
+    let froth = film * smoothstep(0.04, 0.2, fl) * smoothstep(0.62, 0.85, flowStreaks(in.wpos.xy * 1.7, wt.flow, wt.d));
+    let lip = smoothstep(0.05, 0.0, abs(above - run)) * (1.0 - film) * smoothstep(0.3, 0.65, vnoise(in.wpos.xy * 2.2 + vec2<f32>(G.time * 0.35, 0.0)));
+    alb = mix(alb, toLinear(vec3<f32>(0.82, 0.84, 0.82)), max(froth * 0.6, lip * 0.55 * (0.4 + 0.6 * lw)));
+    filmN = windWaves(in.wpos.xy, in.wpos.z, 0.25 + 0.5 * lw);
+  }
   // the detail layer (only where a chip is a few pixels across)
   var lnrm = nrm;
   if (CAM.viewport.z > 4.0 && sw < 0.5) {
@@ -185,7 +212,19 @@ fn fsMesh(in: MOut) -> FOut {
       alb *= 0.8 + 0.2 * smoothstep(0.0, 0.12, edge);
     }
   }
+  // (water smooths the rough ground it covers)
+  lnrm = normalize(mix(lnrm, nrm, film * 0.8));
   var col = alb * lighting(in.wpos, lnrm);
+  if (film > 0.0) {
+    // the wet sheen: the sun's glint off the film
+    let sunL = sunDir();
+    let fn2 = normalize(nrm + vec3<f32>(filmN.xy, 0.0));
+    let hv = normalize(normalize(sunL + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
+    let spec = pow(max(dot(fn2, hv), 0.0), 120.0) * (1.0 - cloudShade(in.wpos.xy)) * shadowLit(in.wpos, nrm);
+    col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.6 * film;
+    // and the sky in it
+    col += G.sky.rgb * 0.08 * film;
+  }
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
@@ -201,6 +240,27 @@ fn cellFields(xy: vec2<f32>) -> vec4<f32> {
     let j = colIdxI(clampCell(t.c[k]));
     o += t.w[k] * vec4<f32>(contam[j].x, veg[j], fields[j].y, wilt[j].y);
   }
+  return o;
+}
+
+/** The water round xy over the three nearest cells: its depth (blended),
+ *  its level over the wet ones and their share, and its flow (blended). */
+struct CellWater { d: f32, level: f32, wet: f32, flow: vec2<f32> };
+fn cellWater(xy: vec2<f32>) -> CellWater {
+  let t = triAt(xy);
+  var o = CellWater(0.0, 0.0, 0.0, vec2<f32>(0.0));
+  for (var k = 0; k < 3; k++) {
+    let q = clampCell(t.c[k]);
+    let j = colIdxI(q);
+    let dk = water[j];
+    o.d += t.w[k] * dk;
+    if (inMap(t.c[k]) && dk > WATER_MIN_R) {
+      o.level += t.w[k] * (f32(sfZ(surface[j])) + driftAt(q) + dk);
+      o.wet += t.w[k];
+      o.flow += t.w[k] * flowOf(j);
+    }
+  }
+  if (o.wet > 0.0) { o.level /= o.wet; }
   return o;
 }
 

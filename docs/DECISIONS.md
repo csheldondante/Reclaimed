@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 41 (session 5, `grids`) — the water's film, shores and wind
+
+- The thin film of water should show on the mesh, even if only as a
+  material on the ground: water flowing was one of the most beautiful parts
+  of the original.
+- Shores should behave and look more like shores, and the water's noise
+  should follow the wind.
+
 ## 2026-10-22 — round 40 (session 5, `grids`) — no hexes in water; built things on their own grids; shadows
 
 - Water shouldn't keep its hexes on the mesh.
