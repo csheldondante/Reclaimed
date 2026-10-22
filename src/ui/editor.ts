@@ -40,6 +40,7 @@ export type EditTool =
   | 'drop'
   | 'beam'
   | 'volcano'
+  | 'meteor'
   | 'water'
   | 'drain'
   | 'oil'
@@ -98,7 +99,8 @@ const TOOLS: [EditTool, string, string][] = [
   ['smash', '💥', 'Break: punch a hole where you click — what loses its support falls'],
   ['drop', '🧱', 'Drop a physics body: steel bends, stone cracks into pieces, a hard hit crumbles it'],
   ['beam', '🔥', 'Heat beam: hold on something — steel glows, softens and melts, so you can cut it; the ground melts into lava'],
-  ['volcano', '🌋', 'Volcano: tap to open a vent — lava pours out, flows, cools and sets into basalt'],
+  ['volcano', '🌋', 'Volcano: tap — a cone rises out of the ground, then lava pours down its sides and sets into basalt'],
+  ['meteor', '☄️', 'Meteor: tap — it falls smoking from the sky and blows out a crater: what it hits turns to dust, the blast of air throws it out'],
   ['water', '💧', 'Pour water'],
   ['drain', '◌', 'Drain water and oil'],
   ['oil', '⬤', 'Spill oil'],

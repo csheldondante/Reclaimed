@@ -73,7 +73,7 @@ try {
         made.push(await P.drop('stone', 3, 4, 3, x - 6, y, 0.05));
         made.push(await P.drop('stone', 3, 4, 3, x + 6, y, 0.05));
         made.push(await P.drop('steel', 18, 2, 2, x, y, 3.3));
-      } else if (scene === 'ruin') {
+      } else if (scene === 'ruin' || scene === 'dig') {
         // a block dropped on the map's nearest ruin (it wakes on the hit)
         const core = R.core;
         const slots = new Uint32Array((await core.readBuffer('layers')).buffer);
@@ -95,7 +95,22 @@ try {
           }
         R.camera.target[0] = best[0];
         R.camera.target[1] = best[1];
-        made.push(await P.drop('concrete', 4, 4, 4, best[0], best[1], 10));
+        if (scene === 'ruin') made.push(await P.drop('concrete', 4, 4, 4, best[0], best[1], 10));
+        else {
+          // the ruin woken, then the ground dug out from under it: nothing should hang in the air
+          await R.scene.wake(best[0], best[1], -1, 4);
+          let k = 0;
+          const t = setInterval(() => {
+            R.globals.events.push({ kind: 5, x: best[0], y: best[1], z: 2 * 32 + 512, radius: 6, strength: 1 });
+            k++;
+            if (k > 20) clearInterval(t);
+          }, 100);
+        }
+      } else if (scene === 'fall') {
+        // concrete falling: a pillar toppling over and a slab dropped on its edge
+        made.push(await P.drop('concrete', 3, 3, 14, x - 5, y, 0.2, 0, 12, 0));
+        made.push(await P.drop('concrete', 12, 6, 2, x + 6, y + 2, 16, 30, 35, 10));
+        made.push(await P.drop('brick', 5, 5, 5, x - 2, y - 9, 18, 20, 20, 0));
       } else if (scene === 'stress') {
         // many bodies at once: the solver's cost
         for (let k = 0; k < 24; k++) {
@@ -129,6 +144,14 @@ try {
         R.scene.lava.addVent(x, y, 20);
         made.push(await P.drop('steel', 10, 2, 2, x + 4, y - 6, 0.2));
         R.globals.events.push({ kind: 5, x: x - 8, y: y + 4, z: 3 * 32 + 512, radius: 3, strength: 3 });
+      } else if (scene === 'meteor') {
+        // a meteor on open ground, with blocks round it to be thrown and crumbled
+        made.push(await P.drop('concrete', 4, 4, 4, x + 4, y + 2, 0.2));
+        made.push(await P.drop('stone', 3, 3, 6, x - 12, y + 6, 0.2));
+        made.push(await P.drop('steel', 10, 2, 2, x + 10, y - 9, 0.2));
+        const col = await P.column(x, y);
+        const top = col[col.length - 1].z1;
+        R.scene.meteors.push({ from: [x - 45, y + 35, top + 110], to: [x, y, top + 0.5], t: 0, dur: 1.6 });
       } else if (scene === 'slam') {
         // a wide slab dropped flat on sand: the dust and the air it shoves out
         made.push(await P.drop('concrete', 10, 10, 2, x, y, 10));
@@ -169,7 +192,7 @@ try {
     page.evaluate(async (scene) => {
       const P = window.reclaimed.phys.physics;
       const X = await P.readPositions();
-      return P.bodies.filter((b) => scene === 'ruin' || window.__made.includes(b.id)).map((b) => {
+      return P.bodies.filter((b) => scene === 'ruin' || scene === 'dig' || window.__made.includes(b.id)).map((b) => {
         let n = 0;
         let lo = Infinity;
         let hi = -Infinity;
@@ -181,7 +204,9 @@ try {
           hi = Math.max(hi, X[i * 8 + 2]);
           hot = Math.max(hot, X[i * 8 + 7]);
         }
-        return `${b.model?.id ?? 'map'}: ${n} live, z ${lo.toFixed(2)}..${hi.toFixed(2)}${hot > 1 ? `, max temp ${hot.toFixed(0)}` : ''}`;
+        let pin = 0;
+        for (let i = b.offset; i < b.offset + b.dims[0] * b.dims[1] * b.dims[2]; i++) if (X[i * 8 + 3] === 0) pin++;
+        return `${b.model?.id ?? 'map'}: ${n} live${pin ? ` (${pin} pinned)` : ''}, z ${lo.toFixed(2)}..${hi.toFixed(2)}${hot > 1 ? `, max temp ${hot.toFixed(0)}` : ''}`;
       });
     }, scene);
   let t = 0;
@@ -259,7 +284,7 @@ try {
     await page.screenshot({ path: `${out}-${scene}-${String(s).replace('.', '_')}s.png` });
     if ((scene === 'cut' || scene === 'gbeam') && s === shots[shots.length - 2]) await page.mouse.up();
     console.log(`t=${s}s`, (await report()).join(' | '));
-    if (scene === 'melt' || scene === 'volcano' || scene === 'quench' || scene === 'gbeam')
+    if (scene === 'melt' || scene === 'volcano' || scene === 'quench' || scene === 'gbeam' || scene === 'meteor')
       console.log(
         '  lava',
         await page.evaluate(async () => {
@@ -273,6 +298,23 @@ try {
           }
           const c = await R.phys.column(x, y);
           return `cols ${n}, volume ${vol.toFixed(1)}, hottest ${tMax.toFixed(0)}, ground heat ${gMax.toFixed(0)} | centre ${c.map((v) => `${v.z0.toFixed(2)}-${v.z1.toFixed(2)} m${v.mat}`).join(', ')}`;
+        }),
+      );
+    if (scene === 'dig')
+      console.log(
+        '  pinned:',
+        await page.evaluate(async () => {
+          const R = window.reclaimed;
+          const P = R.phys.physics;
+          const X = await P.readPositions();
+          const out = [];
+          for (const b of P.bodies)
+            for (let i = b.offset; i < b.offset + b.dims[0] * b.dims[1] * b.dims[2] && out.length < 4; i++)
+              if (X[i * 8 + 3] === 0) {
+                const c = await R.phys.column(X[i * 8], X[i * 8 + 1]);
+                out.push(`z${X[i * 8 + 2].toFixed(2)} over ${c.slice(-2).map((v) => `${v.z0.toFixed(2)}-${v.z1.toFixed(2)} m${v.mat}`).join(',')}`);
+              }
+          return out.join(' | ');
         }),
       );
     if (scene === 'slam') console.log('  puff', await page.evaluate(() => JSON.stringify(window.__puff)));

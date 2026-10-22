@@ -33,7 +33,10 @@ const HASH_N = 262144;
  * crumble (cells/s: an impact faster than this breaks the voxel into its
  * loose material); soften / melt (temperatures: stiffness and yield fall
  * between them, and at melt it's gone; 0 never); heat (how fast the beam
- * heats it); loose (what it crumbles to).
+ * heats it); loose (what it crumbles to); damp (share of its bonds'
+ * stretching speed taken out each substep: 0 rings like a spring); crack
+ * (cells/s: an impact faster than this may snap its bonds, more often the
+ * harder it hits; 0 never).
  */
 interface PhysMat {
   density: number;
@@ -48,28 +51,30 @@ interface PhysMat {
   melt: number;
   heat: number;
   loose: number;
+  damp: number;
+  crack: number;
 }
 
-const ROCKY: PhysMat = { density: 2.5, stiffness: 1, yield: 99, plastic: 0, break: 0.035, restitution: 0.1, friction: 0.7, crumble: 14, soften: 1000, melt: 1600, heat: 0.45, loose: MAT.Rubble };
+const ROCKY: PhysMat = { density: 2.5, stiffness: 1, yield: 99, plastic: 0, break: 0.035, restitution: 0.1, friction: 0.7, crumble: 14, soften: 1000, melt: 1600, heat: 0.45, loose: MAT.Rubble, damp: 0.5, crack: 9 };
 const PHYS: Partial<Record<number, PhysMat>> = {
   [MAT.Stone]: { ...ROCKY, density: 2.7, break: 0.04 },
-  [MAT.Concrete]: { ...ROCKY, density: 2.3, break: 0.03, crumble: 12 },
-  [MAT.Asphalt]: { ...ROCKY, density: 2.2, break: 0.05, crumble: 12, soften: 120, melt: 400, loose: MAT.Rubble },
-  [MAT.Brick]: { ...ROCKY, density: 1.9, break: 0.025, crumble: 11 },
-  [MAT.Bone]: { ...ROCKY, density: 1.9, break: 0.03, crumble: 12, loose: MAT.Drift },
-  [MAT.Steel]: { density: 7.8, stiffness: 0.6, yield: 0.025, plastic: 0.9, break: 0.25, restitution: 0.2, friction: 0.4, crumble: 40, soften: 450, melt: 1400, heat: 1.3, loose: MAT.Rubble },
-  [MAT.Rust]: { density: 7, stiffness: 0.5, yield: 0.02, plastic: 0.9, break: 0.1, restitution: 0.1, friction: 0.6, crumble: 18, soften: 400, melt: 1300, heat: 1.3, loose: MAT.Rubble },
-  [MAT.Wood]: { density: 0.7, stiffness: 0.7, yield: 0.2, plastic: 0.2, break: 0.15, restitution: 0.2, friction: 0.5, crumble: 22, soften: 200, melt: 300, heat: 2, loose: MAT.Ash },
-  [MAT.Canvas]: { density: 0.3, stiffness: 0.25, yield: 0.4, plastic: 0.3, break: 1, restitution: 0.05, friction: 0.8, crumble: 40, soften: 100, melt: 250, heat: 3, loose: MAT.Ash },
-  [MAT.Trash]: { density: 1, stiffness: 0.4, yield: 0.2, plastic: 0.4, break: 0.12, restitution: 0.05, friction: 0.8, crumble: 10, soften: 200, melt: 350, heat: 2, loose: MAT.Litter },
+  [MAT.Concrete]: { ...ROCKY, density: 2.3, break: 0.02, crumble: 9, crack: 5 },
+  [MAT.Asphalt]: { ...ROCKY, density: 2.2, break: 0.05, crumble: 12, crack: 7, soften: 120, melt: 400, loose: MAT.Rubble },
+  [MAT.Brick]: { ...ROCKY, density: 1.9, break: 0.02, crumble: 9, crack: 5 },
+  [MAT.Bone]: { ...ROCKY, density: 1.9, break: 0.03, crumble: 12, crack: 7, loose: MAT.Drift },
+  [MAT.Steel]: { density: 7.8, stiffness: 0.6, yield: 0.025, plastic: 0.9, break: 0.25, restitution: 0.2, friction: 0.4, crumble: 40, soften: 450, melt: 1400, heat: 1.3, loose: MAT.Rubble, damp: 0.2, crack: 0 },
+  [MAT.Rust]: { density: 7, stiffness: 0.5, yield: 0.02, plastic: 0.9, break: 0.1, restitution: 0.1, friction: 0.6, crumble: 18, soften: 400, melt: 1300, heat: 1.3, loose: MAT.Rubble, damp: 0.25, crack: 14 },
+  [MAT.Wood]: { density: 0.7, stiffness: 0.7, yield: 0.2, plastic: 0.2, break: 0.15, restitution: 0.2, friction: 0.5, crumble: 22, soften: 200, melt: 300, heat: 2, loose: MAT.Ash, damp: 0.3, crack: 16 },
+  [MAT.Canvas]: { density: 0.3, stiffness: 0.25, yield: 0.4, plastic: 0.3, break: 1, restitution: 0.05, friction: 0.8, crumble: 40, soften: 100, melt: 250, heat: 3, loose: MAT.Ash, damp: 0.15, crack: 0 },
+  [MAT.Trash]: { density: 1, stiffness: 0.4, yield: 0.2, plastic: 0.4, break: 0.12, restitution: 0.05, friction: 0.8, crumble: 10, soften: 200, melt: 350, heat: 2, loose: MAT.Litter, damp: 0.3, crack: 0 },
 };
 
-/** The physics table as the GPU reads it (phys.wgsl PM: 3 vec4 per material). */
+/** The physics table as the GPU reads it (phys.wgsl PM: 4 vec4 per material). */
 function packPhysMats(): Float32Array {
-  const out = new Float32Array(96 * 4);
+  const out = new Float32Array(128 * 4);
   MATERIALS.forEach((_, m) => {
     const p = PHYS[m] ?? ROCKY;
-    out.set([p.density, p.stiffness, p.yield, p.plastic, p.break, p.restitution, p.friction, p.crumble, p.soften, p.melt, p.heat, p.loose], m * 12);
+    out.set([p.density, p.stiffness, p.yield, p.plastic, p.break, p.restitution, p.friction, p.crumble, p.soften, p.melt, p.heat, p.loose, p.damp, p.crack, 0, 0], m * 16);
   });
   return out;
 }
@@ -144,7 +149,7 @@ export class Physics implements SimSystem {
     this.touches = world.buf('physTouches', 256 * 4, S);
     this.touchRead = world.buf('physTouchRead', 256 * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
     this.uni = world.buf('physU', 80, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.mats = world.buf('physMats', 96 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.mats = world.buf('physMats', 128 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.mats, 0, packPhysMats());
     this.bodyTable = world.buf('physBodies', MAX_BODIES * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.inst = world.buf('physInst', PV_CAP * 32, GPUBufferUsage.STORAGE);
@@ -196,7 +201,7 @@ export class Physics implements SimSystem {
     kernel('hashInsert', { 3: 'rw', 9: 'rw' });
     kernel('collide', { 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'read' });
     kernel('finalize', { 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 27: 'rw' });
-    kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 28: 'read' });
+    kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'rw', 28: 'read' });
     kernel('deaths', { 3: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 14: 'rw', 25: 'rw' });
     kernel('fold', { 14: 'rw', 16: 'rw' });
     kernel('prep', { 3: 'rw', 5: 'rw', 6: 'rw', 8: 'rw', 19: 'rw', 20: 'rw', 26: 'rw' });

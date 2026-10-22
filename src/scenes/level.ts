@@ -100,6 +100,7 @@ export class LevelScene implements Scene {
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
   private beamWoke = -Infinity;
+  private digWoke = -Infinity;
   private beamLine?: SVGLineElement;
   private beamDot?: SVGCircleElement;
   private beamPicking = false;
@@ -114,6 +115,8 @@ export class LevelScene implements Scene {
   /** Break tool: the voxel under the cursor (x, y, z: the sphere's centre, as smashAt aims) */
   private smashHover?: [number, number, number];
   private smashPicking = false;
+  /** meteors in flight (round 48): from the sky to where they'll hit, t seconds of dur */
+  private meteors: { from: [number, number, number]; to: [number, number, number]; t: number; dur: number }[] = [];
 
   private constructor(
     private host: Host,
@@ -312,6 +315,7 @@ export class LevelScene implements Scene {
         if (this.editor?.tool === 'drop') return void this.dropAtPick(sx, sy);
         if (this.editor?.tool === 'beam') return;
         if (this.editor?.tool === 'volcano') return void this.ventAtPick(sx, sy);
+        if (this.editor?.tool === 'meteor') return void this.meteorAtPick(sx, sy);
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
         if (this.editTool(wx, wy, true)) return;
         // (story: nothing answers out in the fog beyond the green's reach)
@@ -674,6 +678,7 @@ export class LevelScene implements Scene {
     hud.setReclaim(this.reclaimed, goal);
     // the brush paints every frame while held
     if (this.brushAt && this.editor) this.brush(this.brushAt[0], this.brushAt[1]);
+    this.stepMeteors(dt);
     this.drawRing();
     if (this.beamAt && this.physics && !this.beamPicking) this.aimBeam(this.beamAt);
     if (this.integrity) {
@@ -1215,6 +1220,66 @@ export class LevelScene implements Scene {
     }
   }
 
+  /** A meteor at what's under the pointer: it comes in from the sky, smoking (stepMeteors). */
+  private meteorAtPick(sx: number, sy: number): void {
+    const { core } = this;
+    const [rx, ry] = [(sx / core.camera.viewportW) * this.renderW, (sy / core.camera.viewportH) * this.renderH];
+    core.renderer.pick(rx, ry).then((hit) => {
+      if (!hit) return;
+      const [x, y] = cellPos(hit.cell % core.dims.w, Math.floor(hit.cell / core.dims.w));
+      const to: [number, number, number] = [x, y, hit.z + 0.5];
+      this.meteors.push({ from: [x - 45, y + 35, to[2] + 110], to, t: 0, dur: 1.6 });
+    }, ignoreTeardown);
+  }
+
+  /**
+   * Meteors in flight: a burning head (embers) and a trail of smoke; on
+   * arrival the impact (round 48): a crater blown out of everything there
+   * (edit.wgsl OP_CRATER: it's gone to dust, ejecta round it), the ruins
+   * there woken and crumbled by the blast, the bodies near thrown, a ring of
+   * wind out every way (ripples) that lifts the loose ground, a flash, a
+   * cloud of dust and debris, and a molten pool in the bowl.
+   */
+  private stepMeteors(dt: number): void {
+    const { core } = this;
+    const parts = core.sim.particles;
+    for (let k = this.meteors.length - 1; k >= 0; k--) {
+      const m = this.meteors[k];
+      m.t += dt;
+      const f = Math.min(m.t / m.dur, 1);
+      const at = [0, 1, 2].map((i) => m.from[i] + (m.to[i] - m.from[i]) * f) as [number, number, number];
+      if (f < 1) {
+        parts.burst({ kind: PK.Ember, x: at[0], y: at[1], z: at[2], count: 10, speed: 1.5, spread: 0.7 });
+        parts.burst({ kind: PK.Smoke, x: at[0], y: at[1], z: at[2], count: 6, speed: 0.4, spread: 1 });
+        continue;
+      }
+      this.meteors.splice(k, 1);
+      this.impact(m.to);
+    }
+  }
+
+  private impact([x, y, z]: [number, number, number]): void {
+    const { core } = this;
+    const g = core.globals;
+    const BOWL = 12;
+    g.events.push({ kind: EventKind.Edit, x, y, z: 13 * 32 + 512, radius: BOWL * 2.5, strength: z });
+    for (let k = 0; k < 6; k++) g.events.push({ kind: EventKind.Ripple, x, y, radius: 55, strength: 16 });
+    g.flash = 1;
+    const parts = core.sim.particles;
+    const dust = MAT.Drift;
+    parts.burst({ kind: PK.Haze, x, y, z: z + 1, count: 500, speed: 16, spread: BOWL, payload: dust });
+    parts.burst({ kind: PK.Haze, x, y, z: z + 4, count: 400, speed: 9, spread: BOWL * 0.6, payload: MAT.Ash });
+    parts.burst({ kind: PK.Haze, x, y, z: z + 10, count: 300, speed: 4, spread: BOWL * 0.4, payload: MAT.Ash });
+    parts.burst({ kind: PK.Dust, x, y, z: z + 1, count: 300, speed: 14, spread: BOWL * 0.7 });
+    parts.burst({ kind: PK.Chip, x, y, z: z + 1, count: 160, speed: 22, spread: BOWL * 0.5 });
+    parts.burst({ kind: PK.Ember, x, y, z: z + 1, count: 90, speed: 18, spread: BOWL * 0.4 });
+    parts.burst({ kind: PK.Smoke, x, y, z: z + 2, count: 150, speed: 5, spread: BOWL * 0.5 });
+    // a molten pool in the bowl (no cone)
+    this.lava?.addVent(x, y, 2.5, 12, 3, 0);
+    const phys = this.physics;
+    if (phys) void this.wake(x, y, -1, BOWL + 2).then(() => phys.blast([x, y, z], BOWL, 28));
+  }
+
   /** Open a volcano vent where the pointer is (sim/lava.ts). */
   private ventAtPick(sx: number, sy: number): void {
     const { core } = this;
@@ -1427,6 +1492,12 @@ export class LevelScene implements Scene {
     const z = op * 32 + ed.material + (this.strokeStart ? 512 : 0);
     this.strokeStart = false;
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z, radius: ed.radius, strength: layered ? ed.layers : ed.strength });
+    // digging under a ruin of the map's wakes it (round 48: it fell, rather
+    // than hanging over the hole); a few times a second, each wake reads the layers back
+    if (this.physics && ed.tool === 'dig' && performance.now() - this.digWoke > 300) {
+      this.digWoke = performance.now();
+      void this.wake(x, y, -1, ed.radius + 1);
+    }
   }
 
   /** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */

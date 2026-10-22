@@ -51,6 +51,12 @@ const OP_BEDROCK: u32 = 11u;
 // the hole (a wall's window, a tower's base) and for loose ground, liquids
 // and plants the hole is emptied (to become grains that carry it: step 2).
 const OP_SMASH: u32 = 12u;
+// a meteor (round 48): a bowl blown out of everything it hits — z the
+// radius of its ring of ejecta, CRATER_RING times the bowl's; w the height
+// it hit at. What was in the bowl is gone to dust (the level throws the dust
+// up as haze); the ejecta land round it as drift, thinning outward.
+const OP_CRATER: u32 = 13u;
+const CRATER_RING: f32 = 2.5;
 const STROKE_START: u32 = 512u;
 const DT_E: f32 = 1.0 / 60.0;
 const MAT_SILT_E: u32 = 22u;
@@ -91,6 +97,38 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (d >= 1.0) { continue; }
     let op = (code & 511u) / 32u;
     let mat = code % 32u;
+    if (op == OP_CRATER) {
+      let rc = ev.z / CRATER_RING;
+      let dc = d * CRATER_RING;
+      if (dc >= 1.0) {
+        // the ejecta: a blanket of dust, thickest at the rim
+        deposit[i].x += 0.12 * rc / (dc * dc * dc);
+        continue;
+      }
+      // the bowl: shallower than it is wide (an ellipsoid), and what stood over it
+      let hz = rc * sqrt(1.0 - dc * dc);
+      let lo = max(ev.w - hz * 0.7, 2.0);
+      let hi = ev.w + hz * 1.5;
+      var out: array<vec4<u32>, MAX_K>;
+      var m = 0u;
+      for (var k = 0u; k < n; k++) {
+        let v = arr[k];
+        let z0 = ivZ0(v);
+        let z1 = ivZ1(v);
+        if (z1 <= lo || z0 >= hi) { out[m] = v; m += 1u; continue; }
+        if (z0 < lo) { out[m] = ivPack(z0, lo, ivMat(v), ivAux(v)); m += 1u; }
+        if (z1 > hi && m < cs.y) { out[m] = ivPack(hi, z1, ivMat(v), ivAux(v)); m += 1u; }
+      }
+      if (m <= cs.y) {
+        for (var k = 0u; k < MAX_K; k++) { arr[k] = select(IV_NONE, out[k], k < m); }
+        n = m;
+      }
+      // (its loose ground, water and plants too)
+      deposit[i].x = min(deposit[i].x, 0.0);
+      water[i] = 0.0;
+      vegE[i] = 0.0;
+      continue;
+    }
     if (op == OP_BUILD || op == OP_DIG || op == OP_POUR || op == OP_BEDROCK) {
       // a layer: full over the inner half, soft at the rim
       let want = smoothstep(1.0, 0.5, d) * ev.w;

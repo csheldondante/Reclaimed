@@ -17,6 +17,10 @@ const LAVA_FRICTION: f32 = 0.9;
 const LAVA_YIELD: f32 = 0.12;
 const LAVA_SET: f32 = 750.0;
 const LAVA_RUNNY: f32 = 1150.0;
+// thin lava barely moves (round 48: a film raced down a volcano's sides
+// unseen): it flows as (depth / this)², full above it, so it thickens into
+// tongues and streams that can be seen running down
+const LAVA_THICK: f32 = 0.8;
 
 fn bedAt(q: vec2<i32>) -> f32 {
   return max(f32(sfZ(surface[colIdxI(q)])) + driftAt(q), bodyTopAt(q));
@@ -29,7 +33,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = colIdxI(p);
   let L = lava[i];
   if (L.x <= 1e-4) { lavaFlux[i] = dZero(); return; }
-  let fluid = smoothstep(LAVA_SET, LAVA_RUNNY, L.y);
+  let thick = min(L.x / LAVA_THICK, 1.0);
+  let fluid = smoothstep(LAVA_SET, LAVA_RUNNY, L.y) * thick * thick;
   let H = bedAt(p) + L.x;
   var f = lavaFlux[i];
   for (var k = 0u; k < NDIR; k++) {

@@ -35,9 +35,16 @@ beam.
    (the column under it and its six walls); other voxels it isn't bonded to.
 5. *finalize*: velocity from the move; a bounce at the material's
    restitution and Coulomb friction where it touched; bonds strained past
-   the material's break strain snap.
+   the material's break strain snap; damping takes a share of each bond's
+   stretching speed out (round 48: a knocked body doesn't ring; turning
+   stretches no bond, so spin isn't slowed).
 6. *relax*: past the yield, the rest shape follows the bend (plastic flow);
-   heat evens out along bonds, cools, and the beam adds it.
+   heat evens out along bonds, cools, and the beam adds it. Cracks (round
+   48): a bond whose end hit something faster than the material's crack
+   speed snaps by chance (more often the harder; both ends draw the same
+   random), and a voxel that lost three bonds that way may crumble, so a
+   hard landing breaks concrete into chunks with rubble and dust along the
+   breaks.
 7. *deaths*: what crumbled goes to the deposit buffer as its loose material
    (the sediment pass folds it into the layers) with a chip and some dust;
    what melted leaves as embers.
@@ -57,7 +64,9 @@ overlap reads as energy from nowhere). Crumbling replaces penetration:
 - deeper than 0.6 into solid ground, or 0.5 into a voxel of another body
   (the weaker of the two, by density × crumble speed): it crumbles;
 - an impact faster than the material's crumble speed (stone 14 cells/s,
-  steel 40): it crumbles;
+  concrete and brick 9, steel 40) crumbles some of the voxels that took it
+  (20–60 %, more the harder): the rest hold and stop the body, so a hard
+  landing crushes its face rather than every layer in turn;
 - voxels of one body that started within two lattice steps of each other
   (a squeeze, the two faces of a crack) only stop each other, never crumble.
 
@@ -68,7 +77,7 @@ it never leaves faster than 0.3 cells/s otherwise.
 
 | | stiffness | yield | break strain | restitution | crumble (cells/s) | melt |
 |---|---|---|---|---|---|---|
-| stone, concrete, brick, bone | 1 | never | 0.025–0.04 | 0.1 | 11–14 | 1600 |
+| stone, concrete, brick, bone | 1 | never | 0.02–0.04 | 0.1 | 9–14 | 1600 |
 | steel | 0.6 | 0.025 | 0.25 | 0.2 | 40 | 1400 |
 | rust | 0.5 | 0.02 | 0.1 | 0.1 | 18 | 1300 |
 | wood | 0.7 | 0.2 | 0.15 | 0.2 | 22 | 300 |
@@ -77,6 +86,11 @@ it never leaves faster than 0.3 cells/s otherwise.
 Heat between a material's soften and melt temperatures lowers its stiffness
 (to 8 %), its yield (to 0) and its break strain (to 30 %): hot steel sags.
 The beam heats steel about three times faster than stone.
+
+Damping (share of bond stretching speed per substep): rocky 0.5, steel 0.2,
+wood, rust, trash 0.25–0.3, canvas 0.15. Crack speed: concrete and brick 5
+cells/s, asphalt and bone 7, stone 9, rust 14, wood 16; steel, canvas and
+trash never crack.
 
 ## The map's own structures
 
@@ -91,6 +105,10 @@ each voxel starting where its cell stood (rest positions are world
 positions: the hex rows half a cell apart). A cell resting on the ground is
 a foundation, pinned until its bonds break; so is the edge of a piece cut
 off at the limit (it holds on to the rest, still terrain).
+
+A foundation (pinned where it stood on the ground) lets go once there is
+no ground under it (dug, blasted, melted away: round 48; it hung in the
+air before), and digging with physics on wakes the ruins round the brush.
 
 ## The ground sees them
 
@@ -124,11 +142,27 @@ and temperature, and the heat of the ground at the column's top.
   per cell melted), so a held beam digs a glowing pit through sand and
   stone alike (never below z 1), and the lava pools in it. The lava on it
   is kept molten (no hotter than 1400).
-- **Volcano** (🌋 tap): a vent pours 6 cells³/s at 1350 for 25 s (four at
-  most), with a smoke plume, ash and embers.
+- **Volcano** (🌋 tap; round 48: it was far too short): first its cone
+  rises out of the ground, 30 cells over 10 s (radius 21, concave sides
+  with ridges and gullies, a crater 2.5 across): the column's bedrock grows,
+  lifting all that lies on it, and the loose ground slides off the steep
+  sides. Then its vent pours 9 cells³/s at 1350 into the crater for 30 s
+  (four at most), with a fountain of embers, a smoke plume and ash; the
+  lava overflows and runs down the gullies.
+- **Meteor** (☄️ tap; round 48): it comes in from the sky in 1.6 s, a
+  burning head and a smoke trail. On impact (edit.wgsl `OP_CRATER`) a bowl
+  12 cells in radius is blown out of everything there, ground and ruins
+  alike, and is gone to dust; ejecta land round it as drift out to 2.5
+  times the radius, thinning outward. The ruins there wake and a blast
+  (radius 12) crumbles the bodies in it and throws those near; six ripples
+  of wind push out every way (radius 55) and lift the loose ground; a
+  flash, clouds of dust and ash, chips, embers and smoke; a molten pool in
+  the bowl.
 - **Flow**: virtual pipes, slow (gain 0.012, friction 0.9), only while hot
-  (fluidity from 750 to 1150) and not over a step under 0.12, so it runs in
-  tongues and stops as it cools; the heat travels with it.
+  (fluidity from 750 to 1150), and not over a step under 0.12, so it runs in
+  tongues and stops as it cools; the heat travels with it. Thin lava barely
+  moves (round 48: it flows as (depth / 0.8)²), so it gathers into streams
+  rather than racing down a slope as an unseen film.
 - **Cooling**: e-folding 0.06 a second per cell of depth (thin lava sets
   first); water over it boils off as steam and quenches it. Below 750 it
   sets at 0.6 cells/s into basalt on top of the column (under a skin of
@@ -137,8 +171,13 @@ and temperature, and the heat of the ground at the column's top.
 - **Fire**: hot lava spits embers, which light what they land on.
 - **Bodies**: a voxel in lava heats toward its temperature (steel fastest),
   softens and melts.
-- **Drawn** as prisms, by temperature: yellow-white hot, orange, then a dark
-  crust with glowing seams; it lights what's round it like fire.
+- **Drawn** as a smooth sheet over the field mesh (round 48: it was hex
+  prisms; prisms still without the mesh), like water's: six triangles round
+  each column's centre at the lava's level, a dry neighbour's corner at its
+  ground just under the level, so the edge slopes into the ground. By
+  temperature: yellow-white hot, orange, then a dark crust with glowing
+  seams; it lights what's round it like fire. Basalt (set lava) is ground,
+  part of the field mesh; columnar basalt isn't modelled.
 
 ## Using it
 
@@ -149,11 +188,12 @@ and temperature, and the heat of the ground at the column's top.
   through a hole it has cut it keeps eating the sides and cuts through) and
   💥 **break** (wakes what it hits, then a blast: what's inside crumbles,
   what's near is thrown). The beam on bare ground melts it into lava; 🌋
-  **volcano** opens a vent where you tap.
+  **volcano** raises a cone where you tap and erupts; ☄️ **meteor** strikes
+  where you tap.
 - In the console: `reclaimed.phys.drop('steel', 18, 2, 2, x, y, above)`,
   `reclaimed.phys.spawn(model, x, y, above, yaw, pitch, roll)`,
   `reclaimed.phys.physics.readPositions()`.
-- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
+- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano|meteor|fall|dig [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
 
 ## Cost
 
@@ -165,7 +205,7 @@ one 30 × 30 × 12 block (10.8k voxels) 1.5 ms. Most of it is the fixed part
 
 - Large bodies are only as stiff as 4 × 4 iterations allow (a 30-wide slab
   flexes a little): a cluster-level rigid pass for rigid materials.
-- Volcanoes: a cone (the vent's ground pushed up), lava bombs (hot physics
-  bodies, once spent bodies can be reused), eruptions that build and fade.
-- Meteors.
+- Lava bombs (hot physics bodies, once spent bodies can be reused),
+  eruptions that build and fade; the meteor as a physics body that
+  tumbles in (it is particles on a straight path).
 - Sleeping: every live voxel is solved every substep.

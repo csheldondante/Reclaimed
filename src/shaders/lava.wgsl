@@ -7,7 +7,9 @@
 //  - the beam heats the ground where it hits (and the lava on it); ground
 //    past MELT melts off the top of the column's layers (in place: each
 //    thread owns its column's slots, as in sediment.wgsl) into lava;
-//  - vents pour fresh lava;
+//  - a volcano's cone rises out of the ground first (the column's layers
+//    lifted, its bedrock growing under them), then its vent pours fresh lava
+//    into the crater, which runs down the sides;
 //  - lava cools (thin lava fastest), water over it boils off as steam and
 //    quenches it; below SET it turns to basalt on top of the column;
 //  - hot lava spits embers (they light what they land on: fire.wgsl), and
@@ -30,6 +32,9 @@ struct LavaU {
   beam2: vec4<f32>,
   // vents: x, y, rate (cells³/s), radius (0: none)
   vents: array<vec4<f32>, 4>,
+  // each vent's cone while it rises (round 48): x how fast its peak rises
+  // (cells/s; 0: not rising), y its radius, z its crater's radius
+  cones: array<vec4<f32>, 4>,
 };
 @group(0) @binding(22) var<uniform> LU: LavaU;
 
@@ -71,6 +76,17 @@ fn spawnL(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, seed: u32, state
   let k = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
   parts[k] = PartL(vec4<f32>(pos, life), vec4<f32>(vel, 0.0), vec4<u32>(kind, seed, 0u, state));
 }
+/** How a cone rises at distance r from its vent (share of its peak's rate): concave sides, a crater in the middle. */
+fn coneShape(off: vec2<f32>, R: f32, cr: f32, seed: f32) -> f32 {
+  let r = length(off);
+  // ridges and gullies down its sides (the lava runs down the gullies)
+  let a = atan2(off.y, off.x);
+  let gully = 1.0 + (0.1 * sin(a * 7.0 + seed) + 0.07 * sin(a * 3.0 + seed * 1.7)) * smoothstep(cr, R * 0.5, r);
+  let side = pow(max(1.0 - r / R, 0.0), 1.6) * gully;
+  if (r >= cr) { return side; }
+  let rim = pow(max(1.0 - cr / R, 0.0), 1.6);
+  return rim - 0.18 * (1.0 - (r / cr) * (r / cr));
+}
 fn chance(i: u32, salt: u32) -> f32 { return f32(hash3(i, G.tick, salt) >> 8u) / 16777216.0; }
 
 @compute @workgroup_size(8, 8)
@@ -97,11 +113,14 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   // anything to do here? (most of the map: nothing)
   let beamOn = LU.beam2.y > 0.5 && length(cp - LU.beam.xy) < LU.beam.w;
   var vent = -1;
+  var rise = 0.0;
   for (var v = 0; v < 4; v++) {
     let vv = LU.vents[v];
     if (vv.w > 0.0 && length(cp - vv.xy) < vv.w) { vent = v; }
+    let cn = LU.cones[v];
+    if (cn.x > 0.0) { rise += cn.x * coneShape(cp - vv.xy, cn.y, cn.z, fract(vv.x * 0.37 + vv.y * 0.71) * 6.28); }
   }
-  if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0) {
+  if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0 && rise <= 0.0) {
     lavaOut[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     return;
   }
@@ -115,6 +134,25 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   var top = 0.0;
   if (n > 0u) { top = ivZ1(layers[cs.x + n - 1u]); }
+
+  // a rising cone: the bedrock grows, lifting all that lies on it (loose
+  // ground then slides off the steep sides, sediment.wgsl)
+  if (rise > 0.0 && n > 0u && top + d < f32(G.zMax) - 4.0) {
+    let dz = rise * DT_L;
+    let b = layers[cs.x];
+    layers[cs.x] = ivPack(ivZ0(b), ivZ1(b) + dz, ivMat(b), ivAux(b));
+    for (var s = 1u; s < n; s++) {
+      let u = layers[cs.x + s];
+      layers[cs.x + s] = ivPack(ivZ0(u) + dz, ivZ1(u) + dz, ivMat(u), ivAux(u));
+    }
+    top += dz;
+    // the ground cracks and smokes as it heaves
+    if (chance(i, 0x59u) < 0.0012 * rise) {
+      let s2 = hash3(i, G.tick, 0x5au);
+      let r2 = vec2<f32>(f32(s2 & 255u), f32((s2 >> 8u) & 255u)) / 255.0 - 0.5;
+      spawnL(vec3<f32>(cp, top + 0.3), vec3<f32>(r2 * 2.0, 2.0), 6.0, K_SMOKE_L, s2, 0u);
+    }
+  }
 
   // the beam: the ground where it hits, and what lava lies there
   if (beamOn) {
@@ -154,9 +192,9 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     d += add;
     heat += add * VENT_T;
     let s = hash3(i, G.tick, 0x51u);
-    if (chance(i, 0x52u) < 0.02) {
+    if (chance(i, 0x52u) < 0.05) {
       let r = vec3<f32>(f32(s & 255u), f32((s >> 8u) & 255u), f32((s >> 16u) & 255u)) / 255.0 - 0.5;
-      spawnL(vec3<f32>(cp, top + d + 0.3), vec3<f32>(r.xy * 6.0, 10.0 + r.z * 6.0), 2.5, K_EMBER_L, s, 0u);
+      spawnL(vec3<f32>(cp, top + d + 0.3), vec3<f32>(r.xy * 8.0, 14.0 + r.z * 8.0), 3.0, K_EMBER_L, s, 0u);
     }
     if (chance(i, 0x53u) < 0.015) {
       spawnL(vec3<f32>(cp, top + d + 0.5), vec3<f32>(0.0, 0.0, 3.0), 9.0, K_SMOKE_L, s ^ 7u, 0u);
@@ -238,4 +276,20 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   // (temperature in the damage bits: 0..15)
   let t = u32(clamp(glowT / 1400.0, 0.0, 1.0) * 15.0);
   inst[k] = vec4<u32>(id.x | (id.y << 12u), bitcast<u32>(z0), bitcast<u32>(z1), MAT_LAVA | (t << 16u));
+  // and for the smooth sheet (render.wgsl lavaSheetVertex, round 48): the
+  // level round it, by direction — a neighbour with lava its level, a dry one
+  // its ground as -1 - ground (out of the map: dry at this level)
+  let c = vec2<i32>(id.xy);
+  var lv: array<f32, 8>;
+  for (var d = 0u; d < NDIR; d++) {
+    let q = nbr(c, d);
+    if (!inMap(q)) { lv[d] = -1.0 - z1; continue; }
+    let Lq = lava[colIdxI(q)];
+    lv[d] = select(-1.0 - Lq.w, Lq.w, Lq.x >= 0.02 || Lq.z >= 300.0);
+    // (a hot-ground film stands just over its ground)
+    if (Lq.x < 0.02 && Lq.z >= 300.0) { lv[d] = Lq.w + 0.06; }
+  }
+  let o = arrayLength(&inst) / 3u + 2u * k;
+  inst[o] = vec4<u32>(bitcast<u32>(lv[0]), bitcast<u32>(lv[1]), bitcast<u32>(lv[2]), bitcast<u32>(lv[3]));
+  inst[o + 1u] = vec4<u32>(bitcast<u32>(lv[4]), bitcast<u32>(lv[5]), 0u, 0u);
 }

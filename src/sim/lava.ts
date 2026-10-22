@@ -23,8 +23,10 @@ export interface Vent {
   /** cells³ of lava a second */
   rate: number;
   radius: number;
-  /** seconds left */
+  /** seconds left pouring */
   left: number;
+  /** its cone (round 48): it rises out of the ground first, to `height` over `riseS` seconds */
+  cone: { height: number; radius: number; crater: number; riseS: number; risen: number };
 }
 
 /** Prism vertices per instance (renderer.ts VERTS_PER_PRISM). */
@@ -47,9 +49,10 @@ export class LavaSystem implements SimSystem {
     private world: WorldGpu,
     private prof: Profiler,
   ) {
-    this.inst = world.buf('lavaInst', world.cells * 16, GPUBufferUsage.STORAGE);
+    // a prism per column, then (for the smooth sheet) the six levels round each: 2 vec4
+    this.inst = world.buf('lavaInst', world.cells * 16 * 3, GPUBufferUsage.STORAGE);
     this.indirect = world.buf('lavaIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.uni = world.buf('lavaU', 32 + 16 * MAX_VENTS, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.uni = world.buf('lavaU', 32 + 32 * MAX_VENTS, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const res: Record<number, GPUBuffer | GPUTextureView> = {
       0: world.globals,
       1: world.chunks,
@@ -84,21 +87,33 @@ export class LavaSystem implements SimSystem {
     kernel('lava-prep', parts, { 3: 'read', 8: 'rw', 9: 'rw' }, 'prep');
   }
 
-  /** A vent at world (x, y): it pours `rate` cells³/s for `seconds`. The oldest goes past MAX_VENTS. */
-  addVent(x: number, y: number, seconds = 25, rate = 6, radius = 1.6): void {
+  /**
+   * A volcano at world (x, y): its cone rises out of the ground (`height`
+   * cells over `riseS` seconds; 0: no cone), then its vent pours `rate`
+   * cells³/s into the crater for `seconds`. The oldest goes past MAX_VENTS.
+   */
+  addVent(x: number, y: number, seconds = 30, rate = 9, radius = 1.6, height = 30, riseS = 10): void {
     if (this.vents.length >= MAX_VENTS) this.vents.shift();
-    this.vents.push({ x, y, rate, radius, left: seconds });
+    this.vents.push({ x, y, rate, radius, left: seconds, cone: { height, radius: Math.max(6, height * 0.7), crater: 2.5, riseS, risen: height > 0 ? 0 : riseS } });
   }
 
   private writeUniforms(dt: number): void {
-    const u = new Float32Array(8 + 4 * MAX_VENTS);
+    const u = new Float32Array(8 + 8 * MAX_VENTS);
     const b = this.beam;
     if (b) u.set([b.at[0], b.at[1], b.at[2], b.radius, b.power, 1, 0, 0], 0);
     for (let i = this.vents.length - 1; i >= 0; i--) {
-      this.vents[i].left -= dt;
-      if (this.vents[i].left <= 0) this.vents.splice(i, 1);
+      const v = this.vents[i];
+      // (rising first, then pouring)
+      if (v.cone.risen < v.cone.riseS) v.cone.risen += dt;
+      else v.left -= dt;
+      if (v.left <= 0) this.vents.splice(i, 1);
     }
-    this.vents.forEach((v, i) => u.set([v.x, v.y, v.rate, v.radius], 8 + 4 * i));
+    this.vents.forEach((v, i) => {
+      const c = v.cone;
+      const rising = c.risen < c.riseS;
+      u.set([v.x, v.y, v.rate, rising ? 0 : v.radius], 8 + 4 * i);
+      u.set([rising ? c.height / c.riseS : 0, c.radius, c.crater, 0], 8 + 4 * MAX_VENTS + 4 * i);
+    });
     this.device.queue.writeBuffer(this.uni, 0, u);
   }
 

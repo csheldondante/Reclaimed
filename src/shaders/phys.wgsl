@@ -51,11 +51,12 @@ struct PhysU {
   d: vec4<f32>,
 };
 @group(0) @binding(22) var<uniform> PU: PhysU;
-// per material, 3 vec4 (physics.ts PHYS_MATS):
+// per material, 4 vec4 (physics.ts PHYS_MATS):
 //  [0] density, stiffness 0..1, yield (cells of local deviation), plastic rate 0..1
 //  [1] break strain, restitution, friction, crumble speed (cells/s)
 //  [2] soften temperature, melt temperature (0: never), heat gain, loose material it crumbles to
-@group(0) @binding(23) var<uniform> PM: array<vec4<f32>, 96>;
+//  [3] damping (share of its bonds' stretching speed taken out per substep), crack speed (cells/s; 0 never)
+@group(0) @binding(23) var<uniform> PM: array<vec4<f32>, 128>;
 // bodies: x first particle, yzw lattice dims
 @group(0) @binding(24) var<uniform> PB: array<vec4<u32>, 256>;
 
@@ -108,9 +109,10 @@ const K_DUST_P: u32 = 1u;
 // a low cloud of dust (particles.wgsl K_HAZE)
 const K_HAZE_P: u32 = 15u;
 
-fn pmA(m: u32) -> vec4<f32> { return PM[m * 3u]; }
-fn pmB(m: u32) -> vec4<f32> { return PM[m * 3u + 1u]; }
-fn pmC(m: u32) -> vec4<f32> { return PM[m * 3u + 2u]; }
+fn pmA(m: u32) -> vec4<f32> { return PM[m * 4u]; }
+fn pmB(m: u32) -> vec4<f32> { return PM[m * 4u + 1u]; }
+fn pmC(m: u32) -> vec4<f32> { return PM[m * 4u + 2u]; }
+fn pmD(m: u32) -> vec4<f32> { return PM[m * 4u + 3u]; }
 fn infoOf(i: u32) -> u32 { return bitcast<u32>(pr[i].w); }
 fn matOf(i: u32) -> u32 { return infoOf(i) & 0xffu; }
 fn alive(i: u32) -> bool { return px[2u * i].w >= 0.0; }
@@ -300,11 +302,18 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
   if (i >= PU.c.x || !alive(i)) { return; }
   let x0 = px[2u * i];
-  if (x0.w <= 0.0) { return; }
-  var x = x0.xyz;
-  let v = pv[i].xyz;
   let info = infoOf(i);
   let m = info & 0xffu;
+  // a foundation (pinned) whose ground has gone (dug, blasted, melted): it
+  // falls with the rest instead of hanging in the air
+  if (x0.w == 0.0) {
+    let gp = groundAt(cellAt(x0.xyz.xy), x0.z - RAD - 0.05);
+    if (gp.x < x0.z - RAD - 0.35) { px[2u * i] = vec4<f32>(x0.xyz, 1.0 / max(pmA(m).x, 0.1)); }
+    return;
+  }
+  if (x0.w < 0.0) { return; }
+  var x = x0.xyz;
+  let v = pv[i].xyz;
   let crumbleV = pmB(m).w;
   let fr = pmB(m).z;
   var nsum = vec3<f32>(0.0);
@@ -393,7 +402,8 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
           let mj = infoJ & 0xffu;
           let toughJ = pmA(mj).x * pmB(mj).w;
           // too fast for the weaker of the two: it breaks up (ties: the higher index)
-          if (!near && closing > crumbleV && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
+          // (by chance, the harder the more likely: below)
+          if (!near && closing > crumbleV && (toughI < toughJ || (toughI == toughJ && i > ju))) { fastest = max(fastest, closing); }
           // deeper than the weaker can bear: it crumbles
           if (!near && over > CRUMBLE_OVERLAP && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
           // stop them closing further (each its share); never part them
@@ -407,7 +417,13 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   }
-  if (fastest > crumbleV) { dying = true; }
+  // an impact past its crumble speed breaks some of the voxels that took it,
+  // more the harder it was; the rest hold and stop the body, so a hard
+  // landing crushes its face instead of every layer in turn (round 48)
+  if (fastest > crumbleV) {
+    let r = f32(hash3(i, PU.c.z, 0x6b2du) & 0xffffu) / 65536.0;
+    if (r < clamp((fastest - crumbleV) / crumbleV, 0.2, 0.6)) { dying = true; }
+  }
   if (dying) {
     px[2u * i] = vec4<f32>(x, PV_CRUMBLE);
     return;
@@ -444,11 +460,11 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     let jn = abs(vnNew - vnOld);
     if (lt > 1e-6) { vt *= max(0.0, 1.0 - pmB(m).z * jn / lt); }
     v = vt + n * vnNew;
-    // (w, a touch, is the deaths pass's to report)
-    pc[i] = vec4<f32>(0.0, 0.0, 0.0, ct.w);
+    let hit = -vnOld;
+    // (x: how hard it hit, for relax's cracks; w, a touch, is the deaths pass's to report)
+    pc[i] = vec4<f32>(max(hit, 0.0), 0.0, 0.0, ct.w);
     // landing hard on something: it shoves the air out from under it (the
     // wind lifts the loose ground round it) and kicks up dust (round 47)
-    let hit = -vnOld;
     if (n.z > 0.5 && hit > PUFF_V) {
       let wt = vec2<i32>(floor(x.xy * 0.5));
       let ww = (G.mapW + 1u) / 2u;
@@ -461,6 +477,29 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
         spawnPart(x.xyz - vec3<f32>(0.0, 0.0, RAD), vec3<f32>(r.xy * 0.4 * hit, 0.6 + r.z), 3.0 + r.z * 2.0, K_HAZE_P, seed, (u32(pmC(m).w) & 255u) << 8u);
       }
     }
+  }
+  // damping (round 48): the speed at which its bonds stretch or squeeze is
+  // taken out, so a body doesn't ring like a spring after a knock (rigid
+  // turning stretches no bond, so it isn't slowed)
+  let damp = pmD(m).x;
+  if (damp > 0.0 && x.w > 0.0) {
+    let bi = PB[(info >> 8u) & 0xffu];
+    let li = latOf(i, bi);
+    let bnd = pb[i];
+    var dv = vec3<f32>(0.0);
+    var nb = 0.0;
+    for (var k = 0u; k < 26u; k++) {
+      if ((bnd & (1u << k)) == 0u) { continue; }
+      let j = latIdx(li + n26(k), bi);
+      if (j < 0 || !alive(u32(j))) { continue; }
+      let ju = u32(j);
+      let xj = px[2u * ju].xyz;
+      let vj = (xj - px[2u * ju + 1u].xyz) / h;
+      let e = normalize(xj - x.xyz + vec3<f32>(1e-6));
+      dv += e * dot(vj - v, e);
+      nb += 1.0;
+    }
+    if (nb > 0.0) { v += dv / nb * damp; }
   }
   v *= 1.0 - AIR_DRAG * h;
   let sp = length(v);
@@ -528,6 +567,34 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
     if (j < 0 || !alive(u32(j))) { continue; }
     sum += px[2u * u32(j) + 1u].w;
     n += 1.0;
+  }
+  // cracks (round 48): a bond whose either end hit something faster than the
+  // material's crack speed may snap (both ends draw the same random), more
+  // likely the harder the hit, so a hard landing breaks it into chunks
+  let crackV = pmD(m).y;
+  if (crackV > 0.0) {
+    var kept = bonds;
+    let hi = pc[i].x;
+    for (var k = 0u; k < 26u; k++) {
+      if ((bonds & (1u << k)) == 0u) { continue; }
+      let j = latIdx(l + n26(k), b);
+      if (j < 0) { continue; }
+      let ju = u32(j);
+      let crackJ = pmD(matOf(ju)).y;
+      let hit = max(hi, pc[ju].x);
+      let cv = select(crackV, min(crackV, crackJ), crackJ > 0.0);
+      if (hit <= cv) { continue; }
+      let p = clamp((hit - cv) / (2.0 * cv), 0.0, 0.5);
+      let r = f32(hash3(min(i, ju), max(i, ju), PU.c.z) & 0xffffu) / 65536.0;
+      if (r < p) { kept &= ~(1u << k); }
+    }
+    if (kept != bonds) {
+      pb[i] = kept;
+      // a voxel the crack ran through on several sides crumbles (rubble and
+      // dust along the break, not clean cuts)
+      let r2 = f32(hash3(i, PU.c.z, 0x51edu) & 0xffffu) / 65536.0;
+      if (countOneBits(bonds & ~kept) >= 3u && x.w > 0.0 && r2 < 0.35) { px[2u * i] = vec4<f32>(x.xyz, PV_CRUMBLE); }
+    }
   }
   var tn = t;
   if (n > 0.0) { tn += (sum / n - t) * min(1.0, 6.0 * h); }
