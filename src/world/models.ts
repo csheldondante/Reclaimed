@@ -19,6 +19,11 @@ export interface VoxelModel {
   vox: Uint8Array;
   /** cells it sits below the ground by default (half-buried wrecks) */
   sink: number;
+  /**
+   * a voxel's edge in cells (default 1): a physics body may be finer than the
+   * world (round 49: 1/2, 1/4); `size` then counts voxels, not cells
+   */
+  voxel?: number;
 }
 
 class Builder {

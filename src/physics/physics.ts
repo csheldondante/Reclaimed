@@ -20,8 +20,22 @@ import { TICK_DT } from '../sim/simulation';
 
 /** particles, all bodies together */
 export const PV_CAP = 1 << 17;
-export const MAX_BODIES = 256;
+/**
+ * Fragments (round 49, phys.wgsl split): a crumbling voxel breaks into eight
+ * half its size, in a ring of FRAG_CAP slots at the start of the particles
+ * (bodies start after it), all of body FRAG_BODY.
+ */
+export const FRAG_CAP = 8192;
+const FRAG_BODY = 255;
+export const MAX_BODIES = FRAG_BODY;
 const HASH_N = 262144;
+
+/** A voxel's edge in cells as phys.wgsl's size code (0 a whole cell, n is n/16). */
+export function sizeCode(s: number): number {
+  const c = Math.round(s * 16);
+  if (!(s > 0 && s <= 1) || Math.abs(c / 16 - s) > 1e-6) throw new Error(`voxel size ${s} is not n/16 of a cell (0 < size <= 1)`);
+  return c === 16 ? 0 : c;
+}
 
 /**
  * What each material does as a physics voxel. density (mass per voxel);
@@ -86,6 +100,8 @@ export interface PhysBody {
   dims: V3;
   /** what it was made from (null: cut from the map's own structures) */
   model: VoxelModel | null;
+  /** its voxels' edge in cells */
+  size: number;
 }
 
 export interface Beam {
@@ -118,6 +134,7 @@ export class Physics implements SimSystem {
   private hash: GPUBuffer;
   private dep: GPUBuffer;
   private touches: GPUBuffer;
+  private fragHead: GPUBuffer;
   private touchRead: GPUBuffer;
   private touchBusy = false;
   private touchAt = 0;
@@ -147,11 +164,14 @@ export class Physics implements SimSystem {
     this.hash = world.buf('physHash', (HASH_N + PV_CAP) * 4, S);
     this.dep = world.buf('physDeposit', world.cells * 8, S);
     this.touches = world.buf('physTouches', 256 * 4, S);
+    this.fragHead = world.buf('physFragHead', 16, S);
     this.touchRead = world.buf('physTouchRead', 256 * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
     this.uni = world.buf('physU', 80, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.mats = world.buf('physMats', 128 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.mats, 0, packPhysMats());
-    this.bodyTable = world.buf('physBodies', MAX_BODIES * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.bodyTable = world.buf('physBodies', 256 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    // the fragments' ring: a lattice of FRAG_CAP × 1 × 1 (they have no bonds)
+    device.queue.writeBuffer(this.bodyTable, FRAG_BODY * 16, new Uint32Array([0, FRAG_CAP, 1, 1]));
     this.inst = world.buf('physInst', PV_CAP * 32, GPUBufferUsage.STORAGE);
     this.indirect = world.buf('physIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     // every slot starts empty (w < 0)
@@ -187,6 +207,7 @@ export class Physics implements SimSystem {
       26: world.physCols,
       27: world.physPuff,
       28: world.lava,
+      29: this.fragHead,
     };
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
@@ -202,6 +223,7 @@ export class Physics implements SimSystem {
     kernel('collide', { 1: 'read', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 9: 'rw', 10: 'rw', 11: 'read' });
     kernel('finalize', { 3: 'rw', 4: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 27: 'rw' });
     kernel('relax', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'rw', 28: 'read' });
+    kernel('split', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 8: 'rw', 10: 'rw', 14: 'rw', 29: 'rw' });
     kernel('deaths', { 3: 'rw', 5: 'rw', 8: 'rw', 10: 'rw', 12: 'rw', 13: 'rw', 14: 'rw', 25: 'rw' });
     kernel('fold', { 14: 'rw', 16: 'rw' });
     kernel('prep', { 3: 'rw', 5: 'rw', 6: 'rw', 8: 'rw', 19: 'rw', 20: 'rw', 26: 'rw' });
@@ -212,37 +234,44 @@ export class Physics implements SimSystem {
    * corner) at world `pos`, rotated by q, moving at `vel`. Null with no room.
    */
   spawn(m: VoxelModel, pos: V3, q: Q, vel: V3 = [0, 0, 0]): PhysBody | null {
-    const [w, d, h] = m.size;
+    const [w, d] = m.size;
+    const s = m.voxel ?? 1;
     return this.spawnLattice(
       m.size,
       (x, y, z) => m.vox[x + w * (y + d * z)],
       (x, y, z) => {
-        const p = qRotate(q, [x + 0.5, y + 0.5, z + 0.5]);
+        const p = qRotate(q, [(x + 0.5) * s, (y + 0.5) * s, (z + 0.5) * s]);
         return [pos[0] + p[0], pos[1] + p[1], pos[2] + p[2]];
       },
-      { model: m, q, vel },
+      { model: m, q, vel, size: s },
     );
-    void h;
   }
 
   /**
    * A body on a w × d × h lattice: matAt gives each cell's material (0 air),
    * at its world position (also its rest shape: a map's hex columns go in
    * where they stand, rows half a cell apart). pinned cells don't move (a
-   * ruin's foundation in the bedrock) until their bonds break.
+   * ruin's foundation in the bedrock) until their bonds break. size: each
+   * voxel's edge in cells (n/16; `at` places them that far apart).
    */
   spawnLattice(
     dims: V3,
     matAt: (x: number, y: number, z: number) => number,
     at: (x: number, y: number, z: number) => V3,
-    opts: { model?: VoxelModel; q?: Q; vel?: V3; pinned?: (x: number, y: number, z: number) => boolean } = {},
+    opts: { model?: VoxelModel; q?: Q; vel?: V3; pinned?: (x: number, y: number, z: number) => boolean; size?: number } = {},
   ): PhysBody | null {
     const [w, d, h] = dims;
     const n = w * d * h;
-    if (this.bodies.length >= MAX_BODIES || this.used + n > PV_CAP) return null;
+    // (the fragments' ring comes first, from the first body on)
+    const start = Math.max(this.used, FRAG_CAP);
+    if (this.bodies.length >= MAX_BODIES || start + n > PV_CAP) return null;
+    if (this.used < FRAG_CAP) this.used = FRAG_CAP;
     const q = opts.q ?? [0, 0, 0, 1];
     const vel = opts.vel ?? [0, 0, 0];
-    const body: PhysBody = { id: this.bodies.length, offset: this.used, dims: [w, d, h], model: opts.model ?? null };
+    const size = opts.size ?? 1;
+    const code = sizeCode(size);
+    const vol = size * size * size;
+    const body: PhysBody = { id: this.bodies.length, offset: this.used, dims: [w, d, h], model: opts.model ?? null, size };
     const X = new Float32Array(n * 8);
     const V = new Float32Array(n * 4);
     const R = new Float32Array(n * 4);
@@ -264,11 +293,11 @@ export class Physics implements SimSystem {
           }
           const p = at(x, y, z);
           const dens = (PHYS[mat] ?? ROCKY).density;
-          const inv = opts.pinned?.(x, y, z) ? 0 : 1 / dens;
+          const inv = opts.pinned?.(x, y, z) ? 0 : 1 / (dens * vol);
           X.set([p[0], p[1], p[2], inv, p[0], p[1], p[2], 0], k * 8);
           V.set([vel[0], vel[1], vel[2], 0], k * 4);
           R.set(qRotate(qi, p), k * 4);
-          RU[k * 4 + 3] = (mat & 0xff) | (body.id << 8);
+          RU[k * 4 + 3] = (mat & 0xff) | (body.id << 8) | (code << 16);
           // bonds to every solid lattice neighbour (phys.wgsl n26 order)
           let bits = 0;
           for (let j = 0, kk = 0; j < 27; j++) {
@@ -338,6 +367,7 @@ export class Physics implements SimSystem {
 
   /** Remove every body. */
   clear(): void {
+    // (the fragments' ring with them)
     const empty = new Float32Array(this.used * 8);
     for (let i = 0; i < this.used; i++) empty[i * 8 + 3] = -1;
     if (this.used) this.device.queue.writeBuffer(this.px, 0, empty);
@@ -396,6 +426,7 @@ export class Physics implements SimSystem {
       run('collide');
       run('finalize');
       run('relax');
+      run('split');
       run('deaths');
     }
     run('fold', this.world.groups);

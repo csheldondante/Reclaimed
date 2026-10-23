@@ -19,7 +19,11 @@
 //              crumbling, -3 melting this substep — the deaths pass ends them)
 //   px[2i + 1] xyz position before this substep, w temperature
 //   pv[i]      xyz velocity (cells/s), w the temperature after this substep's heat
-//   pr[i]      xyz rest position on the lattice (local, cells), w material | body << 8 (u32 bits)
+//   pr[i]      xyz rest position on the lattice (local, cells), w its info (u32
+//              bits): material | body << 8 | size code << 16 | hidden << 22 (the
+//              size: 0 a whole cell, n is n/16 of a cell; hidden: a mesh draws it)
+//              A fragment's (FRAG_BODY) xyz are instead: x how long it has been
+//              at rest, y its age (s)
 //   pq[i]      its region's rotation (rest → world), a quaternion
 //   pg[2i]     its region's centre now (xyz), w mass; pg[2i + 1] its rest centre
 //   pb[i]      bonds: bit k set while bonded to lattice neighbour k (n26)
@@ -27,6 +31,19 @@
 const PV_DEAD: f32 = -1.0;
 const PV_CRUMBLE: f32 = -2.0;
 const PV_MELT: f32 = -3.0;
+// gone to dust without breaking into pieces first (a blast's heart, a voxel
+// buried deep in the ground, a fragment come to rest)
+const PV_DUST: f32 = -4.0;
+// broken into eight fragments this substep (split): the deaths pass only ends it
+const PV_SPLIT: f32 = -5.0;
+// Mixed resolution (round 49): a crumbling voxel breaks into eight fragments
+// half its size (in a ring of FRAG_CAP slots at the start of the particles,
+// body FRAG_BODY, unbonded), which break up or come to rest and go to dust.
+// physics.ts mirrors both.
+const FRAG_BODY: u32 = 255u;
+const FRAG_CAP: u32 = 8192u;
+// the smallest fragment (size code): a voxel whose halves would be smaller goes to dust
+const FRAG_MIN_CODE: u32 = 4u;
 const HASH_N: u32 = 262144u;
 const HASH_NONE: u32 = 0xffffffffu;
 const G_ACC: f32 = 20.0; // cells/s²
@@ -86,6 +103,8 @@ struct PhysU {
 @group(0) @binding(26) var<storage, read_write> cols: array<atomic<u32>>;
 // molten rock (lava.wgsl): x depth, y temperature, w its surface height
 @group(0) @binding(28) var<storage, read> lava: array<vec4<f32>>;
+// the fragment ring's head (split)
+@group(0) @binding(29) var<storage, read_write> fragHead: array<atomic<u32>>;
 // how fast a voxel in lava takes its heat (share a second)
 const LAVA_HEAT: f32 = 1.5;
 // air shoved by voxels landing (finalize; windfield.wgsl): per wind texel (2 cells), ×1000
@@ -116,6 +135,13 @@ fn pmD(m: u32) -> vec4<f32> { return PM[m * 4u + 3u]; }
 fn infoOf(i: u32) -> u32 { return bitcast<u32>(pr[i].w); }
 fn matOf(i: u32) -> u32 { return infoOf(i) & 0xffu; }
 fn alive(i: u32) -> bool { return px[2u * i].w >= 0.0; }
+fn bodyOf(info: u32) -> u32 { return (info >> 8u) & 0xffu; }
+fn sizeCodeOf(info: u32) -> u32 { return (info >> 16u) & 63u; }
+/** A voxel's edge in cells (its info's size code: 0 a whole cell, n is n/16). */
+fn sizeOf(info: u32) -> f32 {
+  let c = sizeCodeOf(info);
+  return select(f32(c) / 16.0, 1.0, c == 0u);
+}
 /** How soft heat has made material m (0 cold .. 1 at its melting point). */
 fn softAt(m: u32, t: f32) -> f32 {
   let c = pmC(m);
@@ -304,11 +330,15 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   let x0 = px[2u * i];
   let info = infoOf(i);
   let m = info & 0xffu;
+  // its size (round 49: a body's voxels may be smaller than a cell)
+  let sz = sizeOf(info);
+  let rad = RAD * sz;
+  let frag = bodyOf(info) == FRAG_BODY;
   // a foundation (pinned) whose ground has gone (dug, blasted, melted): it
   // falls with the rest instead of hanging in the air
   if (x0.w == 0.0) {
-    let gp = groundAt(cellAt(x0.xyz.xy), x0.z - RAD - 0.05);
-    if (gp.x < x0.z - RAD - 0.35) { px[2u * i] = vec4<f32>(x0.xyz, 1.0 / max(pmA(m).x, 0.1)); }
+    let gp = groundAt(cellAt(x0.xyz.xy), x0.z - rad - 0.05);
+    if (gp.x < x0.z - rad - 0.35) { px[2u * i] = vec4<f32>(x0.xyz, 1.0 / max(pmA(m).x * sz * sz * sz, 0.01)); }
     return;
   }
   if (x0.w < 0.0) { return; }
@@ -319,6 +349,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   var nsum = vec3<f32>(0.0);
   var fastest = 0.0;
   var dying = false;
+  var dust = false;
   // Contacts never push out (DECISIONS round 43): they only stop a voxel
   // moving further in. An overlap it already has stays (that reads better than
   // a shove, which looks like energy from nowhere); one deeper than the
@@ -331,9 +362,10 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   // the ground under it
   let c = cellAt(x.xy);
   let g = groundAt(c, x.z);
-  let depth = g.x - (x.z - RAD);
+  let depth = g.x - (x.z - rad);
   if (depth > 0.0) {
-    if (g.y > 0.5 && g.z < 0.5 && depth > CRUMBLE_DEPTH) { dying = true; }
+    // (deep in the ground it goes straight to dust: its pieces would be buried)
+    if (g.y > 0.5 && g.z < 0.5 && depth > CRUMBLE_DEPTH * sz) { dust = true; }
     if (x.z < p0.z) {
       fastest = max(fastest, -v.z * (1.0 - 0.6 * g.z));
       x.z = p0.z;
@@ -346,9 +378,9 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
     let cp = cellPos(c);
     for (var k = 0u; k < NDIR; k++) {
       if (dot(x.xy - cp, DIRV[k]) <= 0.0) { continue; }
-      let gn = groundAt(nbr(c, k), x.z + RAD);
-      if (gn.x - (x.z - RAD) <= STEP_UP) { continue; }
-      if (gn.y < 0.5 && gn.x < x.z - RAD) { continue; }
+      let gn = groundAt(nbr(c, k), x.z + rad);
+      if (gn.x - (x.z - rad) <= STEP_UP * sz) { continue; }
+      if (gn.y < 0.5 && gn.x < x.z - rad) { continue; }
       let into = dot(x.xy - p0.xy, DIRV[k]);
       if (moving && wakeable(u32(gn.w)) && inMap(nbr(c, k))) { touched = colIdxI(nbr(c, k)) + 1u; }
       if (into > 0.0) {
@@ -364,14 +396,15 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   let l = latOf(i, b);
   let bonds = pb[i];
   let cell = vec3<i32>(floor(x));
-  let toughI = pmA(m).x * crumbleV;
+  // (the smaller of two voxels is the weaker: a fragment breaks on what it hits)
+  let toughI = pmA(m).x * crumbleV * sz;
   for (var dz = -1; dz <= 1; dz++) {
     for (var dy = -1; dy <= 1; dy++) {
       for (var dx = -1; dx <= 1; dx++) {
         let cc = cell + vec3<i32>(dx, dy, dz);
         var j = atomicLoad(&hashT[cellHash(cc)]);
         var guard = 0u;
-        while (j != HASH_NONE && guard < 64u) {
+        while (j != HASH_NONE && guard < 128u) {
           guard++;
           let ju = j;
           j = atomicLoad(&hashT[HASH_N + ju]);
@@ -379,15 +412,16 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
           let xj = px[2u * ju];
           if (xj.w < 0.0) { continue; }
           if (any(vec3<i32>(floor(xj.xyz)) != cc)) { continue; }
+          let infoJ = infoOf(ju);
+          let reach = rad + RAD * sizeOf(infoJ);
           let d = x - xj.xyz;
           let dist = length(d);
-          if (dist >= 2.0 * RAD || dist < 1e-5) { continue; }
-          let infoJ = infoOf(ju);
+          if (dist >= reach || dist < 1e-5) { continue; }
           // bonded neighbours hold each other by their bonds; voxels of one
           // body that started close (a squeeze, two sides of a crack) only
-          // nudge each other, never crumble
+          // nudge each other, never crumble (fragments have no lattice)
           var near = false;
-          if (infoJ >> 8u == info >> 8u) {
+          if (bodyOf(infoJ) == bodyOf(info) && !frag) {
             let dl = latOf(ju, b) - l;
             if (all(abs(dl) <= vec3<i32>(1))) {
               let k = u32((dl.x + 1) + 3 * (dl.y + 1) + 9 * (dl.z + 1));
@@ -397,15 +431,15 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
             near = all(abs(dl) <= vec3<i32>(2));
           }
           let n = d / dist;
-          let over = 2.0 * RAD - dist;
+          let over = reach - dist;
           let closing = -dot(v - pv[ju].xyz, n);
           let mj = infoJ & 0xffu;
-          let toughJ = pmA(mj).x * pmB(mj).w;
+          let toughJ = pmA(mj).x * pmB(mj).w * sizeOf(infoJ);
           // too fast for the weaker of the two: it breaks up (ties: the higher index)
           // (by chance, the harder the more likely: below)
           if (!near && closing > crumbleV && (toughI < toughJ || (toughI == toughJ && i > ju))) { fastest = max(fastest, closing); }
           // deeper than the weaker can bear: it crumbles
-          if (!near && over > CRUMBLE_OVERLAP && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
+          if (!near && over > CRUMBLE_OVERLAP * min(sz, sizeOf(infoJ)) && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
           // stop them closing further (each its share); never part them
           let wi = x0.w;
           let wj = max(xj.w, 0.0);
@@ -423,6 +457,10 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   if (fastest > crumbleV) {
     let r = f32(hash3(i, PU.c.z, 0x6b2du) & 0xffffu) / 65536.0;
     if (r < clamp((fastest - crumbleV) / crumbleV, 0.2, 0.6)) { dying = true; }
+  }
+  if (dust) {
+    px[2u * i] = vec4<f32>(x, PV_DUST);
+    return;
   }
   if (dying) {
     px[2u * i] = vec4<f32>(x, PV_CRUMBLE);
@@ -442,6 +480,7 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
   let info = infoOf(i);
   let m = info & 0xffu;
   let h = PU.a.x;
+  let sz = sizeOf(info);
   let vOld = pv[i];
   var v = (x.xyz - prev.xyz) / h;
   if (x.w <= 0.0) { v = vec3<f32>(0.0); }
@@ -465,16 +504,18 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     pc[i] = vec4<f32>(max(hit, 0.0), 0.0, 0.0, ct.w);
     // landing hard on something: it shoves the air out from under it (the
     // wind lifts the loose ground round it) and kicks up dust (round 47)
+    // (a smaller voxel shoves less air, by its face, and raises less dust)
     if (n.z > 0.5 && hit > PUFF_V) {
+      let face = sz * sz;
       let wt = vec2<i32>(floor(x.xy * 0.5));
       let ww = (G.mapW + 1u) / 2u;
       if (all(wt >= vec2<i32>(0)) && u32(wt.x) < ww && u32(wt.y) < (G.mapH + 1u) / 2u) {
-        atomicAdd(&puff[u32(wt.y) * ww + u32(wt.x)], u32(min(hit - PUFF_V, 25.0) * 100.0));
+        atomicAdd(&puff[u32(wt.y) * ww + u32(wt.x)], u32(min(hit - PUFF_V, 25.0) * 100.0 * face));
       }
       let seed = hash3(i, PU.c.z, 0x2c1bu);
-      if (f32(seed >> 24u) < min((hit - PUFF_V) * 6.0, 120.0)) {
+      if (f32(seed >> 24u) < min((hit - PUFF_V) * 6.0, 120.0) * face) {
         let r = vec3<f32>(f32(seed & 255u), f32((seed >> 8u) & 255u), f32((seed >> 16u) & 255u)) / 255.0 - 0.5;
-        spawnPart(x.xyz - vec3<f32>(0.0, 0.0, RAD), vec3<f32>(r.xy * 0.4 * hit, 0.6 + r.z), 3.0 + r.z * 2.0, K_HAZE_P, seed, (u32(pmC(m).w) & 255u) << 8u);
+        spawnPart(x.xyz - vec3<f32>(0.0, 0.0, RAD * sz), vec3<f32>(r.xy * 0.4 * hit, 0.6 + r.z), 3.0 + r.z * 2.0, K_HAZE_P, seed, (u32(pmC(m).w) & 255u) << 8u);
       }
     }
   }
@@ -514,6 +555,15 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     px[2u * i] = vec4<f32>(x.xyz, PV_MELT);
     return;
   }
+  // a fragment: come to rest (or old), it goes to dust and loose ground
+  if (bodyOf(info) == FRAG_BODY) {
+    var t = pr[i];
+    t.y += h;
+    t.x = select(0.0, t.x + h, sp < 1.0);
+    pr[i] = t;
+    if (t.x > FRAG_REST || t.y > FRAG_LIFE) { px[2u * i] = vec4<f32>(x.xyz, PV_DUST); }
+    return;
+  }
   // bonds past their break strain snap (both sides judge the same numbers)
   let b = PB[(info >> 8u) & 0xffu];
   let l = latOf(i, b);
@@ -536,6 +586,10 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
   pb[i] = bonds;
 }
 
+// a fragment this long at rest, or this old (s), goes to dust
+const FRAG_REST: f32 = 0.6;
+const FRAG_LIFE: f32 = 6.0;
+
 // ---- 6. plastic flow and heat --------------------------------------------------------
 @compute @workgroup_size(64)
 fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -548,11 +602,14 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   let h = PU.a.x;
   // past its yield, the rest shape follows the bend (metal stays bent)
   let soft = softAt(m, t);
-  let yieldD = pmA(m).z * (1.0 - soft);
+  let sz = sizeOf(info);
+  let frag = bodyOf(info) == FRAG_BODY;
+  let yieldD = pmA(m).z * (1.0 - soft) * sz;
   let r = pr[i];
   let d = qrotP(qinvP(pq[i]), x.xyz - pg[2u * i].xyz) - (r.xyz - pg[2u * i + 1u].xyz);
   let dl = length(d);
-  if (dl > yieldD && pmA(m).w > 0.0) {
+  // (a fragment's xyz are its timers, not a rest shape)
+  if (dl > yieldD && pmA(m).w > 0.0 && !frag) {
     pr[i] = vec4<f32>(r.xyz + d * (1.0 - yieldD / dl) * min(1.0, pmA(m).w + soft), r.w);
   }
   // heat: it evens out with what it's bonded to, and cools
@@ -603,7 +660,7 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   let lc = cellAt(x.xy);
   if (inMap(lc)) {
     let L = lava[colIdxI(lc)];
-    if (L.x > 0.02 && x.z - RAD < L.w && L.y > tn) { tn += (L.y - tn) * min(LAVA_HEAT * pmC(m).z * h, 1.0); }
+    if (L.x > 0.02 && x.z - RAD * sz < L.w && L.y > tn) { tn += (L.y - tn) * min(LAVA_HEAT * pmC(m).z * h, 1.0); }
   }
   // the beam
   if (PU.a.w > 0.5) {
@@ -624,7 +681,8 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
     let rel = x.xyz - PU.d.xyz;
     let dist = length(rel);
     if (dist < PU.d.w) {
-      px[2u * i] = vec4<f32>(x.xyz, PV_CRUMBLE);
+      // (its heart goes to dust; what's thrown breaks up where it lands)
+      px[2u * i] = vec4<f32>(x.xyz, PV_DUST);
     } else if (dist < PU.d.w * 2.5 && x.w > 0.0) {
       // (heavier voxels move less)
       vel += rel / dist * bs * (1.0 - dist / (PU.d.w * 2.5)) * min(1.0, x.w * 2.5);
@@ -633,7 +691,64 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   pv[i] = vec4<f32>(vel, tn);
 }
 
-// ---- 7. what crumbled or melted leaves the bodies -------------------------------------
+// ---- 7. what crumbled breaks into fragments half its size ------------------------------
+// (round 49: most of the simulation stays coarse; it refines where it breaks)
+const SPLIT_OFF = array<vec3<f32>, 8>(
+  vec3<f32>(-1.0, -1.0, -1.0), vec3<f32>(1.0, -1.0, -1.0), vec3<f32>(-1.0, 1.0, -1.0), vec3<f32>(1.0, 1.0, -1.0),
+  vec3<f32>(-1.0, -1.0, 1.0), vec3<f32>(1.0, -1.0, 1.0), vec3<f32>(-1.0, 1.0, 1.0), vec3<f32>(1.0, 1.0, 1.0));
+
+@compute @workgroup_size(64)
+fn split(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= PU.c.x) { return; }
+  let x = px[2u * i];
+  if (x.w != PV_CRUMBLE) { return; }
+  let info = infoOf(i);
+  let code = select(sizeCodeOf(info), 16u, sizeCodeOf(info) == 0u);
+  let cc = code / 2u;
+  // a fragment, or too small to halve: it goes to dust (deaths)
+  if (bodyOf(info) == FRAG_BODY || cc < FRAG_MIN_CODE) { return; }
+  let m = info & 0xffu;
+  let cs = f32(cc) / 16.0;
+  let q = pq[i];
+  let v = pv[i];
+  let temp = px[2u * i + 1u].w;
+  let invM = 1.0 / max(pmA(m).x * cs * cs * cs, 1e-4);
+  let ci = (info & 0xffu) | (FRAG_BODY << 8u) | (cc << 16u);
+  let base = atomicAdd(&fragHead[0], 8u);
+  for (var k = 0u; k < 8u; k++) {
+    let j = (base + k) % FRAG_CAP;
+    // (the ring has come round onto a fragment still flying: it goes to
+    // loose ground where it is, so nothing is lost)
+    let old = px[2u * j];
+    if (old.w >= 0.0 || old.w == PV_CRUMBLE || old.w == PV_DUST) {
+      let oc = cellAt(old.xy);
+      if (inMap(oc)) {
+        let os = sizeOf(infoOf(j));
+        let oci = colIdxI(oc);
+        atomicAdd(&dep[2u * oci], u32(1000.0 * os * os * os));
+        atomicMax(&dep[2u * oci + 1u], u32(pmC(matOf(j)).w));
+      }
+    }
+    let o = qrotP(q, SPLIT_OFF[k]);
+    let p = x.xyz + o * (cs * 0.5);
+    let seed = hash3(i, k, PU.c.z);
+    let rn = vec3<f32>(f32(seed & 255u), f32((seed >> 8u) & 255u), f32((seed >> 16u) & 255u)) / 255.0 - 0.5;
+    // (they spring apart a little, each turned its own way)
+    let vel = v.xyz + o * 0.9 + rn * 1.2;
+    let spin = normalize(qmul(normalize(vec4<f32>(rn * 0.8, 1.0)), q));
+    px[2u * j] = vec4<f32>(p, invM);
+    px[2u * j + 1u] = vec4<f32>(p, temp);
+    pv[j] = vec4<f32>(vel, temp);
+    pr[j] = vec4<f32>(0.0, 0.0, 0.0, bitcast<f32>(ci));
+    pq[j] = spin;
+    pb[j] = 0u;
+    pc[j] = vec4<f32>(0.0);
+  }
+  px[2u * i] = vec4<f32>(x.xyz, PV_SPLIT);
+}
+
+// ---- 8. what crumbled or melted leaves the bodies -------------------------------------
 @compute @workgroup_size(64)
 fn deaths(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
@@ -646,9 +761,9 @@ fn deaths(@builtin(global_invocation_id) id: vec3<u32>) {
     if (k < 255u) { atomicStore(&touches[k + 1u], tc - 1u); }
   }
   let x = px[2u * i];
-  if (x.w > -1.5 || x.w < -3.5) { return; }
+  if (x.w > -1.5 || x.w < -5.5) { return; }
   let m = matOf(i);
-  let melted = x.w < -2.5;
+  let melted = x.w == PV_MELT;
   px[2u * i] = vec4<f32>(x.xyz, PV_DEAD);
   pb[i] = 0u;
   let seed = hash3(i, PU.c.z, 0x9e37u);
@@ -657,17 +772,28 @@ fn deaths(@builtin(global_invocation_id) id: vec3<u32>) {
     spawnPart(x.xyz, vec3<f32>(r.xy * 3.0, 2.0 + r.z * 2.0), 2.5, K_EMBER_P, seed, 0u);
     return;
   }
-  // a crumbled voxel: its loose material lands below, with a chip and dust
+  // broken into fragments (split): a puff of dust where it broke
+  if (x.w == PV_SPLIT) {
+    if ((seed >> 24u) >= 96u) { return; }
+    spawnPart(x.xyz, vec3<f32>(r.xy * 1.5, 0.8), 3.0, K_DUST_P, seed ^ 0x55u, (u32(pmC(m).w) & 255u) << 8u);
+    return;
+  }
+  // a crumbled voxel: its loose material (by its volume) lands below, with a chip and dust
+  let sz = sizeOf(infoOf(i));
   let c = cellAt(x.xy);
   if (inMap(c)) {
     let ci = colIdxI(c);
-    atomicAdd(&dep[2u * ci], 1000u);
+    atomicAdd(&dep[2u * ci], u32(1000.0 * sz * sz * sz));
     atomicMax(&dep[2u * ci + 1u], u32(pmC(m).w));
   }
   spawnPart(x.xyz, vec3<f32>(r.xy * 6.0, 3.0 + r.z * 3.0), 1.4, K_CHIP_P, seed, (m & 255u) << 8u);
-  // and a puff of dust (round 47: more of it, so a collapse smokes)
-  spawnPart(x.xyz, vec3<f32>(r.xy * 1.5, 0.8), 3.0, K_DUST_P, seed ^ 0x55u, (u32(pmC(m).w) & 255u) << 8u);
-  if ((seed >> 24u) < 128u) {
+  // and a puff of dust (round 47: more of it, so a collapse smokes; a
+  // fragment's by its size, so a voxel's eight raise what it would have)
+  let rd = f32((seed >> 16u) & 255u) / 256.0;
+  if (rd < sz * sz * 2.0) {
+    spawnPart(x.xyz, vec3<f32>(r.xy * 1.5, 0.8), 3.0, K_DUST_P, seed ^ 0x55u, (u32(pmC(m).w) & 255u) << 8u);
+  }
+  if (f32(seed >> 24u) < 128.0 * sz * sz) {
     spawnPart(x.xyz + r * 0.6, vec3<f32>(r.yx * 2.5, 1.2), 4.0, K_HAZE_P, seed ^ 0xa3u, (u32(pmC(m).w) & 255u) << 8u);
   }
 }
@@ -717,6 +843,8 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
         if (j < 0 || !alive(u32(j))) { show = true; }
       }
     }
+    // (a body a mesh draws: its voxels are only what the world feels, round 49)
+    if (((infoOf(i) >> 22u) & 1u) != 0u) { show = false; }
   }
   let off = atomicAdd(&wgN, select(0u, 1u, show));
   workgroupBarrier();
@@ -727,7 +855,8 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   let m = matOf(i);
   let melt = pmC(m).y;
   let heat = select(0.0, clamp(px[2u * i + 1u].w / max(melt, 1.0), 0.0, 1.0), melt > 0.0);
-  let word = m | ((pcg(i) & 255u) << 8u) | (u32(heat * 255.0) << 16u) | 0x40000000u;
+  // (its size code in bits 24..29: render.wgsl bodySize)
+  let word = m | ((pcg(i) & 255u) << 8u) | (u32(heat * 255.0) << 16u) | (sizeCodeOf(infoOf(i)) << 24u) | 0x40000000u;
   let q = pq[i];
   let o = (wgBase + off) * 2u;
   inst[o] = vec4<u32>(bitcast<u32>(x.x), bitcast<u32>(x.y), bitcast<u32>(x.z), word);

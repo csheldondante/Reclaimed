@@ -442,7 +442,8 @@ export class LevelScene implements Scene {
         spawn: async (m: VoxelModel, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0, vel: [number, number, number] = [0, 0, 0], floor = 0) => {
           const r = Math.PI / 180;
           const q = qYawPitchRoll(yaw * r, pitch * r, roll * r);
-          const [w, d, h] = m.size;
+          const vs = m.voxel ?? 1;
+          const [w, d, h] = m.size.map((n) => n * vs);
           // its lowest point `above` the highest ground (loose ground too) under its footprint
           const pts: [number, number, number][] = [];
           for (let k = 0; k <= 4; k++) for (let j = 0; j <= 4; j++) for (let i = 0; i <= 4; i++) pts.push(qRotate(q, [(w * i) / 4, (d * j) / 4, (h * k) / 4]));
@@ -466,10 +467,11 @@ export class LevelScene implements Scene {
           const [gx, gy] = cellAt(x, y);
           return readColumn(core.packed, slots, gx, gy);
         },
-        drop: (mat: string, w: number, d: number, h: number, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0) => {
+        // (voxel: each voxel's edge in cells, round 49; w, d, h count voxels)
+        drop: (mat: string, w: number, d: number, h: number, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0, voxel = 1) => {
           const id = MAT[(mat[0].toUpperCase() + mat.slice(1)) as keyof typeof MAT];
           if (id === undefined) throw new Error(`no material "${mat}"`);
-          return api.phys.spawn(box(id, w, d, h), x, y, above, yaw, pitch, roll);
+          return api.phys.spawn({ ...box(id, w, d, h), voxel }, x, y, above, yaw, pitch, roll);
         },
       },
       trial: new Trial(core, this.powers, gatesOf(map), map.poi.healthy),

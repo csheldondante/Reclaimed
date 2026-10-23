@@ -45,13 +45,48 @@ beam.
    random), and a voxel that lost three bonds that way may crumble, so a
    hard landing breaks concrete into chunks with rubble and dust along the
    breaks.
-7. *deaths*: what crumbled goes to the deposit buffer as its loose material
-   (the sediment pass folds it into the layers) with a chip and some dust;
-   what melted leaves as embers.
+7. *split* (round 49): a crumbling voxel breaks into eight fragments half
+   its size (below).
+8. *deaths*: what crumbled goes to the deposit buffer as its loose material,
+   by its volume (the sediment pass folds it into the layers), with a chip
+   and some dust; what melted leaves as embers.
+
+### Mixed resolution (round 49)
+
+The user's ruling: not uniformly smaller voxels, but coarse simulation
+refined where it's needed. Two ways in:
+
+- **A body's own voxel size.** A model's `voxel` (1, 1/2, 1/4: n/16 of a
+  cell) sets its lattice spacing; size code in each voxel's info (bits
+  16–21, 0 a whole cell). Its mass goes with its volume, its contact radius,
+  step-up, crumble depth, yield and the air and dust it shoves with its
+  size; the smaller of two voxels is the weaker (a fragment breaks on what it
+  hits, not the other way round). The world stays whole cells; a small thing
+  like the hover bike gets a fine lattice of its own.
+  `reclaimed.phys.drop('steel', 24, 2, 2, x, y, above, 0, 0, 0, 0.5)`.
+- **Fracture refines.** A voxel that crumbles (an impact, a crack's seam, a
+  squeeze) breaks into eight fragments half its size (*split*: velocity and
+  heat its own, sprung a little apart, each turned its own way) instead of
+  going straight to dust. Fragments are unbonded (body 255, a ring of 8192
+  slots at the start of the particles; bodies start after it); one that
+  crumbles in turn, comes to rest (0.6 s) or grows old (6 s) goes to dust
+  and loose ground, so a block breaks into chunks, then pieces, then dust.
+  Voxels halved below a quarter cell go straight to dust, and so do the
+  heart of a blast (the meteor turns what it hits to dust) and a voxel
+  deep in the ground. When the ring comes round onto a fragment still
+  flying, that one goes to loose ground where it is, so no mass is lost.
+
+Headless (`phystest --scene fine`): a half-cell steel bar across two posts
+bends under a half-cell brick, which cracks open; a half-cell concrete
+block falling 14 cells keeps 368 of 512 voxels (72%) and sheds about 1,200
+fragments at the peak, all gone to dust by 4 s; the whole-cell slab beside
+it keeps 53 of 64 (83%). The `fall` scene is unchanged (the slab keeps
+116 of 144); `stress` costs 1.4 ms (it was 1.2–1.9).
 
 Then once a tick: *fold* (crumbled ground into `deposit`) and *prep* (each
 voxel with an open face becomes a rotated-cube instance for the body
-pipeline: bit 30 marks it, bits 8–15 a stable speckle, 16–23 its heat).
+pipeline: bit 30 marks it, bits 8–15 a stable speckle, 16–23 its heat,
+24–29 its size).
 
 ### Contacts never push out
 
@@ -193,7 +228,7 @@ and temperature, and the heat of the ground at the column's top.
 - In the console: `reclaimed.phys.drop('steel', 18, 2, 2, x, y, above)`,
   `reclaimed.phys.spawn(model, x, y, above, yaw, pitch, roll)`,
   `reclaimed.phys.physics.readPositions()`.
-- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano|meteor|fall|dig [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
+- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano|meteor|fall|dig|fine [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
 
 ## Cost
 

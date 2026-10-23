@@ -3087,3 +3087,22 @@ public API (ARCHITECTURE.md), and WorldCore's last argument is named for
 what it does (the field mesh), not the sandbox. Headless: a 20x6x6 block of
 quarter voxels, turned 46 degrees, beside a whole one: the right size, lit,
 its shadow cast.
+
+## 2026-10-22 — mixed resolution: a voxel size per body, fracture refines
+
+Round 49: the user ruled out uniformly smaller voxels and asked for coarse
+simulation refined where needed. Two ways in. A body now has its own voxel
+size (the model's `voxel`, n/16 of a cell, carried in each voxel's info
+bits 16-21 so no buffer or binding was added); mass, contact radius,
+step-up, crumble depth, yield, and the air and dust it shoves go with it.
+And a crumbling voxel splits into eight fragments half its size (a new
+*split* pass between relax and deaths: deaths was already at the eight
+storage buffers a stage allows), unbonded, in a ring of 8192 slots ahead
+of the bodies; they go to dust when they crumble, rest 0.6 s or reach
+6 s. Blast hearts and deep-buried voxels still go straight to dust.
+First run: a fragment hitting a body voxel of the same material broke the
+voxel (ties went to the higher index, and the fragments sit lowest), so a
+half-cell concrete block lost 58%; toughness now scales with size and it
+loses 28% (the whole-cell slab 17%), and the dust per crumble scales with
+the fragment's face so eight fragments raise what one voxel did. fall
+scene unchanged (slab 116/144); stress 1.4 ms of physics.
