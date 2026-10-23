@@ -67,6 +67,9 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 0.17;
     var c = mix(vec3<f32>(0.25, 0.45, 0.16), vec3<f32>(0.62, 0.48, 0.18), sr2 * sr2);
     if (sr2 > 0.995) { c = mix(vec3<f32>(0.42, 0.31, 0.17), vec3<f32>(0.55, 0.42, 0.24), sr); } // dead, dry flakes
+    // an autumn leaf (round 51: state 1 + its tree's species)
+    let ls = P.m.w & 255u;
+    if (ls >= 1u && ls <= 4u) { c = autumnLeaf(ls - 1u, sr); }
     col = vec4<f32>(c * (0.7 + 0.3 * abs(sin(G.time * 7.0 + sr * 50.0))), 1.0);
   } else if (kind == 4u) { col = vec4<f32>(0.3, 0.3, 0.3, 0.7); size = 0.12; }
   else if (kind == 5u) { col = vec4<f32>(0.64, 0.63, 0.6, 1.0); size = 0.14 + sr * 0.1; }

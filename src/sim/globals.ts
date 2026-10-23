@@ -123,6 +123,13 @@ export interface GlobalsState {
    * snow and ice melt. Absent: 15 °C, no fall with height.
    */
   climate?: { temp: number; lapse: number };
+  /**
+   * The season (round 51): 0..1 through the year from midsummer — leaves
+   * turn ~0.4–0.55, fall ~0.5–0.75, crowns bare in winter, green again by 1
+   * (common.wgsl seasonColour / seasonShed / seasonBare). Absent: 0.
+   * WorldCore.yearLength advances it.
+   */
+  season?: number;
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }
@@ -201,5 +208,5 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     const d = s.dusts[i];
     f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);
   }
-  f.set([s.story ? 1 : 0, s.climate?.temp ?? 15, s.climate?.lapse ?? 0, 0], 272);
+  f.set([s.story ? 1 : 0, s.climate?.temp ?? 15, s.climate?.lapse ?? 0, s.season ?? 0], 272);
 }

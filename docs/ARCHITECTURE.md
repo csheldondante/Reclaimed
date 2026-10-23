@@ -517,6 +517,19 @@ list with the liquids, hiding nothing behind them; shadeGlass breaks their
 faces into tilted facets). Physics bodies of ice shatter to snow, crystal
 to sand.
 
+## Seasons (round 51)
+
+`Globals.rules.w` is the season, 0..1 through the year from midsummer
+(GlobalsState `season`; `?season=`; WorldCore `yearLength` seconds turns it,
+`?year=`). common.wgsl: `seasonColour` (the leaves turned, ~0.35–0.55, gone
+by ~0.9), `seasonShed` (falling, ~0.46–0.8), `seasonBare` (crowns bare,
+~0.55–0.78, green again by 1), `autumnLeaf(species, h)`, `seasonGrass`.
+render.wgsl thins broadleaf crowns (canopyMarch density) and turns them
+(species 1, conifers, stays green), turns the grass cover and tufts
+(meshdraw too); particles.wgsl sheds K_LEAF from broadleaf crowns (state 1 +
+species: drawn in autumn colours); climate.wgsl drops leaf litter mostly in
+the fall, in drops of 0.01 (thinner tops are spent to the sediment pass).
+
 ## Story rules (round 30)
 
 `Globals.rules.x` = 1 on a story level (`LevelDef.story`, unless opened with
