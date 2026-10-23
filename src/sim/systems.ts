@@ -28,6 +28,7 @@ import windFieldWgsl from '../shaders/windfield.wgsl?raw';
 import sedimentWgsl from '../shaders/sediment.wgsl?raw';
 import climateWgsl from '../shaders/climate.wgsl?raw';
 import editWgsl from '../shaders/edit.wgsl?raw';
+import placeOpWgsl from '../shaders/placeop.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -502,5 +503,51 @@ export class StatsSystem implements SimSystem {
   afterSubmit(): void {
     for (const f of this.pendingMaps) f();
     this.pendingMaps = [];
+  }
+}
+
+/** An op masked to a place (placeop.wgsl): op 1 bury, 2 flood, 3 drain. */
+export interface PlaceOp {
+  op: 1 | 2 | 3;
+  place: number;
+  material?: number;
+  amount?: number;
+  noise?: number;
+  scale?: number;
+  seed?: number;
+}
+
+/**
+ * Ops masked to a place (docs/PLACES.md step 1), one a tick from a queue.
+ * Period 2, before the sediment pass in the list: it runs on the sediment's
+ * ticks, so a bury's deposit is folded in the same tick (the climate pass,
+ * after it, overwrites deposit .yz with its snow and leaves).
+ */
+export class PlaceOpSystem implements SimSystem {
+  readonly name = 'placeop';
+  readonly period = 2;
+  private s;
+  private params: GPUBuffer;
+  readonly queue: PlaceOp[] = [];
+  constructor(private device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.params = device.createBuffer({ label: 'placeop-params', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.s = kernel(
+      device,
+      world,
+      'placeop',
+      placeOpWgsl,
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'uniform' },
+      { 3: world.places, 4: world.placeTable, 5: world.water, 6: world.deposit, 7: this.params },
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
+    const o = this.queue.shift();
+    if (!o) return;
+    const buf = new ArrayBuffer(32);
+    new Uint32Array(buf, 0, 4).set([o.op, o.place, o.material ?? 0, o.seed ?? 1]);
+    new Float32Array(buf, 16, 4).set([o.amount ?? 0, o.noise ?? 0, o.scale ?? 8, 0]);
+    // (written before this tick's submit: one op a tick, so no two share it)
+    this.device.queue.writeBuffer(this.params, 0, buf);
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
   }
 }
