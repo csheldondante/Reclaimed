@@ -29,6 +29,8 @@ export const enum EventKind {
   Edit = 5,
   /** every click: a ring of wind pushing out from it (windfield.wgsl; round 20) */
   Ripple = 6,
+  /** set alight: fuel within the radius catches at intensity `strength` (fire.wgsl; world API fire.ignite) */
+  Ignite = 7,
 }
 
 /** A dust storm: a roaming patch of strong, gusty wind (no rain, no cloud). */

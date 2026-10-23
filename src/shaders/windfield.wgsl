@@ -13,6 +13,15 @@
 @group(0) @binding(16) var windOut: texture_storage_2d<rgba32float, write>;
 // air shoved by physics voxels landing, per texel (×1000; physics.ts, last tick)
 @group(0) @binding(30) var<storage, read> puff: array<u32>;
+// blows and strokes (the world API's wind: api/wind.ts): [0].x the count,
+// then per entry (x, y, radius, strength cells/s — a stroke's cap), (dx, dy,
+// mode, a stroke's length), (a stroke's paint, 0, 0, 0); mode 0 along
+// (dx, dy), 1 outward, 2 inward, 3 swirl (counter-clockwise; dx < 0
+// clockwise), 4 a stroke: a segment ending at (x, y), painted as the
+// player's drag is, never past its cap along it (a mover's wake)
+@group(0) @binding(31) var<storage, read> blows: array<vec4<f32>>;
+// (a blow holds the painted wind at its strength, reached in ~BLOW_S)
+const BLOW_S: f32 = 0.12;
 
 const DT_W: f32 = 1.0 / 60.0;
 const DECAY_S: f32 = 7.0;
@@ -57,6 +66,40 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let d = length(c - (a + d0 * s));
     let f = smoothstep(g.z, g.z * 0.35, d);
     v += dir * g.w * stormBoost * (0.85 + 0.3 * (wob + 0.5)) * f * min(1.0, len / (1.3 * g.z));
+  }
+  // blows: under each, the painted wind is pushed toward the blow's strength
+  // along its direction and never past it, so a held blow is a steady wind
+  // (and stacking blows doesn't run away); it decays as painted wind does
+  // once the blow ends
+  let nb = u32(blows[0].x);
+  for (var k = 0u; k < nb; k++) {
+    let a = blows[1u + k * 3u];
+    let b = blows[2u + k * 3u];
+    if (u32(b.z + 0.5) == 4u) {
+      // a stroke: as the drag's segments above, capped
+      let len = b.w;
+      let s0 = a.xy - b.xy * len;
+      let s = clamp(dot(c - s0, b.xy), 0.0, len);
+      let ds = length(c - (s0 + b.xy * s));
+      if (ds > a.z) { continue; }
+      let sdir = vec2<f32>(b.x * ca - b.y * sa, b.x * sa + b.y * ca);
+      let add = blows[3u + k * 3u].x * stormBoost * (0.85 + 0.3 * (wob + 0.5)) * smoothstep(a.z, a.z * 0.35, ds) * min(1.0, len / (1.3 * a.z));
+      v += sdir * min(add, max(a.w - dot(v, sdir), 0.0));
+      continue;
+    }
+    let o = c - a.xy;
+    let d = length(o);
+    if (d > a.z) { continue; }
+    let fall = smoothstep(a.z, a.z * 0.35, d);
+    var dir = b.xy;
+    let m = u32(b.z + 0.5);
+    let od = o / max(d, 0.01);
+    if (m == 1u) { dir = od; }
+    if (m == 2u) { dir = -od; }
+    if (m == 3u) { dir = vec2<f32>(-od.y, od.x) * select(1.0, -1.0, b.x < 0.0); }
+    if (d < 0.01 && m != 0u) { continue; }
+    let along = dot(v, dir);
+    v += dir * max(a.w - along, 0.0) * fall * (1.0 - exp(-DT_W / BLOW_S));
   }
   // a click's ripple: wind pushing out from it in a ring (round 20: every
   // click is a breath of wind — you are the wind); it relaxes away like any

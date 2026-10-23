@@ -125,6 +125,9 @@ const EV_SCARE: u32 = 3u;
 const EV_GROW: u32 = 4u;
 // a click: a ring of wind pushing outward from it (windfield.wgsl)
 const EV_RIPPLE: u32 = 6u;
+// set alight (the world API's fire.ignite): fuel within the radius catches,
+// at intensity w (fire.wgsl only; no damage, no flash)
+const EV_IGNITE: u32 = 7u;
 // eventKind packs kind (low 4 bits) and a z height (above): kind + 16·z
 fn evKind(e: u32) -> u32 { return u32(G.eventKind[e]) & 15u; }
 fn evZ(e: u32) -> u32 { return u32(G.eventKind[e]) >> 4u; }
