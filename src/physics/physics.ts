@@ -497,6 +497,16 @@ export class Physics implements SimSystem {
     this.pushes.push(p);
   }
 
+  /**
+   * The force fields for the next tick, replacing any queued since the last
+   * one (for a game that sets its fields every frame: a frame with no tick
+   * between doesn't pile them up). Eight at most.
+   */
+  setPushes(list: PushField[]): void {
+    if (list.length > 8) throw new Error(`physics: ${list.length} pushes in one tick (8 at most)`);
+    this.pushes = [...list];
+  }
+
   /** `body` as last read back (undefined until the first readback, or once nothing of it is left). */
   state(body: PhysBody): BodyState | undefined {
     return this.states.get(body.id);
