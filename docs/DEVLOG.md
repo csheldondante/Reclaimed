@@ -3342,3 +3342,36 @@ Measured (scripts/hordetest.mjs): of 74 (60 raiders, 10 ogres, 4 brutes
 with a brick model), all chase within a second, and 69 are round the target
 in 10 s with 121 swings. A radius-3 blast kills 71, each death naming it; a
 fire hit sets the last 3 alight, and the ogres outlast the burn.
+
+## 2026-10-23 — agents: thrown, held, knocked over, catching fire
+
+The second slice of the units session's list.
+- **Tumbling.** A unit thrown hard (a hit's push, a launch, let go, walked
+  off a cliff) tumbles. It flies and falls free of the links, bounces and
+  skids, slams back off walls, is hurt by hard landings, and gets up once
+  it settles.
+- **Knock-overs.** Its momentum goes through the columns it crosses, and
+  the units standing there are knocked over when it would move them fast
+  enough, shared by mass.
+- **Holding.** The game can hold a unit (a lich, a gorilla), release it,
+  launch it, or lob it at a point.
+- **Fire.** Units catch fire from lava, hot ground, landing embers and each
+  other.
+
+That needed a ninth storage buffer in the units' tick, so the water depth
+now rides on each top surface (the peel writes it), and the places pack into
+one word.
+
+Two numbers moved after the first test:
+- A unit lobbed from 6 cells up died on landing (16 cells/s down: 12
+  damage at the first rates), so a landing or slam now hurts from 10
+  cells/s, 1 hp per cell/s past it.
+- The lobbed unit skipped 18 cells past its mark, bouncing with no grip in
+  the air, so each landing now takes 40% of its speed along the ground too.
+
+Measured (scripts/throwtest.mjs):
+- An ogre thrown at 18 cells/s into 40 standing workers bowls over 7-10,
+  and they get up.
+- A blast throws 37-38; a few are hurt landing, and all are up within 4 s.
+- A lob lands on its mark and skids 5 cells.
+- Fire set in a crowd of 30 spreads to 27 within 5 s.

@@ -26,8 +26,9 @@
 // per surface (column i, slot k: i * NAV_K + k): x its height (f32 bits; < 0
 // none), y headroom (bits 0-7, eighths of a cell) | wet (8) | links (9-26:
 // 3 bits a direction, 0 none, else the neighbour's slot + 1), z its room
-// (places: the top surface the column's open-air room, those under it the
-// enclosed level's), w that room's region (0: no place)
+// (low 16 bits; places: the top surface the column's open-air room, those
+// under it the enclosed level's) and that room's region (high 16; 0 no
+// place), w the water's depth on it (f32 bits; the top surface only)
 @group(0) @binding(5) var<storage, read_write> nav: array<vec4<u32>>;
 // per field and surface: f * NS + s (NS = columns * NAV_K)
 @group(0) @binding(6) var<storage, read_write> dist: array<f32>;
@@ -52,6 +53,12 @@ struct AgentParams {
   hits: array<Hit, 32>,
   // what hostile kinds go for (the player's units): x, y, z, radius
   targets: array<vec4<f32>, 8>,
+  // x holds, y launches this tick
+  n3: vec4<u32>,
+  // units the game holds (a lich, a gorilla): where (x, y, z) and the slot (w)
+  holds: array<vec4<f32>, 8>,
+  // units thrown this tick: velocity (x, y, z) and the slot (w)
+  launches: array<vec4<f32>, 32>,
 };
 /**
  * A kind of unit: a (height, mass, hp, speed), b (reach, damage, swing
@@ -84,6 +91,13 @@ fn navZ(s: u32) -> f32 { return bitcast<f32>(nav[s].x); }
 fn navHead(s: u32) -> f32 { return f32(nav[s].y & 0xffu) / 8.0; }
 fn navWet(s: u32) -> bool { return ((nav[s].y >> 8u) & 1u) != 0u; }
 fn navLink(s: u32, d: u32) -> u32 { return (nav[s].y >> (9u + 3u * d)) & 7u; }
+fn navRoom(s: u32) -> u32 { return nav[s].z & 0xffffu; }
+fn navRegion(s: u32) -> u32 { return nav[s].z >> 16u; }
+fn navWater(s: u32) -> f32 { return bitcast<f32>(nav[s].w); }
+/** Surface s lies on place fp (a field's place word: bit 31 a region). */
+fn onPlace(s: u32, fp: u32) -> bool {
+  return select(navRoom(s), navRegion(s), (fp >> 31u) != 0u) == (fp & 0x7fffffffu);
+}
 fn solidMat(m: u32) -> bool {
   let st = matState(m);
   return st == ST_SOLID || st == ST_GRANULAR;
@@ -123,7 +137,8 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
       // (only the top surface carries the water sheet)
       let wet = r == i32(n) - 1 && water[i] > WADE;
       let room = select(underRoom, topRoom, out == 0u);
-      nav[i * NAV_K + out] = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), room, select(0u, placeTable[room], room != 0u));
+      let region = select(0u, placeTable[room], room != 0u);
+      nav[i * NAV_K + out] = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(select(0.0, water[i], out == 0u)));
       out += 1u;
     }
     r -= 1;
@@ -211,7 +226,7 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var f = 0u; f < AP.n.z; f++) {
       // (confined: off its place, nothing)
       let fp = AP.fieldPlace[f];
-      if (fp != 0u && select(nav[s].z, nav[s].w, (fp >> 31u) != 0u) != (fp & 0x7fffffffu)) {
+      if (fp != 0u && !onPlace(s, fp)) {
         dist[f * N + s] = FAR;
         continue;
       }

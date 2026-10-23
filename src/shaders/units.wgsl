@@ -2,26 +2,35 @@
 // One thread a unit (appended to agents.wgsl, whose surfaces, fields and
 // params it reads). Per tick a unit:
 //  * takes the game's hits (a circle or a cone: damage, a push along a
-//    direction or outward, maybe set alight), reporting hurt and death;
+//    direction or outward, maybe set alight), reporting hurt and death; a
+//    push past TUMBLE_PUSH throws it: it tumbles;
+//  * held (the game carries it: a lich, a gorilla) sits where the game puts
+//    it; let go, or launched, it tumbles with the velocity given;
+//  * tumbling, flies and falls, bounces off the ground and the walls (a hard
+//    landing or a slam hurts), knocks over the units it runs into (sharing
+//    its momentum by mass: per-column shoves), and gets up once it settles;
 //  * burns (damage over time, running about) once alight: from the game's
-//    hits or the fire field where it stands; water puts it out;
+//    hits, the fire field, lava or hot ground, an ember landing on it, or a
+//    burning unit next to it; water puts it out; lava hurts besides;
 //  * wades, slowed by the water's depth, and drowns in water over its height;
 //  * behaves as its kind says: a worker (notice 0) follows its group's field;
 //    a hostile kind wanders until its field says a target is within notice,
 //    closes in down the field, and swings when one is in reach (a swing event
 //    the game turns into damage on its unit);
-//  * is pushed apart by the crowd, never crosses a missing link or leaves its
-//    field's place, rides its surface's height.
+//  * walking, is pushed apart by the crowd, never crosses a missing link or
+//    leaves its field's place, rides its surface's height.
 // unitDraw then writes each unit's voxels: its kind's model, or the default
-// figure (legs, torso, head), facing its way; alight it flickers and a hit
-// flashes it (the physics voxel's heat glow, render.wgsl fsBody).
+// figure (legs, torso, head), facing its way, rolled along its throw while
+// tumbling; alight it flickers and a hit flashes it (the physics voxel's
+// heat glow, render.wgsl fsBody).
 //
 // A unit, four vec4<f32>:
 //   a: x, y, z (its feet), info (u32 bits): group 0-7 | alive 8 | kind 9-11 |
 //      state 12-14 | alight 15 | generation 16-31 (its id: gen * 8192 + slot)
 //   b: vx, vy, vz, stride phase
 //   c: hp, swing cooldown (s), fire left (s), heading (rad)
-//   d: hurt flash (s), state time (s), time under water (s), wander heading (rad)
+//   d: hurt flash (s), state time (s), time under water (s), wander heading
+//      (rad; tumbling: how far it has rolled)
 @group(0) @binding(7) var<storage, read_write> units: array<vec4<f32>>;
 // units per column, two halves: the tick writes one (tick % 2) and reads the
 // other, the last tick's count
@@ -31,9 +40,17 @@
 // a hit id), amount (f32 bits), x, y, z (f32 bits), 0
 @group(0) @binding(13) var<storage, read_write> events: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read> fire: array<f32>;
-// (unitDraw; bindings past common.wgsl's) the draw: voxels in the body format, two vec4<u32> each; their
-// count (indirect args, [1] instances); the kinds' models: per voxel x, y, z
-// (cells from the feet, f32) and the material (u32 bits)
+// lava (sim/lava.ts): x depth, y temperature, z the ground's heat (°C)
+@group(0) @binding(15) var<storage, read> lava: array<vec4<f32>>;
+// shoves per column, two halves as occ: what tumbling units carried through
+// it (x, y momentum and mass, ×SHOVE_FIX) and how many burning units (w)
+@group(0) @binding(16) var<storage, read_write> shove: array<atomic<i32>>;
+// embers landed (particles.wgsl): x the tick it landed
+@group(0) @binding(19) var sparkTex: texture_2d<f32>;
+// (unitDraw; bindings past common.wgsl's) the draw: voxels in the body
+// format, two vec4<u32> each; their count (indirect args, [1] instances);
+// the kinds' models: per voxel x, y, z (cells from the feet, f32) and the
+// material (u32 bits)
 @group(0) @binding(9) var<storage, read_write> inst: array<vec4<u32>>;
 @group(0) @binding(22) var<storage, read_write> drawArgs: array<atomic<u32>>;
 @group(0) @binding(23) var<storage, read> models: array<vec4<f32>>;
@@ -44,19 +61,44 @@
 const ST_WANDER: u32 = 0u;
 const ST_CHASE: u32 = 1u;
 const ST_SWING: u32 = 2u;
+const ST_TUMBLE: u32 = 3u;
+const ST_HELD: u32 = 4u;
 const EV_SWING: u32 = 1u;
 const EV_HURT: u32 = 2u;
 const EV_DEATH: u32 = 3u;
 const EV_ALIGHT: u32 = 4u;
 const BY_FIRE: u32 = 0xffffffffu;
 const BY_WATER: u32 = 0xfffffffeu;
+const BY_IMPACT: u32 = 0xfffffffdu;
+const BY_LAVA: u32 = 0xfffffffcu;
 const MAX_SLOTS: u32 = 8192u;
 // a swing: the blow lands this far in (s), the swing ends at SWING_END
 const SWING_HIT: f32 = 0.3;
 const SWING_END: f32 = 0.6;
 const BURN_TIME: f32 = 6.0;
 const BURN_DPS: f32 = 2.0;
+const LAVA_DPS: f32 = 8.0;
+// lava this hot sets alight, and ground this hot (°C)
+const LAVA_LIGHT: f32 = 750.0;
+const HOT_GROUND: f32 = 300.0;
 const DROWN_TIME: f32 = 3.0;
+// a push past this (cells/s, after the mass) throws it
+const TUMBLE_PUSH: f32 = 5.0;
+const GRAVITY: f32 = 20.0;
+// tumbling: what's left of a landing's speed, a slam's; the ground's grip
+const BOUNCE: f32 = 0.35;
+const SLAM_BOUNCE: f32 = 0.35;
+const ROLL_GRIP: f32 = 3.0;
+const LAND_SKID: f32 = 0.6;
+// a landing (falling speed) or slam (into a wall) harder than this hurts, per cell/s past it
+const HURT_SPEED: f32 = 10.0;
+const HURT_PER: f32 = 1.0;
+// settled this long (s), it gets up
+const GETUP: f32 = 0.6;
+// a shove: the momentum carried through a column, fixed point
+const SHOVE_FIX: f32 = 100.0;
+// knocked over when what runs into it would move it this fast (cells/s)
+const KNOCK_SPEED: f32 = 2.5;
 const MAX_INST: u32 = 65536u;
 
 fn unitInfo(a: vec4<f32>) -> u32 { return bitcast<u32>(a.w); }
@@ -77,7 +119,11 @@ fn emit(kind: u32, id: u32, other: u32, amount: f32, p: vec3<f32>) {
 
 @compute @workgroup_size(64)
 fn occClear(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x < G.mapW * G.mapH) { atomicStore(&occ[(AP.n.w % 2u) * G.mapW * G.mapH + id.x], 0u); }
+  let cols = G.mapW * G.mapH;
+  if (id.x >= cols) { return; }
+  let wr = AP.n.w % 2u;
+  atomicStore(&occ[wr * cols + id.x], 0u);
+  for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(wr * cols + id.x) * 4u + k], 0); }
 }
 
 /** The way down field `fld` from surface s of cell c, at pos (0 at a seed, or none). */
@@ -100,6 +146,16 @@ fn downField(fld: u32, s: u32, c: vec2<i32>, pos: vec2<f32>, here: f32) -> vec2<
   return select(bestDir, normalize(g), length(g) > 0.2 && dot(normalize(g), bestDir) > 0.3);
 }
 
+/** The floor under a body at height z in column i, or -FAR where z is inside the ground there (a wall). */
+fn floorUnder(i: u32, z: f32) -> f32 {
+  let k = surfaceAt(i, z + 0.3);
+  if (k >= NAV_K) { return -FAR; }
+  let s = i * NAV_K + k;
+  // (under an overhang: above the air over that surface is solid again)
+  if (k > 0u && z > navZ(s) + navHead(s)) { return -FAR; }
+  return navZ(s);
+}
+
 @compute @workgroup_size(64)
 fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let u = id.x;
@@ -120,10 +176,11 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let fld = AP.groupField[grp / 4u][grp % 4u];
   let N = ns();
   let dt = G.dt;
-  let rd = ((AP.n.w + 1u) % 2u) * G.mapW * G.mapH;
-  let wr = (AP.n.w % 2u) * G.mapW * G.mapH;
+  let cols = G.mapW * G.mapH;
+  let rd = ((AP.n.w + 1u) % 2u) * cols;
+  let wr = (AP.n.w % 2u) * cols;
   var pos = a.xyz;
-  var vel = b.xy;
+  var vel = b.xyz;
   var hp = cc.x;
   var cool = max(cc.y - dt, 0.0);
   var burn = cc.z;
@@ -156,123 +213,248 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     if (hit.c.z > 0.5 && !alight) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
   }
 
+  // held by the game, or launched: holds and launches name its slot
+  var held = false;
+  for (var e = 0u; e < AP.n3.x; e++) {
+    let hd = AP.holds[e];
+    if (u32(hd.w) != u) { continue; }
+    held = true;
+    vel = (hd.xyz - pos) / max(dt, 1e-3);
+    pos = hd.xyz;
+  }
+  if (held) { state = ST_HELD; stT = 0.0; } else if (state == ST_HELD) { state = ST_TUMBLE; stT = 0.0; }
+  for (var e = 0u; e < AP.n3.y; e++) {
+    let ln = AP.launches[e];
+    if (u32(ln.w) != u) { continue; }
+    vel = ln.xyz;
+    state = ST_TUMBLE;
+    stT = 0.0;
+  }
+  // thrown by a hit
+  if (length(push) > TUMBLE_PUSH && state != ST_HELD) {
+    vel = vec3<f32>(vel.xy + push, max(vel.z, 0.0) + length(push) * 0.35);
+    push = vec2<f32>(0.0);
+    state = ST_TUMBLE;
+    stT = 0.0;
+  }
+
   let c = clampCell(cellAt(pos.xy));
   let i = colIdxI(c);
   let k = surfaceAt(i, pos.z + 0.5);
-  var floorZ = pos.z;
+  var floorZ = select(pos.z, navZ(i * NAV_K + min(k, NAV_K - 1u)), k < NAV_K);
+  // knocked over by what tumbled through here last tick (not itself: it
+  // was tumbling then, and a tumbling unit doesn't take shoves)
+  if (state != ST_TUMBLE && state != ST_HELD) {
+    let sm = f32(atomicLoad(&shove[(rd + i) * 4u + 2u])) / SHOVE_FIX;
+    if (sm > 0.0) {
+      let p = vec2<f32>(f32(atomicLoad(&shove[(rd + i) * 4u])), f32(atomicLoad(&shove[(rd + i) * 4u + 1u]))) / SHOVE_FIX;
+      let v = p / (sm + mass);
+      if (length(v) > KNOCK_SPEED) { vel = vec3<f32>(v, length(v) * 0.3); state = ST_TUMBLE; stT = 0.0; }
+    }
+  }
+  let onGround = k < NAV_K && state != ST_HELD && pos.z - floorZ < 0.5;
   // water: wading slows, over its head it drowns (and it puts out fire)
-  let depth = select(0.0, water[i], k == 0u);
+  let depth = select(0.0, navWater(i * NAV_K), k == 0u && onGround);
   if (depth > height) { under += dt; } else { under = 0.0; }
   if (depth > height * 0.5) { alight = false; burn = 0.0; }
   if (under > DROWN_TIME && !dead) { dead = true; killedBy = BY_WATER; }
-  // fire: catches where the ground burns
-  if (!alight && fire[i] > 0.3 && k == 0u) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, BY_FIRE, 0.0, pos); }
+  // fire: where the ground burns, lava, hot ground, an ember just landed, a burning unit by it
+  let lv = lava[i];
+  let onTop = onGround && k == 0u;
+  if (onTop && lv.x > 0.05 && lv.y > LAVA_LIGHT) {
+    hp -= LAVA_DPS * dt;
+    if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_LAVA; }
+  }
+  if (!alight && depth < height * 0.5) {
+    var lit = onTop && (fire[i] > 0.3 || (lv.x > 0.05 && lv.y > LAVA_LIGHT) || lv.z > HOT_GROUND);
+    let sk = textureLoad(sparkTex, c, 0).x;
+    if (sk > 0.0 && f32(G.tick) - sk < 2.5) { lit = true; }
+    // (a burning unit here or next door: a chance a second)
+    var near = f32(atomicLoad(&shove[(rd + i) * 4u + 3u]));
+    for (var d = 0u; d < NDIR; d++) {
+      let q = nbr(c, d);
+      if (inMap(q)) { near += 0.5 * f32(atomicLoad(&shove[(rd + colIdxI(q)) * 4u + 3u])); }
+    }
+    if (near > 0.0 && rand3(u, G.tick, 12u) < near * dt * 1.5) { lit = true; }
+    if (lit) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, BY_FIRE, 0.0, pos); }
+  }
   if (alight) {
     hp -= BURN_DPS * dt;
     burn -= dt;
     if (burn <= 0.0) { alight = false; }
     if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_FIRE; }
   }
+
+  var np = pos;
+  if (state == ST_HELD) {
+    // (where the game holds it: nothing else moves it)
+  } else if (state == ST_TUMBLE) {
+    // flying, falling, bouncing: free of the links
+    vel.z -= GRAVITY * dt;
+    np = pos + vel * dt;
+    var ni = colIdxI(clampCell(cellAt(np.xy)));
+    var fz = floorUnder(ni, np.z);
+    if (fz <= -FAR) {
+      // a wall: back off it, the way it came, slammed
+      let sp = length(vel.xy);
+      if (sp > HURT_SPEED) {
+        let dmg = (sp - HURT_SPEED) * HURT_PER;
+        hp -= dmg;
+        flash = 0.15;
+        emit(EV_HURT, uid, BY_IMPACT, dmg, pos);
+      }
+      vel = vec3<f32>(-vel.xy * SLAM_BOUNCE, vel.z);
+      np = vec3<f32>(pos.xy, np.z);
+      ni = i;
+      fz = floorUnder(i, np.z);
+    }
+    if (fz > -FAR && np.z <= fz + 0.05) {
+      // the ground: a landing, bounced, gripped
+      let impact = -vel.z;
+      if (impact > HURT_SPEED) {
+        let dmg = (impact - HURT_SPEED) * HURT_PER;
+        hp -= dmg;
+        flash = 0.15;
+        emit(EV_HURT, uid, BY_IMPACT, dmg, pos);
+      }
+      np.z = fz;
+      vel.z = select(0.0, impact * BOUNCE, impact > 2.0);
+      // (a landing takes some of its speed along the ground too, as a skid)
+      vel = vec3<f32>(vel.xy * max(1.0 - ROLL_GRIP * dt, 0.0) * select(1.0, LAND_SKID, impact > 2.0), vel.z);
+      if (length(vel) > 0.6) { stT = 0.0; }
+      // settled long enough: up again
+      if (stT > GETUP) {
+        state = select(ST_WANDER, ST_CHASE, kind.b.w <= 0.0);
+        stT = 0.0;
+        vel = vec3<f32>(0.0);
+        wanderH = heading;
+      }
+    } else {
+      stT = 0.0;
+    }
+    if (hp <= 0.0 && !dead) { dead = true; killedBy = BY_IMPACT; }
+    if (state == ST_TUMBLE) {
+      // rolling along its throw (the draw turns it about the axis across it)
+      wanderH += length(vel) * dt / max(height * 0.5, 0.2);
+      if (length(vel.xy) > 0.3) { heading = atan2(vel.y, vel.x); }
+    }
+    // what it carries knocks over the units in its way
+    if (length(vel.xy) > KNOCK_SPEED) {
+      let o = (wr + ni) * 4u;
+      atomicAdd(&shove[o], i32(vel.x * mass * SHOVE_FIX));
+      atomicAdd(&shove[o + 1u], i32(vel.y * mass * SHOVE_FIX));
+      atomicAdd(&shove[o + 2u], i32(mass * SHOVE_FIX));
+    }
+  } else {
+    // walking: what it wants to do
+    var want = vec2<f32>(0.0);
+    var speed = kind.a.w;
+    if (k < NAV_K) {
+      let s = i * NAV_K + k;
+      let here = select(FAR, dist[fld * N + s], fld < AP.n.z);
+      let worker = kind.b.w <= 0.0;
+      // the nearest target, as the crow flies
+      var tgt = -1;
+      var td = FAR;
+      for (var t = 0u; t < AP.n2.y; t++) {
+        let tp = AP.targets[t];
+        let dd2 = length(tp.xy - pos.xy) - tp.w;
+        if (dd2 < td && abs(tp.z - pos.z) < height + 2.0) { td = dd2; tgt = i32(t); }
+      }
+      if (!worker) {
+        if (state == ST_WANDER && here < kind.b.w) { state = ST_CHASE; stT = 0.0; }
+        if (state == ST_CHASE && here > kind.b.w * 1.5) { state = ST_WANDER; stT = 0.0; }
+        if (state == ST_CHASE && tgt >= 0 && td < kind.b.x && cool <= 0.0) { state = ST_SWING; stT = 0.0; }
+      }
+      if (state == ST_SWING) {
+        speed = 0.0;
+        if (tgt >= 0) { heading = atan2(AP.targets[tgt].y - pos.y, AP.targets[tgt].x - pos.x); }
+        // (the blow lands once, partway into the swing, if it's still in reach)
+        if (stT >= SWING_HIT && stT - dt < SWING_HIT && tgt >= 0 && td < kind.b.x * 1.3) {
+          emit(EV_SWING, uid, u32(tgt), kind.b.y, pos);
+        }
+        if (stT > SWING_END) { state = ST_CHASE; stT = 0.0; cool = kind.b.z; }
+      } else if (state == ST_WANDER && !worker) {
+        // (a new heading now and then; slower than closing in)
+        if (rand3(u, G.tick, 7u) < dt * 0.4) { wanderH = rand3(u, G.tick, 8u) * 6.2832; }
+        want = vec2<f32>(cos(wanderH), sin(wanderH)) * 0.4;
+      } else if (here < FAR && here > 0.6) {
+        want = downField(fld, s, c, pos.xy, here);
+      }
+      if (alight) {
+        // burning: running about, faster
+        want = normalize(want + (vec2<f32>(rand3(u, G.tick / 20u, 9u), rand3(u, G.tick / 20u, 10u)) - 0.5) * 2.5 + vec2<f32>(1e-4, 0.0));
+        speed *= 1.5;
+      }
+      // apart from the crowd: away from the busier neighbours
+      let mine = f32(atomicLoad(&occ[rd + i]));
+      var crowd = vec2<f32>(0.0);
+      for (var d = 0u; d < NDIR; d++) {
+        let q = nbr(c, d);
+        if (!inMap(q) || navLink(s, d) == 0u) { continue; }
+        crowd -= DIRV[d] * f32(atomicLoad(&occ[rd + colIdxI(q)]));
+      }
+      let jit = vec2<f32>(rand3(u, G.tick, 1u), rand3(u, G.tick, 2u)) - 0.5;
+      want += crowd * 0.25 + jit * 0.2 * max(mine - 1.0, 0.0);
+    }
+    // wading: slower the deeper
+    speed *= 1.0 - 0.6 * clamp(depth / max(height, 0.1), 0.0, 1.0);
+    let goalV = select(want, normalize(want), length(want) > 1.0) * speed;
+    var v2 = vel.xy + (goalV - vel.xy) * min(dt * 6.0, 1.0) + push;
+    var p2 = pos.xy + v2 * dt;
+    // never step where there's no link, nor off the place its field is
+    // confined to: slide along instead
+    let nc = clampCell(cellAt(p2));
+    let fp = select(0u, AP.fieldPlace[min(fld, 3u)], fld < AP.n.z);
+    if (k < NAV_K && any(nc != c)) {
+      var ok = false;
+      for (var d = 0u; d < NDIR; d++) {
+        let l = navLink(i * NAV_K + k, d);
+        if (!all(nbr(c, d) == nc) || l == 0u) { continue; }
+        let t = colIdxI(nc) * NAV_K + l - 1u;
+        ok = fp == 0u || onPlace(t, fp);
+      }
+      if (!ok) { p2 = pos.xy; v2 *= 0.3; }
+    }
+    // ride the surface: step up and drop down smoothly
+    let ni = colIdxI(clampCell(cellAt(p2)));
+    let k2 = surfaceAt(ni, pos.z + 0.5);
+    if (k2 < NAV_K) { floorZ = navZ(ni * NAV_K + k2); }
+    var z = pos.z + (floorZ - pos.z) * min(dt * 10.0, 1.0);
+    // (just placed, from above: straight onto it)
+    if (pos.z - floorZ > DROP * 2.0) { z = floorZ; } else if (pos.z - floorZ > DROP) {
+      // (walked off an edge higher than a drop: it falls)
+      state = ST_TUMBLE;
+      stT = 0.0;
+      z = pos.z;
+    }
+    np = vec3<f32>(p2, z);
+    vel = vec3<f32>(v2, 0.0);
+    if (length(v2) > 0.05 && state != ST_SWING) { heading = atan2(v2.y, v2.x); }
+  }
   if (dead) {
     emit(EV_DEATH, uid, killedBy, 0.0, pos);
     units[u * 4u] = vec4<f32>(pos, bitcast<f32>(info & ~(1u << 8u)));
     return;
   }
-
-  // what it wants to do
-  var want = vec2<f32>(0.0);
-  var speed = kind.a.w;
-  if (k < NAV_K) {
-    let s = i * NAV_K + k;
-    floorZ = navZ(s);
-    let here = select(FAR, dist[fld * N + s], fld < AP.n.z);
-    let worker = kind.b.w <= 0.0;
-    // the nearest target, as the crow flies
-    var tgt = -1;
-    var td = FAR;
-    for (var t = 0u; t < AP.n2.y; t++) {
-      let tp = AP.targets[t];
-      let dd2 = length(tp.xy - pos.xy) - tp.w;
-      if (dd2 < td && abs(tp.z - pos.z) < height + 2.0) { td = dd2; tgt = i32(t); }
-    }
-    if (!worker) {
-      if (state == ST_WANDER && here < kind.b.w) { state = ST_CHASE; stT = 0.0; }
-      if (state == ST_CHASE && here > kind.b.w * 1.5) { state = ST_WANDER; stT = 0.0; }
-      if (state == ST_CHASE && tgt >= 0 && td < kind.b.x && cool <= 0.0) { state = ST_SWING; stT = 0.0; }
-    }
-    if (state == ST_SWING) {
-      speed = 0.0;
-      if (tgt >= 0) { heading = atan2(AP.targets[tgt].y - pos.y, AP.targets[tgt].x - pos.x); }
-      // (the blow lands once, partway into the swing, if it's still in reach)
-      if (stT >= SWING_HIT && stT - dt < SWING_HIT && tgt >= 0 && td < kind.b.x * 1.3) {
-        emit(EV_SWING, uid, u32(tgt), kind.b.y, pos);
-      }
-      if (stT > SWING_END) { state = ST_CHASE; stT = 0.0; cool = kind.b.z; }
-    } else if (state == ST_WANDER && !worker) {
-      // (a new heading now and then; slower than closing in)
-      if (rand3(u, G.tick, 7u) < dt * 0.4) { wanderH = rand3(u, G.tick, 8u) * 6.2832; }
-      want = vec2<f32>(cos(wanderH), sin(wanderH)) * 0.4;
-    } else if (here < FAR && here > 0.6) {
-      want = downField(fld, s, c, pos.xy, here);
-    }
-    if (alight) {
-      // burning: running about, faster
-      want = normalize(want + (vec2<f32>(rand3(u, G.tick / 20u, 9u), rand3(u, G.tick / 20u, 10u)) - 0.5) * 2.5 + vec2<f32>(1e-4, 0.0));
-      speed *= 1.5;
-    }
-    // apart from the crowd: away from the busier neighbours
-    let mine = f32(atomicLoad(&occ[rd + i]));
-    var crowd = vec2<f32>(0.0);
-    for (var d = 0u; d < NDIR; d++) {
-      let q = nbr(c, d);
-      if (!inMap(q) || navLink(s, d) == 0u) { continue; }
-      crowd -= DIRV[d] * f32(atomicLoad(&occ[rd + colIdxI(q)]));
-    }
-    let jit = vec2<f32>(rand3(u, G.tick, 1u), rand3(u, G.tick, 2u)) - 0.5;
-    want += crowd * 0.25 + jit * 0.2 * max(mine - 1.0, 0.0);
-  }
-  // wading: slower the deeper
-  speed *= 1.0 - 0.6 * clamp(depth / max(height, 0.1), 0.0, 1.0);
-  let goalV = select(want, normalize(want), length(want) > 1.0) * speed;
-  vel += (goalV - vel) * min(dt * 6.0, 1.0) + push;
-  // (a shove beyond walking eases off)
-  var np = pos.xy + vel * dt;
-  // never step where there's no link, nor off the place its field is
-  // confined to: slide along instead
-  let nc = clampCell(cellAt(np));
-  let fp = select(0u, AP.fieldPlace[min(fld, 3u)], fld < AP.n.z);
-  if (k < NAV_K && any(nc != c)) {
-    var ok = false;
-    for (var d = 0u; d < NDIR; d++) {
-      let l = navLink(i * NAV_K + k, d);
-      if (!all(nbr(c, d) == nc) || l == 0u) { continue; }
-      let t = colIdxI(nc) * NAV_K + l - 1u;
-      ok = fp == 0u || select(nav[t].z, nav[t].w, (fp >> 31u) != 0u) == (fp & 0x7fffffffu);
-    }
-    if (!ok) { np = pos.xy; vel *= 0.3; }
-  }
-  // ride the surface: step up and drop down smoothly
-  let ni = colIdxI(clampCell(cellAt(np)));
-  let k2 = surfaceAt(ni, pos.z + 0.5);
-  if (k2 < NAV_K) { floorZ = navZ(ni * NAV_K + k2); }
-  var z = pos.z + (floorZ - pos.z) * min(dt * 10.0, 1.0);
-  // (just placed, from above: straight onto it)
-  if (pos.z - floorZ > DROP * 2.0) { z = floorZ; }
-  let sp = length(vel);
-  if (sp > 0.05 && state != ST_SWING) { heading = atan2(vel.y, vel.x); }
-  let phase = fract(b.w + dt * sp * 0.9);
+  let fi = colIdxI(clampCell(cellAt(np.xy)));
+  if (alight) { atomicAdd(&shove[(wr + fi) * 4u + 3u], 1); }
+  let phase = fract(b.w + dt * length(vel.xy) * 0.9);
   info = (info & ~((7u << 12u) | (1u << 15u))) | (state << 12u) | (select(0u, 1u, alight) << 15u);
-  units[u * 4u] = vec4<f32>(np, z, bitcast<f32>(info));
-  units[u * 4u + 1u] = vec4<f32>(vel, 0.0, phase);
+  units[u * 4u] = vec4<f32>(np, bitcast<f32>(info));
+  units[u * 4u + 1u] = vec4<f32>(vel, phase);
   units[u * 4u + 2u] = vec4<f32>(hp, cool, burn, heading);
   units[u * 4u + 3u] = vec4<f32>(flash, stT, under, wanderH);
-  atomicAdd(&occ[wr + ni], 1u);
+  atomicAdd(&occ[wr + fi], 1u);
 }
 
 fn putVoxel(o: u32, c: vec3<f32>, word: u32, q: vec4<f32>) {
   if (o >= MAX_INST) { return; }
   inst[o * 2u] = vec4<u32>(bitcast<u32>(c.x), bitcast<u32>(c.y), bitcast<u32>(c.z), word);
   inst[o * 2u + 1u] = bitcast<vec4<u32>>(q);
+}
+fn qmul(p: vec4<f32>, q: vec4<f32>) -> vec4<f32> {
+  return vec4<f32>(p.w * q.xyz + q.w * p.xyz + cross(p.xyz, q.xyz), p.w * q.w - dot(p.xyz, q.xyz));
 }
 fn qrotv(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
   let t = 2.0 * cross(q.xyz, v);
@@ -299,11 +481,18 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let kind = AP.kinds[kn];
   let km = kindModels[kn];
   let grp = info & 0xffu;
+  let state = (info >> 12u) & 7u;
   let h = kind.a.x;
   let yaw = cc.w;
-  let q = vec4<f32>(0.0, 0.0, sin(yaw * 0.5), cos(yaw * 0.5));
+  var q = vec4<f32>(0.0, 0.0, sin(yaw * 0.5), cos(yaw * 0.5));
+  // tumbling: rolled along its throw, about the axis across it, round its middle
+  let mid = vec3<f32>(0.0, 0.0, h * 0.5);
+  if (state == ST_TUMBLE) {
+    let ax = vec3<f32>(-sin(yaw), cos(yaw), 0.0);
+    q = qmul(vec4<f32>(ax * sin(dd.w * 0.5), cos(dd.w * 0.5)), q);
+  }
   let sp = length(b.xy);
-  let bob = abs(sin(b.w * 6.2832)) * 0.05 * h * min(sp, 1.0);
+  let bob = select(abs(sin(b.w * 6.2832)) * 0.05 * h * min(sp, 1.0), 0.0, state >= ST_TUMBLE);
   // alight: a flicker of heat; hurt: a white flash (fsBody's physics-voxel glow, bits 16-23)
   let alight = ((info >> 15u) & 1u) != 0u;
   var heat = 0.0;
@@ -312,13 +501,14 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let glow = select(0u, PHYS_BIT | (u32(heat * 255.0) << 16u), heat > 0.0);
   let n = select(3u, km.y, km.y > 0u);
   let base = atomicAdd(&drawArgs[1], n);
+  let centre = a.xyz + mid + vec3<f32>(0.0, 0.0, bob);
   if (km.y > 0u) {
     // the kind's model: voxels round its feet, turned its way
     let code = km.z;
     for (var v = 0u; v < km.y; v++) {
       let m = models[km.x + v];
       let w = bitcast<u32>(m.w) | (code << 24u) | glow;
-      putVoxel(base + v, a.xyz + qrotv(q, m.xyz) + vec3<f32>(0.0, 0.0, bob), w, q);
+      putVoxel(base + v, centre + qrotv(q, m.xyz - mid), w, q);
     }
     return;
   }
@@ -328,7 +518,7 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let lg = h * 0.27;
   let ts = h * 0.4;
   let code = vec3<u32>(vec3<f32>(lg, ts, lg) * 16.0 + 0.5);
-  putVoxel(base, a.xyz + vec3<f32>(0.0, 0.0, lg * 0.5), select(MAT_LEGS, kind.c.x, kind.c.x != 0u) | (min(code.x, 63u) << 24u) | glow, q);
-  putVoxel(base + 1u, a.xyz + vec3<f32>(0.0, 0.0, lg + ts * 0.5 + bob), torso | (min(code.y, 63u) << 24u) | glow, q);
-  putVoxel(base + 2u, a.xyz + vec3<f32>(cos(yaw), sin(yaw), 0.0) * 0.03 * h + vec3<f32>(0.0, 0.0, lg + ts + lg * 0.5 + bob), select(MAT_HEAD, kind.c.y, kind.c.y != 0u) | (min(code.z, 63u) << 24u) | glow, q);
+  putVoxel(base, centre + qrotv(q, vec3<f32>(0.0, 0.0, lg * 0.5) - mid), select(MAT_LEGS, kind.c.x, kind.c.x != 0u) | (min(code.x, 63u) << 24u) | glow, q);
+  putVoxel(base + 1u, centre + qrotv(q, vec3<f32>(0.0, 0.0, lg + ts * 0.5) - mid), torso | (min(code.y, 63u) << 24u) | glow, q);
+  putVoxel(base + 2u, centre + qrotv(q, vec3<f32>(0.03 * h, 0.0, lg + ts + lg * 0.5) - mid), select(MAT_HEAD, kind.c.y, kind.c.y != 0u) | (min(code.z, 63u) << 24u) | glow, q);
 }

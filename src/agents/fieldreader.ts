@@ -90,7 +90,7 @@ export class FieldReader {
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return none;
     const s = this.surfaceAt(cy * this.w + cx, z + 0.5);
     if (s < 0) return none;
-    const at = { z: this.zOf(s), room: this.nav[s * 4 + 2], region: this.nav[s * 4 + 3] };
+    const at = { z: this.zOf(s), room: this.nav[s * 4 + 2] & 0xffff, region: this.nav[s * 4 + 2] >>> 16 };
     const here = this.dist[s];
     if (here >= FAR) return { ...none, ...at };
     // the neighbours' drops, each toward its centre; the best step when that points nowhere useful

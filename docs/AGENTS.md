@@ -123,7 +123,35 @@ game's CPU enemies did: kinds, behaviour, swings, hits and readback.
   and the events since the last sync: `swing`, `hurt`, `death` and
   `alight`. Events past 2,048 a sync are counted and warned about, never
   silently lost.
+- **Thrown, held, knocked over** (slice 2):
+  - **Tumbling.** A push past 5 cells/s (after mass), a launch, a let-go, or
+    walking off an edge higher than a drop sets a unit tumbling. It flies
+    and falls (gravity 20 cells/s²) free of the links. It bounces off the
+    ground (35% of the falling speed) and skids, losing 40% at each landing
+    and gripping at 3/s while on the ground. It slams back off walls.
+  - **Damage.** A landing or slam faster than 10 cells/s hurts 1 hp per
+    cell/s past that (`hurt` / `death` by `'impact'`).
+  - **Getting up.** Once settled for 0.6 s, it gets up.
+  - **Knock-overs.** A tumbling unit faster than 2.5 cells/s carries its
+    momentum through each column it crosses (per-column shoves). A walking
+    unit there is knocked over when that momentum, shared with its own mass,
+    would move it faster than 2.5 cells/s.
+  - **Holding.** `hold(id, x, y, z)` each frame puts a unit where the game
+    holds it (a lich, a gorilla), up to 8 at once.
+    - `release(id, vel?)` lets go: it tumbles, with `vel` or as it was
+      moving.
+    - `launch(id, vel)` throws any unit.
+    - `lob(id, from, to, time?)` works out the launch that lands it at `to`
+      and returns that launch velocity.
+  - **Fire.** Units also catch fire:
+    - from lava (over 750 °C), which burns 8 hp/s besides (`by: 'lava'`);
+    - from hot ground (over 300 °C);
+    - from an ember landing on them (the sparks texture);
+    - by touch: each burning unit in their column or the next gives 1.5 a
+      second of catching (half for the next column).
 - **Drawing**: unitDraw appends each unit's voxels (up to 65,536 in all).
+  While tumbling, a unit is rolled along its throw, about the axis across
+  it.
   - Alight, it flickers with the physics voxel's heat glow; hit, it flashes
     white for 0.15 s.
   - The game stops drawing its own models for them.
@@ -137,6 +165,8 @@ agents.spawn(n, x, y, { group, kind, spread })  // → ids; they land on the top
 agents.remove(ids)                        // out at once, no death event
 agents.setTargets([{ x, y, z, radius }])  // what hostile kinds go for; seeds field 3 (follow(group, 3) to chase)
 agents.hit({ x, y, z?, radius, damage, push, dir?, outward?, cone?, fire? })  // → hit id
+agents.hold(id, x, y, z)                  // each frame while held; false when it's gone
+agents.release(id, vel?) / agents.launch(id, vel) / agents.lob(id, from, to, time?)
 const { units, events } = await agents.sync()  // each frame: live units, and swing/hurt/death/alight events
 agents.goTo(group, x, y, z?)              // the group's own field (group % 4) seeded there
 agents.seed(field, [{ x, y, z? }])        // a field's seeds: a goal, a stockpile, a threat
@@ -161,6 +191,7 @@ limit.
 | 4,000 units | They flow round the pond (water costs more); agents 0.47 ms a tick against sediment's 0.52 |
 | FieldReader (scripts/agentfieldtest.mjs), field seeded at the map centre | 24 of 24 samples, 20-60 cells out, point within 45° of the goal; dist 20.3 at 20 cells; a refresh reads 5 MB back in 10-80 ms |
 | A horde (scripts/hordetest.mjs): 60 raiders, 10 ogres, 4 brutes with their own model, round a standing target | All chase within a second; in 10 s 69 of 74 are within 3 cells of it, 15 swinging, 121 swing events. A blast (radius 3, 30 damage, outward push) kills 71, each death naming the blast. A fire hit sets the last 3 alight: they glow and burn; the ogres outlast the 12 hp the burn does. |
+| Thrown, held, burning (scripts/throwtest.mjs, a crowd of 40 standing workers) | An ogre thrown into the crowd at 18 cells/s bowls over 7-10, and they get up; a blast (push 22, outward) throws 37-38, a few hurt landing hard, all up within 4 s. One held and carried up 6 cells, then lobbed at a point 15 cells off: it lands there and skids 5 cells. One set alight in a fresh crowd of 30: 27 alight within 5 s by touch |
 | 400 units confined to a voronoi room, their goal in another room | 398 of 400 still in their room after 16 s (they stand: no seed in the room); let go, all 400 leave for the goal |
 
 **Places.** The peel reads the `places` buffer: the top surface takes the
@@ -172,12 +203,10 @@ leaves the group standing.
 
 ## Not yet
 
-- From the units session's list:
-  - thrown hard → a tumbling ragdoll that knocks others over, then gets up;
-  - hold, release and lob (the lich, the gorilla);
-  - catching fire from lava, hot ground and embers, and spreading it by touch;
-  - a death left lying (they vanish now);
-  - per-unit heading targets when there are several players.
+- A death left lying (they vanish now).
+- Tumbling units are points against the terrain: a voxel body (the physics
+  solver) would roll and stack properly. Their knock-overs are per column,
+  not per pair.
 
 
 - Structure grids (tilted structures) aren't surfaces yet; units walk

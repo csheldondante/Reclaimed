@@ -28,6 +28,8 @@ export const MAX_KINDS = 8;
 const MAX_SEEDS = 32;
 const MAX_HITS = 32;
 const MAX_TARGETS = 8;
+const MAX_HOLDS = 8;
+const MAX_LAUNCHES = 32;
 const EVENT_CAP = 2048;
 /** voxels drawn in all (units.wgsl MAX_INST), and in all the kinds' models */
 const MAX_INST = 65536;
@@ -44,13 +46,18 @@ const P_N2 = P_FPLACE + 4;
 const P_KINDS = P_N2 + 4;
 const P_HITS = P_KINDS + MAX_KINDS * 12;
 const P_TARGETS = P_HITS + MAX_HITS * 12;
-const PARAMS_BYTES = (P_TARGETS + MAX_TARGETS * 4) * 4;
+const P_N3 = P_TARGETS + MAX_TARGETS * 4;
+const P_HOLDS = P_N3 + 4;
+const P_LAUNCHES = P_HOLDS + MAX_HOLDS * 4;
+const PARAMS_BYTES = (P_LAUNCHES + MAX_LAUNCHES * 4) * 4;
+/** what the tumbling units fall by (units.wgsl GRAVITY, cells/s²) */
+export const AGENT_GRAVITY = 20;
 /** bytes of a surface (agents.wgsl nav: vec4<u32>), and of a unit (four vec4) */
 const NAV_BYTES = 16;
 const UNIT_BYTES = 64;
 /** each group's torso colour (the default figure), by material */
 const GROUP_MATS = [MAT.Rust, MAT.Brick, MAT.Steel, MAT.Wood, MAT.Concrete, MAT.Grass, MAT.Basalt, MAT.Sand];
-const STATES = ['wander', 'chase', 'swing'] as const;
+const STATES = ['wander', 'chase', 'swing', 'tumble', 'held'] as const;
 export type AgentStateName = (typeof STATES)[number];
 
 export interface Seed {
@@ -107,8 +114,8 @@ export interface Target {
 
 export type AgentEvent =
   | { type: 'swing'; id: number; target: number; damage: number; x: number; y: number; z: number }
-  | { type: 'hurt'; id: number; hit: number; damage: number; x: number; y: number; z: number }
-  | { type: 'death'; id: number; by: number | 'fire' | 'water'; x: number; y: number; z: number }
+  | { type: 'hurt'; id: number; hit: number | 'impact'; damage: number; x: number; y: number; z: number }
+  | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava'; x: number; y: number; z: number }
   | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number };
 
 export interface AgentState {
@@ -141,6 +148,7 @@ export class Agents implements SimSystem {
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
   private occ: GPUBuffer;
+  private shove: GPUBuffer;
   private events: GPUBuffer;
   private models: GPUBuffer;
   private kindModelsBuf: GPUBuffer;
@@ -164,6 +172,8 @@ export class Agents implements SimSystem {
   private hits: (HitSpec & { id: number })[] = [];
   private nextHit = 1;
   private targets: Target[] = [];
+  private holds = new Map<number, [number, number, number]>();
+  private launches: [number, number, number, number][] = [];
   private ticks = 0;
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
@@ -179,6 +189,7 @@ export class Agents implements SimSystem {
     this.dist = world.buf('agentDist', NFIELDS * cols * NAV_K * 4, S);
     this.units = world.buf('agentUnits', MAX_UNITS * UNIT_BYTES, S);
     this.occ = world.buf('agentOcc', 2 * cols * 4, S);
+    this.shove = world.buf('agentShove', 2 * cols * 16, S);
     this.events = world.buf('agentEvents', (4 + EVENT_CAP * 8) * 4, S);
     this.inst = world.buf('agentInst', MAX_INST * 32, GPUBufferUsage.STORAGE);
     this.indirect = world.buf('agentIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
@@ -195,7 +206,7 @@ export class Agents implements SimSystem {
     // layers and the places), the fields, the units' tick, their draw
     const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read' };
     const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform' };
-    const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read' };
+    const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read', 15: 'read', 16: 'rw', 19: 'tex' };
     const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 22: 'rw', 23: 'read', 24: 'uniform' };
     this.k = {
       surfaces: mk('surfaces', peelSpec),
@@ -218,7 +229,6 @@ export class Agents implements SimSystem {
     this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params });
     this.unitGroup = makeBindGroup(device, 'agents-units', this.k.unitStep.layout, {
       ...base,
-      4: world.water,
       5: this.nav,
       6: this.dist,
       7: this.units,
@@ -226,6 +236,9 @@ export class Agents implements SimSystem {
       10: this.params,
       13: this.events,
       14: world.fire,
+      15: world.lava,
+      16: this.shove,
+      19: world.sparkView,
     });
     this.drawGroup = makeBindGroup(device, 'agents-draw', this.k.unitDraw.layout, {
       ...base,
@@ -337,6 +350,7 @@ export class Agents implements SimSystem {
       if (Math.floor(id / MAX_UNITS) !== this.gen[slot]) continue;
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, z);
       this.free.push(slot);
+      this.holds.delete(slot);
     }
   }
 
@@ -376,6 +390,53 @@ export class Agents implements SimSystem {
     const id = this.nextHit++;
     this.hits.push({ ...h, id });
     return id;
+  }
+
+  /** The slot of a live id, or -1 for an id whose unit is gone (its slot reused). */
+  private slotOf(id: number): number {
+    const slot = id % MAX_UNITS;
+    return Math.floor(id / MAX_UNITS) === this.gen[slot] && slot < this.count ? slot : -1;
+  }
+
+  /**
+   * Hold unit `id` at world (x, y, z) (its feet), each frame while held (a
+   * lich, a gorilla carrying it): nothing else moves it. Up to 8 at once.
+   * Returns false when the unit is gone.
+   */
+  hold(id: number, x: number, y: number, z: number): boolean {
+    const slot = this.slotOf(id);
+    if (slot < 0) return false;
+    if (!this.holds.has(slot) && this.holds.size >= MAX_HOLDS) throw new Error(`agents: more than ${MAX_HOLDS} units held`);
+    this.holds.set(slot, [x, y, z]);
+    return true;
+  }
+
+  /** Let go of a held unit: it tumbles with `vel` (cells/s; default: as it was moving). */
+  release(id: number, vel?: readonly [number, number, number]): void {
+    const slot = this.slotOf(id);
+    if (slot < 0) return;
+    this.holds.delete(slot);
+    if (vel) this.launches.push([vel[0], vel[1], vel[2], slot]);
+  }
+
+  /** Throw a unit (held or not) with a velocity: it tumbles, bounces, knocks others over, gets up. */
+  launch(id: number, vel: readonly [number, number, number]): void {
+    const slot = this.slotOf(id);
+    if (slot < 0) return;
+    this.holds.delete(slot);
+    this.launches.push([vel[0], vel[1], vel[2], slot]);
+  }
+
+  /**
+   * Lob a unit from (x, y, z) so it lands at `to`, in `time` seconds
+   * (default: by distance, 0.5-1.5 s): the velocity it's launched with.
+   */
+  lob(id: number, from: readonly [number, number, number], to: readonly [number, number, number], time?: number): [number, number, number] {
+    const d = Math.hypot(to[0] - from[0], to[1] - from[1]);
+    const t = time ?? Math.min(1.5, Math.max(0.5, d / 14));
+    const v: [number, number, number] = [(to[0] - from[0]) / t, (to[1] - from[1]) / t, (to[2] - from[2] + 0.5 * AGENT_GRAVITY * t * t) / t];
+    this.launch(id, v);
+    return v;
   }
 
   /**
@@ -443,17 +504,19 @@ export class Agents implements SimSystem {
       const ef = new Float32Array(b, 0, evBytes / 4);
       const m = Math.min(eu[0], EVENT_CAP);
       dropped = eu[0] - m;
-      const by = (v: number) => (v === 0xffffffff ? 'fire' : v === 0xfffffffe ? 'water' : v);
+      const BY: Record<number, 'fire' | 'water' | 'impact' | 'lava'> = { 0xffffffff: 'fire', 0xfffffffe: 'water', 0xfffffffd: 'impact', 0xfffffffc: 'lava' };
+      const by = (v: number) => BY[v] ?? v;
       for (let e = 0; e < m; e++) {
         const o = 4 + e * 8;
         const p = { x: ef[o + 4], y: ef[o + 5], z: ef[o + 6] };
         const id = eu[o + 1];
         const kind = eu[o];
         if (kind === 1) events.push({ type: 'swing', id, target: eu[o + 2], damage: ef[o + 3], ...p });
-        else if (kind === 2) events.push({ type: 'hurt', id, hit: eu[o + 2], damage: ef[o + 3], ...p });
+        else if (kind === 2) events.push({ type: 'hurt', id, hit: by(eu[o + 2]) as number | 'impact', damage: ef[o + 3], ...p });
         else if (kind === 3) {
           events.push({ type: 'death', id, by: by(eu[o + 2]), ...p });
           this.free.push(id % MAX_UNITS);
+          this.holds.delete(id % MAX_UNITS);
         } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
       }
       if (n) {
@@ -534,6 +597,11 @@ export class Agents implements SimSystem {
       f.set([h.x, h.y, h.z ?? -1e9, h.radius, h.dir ? h.dir[0] / dl : 0, h.dir ? h.dir[1] / dl : 0, cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, h.fire ? 1 : 0, h.id], o);
     });
     this.targets.forEach((t, i) => f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4));
+    const holds = [...this.holds].slice(0, MAX_HOLDS);
+    const launches = this.launches.splice(0, MAX_LAUNCHES);
+    u.set([holds.length, launches.length, 0, 0], P_N3);
+    holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
+    launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
     this.device.queue.writeBuffer(this.params, 0, b);
   }
 
