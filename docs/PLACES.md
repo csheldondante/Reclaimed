@@ -75,7 +75,14 @@ places.disconnect(a, b, { with: 'wall' | 'rubble' | 'water' | 'sand' | ... })
 
 // mutations: weather and light are per place; terrain ops are masked to the footprint
 place.storm({ intensity, duration })        // a storm over it (weather.spawn, sized to it)
-place.light({ timeOfDay, tint, ambient })   // a per-place light: one sun, tint/ambient per place
+place.light({ tint, ambient })              // per-place colour coding: a tint and ambient for each place
+
+// the sun (the user, via the units session): one directional light casts the shadows;
+// it follows the time of day until the GM takes it, and goes back to the clock on release
+core.sun.take({ dir, colour, intensity })   // dir: a unit vector (or { azimuth, elevation }); any field optional
+core.sun.set({ dir?, colour?, intensity? }) // while taken; blends over `blend` seconds if given
+core.sun.release({ blend? })                // back to the time of day, eased over `blend` seconds
+core.sun.state()                            // { dir, colour, intensity, taken }
 place.fog(density, colour?)
 place.climate({ temp })                     // an offset on the world's temperature
 place.bury(material, depth, { noise? })     // pour over it (sand, snow, ash…), drift-shaped
@@ -128,6 +135,7 @@ place.state()  // { water, loose depth, snow, fire, contamination, green, bodies
    - bedrock shaped by the plan;
    - per-material layers;
    - connections carved where the plan says they are.
-3. Per-place light, fog and climate; `place.state()` readback.
+3. Per-place light (tint, ambient), fog and climate; the GM's sun
+   (take / set / release); `place.state()` readback.
 4. Contents: `spawn`, `spawnPoints`, obstacles on connections.
 5. Freeze (W3), then navigation (W4).
