@@ -20,8 +20,9 @@
 //   px[2i + 1] xyz position before this substep, w temperature
 //   pv[i]      xyz velocity (cells/s), w the temperature after this substep's heat
 //   pr[i]      xyz rest position on the lattice (local, cells), w its info (u32
-//              bits): material | body << 8 | size code << 16 | hidden << 22 (the
-//              size: 0 a whole cell, n is n/16 of a cell; hidden: a mesh draws it)
+//              bits): material | body << 8 | size code << 16 | hidden << 22 |
+//              faces << 23 (the size: 0 a whole cell, n is n/16 of a cell; hidden:
+//              a mesh draws it; faces: a hidden voxel's six face bonds at spawn)
 //              A fragment's (FRAG_BODY) xyz are instead: x how long it has been
 //              at rest, y its age (s)
 //   pq[i]      its region's rotation (rest → world), a quaternion
@@ -66,6 +67,8 @@ struct PhysU {
   c: vec4<u32>,
   // a blast: xyz centre, w radius (every substep of its tick)
   d: vec4<f32>,
+  // x skinned triangles (skin)
+  e: vec4<u32>,
 };
 @group(0) @binding(22) var<uniform> PU: PhysU;
 // per material, 4 vec4 (physics.ts PHYS_MATS):
@@ -843,8 +846,25 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
         if (j < 0 || !alive(u32(j))) { show = true; }
       }
     }
-    // (a body a mesh draws: its voxels are only what the world feels, round 49)
-    if (((infoOf(i) >> 22u) & 1u) != 0u) { show = false; }
+    // (a body a mesh draws: its voxels are only what the world feels, round 49
+    // — but one that has lost a face neighbour it had shows where the mesh
+    // tore, so a break shows what's inside)
+    let info = infoOf(i);
+    if (((info >> 22u) & 1u) != 0u) {
+      let b = PB[bodyOf(info)];
+      let l = latOf(i, b);
+      // (gone, or the crack has opened: a snapped bond whose two sides still
+      // touch is hidden under the mesh, which bends across it)
+      var lost = false;
+      let gap = 1.25 * sizeOf(info);
+      for (var f = 0u; f < 6u; f++) {
+        if (((info >> (23u + f)) & 1u) == 0u) { continue; }
+        let j = latIdx(l + n26(FACES[f]), b);
+        if (j < 0 || !alive(u32(j))) { lost = true; continue; }
+        if ((bonds & (1u << FACES[f])) == 0u && length(px[2u * u32(j)].xyz - xc) > gap) { lost = true; }
+      }
+      show = lost;
+    }
   }
   let off = atomicAdd(&wgN, select(0u, 1u, show));
   workgroupBarrier();
@@ -861,4 +881,76 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   let o = (wgBase + off) * 2u;
   inst[o] = vec4<u32>(bitcast<u32>(x.x), bitcast<u32>(x.y), bitcast<u32>(x.z), word);
   inst[o + 1u] = vec4<u32>(bitcast<u32>(q.x), bitcast<u32>(q.y), bitcast<u32>(q.z), bitcast<u32>(q.w));
+}
+
+// ---- once a tick: meshes drawn over bodies, bent by their voxels (round 49) ------------
+// A mesh's vertices are bound to up to four of its body's voxels each (weights
+// at bind time, physics.ts spawnMesh): per vertex, 7 vec4 — the voxels'
+// indices (none: 0xffffffff), their weights, the vertex's rest position (xyz,
+// local cells; w its triangle's material, u32 bits), then its offset from each
+// voxel's rest centre (local). Where it is now: each voxel's position plus its
+// region's rotation of the offset, weighted. A triangle whose voxels have
+// mostly gone (crumbled, melted) or which a crack has stretched past
+// TEAR times its rest size is dropped: the mesh tears where the body breaks.
+// Out: per vertex (xyz f32 bits, the material word as vsBody's), (its
+// triangle's normal xyz f32 bits, 0); render.wgsl vsSkin draws them.
+@group(0) @binding(30) var<storage, read> skinSrc: array<vec4<f32>>;
+@group(0) @binding(31) var<storage, read_write> skinOut: array<vec4<u32>>;
+@group(0) @binding(32) var<storage, read_write> skinArgs: array<atomic<u32>>;
+const SKIN_NONE: u32 = 0xffffffffu;
+const SKIN_V: u32 = 7u;
+const TEAR: f32 = 1.6;
+
+struct SkinV { p: vec3<f32>, rest: vec3<f32>, heat: f32, ok: bool, mat: u32 };
+
+fn skinVertex(v: u32) -> SkinV {
+  let b = v * SKIN_V;
+  let idx = bitcast<vec4<u32>>(skinSrc[b]);
+  let wt = skinSrc[b + 1u];
+  let rest = skinSrc[b + 2u];
+  var o: SkinV;
+  o.rest = rest.xyz;
+  o.mat = bitcast<u32>(rest.w);
+  var p = vec3<f32>(0.0);
+  var t = 0.0;
+  var ws = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    let j = idx[k];
+    if (j == SKIN_NONE || wt[k] <= 0.0) { continue; }
+    if (!alive(j)) { continue; }
+    p += (px[2u * j].xyz + qrotP(pq[j], skinSrc[b + 3u + k].xyz)) * wt[k];
+    t += px[2u * j + 1u].w * wt[k];
+    ws += wt[k];
+  }
+  o.ok = ws > 0.35;
+  o.p = p / max(ws, 1e-6);
+  o.heat = t / max(ws, 1e-6);
+  return o;
+}
+
+@compute @workgroup_size(64)
+fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
+  let t = id.x;
+  if (t >= PU.e.x) { return; }
+  let a = skinVertex(3u * t);
+  let b = skinVertex(3u * t + 1u);
+  let c = skinVertex(3u * t + 2u);
+  if (!a.ok || !b.ok || !c.ok) { return; }
+  // torn: an edge stretched far past its rest length
+  let la = length(a.rest - b.rest);
+  let lb = length(b.rest - c.rest);
+  let lc = length(c.rest - a.rest);
+  if (length(a.p - b.p) > la * TEAR + 0.05 || length(b.p - c.p) > lb * TEAR + 0.05 || length(c.p - a.p) > lc * TEAR + 0.05) { return; }
+  let n = normalize(cross(b.p - a.p, c.p - a.p) + vec3<f32>(0.0, 0.0, 1e-9));
+  let m = a.mat & 0xffu;
+  let melt = pmC(m).y;
+  let heat = select(0.0, clamp(max(max(a.heat, b.heat), c.heat) / max(melt, 1.0), 0.0, 1.0), melt > 0.0);
+  let word = m | ((pcg(t) & 255u) << 8u) | (u32(heat * 255.0) << 16u) | 0x40000000u;
+  let o = atomicAdd(&skinArgs[0], 3u) * 2u;
+  let nb = bitcast<vec3<u32>>(n);
+  let ps = array<vec3<f32>, 3>(a.p, b.p, c.p);
+  for (var k = 0u; k < 3u; k++) {
+    skinOut[o + 2u * k] = vec4<u32>(bitcast<vec3<u32>>(ps[k]), word);
+    skinOut[o + 2u * k + 1u] = vec4<u32>(nb, 0u);
+  }
 }

@@ -3106,3 +3106,24 @@ half-cell concrete block lost 58%; toughness now scales with size and it
 loses 28% (the whole-cell slab 17%), and the dust per crumble scales with
 the fragment's face so eight fragments raise what one voxel did. fall
 scene unchanged (slab 116/144); stress 1.4 ms of physics.
+
+## 2026-10-22 — meshes over physics bodies, bent by their voxels
+
+Round 49's third step (F15). The user wanted lo-fi meshes mixed with the
+voxels, deformed by control points, still part of the simulation. The
+control points are a body's own lattice voxels: a mesh body is a lattice
+built under the mesh (hidden) and the mesh bound to it, four voxels a
+vertex. Bending is a compute pass (phys.wgsl `skin`, a thread a
+triangle: it has all three corners, so it can drop torn triangles and
+write a flat normal) into a triangle list the renderer draws through
+`addMesh` with the body shading, so meshes are lit, shadowed, speckled and
+glow with heat like voxels. Each voxel's region rotation, which shape
+matching already finds, turns the vertex offsets, so a bent beam's mesh
+bends smoothly rather than shearing. First look: tears left empty holes
+(the voxels under the mesh were hidden). Showing every hidden voxel that
+had lost a face bond drew a cracked rock as all voxels; now only one
+whose face neighbour is gone or has moved a quarter voxel away shows. A
+lattice of the wrong size at first (ceil(x + 1e-6) made a 3-cell box 7
+half-voxels wide, not 6). Headless (phystest mesh): the steel beam mesh
+bends round a block, the brick crate dents and tears at a corner, the
+rock is half crushed with voxels in its breaks.

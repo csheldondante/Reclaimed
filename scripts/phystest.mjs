@@ -2,7 +2,7 @@
 // the camera's target and screenshots them falling, landing and settling;
 // prints each body's live voxels and height range. --scene picks a setup.
 //
-//   node scripts/phystest.mjs [--url http://localhost:5178] [--out phys] [--scene drop|beam|heat]
+//   node scripts/phystest.mjs [--url http://localhost:5178] [--out phys] [--scene drop|beam|heat|fine|mesh]
 //     [--extra "&mesh=1"] [--zoom 3] [--shots 0.3,1,2.5,5]
 import puppeteer from 'puppeteer-core';
 import gifenc from 'gifenc';
@@ -121,6 +121,17 @@ try {
         made.push(await P.drop('brick', 6, 6, 6, x, y, 12, 0, 0, 0, 0.5));
         made.push(await P.drop('concrete', 8, 8, 8, x - 4, y + 8, 14, 20, 30, 0, 0.5));
         made.push(await P.drop('concrete', 8, 4, 2, x + 5, y + 8, 14, 20, 30, 0));
+      } else if (scene === 'mesh') {
+        // meshes over bodies (round 49): a steel beam mesh (half-cell lattice)
+        // across two posts with a block dropped on it, a concrete rock and a
+        // brick crate dropped hard beside them
+        const M = R.phys.meshes;
+        made.push(await P.drop('stone', 2, 2, 4, x - 5, y, 0.1));
+        made.push(await P.drop('stone', 2, 2, 4, x + 5, y, 0.1));
+        made.push(await P.dropMesh(M.box(20, 12, 1, 1, 0.5), 0.5, x, y, 4.2));
+        made.push(await P.drop('concrete', 3, 3, 3, x, y, 12));
+        made.push(await P.dropMesh(M.rock(5, 2.2, 2, 3), 0.5, x - 4, y + 8, 12, 20, 30, 0));
+        made.push(await P.dropMesh(M.box(11, 3, 3, 3, 0.5), 0.5, x + 5, y + 8, 14, 20, 30, 10));
       } else if (scene === 'stress') {
         // many bodies at once: the solver's cost
         for (let k = 0; k < 24; k++) {

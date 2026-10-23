@@ -255,7 +255,13 @@ region rotation, 26 bond bits; its info word: material, body, size code
 (n/16 of a cell, 0 whole), hidden), solved by lattice shape matching on the
 GPU. Each body has its own voxel size (round 49); a crumbling voxel splits
 into eight fragments half its size, in a ring at the start of the
-particles (body 255), which go to dust in turn. The CPU places bodies (uploads them once) and aims the beam. They
+particles (body 255), which go to dust in turn. A body may carry a mesh
+(`Physics.spawnMesh`, round 49): its voxels hidden, the mesh bound to them
+and bent by them once a tick (phys.wgsl `skin`, into `skinOut` /
+`skinArgs`), drawn by `Renderer.addMesh(verts, indirect)` (render.wgsl
+`vsSkin`: two vec4<u32> a vertex, position + material word, then the
+triangle's normal; three a triangle, no index buffer) with the body
+shading, lit and shadowed. The CPU places bodies (uploads them once) and aims the beam. They
 read the layers (ground contacts) and write crumbled voxels into `deposit`
 (y amount, z material, through their own per-column atomics) and chips,
 dust and embers into the particle ring; the renderer draws their instances
