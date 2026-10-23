@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-22 — round 49 (session 5, `physics`) — mixed resolution, meshes
+
+- Uniformly smaller voxels are not the answer. Resolution should vary:
+  most simulation at the coarse scale, refined only where and when it is
+  needed (a crack, a crumble, a small fine model).
+- Meshes are welcome alongside voxels: a mesh deformed in its vertex
+  shader by control points its vertices bend toward. Keep it lo-fi and
+  stylized; voxels look cool, but mixed is better here. Meshes must still
+  interact with the material systems and the simulation.
+- Wanted: blocks that crumble and then turn to particles; things like the
+  bike that break up and take damage.
+- The hover bike should be about half its current size.
+
 ## 2026-10-22 — round 48 (session 5, `physics`) — after trying lava on the phone
 
 - "OK but not great." Concrete should crumble more when it falls and be
