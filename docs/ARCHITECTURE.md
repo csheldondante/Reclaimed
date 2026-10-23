@@ -22,7 +22,8 @@ GPU per sim tick (60 Hz fixed, ≤ N ticks/frame by quality tier):
    → contamination → moisture → fire → ecology (every 15)
    → particles (emit, fireEmit, bursts, update) → renderfields (every 2)
    → stats (every 20, async readback)
-GPU per frame: renderprep (terrain + liquids) + vegprep (plants) → draw
+GPU per frame: renderprep (terrain + liquids; only columns on screen or whose
+   shadow is: the camera at binding 31) + vegprep (plants) → draw
    (opaque boxes incl. sub-voxel canopies, liquids, particles, rain)
 ```
 
@@ -366,9 +367,11 @@ render fields (no march reads x), for the water's streaks (render.wgsl
 drawn on the ground itself (meshdraw.wgsl `cellWater`: depth, level and
 flow over the three nearest cells; a glaze, streaks, glint, the wet band
 and swash above the edge); the mesh layout gives the vertices to the vertex
-stage only and the look's buffers to the fragments' (eight a stage). Shadows with the mesh come from a shadow map: one 2048² depth32
-texture over the whole map along the sun (an orthographic box round it,
-renderer.ts `writeLight`), drawn each frame by the draw pipelines' own
+stage only and the look's buffers to the fragments' (eight a stage). Shadows with the mesh come from a shadow map: one depth32 texture (quality
+`shadowSize`: low 1024², else 2048²) over the mesh chunks near the view,
+floor to sky, along the sun (an orthographic box round them, renderer.ts
+`writeLight`; it holds every caster whose shadow falls there; only the
+chunks inside it are drawn into it, fieldmesh.ts `castCull`), drawn each frame by the draw pipelines' own
 vertex shaders, depth only, through a second camera buffer holding the
 sun's matrix (so prisms and plants draw the sides facing the sun); every
 built chunk casts, not only those in view. The draw shaders' Camera carries

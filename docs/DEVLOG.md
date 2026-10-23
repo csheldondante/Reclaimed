@@ -3680,3 +3680,54 @@ Measured (scripts/reachtest.mjs, 4 of 4):
 
 The horde, throws, knocks and wind are unchanged. Agents at 4,000 walking
 units: 0.32-0.35 ms (one run during other work read 0.75: noise).
+
+## 2026-10-23 — perf branch: profile a phone's frame; mesh by default; culling; shadows fitted to the view
+
+Round 61: a `perf` branch to profile and experiment; clear wins merge into
+`grids`, and the user judges the feel on a phone.
+
+Tools:
+- scripts/perfprofile.mjs: a phone-shaped viewport (412×915 at DPR 2.6;
+  low's DPR 1 and half scale make a 206×457 frame). Each variant is a fresh
+  page, and every pass is reported as GPU ms per frame: the profiler now
+  sums each pass over every frame (`totalMs`), so a pass that runs every
+  4th tick counts a quarter.
+- `?skip=` (renderer.ts) leaves a piece of the frame out to measure it
+  (opaque, tops, plants, prisms, mesh, bodies, structs, voxels, skins,
+  water, particles, rain, shadow, prep, meshprep, cull, shadowfit).
+
+Measured on the desktop GPU at that frame, the valley at low:
+- Prisms: GPU 3.8 ms/frame. The terrain draw ~1.6 and its instance prep
+  0.5 dominate; every sim pass together is ~1.3.
+- The mesh: 3.7 ms. Draw 1.1, its shadow pass 0.36, the mesh build ~0.6.
+- The sandbox at desktop size (meshtest): draw 1.89 ms with the mesh
+  against 3.42 with prisms, plus 0.31 of mesh build.
+
+Changes:
+- The mesh is the default in every level and the world API (`?mesh=0`).
+  The menu diorama keeps its voxels.
+- renderprep culls to the view: a column is emitted only if its box, or
+  the shadow its top casts (followed up to 40 cells), shows on screen. The
+  camera is bound at 31.
+- The mesh's chunks are culled by their real tops, read back from the hash
+  pass (+4; zMax until known), not boxes to the sky. In an isometric view
+  a box to the sky covered a long strip of the screen.
+- The shadow map covers the chunks near the view instead of the whole map,
+  and only the chunks inside the sun's box are drawn into it. The light is
+  orthographic, so a box floor to sky over the near chunks holds every
+  caster whose shadow lands there.
+- Shadow map 1024² on low (`shadowSize`), 2048² otherwise.
+- The mesh, storm and water tests ask for prisms with `mesh=0` now.
+
+What the desktop can't say: at a 206×457 frame its draw costs are fixed
+overheads. The mesh draws 0.64 ms whether 32 chunks or 63, and the culling
+moves the total by less than the noise (±0.3 ms). A phone's tile-based GPU
+pays for geometry and depth bandwidth far more, which is where culling and
+the smaller fitted shadow map should show. A portrait phone sees half the
+map even at 3× zoom: the isometric tilt squashes depth. So it's the
+user's phone that judges this, through the /perf/ page and `?skip=` A/B
+links.
+
+Checks: shadows fitted to the view look the same as the whole-map ones at
+4× zoom on a portrait screen. meshtest, pulltest (6/6) and hordetest are
+unchanged.

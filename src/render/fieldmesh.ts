@@ -2,7 +2,7 @@
 // terrain drawn as one surface meshed from a field evaluated from the
 // intervals and the structures' voxels, in place of prisms and sheets. In
 // chunks of the world; the GPU finds the chunks that changed and rebuilds a
-// few a frame. ?mesh=1 turns it on; ?meshh= the sample spacing (1; 0.5 is
+// few a frame. On in every level and the world API (round 61; ?mesh=0: prisms); ?meshh= the sample spacing (1; 0.5 is
 // finer and four times the cost). This side writes the layout (a uniform),
 // dispatches, and culls to the view: the chunks drawn, and the chunks
 // rebuilt (near the view; the rest when they come into it).
@@ -26,6 +26,8 @@ const ROW_H = Math.sqrt(3) / 2;
 /** fieldmesh.wgsl CHUNK0, CSTRIDE (u32s) */
 const CHUNK0 = 16;
 const CSTRIDE = 12;
+/** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
+const TOP_PAD = 4;
 
 export class FieldMesh {
   /** the layout uniform (world.meshRegion: renderprep, vegprep and renderfields read it) */
@@ -51,6 +53,12 @@ export class FieldMesh {
   /** per chunk: near the view (rebuilt when changed; written to the state), in it (drawn) */
   private near = new Uint32Array(0);
   private inView = new Uint8Array(0);
+  /** per chunk: the top of what's in it (the hash pass's, read back; zMax until known), what its box reaches up to */
+  private tops = new Float32Array(0);
+  /** per chunk: inside the sun's box (castCull), so it casts into the shadow map */
+  private casts = new Uint8Array(0);
+  /** the world rect (x0, y0, x1, y1) of the chunks near the view: what the shadow map covers */
+  nearRect: [number, number, number, number] = [0, 0, 0, 0];
   /** last-known: chunks found changed that frame, the mesh's size, chunks out of room (async readback) */
   stats = { changed: 0, verts: 0, indices: 0, full: 0 };
   private statBuf?: GPUBuffer;
@@ -142,7 +150,6 @@ export class FieldMesh {
   /** Find the chunks near the view that changed and rebuild a few of them. */
   encode(enc: GPUCommandEncoder, cam: Camera): void {
     if (!this.on) return;
-    this.cull(cam);
     const chunks = this.nx * this.ny;
     this.device.queue.writeBuffer(this.state, 0, new Uint32Array([0]));
     this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, this.near);
@@ -165,7 +172,7 @@ export class FieldMesh {
       pass.end();
     });
     this.profiler.dispatches += 4;
-    if (!this.statBusy && this.statEvery++ % 30 === 0) {
+    if (!this.statBusy && this.statEvery++ % 10 === 0) {
       enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
       this.statBusy = true;
       this.statNeeded = true;
@@ -177,22 +184,28 @@ export class FieldMesh {
    * panning finds them current): each chunk's box in clip space against the
    * screen's edges.
    */
-  private cull(cam: Camera): void {
+  cull(cam: Camera): void {
+    if (!this.on) return;
     const m = cam.viewProj;
     const zHi = this.world.zMax;
     const chunks = this.nx * this.ny;
     if (this.near.length !== chunks) {
       this.near = new Uint32Array(chunks);
       this.inView = new Uint8Array(chunks);
+      this.casts = new Uint8Array(chunks);
+      this.tops = new Float32Array(chunks).fill(this.world.zMax);
     }
+    const r: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
     for (let cy = 0; cy < this.ny; cy++)
       for (let cx = 0; cx < this.nx; cx++) {
         let lo = [Infinity, Infinity];
         let hi = [-Infinity, -Infinity];
+        // (up to what's in it: a box to the sky covered a long strip of the screen)
+        const zTop = Math.min(this.tops[cy * this.nx + cx] + TOP_PAD, zHi);
         for (let k = 0; k < 8; k++) {
           const x = (cx + (k & 1)) * CHUNK;
           const y = (cy + ((k >> 1) & 1)) * CHUNK;
-          const z = k & 4 ? zHi : -1;
+          const z = k & 4 ? zTop : -1;
           const px = m[0] * x + m[4] * y + m[8] * z + m[12];
           const py = m[1] * x + m[5] * y + m[9] * z + m[13];
           lo = [Math.min(lo[0], px), Math.min(lo[1], py)];
@@ -202,6 +215,40 @@ export class FieldMesh {
         const within = (e: number) => hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e;
         this.inView[c] = within(1) ? 1 : 0;
         this.near[c] = within(1.5) ? 1 : 0;
+        if (this.near[c]) {
+          r[0] = Math.min(r[0], cx * CHUNK);
+          r[1] = Math.min(r[1], cy * CHUNK);
+          r[2] = Math.max(r[2], (cx + 1) * CHUNK);
+          r[3] = Math.max(r[3], (cy + 1) * CHUNK);
+        }
+      }
+    // (none near: nothing shows; the rect is the map's, harmlessly)
+    this.nearRect = r[0] <= r[2] ? r : [0, 0, this.nx * CHUNK, this.ny * CHUNK];
+  }
+
+  /** Which chunks lie in the sun's box (its clip space, `light`): they cast into the shadow map. */
+  castCull(light: Float32Array): void {
+    if (!this.on) return;
+    const zHi = this.world.zMax;
+    for (let cy = 0; cy < this.ny; cy++)
+      for (let cx = 0; cx < this.nx; cx++) {
+        let lx = Infinity;
+        let ly = Infinity;
+        let hx = -Infinity;
+        let hy = -Infinity;
+        const zTop = Math.min(this.tops[cy * this.nx + cx] + TOP_PAD, zHi);
+        for (let k = 0; k < 8; k++) {
+          const x = (cx + (k & 1)) * CHUNK;
+          const y = (cy + ((k >> 1) & 1)) * CHUNK;
+          const z = k & 4 ? zTop : -1;
+          const px = light[0] * x + light[4] * y + light[8] * z + light[12];
+          const py = light[1] * x + light[5] * y + light[9] * z + light[13];
+          lx = Math.min(lx, px);
+          ly = Math.min(ly, py);
+          hx = Math.max(hx, px);
+          hy = Math.max(hy, py);
+        }
+        this.casts[cy * this.nx + cx] = hx >= -1 && lx <= 1 && hy >= -1 && ly <= 1 ? 1 : 0;
       }
   }
 
@@ -219,12 +266,15 @@ export class FieldMesh {
     this.profiler.draws += n;
   }
 
-  /** Draw every chunk that has been built (the sun's shadow pass: what's out of view casts too). */
-  drawAll(pass: GPURenderPassEncoder): void {
+  /** Draw the chunks in the sun's box (the shadow pass: what's out of view but up-sun casts too). */
+  drawCasters(pass: GPURenderPassEncoder): void {
     if (!this.on) return;
     pass.setIndexBuffer(this.indices, 'uint32');
-    for (let c = 0; c < this.nx * this.ny; c++) pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
-    this.profiler.draws += this.nx * this.ny;
+    for (let c = 0; c < this.nx * this.ny; c++) {
+      if (!this.casts[c]) continue;
+      pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+      this.profiler.draws++;
+    }
   }
 
   afterSubmit(): void {
@@ -241,6 +291,9 @@ export class FieldMesh {
         indices += u[b];
         verts += u[b + 7];
         full += u[b + 9];
+        // (0: never looked at yet, its top unknown)
+        const t = new Float32Array(u.buffer, (b + 8) * 4, 1)[0];
+        if (t > 0) this.tops[c] = t;
       }
       this.stats = { changed: u[0], verts, indices, full };
       buf.unmap();

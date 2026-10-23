@@ -27,6 +27,8 @@ export interface Quality {
   particles: number;
   /** the agents' field relax sweeps a tick (default 8; agents.ts `sweeps`) */
   agentSweeps?: number;
+  /** the sun's shadow map's side, texels (default 2048) */
+  shadowSize?: number;
 }
 
 /** Shared services a scene runs on. */
@@ -85,7 +87,7 @@ export class WorldCore {
     this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     this.sim = new Simulation(device, this.world, host.profiler);
-    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh);
+    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize);
     this.structures = new Structures(device, this.world);
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h);
     this.places = new Places(device, this.world, this.sim.placeOps, this.weather);

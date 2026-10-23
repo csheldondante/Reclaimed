@@ -14,8 +14,12 @@ export class Profiler {
   private names: string[] = [];
   private next = 0;
 
-  /** Smoothed GPU ms per pass name. */
+  /** Smoothed GPU ms per pass name (over the frames it ran in). */
   readonly passMs = new Map<string, number>();
+  /** GPU ms per pass name summed over every frame resolved since `resetTotals`, and those frames: per-frame costs whatever a pass's period */
+  readonly totalMs = new Map<string, number>();
+  framesResolved = 0;
+  gpuTotalMs = 0;
   gpuFrameMs = 0;
   dispatches = 0;
   draws = 0;
@@ -78,16 +82,25 @@ export class Profiler {
           const ms = Number(b - a) / 1e6;
           perName.set(names[p], (perName.get(names[p]) ?? 0) + ms);
         }
+        this.framesResolved++;
         for (const [n, ms] of perName) {
+          this.totalMs.set(n, (this.totalMs.get(n) ?? 0) + ms);
           const prev = this.passMs.get(n);
           this.passMs.set(n, prev === undefined ? ms : prev * 0.9 + ms * 0.1);
         }
         const frame = Number(last - first) / 1e6;
+        this.gpuTotalMs += frame;
         this.gpuFrameMs = this.gpuFrameMs * 0.9 + frame * 0.1;
         slot.buf.unmap();
         slot.busy = false;
       });
     };
+  }
+
+  resetTotals(): void {
+    this.totalMs.clear();
+    this.framesResolved = 0;
+    this.gpuTotalMs = 0;
   }
 
   trackMemory(label: string, bytes: number): void {

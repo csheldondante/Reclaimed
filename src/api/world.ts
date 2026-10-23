@@ -55,7 +55,7 @@ export interface WorldDef {
   yearLength?: number;
   /** particle capacity (default the host's quality tier) */
   particles?: number;
-  /** draw with the field mesh (default false) */
+  /** draw with the field mesh (default true; round 61) */
   fieldMesh?: boolean;
   /** the kinds of agent (index = kind id; default worker, raider, ogre: agents.ts) */
   agents?: { kinds?: KindSpec[] };
@@ -112,7 +112,7 @@ async function warmup(core: WorldCore, mirror: Mirror, opts: WarmupOpts): Promis
 
 /** A sim of the world `def` describes. */
 export function createSim(host: Host, def: WorldDef): Sim {
-  const core = new WorldCore(host, def.map, def.particles ?? host.quality.particles, undefined, def.fieldMesh ?? false);
+  const core = new WorldCore(host, def.map, def.particles ?? host.quality.particles, undefined, def.fieldMesh ?? true);
   if (def.climate) core.globals.climate = { ...def.climate };
   if (def.season !== undefined) core.globals.season = def.season;
   if (def.yearLength !== undefined) core.yearLength = def.yearLength;

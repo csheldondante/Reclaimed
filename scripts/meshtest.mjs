@@ -47,7 +47,7 @@ try {
         failed = true;
       }
     });
-    const meshArg = mode === 'mesh' ? `&mesh=1&meshh=${h}` : '';
+    const meshArg = mode === 'mesh' ? `&mesh=1&meshh=${h}` : '&mesh=0';
     await page.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&perf=1&tod=0.35${meshArg}${extra}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.reclaimed?.core, { timeout: 90000 });
     await new Promise((res) => setTimeout(res, 5000));
