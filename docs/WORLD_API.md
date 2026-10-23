@@ -118,6 +118,12 @@ with a negative height. What lies over it moves with it.
 - **Volume.** The pulled material comes from nowhere: an authoring tool,
   like the sandbox's bedrock brush. Pulled down, what's over it sinks with
   it.
+- **Shaken off** (`shake`, 0..1, default 0.5; round 53). Where a pull
+  lifts loose ground, that ground slips at an angle up to 60% shallower
+  (× shake) for 2.5 s, fading. So it runs off the new slope rather than
+  riding up on it: still the sediment pass moving it, so still conserved.
+  Measured: 3 s after a 6-cell pull, 93% of the sand stays on top
+  unshaken, 75% shaken hard (1).
 - **A column without the material** grows a new run of it under its loose
   ground, if the column has a free slot.
 - **Drags compose.** Each column remembers how much the stroke has given it

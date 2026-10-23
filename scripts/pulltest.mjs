@@ -95,6 +95,19 @@ try {
   check('pull lift: what lay on it rode up, its volume kept', Math.abs(looseA - looseB) < 0.05, { looseBefore: +looseB.toFixed(3), looseAfter: +looseA.toFixed(3) });
   await wait(2500);
   await page.screenshot({ path: `${out}-1-pulled.png` });
+  // 1b. shaken off: the same pull twice on sand, unshaken and shaken hard; the sand left on top after 3 s
+  const pair = [{ x: site.x - 25, y: site.y - 15, shake: 0 }, { x: site.x + 5, y: site.y - 30, shake: 1 }];
+  const onTop0 = [];
+  for (const q of pair) onTop0.push(await page.evaluate((q) => window.__disc(q.x, q.y, 2.5), q));
+  await page.evaluate((pair) => {
+    for (const q of pair) window.reclaimed.api.terrain.pullLayer('stone', q.x, q.y, { radius: 7, height: 6, shake: q.shake });
+  }, pair);
+  await wait(3000);
+  const onTop = [];
+  for (const q of pair) onTop.push(await page.evaluate((q) => window.__disc(q.x, q.y, 2.5), q));
+  const looseOf = (d) => Object.entries(d.perColumn).filter(([k]) => k !== 'stone' && k !== 'concrete').reduce((a, [, v]) => a + v, 0);
+  const kept = onTop.map((d, k) => +(looseOf(d) / Math.max(looseOf(onTop0[k]), 1e-3)).toFixed(2));
+  check('shaken: less loose cover stays on the pulled top', kept[1] < kept[0] - 0.1, { keptUnshaken: kept[0], keptShaken: kept[1] });
   // 2. a drag: 40 frames along 24 cells, the height growing 0 → 5, each frame overlapping the last
   const ridge = { x: site.x - 30, y: site.y + 20 };
   const ridgeBefore = await page.evaluate((s) => window.__disc(s.x + 12, s.y, 1), ridge);

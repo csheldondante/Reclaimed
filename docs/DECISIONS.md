@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 53 (session 5, `physics`) — pulls shake; locks swallow sediment
+
+- Pulls: "pull adds material and I think it displaces things above it
+  using the natural simulation and angle of repose but we may want to
+  shake them off a bit too." (A pull now shakes the loose ground it lifts:
+  it slips at a lower angle for a while.)
+- Locked regions (API3): "We may also experiment with sediment just
+  disappearing when it enters a locked region so we don't get artifacts at
+  the border."
+
 ## 2026-10-23 — round 52 (session 5, `physics`) — cover on props; agents
 
 - A snow-covered variant of things; the same can work for sand and dust on
