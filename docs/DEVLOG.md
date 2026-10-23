@@ -3470,3 +3470,29 @@ still in reach. In the horde test there were 124 windups to 114 blows in 10
 s; the difference is blows whose target had moved off. The user's design
 notes on world authoring are in DECISIONS (round 52), with BACKLOG API2-API7
 for what the world API owes them.
+
+## 2026-10-23 — world API: layer pulls
+
+The world editor's first ask (DECISIONS round 52) is to grab a material's
+layer and pull it. For example, bedrock pulled up through the sand and soil
+on it, rough by its own noise, dragged each frame with a moving centre and a
+growing height.
+
+layerpull.wgsl does it per column:
+- The material's topmost run grows toward height × the brush (a dome,
+  broken at the edge by the material's noise) and everything over it moves
+  up with it. With `through`, the solids lying on it crack to their rubble.
+- Each column remembers how much the stroke has given it, the editor
+  brush's trick, so a drag's calls compose: a column only moves toward the
+  most any call asked of it.
+
+Measured (scripts/pulltest.mjs, 5 of 5):
+- A one-shot stone pull of 6 under sand rises 5.9 at the centre and 0.95 on
+  average over a disc of 12 (the dome's volume: 0.89). The sand rode up with
+  its volume unchanged (4.421 → 4.420 a column) and ran off the new slope.
+- A 40-frame drag, each frame called twice on the same spot with the height
+  growing 0 → 5, rose 2.1 at its middle and 4.2 at its end: the height asked,
+  not twice it.
+- Through: 1.9 cells of brick on the stone became 1.7 of rubble (some had
+  already slid off) and no brick.
+- Pulled down 3: the stone sank.

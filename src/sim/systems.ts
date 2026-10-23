@@ -29,6 +29,7 @@ import sedimentWgsl from '../shaders/sediment.wgsl?raw';
 import climateWgsl from '../shaders/climate.wgsl?raw';
 import editWgsl from '../shaders/edit.wgsl?raw';
 import placeOpWgsl from '../shaders/placeop.wgsl?raw';
+import layerPullWgsl from '../shaders/layerpull.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -503,6 +504,71 @@ export class StatsSystem implements SimSystem {
   afterSubmit(): void {
     for (const f of this.pendingMaps) f();
     this.pendingMaps = [];
+  }
+}
+
+/** A layer pull (layerpull.wgsl): one frame's call of a stroke. */
+export interface LayerPull {
+  x: number;
+  y: number;
+  radius: number;
+  /** the stroke's height now (cells; < 0 pulls down): each column moves toward height × the brush there */
+  height: number;
+  material: number;
+  mode: 0 | 1;
+  slot: number;
+  start: boolean;
+  roughness: number;
+  dir: [number, number];
+  lean: number;
+}
+
+/** Stroke slots (layerpull.wgsl pullGiven): strokes under way at once. */
+export const PULL_SLOTS = 8;
+const PULLS_A_TICK = 16;
+
+/**
+ * Layer pulls (BACKLOG E2): the queued calls, up to 16 a tick (the rest the
+ * next), each column toward its stroke's target. Every tick there are any,
+ * after the editor's brush and before anything reads the layers.
+ */
+export class LayerPullSystem implements SimSystem {
+  readonly name = 'layerpull';
+  readonly period = 1;
+  private s;
+  private params: GPUBuffer;
+  private given: GPUBuffer;
+  readonly queue: LayerPull[] = [];
+  constructor(private device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.params = device.createBuffer({ label: 'layerpull-params', size: 16 + PULLS_A_TICK * 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.given = world.buf('pullGiven', PULL_SLOTS * world.w * world.h * 4, GPUBufferUsage.STORAGE);
+    this.s = kernel(
+      device,
+      world,
+      'layerpull',
+      layerPullWgsl,
+      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform' },
+      { 3: world.layers, 4: world.layersNext, 5: this.given, 6: this.params },
+      true,
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
+    if (!this.queue.length) return;
+    const batch = this.queue.splice(0, PULLS_A_TICK);
+    const buf = new ArrayBuffer(16 + PULLS_A_TICK * 48);
+    const u = new Uint32Array(buf);
+    const f = new Float32Array(buf);
+    u[0] = batch.length;
+    batch.forEach((p, k) => {
+      const o = 4 + k * 12;
+      f.set([p.x, p.y, p.radius, p.height], o);
+      u.set([p.material, p.mode, p.slot, p.start ? 1 : 0], o + 4);
+      f.set([p.roughness, p.dir[0], p.dir[1], p.lean], o + 8);
+    });
+    // (written before this tick's submit: one batch a tick)
+    this.device.queue.writeBuffer(this.params, 0, buf);
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 
