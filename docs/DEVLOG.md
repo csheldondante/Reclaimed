@@ -3537,3 +3537,32 @@ pull, 63% of the sand stays on the dome's top (was 75%; 93% unshaken).
 The dome's top is nearly flat, so some stays there. The drag check now
 measures the stone's rise: the ridge's sand runs off, so its surface sits
 lower than the stone pulled.
+
+## 2026-10-23 — agents: mass and stun, knockback as physics data
+
+Round 56 (the user, through the units session): use physics wherever the
+sim stays stable and fast, and a specific system only where a general one
+fails. The hoverbike's knight scaled its knockback by mass on its own side
+and called `launch`. Now:
+- A hit's `push` and new `lift` (cells/s) divide by the kind's mass. A lift
+  throws the unit, with the push along the ground and the lift up (without
+  one, a push past 5 cells/s still hops it by a third of the push). Units
+  tumbling into others already shared their momentum by mass. So every
+  force a unit feels is ÷ mass, and an ogre (3) shrugs off a knock the
+  same way everywhere.
+- `stun` (s, up to 20) on a hit, a launch or a lob: the unit stays down
+  that much longer than the usual 0.6 s getting up, once settled. A
+  stunning hit that doesn't throw it holds it where it stands. It costs no
+  new storage: while tumbling, a unit's stride phase (unused then) holds
+  its stun. A launch's stun rides in its slot word, in hundredths of a
+  second.
+- A launch stays a velocity, not ÷ mass: the thrower decides it, and a lob
+  must land where it's aimed. A knock that heavy kinds shrug off is a hit.
+- Units still don't feel the world's wind or blasts themselves (a blast
+  reaches them as the game's hit). Left for when it's wanted: a gale
+  moving units ÷ mass is the same kind of push.
+
+Measured (scripts/knocktest.mjs, 6 of 6): the same hit (push 6, lift 8)
+throws a worker 1.5 high and 5.7 along, an ogre 0.2 high and 0.46. A 2 s
+stun-only hit holds a worker in place 2.6 s. A 1.5 s stun on a throw or a
+launch keeps it down 1.35-1.5 s longer. throwtest is unchanged.

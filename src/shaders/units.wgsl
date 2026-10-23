@@ -27,7 +27,8 @@
 // A unit, four vec4<f32>:
 //   a: x, y, z (its feet), info (u32 bits): group 0-7 | alive 8 | kind 9-11 |
 //      state 12-14 | alight 15 | generation 16-31 (its id: gen * 8192 + slot)
-//   b: vx, vy, vz, stride phase
+//   b: vx, vy, vz, stride phase (tumbling: its stun, s: how much longer
+//      than GETUP it stays down once settled)
 //   c: hp, swing cooldown (s), fire left (s), heading (rad)
 //   d: hurt flash (s), state time (s), time under water (s), wander heading
 //      (rad; tumbling: how far it has rolled)
@@ -192,6 +193,11 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var under = dd.z;
   var wanderH = dd.w;
   var push = vec2<f32>(0.0);
+  // the hits' lift (cells/s, after the mass) and stun (s); 1: a hit gave a lift
+  var lift = 0.0;
+  var lifted = false;
+  var stun = select(0.0, b.w, state == ST_TUMBLE);
+  var stunHit = 0.0;
   var killedBy = 0u;
   var dead = false;
 
@@ -212,6 +218,8 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let away = select(hit.b.xy, off.xy / max(r, 0.01), hit.c.y > 0.5);
     push += away * hit.c.x / mass;
+    if (hit.d.z != 0.0) { lift += hit.d.z / mass; lifted = true; }
+    stunHit = max(stunHit, hit.d.w);
     if (hit.c.z > 0.5 && !alight) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
   }
 
@@ -227,17 +235,29 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   if (held) { state = ST_HELD; stT = 0.0; } else if (state == ST_HELD) { state = ST_TUMBLE; stT = 0.0; }
   for (var e = 0u; e < AP.n3.y; e++) {
     let ln = AP.launches[e];
-    if (u32(ln.w) != u) { continue; }
+    // (w: its slot | its stun in hundredths of a second << 13)
+    let lw = u32(ln.w);
+    if ((lw & 8191u) != u) { continue; }
     vel = ln.xyz;
+    if (state != ST_TUMBLE) { stun = 0.0; }
+    stun = max(stun, f32(lw >> 13u) / 100.0);
     state = ST_TUMBLE;
     stT = 0.0;
   }
-  // thrown by a hit
-  if (length(push) > TUMBLE_PUSH && state != ST_HELD) {
-    vel = vec3<f32>(vel.xy + push, max(vel.z, 0.0) + length(push) * 0.35);
+  // thrown by a hit: pushed past TUMBLE_PUSH, or lifted (then the lift is
+  // its upward speed; else it hops by a share of the push)
+  if ((length(push) > TUMBLE_PUSH || lift > 0.0) && state != ST_HELD) {
+    if (state != ST_TUMBLE) { stun = 0.0; }
+    vel = vec3<f32>(vel.xy + push, max(vel.z, 0.0) + select(length(push) * 0.35, lift, lifted));
     push = vec2<f32>(0.0);
     state = ST_TUMBLE;
     stT = 0.0;
+  }
+  // stunned: down for that much longer once it settles (not thrown: where it
+  // stands, upright)
+  if (stunHit > 0.0 && state != ST_HELD) {
+    if (state != ST_TUMBLE) { stun = 0.0; wanderH = 0.0; vel = vec3<f32>(0.0); push = vec2<f32>(0.0); state = ST_TUMBLE; stT = 0.0; }
+    stun = max(stun, stunHit);
   }
 
   let c = clampCell(cellAt(pos.xy));
@@ -251,7 +271,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     if (sm > 0.0) {
       let p = vec2<f32>(f32(atomicLoad(&shove[(rd + i) * 4u])), f32(atomicLoad(&shove[(rd + i) * 4u + 1u]))) / SHOVE_FIX;
       let v = p / (sm + mass);
-      if (length(v) > KNOCK_SPEED) { vel = vec3<f32>(v, length(v) * 0.3); state = ST_TUMBLE; stT = 0.0; }
+      if (length(v) > KNOCK_SPEED) { vel = vec3<f32>(v, length(v) * 0.3); state = ST_TUMBLE; stT = 0.0; stun = 0.0; }
     }
   }
   let onGround = k < NAV_K && state != ST_HELD && pos.z - floorZ < 0.5;
@@ -325,11 +345,12 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       vel = vec3<f32>(vel.xy * max(1.0 - ROLL_GRIP * dt, 0.0) * select(1.0, LAND_SKID, impact > 2.0), vel.z);
       if (length(vel) > 0.6) { stT = 0.0; }
       // settled long enough: up again
-      if (stT > GETUP) {
+      if (stT > GETUP + stun) {
         state = select(ST_WANDER, ST_CHASE, kind.b.w <= 0.0);
         stT = 0.0;
         vel = vec3<f32>(0.0);
         wanderH = heading;
+        stun = 0.0;
       }
     } else {
       stT = 0.0;
@@ -432,6 +453,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       // (walked off an edge higher than a drop: it falls)
       state = ST_TUMBLE;
       stT = 0.0;
+      stun = 0.0;
       z = pos.z;
     }
     np = vec3<f32>(p2, z);
@@ -448,7 +470,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let phase = fract(b.w + dt * length(vel.xy) * 0.9);
   info = (info & ~((7u << 12u) | (1u << 15u))) | (state << 12u) | (select(0u, 1u, alight) << 15u);
   units[u * 4u] = vec4<f32>(np, bitcast<f32>(info));
-  units[u * 4u + 1u] = vec4<f32>(vel, phase);
+  units[u * 4u + 1u] = vec4<f32>(vel, select(phase, stun, state == ST_TUMBLE));
   units[u * 4u + 2u] = vec4<f32>(hp, cool, burn, heading);
   units[u * 4u + 3u] = vec4<f32>(flash, stT, under, wanderH);
   atomicAdd(&occ[wr + fi], 1u);

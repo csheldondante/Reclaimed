@@ -101,9 +101,20 @@ export interface HitSpec {
   /** a cone instead of a circle: its full angle (degrees) round `axis` (default `dir`) */
   cone?: number;
   axis?: readonly [number, number];
+  /** an upward speed (cells/s, divided by the unit's mass) on top of the push: it throws them (without it, a push past 5 cells/s after the mass hops them by a third of it) */
+  lift?: number;
+  /** seconds they stay down once settled, beyond the usual 0.6 s getting up; a hit that doesn't throw them holds them where they stand (up to 20) */
+  stun?: number;
   /** sets them alight */
   fire?: boolean;
 }
+
+/** A throw's options: `stun`, seconds it stays down once settled, beyond the usual getting up (up to 20). */
+export interface LaunchOpts {
+  stun?: number;
+}
+
+const MAX_STUN = 20;
 
 export interface Target {
   x: number;
@@ -427,23 +438,30 @@ export class Agents implements SimSystem {
     if (vel) this.launches.push([vel[0], vel[1], vel[2], slot]);
   }
 
-  /** Throw a unit (held or not) with a velocity: it tumbles, bounces, knocks others over, gets up. */
-  launch(id: number, vel: readonly [number, number, number]): void {
+  /**
+   * Throw a unit (held or not) with a velocity: it tumbles, bounces, knocks
+   * others over, gets up. A velocity, so whatever its mass (the thrower
+   * decides it; a lob must land where it's aimed). For a force, a knock that
+   * heavy kinds shrug off, use a `hit` with `push` and `lift`.
+   */
+  launch(id: number, vel: readonly [number, number, number], opts: LaunchOpts = {}): void {
     const slot = this.slotOf(id);
     if (slot < 0) return;
     this.holds.delete(slot);
-    this.launches.push([vel[0], vel[1], vel[2], slot]);
+    // (the stun rides in the slot's word, in hundredths of a second: units.wgsl)
+    const stun = Math.round(Math.min(Math.max(opts.stun ?? 0, 0), MAX_STUN) * 100);
+    this.launches.push([vel[0], vel[1], vel[2], slot + stun * MAX_UNITS]);
   }
 
   /**
    * Lob a unit from (x, y, z) so it lands at `to`, in `time` seconds
    * (default: by distance, 0.5-1.5 s): the velocity it's launched with.
    */
-  lob(id: number, from: readonly [number, number, number], to: readonly [number, number, number], time?: number): [number, number, number] {
+  lob(id: number, from: readonly [number, number, number], to: readonly [number, number, number], time?: number, opts: LaunchOpts = {}): [number, number, number] {
     const d = Math.hypot(to[0] - from[0], to[1] - from[1]);
     const t = time ?? Math.min(1.5, Math.max(0.5, d / 14));
     const v: [number, number, number] = [(to[0] - from[0]) / t, (to[1] - from[1]) / t, (to[2] - from[2] + 0.5 * AGENT_GRAVITY * t * t) / t];
-    this.launch(id, v);
+    this.launch(id, v, opts);
     return v;
   }
 
@@ -611,7 +629,7 @@ export class Agents implements SimSystem {
       const dir = unit(h.dir);
       const axis = h.axis ? unit(h.axis) : dir;
       const cone = h.cone !== undefined ? Math.cos(((h.cone / 2) * Math.PI) / 180) : -2;
-      f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, h.fire ? 1 : 0, h.id, axis[0], axis[1], 0, 0], o);
+      f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, h.fire ? 1 : 0, h.id, axis[0], axis[1], h.lift ?? 0, Math.min(Math.max(h.stun ?? 0, 0), MAX_STUN)], o);
     });
     this.targets.forEach((t, i) => f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4));
     const holds = [...this.holds].slice(0, MAX_HOLDS);

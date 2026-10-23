@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 56 (session 5, `agents`; relayed by the GameplayGM units session) — physics first; mass and stun
+
+- "Use physics wherever the sim stays stable and fast, and add a specific
+  system only when a general one fails, because each specific system
+  multiplies the interactions to worry about."
+- So knockback is plain physics data: mass on the kind divides every force
+  on a unit, hits take a `lift`, and hits, launches and lobs take a `stun`.
+  The game drops its own knock and mass scaling.
+
 ## 2026-10-23 — round 55 (session 5, `physics`) — pulls shed more
 
 - "I also think we want lose layers to shake off even more the way they do

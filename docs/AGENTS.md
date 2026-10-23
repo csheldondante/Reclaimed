@@ -133,7 +133,22 @@ game's CPU enemies did: kinds, behaviour, swings, hits and readback.
     and gripping at 3/s while on the ground. It slams back off walls.
   - **Damage.** A landing or slam faster than 10 cells/s hurts 1 hp per
     cell/s past that (`hurt` / `death` by `'impact'`).
-  - **Getting up.** Once settled for 0.6 s, it gets up.
+  - **Getting up.** Once settled for 0.6 s, it gets up; stunned, that much
+    longer.
+  - **Mass and stun** (round 56: knockback is plain physics data). Every
+    force on a unit divides by its kind's `mass`: a hit's `push` and `lift`
+    (cells/s), and the momentum of units tumbling into it (shared with its
+    own mass). So a heavy kind shrugs off every knock the same way. A
+    launch is a velocity, not a force: the thrower decides it, and a lob
+    must land where aimed.
+    - `lift` (a hit's upward speed) throws it: it tumbles with the push
+      along the ground and the lift up. Without one, a push past 5 cells/s
+      hops it up by a third of the push.
+    - `stun` (seconds, on a hit, a launch or a lob, up to 20) keeps it down
+      that much longer once settled. A stunning hit that doesn't throw it
+      holds it where it stands, upright.
+    - Units don't feel the world's wind or blasts themselves: a blast
+      reaches them as the game's `hit`.
   - **Knock-overs.** A tumbling unit faster than 2.5 cells/s carries its
     momentum through each column it crosses (per-column shoves). A walking
     unit there is knocked over when that momentum, shared with its own mass,
@@ -142,9 +157,9 @@ game's CPU enemies did: kinds, behaviour, swings, hits and readback.
     holds it (a lich, a gorilla), up to 8 at once.
     - `release(id, vel?)` lets go: it tumbles, with `vel` or as it was
       moving.
-    - `launch(id, vel)` throws any unit.
-    - `lob(id, from, to, time?)` works out the launch that lands it at `to`
-      and returns that launch velocity.
+    - `launch(id, vel, { stun? })` throws any unit.
+    - `lob(id, from, to, time?, { stun? })` works out the launch that lands
+      it at `to` and returns that launch velocity.
   - **Fire.** Units also catch fire:
     - from lava (over 750 °C), which burns 8 hp/s besides (`by: 'lava'`);
     - from hot ground (over 300 °C);
@@ -166,9 +181,9 @@ agents.defineKind(i, { name, height, mass, hp, speed, reach, damage, swingPeriod
 agents.spawn(n, x, y, { group, kind, spread })  // → ids; they land on the top surface
 agents.remove(ids)                        // out at once, no death event
 agents.setTargets([{ x, y, z, radius }])  // what hostile kinds go for; seeds field 3 (follow(group, 3) to chase)
-agents.hit({ x, y, z?, radius, damage, push, dir?, outward?, cone?, axis?, fire? })  // → hit id; a cone round `axis` (default `dir`)
+agents.hit({ x, y, z?, radius, damage, push, lift?, stun?, dir?, outward?, cone?, axis?, fire? })  // → hit id; a cone round `axis` (default `dir`); push and lift ÷ mass
 agents.hold(id, x, y, z)                  // each frame while held; false when it's gone
-agents.release(id, vel?) / agents.launch(id, vel) / agents.lob(id, from, to, time?)
+agents.release(id, vel?) / agents.launch(id, vel, { stun? }) / agents.lob(id, from, to, time?, { stun? })
 const { units, events } = await agents.sync()  // each frame: live units, and swing/hurt/death/alight events
 agents.goTo(group, x, y, z?)              // the group's own field (group % 4) seeded there
 agents.seed(field, [{ x, y, z? }])        // a field's seeds: a goal, a stockpile, a threat
@@ -194,6 +209,7 @@ limit.
 | FieldReader (scripts/agentfieldtest.mjs), field seeded at the map centre | 24 of 24 samples, 20-60 cells out, point within 45° of the goal; dist 20.3 at 20 cells; a refresh reads 5 MB back in 10-80 ms |
 | A horde (scripts/hordetest.mjs): 60 raiders, 10 ogres, 4 brutes with their own model, round a standing target | All chase within a second; in 10 s 69 of 74 are within 3 cells of it, 15 swinging, 121 swing events. A blast (radius 3, 30 damage, outward push) kills 71, each death naming the blast. A fire hit sets the last 3 alight: they glow and burn; the ogres outlast the 12 hp the burn does. |
 | Thrown, held, burning (scripts/throwtest.mjs, a crowd of 40 standing workers) | An ogre thrown into the crowd at 18 cells/s bowls over 7-10, and they get up; a blast (push 22, outward) throws 37-38, a few hurt landing hard, all up within 4 s. One held and carried up 6 cells, then lobbed at a point 15 cells off: it lands there and skids 5 cells. One set alight in a fresh crowd of 30: 27 alight within 5 s by touch |
+| Mass and stun (scripts/knocktest.mjs) | The same hit (push 6 along dir, lift 8): a worker flies 1.5 high and is carried 5.7; an ogre (mass 3) 0.2 high and 0.46. A stun-only hit of 2 s holds a worker where it stands for 2.6 s (2 + getting up). A stun of 1.5 on a throw or a launch keeps it down 1.35-1.5 s longer |
 | 400 units confined to a voronoi room, their goal in another room | 398 of 400 still in their room after 16 s (they stand: no seed in the room); let go, all 400 leave for the goal |
 
 **Places.** The peel reads the `places` buffer: the top surface takes the
