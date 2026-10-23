@@ -90,8 +90,10 @@ try {
   const centreA = await page.evaluate((s) => window.__disc(s.x, s.y, 0.6), site);
   const looseB = Object.entries(before.perColumn).filter(([k]) => k !== 'stone').reduce((a, [, v]) => a + v, 0);
   const looseA = Object.entries(after.perColumn).filter(([k]) => k !== 'stone').reduce((a, [, v]) => a + v, 0);
+  // (the stone's rise at the centre: the sand on it is shaken off)
+  const cRise = (centreA.perColumn.stone ?? 0) - (centreB.perColumn.stone ?? 0);
   // (the disc's mean rise is the dome's volume: 6 × (8/12)² / 3 ≈ 0.89 with no roughness)
-  check('pull: stone rises ~6 at the centre, ~0.9 on average over the disc', centreA.meanTop - centreB.meanTop > 4.5 && centreA.meanTop - centreB.meanTop < 7.5 && Math.abs(after.meanTop - before.meanTop - 0.89) < 0.3, { centre: [centreB.meanTop, centreA.meanTop], mean: [before.meanTop, after.meanTop] });
+  check('pull: stone rises ~6 at the centre, ~0.9 on average over the disc', cRise > 4.5 && cRise < 7.5 && Math.abs(after.meanTop - before.meanTop - 0.89) < 0.3, { centreStoneRise: +cRise.toFixed(2), mean: [before.meanTop, after.meanTop] });
   check('pull lift: what lay on it rode up, its volume kept', Math.abs(looseA - looseB) < 0.05, { looseBefore: +looseB.toFixed(3), looseAfter: +looseA.toFixed(3) });
   await wait(2500);
   await page.screenshot({ path: `${out}-1-pulled.png` });
@@ -131,12 +133,12 @@ try {
   const midRise = stoneOf(ridgeMid) - stoneOf(ridgeBefore);
   const endRise = stoneOf(ridgeEnd) - stoneOf(endBefore);
   check('drag: a ridge rising along it (mid ~2.5, end ~5), no double counting', midRise > 1.5 && midRise < 3.5 && endRise > 3.5 && endRise < 6.2, { midRise: +midRise.toFixed(2), endRise: +endRise.toFixed(2) });
-  // 3. through: bricks built on the ground, stone pulled up through them
+  // 3. through: bricks built on the ground, stone pulled up through them (unshaken: the rubble would run off before it's counted)
   const wall = { x: site.x + 30, y: site.y + 10 };
   await page.evaluate((s) => window.reclaimed.api.terrain.build(s.x, s.y, 'brick', { radius: 4, layers: 2 }), wall);
   await wait(1500);
   const bricks = await page.evaluate((s) => window.__disc(s.x, s.y, 2), wall);
-  await page.evaluate((s) => window.reclaimed.api.terrain.pullLayer('stone', s.x, s.y, { radius: 5, height: 4, mode: 'through' }), wall);
+  await page.evaluate((s) => window.reclaimed.api.terrain.pullLayer('stone', s.x, s.y, { radius: 5, height: 4, mode: 'through', shake: 0 }), wall);
   await wait(1000);
   const cracked = await page.evaluate((s) => window.__disc(s.x, s.y, 2), wall);
   check('through: the bricks on it crack to rubble', (bricks.perColumn.brick ?? 0) > 0.5 && (cracked.perColumn.brick ?? 0) < 0.1 && (cracked.perColumn.rubble ?? 0) > 0.5, { bricks: bricks.perColumn, cracked: cracked.perColumn });
