@@ -82,11 +82,62 @@ velocity and stride phase.
   torso in its group's colour, head), drawn through `renderer.addVoxels`:
   lit and shadowed like everything else.
 
+## Enemies (round 52: a game's horde on the agents)
+
+The user's direction, relayed by the units session: Reclaimed is the engine,
+and a game's enemies are its agents. The first slice covers what that
+game's CPU enemies did: kinds, behaviour, swings, hits and readback.
+
+- **Kinds** (8). Each kind has a height, mass, hp and speed, plus a reach,
+  damage, swing period and notice distance. The defaults are 0 worker, 1
+  raider (height 1.2, mass 1, hp 10, fast) and 2 ogre (height 2, mass 3,
+  hp 22, slow).
+  - A kind can bring its own voxel model: [x, y, z, material] in voxel units
+    round its feet, `voxel` cells each.
+  - Without one it is drawn as the default figure (legs, torso, head),
+    scaled to its height.
+- **Behaviour** (units.wgsl). A worker (notice 0) always follows its field.
+  A hostile kind:
+  - wanders until its field says a target is within notice;
+  - then closes in down the field;
+  - swings when a target is within reach. The blow lands 0.3 s into a 0.6 s
+    swing, as a `swing` event naming the target and damage; a cooldown of
+    its swing period follows.
+- **Targets**: `setTargets` (up to 8, each frame) for the reach checks; it
+  also seeds field 3 on them.
+- **Hits from the game**: a circle or a cone, carrying damage, a push (along
+  a direction or outward, divided by mass) and optionally fire. Up to 32 a
+  tick; more wait for the next tick. Each returns an id, and `hurt` and
+  `death` events name it.
+- **Fire and water**:
+  - A unit catches fire from a fire hit or the fire field where it stands,
+    then burns at 2 hp/s for 6 s, running about faster.
+  - Wading slows it by depth. Over its head, it drowns after 3 s.
+  - Water half its height deep puts the fire out.
+  - Death events say `by: hitId | 'fire' | 'water'`.
+- **Ids**: generation × 8192 + slot, so an id stays unique when its slot is
+  reused. Deaths free their slots in `sync()`.
+- **Reading back**: `sync()` does one readback a frame for units and events,
+  resolving a frame or two later. It returns the live units (`id`, position,
+  `heading`, `state` wander/chase/swing, `alight`, `hp`, `kind`, `group`)
+  and the events since the last sync: `swing`, `hurt`, `death` and
+  `alight`. Events past 2,048 a sync are counted and warned about, never
+  silently lost.
+- **Drawing**: unitDraw appends each unit's voxels (up to 65,536 in all).
+  - Alight, it flickers with the physics voxel's heat glow; hit, it flashes
+    white for 0.15 s.
+  - The game stops drawing its own models for them.
+
 ## API (`window.reclaimed.agents`; `installAgents(core)` for games)
 
 ```ts
 const agents = installAgents(core);      // the system after the particles, units drawn as voxels
-agents.spawn(n, x, y, { group, spread })  // → the first unit's index; they land on the top surface
+agents.defineKind(i, { name, height, mass, hp, speed, reach, damage, swingPeriod, notice, colours?, model? })
+agents.spawn(n, x, y, { group, kind, spread })  // → ids; they land on the top surface
+agents.remove(ids)                        // out at once, no death event
+agents.setTargets([{ x, y, z, radius }])  // what hostile kinds go for; seeds field 3 (follow(group, 3) to chase)
+agents.hit({ x, y, z?, radius, damage, push, dir?, outward?, cone?, fire? })  // → hit id
+const { units, events } = await agents.sync()  // each frame: live units, and swing/hurt/death/alight events
 agents.goTo(group, x, y, z?)              // the group's own field (group % 4) seeded there
 agents.seed(field, [{ x, y, z? }])        // a field's seeds: a goal, a stockpile, a threat
 agents.follow(group, field)               // a group follows a field (-1: stands)
@@ -109,6 +160,7 @@ limit.
 | A stone wall 4 high, 40 long, across the way | They split and go round both ends |
 | 4,000 units | They flow round the pond (water costs more); agents 0.47 ms a tick against sediment's 0.52 |
 | FieldReader (scripts/agentfieldtest.mjs), field seeded at the map centre | 24 of 24 samples, 20-60 cells out, point within 45° of the goal; dist 20.3 at 20 cells; a refresh reads 5 MB back in 10-80 ms |
+| A horde (scripts/hordetest.mjs): 60 raiders, 10 ogres, 4 brutes with their own model, round a standing target | All chase within a second; in 10 s 69 of 74 are within 3 cells of it, 15 swinging, 121 swing events. A blast (radius 3, 30 damage, outward push) kills 71, each death naming the blast. A fire hit sets the last 3 alight: they glow and burn; the ogres outlast the 12 hp the burn does. |
 | 400 units confined to a voronoi room, their goal in another room | 398 of 400 still in their room after 16 s (they stand: no seed in the room); let go, all 400 leave for the goal |
 
 **Places.** The peel reads the `places` buffer: the top surface takes the
@@ -119,6 +171,14 @@ can't push it out either. A confined field with no seed inside its place
 leaves the group standing.
 
 ## Not yet
+
+- From the units session's list:
+  - thrown hard → a tumbling ragdoll that knocks others over, then gets up;
+  - hold, release and lob (the lich, the gorilla);
+  - catching fire from lava, hot ground and embers, and spreading it by touch;
+  - a death left lying (they vanish now);
+  - per-unit heading targets when there are several players.
+
 
 - Structure grids (tilted structures) aren't surfaces yet; units walk
   through them. Their projection (bodyProj) has the tops, for the next pass.

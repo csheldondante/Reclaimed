@@ -3310,3 +3310,35 @@ storage buffers), and a field can be confined to a place. Masking the field
 alone let a crowd push a third of a confined group out of its room (268 of
 400 left in it after 16 s); a unit now never steps off its field's place
 either, and 398 of 400 stayed.
+
+## 2026-10-23 — agents: a horde (kinds, swings, hits, fire, water)
+
+The user's direction (relayed by the units session): Reclaimed is the engine
+and a game's enemies are its agents, so the game's CPU stand-ins can go.
+This first slice covers what those enemies did:
+- kinds with stats, and models of their own;
+- wander, notice, close in and swing, the swing reaching the game as an
+  event;
+- the game's hits as circles or cones of damage, push and fire, batched per
+  tick;
+- one readback a frame of the live units and the events.
+
+Fire (from hits or the fire field) and water (wading slows, over its head it
+drowns, water puts out fire) cost little in the same pass, so they're in.
+The units moved to their own shader and four vec4s each. Every layout stays
+within eight storage buffers: the peel, the fields, the units and the draw
+each have their own.
+
+Two things the test found:
+- The level installs agents after its warmup, so nothing was peeled when a
+  game first read the fields. The surfaces are now peeled when Agents is
+  built.
+- A seed only matched a surface at or below its height. The test's target
+  height was 4 cells low (the `surface` buffer is the bedrock base, without
+  the loose ground: the sort of decoding the world API will hide), so the
+  target field never seeded. Seeds now take the nearest surface either way.
+
+Measured (scripts/hordetest.mjs): of 74 (60 raiders, 10 ogres, 4 brutes
+with a brick model), all chase within a second, and 69 are round the target
+in 10 s with 121 swings. A radius-3 blast kills 71, each death naming it; a
+fire hit sets the last 3 alight, and the ogres outlast the burn.

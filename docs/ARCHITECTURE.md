@@ -509,12 +509,18 @@ a voxel source on the renderer. Its buffers are its own (not world
 contracts): `agentNav` (per column NAV_K = 4 surfaces, vec4<u32>: height,
 headroom | wet | six 3-bit links, room, region — the peel reads `places` and
 `placeTable` in its own bind group), `agentDist` (NFIELDS = 4 fields × surfaces,
-f32), `agentUnits` (two vec4 a unit), `agentOcc` (units per column, two
-halves by tick parity), `agentInst` (three body-format voxels a unit) and
-its indirect args. It reads `layers` and `water`. A tick: every 8 ticks the
+f32), `agentUnits` (four vec4 a unit: units.wgsl), `agentOcc` (units per
+column, two halves by tick parity), `agentEvents` (a count and 8-u32
+records: swing, hurt, death, alight; the CPU copies and clears it in
+`sync`), `agentModels` (the kinds' voxels) with `agentKindModels`, and
+`agentInst` (body-format voxels, appended) with its indirect args. It reads
+`layers`, `water`, `places`/`placeTable` (the peel) and `fire` (units
+catching). Four bind groups, each within 8 storage buffers: peel, fields,
+units, draw. A tick: every 8 ticks the
 surfaces are re-peeled and linked; 8 sweeps of the fields in use; the
-occupancy half cleared; every unit stepped. Bindings 3-10 (10 the params
-uniform: counts, 32 seeds, each group's field and colour).
+occupancy half cleared; every unit stepped; every unit's voxels written.
+The params uniform (binding 10) carries counts, 32 seeds, each group's field
+and colour, each field's place, 8 kinds, 32 hits, 8 targets.
 
 ## Climate (round 50)
 
