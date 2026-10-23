@@ -16,6 +16,8 @@ import { PK } from '../sim/particles';
 import { Physics } from '../physics/physics';
 import type { LavaSystem } from '../sim/lava';
 import { installPhysics } from '../physics/install';
+import { installAgents } from '../agents/install';
+import type { Agents } from '../agents/agents';
 import type { Waker, WakeOptions } from '../physics/wake';
 import { box, table } from '../physics/shapes';
 import { boxMesh, rockMesh, type SkinMesh } from '../physics/mesh';
@@ -98,6 +100,8 @@ export class LevelScene implements Scene {
   private strokeStart = false;
   /** sandbox: physics voxels (docs/PHYSICS.md) */
   physics?: Physics;
+  /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
+  agents!: Agents;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
   lava?: LavaSystem;
   /** sandbox: the heat beam's pointer while held */
@@ -225,6 +229,7 @@ export class LevelScene implements Scene {
     this.director = new Director(camera);
     const p = host.params;
     this.intro = !this.story && !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
+    this.agents = installAgents(core);
     if (this.level.sandbox) {
       // the physics voxels (one GPU solver for every material, docs/PHYSICS.md)
       // and lava; the map's own ruins stay terrain until something touches
@@ -433,6 +438,8 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
+      agents: this.agents,
       // physics voxels (sandbox): phys.drop('steel', 5, 1, 10, x, y, 6) — a w × d × h box
       // of a material, its centre at world (x, y), `above` cells over the ground
       phys: {

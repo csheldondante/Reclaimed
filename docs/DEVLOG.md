@@ -3241,3 +3241,30 @@ each at ?speed=4): a -8 °C storm caps 31-34 of its 784 voxels (the open
 tops) at a mean 10 of 31 levels; a 14 °C thaw clears them; a dust storm
 dusts 32 at 7.7; rain clears it. Physics bodies and stamped models don't
 take a cover yet.
+
+## 2026-10-23 — agents: surfaces, fields, units
+
+Round 52: the user wants agents that build and mine, as a layer for many
+games ("let's do it", on a new `agents` branch off grids). First the ground
+they walk and the way they find. Surfaces come straight from the
+intervals rather than a depth peel: each column's solid and loose runs,
+merged where they touch, give a surface wherever there's 1.5 cells of air
+over the top. Up to four a column, linked to the six hex neighbours within
+a step up or a drop, with headroom checked over both. The fields are
+distances relaxed in place on the GPU, eight sweeps a tick. Each surface is
+recomputed from its neighbours rather than kept as a running minimum, so a
+field heals when the terrain changes; past (w + h) × 6 a value counts as
+unreachable, which stops pockets cut off from the seeds counting up for
+ever (the first field image showed one as a stale red patch). A unit
+follows its group's field down the six-neighbour gradient, is pushed away
+from busier columns (double-buffered counts) and never crosses a missing
+link. Each draws as three voxels through the physics voxel hook, so it is
+lit and shadowed for free.
+
+Measured (scripts/agentstest.mjs, the 256 × 256 sandbox):
+- Surfaces: 65,484 columns with one and 52 with two (under the bridge);
+  390,551 links.
+- 300 units sent 66 cells: mean distance 62 → 20 in 21 s.
+- A 4-high stone wall across the way: they split round both ends.
+- 4,000 units flow round the pond; agents 0.47 ms a tick on the GPU
+  (sediment 0.52).

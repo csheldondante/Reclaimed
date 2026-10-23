@@ -22,6 +22,8 @@ each was implemented.
   GPU like particles, jobs as fields) awaits their answers on branch, the
   units session's pathing, and scale: BACKLOG A1.
 - The user's go-ahead (relayed by the units session) for places step 1.
+- On the agents layer: "Yes please make agents off of grids and let's do
+  it! I'm excited for this layer." (branch `agents`, docs/AGENTS.md)
 
 ## 2026-10-23 — round 51 (session 5, `physics`) — seasons; places
 

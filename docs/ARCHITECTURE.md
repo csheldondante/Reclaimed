@@ -500,6 +500,19 @@ all are asleep), or when a cyclone passes (small bodies are carried). Break
 on a body removes voxels in its frame and splits it; a budget (64 bodies /
 16k voxels) crumbles the oldest small ones into loose ground (`deposit` .yz).
 
+## Agents (round 52, docs/AGENTS.md; branch `agents`)
+
+`installAgents(core)` (src/agents/) adds one system after the particles and
+a voxel source on the renderer. Its buffers are its own (not world
+contracts): `agentNav` (per column NAV_K = 4 surfaces, vec2<u32>: height,
+headroom | wet | six 3-bit links), `agentDist` (NFIELDS = 4 fields × surfaces,
+f32), `agentUnits` (two vec4 a unit), `agentOcc` (units per column, two
+halves by tick parity), `agentInst` (three body-format voxels a unit) and
+its indirect args. It reads `layers` and `water`. A tick: every 8 ticks the
+surfaces are re-peeled and linked; 8 sweeps of the fields in use; the
+occupancy half cleared; every unit stepped. Bindings 3-10 (10 the params
+uniform: counts, 32 seeds, each group's field and colour).
+
 ## Climate (round 50)
 
 `Globals.rules.y` is the air's temperature (°C) at height 0 by day and
