@@ -86,6 +86,7 @@ export class ParticleSystem implements SimSystem {
       15: 'tex',
       17: 'tex',
       18: 'tex',
+      19: 'tex',
       21: 'tex',
       22: 'stex',
     } as const;
@@ -122,6 +123,7 @@ export class ParticleSystem implements SimSystem {
       15: world.windFieldView,
       17: world.driftView,
       18: world.editStateView,
+      19: world.airView,
       21: world.bodyProjView,
       22: world.sparkView,
     };

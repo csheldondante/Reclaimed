@@ -152,6 +152,14 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     if (fv > 0.75) { c = vec3<f32>(0.95, 0.8, 0.25); } else if (fv > 0.5) { c = vec3<f32>(0.62, 0.48, 0.82); } else if (fv > 0.3) { c = vec3<f32>(0.85, 0.35, 0.3); }
     col = vec4<f32>(c * (0.75 + 0.25 * abs(sin(G.time * 8.0 + sr * 50.0))), 1.0);
   }
+  else if (kind == 23u) { // snow blown off the ground: a white fleck
+    size = 0.07 + sr * 0.05;
+    col = vec4<f32>(0.95, 0.96, 1.0, 0.9);
+  }
+  else if (kind == 22u) { // running grain (loose ground on the move): the material's colour
+    size = 0.1 + sr * 0.07;
+    col = vec4<f32>(dustColour(P.m.w) * (0.78 + 0.22 * sr2), 1.0);
+  }
   else if (kind == 21u) { // poured grain: the material's colour
     size = 0.12 + sr * 0.06;
     col = vec4<f32>(dustColour(P.m.w) * (0.8 + 0.2 * sr2), 1.0);
@@ -184,7 +192,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  let mote = kind == 1u || kind == 21u;
+  let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u;
   o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   return o;
 }

@@ -73,6 +73,18 @@ const K_GLOW: u32 = 19u;
 const K_GRAIN: u32 = 21u;
 const GRAIN_DROP: f32 = 12.0; // cells above the ground it starts falling
 const GRAIN_G: f32 = 2.0 * GRAIN_DROP / (POUR_FALL * POUR_FALL); // lands in POUR_FALL
+// loose ground on the move (round 50): grains streaming off a slump, out of
+// a face, or down where loose ground lost what held it (sediment.wgsl writes
+// the flow into the air texture); they run down the slope and settle. Only a
+// look: the material itself moves in the layers. m.w carries the material.
+const K_RUN: u32 = 22u;
+const RUN_G: f32 = 24.0;
+// grains shown per cell of flow (a pass lasts two ticks), at the high tier's
+// 65536 particles (fewer with fewer: a big slump mustn't take the whole ring)
+const RUN_GRAINS: f32 = 30.0;
+@group(0) @binding(19) var airTex: texture_2d<f32>;
+// snow blown off the ground (round 50): a white fleck on the wind, a look
+const K_SNOW: u32 = 23u;
 // (the funnel follows the spine: spineAt() in common.wgsl)
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
@@ -129,6 +141,11 @@ fn dropDust(pos: vec3<f32>, amount: f32) {
   let c = cellAt(pos.xy);
   if (amount > 0.0 && inMap(c)) { atomicAdd(&contamDelta[G.mapW * G.mapH + colIdxI(c)], i32(amount * DUST_UNIT)); }
 }
+/** The ground a running grain meets on q (a body lying there too). */
+fn runGround(q: vec2<i32>) -> f32 {
+  let j = colIdxI(q);
+  return max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q));
+}
 fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0; }
 
 fn depositAt(pos: vec3<f32>, payload: f32) {
@@ -138,6 +155,8 @@ fn depositAt(pos: vec3<f32>, payload: f32) {
 
 /** How readily bare ground sheds dust: polluted soil most, then plain soil/sand. */
 fn dustinessOf(cs: f32, m: u32) -> f32 {
+  // (snow, fallen leaves, ice and crystal raise no dust: round 50)
+  if (m == MAT_SNOW || m == MAT_LEAFLIT || m == MAT_ICE || m == MAT_CRYSTAL) { return 0.0; }
   var d = clamp(cs, 0.0, 1.5) * 0.7;
   if (m == MAT_SOIL || m == MAT_SAND) { d += 0.12; }
   if (m == MAT_ASH_P) { d += 0.6; } // burned waste: fine, light, blows away
@@ -168,6 +187,29 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   let cover = smoothstep(0.3, 1.5, v);
   let boost = max(G.env.z, 1.0);
   let onGround = base + vec3<f32>(r1 - 0.5, fract(r1 * 7.31) - 0.5, 0.0) * 0.9;
+
+  // loose ground on the move: grains stream off where it goes
+  let fl = textureLoad(airTex, p, 0);
+  if (fl.y > 0.0) {
+    let way = u32(fl.w) % 8u;
+    let fmat = u32(fl.w) / 8u;
+    let rate = min(fl.y * RUN_GRAINS * 0.5, 3.0) * min(f32(arrayLength(&parts)) / 65536.0, 1.0);
+    let nG = u32(rate) + select(0u, 1u, r1 < fract(rate));
+    for (var k = 0u; k < nG; k++) {
+      let hk = hash3(id.x, id.y, G.tick ^ (0x7a11u + k * 977u));
+      let a = f32(hk & 0xffffu) / 65536.0 - 0.5;
+      let b = f32(hk >> 16u) / 65536.0;
+      var at = vec3<f32>(base.xy + vec2<f32>(a, fract(b * 5.7) - 0.5) * 0.8, fl.z - b * 0.3);
+      var vel = vec3<f32>(0.0);
+      if (way < NDIR) {
+        // off the edge it leaves by, along it, outward
+        let d = DIRV[way];
+        at = vec3<f32>(base.xy + d * 0.45 + vec2<f32>(-d.y, d.x) * a * 0.9, fl.z - b * 0.25);
+        vel = vec3<f32>(d * (0.8 + b * 1.4), 0.0);
+      }
+      spawnFull(at, vel, 2.5 + b, K_RUN, 0.0, hk, 0u, dustTag(fmat));
+    }
+  }
 
   // the sandbox pour: grains fall while there is material that will land
   // after a full fall (what lands sooner is already in the air)
@@ -225,6 +267,20 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let hazeRate = min(max(ws - 6.0, 0.0) * 0.0005 * dusty, 0.0012) + dstorm * 0.0012 * dry * (1.0 - cover);
     if (rare(id.x, id.y, 0x4a2eu) < hazeRate * (1.0 - cycloneAt(base.xy))) {
       spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h, 0u, dustTag(groundDustMat(p, m)));
+    }
+    // snow and fallen leaves blow along in a breeze (a look: the wind moves
+    // the material itself, sediment.wgsl)
+    let tm = driftMatAt(p);
+    if ((tm == MAT_SNOW || tm == MAT_LEAFLIT) && driftAt(p) > 0.02) {
+      let lift = MATS[tm].loose.x;
+      if (ws > lift && rare(id.x, id.y, 0x5a0f1u) < (ws - lift) * 0.006) {
+        if (tm == MAT_SNOW) {
+          spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.7, 0.5 + r2), 1.5 + r1 * 1.5, K_SNOW, 0.0, h ^ 0x5a0u, 0u, 0u);
+        } else {
+          // (a leaf with the top bits of its seed set draws dry brown)
+          spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.5, 1.0 + r2), 6.0, K_LEAF, 0.0, 0xffff0000u | (h & 0xffffu));
+        }
+      }
     }
     // scattered litter torn off the ground by strong wind (removed by the
     // material system next tick; see litterStrip)
@@ -490,6 +546,31 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   let ci = colIdxI(cell);
   // (grains land on a body lying here too)
   let ground = max(f32(sfZ(surface[ci])) + driftAt(cell), bodyTopAt(cell)) + water[ci];
+  if (kind == K_RUN) {
+    vel.z -= RUN_G * DT;
+    pos += vel * DT;
+    let c2 = cellAt(pos.xy);
+    if (!inMap(c2) || life <= 0.0) { parts[id.x].p.w = 0.0; return; }
+    let g2 = runGround(c2);
+    if (pos.z <= g2) {
+      // into a wall (a step up it can't have fallen past): gone
+      if (g2 - pos.z > 0.6) { parts[id.x].p.w = 0.0; return; }
+      // on the ground: it runs down the slope and settles where it eases
+      // (the hex directions: Σ DIRV DIRVᵀ = 3 I, so this is the gradient)
+      var grad = vec2<f32>(0.0);
+      for (var k = 0u; k < NDIR; k++) {
+        let q = nbr(c2, k);
+        if (inMap(q)) { grad += DIRV[k] * clamp(runGround(q) - g2, -2.0, 2.0) / 3.0; }
+      }
+      pos.z = g2;
+      vel.z = 0.0;
+      let steep = length(grad);
+      vel = vec3<f32>((vel.xy - grad * 14.0 * DT) * max(1.0 - 3.5 * DT, 0.0), 0.0);
+      if (steep < 0.45 && length(vel.xy) < 0.35) { parts[id.x].p.w = 0.0; return; }
+    }
+    parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), P.m);
+    return;
+  }
   if (kind == K_GRAIN) {
     // straight down under gravity, gone where it lands (the cell it brings
     // lands with it: edit.wgsl times the deposit to the fall)
@@ -506,7 +587,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   // pulled in and held on the cone (flag 2; while caught v.x angle, v.y t along
   // the spine, v.z radius in funnel radii; m.z bits 4..5 which cyclone),
   // carried with it, and now and then flung back out
-  let catchable = kind == K_DUST || kind == K_LITTER || kind == K_LEAF || kind == K_ASH || kind == K_PETAL || kind == K_HAZE;
+  let catchable = kind == K_DUST || kind == K_LITTER || kind == K_LEAF || kind == K_ASH || kind == K_PETAL || kind == K_HAZE || kind == K_SNOW;
   let caught = (P.m.z & 2u) != 0u;
   var cyi = (P.m.z >> 4u) & 3u;
   if (!caught) {
@@ -633,6 +714,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       vel.x += sin(G.time * 5.0 + sr * 40.0) * 2.0 * DT;
       vel.y += cos(G.time * 4.3 + sr * 31.0) * 2.0 * DT;
     }
+  } else if (kind == K_SNOW) {
+    drag = 2.4; grav = 1.2;
+    vel.x += sin(G.time * 6.0 + sr * 40.0) * 1.5 * DT;
   } else if (kind == K_SEED) {
     // fluff: rides the wind, sinks slowly — slower still in a strong wind
     drag = 2.0; grav = 0.35 / (1.0 + ws * 0.35);

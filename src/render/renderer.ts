@@ -150,8 +150,8 @@ export class Renderer {
     this.topsBase = Math.ceil(this.opaqueCapacity / 16) * 16;
     this.instOpaque = world.buf('instOpaque', (this.topsBase + 2 * N) * 16, GPUBufferUsage.STORAGE);
     this.instPlant = world.buf('instPlant', N * VEG_INSTANCES * 16, GPUBufferUsage.STORAGE);
-    // up to two liquid boxes per column (water + oil)
-    this.instWater = world.buf('instWater', N * 2 * 16, GPUBufferUsage.STORAGE);
+    // up to four blended boxes per column: water, oil, two see-through solids (renderprep.wgsl GLASS_MAX)
+    this.instWater = world.buf('instWater', N * 4 * 16, GPUBufferUsage.STORAGE);
     // draw args: [0..3] opaque prisms, [4..7] water, [8..11] plants, [12..15]
     // tops alone; [16] where the tops start in instOpaque (renderprep.wgsl)
     this.indirect = world.buf(

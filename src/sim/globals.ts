@@ -116,6 +116,13 @@ export interface GlobalsState {
   fineVeg?: boolean;
   /** story rules (round 30): green spreads only by seeds, and sheds them */
   story?: boolean;
+  /**
+   * The climate (round 50; sim/climate.ts): air temperature (°C) at height 0
+   * by day, and how much colder per cell up (snow on the peaks while the
+   * valley rains). Below freezing rain falls as snow, water freezes; above,
+   * snow and ice melt. Absent: 15 °C, no fall with height.
+   */
+  climate?: { temp: number; lapse: number };
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }
@@ -194,5 +201,5 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     const d = s.dusts[i];
     f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);
   }
-  f.set([s.story ? 1 : 0, 0, 0, 0], 272);
+  f.set([s.story ? 1 : 0, s.climate?.temp ?? 15, s.climate?.lapse ?? 0, 0], 272);
 }

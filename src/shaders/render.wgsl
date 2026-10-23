@@ -1233,6 +1233,7 @@ fn fsWater(in: VOut) -> FOut {
   let ddx = dpdx(d);
   let ddy = dpdy(d);
   if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
+  if (MATS[in.info.x].look.y > 0.0) { return shadeGlass(in, ci); }
   if (in.nrm.z > 0.5 && d < 0.02) { discard; }
   let det = ex.x * ey.y - ex.y * ey.x;
   let dg = select(vec2<f32>(0.0), vec2<f32>(ddx * ey.y - ddy * ex.y, ddy * ex.x - ddx * ey.x) / det, abs(det) > 1e-9);
@@ -1322,6 +1323,16 @@ fn fsWater(in: VOut) -> FOut {
       col += vec3<f32>(0.25) * (1.0 - 0.8 * G.sky.w) * step(1.0 - 0.06 * rain, randv(rsub));
     }
   }
+  // (round 50) in the freezing cold a skin of ice over it: frosted, pale,
+  // still, cracked — climate.wgsl freezes the water itself from its bed up
+  let frost = smoothstep(-0.5, -3.0, airTempAt(in.wpos.z)) * select(0.6, 1.0, in.nrm.z > 0.5);
+  if (frost > 0.0) {
+    let cr = vnoise(in.wpos.xy * 1.7 + 3.0);
+    let crack = smoothstep(0.03, 0.0, abs(cr - 0.5)) * 0.6;
+    let frosted = toLinear(vec3<f32>(0.78, 0.86, 0.9) * (0.88 + 0.12 * vnoise(in.wpos.xy * 4.0))) * lighting(in.wpos, in.nrm);
+    col = mix(col, frosted * (1.0 - crack * 0.35), frost * 0.85);
+    alpha = mix(alpha, 0.92, frost);
+  }
   col *= 1.0 - gl * 0.3;
   col = haze(col, in.wpos);
   var o: FOut;
@@ -1332,6 +1343,56 @@ fn fsWater(in: VOut) -> FOut {
 
 const WATER_MIN_R: f32 = 0.012;
 
+
+/**
+ * See-through solids (round 50): ice and crystal, drawn blended with the
+ * liquids. Each face is broken into tilted triangular facets (a coarse
+ * lattice across it, a random tilt each), so the light catches them one by
+ * one: a sharp sun glint, a rim brighter at grazing angles, darker toward
+ * the base (the depth of the body seen through), bright facet edges.
+ * Crystal glows faintly of its own, more at night, each column a shade of
+ * violet, cyan or rose.
+ */
+fn shadeGlass(in: VOut, ci: u32) -> FOut {
+  let m = in.info.x;
+  let crystal = m == MAT_CRYSTAL;
+  var alb = toLinear(MATS[m].albedo.rgb);
+  let hc = randv(vec3<i32>(i32(ci), 11, 3));
+  if (crystal) { alb = mix(mix(alb, toLinear(vec3<f32>(0.45, 0.85, 0.92)), smoothstep(0.4, 0.7, hc)), toLinear(vec3<f32>(0.95, 0.55, 0.75)), smoothstep(0.75, 0.95, hc)); }
+  let n0 = normalize(in.nrm);
+  let t = normalize(cross(n0, select(vec3<f32>(0.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0), abs(n0.z) > 0.9)));
+  let bt = cross(n0, t);
+  let fp = in.wpos * select(1.4, 2.2, crystal);
+  let uv = vec2<f32>(dot(fp, t), dot(fp, bt));
+  // (a triangle lattice: skewed square cells, each cut in two)
+  let sk = vec2<f32>(uv.x + uv.y * 0.57735, uv.y * 1.1547);
+  let cid = vec2<i32>(floor(sk));
+  let fr = fract(sk);
+  let tri = select(0, 1, fr.x + fr.y > 1.0);
+  let h1 = randv(vec3<i32>(cid, tri + i32(ci % 97u) * 2));
+  let h2 = randv(vec3<i32>(cid + vec2<i32>(17, 5), tri));
+  let tilt = (vec2<f32>(h1, h2) - 0.5) * select(0.5, 0.9, crystal);
+  let n = normalize(n0 + t * tilt.x + bt * tilt.y);
+  let V = normalize(CAM.eye.xyz);
+  let fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0);
+  let L = sunDir();
+  let hv = normalize(L + V);
+  let spec = pow(max(dot(n, hv), 0.0), 80.0) * (1.0 - cloudShade(in.wpos.xy));
+  let depth = clamp((in.zr.y - in.wpos.z) / max(in.zr.y - in.zr.x, 0.3), 0.0, 1.0);
+  var col = alb * lighting(in.wpos, n) * mix(1.0, 0.6, depth) * (0.8 + 0.4 * h1);
+  col += alb * MATS[m].albedo.w * (0.7 + 0.3 * sin(G.time * 1.3 + h1 * 6.28)) * (0.5 + 0.8 * G.sky.w);
+  col += G.sunCol.rgb * (1.0 / 2.4) * spec * 1.4;
+  col += vec3<f32>(0.75, 0.85, 1.0) * fres * 0.3 * (1.0 - 0.6 * G.sky.w);
+  // (the facets' edges catch the light)
+  let edge = min(min(fr.x, fr.y), abs(1.0 - fr.x - fr.y));
+  col += alb * smoothstep(0.05, 0.0, edge) * 0.3;
+  let alpha = clamp(select(0.4, 0.55, crystal) + fres * 0.35 + spec * 0.5, 0.0, 0.95);
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), alpha);
+  o.pick = vec2<u32>(ci + 1u, m | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  return o;
+}
 
 /** Oil: near-black, glossy, with a slow thin-film rainbow sheen on top. */
 fn shadeOil(in: VOut, ci: u32) -> FOut {
