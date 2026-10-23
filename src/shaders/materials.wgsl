@@ -4,7 +4,7 @@ struct Material {
   albedo: vec4<f32>, // rgb (sRGB), emissive
   sim: vec4<f32>,    // state, reposeDry, reposeWet, strength
   eco: vec4<f32>,    // growthCap, suitability, specular, porosity
-  look: vec4<f32>,   // smooth (cells; 0 = hard steps), unused ×3
+  look: vec4<f32>,   // smooth (cells; 0 = hard steps), see-through (ice, crystal), unused ×2
   loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash flow
 };
 @group(0) @binding(2) var<uniform> MATS: array<Material, 32>;
@@ -26,6 +26,10 @@ const MAT_FLOWER: u32 = 15u;
 const MAT_DRIFT: u32 = 19u;
 const MAT_BASALT_M: u32 = 23u;
 const MAT_LAVA_M: u32 = 24u;
+const MAT_SNOW: u32 = 25u;
+const MAT_LEAFLIT: u32 = 26u;
+const MAT_ICE: u32 = 27u;
+const MAT_CRYSTAL: u32 = 28u;
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 
@@ -38,6 +42,9 @@ fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 fn rubbleOf(m: u32) -> u32 {
   if (m == MAT_WOOD || m == 21u || m == MAT_LEAVES) { return 17u; }
   if (m == 16u) { return MAT_DRIFT; }
+  // (ice shatters to snow, crystal to glittering sand)
+  if (m == MAT_ICE) { return MAT_SNOW; }
+  if (m == MAT_CRYSTAL) { return 3u; }
   if (m == MAT_TRASH) { return 18u; }
   return 4u;
 }

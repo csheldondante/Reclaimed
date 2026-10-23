@@ -77,6 +77,8 @@ const LOOSE: [string, number][] = [
   ['dust', MAT.Drift],
   ['ash', MAT.Ash],
   ['litter', MAT.Litter],
+  ['snow', MAT.Snow],
+  ['leaves', MAT.LeafLitter],
 ];
 
 /** Hard materials: built in place. */
@@ -87,6 +89,8 @@ const HARD: [string, number][] = [
   ['asphalt', MAT.Asphalt],
   ['rust', MAT.Rust],
   ['trash', MAT.Trash],
+  ['ice', MAT.Ice],
+  ['crystal', MAT.Crystal],
 ];
 
 const TOOLS: [EditTool, string, string][] = [

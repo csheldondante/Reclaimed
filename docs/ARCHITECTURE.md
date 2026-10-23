@@ -193,7 +193,7 @@ where pieces turn to particles on impact is P3.
 | layers | vec4<u32> slots: z0, z1 (f32), mat \| aux << 8 (aux = support·16 + damage) | structure, sediment, edit | structure, sediment, surface, renderprep, edit |
 | surface | u32: base of the loose run (8.8), material under it, slot count, bits 30/31 buried loose / air gap | surface | most systems |
 | drift, strata (textures) | the loose run as seen from above (derived from layers) | surface | sediment, particles, water, oil, ecology, wilt, render… |
-| deposit | vec4 per column: editor ±, a crumbled body's amount + material | edit, CPU (integrity) | sediment (folds in, zeroes) |
+| deposit | vec4 per column: editor ±, a crumbled body's amount + material, a cold storm's snow and a tree's leaves (climate) | edit, CPU (integrity), climate | sediment (folds in, zeroes) |
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
@@ -495,6 +495,27 @@ when nothing holds it up any more (checked each integrity pass, ~1 s when
 all are asleep), or when a cyclone passes (small bodies are carried). Break
 on a body removes voxels in its frame and splits it; a budget (64 bodies /
 16k voxels) crumbles the oldest small ones into loose ground (`deposit` .yz).
+
+## Climate (round 50)
+
+`Globals.rules.y` is the air's temperature (°C) at height 0 by day and
+`rules.z` its fall per cell up (GlobalsState `climate: { temp, lapse }`;
+absent: 15 °C, no fall), so a level can have snow on its peaks while its
+valley rains; `airTempAt(z)` (common.wgsl) is 4° colder at night.
+`snowShare(t)` splits a storm: the water pass rains only the warm share;
+`ClimateSystem` (climate.wgsl, period 4, after sediment) lays the rest as
+snow through `deposit`, melts snow and ice on top when warm (lava and fire
+on the column add their heat) into `water`, freezes water onto the ground
+under it when cold (ice, from the bed up; the water is drawn under a frosted
+skin meanwhile, fsWater), drops leaves under trees (leaf litter, to a carpet
+0.3 deep) and rots them into the soil under them where it's damp. Rain
+streaks turn to slow swaying flakes where the air is freezing (rain.wgsl).
+Materials (round 50): 25 snow and 26 leaf litter (loose; a breeze moves
+them, they blow as particles, raise no dust), 27 ice and 28 crystal (solid,
+`look.y` see-through: renderprep puts up to two a column into the blended
+list with the liquids, hiding nothing behind them; shadeGlass breaks their
+faces into tilted facets). Physics bodies of ice shatter to snow, crystal
+to sand.
 
 ## Story rules (round 30)
 

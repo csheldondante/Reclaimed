@@ -54,9 +54,16 @@ struct Globals {
   dusts: array<vec4<f32>, 2>,
   // the cyclones (no cap on summoning them: round 14)
   cyclones: array<CycloneU, 4>,
-  // x: story rules (round 30: green spreads only by seeds and sheds them), yzw unused
+  // x: story rules (round 30: green spreads only by seeds and sheds them);
+  // y: air temperature (°C) at height 0 by day, z: its fall per cell up
+  // (round 50, the climate: sim/climate.ts); w unused
   rules: vec4<f32>,
 };
+
+/** The air's temperature (°C) at height z: colder up high, and at night. */
+fn airTempAt(z: f32) -> f32 { return G.rules.y - G.rules.z * max(z, 0.0) - 4.0 * G.sky.w; }
+/** 0..1 how much of what a storm drops at temperature t is snow (all of it a degree under freezing). */
+fn snowShare(t: f32) -> f32 { return 1.0 - smoothstep(-1.0, 1.0, t); }
 
 /** Point on cyclone c's funnel spine at t in 0..1 (Catmull-Rom through the nodes); w = radius. */
 fn spineAt(c: u32, t: f32) -> vec4<f32> {

@@ -83,6 +83,8 @@ const RUN_G: f32 = 24.0;
 // 65536 particles (fewer with fewer: a big slump mustn't take the whole ring)
 const RUN_GRAINS: f32 = 30.0;
 @group(0) @binding(19) var airTex: texture_2d<f32>;
+// snow blown off the ground (round 50): a white fleck on the wind, a look
+const K_SNOW: u32 = 23u;
 // (the funnel follows the spine: spineAt() in common.wgsl)
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
@@ -153,6 +155,8 @@ fn depositAt(pos: vec3<f32>, payload: f32) {
 
 /** How readily bare ground sheds dust: polluted soil most, then plain soil/sand. */
 fn dustinessOf(cs: f32, m: u32) -> f32 {
+  // (snow, fallen leaves, ice and crystal raise no dust: round 50)
+  if (m == MAT_SNOW || m == MAT_LEAFLIT || m == MAT_ICE || m == MAT_CRYSTAL) { return 0.0; }
   var d = clamp(cs, 0.0, 1.5) * 0.7;
   if (m == MAT_SOIL || m == MAT_SAND) { d += 0.12; }
   if (m == MAT_ASH_P) { d += 0.6; } // burned waste: fine, light, blows away
@@ -263,6 +267,20 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     let hazeRate = min(max(ws - 6.0, 0.0) * 0.0005 * dusty, 0.0012) + dstorm * 0.0012 * dry * (1.0 - cover);
     if (rare(id.x, id.y, 0x4a2eu) < hazeRate * (1.0 - cycloneAt(base.xy))) {
       spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.4 + r1 * 2.5), vec3<f32>(wind * 0.5, 0.5 + r2), 6.0 + r1 * 4.0, K_HAZE, 0.0, h, 0u, dustTag(groundDustMat(p, m)));
+    }
+    // snow and fallen leaves blow along in a breeze (a look: the wind moves
+    // the material itself, sediment.wgsl)
+    let tm = driftMatAt(p);
+    if ((tm == MAT_SNOW || tm == MAT_LEAFLIT) && driftAt(p) > 0.02) {
+      let lift = MATS[tm].loose.x;
+      if (ws > lift && rare(id.x, id.y, 0x5a0f1u) < (ws - lift) * 0.006) {
+        if (tm == MAT_SNOW) {
+          spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.7, 0.5 + r2), 1.5 + r1 * 1.5, K_SNOW, 0.0, h ^ 0x5a0u, 0u, 0u);
+        } else {
+          // (a leaf with the top bits of its seed set draws dry brown)
+          spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.5, 1.0 + r2), 6.0, K_LEAF, 0.0, 0xffff0000u | (h & 0xffffu));
+        }
+      }
     }
     // scattered litter torn off the ground by strong wind (removed by the
     // material system next tick; see litterStrip)
@@ -569,7 +587,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   // pulled in and held on the cone (flag 2; while caught v.x angle, v.y t along
   // the spine, v.z radius in funnel radii; m.z bits 4..5 which cyclone),
   // carried with it, and now and then flung back out
-  let catchable = kind == K_DUST || kind == K_LITTER || kind == K_LEAF || kind == K_ASH || kind == K_PETAL || kind == K_HAZE;
+  let catchable = kind == K_DUST || kind == K_LITTER || kind == K_LEAF || kind == K_ASH || kind == K_PETAL || kind == K_HAZE || kind == K_SNOW;
   let caught = (P.m.z & 2u) != 0u;
   var cyi = (P.m.z >> 4u) & 3u;
   if (!caught) {
@@ -696,6 +714,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       vel.x += sin(G.time * 5.0 + sr * 40.0) * 2.0 * DT;
       vel.y += cos(G.time * 4.3 + sr * 31.0) * 2.0 * DT;
     }
+  } else if (kind == K_SNOW) {
+    drag = 2.4; grav = 1.2;
+    vel.x += sin(G.time * 6.0 + sr * 40.0) * 1.5 * DT;
   } else if (kind == K_SEED) {
     // fluff: rides the wind, sinks slowly — slower still in a strong wind
     drag = 2.0; grav = 0.35 / (1.0 + ws * 0.35);

@@ -408,6 +408,8 @@ function looseFrom(m: number): number {
   if (m === MAT.Wood || m === MAT.Canvas || m === MAT.Leaves) return MAT.Ash;
   if (m === MAT.Bone) return MAT.Drift;
   if (m === MAT.Trash) return MAT.Litter;
+  if (m === MAT.Ice) return MAT.Snow;
+  if (m === MAT.Crystal) return MAT.Sand;
   return MAT.Rubble;
 }
 

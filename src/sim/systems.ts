@@ -26,6 +26,7 @@ import swayWgsl from '../shaders/sway.wgsl?raw';
 import wiltWgsl from '../shaders/wilt.wgsl?raw';
 import windFieldWgsl from '../shaders/windfield.wgsl?raw';
 import sedimentWgsl from '../shaders/sediment.wgsl?raw';
+import climateWgsl from '../shaders/climate.wgsl?raw';
 import editWgsl from '../shaders/edit.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
@@ -114,8 +115,8 @@ export class WaterSystem implements SimSystem {
       world,
       'water-depth',
       waterDepthWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw' },
-      { 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read' },
+      { 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -330,6 +331,31 @@ export class SedimentSystem implements SimSystem {
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, 'sediment-out', this.out.k, this.out.group, this.world.groups);
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+  }
+}
+
+/**
+ * The climate (round 50, climate.wgsl): snow from cold storms, snow and ice
+ * melting, water freezing, trees dropping leaves that rot into soil — by the
+ * air's temperature (Globals climate) and the heat of lava and fire.
+ */
+export class ClimateSystem implements SimSystem {
+  readonly name = 'climate';
+  readonly period = 4;
+  private s;
+  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.s = kernel(
+      device,
+      world,
+      'climate',
+      climateWgsl,
+      { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
+      { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.veg, 7: world.moisture, 8: world.fire, 9: world.lava },
+      true,
+    );
+  }
+  encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
   }
 }

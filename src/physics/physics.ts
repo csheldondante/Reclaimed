@@ -84,6 +84,10 @@ const PHYS: Partial<Record<number, PhysMat>> = {
   [MAT.Rust]: { density: 7, stiffness: 0.5, yield: 0.02, plastic: 0.9, break: 0.1, restitution: 0.1, friction: 0.6, crumble: 18, soften: 400, melt: 1300, heat: 1.3, loose: MAT.Rubble, damp: 0.25, crack: 14 },
   [MAT.Wood]: { density: 0.7, stiffness: 0.7, yield: 0.2, plastic: 0.2, break: 0.15, restitution: 0.2, friction: 0.5, crumble: 22, soften: 200, melt: 300, heat: 2, loose: MAT.Ash, damp: 0.3, crack: 16 },
   [MAT.Canvas]: { density: 0.3, stiffness: 0.25, yield: 0.4, plastic: 0.3, break: 1, restitution: 0.05, friction: 0.8, crumble: 40, soften: 100, melt: 250, heat: 3, loose: MAT.Ash, damp: 0.15, crack: 0 },
+  // (round 50) brittle, they shatter: ice to snow, crystal to sand
+  // (ice never melts into lava: it melts in the world, sim/climate.ts)
+  [MAT.Ice]: { ...ROCKY, density: 0.92, break: 0.03, crumble: 8, crack: 4, soften: 2000, melt: 0, loose: MAT.Snow },
+  [MAT.Crystal]: { ...ROCKY, density: 2.6, break: 0.02, crumble: 10, crack: 3, loose: MAT.Sand },
   [MAT.Trash]: { density: 1, stiffness: 0.4, yield: 0.2, plastic: 0.4, break: 0.12, restitution: 0.05, friction: 0.8, crumble: 10, soften: 200, melt: 350, heat: 2, loose: MAT.Litter, damp: 0.3, crack: 0 },
 };
 

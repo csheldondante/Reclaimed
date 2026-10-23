@@ -35,6 +35,8 @@ export interface MaterialDef {
    * brick). Stone smooths too (round 28): only rises of over 2 stay sheer.
    */
   smooth: number;
+  /** See-through (round 50): drawn blended and faceted (ice, crystal; renderprep.wgsl glassMat); 0 = opaque. */
+  glass?: number;
   /**
    * Loose ground (granular only; round 22 moved these from drift.wgsl's
    * looseOf/washOf into the table): wind (cells/s, sheltered) needed to move
@@ -78,6 +80,14 @@ export const MAT = {
   Basalt: 23,
   /** molten rock: a liquid field (WorldGpu.lava), drawn as prisms; never in the layers */
   Lava: 24,
+  /** round 50: loose, light; drifts in light wind, falls in cold storms, melts (sim/climate.ts) */
+  Snow: 25,
+  /** round 50: fallen leaves, loose and light; they blow as leaves and rot to soil */
+  LeafLitter: 26,
+  /** round 50: see-through; water freezes to it in the cold, it melts back */
+  Ice: 27,
+  /** round 50: faceted, see-through, glowing faintly */
+  Crystal: 28,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -137,6 +147,15 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'basalt', albedo: [0.2, 0.19, 0.19], state: MatState.Solid, growthCap: 1.2, suitability: 0.35, specular: 0.12, porosity: 0.2 },
   // molten rock (a field, like oil; its glow is drawn by temperature)
   { ...NONE, name: 'lava', albedo: [0.9, 0.35, 0.08], state: MatState.Liquid, emissive: 1 },
+  // snow (round 50): bright, holds a fair slope dry, slumps wet; a breeze
+  // moves it (drifts in the lee), water carries it; melts to water when warm
+  { ...NONE, name: 'snow', albedo: [0.84, 0.86, 0.9], state: MatState.Granular, reposeDry: 1.3, reposeWet: 0.7, strength: 0.05, growthCap: 0, porosity: 0, specular: 0.3, smooth: 2, windLift: 6, airborne: 0, washMobility: 1, washFlow: 0.05 },
+  // fallen leaves (round 50): light, loose; blow about in a breeze, rot into soil
+  { ...NONE, name: 'leaf litter', albedo: [0.55, 0.36, 0.16], state: MatState.Granular, reposeDry: 1.5, reposeWet: 1.2, strength: 0.05, growthCap: 4, suitability: 0.9, porosity: 0.5, smooth: 1.5, windLift: 5, airborne: 0, washMobility: 1, washFlow: 0.03 },
+  // ice (round 50): see-through pale blue, glossy; melts back to water
+  { ...NONE, name: 'ice', albedo: [0.72, 0.86, 0.95], state: MatState.Solid, strength: 0.4, specular: 0.9, glass: 1 },
+  // crystal (round 50): faceted, see-through, a faint glow of its own
+  { ...NONE, name: 'crystal', albedo: [0.62, 0.5, 0.9], state: MatState.Solid, emissive: 0.25, strength: 0.7, specular: 1, glass: 1 },
 ];
 
 export const MAX_MATERIALS = 32;
@@ -151,7 +170,7 @@ export function packMaterialTable(): Float32Array {
     out.set([m.albedo[0], m.albedo[1], m.albedo[2], m.emissive], o);
     out.set([m.state, m.reposeDry, m.reposeWet, m.strength], o + 4);
     out.set([m.growthCap, m.suitability, m.specular, m.porosity], o + 8);
-    out.set([m.smooth, 0, 0, 0], o + 12);
+    out.set([m.smooth, m.glass ?? 0, 0, 0], o + 12);
     out.set([m.windLift, m.airborne, m.washMobility, m.washFlow], o + 16);
   });
   return out;

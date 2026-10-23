@@ -3174,3 +3174,31 @@ can't take the ring: a 12-cell sand pillar of radius 3 sheds up to
 ~12,600 grains at 2 s on high (65,536), 770 left at 8 s as it settles
 at ~7 cells (scripts/flowtest.mjs); a pile on a shelf taken away falls
 and spreads as grains (--shelf).
+
+## 2026-10-23 — snow, leaves, ice and crystal
+
+Round 50's materials. They needed a temperature, which the world didn't
+have: the climate is two numbers in the globals' spare `rules.yz` (the
+air at height 0 and its fall per cell up, colder at night), so a level
+can be cold or warm or both by height. Snow and leaf litter are loose
+ground like the rest (the sediment pass moves them: a breeze lifts them,
+they slump, water carries them), with no airborne share (dust grains
+land as dust: snow blown into the air would have come down as dust);
+their blowing is a particle look instead. One climate kernel does the
+state changes, every fourth tick: cold storms snow (the water pass leaves
+that share out), snow and ice melt into water, water freezes, trees drop
+leaves that rot into soil. First storm at 1:1 laid two cells of snow a
+minute (the game's rain is heavy); now half. Ice can't form on top of
+water in a column model, so it freezes from the bed up and the water is
+drawn under a frosted, cracked skin while it does. Ice and crystal are
+drawn see-through: renderprep sends them to the blended list with the
+liquids (made room for two a column) and doesn't let them hide the faces
+behind them; their faces break into tilted facets that catch the sun one
+by one, crystal in violet, cyan or rose with a faint glow. First look
+grey snow under the storm's shade and blown-out under clear sun after
+the storm (albedo 0.96, the whole map white): 0.84 keeps its shading.
+Measured (scripts/climatetest.mjs, sandbox, speed 4): −8 °C with a storm
+over the pond, 2,750–7,500 cells of snow in 48–80 s of storm (by its
+strength); then 18 °C, all but 7–200 melted in as long. Leaf litter in
+the valley (--leaves): 26 patches after 320 s at the first rate, five
+times that now.

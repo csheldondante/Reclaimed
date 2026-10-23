@@ -1,7 +1,10 @@
 // ---- visibility / render preparation --------------------------------------
 // Turns world state into box instances for the renderer:
 //   opaque: one box per layered interval (vegetation: vegprep.wgsl)
-//   liquid: one box per column for water and one for oil floating on it
+//   liquid: one box per column for water and one for oil floating on it,
+//   and (round 50) see-through solids — ice, crystal (MATS look.y > 0) — up
+//   to GLASS_MAX a column, drawn blended with the liquids (render.wgsl
+//   shadeGlass); they hide nothing behind them
 // Appends with one global atomic per workgroup (local prefix via workgroup
 // atomics) to avoid contention on the indirect-args counters.
 //
@@ -37,18 +40,29 @@ const FLAG_VEG: u32 = 2u;
 const HIDE_TOP: u32 = 64u;
 const SIDES_ALL: u32 = 63u;
 
-/** z of the top of the contiguous stack starting at the ground (0 outside the map). */
-fn groundTop(q: vec2<i32>) -> f32 {
+/** Is m see-through (ice, crystal: drawn blended, hiding nothing)? */
+fn glassMat(m: u32) -> bool { return MATS[m].look.y > 0.0; }
+const GLASS_MAX: u32 = 2u;
+
+/**
+ * z of the top of the contiguous stack starting at the ground (0 outside the
+ * map): what hides the faces beside it. A see-through interval ends it
+ * (`glass` false: what's behind it shows) or counts (`glass` true: ice beside
+ * ice hides their shared sides).
+ */
+fn groundTopG(q: vec2<i32>, glass: bool) -> f32 {
   if (!inMap(q)) { return 0.0; }
   let cs = colSlots(u32(q.x), u32(q.y));
   var t = 0.0;
   for (var i = 0u; i < cs.y; i++) {
     let v = layers[cs.x + i];
     if (ivEmpty(v) || abs(ivZ0(v) - t) > 1e-3) { break; }
+    if (!glass && glassMat(ivMat(v))) { break; }
     t = ivZ1(v);
   }
   return t;
 }
+fn groundTop(q: vec2<i32>) -> f32 { return groundTopG(q, false); }
 
 /** Hidden faces: bits 0..5 the sides (NDIR order), bit 6 the top. */
 fn hideFaces(gt: Dirs, z1: f32, nextZ0: f32) -> u32 {
@@ -58,6 +72,24 @@ fn hideFaces(gt: Dirs, z1: f32, nextZ0: f32) -> u32 {
   return f;
 }
 const HIDE_ALL: u32 = 127u;
+
+/**
+ * The faces of interval k of a column (its run of n intervals) hidden: by the
+ * stacks beside it (gt), the next interval on it — unless that one is
+ * see-through — and the loose sheet over the top (coverZ, coverSides).
+ */
+fn hideOf(col: ptr<function, array<vec4<u32>, MAX_K>>, k: u32, n: u32, gt: Dirs, coverZ: f32, coverSides: u32) -> u32 {
+  let v = (*col)[k];
+  var nz = 9999.0;
+  if (k + 1u < n) {
+    let u = (*col)[k + 1u];
+    // (a see-through interval on another of its kind hides its top: ice on ice)
+    if (!glassMat(ivMat(u)) || glassMat(ivMat(v))) { nz = ivZ0(u); }
+  } else if (coverZ >= 0.0) { nz = coverZ; }
+  var h = hideFaces(gt, ivZ1(v), nz);
+  if (k + 1u == n && MATS[ivMat(v)].look.x > 0.0) { h |= coverSides; }
+  return h;
+}
 
 /**
  * The sides of p's soft top that its smoothed corners cover: where both
@@ -108,6 +140,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var d = 0.0;
   var ol = 0.0;
   var gt = dZero();
+  // (beside see-through intervals: the stacks with them counted)
+  var gtG = dZero();
+  var nGlass = 0u;
   var nVis = 0u;
   // the interval drawn as its top alone (none: run)
   var topOnly = 0u;
@@ -135,10 +170,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     // here: its neighbours needn't be looked at)
     var needN = !meshCol || d > WATER_MIN;
     if (meshCol) { for (var k = 0u; k < run; k++) { if (!fieldMat(ivMat(col[k]))) { needN = true; } } }
-    if (needN) {
+    for (var k = 0u; k < run; k++) { if (glassMat(ivMat(col[k])) && nGlass < GLASS_MAX) { nGlass += 1u; } }
+    if (needN || nGlass > 0u) {
       for (var k = 0u; k < NDIR; k++) { gt[k] = groundTop(nbr(p, k)); }
       coverSides = smoothSides(p, gt);
     }
+    if (nGlass > 0u) { for (var k = 0u; k < NDIR; k++) { gtG[k] = groundTopG(nbr(p, k), true); } }
     // under a fair depth of loose ground the top face is covered by the sheet
     // (it only shows where the sheet thins out at its edges)
     if (run < nSlots && run > 0u && ivZ1(col[nSlots - 1u]) - ivZ0(col[run]) >= 0.3) { coverZ = ivZ1(col[run - 1u]); }
@@ -146,15 +183,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     for (var k = 0u; k < run; k++) {
       let v = layers[cs.x + k];
       if (meshCol && fieldMat(ivMat(v))) { continue; }
-      var nz = 9999.0;
-      if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); } else if (coverZ >= 0.0) { nz = coverZ; }
-      var h = hideFaces(gt, ivZ1(v), nz);
-      if (k + 1u == run && MATS[ivMat(v)].look.x > 0.0) { h |= coverSides; }
+      if (glassMat(ivMat(v))) { continue; }
+      let h = hideOf(&col, k, run, gt, coverZ, coverSides);
       if (h != HIDE_ALL) { nVis += 1u; }
       if (h == SIDES_ALL) { topOnly = k; }
     }
     nO = nVis - select(0u, 1u, topOnly < run);
-    nW = select(0u, 1u, d > WATER_MIN) + select(0u, 1u, ol > OIL_MIN);
+    nW = select(0u, 1u, d > WATER_MIN) + select(0u, 1u, ol > OIL_MIN) + nGlass;
   }
   let offO = atomicAdd(&wgO, nO);
   let offW = atomicAdd(&wgW, nW);
@@ -169,17 +204,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   if (!inside) { return; }
 
   var o = baseO + offO;
+  var w = baseW + offW;
+  var col: array<vec4<u32>, MAX_K>;
+  for (var k = 0u; k < nSlots; k++) { col[k] = layers[cs.x + k]; }
+  var g = 0u;
   for (var k = 0u; k < run; k++) {
-    let v = layers[cs.x + k];
+    let v = col[k];
     if (meshCol && fieldMat(ivMat(v))) { continue; }
-    var nz = 9999.0;
-    if (k + 1u < run) { nz = ivZ0(layers[cs.x + k + 1u]); } else if (coverZ >= 0.0) { nz = coverZ; }
-    var hide = hideFaces(gt, ivZ1(v), nz);
-    if (k + 1u == run && MATS[ivMat(v)].look.x > 0.0) { hide |= coverSides; }
-    if (hide == HIDE_ALL) { continue; }
+    let glass = glassMat(ivMat(v));
+    if (glass && g >= GLASS_MAX) { continue; }
+    var gk = gt;
+    if (glass) { gk = gtG; }
+    var hide = hideOf(&col, k, run, gk, coverZ, coverSides);
+    if (hide == HIDE_ALL && !glass) { continue; }
     var inst = mkInst(id.x, id.y, 1u, 1u, ivZ0(v), ivZ1(v), ivMat(v), select(0u, FLAG_TOP, k + 1u == run));
     inst.w |= hideBits(hide);
     inst.w |= (ivAux(v) & 15u) << 16u; // structural damage → cracks
+    if (glass) {
+      // (counted whether hidden or not: an all-hidden one draws no face)
+      instWater[w] = inst;
+      w += 1u;
+      g += 1u;
+      continue;
+    }
     if (k == topOnly) {
       instOpaque[baseT + offT] = inst;
       continue;
@@ -187,7 +234,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     instOpaque[o] = inst;
     o += 1u;
   }
-  var w = baseW + offW;
   // liquids lie on top of drifted dust (it sinks; round 13)
   let bed = max(top + driftAt(vec2<i32>(id.xy)), bodyTopAt(vec2<i32>(id.xy)));
   if (d > WATER_MIN) {
