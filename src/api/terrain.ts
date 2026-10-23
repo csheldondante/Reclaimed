@@ -7,6 +7,7 @@ import { cellAt } from '../world/lattice';
 import { columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
 import { MAT, MATERIALS, MatState } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, type MaterialName } from './common';
+import { PULL_SLOTS } from '../sim/systems';
 import type { Mirror } from './mirror';
 import { blendedTop } from './smooth';
 
@@ -35,6 +36,59 @@ export interface SampleOpts {
   smooth?: boolean;
 }
 
+export interface PullOpts {
+  /** what lies over the pulled run: 'lift' rides up with it (loose cover then slumps off by itself), 'through' cracks the solids on it to their rubble */
+  mode?: 'lift' | 'through';
+  /** how broken its outline is, 0..1 (default: 0.6 for a solid, 0.15 for loose ground) */
+  roughness?: number;
+  /** lean the pull: higher toward `dir` (amount 1: the far rim twice the height, the near one nothing) */
+  lean?: { dir: readonly [number, number]; amount: number };
+}
+
+/**
+ * A layer pull under way (terrain.pull): call `to` each frame with the
+ * brush's centre, radius and the stroke's height so far; overlapping calls
+ * compose (each column moves toward the most the stroke has asked of it,
+ * never twice), so a drag with a growing height builds smoothly. `end`
+ * when the drag lets go.
+ */
+export class PullStroke {
+  private started = false;
+  private done = false;
+  constructor(
+    private owner: Terrain,
+    readonly slot: number,
+    private material: number,
+    private opts: PullOpts,
+  ) {}
+
+  to(x: number, y: number, at: { radius: number; height: number }): void {
+    if (this.done) throw new Error('world.terrain.pull: the stroke has ended');
+    const o = this.opts;
+    const l = o.lean ? Math.hypot(o.lean.dir[0], o.lean.dir[1]) || 1 : 1;
+    this.owner.queuePull({
+      x,
+      y,
+      radius: at.radius,
+      height: at.height,
+      material: this.material,
+      mode: o.mode === 'through' ? 1 : 0,
+      slot: this.slot,
+      start: !this.started,
+      roughness: o.roughness ?? (materialState(this.material) === 'solid' ? 0.6 : 0.15),
+      dir: o.lean ? [o.lean.dir[0] / l, o.lean.dir[1] / l] : [0, 0],
+      lean: o.lean?.amount ?? 0,
+    });
+    this.started = true;
+  }
+
+  end(): void {
+    if (this.done) return;
+    this.done = true;
+    this.owner.releaseSlot(this.slot);
+  }
+}
+
 /** meshregion.wgsl fieldMat: in the field mesh (else drawn as a prism: what's built) */
 function fieldMat(m: number): boolean {
   return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt;
@@ -50,6 +104,8 @@ export class Terrain {
   /** per column, the top of its field-mesh ground (NaN: not worked out yet this read) */
   private fieldTops = new Float32Array(0);
   private topsGen = -1;
+  /** stroke slots: when each was last taken (0 free) */
+  private slots = new Float64Array(PULL_SLOTS);
 
   constructor(
     private core: WorldCore,
@@ -188,6 +244,40 @@ export class Terrain {
     // (pours land over the next ticks: the brush state has to run every tick)
     this.core.sim.edit.always = true;
     this.edit(OP_POUR, m, x, y, opts.radius ?? 3, opts.layers ?? 1);
+  }
+
+  /**
+   * Grab `material`'s layer and pull it (BACKLOG E2): its run under a brush
+   * grows (or, with a negative height, sinks), rough by its own noise, and
+   * what lies over it moves with it (opts.mode). A drag: call `to` each
+   * frame on the stroke this returns, then `end`. Up to 8 strokes at once;
+   * a ninth takes over the one begun longest ago.
+   */
+  pull(material: MaterialName, opts: PullOpts = {}): PullStroke {
+    const m = materialId(material);
+    const st = materialState(m);
+    if (st !== 'solid' && st !== 'loose') throw new Error(`world.terrain.pull: "${material}" isn't ground (a solid or loose material)`);
+    let slot = this.slots.findIndex((t) => t === 0);
+    if (slot < 0) slot = this.slots.indexOf(Math.min(...this.slots));
+    this.slots[slot] = performance.now();
+    return new PullStroke(this, slot, m, opts);
+  }
+
+  /** One pull at (x, y): raise `material` by `height` under a brush of `radius` (a stroke of one call). */
+  pullLayer(material: MaterialName, x: number, y: number, at: { radius: number; height: number } & PullOpts): void {
+    const s = this.pull(material, at);
+    s.to(x, y, at);
+    s.end();
+  }
+
+  /** (PullStroke) */
+  queuePull(p: import('../sim/systems').LayerPull): void {
+    this.core.sim.pulls.queue.push(p);
+  }
+
+  /** (PullStroke) */
+  releaseSlot(slot: number): void {
+    this.slots[slot] = 0;
   }
 
   /** Lay `layers` cells of a solid material on top within `radius`. */
