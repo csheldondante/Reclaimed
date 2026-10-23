@@ -100,9 +100,10 @@ game's CPU enemies did: kinds, behaviour, swings, hits and readback.
   A hostile kind:
   - wanders until its field says a target is within notice;
   - then closes in down the field;
-  - swings when a target is within reach. The blow lands 0.3 s into a 0.6 s
-    swing, as a `swing` event naming the target and damage; a cooldown of
-    its swing period follows.
+  - swings when a target is within reach: a `windup` event as it begins
+    (the target, and `lands`: 0.3 s until the blow), then the blow 0.3 s
+    into a 0.6 s swing, as a `swing` event naming the target and damage (if
+    the target is still in reach); a cooldown of its swing period follows.
 - **Targets**: `setTargets` (up to 8, each frame) for the reach checks; it
   also seeds field 3 on them.
 - **Hits from the game**: a circle or a cone, carrying damage, a push (along

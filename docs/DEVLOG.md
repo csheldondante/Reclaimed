@@ -3460,3 +3460,13 @@ Two asks from the units session, now that its horde runs on sim.agents.
   the lich's pull is a cone toward the enemies pushing back toward the lich.
   Checked: a 90° cone pointing east with a westward push of 3 moved the
   units east of it west (vx -1.6) and left those behind it alone.
+
+## 2026-10-23 — agents: a windup event, for parries
+
+The knight's parry needs to know a blow is coming, not just that it landed.
+A swing now begins with a `windup` event naming the target and how long
+until the blow (0.3 s), and the blow follows as before if the target is
+still in reach. In the horde test there were 124 windups to 114 blows in 10
+s; the difference is blows whose target had moved off. The user's design
+notes on world authoring are in DECISIONS (round 52), with BACKLOG E2-E7
+for what the world API owes them.

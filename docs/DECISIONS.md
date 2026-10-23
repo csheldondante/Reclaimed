@@ -24,6 +24,40 @@ each was implemented.
 - The user's go-ahead (relayed by the units session) for places step 1.
 - On the agents layer: "Yes please make agents off of grids and let's do
   it! I'm excited for this layer." (branch `agents`, docs/AGENTS.md)
+- Controllers and world authoring (the user's design notes, relayed by the
+  units session).
+  - The world editor is its own module: a runtime for interacting with the
+    simulation and data layers Reclaimed owns. It is in neither Reclaimed
+    nor the hoverbike; it lives in GameplayGM on the world API and uses
+    abstractions, never internals. Reclaimed's sandbox editor stays as our
+    own client, so what Reclaimed owes is editing operations in the world
+    API, not an editor.
+  - The asks, in the user's order (BACKLOG E2-E7):
+    1. Layer pulls: grab a material layer and pull it (bedrock up through
+       sand and soil, pushing through or displacing them), growing by that
+       material's own noise, directional or dragged too; the same
+       vocabulary for dig, pile, berm and exposing strata. Open: how
+       displacement conserves mass across intervals and loose debris.
+    2. Watersheds: lasting or replenishing sources (springs, rain-fed
+       catchments), so rivers, tributaries and waterfalls keep flowing; a
+       per-region freeze of erosion and terrain change apart from water,
+       which keeps flowing over approved terrain without re-carving it (for
+       authoring and for speed). Open: how locks meet flowing sediment,
+       melting, explosions and edits.
+    3. Simulation windows: start an event (meteor, volcano, storm, fire,
+       flood, freeze, overgrowth), run it N seconds (optionally in a
+       region only), keep the result.
+    4. Settlements on agents: homes spawn residents, workplaces make jobs;
+       a woodmill's workers fell and carry trees; a quarry's dig real stone,
+       leaving a pit; a farm's clear wild growth and plant crops. The payoff
+       is visible, lasting change in the world.
+    5. Building: Townscaper-like placement on the structure grids, adjacency
+       picking walls, roofs, doors and corners from a style set (stone,
+       brick, wood, metal, glass); the editor owns the rules, Reclaimed the
+       build ops and adjacency queries.
+    6. A swing-start (windup) event, for the knight's parry. (Done.)
+  - Later: map generation aimed at controllers' traversal and combat
+    affordances (ramps for the bike, ledges for the gorilla).
 - The boundary between Reclaimed and games (relayed by the units session):
   each system is a module the game layer uses; the game builds controls and
   abilities on them, and the abilities interact through the shared world

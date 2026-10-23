@@ -67,6 +67,8 @@ const EV_SWING: u32 = 1u;
 const EV_HURT: u32 = 2u;
 const EV_DEATH: u32 = 3u;
 const EV_ALIGHT: u32 = 4u;
+// a swing begins: the target, and how long (s) until the blow lands (a parry's window)
+const EV_WINDUP: u32 = 5u;
 const BY_FIRE: u32 = 0xffffffffu;
 const BY_WATER: u32 = 0xfffffffeu;
 const BY_IMPACT: u32 = 0xfffffffdu;
@@ -364,7 +366,11 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       if (!worker) {
         if (state == ST_WANDER && here < kind.b.w) { state = ST_CHASE; stT = 0.0; }
         if (state == ST_CHASE && here > kind.b.w * 1.5) { state = ST_WANDER; stT = 0.0; }
-        if (state == ST_CHASE && tgt >= 0 && td < kind.b.x && cool <= 0.0) { state = ST_SWING; stT = 0.0; }
+        if (state == ST_CHASE && tgt >= 0 && td < kind.b.x && cool <= 0.0) {
+          state = ST_SWING;
+          stT = 0.0;
+          emit(EV_WINDUP, uid, u32(tgt), SWING_HIT, pos);
+        }
       }
       if (state == ST_SWING) {
         speed = 0.0;

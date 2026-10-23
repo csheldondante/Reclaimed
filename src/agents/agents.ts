@@ -114,6 +114,8 @@ export interface Target {
 }
 
 export type AgentEvent =
+  /** a swing begins: the blow lands on `target` in `lands` seconds, if it's still in reach (a parry's window) */
+  | { type: 'windup'; id: number; target: number; lands: number; x: number; y: number; z: number }
   | { type: 'swing'; id: number; target: number; damage: number; x: number; y: number; z: number }
   | { type: 'hurt'; id: number; hit: number | 'impact'; damage: number; x: number; y: number; z: number }
   | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava'; x: number; y: number; z: number }
@@ -524,6 +526,7 @@ export class Agents implements SimSystem {
           this.free.push(id % MAX_UNITS);
           this.holds.delete(id % MAX_UNITS);
         } else if (kind === 4) events.push({ type: 'alight', id, by: by(eu[o + 2]) as number | 'fire', ...p });
+        else if (kind === 5) events.push({ type: 'windup', id, target: eu[o + 2], lands: ef[o + 3], ...p });
       }
       if (n) {
         const uf = new Float32Array(b, evBytes, n * 16);

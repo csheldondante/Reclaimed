@@ -81,7 +81,7 @@ try {
   const tally = () =>
     page.evaluate(() => {
       const t = window.__t;
-      const c = { swing: 0, hurt: 0, death: 0, alight: 0 };
+      const c = { windup: 0, swing: 0, hurt: 0, death: 0, alight: 0 };
       for (const e of t.log) c[e.type]++;
       const states = {};
       for (const u of t.units ?? []) states[u.state] = (states[u.state] ?? 0) + 1;
