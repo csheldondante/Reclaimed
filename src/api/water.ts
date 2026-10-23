@@ -8,6 +8,8 @@ import { DIRV } from '../world/lattice';
 import { sfZ } from '../world/layout';
 import { columnAt } from './common';
 import type { Mirror } from './mirror';
+import { blendedTop } from './smooth';
+import type { SampleOpts } from './terrain';
 
 const OP_WATER = 3;
 const OP_DRAIN = 9;
@@ -42,20 +44,27 @@ export class Water {
 
   /** Water depth (cells) on the ground at (x, y). */
   depthAt(x: number, y: number): number | null {
-    const w = this.mirror.get('water');
+    const w = this.mirror.f32('water');
     const i = this.col(x, y);
     if (!w || i < 0) return null;
-    return new Float32Array(w)[i];
+    return w[i];
   }
 
-  /** The water's surface height at (x, y) (the bed it lies on plus its depth). */
-  levelAt(x: number, y: number): number | null {
-    const w = this.mirror.get('water');
-    const s = this.mirror.get('surface');
-    const d = this.mirror.get('drift');
+  /**
+   * The water's surface height at (x, y) (the bed it lies on plus its
+   * depth); `smooth`: blended over the three nearest cell centres, as the
+   * water sheet is drawn, so a rider on it doesn't step.
+   */
+  levelAt(x: number, y: number, opts?: SampleOpts): number | null {
+    const w = this.mirror.f32('water');
+    const s = this.mirror.u32('surface');
+    const d = this.mirror.f32('drift');
     const i = this.col(x, y);
     if (!w || !s || !d || i < 0) return null;
-    return sfZ(new Uint32Array(s)[i]) + new Float32Array(d)[i * 4] + new Float32Array(w)[i];
+    const { w: mw, h: mh } = this.core.dims;
+    const at = (j: number) => sfZ(s[j]) + d[j * 4] + w[j];
+    if (opts?.smooth) return blendedTop(x, y, (cx, cy) => (cx < 0 || cy < 0 || cx >= mw || cy >= mh ? null : at(cy * mw + cx)), false);
+    return at(i);
   }
 
   /**
@@ -63,13 +72,12 @@ export class Water {
    * column's outflow through its six pipes over its depth); [0, 0] where dry.
    */
   flowAt(x: number, y: number): [number, number] | null {
-    const w = this.mirror.get('water');
-    const f = this.mirror.get('flux');
+    const w = this.mirror.f32('water');
+    const q = this.mirror.f32('flux');
     const i = this.col(x, y);
-    if (!w || !f || i < 0) return null;
-    const depth = new Float32Array(w)[i];
+    if (!w || !q || i < 0) return null;
+    const depth = w[i];
     if (depth < 0.01) return [0, 0];
-    const q = new Float32Array(f);
     let vx = 0;
     let vy = 0;
     for (let d = 0; d < 6; d++) {

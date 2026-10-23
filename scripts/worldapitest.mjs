@@ -118,6 +118,75 @@ try {
     })),
   );
 
+  // ---- smooth sampling vs the field mesh's own vertices (the sandbox draws with it)
+  const smooth = await run(async () => {
+    const { api } = window.T;
+    const R = window.reclaimed;
+    const fm = R.renderer.fieldMesh;
+    if (!fm.on) return { skipped: 'no field mesh here' };
+    const src = fm.vertexBuffer;
+    const dev = R.core.host.gpu.device;
+    const tmp = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder();
+    enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
+    dev.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    const f = new Float32Array(tmp.getMappedRange().slice(0));
+    tmp.destroy();
+    await api.refresh();
+    const { w, h } = R.core.dims;
+    const eS = [];
+    const eR = [];
+    for (let v = 0; v < f.length / 8 && eS.length < 4000; v += 7) {
+      const x = f[v * 8];
+      const y = f[v * 8 + 1];
+      const z = f[v * 8 + 2];
+      const nz = f[v * 8 + 6];
+      const share = f[v * 8 + 7];
+      if (!(x > 2 && y > 2 && x < w - 2 && y < h * 0.86 - 2) || !(nz > 0.85) || !(share < 0.05) || !(z > 0.5)) continue;
+      const s = api.terrain.heightAt(x, y, { smooth: true });
+      const r = api.terrain.heightAt(x, y);
+      // (the top surface only: a vertex far from it is a cave's floor or a stale slot)
+      if (Math.abs(z - s) > 3) continue;
+      eS.push(Math.abs(z - s));
+      eR.push(Math.abs(z - r));
+    }
+    // (where the hexes step: vertices the stepped heights miss by over 0.1 — slopes, banks)
+    const stepS = eS.filter((_, k) => eR[k] > 0.1);
+    const stepR = eR.filter((e) => e > 0.1);
+    const med = (a) => (a.length ? +a.slice().sort((p, q) => p - q)[Math.floor(a.length / 2)].toFixed(3) : null);
+    const p90 = (a) => (a.length ? +a.slice().sort((p, q) => p - q)[Math.floor(a.length * 0.9)].toFixed(3) : null);
+    // timing: 10,000 smooth samples
+    const t0 = performance.now();
+    let acc = 0;
+    for (let k = 0; k < 10000; k++) acc += api.terrain.heightAt(20 + (k % 200) * 1.1, 20 + Math.floor(k / 200) * 1.7, { smooth: true }) ?? 0;
+    const per = (performance.now() - t0) / 10000;
+    return { vertices: eS.length, onSteps: stepS.length, stepsSmoothMedian: med(stepS), stepsRawMedian: med(stepR), smoothMedian: med(eS), smoothP90: p90(eS), rawMedian: med(eR), rawP90: p90(eR), usPerSmoothSample: +(per * 1000).toFixed(2), acc: acc > 0 };
+  });
+  check('smooth heightAt matches the field mesh', smooth.skipped !== undefined || (smooth.smoothMedian < 0.05 && smooth.stepsSmoothMedian < smooth.stepsRawMedian / 3), smooth);
+
+  // ---- warmup with debris: litter, dust and leaves gather faster while it runs (debrisBoost; it's on dirty ground,
+  // so the clean sandbox shows less of it than a level would)
+  const warm = await run(async () => {
+    const { api } = window.T;
+    const R = window.reclaimed;
+    const debris = async () => {
+      const p = new Uint32Array((await R.core.readBuffer('particles')).buffer);
+      const f = new Float32Array(p.buffer);
+      let n = 0;
+      for (let i = 0; i < p.length / 12; i++) if (f[i * 12 + 3] > 0 && p[i * 12 + 8] >= 1 && p[i * 12 + 8] <= 3) n++;
+      return n;
+    };
+    await api.warmup({ ticks: 600, debris: 1 });
+    const plain = await debris();
+    const t0 = performance.now();
+    await api.warmup({ ticks: 600, debris: 10 });
+    const ms = performance.now() - t0;
+    const boosted = await debris();
+    return { debrisAfterPlain600: plain, afterBoosted600: boosted, ms: Math.round(ms), debrisBack: R.globals.debrisBoost };
+  });
+  check('warmup with debris', warm.afterBoosted600 > warm.debrisAfterPlain600 * 1.2 && warm.debrisBack === 1, warm);
+
   // ---- terrain commands
   const edits = await run(async () => {
     const { api, pt, sleep } = window.T;
