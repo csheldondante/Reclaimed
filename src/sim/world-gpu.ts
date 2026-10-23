@@ -16,6 +16,9 @@ export const STATS_COUNT = 16;
 
 const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
 
+/** blows the wind field takes a tick (api/wind.ts merges past it) */
+export const MAX_BLOWS = 256;
+
 export class WorldGpu {
   readonly w: number;
   readonly h: number;
@@ -137,6 +140,14 @@ export class WorldGpu {
   /** air the physics voxels shove as they land (physics.ts writes it each tick;
    *  windfield.wgsl pushes the wind out from it): u32 per wind texel, ×1000 */
   readonly physPuff: GPUBuffer;
+  /**
+   * Wind blows and strokes (the world API's wind module, api/wind.ts): [0].x
+   * the count, then three vec4 each — (x, y, radius, strength or a stroke's
+   * cap, cells/s), (dx, dy, mode: 0 along (dx, dy), 1 outward, 2 inward,
+   * 3 swirl, 4 a stroke ending at x, y; its length), (a stroke's paint, 0,
+   * 0, 0). windfield.wgsl paints the painted wind under each. CPU-written.
+   */
+  readonly windBlows: GPUBuffer;
   readonly strVox: GPUBuffer;
   /** voxels of the pool in use (Structures keeps it): the per-voxel kernels' size */
   strVoxels = 0;
@@ -250,6 +261,7 @@ export class WorldGpu {
     this.textures.push(this.windField, this.windFieldNext);
     this.windFieldView = this.windField.createView();
     this.physPuff = this.buf('physPuff', wsize.width * wsize.height * 4, S | GPUBufferUsage.COPY_DST);
+    this.windBlows = this.buf('windBlows', (1 + MAX_BLOWS * 3) * 16, S | GPUBufferUsage.COPY_DST);
     this.cornerTex = device.createTexture({ label: 'corners', size: { width: this.w * 5, height: this.h }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
     this.textures.push(this.cornerTex);
     this.cornerView = this.cornerTex.createView();

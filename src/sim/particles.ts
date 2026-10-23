@@ -142,9 +142,9 @@ export class ParticleSystem implements SimSystem {
     });
   }
 
-  /** Queue a burst; spawned on the next tick. */
+  /** Queue a burst; spawned on the next tick (past MAX_BURSTS a tick, on the ticks after). */
   burst(b: Burst): void {
-    if (this.queue.length < MAX_BURSTS) this.queue.push(b);
+    this.queue.push(b);
   }
 
   encode(enc: GPUCommandEncoder): void {
@@ -154,15 +154,16 @@ export class ParticleSystem implements SimSystem {
     if (this.queue.length) {
       const d = this.reqData;
       d.fill(0);
-      d[0] = this.queue.length;
-      this.queue.forEach((b, i) => {
+      const now = this.queue.slice(0, MAX_BURSTS);
+      d[0] = now.length;
+      now.forEach((b, i) => {
         const o = 4 + i * 8;
         d.set([b.x, b.y, b.z, b.count, b.kind, b.speed, b.payload ?? 0, b.spread ?? 0.5], o);
       });
       // ordered before this tick's submit, so the burst kernel sees it
       this.device.queue.writeBuffer(this.reqBuf, 0, d);
       dispatch(enc, this.prof, 'particles-burst', this.burstK, this.groupBurst, [1, 1]);
-      this.queue = [];
+      this.queue = this.queue.slice(MAX_BURSTS);
     }
     dispatch(enc, this.prof, 'particles-update', this.updateK, this.groupUpdate, [Math.ceil(this.world.particleCap / 64), 1]);
   }
