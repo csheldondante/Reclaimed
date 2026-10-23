@@ -31,6 +31,12 @@ export interface Storm {
    * steers the storm, which spun the whole outline (round 15: erratic).
    */
   heading: number;
+  /**
+   * Held over a place (places.storm, docs/PLACES.md): it steers to (x, y)
+   * instead of riding the wind until it is `until` seconds old, at
+   * `strength` (0..1) of its intensity, then fades out over 4 s.
+   */
+  hold?: { x: number; y: number; until: number; strength: number };
 }
 
 /**
@@ -320,6 +326,10 @@ export class Weather {
       const [fx, fy] = this.fieldOver(s.x, s.y, s.radius * 0.6);
       let tvx = fx + s.pushX;
       let tvy = fy + s.pushY;
+      if (s.hold && s.age < s.hold.until) {
+        tvx = (s.hold.x - s.x) * 0.5;
+        tvy = (s.hold.y - s.y) * 0.5;
+      }
       // high ground slows a storm and deflects it along the contours
       const ahead = 14;
       const sp = Math.hypot(tvx, tvy) || 1;
@@ -349,6 +359,7 @@ export class Weather {
       const outside = Math.max(0, -s.x, -s.y, s.x - this.w, s.y - this.h);
       const form = Math.min(1, s.age / 6);
       s.intensity = form * Math.max(0, 1 - Math.max(0, outside - 4) / (s.radius * 0.6));
+      if (s.hold) s.intensity *= s.hold.strength * Math.max(0, 1 - Math.max(0, s.age - s.hold.until) / 4);
       s.downpour = Math.max(0, s.downpour - dt * 0.5);
       s.flash = Math.max(0, s.flash - dt * 4);
     }

@@ -10,6 +10,7 @@ import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
+import { MAX_PLACES } from '../world/places';
 
 export const STATS_COUNT = 16;
 
@@ -90,6 +91,14 @@ export class WorldGpu {
    * from the CPU (a crumbled body; game/integrity.ts writes them)
    */
   readonly deposit: GPUBuffer;
+  /**
+   * Places (docs/PLACES.md; world/places.ts): per column, low u16 the room of
+   * the open air on top, high u16 the room of the first enclosed level under
+   * it (0: the same); 0 no place. `placeTable`: per place id (MAX_PLACES),
+   * a room's region (a region: itself). The CPU uploads both on places.load.
+   */
+  readonly places: GPUBuffer;
+  readonly placeTable: GPUBuffer;
   /** sediment.wgsl's outflows per column (7 vec4: to each neighbour, the wind's easing, totals, spills out of exposed faces) */
   readonly sedOut: GPUBuffer;
   /**
@@ -298,6 +307,8 @@ export class WorldGpu {
     // folds it back in where they land — round 15)
     this.contamDelta = this.buf('contamDelta', N * 8, S);
     this.deposit = this.buf('deposit', N * 16, S);
+    this.places = this.buf('places', N * 4, S);
+    this.placeTable = this.buf('placeTable', MAX_PLACES * 4, S);
     this.sedOut = this.buf('sedOut', N * 7 * DIRS_BYTES, S);
   }
 

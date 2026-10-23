@@ -3241,3 +3241,31 @@ each at ?speed=4): a -8 °C storm caps 31-34 of its 784 voxels (the open
 tops) at a mean 10 of 31 levels; a 14 °C thaw clears them; a dust storm
 dusts 32 at 7.7; rain clears it. Physics bodies and stamped models don't
 take a cover yet.
+
+## 2026-10-23 — places, step 1: plans, queries, ops masked to a place
+
+The user gave the go-ahead (via the units session) for places step 1
+(docs/PLACES.md). A plan (generated Voronoi or noise bands, boxes and
+halls, or hand-drawn SDF rooms) is rasterized onto the hex lattice: one
+u32 per column, the top room and (later) the enclosed level's room,
+uploaded as the `places` contract buffer with a room → region table.
+Adjacency comes from the raster (cell sides shared, border columns, the
+border's middle), so it matches what the GPU masks exactly. The plan's
+shape (chain or tree) picks a spanning set of connections as
+suggestions; connect/disconnect are records until W1 carves. Ops masked
+to a place run in one small kernel (placeop.wgsl, one op a tick from a
+queue) on the sediment's ticks, before it, so a bury's deposit is
+folded in the same tick — the climate pass, after the sediment,
+overwrites deposit .yz with snow and leaves, and would otherwise eat
+it. A storm held over a place is the ordinary storm with `hold`: it
+steers to the centre instead of riding the wind, then fades.
+Measured (scripts/placestest.mjs, sandbox 256 × 256): the default
+Voronoi plan (spacing 22, groups 1–3, chain) makes 46 rooms (387–2,763
+columns, mean 1,425) in 9 regions, 1–9 neighbours a room (mean 4.7), 45
+suggested connections (a spanning chain); bands make 29 rooms with 8
+halls in 6 regions. A 2-cell sand bury (noise 0.5) adds 1.54 cells a
+column in the room, -0.08 in a neighbour (its sand slumps), +0.003
+outside; a 1.5-cell flood is +0.28 a column in the room 1.5 s later and
+the rest already running out over the flat sandbox (nothing holds it
+until W1 shapes rooms); the held storm sits on the room's centre at
+full intensity after 12 s. Drain leaves 0.02 (water flowing back in).

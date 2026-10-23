@@ -10,10 +10,51 @@ so a runtime (a game, an LLM game master) can:
 Spawning things in a place, and its terrain, go through Reclaimed's API. The
 game may own the rest of a room's contents.
 
-Status: design. Nothing here is built yet; it supersedes BACKLOG W2's flat
-region ids and gives W1 (generation), W3 (freezing) and W4 (navigation)
-their frame. The API sketch below is for the units session and the user to
-mark up.
+Status: step 1 built (see "Built in step 1" below); the rest is design. It
+supersedes BACKLOG W2's flat region ids and gives W1 (generation), W3
+(freezing) and W4 (navigation) their frame.
+
+## Built in step 1
+
+- `src/world/places.ts`: the model (`Place`, `Connection`), the plan
+  format and its rasterization onto the hex lattice, adjacency from the
+  raster, suggested connections. `src/game/places.ts`: `core.places`
+  (`Places`, `PlaceRef`), also `window.reclaimed.places`.
+- Plans: `{ partition: 'voronoi', spacing, group?: [1, 3], regions?, shape? }`
+  (Poisson-disc seeds, cells grouped 1–3 into rooms, rooms into `regions`
+  by the nearest of farthest-point seeds, default a fifth as many);
+  `{ partition: 'bands', freq, tunnel, island?, regions?, shape? }` (halls
+  where |noise − island| < tunnel, tagged `hall`, rooms the components
+  between; slivers under 30 columns join a neighbour);
+  `{ partition: 'boxes', rooms: [{ name, rect, region? }], halls?, regions? }`;
+  `{ rooms: [{ name, region?, sdf }], halls?, regions? }` (hand-made; a
+  room without a region goes in `world`). Every plan takes `amp` (default
+  3) and `scale` (10): the borders' wander, a domain warp of the sample
+  point. A hall is a band between two rooms' centres over the columns no
+  room took.
+- `shape`: `chain` (a walk to the neighbour with the fewest free
+  neighbours, branching only where stuck), `tree` (a random spanning
+  tree) or `any` (every adjacency), over rooms sharing at least 3 cell
+  sides: `places.suggested()`. They are suggestions: W1 carves them.
+- Queries: `get(name | id)` → a live `PlaceRef` (`id, name, kind, parent,
+  children, tags, cells, centre, radius`; `rename`, `tag`), `list(kind?)`,
+  `at(x, y, z?)` (world coordinates), `children(region)`,
+  `adjacent(place)` (a room's rooms, a region's regions: `{ room, border,
+  length, mid }`), `connections(place)`, `connect(a, b, { kind, width, at })`
+  and `disconnect(a, b, { with })`. Connections are **records only** in step
+  1: nothing is carved or built in the terrain until step 2 (W1).
+- Mutations: `place.bury(material, depth, { noise, scale, over })` (through
+  `deposit`, sediment folds it in), `place.flood(depth, { over })` (water
+  added on every column; with no walls yet it runs out of the room the way
+  water does), `place.drain()`, `place.storm({ intensity, duration })` (a
+  storm at the centre, sized to the radius, held there by `Storm.hold`
+  for `duration` seconds, then it fades). A region's op covers all its rooms.
+- Not yet: the enclosed level (the high half is 0 everywhere until W1 makes
+  caves; `at` with a z already reads it), `place.light`, `fog`, `climate`,
+  `raise`, `freeze`, contents, `state()`, the GM's sun, and `generate(dims,
+  plan)` (step 1 lays places over an existing map: `places.load(plan, seed)`).
+- Test: `?plan=voronoi|tree|bands` (`?planseed=`) and
+  `scripts/placestest.mjs`.
 
 ## The model
 
@@ -125,7 +166,7 @@ place.state()  // { water, loose depth, snow, fire, contamination, green, bodies
 
 ## Order of work (proposed)
 
-1. Places from a plan:
+1. ✓ Places from a plan:
    - the `places` buffer, the table and the queries (`get`, `at`,
      `children`, `adjacent`);
    - a plan format: regions and rooms as SDFs, with the partition options
