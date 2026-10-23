@@ -3,6 +3,11 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 55 (session 5, `physics`) — pulls shed more
+
+- "I also think we want lose layers to shake off even more the way they do
+  for the volcano": a pull's shake is now stronger and on by default.
+
 ## 2026-10-23 — round 53 (session 5, `physics`) — pulls shake; locks swallow sediment
 
 - Pulls: "pull adds material and I think it displaces things above it

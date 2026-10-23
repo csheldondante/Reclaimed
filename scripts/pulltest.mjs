@@ -126,8 +126,10 @@ try {
   await wait(400);
   const ridgeMid = await page.evaluate((s) => window.__disc(s.x + 12, s.y, 1), ridge);
   const ridgeEnd = await page.evaluate((s) => window.__disc(s.x + 24, s.y, 1), ridge);
-  const midRise = ridgeMid.meanTop - ridgeBefore.meanTop;
-  const endRise = ridgeEnd.meanTop - endBefore.meanTop;
+  // (the stone's rise: the sand on it is shaken off, so the top is lower)
+  const stoneOf = (d) => d.perColumn.stone ?? 0;
+  const midRise = stoneOf(ridgeMid) - stoneOf(ridgeBefore);
+  const endRise = stoneOf(ridgeEnd) - stoneOf(endBefore);
   check('drag: a ridge rising along it (mid ~2.5, end ~5), no double counting', midRise > 1.5 && midRise < 3.5 && endRise > 3.5 && endRise < 6.2, { midRise: +midRise.toFixed(2), endRise: +endRise.toFixed(2) });
   // 3. through: bricks built on the ground, stone pulled up through them
   const wall = { x: site.x + 30, y: site.y + 10 };

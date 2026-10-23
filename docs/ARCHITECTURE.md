@@ -195,7 +195,7 @@ where pieces turn to particles on impact is P3.
 | drift, strata (textures) | the loose run as seen from above (derived from layers) | surface | sediment, particles, water, oil, ecology, wilt, render… |
 | deposit | vec4 per column: editor ±, a crumbled body's amount + material, a cold storm's snow and a tree's leaves (climate), a place's bury (placeop) | edit, CPU (integrity), climate, placeop | sediment (folds in, zeroes) |
 | pullGiven | f32 per stroke slot (8) and column: the height a layer pull's stroke has given it | layerpull | layerpull |
-| shake (texture) | rgba32float per column: x the tick the ground was shaken, y how hard (0..1): loose ground there slips at up to 60% less steep a slope for 150 ticks (sediment `reposeAt`) | layerpull | sediment |
+| shake (texture) | rgba32float per column: x the tick the ground was shaken, y how hard (0..1): loose ground there slips at up to 80% less steep a slope, up to 1.5× as fast and unheld by roots, for 240 ticks (sediment `shakeAt`) | layerpull | sediment |
 | places | u32 per column: low u16 the room of the open air on top, high u16 the room of the enclosed level under it (0 the same); 0 no place (docs/PLACES.md) | CPU (`core.places.load`) | placeop |
 | placeTable | u32 per place id (MAX_PLACES 4096): a room's region, a region itself | CPU (`core.places.load`) | placeop |
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |

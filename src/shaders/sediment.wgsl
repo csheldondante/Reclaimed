@@ -222,17 +222,25 @@ fn topOf(q: vec2<i32>) -> f32 {
 
 // ground shaken (layerpull.wgsl): x the tick, y how hard
 @group(0) @binding(30) var shakeTex: texture_2d<f32>;
-// a shake lasts this long (ticks), and at its hardest lowers the repose by this share
-const SHAKE_TICKS: f32 = 150.0;
-const SHAKE_SLIP: f32 = 0.6;
+// a shake lasts this long (ticks); at its hardest it lowers the repose by
+// SHAKE_SLIP's share, slides it SHAKE_RUSH faster (more and the slumps
+// overshoot: six neighbours each taking that share of the excess) and roots
+// let go (round 55: shed it like a rising volcano's cone does)
+const SHAKE_TICKS: f32 = 240.0;
+const SHAKE_SLIP: f32 = 0.8;
+const SHAKE_RUSH: f32 = 0.5;
+
+/** How hard q's ground is shaken now (0..1, fading). */
+fn shakeAt(q: vec2<i32>) -> f32 {
+  let sh = textureLoad(shakeTex, q, 0);
+  let age = f32(G.tick) - sh.x;
+  return select(0.0, sh.y * (1.0 - age / SHAKE_TICKS), sh.y > 0.0 && age >= 0.0 && age < SHAKE_TICKS);
+}
 
 /** The steepest slope q's top material holds (cells per cell), lower when wet, and while the ground there is shaken. */
 fn reposeAt(q: vec2<i32>, m: u32) -> f32 {
   let rep = mix(MATS[m].sim.y, MATS[m].sim.z, smoothstep(0.35, 0.8, moisture[colIdxI(q)]));
-  let sh = textureLoad(shakeTex, q, 0);
-  let age = f32(G.tick) - sh.x;
-  let fade = select(0.0, 1.0 - age / SHAKE_TICKS, sh.y > 0.0 && age >= 0.0 && age < SHAKE_TICKS);
-  return rep * (1.0 - SHAKE_SLIP * sh.y * fade);
+  return rep * (1.0 - SHAKE_SLIP * shakeAt(q));
 }
 
 /**
@@ -389,7 +397,10 @@ fn slumpOut(q: vec2<i32>) -> Dirs {
   if (top < 0.001 || runLevel(q) == SHUT) { return dZero(); }
   let here = hereAt(q);
   let rep = reposeAt(q, driftMatAt(q));
-  let hd = held(q);
+  // (shaken: roots let go, and it slides faster)
+  let sk = shakeAt(q);
+  let hd = held(q) * (1.0 - sk);
+  let rate = SLUMP * (1.0 + SHAKE_RUSH * sk);
   var o = dZero();
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
@@ -400,7 +411,7 @@ fn slumpOut(q: vec2<i32>) -> Dirs {
     // stays thin and held() never lets go — planted columns grew into
     // spikes 8+ cells over their neighbours (round 30)
     let hk = hd * (1.0 - smoothstep(rep, rep + HOLD_STEEP, diff));
-    o[k] = max(diff - rep, 0.0) * SLUMP * (1.0 - hk);
+    o[k] = max(diff - rep, 0.0) * rate * (1.0 - hk);
   }
   let s = dSum(o);
   if (s > top * 0.8) { o = dScale(o, top * 0.8 / s); }
