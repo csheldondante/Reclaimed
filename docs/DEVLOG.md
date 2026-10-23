@@ -3222,3 +3222,22 @@ another); leaves and light snow now fall in 0.01 drops now and then, the
 same rate. Measured (scripts/seasontest.mjs, a woodland planted in the
 sandbox, 6 s a season): ~450 autumn leaves in the air at 0.6–0.7, ~2,000
 lying by 0.82, leaf litter 4 → 154 cells over the year.
+
+## 2026-10-23 — snow and dust on structures
+
+Round 52: the user wanted a snow-covered variant of things, and the same
+for sand and dust on props. Structure voxels already took sand where the
+loose ground buried them; now the faces that look up gather a cover of
+snow while it snows at that height, or of dust under a dust storm or
+where the wind lifts grit nearby (the sediment pass's air texture). Snow
+melts in the warmth and a gale sweeps it off; rain washes dust away. It
+lives in the voxel's spare bits (31 levels, stepped a level at a time
+with a chance each pass, so slow rates still add up) and is drawn as a
+cap with a ragged thin edge and a lip over the sides, in the cube draw
+and the field mesh. The instance word had no room left (vsBody reads a
+size from 24-29), so structprep repacks moss and sand to 16 levels there.
+Measured (scripts/covertest.mjs, a ruined house in the sandbox, 24 s
+each at ?speed=4): a -8 °C storm caps 31-34 of its 784 voxels (the open
+tops) at a mean 10 of 31 levels; a 14 °C thaw clears them; a dust storm
+dusts 32 at 7.7; rain clears it. Physics bodies and stamped models don't
+take a cover yet.

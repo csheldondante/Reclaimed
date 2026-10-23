@@ -7,7 +7,13 @@
 //    growth on its faces: plants rooted in loose ground belong to the nature
 //    grid), where the ground there is damp; up-facing faces fastest, but
 //    undersides too. It spreads from green ground beneath and from mossy
-//    neighbours, rarely starts on its own (spores), and lies dormant under sand.
+//    neighbours, rarely starts on its own (spores), and lies dormant under sand;
+//  * cover (round 52): snow, or dust, on the faces that look up — snow while
+//    it snows there (rain cold enough at that height), dust under a dust
+//    storm or where the wind lifts grit nearby (the air texture); snow melts
+//    in the warmth and a gale sweeps it off, rain washes dust away. 31 levels
+//    in bits 24..28 (grids.wgsl voxCoverLv), stepped one level at a time with
+//    a chance per pass, bit 29 which it is (the last to settle).
 // Each thread writes only its own voxel; neighbours' moss may be read a tick
 // old or new (harmless: growth only spreads).
 @group(0) @binding(3) var<storage, read> frames: array<Frame>;
@@ -15,10 +21,20 @@
 @group(0) @binding(5) var<storage, read> surface: array<u32>;
 @group(0) @binding(6) var<storage, read> moisture: array<f32>;
 @group(0) @binding(7) var<storage, read> veg: array<f32>;
+// the air (sediment.wgsl airOut): x the dust the wind lifted at a column this pass
+@group(0) @binding(19) var airTex: texture_2d<f32>;
 
 // (per pass, every 4 ticks: bare to full in about four minutes of damp weather)
 const MOSS_RATE: f32 = 0.0003;
 const SAND_EASE: f32 = 0.05;
+// cover, in levels a pass (15 passes a second): full snow cover in ~40 s of
+// steady snow, dust in ~20 s of a storm; snow gone in ~30 s at 10 °C,
+// dust in ~25 s of rain
+const COVER_SNOW: f32 = 0.06;
+const COVER_DUST: f32 = 0.1;
+const COVER_MELT: f32 = 0.007;
+const COVER_WASH: f32 = 0.08;
+const COVER_SWEEP: f32 = 0.02;
 
 fn locate(v: u32) -> vec4<i32> {
   for (var s = 0u; s < MAX_STRUCTS; s++) {
@@ -56,6 +72,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var moss = voxMoss(w);
   var open = 0.0;
   var nearMoss = 0.0;
+  // how much its most upward open face looks up
+  var lookUp = -1.0;
   for (var k = 0u; k < 6u; k++) {
     let q = c + FACE6[k];
     if (inGrid(f, q)) {
@@ -65,6 +83,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // up-facing faces catch the rain best; undersides stay damp in the shade
     let up = qrot(f.q, vec3<f32>(FACE6[k])).z;
     open = max(open, 0.5 + 0.5 * max(up, 0.0));
+    lookUp = max(lookUp, up);
   }
   let damp = smoothstep(0.03, 0.25, moisture[i]) + rainAt(wc.xy) * 0.5;
   // (spores: about once a few hours per voxel; otherwise it creeps from green
@@ -76,5 +95,27 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (open > 0.0 && seeded && sand < 0.5) {
     moss += MOSS_RATE * open * clamp(damp, 0.0, 1.0) * takes * (0.5 + 0.5 * max(nearMoss, moss));
   }
-  vox[v] = voxPack(mat, moss, sand);
+  // cover on the faces that look up
+  var lv = voxCoverLv(w);
+  var dusty = voxDusty(w);
+  let t = airTempAt(wc.z);
+  let snowing = rainAt(wc.xy) * snowShare(t);
+  var dust = min(textureLoad(airTex, cell, 0).x * 20.0, 1.0);
+  for (var k = 0u; k < 2u; k++) {
+    let ds = G.dusts[k];
+    if (ds.w <= 0.0) { continue; }
+    dust += ds.w / 8.0 * smoothstep(1.2, 0.4, length(wc.xy - ds.xy) / ds.z);
+  }
+  let gainS = snowing * COVER_SNOW;
+  let gainD = min(dust, 1.0) * COVER_DUST;
+  if (lookUp > 0.5 && sand < 0.5 && lv < 31u && rand3(v, G.tick, 0xc0e1u) < (gainS + gainD) * lookUp) {
+    lv += 1u;
+    dusty = gainD > gainS;
+  }
+  let gale = max(length(windAt(wc)) - 8.0, 0.0);
+  var loss = select(max(t, 0.0) * COVER_MELT + gale * COVER_SWEEP, rainAt(wc.xy) * (1.0 - snowShare(t)) * COVER_WASH, dusty);
+  // (nothing holds it where no face looks up any more: a toppled wall)
+  if (lookUp <= 0.5) { loss = 1.0; }
+  if (lv > 0u && rand3(v, G.tick, 0xc0e2u) < loss) { lv -= 1u; }
+  vox[v] = voxPack(mat, moss, sand) | (lv << 24u) | (select(0u, 1u, dusty) << 29u);
 }

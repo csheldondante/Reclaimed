@@ -431,6 +431,24 @@ struct FOut {
 };
 
 fn toLinear(c: vec3<f32>) -> vec3<f32> { return pow(c, vec3<f32>(2.2)); }
+
+/**
+ * Snow or dust lying on a structure's face (round 52; structtick.wgsl keeps
+ * it): cover 0..1, over the faces that look up, ragged at its thin edge
+ * (sub: a 0..1 per-fragment dither), with a lip of it hanging over the
+ * sides near the top (ztop: the voxel's top, roughly). The albedo in, out.
+ */
+fn coverLook(alb: vec3<f32>, nrm: vec3<f32>, wpos: vec3<f32>, ztop: f32, cover: f32, dusty: bool, sub: f32) -> vec3<f32> {
+  if (cover <= 0.0) { return alb; }
+  let onTop = nrm.z > 0.5 && cover > 0.03 + 0.5 * sub * (1.0 - cover);
+  let lip = nrm.z > -0.2 && nrm.z <= 0.5 && cover > 0.45 && wpos.z > ztop - 0.18 * cover * (0.6 + 0.8 * sub);
+  if (!onTop && !lip) { return alb; }
+  let c = select(vec3<f32>(0.86, 0.88, 0.93), vec3<f32>(0.6, 0.53, 0.43), dusty);
+  // (dust thin over it lets the face show through)
+  let k = select(1.0, smoothstep(0.03, 0.4, cover), dusty);
+  return mix(alb, toLinear(c) * (0.94 + 0.12 * sub), k);
+}
+
 fn toSrgb(c: vec3<f32>) -> vec3<f32> { return pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2)); }
 
 /** Column whose fields describe this fragment (step slightly into the surface). */
@@ -1544,8 +1562,9 @@ fn fsBody(in: VOut) -> FOut {
   // a structure grid's voxel (structprep.wgsl): the growth it owns on its
   // faces, and the nature grid's sand drawn over it where it's buried
   if ((word >> 31u) != 0u) {
-    let moss = f32((word >> 8u) & 0xffu) / 255.0;
-    let sand = f32((word >> 16u) & 0xffu) / 255.0;
+    // (structprep.wgsl packs them: moss and sand to 16 levels, the cover to 31)
+    let moss = f32((word >> 8u) & 0xfu) / 15.0;
+    let sand = f32((word >> 12u) & 0xfu) / 15.0;
     let sub = randv(vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02)) + vec3<i32>(13, 5, 71));
     if (sub < moss * (0.55 + 0.45 * max(nrm.z, 0.0))) {
       let mc = mix(vec3<f32>(0.2, 0.33, 0.12), vec3<f32>(0.36, 0.5, 0.2), randv(vec3<i32>(floor(in.wpos * 2.0)) + vec3<i32>(3, 1, 7)));
@@ -1559,6 +1578,8 @@ fn fsBody(in: VOut) -> FOut {
       if (driftMatAt(cell) == MAT_DRIFT) { sc = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
       alb = sc * (0.9 + 0.2 * sub);
     }
+    // snow or dust on its up faces (round 52)
+    alb = coverLook(alb, nrm, in.wpos, in.zr.y, f32((word >> 16u) & 31u) / 31.0, ((word >> 21u) & 1u) != 0u, sub);
   }
   var col = alb * lighting(in.wpos, nrm);
   if (physV) {
