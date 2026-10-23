@@ -2,7 +2,7 @@
 // the camera's target and screenshots them falling, landing and settling;
 // prints each body's live voxels and height range. --scene picks a setup.
 //
-//   node scripts/phystest.mjs [--url http://localhost:5178] [--out phys] [--scene drop|beam|heat]
+//   node scripts/phystest.mjs [--url http://localhost:5178] [--out phys] [--scene drop|beam|heat|fine|mesh]
 //     [--extra "&mesh=1"] [--zoom 3] [--shots 0.3,1,2.5,5]
 import puppeteer from 'puppeteer-core';
 import gifenc from 'gifenc';
@@ -111,6 +111,27 @@ try {
         made.push(await P.drop('concrete', 3, 3, 14, x - 5, y, 0.2, 0, 12, 0));
         made.push(await P.drop('concrete', 12, 6, 2, x + 6, y + 2, 16, 30, 35, 10));
         made.push(await P.drop('brick', 5, 5, 5, x - 2, y - 9, 18, 20, 20, 0));
+      } else if (scene === 'fine') {
+        // mixed resolution (round 49): a steel bar of half-cell voxels across two
+        // stone posts with a half-cell brick dropped on it, a half-cell concrete
+        // block falling hard, and a whole-cell slab beside it for comparison
+        made.push(await P.drop('stone', 2, 2, 4, x - 5, y, 0.1));
+        made.push(await P.drop('stone', 2, 2, 4, x + 5, y, 0.1));
+        made.push(await P.drop('steel', 24, 2, 2, x, y, 4.2, 0, 0, 0, 0.5));
+        made.push(await P.drop('brick', 6, 6, 6, x, y, 12, 0, 0, 0, 0.5));
+        made.push(await P.drop('concrete', 8, 8, 8, x - 4, y + 8, 14, 20, 30, 0, 0.5));
+        made.push(await P.drop('concrete', 8, 4, 2, x + 5, y + 8, 14, 20, 30, 0));
+      } else if (scene === 'mesh') {
+        // meshes over bodies (round 49): a steel beam mesh (half-cell lattice)
+        // across two posts with a block dropped on it, a concrete rock and a
+        // brick crate dropped hard beside them
+        const M = R.phys.meshes;
+        made.push(await P.drop('stone', 2, 2, 4, x - 5, y, 0.1));
+        made.push(await P.drop('stone', 2, 2, 4, x + 5, y, 0.1));
+        made.push(await P.dropMesh(M.box(20, 12, 1, 1, 0.5), 0.5, x, y, 4.2));
+        made.push(await P.drop('concrete', 3, 3, 3, x, y, 12));
+        made.push(await P.dropMesh(M.rock(5, 2.2, 2, 3), 0.5, x - 4, y + 8, 12, 20, 30, 0));
+        made.push(await P.dropMesh(M.box(11, 3, 3, 3, 0.5), 0.5, x + 5, y + 8, 14, 20, 30, 10));
       } else if (scene === 'stress') {
         // many bodies at once: the solver's cost
         for (let k = 0; k < 24; k++) {
@@ -192,7 +213,9 @@ try {
     page.evaluate(async (scene) => {
       const P = window.reclaimed.phys.physics;
       const X = await P.readPositions();
-      return P.bodies.filter((b) => scene === 'ruin' || scene === 'dig' || window.__made.includes(b.id)).map((b) => {
+      let frags = 0;
+      for (let i = 0; i < Math.min(P.used, 8192); i++) if (X[i * 8 + 3] >= 0) frags++;
+      return [`fragments: ${frags}`].concat(P.bodies.filter((b) => scene === 'ruin' || scene === 'dig' || window.__made.includes(b.id)).map((b) => {
         let n = 0;
         let lo = Infinity;
         let hi = -Infinity;
@@ -206,8 +229,8 @@ try {
         }
         let pin = 0;
         for (let i = b.offset; i < b.offset + b.dims[0] * b.dims[1] * b.dims[2]; i++) if (X[i * 8 + 3] === 0) pin++;
-        return `${b.model?.id ?? 'map'}: ${n} live${pin ? ` (${pin} pinned)` : ''}, z ${lo.toFixed(2)}..${hi.toFixed(2)}${hot > 1 ? `, max temp ${hot.toFixed(0)}` : ''}`;
-      });
+        return `${b.model?.id ?? 'map'}${b.size !== 1 ? ` (${b.size})` : ''}: ${n} live${pin ? ` (${pin} pinned)` : ''}, z ${lo.toFixed(2)}..${hi.toFixed(2)}${hot > 1 ? `, max temp ${hot.toFixed(0)}` : ''}`;
+      }));
     }, scene);
   let t = 0;
   // --gif out.gif: the first --frames × 80 ms after setup, the middle of the view

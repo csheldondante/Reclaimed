@@ -3087,3 +3087,43 @@ public API (ARCHITECTURE.md), and WorldCore's last argument is named for
 what it does (the field mesh), not the sandbox. Headless: a 20x6x6 block of
 quarter voxels, turned 46 degrees, beside a whole one: the right size, lit,
 its shadow cast.
+
+## 2026-10-22 — mixed resolution: a voxel size per body, fracture refines
+
+Round 49: the user ruled out uniformly smaller voxels and asked for coarse
+simulation refined where needed. Two ways in. A body now has its own voxel
+size (the model's `voxel`, n/16 of a cell, carried in each voxel's info
+bits 16-21 so no buffer or binding was added); mass, contact radius,
+step-up, crumble depth, yield, and the air and dust it shoves go with it.
+And a crumbling voxel splits into eight fragments half its size (a new
+*split* pass between relax and deaths: deaths was already at the eight
+storage buffers a stage allows), unbonded, in a ring of 8192 slots ahead
+of the bodies; they go to dust when they crumble, rest 0.6 s or reach
+6 s. Blast hearts and deep-buried voxels still go straight to dust.
+First run: a fragment hitting a body voxel of the same material broke the
+voxel (ties went to the higher index, and the fragments sit lowest), so a
+half-cell concrete block lost 58%; toughness now scales with size and it
+loses 28% (the whole-cell slab 17%), and the dust per crumble scales with
+the fragment's face so eight fragments raise what one voxel did. fall
+scene unchanged (slab 116/144); stress 1.4 ms of physics.
+
+## 2026-10-22 — meshes over physics bodies, bent by their voxels
+
+Round 49's third step (F15). The user wanted lo-fi meshes mixed with the
+voxels, deformed by control points, still part of the simulation. The
+control points are a body's own lattice voxels: a mesh body is a lattice
+built under the mesh (hidden) and the mesh bound to it, four voxels a
+vertex. Bending is a compute pass (phys.wgsl `skin`, a thread a
+triangle: it has all three corners, so it can drop torn triangles and
+write a flat normal) into a triangle list the renderer draws through
+`addMesh` with the body shading, so meshes are lit, shadowed, speckled and
+glow with heat like voxels. Each voxel's region rotation, which shape
+matching already finds, turns the vertex offsets, so a bent beam's mesh
+bends smoothly rather than shearing. First look: tears left empty holes
+(the voxels under the mesh were hidden). Showing every hidden voxel that
+had lost a face bond drew a cracked rock as all voxels; now only one
+whose face neighbour is gone or has moved a quarter voxel away shows. A
+lattice of the wrong size at first (ceil(x + 1e-6) made a 3-cell box 7
+half-voxels wide, not 6). Headless (phystest mesh): the steel beam mesh
+bends round a block, the brick crate dents and tears at a corner, the
+rock is half crushed with voxels in its breaks.

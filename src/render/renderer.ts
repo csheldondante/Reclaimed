@@ -79,6 +79,10 @@ export class Renderer {
   private bodyBuf: GPUBuffer;
   private bodyGroup: GPUBindGroup;
   private bodyPipe: GPURenderPipeline;
+  /** meshes over physics bodies (render.wgsl vsSkin) */
+  private skinPipe: GPURenderPipeline;
+  private shadowSkinPipe?: GPURenderPipeline;
+  private meshSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
   /** the structure grids' exposed voxels, as rotated cubes (structprep.wgsl → the body pipeline) */
   private structPrep: ComputeKernel;
   private structPrepGroup: GPUBindGroup;
@@ -331,6 +335,15 @@ export class Renderer {
       depthStencil: depthStencil(true),
     });
 
+    this.skinPipe = device.createRenderPipeline({
+      label: 'skins',
+      layout: pl,
+      vertex: { module: drawModule, entryPoint: 'vsSkin' },
+      fragment: { module: drawModule, entryPoint: 'fsBody', targets: [{ format }, { format: PICK_FORMAT }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depthStencil(true),
+    });
+
     if (this.fieldMesh.on) {
       // the field mesh: its own layout (the intervals for the look, in place of
       // the plants' sway and the corners)
@@ -379,6 +392,7 @@ export class Renderer {
         device.createRenderPipeline({ label, layout, vertex: { module, entryPoint }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
       this.shadowOpaquePipe = shadowPipe('shadow-opaque', pl, drawModule, 'vsBox');
       this.shadowBodyPipe = shadowPipe('shadow-bodies', pl, drawModule, 'vsBody');
+      this.shadowSkinPipe = shadowPipe('shadow-skins', pl, drawModule, 'vsSkin');
       this.shadowMeshPipe = shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMesh');
       // (the pass draws into the map, so its groups bind a stand-in texel there)
       const none = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
@@ -447,6 +461,20 @@ export class Renderer {
       indirect,
       group: this.groupFor(inst),
       shadow: this.shadowGroups ? this.groupFor(inst, this.lightCamBuf, this.noShadowView!) : undefined,
+    });
+  }
+
+  /**
+   * Draw a GPU-written triangle list (render.wgsl vsSkin: per vertex two
+   * vec4<u32>, position f32 bits + the material word, then the triangle's
+   * normal; drawIndirect args, vertex count first), lit and shadowed like a
+   * body's voxels. Physics.skinOut / skinArgs: meshes bent by their bodies.
+   */
+  addMesh(verts: GPUBuffer, indirect: GPUBuffer): void {
+    this.meshSources.push({
+      indirect,
+      group: this.groupFor(verts),
+      shadow: this.shadowGroups ? this.groupFor(verts, this.lightCamBuf, this.noShadowView!) : undefined,
     });
   }
 
@@ -562,6 +590,12 @@ export class Renderer {
       pass.drawIndirect(v.indirect, 0);
       this.profiler.draws++;
     }
+    for (const v of this.meshSources) {
+      pass.setPipeline(this.skinPipe);
+      pass.setBindGroup(0, v.group);
+      pass.drawIndirect(v.indirect, 0);
+      this.profiler.draws++;
+    }
     pass.setPipeline(this.waterPipe);
     pass.setBindGroup(0, this.waterGroup);
     pass.drawIndirect(this.indirect, 16);
@@ -672,6 +706,12 @@ export class Renderer {
       pass.draw(36, this.bodyCount);
     }
     for (const v of this.voxelSources) {
+      if (!v.shadow) continue;
+      pass.setBindGroup(0, v.shadow);
+      pass.drawIndirect(v.indirect, 0);
+    }
+    if (this.meshSources.length) pass.setPipeline(this.shadowSkinPipe!);
+    for (const v of this.meshSources) {
       if (!v.shadow) continue;
       pass.setBindGroup(0, v.shadow);
       pass.drawIndirect(v.indirect, 0);

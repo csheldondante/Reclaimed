@@ -16,6 +16,7 @@ import { PK } from '../sim/particles';
 import { Physics } from '../physics/physics';
 import { LavaSystem } from '../sim/lava';
 import { box, table } from '../physics/shapes';
+import { boxMesh, rockMesh, type SkinMesh } from '../physics/mesh';
 import { BODIES } from '../ui/editor';
 import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
@@ -225,6 +226,8 @@ export class LevelScene implements Scene {
       this.physics = phys;
       sim.systems.splice(sim.systems.indexOf(sim.particles), 0, phys);
       core.renderer.addVoxels(phys.inst, phys.indirect);
+      // meshes drawn over bodies, bent by them (round 49)
+      core.renderer.addMesh(phys.skinOut, phys.skinArgs);
       // lava, after the ground has settled this tick and before the bodies feel it
       const lava = new LavaSystem(host.gpu.device, core.world, host.profiler);
       this.lava = lava;
@@ -439,10 +442,44 @@ export class LevelScene implements Scene {
           return self.physics;
         },
         shapes: { box, table },
+        meshes: { box: boxMesh, rock: rockMesh },
+        /**
+         * a mesh as a body over a lattice `voxel` cells apart (round 49): its
+         * lowest point `above` the ground under (x, y), turned by yaw/pitch/roll (degrees)
+         */
+        dropMesh: async (mesh: SkinMesh, voxel: number, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0, vel: [number, number, number] = [0, 0, 0]) => {
+          const phys = this.physics;
+          if (!phys) return null;
+          const r = Math.PI / 180;
+          const q = qYawPitchRoll(yaw * r, pitch * r, roll * r);
+          let lo = [Infinity, Infinity, Infinity];
+          let hi = [-Infinity, -Infinity, -Infinity];
+          for (let i = 0; i < mesh.pos.length; i += 3) {
+            lo = lo.map((v, k) => Math.min(v, mesh.pos[i + k]));
+            hi = hi.map((v, k) => Math.max(v, mesh.pos[i + k]));
+          }
+          // (the lattice's low corner is the mesh frame's origin: about its bounds' corner)
+          const ext = hi.map((v, k) => Math.ceil((v - lo[k]) / voxel - 1e-6) * voxel) as [number, number, number];
+          const pts: [number, number, number][] = [];
+          for (let k = 0; k <= 2; k++) for (let j = 0; j <= 2; j++) for (let i = 0; i <= 2; i++) pts.push(qRotate(q, [(ext[0] * i) / 2, (ext[1] * j) / 2, (ext[2] * k) / 2]));
+          const cx = pts.reduce((a, p) => a + p[0], 0) / pts.length;
+          const cy = pts.reduce((a, p) => a + p[1], 0) / pts.length;
+          const lowZ = Math.min(...pts.map((p) => p[2]));
+          const slots = new Uint32Array((await core.readBuffer('layers')).buffer);
+          let ground = 0;
+          for (const p of pts) {
+            const [gx, gy] = cellAt(x - cx + p[0], y - cy + p[1]);
+            if (gx < 0 || gy < 0 || gx >= dims.w || gy >= dims.h) continue;
+            const col = readColumn(core.packed, slots, gx, gy);
+            if (col.length) ground = Math.max(ground, col[col.length - 1].z1);
+          }
+          return phys.spawnMesh(mesh, voxel, [x - cx, y - cy, ground + above - lowZ], q, vel);
+        },
         spawn: async (m: VoxelModel, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0, vel: [number, number, number] = [0, 0, 0], floor = 0) => {
           const r = Math.PI / 180;
           const q = qYawPitchRoll(yaw * r, pitch * r, roll * r);
-          const [w, d, h] = m.size;
+          const vs = m.voxel ?? 1;
+          const [w, d, h] = m.size.map((n) => n * vs);
           // its lowest point `above` the highest ground (loose ground too) under its footprint
           const pts: [number, number, number][] = [];
           for (let k = 0; k <= 4; k++) for (let j = 0; j <= 4; j++) for (let i = 0; i <= 4; i++) pts.push(qRotate(q, [(w * i) / 4, (d * j) / 4, (h * k) / 4]));
@@ -466,10 +503,11 @@ export class LevelScene implements Scene {
           const [gx, gy] = cellAt(x, y);
           return readColumn(core.packed, slots, gx, gy);
         },
-        drop: (mat: string, w: number, d: number, h: number, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0) => {
+        // (voxel: each voxel's edge in cells, round 49; w, d, h count voxels)
+        drop: (mat: string, w: number, d: number, h: number, x: number, y: number, above = 0, yaw = 0, pitch = 0, roll = 0, voxel = 1) => {
           const id = MAT[(mat[0].toUpperCase() + mat.slice(1)) as keyof typeof MAT];
           if (id === undefined) throw new Error(`no material "${mat}"`);
-          return api.phys.spawn(box(id, w, d, h), x, y, above, yaw, pitch, roll);
+          return api.phys.spawn({ ...box(id, w, d, h), voxel }, x, y, above, yaw, pitch, roll);
         },
       },
       trial: new Trial(core, this.powers, gatesOf(map), map.poi.healthy),
