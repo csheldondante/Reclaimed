@@ -24,11 +24,14 @@
 @group(0) @binding(4) var<storage, read_write> layersOut: array<vec4<u32>>;
 // per stroke slot and column (slot * columns + i): the height this stroke has given it
 @group(0) @binding(5) var<storage, read_write> pullGiven: array<f32>;
+// ground shaken (sediment.wgsl reposeAt): the tick, how hard. Where a pull
+// lifts loose cover, it slips at a lower angle for a while: shaken off
+@group(0) @binding(7) var shakeOut: texture_storage_2d<rgba32float, write>;
 
 struct Pull {
   // x, y (world), radius, height (cells; < 0 pulls down)
   a: vec4<f32>,
-  // material, mode (0 lift, 1 through), stroke slot, 1: the stroke starts
+  // material (bits 0-7) | shake (8-15, 0..255), mode (0 lift, 1 through), stroke slot, 1: the stroke starts
   b: vec4<u32>,
   // roughness (0..1), lean direction xy, lean (0: none; 1: the far rim twice the height, the near one nothing)
   c: vec4<f32>,
@@ -80,7 +83,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let off = wp - pl.a.xy;
     let r = length(off) / max(pl.a.z, 0.5);
     if (r >= 1.3) { continue; }
-    let mat = pl.b.x;
+    let mat = pl.b.x & 0xffu;
+    let shake = f32((pl.b.x >> 8u) & 0xffu) / 255.0;
     // the brush: a smooth dome, its edge broken by the material's noise
     var f = select(0.0, (1.0 - r * r) * (1.0 - r * r), r < 1.0);
     let rough = pl.c.x;
@@ -134,6 +138,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     arr[kk] = ivPack(ivZ0(v), ivZ1(v) + dd, mat, ivAux(v));
+    if (shake > 0.0 && dd > 0.0) { textureStore(shakeOut, p, vec4<f32>(f32(G.tick), shake, 0.0, 0.0)); }
     for (var k = kk + 1u; k < n; k++) {
       let w = arr[k];
       arr[k] = ivPack(ivZ0(w) + dd, ivZ1(w) + dd, ivMat(w), ivAux(w));

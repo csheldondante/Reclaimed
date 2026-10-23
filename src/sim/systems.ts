@@ -318,15 +318,15 @@ export class SedimentSystem implements SimSystem {
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, sedimentWgsl + flowWgsl];
-    const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView };
-    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex' }, 'outflow');
+    const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView, 30: world.shakeView };
+    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' }, 'outflow');
     this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex }) };
     this.s = kernel(
       device,
       world,
       'sediment',
       sedimentWgsl + flowWgsl,
-      { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex' },
+      { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' },
       { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
       true,
     );
@@ -521,6 +521,8 @@ export interface LayerPull {
   roughness: number;
   dir: [number, number];
   lean: number;
+  /** shake the loose ground it lifts (0..1): it slips at a lower angle for a while */
+  shake: number;
 }
 
 /** Stroke slots (layerpull.wgsl pullGiven): strokes under way at once. */
@@ -547,8 +549,8 @@ export class LayerPullSystem implements SimSystem {
       world,
       'layerpull',
       layerPullWgsl,
-      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform' },
-      { 3: world.layers, 4: world.layersNext, 5: this.given, 6: this.params },
+      { 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'stex' },
+      { 3: world.layers, 4: world.layersNext, 5: this.given, 6: this.params, 7: world.shakeView },
       true,
     );
   }
@@ -562,7 +564,8 @@ export class LayerPullSystem implements SimSystem {
     batch.forEach((p, k) => {
       const o = 4 + k * 12;
       f.set([p.x, p.y, p.radius, p.height], o);
-      u.set([p.material, p.mode, p.slot, p.start ? 1 : 0], o + 4);
+      // (the shake rides in the material word's high bits: 0..255)
+      u.set([p.material | (Math.round(Math.min(Math.max(p.shake, 0), 1) * 255) << 8), p.mode, p.slot, p.start ? 1 : 0], o + 4);
       f.set([p.roughness, p.dir[0], p.dir[1], p.lean], o + 8);
     });
     // (written before this tick's submit: one batch a tick)
