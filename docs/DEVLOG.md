@@ -3148,3 +3148,10 @@ sandbox level uses it. First pull on a torn chunk swung through the
 point and back (no damping); pushes take a damping now. Tests: phystest
 game (numbers in PHYSICS.md); stress 1.43 ms; fall unchanged (slab
 117/144).
+
+## 2026-10-22 — setPushes
+
+The GameplayGM units experiment sends its force fields every frame; a frame
+with no tick left its pushes queued, the next frame's joined them, and
+push() threw past eight. `setPushes(list)` replaces the queue instead; the
+throw past eight stays (more than eight in one tick is a caller's mistake).

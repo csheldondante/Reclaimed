@@ -148,7 +148,9 @@ src/physics/:
   eight at most). Strength in cells/s² at the centre, to 0 at the radius;
   `sizeRef`: bodies smaller than that many voxels feel it in proportion (big
   pieces move, small ones and fragments barely); `damping` settles what it
-  holds.
+  holds. `physics.setPushes(list)` replaces what's queued instead (a game
+  that sets its fields every frame: frames with no tick between don't pile
+  them up).
 - `physics.state(body)`: `{ pos, vel, q, alive, total, damage, heat, tick }`
   read back from the GPU every tick (a tick or two late): its centre,
   velocity, mean rotation (what `drive` takes), voxels left, damage = 1 −
