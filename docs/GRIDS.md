@@ -112,6 +112,9 @@ and moves smoother.
    height, banks against walls); sliding on tilted faces by the normal —
    next. Water still has one sheet per column (on the top one), and loose
    ground inside a structure only slumps (no wind in there).
-6. ✓ Face growth (moss) ticking on the structure grid.
+6. ✓ Face growth (moss) ticking on the structure grid. ✓ Snow and dust on
+   the faces that look up (round 52): snow while it snows there, melting in
+   the warmth and swept off by a gale; dust under a dust storm or wind-lifted
+   grit nearby, washed off by rain.
 7. Smoother rendering: the triangle-lattice surface, SDF blending between
    grids, dual contouring.

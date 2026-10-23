@@ -3,8 +3,9 @@
 // becomes one rotated-cube instance in the body format (render.wgsl vsBody:
 // centre xyz as f32 bits + material word, then the rotation), appended with
 // one global atomic per workgroup. The material word carries the voxel's moss
-// and sand cover (bits 8..23) for the shading, and bit 31: a structure voxel
-// (not a CPU body).
+// (bits 8..11) and sand (12..15), each to 16 levels, its cover (16..20, 31
+// levels; 21 dust, else snow) for the shading, and bit 31: a structure voxel
+// (not a CPU body). Bits 24..29 stay 0 (vsBody reads a body voxel's size there).
 @group(0) @binding(3) var<storage, read> frames: array<Frame>;
 @group(0) @binding(4) var<storage, read> vox: array<u32>;
 @group(0) @binding(5) var<storage, read_write> inst: array<vec4<u32>>;
@@ -57,6 +58,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   if (!show) { return; }
   let centre = toWorld(f, vec3<f32>(c) + 0.5);
   let o = (wgBase + off) * 2u;
-  inst[o] = vec4<u32>(bitcast<u32>(centre.x), bitcast<u32>(centre.y), bitcast<u32>(centre.z), w | 0x80000000u);
+  let iw = voxMat(w) | (((w >> 12u) & 0xfu) << 8u) | (((w >> 20u) & 0xfu) << 12u) | (((w >> 24u) & 63u) << 16u) | 0x80000000u;
+  inst[o] = vec4<u32>(bitcast<u32>(centre.x), bitcast<u32>(centre.y), bitcast<u32>(centre.z), iw);
   inst[o + 1u] = vec4<u32>(bitcast<u32>(f.q.x), bitcast<u32>(f.q.y), bitcast<u32>(f.q.z), bitcast<u32>(f.q.w));
 }

@@ -172,6 +172,8 @@ fn fsMesh(in: MOut) -> FOut {
       if (driftMatAt(cell) == MAT_DRIFT) { sc = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
       sa = sc * (0.9 + 0.2 * s);
     }
+    // snow or dust on its up faces (round 52; the raw voxel word: bits 24..29)
+    sa = coverLook(sa, nrm, in.wpos, ceil(in.wpos.z - 0.05), f32((w >> 24u) & 31u) / 31.0, ((w >> 29u) & 1u) != 0u, s);
     alb = mix(alb, sa, sw);
     if (sw > 0.5) { mat = voxMatR(w); }
   }

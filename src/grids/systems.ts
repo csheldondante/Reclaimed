@@ -49,13 +49,15 @@ export class StructTickSystem implements SimSystem {
   readonly period = 4;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = gridKernel(device, world, 'structtick', structTickWgsl, { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 17: 'tex' }, {
+    this.s = gridKernel(device, world, 'structtick', structTickWgsl, { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 15: 'tex', 17: 'tex', 19: 'tex' }, {
       3: world.strFrames,
       4: world.strVox,
       5: world.surface,
       6: world.moisture,
       7: world.veg,
       17: world.driftView,
+      15: world.windFieldView,
+      19: world.airView,
     });
   }
   encode(enc: GPUCommandEncoder): void {

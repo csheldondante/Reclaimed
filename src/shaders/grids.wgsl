@@ -27,6 +27,9 @@ fn voxIndex(f: Frame, c: vec3<i32>) -> u32 { return f.d.w + u32(c.x) + f.d.x * (
 fn voxMat(v: u32) -> u32 { return v & 0xffu; }
 fn voxMoss(v: u32) -> f32 { return f32((v >> 8u) & 0xffu) / 255.0; }
 fn voxSand(v: u32) -> f32 { return f32((v >> 16u) & 0xffu) / 255.0; }
+/** the cover on its up faces (round 52): 0..31 levels in bits 24..28; bit 29 dust (else snow) */
+fn voxCoverLv(v: u32) -> u32 { return (v >> 24u) & 31u; }
+fn voxDusty(v: u32) -> bool { return ((v >> 29u) & 1u) != 0u; }
 fn voxPack(mat: u32, moss: f32, sand: f32) -> u32 {
   return mat | (u32(clamp(moss, 0.0, 1.0) * 255.0 + 0.5) << 8u) | (u32(clamp(sand, 0.0, 1.0) * 255.0 + 0.5) << 16u);
 }

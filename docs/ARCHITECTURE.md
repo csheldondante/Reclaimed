@@ -236,7 +236,9 @@ with `poiWorld`. The world spans (w + 0.5) × h·√3/2.
 
 Structure grids (src/grids/, grids.wgsl): rigid voxel grids in their own
 frames (position + quaternion; `strFrames`, 8 × 64 bytes) over a shared voxel
-pool (`strVox`, u32: material, moss, sand cover). The CPU writes frames only.
+pool (`strVox`, u32: bits 0-7 material, 8-15 moss, 16-23 sand cover, 24-28
+the snow or dust on its up faces in 31 levels, 29 dust (else snow): round 52,
+structtick.wgsl). The CPU writes frames only.
 `project.wgsl` (first each tick) writes `bodyProj` — x top, y bottom, z body id
 (−1: a structure) — from the structures and the CPU's sleeping bodies
 (`bodyCpu`, written by integrity.ts), and `foreign` (xy the top face's world
@@ -475,7 +477,9 @@ instance a voxel); per voxel two vec4<u32>, (centre xyz as f32 bits,
 material word) and the rotation quaternion xyzw as f32 bits. The word:
 bits 0-7 material, 24-29 size (0 a whole cell, n is n/16 of a cell: 4 a
 quarter, for a fine game model, round 49), 30 a physics voxel (8-15 its
-speckle, 16-23 its heat), 31 a structure grid's (8-15 moss, 16-23 sand); a
+speckle, 16-23 its heat), 31 a structure grid's (8-11 moss and 12-15 sand
+to 16 levels, 16-20 its snow or dust cover, 21 dust; structprep.wgsl repacks
+the pool's word so 24-29 stay 0); a
 game model leaves 30-31 clear. They are lit and cast shadows like the
 world, with the field mesh or without, and pick as bodies (flag 0x8000).
 `WorldCore`'s last argument turns the field mesh on (the sandbox passes

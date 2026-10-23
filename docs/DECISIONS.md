@@ -3,6 +3,26 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 52 (session 5, `physics`) — cover on props; agents
+
+- A snow-covered variant of things; the same can work for sand and dust on
+  props, which is desirable.
+- A bigger plan (proposed, not yet started): simulation layers for agents
+  that build and mine. Peel the intervals into pathable surfaces (cull tiny
+  overlapping layers such as on a jagged cliff, or peel perpendicular for
+  such surfaces); an irregular grid like Townscaper for units to dig out
+  land or build structures; units as state-driven groups sharing flow fields
+  or paths recomputed as needed, so most behaviour is following a gradient;
+  units carry material, flee, attack, fell trees and build. Procedural
+  character editors and animations later; simple for now. Many editors and
+  games are meant to use this layer (like the action game with the hover
+  bike). "Don't be dogmatic about following my design." My reply (the
+  surfaces straight from the intervals, the irregular grid for building and
+  the columns for digging, fields per goal shared by groups, units on the
+  GPU like particles, jobs as fields) awaits their answers on branch, the
+  units session's pathing, and scale: BACKLOG A1.
+- The user's go-ahead (relayed by the units session) for places step 1.
+
 ## 2026-10-23 — round 51 (session 5, `physics`) — seasons; places
 
 - Leaves should change to fall colours, with leaf particles too; grass
