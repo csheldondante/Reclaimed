@@ -3127,3 +3127,24 @@ lattice of the wrong size at first (ceil(x + 1e-6) made a 3-cell box 7
 half-voxels wide, not 6). Headless (phystest mesh): the steel beam mesh
 bends round a block, the brick crate dents and tears at a corner, the
 rock is half crushed with voxels in its breaks.
+
+## 2026-10-22 — the game's hold on bodies
+
+Round 49's fourth step: what the GameplayGM experiments asked for (the
+lich's telekinesis, the gorilla's grab and throw, the mech's heat ray
+push, shells and ground pounds, the hover bike driven and damaged). All
+of it acts in `predict`, as accelerations, so contacts, bending and
+breaking stay the solver's: a driven body is pulled voxel by voxel toward
+where the target pose puts it (its region rotation keeps it rigid), an
+impulse is spread over the tick's substeps, and up to eight force fields
+a tick act by distance, optionally in proportion to body size (the
+user's "big pieces more than dust"). The game reads bodies back from a
+`stats` pass (fixed-point atomics per body, one 16 KB readback a tick).
+Waking moved out of the level into physics/wake.ts so a game can do it;
+it now checks for room before taking anything out of the layers (before,
+a piece with no room for it vanished), and can tear out only what's
+within the radius. installPhysics wires it all into a WorldCore; the
+sandbox level uses it. First pull on a torn chunk swung through the
+point and back (no damping); pushes take a damping now. Tests: phystest
+game (numbers in PHYSICS.md); stress 1.43 ms; fall unchanged (slab
+117/144).

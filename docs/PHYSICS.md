@@ -119,6 +119,51 @@ cell lattice across two posts bends round a concrete block dropped on it; a
 brick crate mesh dropped 14 cells dents and tears at a corner, voxels in the
 tear; a concrete rock dropped 12 cells is half crushed, mesh and rubble.
 
+### For games (round 49)
+
+What a game built on Reclaimed (the GameplayGM experiments) uses, all in
+src/physics/:
+
+- `installPhysics(core, { wakeOnTouch })` (install.ts): the solver and lava
+  into a WorldCore in their order, their voxels, meshes and lava drawn, a
+  ruin a body runs into woken. The sandbox level uses it too. Returns
+  `{ physics, lava, waker }`.
+- `waker.wake(x, y, z, r, { materials, flood })` (wake.ts): the map's ruins
+  within r of a point (z < 0: any height) and everything they connect to,
+  foundations pinned (the default); or `flood: false` with a height: only
+  the cells within r, none pinned (a chunk torn out of a wall or rock).
+  Resolves to `{ bodies, full }`; with no room in the solver nothing is
+  taken. One wake at a time (each reads the layers the last left).
+- `physics.spawn(model, pos, q, vel)`, `physics.spawnMesh(mesh, voxel, pos,
+  q, vel)`: bodies from voxel models and from meshes.
+- `physics.drive(body, { pos, q, vel, stiffness, damping })` / `null`: every
+  voxel is pulled toward where that pose puts it (a spring, damped toward
+  `vel`; critical damping by default); the body follows and still collides,
+  bends and breaks. A grab, a carry, a vehicle steered; let go and it's
+  free. Stays until changed.
+- `physics.impulse(body, dv)`: a velocity change over the next tick (a
+  throw, a hit).
+- `physics.push({ kind: 'pull' | 'push' | 'wind', at, radius, strength, dir,
+  body, sizeRef, damping })`: a force field for one tick (call it each tick;
+  eight at most). Strength in cells/s² at the centre, to 0 at the radius;
+  `sizeRef`: bodies smaller than that many voxels feel it in proportion (big
+  pieces move, small ones and fragments barely); `damping` settles what it
+  holds.
+- `physics.state(body)`: `{ pos, vel, q, alive, total, damage, heat, tick }`
+  read back from the GPU every tick (a tick or two late): its centre,
+  velocity, mean rotation (what `drive` takes), voxels left, damage = 1 −
+  alive / total, the hottest voxel's temperature. A crash is a jump in
+  `vel`; damage grows as voxels crumble, melt or break off as fragments.
+- `physics.blast(at, radius, strength)`: inside crumbles to dust, near is
+  thrown. `physics.beam`: the heat beam.
+
+Headless (`phystest --scene game`): a steel crate driven 8 cells up and
+held, then thrown (lands 13 cells off); a mesh sled driven along at 3
+cells/s; a pull with `sizeRef` 30 lifts a 64-voxel stone 8 cells and leaves
+a one-voxel stone where it lay; a chunk torn out of the nearest ruin wall
+(`flood: false`) rises under a damped pull and falls when it ends. Physics
+in the stress scene: 1.43 ms (the pushes loop costs nothing measurable).
+
 ### Contacts never push out
 
 A contact only stops a voxel moving further in: the ground resets its
@@ -259,7 +304,7 @@ and temperature, and the heat of the ground at the column's top.
 - In the console: `reclaimed.phys.drop('steel', 18, 2, 2, x, y, above)`,
   `reclaimed.phys.spawn(model, x, y, above, yaw, pitch, roll)`,
   `reclaimed.phys.physics.readPositions()`.
-- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano|meteor|fall|dig|fine|mesh [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
+- `node scripts/phystest.mjs --url http://localhost:5181 --scene drop|beam|cut|heat|stress|one|sand|slam|melt|gbeam|quench|volcano|meteor|fall|dig|fine|mesh|game [--one mat,w,d,h,above] [--perf 1] [--gif out.gif --frames 45]`.
 
 ## Cost
 
