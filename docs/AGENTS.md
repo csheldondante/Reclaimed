@@ -147,8 +147,22 @@ game's CPU enemies did: kinds, behaviour, swings, hits and readback.
     - `stun` (seconds, on a hit, a launch or a lob, up to 20) keeps it down
       that much longer once settled. A stunning hit that doesn't throw it
       holds it where it stands, upright.
-    - Units don't feel the world's wind or blasts themselves: a blast
-      reaches them as the game's `hit`.
+  - **Wind** (round 57). Units feel the world's wind (`windAt`: the map's
+    wind, storms, gusts, the world API's blows and blasts, wakes,
+    cyclones), sampled at their middle.
+    - Under 8 cells/s it does nothing. Past that, a force of 0.5 × the
+      excess² ÷ mass (cells/s²) along it.
+    - On the ground, the feet hold up to 18 of it: below that it drifts
+      the unit, which walks back to its goal. Past that, it's thrown,
+      hopping by 0.35 of the excess.
+    - In the air (or lying on the ground, less the grip) the force carries
+      it, never past the wind's own speed.
+    - So a worker is thrown past 14 cells/s, an ogre (3) past ~18.4.
+    - Under a roof (any surface but a column's top) it's sheltered.
+    - A blast through the wind API is felt weaker than its strength: the
+      field smooths it (22 is felt as ~16 four cells off its centre), and
+      at its very centre the outward winds cancel. For a sure throw, use a
+      `hit`.
   - **Knock-overs.** A tumbling unit faster than 2.5 cells/s carries its
     momentum through each column it crosses (per-column shoves). A walking
     unit there is knocked over when that momentum, shared with its own mass,
@@ -210,6 +224,7 @@ limit.
 | A horde (scripts/hordetest.mjs): 60 raiders, 10 ogres, 4 brutes with their own model, round a standing target | All chase within a second; in 10 s 69 of 74 are within 3 cells of it, 15 swinging, 121 swing events. A blast (radius 3, 30 damage, outward push) kills 71, each death naming the blast. A fire hit sets the last 3 alight: they glow and burn; the ogres outlast the 12 hp the burn does. |
 | Thrown, held, burning (scripts/throwtest.mjs, a crowd of 40 standing workers) | An ogre thrown into the crowd at 18 cells/s bowls over 7-10, and they get up; a blast (push 22, outward) throws 37-38, a few hurt landing hard, all up within 4 s. One held and carried up 6 cells, then lobbed at a point 15 cells off: it lands there and skids 5 cells. One set alight in a fresh crowd of 30: 27 alight within 5 s by touch |
 | Mass and stun (scripts/knocktest.mjs) | The same hit (push 6 along dir, lift 8): a worker flies 1.5 high and is carried 5.7; an ogre (mass 3) 0.2 high and 0.46. A stun-only hit of 2 s holds a worker where it stands for 2.6 s (2 + getting up). A stun of 1.5 on a throw or a launch keeps it down 1.35-1.5 s longer |
+| Wind (scripts/windtest.mjs, crowds of 12 standing) | The map's own wind moves nobody (0.2 cells in 3 s). A blow of 12 cells/s drifts workers 2.2 cells downwind in 3 s, none thrown. A blast of 22 beside a crowd throws 10 of 12 workers and no ogres. All up within 4 s |
 | 400 units confined to a voronoi room, their goal in another room | 398 of 400 still in their room after 16 s (they stand: no seed in the room); let go, all 400 leave for the goal |
 
 **Places.** The peel reads the `places` buffer: the top surface takes the

@@ -224,7 +224,7 @@ export class Agents implements SimSystem {
     // layers and the places), the fields, the units' tick, their draw
     const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read' };
     const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform' };
-    const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read', 15: 'read', 16: 'rw', 19: 'tex' };
+    const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read', 15: 'tex', 16: 'rw', 19: 'tex', 25: 'read' };
     const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 22: 'rw', 23: 'read', 24: 'uniform' };
     this.k = {
       surfaces: mk('surfaces', peelSpec),
@@ -254,9 +254,10 @@ export class Agents implements SimSystem {
       10: this.params,
       13: this.events,
       14: world.fire,
-      15: world.lava,
+      15: world.windFieldView,
       16: this.shove,
       19: world.sparkView,
+      25: world.lava,
     });
     this.drawGroup = makeBindGroup(device, 'agents-draw', this.k.unitDraw.layout, {
       ...base,

@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 57 (session 5, `agents`; the units session, same principle) — units feel the wind
+
+- Units feel the world's wind and blasts directly, ÷ mass, with a calm
+  before anything moves them and a threshold before they're thrown, so
+  ordinary breezes don't jostle everyone. Storms, the bike's wake, a
+  jetpack's downwash and gusts push light units; the lich's storm can be
+  plain wind instead of holds.
+
 ## 2026-10-23 — round 56 (session 5, `agents`; relayed by the GameplayGM units session) — physics first; mass and stun
 
 - "Use physics wherever the sim stays stable and fast, and add a specific

@@ -4,6 +4,10 @@
 //  * takes the game's hits (a circle or a cone: damage, a push along a
 //    direction or outward, maybe set alight), reporting hurt and death; a
 //    push past TUMBLE_PUSH throws it: it tumbles;
+//  * feels the world's wind (windAt: storms, gusts, blows and blasts,
+//    wakes, cyclones) past a calm, ÷ its mass: on the ground it drifts, and
+//    past its feet's grip it's thrown; in the air it's carried along;
+//    sheltered under a roof, nothing;
 //  * held (the game carries it: a lich, a gorilla) sits where the game puts
 //    it; let go, or launched, it tumbles with the velocity given;
 //  * tumbling, flies and falls, bounces off the ground and the walls (a hard
@@ -42,7 +46,8 @@
 @group(0) @binding(13) var<storage, read_write> events: array<atomic<u32>>;
 @group(0) @binding(14) var<storage, read> fire: array<f32>;
 // lava (sim/lava.ts): x depth, y temperature, z the ground's heat (°C)
-@group(0) @binding(15) var<storage, read> lava: array<vec4<f32>>;
+// (binding 15 is the wind texture: common.wgsl windTex, read by windAt)
+@group(0) @binding(25) var<storage, read> lava: array<vec4<f32>>;
 // shoves per column, two halves as occ: what tumbling units carried through
 // it (x, y momentum and mass, ×SHOVE_FIX) and how many burning units (w)
 @group(0) @binding(16) var<storage, read_write> shove: array<atomic<i32>>;
@@ -96,6 +101,16 @@ const LAND_SKID: f32 = 0.6;
 // a landing (falling speed) or slam (into a wall) harder than this hurts, per cell/s past it
 const HURT_SPEED: f32 = 10.0;
 const HURT_PER: f32 = 1.0;
+// the wind (round 57): calmer than WIND_CALM (cells/s) it does nothing; past
+// it, a force of WIND_K × the excess² ÷ mass (cells/s²) along it. On the
+// ground the feet hold up to WIND_GRIP of it (it drifts), past that it's
+// thrown (hopping by WIND_HOP of the excess); in the air the force carries it
+// until it moves as fast as the wind. A worker (mass 1) is thrown past 14
+// cells/s, an ogre (3) past ~18.4.
+const WIND_CALM: f32 = 8.0;
+const WIND_K: f32 = 0.5;
+const WIND_GRIP: f32 = 18.0;
+const WIND_HOP: f32 = 0.35;
 // settled this long (s), it gets up
 const GETUP: f32 = 0.6;
 // a shove: the momentum carried through a column, fixed point
@@ -264,6 +279,32 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = colIdxI(c);
   let k = surfaceAt(i, pos.z + 0.5);
   var floorZ = select(pos.z, navZ(i * NAV_K + min(k, NAV_K - 1u)), k < NAV_K);
+  // the wind (not under a roof: the top surface, or in the open air above it)
+  if (state != ST_HELD && (k == 0u || k >= NAV_K)) {
+    let wv = windAt(pos + vec3<f32>(0.0, 0.0, height * 0.5));
+    let ws = length(wv);
+    let ex = ws - WIND_CALM;
+    if (ex > 0.0) {
+      let wd = wv / ws;
+      let f = WIND_K * ex * ex / mass;
+      if (state == ST_TUMBLE) {
+        // (carried, never past the wind's own speed; lying on the ground, the
+        // grip holds as much as on its feet, so a wind short of throwing it
+        // lets it settle and get up)
+        let lying = k < NAV_K && pos.z - floorZ < 0.1;
+        let fa = select(f, max(f - WIND_GRIP, 0.0), lying);
+        let along = dot(vel.xy, wd);
+        if (along < ws) { vel = vec3<f32>(vel.xy + wd * min(fa * dt, ws - along), vel.z); }
+      } else if (f > WIND_GRIP) {
+        vel = vec3<f32>(vel.xy + wd * ex * 0.5, max(vel.z, 0.0) + ex * WIND_HOP);
+        state = ST_TUMBLE;
+        stT = 0.0;
+        stun = 0.0;
+      } else {
+        push += wd * f * dt;
+      }
+    }
+  }
   // knocked over by what tumbled through here last tick (not itself: it
   // was tumbling then, and a tumbling unit doesn't take shoves)
   if (state != ST_TUMBLE && state != ST_HELD) {

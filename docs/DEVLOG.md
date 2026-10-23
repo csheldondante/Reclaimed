@@ -3566,3 +3566,43 @@ Measured (scripts/knocktest.mjs, 6 of 6): the same hit (push 6, lift 8)
 throws a worker 1.5 high and 5.7 along, an ogre 0.2 high and 0.46. A 2 s
 stun-only hit holds a worker in place 2.6 s. A 1.5 s stun on a throw or a
 launch keeps it down 1.35-1.5 s longer. throwtest is unchanged.
+
+## 2026-10-23 — agents feel the world's wind
+
+Round 57, the same principle as 56 (physics first). The units session
+asked for units to feel the world's wind and blasts directly, ÷ mass, so
+storms, the bike's wake, downwash and gusts push light units, and the
+lich's storm can be wind rather than holds. units.wgsl now samples
+`windAt` (everything the particles feel: the map's wind, storms, gusts,
+the world API's blows and blasts, wakes, cyclones) at each unit's middle.
+- A calm of 8 cells/s first, so ordinary breezes jostle nobody. Past it,
+  a force of 0.5 × the excess² ÷ mass. Quadratic, as drag is; it makes
+  the mass matter.
+- On the ground, the feet hold up to 18 cells/s² of it. Below that the
+  unit drifts and walks back. Past it, it's thrown (a hop of 0.35 of the
+  excess).
+- In the air the force carries it up to the wind's own speed. Lying on
+  the ground, less the grip, so a wind short of throwing it lets it get
+  up. A first try without that would have kept units skidding in any
+  wind over the calm.
+- Under a roof (not a column's top surface) it's sheltered.
+- A worker is thrown past 14 cells/s, an ogre (3) past ~18.4.
+
+The lava buffer moved from binding 15 to 25: 15 is common.wgsl's wind
+texture.
+
+A first pass had a force of 1 × excess² and a grip of 36 (the same
+thresholds). A 12 cells/s blow drifted standing workers 7.7 cells in 3 s,
+too much for a breeze. Halving both left the thresholds and halved the
+drift.
+
+The field smooths a blast: `wind.blast(…, 16)` peaks near 13 four cells
+out and fades within a second, so it threw nobody. 22 is felt as ~16.
+
+Measured:
+- scripts/windtest.mjs, 5 of 5: the map's wind moves nobody (0.2 cells in
+  3 s); a 12 blow drifts workers 2.2 cells, none thrown; a 22 blast beside
+  a crowd throws 10 of 12 workers and no ogres; all are up within 4 s.
+- Speed: agents at 4,000 walking units 0.74 ms against 0.69 without the
+  wind (agentstest, one run each).
+- knocktest, throwtest and hordetest are unchanged.
