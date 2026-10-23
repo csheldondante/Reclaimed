@@ -493,6 +493,8 @@ struct Spill {
   z: Dirs,
   mat: Dirs,
   src: Dirs,
+  // (round 50: the top of the face it runs out of, for the particles)
+  top: Dirs,
 };
 
 fn spillOut(p: vec2<i32>) -> Spill {
@@ -558,6 +560,7 @@ fn spillOut(p: vec2<i32>) -> Spill {
         sp.z[k] = g0;
         sp.mat[k] = f32(m);
         sp.src[k] = f32(si);
+        sp.top[k] = min(b, g1);
       }
     }
   }
@@ -584,11 +587,26 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   let out = lost + dSum(ow) + dSum(so) + dSum(sm) + dSum(po);
   sedOut[i * SED] = send;
   sedOut[i * SED + 1u] = sm;
+  let sp = spillOut(p);
   var own = dZero();
   own[0] = lost * air;
   own[1] = out;
+  // the flow the particles show (round 50): what slides or spills off this
+  // column this pass, its main way, how far it drops there, its material
+  var fk = 0u;
+  var fa = 0.0;
+  var fm = mat;
+  for (var k = 0u; k < NDIR; k++) {
+    if (so[k] > fa) { fa = so[k]; fk = k; fm = mat; }
+    if (sp.amt[k] > fa) { fa = sp.amt[k]; fk = k; fm = u32(sp.mat[k] + 0.5); }
+  }
+  own[2] = dSum(so) + dSum(sp.amt);
+  if (own[2] > 0.0) {
+    // (where it starts: the top of the run, or of the face it spills from)
+    own[3] = select(hereAt(p), sp.top[fk], sp.amt[fk] > so[fk]);
+    own[4] = f32(fk) + 8.0 * f32(fm);
+  }
   sedOut[i * SED + 2u] = own;
-  let sp = spillOut(p);
   sedOut[i * SED + 3u] = sp.amt;
   // (the rest is only read where there's a spill)
   if (dAny(sp.amt)) {
@@ -609,7 +627,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let m0 = driftMatAt(p);
   let own = sedOut[i * SED + 2u];
   // what the wind sent up into the air (the particles take it from here)
-  textureStore(airOut, p, vec4<f32>(own[0], 0.0, 0.0, 0.0));
+  // (y z w: the flow the particles show — amount, where it starts, way + 8 × material; way 6: falling)
+  textureStore(airOut, p, vec4<f32>(own[0], own[2], own[3], own[4]));
   let here = levelAt(p);
   // under a structure, the level my run lies in; what arrives in another
   // level (sideways at its height, or from the sky over a structure's top)
@@ -814,6 +833,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       if (matState(ivMat(v)) == ST_GRANULAR && z0 > fl + 1e-4) {
         let f = min(FALL, z0 - fl);
+        // (it streams down as grains: the particles show the fall)
+        if (z1 - z0 > 0.05) { textureStore(airOut, p, vec4<f32>(own[0], min(z1 - z0, 2.0) * 0.1, z0, 6.0 + 8.0 * f32(ivMat(v)))); }
         z0 -= f;
         z1 -= f;
         arr[k] = ivPack(z0, z1, ivMat(v), ivAux(v));

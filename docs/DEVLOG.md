@@ -3155,3 +3155,22 @@ The GameplayGM units experiment sends its force fields every frame; a frame
 with no tick left its pushes queued, the next frame's joined them, and
 push() threw past eight. `setPushes(list)` replaces the queue instead; the
 throw past eight stays (more than eight in one tick is a caller's mistake).
+
+## 2026-10-23 — loose ground you can see moving
+
+Round 50 (the user's plan, through the units session): sand and dirt
+should run like water when they spill and fall off things that break.
+The material already moves right (slumps to its repose, spills out of
+faces, falls when its support goes) but a cell at a time, so a slump
+looked like a shape quietly shrinking. Now the sediment pass writes the
+flow it made into the air texture's free channels (amount, where it
+starts, which way, the material) and the particles stream running
+grains from it: off the edge it leaves by, outward, down under gravity,
+then sliding down the ground's slope (a gradient from the six
+neighbours) and settling where it eases. They are a look only; the
+layers stay the truth. Real momentum (runout past the repose, debris
+flows) stays G12. Count scaled to the particle tier so a big slump
+can't take the ring: a 12-cell sand pillar of radius 3 sheds up to
+~12,600 grains at 2 s on high (65,536), 770 left at 8 s as it settles
+at ~7 cells (scripts/flowtest.mjs); a pile on a shelf taken away falls
+and spreads as grains (--shelf).

@@ -3,6 +3,36 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 50 (session 5, `physics`) — map generation and new materials
+
+The user's plan, relayed by the GameplayGM units session (its words,
+summarised; the split between Reclaimed and the game is that session's
+guess, agreed here):
+
+- Generation in order: shape first — the map partitioned into rooms and
+  halls (Poisson-disc Voronoi cells grouped into islands of 1–3, fractal
+  noise thresholds — a band near 0 makes tunnels, a value a bit off 0
+  islands — or boxes and halls drawn directly), borders made noisy by an
+  SDF; the partition names logical regions, read by an API so an LLM game
+  master can set weather and lighting per region and freeze simulation
+  where appropriate. Then bedrock, its ridges and troughs shaped by the
+  room blocking, noise tunnels, underground rivers of magma and water. Then
+  layers of dirt, sand and dust, snow where appropriate, vegetation, then
+  structures and ruins — each material its own noise or heightmap,
+  blended by SDF, each a field that can be raised; editors that grab a
+  layer and pull it into shape, guided by its noise. Then weathering:
+  meteors, wind, storms.
+- New materials: sand and dirt that animate like water when they spill and
+  fall off surfaces such as collapsing buildings; a faceted transparent
+  crystal (crystals and ice); snow and leaves, with particles.
+- Navigation as stacked layers, linked where heights touch; flow fields and
+  AI per layer; JFA vectors to what units care about; scent trails.
+- Reclaimed owns the materials, granular flow, the generation pipeline and
+  its editor ops, weathering, region ids and freezing, layered nav and JFA;
+  the game owns room/key-door blocking and agent behaviour. Generation,
+  regions, freezing and nav wait for the game-side design (after the
+  current playtest); the materials start now.
+
 ## 2026-10-22 — round 49 (session 5, `physics`) — mixed resolution, meshes
 
 - Uniformly smaller voxels are not the answer. Resolution should vary:

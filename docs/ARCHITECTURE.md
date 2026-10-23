@@ -85,6 +85,11 @@ ones with air beside them spill out of the face to their repose
 vec4 + repose in `sim`). Pass 1 (`outflow`) writes each column's outflows
 to `sedOut`; pass 2 (`main`) takes its own off and gathers its
 neighbours', updating its intervals in place (still columns are skipped).
+The air texture it writes carries, besides the dust lifted (x), the flow
+the particles show (round 50): y the amount sliding or spilling off the
+column this pass (or falling, a run that lost its support), z the height it
+starts at, w its way (0–5 a direction, 6 down) + 8 × its material; the
+particles stream running grains (K_RUN) from it — only a look.
 The surface pass derives a view each tick: `surface` z = the base of the
 loose run, the drift texture (x run depth, y top interval depth, z its
 material, w the air output), strata (the intervals beneath the top; w the
