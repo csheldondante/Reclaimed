@@ -51,7 +51,7 @@ struct AgentParams {
   kinds: array<Kind, 8>,
   // the game's hits this tick (units.wgsl Hit)
   hits: array<Hit, 32>,
-  // what hostile kinds go for (the player's units): x, y, z, radius
+  // what hostile kinds go for (the player's units): x, y, z (its feet), radius
   targets: array<vec4<f32>, 8>,
   // x holds, y launches this tick
   n3: vec4<u32>,
@@ -59,6 +59,9 @@ struct AgentParams {
   holds: array<vec4<f32>, 8>,
   // units thrown this tick: velocity (x, y, z) and the slot (w)
   launches: array<vec4<f32>, 32>,
+  // each target's height (cells; target t: [t / 4][t % 4]): it's a
+  // vertical capsule from its feet up, radius its radius (round 59)
+  targetH: array<vec4<f32>, 2>,
 };
 /**
  * A kind of unit: a (height, mass, hp, speed), b (reach, damage, swing

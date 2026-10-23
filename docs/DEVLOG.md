@@ -3646,3 +3646,37 @@ burst request is now three vec4s. scripts/fxveltest.mjs: a burst with vel
 [12, 0, 0] moves at a mean 10.25 cells/s, one without at -0.12. A burst only
 appears on the next tick, and headless runs ~27 ticks a second, so the test
 waits for ticks, not frames.
+
+## 2026-10-23 — agents: real reach and line of sight, no height band
+
+Round 59 (the units session, the user approving). A target counted only
+within `height + 2` of a unit's feet: a band standing in for "the same
+level". It let blows through a thin floor, hid a target just above the
+band, and put the lich out of reach at 5 cells by accident. Now:
+- The target is the nearest as the crow flies over the ground, whatever
+  its height.
+- A swing begins, and its blow lands, only with:
+  - reach: capsule to capsule, the target from its feet up its new
+    `height` (default 1.5), the unit from its feet to just over its head;
+  - sight: open air at every half cell from the unit's chest to the
+    target's nearest point.
+- A target overhead and out of reach is chased and waited for underneath.
+
+Sight reads the surfaces, not the layers: the units' bind group already
+holds 8 storage buffers. A point is open air when it's within a surface's
+headroom or above the top one. A gap too low to be a surface counts as
+solid, a safe error for a blow. The cost is a few lookups, only for a
+unit whose nearest target is near reach.
+
+Measured (scripts/reachtest.mjs, 4 of 4):
+- On the ground: ~40 blows in 12 s from 8 raiders.
+- Hovering 5 up: none, and all 8 wait underneath.
+- Hovering 1.8 up, within reach of their bodies: ~40 blows.
+- Ogres against a 10-cell brick wall with a wide target behind it: no blow
+  from behind the wall. With the sight test switched off, 10, so the test
+  tells them apart. 10 more once they've gone round.
+- The first try of the wall test didn't tell them apart: a 28-cell wall
+  made the path round longer than an ogre notices, so they wandered.
+
+The horde, throws, knocks and wind are unchanged. Agents at 4,000 walking
+units: 0.32-0.35 ms (one run during other work read 0.75: noise).

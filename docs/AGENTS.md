@@ -111,8 +111,26 @@ game's CPU enemies did: kinds, behaviour, swings, hits and readback.
     (the target, and `lands`: 0.3 s until the blow), then the blow 0.3 s
     into a 0.6 s swing, as a `swing` event naming the target and damage (if
     the target is still in reach); a cooldown of its swing period follows.
-- **Targets**: `setTargets` (up to 8, each frame) for the reach checks; it
-  also seeds field 3 on them.
+  - **Reach and sight** (round 59; no height band). It goes for the
+    nearest target as the crow flies over the ground, whatever its height.
+    A swing begins, and its blow lands, only when both hold:
+    - **Reach:** the target is within the kind's reach of the unit's body.
+      Both are vertical capsules: the target from its feet up its
+      `height`, radius its `radius`; the unit from its feet to a little
+      over its head.
+    - **Sight:** nothing solid between the unit's chest and the target's
+      nearest point (at least half a cell up it). The test is open air at
+      every half cell along that segment, read from the surfaces: within a
+      surface's headroom or above the top one. A floor, a deck or a wall
+      between blocks the blow. A gap too low to be a surface counts as
+      solid.
+  - A target overhead and out of reach is chased, and waited for
+    underneath.
+  - Cost: a few lookups per unit, only when its nearest target is near
+    reach.
+- **Targets**: `setTargets` (up to 8, each frame) for the reach checks: x,
+  y, z (its feet), `radius`, `height` (default 1.5). It also seeds field 3
+  on them.
 - **Hits from the game**: a circle or a cone, carrying damage, a push (along
   a direction or outward, divided by mass) and optionally fire. Up to 32 a
   tick; more wait for the next tick. Each returns an id, and `hurt` and
@@ -201,7 +219,7 @@ const agents = installAgents(core);      // the system after the particles, unit
 agents.defineKind(i, { name, height, mass, hp, speed, reach, damage, swingPeriod, notice, colours?, model? })
 agents.spawn(n, x, y, { group, kind, spread })  // → ids; they land on the top surface
 agents.remove(ids)                        // out at once, no death event
-agents.setTargets([{ x, y, z, radius }])  // what hostile kinds go for; seeds field 3 (follow(group, 3) to chase)
+agents.setTargets([{ x, y, z, radius, height? }])  // what hostile kinds go for (z its feet; height default 1.5); seeds field 3 (follow(group, 3) to chase)
 agents.hit({ x, y, z?, radius, damage, push, lift?, stun?, dir?, outward?, cone?, axis?, fire? })  // → hit id; a cone round `axis` (default `dir`); push and lift ÷ mass
 agents.hold(id, x, y, z)                  // each frame while held; false when it's gone
 agents.release(id, vel?) / agents.launch(id, vel, { stun? }) / agents.lob(id, from, to, time?, { stun? })
@@ -232,6 +250,7 @@ limit.
 | Thrown, held, burning (scripts/throwtest.mjs, a crowd of 40 standing workers) | An ogre thrown into the crowd at 18 cells/s bowls over 7-10, and they get up; a blast (push 22, outward) throws 37-38, a few hurt landing hard, all up within 4 s. One held and carried up 6 cells, then lobbed at a point 15 cells off: it lands there and skids 5 cells. One set alight in a fresh crowd of 30: 27 alight within 5 s by touch |
 | Mass and stun (scripts/knocktest.mjs) | The same hit (push 6 along dir, lift 8): a worker flies 1.5 high and is carried 5.7; an ogre (mass 3) 0.2 high and 0.46. A stun-only hit of 2 s holds a worker where it stands for 2.6 s (2 + getting up). A stun of 1.5 on a throw or a launch keeps it down 1.35-1.5 s longer |
 | Wind (scripts/windtest.mjs, crowds of 12 standing) | The map's own wind moves nobody (0.2 cells in 3 s). A blow of 12 cells/s drifts workers 2.2 cells downwind in 3 s, none thrown. A blast of 22 beside a crowd throws 10 of 12 workers and no ogres. All up within 4 s |
+| Reach and sight (scripts/reachtest.mjs) | 8 raiders a target: on the ground, ~40 windups and blows in 12 s; hovering 5 up, none, all 8 waiting underneath; hovering 1.8 up (within reach of their bodies), ~40. Ogres against a 10-cell brick wall with a wide target just behind it: no blow from behind the wall (10 when the sight test is switched off); 10 once round it |
 | 400 units confined to a voronoi room, their goal in another room | 398 of 400 still in their room after 16 s (they stand: no seed in the room); let go, all 400 leave for the goal |
 
 **Places.** The peel reads the `places` buffer: the top surface takes the

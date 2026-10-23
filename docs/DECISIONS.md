@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 59 (session 5, `agents`; the units session, the user approving) — real reach and sight
+
+- The height band (a target counted only within the unit's height + 2 of
+  it) was bad: it let blows through a thin floor, hid a target just above
+  the band, and made the lich out of reach by accident. Instead:
+  - targets are chosen ignoring height;
+  - a blow lands only with real reach (capsule to capsule) and line of
+    sight (nothing solid between);
+  - a target out of reach overhead is chased and waited for underneath;
+  - targets gain a height.
+
 ## 2026-10-23 — round 58 (session 5, `agents`; the units session) — lighter on phones; bursts carried
 
 - The hoverbike is choppy on the user's phone. Asked for a cheaper sim path

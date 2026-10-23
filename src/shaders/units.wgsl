@@ -164,6 +164,58 @@ fn downField(fld: u32, s: u32, c: vec2<i32>, pos: vec2<f32>, here: f32) -> vec2<
   return select(bestDir, normalize(g), length(g) > 0.2 && dot(normalize(g), bestDir) > 0.3);
 }
 
+/**
+ * Open air at height z in column i: within a surface's headroom (the air
+ * over it), or above the top one. Below the lowest surface, or in a gap too
+ * low to be a surface, it's solid. A column with no surfaces is all air.
+ */
+fn airAt(i: u32, z: f32) -> bool {
+  for (var k = 0u; k < NAV_K; k++) {
+    let s = i * NAV_K + k;
+    let zk = navZ(s);
+    if (zk < 0.0) { return k == 0u; }
+    if (z < zk - 0.05) { return false; }
+    let h = navHead(s);
+    // (headroom is capped at 31: the top surface's sky, or a tall hall)
+    let last = k + 1u >= NAV_K || navZ(s + 1u) < 0.0;
+    if (z <= zk + h || (h >= 30.9 && (last || z < navZ(s + 1u)))) { return true; }
+  }
+  return false;
+}
+
+/** Nothing solid between a and b: open air at points every half cell along it (the ends excluded). */
+fn sightClear(a: vec3<f32>, b: vec3<f32>) -> bool {
+  let n = u32(clamp(ceil(length(b - a) / 0.5), 1.0, 16.0));
+  for (var j = 1u; j < n; j++) {
+    let q = mix(a, b, f32(j) / f32(n));
+    if (!airAt(colIdxI(clampCell(cellAt(q.xy))), q.z)) { return false; }
+  }
+  return true;
+}
+
+/**
+ * How far target t is from a unit's body (at pos, `height` tall): between
+ * two vertical capsules, the target's from its feet up its height, radius
+ * its radius; and the nearest point of the target, for sight. (round 59: no
+ * height band. Reach is the arms' reach in 3D, sight is the geometry's.)
+ */
+fn targetGap(t: u32, pos: vec3<f32>, height: f32) -> vec4<f32> {
+  let tp = AP.targets[t];
+  let th = AP.targetH[t / 4u][t % 4u];
+  let off = tp.xy - pos.xy;
+  let hd = max(length(off) - tp.w, 0.0);
+  // the agent's body, feet to a little over its head
+  let lo = pos.z;
+  let hi = pos.z + height + 0.3;
+  let vg = max(max(tp.z - hi, lo - (tp.z + th)), 0.0);
+  // the target's nearest point: its edge toward the agent, at the height nearest the chest
+  let chest = pos.z + height * 0.6;
+  let toward = select(vec2<f32>(0.0), off / max(length(off), 1e-3) * min(tp.w, length(off)), length(off) > 1e-3);
+  // (at least half a cell up it: one standing a step higher isn't hidden by the step's edge)
+  let near = vec3<f32>(tp.xy - toward, clamp(chest, tp.z + min(0.5, th * 0.5), tp.z + th));
+  return vec4<f32>(near, sqrt(hd * hd + vg * vg));
+}
+
 /** The floor under a body at height z in column i, or -FAR where z is inside the ground there (a wall). */
 fn floorUnder(i: u32, z: f32) -> f32 {
   let k = surfaceAt(i, z + 0.3);
@@ -417,18 +469,28 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
       let s = i * NAV_K + k;
       let here = select(FAR, dist[fld * N + s], fld < AP.n.z);
       let worker = kind.b.w <= 0.0;
-      // the nearest target, as the crow flies
+      // the nearest target, as the crow flies over the ground (whatever its
+      // height: one overhead is chased, and waited for underneath)
       var tgt = -1;
       var td = FAR;
       for (var t = 0u; t < AP.n2.y; t++) {
         let tp = AP.targets[t];
         let dd2 = length(tp.xy - pos.xy) - tp.w;
-        if (dd2 < td && abs(tp.z - pos.z) < height + 2.0) { td = dd2; tgt = i32(t); }
+        if (dd2 < td) { td = dd2; tgt = i32(t); }
+      }
+      // in reach: within the arms' reach of the target's body, and nothing
+      // solid between its chest and the target (a floor, a deck, a wall)
+      var reachD = FAR;
+      var seen = false;
+      if (tgt >= 0 && td < kind.b.x * 1.3) {
+        let g = targetGap(u32(tgt), pos, height);
+        reachD = g.w;
+        if (reachD < kind.b.x * 1.3) { seen = sightClear(pos + vec3<f32>(0.0, 0.0, height * 0.6), g.xyz); }
       }
       if (!worker) {
         if (state == ST_WANDER && here < kind.b.w) { state = ST_CHASE; stT = 0.0; }
         if (state == ST_CHASE && here > kind.b.w * 1.5) { state = ST_WANDER; stT = 0.0; }
-        if (state == ST_CHASE && tgt >= 0 && td < kind.b.x && cool <= 0.0) {
+        if (state == ST_CHASE && reachD < kind.b.x && seen && cool <= 0.0) {
           state = ST_SWING;
           stT = 0.0;
           emit(EV_WINDUP, uid, u32(tgt), SWING_HIT, pos);
@@ -438,7 +500,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
         speed = 0.0;
         if (tgt >= 0) { heading = atan2(AP.targets[tgt].y - pos.y, AP.targets[tgt].x - pos.x); }
         // (the blow lands once, partway into the swing, if it's still in reach)
-        if (stT >= SWING_HIT && stT - dt < SWING_HIT && tgt >= 0 && td < kind.b.x * 1.3) {
+        if (stT >= SWING_HIT && stT - dt < SWING_HIT && reachD < kind.b.x * 1.3 && seen) {
           emit(EV_SWING, uid, u32(tgt), kind.b.y, pos);
         }
         if (stT > SWING_END) { state = ST_CHASE; stT = 0.0; cool = kind.b.z; }

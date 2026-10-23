@@ -48,7 +48,8 @@ const P_TARGETS = P_HITS + MAX_HITS * 16;
 const P_N3 = P_TARGETS + MAX_TARGETS * 4;
 const P_HOLDS = P_N3 + 4;
 const P_LAUNCHES = P_HOLDS + MAX_HOLDS * 4;
-const PARAMS_BYTES = (P_LAUNCHES + MAX_LAUNCHES * 4) * 4;
+const P_TARGET_H = P_LAUNCHES + MAX_LAUNCHES * 4;
+const PARAMS_BYTES = (P_TARGET_H + MAX_TARGETS) * 4;
 /** what the tumbling units fall by (units.wgsl GRAVITY, cells/s²) */
 export const AGENT_GRAVITY = 20;
 /** bytes of a surface (agents.wgsl nav: vec4<u32>), and of a unit (four vec4) */
@@ -121,6 +122,8 @@ export interface Target {
   z: number;
   /** its size: reach counts to its edge */
   radius?: number;
+  /** how tall it stands from z (its feet), cells (default 1.5): reach counts to the nearest point of it */
+  height?: number;
 }
 
 export type AgentEvent =
@@ -643,7 +646,10 @@ export class Agents implements SimSystem {
       const cone = h.cone !== undefined ? Math.cos(((h.cone / 2) * Math.PI) / 180) : -2;
       f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, h.fire ? 1 : 0, h.id, axis[0], axis[1], h.lift ?? 0, Math.min(Math.max(h.stun ?? 0, 0), MAX_STUN)], o);
     });
-    this.targets.forEach((t, i) => f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4));
+    this.targets.forEach((t, i) => {
+      f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4);
+      f[P_TARGET_H + i] = t.height ?? 1.5;
+    });
     const holds = [...this.holds].slice(0, MAX_HOLDS);
     const launches = this.launches.splice(0, MAX_LAUNCHES);
     u.set([holds.length, launches.length, 0, 0], P_N3);
