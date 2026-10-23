@@ -19,6 +19,11 @@ export class Mirror {
   private sources: Source[] = [];
   private size = 0;
   private data = new Map<string, ArrayBuffer>();
+  /** typed views of the last read, made once a read (queries run hundreds of times a frame) */
+  private f32s = new Map<string, Float32Array>();
+  private u32s = new Map<string, Uint32Array>();
+  /** bumped every read: a module's own caches of derived values key on it */
+  gen = 0;
   private timer = 0;
   private inFlight: Promise<void> | null = null;
   /** performance.now() of the last completed read (0: never) */
@@ -46,6 +51,30 @@ export class Mirror {
   /** The last read of `name` (undefined before the first refresh). */
   get(name: string): ArrayBuffer | undefined {
     return this.data.get(name);
+  }
+
+  /** The last read of `name` as f32s (one view a read). */
+  f32(name: string): Float32Array | undefined {
+    let v = this.f32s.get(name);
+    if (!v) {
+      const b = this.data.get(name);
+      if (!b) return undefined;
+      v = new Float32Array(b);
+      this.f32s.set(name, v);
+    }
+    return v;
+  }
+
+  /** The last read of `name` as u32s (one view a read). */
+  u32(name: string): Uint32Array | undefined {
+    let v = this.u32s.get(name);
+    if (!v) {
+      const b = this.data.get(name);
+      if (!b) return undefined;
+      v = new Uint32Array(b);
+      this.u32s.set(name, v);
+    }
+    return v;
   }
 
   /** Read everything back; resolves with data read after the call (a read in flight finishes first). */
@@ -81,6 +110,9 @@ export class Mirror {
         this.data.set(s.name, out.buffer);
       }
       tmp.unmap();
+      this.f32s.clear();
+      this.u32s.clear();
+      this.gen++;
       this.readAt = performance.now();
     }, ignoreTeardown);
     tmp.destroy();

@@ -39,20 +39,19 @@ export class Fire {
 
   /** How hard (x, y) is burning, 0..1 (0: not alight). */
   fireAt(x: number, y: number): number | null {
-    const f = this.mirror.get('fire');
+    const f = this.mirror.f32('fire');
     const i = this.col(x, y);
     if (!f || i < 0) return null;
-    return new Float32Array(f)[i];
+    return f[i];
   }
 
   /** Lava at (x, y), or null where there's none (or before the first read). */
   lavaAt(x: number, y: number): LavaAt | null {
-    const l = this.mirror.get('lava');
+    const l = this.mirror.f32('lava');
     const i = this.col(x, y);
     if (!l || i < 0) return null;
-    const v = new Float32Array(l, i * 16, 4);
-    if (v[0] <= 0.001) return null;
-    return { depth: v[0], temperature: v[1], level: v[3] };
+    if (l[i * 4] <= 0.001) return null;
+    return { depth: l[i * 4], temperature: l[i * 4 + 1], level: l[i * 4 + 3] };
   }
 
   /**
@@ -61,12 +60,11 @@ export class Fire {
    * 600 × its intensity.
    */
   heatAt(x: number, y: number): number | null {
-    const l = this.mirror.get('lava');
-    const f = this.mirror.get('fire');
+    const l = this.mirror.f32('lava');
+    const f = this.mirror.f32('fire');
     const i = this.col(x, y);
     if (!l || !f || i < 0) return null;
-    const v = new Float32Array(l, i * 16, 4);
-    return Math.max(v[2], v[0] > 0.001 ? v[1] : 0, new Float32Array(f)[i] * 600);
+    return Math.max(l[i * 4 + 2], l[i * 4] > 0.001 ? l[i * 4 + 1] : 0, f[i] * 600);
   }
 
   /**

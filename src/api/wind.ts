@@ -254,13 +254,13 @@ export class Wind implements SimSystem {
    * in it). Null before the first read.
    */
   fieldAt(x: number, y: number): [number, number] | null {
-    const t = this.mirror.get('wind');
-    if (!t) return null;
+    const f = this.mirror.f32('wind');
+    if (!f) return null;
     const tex = this.core.world.windField;
     const tx = Math.min(tex.width - 1, Math.max(0, Math.floor(x / 2)));
     const ty = Math.min(tex.height - 1, Math.max(0, Math.floor(y / 2)));
-    const f = new Float32Array(t, (ty * tex.width + tx) * 16, 4);
-    return [f[2], f[3]];
+    const o = (ty * tex.width + tx) * 4;
+    return [f[o + 2], f[o + 3]];
   }
 
   encode(): void {

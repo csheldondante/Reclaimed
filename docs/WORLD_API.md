@@ -28,6 +28,9 @@ raw buffers, every command for its effect).
 - `sim.readAt` says when it was read. `await sim.refresh()` resolves with
   data read after the call.
 - Until the first read, queries return null.
+- Typed views of each read are made once and shared by every query, so a
+  few hundred queries a frame cost nothing to speak of: a smooth height
+  sample takes about 2 µs.
 
 **(c) Commands queue inside.** Caps are handled inside, by queueing or
 merging, never thrown at the game or silently dropped:
@@ -49,11 +52,14 @@ stay behind the API, so the engine can change them freely.
 
 ```ts
 const sim = createSim(host, worldDef)   // a world from its definition (below)
-const sim = attachSim(core)             // the modules over a WorldCore a scene already runs (the level: reclaimed.api)
+const sim = attachSim(core, modules?, warmup?)   // the modules over a WorldCore a scene already runs (the level: reclaimed.api)
+await sim.ready                         // the warmup asked for at creation (WorldDef.warmup or attachSim's), if any
+await sim.warmup({ ticks, debris, skip })        // settle the world: ticks of sim at once, debris (dust, litter, leaves)
+                                        // gathering `debris`× faster (the levels use 10), plants left out (skip ['ecology'])
 
 // terrain
-sim.terrain.heightAt(x, y)          // the open sky's floor: ground, loose ground on it, or a structure's top
-sim.terrain.groundAt(x, y)          // the nature grid's own ground (structures ignored)
+sim.terrain.heightAt(x, y, { smooth? })  // the open sky's floor: ground, loose ground on it, or a structure's top
+sim.terrain.groundAt(x, y, { smooth? })  // the nature grid's own ground (structures ignored)
 sim.terrain.floorAt(x, y, z)        // the highest floor of open air at or below z (under an overhang, inside a structure)
 sim.terrain.materialAt(x, y, z?)    // 'sand' | 'stone' | … | 'air' at height z; the top layer's without z
 sim.terrain.layersAt(x, y)          // [{ z0, z1, material, state: 'solid' | 'loose' | 'liquid' | 'plant' }] bottom up
@@ -63,7 +69,7 @@ sim.terrain.deposit(x, y, 'sand', { radius, layers })   // loose only: it falls,
 sim.terrain.build(x, y, 'stone', { radius, layers })    // solids only
 
 // water
-sim.water.depthAt(x, y); sim.water.levelAt(x, y)
+sim.water.depthAt(x, y); sim.water.levelAt(x, y, { smooth? })
 sim.water.flowAt(x, y)              // [vx, vy] cells/s (approximate: outflow over depth)
 sim.water.flood(x, y, { radius, depth }); sim.water.drain(x, y, { radius, depth })
 
@@ -85,6 +91,30 @@ sim.wind.liftThreshold('drift')     // the wind a loose material lifts above
 sim.fx.burst('dust' | 'litter' | 'leaves' | 'ash' | 'chips' | 'cloud' | 'splash' | 'smoke' | 'embers'
            | 'flame' | 'haze' | 'seeds' | 'sparks' | 'petals' | 'grains', x, y, z, { count, speed, spread, material })
 ```
+
+### Smooth sampling
+
+`{ smooth: true }` samples the ground the way the field mesh draws it, so a
+rider glides instead of stepping hex to hex. It's a CPU port of
+fieldmesh.wgsl, hash for hash:
+- Each column's top is blended over the three nearest cell centres, with
+  barycentric weights on the triangle lattice of centres. (The field mesh
+  does this, not a (1 − d)² falloff.)
+- The blend is taken at the point meshregion.wgsl's warp moves (x, y) to.
+  The warp depends on height, so the height is found in two steps from the
+  unwarped blend.
+- Only the materials the mesh draws are blended. Ruins drawn as prisms and
+  structures' cubes stay sharp: over one, its own top.
+
+For water, `levelAt` blends the columns' water levels over the same three
+centres, unwarped, as the sheet is drawn.
+
+Measured on the sandbox against the mesh's own up-facing vertices:
+
+| Vertices | Smooth (median) | Stepped (median) |
+|---|---|---|
+| All 4,000 | 0.011 | 0.034 |
+| The 545 where the hexes step (slopes, banks) | 0.024 | 0.141 |
 
 ### Wind
 

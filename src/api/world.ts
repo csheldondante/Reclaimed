@@ -61,6 +61,21 @@ export interface WorldDef {
   agents?: { kinds?: KindSpec[] };
   /** modules to install (default all of them) */
   modules?: SimModules;
+  /** settle the world before it's shown (Sim.warmup; sim.ready resolves when it's done) */
+  warmup?: WarmupOpts;
+}
+
+export interface WarmupOpts {
+  /** ticks of simulation (60 a second; the levels run 1800, ~30 s: rivers reach equilibrium) */
+  ticks: number;
+  /**
+   * how much faster loose debris (dust, litter) gathers on the ground while
+   * it runs, so the world opens with some lying about for the wind to lift
+   * (the levels use 10; 1 none extra)
+   */
+  debris?: number;
+  /** systems left out while it runs (default ['ecology']: plants don't grow through it) */
+  skip?: string[];
 }
 
 export interface Sim {
@@ -75,8 +90,24 @@ export interface Sim {
   refresh(): Promise<void>;
   /** performance.now() of the last mirror read (0: never). */
   readonly readAt: number;
+  /** Settle the world: `ticks` of simulation at once, debris gathering faster; resolves when the GPU is done. */
+  warmup(opts: WarmupOpts): Promise<void>;
+  /** resolves once the warmup asked for at creation is done (at once without one) */
+  readonly ready: Promise<void>;
   /** Stop the mirror's timer (attachSim), or that and the world too (createSim). */
   dispose(): void;
+}
+
+async function warmup(core: WorldCore, mirror: Mirror, opts: WarmupOpts): Promise<void> {
+  const g = core.globals;
+  const skip = new Set(opts.skip ?? ['ecology']);
+  g.debrisBoost = opts.debris ?? 1;
+  try {
+    await core.warmup(opts.ticks, (sys) => !skip.has(sys.name));
+  } finally {
+    g.debrisBoost = 1;
+  }
+  await mirror.refresh();
 }
 
 /** A sim of the world `def` describes. */
@@ -86,7 +117,7 @@ export function createSim(host: Host, def: WorldDef): Sim {
   if (def.season !== undefined) core.globals.season = def.season;
   if (def.yearLength !== undefined) core.yearLength = def.yearLength;
   if (def.places) core.places.load(def.places.plan, def.places.seed ?? 1);
-  const sim = attachSim(core, def.modules ?? ALL);
+  const sim = attachSim(core, def.modules ?? ALL, def.warmup);
   def.agents?.kinds?.forEach((k, i) => {
     if (!sim.agents) throw new Error('WorldDef: agent kinds given, but the agents module is off');
     sim.agents.defineKind(i, k);
@@ -96,10 +127,12 @@ export function createSim(host: Host, def: WorldDef): Sim {
   return Object.assign(sim, { dispose: () => (stop(), core.destroy()) });
 }
 
-/** The modules over a WorldCore a scene already runs (the level). */
-export function attachSim(core: WorldCore, mods: SimModules = ALL): Sim {
+/** The modules over a WorldCore a scene already runs (the level); `warm` settles it first (sim.ready). */
+export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: WarmupOpts): Sim {
   const mirror = new Mirror(core.host.gpu.device);
   const sim = {
+    warmup: (opts: WarmupOpts) => warmup(core, mirror, opts),
+    ready: warm ? warmup(core, mirror, warm) : Promise.resolve(),
     core,
     terrain: mods.terrain ? new Terrain(core, mirror) : undefined,
     water: mods.water ? new Water(core, mirror) : undefined,

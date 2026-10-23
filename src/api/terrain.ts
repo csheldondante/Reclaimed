@@ -4,9 +4,11 @@
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 import { cellAt } from '../world/lattice';
-import { readColumn, sfZ } from '../world/layout';
+import { columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
+import { MAT, MATERIALS, MatState } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, type MaterialName } from './common';
 import type { Mirror } from './mirror';
+import { blendedTop } from './smooth';
 
 /** edit.wgsl ops (op · 32 + material; + STROKE_START: each command its own press) */
 const OP_BUILD = 1;
@@ -22,6 +24,22 @@ export interface Layer {
   state: 'solid' | 'loose' | 'liquid' | 'plant' | 'air';
 }
 
+export interface SampleOpts {
+  /**
+   * Sample the way the field mesh draws the ground: the columns' tops
+   * blended over the three nearest cell centres at the mesh's warped point,
+   * so a rider glides instead of stepping hex to hex. What the mesh leaves
+   * sharp (ruins drawn as prisms, structures' cubes) stays sharp: over one,
+   * its top.
+   */
+  smooth?: boolean;
+}
+
+/** meshregion.wgsl fieldMat: in the field mesh (else drawn as a prism: what's built) */
+function fieldMat(m: number): boolean {
+  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt;
+}
+
 /**
  * Queries answer from the mirror (refreshed every `mirror.every` ms, 250 by
  * default; `readAt` says when): until the first read they return null.
@@ -29,6 +47,10 @@ export interface Layer {
  * `floorAt` (their projected floors), not in `materialAt` / `layersAt`.
  */
 export class Terrain {
+  /** per column, the top of its field-mesh ground (NaN: not worked out yet this read) */
+  private fieldTops = new Float32Array(0);
+  private topsGen = -1;
+
   constructor(
     private core: WorldCore,
     private mirror: Mirror,
@@ -52,29 +74,71 @@ export class Terrain {
     return columnAt(this.core.dims.w, this.core.dims.h, x, y);
   }
 
+  private inMap(cx: number, cy: number): boolean {
+    return cx >= 0 && cy >= 0 && cx < this.core.dims.w && cy < this.core.dims.h;
+  }
+
+  /** column (cx, cy)'s field-mesh ground: the top of its highest interval the mesh draws (0: none) */
+  private fieldTop(cx: number, cy: number): number | null {
+    if (!this.inMap(cx, cy)) return null;
+    const u = this.mirror.u32('layers');
+    const f = this.mirror.f32('layers');
+    if (!u || !f) return null;
+    if (this.topsGen !== this.mirror.gen) {
+      if (this.fieldTops.length !== this.core.dims.w * this.core.dims.h) this.fieldTops = new Float32Array(this.core.dims.w * this.core.dims.h);
+      this.fieldTops.fill(NaN);
+      this.topsGen = this.mirror.gen;
+    }
+    const i = cy * this.core.dims.w + cx;
+    let t = this.fieldTops[i];
+    if (Number.isNaN(t)) {
+      t = 0;
+      const { base, k } = columnSlots(this.core.packed, cx, cy);
+      for (let s = 0; s < k; s++) {
+        const o = (base + s) * SLOT_WORDS;
+        // (an empty slot ends the column: layout.ts readSlot)
+        if (u[o + 1] === 0) break;
+        if (fieldMat(u[o + 2] & 0xff)) t = Math.max(t, f[o + 1]);
+      }
+      this.fieldTops[i] = t;
+    }
+    return t;
+  }
+
+  /** The ground the field mesh draws at (x, y), with what it leaves sharp on top (`sharp`: a column's own top over its field ground). */
+  private smoothAt(x: number, y: number, sharp: (i: number) => number): number | null {
+    const z = blendedTop(x, y, (cx, cy) => this.fieldTop(cx, cy));
+    const i = this.col(x, y);
+    if (z === null || i < 0) return z;
+    const [cx, cy] = cellAt(x, y);
+    const own = sharp(i);
+    return own > (this.fieldTop(cx, cy) ?? 0) + 0.05 ? Math.max(z, own) : z;
+  }
+
   /** The height of the open sky's floor at (x, y): the ground, loose ground on it, or a structure's top. */
-  heightAt(x: number, y: number): number | null {
-    const lv = this.mirror.get('levels');
+  heightAt(x: number, y: number, opts?: SampleOpts): number | null {
+    const lv = this.mirror.f32('levels');
     const i = this.col(x, y);
     if (!lv || i < 0) return null;
-    return new Float32Array(lv)[i * 4];
+    if (opts?.smooth) return this.smoothAt(x, y, (j) => lv[j * 4]);
+    return lv[i * 4];
   }
 
   /** The nature grid's own ground at (x, y) (its top and the loose ground on it), ignoring structures. */
-  groundAt(x: number, y: number): number | null {
-    const s = this.mirror.get('surface');
-    const d = this.mirror.get('drift');
+  groundAt(x: number, y: number, opts?: SampleOpts): number | null {
+    const s = this.mirror.u32('surface');
+    const d = this.mirror.f32('drift');
     const i = this.col(x, y);
     if (!s || !d || i < 0) return null;
-    return sfZ(new Uint32Array(s)[i]) + new Float32Array(d)[i * 4];
+    if (opts?.smooth) return this.smoothAt(x, y, (j) => sfZ(s[j]) + d[j * 4]);
+    return sfZ(s[i]) + d[i * 4];
   }
 
   /** The floor under height z at (x, y): the highest floor of open air at or below z (+0.5); null none. */
   floorAt(x: number, y: number, z: number): number | null {
-    const lv = this.mirror.get('levels');
+    const f = this.mirror.f32('levels');
     const i = this.col(x, y);
-    if (!lv || i < 0) return null;
-    const f = new Float32Array(lv);
+    if (!f || i < 0) return null;
     let best: number | null = null;
     for (let k = 0; k < 4; k++) {
       const v = f[i * 4 + k];
@@ -86,11 +150,10 @@ export class Terrain {
 
   /** The column's layers at (x, y), bottom up. */
   layersAt(x: number, y: number): Layer[] | null {
-    const l = this.mirror.get('layers');
-    if (!l) return null;
+    const l = this.mirror.u32('layers');
+    if (!l || this.col(x, y) < 0) return null;
     const [cx, cy] = cellAt(x, y);
-    if (this.col(x, y) < 0) return null;
-    return readColumn(this.core.packed, new Uint32Array(l), cx, cy).map((iv) => ({ z0: iv.z0, z1: iv.z1, material: materialName(iv.mat), state: materialState(iv.mat) }));
+    return readColumn(this.core.packed, l, cx, cy).map((iv) => ({ z0: iv.z0, z1: iv.z1, material: materialName(iv.mat), state: materialState(iv.mat) }));
   }
 
   /** What's at height z in (x, y) ('air' between layers), or the top layer's material when z is left out. */
