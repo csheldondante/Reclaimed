@@ -200,7 +200,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     let r = length(off.xy);
     // (z below -1e8: any height)
     if (r > hit.a.w + 0.3 || (hit.a.z > -1e8 && abs(off.z) > hit.a.w + height)) { continue; }
-    if (hit.b.z > -1.5 && r > 0.3 && dot(off.xy / r, hit.b.xy) < hit.b.z) { continue; }
+    if (hit.b.z > -1.5 && r > 0.3 && dot(off.xy / r, hit.d.xy) < hit.b.z) { continue; }
     let hid = u32(hit.c.w);
     if (hit.b.w > 0.0) {
       hp -= hit.b.w;

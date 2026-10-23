@@ -119,7 +119,8 @@ game's CPU enemies did: kinds, behaviour, swings, hits and readback.
   reused. Deaths free their slots in `sync()`.
 - **Reading back**: `sync()` does one readback a frame for units and events,
   resolving a frame or two later. It returns the live units (`id`, position,
-  `heading`, `state` wander/chase/swing, `alight`, `hp`, `kind`, `group`)
+  `heading`, velocity `vx, vy, vz`, `state` wander/chase/swing/tumble/held,
+  `alight`, `hp`, `kind`, `group`)
   and the events since the last sync: `swing`, `hurt`, `death` and
   `alight`. Events past 2,048 a sync are counted and warned about, never
   silently lost.
@@ -164,7 +165,7 @@ agents.defineKind(i, { name, height, mass, hp, speed, reach, damage, swingPeriod
 agents.spawn(n, x, y, { group, kind, spread })  // → ids; they land on the top surface
 agents.remove(ids)                        // out at once, no death event
 agents.setTargets([{ x, y, z, radius }])  // what hostile kinds go for; seeds field 3 (follow(group, 3) to chase)
-agents.hit({ x, y, z?, radius, damage, push, dir?, outward?, cone?, fire? })  // → hit id
+agents.hit({ x, y, z?, radius, damage, push, dir?, outward?, cone?, axis?, fire? })  // → hit id; a cone round `axis` (default `dir`)
 agents.hold(id, x, y, z)                  // each frame while held; false when it's gone
 agents.release(id, vel?) / agents.launch(id, vel) / agents.lob(id, from, to, time?)
 const { units, events } = await agents.sync()  // each frame: live units, and swing/hurt/death/alight events

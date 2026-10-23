@@ -68,11 +68,11 @@ struct AgentParams {
  */
 struct Kind { a: vec4<f32>, b: vec4<f32>, c: vec4<u32> };
 /**
- * A hit from the game: a (x, y, z, radius), b (direction xy, cos of the
- * cone's half angle: -2 a circle, damage), c (push cells/s, 1 outward else
- * along the direction, 1 sets alight, its id)
+ * A hit from the game: a (x, y, z, radius), b (the push's direction xy, cos
+ * of the cone's half angle: -2 a circle, damage), c (push cells/s, 1 outward
+ * else along the direction, 1 sets alight, its id), d (the cone's axis xy)
  */
-struct Hit { a: vec4<f32>, b: vec4<f32>, c: vec4<f32> };
+struct Hit { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32> };
 @group(0) @binding(10) var<uniform> AP: AgentParams;
 // (the surfaces pass only) places: per column low u16 the open-air room, high
 // u16 the enclosed level's (0 the same); the place table: a room's region

@@ -3451,3 +3451,12 @@ That was the bike's last direct Globals write. It works through the
 particles' spawns on dirty ground, so the clean sandbox shows it least: 600
 ticks at debris 10 left 4,294 litter, dust and leaf particles against
 3,147 at 1.
+
+## 2026-10-23 — agents: velocity read back, a cone's axis apart from its push
+
+Two asks from the units session, now that its horde runs on sim.agents.
+- `sync()` units carry their velocity, for lead aiming and feel checks.
+- A cone hit can point one way and push another, `axis` apart from `dir`:
+  the lich's pull is a cone toward the enemies pushing back toward the lich.
+  Checked: a 90° cone pointing east with a westward push of 3 moved the
+  units east of it west (vx -1.6) and left those behind it alone.

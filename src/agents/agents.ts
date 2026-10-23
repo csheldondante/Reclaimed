@@ -45,7 +45,7 @@ const P_FPLACE = P_GMAT + 16;
 const P_N2 = P_FPLACE + 4;
 const P_KINDS = P_N2 + 4;
 const P_HITS = P_KINDS + MAX_KINDS * 12;
-const P_TARGETS = P_HITS + MAX_HITS * 12;
+const P_TARGETS = P_HITS + MAX_HITS * 16;
 const P_N3 = P_TARGETS + MAX_TARGETS * 4;
 const P_HOLDS = P_N3 + 4;
 const P_LAUNCHES = P_HOLDS + MAX_HOLDS * 4;
@@ -98,8 +98,9 @@ export interface HitSpec {
   push?: number;
   dir?: readonly [number, number];
   outward?: boolean;
-  /** a cone instead of a circle: its full angle (degrees) round `dir` */
+  /** a cone instead of a circle: its full angle (degrees) round `axis` (default `dir`) */
   cone?: number;
+  axis?: readonly [number, number];
   /** sets them alight */
   fire?: boolean;
 }
@@ -125,6 +126,10 @@ export interface AgentState {
   z: number;
   /** facing (radians, from +x) */
   heading: number;
+  /** its velocity (cells/s): walking, flying when tumbling, the hand's when held */
+  vx: number;
+  vy: number;
+  vz: number;
   state: AgentStateName;
   alight: boolean;
   hp: number;
@@ -387,6 +392,7 @@ export class Agents implements SimSystem {
    * events name it).
    */
   hit(h: HitSpec): number {
+    if (h.cone !== undefined && !h.axis && !h.dir) throw new Error('agents: a cone hit needs a dir or an axis');
     const id = this.nextHit++;
     this.hits.push({ ...h, id });
     return id;
@@ -531,6 +537,9 @@ export class Agents implements SimSystem {
             y: uf[s * 16 + 1],
             z: uf[s * 16 + 2],
             heading: uf[s * 16 + 11],
+            vx: uf[s * 16 + 4],
+            vy: uf[s * 16 + 5],
+            vz: uf[s * 16 + 6],
             state: STATES[(info >>> 12) & 7] ?? 'wander',
             alight: ((info >>> 15) & 1) === 1,
             hp: uf[s * 16 + 8],
@@ -591,10 +600,15 @@ export class Agents implements SimSystem {
       u.set([k.colours?.legs ?? 0, k.colours?.head ?? 0, k.colours?.torso ?? 0, 0], o + 8);
     });
     hits.forEach((h, i) => {
-      const o = P_HITS + i * 12;
-      const dl = h.dir ? Math.hypot(h.dir[0], h.dir[1]) || 1 : 1;
+      const o = P_HITS + i * 16;
+      const unit = (v?: readonly [number, number]): [number, number] => {
+        const l = v ? Math.hypot(v[0], v[1]) : 0;
+        return v && l > 0 ? [v[0] / l, v[1] / l] : [0, 0];
+      };
+      const dir = unit(h.dir);
+      const axis = h.axis ? unit(h.axis) : dir;
       const cone = h.cone !== undefined ? Math.cos(((h.cone / 2) * Math.PI) / 180) : -2;
-      f.set([h.x, h.y, h.z ?? -1e9, h.radius, h.dir ? h.dir[0] / dl : 0, h.dir ? h.dir[1] / dl : 0, cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, h.fire ? 1 : 0, h.id], o);
+      f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, h.fire ? 1 : 0, h.id, axis[0], axis[1], 0, 0], o);
     });
     this.targets.forEach((t, i) => f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4));
     const holds = [...this.holds].slice(0, MAX_HOLDS);
