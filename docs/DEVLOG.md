@@ -3320,3 +3320,26 @@ Measured (scripts/worldapitest.mjs, the sandbox), all 14 checks passing:
 The mirror's refresh first returned at once while a timed read was in
 flight, so a caller could read stale data (the flood check failed on it);
 it now waits for a read that starts after the call.
+
+## 2026-10-23 — the world API: smooth sampling, cached views, warmup with debris
+
+The units session moved the hover bike onto the API and asked for three
+things.
+
+**Smooth heights.** A rider sampling hex columns steps at every edge. The
+ask was for the field mesh's (1 − d)² blend, but the field mesh doesn't do
+that: it blends the three nearest centres barycentrically, at a point warped
+by hash noise. So `{ smooth: true }` is a CPU port of exactly that, the pcg
+hash included. Against the mesh's own up-facing vertices it misses by 0.011
+(median) everywhere, and 0.024 where the stepped heights miss by 0.141.
+
+**Cached views.** Typed views of each read are made once, not per call: a
+smooth sample is ~2 µs. The field mesh's vertices are now COPY_SRC, for the
+check.
+
+**Warmup with debris.** `WorldDef.warmup`, attachSim's third argument and
+`sim.warmup()` settle the world with debrisBoost raised, then put it back.
+That was the bike's last direct Globals write. It works through the
+particles' spawns on dirty ground, so the clean sandbox shows it least: 600
+ticks at debris 10 left 4,294 litter, dust and leaf particles against
+3,147 at 1.

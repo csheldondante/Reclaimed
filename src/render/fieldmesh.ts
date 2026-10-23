@@ -97,7 +97,8 @@ export class FieldMesh {
     f.set([-1, -1, W + 1, H + 1], 12);
     device.queue.writeBuffer(this.region, 0, ab);
 
-    this.verts = world.buf('meshVerts', chunks * vertsPer * 32, GPUBufferUsage.STORAGE);
+    // (COPY_SRC: the world API's smooth sampling is checked against it, scripts/worldapitest.mjs)
+    this.verts = world.buf('meshVerts', chunks * vertsPer * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
     this.indices = world.buf('meshIndices', chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
     const stateWords = CHUNK0 + chunks * (CSTRIDE + 1);
     this.state = world.buf('meshState', stateWords * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
