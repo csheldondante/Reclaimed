@@ -506,8 +506,9 @@ on a body removes voxels in its frame and splits it; a budget (64 bodies /
 
 `installAgents(core)` (src/agents/) adds one system after the particles and
 a voxel source on the renderer. Its buffers are its own (not world
-contracts): `agentNav` (per column NAV_K = 4 surfaces, vec2<u32>: height,
-headroom | wet | six 3-bit links), `agentDist` (NFIELDS = 4 fields × surfaces,
+contracts): `agentNav` (per column NAV_K = 4 surfaces, vec4<u32>: height,
+headroom | wet | six 3-bit links, room, region — the peel reads `places` and
+`placeTable` in its own bind group), `agentDist` (NFIELDS = 4 fields × surfaces,
 f32), `agentUnits` (two vec4 a unit), `agentOcc` (units per column, two
 halves by tick parity), `agentInst` (three body-format voxels a unit) and
 its indirect args. It reads `layers` and `water`. A tick: every 8 ticks the

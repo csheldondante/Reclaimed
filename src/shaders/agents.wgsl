@@ -25,8 +25,10 @@
 @group(0) @binding(4) var<storage, read> water: array<f32>;
 // per surface (column i, slot k: i * NAV_K + k): x its height (f32 bits; < 0
 // none), y headroom (bits 0-7, eighths of a cell) | wet (8) | links (9-26:
-// 3 bits a direction, 0 none, else the neighbour's slot + 1)
-@group(0) @binding(5) var<storage, read_write> nav: array<vec2<u32>>;
+// 3 bits a direction, 0 none, else the neighbour's slot + 1), z its room
+// (places: the top surface the column's open-air room, those under it the
+// enclosed level's), w that room's region (0: no place)
+@group(0) @binding(5) var<storage, read_write> nav: array<vec4<u32>>;
 // per field and surface: f * NS + s (NS = columns * NAV_K)
 @group(0) @binding(6) var<storage, read_write> dist: array<f32>;
 // per unit, two vec4: (x, y, z, info bits: group 0-7, alive 8), (vx, vy, stride phase, 0)
@@ -45,8 +47,15 @@ struct AgentParams {
   // per group (16): the field it follows, and the material it's drawn in
   groupField: array<vec4<u32>, 4>,
   groupMat: array<vec4<u32>, 4>,
+  // per field: the place it's confined to (0 anywhere; bit 31 a region,
+  // else a room): its distances live only on that place's surfaces
+  fieldPlace: vec4<u32>,
 };
 @group(0) @binding(10) var<uniform> AP: AgentParams;
+// (the surfaces pass only) places: per column low u16 the open-air room, high
+// u16 the enclosed level's (0 the same); the place table: a room's region
+@group(0) @binding(11) var<storage, read> places: array<u32>;
+@group(0) @binding(12) var<storage, read> placeTable: array<u32>;
 
 const NAV_K: u32 = 4u;
 const AGENT_H: f32 = 1.5;
@@ -86,6 +95,10 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
     tops[n] = z1;
     n += 1u;
   }
+  let pl = places[i];
+  let topRoom = pl & 0xffffu;
+  var underRoom = pl >> 16u;
+  if (underRoom == 0u) { underRoom = topRoom; }
   var out = 0u;
   var r = i32(n) - 1;
   while (r >= 0 && out < NAV_K) {
@@ -95,12 +108,13 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
     if (head >= AGENT_H) {
       // (only the top surface carries the water sheet)
       let wet = r == i32(n) - 1 && water[i] > WADE;
-      nav[i * NAV_K + out] = vec2<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u));
+      let room = select(underRoom, topRoom, out == 0u);
+      nav[i * NAV_K + out] = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), room, select(0u, placeTable[room], room != 0u));
       out += 1u;
     }
     r -= 1;
   }
-  for (var k = out; k < NAV_K; k++) { nav[i * NAV_K + k] = vec2<u32>(bitcast<u32>(-1.0), 0u); }
+  for (var k = out; k < NAV_K; k++) { nav[i * NAV_K + k] = vec4<u32>(bitcast<u32>(-1.0), 0u, 0u, 0u); }
 }
 
 /** Link each surface to the six neighbours (after surfaces). */
@@ -132,7 +146,7 @@ fn links(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       bits |= best << (3u * d);
     }
-    nav[s] = vec2<u32>(nav[s].x, (nav[s].y & 0x1ffu) | (bits << 9u));
+    nav[s].y = (nav[s].y & 0x1ffu) | (bits << 9u);
   }
 }
 
@@ -169,6 +183,12 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
       continue;
     }
     for (var f = 0u; f < AP.n.z; f++) {
+      // (confined: off its place, nothing)
+      let fp = AP.fieldPlace[f];
+      if (fp != 0u && select(nav[s].z, nav[s].w, (fp >> 31u) != 0u) != (fp & 0x7fffffffu)) {
+        dist[f * N + s] = FAR;
+        continue;
+      }
       var d = FAR;
       for (var e = 0u; e < AP.n.y; e++) {
         let sd = AP.seeds[e];
@@ -261,12 +281,17 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let goalV = select(want, normalize(want), length(want) > 1.0) * SPEED;
   vel += (goalV - vel) * min(dt * 6.0, 1.0);
   var np = pos.xy + vel * dt;
-  // never step where there's no link: slide along instead
+  // never step where there's no link, nor off the place its field is
+  // confined to: slide along instead
   let nc = clampCell(cellAt(np));
+  let fp = select(0u, AP.fieldPlace[min(fld, 3u)], fld < AP.n.z);
   if (k < NAV_K && any(nc != c)) {
     var ok = false;
     for (var d = 0u; d < NDIR; d++) {
-      if (all(nbr(c, d) == nc) && navLink(i * NAV_K + k, d) != 0u) { ok = true; }
+      let l = navLink(i * NAV_K + k, d);
+      if (!all(nbr(c, d) == nc) || l == 0u) { continue; }
+      let t = colIdxI(nc) * NAV_K + l - 1u;
+      ok = fp == 0u || select(nav[t].z, nav[t].w, (fp >> 31u) != 0u) == (fp & 0x7fffffffu);
     }
     if (!ok) { np = pos.xy; vel *= 0.3; }
   }

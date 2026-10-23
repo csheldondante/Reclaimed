@@ -3296,3 +3296,17 @@ Measured (scripts/agentstest.mjs, the 256 × 256 sandbox):
 - A 4-high stone wall across the way: they split round both ends.
 - 4,000 units flow round the pond; agents 0.47 ms a tick on the GPU
   (sediment 0.52).
+
+## 2026-10-23 — agents: fields a game can read, fields kept to a place
+
+The units session asked for what its CPU enemies need first: fields it can
+read back and steer by, and a horde kept to its room. A FieldReader keeps a
+CPU copy of one field (the surfaces and that field's distances, 5 MB, read
+in 10-80 ms) and samples it the way the GPU units steer: the distance, and
+the way down the field from the six neighbours. 24 of 24 samples round a
+seed pointed within 45° of it. Surfaces now carry their room and region (the
+peel reads the places, in its own bind group so the rest stay within eight
+storage buffers), and a field can be confined to a place. Masking the field
+alone let a crowd push a third of a confined group out of its room (268 of
+400 left in it after 16 s); a unit now never steps off its field's place
+either, and 398 of 400 stayed.

@@ -90,6 +90,9 @@ agents.spawn(n, x, y, { group, spread })  // → the first unit's index; they la
 agents.goTo(group, x, y, z?)              // the group's own field (group % 4) seeded there
 agents.seed(field, [{ x, y, z? }])        // a field's seeds: a goal, a stockpile, a threat
 agents.follow(group, field)               // a group follows a field (-1: stands)
+agents.confine(field, { id, kind } | null) // keep a field (and those following it) to a place: a room or region
+const r = agents.reader(field).start(300) // a CPU copy for walkers the game moves itself (fieldreader.ts)
+r.sample(x, y, z?)                        // → { dist, dir: [dx, dy], z, room, region } on the surface below z
 await agents.read()                       // [x, y, z, group] per unit
 await agents.readRaw('nav' | 'dist')      // tests
 ```
@@ -105,6 +108,15 @@ limit.
 | 300 units, 66 cells to the goal | Mean distance 62 → 20 in 21 s (≈2 cells/s); they march in files along the hex lattice |
 | A stone wall 4 high, 40 long, across the way | They split and go round both ends |
 | 4,000 units | They flow round the pond (water costs more); agents 0.47 ms a tick against sediment's 0.52 |
+| FieldReader (scripts/agentfieldtest.mjs), field seeded at the map centre | 24 of 24 samples, 20-60 cells out, point within 45° of the goal; dist 20.3 at 20 cells; a refresh reads 5 MB back in 10-80 ms |
+| 400 units confined to a voronoi room, their goal in another room | 398 of 400 still in their room after 16 s (they stand: no seed in the room); let go, all 400 leave for the goal |
+
+**Places.** The peel reads the `places` buffer: the top surface takes the
+column's open-air room, those under it the enclosed level's, and each its
+room's region. A field confined to a place (`confine`) keeps distances only
+on its surfaces, and a unit never steps off its field's place, so a crowd
+can't push it out either. A confined field with no seed inside its place
+leaves the group standing.
 
 ## Not yet
 

@@ -85,8 +85,8 @@ try {
     let links = 0;
     for (let i = 0; i < w * h; i++) {
       let k = 0;
-      while (k < 4 && f[(i * 4 + k) * 2] >= 0) {
-        const l = nav[(i * 4 + k) * 2 + 1] >>> 9;
+      while (k < 4 && f[(i * 4 + k) * 4] >= 0) {
+        const l = nav[(i * 4 + k) * 4 + 1] >>> 9;
         for (let d = 0; d < 6; d++) if ((l >>> (3 * d)) & 7) links++;
         k++;
       }
@@ -142,10 +142,10 @@ try {
     const g = c.getContext('2d');
     const img = g.createImageData(w, h);
     let max = 0;
-    for (let i = 0; i < w * h; i++) if (dist[i * 4] < 1e8 && nav[i * 8] >= 0) max = Math.max(max, dist[i * 4]);
+    for (let i = 0; i < w * h; i++) if (dist[i * 4] < 1e8 && nav[i * 16] >= 0) max = Math.max(max, dist[i * 4]);
     for (let i = 0; i < w * h; i++) {
       const d = dist[i * 4];
-      const t = nav[i * 8] < 0 || d >= 1e8 ? -1 : d / max;
+      const t = nav[i * 16] < 0 || d >= 1e8 ? -1 : d / max;
       const band = t >= 0 && Math.floor(d / 4) % 2 === 0 ? 0.85 : 1;
       img.data[i * 4] = t < 0 ? 0 : 255 * t * band;
       img.data[i * 4 + 1] = t < 0 ? 0 : 80 * band;
