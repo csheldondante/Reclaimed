@@ -17,6 +17,7 @@ import { looseIntoGrid } from '../world/loose';
 import { DayNight, type Daylight } from '../weather/daynight';
 import { Weather } from '../weather/weather';
 import { Structures } from '../grids/structures';
+import { Places } from '../game/places';
 
 export interface Quality {
   renderScale: number;
@@ -51,6 +52,8 @@ export class WorldCore {
   /** structure grids over the nature grid (docs/GRIDS.md) */
   readonly structures: Structures;
   readonly weather: Weather;
+  /** regions and rooms as named places (docs/PLACES.md): places.load(plan) */
+  readonly places: Places;
   readonly dayNight = new DayNight();
   /** Seconds of simulation a year takes (round 51; globals.season); 0: the season stays put. */
   yearLength = 0;
@@ -83,6 +86,7 @@ export class WorldCore {
     this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh);
     this.structures = new Structures(device, this.world);
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h);
+    this.places = new Places(device, this.world, this.sim.placeOps, this.weather);
     this.globals = {
       mapW: this.dims.w,
       mapH: this.dims.h,

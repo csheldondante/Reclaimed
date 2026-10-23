@@ -528,9 +528,21 @@ export class LevelScene implements Scene {
           return core.structures.place(m, x, y, qYawPitchRoll(yaw * r, pitch * r, roll * r), this.heightAt, sink);
         },
       },
+      // regions and rooms (docs/PLACES.md): places.load(plan), places.get(name).bury('sand', 2)…
+      places: core.places,
       scene: this,
     };
     (window as unknown as { reclaimed: unknown }).reclaimed = api;
+    core.places.groundAt = this.heightAt;
+    // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)
+    const plan = host.params.get('plan');
+    if (plan) {
+      const seed = Number(host.params.get('planseed') ?? 1);
+      if (plan === 'voronoi') core.places.load({ partition: 'voronoi', spacing: 22, group: [1, 3], shape: 'chain' }, seed);
+      else if (plan === 'tree') core.places.load({ partition: 'voronoi', spacing: 22, group: [1, 3], shape: 'tree' }, seed);
+      else if (plan === 'bands') core.places.load({ partition: 'bands', freq: 0.03, tunnel: 0.06, island: 0.05, shape: 'tree' }, seed);
+      else throw new Error(`?plan: no plan "${plan}" (voronoi, tree, bands)`);
+    }
     // ?structure=model,x,y,yaw,pitch,roll (grid cells, degrees): a structure grid
     // placed at load (the grids branch's test hook)
     const sp = host.params.get('structure');
