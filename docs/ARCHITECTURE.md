@@ -261,7 +261,12 @@ and bent by them once a tick (phys.wgsl `skin`, into `skinOut` /
 `skinArgs`), drawn by `Renderer.addMesh(verts, indirect)` (render.wgsl
 `vsSkin`: two vec4<u32> a vertex, position + material word, then the
 triangle's normal; three a triangle, no index buffer) with the body
-shading, lit and shadowed. The CPU places bodies (uploads them once) and aims the beam. They
+shading, lit and shadowed. Games hold bodies through `Physics.drive` /
+`impulse` / `push` (round 49: a per-body control table and up to eight
+force fields a tick, uniforms read by `predict`) and read them back through
+`state()` (a `stats` pass sums each body's voxels into atomics every tick;
+mapped asynchronously). `installPhysics` (physics/install.ts) wires
+physics, lava and waking (physics/wake.ts `Waker`) into any WorldCore. The CPU places bodies (uploads them once) and aims the beam. They
 read the layers (ground contacts) and write crumbled voxels into `deposit`
 (y amount, z material, through their own per-column atomics) and chips,
 dust and embers into the particle ring; the renderer draws their instances

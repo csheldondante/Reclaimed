@@ -99,6 +99,10 @@ function packPhysMats(): Float32Array {
 
 export interface PhysBody {
   id: number;
+  /** its rotation at spawn, and its rest centre and voxels then (drive goals are relative to them) */
+  q0: Q;
+  restCentre: V3;
+  total: number;
   /** first particle */
   offset: number;
   dims: V3;
@@ -108,6 +112,56 @@ export interface PhysBody {
   model: VoxelModel | null;
   /** its voxels' edge in cells */
   size: number;
+}
+
+/** A body as the game sees it (round 49): read back from the GPU a tick or two late (`tick` says which). */
+export interface BodyState {
+  /** its centre (world cells) and velocity (cells/s) */
+  pos: V3;
+  vel: V3;
+  /** its rotation, rest frame → world (what drive() takes) */
+  q: Q;
+  /** voxels still part of it, of `total` at spawn; damage = 1 − alive / total */
+  alive: number;
+  total: number;
+  damage: number;
+  /** its hottest voxel's temperature */
+  heat: number;
+  tick: number;
+}
+
+/**
+ * Hold a body to a pose (round 49): every voxel is pulled toward where the
+ * pose puts it (a spring of `stiffness`, 1/s²; damped toward `vel` at
+ * `damping`, 1/s, default critical), so the body follows — a grab, a carry,
+ * a vehicle steered — and still collides, bends and breaks on the way.
+ */
+export interface Drive {
+  pos: V3;
+  /** rest frame → world (default: as it was at spawn) */
+  q?: Q;
+  vel?: V3;
+  stiffness: number;
+  damping?: number;
+}
+
+/**
+ * A force field for one tick (round 49; call every tick it lasts): pull toward
+ * `at`, push away from it, or wind along `dir`; `strength` cells/s² at the
+ * centre, falling to 0 at `radius`. `body`: only that one. `sizeRef`: bodies
+ * smaller than this many voxels feel it in proportion (big pieces move, small
+ * ones and fragments barely).
+ */
+export interface PushField {
+  kind: 'pull' | 'push' | 'wind';
+  at: V3;
+  radius: number;
+  strength: number;
+  dir?: V3;
+  body?: PhysBody;
+  sizeRef?: number;
+  /** 1/s: slows what it holds (by the same falloff), so a pull settles instead of swinging through */
+  damping?: number;
 }
 
 export interface Beam {
@@ -158,6 +212,19 @@ export class Physics implements SimSystem {
   private skinSrc: GPUBuffer;
   private skinTris = 0;
   private k: Record<string, { k: ComputeKernel; g: GPUBindGroup }> = {};
+  // the game's hold on bodies (round 49): BODY_CTL, pushes, the state readback
+  private ctl = new Float32Array(256 * 5 * 4);
+  private ctlBuf: GPUBuffer;
+  private ctlDirty = true;
+  private impulsed = false;
+  private pushBuf: GPUBuffer;
+  private pushes: PushField[] = [];
+  private pushLive = false;
+  private bstat: GPUBuffer;
+  private bstatRead: GPUBuffer;
+  private bstatBusy = false;
+  private bstatCopied = -1;
+  private states = new Map<number, BodyState>();
 
   constructor(
     private device: GPUDevice,
@@ -189,6 +256,12 @@ export class Physics implements SimSystem {
     this.skinOut = world.buf('physSkinOut', SKIN_TRIS * 3 * 32, GPUBufferUsage.STORAGE);
     this.skinArgs = world.buf('physSkinArgs', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.skinArgs, 0, new Uint32Array([0, 1, 0, 0]));
+    this.ctlBuf = world.buf('physBodyCtl', 256 * 5 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.pushBuf = world.buf('physPushes', 8 * 48, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.bstat = world.buf('physBodyStats', 256 * 16 * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+    this.bstatRead = world.buf('physBodyStatsRead', 256 * 16 * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
+    // (the fragments: one voxel each, so a push by size barely moves them)
+    this.ctl[FRAG_BODY * 20 + 11] = 1;
     // every slot starts empty (w < 0)
     const empty = new Float32Array(PV_CAP * 8);
     for (let i = 0; i < PV_CAP; i++) empty[i * 8 + 3] = -1;
@@ -226,6 +299,9 @@ export class Physics implements SimSystem {
       30: this.skinSrc,
       31: this.skinOut,
       32: this.skinArgs,
+      33: this.ctlBuf,
+      34: this.pushBuf,
+      35: this.bstat,
     };
     const kernel = (entry: string, spec: BindSpec) => {
       const all = { ...base, ...spec };
@@ -233,7 +309,8 @@ export class Physics implements SimSystem {
       const g = makeBindGroup(device, `phys-${entry}`, k.layout, Object.fromEntries(Object.keys(all).map((b) => [b, res[Number(b)]])));
       this.k[entry] = { k, g };
     };
-    kernel('predict', { 3: 'rw', 4: 'rw', 5: 'rw' });
+    kernel('predict', { 3: 'rw', 4: 'rw', 5: 'rw', 33: 'uniform', 34: 'uniform' });
+    kernel('stats', { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'rw', 35: 'rw' });
     kernel('region', { 3: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' });
     kernel('gather', { 3: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw' });
     kernel('hashClear', { 9: 'rw' });
@@ -290,7 +367,8 @@ export class Physics implements SimSystem {
     const size = opts.size ?? 1;
     const code = sizeCode(size);
     const vol = size * size * size;
-    const body: PhysBody = { id: this.bodies.length, offset: this.used, dims: [w, d, h], model: opts.model ?? null, size };
+    const body: PhysBody = { id: this.bodies.length, offset: this.used, dims: [w, d, h], model: opts.model ?? null, size, q0: q, restCentre: [0, 0, 0], total: 0 };
+    const rc: V3 = [0, 0, 0];
     const X = new Float32Array(n * 8);
     const V = new Float32Array(n * 4);
     const R = new Float32Array(n * 4);
@@ -315,7 +393,10 @@ export class Physics implements SimSystem {
           const inv = opts.pinned?.(x, y, z) ? 0 : 1 / (dens * vol);
           X.set([p[0], p[1], p[2], inv, p[0], p[1], p[2], 0], k * 8);
           V.set([vel[0], vel[1], vel[2], 0], k * 4);
-          R.set(qRotate(qi, p), k * 4);
+          const rp = qRotate(qi, p);
+          R.set(rp, k * 4);
+          for (let a = 0; a < 3; a++) rc[a] += rp[a];
+          body.total++;
           // bonds to every solid lattice neighbour (phys.wgsl n26 order)
           let bits = 0;
           for (let j = 0, kk = 0; j < 27; j++) {
@@ -343,6 +424,10 @@ export class Physics implements SimSystem {
     qd.writeBuffer(this.bodyTable, body.id * 16, new Uint32Array([o, w, d, h]));
     this.used += n;
     this.bodies.push(body);
+    // (the game's drive goals are relative to its rest centre)
+    body.restCentre = rc.map((v) => v / Math.max(1, body.total)) as V3;
+    this.ctl.set([0, 0, 0, 0, ...q, ...body.restCentre, body.total, 0, 0, 0, 0, 0, 0, 0, 0], body.id * 20);
+    this.ctlDirty = true;
     return body;
   }
 
@@ -379,6 +464,44 @@ export class Physics implements SimSystem {
     return body;
   }
 
+  /** Is there room for `bodies` more bodies of `voxels` lattice cells in all? */
+  hasRoom(voxels: number, bodies = 1): boolean {
+    return this.bodies.length + bodies <= MAX_BODIES && Math.max(this.used, FRAG_CAP) + voxels <= PV_CAP;
+  }
+
+  /** Hold `body` to a pose (null: let go). It stays until changed: call again each tick to move the target. */
+  drive(body: PhysBody, d: Drive | null): void {
+    const o = body.id * 20;
+    if (!d) {
+      this.ctl[o + 3] = 0;
+    } else {
+      const k = d.stiffness;
+      this.ctl.set([...d.pos, k], o);
+      this.ctl.set(d.q ?? body.q0, o + 4);
+      this.ctl.set([...(d.vel ?? [0, 0, 0]), d.damping ?? 2 * Math.sqrt(k)], o + 12);
+    }
+    this.ctlDirty = true;
+  }
+
+  /** Change `body`'s velocity by dv (cells/s) over the next tick (a throw, a hit). */
+  impulse(body: PhysBody, dv: V3): void {
+    const o = body.id * 20 + 16;
+    for (let a = 0; a < 3; a++) this.ctl[o + a] += dv[a] / this.substeps;
+    this.ctlDirty = true;
+    this.impulsed = true;
+  }
+
+  /** A force field for the next tick (up to 8 a tick; more are dropped with an error). */
+  push(p: PushField): void {
+    if (this.pushes.length >= 8) throw new Error('physics: more than 8 pushes in one tick');
+    this.pushes.push(p);
+  }
+
+  /** `body` as last read back (undefined until the first readback, or once nothing of it is left). */
+  state(body: PhysBody): BodyState | undefined {
+    return this.states.get(body.id);
+  }
+
   /** A blast at a world point: voxels within `radius` crumble, those within 2.5× are thrown outward. */
   blast(at: V3, radius: number, strength = 8): void {
     this.blasts.push({ at, radius, strength });
@@ -404,6 +527,19 @@ export class Physics implements SimSystem {
 
   /** After the tick's submit: read the touches it copied, if any. */
   afterSubmit(): void {
+    if (this.bstatCopied >= 0) {
+      const tick = this.bstatCopied;
+      this.bstatCopied = -1;
+      this.bstatRead.mapAsync(GPUMapMode.READ).then(
+        () => {
+          const S = new Int32Array(this.bstatRead.getMappedRange().slice(0));
+          this.bstatRead.unmap();
+          this.bstatBusy = false;
+          this.readStates(S, tick);
+        },
+        () => (this.bstatBusy = false),
+      );
+    }
     if (!this.readTouches) return;
     this.readTouches = false;
     this.touchRead.mapAsync(GPUMapMode.READ).then(
@@ -430,9 +566,65 @@ export class Physics implements SimSystem {
     this.bodies.length = 0;
     this.used = 0;
     this.skinTris = 0;
+    this.states.clear();
+    this.ctl.fill(0, 0, FRAG_BODY * 20);
+    this.ctlDirty = true;
     // (nothing left to draw: encode stops writing the draw args)
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     this.device.queue.writeBuffer(this.skinArgs, 0, new Uint32Array([0, 1, 0, 0]));
+  }
+
+  /** The game's drives, impulses (this tick only) and pushes (this tick only) to the GPU. */
+  private writeGame(): void {
+    if (this.ctlDirty) {
+      this.device.queue.writeBuffer(this.ctlBuf, 0, this.ctl);
+      this.ctlDirty = false;
+      if (this.impulsed) {
+        // (spent: cleared for the next tick)
+        for (const b of this.bodies) this.ctl.fill(0, b.id * 20 + 16, b.id * 20 + 19);
+        this.impulsed = false;
+        this.ctlDirty = true;
+      }
+    }
+    if (this.pushes.length || this.pushLive) {
+      const u = new ArrayBuffer(8 * 48);
+      const f = new Float32Array(u);
+      const ui = new Uint32Array(u);
+      const KIND = { pull: 1, push: 2, wind: 3 };
+      this.pushes.forEach((p, k) => {
+        const o = k * 12;
+        f.set([...p.at, p.radius, ...(p.dir ?? [0, 0, 0]), p.strength], o);
+        ui[o + 8] = KIND[p.kind];
+        ui[o + 9] = p.body ? p.body.id : 0xffffffff;
+        f[o + 10] = p.sizeRef ?? 0;
+        f[o + 11] = p.damping ?? 0;
+      });
+      this.device.queue.writeBuffer(this.pushBuf, 0, u);
+      this.pushLive = this.pushes.length > 0;
+      this.pushes.length = 0;
+    }
+  }
+
+  private readStates(S: Int32Array, tick: number): void {
+    for (const b of this.bodies) {
+      const o = b.id * 16;
+      const n = S[o];
+      if (!n) {
+        this.states.delete(b.id);
+        continue;
+      }
+      const ql = Math.hypot(S[o + 7], S[o + 8], S[o + 9], S[o + 10]) || 1;
+      this.states.set(b.id, {
+        pos: [S[o + 1] / 32 / n, S[o + 2] / 32 / n, S[o + 3] / 32 / n],
+        vel: [S[o + 4] / 64 / n, S[o + 5] / 64 / n, S[o + 6] / 64 / n],
+        q: [S[o + 7] / ql, S[o + 8] / ql, S[o + 9] / ql, S[o + 10] / ql],
+        alive: n,
+        total: b.total,
+        damage: 1 - n / Math.max(1, b.total),
+        heat: S[o + 11],
+        tick,
+      });
+    }
   }
 
   private writeUniforms(tick: number): void {
@@ -465,6 +657,7 @@ export class Physics implements SimSystem {
     this.colsLive = this.used > 0;
     if (!this.used) return;
     this.writeUniforms(tick);
+    this.writeGame();
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     this.device.queue.writeBuffer(this.skinArgs, 0, new Uint32Array([0, 1, 0, 0]));
     const pass = enc.beginComputePass({ label: 'physics', timestampWrites: this.prof.timestamps('physics') });
@@ -497,7 +690,16 @@ export class Physics implements SimSystem {
       // (its draw args counted afresh: three vertices a triangle kept)
       run('skin', Math.ceil(this.skinTris / 64));
     }
+    // each body's state for the game, read back when the last one is in
+    const readStats = !this.bstatBusy;
+    if (readStats) run('stats');
     pass.end();
+    if (readStats) {
+      this.bstatBusy = true;
+      enc.copyBufferToBuffer(this.bstat, 0, this.bstatRead, 0, 256 * 64);
+      enc.clearBuffer(this.bstat);
+      this.bstatCopied = tick;
+    }
     // the touches, a few times a second (then cleared)
     if (!this.touchBusy && ++this.touchAt >= 15) {
       this.touchAt = 0;

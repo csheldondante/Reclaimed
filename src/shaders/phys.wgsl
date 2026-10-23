@@ -79,6 +79,22 @@ struct PhysU {
 @group(0) @binding(23) var<uniform> PM: array<vec4<f32>, 128>;
 // bodies: x first particle, yzw lattice dims
 @group(0) @binding(24) var<uniform> PB: array<vec4<u32>, 256>;
+// what the game asks of each body (round 49, physics.ts BODY_CTL), 5 vec4 a body:
+//  [0] drive target: its centre (xyz, world cells), w stiffness (1/s², 0: not driven)
+//  [1] drive target rotation (rest frame → world, as state() reports it)
+//  [2] its rest centre (xyz, rest frame), w its voxels at spawn
+//  [3] drive target velocity (xyz), w damping (1/s)
+//  [4] velocity added each substep this tick (xyz: an impulse spread over the tick)
+@group(0) @binding(33) var<uniform> BC: array<vec4<f32>, 1280>;
+// pushes this tick (round 49): a pull toward a point, a push from it, a wind
+// along a direction — a: centre xyz, radius; b: direction xyz, strength
+// (cells/s² at the centre, falling off to 0 at the radius); c: kind (0 none,
+// 1 pull, 2 push, 3 wind), the one body it acts on (0xffffffff: all), the
+// body size (voxels) it acts on fully (f32 bits; smaller in proportion: big
+// pieces move, dust stays; 0: all alike), damping (f32 bits, 1/s: what it
+// holds settles instead of swinging through)
+struct Push { a: vec4<f32>, b: vec4<f32>, c: vec4<u32> };
+@group(0) @binding(34) var<uniform> PP: array<Push, 8>;
 
 @group(0) @binding(3) var<storage, read_write> px: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read_write> pv: array<vec4<f32>>;
@@ -181,7 +197,45 @@ fn spawnPart(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, seed: u32, st
   parts[i] = PartP(vec4<f32>(pos, life), vec4<f32>(vel, 0.0), vec4<u32>(kind, seed, 0u, state));
 }
 
-// ---- 1. predict: gravity, and the move ----------------------------------------
+/**
+ * What the game does to voxel i this substep (cells/s²): its body's drive
+ * (a spring toward where the target pose puts it, damped toward the target
+ * velocity), its body's impulse, and the pushes that reach it.
+ */
+fn gameAccel(i: u32, x: vec3<f32>, v: vec3<f32>) -> vec3<f32> {
+  let info = infoOf(i);
+  let bi = bodyOf(info);
+  let h = PU.a.x;
+  var acc = BC[bi * 5u + 4u].xyz / h;
+  let tgt = BC[bi * 5u];
+  if (tgt.w > 0.0) {
+    let goal = tgt.xyz + qrotP(BC[bi * 5u + 1u], pr[i].xyz - BC[bi * 5u + 2u].xyz);
+    let d = BC[bi * 5u + 3u];
+    // (each substep's step stays stable: no more than the spring can take in one)
+    let k = min(tgt.w, 0.5 / (h * h));
+    acc += (goal - x) * k + (d.xyz - v) * min(d.w, 0.9 / h);
+  }
+  let size = BC[bi * 5u + 2u].w;
+  for (var k = 0u; k < 8u; k++) {
+    let p = PP[k];
+    if (p.c.x == 0u) { break; }
+    if (p.c.y != 0xffffffffu && p.c.y != bi) { continue; }
+    let rel = x - p.a.xyz;
+    let dist = length(rel);
+    if (dist > p.a.w) { continue; }
+    let sref = bitcast<f32>(p.c.z);
+    let fall = (1.0 - dist / max(p.a.w, 1e-3)) * select(1.0, clamp(size / sref, 0.0, 1.0), sref > 0.0);
+    let f = p.b.w * fall;
+    if (p.c.x == 1u) { acc -= rel / max(dist, 0.3) * f; }
+    else if (p.c.x == 2u) { acc += rel / max(dist, 0.3) * f; }
+    else { acc += p.b.xyz * f; }
+    let dmp = bitcast<f32>(p.c.w) * fall;
+    if (dmp > 0.0) { acc -= v * min(dmp, 0.9 / h); }
+  }
+  return acc;
+}
+
+// ---- 1. predict: gravity, the game's forces, and the move ----------------------------
 @compute @workgroup_size(64)
 fn predict(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.x;
@@ -189,7 +243,10 @@ fn predict(@builtin(global_invocation_id) id: vec3<u32>) {
   let x = px[2u * i];
   let vt = pv[i];
   var v = vt.xyz;
-  if (x.w > 0.0) { v.z -= G_ACC * PU.a.x; }
+  if (x.w > 0.0) {
+    v.z -= G_ACC * PU.a.x;
+    v += gameAccel(i, x.xyz, v) * PU.a.x;
+  }
   pv[i] = vec4<f32>(v, vt.w);
   px[2u * i + 1u] = vec4<f32>(x.xyz, vt.w);
   px[2u * i] = vec4<f32>(x.xyz + v * PU.a.x * f32(x.w > 0.0), x.w);
@@ -953,4 +1010,37 @@ fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
     skinOut[o + 2u * k] = vec4<u32>(bitcast<vec3<u32>>(ps[k]), word);
     skinOut[o + 2u * k + 1u] = vec4<u32>(nb, 0u);
   }
+}
+
+// ---- once a tick: each body's state for the game (round 49) ----------------------------
+// Per body 16 words (atomics): live voxels; Σ position (×32, i32); Σ velocity
+// (×64); Σ region rotation (×1024, each turned to w ≥ 0); hottest temperature.
+@group(0) @binding(35) var<storage, read_write> bstat: array<atomic<i32>>;
+
+@compute @workgroup_size(64)
+fn stats(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= PU.c.x || !alive(i)) { return; }
+  let bi = bodyOf(infoOf(i));
+  if (bi == FRAG_BODY) { return; }
+  let o = bi * 16u;
+  let x = px[2u * i];
+  let v = pv[i].xyz;
+  var q = pq[i];
+  if (q.w < 0.0) { q = -q; }
+  atomicAdd(&bstat[o], 1);
+  let xp = vec3<i32>(round(x.xyz * 32.0));
+  atomicAdd(&bstat[o + 1u], xp.x);
+  atomicAdd(&bstat[o + 2u], xp.y);
+  atomicAdd(&bstat[o + 3u], xp.z);
+  let vp = vec3<i32>(round(v * 64.0));
+  atomicAdd(&bstat[o + 4u], vp.x);
+  atomicAdd(&bstat[o + 5u], vp.y);
+  atomicAdd(&bstat[o + 6u], vp.z);
+  let qp = vec4<i32>(round(q * 1024.0));
+  atomicAdd(&bstat[o + 7u], qp.x);
+  atomicAdd(&bstat[o + 8u], qp.y);
+  atomicAdd(&bstat[o + 9u], qp.z);
+  atomicAdd(&bstat[o + 10u], qp.w);
+  atomicMax(&bstat[o + 11u], i32(px[2u * i + 1u].w));
 }

@@ -2,7 +2,7 @@
 // the camera's target and screenshots them falling, landing and settling;
 // prints each body's live voxels and height range. --scene picks a setup.
 //
-//   node scripts/phystest.mjs [--url http://localhost:5178] [--out phys] [--scene drop|beam|heat|fine|mesh]
+//   node scripts/phystest.mjs [--url http://localhost:5178] [--out phys] [--scene drop|beam|heat|fine|mesh|game]
 //     [--extra "&mesh=1"] [--zoom 3] [--shots 0.3,1,2.5,5]
 import puppeteer from 'puppeteer-core';
 import gifenc from 'gifenc';
@@ -132,6 +132,61 @@ try {
         made.push(await P.drop('concrete', 3, 3, 3, x, y, 12));
         made.push(await P.dropMesh(M.rock(5, 2.2, 2, 3), 0.5, x - 4, y + 8, 12, 20, 30, 0));
         made.push(await P.dropMesh(M.box(11, 3, 3, 3, 0.5), 0.5, x + 5, y + 8, 14, 20, 30, 10));
+      } else if (scene === 'game') {
+        // the game's hold on bodies (round 49): a crate carried up to a point
+        // and thrown, a mesh driven along like a vehicle, a pull lifting rocks
+        // (big ones, not small), and state read back
+        const M = R.phys.meshes;
+        const ph = P.physics;
+        const crate = await P.drop('steel', 3, 3, 3, x - 6, y, 0.1);
+        const sled = await P.dropMesh(M.box(7, 5, 2, 1, 0.5), 0.5, x, y - 6, 0.1);
+        const big = await P.drop('stone', 4, 4, 4, x + 6, y + 4, 0.1);
+        const small = await P.drop('stone', 1, 1, 1, x + 8, y + 4, 0.1);
+        made.push(crate, sled, big, small);
+        // a chunk of the ground torn out (stone, radius 2, its top under the surface) and pulled up too
+        // a chunk torn out of the top of the nearest ruin (radius 1.5, not the
+        // whole wall: flood false) and pulled up too
+        let ruin = null;
+        for (let r = 2; r < 40 && !ruin; r += 1)
+          for (let a = 0; a < 24 && !ruin; a++) {
+            const wx = x + Math.cos((a / 24) * 6.283) * r;
+            const wy = y + Math.sin((a / 24) * 6.283) * r;
+            const c = await P.column(wx, wy);
+            const t = c[c.length - 1];
+            if (t && (t.mat === 5 || t.mat === 11)) ruin = [wx, wy, t.z1];
+          }
+        const torn = ruin ? await P.wake(ruin[0], ruin[1], ruin[2] - 1, 1.5, { flood: false }) : null;
+        const chunk = torn?.bodies[0];
+        window.__game = { crate, sled, big, small, chunk, ruin, log: [`ruin ${ruin?.map((v) => v.toFixed(1))}, chunk ${chunk ? chunk.total : 'none'} voxels`] };
+        const t0 = performance.now();
+        const step = () => {
+          const t = (performance.now() - t0) / 1000;
+          const g = window.__game;
+          // the crate: up to 8 cells over where it was for 2 s, then thrown
+          if (t < 2) ph.drive(crate, { pos: [x - 6, y, 26], stiffness: 60 });
+          else if (!g.thrown) {
+            g.thrown = true;
+            ph.drive(crate, null);
+            ph.impulse(crate, [14, 0, 6]);
+          }
+          // the sled: driven along x, 3 cells/s
+          const sp = ph.state(sled);
+          if (sp && t < 6) ph.drive(sled, { pos: [x - 2 + 3 * t, y - 6, sp.pos[2]], q: sled.q0, vel: [3, 0, 0], stiffness: 30 });
+          else if (t >= 6) ph.drive(sled, null);
+          // the pull: toward a point over the rocks, bodies of 30 voxels and up fully
+          if (t > 1 && t < 4) ph.push({ kind: 'pull', at: [x + 7, y + 4, 24], radius: 14, strength: 45, sizeRef: 30 });
+          if (g.chunk && t > 1 && t < 4) ph.push({ kind: 'pull', at: [g.ruin[0], g.ruin[1], g.ruin[2] + 8], radius: 14, strength: 45, body: g.chunk, damping: 4 });
+          if (t < 9) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+        setInterval(() => {
+          const g = window.__game;
+          const f = (b) => {
+            const st = ph.state(b);
+            return st ? `${st.pos.map((v) => v.toFixed(1)).join(',')} v ${st.vel.map((v) => v.toFixed(1)).join(',')} dmg ${st.damage.toFixed(2)}` : '-';
+          };
+          g.log.push(`crate ${f(g.crate)} | sled ${f(g.sled)} | big ${f(g.big)} | small ${f(g.small)} | chunk ${g.chunk ? f(g.chunk) : '-'}`);
+        }, 1000);
       } else if (scene === 'stress') {
         // many bodies at once: the solver's cost
         for (let k = 0; k < 24; k++) {
@@ -323,6 +378,7 @@ try {
           return `cols ${n}, volume ${vol.toFixed(1)}, hottest ${tMax.toFixed(0)}, ground heat ${gMax.toFixed(0)} | centre ${c.map((v) => `${v.z0.toFixed(2)}-${v.z1.toFixed(2)} m${v.mat}`).join(', ')}`;
         }),
       );
+    if (scene === 'game') console.log('  game', await page.evaluate(() => window.__game.log.splice(0).join(' // ')));
     if (scene === 'dig')
       console.log(
         '  pinned:',
