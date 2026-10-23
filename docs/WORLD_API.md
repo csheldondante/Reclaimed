@@ -92,6 +92,45 @@ sim.fx.burst('dust' | 'litter' | 'leaves' | 'ash' | 'chips' | 'cloud' | 'splash'
            | 'flame' | 'haze' | 'seeds' | 'sparks' | 'petals' | 'grains', x, y, z, { count, speed, spread, material })
 ```
 
+### Layer pulls (BACKLOG API2)
+
+```ts
+const s = sim.terrain.pull('stone', { mode: 'lift' | 'through', roughness?, lean?: { dir, amount } })
+s.to(x, y, { radius, height })   // each frame of a drag: a moving centre, a growing height
+s.end()
+sim.terrain.pullLayer('stone', x, y, { radius, height, mode? })  // one call
+```
+
+Grab a material's layer and pull it: its run in each column under the
+brush grows toward `height` × the brush there (a dome, (1 − r²)²), or sinks
+with a negative height. What lies over it moves with it.
+
+- **Roughness.** The brush is roughened by the material's own noise:
+  0.6 for solids (stone comes up with a broken outline), 0.15 for loose
+  ground. Pass `roughness` to change it.
+- **Lean.** A pull can lean (`lean`): higher toward `dir`.
+- **Modes**, for what lies on the pulled run:
+  - `lift`: everything above rides up with it. Loose cover then slumps off
+    the steepened sides by itself (the sediment pass), so its volume is
+    conserved.
+  - `through`: the solids just over it crack to their rubble (the same
+    volume) and ride up too, then slump and part.
+- **Volume.** The pulled material comes from nowhere: an authoring tool,
+  like the sandbox's bedrock brush. Pulled down, what's over it sinks with
+  it.
+- **A column without the material** grows a new run of it under its loose
+  ground, if the column has a free slot.
+- **Drags compose.** Each column remembers how much the stroke has given it
+  (8 strokes at once; a ninth takes over the oldest). A call only moves a
+  column toward the most the stroke has asked of it, so repeated or
+  overlapping calls never stack.
+- **Queue.** Up to 16 calls go each tick; the rest wait for the next.
+- **Not yet:**
+  - `conserve: true` (the same volume taken from the material's run in a
+    ring round the brush);
+  - shoving sideways (moving what's inside a column to its neighbours);
+  - `expose` (strip the covering layers down to a material).
+
 ### Smooth sampling
 
 `{ smooth: true }` samples the ground the way the field mesh draws it, so a

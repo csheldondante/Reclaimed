@@ -22,6 +22,7 @@ import {
   SurfaceSystem,
   WaterSystem,
   PlaceOpSystem,
+  LayerPullSystem,
 } from './systems';
 import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
@@ -38,6 +39,8 @@ export class Simulation {
   readonly edit: EditSystem;
   /** ops masked to a place (world/places.ts; core.places) */
   readonly placeOps: PlaceOpSystem;
+  /** layer pulls (BACKLOG E2): world.terrain.pull */
+  readonly pulls: LayerPullSystem;
   readonly shadow: RenderFieldsSystem;
   readonly particles: ParticleSystem;
   tick = 0;
@@ -54,12 +57,14 @@ export class Simulation {
     this.wind = new WindFieldSystem(device, world, profiler);
     this.edit = new EditSystem(device, world, profiler);
     this.placeOps = new PlaceOpSystem(device, world, profiler);
+    this.pulls = new LayerPullSystem(device, world, profiler);
     this.shadow = new RenderFieldsSystem(device, world, profiler);
     this.stats = new StatsSystem(device, world, profiler);
     this.particles = new ParticleSystem(device, world, profiler);
     // Order matters only through the contract buffers each system reads.
     this.systems = [
       this.edit,
+      this.pulls,
       this.placeOps,
       this.wind,
       // what the nature grid sees of the structure grids (bodyProj), first
