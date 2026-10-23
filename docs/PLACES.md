@@ -36,18 +36,37 @@ mark up.
   - Enemies and puzzle logic are the game's.
   - Reclaimed places them and keeps the terrain they stand on consistent.
 
-On the GPU there is one new contract buffer, `places`: a u32 per column, the
-room id in the low 16 bits and its region in the high 16. Columns can be
-stacked later if a room under an overhang needs it. There is also a small
-uniform table, one entry per place, holding what systems read per place:
-fog, a light tint and ambient, a temperature offset, wind, and freeze bits.
+Where a place is depends on height as well as column (units session
+markup a): a cave under a room is its own place, for weather, freezing and
+what the AI sees. So on the GPU there is one new contract buffer, `places`:
+a u32 per column holding two u16 room ids.
+- The low half is the room of the open air on top of the column.
+- The high half is the room of the first enclosed level under it, the air
+  under an overhang or inside a cave; 0 means the same room as the top.
+- A room's region comes from the place table, not the buffer.
+
+Lookups take a height: `at(x, y, z)` picks the level z falls in from the
+column's intervals. Two levels a column is enough for now; more can come if
+plans need them. Navigation surfaces carry their own place id (W4).
+
+There is also a small uniform table, one entry per place, holding what
+systems read per place: its region, fog, a light tint and ambient, a
+temperature offset, wind, and freeze bits.
 
 ## API sketch
 
 ```ts
 const places = core.places;                 // after generate(dims, plan)
+// the plan, either way (units session markup 1): generated from parameters, or drawn by hand
+//   { partition: 'voronoi', spacing, group: [1, 3], shape?: 'chain' | 'tree' | 'any' }
+//   { partition: 'bands', freq, tunnel: t, island: off }   (near 0: tunnels; a bit off 0: islands)
+//   { partition: 'boxes', rooms: [{ name, rect }], halls: [{ a, b, width }] }
+//   { rooms: [{ name, region, sdf }], halls: [{ a, b, width }] }   (a hand-made plan)
+// shape biases the room graph toward a corridor of rooms (chain) or one with branches (tree),
+// for lock-and-key layouts; the generator knows no keys: a game reads the graph and
+// connect()s rooms with the obstacle a unit's ability opens (melt, levitate, smash, swim)
 places.get('north-cavern')                  // by name or id → Place
-places.at(x, y)                             // the room (and its region) at a column
+places.at(x, y, z?)                         // the room at a point (z: under an overhang or on top; default the top)
 places.children('ashlands')                 // a region's rooms
 places.adjacent('north-cavern')             // [{ room, border: cells, length, mid }]
 places.connections('north-cavern')          // [{ to, kind, at, width, state }]
@@ -85,10 +104,17 @@ place.state()  // { water, loose depth, snow, fire, contamination, green, bodies
 - **Obstacles**: woken bodies (physics/wake.ts), stamped models, or loose
   plugs, all through the same terrain writes the kit uses.
 - **Freezing**: each system's kernel checks the place's freeze bits at the
-  top. This stops change; saving time needs dispatches over active chunks
-  only, which comes later.
-- **Navigation (W4)**: built per place too, so a game can ask for a flow
-  field inside one room, or between two connected rooms.
+  top. This stops change, but the dispatches still run, so it saves little
+  compute. Saving compute is half the point, so the plan is to dispatch
+  only over active chunks later (markup c).
+- **Navigation (W4)**: walkable surfaces stacked per column, each carrying
+  its place id, linked to the six neighbours of Reclaimed's hex grid where
+  heights meet.
+  - `nav.field(seeds, {archetype})`: one field per target kind (the player,
+    resources, cover), with a distance and a direction on each surface.
+  - `nav.scent`: deposit and decay.
+  - `nav.surfaces(place)`: the surfaces of one place, so a horde can be
+    kept to its room on the GPU rather than by a CPU callback.
 
 ## Order of work (proposed)
 
