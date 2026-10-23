@@ -45,7 +45,7 @@ struct AgentParams {
   // per field: the place it's confined to (0 anywhere; bit 31 a region,
   // else a room): its distances live only on that place's surfaces
   fieldPlace: vec4<u32>,
-  // x hits this tick, y targets, z events capacity
+  // x hits this tick, y targets, z events capacity, w the fields with seeds (bit per field)
   n2: vec4<u32>,
   // the kinds of unit (units.wgsl Kind)
   kinds: array<Kind, 8>,
@@ -219,14 +219,14 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var k = 0u; k < NAV_K; k++) {
     let s = i * NAV_K + k;
     let z = navZ(s);
-    if (z < 0.0) {
-      for (var f = 0u; f < AP.n.z; f++) { dist[f * N + s] = FAR; }
-      continue;
-    }
+    // (the surfaces are packed from 0: past the last, none. Nothing links to
+    // an empty slot, so what's left in its fields is never read; a slot that
+    // fills again is recomputed from its neighbours the next sweep)
+    if (z < 0.0) { break; }
     for (var f = 0u; f < AP.n.z; f++) {
-      // (confined: off its place, nothing)
+      // (confined: off its place, nothing; a field with no seeds: nowhere)
       let fp = AP.fieldPlace[f];
-      if (fp != 0u && !onPlace(s, fp)) {
+      if ((AP.n2.w & (1u << f)) == 0u || (fp != 0u && !onPlace(s, fp))) {
         dist[f * N + s] = FAR;
         continue;
       }

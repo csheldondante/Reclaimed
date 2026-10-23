@@ -2,7 +2,8 @@
 // seconds, for comparing builds — e.g. the hex grid against the square one
 // (docs/GRIDS.md: measure at each step).
 //
-//   node scripts/perfpass.mjs --url http://localhost:5177 [--wait 15000] [--seconds 5] [--zoom z]
+//   node scripts/perfpass.mjs --url http://localhost:5177 [--wait 15000] [--seconds 5] [--zoom z] [--extra "&q=low"] [--eval js]
+// (--eval runs in the page once the level is up, before the wait: e.g. spawn agents)
 import puppeteer from 'puppeteer-core';
 
 const argv = process.argv.slice(2);
@@ -26,6 +27,7 @@ try {
   page.on('pageerror', (e) => errors.push(e.message));
   await page.goto(`${url}/?skipmenu=1&tutorial=0&perf=1${opt("extra", "")}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.reclaimed?.core, { timeout: 90000 });
+  if (opt('eval')) await page.evaluate(opt('eval'));
   await new Promise((r) => setTimeout(r, wait));
   const r = await page.evaluate(async (secs, z) => {
     const R = window.reclaimed;

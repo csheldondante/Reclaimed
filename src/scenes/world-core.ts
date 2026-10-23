@@ -25,6 +25,8 @@ export interface Quality {
   rain: number;
   maxTicksPerFrame: number;
   particles: number;
+  /** the agents' field relax sweeps a tick (default 8; agents.ts `sweeps`) */
+  agentSweeps?: number;
 }
 
 /** Shared services a scene runs on. */

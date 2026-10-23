@@ -51,6 +51,8 @@ export interface FxOpts {
   speed?: number;
   /** cells */
   spread?: number;
+  /** cells/s added to each particle's own random velocity: a mover's dust trails behind it (vel: its velocity, or a share of it) */
+  vel?: readonly [number, number, number];
   /** 'haze': the material it's a cloud of (default drift); otherwise ignored */
   material?: MaterialName;
 }
@@ -68,6 +70,6 @@ export class Fx {
     const f = FX[name];
     if (!f) throw new Error(`world.fx: no burst "${name}" (one of ${this.names.join(', ')})`);
     const payload = name === 'haze' ? materialId(opts.material ?? 'drift') : 0;
-    this.core.sim.particles.burst({ kind: f.kind, x, y, z, count: opts.count ?? f.count, speed: opts.speed ?? f.speed, spread: opts.spread ?? f.spread, payload });
+    this.core.sim.particles.burst({ kind: f.kind, x, y, z, count: opts.count ?? f.count, speed: opts.speed ?? f.speed, spread: opts.spread ?? f.spread, payload, vel: opts.vel });
   }
 }

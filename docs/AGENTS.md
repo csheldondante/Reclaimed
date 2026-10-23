@@ -59,7 +59,14 @@ cells) of air above it.
 
 **Fields.** Each field holds a distance to its seeds on every surface.
 - `NFIELDS` (4) fields, shared by every group following the same one.
-- 8 sweeps a tick, in place.
+- Sweeps a tick, in place: the quality's `agentSweeps` (low 2, medium 4,
+  high 8; `agents.sweeps` at run time). The fields' fixed cost is the map's
+  size × the sweeps (about 0.2 ms a sweep on a 256 map on a desktop GPU), so
+  phones take 2 (round 58). A change spreads that many cells a tick: 2 is
+  120 cells/s, enough to follow anything that moves; only a first fill
+  across the map is slower (~2 s rather than ~0.5).
+- A field with no seeds is skipped (nowhere is near it), and a column's
+  sweep stops at its last surface.
 - A step costs 1, plus 1.5 per cell climbed, 0.3 per cell dropped, and 3
   into water.
 - A surface's value is recomputed from its neighbours every sweep, never

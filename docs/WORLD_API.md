@@ -89,7 +89,8 @@ sim.wind.liftThreshold('drift')     // the wind a loose material lifts above
 
 // fx
 sim.fx.burst('dust' | 'litter' | 'leaves' | 'ash' | 'chips' | 'cloud' | 'splash' | 'smoke' | 'embers'
-           | 'flame' | 'haze' | 'seeds' | 'sparks' | 'petals' | 'grains', x, y, z, { count, speed, spread, material })
+           | 'flame' | 'haze' | 'seeds' | 'sparks' | 'petals' | 'grains', x, y, z, { count, speed, spread, vel, material })
+// vel: cells/s added to each particle's own random velocity, so a mover's dust trails behind it (round 58; not birds)
 ```
 
 ### Layer pulls (BACKLOG API2)

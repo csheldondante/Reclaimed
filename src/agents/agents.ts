@@ -35,7 +35,6 @@ const EVENT_CAP = 2048;
 const MAX_INST = 65536;
 const MAX_MODEL_VOXELS = 8192;
 /** sweeps of the fields a tick, and ticks between re-peeling the surfaces */
-const SWEEPS = 8;
 const PEEL_EVERY = 8;
 /** the params uniform (agents.wgsl AgentParams), in u32s */
 const P_SEEDS = 4;
@@ -196,11 +195,21 @@ export class Agents implements SimSystem {
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
 
+  /**
+   * Relax sweeps a tick (quality's `agentSweeps`; default 8). The fields'
+   * fixed cost is the map's size × this. A change spreads this many cells a
+   * tick (2: 120 cells/s, enough to follow anything that moves; a first
+   * fill across a 256 map takes ~2 s rather than ~0.5).
+   */
+  sweeps: number;
+
   constructor(
     private device: GPUDevice,
     private world: WorldGpu,
     private prof: Profiler,
+    sweeps = 8,
   ) {
+    this.sweeps = sweeps;
     const cols = world.w * world.h;
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
     this.nav = world.buf('agentNav', cols * NAV_K * NAV_BYTES, S);
@@ -614,7 +623,9 @@ export class Agents implements SimSystem {
       u[P_GMAT + g] = GROUP_MATS[g % GROUP_MATS.length];
     }
     u.set(this.fieldPlace, P_FPLACE);
-    u.set([hits.length, this.targets.length, EVENT_CAP, 0], P_N2);
+    let seeded = 0;
+    for (const s of this.seeds) seeded |= 1 << s.field;
+    u.set([hits.length, this.targets.length, EVENT_CAP, seeded], P_N2);
     this.kinds.forEach((k, i) => {
       if (!k) return;
       const o = P_KINDS + i * 12;
@@ -658,8 +669,8 @@ export class Agents implements SimSystem {
     if (this.fieldsUsed > 0) {
       pass.setBindGroup(0, this.fieldGroup);
       pass.setPipeline(this.k.relax.pipeline);
-      for (let i = 0; i < SWEEPS; i++) pass.dispatchWorkgroups(gx, gy);
-      this.prof.dispatches += SWEEPS;
+      for (let i = 0; i < this.sweeps; i++) pass.dispatchWorkgroups(gx, gy);
+      this.prof.dispatches += this.sweeps;
     }
     if (this.count > 0) {
       pass.setBindGroup(0, this.unitGroup);

@@ -23,8 +23,10 @@ struct Particle {
 // read-write only so landing birds can plant a seed (0 → pioneer), see update()
 @group(0) @binding(9) var<storage, read_write> veg: array<f32>;
 @group(0) @binding(10) var<storage, read> moisture: array<f32>;
-// CPU bursts: [0].x = count; then pairs (x, y, z, n) (kind, speed, payload, spread)
-@group(0) @binding(11) var<uniform> requests: array<vec4<f32>, 129>;
+// CPU bursts: [0].x = count; then three vec4 a burst: (x, y, z, n), (kind,
+// speed, payload, spread), (the velocity added to each particle's own,
+// cells/s; 0) (particles.ts)
+@group(0) @binding(11) var<uniform> requests: array<vec4<f32>, 193>;
 // only the petalEmit entry uses these
 @group(0) @binding(14) var<storage, read> wiltP: array<vec4<f32>>;
 @group(0) @binding(16) var<storage, read_write> petals: array<f32>;
@@ -497,8 +499,10 @@ fn fireEmit(@builtin(global_invocation_id) id: vec3<u32>) {
 fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
   let n = u32(requests[0].x);
   if (id.x >= n) { return; }
-  let a = requests[1u + id.x * 2u];
-  let b = requests[2u + id.x * 2u];
+  let a = requests[1u + id.x * 3u];
+  let b = requests[2u + id.x * 3u];
+  // (carried: a mover's dust trails behind it)
+  let carry = requests[3u + id.x * 3u].xyz;
   let count = u32(a.w);
   let kind = u32(b.x);
   for (var k = 0u; k < count; k++) {
@@ -510,13 +514,13 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
     if (kind == K_LEAF) { life = 10.0; }
     if (kind == K_DEER || kind == K_RABBIT) { life = 90.0 + r.x * 60.0; }
     if (kind == K_GLOW) {
-      spawnFull(a.xyz, vec3<f32>(0.0), 1.3, kind, 0.0, h, 0u, u32(b.z));
+      spawnFull(a.xyz, carry, 1.3, kind, 0.0, h, 0u, u32(b.z));
       continue;
     }
     if (kind == K_HAZE) {
       // a dust cloud where something broke (round 21): the payload slot names
       // the material, which tints it; it swells, drifts and thins over ~5 s
-      spawnFull(a.xyz + r * b.w, dir * b.y * (0.4 + 0.6 * fract(r.y * 9.1)), 4.0 + (r.x + 0.5) * 3.0, kind, 0.0, h, 0u, dustTag(u32(b.z)));
+      spawnFull(a.xyz + r * b.w, carry + dir * b.y * (0.4 + 0.6 * fract(r.y * 9.1)), 4.0 + (r.x + 0.5) * 3.0, kind, 0.0, h, 0u, dustTag(u32(b.z)));
       continue;
     }
     if (kind == K_BIRD) {
@@ -528,7 +532,7 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
       spawnFull(pos, vec3<f32>(hd * b.y, 0.0), 120.0 + r.z * 60.0, kind, 0.0, h, 0u, B_SEEK);
       continue;
     }
-    spawn(a.xyz + r * b.w, dir * b.y * (0.6 + 0.8 * fract(r.y * 9.1)), life, kind, b.z / f32(max(count, 1u)), h);
+    spawn(a.xyz + r * b.w, carry + dir * b.y * (0.6 + 0.8 * fract(r.y * 9.1)), life, kind, b.z / f32(max(count, 1u)), h);
   }
 }
 

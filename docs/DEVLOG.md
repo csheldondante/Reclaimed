@@ -3606,3 +3606,43 @@ Measured:
 - Speed: agents at 4,000 walking units 0.74 ms against 0.69 without the
   wind (agentstest, one run each).
 - knocktest, throwtest and hordetest are unchanged.
+
+## 2026-10-23 — lighter on phones: the agents' sweeps follow quality; bursts take a velocity
+
+Round 58 (the units session): the hoverbike is choppy on the user's phone.
+On their desktop profile, agents cost 1.6 ms a tick for 12 units, sediment
+0.96 and sediment-out 0.80.
+
+Reproduced on our own valley at low with 12 raiders chasing a target
+(perfpass, now with `--eval`): agents 1.18 ms. It's a fixed cost: 8 relax
+sweeps of the whole map's fields every tick, about 0.2 ms a sweep on a
+256 map, and 0.16 ms for the rest (the occupancy clear, the units, the
+peel every 8 ticks).
+- The sweeps follow quality: `agentSweeps` low 2, medium 4, high 8
+  (`agents.sweeps` at run time). 2 a tick still spreads a change at 120
+  cells/s, faster than anything moves; only a first fill across the map
+  slows (~2 s).
+- A column's sweep stops at its last surface. The surfaces are packed from
+  0 and nothing links to an empty slot, so writing those slots was wasted.
+- A field with no seeds is skipped. The game's targets live in field 3,
+  so all four were relaxed though only one had seeds.
+
+Measured:
+- 12 raiders, low: agents 1.18 → 0.51 ms; high: 1.18 → 0.97.
+- 4,000 walking units (agentstest, low): 0.74 → 0.41 ms.
+- The field reader (24 of 24 directions), confinement (399-400 of 400),
+  the horde, throws, knocks (6/6) and wind (5/5) are unchanged.
+
+Not done: sediment at half rate on phones (BACKLOG Q20). Its wind carry
+scales with its time step, but its slumping, wind smoothing and piping are
+per pass. At half rate the per-pass transport doubles against the same
+smoothing that stops it see-sawing, and doubling the smoothing too
+overshoots (six neighbours each taking 0.2). That's the user's call.
+Climate runs every 4th tick already (~0.1 ms a tick on average).
+
+`fx.burst` takes `vel` (cells/s, added to each particle's random velocity;
+not birds, which fly their own way), so a mover's dust trails behind it. A
+burst request is now three vec4s. scripts/fxveltest.mjs: a burst with vel
+[12, 0, 0] moves at a mean 10.25 cells/s, one without at -0.12. A burst only
+appears on the next tick, and headless runs ~27 ticks a second, so the test
+waits for ticks, not frames.

@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 58 (session 5, `agents`; the units session) — lighter on phones; bursts carried
+
+- The hoverbike is choppy on the user's phone. Asked for a cheaper sim path
+  for phones, keyed off low quality or a host option: agents' fixed cost,
+  sediment at half rate or only where disturbed, climate less often.
+  - Done: the agents' field sweeps follow quality (low 2, high 8).
+  - Sediment at half rate is not done: it would change how it behaves (see
+    the DEVLOG) and is the user's call. Climate runs every 4th tick already.
+- `fx.burst` takes `vel`, so a walker's or a tank's dust trails behind it.
+
 ## 2026-10-23 — round 57 (session 5, `agents`; the units session, same principle) — units feel the wind
 
 - Units feel the world's wind and blasts directly, ÷ mass, with a calm

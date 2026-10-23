@@ -539,7 +539,7 @@ carried through it, and how many burning units). The peel reads `layers`,
 room | region << 16). The units read `fire`, `lava` and the sparks texture
 (catching fire). Four bind groups, each within 8 storage buffers: peel, fields,
 units, draw. A tick: every 8 ticks the
-surfaces are re-peeled and linked; 8 sweeps of the fields in use; the
+surfaces are re-peeled and linked; `agentSweeps` sweeps (quality: low 2, high 8) of the fields with seeds; the
 occupancy half cleared; every unit stepped; every unit's voxels written.
 The params uniform (binding 10) carries counts, 32 seeds, each group's field
 and colour, each field's place, 8 kinds, 32 hits, 8 targets, 8 holds, 32

@@ -44,9 +44,13 @@ export interface Burst {
   /** total contamination payload split across the burst (Haze: the material that tints it) */
   payload?: number;
   spread?: number;
+  /** cells/s added to each particle's own velocity (not birds: they fly their own way) */
+  vel?: readonly [number, number, number];
 }
 
 const MAX_BURSTS = 64;
+/** floats a burst request (particles.wgsl bursts: three vec4) */
+const REQ = 12;
 
 export class ParticleSystem implements SimSystem {
   readonly name = 'particles';
@@ -62,7 +66,7 @@ export class ParticleSystem implements SimSystem {
   private groupBurst: GPUBindGroup;
   private groupUpdate: GPUBindGroup;
   private reqBuf: GPUBuffer;
-  private reqData = new Float32Array((1 + MAX_BURSTS * 2) * 4);
+  private reqData = new Float32Array(4 + MAX_BURSTS * REQ);
   private queue: Burst[] = [];
 
   constructor(
@@ -157,8 +161,9 @@ export class ParticleSystem implements SimSystem {
       const now = this.queue.slice(0, MAX_BURSTS);
       d[0] = now.length;
       now.forEach((b, i) => {
-        const o = 4 + i * 8;
-        d.set([b.x, b.y, b.z, b.count, b.kind, b.speed, b.payload ?? 0, b.spread ?? 0.5], o);
+        const o = 4 + i * REQ;
+        const v = b.vel ?? [0, 0, 0];
+        d.set([b.x, b.y, b.z, b.count, b.kind, b.speed, b.payload ?? 0, b.spread ?? 0.5, v[0], v[1], v[2], 0], o);
       });
       // ordered before this tick's submit, so the burst kernel sees it
       this.device.queue.writeBuffer(this.reqBuf, 0, d);
