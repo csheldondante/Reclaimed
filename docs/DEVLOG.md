@@ -3369,3 +3369,17 @@ Measured (scripts/pulltest.mjs, 5 of 5):
 - Through: 1.9 cells of brick on the stone became 1.7 of rubble (some had
   already slid off) and no brick.
 - Pulled down 3: the stone sank.
+
+## 2026-10-23 — pulls shake the loose ground off
+
+Round 53: the user agrees a pull adds material and lets the natural sim
+displace what's on it, by its angle of repose, but wants it shaken off a
+bit too. A pull now marks the columns it lifts with a shake: the tick and a
+strength, in a texture (so the sediment pass spends no storage buffer on
+it). There, the loose ground's angle of repose is lowered by up to 60% ×
+the shake, fading over 2.5 s, so it slips off the steepened sides instead
+of riding up. It's still the sediment pass that moves it, so it's still
+conserved. Measured: 3 s after a 6-cell stone pull under sand, 93% of the
+sand on its top stays unshaken, 75% shaken hard. The user also wants to try
+sediment simply vanishing where it enters a locked region (API3), so there
+are no artifacts at the border; that's noted for the locks.

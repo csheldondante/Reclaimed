@@ -154,6 +154,9 @@ export class WorldGpu {
   /** derived by the surface pass: xyz the granular intervals beneath the top one in the run on top (bottom first, packed mat·1000 + depth), w the run's base z */
   readonly strata: GPUTexture;
   readonly strataView: GPUTextureView;
+  /** ground shaken (layerpull.wgsl writes, sediment reads): x the tick it was shaken, y how hard (0..1): loose ground there slips at a lower angle for a while */
+  readonly shake: GPUTexture;
+  readonly shakeView: GPUTextureView;
   /** sandbox brush state per column (edit.wgsl reads `editState`, writes `editStateNext`; particles read it) */
   readonly editState: GPUTexture;
   readonly editStateNext: GPUTexture;
@@ -304,6 +307,9 @@ export class WorldGpu {
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.strata);
     this.strataView = this.strata.createView();
+    this.shake = device.createTexture({ label: 'shake', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.shake);
+    this.shakeView = this.shake.createView();
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
     this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.editState, this.editStateNext);

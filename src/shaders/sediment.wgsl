@@ -220,9 +220,19 @@ fn topOf(q: vec2<i32>) -> f32 {
   return clamp(t.y, 0.0, t.x);
 }
 
-/** The steepest slope q's top material holds (cells per cell), lower when wet. */
+// ground shaken (layerpull.wgsl): x the tick, y how hard
+@group(0) @binding(30) var shakeTex: texture_2d<f32>;
+// a shake lasts this long (ticks), and at its hardest lowers the repose by this share
+const SHAKE_TICKS: f32 = 150.0;
+const SHAKE_SLIP: f32 = 0.6;
+
+/** The steepest slope q's top material holds (cells per cell), lower when wet, and while the ground there is shaken. */
 fn reposeAt(q: vec2<i32>, m: u32) -> f32 {
-  return mix(MATS[m].sim.y, MATS[m].sim.z, smoothstep(0.35, 0.8, moisture[colIdxI(q)]));
+  let rep = mix(MATS[m].sim.y, MATS[m].sim.z, smoothstep(0.35, 0.8, moisture[colIdxI(q)]));
+  let sh = textureLoad(shakeTex, q, 0);
+  let age = f32(G.tick) - sh.x;
+  let fade = select(0.0, 1.0 - age / SHAKE_TICKS, sh.y > 0.0 && age >= 0.0 && age < SHAKE_TICKS);
+  return rep * (1.0 - SHAKE_SLIP * sh.y * fade);
 }
 
 /**
