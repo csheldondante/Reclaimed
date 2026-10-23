@@ -60,6 +60,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let ev = G.events[e];
     if (length(cellPos(p) - ev.xy) < min(ev.z, 4.0) && fuel > 0.2) { f = max(f, 0.9); }
   }
+  // set alight (the world API): any fuel within the radius
+  for (var e = 0u; e < numEvents(); e++) {
+    if (evKind(e) != EV_IGNITE) { continue; }
+    let ev = G.events[e];
+    if (length(cellPos(p) - ev.xy) < ev.z && fuel > 0.05) { f = max(f, clamp(ev.w, 0.05, 1.0)); }
+  }
 
   if (f > 0.0) {
     // burns while there is fuel; damped by water, rain, damp ground

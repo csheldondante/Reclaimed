@@ -24,6 +24,34 @@ each was implemented.
 - The user's go-ahead (relayed by the units session) for places step 1.
 - On the agents layer: "Yes please make agents off of grids and let's do
   it! I'm excited for this layer." (branch `agents`, docs/AGENTS.md)
+- The boundary between Reclaimed and games (relayed by the units session):
+  each system is a module the game layer uses; the game builds controls and
+  abilities on them, and the abilities interact through the shared world
+  (the bike's air blows dust because it uses the wind). Each module installs
+  on its own and is absent if not installed; answers queries from a CPU
+  mirror at a stated rate, in world coordinates, formats decoded on our
+  side; takes commands batched per tick with caps handled inside (queue or
+  merge, never thrown or silently dropped); sends events out; keeps its
+  buffers and Globals private. Order: a read API for terrain, water and
+  fire; wind without the cap; fx; agents; the rest as they're touched
+  (docs/WORLD_API.md).
+- The split: Reclaimed is the engine, the world is the game's (GameplayGM).
+  The facade is a sim of a world definition the game supplies; content
+  comes in as data (map plans and generation recipes, places with names and
+  tags, agent kinds, plant species and biomes, climate, maybe materials),
+  our defaults only where it doesn't. Reclaimed's own game (Nature, the
+  reclamation score, the story rules, powers, levels) is one client, kept
+  out of the core API. Persistence (snapshot and restore per place) later;
+  keep it in mind for formats.
+- A wind wake for things that move (the tank's dust should come only from
+  its wake, lifted by our sediment and particles): built on the painted
+  wind field as the swipe strokes are, since the user likes how they paint,
+  carry, spread and relax — each frame the segment the mover covered,
+  along its motion, capped below its speed (0.6–0.8×), in the usual breeze,
+  gust and gale steps; many movers painting at once with the player's drag.
+- Reclaimed is the engine for the units session's game too: its enemies
+  become our agents, using our fire, wind and physics through an API we
+  expose (agents work on `agents`).
 
 ## 2026-10-23 — round 51 (session 5, `physics`) — seasons; places
 

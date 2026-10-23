@@ -210,6 +210,7 @@ where pieces turn to particles on impact is P3.
 | reachTex | r8unorm per column: the player's reach on a story level (1 inside, 0.5 at the edge, 0 in the fog; 1 everywhere elsewhere) | game/reach.ts (CPU, ~1 Hz) | render.wgsl haze() fog |
 | cornerTex | rgba32f per grid point: x soft-ground height, y water, z drift (−1 = not smoothed), w 1 where the four columns differ in top material or plant cover (soft borders, render.wgsl `edgeLook`) | renderfields | draw |
 | particles / particleCounters | 48-byte ring + atomic head | particles | draw |
+| windBlows | vec4s: [0].x count, then three per entry (x, y, radius, strength or cap), (dx, dy, mode 0-4, a stroke's length), (a stroke's paint) — blows, strokes and wakes | CPU (api/wind.ts, the world API) | windfield |
 | renderFields | vec4 (shadow z, moisture, fire glow, flow) | renderfields | draw |
 | stats | u32 sums | stats, structure (collapsed) | CPU (async) |
 
@@ -402,9 +403,25 @@ are shaded by a sub-voxel ray march inside the box (discard = gap).
 ## Events
 
 `Globals.events` (≤4, one tick): x, y, radius, strength + kind
-(`EV_LIGHTNING`, `EV_CHIP`, `EV_SCARE` — flushes perched birds; `eventKind` packs kind + 16·z for height-targeted
+(`EV_LIGHTNING`, `EV_CHIP`, `EV_SCARE` — flushes perched birds;
+`EV_IGNITE` 7 — fuel within the radius catches at intensity w, the world
+API's fire.ignite; `eventKind` packs kind + 16·z for height-targeted
 events). The CPU queues them; `Simulation.step` clears them after
 the tick that consumes them.
+
+## The world API (round 52, docs/WORLD_API.md)
+
+`src/api/`: `createSim(host, worldDef)` makes a WorldCore from a game's
+world definition (map, places, climate, season) and installs the modules it
+asks for; `attachSim(core)` puts them over a WorldCore a scene runs (the
+level: `reclaimed.api`). One `Mirror` per sim: every module registers the
+buffers and textures it reads (terrain: surface, layers, drift, levels;
+water: water, flux; fire: fire, lava; wind: windField), read back together
+on a timer (250 ms), decoded by the module. Commands go through the world's
+own queues: Globals.events (edits, ignite; the excess waits a tick), the
+particle burst queue (now kept past 64 a tick, not dropped), and
+`windBlows` (wind.ts, a SimSystem just before the windfield: blows, strokes
+and wakes, merged past 256).
 
 ## Levels and the sandbox
 

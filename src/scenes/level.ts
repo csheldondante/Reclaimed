@@ -18,6 +18,7 @@ import type { LavaSystem } from '../sim/lava';
 import { installPhysics } from '../physics/install';
 import { installAgents } from '../agents/install';
 import type { Agents } from '../agents/agents';
+import { attachSim, type Sim } from '../api/world';
 import type { Waker, WakeOptions } from '../physics/wake';
 import { box, table } from '../physics/shapes';
 import { boxMesh, rockMesh, type SkinMesh } from '../physics/mesh';
@@ -102,6 +103,8 @@ export class LevelScene implements Scene {
   physics?: Physics;
   /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
   agents!: Agents;
+  /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
+  private worldApi?: Sim;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
   lava?: LavaSystem;
   /** sandbox: the heat beam's pointer while held */
@@ -530,6 +533,11 @@ export class LevelScene implements Scene {
       },
       // regions and rooms (docs/PLACES.md): places.load(plan), places.get(name).bury('sand', 2)…
       places: core.places,
+      // the world as modules a game uses (docs/WORLD_API.md): api.terrain.heightAt(x, y), api.wind.gust(…), api.fx.burst('dust', …)
+      // (`world` stays the GPU buffers, for tests)
+      get api() {
+        return (self.worldApi ??= attachSim(core));
+      },
       scene: this,
     };
     (window as unknown as { reclaimed: unknown }).reclaimed = api;
@@ -1447,6 +1455,7 @@ export class LevelScene implements Scene {
 
   dispose(): void {
     this.abort.abort();
+    this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();
     this.ring?.parentElement?.remove();

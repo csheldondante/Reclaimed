@@ -3270,6 +3270,57 @@ the rest already running out over the flat sandbox (nothing holds it
 until W1 shapes rooms); the held storm sits on the room's centre at
 full intensity after 12 s. Drain leaves 0.02 (water flowing back in).
 
+## 2026-10-23 — the world API, steps 1–3: terrain, water, fire, wind, fx
+
+Round 52: the user's direction for the boundary between Reclaimed and the
+games on it, relayed by the units session. Each system becomes a module a
+game uses, and Reclaimed is the engine of a world the game defines. The
+hover bike reached into internals: Globals.gusts (four slots, shared with
+the cursor and overwritten every frame), Globals.events, particle bursts by
+PK id, raw readbacks decoded game-side. src/api/ is the outward side:
+- `createSim(host, worldDef)`, and `attachSim(core)` for the level.
+- Queries from one CPU mirror a sim shares: 7 MB read in 22 ms median,
+  every 250 ms.
+- Commands through the world's own queues.
+
+The wind is the one new mechanism. A list of blows, strokes and wakes goes
+to the wind field each tick in its own buffer, so the four Globals slots
+aren't a game's limit any more. Each paints the painted wind (the part the
+player's drag paints, which carries, spreads and relaxes over ~7 s), so
+everything that feels the wind feels it.
+- **Blows** hold the wind at a strength without stacking.
+- **Strokes** paint as the drag does.
+- **Wakes** are what the tank's dust should come from, per the user. Each
+  tick a mover paints the segment it covered along its motion, two passes,
+  capped at 0.7 × its speed.
+
+Past 256 entries a tick the list sent is merged, nearest first. Two fixes
+on the way:
+- Particle bursts past 64 a tick were silently dropped; they now wait for
+  the next tick.
+- An ignite event lights fuel without lightning's damage and flash.
+
+Measured (scripts/worldapitest.mjs, the sandbox), all 14 checks passing:
+
+| Check | Result |
+|---|---|
+| Terrain queries vs the raw buffers (levels, surface + drift, layers) | 200 of 200 points agree |
+| Dig 2 | −1.87 |
+| Deposit 2 of sand | +2, and the top reads sand |
+| Build 3 of stone | +3 |
+| Crater | −4.2 |
+| Flood, then drain | 0 → 0.26-0.33 → 0 (the flat sandbox runs it off in a second) |
+| Ignite on grass | fire 1.0, heat 600 |
+| Blow of 12 north | 12.6 under it, unchanged 30 cells away |
+| Blast | +10 east of it, −8.5 west |
+| 400 blows | sent as 256, none lost, all ended |
+| Two movers at 8 cells/s | +3.6 behind the tank (east), −2.7 behind the bike (west) |
+| 150 chip bursts in one frame | all 600 chips spawned |
+
+The mirror's refresh first returned at once while a timed read was in
+flight, so a caller could read stale data (the flood check failed on it);
+it now waits for a read that starts after the call.
+
 ## 2026-10-23 — agents: surfaces, fields, units
 
 Round 52: the user wants agents that build and mine, as a layer for many

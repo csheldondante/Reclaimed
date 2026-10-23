@@ -265,7 +265,7 @@ export class WindFieldSystem implements SimSystem {
   private s;
   private groups: [number, number];
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'windfield', windFieldWgsl, { 15: 'tex', 16: 'stex', 30: 'read' }, { 15: world.windFieldView, 16: world.windFieldNextView, 30: world.physPuff });
+    this.s = kernel(device, world, 'windfield', windFieldWgsl, { 15: 'tex', 16: 'stex', 30: 'read', 31: 'read' }, { 15: world.windFieldView, 16: world.windFieldNextView, 30: world.physPuff, 31: world.windBlows });
     this.groups = [Math.ceil(world.windField.width / 8), Math.ceil(world.windField.height / 8)];
   }
   encode(enc: GPUCommandEncoder): void {
