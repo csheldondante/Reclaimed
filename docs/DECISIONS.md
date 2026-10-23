@@ -32,7 +32,7 @@ each was implemented.
     abstractions, never internals. Reclaimed's sandbox editor stays as our
     own client, so what Reclaimed owes is editing operations in the world
     API, not an editor.
-  - The asks, in the user's order (BACKLOG E2-E7):
+  - The asks, in the user's order (BACKLOG API2-API7):
     1. Layer pulls: grab a material layer and pull it (bedrock up through
        sand and soil, pushing through or displacing them), growing by that
        material's own noise, directional or dragged too; the same
