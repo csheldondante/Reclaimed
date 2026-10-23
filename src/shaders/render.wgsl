@@ -608,6 +608,8 @@ fn canopyMarch(in: VOut) -> vec4<f32> {
       let d = length(c * vec3<f32>(2.0, 2.0, 2.2));
       density = 0.85 - 0.75 * d * d;
       if (species == 2u) { density -= 0.12; } // birch: airy
+      // (round 51: the leaves fall in autumn, the crown thins to a few)
+      density -= seasonBare() * 0.8;
     }
     if (randv(vec3<i32>(cell) + seed) < density) {
       let hit = in.bmin + in.boff + (cell + 0.5) / res;
@@ -966,6 +968,12 @@ fn fsBox(in: VOut) -> FOut {
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
 
+  if (dmat == MAT_LEAFLIT) {
+    // fallen leaves (round 51): a mottle of autumn colours, browned ones among them
+    var tc = autumnLeaf(select(0u, 2u, n2 > 0.82), fract(n2 * 3.7));
+    if (n2 < 0.3) { tc = mix(vec3<f32>(0.36, 0.24, 0.12), vec3<f32>(0.5, 0.34, 0.16), n1); }
+    alb = toLinear(tc) * (0.7 + 0.4 * n1);
+  }
   if (dmat == MAT_TRASH || dmat == MAT_LITTER) {
     // faded plastics, paper, glass and rust specks (litter: scraps on dirt)
     let k = u32(n2 * 6.0);
@@ -994,6 +1002,16 @@ fn fsBox(in: VOut) -> FOut {
       if (species == 3u) { dark = vec3<f32>(0.1, 0.24, 0.09); light = vec3<f32>(0.24, 0.42, 0.15); }
       var lc = mix(dark, light, canopyN * 0.8 + 0.25 * lnrm.z);
       if (canopyN > 0.93) { lc = mix(lc, vec3<f32>(0.55, 0.45, 0.16), 0.6); }
+      // autumn (round 51): the broadleaves turn — each tree its own shade and
+      // its own time, clusters varying round it — and the last leaves left go
+      // brown; conifers (species 1) stay green
+      if (species != 1u) {
+        let th = randv(vec3<i32>(floor(in.bmin)) + vec3<i32>(5, 1, 9));
+        let turned = autumnLeaf(species, fract(th * 0.75 + canopyN * 0.35)) * (0.72 + 0.3 * lnrm.z + 0.12 * canopyN);
+        let sc = smoothstep(0.0, 0.3, seasonColour() * 1.3 - th * 0.3);
+        lc = mix(lc, turned, sc);
+        lc = mix(lc, vec3<f32>(0.4, 0.27, 0.14), seasonBare() * 0.6);
+      }
       alb = toLinear(lc);
     }
     if (mat == MAT_WOOD && ((in.info.y >> 8u) & 15u) == 2u) {
@@ -1003,7 +1021,7 @@ fn fsBox(in: VOut) -> FOut {
     }
     if (mat == MAT_GRASS) {
       let gv = randv(vec3<i32>(floor(in.bmin * 4.0)));
-      alb = toLinear(mix(vec3<f32>(0.28, 0.44, 0.15), vec3<f32>(0.46, 0.6, 0.22), gv) * (0.8 + 0.3 * smoothstep(in.zr.x, in.zr.y, in.wpos.z)));
+      alb = toLinear(seasonGrass(mix(vec3<f32>(0.28, 0.44, 0.15), vec3<f32>(0.46, 0.6, 0.22), gv), fbm2(in.wpos.xy * 0.08)) * (0.8 + 0.3 * smoothstep(in.zr.x, in.zr.y, in.wpos.z)));
     }
     if (mat == MAT_FLOWER) {
       // one colour per plant (fine flowers are several boxes); a yellow heart
@@ -1057,6 +1075,8 @@ fn fsBox(in: VOut) -> FOut {
         var g = mix(moss, grass, smoothstep(1.0, 2.0, vCov));
         g = mix(g, forest, smoothstep(3.0, 4.5, vCov));
         g *= 0.82 + 0.3 * n2;
+        // (it turns with the season: woodland floor less, under the trees)
+        g = mix(g, seasonGrass(g, fbm2(in.wpos.xy * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, vCov));
         // wind running through the grass: gust patches roll downwind (advected
         // with the integrated wind, so they move smoothly), with fine bands
         // across them; stronger local wind (gusts, drags) deepens the waves

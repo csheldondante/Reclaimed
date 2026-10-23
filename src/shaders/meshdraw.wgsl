@@ -117,6 +117,12 @@ fn fsMesh(in: MOut) -> FOut {
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
+  if (mat == MAT_LEAFLIT) {
+    // fallen leaves (round 51), as fsBox
+    var tc = autumnLeaf(select(0u, 2u, n2 > 0.82), fract(n2 * 3.7));
+    if (n2 < 0.3) { tc = mix(vec3<f32>(0.36, 0.24, 0.12), vec3<f32>(0.5, 0.34, 0.16), n1); }
+    alb = toLinear(tc) * (0.7 + 0.4 * n1);
+  }
   if (mat == MAT_TRASH || mat == MAT_LITTER) {
     // faded plastics, paper, glass and rust specks (litter: scraps on dirt), as fsBox
     let k = u32(n2 * 6.0);
@@ -144,6 +150,8 @@ fn fsMesh(in: MOut) -> FOut {
     if (n1 < cover) {
       var g = mix(vec3<f32>(0.33, 0.40, 0.17), vec3<f32>(0.36, 0.54, 0.19), smoothstep(1.0, 2.0, v));
       g = mix(g, vec3<f32>(0.17, 0.33, 0.12), smoothstep(3.0, 4.5, v));
+      // (it turns with the season, as fsBox)
+      g = mix(g, seasonGrass(g, fbm2(in.wpos.xy * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, v));
       alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
     }
   }

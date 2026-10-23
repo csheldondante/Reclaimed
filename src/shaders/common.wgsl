@@ -56,9 +56,35 @@ struct Globals {
   cyclones: array<CycloneU, 4>,
   // x: story rules (round 30: green spreads only by seeds and sheds them);
   // y: air temperature (°C) at height 0 by day, z: its fall per cell up
-  // (round 50, the climate: sim/climate.ts); w unused
+  // (round 50, the climate: sim/climate.ts); w: the season, 0..1 through
+  // the year from midsummer (round 51)
   rules: vec4<f32>,
 };
+
+// ---- the season (round 51): leaves turn, fall, and come back -------------------
+/** 0..1 how far the deciduous leaves have turned (autumn; gone again by spring). */
+fn seasonColour() -> f32 { let s = G.rules.w; return smoothstep(0.35, 0.55, s) * (1.0 - smoothstep(0.85, 0.92, s)); }
+/** 0..1 how bare the deciduous crowns are (winter; they green again toward 1). */
+fn seasonBare() -> f32 { let s = G.rules.w; return smoothstep(0.55, 0.78, s) * (1.0 - smoothstep(0.9, 1.0, s)); }
+/** 0..1 how fast the leaves are coming down (the fall). */
+fn seasonShed() -> f32 { let s = G.rules.w; return smoothstep(0.46, 0.56, s) * (1.0 - smoothstep(0.72, 0.8, s)); }
+/**
+ * Grass through the year (round 51): green in summer, gold and straw in the
+ * fall (patches at their own pace, by h 0..1), a dull dry brown in winter,
+ * green again in spring.
+ */
+fn seasonGrass(g: vec3<f32>, h: f32) -> vec3<f32> {
+  let straw = mix(vec3<f32>(0.62, 0.52, 0.22), vec3<f32>(0.7, 0.6, 0.3), h);
+  var c = mix(g, straw, seasonColour() * (0.45 + 0.4 * h));
+  return mix(c, vec3<f32>(0.46, 0.39, 0.24) * (0.9 + 0.2 * h), seasonBare() * 0.75);
+}
+/** An autumn leaf's colour: birches (species 2) gold to yellow; the others red, orange or amber by h (0..1). */
+fn autumnLeaf(species: u32, h: f32) -> vec3<f32> {
+  if (species == 2u) { return mix(vec3<f32>(0.84, 0.62, 0.14), vec3<f32>(0.93, 0.83, 0.3), h); }
+  if (h < 0.35) { return mix(vec3<f32>(0.62, 0.12, 0.07), vec3<f32>(0.78, 0.2, 0.08), h / 0.35); }
+  if (h < 0.75) { return mix(vec3<f32>(0.85, 0.36, 0.08), vec3<f32>(0.92, 0.5, 0.12), (h - 0.35) / 0.4); }
+  return mix(vec3<f32>(0.82, 0.58, 0.16), vec3<f32>(0.62, 0.42, 0.18), (h - 0.75) / 0.25);
+}
 
 /** The air's temperature (°C) at height z: colder up high, and at night. */
 fn airTempAt(z: f32) -> f32 { return G.rules.y - G.rules.z * max(z, 0.0) - 4.0 * G.sky.w; }

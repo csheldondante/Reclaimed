@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 51 (session 5, `physics`) — seasons; places
+
+- Leaves should change to fall colours, with leaf particles too; grass
+  should change colour in the fall as well.
+- Generation is hierarchical: regions, and rooms within them. The API
+  abstracts both as named places, so the runtime can mutate them — make
+  storms, change the time of day, add fog, bury a place in sand, flood it,
+  and so on. It can query adjacent rooms and specify connections between
+  adjacent rooms, and change what is in a room: enemies, puzzles, items,
+  obstacles. Some of that can be owned by the consumer (the game), but
+  spawning things in a place, and its terrain, should be exposed through
+  Reclaimed's API.
+
 ## 2026-10-23 — round 50 (session 5, `physics`) — map generation and new materials
 
 The user's plan, relayed by the GameplayGM units session (its words,

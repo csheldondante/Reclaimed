@@ -37,6 +37,7 @@ const FREEZE: f32 = 0.002;
 // leaves a tree drops (cells a second), up to a carpet this deep
 const LEAF_RATE: f32 = 0.002;
 const LEAF_MAX: f32 = 0.3;
+const LEAF_DROP: f32 = 0.01;
 // what rots a second on damp ground (half its depth becomes soil)
 const ROT: f32 = 0.002;
 const MAT_SOIL_C: u32 = 2u;
@@ -67,11 +68,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // a cold storm's snow, and the trees' leaves, land through the deposit
   let dep = deposit[i];
   let snow = rainAt(cellPos(p)) * RAIN_RATE_C * 4.0 * snowShare(t) * SNOW_FALL;
+  // (light snow in drops of LEAF_DROP now and then, as the leaves)
+  var fall = snow;
+  if (snow < LEAF_DROP) { fall = select(0.0, LEAF_DROP, rand3(id.x, id.y, G.tick ^ 0x5a0du) < snow / LEAF_DROP); }
   if (snow > 1e-5 && dep.y <= 0.0) {
-    deposit[i] = vec4<f32>(dep.x, snow, f32(MAT_SNOW), dep.w);
+    if (fall > 0.0) { deposit[i] = vec4<f32>(dep.x, fall, f32(MAT_SNOW), dep.w); }
   } else if (vegC[i] >= 3.6 && t > 0.0 && wd < 0.02 && dep.y <= 0.0 && !(ivMat(top) == MAT_LEAFLIT && ivZ1(top) - ivZ0(top) >= LEAF_MAX)) {
     // (a tree's crown over it: veg ≥ 3.6 is woodland, vegplan.wgsl)
-    deposit[i] = vec4<f32>(dep.x, LEAF_RATE * DT_C, f32(MAT_LEAFLIT), dep.w);
+    // (round 51: most of them in the fall) — in drops of LEAF_DROP now and
+    // then: a sliver thinner than a thousandth of a cell is a spent top to
+    // the sediment pass, which threw every drop away
+    let rate = LEAF_RATE * DT_C * (0.2 + 6.0 * seasonShed());
+    if (rand3(id.x, id.y, G.tick ^ 0x1eafu) < rate / LEAF_DROP) {
+      deposit[i] = vec4<f32>(dep.x, LEAF_DROP, f32(MAT_LEAFLIT), dep.w);
+    }
   }
 
   let m = ivMat(top);

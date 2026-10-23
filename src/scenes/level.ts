@@ -142,6 +142,9 @@ export class LevelScene implements Scene {
     const p = host.params;
     if (p.get('day')) this.core.dayNight.dayLength = Math.max(10, Number(p.get('day')));
     if (p.get('tod')) this.core.dayNight.timeOfDay = Number(p.get('tod')) % 1;
+    // the season (round 51): ?season=0..1 (0.5: autumn colours, 0.65: leaves falling), ?year=<s> to let it turn
+    if (p.get('season')) this.core.globals.season = Number(p.get('season')) % 1;
+    if (p.get('year')) this.core.yearLength = Math.max(10, Number(p.get('year')));
     this.core.camera.target = [dims.w * 0.55, dims.h * ROW_H * 0.5, 14];
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);

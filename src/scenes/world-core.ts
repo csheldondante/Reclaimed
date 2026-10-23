@@ -52,6 +52,8 @@ export class WorldCore {
   readonly structures: Structures;
   readonly weather: Weather;
   readonly dayNight = new DayNight();
+  /** Seconds of simulation a year takes (round 51; globals.season); 0: the season stays put. */
+  yearLength = 0;
   readonly camera = new Camera();
   readonly globals: GlobalsState;
   readonly packed: PackedWorld;
@@ -143,6 +145,8 @@ export class WorldCore {
     g.dusts = this.weather.dustUniforms();
     g.cyclones = this.weather.cycloneUniforms();
     this.dayNight.update(simDt);
+    // the year turns (round 51: seconds per year; 0 holds the season where it is)
+    if (this.yearLength > 0) g.season = ((g.season ?? 0) + simDt / this.yearLength) % 1;
     this.light = this.dayNight.light(this.pollution);
     g.sun = this.light.dir;
     g.sunCol = [this.light.col[0], this.light.col[1], this.light.col[2], this.light.timeOfDay];

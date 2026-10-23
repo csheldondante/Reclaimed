@@ -277,8 +277,8 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
         if (tm == MAT_SNOW) {
           spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.7, 0.5 + r2), 1.5 + r1 * 1.5, K_SNOW, 0.0, h ^ 0x5a0u, 0u, 0u);
         } else {
-          // (a leaf with the top bits of its seed set draws dry brown)
-          spawn(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.5, 1.0 + r2), 6.0, K_LEAF, 0.0, 0xffff0000u | (h & 0xffffu));
+          // (in fallen leaves' colours: state 1, round 51)
+          spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.2), vec3<f32>(wind * 0.5, 1.0 + r2), 6.0, K_LEAF, 0.0, h, 0u, 1u);
         }
       }
     }
@@ -311,6 +311,15 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       if (rare(id.x, id.y, 0x5eedu) < rate) {
         let top = g + pl.trunk + pl.crown;
         spawn(vec3<f32>(base.xy + vec2<f32>(r1 - 0.5, r2 - 0.5) * 2.4, top - r1), vec3<f32>(wind * 0.5, 0.6), 40.0, K_SEED, 0.0, h ^ 0x5eu);
+      }
+      // autumn (round 51): the broadleaves let their turned leaves go,
+      // fluttering down out of the crown — more in a wind (state 1 + species:
+      // drawn in its autumn colours)
+      let shed = seasonShed();
+      if (pl.species != 1u && shed > 0.0 && rare(id.x, id.y, 0x1ea5u) < shed * (0.08 + max(ws - 2.0, 0.0) * 0.03)) {
+        let top = g + pl.trunk + pl.crown;
+        let at = vec3<f32>(base.xy + vec2<f32>(r1 - 0.5, fract(r2 * 3.1) - 0.5) * (1.2 + pl.crown * 0.6), top - r2 * pl.crown);
+        spawnFull(at, vec3<f32>(wind * 0.3, 0.0), 14.0, K_LEAF, 0.0, h ^ 0x1ea5u, 0u, 1u + pl.species);
       }
     }
   }
@@ -350,8 +359,9 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   // fallen leaves gather on the woodland floor
-  if (v >= 3.6 && !wet && rare(id.x, id.y, 0x1eafu) < 0.00004 * boost) {
-    spawnResting(onGround, 50.0 + r2 * 40.0, K_LEAF, h);
+  // (more of them in autumn, in its colours)
+  if (v >= 3.6 && !wet && rare(id.x, id.y, 0x1eafu) < 0.00004 * boost * (1.0 + 20.0 * seasonShed())) {
+    spawnFull(onGround, vec3<f32>(0.0), 50.0 + r2 * 40.0, K_LEAF, 0.0, h, 1u, select(0u, 1u, seasonColour() > 0.5));
   }
   if (G.sky.w < 0.5 && v >= 3.0 && !wet && rare(id.x, id.y, 0xdee5u) < 0.00000006) {
     spawn(base + vec3<f32>(0.0, 0.0, 0.4), vec3<f32>(r2 - 0.5, fract(r2 * 5.0) - 0.5, 0.0), 80.0 + r2 * 60.0, K_DEER, 0.0, h);

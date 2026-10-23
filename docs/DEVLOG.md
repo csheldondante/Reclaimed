@@ -3202,3 +3202,23 @@ over the pond, 2,750–7,500 cells of snow in 48–80 s of storm (by its
 strength); then 18 °C, all but 7–200 melted in as long. Leaf litter in
 the valley (--leaves): 26 patches after 320 s at the first rate, five
 times that now.
+
+## 2026-10-23 — seasons: autumn colours, falling leaves, dry grass
+
+Round 51: the user wanted leaves to change to fall colours with leaf
+particles, and the grass too. The season is one number (the globals'
+last spare, `rules.w`) through a year from midsummer; three curves of it
+(turned, shedding, bare) drive everything. Broadleaf crowns take an
+autumn colour per tree (birches gold, the rest red, orange or amber) and
+each tree turns at its own time; the canopy march thins them to a few
+brown leaves in winter and fills them again in spring; conifers stay
+green. Crowns shed leaves as particles in their colours (more in a
+wind) that flutter down and lie until a gust; grass goes gold and straw
+by patch, a dull brown in winter. Leaf litter now falls mostly in the
+fall — and only now at all: each climate pass dropped a 0.0008-cell
+sliver, which the sediment pass treats as a spent top and throws away
+(the round 50 valley count, 26 patches, was the rare drop that landed on
+another); leaves and light snow now fall in 0.01 drops now and then, the
+same rate. Measured (scripts/seasontest.mjs, a woodland planted in the
+sandbox, 6 s a season): ~450 autumn leaves in the air at 0.6–0.7, ~2,000
+lying by 0.82, leaf litter 4 → 154 cells over the year.
