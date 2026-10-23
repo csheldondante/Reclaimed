@@ -3521,3 +3521,19 @@ scale, DPR 1, 1500 rain drops, 2 ticks a frame at most, 16k particles), and
 `?q=medium` or `?q=high` asks for more. The test scripts now run at low
 too; earlier perf figures in this log were at high, so pass `&q=high` to
 compare with them.
+
+## 2026-10-23 — pulls shed their loose ground more, like a volcano's cone
+
+Round 55: the user wants the loose layers to shake off even more, the way
+they do off a volcano. The volcano doesn't shake anything: its cone rises
+a little each tick, so the sediment pass slides the cover off the
+steepening sides all the way up. A pull lifts in one go, then the cover
+can only slump at the usual rate. So a shake now does more, for longer
+(4 s, was 2.5): the angle it holds drops by up to 80% (was 60%), it slides
+up to 1.5× as fast (more and the slumps overshoot: six neighbours each
+take that share of the excess every pass), and roots let go of it. Its
+default is 1 (was 0.5). Measured (pulltest): 3 s after a 6-cell stone
+pull, 63% of the sand stays on the dome's top (was 75%; 93% unshaken).
+The dome's top is nearly flat, so some stays there. The drag check now
+measures the stone's rise: the ridge's sand runs off, so its surface sits
+lower than the stone pulled.

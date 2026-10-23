@@ -3,6 +3,11 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 55 (session 5, `physics`) — pulls shed more
+
+- "I also think we want lose layers to shake off even more the way they do
+  for the volcano": a pull's shake is now stronger and on by default.
+
 ## 2026-10-23 — round 54 (session 5, `grids`) — low quality by default; agents merged
 
 - "Can you make the default settings the low settings so it runs better on

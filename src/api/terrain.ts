@@ -43,7 +43,7 @@ export interface PullOpts {
   roughness?: number;
   /** lean the pull: higher toward `dir` (amount 1: the far rim twice the height, the near one nothing) */
   lean?: { dir: readonly [number, number]; amount: number };
-  /** shake off the loose ground it lifts, 0..1 (default 0.5): it slips at a slope up to 60% less steep for 2.5 s, so it runs off rather than riding up */
+  /** shake off the loose ground it lifts, 0..1 (default 1): for 4 s it slips at a slope up to 80% less steep, up to 1.5× as fast, roots letting go, so it runs off rather than riding up (as off a rising volcano) */
   shake?: number;
 }
 
@@ -80,7 +80,7 @@ export class PullStroke {
       roughness: o.roughness ?? (materialState(this.material) === 'solid' ? 0.6 : 0.15),
       dir: o.lean ? [o.lean.dir[0] / l, o.lean.dir[1] / l] : [0, 0],
       lean: o.lean?.amount ?? 0,
-      shake: o.shake ?? 0.5,
+      shake: o.shake ?? 1,
     });
     this.started = true;
   }
