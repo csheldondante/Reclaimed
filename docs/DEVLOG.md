@@ -3510,3 +3510,14 @@ conserved. Measured: 3 s after a 6-cell stone pull under sand, 93% of the
 sand on its top stays unshaken, 75% shaken hard. The user also wants to try
 sediment simply vanishing where it enters a locked region (API3), so there
 are no artifacts at the border; that's noted for the locks.
+
+## 2026-10-23 — low quality by default
+
+Round 54: the user wants the defaults to be the low settings so it runs
+better on phones (round 42 already found low looks perfectly good there,
+and Q18 had phones on high like a desktop). The tier is still chosen
+explicitly, with no device detection: `?q` defaults to low (half render
+scale, DPR 1, 1500 rain drops, 2 ticks a frame at most, 16k particles), and
+`?q=medium` or `?q=high` asks for more. The test scripts now run at low
+too; earlier perf figures in this log were at high, so pass `&q=high` to
+compare with them.

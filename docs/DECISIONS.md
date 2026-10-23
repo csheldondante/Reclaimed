@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 54 (session 5, `grids`) — low quality by default; agents merged
+
+- "Can you make the default settings the low settings so it runs better on
+  mobile": the low tier is the default; `?q=medium` or `?q=high` for more.
+- "And please merge agents!": `agents` is merged into `grids` (so it's on
+  the `grids` Pages build).
+
 ## 2026-10-23 — round 53 (session 5, `physics`) — pulls shake; locks swallow sediment
 
 - Pulls: "pull adds material and I think it displaces things above it

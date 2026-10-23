@@ -40,7 +40,7 @@ stock-take.
 - `npm run dev` — Vite dev server on http://localhost:5173
   - `?skipmenu=1` straight into the level (use for scripted tests)
   - `?progress=0..1` preview a menu-diorama stage
-  - `?perf=1` perf overlay (or press `` ` ``), `?q=low|medium|high` quality tier
+  - `?perf=1` perf overlay (or press `` ` ``), `?q=low|medium|high` quality tier (default low)
   - `?speed=N` fast-forward simulation, `?day=<s>` day length, `?tod=0..1` time of day
 - `npm run typecheck` / `npm run build`
 - `node scripts/shot.mjs` — headless Chrome on the real GPU (D3D11): screenshot,

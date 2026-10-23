@@ -20,7 +20,8 @@ const QUALITY: Record<string, Quality> = {
 
 async function main() {
   const params = new URLSearchParams(location.search);
-  const qualityName = params.get('q') ?? 'high';
+  // (low by default, for phones: round 54; ?q=medium|high on a desktop)
+  const qualityName = params.get('q') ?? 'low';
   const quality = QUALITY[qualityName];
   if (!quality) throw new Error(`unknown quality "${qualityName}" (use low|medium|high)`);
 
