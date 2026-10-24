@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 71 (session 5, `atlas`) — scales and representations (discussion)
+
+- "Could we use coarse columns at the atlas scale and then refine them with
+  fine columns? Could we repeat this for things on the map like characters?"
+- "I suppose columns make most sense on things that need fluid simulation and
+  we render with meshes anyway (which looks nice). I think representations
+  should be fluid and have conversions so we can do a structure as voxels for
+  deformations and fracture, rigidbody meshes with control points to bend
+  them or columns for interaction with fluids and powders"
+- Proposed (not yet built): a pyramid of columns (restriction when land
+  leaves the fine window, refinement when it comes in); the same pattern for
+  characters (agents ↔ populations); one owner representation per object at
+  a time with conversions and projections (BACKLOG Q55, Q56).
+
 ## 2026-10-24 — round 70 (session 5, `atlas`) — a free camera, rivers and falls
 
 - "Is there any way to add a free fly camera to explore in 3D? That seems
