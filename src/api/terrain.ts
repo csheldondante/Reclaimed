@@ -3,7 +3,8 @@
 
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
-import { cellAt } from '../world/lattice';
+import { cellAt, cellPos } from '../world/lattice';
+import { EDIT_TAGS } from '../sim/world-gpu';
 import { columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
 import { MAT, MATERIALS, MatState } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, type MaterialName } from './common';
@@ -16,6 +17,8 @@ const OP_BUILD = 1;
 const OP_DIG = 2;
 const OP_POUR = 10;
 const OP_CRATER = 13;
+const OP_TAKE = 14;
+const OP_PUT = 15;
 const STROKE_START = 512;
 
 export interface Layer {
@@ -251,6 +254,77 @@ export class Terrain {
   crater(x: number, y: number, opts: { radius?: number; z?: number } = {}): void {
     const z = opts.z ?? this.heightAt(x, y) ?? 0;
     this.edit(OP_CRATER, 0, x, y, (opts.radius ?? 6) * 2.5, z);
+  }
+
+  /**
+   * Take `amount` cellsÂ³ off the top of the column at (x, y), exactly: off
+   * its top interval only (one material; the map keeps z 2). Resolves with
+   * what was taken, once the tick that took it has been read back (a frame
+   * or two). Round 63: what a unit picks up.
+   */
+  take(x: number, y: number, amount: number): Promise<{ material: MaterialName; amount: number }> {
+    return this.exact(OP_TAKE, 0, x, y, amount).then(([a, m]) => ({ material: materialName(m), amount: a }));
+  }
+
+  /**
+   * Put `amount` cellsÂ³ of `material` on top of the column at (x, y),
+   * exactly (loose material then slumps like any other). Resolves with the
+   * amount put: 0 when the column has no free interval for a new material
+   * (BACKLOG Q21). Round 63: what a unit sets down, or throws.
+   */
+  put(x: number, y: number, material: MaterialName, amount: number): Promise<number> {
+    const m = materialId(material);
+    const st = materialState(m);
+    if (st !== 'solid' && st !== 'loose') throw new Error(`world.terrain.put: "${material}" isn't ground (a solid or loose material)`);
+    return this.exact(OP_PUT, m, x, y, amount).then(([a]) => a);
+  }
+
+  /** In flight: tag â†’ [the tick it was sent at or after, resolve] */
+  private exacts = new Map<number, { tick: number; done: (r: [number, number]) => void }>();
+  private nextTag = 0;
+  private polling = false;
+
+  private exact(op: number, mat: number, x: number, y: number, amount: number): Promise<[number, number]> {
+    if (!(amount >= 0)) throw new Error(`world.terrain: amount must be â‰¥ 0 (got ${amount})`);
+    if (this.exacts.size >= EDIT_TAGS) throw new Error(`world.terrain: ${EDIT_TAGS} takes and puts in flight at most`);
+    while (this.exacts.has(this.nextTag)) this.nextTag = (this.nextTag + 1) % EDIT_TAGS;
+    const tag = this.nextTag;
+    this.nextTag = (tag + 1) % EDIT_TAGS;
+    // (its column's centre, a radius only it lies in)
+    const [cx, cy] = cellAt(x, y);
+    const [px, py] = cellPos(cx, cy);
+    const p = new Promise<[number, number]>((done) => this.exacts.set(tag, { tick: this.core.sim.tick, done }));
+    this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: op * 32 + mat + STROKE_START + tag * 1024, radius: 0.3, strength: amount });
+    if (!this.polling) void this.poll();
+    return p;
+  }
+
+  /** Reads editResult back until every take and put in flight has its answer. */
+  private async poll(): Promise<void> {
+    this.polling = true;
+    const dev = this.core.host.gpu.device;
+    const tex = this.core.world.editResult;
+    const buf = dev.createBuffer({ label: 'editResult read', size: EDIT_TAGS * 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    try {
+      while (this.exacts.size) {
+        await new Promise((r) => requestAnimationFrame(r));
+        const enc = dev.createCommandEncoder({ label: 'editResult read' });
+        enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: EDIT_TAGS * 16 }, [EDIT_TAGS, 1]);
+        dev.queue.submit([enc.finish()]);
+        await buf.mapAsync(GPUMapMode.READ);
+        const f = new Float32Array(buf.getMappedRange().slice(0));
+        buf.unmap();
+        for (const [tag, e] of this.exacts) {
+          if (f[tag * 4 + 3] === 1 && f[tag * 4 + 2] >= e.tick) {
+            this.exacts.delete(tag);
+            e.done([f[tag * 4], f[tag * 4 + 1]]);
+          }
+        }
+      }
+    } finally {
+      buf.destroy();
+      this.polling = false;
+    }
   }
 
   /** Take `layers` cells off the top within `radius` (loose ground first). */

@@ -3765,3 +3765,29 @@ links.
 Checks: shadows fitted to the view look the same as the whole-map ones at
 4× zoom on a portrait screen. meshtest, pulltest (6/6) and hordetest are
 unchanged.
+
+## Round 63 — units carry and throw (agents)
+
+The user's next step for the agents: carry and throw, then dig, fell trees
+into logs, make bricks, keep piles, then build. A load has to be ground
+that goes somewhere, so the first piece is exact ground ops.
+
+- `terrain.take` / `terrain.put` (edit.wgsl OP_TAKE / OP_PUT): one column
+  (its centre and a radius only it lies in), an exact amount off its top
+  interval or on top of it. What each did goes to a 64-texel result texture
+  at the event's tag (code bits 10-15), read back until every take and put
+  in flight has its answer (a frame or two; 0.7–1 s headless, where ticks
+  run slow). A put of a new material into a full column puts 0 (Q21).
+- `agents.carry` / `pickUp` / `putDown` / `throwItem` / `toss`: a load per
+  unit slot on the CPU and in a small buffer the draw reads (the units'
+  tick kernel is at its 8 storage buffers; only the draw needs the load).
+  Thrown loads fly on the CPU, are drawn by a new `itemDraw` kernel and
+  land as ground with a 'landed' event and their hit. Loads are shed when
+  a unit tumbles (flung with it), dies or is removed.
+- Wood is plant matter (trunks) and can't be ground, so logs will need a
+  solid material of their own (next).
+
+Measured (`carrytest`, 8/8): take 0.4 → 0.4 exactly; put 0.75 brick → the
+top rises 0.750; four workers each pick up 0.5 sand; two put it down (0.5
+each); two throw it 8 cells at five raiders (both land, 0.5 each as
+ground; two raiders knocked over); a blasted carrier's 0.5 lands whole.

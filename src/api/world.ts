@@ -154,6 +154,8 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
     },
     dispose: () => mirror.stop(),
   };
+  // (what units carry comes from the ground and goes back to it)
+  if (sim.agents && sim.terrain) sim.agents.useTerrain(sim.terrain);
   const ms = mods.refreshMs ?? 250;
   if (ms > 0) mirror.start(ms);
   return sim;

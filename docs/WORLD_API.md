@@ -68,6 +68,9 @@ sim.terrain.crater(x, y, { radius, z? })
 sim.terrain.dig(x, y, { radius, layers })
 sim.terrain.deposit(x, y, 'sand', { radius, layers })   // loose only: it falls, lands, slumps
 sim.terrain.build(x, y, 'stone', { radius, layers })    // solids only
+await sim.terrain.take(x, y, amount)  // exactly, off the top interval of that column: → { material, amount } (round 63)
+await sim.terrain.put(x, y, 'brick', amount)  // exactly, on top of that column (a solid or loose material): → amount put
+                                    // (0: the column has no free interval for a new material, BACKLOG Q21). 64 in flight
 
 // water
 sim.water.depthAt(x, y); sim.water.levelAt(x, y, { smooth? })

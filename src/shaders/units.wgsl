@@ -63,6 +63,15 @@
 // per kind (8): x first voxel in `models`, y its count (0: the default
 // figure), z the voxel's edge (sixteenths of a cell), w unused
 @group(0) @binding(24) var<uniform> kindModels: array<vec4<u32>, 8>;
+// what each unit carries (round 63; agents.ts carry), by slot: x its
+// material (0: nothing), y its edge (cells). Held over its head, dropped
+// (the CPU's doing) when it's knocked down.
+@group(0) @binding(26) var<storage, read> carried: array<vec4<f32>>;
+// items in flight (agents.ts throwItem), two vec4 each: where (w its
+// material, 0: none), then x its edge, y its spin (rad), zw the axis it spins
+// about (level)
+@group(0) @binding(27) var<storage, read> flying: array<vec4<f32>>;
+const MAX_FLY: u32 = 128u;
 
 const ST_WANDER: u32 = 0u;
 const ST_CHASE: u32 = 1u;
@@ -631,8 +640,15 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   if (dd.x > 0.0) { heat = 1.0; }
   let glow = select(0u, PHYS_BIT | (u32(heat * 255.0) << 16u), heat > 0.0);
   let n = select(3u, km.y, km.y > 0u);
-  let base = atomicAdd(&drawArgs[1], n);
+  let cv = carried[u];
+  let holds = cv.x > 0.5 && state < ST_TUMBLE;
+  let base = atomicAdd(&drawArgs[1], n + select(0u, 1u, holds));
   let centre = a.xyz + mid + vec3<f32>(0.0, 0.0, bob);
+  if (holds) {
+    // its load, held up over its head
+    let e = cv.y;
+    putVoxel(base + n, centre + qrotv(q, vec3<f32>(0.0, 0.0, h + e * 0.5 + 0.05) - mid), u32(cv.x) | (min(u32(e * 16.0 + 0.5), 63u) << 24u) | glow, q);
+  }
   if (km.y > 0u) {
     // the kind's model: voxels round its feet, turned its way
     let code = km.z;
@@ -652,4 +668,18 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   putVoxel(base, centre + qrotv(q, vec3<f32>(0.0, 0.0, lg * 0.5) - mid), select(MAT_LEGS, kind.c.x, kind.c.x != 0u) | (min(code.x, 63u) << 24u) | glow, q);
   putVoxel(base + 1u, centre + qrotv(q, vec3<f32>(0.0, 0.0, lg + ts * 0.5) - mid), torso | (min(code.y, 63u) << 24u) | glow, q);
   putVoxel(base + 2u, centre + qrotv(q, vec3<f32>(0.03 * h, 0.0, lg + ts + lg * 0.5) - mid), select(MAT_HEAD, kind.c.y, kind.c.y != 0u) | (min(code.z, 63u) << 24u) | glow, q);
+}
+
+/** Items in flight (round 63): a voxel of the material each, tumbling about its axis. */
+@compute @workgroup_size(64)
+fn itemDraw(@builtin(global_invocation_id) id: vec3<u32>) {
+  let i = id.x;
+  if (i >= MAX_FLY) { return; }
+  let a = flying[i * 2u];
+  if (a.w < 0.5) { return; }
+  let b = flying[i * 2u + 1u];
+  let k = atomicAdd(&drawArgs[1], 1u);
+  let ax = vec3<f32>(b.zw, 0.0);
+  let q = select(vec4<f32>(0.0, 0.0, 0.0, 1.0), vec4<f32>(normalize(ax) * sin(b.y * 0.5), cos(b.y * 0.5)), length(ax) > 1e-3);
+  putVoxel(k, a.xyz, u32(a.w) | (min(u32(b.x * 16.0 + 0.5), 63u) << 24u), q);
 }

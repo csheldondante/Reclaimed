@@ -16,6 +16,8 @@ import unitsWgsl from '../shaders/units.wgsl?raw';
 import type { SimSystem } from '../sim/system';
 import type { WorldGpu } from '../sim/world-gpu';
 import { MAT } from '../world/materials';
+import { materialId, materialName, materialState, type MaterialName } from '../api/common';
+import type { Terrain } from '../api/terrain';
 import { FieldReader } from './fieldreader';
 
 /** surfaces a column (agents.wgsl NAV_K) */
@@ -132,7 +134,39 @@ export type AgentEvent =
   | { type: 'swing'; id: number; target: number; damage: number; x: number; y: number; z: number }
   | { type: 'hurt'; id: number; hit: number | 'impact'; damage: number; x: number; y: number; z: number }
   | { type: 'death'; id: number; by: number | 'fire' | 'water' | 'impact' | 'lava'; x: number; y: number; z: number }
-  | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number };
+  | { type: 'alight'; id: number; by: number | 'fire'; x: number; y: number; z: number }
+  /** a thrown (or dropped) item came down: `amount` of it is ground there now (0: the column had no room) */
+  | { type: 'landed'; item: number; material: MaterialName; amount: number; x: number; y: number; z: number };
+
+/** What a unit carries: an amount (cellsÂ³) of a material, ground taken up or to be put down. */
+export interface Item {
+  material: MaterialName;
+  amount: number;
+}
+
+/** units.wgsl MAX_FLY: items in flight at once */
+const MAX_FLY = 128;
+/** units.wgsl GRAVITY */
+const GRAVITY = 20;
+
+interface Flight {
+  id: number;
+  mat: number;
+  amount: number;
+  pos: [number, number, number];
+  vel: [number, number, number];
+  spin: number;
+  hit?: ThrowHit;
+}
+
+/** What a thrown item does to the units where it lands (agents.hit). */
+export interface ThrowHit {
+  radius?: number;
+  damage?: number;
+  push?: number;
+  lift?: number;
+  stun?: number;
+}
 
 export interface AgentState {
   id: number;
@@ -173,7 +207,19 @@ export class Agents implements SimSystem {
   private models: GPUBuffer;
   private kindModelsBuf: GPUBuffer;
   private params: GPUBuffer;
-  private k: Record<'surfaces' | 'links' | 'relax' | 'occClear' | 'unitStep' | 'unitDraw', ComputeKernel>;
+  private k: Record<'surfaces' | 'links' | 'relax' | 'occClear' | 'unitStep' | 'unitDraw' | 'itemDraw', ComputeKernel>;
+  /** what each unit carries (round 63): by slot, its material and edge; and items in flight */
+  private carryBuf: GPUBuffer;
+  private flyBuf: GPUBuffer;
+  private carried = new Map<number, { mat: number; amount: number }>();
+  private flights: Flight[] = [];
+  private nextItem = 1;
+  private landed: AgentEvent[] = [];
+  private flyAt = 0;
+  /** each live unit at the last sync, by slot: x, y, z, vx, vy, vz, state */
+  private seen = new Map<number, AgentState>();
+  private terrain?: Terrain;
+  private flyDrawn = false;
   private peelGroup: GPUBindGroup;
   private fieldGroup: GPUBindGroup;
   private unitGroup: GPUBindGroup;
@@ -226,6 +272,8 @@ export class Agents implements SimSystem {
     this.models = world.buf('agentModels', MAX_MODEL_VOXELS * 16, S);
     this.kindModelsBuf = world.buf('agentKindModels', MAX_KINDS * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.params = world.buf('agentParams', PARAMS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.carryBuf = world.buf('agentCarry', MAX_UNITS * 16, S);
+    this.flyBuf = world.buf('agentFly', MAX_FLY * 32, S);
     device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
     // (nothing reached yet: every field starts unreachable)
     device.queue.writeBuffer(this.dist, 0, new Float32Array(NFIELDS * cols * NAV_K).fill(1e9));
@@ -237,7 +285,7 @@ export class Agents implements SimSystem {
     const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read' };
     const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform' };
     const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read', 15: 'tex', 16: 'rw', 19: 'tex', 25: 'read' };
-    const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 22: 'rw', 23: 'read', 24: 'uniform' };
+    const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 22: 'rw', 23: 'read', 24: 'uniform', 26: 'read', 27: 'read' };
     this.k = {
       surfaces: mk('surfaces', peelSpec),
       links: mk('links', fieldSpec),
@@ -245,6 +293,7 @@ export class Agents implements SimSystem {
       occClear: mk('occClear', unitSpec),
       unitStep: mk('unitStep', unitSpec),
       unitDraw: mk('unitDraw', drawSpec),
+      itemDraw: mk('itemDraw', drawSpec),
     };
     const base = { 0: world.globals, 2: world.materials };
     this.peelGroup = makeBindGroup(device, 'agents-peel', this.k.surfaces.layout, {
@@ -279,6 +328,8 @@ export class Agents implements SimSystem {
       22: this.indirect,
       23: this.models,
       24: this.kindModelsBuf,
+      26: this.carryBuf,
+      27: this.flyBuf,
     });
     DEFAULT_KINDS.forEach((k, i) => this.defineKind(i, k));
     // the surfaces now, not at the first tick: a game reading them before
@@ -382,6 +433,14 @@ export class Agents implements SimSystem {
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, z);
       this.free.push(slot);
       this.holds.delete(slot);
+      // (its load falls where it was last seen: ground isn't lost with it)
+      const it = this.carried.get(slot);
+      if (it) {
+        this.carried.delete(slot);
+        this.writeCarry(slot, undefined);
+        const u = this.seen.get(slot);
+        if (u) this.toss(materialName(it.mat), it.amount, [u.x, u.y, u.z + 1], [0, 0, 0]);
+      }
     }
   }
 
@@ -524,6 +583,220 @@ export class Agents implements SimSystem {
    * it each frame or close to it; it resolves a frame or two later). Deaths
    * free their slots here, so a game spawning to keep a horde up must sync.
    */
+  // ---- carrying (round 63, docs/AGENTS.md "Carrying") -------------------------
+
+  /** The world's terrain, for what units pick up, put down and throw (the world API hands it over). */
+  useTerrain(t: Terrain): void {
+    this.terrain = t;
+  }
+
+  private needTerrain(what: string): Terrain {
+    if (!this.terrain) throw new Error(`agents.${what}: needs the world's terrain (createSim / attachSim hands it over)`);
+    return this.terrain;
+  }
+
+  /** Where unit `id` stood at the last sync, or a clear error. */
+  private seenAt(id: number, what: string): AgentState {
+    const slot = this.slotOf(id);
+    const u = slot < 0 ? undefined : this.seen.get(slot);
+    if (!u) throw new Error(`agents.${what}: unit ${id} is gone, or hasn't been seen by a sync() yet`);
+    return u;
+  }
+
+  /** The edge of the cube an amount makes (cells; drawn at most 3.9). */
+  private static edge(amount: number): number {
+    return Math.min(Math.max(Math.cbrt(amount), 0.2), 3.9);
+  }
+
+  private writeCarry(slot: number, it: { mat: number; amount: number } | undefined): void {
+    const v = it ? [it.mat, Agents.edge(it.amount), 0, 0] : [0, 0, 0, 0];
+    this.device.queue.writeBuffer(this.carryBuf, slot * 16, new Float32Array(v));
+  }
+
+  /**
+   * Unit `id` carries `amount` cells³ of `material` (held over its head).
+   * More of what it already carries adds to it; something else is an error.
+   */
+  carry(id: number, material: MaterialName, amount: number): void {
+    const slot = this.slotOf(id);
+    if (slot < 0) throw new Error(`agents.carry: unit ${id} is gone`);
+    const m = materialId(material);
+    const st = materialState(m);
+    if (st !== 'solid' && st !== 'loose') throw new Error(`agents.carry: "${material}" isn't ground (a solid or loose material)`);
+    if (!(amount > 0)) throw new Error(`agents.carry: amount must be > 0 (got ${amount})`);
+    const had = this.carried.get(slot);
+    if (had && had.mat !== m) throw new Error(`agents.carry: unit ${id} already carries ${materialName(had.mat)}`);
+    const it = { mat: m, amount: (had?.amount ?? 0) + amount };
+    this.carried.set(slot, it);
+    this.writeCarry(slot, it);
+  }
+
+  /** What unit `id` carries (null: nothing). */
+  carrying(id: number): Item | null {
+    const it = this.carried.get(this.slotOf(id));
+    return it ? { material: materialName(it.mat), amount: it.amount } : null;
+  }
+
+  /** Take unit `id`'s load off it (it goes nowhere: the game has it now). */
+  unload(id: number): Item | null {
+    const slot = this.slotOf(id);
+    const it = this.carried.get(slot);
+    if (!it) return null;
+    this.carried.delete(slot);
+    this.writeCarry(slot, undefined);
+    return { material: materialName(it.mat), amount: it.amount };
+  }
+
+  /**
+   * Unit `id` picks up `amount` cells³ off the top of the ground where it
+   * stood at the last sync (terrain.take: exact, one material). Resolves
+   * with what it took (amount 0: nothing it could carry; what it can't hold
+   * goes back where it came from).
+   */
+  async pickUp(id: number, amount = 0.5): Promise<Item> {
+    const t = this.needTerrain('pickUp');
+    const u = this.seenAt(id, 'pickUp');
+    const got = await t.take(u.x, u.y, amount);
+    if (got.amount <= 0) return got;
+    const slot = this.slotOf(id);
+    const had = slot < 0 ? undefined : this.carried.get(slot);
+    const st = materialState(materialId(got.material));
+    if (slot < 0 || (had && had.mat !== materialId(got.material)) || (st !== 'solid' && st !== 'loose')) {
+      await t.put(u.x, u.y, got.material, got.amount);
+      return { material: got.material, amount: 0 };
+    }
+    this.carry(id, got.material, got.amount);
+    return got;
+  }
+
+  /**
+   * Unit `id` sets its load down where it stood at the last sync
+   * (terrain.put: exact). Resolves with the amount put; what didn't fit (a
+   * full column, BACKLOG Q21) stays carried.
+   */
+  async putDown(id: number): Promise<number> {
+    const t = this.needTerrain('putDown');
+    const u = this.seenAt(id, 'putDown');
+    const slot = this.slotOf(id);
+    const it = this.carried.get(slot);
+    if (!it) return 0;
+    this.carried.delete(slot);
+    this.writeCarry(slot, undefined);
+    const put = await t.put(u.x, u.y, materialName(it.mat), it.amount);
+    const rest = it.amount - put;
+    if (rest > 1e-6) {
+      if (this.slotOf(id) === slot) this.carry(id, materialName(it.mat), rest);
+      else this.toss(materialName(it.mat), rest, [u.x, u.y, u.z + 1], [0, 0, 0]);
+    }
+    return put;
+  }
+
+  /**
+   * Unit `id` throws its load at `to` (world xyz), landing in `time` s
+   * (default by distance). It flies, tumbling, and comes down as ground
+   * where it lands (a 'landed' event), hitting units there with `hit`.
+   * Returns the item's id (null: it carried nothing).
+   */
+  throwItem(id: number, to: [number, number, number], opts: { time?: number; hit?: ThrowHit } = {}): number | null {
+    const u = this.seenAt(id, 'throwItem');
+    const it = this.unload(id);
+    if (!it) return null;
+    const h = this.kinds.find((k) => k?.name === u.kind)?.height ?? 1.2;
+    const from: [number, number, number] = [u.x, u.y, u.z + h + Agents.edge(it.amount) * 0.5];
+    const d = Math.hypot(to[0] - from[0], to[1] - from[1]);
+    const time = opts.time ?? Math.max(0.35, d / 12);
+    const vel: [number, number, number] = [(to[0] - from[0]) / time, (to[1] - from[1]) / time, (to[2] - from[2]) / time + 0.5 * GRAVITY * time];
+    return this.toss(it.material, it.amount, from, vel, opts.hit);
+  }
+
+  /** An item flying free: `amount` of `material` from `from` at `vel` (a boulder a giant hurls, debris). It lands as ground. */
+  toss(material: MaterialName, amount: number, from: [number, number, number], vel: [number, number, number], hit?: ThrowHit): number {
+    const m = materialId(material);
+    const st = materialState(m);
+    if (st !== 'solid' && st !== 'loose') throw new Error(`agents.toss: "${material}" isn't ground (a solid or loose material)`);
+    if (!(amount > 0)) throw new Error(`agents.toss: amount must be > 0 (got ${amount})`);
+    if (this.flights.length >= MAX_FLY) throw new Error(`agents.toss: ${MAX_FLY} items in flight at most`);
+    const id = this.nextItem++;
+    this.flights.push({ id, mat: m, amount, pos: [from[0], from[1], from[2]], vel: [vel[0], vel[1], vel[2]], spin: 0, hit });
+    if (!this.flyAt) this.flyAt = performance.now();
+    return id;
+  }
+
+  /** Items in flight now. */
+  get inFlight(): { id: number; material: MaterialName; amount: number; x: number; y: number; z: number }[] {
+    return this.flights.map((f) => ({ id: f.id, material: materialName(f.mat), amount: f.amount, x: f.pos[0], y: f.pos[1], z: f.pos[2] }));
+  }
+
+  /** Moves what's in flight on (each sync), lands what came down, and draws them. */
+  private fly(): void {
+    if (!this.flights.length && !this.flyDrawn) return;
+    const now = performance.now();
+    const dt = Math.min((now - (this.flyAt || now)) / 1000, 0.1);
+    this.flyAt = now;
+    const keep: Flight[] = [];
+    for (const f of this.flights) {
+      f.vel[2] -= GRAVITY * dt;
+      for (let a = 0; a < 3; a++) f.pos[a] += f.vel[a] * dt;
+      f.spin += 7 * dt;
+      const [x, y, z] = f.pos;
+      const t = this.needTerrain('toss');
+      const ground = t.floorAt(x, y, z) ?? t.heightAt(x, y);
+      // (off the map: gone)
+      if (ground === null) continue;
+      if (z > ground) {
+        keep.push(f);
+        continue;
+      }
+      const material = materialName(f.mat);
+      void t.put(x, y, material, f.amount).then((amount) => this.landed.push({ type: 'landed', item: f.id, material, amount, x, y, z: ground }));
+      if (f.hit) {
+        const sp = Math.hypot(f.vel[0], f.vel[1]);
+        this.hit({
+          x,
+          y,
+          z: ground,
+          radius: f.hit.radius ?? Math.max(0.8, Agents.edge(f.amount)),
+          damage: f.hit.damage ?? 0,
+          push: f.hit.push ?? 0,
+          lift: f.hit.lift,
+          stun: f.hit.stun,
+          dir: sp > 1e-3 ? [f.vel[0] / sp, f.vel[1] / sp] : undefined,
+        });
+      }
+    }
+    this.flights = keep;
+    if (!keep.length) this.flyAt = 0;
+    const buf = new Float32Array(MAX_FLY * 8);
+    keep.forEach((f, i) => {
+      const sp = Math.hypot(f.vel[0], f.vel[1]);
+      buf.set([f.pos[0], f.pos[1], f.pos[2], f.mat, Agents.edge(f.amount), f.spin, sp > 1e-3 ? -f.vel[1] / sp : 1, sp > 1e-3 ? f.vel[0] / sp : 0], i * 8);
+    });
+    this.device.queue.writeBuffer(this.flyBuf, 0, buf);
+    this.flyDrawn = keep.length > 0;
+  }
+
+  /** What units carried when they went down: it falls off them (tumbling: flung with them; dead: where they fell). */
+  private shed(units: AgentState[], events: AgentEvent[]): void {
+    for (const e of events) {
+      if (e.type !== 'death') continue;
+      const slot = e.id % MAX_UNITS;
+      const it = this.carried.get(slot);
+      if (!it) continue;
+      this.carried.delete(slot);
+      this.writeCarry(slot, undefined);
+      this.toss(materialName(it.mat), it.amount, [e.x, e.y, e.z + 1], [0, 0, 0]);
+    }
+    for (const u of units) {
+      if (u.state !== 'tumble') continue;
+      const slot = u.id % MAX_UNITS;
+      const it = this.carried.get(slot);
+      if (!it) continue;
+      this.carried.delete(slot);
+      this.writeCarry(slot, undefined);
+      this.toss(materialName(it.mat), it.amount, [u.x, u.y, u.z + 1.2], [u.vx, u.vy, Math.max(u.vz, 2)]);
+    }
+  }
+
   async sync(): Promise<{ units: AgentState[]; events: AgentEvent[]; dropped: number }> {
     const n = this.count;
     const evBytes = (4 + EVENT_CAP * 8) * 4;
@@ -587,6 +860,13 @@ export class Agents implements SimSystem {
     tmp.destroy();
     if (dropped) console.warn(`agents: ${dropped} events didn't fit (${EVENT_CAP} a sync): sync more often`);
     this.dropped += dropped;
+    // (carrying: where each stands, loads shed, items in flight moved on)
+    this.seen.clear();
+    for (const u of units) this.seen.set(u.id % MAX_UNITS, u);
+    this.shed(units, events);
+    this.fly();
+    events.push(...this.landed);
+    this.landed = [];
     return { units, events, dropped };
   }
 
@@ -678,7 +958,7 @@ export class Agents implements SimSystem {
       for (let i = 0; i < this.sweeps; i++) pass.dispatchWorkgroups(gx, gy);
       this.prof.dispatches += this.sweeps;
     }
-    if (this.count > 0) {
+    if (this.count > 0 || this.flights.length > 0) {
       pass.setBindGroup(0, this.unitGroup);
       pass.setPipeline(this.k.occClear.pipeline);
       pass.dispatchWorkgroups(Math.ceil((this.world.w * this.world.h) / 64));
@@ -688,8 +968,10 @@ export class Agents implements SimSystem {
       this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([36, 0, 0, 0]));
       pass.setBindGroup(0, this.drawGroup);
       pass.setPipeline(this.k.unitDraw.pipeline);
-      pass.dispatchWorkgroups(Math.ceil(this.count / 64));
-      this.prof.dispatches += 3;
+      pass.dispatchWorkgroups(Math.ceil(Math.max(this.count, 1) / 64));
+      pass.setPipeline(this.k.itemDraw.pipeline);
+      pass.dispatchWorkgroups(MAX_FLY / 64);
+      this.prof.dispatches += 4;
     }
     pass.end();
     this.ticks++;

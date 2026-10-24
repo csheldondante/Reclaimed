@@ -232,6 +232,14 @@ const r = agents.reader(field).start(300) // a CPU copy for walkers the game mov
 r.sample(x, y, z?)                        // → { dist, dir: [dx, dy], z, room, region } on the surface below z
 await agents.read()                       // [x, y, z, group] per unit
 await agents.readRaw('nav' | 'dist')      // tests
+// carrying (round 63): loads are ground, taken up and put back exactly
+agents.carry(id, 'brick', 0.5)            // give it a load (cells³; more of the same adds), held over its head
+agents.carrying(id) / agents.unload(id)   // { material, amount } | null; unload hands it to the game
+await agents.pickUp(id, 0.5)              // off the ground where it stood at the last sync (terrain.take)
+await agents.putDown(id)                  // there (terrain.put); what a full column can't hold stays carried
+agents.throwItem(id, [x, y, z], { time?, hit? })  // it flies, tumbling, lands as ground ('landed' event), hit: { radius, damage, push, lift, stun }
+agents.toss('stone', 2, from, vel, hit?)  // a load flying free (a boulder a giant hurls)
+agents.inFlight                           // [{ id, material, amount, x, y, z }]
 ```
 
 Limits: 8,192 units, 16 groups, 4 fields, 32 seeds; each throws past its
@@ -259,6 +267,31 @@ room's region. A field confined to a place (`confine`) keeps distances only
 on its surfaces, and a unit never steps off its field's place, so a crowd
 can't push it out either. A confined field with no seed inside its place
 leaves the group standing.
+
+## Carrying (round 63)
+
+The user's order: units carry and throw first; then dig, fell trees (logs),
+make bricks and keep piles; then build.
+- A load is ground: an amount (cells³) of a solid or loose material,
+  taken off a column's top and put back on one exactly (`terrain.take` /
+  `terrain.put`: edit.wgsl OP_TAKE / OP_PUT, one column, the result read
+  back by tag), so totals hold.
+- Drawn as a cube of its material over the unit's head, edge ∛amount
+  (0.2–3.9; units.wgsl `carried`, by slot, written on change).
+- Knocked down (tumbling), the load flies off with the unit's momentum;
+  dead or removed, it falls where the unit was. Nothing is lost.
+- Thrown or tossed, it flies on the CPU (gravity 20, as the units), drawn
+  by `itemDraw` (128 in flight), and lands where it meets the floor under
+  it (`terrain.floorAt`): put there as ground, a 'landed' event with the
+  amount put, and its `hit` on the units there (push along its flight).
+- Flights move on at each `sync()`: a game that syncs every frame sees them
+  fly smoothly.
+
+`carrytest`: take 0.4 → exactly 0.4 off the sand; put 0.75 brick → the top
+rises 0.75; four workers pick up 0.5 each and carry it, two put it down
+(0.5 each back), two throw it at five raiders 8 cells off (both land, 0.5
+each as ground, two raiders knocked over); a carrier blasted sheds its load,
+which lands whole.
 
 ## Not yet
 

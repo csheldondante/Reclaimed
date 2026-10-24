@@ -13,6 +13,8 @@ import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structur
 import { MAX_PLACES } from '../world/places';
 
 export const STATS_COUNT = 16;
+/** exact takes and puts in flight at once (edit.wgsl: the tag in the event's code bits 10-15) */
+export const EDIT_TAGS = 64;
 
 const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
 
@@ -162,6 +164,12 @@ export class WorldGpu {
   readonly editStateNext: GPUTexture;
   readonly editStateView: GPUTextureView;
   readonly editStateNextView: GPUTextureView;
+  /**
+   * what each exact take or put did (edit.wgsl OP_TAKE / OP_PUT; round 63),
+   * one texel a tag: x the amount, y the material, z the tick, w 1
+   */
+  readonly editResult: GPUTexture;
+  readonly editResultView: GPUTextureView;
   /** smoothed soft-ground corner heights (rgba32float, one texel per grid point; x = height or -1) */
   readonly cornerTex: GPUTexture;
   readonly cornerView: GPUTextureView;
@@ -315,6 +323,8 @@ export class WorldGpu {
     this.textures.push(this.editState, this.editStateNext);
     this.editStateView = this.editState.createView();
     this.editStateNextView = this.editStateNext.createView();
+    this.editResult = device.createTexture({ label: 'editResult', size: [EDIT_TAGS, 1], format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC });
+    this.editResultView = this.editResult.createView();
     this.stats = this.buf('stats', STATS_COUNT * 4, S);
 
     this.particleCap = particleCap;

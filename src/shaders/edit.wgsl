@@ -56,6 +56,14 @@ const OP_SMASH: u32 = 12u;
 // it hit at. What was in the bowl is gone to dust (the level throws the dust
 // up as haze); the ejecta land round it as drift, thinning outward.
 const OP_CRATER: u32 = 13u;
+// exact (round 63: units carry what they take and put down): one column, the
+// one whose centre lies within the radius; w cells. take: off the top
+// interval (whatever it is; the map keeps z 2); put: material `mat` on top
+// (onto the top interval if the same, else a new one: a full column takes
+// none). What it did goes to editResult at the tag (code bits 10-15).
+const OP_TAKE: u32 = 14u;
+const OP_PUT: u32 = 15u;
+@group(0) @binding(26) var editResult: texture_storage_2d<rgba32float, write>;
 const CRATER_RING: f32 = 2.5;
 const STROKE_START: u32 = 512u;
 const DT_E: f32 = 1.0 / 60.0;
@@ -97,6 +105,36 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (d >= 1.0) { continue; }
     let op = (code & 511u) / 32u;
     let mat = code % 32u;
+    if (op == OP_TAKE || op == OP_PUT) {
+      var got = 0.0;
+      var gm = mat;
+      if (op == OP_TAKE && n > 0u) {
+        let t = arr[n - 1u];
+        gm = ivMat(t);
+        got = clamp(ev.w, 0.0, ivZ1(t) - max(ivZ0(t), 2.0));
+        if (got > 0.0) {
+          if (ivZ1(t) - got <= ivZ0(t) + 1e-3) { n -= 1u; arr[n] = IV_NONE; }
+          else { arr[n - 1u] = ivPack(ivZ0(t), ivZ1(t) - got, gm, ivAux(t)); }
+        }
+      } else if (op == OP_PUT) {
+        var top = 0.0;
+        if (n > 0u) { top = ivZ1(arr[n - 1u]); }
+        let a = clamp(ev.w, 0.0, f32(G.zMax) - 2.0 - top);
+        if (a <= 0.0) {
+          got = 0.0;
+        } else if (n > 0u && ivMat(arr[n - 1u]) == mat) {
+          let t = arr[n - 1u];
+          arr[n - 1u] = ivPack(ivZ0(t), top + a, mat, ivAux(t));
+          got = a;
+        } else if (n < cs.y) {
+          arr[n] = ivPack(top, top + a, mat, 0u);
+          n += 1u;
+          got = a;
+        }
+      }
+      textureStore(editResult, vec2<i32>(i32(code >> 10u), 0), vec4<f32>(max(got, 0.0), f32(gm), f32(G.tick), 1.0));
+      continue;
+    }
     if (op == OP_CRATER) {
       let rc = ev.z / CRATER_RING;
       let dc = d * CRATER_RING;

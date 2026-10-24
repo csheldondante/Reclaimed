@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 63 (session 5, `agents`) — what the agents do next: carry and throw, then dig and fell
+
+- "I think digging and chopping trees and maybe making them into logs or
+  bricks and having piles of things is a good next step. Then we can work
+  on building."
+- "Units can maybe carry things? That's a good first place too. Since we
+  want carry and throw." So: carrying and throwing first (done, this
+  round), then digging, felling (logs), making bricks and piles, then
+  building (API5, API6).
+- The rain spires: the user's screenshot (a phone, the hoverbike's map):
+  tall narrow pillars of loose ground against a ravine wall; they think the
+  sediment is "getting turned solid before it can collapse" (Q16b / Q22).
+
 ## 2026-10-23 — round 62 (session 5) — caves and overhangs: keep them
 
 - The user, on the overhangs: "the overhangs look so cool". They made a
