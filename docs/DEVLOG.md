@@ -3765,3 +3765,37 @@ links.
 Checks: shadows fitted to the view look the same as the whole-map ones at
 4× zoom on a portrait screen. meshtest, pulltest (6/6) and hordetest are
 unchanged.
+
+## Round 63 — pillars of loose ground beside caves (Q16b, Q22)
+
+The user's phone screenshot showed tall narrow pillars of loose ground
+against a ravine wall, persisting after storms and explosions; they guessed
+the sediment turns solid before it can collapse. Nothing turns loose ground
+solid. A probe (`scripts/pillartest.mjs`: craters and storms at ?q=low,
+then loose-topped columns over all their lower neighbours, the neighbours'
+floors measured from their real intervals) reproduced pillars in the
+sandbox after craters and round the arch after rain; not on the valley.
+
+The cause: `slumpOut` measures the drop to a neighbour with `seenAt`, which
+(no structure projected there) is the neighbour's whole-column top: the
+roof of any cave or overhang inside it. Loose ground beside air under a
+roof (a crater's undercut rim, an arch) saw a wall and never slid into the
+air, and the face spill (`spillOut`) only spilled buried intervals, not the
+run on top.
+- `spillOut` spills the run on top too, but only into a neighbour's air
+  under a roof (the open air over its top stays slumpOut's, so nothing is
+  counted twice).
+- A spill that joins or empties intervals left the freed slots holding
+  stale copies (the write loop ran to the new count): columns like
+  `stone 8.49–9.00 ×12`. The slots in use before the spill are cleared now.
+- A trace (< 0.02) of another loose material landing by spill blends into
+  the floor's, as `landAt` does: alternating spills had filled slots with
+  hairline strata.
+
+Measured (pillartest, sandbox, q=low): 8 craters, 40 s: 61 'hidden'
+columns, 208 cells over repose in all, worst 5.4 → 0; with storms, 100 s:
+100–118 → ≤ 3, worst 6.1 → 1.8. Sediment 0.70 ms vs 0.73 ms before
+(agentstest, the same run); pulltest 6/6, boretest 5/5, spiretest finds
+only the same stone pillar with a dust film as before. Found on the way:
+overlapping intervals after craters (Q23) and paper-thin solid lids over a
+crater's undercut rim (Q24).
