@@ -135,6 +135,26 @@ export class Weather {
     return this.storms.length < MAX_STORMS;
   }
 
+  /** The world moved under the weather by (−dx, −dy) world units (a streamed window sliding, scenes/streamer.ts). */
+  shift(dx: number, dy: number): void {
+    for (const s of this.storms) {
+      s.x -= dx;
+      s.y -= dy;
+    }
+    for (const d of this.dusts) {
+      d.x -= dx;
+      d.y -= dy;
+    }
+    for (const c of this.cyclones) {
+      c.x -= dx;
+      c.y -= dy;
+      for (const n of c.spine) {
+        n.x -= dx;
+        n.y -= dy;
+      }
+    }
+  }
+
   /** Keep natural weather (storms, dust storms) away for `seconds` (the intro). */
   holdNatural(seconds: number): void {
     this.nextNatural = Math.max(this.nextNatural, this.t + seconds);

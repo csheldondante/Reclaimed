@@ -30,6 +30,7 @@ worked on in parallel:
 | `agents` | `C:/Projects/Reclaimed-agents` | `npm run dev -- --port 5185` |
 | `perf` | `C:/Projects/Reclaimed-perf` | `npm run dev -- --port 5189` |
 | `builder` | `C:/Projects/Reclaimed-builder` | `npm run dev -- --port 5195` |
+| `stream` | `C:/Projects/Reclaimed-stream` | `npm run dev -- --port 5199` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -40,6 +41,7 @@ worked on in parallel:
 | `grids` | The map engine generalised: intersecting grids (a hex nature grid of material intervals, a rectangular voxel grid for structures, an irregular grid for WFC buildings) that read and write each other's data | the sim systems and their contracts | X5 |
 | `agents` | Units that walk, dig, carry, build, fell, flee and attack, by shared fields; a layer for editors and games (docs/AGENTS.md) | grids' engine (and places, from physics) | A1 |
 | `builder` | Terrain generation (landforms, caves, rivers), the range and mesa brushes, Townscaper-style building (instant, and planned: crews build the difference) | `agents` | W1, X4, API6 |
+| `stream` | A world without an edge (round 66): the live world a window that slides with the camera, regions out of it frozen and thawed exactly, new land generated a region at a time; later deferred or coarse ticks for what's frozen, so towns and nature grow out of sight | `builder` | Q28, Q31–Q35 |
 | `perf` | Profiling and experiments for phones (round 61): what's a clear win merges into `grids`; the user validates the feel on a phone | `grids` (with `agents`) | G16, Q20 |
 | `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 

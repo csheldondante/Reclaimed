@@ -7,6 +7,7 @@ import type { MapData } from '../world/mapgen';
 import { generateMap } from '../world/mapgen';
 import { generateSandbox } from '../world/sandbox';
 import { generateLandforms } from '../world/landforms';
+import { generateStreamWindow } from '../world/streamgen';
 import { generateTrials } from '../levels/trials';
 import type { GateSpec } from '../world/kit';
 
@@ -33,6 +34,8 @@ export interface LevelDef {
   hidden?: boolean;
   /** its height limit (cells; default 64): the wilds' ranges want more (round 64) */
   zMax?: number;
+  /** the world is a window onto land without an edge (round 66: scenes/streamer.ts) */
+  stream?: boolean;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -66,6 +69,17 @@ export const LEVELS: LevelDef[] = [
     generate: (dims) => generateLandforms(dims, { seed: 1 }),
     sandbox: true,
     zMax: 96,
+  },
+  {
+    id: 'stream',
+    name: 'The Open Land',
+    blurb: 'Land without an edge: the world streams in around you.',
+    model: 'sign',
+    generate: (dims) => generateStreamWindow(dims, 0, 0, 1),
+    sandbox: true,
+    hidden: true,
+    zMax: 96,
+    stream: true,
   },
   {
     id: 'sandbox',

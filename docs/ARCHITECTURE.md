@@ -428,6 +428,37 @@ particle burst queue (now kept past 64 a tick, not dropped), and
 `windBlows` (wind.ts, a SimSystem just before the windfield: blows, strokes
 and wakes, merged past 256).
 
+## The streamed world (round 66, branch `stream`)
+
+`?level=stream` (LevelDef.stream): the live world is a 256² window onto
+land without an edge. `scenes/streamer.ts` (`Streamer`, `reclaimed.stream`)
+slides it a region (`REGION` = 64 columns: whole chunks, an even number of
+rows so the hex parity holds) when the camera comes within 1¼ regions of
+its edge:
+- **Freeze** what leaves: its chunks' layer pages and the fields that are
+  state (water, waterSource, oil, oilStored, lava, contam, moisture, veg,
+  fire, petals, wilt, bend; the shake texture) are copied to a staging
+  buffer and read back into `frozen` (keyed by region). Derived fields
+  aren't kept.
+- **Shift**: every per-column buffer and texture (state and derived, the
+  half-res wind field, `proj`'s PROJ_K texels a column) moves a region over
+  through a scratch copy, so nothing jumps for a tick. The layers don't
+  move: every chunk has the same K (the sandbox's 14), so the chunk table is
+  a page table and the leaving chunks' pages go to the ones coming in.
+- **Thaw** what comes in from `frozen`, exactly as it was left, or generate
+  it (`world/streamgen.ts`, a pure function of world position: no seams).
+  Its derived fields start at zero (bodyProj/bodyCpu at −1, none).
+- The CPU's window coordinates move too: the camera, the weather
+  (`Weather.shift`), the map's surface heights, the level's surface cache
+  (`onSlide`); the undo ring is cleared; particles in the air are dropped.
+- `Globals.org` carries the window's world origin: `hash3` adds it to its
+  cell coordinates and `wo()` to positions in the noise of the render, the
+  wind, the clouds and the ecology's woodland patches, so what they draw
+  stays with the land.
+- The sim waits (`busy`) only while a region coming in is still being read
+  back from its last visit. Frozen regions don't tick (BACKLOG Q31).
+- Not yet moved by a slide: the town, units, physics bodies, places (Q32).
+
 ## The town (round 65, branch `builder`)
 
 `build/towngrid.ts`: Townscaper's irregular grid (relaxed quads over the

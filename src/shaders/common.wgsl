@@ -59,6 +59,9 @@ struct Globals {
   // (round 50, the climate: sim/climate.ts); w: the season, 0..1 through
   // the year from midsummer (round 51)
   rules: vec4<f32>,
+  // the window's world origin (a streamed world, round 66: scenes/streamer.ts):
+  // xy in world units (noise of positions: wo()), zw in cells (hash3)
+  org: vec4<f32>,
 };
 
 // ---- the season (round 51): leaves turn, fall, and come back -------------------
@@ -244,7 +247,10 @@ fn pcg(v: u32) -> u32 {
   let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
   return (w >> 22u) ^ w;
 }
-fn hash3(x: u32, y: u32, z: u32) -> u32 { return pcg(x ^ pcg(y ^ pcg(z))); }
+// (x, y are cells: the window's origin goes in, so a cell's randoms stay with the land when a streamed window slides)
+fn hash3(x: u32, y: u32, z: u32) -> u32 { return pcg((x + bitcast<u32>(i32(G.org.z))) ^ pcg((y + bitcast<u32>(i32(G.org.w))) ^ pcg(z))); }
+/** A world position in the frame that stays with the land (a streamed window's origin added): noise of positions. */
+fn wo(p: vec2<f32>) -> vec2<f32> { return p + G.org.xy; }
 fn rand3(x: u32, y: u32, z: u32) -> f32 { return f32(hash3(x, y, z) >> 8u) / 16777216.0; }
 fn randv(p: vec3<i32>) -> f32 { return rand3(bitcast<u32>(p.x), bitcast<u32>(p.y), bitcast<u32>(p.z)); }
 
@@ -301,7 +307,7 @@ fn rainAt(p: vec2<f32>) -> f32 {
     let s = G.storms[i];
     let b = G.stormsB[i];
     let d = stormDist(p, i);
-    let n = fbm2(p * 0.045 + vec2<f32>(G.time * 0.05, -G.time * 0.03) + f32(i) * 13.0);
+    let n = fbm2(wo(p) * 0.045 + vec2<f32>(G.time * 0.05, -G.time * 0.03) + f32(i) * 13.0);
     r += s.w * (1.0 + b.z) * smoothstep(1.0, 0.35, d) * (0.45 + 0.9 * n);
   }
   return r;
@@ -335,7 +341,7 @@ fn cloudShade(p: vec2<f32>) -> f32 {
  * rain, no lightning.
  */
 fn fairCloud(p: vec2<f32>) -> f32 {
-  let q = (p - G.env.xy * 1.3) * 0.022 + vec2<f32>(G.time * 0.004, 31.0);
+  let q = (wo(p) - G.env.xy * 1.3) * 0.022 + vec2<f32>(G.time * 0.004, 31.0);
   return smoothstep(0.47, 0.6, fbm2(q));
 }
 
@@ -347,7 +353,7 @@ fn fairCloud(p: vec2<f32>) -> f32 {
 // prevailing wind (G.env.xy), so gust patches roll smoothly downwind instead
 // of flickering. (Before, noise was scrolled by time along fixed axes and
 // phases were time × a varying speed, which read as jitter.)
-fn windDrift(p: vec2<f32>) -> vec2<f32> { return p - G.env.xy; }
+fn windDrift(p: vec2<f32>) -> vec2<f32> { return wo(p) - G.env.xy; }
 
 /** Smooth 0..1 gust patches travelling with the wind (also drives grass and water ripples). */
 fn gustField(p: vec2<f32>) -> f32 {

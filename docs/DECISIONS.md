@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 66 (session 5, `stream`) — a streamed world
+
+- "Do workers actually build or just a plan mode? Do we need to add
+  workers?" Answered: they build (👷 sends six from the nearest pile of
+  bricks or logs; the plan is what they build).
+- "I think it would be cool to prototype the map streaming as I have an
+  idea that involves building bigger regions (simulated at coarser detail
+  or frozen)." Asked, and answered:
+  - first: a live window that follows the camera, regions out of it frozen
+    exactly (not simulated coarsely yet);
+  - a new branch `stream` off `builder` (the town and workers come along);
+  - the idea: "Towns and nature can grow but we may want to freeze them and
+    then have deferred ticks or coarse ticks later. I would start frozen
+    for now."
+
 ## 2026-10-24 — round 65 (session 5, `builder`) — questions; the town
 
 - "Why is 256 a height limit with the intervals? Shouldn't they be able to

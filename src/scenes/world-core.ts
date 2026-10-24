@@ -307,6 +307,11 @@ export class WorldCore {
     this.undoCount = Math.min(this.undoCount + 1, WorldCore.UNDO_DEPTH);
   }
 
+  /** Forget the snapshots (the streamed window slid: they're of another place). */
+  clearUndo(): void {
+    this.undoCount = 0;
+  }
+
   /** Put back the last snapshot; false when there is none. */
   undo(): boolean {
     if (this.undoCount === 0) return false;

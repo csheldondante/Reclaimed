@@ -3984,3 +3984,39 @@ Measured (`buildtest`, 4/4): 36 cells³ of brick laid, three blocks planned
 the first after 8 s; 18 cells³ used, 15 trips; the top block planned away:
 taken down, 9.5 cells³ back on the pile (its 6 and leftovers).
 
+
+## Round 66 — a streamed world: the window slides, what leaves is frozen (stream)
+
+The user: "prototype the map streaming … building bigger regions
+(simulated at coarser detail or frozen)"; first step chosen: a live window
+that follows the camera, regions out of it frozen exactly (DECISIONS round
+66). `?level=stream`; `scenes/streamer.ts`, `world/streamgen.ts`;
+ARCHITECTURE "The streamed world".
+- Sliding, not toroidal addressing: Q28 had every kernel's indexing
+  wrapping. Moving the contents instead keeps every kernel as it is — a
+  slide is a few thousand GPU copies, once per 64 columns of panning. The
+  layers aren't copied at all: with the same K in every chunk the chunk
+  table is a page table, so a slide hands the leaving chunks' pages to the
+  ones coming in.
+- What's frozen is what's state (the layers, water, oil, lava, contam,
+  moisture, veg, fire, petals, wilt, bend, shake); what's derived each tick
+  is shifted with the window (so nothing jumps for a tick) but not kept.
+- Hashes and noise of position were in window coordinates, so after a
+  slide the trees, tufts, the ground's tint and the woodland patches would
+  re-roll. `Globals.org` (the window's world origin) goes into `hash3` and
+  `wo()`. The fields were checked identical across a slide (400 cells,
+  every field: no difference).
+- Generation is per region from world position (noise: continents, hills,
+  ridged ranges under a broad mask, lakes below the sea level, cover at
+  its angle of repose, snow, plants by moisture). No rivers or caves yet:
+  those need a coarse plan over regions (Q33).
+
+Measured (`streamtest`, 8/8): a brick tower 9 high in the west column of
+regions; two slides east (8 regions frozen, 8 made): the origin at 128, the
+camera moved with the land, the seam where new land meets the old no
+steeper than the land beside it (worst 0.31); back west: the tower thawed
+exactly (stone 0–19, soil 19–21.7, brick 21.7–30.7, before and after), 12
+regions thawed; the sim ticks on; panning south 153 cells: three slides on
+their own, the camera kept in the window's middle. A slide: 35–45 ms (one
+frame). Frozen regions ~1.4 MB each in memory (Q34). The other tests on
+this branch: towntest 6/6, buildtest 4/4, carrytest 8/8, brushtest 5/5.

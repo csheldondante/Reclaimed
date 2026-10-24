@@ -32,7 +32,7 @@ fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
   o.nrm = vec3<f32>(bitcast<f32>(b.x), bitcast<f32>(b.y), bitcast<f32>(b.z));
   o.share = bitcast<f32>(b.w);
   o.word = a.w;
-  o.tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
+  o.tint = 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02));
   return o;
 }
 
@@ -111,7 +111,7 @@ fn fsMesh(in: MOut) -> FOut {
   alb *= 0.9 + 0.12 * randv(vc) + 0.08 * n1;
   alb *= in.tint;
   if (mat >= 1u && mat <= 4u) {
-    let band = fbm2(in.wpos.xy * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
+    let band = fbm2(wo(in.wpos.xy) * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
     if (mat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
     if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     let pb = randv(sub + vec3<i32>(5, 77, 13));
@@ -151,7 +151,7 @@ fn fsMesh(in: MOut) -> FOut {
       var g = mix(vec3<f32>(0.33, 0.40, 0.17), vec3<f32>(0.36, 0.54, 0.19), smoothstep(1.0, 2.0, v));
       g = mix(g, vec3<f32>(0.17, 0.33, 0.12), smoothstep(3.0, 4.5, v));
       // (it turns with the season, as fsBox)
-      g = mix(g, seasonGrass(g, fbm2(in.wpos.xy * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, v));
+      g = mix(g, seasonGrass(g, fbm2(wo(in.wpos.xy) * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, v));
       alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
     }
   }
@@ -189,7 +189,7 @@ fn fsMesh(in: MOut) -> FOut {
     let wv = windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5));
     let lw = clamp(length(wv) / 4.0, 0.0, 1.5);
     // the swash: how far up the waves run now (higher in the wind), ragged along the shore
-    let along = vnoise(in.wpos.xy * 0.7 + 3.0);
+    let along = vnoise(wo(in.wpos.xy) * 0.7 + 3.0);
     let run = (0.06 + 0.12 * lw) * (0.55 + 0.45 * sin(G.time * 1.3 + along * 9.0));
     let damp = smoothstep(run + 0.35, run, above) * (1.0 - film);
     alb *= 1.0 - 0.45 * max(film, damp * 0.75) * (0.4 + 0.6 * MATS[mat].eco.w);
@@ -199,8 +199,8 @@ fn fsMesh(in: MOut) -> FOut {
     let fl = length(wt.flow);
     let st = flowStreaks(in.wpos.xy, wt.flow, wt.d) * smoothstep(0.003, 0.04, fl);
     alb += toLinear(vec3<f32>(0.42, 0.48, 0.48)) * film * smoothstep(0.5, 0.9, st) * 0.3;
-    let froth = film * smoothstep(0.04, 0.2, fl) * smoothstep(0.62, 0.85, flowStreaks(in.wpos.xy * 1.7, wt.flow, wt.d));
-    let lip = smoothstep(0.05, 0.0, abs(above - run)) * (1.0 - film) * smoothstep(0.3, 0.65, vnoise(in.wpos.xy * 2.2 + vec2<f32>(G.time * 0.35, 0.0)));
+    let froth = film * smoothstep(0.04, 0.2, fl) * smoothstep(0.62, 0.85, flowStreaks(wo(in.wpos.xy) * 1.7, wt.flow, wt.d));
+    let lip = smoothstep(0.05, 0.0, abs(above - run)) * (1.0 - film) * smoothstep(0.3, 0.65, vnoise(wo(in.wpos.xy) * 2.2 + vec2<f32>(G.time * 0.35, 0.0)));
     alb = mix(alb, toLinear(vec3<f32>(0.82, 0.84, 0.82)), max(froth * 0.6, lip * 0.55 * (0.4 + 0.6 * lw)));
     filmN = windWaves(in.wpos.xy, in.wpos.z, 0.25 + 0.5 * lw);
   }

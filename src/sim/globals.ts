@@ -1,6 +1,8 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
-export const GLOBALS_BYTES = 1104;
+import { ROW_H } from '../world/lattice';
+
+export const GLOBALS_BYTES = 1120;
 /** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
 export const MAX_CYCLONES = 4;
 
@@ -132,6 +134,12 @@ export interface GlobalsState {
    * WorldCore.yearLength advances it.
    */
   season?: number;
+  /**
+   * The world cell of the window's first column and row (a streamed world,
+   * round 66: scenes/streamer.ts). Hashes and noise of position add it, so
+   * what they draw stays with the land when the window slides. Absent: 0, 0.
+   */
+  origin?: [number, number];
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }
@@ -211,4 +219,7 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
     f.set(d ? [d.x, d.y, d.radius, d.strength] : [0, 0, 1, 0], 136 + i * 4);
   }
   f.set([s.story ? 1 : 0, s.climate?.temp ?? 15, s.climate?.lapse ?? 0, s.season ?? 0], 272);
+  const o = s.origin ?? [0, 0];
+  // (world units for the noise of positions; cells for the hashes of cells)
+  f.set([o[0], o[1] * ROW_H, o[0], o[1]], 276);
 }

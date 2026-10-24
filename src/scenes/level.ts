@@ -29,6 +29,7 @@ import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
+import { Streamer, shiftGrid } from './streamer';
 import type { MapData } from '../world/mapgen';
 import { columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
@@ -138,6 +139,8 @@ export class LevelScene implements Scene {
   /** Break tool: the voxel under the cursor (x, y, z: the sphere's centre, as smashAt aims) */
   private smashHover?: [number, number, number];
   private smashPicking = false;
+  /** the streamed world (level.stream, round 66): the window slides with the camera */
+  stream?: Streamer;
   /** meteors in flight (round 48): from the sky to where they'll hit, t seconds of dur */
   private meteors: { from: [number, number, number]; to: [number, number, number]; t: number; dur: number }[] = [];
 
@@ -562,7 +565,15 @@ export class LevelScene implements Scene {
       },
       scene: this,
     };
-    (window as unknown as { reclaimed: unknown }).reclaimed = api;
+    if (this.level.stream) {
+      this.stream = new Streamer(core);
+      this.stream.onSlide.push((dx, dy) => {
+        // what the level keeps in window coordinates
+        shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
+        this.hoverWorld = null;
+      });
+    }
+    (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream });
     core.places.groundAt = this.heightAt;
     // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)
     const plan = host.params.get('plan');
@@ -759,7 +770,9 @@ export class LevelScene implements Scene {
     const lc = this.hoverWorld ?? [camera.target[0], camera.target[1]];
     globals.lens = [lc[0], lc[1], 24, this.lensK < 0.01 ? 0 : this.lensK];
 
-    const ticks = core.advance(now, simDt, this.speed);
+    // (a slide in progress: the sim waits for the regions coming in)
+    void this.stream?.update();
+    const ticks = this.stream?.busy ? 0 : core.advance(now, simDt, this.speed);
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     core.render();
 

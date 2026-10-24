@@ -375,7 +375,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   // fireflies over living land at night
   // fireflies belong to meadows, not woodland — and only in a few small
   // patches that wander slowly over the night (round 14: they were everywhere)
-  let ffPatch = smoothstep(0.84, 0.92, vnoise(vec2<f32>(p) / 9.0 + vec2<f32>(G.time * 0.004, 17.0)));
+  let ffPatch = smoothstep(0.84, 0.92, vnoise((vec2<f32>(p) + G.org.zw) / 9.0 + vec2<f32>(G.time * 0.004, 17.0)));
   if (G.sky.w > 0.6 && v >= 1.8 && v < 3.4 && !wet && ffPatch > 0.0 && rare(id.x, id.y, 0xf1f1u) < 0.0005 * G.sky.w * ffPatch) {
     spawn(base + vec3<f32>(r1 - 0.5, fract(r1 * 5.3) - 0.5, 0.6 + r1 * 2.0), vec3<f32>(0.0), 6.0 + r1 * 6.0, K_FIREFLY, 0.0, h);
   }
@@ -695,7 +695,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
         vel = vec3<f32>(0.0);
       }
     } else {
-      vel.z += (vnoise(pos.xy * 0.3 + vec2<f32>(G.time * 2.0, sr * 10.0)) - 0.48) * 4.0 * DT;
+      vel.z += (vnoise(wo(pos.xy) * 0.3 + vec2<f32>(G.time * 2.0, sr * 10.0)) - 0.48) * 4.0 * DT;
     }
   } else if (kind == K_LITTER) {
     drag = 1.2; grav = 4.0;

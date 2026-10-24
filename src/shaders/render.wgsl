@@ -240,7 +240,7 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   (*out).bsize = vec3<f32>(1.0, 1.0, b.z1 - b.z0);
   (*out).boff = vec3<f32>(0.0);
   (*out).nrm = n;
-  (*out).tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
+  (*out).tint = 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02));
   (*out).info = vec2<u32>(b.mat, b.flags);
   (*out).zr = vec2<f32>(b.z0, b.z1);
   (*out).sides = b.sides | PRISM;
@@ -279,7 +279,7 @@ fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   (*out).bsize = vec3<f32>(b.sx, b.sy, b.z1 - b.z0);
   (*out).boff = swayOffsetRigid(b, off);
   (*out).nrm = n;
-  (*out).tint = 0.82 + 0.36 * fbm2(p.xy * 0.045 + vec2<f32>(p.z * 0.02));
+  (*out).tint = 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02));
   (*out).info = vec2<u32>(b.mat, b.flags);
   (*out).zr = vec2<f32>(b.z0, b.z1);
   (*out).sides = 0u;
@@ -717,7 +717,7 @@ fn edgeLook(p: vec3<f32>, own: u32, ownV: f32) -> EdgeLook {
     if (seen) { continue; }
     var w = 0.0;
     for (var j = 0; j < 3; j++) { if (ms[j] == m) { w += ws[j]; } }
-    let s = w + 0.28 * (vnoise(p.xy * 1.1 + vec2<f32>(f32(m) * 7.3, f32(m) * 3.1)) - 0.5) + relief(m, p.xy);
+    let s = w + 0.28 * (vnoise(wo(p.xy) * 1.1 + vec2<f32>(f32(m) * 7.3, f32(m) * 3.1)) - 0.5) + relief(m, wo(p.xy));
     if (s > bestS) { bestS = s; best = m; }
   }
   return EdgeLook(best, vs);
@@ -790,7 +790,7 @@ fn vnoise3(p: vec3<f32>) -> f32 {
 /** How deep the rock is cut away at p (0..ROCK_CARVE): lumpy, with sharper chips. */
 fn rockCut(p: vec3<f32>) -> f32 {
   // (one octave: the facets add the fine detail; two cost too much)
-  return ROCK_CARVE * smoothstep(0.2, 0.85, vnoise3(p * 1.1));
+  return ROCK_CARVE * smoothstep(0.2, 0.85, vnoise3((p + vec3<f32>(G.org.xy, 0.0)) * 1.1));
 }
 
 // nt: the top of the ground in each neighbour (NDIR order). A side is only
@@ -896,7 +896,7 @@ fn fsBox(in: VOut) -> FOut {
   let damage = in.info.y >> 8u;
   // drifted dust: cut a rounded, slightly ragged outline from the smooth depth
   if (mat == MAT_DRIFT) {
-    let rag = (randv(vec3<i32>(vec2<i32>(floor(in.wpos.xy * 4.0)), 7)) - 0.5) * 0.04;
+    let rag = (randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 4.0)), 7)) - 0.5) * 0.04;
     if (sheetDepth(in.wpos.xy, 0u) < 0.07 + rag) { discard; }
   }
   var lpos = in.wpos;
@@ -978,7 +978,7 @@ fn fsBox(in: VOut) -> FOut {
     let cool = vec3<f32>(0.92, 0.98, 1.06);
     alb *= mix(cool, warm, hv);
     // large-scale mineral bands on stone / clay-iron patches on soil
-    let band = fbm2(in.wpos.xy * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
+    let band = fbm2(wo(in.wpos.xy) * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
     if (dmat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
     if (dmat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     // pebbles: occasional lighter/darker sub-voxels
@@ -1039,7 +1039,7 @@ fn fsBox(in: VOut) -> FOut {
     }
     if (mat == MAT_GRASS) {
       let gv = randv(vec3<i32>(floor(in.bmin * 4.0)));
-      alb = toLinear(seasonGrass(mix(vec3<f32>(0.28, 0.44, 0.15), vec3<f32>(0.46, 0.6, 0.22), gv), fbm2(in.wpos.xy * 0.08)) * (0.8 + 0.3 * smoothstep(in.zr.x, in.zr.y, in.wpos.z)));
+      alb = toLinear(seasonGrass(mix(vec3<f32>(0.28, 0.44, 0.15), vec3<f32>(0.46, 0.6, 0.22), gv), fbm2(wo(in.wpos.xy) * 0.08)) * (0.8 + 0.3 * smoothstep(in.zr.x, in.zr.y, in.wpos.z)));
     }
     if (mat == MAT_FLOWER) {
       // one colour per plant (fine flowers are several boxes); a yellow heart
@@ -1094,7 +1094,7 @@ fn fsBox(in: VOut) -> FOut {
         g = mix(g, forest, smoothstep(3.0, 4.5, vCov));
         g *= 0.82 + 0.3 * n2;
         // (it turns with the season: woodland floor less, under the trees)
-        g = mix(g, seasonGrass(g, fbm2(in.wpos.xy * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, vCov));
+        g = mix(g, seasonGrass(g, fbm2(wo(in.wpos.xy) * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, vCov));
         // wind running through the grass: gust patches roll downwind (advected
         // with the integrated wind, so they move smoothly), with fine bands
         // across them; stronger local wind (gusts, drags) deepens the waves
@@ -1135,7 +1135,7 @@ fn fsBox(in: VOut) -> FOut {
   // cracks and chipped edges grow with structural damage (taps, lightning,
   // heat, water pressure) so decay is visible before anything fails
   if (damage > 0u && (flags & 2u) == 0u) {
-    let fa = faceUV(in.wpos, in.nrm);
+    let fa = faceUV(in.wpos + vec3<f32>(G.org.xy, 0.0), in.nrm);
     let dk = f32(damage);
     let c1 = abs(vnoise(fa * 2.2 + vec2<f32>(f32(ci % 97u))) - 0.5);
     let c2 = abs(vnoise(fa * 4.7 + 11.0) - 0.5);
@@ -1157,7 +1157,7 @@ fn fsBox(in: VOut) -> FOut {
   if (mat == MAT_LAVA_M) {
     let t = f32(damage & 15u) / 15.0;
     let flow = G.time * 0.15;
-    let cr = fbm2(in.wpos.xy * 1.3 + vec2<f32>(flow, -flow * 0.7));
+    let cr = fbm2(wo(in.wpos.xy) * 1.3 + vec2<f32>(flow, -flow * 0.7));
     let crack = smoothstep(0.42, 0.5, abs(cr - 0.5) * 2.0 + (1.0 - t) * 0.6);
     let hot = mix(vec3<f32>(0.9, 0.12, 0.02), vec3<f32>(1.0, 0.75, 0.3), smoothstep(0.6, 1.0, t)) * (1.1 + 1.6 * t);
     let crust = toLinear(vec3<f32>(0.12, 0.1, 0.09)) * lighting(lpos, lnrm);
@@ -1173,7 +1173,7 @@ fn fsBox(in: VOut) -> FOut {
       let wet = fields[ci].y;
       var lensCol = vec3<f32>(0.0);
       var pattern = 1.0;
-      let q = vec2<i32>(floor(in.wpos.xy * 4.0));
+      let q = vec2<i32>(floor(wo(in.wpos.xy) * 4.0));
       if (v > 0.4) { lensCol = vec3<f32>(0.2, 0.9, 0.3); }
       else if (c > 0.2) { lensCol = vec3<f32>(0.85, 0.15, 0.6); pattern = select(0.4, 1.0, ((q.x + q.y) & 3) == 0); }
       else if (MATS[mat].eco.x < 1.6) { lensCol = vec3<f32>(0.55, 0.58, 0.65); pattern = select(0.3, 1.0, ((q.x - q.y) & 3) == 0); }
@@ -1284,8 +1284,8 @@ fn fsWater(in: VOut) -> FOut {
   // sludge: thick, opaque, sickly olive-brown with a scummy mottle (an
   // obvious thing to wash away); fades back to water as it is diluted
   let sludge = smoothstep(0.9, 2.2, conc);
-  let scum = smoothstep(0.55, 0.75, vnoise(in.wpos.xy * 1.3 + vec2<f32>(G.time * 0.03, 0.0)));
-  let murk = vnoise(in.wpos.xy * 0.4 + 9.0);
+  let scum = smoothstep(0.55, 0.75, vnoise(wo(in.wpos.xy) * 1.3 + vec2<f32>(G.time * 0.03, 0.0)));
+  let murk = vnoise(wo(in.wpos.xy) * 0.4 + 9.0);
   c = mix(c, mix(mix(vec3<f32>(0.13, 0.11, 0.06), vec3<f32>(0.2, 0.16, 0.08), murk), vec3<f32>(0.44, 0.42, 0.1), scum * 0.8), sludge);
   var col = toLinear(c) * lighting(in.wpos, in.nrm);
   var alpha = mix(mix(0.5, 0.9, deep), 0.97, sludge) * smoothstep(WATER_MIN_R, 0.08, d);
@@ -1311,15 +1311,15 @@ fn fsWater(in: VOut) -> FOut {
     col *= mix(shade, 1.0, sludge * 0.7);
     col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.7;
     // slow bubbles rising through the sludge
-    let bub = vec3<i32>(vec2<i32>(floor(in.wpos.xy * 2.5)), i32(floor(t * 0.8 + randv(vec3<i32>(vec2<i32>(floor(in.wpos.xy * 2.5)), 3)) * 7.0)));
-    let bf = fract(in.wpos.xy * 2.5) - 0.5;
+    let bub = vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.5)), i32(floor(t * 0.8 + randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.5)), 3)) * 7.0)));
+    let bf = fract(wo(in.wpos.xy) * 2.5) - 0.5;
     col += vec3<f32>(0.05, 0.05, 0.01) * sludge * step(0.93, randv(bub)) * step(length(bf), 0.32) * (1.0 - 0.8 * G.sky.w);
     // foam where flowing fast
     // (on the field mesh smooth, in streaks down the flow; on the prisms in cells)
     let meshOn = (u32(CAM.eye.w) & 2u) != 0u;
-    let sub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 4.0, t * 6.0)));
+    let sub = vec3<i32>(floor(vec3<f32>(wo(in.wpos.xy) * 4.0, t * 6.0)));
     var fleck = step(0.72, randv(sub));
-    if (meshOn) { fleck = smoothstep(0.62, 0.85, flowStreaks(in.wpos.xy * 1.7, fv, d)); }
+    if (meshOn) { fleck = smoothstep(0.62, 0.85, flowStreaks(wo(in.wpos.xy) * 1.7, fv, d)); }
     let foam = smoothstep(0.03, 0.25, flow) * fleck;
     col = mix(col, vec3<f32>(0.85, 0.85, 0.8), foam * 0.6);
     alpha = max(alpha, foam * 0.7);
@@ -1334,14 +1334,14 @@ fn fsWater(in: VOut) -> FOut {
     let toShore = -dg / max(gl2, 1e-5);
     let dist = d / max(gl2, 0.03);
     let onshore = clamp(dot(wv / max(lw, 1e-3), toShore), 0.0, 1.0) * clamp(lw / 4.0, 0.0, 1.0);
-    let alongN = vnoise(in.wpos.xy * 0.6 + 5.0);
+    let alongN = vnoise(wo(in.wpos.xy) * 0.6 + 5.0);
     // (dist is only piecewise smooth, over the centres' triangles: broad
     // soft crests, so the joins don't show)
     let crest = sin(min(dist, 3.0) * 1.8 + t * (1.6 + onshore) + alongN * 5.0);
     let near = smoothstep(2.6, 0.6, dist) * smoothstep(0.012, 0.03, d);
     // (a running stream has no swell: its banks are all near)
     let swell = near * smoothstep(0.55, 0.95, crest) * (0.2 + 0.6 * onshore) * (1.0 - smoothstep(0.01, 0.06, flow));
-    let froth = smoothstep(0.3, 0.65, vnoise(in.wpos.xy * 2.2 + vec2<f32>(t * 0.35, -t * 0.2)));
+    let froth = smoothstep(0.3, 0.65, vnoise(wo(in.wpos.xy) * 2.2 + vec2<f32>(t * 0.35, -t * 0.2)));
     let sf = swell * (1.0 - sludge * 0.7) * froth;
     col = mix(col, vec3<f32>(0.8, 0.82, 0.8) * (1.0 - 0.75 * G.sky.w), sf * 0.65);
     alpha = max(alpha, sf * 0.8);
@@ -1350,14 +1350,14 @@ fn fsWater(in: VOut) -> FOut {
     if (meshOn) {
       // (on the field mesh: rings spreading from each drop, a third of a
       // cell apart, each cell's drops at its own times)
-      let rc = vec2<i32>(floor(in.wpos.xy * 3.0));
-      let rf = fract(in.wpos.xy * 3.0) - 0.5;
+      let rc = vec2<i32>(floor(wo(in.wpos.xy) * 3.0));
+      let rf = fract(wo(in.wpos.xy) * 3.0) - 0.5;
       let rt = t * 2.5 + randv(vec3<i32>(rc, 5));
       let rr = fract(rt) * 0.5;
       let ring = smoothstep(0.07, 0.0, abs(length(rf) - rr)) * (1.0 - rr * 2.0);
       col += vec3<f32>(0.3) * (1.0 - 0.8 * G.sky.w) * ring * step(1.0 - 0.25 * min(rain, 3.0), randv(vec3<i32>(rc, i32(floor(rt)))));
     } else {
-      let rsub = vec3<i32>(floor(vec3<f32>(in.wpos.xy * 3.0, t * 10.0)));
+      let rsub = vec3<i32>(floor(vec3<f32>(wo(in.wpos.xy) * 3.0, t * 10.0)));
       col += vec3<f32>(0.25) * (1.0 - 0.8 * G.sky.w) * step(1.0 - 0.06 * rain, randv(rsub));
     }
   }
@@ -1365,9 +1365,9 @@ fn fsWater(in: VOut) -> FOut {
   // still, cracked — climate.wgsl freezes the water itself from its bed up
   let frost = smoothstep(-0.5, -3.0, airTempAt(in.wpos.z)) * select(0.6, 1.0, in.nrm.z > 0.5);
   if (frost > 0.0) {
-    let cr = vnoise(in.wpos.xy * 1.7 + 3.0);
+    let cr = vnoise(wo(in.wpos.xy) * 1.7 + 3.0);
     let crack = smoothstep(0.03, 0.0, abs(cr - 0.5)) * 0.6;
-    let frosted = toLinear(vec3<f32>(0.78, 0.86, 0.9) * (0.88 + 0.12 * vnoise(in.wpos.xy * 4.0))) * lighting(in.wpos, in.nrm);
+    let frosted = toLinear(vec3<f32>(0.78, 0.86, 0.9) * (0.88 + 0.12 * vnoise(wo(in.wpos.xy) * 4.0))) * lighting(in.wpos, in.nrm);
     col = mix(col, frosted * (1.0 - crack * 0.35), frost * 0.85);
     alpha = mix(alpha, 0.92, frost);
   }
@@ -1438,7 +1438,7 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
   var c = toLinear(vec3<f32>(0.08, 0.065, 0.05));
   var col = c * lighting(in.wpos, in.nrm);
   if (in.nrm.z > 0.5) {
-    let n = vnoise(in.wpos.xy * 0.45 + vec2<f32>(G.time * 0.04, -G.time * 0.03)) * 2.0 + vnoise(in.wpos.xy * 1.3) * 0.6;
+    let n = vnoise(wo(in.wpos.xy) * 0.45 + vec2<f32>(G.time * 0.04, -G.time * 0.03)) * 2.0 + vnoise(wo(in.wpos.xy) * 1.3) * 0.6;
     // cosine palette ≈ thin-film interference colours
     let film = 0.5 + 0.5 * cos(6.2831 * (vec3<f32>(n) + vec3<f32>(0.0, 0.33, 0.67)));
     col += toLinear(film) * 0.035 * (1.0 - cloudShade(in.wpos.xy));
