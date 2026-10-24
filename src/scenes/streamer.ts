@@ -15,24 +15,35 @@
 //    left, or generated the first time they're seen, by the level's
 //    LandSource (world/streamgen.ts's noise, or the atlas: round 67), all of
 //    a slide's asked for at once.
+// The window slides in z too (round 69, when the land is taller than it —
+// the atlas's): it holds world heights oz .. oz + zMax, and every column keeps
+// what's above and below that (`outside`, world z) on the CPU. When the ground
+// under the camera nears the window's top or bottom, the whole window is read
+// back, each column joined with what's outside it and cut again a step higher
+// or lower (layout.ts splitColumn / joinColumn); a frozen region keeps the oz
+// it was left at, and is cut again the same way if it comes back at another.
 // Frozen regions don't tick (deferred or coarse ticks are the next step).
 // The sim waits while a slide is `busy` (only when a region coming in is
 // still being read back from its last visit).
 
-import { CHUNK, SLOT_WORDS, packColumn } from '../world/layout';
-import { ROW_H } from '../world/lattice';
+import { CHUNK, K_HEADROOM, SLOT_WORDS, fitColumn, joinColumn, packColumn, readSlot, splitColumn, type Interval } from '../world/layout';
+import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
 
 /** columns a side of a region: what the window slides by (whole chunks, an even number of rows) */
 export const REGION = 64;
+/** cells the window slides by in z */
+export const TIER = 32;
 
-/** Where new land comes from: a region of w × h world cells from (x0, y0), y0 even. */
+/** Where new land comes from: a region of w × h world cells from (x0, y0), y0 even, in world z. */
 export interface LandSource {
   region(x0: number, y0: number, w: number, h: number, zMax: number): Promise<RegionLand>;
   /** the world's size in cells when it wraps (a torus: frozen regions are kept by where they are on it) */
   wrap?: [number, number];
+  /** the land's height when it's taller than the window: the window slides in z (round 69) */
+  height?: number;
 }
 
 /** round 66's land: noise of world position (world/streamgen.ts), without an edge */
@@ -64,6 +75,9 @@ interface ColTex {
 interface Frozen {
   /** (generated only) the box (region cells) round what the structural system should judge */
   judge?: [number, number, number, number];
+  /** the window's oz its layers are cut at, and each column's intervals outside that (world z) */
+  oz: number;
+  outside: Interval[][];
   /** its chunks' pages, chunk by chunk (row-major in the region) */
   layers: Uint32Array;
   /** each kept buffer's columns: per plane, REGION rows of REGION × stride bytes */
@@ -80,6 +94,11 @@ export interface SlideStats {
   thawed: number;
   /** of those generated, how many were ready before the slide (prefetch) */
   prefetched: number;
+  /** slides in z, and regions cut again at another oz when they came in */
+  tiers: number;
+  resliced: number;
+  /** columns with more intervals than the window holds (their closest made one: layout.ts fitColumn) */
+  fitted: number;
   /** the last slide: ms from start to the regions coming in written */
   lastMs: number;
 }
@@ -95,9 +114,15 @@ export class Streamer {
   busy = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0 };
-  /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy) */
-  readonly onSlide: ((dx: number, dy: number) => void)[] = [];
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0 };
+  /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
+  readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
+  /** the world height of the window's z = 0 */
+  oz = 0;
+  /** per window column: its intervals above and below the window (world z) */
+  outside: Interval[][];
+  /** what a column may hold (the chunks' K less their headroom) */
+  private colK: number;
   /** called when land comes into the window that the structural system should judge: the box (window cells) round it */
   readonly onArrive: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
   private bufs: ColBuf[];
@@ -112,8 +137,14 @@ export class Streamer {
     private core: WorldCore,
     private source: LandSource = noiseLand(),
     origin: [number, number] = [0, 0],
+    /** the first window's oz and what's outside it (the atlas's window) */
+    tier?: { oz: number; outside: Interval[][] },
   ) {
     const { w, h } = core.dims;
+    this.oz = tier?.oz ?? 0;
+    if (this.oz % TIER) throw new Error(`the window's oz must be whole tiers of ${TIER}`);
+    this.outside = tier?.outside ?? Array.from({ length: w * h }, () => []);
+    if (this.outside.length !== w * h) throw new Error('the window needs what lies outside every column');
     if (origin[0] % REGION || origin[1] % REGION) throw new Error(`the window's origin must be whole regions of ${REGION}`);
     this.origin[0] = origin[0];
     this.origin[1] = origin[1];
@@ -126,6 +157,7 @@ export class Streamer {
     this.K = t[1];
     for (let c = 0; c < t.length / 2; c++) if (t[c * 2 + 1] !== this.K) throw new Error('a streamed world needs the same K in every chunk');
     this.pageSlots = this.K * CHUNK * CHUNK;
+    this.colK = this.K - K_HEADROOM;
     const wg = core.world;
     const b = (name: keyof typeof wg, stride: number, keep: boolean, planes = 1): ColBuf => ({ name, buf: wg[name] as GPUBuffer, stride, planes, keep });
     this.bufs = [
@@ -206,6 +238,17 @@ export class Streamer {
     if (x < this.W / 2 - near) this.prefetch(-R, 0);
     if (y > this.H / 2 + near) this.prefetch(0, R);
     if (y < this.H / 2 - near) this.prefetch(0, -R);
+    // in z: the ground under the camera near the window's top or bottom
+    const h = this.source.height;
+    if (h) {
+      const [cx, cy] = cellAt(x, yw);
+      if (cx >= 0 && cy >= 0 && cx < this.W && cy < this.H) {
+        const g = this.core.map.surface[cy * this.W + cx];
+        const zMax = this.core.dims.zMax;
+        if (g > zMax - 40 && this.oz + zMax < h) return this.slideZ(TIER);
+        if (g < 24 && this.oz > 0) return this.slideZ(-TIER);
+      }
+    }
     if (x > this.W / 2 + reach) return this.slide(R, 0);
     if (x < this.W / 2 - reach) return this.slide(-R, 0);
     if (y > this.H / 2 + reach) return this.slide(0, R);
@@ -320,6 +363,12 @@ export class Streamer {
       }
     dev.queue.submit([enc.finish()]);
     const leftKeys = leaving.map(([lx, ly]) => this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R));
+    const leftOut = leaving.map(([lx, ly]) => {
+      const o: Interval[][] = [];
+      for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) o.push(this.outside[(ly + r) * W + lx + c]);
+      return o;
+    });
+    const oz = this.oz;
     const read = staging.mapAsync(GPUMapMode.READ).then(() => {
       const all = new Uint8Array(staging.getMappedRange()).slice();
       staging.unmap();
@@ -327,7 +376,7 @@ export class Streamer {
       const out: Frozen[] = [];
       let o = 0;
       for (let k = 0; k < leaving.length; k++) {
-        const f: Frozen = { layers: new Uint32Array(all.buffer, o, (rc * rc * pageBytes) / 4).slice(), bufs: {}, texs: {}, surface: new Float32Array(R * R) };
+        const f: Frozen = { layers: new Uint32Array(all.buffer, o, (rc * rc * pageBytes) / 4).slice(), bufs: {}, texs: {}, surface: new Float32Array(R * R), oz, outside: leftOut[k] };
         o += rc * rc * pageBytes;
         for (const b of kept) {
           const n = R * R * b.stride * b.planes;
@@ -391,11 +440,12 @@ export class Streamer {
     this.origin[1] += dy;
     core.globals.origin = [this.origin[0], this.origin[1]];
     shiftGrid(surf, W, H, 1, dx, dy);
+    shiftGrid(this.outside, W, H, 1, dx, dy);
     core.camera.target[0] -= dx;
     core.camera.target[1] -= dy * ROW_H;
     core.weather.shift(dx, dy * ROW_H);
     core.clearUndo();
-    for (const f of this.onSlide) f(dx, dy);
+    for (const f of this.onSlide) f(dx, dy, 0);
 
     // ---- 5. what comes in: thawed, or generated (all of them asked for at once) ----
     const coming = entering.map(([lx, ly]) => {
@@ -418,21 +468,28 @@ export class Streamer {
     for (let k = 0; k < entering.length; k++) this.write(await coming[k], entering[k][0], entering[k][1]);
   }
 
-  /** a region's land the first time it is seen, in the frozen form */
+  /** a region's land the first time it is seen, in the frozen form (cut at the window's oz now) */
   private async generate(x0: number, y0: number): Promise<Frozen> {
-    const { R, K } = this;
+    const { R } = this;
     const zMax = this.core.dims.zMax;
     const land = await this.source.region(x0, y0, R, R, zMax);
+    const oz = this.oz;
     const rc = R / CHUNK;
     const layers = new Uint32Array(rc * rc * this.pageSlots * SLOT_WORDS);
+    const outside: Interval[][] = [];
+    const surface = new Float32Array(R * R);
     for (let y = 0; y < R; y++)
       for (let x = 0; x < R; x++) {
-        const col = land.cols[y * R + x];
-        if (col.length > K) throw new Error(`streamed column ${x0 + x},${y0 + y} has ${col.length} intervals (K ${K})`);
-        for (const iv of col) if (iv.z1 > zMax) throw new Error(`streamed column ${x0 + x},${y0 + y} is above zMax`);
-        const page = Math.floor(y / CHUNK) * rc + Math.floor(x / CHUNK);
-        const slot = page * this.pageSlots + ((y % CHUNK) * CHUNK + (x % CHUNK)) * K;
-        layers.set(packColumn(col, K), slot * SLOT_WORDS);
+        const i = y * R + x;
+        const cut = splitColumn(land.cols[i], oz, zMax);
+        outside.push(cut.outside);
+        this.place(layers, x, y, cut.inside);
+        surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        // (the ground's top out of the window: what lies on it isn't here)
+        if (!topInside(cut, oz, zMax)) {
+          land.water[i] = 0;
+          if (land.lava) land.lava.fill(0, i * 4, i * 4 + 4);
+        } else if (land.lava && land.lava[i * 4] > 0) land.lava[i * 4 + 3] -= oz;
       }
     const bytes = (a: Float32Array) => new Uint8Array(a.buffer, a.byteOffset, a.byteLength);
     const bufs: Record<string, Uint8Array> = {
@@ -450,12 +507,134 @@ export class Streamer {
       for (let k = 0; k < R * R; k++) t[k * 4] = land.lavaSpring[k];
       texs.lavaSpring = t;
     }
-    return { layers, bufs, texs, surface: land.surface, judge };
+    return { layers, bufs, texs, surface, judge, oz, outside };
+  }
+
+  /** column (x, y) of a region (window z) into its layers' pages, fitted to what a column may hold */
+  private place(layers: Uint32Array, x: number, y: number, col: Interval[]): void {
+    const { K } = this;
+    if (fitColumn(col, this.colK)) this.stats.fitted++;
+    const rc = this.R / CHUNK;
+    const page = Math.floor(y / CHUNK) * rc + Math.floor(x / CHUNK);
+    const slot = page * this.pageSlots + ((y % CHUNK) * CHUNK + (x % CHUNK)) * K;
+    layers.set(packColumn(col, K), slot * SLOT_WORDS);
+  }
+
+  /** the intervals of column (x, y) of a region's pages (window z) */
+  private columnOf(layers: Uint32Array, x: number, y: number): Interval[] {
+    const { K } = this;
+    const rc = this.R / CHUNK;
+    const page = Math.floor(y / CHUNK) * rc + Math.floor(x / CHUNK);
+    const slot = page * this.pageSlots + ((y % CHUNK) * CHUNK + (x % CHUNK)) * K;
+    const out: Interval[] = [];
+    for (let s = 0; s < K; s++) {
+      const iv = readSlot(layers, slot + s);
+      if (!iv) break;
+      out.push(iv);
+    }
+    return out;
+  }
+
+  /** a frozen region cut again at the window's oz now (it was left at another) */
+  private reslice(f: Frozen): Frozen {
+    const { R } = this;
+    const zMax = this.core.dims.zMax;
+    const layers = new Uint32Array(f.layers.length);
+    const outside: Interval[][] = [];
+    const surface = new Float32Array(R * R);
+    const water = f.bufs.water ? new Float32Array(f.bufs.water.buffer, f.bufs.water.byteOffset, R * R) : undefined;
+    const lava = f.bufs.lava ? new Float32Array(f.bufs.lava.buffer, f.bufs.lava.byteOffset, R * R * 4) : undefined;
+    for (let y = 0; y < R; y++)
+      for (let x = 0; x < R; x++) {
+        const i = y * R + x;
+        const was = this.columnOf(f.layers, x, y);
+        const full = joinColumn(was, f.oz, f.outside[i]);
+        const wasTop = was.length > 0 && !f.outside[i].some((iv) => iv.z0 >= f.oz + zMax);
+        const cut = splitColumn(full, this.oz, zMax);
+        outside.push(cut.outside);
+        this.place(layers, x, y, cut.inside);
+        surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        if (!(wasTop && topInside(cut, this.oz, zMax))) {
+          if (water) water[i] = 0;
+          if (lava) lava.fill(0, i * 4, i * 4 + 4);
+        } else if (lava && lava[i * 4] > 0) lava[i * 4 + 3] += f.oz - this.oz;
+      }
+    this.stats.resliced++;
+    return { ...f, layers, surface, oz: this.oz, outside };
+  }
+
+  /** Move the window by dz cells in z (±TIER): every column read back, joined with what's outside it, cut again. */
+  async slideZ(dz: number): Promise<void> {
+    if (Math.abs(dz) !== TIER) throw new Error(`a slide in z is one tier (${TIER})`);
+    if (this.oz + dz < 0) throw new Error('the window is at the bottom of the world');
+    this.busy = true;
+    const t0 = performance.now();
+    try {
+      await this.slideZNow(dz);
+    } finally {
+      this.busy = false;
+    }
+    this.stats.tiers++;
+    this.stats.lastMs = +(performance.now() - t0).toFixed(1);
+  }
+
+  private async slideZNow(dz: number): Promise<void> {
+    const { core, W, H, R } = this;
+    const dev = core.host.gpu.device;
+    const wg = core.world;
+    const zMax = core.dims.zMax;
+    const N = W * H;
+    const [layersBuf, waterBuf, lavaBuf] = await Promise.all([core.readBuffer('layers'), core.readBuffer('water'), core.readBuffer('lava')]);
+    const slots = new Uint32Array(layersBuf.buffer, layersBuf.byteOffset, layersBuf.byteLength / 4);
+    const water = new Float32Array(waterBuf.buffer, waterBuf.byteOffset, N);
+    const lava = new Float32Array(lavaBuf.buffer, lavaBuf.byteOffset, N * 4);
+    const table = core.packed.chunkTable;
+    const cx = W / CHUNK;
+    const K = this.K;
+    const out = slots.slice();
+    const oz = this.oz + dz;
+    const surf = core.map.surface;
+    for (let y = 0; y < H; y++)
+      for (let x = 0; x < W; x++) {
+        const i = y * W + x;
+        const ci = Math.floor(y / CHUNK) * cx + Math.floor(x / CHUNK);
+        const base = table[ci * 2] + ((y % CHUNK) * CHUNK + (x % CHUNK)) * K;
+        const was: Interval[] = [];
+        for (let s = 0; s < K; s++) {
+          const iv = readSlot(slots, base + s);
+          if (!iv) break;
+          was.push(iv);
+        }
+        const wasTop = was.length > 0 && !this.outside[i].some((iv) => iv.z0 >= this.oz + zMax);
+        const cut = splitColumn(joinColumn(was, this.oz, this.outside[i]), oz, zMax);
+        if (fitColumn(cut.inside, this.colK)) this.stats.fitted++;
+        this.outside[i] = cut.outside;
+        out.set(packColumn(cut.inside, K), base * SLOT_WORDS);
+        surf[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        if (!(wasTop && topInside(cut, oz, zMax))) {
+          water[i] = 0;
+          lava.fill(0, i * 4, i * 4 + 4);
+        } else if (lava[i * 4] > 0) lava[i * 4 + 3] -= dz;
+      }
+    for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, out);
+    for (const b of [wg.water, wg.waterNext, wg.waterPrev]) dev.queue.writeBuffer(b, 0, water);
+    for (const b of [wg.lava, wg.lavaNext]) dev.queue.writeBuffer(b, 0, lava);
+    // (particles in the air: dropped, as on a slide sideways)
+    const enc = dev.createCommandEncoder({ label: 'stream slide z' });
+    enc.clearBuffer(wg.particles);
+    dev.queue.submit([enc.finish()]);
+    this.oz = oz;
+    core.camera.target[2] -= dz;
+    core.clearUndo();
+    void R;
+    for (const f of this.onSlide) f(0, 0, dz);
   }
 
   /** write a region into the window at local cell (lx, ly) */
   private write(f: Frozen, lx: number, ly: number): void {
+    if (f.oz !== this.oz) f = this.reslice(f);
     const { core, W, H, R } = this;
+    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[(ly + r) * W + lx + c] = f.outside[r * R + c];
     const dev = core.host.gpu.device;
     const wg = core.world;
     const table = core.packed.chunkTable;
@@ -531,6 +710,9 @@ export class Streamer {
 }
 
 const align256 = (n: number) => Math.ceil(n / 256) * 256;
+
+/** whether a column cut at the window has its top in the window (nothing of it above) */
+const topInside = (cut: { inside: Interval[]; outside: Interval[] }, oz: number, zMax: number) => cut.inside.length > 0 && !cut.outside.some((iv) => iv.z0 >= oz + zMax - 1e-4);
 
 /** the box (cells, x1 y1 past the end) round the set cells of a w-wide mask, with a margin of 2; none if none */
 export function boxOf(mask: Uint8Array, w: number, x0 = 0, y0 = 0, bw = w, bh = mask.length / w): [number, number, number, number] | undefined {

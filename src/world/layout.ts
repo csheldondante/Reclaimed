@@ -181,3 +181,46 @@ export function packColumn(col: Interval[], k: number): Uint32Array {
   col.forEach((iv, s) => writeSlot(data, s, iv.z0, iv.z1, iv.mat, iv.aux ?? 0));
   return data;
 }
+
+// ---- a window onto taller columns (round 69: the streamed window slides in z) ----
+
+/** Column `col` (world z) cut at the window [oz, oz + zMax): what's in it (window z) and what's outside it (world z, below then above). */
+export function splitColumn(col: Interval[], oz: number, zMax: number): { inside: Interval[]; outside: Interval[] } {
+  const inside: Interval[] = [];
+  const outside: Interval[] = [];
+  const hi = oz + zMax;
+  for (const iv of col) {
+    if (iv.z0 < oz) outside.push({ z0: iv.z0, z1: Math.min(iv.z1, oz), mat: iv.mat });
+    if (iv.z1 > oz && iv.z0 < hi) inside.push({ z0: Math.max(iv.z0, oz) - oz, z1: Math.min(iv.z1, hi) - oz, mat: iv.mat, aux: iv.aux });
+    if (iv.z1 > hi) outside.push({ z0: Math.max(iv.z0, hi), z1: iv.z1, mat: iv.mat });
+  }
+  return { inside, outside };
+}
+
+/** The whole column again (world z): what's in the window at oz, and what's outside it; pieces cut at the window's edges joined. */
+export function joinColumn(inside: Interval[], oz: number, outside: Interval[]): Interval[] {
+  const all = [...outside.map((iv) => ({ z0: iv.z0, z1: iv.z1, mat: iv.mat })), ...inside.map((iv) => ({ z0: iv.z0 + oz, z1: iv.z1 + oz, mat: iv.mat, aux: iv.aux }))].sort((a, b) => a.z0 - b.z0);
+  const out: Interval[] = [];
+  for (const iv of all) {
+    const last = out[out.length - 1];
+    if (last && last.mat === iv.mat && Math.abs(iv.z0 - last.z1) < 1e-4) last.z1 = Math.max(last.z1, iv.z1);
+    else out.push(iv);
+  }
+  return out;
+}
+
+/** At most k intervals: the neighbours closest to being one (the gap between them and the thinner's
+ *  thickness least) become one, of the thicker's material, until it fits. Whether it had to. */
+export function fitColumn(col: Interval[], k: number): boolean {
+  if (col.length <= k) return false;
+  const cost = (i: number) => col[i].z0 - col[i - 1].z1 + Math.min(col[i].z1 - col[i].z0, col[i - 1].z1 - col[i - 1].z0);
+  while (col.length > k) {
+    let best = 1;
+    for (let i = 2; i < col.length; i++) if (cost(i) < cost(best)) best = i;
+    const lo = col[best - 1];
+    const hi = col[best];
+    const mat = hi.z1 - hi.z0 > lo.z1 - lo.z0 ? hi.mat : lo.mat;
+    col.splice(best - 1, 2, { z0: lo.z0, z1: hi.z1, mat });
+  }
+  return true;
+}

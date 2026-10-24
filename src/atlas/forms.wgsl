@@ -396,6 +396,8 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   var pForm = false;
   var caveRuns = 0u;
   var inCave = false;
+  var alcRuns = 0u;
+  var inAlc = false;
   var surf = 0.0;
   var surfForm = false;
   let K = i32(ceil(zEnd));
@@ -426,11 +428,17 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       if (net.sky && z > net.zc) { carve = max(carve, net.r * 0.85 - net.d); }
     }
-    if (alc && z > g.hlo + 1.5 && z < top - 3.0) {
+    // (six openings a column at most: a tall wall's would run past what a column holds)
+    if (alc && z > g.hlo + 1.5 && z < top - 3.0 && (alcRuns < 6u || inAlc)) {
       let n3 = vfbm3(vec3<f32>(torusU(p) * f32(alcPer), z / max(af.hHi, 1.0)), vec2<i32>(alcPer), 2u, R.seed + 77u);
       let open = n3 - (0.5 - af.chance);
       let depth = af.radius * (0.4 + 0.6 * clamp(open * 4.0, 0.0, 1.0));
-      carve = max(carve, min(open * 6.0, depth - abs(g.s)));
+      let c = min(open * 6.0, depth - abs(g.s));
+      if (c > 0.0) { inAlc = true; } else if (inAlc) {
+        inAlc = false;
+        alcRuns++;
+      }
+      carve = max(carve, c);
     }
     for (var j = 0u; j < nl; j++) {
       let fv = instAt(insts[li[j]], p, z);

@@ -518,6 +518,21 @@ its edge:
 - The CPU's window coordinates move too: the camera, the weather
   (`Weather.shift`), the map's surface heights, the level's surface cache
   (`onSlide`); the undo ring is cleared; particles in the air are dropped.
+- **In z** (round 69, when the LandSource has a `height` — the atlas's 480):
+  the window holds world heights `oz` .. `oz + zMax` (the atlas level's
+  zMax 248, the most the 8-bit z holds less a margin) and every column
+  keeps what's above and below on the CPU (`Streamer.outside`, world z).
+  LandSources give world z; the streamer cuts each column at the window
+  (`layout.ts` splitColumn) and fits it to K − headroom (fitColumn). When
+  the ground under the camera is within 40 of the top or 24 of the bottom
+  the window slides a `TIER` (32): the whole window is read back, each
+  column joined with what's outside it (joinColumn) and cut again; water
+  and lava stay only where the ground's top is in the window both before
+  and after; bodies and undo are cleared. A frozen region keeps the oz it
+  was left at and is cut again if it comes back at another (`resliced`).
+  The sim's z is the window's (the climate's temperature at z = 0 is the
+  world's at oz). Water that runs into a column with nothing in the window
+  (ground below its floor) drains (water_depth.wgsl).
 - `Globals.org` carries the window's world origin: `hash3` adds it to its
   cell coordinates and `wo()` to positions in the noise of the render, the
   wind, the clouds and the ecology's woodland patches, so what they draw

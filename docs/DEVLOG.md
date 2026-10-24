@@ -4145,3 +4145,30 @@ column); the first 256² window 20 ms; slides 6–9 ms prefetched; at the
 crystal field 27 pieces broke free on arrival and came to rest (an
 integrity pass ~10 ms); atlastest 5/5, streamtest 8/8. Next: the window
 slides in z (the user's choice) so cliffs can be taller than a window.
+
+## Round 69, part two — the window slides in z (atlas)
+
+The user's way to taller land: "map cells themselves could stack vertically"
+— the window slides in z as it does sideways, one live window (chosen over
+every tier live, a rewrite of every kernel). The world is 480 tall now; the
+window 248 (the most the 8-bit z and the surface's 8.8 hold, less a
+margin); escarpments 140–260 over the sea, spires to 120.
+- The streamer keeps each column's intervals outside the window (world z)
+  on the CPU; a slide in z reads the window back, joins and cuts every
+  column again a tier (32) up or down; a frozen region carries its oz and
+  is cut again when it comes back at another. LandSources give world z now.
+- The first window's oz: the tier holding the most of the ground's tops
+  (at the first cliff tried, the ground's middle alone put the floor of a
+  160-tall window over the cliff's foot: a plateau floating in nothing).
+- Water that runs into a column with nothing in the window drains (it falls
+  on below the window's floor); the sim's air temperature is the world's at
+  the window's height.
+- The surfaces at the window's floor and ceiling are cut flat; what's beyond
+  isn't drawn yet (Q50). Tall walls ran chunks out of mesh room again
+  (meshRoom 5; one chunk of the tallest cliff still out — Q48, room handed
+  out as needed, is the fix).
+
+Measured (tiertest.mjs, at an escarpment's cliff 156 tall): up a tier and
+back, every column's solid intervals in world z unchanged (0 columns
+differ); a region frozen at one oz and thawed at another, the same; a slide
+in z 120–300 ms (Q51); atlastest 5/5, streamtest 8/8.

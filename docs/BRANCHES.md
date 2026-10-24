@@ -152,4 +152,6 @@ them: the town doesn't follow a slide yet (Q32) — in the streamed and atlas
 levels the town tool works only until the first slide; the atlas's regions
 are where rooms and key-and-door rules would hang (Q39); frozen regions
 ticking (Q31) is the stream's next step and applies to the atlas level as
-it is.
+it is. Round 69 (atlas) slides the window in z too (`Streamer.oz`,
+`outside`): the stream level doesn't use it (its land has no height), so
+`stream` merging under `atlas` stays as it is.

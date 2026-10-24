@@ -14,7 +14,7 @@
 // maps: the viewer draws it per pixel and `columns` per cell, the same code.
 
 import { makeBindGroup, makeCompute, makeComputeAsync, makeModule, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
-import { ColumnGrid, type Interval, type WorldDims } from '../world/layout';
+import { ColumnGrid, fitColumn, splitColumn, type Interval, type WorldDims } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
 import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
@@ -70,7 +70,8 @@ export const DEFAULT_ATLAS: AtlasParams = {
   cols: 16384,
   rows: 18944,
   sea: 28,
-  zTop: 146,
+  // (round 69: the world is taller than a window — the streamed window slides in z)
+  zTop: 480,
   landPer: 3,
   landThresh: 0.06,
   warp: 0.05,
@@ -616,11 +617,12 @@ export class Atlas {
 
   /** The sim's climate for a window centred on world cell (cx, cy): the atlas's temperature
    *  (compose.wgsl temperature) as Globals.climate's (°C at height 0, °C less a cell up). */
-  climateAt(cx: number, cy: number): { temp: number; lapse: number } {
+  climateAt(cx: number, cy: number, oz = 0): { temp: number; lapse: number } {
     // (compose.wgsl temperature and LAPSE: keep the two the same)
     const lapse = 0.12;
     const warm = warmth(((cy + 0.5) / this.p.rows) % 1);
-    return { temp: warm * 34 - 8 + this.p.sea * lapse, lapse };
+    // (the sim's z is the window's: its z = 0 is the world's oz)
+    return { temp: warm * 34 - 8 + (this.p.sea - oz) * lapse, lapse };
   }
 
   /** the region (dense id) at world point (px, py) by its macro texel */
@@ -688,8 +690,8 @@ export class Atlas {
   /** columns that had more intervals than the window holds (their smallest gaps filled: landFrom) */
   gapsFilled = 0;
 
-  /** A region's land for the streamer (world/streamgen.ts RegionLand), K intervals a column at most. */
-  async regionLand(x0: number, y0: number, w: number, h: number, K = 14): Promise<RegionLand> {
+  /** A region's land for the streamer (world/streamgen.ts RegionLand), in world z (the streamer cuts it at its window). */
+  async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity): Promise<RegionLand> {
     if (y0 & 1) throw new Error('a region starts on an even row');
     const c = await this.columns(x0, y0, w, h);
     const land = landFrom(c, x0, y0, K);
@@ -697,9 +699,11 @@ export class Atlas {
     return land;
   }
 
-  /** The window from world cell (ox, oy) as a map (the level's first world). */
-  async window(dims: WorldDims, ox: number, oy: number, K: number): Promise<MapData> {
-    const { w, h } = dims;
+  /** The window from world cell (ox, oy) as a map (the level's first world): its oz a whole number
+   *  of tiers (the one holding the most of the ground's tops), K intervals a column at most, and
+   *  what's outside it (world z). */
+  async window(dims: WorldDims, ox: number, oy: number, K: number, tier: number, floor = 8): Promise<{ map: MapData; oz: number; outside: Interval[][] }> {
+    const { w, h, zMax } = dims;
     const N = w * h;
     // (in tiles of a region, as the streamer asks: one batch of the whole window is too much
     // work for one dispatch where forms stand thick — the GPU's watchdog resets the device)
@@ -707,7 +711,25 @@ export class Atlas {
     if (w % T || h % T) throw new Error(`the window (${w} × ${h}) must be whole tiles of ${T}`);
     const tiles: [number, number][] = [];
     for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
-    const lands = await Promise.all(tiles.map(([tx, ty]) => this.regionLand(ox + tx, oy + ty, T, T, K)));
+    const lands = await Promise.all(tiles.map(([tx, ty]) => this.regionLand(ox + tx, oy + ty, T, T)));
+    // the window's oz: the tier holding the most of the ground's tops (`floor` over its bottom, 24
+    // under its top), the ground at its middle in it
+    const mx = w >> 1;
+    const my = h >> 1;
+    const mid = lands[tiles.findIndex(([tx, ty]) => tx === Math.floor(mx / T) * T && ty === Math.floor(my / T) * T)];
+    const gMid = mid.surface[(my % T) * T + (mx % T)];
+    let oz = 0;
+    let most = -1;
+    for (let c = 0; c + zMax <= this.p.zTop + tier; c += tier) {
+      if (gMid < c + 8 || gMid > c + zMax - 40) continue;
+      let n = 0;
+      for (const t of lands) for (let i = 0; i < T * T; i += 7) if (t.surface[i] >= c + floor && t.surface[i] <= c + zMax - 24) n++;
+      if (n > most) {
+        most = n;
+        oz = c;
+      }
+    }
+    const outside: Interval[][] = new Array(N);
     const grid = new ColumnGrid(dims);
     const land = { water: new Float32Array(N), moisture: new Float32Array(N), vegetation: new Float32Array(N), contam: new Float32Array(N * 2), lava: new Float32Array(N * 4), lavaSpring: new Float32Array(N), surface: new Float32Array(N), structural: new Uint8Array(N) };
     tiles.forEach(([tx, ty], k) => {
@@ -716,19 +738,23 @@ export class Atlas {
         for (let x = 0; x < T; x++) {
           const i = y * T + x;
           const j = (ty + y) * w + tx + x;
-          grid.cols[j] = t.cols[i];
-          land.water[j] = t.water[i];
+          const cut = splitColumn(t.cols[i], oz, zMax);
+          if (fitColumn(cut.inside, K)) this.gapsFilled++;
+          grid.cols[j] = cut.inside;
+          outside[j] = cut.outside;
+          const top = cut.inside.length > 0 && !cut.outside.some((iv) => iv.z0 >= oz + zMax - 1e-4);
+          land.water[j] = top ? t.water[i] : 0;
           land.moisture[j] = t.moisture[i];
           land.vegetation[j] = t.vegetation[i];
-          land.surface[j] = t.surface[i];
+          land.surface[j] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
           land.contam[j * 2] = t.contam[i * 2];
           land.contam[j * 2 + 1] = t.contam[i * 2 + 1];
-          if (t.lava) land.lava.set(t.lava.subarray(i * 4, i * 4 + 4), j * 4);
+          if (t.lava && top && t.lava[i * 4] > 0) land.lava.set([t.lava[i * 4], t.lava[i * 4 + 1], t.lava[i * 4 + 2], t.lava[i * 4 + 3] - oz], j * 4);
           if (t.lavaSpring) land.lavaSpring[j] = t.lavaSpring[i];
           if (t.structural) land.structural[j] = t.structural[i];
         }
     });
-    return {
+    const map: MapData = {
       grid,
       water: land.water,
       contam: land.contam,
@@ -744,6 +770,7 @@ export class Atlas {
       surface: land.surface,
       poi: Object.fromEntries(['healthy', 'tutorial', 'dam', 'reservoir', 'site', 'landfill', 'heap'].map((k) => [k, [w / 2, h / 2]])) as Record<string, [number, number]>,
     };
+    return { map, oz, outside };
   }
 
   /** A world cell to start at: on land, temperate, in a kind that's good to stand on. */

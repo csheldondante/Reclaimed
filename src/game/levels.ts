@@ -95,10 +95,11 @@ export const LEVELS: LevelDef[] = [
     },
     sandbox: true,
     hidden: true,
-    zMax: 160,
+    // (the window's height: the most the 8-bit z holds, less a margin; it slides in z over a taller world)
+    zMax: 248,
     stream: true,
     atlas: true,
-    meshRoom: 4,
+    meshRoom: 5,
   },
   {
     id: 'sandbox',

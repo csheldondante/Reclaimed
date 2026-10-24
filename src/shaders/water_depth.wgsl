@@ -32,6 +32,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // thin films (wet ground, puddles) evaporate; deep water barely does — otherwise
   // a large lake evaporates the whole river inflow
   nd = max(0.0, nd - select(EVAP_DEEP, EVAP, nd < 0.08));
+  // a column with nothing in it (round 69: the window slides in z, and the ground here is
+  // below its floor): what runs in falls on out of the window
+  if (sfCount(surface[i]) == 0u) { nd = 0.0; }
   waterPrev[i] = d;
   waterOut[i] = nd;
 }

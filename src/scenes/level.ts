@@ -29,10 +29,10 @@ import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
-import { Streamer, shiftGrid, REGION, boxOf } from './streamer';
+import { Streamer, shiftGrid, REGION, TIER, boxOf } from './streamer';
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import type { MapData } from '../world/mapgen';
-import { columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
+import { type Interval, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -48,7 +48,7 @@ export interface LevelOptions {
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number] };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][] };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -179,7 +179,7 @@ export class LevelScene implements Scene {
       const c = (dims.h / 2) * dims.w + dims.w / 2;
       this.core.camera.target = [dims.w / 2, dims.h * ROW_H * 0.5, this.core.map.surface[c]];
       // the atlas's climate before the world settles (warmed at the default, its snow melted and froze to sheets)
-      this.core.globals.climate = opts.atlas.atlas.climateAt(opts.atlas.origin[0] + dims.w / 2, opts.atlas.origin[1] + dims.h / 2);
+      this.core.globals.climate = opts.atlas.atlas.climateAt(opts.atlas.origin[0] + dims.w / 2, opts.atlas.origin[1] + dims.h / 2, opts.atlas.oz);
     }
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
@@ -191,14 +191,14 @@ export class LevelScene implements Scene {
     if (level.atlas && !opts.map) {
       // the world's atlas first (atlas/atlas.ts), then the window onto it where we start (?at=x,y cells, or its own spawn)
       const zMax = level.zMax ?? 64;
-      const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params, { zTop: zMax - 14 }));
-      if (atlas.p.zTop > zMax - 2) throw new Error(`the atlas reaches ${atlas.p.zTop}, above the level's zMax ${zMax}`);
+      // (the atlas is taller than the window: it slides in z — round 69)
+      const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
       const at = host.params.get('at');
       const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
       const W = 256;
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
-      const map = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K);
-      opts = { ...opts, atlas: { atlas, map, origin } };
+      const { map, oz, outside } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
@@ -594,14 +594,19 @@ export class LevelScene implements Scene {
     if (this.level.stream) {
       const a = this.opts.atlas;
       this.stream = a
-        ? new Streamer(core, { region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, ATLAS_COL_K), wrap: [a.atlas.p.cols, a.atlas.p.rows] }, a.origin)
+        ? new Streamer(core, { region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h), wrap: [a.atlas.p.cols, a.atlas.p.rows], height: a.atlas.p.zTop }, a.origin, { oz: a.oz, outside: a.outside })
         : new Streamer(core);
-      this.stream.onSlide.push((dx, dy) => {
+      this.stream.onSlide.push((dx, dy, dz) => {
         // what the level keeps in window coordinates
         shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
         this.hoverWorld = null;
-        // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps)
-        if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2);
+        // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps), and the window's height
+        if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, this.stream!.oz);
+        if (dz) {
+          // (a slide in z: every column moved; what's falling or lying loose in window z goes)
+          for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
+          this.integrity?.clear();
+        }
       });
       // (round 69: the atlas's forms of a weak material are judged when they come in, like anything
       // built — what can't stand falls; the first window's, region by region)
