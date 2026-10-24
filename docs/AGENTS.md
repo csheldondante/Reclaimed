@@ -220,7 +220,8 @@ agents.defineKind(i, { name, height, mass, hp, speed, reach, damage, swingPeriod
 agents.spawn(n, x, y, { group, kind, spread })  // → ids; they land on the top surface
 agents.remove(ids)                        // out at once, no death event
 agents.setTargets([{ x, y, z, radius, height? }])  // what hostile kinds go for (z its feet; height default 1.5); seeds field 3 (follow(group, 3) to chase)
-agents.hit({ x, y, z?, radius, damage, push, lift?, stun?, dir?, outward?, cone?, axis?, fire? })  // → hit id; a cone round `axis` (default `dir`); push and lift ÷ mass
+agents.hit({ x, y, z?, radius, damage, push, lift?, stun?, dir?, outward?, cone?, axis?, fire?, groups?, spare? })  // → hit id; a cone round `axis` (default `dir`); push and lift ÷ mass;
+                                          // groups: only these feel it, spare: these don't (round 63; bowled over by others flung, still)
 agents.hold(id, x, y, z)                  // each frame while held; false when it's gone
 agents.release(id, vel?) / agents.launch(id, vel, { stun? }) / agents.lob(id, from, to, time?, { stun? })
 const { units, events } = await agents.sync()  // each frame: live units, and swing/hurt/death/alight events

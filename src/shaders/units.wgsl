@@ -285,6 +285,9 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     // (z below -1e8: any height)
     if (r > hit.a.w + 0.3 || (hit.a.z > -1e8 && abs(off.z) > hit.a.w + height)) { continue; }
     if (hit.b.z > -1.5 && r > 0.3 && dot(off.xy / r, hit.d.xy) < hit.b.z) { continue; }
+    // (c.z: bit 0 fire, bits 1-16 the groups it spares)
+    let hz = u32(hit.c.z + 0.5);
+    if (((hz >> (1u + grp)) & 1u) != 0u) { continue; }
     let hid = u32(hit.c.w);
     if (hit.b.w > 0.0) {
       hp -= hit.b.w;
@@ -296,7 +299,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     push += away * hit.c.x / mass;
     if (hit.d.z != 0.0) { lift += hit.d.z / mass; lifted = true; }
     stunHit = max(stunHit, hit.d.w);
-    if (hit.c.z > 0.5 && !alight) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
+    if ((hz & 1u) != 0u && !alight) { alight = true; burn = BURN_TIME; emit(EV_ALIGHT, uid, hid, 0.0, pos); }
   }
 
   // held by the game, or launched: holds and launches name its slot

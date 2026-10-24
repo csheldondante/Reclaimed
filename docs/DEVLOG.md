@@ -3824,3 +3824,15 @@ columns, 208 cells over repose in all, worst 5.4 → 0; with storms, 100 s:
 only the same stone pillar with a dust film as before. Found on the way:
 overlapping intervals after craters (Q23) and paper-thin solid lids over a
 crater's undercut rim (Q24).
+
+## Round 63 — hits that spare groups (agents; the hoverbike session asked)
+
+The hoverbike's lich raises dead (agents in a group of their own); its
+fireball and push hurt them too. `HitSpec.groups` (only these groups feel
+it) and `spare` (these don't), on `agents.hit` and on a thrown item's hit.
+The mask rides in the hit's fire float (bit 0 fire, bits 1-16 a group
+each: all 16 floats of a hit were taken). A spared unit can still be
+bowled over by the others flung into it (knock-overs are physics), and a
+hard landing then hurts it as 'impact'. `sparetest` 2/2: spare [g1]: g1 0
+hurt by the blast, g2 6 hurt and 6 thrown (1 of g1 bowled over); groups
+[g1]: 5 of g1 hurt and thrown, g2 none.

@@ -109,6 +109,10 @@ export interface HitSpec {
   stun?: number;
   /** sets them alight */
   fire?: boolean;
+  /** only these groups' units feel it (round 63: a lich's fireball spares its raised dead) */
+  groups?: readonly number[];
+  /** these groups' units don't feel it */
+  spare?: readonly number[];
 }
 
 /** A throw's options: `stun`, seconds it stays down once settled, beyond the usual getting up (up to 20). */
@@ -166,6 +170,9 @@ export interface ThrowHit {
   push?: number;
   lift?: number;
   stun?: number;
+  /** only these groups feel it, or these are spared (HitSpec) */
+  groups?: readonly number[];
+  spare?: readonly number[];
 }
 
 export interface AgentState {
@@ -760,6 +767,8 @@ export class Agents implements SimSystem {
           push: f.hit.push ?? 0,
           lift: f.hit.lift,
           stun: f.hit.stun,
+          groups: f.hit.groups,
+          spare: f.hit.spare,
           dir: sp > 1e-3 ? [f.vel[0] / sp, f.vel[1] / sp] : undefined,
         });
       }
@@ -924,7 +933,15 @@ export class Agents implements SimSystem {
       const dir = unit(h.dir);
       const axis = h.axis ? unit(h.axis) : dir;
       const cone = h.cone !== undefined ? Math.cos(((h.cone / 2) * Math.PI) / 180) : -2;
-      f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, h.fire ? 1 : 0, h.id, axis[0], axis[1], h.lift ?? 0, Math.min(Math.max(h.stun ?? 0, 0), MAX_STUN)], o);
+      // (the groups it spares ride with the fire flag: bit 0 fire, bits 1-16 a group each)
+      let spare = 0;
+      for (const g of h.spare ?? []) spare |= 1 << g;
+      if (h.groups) {
+        let only = 0;
+        for (const g of h.groups) only |= 1 << g;
+        spare |= ~only & 0xffff;
+      }
+      f.set([h.x, h.y, h.z ?? -1e9, h.radius, dir[0], dir[1], cone, h.damage ?? 0, h.push ?? 0, h.outward ? 1 : 0, (h.fire ? 1 : 0) + spare * 2, h.id, axis[0], axis[1], h.lift ?? 0, Math.min(Math.max(h.stun ?? 0, 0), MAX_STUN)], o);
     });
     this.targets.forEach((t, i) => {
       f.set([t.x, t.y, t.z, t.radius ?? 0.5], P_TARGETS + i * 4);
