@@ -359,6 +359,7 @@ user) · `deferred` (agreed for later).
 | Q18 | Frame rate is low on the phone | M | open: phones get the `high` tier like desktop; compare `?q=low` on the device and the perf overlay, then pick a default tier for phones |
 | Q19 | Loose ground lying higher than the rock beside it should erode/collapse down to the rock's top or below (Q17's sheet sides are a fine stopgap) | M | open |
 | Q21 | A column's intervals are capped at its chunk's slot count (4, or the chunk's busiest column at load + 2; the sandbox 14; at most 16; never grown at runtime). A full column can't open another gap: the beam's bore skips it, a meteor's crater drops the overhang over its bowl (`edit.wgsl`'s upper piece), others extend the top interval. Raise it per world with `WorldDef.slots`. Later: repack chunks that fill up (grow K), or merge the lowest gap | M | open (round 62, from the hoverbike session) |
+| Q22 | Weird column artifacts, sometimes after storms or explosions (round 62, the user: "I kind of think look cool"). Not reproduced yet; suspects: columns left full by blasts (Q21: an overhang dropped, a gap that can't open), thin slices the field mesh draws as spikes, or the Q16b sediment spires. Needs a screenshot or the place it happened | M | open |
 
 ## Round 22 (2026-10-11, session 4)
 

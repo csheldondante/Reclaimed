@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 62 (session 5) — caves and overhangs: keep them
+
+- The user, on the overhangs: "the overhangs look so cool". They made a
+  deep crater with caves by accident, "like the procedural map I suggested
+  with subterranean rivers or magma tubes", and overgrown "it looks
+  amazing… like an artist made it". Caves, overhangs and tubes are a look
+  to keep and build on (W1's tunnels and underground rivers).
+- It'll be better still with the Townscaper-style settlements and ruins;
+  overgrown ruins look cool (G14, API5, API6).
+- Column artifacts after storms or explosions: they kind of like them, but
+  they're a bug to find (BACKLOG Q22).
+- The perf branch (round 61) looked good on the phone: merged into grids
+  (5e24d24).
+
 ## 2026-10-23 — round 61 (session 5, `perf`) — a perf branch; the mesh by default; culling
 
 - "Well make a branch and profile and experiment then merge in clear wins.
