@@ -4,6 +4,7 @@
 import { Ambience } from './audio/ambience';
 import { initGpu, showFatal, UnsupportedError } from './gpu/device';
 import { Profiler } from './gpu/profiler';
+import { AtlasView } from './scenes/atlas-view';
 import { LevelScene } from './scenes/level';
 import { MenuScene } from './scenes/menu';
 import type { MapData } from './world/mapgen';
@@ -75,8 +76,9 @@ async function main() {
     show(menu);
   };
 
-  // ?skipmenu=1 goes straight to the level (debugging, scripted tests)
-  if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
+  // ?atlas=view: the atlas viewer (round 67); ?skipmenu=1 goes straight to the level (debugging, scripted tests)
+  if (params.get('atlas') === 'view') show(await AtlasView.create(host));
+  else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
 
   let last = performance.now();

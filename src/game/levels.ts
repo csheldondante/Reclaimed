@@ -36,6 +36,10 @@ export interface LevelDef {
   zMax?: number;
   /** the world is a window onto land without an edge (round 66: scenes/streamer.ts) */
   stream?: boolean;
+  /** its land comes from an atlas made when it starts (round 67: atlas/atlas.ts; ?a.<param>=, ?at=x,y) */
+  atlas?: boolean;
+  /** the field mesh's room a chunk, times its default (rough land) */
+  meshRoom?: number;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -80,6 +84,21 @@ export const LEVELS: LevelDef[] = [
     hidden: true,
     zMax: 96,
     stream: true,
+  },
+  {
+    id: 'atlas',
+    name: 'The Atlas World',
+    blurb: 'A whole world made at once — continents, countries, faults — streamed in around you.',
+    model: 'sign',
+    generate: () => {
+      throw new Error('the atlas level is made by LevelScene.create (its atlas is built on the GPU first)');
+    },
+    sandbox: true,
+    hidden: true,
+    zMax: 160,
+    stream: true,
+    atlas: true,
+    meshRoom: 2.5,
   },
   {
     id: 'sandbox',

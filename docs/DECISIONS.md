@@ -3,6 +3,43 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 67 (session 5, `atlas`) — a world map to stream from
+
+The user's idea (in their words, shortened): a coarse map made first —
+Voronoi and fractal noise as the base, ridge noise for mountains, a bank of
+tiling scalar textures (wallpaper groups, fractals, cellular automata, …)
+mixed into the heightmaps; SDF and JFA for blending; land and water from
+thresholded fractal noise, SDF blends for drops, mountains, craters,
+ravines; faults from two thresholds on one noise with mountains blended in
+by SDF; GPU flood fill to partition into regions, borders as cliffs or
+ravines; sand and plants tied to the region and to continent and
+latitude; a deep cave layer from dual-threshold noise; weird maps (flesh
+with vasculature); partitions at the macro scale may become rooms. Then
+the chunks are streamed from it with the region's parameters and its
+boundary conditions. Asked, and answered:
+- Finite or endless: "Finite although you could blend with SDF to do
+  infinite it seems unnecessary". Defaults taken: finite and wrapped (a
+  torus), 16k cells across, a macro texel to 8.
+- Height: "If we load chunks vertically too (most will be empty air) we can
+  just go arbitrarily high right? I'm ok bumping but I don't think we need
+  to. Just use a sparse vertical hash for the chunks". (Columns are already
+  sparse in z — a few intervals each — so air costs nothing; what caps
+  height is a handful of 8- and 16-bit packings at 256: BACKLOG Q38. The
+  atlas level uses 160.)
+- Where: "an atlas branch off is stream although once I validate this all
+  we may merge I hope you are keeping track of our threads between town
+  building and streaming and world map" (BRANCHES: the stacked threads).
+- Rooms: "I would just use course rules for now. Land regions can be CC to
+  find continents and islands. Then islands can be partitioned and the
+  faults (that was in fact what I was suggesting we do with dual
+  thresholds) and voronoi regions can make the borders. We can adjust later
+  with logical requests for key door mechanics etc. Don't forget that we
+  also have a simulation layer already built if we want sediment and
+  erosion etc. that is fine to do passes of over the overall terrain and we
+  will see about using it for streaming (ideally we can cache and keep
+  latency interactive)" (Q37, Q39).
+- "So yes happy with your defaults please go ahead and build!"
+
 ## 2026-10-24 — round 66 (session 5, `stream`) — a streamed world
 
 - "Do workers actually build or just a plan mode? Do we need to add

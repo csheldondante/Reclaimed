@@ -29,7 +29,8 @@ import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
-import { Streamer, shiftGrid } from './streamer';
+import { Streamer, shiftGrid, REGION } from './streamer';
+import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import type { MapData } from '../world/mapgen';
 import { columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
@@ -46,6 +47,8 @@ export interface LevelOptions {
   free?: boolean;
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
+  /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number] };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -154,7 +157,7 @@ export class LevelScene implements Scene {
   ) {
     const dims = { w: 256, h: 256, zMax: level.zMax ?? 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
-    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true);
+    this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
     // (grids, the rendering branch, opens in free play; ?mode=story for the story's rules)
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
     this.core.globals.story = this.story;
@@ -169,13 +172,31 @@ export class LevelScene implements Scene {
     if (p.get('season')) this.core.globals.season = Number(p.get('season')) % 1;
     if (p.get('year')) this.core.yearLength = Math.max(10, Number(p.get('year')));
     this.core.camera.target = [dims.w * 0.55, dims.h * ROW_H * 0.5, 14];
+    if (opts.atlas) {
+      // (the atlas's land stands higher: look at the ground in the middle)
+      const c = (dims.h / 2) * dims.w + dims.w / 2;
+      this.core.camera.target = [dims.w / 2, dims.h * ROW_H * 0.5, this.core.map.surface[c]];
+    }
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
   }
 
   /** Builds the level and settles it (rivers, slopes) before returning. */
   static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void, opts: LevelOptions = {}): Promise<LevelScene> {
-    const s = new LevelScene(host, audio, perf, levelById(levelId), onExit, opts);
+    const level = levelById(levelId);
+    if (level.atlas && !opts.map) {
+      // the world's atlas first (atlas/atlas.ts), then the window onto it where we start (?at=x,y cells, or its own spawn)
+      const zMax = level.zMax ?? 64;
+      const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params, { zTop: zMax - 14 }));
+      if (atlas.p.zTop > zMax - 2) throw new Error(`the atlas reaches ${atlas.p.zTop}, above the level's zMax ${zMax}`);
+      const at = host.params.get('at');
+      const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
+      const W = 256;
+      const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
+      const map = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1]);
+      opts = { ...opts, atlas: { atlas, map, origin } };
+    }
+    const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
     // litter, fallen leaves) accumulates fast so the level opens with it lying about.
     // A saved map was settled when it was saved: a short prime only.
@@ -566,14 +587,17 @@ export class LevelScene implements Scene {
       scene: this,
     };
     if (this.level.stream) {
-      this.stream = new Streamer(core);
+      const a = this.opts.atlas;
+      this.stream = a
+        ? new Streamer(core, { region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h), wrap: [a.atlas.p.cols, a.atlas.p.rows] }, a.origin)
+        : new Streamer(core);
       this.stream.onSlide.push((dx, dy) => {
         // what the level keeps in window coordinates
         shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
         this.hoverWorld = null;
       });
     }
-    (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream });
+    (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream, atlas: this.opts.atlas?.atlas });
     core.places.groundAt = this.heightAt;
     // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)
     const plan = host.params.get('plan');

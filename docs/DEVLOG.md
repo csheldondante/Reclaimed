@@ -4020,3 +4020,50 @@ regions thawed; the sim ticks on; panning south 153 cells: three slides on
 their own, the camera kept in the window's middle. A slide: 35–45 ms (one
 frame). Frozen regions ~1.4 MB each in memory (Q34). The other tests on
 this branch: towntest 6/6, buildtest 4/4, carrytest 8/8, brushtest 5/5.
+
+## Round 67 — the atlas: a world map the stream draws from (atlas)
+
+The user's design (DECISIONS round 67): a coarse map first — continents,
+connected components, a partition by Voronoi cells and faults (two
+thresholds on one noise), SDF/JFA blending at the borders, patterns from a
+bank of tiling fields, climate by latitude, caves — and the chunks streamed
+from it. Built as they described it, on the GPU (`src/atlas/`; ARCHITECTURE
+"The atlas"). Choices made along the way, and why:
+- A torus, so the world has no edge and every noise is periodic (an
+  integer lattice period an octave) — no seams at the wrap.
+- The macro maps hold only what can't be known locally (a texel's region,
+  the region across its nearest border, the distances to that border and
+  to the coast); the ground itself is a function of position over them,
+  evaluated wherever it's needed. So the whole-world view, a close-up and
+  the streamed columns are one function and can't disagree.
+- The partition's cells are bent by two octaves of warp at the cells' own
+  scale: unwarped, the regions read as paving (straight Voronoi edges).
+- Kinds by province (a coarser partition): 85% of a province's regions take
+  its kind, so a country reads as one; at 70% the map was a patchwork.
+- The region across a border is taken from the four texels a point blends
+  (when one differs), not the nearest texel's: past a corner the nearest
+  texel's neighbour is a third region and the blend stepped.
+- D3D compiles were the cost of starting: the viewer's shader took 27 s
+  because the compiler inlined ground() three times (hillshade), each with
+  two copies of every region's height and the pattern switch. Now the two
+  regions are a loop with a bound it can't unroll, the pattern value comes
+  back with the height, shading is from screen derivatives: 1.8 s. All the
+  kernels compile at once (createComputePipelineAsync): ~7 s cold, cached
+  by the browser after.
+- Reaction–diffusion took 14 s as 12000 dispatches; now six steps a
+  dispatch in workgroup memory, and only for the patterns a region uses.
+- Columns of one batch waited on the last's readback (one parameter
+  buffer): each batch has its own now, a slide's four run together.
+
+Measured (`atlastest`, 5/5; n 2048, seed 1): every region one connected
+piece (7767 regions, flood fill 8 iterations a run); the borders' JFA
+against brute force at 300 texels: worst 0.59 texel, mean 0.13. Building:
+base 22 ms, three flood fills ~120–250 ms each (readbacks of the
+convergence flag), the CPU's regions 200 ms, JFA 70–80 ms each, the ground
+28 ms; kernels compile ~7 s (D3D, cold). Columns: 64² in 5 ms, 256² in
+8 ms. The atlas level: three slides east, 12 regions generated, the seam
+against the atlas's own ground at the same cells 0 (exact); a slide 120–240
+ms when its land wasn't asked for ahead, 9 ms when it was (prefetch). The
+field mesh ran out of room in 9 chunks on the atlas's rough land (holes):
+its room is a level option now (meshRoom 2.5 for the atlas: 0 full).
+streamtest 8/8, towntest 6/6, buildtest 4/4 on this branch.

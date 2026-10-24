@@ -12,7 +12,9 @@
 //    table is a page table — the chunks that left give their pages to the
 //    ones coming in;
 //  - the regions coming in are thawed from `frozen` exactly as they were
-//    left, or generated (world/streamgen.ts) the first time they're seen.
+//    left, or generated the first time they're seen, by the level's
+//    LandSource (world/streamgen.ts's noise, or the atlas: round 67), all of
+//    a slide's asked for at once.
 // Frozen regions don't tick (deferred or coarse ticks are the next step).
 // The sim waits while a slide is `busy` (only when a region coming in is
 // still being read back from its last visit).
@@ -20,11 +22,23 @@
 import { CHUNK, SLOT_WORDS, packColumn } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
-import { generateRegion } from '../world/streamgen';
+import { generateRegion, type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
 
 /** columns a side of a region: what the window slides by (whole chunks, an even number of rows) */
 export const REGION = 64;
+
+/** Where new land comes from: a region of w × h world cells from (x0, y0), y0 even. */
+export interface LandSource {
+  region(x0: number, y0: number, w: number, h: number, zMax: number): Promise<RegionLand>;
+  /** the world's size in cells when it wraps (a torus: frozen regions are kept by where they are on it) */
+  wrap?: [number, number];
+}
+
+/** round 66's land: noise of world position (world/streamgen.ts), without an edge */
+export const noiseLand = (seed = 1): LandSource => ({
+  region: async (x0, y0, w, h, zMax) => generateRegion(x0, y0, w, h, zMax, seed),
+});
 
 /** a per-column buffer: `stride` bytes a column, in `planes` w × h arrays; kept = frozen with its region */
 interface ColBuf {
@@ -62,6 +76,8 @@ export interface SlideStats {
   frozen: number;
   generated: number;
   thawed: number;
+  /** of those generated, how many were ready before the slide (prefetch) */
+  prefetched: number;
   /** the last slide: ms from start to the regions coming in written */
   lastMs: number;
 }
@@ -77,7 +93,7 @@ export class Streamer {
   busy = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, lastMs: 0 };
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy) */
   readonly onSlide: ((dx: number, dy: number) => void)[] = [];
   private bufs: ColBuf[];
@@ -90,9 +106,14 @@ export class Streamer {
 
   constructor(
     private core: WorldCore,
-    private seed = 1,
+    private source: LandSource = noiseLand(),
+    origin: [number, number] = [0, 0],
   ) {
     const { w, h } = core.dims;
+    if (origin[0] % REGION || origin[1] % REGION) throw new Error(`the window's origin must be whole regions of ${REGION}`);
+    this.origin[0] = origin[0];
+    this.origin[1] = origin[1];
+    core.globals.origin = [origin[0], origin[1]];
     const R = this.R;
     if (w % R || h % R) throw new Error(`the window (${w} × ${h}) must be whole regions of ${R}`);
     this.W = w;
@@ -164,13 +185,22 @@ export class Streamer {
     return [x + this.origin[0], y + this.origin[1]];
   }
 
-  /** Slide when the camera has come within 1¼ regions of the window's edge (one axis a call). */
+  /** land asked for ahead of a slide, by region key */
+  private pending = new Map<string, Promise<Frozen>>();
+
+  /** Slide when the camera has come within 1¼ regions of the window's edge (one axis a call);
+   *  ask for the land of the slide it's heading for once it's halfway there. */
   update(): Promise<void> | null {
     if (this.busy || !this.auto) return null;
     const [x, yw] = this.core.camera.target;
     const y = yw / ROW_H;
     const R = this.R;
     const reach = R * 0.75;
+    const near = R * 0.4;
+    if (x > this.W / 2 + near) this.prefetch(R, 0);
+    if (x < this.W / 2 - near) this.prefetch(-R, 0);
+    if (y > this.H / 2 + near) this.prefetch(0, R);
+    if (y < this.H / 2 - near) this.prefetch(0, -R);
     if (x > this.W / 2 + reach) return this.slide(R, 0);
     if (x < this.W / 2 - reach) return this.slide(-R, 0);
     if (y > this.H / 2 + reach) return this.slide(0, R);
@@ -193,7 +223,34 @@ export class Streamer {
   }
 
   private key(rx: number, ry: number): string {
+    const w = this.source.wrap;
+    if (w) {
+      const nx = w[0] / this.R;
+      const ny = w[1] / this.R;
+      rx = ((rx % nx) + nx) % nx;
+      ry = ((ry % ny) + ny) % ny;
+    }
     return `${rx},${ry}`;
+  }
+
+  /** the regions coming in with a slide of (dx, dy), as [local x, local y] corners in the window after it */
+  private enteringFor(dx: number, dy: number): [number, number][] {
+    const { W, H } = this;
+    return dx > 0 ? this.strip(W - dx, W, 0, H) : dx < 0 ? this.strip(0, -dx, 0, H) : dy > 0 ? this.strip(0, W, H - dy, H) : this.strip(0, W, 0, -dy);
+  }
+
+  /** Start making the land a slide of (dx, dy) would bring in (what's frozen needs nothing). */
+  prefetch(dx: number, dy: number): void {
+    const R = this.R;
+    for (const [lx, ly] of this.enteringFor(dx, dy)) {
+      const wx = this.origin[0] + dx + lx;
+      const wy = this.origin[1] + dy + ly;
+      const key = this.key(wx / R, wy / R);
+      if (this.frozen.has(key) || this.pending.has(key)) continue;
+      const job = this.generate(wx, wy);
+      job.catch(() => this.pending.delete(key));
+      this.pending.set(key, job);
+    }
   }
 
   /** the regions of a strip of the window (local cells x0..x1, y0..y1), as [local x, local y] corners */
@@ -213,7 +270,7 @@ export class Streamer {
     const rc = R / CHUNK;
     // what leaves (old window cells) and what comes in (new window cells)
     const leaving = dx > 0 ? this.strip(0, dx, 0, H) : dx < 0 ? this.strip(W + dx, W, 0, H) : dy > 0 ? this.strip(0, W, 0, dy) : this.strip(0, W, H + dy, H);
-    const entering = dx > 0 ? this.strip(W - dx, W, 0, H) : dx < 0 ? this.strip(0, -dx, 0, H) : dy > 0 ? this.strip(0, W, H - dy, H) : this.strip(0, W, 0, -dy);
+    const entering = this.enteringFor(dx, dy);
 
     // ---- 1. freeze what leaves: copies into one staging buffer ---------------
     const enc = dev.createCommandEncoder({ label: 'stream slide' });
@@ -335,24 +392,32 @@ export class Streamer {
     core.clearUndo();
     for (const f of this.onSlide) f(dx, dy);
 
-    // ---- 5. what comes in: thawed, or generated ----------------------------------
-    for (const [lx, ly] of entering) {
+    // ---- 5. what comes in: thawed, or generated (all of them asked for at once) ----
+    const coming = entering.map(([lx, ly]) => {
       const key = this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R);
       const got = this.frozen.get(key);
-      const f = got ? await got : this.generate(this.origin[0] + lx, this.origin[1] + ly);
       if (got) {
         this.frozen.delete(key);
         this.stats.thawed++;
-      } else this.stats.generated++;
-      this.write(f, lx, ly);
-    }
+        return got;
+      }
+      this.stats.generated++;
+      const ahead = this.pending.get(key);
+      if (ahead) {
+        this.pending.delete(key);
+        this.stats.prefetched++;
+        return ahead;
+      }
+      return this.generate(this.origin[0] + lx, this.origin[1] + ly);
+    });
+    for (let k = 0; k < entering.length; k++) this.write(await coming[k], entering[k][0], entering[k][1]);
   }
 
   /** a region's land the first time it is seen, in the frozen form */
-  private generate(x0: number, y0: number): Frozen {
+  private async generate(x0: number, y0: number): Promise<Frozen> {
     const { R, K } = this;
     const zMax = this.core.dims.zMax;
-    const land = generateRegion(x0, y0, R, R, zMax, this.seed);
+    const land = await this.source.region(x0, y0, R, R, zMax);
     const rc = R / CHUNK;
     const layers = new Uint32Array(rc * rc * this.pageSlots * SLOT_WORDS);
     for (let y = 0; y < R; y++)

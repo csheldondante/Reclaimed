@@ -31,6 +31,7 @@ worked on in parallel:
 | `perf` | `C:/Projects/Reclaimed-perf` | `npm run dev -- --port 5189` |
 | `builder` | `C:/Projects/Reclaimed-builder` | `npm run dev -- --port 5195` |
 | `stream` | `C:/Projects/Reclaimed-stream` | `npm run dev -- --port 5199` |
+| `atlas` | `C:/Projects/Reclaimed-atlas` | `npm run dev -- --port 5203` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -42,6 +43,7 @@ worked on in parallel:
 | `agents` | Units that walk, dig, carry, build, fell, flee and attack, by shared fields; a layer for editors and games (docs/AGENTS.md) | grids' engine (and places, from physics) | A1 |
 | `builder` | Terrain generation (landforms, caves, rivers), the range and mesa brushes, Townscaper-style building (instant, and planned: crews build the difference) | `agents` | W1, X4, API6 |
 | `stream` | A world without an edge (round 66): the live world a window that slides with the camera, regions out of it frozen and thawed exactly, new land generated a region at a time; later deferred or coarse ticks for what's frozen, so towns and nature grow out of sight | `builder` | Q28, Q31–Q35 |
+| `atlas` | A world map to stream from (round 67): a finite world (a torus) made on the GPU when it starts — continents, islands, a partition into regions by Voronoi cells and faults, each region a kind with its own ground, patterns from a bank (wallpaper groups, reaction–diffusion, automata, fractals), borders as cliffs, ravines, walls, terraces, beaches; caves; the streamer's columns drawn from it. `?atlas=view` the viewer, `?level=atlas` walks in | `stream` | Q33, Q36–Q43 |
 | `perf` | Profiling and experiments for phones (round 61): what's a clear win merges into `grids`; the user validates the feel on a phone | `grids` (with `agents`) | G16, Q20 |
 | `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 
@@ -139,3 +141,15 @@ building on a Townscaper-style irregular grid, felling, fleeing and
 attacking (docs/AGENTS.md). Meant for many editors and games. Merges from
 `grids` for the engine. Not on Pages yet: the workflow lists its branches
 and must be the same on every branch.
+
+## Threads that stack (round 67)
+
+Three threads are built one on the other and are meant to merge together
+once the user has tried them: `builder` (the town: plan mode, workers) →
+`stream` (the window that slides, frozen regions) → `atlas` (the world map
+the stream draws from). Each branch has everything below it. What crosses
+them: the town doesn't follow a slide yet (Q32) — in the streamed and atlas
+levels the town tool works only until the first slide; the atlas's regions
+are where rooms and key-and-door rules would hang (Q39); frozen regions
+ticking (Q31) is the stream's next step and applies to the atlas level as
+it is.

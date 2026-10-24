@@ -428,6 +428,48 @@ particle burst queue (now kept past 64 a tick, not dropped), and
 `windBlows` (wind.ts, a SimSystem just before the windfield: blows, strokes
 and wakes, merged past 256).
 
+## The atlas (round 67, branch `atlas`)
+
+A finite world's map, made on the GPU when the world starts, that the
+streamer's columns are drawn from (`src/atlas/`). The world is a torus of
+`cols` × `rows` cells (16384 × 18944 by default: it wraps); the macro grid
+is `n` × `n` texels over it (2048: a texel ~8 cells).
+- `build.wgsl`, the macro passes: continents (warped periodic fbm above a
+  threshold) → their connected components (GPU flood fill: hook roots onto
+  the smaller, pointer jumping, to a fixed point) → islands and lakes too
+  small flipped → the partition (Voronoi cells, bent by two octaves of warp,
+  split by the faults: the strip between two thresholds of one noise is its
+  own region; provinces, a coarser partition, for the kinds) → regions, the
+  components of equal keys → (CPU, `atlas.ts`) dense ids, tiny regions
+  merged into the neighbour they share most border with, the region table
+  (`regions.ts`: kinds by rules from land or water, fault strip, latitude,
+  province, size; each a ground, a pattern, a border profile, materials) →
+  JFA from the regions' borders (distance, the region across) and from the
+  coast (signed distance) → the ground of every texel (`hmac`).
+- `compose.wgsl`, the ground at any world point: the regions on either side
+  of the nearest border and the distance to it (bilinear, below the texel),
+  each region's own height (noise at its scale, ridges, its pattern,
+  terraces; land rises from its coast, water deepens from it), met in the
+  border's profile (smooth, cliff, ravine, wall, terraces; on a coast beach
+  or sea cliff), chosen by the region with the higher priority (on a coast,
+  the land). Every profile is odd in the distance so both sides agree.
+- `patterns.wgsl`, the pattern bank: wallpaper-group folds (p6m, p4m, p6,
+  p3, a weave), Truchet, cracks, craters, dunes, veins, a kaleidoscopic
+  fractal, basalt columns; reaction–diffusion (coral, maze) and a cave
+  automaton simulated once into tiles (`patsim.wgsl`).
+- `columns.wgsl`: a batch of columns from the ground — slope, cover at its
+  angle of repose, sand where wet, snow where cold, the region's materials
+  and its accent, caves (two dual-threshold noises crossing, a third's
+  peaks), water, moisture, plants. `Atlas.regionLand` turns them into
+  intervals (world/streamgen.ts RegionLand); the streamer's `LandSource`.
+- One function, three users: the viewer (`?atlas=view`,
+  `scenes/atlas-view.ts`) draws `ground()` per pixel, the macro pass per
+  texel, the columns per cell.
+- `?level=atlas` (LevelDef.atlas): LevelScene.create builds the atlas,
+  picks a start (`?at=x,y`, or `Atlas.spawn`), makes the window from it
+  and gives the Streamer the atlas as its LandSource (wrapping round the
+  torus). `?a.<param>=` sets any AtlasParams.
+
 ## The streamed world (round 66, branch `stream`)
 
 `?level=stream` (LevelDef.stream): the live world is a 256² window onto
@@ -458,6 +500,10 @@ its edge:
 - The sim waits (`busy`) only while a region coming in is still being read
   back from its last visit. Frozen regions don't tick (BACKLOG Q31).
 - Not yet moved by a slide: the town, units, physics bodies, places (Q32).
+- Where new land comes from is a `LandSource` (round 67): streamgen's noise
+  (`noiseLand`), or the atlas. A slide asks for all its regions at once;
+  `prefetch` asks for the next slide's when the camera is 0.4 regions off
+  the middle (land made ahead is kept in `pending`).
 
 ## The town (round 65, branch `builder`)
 

@@ -146,6 +146,8 @@ export class Renderer {
     meshByDefault = false,
     /** the sun's shadow map's side (texels; quality `shadowSize`): it covers the chunks near the view */
     shadowSize = SHADOW_SIZE,
+    /** the field mesh's room a chunk, times its default */
+    meshRoom = 1,
   ) {
     const N = world.cells;
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
@@ -170,7 +172,7 @@ export class Renderer {
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
-    this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault);
+    this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom);
     // (a texel when there's no shadow pass: the draw shaders still bind one)
     const ss = this.fieldMesh.on ? shadowSize : 1;
     this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });

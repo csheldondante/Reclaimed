@@ -89,3 +89,20 @@ export function ignoreTeardown(e: unknown): void {
   if (e instanceof DOMException && e.name === 'AbortError') return;
   throw e;
 }
+
+/** makeCompute, compiled off the main thread (createComputePipelineAsync): compile many at once with Promise.all */
+export async function makeComputeAsync(
+  device: GPUDevice,
+  label: string,
+  module: GPUShaderModule,
+  spec: BindSpec,
+  entryPoint = 'main',
+): Promise<ComputeKernel> {
+  const layout = makeLayout(device, label, spec, GPUShaderStage.COMPUTE);
+  const pipeline = await device.createComputePipelineAsync({
+    label,
+    layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+    compute: { module, entryPoint },
+  });
+  return { pipeline, layout };
+}

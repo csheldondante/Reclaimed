@@ -71,6 +71,8 @@ export class FieldMesh {
     private world: WorldGpu,
     private profiler: Profiler,
     byDefault = false,
+    /** room a chunk, times the default */
+    room = 1,
   ) {
     const q = new URLSearchParams(location.search);
     const arg = q.get('mesh');
@@ -92,7 +94,7 @@ export class FieldMesh {
     // room per chunk: ~1.3k vertices per 1000 columns at spacing 1 (~5k at
     // 0.5; DEVLOG 2026-10-22), a chunk ~1.2k columns, four times that for
     // cliffs and caves
-    const vertsPer = Math.ceil(6144 / (h * h) / 64) * 64;
+    const vertsPer = Math.ceil((6144 * room) / (h * h) / 64) * 64;
     const indicesPer = vertsPer * 6;
     const chunks = this.nx * this.ny;
     const ab = new ArrayBuffer(REGION_BYTES);
