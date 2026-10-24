@@ -29,6 +29,7 @@ worked on in parallel:
 | `physics` | `C:/Projects/Reclaimed-physics` | `npm run dev -- --port 5181` |
 | `agents` | `C:/Projects/Reclaimed-agents` | `npm run dev -- --port 5185` |
 | `perf` | `C:/Projects/Reclaimed-perf` | `npm run dev -- --port 5189` |
+| `builder` | `C:/Projects/Reclaimed-builder` | `npm run dev -- --port 5195` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -38,6 +39,7 @@ worked on in parallel:
 | `sandbox` | World editor: place and modify prefabs, raise mountains, shape the land with wind, rain, meteors, volcanoes | the sandbox brushes (edit.wgsl), stampGrid models, bedrock uplift | X4 |
 | `grids` | The map engine generalised: intersecting grids (a hex nature grid of material intervals, a rectangular voxel grid for structures, an irregular grid for WFC buildings) that read and write each other's data | the sim systems and their contracts | X5 |
 | `agents` | Units that walk, dig, carry, build, fell, flee and attack, by shared fields; a layer for editors and games (docs/AGENTS.md) | grids' engine (and places, from physics) | A1 |
+| `builder` | Terrain generation (landforms, caves, rivers), the range and mesa brushes, Townscaper-style building (instant, and planned: crews build the difference) | `agents` | W1, X4, API6 |
 | `perf` | Profiling and experiments for phones (round 61): what's a clear win merges into `grids`; the user validates the feel on a phone | `grids` (with `agents`) | G16, Q20 |
 | `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 

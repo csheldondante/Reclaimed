@@ -3,6 +3,30 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 64 (session 5, `builder`) — terrain generation, brushes, Townscaper building
+
+- "I think it's time to improve the initial terrain generation. Then I
+  think let's add the building mode." A new branch, `builder`, off agents.
+- Generation, first: natural landforms (mountain ranges with ridges, mesas
+  and buttes with layered strata and cliffs, canyons, hills, valleys);
+  underground caves, tubes and rivers (like the crater accident: overhangs
+  and cave mouths that overgrow); rivers and lakes carved into the land so
+  the water settles from the start.
+- "I don't actually love the sandbox tools right now. I think I want to be
+  able to paint mountain ranges and mesas and have them rise from the
+  ground relatively quickly under the brush." Feel: drag a line and the
+  range rises along it over 1-2 s (noisy peaks and spurs); the mesa brush:
+  paint an area, it rises flat-topped with cliff sides and strata; loose
+  ground slides off as it rises. Painting should be more intuitive, "and
+  that's one reason I want a townscraper inspired grid and building
+  system". It has to play nice with terrain and dust.
+- Building: you place, it appears (click cells on the irregular grid; the
+  walls, roofs, stairs and arches pick themselves from the neighbours;
+  pieces are real matter: dust drifts on them, they bury and crumble).
+- And a plan mode: "it takes the delta of the finished thing you build and
+  the current state then workers build it and use resources" — the crews
+  carry bricks and logs from the piles and build the difference.
+
 ## 2026-10-24 — round 63 (session 5, `agents`) — what the agents do next: carry and throw, then dig and fell
 
 - "I think digging and chopping trees and maybe making them into logs or
