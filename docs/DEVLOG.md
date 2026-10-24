@@ -4098,3 +4098,50 @@ Left: the strips that come in haven't grown as the ground in the window has
 Measured: every slide while panning was asked for ahead (prefetched 8 of 8
 in every run), 10–24 ms each; atlastest 5/5 (the seam against the atlas's
 own ground 0), streamtest 8/8.
+
+## Round 69 — forms: what stands on the ground and what's cut into it (atlas)
+
+The user asked for more variety, playing with vertical and horizontal space:
+holes to rivers and lava underground, columns of stone, near-vertical cliffs
+with caves in their walls, vasculature, symmetric curving spires, and a
+general generator (crystal spires, spiralling spires, angled mesas). The
+columns already hold up to 16 intervals each, so none of it needs a new
+representation, only a generator that makes more than a height
+(forms.wgsl; ARCHITECTURE "The atlas"):
+- one parameterised solid covers spires, towers, hoodoos, buttes, crystals
+  and seracs: a profile up its height, a lobed or polygonal section that
+  twists, an axis that bends over or a top that tilts, hollow or not, a cap
+  of another material; arches; networks of tubes (meandering or branching)
+  as tunnels with skylights or as walled vessels; alcoves in cliff faces;
+- each column is marched up as signed values, so surfaces lie between
+  samples where the value crosses zero: tops and walls stay fractional as
+  the world keeps them, not stepped to whole cells;
+- new kinds: spires, escarpment (65–90 over the sea, cliffs all round,
+  alcoves), lavafield (lava tubes with skylights, obsidian needles),
+  cenotes (water under skylights), crystals; forms added to karst (towers,
+  sinkholes), mesa (tilted buttes, arches), badlands (hoodoos with stone
+  caps), range and highlands (alcoves, needles), glacier (seracs), basalt
+  and rift (lava tubes), craters (crystal clusters), kaleido (twisting lobed
+  spires), coral (vessel networks, branches), flesh and veins (vessels).
+  New materials flesh, coral, obsidian.
+- Lava set in the skylights before the level opened (it cools in ~25 s at
+  three deep): springs keep it topped up and molten (a world texture: the
+  lava pass was at its 8 storage buffers).
+- Physics, the user's way ("if you want it to stand make a stronger
+  material"): the ground is terrain; forms of weaker materials are judged
+  by the integrity system as they arrive. Sandstone and flesh became
+  strength 1: as ground they made whole regions one structure, and judging
+  a strip of it froze the page (the flesh tour hung).
+- What broke on the way: a crystal cluster's column ran past 16 runs (now
+  24, packed in 8 bytes); the K limit's loop never ended when the two
+  intervals it filled between were different materials (now the closest
+  pair become one); columns may hold K − headroom (12), or the chunk grows
+  and the streamer refuses it; the whole first window in one dispatch reset
+  the GPU (tiles of 64); six chunks of alcoves ran out of mesh room (4, was
+  2.5).
+
+Measured: a 64² batch 13–26 ms (crystals: 85 forms, at most 12 runs a
+column); the first 256² window 20 ms; slides 6–9 ms prefetched; at the
+crystal field 27 pieces broke free on arrival and came to rest (an
+integrity pass ~10 ms); atlastest 5/5, streamtest 8/8. Next: the window
+slides in z (the user's choice) so cliffs can be taller than a window.

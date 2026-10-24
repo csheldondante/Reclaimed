@@ -191,18 +191,22 @@ try {
     const t0 = performance.now();
     const r = await a.columns(c[0] - 32, c[1] - 32, 64, 64);
     const ms = performance.now() - t0;
-    let caves = 0;
+    // (columns with air between two runs: caves, tunnels, overhangs, arches)
+    let layered = 0;
     let lo = 1e9;
     let hi = -1e9;
     for (let i = 0; i < 64 * 64; i++) {
       const o = i * 12;
       lo = Math.min(lo, r.f[o]);
       hi = Math.max(hi, r.f[o]);
-      if (r.f[o + 7] > r.f[o + 6]) caves++;
+      for (let k = 1; k < r.u[o + 9]; k++) if (r.run(i, k).z0 > r.run(i, k - 1).z1 + 0.01) {
+        layered++;
+        break;
+      }
     }
     const t1 = performance.now();
     await a.columns(0, 0, 256, 256);
-    return { ms: +ms.toFixed(1), window256ms: +(performance.now() - t1).toFixed(1), lo: +lo.toFixed(1), hi: +hi.toFixed(1), caveColumns: caves };
+    return { ms: +ms.toFixed(1), window256ms: +(performance.now() - t1).toFixed(1), lo: +lo.toFixed(1), hi: +hi.toFixed(1), layered, forms: r.forms };
   }, spot.cell);
   check('a region of columns from the atlas', cols.hi > cols.lo && cols.ms < 500, cols);
   await page.close();

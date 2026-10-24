@@ -156,6 +156,10 @@ export class WorldGpu {
   /** derived by the surface pass: xyz the granular intervals beneath the top one in the run on top (bottom first, packed mat·1000 + depth), w the run's base z */
   readonly strata: GPUTexture;
   readonly strataView: GPUTextureView;
+  /** lava springs (round 69, the atlas's lava tubes; lava.wgsl depth): x the depth of lava a column is
+   *  kept at, and kept molten (0: none) — what's fed from below keeps flowing */
+  readonly lavaSpring: GPUTexture;
+  readonly lavaSpringView: GPUTextureView;
   /** ground shaken (layerpull.wgsl writes, sediment reads): x the tick it was shaken, y how hard (0..1): loose ground there slips at a lower angle for a while */
   readonly shake: GPUTexture;
   readonly shakeView: GPUTextureView;
@@ -245,6 +249,7 @@ export class WorldGpu {
     this.lava = this.buf('lava', N * 16, S);
     this.lavaNext = this.buf('lavaNext', N * 16, S);
     this.lavaFlux = this.buf('lavaFlux', N * 24, S);
+    if (map.lava) device.queue.writeBuffer(this.lava, 0, map.lava);
     device.queue.writeBuffer(this.oilStored, 0, map.oilStored);
 
     this.contam = this.buf('contam', N * 8, S);
@@ -317,6 +322,14 @@ export class WorldGpu {
     this.strataView = this.strata.createView();
     this.shake = device.createTexture({ label: 'shake', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.shake);
+    this.lavaSpring = device.createTexture({ label: 'lavaSpring', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.lavaSpring);
+    this.lavaSpringView = this.lavaSpring.createView();
+    if (map.lavaSpring) {
+      const t = new Float32Array(N * 4);
+      for (let k = 0; k < N; k++) t[k * 4] = map.lavaSpring[k];
+      device.queue.writeTexture({ texture: this.lavaSpring }, t, { bytesPerRow: this.w * 16 }, dsize);
+    }
     this.shakeView = this.shake.createView();
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
     this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });

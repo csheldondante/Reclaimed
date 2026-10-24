@@ -29,10 +29,10 @@ import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
-import { Streamer, shiftGrid, REGION } from './streamer';
+import { Streamer, shiftGrid, REGION, boxOf } from './streamer';
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import type { MapData } from '../world/mapgen';
-import { columnSlots, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
+import { columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -53,6 +53,8 @@ export interface LevelOptions {
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
 const SANDBOX_K = 14;
+/** the atlas's columns: what a sandbox chunk holds less its headroom (more and the chunk would grow: a streamed world's chunks are all one K) */
+const ATLAS_COL_K = SANDBOX_K - K_HEADROOM;
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
 
 export class LevelScene implements Scene {
@@ -195,7 +197,7 @@ export class LevelScene implements Scene {
       const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
       const W = 256;
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
-      const map = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1]);
+      const map = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K);
       opts = { ...opts, atlas: { atlas, map, origin } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
@@ -592,7 +594,7 @@ export class LevelScene implements Scene {
     if (this.level.stream) {
       const a = this.opts.atlas;
       this.stream = a
-        ? new Streamer(core, { region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h), wrap: [a.atlas.p.cols, a.atlas.p.rows] }, a.origin)
+        ? new Streamer(core, { region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, ATLAS_COL_K), wrap: [a.atlas.p.cols, a.atlas.p.rows] }, a.origin)
         : new Streamer(core);
       this.stream.onSlide.push((dx, dy) => {
         // what the level keeps in window coordinates
@@ -601,6 +603,19 @@ export class LevelScene implements Scene {
         // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps)
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2);
       });
+      // (round 69: the atlas's forms of a weak material are judged when they come in, like anything
+      // built — what can't stand falls; the first window's, region by region)
+      const integ = this.integrity;
+      if (a && integ) {
+        this.stream.onArrive.push((x0, y0, x1, y1) => integ.markBox(x0, y0, x1, y1));
+        const m = a.map.structural;
+        if (m)
+          for (let y = 0; y < dims.h; y += REGION)
+            for (let x = 0; x < dims.w; x += REGION) {
+              const b = boxOf(m, dims.w, x, y, REGION, REGION);
+              if (b) integ.markBox(...b);
+            }
+      }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream, atlas: this.opts.atlas?.atlas });
     core.places.groundAt = this.heightAt;

@@ -59,6 +59,12 @@ export interface RegionLand {
   vegetation: Float32Array;
   /** two per column: soil-bound, dissolved */
   contam: Float32Array;
+  /** molten rock (world-gpu's lava, four per column), if any (round 69: the atlas's lava tubes) */
+  lava?: Float32Array;
+  /** lava springs (world-gpu's lavaSpring x), if any */
+  lavaSpring?: Float32Array;
+  /** columns with something the structural system should judge (the atlas's forms of a weak material) */
+  structural?: Uint8Array;
 }
 
 /**

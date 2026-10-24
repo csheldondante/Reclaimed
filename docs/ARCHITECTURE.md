@@ -457,11 +457,36 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   p3, a weave), Truchet, cracks, craters, dunes, veins, a kaleidoscopic
   fractal, basalt columns; reaction–diffusion (coral, maze) and a cave
   automaton simulated once into tiles (`patsim.wgsl`).
-- `columns.wgsl`: a batch of columns from the ground — slope, cover at its
-  angle of repose, sand where wet, snow where cold, the region's materials
-  and its accent, caves (two dual-threshold noises crossing, a third's
-  peaks), water, moisture, plants. `Atlas.regionLand` turns them into
-  intervals (world/streamgen.ts RegionLand); the streamer's `LandSource`.
+- `columns.wgsl`: the ground of a batch of columns (and a margin), and the
+  caves as a signed field (two dual-threshold noises crossing, a third's
+  peaks).
+- `forms.wgsl` (round 69): what stands on the ground and what's cut into
+  it. Each region has up to two forms (12 words each after its 24, regions.ts
+  `FormDef`): SPIRE (a solid of revolution on a jittered lattice of one of
+  seven spacings: a profile up its height, round / n-lobed / polygonal
+  section, twist, a bending axis or a tilted top, hollow, a cap material —
+  spires, towers, hoodoos, buttes, crystals, seracs), ARCH, NETWORK (tubes
+  along a meandering zero set or cellular edges: tunnels with skylights
+  holding water or lava, or walled vessels arching in and out of the
+  ground), ALCOVE (openings in a cliff's face, on the high side of a border).
+  `formSeed` places a batch's lattice forms (48 cells round it);
+  `colFinish` finishes each column (cover, snow, accent, water, plants) and
+  marches it up as signed values — ground, minus caves and carves, plus
+  forms — writing runs where the value crosses zero (fractional), up to 24
+  a column, each marked form or ground. `landFrom` merges them into
+  intervals, at most K − headroom a column (closest neighbours made one past
+  that: `Atlas.gapsFilled`), and a mask of columns holding a form of a weak
+  material. Batches are 64² (the first window in tiles: one dispatch of
+  the whole window trips the GPU's watchdog where forms are thick).
+- Lava in the tubes: `lavaSpring`, a world texture (lava.wgsl's depth pass
+  is at its 8 storage buffers): a column's lava is topped up to its depth
+  and kept molten; what spills runs off and sets. Kept with its region by
+  the streamer.
+- Physics of forms: the ground is terrain (strength-1 materials: stone,
+  sandstone, basalt, obsidian, flesh); forms of weaker ones (crystal, ice,
+  coral) are judged by the integrity system when they arrive
+  (`Streamer.onArrive` with the box round the mask; the first window region
+  by region) — what can't stand breaks free and falls.
 - One function, three users: the viewer (`?atlas=view`,
   `scenes/atlas-view.ts`) draws `ground()` per pixel, the macro pass per
   texel, the columns per cell.

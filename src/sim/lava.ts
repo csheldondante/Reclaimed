@@ -82,6 +82,7 @@ export class LavaSystem implements SimSystem {
       23: this.spill.createView(),
       24: this.spillNext.createView(),
       29: world.levelsView,
+      30: world.lavaSpringView,
     };
     const kernel = (name: string, parts: string[], spec: BindSpec, entry = 'main', over: Record<number, GPUBuffer | GPUTextureView> = {}) => {
       const all: BindSpec = { 0: 'uniform', 2: 'uniform', ...spec };
@@ -96,7 +97,7 @@ export class LavaSystem implements SimSystem {
       5: world.lavaFlux,
     });
     const parts = [commonWgsl, layersWgsl, materialsWgsl, lavaWgsl];
-    kernel('lava-depth', parts, { 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 12: 'rw', 13: 'rw', 22: 'uniform', 23: 'tex', 24: 'stex', 29: 'tex' }, 'depth');
+    kernel('lava-depth', parts, { 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 12: 'rw', 13: 'rw', 22: 'uniform', 23: 'tex', 24: 'stex', 29: 'tex', 30: 'tex' }, 'depth');
     kernel('lava-prep', parts, { 3: 'read', 8: 'rw', 9: 'rw' }, 'prep');
   }
 

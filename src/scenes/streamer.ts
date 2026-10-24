@@ -62,6 +62,8 @@ interface ColTex {
 
 /** a region as it was left */
 interface Frozen {
+  /** (generated only) the box (region cells) round what the structural system should judge */
+  judge?: [number, number, number, number];
   /** its chunks' pages, chunk by chunk (row-major in the region) */
   layers: Uint32Array;
   /** each kept buffer's columns: per plane, REGION rows of REGION × stride bytes */
@@ -96,6 +98,8 @@ export class Streamer {
   readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy) */
   readonly onSlide: ((dx: number, dy: number) => void)[] = [];
+  /** called when land comes into the window that the structural system should judge: the box (window cells) round it */
+  readonly onArrive: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
   private bufs: ColBuf[];
   private texs: ColTex[];
   private scratch: GPUBuffer;
@@ -161,6 +165,7 @@ export class Streamer {
     const none: ColTex['fill'] = [-1, 0, 0, 0];
     this.texs = [
       tx('shake', true),
+      tx('lavaSpring', true),
       tx('drift', false),
       tx('air', false),
       tx('strata', false),
@@ -437,7 +442,15 @@ export class Streamer {
       contam: bytes(land.contam),
       petals: bytes(new Float32Array(R * R).fill(1)),
     };
-    return { layers, bufs, texs: {}, surface: land.surface };
+    if (land.lava) bufs.lava = bytes(land.lava);
+    const texs: Record<string, Float32Array> = {};
+    const judge = land.structural ? boxOf(land.structural, R) : undefined;
+    if (land.lavaSpring) {
+      const t = new Float32Array(R * R * 4);
+      for (let k = 0; k < R * R; k++) t[k * 4] = land.lavaSpring[k];
+      texs.lavaSpring = t;
+    }
+    return { layers, bufs, texs, surface: land.surface, judge };
   }
 
   /** write a region into the window at local cell (lx, ly) */
@@ -479,6 +492,7 @@ export class Streamer {
     }
     const surf = core.map.surface;
     for (let r = 0; r < R; r++) surf.set(f.surface.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
+    if (f.judge) for (const cb of this.onArrive) cb(lx + f.judge[0], ly + f.judge[1], lx + f.judge[2], ly + f.judge[3]);
   }
 
   /** new(x, y) = old(x + dx, y + dy), per plane */
@@ -517,6 +531,23 @@ export class Streamer {
 }
 
 const align256 = (n: number) => Math.ceil(n / 256) * 256;
+
+/** the box (cells, x1 y1 past the end) round the set cells of a w-wide mask, with a margin of 2; none if none */
+export function boxOf(mask: Uint8Array, w: number, x0 = 0, y0 = 0, bw = w, bh = mask.length / w): [number, number, number, number] | undefined {
+  let lx = 1e9;
+  let ly = 1e9;
+  let hx = -1;
+  let hy = -1;
+  for (let y = y0; y < y0 + bh; y++)
+    for (let x = x0; x < x0 + bw; x++)
+      if (mask[y * w + x]) {
+        lx = Math.min(lx, x);
+        ly = Math.min(ly, y);
+        hx = Math.max(hx, x);
+        hy = Math.max(hy, y);
+      }
+  return hx < 0 ? undefined : [lx - 2, ly - 2, hx + 3, hy + 3];
+}
 
 /** new(x, y) = old(x + dx, y + dy) on a CPU w × h array with `per` values a cell (what comes in keeps the old values) */
 export function shiftGrid(a: { copyWithin(t: number, s: number, e: number): unknown }, w: number, h: number, per: number, dx: number, dy: number): void {

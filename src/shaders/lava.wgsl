@@ -38,6 +38,10 @@
 @group(0) @binding(24) var spillOut: texture_storage_2d<rgba32float, write>;
 // the open air's floors (surface.wgsl): x the sky's
 @group(0) @binding(29) var levelsL: texture_2d<f32>;
+// lava springs (round 69: the atlas's lava tubes): x the depth kept, molten (world-gpu lavaSpring)
+@group(0) @binding(30) var springL: texture_2d<f32>;
+// how fast a spring tops its column up (cells/s)
+const SPRING_RATE: f32 = 1.5;
 
 struct LavaU {
   // the beam: where it hits (xyz) and its radius; power (heat/s), on, the
@@ -170,7 +174,8 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let cn = LU.cones[v];
     if (cn.x > 0.0) { rise += cn.x * coneShape(cp - vv.xy, cn.y, cn.z, fract(vv.x * 0.37 + vv.y * 0.71) * 6.28); }
   }
-  if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0) {
+  let spring = textureLoad(springL, p, 0).x;
+  if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0 && spring <= 0.0) {
     lavaOut[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     textureStore(spillOut, p, vec4<f32>(0.0, 0.0, 0.0, f32(u32(sp.w) & 7u)));
     return;
@@ -353,6 +358,12 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   gh *= exp(-DT_L / GROUND_COOL_S);
   if (gh < 1.0) { gh = 0.0; }
 
+  // a spring keeps its column topped up from below, and molten (what spills over runs off and sets)
+  if (spring > 0.0) {
+    let add = clamp(spring - d, 0.0, SPRING_RATE * DT_L);
+    d += add;
+    heat = max(heat + add * LAVA_HOT, d * LAVA_HOT);
+  }
   // vents pour fresh lava (and smoke, ash, embers)
   if (vent >= 0) {
     let vv = LU.vents[vent];

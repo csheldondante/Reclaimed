@@ -96,6 +96,10 @@ export const MAT = {
   Plaster: 31,
   /** round 65: the town's roofs */
   Tile: 32,
+  /** round 69: the atlas's forms — flesh (vessels, the flesh style's ground), coral (shells and branches), obsidian (by lava) */
+  Flesh: 33,
+  Coral: 34,
+  Obsidian: 35,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -166,11 +170,19 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'crystal', albedo: [0.62, 0.5, 0.9], state: MatState.Solid, emissive: 0.25, strength: 0.7, specular: 1, glass: 1 },
   // logs (round 63): felled trunks, cut and stacked (wood is the living trunk, plant matter)
   { ...NONE, name: 'log', albedo: [0.45, 0.31, 0.18], state: MatState.Solid, strength: 0.45, growthCap: 1, suitability: 0.2 },
-  // sandstone (round 64): warm banded rock, the mesas' strata (softer than stone)
-  { ...NONE, name: 'sandstone', albedo: [0.74, 0.47, 0.32], state: MatState.Solid, strength: 0.7, growthCap: 1.2, suitability: 0.3, porosity: 0.3 },
+  // sandstone (round 64): warm banded rock, the mesas' strata; terrain (round 69: strength 1 — the
+  // atlas's mesas, badlands and dunes stand on it; api/terrain.ts already counted it as ground)
+  { ...NONE, name: 'sandstone', albedo: [0.74, 0.47, 0.32], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.3 },
   // plaster and roof tiles (round 65): what the town is built of (build/town.ts): pale walls, terracotta roofs
   { ...NONE, name: 'plaster', albedo: [0.86, 0.8, 0.68], state: MatState.Solid, strength: 0.6, growthCap: 1.2, suitability: 0.25, porosity: 0.3 },
   { ...NONE, name: 'tile', albedo: [0.68, 0.3, 0.2], state: MatState.Solid, strength: 0.6, growthCap: 1.3, suitability: 0.3, specular: 0.15, porosity: 0.2 },
+  // the atlas's forms (round 69; what's meant to stand is strong — "if you want it to stand make a stronger material"):
+  // flesh: soft-looking, wet, red; the flesh style's ground, so terrain (strength 1): its vessels stand
+  { ...NONE, name: 'flesh', albedo: [0.7, 0.34, 0.34], state: MatState.Solid, growthCap: 1.5, suitability: 0.45, specular: 0.35, porosity: 0.6, smooth: 2 },
+  // coral: pale, porous, light and fairly strong (shells, branches, vessels)
+  { ...NONE, name: 'coral', albedo: [0.9, 0.74, 0.68], state: MatState.Solid, strength: 0.85, growthCap: 1.6, suitability: 0.4, porosity: 0.55, smooth: 1 },
+  // obsidian: black volcanic glass by the lava; terrain (never falls)
+  { ...NONE, name: 'obsidian', albedo: [0.07, 0.06, 0.09], state: MatState.Solid, specular: 0.95, porosity: 0.05 },
 ];
 
 export const MAX_MATERIALS = 40;

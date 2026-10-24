@@ -98,7 +98,7 @@ export const LEVELS: LevelDef[] = [
     zMax: 160,
     stream: true,
     atlas: true,
-    meshRoom: 2.5,
+    meshRoom: 4,
   },
   {
     id: 'sandbox',

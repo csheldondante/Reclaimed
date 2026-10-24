@@ -43,6 +43,26 @@ struct Region {
   accent: u32,
   /** water: how deep the floor drops away from the coast */
   depth: f32,
+  /** what stands on its ground or is cut into it (forms.wgsl, round 69) */
+  f0: Form,
+  f1: Form,
+}
+
+/** a region's form (regions.ts FormDef → 12 words): what each field means depends on the kind (forms.wgsl) */
+struct Form {
+  kind: u32,
+  /** material | second material << 8 | profile << 16 | lobes << 24 */
+  pk: u32,
+  spacing: f32,
+  chance: f32,
+  hLo: f32,
+  hHi: f32,
+  radius: f32,
+  twist: f32,
+  lean: f32,
+  lobeAmp: f32,
+  shell: f32,
+  zOff: f32,
 }
 
 const EDGE_SMOOTH: u32 = 0u;
@@ -143,6 +163,9 @@ struct Ground {
   coast: f32,
   /** the pattern's value here, A's (for its accent) */
   pv: f32,
+  /** the distance from the border (signed towards A), and the lower of the two sides' heights there */
+  s: f32,
+  hlo: f32,
 }
 
 /** symmetric steps: st(1 − t) = 1 − st(t) */
@@ -195,6 +218,9 @@ fn ground(p: vec2<f32>) -> Ground {
     if (k == 0u) { g.pv = rh.pv; }
   }
   let hA = hs[0];
+  g.s = s;
+  g.hlo = hA;
+  if (both) { g.hlo = min(hA, hs[1]); }
   if (!both) {
     g.h = hA;
     g.w = 1.0;

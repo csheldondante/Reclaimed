@@ -3,6 +3,36 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 69 (session 5, `atlas`) — forms: terrain that plays with vertical and horizontal space
+
+- "This is cool and I wonder if we can have even more variety? Ground with
+  holes to subterranean rivers or lava flows, columns of stone, nearly
+  vertical cliffs with caves carved into the walls, eventually giant flora,
+  hollow tubes that extend like vasculature, rotationally symmetric curving
+  spires etc. can we parameterize and generate types of terrain that are
+  visually interesting and play with vertical and horizontal space
+  differently?"
+- Families: all four (tubes and skylights; pillars and arches; cave walls
+  and spires; vascular tubes) and "a more general generator of interesting
+  features. Crystal spires, spiraling spires, angled mesas etc" — one
+  parameterised solid (profile, lobes or polygon, twist, lean, hollow, cap)
+  covers those.
+- Height: "I was suggesting that map cells themselves could stack
+  vertically … the columns are used in the simulation and memory efficient"
+  / "If we can stack cells vertically we can have multiple to make really
+  tall cliffs" → the window slides in z as it does sideways (one live 256-
+  tall-at-most window; what's above and below it kept, as frozen regions
+  are). "All tiers live" was the bigger alternative, not chosen.
+- "Wouldn't a really vertical one basically have all air on one side and a
+  wall with intervals that maybe have caves in them?" — yes: that is how the
+  columns hold it (a tall column beside a low one; alcoves are air intervals
+  in the wall's columns by its face).
+- Physics: full — "Just have different materials if you want it to stand
+  make a stronger material". Forms are judged when they arrive like anything
+  built (what can't stand falls); what must stand is made of a material of
+  strength 1 (terrain: stone, basalt, obsidian), what may fall of a weaker
+  one (sandstone, crystal, ice, coral, flesh).
+
 ## 2026-10-24 — round 68 (session 5, `atlas`) — screens, and seams
 
 - "Ok this looks awesome please proceed to restart and then show me some

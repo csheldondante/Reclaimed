@@ -15,6 +15,7 @@
 
 import { makeBindGroup, makeCompute, makeComputeAsync, makeModule, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import { ColumnGrid, type Interval, type WorldDims } from '../world/layout';
+import { MATERIALS, MatState } from '../world/materials';
 import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
 import { rng } from '../world/noise';
@@ -23,6 +24,7 @@ import buildW from './build.wgsl?raw';
 import columnsW from './columns.wgsl?raw';
 import commonW from './common.wgsl?raw';
 import composeW from './compose.wgsl?raw';
+import formsW from './forms.wgsl?raw';
 import noiseW from './noise.wgsl?raw';
 import patsimW from './patsim.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
@@ -118,8 +120,15 @@ interface Extra {
 }
 
 const PARAM_BYTES = 128;
+/** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 12;
 const COLG_BYTES = 32;
+const MR = 24;
+const INST_BYTES = 64;
+const MAX_INST = 8192;
+/** forms.wgsl MARGIN and its lattices' finest spacing */
+const FORM_MARGIN = 48;
+const FINEST = 4;
 
 export interface AtlasStats {
   continents: number;
@@ -131,12 +140,18 @@ export interface AtlasStats {
   kinds: Record<string, number>;
 }
 
-/** one column as `columns` returns it (columns.wgsl ColOut) */
+/** a batch of columns as `columns` returns it: forms.wgsl ColOut a column, and its runs (`run`) */
 export interface AtlasColumns {
   w: number;
   h: number;
   f: Float32Array;
   u: Uint32Array;
+  /** MR a column, two words each (forms.wgsl colRuns) */
+  runsU: Uint32Array;
+  /** column i's run k (form: a form's, not the ground's) */
+  run(i: number, k: number): Interval & { form: boolean };
+  /** lattice forms placed for the batch */
+  forms: number;
 }
 
 export class Atlas {
@@ -159,6 +174,7 @@ export class Atlas {
   readonly kcol: GPUBuffer;
   private colH!: ComputeKernel;
   private colF!: ComputeKernel;
+  private formSeed!: ComputeKernel;
 
   private constructor(
     readonly device: GPUDevice,
@@ -269,9 +285,9 @@ export class Atlas {
     const hmacB = mk('hmac', N * 4);
     // every pipeline at once, off the main thread (D3D compiles are the slow part of making the atlas)
     const bm = makeModule(dev, 'atlas build', this.parts(buildW));
-    const cm = makeModule(dev, 'atlas columns', this.parts(columnsW));
+    const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, formsW));
     const K = (entry: string, spec: BindSpec, m = bm) => makeComputeAsync(dev, `atlas ${entry}`, m, { 0: 'uniform', ...spec }, entry);
-    const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF] = await this.time('compile', () =>
+    const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed] = await this.time('compile', () =>
       Promise.all([
         K('base', { 1: 'rw', 2: 'rw' }),
         K('ccInit', { 3: 'rw' }),
@@ -287,11 +303,13 @@ export class Atlas {
         K('jfaOutC', { 6: 'rw', 7: 'rw', 9: 'rw', 22: 'read' }),
         K('macroHeight', { 11: 'rw', 20: 'read', 21: 'read', 22: 'read', 23: 'read' }),
         K('colHeight', { 20: 'read', 21: 'read', 22: 'read', 23: 'read', 30: 'rw' }, cm),
-        K('colFinish', { 22: 'read', 23: 'read', 30: 'rw', 31: 'rw' }, cm),
+        K('colFinish', { 22: 'read', 23: 'read', 30: 'rw', 31: 'rw', 32: 'rw', 33: 'rw', 34: 'rw' }, cm),
+        K('formSeed', { 20: 'read', 21: 'read', 22: 'read', 23: 'read', 32: 'rw', 33: 'rw' }, cm),
       ]),
     );
     this.colH = colH;
     this.colF = colF;
+    this.formSeed = fSeed;
     const bg = (k: ComputeKernel, res: Record<number, GPUBuffer>) => makeBindGroup(dev, 'atlas', k.layout, { 0: this.paramBuf, ...res });
     const groups = Math.ceil(n / 8);
     const pass = (enc: GPUCommandEncoder, k: ComputeKernel, g: GPUBindGroup) => {
@@ -620,7 +638,10 @@ export class Atlas {
     const pb = dev.createBuffer({ label: 'atlas col params', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const g = dev.createBuffer({ label: 'atlas colG', size: (w + 2) * (h + 2) * COLG_BYTES, usage: GPUBufferUsage.STORAGE });
     const o = dev.createBuffer({ label: 'atlas colOut', size: w * h * COL_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    const st = dev.createBuffer({ label: 'atlas col read', size: o.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const runs = dev.createBuffer({ label: 'atlas colRuns', size: w * h * MR * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
+    const inst = dev.createBuffer({ label: 'atlas forms', size: MAX_INST * INST_BYTES, usage: GPUBufferUsage.STORAGE });
+    const instN = dev.createBuffer({ label: 'atlas forms n', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
+    const st = dev.createBuffer({ label: 'atlas col read', size: o.size + runs.size + 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     this.writeParams({ x0, y0, w, h }, pb);
     const enc = dev.createCommandEncoder({ label: 'atlas columns' });
     let cp = enc.beginComputePass();
@@ -628,34 +649,85 @@ export class Atlas {
     cp.setBindGroup(0, makeBindGroup(dev, 'colH', this.colH.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 30: g }));
     cp.dispatchWorkgroups(Math.ceil((w + 2) / 8), Math.ceil((h + 2) / 8));
     cp.end();
+    // the lattice forms around the batch (every lattice: the finest's cells cover the most)
+    cp = enc.beginComputePass();
+    cp.setPipeline(this.formSeed.pipeline);
+    cp.setBindGroup(0, makeBindGroup(dev, 'formSeed', this.formSeed.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 32: inst, 33: instN }));
+    const cells = (n: number) => Math.ceil((n + 2 * FORM_MARGIN) / FINEST) + 3;
+    cp.dispatchWorkgroups(Math.ceil(cells(w + 1) / 8), Math.ceil(cells(h * ROW_H) / 8), 7);
+    cp.end();
     cp = enc.beginComputePass();
     cp.setPipeline(this.colF.pipeline);
-    cp.setBindGroup(0, makeBindGroup(dev, 'colF', this.colF.layout, { 0: pb, 22: this.regs, 23: this.pat, 30: g, 31: o }));
+    cp.setBindGroup(0, makeBindGroup(dev, 'colF', this.colF.layout, { 0: pb, 22: this.regs, 23: this.pat, 30: g, 31: o, 32: inst, 33: instN, 34: runs }));
     cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8));
     cp.end();
     enc.copyBufferToBuffer(o, 0, st, 0, o.size);
+    enc.copyBufferToBuffer(runs, 0, st, o.size, runs.size);
+    enc.copyBufferToBuffer(instN, 0, st, o.size + runs.size, 16);
     dev.queue.submit([enc.finish()]);
     await st.mapAsync(GPUMapMode.READ);
     const buf = st.getMappedRange().slice(0);
     st.unmap();
-    for (const b of [g, o, st, pb]) b.destroy();
-    return { w, h, f: new Float32Array(buf), u: new Uint32Array(buf) };
+    for (const b of [g, o, runs, inst, instN, st, pb]) b.destroy();
+    const forms = new Uint32Array(buf, o.size + runs.size, 1)[0];
+    if (forms > MAX_INST) throw new Error(`atlas: ${forms} forms around the batch at ${x0},${y0} (room for ${MAX_INST})`);
+    const f = new Float32Array(buf, 0, o.size / 4);
+    const u = new Uint32Array(buf, 0, o.size / 4);
+    for (let i = 0; i < w * h; i++) {
+      const fl = u[i * COL_WORDS + 10];
+      if (fl) throw new Error(`atlas: column ${x0 + (i % w)},${y0 + Math.floor(i / w)} has ${fl & 1 ? 'more forms near it than it considers' : `more than ${MR} runs`}`);
+    }
+    const runsU = new Uint32Array(buf, o.size, runs.size / 4);
+    const run = (i: number, k: number) => {
+      const r = (i * MR + k) * 2;
+      return { z0: (runsU[r] & 0x7fffffff) / 256, z1: (runsU[r + 1] & 0xffffff) / 256, mat: runsU[r + 1] >>> 24, form: runsU[r] >>> 31 === 1 };
+    };
+    return { w, h, f, u, runsU, run, forms };
   }
 
-  /** A region's land for the streamer (world/streamgen.ts RegionLand). */
-  async regionLand(x0: number, y0: number, w: number, h: number): Promise<RegionLand> {
+  /** columns that had more intervals than the window holds (their smallest gaps filled: landFrom) */
+  gapsFilled = 0;
+
+  /** A region's land for the streamer (world/streamgen.ts RegionLand), K intervals a column at most. */
+  async regionLand(x0: number, y0: number, w: number, h: number, K = 14): Promise<RegionLand> {
     if (y0 & 1) throw new Error('a region starts on an even row');
     const c = await this.columns(x0, y0, w, h);
-    return landFrom(c, x0, y0);
+    const land = landFrom(c, x0, y0, K);
+    this.gapsFilled += land.gapsFilled;
+    return land;
   }
 
   /** The window from world cell (ox, oy) as a map (the level's first world). */
-  async window(dims: WorldDims, ox: number, oy: number): Promise<MapData> {
+  async window(dims: WorldDims, ox: number, oy: number, K: number): Promise<MapData> {
     const { w, h } = dims;
     const N = w * h;
-    const land = await this.regionLand(ox, oy, w, h);
+    // (in tiles of a region, as the streamer asks: one batch of the whole window is too much
+    // work for one dispatch where forms stand thick — the GPU's watchdog resets the device)
+    const T = 64;
+    if (w % T || h % T) throw new Error(`the window (${w} × ${h}) must be whole tiles of ${T}`);
+    const tiles: [number, number][] = [];
+    for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
+    const lands = await Promise.all(tiles.map(([tx, ty]) => this.regionLand(ox + tx, oy + ty, T, T, K)));
     const grid = new ColumnGrid(dims);
-    land.cols.forEach((c, i) => (grid.cols[i] = c));
+    const land = { water: new Float32Array(N), moisture: new Float32Array(N), vegetation: new Float32Array(N), contam: new Float32Array(N * 2), lava: new Float32Array(N * 4), lavaSpring: new Float32Array(N), surface: new Float32Array(N), structural: new Uint8Array(N) };
+    tiles.forEach(([tx, ty], k) => {
+      const t = lands[k];
+      for (let y = 0; y < T; y++)
+        for (let x = 0; x < T; x++) {
+          const i = y * T + x;
+          const j = (ty + y) * w + tx + x;
+          grid.cols[j] = t.cols[i];
+          land.water[j] = t.water[i];
+          land.moisture[j] = t.moisture[i];
+          land.vegetation[j] = t.vegetation[i];
+          land.surface[j] = t.surface[i];
+          land.contam[j * 2] = t.contam[i * 2];
+          land.contam[j * 2 + 1] = t.contam[i * 2 + 1];
+          if (t.lava) land.lava.set(t.lava.subarray(i * 4, i * 4 + 4), j * 4);
+          if (t.lavaSpring) land.lavaSpring[j] = t.lavaSpring[i];
+          if (t.structural) land.structural[j] = t.structural[i];
+        }
+    });
     return {
       grid,
       water: land.water,
@@ -666,6 +738,9 @@ export class Atlas {
       drift: new Float32Array(N),
       oilStored: new Float32Array(N * 2),
       waterSource: new Float32Array(N),
+      lava: land.lava,
+      lavaSpring: land.lavaSpring,
+      structural: land.structural,
       surface: land.surface,
       poi: Object.fromEntries(['healthy', 'tutorial', 'dam', 'reservoir', 'site', 'landfill', 'heap'].map((k) => [k, [w / 2, h / 2]])) as Record<string, [number, number]>,
     };
@@ -695,8 +770,16 @@ export class Atlas {
   }
 }
 
-/** columns → intervals: the region's rock with the caves cut out of it, the cover on top */
-export function landFrom(c: AtlasColumns, x0: number, y0: number): RegionLand {
+/** what the structural system judges (integrity.ts, fracture.ts: solid and weaker than bedrock) */
+const WEAK = MATERIALS.map((m) => m.state === MatState.Solid && m.strength < 1);
+
+/** lava as the tubes hold it (lava.wgsl: it sets below 750) */
+const LAVA_HOT = 1250;
+
+/** columns → intervals: each column's runs (forms.wgsl colFinish), alike neighbours merged; a
+ *  column with more than K (what the window's chunks hold) has its closest neighbours made one
+ *  until it fits (counted: `gapsFilled`). */
+export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): RegionLand & { gapsFilled: number } {
   const { w, h, f, u } = c;
   const N = w * h;
   const cols: Interval[][] = [];
@@ -704,28 +787,45 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number): RegionLand {
   const water = new Float32Array(N);
   const moisture = new Float32Array(N);
   const vegetation = new Float32Array(N);
+  const lava = new Float32Array(N * 4);
+  const lavaSpring = new Float32Array(N);
+  const structural = new Uint8Array(N);
   const contam = new Float32Array(N * 2);
+  let gapsFilled = 0;
   for (let i = 0; i < N; i++) {
     const o = i * COL_WORDS;
-    const top = f[o];
-    const cover = f[o + 1];
-    const topMat = u[o + 2] & 0xff;
-    const rock = (u[o + 2] >>> 8) & 0xff;
-    const rockTop = Math.max(1, top - cover);
+    const n = u[o + 9];
     const col: Interval[] = [];
-    let z = 0;
-    for (const [a, b] of [[f[o + 6], f[o + 7]], [f[o + 8], f[o + 9]]]) {
-      if (b <= a || a < 1 || b > rockTop - 1) continue;
-      col.push({ z0: z, z1: a, mat: rock });
-      z = b;
+    for (let k = 0; k < n; k++) {
+      const { z0, z1, mat, form } = c.run(i, k);
+      if (form && WEAK[mat]) structural[i] = 1;
+      const last = col[col.length - 1];
+      if (last && last.mat === mat && z0 <= last.z1) last.z1 = z1;
+      else col.push({ z0, z1, mat });
     }
-    col.push({ z0: z, z1: rockTop, mat: rock });
-    if (top > rockTop + 0.05) col.push({ z0: rockTop, z1: top, mat: topMat });
+    if (!col.length) throw new Error(`atlas: column ${x0 + (i % w)},${y0 + Math.floor(i / w)} is empty`);
+    if (col.length > K) gapsFilled++;
+    // (each step: the neighbours closest to being one — the gap between them and the thinner's
+    // thickness least — become one, of the thicker's material)
+    const cost = (k: number) => col[k].z0 - col[k - 1].z1 + Math.min(col[k].z1 - col[k].z0, col[k - 1].z1 - col[k - 1].z0);
+    while (col.length > K) {
+      let best = 1;
+      for (let k = 2; k < col.length; k++) if (cost(k) < cost(best)) best = k;
+      const lo = col[best - 1];
+      const hi = col[best];
+      const mat = hi.z1 - hi.z0 > lo.z1 - lo.z0 ? hi.mat : lo.mat;
+      col.splice(best - 1, 2, { z0: lo.z0, z1: hi.z1, mat });
+    }
     cols.push(col);
     surface[i] = col[col.length - 1].z1;
     water[i] = f[o + 3];
     moisture[i] = f[o + 4];
     vegetation[i] = f[o + 5];
+    const lv = f[o + 6];
+    if (lv > 0) {
+      lava.set([lv, LAVA_HOT, 0, surface[i] + lv], i * 4);
+      lavaSpring[i] = lv;
+    }
   }
-  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam };
+  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam, lava, lavaSpring, structural, gapsFilled };
 }

@@ -12,6 +12,8 @@ const url = opt('url', 'http://localhost:5203');
 const q = opt('q', '');
 const kinds = opt('kinds', 'kaleido,coral,basalt,range,mesa,craters').split(',');
 const out = opt('out', 'tour');
+// (the close shot's zoom, times the level's own)
+const zoom = Number(opt('zoom', '1'));
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
