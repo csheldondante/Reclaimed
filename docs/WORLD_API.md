@@ -60,7 +60,8 @@ await sim.warmup({ ticks, debris, skip })        // settle the world: ticks of s
 // terrain
 sim.terrain.heightAt(x, y, { smooth? })  // the open sky's floor: ground, loose ground on it, or a structure's top
 sim.terrain.groundAt(x, y, { smooth? })  // the nature grid's own ground (structures ignored)
-sim.terrain.floorAt(x, y, z)        // the highest floor of open air at or below z (under an overhang, inside a structure)
+sim.terrain.floorAt(x, y, z)        // the highest floor of open air at or below z (+0.5): under an overhang, in a cave
+                                    // or bore (round 62), inside a structure. From the mirror (250 ms), a few µs a call
 sim.terrain.materialAt(x, y, z?)    // 'sand' | 'stone' | … | 'air' at height z; the top layer's without z
 sim.terrain.layersAt(x, y)          // [{ z0, z1, material, state: 'solid' | 'loose' | 'liquid' | 'plant' }] bottom up
 sim.terrain.crater(x, y, { radius, z? })

@@ -3399,3 +3399,37 @@ pull, 63% of the sand stays on the dome's top (was 75%; 93% unshaken).
 The dome's top is nearly flat, so some stays there. The drag check now
 measures the stone's rise: the ridge's sand runs off, so its surface sits
 lower than the stone pulled.
+
+## Round 62 — the beam bores into cliffs (physics; the hoverbike session asked)
+
+The hoverbike session wants players to dig caves and tunnels into mountains
+with the mech's heat beam, keeping the overhang. Before, the beam only
+heated within 2.5 cells of a column's top, so a ray hitting a cliff face
+partway up melted nothing there (or the cliff's top).
+
+- `lava.wgsl`: a beam hitting a column more than the hole's half height
+  under its top bores into it. The heat gathers per column until it can
+  melt the whole span of a round hole about the hit (half height
+  √(r² − off²)), then the span goes at once and the rock over it stays (the
+  interval split). Melting from the middle out was tried first: the line
+  through the hole opened after a tick or two, the aim (re-taken each
+  150 ms at the first rock along the line, as a game's ray does) ran on
+  through it, and the bore was a slit 0.4 high, 9 deep.
+- The melt runs out a column a tick through a spill texture (two rgba32float
+  textures, since the depth kernel is at the 8 storage buffers): to the lowest
+  open neighbour, else back along the beam's `dir`, and pours out as lava
+  on the first column whose open sky lies at or under the bore's floor.
+  With nowhere to go (or after 48 columns) it sets on the bore's floor.
+- `terrain.floorAt` also finds the column's own gaps (a cave's floor), not
+  only the open air under structures' projected intervals: walkers can
+  stand in a bore.
+- `WorldDef.slots`: a world can ask for more intervals per column (the
+  overhang over a bore takes a slot; a full column can't be bored:
+  BACKLOG Q21).
+
+Measured (`boretest`, sandbox, a 14-high stone block, beam radius 1.6,
+power 9000, re-aimed each 150 ms): 6 columns in after 9 s, the hole 3.0
+high (14.75–17.79 at a hit of 16.27) with 9 cells of rock over it,
+36 cells³ of lava out in front of the face, none on the top; floorAt gives
+14.75 in the hole and 26.79 from the top. The beam on the open top still
+melts it down (25.9 → 16.2 in 5 s).
