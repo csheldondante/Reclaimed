@@ -41,7 +41,7 @@ try {
         failed = true;
       }
     });
-    await page.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&perf=1&tod=0.35${mode === 'mesh' ? '&mesh=1' : ''}${extra}`, { waitUntil: 'load' });
+    await page.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&perf=1&tod=0.35${mode === 'mesh' ? '&mesh=1' : '&mesh=0'}${extra}`, { waitUntil: 'load' });
     await page.waitForFunction(() => window.reclaimed?.core, { timeout: 90000 });
     await new Promise((res) => setTimeout(res, 6000));
     // the camera on the deepest water

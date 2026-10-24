@@ -138,7 +138,7 @@ export class LevelScene implements Scene {
   ) {
     const dims = { w: 256, h: 256, zMax: 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
-    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, !!level.sandbox);
+    this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true);
     // (grids, the rendering branch, opens in free play; ?mode=story for the story's rules)
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
     this.core.globals.story = this.story;

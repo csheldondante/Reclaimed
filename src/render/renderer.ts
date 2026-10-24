@@ -59,6 +59,10 @@ export interface RenderOptions {
   sun: [number, number, number];
 }
 
+// (perf branch: ?skip=opaque,tops,plants,prisms,mesh,bodies,structs,voxels,skins,water,particles,rain,shadow,prep,meshprep
+// leaves that piece out of the frame, to measure what it costs: scripts/perfprofile.mjs)
+const SKIP = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(',').filter(Boolean));
+
 export class Renderer {
   private prep: ComputeKernel;
   private prepGroup: GPUBindGroup;
@@ -138,8 +142,10 @@ export class Renderer {
     format: GPUTextureFormat,
     private world: WorldGpu,
     private profiler: Profiler,
-    /** the field mesh unless ?mesh=0 (the sandbox), rather than only with ?mesh=1 */
+    /** the field mesh unless ?mesh=0, rather than only with ?mesh=1 */
     meshByDefault = false,
+    /** the sun's shadow map's side (texels; quality `shadowSize`): it covers the chunks near the view */
+    shadowSize = SHADOW_SIZE,
   ) {
     const N = world.cells;
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
@@ -166,12 +172,14 @@ export class Renderer {
 
     this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault);
     // (a texel when there's no shadow pass: the draw shaders still bind one)
-    const ss = this.fieldMesh.on ? SHADOW_SIZE : 1;
+    const ss = this.fieldMesh.on ? shadowSize : 1;
     this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
     this.shadowView = this.shadowTex.createView();
     this.shadowSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' });
     profiler.trackMemory('shadow', ss * ss * 4);
-    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshRegionWgsl, renderprepWgsl], {
+    // (?skip=cull: every column, as before the view culling)
+    const cullOff = `const CULL_OFF: bool = ${SKIP.has('cull')};`;
+    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshRegionWgsl, cullOff, renderprepWgsl], {
       0: 'uniform',
       1: 'read',
       2: 'uniform',
@@ -186,6 +194,7 @@ export class Renderer {
       17: 'tex',
       21: 'tex',
       30: 'uniform',
+      31: 'uniform',
     });
     this.prepGroup = makeBindGroup(device, 'renderprep', this.prep.layout, {
       0: world.globals,
@@ -202,6 +211,7 @@ export class Renderer {
       17: world.driftView,
       21: world.bodyProjView,
       30: this.fieldMesh.region,
+      31: this.camBuf,
     });
 
     this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshRegionWgsl, vegprepWgsl], {
@@ -515,6 +525,7 @@ export class Renderer {
     cam.write(this.camData);
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0);
+    this.fieldMesh.cull(cam);
     if (this.fieldMesh.on) this.writeLight(opts.sun);
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
     if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
@@ -524,7 +535,7 @@ export class Renderer {
       new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0, VERTS_PER_TOP, 0, 0, 0, this.topsBase]),
     );
 
-    {
+    if (!SKIP.has('prep')) {
       const pass = enc.beginComputePass({ label: 'renderprep', timestampWrites: this.profiler.timestamps('renderprep') });
       pass.setPipeline(this.prep.pipeline);
       pass.setBindGroup(0, this.prepGroup);
@@ -542,8 +553,8 @@ export class Renderer {
       pass.end();
       this.profiler.dispatches += 2;
     }
-    this.fieldMesh.encode(enc, cam);
-    if (this.shadowGroups) this.encodeShadow(enc);
+    if (!SKIP.has('meshprep')) this.fieldMesh.encode(enc, cam);
+    if (this.shadowGroups && !SKIP.has('shadow')) this.encodeShadow(enc);
 
     const pass = enc.beginRenderPass({
       label: 'world',
@@ -556,41 +567,41 @@ export class Renderer {
     });
     pass.setPipeline(this.opaquePipe);
     pass.setBindGroup(0, this.opaqueGroup);
-    pass.drawIndirect(this.indirect, 0);
+    if (!SKIP.has('opaque')) pass.drawIndirect(this.indirect, 0);
     pass.setBindGroup(0, this.topsGroup);
-    pass.drawIndirect(this.indirect, 48);
+    if (!SKIP.has('tops')) pass.drawIndirect(this.indirect, 48);
     pass.setBindGroup(0, this.plantGroup);
-    pass.drawIndirect(this.indirect, 32);
-    for (const s of this.prismSources) {
+    if (!SKIP.has('plants')) pass.drawIndirect(this.indirect, 32);
+    for (const s of SKIP.has('prisms') ? [] : this.prismSources) {
       pass.setBindGroup(0, s.group);
       pass.drawIndirect(s.indirect, 0);
       this.profiler.draws++;
     }
-    if (this.meshPipe) {
+    if (this.meshPipe && !SKIP.has('mesh')) {
       pass.setPipeline(this.meshPipe);
       pass.setBindGroup(0, this.meshGroup!);
       this.fieldMesh.draw(pass);
       this.profiler.draws++;
     }
-    if (this.bodyCount > 0) {
+    if (this.bodyCount > 0 && !SKIP.has('bodies')) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);
       pass.draw(36, this.bodyCount);
       this.profiler.draws++;
     }
-    if (this.world.strVoxels > 0) {
+    if (this.world.strVoxels > 0 && !SKIP.has('structs')) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.structGroup);
       pass.drawIndirect(this.structIndirect, 0);
       this.profiler.draws++;
     }
-    for (const v of this.voxelSources) {
+    for (const v of SKIP.has('voxels') ? [] : this.voxelSources) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, v.group);
       pass.drawIndirect(v.indirect, 0);
       this.profiler.draws++;
     }
-    for (const v of this.meshSources) {
+    for (const v of SKIP.has('skins') ? [] : this.meshSources) {
       pass.setPipeline(this.skinPipe);
       pass.setBindGroup(0, v.group);
       pass.drawIndirect(v.indirect, 0);
@@ -598,12 +609,12 @@ export class Renderer {
     }
     pass.setPipeline(this.waterPipe);
     pass.setBindGroup(0, this.waterGroup);
-    pass.drawIndirect(this.indirect, 16);
+    if (!SKIP.has('water')) pass.drawIndirect(this.indirect, 16);
     pass.setPipeline(this.partPipe);
     pass.setBindGroup(0, this.partGroup);
-    pass.draw(6, this.world.particleCap);
+    if (!SKIP.has('particles')) pass.draw(6, this.world.particleCap);
     this.profiler.draws++;
-    if (opts.rainParticles > 0) {
+    if (opts.rainParticles > 0 && !SKIP.has('rain')) {
       pass.setPipeline(this.rainPipe);
       pass.setBindGroup(0, this.rainGroup);
       pass.draw(6, opts.rainParticles);
@@ -646,12 +657,14 @@ export class Renderer {
     const rl = Math.hypot(r[0], r[1], r[2]);
     r = r.map((v) => v / rl);
     const u = [r[1] * f[2] - r[2] * f[1], r[2] * f[0] - r[0] * f[2], r[0] * f[1] - r[1] * f[0]];
-    const W = this.world.w + 0.5;
-    const H = this.world.h * (Math.sqrt(3) / 2);
+    // the box: the chunks near the view, floor to sky (perf branch; it was the
+    // whole map). The light is orthographic, so it holds every caster whose
+    // shadow falls in them: those up-sun of the view too.
+    const [x0, y0, x1, y1] = SKIP.has('shadowfit') ? [0, 0, this.world.w + 0.5, this.world.h * (Math.sqrt(3) / 2)] : this.fieldMesh.nearRect;
     const lo = [Infinity, Infinity, Infinity];
     const hi = [-Infinity, -Infinity, -Infinity];
     for (let k = 0; k < 8; k++) {
-      const p = [k & 1 ? W : 0, k & 2 ? H : 0, k & 4 ? this.world.zMax + 2 : -2];
+      const p = [k & 1 ? x1 : x0, k & 2 ? y1 : y0, k & 4 ? this.world.zMax + 2 : -2];
       const a = [r, u, f].map((ax) => ax[0] * p[0] + ax[1] * p[1] + ax[2] * p[2]);
       for (let i = 0; i < 3; i++) {
         lo[i] = Math.min(lo[i], a[i]);
@@ -667,6 +680,7 @@ export class Renderer {
     m.set([-(lo[0] + hi[0]) / 2 * sx, -(lo[1] + hi[1]) / 2 * sy, -lo[2] * sz, 1], 12);
     const cf = new Float32Array(this.camData);
     cf.set(m, CAMERA_BYTES / 4);
+    this.fieldMesh.castCull(m);
     // the lookup's depth bias: a quarter of a cell along the light
     cf[23] = 0.25 * sz;
     // the sun's own camera: its matrix as the view, looking from the sun
@@ -688,7 +702,7 @@ export class Renderer {
     });
     pass.setPipeline(this.shadowMeshPipe!);
     pass.setBindGroup(0, g.mesh);
-    this.fieldMesh.drawAll(pass);
+    this.fieldMesh.drawCasters(pass);
     pass.setPipeline(this.shadowOpaquePipe!);
     pass.setBindGroup(0, g.opaque);
     pass.drawIndirect(this.indirect, 0);

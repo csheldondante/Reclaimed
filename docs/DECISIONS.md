@@ -3,6 +3,24 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-23 — round 61 (session 5, `perf`) — a perf branch; the mesh by default; culling
+
+- "Well make a branch and profile and experiment then merge in clear wins.
+  I can test on mobile and validate the feel."
+- "Wait I thought we were using the mesh drawing? That one looks good."
+  "Can you make the default mesh": the field mesh is the default in every
+  level and the world API (`?mesh=0` for prisms). The title screen's
+  diorama keeps its voxels.
+- "Definitely do culling it is cheap and most play is zoomed in
+  significantly."
+
+## 2026-10-23 — round 60 (session 5) — cached tiles
+
+- "Even rendering to orthographic tiles could speed up things right? A few
+  layers like terrain and units and you would have cheap renders no?"
+  (BACKLOG G16.) On the sediment options (Q20): "Those all seem like
+  reasonable performance improvements."
+
 ## 2026-10-23 — round 59 (session 5, `agents`; the units session, the user approving) — real reach and sight
 
 - The height band (a target counted only within the unit's height + 2 of

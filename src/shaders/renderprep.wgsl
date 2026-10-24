@@ -126,12 +126,52 @@ fn mkInst(x: u32, y: u32, sx: u32, sy: u32, z0: f32, z1: f32, mat: u32, flags: u
   return vec4<u32>(x | (y << 12u) | ((sx - 1u) << 24u) | ((sy - 1u) << 28u), bitcast<u32>(z0), bitcast<u32>(z1), mat | (flags << 8u));
 }
 
+// the view (render.wgsl Camera; perf branch): columns off screen, and whose
+// shadow falls off screen, aren't emitted at all
+struct PrepCam {
+  viewProj: mat4x4<f32>,
+  eye: vec4<f32>,
+  viewport: vec4<f32>,
+  light: mat4x4<f32>,
+};
+@group(0) @binding(31) var<uniform> PC: PrepCam;
+// (a margin round the screen, in clip units: a box's bevels, the sway)
+const CULL_PAD: f32 = 0.06;
+// (a shadow is followed at most this far, in cells: a low sun's are long)
+const SHADOW_REACH: f32 = 40.0;
+
+/** Does column c, from the map's floor to its top (water too), or the shadow its top casts, show on screen? */
+fn colSeen(c: vec2<u32>) -> bool {
+  let i = colIdx(c.x, c.y);
+  let top = sfZ(surface[i]) + max(water[i], 0.0) + 1.0;
+  let p = cellPos(vec2<i32>(c));
+  var lo = vec2<f32>(1e9);
+  var hi = vec2<f32>(-1e9);
+  // (the sun: G.sunX/Y/Z toward it; a shadow falls the other way, z down to the floor)
+  var sh = vec2<f32>(0.0);
+  if (G.sunZ > 0.02) { sh = -vec2<f32>(G.sunX, G.sunY) / G.sunZ * top; }
+  let sl = length(sh);
+  if (sl > SHADOW_REACH) { sh *= SHADOW_REACH / sl; }
+  for (var k = 0u; k < 4u; k++) {
+    let o = vec2<f32>(select(-0.6, 0.6, (k & 1u) != 0u), select(-0.6, 0.6, (k & 2u) != 0u));
+    for (var z = 0u; z < 3u; z++) {
+      var w = vec3<f32>(p + o, select(0.0, top, z >= 1u));
+      if (z == 2u) { w = vec3<f32>(p + o + sh, 0.0); }
+      let q = PC.viewProj * vec4<f32>(w, 1.0);
+      let n = q.xy / q.w;
+      lo = min(lo, n);
+      hi = max(hi, n);
+    }
+  }
+  return all(hi > vec2<f32>(-1.0 - CULL_PAD)) && all(lo < vec2<f32>(1.0 + CULL_PAD));
+}
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   if (li == 0u) { atomicStore(&wgO, 0u); atomicStore(&wgW, 0u); atomicStore(&wgT, 0u); }
   workgroupBarrier();
 
-  let inside = id.x < G.mapW && id.y < G.mapH;
+  let inside = id.x < G.mapW && id.y < G.mapH && (CULL_OFF || colSeen(id.xy));
   var nO = 0u;
   var nW = 0u;
   var cs = vec2<u32>(0u);
