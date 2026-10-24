@@ -440,6 +440,8 @@ brushes): `ColumnStamp`s — a column, its span [lo, hi), the design, a
 foundation flag — up to 4,096 columns a tick, written in place on the
 layers; a column queued twice keeps its latest stamp. Built matter starts
 at support 15 (aux 240). `api.town(opts)` makes the one town of a sim.
+The plan (`plans`, a mask a cell like `mask`) is what a building crew
+(agents/buildcrew.ts) builds toward; `delta()` is plan XOR what stands.
 
 ## Levels and the sandbox
 

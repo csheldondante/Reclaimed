@@ -27,6 +27,8 @@ export interface EditorMaps {
   load: (map: MapData) => void;
   fresh: () => void;
   say: (text: string) => void;
+  /** town tool: send workers to build the plan */
+  crew?: () => void;
 }
 
 export type EditTool =
@@ -142,6 +144,8 @@ export class Editor {
   /** drop tool: which body (physics/shapes.ts bodyCatalogue) and how high above the ground */
   body = 'steel-beam';
   dropHeight = 8;
+  /** town tool: presses change the plan (workers build it), not what stands */
+  plan = false;
   private el: HTMLElement;
   private picked = { pour: MAT.Soil as number, build: MAT.Stone as number };
 
@@ -158,6 +162,10 @@ export class Editor {
       <label data-tl title="Above 0: placed as its own tilted grid (sand buries it, moss grows on it)">tilt <input data-ti type="range" min="0" max="90" step="5" value="0"></label>
       <label data-pbl>body <select data-pb>${BODIES.map((b) => `<option value="${b.id}">${b.name}</option>`).join('')}</select></label>
       <label data-dhl>height <input data-dh type="range" min="0" max="30" value="${this.dropHeight}"></label>
+      <div class="maps" data-tw>
+        <label title="Plan: presses mark blocks to build (green) or take down (red); workers build the difference from a pile of bricks or logs">plan <input data-tp type="checkbox"></label>
+        <button data-a="crew" title="Send six workers to build the plan from the nearest pile of bricks or logs">👷 workers</button>
+      </div>
       <label data-sl>strength <input data-s type="range" min="5" max="100" value="${this.strength * 100}"></label>
       <div class="speed">${[0, 1, 2, 4, 8].map((s) => `<button data-sp="${s}">${s === 0 ? '❚❚' : s + '×'}</button>`).join('')}</div>
       <div class="maps">
@@ -187,6 +195,7 @@ export class Editor {
       show('[data-tl]', t === 'place');
       show('[data-pbl]', t === 'drop');
       show('[data-dhl]', t === 'drop');
+      show('[data-tw]', t === 'town');
       if (list) {
         const cur = this.picked[t as 'pour' | 'build'];
         matSel.innerHTML = list.map(([n, m]) => `<option value="${m}"${m === cur ? ' selected' : ''}>${n}</option>`).join('');
@@ -198,6 +207,8 @@ export class Editor {
       this.material = Number(matSel.value);
       if (this.tool === 'pour' || this.tool === 'build') this.picked[this.tool] = this.material;
     });
+    el.querySelector<HTMLInputElement>('[data-tp]')!.addEventListener('change', (e) => (this.plan = (e.target as HTMLInputElement).checked));
+    el.querySelector<HTMLButtonElement>('[data-a="crew"]')!.addEventListener('click', () => this.maps.crew?.());
     el.querySelector<HTMLSelectElement>('[data-pb]')!.addEventListener('change', (e) => (this.body = (e.target as HTMLSelectElement).value));
     el.querySelector<HTMLInputElement>('[data-dh]')!.addEventListener('input', (e) => (this.dropHeight = Number((e.target as HTMLInputElement).value)));
     const bury = el.querySelector<HTMLInputElement>('[data-b]')!;

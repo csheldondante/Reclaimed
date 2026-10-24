@@ -326,6 +326,27 @@ pile 0.65 higher, the soil fired to brick. A wood grown beside it
 (`plants.grow`), six workers fell 4 of its 5 trees (a storm burned the
 other) and pile their 4.95 cells³ of logs, all of it.
 
+## Building crews (round 65, branch `builder`)
+
+`api.buildCrew({ units, groups: [toPile, atWork, toSite], fields: [pile, sites], town, pile: { x, y, radius }, materials?, cost?, load?, workTime? })`
+(src/agents/buildcrew.ts): the town's plan (`town.plan(cell, level, on)`)
+against what stands (`town.delta()`) is the work. A worker takes a load of
+`materials` (default brick, log, stone, sandstone) off the highest spot of
+the pile (`terrain.take`, exact), carries it to a block to build and works
+it in; a block stands (`town.add`, whole) once it has had `cost` (default
+6 cells³). A block planned away: a worker works at it, it goes
+(`town.remove`) and `cost` of brick is carried back to the pile, as are
+loads left over when there's nothing to build. Lowest blocks first (a
+block waits for the one under it, if that's planned), nearest the pile
+first; taking down goes from the top. The pile's field is seeded round its
+foot (solid bricks are a block they can't climb); the sites just outside
+each block's sides open at the ground (a cell's centre can be inside a
+house); a worker works on whichever block of its kind it comes to (one
+field leads to all the sites). `stats`: used (by material), built,
+takenDown, returned, trips, starved (waits at an empty pile).
+`cost` is a price, not the block's volume (the town works out 50+ cells³
+of plaster and tile a block); `scripts/buildtest.mjs`.
+
 ## Not yet
 
 - A death left lying (they vanish now).

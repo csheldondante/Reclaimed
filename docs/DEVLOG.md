@@ -3956,3 +3956,31 @@ the gap on 7 pillar columns, 26 of 33 open beneath; taking the upper block
 brings the roof down a level. Through the editor: taps on the ground,
 roofs and walls build houses, towers and neighbours.
 
+## Round 65 — the town's plan mode: workers build the difference (builder)
+
+The user: "a mode where it takes the delta of the finished thing you build
+and the current state then workers build it and use resources". The town
+keeps a plan beside what stands (`town.plan`, `delta()`); placing outright
+changes both. `agents/buildcrew.ts` (`api.buildCrew`): workers take loads
+of brick or log off a pile, carry them to the planned blocks, and a block
+stands once it's had its cost (6 cells³); blocks planned away are taken
+down and their worth carried back. The editor's 🏠 tool has a plan toggle
+(presses mark blocks: green outlines to build, red to take down) and a
+workers button (six workers, from the nearest pile of bricks or logs to the
+view's centre).
+- A block stands whole when paid for, not voxel by voxel: the town's
+  pieces are worked out from the neighbours (a wall moves when the block
+  beside it comes), so a part-built block has no stable shape to fill.
+  The cost is a price, not the volume the town stands it as.
+- Three fixes from the first runs: the pile's field seeded on a 4-high
+  block of solid bricks was out of reach (workers wandered) — now round
+  its foot; a cell's centre can be inside a house — the sites are just
+  outside its open sides; one field leads to all the sites, so a worker
+  carrying for one block came to another and waited for good — it now
+  works on whichever block of its kind it comes to.
+
+Measured (`buildtest`, 4/4): 36 cells³ of brick laid, three blocks planned
+(two side by side, one on top) 14 cells off: built in 34 s by six workers,
+the first after 8 s; 18 cells³ used, 15 trips; the top block planned away:
+taken down, 9.5 cells³ back on the pile (its 6 and leftovers).
+

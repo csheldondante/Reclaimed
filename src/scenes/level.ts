@@ -20,6 +20,7 @@ import { installAgents } from '../agents/install';
 import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
+import type { BuildCrew } from '../agents/buildcrew';
 import type { Waker, WakeOptions } from '../physics/wake';
 import { box, table } from '../physics/shapes';
 import { boxMesh, rockMesh, type SkinMesh } from '../physics/mesh';
@@ -61,6 +62,12 @@ export class LevelScene implements Scene {
   private lensOn = false;
   private lensK = 0;
   private hoverWorld: [number, number] | null = null;
+  /** Town tool, plan mode: the building crew and its workers (sendBuilders) */
+  private buildCrew?: BuildCrew;
+  /** Town tool: the plan's outlines (drawPlan) */
+  private planAdd?: SVGPathElement;
+  private planDel?: SVGPathElement;
+  private builders?: number[];
   /** Town tool: the block under the cursor (pickTown) */
   private townHover?: Block;
   private townPicking = false;
@@ -259,6 +266,7 @@ export class LevelScene implements Scene {
         load: (map) => this.opts.onLoadMap?.(map),
         fresh: () => this.opts.onLoadMap?.(undefined),
         say: (t) => this.hud.say(t, 3),
+        crew: () => this.sendBuilders(),
       });
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('class', 'brush-ring');
@@ -1084,19 +1092,70 @@ export class LevelScene implements Scene {
     const remove = this.keys.has('shift');
     return core.renderer.pick((sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH).then((hit) => {
       if (!hit) return null;
-      return this.town.pickBlock(hit.cell, hit.z + 0.5, remove);
+      return this.town.pickBlock(hit.cell, hit.z + 0.5, remove, !!this.editor?.plan);
     });
   }
 
-  /** Town tool: add the block a press lands on (Townscaper's way: town.pickBlock), or take it away with shift. */
+  /** Town tool: add the block a press lands on (Townscaper's way: town.pickBlock), or take it away with shift; in plan mode, plan it. */
   private townAtPick(sx: number, sy: number): void {
     const remove = this.keys.has('shift');
+    const plan = !!this.editor?.plan;
     this.townPick(sx, sy).then((b) => {
       if (!b) return;
-      if (remove) this.town.remove(b.cell, b.level);
+      if (plan) this.town.plan(b.cell, b.level, !remove);
+      else if (remove) this.town.remove(b.cell, b.level);
       else this.town.add(b.cell, b.level);
       this.townHover = undefined;
     }, ignoreTeardown);
+  }
+
+  /**
+   * Town tool, plan mode: six workers to build the plan (agents/buildcrew.ts)
+   * from the nearest pile of bricks or logs to the view's centre (lay one
+   * with ▲ Build, brick). Groups 10-12 and fields 0-1 (a crew at a time).
+   */
+  private sendBuilders(): void {
+    const api = (this.worldApi ??= attachSim(this.core));
+    const A = api.agents;
+    const T = api.terrain;
+    if (!A || !T) return;
+    const { camera } = this.core;
+    const [tx, ty] = [camera.target[0], camera.target[1]];
+    let pile: { x: number; y: number; n: number } | null = null;
+    for (let r = 0; r <= 60 && !pile; r += 3) {
+      for (let k = 0; k < Math.max(1, Math.round(r * 2)); k++) {
+        const a = (k / Math.max(1, Math.round(r * 2))) * Math.PI * 2;
+        const x = tx + Math.cos(a) * r;
+        const y = ty + Math.sin(a) * r;
+        const m = T.materialAt(x, y);
+        if (m === 'brick' || m === 'log') {
+          pile = { x, y, n: 1 };
+          break;
+        }
+      }
+    }
+    if (!pile) {
+      this.hud.say('No pile of bricks or logs near: lay some with ▲ Build (brick) first.', 4);
+      return;
+    }
+    this.buildCrew?.stop();
+    if (this.builders) A.remove(this.builders);
+    this.builders = A.spawn(6, pile.x + 2, pile.y + 2, { kind: 'worker', group: 10, spread: 0.8 });
+    this.buildCrew = api.buildCrew({ units: this.builders, groups: [10, 11, 12], fields: [0, 1], town: this.town, pile: { x: pile.x, y: pile.y, radius: 2.5 }, materials: ['brick', 'log'] });
+    this.hud.say(`Six workers build the plan from the pile (${this.town.delta().length} blocks to do).`, 4);
+    const tick = async () => {
+      const crew = this.buildCrew;
+      if (!crew || this.abort.signal.aborted) return;
+      try {
+        const { units } = await A.sync();
+        if (this.buildCrew === crew) crew.update(units);
+      } catch (e) {
+        ignoreTeardown(e);
+        return;
+      }
+      requestAnimationFrame(() => void tick());
+    };
+    void tick();
   }
 
   /** Town tool: find the block under the cursor for the outline (one pick in flight at a time). */
@@ -1115,6 +1174,42 @@ export class LevelScene implements Scene {
     );
   }
 
+  /** Town tool: the plan's difference from what stands, outlined — green to build, red to take down (the blocks a crew is on, brighter). */
+  private drawPlan(svg: SVGSVGElement): void {
+    const mk = (cls: string) => {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      p.setAttribute('class', cls);
+      svg.appendChild(p);
+      return p;
+    };
+    this.planAdd ??= mk('plan-add');
+    this.planDel ??= mk('plan-del');
+    const t = this.town;
+    const g = t.grid;
+    const { camera } = this.core;
+    let add = '';
+    let del = '';
+    for (const d of t.delta()) {
+      const z0 = t.floorZ(d.cell, d.level) + 0.05;
+      const z1 = z0 + LEVEL_H;
+      const lo: string[] = [];
+      const hi: string[] = [];
+      for (let k = 0; k < 4; k++) {
+        const [x, y] = g.corner(d.cell, k);
+        const a = camera.project(x, y, z0);
+        const c = camera.project(x, y, z1);
+        lo.push(`${a[0].toFixed(1)},${a[1].toFixed(1)}`);
+        hi.push(`${c[0].toFixed(1)},${c[1].toFixed(1)}`);
+      }
+      let path = `M${lo.join('L')}ZM${hi.join('L')}Z`;
+      for (let k = 0; k < 4; k++) path += `M${lo[k]}L${hi[k]}`;
+      if (d.add) add += path;
+      else del += path;
+    }
+    this.planAdd.setAttribute('d', add);
+    this.planDel.setAttribute('d', del);
+  }
+
   /** Sandbox: outline the brush on the ground (follows the terrain); Break: the sphere it smashes, round the voxel picked. */
   private drawRing(): void {
     const ed = this.editor;
@@ -1122,14 +1217,19 @@ export class LevelScene implements Scene {
     if (!ed || !ring) return;
     const { camera } = this.core;
     const ring2 = this.ring2!;
+    if (ed.tool !== 'town' && this.planAdd) {
+      this.planAdd.setAttribute('d', '');
+      this.planDel!.setAttribute('d', '');
+    }
     if (ed.tool === 'town') {
       // the cell's outline at the floor of the block a press would add (or take)
       const b = this.townHover;
       ring2.setAttribute('points', '');
-      ring.parentElement!.style.display = b ? '' : 'none';
-      if (!b) return;
       const t = this.town;
       const g = t.grid;
+      this.drawPlan(ring.parentElement as unknown as SVGSVGElement);
+      ring.parentElement!.style.display = b || this.planAdd?.getAttribute('d') || this.planDel?.getAttribute('d') ? '' : 'none';
+      if (!b) return ring.setAttribute('points', '');
       const floor = Number.isNaN(t.base[b.cell]) ? Math.max(...g.columns[b.cell].map((col) => this.heightAt(...cellPos(col % this.core.dims.w, Math.floor(col / this.core.dims.w))))) : t.floorZ(b.cell, b.level);
       const pts: string[] = [];
       for (const z of [floor + 0.1, floor + LEVEL_H]) {

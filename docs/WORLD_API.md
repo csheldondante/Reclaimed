@@ -227,6 +227,18 @@ passes 9:
 Measured: a mover at 8 cells/s with two passes left +3.6 cells/s behind it
 over the wind ahead; one pass left +1.8.
 
+### The town (round 65, branch `builder`)
+
+`api.town(opts?)` — the one town of a sim (build/town.ts; its grid,
+Townscaper's relaxed quads, from `opts`: seed, spacing, relax).
+`town.add(cell, level)` / `remove` / `set(blocks, on)`: what stands, at
+once (stamped into the columns next tick: plaster walls and floors, tile
+roofs, a stone foundation — real matter). `town.plan(cell, level, on)`:
+the plan only; `town.delta()` the difference, which `api.buildCrew(…)`
+builds (docs/AGENTS.md). `town.grid`: `cellAtWorld(x, y)`, `centre(c)`,
+`corner(c, k)`, `nbr` (four a cell), `columns[c]`. `town.pickBlock(col,
+z, remove, plan?)`: the block a press on (col, z) means, Townscaper's way.
+
 ## The world as data: what a game can pass in
 
 | Content | Today | What it would take |

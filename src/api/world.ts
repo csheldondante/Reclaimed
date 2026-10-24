@@ -25,6 +25,7 @@ import { Crew, type CrewDef } from '../agents/crew';
 import { Mirror } from './mirror';
 import { Terrain } from './terrain';
 import { Town } from '../build/town';
+import { BuildCrew, type BuildCrewDef } from '../agents/buildcrew';
 import type { TownGridOpts } from '../build/towngrid';
 import { cellPos } from '../world/lattice';
 import { Water } from './water';
@@ -106,6 +107,8 @@ export interface Sim {
    * (its grid from `opts`), the same one after. Needs terrain.
    */
   town(opts?: TownGridOpts): Town;
+  /** A building crew (round 65, agents/buildcrew.ts): workers build the town's plan from a pile. Call `update(units)` each frame after a sync. */
+  buildCrew(def: BuildCrewDef): BuildCrew;
   /** Read every module's mirror now (resolves when it's in). */
   refresh(): Promise<void>;
   /** performance.now() of the last mirror read (0: never). */
@@ -179,6 +182,10 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
         stamp: (s) => core.sim.town.stamp(s),
         zMax: core.dims.zMax,
       }, opts));
+    },
+    buildCrew: (def: BuildCrewDef): BuildCrew => {
+      if (!agents || !terrain) throw new Error('world.buildCrew: needs the agents and terrain modules');
+      return new BuildCrew(agents, terrain, def);
     },
     refresh: () => mirror.refresh(),
     get readAt() {

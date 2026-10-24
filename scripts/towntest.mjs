@@ -66,9 +66,13 @@ try {
     // nothing two cells along (its first level over a gap: an arch)
     town.set([{ cell: row[0], level: 0 }, { cell: row[0], level: 1 }, { cell: row[1], level: 0 }], true);
     if (row[2] !== undefined) town.add(row[2], 1);
-    await new Promise((res) => setTimeout(res, 1000));
-    await T.refresh();
-    await T.refresh();
+    // (until the stamps are in the mirror: they're written next tick, read back a timer later)
+    const probe = g.columns[row[0]][0];
+    for (let k = 0; k < 40; k++) {
+      await new Promise((res) => setTimeout(res, 250));
+      await T.refresh();
+      if (T.layersAt(...cellPos(probe % w, Math.floor(probe / w))).some((l) => l.material === 'tile')) break;
+    }
     const mats = (col) => T.layersAt(...cellPos(col % w, Math.floor(col / w))).map((l) => `${l.material}:${l.z0.toFixed(1)}-${l.z1.toFixed(1)}`);
     const cols = g.columns[row[0]];
     // a column in the middle (a floor, a floor, a roof) and one at its edge (a wall)
