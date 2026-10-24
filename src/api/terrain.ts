@@ -95,6 +95,59 @@ export class PullStroke {
   }
 }
 
+export interface RaiseOpts {
+  /** the brush's half-width (cells; default range 8, mesa 6) */
+  radius?: number;
+  /** range: its height over the ground (default 22); mesa: its top over the ground where the stroke starts (default 10) */
+  height?: number;
+  /** mesa: its top level, absolute z (default: the ground where the stroke starts + height) */
+  level?: number;
+}
+
+/**
+ * A landform brush stroke under way (terrain.raise; round 64): call `to`
+ * each frame with the brush's centre; the land rises along where it went
+ * (a range: a ridge, peaks and spurs, on the ground; a mesa: flat at its
+ * level, cliffs at the edge, banded sandstone and stone) at 18 cells/s.
+ * `end` when the drag lets go (what's still rising finishes).
+ */
+export class RaiseStroke {
+  private last?: [number, number];
+  private level?: number;
+  private static next = 1;
+  private done = false;
+  private serial = RaiseStroke.next++;
+  constructor(
+    private owner: Terrain,
+    readonly shape: 'range' | 'mesa',
+    private opts: RaiseOpts,
+  ) {}
+
+  to(x: number, y: number): void {
+    if (this.done) throw new Error('world.terrain.raise: the stroke has ended');
+    const mesa = this.shape === 'mesa';
+    const height = this.opts.height ?? (mesa ? 10 : 22);
+    if (mesa && this.level === undefined) {
+      const g = this.owner.heightAt(x, y);
+      if (g === null) throw new Error('world.terrain.raise: the ground is not read yet (await terrain.refresh())');
+      this.level = this.opts.level ?? g + height;
+    }
+    this.owner.queueStamp({
+      from: this.last ?? [x, y],
+      to: [x, y],
+      radius: this.opts.radius ?? (mesa ? 6 : 8),
+      height: mesa ? this.level! : height,
+      shape: this.shape,
+      stroke: this.serial,
+    });
+    this.last = [x, y];
+  }
+
+  end(): void {
+    this.done = true;
+  }
+}
+
 /** meshregion.wgsl fieldMat: in the field mesh (else drawn as a prism: what's built) */
 function fieldMat(m: number): boolean {
   return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone;
@@ -357,6 +410,20 @@ export class Terrain {
     if (slot < 0) slot = this.slots.indexOf(Math.min(...this.slots));
     this.slots[slot] = performance.now();
     return new PullStroke(this, slot, m, opts);
+  }
+
+  /**
+   * Paint a landform (round 64): 'range' raises a ridge along the stroke,
+   * 'mesa' a flat-topped plateau with banded cliffs; the land comes up
+   * under the brush over a second or two. Call `to` each frame, then `end`.
+   */
+  raise(shape: 'range' | 'mesa', opts: RaiseOpts = {}): RaiseStroke {
+    return new RaiseStroke(this, shape, opts);
+  }
+
+  /** (RaiseStroke) */
+  queueStamp(s: import('../sim/systems').LandStamp): void {
+    this.core.sim.land.queue.push(s);
   }
 
   /** One pull at (x, y): raise `material` by `height` under a brush of `radius` (a stroke of one call). */

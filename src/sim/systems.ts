@@ -1,7 +1,7 @@
 // First (simplest) implementations of each simulation system. Each one is a
 // thin wrapper binding a WGSL kernel to WorldGpu contract buffers.
 
-import { ignoreTeardown, makeBindGroup, makeCompute, type BindSpec } from '../gpu/pipeline';
+import { ignoreTeardown, makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
@@ -30,6 +30,7 @@ import climateWgsl from '../shaders/climate.wgsl?raw';
 import editWgsl from '../shaders/edit.wgsl?raw';
 import placeOpWgsl from '../shaders/placeop.wgsl?raw';
 import layerPullWgsl from '../shaders/layerpull.wgsl?raw';
+import landBrushWgsl from '../shaders/landbrush.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -572,6 +573,67 @@ export class LayerPullSystem implements SimSystem {
     this.device.queue.writeBuffer(this.params, 0, buf);
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
     enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+  }
+}
+
+/** A landform brush stamp (landbrush.wgsl): a stroke's segment this tick. */
+export interface LandStamp {
+  from: [number, number];
+  to: [number, number];
+  /** half-width (cells) */
+  radius: number;
+  /** range: its height (cells over the ground); mesa: its top level (absolute z) */
+  height: number;
+  shape: 'range' | 'mesa';
+  /** the stroke it belongs to (a serial from 1: a column new to it starts over) */
+  stroke: number;
+}
+
+const STAMPS_A_TICK = 16;
+
+/**
+ * The landform brushes (round 64; landbrush.wgsl): strokes stamp ranges and
+ * mesas, the rock rises toward what they ask at 18 cells/s. In place on the
+ * layers (each thread its own column); runs while anything is still rising.
+ */
+export class LandBrushSystem implements SimSystem {
+  readonly name = 'landbrush';
+  readonly period = 1;
+  readonly queue: LandStamp[] = [];
+  private params: GPUBuffer;
+  private state: GPUBuffer;
+  private stamp: { k: ComputeKernel; group: GPUBindGroup };
+  private rise: { k: ComputeKernel; group: GPUBindGroup };
+  /** ms of performance.now() until which it keeps rising (a stamp's height / 18 cells/s, and some) */
+  private until = 0;
+  constructor(private device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.params = device.createBuffer({ label: 'landbrush-params', size: 16 + STAMPS_A_TICK * 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.state = world.buf('landBrush', world.w * world.h * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    const spec: BindSpec = { ...BASE, 3: 'rw', 4: 'rw', 6: 'uniform', 7: 'stex' };
+    const bound = { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: this.state, 6: this.params, 7: world.shakeView };
+    const mk = (entry: string) => {
+      const k = makeCompute(device, `landbrush-${entry}`, [...WITH_ALL, landBrushWgsl], spec, entry);
+      return { k, group: makeBindGroup(device, `landbrush-${entry}`, k.layout, bound) };
+    };
+    this.stamp = mk('stamp');
+    this.rise = mk('rise');
+  }
+  encode(enc: GPUCommandEncoder): void {
+    const now = performance.now();
+    if (!this.queue.length && now > this.until) return;
+    const batch = this.queue.splice(0, STAMPS_A_TICK);
+    const buf = new ArrayBuffer(16 + STAMPS_A_TICK * 32);
+    const u = new Uint32Array(buf);
+    const f = new Float32Array(buf);
+    u[0] = batch.length;
+    batch.forEach((s, k) => {
+      f.set([s.from[0], s.from[1], s.to[0], s.to[1], s.radius, s.height, s.shape === 'mesa' ? 1 : 0, s.stroke], 4 + k * 8);
+      // (a range of h cells rises in h / 18 s; a mesa's level is absolute: allow for the tallest)
+      this.until = Math.max(this.until, now + 1000 * ((s.shape === 'mesa' ? this.world.zMax : s.height) / 18 + 1));
+    });
+    this.device.queue.writeBuffer(this.params, 0, buf);
+    if (batch.length) dispatch(enc, this.prof, 'landbrush-stamp', this.stamp.k, this.stamp.group, this.world.groups);
+    dispatch(enc, this.prof, 'landbrush-rise', this.rise.k, this.rise.group, this.world.groups);
   }
 }
 

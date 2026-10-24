@@ -105,6 +105,8 @@ export class LevelScene implements Scene {
   agents!: Agents;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
+  /** the landform brush's stroke (range, mesa; round 64) */
+  private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
   lava?: LavaSystem;
   /** sandbox: the heat beam's pointer while held */
@@ -380,6 +382,8 @@ export class LevelScene implements Scene {
           return;
         }
         this.smashing = false;
+        this.raising?.end();
+        this.raising = undefined;
         if (this.brushAt) this.brushAt = undefined;
         else this.powers.gustEnd();
       },
@@ -1026,6 +1030,18 @@ export class LevelScene implements Scene {
       void this.placeModel(wx, wy);
       return true;
     }
+    // landforms: a stroke the world API raises as it goes (round 64)
+    if (ed.tool === 'range' || ed.tool === 'mesa') {
+      this.core.snapshot();
+      const api = (this.worldApi ??= attachSim(this.core));
+      this.raising = api.terrain!.raise(ed.tool, ed.tool === 'range' ? { radius: ed.radius, height: ed.radius * 2.6 } : { radius: ed.radius, level: this.heightAt(wx, wy) + 10 });
+      this.raising.to(wx, wy);
+      if (tap) {
+        this.raising.end();
+        this.raising = undefined;
+      } else this.brushAt = [wx, wy];
+      return true;
+    }
     // each press can be undone
     if (EDIT_OP[ed.tool]) this.core.snapshot();
     this.strokeStart = true;
@@ -1075,7 +1091,7 @@ export class LevelScene implements Scene {
     }
     ring2.setAttribute('points', '');
     const at = this.brushAt ?? this.hoverWorld;
-    const on = !!at && (!!EDIT_OP[ed.tool] || ed.tool === 'place');
+    const on = !!at && (!!EDIT_OP[ed.tool] || ed.tool === 'place' || ed.tool === 'range' || ed.tool === 'mesa');
     ring.parentElement!.style.display = on ? '' : 'none';
     if (!on) return;
     const pts: string[] = [];
@@ -1405,6 +1421,7 @@ export class LevelScene implements Scene {
   /** One frame of the brush: an EV_EDIT event for edit.wgsl. */
   private brush(x: number, y: number): void {
     const ed = this.editor!;
+    if (this.raising) return void this.raising.to(x, y);
     const op = EDIT_OP[ed.tool];
     if (!op) return;
     const layered = LAYER_TOOLS.has(ed.tool);

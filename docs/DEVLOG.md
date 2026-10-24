@@ -3891,3 +3891,30 @@ yes, from rooms as we talked about (W1). `world/landforms.ts`, the level
 Measured: 0.3 s to generate (three seeds; at most 6 intervals a column);
 seed 1: 2,724 cave columns, 144 lined with basalt; a minute of sim at
 speed 2: the water steady (4,078 → 4,134 cells³), sediment 0.35 ms.
+
+## Round 64 — the range and mesa brushes (builder)
+
+The user: "I want to be able to paint mountain ranges and mesas and have them
+rise from the ground relatively quickly under the brush" — drag a line for a
+range, paint an area for a mesa. `landbrush.wgsl` (LandBrushSystem),
+`terrain.raise('range' | 'mesa')`, the editor's 🏔 and 🏜 tools:
+- A stroke stamps its segments each tick into a per-column state (still to
+  rise, the most the stroke asked, the ground's top when it first touched,
+  its stroke and shape); the rock rises toward it at 18 cells/s, so the land
+  comes up under the brush over a second or two. A column new to a stroke
+  starts over (a per-stroke serial: zeroed state read as "ground at z 0" the
+  first time, and the mesa rose 6 cells past its level).
+- Range: highest on the line (a profile across it), peaks and saddles from
+  ridged noise (squared, so the saddles drop), spurs on the flanks; added on
+  the ground. Mesa: flat at the stroke's level (the ground where it starts +
+  10, or a level given), a steep edge broken by noise, banded sandstone and
+  stone by height.
+- The loose cover on rising ground turns to rock as it goes (sand pressed to
+  sandstone on a mesa, stone on a range), all but a 0.4 skin that's shaken
+  off: on the sandbox's 4 cells of sand the first mesas came up as sand
+  mounds, the cliffs buried in what they rose through.
+
+Measured (`brushtest`, 5/5): a range dragged 40 cells rises 11–16 cells along
+its line (21 on the first try, before the saddles), 2.5 a few cells across,
+mid-rise visibly lower than settled; a mesa painted at level 26.2 tops out at
+26.13 ± 0.39 with a 11.8-cell drop at its edge, sandstone over stone.

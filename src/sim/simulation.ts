@@ -23,6 +23,7 @@ import {
   WaterSystem,
   PlaceOpSystem,
   LayerPullSystem,
+  LandBrushSystem,
 } from './systems';
 import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
@@ -41,6 +42,8 @@ export class Simulation {
   readonly placeOps: PlaceOpSystem;
   /** layer pulls (BACKLOG E2): world.terrain.pull */
   readonly pulls: LayerPullSystem;
+  /** the landform brushes (round 64): world.terrain.raise */
+  readonly land: LandBrushSystem;
   readonly shadow: RenderFieldsSystem;
   readonly particles: ParticleSystem;
   tick = 0;
@@ -58,6 +61,7 @@ export class Simulation {
     this.edit = new EditSystem(device, world, profiler);
     this.placeOps = new PlaceOpSystem(device, world, profiler);
     this.pulls = new LayerPullSystem(device, world, profiler);
+    this.land = new LandBrushSystem(device, world, profiler);
     this.shadow = new RenderFieldsSystem(device, world, profiler);
     this.stats = new StatsSystem(device, world, profiler);
     this.particles = new ParticleSystem(device, world, profiler);
@@ -65,6 +69,7 @@ export class Simulation {
     this.systems = [
       this.edit,
       this.pulls,
+      this.land,
       this.placeOps,
       this.wind,
       // what the nature grid sees of the structure grids (bodyProj), first
