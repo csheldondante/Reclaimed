@@ -507,8 +507,9 @@ fn takeTop(s: ptr<function, Stack>, amount: f32) -> f32 {
 // it lands on the neighbour's floor there, and keeps going until the face
 // stands at its angle of repose. What lies on top doesn't hold it, so the
 // sand under a rock shelf is undercut and leaves a pocket of air beneath it;
-// the structure pass then sees the shelf's support go. Only intervals
-// beneath the loose run on top spill this way (the run slumps by levels).
+// the structure pass then sees the shelf's support go. The loose run on top
+// slumps by levels into the open air over its neighbours, and spills this
+// way only into air inside them (under a roof slumpOut doesn't see past).
 struct Spill {
   amt: Dirs,
   z: Dirs,
@@ -520,7 +521,15 @@ struct Spill {
 
 fn spillOut(p: vec2<i32>) -> Spill {
   var sp: Spill;
-  if (!sfBuried(surface[colIdxI(p)])) { return sp; }
+  // (the run on top spills too, into air inside a neighbour — a cave under
+  // a crater's rim, under an overhang: slumpOut sees only that neighbour's
+  // top, its roof, so the run stood as a wall beside the air — Q16b/Q22)
+  var gapNb = false;
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
+    if (inMap(q) && sfGap(surface[colIdxI(q)])) { gapNb = true; }
+  }
+  if (!sfBuried(surface[colIdxI(p)]) && !gapNb) { return sp; }
   let cs = colSlots(u32(p.x), u32(p.y));
   var n = 0u;
   for (var k = 0u; k < cs.y; k++) {
@@ -535,8 +544,11 @@ fn spillOut(p: vec2<i32>) -> Spill {
     if (r < n && abs(ivZ1(v) - ivZ0(layers[cs.x + r])) > 1e-3) { break; }
     r -= 1u;
   }
-  for (var si = 0u; si < r; si++) {
+  for (var si = 0u; si < n; si++) {
     let v = layers[cs.x + si];
+    // (the run on top: only into a neighbour's air under a roof — the open
+    // air over its top is slumpOut's)
+    let onTop = si >= r;
     let m = ivMat(v);
     if (matState(m) != ST_GRANULAR) { continue; }
     let a = ivZ0(v);
@@ -547,7 +559,7 @@ fn spillOut(p: vec2<i32>) -> Spill {
       if (!inMap(q)) { continue; }
       // (a neighbour as high as this interval's top with no air inside it
       // has no face here: most of them — skip reading its intervals)
-      if (!sfGap(surface[colIdxI(q)]) && baseAt(q) + driftAt(q) >= b) { continue; }
+      if (!sfGap(surface[colIdxI(q)]) && (onTop || baseAt(q) + driftAt(q) >= b)) { continue; }
       let qs = colSlots(u32(q.x), u32(q.y));
       // the lowest air gap in q beside [a, b) that has a floor under it
       var g0 = -1.0;
@@ -567,7 +579,7 @@ fn spillOut(p: vec2<i32>) -> Spill {
         prev = u;
       }
       // (or the open air over its top)
-      if (g0 < 0.0 && qn > 0u && ivZ1(prev) < b) { g0 = ivZ1(prev); g1 = 1e9; fl = prev; }
+      if (g0 < 0.0 && qn > 0u && ivZ1(prev) < b && !onTop) { g0 = ivZ1(prev); g1 = 1e9; fl = prev; }
       if (g0 < 0.0) { continue; }
       let drop = min(b, g1) - g0;
       if (drop <= rep) { continue; }
@@ -771,6 +783,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let spills = dSum(mySpill) > 0.0 || inSpill > 0.0;
   let moves = own[1] > 0.0 || same > 0.0 || other > 0.0 || pour > 0.0 || depY > 0.0 || delta < 0.0 || strip > 0u || bind || spills || lvAny;
   if (!moves && !hangs) { return; }
+  // (the slots in use now: a spill may join or empty some of them, and the
+  // ones it frees must be cleared below)
+  let n0 = n;
 
   var arr: array<vec4<u32>, MAX_K>;
   for (var k = 0u; k < n; k++) { arr[k] = layers[cs.x + k]; }
@@ -802,8 +817,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         var room = 1e9;
         if (f + 1u < n) { room = ivZ0(arr[f + 1u]) - fz; }
         let add = min(amt, room);
-        if (ivMat(v) == fm) {
-          arr[f] = ivPack(ivZ0(v), ivZ1(v) + add, fm, ivAux(v));
+        // (a trace of another on loose ground blends in, as landAt: no
+        // hairline strata filling the slots)
+        if (ivMat(v) == fm || (matState(ivMat(v)) == ST_GRANULAR && add < 0.02)) {
+          arr[f] = ivPack(ivZ0(v), ivZ1(v) + add, ivMat(v), ivAux(v));
         } else if (n < cs.y) {
           for (var t = n; t > f + 1u; t--) { arr[t] = arr[t - 1u]; z1o[t] = z1o[t - 1u]; }
           // (on the floor as it is now: something may have run out of it)
@@ -928,5 +945,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (lvAmt[t] > 0.0) { n1 = landAt(&arr, n1, cs.y, p, t, lvAmt[t], lvMat[t]); }
     }
   }
-  for (var k = 0u; k < max(n, n1); k++) { layers[cs.x + k] = select(IV_NONE, arr[k], k < n1); }
+  for (var k = 0u; k < max(n0, n1); k++) { layers[cs.x + k] = select(IV_NONE, arr[k], k < n1); }
 }
