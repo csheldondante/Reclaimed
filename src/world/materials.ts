@@ -90,6 +90,8 @@ export const MAT = {
   Crystal: 28,
   /** round 63: felled trees, cut — solid, stacked in piles by workers; they crumble to ash-like chips */
   Log: 29,
+  /** round 64: the mesas' warm strata (landforms.ts) */
+  Sandstone: 30,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -160,6 +162,8 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'crystal', albedo: [0.62, 0.5, 0.9], state: MatState.Solid, emissive: 0.25, strength: 0.7, specular: 1, glass: 1 },
   // logs (round 63): felled trunks, cut and stacked (wood is the living trunk, plant matter)
   { ...NONE, name: 'log', albedo: [0.45, 0.31, 0.18], state: MatState.Solid, strength: 0.45, growthCap: 1, suitability: 0.2 },
+  // sandstone (round 64): warm banded rock, the mesas' strata (softer than stone)
+  { ...NONE, name: 'sandstone', albedo: [0.74, 0.47, 0.32], state: MatState.Solid, strength: 0.7, growthCap: 1.2, suitability: 0.3, porosity: 0.3 },
 ];
 
 export const MAX_MATERIALS = 32;

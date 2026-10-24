@@ -6,6 +6,7 @@ import type { WorldDims } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { generateMap } from '../world/mapgen';
 import { generateSandbox } from '../world/sandbox';
+import { generateLandforms } from '../world/landforms';
 import { generateTrials } from '../levels/trials';
 import type { GateSpec } from '../world/kit';
 
@@ -30,6 +31,8 @@ export interface LevelDef {
   story?: boolean;
   /** not on the title screen (test beds: ?skipmenu=1&level=<id>, or the sandbox's load list) */
   hidden?: boolean;
+  /** its height limit (cells; default 64): the wilds' ranges want more (round 64) */
+  zMax?: number;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -54,6 +57,15 @@ export const LEVELS: LevelDef[] = [
     generate: (dims) => generateTrials(dims),
     story: true,
     hidden: true,
+  },
+  {
+    id: 'wilds',
+    name: 'The Wilds',
+    blurb: 'Ranges, mesas, rivers and caves: land to shape and build on.',
+    model: 'sign',
+    generate: (dims) => generateLandforms(dims, { seed: 1 }),
+    sandbox: true,
+    zMax: 96,
   },
   {
     id: 'sandbox',

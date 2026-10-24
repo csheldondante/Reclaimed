@@ -97,7 +97,7 @@ export class PullStroke {
 
 /** meshregion.wgsl fieldMat: in the field mesh (else drawn as a prism: what's built) */
 function fieldMat(m: number): boolean {
-  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt;
+  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone;
 }
 
 /**

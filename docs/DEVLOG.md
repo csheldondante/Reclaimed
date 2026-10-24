@@ -3857,3 +3857,37 @@ Measured (`crewtest`, the valley, 40 s, six workers each): digging, 24
 trips, 12.10 dug = 10.90 piled + 1.20 carried (exact), the pit 0.32 down,
 the pile 0.65 up, the soil fired to brick; felling a grown wood, 4 trees
 felled (a storm burned the fifth), 4.95 cells³ of logs cut and all piled.
+
+## Round 64 — the wilds: land generated from a room plan (builder)
+
+The user: improve the initial terrain generation first (natural landforms,
+caves and tubes and underground rivers, rivers and lakes that fit), and
+yes, from rooms as we talked about (W1). `world/landforms.ts`, the level
+"The Wilds" (a sandbox, zMax 96; `LevelDef.zMax`):
+- A Voronoi plan (places.ts: rooms ~28 apart, 7 regions); each region a
+  landform: range, mesa country, basin, woods, hills (at least a range, a
+  mesa land and a basin), blended ~9 cells across the borders. The plan
+  goes with the map and loads as the level's places.
+- Ranges: anisotropic ridged noise (ridges one way, spurs off them), the
+  crest down the region's middle (distance to its border); the highest
+  peak scaled under the cap (zMax − 8) with the rest (a clamp flattened
+  the first try into a plateau). Mesas: two flat levels where a noise
+  field crosses thresholds (cliffs), talus aprons; banded sandstone and
+  stone (a new solid, `sandstone`, drawn in the field mesh with stone).
+- Water: a priority flood from the edges (every pit fills to its spill
+  level), each column draining to its lowest filled neighbour, the rain
+  accumulated down; channels carved where 420+ columns' worth gathers
+  (deeper downstream), springs at their heads (0.004 a tick), the rivers'
+  water and the lakes (not above BASE + 16) set where they'd settle.
+- Under it: cave systems from the feet of ranges and mesas (the mouth in
+  the open), winding in under them with branches; passages between
+  neighbouring rooms where a ridge stands between them; lava tubes down a
+  range's flank, lined with basalt. A roof thinner than 3.5 opens to the
+  sky (thinner left floating chips).
+- Loose cover only where it would lie (slope under 1.1): soil, sand in
+  mesa country, snow high up; plants by moisture (distance to water),
+  slope and height.
+
+Measured: 0.3 s to generate (three seeds; at most 6 intervals a column);
+seed 1: 2,724 cave columns, 144 lined with basalt; a minute of sim at
+speed 2: the water steady (4,078 → 4,134 cells³), sediment 0.35 ms.

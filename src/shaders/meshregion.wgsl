@@ -17,7 +17,7 @@ struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32> };
  * rust, bone, canvas) — and drawn as prisms, sharp, the way the structure
  * grids stay cubes? (Smoothed, a ruin's walls melted into cones.)
  */
-fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE || m == 12u || m == 23u; }
+fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE || m == 12u || m == 23u || m == 30u; }
 
 /** Smooth value noise 0..1 (trilinear between hashed lattice values). */
 fn warpNoise(p: vec3<f32>) -> f32 {

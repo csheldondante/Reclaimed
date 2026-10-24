@@ -136,7 +136,7 @@ export class LevelScene implements Scene {
     private onExit: () => void,
     private opts: LevelOptions,
   ) {
-    const dims = { w: 256, h: 256, zMax: 64 };
+    const dims = { w: 256, h: 256, zMax: level.zMax ?? 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
     this.core = new WorldCore(host, opts.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true);
     // (grids, the rendering branch, opens in free play; ?mode=story for the story's rules)
@@ -544,6 +544,9 @@ export class LevelScene implements Scene {
     core.places.groundAt = this.heightAt;
     // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)
     const plan = host.params.get('plan');
+    // (a generated map's own plan: its places — landforms.ts)
+    const own = (map as { plan?: { plan: import('../world/places').Plan; seed: number } }).plan;
+    if (own && !plan) core.places.load(own.plan, own.seed);
     if (plan) {
       const seed = Number(host.params.get('planseed') ?? 1);
       if (plan === 'voronoi') core.places.load({ partition: 'voronoi', spacing: 22, group: [1, 3], shape: 'chain' }, seed);
