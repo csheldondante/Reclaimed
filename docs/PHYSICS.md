@@ -255,6 +255,22 @@ and temperature, and the heat of the ground at the column's top.
   per cell melted), so a held beam digs a glowing pit through sand and
   stone alike (never below z 1), and the lava pools in it. The lava on it
   is kept molten (no hotter than 1400).
+- **The beam into a face** (round 62: a cliff, a mountain's side): where it
+  hits a column more than the hole's half height under its top, it bores
+  instead. Each column in the beam's radius r gathers heat until it can
+  melt all the rock in its span of a round hole (half height
+  âˆš(rÂ² âˆ’ offÂ²) about the hit), then the span goes at once: the rock over
+  it stays as an overhang (the interval split, so it takes a slot). A
+  slit would open first if it melted from the middle out, and a game's
+  ray would run on through it. At the level's 9000 a cell of face goes in
+  about 1.4 s. The melt runs out of the bore a column a tick (a spill
+  texture): to the lowest open neighbour (sky floor at or under the
+  bore's floor + 0.3), else back the way the beam came (`beam.dir`;
+  without it, downhill), and pours out as lava where it reaches open air.
+  With nowhere to go, or after 48 columns, it sets on the bore's floor.
+  A full column (no free slot) can't be bored (BACKLOG Q21).
+  `boretest`: 6 columns in, the hole 3 high with 9 cells of rock over it,
+  36 cellsÂ³ of lava out in front, none on top.
 - **Volcano** (🌋 tap; round 48: it was far too short): first its cone
   rises out of the ground, 30 cells over 10 s (radius 21, concave sides
   with ridges and gullies, a crater 2.5 across): the column's bedrock grows,

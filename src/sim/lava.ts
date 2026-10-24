@@ -35,13 +35,20 @@ const VERTS_PER_PRISM = 30;
 export class LavaSystem implements SimSystem {
   readonly name = 'lava';
   readonly period = 1;
-  /** the beam on the ground: where it hits, its radius and power (heat/s) */
-  beam: { at: [number, number, number]; radius: number; power: number } | null = null;
+  /**
+   * the beam: where it hits, its radius and power (heat/s), and the way it
+   * points (round 62: hitting a column under its top it bores into it, and
+   * the melt runs out back along `dir`; left out, downhill)
+   */
+  beam: { at: [number, number, number]; radius: number; power: number; dir?: [number, number, number] } | null = null;
   readonly vents: Vent[] = [];
   /** lava prisms for the opaque pipeline (Renderer.addPrisms) */
   readonly inst: GPUBuffer;
   readonly indirect: GPUBuffer;
   private uni: GPUBuffer;
+  /** the bore's melt on its way out (lava.wgsl spill): read, and written each tick */
+  private spill: GPUTexture;
+  private spillNext: GPUTexture;
   private k: Record<string, { k: ComputeKernel; g: GPUBindGroup }> = {};
 
   constructor(
@@ -53,6 +60,9 @@ export class LavaSystem implements SimSystem {
     this.inst = world.buf('lavaInst', world.cells * 16 * 3, GPUBufferUsage.STORAGE);
     this.indirect = world.buf('lavaIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.uni = world.buf('lavaU', 32 + 32 * MAX_VENTS, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    const tsize = { width: world.w, height: world.h };
+    this.spill = device.createTexture({ label: 'lavaSpill', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.spillNext = device.createTexture({ label: 'lavaSpillNext', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC });
     const res: Record<number, GPUBuffer | GPUTextureView> = {
       0: world.globals,
       1: world.chunks,
@@ -69,6 +79,9 @@ export class LavaSystem implements SimSystem {
       17: world.driftView,
       21: world.bodyProjView,
       22: this.uni,
+      23: this.spill.createView(),
+      24: this.spillNext.createView(),
+      29: world.levelsView,
     };
     const kernel = (name: string, parts: string[], spec: BindSpec, entry = 'main', over: Record<number, GPUBuffer | GPUTextureView> = {}) => {
       const all: BindSpec = { 0: 'uniform', 2: 'uniform', ...spec };
@@ -83,7 +96,7 @@ export class LavaSystem implements SimSystem {
       5: world.lavaFlux,
     });
     const parts = [commonWgsl, layersWgsl, materialsWgsl, lavaWgsl];
-    kernel('lava-depth', parts, { 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 12: 'rw', 13: 'rw', 22: 'uniform' }, 'depth');
+    kernel('lava-depth', parts, { 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 12: 'rw', 13: 'rw', 22: 'uniform', 23: 'tex', 24: 'stex', 29: 'tex' }, 'depth');
     kernel('lava-prep', parts, { 3: 'read', 8: 'rw', 9: 'rw' }, 'prep');
   }
 
@@ -100,7 +113,11 @@ export class LavaSystem implements SimSystem {
   private writeUniforms(dt: number): void {
     const u = new Float32Array(8 + 8 * MAX_VENTS);
     const b = this.beam;
-    if (b) u.set([b.at[0], b.at[1], b.at[2], b.radius, b.power, 1, 0, 0], 0);
+    if (b) {
+      // (the way it points, level: the bore's melt runs back along it)
+      const l = b.dir ? Math.hypot(b.dir[0], b.dir[1]) : 0;
+      u.set([b.at[0], b.at[1], b.at[2], b.radius, b.power, 1, l > 1e-6 ? b.dir![0] / l : 0, l > 1e-6 ? b.dir![1] / l : 0], 0);
+    }
     for (let i = this.vents.length - 1; i >= 0; i--) {
       const v = this.vents[i];
       // (rising first, then pouring)
@@ -123,6 +140,7 @@ export class LavaSystem implements SimSystem {
     const run = (name: string) => dispatch(enc, this.prof, name, this.k[name].k, this.k[name].g, this.world.groups);
     run('lava-flux');
     run('lava-depth');
+    enc.copyTextureToTexture({ texture: this.spillNext }, { texture: this.spill }, { width: this.world.w, height: this.world.h });
     enc.copyBufferToBuffer(this.world.lavaNext, 0, this.world.lava, 0, this.world.lava.size);
     run('lava-prep');
   }

@@ -59,6 +59,13 @@ export interface WorldDef {
   fieldMesh?: boolean;
   /** the kinds of agent (index = kind id; default worker, raider, ogre: agents.ts) */
   agents?: { kinds?: KindSpec[] };
+  /**
+   * intervals every column can hold, at least (default: 4, or what the
+   * map's busiest column in each 16×16 chunk needs + 2; at most 16). Caves,
+   * bores and overhangs each take one; a full column can't open another
+   * (round 62)
+   */
+  slots?: number;
   /** modules to install (default all of them) */
   modules?: SimModules;
   /** settle the world before it's shown (Sim.warmup; sim.ready resolves when it's done) */
@@ -112,7 +119,7 @@ async function warmup(core: WorldCore, mirror: Mirror, opts: WarmupOpts): Promis
 
 /** A sim of the world `def` describes. */
 export function createSim(host: Host, def: WorldDef): Sim {
-  const core = new WorldCore(host, def.map, def.particles ?? host.quality.particles, undefined, def.fieldMesh ?? false);
+  const core = new WorldCore(host, def.map, def.particles ?? host.quality.particles, def.slots, def.fieldMesh ?? false);
   if (def.climate) core.globals.climate = { ...def.climate };
   if (def.season !== undefined) core.globals.season = def.season;
   if (def.yearLength !== undefined) core.yearLength = def.yearLength;

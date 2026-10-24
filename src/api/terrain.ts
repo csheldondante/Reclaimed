@@ -193,16 +193,34 @@ export class Terrain {
     return sfZ(s[i]) + d[i * 4];
   }
 
-  /** The floor under height z at (x, y): the highest floor of open air at or below z (+0.5); null none. */
+  /**
+   * The floor under height z at (x, y): the highest floor of open air at or
+   * below z (+0.5); null none. Open air under structures' projected
+   * intervals (the levels) and in the column's own layers (a cave's floor,
+   * round 62).
+   */
   floorAt(x: number, y: number, z: number): number | null {
     const f = this.mirror.f32('levels');
+    const lf = this.mirror.f32('layers');
+    const lu = this.mirror.u32('layers');
     const i = this.col(x, y);
-    if (!f || i < 0) return null;
+    if (!f || !lf || !lu || i < 0) return null;
     let best: number | null = null;
     for (let k = 0; k < 4; k++) {
       const v = f[i * 4 + k];
       if (v < 0) continue;
       if (v <= z + 0.5 && (best === null || v > best)) best = v;
+    }
+    // (an interval's top with air over it: the next one starts higher, or none)
+    const [cx, cy] = cellAt(x, y);
+    const { base, k } = columnSlots(this.core.packed, cx, cy);
+    for (let s = 0; s < k; s++) {
+      const o = (base + s) * SLOT_WORDS;
+      if (lu[o + 1] === 0) break;
+      const z1 = lf[o + 1];
+      if (z1 > z + 0.5) break;
+      const next = s + 1 < k && lu[o + SLOT_WORDS + 1] !== 0 ? lf[o + SLOT_WORDS] : Infinity;
+      if (next > z1 + 1e-3 && (best === null || z1 > best)) best = z1;
     }
     return best;
   }

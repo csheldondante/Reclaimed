@@ -7,6 +7,11 @@
 //  - the beam heats the ground where it hits (and the lava on it); ground
 //    past MELT melts off the top of the column's layers (in place: each
 //    thread owns its column's slots, as in sediment.wgsl) into lava;
+//  - hitting a column under its top (a cliff's face: round 62), the beam
+//    bores into it instead: it melts a round hole about the hit, leaving
+//    the rock over it (an overhang), and the melt runs out of the bore a
+//    column a tick (spill) until it reaches open air, where it pours out
+//    as lava (or, with nowhere to go, sets on the bore's floor);
 //  - a volcano's cone rises out of the ground first (the column's layers
 //    lifted, its bedrock growing under them), then its vent pours fresh lava
 //    into the crater, which runs down the sides;
@@ -25,9 +30,18 @@
 @group(0) @binding(9) var<storage, read_write> indirect: array<atomic<u32>>;
 @group(0) @binding(12) var<storage, read_write> parts: array<PartL>;
 @group(0) @binding(13) var<storage, read_write> counters: array<atomic<u32>>;
+// the bore's melt on its way out (round 62), one column a tick: x how much
+// (cells³), y the floor it runs along, z the way it was sent (+1) + 8 × the
+// columns it has come, w the way out of this column's bore (+1; kept) + 8 ×
+// the heat gathered to bore it
+@group(0) @binding(23) var spillIn: texture_2d<f32>;
+@group(0) @binding(24) var spillOut: texture_storage_2d<rgba32float, write>;
+// the open air's floors (surface.wgsl): x the sky's
+@group(0) @binding(29) var levelsL: texture_2d<f32>;
 
 struct LavaU {
-  // the beam: where it hits (xyz) and its radius; power (heat/s), on
+  // the beam: where it hits (xyz) and its radius; power (heat/s), on, the
+  // way it points (level: xy; 0 not given)
   beam: vec4<f32>,
   beam2: vec4<f32>,
   // vents: x, y, rate (cells³/s), radius (0: none)
@@ -71,6 +85,28 @@ const QUENCH: f32 = 2500.0;
 const BEAM_REACH: f32 = 2.5;
 // the floor the beam can't melt through
 const FLOOR_Z: f32 = 1.0;
+// the bore's melt: open air this close over its floor takes it; it sets
+// after running this many columns
+const OPEN_SLACK: f32 = 0.3;
+const SPILL_HOPS: u32 = 48u;
+
+/** The way out of a bore at p: back the way the beam came (back: the way it points, reversed), or downhill when not given. */
+fn wayOut(p: vec2<i32>, back: vec2<f32>) -> f32 {
+  var best = -1;
+  var bv = -1e9;
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
+    var v = 0.0;
+    if (length(back) > 0.5) {
+      v = dot(normalize(cellPos(q) - cellPos(p)), back);
+    } else {
+      if (!inMap(q)) { continue; }
+      v = -textureLoad(levelsL, q, 0).x;
+    }
+    if (v > bv) { bv = v; best = i32(k); }
+  }
+  return f32(best + 1);
+}
 
 fn spawnL(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, seed: u32, state: u32) {
   let k = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
@@ -110,6 +146,20 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   d = max(d, 0.0);
   var gh = L.z;
+  // a bore's melt sent here last tick
+  let sp = textureLoad(spillIn, p, 0);
+  var sAmt = 0.0;
+  var sLvl = 0.0;
+  var sHops = 0u;
+  for (var k = 0u; k < NDIR; k++) {
+    let q = nbr(p, k);
+    if (!inMap(q)) { continue; }
+    let s = textureLoad(spillIn, q, 0);
+    if (s.x <= 0.0 || (u32(s.z) & 7u) != (k ^ 1u) + 1u) { continue; }
+    sAmt += s.x;
+    sLvl = max(sLvl, s.y);
+    sHops = max(sHops, u32(s.z) >> 3u);
+  }
   // anything to do here? (most of the map: nothing)
   let beamOn = LU.beam2.y > 0.5 && length(cp - LU.beam.xy) < LU.beam.w;
   var vent = -1;
@@ -120,8 +170,9 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let cn = LU.cones[v];
     if (cn.x > 0.0) { rise += cn.x * coneShape(cp - vv.xy, cn.y, cn.z, fract(vv.x * 0.37 + vv.y * 0.71) * 6.28); }
   }
-  if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0 && rise <= 0.0) {
+  if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0) {
     lavaOut[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+    textureStore(spillOut, p, vec4<f32>(0.0, 0.0, 0.0, f32(u32(sp.w) & 7u)));
     return;
   }
 
@@ -155,15 +206,132 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 
   // the beam: the ground where it hits, and what lava lies there
+  var melt = 0.0;
+  var meltLvl = 0.0;
+  // (spill.w: the way out, + 8 � the bore's heat here)
+  var way = f32(u32(sp.w) & 7u);
+  var boreHeat = 0.0;
   if (beamOn) {
     let off = length(cp - LU.beam.xy);
     let r = LU.beam.w;
-    let h = LU.beam2.x * (1.0 - off * off / (r * r)) * DT_L;
-    if (abs(top + d - LU.beam.z) < BEAM_REACH) {
+    let fall = 1.0 - off * off / (r * r);
+    let h = LU.beam2.x * fall * DT_L;
+    let bz = LU.beam.z;
+    // the bore's half height here (a round hole the beam's radius)
+    let hz = r * sqrt(fall);
+    if (n > 0u && bz + hz < top) {
+      // under the column's top: bore into it, the rock over it left standing.
+      // The heat gathers until it melts all the rock in the hole's span at
+      // once (from the middle out, the line through the hole would open
+      // first and the aim run on through a slit)
+      let lo = max(bz - hz, FLOOR_Z);
+      let hi = bz + hz;
+      var rock = 0.0;
+      for (var s = 0u; s < n; s++) {
+        let v = layers[cs.x + s];
+        rock += max(min(ivZ1(v), hi) - max(ivZ0(v), lo), 0.0);
+      }
+      boreHeat = f32(u32(sp.w) >> 3u) + h;
+      if (rock <= 0.0) { boreHeat = 0.0; }
+      if (rock > 0.0 && boreHeat >= rock * LATENT) {
+        var arr: array<vec4<u32>, MAX_K>;
+        var nn = 0u;
+        var room = true;
+        for (var s = 0u; s < n; s++) {
+          let v = layers[cs.x + s];
+          if (ivZ1(v) <= lo || ivZ0(v) >= hi) {
+            if (nn < MAX_K) { arr[nn] = v; }
+            nn += 1u;
+            continue;
+          }
+          if (ivZ0(v) < lo - 1e-3) {
+            if (nn < MAX_K) { arr[nn] = ivPack(ivZ0(v), lo, ivMat(v), ivAux(v)); }
+            nn += 1u;
+          }
+          if (ivZ1(v) > hi + 1e-3) {
+            if (nn < MAX_K) { arr[nn] = ivPack(hi, ivZ1(v), ivMat(v), ivAux(v)); }
+            nn += 1u;
+          }
+        }
+        // (the rock over the hole needs a slot of its own: in a full column
+        // it can't open, BACKLOG Q21)
+        if (nn <= cs.y) {
+          melt = rock;
+          boreHeat = 0.0;
+          for (var s = 0u; s < cs.y; s++) { layers[cs.x + s] = select(IV_NONE, arr[min(s, MAX_K - 1u)], s < nn); }
+          n = nn;
+          top = select(0.0, ivZ1(arr[max(nn, 1u) - 1u]), nn > 0u);
+          // the bore's floor: the highest ground under bz
+          for (var s = 0u; s < nn; s++) { if (ivZ1(arr[s]) <= bz + 1e-3) { meltLvl = max(meltLvl, ivZ1(arr[s])); } }
+          way = wayOut(p, -LU.beam2.zw);
+        }
+      }
+      // it smokes and spits out of the face
+      if (boreHeat > 0.0 || melt > 0.0) {
+        if (chance(i, 0x5bu) < 0.03) {
+          let s2 = hash3(i, G.tick, 0x5cu);
+          let r2 = vec2<f32>(f32(s2 & 255u), f32((s2 >> 8u) & 255u)) / 255.0 - 0.5;
+          spawnL(vec3<f32>(cp, bz), vec3<f32>(r2 * 3.0 - LU.beam2.zw * 3.0, 2.0), 5.0, K_SMOKE_L, s2, 0u);
+        }
+        if (chance(i, 0x5du) < 0.02) {
+          let s2 = hash3(i, G.tick, 0x5eu);
+          let r2 = vec2<f32>(f32(s2 & 255u), f32((s2 >> 8u) & 255u)) / 255.0 - 0.5;
+          spawnL(vec3<f32>(cp, bz), vec3<f32>(r2 * 4.0 - LU.beam2.zw * 5.0, 3.0), 1.5, K_EMBER_L, s2, 0u);
+        }
+      }
+    } else if (abs(top + d - bz) < max(BEAM_REACH, hz + 0.5)) {
       gh += h;
       heat += 0.3 * h * max(d, 0.0);
     }
   }
+
+  // the bore's melt (this column's and what came in): out in the open it
+  // pours here; under rock it runs on, to the lowest open neighbour, else
+  // out the way the bore came; with nowhere to go it sets on the floor
+  let keep = way + 8.0 * round(min(boreHeat, 1e6));
+  var spill = vec4<f32>(0.0, 0.0, 0.0, keep);
+  let carry = sAmt + melt;
+  if (carry > 0.0) {
+    let lvl = max(select(0.0, sLvl, sAmt > 0.0), select(0.0, meltLvl, melt > 0.0));
+    if (top + d <= lvl + OPEN_SLACK) {
+      d += carry;
+      heat += carry * LAVA_HOT;
+    } else {
+      var to = -1;
+      var best = lvl + OPEN_SLACK;
+      for (var k = 0u; k < NDIR; k++) {
+        let q = nbr(p, k);
+        // (off the map: it drains)
+        var w = -1e9;
+        if (inMap(q)) { w = textureLoad(levelsL, q, 0).x + lava[colIdxI(q)].x; }
+        if (w <= best) { best = w; to = i32(k); }
+      }
+      if (to < 0 && way >= 1.0) { to = i32(way) - 1; }
+      if (to >= 0 && sHops < SPILL_HOPS) {
+        spill = vec4<f32>(carry, lvl, f32(u32(to) + 1u + 8u * (sHops + 1u)), keep);
+      } else {
+        // it sets: onto the floor it ran along, up to the roof
+        var f = -1;
+        for (var s = 0u; s < n; s++) { if (ivZ1(layers[cs.x + s]) <= lvl + 0.05) { f = i32(s); } }
+        if (f >= 0 && u32(f) + 1u < n) {
+          let uf = u32(f);
+          let v = layers[cs.x + uf];
+          let u = layers[cs.x + uf + 1u];
+          let z1 = min(ivZ1(v) + carry, ivZ0(u));
+          if (z1 >= ivZ0(u) - 1e-3) {
+            // (the gap filled: the two become one)
+            layers[cs.x + uf] = ivPack(ivZ0(v), ivZ1(u), ivMat(v), ivAux(v));
+            for (var s = uf + 1u; s + 1u < n; s++) { layers[cs.x + s] = layers[cs.x + s + 1u]; }
+            n -= 1u;
+            layers[cs.x + n] = IV_NONE;
+          } else {
+            layers[cs.x + uf] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v));
+          }
+        }
+      }
+    }
+  }
+  textureStore(spillOut, p, spill);
   // ground past melting runs off the top of the column as lava
   if (gh > MELT && n > 0u && top > FLOOR_Z) {
     let v = layers[cs.x + n - 1u];
