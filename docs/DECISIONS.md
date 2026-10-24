@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 65 (session 5, `builder`) — questions; the town
+
+- "Why is 256 a height limit with the intervals? Shouldn't they be able to
+  store much higher total height?" Answered: the intervals are f32; the cap
+  is the surface word's 16-bit top and zMax sizing the mesh (BACKLOG Q27).
+- "How hard would it be to stream in chunks of terrain around the camera in
+  3d so that the map is effectively infinite? Is it a GPU memory issue or
+  just something we haven't done?" Answered: not memory, foundations
+  (BACKLOG Q28).
+- "Is there anything to stop a first person camera flying down and looking
+  at everything up close? Acknowledging the current textures would likely
+  not look very good." Answered (BACKLOG Q29).
+- "Once we answer those let's proceed with townscaper."
+
 ## 2026-10-24 — round 64 (session 5, `builder`) — terrain generation, brushes, Townscaper building
 
 - "I think it's time to improve the initial terrain generation. Then I

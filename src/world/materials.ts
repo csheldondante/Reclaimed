@@ -92,6 +92,10 @@ export const MAT = {
   Log: 29,
   /** round 64: the mesas' warm strata (landforms.ts) */
   Sandstone: 30,
+  /** round 65: the town's walls and floors (build/town.ts) */
+  Plaster: 31,
+  /** round 65: the town's roofs */
+  Tile: 32,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -164,9 +168,12 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'log', albedo: [0.45, 0.31, 0.18], state: MatState.Solid, strength: 0.45, growthCap: 1, suitability: 0.2 },
   // sandstone (round 64): warm banded rock, the mesas' strata (softer than stone)
   { ...NONE, name: 'sandstone', albedo: [0.74, 0.47, 0.32], state: MatState.Solid, strength: 0.7, growthCap: 1.2, suitability: 0.3, porosity: 0.3 },
+  // plaster and roof tiles (round 65): what the town is built of (build/town.ts): pale walls, terracotta roofs
+  { ...NONE, name: 'plaster', albedo: [0.86, 0.8, 0.68], state: MatState.Solid, strength: 0.6, growthCap: 1.2, suitability: 0.25, porosity: 0.3 },
+  { ...NONE, name: 'tile', albedo: [0.68, 0.3, 0.2], state: MatState.Solid, strength: 0.6, growthCap: 1.3, suitability: 0.3, specular: 0.15, porosity: 0.2 },
 ];
 
-export const MAX_MATERIALS = 32;
+export const MAX_MATERIALS = 40;
 /** Floats per material in the GPU uniform: 5 x vec4<f32>. Must match materials.wgsl. */
 export const MATERIAL_STRIDE_FLOATS = 20;
 

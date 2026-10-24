@@ -3918,3 +3918,41 @@ Measured (`brushtest`, 5/5): a range dragged 40 cells rises 11–16 cells along
 its line (21 on the first try, before the saddles), 2.5 a few cells across,
 mid-rise visibly lower than settled; a mesa painted at level 26.2 tops out at
 26.13 ± 0.39 with a 11.8-cell drop at its edge, sandstone over stone.
+
+## Round 65 — the town: Townscaper blocks as real matter (builder)
+
+The user: "a townscraper inspired grid and building system… it plays nice
+with terrain and dust"; "you place, it appears". `build/towngrid.ts`,
+`build/town.ts`, `townstamp.wgsl` (TownStampSystem), `api.town()`, the
+editor's 🏠 tool:
+- The grid, Townscaper's (Oskar Stålberg's): a hexagon of triangles over
+  the map, neighbours merged at random into quads (a third stay triangles),
+  every polygon cut into quads, 40 passes relaxing each toward its
+  best-fit square. 1,924 cells of ~32 hex columns on the 256² map, 60 ms.
+- A block is a cell and a level (4 high). What stands is worked out from
+  the blocks, the way Townscaper picks its pieces: a floor, walls on the
+  sides with no block beside (a window in the middle of each, a door on the
+  ground floor facing the lowest ground), open to the blocks beside it, a
+  hip roof over the top of a stack (rising from its open sides, carrying on
+  over a neighbour roofed at its level, leaning up to a taller one's wall),
+  pillars at the corners and arches between under a block over nothing. A
+  cell's ground floor sits on the highest ground under it, or a
+  neighbour's floor when that lines up, on a stone foundation.
+- Real matter, not a structure grid: the town rewrites the span of each
+  column it touches (on the GPU, one thread a column, in place), so dust
+  drifts onto it, moss and vines grow on it (they did within seconds in the
+  first shot), the structure pass supports and cracks it, and the agents'
+  exact take and put work on it. Loose ground in the span isn't lost: it
+  lands on the new top and slides off. The CPU never reads the columns to
+  write them (no race with the sim); it tracks the span it last wrote.
+  A column over its slots closes its smallest gap (a window filled in).
+- Plaster and tile (31, 32): the material table grows to 40 (the physics
+  table with it).
+
+Measured (`towntest`, 6/6): a two-level block, one beside it and one over
+a gap: the middle column has floors at 13.5 and 17.5 and a roof to 23.9;
+the edge a wall 13.5–21.5; every column of the cell roofed; the block over
+the gap on 7 pillar columns, 26 of 33 open beneath; taking the upper block
+brings the roof down a level. Through the editor: taps on the ground,
+roofs and walls build houses, towers and neighbours.
+

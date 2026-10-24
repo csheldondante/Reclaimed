@@ -31,6 +31,8 @@ import editWgsl from '../shaders/edit.wgsl?raw';
 import placeOpWgsl from '../shaders/placeop.wgsl?raw';
 import layerPullWgsl from '../shaders/layerpull.wgsl?raw';
 import landBrushWgsl from '../shaders/landbrush.wgsl?raw';
+import townStampWgsl from '../shaders/townstamp.wgsl?raw';
+import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
@@ -634,6 +636,83 @@ export class LandBrushSystem implements SimSystem {
     this.device.queue.writeBuffer(this.params, 0, buf);
     if (batch.length) dispatch(enc, this.prof, 'landbrush-stamp', this.stamp.k, this.stamp.group, this.world.groups);
     dispatch(enc, this.prof, 'landbrush-rise', this.rise.k, this.rise.group, this.world.groups);
+  }
+}
+
+/** A town column stamp (townstamp.wgsl; build/town.ts): its span [lo, hi) rewritten as the design. */
+export interface ColumnStamp {
+  /** the column (y * w + x) */
+  col: number;
+  lo: number;
+  hi: number;
+  /** a stone foundation from the column's top under lo up to lo */
+  foundation: boolean;
+  /** within [lo, hi), bottom up */
+  design: { z0: number; z1: number; mat: number }[];
+}
+
+const STAMP_COLS = 4096;
+const STAMP_IVS = 16;
+
+/**
+ * The town's columns (round 65; townstamp.wgsl): stamps from build/town.ts,
+ * up to STAMP_COLS columns a tick, in place on the layers. A column queued
+ * twice before it's written keeps only its latest stamp (the town works out
+ * each stamp's span with the one before it in mind).
+ */
+export class TownStampSystem implements SimSystem {
+  readonly name = 'townstamp';
+  readonly period = 1;
+  private queue = new Map<number, ColumnStamp>();
+  private params: GPUBuffer;
+  private recs: GPUBuffer;
+  private design: GPUBuffer;
+  private s: { k: ComputeKernel; group: GPUBindGroup };
+  constructor(private device: GPUDevice, world: WorldGpu, private prof: Profiler) {
+    this.params = device.createBuffer({ label: 'townstamp-params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.recs = device.createBuffer({ label: 'townstamp-recs', size: STAMP_COLS * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.design = device.createBuffer({ label: 'townstamp-design', size: STAMP_COLS * STAMP_IVS * 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    const spec: BindSpec = { ...BASE, 3: 'rw', 4: 'read', 5: 'read', 6: 'uniform' };
+    const k = makeCompute(device, 'townstamp', [...WITH_ALL, townStampWgsl], spec, 'stampCols');
+    this.s = { k, group: makeBindGroup(device, 'townstamp', k.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: this.recs, 5: this.design, 6: this.params }) };
+  }
+  /** Columns waiting to be written. */
+  get pending(): number {
+    return this.queue.size;
+  }
+  stamp(stamps: ColumnStamp[]): void {
+    for (const s of stamps) {
+      if (s.design.length > STAMP_IVS) throw new Error(`a town column of ${s.design.length} intervals (> ${STAMP_IVS})`);
+      // (re-queued: to the back, so the order of writes stays the order of stamps)
+      this.queue.delete(s.col);
+      this.queue.set(s.col, s);
+    }
+  }
+  encode(enc: GPUCommandEncoder): void {
+    if (!this.queue.size) return;
+    const batch: ColumnStamp[] = [];
+    for (const [col, s] of this.queue) {
+      if (batch.length >= STAMP_COLS) break;
+      batch.push(s);
+      this.queue.delete(col);
+    }
+    const rec = new ArrayBuffer(batch.length * 32);
+    const ru = new Uint32Array(rec);
+    const rf = new Float32Array(rec);
+    const n = batch.reduce((a, s) => a + s.design.length, 0);
+    const des = new ArrayBuffer(Math.max(n, 1) * 16);
+    const du = new Uint32Array(des);
+    let o = 0;
+    batch.forEach((s, k) => {
+      ru.set([s.col, s.design.length, o, s.foundation ? 1 : 0], k * 8);
+      rf[k * 8 + 4] = s.lo;
+      rf[k * 8 + 5] = s.hi;
+      for (const iv of s.design) writeSlot(du, o++, iv.z0, iv.z1, iv.mat, 240);
+    });
+    this.device.queue.writeBuffer(this.recs, 0, rec);
+    this.device.queue.writeBuffer(this.design, 0, des);
+    this.device.queue.writeBuffer(this.params, 0, new Uint32Array([batch.length, 0, 0, 0]));
+    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, [Math.ceil(batch.length / 64), 1]);
   }
 }
 

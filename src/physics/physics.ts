@@ -13,7 +13,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import physWgsl from '../shaders/phys.wgsl?raw';
 import type { SimSystem } from '../sim/system';
 import type { WorldGpu } from '../sim/world-gpu';
-import { MAT, MATERIALS } from '../world/materials';
+import { MAT, MATERIALS, MAX_MATERIALS } from '../world/materials';
 import type { VoxelModel } from '../world/models';
 import { qRotate, type Q, type V3 } from '../grids/structures';
 import { TICK_DT } from '../sim/simulation';
@@ -93,7 +93,7 @@ const PHYS: Partial<Record<number, PhysMat>> = {
 
 /** The physics table as the GPU reads it (phys.wgsl PM: 4 vec4 per material). */
 function packPhysMats(): Float32Array {
-  const out = new Float32Array(128 * 4);
+  const out = new Float32Array(MAX_MATERIALS * 16);
   MATERIALS.forEach((_, m) => {
     const p = PHYS[m] ?? ROCKY;
     out.set([p.density, p.stiffness, p.yield, p.plastic, p.break, p.restitution, p.friction, p.crumble, p.soften, p.melt, p.heat, p.loose, p.damp, p.crack, 0, 0], m * 16);
@@ -249,7 +249,7 @@ export class Physics implements SimSystem {
     this.fragHead = world.buf('physFragHead', 16, S);
     this.touchRead = world.buf('physTouchRead', 256 * 4, GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ);
     this.uni = world.buf('physU', 96, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    this.mats = world.buf('physMats', 128 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.mats = world.buf('physMats', MAX_MATERIALS * 64, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.mats, 0, packPhysMats());
     this.bodyTable = world.buf('physBodies', 256 * 16, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     // the fragments' ring: a lattice of FRAG_CAP × 1 × 1 (they have no bonds)

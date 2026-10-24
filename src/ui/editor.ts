@@ -36,6 +36,7 @@ export type EditTool =
   | 'bedrock'
   | 'range'
   | 'mesa'
+  | 'town'
   | 'dig'
   | 'place'
   | 'smash'
@@ -101,6 +102,7 @@ const TOOLS: [EditTool, string, string][] = [
   ['build', '▲', 'Build: lay hard material (a layer per press)'],
   ['range', '🏔', 'Mountain range: drag a line — a ridge of peaks rises along it (bigger brush, higher range)'],
   ['mesa', '🏜', 'Mesa: paint an area — it rises flat-topped with banded cliffs; paint on a mesa for a higher tier'],
+  ['town', '🏠', 'Town: tap the ground for a house, a roof to build up, a wall to build beside it; shift-tap to take a block away'],
   ['bedrock', '⛰', 'Bedrock: raise stone from below, lifting everything on it'],
   ['dig', '▼', 'Dig: take a layer off the top'],
   ['place', '🚗', 'Place a model: cars, ruins, a tanker… (E rotates)'],

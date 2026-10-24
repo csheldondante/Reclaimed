@@ -24,6 +24,9 @@ import { Plants } from './plants';
 import { Crew, type CrewDef } from '../agents/crew';
 import { Mirror } from './mirror';
 import { Terrain } from './terrain';
+import { Town } from '../build/town';
+import type { TownGridOpts } from '../build/towngrid';
+import { cellPos } from '../world/lattice';
 import { Water } from './water';
 import { Wind } from './wind';
 
@@ -97,6 +100,12 @@ export interface Sim {
   readonly wind?: Wind;
   readonly fx?: Fx;
   readonly agents?: Agents;
+  /**
+   * The town (round 65, build/town.ts): blocks on Townscaper's irregular
+   * grid that stand as real matter. One a world: made on the first call
+   * (its grid from `opts`), the same one after. Needs terrain.
+   */
+  town(opts?: TownGridOpts): Town;
   /** Read every module's mirror now (resolves when it's in). */
   refresh(): Promise<void>;
   /** performance.now() of the last mirror read (0: never). */
@@ -145,6 +154,7 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
   if (mods.plants && !terrain) throw new Error('world: the plants module needs terrain');
   const plants = mods.plants && terrain ? new Plants(core, mirror, terrain) : undefined;
   const agents = mods.agents ? (core.sim.systems.find((s): s is Agents => s instanceof Agents) ?? installAgents(core)) : undefined;
+  let town: Town | undefined;
   const sim = {
     warmup: (opts: WarmupOpts) => warmup(core, mirror, opts),
     ready: warm ? warmup(core, mirror, warm) : Promise.resolve(),
@@ -161,6 +171,14 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
     crew: (def: CrewDef): Crew => {
       if (!agents || !terrain) throw new Error('world.crew: needs the agents and terrain modules');
       return new Crew(agents, terrain, plants, def);
+    },
+    town: (opts?: TownGridOpts): Town => {
+      if (!terrain) throw new Error('world.town: needs the terrain module');
+      return (town ??= new Town(core.dims.w, core.dims.h, {
+        ground: (col) => terrain.heightAt(...cellPos(col % core.dims.w, Math.floor(col / core.dims.w))) ?? 0,
+        stamp: (s) => core.sim.town.stamp(s),
+        zMax: core.dims.zMax,
+      }, opts));
     },
     refresh: () => mirror.refresh(),
     get readAt() {

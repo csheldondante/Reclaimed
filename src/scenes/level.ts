@@ -19,6 +19,7 @@ import { installPhysics } from '../physics/install';
 import { installAgents } from '../agents/install';
 import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
+import { LEVEL_H, type Block, type Town } from '../build/town';
 import type { Waker, WakeOptions } from '../physics/wake';
 import { box, table } from '../physics/shapes';
 import { boxMesh, rockMesh, type SkinMesh } from '../physics/mesh';
@@ -60,6 +61,9 @@ export class LevelScene implements Scene {
   private lensOn = false;
   private lensK = 0;
   private hoverWorld: [number, number] | null = null;
+  /** Town tool: the block under the cursor (pickTown) */
+  private townHover?: Block;
+  private townPicking = false;
   private surfaceCache: Uint32Array;
   private surfaceRefresh = 0;
   private renderW = 1;
@@ -323,6 +327,7 @@ export class LevelScene implements Scene {
       tap: (sx, sy) => {
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
         if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
+        if (this.editor?.tool === 'town') return void this.townAtPick(sx, sy);
         if (this.editor?.tool === 'drop') return void this.dropAtPick(sx, sy);
         if (this.editor?.tool === 'beam') return;
         if (this.editor?.tool === 'volcano') return void this.ventAtPick(sx, sy);
@@ -352,6 +357,10 @@ export class LevelScene implements Scene {
         // (a press that turns into a drag still places, once)
         if (this.editor?.tool === 'place') {
           this.placeAtPick(sx, sy);
+          return true;
+        }
+        if (this.editor?.tool === 'town') {
+          this.townAtPick(sx, sy);
           return true;
         }
         const [wx, wy] = camera.groundAt(sx, sy, this.heightAt);
@@ -391,6 +400,7 @@ export class LevelScene implements Scene {
         const hw = camera.groundAt(sx, sy, this.heightAt).slice(0, 2) as [number, number];
         this.hoverWorld = this.reach && !this.reach.contains(hw[0], hw[1]) ? null : hw;
         if (this.editor?.tool === 'smash') this.pickSmash(sx, sy);
+        if (this.editor?.tool === 'town') this.pickTown(sx, sy);
       },
       pan: (dx, dy) => {
         const [wx, wy] = camera.screenDeltaToWorld(dx, dy);
@@ -1062,6 +1072,49 @@ export class LevelScene implements Scene {
     }, ignoreTeardown);
   }
 
+  /** The town (round 65): made on first use, its grid seeded by the map. */
+  private get town(): Town {
+    return (this.worldApi ??= attachSim(this.core)).town({ seed: 7 });
+  }
+
+  /** Town tool: the block a press there would add (or, shift held, take away). */
+  private townPick(sx: number, sy: number): Promise<Block | null> {
+    const { core } = this;
+    const { camera } = core;
+    const remove = this.keys.has('shift');
+    return core.renderer.pick((sx / camera.viewportW) * this.renderW, (sy / camera.viewportH) * this.renderH).then((hit) => {
+      if (!hit) return null;
+      return this.town.pickBlock(hit.cell, hit.z + 0.5, remove);
+    });
+  }
+
+  /** Town tool: add the block a press lands on (Townscaper's way: town.pickBlock), or take it away with shift. */
+  private townAtPick(sx: number, sy: number): void {
+    const remove = this.keys.has('shift');
+    this.townPick(sx, sy).then((b) => {
+      if (!b) return;
+      if (remove) this.town.remove(b.cell, b.level);
+      else this.town.add(b.cell, b.level);
+      this.townHover = undefined;
+    }, ignoreTeardown);
+  }
+
+  /** Town tool: find the block under the cursor for the outline (one pick in flight at a time). */
+  private pickTown(sx: number, sy: number): void {
+    if (this.townPicking) return;
+    this.townPicking = true;
+    this.townPick(sx, sy).then(
+      (b) => {
+        this.townPicking = false;
+        this.townHover = b ?? undefined;
+      },
+      (e) => {
+        this.townPicking = false;
+        ignoreTeardown(e);
+      },
+    );
+  }
+
   /** Sandbox: outline the brush on the ground (follows the terrain); Break: the sphere it smashes, round the voxel picked. */
   private drawRing(): void {
     const ed = this.editor;
@@ -1069,6 +1122,26 @@ export class LevelScene implements Scene {
     if (!ed || !ring) return;
     const { camera } = this.core;
     const ring2 = this.ring2!;
+    if (ed.tool === 'town') {
+      // the cell's outline at the floor of the block a press would add (or take)
+      const b = this.townHover;
+      ring2.setAttribute('points', '');
+      ring.parentElement!.style.display = b ? '' : 'none';
+      if (!b) return;
+      const t = this.town;
+      const g = t.grid;
+      const floor = Number.isNaN(t.base[b.cell]) ? Math.max(...g.columns[b.cell].map((col) => this.heightAt(...cellPos(col % this.core.dims.w, Math.floor(col / this.core.dims.w))))) : t.floorZ(b.cell, b.level);
+      const pts: string[] = [];
+      for (const z of [floor + 0.1, floor + LEVEL_H]) {
+        for (let k = 0; k <= 4; k++) {
+          const [x, y] = g.corner(b.cell, k);
+          const [px, py] = camera.project(x, y, z);
+          pts.push(`${px.toFixed(1)},${py.toFixed(1)}`);
+        }
+      }
+      ring.setAttribute('points', pts.join(' '));
+      return;
+    }
     if (ed.tool === 'smash') {
       const c = this.smashHover;
       ring.parentElement!.style.display = c ? '' : 'none';

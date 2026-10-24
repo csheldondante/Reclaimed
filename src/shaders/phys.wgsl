@@ -76,7 +76,7 @@ struct PhysU {
 //  [1] break strain, restitution, friction, crumble speed (cells/s)
 //  [2] soften temperature, melt temperature (0: never), heat gain, loose material it crumbles to
 //  [3] damping (share of its bonds' stretching speed taken out per substep), crack speed (cells/s; 0 never)
-@group(0) @binding(23) var<uniform> PM: array<vec4<f32>, 128>;
+@group(0) @binding(23) var<uniform> PM: array<vec4<f32>, 160>; // 4 a material, MAX_MATERIALS (materials.ts)
 // bodies: x first particle, yzw lattice dims
 @group(0) @binding(24) var<uniform> PB: array<vec4<u32>, 256>;
 // what the game asks of each body (round 49, physics.ts BODY_CTL), 5 vec4 a body:

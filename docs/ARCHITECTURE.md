@@ -428,6 +428,19 @@ particle burst queue (now kept past 64 a tick, not dropped), and
 `windBlows` (wind.ts, a SimSystem just before the windfield: blows, strokes
 and wakes, merged past 256).
 
+## The town (round 65, branch `builder`)
+
+`build/towngrid.ts`: Townscaper's irregular grid (relaxed quads over the
+hex lattice), per cell four corners and four neighbours, per column its
+cell (`cellOf`). `build/town.ts`: blocks (cell, level) and per cell its
+ground floor; `design(cell, column)` works out the column's intervals from
+the blocks around it; changes restamp the cell and its neighbours.
+`TownStampSystem` (`sim.town`, townstamp.wgsl, period 1, after the land
+brushes): `ColumnStamp`s — a column, its span [lo, hi), the design, a
+foundation flag — up to 4,096 columns a tick, written in place on the
+layers; a column queued twice keeps its latest stamp. Built matter starts
+at support 15 (aux 240). `api.town(opts)` makes the one town of a sim.
+
 ## Levels and the sandbox
 
 `game/levels.ts` is the level registry: id, name, blurb, title-screen model,

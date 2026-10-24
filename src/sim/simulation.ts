@@ -24,6 +24,7 @@ import {
   PlaceOpSystem,
   LayerPullSystem,
   LandBrushSystem,
+  TownStampSystem,
 } from './systems';
 import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
@@ -44,6 +45,8 @@ export class Simulation {
   readonly pulls: LayerPullSystem;
   /** the landform brushes (round 64): world.terrain.raise */
   readonly land: LandBrushSystem;
+  /** the town's columns (round 65): build/town.ts */
+  readonly town: TownStampSystem;
   readonly shadow: RenderFieldsSystem;
   readonly particles: ParticleSystem;
   tick = 0;
@@ -62,6 +65,7 @@ export class Simulation {
     this.placeOps = new PlaceOpSystem(device, world, profiler);
     this.pulls = new LayerPullSystem(device, world, profiler);
     this.land = new LandBrushSystem(device, world, profiler);
+    this.town = new TownStampSystem(device, world, profiler);
     this.shadow = new RenderFieldsSystem(device, world, profiler);
     this.stats = new StatsSystem(device, world, profiler);
     this.particles = new ParticleSystem(device, world, profiler);
@@ -70,6 +74,7 @@ export class Simulation {
       this.edit,
       this.pulls,
       this.land,
+      this.town,
       this.placeOps,
       this.wind,
       // what the nature grid sees of the structure grids (bodyProj), first

@@ -7,7 +7,7 @@ struct Material {
   look: vec4<f32>,   // smooth (cells; 0 = hard steps), see-through (ice, crystal), unused ×2
   loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash flow
 };
-@group(0) @binding(2) var<uniform> MATS: array<Material, 32>;
+@group(0) @binding(2) var<uniform> MATS: array<Material, 40>; // MAX_MATERIALS (materials.ts)
 
 const ST_EMPTY: u32 = 0u;
 const ST_SOLID: u32 = 1u;
