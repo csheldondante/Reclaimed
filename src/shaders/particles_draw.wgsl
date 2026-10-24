@@ -184,14 +184,18 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   if (perched) { size = 0.24; }
   let c = CORNERS[vi];
   let center = CAM.viewProj * vec4<f32>(P.p.xyz, 1.0);
-  // world-size square in screen space: viewport.z = px per world unit
-  let px = max(size * CAM.viewport.z, select(1.0, 0.0, soft > 0.5));
+  // world-size square in screen space: viewport.z = px per world unit (the free camera's at
+  // distance 1: divided by the depth, clip w — 1 in the fixed view)
+  let cw = max(center.w, 1e-4);
+  let px = max(size * CAM.viewport.z / cw, select(1.0, 0.0, soft > 0.5));
   var shape = vec2<f32>(1.0);
   if (kind == 13u) { shape = vec2<f32>(1.7, 0.9); }
   if (kind == 14u) { shape = vec2<f32>(1.3, 1.0); }
   if (kind == 10u) { shape = vec2<f32>(1.6, 0.8); }
   let ndc = c * shape * px * 2.0 / CAM.viewport.xy;
-  o.pos = vec4<f32>(center.xy + ndc, center.z - 0.0005, 1.0);
+  o.pos = vec4<f32>(center.xy + ndc * cw, center.z - 0.0005 * cw, cw);
+  // (behind the free camera: nothing)
+  if (center.w <= 0.0) { o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0); }
   o.col = col;
   o.uv = c;
   o.soft = soft;

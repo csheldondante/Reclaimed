@@ -441,8 +441,7 @@ export class Streamer {
     core.globals.origin = [this.origin[0], this.origin[1]];
     shiftGrid(surf, W, H, 1, dx, dy);
     shiftGrid(this.outside, W, H, 1, dx, dy);
-    core.camera.target[0] -= dx;
-    core.camera.target[1] -= dy * ROW_H;
+    core.camera.shift(dx, dy * ROW_H, 0);
     core.weather.shift(dx, dy * ROW_H);
     core.clearUndo();
     for (const f of this.onSlide) f(dx, dy, 0);
@@ -488,6 +487,7 @@ export class Streamer {
         // (the ground's top out of the window: what lies on it isn't here)
         if (!topInside(cut, oz, zMax)) {
           land.water[i] = 0;
+          if (land.waterSource) land.waterSource[i] = 0;
           if (land.lava) land.lava.fill(0, i * 4, i * 4 + 4);
         } else if (land.lava && land.lava[i * 4] > 0) land.lava[i * 4 + 3] -= oz;
       }
@@ -500,6 +500,7 @@ export class Streamer {
       petals: bytes(new Float32Array(R * R).fill(1)),
     };
     if (land.lava) bufs.lava = bytes(land.lava);
+    if (land.waterSource) bufs.waterSource = bytes(land.waterSource);
     const texs: Record<string, Float32Array> = {};
     const judge = land.structural ? boxOf(land.structural, R) : undefined;
     if (land.lavaSpring) {
@@ -624,7 +625,7 @@ export class Streamer {
     enc.clearBuffer(wg.particles);
     dev.queue.submit([enc.finish()]);
     this.oz = oz;
-    core.camera.target[2] -= dz;
+    core.camera.shift(0, 0, dz);
     core.clearUndo();
     void R;
     for (const f of this.onSlide) f(0, 0, dz);

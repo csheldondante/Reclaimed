@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 70 (session 5, `atlas`) — a free camera, rivers and falls
+
+- "Is there any way to add a free fly camera to explore in 3D? That seems
+  easy but probably should switch to perspective." → F toggles a free
+  perspective camera (the fixed isometric view stays the default).
+- "Also, how did this impact perf?" → measured against round 68 (see the
+  DEVLOG).
+- "it would be cool to add waterfalls or lava waterfalls" / "And rivers
+  (water or lava)" → rivers from the atlas's drainage; where they drop off a
+  cliff, a fall; lava rivers from the volcanic regions.
+- "Oh also, thoughts on recursive enhancement of column resolution?" —
+  answered, not built (BACKLOG Q54).
+
 ## 2026-10-24 — round 69 (session 5, `atlas`) — forms: terrain that plays with vertical and horizontal space
 
 - "This is cool and I wonder if we can have even more variety? Ground with

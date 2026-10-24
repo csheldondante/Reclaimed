@@ -63,6 +63,8 @@ export interface RegionLand {
   lava?: Float32Array;
   /** lava springs (world-gpu's lavaSpring x), if any */
   lavaSpring?: Float32Array;
+  /** water springs a tick (world-gpu's waterSource: the atlas's rivers), if any */
+  waterSource?: Float32Array;
   /** columns with something the structural system should judge (the atlas's forms of a weak material) */
   structural?: Uint8Array;
 }

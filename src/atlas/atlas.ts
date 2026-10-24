@@ -29,6 +29,7 @@ import noiseW from './noise.wgsl?raw';
 import patsimW from './patsim.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
 import { defineRegions, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
+import { findRivers, NODE_WORDS } from './rivers';
 
 export interface AtlasParams {
   /** macro texels a side */
@@ -122,8 +123,8 @@ interface Extra {
 
 const PARAM_BYTES = 128;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
-const COL_WORDS = 12;
-const COLG_BYTES = 32;
+const COL_WORDS = 16;
+const COLG_BYTES = 48;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;
@@ -173,6 +174,12 @@ export class Atlas {
   regs!: GPUBuffer;
   readonly pat: GPUBuffer;
   readonly kcol: GPUBuffer;
+  /** the rivers (rivers.ts): per texel its nearest node + 1, and the nodes */
+  readonly riverNear: GPUBuffer;
+  rivers: GPUBuffer;
+  riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0 };
+  /** the nodes (rivers.ts NODE_WORDS each), for tools */
+  riverNodes: Uint32Array = new Uint32Array(0);
   private colH!: ComputeKernel;
   private colF!: ComputeKernel;
   private formSeed!: ComputeKernel;
@@ -190,6 +197,9 @@ export class Atlas {
     this.dist = device.createBuffer({ label: 'atlas dist', size: N * 16, usage: S });
     this.pat = device.createBuffer({ label: 'atlas patterns', size: 3 * 256 * 256 * 4, usage: S });
     this.kcol = device.createBuffer({ label: 'atlas kind colours', size: KIND_IDS.length * 16, usage: S });
+    // (none until they're found: the ground the rivers are found on is made without them)
+    this.riverNear = device.createBuffer({ label: 'atlas river near', size: N * 4, usage: S });
+    this.rivers = device.createBuffer({ label: 'atlas rivers', size: NODE_WORDS * 4, usage: S });
     device.queue.writeBuffer(this.kcol, 0, new Float32Array(KIND_IDS.flatMap((k) => [...KINDS[k].colour, 1])));
   }
 
@@ -288,7 +298,7 @@ export class Atlas {
     const bm = makeModule(dev, 'atlas build', this.parts(buildW));
     const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, formsW));
     const K = (entry: string, spec: BindSpec, m = bm) => makeComputeAsync(dev, `atlas ${entry}`, m, { 0: 'uniform', ...spec }, entry);
-    const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed] = await this.time('compile', () =>
+    const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed, kSeedV, kOutV] = await this.time('compile', () =>
       Promise.all([
         K('base', { 1: 'rw', 2: 'rw' }),
         K('ccInit', { 3: 'rw' }),
@@ -302,10 +312,12 @@ export class Atlas {
         K('jfaStep', { 7: 'rw', 8: 'rw' }),
         K('jfaOutR', { 6: 'rw', 7: 'rw', 9: 'rw' }),
         K('jfaOutC', { 6: 'rw', 7: 'rw', 9: 'rw', 22: 'read' }),
-        K('macroHeight', { 11: 'rw', 20: 'read', 21: 'read', 22: 'read', 23: 'read' }),
-        K('colHeight', { 20: 'read', 21: 'read', 22: 'read', 23: 'read', 30: 'rw' }, cm),
+        K('macroHeight', { 11: 'rw', 20: 'read', 21: 'read', 22: 'read', 23: 'read', 25: 'read', 26: 'read' }),
+        K('colHeight', { 20: 'read', 21: 'read', 22: 'read', 23: 'read', 25: 'read', 26: 'read', 30: 'rw' }, cm),
         K('colFinish', { 22: 'read', 23: 'read', 30: 'rw', 31: 'rw', 32: 'rw', 33: 'rw', 34: 'rw' }, cm),
-        K('formSeed', { 20: 'read', 21: 'read', 22: 'read', 23: 'read', 32: 'rw', 33: 'rw' }, cm),
+        K('formSeed', { 20: 'read', 21: 'read', 22: 'read', 23: 'read', 25: 'read', 26: 'read', 32: 'rw', 33: 'rw' }, cm),
+        K('jfaSeedV', { 2: 'rw', 7: 'rw' }),
+        K('jfaOutV', { 2: 'rw', 7: 'rw' }),
       ]),
     );
     this.colH = colH;
@@ -394,8 +406,36 @@ export class Atlas {
     };
     await this.time('jfa borders', () => jfa(kSeedR, { 6: this.region }, kOutR, { 6: this.region, 9: this.dist }));
     await this.time('jfa coast', () => jfa(kSeedC, { 6: this.region, 22: this.regs }, kOutC, { 6: this.region, 9: this.dist, 22: this.regs }));
-    await this.time('ground', () => one(kMacro, bg(kMacro, { 11: hmacB, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat })));
+    const macro = () => one(kMacro, bg(kMacro, { 11: hmacB, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverNear, 26: this.rivers }));
+    await this.time('ground', macro);
     this.hmac = new Float32Array(await this.time('readback ground', () => this.read(hmacB)));
+
+    // ---- the rivers: found on the ground, spread to every texel (JFA), the ground again with them ----
+    const rv = await this.time('rivers (cpu)', () => {
+      const water = new Uint8Array(N);
+      const volcanic = new Uint8Array(N);
+      const lavaKinds = new Set(['lavafield', 'basalt', 'rift']);
+      for (let i = 0; i < N; i++) {
+        const d = this.defs[this.regionOf[i]];
+        water[i] = d.stat.land ? 0 : 1;
+        volcanic[i] = lavaKinds.has(d.kind) ? 1 : 0;
+      }
+      return findRivers({ n, hmac: this.hmac, water, volcanic, regionOf: this.regionOf, sea: p.sea, worldW: this.worldW, worldH: this.worldH });
+    });
+    this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, ms: rv.ms };
+    this.riverNodes = rv.nodes;
+    this.rivers.destroy();
+    this.rivers = dev.createBuffer({ label: 'atlas rivers', size: rv.nodes.byteLength, usage: S });
+    dev.queue.writeBuffer(this.rivers, 0, rv.nodes);
+    dev.queue.writeBuffer(key, 0, rv.nodeAt);
+    await this.time('jfa rivers', async () => {
+      await jfa(kSeedV, { 2: key }, kOutV, { 2: key });
+      const enc = dev.createCommandEncoder();
+      enc.copyBufferToBuffer(key, 0, this.riverNear, 0, N * 4);
+      dev.queue.submit([enc.finish()]);
+    });
+    await this.time('ground with rivers', macro);
+    this.hmac = new Float32Array(await this.read(hmacB));
     for (const b of [fieldA, key, label, size, flag, flagRead, info, cont, jfaA, jfaB, hmacB]) b.destroy();
   }
 
@@ -648,13 +688,13 @@ export class Atlas {
     const enc = dev.createCommandEncoder({ label: 'atlas columns' });
     let cp = enc.beginComputePass();
     cp.setPipeline(this.colH.pipeline);
-    cp.setBindGroup(0, makeBindGroup(dev, 'colH', this.colH.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 30: g }));
+    cp.setBindGroup(0, makeBindGroup(dev, 'colH', this.colH.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverNear, 26: this.rivers, 30: g }));
     cp.dispatchWorkgroups(Math.ceil((w + 2) / 8), Math.ceil((h + 2) / 8));
     cp.end();
     // the lattice forms around the batch (every lattice: the finest's cells cover the most)
     cp = enc.beginComputePass();
     cp.setPipeline(this.formSeed.pipeline);
-    cp.setBindGroup(0, makeBindGroup(dev, 'formSeed', this.formSeed.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 32: inst, 33: instN }));
+    cp.setBindGroup(0, makeBindGroup(dev, 'formSeed', this.formSeed.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverNear, 26: this.rivers, 32: inst, 33: instN }));
     const cells = (n: number) => Math.ceil((n + 2 * FORM_MARGIN) / FINEST) + 3;
     cp.dispatchWorkgroups(Math.ceil(cells(w + 1) / 8), Math.ceil(cells(h * ROW_H) / 8), 7);
     cp.end();
@@ -731,7 +771,7 @@ export class Atlas {
     }
     const outside: Interval[][] = new Array(N);
     const grid = new ColumnGrid(dims);
-    const land = { water: new Float32Array(N), moisture: new Float32Array(N), vegetation: new Float32Array(N), contam: new Float32Array(N * 2), lava: new Float32Array(N * 4), lavaSpring: new Float32Array(N), surface: new Float32Array(N), structural: new Uint8Array(N) };
+    const land = { water: new Float32Array(N), moisture: new Float32Array(N), vegetation: new Float32Array(N), contam: new Float32Array(N * 2), lava: new Float32Array(N * 4), lavaSpring: new Float32Array(N), waterSource: new Float32Array(N), surface: new Float32Array(N), structural: new Uint8Array(N) };
     tiles.forEach(([tx, ty], k) => {
       const t = lands[k];
       for (let y = 0; y < T; y++)
@@ -752,6 +792,7 @@ export class Atlas {
           if (t.lava && top && t.lava[i * 4] > 0) land.lava.set([t.lava[i * 4], t.lava[i * 4 + 1], t.lava[i * 4 + 2], t.lava[i * 4 + 3] - oz], j * 4);
           if (t.lavaSpring) land.lavaSpring[j] = t.lavaSpring[i];
           if (t.structural) land.structural[j] = t.structural[i];
+          if (t.waterSource && top) land.waterSource[j] = t.waterSource[i];
         }
     });
     const map: MapData = {
@@ -763,7 +804,7 @@ export class Atlas {
       oil: new Float32Array(N),
       drift: new Float32Array(N),
       oilStored: new Float32Array(N * 2),
-      waterSource: new Float32Array(N),
+      waterSource: land.waterSource,
       lava: land.lava,
       lavaSpring: land.lavaSpring,
       structural: land.structural,
@@ -793,7 +834,7 @@ export class Atlas {
   }
 
   dispose(): void {
-    for (const b of [this.paramBuf, this.region, this.dist, this.regs, this.pat, this.kcol]) b?.destroy();
+    for (const b of [this.paramBuf, this.region, this.dist, this.regs, this.pat, this.kcol, this.riverNear, this.rivers]) b?.destroy();
   }
 }
 
@@ -816,6 +857,7 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): Re
   const vegetation = new Float32Array(N);
   const lava = new Float32Array(N * 4);
   const lavaSpring = new Float32Array(N);
+  const waterSource = new Float32Array(N);
   const structural = new Uint8Array(N);
   const contam = new Float32Array(N * 2);
   let gapsFilled = 0;
@@ -848,11 +890,12 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): Re
     water[i] = f[o + 3];
     moisture[i] = f[o + 4];
     vegetation[i] = f[o + 5];
+    waterSource[i] = f[o + 12];
     const lv = f[o + 6];
     if (lv > 0) {
       lava.set([lv, LAVA_HOT, 0, surface[i] + lv], i * 4);
       lavaSpring[i] = lv;
     }
   }
-  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam, lava, lavaSpring, structural, gapsFilled };
+  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam, lava, lavaSpring, waterSource, structural, gapsFilled };
 }

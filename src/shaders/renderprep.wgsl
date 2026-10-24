@@ -158,6 +158,8 @@ fn colSeen(c: vec2<u32>) -> bool {
       var w = vec3<f32>(p + o, select(0.0, top, z >= 1u));
       if (z == 2u) { w = vec3<f32>(p + o + sh, 0.0); }
       let q = PC.viewProj * vec4<f32>(w, 1.0);
+      // (behind the free camera's eye: can't say from here, keep it)
+      if (q.w <= 1e-3) { return true; }
       let n = q.xy / q.w;
       lo = min(lo, n);
       hi = max(hi, n);

@@ -53,6 +53,8 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
   switch AP.mode {
     case 0u: {
       c = terrainColour(g.h) * select(1.0, sh, g.h >= AP.sea);
+      // (rivers: blue, lava: orange)
+      if (g.rx < 1.0 && g.h >= AP.sea) { c = select(vec3<f32>(0.2, 0.42, 0.7), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u) * mix(1.0, sh, 0.5); }
     }
     case 1u: {
       c = hue(g.a) * sh;

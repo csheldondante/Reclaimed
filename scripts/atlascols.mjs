@@ -22,7 +22,7 @@ try {
       const t0 = performance.now();
       const c = await a.columns(x - size / 2, y - size / 2, size, size);
       let maxRuns = 0;
-      for (let i = 0; i < size * size; i++) maxRuns = Math.max(maxRuns, c.u[i * 12 + 9]);
+      for (let i = 0; i < size * size; i++) maxRuns = Math.max(maxRuns, c.u[i * 16 + 9]);
       out.push({ ms: +(performance.now() - t0).toFixed(1), forms: c.forms, maxRuns, kind: a.regionAt(x, y * 0.866).kind });
     }
     return out;

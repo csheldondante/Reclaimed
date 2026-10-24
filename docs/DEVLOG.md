@@ -4172,3 +4172,40 @@ Measured (tiertest.mjs, at an escarpment's cliff 156 tall): up a tier and
 back, every column's solid intervals in world z unchanged (0 columns
 differ); a region frozen at one oz and thawed at another, the same; a slide
 in z 120–300 ms (Q51); atlastest 5/5, streamtest 8/8.
+
+## Round 70 — a free camera, rivers and falls; what the forms cost (atlas)
+
+**Perf** (perfprofile.mjs, 1400×900, quality high, the atlas level; round 68
+at e053ce5 in a scratch worktree against now, the same cells):
+
+| where (kind now) | round 68 fps / GPU ms | now fps / GPU ms | draw ms then → now |
+|---|---|---|---|
+| 14629,9916 (karst: towers) | 40.0 / 20.3 | 26.8 / 23.0 | 10.8 → 11.6 |
+| 3340,13224 (mesa: buttes) | 74.8 / 11.3 | 72.3 / 11.6 | 5.9 → 6.9 |
+| 12684,13472 (craters: crystals) | 67.2 / 12.6 | 60.2 / 14.4 | 6.8 → 8.7 |
+
+The forms cost draw time where they stand thick (more faces: towers,
+crystals' glass), and the window 248 tall costs the sim a little
+(structure, sediment); the karst's fps fell more than its GPU time (2.2
+ticks a frame catching up). The free camera over the karst: 50 fps, GPU 15.7
+ms (it sees less of the window close to than the fixed view at that zoom).
+
+**The free camera** (ARCHITECTURE "Rendering"): F in a level; WASD along the
+view, Q/E down and up, Shift faster, right-drag to look, the wheel along the
+view. A perspective matrix, and the eye's position for the shaders: what's
+drawn toward the eye (plant boxes' sides, prisms' three sides, canopy and
+rock marches, highlights) looks from where it is; particles and rain divide
+by clip w; culling divides by w and keeps what's behind the eye.
+
+**Rivers** (rivers.ts, ARCHITECTURE "The atlas"): a priority flood over the
+macro ground (~0.4 s on the CPU, 2048²): 55 085 river nodes, 14 917 of lava,
+357 falls of 12 or more. Channels carved to the river's level with steep
+valley sides; filled, bedded and fed (springs along the middle). At an
+escarpment a river pours down the wall past the alcoves into the sea; a
+lava river from a lava field runs off a cliff, across grassland and into a
+water river, which boils (steam). Lava springs were along the whole channel
+first: the lava flooded the land round a fall's foot — along its middle
+only now. Falls: steep water is white water streaking down, steep lava
+bright streaks (Q53 for spray).
+
+atlastest 5/5, streamtest 8/8, tiertest 4/4.

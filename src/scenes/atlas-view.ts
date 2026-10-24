@@ -49,7 +49,7 @@ export class AtlasView implements Scene {
   ) {
     const dev = host.gpu.device;
     this.pipeline = pipe.pipeline;
-    this.group = makeBindGroup(dev, 'atlas view', pipe.layout, { 0: atlas.paramBuf, 20: atlas.region, 21: atlas.dist, 22: atlas.regs, 23: atlas.pat, 24: atlas.kcol });
+    this.group = makeBindGroup(dev, 'atlas view', pipe.layout, { 0: atlas.paramBuf, 20: atlas.region, 21: atlas.dist, 22: atlas.regs, 23: atlas.pat, 24: atlas.kcol, 25: atlas.riverNear, 26: atlas.rivers });
     this.vc = [atlas.worldW / 2, atlas.worldH / 2];
     this.scale = 1;
     const mode = Number(host.params.get('mode') ?? 0);
@@ -76,7 +76,7 @@ export class AtlasView implements Scene {
     try {
       const dev = host.gpu.device;
       const atlas = await Atlas.build(dev, p);
-      const layout = makeLayout(dev, 'atlas view', { 0: 'uniform', 20: 'read', 21: 'read', 22: 'read', 23: 'read', 24: 'read' }, GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX);
+      const layout = makeLayout(dev, 'atlas view', { 0: 'uniform', 20: 'read', 21: 'read', 22: 'read', 23: 'read', 24: 'read', 25: 'read', 26: 'read' }, GPUShaderStage.FRAGMENT | GPUShaderStage.VERTEX);
       const module = makeModule(dev, 'atlas view', atlas.parts(columnsW, viewW));
       const t0 = performance.now();
       const pipeline = await dev.createRenderPipelineAsync({

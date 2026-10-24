@@ -55,12 +55,14 @@ fn vsRain(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> V
   }
   let cb = CAM.viewProj * vec4<f32>(bottom, 1.0);
   let ct = CAM.viewProj * vec4<f32>(top, 1.0);
-  let dir = normalize((ct.xy - cb.xy) * CAM.viewport.xy);
+  // (divided by clip w: the free camera's perspective; 1 in the fixed view)
+  let dir = normalize((ct.xy / max(ct.w, 1e-4) - cb.xy / max(cb.w, 1e-4)) * CAM.viewport.xy);
   let perp = vec2<f32>(-dir.y, dir.x) / CAM.viewport.xy * 2.0 * select(0.9, 2.0, snow);
   let q = QUAD[vi];
   var c = mix(cb, ct, q.y);
-  c = vec4<f32>(c.xy + perp * q.x, c.z, c.w);
+  c = vec4<f32>(c.xy + perp * q.x * c.w, c.z, c.w);
   o.pos = c;
+  if (cb.w <= 0.0 || ct.w <= 0.0) { o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0); }
   o.a = select((1.0 - q.y * 0.75) * 0.22, 0.75, snow) * smoothstep(span, span - 26.0, z);
   o.snow = select(0.0, 1.0, snow);
   return o;

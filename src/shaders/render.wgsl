@@ -9,7 +9,15 @@ struct Camera {
   viewport: vec4<f32>, // px w, px h, px per world unit, the shadow lookup's depth bias (light clip units)
   // world → the sun's shadow map (clip space; renderer.ts lightMatrix)
   light: mat4x4<f32>,
+  // where the eye is (round 69: the free camera, perspective), w 1 when it's there; 0: the fixed view
+  pos: vec4<f32>,
 };
+
+/** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */
+fn toEye(p: vec3<f32>) -> vec3<f32> {
+  if (CAM.pos.w > 0.5) { return normalize(CAM.pos.xyz - p); }
+  return CAM.eye.xyz;
+}
 
 // the sun's shadow map (with the field mesh: renderer.ts shadow pass)
 @group(0) @binding(25) var shadowMap: texture_depth_2d;
@@ -206,7 +214,8 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
     let uv = QUAD[(vi - 12u) % 6u];
     // the three sides facing the eye: the one most squarely toward it, and
     // the one either side
-    let m0 = i32(round(atan2(CAM.eye.y, CAM.eye.x) / 1.0471976));
+    let te = toEye(vec3<f32>(c, (b.z0 + b.z1) * 0.5));
+    let m0 = i32(round(atan2(te.y, te.x) / 1.0471976));
     let m = u32((m0 - 1 + i32(s) + 12) % 6);
     // side m runs from corner m - 1 to corner m
     let j = select((m + 5u) % 6u, m, uv.x > 0.5);
@@ -251,8 +260,9 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
 fn boxVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   let face = vi / 6u;
   let uv = QUAD[vi % 6u];
-  let sxn = select(-1.0, 1.0, CAM.eye.x > 0.0);
-  let syn = select(-1.0, 1.0, CAM.eye.y > 0.0);
+  let te = toEye(vec3<f32>(b.x + b.sx * 0.5, b.y + b.sy * 0.5, (b.z0 + b.z1) * 0.5));
+  let sxn = select(-1.0, 1.0, te.x > 0.0);
+  let syn = select(-1.0, 1.0, te.y > 0.0);
   var p: vec3<f32>;
   var n: vec3<f32>;
   if (face == 0u) {
@@ -606,7 +616,7 @@ fn canopyMarch(in: VOut) -> vec4<f32> {
   let species = (in.info.y >> 8u) & 15u;
   let dims = in.bsize * res;
   let local = (in.wpos - in.boff - in.bmin) * res;
-  let dir = -CAM.eye.xyz;
+  let dir = -toEye(in.wpos);
   var cell = floor(local - in.nrm * 0.01);
   let stepv = sign(dir);
   let tDelta = abs(1.0 / dir);
@@ -854,7 +864,7 @@ fn rockIn(rb: RockBox, p: vec3<f32>) -> f32 {
 /** March into a stone prism from the face point: vec4(hit, 1) or w = 0 (missed: the air). */
 fn rockMarch(in: VOut, flags: u32) -> vec4<f32> {
   let rb = rockBox(in, flags);
-  let dir = -normalize(CAM.eye.xyz);
+  let dir = -normalize(toEye(in.wpos));
   var t = 0.0;
   for (var i = 0; i < 20; i++) {
     let p = in.wpos + dir * t;
@@ -906,7 +916,7 @@ fn fsBox(in: VOut) -> FOut {
     let h = canopyMarch(in);
     if (h.w == 0.0) { discard; }
     lpos = h.xyz;
-    let eye = CAM.eye.xyz;
+    let eye = toEye(in.wpos);
     if (h.w == 1.0) { lnrm = vec3<f32>(sign(eye.x), 0.0, 0.0); }
     else if (h.w == 2.0) { lnrm = vec3<f32>(0.0, sign(eye.y), 0.0); }
     else { lnrm = vec3<f32>(0.0, 0.0, 1.0); }
@@ -1163,6 +1173,13 @@ fn fsBox(in: VOut) -> FOut {
     let crust = toLinear(vec3<f32>(0.12, 0.1, 0.09)) * lighting(lpos, lnrm);
     // hot: mostly glowing with a little crust; cooling: crust with glowing seams
     col = mix(hot * (0.8 + 0.4 * n1), crust, crack * smoothstep(0.95, 0.45, t));
+    // a fall of it (round 69): bright streaks running down a steep face, no crust on it
+    let steepL = 1.0 - smoothstep(0.25, 0.7, in.nrm.z);
+    if (steepL > 0.0) {
+      let lane = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 1.5)), 11));
+      let streak = smoothstep(0.2, 0.9, fract(in.wpos.z * 0.15 + G.time * 0.9 + lane));
+      col = mix(col, hot * (0.9 + 0.5 * streak), steepL * 0.85);
+    }
   }
   // life lens (hold Space): what keeps life out, around the cursor
   if (G.lens.w > 0.0 && in.nrm.z > 0.5) {
@@ -1306,7 +1323,7 @@ fn fsWater(in: VOut) -> FOut {
     // ripples instead of only at one viewing angle.
     let sunL = sunDir();
     let shade = 1.0 + dot(nn.xy, normalize(sunL.xy)) * 0.45;
-    let h = normalize(normalize(sunL + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
+    let h = normalize(normalize(sunL + toEye(in.wpos)) + vec3<f32>(0.0, 0.0, 1.6));
     let spec = pow(max(dot(nn, h), 0.0), 160.0) * (1.0 - cloudShade(in.wpos.xy)) * (1.0 - sludge * 0.8);
     col *= mix(shade, 1.0, sludge * 0.7);
     col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.7;
@@ -1323,6 +1340,15 @@ fn fsWater(in: VOut) -> FOut {
     let foam = smoothstep(0.03, 0.25, flow) * fleck;
     col = mix(col, vec3<f32>(0.85, 0.85, 0.8), foam * 0.6);
     alpha = max(alpha, foam * 0.7);
+    // a fall (round 69: the atlas's rivers over cliffs): water steep down a face is white water,
+    // streaks of it running down
+    let steepW = 1.0 - smoothstep(0.25, 0.7, in.nrm.z);
+    if (steepW > 0.0) {
+      let lane = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 1.5)), 9));
+      let streak = smoothstep(0.3, 0.85, fract(in.wpos.z * 0.22 + t * 1.6 + lane)) * (0.6 + 0.4 * vnoise(wo(in.wpos.xy) * 3.0 + vec2<f32>(0.0, in.wpos.z * 0.5 + t * 4.0)));
+      col = mix(col, vec3<f32>(0.88, 0.9, 0.9) * (1.0 - 0.7 * G.sky.w), steepW * (0.5 + 0.45 * streak));
+      alpha = max(alpha, steepW * (0.72 + 0.25 * streak));
+    }
     // the flow's streaks (with the field mesh, which knows its direction)
     if (meshOn && flow > 0.005) {
       let st = flowStreaks(in.wpos.xy, fv, d) * smoothstep(0.005, 0.06, flow) * (1.0 - sludge);
@@ -1411,7 +1437,7 @@ fn shadeGlass(in: VOut, ci: u32) -> FOut {
   let h2 = randv(vec3<i32>(cid + vec2<i32>(17, 5), tri));
   let tilt = (vec2<f32>(h1, h2) - 0.5) * select(0.5, 0.9, crystal);
   let n = normalize(n0 + t * tilt.x + bt * tilt.y);
-  let V = normalize(CAM.eye.xyz);
+  let V = normalize(toEye(in.wpos));
   let fres = pow(1.0 - clamp(dot(n, V), 0.0, 1.0), 3.0);
   let L = sunDir();
   let hv = normalize(L + V);
@@ -1442,7 +1468,7 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
     // cosine palette ≈ thin-film interference colours
     let film = 0.5 + 0.5 * cos(6.2831 * (vec3<f32>(n) + vec3<f32>(0.0, 0.33, 0.67)));
     col += toLinear(film) * 0.035 * (1.0 - cloudShade(in.wpos.xy));
-    let h = normalize(normalize(sunDir() + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
+    let h = normalize(normalize(sunDir() + toEye(in.wpos)) + vec3<f32>(0.0, 0.0, 1.6));
     let spec = pow(max(h.z, 0.0), 30.0) * 0.25;
     col += G.sunCol.rgb * (1.0 / 2.4) * spec;
   }

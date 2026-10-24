@@ -185,6 +185,52 @@ export class LevelScene implements Scene {
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
   }
 
+  /** The free camera on (from where the fixed view looks from, the same way) or off (looking at the ground under the screen's middle). */
+  toggleFly(): void {
+    const { camera } = this.core;
+    if (camera.fly) {
+      const g = camera.groundAt(camera.viewportW / 2, camera.viewportH / 2, this.heightAt);
+      camera.fly = null;
+      camera.target = [g[0], g[1], g[2]];
+      this.hud.say('Fixed view', 2);
+      return;
+    }
+    const [tx, ty, tz] = camera.target;
+    const e = camera.eye;
+    const d = Math.max(40, camera.viewportH / camera.zoom);
+    camera.fly = { pos: [tx + e[0] * d, ty + e[1] * d, tz + e[2] * d], yaw: Math.atan2(-e[1], -e[0]), pitch: -Math.asin(e[2]), fov: (60 * Math.PI) / 180 };
+    this.hud.say('Free camera — WASD fly, Q/E down/up, Shift faster, right-drag to look, wheel forward; F back', 5);
+  }
+
+  /** Flying: WASD along the view (level), Q/E down and up; the window's middle follows the camera. */
+  private flyKeys(dt: number): void {
+    const { camera, dims } = this.core;
+    const fly = camera.fly!;
+    const k = this.keys;
+    const speed = (k.has('shift') ? 120 : 35) * dt;
+    const { f } = camera.basis();
+    const hl = Math.hypot(f[0], f[1]) || 1;
+    const fx = f[0] / hl;
+    const fy = f[1] / hl;
+    let m = 0;
+    let s = 0;
+    if (k.has('w') || k.has('arrowup')) m += 1;
+    if (k.has('s') || k.has('arrowdown')) m -= 1;
+    if (k.has('d') || k.has('arrowright')) s += 1;
+    if (k.has('a') || k.has('arrowleft')) s -= 1;
+    fly.pos[0] += (fx * m + fy * s) * speed;
+    fly.pos[1] += (fy * m - fx * s) * speed;
+    if (k.has('e')) fly.pos[2] += speed;
+    if (k.has('q')) fly.pos[2] -= speed;
+    // (inside the window, over the ground under it)
+    fly.pos[0] = Math.max(1, Math.min(dims.w - 1, fly.pos[0]));
+    fly.pos[1] = Math.max(1, Math.min(dims.h * ROW_H - 1, fly.pos[1]));
+    fly.pos[2] = Math.max(this.heightAt(fly.pos[0], fly.pos[1]) + 1.5, Math.min(dims.zMax + 200, fly.pos[2]));
+    // the window streams round where the camera is
+    camera.target[0] = fly.pos[0];
+    camera.target[1] = fly.pos[1];
+  }
+
   /** Builds the level and settles it (rivers, slopes) before returning. */
   static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void, opts: LevelOptions = {}): Promise<LevelScene> {
     const level = levelById(levelId);
@@ -350,6 +396,13 @@ export class LevelScene implements Scene {
     }
 
     const zoomAt = (sx: number, sy: number, factor: number) => {
+      // (flying: the wheel moves along the view)
+      if (camera.fly) {
+        const { f } = camera.basis();
+        const step = Math.log(factor) * 40;
+        for (let i = 0; i < 3; i++) camera.fly.pos[i] += f[i] * step;
+        return;
+      }
       const before = camera.screenDeltaToWorld(sx - camera.viewportW / 2, sy - camera.viewportH / 2);
       camera.zoom = Math.max(0.8, Math.min(24, camera.zoom * factor));
       const after = camera.screenDeltaToWorld(sx - camera.viewportW / 2, sy - camera.viewportH / 2);
@@ -440,6 +493,12 @@ export class LevelScene implements Scene {
         if (this.editor?.tool === 'town') this.pickTown(sx, sy);
       },
       pan: (dx, dy) => {
+        // (flying: a right drag looks round)
+        if (camera.fly) {
+          camera.fly.yaw -= dx * 0.004;
+          camera.fly.pitch = Math.max(-1.5, Math.min(1.5, camera.fly.pitch - dy * 0.004));
+          return;
+        }
         const [wx, wy] = camera.screenDeltaToWorld(dx, dy);
         camera.target[0] -= wx;
         camera.target[1] -= wy;
@@ -459,6 +518,8 @@ export class LevelScene implements Scene {
         }
         if (e.key.toLowerCase() === 'e' && this.editor?.tool === 'place') this.editor.rotate();
         if (e.key === 'Escape' && this.intro) this.director.cancel();
+        // F: the free camera (round 69: fly round the world in perspective), and back
+        if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement)) this.toggleFly();
         if (e.key === ' ') {
           e.preventDefault();
           if (!this.lensOn) this.hud.say('Life lens — green: growing · magenta: toxic · grey: sealed · amber: too dry · blue: ready for life', 4);
@@ -622,7 +683,7 @@ export class LevelScene implements Scene {
             }
       }
     }
-    (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream, atlas: this.opts.atlas?.atlas });
+    (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream, atlas: this.opts.atlas?.atlas, toggleFly: () => this.toggleFly() });
     core.places.groundAt = this.heightAt;
     // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)
     const plan = host.params.get('plan');
@@ -749,6 +810,8 @@ export class LevelScene implements Scene {
     let kx = 0;
     let ky = 0;
     const k = this.keys;
+    if (camera.fly) this.flyKeys(dt);
+    else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
     if (k.has('d') || k.has('arrowright')) kx += 1;
     if (k.has('w') || k.has('arrowup')) ky -= 1;
@@ -757,6 +820,7 @@ export class LevelScene implements Scene {
       const [wx, wy] = camera.screenDeltaToWorld(kx * panSpeed * dt, ky * panSpeed * dt);
       camera.target[0] += wx;
       camera.target[1] += wy;
+    }
     }
     camera.target[0] = Math.max(0, Math.min(dims.w, camera.target[0]));
     camera.target[1] = Math.max(0, Math.min(dims.h * ROW_H, camera.target[1]));

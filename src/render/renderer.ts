@@ -25,7 +25,7 @@ import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
-const CAM_BYTES = CAMERA_BYTES + 64;
+const CAM_BYTES = CAMERA_BYTES + 64 + 16;
 /** the sun's shadow map, texels a side (the whole map: ~0.15 cells a texel on 256²) */
 const SHADOW_SIZE = 2048;
 const SHADOW_FORMAT: GPUTextureFormat = 'depth32float';

@@ -229,7 +229,7 @@ fn fsMesh(in: MOut) -> FOut {
     // the wet sheen: the sun's glint off the film
     let sunL = sunDir();
     let fn2 = normalize(nrm + vec3<f32>(filmN.xy, 0.0));
-    let hv = normalize(normalize(sunL + CAM.eye.xyz) + vec3<f32>(0.0, 0.0, 1.6));
+    let hv = normalize(normalize(sunL + toEye(in.wpos)) + vec3<f32>(0.0, 0.0, 1.6));
     let spec = pow(max(dot(fn2, hv), 0.0), 120.0) * (1.0 - cloudShade(in.wpos.xy)) * shadowLit(in.wpos, nrm);
     col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.6 * film;
     // and the sky in it

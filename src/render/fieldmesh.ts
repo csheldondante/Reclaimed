@@ -202,19 +202,23 @@ export class FieldMesh {
       for (let cx = 0; cx < this.nx; cx++) {
         let lo = [Infinity, Infinity];
         let hi = [-Infinity, -Infinity];
+        let behind = false;
         // (up to what's in it: a box to the sky covered a long strip of the screen)
         const zTop = Math.min(this.tops[cy * this.nx + cx] + TOP_PAD, zHi);
         for (let k = 0; k < 8; k++) {
           const x = (cx + (k & 1)) * CHUNK;
           const y = (cy + ((k >> 1) & 1)) * CHUNK;
           const z = k & 4 ? zTop : -1;
-          const px = m[0] * x + m[4] * y + m[8] * z + m[12];
-          const py = m[1] * x + m[5] * y + m[9] * z + m[13];
+          // (divided by clip w: the free camera's perspective; a corner behind its eye: keep the chunk)
+          const w = m[3] * x + m[7] * y + m[11] * z + m[15];
+          if (w <= 1e-3) behind = true;
+          const px = (m[0] * x + m[4] * y + m[8] * z + m[12]) / Math.max(w, 1e-3);
+          const py = (m[1] * x + m[5] * y + m[9] * z + m[13]) / Math.max(w, 1e-3);
           lo = [Math.min(lo[0], px), Math.min(lo[1], py)];
           hi = [Math.max(hi[0], px), Math.max(hi[1], py)];
         }
         const c = cy * this.nx + cx;
-        const within = (e: number) => hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e;
+        const within = (e: number) => behind || (hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e);
         this.inView[c] = within(1) ? 1 : 0;
         this.near[c] = within(1.5) ? 1 : 0;
         if (this.near[c]) {

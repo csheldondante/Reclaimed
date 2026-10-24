@@ -196,7 +196,7 @@ try {
     let lo = 1e9;
     let hi = -1e9;
     for (let i = 0; i < 64 * 64; i++) {
-      const o = i * 12;
+      const o = i * 16;
       lo = Math.min(lo, r.f[o]);
       hi = Math.max(hi, r.f[o]);
       for (let k = 1; k < r.u[o + 9]; k++) if (r.run(i, k).z0 > r.run(i, k - 1).z1 + 0.01) {
@@ -246,8 +246,8 @@ try {
       for (let y = 8; y < 248; y += 4) {
         const b = T.heightAt(...cellPos(191, y));
         const c = T.heightAt(...cellPos(192, y));
-        const rb = ref.f[(y * 2) * 12];
-        const rc = ref.f[(y * 2 + 1) * 12];
+        const rb = ref.f[(y * 2) * 16];
+        const rc = ref.f[(y * 2 + 1) * 16];
         worst = Math.max(worst, Math.abs(Math.abs(c - b) - Math.abs(rc - rb)));
       }
       return { from: o0, origin: [...S.origin], ms, stats: { ...S.stats }, seamWorst: +worst.toFixed(2), ticks: R.globals.tick };

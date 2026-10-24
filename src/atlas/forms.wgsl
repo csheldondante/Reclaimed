@@ -40,6 +40,9 @@ const MAT_WATER: u32 = 8u;
 const MAT_SILT: u32 = 22u;
 const MAT_LAVA: u32 = 24u;
 const MAT_SNOW: u32 = 25u;
+const MAT_BASALT_F: u32 = 23u;
+/** a river's springs: water a tick at the middle of its channel (what comes down from upstream) */
+const RIVER_SPRING: f32 = 0.0008;
 
 /** world units around a batch whose lattice forms are placed (regions.ts FORM_REACH: no form reaches further) */
 const MARGIN: f32 = 48.0;
@@ -94,6 +97,11 @@ struct ColOut {
   /** 1: more forms near it than a column considers, 2: more runs than it holds */
   flags: u32,
   ground: f32,
+  /** water a tick from a spring (a river's: what flows in from upstream) */
+  spring: f32,
+  _p0: f32,
+  _p1: f32,
+  _p2: f32,
 }
 
 @group(0) @binding(31) var<storage, read_write> colOut: array<ColOut>;
@@ -339,6 +347,18 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     topMat = R.accent;
     cover = max(cover, 1.0);
   }
+  // a river's bed: sand and silt under water, the lava's own rock under lava
+  let river = g.rx < 1.0;
+  let lavaR = river && g.rflags == 1u;
+  if (river) {
+    if (lavaR) {
+      topMat = MAT_BASALT_F;
+      cover = 0.0;
+    } else {
+      topMat = select(MAT_SAND, MAT_SILT, g.rx < 0.5);
+      cover = max(cover, 1.0);
+    }
+  }
   cover = min(cover, top - 1.0);
   let rockTop = top - cover;
   var flags = 0u;
@@ -503,8 +523,19 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     let depth = max(net.zc - net.r * 0.3 - surf, 0.0);
     if (net.liquid == MAT_LAVA) { o.lava = depth; } else if (net.liquid == MAT_WATER) { o.water = max(o.water, depth); }
   }
+  // a river: filled to its level, fed along its middle; lava kept molten by its springs
+  o.spring = 0.0;
+  if (river && open) {
+    if (lavaR) {
+      // (fed along its middle only: springs to its banks flooded the land round a fall's foot)
+      if (g.rx < 0.5) { o.lava = max(g.rl - surf, 0.6); }
+    } else {
+      o.water = max(o.water, g.rl - 0.3 - surf);
+      if (g.rx < 0.6) { o.spring = RIVER_SPRING; }
+    }
+  }
   var m = moistureAt(p, g.coast, R.moist);
-  if (wet) { m = max(m, 0.8); }
+  if (wet || (river && !lavaR)) { m = max(m, 0.8); }
   o.moisture = m;
   o.veg = 0.0;
   if (o.water == 0.0 && o.lava == 0.0 && !snowy && R.veg > 0.0 && surf < AP.sea + 70.0) {

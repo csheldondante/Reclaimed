@@ -313,6 +313,17 @@ ripples, bursts, a wake and a physics blast.
 
 ## Rendering
 
+The camera (render/camera.ts): the fixed isometric orthographic view, or
+(round 69, F in a level) a free perspective camera (`Camera.fly`: where it
+is, yaw, pitch, field of view). The draw shaders get its position
+(render.wgsl `Camera.pos`, w 1 when flying: `toEye(p)` is the way to the eye
+from p), so the sides drawn toward the eye, canopy and rock marches and
+highlights look from where the eye is; what's sized in pixels divides by
+clip w (1 in the fixed view); culling (field-mesh chunks, renderprep's
+columns) divides by w and keeps what's behind the eye; picking flies a ray
+into the ground (`groundAt`). A streamed window follows the camera's
+position.
+
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the
 loose sheet) are hex prisms, 30 vertices: the top in four triangles with one
 flat normal (the plane through its corners, cached per cell by render-fields)
@@ -482,6 +493,21 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   is at its 8 storage buffers): a column's lava is topped up to its depth
   and kept molten; what spills runs off and sets. Kept with its region by
   the streamer.
+- Rivers (round 69, `rivers.ts`): on the CPU over the macro ground, a
+  priority flood from the coast fills every hollow and gives each texel the
+  one it drains to; texels drained through (less where it's dry) over a
+  threshold are river nodes (level: the filled ground, so it only falls;
+  width with what drains through), and lava nodes run down the same tree
+  from each volcanic region's top. JFA spreads the nearest node to every
+  texel (build.wgsl jfaSeedV/jfaOutV → `riverNear`); compose.wgsl `riverAt`
+  measures the distance to the segments from the nodes round a point to
+  their next, and `ground` carves the channel to the river's level with
+  steep valley sides (gorges through high ground). Where the level drops
+  across a segment the channel is a chute: a fall. colFinish fills the
+  channel (water to its level, lava along its middle), beds it (sand, silt;
+  basalt under lava) and feeds it: water springs along its middle
+  (`waterSource`: what comes from upstream), lava springs. The ground is made
+  twice: first without rivers (to find them on), then with them.
 - Physics of forms: the ground is terrain (strength-1 materials: stone,
   sandstone, basalt, obsidian, flesh); forms of weaker ones (crystal, ice,
   coral) are judged by the integrity system when they arrive

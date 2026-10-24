@@ -165,6 +165,26 @@ fn jfaSeedR(@builtin(global_invocation_id) id: vec3<u32>) {
   jfaSrc[i] = out;
 }
 
+/** the rivers' nodes (keyB: per texel its node + 1, rivers.ts) as seeds */
+@compute @workgroup_size(8, 8)
+fn jfaSeedV(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= AP.n || id.y >= AP.n) { return; }
+  let i = id.y * AP.n + id.x;
+  let v = keyB[i];
+  jfaSrc[i] = select(vec2<u32>(0u), vec2<u32>(packXY(id.x, id.y), v), v != 0u);
+}
+
+/** each texel's nearest node + 1 (keyB), within a few texels of it (0 beyond: no river near) */
+@compute @workgroup_size(8, 8)
+fn jfaOutV(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= AP.n || id.y >= AP.n) { return; }
+  let i = id.y * AP.n + id.x;
+  let s = jfaSrc[i];
+  var v = 0u;
+  if (s.x != 0u && tdist(vec2<i32>(id.xy), unpackXY(s.x)) < 6.0 * texelW()) { v = s.y; }
+  keyB[i] = v;
+}
+
 @compute @workgroup_size(8, 8)
 fn jfaSeedC(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= AP.n || id.y >= AP.n) { return; }

@@ -78,6 +78,70 @@ const EDGE_SEACLIFF: u32 = 6u;
 @group(0) @binding(21) var<storage, read> distR: array<vec4<f32>>;
 @group(0) @binding(22) var<storage, read> regs: array<Region>;
 @group(0) @binding(23) var<storage, read> pat: array<f32>;
+// the rivers (round 69, rivers.ts): per texel its nearest node + 1 (0: none, JFA), and the nodes
+struct RiverNode {
+  x: f32,
+  y: f32,
+  level: f32,
+  width: f32,
+  next: u32,
+  /** 1: lava */
+  flags: u32,
+  depth: f32,
+  _p: f32,
+}
+@group(0) @binding(25) var<storage, read> riverNear: array<u32>;
+@group(0) @binding(26) var<storage, read> rivers: array<RiverNode>;
+
+struct River {
+  on: bool,
+  /** distance from the river's line, in its half-widths */
+  x: f32,
+  level: f32,
+  w: f32,
+  depth: f32,
+  flags: u32,
+}
+
+/** q moved by whole turns of the torus to be nearest p */
+fn nearTo(q: vec2<f32>, p: vec2<f32>) -> vec2<f32> {
+  let W = vec2<f32>(AP.worldW, AP.worldH);
+  let d = q - p;
+  return p + d - round(d / W) * W;
+}
+
+/** the nearest river at p: of the segments from the nodes nearest the four texels round it to their next */
+fn riverAt(p: vec2<f32>) -> River {
+  var r: River;
+  r.on = false;
+  r.x = 1e9;
+  let t = torusU(p) * f32(AP.n) - 0.5;
+  let i0 = vec2<i32>(floor(t));
+  for (var k = 0; k < 4; k++) {
+    let id = riverNear[texIdxW(i0 + vec2<i32>(k & 1, k >> 1))];
+    if (id == 0u) { continue; }
+    let a = rivers[id - 1u];
+    let b = rivers[a.next];
+    let pa = nearTo(vec2<f32>(a.x, a.y), p);
+    let pb = nearTo(vec2<f32>(b.x, b.y), pa);
+    let ab = pb - pa;
+    let l2 = dot(ab, ab);
+    var s = 0.0;
+    if (l2 > 1e-6) { s = clamp(dot(p - pa, ab) / l2, 0.0, 1.0); }
+    let w = mix(a.width, b.width, s);
+    let x = length(p - (pa + ab * s)) / w;
+    if (x < r.x) {
+      r.on = true;
+      r.x = x;
+      r.level = mix(a.level, b.level, s);
+      r.w = w;
+      r.depth = mix(a.depth, b.depth, s);
+      r.flags = a.flags & b.flags;
+      if (a.flags == 1u && s < 0.5) { r.flags = 1u; }
+    }
+  }
+  return r;
+}
 
 struct Macro {
   a: u32,
@@ -166,6 +230,10 @@ struct Ground {
   /** the distance from the border (signed towards A), and the lower of the two sides' heights there */
   s: f32,
   hlo: f32,
+  /** a river: its level (−1: none), the distance from its line in half-widths, 1 lava */
+  rl: f32,
+  rx: f32,
+  rflags: u32,
 }
 
 /** symmetric steps: st(1 − t) = 1 − st(t) */
@@ -252,6 +320,20 @@ fn ground(p: vec2<f32>) -> Ground {
     }
     g.h = mix(hB, hA, w) + extra;
     g.w = w;
+  }
+  // a river's channel, and the valley it cuts (its sides steep, so it cuts gorges through high
+  // ground); its level only falls, all at once where the ground drops away: a waterfall
+  g.rl = -1.0;
+  g.rx = 9.0;
+  g.rflags = 0u;
+  let rv = riverAt(p);
+  if (rv.on && rv.x < 4.0) {
+    var cut = rv.level + (rv.x - 1.0) * rv.w * 2.5;
+    if (rv.x < 1.0) { cut = rv.level - rv.depth * (1.0 - rv.x * rv.x); }
+    g.h = min(g.h, cut);
+    g.rl = rv.level;
+    g.rx = rv.x;
+    g.rflags = rv.flags;
   }
   g.h = clamp(g.h, 1.0, AP.zTop);
   return g;
