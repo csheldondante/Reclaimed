@@ -263,7 +263,7 @@ export class Terrain {
    * or two). Round 63: what a unit picks up.
    */
   take(x: number, y: number, amount: number): Promise<{ material: MaterialName; amount: number }> {
-    return this.exact(OP_TAKE, 0, x, y, amount).then(([a, m]) => ({ material: materialName(m), amount: a }));
+    return this.exactOp(OP_TAKE, 0, x, y, amount).then(([a, m]) => ({ material: materialName(m), amount: a }));
   }
 
   /**
@@ -276,7 +276,7 @@ export class Terrain {
     const m = materialId(material);
     const st = materialState(m);
     if (st !== 'solid' && st !== 'loose') throw new Error(`world.terrain.put: "${material}" isn't ground (a solid or loose material)`);
-    return this.exact(OP_PUT, m, x, y, amount).then(([a]) => a);
+    return this.exactOp(OP_PUT, m, x, y, amount).then(([a]) => a);
   }
 
   /** In flight: tag â†’ [the tick it was sent at or after, resolve] */
@@ -284,7 +284,8 @@ export class Terrain {
   private nextTag = 0;
   private polling = false;
 
-  private exact(op: number, mat: number, x: number, y: number, amount: number): Promise<[number, number]> {
+  /** (the plants module too) An exact one-column edit op; resolves with editResult's x and y for it. */
+  exactOp(op: number, mat: number, x: number, y: number, amount: number): Promise<[number, number]> {
     if (!(amount >= 0)) throw new Error(`world.terrain: amount must be â‰¥ 0 (got ${amount})`);
     if (this.exacts.size >= EDIT_TAGS) throw new Error(`world.terrain: ${EDIT_TAGS} takes and puts in flight at most`);
     while (this.exacts.has(this.nextTag)) this.nextTag = (this.nextTag + 1) % EDIT_TAGS;

@@ -20,6 +20,8 @@ import { Fire } from './fire';
 import { Agents, type KindSpec } from '../agents/agents';
 import { installAgents } from '../agents/install';
 import { Fx } from './fx';
+import { Plants } from './plants';
+import { Crew, type CrewDef } from '../agents/crew';
 import { Mirror } from './mirror';
 import { Terrain } from './terrain';
 import { Water } from './water';
@@ -31,13 +33,15 @@ export interface SimModules {
   fire?: boolean;
   wind?: boolean;
   fx?: boolean;
+  /** the plants and the trees on them; fell (round 63; needs terrain) */
+  plants?: boolean;
   /** units walking the surfaces by shared fields, and fighting (docs/AGENTS.md) */
   agents?: boolean;
   /** ms between mirror reads (default 250); 0: never on a timer (call refresh()) */
   refreshMs?: number;
 }
 
-const ALL: SimModules = { terrain: true, water: true, fire: true, wind: true, fx: true, agents: true };
+const ALL: SimModules = { terrain: true, water: true, fire: true, wind: true, fx: true, plants: true, agents: true };
 
 /**
  * A world, as data (docs/WORLD_API.md "Content"): what the game supplies;
@@ -137,17 +141,27 @@ export function createSim(host: Host, def: WorldDef): Sim {
 /** The modules over a WorldCore a scene already runs (the level); `warm` settles it first (sim.ready). */
 export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: WarmupOpts): Sim {
   const mirror = new Mirror(core.host.gpu.device);
+  const terrain = mods.terrain ? new Terrain(core, mirror) : undefined;
+  if (mods.plants && !terrain) throw new Error('world: the plants module needs terrain');
+  const plants = mods.plants && terrain ? new Plants(core, mirror, terrain) : undefined;
+  const agents = mods.agents ? (core.sim.systems.find((s): s is Agents => s instanceof Agents) ?? installAgents(core)) : undefined;
   const sim = {
     warmup: (opts: WarmupOpts) => warmup(core, mirror, opts),
     ready: warm ? warmup(core, mirror, warm) : Promise.resolve(),
     core,
-    terrain: mods.terrain ? new Terrain(core, mirror) : undefined,
+    terrain,
+    plants,
     water: mods.water ? new Water(core, mirror) : undefined,
     fire: mods.fire ? new Fire(core, mirror) : undefined,
     wind: mods.wind ? new Wind(core, mirror) : undefined,
     fx: mods.fx ? new Fx(core) : undefined,
     // (a scene may have installed them already: the level does)
-    agents: mods.agents ? (core.sim.systems.find((s): s is Agents => s instanceof Agents) ?? installAgents(core)) : undefined,
+    agents,
+    /** A work crew (round 63, docs/AGENTS.md "Crews"): workers dig or fell and carry it to a pile. Call `update(units)` each frame after a sync. */
+    crew: (def: CrewDef): Crew => {
+      if (!agents || !terrain) throw new Error('world.crew: needs the agents and terrain modules');
+      return new Crew(agents, terrain, plants, def);
+    },
     refresh: () => mirror.refresh(),
     get readAt() {
       return mirror.readAt;

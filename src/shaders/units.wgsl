@@ -246,7 +246,12 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   var info = unitInfo(a);
   if (((info >> 8u) & 1u) == 0u) { return; }
   let uid = unitId(u, info);
-  let grp = info & 0xffu;
+  var grp = info & 0xffu;
+  // (moved to another group by the game: agents.regroup)
+  for (var e = 0u; e < AP.n3.z; e++) {
+    let rg = AP.regroups[e / 4u][e % 4u];
+    if ((rg & 0xffffu) == u) { grp = rg >> 16u; }
+  }
   let kind = AP.kinds[(info >> 9u) & 7u];
   var state = (info >> 12u) & 7u;
   var alight = ((info >> 15u) & 1u) != 0u;
@@ -583,7 +588,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   let fi = colIdxI(clampCell(cellAt(np.xy)));
   if (alight) { atomicAdd(&shove[(wr + fi) * 4u + 3u], 1); }
   let phase = fract(b.w + dt * length(vel.xy) * 0.9);
-  info = (info & ~((7u << 12u) | (1u << 15u))) | (state << 12u) | (select(0u, 1u, alight) << 15u);
+  info = (info & ~((7u << 12u) | (1u << 15u) | 0xffu)) | (state << 12u) | (select(0u, 1u, alight) << 15u) | grp;
   units[u * 4u] = vec4<f32>(np, bitcast<f32>(info));
   units[u * 4u + 1u] = vec4<f32>(vel, select(phase, stun, state == ST_TUMBLE));
   units[u * 4u + 2u] = vec4<f32>(hp, cool, burn, heading);

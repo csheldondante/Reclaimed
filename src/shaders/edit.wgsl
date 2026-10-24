@@ -63,6 +63,10 @@ const OP_CRATER: u32 = 13u;
 // none). What it did goes to editResult at the tag (code bits 10-15).
 const OP_TAKE: u32 = 14u;
 const OP_PUT: u32 = 15u;
+// fell (round 63; op 5 was free: ops have 4 bits): the column's plants cut back to grass (its tree goes);
+// editResult gets what stood there (x the veg it had)
+const OP_FELL: u32 = 5u;
+const FELLED: f32 = 2.2;
 @group(0) @binding(26) var editResult: texture_storage_2d<rgba32float, write>;
 const CRATER_RING: f32 = 2.5;
 const STROKE_START: u32 = 512u;
@@ -105,6 +109,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (d >= 1.0) { continue; }
     let op = (code & 511u) / 32u;
     let mat = code % 32u;
+    if (op == OP_FELL) {
+      let had = vegE[i];
+      vegE[i] = min(had, FELLED);
+      textureStore(editResult, vec2<i32>(i32(code >> 10u), 0), vec4<f32>(had, 0.0, f32(G.tick), 1.0));
+      continue;
+    }
     if (op == OP_TAKE || op == OP_PUT) {
       var got = 0.0;
       var gm = mat;

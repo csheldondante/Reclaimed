@@ -294,6 +294,38 @@ rises 0.75; four workers pick up 0.5 each and carry it, two put it down
 each as ground, two raiders knocked over); a carrier blasted sheds its load,
 which lands whole.
 
+## Crews (round 63)
+
+`sim.crew({ units, groups: [toJob, atWork, toPile], fields: [job, pile], job, pile, make? })`
+then `crew.update(units)` each frame after a sync. Workers dig or fell and
+carry what they get to a pile, over and over:
+- **dig** `{ kind: 'dig', x, y, radius, depth }`: the ground within the
+  radius, down `depth` under its mean top at the start. A worker in the
+  area on ground above that floor stands and digs (`digTime`, 1.2 s), picks
+  up a load (`load`, 0.5 cells³, `terrain.take`), carries it to the pile
+  and puts it down there (`terrain.put`). The job field is seeded at up to
+  12 points of the area still above the floor (every second); none left:
+  done, they stand.
+- **fell** `{ kind: 'fell', x, y, radius }`: each worker claims the nearest
+  unclaimed tree (`plants.treesNear`), walks to it, works `fellTime` (3 s),
+  fells it (`plants.fell`: the column cut back to grass) and carries its
+  logs (`log`, a solid: 0.3 × trunk + 0.15 × crown cells³) to the pile.
+- **make** `{ from: ['soil'], to: 'brick' }`: loads of `from` are put down
+  as `to` at the pile, the same amount (fired).
+- Groups: a worker is moved between the three (`agents.regroup`, applied
+  in the units' tick from the params) as it goes: the job's field, standing
+  at work, the pile's field. A crew takes three groups and two of the four
+  fields, so two crews at once at most for now.
+- Knocked about, a worker sheds its load (carrying) and goes back to work.
+- `crew.stats`: dug (by material), felled, logs, piled (by material),
+  trips; everything dug is piled, carried or in flight.
+
+`crewtest` (the valley, 40 s): six workers dig a pit 2.5 across: 24 trips,
+12.10 dug = 10.90 piled + 1.20 carried; the pit 0.32 lower on average, the
+pile 0.65 higher, the soil fired to brick. A wood grown beside it
+(`plants.grow`), six workers fell 4 of its 5 trees (a storm burned the
+other) and pile their 4.95 cells³ of logs, all of it.
+
 ## Not yet
 
 - A death left lying (they vanish now).

@@ -57,6 +57,15 @@ await sim.ready                         // the warmup asked for at creation (Wor
 await sim.warmup({ ticks, debris, skip })        // settle the world: ticks of sim at once, debris (dust, litter, leaves)
                                         // gathering `debris`× faster (the levels use 10), plants left out (skip ['ecology'])
 
+// plants (round 63)
+sim.plants.vegAt(x, y)              // the succession field: ~1.2 grass, 2.6 shrubs, 3.6+ woods
+sim.plants.treeAt(x, y) / treesNear(x, y, radius)   // { cx, cy, x, y, species, trunk, crown, logs }, nearest first
+await sim.plants.fell(x, y)         // that column cut back to grass: → the tree as it stood (its logs), or null
+sim.plants.grow(x, y, { radius, strength })   // the plants rise (60: a wood at once)
+// work crews (round 63; docs/AGENTS.md "Crews"): dig or fell, carry to a pile
+const crew = sim.crew({ units, groups: [3 free], fields: [2 free], job: { kind: 'dig' | 'fell', … }, pile, make? })
+crew.update(units)                  // each frame, after agents.sync()
+
 // terrain
 sim.terrain.heightAt(x, y, { smooth? })  // the open sky's floor: ground, loose ground on it, or a structure's top
 sim.terrain.groundAt(x, y, { smooth? })  // the nature grid's own ground (structures ignored)

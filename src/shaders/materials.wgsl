@@ -30,6 +30,7 @@ const MAT_SNOW: u32 = 25u;
 const MAT_LEAFLIT: u32 = 26u;
 const MAT_ICE: u32 = 27u;
 const MAT_CRYSTAL: u32 = 28u;
+const MAT_LOG: u32 = 29u;
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 
@@ -40,7 +41,7 @@ fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
  * asphalt) to rubble. Mirrors integrity.ts looseFrom().
  */
 fn rubbleOf(m: u32) -> u32 {
-  if (m == MAT_WOOD || m == 21u || m == MAT_LEAVES) { return 17u; }
+  if (m == MAT_WOOD || m == 21u || m == MAT_LEAVES || m == MAT_LOG) { return 17u; }
   if (m == 16u) { return MAT_DRIFT; }
   // (ice shatters to snow, crystal to glittering sand)
   if (m == MAT_ICE) { return MAT_SNOW; }

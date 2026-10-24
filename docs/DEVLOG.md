@@ -3836,3 +3836,24 @@ bowled over by the others flung into it (knock-overs are physics), and a
 hard landing then hurts it as 'impact'. `sparetest` 2/2: spare [g1]: g1 0
 hurt by the blast, g2 6 hurt and 6 thrown (1 of g1 bowled over); groups
 [g1]: 5 of g1 hurt and thrown, g2 none.
+
+## Round 63 — crews dig, fell, fire bricks and pile (agents)
+
+The user's order after carrying: dig, fell trees into logs, bricks, piles.
+- `log` (material 29): a solid, cut trunks (wood is the living trunk,
+  plant matter, so it can't be ground). It crumbles to ash like wood.
+- `plants` module: the succession field from the mirror and the trees on it,
+  as vegplan.wgsl lays them out (its hash ported to the CPU); `fell` (edit
+  op 5, free: ops have 4 bits, so 16 would have set the stroke bit) cuts the
+  column back to grass and reads back what stood there; `grow` (the
+  sandbox's plant brush) raises the field.
+- `agents.regroup(id, g)`: a unit moved to another group from the next tick
+  (a list in the params like launches; the GPU owns the info word).
+- `Crew` (src/agents/crew.ts): the brain on the CPU, a state a worker; the
+  walking on the GPU's fields. Three groups (to the job, at work, to the
+  pile) and two fields (the job's sites, the pile).
+
+Measured (`crewtest`, the valley, 40 s, six workers each): digging, 24
+trips, 12.10 dug = 10.90 piled + 1.20 carried (exact), the pit 0.32 down,
+the pile 0.65 up, the soil fired to brick; felling a grown wood, 4 trees
+felled (a storm burned the fifth), 4.95 cells³ of logs cut and all piled.

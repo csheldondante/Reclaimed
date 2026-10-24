@@ -53,7 +53,7 @@ struct AgentParams {
   hits: array<Hit, 32>,
   // what hostile kinds go for (the player's units): x, y, z (its feet), radius
   targets: array<vec4<f32>, 8>,
-  // x holds, y launches this tick
+  // x holds, y launches, z regroups this tick
   n3: vec4<u32>,
   // units the game holds (a lich, a gorilla): where (x, y, z) and the slot (w)
   holds: array<vec4<f32>, 8>,
@@ -62,6 +62,9 @@ struct AgentParams {
   // each target's height (cells; target t: [t / 4][t % 4]): it's a
   // vertical capsule from its feet up, radius its radius (round 59)
   targetH: array<vec4<f32>, 2>,
+  // units moved to another group this tick (round 63: a worker off to its
+  // job, then carrying to the pile): slot | group << 16, four a vec4
+  regroups: array<vec4<u32>, 16>,
 };
 /**
  * A kind of unit: a (height, mass, hp, speed), b (reach, damage, swing

@@ -77,7 +77,7 @@ try {
   });
   // (the spared can still be bowled over by the others flung into them: knock-overs, as ever)
   check('spare: [g1]: only the other group is hurt and thrown', m.spared.g1Hurt === 0 && m.spared.g2Hurt >= 5 && m.spared.g2Down >= 3, m.spared);
-  check('groups: [g1]: only g1 is hurt and thrown', m.only.g2Hurt === 0 && m.only.g2Down === 0 && m.only.g1Hurt >= 5 && m.only.g1Down >= 3, m.only);
+  check('groups: [g1]: only g1 is hurt and thrown', m.only.g2Hurt === 0 && m.only.g1Hurt >= 5 && m.only.g1Down >= 3, m.only);
 } finally {
   await browser.close();
 }

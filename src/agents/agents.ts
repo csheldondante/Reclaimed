@@ -51,7 +51,10 @@ const P_N3 = P_TARGETS + MAX_TARGETS * 4;
 const P_HOLDS = P_N3 + 4;
 const P_LAUNCHES = P_HOLDS + MAX_HOLDS * 4;
 const P_TARGET_H = P_LAUNCHES + MAX_LAUNCHES * 4;
-const PARAMS_BYTES = (P_TARGET_H + MAX_TARGETS) * 4;
+/** units moved to another group a tick (agents.wgsl regroups) */
+const MAX_REGROUPS = 64;
+const P_REGROUPS = P_TARGET_H + MAX_TARGETS;
+const PARAMS_BYTES = (P_REGROUPS + MAX_REGROUPS) * 4;
 /** what the tumbling units fall by (units.wgsl GRAVITY, cells/s²) */
 export const AGENT_GRAVITY = 20;
 /** bytes of a surface (agents.wgsl nav: vec4<u32>), and of a unit (four vec4) */
@@ -247,6 +250,7 @@ export class Agents implements SimSystem {
   private targets: Target[] = [];
   private holds = new Map<number, [number, number, number]>();
   private launches: [number, number, number, number][] = [];
+  private regroups: number[] = [];
   private ticks = 0;
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
@@ -523,6 +527,18 @@ export class Agents implements SimSystem {
    * decides it; a lob must land where it's aimed). For a force, a knock that
    * heavy kinds shrug off, use a `hit` with `push` and `lift`.
    */
+  /**
+   * Move unit `id` to group `g` (from the next tick): it follows that
+   * group's field and is drawn in its colour (round 63: a worker off to its
+   * job, then to the pile). Up to 64 a tick; the rest wait.
+   */
+  regroup(id: number, g: number): void {
+    const slot = this.slotOf(id);
+    if (slot < 0) return;
+    if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents.regroup: group ${g} out of 0..${MAX_GROUPS - 1}`);
+    this.regroups.push(slot | (g << 16));
+  }
+
   launch(id: number, vel: readonly [number, number, number], opts: LaunchOpts = {}): void {
     const slot = this.slotOf(id);
     if (slot < 0) return;
@@ -949,7 +965,9 @@ export class Agents implements SimSystem {
     });
     const holds = [...this.holds].slice(0, MAX_HOLDS);
     const launches = this.launches.splice(0, MAX_LAUNCHES);
-    u.set([holds.length, launches.length, 0, 0], P_N3);
+    const regroups = this.regroups.splice(0, MAX_REGROUPS);
+    u.set([holds.length, launches.length, regroups.length, 0], P_N3);
+    u.set(regroups, P_REGROUPS);
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
     this.device.queue.writeBuffer(this.params, 0, b);
