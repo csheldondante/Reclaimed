@@ -176,6 +176,8 @@ export class LevelScene implements Scene {
       // (the atlas's land stands higher: look at the ground in the middle)
       const c = (dims.h / 2) * dims.w + dims.w / 2;
       this.core.camera.target = [dims.w / 2, dims.h * ROW_H * 0.5, this.core.map.surface[c]];
+      // the atlas's climate before the world settles (warmed at the default, its snow melted and froze to sheets)
+      this.core.globals.climate = opts.atlas.atlas.climateAt(opts.atlas.origin[0] + dims.w / 2, opts.atlas.origin[1] + dims.h / 2);
     }
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
@@ -200,7 +202,8 @@ export class LevelScene implements Scene {
     // ecology excluded so nothing grows during settling; ground debris (dust,
     // litter, fallen leaves) accumulates fast so the level opens with it lying about.
     // A saved map was settled when it was saved: a short prime only.
-    s.core.globals.debrisBoost = opts.map ? 1 : 10;
+    // (a streamed world: none — the strips that come in later get no such start)
+    s.core.globals.debrisBoost = opts.map || level.stream ? 1 : 10;
     await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology');
     s.core.globals.debrisBoost = 1;
     s.attach();
@@ -595,6 +598,8 @@ export class LevelScene implements Scene {
         // what the level keeps in window coordinates
         shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
         this.hoverWorld = null;
+        // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps)
+        if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2);
       });
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream, atlas: this.opts.atlas?.atlas });

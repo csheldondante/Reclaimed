@@ -29,7 +29,10 @@ try {
     const out = {};
     a.defs.forEach((d) => {
       if (!kinds.includes(d.kind) || !d.stat.land) return;
-      if (!out[d.kind] || d.stat.area > out[d.kind].area) out[d.kind] = { area: d.stat.area, at: [Math.floor(d.stat.cx * a.p.cols), Math.floor(d.stat.cy * a.p.rows)] };
+      // (temperate first: the largest of a kind is often near a pole, under snow)
+      const warm = 0.5 - 0.5 * Math.cos(2 * Math.PI * d.stat.cy);
+      const score = d.stat.area * (warm > 0.5 ? 4 : 1);
+      if (!out[d.kind] || score > out[d.kind].score) out[d.kind] = { score, warm: +warm.toFixed(2), temp: +a.climateAt(0, d.stat.cy * a.p.rows).temp.toFixed(1), at: [Math.floor(d.stat.cx * a.p.cols), Math.floor(d.stat.cy * a.p.rows)] };
     });
     return out;
   }, kinds);
@@ -42,7 +45,31 @@ try {
     await lv.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&tod=0.35&q=high&at=${spots[k].at.join(',')}&${q}`, { waitUntil: 'load' });
     await lv.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
     await new Promise((r) => setTimeout(r, 5000));
+    await lv.evaluate(() => (document.getElementById('ui').style.visibility = 'hidden'));
     await lv.screenshot({ path: `${out}-${k}.png` });
+    // wider, then panning east over two slides (the strips that came in are in the picture)
+    const z0 = await lv.evaluate(() => {
+      const c = window.reclaimed.camera;
+      const z = c.zoom;
+      c.zoom = z * 0.55;
+      return z;
+    });
+    await new Promise((r) => setTimeout(r, 2500));
+    await lv.screenshot({ path: `${out}-${k}-wide.png` });
+    const pan = await lv.evaluate(async () => {
+      const R = window.reclaimed;
+      const S = R.stream;
+      const n0 = S.stats.slides;
+      for (let f = 0; f < 900 && S.stats.slides - n0 < 2; f++) {
+        R.camera.target[0] += 1.2;
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      await new Promise((r) => setTimeout(r, 3000));
+      return { slides: S.stats.slides - n0, prefetched: S.stats.prefetched, lastMs: S.stats.lastMs };
+    });
+    console.log(k, JSON.stringify(pan));
+    await lv.screenshot({ path: `${out}-${k}-panned.png` });
+    void z0;
     await lv.close();
   }
 } finally {

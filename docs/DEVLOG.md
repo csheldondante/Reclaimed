@@ -4067,3 +4067,34 @@ ms when its land wasn't asked for ahead, 9 ms when it was (prefetch). The
 field mesh ran out of room in 9 chunks on the atlas's rough land (holes):
 its room is a level option now (meshRoom 2.5 for the atlas: 0 full).
 streamtest 8/8, towntest 6/6, buildtest 4/4 on this branch.
+
+## Round 68 — the atlas in action; the seams between strips (atlas)
+
+A tour (`scripts/atlastour.mjs`: each kind at the middle of its largest
+temperate region — close, wide, then panned east over two slides) in the
+three styles. What didn't join, and why:
+- Snow: the first window settled (warmup) at the default 15 °C before the
+  atlas's climate was set, so its snow melted and froze to sheets of ice
+  while every strip after came in white. The climate is set before it
+  settles now, and follows the window's latitude at each slide; the
+  atlas's temperature lost its noise and takes the sim's lapse, so the snow
+  it lays is the snow the sim keeps (Q40).
+- Lapse 0.3 °C a cell snowed over most uplands at mid-latitudes (patterns
+  buried): 0.12, warmer equator (34 · warmth − 8 at the sea).
+- Debris: the first window opened with ten times the debris (warmup's
+  debrisBoost: litter, dust, leaves lying about) and the strips after none:
+  none for a streamed level.
+- Glaciers' rock was ice: every cliff in them a stack of glass pillars.
+  Stone under a cap of ice.
+- The region across a border: of the footprint's other regions, the one
+  whose texel is nearest its border (the last one met, before: past a
+  junction the two sides picked differently).
+- Smaller: basalt columns 11–17 across (6–10 didn't read), few plants on
+  them; the accent (crystal) only at a pattern's peaks (> 0.9, not 0.7:
+  the kaleido's domes were carpeted).
+Left: the strips that come in haven't grown as the ground in the window has
+(Q44, part of Q31).
+
+Measured: every slide while panning was asked for ahead (prefetched 8 of 8
+in every run), 10–24 ms each; atlastest 5/5 (the seam against the atlas's
+own ground 0), streamtest 8/8.

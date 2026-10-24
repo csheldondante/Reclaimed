@@ -3,6 +3,12 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 68 (session 5, `atlas`) — screens, and seams
+
+- "Ok this looks awesome please proceed to restart and then show me some
+  screens. I love the variety here and I'm curious to see it in action.
+  Some screens don't look super seamless though"
+
 ## 2026-10-24 — round 67 (session 5, `atlas`) — a world map to stream from
 
 The user's idea (in their words, shortened): a coarse map made first —

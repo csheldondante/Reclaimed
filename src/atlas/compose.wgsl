@@ -86,8 +86,13 @@ fn macroAt(p: vec2<f32>) -> Macro {
   }
   // the region across: one that's here when the border runs through these texels
   // (the nearest texel's own may be a third region's, past a corner)
+  var bd = 1e30;
   for (var k = 0; k < 4; k++) {
-    if (r[k] != m.a) { m.b = r[k]; }
+    let j = texIdxW(i0 + vec2<i32>(k & 1, k >> 1));
+    if (r[k] != m.a && distR[j].x < bd) {
+      bd = distR[j].x;
+      m.b = r[k];
+    }
   }
   m.s = mix(mix(s[0], s[1], f.x), mix(s[2], s[3], f.x), f.y);
   m.coast = mix(mix(c[0], c[1], f.x), mix(c[2], c[3], f.x), f.y);
@@ -229,10 +234,12 @@ fn ground(p: vec2<f32>) -> Ground {
 /** 0 at the poles, 1 at the equator (the torus's v: poles at 0 and 1, the equator at ½) */
 fn warmth(p: vec2<f32>) -> f32 { return 0.5 - 0.5 * cos(6.2831853 * torusU(p).y); }
 
-/** °C-ish: the latitude, cooler with height */
+/** °C: the latitude, cooler with height — the same as the sim's air (Atlas.climateAt sets its climate to this) */
 fn temperature(p: vec2<f32>, h: f32) -> f32 {
-  return warmth(p) * 32.0 - 6.0 - max(h - AP.sea, 0.0) * 0.3 + 2.5 * pfbm(torusU(p), perOf(300.0), 3u, AP.seed + 41u);
+  return warmth(p) * 34.0 - 8.0 - (h - AP.sea) * LAPSE;
 }
+/** °C a cell up: at 0.3 most uplands snowed over at mid-latitudes; now snow is for peaks and the cold */
+const LAPSE: f32 = 0.12;
 
 /** 0..1: wet at the equator and the mid-latitudes, dry in the subtropics and at the poles; wetter by the coast */
 fn moistureAt(p: vec2<f32>, coast: f32, bias: f32) -> f32 {

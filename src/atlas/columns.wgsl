@@ -130,7 +130,8 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     cover = 0.8;
     topMat = MAT_SNOW;
   }
-  if (R.accent != 0u && g.a == ri && g.pv > 0.7 && !wet) {
+  // (only the peaks: at 0.7 the kaleido's domes were carpeted in crystal)
+  if (R.accent != 0u && g.a == ri && g.pv > 0.9 && !wet) {
     topMat = R.accent;
     cover = max(cover, 1.0);
   }

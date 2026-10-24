@@ -596,6 +596,15 @@ export class Atlas {
     for (const d of this.defs) this.stats.kinds[d.kind] = (this.stats.kinds[d.kind] ?? 0) + 1;
   }
 
+  /** The sim's climate for a window centred on world cell (cx, cy): the atlas's temperature
+   *  (compose.wgsl temperature) as Globals.climate's (°C at height 0, °C less a cell up). */
+  climateAt(cx: number, cy: number): { temp: number; lapse: number } {
+    // (compose.wgsl temperature and LAPSE: keep the two the same)
+    const lapse = 0.12;
+    const warm = warmth(((cy + 0.5) / this.p.rows) % 1);
+    return { temp: warm * 34 - 8 + this.p.sea * lapse, lapse };
+  }
+
   /** the region (dense id) at world point (px, py) by its macro texel */
   regionAt(px: number, py: number): RegionDef {
     const n = this.p.n;
