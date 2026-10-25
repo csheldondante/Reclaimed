@@ -25,8 +25,10 @@
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-  // (a sleeping chunk: round 80)
-  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
+  // (round 80: not skipped asleep — the column tops are cheap and everything that reads them, a game's
+  // terrain queries too, must see them after a slide; the hoverbike session: "levels stay 0 for columns in
+  // sleeping chunks")
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let cs = colSlots(id.x, id.y);
   var arr: array<vec4<u32>, MAX_K>;

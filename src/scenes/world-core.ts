@@ -71,6 +71,12 @@ export class WorldCore {
   pollution = 1;
   /** sleep and wake (round 80, sim/sleep.ts), when the scene has it: what writes the columns wakes them */
   sleep?: import('../sim/sleep').Sleep;
+  /** per-column buffers of the modules a game installed (agents' fields): a streamed window's slide moves them (round 80) */
+  readonly columnBufs: { name: string; buf: GPUBuffer; stride: number; planes: number }[] = [];
+  /** what a slide moves besides the columns (units, bodies): dx cells, dy world units, dz cells (round 80) */
+  readonly onShift: ((dx: number, dy: number, dz: number) => void)[] = [];
+  /** bumped at a streamed window's slide's start and end: a readback that straddles one is stale (round 80) */
+  windowEpoch = 0;
   light!: Daylight;
 
   constructor(

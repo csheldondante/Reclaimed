@@ -5,6 +5,7 @@
 // what crumbles into loose ground (through the deposit buffer, like the
 // editor's pours) or melts away as embers.
 
+import { Translator } from '../sim/translate';
 import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
@@ -469,6 +470,16 @@ export class Physics implements SimSystem {
   }
 
   /** Is there room for `bodies` more bodies of `voxels` lattice cells in all? */
+  private translator?: Translator;
+
+  /** The streamed window slid (round 80): every body's particles move with the land (−d, world units). */
+  shift(dx: number, dy: number, dz: number): void {
+    this.translator ??= new Translator(this.device);
+    // (both a particle's positions: now, and before this substep)
+    this.translator.run(this.px, PV_CAP, 2, 0b11, [dx, dy, dz]);
+    for (const b of this.bodies) b.restCentre = [b.restCentre[0] - dx, b.restCentre[1] - dy, b.restCentre[2] - dz];
+  }
+
   hasRoom(voxels: number, bodies = 1): boolean {
     return this.bodies.length + bodies <= MAX_BODIES && Math.max(this.used, FRAG_CAP) + voxels <= PV_CAP;
   }

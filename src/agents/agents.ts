@@ -6,6 +6,7 @@
 // each group follows and where its seeds and the targets are, sends the
 // game's hits, and reads units and events back.
 
+import { Translator } from '../sim/translate';
 import { makeBindGroup, makeCompute, ignoreTeardown, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import agentsWgsl from '../shaders/agents.wgsl?raw';
@@ -433,6 +434,30 @@ export class Agents implements SimSystem {
       ids.push(gen * MAX_UNITS + slot);
     }
     return ids;
+  }
+
+  private translator?: Translator;
+
+  /**
+   * The streamed window slid (round 80): every unit and item in flight moves with the land (−d: dx cells,
+   * dy world units, dz cells); the fields and surfaces per column go with the streamer's (installAgents
+   * hands them to it).
+   */
+  shift(dx: number, dy: number, dz: number): void {
+    this.translator ??= new Translator(this.device);
+    this.translator.run(this.units, MAX_UNITS, 4, 0b1, [dx, dy, dz]);
+    this.translator.run(this.flyBuf, MAX_FLY, 2, 0b1, [dx, dy, dz]);
+    for (const f of this.flights) f.pos = [f.pos[0] - dx, f.pos[1] - dy, f.pos[2] - dz];
+  }
+
+  /** the per-column buffers a slide moves (name, buffer, bytes a column, planes) */
+  columnBuffers(): { name: string; buf: GPUBuffer; stride: number; planes: number }[] {
+    return [
+      { name: 'agentNav', buf: this.nav, stride: NAV_K * NAV_BYTES, planes: 1 },
+      { name: 'agentDist', buf: this.dist, stride: NAV_K * 4, planes: NFIELDS },
+      { name: 'agentOcc', buf: this.occ, stride: 4, planes: 2 },
+      { name: 'agentShove', buf: this.shove, stride: 16, planes: 2 },
+    ];
   }
 
   /** Take units out at once (no death event). */

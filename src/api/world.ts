@@ -152,7 +152,8 @@ export function createSim(host: Host, def: WorldDef): Sim {
 
 /** The modules over a WorldCore a scene already runs (the level); `warm` settles it first (sim.ready). */
 export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: WarmupOpts): Sim {
-  const mirror = new Mirror(core.host.gpu.device);
+  // (round 80: a streamed window's slides make a read stale — WorldCore.windowEpoch)
+  const mirror = new Mirror(core.host.gpu.device, () => core.windowEpoch);
   const terrain = mods.terrain ? new Terrain(core, mirror) : undefined;
   if (mods.plants && !terrain) throw new Error('world: the plants module needs terrain');
   const plants = mods.plants && terrain ? new Plants(core, mirror, terrain) : undefined;
@@ -190,6 +191,10 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
     refresh: () => mirror.refresh(),
     get readAt() {
       return mirror.readAt;
+    },
+    /** the last read is of the window as it is now (round 80: a streamed window's slide makes it stale; queries return null until a new read lands) */
+    get fresh() {
+      return mirror.fresh();
     },
     dispose: () => mirror.stop(),
   };

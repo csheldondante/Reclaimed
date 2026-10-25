@@ -143,7 +143,7 @@ try {
     const surf = R.map.surface;
     const i = 128 * 256 + 128;
     const before = surf[i];
-    R.world.meteor(128, 128, 60);
+    R.coarse.meteor(128, 128, 60);
     await new Promise((r) => setTimeout(r, 3000));
     return { before: +before.toFixed(1), after: +surf[i].toFixed(1) };
   });

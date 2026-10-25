@@ -77,17 +77,17 @@ try {
         const R = window.reclaimed;
         const S = R.stream;
         for (let i = 0; i < 1200; i++) {
-          const g = R.world.geysers();
+          const g = R.coarse.geysers();
           if (g.on.length) return { on: g.on, n: g.list.length, waited: i };
           await new Promise((r) => setTimeout(r, 100));
         }
-        return { on: [], n: R.world.geysers().list.length };
+        return { on: [], n: R.coarse.geysers().list.length };
       });
       console.log('geyser', JSON.stringify(st));
       await lv.evaluate(async (st) => {
         const R = window.reclaimed;
         const S = R.stream;
-        const g = R.world.geysers().list[st.on[0] ?? 0];
+        const g = R.coarse.geysers().list[st.on[0] ?? 0];
         const x = g.x - S.origin[0];
         const y = (g.y - S.origin[1]) * 0.866;
         const z = R.map.surface[(g.y - S.origin[1]) * 256 + (g.x - S.origin[0])];

@@ -4648,3 +4648,35 @@ over it and rides a target 200 cells east: built in ~10.7 s, 3 slides (56
 frames waiting on them), the sea at 90, 176 of 256 chunks awake, the
 terrain under the target 95.4. The atlas level still wires its own (the
 same steps); it moves onto the call later.
+
+## Round 80 — the hoverbike on the atlas: what moves with a slide, the mirror after one (places)
+
+Why: the hoverbike session (GameplayGM `experiment/hoverbike-atlas`) ran on
+createAtlasWorld and found: (1) agents and physics bodies stayed put when
+the window slid — the horde 64 cells off the land; (2) the world API's
+terrain read 0 where chunks slept (the surface pass was gated) and read the
+old window until a read after the slide; (3) a slide costs one 230–625 ms
+frame, the CPU idle in it (its profiles: the GPU's queue, not JS); and the
+first ~7–10 s after boot are GPU-bound (mapAsync waits behind it: a
+refresh 9.8 s then, 31 ms in steady play).
+
+- sim/translate.ts: a kernel moving positions in a buffer by −d.
+  Agents.shift (units, items in flight), Physics.shift (both of a
+  particle's positions, the bodies' rest centres); WorldCore.onShift and
+  WorldCore.columnBufs (the agents' nav, dist, occupancy, shove), filled by
+  installAgents / installPhysics, the streamer moving them with its own.
+- The surface pass runs asleep too (cheap; everything reads the tops).
+- WorldCore.windowEpoch, bumped at a slide's start and end; the mirror drops
+  a read that straddled one and reads again; queries return null while its
+  data is an older window's; `sim.fresh`.
+- `window.reclaimed.world` was the coarse world's meteor/erupt/geysers since
+  round 71, hiding the GPU world (worldapitest crashed on it): now
+  `reclaimed.coarse`.
+- scripts/atlasworldtest.mjs: units spawned and left standing are where they
+  stood after three slides (drift 0.24, on the land), no column top reads 0
+  after them (3 600 sampled), the reads fresh.
+- Left: (3), the slide's GPU burst (freeze copies, every per-column
+  buffer's and texture's scratch round trip, the staging buffer) — next.
+
+atlasworldtest 5/5, worldapitest all, atlastest 6/6, tiertest 4/4,
+coarsetest 5/5, streamtest 8/8.

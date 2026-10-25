@@ -31,7 +31,28 @@ export class Mirror {
   /** ms between reads while started */
   every = 250;
 
-  constructor(private device: GPUDevice) {}
+  /**
+   * The window's epoch (round 80: a streamed window, WorldCore.windowEpoch): a read that straddles a slide
+   * is dropped and made again; while the last read is an older window's, the queries return nothing.
+   */
+  private dataEpoch = -1;
+
+  constructor(
+    private device: GPUDevice,
+    private epoch?: () => number,
+  ) {}
+
+  /** the last read is the window's as it is now */
+  fresh(): boolean {
+    return !this.epoch || this.epoch() === this.dataEpoch;
+  }
+
+  private staleNow(): boolean {
+    if (this.fresh()) return false;
+    // (a read for the window as it is now, at once)
+    if (!this.inFlight) void this.refresh();
+    return true;
+  }
 
   /** Mirror a buffer (all of it) under `name`. */
   addBuffer(name: string, buffer: GPUBuffer): void {
@@ -50,11 +71,13 @@ export class Mirror {
 
   /** The last read of `name` (undefined before the first refresh). */
   get(name: string): ArrayBuffer | undefined {
+    if (this.staleNow()) return undefined;
     return this.data.get(name);
   }
 
   /** The last read of `name` as f32s (one view a read). */
   f32(name: string): Float32Array | undefined {
+    if (this.staleNow()) return undefined;
     let v = this.f32s.get(name);
     if (!v) {
       const b = this.data.get(name);
@@ -67,6 +90,7 @@ export class Mirror {
 
   /** The last read of `name` as u32s (one view a read). */
   u32(name: string): Uint32Array | undefined {
+    if (this.staleNow()) return undefined;
     let v = this.u32s.get(name);
     if (!v) {
       const b = this.data.get(name);
@@ -87,6 +111,7 @@ export class Mirror {
   }
 
   private async read(): Promise<void> {
+    const e0 = this.epoch?.() ?? 0;
     const tmp = this.device.createBuffer({ label: 'mirror', size: this.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = this.device.createCommandEncoder({ label: 'mirror' });
     for (const s of this.sources) {
@@ -94,7 +119,14 @@ export class Mirror {
       else if (s.texture) enc.copyTextureToBuffer({ texture: s.texture }, { buffer: tmp, offset: s.offset, bytesPerRow: s.rowBytes }, [s.texture.width, s.texture.height]);
     }
     this.device.queue.submit([enc.finish()]);
+    let straddled = false;
     await tmp.mapAsync(GPUMapMode.READ).then(() => {
+      // (the window slid while this was read: its data is part one window's, part another's)
+      if (this.epoch && this.epoch() !== e0) {
+        straddled = true;
+        tmp.unmap();
+        return;
+      }
       const all = tmp.getMappedRange();
       for (const s of this.sources) {
         if (s.buffer) {
@@ -114,8 +146,11 @@ export class Mirror {
       this.u32s.clear();
       this.gen++;
       this.readAt = performance.now();
+      this.dataEpoch = e0;
     }, ignoreTeardown);
     tmp.destroy();
+    // (once more, for the window as it is now)
+    if (straddled) await this.read();
   }
 
   /** Refresh every `ms` (default `every`) until stop(). */

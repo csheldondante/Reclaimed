@@ -31,6 +31,8 @@ export function installPhysics(core: WorldCore, opts: { wakeOnTouch?: boolean } 
   sim.systems.splice(sim.systems.indexOf(physics), 0, lava);
   renderer.addPrisms(lava.inst, lava.indirect);
   const waker = new Waker(core, physics);
+  // (round 80: a streamed window's slide moves the bodies)
+  core.onShift.push((dx, dy, dz) => physics.shift(dx, dy, dz));
   if (opts.wakeOnTouch ?? true) {
     physics.onTouch = (cols) => {
       for (const c of cols) {

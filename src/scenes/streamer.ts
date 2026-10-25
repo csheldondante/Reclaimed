@@ -344,6 +344,8 @@ export class Streamer {
 
   private async slideNow(dx: number, dy: number): Promise<void> {
     const tSync = performance.now();
+    // (a readback that straddles the slide is stale: round 80)
+    this.core.windowEpoch++;
     const { core, W, H, R } = this;
     const dev = core.host.gpu.device;
     const wg = core.world;
@@ -387,13 +389,15 @@ export class Streamer {
 
     record('slide.freeze', performance.now() - tSync);
     // ---- 2. everything per column moves a region over ------------------------
-    for (const b of this.bufs) this.shiftBuf(enc, b, dx, dy);
+    // (and the per-column buffers of what the game installed: the agents' fields — round 80)
+    const mods = this.moduleBufs();
+    for (const b of [...this.bufs, ...mods]) this.shiftBuf(enc, b, dx, dy);
     for (const t of this.texs) this.shiftTex(enc, t, dx, dy);
     // (particles in the air: dropped — Q28 follow-up: move them with a kernel)
     enc.clearBuffer(wg.particles);
     // what comes in starts empty where nothing is frozen for it
     for (const [lx, ly] of entering)
-      for (const b of this.bufs) {
+      for (const b of [...this.bufs, ...mods]) {
         if (b.keep) continue;
         for (let p = 0; p < b.planes; p++) for (let r = 0; r < R; r++) enc.clearBuffer(b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, R * b.stride);
       }
@@ -489,6 +493,8 @@ export class Streamer {
     shiftGrid(this.outside, W, H, 1, dx, dy);
     shiftGrid(this.ground, W, H, 1, dx, dy);
     core.camera.shift(dx, dy * ROW_H, 0);
+    // (what the game installed that lives in window coordinates: units, bodies — round 80)
+    for (const f of core.onShift) f(dx, dy * ROW_H, 0);
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
     core.renderer.fieldMesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
     core.renderer.band?.mesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
@@ -530,6 +536,7 @@ export class Streamer {
     }
     // (round 80: the band's pages went with the land; only what came in is packed)
     timed('band', () => this.core.renderer.band?.packFresh(this.outside, this.core.dims.zMax));
+    this.core.windowEpoch++;
   }
 
   /** What's outside the window, drawn (round 79: the renderer's band, when it has one). */
@@ -734,6 +741,7 @@ export class Streamer {
     const t0 = performance.now();
     try {
       const tz = performance.now();
+      this.core.windowEpoch++;
       await this.slideZNow(dz);
       record('slideZ', performance.now() - tz);
     } finally {
@@ -791,6 +799,8 @@ export class Streamer {
     this.oz = oz;
     for (let i = 0; i < N; i++) this.ground[i] -= dz;
     core.camera.shift(0, 0, dz);
+    for (const f of core.onShift) f(0, 0, dz);
+    core.windowEpoch++;
     core.renderer.fieldMesh.shift(0, 0, [0, 0, -dz]);
     core.renderer.band?.mesh.shift(0, 0, [0, 0, -dz]);
     this.refreshBand();
@@ -851,6 +861,14 @@ export class Streamer {
   }
 
   /** new(x, y) = old(x + dx, y + dy), per plane */
+  /** the installed modules' per-column buffers (WorldCore.columnBufs) as the streamer's own, the scratch grown to fit */
+  private moduleBufs(): ColBuf[] {
+    const out: ColBuf[] = this.core.columnBufs.map((m) => ({ name: m.name, buf: m.buf, stride: m.stride, planes: m.planes, keep: false }));
+    const big = Math.max(0, ...out.map((b) => b.buf.size));
+    if (big > this.scratch.size) this.scratch = this.core.world.buf('streamScratch', big, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+    return out;
+  }
+
   private shiftBuf(enc: GPUCommandEncoder, b: ColBuf, dx: number, dy: number): void {
     const { W, H } = this;
     const s = b.stride;

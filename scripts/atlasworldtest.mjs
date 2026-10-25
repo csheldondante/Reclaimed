@@ -31,10 +31,18 @@ try {
     const built = performance.now() - t0;
     // (its render targets come with its first size, as for any WorldCore)
     aw.core.resize(412, 915, 412, 915);
-    const sim = attachSim(aw.core, { terrain: true, water: true });
+    const sim = attachSim(aw.core, { terrain: true, water: true, agents: true });
     await sim.refresh();
     const o0 = [...aw.stream.origin];
     const target = [128, 128 * 0.866];
+    // (round 80: units left standing where they're spawned must stay on the same land through the slides)
+    sim.agents.spawn(12, target[0] + 100, target[1], { spread: 4 });
+    for (let k = 0; k < 90; k++) {
+      aw.core.advance(performance.now(), 1 / 60, 1);
+      aw.core.render();
+      await new Promise((res) => requestAnimationFrame(res));
+    }
+    const before = new Map((await sim.agents.sync()).units.map((u) => [u.id, aw.toWorld(u.x, u.y)]));
     let slides = 0;
     aw.onSlide.push((dx, dy) => {
       slides++;
@@ -53,9 +61,38 @@ try {
       aw.core.render();
       await new Promise((res) => requestAnimationFrame(res));
     }
-    await new Promise((res) => setTimeout(res, 1500));
+    // (a game goes on ticking: the column tops of what came in last are made by the sim's next tick)
+    for (let k = 0; k < 90; k++) {
+      if (!aw.frame([target[0], target[1]])) aw.core.advance(performance.now(), 1 / 60, 1);
+      aw.core.render();
+      await new Promise((res) => requestAnimationFrame(res));
+    }
     await sim.refresh();
     const h = sim.terrain.heightAt(target[0], target[1]);
+    const after = (await sim.agents.sync()).units;
+    // (by id: some drown or fall; an idle unit wanders a few cells — a slide not followed is 64 off)
+    const drift = after.filter((u) => before.has(u.id)).map((u) => {
+      const w = aw.toWorld(u.x, u.y);
+      const b = before.get(u.id);
+      return Math.hypot(w[0] - b[0], w[1] - b[1]);
+    });
+    // (those still in the window)
+    const onLand = after.filter((u) => u.x > 2 && u.y > 2 && u.x < aw.core.dims.w - 2 && u.y < aw.core.dims.h * 0.866 - 2).map((u) => Math.abs(u.z - (sim.terrain.heightAt(u.x, u.y) ?? -99)));
+    // (the column tops everywhere in the window, asleep or not: none 0 — the hoverbike session's 2b)
+    const S = aw.core.map.surface;
+    let zeros = 0;
+    let n = 0;
+    const zx = new Array(8).fill(0);
+    const zy = new Array(8).fill(0);
+    for (let y = 8; y < aw.core.dims.h - 8; y += 4)
+      for (let x = 8; x < aw.core.dims.w - 8; x += 4) {
+        n++;
+        if ((sim.terrain.heightAt(x + 0.5, (y + 0.5) * 0.866) ?? 0) <= 0) {
+          zeros++;
+          zx[Math.floor(x / 32)]++;
+          zy[Math.floor(y / 32)]++;
+        }
+      }
     return {
       built: +built.toFixed(0),
       moved: aw.stream.origin[0] - o0[0],
@@ -67,11 +104,23 @@ try {
       chunks: (aw.core.dims.w / 16) * (aw.core.dims.h / 16),
       band: !!aw.core.renderer.band,
       height: h,
+      fresh: sim.fresh,
+      units: after.length,
+      driftMax: +Math.max(...drift).toFixed(2),
+      offLandMax: +Math.max(...onLand).toFixed(2),
+      zeros,
+      sampled: n,
+      zx,
+      zy,
+      surfZeros: [...S].filter((v) => v <= 0).length,
+      onLandN: onLand.length,
       world: aw.toWorld(target[0], target[1]).map((v) => +v.toFixed(0)),
     };
   });
   check('an atlas world from the API: built, the world API over it', r.built > 0 && r.band, { built: r.built, band: r.band });
   check('a target ridden east: the window slides after it', r.moved >= 192 && r.slides >= 3, { moved: r.moved, slides: r.slides, busyFrames: r.busyFrames, ticks: r.ticks });
+  check('units stay on the land they stood on through the slides (they move with the window)', r.units > 0 && r.driftMax < 12 && (r.onLandN === 0 || r.offLandMax < 2.5), { units: r.units, driftMax: r.driftMax, inWindow: r.onLandN, offLandMax: r.offLandMax });
+  check('the terrain reads after the slides: fresh, no column top 0 (asleep or not)', r.fresh && r.zeros === 0, { fresh: r.fresh, zeros: r.zeros, of: r.sampled, byX: r.zx, byY: r.zy, cpuSurfaceZeros: r.surfZeros });
   check('the sea held, sleep on, the terrain under the target', r.seaZ > -1e8 && r.awake > 0 && r.awake < r.chunks && r.height > 0, { seaZ: r.seaZ, awake: r.awake, of: r.chunks, height: r.height, world: r.world });
 } finally {
   await browser.close();

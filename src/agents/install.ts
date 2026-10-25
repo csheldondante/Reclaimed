@@ -9,5 +9,8 @@ export function installAgents(core: WorldCore): Agents {
   const agents = new Agents(host.gpu.device, core.world, host.profiler, host.quality.agentSweeps ?? 8);
   sim.systems.splice(sim.systems.indexOf(sim.particles) + 1, 0, agents);
   renderer.addVoxels(agents.inst, agents.indirect);
+  // (round 80: a streamed window's slide moves its fields and its units)
+  core.columnBufs.push(...agents.columnBuffers());
+  core.onShift.push((dx, dy, dz) => agents.shift(dx, dy, dz));
   return agents;
 }

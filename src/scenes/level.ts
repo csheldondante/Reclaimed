@@ -1026,8 +1026,9 @@ export class LevelScene implements Scene {
       stream: this.stream,
       atlas: this.opts.atlas?.atlas,
       toggleFly: () => this.toggleFly(),
-      // the coarse world's events at a window cell (round 71): world.meteor(x, y, r), world.erupt(x, y)
-      world: {
+      // the coarse world's events at a window cell (round 71): coarse.meteor(x, y, r), coarse.erupt(x, y)
+      // (round 80: `coarse`, not `world` — that's the GPU world, as everything else reads it: worldapitest broke)
+      coarse: {
         meteor: (x: number, y: number, r?: number) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy, r)),
         erupt: (x: number, y: number) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy)),
         // (round 75) the geysers in the window and the time they keep

@@ -302,7 +302,9 @@ const aw = await createAtlasWorld(host, { at: [12304, 5457], particles: quality.
 aw.core.resize(w, h, cssW, cssH)            // as any WorldCore: its render targets come with its size
 const sim = attachSim(aw.core, modules)     // the world API over it, unchanged
 aw.onSlide.push((dx, dy, dz) => …)          // the window moved: shift the game's own window-coord state
-                                            // (units, the camera's target, trails) by −dx cells, −dy rows (× ROW_H), −dz
+                                            // (its player, trails, its own CPU copies) by −dx cells, −dy rows (× ROW_H), −dz.
+                                            // Not the camera (camera.shift moves it and its target), not the world API's
+                                            // agents or physics bodies (they move with the land: WorldCore.onShift)
 // each frame:
 const busy = aw.frame([px, py], 40)         // the player (window x, y in world units) keeps its ring awake;
 if (!busy) aw.core.advance(now, dt, 1)      // the streamer slides; while one runs, the sim waits
@@ -312,6 +314,10 @@ aw.atlas.settlement / aw.atlas.ways         // the sites and roads (world coordi
 ```
 
 - The streamer follows `core.camera.target` — set it to the player.
+- After a slide the world API's queries return null until a read of the
+  window as it is now lands (`sim.fresh`; a read that straddles a slide is
+  dropped and made again: WorldCore.windowEpoch).
+- The column tops (the surface) are made every tick, asleep or not.
 - Asleep (sim/sleep.ts): chunks away from the player and from the world's
   events don't change (water and lava keep flowing, drawn); the game's own
   agents and bodies aren't part of it. A column the game writes wakes its
