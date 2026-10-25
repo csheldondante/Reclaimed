@@ -4241,3 +4241,14 @@ crater (9.3 = 9.3); a region left, buried in ash, come back to — ash on top
 (4 regions changed); a meteor in sight r 60 — the ground at its middle 15.5
 → 3.9. The coarse world's setup 77 ms; a step every 4th frame. atlastest
 5/5, streamtest 8/8, tiertest 4/4.
+
+## Round 72, part two — trying it on a phone (atlas)
+
+The Pages workflow built only the branches it listed (main … builder): stream
+and atlas weren't, so pushing them published nothing. Both added (on atlas,
+stream and builder; main and the others need the same two words, or a push
+to them rebuilds the site without stream and atlas). A phone has no F, WASD,
+M or V: the atlas level has buttons (bottom right) — the free camera on and
+off; while flying, held, forward, back, up, down (a finger's drag looks, a
+pinch moves along the view); a great meteor and an eruption at the ground
+in the middle of the screen.

@@ -187,6 +187,64 @@ export class LevelScene implements Scene {
   }
 
   private worldEvents: Promise<void> = Promise.resolve();
+  private atlasCtl?: HTMLDivElement;
+
+  /**
+   * Buttons for the atlas level, for touch (round 72): the free camera on and off; while flying,
+   * held: forward, back, up, down (a finger's drag looks round, a pinch moves along the view);
+   * a great meteor or an eruption at the ground in the middle of the screen.
+   */
+  private atlasControls(): void {
+    const d = document.createElement('div');
+    d.className = 'atlas-ctl';
+    d.style.cssText = 'position:absolute;right:8px;bottom:8px;display:flex;flex-wrap:wrap;gap:6px;max-width:220px;justify-content:flex-end;z-index:5;';
+    const btn = (label: string, title: string) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.title = title;
+      b.style.cssText = 'min-width:44px;height:44px;font:18px system-ui,sans-serif;border-radius:8px;border:1px solid #888;background:rgba(20,22,24,0.8);color:#eee;touch-action:none;';
+      d.appendChild(b);
+      return b;
+    };
+    const hold = (b: HTMLButtonElement, key: string) => {
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        this.keys.add(key);
+      });
+      for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => this.keys.delete(key));
+    };
+    const moves: HTMLButtonElement[] = [];
+    const fly = btn('✈', 'free camera (F)');
+    const mv = (label: string, key: string, title: string) => {
+      const b = btn(label, title);
+      hold(b, key);
+      b.style.display = 'none';
+      moves.push(b);
+    };
+    mv('⇧', 'w', 'forward (W)');
+    mv('⇩', 's', 'back (S)');
+    mv('▲', 'e', 'up (E)');
+    mv('▼', 'q', 'down (Q)');
+    const show = () => {
+      for (const b of moves) b.style.display = this.core.camera.fly ? '' : 'none';
+      fly.style.background = this.core.camera.fly ? 'rgba(60,90,140,0.9)' : 'rgba(20,22,24,0.8)';
+    };
+    fly.addEventListener('click', () => {
+      this.toggleFly();
+      show();
+    });
+    window.addEventListener('keydown', (e) => e.key.toLowerCase() === 'f' && setTimeout(show), { signal: this.abort.signal });
+    const atMiddle = (f: (x: number, y: number) => void) => {
+      const cam = this.core.camera;
+      const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, this.heightAt);
+      const [x, y] = cellAt(g[0], g[1]);
+      f(x, y);
+    };
+    btn('☄', 'a great meteor at the middle of the screen (M at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy))));
+    btn('🌋', 'an eruption at the middle of the screen (V at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy))));
+    this.host.ui.appendChild(d);
+    this.atlasCtl = d;
+  }
   private coarseFrame = 0;
 
   /** Window cell (x, y) as a world point (world units), for the coarse world. */
@@ -250,7 +308,7 @@ export class LevelScene implements Scene {
     const e = camera.eye;
     const d = Math.max(40, camera.viewportH / camera.zoom);
     camera.fly = { pos: [tx + e[0] * d, ty + e[1] * d, tz + e[2] * d], yaw: Math.atan2(-e[1], -e[0]), pitch: -Math.asin(e[2]), fov: (60 * Math.PI) / 180 };
-    this.hud.say('Free camera — WASD fly, Q/E down/up, Shift faster, right-drag to look, wheel forward; F back', 5);
+    this.hud.say('Free camera — WASD or ⇧⇩▲▼ to fly (Q/E down/up, Shift faster), drag to look (right-drag with a mouse), wheel or pinch to move along the view; F or ✈ back', 6);
   }
 
   /** Flying: WASD along the view (level), Q/E down and up; the window's middle follows the camera. */
@@ -739,6 +797,8 @@ export class LevelScene implements Scene {
         }
       });
       // (round 71) an event of the coarse world in sight is made in the window's columns too
+      // the atlas level's buttons (round 72: a phone has no F, WASD, M or V)
+      if (a) this.atlasControls();
       // (one after another: each reads the window back and writes it)
       if (a) a.atlas.coarse.onEvent.push((e) => (this.worldEvents = this.worldEvents.then(() => this.worldEventHere(e))));
       // (round 69: the atlas's forms of a weak material are judged when they come in, like anything
@@ -1857,6 +1917,7 @@ export class LevelScene implements Scene {
 
   dispose(): void {
     this.abort.abort();
+    this.atlasCtl?.remove();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();
