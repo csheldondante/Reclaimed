@@ -94,6 +94,7 @@ export class LevelScene implements Scene {
   private saveTimer = 0;
   private speed: number;
   private fps = 60;
+  private noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
   private ticksAvg = 1;
   /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
   private frameMs: number[] = [];
@@ -1206,7 +1207,8 @@ export class LevelScene implements Scene {
 
     // (a slide in progress: the sim waits for the regions coming in)
     void this.stream?.update();
-    const ticks = this.stream?.busy ? 0 : core.advance(now, simDt, this.speed);
+    // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
+    const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     core.render();
 

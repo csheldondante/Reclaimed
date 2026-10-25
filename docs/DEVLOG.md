@@ -4570,3 +4570,13 @@ character", and agreed an order (DECISIONS round 80). First: measure.
   the window slid 47 times chasing it.
 
 Next: the same on the Pixel 9 (the user), then P2–P4.
+
+## Round 80 — the phone: p50 30, p95 100; ?skip=sim (places)
+
+The user's Pixel 9 riding at 18/s, low: p50 30 ms, p95 100 ms, many
+hitches (the desktop at the phone's size: 10 / 27). `?skip=sim` stops the
+sim (drawing and streaming go on), to split the frame on the phone. The
+desktop, 20 s: base p50 10.1, p95 25.3, 6 hitches; no sim p50 9.9, p95
+10.7, 2; no shadow, plants or band p50 9.9, p95 21.3, 8 — the slow frames
+are the sim's (ticks caught up after a slow frame), drawing barely moves
+it here.
