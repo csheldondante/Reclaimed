@@ -4634,3 +4634,17 @@ ms; scripts/cpuprofile.mjs: the CDP profiler while riding).
   z still repacks 65 000 columns on the CPU (~200 ms at a mesa).
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 80 — the atlas world for a game: createAtlasWorld (places)
+
+Why: the user wants the hoverbike session to make "a playable branch that
+starts on the atlas map with streaming". The hoverbike vendors Reclaimed
+and builds its own WorldCore; everything the atlas needs (the window, the
+streamer, the band, the sea, sleep, the far land, the climate) was wired
+inside the atlas level. src/api/atlas-world.ts does it in one call, and
+`frame(target)` keeps the target's ring awake and the streamer sliding.
+scripts/atlasworldtest.mjs makes one on a page's host, puts the world API
+over it and rides a target 200 cells east: built in ~10.7 s, 3 slides (56
+frames waiting on them), the sea at 90, 176 of 256 chunks awake, the
+terrain under the target 95.4. The atlas level still wires its own (the
+same steps); it moves onto the call later.

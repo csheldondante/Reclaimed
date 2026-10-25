@@ -284,3 +284,43 @@ To let a game pass materials:
 - **Retiring the old paths.** `Globals.gusts` slots 1–3 (the player's drag)
   and the analytic breeze in slot 0 are still how powers.ts paints. A game
   should no longer write `core.globals.gusts` or `events`.
+
+## An atlas world (round 80, branch `places`)
+
+A game can start on the atlas — the world map (landforms, mesas with their
+tiers and ravines, rivers, the sea, sites joined by graded roads with
+tunnels, bridges, switchbacks and lifts) — and stream it: the window slides
+a region (64 cells) as its target nears an edge, and in z (32) as the
+ground nears the window's top or bottom.
+
+```ts
+import { createAtlasWorld } from 'src/api/atlas-world';
+const aw = await createAtlasWorld(host, { at: [12304, 5457], particles: quality.particles })
+// options: at (a world cell; the atlas's spawn if left out), win (256; whole regions), zMax (248),
+//          params (the atlas's: seed, style …, or the page's URLSearchParams for a.* keys),
+//          sleep / band / far (all on by default)
+aw.core.resize(w, h, cssW, cssH)            // as any WorldCore: its render targets come with its size
+const sim = attachSim(aw.core, modules)     // the world API over it, unchanged
+aw.onSlide.push((dx, dy, dz) => …)          // the window moved: shift the game's own window-coord state
+                                            // (units, the camera's target, trails) by −dx cells, −dy rows (× ROW_H), −dz
+// each frame:
+const busy = aw.frame([px, py], 40)         // the player (window x, y in world units) keeps its ring awake;
+if (!busy) aw.core.advance(now, dt, 1)      // the streamer slides; while one runs, the sim waits
+aw.core.render()
+aw.toWorld(x, y) / aw.fromWorld(cx, cy)     // window ↔ the atlas's world cells
+aw.atlas.settlement / aw.atlas.ways         // the sites and roads (world coordinates)
+```
+
+- The streamer follows `core.camera.target` — set it to the player.
+- Asleep (sim/sleep.ts): chunks away from the player and from the world's
+  events don't change (water and lava keep flowing, drawn); the game's own
+  agents and bodies aren't part of it. A column the game writes wakes its
+  chunk through the API's commands (they're world events); anything the
+  game writes into the layers itself should call `aw.sleep?.wake(x, y, r,
+  secs, performance.now() / 1000)`.
+- Not in it (the atlas level's own, scenes/level.ts): the coarse world's
+  meteors and eruptions, the integrity system, the HUD and its buttons.
+- On a phone: `q=low`; the perf overlay (?perf=1) shows the frame's
+  times, the streaming's worst steps and the awake chunks.
+- Test: scripts/atlasworldtest.mjs (built, ridden 200 cells east, slides,
+  the sea, sleep, the terrain under the target).

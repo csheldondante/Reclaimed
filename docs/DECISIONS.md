@@ -16,6 +16,9 @@ each was implemented.
   frames, look-ahead by speed → sleep/wake with frozen water and lava → instances and shadows cached for
   what sleeps → the hoverbike on the atlas (BACKLOG P1–P5).
 - The hoverbike gets it through the World API (its session keeps its controller): "API for their session".
+- "I would like the other agent to make a playable branch that starts on the atlas map with streaming so I
+  can test it. I suspect we need to further improve performance but let me fly it live (I also think the
+  camera will be zoomed in more)."
 - Its camera: a fixed angle that follows — "Right now it is fixed but zooms out with speed which looks great"
   (baked tiles, V14, possible later).
 
