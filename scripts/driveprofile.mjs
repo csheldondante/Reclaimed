@@ -50,6 +50,9 @@ try {
   await p.evaluate(() => {
     const s = window.reclaimed.scene;
     s.hitches = 0;
+    // (the main thread's steps from here on: startup's pipeline compiles aren't riding's)
+    s.cpuReset?.();
+    s.longFrames = [];
     s.worstMs = 0;
     s.frameMs = [];
     window.__all = [];
@@ -81,6 +84,8 @@ try {
       stream: R.stream.stats,
       gpu: pm,
       gpuFrame: +R.core.host.profiler.gpuFrameMs.toFixed(2),
+      cpu: R.scene.cpuWorst?.() ?? null,
+      long: R.scene.longFrames,
     };
   });
   console.log(JSON.stringify(r));

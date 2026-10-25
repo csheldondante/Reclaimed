@@ -26,6 +26,7 @@
 // The sim waits while a slide is `busy` (only when a region coming in is
 // still being read back from its last visit).
 
+import { record, timed } from '../gpu/cpustat';
 import { CHUNK, K_HEADROOM, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
@@ -342,6 +343,7 @@ export class Streamer {
   }
 
   private async slideNow(dx: number, dy: number): Promise<void> {
+    const tSync = performance.now();
     const { core, W, H, R } = this;
     const dev = core.host.gpu.device;
     const wg = core.world;
@@ -383,6 +385,7 @@ export class Streamer {
       }
     }
 
+    record('slide.freeze', performance.now() - tSync);
     // ---- 2. everything per column moves a region over ------------------------
     for (const b of this.bufs) this.shiftBuf(enc, b, dx, dy);
     for (const t of this.texs) this.shiftTex(enc, t, dx, dy);
@@ -457,6 +460,7 @@ export class Streamer {
     );
     this.stats.frozen += leaving.length;
 
+    record('slide.move', performance.now() - tSync);
     // ---- 3. the chunk table: pages move, the leaving chunks' pages are reused --
     const old = table.slice();
     const dcx = dx / CHUNK;
@@ -476,6 +480,7 @@ export class Streamer {
       }
     dev.queue.writeBuffer(wg.chunks, 0, table);
 
+    record('slide.table', performance.now() - tSync);
     // ---- 4. the CPU's window coordinates move too ------------------------------
     this.origin[0] += dx;
     this.origin[1] += dy;
@@ -487,10 +492,20 @@ export class Streamer {
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
     core.renderer.fieldMesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
     core.renderer.band?.mesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
+    record('slide.grids', performance.now() - tSync);
+    core.renderer.band?.shift(dx, dy);
+    record('slide.band', performance.now() - tSync);
     core.weather.shift(dx, dy * ROW_H);
+    record('slide.weather', performance.now() - tSync);
     core.clearUndo();
-    for (const f of this.onSlide) f(dx, dy, 0);
+    record('slide.undo', performance.now() - tSync);
+    this.onSlide.forEach((f, k) => {
+      const t = performance.now();
+      f(dx, dy, 0);
+      record(`slide.cb${k}`, performance.now() - t);
+    });
 
+    record('slide', performance.now() - tSync);
     // ---- 5. what comes in: thawed, or generated (all of them asked for at once) ----
     const coming = entering.map(([lx, ly]) => {
       const key = this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R);
@@ -513,12 +528,13 @@ export class Streamer {
       const [lx, ly] = entering[k];
       this.write(await this.since(await coming[k], this.origin[0] + lx, this.origin[1] + ly), lx, ly);
     }
-    this.refreshBand();
+    // (round 80: the band's pages went with the land; only what came in is packed)
+    timed('band', () => this.core.renderer.band?.packFresh(this.outside, this.core.dims.zMax));
   }
 
   /** What's outside the window, drawn (round 79: the renderer's band, when it has one). */
   refreshBand(): void {
-    this.core.renderer.band?.update(this.outside, this.oz, this.core.dims.zMax);
+    timed('band', () => this.core.renderer.band?.update(this.outside, this.oz, this.core.dims.zMax));
   }
 
   /** a region's land the first time it is seen, in the frozen form (cut at the window's oz now) */
@@ -526,6 +542,12 @@ export class Streamer {
     const { R } = this;
     const zMax = this.core.dims.zMax;
     const [land, snap] = await Promise.all([this.source.region(x0, y0, R, R, zMax), this.source.snapshot?.(x0, y0, R, R)]);
+    return timed('cut', () => this.cutRegion(land, snap));
+  }
+
+  private cutRegion(land: RegionLand, snap: Frozen['snap']): Frozen {
+    const { R } = this;
+    const zMax = this.core.dims.zMax;
     const oz = this.oz;
     const rc = R / CHUNK;
     const layers = new Uint32Array(rc * rc * this.pageSlots * SLOT_WORDS);
@@ -711,7 +733,9 @@ export class Streamer {
     this.busy = true;
     const t0 = performance.now();
     try {
+      const tz = performance.now();
       await this.slideZNow(dz);
+      record('slideZ', performance.now() - tz);
     } finally {
       this.busy = false;
     }
@@ -777,6 +801,10 @@ export class Streamer {
 
   /** write a region into the window at local cell (lx, ly) */
   private write(f: Frozen, lx: number, ly: number): void {
+    timed('write', () => this.writeNow(f, lx, ly));
+  }
+
+  private writeNow(f: Frozen, lx: number, ly: number): void {
     if (f.oz !== this.oz) f = this.reslice(f);
     const { core, W, H, R } = this;
     for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[(ly + r) * W + lx + c] = f.outside[r * R + c];

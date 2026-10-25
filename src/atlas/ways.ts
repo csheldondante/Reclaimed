@@ -314,27 +314,48 @@ export function stampWays(
       if (b) cand.push(...b);
     }
   if (!cand.length) return 0;
+  // (round 80: the candidates binned REACH apart in the region's own frame — a column looks at the nine
+  // bins round it, not every point near the region: 18 ms a region was a phone's hitch several times over)
+  const nb = Math.ceil((bx - ax + 2 * REACH) / REACH) + 1;
+  const mb = Math.ceil((by - ay + 2 * REACH) / REACH) + 1;
+  const bins: number[][] = Array.from({ length: nb * mb }, () => []);
+  const lx = new Float32Array(cand.length);
+  const ly = new Float32Array(cand.length);
+  cand.forEach((k, j) => {
+    const p = ways.points[k];
+    lx[j] = ax + wrapD(p.x - ax, W);
+    ly[j] = ay + wrapD(p.y - ay, H);
+    const i = Math.floor((lx[j] - ax + REACH) / REACH);
+    const m = Math.floor((ly[j] - ay + REACH) / REACH);
+    if (i >= 0 && m >= 0 && i < nb && m < mb) bins[m * nb + i].push(j);
+  });
+  // (the lifts within reach of the region, in its frame)
+  const lifts = ways.lifts
+    .map((l) => ({ ...l, x: ax + wrapD(l.x - ax, W), y: ay + wrapD(l.y - ay, H) }))
+    .filter((l) => l.x > ax - 4 && l.x < bx + 4 && l.y > ay - 4 && l.y < by + 4);
   let changed = 0;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const [cx, cy] = world(x0 + x, y0 + y);
       let best = -1;
       let bd = REACH;
-      for (const k of cand) {
-        const p = ways.points[k];
-        const d = Math.hypot(wrapD(p.x - cx, W), wrapD(p.y - cy, H));
-        // (a plaza or a road over a bridge's or a tunnel's point at the same distance: the nearer wins)
-        if (d < bd) {
-          bd = d;
-          best = k;
-        }
-      }
+      const bi = Math.floor((cx - ax + REACH) / REACH);
+      const bm = Math.floor((cy - ay + REACH) / REACH);
+      for (let m = Math.max(0, bm - 1); m <= Math.min(mb - 1, bm + 1); m++)
+        for (let i = Math.max(0, bi - 1); i <= Math.min(nb - 1, bi + 1); i++)
+          for (const j of bins[m * nb + i]) {
+            const d = Math.hypot(lx[j] - cx, ly[j] - cy);
+            if (d < bd) {
+              bd = d;
+              best = cand[j];
+            }
+          }
       const i = y * w + x;
       const col = land.cols[i];
       let did = false;
       // a lift's tower
-      for (const l of ways.lifts) {
-        const d = Math.hypot(wrapD(l.x - cx, W), wrapD(l.y - cy, H));
+      for (const l of lifts) {
+        const d = Math.hypot(l.x - cx, l.y - cy);
         if (d > 3.5) continue;
         const top = topOf(col);
         if (top < l.z1) addTop(col, l.z1 - top, MAT_BUILT);

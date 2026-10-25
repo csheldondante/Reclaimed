@@ -311,7 +311,9 @@ fn netAt(f: Form, R: Region, k: u32, p: vec2<f32>, ground: f32, wgt: f32) -> Net
 }
 
 @compute @workgroup_size(8, 8)
-fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
+fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
+  // (round 80: a tile of the batch at a time, a frame apart, when streaming)
+  let id = vec3<u32>(gid.x + u32(AP.tileX), gid.y + u32(AP.tileY), gid.z);
   if (id.x >= AP.w || id.y >= AP.h) { return; }
   let mw = AP.w + 2u;
   let x = AP.x0 + i32(id.x);

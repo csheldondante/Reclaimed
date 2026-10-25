@@ -4608,3 +4608,29 @@ can still look very reactive and we just wake as needed right?" — yes).
   awake ones only is the next step), bodies in motion keeping theirs awake.
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 80 — the hitches, part 1 (places)
+
+Why: the phone with the sim off still hitched (p95 50). Measured what a
+slide costs, step by step (src/gpu/cpustat.ts: each step's last and worst
+ms; scripts/cpuprofile.mjs: the CDP profiler while riding).
+
+- A streamed region's column march was one dispatch, ~13 ms of a
+  desktop's GPU (a phone: several frames): now a 32² tile a frame, one
+  tile a frame over all the batches in flight (Atlas.columns `spread`;
+  the window's first build stays whole). 16² made no difference here.
+- stampWays checked every candidate point for every column (21.6 ms the
+  worst a region): binned REACH apart in the region's frame, the lifts
+  filtered to the region — ~9 ms on the road site (20 at a mesa).
+- The band packed every column after every slide (30–40 ms where the
+  window is off the ground): its chunk table's pages now go with the land
+  and only the fresh chunks are packed (12 ms the worst at a mesa).
+- A false trail: a step's worst since the page loaded showed slides of
+  1.3 s — startup's first pipeline compiles; driveprofile clears the steps
+  when riding starts now.
+- What's left on the desktop: most long frames have no CPU step in them
+  (the overlay lists the last ones), and the runs are noisy here (other
+  sessions share this GPU: 7 to 42 hitches for the same 25 s). A slide in
+  z still repacks 65 000 columns on the CPU (~200 ms at a mesa).
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.

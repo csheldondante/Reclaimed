@@ -35,6 +35,7 @@ import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import type { MapData } from '../world/mapgen';
 import { Sleep } from '../sim/sleep';
+import { cpuLine, cpuStats, frameSteps } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
@@ -102,6 +103,8 @@ export class LevelScene implements Scene {
   /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
   private frameMs: number[] = [];
   private hitches = 0;
+  /** the long frames and what ran in each (round 80) */
+  longFrames: string[] = [];
   private worstMs = 0;
   /** ?drive=speed (round 79): the camera drives itself along the atlas's nearest road at that many cells a
    *  second, zooming out with speed as the hoverbike's does — a stand-in for riding, to profile on a phone */
@@ -384,6 +387,16 @@ export class LevelScene implements Scene {
     this.hud.say('Free camera — WASD or ⇧⇩▲▼ to fly (Q/E down/up, Shift faster), drag to look (right-drag with a mouse), wheel or pinch to move along the view; F or ✈ back', 6);
   }
 
+  /** forget the steps so far (driveprofile: from when riding starts) */
+  cpuReset(): void {
+    cpuStats.clear();
+  }
+
+  /** the main thread's worst steps (round 80, for driveprofile) */
+  cpuWorst(): Record<string, { max: number; n: number }> {
+    return Object.fromEntries([...cpuStats.entries()].map(([k, v]) => [k, { max: +v.max.toFixed(1), n: v.n }]));
+  }
+
   /** the phone's profile (round 79): frame times over the last 300 frames, hitches, the streamer's slides */
   private perfLines(): string[] {
     const f = [...this.frameMs].sort((a, b) => a - b);
@@ -392,6 +405,9 @@ export class LevelScene implements Scene {
     const S = this.stream;
     if (S) out.push(`stream slides ${S.stats.slides}  z ${S.stats.tiers}  last ${S.stats.lastMs}ms  made ${S.stats.generated}  thawed ${S.stats.thawed}${S.busy ? '  BUSY' : ''}`);
     if (this.drive) out.push(`drive ${this.drive.speed}/s  zoom ${this.core.camera.zoom.toFixed(2)}`);
+    out.push(`cpu worst ms: ${cpuLine()}`);
+    // (the last long frames and what ran in them: '-' is the GPU's or the browser's)
+    for (const l of this.longFrames.slice(-3)) out.push(`long ${l.slice(0, 90)}`);
     if (this.sleep) out.push(`awake chunks ${this.sleep.awake} of ${(this.core.dims.w / CHUNK) * (this.core.dims.h / CHUNK)}`);
     return out;
   }
@@ -466,6 +482,8 @@ export class LevelScene implements Scene {
       if (!(W >= 256 && W % REGION === 0)) throw new Error(`?win= must be 256 or more, whole regions of ${REGION}`);
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
+      // (round 80: its column batches timed in the perf overlay)
+      atlas.profiler = host.profiler;
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
@@ -886,7 +904,8 @@ export class LevelScene implements Scene {
         ? new Streamer(
             core,
             {
-              region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h),
+              // (round 80: a tile of its columns a frame — streaming mustn't stall the frame)
+              region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, Infinity, true),
               wrap: [a.atlas.p.cols, a.atlas.p.rows],
               height: a.atlas.p.zTop,
               // (round 71: the coarse world changes while a region is away)
@@ -1137,7 +1156,13 @@ export class LevelScene implements Scene {
     const fms = dt * 1000;
     this.frameMs.push(fms);
     if (this.frameMs.length > 300) this.frameMs.shift();
-    if (fms > 50) this.hitches++;
+    if (fms > 50) {
+      this.hitches++;
+      // (what ran in it: none — the GPU's, or the browser's)
+      this.longFrames.push(`${fms.toFixed(0)}ms${this.stream?.busy ? ' busy' : ''}: ${frameSteps.join(', ') || '-'}`);
+      if (this.longFrames.length > 24) this.longFrames.shift();
+    }
+    frameSteps.length = 0;
     this.worstMs = Math.max(this.worstMs, fms);
     this.host.profiler.beginFrame();
 
@@ -1315,7 +1340,7 @@ export class LevelScene implements Scene {
         stats,
         adapter: this.host.gpu.adapterInfo,
         quality: this.host.qualityName,
-        extra: this.perfLines(),
+        extra: () => this.perfLines(),
       },
       this.host.profiler,
       sim,

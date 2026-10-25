@@ -32,6 +32,7 @@ import { defineRegions, dryness, KIND_IDS, KINDS, REGION_WORDS, warmth, type Reg
 import { landformsOf, tiersOf, type Landform } from './landforms';
 import { settle, type Settlement } from './sites';
 import { buildWays, stampWays, type Ways } from './ways';
+import { timed } from '../gpu/cpustat';
 import { findRivers, NODE_WORDS } from './rivers';
 import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
@@ -141,6 +142,8 @@ export function atlasParamsFrom(q: URLSearchParams, base: Partial<AtlasParams> =
 /** what the viewer and the caller set on top of the parameters */
 interface Extra {
   step?: number;
+  /** colFinish's tile (round 80) */
+  tile?: [number, number];
   x0?: number;
   y0?: number;
   w?: number;
@@ -158,6 +161,8 @@ const COLG_BYTES = 76;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;
+/** a streamed batch's columns are made a TILE² tile a frame (round 80) */
+const TILE = 32;
 /** a geyser (Atlas.geysersIn) */
 export interface Geyser {
   x: number;
@@ -322,6 +327,8 @@ export class Atlas {
     f[31] = p.caveScale;
     f[32] = p.liftReach;
     f[33] = p.detail;
+    f[34] = e.tile?.[0] ?? 0;
+    f[35] = e.tile?.[1] ?? 0;
     this.device.queue.writeBuffer(into, 0, ab);
   }
 
@@ -871,8 +878,9 @@ export class Atlas {
 
   /** A batch of columns (w × h world cells from (x0, y0), wrapped): the ground and what lies on it.
    *  (Each batch has its own parameters: batches asked for together run together.) */
-  async columns(x0: number, y0: number, w: number, h: number): Promise<AtlasColumns> {
+  async columns(x0: number, y0: number, w: number, h: number, spread = false): Promise<AtlasColumns> {
     const dev = this.device;
+    const tileBufs: GPUBuffer[] = [];
     const pb = dev.createBuffer({ label: 'atlas col params', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const g = dev.createBuffer({ label: 'atlas colG', size: (w + 2) * (h + 2) * COLG_BYTES, usage: GPUBufferUsage.STORAGE });
     const o = dev.createBuffer({ label: 'atlas colOut', size: w * h * COL_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
@@ -888,31 +896,52 @@ export class Atlas {
       dev.queue.writeBuffer(instN, 0, new Uint32Array([gi.count]));
     }
     const enc = dev.createCommandEncoder({ label: 'atlas columns' });
-    let cp = enc.beginComputePass();
+    // (round 80: the passes' GPU time in the game's profiler, when the level lends it — the streaming's cost)
+    const ts = (name: string) => ({ timestampWrites: this.profiler?.timestamps(name) });
+    let cp = enc.beginComputePass(ts('atlas-colHeight'));
     cp.setPipeline(this.colH.pipeline);
     cp.setBindGroup(0, makeBindGroup(dev, 'colH', this.colH.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells, 30: g }));
     cp.dispatchWorkgroups(Math.ceil((w + 2) / 8), Math.ceil((h + 2) / 8));
     cp.end();
     // the lattice forms around the batch (every lattice: the finest's cells cover the most)
-    cp = enc.beginComputePass();
+    cp = enc.beginComputePass(ts('atlas-formSeed'));
     cp.setPipeline(this.formSeed.pipeline);
     cp.setBindGroup(0, makeBindGroup(dev, 'formSeed', this.formSeed.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells, 32: inst, 33: instN }));
     const cells = (n: number) => Math.ceil((n + 2 * FORM_MARGIN) / FINEST) + 3;
     cp.dispatchWorkgroups(Math.ceil(cells(w + 1) / 8), Math.ceil(cells(h * ROW_H) / 8), 7);
     cp.end();
-    cp = enc.beginComputePass();
-    cp.setPipeline(this.colF.pipeline);
-    cp.setBindGroup(0, makeBindGroup(dev, 'colF', this.colF.layout, { 0: pb, 22: this.regs, 23: this.pat, 30: g, 31: o, 32: inst, 33: instN, 34: runs }));
-    cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8));
-    cp.end();
-    enc.copyBufferToBuffer(o, 0, st, 0, o.size);
-    enc.copyBufferToBuffer(runs, 0, st, o.size, runs.size);
-    enc.copyBufferToBuffer(instN, 0, st, o.size + runs.size, 16);
-    dev.queue.submit([enc.finish()]);
+    // the columns: at once, or (streaming: `spread`) a TILE² tile a frame — the march is the batch's cost
+    // (~13 ms of a desktop's GPU a 64² region: a phone's frame several times over)
+    let fin = enc;
+    const tiles: [number, number][] = [];
+    const T = spread ? TILE : Math.max(w, h);
+    for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
+    for (let k = 0; k < tiles.length; k++) {
+      let tpb = pb;
+      if (spread) {
+        dev.queue.submit([fin.finish()]);
+        await this.tileGate();
+        fin = dev.createCommandEncoder({ label: 'atlas columns tile' });
+        tpb = dev.createBuffer({ label: 'atlas col params tile', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+        this.writeParams({ x0, y0, w, h, tile: tiles[k] }, tpb);
+        tileBufs.push(tpb);
+      }
+      const tw = Math.min(T, w - tiles[k][0]);
+      const th = Math.min(T, h - tiles[k][1]);
+      cp = fin.beginComputePass(ts('atlas-colFinish'));
+      cp.setPipeline(this.colF.pipeline);
+      cp.setBindGroup(0, makeBindGroup(dev, 'colF', this.colF.layout, { 0: tpb, 22: this.regs, 23: this.pat, 30: g, 31: o, 32: inst, 33: instN, 34: runs }));
+      cp.dispatchWorkgroups(Math.ceil(tw / 8), Math.ceil(th / 8));
+      cp.end();
+    }
+    fin.copyBufferToBuffer(o, 0, st, 0, o.size);
+    fin.copyBufferToBuffer(runs, 0, st, o.size, runs.size);
+    fin.copyBufferToBuffer(instN, 0, st, o.size + runs.size, 16);
+    dev.queue.submit([fin.finish()]);
     await st.mapAsync(GPUMapMode.READ);
     const buf = st.getMappedRange().slice(0);
     st.unmap();
-    for (const b of [g, o, runs, inst, instN, st, pb]) b.destroy();
+    for (const b of [g, o, runs, inst, instN, st, pb, ...tileBufs]) b.destroy();
     const forms = new Uint32Array(buf, o.size + runs.size, 1)[0];
     if (forms > MAX_INST) throw new Error(`atlas: ${forms} forms around the batch at ${x0},${y0} (room for ${MAX_INST})`);
     const f = new Float32Array(buf, 0, o.size / 4);
@@ -1080,10 +1109,10 @@ export class Atlas {
   gapsFilled = 0;
 
   /** A region's land for the streamer (world/streamgen.ts RegionLand), in world z (the streamer cuts it at its window). */
-  async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity): Promise<RegionLand> {
+  async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity, spread = false): Promise<RegionLand> {
     if (y0 & 1) throw new Error('a region starts on an even row');
-    const c = await this.columns(x0, y0, w, h);
-    const land = landFrom(c, x0, y0, K);
+    const c = await this.columns(x0, y0, w, h, spread);
+    const land = timed('land', () => landFrom(c, x0, y0, K));
     this.gapsFilled += land.gapsFilled;
     // the geysers' sinter: a low mound round each vent, its pit at the middle
     for (const g of this.geysersIn(x0, y0, w, h))
@@ -1102,8 +1131,19 @@ export class Atlas {
           land.surface[y * w + x] = col[col.length - 1].z1;
         }
     // the roads, their crossings and the sites' plazas (round 79, ways.ts)
-    this.waysStamped += stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH);
+    this.waysStamped += timed('ways', () => stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH));
     return land;
+  }
+
+  /** the game's GPU profiler, when the level lends it (round 80): the column batches' passes are timed */
+  profiler?: import('../gpu/profiler').Profiler;
+
+  /** one streamed batch's tile a frame, over all of them (round 80) */
+  private gate: Promise<void> = Promise.resolve();
+  private tileGate(): Promise<void> {
+    const p = this.gate.then(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
+    this.gate = p;
+    return p;
   }
 
   /** columns the ways have changed so far */
