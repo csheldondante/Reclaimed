@@ -4335,3 +4335,26 @@ SDF to blend the heights wanted, features far bigger than a region.
 Build cost on seed 1 (2048² texels): jfa landforms 55 ms; the rest as
 before (rivers 364 ms on the CPU, the largest). atlastest 5/5, coarsetest
 5/5, tiertest 4/4, streamtest 8/8.
+
+## Round 78 — sites, roads and their crossings (places)
+
+Why: the user's plan — "super structures … several sites with large radial
+growth or massive walls or roads connecting things", and crossings
+("vertical cities, ramps and roads, lifts, switchbacks, or tunnels
+intentionally stamped at the region level"). The atlas decides where the
+settlements and roads are and where a road meets a landform's edge, a
+pass, a gorge or a river; the region generator (V2) will build each
+crossing.
+
+- sites.ts: a coarse grid (512², 4 × 4 texels a cell); a setting per land
+  cell, the best taken first 18 cells apart; roads by the relative
+  neighbourhood graph of each continent, A* each (≤ 60 000 cells expanded).
+- Seed 1: 140 sites, 155 roads, crossings 30 ramps, 29 switchbacks, 31
+  lifts, 16 tunnels, 204 bridges; 244–272 ms on the CPU at build (the
+  atlas's whole build ~3.5 s, compiles 1.8 s of it). Two continents' sites
+  aren't all joined (sites farther apart than a road's reach).
+- First try found no tunnels (only inside massifs, 60 over both ends); a
+  pass of 45 within 14 cells either side anywhere is one now.
+
+atlastest 6/6 (a new check: landforms many regions across, sites on land,
+roads ending at their sites, continents joined, crossings found).

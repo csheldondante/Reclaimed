@@ -7,6 +7,7 @@
 import { Atlas, atlasParamsFrom, type AtlasParams } from '../atlas/atlas';
 import { EDGE, KIND_IDS, KINDS } from '../atlas/regions';
 import { TIER_NAMES } from '../atlas/landforms';
+import { CROSS, CROSS_NAMES, SETTING_NAMES, SITE_NAMES } from '../atlas/sites';
 import viewW from '../atlas/view.wgsl?raw';
 import columnsW from '../atlas/columns.wgsl?raw';
 import { makeBindGroup, makeLayout, makeModule } from '../gpu/pipeline';
@@ -17,6 +18,17 @@ const landformLine = (a: Atlas, id: number) => {
   const f = a.landforms[id];
   return f ? `${id}: ${TIER_NAMES[f.tier]}, level ${f.level.toFixed(0)}${f.peak ? `, peak ${f.peak.toFixed(0)} over ${f.rise.toFixed(0)}` : ''}, ${f.regions} regions` : 'none (water)';
 };
+const crossCounts = (a: Atlas) => {
+  const k = CROSS_NAMES.map(() => 0);
+  for (const r of a.settlement.roads) for (const c of r.crossings) k[c.kind]++;
+  return CROSS_NAMES.map((n, i) => `${k[i]} ${n}`).join(', ');
+};
+const siteNear = (a: Atlas, x: number, y: number, r: number) => {
+  const s = a.settlement.sites.find((s) => Math.hypot(s.x - x, s.y - y) < r);
+  return s ? `
+site: a ${SITE_NAMES[s.size]}, ${SETTING_NAMES[s.setting]}, ground ${s.h.toFixed(0)}` : '';
+};
+const CROSS_COLOUR = ['#5c5', '#ec3', '#e33', '#111', '#39f'];
 const MODES = ['ground', 'regions', 'kinds', 'borders', 'coast', 'climate', 'pattern', 'caves', 'landforms'];
 
 /** the sliders: key, label, min, max, step */
@@ -50,6 +62,9 @@ export class AtlasView implements Scene {
   private size = { rw: 1, rh: 1, cw: 1, ch: 1 };
   private drag: { x: number; y: number } | null = null;
   private listeners: [EventTarget, string, EventListener][] = [];
+  /** the sites, roads and crossings drawn over the map (round 78; O toggles) */
+  private overlay: HTMLCanvasElement;
+  private showOverlay = true;
 
   private constructor(
     private host: Host,
@@ -64,6 +79,10 @@ export class AtlasView implements Scene {
     const mode = Number(host.params.get('mode') ?? 0);
     this.mode = MODES.includes(host.params.get('mode') ?? '') ? MODES.indexOf(host.params.get('mode')!) : mode;
     const at = host.params.get('view');
+    this.overlay = document.createElement('canvas');
+    this.overlay.style.cssText = 'position:absolute;left:0;top:0;width:100%;height:100%;pointer-events:none;';
+    host.ui.appendChild(this.overlay);
+    this.showOverlay = host.params.get('overlay') !== '0';
     this.panel = this.makePanel();
     this.info = this.panel.querySelector('.atlas-info') as HTMLDivElement;
     if (at) {
@@ -112,7 +131,7 @@ export class AtlasView implements Scene {
       const c = KINDS[k].colour.map((v) => Math.round(v * 255)).join(',');
       return `<span style="display:inline-block;margin:1px 4px 1px 0"><i style="display:inline-block;width:9px;height:9px;background:rgb(${c});margin-right:3px"></i>${k}</span>`;
     }).join('');
-    d.innerHTML = `<div style="font-size:14px;margin-bottom:4px">Atlas</div><div>${modes}</div>${sliders}<button data-rebuild style="margin-top:6px">Make this world</button><div class="atlas-info" style="margin-top:8px;white-space:pre-wrap"></div><div style="margin-top:6px">${legend}</div><div style="margin-top:6px;color:#aaa">Drag to pan, wheel to zoom, 1–8 modes, double-click to walk in; shift-click a meteor, alt-click an eruption.</div>`;
+    d.innerHTML = `<div style="font-size:14px;margin-bottom:4px">Atlas</div><div>${modes}</div>${sliders}<button data-rebuild style="margin-top:6px">Make this world</button><div class="atlas-info" style="margin-top:8px;white-space:pre-wrap"></div><div style="margin-top:6px">${legend}</div><div style="margin-top:6px;color:#aaa">Drag to pan, wheel to zoom, 1–9 modes, O the sites and roads (crossings: ramp green, switchbacks yellow, lift red, tunnel black, bridge blue), double-click to walk in; shift-click a meteor, alt-click an eruption.</div>`;
     d.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => (b.onclick = () => (this.mode = Number(b.dataset.mode))));
     d.querySelectorAll<HTMLInputElement>('[data-k]').forEach((inp) => (inp.oninput = () => (d.querySelector(`[data-v="${inp.dataset.k}"]`)!.textContent = inp.value)));
     (d.querySelector('[data-rebuild]') as HTMLButtonElement).onclick = () => {
@@ -194,6 +213,7 @@ export class AtlasView implements Scene {
     this.on(window, 'keydown', (e) => {
       const k = Number((e as KeyboardEvent).key);
       if (k >= 1 && k <= MODES.length) this.mode = k - 1;
+      if ((e as KeyboardEvent).key === 'o') this.showOverlay = !this.showOverlay;
     });
   }
 
@@ -221,7 +241,10 @@ export class AtlasView implements Scene {
       `at ${x.toFixed(0)}, ${y.toFixed(0)}: ${d.kind}${d.stat.fault ? ' (fault strip)' : ''}\n` +
       `ground ${a.hmac[t]?.toFixed(1)} (sea ${a.p.sea}); border ${edge}, coast ${coast}\n` +
       `pattern ${d.words[1]}, area ${d.stat.area} texels, mode ${MODES[this.mode]}\n` +
-      `landform ${landformLine(a, d.words[48])}`;
+      `landform ${landformLine(a, d.words[48])}
+` +
+      `${a.settlement.sites.length} sites, ${a.settlement.roads.length} roads (${a.settlement.ms} ms), crossings: ${crossCounts(a)}` +
+      siteNear(a, x, y, 12 * Math.max(this.scale, 1));
   }
 
   frame(): void {
@@ -239,6 +262,76 @@ export class AtlasView implements Scene {
     rp.draw(3);
     rp.end();
     dev.queue.submit([enc.finish()]);
+    this.drawOverlay();
+  }
+
+  /** the sites, roads and their crossings (round 78), each drawn at its copy nearest the view's middle */
+  private drawOverlay(): void {
+    const o = this.overlay;
+    const { rw, rh, cw, ch } = this.size;
+    if (o.width !== Math.round(cw) || o.height !== Math.round(ch)) {
+      o.width = Math.round(cw);
+      o.height = Math.round(ch);
+    }
+    const g = o.getContext('2d')!;
+    g.clearRect(0, 0, o.width, o.height);
+    if (!this.showOverlay) return;
+    const a = this.atlas;
+    const W = a.worldW;
+    const H = a.worldH;
+    const k = cw / rw / this.scale;
+    // (a world point → CSS pixels, its copy nearest the view's middle; dx, dy keep a road's points together)
+    const near = (x: number, y: number): [number, number] => [x - Math.round((x - this.vc[0]) / W) * W, y - Math.round((y - this.vc[1]) / H) * H];
+    const sx = (x: number) => (x - this.vc[0]) * k + cw / 2;
+    const sy = (y: number) => (y - this.vc[1]) * k * (rh / rw) * (cw / ch) + ch / 2;
+    g.lineCap = 'round';
+    g.lineJoin = 'round';
+    for (const r of a.settlement.roads) {
+      const p = r.path;
+      const [x0, y0] = near(p[0], p[1]);
+      const dx = x0 - p[0];
+      const dy = y0 - p[1];
+      g.strokeStyle = 'rgba(70,45,25,0.85)';
+      g.lineWidth = Math.max(1.2, Math.min(3, 30 * k));
+      g.beginPath();
+      for (let i = 0; i < p.length; i += 2) {
+        const X = sx(p[i] + dx);
+        const Y = sy(p[i + 1] + dy);
+        if (i) g.lineTo(X, Y);
+        else g.moveTo(X, Y);
+      }
+      g.stroke();
+      for (const c of r.crossings) {
+        g.strokeStyle = CROSS_COLOUR[c.kind];
+        g.lineWidth = Math.max(3, Math.min(7, 60 * k));
+        g.beginPath();
+        g.moveTo(sx(c.x0 + dx), sy(c.y0 + dy));
+        g.lineTo(sx(c.x1 + dx), sy(c.y1 + dy));
+        g.stroke();
+        if (c.kind === CROSS.lift) {
+          g.fillStyle = CROSS_COLOUR[c.kind];
+          g.fillRect(sx((c.x0 + c.x1) / 2 + dx) - 3, sy((c.y0 + c.y1) / 2 + dy) - 3, 6, 6);
+        }
+      }
+    }
+    for (const s of a.settlement.sites) {
+      const [x, y] = near(s.x, s.y);
+      const rad = 2.5 + s.size * 1.6;
+      g.fillStyle = ['#fff', '#fde7a8', '#ffb347', '#ff5a36'][s.size];
+      g.strokeStyle = '#222';
+      g.lineWidth = 1.2;
+      g.beginPath();
+      if (s.setting === 0) {
+        // (cliffside: a diamond)
+        g.moveTo(sx(x), sy(y) - rad * 1.3);
+        g.lineTo(sx(x) + rad * 1.3, sy(y));
+        g.lineTo(sx(x), sy(y) + rad * 1.3);
+        g.lineTo(sx(x) - rad * 1.3, sy(y));
+        g.closePath();
+      } else g.arc(sx(x), sy(y), rad, 0, Math.PI * 2);
+      g.fill();
+      g.stroke();
+    }
   }
 
   resize(rw: number, rh: number, cw: number, ch: number): void {
@@ -248,6 +341,7 @@ export class AtlasView implements Scene {
   dispose(): void {
     for (const [t, ev, f] of this.listeners) t.removeEventListener(ev, f);
     this.panel.remove();
+    this.overlay.remove();
     this.atlas.dispose();
   }
 }

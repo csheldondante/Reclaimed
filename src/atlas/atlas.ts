@@ -30,6 +30,7 @@ import patsimW from './patsim.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
 import { defineRegions, dryness, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
 import { landformsOf, tiersOf, type Landform } from './landforms';
+import { settle, type Settlement } from './sites';
 import { findRivers, NODE_WORDS } from './rivers';
 import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
@@ -75,6 +76,8 @@ export interface AtlasParams {
   detail: number;
   /** impact craters in the macro height (round 78), at most MAX_CRATERS */
   craters: number;
+  /** settlement sites (round 78, sites.ts), joined by roads */
+  sites: number;
 }
 
 export const DEFAULT_ATLAS: AtlasParams = {
@@ -106,6 +109,7 @@ export const DEFAULT_ATLAS: AtlasParams = {
   liftReach: 2400,
   detail: 0.5,
   craters: 18,
+  sites: 140,
 };
 
 /** what `?a.<key>=` may set (the viewer's sliders write the same) */
@@ -225,6 +229,8 @@ export class Atlas {
   riverBuf: GPUBuffer;
   /** the impact craters (round 78): CRATER_WORDS floats each */
   craters = new Float32Array(0);
+  /** the sites and the roads between them (round 78, sites.ts) */
+  settlement: Settlement = { sites: [], roads: [], ms: 0 };
   riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0 };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
@@ -504,6 +510,17 @@ export class Atlas {
     });
     await this.time('ground with rivers', macro);
     this.hmac = new Float32Array(await this.read(hmacB));
+    // sites and roads (round 78): on the ground with its rivers
+    await this.time('sites and roads (cpu)', () => {
+      const contOf = new Int32Array(N);
+      for (let i = 0; i < N; i++) {
+        const d = this.defs[this.regionOf[i]];
+        contOf[i] = d.stat.land ? d.stat.cont : -1;
+      }
+      const lfOf = new Int32Array(N);
+      for (let i = 0; i < N; i++) lfOf[i] = this.landformOf[this.regionOf[i]];
+      this.settlement = settle({ n, seed: p.seed, hmac: this.hmac, landformOf: lfOf, forms: this.landforms, contOf, river: rv.nodeAt, craters: this.craters, craterWords: CRATER_WORDS, worldW: this.worldW, worldH: this.worldH, sea: p.sea, count: p.sites });
+    });
     await this.time('coarse world', () => this.coarse.init(this.hmac, n, (t) => !this.defs[this.regionOf[t]].stat.land));
     await this.time('giants (cpu)', () => this.makeGiants());
     for (const b of [fieldA, key, label, size, flag, flagRead, info, cont, jfaA, jfaB, hmacB]) b.destroy();

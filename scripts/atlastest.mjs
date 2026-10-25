@@ -55,6 +55,40 @@ try {
   console.log(JSON.stringify(built), `page to atlas ${Date.now() - t0} ms`);
   check('the atlas is built: continents, regions of many kinds', built.stats.regions > 100 && Object.keys(built.stats.kinds).length >= 6, { regions: built.stats.regions, kinds: built.stats.kinds });
 
+  // round 78: landforms and the settlement — plateaus and massifs many regions across; sites on land,
+  // the roads of each continent joining its sites (one piece where the continent has two or more), every
+  // road starting and ending at its sites, crossings found
+  const lf = await page.evaluate(() => {
+    const a = window.reclaimed.atlas;
+    const { sites, roads } = a.settlement;
+    const tiers = [0, 0, 0, 0];
+    let bigHigh = 0;
+    for (const f of a.landforms) {
+      tiers[f.tier]++;
+      if (f.tier >= 2 && f.regions >= 10) bigHigh++;
+    }
+    const parent = sites.map((_, i) => i);
+    const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+    let ends = 0;
+    for (const r of roads) {
+      parent[find(r.a)] = find(r.b);
+      const W = a.worldW;
+      const H = a.worldH;
+      const d = (x, y, s) => Math.hypot(((x - s.x + W * 1.5) % W) - W / 2, ((y - s.y + H * 1.5) % H) - H / 2);
+      const p = r.path;
+      if (d(p[0], p[1], sites[r.a]) > 1 || d(p[p.length - 2], p[p.length - 1], sites[r.b]) > 1) ends++;
+    }
+    const byCont = new Map();
+    sites.forEach((s, i) => byCont.set(s.cont, [...(byCont.get(s.cont) ?? []), i]));
+    let split = 0;
+    for (const ids of byCont.values()) if (ids.length > 1 && new Set(ids.map(find)).size > 1) split++;
+    const crossings = [0, 0, 0, 0, 0];
+    for (const r of roads) for (const c of r.crossings) crossings[c.kind]++;
+    const onLand = sites.every((s) => s.landform >= 0 && s.h > a.p.sea);
+    return { landforms: a.landforms.length, tiers, bigHigh, sites: sites.length, roads: roads.length, onLand, ends, continentsSplit: split, crossings, ms: a.timings['sites and roads (cpu)'] };
+  });
+  check('landforms (round 78): plateaus and massifs many regions across; sites on land joined by roads per continent, crossings found', lf.bigHigh >= 5 && lf.sites >= 50 && lf.onLand && lf.ends === 0 && lf.continentsSplit <= 2 && lf.crossings.reduce((s, k) => s + k, 0) > 20, lf);
+
   // every region is one connected piece (4-neighbours, wrapped)
   const conn = await page.evaluate(() => {
     const a = window.reclaimed.atlas;

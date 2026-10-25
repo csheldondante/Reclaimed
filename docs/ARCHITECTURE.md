@@ -577,6 +577,19 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   distance noise-warped so none is a circle). They live in the river
   buffer between the nearest-node words and the nodes (CRATER_BLOCK): the
   column shaders are at their eight storage buffers.
+- Sites and roads (round 78, sites.ts, `Atlas.settlement`): on the CPU
+  over a coarse grid (4 × 4 texels a cell) of the ground with its rivers.
+  Each land cell scores a setting — a plateau's rim over a 60+ drop
+  (cliffside), a river's mouth (port), a river in the low ground, a
+  massif's flank, a crater's rim, a coast, plain; the best taken first, 18
+  cells apart (`AtlasParams.sites`, 140). Roads: the relative neighbourhood
+  graph of each continent's sites (within 70 cells), each by A* (slope,
+  high ground and rivers cost; the sea is no way). Walking a road finds its
+  crossings: tunnels at passes (45 up and down within 14 cells), steep runs
+  classed by their drop (ramp < 30, switchbacks < 90, else a lift), gorges
+  and rivers bridged. Nothing is stamped into the ground yet: the crossings
+  are for the regions' briefs (BACKLOG V2), which build them. The viewer
+  draws them over the map (O).
 - Giants (round 75, `Atlas.giants`): quartz crystals the size of mountains
   in the crystal regions (a few each, 150–420 tall, leaning up to 35°),
   placed once when the atlas is made. Each column batch is handed the giants
