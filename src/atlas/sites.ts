@@ -129,8 +129,11 @@ export function settle(inp: SiteInput): Settlement {
   const world = (c: number): [number, number] => [((c % m) + 0.5) * cellW, (Math.floor(c / m) + 0.5) * cellH];
 
   // ---- candidates: each land cell's best setting and its score --------------------------------------
+  const kinds = new Uint32Array(inp.craters.buffer, inp.craters.byteOffset, inp.craters.length);
   const craterNear = (x: number, y: number) => {
     for (let i = 0; i < inp.craters.length; i += inp.craterWords) {
+      // (craters only: the oddities share the list, atlas.ts STAMP)
+      if (kinds[i + 6] !== 0) continue;
       let dx = x - inp.craters[i];
       let dy = y - inp.craters[i + 1];
       dx -= Math.round(dx / inp.worldW) * inp.worldW;

@@ -40,7 +40,11 @@ try {
     let best = null;
     a.defs.forEach((d) => {
       if (kind === 'plateau' ? d.words[49] !== 2 : d.kind !== kind) return;
+      // (not a volcanic one: its lava falls cool to basalt while the test runs, and the columns change)
+      if (kind === 'plateau' && ['basalt', 'lavafield', 'rift'].includes(d.kind)) return;
       const warm = 0.5 - 0.5 * Math.cos(2 * Math.PI * d.stat.cy);
+      // (a cliff taller than the window: the plateau's top 240 or more at its middle)
+      if (kind === 'plateau' && a.hmac[Math.floor(d.stat.cy * a.p.n) * a.p.n + Math.floor(d.stat.cx * a.p.n)] < 240) return;
       const score = d.stat.area * (warm > 0.45 && warm < 0.85 ? 4 : 1);
       if (!best || score > best.score) best = { score, cx: d.stat.cx, cy: d.stat.cy };
     });
@@ -97,15 +101,20 @@ try {
     const diff = (a, b) => {
       let cols = 0;
       let worst = 0;
+      let sample = null;
       for (let i = 0; i < a.length; i++) {
         const A = a[i];
         const B = b[i];
         let d = A.length === B.length ? 0 : 99;
         if (!d) for (let k = 0; k < A.length; k++) d = Math.max(d, Math.abs(A[k].z0 - B[k].z0), Math.abs(A[k].z1 - B[k].z1), A[k].mat === B[k].mat ? 0 : 99);
-        if (d > 0.01) cols++;
+        if (d > 0.01) {
+          cols++;
+          // (the first column that differs, to see what changed)
+          sample ??= { x: i % w, y: Math.floor(i / w), a: A.map((iv) => `${iv.mat}:${iv.z0.toFixed(2)}-${iv.z1.toFixed(2)}`).join(' '), b: B.map((iv) => `${iv.mat}:${iv.z0.toFixed(2)}-${iv.z1.toFixed(2)}`).join(' ') };
+        }
         worst = Math.max(worst, d);
       }
-      return { cols, worst: +worst.toFixed(3) };
+      return { cols, worst: +worst.toFixed(3), ...(sample ? { sample } : {}) };
     };
     let tall = 0;
     let empty = 0;

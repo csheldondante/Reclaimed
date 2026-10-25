@@ -371,6 +371,13 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     topMat = g.cap;
     cover = 0.0;
   }
+  // an oddity (round 78): a crystal or a dome of its own stuff, bare
+  var rockMat = R.rockMat;
+  if (g.smat != 0u && !river) {
+    topMat = g.smat;
+    rockMat = g.smat;
+    cover = 0.0;
+  }
   cover = min(cover, top - 1.0);
   let rockTop = top - cover;
   // the coarse world's loose ground over all of it (ash, a crater's rubble, silt)
@@ -492,7 +499,7 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     let form = add >= bc;
     var lab = 0u;
     if (F > 0.0) {
-      if (form) { lab = addMat; } else if (z >= top) { lab = g.lmat; } else { lab = select(topMat, R.rockMat, z < rockTop); }
+      if (form) { lab = addMat; } else if (z >= top) { lab = g.lmat; } else { lab = select(topMat, rockMat, z < rockTop); }
     }
     if (k > 0 && lab != L) {
       // where between the samples it changed
@@ -528,7 +535,7 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   o.top = surf;
   o.ground = top;
   o.cover = cover;
-  o.mats = topMat | (R.rockMat << 8u);
+  o.mats = topMat | (rockMat << 8u);
   o.n = runs;
   o.flags = flags;
   o.region = ri;

@@ -159,17 +159,64 @@ fn coarseAt(p: vec2<f32>) -> Co {
  * thinning outward, a central peak in the big ones (the coarse world's meteor, coarse.wgsl, the same
  * shape at its own scale).
  */
-fn craterAt(p: vec2<f32>) -> f32 { return craterSum(p, false); }
+struct Stamped {
+  /** the height added (craters summed, the oddities' highest over the ground), and the material where an
+   *  oddity stands (0: none) */
+  dh: f32,
+  mat: u32,
+}
+
+fn craterAt(p: vec2<f32>) -> f32 { return stampsAt(p).dh; }
 
 /** the craters' shape, each its bowl −1 deep (the continent's noise takes it: atlas build.wgsl base) */
-fn craterShape(p: vec2<f32>) -> f32 { return craterSum(p, true); }
+fn craterShape(p: vec2<f32>) -> f32 { return stampSum(p, true).dh; }
 
-fn craterSum(p: vec2<f32>, unit: bool) -> f32 {
+fn stampsAt(p: vec2<f32>) -> Stamped { return stampSum(p, false); }
+
+/** an oddity's height at p (atlas.ts STAMP): a faceted crystal (its faces planes to its point), a bulb */
+fn oddityAt(o: u32, p: vec2<f32>, kind: u32) -> f32 {
+  let c = nearTo(vec2<f32>(bitcast<f32>(riverBuf[o]), bitcast<f32>(riverBuf[o + 1u])), p);
+  let R = bitcast<f32>(riverBuf[o + 2u]);
+  let H = bitcast<f32>(riverBuf[o + 3u]);
+  let d = p - c;
+  if (dot(d, d) > R * R * 1.5) { return 0.0; }
+  if (kind == 1u) {
+    // the faces: a pyramid of n planes (the farthest plane is the face p is on)
+    let turn = bitcast<f32>(riverBuf[o + 4u]);
+    let nf = bitcast<f32>(riverBuf[o + 5u]);
+    var e = 0.0;
+    for (var f = 0.0; f < nf; f += 1.0) {
+      let a = turn + f * 6.2831853 / nf;
+      e = max(e, dot(d, vec2<f32>(cos(a), sin(a))));
+    }
+    return H * max(0.0, 1.0 - e / R);
+  }
+  // a bulb: a dome, its outline lobed, swelling steep at its foot
+  let lobe = bitcast<f32>(riverBuf[o + 4u]);
+  let ang = atan2(d.y, d.x);
+  let rr = length(d) / (R * (1.0 + 0.18 * lobe * sin(ang * 3.0 + lobe * 9.0) + 0.1 * sin(ang * 5.0 + 1.3)));
+  if (rr >= 1.0) { return 0.0; }
+  return H * pow(1.0 - rr * rr, 0.35);
+}
+
+fn stampSum(p: vec2<f32>, unit: bool) -> Stamped {
   let base = AP.n * AP.n;
   let k = min(riverBuf[base], 64u);
   var dh = 0.0;
+  var odd = 0.0;
+  var mat = 0u;
   for (var i = 0u; i < k; i++) {
     let o = base + 4u + i * CRATER_WORDS;
+    let kind = riverBuf[o + 6u];
+    if (kind != 0u) {
+      if (unit) { continue; }
+      let v = oddityAt(o, p, kind);
+      if (v > odd) {
+        odd = v;
+        mat = riverBuf[o + 7u];
+      }
+      continue;
+    }
     let c = nearTo(vec2<f32>(bitcast<f32>(riverBuf[o]), bitcast<f32>(riverBuf[o + 1u])), p);
     let R = bitcast<f32>(riverBuf[o + 2u]);
     var r = length(p - c);
@@ -193,7 +240,7 @@ fn craterSum(p: vec2<f32>, unit: bool) -> f32 {
     h += pk * exp(-pow(t / 0.12, 2.0));
     dh += h;
   }
-  return dh;
+  return Stamped(dh + odd, select(0u, mat, odd > 1.5));
 }
 
 struct River {
@@ -358,6 +405,8 @@ struct Ground {
   cap: u32,
   /** the distance into its landform (round 78) */
   dl: f32,
+  /** an oddity's material where one stands (round 78; 0: none) */
+  smat: u32,
 }
 
 /**
@@ -486,10 +535,11 @@ fn ground(p: vec2<f32>) -> Ground {
     g.h = mix(hB, hA, w) + extra;
     g.w = w;
   }
-  // the impact craters (round 78)
-  let cr = craterAt(p);
-  g.h += cr;
-  g.hlo += cr;
+  // the impact craters and the oddities (round 78)
+  let st = stampsAt(p);
+  g.h += st.dh;
+  g.hlo += st.dh;
+  g.smat = st.mat;
   // the coarse world: rock taken or added (a crater, a cone, set lava), what lies on top
   let co = coarseAt(p);
   g.h += co.dr;

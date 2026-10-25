@@ -577,6 +577,15 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   distance noise-warped so none is a circle). They live in the river
   buffer between the nearest-node words and the nodes (CRATER_BLOCK): the
   column shaders are at their eight storage buffers.
+- Oddities (round 78, `Atlas.makeOddities`, `AtlasParams.oddities`):
+  clusters on land regions' middles stamped into the ground with the
+  craters (the same list, atlas.ts STAMP: kind and material words) —
+  faceted crystal mountains (a pyramid of 5–8 planes to its point, quartz)
+  and bulbous domes (lobed outlines, steep feet; granite, coral or flesh by
+  the style). An oddity's height is the highest of them over the ground
+  (craters add); where one stands, Ground.smat (ColG.smat, COLG_BYTES 76)
+  makes the column's top and rock its material, bare. No lava rises from
+  one (the rivers' volcanic sources skip them).
 - Great caverns (round 78, compose.wgsl `cavernAt`): under plateaus and
   massifs, deep inside them (120–360 into the landform) where a slow noise
   says; the floor near the sea's level, a domed roof up to ~100 over it

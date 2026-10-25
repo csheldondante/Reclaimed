@@ -60,6 +60,11 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
   switch AP.mode {
     case 0u: {
       c = terrainColourAt(g.h, p) * select(1.0, sh, g.h >= AP.sea);
+      // (round 78: an oddity in its own colour — quartz, granite, coral, flesh)
+      if (g.smat == 36u) { c = vec3<f32>(0.82, 0.78, 0.98) * sh; }
+      if (g.smat == 1u) { c = vec3<f32>(0.62, 0.6, 0.58) * sh; }
+      if (g.smat == 34u) { c = vec3<f32>(0.9, 0.55, 0.6) * sh; }
+      if (g.smat == 33u) { c = vec3<f32>(0.75, 0.32, 0.3) * sh; }
       // (rivers: blue, lava: orange)
       if (g.rx < 1.0 && g.h >= AP.sea) { c = select(vec3<f32>(0.2, 0.42, 0.7), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u) * mix(1.0, sh, 0.5); }
       // (round 71: the coarse world — set lava's basalt dark, ash grey, rubble brown, running lava glowing)

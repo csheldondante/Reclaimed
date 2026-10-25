@@ -47,6 +47,7 @@ const SLIDERS: [keyof AtlasParams, string, number, number, number][] = [
   ['formPer', 'landforms a turn (fewer: bigger)', 1, 12, 1],
   ['detail', 'region detail', 0, 1, 0.05],
   ['craters', 'impact craters', 0, 64, 1],
+  ['oddities', 'oddities (crystals, domes)', 0, 30, 1],
   ['warpCell', 'border wiggle', 0, 20, 1],
 ];
 

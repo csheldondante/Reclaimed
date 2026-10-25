@@ -78,6 +78,8 @@ export interface AtlasParams {
   craters: number;
   /** settlement sites (round 78, sites.ts), joined by roads */
   sites: number;
+  /** atlas-scale oddities (round 78): clusters of faceted crystal mountains and bulbous domes */
+  oddities: number;
 }
 
 export const DEFAULT_ATLAS: AtlasParams = {
@@ -110,6 +112,7 @@ export const DEFAULT_ATLAS: AtlasParams = {
   detail: 0.5,
   craters: 18,
   sites: 140,
+  oddities: 16,
 };
 
 /** what `?a.<key>=` may set (the viewer's sliders write the same) */
@@ -146,7 +149,7 @@ interface Extra {
 const PARAM_BYTES = 144;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 16;
-const COLG_BYTES = 72;
+const COLG_BYTES = 76;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;
@@ -163,10 +166,15 @@ const GEYSER_SPACING = 64;
 const MAT_SINTER = 37;
 
 /**
- * The macro height's impact craters (round 78): in the river buffer after its n² words of nearest nodes
- * (compose.wgsl craterAt) — a count, then CRATER_WORDS each: x, y (world), radius, depth, rim (0 worn
- * flat .. 1 sharp), central peak's height. One shader is at its storage buffers' limit, so they share.
+ * The macro height's stamps (round 78): in the river buffer after its n² words of nearest nodes
+ * (compose.wgsl stampsAt) — a count, then CRATER_WORDS each: x, y (world), radius, height, a, b, kind,
+ * material. One shader is at its storage buffers' limit, so they share.
+ *  crater (kind 0)  height: its depth; a: rim (0 worn flat .. 1 sharp); b: a central peak's height
+ *  facet  (kind 1)  a faceted crystal mountain: height its point's; a: its turn; b: its faces
+ *  bulb   (kind 2)  a bulbous dome: height its top's; a: how lobed
+ * Craters go first (the continents' noise takes only them); oddities are placed on land after the regions.
  */
+export const STAMP = { crater: 0, facet: 1, bulb: 2 } as const;
 const CRATER_WORDS = 8;
 export const MAX_CRATERS = 64;
 const CRATER_BLOCK = 4 + MAX_CRATERS * CRATER_WORDS;
@@ -456,6 +464,9 @@ export class Atlas {
     // ---- the CPU: dense ids, stats, tiny regions merged, the table -------------
     const [L, I, C] = await this.time('readback', async () => [new Uint32Array(await this.read(label)), new Uint32Array(await this.read(info)), new Uint32Array(await this.read(cont))]);
     await this.time('regions (cpu)', () => this.regionsCpu(L, I, C));
+    // the oddities (round 78): on land, now that the land's known; in the ground from here on
+    this.makeOddities();
+    writeCraters();
     dev.queue.writeBuffer(this.region, 0, this.regionOf);
     await this.time('patterns', () => this.patterns());
 
@@ -492,6 +503,17 @@ export class Atlas {
         const d = this.defs[this.regionOf[i]];
         water[i] = d.stat.land ? 0 : 1;
         volcanic[i] = lavaKinds.has(d.kind) ? 1 : 0;
+      }
+      // (no lava out of an oddity's top: a crystal on a lava field isn't a vent)
+      const ku = new Uint32Array(this.craters.buffer);
+      for (let o = 0; o < this.craters.length; o += CRATER_WORDS) {
+        if (ku[o + 6] === 0) continue;
+        const R = this.craters[o + 2] * 1.25;
+        const tx = Math.floor((this.craters[o] / this.worldW) * n);
+        const ty = Math.floor((this.craters[o + 1] / this.worldH) * n);
+        const rt = Math.ceil((R / this.worldW) * n);
+        for (let dy = -rt; dy <= rt; dy++)
+          for (let dx = -rt; dx <= rt; dx++) if (dx * dx + dy * dy <= rt * rt) volcanic[(((ty + dy) % n) + n) % n * n + ((((tx + dx) % n) + n) % n)] = 0;
       }
       return findRivers({ n, hmac: this.hmac, water, volcanic, regionOf: this.regionOf, sea: p.sea, worldW: this.worldW, worldH: this.worldH });
     });
@@ -540,8 +562,52 @@ export class Atlas {
       const R = 120 + 900 * r() ** 3;
       const age = r();
       out.set([r() * this.worldW, r() * this.worldH, R, Math.min(R * 0.07, 45) * (1 - 0.6 * age), 1 - age * 0.8, R > 450 ? Math.min(R * 0.05, 40) : 0, 0, 0], i * CRATER_WORDS);
+      // (kind crater 0, material 0: the u32 words are zero either way)
     }
     this.craters = out;
+  }
+
+  /**
+   * Atlas-scale oddities (round 78: "atlas scale weird features like faceted crystals or bulbous bumps in
+   * the height map"): clusters on land regions' middles — faceted crystal mountains (a main one and smaller
+   * ones round it, quartz) or bulbous domes (granite in the earth style, coral in the strange, flesh in
+   * the flesh), appended to the craters (STAMP).
+   */
+  private makeOddities(): void {
+    const r = rng(this.p.seed * 3571 + 41);
+    const room = MAX_CRATERS - this.craters.length / CRATER_WORDS;
+    const land = this.defs.filter((d) => d.stat.land && d.stat.contArea > 2000);
+    const out: number[] = [];
+    const style = this.p.style;
+    const bulbMat = style === 2 ? 33 : style === 1 ? 34 : 1;
+    for (let c = 0; c < Math.round(this.p.oddities) && land.length; c++) {
+      const d = land[Math.floor(r() * land.length)];
+      const cx = d.stat.cx * this.worldW;
+      const cy = d.stat.cy * this.worldH;
+      const facet = r() < (style === 2 ? 0.3 : 0.55);
+      const k = facet ? 1 + Math.floor(r() * 4) : 3 + Math.floor(r() * 6);
+      const R0 = facet ? 140 + 260 * r() : 70 + 140 * r();
+      for (let i = 0; i < k; i++) {
+        if (out.length / CRATER_WORDS >= room) break;
+        const R = i === 0 ? R0 : R0 * (0.3 + 0.5 * r());
+        const a = r() * Math.PI * 2;
+        const dd = i === 0 ? 0 : R0 * (0.6 + 0.9 * r());
+        const x = cx + Math.cos(a) * dd;
+        const y = cy + Math.sin(a) * dd;
+        if (facet) out.push(x, y, R, R * (0.9 + 0.8 * r()), r() * Math.PI * 2, 5 + Math.floor(r() * 4), STAMP.facet, 36);
+        else out.push(x, y, R, R * (0.45 + 0.35 * r()), r(), 0, STAMP.bulb, bulbMat);
+      }
+    }
+    const all = new Float32Array(this.craters.length + out.length);
+    all.set(this.craters);
+    all.set(out, this.craters.length);
+    // (the kind and material words are u32s)
+    const u = new Uint32Array(all.buffer);
+    for (let i = this.craters.length; i < all.length; i += CRATER_WORDS) {
+      u[i + 6] = all[i + 6];
+      u[i + 7] = all[i + 7];
+    }
+    this.craters = all;
   }
 
   /** the simulated tiles: two reaction–diffusion patterns and a cellular-automaton cave map */

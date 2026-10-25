@@ -4368,3 +4368,17 @@ the sea, a dome up to ~100, rock pillars. Found in the columns by
 scripts/cavernprobe.mjs (a void 33–53 under ground at 120 at its edge).
 The column batch's cost didn't move (97.7 ms a 64² region, 116 ms a 256²
 window). atlastest 6/6, tiertest 4/4, coarsetest 5/5.
+
+## Round 78 — oddities: faceted crystal mountains, bulbous domes (places)
+
+Why: "consider also adding atlas scale weird features like faceted crystals
+or bulbous bumps in the height map". Clusters (16 on seed 1: 27 crystals,
+19 domes) stamped like the craters: a crystal a pyramid of planes to its
+point (140–400 across, as tall), domes lobed with steep feet, each of its
+own material in the columns. Lava rivers started at a crystal's point on a
+lava field — the volcanic sources skip the oddities now.
+
+tiertest: the cliff it found was a basalt plateau's whose lava falls cool
+to basalt while the test runs (the columns changed: not the slicing); it
+takes a non-volcanic plateau 240 or more high now, and reports the first
+column that differs when one does. atlastest 6/6, tiertest 4/4.
