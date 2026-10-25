@@ -65,7 +65,27 @@ struct Globals {
   // x: the sea's level in window z (round 79: past the window's edge the world is sea at it, so the sea in
   // the window doesn't drain out of it; −1e9 none)
   ocean: vec4<f32>,
+  // (round 80, sim/sleep.ts) a bit a chunk (16 × 16 columns), set: asleep — the systems that change the
+  // ground skip it; its water and lava keep their depth and flow (drawn moving). 2 048 chunks at most.
+  sleep: array<vec4<u32>, 16>,
+  // (round 80) a bit a chunk, set: just fallen asleep (a quarter second) — the passes that write the next
+  // layers carry its slots through once, so the next layers hold what its last awake tick left
+  drowse: array<vec4<u32>, 16>,
 };
+
+/** Has column q's chunk just fallen asleep (round 80)? */
+fn drowsy(q: vec2<u32>) -> bool {
+  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
+  if (c >= 2048u) { return false; }
+  return ((G.drowse[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
+}
+
+/** Is column q's chunk asleep (round 80)? Past the mask's 2 048 chunks: awake. */
+fn asleep(q: vec2<u32>) -> bool {
+  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
+  if (c >= 2048u) { return false; }
+  return ((G.sleep[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
+}
 
 // ---- the season (round 51): leaves turn, fall, and come back -------------------
 /** 0..1 how far the deciduous leaves have turned (autumn; gone again by spring). */

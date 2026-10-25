@@ -731,6 +731,23 @@ its edge:
   shifts with the window's mesh on a slide and is repacked after every
   slide (`Streamer.refreshBand`). `?skip=band` leaves it out. ~58 MB
   (vertex room 2, 3 rebuild slots, samples up the world's height).
+- **Sleep and wake** (round 80, sim/sleep.ts `Sleep`, the atlas level):
+  each chunk (16 × 16, the layers') is awake until a time. Globals.sleep
+  (a bit a chunk, set: asleep; 2 048 chunks) and Globals.drowse (fallen
+  asleep in the last 0.25 s); common.wgsl `asleep`, `drowsy`. Skipped
+  asleep: surface, structure, edit, water, oil, lava, contamination,
+  moisture, fire, wilt, ecology, sediment (its deposit cleared: what lands
+  fades), climate. The double-buffered ones copy their value through when
+  asleep (their next buffers are copied back over them every tick, and the
+  streamer doesn't fill the next ones); structure and edit copy a column's
+  slots only while drowsy (sediment, lava and climate write the layers in
+  place after the next layers are written: once is enough, then the two
+  agree). Water's and lava's flux isn't touched asleep: the surface is
+  drawn moving, and a frozen river goes on feeding what's awake below it.
+  Wakers: the camera's target (40, 1.5 s), Globals.events (+16, 8 s),
+  storms over 0.2 intensity, a slide's new chunks (1.5 s), everything
+  after a slide in z (2 s), coarse events in sight, integrity's column
+  writes, placed models (WorldCore.sleep). `?sleep=0` off.
 - The sea in a streamed window (round 79): `Globals.ocean.x` (`seaZ`, window z; the atlas level sets it
   from the start) — water_flux.wgsl's off-map neighbour stands at least at it, so the sea doesn't drain out
   of the window's edges (it did: in seconds, during the warmup). The atlas's sea is at 90 (was 28: 27

@@ -25,6 +25,12 @@ const RAIN_LEACH: f32 = 0.00012;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
+  if (asleep(id.xy)) {
+    let ia = colIdx(id.x, id.y);
+    contamOut[ia] = contamIn[ia];
+    return;
+  }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let c = contamIn[i];

@@ -69,6 +69,8 @@ export class WorldCore {
   private t0 = performance.now();
   private strikeAge = 99;
   pollution = 1;
+  /** sleep and wake (round 80, sim/sleep.ts), when the scene has it: what writes the columns wakes them */
+  sleep?: import('../sim/sleep').Sleep;
   light!: Daylight;
 
   constructor(

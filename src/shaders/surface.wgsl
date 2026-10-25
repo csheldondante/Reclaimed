@@ -25,7 +25,8 @@
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (a sleeping chunk: round 80)
+  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let cs = colSlots(id.x, id.y);
   var arr: array<vec4<u32>, MAX_K>;

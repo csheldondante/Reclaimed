@@ -400,6 +400,8 @@ export class Integrity {
     const data = packColumn(col, k);
     this.world.slots.set(data, base * SLOT_WORDS);
     this.core.host.gpu.device.queue.writeBuffer(this.core.world.layers, base * SLOT_WORDS * 4, data);
+    // (round 80: a column written under a sleeping chunk wakes it — its surface, its water, its slumping)
+    this.core.sleep?.wake(x + 0.5, (y + 0.5) * ROW_H, 16, 8, performance.now() / 1000);
   }
 }
 

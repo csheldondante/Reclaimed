@@ -603,7 +603,8 @@ fn spillOut(p: vec2<i32>) -> Spill {
 /** Pass 1: what leaves each column's top this pass, and where it goes. */
 @compute @workgroup_size(8, 8)
 fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (a sleeping chunk: round 80)
+  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let mat = driftMatAt(p);
@@ -655,6 +656,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
+  // (round 80: asleep — what lands here fades: the ground doesn't change, V12)
+  if (asleep(id.xy)) {
+    deposit[i] = vec4<f32>(0.0);
+    return;
+  }
   let cs = colSlots(id.x, id.y);
   // the top's material, as the view sees it (dust when there's no loose ground)
   let m0 = driftMatAt(p);

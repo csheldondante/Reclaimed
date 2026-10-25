@@ -92,6 +92,13 @@ fn lateral(q: vec2<i32>, z0: f32, z1: f32) -> u32 {
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
+  if (asleep(id.xy)) {
+    if (!drowsy(id.xy)) { return; }
+    let cs = colSlots(id.x, id.y);
+    for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = layersIn[cs.x + k]; }
+    return;
+  }
   let p = vec2<i32>(id.xy);
   let cs = colSlots(id.x, id.y);
   var n = 0u;

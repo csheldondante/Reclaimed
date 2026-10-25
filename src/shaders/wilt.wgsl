@@ -38,7 +38,8 @@ fn doomTime(tier: f32) -> f32 { return select(select(11.0, 8.0, tier < 2.5), 6.0
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (a sleeping chunk: round 80)
+  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
   let i = colIdx(id.x, id.y);
   let m = groundMatAt(vec2<i32>(id.xy), sfMat(surface[i]));
   let v = veg[i];

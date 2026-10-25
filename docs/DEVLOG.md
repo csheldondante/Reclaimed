@@ -4580,3 +4580,31 @@ desktop, 20 s: base p50 10.1, p95 25.3, 6 hitches; no sim p50 9.9, p95
 10.7, 2; no shadow, plants or band p50 9.9, p95 21.3, 8 — the slow frames
 are the sim's (ticks caught up after a slow frame), drawing barely moves
 it here.
+
+## Round 80 — sleep and wake, part 1 (places)
+
+Why: the phone's split — the sim ~13 ms of a 30 ms frame and most of its
+spikes (`?skip=sim`: p50 17, p95 50) — and the user's plan: "freezing parts
+of the simulation (like rigidbodies going to rest in a physics engine) and
+then unfreezing selectively based on player interactions" ("in theory it
+can still look very reactive and we just wake as needed right?" — yes).
+
+- sim/sleep.ts and the Globals masks; 16 kernels skip sleeping chunks.
+- Two bugs on the way: (1) the plants vanished where asleep — the double-
+  buffered systems' next buffers are copied back over theirs every tick,
+  and a sleeping column left stale (never written: the streamer writes
+  only the live buffers) values in them; asleep, they carry their value
+  through now. (2) carrying the layers through every tick cost 1.2 ms
+  (edit and structure, 16 slots a column); only while drowsy (0.25 s after
+  a chunk falls asleep) now — sediment, lava and climate write the layers
+  in place after the next layers are written, so once is needed.
+- Awake while riding: 120–200 of 256 chunks at first (land just come in
+  woke for 4 s); 1.5 s now, the player's ring 40 (was 48).
+- Desktop at the phone's size, low, 18/s, 25 s: sleep off — p50 10.0, p95
+  20.3, worst 205, 5 hitches, the sim's GPU 4.69 ms a frame; on — p50 9.9,
+  p95 13.4, worst 43, 0 hitches, 2.03 ms. The coast with and without:
+  the same.
+- Left: the sleeping chunks' threads still start (a dispatch over the
+  awake ones only is the next step), bodies in motion keeping theirs awake.
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.

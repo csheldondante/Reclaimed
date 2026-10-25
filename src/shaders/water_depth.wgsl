@@ -19,6 +19,13 @@ const EVAP_DEEP: f32 = 0.000002;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
+  if (asleep(id.xy)) {
+    let ia = colIdx(id.x, id.y);
+    waterOut[ia] = water[ia];
+    waterPrev[ia] = water[ia];
+    return;
+  }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let d = water[i];

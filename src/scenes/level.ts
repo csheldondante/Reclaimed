@@ -34,7 +34,8 @@ import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import type { MapData } from '../world/mapgen';
-import { type Interval, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
+import { Sleep } from '../sim/sleep';
+import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -94,6 +95,8 @@ export class LevelScene implements Scene {
   private saveTimer = 0;
   private speed: number;
   private fps = 60;
+ /** sleep and wake (round 80, sim/sleep.ts): the atlas level's; ?sleep=0 off */
+  private sleep?: Sleep;
   private noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
   private ticksAvg = 1;
   /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
@@ -340,6 +343,8 @@ export class LevelScene implements Scene {
     let ey = e.y / ROW_H - (S.origin[1] + 0.5);
     ex -= Math.round(ex / worldW) * worldW;
     ey -= Math.round(ey / (worldH / ROW_H)) * (worldH / ROW_H);
+    // (round 80: what it cuts or buries in the window wakes — its columns change under a sleeping chunk)
+    this.sleep?.wake(ex + 0.5, (ey + 0.5) * ROW_H, reach + 16, Sleep.EVENT_S, performance.now() / 1000);
     const rc = reach / ROW_H;
     const x0 = Math.floor(ex - reach);
     const x1 = Math.ceil(ex + reach);
@@ -387,6 +392,7 @@ export class LevelScene implements Scene {
     const S = this.stream;
     if (S) out.push(`stream slides ${S.stats.slides}  z ${S.stats.tiers}  last ${S.stats.lastMs}ms  made ${S.stats.generated}  thawed ${S.stats.thawed}${S.busy ? '  BUSY' : ''}`);
     if (this.drive) out.push(`drive ${this.drive.speed}/s  zoom ${this.core.camera.zoom.toFixed(2)}`);
+    if (this.sleep) out.push(`awake chunks ${this.sleep.awake} of ${(this.core.dims.w / CHUNK) * (this.core.dims.h / CHUNK)}`);
     return out;
   }
 
@@ -895,6 +901,19 @@ export class LevelScene implements Scene {
       if (a && core.renderer.enableBand(a.atlas.p.zTop)) this.stream.refreshBand();
       // (round 79) the sea past the window's edge: the sea in it stays
       if (a) core.globals.seaZ = a.atlas.p.sea - this.stream.oz;
+      // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
+      if (a && host.params.get('sleep') !== '0') {
+        this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);
+        this.sleep.wakeAll(Sleep.SETTLE_S, performance.now() / 1000);
+        core.sleep = this.sleep;
+        const sl = this.sleep;
+        this.stream.onSlide.push((dx, dy, dz) => {
+          const t = performance.now() / 1000;
+          // (a slide in z: every column cut again — the surfaces made again everywhere, the water settles)
+          if (dz) sl.wakeAll(2, t);
+          else sl.shift(dx, dy, t);
+        });
+      }
       // (round 79) ?drive=speed: along the road nearest the window's middle (unwrapped from its first point)
       const dv = Number(host.params.get('drive') ?? 0);
       if (a && dv > 0) {
@@ -1207,6 +1226,11 @@ export class LevelScene implements Scene {
 
     // (a slide in progress: the sim waits for the regions coming in)
     void this.stream?.update();
+    // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
+    if (this.sleep) {
+      globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms);
+      globals.drowse = this.sleep.drowse;
+    }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
@@ -1990,6 +2014,7 @@ export class LevelScene implements Scene {
       }
     const { device } = this.host.gpu;
     for (const w of writes) device.queue.writeBuffer(core.world.layers, w.at * SLOT_WORDS * 4, w.data);
+    core.sleep?.wake(x0 + fw / 2, (y0 + fd / 2) * ROW_H, Math.max(fw, fd) + 16, Sleep.EVENT_S, performance.now() / 1000);
     // (the loose ground under it stays in the layers, under the model)
     if (!this.physics) this.integrity?.markBox(x0 - 2, y0 - 2, x0 + fw + 2, y0 + fd + 2);
   }

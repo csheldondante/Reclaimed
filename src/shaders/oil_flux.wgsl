@@ -15,7 +15,8 @@ const CURRENT_DRAG: f32 = 0.6;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (a sleeping chunk: round 80)
+  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let o = oil[i];
