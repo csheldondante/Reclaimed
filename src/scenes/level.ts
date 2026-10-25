@@ -32,6 +32,7 @@ import { WorldCore, type Host, type Scene } from './world-core';
 import { Streamer, shiftGrid, REGION, TIER, boxOf } from './streamer';
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import { EV, eventAt } from '../atlas/coarse';
+import { FarLand } from '../atlas/far';
 import type { MapData } from '../world/mapgen';
 import { type Interval, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
@@ -188,6 +189,7 @@ export class LevelScene implements Scene {
 
   private worldEvents: Promise<void> = Promise.resolve();
   private atlasCtl?: HTMLDivElement;
+  private far?: FarLand;
 
   /**
    * Buttons for the atlas level, for touch (round 72): the free camera on and off; while flying,
@@ -799,6 +801,19 @@ export class LevelScene implements Scene {
       // (round 71) an event of the coarse world in sight is made in the window's columns too
       // the atlas level's buttons (round 72: a phone has no F, WASD, M or V)
       if (a) this.atlasControls();
+      // the land beyond the window (round 73): the atlas's ground and the coarse world, out to the sky
+      if (a) {
+        const far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets);
+        this.far = far;
+        const S = this.stream;
+        core.renderer.extraDraws.push((pass, clear) => {
+          far.org = [S.origin[0], S.origin[1] * ROW_H, S.oz];
+          far.win = [dims.w + 0.5, dims.h * ROW_H];
+          const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;
+          far.mid = [c[0], c[1]];
+          far.draw(pass, clear);
+        });
+      }
       // (one after another: each reads the window back and writes it)
       if (a) a.atlas.coarse.onEvent.push((e) => (this.worldEvents = this.worldEvents.then(() => this.worldEventHere(e))));
       // (round 69: the atlas's forms of a weak material are judged when they come in, like anything
@@ -1918,6 +1933,7 @@ export class LevelScene implements Scene {
   dispose(): void {
     this.abort.abort();
     this.atlasCtl?.remove();
+    this.far?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

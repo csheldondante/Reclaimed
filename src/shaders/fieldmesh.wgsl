@@ -138,9 +138,9 @@ fn smin(a: f32, b: f32, k: f32) -> f32 {
 
 fn field(p: vec3<f32>) -> f32 { return smin(terrainField(p), structField(p).x, FILLET); }
 
-const CHUNK0: u32 = 16u;
-const CSTRIDE: u32 = 12u;
 fn cbase(c: u32) -> u32 { return CHUNK0 + c * CSTRIDE; }
+/** the mesh range a chunk's vertices and indices are in (word 10: its own at first; a slide hands them on) */
+fn rangeOf(c: u32) -> u32 { return atomicLoad(&state[cbase(c) + 10u]); }
 
 // ---- change detection -------------------------------------------------------
 
@@ -153,13 +153,22 @@ fn mixHash(h: u32, v: u32) -> u32 { return (h ^ v) * 16777619u; }
 fn chunkRect(c: u32) -> vec4<f32> {
   let cx = f32(c % MR.n.x);
   let cy = f32(c / MR.n.x);
-  let s = MR.o.x;
-  return vec4<f32>(cx * s, cy * s, (cx + 1.0) * s, (cy + 1.0) * s);
+  // (round 73: a row of samples a row of cells, so a slide is whole chunks both ways)
+  let s = vec2<f32>(MR.o.x, MR.o.z);
+  return vec4<f32>(cx * s.x, cy * s.y, (cx + 1.0) * s.x, (cy + 1.0) * s.y);
 }
 
+/** a chunk with nothing built (new, or come in fresh with a slide): its built hash */
+const FRESH: u32 = 0x9e3779b9u;
+
+// (round 73) two passes a frame: the chunks with nothing built claim the rebuild slots first — a
+// strip that slid in fresh mustn't wait behind chunks whose leaf litter moved a sixteenth
 @compute @workgroup_size(64)
-fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) {
-  let c = wid.x;
+fn hashFresh(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) { hashChunk(wid.x, li, true); }
+@compute @workgroup_size(64)
+fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_index) li: u32) { hashChunk(wid.x, li, false); }
+
+fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   if (li == 0u) {
     atomicStore(&wgHash, 0u);
     atomicStore(&wgTop, 0u);
@@ -173,14 +182,19 @@ fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_i
   let i1 = min(i32(ceil(rc.z + 2.0)) + 1, i32(G.mapW) - 1);
   let w = u32(max(i1 - i0 + 1, 0));
   // (out of view: not looked at; its hash stays old, so it's rebuilt once it's in view)
-  let vis = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]) != 0u;
+  let b0 = cbase(c);
+  let built = atomicLoad(&state[b0 + 5u]);
+  // (this frame's first pass took it already; the second only takes the rest)
+  let taken = atomicLoad(&state[b0 + 11u]) == atomicLoad(&state[15]);
+  let vis = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]) != 0u && !taken && (!freshOnly || built == FRESH || built == 0u);
   let n = select(0u, w * u32(max(j1 - j0 + 1, 0)), vis);
   var sum = 0u;
   var top = 0.0;
   for (var t = li; t < n; t += 64u) {
     let q = vec2<i32>(i0 + i32(t % w), j0 + i32(t / w));
     let cs = colSlots(u32(q.x), u32(q.y));
-    var h = 2166136261u ^ (u32(q.x) * 73856093u) ^ (u32(q.y) * 19349663u);
+    // (where it is in the world, not the window: what a slide moved still hashes the same)
+    var h = 2166136261u ^ (bitcast<u32>(q.x + i32(G.org.z)) * 73856093u) ^ (bitcast<u32>(q.y + i32(G.org.w)) * 19349663u);
     for (var i = 0u; i < cs.y; i++) {
       let v = layers[cs.x + i];
       if (ivEmpty(v)) { break; }
@@ -208,7 +222,11 @@ fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_i
   let at = atomicAdd(&state[0], 1u);
   if (at >= MR.k.y) { return; }
   atomicStore(&state[1u + at], c);
+  atomicStore(&state[b + 11u], atomicLoad(&state[15]));
   atomicStore(&state[b + 6u], h);
+  // (its range is made again where it is now: no translation)
+  let ob = offBase() + rangeOf(c) * 4u;
+  for (var k = 0u; k < 3u; k++) { atomicStore(&state[ob + k], 0u); }
   atomicStore(&state[b + 8u], atomicLoad(&wgTop));
   atomicStore(&state[b], 0u);
   atomicStore(&state[b + 7u], 0u);
@@ -226,7 +244,7 @@ fn hashChunks(@builtin(workgroup_id) wid: vec3<u32>, @builtin(local_invocation_i
 fn sideN() -> u32 { return MR.k.x + 3u; }
 fn slotSamples() -> u32 { return sideN() * sideN() * MR.n.z; }
 
-struct Job { ok: bool, c: u32, slot: u32, l: vec3<u32>, top: f32 };
+struct Job { ok: bool, c: u32, slot: u32, l: vec3<u32>, top: f32, r: u32 };
 
 var<workgroup> wgJob: vec3<u32>;
 var<workgroup> wgN: atomic<u32>;
@@ -242,14 +260,19 @@ fn job(id: vec3<u32>, li: u32) -> Job {
     var c = NONE;
     if (j.slot < min(atomicLoad(&state[0]), MR.k.y)) { c = atomicLoad(&state[1u + j.slot]); }
     var top = 0u;
-    if (c != NONE) { top = atomicLoad(&state[cbase(c) + 8u]); }
-    wgJob = vec3<u32>(c, top, 0u);
+    var r = 0u;
+    if (c != NONE) {
+      top = atomicLoad(&state[cbase(c) + 8u]);
+      r = rangeOf(c);
+    }
+    wgJob = vec3<u32>(c, top, r);
     atomicStore(&wgN, 0u);
   }
   workgroupBarrier();
   let w = workgroupUniformLoad(&wgJob);
   j.c = w.x;
   j.top = bitcast<f32>(w.y);
+  j.r = w.z;
   j.ok = j.c != NONE && all(j.l < vec3<u32>(sideN(), sideN(), MR.n.z));
   return j;
 }
@@ -282,7 +305,7 @@ fn cellVert(j: Job, l: vec3<u32>) -> u32 { return scratch[sampleIdx(j, l) + slot
 /** World position of a chunk's local sample (one lattice over the map; local 0 is the sample before the chunk). */
 fn samplePos(j: Job, l: vec3<u32>) -> vec3<f32> {
   let g = vec2<i32>(i32((j.c % MR.n.x) * MR.k.x + l.x) - 1, i32((j.c / MR.n.x) * MR.k.x + l.y) - 1);
-  return vec3<f32>(f32(g.x) * MR.o.y, f32(g.y) * MR.o.y, (f32(l.z) - 1.0) * MR.o.y);
+  return vec3<f32>(f32(g.x) * MR.o.y, f32(g.y) * MR.o.w, (f32(l.z) - 1.0) * MR.o.y);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -336,7 +359,7 @@ fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     acc += mix(vec3<f32>(CORNER[a]), vec3<f32>(CORNER[b]), t);
     n += 1.0;
   }
-  let p = samplePos(j, j.l) + acc / n * MR.o.y;
+  let p = samplePos(j, j.l) + acc / n * vec3<f32>(MR.o.y, MR.o.w, MR.o.y);
   scratch[ci] = at;
   // the normal: the field's gradient (central differences of the field itself,
   // not the samples, so it's smooth across cells)
@@ -349,12 +372,12 @@ fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
   // which of the two it is: the terrain, a structure, or the fillet between
   let s = structField(p);
   let share = clamp(0.5 + (terrainField(p) - s.x) / FILLET, 0.0, 1.0);
-  let o = (j.c * MR.k.z + at) * 2u;
+  let o = (j.r * MR.k.z + at) * 2u;
   verts[o] = vec4<u32>(bitcast<u32>(p.x), bitcast<u32>(p.y), bitcast<u32>(p.z), bitcast<u32>(s.y));
   verts[o + 1u] = vec4<u32>(bitcast<u32>(nrm.x), bitcast<u32>(nrm.y), bitcast<u32>(nrm.z), bitcast<u32>(share));
 }
 
-fn shareOf(j: Job, v: u32) -> f32 { return bitcast<f32>(verts[(j.c * MR.k.z + v) * 2u + 1u].w); }
+fn shareOf(j: Job, v: u32) -> f32 { return bitcast<f32>(verts[(j.r * MR.k.z + v) * 2u + 1u].w); }
 
 /** The four vertices round a crossed edge, or x NONE (a cell without one, or all structure: its cubes draw it). */
 fn quadVerts(j: Job, a: vec3<u32>, b: vec3<u32>, c: vec3<u32>, d: vec3<u32>) -> vec4<u32> {
@@ -395,7 +418,7 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
   }
   let at = claim(j, n * 6u, li, 0u, MR.k.w);
   if (at == NONE) { return; }
-  let o = j.c * MR.k.w + at;
+  let o = j.r * MR.k.w + at;
   for (var k = 0u; k < n; k++) {
     let t = q[k];
     indices[o + k * 6u] = t.x;
@@ -405,4 +428,39 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     indices[o + k * 6u + 4u] = t.z;
     indices[o + k * 6u + 5u] = t.w;
   }
+}
+
+// ---- a slide (round 73: the streamed window moved, fieldmesh.ts shift) ----------
+// What's built moves with the land instead of being built again: chunk c takes
+// the record of the chunk the land came from (SH.d chunks along), so its hash
+// (the world's) still matches and its range (word 10) still holds its mesh;
+// every range's translation gains the slide; the chunks the land came into
+// fresh take the ranges the leaving ones held (the chunks go round), empty
+// and to be built.
+struct Shift { d: vec4<i32>, t: vec4<f32> };
+@group(0) @binding(31) var<uniform> SH: Shift;
+@group(0) @binding(10) var<storage, read> stateOld: array<u32>;
+
+@compute @workgroup_size(64)
+fn shiftChunks(@builtin(global_invocation_id) id: vec3<u32>) {
+  let n = MR.n.x * MR.n.y;
+  let c = id.x;
+  if (c >= n) { return; }
+  let cx = i32(c % MR.n.x);
+  let cy = i32(c / MR.n.x);
+  let sx = cx + SH.d.x;
+  let sy = cy + SH.d.y;
+  let fresh = sx < 0 || sy < 0 || sx >= i32(MR.n.x) || sy >= i32(MR.n.y);
+  let wx = (sx + i32(MR.n.x)) % i32(MR.n.x);
+  let wy = (sy + i32(MR.n.y)) % i32(MR.n.y);
+  let src = u32(wy) * MR.n.x + u32(wx);
+  for (var k = 0u; k < CSTRIDE; k++) { atomicStore(&state[cbase(c) + k], stateOld[cbase(src) + k]); }
+  if (fresh) {
+    atomicStore(&state[cbase(c)], 0u);
+    atomicStore(&state[cbase(c) + 5u], FRESH);
+    atomicStore(&state[cbase(c) + 9u], 0u);
+  }
+  // (range c's translation: all that's built moved the same way)
+  let ob = offBase() + c * 4u;
+  for (var k = 0u; k < 3u; k++) { atomicStore(&state[ob + k], bitcast<u32>(bitcast<f32>(stateOld[ob + k]) + SH.t[k])); }
 }

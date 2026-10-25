@@ -313,6 +313,28 @@ ripples, bursts, a wake and a physics blast.
 
 ## Rendering
 
+The field mesh through a slide (round 73): chunks are CHUNK across and
+CHUNK rows down (samples a row apart in y), so a slide is whole chunks both
+ways; each chunk record holds the mesh range its geometry is in (word 10)
+and each range a translation (after the records: meshregion.wgsl offBase).
+`FieldMesh.shift` (fieldmesh.wgsl shiftChunks) hands every chunk the record
+of the chunk its land came from and adds the slide to every range's
+translation; the chunks the land came into fresh take the leaving ones'
+ranges, empty, to be built; chunks hash their columns where they are in the
+world, so moved land doesn't count as changed; a range's translation is
+zeroed when its chunk is rebuilt; vsMesh adds it. Each frame a first hash
+pass gives the rebuild slots to chunks with nothing built, a second to the
+rest.
+
+The land beyond the window (round 73, atlas/far.ts, far.wgsl): a grid
+round the camera (161² vertices, 32 world units apart) of the atlas's
+macro ground at half resolution and the coarse world's changes, coloured by
+each region's ground (its top's colour, green where it grows, snow where
+it's freezing, the sea); it sinks away under the window (the columns draw
+over it, meeting at the edge) and fades into the sky. The fixed view draws
+only what's beyond the window's two far edges (anything past both near
+edges could stand between the eye and the window). `Renderer.extraDraws`.
+
 The camera (render/camera.ts): the fixed isometric orthographic view, or
 (round 69, F in a level) a free perspective camera (`Camera.fly`: where it
 is, yaw, pitch, field of view). The draw shaders get its position

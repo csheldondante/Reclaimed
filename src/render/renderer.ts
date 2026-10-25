@@ -96,6 +96,12 @@ export class Renderer {
   /** the field mesh (G13 h: ?mesh=1) */
   readonly fieldMesh: FieldMesh;
   private meshPipe?: GPURenderPipeline;
+  /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
+  readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
+  /** what an extra draw renders into, and the camera it reads (render.wgsl Camera) */
+  get targets(): { format: GPUTextureFormat; pickFormat: GPUTextureFormat; depthFormat: GPUTextureFormat; camera: GPUBuffer } {
+    return { format: this.colorFormat, pickFormat: PICK_FORMAT, depthFormat: DEPTH_FORMAT, camera: this.camBuf };
+  }
   private meshGroup?: GPUBindGroup;
   private bodyCount = 0;
   static readonly MAX_BODY_VOXELS = 16384;
@@ -139,7 +145,7 @@ export class Renderer {
 
   constructor(
     private device: GPUDevice,
-    format: GPUTextureFormat,
+    private colorFormat: GPUTextureFormat,
     private world: WorldGpu,
     private profiler: Profiler,
     /** the field mesh unless ?mesh=0, rather than only with ?mesh=1 */
@@ -172,6 +178,7 @@ export class Renderer {
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
+    const format = this.colorFormat;
     this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom);
     // (a texel when there's no shadow pass: the draw shaders still bind one)
     const ss = this.fieldMesh.on ? shadowSize : 1;
@@ -362,11 +369,12 @@ export class Renderer {
       const meshLayout = makeLayout(
         device,
         'mesh-draw',
-        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler' },
+        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform' },
         VF,
-        // (a stage has eight storage buffers: the vertices are the vertex
-        // stage's, the look's and the water's (its film) the fragments')
-        { 3: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+        // (a stage has eight storage buffers: the vertices and the mesh's
+        // state (its translations) are the vertex stage's, the look's and the
+        // water's (its film) the fragments')
+        { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
       );
       const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, meshDrawWgsl]);
       this.meshPipe = device.createRenderPipeline({
@@ -383,6 +391,8 @@ export class Renderer {
         2: world.materials,
         3: this.fieldMesh.vertexBuffer,
         4: world.contam,
+        5: this.fieldMesh.stateBuffer,
+        30: this.fieldMesh.region,
         6: world.veg,
         7: world.renderFields,
         8: world.water,
@@ -585,6 +595,7 @@ export class Renderer {
       this.fieldMesh.draw(pass);
       this.profiler.draws++;
     }
+    for (const f of this.extraDraws) f(pass, opts.clear);
     if (this.bodyCount > 0 && !SKIP.has('bodies')) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);

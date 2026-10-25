@@ -4252,3 +4252,29 @@ M or V: the atlas level has buttons (bottom right) — the free camera on and
 off; while flying, held, forward, back, up, down (a finger's drag looks, a
 pinch moves along the view); a great meteor and an eruption at the ground
 in the middle of the screen.
+
+## Round 74 — tightening: the land beyond the window, slides that don't rebuild everything (atlas)
+
+The user tried it on a phone: trippy and compelling but glitchy next to main
+— only the window's chunks, and the rendering "loads weirdly … I briefly see
+the layers underground".
+- Why it loaded weirdly: the field mesh rebuilds 8 chunks a frame, and a
+  slide changed all 72 (everything in the window moved): for half a second
+  or more (a phone: more) stale meshes and cut layers showed. Now a slide
+  moves what's built with the land (records handed on, ranges translated,
+  hashes by world position): after a slide 4–16 chunks are found changed
+  (the strip that came in), not 72.
+- And it was always behind: the forest's leaf litter and soil creep change
+  ~590 columns a second in 51 of the 72 chunks (the valley: 189 in 14), so
+  the 8 slots were always busy and a fresh strip queued behind specks of
+  litter; fresh chunks claim the slots first now.
+- The land beyond the window (far.ts): the atlas's ground and the coarse
+  world's, to the sky. The first cut of it left a grey band at the window's
+  edge (cut away inside, the columns' land a little below it): it sinks
+  under the window now. In the fixed view the near side stood between the
+  eye and the window: only what's beyond the far edges is drawn there.
+- Flesh, coral and obsidian are meshed (smooth) like the other ground, not
+  drawn as prisms.
+
+atlastest 5/5, streamtest 8/8, tiertest 4/4, coarsetest 5/5; the valley
+looks as it did.

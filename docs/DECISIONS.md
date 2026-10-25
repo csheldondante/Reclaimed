@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 74 (session 5, `atlas`) — tried on a phone: tighten it up
+
+- "It looks very trippy though and I only see the local chunks (not the
+  distant coarse ones) and the rendering loads weirdly (am I seeing it load
+  in incrementally so I briefly see the layers underground?) either way this
+  is pretty rad just very glitchy at the moment compared to the main branch
+  which is fairly tight."
+- Done: the land beyond the window drawn; what's built moving with a slide
+  instead of being built again; fresh chunks built first.
+
 ## 2026-10-24 — round 73 (session 5, `atlas`) — trying it; rivers and lava
 
 - "Do rivers flow from high to low? It seems like a waste to have the good

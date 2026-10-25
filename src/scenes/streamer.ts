@@ -36,6 +36,8 @@ import type { WorldCore } from './world-core';
 export const REGION = 64;
 /** cells the window slides by in z */
 export const TIER = 32;
+/** the field mesh's chunks: cells across and rows down (fieldmesh.ts CHUNK) — a slide is whole ones */
+const MESH_CHUNK = 32;
 
 /** Where new land comes from: a region of w × h world cells from (x0, y0), y0 even, in world z. */
 export interface LandSource {
@@ -469,6 +471,8 @@ export class Streamer {
     shiftGrid(surf, W, H, 1, dx, dy);
     shiftGrid(this.outside, W, H, 1, dx, dy);
     core.camera.shift(dx, dy * ROW_H, 0);
+    // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
+    core.renderer.fieldMesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
     core.weather.shift(dx, dy * ROW_H);
     core.clearUndo();
     for (const f of this.onSlide) f(dx, dy, 0);
@@ -739,6 +743,7 @@ export class Streamer {
     dev.queue.submit([enc.finish()]);
     this.oz = oz;
     core.camera.shift(0, 0, dz);
+    core.renderer.fieldMesh.shift(0, 0, [0, 0, -dz]);
     core.clearUndo();
     void R;
     for (const f of this.onSlide) f(0, 0, dz);

@@ -17,7 +17,14 @@ struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32> };
  * rust, bone, canvas) — and drawn as prisms, sharp, the way the structure
  * grids stay cubes? (Smoothed, a ruin's walls melted into cones.)
  */
-fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE || m == 12u || m == 23u || m == 30u; }
+fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE || m == 12u || m == 23u || m == 30u || (m >= 33u && m <= 35u); }
+
+// the field mesh's state (fieldmesh.wgsl binding 9): CHUNK0 words, then CSTRIDE a chunk, then a word
+// a chunk (near the view), then (round 73) four a mesh range: the translation its vertices are drawn
+// with — the streamed window slid since they were made (fieldmesh.ts shift)
+const CHUNK0: u32 = 16u;
+const CSTRIDE: u32 = 12u;
+fn offBase() -> u32 { return CHUNK0 + MR.n.x * MR.n.y * (CSTRIDE + 1u); }
 
 /** Smooth value noise 0..1 (trilinear between hashed lattice values). */
 fn warpNoise(p: vec3<f32>) -> f32 {

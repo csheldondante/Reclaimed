@@ -10,6 +10,8 @@
 // the shading: rock in facets (rockFacet), rubble, trash, litter and ruins in
 // chips, each tilted its own way; sand, soil, ash and silt stay smooth.
 @group(0) @binding(9) var<storage, read> meshLayers: array<vec4<u32>>;
+// the mesh's state (round 73): each range's translation (meshregion.wgsl offBase), the vertex stage's
+@group(0) @binding(5) var<storage, read> meshState: array<u32>;
 
 struct MOut {
   @builtin(position) pos: vec4<f32>,
@@ -25,7 +27,9 @@ struct MOut {
 fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
   let a = instances[vi * 2u];
   let b = instances[vi * 2u + 1u];
-  let p = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z));
+  // (where it was made, moved by the slides since: its range's translation)
+  let ob = offBase() + (vi / MR.k.z) * 4u;
+  let p = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z)) + vec3<f32>(bitcast<f32>(meshState[ob]), bitcast<f32>(meshState[ob + 1u]), bitcast<f32>(meshState[ob + 2u]));
   var o: MOut;
   o.pos = CAM.viewProj * vec4<f32>(p, 1.0);
   o.wpos = p;

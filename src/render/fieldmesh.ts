@@ -42,6 +42,10 @@ export class FieldMesh {
   private groups: GPUBindGroup[] = [];
   private hash!: ComputeKernel;
   private hashGroup!: GPUBindGroup;
+  /** the first hash pass: chunks with nothing built (round 73) */
+  private hashF!: ComputeKernel;
+  private hashFGroup!: GPUBindGroup;
+  private frameNo = 0;
   /** chunks along x, y; samples along z; a chunk's cells per side (N); rebuild slots */
   private nx = 0;
   private ny = 0;
@@ -85,8 +89,9 @@ export class FieldMesh {
     const h = Number(q.get('meshh') ?? 1);
     const W = world.w + 0.5;
     const H = world.h * ROW_H;
+    // (a chunk is CHUNK across and CHUNK rows down: round 73, a slide is whole chunks both ways)
     this.nx = Math.ceil(W / CHUNK);
-    this.ny = Math.ceil(H / CHUNK);
+    this.ny = Math.ceil(H / (CHUNK * ROW_H));
     this.side = Math.round(CHUNK / h);
     this.nz = Math.ceil((world.zMax + 2) / h) + 2;
     // rebuild slots a frame: their scratch is the big cost in memory
@@ -100,7 +105,7 @@ export class FieldMesh {
     const ab = new ArrayBuffer(REGION_BYTES);
     const f = new Float32Array(ab);
     const u = new Uint32Array(ab);
-    f.set([CHUNK, h, 0, 0], 0);
+    f.set([CHUNK, h, CHUNK * ROW_H, h * ROW_H], 0);
     u.set([this.nx, this.ny, this.nz, 1], 4);
     u.set([this.side, this.slots, vertsPer, indicesPer], 8);
     // every column is the mesh's
@@ -110,10 +115,14 @@ export class FieldMesh {
     // (COPY_SRC: the world API's smooth sampling is checked against it, scripts/worldapitest.mjs)
     this.verts = world.buf('meshVerts', chunks * vertsPer * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
     this.indices = world.buf('meshIndices', chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
-    const stateWords = CHUNK0 + chunks * (CSTRIDE + 1);
+    // (then four words a range: its translation — meshregion.wgsl offBase)
+    const stateWords = CHUNK0 + chunks * (CSTRIDE + 1) + chunks * 4;
     this.state = world.buf('meshState', stateWords * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const init = new Uint32Array(stateWords);
-    for (let c = 0; c < chunks; c++) init.set([0, 1, c * indicesPer, c * vertsPer, 0], CHUNK0 + c * CSTRIDE);
+    for (let c = 0; c < chunks; c++) {
+      init.set([0, 1, c * indicesPer, c * vertsPer, 0], CHUNK0 + c * CSTRIDE);
+      init[CHUNK0 + c * CSTRIDE + 10] = c;
+    }
     device.queue.writeBuffer(this.state, 0, init);
     const s = this.side + 3;
     this.scratch = world.buf('meshScratch', this.slots * s * s * this.nz * 8, GPUBufferUsage.STORAGE);
@@ -137,6 +146,8 @@ export class FieldMesh {
       });
     this.hash = makeCompute(device, 'fieldmesh-hash', parts, spec, 'hashChunks');
     this.hashGroup = group(this.hash);
+    this.hashF = makeCompute(device, 'fieldmesh-hash-fresh', parts, spec, 'hashFresh');
+    this.hashFGroup = group(this.hashF);
     for (const entry of ['sampleField', 'makeVerts', 'makeQuads']) {
       const k = makeCompute(device, `fieldmesh-${entry}`, parts, spec, entry);
       this.kernels.push(k);
@@ -149,16 +160,67 @@ export class FieldMesh {
     return this.verts;
   }
 
+  /** The chunks' records and the ranges' translations (meshdraw.wgsl binding 5). */
+  get stateBuffer(): GPUBuffer {
+    return this.state;
+  }
+
+  private shiftK?: ComputeKernel;
+  private shiftGroup?: GPUBindGroup;
+  private shiftUni?: GPUBuffer;
+  private stateOld?: GPUBuffer;
+
+  /**
+   * The streamed window slid (round 73): what's built moves with the land — chunk records come from
+   * the chunks (dcx, dcy) along, every range is drawn moved by t (world units: the land moved by −the
+   * window's slide), the chunks the land came into fresh are built (fieldmesh.wgsl shiftChunks).
+   */
+  shift(dcx: number, dcy: number, t: [number, number, number]): void {
+    if (!this.on) return;
+    const dev = this.device;
+    if (!this.shiftK) {
+      this.stateOld = this.world.buf('meshStateOld', this.state.size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+      this.shiftUni = dev.createBuffer({ label: 'mesh shift', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, fieldMeshWgsl];
+      this.shiftK = makeCompute(dev, 'fieldmesh-shift', parts, { 0: 'uniform', 9: 'rw', 10: 'read', 30: 'uniform', 31: 'uniform' }, 'shiftChunks');
+      this.shiftGroup = makeBindGroup(dev, 'fieldmesh-shift', this.shiftK.layout, { 0: this.world.globals, 9: this.state, 10: this.stateOld, 30: this.region, 31: this.shiftUni });
+    }
+    const ab = new ArrayBuffer(32);
+    new Int32Array(ab).set([dcx, dcy, 0, 0]);
+    new Float32Array(ab).set(t, 4);
+    dev.queue.writeBuffer(this.shiftUni!, 0, ab);
+    const enc = dev.createCommandEncoder({ label: 'mesh shift' });
+    enc.copyBufferToBuffer(this.state, 0, this.stateOld!, 0, this.state.size);
+    const pass = enc.beginComputePass({ label: 'fieldmesh-shift' });
+    pass.setPipeline(this.shiftK.pipeline);
+    pass.setBindGroup(0, this.shiftGroup!);
+    pass.dispatchWorkgroups(Math.ceil((this.nx * this.ny) / 64));
+    pass.end();
+    dev.queue.submit([enc.finish()]);
+    // (the CPU's chunk tops go round with them; the fresh ones aren't known yet)
+    if (this.tops.length) {
+      const old = this.tops.slice();
+      for (let cy = 0; cy < this.ny; cy++)
+        for (let cx = 0; cx < this.nx; cx++) {
+          const sx = cx + dcx;
+          const sy = cy + dcy;
+          this.tops[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? this.world.zMax : old[sy * this.nx + sx];
+        }
+    }
+  }
+
   /** Find the chunks near the view that changed and rebuild a few of them. */
   encode(enc: GPUCommandEncoder, cam: Camera): void {
     if (!this.on) return;
     const chunks = this.nx * this.ny;
     this.device.queue.writeBuffer(this.state, 0, new Uint32Array([0]));
+    // (state word 15: the frame, so the second hash pass knows what the first took)
+    this.device.queue.writeBuffer(this.state, 15 * 4, new Uint32Array([++this.frameNo]));
     this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, this.near);
-    {
+    for (const [k, g] of [[this.hashF, this.hashFGroup], [this.hash, this.hashGroup]] as const) {
       const pass = enc.beginComputePass({ label: 'fieldmesh-hash', timestampWrites: this.profiler.timestamps('fieldmesh-hash') });
-      pass.setPipeline(this.hash.pipeline);
-      pass.setBindGroup(0, this.hashGroup);
+      pass.setPipeline(k.pipeline);
+      pass.setBindGroup(0, g);
       pass.dispatchWorkgroups(chunks);
       pass.end();
     }
@@ -207,7 +269,7 @@ export class FieldMesh {
         const zTop = Math.min(this.tops[cy * this.nx + cx] + TOP_PAD, zHi);
         for (let k = 0; k < 8; k++) {
           const x = (cx + (k & 1)) * CHUNK;
-          const y = (cy + ((k >> 1) & 1)) * CHUNK;
+          const y = (cy + ((k >> 1) & 1)) * CHUNK * ROW_H;
           const z = k & 4 ? zTop : -1;
           // (divided by clip w: the free camera's perspective; a corner behind its eye: keep the chunk)
           const w = m[3] * x + m[7] * y + m[11] * z + m[15];
@@ -223,13 +285,13 @@ export class FieldMesh {
         this.near[c] = within(1.5) ? 1 : 0;
         if (this.near[c]) {
           r[0] = Math.min(r[0], cx * CHUNK);
-          r[1] = Math.min(r[1], cy * CHUNK);
+          r[1] = Math.min(r[1], cy * CHUNK * ROW_H);
           r[2] = Math.max(r[2], (cx + 1) * CHUNK);
-          r[3] = Math.max(r[3], (cy + 1) * CHUNK);
+          r[3] = Math.max(r[3], (cy + 1) * CHUNK * ROW_H);
         }
       }
     // (none near: nothing shows; the rect is the map's, harmlessly)
-    this.nearRect = r[0] <= r[2] ? r : [0, 0, this.nx * CHUNK, this.ny * CHUNK];
+    this.nearRect = r[0] <= r[2] ? r : [0, 0, this.nx * CHUNK, this.ny * CHUNK * ROW_H];
   }
 
   /** Which chunks lie in the sun's box (its clip space, `light`): they cast into the shadow map. */
@@ -245,7 +307,7 @@ export class FieldMesh {
         const zTop = Math.min(this.tops[cy * this.nx + cx] + TOP_PAD, zHi);
         for (let k = 0; k < 8; k++) {
           const x = (cx + (k & 1)) * CHUNK;
-          const y = (cy + ((k >> 1) & 1)) * CHUNK;
+          const y = (cy + ((k >> 1) & 1)) * CHUNK * ROW_H;
           const z = k & 4 ? zTop : -1;
           const px = light[0] * x + light[4] * y + light[8] * z + light[12];
           const py = light[1] * x + light[5] * y + light[9] * z + light[13];
