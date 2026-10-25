@@ -4680,3 +4680,13 @@ refresh 9.8 s then, 31 ms in steady play).
 
 atlasworldtest 5/5, worldapitest all, atlastest 6/6, tiertest 4/4,
 coarsetest 5/5, streamtest 8/8.
+
+## Round 80 — the hoverbike on the atlas, measured clean (places)
+
+The hoverbike session's re-measure on b01f274 (GameplayGM c52df86) with the
+GPU to itself: standing, 102–103 fps, GPU 5.5–6.3 ms (the valley 5.7); riding
+~80 km/h 9 s, 4 slides, the worst frame within two of a slide 11–18 ms, the
+worst of the ride 98 at its start (as slideframe's 91). The 200–600 ms slide
+frames and the "idle regression" were both other sessions' browsers on the
+same GPU: measure only when it's free. scripts/slideframe.mjs reproduces the
+hoverbike's setup (every world-API module, physics, a fast ride).
