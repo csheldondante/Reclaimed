@@ -15,6 +15,8 @@ export interface PerfSnapshot {
   stats?: WorldStats;
   adapter: string;
   quality: string;
+  /** lines the scene adds (round 79: frame times, hitches, the streamer) */
+  extra?: string[];
 }
 
 export class PerfOverlay {
@@ -44,6 +46,7 @@ export class PerfOverlay {
     lines.push(`${p.adapter}`);
     lines.push(`quality ${p.quality}  render ${p.renderW}×${p.renderH}`);
     lines.push(`fps ${p.fps.toFixed(0)}  cpu ${p.cpuFrameMs.toFixed(2)}ms  ticks/frame ${p.ticksPerFrame.toFixed(2)}`);
+    for (const l of p.extra ?? []) lines.push(l);
     if (prof.enabled) {
       lines.push(`gpu span ${prof.gpuFrameMs.toFixed(2)}ms`);
       const entries = [...prof.passMs.entries()].sort((a, b) => b[1] - a[1]);

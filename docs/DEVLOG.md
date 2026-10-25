@@ -4547,3 +4547,26 @@ cross sections "more blotchy … I would expect … sheet like strata".
   now (MAX_K), 284 still fit (V20).
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 80 — a phone's frame while riding: ?drive, the overlay's frame times (places)
+
+Why: the user wants the hoverbike on the atlas with "a solid frame rate on
+my phone while running around and streaming the map ahead of the
+character", and agreed an order (DECISIONS round 80). First: measure.
+
+- `?drive=speed`: the camera rides the atlas's road nearest the window's
+  middle (from its nearest point; at its end, back), zooming out with
+  speed as the hoverbike's camera does. The perf overlay (`?perf=1`) adds
+  the last 300 frames' p50 and p95, the worst, hitches over 50 ms, and the
+  streamer's slides (their count, the last one's ms, BUSY while one runs).
+- scripts/driveprofile.mjs: a phone-shaped viewport (412×915, DPR 2.6) on
+  the desktop's GPU — the hitches and the CPU's stalls are real, the GPU's
+  ms aren't a phone's. Low, 18/s, 30 s on a road: 79 fps, p50 10.1, p95
+  27.1, p99 42.4, worst 78, 4 hitches over 50 ms; 12 slides (~230 ms each,
+  off the frame: the sim waits, the frame goes on); GPU ~9.6 ms a frame —
+  draw 3.1, the mesh's build ~1.7 (the band's 0.4 of it), shadow 0.66,
+  structure 0.56, edit 0.78, sediment 1.2, climate 0.42.
+- First try: the drive started at the road's first point 2 000 cells off;
+  the window slid 47 times chasing it.
+
+Next: the same on the Pixel 9 (the user), then P2–P4.

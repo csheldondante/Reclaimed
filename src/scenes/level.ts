@@ -95,6 +95,13 @@ export class LevelScene implements Scene {
   private speed: number;
   private fps = 60;
   private ticksAvg = 1;
+  /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
+  private frameMs: number[] = [];
+  private hitches = 0;
+  private worstMs = 0;
+  /** ?drive=speed (round 79): the camera drives itself along the atlas's nearest road at that many cells a
+   *  second, zooming out with speed as the hoverbike's does — a stand-in for riding, to profile on a phone */
+  private drive?: { speed: number; path: [number, number][]; s: number; dir: number; zoom: number };
   /** slow readbacks of veg and water for positional audio (refreshed ~1 Hz) */
   private vegCache?: Float32Array;
   private waterCache?: Float32Array;
@@ -369,6 +376,42 @@ export class LevelScene implements Scene {
     const d = Math.max(40, camera.viewportH / camera.zoom);
     camera.fly = { pos: [tx + e[0] * d, ty + e[1] * d, tz + e[2] * d], yaw: Math.atan2(-e[1], -e[0]), pitch: -Math.asin(e[2]), fov: (60 * Math.PI) / 180 };
     this.hud.say('Free camera — WASD or ⇧⇩▲▼ to fly (Q/E down/up, Shift faster), drag to look (right-drag with a mouse), wheel or pinch to move along the view; F or ✈ back', 6);
+  }
+
+  /** the phone's profile (round 79): frame times over the last 300 frames, hitches, the streamer's slides */
+  private perfLines(): string[] {
+    const f = [...this.frameMs].sort((a, b) => a - b);
+    const q = (p: number) => (f.length ? f[Math.min(f.length - 1, Math.floor(p * f.length))] : 0);
+    const out = [`frame ms p50 ${q(0.5).toFixed(1)}  p95 ${q(0.95).toFixed(1)}  worst ${this.worstMs.toFixed(0)}  hitches(>50) ${this.hitches}`];
+    const S = this.stream;
+    if (S) out.push(`stream slides ${S.stats.slides}  z ${S.stats.tiers}  last ${S.stats.lastMs}ms  made ${S.stats.generated}  thawed ${S.stats.thawed}${S.busy ? '  BUSY' : ''}`);
+    if (this.drive) out.push(`drive ${this.drive.speed}/s  zoom ${this.core.camera.zoom.toFixed(2)}`);
+    return out;
+  }
+
+  /** ?drive: along the road from where it is, back again at its end (world points, the window's origin taken off) */
+  private driveOn(dt: number): void {
+    const d = this.drive!;
+    const S = this.stream;
+    if (!S || d.path.length < 2) return;
+    d.s += d.dir * d.speed * dt;
+    let len = 0;
+    for (let k = 1; k < d.path.length; k++) {
+      const seg = Math.hypot(d.path[k][0] - d.path[k - 1][0], d.path[k][1] - d.path[k - 1][1]);
+      if (d.s <= len + seg || k === d.path.length - 1) {
+        const t = Math.max(0, Math.min(1, (d.s - len) / seg));
+        const wx = d.path[k - 1][0] + (d.path[k][0] - d.path[k - 1][0]) * t;
+        const wy = d.path[k - 1][1] + (d.path[k][1] - d.path[k - 1][1]) * t;
+        if (d.s > len + seg) d.dir = -1;
+        const cam = this.core.camera;
+        cam.target[0] = wx - S.origin[0];
+        cam.target[1] = wy - S.origin[1] * ROW_H;
+        break;
+      }
+      len += seg;
+    }
+    if (d.s < 0) d.dir = 1;
+    this.core.camera.zoom = d.zoom / (1 + d.speed / 40);
   }
 
   /** Flying: WASD along the view (level), Q/E down and up; the window's middle follows the camera. */
@@ -851,6 +894,49 @@ export class LevelScene implements Scene {
       if (a && core.renderer.enableBand(a.atlas.p.zTop)) this.stream.refreshBand();
       // (round 79) the sea past the window's edge: the sea in it stays
       if (a) core.globals.seaZ = a.atlas.p.sea - this.stream.oz;
+      // (round 79) ?drive=speed: along the road nearest the window's middle (unwrapped from its first point)
+      const dv = Number(host.params.get('drive') ?? 0);
+      if (a && dv > 0) {
+        const mx = this.stream.origin[0] + dims.w / 2;
+        const my = (this.stream.origin[1] + dims.h / 2) * ROW_H;
+        let best: Float32Array | null = null;
+        let bd = Infinity;
+        for (const r of a.atlas.settlement.roads)
+          for (let k = 0; k < r.path.length; k += 2) {
+            const dd = Math.hypot(r.path[k] - mx, r.path[k + 1] - my);
+            if (dd < bd) {
+              bd = dd;
+              best = r.path;
+            }
+          }
+        const W = a.atlas.worldW;
+        const H = a.atlas.worldH;
+        const path: [number, number][] = [];
+        if (best)
+          for (let k = 0; k < best.length; k += 2) {
+            const prev = path[path.length - 1];
+            let x = best[k];
+            let y = best[k + 1];
+            if (prev) {
+              x = prev[0] + (((x - prev[0] + W * 1.5) % W) - W / 2);
+              y = prev[1] + (((y - prev[1] + H * 1.5) % H) - H / 2);
+            }
+            path.push([x, y]);
+          }
+        // (from its point nearest the middle: its start may be far off)
+        let s0 = 0;
+        let sNear = 0;
+        let dNear = Infinity;
+        for (let k = 0; k < path.length; k++) {
+          if (k > 0) s0 += Math.hypot(path[k][0] - path[k - 1][0], path[k][1] - path[k - 1][1]);
+          const dd = Math.hypot(((path[k][0] - mx + W * 1.5) % W) - W / 2, ((path[k][1] - my + H * 1.5) % H) - H / 2);
+          if (dd < dNear) {
+            dNear = dd;
+            sNear = s0;
+          }
+        }
+        this.drive = { speed: dv, path, s: sNear, dir: 1, zoom: core.camera.zoom };
+      }
       this.stream.onSlide.push((dx, dy, dz) => {
         // what the level keeps in window coordinates
         shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
@@ -1028,6 +1114,11 @@ export class LevelScene implements Scene {
     const { core, audio, powers, hud } = this;
     const { camera, weather, globals, sim, map, dims } = core;
     this.fps = this.fps * 0.95 + (1 / Math.max(dt, 1e-4)) * 0.05;
+    const fms = dt * 1000;
+    this.frameMs.push(fms);
+    if (this.frameMs.length > 300) this.frameMs.shift();
+    if (fms > 50) this.hitches++;
+    this.worstMs = Math.max(this.worstMs, fms);
     this.host.profiler.beginFrame();
 
     // keyboard pan
@@ -1035,7 +1126,8 @@ export class LevelScene implements Scene {
     let kx = 0;
     let ky = 0;
     const k = this.keys;
-    if (camera.fly) this.flyKeys(dt);
+    if (this.drive) this.driveOn(dt);
+    else if (camera.fly) this.flyKeys(dt);
     else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
     if (k.has('d') || k.has('arrowright')) kx += 1;
@@ -1197,6 +1289,7 @@ export class LevelScene implements Scene {
         stats,
         adapter: this.host.gpu.adapterInfo,
         quality: this.host.qualityName,
+        extra: this.perfLines(),
       },
       this.host.profiler,
       sim,

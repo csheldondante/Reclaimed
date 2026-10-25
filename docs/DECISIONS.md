@@ -3,6 +3,22 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-25 — round 80 (session 5, `places`) — the hoverbike on the atlas; a phone's frame
+
+- Before rooms and paths: "make the hoverbike character controller session able to use the new terrain,
+  atlas and streaming but I'm concerned about the performance on my phone". Freezing, as rigid bodies go to
+  rest: "unfreezing selectively based on player interactions. We can hopefully still do the wind and
+  particles. Water and magma I figure we can freeze into a flow steady state that doesn't actually add or
+  subtract material so a basin can indefinitely spill water or magma unless we unfreeze it. Then rendering
+  can hopefully be sped up as just lightning, particles, unit layers and anything rotating relative to the
+  camera. I just want to see if we can get a solid frame rate on my phone while running around and
+  streaming the map ahead of the character." Agreed, in order: profile on the phone → slides spread over
+  frames, look-ahead by speed → sleep/wake with frozen water and lava → instances and shadows cached for
+  what sleeps → the hoverbike on the atlas (BACKLOG P1–P5).
+- The hoverbike gets it through the World API (its session keeps its controller): "API for their session".
+- Its camera: a fixed angle that follows — "Right now it is fixed but zooms out with speed which looks great"
+  (baked tiles, V14, possible later).
+
 ## 2026-10-25 — round 79 (session 5, `places`) — cliffs: ravines, steps, talus; facet fields
 
 - "Why are cliffs limited to one cell? Can't we go vertical? I mean we may want to limit for draw but
