@@ -106,7 +106,9 @@ export const DEFAULT_ATLAS: AtlasParams = {
   minRegion: 60,
   warpCell: 9,
   caveDepth: 7,
-  caveScale: 40,
+  // (round 79, the user: "I would try a 2-8x reduction in noise frequency to get bigger caves": 40 → 160; their
+  // height scales with it, columns.wgsl caveZ)
+  caveScale: 160,
   coarseN: 512,
   formPer: 3,
   liftReach: 2400,

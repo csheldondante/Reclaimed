@@ -4499,3 +4499,21 @@ nothing was built.
 - Column batch unchanged (79.6 ms a region, 98 ms a window).
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 79 — tiered shelves in Voronoi cells; bigger caves (places)
+
+Why: the user — "multiple tiers as a function of distance with some
+noise … an SDF based shelf with voronoi cells offset"; the caves' holes
+"a bit higher [frequency] than I imagined … a 2-8x reduction".
+
+- mesaEdge: six tiers by distance (was four walls); by the cliff each
+  Worley cell (~10) is flat at the tiers' height at its site's distance
+  (x + site·∇x) plus its own offset (±3.5) — blocks stepping with the
+  tiers, each its own height; the old fall/stand jointing replaced (the
+  columns off a foot kept). Seen: shots78/t2w-switchbacks.png — shelves,
+  columns, the switchbacks winding down between them.
+- Caves 4× bigger every way (caveScale 160; z scales 9, 14 grow with it).
+- Column batch 77 ms a region, 88 ms a window (the gradient's two macro
+  samples are only at mesa edges).
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.

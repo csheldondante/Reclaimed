@@ -67,6 +67,9 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat);
 }
 
+/** a cave noise's height scale: its scale at caveScale 40, grown with it (round 79: bigger caves both ways) */
+fn caveZ(z40: f32) -> f32 { return z40 * AP.caveScale / 40.0; }
+
 fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {
   var out = vec4<f32>(0.0);
   if (r.cave <= 0.0) { return out; }
@@ -81,9 +84,9 @@ fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {
   var n = 0;
   var start = -1.0;
   for (var z = zLo; z < zHi; z += 1.0) {
-    let a = vfbm3(vec3<f32>(q, z / 9.0), vec2<i32>(per), 2u, AP.seed + 61u);
-    let b = vfbm3(vec3<f32>(q, z / 9.0), vec2<i32>(per), 2u, AP.seed + 62u);
-    let big = vfbm3(vec3<f32>(qb, z / 14.0), vec2<i32>(perB), 2u, AP.seed + 63u);
+    let a = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 61u);
+    let b = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 62u);
+    let big = vfbm3(vec3<f32>(qb, z / caveZ(14.0)), vec2<i32>(perB), 2u, AP.seed + 63u);
     let open = (abs(a) < t && abs(b) < t) || big > 0.5 - 0.06 * r.cave;
     if (open && start < 0.0) { start = z; }
     if ((!open || z + 1.0 >= zHi) && start >= 0.0) {
@@ -103,8 +106,8 @@ fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {
 /** the caves as a value at height z (> 0 open): tunnels where two noises are both near zero, caverns at a third's peaks */
 fn caveField(q: vec2<f32>, qb: vec2<f32>, per: i32, perB: i32, z: f32, cave: f32) -> f32 {
   let t = 0.03 + 0.035 * cave;
-  let a = vfbm3(vec3<f32>(q, z / 9.0), vec2<i32>(per), 2u, AP.seed + 61u);
-  let b = vfbm3(vec3<f32>(q, z / 9.0), vec2<i32>(per), 2u, AP.seed + 62u);
-  let big = vfbm3(vec3<f32>(qb, z / 14.0), vec2<i32>(perB), 2u, AP.seed + 63u);
+  let a = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 61u);
+  let b = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 62u);
+  let big = vfbm3(vec3<f32>(qb, z / caveZ(14.0)), vec2<i32>(perB), 2u, AP.seed + 63u);
   return max((t - max(abs(a), abs(b))) / t, (big - (0.5 - 0.06 * cave)) * 8.0);
 }

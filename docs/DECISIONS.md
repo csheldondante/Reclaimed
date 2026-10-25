@@ -29,6 +29,12 @@ each was implemented.
 - "For some images it would be cool to stream in a few more blocks out to see more of the terrain at a
   time (top down won't need that the same way but it's nice for debugging even if too slow for mobile)"
   (V18, `?win=`).
+- "Multiple tiers as a function of distance with some noise. So that it's more stepped but with variation in
+  the height of those steps … an SDF based shelf with voronoi cells offset I think would look even better."
+  "Those look fantastic!"
+- Caves: "I think their frequency is a bit higher than I imagined. I would try a 2-8x reduction in noise
+  frequency to get bigger caves" (4×: caveScale 40 → 160, their height with it).
+- Coasts: "They should drop off more so the water is deeper."
 - Paving brick, bridges and lifts concrete for now (readable: built, drawn sharp) — the materials by
   era and style are the user's to choose (V8's styles).
 - Then: "I would maybe use voronoi and then make some along the border drop with noise so the cliff has

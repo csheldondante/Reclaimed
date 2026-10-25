@@ -577,6 +577,13 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   distance noise-warped so none is a circle). They live in the river
   buffer between the nearest-node words and the nodes (CRATER_BLOCK): the
   column shaders are at their eight storage buffers.
+- Mesa tiers (round 79): MESA_TIERS 6 walls by the distance onto the high
+  side (shares and ledges by noises along the edge, `tiersW`); by the
+  cliff, Worley cells ~10 across each take the tiers' height at their own
+  site's distance (the distance's gradient from two more macro samples)
+  moved by their own offset: flat shelves at varied heights; sediment on
+  the cells that fell. Caves: caveScale 160, their height scales with it
+  (columns.wgsl caveZ).
 - Mesa edges (round 79, compose.wgsl `mesaEdge`, `EDGE_MESA`): a plateau's
   edge against another landform. Within MESA_REACH (110) of the border, on
   the distance onto the high side: ravines (the zero lines of a noise,

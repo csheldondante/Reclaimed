@@ -87,6 +87,8 @@ const EDGE_MESA: u32 = 7u;
 const MESA_REACH: f32 = 200.0;
 /** how far out its buttes stand */
 const BUTTE_REACH: f32 = 110.0;
+/** a mesa's walls, one above another by the distance onto the high side */
+const MESA_TIERS: u32 = 6u;
 
 @group(0) @binding(20) var<storage, read> regionR: array<u32>;
 /** x distance to the region's border (world units), y signed distance to the coast (+ land), z the region across (bits),
@@ -465,7 +467,15 @@ struct Mesa {
  * spurs push it out; the drop is two walls with a ledge between (it narrows to none in places); buttes
  * stand off it on the low side, flat-topped, shorter farther out.
  */
-fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
+/** a mesa's tiers at distance x onto the high side: each wall's share where x is past it (e: the walls' half-width) */
+fn tiersW(x: f32, sh4: array<f32, MESA_TIERS>, xw: array<f32, MESA_TIERS>, e: f32) -> f32 {
+  var w = 0.0;
+  for (var k = 0u; k < MESA_TIERS; k++) { w += sh4[k] * smoothstep(-e, e, x - xw[k]); }
+  return w;
+}
+
+/** g: the gradient of the distance onto the high side (world units, unit length) */
+fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32, g: vec2<f32>) -> Mesa {
   var o: Mesa;
   let sp = 34.0 * smoothstep(0.1, 0.4, pfbm(u, perOf(130.0), 2u, AP.seed + 611u));
   let on = smoothstep(-0.35, -0.05, pfbm(u, perOf(420.0), 2u, AP.seed + 615u));
@@ -474,26 +484,45 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
   let rn = pfbm(u, perOf(140.0), 3u, AP.seed + 612u);
   o.rav = (1.0 - smoothstep(0.0, 0.13 * taper + 1e-4, abs(rn))) * on * step(0.001, taper);
   o.x = sh + sp - depth * o.rav;
-  // the steps (the user: "more step variety in height on the cliffs"): four walls, each its share of the
-  // drop and the ledge before it by a noise along the edge — a share near none merges two walls, a ledge
-  // near none stacks them; the shares and widths change smoothly, so steps come and go along the edge
-  var sh4 = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
-  var xw = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+  // the tiers (the user: "more step variety in height on the cliffs"; then "multiple tiers as a function of
+  // distance with some noise … an SDF based shelf with voronoi cells offset"): MESA_TIERS walls by the
+  // distance onto the high side, each its share of the drop and the ledge before it by a noise along the
+  // edge — a share near none merges two walls, a ledge near none stacks them
+  var sh4: array<f32, MESA_TIERS>;
+  var xw: array<f32, MESA_TIERS>;
   var tot = 0.0;
   var xa = 0.0;
-  for (var k = 0u; k < 4u; k++) {
-    sh4[k] = max(0.0, pfbm(u, perOf(150.0 - 25.0 * f32(k)), 2u, AP.seed + 613u + k * 7u) + 0.2) + 0.02;
+  for (var k = 0u; k < MESA_TIERS; k++) {
+    sh4[k] = max(0.0, pfbm(u, perOf(160.0 - 18.0 * f32(k)), 2u, AP.seed + 613u + k * 7u) + 0.22) + 0.02;
     tot += sh4[k];
-    if (k > 0u) { xa += max(0.0, 30.0 * pfbm(u, perOf(95.0 - 12.0 * f32(k)), 2u, AP.seed + 614u + k * 7u) + 3.0); }
+    if (k > 0u) { xa += max(0.0, 22.0 * pfbm(u, perOf(95.0 - 9.0 * f32(k)), 2u, AP.seed + 614u + k * 7u) + 4.0); }
     xw[k] = xa;
   }
-  o.w = 0.0;
-  for (var k = 0u; k < 4u; k++) {
-    sh4[k] /= tot;
-    o.w += sh4[k] * smoothstep(-1.2, 1.2, o.x - xw[k]);
-  }
+  for (var k = 0u; k < MESA_TIERS; k++) { sh4[k] /= tot; }
+  o.w = tiersW(o.x, sh4, xw, 1.2);
   o.f = sh4[0];
-  o.L = xw[3];
+  o.L = xw[MESA_TIERS - 1u];
+  // the shelves in cells: by the cliff each Voronoi cell ~10 across takes the tiers' height at its own
+  // site's distance (the distance's gradient: g), moved by its own offset — flat blocks at varied heights,
+  // stepping as the tiers do; a cell that fell below the tiers there has sediment on it
+  let pj = perOf(10.0);
+  let wj = pworley(u * f32(pj), vec2<i32>(pj), 0.9, AP.seed + 633u);
+  let hj = hf(pcg(wj.id ^ (AP.seed * 0x27d4eb2fu)));
+  let hj2 = hf(pcg(wj.id * 9u + 1u));
+  o.ftop = 0.0;
+  if (o.x > -6.0 && o.x < o.L + 10.0) {
+    let site = (wj.near - u * f32(pj)) * vec2<f32>(AP.worldW, AP.worldH) / f32(pj);
+    let xs = o.x + dot(site, g) + (hj - 0.5) * 7.0;
+    let wc = tiersW(xs, sh4, xw, 0.35) + (hj2 - 0.5) * 0.025;
+    if (wc < o.w - 0.01 && drop * (o.w - wc) > 2.0) { o.tal = max(o.tal, 0.8 + 2.2 * hj2); }
+    o.ftop = max(o.w - wc, 0.0);
+    o.w = wc;
+  }
+  // and off each wall's foot a cell now and then stands as a column to its step's top
+  for (var k = 0u; k < MESA_TIERS; k++) {
+    let d = o.x - xw[k];
+    if (d < -1.2 && d > -6.0 && hj2 < 0.12) { o.w = max(o.w, tiersW(xw[k] + 1.0, sh4, xw, 1.2) * (0.85 + 0.15 * hj)); }
+  }
   // the rim and the foot (the user: "the height at the top and bottom should have noise and fade up to the
   // full height"): the top lower at its edge, rising to the full height inland, rough; the ground at the
   // foot rising to the wall (a pediment, under the talus), rough
@@ -504,30 +533,10 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
   o.w -= smoothstep(-1.2, 1.2, xt) * (rim - 0.04 * rough * (1.0 - smoothstep(0.0, D, max(xt, 0.0))));
   // (round 79: lips floated over the lowered rim at the top's full height)
   let rim0 = 0.05 + 0.12 * (0.5 + 0.5 * pfbm(u, perOf(80.0), 2u, AP.seed + 626u));
+  o.lipW = 1.0 - rim0 + 0.04 * rough - o.ftop;
   if (o.x < 0.0) {
     let fade = 1.0 - smoothstep(0.0, D * 0.8, -o.x);
     o.w += fade * (0.04 + 0.05 * (0.5 + 0.5 * pfbm(u, perOf(90.0), 2u, AP.seed + 628u)) + 0.02 * rough);
-  }
-  // the walls jointed (round 79, the user: "use voronoi and then make some along the border drop with noise
-  // so the cliff has an irregular top with sediment at different points … more varied height smaller
-  // voronoi cells along the cliff"): cells ~11 across along each wall; on a step's top by its wall a cell
-  // drops by its own amount (a block fallen away, sediment on it), off its foot one stands (a column)
-  let pj = perOf(11.0);
-  let wj = pworley(u * f32(pj), vec2<i32>(pj), 0.9, AP.seed + 633u);
-  let hj = hf(pcg(wj.id ^ (AP.seed * 0x27d4eb2fu)));
-  let hj2 = hf(pcg(wj.id * 9u + 1u));
-  let band = 9.0 + 12.0 * hj2;
-  o.ftop = sh4[3] * hj * hj;
-  o.lipW = 1.0 - rim0 + 0.04 * rough - o.ftop;
-  for (var k = 0u; k < 4u; k++) {
-    let d = o.x - xw[k];
-    if (d > 0.0 && d < band) {
-      let fall = sh4[k] * hj * hj * smoothstep(band, band * 0.6, d);
-      o.w -= fall;
-      if (fall * drop > 2.0) { o.tal = max(o.tal, 0.8 + 2.2 * hj2); }
-    } else if (d < -1.2 && d > -band * 0.5 && hj2 < 0.14) {
-      o.w += sh4[k] * (0.55 + 0.45 * hj);
-    }
   }
   // an eroded ramp (round 79, the user: "a slope … of sand or dirt or gravel and sdf from flat to mesa height
   // and we can have some voronoi cells in that transition be stone up to the full height"): where a slow
@@ -566,7 +575,7 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
   // a fifth of the wall's, varying along it), lumpy; thinner in the ravines
   let tn = 0.55 + 0.45 * (0.5 + 0.5 * pfbm(u, perOf(40.0), 2u, AP.seed + 621u));
   if (o.x < 0.0) { o.tal = max(o.tal, min(sh4[0] * drop * 0.2, 26.0) * tn - 0.8 * (-o.x)); }
-  for (var k = 1u; k < 4u; k++) {
+  for (var k = 1u; k < MESA_TIERS; k++) {
     if (o.x > xw[k - 1u] + 1.2 && o.x < xw[k] - 1.2) { o.tal = max(o.tal, min(sh4[k] * drop * 0.2, 20.0) * tn - 0.8 * (xw[k] - o.x)); }
   }
   if (o.tal > 0.0) { o.tal = max(0.0, o.tal + 1.2 * pfbm(u, perOf(9.0), 2u, AP.seed + 622u)) * (1.0 - 0.7 * o.rav); }
@@ -705,7 +714,14 @@ fn ground(p: vec2<f32>) -> Ground {
         let hLo = select(hA, hB, hiA);
         let drop = max(hHi - hLo, 0.0);
         // (the jitter odd under swapping the pair, as the distance is: the same line from both sides)
-        let me = mesaEdge(u, select(-1.0, 1.0, hiA) * (s + jit), drop);
+        // (the distance's gradient: the macro field a unit along x and y, signed as here)
+        let pw = p + wq * AP.warpCell;
+        let mx = macroAt(pw + vec2<f32>(1.0, 0.0));
+        let my = macroAt(pw + vec2<f32>(0.0, 1.0));
+        let sx = select(select(s, -mx.s, mx.a == m.b), mx.s, mx.a == m.a);
+        let sy = select(select(s, -my.s, my.a == m.b), my.s, my.a == m.a);
+        let gs = vec2<f32>(sx - s, sy - s) * select(-1.0, 1.0, hiA);
+        let me = mesaEdge(u, select(-1.0, 1.0, hiA) * (s + jit), drop, gs / max(length(gs), 1e-3));
         w = select(1.0 - me.w, me.w, hiA);
         extra = (1.0 - me.w) * me.rise;
         talus = me.tal;
