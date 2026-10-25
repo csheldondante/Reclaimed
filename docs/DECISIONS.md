@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 73 (session 5, `atlas`) — trying it; rivers and lava
+
+- "Do rivers flow from high to low? It seems like a waste to have the good
+  water simulation and of use it to bake rivers in as flow from snow melt and
+  just replenish the snow with storms to keep it steady state." (Q58)
+- "For magma, I imagine vents could just keep pushing more out and make
+  rivers that flow but I'm not sure how to make them keep their heat other
+  than flow and replenish from below." (Q59)
+- "I think populations is a good next step but I still have to fly all of
+  this" — the user tries the atlas branch on a phone first.
+
 ## 2026-10-24 — round 72 (session 5, `atlas`) — the coarse world
 
 - "I think the coarse columns make sense. It solves our simulation at scale
