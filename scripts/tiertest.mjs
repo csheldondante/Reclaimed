@@ -43,8 +43,9 @@ try {
       // (not a volcanic one: its lava falls cool to basalt while the test runs, and the columns change)
       if (kind === 'plateau' && ['basalt', 'lavafield', 'rift'].includes(d.kind)) return;
       const warm = 0.5 - 0.5 * Math.cos(2 * Math.PI * d.stat.cy);
-      // (a cliff taller than the window: the plateau's top 240 or more at its middle)
-      if (kind === 'plateau' && a.hmac[Math.floor(d.stat.cy * a.p.n) * a.p.n + Math.floor(d.stat.cx * a.p.n)] < 240) return;
+      // (a cliff taller than the window: the plateau's top 212 or more over the sea at its middle — round 79: the
+      // sea's level moved)
+      if (kind === 'plateau' && a.hmac[Math.floor(d.stat.cy * a.p.n) * a.p.n + Math.floor(d.stat.cx * a.p.n)] < a.p.sea + 212) return;
       const score = d.stat.area * (warm > 0.45 && warm < 0.85 ? 4 : 1);
       if (!best || score > best.score) best = { score, cx: d.stat.cx, cy: d.stat.cy };
     });

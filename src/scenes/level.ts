@@ -54,7 +54,9 @@ export interface LevelOptions {
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
-const SANDBOX_K = 14;
+// (round 79: 16, the most a column holds — layers.wgsl MAX_K: the mesas' undercuts, lips, talus, bigger caves
+// and alcoves had 344 columns merged to fit in 12 after a tier's slide)
+const SANDBOX_K = 16;
 /** the atlas's columns: what a sandbox chunk holds less its headroom (more and the chunk would grow: a streamed world's chunks are all one K) */
 const ATLAS_COL_K = SANDBOX_K - K_HEADROOM;
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
@@ -165,6 +167,8 @@ export class LevelScene implements Scene {
     // (grids, the rendering branch, opens in free play; ?mode=story for the story's rules)
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
     this.core.globals.story = this.story;
+    // (round 79) the sea past a streamed window's edge, from the start (the warmup drained it otherwise)
+    if (opts.atlas) this.core.globals.seaZ = opts.atlas.atlas.p.sea - opts.atlas.oz;
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
     const diff: Difficulty = dq === 'easy' || dq === 'medium' || dq === 'hard' ? dq : loadDifficulty();
@@ -845,12 +849,15 @@ export class LevelScene implements Scene {
         : new Streamer(core);
       // (round 79) the atlas's columns run past the window: what's above and below it drawn too
       if (a && core.renderer.enableBand(a.atlas.p.zTop)) this.stream.refreshBand();
+      // (round 79) the sea past the window's edge: the sea in it stays
+      if (a) core.globals.seaZ = a.atlas.p.sea - this.stream.oz;
       this.stream.onSlide.push((dx, dy, dz) => {
         // what the level keeps in window coordinates
         shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
         this.hoverWorld = null;
         // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps), and the window's height
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, this.stream!.oz);
+        if (a) core.globals.seaZ = a.atlas.p.sea - this.stream!.oz;
         if (dz) {
           // (a slide in z: every column moved; what's falling or lying loose in window z goes)
           for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);

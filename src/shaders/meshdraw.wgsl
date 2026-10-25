@@ -112,15 +112,19 @@ fn fsMesh(in: MOut) -> FOut {
   let sub = vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02));
   let n1 = randv(sub);
   let n2 = randv(sub + vec3<i32>(71, 13, 5));
-  alb *= 0.9 + 0.12 * randv(vc) + 0.08 * n1;
+  // (round 79: on a steep face less of it — the beds read as sheets, not a mosaic of cells)
+  let steep = 1.0 - smoothstep(0.3, 0.7, abs(nrm.z));
+  alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1);
   alb *= in.tint;
   if (mat >= 1u && mat <= 4u) {
-    let band = fbm2(wo(in.wpos.xy) * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
-    if (mat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
+    // (round 79: strata — render.wgsl)
+    let band = strata(in.wpos);
+    if (mat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
     if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
+  if (mat == 23u || mat == 30u) { alb *= strataTint(mat, strata(in.wpos)); }
   if (mat == MAT_LEAFLIT) {
     // fallen leaves (round 51), as fsBox
     var tc = autumnLeaf(select(0u, 2u, n2 > 0.82), fract(n2 * 3.7));
@@ -148,7 +152,8 @@ fn fsMesh(in: MOut) -> FOut {
   // wet ground darkens
   alb *= 1.0 - MATS[mat].eco.w * 0.5 * smoothstep(0.15, 0.9, cf.z);
   // plant cover on tops, a few tufts of it up the slopes
-  let v = cf.y;
+  // (plants on a face only near its top: a cut face isn't green all the way down — round 79)
+  let v = select(cf.y, 0.0, !isTop && in.wpos.z < lk.top - 2.5);
   if (v > 0.0) {
     let cover = select(smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2), smoothstep(0.0, 1.2, v), isTop);
     if (n1 < cover) {
@@ -211,7 +216,8 @@ fn fsMesh(in: MOut) -> FOut {
   // the detail layer (only where a chip is a few pixels across)
   var lnrm = nrm;
   if (CAM.viewport.z > 4.0 && sw < 0.5) {
-    if (mat == MAT_STONE) {
+    // (round 79: the bedded rocks too — sandstone, basalt, obsidian were chips like rubble, blotching a cliff's face)
+    if (mat == MAT_STONE || bedded(mat)) {
       let rf = rockFacet(in.wpos, nrm, 1.0);
       lnrm = rf.xyz;
       alb *= rf.w;
@@ -283,5 +289,8 @@ fn voxMatR(w: u32) -> u32 { return w & 0xffu; }
 
 /** Broken or built: rubble, trash, litter, and every solid but stone (ruins: concrete, brick, asphalt, steel). */
 fn jagged(m: u32) -> bool {
-  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE);
+  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE && !bedded(m));
 }
+
+/** rock in beds (round 79): basalt, sandstone, obsidian — faceted as stone is, its strata tinted */
+fn bedded(m: u32) -> bool { return m == 23u || m == 30u || m == 35u; }

@@ -62,6 +62,9 @@ struct Globals {
   // the window's world origin (a streamed world, round 66: scenes/streamer.ts):
   // xy in world units (noise of positions: wo()), zw in cells (hash3)
   org: vec4<f32>,
+  // x: the sea's level in window z (round 79: past the window's edge the world is sea at it, so the sea in
+  // the window doesn't drain out of it; −1e9 none)
+  ocean: vec4<f32>,
 };
 
 // ---- the season (round 51): leaves turn, fall, and come back -------------------

@@ -2,7 +2,7 @@
 
 import { ROW_H } from '../world/lattice';
 
-export const GLOBALS_BYTES = 1120;
+export const GLOBALS_BYTES = 1136;
 /** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
 export const MAX_CYCLONES = 4;
 
@@ -140,6 +140,8 @@ export interface GlobalsState {
    * what they draw stays with the land when the window slides. Absent: 0, 0.
    */
   origin?: [number, number];
+  /** the sea's level in window z (round 79, a streamed atlas world): past the window's edge the world is sea at it */
+  seaZ?: number;
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }
@@ -222,4 +224,5 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   const o = s.origin ?? [0, 0];
   // (world units for the noise of positions; cells for the hashes of cells)
   f.set([o[0], o[1] * ROW_H, o[0], o[1]], 276);
+  f.set([s.seaZ ?? -1e9, 0, 0, 0], 280);
 }

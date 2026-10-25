@@ -111,6 +111,8 @@ export class FieldMesh {
       return;
     }
     const h = Number(q.get('meshh') ?? 1);
+    // (?meshroom=: the window's room a chunk, times the default — round 79, to tell holes from out of room)
+    if (!src && q.get('meshroom')) room = Number(q.get('meshroom'));
     const W = world.w + 0.5;
     const H = world.h * ROW_H;
     // (a chunk is CHUNK across and CHUNK rows down: round 73, a slide is whole chunks both ways)

@@ -987,15 +987,16 @@ fn fsBox(in: VOut) -> FOut {
     let warm = vec3<f32>(1.08, 0.97, 0.88);
     let cool = vec3<f32>(0.92, 0.98, 1.06);
     alb *= mix(cool, warm, hv);
-    // large-scale mineral bands on stone / clay-iron patches on soil
-    let band = fbm2(wo(in.wpos.xy) * 0.11 + vec2<f32>(in.wpos.z * 0.35, 0.0));
-    if (dmat == 1u) { alb *= mix(vec3<f32>(0.9, 0.92, 0.96), vec3<f32>(1.1, 1.0, 0.9), band); }
+    // the beds (round 79: strata — sheets, not blotches)
+    let band = strata(in.wpos);
+    if (dmat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
     if (dmat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     // pebbles: occasional lighter/darker sub-voxels
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
 
+  if (dmat == 23u || dmat == 30u) { alb *= strataTint(dmat, strata(in.wpos)); }
   if (dmat == MAT_LEAFLIT) {
     // fallen leaves (round 51): a mottle of autumn colours, browned ones among them
     var tc = autumnLeaf(select(0u, 2u, n2 > 0.82), fract(n2 * 3.7));
@@ -1624,4 +1625,24 @@ fn fsBody(in: VOut) -> FOut {
   let flag = select(0x8000u, 0u, (word >> 31u) != 0u);
   o.pick = vec2<u32>(colIdxI(bc) + 1u, mat | (u32(max(in.wpos.z, 0.0)) << 8u) | (flag << 16u));
   return o;
+}
+
+/**
+ * The rock's beds at p, 0..1 (round 79, the user: the cross section "should be biased heavily in the x,y plane so
+ * it looks more sheet like strata rather than blotches"): a noise up the column — beds of their own
+ * thicknesses, a sharper edge between two — the beds dipping and swelling only over long distances
+ * across the land, fine laminations in them.
+ */
+fn strata(p: vec3<f32>) -> f32 {
+  let w = wo(p.xy);
+  let z = p.z + 6.0 * fbm2(w * 0.01) + 1.2 * fbm2(w * 0.045);
+  let bed = smoothstep(0.32, 0.68, fbm2(vec2<f32>(z * 0.3, 3.7)));
+  let lam = 0.5 + 0.5 * sin(z * 2.3 + 2.0 * fbm2(w * 0.03));
+  return bed * 0.8 + lam * 0.2;
+}
+
+/** a bedded rock's colour across its beds (sandstone: cream to red; basalt: grey to rust) */
+fn strataTint(m: u32, b: f32) -> vec3<f32> {
+  if (m == 30u) { return mix(vec3<f32>(1.16, 1.02, 0.84), vec3<f32>(0.84, 0.74, 0.74), b); }
+  return mix(vec3<f32>(0.92, 0.94, 1.0), vec3<f32>(1.1, 0.96, 0.86), b);
 }

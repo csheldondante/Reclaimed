@@ -4517,3 +4517,33 @@ noise … an SDF based shelf with voronoi cells offset"; the caves' holes
   samples are only at mesa edges).
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 79 — the sea stays; deeper, gentler coasts; strata; 16 runs a column (places)
+
+Why: "the coasts … should drop off more so the water is deeper"; then the
+cross sections "more blotchy … I would expect … sheet like strata".
+
+- The sea drained out of the window: water_flux's map edge drained
+  outward (the world continues downhill), and an ocean at the edge ran
+  out in seconds — during the level's warmup, before anything showed. Past
+  the edge the world is sea at its level now (Globals.ocean.x, set before
+  the warmup). seaprobe at a coast: 0 deep columns before; 32 824 more
+  than 10 deep (39.5 the deepest) after 15 s. The user: "that may have
+  been the whole issue".
+- The sea at 90 (was 28: the floor is 0, so it was 27 deep at most); the
+  ocean's floor 0.9 × its depth over 90 from the shore, then 3 × over
+  70–650 (the user: "slightly gentler").
+- The blotches in the cross sections: (1) sandstone, basalt and obsidian
+  were drawn as chips (`jagged`: every solid but stone), each tilted its
+  own way — a mottle on a big face; faceted as stone now; (2) plants'
+  tufts all the way down a cut face, and per-cell speckle — near the top
+  only, damped on steep faces; (3) the beds were fbm(xy × 0.11, z × 0.35),
+  blobs ~9 across — `strata` now: by height, dipping only over hundreds
+  of cells, fine laminations. The caves' cross sections (the window's edge
+  cuts through them) are the dark holes left — the user likes them.
+- tiertest: a plateau's top 212 over the sea (was 240 absolute: the sea
+  rose); one column after the slide up and back differed by 0.03 — merged
+  to fit 12 runs (344 columns fitted); the atlas level's columns hold 16
+  now (MAX_K), 284 still fit (V20).
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.

@@ -384,7 +384,10 @@ fn regionHeight(r: Region, p: vec2<f32>, coast: f32, dl: f32) -> RH {
       h += r.peak * smoothstep(0.0, r.rise, dl) * (0.4 + 0.6 * rd);
     }
   } else {
-    h -= r.depth * smoothstep(0.0, 260.0, -coast);
+    // (round 79: a drop-off near the shore, then the shelf down to the deep — the user: "they should drop off
+    // more so the water is deeper"; the depth's range scales both)
+    let dd = -coast;
+    h -= r.depth * (0.9 * smoothstep(0.0, 90.0, dd) + 3.0 * smoothstep(70.0, 650.0, dd));
   }
   // (the world's own noise, at the region's scale and amplitude: regions alike meet without a seam)
   // (round 78: on the landforms each region's own noise and pattern are detail, AP.detail of them)

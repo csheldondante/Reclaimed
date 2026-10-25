@@ -731,6 +731,15 @@ its edge:
   shifts with the window's mesh on a slide and is repacked after every
   slide (`Streamer.refreshBand`). `?skip=band` leaves it out. ~58 MB
   (vertex room 2, 3 rebuild slots, samples up the world's height).
+- The sea in a streamed window (round 79): `Globals.ocean.x` (`seaZ`, window z; the atlas level sets it
+  from the start) — water_flux.wgsl's off-map neighbour stands at least at it, so the sea doesn't drain out
+  of the window's edges (it did: in seconds, during the warmup). The atlas's sea is at 90 (was 28: 27
+  deep at most over the floor); the ocean floor drops off near the shore (0.9 × depth over 90) then
+  shelves (3 × over 70–650).
+- Strata (round 79, render.wgsl `strata`, `strataTint`): rock's beds by height (a noise up the column,
+  dipping only over long distances), on stone, soil, basalt and sandstone; bedded rocks (basalt,
+  sandstone, obsidian) faceted as stone (they were chips, like rubble); on steep faces less per-cell
+  speckle and plants only near the top. The atlas level's columns hold 16 runs (was 14).
 - `?win=N` (round 79): the atlas level's window N wide (whole regions); the
   device asks for the adapter's buffer limits (gpu/device.ts), FieldMesh
   says when the mesh can't be bound.

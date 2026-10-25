@@ -34,7 +34,15 @@ each was implemented.
   "Those look fantastic!"
 - Caves: "I think their frequency is a bit higher than I imagined. I would try a 2-8x reduction in noise
   frequency to get bigger caves" (4×: caveScale 40 → 160, their height with it).
-- Coasts: "They should drop off more so the water is deeper."
+- Coasts: "They should drop off more so the water is deeper." Then (the sea had drained out of the window):
+  "Ah that may have been the whole issue! I'm not even sure if the deeper dropoff at the coast was needed"
+  — "I think slightly gentler maybe? But low priority."
+- Cross sections: "the layers in the cross section look more blotchy (the surface looks great). I would expect
+  it to be biased heavily in the x,y plane so it looks more sheet like strata rather than blotches."
+- Caves: "The caves look so cool! I would bias to having skylights with gravel and sand at the bottom or
+  springs that make underground waterfalls." "Underground caves are going to need special lighting tweaks
+  … skylights and corpuscular rays and waterfalls and magma and make plants grow in light and maybe add
+  glowing crystals … it will look cool to have cities underground and above eventually" (V19).
 - Paving brick, bridges and lifts concrete for now (readable: built, drawn sharp) — the materials by
   era and style are the user's to choose (V8's styles).
 - Then: "I would maybe use voronoi and then make some along the border drop with noise so the cliff has

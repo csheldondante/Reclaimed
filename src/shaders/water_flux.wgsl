@@ -1,7 +1,8 @@
 // ---- water transport: flux pass ---------------------------------------
 // Column-volume "virtual pipes" model. flux[i] holds the volume (cells^3)
 // leaving column i this tick toward each neighbour (NDIR order, common.wgsl).
-// Columns at the map edge drain outward (the world continues downhill).
+// Columns at the map edge drain outward (the world continues downhill) — down to the sea's level where
+// there is one (G.ocean.x, round 79: the sea in a streamed window stays).
 // Loose dust (drift) is part of the bed: water lies on top of it (round 13).
 @group(0) @binding(3) var<storage, read> surface: array<u32>;
 @group(0) @binding(4) var<storage, read> water: array<f32>;
@@ -28,7 +29,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var f = flux[i];
   for (var k = 0u; k < NDIR; k++) {
     let q = nbr(p, k);
-    var Hn = g;
+    var Hn = max(g, G.ocean.x);
     if (inMap(q)) {
       let j = colIdxI(q);
       Hn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q)) + water[j] + oil[j] * OIL_DENSITY;

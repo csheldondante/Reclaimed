@@ -89,7 +89,9 @@ export const DEFAULT_ATLAS: AtlasParams = {
   style: 0,
   cols: 16384,
   rows: 18944,
-  sea: 28,
+  // (round 79, the user: the coasts "should drop off more so the water is deeper" — at 28 the sea was 27 deep
+  // at most over the world's floor)
+  sea: 90,
   // (round 69: the world is taller than a window — the streamed window slides in z)
   zTop: 480,
   landPer: 3,
