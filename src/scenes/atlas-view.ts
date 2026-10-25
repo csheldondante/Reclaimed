@@ -49,7 +49,7 @@ export class AtlasView implements Scene {
   ) {
     const dev = host.gpu.device;
     this.pipeline = pipe.pipeline;
-    this.group = makeBindGroup(dev, 'atlas view', pipe.layout, { 0: atlas.paramBuf, 20: atlas.region, 21: atlas.dist, 22: atlas.regs, 23: atlas.pat, 24: atlas.kcol, 25: atlas.riverNear, 26: atlas.rivers });
+    this.group = makeBindGroup(dev, 'atlas view', pipe.layout, { 0: atlas.paramBuf, 20: atlas.region, 21: atlas.dist, 22: atlas.regs, 23: atlas.pat, 24: atlas.kcol, 25: atlas.riverBuf, 26: atlas.coarse.cells });
     this.vc = [atlas.worldW / 2, atlas.worldH / 2];
     this.scale = 1;
     const mode = Number(host.params.get('mode') ?? 0);
@@ -103,7 +103,7 @@ export class AtlasView implements Scene {
       const c = KINDS[k].colour.map((v) => Math.round(v * 255)).join(',');
       return `<span style="display:inline-block;margin:1px 4px 1px 0"><i style="display:inline-block;width:9px;height:9px;background:rgb(${c});margin-right:3px"></i>${k}</span>`;
     }).join('');
-    d.innerHTML = `<div style="font-size:14px;margin-bottom:4px">Atlas</div><div>${modes}</div>${sliders}<button data-rebuild style="margin-top:6px">Make this world</button><div class="atlas-info" style="margin-top:8px;white-space:pre-wrap"></div><div style="margin-top:6px">${legend}</div><div style="margin-top:6px;color:#aaa">Drag to pan, wheel to zoom, 1–8 modes, double-click to walk in.</div>`;
+    d.innerHTML = `<div style="font-size:14px;margin-bottom:4px">Atlas</div><div>${modes}</div>${sliders}<button data-rebuild style="margin-top:6px">Make this world</button><div class="atlas-info" style="margin-top:8px;white-space:pre-wrap"></div><div style="margin-top:6px">${legend}</div><div style="margin-top:6px;color:#aaa">Drag to pan, wheel to zoom, 1–8 modes, double-click to walk in; shift-click a meteor, alt-click an eruption.</div>`;
     d.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach((b) => (b.onclick = () => (this.mode = Number(b.dataset.mode))));
     d.querySelectorAll<HTMLInputElement>('[data-k]').forEach((inp) => (inp.oninput = () => (d.querySelector(`[data-v="${inp.dataset.k}"]`)!.textContent = inp.value)));
     (d.querySelector('[data-rebuild]') as HTMLButtonElement).onclick = () => {
@@ -139,6 +139,13 @@ export class AtlasView implements Scene {
     const c = this.host.canvas;
     this.on(c, 'pointerdown', (e) => {
       const p = e as PointerEvent;
+      // (round 71) shift-click: a great meteor there; alt-click: an eruption
+      if (p.shiftKey || p.altKey) {
+        const [x, y] = this.wrap(this.worldAt(p.clientX, p.clientY));
+        if (p.shiftKey) this.atlas.coarse.meteor(x, y);
+        else this.atlas.coarse.erupt(x, y);
+        return;
+      }
       this.drag = { x: p.clientX, y: p.clientY };
     });
     this.on(window, 'pointerup', () => (this.drag = null));
@@ -209,6 +216,8 @@ export class AtlasView implements Scene {
 
   frame(): void {
     const a = this.atlas;
+    // the coarse world goes on (round 71): a few steps a frame, to watch it at the world's scale
+    a.coarse.step(4);
     const { rw, rh } = this.size;
     if (this.scale < 0) this.scale = Math.max(a.worldW / rw, a.worldH / rh);
     a.writeParams({ vc: this.vc, vscale: this.scale, mode: this.mode, vsize: [rw, rh] });

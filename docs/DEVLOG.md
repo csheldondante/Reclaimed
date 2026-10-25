@@ -4209,3 +4209,35 @@ only now. Falls: steep water is white water streaking down, steep lava
 bright streaks (Q53 for spray).
 
 atlastest 5/5, streamtest 8/8, tiertest 4/4.
+
+## Round 72 — the coarse world: craters many chunks across, eruptions burying a country (atlas)
+
+The user's direction: coarse columns under the fine window, so the world
+changes at its own scale out of sight (ARCHITECTURE "The atlas"). The coarse
+world is what has changed from the atlas, 512² cells over the torus (32
+world units each), on the GPU: water, loose ground slumping, lava running
+and setting to basalt, (off for now) rain and erosion; events — a meteor's
+crater (bowl, rim, rubble), an eruption's cone, ash downwind and a vent. The
+columns are made from the atlas and it; a region frozen before an event
+comes back with what changed (snapshots round each region when made and
+when left); an event in sight is made in the window's columns too.
+
+On the way:
+- the coarse world needed a binding where the forms' kernel was at its 8:
+  the rivers' two buffers became one (nearest node, then the nodes);
+- the columns' per-cell record grew to 64 bytes and the batch's buffer
+  wasn't resized: writes past its end left columns empty;
+- in a crater's floor near the world's bottom a lava tube's middle went
+  below zero and its skylight cut the whole column away: tubes keep rock
+  under them, and nothing carves the world's first cell;
+- the vent's lava (0.6 a step, thick) built a pile 230 tall: 0.15 a step and
+  runnier, 83 after 1000 steps (a shield volcano's worth).
+
+Measured (coarsetest.mjs 5/5): a meteor r 160, d 30 — the middle −29.4, the
+rim +2.9, rubble 1.6 round it; an eruption — ash 2.45 downwind, none 2000
+across the wind, the vent's cone and set basalt 83; slid 5 regions to the
+far crater, the window's column at its middle is the atlas's with the
+crater (9.3 = 9.3); a region left, buried in ash, come back to — ash on top
+(4 regions changed); a meteor in sight r 60 — the ground at its middle 15.5
+→ 3.9. The coarse world's setup 77 ms; a step every 4th frame. atlastest
+5/5, streamtest 8/8, tiertest 4/4.

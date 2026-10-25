@@ -22,7 +22,12 @@ struct ColG {
   rl: f32,
   rx: f32,
   rflags: u32,
-  _p: u32,
+  /** the coarse world: loose ground's material, its depth, water, lava, what added rock is */
+  lmat: u32,
+  loose: f32,
+  cw: f32,
+  clava: f32,
+  cap: u32,
 }
 
 @group(0) @binding(30) var<storage, read_write> colG: array<ColG>;
@@ -41,7 +46,7 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= mw || id.y >= AP.h + 2u) { return; }
   let p = cellW(AP.x0 - 1 + i32(id.x), AP.y0 - 1 + i32(id.y));
   let g = ground(p);
-  colG[id.y * mw + id.x] = ColG(g.h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, 0u);
+  colG[id.y * mw + id.x] = ColG(g.h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, g.loose, g.cw, g.clava, g.cap);
 }
 
 fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {

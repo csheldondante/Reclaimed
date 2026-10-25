@@ -90,8 +90,56 @@ struct RiverNode {
   depth: f32,
   _p: f32,
 }
-@group(0) @binding(25) var<storage, read> riverNear: array<u32>;
-@group(0) @binding(26) var<storage, read> rivers: array<RiverNode>;
+// (one buffer: n² words of nearest node + 1, then the nodes, 8 words each — binding 26 is the coarse world's)
+@group(0) @binding(25) var<storage, read> riverBuf: array<u32>;
+fn riverNode(i: u32) -> RiverNode {
+  let o = AP.n * AP.n + i * 8u;
+  return RiverNode(bitcast<f32>(riverBuf[o]), bitcast<f32>(riverBuf[o + 1u]), bitcast<f32>(riverBuf[o + 2u]), bitcast<f32>(riverBuf[o + 3u]), riverBuf[o + 4u], riverBuf[o + 5u], bitcast<f32>(riverBuf[o + 6u]), 0.0);
+}
+
+// the coarse world (round 71, coarse.wgsl CCell): what has changed from the atlas, cell by cell
+struct CoarseCell {
+  s: vec4<f32>,
+  l: vec4<f32>,
+}
+@group(0) @binding(26) var<storage, read> coarse: array<CoarseCell>;
+
+struct Co {
+  /** rock added (+) or taken (−), loose ground on top, water, lava */
+  dr: f32,
+  loose: f32,
+  water: f32,
+  lava: f32,
+  /** the loose ground's material, what added rock is made of (the nearest cell's) */
+  lmat: u32,
+  cap: u32,
+}
+
+/** the coarse world at p: bilinear between its cells' middles (it wraps) */
+fn coarseAt(p: vec2<f32>) -> Co {
+  let cn = u32(round(sqrt(f32(arrayLength(&coarse)))));
+  let t = torusU(p) * f32(cn) - 0.5;
+  let i0 = vec2<i32>(floor(t));
+  let f = t - floor(t);
+  var o: Co;
+  var best = -1.0;
+  for (var k = 0; k < 4; k++) {
+    let o2 = vec2<i32>(k & 1, k >> 1);
+    let w2 = wrapi(i0 + o2, vec2<i32>(i32(cn)));
+    let c = coarse[u32(w2.y) * cn + u32(w2.x)];
+    let wt = select(1.0 - f.x, f.x, o2.x == 1) * select(1.0 - f.y, f.y, o2.y == 1);
+    o.dr += c.s.x * wt;
+    o.loose += c.s.y * wt;
+    o.water += c.s.z * wt;
+    o.lava += c.l.x * wt;
+    if (wt > best && c.s.y > 0.01) {
+      best = wt;
+      o.lmat = u32(c.l.z);
+    }
+    if (c.l.w > 0.5 && wt > 0.25) { o.cap = u32(c.l.w); }
+  }
+  return o;
+}
 
 struct River {
   on: bool,
@@ -118,10 +166,10 @@ fn riverAt(p: vec2<f32>) -> River {
   let t = torusU(p) * f32(AP.n) - 0.5;
   let i0 = vec2<i32>(floor(t));
   for (var k = 0; k < 4; k++) {
-    let id = riverNear[texIdxW(i0 + vec2<i32>(k & 1, k >> 1))];
+    let id = riverBuf[texIdxW(i0 + vec2<i32>(k & 1, k >> 1))];
     if (id == 0u) { continue; }
-    let a = rivers[id - 1u];
-    let b = rivers[a.next];
+    let a = riverNode(id - 1u);
+    let b = riverNode(a.next);
     let pa = nearTo(vec2<f32>(a.x, a.y), p);
     let pb = nearTo(vec2<f32>(b.x, b.y), pa);
     let ab = pb - pa;
@@ -234,6 +282,12 @@ struct Ground {
   rl: f32,
   rx: f32,
   rflags: u32,
+  /** the coarse world here (coarseAt): loose ground on top and its material, water, lava, what added rock is */
+  loose: f32,
+  lmat: u32,
+  cw: f32,
+  clava: f32,
+  cap: u32,
 }
 
 /** symmetric steps: st(1 − t) = 1 − st(t) */
@@ -321,6 +375,15 @@ fn ground(p: vec2<f32>) -> Ground {
     g.h = mix(hB, hA, w) + extra;
     g.w = w;
   }
+  // the coarse world: rock taken or added (a crater, a cone, set lava), what lies on top
+  let co = coarseAt(p);
+  g.h += co.dr;
+  g.hlo += co.dr;
+  g.loose = co.loose;
+  g.lmat = co.lmat;
+  g.cw = co.water;
+  g.clava = co.lava;
+  g.cap = select(0u, co.cap, co.dr > 0.3);
   // a river's channel, and the valley it cuts (its sides steep, so it cuts gorges through high
   // ground); its level only falls, all at once where the ground drops away: a waterfall
   g.rl = -1.0;

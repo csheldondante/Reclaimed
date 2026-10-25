@@ -224,3 +224,23 @@ export function fitColumn(col: Interval[], k: number): boolean {
   }
   return true;
 }
+
+/** Take dz off the top of a column (world or window z alike): the top intervals cut down, the emptied ones gone. */
+export function lowerTop(col: Interval[], dz: number): void {
+  if (!col.length || dz <= 0) return;
+  const to = col[col.length - 1].z1 - dz;
+  while (col.length && col[col.length - 1].z0 >= to) col.pop();
+  const last = col[col.length - 1];
+  if (last && last.z1 > to) last.z1 = to;
+  // (never below the floor)
+  if (!col.length) col.push({ z0: 0, z1: Math.max(0.5, to), mat: 1 });
+}
+
+/** Lay dz of material `mat` on top of a column (merging with the top when it's the same). */
+export function addTop(col: Interval[], dz: number, mat: number): void {
+  if (dz <= 0) return;
+  const last = col[col.length - 1];
+  const z0 = last ? last.z1 : 0;
+  if (last && last.mat === mat) last.z1 += dz;
+  else col.push({ z0, z1: z0 + dz, mat });
+}

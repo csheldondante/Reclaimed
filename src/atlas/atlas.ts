@@ -30,6 +30,8 @@ import patsimW from './patsim.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
 import { defineRegions, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
 import { findRivers, NODE_WORDS } from './rivers';
+import { Coarse, type CoarseSnap } from './coarse';
+import type { LandChange } from '../scenes/streamer';
 
 export interface AtlasParams {
   /** macro texels a side */
@@ -62,6 +64,8 @@ export interface AtlasParams {
   /** caves: rock kept over them, and their scale */
   caveDepth: number;
   caveScale: number;
+  /** the coarse world's cells a side (round 71: coarse.ts; a power of two dividing n) */
+  coarseN: number;
 }
 
 export const DEFAULT_ATLAS: AtlasParams = {
@@ -88,6 +92,7 @@ export const DEFAULT_ATLAS: AtlasParams = {
   warpCell: 9,
   caveDepth: 7,
   caveScale: 40,
+  coarseN: 512,
 };
 
 /** what `?a.<key>=` may set (the viewer's sliders write the same) */
@@ -124,7 +129,7 @@ interface Extra {
 const PARAM_BYTES = 128;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 16;
-const COLG_BYTES = 48;
+const COLG_BYTES = 64;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;
@@ -174,12 +179,13 @@ export class Atlas {
   regs!: GPUBuffer;
   readonly pat: GPUBuffer;
   readonly kcol: GPUBuffer;
-  /** the rivers (rivers.ts): per texel its nearest node + 1, and the nodes */
-  readonly riverNear: GPUBuffer;
-  rivers: GPUBuffer;
+  /** the rivers (rivers.ts): per texel its nearest node + 1, then the nodes (compose.wgsl riverBuf) */
+  riverBuf: GPUBuffer;
   riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0 };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
+  /** the coarse world (round 71): what changes at the world's scale, out of sight */
+  readonly coarse: Coarse;
   private colH!: ComputeKernel;
   private colF!: ComputeKernel;
   private formSeed!: ComputeKernel;
@@ -198,8 +204,8 @@ export class Atlas {
     this.pat = device.createBuffer({ label: 'atlas patterns', size: 3 * 256 * 256 * 4, usage: S });
     this.kcol = device.createBuffer({ label: 'atlas kind colours', size: KIND_IDS.length * 16, usage: S });
     // (none until they're found: the ground the rivers are found on is made without them)
-    this.riverNear = device.createBuffer({ label: 'atlas river near', size: N * 4, usage: S });
-    this.rivers = device.createBuffer({ label: 'atlas rivers', size: NODE_WORDS * 4, usage: S });
+    this.riverBuf = device.createBuffer({ label: 'atlas rivers', size: (N + NODE_WORDS) * 4, usage: S });
+    this.coarse = new Coarse(device, p.coarseN, this.worldW, this.worldH);
     device.queue.writeBuffer(this.kcol, 0, new Float32Array(KIND_IDS.flatMap((k) => [...KINDS[k].colour, 1])));
   }
 
@@ -406,7 +412,7 @@ export class Atlas {
     };
     await this.time('jfa borders', () => jfa(kSeedR, { 6: this.region }, kOutR, { 6: this.region, 9: this.dist }));
     await this.time('jfa coast', () => jfa(kSeedC, { 6: this.region, 22: this.regs }, kOutC, { 6: this.region, 9: this.dist, 22: this.regs }));
-    const macro = () => one(kMacro, bg(kMacro, { 11: hmacB, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverNear, 26: this.rivers }));
+    const macro = () => one(kMacro, bg(kMacro, { 11: hmacB, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells }));
     await this.time('ground', macro);
     this.hmac = new Float32Array(await this.time('readback ground', () => this.read(hmacB)));
 
@@ -424,18 +430,19 @@ export class Atlas {
     });
     this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, ms: rv.ms };
     this.riverNodes = rv.nodes;
-    this.rivers.destroy();
-    this.rivers = dev.createBuffer({ label: 'atlas rivers', size: rv.nodes.byteLength, usage: S });
-    dev.queue.writeBuffer(this.rivers, 0, rv.nodes);
+    this.riverBuf.destroy();
+    this.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: N * 4 + rv.nodes.byteLength, usage: S });
+    dev.queue.writeBuffer(this.riverBuf, N * 4, rv.nodes);
     dev.queue.writeBuffer(key, 0, rv.nodeAt);
     await this.time('jfa rivers', async () => {
       await jfa(kSeedV, { 2: key }, kOutV, { 2: key });
       const enc = dev.createCommandEncoder();
-      enc.copyBufferToBuffer(key, 0, this.riverNear, 0, N * 4);
+      enc.copyBufferToBuffer(key, 0, this.riverBuf, 0, N * 4);
       dev.queue.submit([enc.finish()]);
     });
     await this.time('ground with rivers', macro);
     this.hmac = new Float32Array(await this.read(hmacB));
+    await this.time('coarse world', () => this.coarse.init(this.hmac, n, (t) => !this.defs[this.regionOf[t]].stat.land));
     for (const b of [fieldA, key, label, size, flag, flagRead, info, cont, jfaA, jfaB, hmacB]) b.destroy();
   }
 
@@ -688,13 +695,13 @@ export class Atlas {
     const enc = dev.createCommandEncoder({ label: 'atlas columns' });
     let cp = enc.beginComputePass();
     cp.setPipeline(this.colH.pipeline);
-    cp.setBindGroup(0, makeBindGroup(dev, 'colH', this.colH.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverNear, 26: this.rivers, 30: g }));
+    cp.setBindGroup(0, makeBindGroup(dev, 'colH', this.colH.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells, 30: g }));
     cp.dispatchWorkgroups(Math.ceil((w + 2) / 8), Math.ceil((h + 2) / 8));
     cp.end();
     // the lattice forms around the batch (every lattice: the finest's cells cover the most)
     cp = enc.beginComputePass();
     cp.setPipeline(this.formSeed.pipeline);
-    cp.setBindGroup(0, makeBindGroup(dev, 'formSeed', this.formSeed.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverNear, 26: this.rivers, 32: inst, 33: instN }));
+    cp.setBindGroup(0, makeBindGroup(dev, 'formSeed', this.formSeed.layout, { 0: pb, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells, 32: inst, 33: instN }));
     const cells = (n: number) => Math.ceil((n + 2 * FORM_MARGIN) / FINEST) + 3;
     cp.dispatchWorkgroups(Math.ceil(cells(w + 1) / 8), Math.ceil(cells(h * ROW_H) / 8), 7);
     cp.end();
@@ -725,6 +732,32 @@ export class Atlas {
       return { z0: (runsU[r] & 0x7fffffff) / 256, z1: (runsU[r + 1] & 0xffffff) / 256, mat: runsU[r + 1] >>> 24, form: runsU[r] >>> 31 === 1 };
     };
     return { w, h, f, u, runsU, run, forms };
+  }
+
+  /** the coarse world round a region of world cells now (the streamer's LandSource.snapshot) */
+  snapshot(x0: number, y0: number, w: number, h: number): Promise<CoarseSnap> {
+    return this.coarse.snapshot(x0, y0, w, h);
+  }
+
+  /** what has changed at each world cell of a region since `snap` (the streamer's LandSource.changes) */
+  async changes(snap: unknown, x0: number, y0: number, w: number, h: number): Promise<((x: number, y: number) => LandChange) | null> {
+    const was = snap as CoarseSnap;
+    const now = await this.coarse.snapshot(x0, y0, w, h);
+    let any = false;
+    for (let i = 0; i < now.cells.length; i++)
+      if (Math.abs(now.cells[i] - was.cells[i]) > 1e-4) {
+        any = true;
+        break;
+      }
+    if (!any) return null;
+    const rowH = Math.sqrt(3) / 2;
+    return (x, y) => {
+      const px = x + 0.5 + 0.5 * (((y % 2) + 2) % 2);
+      const py = (y + 0.5) * rowH;
+      const a = this.coarse.sample(now, px, py);
+      const b = this.coarse.sample(was, px, py);
+      return { dr: a.dr - b.dr, cap: a.cap, dl: a.loose - b.loose, lmat: a.lmat, dw: a.water - b.water };
+    };
   }
 
   /** columns that had more intervals than the window holds (their smallest gaps filled: landFrom) */
@@ -834,7 +867,8 @@ export class Atlas {
   }
 
   dispose(): void {
-    for (const b of [this.paramBuf, this.region, this.dist, this.regs, this.pat, this.kcol, this.riverNear, this.rivers]) b?.destroy();
+    for (const b of [this.paramBuf, this.region, this.dist, this.regs, this.pat, this.kcol, this.riverBuf]) b?.destroy();
+    this.coarse.dispose();
   }
 }
 

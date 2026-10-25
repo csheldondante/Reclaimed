@@ -508,6 +508,25 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   basalt under lava) and feeds it: water springs along its middle
   (`waterSource`: what comes from upstream), lava springs. The ground is made
   twice: first without rivers (to find them on), then with them.
+- The coarse world (round 72, `coarse.ts`, `coarse.wgsl`): the torus at
+  `coarseN`² cells (512: 32 world units each), what has changed from the
+  atlas — rock taken or added, loose ground (its material), water, the
+  sediment it carries, lava (its heat) — simulated on the GPU (cFlux: what
+  leaves each cell for its four neighbours; cDepth: what came, rain, the
+  sea, erosion and deposition, lava cooling to basalt, vents; one buffer
+  everything reads, the step's result copied back) a step every 4th frame
+  in the level, 4 a frame in the viewer. Events (cEvent): a meteor (bowl,
+  rim, ejecta of rubble), ash downwind of an eruption, a cone; `erupt` adds
+  a vent. compose.wgsl `coarseAt` (bilinear) adds it to `ground` and the
+  columns lay its loose ground on top (burying plants), its basalt cap, its
+  water and lava. Regions come in changed: the streamer keeps a snapshot of
+  the coarse cells round a region when it's made and when it's left
+  (`LandSource.snapshot`), and on the way back in applies what changed since
+  (`changes`: rock off or on, loose ground on, water — layout.ts lowerTop /
+  addTop). An event in sight is made in the window's columns too
+  (`Streamer.editLive` with coarse.ts `eventAt`, the GPU's shapes cell by
+  cell), with the fine meteor's flash and blast or a lava vent. Rain and
+  erosion run when `rain` / `erode` are set (off by default: untuned).
 - Physics of forms: the ground is terrain (strength-1 materials: stone,
   sandstone, basalt, obsidian, flesh); forms of weaker ones (crystal, ice,
   coral) are judged by the integrity system when they arrive

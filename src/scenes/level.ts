@@ -31,6 +31,7 @@ import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import { Streamer, shiftGrid, REGION, TIER, boxOf } from './streamer';
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
+import { EV, eventAt } from '../atlas/coarse';
 import type { MapData } from '../world/mapgen';
 import { type Interval, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
@@ -183,6 +184,56 @@ export class LevelScene implements Scene {
     }
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
+  }
+
+  private worldEvents: Promise<void> = Promise.resolve();
+  private coarseFrame = 0;
+
+  /** Window cell (x, y) as a world point (world units), for the coarse world. */
+  private worldAt(x: number, y: number, f: (wx: number, wy: number, c: import('../atlas/coarse').Coarse) => void): void {
+    const a = this.opts.atlas;
+    if (!a || !this.stream) throw new Error('the coarse world is the atlas level\'s');
+    const gx = this.stream.origin[0] + x;
+    const gy = this.stream.origin[1] + y;
+    f(gx + 0.5 + 0.5 * (((gy % 2) + 2) % 2), (gy + 0.5) * ROW_H, a.atlas.coarse);
+  }
+
+  /**
+   * A coarse event, in the window's columns too where it reaches into it (coarse.ts eventAt: the same
+   * shapes, cell by cell), with what can be seen of it: a meteor's flash and blast, an eruption's vent.
+   */
+  private async worldEventHere(e: import('../atlas/coarse').CoarseEvent): Promise<void> {
+    const a = this.opts.atlas;
+    const S = this.stream;
+    if (!a || !S) return;
+    const { w: W, h: H } = this.core.dims;
+    const { worldW, worldH } = a.atlas;
+    const reach = e.kind === EV.meteor ? e.r * 3 : e.kind === EV.ash ? e.r * 3.5 : e.r;
+    // the event's middle in window cells (the short way round the torus)
+    let ex = e.x - (S.origin[0] + 0.5);
+    let ey = e.y / ROW_H - (S.origin[1] + 0.5);
+    ex -= Math.round(ex / worldW) * worldW;
+    ey -= Math.round(ey / (worldH / ROW_H)) * (worldH / ROW_H);
+    const rc = reach / ROW_H;
+    const x0 = Math.floor(ex - reach);
+    const x1 = Math.ceil(ex + reach);
+    const y0 = Math.floor(ey - rc);
+    const y1 = Math.ceil(ey + rc);
+    if (x1 < 0 || y1 < 0 || x0 >= W || y0 >= H) return;
+    const n = await S.editLive(x0, y0, x1, y1, (x, y) => {
+      const gx = S.origin[0] + x;
+      const gy = S.origin[1] + y;
+      const d = eventAt(e, gx + 0.5 + 0.5 * (((gy % 2) + 2) % 2), (gy + 0.5) * ROW_H, worldW, worldH);
+      return { ...d, cap: e.kind === EV.cone ? MAT.Basalt : 0 };
+    });
+    for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
+    this.integrity?.clear();
+    const cx = Math.min(W - 1, Math.max(0, Math.round(ex)));
+    const cy = Math.min(H - 1, Math.max(0, Math.round(ey)));
+    const [px, py] = cellPos(cx, cy);
+    const z = this.core.map.surface[cy * W + cx];
+    if (e.kind === EV.meteor && n) this.impact([px, py, z]);
+    if (e.kind === EV.cone && n) this.lava?.addVent(px, py, 60, 12, 3, 0);
   }
 
   /** The free camera on (from where the fixed view looks from, the same way) or off (looking at the ground under the screen's middle). */
@@ -518,6 +569,12 @@ export class LevelScene implements Scene {
         }
         if (e.key.toLowerCase() === 'e' && this.editor?.tool === 'place') this.editor.rotate();
         if (e.key === 'Escape' && this.intro) this.director.cancel();
+        // (the atlas level, round 71) M: a great meteor where the pointer is; V: an eruption there
+        if (this.opts.atlas && this.hoverWorld && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement)) {
+          const [hx, hy] = cellAt(this.hoverWorld[0], this.hoverWorld[1]);
+          if (e.key.toLowerCase() === 'm') this.worldAt(hx, hy, (wx, wy, c) => c.meteor(wx, wy));
+          if (e.key.toLowerCase() === 'v') this.worldAt(hx, hy, (wx, wy, c) => c.erupt(wx, wy));
+        }
         // F: the free camera (round 69: fly round the world in perspective), and back
         if (e.key.toLowerCase() === 'f' && !e.ctrlKey && !e.metaKey && !(e.target instanceof HTMLInputElement)) this.toggleFly();
         if (e.key === ' ') {
@@ -655,7 +712,19 @@ export class LevelScene implements Scene {
     if (this.level.stream) {
       const a = this.opts.atlas;
       this.stream = a
-        ? new Streamer(core, { region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h), wrap: [a.atlas.p.cols, a.atlas.p.rows], height: a.atlas.p.zTop }, a.origin, { oz: a.oz, outside: a.outside })
+        ? new Streamer(
+            core,
+            {
+              region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h),
+              wrap: [a.atlas.p.cols, a.atlas.p.rows],
+              height: a.atlas.p.zTop,
+              // (round 71: the coarse world changes while a region is away)
+              snapshot: (x0, y0, w, h) => a.atlas.snapshot(x0, y0, w, h),
+              changes: (s, x0, y0, w, h) => a.atlas.changes(s, x0, y0, w, h),
+            },
+            a.origin,
+            { oz: a.oz, outside: a.outside },
+          )
         : new Streamer(core);
       this.stream.onSlide.push((dx, dy, dz) => {
         // what the level keeps in window coordinates
@@ -669,6 +738,9 @@ export class LevelScene implements Scene {
           this.integrity?.clear();
         }
       });
+      // (round 71) an event of the coarse world in sight is made in the window's columns too
+      // (one after another: each reads the window back and writes it)
+      if (a) a.atlas.coarse.onEvent.push((e) => (this.worldEvents = this.worldEvents.then(() => this.worldEventHere(e))));
       // (round 69: the atlas's forms of a weak material are judged when they come in, like anything
       // built — what can't stand falls; the first window's, region by region)
       const integ = this.integrity;
@@ -683,7 +755,16 @@ export class LevelScene implements Scene {
             }
       }
     }
-    (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, { stream: this.stream, atlas: this.opts.atlas?.atlas, toggleFly: () => this.toggleFly() });
+    (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      stream: this.stream,
+      atlas: this.opts.atlas?.atlas,
+      toggleFly: () => this.toggleFly(),
+      // the coarse world's events at a window cell (round 71): world.meteor(x, y, r), world.erupt(x, y)
+      world: {
+        meteor: (x: number, y: number, r?: number) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy, r)),
+        erupt: (x: number, y: number) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy)),
+      },
+    });
     core.places.groundAt = this.heightAt;
     // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)
     const plan = host.params.get('plan');
@@ -833,6 +914,8 @@ export class LevelScene implements Scene {
       this.confineToReach();
     }
     this.director.update(dt);
+    // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms)
+    if (this.opts.atlas && ++this.coarseFrame % 4 === 0) this.opts.atlas.atlas.coarse.step(1);
 
     const simDt = dt * this.speed;
     if (this.hoverWorld) powers.hover(this.hoverWorld[0], this.hoverWorld[1], dt);

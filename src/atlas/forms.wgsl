@@ -295,7 +295,8 @@ fn netAt(f: Form, R: Region, k: u32, p: vec2<f32>, ground: f32, wgt: f32) -> Net
   n.d = d;
   n.r = r;
   n.shell = f.shell;
-  n.zc = ground + f.zOff + f.hHi * pfbm(u, perOf(f.spacing * 1.5), 2u, s + 5u);
+  // (rock under it always: where the ground is low — a crater's floor — the tubes rise with it)
+  n.zc = max(ground + f.zOff + f.hHi * pfbm(u, perOf(f.spacing * 1.5), 2u, s + 5u), r + 2.0);
   n.mat = f.pk & 0xffu;
   n.liquid = (f.pk >> 8u) & 0xffu;
   // skylights: where a coarser noise is high, the roof over a tunnel is open
@@ -359,14 +360,22 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
       cover = max(cover, 1.0);
     }
   }
+  // set lava, a cone: the rock added is basalt at the top
+  if (g.cap != 0u && !river) {
+    topMat = g.cap;
+    cover = 0.0;
+  }
   cover = min(cover, top - 1.0);
   let rockTop = top - cover;
+  // the coarse world's loose ground over all of it (ash, a crater's rubble, silt)
+  let lz = select(0.0, g.loose, g.loose > 0.05 && g.lmat != 0u);
+  let topL = top + lz;
   var flags = 0u;
 
   // ---- what could be here: the lattice forms near, the network, the alcoves --
   var li: array<u32, 16>;
   var nl = 0u;
-  var zEnd = top;
+  var zEnd = topL;
   let ni = min(atomicLoad(&instN[0]), MAX_INST);
   for (var i = 0u; i < ni; i++) {
     let I = insts[i];
@@ -467,13 +476,15 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
         addMat = fv.mat;
       }
     }
-    let bc = min(top - z, -carve);
+    // (nothing carves the world's floor: every column keeps its first cell)
+    if (z < 1.0) { carve = -1e9; }
+    let bc = min(topL - z, -carve);
     var F = max(bc, add);
     if (z >= AP.zTop) { F = min(F, AP.zTop - z); }
     let form = add >= bc;
     var lab = 0u;
     if (F > 0.0) {
-      if (form) { lab = addMat; } else { lab = select(topMat, R.rockMat, z < rockTop); }
+      if (form) { lab = addMat; } else if (z >= top) { lab = g.lmat; } else { lab = select(topMat, R.rockMat, z < rockTop); }
     }
     if (k > 0 && lab != L) {
       // where between the samples it changed
@@ -484,7 +495,8 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
         let M = add - bc;
         zb = z - 1.0 + pM / (pM - M);
       } else if (!form) {
-        zb = clamp(rockTop, z - 1.0, z);
+        // (the ground's own top under the loose, or the cover's bottom)
+        if (lz > 0.0 && top > z - 1.0 && top <= z) { zb = top; } else { zb = clamp(rockTop, z - 1.0, z); }
       }
       if (L != 0u && zb - zs > 0.05) {
         if (runs < MR) {
@@ -516,8 +528,10 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   o.water = 0.0;
   o.lava = 0.0;
   // the open ground (not a form's top, not a hole in it): below the sea, water
-  let open = !surfForm && abs(surf - top) < 0.01;
-  if (open) { o.water = max(AP.sea - top, 0.0); }
+  let open = !surfForm && abs(surf - topL) < 0.01;
+  if (open) { o.water = max(max(AP.sea - topL, 0.0), g.cw); }
+  // the coarse world's lava, where it's still running
+  if (open && g.clava > 0.05) { o.lava = g.clava; }
   // a skylight onto a tube: its water or lava, a little below the tube's middle
   if (net.on && net.sky && surf < net.zc && !surfForm) {
     let depth = max(net.zc - net.r * 0.3 - surf, 0.0);
@@ -541,7 +555,9 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   if (o.water == 0.0 && o.lava == 0.0 && !snowy && R.veg > 0.0 && surf < AP.sea + 70.0) {
     let woods = smoothstep(0.05, 0.35, pfbm(torusU(p), perOf(55.0), 3u, AP.seed + 6u)) * smoothstep(AP.sea + 60.0, AP.sea + 20.0, surf);
     let v = clamp(R.veg * (1.0 + m * 1.6 + woods * 2.2) + (hf(hash2u(x, y, AP.seed + 7u)) - 0.5) * 0.6, 0.0, 4.2);
-    if (open && o.cover > 0.0) { o.veg = v; } else if (surfForm) { o.veg = v * 0.35; }
+    if (open && (o.cover > 0.0 || lz > 0.0)) { o.veg = v; } else if (surfForm) { o.veg = v * 0.35; }
+    // (buried: under half a cell of ash or rubble nothing's left; thinner, it thins)
+    o.veg *= clamp(1.0 - lz * 2.0, 0.0, 1.0);
   }
   colOut[id.y * AP.w + id.x] = o;
 }

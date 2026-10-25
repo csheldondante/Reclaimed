@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 72 (session 5, `atlas`) — the coarse world
+
+- "I think the coarse columns make sense. It solves our simulation at scale
+  too potentially and lets us simulate erosion, fluids, physics (maybe) at a
+  large scale so we can have huge eruptions bury forests in ash or meteors
+  that make craters that are many chunks. We can even extend it to agents
+  and simulate stacks of agents moving and consuming, transporting resources
+  or transforming land. For example, we could simulate settlements spreading
+  at the coarse scale then show the settlements with individual structures
+  going up at the fine scale. I think it would make the world feel alive and
+  massive and less like a toy."
+- Built first: the coarse world (terrain, water, loose ground, lava) with
+  meteors and eruptions; settlements and agents at the coarse scale next, on
+  the same pattern (BACKLOG Q57).
+
 ## 2026-10-24 — round 71 (session 5, `atlas`) — scales and representations (discussion)
 
 - "Could we use coarse columns at the atlas scale and then refine them with

@@ -55,6 +55,13 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
       c = terrainColour(g.h) * select(1.0, sh, g.h >= AP.sea);
       // (rivers: blue, lava: orange)
       if (g.rx < 1.0 && g.h >= AP.sea) { c = select(vec3<f32>(0.2, 0.42, 0.7), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u) * mix(1.0, sh, 0.5); }
+      // (round 71: the coarse world — set lava's basalt dark, ash grey, rubble brown, running lava glowing)
+      if (g.cap != 0u) { c = vec3<f32>(0.16, 0.15, 0.16) * sh; }
+      if (g.loose > 0.05) {
+        let lc = select(vec3<f32>(0.5, 0.44, 0.38), vec3<f32>(0.62, 0.6, 0.58), g.lmat == 17u);
+        c = mix(c, lc * sh, clamp(g.loose * 1.5, 0.0, 1.0));
+      }
+      if (g.clava > 0.05) { c = mix(c, vec3<f32>(1.0, 0.4, 0.06), clamp(g.clava, 0.0, 1.0)); }
     }
     case 1u: {
       c = hue(g.a) * sh;

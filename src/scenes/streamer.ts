@@ -26,7 +26,7 @@
 // The sim waits while a slide is `busy` (only when a region coming in is
 // still being read back from its last visit).
 
-import { CHUNK, K_HEADROOM, SLOT_WORDS, fitColumn, joinColumn, packColumn, readSlot, splitColumn, type Interval } from '../world/layout';
+import { CHUNK, K_HEADROOM, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
@@ -44,6 +44,27 @@ export interface LandSource {
   wrap?: [number, number];
   /** the land's height when it's taller than the window: the window slides in z (round 69) */
   height?: number;
+  /** (round 71: a coarse world that changes while a region is away) what it is round a region now, and what has
+   *  changed at a world cell since then — rock taken (−) or added, loose ground and its material, water */
+  snapshot?(x0: number, y0: number, w: number, h: number): Promise<unknown>;
+  changes?(snap: unknown, x0: number, y0: number, w: number, h: number): Promise<((x: number, y: number) => LandChange) | null>;
+}
+
+/** what changed at a world cell while its region was away (LandSource.changes) */
+export interface LandChange {
+  dr: number;
+  /** rock added is this (0: stone) */
+  cap: number;
+  dl: number;
+  lmat: number;
+  dw: number;
+}
+
+/** a column's top changed by `d` (world z): rock off or on, loose ground on (layout.ts lowerTop / addTop) */
+export function applyChange(col: Interval[], d: { dr: number; cap?: number; dl: number; lmat: number }): void {
+  if (d.dr < -0.05) lowerTop(col, -d.dr);
+  else if (d.dr > 0.05) addTop(col, d.dr, d.cap || 1);
+  if (d.dl > 0.05 && d.lmat) addTop(col, d.dl, d.lmat);
 }
 
 /** round 66's land: noise of world position (world/streamgen.ts), without an edge */
@@ -78,6 +99,8 @@ interface Frozen {
   /** the window's oz its layers are cut at, and each column's intervals outside that (world z) */
   oz: number;
   outside: Interval[][];
+  /** the land source's snapshot when it was made or left (LandSource.snapshot) */
+  snap?: unknown;
   /** its chunks' pages, chunk by chunk (row-major in the region) */
   layers: Uint32Array;
   /** each kept buffer's columns: per plane, REGION rows of REGION × stride bytes */
@@ -99,6 +122,8 @@ export interface SlideStats {
   resliced: number;
   /** columns with more intervals than the window holds (their closest made one: layout.ts fitColumn) */
   fitted: number;
+  /** regions that came back changed (the coarse world: LandSource.changes) */
+  changed: number;
   /** the last slide: ms from start to the regions coming in written */
   lastMs: number;
 }
@@ -114,7 +139,7 @@ export class Streamer {
   busy = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0 };
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
   /** the world height of the window's z = 0 */
@@ -369,6 +394,7 @@ export class Streamer {
       return o;
     });
     const oz = this.oz;
+    const leftSnaps = leaving.map(([lx, ly]) => this.source.snapshot?.(this.origin[0] + lx, this.origin[1] + ly, R, R));
     const read = staging.mapAsync(GPUMapMode.READ).then(() => {
       const all = new Uint8Array(staging.getMappedRange()).slice();
       staging.unmap();
@@ -406,8 +432,9 @@ export class Streamer {
     leftKeys.forEach((k, i) =>
       this.frozen.set(
         k,
-        read.then((fs) => {
+        Promise.all([read, leftSnaps[i]]).then(([fs, snap]) => {
           const f = fs[i];
+          f.snap = snap;
           f.surface = leftSurf[i];
           this.frozen.set(k, f);
           return f;
@@ -464,14 +491,17 @@ export class Streamer {
       }
       return this.generate(this.origin[0] + lx, this.origin[1] + ly);
     });
-    for (let k = 0; k < entering.length; k++) this.write(await coming[k], entering[k][0], entering[k][1]);
+    for (let k = 0; k < entering.length; k++) {
+      const [lx, ly] = entering[k];
+      this.write(await this.since(await coming[k], this.origin[0] + lx, this.origin[1] + ly), lx, ly);
+    }
   }
 
   /** a region's land the first time it is seen, in the frozen form (cut at the window's oz now) */
   private async generate(x0: number, y0: number): Promise<Frozen> {
     const { R } = this;
     const zMax = this.core.dims.zMax;
-    const land = await this.source.region(x0, y0, R, R, zMax);
+    const [land, snap] = await Promise.all([this.source.region(x0, y0, R, R, zMax), this.source.snapshot?.(x0, y0, R, R)]);
     const oz = this.oz;
     const rc = R / CHUNK;
     const layers = new Uint32Array(rc * rc * this.pageSlots * SLOT_WORDS);
@@ -508,7 +538,90 @@ export class Streamer {
       for (let k = 0; k < R * R; k++) t[k * 4] = land.lavaSpring[k];
       texs.lavaSpring = t;
     }
-    return { layers, bufs, texs, surface, judge, oz, outside };
+    return { layers, bufs, texs, surface, judge, oz, outside, snap };
+  }
+
+  /** a region coming in with what changed while it was away (LandSource.changes since its snapshot) */
+  private async since(f: Frozen, x0: number, y0: number): Promise<Frozen> {
+    const { R } = this;
+    if (!this.source.changes || f.snap === undefined) return f;
+    const at = await this.source.changes(f.snap, x0, y0, R, R);
+    if (!at) return f;
+    const zMax = this.core.dims.zMax;
+    const layers = f.layers.slice();
+    const outside = f.outside.slice();
+    const surface = f.surface.slice();
+    const water = f.bufs.water ? new Float32Array(f.bufs.water.slice().buffer) : undefined;
+    const veg = f.bufs.veg ? new Float32Array(f.bufs.veg.slice().buffer) : undefined;
+    let n = 0;
+    for (let y = 0; y < R; y++)
+      for (let x = 0; x < R; x++) {
+        const d = at(x0 + x, y0 + y);
+        if (Math.abs(d.dr) < 0.05 && d.dl < 0.05 && d.dw < 0.02) continue;
+        const i = y * R + x;
+        const full = joinColumn(this.columnOf(f.layers, x, y), f.oz, f.outside[i]);
+        applyChange(full, d);
+        const cut = splitColumn(full, f.oz, zMax);
+        outside[i] = cut.outside;
+        this.place(layers, x, y, cut.inside);
+        surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        if (water && d.dw > 0) water[i] += d.dw;
+        if (veg && d.dl > 0.05) veg[i] *= Math.max(0, 1 - d.dl * 2);
+        n++;
+      }
+    if (!n) return f;
+    this.stats.changed++;
+    const bufs = { ...f.bufs };
+    if (water) bufs.water = new Uint8Array(water.buffer);
+    if (veg) bufs.veg = new Uint8Array(veg.buffer);
+    return { ...f, layers, outside, surface, bufs, snap: undefined };
+  }
+
+  /**
+   * Change the live window's columns in the box (window cells x0..x1, y0..y1) by `at(x, y)` (window
+   * cells; layout.ts lowerTop / addTop, world z): read back, changed, written — an event in sight.
+   */
+  async editLive(x0: number, y0: number, x1: number, y1: number, at: (x: number, y: number) => { dr: number; cap?: number; dl: number; lmat: number } | null): Promise<number> {
+    const { core, W, H } = this;
+    const dev = core.host.gpu.device;
+    const wg = core.world;
+    const zMax = core.dims.zMax;
+    const [layersBuf, vegBuf] = await Promise.all([core.readBuffer('layers'), core.readBuffer('veg')]);
+    const slots = new Uint32Array(layersBuf.buffer, layersBuf.byteOffset, layersBuf.byteLength / 4);
+    const veg = new Float32Array(vegBuf.buffer, vegBuf.byteOffset, W * H);
+    const table = core.packed.chunkTable;
+    const cx = W / CHUNK;
+    const K = this.K;
+    let n = 0;
+    for (let y = Math.max(0, y0); y < Math.min(H, y1); y++)
+      for (let x = Math.max(0, x0); x < Math.min(W, x1); x++) {
+        const d = at(x, y);
+        if (!d || (Math.abs(d.dr) < 0.05 && d.dl < 0.05)) continue;
+        const i = y * W + x;
+        const ci = Math.floor(y / CHUNK) * cx + Math.floor(x / CHUNK);
+        const base = table[ci * 2] + ((y % CHUNK) * CHUNK + (x % CHUNK)) * K;
+        const was: Interval[] = [];
+        for (let s = 0; s < K; s++) {
+          const iv = readSlot(slots, base + s);
+          if (!iv) break;
+          was.push(iv);
+        }
+        const full = joinColumn(was, this.oz, this.outside[i]);
+        applyChange(full, d);
+        const cut = splitColumn(full, this.oz, zMax);
+        if (fitColumn(cut.inside, this.colK)) this.stats.fitted++;
+        this.outside[i] = cut.outside;
+        slots.set(packColumn(cut.inside, K), base * SLOT_WORDS);
+        core.map.surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        if (d.dl > 0.05) veg[i] *= Math.max(0, 1 - d.dl * 2);
+        n++;
+      }
+    if (n) {
+      for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, slots);
+      for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, veg);
+      core.clearUndo();
+    }
+    return n;
   }
 
   /** column (x, y) of a region (window z) into its layers' pages, fitted to what a column may hold */
