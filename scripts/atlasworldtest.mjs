@@ -93,14 +93,39 @@ try {
           zy[Math.floor(y / 32)]++;
         }
       }
+    const ride = { moved: aw.stream.origin[0] - o0[0], slides, seaZ: aw.core.globals.seaZ, awake: aw.sleep?.awake, world: aw.toWorld(target[0], target[1]).map((v) => +v.toFixed(0)) };
+    // (round 80) a warp: somewhere else entirely, the land there, the reads fresh after
+    let warped = null;
+    aw.onWarp.push((ox, oy, oz) => (warped = { ox, oy, oz }));
+    const tw = performance.now();
+    await aw.warp(5040, 12672);
+    const warpMs = performance.now() - tw;
+    for (let k = 0; k < 120; k++) {
+      if (!aw.frame([aw.core.camera.target[0], aw.core.camera.target[1]])) aw.core.advance(performance.now(), 1 / 60, 1);
+      aw.core.render();
+      await new Promise((res) => requestAnimationFrame(res));
+    }
+    await sim.refresh();
+    let wz = 0;
+    // (columns with ground in the window — the CPU's surface — read so in the mirror too)
+    let wn = 0;
+    for (let y = 8; y < aw.core.dims.h - 8; y += 8)
+      for (let x = 8; x < aw.core.dims.w - 8; x += 8) {
+        if (aw.core.map.surface[y * aw.core.dims.w + x] <= 0) continue;
+        wn++;
+        if ((sim.terrain.heightAt(x + 0.5, (y + 0.5) * 0.866) ?? 0) <= 0) wz++;
+      }
+    const mid = aw.toWorld(aw.core.camera.target[0], aw.core.camera.target[1]);
+    const warp = { warped, warpMs: +warpMs.toFixed(0), mid: mid.map((v) => Math.round(v)), zeros: wz, ofGround: wn, empty: [...aw.core.map.surface].filter((v) => v <= 0).length, fresh: sim.fresh, seaZ: aw.core.globals.seaZ, awake: aw.sleep?.awake };
     return {
+      warp,
       built: +built.toFixed(0),
-      moved: aw.stream.origin[0] - o0[0],
-      slides,
+      moved: ride.moved,
+      slides: ride.slides,
       busyFrames,
       ticks,
-      seaZ: aw.core.globals.seaZ,
-      awake: aw.sleep?.awake,
+      seaZ: ride.seaZ,
+      awake: ride.awake,
       chunks: (aw.core.dims.w / 16) * (aw.core.dims.h / 16),
       band: !!aw.core.renderer.band,
       height: h,
@@ -114,13 +139,14 @@ try {
       zy,
       surfZeros: [...S].filter((v) => v <= 0).length,
       onLandN: onLand.length,
-      world: aw.toWorld(target[0], target[1]).map((v) => +v.toFixed(0)),
+      world: ride.world,
     };
   });
   check('an atlas world from the API: built, the world API over it', r.built > 0 && r.band, { built: r.built, band: r.band });
   check('a target ridden east: the window slides after it', r.moved >= 192 && r.slides >= 3, { moved: r.moved, slides: r.slides, busyFrames: r.busyFrames, ticks: r.ticks });
   check('units stay on the land they stood on through the slides (they move with the window)', r.units > 0 && r.driftMax < 12 && (r.onLandN === 0 || r.offLandMax < 2.5), { units: r.units, driftMax: r.driftMax, inWindow: r.onLandN, offLandMax: r.offLandMax });
   check('the terrain reads after the slides: fresh, no column top 0 (asleep or not)', r.fresh && r.zeros === 0, { fresh: r.fresh, zeros: r.zeros, of: r.sampled, byX: r.zx, byY: r.zy, cpuSurfaceZeros: r.surfZeros });
+  check('a warp: the window somewhere else, the land there read fresh, onWarp told', r.warp.warped && Math.abs(r.warp.mid[0] - 5040) < 40 && Math.abs(r.warp.mid[1] - 12672) < 40 && r.warp.zeros === 0 && r.warp.fresh, r.warp);
   check('the sea held, sleep on, the terrain under the target', r.seaZ > -1e8 && r.awake > 0 && r.awake < r.chunks && r.height > 0, { seaZ: r.seaZ, awake: r.awake, of: r.chunks, height: r.height, world: r.world });
 } finally {
   await browser.close();

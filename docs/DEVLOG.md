@@ -4690,3 +4690,24 @@ worst of the ride 98 at its start (as slideframe's 91). The 200–600 ms slide
 frames and the "idle regression" were both other sessions' browsers on the
 same GPU: measure only when it's free. scripts/slideframe.mjs reproduces the
 hoverbike's setup (every world-API module, physics, a fast ride).
+
+## Round 80 — the atlas map and warping (places)
+
+Why: the user, on the phone: "I would love a way to access the atlas map so
+I can see where I am or maybe warp. I'm curious to see different locations
+and it will help with debugging."
+
+- Streamer.warp(ox, oy, oz): the window somewhere else — every region there
+  generated (or thawed) and written, what's derived per column cleared, the
+  meshes and the band made again, onWarp. api/atlas-world.ts `warpWindow`
+  (whole regions round the cell; oz as the first window's — the tier holding
+  the most ground tops, the middle in it: a mesa's top at 224 first left the
+  plain under the floor) and `aw.warp`, `aw.onWarp`.
+- api/atlas-map.ts AtlasMap: the atlas drawn once on the CPU (2048² from its
+  macro heights, roads, sites), shown panned and zoomed; tap to warp. In the
+  atlas level: the 🗺 button. scripts/mapshot.mjs (a phone's size): the map
+  (shots78/map-open.png) and a warp north to a snowy road (map-landed.png).
+- atlasworldtest's warp: onWarp told, the window round the cell, oz 128 at a
+  mesa, every column with ground read fresh, ~1.4 s.
+
+atlasworldtest 6/6.

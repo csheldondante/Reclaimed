@@ -160,6 +160,8 @@ export class Streamer {
   readonly ground: Float32Array;
   /** called when land comes into the window that the structural system should judge: the box (window cells) round it */
   readonly onArrive: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
+  /** the window was moved somewhere else entirely (warp): its new origin and oz — what the game keeps in window coordinates is void */
+  readonly onWarp: ((ox: number, oy: number, oz: number) => void)[] = [];
   private bufs: ColBuf[];
   private texs: ColTex[];
   private scratch: GPUBuffer;
@@ -736,6 +738,61 @@ export class Streamer {
   }
 
   /** Move the window by dz cells in z (±TIER): every column read back, joined with what's outside it, cut again. */
+  /**
+   * Move the window somewhere else entirely (round 80, the user: "a way to access the atlas map so I can see
+   * where I am or maybe warp"): its origin (world cells, whole regions) and oz (whole tiers). Every region
+   * there is generated (or thawed) and written; what's derived per column is cleared, the meshes and the band
+   * made again. What the window held is dropped, not frozen (a warp is a jump, not a ride). The sim waits.
+   */
+  async warp(ox: number, oy: number, oz: number): Promise<void> {
+    if (ox % this.R || oy % this.R) throw new Error(`a warp's origin must be whole regions of ${this.R}`);
+    if (oz % TIER || oz < 0) throw new Error(`a warp's oz must be whole tiers of ${TIER}`);
+    while (this.busy) await new Promise((r) => setTimeout(r, 16));
+    this.busy = true;
+    const t0 = performance.now();
+    const { core, W, H, R } = this;
+    try {
+      core.windowEpoch++;
+      this.pending.clear();
+      this.origin[0] = ox;
+      this.origin[1] = oy;
+      this.oz = oz;
+      core.globals.origin = [ox, oy];
+      const dev = core.host.gpu.device;
+      const wg = core.world;
+      const enc = dev.createCommandEncoder({ label: 'stream warp' });
+      for (const b of [...this.bufs, ...this.moduleBufs()]) if (!b.keep) enc.clearBuffer(b.buf);
+      enc.clearBuffer(wg.particles);
+      dev.queue.submit([enc.finish()]);
+      const spots: [number, number][] = [];
+      for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) spots.push([lx, ly]);
+      const lands = await Promise.all(
+        spots.map(([lx, ly]) => {
+          const key = this.key((ox + lx) / R, (oy + ly) / R);
+          const got = this.frozen.get(key);
+          if (got) {
+            this.frozen.delete(key);
+            this.stats.thawed++;
+            return Promise.resolve(got).then((f) => this.since(f, ox + lx, oy + ly));
+          }
+          this.stats.generated++;
+          return this.generate(ox + lx, oy + ly);
+        }),
+      );
+      lands.forEach((f, k) => this.write(f, spots[k][0], spots[k][1]));
+      // (everything built is made again where it is now)
+      core.renderer.fieldMesh.shift(1 << 12, 0, [0, 0, 0]);
+      core.renderer.band?.mesh.shift(1 << 12, 0, [0, 0, 0]);
+      this.refreshBand();
+      core.clearUndo();
+      core.windowEpoch++;
+      for (const f of this.onWarp) f(ox, oy, oz);
+    } finally {
+      this.busy = false;
+    }
+    this.stats.lastMs = +(performance.now() - t0).toFixed(1);
+  }
+
   async slideZ(dz: number): Promise<void> {
     if (Math.abs(dz) !== TIER) throw new Error(`a slide in z is one tier (${TIER})`);
     if (this.oz + dz < 0) throw new Error('the window is at the bottom of the world');

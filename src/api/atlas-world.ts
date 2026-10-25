@@ -56,9 +56,45 @@ export interface AtlasWorld {
    * under way (the sim waits for the land coming in: skip core.advance).
    */
   frame(target: [number, number], reach?: number): boolean;
+  /**
+   * Jump the window to world cell (cx, cy) (round 80: the map's warp): the window round it, at a height for
+   * the ground there; the camera at its middle. Then `onWarp` — the game puts its player down (what it kept
+   * in window coordinates is void). Resolves when the land is in.
+   */
+  warp(cx: number, cy: number): Promise<void>;
+  /** the window jumped (warp): its new origin (world cells) and oz */
+  onWarp: ((ox: number, oy: number, oz: number) => void)[];
   /** a window point (x cells, y world units) as a world cell, and back */
   toWorld(x: number, y: number): [number, number];
   fromWorld(cx: number, cy: number): [number, number];
+}
+
+/**
+ * The window to world cell (cx, cy) (round 80): its origin the whole regions round it, its oz the tier that
+ * holds the ground there well inside it (as the streamer keeps it: over its floor, under its top).
+ */
+export function warpWindow(atlas: Atlas, stream: Streamer, dims: { w: number; h: number; zMax: number }, wcx: number, wcy: number): Promise<void> {
+  const { cols, rows, zTop } = atlas.p;
+  const x = ((Math.round(wcx) % cols) + cols) % cols;
+  const y = ((Math.round(wcy) % rows) + rows) % rows;
+  const ox = Math.round((x - dims.w / 2) / REGION) * REGION;
+  const oy = Math.round((y - dims.h / 2) / REGION) * REGION;
+  // (as the first window's: the tier holding the most of the ground's tops over it — 8 over its floor, 24
+  // under its top — the ground at its middle in it, by the atlas's macro heights)
+  const gMid = atlas.macroAt(x + 0.5, (y + 0.5) * ROW_H);
+  const gs: number[] = [];
+  for (let j = 0; j < 16; j++) for (let i = 0; i < 16; i++) gs.push(atlas.macroAt(ox + ((i + 0.5) * dims.w) / 16, (oy + ((j + 0.5) * dims.h) / 16) * ROW_H));
+  let oz = 0;
+  let most = -1;
+  for (let c = 0; c + dims.zMax <= zTop + TIER; c += TIER) {
+    if (gMid < c + 8 || gMid > c + dims.zMax - 40) continue;
+    const n = gs.filter((v) => v >= c + 8 && v <= c + dims.zMax - 24).length;
+    if (n > most) {
+      most = n;
+      oz = c;
+    }
+  }
+  return stream.warp(ox, oy, oz);
 }
 
 /** the atlas level's columns: 16 slots, two of them headroom (scenes/level.ts SANDBOX_K) */
@@ -121,11 +157,21 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
       far.draw(pass, clear);
     });
   }
+  const warp = (wcx: number, wcy: number) => warpWindow(atlas, stream, dims, wcx, wcy);
+  stream.onWarp.push((_ox, _oy, nz) => {
+    core.globals.climate = climate(stream);
+    core.globals.seaZ = params.sea - nz;
+    sleep?.wakeAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
+    const i = Math.floor(dims.h / 2) * dims.w + Math.floor(dims.w / 2);
+    core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
+  });
   return {
     atlas,
     core,
     stream,
     sleep,
+    warp,
+    onWarp: stream.onWarp,
     onSlide: stream.onSlide,
     frame(target, reach = 40) {
       void stream.update();

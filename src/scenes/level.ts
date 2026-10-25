@@ -35,6 +35,8 @@ import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import type { MapData } from '../world/mapgen';
 import { Sleep } from '../sim/sleep';
+import { AtlasMap } from '../api/atlas-map';
+import { warpWindow } from '../api/atlas-world';
 import { cpuLine, cpuStats, frameSteps } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
@@ -288,6 +290,17 @@ export class LevelScene implements Scene {
       for (const ev of ['pointerup', 'pointerleave', 'pointercancel']) b.addEventListener(ev, () => this.keys.delete(key));
     };
     const moves: HTMLButtonElement[] = [];
+    // (round 80) the atlas as a map: where you are; tap to warp
+    const a = this.opts.atlas;
+    if (a && this.stream) {
+      const S = this.stream;
+      const dims = this.core.dims;
+      const map = new AtlasMap(
+        { atlas: a.atlas, core: this.core, stream: S, warp: (x, y) => warpWindow(a.atlas, S, dims, x, y), toWorld: (x, y) => [S.origin[0] + x, S.origin[1] + y / ROW_H] },
+        this.host.ui,
+      );
+      btn('🗺', 'the atlas map: where you are; tap a place to warp there').addEventListener('click', () => map.toggle());
+    }
     const fly = btn('✈', 'free camera (F)');
     const mv = (label: string, key: string, title: string) => {
       const b = btn(label, title);
@@ -988,6 +1001,18 @@ export class LevelScene implements Scene {
           for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
           this.integrity?.clear();
         }
+      });
+      // (round 80) a warp (the map's): the window somewhere else — what the level keeps in window coordinates again
+      this.stream.onWarp.push((_ox, _oy, nz) => {
+        if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, nz);
+        if (a) core.globals.seaZ = a.atlas.p.sea - nz;
+        this.sleep?.wakeAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
+        for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
+        this.hoverWorld = null;
+        this.integrity?.clear();
+        const i = Math.floor(dims.h / 2) * dims.w + Math.floor(dims.w / 2);
+        core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
+        if (core.camera.fly) this.toggleFly();
       });
       // (round 71) an event of the coarse world in sight is made in the window's columns too
       // the atlas level's buttons (round 72: a phone has no F, WASD, M or V)

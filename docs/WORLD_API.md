@@ -329,4 +329,23 @@ aw.atlas.settlement / aw.atlas.ways         // the sites and roads (world coordi
 - On a phone: `q=low`; the perf overlay (?perf=1) shows the frame's
   times, the streaming's worst steps and the awake chunks.
 - Test: scripts/atlasworldtest.mjs (built, ridden 200 cells east, slides,
-  the sea, sleep, the terrain under the target).
+  the sea, sleep, the terrain under the target, a warp).
+
+### The map and warping (round 80)
+
+```ts
+import { AtlasMap } from 'src/api/atlas-map';
+const map = new AtlasMap(aw, document.body)   // a full-screen overlay, closed
+mapButton.onclick = () => map.toggle()
+aw.onWarp.push((ox, oy, oz) => { /* put the player at the window's middle, clear what the game kept in window coords */ })
+await aw.warp(cx, cy)                        // or from code: the window round world cell (cx, cy)
+```
+
+The map: the atlas's ground hill-shaded (the sea by depth, snow by latitude
+and height), its roads and sites, the window a box and the player (the
+camera's target) a dot. Drag to pan, wheel or ± to zoom, ◎ back to you, tap
+a place to warp there, × or Esc closes. A warp drops what the window held
+(not frozen), makes every region there, picks the tier holding most of the
+ground's tops, wakes everything to settle, puts the camera at the middle,
+then `onWarp`. ~1.4 s on a desktop. The game's own units and bodies stay
+where they were in window coordinates: remove or move them in `onWarp`.
