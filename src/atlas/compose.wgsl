@@ -81,6 +81,10 @@ const EDGE_WALL: u32 = 3u;
 const EDGE_TERRACE: u32 = 4u;
 const EDGE_BEACH: u32 = 5u;
 const EDGE_SEACLIFF: u32 = 6u;
+/** a plateau's edge where it meets another landform (round 78, mesaEdge) */
+const EDGE_MESA: u32 = 7u;
+/** how far either side of a mesa's border its ravines, spurs and buttes reach */
+const MESA_REACH: f32 = 110.0;
 
 @group(0) @binding(20) var<storage, read> regionR: array<u32>;
 /** x distance to the region's border (world units), y signed distance to the coast (+ land), z the region across (bits),
@@ -180,6 +184,22 @@ fn oddityAt(o: u32, p: vec2<f32>, kind: u32) -> f32 {
   let H = bitcast<f32>(riverBuf[o + 3u]);
   let d = p - c;
   if (dot(d, d) > R * R * 1.5) { return 0.0; }
+  if (kind == 3u) {
+    // a field of facets (the user: "large voronoi facets raised slightly deeper in"): the ground broken into
+    // cells, each a tilted plane, higher toward the field's middle, a crack between each two
+    let cs = bitcast<f32>(riverBuf[o + 5u]);
+    let sd = u32(bitcast<f32>(riverBuf[o + 4u])) + AP.seed;
+    let wr = pworley(d / cs + 4096.0, vec2<i32>(1 << 16), 0.85, sd);
+    let site = (wr.near - 4096.0) * cs;
+    let rr = length(site) / R;
+    if (rr >= 1.0) { return 0.0; }
+    let hh = hf(pcg(wr.id ^ sd));
+    let ta = hf(pcg(wr.id * 5u + sd)) * 6.2831853;
+    let tilt = vec2<f32>(cos(ta), sin(ta)) * H * (0.25 + 0.35 * hh) / cs;
+    let crack = 1.0 - smoothstep(0.0, 0.07, wr.f2 - wr.f1);
+    let v = H * (1.0 - rr * rr) * (0.55 + 0.45 * hh) + dot(d - site, tilt) - crack * H * 0.12;
+    return max(v, 0.0);
+  }
   if (kind == 1u) {
     // the faces: a pyramid of n planes (the farthest plane is the face p is on)
     let turn = bitcast<f32>(riverBuf[o + 4u]);
@@ -407,6 +427,99 @@ struct Ground {
   dl: f32,
   /** an oddity's material where one stands (round 78; 0: none) */
   smat: u32,
+  /** an overhang at a mesa's edge (round 78): the lip's top (0: none — an undercut), the open under it
+   *  (floor, roof; none when roof ≤ floor) */
+  ov: vec3<f32>,
+}
+
+struct Mesa {
+  /** the high side's weight */
+  w: f32,
+  /** a ravine's floor, risen toward its head */
+  rise: f32,
+  /** the distance onto the high side from the cliff's foot, and the ledge's width (the upper wall at x = L) */
+  x: f32,
+  L: f32,
+  /** the ledge's height, a fraction of the drop */
+  f: f32,
+  /** in a ravine (1) */
+  rav: f32,
+  /** talus: the loose ground piled at the walls' feet and round the buttes */
+  tal: f32,
+}
+
+/**
+ * A plateau's edge (round 78, the user: "the boundary should probably use ridge noise to cut ravines into
+ * the border so it's not so flat and there are places from the ground to run between the cliffs … butes
+ * that stick out and intermediary ledges and overhangs"). sh: the distance onto the high side from the
+ * border. The zero lines of a noise cut ravines back into it, tapering to their heads, their floors rising;
+ * spurs push it out; the drop is two walls with a ledge between (it narrows to none in places); buttes
+ * stand off it on the low side, flat-topped, shorter farther out.
+ */
+fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
+  var o: Mesa;
+  let sp = 34.0 * smoothstep(0.1, 0.4, pfbm(u, perOf(130.0), 2u, AP.seed + 611u));
+  let on = smoothstep(-0.35, -0.05, pfbm(u, perOf(420.0), 2u, AP.seed + 615u));
+  let depth = 95.0 * on;
+  let taper = clamp(1.0 - max(sh, 0.0) / max(depth, 1.0), 0.0, 1.0);
+  let rn = pfbm(u, perOf(140.0), 3u, AP.seed + 612u);
+  o.rav = (1.0 - smoothstep(0.0, 0.13 * taper + 1e-4, abs(rn))) * on * step(0.001, taper);
+  o.x = sh + sp - depth * o.rav;
+  // the steps (the user: "more step variety in height on the cliffs"): four walls, each its share of the
+  // drop and the ledge before it by a noise along the edge — a share near none merges two walls, a ledge
+  // near none stacks them; the shares and widths change smoothly, so steps come and go along the edge
+  var sh4 = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+  var xw = array<f32, 4>(0.0, 0.0, 0.0, 0.0);
+  var tot = 0.0;
+  var xa = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    sh4[k] = max(0.0, pfbm(u, perOf(150.0 - 25.0 * f32(k)), 2u, AP.seed + 613u + k * 7u) + 0.2) + 0.02;
+    tot += sh4[k];
+    if (k > 0u) { xa += max(0.0, 30.0 * pfbm(u, perOf(95.0 - 12.0 * f32(k)), 2u, AP.seed + 614u + k * 7u) + 3.0); }
+    xw[k] = xa;
+  }
+  o.w = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    sh4[k] /= tot;
+    o.w += sh4[k] * smoothstep(-1.2, 1.2, o.x - xw[k]);
+  }
+  o.f = sh4[0];
+  o.L = xw[3];
+  // the rim and the foot (the user: "the height at the top and bottom should have noise and fade up to the
+  // full height"): the top lower at its edge, rising to the full height inland, rough; the ground at the
+  // foot rising to the wall (a pediment, under the talus), rough
+  let xt = o.x - o.L;
+  let D = 25.0 + 55.0 * (0.5 + 0.5 * pfbm(u, perOf(110.0), 2u, AP.seed + 625u));
+  let rim = (0.05 + 0.12 * (0.5 + 0.5 * pfbm(u, perOf(80.0), 2u, AP.seed + 626u))) * (1.0 - smoothstep(0.0, D, max(xt, 0.0)));
+  let rough = pfbm(u, perOf(22.0), 3u, AP.seed + 627u);
+  o.w -= smoothstep(-1.2, 1.2, xt) * (rim - 0.04 * rough * (1.0 - smoothstep(0.0, D, max(xt, 0.0))));
+  if (o.x < 0.0) {
+    let fade = 1.0 - smoothstep(0.0, D * 0.8, -o.x);
+    o.w += fade * (0.04 + 0.05 * (0.5 + 0.5 * pfbm(u, perOf(90.0), 2u, AP.seed + 628u)) + 0.02 * rough);
+  }
+  o.rise = drop * 0.3 * o.rav * clamp(sh / max(depth, 1.0), 0.0, 1.0);
+  if (o.x < -2.0) {
+    let per = perOf(46.0);
+    let wr = pworley(u * f32(per), vec2<i32>(per), 0.8, AP.seed + 616u);
+    let hh = hf(pcg(wr.id ^ (AP.seed * 0x9e3779b9u)));
+    if (hh < 0.4) {
+      let rad = (0.16 + 0.2 * hf(pcg(wr.id * 7u + 3u))) * smoothstep(-MESA_REACH * 0.95, -MESA_REACH * 0.3, o.x);
+      let bw = smoothstep(rad + 0.035, rad - 0.035, wr.f1) * (0.55 + 0.45 * hf(pcg(wr.id * 13u + 5u)));
+      o.w = max(o.w, bw);
+      // (a butte's own apron of talus)
+      if (wr.f1 > rad) { o.tal = max(0.0, min(bw * drop * 0.2, 18.0) - 0.8 * (wr.f1 - rad) * 46.0); }
+    }
+  }
+  // talus (the user: "pile up sand or dirt along the base and then have rocks in it … cliffs erode and debris
+  // collects and slopes at the base"): an apron sloping off each wall's foot (an SDF of the wall, its height
+  // a fifth of the wall's, varying along it), lumpy; thinner in the ravines
+  let tn = 0.55 + 0.45 * (0.5 + 0.5 * pfbm(u, perOf(40.0), 2u, AP.seed + 621u));
+  if (o.x < 0.0) { o.tal = max(o.tal, min(sh4[0] * drop * 0.2, 26.0) * tn - 0.8 * (-o.x)); }
+  for (var k = 1u; k < 4u; k++) {
+    if (o.x > xw[k - 1u] + 1.2 && o.x < xw[k] - 1.2) { o.tal = max(o.tal, min(sh4[k] * drop * 0.2, 20.0) * tn - 0.8 * (xw[k] - o.x)); }
+  }
+  if (o.tal > 0.0) { o.tal = max(0.0, o.tal + 1.2 * pfbm(u, perOf(9.0), 2u, AP.seed + 622u)) * (1.0 - 0.7 * o.rav); }
+  return o;
 }
 
 /**
@@ -449,6 +562,9 @@ fn ground(p: vec2<f32>) -> Ground {
   var kind: u32;
   var ew: f32;
   var ed: f32;
+  var hiA = true;
+  var hiRock = 0u;
+  var talus = 0.0;
   if (isLand(A) != isLand(B)) {
     var L = B;
     if (isLand(A)) {
@@ -460,14 +576,18 @@ fn ground(p: vec2<f32>) -> Ground {
   } else if (A.lf != B.lf) {
     // two landforms meet (round 78): the higher one's edge — a plateau's a cliff, a massif's a wide rise
     var H = B;
+    hiA = false;
     if (A.base > B.base) {
       H = A;
+      hiA = true;
     }
     kind = H.edge;
     ew = H.edgeW;
     ed = H.edgeD;
+    hiRock = H.rockMat;
     if (H.tier == TIER_PLATEAU) {
-      kind = EDGE_CLIFF;
+      kind = EDGE_MESA;
+      ew = MESA_REACH;
     } else if (H.tier == TIER_MASSIF) {
       kind = EDGE_SMOOTH;
       ew = max(ew, 50.0);
@@ -502,6 +622,7 @@ fn ground(p: vec2<f32>) -> Ground {
   g.s = s;
   g.dl = m.dl;
   g.hlo = hA;
+  g.ov = vec3<f32>(0.0);
   if (both) { g.hlo = min(hA, hs[1]); }
   if (!both) {
     g.h = hA;
@@ -528,12 +649,39 @@ fn ground(p: vec2<f32>) -> Ground {
       case EDGE_TERRACE: {
         w = stairs(smoothstep(-ew, ew, s), 4.0);
       }
+      case EDGE_MESA: {
+        let hHi = select(hB, hA, hiA);
+        let hLo = select(hA, hB, hiA);
+        let drop = max(hHi - hLo, 0.0);
+        // (the jitter odd under swapping the pair, as the distance is: the same line from both sides)
+        let me = mesaEdge(u, select(-1.0, 1.0, hiA) * (s + jit), drop);
+        w = select(1.0 - me.w, me.w, hiA);
+        extra = (1.0 - me.w) * me.rise;
+        talus = me.tal;
+        // overhangs: the top wall's lip out over the ledge or the ground, the foot's wall undercut
+        // (where it's tall, not in a ravine; each comes and goes along it)
+        if (drop > 30.0 && me.rav < 0.05) {
+          let xt = me.x - me.L;
+          let lipD = min(14.0 * pfbm(u, perOf(70.0), 2u, AP.seed + 617u) + 4.0, 10.0);
+          let ucD = 12.0 * pfbm(u, perOf(55.0), 2u, AP.seed + 618u) + 3.5;
+          if (xt < -1.2 && xt > -lipD) {
+            let T = 7.0 + 5.0 * (0.5 + 0.5 * pfbm(u, perOf(30.0), 2u, AP.seed + 619u));
+            g.ov = vec3<f32>(hHi, -1.0, hHi - T);
+          } else if (me.x > 1.2 && me.x < ucD && me.L > 3.0) {
+            let ucH = min(5.0 + 9.0 * (0.5 + 0.5 * pfbm(u, perOf(30.0), 2u, AP.seed + 620u)), drop * me.f - 5.0);
+            g.ov = vec3<f32>(0.0, hLo, hLo + ucH);
+          }
+        }
+      }
       default: {
         w = smoothstep(-ew, ew, s);
       }
     }
     g.h = mix(hB, hA, w) + extra;
     g.w = w;
+    // (a lip's open runs from the ground under it)
+    if (g.ov.y < 0.0) { g.ov.y = g.h; }
+    if (g.ov.z - g.ov.y < 3.0) { g.ov = vec3<f32>(0.0); }
   }
   // the impact craters and the oddities (round 78)
   let st = stampsAt(p);
@@ -562,6 +710,33 @@ fn ground(p: vec2<f32>) -> Ground {
     g.rl = rv.level;
     g.rx = rv.x;
     g.rflags = rv.flags;
+  }
+  // (no overhang where a river runs or the coarse world has changed the ground)
+  if (g.rx < 3.0 || abs(co.dr) > 0.3) { g.ov = vec3<f32>(0.0); }
+  // a mesa's talus (round 78): loose ground — sand where it's dry, soil, patches of rubble — with boulders of
+  // the cliff's rock in it (rock added, bare: the cap)
+  if (talus > 0.3 && g.rx > 1.5 && abs(co.dr) < 0.3) {
+    let R0 = regs[g.a];
+    let pr = perOf(30.0);
+    let wp = pworley(u * f32(pr), vec2<i32>(pr), 0.9, AP.seed + 623u);
+    var tm = select(2u, 3u, moistureAt(p, g.coast, R0.moist) < 0.35);
+    if (hf(pcg(wp.id + AP.seed)) < 0.3) { tm = 4u; }
+    let pb = perOf(9.0);
+    let wb = pworley(u * f32(pb), vec2<i32>(pb), 0.85, AP.seed + 624u);
+    let hb = hf(pcg(wb.id ^ (AP.seed * 0x85ebca6bu)));
+    var bump = 0.0;
+    if (hb < 0.3 && hiRock != 0u) {
+      let rad = 0.22 + 0.25 * hf(pcg(wb.id * 3u + 1u));
+      bump = (talus * 0.5 + 2.0 + 4.0 * hb / 0.3) * sqrt(max(0.0, 1.0 - (wb.f1 / rad) * (wb.f1 / rad)));
+    }
+    if (bump > talus + 0.3) {
+      g.h += bump;
+      g.hlo += bump;
+      g.cap = hiRock;
+    } else {
+      g.loose = max(g.loose, talus);
+      g.lmat = tm;
+    }
   }
   g.h = clamp(g.h, 1.0, AP.zTop);
   return g;

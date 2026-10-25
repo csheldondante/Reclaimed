@@ -123,6 +123,10 @@ export function settle(inp: SiteInput): Settlement {
     }
   const wrap = (x: number, y: number) => ((((y % m) + m) % m) * m + (((x % m) + m) % m)) | 0;
   const land = (c: number) => lf[c] >= 0 && h[c] > inp.sea;
+  // (a road's way: any land the continent's, a cell under the sea's level in it — a river's mouth, a lake, a
+  // crater's floor — dear, bridged: they split a continent's roads where they cut it)
+  const way = (c: number) => lf[c] >= 0;
+  const wet = (c: number) => h[c] <= inp.sea;
   const tierOf = (c: number) => (lf[c] >= 0 ? inp.forms[lf[c]].tier : -1);
   const cellW = inp.worldW / m;
   const cellH = inp.worldH / m;
@@ -229,15 +233,40 @@ export function settle(inp: SiteInput): Settlement {
     }
   const roads: Road[] = [];
   for (const [a, b] of edges) {
-    const path = findPath(taken[a], taken[b], m, h, land, riv, tierOf);
+    const path = findPath(taken[a], taken[b], m, h, way, wet, riv, tierOf);
     if (!path) continue;
     roads.push(walk(a, b, path, m, h, riv, world));
+  }
+  // (a continent whose sites are farther apart than a road's reach, or whose short roads failed, is joined
+  // anyway: the nearest two sites of two of its pieces, until it's one piece or no pair can be routed)
+  const parent = sites.map((_, i) => i);
+  const find = (i: number): number => (parent[i] === i ? i : (parent[i] = find(parent[i])));
+  for (const rd of roads) parent[find(rd.a)] = find(rd.b);
+  const failed = new Set<string>();
+  for (let tries = 0; tries < 60; tries++) {
+    let best: [number, number, number] | null = null;
+    for (let a = 0; a < sites.length; a++)
+      for (let b = a + 1; b < sites.length; b++) {
+        if (sites[a].cont !== sites[b].cont || find(a) === find(b) || failed.has(`${a},${b}`)) continue;
+        const d = cdist(a, b);
+        if (!best || d < best[2]) best = [a, b, d];
+      }
+    if (!best) break;
+    const [a, b] = best;
+    // (these are long: a wider search)
+    const path = findPath(taken[a], taken[b], m, h, way, wet, riv, tierOf, 400000);
+    if (!path) {
+      failed.add(`${a},${b}`);
+      continue;
+    }
+    roads.push(walk(a, b, path, m, h, riv, world));
+    parent[find(a)] = find(b);
   }
   return { sites, roads, ms: +(performance.now() - t0).toFixed(1) };
 }
 
-/** A* on the coarse grid (8 neighbours, wrapping): distance, slope, high ground and rivers cost; no sea */
-function findPath(s: number, g: number, m: number, h: Float32Array, land: (c: number) => boolean, riv: Uint8Array, tierOf: (c: number) => number): number[] | null {
+/** A* on the coarse grid (8 neighbours, wrapping): distance, slope, high ground, rivers and cells under the sea's level cost; no sea */
+function findPath(s: number, g: number, m: number, h: Float32Array, way: (c: number) => boolean, wet: (c: number) => boolean, riv: Uint8Array, tierOf: (c: number) => number, cap = 60000): number[] | null {
   const gx = g % m;
   const gy = Math.floor(g / m);
   const heur = (c: number) => {
@@ -289,7 +318,7 @@ function findPath(s: number, g: number, m: number, h: Float32Array, land: (c: nu
       while (from.has(k)) out.push((k = from.get(k)!));
       return out.reverse();
     }
-    if (++expanded > 60000) return null;
+    if (++expanded > cap) return null;
     const cc = cost.get(c)!;
     const cx = c % m;
     const cy = Math.floor(c / m);
@@ -297,13 +326,14 @@ function findPath(s: number, g: number, m: number, h: Float32Array, land: (c: nu
       for (let dx = -1; dx <= 1; dx++) {
         if (!dx && !dy) continue;
         const o = ((((cy + dy) % m) + m) % m) * m + ((((cx + dx) % m) + m) % m);
-        if (!land(o)) continue;
+        if (!way(o)) continue;
         const len = dx && dy ? Math.SQRT2 : 1;
         const dh = Math.abs(h[o] - h[c]);
         // (a gentle grade is free; a landform's edge is a crossing to build, dear but possible)
         let step = len * (1 + Math.max(0, dh - 2) * 0.08);
         if (dh > STEP) step += 6 + dh * 0.05;
         if (riv[o] && !riv[c]) step += 2;
+        if (wet(o)) step += 8;
         if (tierOf(o) === TIER.massif) step += h[o] * 0.004;
         const nc = cc + step;
         if (nc < (cost.get(o) ?? Infinity)) {

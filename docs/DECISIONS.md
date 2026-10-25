@@ -3,6 +3,25 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-25 — round 79 (session 5, `places`) — cliffs: ravines, steps, talus; facet fields
+
+- "Why are cliffs limited to one cell? Can't we go vertical? I mean we may want to limit for draw but
+  worth considering." (The streamed window is 248 high, an 8-bit z: a mesa taller than that is cut at
+  the window's top or bottom and the window slides a tier — BACKLOG V17.)
+- "The boundary should probably use ridge noise to cut ravines into the border so it's not so flat and
+  there are places from the ground to run between the cliffs. Plus let's make the cliffs more
+  interesting with butes that stick out and intermediary ledges and overhangs." "I would have the shape
+  at the border carve in with ridge noise so there are ravines at the cliff wall."
+- "I would also pile up sand or dirt along the base and then have rocks in it too … cliffs erode and
+  debris collects and slopes at the base. You can use SDF and noise."
+- "The height at the top and bottom should have noise and fade up to the full height and it should have
+  more step variety in height on the cliffs."
+- "Then let's also think about dynamic region features like flash floods in ravines or dust storms in
+  deserts" (V16).
+- "For the crystals I was imagining more like large voronoi facets raised slightly deeper in rather than
+  a single large crystal but both should be possible."
+- Occlusion and seeing the cliff's back from the fixed view stay V5 (high priority).
+
 ## 2026-10-25 — rounds 76–78 (session 5, `places`) — the game's direction
 
 - Round 76 (step back): "I love the way the simulation makes the world feel responsive. I think the lo fi

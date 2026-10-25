@@ -4382,3 +4382,36 @@ tiertest: the cliff it found was a basalt plateau's whose lava falls cool
 to basalt while the test runs (the columns changed: not the slicing); it
 takes a non-volcanic plateau 240 or more high now, and reports the first
 column that differs when one does. atlastest 6/6, tiertest 4/4.
+
+## Round 79 — mesa edges: ravines, steps, buttes, talus, overhangs; facet fields (places)
+
+Why: the user on the cliffs — ravines cut into the border by ridge noise
+"so there are places from the ground to run between the cliffs", buttes,
+ledges, overhangs; talus ("pile up sand or dirt along the base and then
+have rocks in it"); the top and bottom noisy and fading to the full
+height; "more step variety in height"; crystals as "large voronoi facets".
+
+- A plateau's edge was one wall 2.4 wide (EDGE_CLIFF). Now EDGE_MESA
+  (compose.wgsl `mesaEdge`): ravines, spurs, four steps, rim and pediment,
+  buttes, talus with boulders, lips and undercuts (Ground.ov, carved in the
+  columns like a great cavern). Seen from the low ground with the fly
+  camera (scripts/mesashot.mjs): stepped walls with grassy ledges, a butte
+  standing off, talus at the feet. The viewer's caves mode shows lips cyan,
+  undercuts magenta; scripts/mesaprobe.mjs counts them in the columns.
+- A column at a mesa in a crystal field had more than 24 runs (the atlas
+  level failed to start): the crystal cluster's forms filled the wall's
+  six alcoves and lined its caves, a band each. Forms don't grow in an
+  alcove's, a cavern's or an overhang's open now, and a column holds four
+  forms' runs at most (past them a form isn't there — not stone in the air).
+- Facet fields (STAMP.field): 70 % of crystal clusters, alone or with
+  crystals in them.
+- Roads: three continents' sites weren't all joined — inland cells under
+  the sea's level (river mouths, lakes, crater floors) cut the coarse grid.
+  Roads may cross them now (dear, bridged), and a continent's pieces are
+  joined by the nearest pair, A* searching wider (400 000 cells): 165
+  roads, every continent one piece; sites and roads 266 ms. atlastest
+  checks every continent is joined.
+- Cost: the column batch 96 ms a 64² region (was 79), a 256² window 133 ms
+  (was 107).
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.

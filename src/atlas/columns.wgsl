@@ -51,8 +51,20 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= mw || id.y >= AP.h + 2u) { return; }
   let p = cellW(AP.x0 - 1 + i32(id.x), AP.y0 - 1 + i32(id.y));
   let g = ground(p);
-  let cav = cavernAt(p, g);
-  colG[id.y * mw + id.x] = ColG(g.h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, g.loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat);
+  var cav = cavernAt(p, g);
+  var h = g.h;
+  var loose = g.loose;
+  // a mesa's overhang (round 78): the lip raises the column, the open under it carved as a cavern's is
+  // (under a lip, the talus there is the open's floor: what's loose lies on a column's top)
+  if (cav.y <= cav.x && g.ov.z > g.ov.y) {
+    cav = g.ov.yz;
+    if (g.ov.x > h) {
+      cav.x += loose;
+      loose = 0.0;
+      h = g.ov.x;
+    }
+  }
+  colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat);
 }
 
 fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {

@@ -87,7 +87,7 @@ try {
     const onLand = sites.every((s) => s.landform >= 0 && s.h > a.p.sea);
     return { landforms: a.landforms.length, tiers, bigHigh, sites: sites.length, roads: roads.length, onLand, ends, continentsSplit: split, crossings, ms: a.timings['sites and roads (cpu)'] };
   });
-  check('landforms (round 78): plateaus and massifs many regions across; sites on land joined by roads per continent, crossings found', lf.bigHigh >= 5 && lf.sites >= 50 && lf.onLand && lf.ends === 0 && lf.continentsSplit <= 2 && lf.crossings.reduce((s, k) => s + k, 0) > 20, lf);
+  check('landforms (round 78): plateaus and massifs many regions across; sites on land joined by roads per continent, crossings found', lf.bigHigh >= 5 && lf.sites >= 50 && lf.onLand && lf.ends === 0 && lf.continentsSplit === 0 && lf.crossings.reduce((s, k) => s + k, 0) > 20, lf);
 
   // every region is one connected piece (4-neighbours, wrapped)
   const conn = await page.evaluate(() => {

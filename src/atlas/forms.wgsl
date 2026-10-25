@@ -439,6 +439,7 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
   var caveRuns = 0u;
   var inCave = false;
   var alcRuns = 0u;
+  var formRuns = 0u;
   var inAlc = false;
   var surf = 0.0;
   var surfForm = false;
@@ -473,18 +474,23 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
       if (net.sky && z > net.zc) { carve = max(carve, net.r * 0.85 - net.d); }
     }
     // (six openings a column at most: a tall wall's would run past what a column holds)
+    var alcOpen = false;
     if (alc && z > g.hlo + 1.5 && z < top - 3.0 && (alcRuns < 6u || inAlc)) {
       let n3 = vfbm3(vec3<f32>(torusU(p) * f32(alcPer), z / max(af.hHi, 1.0)), vec2<i32>(alcPer), 2u, R.seed + 77u);
       let open = n3 - (0.5 - af.chance);
       let depth = af.radius * (0.4 + 0.6 * clamp(open * 4.0, 0.0, 1.0));
       let c = min(open * 6.0, depth - abs(g.s));
+      alcOpen = c > 0.0;
       if (c > 0.0) { inAlc = true; } else if (inAlc) {
         inAlc = false;
         alcRuns++;
       }
       carve = max(carve, c);
     }
-    for (var j = 0u; j < nl; j++) {
+    // (round 78: none in an alcove, a great cavern's or an overhang's open — a crystal field's forms filled
+    // a mesa's six alcoves, a band each, past what a column holds)
+    let inOpen = alcOpen || (z > g.cf && z < g.cr);
+    for (var j = 0u; j < nl && !inOpen; j++) {
       let fv = instAt(insts[li[j]], p, z);
       if (fv.v > add) {
         add = fv.v;
@@ -496,7 +502,18 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     let bc = min(topL - z, -carve);
     var F = max(bc, add);
     if (z >= AP.zTop) { F = min(F, AP.zTop - z); }
-    let form = add >= bc;
+    // (four forms' runs a column at most, as the caves are two and the alcoves six: past them a form isn't
+    // there — crystal clusters lining a tall cliff's caves and alcoves ran past what a column holds)
+    var form = add >= bc;
+    if (form && !pForm && k > 0) {
+      if (formRuns >= 4u) {
+        form = false;
+        F = bc;
+        if (z >= AP.zTop) { F = min(F, AP.zTop - z); }
+      } else {
+        formRuns++;
+      }
+    }
     var lab = 0u;
     if (F > 0.0) {
       if (form) { lab = addMat; } else if (z >= top) { lab = g.lmat; } else { lab = select(topMat, rockMat, z < rockTop); }

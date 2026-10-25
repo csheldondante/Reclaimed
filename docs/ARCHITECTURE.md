@@ -577,6 +577,23 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   distance noise-warped so none is a circle). They live in the river
   buffer between the nearest-node words and the nodes (CRATER_BLOCK): the
   column shaders are at their eight storage buffers.
+- Mesa edges (round 79, compose.wgsl `mesaEdge`, `EDGE_MESA`): a plateau's
+  edge against another landform. Within MESA_REACH (110) of the border, on
+  the distance onto the high side: ravines (the zero lines of a noise,
+  tapering to their heads, floors rising), spurs, four walls each its share
+  of the drop with a ledge before it (shares and widths by noises along the
+  edge), the rim lowered and rough near the edge, a pediment at the foot,
+  buttes (Worley cells) on the low side. Talus at each wall's foot is loose
+  ground (Ground.loose/lmat: sand where dry, soil, rubble patches) with
+  boulders of the cliff's rock (rock added, Ground.cap). Overhangs:
+  Ground.ov (lip top, open floor, roof) — a lip over the ground or ledge
+  past the top wall, an undercut at the foot; colHeight raises the column
+  to the lip and carves the open as a great cavern's (ColG cf/cr). Forms
+  don't grow in an alcove's, a cavern's or an overhang's open, and a column
+  holds four forms' runs at most (forms.wgsl).
+- Facet fields (round 79, STAMP.field 3): a crystal cluster's ground broken
+  into Voronoi cells, each a tilted plane, higher toward the middle, cracks
+  between (x, y, R, H, seed, cell size).
 - Oddities (round 78, `Atlas.makeOddities`, `AtlasParams.oddities`):
   clusters on land regions' middles stamped into the ground with the
   craters (the same list, atlas.ts STAMP: kind and material words) —

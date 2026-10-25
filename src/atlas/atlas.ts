@@ -174,7 +174,7 @@ const MAT_SINTER = 37;
  *  bulb   (kind 2)  a bulbous dome: height its top's; a: how lobed
  * Craters go first (the continents' noise takes only them); oddities are placed on land after the regions.
  */
-export const STAMP = { crater: 0, facet: 1, bulb: 2 } as const;
+export const STAMP = { crater: 0, facet: 1, bulb: 2, field: 3 } as const;
 const CRATER_WORDS = 8;
 export const MAX_CRATERS = 64;
 const CRATER_BLOCK = 4 + MAX_CRATERS * CRATER_WORDS;
@@ -585,6 +585,16 @@ export class Atlas {
       const cx = d.stat.cx * this.worldW;
       const cy = d.stat.cy * this.worldH;
       const facet = r() < (style === 2 ? 0.3 : 0.55);
+      // (round 78: a crystal cluster is a field of facets (the user: "large voronoi facets raised slightly
+      // deeper in rather than a single large crystal but both should be possible") — a field alone, a
+      // field with crystals in it, or crystals alone)
+      const fr = r();
+      if (facet && fr < 0.7 && out.length / CRATER_WORDS < room) {
+        const RF = 220 + 380 * r();
+        // (x, y, R, H, its noise's seed, a facet's size)
+        out.push(cx, cy, RF, 14 + 30 * r(), Math.floor(r() * 1e6), 18 + 26 * r(), STAMP.field, 36);
+        if (fr < 0.4) continue;
+      }
       const k = facet ? 1 + Math.floor(r() * 4) : 3 + Math.floor(r() * 6);
       const R0 = facet ? 140 + 260 * r() : 70 + 140 * r();
       for (let i = 0; i < k; i++) {

@@ -105,6 +105,8 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
       let cav = cavernAt(p, g);
       let open = (cv.y - cv.x) + (cv.w - cv.z) + max(cav.y - cav.x, 0.0);
       c = mix(terrainColour(g.h) * 0.4, vec3<f32>(1.0, 0.8, 0.3), clamp(open / 12.0, 0.0, 1.0));
+      // (a mesa's overhangs, round 78: lips cyan, undercuts magenta)
+      if (g.ov.z > g.ov.y) { c = select(vec3<f32>(0.9, 0.3, 0.8), vec3<f32>(0.3, 0.9, 1.0), g.ov.x > 0.0); }
     }
     default: {
       let A = regs[g.a];
