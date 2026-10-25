@@ -7,9 +7,10 @@
 
 import { MAT } from '../world/materials';
 import { rng } from '../world/noise';
+import { TIER, type Landform } from './landforms';
 
-/** u32 words a region (compose.wgsl `Region`): 24 of its ground, 12 for each of its two forms */
-export const REGION_WORDS = 48;
+/** u32 words a region (compose.wgsl `Region`): 24 of its ground, 12 for each of its two forms, 4 of its landform */
+export const REGION_WORDS = 52;
 const FORM_WORDS = 12;
 
 export const PAT = {
@@ -124,7 +125,7 @@ export const KINDS: Record<string, KindDef> = {
   flesh: { name: 'flesh', colour: [0.75, 0.32, 0.3], land: true, base: [6, 14], rough: [5, 8], ridge: [0, 0], scale: [60, 110], patterns: [P(PAT.maze, [5, 8], [40, 60], 1), P(PAT.coral, [5, 8], [40, 60], 1)], cover: 0.4, top: MAT.Flesh, rock: MAT.Flesh, edges: [[EDGE.ravine, 2], [EDGE.wall, 2]], coast: smoothCoast, edgeW: [14, 22], edgeD: [6, 10], moist: 0.3, veg: 0.2, cave: 1.4, accent: MAT.Bone },
   // round 69: kinds made by their forms
   spires: { name: 'spires', colour: [0.58, 0.55, 0.66], land: true, base: [10, 18], rough: [3, 5], ridge: [0, 0], scale: [80, 140], patterns: [none], cover: 1.2, top: MAT.Soil, rock: MAT.Stone, edges: [[EDGE.smooth, 2], [EDGE.cliff, 1]], coast: [[EDGE.seacliff, 2], [EDGE.beach, 1]], edgeW: [16, 28], edgeD: [0, 0], moist: 0, veg: 0.8, cave: 0.6 },
-  escarpment: { name: 'escarpment', colour: [0.66, 0.5, 0.42], land: true, base: [140, 260], rough: [4, 7], ridge: [0, 8], scale: [80, 140], patterns: [none], cover: 1, top: MAT.Soil, rock: MAT.Stone, edges: [[EDGE.cliff, 1]], coast: [[EDGE.seacliff, 1]], edgeW: [4, 8], edgeD: [0, 0], moist: 0, veg: 0.6, cave: 0.8, prio: 2 },
+  escarpment: { name: 'escarpment', colour: [0.66, 0.5, 0.42], land: true, base: [4, 10], rough: [4, 7], ridge: [0, 8], scale: [80, 140], patterns: [none], cover: 1, top: MAT.Soil, rock: MAT.Stone, edges: [[EDGE.cliff, 1]], coast: [[EDGE.seacliff, 1]], edgeW: [4, 8], edgeD: [0, 0], moist: 0, veg: 0.6, cave: 0.8, prio: 2 },
   lavafield: { name: 'lavafield', colour: [0.4, 0.12, 0.08], land: true, base: [4, 10], rough: [2, 4], ridge: [0, 0], scale: [80, 140], patterns: [none], cover: 0.3, top: MAT.Basalt, rock: MAT.Basalt, edges: [[EDGE.cliff, 2], [EDGE.smooth, 1]], coast: [[EDGE.seacliff, 2]], edgeW: [10, 18], edgeD: [0, 0], moist: -0.2, veg: 0.05, cave: 0.3 },
   cenotes: { name: 'cenotes', colour: [0.3, 0.62, 0.55], land: true, base: [6, 12], rough: [2, 4], ridge: [0, 0], scale: [90, 150], patterns: [none], cover: 1.6, top: MAT.Soil, rock: MAT.Stone, edges: [[EDGE.smooth, 2], [EDGE.cliff, 1]], coast: smoothCoast, edgeW: [18, 30], edgeD: [0, 0], moist: 0.2, veg: 1.3, cave: 0.8 },
   // round 75: giant crystals (atlas.ts giants: mountains of quartz, tilted) over a field of small ones
@@ -240,33 +241,52 @@ function climateKinds(warm: number, dry: number, style: number): Pick<string> {
   return ks;
 }
 
+/** the kinds each tier's land may be (landforms.ts TIER; round 78: the kind follows the landform) */
+const TIER_KINDS: Record<number, Set<string>> = {
+  [TIER.low]: new Set(['plains', 'marsh', 'dunes', 'cenotes', 'tundra', 'lavafield', 'crystalfield', 'craters', 'coral', 'flesh', 'veins']),
+  [TIER.upland]: new Set(['hills', 'karst', 'badlands', 'spires', 'craters', 'basalt', 'tundra', 'kaleido', 'crystals', 'crystalfield', 'flesh', 'veins', 'coral', 'dunes']),
+  [TIER.plateau]: new Set(['mesa', 'escarpment', 'basalt', 'highlands', 'glacier', 'kaleido', 'karst', 'crystals']),
+  [TIER.massif]: new Set(['range', 'highlands', 'glacier', 'crystalfield']),
+};
+const TIER_DEFAULT = ['plains', 'hills', 'escarpment', 'range'];
+
 /** how dry a latitude is (0 wet .. 1 dry), compose.wgsl moistureAt's latitude term */
-const dryness = (cy: number) => {
+export const dryness = (cy: number) => {
   const lat = 1 - warmth(cy);
   return 0.5 - 0.5 * Math.cos(lat * 3 * Math.PI);
 };
 
+/** what the landforms (landforms.ts) say of the regions: each one's tier (−1 water), rift, landform */
+export interface RegionLandforms {
+  tier: Int8Array;
+  rift: Uint8Array;
+  of: Int32Array;
+  forms: Landform[];
+}
+
 /** The table: each region's kind and parameters. */
-export function defineRegions(stats: RegionStat[], seed: number, style: number, oceanArea: number): RegionDef[] {
+export function defineRegions(stats: RegionStat[], seed: number, style: number, oceanArea: number, lf: RegionLandforms): RegionDef[] {
   const provKind = new Map<number, string>();
   return stats.map((st, i) => {
     const r = rng(seed * 7919 + i * 104729 + 17);
     let kind: string;
+    const t = lf.tier[i];
     if (!st.land) kind = st.contArea >= oceanArea ? 'ocean' : 'lake';
-    else if (st.fault) kind = rng(seed * 31 + st.prov * 7 + 3)() < 0.68 ? 'range' : 'rift';
+    else if (st.fault) kind = lf.rift[i] ? 'rift' : 'range';
     else {
-      // the province's own kind most of the time; another of its climate otherwise
-      const ks = climateKinds(warmth(st.cy), dryness(st.cy), style);
-      let pk = provKind.get(st.prov);
+      // the province's own kind (for its tier) most of the time; another of its climate otherwise
+      const ks = climateKinds(warmth(st.cy), dryness(st.cy), style).filter(([k]) => TIER_KINDS[t].has(k));
+      if (!ks.length) ks.push([TIER_DEFAULT[t], 1]);
+      const pkey = st.prov * 4 + t;
+      let pk = provKind.get(pkey);
       if (!pk) {
-        pk = pick(ks, rng(seed * 131 + st.prov * 977 + 5)());
-        provKind.set(st.prov, pk);
+        pk = pick(ks, rng(seed * 131 + st.prov * 977 + t * 31 + 5)());
+        provKind.set(pkey, pk);
       }
       kind = r() < 0.85 ? pk : pick(ks, r());
-      // small islands: no glaciers or ranges on a rock in the sea
-      if (st.contArea < 400 && (kind === 'glacier' || kind === 'highlands')) kind = 'hills';
     }
     const k = KINDS[kind];
+    const form = lf.of[i] >= 0 ? lf.forms[lf.of[i]] : undefined;
     const pat = pick(k.patterns, r());
     const w = new Uint32Array(REGION_WORDS);
     const f = new Float32Array(w.buffer);
@@ -274,7 +294,8 @@ export function defineRegions(stats: RegionStat[], seed: number, style: number, 
     w[1] = pat.id;
     w[2] = k.top;
     w[3] = k.rock;
-    f[4] = lerp(k.base, r());
+    // (round 78: the landform sets the height; the kind's own base is a little on top above the lowlands)
+    f[4] = form && form.tier > TIER.low ? form.level + 0.3 * lerp(k.base, r()) : lerp(k.base, r());
     f[5] = lerp(k.rough, r());
     f[6] = lerp(k.ridge, r());
     f[7] = lerp(k.scale, r());
@@ -286,7 +307,7 @@ export function defineRegions(stats: RegionStat[], seed: number, style: number, 
     f[13] = lerp(k.edgeW, r());
     f[14] = lerp(k.edgeD, r());
     f[15] = k.prio ?? r();
-    w[16] = pick(k.coast, r());
+    w[16] = form && form.tier >= TIER.plateau ? EDGE.seacliff : pick(k.coast, r());
     f[17] = k.moist;
     f[18] = k.veg;
     f[19] = k.cave;
@@ -295,6 +316,11 @@ export function defineRegions(stats: RegionStat[], seed: number, style: number, 
     w[22] = k.accent ?? 0;
     f[23] = k.depth ? lerp(k.depth, r()) : 0;
     (k.forms ?? []).forEach((fd, slot) => writeForm(w, 24 + slot * FORM_WORDS, fd, r));
+    // its landform (compose.wgsl Region.lf..rise): water none
+    w[48] = lf.of[i] >= 0 ? lf.of[i] : 0xffffffff;
+    w[49] = Math.max(t, 0);
+    f[50] = form?.peak ?? 0;
+    f[51] = form?.rise ?? 0;
     return { kind, stat: st, words: w };
   });
 }

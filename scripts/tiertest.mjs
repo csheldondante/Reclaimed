@@ -13,7 +13,8 @@ const opt = (k, d) => {
 };
 const url = opt('url', 'http://localhost:5203');
 const out = opt('out', 'tier');
-const kind = opt('kind', 'escarpment');
+// (round 78: 'plateau' — any region on a plateau landform, whose edges are its cliffs; or a kind's name)
+const kind = opt('kind', 'plateau');
 const results = [];
 let failed = false;
 const check = (name, ok, info) => {
@@ -38,7 +39,7 @@ try {
     const a = window.reclaimed.atlas;
     let best = null;
     a.defs.forEach((d) => {
-      if (d.kind !== kind) return;
+      if (kind === 'plateau' ? d.words[49] !== 2 : d.kind !== kind) return;
       const warm = 0.5 - 0.5 * Math.cos(2 * Math.PI * d.stat.cy);
       const score = d.stat.area * (warm > 0.45 && warm < 0.85 ? 4 : 1);
       if (!best || score > best.score) best = { score, cx: d.stat.cx, cy: d.stat.cy };
@@ -52,7 +53,7 @@ try {
     for (const [ex, ey] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
       let tx = tx0;
       let ty = ty0;
-      for (let k = 0; k < 120; k++) {
+      for (let k = 0; k < 400; k++) {
         if (H(tx + 3 * ex, ty + 3 * ey) < H(tx, ty) - 120) {
           return { at: [Math.floor(((tx + 0.5) / n) * a.p.cols), Math.floor(((ty + 0.5) / n) * a.p.rows)], top: H(tx, ty), foot: H(tx + 3 * ex, ty + 3 * ey) };
         }

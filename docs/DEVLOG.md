@@ -4298,3 +4298,40 @@ looks as it did.
   start and when it slides.
 
 atlastest 5/5, streamtest 8/8, tiertest 4/4, coarsetest 5/5.
+
+## Round 78 — landforms: the atlas's macro height designed (places)
+
+Why: the user's direction (DECISIONS rounds 76–78) — the heightmaps read as
+noise from above; "the actual heightmap can be informed by but not
+determined by the underlying noise", borders as the seeded boundaries, an
+SDF to blend the heights wanted, features far bigger than a region.
+
+- Landforms (landforms.ts): each land region a tier (lowland, upland,
+  plateau, massif) from a low-frequency elevation noise at its centre, by
+  rank so the shares hold; adjacent regions of a tier are one landform (180
+  on seed 1: 49 lowland, 56 upland, 26 plateau, 49 massif; 37 over 20
+  regions). A plateau is one level (90–290 over the land, a few tower) with
+  cliffs at its edge; a massif rises 120–240 to its peaks over 250–450 from
+  its edge (the JFA distance into the landform), along ridged noise. The
+  kinds follow the tiers. Inside a landform no cliffs or terraces at the
+  regions' borders (they read as noise).
+- The user's notes while it was built: the continent's SDF so the land
+  slopes down to the water and rivers run down it (`lift` 14 → 36 over
+  2400 of the coast's distance; rivers were already found by a priority
+  flood, so they only ever fall, now off the plateaus as falls); lower
+  frequency (`formPer` 3, a slider); a warped domain whose grain changes
+  from place to place (scaling x and y by a noise would break the torus's
+  wrap, so the noise at its size and at half its size blended by a slow
+  noise); impact craters at large scale, stamped into the continents' noise
+  too so a coast follows a crater's bowl.
+- Region detail at half (`detail` 0.5): their own noise and patterns are
+  texture on a landform, not its shape.
+- The lapse rate 0.12 → 0.05 °C a cell: at 0.12 every plateau was under snow.
+- Bug found on the way: `Atlas.adjacency` was keyed by the pre-merge region
+  count while its keys were dense ids (no user until now).
+- tiertest looks for a plateau's edge (any region on a plateau landform)
+  instead of the escarpment kind, which no longer carries the height.
+
+Build cost on seed 1 (2048² texels): jfa landforms 55 ms; the rest as
+before (rivers 364 ms on the CPU, the largest). atlastest 5/5, coarsetest
+5/5, tiertest 4/4, streamtest 8/8.

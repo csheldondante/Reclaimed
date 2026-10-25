@@ -6,13 +6,18 @@
 
 import { Atlas, atlasParamsFrom, type AtlasParams } from '../atlas/atlas';
 import { EDGE, KIND_IDS, KINDS } from '../atlas/regions';
+import { TIER_NAMES } from '../atlas/landforms';
 import viewW from '../atlas/view.wgsl?raw';
 import columnsW from '../atlas/columns.wgsl?raw';
 import { makeBindGroup, makeLayout, makeModule } from '../gpu/pipeline';
 import { cellAt } from '../world/lattice';
 import type { Host, Scene } from './world-core';
 
-const MODES = ['ground', 'regions', 'kinds', 'borders', 'coast', 'climate', 'pattern', 'caves'];
+const landformLine = (a: Atlas, id: number) => {
+  const f = a.landforms[id];
+  return f ? `${id}: ${TIER_NAMES[f.tier]}, level ${f.level.toFixed(0)}${f.peak ? `, peak ${f.peak.toFixed(0)} over ${f.rise.toFixed(0)}` : ''}, ${f.regions} regions` : 'none (water)';
+};
+const MODES = ['ground', 'regions', 'kinds', 'borders', 'coast', 'climate', 'pattern', 'caves', 'landforms'];
 
 /** the sliders: key, label, min, max, step */
 const SLIDERS: [keyof AtlasParams, string, number, number, number][] = [
@@ -25,7 +30,11 @@ const SLIDERS: [keyof AtlasParams, string, number, number, number][] = [
   ['faultPer', 'faults (more)', 1, 16, 1],
   ['faultHi', 'fault strip width', 0, 0.12, 0.005],
   ['warp', 'warp', 0, 0.2, 0.005],
-  ['lift', 'continental lift', 0, 40, 1],
+  ['lift', 'continental lift', 0, 120, 1],
+  ['liftReach', 'continental slope reach', 200, 6000, 100],
+  ['formPer', 'landforms a turn (fewer: bigger)', 1, 12, 1],
+  ['detail', 'region detail', 0, 1, 0.05],
+  ['craters', 'impact craters', 0, 64, 1],
   ['warpCell', 'border wiggle', 0, 20, 1],
 ];
 
@@ -211,7 +220,8 @@ export class AtlasView implements Scene {
       `cc iterations ${s.ccIters.join(' / ')}\nms: ${tm}\n\n` +
       `at ${x.toFixed(0)}, ${y.toFixed(0)}: ${d.kind}${d.stat.fault ? ' (fault strip)' : ''}\n` +
       `ground ${a.hmac[t]?.toFixed(1)} (sea ${a.p.sea}); border ${edge}, coast ${coast}\n` +
-      `pattern ${d.words[1]}, area ${d.stat.area} texels, mode ${MODES[this.mode]}`;
+      `pattern ${d.words[1]}, area ${d.stat.area} texels, mode ${MODES[this.mode]}\n` +
+      `landform ${landformLine(a, d.words[48])}`;
   }
 
   frame(): void {

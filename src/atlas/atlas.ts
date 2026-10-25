@@ -28,7 +28,8 @@ import formsW from './forms.wgsl?raw';
 import noiseW from './noise.wgsl?raw';
 import patsimW from './patsim.wgsl?raw';
 import patternsW from './patterns.wgsl?raw';
-import { defineRegions, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
+import { defineRegions, dryness, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
+import { landformsOf, tiersOf, type Landform } from './landforms';
 import { findRivers, NODE_WORDS } from './rivers';
 import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
@@ -66,6 +67,14 @@ export interface AtlasParams {
   caveScale: number;
   /** the coarse world's cells a side (round 71: coarse.ts; a power of two dividing n) */
   coarseN: number;
+  /** landforms (round 78, landforms.ts): the elevation noise's cells a turn (lower: bigger mesas and massifs) */
+  formPer: number;
+  /** the continent's slope (round 78): the land rises `lift` over this far from its coast (the coast's SDF) */
+  liftReach: number;
+  /** how much of each region's own noise and pattern shows on its landform (round 78: top-down wants less) */
+  detail: number;
+  /** impact craters in the macro height (round 78), at most MAX_CRATERS */
+  craters: number;
 }
 
 export const DEFAULT_ATLAS: AtlasParams = {
@@ -85,7 +94,7 @@ export const DEFAULT_ATLAS: AtlasParams = {
   faultPer: 5,
   faultLo: -0.035,
   faultHi: 0.035,
-  lift: 14,
+  lift: 36,
   minIsland: 30,
   minLake: 30,
   minRegion: 60,
@@ -93,6 +102,10 @@ export const DEFAULT_ATLAS: AtlasParams = {
   caveDepth: 7,
   caveScale: 40,
   coarseN: 512,
+  formPer: 3,
+  liftReach: 2400,
+  detail: 0.5,
+  craters: 18,
 };
 
 /** what `?a.<key>=` may set (the viewer's sliders write the same) */
@@ -126,7 +139,7 @@ interface Extra {
   vsize?: [number, number];
 }
 
-const PARAM_BYTES = 128;
+const PARAM_BYTES = 144;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 16;
 const COLG_BYTES = 64;
@@ -144,6 +157,15 @@ export interface Geyser {
 /** world cells between the geysers' lattice points (a whole number of them round the world) */
 const GEYSER_SPACING = 64;
 const MAT_SINTER = 37;
+
+/**
+ * The macro height's impact craters (round 78): in the river buffer after its n² words of nearest nodes
+ * (compose.wgsl craterAt) — a count, then CRATER_WORDS each: x, y (world), radius, depth, rim (0 worn
+ * flat .. 1 sharp), central peak's height. One shader is at its storage buffers' limit, so they share.
+ */
+const CRATER_WORDS = 8;
+export const MAX_CRATERS = 64;
+const CRATER_BLOCK = 4 + MAX_CRATERS * CRATER_WORDS;
 
 /** floats a giant (Atlas.giants), and what they're made of (materials.ts quartz) */
 export const GIANT_FLOATS = 8;
@@ -187,16 +209,22 @@ export class Atlas {
   /** per texel: the ground (compose.wgsl ground) */
   hmac!: Float32Array;
   defs!: RegionDef[];
-  /** "a,b" (a < b) → texel edges shared */
+  /** a · regions + b (a < b, dense ids) → texel edges shared */
   adjacency = new Map<number, number>();
+  /** the landforms (round 78, landforms.ts) and each region's (−1: water) */
+  landforms: Landform[] = [];
+  landformOf: Int32Array = new Int32Array(0);
   readonly paramBuf: GPUBuffer;
   readonly region: GPUBuffer;
   readonly dist: GPUBuffer;
   regs!: GPUBuffer;
   readonly pat: GPUBuffer;
   readonly kcol: GPUBuffer;
-  /** the rivers (rivers.ts): per texel its nearest node + 1, then the nodes (compose.wgsl riverBuf) */
+  /** the rivers (rivers.ts): per texel its nearest node + 1, the craters (CRATER_BLOCK), then the nodes
+   *  (compose.wgsl riverBuf) */
   riverBuf: GPUBuffer;
+  /** the impact craters (round 78): CRATER_WORDS floats each */
+  craters = new Float32Array(0);
   riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0 };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
@@ -223,7 +251,7 @@ export class Atlas {
     this.pat = device.createBuffer({ label: 'atlas patterns', size: 3 * 256 * 256 * 4, usage: S });
     this.kcol = device.createBuffer({ label: 'atlas kind colours', size: KIND_IDS.length * 16, usage: S });
     // (none until they're found: the ground the rivers are found on is made without them)
-    this.riverBuf = device.createBuffer({ label: 'atlas rivers', size: (N + NODE_WORDS) * 4, usage: S });
+    this.riverBuf = device.createBuffer({ label: 'atlas rivers', size: (N + CRATER_BLOCK + NODE_WORDS) * 4, usage: S });
     this.coarse = new Coarse(device, p.coarseN, this.worldW, this.worldH);
     device.queue.writeBuffer(this.kcol, 0, new Float32Array(KIND_IDS.flatMap((k) => [...KINDS[k].colour, 1])));
   }
@@ -271,6 +299,8 @@ export class Atlas {
     f[29] = e.vsize?.[1] ?? 1;
     f[30] = p.caveDepth;
     f[31] = p.caveScale;
+    f[32] = p.liftReach;
+    f[33] = p.detail;
     this.device.queue.writeBuffer(into, 0, ab);
   }
 
@@ -323,9 +353,9 @@ export class Atlas {
     const bm = makeModule(dev, 'atlas build', this.parts(buildW));
     const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, formsW));
     const K = (entry: string, spec: BindSpec, m = bm) => makeComputeAsync(dev, `atlas ${entry}`, m, { 0: 'uniform', ...spec }, entry);
-    const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed, kSeedV, kOutV] = await this.time('compile', () =>
+    const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed, kSeedV, kOutV, kSeedL, kOutL] = await this.time('compile', () =>
       Promise.all([
-        K('base', { 1: 'rw', 2: 'rw' }),
+        K('base', { 1: 'rw', 2: 'rw', 25: 'read' }),
         K('ccInit', { 3: 'rw' }),
         K('ccHook', { 2: 'rw', 3: 'rw', 5: 'rw' }),
         K('ccJump', { 3: 'rw', 5: 'rw' }),
@@ -343,6 +373,8 @@ export class Atlas {
         K('formSeed', { 20: 'read', 21: 'read', 22: 'read', 23: 'read', 25: 'read', 26: 'read', 32: 'rw', 33: 'rw' }, cm),
         K('jfaSeedV', { 2: 'rw', 7: 'rw' }),
         K('jfaOutV', { 2: 'rw', 7: 'rw' }),
+        K('jfaSeedL', { 6: 'rw', 7: 'rw', 22: 'read' }),
+        K('jfaOutL', { 6: 'rw', 7: 'rw', 9: 'rw', 22: 'read' }),
       ]),
     );
     this.colH = colH;
@@ -388,7 +420,16 @@ export class Atlas {
     };
 
     this.writeParams();
-    await this.time('base', () => one(kBase, bg(kBase, { 1: fieldA, 2: key })));
+    // the craters first (round 78): the continents' noise takes them
+    this.makeCraters();
+    const writeCraters = () => {
+      const blk = new Float32Array(CRATER_BLOCK);
+      new Uint32Array(blk.buffer)[0] = this.craters.length / CRATER_WORDS;
+      blk.set(this.craters, 4);
+      dev.queue.writeBuffer(this.riverBuf, N * 4, blk);
+    };
+    writeCraters();
+    await this.time('base', () => one(kBase, bg(kBase, { 1: fieldA, 2: key, 25: this.riverBuf })));
     this.stats.ccIters.push(await this.time('cc land', cc));
     await this.time('clean', async () => {
       const enc = dev.createCommandEncoder();
@@ -431,6 +472,7 @@ export class Atlas {
     };
     await this.time('jfa borders', () => jfa(kSeedR, { 6: this.region }, kOutR, { 6: this.region, 9: this.dist }));
     await this.time('jfa coast', () => jfa(kSeedC, { 6: this.region, 22: this.regs }, kOutC, { 6: this.region, 9: this.dist, 22: this.regs }));
+    await this.time('jfa landforms', () => jfa(kSeedL, { 6: this.region, 22: this.regs }, kOutL, { 6: this.region, 9: this.dist, 22: this.regs }));
     const macro = () => one(kMacro, bg(kMacro, { 11: hmacB, 20: this.region, 21: this.dist, 22: this.regs, 23: this.pat, 25: this.riverBuf, 26: this.coarse.cells }));
     await this.time('ground', macro);
     this.hmac = new Float32Array(await this.time('readback ground', () => this.read(hmacB)));
@@ -450,8 +492,9 @@ export class Atlas {
     this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, ms: rv.ms };
     this.riverNodes = rv.nodes;
     this.riverBuf.destroy();
-    this.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: N * 4 + rv.nodes.byteLength, usage: S });
-    dev.queue.writeBuffer(this.riverBuf, N * 4, rv.nodes);
+    this.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (N + CRATER_BLOCK) * 4 + Math.max(rv.nodes.byteLength, NODE_WORDS * 4), usage: S });
+    writeCraters();
+    dev.queue.writeBuffer(this.riverBuf, (N + CRATER_BLOCK) * 4, rv.nodes);
     dev.queue.writeBuffer(key, 0, rv.nodeAt);
     await this.time('jfa rivers', async () => {
       await jfa(kSeedV, { 2: key }, kOutV, { 2: key });
@@ -464,6 +507,24 @@ export class Atlas {
     await this.time('coarse world', () => this.coarse.init(this.hmac, n, (t) => !this.defs[this.regionOf[t]].stat.land));
     await this.time('giants (cpu)', () => this.makeGiants());
     for (const b of [fieldA, key, label, size, flag, flagRead, info, cont, jfaA, jfaB, hmacB]) b.destroy();
+  }
+
+  /**
+   * Impact craters (round 78: "adding impact craters at large scale to the heightmap you initially
+   * sample"): a few dozen over the world, most a few hundred cells across, some huge with a central peak;
+   * the older the more worn (a lower rim, a shallower bowl). Land or sea alike: a crater by a coast is a bay.
+   */
+  private makeCraters(): void {
+    const r = rng(this.p.seed * 6151 + 29);
+    const k = Math.min(Math.max(0, Math.round(this.p.craters)), MAX_CRATERS);
+    const out = new Float32Array(k * CRATER_WORDS);
+    for (let i = 0; i < k; i++) {
+      // (sizes: many small, a few huge)
+      const R = 120 + 900 * r() ** 3;
+      const age = r();
+      out.set([r() * this.worldW, r() * this.worldH, R, Math.min(R * 0.07, 45) * (1 - 0.6 * age), 1 - age * 0.8, R > 450 ? Math.min(R * 0.05, 40) : 0, 0, 0], i * CRATER_WORDS);
+    }
+    this.craters = out;
   }
 
   /** the simulated tiles: two reaction–diffusion patterns and a cellular-automaton cave map */
@@ -584,9 +645,8 @@ export class Atlas {
       if (((I[i] >>> 1) & 3) === 1) s.faults++;
     }
     // shared edges between regions (right and down neighbours, wrapped)
-    const adj = (rs: Uint32Array) => {
+    const adj = (rs: Uint32Array, R: number) => {
       const m = new Map<number, number>();
-      const R = stats.length;
       for (let y = 0; y < n; y++)
         for (let x = 0; x < n; x++) {
           const a = rs[y * n + x];
@@ -602,7 +662,7 @@ export class Atlas {
     // tiny regions join the neighbour they share most border with (the same land or water, when there is one)
     const parent = stats.map((_, i) => i);
     const find = (a: number): number => (parent[a] === a ? a : (parent[a] = find(parent[a])));
-    const pairs = adj(reg);
+    const pairs = adj(reg, stats.length);
     const nbrs = new Map<number, [number, number][]>();
     const R0 = stats.length;
     for (const [k, c] of pairs) {
@@ -651,10 +711,16 @@ export class Atlas {
     }
     for (let i = 0; i < N; i++) reg[i] = dense[find(reg[i])];
     this.regionOf = reg;
-    this.adjacency = adj(reg);
+    // (keyed by the dense ids: a · regions + b)
+    this.adjacency = adj(reg, out.length);
     let ocean = 0;
     for (const s of out) if (!s.land) ocean = Math.max(ocean, s.contArea);
-    this.defs = defineRegions(out, this.p.seed, this.p.style, Math.min(ocean, N * 0.02));
+    // the landforms: tiers from the elevation noise, adjacent regions of one tier one landform
+    const { tier, rift } = tiersOf(out, this.p.seed, dryness, this.p.formPer);
+    const lf = landformsOf(tier, this.adjacency, this.p.seed);
+    this.landforms = lf.forms;
+    this.landformOf = lf.of;
+    this.defs = defineRegions(out, this.p.seed, this.p.style, Math.min(ocean, N * 0.02), { tier, rift, of: lf.of, forms: lf.forms });
     const words = new Uint32Array(this.defs.length * REGION_WORDS);
     this.defs.forEach((d, i) => words.set(d.words, i * REGION_WORDS));
     this.regs?.destroy();
@@ -686,7 +752,7 @@ export class Atlas {
    *  (compose.wgsl temperature) as Globals.climate's (°C at height 0, °C less a cell up). */
   climateAt(cx: number, cy: number, oz = 0): { temp: number; lapse: number } {
     // (compose.wgsl temperature and LAPSE: keep the two the same)
-    const lapse = 0.12;
+    const lapse = 0.05;
     const warm = warmth(((cy + 0.5) / this.p.rows) % 1);
     // (the sim's z is the window's: its z = 0 is the world's oz)
     return { temp: warm * 34 - 8 + (this.p.sea - oz) * lapse, lapse };

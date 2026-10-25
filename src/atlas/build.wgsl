@@ -34,6 +34,9 @@ fn nb(id: vec2<u32>, k: i32) -> u32 {
   if (k == 3) { o = vec2<i32>(0, -1); }
   return texIdxW(vec2<i32>(id.xy) + o);
 }
+/** how far the craters push the continents' noise (its land threshold is AP.landThresh, ~0.06) */
+const CRATER_LAND: f32 = 0.06;
+
 fn macroWarp(u: vec2<f32>) -> vec2<f32> {
   return vec2<f32>(pfbm(u, 4, 4u, AP.seed + 11u), pfbm(u + 0.37, 4, 4u, AP.seed + 12u)) * AP.warp;
 }
@@ -44,7 +47,9 @@ fn base(@builtin(global_invocation_id) id: vec3<u32>) {
   let i = id.y * AP.n + id.x;
   let u = texU(id.xy);
   let wq = macroWarp(u);
-  let c = pfbm(u + wq, i32(AP.landPer), 7u, AP.seed + 1u);
+  // (round 78: the impact craters stamped into the continents' noise — a bowl by a coast floods into a bay,
+  // inland one deep enough holds a lake, the noise roughening their shores — as well as into the height)
+  let c = pfbm(u + wq, i32(AP.landPer), 7u, AP.seed + 1u) + CRATER_LAND * craterShape(u * vec2<f32>(AP.worldW, AP.worldH));
   let f = pfbm(u + wq * 0.5, i32(AP.faultPer), 5u, AP.seed + 3u);
   let land = select(0.0, 1.0, c > AP.landThresh);
   fieldA[i] = vec4<f32>(c, f, land, 0.0);
@@ -195,6 +200,38 @@ fn jfaSeedC(@builtin(global_invocation_id) id: vec3<u32>) {
     if (isLand(regs[regionW[nb(id.xy, d)]]) != land) { out = vec2<u32>(packXY(id.x, id.y), 0u); }
   }
   jfaSrc[i] = out;
+}
+
+/** the landforms' borders (round 78: compose.wgsl Region.lf; the coast is one too) as seeds */
+@compute @workgroup_size(8, 8)
+fn jfaSeedL(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= AP.n || id.y >= AP.n) { return; }
+  let i = id.y * AP.n + id.x;
+  let lf = regs[regionW[i]].lf;
+  var out = vec2<u32>(0u);
+  for (var d = 0; d < 4; d++) {
+    if (regs[regionW[nb(id.xy, d)]].lf != lf) { out = vec2<u32>(packXY(id.x, id.y), 0u); }
+  }
+  jfaSrc[i] = out;
+}
+
+/** each texel's distance into its landform (distW.w, world units; 1e6: no border) */
+@compute @workgroup_size(8, 8)
+fn jfaOutL(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= AP.n || id.y >= AP.n) { return; }
+  let i = id.y * AP.n + id.x;
+  let s = jfaSrc[i];
+  let lf = regs[regionW[i]].lf;
+  var o = distW[i];
+  var d = 1e6;
+  if (s.x != 0u) {
+    let sp = unpackXY(s.x);
+    let same = regs[regionW[texIdxW(sp)]].lf == lf;
+    d = tdist(vec2<i32>(id.xy), sp);
+    d = select(max(d - 0.5 * texelW(), 0.0), d + 0.5 * texelW(), same);
+  }
+  o.w = d;
+  distW[i] = o;
 }
 
 @compute @workgroup_size(8, 8)

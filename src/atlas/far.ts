@@ -63,7 +63,7 @@ export class FarLand {
         const k = KINDS[d.kind];
         let c = albedo(k.top) as number[];
         if (k.veg > 0.5) c = c.map((v, i) => v * 0.35 + green[i] * 0.65);
-        const temp = warmth((y + 0.5) / m) * 34 - 8 - (h - atlas.p.sea) * 0.12;
+        const temp = warmth((y + 0.5) / m) * 34 - 8 - (h - atlas.p.sea) * 0.05; // (compose.wgsl LAPSE)
         if (temp < 0 && d.stat.land) c = [0.86, 0.88, 0.92];
         col.set([Math.round(c[0] * 255), Math.round(c[1] * 255), Math.round(c[2] * 255), 255], (y * m + x) * 4);
       }

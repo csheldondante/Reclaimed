@@ -45,6 +45,11 @@ struct AtlasP {
   vsize: vec2<f32>,
   caveDepth: f32,
   caveScale: f32,
+  /** round 78: the continent's slope reaches its full lift this far from the coast; regions' own detail shown */
+  liftReach: f32,
+  detail: f32,
+  _p0: f32,
+  _p1: f32,
 }
 
 @group(0) @binding(0) var<uniform> AP: AtlasP;

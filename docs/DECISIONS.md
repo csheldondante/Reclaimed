@@ -3,6 +3,41 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-25 — rounds 76–78 (session 5, `places`) — the game's direction
+
+- Round 76 (step back): "I love the way the simulation makes the world feel responsive. I think the lo fi
+  graphics are fun but I find I want a bit more readability and for better animations and possibly
+  fidelity on characters and fauna and flora." Biggest frustrations: "tiny chunks of rock sticking up out
+  of the ground can frustratingly block your character movement and dust or the fixed perspective can
+  occlude the character." Mobile: "squeeze blood from stone and try to get high frame rates on mobile"
+  with static composition for what's at rest. "I suspect in gameplay we want an overmap and then places
+  the character can go rather than make them traverse the world." The game: a roguelite; heroes from a
+  library of roles; story and objectives LLM-generated from a persistent world wiki; mixed mechanics per
+  role; the world shows the history of play.
+- Round 77: target the user's Pixel 9. Readability first, "and that includes level generation that
+  actually makes regions of low and high detail and creates regions that are fun for the various
+  characters to traverse." The atlas as "a readable fantasy map (or maybe have multiple styles depending
+  on the state of the world)". The heightmaps "are noisy and not well suited to a top down perspective
+  but I think they could be." Bulwark's cliffside cities (radial grids tied to iso lines, long straight
+  supported bridges, lifts, ramps). A mix of vertical and horizontal areas; busy and calm places; rooms
+  calmer or with sparse impassable footprints. Layers for history: toppled monuments, buried cities,
+  repurposed megastructures. Diplomacy and procedural units and structures ideas to come.
+- Round 78 (the two scales, agreed): "The fractal noise is great for shapes in 2d and blocking out maps"
+  — shorelines, ridges, mesas bigger than regions; other grids for superstructures; "I would use SDF to
+  blend the actual heights we want. The actual heightmap can be informed by but not determined by the
+  underlying noise. Think of borders here as a good candidate for the initial seeded boundaries."
+  "We should be intentional and make vertical cities, ramps and roads, lifts, switchbacks, or tunnels
+  intentionally stamped at the region level." Layers at the atlas scale too (a massive cave under
+  mountains, tunnels). "Low frequency defined by the atlas and then the regions are higher frequency but
+  with intentional rooms and paths that are low detail and traversable within the constraints of the
+  macro features." Paths by dungeon layouts, slime-mold or weighted random walks. Order agreed: atlas
+  macro height → region briefs and a generator → traversal check and camera; the readability items high
+  priority next (BACKLOG V1–V14).
+- Round 78, optimization: "a way to still have particles and wind but freeze deposits. Then we can freeze
+  and cache the terrain without losing the ability to show dust and debris and we can unfreeze for player
+  interactions or simulation during generation. Likewise we can freeze the flow of rivers this way"
+  (V12, V13).
+
 ## 2026-10-24 — round 75 (session 5, `atlas`) — geysers, giant crystals; the far land and top-down
 
 - "I think lava areas should have geysers that shoot out water and steam."

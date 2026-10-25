@@ -46,7 +46,16 @@ struct Region {
   /** what stands on its ground or is cut into it (forms.wgsl, round 69) */
   f0: Form,
   f1: Form,
+  /** its landform (round 78, landforms.ts; 0xffffffff water), the landform's tier (0 lowland, 1 upland,
+   *  2 plateau, 3 massif), a massif's peak above its level and how far in from its edge it peaks */
+  lf: u32,
+  tier: u32,
+  peak: f32,
+  rise: f32,
 }
+
+const TIER_PLATEAU: u32 = 2u;
+const TIER_MASSIF: u32 = 3u;
 
 /** a region's form (regions.ts FormDef → 12 words): what each field means depends on the kind (forms.wgsl) */
 struct Form {
@@ -74,7 +83,8 @@ const EDGE_BEACH: u32 = 5u;
 const EDGE_SEACLIFF: u32 = 6u;
 
 @group(0) @binding(20) var<storage, read> regionR: array<u32>;
-/** x distance to the region's border (world units), y signed distance to the coast (+ land), z the region across (bits), w unused */
+/** x distance to the region's border (world units), y signed distance to the coast (+ land), z the region across (bits),
+ *  w the distance into its landform (round 78) */
 @group(0) @binding(21) var<storage, read> distR: array<vec4<f32>>;
 @group(0) @binding(22) var<storage, read> regs: array<Region>;
 @group(0) @binding(23) var<storage, read> pat: array<f32>;
@@ -92,8 +102,11 @@ struct RiverNode {
 }
 // (one buffer: n² words of nearest node + 1, then the nodes, 8 words each — binding 26 is the coarse world's)
 @group(0) @binding(25) var<storage, read> riverBuf: array<u32>;
+// (round 78: the impact craters sit between the two — atlas.ts CRATER_BLOCK)
+const CRATER_WORDS: u32 = 8u;
+const CRATER_BLOCK: u32 = 4u + 64u * CRATER_WORDS;
 fn riverNode(i: u32) -> RiverNode {
-  let o = AP.n * AP.n + i * 8u;
+  let o = AP.n * AP.n + CRATER_BLOCK + i * 8u;
   return RiverNode(bitcast<f32>(riverBuf[o]), bitcast<f32>(riverBuf[o + 1u]), bitcast<f32>(riverBuf[o + 2u]), bitcast<f32>(riverBuf[o + 3u]), riverBuf[o + 4u], riverBuf[o + 5u], bitcast<f32>(riverBuf[o + 6u]), 0.0);
 }
 
@@ -139,6 +152,48 @@ fn coarseAt(p: vec2<f32>) -> Co {
     if (c.l.w > 0.5 && wt > 0.25) { o.cap = u32(c.l.w); }
   }
   return o;
+}
+
+/**
+ * The impact craters' relief at p (round 78, atlas.ts makeCraters): a bowl, a raised rim, the ejecta
+ * thinning outward, a central peak in the big ones (the coarse world's meteor, coarse.wgsl, the same
+ * shape at its own scale).
+ */
+fn craterAt(p: vec2<f32>) -> f32 { return craterSum(p, false); }
+
+/** the craters' shape, each its bowl −1 deep (the continent's noise takes it: atlas build.wgsl base) */
+fn craterShape(p: vec2<f32>) -> f32 { return craterSum(p, true); }
+
+fn craterSum(p: vec2<f32>, unit: bool) -> f32 {
+  let base = AP.n * AP.n;
+  let k = min(riverBuf[base], 64u);
+  var dh = 0.0;
+  for (var i = 0u; i < k; i++) {
+    let o = base + 4u + i * CRATER_WORDS;
+    let c = nearTo(vec2<f32>(bitcast<f32>(riverBuf[o]), bitcast<f32>(riverBuf[o + 1u])), p);
+    let R = bitcast<f32>(riverBuf[o + 2u]);
+    var r = length(p - c);
+    if (r > R * 2.4) { continue; }
+    // (no perfect circles: the distance warped by a noise at the crater's own scale — slumped walls,
+    // a rim broken in places)
+    let wu = torusU(p) + f32(i) * 0.137;
+    r *= 1.0 + 0.16 * pfbm(wu, perOf(R * 0.7), 3u, AP.seed + 401u);
+    var D = bitcast<f32>(riverBuf[o + 3u]);
+    let rim = bitcast<f32>(riverBuf[o + 4u]);
+    var pk = bitcast<f32>(riverBuf[o + 5u]);
+    if (unit) {
+      pk = pk / max(D, 1e-3);
+      D = 1.0;
+    }
+    // (the bowl flat-bottomed, its wall steepest under the rim)
+    let t = r / R;
+    var h = -D * (1.0 - smoothstep(0.55, 1.0, t));
+    h += D * 0.35 * rim * exp(-pow((t - 1.0) / 0.12, 2.0));
+    h += D * 0.08 * rim * smoothstep(2.2, 1.0, t) * step(1.0, t);
+    h += pk * exp(-pow(t / 0.12, 2.0));
+    dh += h;
+  }
+  return dh;
 }
 
 struct River {
@@ -196,6 +251,8 @@ struct Macro {
   b: u32,
   s: f32,
   coast: f32,
+  /** the distance into the landform (bilinear: near a landform's border both sides are near 0) */
+  dl: f32,
 }
 
 fn macroAt(p: vec2<f32>) -> Macro {
@@ -208,6 +265,7 @@ fn macroAt(p: vec2<f32>) -> Macro {
   m.b = bitcast<u32>(distR[near].z);
   var s: array<f32, 4>;
   var c: array<f32, 4>;
+  var l: array<f32, 4>;
   var r: array<u32, 4>;
   for (var k = 0; k < 4; k++) {
     let j = texIdxW(i0 + vec2<i32>(k & 1, k >> 1));
@@ -215,6 +273,7 @@ fn macroAt(p: vec2<f32>) -> Macro {
     r[k] = regionR[j];
     s[k] = select(-d.x, d.x, r[k] == m.a);
     c[k] = d.y;
+    l[k] = min(d.w, 1e5);
   }
   // the region across: one that's here when the border runs through these texels
   // (the nearest texel's own may be a third region's, past a corner)
@@ -228,6 +287,7 @@ fn macroAt(p: vec2<f32>) -> Macro {
   }
   m.s = mix(mix(s[0], s[1], f.x), mix(s[2], s[3], f.x), f.y);
   m.coast = mix(mix(c[0], c[1], f.x), mix(c[2], c[3], f.x), f.y);
+  m.dl = mix(mix(l[0], l[1], f.x), mix(l[2], l[3], f.x), f.y);
   return m;
 }
 
@@ -239,24 +299,32 @@ struct RH {
   pv: f32,
 }
 
-/** a region's own ground at p (as if it went on past its borders) */
-fn regionHeight(r: Region, p: vec2<f32>, coast: f32) -> RH {
+/** a region's own ground at p (as if it went on past its borders); dl: the distance into its landform */
+fn regionHeight(r: Region, p: vec2<f32>, coast: f32, dl: f32) -> RH {
   let u = torusU(p);
   var h = AP.sea + r.base;
   if (isLand(r)) {
-    h += AP.lift * smoothstep(0.0, 900.0, coast);
+    // the continent slopes down to the sea all the way across (round 78: the coast's SDF; rivers, found
+    // on this ground by a priority flood, run down it)
+    h += AP.lift * smoothstep(0.0, AP.liftReach, coast);
+    // a massif rises from its edge to its peaks (round 78), along ridges
+    if (r.tier == TIER_MASSIF) {
+      let rd = pridged(u, perOf(r.rise * 0.9), 4u, AP.seed + 303u);
+      h += r.peak * smoothstep(0.0, r.rise, dl) * (0.4 + 0.6 * rd);
+    }
   } else {
     h -= r.depth * smoothstep(0.0, 260.0, -coast);
   }
   // (the world's own noise, at the region's scale and amplitude: regions alike meet without a seam)
-  h += r.rough * pfbm(u, perOf(r.scale), 5u, AP.seed + 101u);
+  // (round 78: on the landforms each region's own noise and pattern are detail, AP.detail of them)
+  h += AP.detail * r.rough * pfbm(u, perOf(r.scale), 5u, AP.seed + 101u);
   if (r.ridge > 0.0) {
-    h += r.ridge * pridged(u, perOf(r.scale * 1.6), 5u, AP.seed + 202u);
+    h += AP.detail * r.ridge * pridged(u, perOf(r.scale * 1.6), 5u, AP.seed + 202u);
   }
   var pv = 0.0;
   if (r.pattern != 0u) {
     pv = pattern(r.pattern, p, r.patScale, r.seed);
-    h += r.patAmp * pv;
+    h += AP.detail * r.patAmp * pv;
   }
   if (r.terrace > 0.0) {
     let k = h / r.terrace;
@@ -318,6 +386,21 @@ fn ground(p: vec2<f32>) -> Ground {
     kind = L.coastEdge;
     ew = L.edgeW;
     ed = L.edgeD;
+  } else if (A.lf != B.lf) {
+    // two landforms meet (round 78): the higher one's edge — a plateau's a cliff, a massif's a wide rise
+    var H = B;
+    if (A.base > B.base) {
+      H = A;
+    }
+    kind = H.edge;
+    ew = H.edgeW;
+    ed = H.edgeD;
+    if (H.tier == TIER_PLATEAU) {
+      kind = EDGE_CLIFF;
+    } else if (H.tier == TIER_MASSIF) {
+      kind = EDGE_SMOOTH;
+      ew = max(ew, 50.0);
+    }
   } else {
     let aWins = A.prio > B.prio || (A.prio == B.prio && m.a < m.b);
     var E = B;
@@ -327,6 +410,9 @@ fn ground(p: vec2<f32>) -> Ground {
     kind = E.edge;
     ew = E.edgeW;
     ed = E.edgeD;
+    // (round 78: inside one landform a region's border is no cliff or step — the landform's edges are the
+    // cliffs; ravines and walls stay, features of their own)
+    if (kind == EDGE_CLIFF || kind == EDGE_TERRACE) { kind = EDGE_SMOOTH; }
   }
   let s = m.s;
   // the two regions' heights in a loop the compiler can't unroll (its bound isn't known):
@@ -335,7 +421,9 @@ fn ground(p: vec2<f32>) -> Ground {
   let nr = select(1u, 2u, both);
   var hs = array<f32, 2>(0.0, 0.0);
   for (var k = 0u; k < nr; k++) {
-    let rh = regionHeight(regs[select(m.b, m.a, k == 0u)], p, m.coast);
+    let rk = regs[select(m.b, m.a, k == 0u)];
+    // (the distance into B's landform: A's own where they're one landform; at another's edge, ~0)
+    let rh = regionHeight(rk, p, m.coast, select(0.0, m.dl, rk.lf == A.lf));
     hs[k] = rh.h;
     if (k == 0u) { g.pv = rh.pv; }
   }
@@ -375,6 +463,10 @@ fn ground(p: vec2<f32>) -> Ground {
     g.h = mix(hB, hA, w) + extra;
     g.w = w;
   }
+  // the impact craters (round 78)
+  let cr = craterAt(p);
+  g.h += cr;
+  g.hlo += cr;
   // the coarse world: rock taken or added (a crater, a cone, set lava), what lies on top
   let co = coarseAt(p);
   g.h += co.dr;
@@ -409,8 +501,9 @@ fn warmth(p: vec2<f32>) -> f32 { return 0.5 - 0.5 * cos(6.2831853 * torusU(p).y)
 fn temperature(p: vec2<f32>, h: f32) -> f32 {
   return warmth(p) * 34.0 - 8.0 - (h - AP.sea) * LAPSE;
 }
-/** °C a cell up: at 0.3 most uplands snowed over at mid-latitudes; now snow is for peaks and the cold */
-const LAPSE: f32 = 0.12;
+/** °C a cell up: at 0.3 most uplands snowed over at mid-latitudes; 0.12 snow for peaks and the cold; round 78:
+ *  0.05, the landforms reach ~300 over the sea (at 0.12 every plateau was snowed over) */
+const LAPSE: f32 = 0.05;
 
 /** 0..1: wet at the equator and the mid-latitudes, dry in the subtropics and at the poles; wetter by the coast */
 fn moistureAt(p: vec2<f32>, coast: f32, bias: f32) -> f32 {

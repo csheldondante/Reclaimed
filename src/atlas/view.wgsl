@@ -3,7 +3,9 @@
 // streamer's columns (compose.wgsl), from the whole world down to a cell, in
 // one of several modes (AP.mode): 0 the ground (hillshade, height colours),
 // 1 regions, 2 kinds, 3 the regions' borders (their distance field), 4 the
-// coast's distance field, 5 climate, 6 the pattern alone, 7 caves.
+// coast's distance field, 5 climate, 6 the pattern alone, 7 caves, 8 the
+// landforms (round 78: lowland green, upland olive, plateau ochre, massif
+// grey; contours every 20, the landforms' edges dark).
 
 /** the viewer's colour for each kind (regions.ts KINDS) */
 @group(0) @binding(24) var<storage, read> kcol: array<vec4<f32>>;
@@ -25,14 +27,18 @@ fn hue(h: u32) -> vec3<f32> {
   return 0.35 + 0.55 * vec3<f32>(hf(pcg(h * 3u + 7u)), hf(pcg(h * 5u + 11u)), a);
 }
 
-fn terrainColour(h: f32) -> vec3<f32> {
+/** round 78: the land's colour up the whole height (the landforms reach ~300 over the sea), snow where it's
+ *  below freezing (compose.wgsl temperature) */
+fn terrainColourAt(h: f32, p: vec2<f32>) -> vec3<f32> {
   let d = h - AP.sea;
   if (d < 0.0) { return mix(vec3<f32>(0.2, 0.42, 0.62), vec3<f32>(0.04, 0.12, 0.3), clamp(-d / 20.0, 0.0, 1.0)); }
+  if (temperature(p, h) < 0.0) { return vec3<f32>(0.93, 0.94, 0.97); }
   if (d < 2.0) { return vec3<f32>(0.82, 0.76, 0.56); }
-  if (d < 30.0) { return mix(vec3<f32>(0.42, 0.6, 0.3), vec3<f32>(0.55, 0.5, 0.36), d / 30.0); }
-  if (d < 70.0) { return mix(vec3<f32>(0.55, 0.5, 0.36), vec3<f32>(0.6, 0.58, 0.56), (d - 30.0) / 40.0); }
-  return mix(vec3<f32>(0.6, 0.58, 0.56), vec3<f32>(0.95, 0.96, 0.98), clamp((d - 70.0) / 30.0, 0.0, 1.0));
+  if (d < 40.0) { return mix(vec3<f32>(0.4, 0.58, 0.3), vec3<f32>(0.56, 0.6, 0.34), d / 40.0); }
+  if (d < 120.0) { return mix(vec3<f32>(0.56, 0.6, 0.34), vec3<f32>(0.66, 0.54, 0.38), (d - 40.0) / 80.0); }
+  return mix(vec3<f32>(0.66, 0.54, 0.38), vec3<f32>(0.6, 0.58, 0.58), clamp((d - 120.0) / 120.0, 0.0, 1.0));
 }
+fn terrainColour(h: f32) -> vec3<f32> { return terrainColourAt(h, vec2<f32>(0.0, AP.worldH * 0.25)); }
 
 /** light on the ground from its slope across the pixel (screen derivatives: ground() once a pixel) */
 fn shadeOf(h: f32, dhx: f32, dhy: f32) -> f32 {
@@ -49,10 +55,11 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
   let g = ground(p);
   // (derivatives in uniform control flow, before the modes branch)
   let sh = shadeOf(g.h, dpdx(g.h), dpdy(g.h));
+  let fwh = fwidth(g.h);
   var c = vec3<f32>(0.0);
   switch AP.mode {
     case 0u: {
-      c = terrainColour(g.h) * select(1.0, sh, g.h >= AP.sea);
+      c = terrainColourAt(g.h, p) * select(1.0, sh, g.h >= AP.sea);
       // (rivers: blue, lava: orange)
       if (g.rx < 1.0 && g.h >= AP.sea) { c = select(vec3<f32>(0.2, 0.42, 0.7), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u) * mix(1.0, sh, 0.5); }
       // (round 71: the coarse world — set lava's basalt dark, ash grey, rubble brown, running lava glowing)
@@ -88,10 +95,25 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
     case 6u: {
       c = vec3<f32>(0.5 + 0.5 * g.pv) * select(0.5, 1.0, regs[g.a].pattern != 0u);
     }
-    default: {
+    case 7u: {
       let cv = caves(p, g.h - 1.0, regs[g.a]);
       let open = (cv.y - cv.x) + (cv.w - cv.z);
       c = mix(terrainColour(g.h) * 0.4, vec3<f32>(1.0, 0.8, 0.3), clamp(open / 12.0, 0.0, 1.0));
+    }
+    default: {
+      let A = regs[g.a];
+      if (!isLand(A)) {
+        c = vec3<f32>(0.16, 0.3, 0.5);
+      } else {
+        var tc = array<vec3<f32>, 4>(vec3<f32>(0.45, 0.62, 0.36), vec3<f32>(0.62, 0.62, 0.38), vec3<f32>(0.82, 0.6, 0.36), vec3<f32>(0.66, 0.64, 0.66));
+        c = tc[min(A.tier, 3u)] * sh;
+        // contours every 20 above the sea
+        let cl = (g.h - AP.sea) / 20.0;
+        let fw = max(fwh / 20.0, 1e-4);
+        // (only where the lines are resolved: a contour every few pixels at least)
+        if (fw < 0.12) { c *= 1.0 - 0.35 * (1.0 - smoothstep(0.0, fw * 1.5, abs(cl - round(cl)))); }
+        if (macroAt(p).dl < max(AP.vscale * 1.5, 1.0)) { c *= 0.35; }
+      }
     }
   }
   return vec4<f32>(c, 1.0);

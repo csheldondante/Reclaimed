@@ -549,6 +549,34 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   (`Streamer.editLive` with coarse.ts `eventAt`, the GPU's shapes cell by
   cell), with the fine meteor's flash and blast or a lava vent. Rain and
   erosion run when `rain` / `erode` are set (off by default: untuned).
+- Landforms (round 78, branch `places`, landforms.ts): the macro height is
+  designed. An elevation noise (domain-warped, blending its own size and
+  half of it by a slow noise: `AtlasParams.formPer` cells a turn) gives each
+  land region a tier at its centre by rank — lowland 45 %, upland 30 %, the
+  rest plateau or massif (a second noise, plateaus where it's dry); a
+  fault's strip is a range (massif) or a rift. Adjacent regions of one tier
+  are one landform (union-find over `Atlas.adjacency`, keyed a · regions + b
+  by dense ids) with one level (a massif also a peak and how far in it
+  peaks). Region words 48–51 carry it (REGION_WORDS 52; compose.wgsl
+  `Region.lf, tier, peak, rise`); a JFA from the landforms' borders (the
+  coast is one) puts the distance into the landform in `distR.w`. In
+  `ground`: a massif rises from its edge to its peaks along ridges by that
+  distance; where two landforms meet the higher one's edge is used — a
+  plateau's a cliff, a massif's a wide smooth rise; inside one landform a
+  border is never a cliff or a terrace. The kind follows the tier
+  (regions.ts TIER_KINDS). The continent slopes down to the sea all the way
+  across (`lift` over `liftReach` of the coast's SDF), so the rivers (a
+  priority flood on this ground) run down it and drop off plateaus as
+  falls. Each region's own noise and pattern are `detail` (0.5) of what
+  they were. `?atlas=view&mode=landforms` shows the tiers.
+- Impact craters (round 78, `Atlas.craters`, `AtlasParams.craters`): placed
+  once (many a few hundred cells across, a few huge with a central peak,
+  the older the more worn) and stamped twice — into the continents' noise
+  (build.wgsl `base`, CRATER_LAND: a bowl by a coast floods into a bay)
+  and into the ground (compose.wgsl `craterAt`: bowl, rim, ejecta, peak, the
+  distance noise-warped so none is a circle). They live in the river
+  buffer between the nearest-node words and the nodes (CRATER_BLOCK): the
+  column shaders are at their eight storage buffers.
 - Giants (round 75, `Atlas.giants`): quartz crystals the size of mountains
   in the crystal regions (a few each, 150–420 tall, leaning up to 35°),
   placed once when the atlas is made. Each column batch is handed the giants
