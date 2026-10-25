@@ -146,7 +146,7 @@ interface Extra {
 const PARAM_BYTES = 144;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 16;
-const COLG_BYTES = 64;
+const COLG_BYTES = 72;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;

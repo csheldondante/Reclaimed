@@ -28,6 +28,9 @@ struct ColG {
   cw: f32,
   clava: f32,
   cap: u32,
+  /** a great cavern under it (round 78, compose.wgsl cavernAt): floor, roof (none when roof ≤ floor) */
+  cf: f32,
+  cr: f32,
 }
 
 @group(0) @binding(30) var<storage, read_write> colG: array<ColG>;
@@ -46,7 +49,8 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= mw || id.y >= AP.h + 2u) { return; }
   let p = cellW(AP.x0 - 1 + i32(id.x), AP.y0 - 1 + i32(id.y));
   let g = ground(p);
-  colG[id.y * mw + id.x] = ColG(g.h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, g.loose, g.cw, g.clava, g.cap);
+  let cav = cavernAt(p, g);
+  colG[id.y * mw + id.x] = ColG(g.h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, g.loose, g.cw, g.clava, g.cap, cav.x, cav.y);
 }
 
 fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {

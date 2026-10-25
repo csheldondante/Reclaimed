@@ -356,6 +356,28 @@ struct Ground {
   cw: f32,
   clava: f32,
   cap: u32,
+  /** the distance into its landform (round 78) */
+  dl: f32,
+}
+
+/**
+ * A great cavern under a plateau or a massif (round 78: "a massive cave under mountains"): deep inside the
+ * landform (by the distance into it) where a slow noise says, its floor near the sea's level, its roof
+ * domed under the rock kept over it, columns of rock left standing in it. (floor, roof): none when roof ≤ floor.
+ */
+fn cavernAt(p: vec2<f32>, g: Ground) -> vec2<f32> {
+  let A = regs[g.a];
+  if (!isLand(A) || A.tier < TIER_PLATEAU) { return vec2<f32>(0.0); }
+  let u = torusU(p);
+  let m = smoothstep(0.02, 0.3, pfbm(u, perOf(700.0), 3u, AP.seed + 501u)) * smoothstep(120.0, 360.0, g.dl);
+  if (m <= 0.0) { return vec2<f32>(0.0); }
+  // (pillars: the columns where a fine noise peaks stay rock)
+  if (pfbm(u, perOf(26.0), 2u, AP.seed + 504u) > 0.42) { return vec2<f32>(0.0); }
+  let fl = AP.sea + 4.0 + 6.0 * pfbm(u, perOf(90.0), 2u, AP.seed + 502u);
+  let dome = (30.0 + 70.0 * m) * sqrt(m) * (0.7 + 0.3 * pfbm(u, perOf(60.0), 2u, AP.seed + 503u));
+  let roof = min(fl + dome, g.h - 28.0);
+  if (roof - fl < 4.0) { return vec2<f32>(0.0); }
+  return vec2<f32>(fl, roof);
 }
 
 /** symmetric steps: st(1 − t) = 1 − st(t) */
@@ -429,6 +451,7 @@ fn ground(p: vec2<f32>) -> Ground {
   }
   let hA = hs[0];
   g.s = s;
+  g.dl = m.dl;
   g.hlo = hA;
   if (both) { g.hlo = min(hA, hs[1]); }
   if (!both) {

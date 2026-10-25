@@ -449,6 +449,8 @@ fn colFinish(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       carve = max(carve, c);
     }
+    // a great cavern (round 78)
+    if (z > g.cf && z < g.cr) { carve = max(carve, min(z - g.cf, g.cr - z)); }
     var add = -1e9;
     var addMat = 0u;
     if (net.on) {

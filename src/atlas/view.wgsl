@@ -97,7 +97,8 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
     }
     case 7u: {
       let cv = caves(p, g.h - 1.0, regs[g.a]);
-      let open = (cv.y - cv.x) + (cv.w - cv.z);
+      let cav = cavernAt(p, g);
+      let open = (cv.y - cv.x) + (cv.w - cv.z) + max(cav.y - cav.x, 0.0);
       c = mix(terrainColour(g.h) * 0.4, vec3<f32>(1.0, 0.8, 0.3), clamp(open / 12.0, 0.0, 1.0));
     }
     default: {

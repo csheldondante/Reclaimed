@@ -4358,3 +4358,13 @@ crossing.
 
 atlastest 6/6 (a new check: landforms many regions across, sites on land,
 roads ending at their sites, continents joined, crossings found).
+
+## Round 78 — great caverns (places)
+
+Why: "we want layers I think even at the atlas scale so we may want a
+massive cave under mountains". Under plateaus and massifs, deep inside
+(by the distance into the landform), where a slow noise says: a floor near
+the sea, a dome up to ~100, rock pillars. Found in the columns by
+scripts/cavernprobe.mjs (a void 33–53 under ground at 120 at its edge).
+The column batch's cost didn't move (97.7 ms a 64² region, 116 ms a 256²
+window). atlastest 6/6, tiertest 4/4, coarsetest 5/5.

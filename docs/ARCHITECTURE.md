@@ -577,6 +577,12 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   distance noise-warped so none is a circle). They live in the river
   buffer between the nearest-node words and the nodes (CRATER_BLOCK): the
   column shaders are at their eight storage buffers.
+- Great caverns (round 78, compose.wgsl `cavernAt`): under plateaus and
+  massifs, deep inside them (120–360 into the landform) where a slow noise
+  says; the floor near the sea's level, a domed roof up to ~100 over it
+  with 28 of rock kept above, columns of rock standing in it (where a fine
+  noise peaks). colHeight puts (floor, roof) in ColG (COLG_BYTES 72) and
+  the column march carves it.
 - Sites and roads (round 78, sites.ts, `Atlas.settlement`): on the CPU
   over a coarse grid (4 × 4 texels a cell) of the ground with its rivers.
   Each land cell scores a setting — a plateau's rim over a 60+ drop
