@@ -190,7 +190,20 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   let built = atomicLoad(&state[b0 + 5u]);
   // (this frame's first pass took it already; the second only takes the rest)
   let taken = atomicLoad(&state[b0 + 11u]) == atomicLoad(&state[15]);
-  let vis = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]) != 0u && !taken && (!freshOnly || built == FRESH || built == 0u);
+  // (round 80: the window's mesh — MR.zb.w 1 — leaves a chunk whose columns all sleep: they can't have changed;
+  // the phone's frame had this pass near its top. Fresh ones are built anyway; one just fallen asleep is looked at.)
+  // (and only a chunk that was near the view already — one just come near is looked at once: it may have
+  // changed out of sight before it fell asleep)
+  let nearW = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]);
+  var still = false;
+  if (MR.zb.w > 0.5 && nearW == 1u && built != FRESH && built != 0u) {
+    still = true;
+    for (var k = 0u; k < 9u; k++) {
+      let q = vec2<u32>(u32(clamp(mix(rc.x, rc.z, f32(k % 3u) * 0.5), 0.0, f32(G.mapW - 1u))), u32(clamp(mix(rc.y, rc.w, f32(k / 3u) * 0.5) / ROW_H, 0.0, f32(G.mapH - 1u))));
+      if (!asleep(q) || drowsy(q)) { still = false; }
+    }
+  }
+  let vis = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]) != 0u && !taken && !still && (!freshOnly || built == FRESH || built == 0u);
   let n = select(0u, w * u32(max(j1 - j0 + 1, 0)), vis);
   var sum = 0u;
   var top = 0.0;

@@ -103,6 +103,7 @@ export class OutsideBand {
     // (the fresh pages empty until what's outside them is known: packFresh, once the regions are in)
     const empty = new Uint32Array(CHUNK * CHUNK * BAND_K * SLOT_WORDS);
     for (const c of fresh) this.device.queue.writeBuffer(this.layers, this.table[c * 2] * SLOT_WORDS * 4, empty);
+    this.mesh.packed();
     this.fresh.push(...fresh);
   }
 
@@ -148,6 +149,7 @@ export class OutsideBand {
           this.stats.runs += col.length;
         }
       this.device.queue.writeBuffer(this.layers, this.table[c * 2] * SLOT_WORDS * 4, page);
+      this.mesh.packed();
     }
   }
 }

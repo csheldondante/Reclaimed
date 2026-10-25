@@ -4711,3 +4711,26 @@ and it will help with debugging."
   mesa, every column with ground read fresh, ~1.4 s.
 
 atlasworldtest 6/6.
+
+## Round 80 — the phone's overlay; the meshes' change passes skip what can't have changed (places)
+
+The user's Pixel 9 (Arm Valhall), the atlas level on Pages, low: fps 45,
+p50 16.7, p95 100, 28 hitches, the long frames all '-' (the GPU's), 36 of
+256 chunks awake, the GPU's span ~29 ms. Its per-pass times overlap (a
+tiler batches the passes: every pass 8–27 ms, far over the span), but the
+order says the meshes' change passes are at the top: the band's (27.6) and
+the window's (21.5) — every column of every chunk near the view, hashed
+every frame.
+
+- The window's mesh skips a chunk whose columns all sleep (they can't have
+  changed: nine samples of the sleep mask; drowsy ones are looked at), unless
+  it came near the view within ten frames (it may have changed out of sight
+  before it fell asleep) or it's fresh. MeshRegion zb.w 1 marks the window's.
+- The band's full change pass runs only for 180 frames after it's packed
+  (its layers change only then: slides, warps, slides in z); otherwise only
+  the fresh chunks' pass.
+- Desktop: the same frames (the passes were 0.13 ms here); the phone is the
+  judge.
+
+atlasworldtest 6/6, streamtest 8/8, tiertest 4/4, coarsetest 5/5,
+atlastest 6/6.

@@ -138,7 +138,8 @@ export class FieldMesh {
     f.set([-1, -1, W + 1, H + 1], 12);
     // (round 79) the window's: samples from 0, bedrock under 0, a run cut at its top goes on up (the
     // band draws it), quads under its top; a band's: setBand
-    f.set([0, 0, world.zMax, 0], 16);
+    // (zb.w 1: the window's — a chunk whose columns all sleep isn't looked at for changes, round 80)
+    f.set([0, 0, world.zMax, src ? 0 : 1], 16);
     f.set([-1e30, world.zMax, 0, 0], 20);
     this.layout = ab;
     device.queue.writeBuffer(this.region, 0, ab);
@@ -193,6 +194,13 @@ export class FieldMesh {
   }
 
   private layout = new ArrayBuffer(REGION_BYTES);
+  /** frames since a band was last packed (its full change pass runs for a while after) */
+  private framesSincePack = 0;
+
+  /** the band's layers were written: look at every chunk for a while (round 80) */
+  packed(): void {
+    this.framesSincePack = 0;
+  }
   /** its passes' and buffers' names begin so ('band ': the profiler tells the two apart) */
   private pre = '';
 
@@ -273,7 +281,11 @@ export class FieldMesh {
     // (state word 15: the frame, so the second hash pass knows what the first took)
     this.device.queue.writeBuffer(this.state, 15 * 4, new Uint32Array([++this.frameNo]));
     this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, this.near);
-    for (const [k, g] of [[this.hashF, this.hashFGroup], [this.hash, this.hashGroup]] as const) {
+    // (round 80: a band only changes when it's packed — every chunk looked at for a few seconds after; else
+    // only the fresh ones, those come into view)
+    const passes = this.src && this.framesSincePack > 180 ? ([[this.hashF, this.hashFGroup]] as const) : ([[this.hashF, this.hashFGroup], [this.hash, this.hashGroup]] as const);
+    this.framesSincePack++;
+    for (const [k, g] of passes) {
       const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-hash`, timestampWrites: this.profiler.timestamps(`${this.pre}fieldmesh-hash`) });
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, g);
@@ -338,7 +350,10 @@ export class FieldMesh {
         const c = cy * this.nx + cx;
         const within = (e: number) => behind || (hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e);
         this.inView[c] = within(1) ? 1 : 0;
-        this.near[c] = within(1.5) ? 1 : 0;
+        // (over 1: come near within ten frames — the change pass looks at it even asleep, round 80; ten, so a
+        // change found when every rebuild slot was taken is found again)
+        const was = this.near[c];
+        this.near[c] = within(1.5) ? (was === 0 ? 11 : Math.max(1, was - 1)) : 0;
         if (this.near[c]) {
           r[0] = Math.min(r[0], cx * CHUNK);
           r[1] = Math.min(r[1], cy * CHUNK * ROW_H);
