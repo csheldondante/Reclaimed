@@ -21,6 +21,12 @@ each was implemented.
 - "For the crystals I was imagining more like large voronoi facets raised slightly deeper in rather than
   a single large crystal but both should be possible."
 - Occlusion and seeing the cliff's back from the fixed view stay V5 (high priority).
+- Then: "I would maybe use voronoi and then make some along the border drop with noise so the cliff has
+  an irregular top with sediment at different points … I do think more varied height smaller voronoi
+  cells along the cliff will make it look more like a cliff." And "we can optionally make a slope if we
+  want it to be traversable of sand or dirt or gravel and sdf from flat to mesa height and we can have
+  some voronoi cells in that transition be stone up to the full height … like a messa that has eroded to
+  make a ramp." "The screens here look decent though!"
 
 ## 2026-10-25 — rounds 76–78 (session 5, `places`) — the game's direction
 

@@ -13,6 +13,8 @@ const which = opt('which', 'mesa,foot,field').split(',');
 const pick = Number(opt('pick', 0));
 const mode = opt('mode', 'ground');
 const game = opt('game', '1') !== '0';
+// (--cam x,y,z,tx,ty: the fly camera put there in the window, looking at (tx, ty), instead of found)
+const cam = opt('cam', '') ? opt('cam', '').split(',').map(Number) : null;
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
@@ -93,7 +95,17 @@ try {
       await new Promise((r) => setTimeout(r, 1500));
       await lv.screenshot({ path: `${out}-${k}-iso-${z}.png` });
     }
-    if (k === 'foot') {
+    if (cam) {
+      await lv.evaluate(async (c) => {
+        const R = window.reclaimed;
+        R.toggleFly();
+        R.camera.fly.pos = [c[0], c[1] * 0.866, c[2]];
+        R.camera.fly.yaw = Math.atan2((c[4] - c[1]) * 0.866, c[3] - c[0]);
+        R.camera.fly.pitch = c[5] ?? 0.1;
+        await new Promise((r) => setTimeout(r, 2500));
+      }, cam);
+      await lv.screenshot({ path: `${out}-${k}-cam.png` });
+    } else if (k === 'foot') {
       // the fly camera on the low ground, looking back at the wall (the steepest drop near the middle)
       const fl = await lv.evaluate(async () => {
         const R = window.reclaimed;

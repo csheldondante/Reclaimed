@@ -83,8 +83,10 @@ const EDGE_BEACH: u32 = 5u;
 const EDGE_SEACLIFF: u32 = 6u;
 /** a plateau's edge where it meets another landform (round 78, mesaEdge) */
 const EDGE_MESA: u32 = 7u;
-/** how far either side of a mesa's border its ravines, spurs and buttes reach */
-const MESA_REACH: f32 = 110.0;
+/** how far either side of a mesa's border it reaches (its eroded ramps the farthest) */
+const MESA_REACH: f32 = 200.0;
+/** how far out its buttes stand */
+const BUTTE_REACH: f32 = 110.0;
 
 @group(0) @binding(20) var<storage, read> regionR: array<u32>;
 /** x distance to the region's border (world units), y signed distance to the coast (+ land), z the region across (bits),
@@ -446,6 +448,8 @@ struct Mesa {
   rav: f32,
   /** talus: the loose ground piled at the walls' feet and round the buttes */
   tal: f32,
+  /** on an eroded ramp (1) */
+  ramp: f32,
 }
 
 /**
@@ -497,13 +501,51 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
     let fade = 1.0 - smoothstep(0.0, D * 0.8, -o.x);
     o.w += fade * (0.04 + 0.05 * (0.5 + 0.5 * pfbm(u, perOf(90.0), 2u, AP.seed + 628u)) + 0.02 * rough);
   }
+  // the walls jointed (round 79, the user: "use voronoi and then make some along the border drop with noise
+  // so the cliff has an irregular top with sediment at different points … more varied height smaller
+  // voronoi cells along the cliff"): cells ~11 across along each wall; on a step's top by its wall a cell
+  // drops by its own amount (a block fallen away, sediment on it), off its foot one stands (a column)
+  let pj = perOf(11.0);
+  let wj = pworley(u * f32(pj), vec2<i32>(pj), 0.9, AP.seed + 633u);
+  let hj = hf(pcg(wj.id ^ (AP.seed * 0x27d4eb2fu)));
+  let hj2 = hf(pcg(wj.id * 9u + 1u));
+  let band = 9.0 + 12.0 * hj2;
+  for (var k = 0u; k < 4u; k++) {
+    let d = o.x - xw[k];
+    if (d > 0.0 && d < band) {
+      let fall = sh4[k] * hj * hj * smoothstep(band, band * 0.6, d);
+      o.w -= fall;
+      if (fall * drop > 2.0) { o.tal = max(o.tal, 0.8 + 2.2 * hj2); }
+    } else if (d < -1.2 && d > -band * 0.5 && hj2 < 0.14) {
+      o.w += sh4[k] * (0.55 + 0.45 * hj);
+    }
+  }
+  // an eroded ramp (round 79, the user: "a slope … of sand or dirt or gravel and sdf from flat to mesa height
+  // and we can have some voronoi cells in that transition be stone up to the full height"): where a slow
+  // noise says, the edge is a ramp from the plain to the top (rock under a skin of loose ground — the
+  // material by the place, as talus), its pillars cells of stone left standing to the full height
+  o.ramp = smoothstep(0.3, 0.42, pfbm(u, perOf(520.0), 2u, AP.seed + 631u));
+  if (o.ramp > 0.0) {
+    let Lr = clamp(drop * 1.3, 30.0, MESA_REACH * 0.85);
+    let t = clamp((o.x + Lr) / (Lr + o.L + 12.0), 0.0, 1.0);
+    var wr = mix(t, t * t * (3.0 - 2.0 * t), 0.5) + 0.015 * rough;
+    let pp = perOf(15.0);
+    let wv = pworley(u * f32(pp), vec2<i32>(pp), 0.85, AP.seed + 632u);
+    let hp = hf(pcg(wv.id ^ (AP.seed * 0x165667b1u)));
+    var pillar = 0.0;
+    if (hp < 0.2 && t > 0.06 && t < 0.97) {
+      pillar = smoothstep(0.42, 0.34, wv.f1) * (0.8 + 0.2 * hf(pcg(wv.id * 5u + 7u)));
+    }
+    o.w = mix(o.w, max(max(o.w, wr), pillar), o.ramp);
+    if (t > 0.0 && t < 1.0 && pillar < 0.5) { o.tal = max(o.tal, o.ramp * (1.5 + 1.5 * (0.5 + 0.5 * rough))); }
+  }
   o.rise = drop * 0.3 * o.rav * clamp(sh / max(depth, 1.0), 0.0, 1.0);
   if (o.x < -2.0) {
     let per = perOf(46.0);
     let wr = pworley(u * f32(per), vec2<i32>(per), 0.8, AP.seed + 616u);
     let hh = hf(pcg(wr.id ^ (AP.seed * 0x9e3779b9u)));
     if (hh < 0.4) {
-      let rad = (0.16 + 0.2 * hf(pcg(wr.id * 7u + 3u))) * smoothstep(-MESA_REACH * 0.95, -MESA_REACH * 0.3, o.x);
+      let rad = (0.16 + 0.2 * hf(pcg(wr.id * 7u + 3u))) * smoothstep(-BUTTE_REACH * 0.95, -BUTTE_REACH * 0.3, o.x);
       let bw = smoothstep(rad + 0.035, rad - 0.035, wr.f1) * (0.55 + 0.45 * hf(pcg(wr.id * 13u + 5u)));
       o.w = max(o.w, bw);
       // (a butte's own apron of talus)
@@ -660,7 +702,7 @@ fn ground(p: vec2<f32>) -> Ground {
         talus = me.tal;
         // overhangs: the top wall's lip out over the ledge or the ground, the foot's wall undercut
         // (where it's tall, not in a ravine; each comes and goes along it)
-        if (drop > 30.0 && me.rav < 0.05) {
+        if (drop > 30.0 && me.rav < 0.05 && me.ramp < 0.05) {
           let xt = me.x - me.L;
           let lipD = min(14.0 * pfbm(u, perOf(70.0), 2u, AP.seed + 617u) + 4.0, 10.0);
           let ucD = 12.0 * pfbm(u, perOf(55.0), 2u, AP.seed + 618u) + 3.5;

@@ -583,7 +583,11 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   tapering to their heads, floors rising), spurs, four walls each its share
   of the drop with a ledge before it (shares and widths by noises along the
   edge), the rim lowered and rough near the edge, a pediment at the foot,
-  buttes (Worley cells) on the low side. Talus at each wall's foot is loose
+  buttes (Worley cells) on the low side; the walls jointed (Worley cells
+  ~11 across: on a step's top by its wall a cell drops by its own amount,
+  sediment on it; off its foot one stands); eroded ramps (MESA_REACH 200
+  for them; a slow noise: rock under a skin of loose ground from the plain
+  to the top, Worley cells left standing as stone pillars). Talus at each wall's foot is loose
   ground (Ground.loose/lmat: sand where dry, soil, rubble patches) with
   boulders of the cliff's rock (rock added, Ground.cap). Overhangs:
   Ground.ov (lip top, open floor, roof) — a lip over the ground or ledge

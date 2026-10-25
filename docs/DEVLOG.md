@@ -4415,3 +4415,28 @@ height; "more step variety in height"; crystals as "large voronoi facets".
   (was 107).
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 79 — jointed walls, eroded ramps (places)
+
+Why: the user: "use voronoi and then make some along the border drop with
+noise so the cliff has an irregular top with sediment at different
+points", "more varied height smaller voronoi cells along the cliff", and
+an eroded ramp — "a slope … of sand or dirt or gravel and sdf from flat to
+mesa height" with "some voronoi cells in that transition be stone up to
+the full height".
+
+- mesaEdge: each wall's top in Worley cells ~11 across within 9–21 of it:
+  a cell drops by its own share (squared hash: most a little, some most of
+  the step), sediment 1–3 on the ones that fell; 14 % of the cells just off
+  a wall's foot stand as columns. Seen from the plain: blocks at different
+  heights along the edge, grass on their tops; spires and columns off the
+  wall (shots78/v2-foot-cam.png).
+- Ramps where a slow noise (520 across) says, ~a quarter of the edges: the
+  ground from 1.3 × the drop out (≤ 170) to 12 past the top wall, rock under
+  a loose skin 1.5–3 (the talus's material by the place); 20 % of the
+  Worley cells (15 across) in it stone pillars to 0.8–1 of the drop. No
+  lips or undercuts on a ramp. MESA_REACH 200 (the ramps); buttes keep 110.
+- Column batch 80.6 ms a 64² region, 98 ms a 256² window (the last commit's
+  96 / 133 were a noisier run).
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
