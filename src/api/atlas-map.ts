@@ -271,9 +271,17 @@ export class AtlasMap {
       e.preventDefault();
       this.zoom(e.deltaY > 0 ? 1.25 : 0.8);
     }, { passive: false });
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'Escape' && this.isOpen) this.close();
-    });
+    // (open, the map takes the keys: the game's own — WASD, space — don't reach it; their key-ups still do,
+    // so nothing stays held. Captured first, before the page's listeners.)
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (!this.isOpen) return;
+        e.stopImmediatePropagation();
+        if (e.key === 'Escape') this.close();
+      },
+      { capture: true },
+    );
   }
 
   private async warpTo(cx: number, cy: number): Promise<void> {
