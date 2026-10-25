@@ -35,6 +35,8 @@ import type { WorldCore } from './world-core';
 
 /** columns a side of a region: what the window slides by (whole chunks, an even number of rows) */
 export const REGION = 64;
+/** ?slideskip=freeze,bufs,texs,mesh (round 80, measuring a slide's GPU burst only: what's left out is wrong) */
+const SLIDE_SKIP = new Set((typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('slideskip') ?? '').split(',').filter(Boolean));
 /** cells the window slides by in z */
 export const TIER = 32;
 /** the field mesh's chunks: cells across and rows down (fieldmesh.ts CHUNK) — a slide is whole ones */
@@ -365,7 +367,7 @@ export class Streamer {
     const regionBytes = rc * rc * pageBytes + kept.reduce((s, b) => s + R * R * b.stride * b.planes, 0) + keptT.reduce((s, t) => s + align256((R / t.div) * t.per * 16) * (R / t.div), 0);
     const staging = dev.createBuffer({ label: 'stream freeze', size: regionBytes * leaving.length, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     let off = 0;
-    for (const [lx, ly] of leaving) {
+    for (const [lx, ly] of SLIDE_SKIP.has('freeze') ? [] : leaving) {
       for (let j = 0; j < rc; j++)
         for (let i = 0; i < rc; i++) {
           const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
@@ -391,8 +393,8 @@ export class Streamer {
     // ---- 2. everything per column moves a region over ------------------------
     // (and the per-column buffers of what the game installed: the agents' fields — round 80)
     const mods = this.moduleBufs();
-    for (const b of [...this.bufs, ...mods]) this.shiftBuf(enc, b, dx, dy);
-    for (const t of this.texs) this.shiftTex(enc, t, dx, dy);
+    if (!SLIDE_SKIP.has('bufs')) for (const b of [...this.bufs, ...mods]) this.shiftBuf(enc, b, dx, dy);
+    if (!SLIDE_SKIP.has('texs')) for (const t of this.texs) this.shiftTex(enc, t, dx, dy);
     // (particles in the air: dropped — Q28 follow-up: move them with a kernel)
     enc.clearBuffer(wg.particles);
     // what comes in starts empty where nothing is frozen for it

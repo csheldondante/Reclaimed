@@ -113,6 +113,8 @@ export interface Sim {
   refresh(): Promise<void>;
   /** performance.now() of the last mirror read (0: never). */
   readonly readAt: number;
+  /** the last read is of the window as it is now (round 80: after a streamed window's slide, false — queries return null — until a new read lands) */
+  readonly fresh: boolean;
   /** Settle the world: `ticks` of simulation at once, debris gathering faster; resolves when the GPU is done. */
   warmup(opts: WarmupOpts): Promise<void>;
   /** resolves once the warmup asked for at creation is done (at once without one) */
