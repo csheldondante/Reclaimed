@@ -549,6 +549,20 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   (`Streamer.editLive` with coarse.ts `eventAt`, the GPU's shapes cell by
   cell), with the fine meteor's flash and blast or a lava vent. Rain and
   erosion run when `rain` / `erode` are set (off by default: untuned).
+- Giants (round 75, `Atlas.giants`): quartz crystals the size of mountains
+  in the crystal regions (a few each, 150–420 tall, leaning up to 35°),
+  placed once when the atlas is made. Each column batch is handed the giants
+  that reach into it as forms ahead of its lattice forms (forms.wgsl
+  PROF_PRISM: a hexagonal prism to its point, its axis straight); the far
+  land draws them as meshes beyond the window, and over it above and below
+  the window's heights.
+- Geysers (round 75, `Atlas.geysersIn`): a pure function of where — a
+  lattice 64 cells apart over the volcanic regions' land; the generator lays
+  each one's sinter, the level makes them go (a jet of water and steam for a
+  few seconds every half a minute or so; their vent spills water).
+- The window's height goes by the ground's own top, not what stands on it
+  (`RegionLand.ground`, `Streamer.ground`): a giant's point under the camera
+  isn't where the land is.
 - Physics of forms: the ground is terrain (strength-1 materials: stone,
   sandstone, basalt, obsidian, flesh); forms of weaker ones (crystal, ice,
   coral) are judged by the integrity system when they arrive

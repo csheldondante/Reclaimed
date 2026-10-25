@@ -34,6 +34,8 @@ const PROF_HOURGLASS: u32 = 4u;
 const PROF_TIERS: u32 = 5u;
 const PROF_TILTED: u32 = 6u;
 const PROF_NEEDLE: u32 = 7u;
+/** (round 75: the giants) a prism to its point, its axis straight (it leans the same all the way up) */
+const PROF_PRISM: u32 = 8u;
 
 const MAT_SAND: u32 = 3u;
 const MAT_WATER: u32 = 8u;
@@ -195,6 +197,7 @@ fn profileAt(prof: u32, t: f32) -> f32 {
     case PROF_BULB: { return 0.12 + 1.05 * sin(3.14159265 * pow(t, 0.75)); }
     case PROF_HOURGLASS: { return 0.42 + 0.58 * abs(2.0 * t - 1.0); }
     case PROF_TIERS: { return 1.0 - 0.72 * floor(t * 4.0) / 4.0; }
+    case PROF_PRISM: { return min(1.0, (1.0 - t) / 0.16); }
     default: { return pow(1.0 - t, 1.35); }
   }
 }
@@ -228,6 +231,9 @@ fn instAt(I: Inst, p: vec2<f32>, z: f32) -> FormV {
   var topZ = I.zb + I.H;
   if (prof == PROF_TILTED) {
     topZ += dot(I.lean, p - I.c) * I.H / max(I.r, 1.0);
+  } else if (prof == PROF_PRISM) {
+    // (straight: lean is the offset a cell up; the top is where the point is, along the axis)
+    axis += I.lean * max(z - I.zb, 0.0);
   } else {
     axis += I.lean * I.H * t * t;
   }

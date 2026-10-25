@@ -6,7 +6,7 @@
 
 import { MATERIALS } from '../world/materials';
 import { KINDS, warmth } from './regions';
-import type { Atlas } from './atlas';
+import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
 
 const UNI_BYTES = 80;
@@ -28,10 +28,17 @@ export class FarLand {
   private index: GPUBuffer;
   private textures: GPUTexture[];
   private count: number;
+  /** the giants (Atlas.giants): their pipeline, their buffer, how many */
+  private gPipe?: GPURenderPipeline;
+  private gGroup?: GPUBindGroup;
+  private gBuf?: GPUBuffer;
+  private gCount = 0;
   /** where the window is (world units and its oz), its size, the grid's middle (window coordinates), the fog */
   org: [number, number, number] = [0, 0, 0];
   win: [number, number] = [256, 256];
   mid: [number, number] = [128, 128];
+  /** the window's height (what's above it is drawn here, over the window too) */
+  zMax = 248;
 
   constructor(
     private device: GPUDevice,
@@ -112,6 +119,37 @@ export class FarLand {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
     });
+    // the giants beyond the window (round 75)
+    this.gCount = atlas.giants.length / GIANT_FLOATS;
+    if (this.gCount) {
+      this.gBuf = device.createBuffer({ label: 'far giants', size: atlas.giants.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(this.gBuf, 0, atlas.giants);
+      const gl = device.createBindGroupLayout({
+        label: 'far giants',
+        entries: [
+          { binding: 10, visibility: VF, buffer: { type: 'uniform' } },
+          { binding: 40, visibility: VF, buffer: { type: 'uniform' } },
+          { binding: 44, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        ],
+      });
+      this.gGroup = device.createBindGroup({
+        label: 'far giants',
+        layout: gl,
+        entries: [
+          { binding: 10, resource: { buffer: t.camera } },
+          { binding: 40, resource: { buffer: this.uni } },
+          { binding: 44, resource: { buffer: this.gBuf } },
+        ],
+      });
+      this.gPipe = device.createRenderPipeline({
+        label: 'far giants',
+        layout: device.createPipelineLayout({ bindGroupLayouts: [gl] }),
+        vertex: { module, entryPoint: 'vsGiant' },
+        fragment: { module, entryPoint: 'fsGiant', targets: [{ format: t.format }, { format: t.pickFormat }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
+      });
+    }
   }
 
   /** Draw it (the world pass), the fog the sky's colour. */
@@ -119,7 +157,7 @@ export class FarLand {
     const a = this.atlas;
     const f = new Float32Array(UNI_BYTES / 4);
     f.set([this.org[0], this.org[1], this.org[2], 0], 0);
-    f.set([this.win[0], this.win[1], SPACING, 0], 4);
+    f.set([this.win[0], this.win[1], SPACING, this.zMax], 4);
     f.set([this.mid[0], this.mid[1], G, a.p.sea], 8);
     f.set([fog[0], fog[1], fog[2], 1], 12);
     f.set([a.worldW, a.worldH, a.p.n / 2, a.coarse.cn], 16);
@@ -128,11 +166,17 @@ export class FarLand {
     pass.setBindGroup(0, this.group);
     pass.setIndexBuffer(this.index, 'uint32');
     pass.drawIndexed(this.count);
+    if (this.gPipe) {
+      pass.setPipeline(this.gPipe);
+      pass.setBindGroup(0, this.gGroup!);
+      pass.draw(54, this.gCount);
+    }
   }
 
   dispose(): void {
     for (const t of this.textures) t.destroy();
     this.index.destroy();
     this.uni.destroy();
+    this.gBuf?.destroy();
   }
 }

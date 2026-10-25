@@ -4278,3 +4278,23 @@ the layers underground".
 
 atlastest 5/5, streamtest 8/8, tiertest 4/4, coarsetest 5/5; the valley
 looks as it did.
+
+## Round 75 — geysers, giant crystals (atlas)
+
+- Geysers in the lava regions: on a lattice 64 cells apart (a whole number
+  round the world), one lattice cell in three where the land's volcanic;
+  each on a mound of sinter (a new pale crust) with a pit at its middle.
+  Every 18–58 s it goes for 4–9 s: a jet of droplets (splash, up to ~45
+  high) with a column of spray and steam up it and a plume at its top, and
+  its vent spills water over the sinter; steam puffs before it goes.
+- Giant crystals: 214 over the world (the crystal regions; crystalfield, a
+  new kind, brings them to the earth style too), 20 ms to place. Quartz (new,
+  strength 1: they stand) hexagonal prisms to a point; in the columns a form
+  handed to the batches they reach into (their reach is far past the
+  lattice forms' 48), beyond the window and above its ceiling a mesh.
+- The window slid up off the ground at the first giant: its height went by
+  the surface under the camera (a giant's top). The ground's own top is kept
+  a column now (from the generator) and the window goes by that — at the
+  start and when it slides.
+
+atlastest 5/5, streamtest 8/8, tiertest 4/4, coarsetest 5/5.

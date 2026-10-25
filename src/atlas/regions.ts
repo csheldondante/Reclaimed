@@ -127,6 +127,8 @@ export const KINDS: Record<string, KindDef> = {
   escarpment: { name: 'escarpment', colour: [0.66, 0.5, 0.42], land: true, base: [140, 260], rough: [4, 7], ridge: [0, 8], scale: [80, 140], patterns: [none], cover: 1, top: MAT.Soil, rock: MAT.Stone, edges: [[EDGE.cliff, 1]], coast: [[EDGE.seacliff, 1]], edgeW: [4, 8], edgeD: [0, 0], moist: 0, veg: 0.6, cave: 0.8, prio: 2 },
   lavafield: { name: 'lavafield', colour: [0.4, 0.12, 0.08], land: true, base: [4, 10], rough: [2, 4], ridge: [0, 0], scale: [80, 140], patterns: [none], cover: 0.3, top: MAT.Basalt, rock: MAT.Basalt, edges: [[EDGE.cliff, 2], [EDGE.smooth, 1]], coast: [[EDGE.seacliff, 2]], edgeW: [10, 18], edgeD: [0, 0], moist: -0.2, veg: 0.05, cave: 0.3 },
   cenotes: { name: 'cenotes', colour: [0.3, 0.62, 0.55], land: true, base: [6, 12], rough: [2, 4], ridge: [0, 0], scale: [90, 150], patterns: [none], cover: 1.6, top: MAT.Soil, rock: MAT.Stone, edges: [[EDGE.smooth, 2], [EDGE.cliff, 1]], coast: smoothCoast, edgeW: [18, 30], edgeD: [0, 0], moist: 0.2, veg: 1.3, cave: 0.8 },
+  // round 75: giant crystals (atlas.ts giants: mountains of quartz, tilted) over a field of small ones
+  crystalfield: { name: 'crystalfield', colour: [0.78, 0.7, 1.0], land: true, base: [10, 18], rough: [3, 5], ridge: [0, 6], scale: [100, 160], patterns: [none], cover: 1, top: MAT.Rubble, rock: MAT.Stone, edges: [[EDGE.smooth, 2], [EDGE.cliff, 1]], coast: smoothCoast, edgeW: [16, 26], edgeD: [0, 0], moist: -0.05, veg: 0.4, cave: 0.5, accent: MAT.Crystal },
   crystals: { name: 'crystals', colour: [0.7, 0.6, 0.95], land: true, base: [8, 14], rough: [2, 3], ridge: [0, 0], scale: [100, 160], patterns: [none], cover: 0.8, top: MAT.Rubble, rock: MAT.Stone, edges: [[EDGE.smooth, 2], [EDGE.wall, 1]], coast: smoothCoast, edgeW: [16, 26], edgeD: [4, 8], moist: -0.05, veg: 0.3, cave: 0.6, accent: MAT.Crystal },
   veins: { name: 'veins', colour: [0.6, 0.2, 0.25], land: true, base: [6, 12], rough: [3, 5], ridge: [0, 0], scale: [80, 140], patterns: [P(PAT.veins, [-7, -4], [70, 120], 1)], cover: 0.4, top: MAT.Flesh, rock: MAT.Flesh, edges: [[EDGE.ravine, 2], [EDGE.smooth, 1]], coast: smoothCoast, edgeW: [14, 22], edgeD: [8, 12], moist: 0.35, veg: 0.2, cave: 1, accent: MAT.Bone },
 };
@@ -180,6 +182,7 @@ const FORMS: Record<string, FormDef[]> = {
     spire({ p: 0.7, mat: MAT.Obsidian, profile: [[PROF.needle, 1]], lobes: [5, 7], lobeAmp: [-1, -1], spacing: [8, 12], chance: [0.2, 0.3], h: [6, 16], radius: [1.5, 3], lean: [0, 0.2], zOff: [1, 1] }),
   ],
   cenotes: [sinkholes(1, [4, 6])],
+  crystalfield: [crystalCluster(0.9)],
   crystals: [
     spire({ p: 1, mat: MAT.Crystal, profile: [[PROF.needle, 1]], lobes: [6, 6], lobeAmp: [-1, -1], spacing: [12, 16], chance: [0.3, 0.5], h: [14, 40], radius: [2.6, 4.5], lean: [0.1, 0.35], zOff: [1.5, 1.5] }),
     crystalCluster(0.8),
@@ -228,11 +231,11 @@ export const warmth = (cy: number) => 0.5 - 0.5 * Math.cos(2 * Math.PI * cy);
 function climateKinds(warm: number, dry: number, style: number): Pick<string> {
   const temp = warm * 32 - 6;
   let ks: Pick<string>;
-  if (temp < 2) ks = [['tundra', 3], ['glacier', 2], ['highlands', 1], ['craters', 0.3], ['escarpment', 0.4]];
+  if (temp < 2) ks = [['tundra', 3], ['glacier', 2], ['highlands', 1], ['craters', 0.3], ['escarpment', 0.4], ['crystalfield', 0.25]];
   else if (dry > 0.6 && temp > 13) ks = [['dunes', 3], ['mesa', 2], ['badlands', 2], ['craters', 0.5], ['basalt', 0.4], ['lavafield', 0.5], ['spires', 0.3]];
   else if (dry < 0.25 && temp > 15) ks = [['marsh', 2], ['hills', 2], ['karst', 1.2], ['plains', 1], ['cenotes', 0.8], ['spires', 0.4]];
-  else ks = [['plains', 3], ['hills', 3], ['highlands', 1.5], ['karst', 0.6], ['craters', 0.3], ['basalt', 0.3], ['mesa', 0.4], ['escarpment', 0.5], ['spires', 0.3], ['cenotes', 0.3], ['lavafield', 0.15]];
-  if (style === 1) ks = [...ks, ['kaleido', 2.5], ['coral', 1.2], ['basalt', 1], ['veins', 0.4], ['crystals', 2], ['spires', 1.5]];
+  else ks = [['plains', 3], ['hills', 3], ['highlands', 1.5], ['karst', 0.6], ['craters', 0.3], ['basalt', 0.3], ['mesa', 0.4], ['escarpment', 0.5], ['spires', 0.3], ['cenotes', 0.3], ['lavafield', 0.15], ['crystalfield', 0.15]];
+  if (style === 1) ks = [...ks, ['kaleido', 2.5], ['coral', 1.2], ['basalt', 1], ['veins', 0.4], ['crystals', 2], ['spires', 1.5], ['crystalfield', 1.2]];
   if (style === 2) ks = [['flesh', 3], ['veins', 3], ['coral', 1.5], ...ks.map(([k, w]) => [k, w * 0.15] as [string, number])];
   return ks;
 }

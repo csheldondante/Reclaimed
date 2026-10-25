@@ -14,7 +14,7 @@
 // maps: the viewer draws it per pixel and `columns` per cell, the same code.
 
 import { makeBindGroup, makeCompute, makeComputeAsync, makeModule, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
-import { ColumnGrid, fitColumn, splitColumn, type Interval, type WorldDims } from '../world/layout';
+import { ColumnGrid, addTop, fitColumn, lowerTop, splitColumn, type Interval, type WorldDims } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
 import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
@@ -133,6 +133,21 @@ const COLG_BYTES = 64;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;
+/** a geyser (Atlas.geysersIn) */
+export interface Geyser {
+  x: number;
+  y: number;
+  period: number;
+  last: number;
+  phase: number;
+}
+/** world cells between the geysers' lattice points (a whole number of them round the world) */
+const GEYSER_SPACING = 64;
+const MAT_SINTER = 37;
+
+/** floats a giant (Atlas.giants), and what they're made of (materials.ts quartz) */
+export const GIANT_FLOATS = 8;
+const MAT_QUARTZ = 36;
 /** forms.wgsl MARGIN and its lattices' finest spacing */
 const FORM_MARGIN = 48;
 const FINEST = 4;
@@ -145,6 +160,7 @@ export interface AtlasStats {
   merged: number;
   ccIters: number[];
   kinds: Record<string, number>;
+  giants?: number;
 }
 
 /** a batch of columns as `columns` returns it: forms.wgsl ColOut a column, and its runs (`run`) */
@@ -186,6 +202,9 @@ export class Atlas {
   riverNodes: Uint32Array = new Uint32Array(0);
   /** the coarse world (round 71): what changes at the world's scale, out of sight */
   readonly coarse: Coarse;
+  /** the giants (round 75): crystals the size of mountains, GIANT_FLOATS each — x, y (world), base, height,
+   *  radius, lean (x, y: the offset a cell up), turn */
+  giants = new Float32Array(0);
   private colH!: ComputeKernel;
   private colF!: ComputeKernel;
   private formSeed!: ComputeKernel;
@@ -443,6 +462,7 @@ export class Atlas {
     await this.time('ground with rivers', macro);
     this.hmac = new Float32Array(await this.read(hmacB));
     await this.time('coarse world', () => this.coarse.init(this.hmac, n, (t) => !this.defs[this.regionOf[t]].stat.land));
+    await this.time('giants (cpu)', () => this.makeGiants());
     for (const b of [fieldA, key, label, size, flag, flagRead, info, cont, jfaA, jfaB, hmacB]) b.destroy();
   }
 
@@ -688,10 +708,16 @@ export class Atlas {
     const g = dev.createBuffer({ label: 'atlas colG', size: (w + 2) * (h + 2) * COLG_BYTES, usage: GPUBufferUsage.STORAGE });
     const o = dev.createBuffer({ label: 'atlas colOut', size: w * h * COL_WORDS * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const runs = dev.createBuffer({ label: 'atlas colRuns', size: w * h * MR * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
-    const inst = dev.createBuffer({ label: 'atlas forms', size: MAX_INST * INST_BYTES, usage: GPUBufferUsage.STORAGE });
+    const inst = dev.createBuffer({ label: 'atlas forms', size: MAX_INST * INST_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     const instN = dev.createBuffer({ label: 'atlas forms n', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
     const st = dev.createBuffer({ label: 'atlas col read', size: o.size + runs.size + 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     this.writeParams({ x0, y0, w, h }, pb);
+    // the giants reaching into it go first (the lattice forms are counted on from them)
+    const gi = this.giantsFor(x0, y0, w, h);
+    if (gi.count) {
+      dev.queue.writeBuffer(inst, 0, gi.data);
+      dev.queue.writeBuffer(instN, 0, new Uint32Array([gi.count]));
+    }
     const enc = dev.createCommandEncoder({ label: 'atlas columns' });
     let cp = enc.beginComputePass();
     cp.setPipeline(this.colH.pipeline);
@@ -734,6 +760,95 @@ export class Atlas {
     return { w, h, f, u, runsU, run, forms };
   }
 
+  /**
+   * The giants (round 75: "faceted crystals the size of mountains or columns of crystal extending into
+   * the sky at angles"): in the crystal regions, a few each — quartz prisms to a point, 150–420 tall,
+   * 16–46 across, leaning up to 35°. The columns have them as forms (forms.wgsl PROF_PRISM: they're
+   * handed to each batch they reach into), the far land as meshes (far.ts).
+   */
+  private makeGiants(): void {
+    const n = this.p.n;
+    const kinds = new Set(['crystals', 'crystalfield']);
+    const texels = new Map<number, number[]>();
+    for (let i = 0; i < n * n; i++) {
+      const r = this.regionOf[i];
+      if (!kinds.has(this.defs[r].kind)) continue;
+      (texels.get(r) ?? texels.set(r, []).get(r)!).push(i);
+    }
+    const out: number[] = [];
+    for (const [reg, ts] of texels) {
+      const r = rng(this.p.seed * 2741 + reg * 613 + 11);
+      const count = Math.max(1, Math.min(10, Math.floor(ts.length / 180)));
+      for (let k = 0; k < count; k++) {
+        const t = ts[Math.floor(r() * ts.length)];
+        const tx = t % n;
+        const ty = (t - tx) / n;
+        const x = ((tx + 0.2 + 0.6 * r()) / n) * this.worldW;
+        const y = ((ty + 0.2 + 0.6 * r()) / n) * this.worldH;
+        const H = 150 + 270 * r() * r();
+        const rad = 16 + 30 * r();
+        const tilt = ((r() * 35) / 180) * Math.PI;
+        const dir = r() * 2 * Math.PI;
+        const lean = Math.tan(tilt);
+        out.push(x, y, this.hmac[t] - 6, H, rad, Math.cos(dir) * lean, Math.sin(dir) * lean, r() * Math.PI);
+      }
+    }
+    this.giants = Float32Array.from(out);
+    this.stats.giants = this.giants.length / GIANT_FLOATS;
+  }
+
+  /** the giants reaching into a batch of world cells, as forms.wgsl Insts in the batch's frame */
+  private giantsFor(x0: number, y0: number, w: number, h: number): { data: ArrayBuffer; count: number } {
+    const rowH = Math.sqrt(3) / 2;
+    const cx = x0 + w / 2;
+    const cy = (y0 + h / 2) * rowH;
+    const hw = w / 2 + 2;
+    const hh = (h / 2) * rowH + 2;
+    const G = this.giants;
+    const recs: number[] = [];
+    for (let k = 0; k < G.length; k += GIANT_FLOATS) {
+      // (the copy of it round the torus nearest the batch)
+      const gx = G[k] + Math.round((cx - G[k]) / this.worldW) * this.worldW;
+      const gy = G[k + 1] + Math.round((cy - G[k + 1]) / this.worldH) * this.worldH;
+      const H = G[k + 3];
+      const r = G[k + 4];
+      const lx = G[k + 5] * H;
+      const ly = G[k + 6] * H;
+      // its box: from its foot to its point, the polygon's corners round both
+      const R = r * 1.16 + 2;
+      const bx0 = Math.min(gx, gx + lx) - R;
+      const bx1 = Math.max(gx, gx + lx) + R;
+      const by0 = Math.min(gy, gy + ly) - R;
+      const by1 = Math.max(gy, gy + ly) + R;
+      if (bx1 < cx - hw || bx0 > cx + hw || by1 < cy - hh || by0 > cy + hh) continue;
+      recs.push(k / GIANT_FLOATS, gx, gy, Math.max(R + Math.hypot(lx, ly), 1));
+    }
+    const data = new ArrayBuffer(Math.max(recs.length / 4, 1) * INST_BYTES);
+    const f = new Float32Array(data);
+    const u = new Uint32Array(data);
+    for (let i = 0; i < recs.length / 4; i++) {
+      const k = recs[i * 4] * GIANT_FLOATS;
+      const o = i * 16;
+      f[o] = recs[i * 4 + 1];
+      f[o + 1] = recs[i * 4 + 2];
+      f[o + 2] = G[k + 2];
+      f[o + 3] = G[k + 3];
+      f[o + 4] = G[k + 4];
+      f[o + 5] = 0;
+      f[o + 6] = G[k + 5];
+      f[o + 7] = G[k + 6];
+      u[o + 8] = 1; // FORM_SPIRE
+      u[o + 9] = MAT_QUARTZ | (8 << 16) | (6 << 24); // a hexagonal prism to its point (PROF_PRISM)
+      f[o + 10] = -1;
+      f[o + 11] = 0;
+      f[o + 12] = G[k + 7];
+      f[o + 13] = recs[i * 4 + 3];
+      f[o + 14] = G[k + 2] + G[k + 3];
+      f[o + 15] = 0;
+    }
+    return { data, count: recs.length / 4 };
+  }
+
   /** the coarse world round a region of world cells now (the streamer's LandSource.snapshot) */
   snapshot(x0: number, y0: number, w: number, h: number): Promise<CoarseSnap> {
     return this.coarse.snapshot(x0, y0, w, h);
@@ -760,6 +875,38 @@ export class Atlas {
     };
   }
 
+  /**
+   * The geysers in a box of world cells (round 75: "lava areas should have geysers that shoot out water
+   * and steam"): on a lattice GEYSER_SPACING cells apart, in the volcanic regions' land, one cell in three
+   * — where it is (world cells), how long between eruptions and how long each lasts (s), when it first
+   * goes. A pure function of where: the generator lays their sinter, the level makes them go.
+   */
+  geysersIn(x0: number, y0: number, w: number, h: number): Geyser[] {
+    const S = GEYSER_SPACING;
+    const out: Geyser[] = [];
+    const nx = this.p.cols / S;
+    const ny = this.p.rows / S;
+    const kinds = new Set(['lavafield', 'basalt', 'rift']);
+    const rowH = Math.sqrt(3) / 2;
+    for (let j = Math.floor(y0 / S) - 1; j <= Math.floor((y0 + h) / S) + 1; j++)
+      for (let i = Math.floor(x0 / S) - 1; i <= Math.floor((x0 + w) / S) + 1; i++) {
+        const wi = ((i % nx) + nx) % nx;
+        const wj = ((j % ny) + ny) % ny;
+        const r = rng(this.p.seed * 7907 + wj * 104729 + wi * 31 + 5);
+        if (r() > 0.34) continue;
+        const x = i * S + 8 + Math.floor(r() * (S - 16));
+        let y = j * S + 8 + Math.floor(r() * (S - 16));
+        y -= y & 1 ? 1 : 0;
+        if (x < x0 || y < y0 || x >= x0 + w || y >= y0 + h) continue;
+        const px = x + 0.5;
+        const py = (y + 0.5) * rowH;
+        const d = this.regionAt(px, py);
+        if (!d.stat.land || !kinds.has(d.kind)) continue;
+        out.push({ x, y, period: 18 + r() * 40, last: 4 + r() * 5, phase: r() * 60 });
+      }
+    return out;
+  }
+
   /** columns that had more intervals than the window holds (their smallest gaps filled: landFrom) */
   gapsFilled = 0;
 
@@ -769,13 +916,29 @@ export class Atlas {
     const c = await this.columns(x0, y0, w, h);
     const land = landFrom(c, x0, y0, K);
     this.gapsFilled += land.gapsFilled;
+    // the geysers' sinter: a low mound round each vent, its pit at the middle
+    for (const g of this.geysersIn(x0, y0, w, h))
+      for (let dy = -4; dy <= 4; dy++)
+        for (let dx = -4; dx <= 4; dx++) {
+          const x = g.x - x0 + dx;
+          const y = g.y - y0 + dy;
+          if (x < 0 || y < 0 || x >= w || y >= h) continue;
+          const r = Math.hypot(dx, dy * 0.866);
+          if (r > 4) continue;
+          const col = land.cols[y * w + x];
+          if (!col.length) continue;
+          if (r < 0.9) lowerTop(col, 0.6);
+          else addTop(col, 1.8 * (1 - r / 4) ** 1.5, MAT_SINTER);
+          land.vegetation[y * w + x] = 0;
+          land.surface[y * w + x] = col[col.length - 1].z1;
+        }
     return land;
   }
 
   /** The window from world cell (ox, oy) as a map (the level's first world): its oz a whole number
    *  of tiers (the one holding the most of the ground's tops), K intervals a column at most, and
    *  what's outside it (world z). */
-  async window(dims: WorldDims, ox: number, oy: number, K: number, tier: number, floor = 8): Promise<{ map: MapData; oz: number; outside: Interval[][] }> {
+  async window(dims: WorldDims, ox: number, oy: number, K: number, tier: number, floor = 8): Promise<{ map: MapData; oz: number; outside: Interval[][]; ground: Float32Array }> {
     const { w, h, zMax } = dims;
     const N = w * h;
     // (in tiles of a region, as the streamer asks: one batch of the whole window is too much
@@ -790,19 +953,21 @@ export class Atlas {
     const mx = w >> 1;
     const my = h >> 1;
     const mid = lands[tiles.findIndex(([tx, ty]) => tx === Math.floor(mx / T) * T && ty === Math.floor(my / T) * T)];
-    const gMid = mid.surface[(my % T) * T + (mx % T)];
+    // (the ground's own top, not what stands on it: a giant's point isn't where the land is)
+    const gMid = mid.ground![(my % T) * T + (mx % T)];
     let oz = 0;
     let most = -1;
     for (let c = 0; c + zMax <= this.p.zTop + tier; c += tier) {
       if (gMid < c + 8 || gMid > c + zMax - 40) continue;
       let n = 0;
-      for (const t of lands) for (let i = 0; i < T * T; i += 7) if (t.surface[i] >= c + floor && t.surface[i] <= c + zMax - 24) n++;
+      for (const t of lands) for (let i = 0; i < T * T; i += 7) if (t.ground![i] >= c + floor && t.ground![i] <= c + zMax - 24) n++;
       if (n > most) {
         most = n;
         oz = c;
       }
     }
     const outside: Interval[][] = new Array(N);
+    const ground = new Float32Array(N);
     const grid = new ColumnGrid(dims);
     const land = { water: new Float32Array(N), moisture: new Float32Array(N), vegetation: new Float32Array(N), contam: new Float32Array(N * 2), lava: new Float32Array(N * 4), lavaSpring: new Float32Array(N), waterSource: new Float32Array(N), surface: new Float32Array(N), structural: new Uint8Array(N) };
     tiles.forEach(([tx, ty], k) => {
@@ -820,6 +985,7 @@ export class Atlas {
           land.moisture[j] = t.moisture[i];
           land.vegetation[j] = t.vegetation[i];
           land.surface[j] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+          ground[j] = (t.ground ? t.ground[i] : land.surface[j] + oz) - oz;
           land.contam[j * 2] = t.contam[i * 2];
           land.contam[j * 2 + 1] = t.contam[i * 2 + 1];
           if (t.lava && top && t.lava[i * 4] > 0) land.lava.set([t.lava[i * 4], t.lava[i * 4 + 1], t.lava[i * 4 + 2], t.lava[i * 4 + 3] - oz], j * 4);
@@ -844,7 +1010,7 @@ export class Atlas {
       surface: land.surface,
       poi: Object.fromEntries(['healthy', 'tutorial', 'dam', 'reservoir', 'site', 'landfill', 'heap'].map((k) => [k, [w / 2, h / 2]])) as Record<string, [number, number]>,
     };
-    return { map, oz, outside };
+    return { map, oz, outside, ground };
   }
 
   /** A world cell to start at: on land, temperate, in a kind that's good to stand on. */
@@ -892,6 +1058,7 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): Re
   const lava = new Float32Array(N * 4);
   const lavaSpring = new Float32Array(N);
   const waterSource = new Float32Array(N);
+  const ground = new Float32Array(N);
   const structural = new Uint8Array(N);
   const contam = new Float32Array(N * 2);
   let gapsFilled = 0;
@@ -925,11 +1092,12 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): Re
     moisture[i] = f[o + 4];
     vegetation[i] = f[o + 5];
     waterSource[i] = f[o + 12];
+    ground[i] = f[o + 11];
     const lv = f[o + 6];
     if (lv > 0) {
       lava.set([lv, LAVA_HOT, 0, surface[i] + lv], i * 4);
       lavaSpring[i] = lv;
     }
   }
-  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam, lava, lavaSpring, waterSource, structural, gapsFilled };
+  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam, lava, lavaSpring, waterSource, structural, ground, gapsFilled };
 }

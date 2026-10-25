@@ -103,6 +103,8 @@ interface Frozen {
   outside: Interval[][];
   /** the land source's snapshot when it was made or left (LandSource.snapshot) */
   snap?: unknown;
+  /** the ground's own top a column (window z at oz: under what stands on it), when the source says */
+  ground?: Float32Array;
   /** its chunks' pages, chunk by chunk (row-major in the region) */
   layers: Uint32Array;
   /** each kept buffer's columns: per plane, REGION rows of REGION × stride bytes */
@@ -150,6 +152,9 @@ export class Streamer {
   outside: Interval[][];
   /** what a column may hold (the chunks' K less their headroom) */
   private colK: number;
+  /** per window column: the ground's own top (window z; round 75: a slide in z goes by it, not by what
+   *  stands on it — a giant's point under the camera isn't where the land is) */
+  readonly ground: Float32Array;
   /** called when land comes into the window that the structural system should judge: the box (window cells) round it */
   readonly onArrive: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
   private bufs: ColBuf[];
@@ -164,13 +169,14 @@ export class Streamer {
     private core: WorldCore,
     private source: LandSource = noiseLand(),
     origin: [number, number] = [0, 0],
-    /** the first window's oz and what's outside it (the atlas's window) */
-    tier?: { oz: number; outside: Interval[][] },
+    /** the first window's oz and what's outside it (the atlas's window), the ground's tops (window z) */
+    tier?: { oz: number; outside: Interval[][]; ground?: Float32Array },
   ) {
     const { w, h } = core.dims;
     this.oz = tier?.oz ?? 0;
     if (this.oz % TIER) throw new Error(`the window's oz must be whole tiers of ${TIER}`);
     this.outside = tier?.outside ?? Array.from({ length: w * h }, () => []);
+    this.ground = tier?.ground ? tier.ground.slice() : core.map.surface.slice();
     if (this.outside.length !== w * h) throw new Error('the window needs what lies outside every column');
     if (origin[0] % REGION || origin[1] % REGION) throw new Error(`the window's origin must be whole regions of ${REGION}`);
     this.origin[0] = origin[0];
@@ -270,7 +276,7 @@ export class Streamer {
     if (h) {
       const [cx, cy] = cellAt(x, yw);
       if (cx >= 0 && cy >= 0 && cx < this.W && cy < this.H) {
-        const g = this.core.map.surface[cy * this.W + cx];
+        const g = this.ground[cy * this.W + cx];
         const zMax = this.core.dims.zMax;
         if (g > zMax - 40 && this.oz + zMax < h) return this.slideZ(TIER);
         if (g < 24 && this.oz > 0) return this.slideZ(-TIER);
@@ -431,6 +437,11 @@ export class Streamer {
       for (let r = 0; r < R; r++) s.set(surf.subarray((ly + r) * W + lx, (ly + r) * W + lx + R), r * R);
       return s;
     });
+    const leftGround = leaving.map(([lx, ly]) => {
+      const s = new Float32Array(R * R);
+      for (let r = 0; r < R; r++) s.set(this.ground.subarray((ly + r) * W + lx, (ly + r) * W + lx + R), r * R);
+      return s;
+    });
     leftKeys.forEach((k, i) =>
       this.frozen.set(
         k,
@@ -438,6 +449,7 @@ export class Streamer {
           const f = fs[i];
           f.snap = snap;
           f.surface = leftSurf[i];
+          f.ground = leftGround[i];
           this.frozen.set(k, f);
           return f;
         }),
@@ -470,6 +482,7 @@ export class Streamer {
     core.globals.origin = [this.origin[0], this.origin[1]];
     shiftGrid(surf, W, H, 1, dx, dy);
     shiftGrid(this.outside, W, H, 1, dx, dy);
+    shiftGrid(this.ground, W, H, 1, dx, dy);
     core.camera.shift(dx, dy * ROW_H, 0);
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
     core.renderer.fieldMesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
@@ -542,7 +555,8 @@ export class Streamer {
       for (let k = 0; k < R * R; k++) t[k * 4] = land.lavaSpring[k];
       texs.lavaSpring = t;
     }
-    return { layers, bufs, texs, surface, judge, oz, outside, snap };
+    const ground = land.ground ? land.ground.map((v) => v - oz) : undefined;
+    return { layers, bufs, texs, surface, judge, oz, outside, snap, ground };
   }
 
   /** a region coming in with what changed while it was away (LandSource.changes since its snapshot) */
@@ -617,6 +631,7 @@ export class Streamer {
         this.outside[i] = cut.outside;
         slots.set(packColumn(cut.inside, K), base * SLOT_WORDS);
         core.map.surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        this.ground[i] += d.dr + (d.dl > 0.05 ? d.dl : 0);
         if (d.dl > 0.05) veg[i] *= Math.max(0, 1 - d.dl * 2);
         n++;
       }
@@ -678,7 +693,8 @@ export class Streamer {
         } else if (lava && lava[i * 4] > 0) lava[i * 4 + 3] += f.oz - this.oz;
       }
     this.stats.resliced++;
-    return { ...f, layers, surface, oz: this.oz, outside };
+    const ground = f.ground ? f.ground.map((v) => v + f.oz - this.oz) : undefined;
+    return { ...f, layers, surface, oz: this.oz, outside, ground };
   }
 
   /** Move the window by dz cells in z (±TIER): every column read back, joined with what's outside it, cut again. */
@@ -742,6 +758,7 @@ export class Streamer {
     enc.clearBuffer(wg.particles);
     dev.queue.submit([enc.finish()]);
     this.oz = oz;
+    for (let i = 0; i < N; i++) this.ground[i] -= dz;
     core.camera.shift(0, 0, dz);
     core.renderer.fieldMesh.shift(0, 0, [0, 0, -dz]);
     core.clearUndo();
@@ -790,6 +807,9 @@ export class Streamer {
     }
     const surf = core.map.surface;
     for (let r = 0; r < R; r++) surf.set(f.surface.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
+    // (the ground: its own if the source said, else the surface)
+    const gr = f.ground ?? f.surface;
+    for (let r = 0; r < R; r++) this.ground.set(gr.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
     if (f.judge) for (const cb of this.onArrive) cb(lx + f.judge[0], ly + f.judge[1], lx + f.judge[2], ly + f.judge[3]);
   }
 

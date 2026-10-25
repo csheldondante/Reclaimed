@@ -50,7 +50,7 @@ export interface LevelOptions {
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][] };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -188,6 +188,60 @@ export class LevelScene implements Scene {
   }
 
   private worldEvents: Promise<void> = Promise.resolve();
+  /** the geysers in the window (Atlas.geysersIn: found again when the window moves), the time, which are going */
+  private geysers: import('../atlas/atlas').Geyser[] = [];
+  private geysersAt = '';
+  private geyserT = 0;
+  private geyserOn = new Set<number>();
+
+  /**
+   * Geysers (round 75): each goes for a few seconds every half a minute or so — a jet of water and a
+   * plume of steam out of its vent, its water spilling over the sinter round it; a few puffs of steam
+   * before it goes.
+   */
+  private stepGeysers(dt: number): void {
+    const S = this.stream;
+    const a = this.opts.atlas;
+    if (!S || !a) return;
+    const { core } = this;
+    const { w: W, h: H } = core.dims;
+    const key = `${S.origin[0]},${S.origin[1]}`;
+    if (key !== this.geysersAt) {
+      this.geysersAt = key;
+      this.geysers = a.atlas.geysersIn(S.origin[0], S.origin[1], W, H);
+      this.geyserOn.clear();
+    }
+    this.geyserT += dt;
+    const parts = core.sim.particles;
+    const dev = core.host.gpu.device;
+    this.geysers.forEach((g, k) => {
+      const x = g.x - S.origin[0];
+      const y = g.y - S.origin[1];
+      if (x < 0 || y < 0 || x >= W || y >= H) return;
+      const i = y * W + x;
+      const [px, py] = cellPos(x, y);
+      const z = core.map.surface[i];
+      const t = (this.geyserT + g.phase) % g.period;
+      const going = t < g.last;
+      if (going) {
+        // (the jet surges and falls back through its eruption)
+        const surge = Math.sin((t / g.last) * Math.PI);
+        const jet = 14 + 22 * surge;
+        parts.burst({ kind: PK.Splash, x: px, y: py, z: z + 0.5, count: 36, speed: 2.4, spread: 0.45, vel: [0, 0, jet] });
+        // (the column of spray up its height, and the steam boiling off the top of it)
+        const up = (jet * jet) / 30;
+        for (let h = 2; h < up; h += 4) parts.burst({ kind: PK.Haze, x: px, y: py, z: z + h, count: 1, speed: 0.6, spread: 0.6, payload: MAT.Snow, vel: [0, 0, 3] });
+        parts.burst({ kind: PK.Haze, x: px, y: py, z: z + up, count: 3, speed: 1.5, spread: 1.6, payload: MAT.Snow, vel: [0, 0, 5] });
+      } else if (t > g.period - 3 && Math.random() < 0.15) {
+        parts.burst({ kind: PK.Haze, x: px, y: py, z: z + 1, count: 2, speed: 0.6, spread: 0.5, payload: MAT.Snow, vel: [0, 0, 2] });
+      }
+      if (going !== this.geyserOn.has(k)) {
+        if (going) this.geyserOn.add(k);
+        else this.geyserOn.delete(k);
+        dev.queue.writeBuffer(core.world.waterSource, i * 4, new Float32Array([going ? 0.08 : 0]));
+      }
+    });
+  }
   private atlasCtl?: HTMLDivElement;
   private far?: FarLand;
 
@@ -354,8 +408,8 @@ export class LevelScene implements Scene {
       const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
       const W = 256;
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
-      const { map, oz, outside } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside } };
+      const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
@@ -783,7 +837,7 @@ export class LevelScene implements Scene {
               changes: (s, x0, y0, w, h) => a.atlas.changes(s, x0, y0, w, h),
             },
             a.origin,
-            { oz: a.oz, outside: a.outside },
+            { oz: a.oz, outside: a.outside, ground: a.ground },
           )
         : new Streamer(core);
       this.stream.onSlide.push((dx, dy, dz) => {
@@ -809,6 +863,7 @@ export class LevelScene implements Scene {
         core.renderer.extraDraws.push((pass, clear) => {
           far.org = [S.origin[0], S.origin[1] * ROW_H, S.oz];
           far.win = [dims.w + 0.5, dims.h * ROW_H];
+          far.zMax = dims.zMax;
           const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;
           far.mid = [c[0], c[1]];
           far.draw(pass, clear);
@@ -838,6 +893,8 @@ export class LevelScene implements Scene {
       world: {
         meteor: (x: number, y: number, r?: number) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy, r)),
         erupt: (x: number, y: number) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy)),
+        // (round 75) the geysers in the window and the time they keep
+        geysers: () => ({ list: this.geysers, t: this.geyserT, on: [...this.geyserOn] }),
       },
     });
     core.places.groundAt = this.heightAt;
@@ -989,6 +1046,8 @@ export class LevelScene implements Scene {
       this.confineToReach();
     }
     this.director.update(dt);
+    // geysers (round 75)
+    if (this.opts.atlas) this.stepGeysers(dt * this.speed);
     // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms)
     if (this.opts.atlas && ++this.coarseFrame % 4 === 0) this.opts.atlas.atlas.coarse.step(1);
 

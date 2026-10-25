@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-24 — round 75 (session 5, `atlas`) — geysers, giant crystals; the far land and top-down
+
+- "I think lava areas should have geysers that shoot out water and steam."
+- "is there anyway we could add more macroscopic shapes and materials? Like
+  could we have faceted crystals the size of mountains or columns of crystal
+  extending into the sky at angles?"
+- "what would we need to do to make the distant course detail look like it
+  is more detailed so that it is less visually jarring. I expect top down
+  view so it's not important but I'm curious about the limitations in terms
+  of performance of this approach vs more conventional approaches." —
+  answered (BACKLOG Q60), not built.
+- "My plan is to focus on top down and the streaming is good for that
+  (although the camera will need work)" (BACKLOG Q61).
+
 ## 2026-10-24 — round 74 (session 5, `atlas`) — tried on a phone: tighten it up
 
 - "It looks very trippy though and I only see the local chunks (not the
