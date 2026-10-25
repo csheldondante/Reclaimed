@@ -29,6 +29,8 @@ each was implemented.
 - "For some images it would be cool to stream in a few more blocks out to see more of the terrain at a
   time (top down won't need that the same way but it's nice for debugging even if too slow for mobile)"
   (V18, `?win=`).
+- Paving brick, bridges and lifts concrete for now (readable: built, drawn sharp) — the materials by
+  era and style are the user's to choose (V8's styles).
 - Then: "I would maybe use voronoi and then make some along the border drop with noise so the cliff has
   an irregular top with sediment at different points … I do think more varied height smaller voronoi
   cells along the cliff will make it look more like a cliff." And "we can optionally make a slope if we

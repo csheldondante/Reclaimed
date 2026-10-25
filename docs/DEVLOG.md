@@ -4472,3 +4472,30 @@ regions beside the window don't).
   can't. 1.86 M vertices live, 345 k in the band at 512.
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 79 — the ways: roads, tunnels, bridges, switchbacks, lifts, plazas in the columns (places)
+
+Why: V2 ("b" after the band): "vertical cities, ramps and roads, lifts,
+switchbacks, or tunnels intentionally stamped at the region level"; the
+atlas already knew where the roads go and what each crosses (sites.ts),
+nothing was built.
+
+- atlas/ways.ts: each road smoothed and graded over the macro ground;
+  tunnels and bridges fall out of the grade (7 under / 4 over the
+  ground); the atlas's switchbacks and lifts kept as theirs. Built into a
+  region's columns in `regionLand` (after the geysers' sinter), each
+  column by its nearest way point: cut/fill with shoulders, a bore, a
+  deck with pillars, a tower; plazas at the sites. Seed 1: 98 673 points
+  (76 343 road, 3 069 tunnel, 4 043 bridge, 8 005 switchbacks, 145 lift,
+  7 068 plaza), 29 lifts; 27 ms on the CPU at build.
+- Seen: a brick road winding over a hill and a deck bridge over a river
+  with a cut into the hillside (shots78/way3-bridge.png); switchbacks down
+  off a mesa (way6-switchbacks). The lift's tower stood on the cliff's face
+  at first (the coarse crossing's end) — at the stretch's lowest ground
+  now; from the fixed view it's behind the wall (V5).
+- Lips floated over the mesa's lowered rim (they took the top's full
+  height): as high as the top just inside the wall now (the rim, the joint
+  block's fall).
+- Column batch unchanged (79.6 ms a region, 98 ms a window).
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.

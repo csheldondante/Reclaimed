@@ -613,6 +613,18 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   with 28 of rock kept above, columns of rock standing in it (where a fine
   noise peaks). colHeight puts (floor, roof) in ColG (COLG_BYTES 72) and
   the column march carves it.
+- Ways (round 79, ways.ts, `Atlas.ways`, `stampWays` in `regionLand`):
+  each road's coarse path unwrapped, smoothed (Chaikin ×3), sampled every
+  2; the macro ground under it (`Atlas.macroAt`, bilinear hmac) smoothed
+  along it and graded forward and back (≤ 0.22 a unit; the atlas's lift
+  and switchbacks stretches exempt). Each point a kind: tunnel (7+ under
+  the ground: a bore 5 high), bridge (4+ over: a deck of concrete 1.2
+  thick, a pillar every 7 points), road (cut or filled, a 1:1 shoulder
+  back to the ground), switchbacks (legs of 26 across the fall line,
+  climbing evenly), lift (a concrete tower radius 3.5 at the stretch's
+  lowest ground up to the top, the way level with the top from it), plaza
+  (a disc at each site). Paved in brick (built: prisms). A column takes
+  its nearest point within 26; points binned by 64.
 - Sites and roads (round 78, sites.ts, `Atlas.settlement`): on the CPU
   over a coarse grid (4 × 4 texels a cell) of the ground with its rivers.
   Each land cell scores a setting — a plateau's rim over a 60+ drop

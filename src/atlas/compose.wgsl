@@ -450,6 +450,11 @@ struct Mesa {
   tal: f32,
   /** on an eroded ramp (1) */
   ramp: f32,
+  /** how far the joint cell here dropped from the top wall's top (a fraction of the drop) */
+  ftop: f32,
+  /** the top's height just inside its wall (a fraction of the drop: the rim lowered, the joint cell's
+   *  fall): a lip is as high as what it juts from */
+  lipW: f32,
 }
 
 /**
@@ -497,6 +502,8 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
   let rim = (0.05 + 0.12 * (0.5 + 0.5 * pfbm(u, perOf(80.0), 2u, AP.seed + 626u))) * (1.0 - smoothstep(0.0, D, max(xt, 0.0)));
   let rough = pfbm(u, perOf(22.0), 3u, AP.seed + 627u);
   o.w -= smoothstep(-1.2, 1.2, xt) * (rim - 0.04 * rough * (1.0 - smoothstep(0.0, D, max(xt, 0.0))));
+  // (round 79: lips floated over the lowered rim at the top's full height)
+  let rim0 = 0.05 + 0.12 * (0.5 + 0.5 * pfbm(u, perOf(80.0), 2u, AP.seed + 626u));
   if (o.x < 0.0) {
     let fade = 1.0 - smoothstep(0.0, D * 0.8, -o.x);
     o.w += fade * (0.04 + 0.05 * (0.5 + 0.5 * pfbm(u, perOf(90.0), 2u, AP.seed + 628u)) + 0.02 * rough);
@@ -510,6 +517,8 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32) -> Mesa {
   let hj = hf(pcg(wj.id ^ (AP.seed * 0x27d4eb2fu)));
   let hj2 = hf(pcg(wj.id * 9u + 1u));
   let band = 9.0 + 12.0 * hj2;
+  o.ftop = sh4[3] * hj * hj;
+  o.lipW = 1.0 - rim0 + 0.04 * rough - o.ftop;
   for (var k = 0u; k < 4u; k++) {
     let d = o.x - xw[k];
     if (d > 0.0 && d < band) {
@@ -708,7 +717,9 @@ fn ground(p: vec2<f32>) -> Ground {
           let ucD = 12.0 * pfbm(u, perOf(55.0), 2u, AP.seed + 618u) + 3.5;
           if (xt < -1.2 && xt > -lipD) {
             let T = 7.0 + 5.0 * (0.5 + 0.5 * pfbm(u, perOf(30.0), 2u, AP.seed + 619u));
-            g.ov = vec3<f32>(hHi, -1.0, hHi - T);
+            // (as high as its joint block: a lip over a block that fell stood in the air)
+            let lt = hLo + me.lipW * drop;
+            g.ov = vec3<f32>(lt, -1.0, lt - T);
           } else if (me.x > 1.2 && me.x < ucD && me.L > 3.0) {
             let ucH = min(5.0 + 9.0 * (0.5 + 0.5 * pfbm(u, perOf(30.0), 2u, AP.seed + 620u)), drop * me.f - 5.0);
             g.ov = vec3<f32>(0.0, hLo, hLo + ucH);

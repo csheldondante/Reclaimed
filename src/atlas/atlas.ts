@@ -31,6 +31,7 @@ import patternsW from './patterns.wgsl?raw';
 import { defineRegions, dryness, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
 import { landformsOf, tiersOf, type Landform } from './landforms';
 import { settle, type Settlement } from './sites';
+import { buildWays, stampWays, type Ways } from './ways';
 import { findRivers, NODE_WORDS } from './rivers';
 import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
@@ -239,6 +240,8 @@ export class Atlas {
   craters = new Float32Array(0);
   /** the sites and the roads between them (round 78, sites.ts) */
   settlement: Settlement = { sites: [], roads: [], ms: 0 };
+  /** the roads and their crossings, graded, to be built into the columns (round 79, ways.ts) */
+  ways: Ways = { points: [], lifts: [], bins: new Map(), counts: [], ms: 0 };
   riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0 };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
@@ -542,6 +545,9 @@ export class Atlas {
       const lfOf = new Int32Array(N);
       for (let i = 0; i < N; i++) lfOf[i] = this.landformOf[this.regionOf[i]];
       this.settlement = settle({ n, seed: p.seed, hmac: this.hmac, landformOf: lfOf, forms: this.landforms, contOf, river: rv.nodeAt, craters: this.craters, craterWords: CRATER_WORDS, worldW: this.worldW, worldH: this.worldH, sea: p.sea, count: p.sites });
+    });
+    await this.time('ways (cpu)', () => {
+      this.ways = buildWays({ settlement: this.settlement, ground: (x, y) => this.macroAt(x, y), worldW: this.worldW, worldH: this.worldH, sea: p.sea });
     });
     await this.time('coarse world', () => this.coarse.init(this.hmac, n, (t) => !this.defs[this.regionOf[t]].stat.land));
     await this.time('giants (cpu)', () => this.makeGiants());
@@ -1091,7 +1097,25 @@ export class Atlas {
           land.vegetation[y * w + x] = 0;
           land.surface[y * w + x] = col[col.length - 1].z1;
         }
+    // the roads, their crossings and the sites' plazas (round 79, ways.ts)
+    this.waysStamped += stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH);
     return land;
+  }
+
+  /** columns the ways have changed so far */
+  waysStamped = 0;
+
+  /** the macro ground at a world point: the texels' heights, bilinear, wrapping */
+  macroAt(x: number, y: number): number {
+    const n = this.p.n;
+    const fx = (x / this.worldW) * n - 0.5;
+    const fy = (y / this.worldH) * n - 0.5;
+    const ix = Math.floor(fx);
+    const iy = Math.floor(fy);
+    const tx = fx - ix;
+    const ty = fy - iy;
+    const at = (i: number, j: number) => this.hmac[(((j % n) + n) % n) * n + (((i % n) + n) % n)];
+    return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
   }
 
   /** The window from world cell (ox, oy) as a map (the level's first world): its oz a whole number
