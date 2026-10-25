@@ -21,6 +21,14 @@ each was implemented.
 - "For the crystals I was imagining more like large voronoi facets raised slightly deeper in rather than
   a single large crystal but both should be possible."
 - Occlusion and seeing the cliff's back from the fixed view stay V5 (high priority).
+- On the window's height: "Why not stream vertical identical to lateral in the streaming? … A window is a
+  3d coordinate and you are intersecting the interval and generating the mesh to render right? Why not
+  also do what with the 3d cell above the current cell? It will just render different intervals of the
+  same columns right?" — agreed: the band outside the window, drawn, frozen (V17). Then the region
+  generator (V2): "Yes a then b".
+- "For some images it would be cool to stream in a few more blocks out to see more of the terrain at a
+  time (top down won't need that the same way but it's nice for debugging even if too slow for mobile)"
+  (V18, `?win=`).
 - Then: "I would maybe use voronoi and then make some along the border drop with noise so the cliff has
   an irregular top with sediment at different points … I do think more varied height smaller voronoi
   cells along the cliff will make it look more like a cliff." And "we can optionally make a slope if we

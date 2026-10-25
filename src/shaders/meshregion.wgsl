@@ -8,7 +8,12 @@
 //      at most, z vertices and w indices a chunk has room for
 //   r  the world xy rectangle the prisms and sheets leave to the mesh
 //      (min x, min y, max x, max y)
-struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32> };
+//   zb (round 79, the band outside the window) x the samples' lowest z, y the
+//      bedrock's top (solid below it), z the window's top: a run reaching it
+//      goes on up (the live mesh: what's above is the band's; else far up)
+//   ze the quads made: those whose base sample's z is in [x, y), or (z = 1)
+//      outside it — the live mesh its window's, the band what's outside
+struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32> };
 @group(0) @binding(30) var<uniform> MR: MeshRegion;
 
 /**

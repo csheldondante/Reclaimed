@@ -23,6 +23,7 @@ import { FieldMesh } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
+import { OutsideBand } from './band';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
 const CAM_BYTES = CAMERA_BYTES + 64 + 16;
@@ -103,6 +104,10 @@ export class Renderer {
     return { format: this.colorFormat, pickFormat: PICK_FORMAT, depthFormat: DEPTH_FORMAT, camera: this.camBuf };
   }
   private meshGroup?: GPUBindGroup;
+  /** the band outside the window (round 79, enableBand): its draw group */
+  band?: OutsideBand;
+  private bandGroup?: GPUBindGroup;
+  private meshGroupOf?: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => GPUBindGroup;
   private bodyCount = 0;
   static readonly MAX_BODY_VOXELS = 16384;
   private rainGroup: GPUBindGroup;
@@ -385,18 +390,19 @@ export class Renderer {
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: depthStencil(true),
       });
-      const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = this.shadowView) => makeBindGroup(device, 'mesh-draw', meshLayout, {
+      // (round 79: or the band's — its mesh, chunk table and layers)
+      this.meshGroupOf = (cam, shadow, src) => makeBindGroup(device, 'mesh-draw', meshLayout, {
         0: world.globals,
-        1: world.chunks,
+        1: src.chunks,
         2: world.materials,
-        3: this.fieldMesh.vertexBuffer,
+        3: src.mesh.vertexBuffer,
         4: world.contam,
-        5: this.fieldMesh.stateBuffer,
-        30: this.fieldMesh.region,
+        5: src.mesh.stateBuffer,
+        30: src.mesh.region,
         6: world.veg,
         7: world.renderFields,
         8: world.water,
-        9: world.layers,
+        9: src.layers,
         10: cam,
         11: world.surface,
         13: world.wilt,
@@ -406,6 +412,7 @@ export class Renderer {
         25: shadow,
         26: this.shadowSampler,
       });
+      const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = this.shadowView) => this.meshGroupOf!(cam, shadow, { mesh: this.fieldMesh, chunks: world.chunks, layers: world.layers });
       this.meshGroup = meshGroupFor(this.camBuf);
       // the sun's shadow pass: the same vertex shaders, depth only, through the
       // sun's camera (the prisms and plants draw the sides facing it)
@@ -538,6 +545,7 @@ export class Renderer {
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0);
     this.fieldMesh.cull(cam);
+    this.band?.mesh.cull(cam);
     if (this.fieldMesh.on) this.writeLight(opts.sun);
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
     if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
@@ -566,6 +574,7 @@ export class Renderer {
       this.profiler.dispatches += 2;
     }
     if (!SKIP.has('meshprep')) this.fieldMesh.encode(enc, cam);
+    if (this.band && !SKIP.has('band')) this.band.mesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow')) this.encodeShadow(enc);
 
     const pass = enc.beginRenderPass({
@@ -594,6 +603,11 @@ export class Renderer {
       pass.setBindGroup(0, this.meshGroup!);
       this.fieldMesh.draw(pass);
       this.profiler.draws++;
+      // (round 79: the band outside the window — it casts no shadow yet: the sun's box is the window's)
+      if (this.band && !SKIP.has('band')) {
+        pass.setBindGroup(0, this.bandGroup!);
+        this.band.mesh.draw(pass);
+      }
     }
     for (const f of this.extraDraws) f(pass, opts.clear);
     if (this.bodyCount > 0 && !SKIP.has('bodies')) {
@@ -747,9 +761,21 @@ export class Renderer {
     this.profiler.draws += 4;
   }
 
+  /**
+   * Draw what lies outside the streamed window too (round 79: the atlas level; render/band.ts), up to the
+   * world's height. The streamer packs it (Streamer → band.update).
+   */
+  enableBand(zSpan: number): OutsideBand | undefined {
+    if (!this.fieldMesh.on || !this.meshGroupOf || this.band) return this.band;
+    this.band = new OutsideBand(this.device, this.world, this.profiler, zSpan);
+    this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
+    return this.band;
+  }
+
   /** Call after submit to start async readbacks requested during encode. */
   afterSubmit(): void {
     this.fieldMesh.afterSubmit();
+    this.band?.mesh.afterSubmit();
     if (this.pickPending) {
       const resolve = this.pickPending;
       this.pickPending = undefined;

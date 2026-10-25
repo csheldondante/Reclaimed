@@ -406,7 +406,10 @@ export class LevelScene implements Scene {
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
       const at = host.params.get('at');
       const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
-      const W = 256;
+      // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
+      // more of the terrain at a time … nice for debugging even if too slow for mobile")
+      const W = Number(host.params.get('win') ?? 256);
+      if (!(W >= 256 && W % REGION === 0)) throw new Error(`?win= must be 256 or more, whole regions of ${REGION}`);
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground } };
@@ -840,6 +843,8 @@ export class LevelScene implements Scene {
             { oz: a.oz, outside: a.outside, ground: a.ground },
           )
         : new Streamer(core);
+      // (round 79) the atlas's columns run past the window: what's above and below it drawn too
+      if (a && core.renderer.enableBand(a.atlas.p.zTop)) this.stream.refreshBand();
       this.stream.onSlide.push((dx, dy, dz) => {
         // what the level keeps in window coordinates
         shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);

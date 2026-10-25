@@ -4440,3 +4440,35 @@ the full height".
   96 / 133 were a noisier run).
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.
+
+## Round 79 — the band outside the window; ?win= (places)
+
+Why: the user — the window is a 3D slab of the columns; "Why not also do
+what with the 3d cell above the current cell? It will just render
+different intervals of the same columns right?" Right: the intervals are
+f32 (the 8-bit limit is the sim's surface field), and the streamer keeps
+every column's runs outside the window on the CPU. Drawing them is a
+second mesh over a second layers buffer; it needn't tick (as the frozen
+regions beside the window don't).
+
+- render/band.ts packs `outside` in window z; a second FieldMesh meshes it
+  (samples from the world's floor to its top, quads only outside the
+  window's z) and the renderer draws it with the window's. fieldmesh.wgsl:
+  the bedrock's top and the samples' base from the layout; a run cut at
+  the window's top goes on up in the window's mesh (no flat cap — the cut
+  tops in every earlier cliff shot), so the two meshes meet.
+- Measured (the mesa site 5040,12672, oz 64): 65 536 columns packed,
+  148 675 runs, 31–41 ms on the CPU; 423 k vertices in the band; GPU idle
+  ~0.5 ms a frame (hash 0.12, the empty rebuild passes ~0.4). From the mesa
+  the block now runs down to the world's floor under the window (it
+  stopped at the window's bottom; shots78/tnb vs twb). A z slide 443 ms
+  (was 234–320). Memory ~58 MB.
+- The band's own pass names ('band fieldmesh-…') in the profiler;
+  scripts/bandprobe.mjs prints them and the band's stats.
+- `?win=512` (the user: "stream in a few more blocks out … nice for
+  debugging"): the window's mesh is 267 MB in one buffer there, over the
+  default 128 MB binding — the device now asks for the adapter's limits
+  (2 GB on this desktop); FieldMesh throws UnsupportedError where a GPU
+  can't. 1.86 M vertices live, 345 k in the band at 512.
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8.

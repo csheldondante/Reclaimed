@@ -242,7 +242,8 @@ fn fsMesh(in: MOut) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
-  o.pick = vec2<u32>(ci + 1u, mat | (u32(max(in.wpos.z, 0.0)) << 8u));
+  // (the band's z runs past the byte: round 79)
+  o.pick = vec2<u32>(ci + 1u, mat | (u32(clamp(in.wpos.z, 0.0, 255.0)) << 8u));
   return o;
 }
 

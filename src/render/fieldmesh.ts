@@ -8,6 +8,7 @@
 // rebuilt (near the view; the rest when they come into it).
 
 import { ignoreTeardown, makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
+import { UnsupportedError } from '../gpu/device';
 import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
@@ -19,7 +20,7 @@ import type { WorldGpu } from '../sim/world-gpu';
 import type { Camera } from './camera';
 
 /** bytes of the layout uniform (meshregion.wgsl MeshRegion) */
-export const REGION_BYTES = 64;
+export const REGION_BYTES = 96;
 /** a chunk's side, world units */
 const CHUNK = 32;
 const ROW_H = Math.sqrt(3) / 2;
@@ -28,6 +29,23 @@ const CHUNK0 = 16;
 const CSTRIDE = 12;
 /** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
 const TOP_PAD = 4;
+
+/**
+ * What a field mesh is made from (round 79): by default the window's own layers; or a band's — the
+ * columns' runs outside the window (above and below it, window z), its own chunk table and layers,
+ * meshed the same way and drawn with the window's (render/band.ts).
+ */
+export interface MeshSource {
+  name: string;
+  chunks: GPUBuffer;
+  layers: GPUBuffer;
+  frames: GPUBuffer;
+  vox: GPUBuffer;
+  /** the world's height: the samples along z cover it */
+  zSpan: number;
+  /** chunks rebuilt a frame */
+  slots: number;
+}
 
 export class FieldMesh {
   /** the layout uniform (world.meshRegion: renderprep, vegprep and renderfields read it) */
@@ -54,6 +72,9 @@ export class FieldMesh {
   private slots = 0;
   /** chunks drawn last frame (after culling) */
   drawn = 0;
+  /** the z its chunks' boxes start at and reach to at most (window z; the band's move with the window's oz) */
+  private zLo = -1;
+  private zHi = 0;
   /** per chunk: near the view (rebuilt when changed; written to the state), in it (drawn) */
   private near = new Uint32Array(0);
   private inView = new Uint8Array(0);
@@ -77,11 +98,14 @@ export class FieldMesh {
     byDefault = false,
     /** room a chunk, times the default */
     room = 1,
+    /** a band's (round 79); the window's own when not given */
+    private src?: MeshSource,
   ) {
     const q = new URLSearchParams(location.search);
     const arg = q.get('mesh');
     this.on = arg === null ? byDefault : arg !== '0';
-    this.region = world.meshRegion;
+    this.region = src ? device.createBuffer({ label: `${src.name} region`, size: REGION_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }) : world.meshRegion;
+    this.zHi = world.zMax;
     if (!this.on) {
       device.queue.writeBuffer(this.region, 0, new ArrayBuffer(REGION_BYTES));
       return;
@@ -93,9 +117,9 @@ export class FieldMesh {
     this.nx = Math.ceil(W / CHUNK);
     this.ny = Math.ceil(H / (CHUNK * ROW_H));
     this.side = Math.round(CHUNK / h);
-    this.nz = Math.ceil((world.zMax + 2) / h) + 2;
+    this.nz = Math.ceil(((src?.zSpan ?? world.zMax) + 2) / h) + 2;
     // rebuild slots a frame: their scratch is the big cost in memory
-    this.slots = h >= 1 ? 8 : 3;
+    this.slots = src?.slots ?? (h >= 1 ? 8 : 3);
     // room per chunk: ~1.3k vertices per 1000 columns at spacing 1 (~5k at
     // 0.5; DEVLOG 2026-10-22), a chunk ~1.2k columns, four times that for
     // cliffs and caves
@@ -110,14 +134,25 @@ export class FieldMesh {
     u.set([this.side, this.slots, vertsPer, indicesPer], 8);
     // every column is the mesh's
     f.set([-1, -1, W + 1, H + 1], 12);
+    // (round 79) the window's: samples from 0, bedrock under 0, a run cut at its top goes on up (the
+    // band draws it), quads under its top; a band's: setBand
+    f.set([0, 0, world.zMax, 0], 16);
+    f.set([-1e30, world.zMax, 0, 0], 20);
+    this.layout = ab;
     device.queue.writeBuffer(this.region, 0, ab);
+    const pre = src ? `${src.name} ` : '';
+    this.pre = pre;
 
+    const vb = chunks * vertsPer * 32;
+    if (vb > device.limits.maxStorageBufferBindingSize) {
+      throw new UnsupportedError(`the ${src?.name ?? 'window'}'s mesh needs ${(vb / 2 ** 20).toFixed(0)} MB in one buffer; this GPU binds ${(device.limits.maxStorageBufferBindingSize / 2 ** 20).toFixed(0)} MB (a smaller ?win=)`);
+    }
     // (COPY_SRC: the world API's smooth sampling is checked against it, scripts/worldapitest.mjs)
-    this.verts = world.buf('meshVerts', chunks * vertsPer * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
-    this.indices = world.buf('meshIndices', chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
+    this.verts = world.buf(`${pre}meshVerts`, chunks * vertsPer * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+    this.indices = world.buf(`${pre}meshIndices`, chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
     // (then four words a range: its translation — meshregion.wgsl offBase)
     const stateWords = CHUNK0 + chunks * (CSTRIDE + 1) + chunks * 4;
-    this.state = world.buf('meshState', stateWords * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    this.state = world.buf(`${pre}meshState`, stateWords * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const init = new Uint32Array(stateWords);
     for (let c = 0; c < chunks; c++) {
       init.set([0, 1, c * indicesPer, c * vertsPer, 0], CHUNK0 + c * CSTRIDE);
@@ -125,19 +160,19 @@ export class FieldMesh {
     }
     device.queue.writeBuffer(this.state, 0, init);
     const s = this.side + 3;
-    this.scratch = world.buf('meshScratch', this.slots * s * s * this.nz * 8, GPUBufferUsage.STORAGE);
-    this.statBuf = world.buf('meshStats', stateWords * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8, GPUBufferUsage.STORAGE);
+    this.statBuf = world.buf(`${pre}meshStats`, stateWords * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, fieldMeshWgsl];
     const spec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 30: 'uniform' } as const;
     const group = (k: ComputeKernel) =>
       makeBindGroup(device, 'fieldmesh', k.layout, {
         0: world.globals,
-        1: world.chunks,
+        1: src?.chunks ?? world.chunks,
         2: world.materials,
-        3: world.layers,
-        4: world.strFrames,
-        5: world.strVox,
+        3: src?.layers ?? world.layers,
+        4: src?.frames ?? world.strFrames,
+        5: src?.vox ?? world.strVox,
         6: this.scratch,
         7: this.verts,
         8: this.indices,
@@ -153,6 +188,25 @@ export class FieldMesh {
       this.kernels.push(k);
       this.groups.push(group(k));
     }
+  }
+
+  private layout = new ArrayBuffer(REGION_BYTES);
+  /** its passes' and buffers' names begin so ('band ': the profiler tells the two apart) */
+  private pre = '';
+
+  /**
+   * A band's z (round 79): the window is at oz, zMax high — its samples from the world's floor (window z
+   * −oz) up the world's height, the bedrock under the floor, no run going on up, quads outside [0, zMax).
+   */
+  setBand(oz: number, zMax: number): void {
+    if (!this.on || !this.src) return;
+    const f = new Float32Array(this.layout);
+    f.set([-oz - 1, -oz, 1e30, 0], 16);
+    f.set([0, zMax, 1, 0], 20);
+    this.device.queue.writeBuffer(this.region, 0, this.layout);
+    this.zLo = -oz - 1;
+    this.zHi = this.src.zSpan - oz;
+    this.tops.fill(this.zHi);
   }
 
   /** The vertices (meshdraw.wgsl binding 3). */
@@ -204,7 +258,7 @@ export class FieldMesh {
         for (let cx = 0; cx < this.nx; cx++) {
           const sx = cx + dcx;
           const sy = cy + dcy;
-          this.tops[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? this.world.zMax : old[sy * this.nx + sx];
+          this.tops[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? this.zHi : old[sy * this.nx + sx];
         }
     }
   }
@@ -218,7 +272,7 @@ export class FieldMesh {
     this.device.queue.writeBuffer(this.state, 15 * 4, new Uint32Array([++this.frameNo]));
     this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, this.near);
     for (const [k, g] of [[this.hashF, this.hashFGroup], [this.hash, this.hashGroup]] as const) {
-      const pass = enc.beginComputePass({ label: 'fieldmesh-hash', timestampWrites: this.profiler.timestamps('fieldmesh-hash') });
+      const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-hash`, timestampWrites: this.profiler.timestamps(`${this.pre}fieldmesh-hash`) });
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, g);
       pass.dispatchWorkgroups(chunks);
@@ -228,7 +282,7 @@ export class FieldMesh {
     const s = this.side + 3;
     const wg: [number, number, number] = [Math.ceil(s / 4), Math.ceil(s / 4), Math.ceil(this.nz / 4) * this.slots];
     this.kernels.forEach((k, i) => {
-      const name = ['fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
+      const name = this.pre + ['fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
       const pass = enc.beginComputePass({ label: name, timestampWrites: this.profiler.timestamps(name) });
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, this.groups[i]);
@@ -251,13 +305,13 @@ export class FieldMesh {
   cull(cam: Camera): void {
     if (!this.on) return;
     const m = cam.viewProj;
-    const zHi = this.world.zMax;
+    const zHi = this.zHi;
     const chunks = this.nx * this.ny;
     if (this.near.length !== chunks) {
       this.near = new Uint32Array(chunks);
       this.inView = new Uint8Array(chunks);
       this.casts = new Uint8Array(chunks);
-      this.tops = new Float32Array(chunks).fill(this.world.zMax);
+      this.tops = new Float32Array(chunks).fill(this.zHi);
     }
     const r: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
     for (let cy = 0; cy < this.ny; cy++)
@@ -270,7 +324,7 @@ export class FieldMesh {
         for (let k = 0; k < 8; k++) {
           const x = (cx + (k & 1)) * CHUNK;
           const y = (cy + ((k >> 1) & 1)) * CHUNK * ROW_H;
-          const z = k & 4 ? zTop : -1;
+          const z = k & 4 ? zTop : this.zLo;
           // (divided by clip w: the free camera's perspective; a corner behind its eye: keep the chunk)
           const w = m[3] * x + m[7] * y + m[11] * z + m[15];
           if (w <= 1e-3) behind = true;
@@ -297,7 +351,7 @@ export class FieldMesh {
   /** Which chunks lie in the sun's box (its clip space, `light`): they cast into the shadow map. */
   castCull(light: Float32Array): void {
     if (!this.on) return;
-    const zHi = this.world.zMax;
+    const zHi = this.zHi;
     for (let cy = 0; cy < this.ny; cy++)
       for (let cx = 0; cx < this.nx; cx++) {
         let lx = Infinity;
@@ -308,7 +362,7 @@ export class FieldMesh {
         for (let k = 0; k < 8; k++) {
           const x = (cx + (k & 1)) * CHUNK;
           const y = (cy + ((k >> 1) & 1)) * CHUNK * ROW_H;
-          const z = k & 4 ? zTop : -1;
+          const z = k & 4 ? zTop : this.zLo;
           const px = light[0] * x + light[4] * y + light[8] * z + light[12];
           const py = light[1] * x + light[5] * y + light[9] * z + light[13];
           lx = Math.min(lx, px);

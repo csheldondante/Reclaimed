@@ -486,6 +486,7 @@ export class Streamer {
     core.camera.shift(dx, dy * ROW_H, 0);
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
     core.renderer.fieldMesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
+    core.renderer.band?.mesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
     core.weather.shift(dx, dy * ROW_H);
     core.clearUndo();
     for (const f of this.onSlide) f(dx, dy, 0);
@@ -512,6 +513,12 @@ export class Streamer {
       const [lx, ly] = entering[k];
       this.write(await this.since(await coming[k], this.origin[0] + lx, this.origin[1] + ly), lx, ly);
     }
+    this.refreshBand();
+  }
+
+  /** What's outside the window, drawn (round 79: the renderer's band, when it has one). */
+  refreshBand(): void {
+    this.core.renderer.band?.update(this.outside, this.oz, this.core.dims.zMax);
   }
 
   /** a region's land the first time it is seen, in the frozen form (cut at the window's oz now) */
@@ -761,6 +768,8 @@ export class Streamer {
     for (let i = 0; i < N; i++) this.ground[i] -= dz;
     core.camera.shift(0, 0, dz);
     core.renderer.fieldMesh.shift(0, 0, [0, 0, -dz]);
+    core.renderer.band?.mesh.shift(0, 0, [0, 0, -dz]);
+    this.refreshBand();
     core.clearUndo();
     void R;
     for (const f of this.onSlide) f(0, 0, dz);

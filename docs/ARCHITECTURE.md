@@ -698,6 +698,23 @@ its edge:
 - The sim waits (`busy`) only while a region coming in is still being read
   back from its last visit. Frozen regions don't tick (BACKLOG Q31).
 - Not yet moved by a slide: the town, units, physics bodies, places (Q32).
+- **The band outside the window** (round 79, render/band.ts `OutsideBand`,
+  `Renderer.enableBand`, the atlas level): every column's runs outside
+  the window (`outside`) packed in window z (under 0 below, over zMax
+  above; runs cut at the window's edges reach SEAM 6 across) into a second
+  layers buffer and chunk table (BAND_K 12 slots a column), meshed by a
+  second FieldMesh (`MeshSource`: its own region uniform — MeshRegion gains
+  `zb` (samples' base z, bedrock's top, the cut top a run goes on up past)
+  and `ze` (the quads kept: base sample inside or outside a z range);
+  REGION_BYTES 96) and drawn with the window's mesh. The window's mesh
+  keeps quads under zMax and doesn't close a run reaching it; the band's
+  keeps quads outside [0, zMax). It doesn't tick and casts no shadow; it
+  shifts with the window's mesh on a slide and is repacked after every
+  slide (`Streamer.refreshBand`). `?skip=band` leaves it out. ~58 MB
+  (vertex room 2, 3 rebuild slots, samples up the world's height).
+- `?win=N` (round 79): the atlas level's window N wide (whole regions); the
+  device asks for the adapter's buffer limits (gpu/device.ts), FieldMesh
+  says when the mesh can't be bound.
 - Where new land comes from is a `LandSource` (round 67): streamgen's noise
   (`noiseLand`), or the atlas. A slide asks for all its regions at once;
   `prefetch` asks for the next slide's when the camera is 0.4 regions off

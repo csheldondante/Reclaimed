@@ -1,6 +1,6 @@
 // A mesa's edge and a crystal field (round 78): finds a cliffside site in a temperate place (a plateau's rim)
 // and the largest field of facets; shoots each in the viewer (ground) close up, then walks in at each.
-//   node scripts/mesashot.mjs [--url http://localhost:5207] [--out mesa] [--which mesa,field] [--pick 0]
+//   node scripts/mesashot.mjs [--url http://localhost:5207] [--out mesa] [--which mesa,field] [--pick 0] [--win 512]
 import puppeteer from 'puppeteer-core';
 const argv = process.argv.slice(2);
 const opt = (k, d) => {
@@ -83,7 +83,7 @@ try {
     if (!s) continue;
     const lv = await browser.newPage();
     lv.on('pageerror', (e) => console.log(k, 'pageerror', e.message));
-    await lv.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&tod=0.35&q=high&at=${s.at.join(',')}`, { waitUntil: 'load' });
+    await lv.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&tod=0.35&q=high&at=${s.at.join(',')}${opt('win', '') ? `&win=${opt('win', '')}` : ''}`, { waitUntil: 'load' });
     await lv.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
     await new Promise((r) => setTimeout(r, 6000));
     await lv.evaluate(() => {

@@ -37,7 +37,10 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
   const hasTimestamps = adapter.features.has('timestamp-query');
   const requiredFeatures: GPUFeatureName[] = hasTimestamps ? ['timestamp-query'] : [];
 
-  const device = await adapter.requestDevice({ requiredFeatures });
+  // (the adapter's own buffer limits, not the defaults: a wider streamed window's mesh — ?win=, round 79 —
+  // binds more than the default 128 MB where the GPU allows it; FieldMesh says so where it doesn't)
+  const requiredLimits = { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize };
+  const device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
 
   device.lost.then((info) => {
     showFatal(`GPU device lost (${info.reason}): ${info.message}`);

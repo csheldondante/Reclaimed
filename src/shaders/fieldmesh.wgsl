@@ -62,13 +62,15 @@ const FILLET: f32 = 0.6;
 fn colDist(q: vec2<i32>, z: f32) -> f32 {
   // (off the map is air: the map's edge closes in a wall)
   if (!inMap(q)) { return FAR; }
-  if (z < 0.0) { return max(z, -FAR); }
-  var d = z;
+  // (round 79: the bedrock's top is MR.zb.y — 0 in the window, the world's floor in the band under it)
+  let bz = MR.zb.y;
+  if (z < bz) { return max(z - bz, -FAR); }
+  var d = z - bz;
   let cs = colSlots(u32(q.x), u32(q.y));
   // the solid runs: touching intervals are one (a boundary between two
   // layers isn't a surface)
-  var lo = 0.0;
-  var hi = 0.0;
+  var lo = bz;
+  var hi = bz;
   for (var i = 0u; i < cs.y; i++) {
     let v = layers[cs.x + i];
     if (ivEmpty(v)) { break; }
@@ -78,14 +80,16 @@ fn colDist(q: vec2<i32>, z: f32) -> f32 {
     let z1 = ivZ1(v);
     if (z0 - hi > 1e-3) {
       // a gap: the run so far is done
-      if (z >= lo && z <= hi) { return max(-min(select(z - lo, FAR, lo <= 0.0), hi - z), -FAR); }
+      if (z >= lo && z <= hi) { return max(-min(select(z - lo, FAR, lo <= bz), hi - z), -FAR); }
       d = min(d, min(abs(z - lo), abs(z - hi)));
       lo = z0;
     }
     hi = z1;
   }
-  if (z >= lo && z <= hi) { return max(-min(select(z - lo, FAR, lo <= 0.0), hi - z), -FAR); }
-  d = min(d, min(abs(z - lo), abs(z - hi)));
+  // (a run cut at the window's top goes on up: the band over the window draws the rest, round 79)
+  let he = select(hi, 1e9, hi > lo && hi >= MR.zb.z - 1e-3);
+  if (z >= lo && z <= he) { return max(-min(select(z - lo, FAR, lo <= bz), he - z), -FAR); }
+  d = min(d, min(abs(z - lo), abs(z - he)));
   return min(d, FAR);
 }
 
@@ -305,7 +309,7 @@ fn cellVert(j: Job, l: vec3<u32>) -> u32 { return scratch[sampleIdx(j, l) + slot
 /** World position of a chunk's local sample (one lattice over the map; local 0 is the sample before the chunk). */
 fn samplePos(j: Job, l: vec3<u32>) -> vec3<f32> {
   let g = vec2<i32>(i32((j.c % MR.n.x) * MR.k.x + l.x) - 1, i32((j.c / MR.n.x) * MR.k.x + l.y) - 1);
-  return vec3<f32>(f32(g.x) * MR.o.y, f32(g.y) * MR.o.w, (f32(l.z) - 1.0) * MR.o.y);
+  return vec3<f32>(f32(g.x) * MR.o.y, f32(g.y) * MR.o.w, MR.zb.x + (f32(l.z) - 1.0) * MR.o.y);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -396,9 +400,12 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
   var q: array<vec4<u32>, 3>;
   var n = 0u;
   // the edges whose base sample is the chunk's own (local 1..N along x and y)
-  if (j.ok && l.x >= 1u && l.y >= 1u && l.x <= MR.k.x && l.y <= MR.k.x && l.z >= 1u && l.z + 2u <= MR.n.z) {
-    // (the chunk is built from the hash it was found with)
-    if (all(l == vec3<u32>(1u))) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
+  // (round 79: and whose base sample is in the mesh's z range — the window's, or the band's outside it)
+  let bz0 = MR.zb.x + (f32(l.z) - 1.0) * MR.o.y;
+  let inZ = (bz0 >= MR.ze.x && bz0 < MR.ze.y) != (MR.ze.z > 0.5);
+  // (the chunk is built from the hash it was found with)
+  if (j.ok && all(l == vec3<u32>(1u))) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
+  if (j.ok && inZ && l.x >= 1u && l.y >= 1u && l.x <= MR.k.x && l.y <= MR.k.x && l.z >= 1u && l.z + 2u <= MR.n.z) {
     let s0 = fieldAt(j, l) < 0.0;
     let X = vec3<u32>(1u, 0u, 0u);
     let Y = vec3<u32>(0u, 1u, 0u);
