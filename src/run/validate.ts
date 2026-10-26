@@ -18,7 +18,7 @@ export class StoryError extends Error {
   }
 }
 
-const CONDITIONS = new Set(['talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time']);
+const CONDITIONS = new Set(['any', 'talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time']);
 const EVENTS = new Set(['collapsed', 'flooded', 'burned', 'built', 'dug']);
 
 /** Check a story (parsed JSON or a literal): every reference resolves. Throws StoryError listing what's wrong. */
@@ -63,6 +63,8 @@ export function validateStory(data: unknown): SessionStory {
   }
   for (const c of s.cast) {
     need(locations.has(c.location), `character "${c.id}": unknown location "${c.location}"`);
+    if (c.room !== undefined)
+      need(s.locations.find((l) => l.id === c.location)?.brief?.rooms?.some((r) => r.id === c.room), `character "${c.id}": location "${c.location}" has no room "${c.room}"`);
     need(typeof c.disposition === 'number' && c.disposition >= -1 && c.disposition <= 1, `character "${c.id}": disposition in −1..1`);
   }
   for (const d of s.dialogs) {
@@ -111,6 +113,10 @@ export function validateStory(data: unknown): SessionStory {
   function condition(c: Condition, at: string): void {
     if (!c || !CONDITIONS.has(c.kind)) return void bad.push(`${at}: unknown condition kind "${(c as { kind?: string })?.kind}"`);
     switch (c.kind) {
+      case 'any':
+        need(Array.isArray(c.of) && c.of.length > 0, `${at}: any needs a list of conditions`);
+        (c.of ?? []).forEach((x, i) => condition(x, `${at} any[${i}]`));
+        break;
       case 'talked':
         need(cast.has(c.character), `${at}: talked to unknown character "${c.character}"`);
         if (c.node !== undefined)
@@ -159,9 +165,13 @@ export function validateStory(data: unknown): SessionStory {
     for (const e of o.atlas ?? []) {
       need(Array.isArray(e.regions) && e.regions.length > 0, `${at}: an atlas event (${e.kind}) without regions`);
       need(typeof e.magnitude === 'number', `${at}: an atlas event (${e.kind}) without a magnitude`);
+      const [lo, hi] = e.kind === 'faction-presence' || e.kind === 'faction-attitude' ? [-1, 1] : e.kind === 'bury' ? [0, Infinity] : [0, 1];
+      need(!(e.magnitude < lo || e.magnitude > hi), `${at}: an atlas event (${e.kind})'s magnitude ${e.magnitude} is out of ${lo}..${hi}`);
+      if (e.kind === 'flood') need(typeof e.level === 'number', `${at}: a flood needs its level (world z)`);
+      if (e.kind === 'faction-presence' || e.kind === 'faction-attitude') need(typeof e.detail?.faction === 'string', `${at}: ${e.kind} needs detail.faction`);
       need(e.cause && ['story', 'player', 'world'].includes(e.cause.by), `${at}: an atlas event (${e.kind}) without a cause`);
       // (where in the region it's seen: a story location — story/play.ts realises it there)
-      if (e.detail?.location !== undefined) need(locations.has(String(e.detail.location)), `${at}: an atlas event (${e.kind}) at unknown location "${String(e.detail.location)}"`);
+      if (e.location !== undefined) need(locations.has(e.location), `${at}: an atlas event (${e.kind}) at unknown location "${e.location}"`);
     }
     for (const a of o.attitude ?? []) {
       need(a.character !== undefined || a.faction !== undefined, `${at}: an attitude change names neither a character nor a faction`);

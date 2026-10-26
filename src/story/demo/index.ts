@@ -18,6 +18,6 @@ export function demoStory() {
     { id: 'valley-folk', name: 'The Valley Folk', ethos: 'the few who stayed: patient, poor, stubborn', era: 'post-apocalyptic', attitude: 0.2, relations: { 'the-company': -0.6 } },
     { id: 'the-company', name: 'The Company', ethos: 'owns the plant and the land under it; liability first', era: 'industrial', attitude: -0.1, relations: { 'valley-folk': -0.4 } },
   ];
-  const world = new MemoryWorldState([{ id: 0, name: 'The Dam Valley', kind: 'valley' }], factions);
+  const world = new MemoryWorldState(1, [{ id: 0, name: 'The Dam Valley', kind: 'valley' }], factions);
   return { story, stage, world };
 }

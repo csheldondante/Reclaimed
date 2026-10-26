@@ -46,8 +46,6 @@ export interface StoryPlayDeps {
   cut?: { dither?: Dither; slice?: Slice };
   /** where the player is (default: the camera's target) */
   player?: () => V3 | null;
-  /** told the RunRecord when the run ends */
-  record?: (r: RunRecord) => void;
 }
 
 interface Placed {
@@ -77,14 +75,15 @@ export class StoryPlay {
       ...story.cast.filter((c) => !stage.cast[c.id]).map((c) => `character "${c.id}"`),
     ];
     if (missing.length) throw new Error(`story "${story.id}": not on the stage: ${missing.join(', ')}`);
-    this.run = new StoryRun(story, d.world, { hero: d.hero ?? 'wanderer', record: d.record });
+    this.run = new StoryRun(story, d.world, { hero: d.hero ?? 'wanderer' });
     this.dialog = new DialogBox(d.ui, {
       speaker: (id) => {
         const c = story.cast.find((x) => x.id === id);
         if (!c) throw new Error(`story "${story.id}": no character "${id}"`);
         return { name: c.name, title: c.role, colour: stage.cast[id].colour };
       },
-      check: (cs) => this.run.holds(cs),
+      check: (c) => this.run.holds(c),
+      entry: (t) => this.run.entry(t),
     });
     this.run.hear(this.dialog);
     this.cam = new StoryCamera(d.camera, d.cut);
@@ -152,7 +151,7 @@ export class StoryPlay {
     if (this.dialog.isOpen || this.cam.busy) return;
     const top: V3 = [p.at[0], p.at[1], p.at[2] + p.height * 0.7];
     void this.cam.frame(top);
-    await this.dialog.open(p.tree, this.run.entry(p.tree));
+    await this.dialog.open(p.tree);
     await this.cam.release();
   }
 
@@ -266,11 +265,8 @@ export class StoryPlay {
   }
 }
 
-/**
- * The story location an AtlasEvent names (`detail.location`: where in its region it's seen — the GM knows
- * places, not cells; run/validate.ts checks it's one of the story's).
- */
-const placeOf = (e: Omit<AtlasEvent, 'id' | 'run'>): string | undefined => (typeof e.detail?.location === 'string' ? e.detail.location : undefined);
+/** The story location an AtlasEvent names (`location`: where in its region it's seen; run/validate.ts checks it). */
+const placeOf = (e: Omit<AtlasEvent, 'id' | 'run'>): string | undefined => e.location;
 
 /** the AtlasEvent kinds with a play-scale stand-in here */
 const play = (k: AtlasEvent['kind']) => k === 'overgrow' || k === 'flood' || k === 'mark';

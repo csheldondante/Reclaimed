@@ -1179,7 +1179,6 @@ export class LevelScene implements Scene {
       story,
       stage,
       cut,
-      record: (r) => world.runs.push(r),
     });
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.story = Object.assign(this.storyPlay, { world });
   }

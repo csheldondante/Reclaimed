@@ -206,8 +206,8 @@
       ],
       "outcome": {
         "atlas": [
-          { "kind": "overgrow", "regions": [0], "magnitude": 0.3, "detail": { "location": "camp" }, "cause": { "by": "story" } },
-          { "kind": "mark", "regions": [0], "magnitude": 1, "detail": { "name": "Wren's Green", "kind": "garden", "location": "camp" }, "cause": { "by": "story" } }
+          { "kind": "overgrow", "regions": [0], "magnitude": 0.3, "location": "camp", "cause": { "by": "story" } },
+          { "kind": "mark", "regions": [0], "magnitude": 1, "location": "camp", "detail": { "name": "Wren's Green", "kind": "garden" }, "cause": { "by": "story" } }
         ],
         "flags": { "sluice_open": true },
         "attitude": [

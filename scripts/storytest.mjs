@@ -21,9 +21,10 @@ try {
   const story = validateStory(JSON.parse(text));
   ok(true, 'the demo story validates');
 
-  const world = new MemoryWorldState([{ id: 0, name: 'The Dam Valley', kind: 'valley' }], []);
-  const records = [];
-  const run = new StoryRun(story, world, { hero: 'tester', record: (r) => records.push(r) });
+  const factions = ['valley-folk', 'the-company'].map((id) => ({ id, name: id, ethos: '', era: 'industrial', attitude: 0, relations: {} }));
+  const world = new MemoryWorldState(1, [{ id: 0, name: 'The Dam Valley', kind: 'valley' }], factions);
+  const records = world.runs;
+  const run = new StoryRun(story, world, { hero: 'tester' });
   const log = [];
   run.onObjective.push((id, s) => log.push(`${id}:${s}`));
   // (a dialog as the run hears one: what DialogBox calls)
@@ -36,9 +37,10 @@ try {
 
   ok(state('meet') === 'shown' && state('sluice') === 'hidden', 'at the start: meet shown, sluice hidden');
   const tip = tree('wren-talk').nodes.hello.choices[2].requires;
-  ok(!run.holds(tip), "Harlan's tip is hidden before talking to him");
+  ok(!run.all(tip), "Harlan's tip is hidden before talking to him");
+  ok(run.holds({ kind: 'any', of: [{ kind: 'flag', flag: 'nope' }, { kind: 'time', after: 0 }] }), "'any' holds when one of its own does");
   say('harlan-talk', 'hi');
-  ok(run.holds(tip), "…and shown after");
+  ok(run.all(tip), "…and shown after");
   choose('harlan-talk', 'hi', 0);
   say('harlan-talk', 'can');
   ok(run.has('gate-knack') === 1, "a node's effects: Harlan's knack given");
@@ -55,19 +57,19 @@ try {
   run.note({ kind: 'reached', location: 'sluice' });
   ok(state('sluice') === 'done' && state('tell') === 'shown', 'reaching the sluice: done, and "tell" shown');
   const h = world.history();
-  ok(h.length === 2 && h.every((e) => e.cause.by === 'story' && e.cause.ref === 'sluice'), `two AtlasEvents in the world, caused by the objective (${h.map((e) => e.kind)})`);
+  ok(h.length === 4 && h.every((e) => e.cause.by === 'story' && e.cause.ref === 'sluice'), `four AtlasEvents in the world, caused by the objective (${h.map((e) => e.kind)})`);
   ok(Math.abs(world.region(0).overgrowth - 0.3) < 1e-9 && world.region(0).marks[0]?.name === "Wren's Green", 'the region overgrew and has the mark');
   ok(run.entry(tree('wren-talk')) === 'after', "Wren's dialog now opens at its unlocked node");
-  ok(run.factionShifts()['the-company'] === -0.3, 'faction attitude shifts kept by the run');
+  ok(Math.abs(world.faction('the-company').attitude + 0.3) < 1e-9 && Math.abs(world.faction('valley-folk').attitude - 0.3) < 1e-9, "faction attitudes changed in the world (faction-attitude events)");
 
   say('wren-talk', 'after');
   ok(run.over && records.length === 1 && records[0].end === 'won', 'telling Wren ends the run, won, and the record is kept');
   const r = records[0];
-  ok(r.events.length === 2 && r.deeds.some((d) => d.startsWith('done: Promise Wren')), `the record: ${r.deeds.length} deeds, ${r.events.length} events`);
+  ok(r.events.length === 4 && world.snapshot().run === 1 && r.deeds.some((d) => d.startsWith('done: Promise Wren')), `the record: ${r.deeds.length} deeds, ${r.events.length} events`);
   ok(log.join(',') === 'meet:done,sluice:shown,sluice:done,tell:shown,tell:done', `objective changes in order (${log.join(',')})`);
 
   // time, on a fresh run
-  const run2 = new StoryRun(story, new MemoryWorldState(), { hero: 't' });
+  const run2 = new StoryRun(story, new MemoryWorldState(1), { hero: 't' });
   run2.update(599);
   const before = run2.flag('dusk');
   run2.update(2);

@@ -8,8 +8,8 @@
 // its index in the node's `choices`, hidden ones counted, so a `chose` condition means the same thing whatever
 // was shown.
 //
-//   const dialog = new DialogBox(ui, { speaker: (id) => ({ name, colour }), check: (cs) => run.holds(cs) })
-//   const path = await dialog.open(tree, run.entry(tree))
+//   const dialog = new DialogBox(ui, { speaker: (id) => ({ name, colour }), check: (c) => run.holds(c), entry: (t) => run.entry(t) })
+//   const path = await dialog.open(tree)     // at its last unlocked node, else its start
 //
 // Styling: dialog.css, its colours as custom properties on .dlg (--dlg-bg, --dlg-ink, --dlg-accent …); the
 // speaker's colour is --dlg-speaker. The portrait is a coloured initial until there are pictures (`portrait`).
@@ -30,8 +30,10 @@ export interface Speaker {
 export interface DialogOptions {
   /** who a tree's speaker is (throws for an unknown id: a bad reference isn't guessed at) */
   speaker: (id: string) => Speaker;
-  /** do these conditions hold (a choice's `requires`) */
-  check: (conds: Condition[]) => boolean;
+  /** does a condition hold (each of a choice's `requires`: Run.holds) */
+  check: (c: Condition) => boolean;
+  /** where a tree opens when `open` isn't told: its most recently unlocked node (the run's), else its start */
+  entry?: (tree: DialogTree) => string | undefined;
   /** characters a second the line is typed at (default 50; prefers-reduced-motion: all at once) */
   cps?: number;
 }
@@ -129,7 +131,7 @@ export class DialogBox implements Dialog {
 
   open(tree: DialogTree, at?: string): Promise<Path> {
     if (this.talk) throw new Error(`dialog: "${this.talk.tree.id}" is open; close it before opening "${tree.id}"`);
-    const start = at ?? tree.start;
+    const start = at ?? this.opts.entry?.(tree) ?? tree.start;
     if (!(start in tree.nodes)) throw new Error(`dialog "${tree.id}": no node "${start}"`);
     const sp = this.opts.speaker(tree.speaker);
     this.nameEl.textContent = sp.name;
@@ -199,7 +201,7 @@ export class DialogBox implements Dialog {
     if (this.typing) this.textEl.textContent = this.typing.full;
     this.typing = null;
     const n = t.tree.nodes[t.node];
-    const shown = n.choices.map((c, i) => ({ c, i })).filter(({ c }) => !c.requires || this.opts.check(c.requires));
+    const shown = n.choices.map((c, i) => ({ c, i })).filter(({ c }) => !c.requires || c.requires.every((q) => this.opts.check(q)));
     if (!shown.length) {
       this.moreEl.textContent = 'Tap to close';
       this.moreEl.classList.add('on');

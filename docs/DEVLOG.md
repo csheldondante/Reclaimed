@@ -5788,3 +5788,27 @@ coded against src/api/contracts only.
 - Measured: nothing per frame worth timing — the run works only when a fact is noted (or a `time` edge
   passes); the badges are a projection and a transform each.
 - The world API's `Sim` type now names `plants` (attachSim always made it; the type left it out).
+
+### `dialog` — onto places' contracts (the GM's and D7's): workarounds dropped
+
+- Merged origin/places (e63a874 and after). The run and the dialog now use the contract's shapes:
+  `Run.holds(c)` takes one condition (lists are AND: `StoryRun.all(conds)`; `any` is OR); `update(dt)` is
+  the contract's; `Dialog.onNode` is the contract's (DialogBox had it already); `open(tree)` opens at its
+  most recently unlocked node (DialogBox asks an `entry` callback: the run's) — the caller no longer passes it.
+- Faction attitudes go to the world: an Outcome's `attitude` with a faction becomes a `faction-attitude`
+  AtlasEvent (in the region of the objective's location, else the speaker's, else the story's first place).
+  The run's own shift table is gone.
+- The RunRecord goes to `WorldState.record` (the `record` callback is gone). The run's number defaults to
+  the snapshot's `run`, the one to come (`record` moves it on).
+- An AtlasEvent's place is `location` (was `detail.location` in the demo); the validator checks it, a
+  flood's `level`, faction-* events' `detail.faction` and magnitudes (−1..1 for faction-*, 0..1 the rest
+  but bury).
+- The validator: the GM's storycheck (origin/gm src/gm/storycheck.ts) is the fuller one (shapes, names,
+  reachability, against a WorldSnapshot). run/validate.ts stays as what a run checks before it plays,
+  without a snapshot (a run's world needn't be a wiki), and it knows the newer contract (`any`,
+  `faction-attitude`, `level`, `location`, `room`), which storycheck's kind lists don't yet.
+- The GM's the-bell-under-kaudru.json fails it in two places: its happening's flood has `magnitude: 116`
+  and no `level` (written before the contract split them). It isn't staged: its regions are the atlas's
+  (2341, 2039, 2159), and a stage there needs the atlas level's window. That's next, once its places
+  have positions from the region generator.
+- storytest: 20 checks (faction attitudes in the world, the record in world.runs, `any`).

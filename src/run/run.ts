@@ -21,10 +21,8 @@ type ObjState = 'hidden' | 'shown' | 'done' | 'failed';
 export interface RunOptions {
   /** who the player is (RunRecord.hero) */
   hero: string;
-  /** the run's number (default the world's snapshot's run + 1) */
+  /** the run's number (default the world's: its snapshot's `run`, the one to come) */
   run?: number;
-  /** told the RunRecord when the run ends (MemoryWorldState: `r => world.runs.push(r)`) */
-  record?: (r: RunRecord) => void;
 }
 
 export class StoryRun implements Run {
@@ -43,7 +41,6 @@ export class StoryRun implements Run {
   private states = new Map<string, ObjState>();
   private fired = new Set<number>();
   private attitudes = new Map<string, number>();
-  private factionShift = new Map<string, number>();
   private unlocked = new Map<string, string>();
   private deeds: string[] = [];
   private events: AtlasEvent[] = [];
@@ -57,7 +54,7 @@ export class StoryRun implements Run {
     private opts: RunOptions,
   ) {
     this.story = validateStory(story);
-    this.number = opts.run ?? world.snapshot().run + 1;
+    this.number = opts.run ?? world.snapshot().run;
     for (const o of story.objectives) this.states.set(o.id, 'hidden');
     for (const c of story.cast) this.attitudes.set(c.id, c.disposition);
     this.timeEdges = this.collectTimes();
@@ -119,14 +116,14 @@ export class StoryRun implements Run {
   }
   private timeEdges: number[];
 
-  /** Every condition holds (an empty list does). */
-  holds(conds: readonly Condition[]): boolean {
-    return conds.every((c) => this.holdsOne(c));
+  /** every condition of a list holds (AND; an empty list does) */
+  all(conds: readonly Condition[]): boolean {
+    return conds.every((c) => this.holds(c));
   }
 
   /** A dialog's nodes and choices become this run's facts and effects. */
-  hear(dialog: Dialog & { onNode?: ((tree: DialogTree, node: string) => void)[] }): void {
-    dialog.onNode?.push((tree, node) => {
+  hear(dialog: Dialog): void {
+    dialog.onNode.push((tree, node) => {
       const n = tree.nodes[node];
       // (the node's effects before the fact: a `talked` condition sees what saying it changed)
       if (n.effects) this.apply(n.effects, `${tree.id}/${node}`);
@@ -147,18 +144,16 @@ export class StoryRun implements Run {
     for (const o of this.story.objectives) if (this.states.get(o.id) === 'shown') this.deeds.push(`left undone: ${o.text}`);
     const r: RunRecord = { run: this.number, hero: this.opts.hero, story: this.story.id, end: how, deeds: [...this.deeds], events: [...this.events] };
     this.ended = r;
-    this.opts.record?.(r);
+    this.world.record(r);
     for (const cb of this.onEnd) cb(r);
     return r;
   }
 
-  /** what faction attitudes this run shifted (world.ts has no AtlasEvent for an attitude: kept here, in the record's deeds) */
-  factionShifts(): Record<string, number> {
-    return Object.fromEntries(this.factionShift);
-  }
-
-  private holdsOne(c: Condition): boolean {
+  /** Does a condition hold now. */
+  holds(c: Condition): boolean {
     switch (c.kind) {
+      case 'any':
+        return c.of.some((x) => this.holds(x));
       case 'flag':
         return this.flag(c.flag) === (c.value ?? true);
       case 'has':
@@ -194,15 +189,15 @@ export class StoryRun implements Run {
         changed = false;
         for (const o of this.story.objectives) {
           const st = this.states.get(o.id)!;
-          if (st === 'hidden' && this.holds(o.when)) {
+          if (st === 'hidden' && this.all(o.when)) {
             this.set(o.id, 'shown');
             changed = true;
-          } else if (st === 'shown' && o.failed && this.holds(o.failed.when)) {
+          } else if (st === 'shown' && o.failed && this.all(o.failed.when)) {
             this.set(o.id, 'failed');
             this.deeds.push(`failed: ${o.text}`);
             this.apply(o.failed.outcome, o.id);
             changed = true;
-          } else if (st === 'shown' && this.holds(o.done)) {
+          } else if (st === 'shown' && this.all(o.done)) {
             this.set(o.id, 'done');
             this.deeds.push(`done: ${o.text}`);
             this.apply(o.outcome, o.id);
@@ -211,7 +206,7 @@ export class StoryRun implements Run {
           if (this.ended) return;
         }
         this.story.happenings.forEach((h, i) => {
-          if (this.fired.has(i) || this.ended || !this.holds(h.when)) return;
+          if (this.fired.has(i) || this.ended || !this.all(h.when)) return;
           this.fired.add(i);
           this.apply(h.effects, `happening ${i}`);
           changed = true;
@@ -228,17 +223,19 @@ export class StoryRun implements Run {
   }
 
   private apply(o: Outcome, cause: string): void {
+    const atlas = [...(o.atlas ?? [])];
     for (const [k, v] of Object.entries(o.flags ?? {})) this.flags.set(k, v);
     for (const g of o.give ?? []) this.items.set(g.item, this.has(g.item) + (g.count ?? 1));
     for (const a of o.attitude ?? []) {
       if (a.character !== undefined) this.attitudes.set(a.character, Math.max(-1, Math.min(1, this.attitude(a.character) + a.delta)));
       if (a.faction !== undefined) {
-        this.factionShift.set(a.faction, (this.factionShift.get(a.faction) ?? 0) + a.delta);
+        // (a faction's attitude is the world's: an AtlasEvent in the region where it happened)
+        atlas.push({ kind: 'faction-attitude', regions: [this.regionOf(cause)], magnitude: a.delta, detail: { faction: a.faction }, cause: { by: 'story' } });
         this.deeds.push(`${a.delta > 0 ? 'won over' : 'turned against them'}: ${a.faction} (${a.delta > 0 ? '+' : ''}${a.delta})`);
       }
     }
     for (const u of o.unlock ?? []) this.unlocked.set(u.dialog, u.node);
-    for (const e of o.atlas ?? []) {
+    for (const e of atlas) {
       const ev: AtlasEvent = { ...e, id: `${this.story.id}:${this.number}:${this.eventN++}`, run: this.number, cause: { ...e.cause, ref: e.cause.ref ?? cause } };
       this.world.apply(ev);
       this.events.push(ev);
@@ -249,9 +246,21 @@ export class StoryRun implements Run {
     this.check();
   }
 
+  /** the region an outcome happened in: its objective's location's, the speaker's, else the story's first place's */
+  private regionOf(cause: string): number {
+    const loc = (id: string | undefined) => this.story.locations.find((l) => l.id === id);
+    const o = this.story.objectives.find((x) => x.id === cause);
+    const tree = this.story.dialogs.find((d) => cause.startsWith(`${d.id}/`));
+    const speaker = tree && this.story.cast.find((c) => c.id === tree.speaker);
+    const l = loc(o?.location) ?? loc(speaker?.location) ?? this.story.locations[0];
+    if (!l) throw new Error(`run: story "${this.story.id}" has no locations (a faction's attitude needs a region)`);
+    return l.region;
+  }
+
   private collectTimes(): number[] {
     const out: number[] = [];
-    const scan = (cs: readonly Condition[] | undefined) => cs?.forEach((c) => c.kind === 'time' && out.push(c.after));
+    const scan = (cs: readonly Condition[] | undefined): void =>
+      cs?.forEach((c) => (c.kind === 'time' ? out.push(c.after) : c.kind === 'any' ? scan(c.of) : undefined));
     for (const o of this.story.objectives) {
       scan(o.when);
       scan(o.done);
