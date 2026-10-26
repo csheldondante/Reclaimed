@@ -224,6 +224,10 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
     let cs = colSlots(u32(q.x), u32(q.y));
     // (where it is in the world, not the window: what a slide moved still hashes the same)
     var h = 2166136261u ^ (bitcast<u32>(q.x + i32(G.org.z)) * 73856093u) ^ (bitcast<u32>(q.y + i32(G.org.w)) * 19349663u);
+    // (the top of the solid joined to the bedrock, as colDist sees it: field materials, touching runs one —
+    // perfopt: in the same walk as the hash, the column's intervals read once)
+    var hb = MR.zb.y;
+    var hbOpen = true;
     for (var i = 0u; i < cs.y; i++) {
       let v = layers[cs.x + i];
       if (ivEmpty(v)) { break; }
@@ -231,15 +235,9 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
       // that doesn't rebuild the chunk; the mesh catches up when it adds up)
       h = mixHash(mixHash(mixHash(h, u32(ivZ0(v) * 16.0 + 0.5)), u32(ivZ1(v) * 16.0 + 0.5)), v.z & 0xffu);
       top = max(top, ivZ1(v));
-    }
-    // (the top of the solid joined to the bedrock, as colDist sees it: field materials, touching runs one)
-    var hb = MR.zb.y;
-    for (var i = 0u; i < cs.y; i++) {
-      let v = layers[cs.x + i];
-      if (ivEmpty(v)) { break; }
-      if (!fieldMat(ivMat(v))) { continue; }
-      if (ivZ0(v) - hb > 1e-3) { break; }
-      hb = max(hb, ivZ1(v));
+      if (hbOpen && fieldMat(ivMat(v))) {
+        if (ivZ0(v) - hb > 1e-3) { hbOpen = false; } else { hb = max(hb, ivZ1(v)); }
+      }
     }
     atomicMin(&wgBot, bitcast<u32>(max(hb - MR.zb.y, 0.0)));
     sum += h;
