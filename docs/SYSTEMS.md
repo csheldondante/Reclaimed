@@ -196,11 +196,18 @@ The GM writes objectives with triggers and outcomes from a persistent world wiki
   - the run log.
 - **Writes:** only AtlasEvents and spawns, through their APIs.
 
-### 10. Dialog ○
+### 10. Dialog ◐ — branch `dialog`
 - **API:** `dialog.open(node)`, with choices, `onChoice → effects` (effects are the same outcomes as
   system 9: attitude, items, events). The UI is for phones first.
+- **Has (round 83):** src/dialog/dialog.ts `DialogBox` (contracts/dialog.ts `Dialog`, plus `onNode`);
+  story cameras in src/story/camera.ts (frame a speaker, reveal, follow); src/story/play.ts plays a
+  SessionStory on a level over the world API (`?story=demo`). ARCHITECTURE.md "Dialog, the run and story
+  cameras".
 
-### 11. Run lifecycle ○
+### 11. Run lifecycle ◐ — branch `dialog`
+- **Has (round 83):** src/run/run.ts `StoryRun` (contracts/run.ts `Run`): objectives, conditions,
+  outcomes (AtlasEvents applied to the WorldState), `end → RunRecord`; src/run/validate.ts checks a story;
+  src/run/hud.ts the objective list. Not yet: `start(hero, at)`, `between(runs)`.
 - **API:**
   - `run.start(hero, at)`
   - `run.end(cause)`: death, escape or objective done

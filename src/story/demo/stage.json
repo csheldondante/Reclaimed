@@ -1,0 +1,13 @@
+{
+  "$comment": "PLACEHOLDER: where the demo story's places and people are in the valley (world x, y). The region generator will hand this over once it builds a story's locations; until then it's written by hand.",
+  "locations": {
+    "camp": { "at": [138, 114], "radius": 12 },
+    "sluice": { "at": [100, 90], "radius": 10 },
+    "lookout": { "at": [157, 101], "radius": 8 }
+  },
+  "cast": {
+    "wren": { "at": [133, 113], "colour": "#b9d77e", "material": "crystal", "height": 6 },
+    "harlan": { "at": [143, 117], "colour": "#e0b36c", "material": "tile", "height": 5 },
+    "ves": { "at": [157, 101], "colour": "#8fb7e6", "material": "steel", "height": 7 }
+  }
+}

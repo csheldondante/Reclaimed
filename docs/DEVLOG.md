@@ -5733,3 +5733,58 @@ classed sea / river (a source) / other / dry.
   GPU, two drawbench runs gave draw/ref 26.3 to 22.5 and 11.3 to 14.0, so no measurable
   gain. It stays off. The band is vertical (above and below the window), so the LOD
   rings never cover it and there are no band draws to skip for them.
+
+## Round 83 (2026-10-26, `dialog`) — dialog, the run, story cameras; `?story=demo`
+
+The user: "get dialogue in and basic cameras so we have a way to communicate what is going on." The GM (branch
+`gm`) writes a SessionStory as data offline; these systems play it (docs/SYSTEMS.md systems 10, 11, part of 5),
+coded against src/api/contracts only.
+
+- **Dialog** (src/dialog/dialog.ts, `DialogBox implements Dialog`). A panel across the bottom, phone first:
+  speaker name, role and a portrait slot (a coloured initial until there are pictures), the line typed at 50
+  characters a second (a tap shows it all; prefers-reduced-motion shows it at once), then the answers as
+  buttons at least 52 px tall, numbered (1–9 on a keyboard). A scrim over the rest of the screen takes every
+  touch, wheel and key while a talk is open, so the game's controls get nothing. It knows nothing of runs:
+  a choice's `requires` is asked of a `check` callback; nodes said and choices made go out on `onNode` and
+  `onChoice`. A choice's index is its index in the node's `choices`, hidden ones counted, so a `chose`
+  condition means the same thing whatever was shown. Styled by custom properties (dialog.css).
+- **Run** (src/run/run.ts, `StoryRun implements Run`). Keeps the facts noted (talked, chose, reached,
+  killed, event), the flags, the items given, attitudes (each cast member's disposition plus shifts), the
+  clock. Each fact re-checks objectives (hidden → shown when `when` holds → done when `done` holds, or
+  failed) and happenings until nothing changes (64 passes and it throws: a story that doesn't settle is a
+  bug). Outcomes: flags, attitudes, give, unlock (where a tree opens next: `entry(tree)`), spawn (told to
+  `onOutcome` for the game), endRun, and AtlasEvents applied to the WorldState at once (the atlas scale
+  "when a story event fires"), each with an id, the run number and the cause's ref (the objective or
+  `dialog/node`). `end(how)` makes the RunRecord (deeds: objectives done, failed and left undone, what
+  was said, faction shifts; the events).
+- **Validator** (src/run/validate.ts). A story is checked before it's played: unique ids, every reference
+  (cast locations, speakers, next nodes, condition targets, choice indices, unlocks, spawn places, an
+  atlas event's `detail.location`) resolves. One StoryError lists every problem, so the GM fixes them in
+  one go; nothing is guessed. The GM step (SYSTEMS order 3) can use it as its check.
+- **Story cameras** (src/story/camera.ts, `StoryCamera`). On the fixed camera's target and zoom:
+  `frame(at)` eases there (the point placed 32% down the screen, over the dialog panel) and holds until
+  `release()`; `reveal(at)` eases there, holds (a tap skips), eases back; `look(at)` an opening shot left
+  with the player; `follow(get)` a spring after a moving point while no shot runs. Every move starts from
+  where the camera is (interruptible without a jump); zoom eases in log space; a reveal set off during a
+  talk waits for it, then goes from the speaker, not home first. While a shot holds a point it's kept seen
+  through the cutaway: Dither.see, and the Slice cut over it (then let back up); with ?cutaway=1 the
+  level's own dither and slice are used, the puck's slice paused while a shot runs.
+- **Play** (src/story/play.ts, `StoryPlay`). Wires them over the world API: the cast stand where a Stage
+  puts them (a pillar built with terrain.build, a badge over it to tap); the player's position (the
+  camera's target, the god's-eye game's) noted `reached` inside a staged location; a done objective gets a
+  reveal of where its change is seen (an atlas event's `detail.location`, else the objective's); outcomes'
+  atlas events realised at play scale where they can be (overgrow: plants grown and petals, flood: water,
+  mark: a cairn), the rest left to the atlas; an end card with the record. The Stage (where locations and
+  people are in this window) is what the region generator will hand over; for now it's hand-written.
+- **The demo** (`?skipmenu=1&story=demo`, the valley): src/story/demo/story.json, marked PLACEHOLDER — Wren
+  the seed-keeper, Harlan the old warden, Ves the company surveyor; branching talks (a choice shown only
+  after talking to Harlan, one only once you've promised); "Promise Wren, then go to the old sluice" done
+  by a choice and a visit; its outcome an overgrow and a mark in the MemoryWorldState, the camp greening in
+  a reveal shot; telling Wren (her unlocked node) wins the run. The opening eases the camera to the camp
+  (the phone's default view of the whole valley put the three markers on top of each other).
+- Tests: scripts/storytest.mjs drives the run and the validator through their APIs in Node (Vite loads the
+  TypeScript; no browser): 19 checks. scripts/storyshot.mjs plays the demo headlessly at 412×915 (markers,
+  the talk, the reveal, the end card).
+- Measured: nothing per frame worth timing — the run works only when a fact is noted (or a `time` edge
+  passes); the badges are a projection and a transform each.
+- The world API's `Sim` type now names `plants` (attachSim always made it; the type left it out).

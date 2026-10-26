@@ -1,0 +1,44 @@
+/* The objective list (run/hud.ts): bottom left, over the lens button (the top has the living-land bar and the hints). */
+.objectives {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 62px);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: min(320px, 62vw);
+  pointer-events: none;
+  z-index: 30;
+}
+#ui > .objectives { pointer-events: none; }
+.objective {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 11px 7px 9px;
+  border-radius: 10px;
+  background: rgba(22, 20, 17, 0.72);
+  border-left: 3px solid #e0c46c;
+  color: #f1ebdd;
+  font-size: 14px;
+  line-height: 1.3;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition: opacity 0.35s, transform 0.35s, border-color 0.3s;
+}
+.objective.in { opacity: 1; transform: none; }
+.objective .mark {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-top: 2px;
+  border-radius: 3px;
+  border: 2px solid #e0c46c;
+}
+.objective.done { border-left-color: #b9d77e; }
+.objective.done .mark { border-color: #b9d77e; background: #b9d77e; }
+.objective.done .mark::after { content: '✓'; display: block; font-size: 11px; line-height: 10px; color: #1b1a16; text-align: center; font-weight: 800; }
+.objective.done .text { text-decoration: line-through; opacity: 0.75; }
+.objective.failed { border-left-color: #d9735e; }
+.objective.failed .mark { border-color: #d9735e; }
+.objective.failed .text { text-decoration: line-through; opacity: 0.6; }

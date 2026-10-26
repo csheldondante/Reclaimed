@@ -12,6 +12,20 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 83 (2026-10-26, `dialog`) — dialog, the run, story cameras (docs/SYSTEMS.md 10, 11, 5)
+
+| id | item | size | status |
+|---|---|---|---|
+| D1 | Dialog (round 83: "get dialogue in and basic cameras so we have a way to communicate what is going on"): src/dialog — a DialogTree played, phone first (bottom panel, typed lines, tap to skip, big answers), choices hidden by their `requires`, effects through onNode/onChoice, the game's controls paused while open | M | done (this commit) |
+| D2 | The run (system 11): src/run — objectives hidden → shown → done/failed, conditions on noted facts, outcomes (flags, attitudes, give, unlock, spawn, endRun, AtlasEvents to the WorldState), the RunRecord; a validator for stories (every reference resolves); the objective list | M | done (this commit) |
+| D3 | Story cameras: frame a speaker, reveal a place or effect, an opening look, follow; interruptible, through the cutaway (Dither, Slice) | M | done (this commit) |
+| D4 | `?story=demo` on the valley: a placeholder story (three characters, branching talks, an objective a choice and a visit complete, an overgrow and a mark in a MemoryWorldState, a reveal shot, an end card) | S | done (this commit) |
+| D5 | Portraits: real pictures (or the unit generator's faces) in the portrait slot; a voice per character (the cast's `voice`) | M | open |
+| D6 | Characters as units: the cast placed by the region generator (the Stage handed over, not hand-written), standing and walking as agents (system 6), with their models; tap a unit to talk | M | open |
+| D7 | The contracts: no AtlasEvent kind for a faction's attitude (SYSTEMS lists `faction-attitude`; world.ts doesn't) — the run keeps the shifts in its deeds; WorldState has no way to record a RunRecord (MemoryWorldState.runs only); Dialog has no node-arrival hook (node effects need one: DialogBox.onNode); an AtlasEvent's place in its region has no field (the demo uses `detail.location`, a story location) — to settle with the GM and places | S | asked |
+| D8 | A hero to follow: the story camera's `follow` on a hero's position (hoverbike session), and `reached` from the hero, not the camera's target | S | open |
+| D9 | The talk's camera on the perspective camera (fly / over the shoulder): frame and reveal only move the fixed camera's target and zoom now | S | open |
+
 ## Rounds 76–78 (2026-10-25, session 5, `places`) — the game's direction: readable places, an overmap
 
 The user stepped back (DECISIONS rounds 76–78): a roguelite on an overmap, hero roles, an LLM game master

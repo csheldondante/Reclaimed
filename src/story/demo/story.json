@@ -1,0 +1,233 @@
+{
+  "id": "demo-placeholder",
+  "title": "PLACEHOLDER — The Dry Sluice",
+  "premise": "PLACEHOLDER, hand-written to exercise the dialog, the run and the story cameras. The GM (branch `gm`) writes SessionStories like this one, offline, from the world's snapshot. A seed-keeper in the dead valley needs the old sluice opened so clean water reaches her seedlings; the company that shut it would rather it stayed shut.",
+  "from": { "worldVersion": 0, "run": 1, "seed": 1 },
+  "locations": [
+    {
+      "id": "camp",
+      "name": "The Seed-keepers' Camp",
+      "region": 0,
+      "kind": "camp",
+      "brief": { "landmarks": ["a ring of planters made from oil drums"] }
+    },
+    {
+      "id": "sluice",
+      "name": "The Old Sluice",
+      "region": 0,
+      "kind": "ruin",
+      "brief": {
+        "rooms": [{ "id": "gatehouse", "kind": "gatehouse", "size": "small" }],
+        "landmarks": ["a rusted sluice gate at the head of the channel"]
+      }
+    },
+    {
+      "id": "lookout",
+      "name": "The Surveyor's Post",
+      "region": 0,
+      "kind": "camp",
+      "brief": { "landmarks": ["a company survey tripod"] }
+    }
+  ],
+  "cast": [
+    {
+      "id": "wren",
+      "name": "Wren",
+      "role": "seed-keeper",
+      "faction": "valley-folk",
+      "location": "camp",
+      "disposition": 0.3,
+      "voice": "quiet, plain words, tired but not beaten",
+      "wants": "clean water for her seedlings",
+      "knows": ["the sluice was shut when the plant closed", "Harlan kept the gate"]
+    },
+    {
+      "id": "harlan",
+      "name": "Harlan",
+      "role": "old sluice warden",
+      "faction": "valley-folk",
+      "location": "camp",
+      "disposition": 0.5,
+      "voice": "slow, fond of the old days",
+      "wants": "to see the gate open once more",
+      "knows": ["how the gate opens", "who shut it"]
+    },
+    {
+      "id": "ves",
+      "name": "Ves",
+      "role": "company surveyor",
+      "faction": "the-company",
+      "location": "lookout",
+      "disposition": -0.2,
+      "voice": "clipped, procedural",
+      "wants": "the poison kept where it is, and no one suing",
+      "knows": ["why the sluice was shut"]
+    }
+  ],
+  "dialogs": [
+    {
+      "id": "wren-talk",
+      "speaker": "wren",
+      "start": "hello",
+      "nodes": {
+        "hello": {
+          "text": "You walked in out of the dust. Not many do any more. I'm Wren — I keep what seeds are left.",
+          "choices": [
+            { "text": "What happened to this valley?", "to": "past" },
+            { "text": "You look like you could use some help.", "to": "help" },
+            {
+              "text": "Harlan says the sluice only needs a strong shove.",
+              "to": "tip",
+              "requires": [{ "kind": "talked", "character": "harlan" }],
+              "effects": { "attitude": [{ "character": "wren", "delta": 0.1 }] }
+            },
+            { "text": "Nothing. Just passing through." }
+          ]
+        },
+        "past": {
+          "text": "The plant upstream poisoned the river. Then the company shut the sluice so the poison would sit still. Nothing's grown since.",
+          "choices": [
+            { "text": "How can I help?", "to": "help" },
+            { "text": "That's hard. Goodbye, Wren." }
+          ]
+        },
+        "tip": {
+          "text": "If Harlan says so, it's true. He kept that gate for forty years.",
+          "choices": [{ "text": "Then tell me what you need.", "to": "help" }]
+        },
+        "help": {
+          "text": "Open the old sluice by the dam. Clean water down the channel, and my seeds have a chance.",
+          "choices": [
+            {
+              "text": "I'll open it.",
+              "to": "promise",
+              "effects": { "flags": { "promised": true }, "attitude": [{ "character": "wren", "delta": 0.3 }] }
+            },
+            {
+              "text": "That's not my problem.",
+              "to": "refuse",
+              "effects": { "flags": { "refused": true }, "attitude": [{ "character": "wren", "delta": -0.3 }] }
+            }
+          ]
+        },
+        "promise": {
+          "text": "Then go — up past the plant, where the channel starts. I'll be ready with the seed trays.",
+          "choices": []
+        },
+        "refuse": {
+          "text": "Then I'll keep carrying water by hand. Until I can't.",
+          "choices": [{ "text": "...wait. Tell me again.", "to": "help" }, { "text": "Goodbye." }]
+        },
+        "after": {
+          "text": "You did it. Hear that? Water, running clean. The planters are drinking already.",
+          "choices": [
+            { "text": "What will you plant first?", "to": "plant" },
+            { "text": "Take care, Wren." }
+          ]
+        },
+        "plant": {
+          "text": "Beans, then willows along the bank to hold it. Come back in a year — you won't know the place.",
+          "choices": []
+        }
+      }
+    },
+    {
+      "id": "harlan-talk",
+      "speaker": "harlan",
+      "start": "hi",
+      "nodes": {
+        "hi": {
+          "text": "Forty years I kept that gate. Rusted shut now, they tell me.",
+          "choices": [
+            { "text": "Can it still be opened?", "to": "can" },
+            { "text": "Who shut it?", "to": "who" },
+            { "text": "Goodbye." }
+          ]
+        },
+        "can": {
+          "text": "A strong shove, the right way. Lean left — always left. Tell Wren I said so.",
+          "effects": { "give": [{ "item": "gate-knack" }] },
+          "choices": [{ "text": "Thanks, Harlan." }]
+        },
+        "who": {
+          "text": "Company men. Their surveyor's still about, up on the rise, writing in a little book.",
+          "choices": [
+            { "text": "Can it still be opened?", "to": "can" },
+            { "text": "I'll have a word with them." }
+          ]
+        }
+      }
+    },
+    {
+      "id": "ves-talk",
+      "speaker": "ves",
+      "start": "hi",
+      "nodes": {
+        "hi": {
+          "text": "This land is company property. The sluice stays shut: the poison stays put, nobody downstream sues.",
+          "choices": [
+            { "text": "The valley is dying.", "to": "dying" },
+            {
+              "text": "I'm opening it anyway.",
+              "to": "defy",
+              "requires": [{ "kind": "flag", "flag": "promised" }],
+              "effects": { "attitude": [{ "faction": "the-company", "delta": -0.2 }] }
+            },
+            { "text": "Fair enough." }
+          ]
+        },
+        "dying": {
+          "text": "The valley was dead when we bought it. That's why we bought it.",
+          "choices": []
+        },
+        "defy": {
+          "text": "Then you'll have the company to answer to. I'm writing your name down.",
+          "choices": []
+        }
+      }
+    }
+  ],
+  "objectives": [
+    {
+      "id": "meet",
+      "text": "Find someone alive in the valley (tap a marker)",
+      "when": [],
+      "done": [{ "kind": "talked", "character": "wren" }],
+      "outcome": {}
+    },
+    {
+      "id": "sluice",
+      "text": "Promise Wren, then go to the old sluice by the dam",
+      "location": "sluice",
+      "when": [{ "kind": "objective", "id": "meet", "state": "done" }],
+      "done": [
+        { "kind": "chose", "dialog": "wren-talk", "node": "help", "choice": 0 },
+        { "kind": "reached", "location": "sluice" }
+      ],
+      "outcome": {
+        "atlas": [
+          { "kind": "overgrow", "regions": [0], "magnitude": 0.3, "detail": { "location": "camp" }, "cause": { "by": "story" } },
+          { "kind": "mark", "regions": [0], "magnitude": 1, "detail": { "name": "Wren's Green", "kind": "garden", "location": "camp" }, "cause": { "by": "story" } }
+        ],
+        "flags": { "sluice_open": true },
+        "attitude": [
+          { "character": "wren", "delta": 0.3 },
+          { "faction": "valley-folk", "delta": 0.3 },
+          { "faction": "the-company", "delta": -0.3 }
+        ],
+        "unlock": [{ "dialog": "wren-talk", "node": "after" }]
+      }
+    },
+    {
+      "id": "tell",
+      "text": "Go back and tell Wren",
+      "location": "camp",
+      "when": [{ "kind": "objective", "id": "sluice", "state": "done" }],
+      "done": [{ "kind": "talked", "character": "wren", "node": "after" }],
+      "outcome": { "endRun": "won" }
+    }
+  ],
+  "happenings": [
+    { "when": [{ "kind": "time", "after": 600 }], "effects": { "flags": { "dusk": true } } }
+  ]
+}
