@@ -5699,3 +5699,25 @@ classed sea / river (a source) / other / dry.
 - Rivers now go to the `rivers` branch's agent; these are its baseline and
   tools (scripts/waterrest.mjs, scripts/breach.mjs).
 
+### perfopt — lazy caves, step 1 (`?caves=mouths`, default off); the band's back faces culled (`?bandcull=1`, no gain)
+
+- The coordinator's lazy caves, travel first. With `?caves=mouths`, the atlas's columns
+  (forms.wgsl colFinish, `LAZY_CAVES`) make a column's caves only where they can
+  open to the air: where some neighbour's ground is under the rock kept over the caves
+  (`lowN < rockTop - caveDepth`). Inside the hills it makes none, so no cave noise is
+  evaluated and no runs are written. Why: the caves nobody can see cost generation, mesh
+  and memory in every streamed column.
+- Measured (driveprofile, ride, desktop, GPU shared with other agents): the atlas's
+  generation passes were already small on the ride, so there's no clear win there. The
+  G-buffer went 0.26 to 0.20 ms in one pair; a second pair was throttled. Fewer runs
+  should help the mesh and the band most where the hills are deep. That isn't measured
+  separately yet.
+- Look (A/B screenshots at the spawn, 600x600): the same except for one enclosed cave
+  that showed in the window's cut edge. Elsewhere there were only water-shimmer
+  differences (mean diff 1.6). The cost: enclosed caves are gone, so the cutaway and
+  digging into a hill find solid rock. Step 2, still to do: carve them in later, near
+  the player (or when a dig reaches one).
+- `?bandcull=1` (the band's G-buffer draw culls back faces) is still in. On a contended
+  GPU, two drawbench runs gave draw/ref 26.3 to 22.5 and 11.3 to 14.0, so no measurable
+  gain. It stays off. The band is vertical (above and below the window), so the LOD
+  rings never cover it and there are no band draws to skip for them.
