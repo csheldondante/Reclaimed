@@ -39,6 +39,12 @@ each was implemented.
   "Can rock still tip and fall? … I want to topple spires of stone."
 - Performance is "sufficient for now"; the perf agent goes on in the
   background (lazy caves); the focus is usability and features.
+- Nothing is simulated on arrival: "all generators make a steady state so when
+  we arrive nothing is simulated until the player interacts with it or the
+  session otherwise requests it to unfreeze". The water: "use SDF for the
+  water to make waves from large bodies come into the shore"; "rivers should
+  flow downstream and water in the ocean should be waves coming into the
+  shore".
 - What the sim must do (P11): water's steady state is cached, so no tick is
   needed most of the time: "run simulation on demand and cache when it has
   run for a bit and localize real simulation to player actions."

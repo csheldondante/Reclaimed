@@ -5551,3 +5551,15 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   crater, take: the op in the event's z) — its radius cut. rockshot.mjs:
   the meteor's own event (a crater 12 across) at a spire's foot frees its
   top (44 cells, a body).
+- Nothing wakes for being near (the user: "When I enter a new area water
+  rushes in and my understanding was that all generators make a steady state
+  so when we arrive nothing is simulated until the player interacts with it
+  or the session otherwise requests it to unfreeze"). Sleep kept the ring
+  round the camera's target (a game's unit) awake — every new area woke as
+  it came into view. Now the player's whereabouts wake nothing (sleep.ts
+  WAKE_NEAR; `?wakenear=1` as before): what's done there does (the events)
+  and the storms raining. Found with it: land come in is drowsy a moment to
+  make its derived fields (the surface, the render fields), 0.25 s — but a
+  slide holds the sim, so the moment passed with no tick: the ring had been
+  making them. Drowsy now for 8 of the sim's ticks (Sleep.update's `tick`).
+  atlasworldtest 6/6 (riding: 0 of 256 chunks awake; every column top read).

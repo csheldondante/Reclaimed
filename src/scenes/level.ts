@@ -1318,7 +1318,7 @@ export class LevelScene implements Scene {
     void this.stream?.update();
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
     if (this.sleep) {
-      globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms);
+      globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
