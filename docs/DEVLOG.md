@@ -5457,3 +5457,28 @@ frame (15.0 before the merge, rings and all).
   is the edge column, going on) — no wall; the rings cover what's past it.
   Without rings (`?lod=0`, the valley, the noise-streamed level) the wall
   stays: an open edge there shows the ground's shell from under.
+
+## Round 83 — the deferred pipelines compiled off the main thread; one copy of the phone's flags (perfopt)
+
+Why: the hoverbike session found a ~1.5 s frame a second after a level
+loads since the merge (c014346): the deferred terrain's four pipelines
+(the G-buffer's three, the resolve — the heavy look module) were made on
+the first frame that drew deferred (`meshDefMake`), compiled then.
+
+- They're made with createRenderPipelineAsync when the renderer is built
+  (`meshPipesReady`; the terrain cache's on its first frame on, `tcPipesMake`),
+  and WorldCore.warmup awaits `Renderer.ready()` with its ticks, so a scene's
+  first frame has them; until they're in, the terrain draws forward.
+  Measured (scratch loadstall.mjs: the frames in the 2 s after waiting 1 s
+  once the level is up, valley, q=high, desktop): before, 2–8 frames in the
+  2 s (one frame of ~1.5 s); after, 199–204 frames, worst 11–30 ms; 0cbcf4b
+  (before perfopt) 192–201, worst 19–40. The atlas at the phone tier: 90
+  frames, worst 41 ms. (An earlier stall, in the first second after the
+  level is up, ~0.9 s, is there at 0cbcf4b too: not this.)
+- src/phone-flags.ts (`LITE_SET`, `SIM_SET`, `isPhoneTier(q)`,
+  `expandPhoneFlags(q, phone?)`, `applyPhoneFlags(phone?)`) and
+  src/phone-flags-boot.ts (applies it): main.ts imports the boot first, so the
+  URL is expanded before any module reads it; index.html's inline copy is
+  gone. Another page (the hoverbike) imports the boot first, or calls
+  applyPhoneFlags with its own tier rule.
+

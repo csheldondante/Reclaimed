@@ -139,6 +139,8 @@ export class WorldCore {
 
   /** Settle the generated world with the real systems before anyone looks. */
   async warmup(ticks: number, filter?: (s: SimSystem) => boolean): Promise<void> {
+    // (perfopt: the renderer's deferred pipelines, compiled off the main thread meanwhile — in before the first frame)
+    const pipes = this.renderer.ready();
     this.sim.prime(this.globals);
     for (let i = 0; i < ticks; i++) {
       // support needs a few ticks to propagate before collapse can be judged
@@ -146,7 +148,7 @@ export class WorldCore {
       this.sim.step(this.globals, filter);
     }
     this.globals.collapseEnabled = true;
-    await this.host.gpu.device.queue.onSubmittedWorkDone();
+    await Promise.all([this.host.gpu.device.queue.onSubmittedWorkDone(), pipes]);
   }
 
   /** Advance light, weather and the fixed-step simulation. Returns ticks run. */

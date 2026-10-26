@@ -9,30 +9,6 @@
   <body>
     <canvas id="world"></canvas>
     <div id="ui"></div>
-    <script>
-      // (perfopt, round 83) The phone's performance flags (docs/DEVLOG.md round 83; the user: "About 16ms for p95"),
-      // the low tier's defaults — each only where the URL doesn't give it (so any one can be turned back, e.g.
-      // &settle=1 or &tufts=1), all of them off with ?phone=0. Expanded here, before any module reads the URL.
-      // ?lite=1 (the render's share alone) still works on any tier.
-      (function () {
-        var q = new URLSearchParams(location.search);
-        var low = (q.get('q') || 'low') === 'low' && q.get('phone') !== '0';
-        if (q.get('lite') !== '1' && !low) return;
-        var set = { tufts: '0', shadowcache: '4', prepevery: '2', bandh: '2', shadowsize: '512' };
-        if (low) {
-          set.settle = '0';
-          set.inplace = '1';
-          set.sleepmore = '1';
-        }
-        var changed = false;
-        for (var k in set)
-          if (!q.has(k)) {
-            q.set(k, set[k]);
-            changed = true;
-          }
-        if (changed) history.replaceState(null, '', location.pathname + '?' + q.toString() + location.hash);
-      })();
-    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

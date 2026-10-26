@@ -168,7 +168,13 @@ export class Renderer {
   private meshPipes?: { g: GPURenderPipeline; gBack: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline };
   private meshModule?: GPUShaderModule;
   private meshResources!: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
-  private meshDefMake?: () => { g: GPURenderPipeline; gBack: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline };
+  /** (perfopt) the deferred pipelines, compiled off the main thread from the start (createRenderPipelineAsync): the
+   *  terrain draws forward until they're in — compiled on first use they froze the frame ~1.5 s after a load */
+  private meshPipesReady?: Promise<void>;
+  /** the pipelines compiled off the main thread, in (a scene awaits it while it loads: WorldCore.warmup) */
+  ready(): Promise<void> {
+    return this.meshPipesReady ?? Promise.resolve();
+  }
   private meshResolveLayout?: GPUBindGroupLayout;
   /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
   readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
@@ -492,9 +498,9 @@ export class Renderer {
         { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
       );
       this.meshResolveLayout = resolveLayout;
-      this.meshDefMake = () => {
+      this.meshPipesReady = (async () => {
         const g = (entryPoint: string, cullMode: GPUCullMode = 'none') =>
-          device.createRenderPipeline({
+          device.createRenderPipelineAsync({
             label: `mesh-${entryPoint}-${cullMode}`,
             layout: meshPl,
             vertex: { module: meshModule, entryPoint: 'vsMeshG' },
@@ -502,11 +508,11 @@ export class Renderer {
             primitive: { topology: 'triangle-list', cullMode, frontFace: MESH_FRONT },
             depthStencil: depthStencil(true),
           });
-        return {
-          g: g('fsMeshG'),
-          gBack: g('fsMeshG', 'back'),
-          gCut: g('fsMeshGCut'),
-          resolve: device.createRenderPipeline({
+        const [gp, gBack, gCut, resolve] = await Promise.all([
+          g('fsMeshG'),
+          g('fsMeshG', 'back'),
+          g('fsMeshGCut'),
+          device.createRenderPipelineAsync({
             label: 'mesh-resolve',
             layout: device.createPipelineLayout({ bindGroupLayouts: [resolveLayout] }),
             vertex: { module: meshModule, entryPoint: 'vsFull' },
@@ -514,8 +520,11 @@ export class Renderer {
             primitive: { topology: 'triangle-list' },
             depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' },
           }),
-        };
-      };
+        ]);
+        this.meshPipes = { g: gp, gBack, gCut, resolve };
+        // (the terrain's cached layer's, when it's asked for: ?tcache)
+        if (Renderer.opts.tcache > 0) await this.tcPipesMake();
+      })();
       this.meshPreMake = () => {
         const z = (entryPoint: string) =>
           device.createRenderPipeline({
@@ -751,7 +760,8 @@ export class Renderer {
 
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
     if (tcMode === 'refresh') this.encodeTerrainCache(enc);
-    const def = !tcMode && this.meshPipe && !SKIP.has('mesh') && Renderer.opts.defer ? this.encodeGBuffer(enc, cam) : undefined;
+    // (the deferred pipelines compile off the main thread from the start: forward until they're in)
+    const def = !tcMode && this.meshPipe && this.meshPipes && !SKIP.has('mesh') && Renderer.opts.defer ? this.encodeGBuffer(enc, cam) : undefined;
     // (perfopt: nothing reads the depth after this pass, nor the pick target unless a pick is asked for — on a
     // tile-based GPU a discarded attachment never leaves the tile: 12 bytes a pixel not written out every frame)
     const keepPick = !!this.pickRequest && !this.pickBusy;
@@ -881,7 +891,9 @@ export class Renderer {
    */
   private terrainCacheMode(cam: Camera): 'reuse' | 'refresh' | false {
     const N = Renderer.opts.tcache | 0;
-    if (N <= 0 || !Renderer.opts.defer || !this.meshPipe || SKIP.has('mesh') || cam.fly || cutOn(cam)) return false;
+    // (its pipelines asked for at the first frame it's on, compiled off the main thread; till then it's off)
+    if (N > 0 && !this.tcPipes) void this.tcPipesMake();
+    if (N <= 0 || !Renderer.opts.defer || !this.meshPipes || !this.tcPipes || !this.meshPipe || SKIP.has('mesh') || cam.fly || cutOn(cam)) return false;
     const f = new Float32Array(this.camData);
     const W = this.depth!.width;
     const H = this.depth!.height;
@@ -914,29 +926,7 @@ export class Renderer {
     const M = TC_MARGIN;
     const LW = W + 2 * M;
     const LH = H + 2 * M;
-    this.meshPipes ??= this.meshDefMake!();
-    if (!this.tcPipes) {
-      const compLayout = makeLayout(dev, 'tcache', { 0: 'tex', 1: 'utex', 2: 'tex', 3: 'uniform' }, GPUShaderStage.FRAGMENT);
-      const module = makeModule(dev, 'tcache', [tcacheWgsl]);
-      this.tcPipes = {
-        compLayout,
-        comp: dev.createRenderPipeline({
-          label: 'tcache-composite',
-          layout: dev.createPipelineLayout({ bindGroupLayouts: [compLayout] }),
-          vertex: { module, entryPoint: 'vsComp' },
-          fragment: { module, entryPoint: 'fsComp', targets: [{ format: this.colorFormat }, { format: PICK_FORMAT }] },
-          primitive: { topology: 'triangle-list' },
-          depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'always' },
-        }),
-        resolve: dev.createRenderPipeline({
-          label: 'tcache-resolve',
-          layout: dev.createPipelineLayout({ bindGroupLayouts: [this.meshResolveLayout!] }),
-          vertex: { module: this.meshModule!, entryPoint: 'vsFull' },
-          fragment: { module: this.meshModule!, entryPoint: 'fsMeshResolveC', targets: [{ format: this.colorFormat }, { format: PICK_FORMAT }, { format: 'r32float' }] },
-          primitive: { topology: 'triangle-list' },
-        }),
-      };
-    }
+    const tcPipes = this.tcPipes!;
     let T = this.tc;
     if (!T || T.tex.color.width !== LW || T.tex.color.height !== LH || T.band !== this.band) {
       if (T) for (const t of Object.values(T.tex)) t.destroy();
@@ -966,7 +956,7 @@ export class Renderer {
         rGroups: srcs.map((s) =>
           dev.createBindGroup({ label: 'tcache-resolve', layout: this.meshResolveLayout!, entries: [...this.meshEntries(s, camB), { binding: 40, resource: g0v }, { binding: 41, resource: g1v }] }),
         ),
-        comp: makeBindGroup(dev, 'tcache', this.tcPipes.compLayout, { 0: tex.color.createView(), 1: tex.pick.createView(), 2: tex.depth.createView(), 3: uni }),
+        comp: makeBindGroup(dev, 'tcache', tcPipes.compLayout, { 0: tex.color.createView(), 1: tex.pick.createView(), 2: tex.depth.createView(), 3: uni }),
         band: this.band,
         m: new Float32Array(16),
         frame: 0,
@@ -986,6 +976,36 @@ export class Renderer {
     for (const i of [0, 4, 8, 12]) c[i] *= W / LW;
     for (const i of [1, 5, 9, 13]) c[i] *= H / LH;
     dev.queue.writeBuffer(T.cam, 0, c);
+  }
+
+  /** (perfopt, tcache) the layer's pipelines, compiled off the main thread (made when ?tcache is first on) */
+  private tcPipesBusy?: Promise<void>;
+  private tcPipesMake(): Promise<void> {
+    if (this.tcPipesBusy) return this.tcPipesBusy;
+    const dev = this.device;
+    this.tcPipesBusy = (async () => {
+      const compLayout = makeLayout(dev, 'tcache', { 0: 'tex', 1: 'utex', 2: 'tex', 3: 'uniform' }, GPUShaderStage.FRAGMENT);
+      const module = makeModule(dev, 'tcache', [tcacheWgsl]);
+      const [comp, resolve] = await Promise.all([
+        dev.createRenderPipelineAsync({
+          label: 'tcache-composite',
+          layout: dev.createPipelineLayout({ bindGroupLayouts: [compLayout] }),
+          vertex: { module, entryPoint: 'vsComp' },
+          fragment: { module, entryPoint: 'fsComp', targets: [{ format: this.colorFormat }, { format: PICK_FORMAT }] },
+          primitive: { topology: 'triangle-list' },
+          depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'always' },
+        }),
+        dev.createRenderPipelineAsync({
+          label: 'tcache-resolve',
+          layout: dev.createPipelineLayout({ bindGroupLayouts: [this.meshResolveLayout!] }),
+          vertex: { module: this.meshModule!, entryPoint: 'vsFull' },
+          fragment: { module: this.meshModule!, entryPoint: 'fsMeshResolveC', targets: [{ format: this.colorFormat }, { format: PICK_FORMAT }, { format: 'r32float' }] },
+          primitive: { topology: 'triangle-list' },
+        }),
+      ]);
+      this.tcPipes = { compLayout, comp, resolve };
+    })();
+    return this.tcPipesBusy;
   }
 
   /** (perfopt, tcache) The terrain into its layer: the G-buffer of the chunks near the view, then the resolve. */
@@ -1035,7 +1055,7 @@ export class Renderer {
   private encodeGBuffer(enc: GPUCommandEncoder, cam: Camera): { resolve: GPURenderPipeline; groups: GPUBindGroup[] } {
     const depth = this.depth!;
     if (!this.meshDef || this.meshDef.tex[0].width !== depth.width || this.meshDef.tex[0].height !== depth.height) {
-      const p = this.meshDef ?? { ...(this.meshPipes ??= this.meshDefMake!()), groups: [], tex: [] };
+      const p = this.meshDef ?? { ...this.meshPipes!, groups: [], tex: [] };
       for (const t of p.tex) t.destroy();
       const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
       p.tex = [
