@@ -158,3 +158,9 @@ ticking (Q31) is the stream's next step and applies to the atlas level as
 it is. Round 69 (atlas) slides the window in z too (`Streamer.oz`,
 `outside`): the stream level doesn't use it (its land has no height), so
 `stream` merging under `atlas` stays as it is.
+
+## Stable checkpoints
+
+| Tag | Commit | Branch | What |
+|---|---|---|---|
+| `stable-r83-perf` | `a0d8bea` | `places` | Round 83, 2026-10-26: the user, testing it — "this is much better! I think this is sufficient for performance for now" (perfopt's deferred shading and phone set, the LOD rings filling unbuilt chunks, the mesh held during slides). The revert point if later work regresses; after it came the rings' cuts and the rock collapse (whose first versions froze for seconds). |
