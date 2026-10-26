@@ -28,7 +28,7 @@ fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE |
 // a chunk (near the view), then (round 73) four a mesh range: the translation its vertices are drawn
 // with — the streamed window slid since they were made (fieldmesh.ts shift)
 const CHUNK0: u32 = 16u;
-const CSTRIDE: u32 = 12u;
+const CSTRIDE: u32 = 13u;
 fn offBase() -> u32 { return CHUNK0 + MR.n.x * MR.n.y * (CSTRIDE + 1u); }
 
 /** Smooth value noise 0..1 (trilinear between hashed lattice values). */

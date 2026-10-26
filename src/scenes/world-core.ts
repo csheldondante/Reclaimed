@@ -27,6 +27,8 @@ export interface Quality {
   particles: number;
   /** the agents' field relax sweeps a tick (default 8; agents.ts `sweeps`) */
   agentSweeps?: number;
+  /** field mesh chunks rebuilt a frame at most (round 81: a phone's a slide's rebuilds spread over more frames; default 8) */
+  meshSlots?: number;
   /** the sun's shadow map's side, texels (default 2048) */
   shadowSize?: number;
 }
@@ -97,7 +99,7 @@ export class WorldCore {
     this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     this.sim = new Simulation(device, this.world, host.profiler);
-    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize, meshRoom);
+    this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize, meshRoom, host.quality.meshSlots);
     this.structures = new Structures(device, this.world);
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h);
     this.places = new Places(device, this.world, this.sim.placeOps, this.weather);

@@ -4763,3 +4763,22 @@ in theory we know every interesting boundary".
   is the other half of the stutter; interval assets (P8).
 
 atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8, atlasworldtest 6/6.
+
+## Round 81 — the mesh skips the rock under the ground; fewer rebuilds a frame on low (places)
+
+Why: the user still has a hiccup riding straight on the phone — a slide's
+mesh rebuilds (up to 8 chunks a frame, each sampled from the bedrock up).
+
+- Each field-mesh chunk keeps its lowest boundary (state word 12; CSTRIDE
+  13): the top of the solid joined to the bedrock, the least of its columns'
+  (over the bedrock's top, so the band's negative z order). A sample 3 under
+  it is solid without the field. Not under a structure (a buried one's faces
+  are the field's). Desktop, the window's passes: sample 0.4–0.6 → 0.21 ms,
+  verts 0.6–1.0 → 0.3 ms a frame riding.
+- Quality `meshSlots`: low 3, medium 5 (high 8): a slide's rebuilds spread
+  over more frames on a phone.
+- worldapitest's "smooth heightAt matches the field mesh" unchanged (4 000
+  vertices).
+- Next (P9): a sample column's active heights from its neighbourhood's
+  intervals (sky and the rock between cave layers skipped too), walls
+  meshed coarser for a camera from above.

@@ -159,6 +159,8 @@ export class Renderer {
     shadowSize = SHADOW_SIZE,
     /** the field mesh's room a chunk, times its default */
     meshRoom = 1,
+    /** field mesh chunks rebuilt a frame (quality `meshSlots`; round 81) */
+    meshSlots?: number,
   ) {
     const N = world.cells;
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
@@ -184,7 +186,7 @@ export class Renderer {
     this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     const format = this.colorFormat;
-    this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom);
+    this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom, undefined, meshSlots);
     // (a texel when there's no shadow pass: the draw shaders still bind one)
     const ss = this.fieldMesh.on ? shadowSize : 1;
     this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });

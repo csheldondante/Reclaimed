@@ -26,7 +26,7 @@ const CHUNK = 32;
 const ROW_H = Math.sqrt(3) / 2;
 /** fieldmesh.wgsl CHUNK0, CSTRIDE (u32s) */
 const CHUNK0 = 16;
-const CSTRIDE = 12;
+const CSTRIDE = 13;
 /** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
 const TOP_PAD = 4;
 
@@ -100,6 +100,8 @@ export class FieldMesh {
     room = 1,
     /** a band's (round 79); the window's own when not given */
     private src?: MeshSource,
+    /** chunks rebuilt a frame (the window's: quality `meshSlots`, round 81) */
+    slots?: number,
   ) {
     const q = new URLSearchParams(location.search);
     const arg = q.get('mesh');
@@ -121,7 +123,7 @@ export class FieldMesh {
     this.side = Math.round(CHUNK / h);
     this.nz = Math.ceil(((src?.zSpan ?? world.zMax) + 2) / h) + 2;
     // rebuild slots a frame: their scratch is the big cost in memory
-    this.slots = src?.slots ?? (h >= 1 ? 8 : 3);
+    this.slots = src?.slots ?? (h >= 1 ? (slots ?? 8) : 3);
     // room per chunk: ~1.3k vertices per 1000 columns at spacing 1 (~5k at
     // 0.5; DEVLOG 2026-10-22), a chunk ~1.2k columns, four times that for
     // cliffs and caves

@@ -47,7 +47,9 @@
 // per chunk (from CHUNK0, CSTRIDE each): [0..4] its drawIndexedIndirect args
 // (index count, 1, first index, base vertex, 0), [5] the hash it was built
 // from, [6] the hash it will be, [7] vertices so far, [8] its top (f32 bits),
-// [9] 1 when it ran out of room; after the chunks, one word each: 1 when it's
+// [9] 1 when it ran out of room, [12] (round 81) its lowest boundary over the bedrock's top (f32 bits: the
+// top of the solid joined to the bedrock, the least of its columns' — the samples under it, less 3, are
+// solid without the field); after the chunks, one word each: 1 when it's
 // near the view (the CPU writes them; only those are rebuilt, the rest when
 // they come into view)
 @group(0) @binding(9) var<storage, read_write> state: array<atomic<u32>>;
@@ -150,6 +152,7 @@ fn rangeOf(c: u32) -> u32 { return atomicLoad(&state[cbase(c) + 10u]); }
 
 var<workgroup> wgHash: atomic<u32>;
 var<workgroup> wgTop: atomic<u32>;
+var<workgroup> wgBot: atomic<u32>;
 
 fn mixHash(h: u32, v: u32) -> u32 { return (h ^ v) * 16777619u; }
 
@@ -176,6 +179,7 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   if (li == 0u) {
     atomicStore(&wgHash, 0u);
     atomicStore(&wgTop, 0u);
+    atomicStore(&wgBot, bitcast<u32>(1e9));
   }
   workgroupBarrier();
   // the columns whose fields reach its samples (two cells of margin)
@@ -220,6 +224,16 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
       h = mixHash(mixHash(mixHash(h, u32(ivZ0(v) * 16.0 + 0.5)), u32(ivZ1(v) * 16.0 + 0.5)), v.z & 0xffu);
       top = max(top, ivZ1(v));
     }
+    // (the top of the solid joined to the bedrock, as colDist sees it: field materials, touching runs one)
+    var hb = MR.zb.y;
+    for (var i = 0u; i < cs.y; i++) {
+      let v = layers[cs.x + i];
+      if (ivEmpty(v)) { break; }
+      if (!fieldMat(ivMat(v))) { continue; }
+      if (ivZ0(v) - hb > 1e-3) { break; }
+      hb = max(hb, ivZ1(v));
+    }
+    atomicMin(&wgBot, bitcast<u32>(max(hb - MR.zb.y, 0.0)));
     sum += h;
   }
   atomicAdd(&wgHash, sum);
@@ -227,10 +241,12 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   workgroupBarrier();
   if (li != 0u || !vis) { return; }
   var h = atomicLoad(&wgHash);
-  // and the structures over it (placed, moved)
+  // and the structures over it (placed, moved) — and none skipped under them (a buried one's faces are the field's)
+  var bot = atomicLoad(&wgBot);
   for (var s = 0u; s < MAX_STRUCTS; s++) {
     let f = frames[s];
     if (f.d.x == 0u || f.b.z < rc.x - 2.0 || f.b.x > rc.z + 2.0 || f.b.w < rc.y - 2.0 || f.b.y > rc.w + 2.0) { continue; }
+    bot = 0u;
     h = mixHash(h, s + 1u);
     for (var k = 0u; k < 4u; k++) { h = mixHash(mixHash(h, bitcast<u32>(f.a[k])), bitcast<u32>(f.q[k])); }
   }
@@ -245,6 +261,7 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   let ob = offBase() + rangeOf(c) * 4u;
   for (var k = 0u; k < 3u; k++) { atomicStore(&state[ob + k], 0u); }
   atomicStore(&state[b + 8u], atomicLoad(&wgTop));
+  atomicStore(&state[b + 12u], bot);
   atomicStore(&state[b], 0u);
   atomicStore(&state[b + 7u], 0u);
   atomicStore(&state[b + 9u], 0u);
@@ -261,9 +278,9 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
 fn sideN() -> u32 { return MR.k.x + 3u; }
 fn slotSamples() -> u32 { return sideN() * sideN() * MR.n.z; }
 
-struct Job { ok: bool, c: u32, slot: u32, l: vec3<u32>, top: f32, r: u32 };
+struct Job { ok: bool, c: u32, slot: u32, l: vec3<u32>, top: f32, r: u32, bot: f32 };
 
-var<workgroup> wgJob: vec3<u32>;
+var<workgroup> wgJob: vec4<u32>;
 var<workgroup> wgN: atomic<u32>;
 var<workgroup> wgBase: u32;
 
@@ -278,11 +295,13 @@ fn job(id: vec3<u32>, li: u32) -> Job {
     if (j.slot < min(atomicLoad(&state[0]), MR.k.y)) { c = atomicLoad(&state[1u + j.slot]); }
     var top = 0u;
     var r = 0u;
+    var bot = 0u;
     if (c != NONE) {
       top = atomicLoad(&state[cbase(c) + 8u]);
       r = rangeOf(c);
+      bot = atomicLoad(&state[cbase(c) + 12u]);
     }
-    wgJob = vec3<u32>(c, top, r);
+    wgJob = vec4<u32>(c, top, r, bot);
     atomicStore(&wgN, 0u);
   }
   workgroupBarrier();
@@ -290,6 +309,7 @@ fn job(id: vec3<u32>, li: u32) -> Job {
   j.c = w.x;
   j.top = bitcast<f32>(w.y);
   j.r = w.z;
+  j.bot = MR.zb.y + bitcast<f32>(w.w);
   j.ok = j.c != NONE && all(j.l < vec3<u32>(sideN(), sideN(), MR.n.z));
   return j;
 }
@@ -330,9 +350,10 @@ fn sampleField(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invo
   let j = job(id, li);
   if (!j.ok) { return; }
   let p = samplePos(j, j.l);
-  // (above everything in the chunk: air)
+  // (above everything in the chunk: air; round 81: 3 under its lowest boundary, solid — no field: the deep
+  // rock under the ground was most of a rebuild's samples)
   var d = FAR;
-  if (p.z <= j.top + 2.0) { d = field(p); }
+  if (p.z < j.bot - 3.0) { d = -FAR; } else if (p.z <= j.top + 2.0) { d = field(p); }
   scratch[sampleIdx(j, j.l)] = bitcast<u32>(d);
 }
 

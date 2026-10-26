@@ -14,8 +14,8 @@ import { PerfOverlay } from './ui/perf-overlay';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
-  low: { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2, particles: 16384, agentSweeps: 2, shadowSize: 1024 },
-  medium: { renderScale: 0.75, maxDpr: 1.5, rain: 3000, maxTicksPerFrame: 3, particles: 32768, agentSweeps: 4 },
+  low: { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2, particles: 16384, agentSweeps: 2, shadowSize: 1024, meshSlots: 3 },
+  medium: { renderScale: 0.75, maxDpr: 1.5, rain: 3000, maxTicksPerFrame: 3, particles: 32768, agentSweeps: 4, meshSlots: 5 },
   high: { renderScale: 1, maxDpr: 2, rain: 6000, maxTicksPerFrame: 4, particles: 65536, agentSweeps: 8 },
 };
 
