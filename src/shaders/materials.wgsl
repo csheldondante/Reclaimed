@@ -31,6 +31,7 @@ const MAT_LEAFLIT: u32 = 26u;
 const MAT_ICE: u32 = 27u;
 const MAT_CRYSTAL: u32 = 28u;
 const MAT_LOG: u32 = 29u;
+const MAT_QUARTZ: u32 = 36u;
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 

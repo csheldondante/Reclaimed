@@ -362,6 +362,11 @@ api/cutaway.ts), each on its own:
   floor between the point and the eye gives a goal azimuth (the nearest
   clear one in 5° steps, 10° on), looked at again every 0.15 s;
   `Camera.azimuth` turns to it on a critically damped spring (≤ 2.2 rad/s).
+  `Orbit.prefer`
+  ({ az, dead, firm? }, set each frame: a game's heading) draws the view
+  back within `dead` of `az` while the point is seen (twice as firm past
+  `firm`) and starts the clear-angle search from that zone;
+  `Orbit.seen(x, y, floor, az)` is the test, for a game's own rules.
 - `Dither.see(id, x, y, z, r)` / `surface(id, lo, hi)` / `update(dt)`: up
   to 4 points kept seen (a hole opens round one while something hides it)
   and up to 4 boxes that limit what may be dithered.

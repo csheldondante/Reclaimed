@@ -21,6 +21,17 @@ each was implemented.
 - LOD: "I want some sort of LOD so that I can zoom out and still see more of
   the map loaded … things pop in a lot right now". Heightfield rings
   (a clipmap) chosen over mipmapped voxel columns; on `places`.
+- The cameras, from the hoverbike's playtest (relayed by its session): the
+  chase view and over-the-shoulder (the perspective camera) both beat the
+  Puck; the cutaway's dither and turning work well ("they love the
+  cliffs"); over the shoulder the far land's LOD looks bad. The chase view
+  settles within 30° of behind the bike (springy past 30°, firmer past
+  45°) so a bend doesn't hide a dead end: `Orbit.prefer`.
+- The giant crystals should look faceted, drawn as meshes like the rest of
+  the terrain rather than see-through boxes column by column (the user's
+  suggestion, via the hoverbike).
+- The perf branch on the phone: "crushing it. About 16ms for p95!"
+  (deferred, lite=1, settle=0, inplace=1, sleepmore=1).
 - What the sim must do (P11): water's steady state is cached, so no tick is
   needed most of the time: "run simulation on demand and cache when it has
   run for a bit and localize real simulation to player actions."

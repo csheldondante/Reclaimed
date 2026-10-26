@@ -134,6 +134,13 @@ export class Orbit {
   maxSpeed = 2.2;
   /** the azimuth it's turning to; null at rest */
   goal: number | null = null;
+  /**
+   * (round 83, the hoverbike: "settle within 30° of behind the bike") A preferred azimuth: while the point
+   * is seen, the view is drawn back within `dead` of `az` (radians) — on the spring, twice as firm past
+   * `firm`; when it's hidden, the clear angle nearest that zone is taken. Set it each frame (a heading
+   * moves); null: none, the view stays where it's turned to.
+   */
+  prefer: { az: number; dead: number; firm?: number } | null = null;
   private speed = 0;
   private look = 0;
   private sight: Sight;
@@ -153,7 +160,9 @@ export class Orbit {
       this.look = 0.15;
       this.choose(x, y, floor);
     }
-    const w = this.rate;
+    const pf = this.prefer;
+    const far = pf?.firm !== undefined && Math.abs(wrap(cam.azimuth - pf.az)) > pf.firm;
+    const w = this.rate * (far ? 2 : 1);
     if (this.goal !== null) {
       const d = wrap(this.goal - cam.azimuth);
       this.speed += (w * w * d - 2 * w * this.speed) * dt;
@@ -166,24 +175,44 @@ export class Orbit {
     cam.azimuth = wrap(cam.azimuth + this.speed * dt);
   }
 
-  /** The goal: kept while the point's seen from it; else the nearest angle (5° steps either way) it is, and 10° on. */
+  /**
+   * The goal: kept while the point's seen from it (drawn into the preferred zone, when there is one, if it's
+   * seen from there); else the nearest angle (5° steps either way) it is, and 10° on — nearest the preferred
+   * zone when there is one.
+   */
   private choose(x: number, y: number, floor: number): void {
     const from = this.goal ?? this.camera.azimuth;
-    const h = this.sight.hiddenBy(x, y, floor + 1.2, floor, from);
-    if (h === null || h <= this.large) return;
+    const pf = this.prefer;
+    // (the nearest angle in the preferred zone)
+    const into = (a: number) => {
+      if (!pf) return a;
+      const d = wrap(a - pf.az);
+      return Math.abs(d) <= pf.dead ? a : wrap(pf.az + Math.sign(d) * pf.dead);
+    };
+    if (this.seen(x, y, floor, from)) {
+      const z = into(from);
+      if (z !== from && this.seen(x, y, floor, z)) this.goal = z;
+      return;
+    }
+    const at = into(from);
+    if (at !== from && this.seen(x, y, floor, at)) {
+      this.goal = at;
+      return;
+    }
     const step = Math.PI / 36;
     for (let k = 1; k <= 36; k++)
       for (const s of [1, -1]) {
-        const a = from + s * k * step;
-        if (this.clear(x, y, floor, a)) {
+        const a = at + s * k * step;
+        if (this.seen(x, y, floor, a)) {
           const on = a + s * 2 * step;
-          this.goal = wrap(this.clear(x, y, floor, on) ? on : a);
+          this.goal = wrap(this.seen(x, y, floor, on) ? on : a);
           return;
         }
       }
   }
 
-  private clear(x: number, y: number, floor: number, az: number): boolean {
+  /** Is (x, y) on its floor seen from azimuth `az` — nothing over `large` between it and the eye? (public: a game's own camera rules) */
+  seen(x: number, y: number, floor: number, az: number): boolean {
     const h = this.sight.hiddenBy(x, y, floor + 1.2, floor, az);
     return h === null || h <= this.large;
   }

@@ -4985,3 +4985,20 @@ worst case doesn't make sense".
   dark, the land in pieces): the fixed view's slice (and holes) stayed on
   the camera when the free camera took over, the cutaway not run while
   flying. Flying clears the camera's cut.
+
+- Orbit for a game's camera rules (the hoverbike: "settle within 30° of
+  behind the bike", done there by writing the azimuth while Orbit rested, a
+  2.5 s wait after any turn to keep the two from fighting): `Orbit.prefer`
+  ({ az, dead, firm? }) — while the point is seen the goal is drawn into the
+  zone (when it's seen from there), twice as firm past `firm`; hidden, the
+  clear-angle search starts from the zone's nearest edge. `Orbit.seen` is
+  the test made public.
+- The giant crystals as gems (the user, via the hoverbike: "don't look
+  faceted"): quartz went through the see-through prisms column by column
+  (blended, as water: two of them a column at most) — mountains of glass
+  boxes. Quartz is now opaque terrain in the field mesh (meshregion.wgsl
+  fieldMat) and fsMesh draws it as a cut gem (gemLook): the smooth normal
+  snapped to facets (12 ways round, 5 up, a little turn each), a shade each
+  between violet and pale blue, a glint off the facets turned to the sun,
+  the sky's rim at grazing angles, a glow of its own (more at night). The
+  far land's giants were faceted meshes already.

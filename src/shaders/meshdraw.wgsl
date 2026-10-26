@@ -260,6 +260,8 @@ fn fsMesh(in: MOut) -> FOut {
   // (water smooths the rough ground it covers)
   lnrm = normalize(mix(lnrm, nrm, film * 0.8));
   var col = alb * lighting(in.wpos, lnrm);
+  // (round 83: quartz cut as a gem — the hoverbike's playtest: the giant crystals didn't look faceted)
+  if (mat == MAT_QUARTZ && sw < 0.5) { col = gemLook(in.wpos, nrm); }
   if (film > 0.0) {
     // the wet sheen: the sun's glint off the film
     let sunL = sunDir();
@@ -314,7 +316,37 @@ fn voxMatR(w: u32) -> u32 { return w & 0xffu; }
 
 /** Broken or built: rubble, trash, litter, and every solid but stone (ruins: concrete, brick, asphalt, steel). */
 fn jagged(m: u32) -> bool {
-  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE && !bedded(m));
+  return m == 4u || m == MAT_TRASH || m == MAT_LITTER || (matState(m) == ST_SOLID && m != MAT_STONE && m != MAT_QUARTZ && !bedded(m));
+}
+
+/**
+ * Quartz as a cut gem (round 83): the smooth normal snapped to facets (12 ways round, 5 up: flat faces
+ * with sharp edges between them whatever the mesh's triangles), each facet its own shade between violet
+ * and a pale blue; lit, a glint off the facets turned to the sun, the sky's rim at grazing angles, and a
+ * glow of its own (more at night).
+ */
+fn gemLook(p: vec3<f32>, n: vec3<f32>) -> vec3<f32> {
+  // (60° round: a hexagonal crystal's six sides a face each; three up — side, shoulder, point)
+  let az = atan2(n.y, n.x);
+  let el = asin(clamp(n.z, -1.0, 1.0));
+  let ia = floor(az / 1.0471976 + 0.5);
+  let ie = clamp(floor(el / 0.7853982 + 0.5), -1.0, 2.0);
+  // (and bands up it, 9 cells each: long facets, as a crystal's striations)
+  let id = vec3<i32>(i32(ia), i32(ie), i32(floor(p.z / 9.0)));
+  let h = randv(id);
+  let a2 = (ia + (h - 0.5) * 0.3) * 1.0471976;
+  let e2 = ie * 0.7853982 + (randv(id + vec3<i32>(7, 3, 1)) - 0.5) * 0.3;
+  var fnm = vec3<f32>(cos(a2) * cos(e2), sin(a2) * cos(e2), sin(e2));
+  if (dot(fnm, n) < 0.2) { fnm = n; }
+  let alb = mix(toLinear(vec3<f32>(0.62, 0.5, 0.92)), toLinear(vec3<f32>(0.72, 0.86, 0.98)), h) * (0.85 + 0.25 * randv(id + vec3<i32>(1, 9, 5)));
+  var c = alb * lighting(p, fnm);
+  let e = toEye(p);
+  let sunL = sunDir();
+  let hv = normalize(sunL + e);
+  c += G.sunCol.rgb * pow(max(dot(fnm, hv), 0.0), 24.0) * 0.35 * shadowLit(p, n);
+  c += G.sky.rgb * 0.3 * pow(1.0 - max(dot(fnm, e), 0.0), 3.0);
+  c += alb * (0.15 + 0.3 * (1.0 - smoothstep(-0.1, 0.25, sunL.z)));
+  return c;
 }
 
 /** rock in beds (round 79): basalt, sandstone, obsidian — faceted as stone is, its strata tinted */

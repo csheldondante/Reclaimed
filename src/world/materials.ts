@@ -186,8 +186,9 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'coral', albedo: [0.9, 0.74, 0.68], state: MatState.Solid, strength: 0.85, growthCap: 1.6, suitability: 0.4, porosity: 0.55, smooth: 1 },
   // obsidian: black volcanic glass by the lava; terrain (never falls)
   { ...NONE, name: 'obsidian', albedo: [0.07, 0.06, 0.09], state: MatState.Solid, specular: 0.95, porosity: 0.05 },
-  // quartz (round 75): the giant crystals, mountains of it — faceted, see-through, glowing a little; terrain
-  { ...NONE, name: 'quartz', albedo: [0.74, 0.66, 0.96], state: MatState.Solid, emissive: 0.2, specular: 1, glass: 1 },
+  // quartz (round 75): the giant crystals, mountains of it — faceted, glowing a little; terrain. Round 83: in
+  // the field mesh, cut as a gem (meshdraw.wgsl gemLook), not see-through prisms column by column
+  { ...NONE, name: 'quartz', albedo: [0.74, 0.66, 0.96], state: MatState.Solid, emissive: 0.2, specular: 1 },
   // sinter: the pale crust a geyser's water leaves round its vent; terrain
   { ...NONE, name: 'sinter', albedo: [0.86, 0.82, 0.72], state: MatState.Solid, growthCap: 0.5, suitability: 0.1, porosity: 0.4, smooth: 2 },
 ];
