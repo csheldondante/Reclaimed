@@ -18,9 +18,13 @@ export class Profiler {
   readonly passMs = new Map<string, number>();
   /** GPU ms per pass name summed over every frame resolved since `resetTotals`, and those frames: per-frame costs whatever a pass's period */
   readonly totalMs = new Map<string, number>();
+  /** (round 81) the most one frame took of each pass since `resetTotals` (raw, not smoothed) */
+  readonly maxMs = new Map<string, number>();
   framesResolved = 0;
   gpuTotalMs = 0;
   gpuFrameMs = 0;
+  /** (round 81) the GPU's long frames: its ms (first pass's start to the last's end) and its three longest passes */
+  readonly gpuLong: string[] = [];
   dispatches = 0;
   draws = 0;
   memory = new Map<string, number>();
@@ -85,10 +89,16 @@ export class Profiler {
         this.framesResolved++;
         for (const [n, ms] of perName) {
           this.totalMs.set(n, (this.totalMs.get(n) ?? 0) + ms);
+          this.maxMs.set(n, Math.max(this.maxMs.get(n) ?? 0, ms));
           const prev = this.passMs.get(n);
           this.passMs.set(n, prev === undefined ? ms : prev * 0.9 + ms * 0.1);
         }
         const frame = Number(last - first) / 1e6;
+        if (frame > 25) {
+          const top = [...perName].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([n, ms]) => `${n} ${ms.toFixed(1)}`);
+          this.gpuLong.push(`${frame.toFixed(0)}ms: ${top.join(', ')}`);
+          if (this.gpuLong.length > 24) this.gpuLong.shift();
+        }
         this.gpuTotalMs += frame;
         this.gpuFrameMs = this.gpuFrameMs * 0.9 + frame * 0.1;
         slot.buf.unmap();
@@ -99,6 +109,7 @@ export class Profiler {
 
   resetTotals(): void {
     this.totalMs.clear();
+    this.maxMs.clear();
     this.framesResolved = 0;
     this.gpuTotalMs = 0;
   }

@@ -50,6 +50,8 @@ try {
         await new Promise((res) => requestAnimationFrame(res));
       }
       const gaps = [];
+      const acc = {};
+      const mx = {};
       let last = performance.now();
       for (f = 0; f < frames; f++) {
         target[0] += speed;
@@ -60,6 +62,7 @@ try {
         await new Promise((res) => requestAnimationFrame(res));
         const t = performance.now();
         gaps.push(t - last);
+        for (const [k, v] of host.profiler.passMs) if (k.includes('fieldmesh')) { acc[k] = (acc[k] ?? 0) + v; mx[k] = Math.max(mx[k] ?? 0, v); }
         last = t;
       }
       void sim;
@@ -67,9 +70,10 @@ try {
       let sum = 0;
       for (const [k, v] of host.profiler.passMs) {
         sum += v;
-        if (v > 0.3) pm[k] = +v.toFixed(2);
+        if (v > 0.3 || k.includes('fieldmesh')) pm[k] = +v.toFixed(3);
       }
       pm.SUM = +sum.toFixed(2);
+      for (const k in acc) pm[k] = `mean ${(acc[k] / frames).toFixed(3)} max ${mx[k].toFixed(2)}`;
       const sorted = [...gaps].sort((a, b) => a - b);
       const at = slideAt.map((s) => Math.max(...gaps.slice(Math.max(0, s - 1), s + 6)).toFixed(0));
       return { slides: slideAt.length, atSlides: at, p50: +sorted[Math.floor(gaps.length / 2)].toFixed(1), p95: +sorted[Math.floor(gaps.length * 0.95)].toFixed(1), worst: +sorted[gaps.length - 1].toFixed(0), over100: gaps.filter((g) => g > 100).length, gpuFrame: +host.profiler.gpuFrameMs.toFixed(2), passes: pm, awake: aw.sleep?.awake };

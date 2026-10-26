@@ -353,7 +353,11 @@ fn sampleField(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invo
   // (above everything in the chunk: air; round 81: 3 under its lowest boundary, solid — no field: the deep
   // rock under the ground was most of a rebuild's samples)
   var d = FAR;
-  if (p.z < j.bot - 3.0) { d = -FAR; } else if (p.z <= j.top + 2.0) { d = field(p); }
+  // (round 81: a band keeps no quads in the window's z — MR.ze.z 1 — so the samples deeper in it than the
+  // field reaches can't change one it keeps: not evaluated. Its rebuild after a pack sampled the window's
+  // whole height, 13 ms in a frame.)
+  let inner = MR.ze.z > 0.5 && p.z > MR.ze.x + FAR + 2.0 * MR.o.y && p.z < MR.ze.y - FAR - 2.0 * MR.o.y;
+  if (p.z < j.bot - 3.0) { d = -FAR; } else if (p.z <= j.top + 2.0 && !inner) { d = field(p); }
   scratch[sampleIdx(j, j.l)] = bitcast<u32>(d);
 }
 
@@ -504,4 +508,21 @@ fn shiftChunks(@builtin(global_invocation_id) id: vec3<u32>) {
   // (range c's translation: all that's built moved the same way)
   let ob = offBase() + c * 4u;
   for (var k = 0u; k < 3u; k++) { atomicStore(&state[ob + k], bitcast<u32>(bitcast<f32>(stateOld[ob + k]) + SH.t[k])); }
+}
+
+// ---- the rebuild's size (round 81) --------------------------------------------------
+// The three rebuild passes are dispatched indirectly, for the chunks found changed only: dispatched for
+// every slot every frame, their workgroups found no job most frames and returned — over a ride, most of
+// the mesh's GPU time (each pass ~0.1 ms a frame on the desktop). Written after the change passes into
+// the words after the ranges' translations, then copied to the dispatch's own buffer (fieldmesh.ts: a
+// buffer bound for writing can't be a dispatch's indirect arguments in the same pass).
+fn argsBase() -> u32 { return offBase() + MR.n.x * MR.n.y * 4u; }
+
+@compute @workgroup_size(1)
+fn rebuildArgs() {
+  let n = min(atomicLoad(&state[0]), MR.k.y);
+  let s = (sideN() + 3u) / 4u;
+  atomicStore(&state[argsBase()], select(0u, s, n > 0u));
+  atomicStore(&state[argsBase() + 1u], s);
+  atomicStore(&state[argsBase() + 2u], (MR.n.z + 3u) / 4u * n);
 }

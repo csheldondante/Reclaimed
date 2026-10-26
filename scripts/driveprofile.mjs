@@ -52,6 +52,8 @@ try {
     s.hitches = 0;
     // (the main thread's steps from here on: startup's pipeline compiles aren't riding's)
     s.cpuReset?.();
+    window.reclaimed.core.host.profiler.resetTotals();
+    window.reclaimed.core.host.profiler.gpuLong.length = 0;
     s.longFrames = [];
     s.worstMs = 0;
     s.frameMs = [];
@@ -86,6 +88,9 @@ try {
       gpuFrame: +R.core.host.profiler.gpuFrameMs.toFixed(2),
       cpu: R.scene.cpuWorst?.() ?? null,
       long: R.scene.longFrames,
+      gpuLong: R.core.host.profiler.gpuLong,
+      meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
+      meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };
   });
   console.log(JSON.stringify(r));

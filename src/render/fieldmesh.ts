@@ -156,7 +156,10 @@ export class FieldMesh {
     this.verts = world.buf(`${pre}meshVerts`, chunks * vertsPer * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
     this.indices = world.buf(`${pre}meshIndices`, chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
     // (then four words a range: its translation — meshregion.wgsl offBase)
-    const stateWords = CHUNK0 + chunks * (CSTRIDE + 1) + chunks * 4;
+    // (then (round 81) three: the rebuild's dispatch — fieldmesh.wgsl rebuildArgs)
+    const stateWords = CHUNK0 + chunks * (CSTRIDE + 1) + chunks * 4 + 4;
+    this.argsAt = (stateWords - 4) * 4;
+    this.args = world.buf(`${pre}meshArgs`, 16, GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.state = world.buf(`${pre}meshState`, stateWords * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const init = new Uint32Array(stateWords);
     for (let c = 0; c < chunks; c++) {
@@ -186,6 +189,8 @@ export class FieldMesh {
       });
     this.hash = makeCompute(device, 'fieldmesh-hash', parts, spec, 'hashChunks');
     this.hashGroup = group(this.hash);
+    this.argsK = makeCompute(device, 'fieldmesh-args', parts, spec, 'rebuildArgs');
+    this.argsGroup = group(this.argsK);
     this.hashF = makeCompute(device, 'fieldmesh-hash-fresh', parts, spec, 'hashFresh');
     this.hashFGroup = group(this.hashF);
     for (const entry of ['sampleField', 'makeVerts', 'makeQuads']) {
@@ -196,6 +201,11 @@ export class FieldMesh {
   }
 
   private layout = new ArrayBuffer(REGION_BYTES);
+  /** the rebuild's indirect dispatch (round 81) and where the state keeps it */
+  private args!: GPUBuffer;
+  private argsAt = 0;
+  private argsK!: ComputeKernel;
+  private argsGroup!: GPUBindGroup;
   /** frames since a band was last packed (its full change pass runs for a while after) */
   private framesSincePack = 0;
 
@@ -294,18 +304,24 @@ export class FieldMesh {
       pass.dispatchWorkgroups(chunks);
       pass.end();
     }
-    // (the threads of empty slots return at once)
-    const s = this.side + 3;
-    const wg: [number, number, number] = [Math.ceil(s / 4), Math.ceil(s / 4), Math.ceil(this.nz / 4) * this.slots];
+    // (round 81: the rebuild sized to the chunks found changed — none, most frames)
+    {
+      const pass = enc.beginComputePass({ label: `${this.pre}fieldmesh-args` });
+      pass.setPipeline(this.argsK.pipeline);
+      pass.setBindGroup(0, this.argsGroup);
+      pass.dispatchWorkgroups(1);
+      pass.end();
+      enc.copyBufferToBuffer(this.state, this.argsAt, this.args, 0, 12);
+    }
     this.kernels.forEach((k, i) => {
       const name = this.pre + ['fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
       const pass = enc.beginComputePass({ label: name, timestampWrites: this.profiler.timestamps(name) });
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, this.groups[i]);
-      pass.dispatchWorkgroups(...wg);
+      pass.dispatchWorkgroupsIndirect(this.args, 0);
       pass.end();
     });
-    this.profiler.dispatches += 4;
+    this.profiler.dispatches += 5;
     if (!this.statBusy && this.statEvery++ % 10 === 0) {
       enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
       this.statBusy = true;

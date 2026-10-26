@@ -4782,3 +4782,38 @@ mesh rebuilds (up to 8 chunks a frame, each sampled from the bedrock up).
 - Next (P9): a sample column's active heights from its neighbourhood's
   intervals (sky and the rock between cave layers skipped too), walls
   meshed coarser for a camera from above.
+
+## Round 82 — the mesh rebuild dispatched for what changed; the GPU's long frames named (places)
+
+Why: the user's hiccup riding straight on the phone; "find all the worst
+case pieces". The overlay's per-pass numbers are smoothed (a tenth of each
+frame), so a spike showed at a tenth its size — the user caught "0.03 ms
+worst case doesn't make sense".
+
+- The profiler keeps the GPU's long frames (over 25 ms) with their three
+  longest passes (`gpuLong`) and each pass's worst frame since a reset
+  (`maxMs`, raw). driveprofile prints them and each pass's total over the
+  ride. Riding 25 s on the desktop (phone viewport, dpr 2.6): the mesh's
+  passes ran every frame whatever changed — window and band together about
+  2.5 s of GPU over the ride.
+- Tried first (P9 part 2): a pass marking each sample column's heights near
+  its neighbourhood's boundaries, the field evaluated only there. The mesh
+  came out identical (scripts/meshcmp.mjs: vertices a chunk and their sums),
+  but window sampling fell only 229 → 200 ms over the ride and the new pass
+  cost 236 ms: sampling is no longer the cost (the chunk-bottom skip of round
+  81 took most of it). Taken out.
+- The rebuild's three passes are dispatched indirectly: a one-thread pass
+  after the change passes writes the dispatch (the chunks found changed, at
+  most the slots) into the state's last words, copied to an indirect buffer
+  (a buffer bound for writing can't be a dispatch's arguments in the same
+  pass). Idle, they had launched every slot's workgroups (thousands) to find
+  no job. Ride: p95 16.6 → 10.5 ms, p99 27 → 14 ms; the band's mesh passes
+  1.2 s → 0.4 s over the ride. Mesh identical (meshcmp).
+- A band keeps no quads in the window's z, so its samples deeper in it than
+  the field reaches (3 + two samples) aren't evaluated: its rebuild after a
+  pack sampled the window's whole height (13.4 ms in one frame). Mesh
+  identical.
+- Open: the draw pass goes from 4 to 15–33 ms on some frames (gpuLong);
+  timing on this desktop is noisy (other GPU users), the totals steadier
+  than the maxima.
+
