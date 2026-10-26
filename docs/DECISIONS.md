@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-26 — round 82 (session 5, `places`) — where the phone's frame goes
+
+- The phone: leaving out the terrain mesh and the shadows is 20–40 % off the
+  p95 frames; with `?skip=render` p95 falls to 16 ms, the same as p50 — the
+  stutter is the graphics, not streaming or generation.
+- Play happens mostly at points of interest; travel between them is shown on
+  the overworld map, which gives time to load them. Streaming stays (the
+  world should feel open), but its cost can be hidden that way.
+- Direction: render the terrain to isometric tiles (depth, normal,
+  material) and draw the characters and particles over them (V22).
+- The sim isn't to be skipped; if it costs too much, wake even less of it.
+
 ## 2026-10-25 — round 81 (session 5, `places`) — columns as intervals, not a walk
 
 - "Do we need to walk every cell of the column? The whole point of the interval storage is that in theory we
