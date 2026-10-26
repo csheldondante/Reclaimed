@@ -11,8 +11,8 @@ import { MATERIALS } from '../world/materials';
 import type { Atlas } from './atlas';
 import lodW from './lod.wgsl?raw';
 
-/** far.wgsl LodD: a vec4 a ring (4), then info */
-export const LOD_UNI_BYTES = 5 * 16;
+/** far.wgsl LodD: a vec4 a ring (4), then info, then the window's mesh chunks */
+export const LOD_UNI_BYTES = 6 * 16;
 const MAX_RINGS = 4;
 /** seconds between one eighth of a ring made again and the next (the coarse world changes slowly) */
 const REFRESH_S = 0.4;
@@ -35,6 +35,9 @@ export class LodRings {
   private next = 0;
   /** every ring made at least once: drawn from then */
   ready = false;
+  /** (round 83) the window's mesh chunks (cells across a chunk, rows, chunks across, down) — the rings fill those
+   *  not built yet; null: never inside the window */
+  meshGrid: [number, number, number, number] | null = null;
 
   constructor(
     private device: GPUDevice,
@@ -121,6 +124,7 @@ export class LodRings {
     const sOut = this.spacings[this.spacings.length - 1];
     const outer = this.made[this.made.length - 1]!;
     f.set([this.spacings.length, outer[0] * sOut - org[0], outer[1] * sOut - org[1], (n - 1) * sOut], MAX_RINGS * 4);
+    if (this.meshGrid) f.set(this.meshGrid, MAX_RINGS * 4 + 4);
     this.device.queue.writeBuffer(this.uni, 0, f);
   }
 

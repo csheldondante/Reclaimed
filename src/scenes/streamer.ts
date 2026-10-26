@@ -176,7 +176,19 @@ export class Streamer {
   readonly origin: [number, number] = [0, 0];
   /** regions out of the window, as they were left ("rx,ry" in regions) */
   readonly frozen = new Map<string, Frozen | Promise<Frozen>>();
-  busy = false;
+  /**
+   * A slide (or a warp, a cut in z) under way. (Round 83: while it is, the meshes aren't made — a chunk made
+   * from land still being written came out half made, a hole till it was made again; the rings show the land
+   * not made yet: Renderer.holdMesh.)
+   */
+  get busy(): boolean {
+    return this.busyNow;
+  }
+  set busy(v: boolean) {
+    this.busyNow = v;
+    this.core.renderer.holdMesh = v;
+  }
+  private busyNow = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
   readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0 };

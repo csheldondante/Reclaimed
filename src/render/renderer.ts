@@ -173,8 +173,10 @@ export class Renderer {
   /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
   readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
   /** what an extra draw renders into, and the camera it reads (render.wgsl Camera) */
-  get targets(): { format: GPUTextureFormat; pickFormat: GPUTextureFormat; depthFormat: GPUTextureFormat; camera: GPUBuffer } {
-    return { format: this.colorFormat, pickFormat: PICK_FORMAT, depthFormat: DEPTH_FORMAT, camera: this.camBuf };
+  get targets(): { format: GPUTextureFormat; pickFormat: GPUTextureFormat; depthFormat: GPUTextureFormat; camera: GPUBuffer; mesh?: { state: GPUBuffer; grid: [number, number, number] } } {
+    // (round 83: the field mesh's state, when it draws the ground — far.ts's rings fill the chunks not built yet)
+    const mesh = this.fieldMesh.on ? { state: this.fieldMesh.stateBuffer, grid: this.fieldMesh.chunkGrid } : undefined;
+    return { format: this.colorFormat, pickFormat: PICK_FORMAT, depthFormat: DEPTH_FORMAT, camera: this.camBuf, mesh };
   }
   private meshGroup?: GPUBindGroup;
   /** the band outside the window (round 79, enableBand): its draw group */
@@ -745,8 +747,8 @@ export class Renderer {
     // (round 82: with a band, the window's mesh and the band's look for changes and rebuild on alternate frames —
     // a frame never rebuilds both: on the phone the rebuilds were the biggest share of the p95 spikes)
     const turn = this.meshTurn++ & 1;
-    if (!SKIP.has('meshprep') && (!this.band || turn === 0)) this.fieldMesh.encode(enc, cam);
-    if (this.band && !SKIP.has('band') && turn === 1) this.band.mesh.encode(enc, cam);
+    if (!SKIP.has('meshprep') && !this.holdMesh && (!this.band || turn === 0)) this.fieldMesh.encode(enc, cam);
+    if (this.band && !SKIP.has('band') && !this.holdMesh && turn === 1) this.band.mesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc, shadowDue);
 
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
@@ -1224,6 +1226,8 @@ export class Renderer {
    * world's height. The streamer packs it (Streamer → band.update).
    */
   private edgesOpen = false;
+  /** (round 83) no mesh made while set: a streamed window's slide is writing its land (Streamer.busy) */
+  holdMesh = false;
 
   /**
    * (round 83) The window's edge open (FieldMesh.openEdges): no wall down it — for a streamed window with

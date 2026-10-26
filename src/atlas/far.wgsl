@@ -40,6 +40,24 @@ struct LodD {
   lv: array<vec4<f32>, 4>,
   /** how many rings (0: none), the outermost's corner (window coordinates) and its span */
   info: vec4<f32>,
+  /** (round 83) the window's mesh chunks: a chunk's width and depth (window units), chunks across and down;
+   *  0: the rings never draw in the window */
+  mesh: vec4<f32>,
+}
+/** the window's field mesh's state (meshregion.wgsl: CHUNK0 words, CSTRIDE a chunk; word 0 its indices drawn,
+ *  word 5 the hash it was built for, FRESH (or 0) not built) */
+@group(0) @binding(47) var<storage, read> meshSt: array<u32>;
+
+/** Is the window's mesh built where l (window coordinates) is? (No mesh: as if it were — the rings stay out.) */
+fn meshBuilt(l: vec2<f32>) -> bool {
+  if (LD.mesh.z < 0.5) { return true; }
+  let c = vec2<i32>(floor(l / LD.mesh.xy));
+  if (any(c < vec2<i32>(0)) || c.x >= i32(LD.mesh.z) || c.y >= i32(LD.mesh.w)) { return true; }
+  let b = 16u + u32(c.y * i32(LD.mesh.z) + c.x) * 13u;
+  let h = meshSt[b + 5u];
+  // (and drawn: a chunk made while its land was still coming in — a slide's — is made, and empty, till it's
+  // made again; word 0 its indices)
+  return h != 0x9e3779b9u && h != 0u && meshSt[b] > 0u;
 }
 @group(0) @binding(45) var<storage, read> lodT: array<vec2<f32>>;
 @group(0) @binding(46) var<uniform> LD: LodD;
@@ -232,8 +250,9 @@ fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOu
 @fragment
 fn fsLod(v: LOut) -> FOutF {
   let l = v.local.xy;
-  // the window's own land is the columns'; a finer ring's square is that ring's
-  if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy)) { discard; }
+  // the window's own land is the columns' — where its mesh is built (round 83: till then, the ring's top, so
+  // land just come in isn't a hole while its chunks are made); a finer ring's square is that ring's
+  if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy) && meshBuilt(l)) { discard; }
   if (v.ring > 0u) {
     let F = LD.lv[v.ring - 1u];
     let fc = lodCorner(v.ring - 1u);

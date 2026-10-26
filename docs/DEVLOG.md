@@ -5457,3 +5457,21 @@ frame (15.0 before the merge, rings and all).
   is the edge column, going on) — no wall; the rings cover what's past it.
   Without rings (`?lod=0`, the valley, the noise-streamed level) the wall
   stays: an open edge there shows the ground's shell from under.
+- Land just come in drawn before its mesh is (the user: "draw the top
+  layer further out then swap in asynchronously" — the rings are that top
+  layer). The rings left out the whole window; now only where the window's
+  mesh chunk is built and drawn (far.wgsl meshBuilt: the field mesh's state
+  bound to the rings, word 5 not FRESH and word 0, its indices, not 0). And
+  no mesh is made while a slide is writing its land (Renderer.holdMesh, set
+  with Streamer.busy): chunks made from land half written came out half
+  made — cave pieces, no ground — till they were made again, seconds with
+  one rebuild a frame. scripts/slideshot.mjs (a slide forced, one rebuild a
+  frame): before, holes for over 400 ms; now the rings' ground in the
+  chunks not made yet, each sharpening as it's made. (The mesh's chunks
+  are 32 cells, not the layers' 16: FieldMesh.chunkGrid says.)
+- What the hidden layers cost riding (driveprofile, 30 s, the phone tier on
+  the desktop's GPU, ms a frame): the band (what's over and under the
+  window's heights) 0.5 meshing + ~2.0 drawing of 10.2 — `?skip=band`
+  draw 5.3 → 3.3; the caves (`?a.caveDepth=9999`) 0.44 of the generation
+  (2.00 → 1.56), 0.26 of the sim, ~0.4 of the draw. The field mesh's own
+  1.4 is mostly the ground's surface (it skips the rock under it, round 81).

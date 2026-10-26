@@ -9,6 +9,7 @@ import { KINDS, warmth } from './regions';
 import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
 import { LodRings } from './lod';
+import { ROW_H } from '../world/lattice';
 
 const UNI_BYTES = 80;
 /** vertices a side, and world units between them */
@@ -16,6 +17,9 @@ const G = 161;
 const SPACING = 32;
 
 export interface FarTargets {
+  /** (round 83) the window's field mesh: its state (which chunks are built) and chunks across and down — the
+   *  rings fill the chunks not built yet; absent: the rings never draw in the window */
+  mesh?: { state: GPUBuffer; grid: [number, number, number] };
   format: GPUTextureFormat;
   pickFormat: GPUTextureFormat;
   depthFormat: GPUTextureFormat;
@@ -108,12 +112,15 @@ export class FarLand {
         { binding: 43, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 45, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 46, visibility: VF, buffer: { type: 'uniform' } },
+        { binding: 47, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.lod = lod ? new LodRings(device, atlas, lod.spacings, lod.n) : null;
+    if (this.lod && t.mesh) this.lod.meshGrid = [t.mesh.grid[2], t.mesh.grid[2] * ROW_H, t.mesh.grid[0], t.mesh.grid[1]];
+    const meshState = t.mesh?.state ?? device.createBuffer({ label: 'lod no mesh', size: 16, usage: GPUBufferUsage.STORAGE });
     // (no rings: an empty LodD, its count 0)
     const lodData = this.lod?.data ?? device.createBuffer({ label: 'lod none', size: 16, usage: GPUBufferUsage.STORAGE });
-    const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: 80, usage: GPUBufferUsage.UNIFORM });
+    const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: 96, usage: GPUBufferUsage.UNIFORM });
     this.group = device.createBindGroup({
       label: 'far',
       layout,
@@ -125,6 +132,7 @@ export class FarLand {
         { binding: 43, resource: { buffer: atlas.coarse.cells } },
         { binding: 45, resource: { buffer: lodData } },
         { binding: 46, resource: { buffer: lodUni } },
+        { binding: 47, resource: { buffer: meshState } },
       ],
     });
     const module = device.createShaderModule({ label: 'far', code: farW });
