@@ -640,6 +640,7 @@ export class LevelScene implements Scene {
       // pieces; the structure system only collapses damage
       const integ = new Integrity(core);
       this.integrity = integ;
+      core.integrity = integ;
       // lightning seeks what you see (loose ground, fallen bodies) and breaks
       // the bodies it strikes (round 19)
       this.powers.topAt = (x, y) => integ.topAt(x, y);

@@ -32,6 +32,13 @@ each was implemented.
   suggestion, via the hoverbike).
 - The perf branch on the phone: "crushing it. About 16ms for p95!"
   (deferred, lite=1, settle=0, inplace=1, sleepmore=1).
+- Rock falls (the hoverbike's playtest: undercut rock left floating): "Islands
+  + weak overhangs", what breaks free falls as a body. "If things are breaking
+  just make a material that is stronger so they don't break" (bedrock). "Make
+  sure to get the boundary correct and assume it is firmly anchored there."
+  "Can rock still tip and fall? … I want to topple spires of stone."
+- Performance is "sufficient for now"; the perf agent goes on in the
+  background (lazy caves); the focus is usability and features.
 - What the sim must do (P11): water's steady state is cached, so no tick is
   needed most of the time: "run simulation on demand and cache when it has
   run for a bit and localize real simulation to player actions."

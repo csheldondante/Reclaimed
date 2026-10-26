@@ -301,6 +301,8 @@ export class Terrain {
   private edit(op: number, mat: number, x: number, y: number, radius: number, strength: number): void {
     // (the world's event queue: a tick carries four, the rest wait for the next)
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: op * 32 + mat + STROKE_START, radius, strength });
+    // (round 83: what it cut may now hang free — rock and structures judged round it)
+    this.core.integrity?.markDirty(x, y, radius + 14);
   }
 
   /** A meteor's bowl at (x, y): ejecta round it as drift; `z` the height it hits (default the ground). */
@@ -349,6 +351,7 @@ export class Terrain {
     const [px, py] = cellPos(cx, cy);
     const p = new Promise<[number, number]>((done) => this.exacts.set(tag, { tick: this.core.sim.tick, done }));
     this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: op * 32 + mat + STROKE_START + tag * 1024, radius: 0.3, strength: amount });
+    this.core.integrity?.markDirty(px, py, 14);
     if (!this.polling) void this.poll();
     return p;
   }

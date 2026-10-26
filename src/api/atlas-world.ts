@@ -21,6 +21,7 @@ import { FarLand } from '../atlas/far';
 import { Streamer, REGION, TIER } from '../scenes/streamer';
 import { WorldCore, type Host } from '../scenes/world-core';
 import { Sleep } from '../sim/sleep';
+import { Integrity } from '../game/integrity';
 import { CHUNK, K_HEADROOM } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 
@@ -41,6 +42,9 @@ export interface AtlasWorldOptions {
   band?: boolean;
   /** the land beyond the window (default on) */
   far?: boolean;
+  /** (round 83) what's cut loose falls — structures, and rock (islands, overhangs past their span, undercut
+   *  spires): game/integrity.ts, the world API's edits marking it (default on) */
+  integrity?: boolean;
 }
 
 export interface AtlasWorld {
@@ -48,6 +52,8 @@ export interface AtlasWorld {
   core: WorldCore;
   stream: Streamer;
   sleep?: Sleep;
+  /** (round 83) what judges what's cut loose and makes it fall (opts.integrity) */
+  integrity?: Integrity;
   /** the window moved by (dx, dy) cells or dz in z: the game shifts what it keeps in window coordinates */
   onSlide: ((dx: number, dy: number, dz: number) => void)[];
   /**
@@ -139,7 +145,16 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
     sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
     core.sleep = sleep;
   }
+  let integrity: Integrity | undefined;
+  if (opts.integrity !== false) {
+    integrity = new Integrity(core);
+    core.integrity = integrity;
+    // (as the sandbox: the structure system only collapses damage, the integrity system the rest)
+    core.globals.spanCollapse = false;
+  }
   stream.onSlide.push((dx, dy, dz) => {
+    // (a slide in z: every column moved — what's falling goes)
+    if (dz) integrity?.clear();
     core.globals.climate = climate(stream);
     core.globals.seaZ = params.sea - stream.oz;
     const t = performance.now() / 1000;
@@ -162,22 +177,28 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   }
   const warp = (wcx: number, wcy: number) => warpWindow(atlas, stream, dims, wcx, wcy);
   stream.onWarp.push((_ox, _oy, nz) => {
+    integrity?.clear();
     core.globals.climate = climate(stream);
     core.globals.seaZ = params.sea - nz;
     sleep?.settleAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
     const i = Math.floor(dims.h / 2) * dims.w + Math.floor(dims.w / 2);
     core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
   });
+  let lastFrame = performance.now();
   return {
     atlas,
     core,
     stream,
     sleep,
+    integrity,
     warp,
     onWarp: stream.onWarp,
     onSlide: stream.onSlide,
     frame(target, reach = 40) {
       void stream.update();
+      const now = performance.now();
+      integrity?.update(Math.min(0.1, (now - lastFrame) / 1000));
+      lastFrame = now;
       if (sleep) {
         const g = core.globals;
         g.sleep = sleep.update(performance.now() / 1000, [target[0], target[1], reach], g.events, core.weather.storms);

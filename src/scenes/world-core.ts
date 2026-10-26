@@ -76,6 +76,8 @@ export class WorldCore {
   pollution = 1;
   /** sleep and wake (round 80, sim/sleep.ts), when the scene has it: what writes the columns wakes them */
   sleep?: import('../sim/sleep').Sleep;
+  /** (round 83) what judges what's changed — structures and rock (game/integrity.ts); the world API's edits mark it */
+  integrity?: { markDirty(x: number, y: number, r: number): void };
   /** per-column buffers of the modules a game installed (agents' fields): a streamed window's slide moves them (round 80) */
   readonly columnBufs: { name: string; buf: GPUBuffer; stride: number; planes: number }[] = [];
   /** what a slide moves besides the columns (units, bodies): dx cells, dy world units, dz cells (round 80) */

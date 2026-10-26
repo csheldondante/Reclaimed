@@ -20,6 +20,11 @@ export interface MaterialDef {
   reposeWet: number;
   /** Structural strength 0..1 (used by the structural system, later milestones). */
   strength: number;
+  /**
+   * (round 83) Rock (strength 1, solid): how far it hangs over air, cells for each cell of its thickness,
+   * before it gives (fracture.ts analyseRock; default 3). Infinity: it never gives (bedrock: for what must stand).
+   */
+  span?: number;
   /** Max vegetation stage this substrate can carry (0 = nothing grows). */
   growthCap: number;
   /** Growth-rate multiplier for vegetation on this substrate. */
@@ -103,6 +108,8 @@ export const MAT = {
   /** round 75: giant crystals (terrain: they stand), and the sinter round a geyser's vent */
   Quartz: 36,
   Sinter: 37,
+  /** round 83: rock that never gives (fracture.ts analyseRock: no span limit) — for what must stand */
+  Bedrock: 38,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -191,6 +198,9 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'quartz', albedo: [0.74, 0.66, 0.96], state: MatState.Solid, emissive: 0.2, specular: 1 },
   // sinter: the pale crust a geyser's water leaves round its vent; terrain
   { ...NONE, name: 'sinter', albedo: [0.86, 0.82, 0.72], state: MatState.Solid, growthCap: 0.5, suitability: 0.1, porosity: 0.4, smooth: 2 },
+  // bedrock (round 83, the user: "If things are breaking just make a material that is stronger so they don't
+  // break"): dark, dense rock whose overhangs never give — for what must stand (a cave's roof, an arch)
+  { ...NONE, name: 'bedrock', albedo: [0.26, 0.25, 0.25], state: MatState.Solid, porosity: 0.05, smooth: 2, span: Infinity },
 ];
 
 export const MAX_MATERIALS = 40;

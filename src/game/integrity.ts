@@ -12,7 +12,7 @@
 
 import { packColumn, readColumn, columnSlots, SLOT_WORDS, type Interval } from '../world/layout';
 import { MAT } from '../world/materials';
-import { analyse, WorldVox, type Voxel } from './fracture';
+import { analyse, analyseRock, WorldVox, type Voxel } from './fracture';
 import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
 import { ignoreTeardown } from '../gpu/pipeline';
@@ -298,6 +298,10 @@ export class Integrity {
     for (const [x0, y0, x1, y1, left] of boxes) {
       if (left > 1) this.dirty.push([x0, y0, x1, y1, left - 1]);
       const r = analyse(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
+      // (round 83: rock too — islands fall, overhangs past their span and undercut spires give)
+      const rk = analyseRock(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
+      r.bodies.push(...rk.bodies);
+      r.crumble.push(...rk.crumble);
       if (r.crumble.length) {
         this.removeCells(r.crumble);
         this.spillRubble(r.crumble);
