@@ -36,6 +36,20 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 
+/**
+ * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
+ * pulls — write the layers in place instead of into layersNext copied back whole (16 MB a tick each in the atlas's
+ * window: on a phone the bandwidth of the copies alone was a share of the frame). Each thread rewrites only its
+ * own column (the structures read their neighbours' support: one tick's Gauss-Seidel instead of Jacobi). With
+ * it the brush runs only while an edit is in flight (a pour lands for up to ~4 s after the press).
+ */
+export const INPLACE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('inplace') === '1';
+/** a column pass's code and its two layer bindings, in place or not */
+const columnPass = (code: string, world: WorldGpu) =>
+  INPLACE ? { code: code.replaceAll('layersIn[', 'layersOut['), in: world.layersNext, out: world.layers } : { code, in: world.layers, out: world.layersNext };
+/** (perfopt, inplace) ticks the brush runs after an edit (the longest pour's fall, 3.9 s, and some) */
+const EDIT_LINGER = 300;
+
 const BASE: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform' };
 const WITH_ALL = [commonWgsl, layersWgsl, materialsWgsl];
 
@@ -89,15 +103,15 @@ export class StructureSystem implements SimSystem {
       device,
       world,
       'structure',
-      structureWgsl + flowWgsl,
+      columnPass(structureWgsl, world).code + flowWgsl,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
-      { 3: world.layers, 4: world.layersNext, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
+      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
       true,
     );
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 
@@ -289,9 +303,9 @@ export class EditSystem implements SimSystem {
       device,
       world,
       'edit',
-      editWgsl,
+      columnPass(editWgsl, world).code,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex', 26: 'stex' },
-      { 3: world.layers, 4: world.layersNext, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView, 26: world.editResultView },
+      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView, 26: world.editResultView },
       true,
     );
   }
@@ -299,11 +313,14 @@ export class EditSystem implements SimSystem {
   pending = false;
   /** Run every tick (the sandbox: pours keep landing after the press). */
   always = false;
+  /** (perfopt, inplace) ticks since the last edit: with `always`, the brush runs EDIT_LINGER ticks after one */
+  private idle = 1e9;
   encode(enc: GPUCommandEncoder): void {
-    if (!this.pending && !this.always) return;
+    this.idle = this.pending ? 0 : this.idle + 1;
+    if (!this.pending && !(this.always && (!INPLACE || this.idle < EDIT_LINGER))) return;
     this.pending = false;
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
     const size = [this.world.w, this.world.h];
     enc.copyTextureToTexture({ texture: this.world.editStateNext }, { texture: this.world.editState }, size);
   }
@@ -551,9 +568,9 @@ export class LayerPullSystem implements SimSystem {
       device,
       world,
       'layerpull',
-      layerPullWgsl,
+      columnPass(layerPullWgsl, world).code,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'stex' },
-      { 3: world.layers, 4: world.layersNext, 5: this.given, 6: this.params, 7: world.shakeView },
+      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: this.given, 6: this.params, 7: world.shakeView },
       true,
     );
   }
@@ -574,7 +591,7 @@ export class LayerPullSystem implements SimSystem {
     // (written before this tick's submit: one batch a tick)
     this.device.queue.writeBuffer(this.params, 0, buf);
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 

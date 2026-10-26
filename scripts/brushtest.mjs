@@ -41,7 +41,7 @@ try {
       console.log('console.error:', m.text().slice(0, 800));
     }
   });
-  await page.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&tod=0.4`, { waitUntil: 'load' });
+  await page.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&tod=0.4${opt('extra', '')}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.reclaimed?.api?.terrain, { timeout: 90000 });
   await wait(3000);
   // a range: dragged 40 cells east over a second

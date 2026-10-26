@@ -5216,3 +5216,39 @@ moving camera: one layer the size of the screen and a margin, not tiles.
   chunks (keep them across slides; bake them at a higher resolution for
   crisper lines); per 90° step for the turning view.
 
+
+## Round 83 — the simulation's cost: land comes in settled; the layers rewritten in place (perfopt)
+
+Why: the user's directions (DECISIONS round 83). Measured first, riding
+(driveprofile now prints `ticks` and every pass's mean a frame; scratch
+dps.mjs sums the passes that aren't the render's): the sim is ~2 ms of
+GPU a tick on the desktop (6.2–7.9 renderprep units) — at 30 fps the phone
+runs two a frame. The largest: edit 0.26 ms a tick, project 0.20, surface
+0.20, structure 0.16, sediment-out 0.15, renderfields 0.14, particles 0.13,
+sediment 0.11, lava 0.08, agents 0.07. Not timed at all: the full-buffer
+copies between passes (copyBufferToBuffer is outside the timed passes) —
+the layers are 16 MB in the atlas's window, and the editor's brush (always
+on in the sandbox) and the structures each copied them back whole every
+tick: 32 MB a tick, ~2 GB/s of a phone's bandwidth at 60 ticks.
+
+- `?settle=0` (sim/sleep.ts `SETTLE`, `settleAll`): land that comes in — a
+  slide's new chunks, the window cut again in z, a warp, the first window —
+  doesn't wake for 1.5–2 s to settle; it falls asleep at once (drowsy a
+  moment: its layers carried through). Awake chunks riding were 48–118 of
+  256 (the player's ring plus the settling); the sim a tick 6.24/7.91 →
+  5.25/5.38 units (−16 to −32 %). Not yet looked at: whether what comes in
+  unsettled looks wrong (the user: fix that in the generator) — rivers
+  especially: the flux isn't frozen with a region (keep: false), so a river
+  come in asleep has none and its surface is drawn still until something
+  wakes it (next: freeze the flux with the region, and a generated river's
+  flux from the generator).
+- `?inplace=1` (sim/systems.ts `INPLACE`, `columnPass`): the brush, the
+  structures and the layer pulls rewrite the layers in place (each thread
+  its own column: the brush and the pulls read only it; the structures read
+  their neighbours' support — one tick's Gauss–Seidel instead of Jacobi)
+  instead of into layersNext copied back whole; and the brush runs only for
+  5 s after an edit (a pour lands up to 3.9 s after the press). The timed
+  sim a tick 5.30 → 4.6 units with settle=0 (the brush's pass gone), plus
+  the two 16 MB copies a tick, untimed. brushtest 5/5, pulltest 6/6,
+  buildtest 4/4, worldapitest all ok with inplace=1&settle=0.
+

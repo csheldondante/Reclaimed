@@ -60,6 +60,7 @@ try {
     s.worstMs = 0;
     s.frameMs = [];
     window.__all = [];
+    window.__tick0 = window.reclaimed.core.sim.tick;
     const tick = () => {
       window.__all.push(performance.now());
       requestAnimationFrame(tick);
@@ -94,6 +95,9 @@ try {
       drawMax: +(R.core.host.profiler.maxMs.get('draw') ?? 0).toFixed(1),
       // (perfopt: each pass's mean a frame over the ride, from the raw totals — the draw's with ?defer's G-buffer)
       perFrame: Object.fromEntries(['draw', 'gbuffer', 'tcache-g', 'tcache-r', 'shadow', 'shadow-static', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
+      // (perfopt: every pass's mean a frame over the ride, the largest first)
+      ticks: R.core.sim.tick - window.__tick0,
+      allPerFrame: Object.fromEntries([...R.core.host.profiler.totalMs].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => [k, +(v / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(3)])),
       meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };

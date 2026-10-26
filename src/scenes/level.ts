@@ -944,13 +944,13 @@ export class LevelScene implements Scene {
       // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
       if (a && host.params.get('sleep') !== '0') {
         this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);
-        this.sleep.wakeAll(Sleep.SETTLE_S, performance.now() / 1000);
+        this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
         core.sleep = this.sleep;
         const sl = this.sleep;
         this.stream.onSlide.push((dx, dy, dz) => {
           const t = performance.now() / 1000;
           // (a slide in z: every column cut again — the surfaces made again everywhere, the water settles)
-          if (dz) sl.wakeAll(2, t);
+          if (dz) sl.settleAll(2, t);
           else sl.shift(dx, dy, t);
         });
       }
@@ -1014,7 +1014,7 @@ export class LevelScene implements Scene {
       this.stream.onWarp.push((_ox, _oy, nz) => {
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, nz);
         if (a) core.globals.seaZ = a.atlas.p.sea - nz;
-        this.sleep?.wakeAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
+        this.sleep?.settleAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
         for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
         this.hoverWorld = null;
         this.integrity?.clear();

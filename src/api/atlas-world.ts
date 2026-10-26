@@ -136,14 +136,14 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   let sleep: Sleep | undefined;
   if (opts.sleep !== false) {
     sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);
-    sleep.wakeAll(Sleep.SETTLE_S, performance.now() / 1000);
+    sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
     core.sleep = sleep;
   }
   stream.onSlide.push((dx, dy, dz) => {
     core.globals.climate = climate(stream);
     core.globals.seaZ = params.sea - stream.oz;
     const t = performance.now() / 1000;
-    if (dz) sleep?.wakeAll(2, t);
+    if (dz) sleep?.settleAll(2, t);
     else sleep?.shift(dx, dy, t);
   });
   if (opts.far !== false) {
@@ -161,7 +161,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   stream.onWarp.push((_ox, _oy, nz) => {
     core.globals.climate = climate(stream);
     core.globals.seaZ = params.sea - nz;
-    sleep?.wakeAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
+    sleep?.settleAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
     const i = Math.floor(dims.h / 2) * dims.w + Math.floor(dims.w / 2);
     core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
   });

@@ -23,6 +23,10 @@ const EVENT_S = 8;
 const SETTLE_S = 1.5;
 const NEAR_S = 1.5;
 const DROWSE_S = 0.25;
+/** (perfopt, ?settle=0 — DECISIONS round 83: "Generated land should come in settled"; "We don't need to simulate a
+ *  map cell we stream") land come in — a slide's new chunks, the window cut again in z, a warp, the first window —
+ *  doesn't wake to settle: it falls asleep at once (drowsy for a moment: its layers carried through) */
+const SETTLE = typeof location === 'undefined' || new URLSearchParams(location.search).get('settle') !== '0';
 
 export class Sleep {
   /** per chunk, the time (s) it sleeps again */
@@ -54,6 +58,12 @@ export class Sleep {
       }
   }
 
+  /** land come in everywhere (the first window, a slide in z, a warp): woken to settle for `secs` — or, with
+   *  ?settle=0, only drowsy (asleep at once, its layers carried through) */
+  settleAll(secs: number, now: number): void {
+    this.wakeAll(SETTLE ? secs : 0, now);
+  }
+
   wakeAll(secs: number, now: number): void {
     for (let k = 0; k < this.until.length; k++) this.until[k] = Math.max(this.until[k], now + secs);
   }
@@ -67,7 +77,7 @@ export class Sleep {
       for (let i = 0; i < this.cx; i++) {
         const si = i + dcx;
         const sj = j + dcy;
-        this.until[j * this.cx + i] = si < 0 || sj < 0 || si >= this.cx || sj >= this.cy ? now + SETTLE_S : old[sj * this.cx + si];
+        this.until[j * this.cx + i] = si < 0 || sj < 0 || si >= this.cx || sj >= this.cy ? now + (SETTLE ? SETTLE_S : 0) : old[sj * this.cx + si];
       }
   }
 
