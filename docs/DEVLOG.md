@@ -5581,6 +5581,158 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   --at coast (a warm coast found on the atlas): rings of swell round an
   island, moving in between frames.
 
+- Encapsulation (the user: "Are you still practicing good encapsulation?"):
+  three leaks of this round closed. The field mesh's state layout (CHUNK0,
+  CSTRIDE, the built hash's word, its indices', FRESH) is published once in
+  shaders/meshstate.wgsl, included before meshregion.wgsl wherever that is
+  and before far.wgsl (the rings' meshBuilt read the numbers from their own
+  copy). The streamer tells the renderer the window moved (Renderer.
+  windowMoved: the meshes, the band's, the shore field) instead of reaching
+  into each. The edit ops are one table (sim/edit-ops.ts: OP, STROKE_START,
+  editOpOf, CUTS) for the world API, the plants and water modules and the
+  integrity system's tap. atlasworldtest 6/6, slideshot, craterbench (p95
+  10.2 ms) on it. Pages builds the experiment branches too (ceiling, rivers,
+  flow).
+## Round 83 — caves left out of the mesh but near the player (`?cavemesh=near`) (perfopt)
+
+Why: the coordinator's measurement riding at the phone tier: caves ~1.1 ms a
+frame (0.44 generation, 0.26 sim, ~0.4 drawing). The draw's share is the
+mesh's cave surfaces — inside the ground, never seen from the sky, but drawn
+(the G-buffer pass and the shadow pass are vertex-bound).
+
+- `?cavemesh=near` (fieldmesh.wgsl `columnTops`, `CAVE_DEEP`; MeshRegion `cv`,
+  112 bytes now): a rebuild's first pass writes, for each sample column, the
+  lowest top (any material) of its cell and the six round it, less 4 cells;
+  the sample pass makes what's under that solid — caves, the insides of hills.
+  Cave mouths on cliffs and skylights stay (the low neighbour's top keeps
+  them). Near the cut's focus (the camera's target, 48 cells, while the cut
+  slices a roof off: the player under one) everything is meshed; flying,
+  everything. A change of focus rebuilds the chunks it touches
+  (`FieldMesh.setCaves`: their built hash set to 1 — they stay drawn until
+  each is rebuilt).
+- At 12304,5457: the window's mesh 173.7 k → 121.8 k vertices (−30 %); the
+  picture the same but a small dark hole on a slope (a skylight into a cave,
+  seen through: the cave's far walls are under the neighbours' tops — they're
+  now a flat cap). Timing not measured (the GPU was shared at the time).
+- Not done: generating the caves lazily (the 0.44 ms of generation and the
+  sim's share) — the columns would need their caves carved later, near the
+  player, from the atlas's cave noise (forms.wgsl caveVoids) into the
+  window's layers.
+
+
+## Round 83 — the audit: dense cells and whole reads where the runs would do (perfopt)
+
+Why: the coordinator's analyseRock fix (a 64² box unpacked to a million
+cells, 1–3 s frames) — the user: look for the same elsewhere. Measured at the
+phone tier on the desktop (scratch integ.mjs: a 20 s ride, the integrity
+passes' CPU time and what the readbacks copy; fraccmp.mjs: analyse() on the
+same boxes both ways, results compared). The user's game was open in their
+browser part of the time: GPU timings then contended (the CPU ones less so).
+
+- fracture.ts `analyse` (structures; every box integrity marks — land come in,
+  64² regions, riding; cyclones r × 2.5; forms): unpacked every column of the
+  box into a W × D × zMax cell grid (1 M cells for a region) and scanned all of
+  it to seed the floods. `?fracture=runs`: only the structural runs are
+  unpacked (a sparse map), the floods seeded from them, any other cell looked
+  up in its column when asked; nothing structural → nothing done. Same
+  results (bodies and crumbled cells compared on 12 boxes, atlas and valley);
+  atlas regions 15–24 → 0.4–2.3 ms, the valley's (towers, ruins) 4–20 →
+  0.2–8.5, the whole valley 172 → 74 ms.
+- fracture.ts `WorldVox` (matAt, colTop, baseTop, runTop): read slots through
+  readSlot — a Float32Array view and an object a slot — and baseTop built an
+  array a call; the bodies call them for every collision point of every
+  substep. Now read in place (a float view kept, made again when the slots
+  change): no allocation. Same values (knocktest 6/6; pillar and phys runs
+  fall and settle as before).
+- integrity.ts `update`: read all of the layers back (16 MB in the atlas's
+  window) and the drift texture every 0.35 s while anything was dirty — riding,
+  every region come in — and every 1 s while bodies exist. `?intread=near`:
+  only the chunks a pass looks at (the dirty boxes + 6, the cut columns + 24,
+  the bodies + 4) into a CPU copy of the whole; whole again after a slide
+  (the pages move). Riding 20 s: 160 MB → 81 MB read back (the slides' whole
+  reads are most of what's left), the passes' CPU 9–35 ms → 0.8–5.4 ms (with
+  fracture=runs).
+- api/mirror.ts (the world API's mirror, on whenever a game attaches it — the
+  hoverbike, ?cutaway): every 250 ms a new 20 MB staging buffer, every source
+  copied out (the layers 16 MB of it). The staging buffer is kept now; and
+  `?mirror=near`: the layers (`addBuffer(name, buf, paged)`) are read whole
+  every 8th read and after a slide, between only their pages within 48 cells
+  of the camera's target, written into the copy in place (its views kept).
+  worldapitest 16/16 with mirror=near&intread=near&fracture=runs; a read's
+  median 12.9 → 8.1 ms.
+- Left as found (listed for later): level.ts `metalSize` reads the whole
+  layers back for a tap's metal flood (once a tap: the chunks round it would
+  do); level.ts reads surface, veg, water (256 KB each) every second and the
+  particle counters twice a second, each through a new staging buffer
+  (WorldCore.readBuffer makes one a call: a kept one, or one read of the four,
+  would do); bodies.ts keeps a free body as a voxel list and collision points
+  (the user asks why not columns: a body rotates, so its runs would be along
+  its own z — a pillar's 100 voxels one run; packing, collision and the
+  projection would walk runs, not voxels; not done).
+
+
+## Round 83 — the generator's water at rest: what's out of balance; settling and river-hold tried (perfopt)
+
+Why: the user: "all generators make a steady state so when we arrive nothing
+is simulated until the player interacts with it" — they saw water rush in on
+arrival. scripts/waterrest.mjs: the atlas level (phone tier: land comes in
+asleep), every chunk woken with no edits, the water read before and 5 s after,
+classed sea / river (a source) / other / dry.
+
+- Out of balance: the rivers. A river is filled to its level (rl − 0.3) and fed
+  by springs (0.0008 a tick along its middle); the pipes' steady state for those
+  springs is far thinner on a slope (the outflow cap binds: about the river's
+  accumulated spring discharge a tick). Woken: 3 378 of 4 929 river columns
+  change by over 0.05 in 5 s, the window's water 3 466 → 3 035 (−12 %), and
+  converged (2 048 steps) it's ~2 500 (−27 %). Other water (the coarse world's
+  lakes, tubes) moves in 161 columns. One basin fed by springs with no outlet
+  rises ~1.3 cells in 5 s: never at rest.
+- Fixed: Sleep.settleAll's drowsy window for the first window was counted
+  from tick 0, after the level's warmup had run hundreds — the first window
+  was never drowsy (532015d).
+- Tried, kept as a measuring tool only (`?settleiters=N`, default 0): the new
+  land's water settled on arrival — water flux/depth ping-ponged over the
+  rect of land just come in (one compute pass, no copies; sim/sleep.ts
+  `settling` rects, 64 ticks each). 2 048 steps: river columns moving 3 378 →
+  ~700, the moved volume 539 → ~190 — but ~44 ms of GPU in a tick for a whole
+  window. Not the generator's fix.
+- Tried, `?riverhold=1` (default off): a river's source holds its level
+  instead of a spring's constant flow (forms.wgsl RIVER_HOLD writes
+  waterSource = −depth; water_depth.wgsl tops a negative-source column up to
+  that depth, at most 0.5 a tick) — what comes down from upstream, past the
+  window, so the generated river would be the pipes' steady state by
+  construction, its flux (FLUX_SEED) the flow it keeps. A breach works
+  (scripts/breach.mjs: a hole dug by a held river fills, ~31 units in 1 s, the
+  river stays at 0.70 and flows on). But it floods: the held level is above the
+  ground beside the channel in many places, and within 4 s of the load the
+  window's water goes 3.5 k → 44 k, wet columns 9.9 k → 22 k. A held river needs
+  banks at least as high as its level (the generator carving the channel and
+  keeping its banks), or a hold limited to its own discharge.
+- Rivers now go to the `rivers` branch's agent; these are its baseline and
+  tools (scripts/waterrest.mjs, scripts/breach.mjs).
+
+### perfopt — lazy caves, step 1 (`?caves=mouths`, default off); the band's back faces culled (`?bandcull=1`, no gain)
+
+- The coordinator's lazy caves, travel first. With `?caves=mouths`, the atlas's columns
+  (forms.wgsl colFinish, `LAZY_CAVES`) make a column's caves only where they can
+  open to the air: where some neighbour's ground is under the rock kept over the caves
+  (`lowN < rockTop - caveDepth`). Inside the hills it makes none, so no cave noise is
+  evaluated and no runs are written. Why: the caves nobody can see cost generation, mesh
+  and memory in every streamed column.
+- Measured (driveprofile, ride, desktop, GPU shared with other agents): the atlas's
+  generation passes were already small on the ride, so there's no clear win there. The
+  G-buffer went 0.26 to 0.20 ms in one pair; a second pair was throttled. Fewer runs
+  should help the mesh and the band most where the hills are deep. That isn't measured
+  separately yet.
+- Look (A/B screenshots at the spawn, 600x600): the same except for one enclosed cave
+  that showed in the window's cut edge. Elsewhere there were only water-shimmer
+  differences (mean diff 1.6). The cost: enclosed caves are gone, so the cutaway and
+  digging into a hill find solid rock. Step 2, still to do: carve them in later, near
+  the player (or when a dig reaches one).
+- `?bandcull=1` (the band's G-buffer draw culls back faces) is still in. On a contended
+  GPU, two drawbench runs gave draw/ref 26.3 to 22.5 and 11.3 to 14.0, so no measurable
+  gain. It stays off. The band is vertical (above and below the window), so the LOD
+  rings never cover it and there are no band draws to skip for them.
 ## Round 84 — rivers at the atlas's steady state: held, drawn flowing, no simulation (rivers)
 
 The user: "all generators make a steady state so when we arrive nothing is simulated until the player

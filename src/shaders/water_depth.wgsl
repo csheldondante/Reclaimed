@@ -15,18 +15,23 @@
 const RAIN_RATE: f32 = 0.0012;
 const EVAP: f32 = 0.00003;
 const EVAP_DEEP: f32 = 0.000002;
-/** (?rivers=hold, the perf agent's) the most a held source tops its column up by a step */
+/** (?rivers=hold / ?riverhold=1, the perf agent's) the most a held source tops its column up by a step (a breach
+ *  upstream of it still shows) */
 const HOLD_RATE: f32 = 0.5;
 /** (round 84, ?rivers=table) how fast a held river's column comes to the table's depth (a step's share): the river
  *  rises and falls with the wetness, and comes back to its level when a breach falls asleep, smoothly */
 const RIVER_RELAX: f32 = 0.02;
 
+// (perfopt: a settling pass runs over the rect of the land just come in — x, y, w, h columns: sim/systems.ts)
+@group(0) @binding(31) var<uniform> SR: vec4<u32>;
 @group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
 // (round 84) per chunk the most a column's water changed in a step (sim/world-gpu.ts waterChange)
 @group(0) @binding(9) var<storage, read_write> waterChange: array<atomic<u32>>;
 
 @compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (SETTLE_PASS && (gid.x >= SR.z || gid.y >= SR.w)) { return; }
+  let id = select(gid.xy, gid.xy + SR.xy, SETTLE_PASS);
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   // (round 84, ?rivers=table: a river's column nothing has woken: the atlas's table at the rivers' wetness, no
   // simulation — riverheld.wgsl)
@@ -38,7 +43,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     return;
   }
   // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
-  if (flowFrozen(id.xy, FLOW_N)) {
+  // (perfopt: a settling pass — SETTLE_PASS, sim/systems.ts WaterSystem — moves its rect, the land just come in)
+  if (!SETTLE_PASS && flowFrozen(id.xy, FLOW_N)) {
     let ia = colIdx(id.x, id.y);
     waterOut[ia] = water[ia];
     waterPrev[ia] = water[ia];

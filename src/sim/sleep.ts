@@ -27,6 +27,8 @@ const DROWSE_S = 0.25;
 /** (round 83) land come in stays drowsy for this many of the sim's ticks (not seconds: a slide holds the sim, and
  *  its derived fields — the surface, the render fields — must be made before it sleeps) */
 const DROWSE_TICKS = 8;
+/** (perfopt, settle=0) the ticks land come in settles its water for (WaterSystem's settling passes) */
+const SETTLE_TICKS = 64;
 /** (perfopt, ?settle=0 — DECISIONS round 83: "Generated land should come in settled"; "We don't need to simulate a
  *  map cell we stream") land come in — a slide's new chunks, the window cut again in z, a warp, the first window —
  *  doesn't wake to settle: it falls asleep at once (drowsy for a moment: its layers carried through) */
@@ -131,7 +133,12 @@ export class Sleep {
   settleAll(secs: number, now: number): void {
     this.wakeAll(SETTLE ? secs : 0, now);
     this.drowseTick.fill(this.tick + DROWSE_TICKS);
+    this.settling = [{ rect: [0, 0, this.cx * CHUNK, this.cy * CHUNK], until: -1 }];
+    // (perfopt: counted from the sim's tick at the next update — the first window's comes before any, at tick 0,
+    // and the level's warmup had run hundreds by then: it was never drowsy)
+    this.settleNext = true;
   }
+  private settleNext = false;
 
   wakeAll(secs: number, now: number): void {
     for (let k = 0; k < this.until.length; k++) this.until[k] = Math.max(this.until[k], now + secs);
@@ -141,8 +148,22 @@ export class Sleep {
   /** (sleepmore) when the window last slid: every chunk drowsy for DROWSE_S after */
   private slidAt = -1e9;
 
+  /**
+   * (perfopt) Land come in and still settling its water: rects of columns (x, y, w, h) and the tick they're done at
+   * (−1: from the next update) — the window's coordinates, moved with it on a slide.
+   */
+  settling: { rect: [number, number, number, number]; until: number }[] = [];
+
   shift(dx: number, dy: number, now: number): void {
     this.slidAt = now;
+    // (what was settling moves with the land; the strip come in settles from the next update)
+    const W = this.cx * CHUNK;
+    const H = this.cy * CHUNK;
+    this.settling = this.settling
+      .map((s) => ({ rect: [s.rect[0] - dx, s.rect[1] - dy, s.rect[2], s.rect[3]] as [number, number, number, number], until: s.until }))
+      .filter((s) => s.rect[0] + s.rect[2] > 0 && s.rect[1] + s.rect[3] > 0 && s.rect[0] < W && s.rect[1] < H);
+    if (dx) this.settling.push({ rect: dx > 0 ? [W - dx, 0, dx, H] : [0, 0, -dx, H], until: -1 });
+    if (dy) this.settling.push({ rect: dy > 0 ? [0, H - dy, W, dy] : [0, 0, W, -dy], until: -1 });
     const dcx = dx / CHUNK;
     const dcy = dy / CHUNK;
     const old = this.until.slice();
@@ -160,6 +181,17 @@ export class Sleep {
   /** this frame's wakers, then the mask (bits set: asleep) */
   update(now: number, near: [number, number, number] | null, events: WorldEvent[], storms: { x: number; y: number; radius: number; intensity: number }[], tick = this.tick): Uint32Array {
     this.tick = tick;
+    if (this.settleNext) {
+      this.settleNext = false;
+      this.drowseTick.fill(tick + DROWSE_TICKS);
+    }
+    // (one at a time — the water's settling pass takes the first: its ticks counted from when it's first)
+    while (this.settling.length) {
+      const s = this.settling[0];
+      if (s.until < 0) s.until = tick + SETTLE_TICKS;
+      if (tick < s.until) break;
+      this.settling.shift();
+    }
     if (near && WAKE_NEAR) this.wake(near[0], near[1], near[2], NEAR_S, now);
     for (const e of events) this.wake(e.x, e.y, e.radius + CHUNK, EVENT_S, now);
     for (const s of storms) if (s.intensity > 0.2) this.wake(s.x, s.y, s.radius, NEAR_S, now);

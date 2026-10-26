@@ -18,9 +18,13 @@ const FRICTION: f32 = 0.985;
 
 // (round 84, ?rivers=table: riverheld.wgsl) the atlas's rivers at their steady state
 @group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
+// (perfopt: a settling pass runs over the rect of the land just come in — x, y, w, h columns: sim/systems.ts)
+@group(0) @binding(31) var<uniform> SR: vec4<u32>;
 
 @compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (SETTLE_PASS && (gid.x >= SR.z || gid.y >= SR.w)) { return; }
+  let id = select(gid.xy, gid.xy + SR.xy, SETTLE_PASS);
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
@@ -29,8 +33,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // with no flux takes the pipes' steady state for its levels at once: f = GAIN (H - Hn) / (1 - FRICTION))
   // (round 84, ?rivers=table: a river's column nothing has woken is held at the atlas's steady state — its flux the
   // pipes' steady flux for its levels, so what's awake beside it is fed as the river would feed it)
-  let held = riverHeld(id.xy, riverHere(id.xy));
-  let seed = flowFrozen(id.xy, FLOW_N) || held;
+  // (a settling pass, SETTLE_PASS: its rect, the land just come in, the pipes as awake)
+  let held = !SETTLE_PASS && riverHeld(id.xy, riverHere(id.xy));
+  let seed = (!SETTLE_PASS && flowFrozen(id.xy, FLOW_N)) || held;
   if (seed && !held && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
   let d = water[i];
   if (d <= 1e-5) { flux[i] = dZero(); return; }

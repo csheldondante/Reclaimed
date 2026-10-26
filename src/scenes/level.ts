@@ -1362,6 +1362,7 @@ export class LevelScene implements Scene {
     if (this.sleep) {
       globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;
+      globals.settle = this.sleep.settling.map((s) => s.rect);
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);

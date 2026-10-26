@@ -24,7 +24,9 @@ const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY
  * atlas's steady state, riverFlow: held and drawn flowing with no simulation until something wakes it).
  */
 export const RIVERS: 'sim' | 'hold' | 'table' = (() => {
-  const v = (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('rivers')) ?? 'sim';
+  const q = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
+  // (perfopt's ?riverhold=1 is rivers=hold)
+  const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : 'sim');
   if (v !== 'sim' && v !== 'hold' && v !== 'table') throw new Error(`?rivers=${v}: sim, hold or table`);
   return v;
 })();
@@ -313,7 +315,7 @@ export class WorldGpu {
     this.fire = this.buf('fire', N * 4, S);
     this.fireNext = this.buf('fireNext', N * 4, S);
     this.renderFields = this.buf('renderFields', N * 16, S);
-    this.meshRegion = this.buf('meshRegion', 96, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.meshRegion = this.buf('meshRegion', 112, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.bend = this.buf('bend', N * 16, S);
     this.wilt = this.buf('wilt', N * 16, S);
     this.petals = this.buf('petals', N * 4, S);

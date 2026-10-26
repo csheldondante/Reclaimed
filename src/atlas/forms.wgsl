@@ -332,12 +332,15 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
   var dys = array<i32, 6>(0, 0, 1, -1, 1, -1);
   if (odd) { dxs = array<i32, 6>(1, -1, 1, 0, 0, 1); }
   var slope = 0.0;
+  // (perfopt, ?caves=mouths: the lowest neighbour — a cave can open only where one's ground is under it)
+  var lowN = 1e9;
   // (round 84) and the steepest step down from it the way a river runs (not across: its channel's sides)
   var drop = 0.0;
   let rdir = vec2<f32>(g.rvx, g.rvy) / max(length(vec2<f32>(g.rvx, g.rvy)), 1e-6);
   for (var k = 0; k < 6; k++) {
     let n = colG[u32(i32(id.y) + 1 + dys[k]) * mw + u32(i32(id.x) + 1 + dxs[k])];
     slope = max(slope, abs(n.h - g.h));
+    lowN = min(lowN, n.h);
     if (dot(normalize(cellU(x + dxs[k], y + dys[k]) - p), rdir) > 0.4) { drop = max(drop, g.h - n.h); }
   }
   // whose ground this is (dithered across a blend)
@@ -432,7 +435,12 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
   // their skylights, the alcoves (never the world's first cell)
   var vl: array<vec2<f32>, 16>;
   var nv = 0u;
-  let cv = caveVoids(p, rockTop, R);
+  // (perfopt, ?caves=mouths — the coordinator's lazy caves, travel first: a column's caves are made only where they
+  // can open to the air, a neighbour's ground under the rock kept over them (caveDepth); inside the hills, none — no
+  // noise evaluated, no runs. Not yet: carving them in later, near the player)
+  var cv: CaveVoids;
+  cv.n = 0u;
+  if (!LAZY_CAVES || lowN < rockTop - AP.caveDepth + 0.5) { cv = caveVoids(p, rockTop, R); }
   for (var k = 0u; k < cv.n; k++) {
     vl[nv] = cv.v[k];
     nv++;

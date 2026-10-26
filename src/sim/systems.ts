@@ -19,6 +19,7 @@ import moistureWgsl from '../shaders/moisture.wgsl?raw';
 import ecologyWgsl from '../shaders/ecology.wgsl?raw';
 import renderFieldsWgsl from '../shaders/renderfields.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
+import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import terrainShapeWgsl from '../shaders/terrainshape.wgsl?raw';
 import fireWgsl from '../shaders/fire.wgsl?raw';
 import statsWgsl from '../shaders/stats.wgsl?raw';
@@ -126,30 +127,98 @@ export class StructureSystem implements SimSystem {
   }
 }
 
+/**
+ * (perfopt, round 83 — the user: "all generators make a steady state so when we arrive nothing is simulated until
+ * the player interacts with it") With ?settle=0, land come in is drowsy for a few ticks (sim/sleep.ts) and, asleep,
+ * would freeze its water as the generator wrote it — a river filled to its level, not to what its springs keep it
+ * at, so it rushed off downstream when anything woke it. While any chunk is drowsy, each tick runs SETTLE_ITERS more
+ * water passes over the drowsy columns only (the pipes at the 60 Hz step): the new land's water settles, its flux
+ * becomes the flow the river keeps, and then it's frozen so. ?settleiters=N (0 off).
+ */
+const SETTLE_ITERS = (() => {
+  const q = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settleiters');
+  return q !== null ? Math.max(0, Number(q) | 0) : 0;
+})();
+
 export class WaterSystem implements SimSystem {
   readonly name = 'water';
   readonly period = 1;
   private flux;
   private depth;
-  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.flux = kernel(
-      device,
-      world,
-      'water-flux',
-      `const FLUX_SEED: bool = ${!SETTLE};\n` + flowConst('water') + waterFluxWgsl + riverHeld,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 22: 'tex' },
-      { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView },
-    );
-    this.depth = kernel(
-      device,
-      world,
-      'water-depth',
-      flowConst('water') + waterDepthWgsl + riverHeld,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex' },
-      { 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView },
-    );
+  private settleFlux;
+  private settleDepth;
+  /** (perfopt) the rects of land come in still settling (columns: x, y, w, h; Simulation.step sets them) */
+  settling: [number, number, number, number][] = [];
+  /** its uniform (water_flux.wgsl, water_depth.wgsl SR) */
+  private rect: GPUBuffer;
+  /** the first half of a settling iteration (water → the next buffer): the tick's own kernels with the rect */
+  private settleA?: { flux: ComputeKernel; fg: GPUBindGroup; depth: ComputeKernel; dg: GPUBindGroup };
+  constructor(private device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.rect = device.createBuffer({ label: 'water settle rect', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    const fluxK = (settle: boolean) =>
+      kernel(
+        device,
+        world,
+        settle ? 'water-settle-flux' : 'water-flux',
+        `const FLUX_SEED: bool = ${!SETTLE};\nconst SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterFluxWgsl + riverHeld,
+        { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 22: 'tex', 31: 'uniform' },
+        { 3: world.surface, 4: settle ? world.waterNext : world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 31: this.rect },
+      );
+    const depthK = (settle: boolean) =>
+      kernel(
+        device,
+        world,
+        settle ? 'water-settle-depth' : 'water-depth',
+        `const SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterDepthWgsl + riverHeld,
+        { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex', 31: 'uniform' },
+        // (a settling pass's second half: from the next buffer back into the water — the passes ping-pong)
+        { 3: settle ? world.waterNext : world.water, 4: world.flux, 5: world.waterSource, 6: settle ? world.water : world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 31: this.rect },
+      );
+    this.flux = fluxK(false);
+    this.depth = depthK(false);
+    // (settling: B — flux from the next buffer, depth from it back into the water; A — the same kernels with the
+    // buffers the other way round, so an iteration is A then B and ends in the water, no copies)
+    this.settleFlux = SETTLE_ITERS ? fluxK(true) : undefined;
+    this.settleDepth = SETTLE_ITERS ? depthK(true) : undefined;
+    if (this.settleFlux && this.settleDepth) {
+      const f = this.settleFlux.k;
+      const d = this.settleDepth.k;
+      this.settleA = {
+        flux: f,
+        fg: makeBindGroup(device, 'water-settle-flux-a', f.layout, { 0: world.globals, 2: world.materials, 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 31: this.rect }),
+        depth: d,
+        dg: makeBindGroup(device, 'water-settle-depth-a', d.layout, { 0: world.globals, 2: world.materials, 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 31: this.rect }),
+      };
+    }
   }
   encode(enc: GPUCommandEncoder): void {
+    // (perfopt: land just come in settles first, in one pass over its rect, the tick's own passes after — what the
+    // others read is theirs. The next buffer holds the water at the tick's start everywhere (the last tick's depth
+    // pass wrote all of it, then it was copied over), so outside the rect the two agree throughout.)
+    // (one rect a tick — the oldest first: a slide's strips settle one after another)
+    const r = this.settling[0];
+    if (r && this.settleFlux && this.settleDepth && this.settleA) {
+      this.device.queue.writeBuffer(this.rect, 0, new Uint32Array([Math.max(0, r[0]), Math.max(0, r[1]), r[2] + Math.min(0, r[0]), r[3] + Math.min(0, r[1])]));
+      const A = this.settleA;
+      const gx = Math.ceil(r[2] / 8);
+      const gy = Math.ceil(r[3] / 8);
+      const pass = enc.beginComputePass({ label: 'water-settle', timestampWrites: this.prof.timestamps('water-settle') });
+      for (let s = 0; s < SETTLE_ITERS; s++) {
+        pass.setPipeline(A.flux.pipeline);
+        pass.setBindGroup(0, A.fg);
+        pass.dispatchWorkgroups(gx, gy);
+        pass.setPipeline(A.depth.pipeline);
+        pass.setBindGroup(0, A.dg);
+        pass.dispatchWorkgroups(gx, gy);
+        pass.setPipeline(this.settleFlux.k.pipeline);
+        pass.setBindGroup(0, this.settleFlux.group);
+        pass.dispatchWorkgroups(gx, gy);
+        pass.setPipeline(this.settleDepth.k.pipeline);
+        pass.setBindGroup(0, this.settleDepth.group);
+        pass.dispatchWorkgroups(gx, gy);
+      }
+      pass.end();
+    }
     // (perfopt, simhz: the pipes stable only at the 60 Hz step — FLOW_SUB of them a tick, sim/flow.ts)
     for (let s = 0; s < FLOW_SUB; s++) {
       dispatch(enc, this.prof, 'water-flux', this.flux.k, this.flux.group, this.world.groups);
@@ -288,7 +357,7 @@ export class RenderFieldsSystem implements SimSystem {
       device,
       world,
       'renderfields',
-      terrainShapeWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
+      terrainShapeWgsl + meshStateWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
 ` + renderFieldsWgsl + flowWgsl + riverHeld,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 22: 'tex', 30: 'uniform' },
       { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 22: world.riverFlowView, 30: world.meshRegion },

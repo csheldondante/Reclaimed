@@ -384,7 +384,11 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     const hmacB = mk('hmac', N * 4);
     // every pipeline at once, off the main thread (D3D compiles are the slow part of making the atlas)
     const bm = makeModule(dev, 'atlas build', this.parts(buildW));
-    const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, formsW));
+    // (perfopt, ?caves=mouths: only the caves that can open to the air — forms.wgsl LAZY_CAVES)
+    const lazyCaves = new URLSearchParams(location.search).get('caves') === 'mouths';
+    // (perfopt's ?riverhold=1, round 84: ?rivers=hold — RIVER_HOLD in parts())
+    const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, `const LAZY_CAVES: bool = ${lazyCaves};
+`, formsW));
     const K = (entry: string, spec: BindSpec, m = bm) => makeComputeAsync(dev, `atlas ${entry}`, m, { 0: 'uniform', ...spec }, entry);
     const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed, kSeedV, kOutV, kSeedL, kOutL] = await this.time('compile', () =>
       Promise.all([

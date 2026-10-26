@@ -13,7 +13,10 @@
 //      goes on up (the live mesh: what's above is the band's; else far up)
 //   ze the quads made: those whose base sample's z is in [x, y), or (z = 1)
 //      outside it — the live mesh its window's, the band what's outside
-struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32> };
+//   cv (perfopt, ?cavemesh=near) w 1: the mesh leaves out what's more than CAVE_DEEP under the lowest top of a
+//      sample's cell and its neighbours (caves, the insides of hills: under the ground, never seen from the
+//      sky), except within z of (x, y) — the cut's focus, where the player is under a roof
+struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32>, cv: vec4<f32> };
 @group(0) @binding(30) var<uniform> MR: MeshRegion;
 
 /**
@@ -27,8 +30,7 @@ fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE |
 // the field mesh's state (fieldmesh.wgsl binding 9): CHUNK0 words, then CSTRIDE a chunk, then a word
 // a chunk (near the view), then (round 73) four a mesh range: the translation its vertices are drawn
 // with — the streamed window slid since they were made (fieldmesh.ts shift)
-const CHUNK0: u32 = 16u;
-const CSTRIDE: u32 = 13u;
+// (CHUNK0, CSTRIDE: meshstate.wgsl, included before this)
 fn offBase() -> u32 { return CHUNK0 + MR.n.x * MR.n.y * (CSTRIDE + 1u); }
 
 /** Smooth value noise 0..1 (trilinear between hashed lattice values). */
