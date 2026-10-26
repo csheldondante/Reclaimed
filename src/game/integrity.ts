@@ -22,6 +22,14 @@ import { CUTS, editOpOf } from '../sim/edit-ops';
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 
+/**
+ * (perfopt, round 83 audit: ?intread=near) A pass reads back only the layers' chunks it looks at — round the dirty
+ * boxes (4 cells), the cut columns (24: the rock hanging from them), the bodies (4) — into a CPU copy of all of
+ * them, not all 16 MB of the atlas's window every 0.35 s while anything is dirty (riding: every region come in) or
+ * every 1 s while bodies exist. After a slide (the window's epoch) the next read is whole again.
+ */
+const READ_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('intread') === 'near';
+
 // Impacts (round 21: "crumble much more easily, break up more; impacts make
 // dust"): a body that hits something at IMPACT_BREAK cells/s or more
 // shatters into about weakness · speed² · voxels / SHATTER pieces (the small
@@ -307,14 +315,85 @@ export class Integrity {
     this.busy = true;
     // the layers (structures, solid ground) and the loose ground's depth
     // (bodies lie on it) — read back together
-    void Promise.all([this.core.readBuffer('layers'), this.core.readTexture(this.core.world.drift)]).then(([f, d]) => {
+    void Promise.all([READ_NEAR ? this.readNear() : this.core.readBuffer('layers').then((f) => ((this.readBytes += f.byteLength), f)), this.core.readTexture(this.core.world.drift)]).then(([f, d]) => {
       this.busy = false;
-      this.world.slots = new Uint32Array(f.buffer);
+      if (f) this.world.slots = new Uint32Array(f.buffer);
       const loose = new Float32Array(d.w * d.h);
       for (let i = 0; i < loose.length; i++) loose[i] = d.data[i * 4];
       this.bodies.loose = loose;
       this.pass();
     }, ignoreTeardown);
+  }
+
+  /** (intread=near) the window's epoch the CPU copy is of, and bytes read back so far (scripts read it) */
+  private readEpoch = -1;
+  readBytes = 0;
+
+  /** (intread=near) the chunks a pass looks at, read back into the CPU copy of the layers (whole after a slide) */
+  private async readNear(): Promise<Float32Array | null> {
+    const core = this.core;
+    if (!this.world.slots.length || core.windowEpoch !== this.readEpoch) {
+      const e = core.windowEpoch;
+      const f = await core.readBuffer('layers');
+      this.readEpoch = e;
+      this.readBytes += f.byteLength;
+      return f;
+    }
+    const p = core.packed;
+    const C = 16;
+    const want = new Set<number>();
+    const box = (x0: number, y0: number, x1: number, y1: number) => {
+      const cx0 = Math.max(0, Math.floor(x0 / C));
+      const cx1 = Math.min(p.chunksX - 1, Math.floor(x1 / C));
+      const cy0 = Math.max(0, Math.floor(y0 / ROW_H / C));
+      const cy1 = Math.min(p.chunksY - 1, Math.floor(y1 / ROW_H / C));
+      for (let cy = cy0; cy <= cy1; cy++) for (let cx = cx0; cx <= cx1; cx++) want.add(cy * p.chunksX + cx);
+    };
+    for (const [x0, y0, x1, y1] of this.dirty) box(x0 - 6, y0 - 6, x1 + 6, y1 + 6);
+    for (const k of this.rockSeeds.keys()) {
+      const [px, py] = cellPos(k % 65536, Math.floor(k / 65536));
+      box(px - 24, py - 24, px + 24, py + 24);
+    }
+    for (const b of this.bodies.list) {
+      let r = 0;
+      for (const v of b.local) r = Math.max(r, Math.hypot(v.p[0], v.p[1], v.p[2]));
+      box(b.pos[0] - r - 4, b.pos[1] - r - 4, b.pos[0] + r + 4, b.pos[1] + r + 4);
+    }
+    if (!want.size) return null;
+    const dev = core.host.gpu.device;
+    const ranges: [number, number][] = [];
+    let bytes = 0;
+    for (const ci of want) {
+      const at = p.chunkTable[ci * 2] * SLOT_WORDS * 4;
+      const n = C * C * p.chunkTable[ci * 2 + 1] * SLOT_WORDS * 4;
+      ranges.push([at, n]);
+      bytes += n;
+    }
+    const e = core.windowEpoch;
+    const tmp = dev.createBuffer({ label: 'integrity near', size: bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder();
+    let o = 0;
+    for (const [at, n] of ranges) {
+      enc.copyBufferToBuffer(core.world.layers, at, tmp, o, n);
+      o += n;
+    }
+    dev.queue.submit([enc.finish()]);
+    await tmp.mapAsync(GPUMapMode.READ);
+    // (the window slid meanwhile: the pages moved — the whole of it next time)
+    if (core.windowEpoch !== e) {
+      tmp.destroy();
+      this.readEpoch = -1;
+      return null;
+    }
+    const all = new Uint32Array(tmp.getMappedRange());
+    o = 0;
+    for (const [at, n] of ranges) {
+      this.world.slots.set(all.subarray(o / 4, (o + n) / 4), at / 4);
+      o += n;
+    }
+    tmp.destroy();
+    this.readBytes += bytes;
+    return null;
   }
 
   private pass(): void {

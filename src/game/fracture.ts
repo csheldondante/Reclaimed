@@ -15,7 +15,7 @@
 // Structural = solid and weaker than bedrock (strength < 1); everything else
 // that isn't air (stone, soil, sand, trash, rubble…) is terrain and anchors.
 
-import { cellRange, columnSlots, readSlot, type PackedWorld } from '../world/layout';
+import { CHUNK as CHUNK_V, SLOT_WORDS, cellRange, columnSlots, readSlot, type PackedWorld } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
 import { NDIR, nbr } from '../world/lattice';
 
@@ -34,6 +34,13 @@ export interface Fracture {
 
 /** Read-only voxel view of packed column slots (allocation-free lookups). */
 export class WorldVox {
+  /**
+   * (perfopt, round 83 audit) The slots read in place — a slot's z0, z1 as floats, its material the low byte of its
+   * third word — not through readSlot, which made a view and an object a slot: matAt walks a column a call, and the
+   * bodies call it for every point of every substep.
+   */
+  private f32: Float32Array<ArrayBufferLike> = new Float32Array(0);
+  private slotsAt: Uint32Array | null = null;
   constructor(
     readonly packed: PackedWorld,
     public slots: Uint32Array,
@@ -46,16 +53,35 @@ export class WorldVox {
     return this.packed.dims.h;
   }
 
+  /** the float view of the slots (made again when they're replaced) */
+  private floats(): Float32Array<ArrayBufferLike> {
+    if (this.slotsAt !== this.slots) {
+      this.slotsAt = this.slots;
+      this.f32 = new Float32Array(this.slots.buffer, this.slots.byteOffset, this.slots.length);
+    }
+    return this.f32;
+  }
+
+  /** the slots of column (x, y): its first word and how many slots it has */
+  private col(x: number, y: number): [number, number] {
+    const p = this.packed;
+    const ci = Math.floor(y / CHUNK_V) * p.chunksX + Math.floor(x / CHUNK_V);
+    const k = p.chunkTable[ci * 2 + 1];
+    return [(p.chunkTable[ci * 2] + ((y % CHUNK_V) * CHUNK_V + (x % CHUNK_V)) * k) * SLOT_WORDS, k];
+  }
+
   /** Material at cell (x, y, z) (its centre z + 0.5), 0 for air or off the map. */
   matAt(x: number, y: number, z: number): number {
     if (x < 0 || y < 0 || x >= this.w || y >= this.h || z < 0) return 0;
-    const { base, k } = columnSlots(this.packed, x, y);
+    const f = this.floats();
+    const u = this.slots;
+    const [o, k] = this.col(x, y);
     const c = z + 0.5;
     for (let s = 0; s < k; s++) {
-      const iv = readSlot(this.slots, base + s);
-      if (!iv) return 0;
-      if (c < iv.z0) return 0;
-      if (c < iv.z1) return iv.mat;
+      const w = o + s * SLOT_WORDS;
+      if (u[w + 1] === 0) return 0;
+      if (c < f[w]) return 0;
+      if (c < f[w + 1]) return u[w + 2] & 0xff;
     }
     return 0;
   }
@@ -63,12 +89,14 @@ export class WorldVox {
   /** Top of the column's highest run (0 if empty or off the map). */
   colTop(x: number, y: number): number {
     if (x < 0 || y < 0 || x >= this.w || y >= this.h) return 0;
-    const { base, k } = columnSlots(this.packed, x, y);
+    const f = this.floats();
+    const u = this.slots;
+    const [o, k] = this.col(x, y);
     let top = 0;
     for (let s = 0; s < k; s++) {
-      const iv = readSlot(this.slots, base + s);
-      if (!iv) break;
-      top = iv.z1;
+      const w = o + s * SLOT_WORDS;
+      if (u[w + 1] === 0) break;
+      top = f[w + 1];
     }
     return top;
   }
@@ -76,29 +104,30 @@ export class WorldVox {
   /** Base of the loose ground on top of the column (its top if there is none): granular intervals touching from the top. */
   baseTop(x: number, y: number): number {
     if (x < 0 || y < 0 || x >= this.w || y >= this.h) return 0;
-    const { base, k } = columnSlots(this.packed, x, y);
-    const col: { z0: number; z1: number; mat: number }[] = [];
-    for (let s = 0; s < k; s++) {
-      const iv = readSlot(this.slots, base + s);
-      if (!iv) break;
-      col.push(iv);
-    }
-    let z = col.length ? col[col.length - 1].z1 : 0;
-    for (let s = col.length - 1; s >= 0; s--) {
-      if (MATERIALS[col[s].mat]?.state !== MatState.Granular || Math.abs(col[s].z1 - z) > 1e-3) break;
-      z = col[s].z0;
+    const f = this.floats();
+    const u = this.slots;
+    const [o, k] = this.col(x, y);
+    let n = 0;
+    while (n < k && u[o + n * SLOT_WORDS + 1] !== 0) n++;
+    let z = n ? f[o + (n - 1) * SLOT_WORDS + 1] : 0;
+    for (let s = n - 1; s >= 0; s--) {
+      const w = o + s * SLOT_WORDS;
+      if (MATERIALS[u[w + 2] & 0xff]?.state !== MatState.Granular || Math.abs(f[w + 1] - z) > 1e-3) break;
+      z = f[w];
     }
     return z;
   }
 
   /** Top of the run containing cell (x, y, z) (z itself must be inside one). */
   runTop(x: number, y: number, z: number): number {
-    const { base, k } = columnSlots(this.packed, x, y);
+    const f = this.floats();
+    const u = this.slots;
+    const [o, k] = this.col(x, y);
     const c = z + 0.5;
     for (let s = 0; s < k; s++) {
-      const iv = readSlot(this.slots, base + s);
-      if (!iv) break;
-      if (c >= iv.z0 && c < iv.z1) return iv.z1;
+      const w = o + s * SLOT_WORDS;
+      if (u[w + 1] === 0) break;
+      if (c >= f[w] && c < f[w + 1]) return f[w + 1];
     }
     return z + 1;
   }
@@ -120,6 +149,13 @@ const CAPACITY = 40;
  * Analyse the structures in the box [x0, x1) × [y0, y1) (all heights).
  * Pieces reaching the box's side are left alone (they continue outside it).
  */
+/**
+ * (perfopt, round 83 audit: ?fracture=runs) The box's structural cells only, from the columns' runs — a sparse map
+ * (the box is mostly ground and air: a 64² region came in as a W × D × zMax grid, a million cells unpacked and
+ * scanned, 12–27 ms a pass on the desktop while riding); any other cell is looked up in its column when asked.
+ */
+export const fractureOpts = { runs: typeof location !== 'undefined' && new URLSearchParams(location.search).get('fracture') === 'runs' };
+
 export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1: number): Fracture {
   x0 = Math.max(0, Math.floor(x0));
   y0 = Math.max(0, Math.floor(y0));
@@ -130,27 +166,53 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
   const H = world.packed.dims.zMax;
   if (W <= 0 || D <= 0) return { bodies: [], crumble: [] };
   const N = W * D * H;
-  const mat = new Uint8Array(N);
   const idx = (x: number, y: number, z: number) => (z * D + (y - y0)) * W + (x - x0);
+  const structural = new Uint8Array(256);
+  for (let m = 0; m < MATERIALS.length; m++) structural[m] = isStructural(m) ? 1 : 0;
+  // the cells: dense (every cell of the box, all heights), or (fracture=runs) the structural ones only
+  const dense = fractureOpts.runs ? null : new Uint8Array(N);
+  const sparse = fractureOpts.runs ? new Map<number, number>() : null;
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++) {
       const { base, k } = columnSlots(world.packed, x, y);
       for (let s = 0; s < k; s++) {
         const iv = readSlot(world.slots, base + s);
         if (!iv) break;
+        if (sparse && !structural[iv.mat]) continue;
         const [c0, c1] = cellRange(iv.z0, iv.z1);
-        for (let z = Math.max(c0, 0); z < c1 && z < H; z++) mat[idx(x, y, z)] = iv.mat;
+        for (let z = Math.max(c0, 0); z < c1 && z < H; z++) {
+          if (dense) dense[idx(x, y, z)] = iv.mat;
+          else sparse!.set(idx(x, y, z), iv.mat);
+        }
       }
     }
-  const structural = new Uint8Array(256);
-  for (let m = 0; m < MATERIALS.length; m++) structural[m] = isStructural(m) ? 1 : 0;
+  if (sparse && !sparse.size) return { bodies: [], crumble: [] };
+  const coordOf = (i: number): [number, number, number] => {
+    const x = i % W;
+    const r = (i - x) / W;
+    const y = r % D;
+    return [x + x0, y + y0, (r - y) / D];
+  };
+  // (a cell's material: the box's own, or — sparse, not structural — its column's)
+  const mat = {
+    at: (i: number): number => {
+      if (dense) return dense[i];
+      const m = sparse!.get(i);
+      if (m !== undefined) return m;
+      const [x, y, z] = coordOf(i);
+      return world.matAt(x, y, z);
+    },
+  };
   // what holds a structure: terrain under it, or solid terrain beside it —
   // loose ground banked against it doesn't (round 24: a tower with sand
   // drifted round its foot was "keyed in" and never tipped)
   const loose = new Uint8Array(256);
   for (let m = 0; m < MATERIALS.length; m++) loose[m] = MATERIALS[m].state === MatState.Granular ? 1 : 0;
   const holds = (m: number, dz: number) => m !== 0 && !structural[m] && (dz < 0 || !loose[m]);
-  const comp = new Int32Array(N).fill(-1);
+  const comp = dense ? new Int32Array(N).fill(-1) : null;
+  const compS = dense ? null : new Map<number, number>();
+  const compAt = (i: number) => (comp ? comp[i] : (compS!.get(i) ?? -1));
+  const compSet = (i: number, c: number) => (comp ? (comp[i] = c) : compS!.set(i, c));
   const result: Fracture = { bodies: [], crumble: [] };
   const NB = [
     [1, 0, 0],
@@ -167,11 +229,13 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
     return [x + x0, y + y0, (r - y) / D];
   };
   let nComp = 0;
-  for (let start = 0; start < N; start++) {
-    if (!structural[mat[start]] || comp[start] >= 0) continue;
+  // (in index order either way: z-major, as the dense scan went)
+  const starts: Iterable<number> = dense ? dense.keys() : [...sparse!.keys()].sort((a, b) => a - b);
+  for (const start of starts) {
+    if (!structural[mat.at(start)] || compAt(start) >= 0) continue;
     // flood the piece
     const cells: number[] = [start];
-    comp[start] = nComp;
+    compSet(start, nComp);
     let touchesEdge = false;
     let anchored = false;
     for (let h = 0; h < cells.length; h++) {
@@ -188,14 +252,14 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
           continue;
         }
         const j = idx(nx, ny, nz);
-        const m = mat[j];
+        const m = mat.at(j);
         if (!m) continue;
         if (!structural[m]) {
           if (holds(m, dz)) anchored = true;
           continue;
         }
-        if (comp[j] < 0) {
-          comp[j] = nComp;
+        if (compAt(j) < 0) {
+          compSet(j, nComp);
           cells.push(j);
         }
       }
@@ -204,7 +268,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
     if (touchesEdge) continue;
     const vox = (i: number): Voxel => {
       const [x, y, z] = coord(i);
-      return { x, y, z, mat: mat[i] };
+      return { x, y, z, mat: mat.at(i) };
     };
     if (!anchored) {
       result.bodies.push(cells.map(vox));
@@ -231,13 +295,13 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
       const [x, y, z] = coord(i);
       cx += x + 0.5;
       cy += y + 0.5;
-      const below = z > 0 ? mat[idx(x, y, z - 1)] : 1;
+      const below = z > 0 ? mat.at(idx(x, y, z - 1)) : 1;
       if (z === 0 || (below && !structural[below])) foot.push([x, y]);
       for (const [dx, dy] of NB.slice(0, 4)) {
         const nx = x + dx;
         const ny = y + dy;
         if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1) continue;
-        const m = mat[idx(nx, ny, z)];
+        const m = mat.at(idx(nx, ny, z));
         if (holds(m, 0)) sideAnchored = true;
       }
     }
@@ -254,7 +318,8 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
       // (index order is z-major: every voxel's support below comes first)
       const [x, y, z] = coord(i);
       const below = z > 0 ? idx(x, y, z - 1) : -1;
-      if (z === 0 || (mat[below] && !structural[mat[below]]) || grounded.has(below)) grounded.add(i);
+      const mb = below >= 0 ? mat.at(below) : 0;
+      if (z === 0 || (mb && !structural[mb]) || grounded.has(below)) grounded.add(i);
     }
     const dist = new Map<number, number>();
     let frontier: number[] = [];
@@ -266,7 +331,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
         const ny = y + dy;
         const nz = z + dz;
         if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1 || nz < 0 || nz >= H) continue;
-        const m = mat[idx(nx, ny, nz)];
+        const m = mat.at(idx(nx, ny, nz));
         if (holds(m, dz)) anchor = true;
       }
       if (anchor) {
@@ -346,7 +411,7 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
       if (d > 0) {
         const moment = Math.hypot(sx - m * (x + 0.5), sy - m * (y + 0.5));
         const t = 2 * thick.get(i)! - 1;
-        const ratio = moment / (CAPACITY * MATERIALS[mat[i]].strength * t * t * t);
+        const ratio = moment / (CAPACITY * MATERIALS[mat.at(i)].strength * t * t * t);
         if (ratio > worstRatio) {
           worstRatio = ratio;
           worst = i;

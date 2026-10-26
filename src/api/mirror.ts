@@ -5,6 +5,30 @@
 
 import { ignoreTeardown } from '../gpu/pipeline';
 
+/**
+ * (perfopt, round 83 audit: ?mirror=near) A paged buffer (the layers: 16 MB in the atlas's window, read whole every
+ * 250 ms while a game's API is on) is read whole only every NEAR_FULL reads, and after a slide; between, only its
+ * pages within NEAR_R of the focus (the camera's target) are read and written into the copy. Elsewhere a query sees
+ * the world as it was up to NEAR_FULL reads ago.
+ */
+const MIRROR_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mirror') === 'near';
+const NEAR_R = 48;
+const NEAR_FULL = 8;
+
+/** a paged buffer's layout (render/layout PackedWorld's): per chunk its first slot and slots a column, cells a side */
+export interface Paged {
+  chunksX: number;
+  chunksY: number;
+  chunkTable: Uint32Array;
+  /** bytes a slot */
+  slotBytes: number;
+  /** columns a chunk side */
+  chunk: number;
+  /** world units a row (hex rows: √3/2) */
+  rowH: number;
+  focus: () => [number, number] | null;
+}
+
 interface Source {
   name: string;
   buffer?: GPUBuffer;
@@ -13,6 +37,8 @@ interface Source {
   bytes: number;
   /** a texture's padded row (copyTextureToBuffer wants 256-byte rows) */
   rowBytes: number;
+  /** (mirror=near) read by pages near the focus between whole reads */
+  paged?: Paged;
 }
 
 export class Mirror {
@@ -54,10 +80,10 @@ export class Mirror {
     return true;
   }
 
-  /** Mirror a buffer (all of it) under `name`. */
-  addBuffer(name: string, buffer: GPUBuffer): void {
+  /** Mirror a buffer (all of it) under `name`; `paged` (a layers buffer): with ?mirror=near, read by pages near a focus between whole reads. */
+  addBuffer(name: string, buffer: GPUBuffer, paged?: Paged): void {
     if (this.sources.some((s) => s.name === name)) return;
-    this.sources.push({ name, buffer, offset: this.size, bytes: buffer.size, rowBytes: 0 });
+    this.sources.push({ name, buffer, offset: this.size, bytes: buffer.size, rowBytes: 0, paged: MIRROR_NEAR ? paged : undefined });
     this.size += Math.ceil(buffer.size / 256) * 256;
   }
 
@@ -110,11 +136,52 @@ export class Mirror {
     this.inFlight = null;
   }
 
+  /** (mirror=near) reads since the last whole one, and the staging buffer kept between reads */
+  private reads = 0;
+  private staging?: GPUBuffer;
+  /** bytes copied back so far (scripts read it) */
+  readBytes = 0;
+
+  /** a paged source's pages near its focus this read: [byte offset, bytes]; null: the whole of it */
+  private pagesNear(s: Source, whole: boolean): [number, number][] | null {
+    const p = s.paged;
+    if (!p || whole || !this.data.has(s.name)) return null;
+    const f = p.focus();
+    if (!f) return null;
+    const out: [number, number][] = [];
+    const cx0 = Math.max(0, Math.floor((f[0] - NEAR_R) / p.chunk));
+    const cx1 = Math.min(p.chunksX - 1, Math.floor((f[0] + NEAR_R) / p.chunk));
+    const cy0 = Math.max(0, Math.floor((f[1] - NEAR_R) / p.rowH / p.chunk));
+    const cy1 = Math.min(p.chunksY - 1, Math.floor((f[1] + NEAR_R) / p.rowH / p.chunk));
+    for (let cy = cy0; cy <= cy1; cy++)
+      for (let cx = cx0; cx <= cx1; cx++) {
+        const ci = cy * p.chunksX + cx;
+        out.push([p.chunkTable[ci * 2] * p.slotBytes, p.chunk * p.chunk * p.chunkTable[ci * 2 + 1] * p.slotBytes]);
+      }
+    return out;
+  }
+
   private async read(): Promise<void> {
     const e0 = this.epoch?.() ?? 0;
-    const tmp = this.device.createBuffer({ label: 'mirror', size: this.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    // (the staging buffer kept: a 20 MB buffer made and destroyed every 250 ms otherwise)
+    if (!this.staging || this.staging.size < this.size) {
+      this.staging?.destroy();
+      this.staging = this.device.createBuffer({ label: 'mirror', size: this.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    }
+    const tmp = this.staging;
+    // (mirror=near: whole every NEAR_FULL reads and after a slide; else the paged sources' near pages)
+    const whole = this.reads++ % NEAR_FULL === 0 || !this.fresh();
+    const near = new Map<Source, [number, number][]>();
     const enc = this.device.createCommandEncoder({ label: 'mirror' });
     for (const s of this.sources) {
+      const pages = s.buffer ? this.pagesNear(s, whole) : null;
+      if (pages) {
+        near.set(s, pages);
+        for (const [at, n] of pages) enc.copyBufferToBuffer(s.buffer!, at, tmp, s.offset + at, n);
+        this.readBytes += pages.reduce((a, [, n]) => a + n, 0);
+        continue;
+      }
+      this.readBytes += s.bytes;
       if (s.buffer) enc.copyBufferToBuffer(s.buffer, 0, tmp, s.offset, s.bytes);
       else if (s.texture) enc.copyTextureToBuffer({ texture: s.texture }, { buffer: tmp, offset: s.offset, bytesPerRow: s.rowBytes }, [s.texture.width, s.texture.height]);
     }
@@ -129,6 +196,13 @@ export class Mirror {
       }
       const all = tmp.getMappedRange();
       for (const s of this.sources) {
+        const pages = near.get(s);
+        if (pages) {
+          // (into the copy as it is: its views stay good)
+          const dst = new Uint8Array(this.data.get(s.name)!);
+          for (const [at, n] of pages) dst.set(new Uint8Array(all, s.offset + at, n), at);
+          continue;
+        }
         if (s.buffer) {
           this.data.set(s.name, all.slice(s.offset, s.offset + s.bytes));
           continue;
@@ -142,13 +216,16 @@ export class Mirror {
         this.data.set(s.name, out.buffer);
       }
       tmp.unmap();
-      this.f32s.clear();
-      this.u32s.clear();
+      // (a paged read keeps its views: they're of the same copy)
+      for (const s of this.sources) {
+        if (near.has(s)) continue;
+        this.f32s.delete(s.name);
+        this.u32s.delete(s.name);
+      }
       this.gen++;
       this.readAt = performance.now();
       this.dataEpoch = e0;
     }, ignoreTeardown);
-    tmp.destroy();
     // (once more, for the window as it is now)
     if (straddled) await this.read();
   }
@@ -168,5 +245,12 @@ export class Mirror {
   stop(): void {
     if (this.timer) window.clearInterval(this.timer);
     this.timer = 0;
+  }
+
+  /** the staging buffer let go (the world's gone) */
+  destroy(): void {
+    this.stop();
+    this.staging?.destroy();
+    this.staging = undefined;
   }
 }
