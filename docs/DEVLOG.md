@@ -6002,3 +6002,31 @@ look's detail (the mesh's material lookup, stains, wetness).
   chunk to voxels first (the hybrid's choice now runs before Sleep's update,
   the same frame), so what the player does there still wakes it. A storm
   spawned by the first spawn: 20 sim chunks awake, none outside the voxels.
+
+- **Measured again, interleaved** (after the sim filter; driveprofile as above,
+  the GPU busier this time — the same ceiling read 2.6 before, 2.9–3.2 now):
+
+| run | p50 | p95 | p99 | worst | GPU ms/frame | draw | gbuffer | renderprep | shadow (+static) |
+|---|---|---|---|---|---|---|---|---|---|
+| hybrid | 9.8 | 10.5 | 13.2 | 68 | 7.63 | 4.05 | 0.29 | 0.24 | 0.13 + 0.07 |
+| full game | 9.9 | 10.7 | 13.8 | 71 | 9.09 | 4.56 | 0.59 | 0.36 | 0.25 + 0.15 |
+| ceiling | 10.0 | 10.2 | 10.6 | 16 | 3.19 | 3.13 | – | – | – |
+| hybrid | 9.9 | 10.7 | 16.9 | 68 | 7.78 | 4.01 | 0.28 | 0.23 | 0.13 + 0.07 |
+| full game | 9.9 | 10.8 | 19.5 | 70 | 8.96 | 4.39 | 0.58 | 0.35 | 0.24 + 0.14 |
+| ceiling | 9.9 | 10.2 | 10.6 | 19 | 2.96 | 2.88 | – | – | – |
+| hybrid, ?ringn=129 | 9.9 | 10.6 | 16.0 | 74 | 7.04 | 3.08 | 0.29 | 0.26 | 0.13 + 0.07 |
+
+  The hybrid takes 13–16% off the game's GPU (the mesh's G-buffer, shadow and
+  prep halve; 21 of 72 chunks voxels on the ride, 18 drawn, against 53 drawn
+  in the game); it is nowhere near the ceiling, because what's left is not the
+  terrain: the draw is the rings themselves (the 1-cell ring adds 193² vertices
+  to the game's four; `?ringn=129` takes a ms off), and ~3.5 ms is the rest of
+  the game the ceiling doesn't run — the sim's kernels over the whole window
+  (they skip sleeping chunks but still dispatch), particles, agents, the wind
+  field, projection. Those are the next cut (P13).
+- **How many chunks need voxels depends on the place** (the first window of
+  each, 72 chunks; 12 of them the focus's): the first spawn 1 for its land,
+  the mesa 27, a settlement's ruins 27, a crystal field by a giant 59 (20% of
+  its columns are forms), a tunnel's hills 63 (way cuttings 10 cells deep, and
+  996 columns with gaps open to the air). A single flagged column makes its
+  chunk voxels.
