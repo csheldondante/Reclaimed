@@ -1,6 +1,9 @@
 // Boot: WebGPU, shared services, and switching between the menu diorama and
 // the level. Each scene owns its world and is disposed when left.
 
+// (perfopt: the phone's flags into the URL first — the modules below read it as they load; src/phone-flags.ts)
+import './phone-flags-boot';
+
 import { Ambience } from './audio/ambience';
 import { initGpu, showFatal, UnsupportedError } from './gpu/device';
 import { Profiler } from './gpu/profiler';
