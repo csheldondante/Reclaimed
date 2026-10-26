@@ -5143,3 +5143,17 @@ vegplan.wgsl's tufts (smoothstep(1.2, 2.5, veg)). At the phone's 1.3 pixels
 a cell a tuft box was a third of a pixel; the painted ones read nearly the
 same (scratch tf4-cmp: default left, tufts=0 right).
 
+
+## Round 83 — `?lite=1`, the phone's set (perfopt)
+
+- index.html expands `?lite=1` into tufts=0, shadowcache=4, prepevery=2,
+  bandh=2, shadowsize=512 (each only where the URL doesn't give it) before
+  any module reads the URL: one link for the phone, and any piece can be
+  turned back (`&lite=1&shadowcache=0`).
+- Tried for the water (0.35 ms of the draw): its surface detail left out
+  (ripples, glint, foam, swell, rain rings) saved 0.06 ms — the water's cost
+  is its sheet's vertices (9.5 k columns × 18, three neighbours' levels a
+  vertex), not its pixels. Taken out.
+- Riding, desktop, the render's passes a frame (draw + G-buffer + shadow +
+  prep, ms): forward (defer=0) 4.3; the default now 2.95; the lite set 1.9.
+

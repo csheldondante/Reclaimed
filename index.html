@@ -9,6 +9,17 @@
   <body>
     <canvas id="world"></canvas>
     <div id="ui"></div>
+    <script>
+      // (perfopt) ?lite=1: the phone's set of performance flags (docs/DEVLOG.md round 83), each one only where the URL
+      // doesn't give it — expanded here, before any module reads the URL
+      (function () {
+        var q = new URLSearchParams(location.search);
+        if (q.get('lite') !== '1') return;
+        var set = { tufts: '0', shadowcache: '4', prepevery: '2', bandh: '2', shadowsize: '512' };
+        for (var k in set) if (!q.has(k)) q.set(k, set[k]);
+        history.replaceState(null, '', location.pathname + '?' + q.toString() + location.hash);
+      })();
+    </script>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
