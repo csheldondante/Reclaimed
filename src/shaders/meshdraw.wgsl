@@ -87,6 +87,13 @@ fn groundAlbedo(m: u32) -> vec3<f32> {
 
 @fragment
 fn fsMesh(in: MOut) -> FOut {
+  // (round 82, ?look=flat: grey by the normal — the geometry's own cost)
+  if (MESH_LOOK == 2u) {
+    var f: FOut;
+    f.color = vec4<f32>(vec3<f32>(0.35 + 0.45 * max(dot(normalize(in.nrm), normalize(vec3<f32>(-0.4, -0.6, 0.7))), 0.0)), 1.0);
+    f.pick = vec2<u32>(1u, 1u);
+    return f;
+  }
   let nrm = normalize(in.nrm);
   // one step into the surface: the interval this point of it belongs to
   let ip = in.wpos - nrm * 0.2;
@@ -104,6 +111,13 @@ fn fsMesh(in: MOut) -> FOut {
   let cf = cellFields(in.wpos.xy);
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
+  // (?look=lookup: the interval's material and the lighting, none of the detail)
+  if (MESH_LOOK == 1u) {
+    var f: FOut;
+    f.color = vec4<f32>(toSrgb(haze(alb * in.tint * lighting(in.wpos, nrm), in.wpos)), 1.0);
+    f.pick = vec2<u32>(ci + 1u, mat | (u32(clamp(in.wpos.z, 0.0, 255.0)) << 8u));
+    return f;
+  }
   // a thin top layer shows the one beneath through it (a trace of blown dust
   // doesn't flip the ground's colour — round 17)
   if (isTop && lk.below != 0u) { alb = mix(groundAlbedo(lk.below), alb, smoothstep(0.02, 0.2, lk.thick)); }

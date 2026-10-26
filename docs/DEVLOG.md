@@ -4839,3 +4839,15 @@ worst case doesn't make sense".
   apart): GPU a frame 7.8 → 4.5 → 2.2 ms — render ~3.3, sim ~2.3, the
   atlas's columns ~2.2 (colHeight, formSeed). The phone's frame times
   decide.
+- The user: "What makes the pixel shader so complex? I thought we used a
+  compute shader to convert columns to triangles once per chunk". The
+  geometry is cached; the look isn't — each terrain pixel walks its
+  column's intervals, blends three cells' fields and adds its detail
+  every frame (round 61's choice: the field the shape, the intervals the
+  layers). Measured (drawbench, 1.5 M pixels, the mesh's share of the
+  draw): full 7.65 ms; the interval's material and the lighting only
+  2.46; grey by the normal 0.40. The pixel shader is ~95 % of it, its
+  detail (specks, chips, strata, the water film, plants, the fields) ~5 ms
+  of that. `?look=full|lookup|flat` (renderer.ts, meshdraw.wgsl
+  MESH_LOOK) for the phone to measure the same; shots78/look-compare.png.
+

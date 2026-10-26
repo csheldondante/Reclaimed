@@ -385,7 +385,11 @@ export class Renderer {
         // water's (its film) the fragments')
         { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
       );
-      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, meshDrawWgsl]);
+      // (round 82, ?look=: the terrain's pixel shader cut down, to measure it on a phone — full (default), lookup
+      // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
+      const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
+      if (look === undefined) throw new Error('?look= must be full, lookup or flat');
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, meshDrawWgsl]);
       this.meshPipe = device.createRenderPipeline({
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
