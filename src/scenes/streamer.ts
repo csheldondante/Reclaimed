@@ -546,10 +546,7 @@ export class Streamer {
     // (what the game installed that lives in window coordinates: units, bodies — round 80)
     for (const f of core.onShift) f(dx, dy * ROW_H, 0);
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
-    core.renderer.fieldMesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
-    // (round 83: the shore field made again for the window where it is now)
-    core.renderer.shore.dirty();
-    core.renderer.band?.mesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
+    core.renderer.windowMoved(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
     record('slide.grids', performance.now() - tSync);
     core.renderer.band?.shift(dx, dy);
     record('slide.band', performance.now() - tSync);
@@ -831,8 +828,7 @@ export class Streamer {
       );
       lands.forEach((f, k) => this.write(f, spots[k][0], spots[k][1]));
       // (everything built is made again where it is now)
-      core.renderer.fieldMesh.shift(1 << 12, 0, [0, 0, 0]);
-      core.renderer.band?.mesh.shift(1 << 12, 0, [0, 0, 0]);
+      core.renderer.windowMoved(1 << 12, 0, [0, 0, 0]);
       this.refreshBand();
       core.clearUndo();
       core.windowEpoch++;
@@ -910,8 +906,7 @@ export class Streamer {
     core.camera.shift(0, 0, dz);
     for (const f of core.onShift) f(0, 0, dz);
     core.windowEpoch++;
-    core.renderer.fieldMesh.shift(0, 0, [0, 0, -dz]);
-    core.renderer.band?.mesh.shift(0, 0, [0, 0, -dz]);
+    core.renderer.windowMoved(0, 0, [0, 0, -dz]);
     this.refreshBand();
     core.clearUndo();
     void R;

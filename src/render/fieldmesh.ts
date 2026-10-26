@@ -15,6 +15,7 @@ import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
+import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import fieldMeshWgsl from '../shaders/fieldmesh.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
 
@@ -181,7 +182,7 @@ export class FieldMesh {
     this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8, GPUBufferUsage.STORAGE);
     this.statBuf = world.buf(`${pre}meshStats`, stateWords * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshStateWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
     const spec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 30: 'uniform' } as const;
     const group = (k: ComputeKernel) =>
       makeBindGroup(device, 'fieldmesh', k.layout, {
@@ -289,7 +290,7 @@ export class FieldMesh {
     if (!this.shiftK) {
       this.stateOld = this.world.buf('meshStateOld', this.state.size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
       this.shiftUni = dev.createBuffer({ label: 'mesh shift', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
+      const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshStateWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
       this.shiftK = makeCompute(dev, 'fieldmesh-shift', parts, { 0: 'uniform', 9: 'rw', 10: 'read', 30: 'uniform', 31: 'uniform' }, 'shiftChunks');
       this.shiftGroup = makeBindGroup(dev, 'fieldmesh-shift', this.shiftK.layout, { 0: this.world.globals, 9: this.state, 10: this.stateOld, 30: this.region, 31: this.shiftUni });
     }

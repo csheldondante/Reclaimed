@@ -18,6 +18,7 @@ import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import structPrepWgsl from '../shaders/structprep.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
+import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import { FieldMesh, READBACK } from './fieldmesh';
@@ -290,7 +291,7 @@ export class Renderer {
     profiler.trackMemory('shadow', ss * ss * 4);
     // (?skip=cull: every column, as before the view culling)
     const cullOff = `const CULL_OFF: bool = ${SKIP.has('cull')};`;
-    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshRegionWgsl, cullOff, renderprepWgsl], {
+    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], {
       0: 'uniform',
       1: 'read',
       2: 'uniform',
@@ -327,7 +328,7 @@ export class Renderer {
 
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
     const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshRegionWgsl, tufts, vegprepWgsl], {
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, vegprepWgsl], {
       0: 'uniform',
       2: 'uniform',
       3: 'read',
@@ -486,7 +487,7 @@ export class Renderer {
       // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
       const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
       if (look === undefined) throw new Error('?look= must be full, lookup or flat');
-      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
       this.meshPipe = device.createRenderPipeline({
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
@@ -1251,6 +1252,17 @@ export class Renderer {
    * Draw what lies outside the streamed window too (round 79: the atlas level; render/band.ts), up to the
    * world's height. The streamer packs it (Streamer → band.update).
    */
+  /**
+   * (round 83) The streamed window moved by (dcx, dcy) mesh chunks, its vertices translated by t (world units):
+   * what's drawn from the window follows — the meshes (the window's and the band's), the shore field.
+   * dcx 1 << 12: every chunk made again (a warp).
+   */
+  windowMoved(dcx: number, dcy: number, t: [number, number, number]): void {
+    this.fieldMesh.shift(dcx, dcy, t);
+    this.band?.mesh.shift(dcx, dcy, t);
+    this.shore.dirty();
+  }
+
   private edgesOpen = false;
   /** (round 83) the nearest shore to every column (render/shore.ts): made every second, and after the window moves */
   readonly shore: ShoreField;

@@ -12,14 +12,10 @@ import { PULL_SLOTS } from '../sim/systems';
 import type { Mirror } from './mirror';
 import { blendedTop } from './smooth';
 
-/** edit.wgsl ops (op · 32 + material; + STROKE_START: each command its own press) */
-const OP_BUILD = 1;
-const OP_DIG = 2;
-const OP_POUR = 10;
-const OP_CRATER = 13;
-const OP_TAKE = 14;
-const OP_PUT = 15;
-const STROKE_START = 512;
+import { OP, STROKE_START } from '../sim/edit-ops';
+
+/** edit.wgsl ops (sim/edit-ops.ts) */
+const { BUILD: OP_BUILD, DIG: OP_DIG, POUR: OP_POUR, CRATER: OP_CRATER, TAKE: OP_TAKE, PUT: OP_PUT } = OP;
 
 export interface Layer {
   z0: number;

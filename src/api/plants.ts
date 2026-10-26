@@ -9,10 +9,10 @@ import { cellAt, cellPos } from '../world/lattice';
 import type { Mirror } from './mirror';
 import type { Terrain } from './terrain';
 
-/** edit.wgsl OP_FELL (op 5) */
-const OP_FELL = 5;
-const OP_PLANT = 7;
-const STROKE_START = 512;
+import { OP, STROKE_START } from '../sim/edit-ops';
+
+/** edit.wgsl ops (sim/edit-ops.ts) */
+const { FELL: OP_FELL, PLANT: OP_PLANT } = OP;
 
 export type TreeSpecies = 'broadleaf' | 'conifer' | 'birch' | 'giant';
 

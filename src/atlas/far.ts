@@ -8,6 +8,7 @@ import { MATERIALS } from '../world/materials';
 import { KINDS, warmth } from './regions';
 import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
+import meshStateW from '../shaders/meshstate.wgsl?raw';
 import { LodRings } from './lod';
 import { ROW_H } from '../world/lattice';
 
@@ -138,7 +139,7 @@ export class FarLand {
         { binding: 47, resource: { buffer: meshState } },
       ],
     });
-    const module = device.createShaderModule({ label: 'far', code: farW });
+    const module = device.createShaderModule({ label: 'far', code: meshStateW + '\n' + farW });
     this.pipe = device.createRenderPipeline({
       label: 'far',
       layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),

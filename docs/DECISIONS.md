@@ -45,6 +45,19 @@ each was implemented.
   water to make waves from large bodies come into the shore"; "rivers should
   flow downstream and water in the ocean should be waves coming into the
   shore".
+- The world's physics, layered (the user): "solids can use columns to cheaply
+  compute collapse and fracture in the vertical direction. Then sleep like
+  any other physics system. The water and loose materials can sit in
+  intervals on top of that and then simulate flow but we treat steady state
+  flow as sleeping." A unified flow for water, loose ground and lava ("a
+  unified model of material flow would be great for waterfalls emerging from
+  underground streams or lava flows"; "a water fall that actually arcs out");
+  steady flow frozen: "show the animation of sand endlessly spilling out of a
+  basin. Think flux. As long as our section has material going in matching
+  material out it is in steady state and we only need to find that again
+  when we perturb it." Rivers: the atlas's watersheds and their flow as a
+  function of dryness precomputed; the unperturbed basin a steady state, its
+  flow "strictly a render artifact computed at the atlas level".
 - What the sim must do (P11): water's steady state is cached, so no tick is
   needed most of the time: "run simulation on demand and cache when it has
   run for a bit and localize real simulation to player actions."

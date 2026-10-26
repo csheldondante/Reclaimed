@@ -171,7 +171,7 @@ fn chunkRect(c: u32) -> vec4<f32> {
 }
 
 /** a chunk with nothing built (new, or come in fresh with a slide): its built hash */
-const FRESH: u32 = 0x9e3779b9u;
+// (FRESH: meshstate.wgsl)
 
 // (round 73) two passes a frame: the chunks with nothing built claim the rebuild slots first — a
 // strip that slid in fresh mustn't wait behind chunks whose leaf litter moved a sixteenth

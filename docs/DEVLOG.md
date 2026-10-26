@@ -5580,3 +5580,16 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   (a river's flow has its streaks down it, no swell). scripts/watershot.mjs
   --at coast (a warm coast found on the atlas): rings of swell round an
   island, moving in between frames.
+
+- Encapsulation (the user: "Are you still practicing good encapsulation?"):
+  three leaks of this round closed. The field mesh's state layout (CHUNK0,
+  CSTRIDE, the built hash's word, its indices', FRESH) is published once in
+  shaders/meshstate.wgsl, included before meshregion.wgsl wherever that is
+  and before far.wgsl (the rings' meshBuilt read the numbers from their own
+  copy). The streamer tells the renderer the window moved (Renderer.
+  windowMoved: the meshes, the band's, the shore field) instead of reaching
+  into each. The edit ops are one table (sim/edit-ops.ts: OP, STROKE_START,
+  editOpOf, CUTS) for the world API, the plants and water modules and the
+  integrity system's tap. atlasworldtest 6/6, slideshot, craterbench (p95
+  10.2 ms) on it. Pages builds the experiment branches too (ceiling, rivers,
+  flow).

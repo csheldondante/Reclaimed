@@ -101,8 +101,7 @@ struct LodD {
    *  0: the rings never draw in the window */
   mesh: vec4<f32>,
 }
-/** the window's field mesh's state (meshregion.wgsl: CHUNK0 words, CSTRIDE a chunk; word 0 its indices drawn,
- *  word 5 the hash it was built for, FRESH (or 0) not built) */
+/** the window's field mesh's state (its published layout: meshstate.wgsl, included before this) */
 @group(0) @binding(47) var<storage, read> meshSt: array<u32>;
 
 /** Is the window's mesh built where l (window coordinates) is? (No mesh: as if it were — the rings stay out.) */
@@ -110,11 +109,11 @@ fn meshBuilt(l: vec2<f32>) -> bool {
   if (LD.mesh.z < 0.5) { return true; }
   let c = vec2<i32>(floor(l / LD.mesh.xy));
   if (any(c < vec2<i32>(0)) || c.x >= i32(LD.mesh.z) || c.y >= i32(LD.mesh.w)) { return true; }
-  let b = 16u + u32(c.y * i32(LD.mesh.z) + c.x) * 13u;
-  let h = meshSt[b + 5u];
+  let b = CHUNK0 + u32(c.y * i32(LD.mesh.z) + c.x) * CSTRIDE;
+  let h = meshSt[b + MS_BUILT];
   // (and drawn: a chunk made while its land was still coming in — a slide's — is made, and empty, till it's
   // made again; word 0 its indices)
-  return h != 0x9e3779b9u && h != 0u && meshSt[b] > 0u;
+  return h != FRESH && h != 0u && meshSt[b + MS_INDICES] > 0u;
 }
 @group(0) @binding(45) var<storage, read> lodT: array<vec2<f32>>;
 @group(0) @binding(46) var<uniform> LD: LodD;
