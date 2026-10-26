@@ -32,6 +32,10 @@ export interface Run {
   /** something happened (a sim or unit event, a dialog choice, an item picked up): conditions checked */
   note(fact: import('./story').Condition): void;
   flag(name: string): boolean;
+  /** does a condition hold now (the dialog asks it of a choice's `requires`) */
+  holds(c: import('./story').Condition): boolean;
+  /** the run's clock: `time` conditions, happenings (seconds) */
+  update(dt: number): void;
   end(how: RunRecord['end']): RunRecord;
   onObjective: ((id: string, state: 'shown' | 'done' | 'failed') => void)[];
 }

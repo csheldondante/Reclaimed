@@ -73,6 +73,12 @@ export class MemoryWorldState implements WorldState {
           r.presence[f] = clamp01((r.presence[f] ?? 0) + Math.max(-1, Math.min(1, m)));
           break;
         }
+        case 'faction-attitude': {
+          const f = this.factions.get(d.faction as FactionId);
+          if (!f) throw new Error(`AtlasEvent ${e.id}: faction-attitude needs detail.faction, a known faction`);
+          f.attitude = Math.max(-1, Math.min(1, f.attitude + m));
+          break;
+        }
         case 'mark': {
           if (!d.name || !d.kind) throw new Error(`AtlasEvent ${e.id}: a mark needs detail.name and detail.kind`);
           r.marks.push({ id: e.id, name: String(d.name), kind: String(d.kind), at: d.at as [number, number] | undefined, cause: e.id });
@@ -82,6 +88,12 @@ export class MemoryWorldState implements WorldState {
       for (const cb of this.onChange) cb(id, before, r);
     }
     this.events.push(e);
+    this.version++;
+  }
+
+  record(run: RunRecord): void {
+    this.runs.push(run);
+    this.run = run.run + 1;
     this.version++;
   }
 

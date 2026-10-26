@@ -66,6 +66,7 @@ export type AtlasEventKind =
   | 'ruin'
   | 'rebuild'
   | 'faction-presence'
+  | 'faction-attitude'
   | 'mark';
 
 export interface AtlasEvent {
@@ -78,6 +79,8 @@ export interface AtlasEvent {
   magnitude: number;
   /** a flood's water level (world z); a flood needs it, the rest ignore it */
   level?: number;
+  /** where in its region it shows: a story location's id (the GM knows places, not cells) */
+  location?: string;
   /** extra for the kind: the storm's kind, the burying material, the faction, the mark */
   detail?: Record<string, unknown>;
   /** which run it happened in, and why */
@@ -118,6 +121,8 @@ export interface WorldState {
   apply(e: AtlasEvent): void;
   history(region?: RegionId): AtlasEvent[];
   snapshot(): WorldSnapshot;
+  /** keep a finished run (what the GM and the overmap read in the snapshot's `runs`) */
+  record(run: import('./run').RunRecord): void;
   /** told after each change: the overmap and the generators listen */
   onChange: ((region: RegionId, before: RegionState, after: RegionState) => void)[];
 }

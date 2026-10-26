@@ -38,4 +38,6 @@ export interface Dialog {
   readonly isOpen: boolean;
   /** told each choice made: the run checks its conditions, applies effects */
   onChoice: ((tree: DialogTree, node: string, choice: number) => void)[];
+  /** told each node reached (its effects apply, `talked { node }` holds) */
+  onNode: ((tree: DialogTree, node: string) => void)[];
 }
