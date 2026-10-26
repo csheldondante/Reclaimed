@@ -23,6 +23,7 @@ import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
+import { ShoreField } from './shore';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from './camera';
 import { OutsideBand } from './band';
 
@@ -255,6 +256,8 @@ export class Renderer {
     private meshSlots?: number,
   ) {
     const N = world.cells;
+    // (round 83) the nearest shore to every column: the water's swell (render.wgsl shoreTex)
+    this.shore = new ShoreField(device, world, world.w, world.h);
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
     // drawn with fewer vertices
     this.opaqueCapacity = N * (world.maxK + 1);
@@ -374,6 +377,7 @@ export class Renderer {
         17: 'tex',
         19: 'tex',
         23: 'tex',
+        24: 'tex',
         25: 'depth',
         26: 'csampler',
       },
@@ -425,6 +429,7 @@ export class Renderer {
         17: world.driftView,
         19: world.strataView,
         23: world.reachView,
+        24: this.shore.view,
         25: shadow,
         26: this.shadowSampler,
       });
@@ -735,6 +740,7 @@ export class Renderer {
         new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0, VERTS_PER_TOP, 0, 0, 0, this.topsBase]),
       );
 
+    if (!SKIP.has('shore')) this.shore.encode(enc, performance.now());
     if (!SKIP.has('prep') && prepDue) {
       const pass = enc.beginComputePass({ label: 'renderprep', timestampWrites: this.profiler.timestamps('renderprep') });
       pass.setPipeline(this.prep.pipeline);
@@ -1246,6 +1252,8 @@ export class Renderer {
    * world's height. The streamer packs it (Streamer → band.update).
    */
   private edgesOpen = false;
+  /** (round 83) the nearest shore to every column (render/shore.ts): made every second, and after the window moves */
+  readonly shore: ShoreField;
   /** (round 83) no mesh made while set: a streamed window's slide is writing its land (Streamer.busy) */
   holdMesh = false;
 
