@@ -1078,3 +1078,29 @@ strokes one after another, cyclones, parked storms, scripted lightning
 natural storm and one dust storm), and measures each gate from readbacks
 (surface, contam, oil, moisture, water, driftTex): share closed, share
 fertile, amount of its stuff left.
+
+## Dialog, the run and story cameras (round 83, branch `dialog`; docs/SYSTEMS.md 10, 11, 5)
+
+Coded against src/api/contracts (dialog.ts, run.ts, story.ts, world.ts); each piece knows only its inputs:
+
+- `src/dialog/dialog.ts` — `DialogBox implements Dialog`: `open(tree, at?) → path`, `isOpen`, `onChoice`;
+  beyond the contract `onNode(tree, node)` (each node said: the run applies its effects and notes
+  `talked`), `onOpen` / `onClose`, `close()`. Choices filtered by a `check(conds)` callback; indices are the
+  node's own (hidden ones counted). DOM in `#ui`: `.dlg-scrim` (swallows input while open) and `.dlg`.
+- `src/run/run.ts` — `StoryRun implements Run` over a SessionStory and a WorldState: `note(fact)`,
+  `update(dt)` (the clock), `holds(c)` (`all(conds)` for a list), `objectives()`, `flag`, `has(item)`, `attitude(character)`,
+  `entry(tree)` (its last unlocked node), `hear(dialog)`, `end(how) → RunRecord`; events `onObjective`,
+  `onOutcome(outcome, cause)`, `onEnd`. AtlasEvents (and faction attitudes, as `faction-attitude`) go to
+  `WorldState.apply` when the outcome fires; the RunRecord to `WorldState.record`.
+- `src/run/validate.ts` — `validateStory(json) → SessionStory`, or a `StoryError` listing every problem
+  (references only, no snapshot needed; the GM's storycheck is the full check).
+- `src/run/hud.ts` — `ObjectiveHud(root, run)`: the shown objectives, bottom left.
+- `src/story/camera.ts` — `StoryCamera(camera, { dither?, slice? })`: `frame`/`release`, `reveal`, `look`,
+  `follow`, `skip`, `idle`, `busy`, `update(dt)`. Writes only `camera.target` and `camera.zoom`; the
+  cutaway through Dither.see / Slice.update.
+- `src/story/play.ts` — `StoryPlay.start({ ui, camera, api, world, story, stage, cut })`: the above over the
+  world API (terrain for heights and the cast's pillars; plants, water, fx for play-scale stand-ins of
+  atlas events). `Stage` maps story locations and cast to world positions: the region generator's output
+  later, hand-written now. `holdsInput`: the level's controls wait (a tap skips a reveal).
+- `src/story/demo/` — `?story=demo`: a placeholder story (JSON) and its stage in the valley; the level
+  (`LevelScene.startStory`) makes a MemoryWorldState for it. `window.reclaimed.story` is the StoryPlay.
