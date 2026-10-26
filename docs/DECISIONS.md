@@ -3,6 +3,25 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-26 — round 83 (session 5, `places`) — the why: an engine for legacy games
+
+- Reclaimed began as an atmospheric sandbox (wind helping nature regrow; satisfying floods and wind that
+  reacts to the landscape). Since the atlas it has been "an engine for legacy games": roguelike runs where
+  failure and death are always possible and choices leave a lasting, visible impact.
+- Built or prototyped: a detailed terrain generator, touch controllers, streaming, physics and destruction,
+  a streaming build fast enough on mobile. Missing: camera polish, dialogs, unit and item generators, a full
+  build mode for places, a story framework for the GM, room-based key/door generation.
+- Erosion, weather, water and fracture make the world feel alive, but only some need run in play; the rest
+  can be generated in response to story events or between runs. Agents that work, build and shape terrain
+  are to be brought out. "All that matters is the illusion of a living world. We can and should take
+  shortcuts that keep things fast and make them more compelling."
+- Atlas-changing events to support: a region sinking into the sea, a volcano burying a city in ash, a forest
+  overgrowing ruins, freezing over, an ever-storm, eternal shadow, the dead rising, factions turning
+  friendly or hostile.
+- "I would rather orchestrate and plan these systems in parallel and abstract them behind an API so we can
+  iterate and improve them all across multiple sessions. Fixing the performance and quality of the fluid
+  simulation or destruction shouldn't fundamentally matter to dialogue or the atlas updates." → docs/SYSTEMS.md.
+
 ## 2026-10-26 — round 83 (session 5, `places`) — the puck, separate cuts, LOD
 
 - "I think this camera is buggier than it is worth": the puck again, tracked
