@@ -200,11 +200,19 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   // changed out of sight before it fell asleep)
   let nearW = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]);
   var still = false;
-  if (MR.zb.w > 0.5 && nearW == 1u && built != FRESH && built != 0u) {
+  // (round 82: nor one owed a rebuild — found changed when every slot was taken: word 6 its new hash, not yet
+  // built. Before, it fell asleep owed, past its drowsy quarter second, and stayed stale until it left the view.)
+  let owed = atomicLoad(&state[b0 + 6u]) != built;
+  if (MR.zb.w > 0.5 && nearW == 1u && built != FRESH && built != 0u && !owed) {
     still = true;
-    for (var k = 0u; k < 9u; k++) {
-      let q = vec2<u32>(u32(clamp(mix(rc.x, rc.z, f32(k % 3u) * 0.5), 0.0, f32(G.mapW - 1u))), u32(clamp(mix(rc.y, rc.w, f32(k / 3u) * 0.5) / ROW_H, 0.0, f32(G.mapH - 1u))));
-      if (!asleep(q) || drowsy(q)) { still = false; }
+    // (round 82: every sim chunk under the columns it hashes — its margin too: 9 points in its rect missed the
+    // neighbours left and above, and a change there left it stale)
+    let cs = G.chunkSize;
+    for (var y = u32(j0) / cs; y <= u32(j1) / cs; y++) {
+      for (var x = u32(i0) / cs; x <= u32(i1) / cs; x++) {
+        let q = vec2<u32>(x * cs, y * cs);
+        if (!asleep(q) || drowsy(q)) { still = false; }
+      }
     }
   }
   let vis = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]) != 0u && !taken && !still && (!freshOnly || built == FRESH || built == 0u);
@@ -251,9 +259,17 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
     for (var k = 0u; k < 4u; k++) { h = mixHash(mixHash(h, bitcast<u32>(f.a[k])), bitcast<u32>(f.q[k])); }
   }
   let b = cbase(c);
-  if (h == atomicLoad(&state[b + 5u])) { return; }
+  if (h == atomicLoad(&state[b + 5u])) {
+    // (changed back before it was rebuilt: owed nothing)
+    atomicStore(&state[b + 6u], h);
+    return;
+  }
   let at = atomicAdd(&state[0], 1u);
-  if (at >= MR.k.y) { return; }
+  if (at >= MR.k.y) {
+    // (no slot: owed — looked at again, asleep or not, until it has one)
+    atomicStore(&state[b + 6u], h);
+    return;
+  }
   atomicStore(&state[1u + at], c);
   atomicStore(&state[b + 11u], atomicLoad(&state[15]));
   atomicStore(&state[b + 6u], h);

@@ -4886,3 +4886,19 @@ worst case doesn't make sense".
   waits for the next animation frame, its time carried (`?pace=0` off).
   The other suspect, low's one rebuild slot (a backlog after a slide):
   `?slots=N` overrides the tier's meshSlots to A/B it.
+- The user: the pacing helps a little (the freezes didn't come back with
+  `pace=0` either — intermittent), but "chunks are not finishing … if the
+  chunk stays skipped with no queue going back that way would reveal an
+  unfinished chunk". Two holes in the round-80 sleep skip (a chunk whose
+  columns all sleep isn't hashed): (1) one found changed when every slot
+  was taken wasn't remembered — it had its drowsy quarter second to be
+  found again, and with one slot on alternate frames it could miss it;
+  now word 6 keeps its new hash (owed) until it's built, and an owed chunk
+  is always looked at; (2) the test looked at 9 points in the chunk's own
+  rect, but its hash reads 2–3 cells past it: a change in the neighbour
+  left or above, while it slept, was never seen; now every sim chunk under
+  the hashed columns is checked. scripts/stalemesh.mjs (40 edits round
+  the view, one slot, everything left to sleep, then every chunk looked at
+  afresh): stale 6 → 3; with no edits 3 too — a background few, left for
+  the performance branch.
+
