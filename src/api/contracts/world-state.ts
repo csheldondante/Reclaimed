@@ -12,11 +12,15 @@ export class MemoryWorldState implements WorldState {
   private events: AtlasEvent[] = [];
   private factions = new Map<FactionId, Faction>();
   readonly runs: RunRecord[] = [];
+  /** the world's settlements (the region generator and the city game keep them) */
+  readonly settlements: import('./settlement').Settlement[] = [];
   version = 0;
   run = 0;
   onChange: ((region: RegionId, before: RegionState, after: RegionState) => void)[] = [];
 
   constructor(
+    /** the atlas's seed */
+    readonly seed: number,
     /** the regions' names and kinds (the atlas's defs) */
     private names: { id: RegionId; name: string; kind: string }[] = [],
     factions: Faction[] = [],
@@ -54,7 +58,11 @@ export class MemoryWorldState implements WorldState {
         case 'light': r.shadow = clamp01(r.shadow - m); break;
         case 'raise-dead': r.undead = clamp01(r.undead + m); break;
         case 'lay-dead': r.undead = clamp01(r.undead - m); break;
-        case 'flood': r.flooded = Math.max(r.flooded ?? -Infinity, m); break;
+        case 'flood': {
+          if (e.level === undefined) throw new Error(`AtlasEvent ${e.id}: a flood needs its level`);
+          r.flooded = Math.max(r.flooded ?? -Infinity, e.level);
+          break;
+        }
         case 'drain': r.flooded = null; break;
         case 'burn': r.ruin = clamp01(r.ruin + m * 0.5); r.overgrowth = clamp01(r.overgrowth - m); break;
         case 'ruin': r.ruin = clamp01(r.ruin + m); break;
@@ -62,7 +70,13 @@ export class MemoryWorldState implements WorldState {
         case 'faction-presence': {
           const f = d.faction as FactionId | undefined;
           if (!f) throw new Error(`AtlasEvent ${e.id}: faction-presence needs detail.faction`);
-          r.presence[f] = clamp01((r.presence[f] ?? 0) + m);
+          r.presence[f] = clamp01((r.presence[f] ?? 0) + Math.max(-1, Math.min(1, m)));
+          break;
+        }
+        case 'faction-attitude': {
+          const f = this.factions.get(d.faction as FactionId);
+          if (!f) throw new Error(`AtlasEvent ${e.id}: faction-attitude needs detail.faction, a known faction`);
+          f.attitude = Math.max(-1, Math.min(1, f.attitude + m));
           break;
         }
         case 'mark': {
@@ -77,6 +91,12 @@ export class MemoryWorldState implements WorldState {
     this.version++;
   }
 
+  record(run: RunRecord): void {
+    this.runs.push(run);
+    this.run = run.run + 1;
+    this.version++;
+  }
+
   history(region?: RegionId): AtlasEvent[] {
     return region === undefined ? [...this.events] : this.events.filter((e) => e.regions.includes(region));
   }
@@ -84,9 +104,11 @@ export class MemoryWorldState implements WorldState {
   snapshot(): WorldSnapshot {
     return {
       version: this.version,
+      seed: this.seed,
       run: this.run,
       regions: this.names.map((n) => ({ ...n, state: structuredClone(this.region(n.id)), settlements: [] })),
       factions: [...this.factions.values()],
+      settlements: [...this.settlements],
       history: this.history(),
       runs: [...this.runs],
     };
