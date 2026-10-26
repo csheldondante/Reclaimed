@@ -34,6 +34,9 @@ worked on in parallel:
 | `atlas` | `C:/Projects/Reclaimed-atlas` | `npm run dev -- --port 5203` |
 | `places` | `C:/Projects/Reclaimed-places` | `npm run dev -- --port 5207` |
 | `perfopt` | `C:/Projects/Reclaimed-perfopt` | `npm run dev -- --port 5211` |
+| `ceiling` | `C:/Projects/Reclaimed-ceiling` | `npm run dev -- --port 5215` |
+| `rivers` | `C:/Projects/Reclaimed-rivers` | `npm run dev -- --port 5219` |
+| `flow` | `C:/Projects/Reclaimed-flow` | `npm run dev -- --port 5223` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -164,3 +167,11 @@ it is. Round 69 (atlas) slides the window in z too (`Streamer.oz`,
 | Tag | Commit | Branch | What |
 |---|---|---|---|
 | `stable-r83-perf` | `a0d8bea` | `places` | Round 83, 2026-10-26: the user, testing it — "this is much better! I think this is sufficient for performance for now" (perfopt's deferred shading and phone set, the LOD rings filling unbuilt chunks, the mesh held during slides). The revert point if later work regresses; after it came the rings' cuts and the rock collapse (whose first versions froze for seconds). |
+
+## Experiments (round 83, from `places`; merge back what wins)
+
+| Branch | What | Try |
+|---|---|---|
+| `ceiling` | The perf ceiling: a heightfield of the atlas's ground only (`?ceiling=1`): GPU 8.4 → 2.5 ms a frame on the desktop's iGPU; the rings' vertices are what's left | /Reclaimed/ceiling/?skipmenu=1&level=atlas&drive=18&perf=lite&ceiling=1 |
+| `rivers` | Rivers at the atlas's steady state (`?rivers=table`): discharge from each node's watershed, levees, held asleep, drawn flowing, pulled back when woken, scaled by wetness | /Reclaimed/rivers/?skipmenu=1&level=atlas&rivers=table |
+| `flow` | One interval flow for liquids (`?flow=1`, `level=flowlab`): runs in the columns' gaps, arcing falls, cave streams, lava setting to basalt, near-steady chunks frozen as animation, supply rescaled | /Reclaimed/flow/?skipmenu=1&flow=1&level=flowlab |
