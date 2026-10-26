@@ -37,6 +37,10 @@ import type { MapData } from '../world/mapgen';
 import { Sleep } from '../sim/sleep';
 import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
+import { Cutaway } from '../api/cutaway';
+
+/** round 82, V21: ?cutaway=1 — the cutaway round the camera's target */
+const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 import { cpuLine, cpuStats, frameSteps } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
@@ -142,6 +146,10 @@ export class LevelScene implements Scene {
   agents!: Agents;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
+  /** round 82, V21: ?cutaway (api/cutaway.ts) */
+  private cutaway?: Cutaway;
+  /** a stand-in character's feet for ?cutaway (scripts/cutshot.mjs); the camera's target when unset */
+  cutFeet?: [number, number, number];
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
@@ -1285,6 +1293,13 @@ export class LevelScene implements Scene {
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
+    // (round 82, V21: ?cutaway=1 — the cutaway round the camera's target, as a game puts it round its
+    // character's feet; `cutFeet` for a script's stand-in character)
+    if (CUTAWAY) {
+      this.cutaway ??= new Cutaway((this.worldApi ??= attachSim(core)).terrain!, camera);
+      const [fx, fy, fz] = this.cutFeet ?? camera.target;
+      this.cutaway.update(fx, fy, fz, dt);
+    }
     core.render();
 
     hud.setWind(powers.windTier());

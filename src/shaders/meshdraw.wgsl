@@ -87,6 +87,17 @@ fn groundAlbedo(m: u32) -> vec3<f32> {
 
 @fragment
 fn fsMesh(in: MOut) -> FOut {
+  if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  // (round 82, V21: the inside of the ground, seen only where the cutaway opened it — a section through the
+  // rock, dark and flat, not its far side lit as if it were outside. Its normal, not the winding: the mesh's
+  // triangles face either way.)
+  // (a little past edge-on: a silhouette's smooth normals tip under it)
+  if (inCut(in.wpos) && dot(normalize(in.nrm), toEye(in.wpos)) < -0.15) {
+    var f: FOut;
+    f.color = vec4<f32>(0.12, 0.11, 0.1, 1.0); // (sRGB; world-core.ts SECTION_DARK)
+    f.pick = vec2<u32>(0u, 0u);
+    return f;
+  }
   // (round 82, ?look=flat: grey by the normal — the geometry's own cost)
   if (MESH_LOOK == 2u) {
     var f: FOut;

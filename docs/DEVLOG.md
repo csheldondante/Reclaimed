@@ -4901,4 +4901,28 @@ worst case doesn't make sense".
   the view, one slot, everything left to sleep, then every chunk looked at
   afresh): stale 6 → 3; with no edits 3 too — a background few, left for
   the performance branch.
+- V21, the character always seen (the user's puck: DECISIONS round 82).
+  api/cutaway.ts: a puck on the floor under the character's feet
+  (Terrain.floorAt; it falls to it, follows it, a jump leaves it down) looks
+  up at the eye each frame through the terrain mirror's layers. Rock 1.5–12
+  cells over most of it and the ring round it: a slice — `Camera.focus`
+  (x, y, the roof's underside, −1): render.wgsl `cutAway` discards
+  everything over it, the whole view; what solid it opens is drawn dark
+  (fsMesh: a surface seen from inside, its normal away from the eye — not
+  the winding, the mesh's triangles face either way; the clear colour the
+  same dark, for rock cut down to the window's floor). In the open, solid on
+  the line of sight: up to 8 cells over the floor a hole (focus w its radius:
+  in front of the character, over its floor, a 4 × 4 ordered dither,
+  opening and closing over 0.3 s); higher, the view turns (`Camera.azimuth`,
+  π/4 till now a constant) the shortest way to the nearest 15° step the
+  puck is seen from, and stays. The shadow pass never cuts (the sun's
+  camera has no focus): the light is the world's as it stands. Tried first:
+  a cylinder dithered through whatever's in front — the user: not readable;
+  through a mountain it shows the sky (the field mesh is a shell).
+  `?cutaway=1` puts it round the camera's target; scripts/cutshot.mjs finds
+  a cave and a cliff and shoots each without and with (valley: the cave
+  sliced at its roof, z 21; the cliff turned 45° → 90°). On the atlas the
+  stand-in is unreliable: the terrain mirror reads once a slide begins and
+  can catch the new land half-written (floorAt then wrong) — a game's
+  character needs the mirror fresh after a slide (open).
 

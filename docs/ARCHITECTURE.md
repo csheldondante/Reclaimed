@@ -346,6 +346,15 @@ columns) divides by w and keeps what's behind the eye; picking flies a ray
 into the ground (`groundAt`). A streamed window follows the camera's
 position.
 
+The cutaway (round 82, V21; api/cutaway.ts): a game calls
+`Cutaway.update(feet x, y, z, dt)` each frame; it writes `Camera.focus`
+(render.wgsl `Camera.focus`: x, y, the floor, w a hole's radius; or z a
+slice's height, w −1; null none) and may turn `Camera.azimuth`. The terrain
+mesh (fsMesh) and the prisms (fsBox) discard what `cutAway` cuts; fsMesh
+draws a surface seen from inside, within the cut, dark (a section), and
+WorldCore clears to the same dark under a slice. The shadow pass's camera
+has no focus.
+
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the
 loose sheet) are hex prisms, 30 vertices: the top in four triangles with one
 flat normal (the plane through its corners, cached per cell by render-fields)

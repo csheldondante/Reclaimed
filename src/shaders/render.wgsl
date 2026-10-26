@@ -11,7 +11,49 @@ struct Camera {
   light: mat4x4<f32>,
   // where the eye is (round 69: the free camera, perspective), w 1 when it's there; 0: the fixed view
   pos: vec4<f32>,
+  // (round 82, V21) the cutaway (api/cutaway.ts, render.wgsl cutReach): x, y, z the character's floor and w a
+  // hole's radius on screen; or z a slice's height and w −1; 0: none
+  focus: vec4<f32>,
 };
+
+/** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
+fn bayer4(px: vec2<f32>) -> f32 {
+  let i = vec2<u32>(px) & vec2<u32>(3u);
+  let m = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+  return (f32(m[i.y * 4u + i.x]) + 0.5) / 16.0;
+}
+
+/**
+ * The cutaway's reach at p (round 82, V21 â€” api/cutaway.ts). Two kinds:
+ * - a hole (focus.w > 0, its radius on screen): what's in front of the character (over a cell and a half
+ *   toward the eye) and over its floor (focus.z), near it on screen â€” a tree, a wall, a rock â€” thinning over
+ *   the outer third of the circle;
+ * - a slice (focus.w < 0): the character under a roof (a cave, an overhang) â€” everything over focus.z
+ *   (the roof's underside) isn't drawn, the whole view: the layer it's in, seen from above.
+ */
+fn cutReach(p: vec3<f32>) -> f32 {
+  let f = CAM.focus;
+  if (f.w == 0.0) { return 0.0; }
+  if (f.w < 0.0) { return 1.0; }
+  let e = toEye(p);
+  let v = p - f.xyz;
+  let along = dot(v, e);
+  return (1.0 - smoothstep(f.w * 0.7, f.w, length(v - along * e))) * smoothstep(1.0, 2.0, along);
+}
+
+/** Is p where the cutaway opened the view? A surface seen from inside the solid there is drawn dark (a section). */
+fn inCut(p: vec3<f32>) -> bool { return cutReach(p) > 0.5; }
+
+/**
+ * (round 82, V21: the character always seen â€” api/cutaway.ts) Is this point cut away? The hole is dithered
+ * (it opens and closes as an iris), the slice is sharp. The shadow pass doesn't cut: the light stays.
+ */
+fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
+  let f = CAM.focus;
+  if (f.w < 0.0) { return p.z > f.z; }
+  let k = cutReach(p) * smoothstep(0.0, 0.8, p.z - f.z);
+  return k > bayer4(px);
+}
 
 /** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */
 fn toEye(p: vec3<f32>) -> vec3<f32> {
@@ -901,6 +943,7 @@ fn rockNormal(in: VOut, flags: u32, p: vec3<f32>) -> vec3<f32> {
 fn fsBox(in: VOut) -> FOut {
   // derivatives first: canopy fragments may discard below
   let gl = gridLines(in.wpos, in.nrm);
+  if (cutAway(in.wpos, in.pos.xy)) { discard; }
   let mat = in.info.x;
   let flags = in.info.y & 0xffu;
   let damage = in.info.y >> 8u;

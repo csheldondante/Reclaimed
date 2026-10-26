@@ -14,6 +14,22 @@ each was implemented.
 - Direction: render the terrain to isometric tiles (depth, normal,
   material) and draw the characters and particles over them (V22).
 - The sim isn't to be skipped; if it costs too much, wake even less of it.
+- Performance is tabled on `places` for the camera; it goes on a branch of
+  its own (cut from `places`), a long profiling session trying things for the
+  user to test on the phone — baked isometric tiles, cached chunks, a cheaper
+  pixel shader — merged back where it wins.
+- The character always seen (V21): "Imagine the camera as puck following
+  gravity and sliding along a surface. When that surface goes below other
+  surfaces I think we want to dither and show the surface". "If you are
+  inside a cave that opens onto a beach I expect to see the beach and cave
+  interior not the cliffs above." "Dithering or an outline make sense for
+  small obstacles but very large obstacles probably should rotate the
+  camera to an angle that isn't occluded and being in a lower layer should
+  probably just skip rendering the layers above." So: under a roof, a slice
+  (nothing over the layer drawn); a small obstacle in front, a dithered
+  hole; a large one, the view turns to the nearest clear angle. The view's
+  rotation (removed 2026-10-07) comes back for that case only — the user
+  knows it looks worse isometric and invalidates a baked tile.
 
 ## 2026-10-25 — round 81 (session 5, `places`) — columns as intervals, not a walk
 

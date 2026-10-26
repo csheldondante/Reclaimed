@@ -11,6 +11,8 @@ export type Mat4 = Float32Array;
 export const CAMERA_BYTES = 96;
 /** where the eye is (render.wgsl Camera.pos: xyz, w 1 when flying), after the light's matrix the renderer writes at CAMERA_BYTES */
 export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
+/** the cutaway after it (render.wgsl Camera.focus, round 82) */
+export const CAMERA_FOCUS_OFFSET = CAMERA_POS_OFFSET + 16;
 
 /** the free camera: where it is (world), which way it looks (radians), its vertical field of view */
 export interface Fly {
@@ -35,6 +37,11 @@ export class Camera {
   readonly eye: [number, number, number] = [0, 0, 0];
   /** flying (perspective) when set */
   fly: Fly | null = null;
+  /**
+   * (round 82, V21) The cutaway: the character's feet (world x, y, z) and a radius (world units, on screen).
+   * What's in front of it near it is dithered out, so it's always seen without turning the view. null: none.
+   */
+  focus: [number, number, number, number] | null = null;
 
   /** the way a flying camera looks, and its right and up */
   basis(): { f: [number, number, number]; r: [number, number, number]; u: [number, number, number] } {
@@ -63,9 +70,11 @@ export class Camera {
     }
   }
 
-  get azimuth(): number {
-    return Math.PI / 4;
-  }
+  /**
+   * Which way the eye is round the target (radians; π/4 the fixed view). Round 82 (V21): the cutaway turns
+   * it when a large obstacle hides the character (api/cutaway.ts) — the rest of the time it stays put.
+   */
+  azimuth = Math.PI / 4;
 
   update(): void {
     if (this.fly) {
@@ -206,5 +215,6 @@ export class Camera {
     // (flying: px a unit at distance 1 — what's sized by it divides by its depth)
     f.set([this.viewportW, this.viewportH, this.fly ? this.focal : this.zoom, 0], 20);
     if (out.byteLength >= CAMERA_POS_OFFSET + 16) f.set(this.fly ? [...this.fly.pos, 1] : [0, 0, 0, 0], CAMERA_POS_OFFSET / 4);
+    if (out.byteLength >= CAMERA_FOCUS_OFFSET + 16) f.set(this.focus ?? [0, 0, 0, 0], CAMERA_FOCUS_OFFSET / 4);
   }
 }
