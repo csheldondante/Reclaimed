@@ -4966,3 +4966,7 @@ worst case doesn't make sense".
   and the seam at its edge is level. Colours stepped by the macro map's
   texels at first (16 cells); the two regions' grounds are now blended by
   the ground's own border weight. `?lod=0` off, `?lod=low` (4, 8, 16; 129²).
+- The free camera (✈, F; the user: "make the airplane mode drag to turn and
+  hide the tools"): a left drag (a finger's, a mouse's) turns the view, as
+  the right drag did; taps do nothing while flying; the editor's panel is
+  hidden while flying (`Editor.setVisible`) and back with the fixed view.

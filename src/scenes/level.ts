@@ -166,6 +166,8 @@ export class LevelScene implements Scene {
   private integrity?: Integrity;
   /** sandbox: a smash drag in progress */
   private smashing = false;
+  /** (round 83) flying: a drag turns the view — where the pointer was */
+  private flyDrag?: [number, number];
   /** sandbox: the brush's footprint drawn on the ground under the cursor */
   private ring?: SVGPolylineElement;
   /** Break tool: the sphere's equator (the ring is its outline) */
@@ -399,6 +401,7 @@ export class LevelScene implements Scene {
       const g = camera.groundAt(camera.viewportW / 2, camera.viewportH / 2, this.heightAt);
       camera.fly = null;
       camera.target = [g[0], g[1], g[2]];
+      this.editor?.setVisible(true);
       this.hud.say('Fixed view', 2);
       return;
     }
@@ -406,7 +409,8 @@ export class LevelScene implements Scene {
     const e = camera.eye;
     const d = Math.max(40, camera.viewportH / camera.zoom);
     camera.fly = { pos: [tx + e[0] * d, ty + e[1] * d, tz + e[2] * d], yaw: Math.atan2(-e[1], -e[0]), pitch: -Math.asin(e[2]), fov: (60 * Math.PI) / 180 };
-    this.hud.say('Free camera — WASD or ⇧⇩▲▼ to fly (Q/E down/up, Shift faster), drag to look (right-drag with a mouse), wheel or pinch to move along the view; F or ✈ back', 6);
+    this.editor?.setVisible(false);
+    this.hud.say('Free camera — WASD or ⇧⇩▲▼ to fly (Q/E down/up, Shift faster), drag to turn, wheel or pinch to move along the view; F or ✈ back', 6);
   }
 
   /** forget the steps so far (driveprofile: from when riding starts) */
@@ -677,6 +681,8 @@ export class LevelScene implements Scene {
     ];
     this.controls = new Controls(host.canvas, {
       tap: (sx, sy) => {
+        // (round 83: flying, the pointer only turns the view)
+        if (camera.fly) return;
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
         if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
         if (this.editor?.tool === 'town') return void this.townAtPick(sx, sy);
@@ -692,6 +698,10 @@ export class LevelScene implements Scene {
         core.renderer.pick(rx, ry).then((hit) => this.powers.tap(hit, wx, wy, sx, sy));
       },
       dragStart: (sx, sy) => {
+        if (camera.fly) {
+          this.flyDrag = [sx, sy];
+          return true;
+        }
         if (this.editor?.tool === 'smash') {
           this.smashAt(sx, sy, true);
           this.smashing = true;
@@ -721,6 +731,15 @@ export class LevelScene implements Scene {
         return this.powers.gustStart(wx, wy);
       },
       dragMove: (sx, sy) => {
+        if (this.flyDrag) {
+          const [px, py] = this.flyDrag;
+          this.flyDrag = [sx, sy];
+          if (camera.fly) {
+            camera.fly.yaw -= (sx - px) * 0.004;
+            camera.fly.pitch = Math.max(-1.5, Math.min(1.5, camera.fly.pitch - (sy - py) * 0.004));
+          }
+          return;
+        }
         if (this.beamAt) return void (this.beamAt = this.beamAim(sx, sy));
         if (this.smashing) {
           this.pickSmash(sx, sy);
@@ -731,6 +750,7 @@ export class LevelScene implements Scene {
         else this.powers.gustMove(wx, wy);
       },
       dragEnd: () => {
+        if (this.flyDrag) return void (this.flyDrag = undefined);
         if (this.beamAt) {
           this.beamAt = undefined;
           if (this.physics) this.physics.beam = null;

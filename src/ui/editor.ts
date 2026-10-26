@@ -149,6 +149,11 @@ export class Editor {
   private el: HTMLElement;
   private picked = { pour: MAT.Soil as number, build: MAT.Stone as number };
 
+  /** shown or hidden (round 83: hidden while the free camera flies) */
+  setVisible(on: boolean): void {
+    this.el.style.display = on ? '' : 'none';
+  }
+
   constructor(root: HTMLElement, onSpeed: (s: number) => void, private maps: EditorMaps) {
     const el = document.createElement('div');
     el.className = 'editor';
