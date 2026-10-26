@@ -416,6 +416,14 @@ copied into the map each frame and the moving casters drawn over it),
 `prepEvery` (renderprep's and vegprep's
 instance lists kept N frames), `noDetail` (bits of the look left out,
 carried to the shaders in `Camera.eye.w` from bit 2: meshdraw.wgsl `ND_*`).
+The terrain's cached layer (`?tcache=N`, `Renderer.opts.tcache`; tcache.wgsl):
+the terrain drawn deferred every Nth frame into a layer 24 render pixels
+past the screen each side (colour, pick, depth as r32float); between, the
+frame's camera (camData only) is snapped to the layer's pixels and a
+full-screen draw copies the layer in, shifted, with its depth (frag_depth)
+and picks, before the rest of the world pass. Redrawn after a slide, a turn
+or zoom, a resize or when the shift passes the margin; off with the cutaway
+and the free camera.
 The world pass discards its depth and, unless a pick is asked for, its pick
 target (nothing reads them after it).
 The terrain field is looked up 0.45 cells of 3D noise to the side

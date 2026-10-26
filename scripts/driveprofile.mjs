@@ -93,13 +93,13 @@ try {
       gpuLong: R.core.host.profiler.gpuLong,
       drawMax: +(R.core.host.profiler.maxMs.get('draw') ?? 0).toFixed(1),
       // (perfopt: each pass's mean a frame over the ride, from the raw totals — the draw's with ?defer's G-buffer)
-      perFrame: Object.fromEntries(['draw', 'gbuffer', 'shadow', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
+      perFrame: Object.fromEntries(['draw', 'gbuffer', 'tcache-g', 'tcache-r', 'shadow', 'shadow-static', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
       meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };
   });
   console.log(JSON.stringify(r));
-  console.log(`SUMMARY p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} h50 ${r.hitches50} | per frame: ${Object.entries(r.perFrame).map(([k, v]) => `${k} ${v}`).join(', ')} | meshTotal ${Object.values(r.meshTotal).reduce((a, b) => a + b, 0).toFixed(0)} ms | in renderprep units (the clocks drift): draw ${((r.perFrame.draw + r.perFrame.gbuffer) / r.perFrame.renderprep).toFixed(2)}, shadow ${(r.perFrame.shadow / r.perFrame.renderprep).toFixed(2)}, mesh ${Object.entries(['hash', 'sample', 'verts', 'quads'].reduce((o, k) => ((o[k] = Object.entries(r.meshTotal).filter(([n]) => n.endsWith(k)).reduce((a, [, v]) => a + v, 0) / (r.perFrame.renderprep * r.frames)), o), {})).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(' ')}`);
+  console.log(`SUMMARY p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} h50 ${r.hitches50} | per frame: ${Object.entries(r.perFrame).map(([k, v]) => `${k} ${v}`).join(', ')} | meshTotal ${Object.values(r.meshTotal).reduce((a, b) => a + b, 0).toFixed(0)} ms | in renderprep units (the clocks drift): draw ${((r.perFrame.draw + r.perFrame.gbuffer + r.perFrame['tcache-g'] + r.perFrame['tcache-r']) / r.perFrame.renderprep).toFixed(2)}, shadow ${(r.perFrame.shadow / r.perFrame.renderprep).toFixed(2)}, mesh ${Object.entries(['hash', 'sample', 'verts', 'quads'].reduce((o, k) => ((o[k] = Object.entries(r.meshTotal).filter(([n]) => n.endsWith(k)).reduce((a, [, v]) => a + v, 0) / (r.perFrame.renderprep * r.frames)), o), {})).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(' ')}`);
 } finally {
   await browser.close();
 }

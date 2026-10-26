@@ -5177,3 +5177,42 @@ runs 100 fps, under a tick a frame).
 - Tried `meshh=1.5`: not a lattice the chunks tile (ground missing, holes).
   Only 1 and 2 work.
 
+
+## Round 83 — the terrain's cached layer: the user's baked tiles, first step (perfopt)
+
+Why: the user's fourth item, "render static terrain to iso tiles … relit per
+frame, characters and particles composited over"; with the look deferred,
+the terrain was the largest piece of the draw left (G-buffer 0.28 ms +
+resolve ~0.2 on the still frame). The simplest form that works with a
+moving camera: one layer the size of the screen and a margin, not tiles.
+
+- `?tcache=N` (renderer.ts terrainCacheMode, tcPrepare, encodeTerrainCache;
+  tcache.wgsl): every Nth frame the terrain (window and band, the chunks
+  near the view) is drawn deferred into a layer 24 render pixels larger
+  than the screen each side (its camera the frame's, clip x and y scaled),
+  the resolve writing colour, pick and depth (fsMeshResolveC; depth as an
+  r32float target). Between, the camera is snapped to the layer's pixels
+  (its translation in camData moved by under a pixel, so the shift since
+  the layer is whole pixels — everything that frame draws with the snapped
+  camera; the CPU's camera is untouched) and a full-screen draw copies the
+  layer in, shifted, writing the depth (moved by the camera's along the
+  view: the orthographic depth is linear) and the picks; plants, water,
+  bodies and particles draw over it as before. Drawn again at once after a
+  slide (the picks are the window's cells), a turn or zoom (the matrix's
+  rotation and scale must match exactly), a new size, the margin used up,
+  the band replaced; off with the cutaway or the free camera.
+- Riding at 18 (the drive zooms with speed but mostly holds), 87 % of
+  frames reuse it at N=8. Drawbench (still frame): draw 1.89 → 1.25 ms at
+  N=4 (the mesh's whole share 0.78; the layer saves 0.64). Riding, in
+  renderprep units: draw 7.2–7.3 → 5.6–5.8.
+- The cost: what's in the terrain's look that moves — the water film's
+  swash and streaks, the wet glint, cloud shadows, the shadows of what
+  moves (the bike, bodies) on the ground — updates every Nth frame; the
+  camera moves in whole pixels (the render's: at low, two CSS pixels).
+  A refresh frame costs what a frame costs now: it lowers the average, not
+  the worst frame.
+- Next for it: refresh a band of the layer a frame (chunks culled to it)
+  instead of the whole every Nth — no refresh frames; tiles keyed to world
+  chunks (keep them across slides; bake them at a higher resolution for
+  crisper lines); per 90° step for the turning view.
+

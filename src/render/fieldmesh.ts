@@ -435,6 +435,17 @@ export class FieldMesh {
     this.profiler.draws += n;
   }
 
+  /** (perfopt, the terrain's cached layer: a margin past the screen) Draw the chunks near the view. */
+  drawNear(pass: GPURenderPassEncoder): void {
+    if (!this.on) return;
+    pass.setIndexBuffer(this.indices, 'uint32');
+    for (let c = 0; c < this.nx * this.ny; c++) {
+      if (!this.near[c]) continue;
+      pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+      this.profiler.draws++;
+    }
+  }
+
   /** Draw the chunks in the sun's box (the shadow pass: what's out of view but up-sun casts too). */
   drawCasters(pass: GPURenderPassEncoder): void {
     if (!this.on) return;

@@ -172,7 +172,24 @@ fn vsFull(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
 
 /** the look, a pixel at a time, from the G-buffer (drawn once for the window's source, once for the band's) */
 @fragment
-fn fsMeshResolve(@builtin(position) pos: vec4<f32>) -> FOut {
+fn fsMeshResolve(@builtin(position) pos: vec4<f32>) -> FOut { return resolveAt(pos); }
+
+/** (perfopt, ?tcache=N) the resolve into the terrain's cached layer: its depth too (a colour target: the
+ *  composite reads it back and writes it as the frame's depth, moved by the camera's since) */
+struct COut { @location(0) color: vec4<f32>, @location(1) pick: vec2<u32>, @location(2) depth: f32 };
+@fragment
+fn fsMeshResolveC(@builtin(position) pos: vec4<f32>) -> COut {
+  let f = resolveAt(pos);
+  let a = textureLoad(gbuf0, vec2<i32>(pos.xy), 0);
+  let p = CAM.viewProj * vec4<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z), 1.0);
+  var o: COut;
+  o.color = f.color;
+  o.pick = f.pick;
+  o.depth = p.z / p.w;
+  return o;
+}
+
+fn resolveAt(pos: vec4<f32>) -> FOut {
   let px = vec2<i32>(pos.xy);
   let a = textureLoad(gbuf0, px, 0);
   if ((a.w >> 31u) == 0u || ((a.w >> 30u) & 1u) != u32(MR.zb.w)) { discard; }
@@ -191,7 +208,6 @@ fn fsMeshResolve(@builtin(position) pos: vec4<f32>) -> FOut {
   return meshShade(m);
 }
 
-/** The look of the mesh's surface at a point (the forward pass's and the deferred resolve's). */
 /** (perfopt, ?nodetail=: the look's pieces left out, Camera.eye.w bits 2+ — renderer.ts DETAIL_BITS) */
 fn noDetail(bit: u32) -> bool { return ((u32(CAM.eye.w) >> 2u) & bit) != 0u; }
 const ND_STRATA: u32 = 1u;
@@ -209,6 +225,7 @@ fn cellFields1(xy: vec2<f32>) -> vec4<f32> {
   return vec4<f32>(contam[j].x, veg[j], fields[j].y, wilt[j].y);
 }
 
+/** The look of the mesh's surface at a point (the forward pass's and the deferred resolve's). */
 fn meshShade(in: MOut) -> FOut {
   // (round 82, V21: the inside of the ground, seen only where the cutaway opened it — a section through the
   // rock, dark and flat, not its far side lit as if it were outside. Its normal, not the winding: the mesh's

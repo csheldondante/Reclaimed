@@ -62,7 +62,7 @@ try {
           for (let f = 0; f < frames; f++) await raf();
           const n = Math.max(prof.framesResolved, 1);
           const o = (res[piece] ??= { draw: 0, shadow: 0, gpu: 0, ref: 0, n: 0 });
-          o.draw += ((prof.totalMs.get('draw') ?? 0) + (prof.totalMs.get('gbuffer') ?? 0)) / n; // (perfopt: ?defer's G-buffer pass counted with the draw)
+          o.draw += ['draw', 'gbuffer', 'tcache-g', 'tcache-r'].reduce((a, k) => a + (prof.totalMs.get(k) ?? 0), 0) / n; // (perfopt: ?defer's G-buffer pass counted with the draw)
           o.shadow += ((prof.totalMs.get('shadow') ?? 0) + (prof.totalMs.get('shadow-static') ?? 0)) / n;
           o.gpu += prof.gpuTotalMs / n;
           // (perfopt: renderprep, the same work whatever's drawn — a yardstick for the GPU's clocks)
