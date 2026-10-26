@@ -581,7 +581,9 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   let sc = clampCell(cellAt(wpos.xy + nrm.xy * 0.5));
   // (with the field mesh, from the shadow map; without, the heightfield march)
   var lit: f32;
-  if ((u32(CAM.eye.w) & 2u) != 0u) { lit = shadowLit(wpos, nrm); } else { lit = sunLit(wpos, nrm, sc); }
+  // (perfopt, ?nodetail=shadow: eye.w bit 7 — no shadow lookups, every draw's)
+  if (((u32(CAM.eye.w) >> 2u) & 32u) != 0u) { lit = 1.0; }
+  else if ((u32(CAM.eye.w) & 2u) != 0u) { lit = shadowLit(wpos, nrm); } else { lit = sunLit(wpos, nrm, sc); }
   // storm shade, and the light shadow of passing fair-weather clouds
   let cloud = max(cloudShade(wpos.xy), fairCloud(wpos.xy) * 0.22);
   // light comes from the day/night cycle (src/weather/daynight.ts)

@@ -405,6 +405,16 @@ colour and the pick; the rest draws over it as before. With the cutaway on
 the G-buffer pass's pipeline discards (`fsMeshGCut`). Why: at the phone's
 resolution a mesh triangle is about a pixel, and the forward draw shaded
 2 × 2 quads per triangle and every surface behind the front one.
+Run-time switches for A/B (`Renderer.opts`, each from a URL flag;
+scripts/drawbench.mjs sets them with `@name=value` pieces): `defer`,
+`prepass`, `cull` (the G-buffer pass culls faces turned away; the mesh's
+quads are wound out of the solid), `shadowEvery` (the shadow map and the
+light matrix it was drawn with kept for N frames, redrawn after a slide —
+`FieldMesh.slides` — or a new box), `prepEvery` (renderprep's and vegprep's
+instance lists kept N frames), `noDetail` (bits of the look left out,
+carried to the shaders in `Camera.eye.w` from bit 2: meshdraw.wgsl `ND_*`).
+The world pass discards its depth and, unless a pick is asked for, its pick
+target (nothing reads them after it).
 The terrain field is looked up 0.45 cells of 3D noise to the side
 (`terrainWarp`, meshregion.wgsl), so cliffs bulge and recede; the draw
 shader looks materials up at the same place. Only chunks near the view

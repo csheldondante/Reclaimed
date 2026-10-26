@@ -60,10 +60,13 @@ export interface RenderOptions {
   sun: [number, number, number];
 }
 
-// (perf branch: ?skip=render (round 82: world-core.ts — nothing drawn),opaque,tops,plants,prisms,mesh,bodies,structs,voxels,skins,water,particles,rain,shadow,prep,meshprep
-// leaves that piece out of the frame, to measure what it costs: scripts/perfprofile.mjs)
 /** (perfopt) the winding of the mesh's faces out of the solid on screen (fieldmesh.wgsl makeQuads; ?front=cw to try the other) */
 const MESH_FRONT: GPUFrontFace = new URLSearchParams(location.search).get('front') === 'cw' ? 'cw' : 'ccw';
+/** (perfopt) the look's pieces ?nodetail= can leave out (meshdraw.wgsl ND_*; shadow: render.wgsl lighting) */
+const DETAIL_BITS: Record<string, number> = { strata: 1, water: 2, plants: 4, stains: 8, struct: 16, shadow: 32, warp: 64, fields: 128, specks: 256 };
+
+// (perf branch: ?skip=render (round 82: world-core.ts — nothing drawn),opaque,tops,plants,prisms,mesh,bodies,structs,voxels,skins,water,particles,rain,shadow,prep,meshprep
+// leaves that piece out of the frame, to measure what it costs: scripts/perfprofile.mjs)
 export const SKIP = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(',').filter(Boolean));
 
 export class Renderer {
@@ -81,6 +84,16 @@ export class Renderer {
     /** the G-buffer pass culls the mesh's faces turned from the eye (?cull=1; fieldmesh.wgsl winds them out of
      *  the solid); not while the cutaway is on: it shows the inside */
     cull: new URLSearchParams(location.search).get('cull') === '1',
+    /** the terrain look's pieces left out (?nodetail=strata,water,plants,stains,struct,shadow,warp,fields,specks;
+     *  meshdraw.wgsl ND_*): Camera.eye.w bits 2 up, read at run time — to find what the look's cost is */
+    noDetail: (new URLSearchParams(location.search).get('nodetail') ?? '')
+      .split(',')
+      .filter(Boolean)
+      .reduce((m, k) => {
+        const b = DETAIL_BITS[k];
+        if (b === undefined) throw new Error(`?nodetail=${k}: one of ${Object.keys(DETAIL_BITS).join(', ')}`);
+        return m | b;
+      }, 0),
     shadowEvery: Number(new URLSearchParams(location.search).get('shadowevery') ?? 1),
     /** the prisms' and plants' instance lists made every Nth frame (?prepevery=N): a frame's lag on what changed;
      *  made again at once after a slide */
@@ -648,7 +661,7 @@ export class Renderer {
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
     cam.write(this.camData);
     // look flags (render.wgsl Camera.eye.w)
-    new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0);
+    new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
     this.fieldMesh.cull(cam);
     this.band?.mesh.cull(cam);
     this.frameNo++;
@@ -693,15 +706,18 @@ export class Renderer {
 
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
     const def = this.meshPipe && !SKIP.has('mesh') && Renderer.opts.defer ? this.encodeGBuffer(enc, cam) : undefined;
+    // (perfopt: nothing reads the depth after this pass, nor the pick target unless a pick is asked for — on a
+    // tile-based GPU a discarded attachment never leaves the tile: 12 bytes a pixel not written out every frame)
+    const keepPick = !!this.pickRequest && !this.pickBusy;
     const pass = enc.beginRenderPass({
       label: 'world',
       colorAttachments: [
         { view: target, clearValue: { r: opts.clear[0], g: opts.clear[1], b: opts.clear[2], a: 1 }, loadOp: 'clear', storeOp: 'store' },
-        { view: this.pickTex!.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
+        { view: this.pickTex!.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: keepPick ? 'store' : 'discard' },
       ],
       depthStencilAttachment: def
-        ? { view: this.depth!.createView(), depthLoadOp: 'load', depthStoreOp: 'store' }
-        : { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+        ? { view: this.depth!.createView(), depthLoadOp: 'load', depthStoreOp: 'discard' }
+        : { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
       timestampWrites: this.profiler.timestamps('draw'),
     });
     if (def) {

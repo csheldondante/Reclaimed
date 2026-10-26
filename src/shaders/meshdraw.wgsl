@@ -192,6 +192,23 @@ fn fsMeshResolve(@builtin(position) pos: vec4<f32>) -> FOut {
 }
 
 /** The look of the mesh's surface at a point (the forward pass's and the deferred resolve's). */
+/** (perfopt, ?nodetail=: the look's pieces left out, Camera.eye.w bits 2+ — renderer.ts DETAIL_BITS) */
+fn noDetail(bit: u32) -> bool { return ((u32(CAM.eye.w) >> 2u) & bit) != 0u; }
+const ND_STRATA: u32 = 1u;
+const ND_WATER: u32 = 2u;
+const ND_PLANTS: u32 = 4u;
+const ND_STAINS: u32 = 8u;
+const ND_STRUCT: u32 = 16u;
+const ND_WARP: u32 = 64u;
+const ND_FIELDS: u32 = 128u;
+const ND_SPECKS: u32 = 256u;
+
+/** (perfopt, ?nodetail=fields) the cell's own fields, not blended over three */
+fn cellFields1(xy: vec2<f32>) -> vec4<f32> {
+  let j = colIdxI(clampCell(cellAt(xy)));
+  return vec4<f32>(contam[j].x, veg[j], fields[j].y, wilt[j].y);
+}
+
 fn meshShade(in: MOut) -> FOut {
   // (round 82, V21: the inside of the ground, seen only where the cutaway opened it — a section through the
   // rock, dark and flat, not its far side lit as if it were outside. Its normal, not the winding: the mesh's
@@ -217,14 +234,17 @@ fn meshShade(in: MOut) -> FOut {
   // between cells of different ground come out ragged, not hexagons)
   let jit = vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02));
   let jo = vec2<f32>(randv(jit + vec3<i32>(41, 0, 0)), randv(jit + vec3<i32>(0, 43, 0))) - 0.5;
-  let cell = clampCell(cellAt(terrainWarp(ip) + jo * 0.6));
+  // (?nodetail=warp: looked up where it is, not warped and jittered — the borders hexagons again)
+  var cell: vec2<i32>;
+  if (noDetail(ND_WARP)) { cell = clampCell(cellAt(ip.xy)); } else { cell = clampCell(cellAt(terrainWarp(ip) + jo * 0.6)); }
   let ci = colIdxI(cell);
   let up = nrm.z > 0.55;
   let lk = meshLook(cell, ip.z, up);
   var mat = lk.mat;
   // the cells' own fields blended over the three nearest (no hexagons in
   // the plants or stains): contamination, plants, wetness, withering
-  let cf = cellFields(in.wpos.xy);
+  var cf: vec4<f32>;
+  if (noDetail(ND_FIELDS)) { cf = cellFields1(in.wpos.xy); } else { cf = cellFields(in.wpos.xy); }
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   // (?look=lookup: the interval's material and the lighting, none of the detail)
@@ -244,9 +264,9 @@ fn meshShade(in: MOut) -> FOut {
   let n2 = randv(sub + vec3<i32>(71, 13, 5));
   // (round 79: on a steep face less of it — the beds read as sheets, not a mosaic of cells)
   let steep = 1.0 - smoothstep(0.3, 0.7, abs(nrm.z));
-  alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1);
+  if (!noDetail(ND_SPECKS)) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
   alb *= in.tint;
-  if (mat >= 1u && mat <= 4u) {
+  if (mat >= 1u && mat <= 4u && !noDetail(ND_STRATA)) {
     // (round 79: strata — render.wgsl)
     let band = strata(in.wpos);
     if (mat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
@@ -254,7 +274,7 @@ fn meshShade(in: MOut) -> FOut {
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
-  if (mat == 23u || mat == 30u) { alb *= strataTint(mat, strata(in.wpos)); }
+  if ((mat == 23u || mat == 30u) && !noDetail(ND_STRATA)) { alb *= strataTint(mat, strata(in.wpos)); }
   if (mat == MAT_LEAFLIT) {
     // fallen leaves (round 51), as fsBox
     var tc = autumnLeaf(select(0u, 2u, n2 > 0.82), fract(n2 * 3.7));
@@ -273,7 +293,7 @@ fn meshShade(in: MOut) -> FOut {
     alb = toLinear(tc) * (0.75 + 0.35 * n1);
     if (mat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
   }
-  if (isTop) {
+  if (isTop && !noDetail(ND_STAINS)) {
     let c = cf.x;
     let stain = smoothstep(0.12, 1.1, c);
     let oil = mix(vec3<f32>(0.10, 0.09, 0.06), vec3<f32>(0.42, 0.40, 0.12), smoothstep(0.55, 0.95, n2));
@@ -283,7 +303,7 @@ fn meshShade(in: MOut) -> FOut {
   alb *= 1.0 - MATS[mat].eco.w * 0.5 * smoothstep(0.15, 0.9, cf.z);
   // plant cover on tops, a few tufts of it up the slopes
   // (plants on a face only near its top: a cut face isn't green all the way down — round 79)
-  let v = select(cf.y, 0.0, !isTop && in.wpos.z < lk.top - 2.5);
+  let v = select(cf.y, 0.0, (!isTop && in.wpos.z < lk.top - 2.5) || noDetail(ND_PLANTS));
   if (v > 0.0) {
     let cover = select(smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2), smoothstep(0.0, 1.2, v), isTop);
     if (n1 < cover) {
@@ -296,7 +316,7 @@ fn meshShade(in: MOut) -> FOut {
   }
   // a structure's face: its moss, and the sand lying against it
   let sw = smoothstep(0.35, 0.65, in.share);
-  if (sw > 0.0 && in.word != 0u) {
+  if (sw > 0.0 && in.word != 0u && !noDetail(ND_STRUCT)) {
     let w = in.word;
     let r = randv(vec3<i32>(floor(in.wpos * 1.0 - nrm * 0.02)) + vec3<i32>(3, 9, 27));
     var sa = toLinear(MATS[voxMatR(w)].albedo.rgb) * (0.88 + 0.24 * r);
@@ -319,7 +339,8 @@ fn meshShade(in: MOut) -> FOut {
   // water on the ground: a film where it runs too thin to clear the
   // smoothed ground (the sheet draws the rest), darker wet ground above the
   // water's edge, and the swash running up and back (round 41)
-  let wt = cellWater(in.wpos.xy);
+  var wt = CellWater(0.0, 0.0, 0.0, vec2<f32>(0.0));
+  if (!noDetail(ND_WATER)) { wt = cellWater(in.wpos.xy); }
   var film = 0.0;
   var filmN = nrm;
   if (wt.wet > 0.0 && nrm.z > 0.2 && sw < 0.5) {

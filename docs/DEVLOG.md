@@ -5087,3 +5087,29 @@ differently:
   ~4–5 units to the ~9 of a frame (draw 5.8, shadow 2.2): the phone's
   spikes. The change pass's worst is the largest single piece.
 
+
+## Round 83 — what's left of the look; the world pass's depth and pick not stored (perfopt)
+
+Why: to see what's left of the pixel shader with the look deferred.
+
+- Drawbench with the look cut down (deferred): look=flat, the terrain's
+  share 0.16 ms; lookup 0.44; full ~0.47–0.6. `?nodetail=` (run-time bits
+  in Camera.eye.w from bit 2: strata, water, plants, stains, struct, shadow
+  (every draw's shadow lookups), warp (the cell looked up where the point is,
+  not warped and jittered), fields (the cell's own, not three blended),
+  specks): each piece alone within the noise (±0.2 ms); all of them 0.13 ms.
+  The resolve is ~0.2 ms of the terrain's 0.47 on the desktop — the
+  G-buffer pass (vertices) is the rest: the pixel shader is no longer the
+  terrain's cost here. On the phone, whose pixels cost more, `nodetail`
+  tells what each piece costs there.
+- The world pass discards its depth (nothing reads it after) and its pick
+  target unless a pick is asked for that frame: on a tile-based GPU 12
+  bytes a pixel not written out every frame. Picks the same (two points).
+- Tried: the sun's camera leaving out the quarter-cell plants (a flag in its
+  eye.w, the vertex shader degenerating them): no change — their vertex
+  shader still runs; `?tufts=0` (not emitted at all) is what saves. Taken out.
+- Where a still frame's GPU goes now (desktop, phone viewport): draw 1.5 ms
+  (the terrain 0.47 of it: G-buffer 0.28, resolve ~0.2; plants ~0.45;
+  water 0.34; band 0.37 or 0.1 with bandh=2), shadow 0.6 (the mesh's 72
+  casting chunks and the plants' 330 k vertices), renderprep 0.35.
+
