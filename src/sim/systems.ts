@@ -35,6 +35,7 @@ import townStampWgsl from '../shaders/townstamp.wgsl?raw';
 import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
+import { SETTLE } from './sleep';
 
 /**
  * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
@@ -125,7 +126,7 @@ export class WaterSystem implements SimSystem {
       device,
       world,
       'water-flux',
-      waterFluxWgsl,
+      `const FLUX_SEED: bool = ${!SETTLE};` + waterFluxWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex' },
       { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView },
     );

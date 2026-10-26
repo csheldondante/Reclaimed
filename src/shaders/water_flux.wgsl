@@ -18,10 +18,14 @@ const FRICTION: f32 = 0.985;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-  // (a sleeping chunk: round 80)
-  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
+  // (a sleeping chunk: round 80 — its flux frozen as it is, the surface drawn moving by it. perfopt, ?settle=0:
+  // land come in asleep has none — a river would be drawn still — so while it's drowsy (just come in) a column
+  // with no flux takes the pipes' steady state for its levels at once: f = GAIN (H - Hn) / (1 - FRICTION))
+  let seed = asleep(id.xy);
+  if (seed && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
   let d = water[i];
   if (d <= 1e-5) { flux[i] = dZero(); return; }
   // (a body lying here is ground to the water: round 17)
@@ -35,7 +39,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let j = colIdxI(q);
       Hn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q)) + water[j] + oil[j] * OIL_DENSITY;
     }
-    f[k] = max(0.0, f[k] * FRICTION + GAIN * (H - Hn));
+    f[k] = select(max(0.0, f[k] * FRICTION + GAIN * (H - Hn)), max(0.0, GAIN / (1.0 - FRICTION) * (H - Hn)), seed);
   }
   let total = dSum(f);
   if (total > d) { f = dScale(f, d / total); }

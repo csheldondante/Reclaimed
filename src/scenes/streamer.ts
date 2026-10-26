@@ -32,6 +32,7 @@ import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
+import { SETTLE } from '../sim/sleep';
 
 /** columns a side of a region: what the window slides by (whole chunks, an even number of rows) */
 export const REGION = 64;
@@ -216,7 +217,8 @@ export class Streamer {
       b('surface', 4, false),
       b('waterNext', 4, false),
       b('waterPrev', 4, false),
-      b('flux', 24, false),
+      // (perfopt, ?settle=0: frozen with its region, so land that comes back in asleep is drawn flowing as it was)
+      b('flux', 24, !SETTLE),
       b('oilNext', 4, false),
       b('oilFlux', 24, false),
       b('lavaNext', 16, false),
