@@ -60,7 +60,11 @@ each was implemented.
   fairly simple. Think noita physics which just checks for adjacent
   emptiness and moves pixels over. We are just doing this in a compressed
   column space and adding in velocity. The goal is plausibility and
-  spectacle not realism." Rivers: the atlas's watersheds and their flow as a
+  spectacle not realism." Near enough is steady: "we can have a tolerance and
+  decide when we are close enough to steady state to freeze and treat it as
+  an animation only. The goal here is to have the generator make things start
+  in steady state and the simulation can then take over until it finds
+  another near steady state then freeze things." Rivers: the atlas's watersheds and their flow as a
   function of dryness precomputed; the unperturbed basin a steady state, its
   flow "strictly a render artifact computed at the atlas level".
 - What the sim must do (P11): water's steady state is cached, so no tick is
