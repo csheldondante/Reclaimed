@@ -4734,3 +4734,32 @@ every frame.
 
 atlasworldtest 6/6, streamtest 8/8, tiertest 4/4, coarsetest 5/5,
 atlastest 6/6.
+
+## Round 81 — columns as intervals: no walk up the column (places)
+
+Why: the phone stutters while streaming; the column pass walked every cell
+of every column (250–480) evaluating three 3D noises for the caves (and
+the alcoves' 3D noise, the forms' fields) — the user: "Do we need to walk
+every cell of the column? The whole point of the interval storage is that
+in theory we know every interesting boundary".
+
+- Caves as layers of 2D intervals (columns.wgsl caveVoids): tunnels (|n|
+  under a threshold: winding like rivers), chambers (another noise over
+  one, domed by how far in), floors sloping with a slow noise between the
+  sea and the ground, shafts joining layers. The viewer's cave map shows
+  the networks (shots78/ivc-foot-view-wide.png); the cliffs show their
+  mouths (iv-foot-cam.png).
+- colFinish as interval arithmetic (ARCHITECTURE "Columns as intervals").
+  The forms sampled only over their own heights.
+- scripts/genbench.mjs, eight regions made one after another in the atlas
+  level (desktop wall time a region, the readback's latency in it): the old
+  walk 35–83 ms on a road, 40–100 at a mesa; intervals 9–25 at both — about
+  four times; the GPU's own share more (the latency is a floor).
+- tiertest found two columns 0.016 off after a slide in z and back: over 300
+  columns had more runs than their slots and fitColumn joined a thin loose
+  layer into the stone under it (the stone grew). A loose and a solid now
+  cost 3 more to join (1 000 filled caves instead: solids joined over them).
+- Left: the mesher still samples every cell (P9) — the rebuild after a slide
+  is the other half of the stutter; interval assets (P8).
+
+atlastest 6/6, tiertest 4/4, coarsetest 5/5, streamtest 8/8, atlasworldtest 6/6.

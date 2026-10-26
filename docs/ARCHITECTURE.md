@@ -577,6 +577,17 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   distance noise-warped so none is a circle). They live in the river
   buffer between the nearest-node words and the nodes (CRATER_BLOCK): the
   column shaders are at their eight storage buffers.
+- **Columns as intervals** (round 81, forms.wgsl colFinish): no walk up the
+  column. The ground from 0 to its top (loose on it), minus the voids — the
+  caves' layers (columns.wgsl `caveVoids`: up to three, tunnels where a 2D
+  noise is near zero and chambers where another is high, floors between the
+  sea and the ground, roofs under caveDepth of rock, shafts between layers),
+  the cavern or an overhang's open, a tube's inside (its circle cut by the
+  column) and skylight, alcoves (six bands, a 2D noise each) — split into
+  rock, cover and loose; plus the forms, each sampled only over its own
+  heights (1.5 apart, the edges halved four times), kept where there's air;
+  sorted, joined, written. fitColumn joins loose layers with each other
+  first (a loose and a solid +3).
 - Mesa tiers (round 79): MESA_TIERS 6 walls by the distance onto the high
   side (shares and ledges by noises along the edge, `tiersW`); by the
   cliff, Worley cells ~10 across each take the tiers' height at their own

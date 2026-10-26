@@ -14,6 +14,7 @@
 // Storage is chunked: the map is split into CHUNK×CHUNK column chunks and each
 // chunk has its own slot stride K (as recommended in the handoff: most chunks
 // need few layers, ruins need more). A chunk table maps chunk → (offset, K).
+import { MATERIALS, MatState } from './materials';
 
 export const CHUNK = 16;
 /** Hard upper bound on K: shaders keep a column in a fixed local array this big. */
@@ -213,7 +214,11 @@ export function joinColumn(inside: Interval[], oz: number, outside: Interval[]):
  *  thickness least) become one, of the thicker's material, until it fits. Whether it had to. */
 export function fitColumn(col: Interval[], k: number): boolean {
   if (col.length <= k) return false;
-  const cost = (i: number) => col[i].z0 - col[i - 1].z1 + Math.min(col[i].z1 - col[i].z0, col[i - 1].z1 - col[i - 1].z0);
+  // (round 80: a loose layer and a solid joined cost 3 more — the solid would grow by the loose one's
+  // thickness, and a slide in z that cut the column again changed its ground: loose layers join each other
+  // first; still less than filling a cave or a gap of a few cells)
+  const loose = (m: number) => MATERIALS[m]?.state === MatState.Granular;
+  const cost = (i: number) => col[i].z0 - col[i - 1].z1 + Math.min(col[i].z1 - col[i].z0, col[i - 1].z1 - col[i - 1].z0) + (loose(col[i].mat) !== loose(col[i - 1].mat) ? 3 : 0);
   while (col.length > k) {
     let best = 1;
     for (let i = 2; i < col.length; i++) if (cost(i) < cost(best)) best = i;

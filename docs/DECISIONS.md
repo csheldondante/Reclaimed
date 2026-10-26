@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-25 — round 81 (session 5, `places`) — columns as intervals, not a walk
+
+- "Do we need to walk every cell of the column? The whole point of the interval storage is that in theory we
+  know every interesting boundary without a 3d texture or voxels. The only complication I see is the 3d
+  noise for the caves. Can we do it cheaper? Can we do 2d noise with two thresholds then for every point
+  within our threshold then vary the height of those caves with noise and optionally have layers for more
+  3D caves? It seems like our meshing could also do this." — agreed (the caves' look changes).
+- "Anything with a field we could treat more like an asset we can compute async then add or subtract as
+  intervals … if they want truly 3D caves we can compute intervals for a 3D cave async and then interval
+  subtract … we can subtract structures which is great for things like digging quarries" (P8).
+- Later passes: "cool stalagtites and stalagmites and other cave features … along with our skylights,
+  waterfalls, corpuscular rays and crystals" (V19).
+- Loose layers merged when a column runs out of slots: "I'm not that concerned about losing the loose
+  layers … Usually the player sees the top two or three when surfaces are cut."
+
 ## 2026-10-25 — round 80 (session 5, `places`) — the hoverbike on the atlas; a phone's frame
 
 - Before rooms and paths: "make the hoverbike character controller session able to use the new terrain,

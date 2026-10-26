@@ -2,9 +2,8 @@
 // Columns for the streamer from the atlas (round 67): a batch of w × h world
 // cells from (AP.x0, AP.y0), wrapped round the torus.
 //  colHeight  the ground (compose.wgsl) of the batch and a margin of one
-//  caves      two dual-threshold noises crossing make tunnels, a third's
-//             peaks caverns (the viewer's map of them; forms.wgsl's column
-//             march uses caveField, the same as a signed value)
+//  caves      layers of tunnels and chambers as intervals (caveVoids,
+//             round 80): the viewer's map of them, forms.wgsl's columns
 // Each column's finish and solid (what lies on it, what stands on it, what's
 // cut out of it) is forms.wgsl's colFinish.
 
@@ -70,44 +69,64 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
 /** a cave noise's height scale: its scale at caveScale 40, grown with it (round 79: bigger caves both ways) */
 fn caveZ(z40: f32) -> f32 { return z40 * AP.caveScale / 40.0; }
 
-fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {
-  var out = vec4<f32>(0.0);
-  if (r.cave <= 0.0) { return out; }
-  let zLo = 3.0;
-  let zHi = top - AP.caveDepth;
-  if (zHi < zLo + 3.0) { return out; }
-  let per = perOf(AP.caveScale);
-  let q = torusU(p) * f32(per);
-  let perB = max(1, per / 3);
-  let qb = torusU(p) * f32(perB);
-  let t = 0.03 + 0.035 * r.cave;
-  var n = 0;
-  var start = -1.0;
-  for (var z = zLo; z < zHi; z += 1.0) {
-    let a = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 61u);
-    let b = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 62u);
-    let big = vfbm3(vec3<f32>(qb, z / caveZ(14.0)), vec2<i32>(perB), 2u, AP.seed + 63u);
-    let open = (abs(a) < t && abs(b) < t) || big > 0.5 - 0.06 * r.cave;
-    if (open && start < 0.0) { start = z; }
-    if ((!open || z + 1.0 >= zHi) && start >= 0.0) {
-      let end = select(z, z + 1.0, open);
-      if (end - start >= 2.0) {
-        if (n == 0) { out = vec4<f32>(start, end, out.zw); }
-        else { out = vec4<f32>(out.xy, start, end); }
-        n++;
-        if (n == 2) { break; }
-      }
-      start = -1.0;
-    }
-  }
-  return out;
+/**
+ * The caves under a column as intervals (round 80, the user: "Do we need to walk every cell of the column? …
+ * 2d noise with two thresholds … then vary the height of those caves with noise and optionally have layers
+ * for more 3D caves"): up to three layers, each a network of tunnels (where a noise is near zero: winding,
+ * like rivers underground) and chambers (where another is high, domed by how far in), its floor between the
+ * sea and the ground swelling with a slow noise, its roof under the rock kept over the caves (caveDepth); a
+ * shaft joins a layer to the one under it where a third noise says. No walk up the column: a few 2D noises
+ * a layer. (They were three 3D noises at every cell of height — most of a streamed region's cost.)
+ */
+struct CaveVoids {
+  n: u32,
+  v: array<vec2<f32>, 4>,
 }
 
-/** the caves as a value at height z (> 0 open): tunnels where two noises are both near zero, caverns at a third's peaks */
-fn caveField(q: vec2<f32>, qb: vec2<f32>, per: i32, perB: i32, z: f32, cave: f32) -> f32 {
-  let t = 0.03 + 0.035 * cave;
-  let a = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 61u);
-  let b = vfbm3(vec3<f32>(q, z / caveZ(9.0)), vec2<i32>(per), 2u, AP.seed + 62u);
-  let big = vfbm3(vec3<f32>(qb, z / caveZ(14.0)), vec2<i32>(perB), 2u, AP.seed + 63u);
-  return max((t - max(abs(a), abs(b))) / t, (big - (0.5 - 0.06 * cave)) * 8.0);
+fn caveVoids(p: vec2<f32>, top: f32, r: Region) -> CaveVoids {
+  var o: CaveVoids;
+  o.n = 0u;
+  if (r.cave <= 0.0) { return o; }
+  let u = torusU(p);
+  let roofMax = top - AP.caveDepth;
+  if (roofMax < AP.sea - 30.0) { return o; }
+  let sc = AP.caveScale;
+  let t = 0.03 + 0.035 * r.cave;
+  var below = vec2<f32>(0.0);
+  for (var k = 0u; k < 3u; k++) {
+    let fk = f32(k);
+    let s = AP.seed + 61u + k * 17u;
+    let tun = 1.0 - smoothstep(t * 0.55, t, abs(pfbm(u, perOf(sc * (1.0 + 0.35 * fk)), 2u, s)));
+    let ch = smoothstep(0.4 - 0.05 * r.cave, 0.56 - 0.05 * r.cave, pfbm(u, perOf(sc * 1.6), 2u, s + 5u));
+    let open = max(tun, ch);
+    if (open <= 0.02) {
+      below = vec2<f32>(0.0);
+      continue;
+    }
+    // (the floor a share of the way from the sea's level to the rock kept over the caves, deeper layers lower)
+    let span = max(roofMax - (AP.sea - 24.0), 0.0);
+    let fl = AP.sea - 24.0 + span * (0.18 + 0.27 * fk) + 7.0 * pfbm(u, perOf(sc * 0.8), 2u, s + 9u);
+    let h = open * (2.5 + 2.0 * tun) + ch * ch * (7.0 + 12.0 * r.cave) * (0.7 + 0.3 * pfbm(u, perOf(sc * 0.5), 2u, s + 7u));
+    var lo = max(fl, 1.0);
+    let hi = min(fl + h, roofMax);
+    if (hi - lo < 2.0) {
+      below = vec2<f32>(0.0);
+      continue;
+    }
+    // a shaft down to the layer under it
+    if (below.y > below.x && pfbm(u, perOf(sc * 0.35), 2u, s + 11u) > 0.45) { lo = below.x; o.n -= 1u; }
+    o.v[o.n] = vec2<f32>(lo, hi);
+    o.n += 1u;
+    below = vec2<f32>(lo, hi);
+  }
+  return o;
+}
+
+/** the first two caves under a column (the viewer's cave map): (z0, z1, z0, z1), none 0 */
+fn caves(p: vec2<f32>, top: f32, r: Region) -> vec4<f32> {
+  let c = caveVoids(p, top, r);
+  var out = vec4<f32>(0.0);
+  if (c.n > 0u) { out = vec4<f32>(c.v[0], 0.0, 0.0); }
+  if (c.n > 1u) { out = vec4<f32>(c.v[0], c.v[1]); }
+  return out;
 }

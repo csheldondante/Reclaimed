@@ -390,7 +390,6 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
   // ---- what could be here: the lattice forms near, the network, the alcoves --
   var li: array<u32, 16>;
   var nl = 0u;
-  var zEnd = topL;
   let ni = min(atomicLoad(&instN[0]), MAX_INST);
   for (var i = 0u; i < ni; i++) {
     let I = insts[i];
@@ -402,7 +401,6 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
     li[nl] = i;
     nl++;
-    zEnd = max(zEnd, I.top);
   }
   var net: Net;
   net.on = false;
@@ -412,7 +410,6 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
     let f = formOf(R, k);
     if (f.kind == FORM_NETWORK && !net.on) {
       net = netAt(f, R, k, p, top, wgt);
-      if (net.on) { zEnd = max(zEnd, net.zc + net.r); }
     }
     // alcoves: on the high side of a border that drops away
     if (f.kind == FORM_ALCOVE && top - g.hlo > 8.0 && abs(g.s) < f.radius) {
@@ -420,134 +417,247 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
       af = f;
     }
   }
-  // the caves (as before: under the rock kept over them)
-  let zLoC = 3.0;
-  let zHiC = rockTop - AP.caveDepth;
-  let per = perOf(AP.caveScale);
-  let q = torusU(p) * f32(per);
-  let perB = max(1, per / 3);
-  let qb = torusU(p) * f32(perB);
-  let alcPer = perOf(af.spacing);
-
-  // ---- the march: samples a cell apart, surfaces where the value crosses zero --
-  zEnd = min(zEnd, AP.zTop) + 1.0;
+  // ---- the column as intervals (round 80: no walk up it — the ground and what's cut out of it are known
+  // from the 2D fields; only the forms are sampled, and only over their own heights) ----
+  // what's cut out of the ground: the caves' layers, the great cavern or an overhang's open, the tubes and
+  // their skylights, the alcoves (never the world's first cell)
+  var vl: array<vec2<f32>, 16>;
+  var nv = 0u;
+  let cv = caveVoids(p, rockTop, R);
+  for (var k = 0u; k < cv.n; k++) {
+    vl[nv] = cv.v[k];
+    nv++;
+  }
+  if (g.cr > g.cf) {
+    vl[nv] = vec2<f32>(g.cf, g.cr);
+    nv++;
+  }
+  if (net.on) {
+    let ri = net.r - net.shell;
+    if (net.d < ri) {
+      let hh = sqrt(ri * ri - net.d * net.d);
+      vl[nv] = vec2<f32>(net.zc - hh, net.zc + hh);
+      nv++;
+    }
+    if (net.sky && net.d < net.r * 0.85) {
+      vl[nv] = vec2<f32>(net.zc, 1e9);
+      nv++;
+    }
+  }
+  if (alc) {
+    // (alcoves: openings into the cliff's face in bands up its height, each where a noise along the face is
+    // high enough, as deep as it's open — round 80: a 2D noise a band, no walk)
+    let lo = g.hlo + 1.5;
+    let span = (top - 3.0 - lo) / 6.0;
+    let alcPer = perOf(af.spacing);
+    for (var k = 0u; k < 6u && span > 1.0; k++) {
+      let open = 0.5 + 0.5 * pfbm(torusU(p), alcPer, 2u, R.seed + 77u + k * 13u) - 0.55 + af.chance * 0.5;
+      if (open <= 0.0) { continue; }
+      let depth = af.radius * (0.4 + 0.6 * clamp(open * 4.0, 0.0, 1.0));
+      if (abs(g.s) >= depth) { continue; }
+      let zc = lo + (f32(k) + 0.5) * span;
+      let hh = span * 0.35 * clamp(open * 5.0, 0.4, 1.0);
+      vl[nv] = vec2<f32>(zc - hh, zc + hh);
+      nv++;
+    }
+  }
+  // the ground: solid from the floor to its top (loose ground on it), the voids taken out
+  var gp: array<vec2<f32>, 24>;
+  var ng = 1u;
+  gp[0] = vec2<f32>(0.0, topL);
+  for (var v = 0u; v < nv; v++) {
+    let a = max(vl[v].x, 1.0);
+    let b = vl[v].y;
+    if (b <= a) { continue; }
+    var out: array<vec2<f32>, 24>;
+    var no = 0u;
+    for (var k = 0u; k < ng; k++) {
+      let q = gp[k];
+      if (q.y <= a || q.x >= b) {
+        if (no < 24u) { out[no] = q; no++; }
+        continue;
+      }
+      if (q.x < a && no < 24u) { out[no] = vec2<f32>(q.x, a); no++; }
+      if (q.y > b && no < 24u) { out[no] = vec2<f32>(b, q.y); no++; }
+    }
+    gp = out;
+    ng = no;
+  }
+  // the runs: the ground's pieces in their bands (rock, the cover, the loose on top), then the forms
+  var rz: array<vec2<f32>, 32>;
+  var rm: array<u32, 32>;
+  var rf: array<bool, 32>;
+  var nr = 0u;
+  let bands = array<vec3<f32>, 3>(vec3<f32>(0.0, rockTop, f32(rockMat)), vec3<f32>(rockTop, top, f32(topMat)), vec3<f32>(top, topL, f32(g.lmat)));
+  for (var k = 0u; k < ng; k++) {
+    let q = gp[k];
+    for (var b = 0u; b < 3u; b++) {
+      let lo = max(q.x, bands[b].x);
+      let hi = min(q.y, bands[b].y);
+      if (hi - lo > 0.01 && nr < 32u) {
+        rz[nr] = vec2<f32>(lo, hi);
+        rm[nr] = u32(bands[b].z);
+        rf[nr] = false;
+        nr++;
+      }
+    }
+  }
+  // the forms: each sampled only over its own heights, in steps, its edges found between them; kept where
+  // there's air (in the open or in a cave: what's inside the ground is the ground's); a tube's wall the same
+  var fz: array<vec2<f32>, 8>;
+  var fm: array<u32, 8>;
+  var nf = 0u;
+  if (net.on && net.shell > 0.0 && net.d < net.r) {
+    let ho = sqrt(net.r * net.r - net.d * net.d);
+    let ri = net.r - net.shell;
+    if (net.d < ri) {
+      let hi2 = sqrt(ri * ri - net.d * net.d);
+      fz[0] = vec2<f32>(net.zc - ho, net.zc - hi2);
+      fz[1] = vec2<f32>(net.zc + hi2, net.zc + ho);
+      fm[0] = net.mat;
+      fm[1] = net.mat;
+      nf = 2u;
+    } else {
+      fz[0] = vec2<f32>(net.zc - ho, net.zc + ho);
+      fm[0] = net.mat;
+      nf = 1u;
+    }
+  }
+  for (var j = 0u; j < nl && nf < 8u; j++) {
+    let I = insts[li[j]];
+    let z0 = max(I.zb - 3.0, 0.0);
+    let z1 = min(I.top + 1.0, AP.zTop);
+    var prev = instAt(I, p, z0);
+    var zp = z0;
+    var start = select(-1.0, z0, prev.v > 0.0);
+    var smat = prev.mat;
+    var z = z0;
+    loop {
+      if (z >= z1 || nf >= 8u) { break; }
+      z = min(z + 1.5, z1);
+      let cur = instAt(I, p, z);
+      if ((cur.v > 0.0) != (prev.v > 0.0)) {
+        // (the edge between them: halved four times)
+        var a = zp;
+        var b = z;
+        for (var it = 0; it < 4; it++) {
+          let m = 0.5 * (a + b);
+          if ((instAt(I, p, m).v > 0.0) == (prev.v > 0.0)) { a = m; } else { b = m; }
+        }
+        let e = 0.5 * (a + b);
+        if (cur.v > 0.0) {
+          start = e;
+          smat = cur.mat;
+        } else if (start >= 0.0) {
+          fz[nf] = vec2<f32>(start, e);
+          fm[nf] = smat;
+          nf++;
+          start = -1.0;
+        }
+      } else if (cur.v > 0.0 && cur.mat != smat && start >= 0.0) {
+        // (its cap: another material from here up)
+        fz[nf] = vec2<f32>(start, z);
+        fm[nf] = smat;
+        nf++;
+        start = z;
+        smat = cur.mat;
+      }
+      prev = cur;
+      zp = z;
+    }
+    if (start >= 0.0 && nf < 8u) {
+      fz[nf] = vec2<f32>(start, z1);
+      fm[nf] = smat;
+      nf++;
+    }
+  }
+  // (kept where there's air: the ground's pieces taken out of each)
+  for (var f = 0u; f < nf; f++) {
+    var pa: array<vec2<f32>, 8>;
+    var np = 1u;
+    pa[0] = fz[f];
+    for (var k = 0u; k < ng; k++) {
+      let a = gp[k].x;
+      let b = gp[k].y;
+      var out: array<vec2<f32>, 8>;
+      var no = 0u;
+      for (var m = 0u; m < np; m++) {
+        let q = pa[m];
+        if (q.y <= a || q.x >= b) {
+          if (no < 8u) { out[no] = q; no++; }
+          continue;
+        }
+        if (q.x < a && no < 8u) { out[no] = vec2<f32>(q.x, a); no++; }
+        if (q.y > b && no < 8u) { out[no] = vec2<f32>(b, q.y); no++; }
+      }
+      pa = out;
+      np = no;
+    }
+    for (var m = 0u; m < np; m++) {
+      if (pa[m].y - pa[m].x > 0.05 && nr < 32u) {
+        rz[nr] = pa[m];
+        rm[nr] = fm[f];
+        rf[nr] = true;
+        nr++;
+      }
+    }
+  }
+  // sorted from the bottom up (few: an insertion sort), touching runs of one material joined, cut at the top
+  for (var k = 1u; k < nr; k++) {
+    var m = k;
+    loop {
+      if (m == 0u || rz[m - 1u].x <= rz[m].x) { break; }
+      let tz = rz[m];
+      rz[m] = rz[m - 1u];
+      rz[m - 1u] = tz;
+      let tm = rm[m];
+      rm[m] = rm[m - 1u];
+      rm[m - 1u] = tm;
+      let tf = rf[m];
+      rf[m] = rf[m - 1u];
+      rf[m - 1u] = tf;
+      m--;
+    }
+  }
   var runs = 0u;
   let base = (id.y * AP.w + id.x) * MR;
-  var zs = 0.0;
-  var L = 0u;
-  var pF = 0.0;
-  var pM = 0.0;
-  var pForm = false;
-  var caveRuns = 0u;
-  var inCave = false;
-  var alcRuns = 0u;
-  var formRuns = 0u;
-  var inAlc = false;
   var surf = 0.0;
   var surfForm = false;
-  let K = i32(ceil(zEnd));
-  for (var k = 0; k <= K; k++) {
-    let z = f32(k);
-    var carve = -1e9;
-    // caves: two at most in a column (each two cells or more), as before
-    if (R.cave > 0.0 && z >= zLoC && z < zHiC && (caveRuns < 2u || inCave)) {
-      let c = caveField(q, qb, per, perB, z, R.cave);
-      if (c > 0.0 && !inCave) { inCave = true; }
-      if (c <= 0.0 && inCave) {
-        inCave = false;
-        caveRuns++;
-      }
-      carve = max(carve, c);
+  var cz = vec2<f32>(0.0);
+  var cm = 0u;
+  var cf = false;
+  var has = false;
+  for (var k = 0u; k < nr; k++) {
+    let q = vec2<f32>(rz[k].x, min(rz[k].y, AP.zTop));
+    if (q.y <= q.x) { continue; }
+    if (has && rm[k] == cm && rf[k] == cf && abs(q.x - cz.y) < 1e-3) {
+      cz.y = max(cz.y, q.y);
+      continue;
     }
-    // a great cavern (round 78)
-    if (z > g.cf && z < g.cr) { carve = max(carve, min(z - g.cf, g.cr - z)); }
-    var add = -1e9;
-    var addMat = 0u;
-    if (net.on) {
-      let rr = length(vec2<f32>(net.d, z - net.zc));
-      carve = max(carve, (net.r - net.shell) - rr);
-      if (net.shell > 0.0) {
-        let wall = min(net.r - rr, rr - (net.r - net.shell));
-        if (wall > add) {
-          add = wall;
-          addMat = net.mat;
-        }
-      }
-      if (net.sky && z > net.zc) { carve = max(carve, net.r * 0.85 - net.d); }
-    }
-    // (six openings a column at most: a tall wall's would run past what a column holds)
-    var alcOpen = false;
-    if (alc && z > g.hlo + 1.5 && z < top - 3.0 && (alcRuns < 6u || inAlc)) {
-      let n3 = vfbm3(vec3<f32>(torusU(p) * f32(alcPer), z / max(af.hHi, 1.0)), vec2<i32>(alcPer), 2u, R.seed + 77u);
-      let open = n3 - (0.5 - af.chance);
-      let depth = af.radius * (0.4 + 0.6 * clamp(open * 4.0, 0.0, 1.0));
-      let c = min(open * 6.0, depth - abs(g.s));
-      alcOpen = c > 0.0;
-      if (c > 0.0) { inAlc = true; } else if (inAlc) {
-        inAlc = false;
-        alcRuns++;
-      }
-      carve = max(carve, c);
-    }
-    // (round 78: none in an alcove, a great cavern's or an overhang's open — a crystal field's forms filled
-    // a mesa's six alcoves, a band each, past what a column holds)
-    let inOpen = alcOpen || (z > g.cf && z < g.cr);
-    for (var j = 0u; j < nl && !inOpen; j++) {
-      let fv = instAt(insts[li[j]], p, z);
-      if (fv.v > add) {
-        add = fv.v;
-        addMat = fv.mat;
-      }
-    }
-    // (nothing carves the world's floor: every column keeps its first cell)
-    if (z < 1.0) { carve = -1e9; }
-    let bc = min(topL - z, -carve);
-    var F = max(bc, add);
-    if (z >= AP.zTop) { F = min(F, AP.zTop - z); }
-    // (four forms' runs a column at most, as the caves are two and the alcoves six: past them a form isn't
-    // there — crystal clusters lining a tall cliff's caves and alcoves ran past what a column holds)
-    var form = add >= bc;
-    if (form && !pForm && k > 0) {
-      if (formRuns >= 4u) {
-        form = false;
-        F = bc;
-        if (z >= AP.zTop) { F = min(F, AP.zTop - z); }
+    if (has) {
+      if (runs < MR) {
+        colRuns[base + runs] = vec2<u32>((zq(cz.x) & 0x7fffffffu) | select(0u, 1u << 31u, cf), (zq(cz.y) & 0xffffffu) | (cm << 24u));
+        runs++;
+        surf = cz.y;
+        surfForm = cf;
       } else {
-        formRuns++;
+        flags |= 2u;
       }
     }
-    var lab = 0u;
-    if (F > 0.0) {
-      if (form) { lab = addMat; } else if (z >= top) { lab = g.lmat; } else { lab = select(topMat, rockMat, z < rockTop); }
+    cz = q;
+    cm = rm[k];
+    cf = rf[k];
+    has = true;
+  }
+  if (has) {
+    if (runs < MR) {
+      colRuns[base + runs] = vec2<u32>((zq(cz.x) & 0x7fffffffu) | select(0u, 1u << 31u, cf), (zq(cz.y) & 0xffffffu) | (cm << 24u));
+      runs++;
+      surf = cz.y;
+      surfForm = cf;
+    } else {
+      flags |= 2u;
     }
-    if (k > 0 && lab != L) {
-      // where between the samples it changed
-      var zb = z - 0.5;
-      if ((L == 0u) != (lab == 0u)) {
-        zb = z - 1.0 + pF / (pF - F);
-      } else if (form != pForm) {
-        let M = add - bc;
-        zb = z - 1.0 + pM / (pM - M);
-      } else if (!form) {
-        // (the ground's own top under the loose, or the cover's bottom)
-        if (lz > 0.0 && top > z - 1.0 && top <= z) { zb = top; } else { zb = clamp(rockTop, z - 1.0, z); }
-      }
-      if (L != 0u && zb - zs > 0.05) {
-        if (runs < MR) {
-          colRuns[base + runs] = vec2<u32>((zq(zs) & 0x7fffffffu) | select(0u, 1u << 31u, pForm), (zq(zb) & 0xffffffu) | (L << 24u));
-          runs++;
-          surf = zb;
-          surfForm = pForm;
-        } else {
-          flags |= 2u;
-        }
-      }
-      zs = zb;
-    }
-    L = lab;
-    pF = F;
-    pM = add - bc;
-    pForm = form;
   }
 
   var o: ColOut;
