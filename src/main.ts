@@ -26,6 +26,14 @@ async function main() {
   const quality = QUALITY[qualityName];
   if (!quality) throw new Error(`unknown quality "${qualityName}" (use low|medium|high)`);
   // (round 82: ?slots=N — the mesh's rebuilds a frame, overriding the tier's, to A/B on the phone)
+  // (perfopt: ?shadowsize=N — the sun's map's side, overriding the tier's: at low a cell is 1.3 pixels on screen
+  // and 5 texels in a 1024² map, eleven times the screen's pixels drawn and stored every frame)
+  const shadowSize = params.get('shadowsize');
+  if (shadowSize !== null) {
+    const n = Number(shadowSize);
+    if (![256, 512, 1024, 2048].includes(n)) throw new Error(`?shadowsize=${shadowSize}: 256, 512, 1024 or 2048`);
+    quality.shadowSize = n;
+  }
   const slots = params.get('slots');
   if (slots !== null) {
     const n = Number(slots);

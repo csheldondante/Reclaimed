@@ -37,7 +37,27 @@ fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
   o.nrm = vec3<f32>(bitcast<f32>(b.x), bitcast<f32>(b.y), bitcast<f32>(b.z));
   o.share = bitcast<f32>(b.w);
   o.word = a.w;
-  o.tint = 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02));
+  o.tint = meshTint(p);
+  return o;
+}
+
+/** large-scale ground patchiness at p (the forward pass's per vertex; the deferred resolve's per pixel) */
+fn meshTint(p: vec3<f32>) -> f32 { return 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02)); }
+
+/** (perfopt) the mesh's vertex without the tint: the shadow pass's and the G-buffer's (the resolve takes the tint a pixel) */
+@vertex
+fn vsMeshG(@builtin(vertex_index) vi: u32) -> MOut {
+  let a = instances[vi * 2u];
+  let b = instances[vi * 2u + 1u];
+  let ob = offBase() + (vi / MR.k.z) * 4u;
+  let p = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z)) + vec3<f32>(bitcast<f32>(meshState[ob]), bitcast<f32>(meshState[ob + 1u]), bitcast<f32>(meshState[ob + 2u]));
+  var o: MOut;
+  o.pos = CAM.viewProj * vec4<f32>(p, 1.0);
+  o.wpos = p;
+  o.nrm = vec3<f32>(bitcast<f32>(b.x), bitcast<f32>(b.y), bitcast<f32>(b.z));
+  o.share = bitcast<f32>(b.w);
+  o.word = a.w;
+  o.tint = 1.0;
   return o;
 }
 
@@ -122,7 +142,7 @@ struct GOut { @location(0) g0: vec4<u32>, @location(1) g1: vec2<u32> };
 @group(0) @binding(41) var gbuf1: texture_2d<u32>;
 
 /** g0: the point's xyz (bits), w the normal (octahedral, 15 bits a side) | the source (bit 30: 1 the window's,
- *  0 the band's — MR.zb.w) | drawn (bit 31); g1: the structure word, share and tint / 2 (unorm16 each) */
+ *  0 the band's — MR.zb.w) | drawn (bit 31); g1: the structure word, the share (unorm16; the tint is the resolve's) */
 fn gPack(in: MOut) -> GOut {
   let n = normalize(in.nrm);
   var o = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
@@ -130,7 +150,7 @@ fn gPack(in: MOut) -> GOut {
   let q = vec2<u32>(round(clamp(o * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 32767.0));
   var g: GOut;
   g.g0 = vec4<u32>(bitcast<u32>(in.wpos.x), bitcast<u32>(in.wpos.y), bitcast<u32>(in.wpos.z), q.x | (q.y << 15u) | (u32(MR.zb.w) << 30u) | (1u << 31u));
-  g.g1 = vec2<u32>(in.word, pack2x16unorm(vec2<f32>(in.share, in.tint * 0.5)));
+  g.g1 = vec2<u32>(in.word, pack2x16unorm(vec2<f32>(in.share, 0.0)));
   return g;
 }
 
@@ -167,7 +187,7 @@ fn fsMeshResolve(@builtin(position) pos: vec4<f32>) -> FOut {
   m.nrm = normalize(n);
   m.share = st.x;
   m.word = b.x;
-  m.tint = st.y * 2.0;
+  m.tint = meshTint(m.wpos);
   return meshShade(m);
 }
 

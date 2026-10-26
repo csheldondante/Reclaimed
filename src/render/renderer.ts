@@ -445,7 +445,7 @@ export class Renderer {
           device.createRenderPipeline({
             label: `mesh-${entryPoint}`,
             layout: meshPl,
-            vertex: { module: meshModule, entryPoint: 'vsMesh' },
+            vertex: { module: meshModule, entryPoint: 'vsMeshG' },
             fragment: { module: meshModule, entryPoint, targets: [{ format: 'rgba32uint' }, { format: 'rg32uint' }] },
             primitive: { topology: 'triangle-list', cullMode: 'none' },
             depthStencil: depthStencil(true),
@@ -521,7 +521,7 @@ export class Renderer {
       this.shadowOpaquePipe = shadowPipe('shadow-opaque', pl, drawModule, 'vsBox');
       this.shadowBodyPipe = shadowPipe('shadow-bodies', pl, drawModule, 'vsBody');
       this.shadowSkinPipe = shadowPipe('shadow-skins', pl, drawModule, 'vsSkin');
-      this.shadowMeshPipe = shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMesh');
+      this.shadowMeshPipe = shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMeshG');
       // (the pass draws into the map, so its groups bind a stand-in texel there)
       const none = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
       this.noShadowView = none;
