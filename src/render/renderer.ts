@@ -60,7 +60,7 @@ export interface RenderOptions {
   sun: [number, number, number];
 }
 
-// (perf branch: ?skip=opaque,tops,plants,prisms,mesh,bodies,structs,voxels,skins,water,particles,rain,shadow,prep,meshprep
+// (perf branch: ?skip=render (round 82: world-core.ts — nothing drawn),opaque,tops,plants,prisms,mesh,bodies,structs,voxels,skins,water,particles,rain,shadow,prep,meshprep
 // leaves that piece out of the frame, to measure what it costs: scripts/perfprofile.mjs)
 export const SKIP = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(',').filter(Boolean));
 

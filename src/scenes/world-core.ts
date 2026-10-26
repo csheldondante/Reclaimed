@@ -191,6 +191,14 @@ export class WorldCore {
     this.sim.uploadGlobals(this.globals);
     const enc = device.createCommandEncoder({ label: 'frame' });
     const q = this.host.quality;
+    // (round 82, ?skip=render: nothing drawn or prepared to draw — the mesh not built, no prep, no passes;
+    // streaming, generation and the sim go on: what the frame costs without its rendering)
+    if (Renderer.skip.has('render')) {
+      const after = prof.endFrame(enc);
+      device.queue.submit([enc.finish()]);
+      after?.();
+      return;
+    }
     this.renderer.encode(enc, context.getCurrentTexture().createView(), this.camera, {
       clear: flashSky(this.light.clear, this.globals.flash),
       sun: this.light.dir,

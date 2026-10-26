@@ -4828,3 +4828,14 @@ worst case doesn't make sense".
   on D3D11), so the phone (Vulkan) decides: A/B links to the user.
 - A still frame's other passes: shadow 0.5, renderprep 0.4 (every frame:
   P4), the mesh's change pass 0.2, the sim's ~0.1 each.
+- The phone (the user): leaving out the mesh and the shadows is 20–40 % off
+  the p95 frames. Their next step: "would skipping the render and just
+  doing the streaming and generation be a good test? Then we can figure out
+  where to target savings". `?skip=render` (world-core.ts): nothing drawn
+  or prepared to draw (no mesh built, no prep, no passes); streaming, the
+  atlas's generation and the sim go on. With `skip=sim` a ladder: all →
+  no render → no render, no sim (streaming and generation alone). Desktop
+  riding (it holds its 100 Hz on every rung, so only the GPU tells them
+  apart): GPU a frame 7.8 → 4.5 → 2.2 ms — render ~3.3, sim ~2.3, the
+  atlas's columns ~2.2 (colHeight, formSeed). The phone's frame times
+  decide.
