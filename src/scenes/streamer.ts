@@ -282,6 +282,8 @@ export class Streamer {
     this.texs = [
       tx('shake', true),
       tx('lavaSpring', true),
+      // (round 84: the atlas's rivers at their steady state — frozen with its region, as what's held there)
+      tx('riverFlow', true),
       tx('drift', false),
       tx('air', false),
       tx('strata', false),
@@ -625,6 +627,7 @@ export class Streamer {
         if (!topInside(cut, oz, zMax)) {
           land.water[i] = 0;
           if (land.waterSource) land.waterSource[i] = 0;
+          if (land.riverFlow) land.riverFlow.fill(0, i * 4, i * 4 + 4);
           if (land.lava) land.lava.fill(0, i * 4, i * 4 + 4);
         } else if (land.lava && land.lava[i * 4] > 0) land.lava[i * 4 + 3] -= oz;
       }
@@ -645,6 +648,7 @@ export class Streamer {
       for (let k = 0; k < R * R; k++) t[k * 4] = land.lavaSpring[k];
       texs.lavaSpring = t;
     }
+    if (land.riverFlow) texs.riverFlow = land.riverFlow;
     const ground = land.ground ? land.ground.map((v) => v - oz) : undefined;
     return { layers, bufs, texs, surface, judge, oz, outside, snap, ground };
   }

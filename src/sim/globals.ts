@@ -142,6 +142,8 @@ export interface GlobalsState {
   origin?: [number, number];
   /** the sea's level in window z (round 79, a streamed atlas world): past the window's edge the world is sea at it */
   seaZ?: number;
+  /** (round 84) the atlas's rivers' wetness: their discharge over the reference's (sim/world-gpu.ts riverFlow). Absent: 1. */
+  riverWet?: number;
   /** a bit a chunk, set: asleep (round 80, sim/sleep.ts; 64 words). Absent: all awake. */
   sleep?: Uint32Array;
   /** a bit a chunk, set: just fallen asleep (round 80; 64 words) */
@@ -228,7 +230,7 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   const o = s.origin ?? [0, 0];
   // (world units for the noise of positions; cells for the hashes of cells)
   f.set([o[0], o[1] * ROW_H, o[0], o[1]], 276);
-  f.set([s.seaZ ?? -1e9, 0, 0, 0], 280);
+  f.set([s.seaZ ?? -1e9, s.riverWet ?? 1, 0, 0], 280);
   const su = new Uint32Array(f.buffer, f.byteOffset + 284 * 4, 64);
   if (s.sleep) su.set(s.sleep);
   else su.fill(0);

@@ -63,7 +63,7 @@ struct Globals {
   // xy in world units (noise of positions: wo()), zw in cells (hash3)
   org: vec4<f32>,
   // x: the sea's level in window z (round 79: past the window's edge the world is sea at it, so the sea in
-  // the window doesn't drain out of it; −1e9 none)
+  // the window doesn't drain out of it; −1e9 none); y (round 84) the rivers' wetness (sim/world-gpu.ts riverFlow)
   ocean: vec4<f32>,
   // (round 80, sim/sleep.ts) a bit a chunk (16 × 16 columns), set: asleep — the systems that change the
   // ground skip it; its water and lava keep their depth and flow (drawn moving). 2 048 chunks at most.

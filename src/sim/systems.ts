@@ -34,7 +34,15 @@ import landBrushWgsl from '../shaders/landbrush.wgsl?raw';
 import townStampWgsl from '../shaders/townstamp.wgsl?raw';
 import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
-import { STATS_COUNT, type WorldGpu } from './world-gpu';
+import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
+import { RIVERS, RIVER_PULL, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, STATS_COUNT, type WorldGpu } from './world-gpu';
+
+/** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) */
+const riverHeld = `const RIVER_TABLE: bool = ${RIVERS === 'table'};
+const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
+const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
+const RIVER_PULL: f32 = ${RIVER_PULL};
+` + riverHeldWgsl;
 import { SETTLE, SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst } from './flow';
 
@@ -128,17 +136,17 @@ export class WaterSystem implements SimSystem {
       device,
       world,
       'water-flux',
-      `const FLUX_SEED: bool = ${!SETTLE};\n` + flowConst('water') + waterFluxWgsl,
-      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex' },
-      { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView },
+      `const FLUX_SEED: bool = ${!SETTLE};\n` + flowConst('water') + waterFluxWgsl + riverHeld,
+      { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 22: 'tex' },
+      { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView },
     );
     this.depth = kernel(
       device,
       world,
       'water-depth',
-      flowConst('water') + waterDepthWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read' },
-      { 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface },
+      flowConst('water') + waterDepthWgsl + riverHeld,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex' },
+      { 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
@@ -281,9 +289,9 @@ export class RenderFieldsSystem implements SimSystem {
       world,
       'renderfields',
       terrainShapeWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
-` + renderFieldsWgsl + flowWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 30: 'uniform' },
-      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 30: world.meshRegion },
+` + renderFieldsWgsl + flowWgsl + riverHeld,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 22: 'tex', 30: 'uniform' },
+      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 22: world.riverFlowView, 30: world.meshRegion },
     );
   }
   encode(enc: GPUCommandEncoder): void {

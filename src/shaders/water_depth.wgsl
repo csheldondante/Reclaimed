@@ -15,10 +15,28 @@
 const RAIN_RATE: f32 = 0.0012;
 const EVAP: f32 = 0.00003;
 const EVAP_DEEP: f32 = 0.000002;
+/** (?rivers=hold, the perf agent's) the most a held source tops its column up by a step */
+const HOLD_RATE: f32 = 0.5;
+/** (round 84, ?rivers=table) how fast a held river's column comes to the table's depth (a step's share): the river
+ *  rises and falls with the wetness, and comes back to its level when a breach falls asleep, smoothly */
+const RIVER_RELAX: f32 = 0.02;
+
+@group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
+// (round 84) per chunk the most a column's water changed in a step (sim/world-gpu.ts waterChange)
+@group(0) @binding(9) var<storage, read_write> waterChange: array<atomic<u32>>;
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (round 84, ?rivers=table: a river's column nothing has woken: the atlas's table at the rivers' wetness, no
+  // simulation — riverheld.wgsl)
+  let rh = riverHere(id.xy);
+  if (riverHeld(id.xy, rh)) {
+    let ia = colIdx(id.x, id.y);
+    waterPrev[ia] = water[ia];
+    waterOut[ia] = mix(water[ia], rh.depth, RIVER_RELAX);
+    return;
+  }
   // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
   if (flowFrozen(id.xy, FLOW_N)) {
     let ia = colIdx(id.x, id.y);
@@ -35,13 +53,25 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = nbr(p, k);
     if (inMap(q)) { nd += flux[colIdxI(q)][k ^ 1u]; }
   }
-  nd += rainAt(cellPos(p)) * RAIN_RATE * (1.0 - snowShare(airTempAt(f32(sfZ(surface[i]))))) + waterSource[i];
+  // a source: positive, a spring (water a step); negative (?rivers=hold: forms.wgsl RIVER_HOLD), the depth it's
+  // topped up to — the river held at its level by what comes down from upstream
+  let src = waterSource[i];
+  nd += rainAt(cellPos(p)) * RAIN_RATE * (1.0 - snowShare(airTempAt(f32(sfZ(surface[i]))))) + max(src, 0.0);
+  if (src < 0.0) { nd = max(nd, min(-src, nd + HOLD_RATE)); }
   // thin films (wet ground, puddles) evaporate; deep water barely does — otherwise
   // a large lake evaporates the whole river inflow
   nd = max(0.0, nd - select(EVAP_DEEP, EVAP, nd < 0.08));
   // a column with nothing in it (round 69: the window slides in z, and the ground here is
   // below its floor): what runs in falls on out of the window
   if (sfCount(surface[i]) == 0u) { nd = 0.0; }
+  // (round 84, ?rivers=table&riverpull=x: a woken river's column pulled toward the atlas's table by x a step — what
+  // comes down from upstream past the window keeps coming: a breach is fed, the river runs on past it)
+  if (RIVER_PULL > 0.0 && rh.on) { nd = mix(nd, rh.depth, RIVER_PULL); }
   waterPrev[i] = d;
   waterOut[i] = nd;
+  let dd = abs(nd - d);
+  if (dd > 1e-4) {
+    let c = (id.y / G.chunkSize) * G.chunksX + id.x / G.chunkSize;
+    if (c < 2048u) { atomicMax(&waterChange[c], bitcast<u32>(dd)); }
+  }
 }

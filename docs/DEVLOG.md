@@ -5580,3 +5580,80 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   (a river's flow has its streaks down it, no swell). scripts/watershot.mjs
   --at coast (a warm coast found on the atlas): rings of swell round an
   island, moving in between frames.
+
+## Round 84 — rivers at the atlas's steady state: held, drawn flowing, no simulation (rivers)
+
+The user: "all generators make a steady state so when we arrive nothing is simulated until the player
+interacts with it"; "rivers should flow downstream"; "Find the atlas level rivers and what watersheds
+feed them … precompute the flow of those as a function of dryness. Then the actual simulation treats the
+unperturbed river basin as a steady state with no actual simulation and flow as strictly a render
+artifact computed at the atlas level"; "we can have a tolerance and decide when we are close enough to
+steady state to freeze"; "keep the flow proportional and then zero out when they get too low".
+
+Why: a generated river wasn't the pipes' steady state. Springs along its middle fed 0.0008 a step; the
+pipes carry a flow set by the level's fall, not by depth, so the deep generated channel drained to a
+film within the level's 30 s warmup (the sim's window holds 2,086 cells³ of river where the generator
+made 7,378), and woken again it moved on (riverrest, wake all: 1,912 of 2,691 wet columns changed in
+5 s, −6 %). The perf agent's hold (sources topped to the generated depth) flooded the banks.
+
+What (`?rivers=table`; `sim`, the default, as before; `hold`, the perf agent's, for comparison):
+- **The table, at the atlas** (rivers.ts): each node's discharge is its watershed's — RIVER_RUNOFF
+  (0.002) cells³ a step for each texel drained through it (the drainage tree's accumulation, less where
+  the latitude is dry) — and its speed that over the channel's wetted section (the carve's parabola
+  filled to 0.3 under the level), square-rooted so a brook still moves, up to 2.5× where the level
+  falls fast (rapids). Node word 7. Stats on the default atlas: speeds 0.06 / median / 0.8 cells a
+  step (riverStats.speed); the pipes' own steady surface slope for that discharge is a small share of
+  the level's fall (riverStats.pipeSlope) — the pipes can't carry the river the atlas has at its slope,
+  which is why the flow is a render artifact and not the pipes'.
+- **Per column, when the land is made** (compose.wgsl riverAt → Ground.rvel, rd → ColG → forms.wgsl
+  colFinish → ColOut's spare words → atlas.ts landFrom): the flow along the river's segment and the
+  depth, into a new contract texture `riverFlow` (world-gpu.ts: xy flow, z the column's depth, w the
+  river's depth at its line), kept with its region by the streamer. No springs. Banks: the ground just
+  outside the channel (0.95–1.9 half-widths) raised to the level where it lay up to 12 under it (a
+  levee), so the river holds what it carries; where the bed steps down 1.5 or more the way the river
+  runs, its water is a 0.2 sheet poured over the step (fast: foam), not a pool to empty down it.
+- **Held** (riverheld.wgsl, in water_flux, water_depth, renderfields): a river's column asleep, or at
+  the window's edge (where the river comes in from the unsimulated world and goes on out), is the
+  table at the rivers' wetness — its depth eased to it (2 % a step), its flux the pipes' steady flux
+  for its levels (so what's awake beside it is fed as the river would feed it, and drains into it) —
+  and is drawn flowing by the table's flow (renderfields: flow × depth, as the pipes' net flow).
+  Woken (an edit, a power, a storm), the pipes run it; with `?riverpull=x` (0.02 by default with the
+  table) its column is pulled toward the table x a step: what comes down from past the window keeps
+  coming, a breach is fed and the river runs on past it. The renderer draws a woken river's column
+  with the table's flow (as deep as it still is) plus the pipes' own.
+- **Dryness** (weather/riverwet.ts → Globals ocean.y): 1 is the land as made; the season (wettest at
+  the thaw) and the storms raining move it, followed over ~20 s. The frozen pattern scales with it, no
+  simulation: at the line the depth × wet^0.6 (the level shifted with it across the channel, at most
+  0.28 over), the flow × wet^0.4; under 0.03 a dry bed. `?riverwet=x` holds it.
+- **Settled, then frozen** (`?settletol=x`, 0.01 by default with the table): water_depth.wgsl keeps,
+  per chunk, the most a column's water changed in a step (`waterChange`, atomicMax of the f32's bits);
+  the level reads and clears it twice a second, and a woken chunk whose time is up stays awake while
+  it's over the tolerance (60 s at most) — then sleeps, its last flux the animation, the river's
+  columns back to the table.
+- The atlas level's warmup (1,800 ticks, all awake) doesn't run the water with the table: the land
+  comes in at its steady state (the warmup had drained it before anything slept). `?settle` is off by
+  default with the table (`?settle=1` to settle land as it comes in).
+- Without the field mesh (the phone) the flow's heading reaches the water too: renderfields packs it
+  in w (1/1024 turns in the whole part, size/8 in the fraction; render.wgsl flowOf), so the streaks
+  and the foam run down the river there as well. With the table, foam goes by the water's speed (flow
+  over depth), not its net flow — a deep river carries a lot without being fast.
+
+Measured (scripts/riverrest.mjs: an atlas river found on riverNodes — temperate, 5–8 half-widths, not
+at its mouth — the level walked in with settle=0, every chunk asleep, then woken with no edit; wet
+columns over the sea, |Δdepth| > 0.05 in 5 s; node at 3884,13288):
+
+| | river held at | wake all: river cols changed, volume | wake an event (r 40): near, window |
+|---|---|---|---|
+| sim (before) | 2,086 cells³ (drained in warmup) | 1,912 of 2,691, −6.3 % | — |
+| table, warmup ran unheld | 18,673 (spilt onto banks) | 16,417 of 18,960, −19.9 % | — |
+| table + levees + still warmup | 7,378 | 3,979 of 4,522, −28.9 % (reaches above falls empty) | −6.3 %, −0.65 % |
+| table + riverpull 0.02 | 7,378 | 4,121 of 4,542, −13.5 % | −2.0 %, +0.12 % |
+
+The breach (riverrest --breach: a trench dug across the bank): it fills from the river and the river
+runs on past it (shots84/pull-breach-*.png). driveprofile at q=low, 20 s: p95 10.7 ms (sim) vs 10.4
+(table); water-flux + water-depth ≈ 0.05 ms a frame either way.
+
+Open: a woken reach above a fall still empties down it (the pipes have no weir: flux over a lip is
+the head difference, not the critical flow) — the pull holds it; the channel's deep middle shows its
+silt bed as a grey stripe through the water; the watershed's discharge doesn't yet reach the sea's
+mouths' look; `?settletol` reads `waterChange` per chunk by index, not moved on a slide.

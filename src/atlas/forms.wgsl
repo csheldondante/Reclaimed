@@ -45,6 +45,9 @@ const MAT_SNOW: u32 = 25u;
 const MAT_BASALT_F: u32 = 23u;
 /** a river's springs: water a tick at the middle of its channel (what comes down from upstream) */
 const RIVER_SPRING: f32 = 0.0008;
+/** (round 84, ?rivers=table) a step down from a river's column this high or more is a fall: its water a sheet this deep */
+const RIVER_FALL: f32 = 1.5;
+const RIVER_SHEET: f32 = 0.2;
 
 /** world units around a batch whose lattice forms are placed (regions.ts FORM_REACH: no form reaches further) */
 const MARGIN: f32 = 48.0;
@@ -101,9 +104,11 @@ struct ColOut {
   ground: f32,
   /** water a tick from a spring (a river's: what flows in from upstream) */
   spring: f32,
-  _p0: f32,
-  _p1: f32,
-  _p2: f32,
+  /** (round 84) a river's column: its flow at the reference wetness (cells a tick) and the river's depth at its
+   *  line (0: not a river's) — atlas.ts landFrom's riverFlow */
+  rvx: f32,
+  rvy: f32,
+  rd: f32,
 }
 
 @group(0) @binding(31) var<storage, read_write> colOut: array<ColOut>;
@@ -327,9 +332,13 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
   var dys = array<i32, 6>(0, 0, 1, -1, 1, -1);
   if (odd) { dxs = array<i32, 6>(1, -1, 1, 0, 0, 1); }
   var slope = 0.0;
+  // (round 84) and the steepest step down from it the way a river runs (not across: its channel's sides)
+  var drop = 0.0;
+  let rdir = vec2<f32>(g.rvx, g.rvy) / max(length(vec2<f32>(g.rvx, g.rvy)), 1e-6);
   for (var k = 0; k < 6; k++) {
     let n = colG[u32(i32(id.y) + 1 + dys[k]) * mw + u32(i32(id.x) + 1 + dxs[k])];
     slope = max(slope, abs(n.h - g.h));
+    if (dot(normalize(cellU(x + dxs[k], y + dys[k]) - p), rdir) > 0.4) { drop = max(drop, g.h - n.h); }
   }
   // whose ground this is (dithered across a blend)
   let hsh = hf(hash2u(x, y, AP.seed + 71u));
@@ -689,7 +698,24 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (g.rx < 0.5) { o.lava = max(g.rl - surf, 0.6); }
     } else {
       o.water = max(o.water, g.rl - 0.3 - surf);
-      if (g.rx < 0.6) { o.spring = RIVER_SPRING; }
+      // (round 84, ?rivers=table: no springs — the river is held at the atlas's steady state, fed from past the
+      // window by its own table: sim/world-gpu.ts riverFlow)
+      if (g.rx < 0.6 && !RIVER_TABLE) { o.spring = RIVER_SPRING; }
+      // (?rivers=hold, the perf agent's: the river's water holds its level — a negative source, the depth it's topped
+      // up to, water_depth.wgsl — rather than a spring pouring a constant flow in)
+      if (RIVER_HOLD && o.water > 0.02) { o.spring = -o.water; }
+      // (round 84, ?rivers=table) where the bed steps down (a fall, a chute: RIVER_FALL a step) the water is a sheet
+      // pouring over it, quick — not a pool the pipes would empty down the step when woken
+      var fall = 1.0;
+      if (RIVER_TABLE && drop > RIVER_FALL) {
+        o.water = min(o.water, RIVER_SHEET);
+        fall = 2.0;
+      }
+      if (o.water > 0.02) {
+        o.rvx = g.rvx * fall;
+        o.rvy = g.rvy * fall;
+        o.rd = max(g.rd, 0.05);
+      }
     }
   }
   var m = moistureAt(p, g.coast, R.moist);

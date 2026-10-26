@@ -16,6 +16,9 @@ const OIL_DENSITY: f32 = 0.88;
 const GAIN: f32 = 0.12 * 2.0 / 3.0;
 const FRICTION: f32 = 0.985;
 
+// (round 84, ?rivers=table: riverheld.wgsl) the atlas's rivers at their steady state
+@group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
+
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
@@ -24,8 +27,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // (a sleeping chunk: round 80 — its flux frozen as it is, the surface drawn moving by it. perfopt, ?settle=0:
   // land come in asleep has none — a river would be drawn still — so while it's drowsy (just come in) a column
   // with no flux takes the pipes' steady state for its levels at once: f = GAIN (H - Hn) / (1 - FRICTION))
-  let seed = flowFrozen(id.xy, FLOW_N);
-  if (seed && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
+  // (round 84, ?rivers=table: a river's column nothing has woken is held at the atlas's steady state — its flux the
+  // pipes' steady flux for its levels, so what's awake beside it is fed as the river would feed it)
+  let held = riverHeld(id.xy, riverHere(id.xy));
+  let seed = flowFrozen(id.xy, FLOW_N) || held;
+  if (seed && !held && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
   let d = water[i];
   if (d <= 1e-5) { flux[i] = dZero(); return; }
   // (a body lying here is ground to the water: round 17)

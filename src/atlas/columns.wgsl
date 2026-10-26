@@ -32,6 +32,10 @@ struct ColG {
   cr: f32,
   /** an oddity's material (compose.wgsl Ground.smat) */
   smat: u32,
+  /** (round 84) a river's flow at the reference wetness (cells a tick) and its depth at the line (atlas.ts COLG_BYTES) */
+  rvx: f32,
+  rvy: f32,
+  rd: f32,
 }
 
 @group(0) @binding(30) var<storage, read_write> colG: array<ColG>;
@@ -63,8 +67,17 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
       h = g.ov.x;
     }
   }
-  colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat);
+  // (round 84, ?rivers=table — the user: "the generator make things start in steady state"): a water river's banks
+  // stand at least a little over its level, so what it holds stays in its channel — where the ground beside it lies
+  // lower (the river's level is the filled ground's: it crosses hollows) up to RIVER_LEVEE under it, a levee
+  if (RIVER_TABLE && g.rflags == 0u && g.rl > 0.0 && g.rx >= 0.95 && g.rx < 1.9 && h < g.rl + 0.2 && h > g.rl - RIVER_LEVEE) {
+    h = g.rl + 0.2 * smoothstep(1.9, 1.3, g.rx);
+  }
+  colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat, g.rvel.x, g.rvel.y, g.rd);
 }
+
+/** (round 84) the deepest hollow beside a river its bank is raised over (columns more below it are left: a lake's) */
+const RIVER_LEVEE: f32 = 12.0;
 
 /** a cave noise's height scale: its scale at caveScale 40, grown with it (round 79: bigger caves both ways) */
 fn caveZ(z40: f32) -> f32 { return z40 * AP.caveScale / 40.0; }
