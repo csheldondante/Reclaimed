@@ -82,7 +82,11 @@ export class Sleep {
   settleAll(secs: number, now: number): void {
     this.wakeAll(SETTLE ? secs : 0, now);
     this.drowseTick.fill(this.tick + DROWSE_TICKS);
+    // (perfopt: counted from the sim's tick at the next update — the first window's comes before any, at tick 0,
+    // and the level's warmup had run hundreds by then: it was never drowsy)
+    this.settleNext = true;
   }
+  private settleNext = false;
 
   wakeAll(secs: number, now: number): void {
     for (let k = 0; k < this.until.length; k++) this.until[k] = Math.max(this.until[k], now + secs);
@@ -111,6 +115,10 @@ export class Sleep {
   /** this frame's wakers, then the mask (bits set: asleep) */
   update(now: number, near: [number, number, number] | null, events: WorldEvent[], storms: { x: number; y: number; radius: number; intensity: number }[], tick = this.tick): Uint32Array {
     this.tick = tick;
+    if (this.settleNext) {
+      this.settleNext = false;
+      this.drowseTick.fill(tick + DROWSE_TICKS);
+    }
     if (near && WAKE_NEAR) this.wake(near[0], near[1], near[2], NEAR_S, now);
     for (const e of events) this.wake(e.x, e.y, e.radius + CHUNK, EVENT_S, now);
     for (const s of storms) if (s.intensity > 0.2) this.wake(s.x, s.y, s.radius, NEAR_S, now);
