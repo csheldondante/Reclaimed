@@ -1078,3 +1078,53 @@ strokes one after another, cyclones, parked storms, scripted lightning
 natural storm and one dust storm), and measures each gate from readbacks
 (surface, contam, oil, moisture, water, driftTex): share closed, share
 fertile, amount of its stuff left.
+
+## The game master (round 84, branch `gm`; docs/GM.md, docs/SYSTEMS.md system 9)
+
+The GM writes a run's `SessionStory` (src/api/contracts/story.ts) offline, from the world wiki. For now it is a
+Claude subagent run with docs/GM.md as its context. Later it will be a model called behind the same interface.
+
+- **The wiki's facts.** `src/gm/atlas-facts.ts` `atlasFacts(atlas)` reads a built Atlas without changing it (its
+  defs, landforms, regionOf, macro heights, river nodes, stamps and settlement). It gives each region's kind,
+  tier, climate, ground min/mean/max, neighbours, river and lava nodes and stamps. Sites: world point, level
+  cell, size, setting, region. Roads: their ends, the regions they pass and their crossings. Also
+  Atlas.spawn and its region. `scripts/worldwiki.mjs --pull` runs it once in a page (headless,
+  `?atlas=view`) and caches it to `data/atlas/seed<N>.json`, so nothing after needs the browser.
+- **The wiki.** `src/gm/wiki.ts` has `buildWiki(facts) → WorldWiki` and `wikiMarkdown(wiki, {around, radius})`.
+  Both are pure and deterministic, and run in Node and the browser.
+  - A `WorldSnapshot`: version 0, run 0, every region fresh except for faction presence.
+  - Beside it: geography (`regions`), `settlements` (settlement.ts's draft shape plus setting, atlas size,
+    cell and roads), `roads`, `continents` and `factions`.
+  - Names (regions, continents, settlements) come from a syllable table, one tongue a continent.
+  - **Factions are placeholders.** Realms are each continent's settlements clustered (about 32 a realm,
+    named for the seat). Four world factions (Ashwrights, Green Choir, Hollow Court, Salt Fleet) are present
+    where their kinds of land are. They wait for the user's diplomacy design.
+  - Output: `data/wiki/seed<N>.json` and `.md`.
+- **The validator.** `src/gm/storycheck.ts` has `checkStory(story, world) → string[]` (every problem; empty
+  means clean) and `checkWorldFrom(json)` (a wiki or a bare snapshot). It checks:
+  - shapes against story.ts, with no extra keys;
+  - every reference, item spellings, and flags set before they're needed;
+  - AtlasEvent kinds and magnitudes (a flood's level against the region's ground, when the wiki gives it);
+  - then a fixed point over what can happen: every node reachable, every objective shown and done, every
+    happening fired, every room reached through its locks, a way to win and a way to lose, and an AtlasEvent
+    somewhere.
+
+  Its runtime lists of kinds have compile-time checks that they cover world.ts's and story.ts's unions.
+  CLI: `scripts/storycheck.mjs`.
+- **The adapter.** `src/gm/gm.ts`: `GameMaster.brief(snapshot, player: PlayerRecord) → Promise<SessionStory>`.
+  `FileGM(ids, load)` serves the first listed story whose `from` matches the snapshot's version and run, and
+  validates it again. It throws on a story with problems, and when no story was written for this world.
+  `fetchGM(ids)` loads `data/stories/<id>.json` from the dev server. `PlayerRecord` is a draft here until the
+  run system owns it.
+- **Semantics the types leave open** (docs/GM.md "The format"):
+  - conditions in a list are ANDed;
+  - a happening fires once;
+  - a talk opens at its most recently unlocked node, else at its start;
+  - a brief's first room is its way in;
+  - `time.after` is seconds of run time;
+  - a flag condition with `value: false` holds while the flag is unset.
+- Node runs the gm modules directly (type stripping). So they import only types, or runtime modules with a
+  `.ts` extension (tsconfig `allowImportingTsExtensions`), and use no TS-only runtime syntax (no parameter
+  properties, no enums).
+- Test: `scripts/gmtest.mjs`. The first story and docs/GM.md's example come out clean, 18 kinds of mistake
+  are caught, and FileGM serves and refuses as it should.

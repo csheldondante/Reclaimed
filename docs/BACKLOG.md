@@ -12,6 +12,24 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 84 (2026-10-26, session 5, `gm`) — the game master's pipeline (SYSTEMS.md step 3)
+
+The user (round 83): a GM, "for now … a subagent with GM context and tools", takes the world wiki and writes a
+session story offline as data. docs/GM.md is the GM's context and says how a session runs it.
+
+| id | item | size | status |
+|---|---|---|---|
+| G1 | The world wiki. The atlas's facts are exported once (src/gm/atlas-facts.ts, `scripts/worldwiki.mjs --pull`) and cached in data/atlas/. The wiki is made from the cache in Node (src/gm/wiki.ts): a WorldSnapshot plus geography, settlements and roads, and markdown around the start | M | done (this commit) |
+| G2 | The GM's context, docs/GM.md: who the GM is, the rules for a good story, the hard constraints, the format's semantics, a worked example, the subagent's prompt and the validator loop | S | done (this commit) |
+| G3 | The validator (src/gm/storycheck.ts, scripts/storycheck.mjs): shapes, references, items, flags, AtlasEvents, and a fixed point over play. Test: scripts/gmtest.mjs | M | done (this commit) |
+| G4 | The first story: data/stories/the-bell-under-kaudru.json (seed 1, near the spawn), clean | S | done (this commit) |
+| G5 | The adapter: src/gm/gm.ts `GameMaster.brief`, `FileGM`, `fetchGM` | S | done (this commit) |
+| G6 | Contract changes to propose to the contracts' owner (not made): WorldSnapshot gets `seed` and settlement records (the wiki carries them beside it for now); story.ts comments for the semantics in docs/GM.md "The format" (AND lists, a happening fires once, a talk opens at its last unlocked node, the first room is the way in, time in seconds); `StoryCharacter.room`; an `any` condition (OR); `faction-presence` with a negative magnitude (a faction losing ground); `PlayerRecord` in run.ts | S | asked |
+| G7 | A GM that calls a model at run start behind `GameMaster.brief`: the prompt from docs/GM.md, the wiki and the player record; `checkStory` on the reply; a retry with the problems until it's clean | M | open |
+| G8 | Factions from the user's diplomacy design, replacing the wiki's placeholder table (realms from settlement clusters, four world factions) | M | waits (the user's ideas) |
+| G9 | Play the first story: the dialog system (step 2) opens its trees, the run tracks objectives and happenings, the world state applies its AtlasEvents, and the region generator builds its briefs | L | waits (steps 2, 4) |
+| G10 | The wiki after runs: history, marks and past runs in the markdown once events are applied (MemoryWorldState → snapshot → wiki); region names kept stable if the namer changes | S | open |
+
 ## Rounds 76–78 (2026-10-25, session 5, `places`) — the game's direction: readable places, an overmap
 
 The user stepped back (DECISIONS rounds 76–78): a roguelite on an overmap, hero roles, an LLM game master

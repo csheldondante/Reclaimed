@@ -183,8 +183,14 @@ Units that walk, work, build, shape terrain, fight and flee.
   - `hero.role → { controller, abilities, camera preference }`
   - Abilities act on the world only through the world API, units and items.
 
-### 9. Narrative / game master ○ — the storyteller work (separate project) behind an adapter
+### 9. Narrative / game master ◐ — branch `gm` (docs/GM.md); the storyteller work (separate project) behind an adapter
 The GM writes objectives with triggers and outcomes from a persistent world wiki.
+- **Has (round 84):**
+  - the world wiki (src/gm/wiki.ts; `scripts/worldwiki.mjs`, the atlas cached in data/atlas/);
+  - the GM's context (docs/GM.md);
+  - the validator (src/gm/storycheck.ts, `scripts/storycheck.mjs`);
+  - `GameMaster.brief(snapshot, player) → SessionStory` with `FileGM` serving data/stories/;
+  - the first story (data/stories/the-bell-under-kaudru.json).
 - **API (the adapter):**
   - `gm.brief(world snapshot, player record) → Objective[]`
     - Objective: text, trigger conditions on events from 4, 6 and 7, and outcomes:
@@ -251,7 +257,7 @@ before creating heroes or their stories".
    MemoryWorldState (world-state.ts).
 2. Dialog: the system that plays a DialogTree (phone-first UI, choices, effects through Outcome) and basic
    cameras to frame a talk and show what's happening (a cut to a speaker, a reveal of a world effect).
-3. The GM: a subagent with the GM's context and tools reads a WorldSnapshot and writes a SessionStory (JSON),
+3. ◐ (round 84, `gm`) The GM: a subagent with the GM's context and tools reads a WorldSnapshot and writes a SessionStory (JSON),
    offline; a validator checks it against story.ts (every reference resolves).
 4. Settlements and agents: the settlement data (with the city game's needs), placed by the region generator,
    worked by agents (workers) and raided by hostile ones; items, units and diplomacy after the user's ideas.
