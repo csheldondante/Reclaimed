@@ -5345,3 +5345,17 @@ pieces. And the phone: "Deferred shading helped a lot" — it stays the default.
   it. About 16ms for p95!" with lite=1&settle=0&inplace=1&sleepmore=1 —
   p95 from 80–100 ms (round 82) to 16, the frame rate's own.
 
+
+## Round 83 — the phone's set as the low tier's defaults (perfopt)
+
+Why: the user's phone, "About 16ms for p95!", with lite=1&settle=0&
+inplace=1&sleepmore=1. index.html now expands that set on the low tier (no
+`q`, or `q=low` — the default, for phones): tufts=0, shadowcache=4,
+prepevery=2, bandh=2, shadowsize=512, settle=0, inplace=1, sleepmore=1 —
+each only where the URL doesn't give it (so `&settle=1`, `&tufts=1` … turn
+one back), all of them off with `?phone=0`; `?lite=1` still adds the render
+half on any tier. The deferred terrain was already the default. Not in it
+(not yet seen on the phone): simhz, flowhz, windhz, fieldhz, tcache, cull,
+normals. streamtest 8/8, atlasworldtest 6/6, worldapitest 16/16 with the
+new defaults; build clean.
+

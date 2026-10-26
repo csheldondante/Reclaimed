@@ -802,6 +802,24 @@ its edge:
   storms over 0.2 intensity, a slide's new chunks (1.5 s), everything
   after a slide in z (2 s), coarse events in sight, integrity's column
   writes, placed models (WorldCore.sleep). `?sleep=0` off.
+  (perfopt, round 83; the low tier's defaults from index.html, `?phone=0`
+  off) `settle=0`: land that comes in doesn't wake to settle — drowsy at
+  once; a river come in takes the pipes' steady flux for its levels while
+  drowsy (water_flux.wgsl FLUX_SEED), the flux is frozen with its region,
+  and a streamed column's loose intervals over air are dropped onto their
+  support (streamer.ts `settleLoose`). `sleepmore=1`: surface and render
+  fields skip sleeping chunks too, every chunk drowsy for 0.25 s after any
+  slide. `inplace=1`: edit, structure and layer pulls rewrite the layers in
+  place (no layersNext copied back); the brush runs 5 s after an edit.
+- **The simulation's rates** (perfopt, round 83, sim/flow.ts): `?simhz=60|30
+  |15` the tick rate — the kernels' per-60 Hz-tick rates scale by
+  common.wgsl `simStep()` (G.dt × 60), `perTick`, `relaxTick`; water, oil
+  and lava run `FLOW_SUB` 60 Hz substeps a tick (their pipes' stability).
+  `?flowhz=water:N,oil:N,lava:N,sediment:N` a sleeping chunk's flow updated
+  N times a second (staggered, common.wgsl `slowTick`, `flowFrozen`) instead
+  of frozen. `?windhz=N` the wind field and the API's blows every TICK_HZ/N
+  ticks, strokes held for it. `?fieldhz=N` moisture, contamination,
+  climate, ecology N times a second (their kernels' step × K: `fieldPass`).
 - The sea in a streamed window (round 79): `Globals.ocean.x` (`seaZ`, window z; the atlas level sets it
   from the start) — water_flux.wgsl's off-map neighbour stands at least at it, so the sea doesn't drain out
   of the window's edges (it did: in seconds, during the warmup). The atlas's sea is at 90 (was 28: 27
