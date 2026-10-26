@@ -5027,3 +5027,38 @@ while its surface lies between its lowest boundary and its top.
   renderprep units; meshcmp takes --extra. vegprep.wgsl and fieldmesh.wgsl
   back to LF (an edit had made them CRLF).
 
+
+## Round 83 — the shadow map's size, faces wound out of the solid, normals from the samples (perfopt)
+
+Why: after the deferred look, the desktop's still frame: draw 1.7 ms (the
+G-buffer pass 0.3), shadow 0.56 — both mostly vertices (the whole window is
+in view at the phone's zoom: 56 chunks, 210 k mesh vertices, 75 k the
+band's). Each tried for the phone, whose tile-based GPU bins and stores
+differently:
+
+- `?shadowsize=N` (256/512/1024/2048) overrides the tier's map (low 1024²:
+  5 texels a cell, the screen 1.3 pixels a cell — the map is eleven times
+  the screen's pixels, drawn and stored every frame). Desktop: shadow 0.58 →
+  0.54 ms at 512, 0.53 at 256 (it's the casters' vertices here); 512 a
+  little softer, 256 blurred (scratch sh-cmp). For the phone: 512.
+- The shadow and G-buffer passes use `vsMeshG` (no tint: three value
+  noises a vertex, twice a frame); the resolve takes the tint a pixel
+  (`meshTint`). No change measured on the desktop (its compiler likely
+  dropped the unused output already); the phone's may not.
+- Tried: fitting the sun's box to the chunks in view, up to their tops
+  (casters up-sun still in its depth): at the phone's zoom every chunk of
+  the window is in view (56 of 68 near, 72 cast), so nothing changed. Taken
+  out.
+- `?cull=1`: makeQuads winds each quad out of the solid (as listed the X
+  quad faces +X, Y −Y, Z +Z; turned when the base sample is outside) and
+  the G-buffer pass culls back faces (not with the cutaway: it shows the
+  inside). The mesh's sums are unchanged (order only); the picture the same
+  (within two shots' noise). Desktop: no change (0 ms) — the phone to tell.
+- `?normals=grid`: makeVerts takes a vertex's normal from the samples
+  (central differences at the cell's corners, trilinear to the vertex)
+  instead of six more fields; and the share's terrain field only where a
+  structure is near (always: the default too — mesh identical, meshcmp).
+  Riding: verts 0.256 → 0.175 units (−32 %), the mesh's passes 1.2 → 1.1.
+  But a cliff's face changes: smoother, lighter, its rock facets weaker
+  (scratch ng-cmp) — the field's normals carry the warp's detail. A flag.
+

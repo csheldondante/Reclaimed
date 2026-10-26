@@ -372,6 +372,14 @@ fn idleBlock(wid: vec3<u32>) -> bool {
 
 fn sampleIdx(j: Job, l: vec3<u32>) -> u32 { return j.slot * slotSamples() * 2u + l.x + sideN() * (l.y + sideN() * l.z); }
 fn fieldAt(j: Job, l: vec3<u32>) -> f32 { return bitcast<f32>(scratch[sampleIdx(j, l)]); }
+/** (perfopt) the sample one step along axis a (0 x, 1 y, 2 z) from l, held to the slot's grid (one-sided at its edge) */
+fn fieldAtC(j: Job, l: vec3<u32>, a: u32, d: i32) -> f32 {
+  var q = vec3<i32>(l);
+  q[a] += d;
+  let hiq = vec3<i32>(i32(sideN()) - 1, i32(sideN()) - 1, i32(MR.n.z) - 1);
+  return fieldAt(j, vec3<u32>(clamp(q, vec3<i32>(0), hiq)));
+}
+
 fn cellVert(j: Job, l: vec3<u32>) -> u32 { return scratch[sampleIdx(j, l) + slotSamples()]; }
 
 /** World position of a chunk's local sample (one lattice over the map; local 0 is the sample before the chunk). */
@@ -443,17 +451,36 @@ fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
   }
   let p = samplePos(j, j.l) + acc / n * vec3<f32>(MR.o.y, MR.o.w, MR.o.y);
   scratch[ci] = at;
-  // the normal: the field's gradient (central differences of the field itself,
-  // not the samples, so it's smooth across cells)
-  let e = MR.o.y * 0.35;
-  let g = vec3<f32>(
-    field(p + vec3<f32>(e, 0.0, 0.0)) - field(p - vec3<f32>(e, 0.0, 0.0)),
-    field(p + vec3<f32>(0.0, e, 0.0)) - field(p - vec3<f32>(0.0, e, 0.0)),
-    field(p + vec3<f32>(0.0, 0.0, e)) - field(p - vec3<f32>(0.0, 0.0, e)));
-  let nrm = normalize(g + vec3<f32>(0.0, 0.0, 1e-6));
+  var nrm: vec3<f32>;
+  if (NORMALS_GRID) {
+    // (perfopt, ?normals=grid: the gradient from the samples already made — central differences at the cell's
+    // eight corners, blended trilinearly to the vertex: smooth across cells, no field evaluated)
+    let t = acc / n;
+    var g = vec3<f32>(0.0);
+    for (var k = 0u; k < 8u; k++) {
+      let c = j.l + CORNER[k];
+      let w = select(1.0 - t, t, vec3<bool>(CORNER[k] == vec3<u32>(1u)));
+      g += w.x * w.y * w.z * vec3<f32>(
+        (fieldAtC(j, c, 0u, 1) - fieldAtC(j, c, 0u, -1)) / MR.o.y,
+        (fieldAtC(j, c, 1u, 1) - fieldAtC(j, c, 1u, -1)) / MR.o.w,
+        (fieldAtC(j, c, 2u, 1) - fieldAtC(j, c, 2u, -1)) / MR.o.y);
+    }
+    nrm = normalize(g + vec3<f32>(0.0, 0.0, 1e-6));
+  } else {
+    // the normal: the field's gradient (central differences of the field itself,
+    // not the samples, so it's smooth across cells)
+    let e = MR.o.y * 0.35;
+    let g = vec3<f32>(
+      field(p + vec3<f32>(e, 0.0, 0.0)) - field(p - vec3<f32>(e, 0.0, 0.0)),
+      field(p + vec3<f32>(0.0, e, 0.0)) - field(p - vec3<f32>(0.0, e, 0.0)),
+      field(p + vec3<f32>(0.0, 0.0, e)) - field(p - vec3<f32>(0.0, 0.0, e)));
+    nrm = normalize(g + vec3<f32>(0.0, 0.0, 1e-6));
+  }
   // which of the two it is: the terrain, a structure, or the fillet between
+  // (perfopt: no structure near — FAR — the share is 0 whatever the terrain: a vertex is on the surface)
   let s = structField(p);
-  let share = clamp(0.5 + (terrainField(p) - s.x) / FILLET, 0.0, 1.0);
+  var share = 0.0;
+  if (s.x < FAR) { share = clamp(0.5 + (terrainField(p) - s.x) / FILLET, 0.0, 1.0); }
   let o = (j.r * MR.k.z + at) * 2u;
   verts[o] = vec4<u32>(bitcast<u32>(p.x), bitcast<u32>(p.y), bitcast<u32>(p.z), bitcast<u32>(s.y));
   verts[o + 1u] = vec4<u32>(bitcast<u32>(nrm.x), bitcast<u32>(nrm.y), bitcast<u32>(nrm.z), bitcast<u32>(share));
@@ -489,17 +516,20 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     let X = vec3<u32>(1u, 0u, 0u);
     let Y = vec3<u32>(0u, 1u, 0u);
     let Z = vec3<u32>(0u, 0u, 1u);
+    // (perfopt: each quad wound to face out of the solid — its corners' order turned when the inside is the
+    // other side of the edge — so a pass can cull the faces turned away: as listed, the X quad faces +X, the Y
+    // quad −Y, the Z quad +Z; out of the solid is +axis when the base sample is inside)
     if (s0 != (fieldAt(j, l + X) < 0.0)) {
       let t = quadVerts(j, l - Y - Z, l - Z, l, l - Y);
-      if (t.x != NONE) { q[n] = t; n += 1u; }
+      if (t.x != NONE) { q[n] = select(t.xwzy, t, s0); n += 1u; }
     }
     if (s0 != (fieldAt(j, l + Y) < 0.0)) {
       let t = quadVerts(j, l - X - Z, l - Z, l, l - X);
-      if (t.x != NONE) { q[n] = t; n += 1u; }
+      if (t.x != NONE) { q[n] = select(t, t.xwzy, s0); n += 1u; }
     }
     if (s0 != (fieldAt(j, l + Z) < 0.0)) {
       let t = quadVerts(j, l - X - Y, l - Y, l, l - X);
-      if (t.x != NONE) { q[n] = t; n += 1u; }
+      if (t.x != NONE) { q[n] = select(t.xwzy, t, s0); n += 1u; }
     }
   }
   let at = claim(j, n * 6u, li, 0u, MR.k.w);

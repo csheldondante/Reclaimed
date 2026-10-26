@@ -62,6 +62,8 @@ export interface RenderOptions {
 
 // (perf branch: ?skip=render (round 82: world-core.ts — nothing drawn),opaque,tops,plants,prisms,mesh,bodies,structs,voxels,skins,water,particles,rain,shadow,prep,meshprep
 // leaves that piece out of the frame, to measure what it costs: scripts/perfprofile.mjs)
+/** (perfopt) the winding of the mesh's faces out of the solid on screen (fieldmesh.wgsl makeQuads; ?front=cw to try the other) */
+const MESH_FRONT: GPUFrontFace = new URLSearchParams(location.search).get('front') === 'cw' ? 'cw' : 'ccw';
 export const SKIP = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(',').filter(Boolean));
 
 export class Renderer {
@@ -76,6 +78,9 @@ export class Renderer {
     defer: new URLSearchParams(location.search).get('defer') !== '0',
     /** the sun's shadow map drawn every Nth frame (?shadowevery=N; 1 every frame): kept with the light matrix it was
      *  drawn with, so it stays right as the camera moves; drawn again at once after a slide or when the box it covers moves */
+    /** the G-buffer pass culls the mesh's faces turned from the eye (?cull=1; fieldmesh.wgsl winds them out of
+     *  the solid); not while the cutaway is on: it shows the inside */
+    cull: new URLSearchParams(location.search).get('cull') === '1',
     shadowEvery: Number(new URLSearchParams(location.search).get('shadowevery') ?? 1),
     /** the prisms' and plants' instance lists made every Nth frame (?prepevery=N): a frame's lag on what changed;
      *  made again at once after a slide */
@@ -117,10 +122,10 @@ export class Renderer {
   private meshPre?: { z: GPURenderPipeline; zCut: GPURenderPipeline; look: GPURenderPipeline };
   private meshPreMake?: () => { z: GPURenderPipeline; zCut: GPURenderPipeline; look: GPURenderPipeline };
   /** (perfopt, ?defer=1) the G-buffer pipelines (no cut, cut), the resolve, its groups (window, band), made on first use */
-  private meshDef?: { g: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline; groups: GPUBindGroup[]; tex: GPUTexture[]; band?: OutsideBand };
+  private meshDef?: { g: GPURenderPipeline; gBack: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline; groups: GPUBindGroup[]; tex: GPUTexture[]; band?: OutsideBand };
   private meshEntries!: (src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => GPUBindGroupEntry[];
   private meshResources!: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
-  private meshDefMake?: () => { g: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline };
+  private meshDefMake?: () => { g: GPURenderPipeline; gBack: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline };
   private meshResolveLayout?: GPUBindGroupLayout;
   /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
   readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
@@ -441,17 +446,18 @@ export class Renderer {
       );
       this.meshResolveLayout = resolveLayout;
       this.meshDefMake = () => {
-        const g = (entryPoint: string) =>
+        const g = (entryPoint: string, cullMode: GPUCullMode = 'none') =>
           device.createRenderPipeline({
-            label: `mesh-${entryPoint}`,
+            label: `mesh-${entryPoint}-${cullMode}`,
             layout: meshPl,
             vertex: { module: meshModule, entryPoint: 'vsMeshG' },
             fragment: { module: meshModule, entryPoint, targets: [{ format: 'rgba32uint' }, { format: 'rg32uint' }] },
-            primitive: { topology: 'triangle-list', cullMode: 'none' },
+            primitive: { topology: 'triangle-list', cullMode, frontFace: MESH_FRONT },
             depthStencil: depthStencil(true),
           });
         return {
           g: g('fsMeshG'),
+          gBack: g('fsMeshG', 'back'),
           gCut: g('fsMeshGCut'),
           resolve: device.createRenderPipeline({
             label: 'mesh-resolve',
@@ -848,7 +854,7 @@ export class Renderer {
       timestampWrites: this.profiler.timestamps('gbuffer'),
     });
     const f = cam.focus;
-    pass.setPipeline(f && f[3] !== 0 ? d.gCut : d.g);
+    pass.setPipeline(f && f[3] !== 0 ? d.gCut : Renderer.opts.cull ? d.gBack : d.g);
     pass.setBindGroup(0, this.meshGroup!);
     this.fieldMesh.draw(pass);
     if (this.band && !SKIP.has('band')) {
