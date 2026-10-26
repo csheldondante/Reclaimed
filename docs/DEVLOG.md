@@ -4970,3 +4970,18 @@ worst case doesn't make sense".
   hide the tools"): a left drag (a finger's, a mouse's) turns the view, as
   the right drag did; taps do nothing while flying; the editor's panel is
   hidden while flying (`Editor.setVisible`) and back with the fixed view.
+- The rings made only where they're new (the user's phone, riding the
+  /places/ build: p50 33.4, p95 83.4 ms, 228 hitches over 50 ms; the rings
+  had come in with it). Each ring was made whole (193² ground() calls)
+  whenever the camera moved 8 of its spacings, every ring on every slide of
+  the window, and one whole ring every 3 s: riding at 18 a second, ~2 rings
+  a second, 4 at a slide. Now a ring is anchored to the world (its texel
+  (I, J) at (I, J) · spacing) and held round in its slots (I mod n,
+  J mod n): a move makes only the strip new to it (8 · n texels, an eighth
+  of a ring at the finest), a slide makes nothing (the far land's grid is on
+  the world's lattice too, so the outermost ring's edge still meets it), and
+  the coarse world's changes are taken an eighth of a ring every 0.4 s.
+- Flying cut the world (the user's phone: the screen mostly the section's
+  dark, the land in pieces): the fixed view's slice (and holes) stayed on
+  the camera when the free camera took over, the cutaway not run while
+  flying. Flying clears the camera's cut.

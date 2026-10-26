@@ -35,9 +35,10 @@ struct FarCoarse {
 
 /** the rings of less detail round the window (round 83, lod.ts / lod.wgsl) */
 struct LodD {
-  /** each ring: its texel (0, 0) (window coordinates), its spacing, texels a side */
+  /** each ring: its corner (world texel indices: texel (I, J) at (I, J) · spacing in the world; held in slot
+   *  (I mod n, J mod n)), its spacing, texels a side */
   lv: array<vec4<f32>, 4>,
-  /** how many rings (0: none), the outermost's texel (0, 0) and its span */
+  /** how many rings (0: none), the outermost's corner (window coordinates) and its span */
   info: vec4<f32>,
 }
 @group(0) @binding(45) var<storage, read> lodT: array<vec2<f32>>;
@@ -104,8 +105,9 @@ fn vsFar(@builtin(vertex_index) vi: u32) -> FOutV {
   let G = u32(FP.mid.z);
   let s = FP.win.z;
   let gi = vec2<f32>(f32(vi % G), f32(vi / G)) - f32(G - 1u) * 0.5;
-  // (on the world's lattice of the grid's spacing: it doesn't swim as the camera moves)
-  let local = (floor(FP.mid.xy / s) + gi) * s;
+  // (on the world's lattice of the grid's spacing: it doesn't swim as the camera moves, and round 83 the
+  // rings' edges are on it)
+  let local = (floor((FP.mid.xy + FP.org.xy) / s) + gi) * s - FP.org.xy;
   let p = local + FP.org.xy;
   let a = farAt(p);
   let e = s;
@@ -167,17 +169,21 @@ struct LOut {
   @location(4) @interpolate(flat) ring: u32,
 }
 
+fn lodPmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
+
+/** ring k's texel i texels from its corner (clamped to the ring): its top and colour */
 fn lodTexel(k: u32, i: vec2<i32>) -> vec4<f32> {
-  let n = i32(LD.lv[k].w);
-  let c = clamp(i, vec2<i32>(0), vec2<i32>(n - 1));
-  let t = lodT[k * u32(n * n) + u32(c.y * n + c.x)];
+  let L = LD.lv[k];
+  let n = i32(L.w);
+  let c = clamp(i, vec2<i32>(0), vec2<i32>(n - 1)) + vec2<i32>(L.xy);
+  let t = lodT[k * u32(n * n) + u32(lodPmod(c.y, n) * n + lodPmod(c.x, n))];
   return vec4<f32>(t.x, unpack4x8unorm(bitcast<u32>(t.y)).rgb);
 }
 
 /** ring k at l (window coordinates), bilinear: its top and colour */
 fn lodAt(k: u32, l: vec2<f32>) -> vec4<f32> {
   let L = LD.lv[k];
-  let q = (l - L.xy) / L.z;
+  let q = (l + FP.org.xy) / L.z - L.xy;
   let i0 = vec2<i32>(floor(q));
   let f = q - floor(q);
   let a = mix(lodTexel(k, i0), lodTexel(k, i0 + vec2<i32>(1, 0)), f.x);
@@ -185,13 +191,16 @@ fn lodAt(k: u32, l: vec2<f32>) -> vec4<f32> {
   return mix(a, b, f.y);
 }
 
+/** ring k's corner in window coordinates */
+fn lodCorner(k: u32) -> vec2<f32> { return LD.lv[k].xy * LD.lv[k].z - FP.org.xy; }
+
 @vertex
 fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOut {
   let L = LD.lv[k];
   let n = u32(L.w);
   let s = L.z;
   let ij = vec2<i32>(i32(vi % n), i32(vi / n));
-  let local = L.xy + vec2<f32>(ij) * s;
+  let local = lodCorner(k) + vec2<f32>(ij) * s;
   var t = lodTexel(k, ij);
   // (toward the edge, what the next ring out — or the far land — is there)
   let e = f32(min(min(ij.x, i32(n) - 1 - ij.x), min(ij.y, i32(n) - 1 - ij.y)));
@@ -227,7 +236,8 @@ fn fsLod(v: LOut) -> FOutF {
   if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy)) { discard; }
   if (v.ring > 0u) {
     let F = LD.lv[v.ring - 1u];
-    if (all(l > F.xy) && all(l < F.xy + (F.w - 1.0) * F.z)) { discard; }
+    let fc = lodCorner(v.ring - 1u);
+    if (all(l > fc) && all(l < fc + (F.w - 1.0) * F.z)) { discard; }
   }
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(normalize(v.nrm), sun), 0.0);

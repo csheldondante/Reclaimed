@@ -29,7 +29,7 @@ const page = async (q) => {
   return p;
 };
 try {
-  if (only !== 'cam') {
+  if (only === 'lod' || only === '') {
     for (const [name, q] of [['on', ''], ['off', '&lod=0']]) {
       const p = await page(`level=atlas${q}`);
       await sleep(15000);
@@ -42,7 +42,23 @@ try {
       console.log('lod', name);
     }
   }
-  if (only !== 'lod') {
+  if (only === 'fly' || only === '') {
+    // (round 83: the fixed view's slice left on while flying cut the world under the flyer)
+    const p = await page('level=atlas&cutaway=1');
+    await sleep(15000);
+    const st = await p.evaluate(() => {
+      const R = window.reclaimed;
+      R.camera.cut.slice = R.camera.target[2] - 5;
+      R.scene.toggleFly();
+      return R.camera.cut.slice;
+    });
+    await sleep(3000);
+    const after = await p.evaluate(() => window.reclaimed.camera.cut.slice);
+    console.log('fly: slice set', st, 'after flying', after);
+    await p.screenshot({ path: `${out}-fly.png` });
+    await p.close();
+  }
+  if (only === 'cam' || only === '') {
     const p = await page('cutaway=1');
     await sleep(8000);
     await p.evaluate(() => (window.reclaimed.camera.zoom = 6));

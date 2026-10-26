@@ -3,19 +3,26 @@
 // can zoom out and still see more of the map loaded"): each ring a grid of the same ground the streamer's
 // columns are made from (compose.wgsl ground), a vertex every 2, 4, 8, 16 cells — its top (the ground, a
 // mesa's lip, what's loose on it; water's level where the sea or a river stands over it) and its colour.
-// Drawn by far.wgsl (vsLod). No forms, caves or edits: those are the window's.
+// Drawn by far.wgsl (vsLod). No forms, caves or edits: those are the window's. A ring is anchored to the
+// world (its texels on the world's lattice of its spacing), held round in its slots: as the camera moves,
+// only the strips new to it are made; a slide of the window makes nothing.
 
 struct LodP {
-  /** the ring's texel (0, 0) in the world (world units), its spacing, texels a side */
-  org: vec4<f32>,
-  /** where its texels go in lodOut */
+  /** the ring's window now and as it was made (world texel indices of its corner: a texel (I, J) stands at
+   *  (I, J) · spacing in the world), the slots' rows refreshed (r0 ≤ row < r1) */
+  now: vec4<i32>,
+  /** the spacing, texels a side, where its slots start in lodOut */
+  sp: vec4<f32>,
   at: vec4<u32>,
 }
 @group(0) @binding(50) var<uniform> LP: LodP;
-/** a texel: its top (world z) and its colour (pack4x8unorm, bitcast) */
+/** a slot: its top (world z) and its colour (pack4x8unorm, bitcast); a ring's texel (I, J) is in slot
+ *  (I mod n, J mod n) — moving the ring makes only the texels new to it */
 @group(0) @binding(51) var<storage, read_write> lodOut: array<vec2<f32>>;
 /** each material's albedo (materials.ts) */
 @group(0) @binding(52) var<storage, read> lodAlbedo: array<vec4<f32>>;
+
+fn pmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
 
 /** a region's ground: its top's colour, green where it grows */
 fn regionColour(r: Region) -> vec3<f32> {
@@ -25,10 +32,16 @@ fn regionColour(r: Region) -> vec3<f32> {
 
 @compute @workgroup_size(8, 8)
 fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
-  let n = u32(LP.org.w);
-  if (id.x >= n || id.y >= n) { return; }
+  let n = i32(LP.sp.y);
+  if (i32(id.x) >= n || i32(id.y) >= n) { return; }
+  // the texel this slot holds in the window now, and whether it held it before (or its row is refreshed)
+  let I = LP.now.x + pmod(i32(id.x) - LP.now.x, n);
+  let J = LP.now.y + pmod(i32(id.y) - LP.now.y, n);
+  let had = I >= LP.now.z && I < LP.now.z + n && J >= LP.now.w && J < LP.now.w + n;
+  let row = i32(id.y);
+  if (had && !(row >= i32(LP.at.y) && row < i32(LP.at.z))) { return; }
   let size = vec2<f32>(AP.worldW, AP.worldH);
-  var p = LP.org.xy + vec2<f32>(id.xy) * LP.org.z;
+  var p = vec2<f32>(f32(I), f32(J)) * LP.sp.x;
   p = p - floor(p / size) * size;
   let g = ground(p);
   var h = g.h;
@@ -51,5 +64,5 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
     c = select(vec3<f32>(0.2, 0.4, 0.55), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u);
   }
   if (g.clava > 0.05) { c = mix(c, vec3<f32>(1.0, 0.4, 0.06), clamp(g.clava, 0.0, 1.0)); }
-  lodOut[LP.at.x + id.y * n + id.x] = vec2<f32>(top, bitcast<f32>(pack4x8unorm(vec4<f32>(c, 1.0))));
+  lodOut[LP.at.x + id.y * u32(n) + id.x] = vec2<f32>(top, bitcast<f32>(pack4x8unorm(vec4<f32>(c, 1.0))));
 }

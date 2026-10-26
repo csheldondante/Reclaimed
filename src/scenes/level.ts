@@ -1332,6 +1332,9 @@ export class LevelScene implements Scene {
       if (this.cutFeet) c.dither.see('feet', ...this.cutFeet);
       else c.dither.forget('feet');
       c.dither.update(dt);
+    } else if (camera.fly) {
+      // (round 83: flying, nothing's cut — the slice left from the fixed view cut the world under the flyer)
+      camera.cut = { slice: null, see: [], boxes: [] };
     }
     core.render();
 
