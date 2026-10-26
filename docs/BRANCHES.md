@@ -38,6 +38,7 @@ worked on in parallel:
 | `hybrid` | `C:/Projects/Reclaimed-hybrid` | `npm run dev -- --port 5235` |
 | `rivers` | `C:/Projects/Reclaimed-rivers` | `npm run dev -- --port 5219` |
 | `flow` | `C:/Projects/Reclaimed-flow` | `npm run dev -- --port 5223` |
+| `dialog` | `C:/Projects/Reclaimed-dialog` | `npm run dev -- --port 5227` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -51,6 +52,7 @@ worked on in parallel:
 | `stream` | A world without an edge (round 66): the live world a window that slides with the camera, regions out of it frozen and thawed exactly, new land generated a region at a time; later deferred or coarse ticks for what's frozen, so towns and nature grow out of sight | `builder` | Q28, Q31–Q35 |
 | `atlas` | A world map to stream from (round 67): a finite world (a torus) made on the GPU when it starts — continents, islands, a partition into regions by Voronoi cells and faults, each region a kind with its own ground, patterns from a bank (wallpaper groups, reaction–diffusion, automata, fractals), borders as cliffs, ravines, walls, terraces, beaches; caves; the streamer's columns drawn from it. `?atlas=view` the viewer, `?level=atlas` walks in | `stream` | Q33, Q36–Q43 |
 | `places` | Readable places on an overmap (rounds 76–78): the atlas's macro height designed (noise for 2D shapes, SDF blends at region borders by the kinds that meet, superstructures, layers), regions given briefs and generated with rooms, paths and stamped crossings (ramps, switchbacks, lifts, tunnels, bridges), a traversal check per hero, a steep top-down camera; the overmap as a fantasy map | `atlas` | V1–V14 |
+| `dialog` | Dialog and story cameras (round 83, docs/SYSTEMS.md systems 10, 11 and part of 5): a SessionStory played on a level — the dialog panel (phone first), the run (objectives, conditions, outcomes, AtlasEvents to the world state, the RunRecord), the objective list, the story cameras (frame a speaker, reveal a place, follow). `?story=demo` on the valley: /Reclaimed/dialog/?skipmenu=1&story=demo | `places` (1f1fea5, the contracts) | systems 10, 11 |
 | `perf` | Profiling and experiments for phones (round 61): what's a clear win merges into `grids`; the user validates the feel on a phone | `grids` (with `agents`) | G16, Q20 |
 | `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 

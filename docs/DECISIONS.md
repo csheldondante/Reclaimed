@@ -27,6 +27,10 @@ each was implemented.
   settlements first, agents as workers or hostile, settlements in the data structure the city management
   game will use; the user's ideas for items, units and diplomacy to be talked through first, a first pass of
   their data in play before heroes or their stories.
+- The perf ceiling (branch `ceiling`, the heightfield alone) on the phone: "The performance was solid and very
+  usable." A hybrid to build: "Yes I think a hybrid approach makes sense to build" — the heightfield for most
+  of the view, voxels only near the player and where the ground needs them (overhangs, caves, forms, edits);
+  rock on steep faces (branch `hybrid`).
 
 ## 2026-10-26 — round 83 (session 5, `places`) — the puck, separate cuts, LOD
 

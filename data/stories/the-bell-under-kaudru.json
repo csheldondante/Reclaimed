@@ -1,0 +1,519 @@
+{
+  "id": "the-bell-under-kaudru",
+  "title": "The Bell Under Kaudru",
+  "premise": "The river that feeds Mebe runs cold out of Bethorn Downs, and for three nights the dead have walked down it from the old wardens' barrow under the Teeth of Kaudru. The Kuharm Moot sends no help. A Choir singer at the Thaurd ford, a miller who knows his great-grandfather's dam, an Ashwright with powder to sell and the Bellwarden in the barrow each offer a way to stop them, and each way leaves Bethorn Downs changed: drowned, buried in slag, grown over with singing wood, given to the shadow of the Hollow Court, or quiet over a grave. If nothing stops them, Mebe falls.",
+  "from": { "worldVersion": 0, "run": 0, "seed": 1 },
+  "locations": [
+    {
+      "id": "loc-ford",
+      "name": "The Thaurd Ford",
+      "region": 2341,
+      "kind": "camp",
+      "brief": {
+        "rooms": [
+          { "id": "ford", "kind": "river ford", "size": "medium" },
+          { "id": "choir-camp", "kind": "camp", "size": "small" },
+          { "id": "sapling-ring", "kind": "grove", "size": "small" }
+        ],
+        "connections": [
+          { "from": "ford", "to": "choir-camp" },
+          { "from": "choir-camp", "to": "sapling-ring" }
+        ],
+        "landmarks": ["a ring of young oaks planted in the dry flats, humming in the wind", "stepping stones across a cold, shallow river"],
+        "hazards": []
+      }
+    },
+    {
+      "id": "loc-mebe",
+      "name": "Mebe",
+      "region": 2039,
+      "kind": "settlement",
+      "settlement": "s139",
+      "brief": {
+        "rooms": [
+          { "id": "river-gate", "kind": "gate", "size": "medium" },
+          { "id": "market-square", "kind": "square", "size": "large" },
+          { "id": "reeve-hall", "kind": "hall", "size": "medium" },
+          { "id": "mill", "kind": "watermill", "size": "medium" }
+        ],
+        "connections": [
+          { "from": "river-gate", "to": "market-square" },
+          { "from": "market-square", "to": "reeve-hall" },
+          { "from": "market-square", "to": "mill" }
+        ],
+        "landmarks": ["a bridge over the river with a barricade of carts across it", "a slow mill wheel"],
+        "hazards": ["the walking dead at night, once the town is besieged"]
+      }
+    },
+    {
+      "id": "loc-barrow",
+      "name": "The Wardens' Barrow",
+      "region": 2159,
+      "kind": "ruin",
+      "brief": {
+        "rooms": [
+          { "id": "cairn-gate", "kind": "barrow mouth", "size": "medium" },
+          { "id": "ossuary", "kind": "ossuary", "size": "large" },
+          { "id": "bell-chamber", "kind": "tomb hall", "size": "large" },
+          { "id": "old-dam", "kind": "broken dam", "size": "medium" },
+          { "id": "sluice-house", "kind": "sluice house", "size": "small" }
+        ],
+        "connections": [
+          { "from": "cairn-gate", "to": "ossuary" },
+          { "from": "ossuary", "to": "bell-chamber", "lock": "bone-door" },
+          { "from": "cairn-gate", "to": "old-dam" },
+          { "from": "old-dam", "to": "sluice-house", "lock": "sluice-wheel" }
+        ],
+        "keys": [
+          { "lock": "bone-door", "key": { "item": "bone key" } },
+          { "lock": "sluice-wheel", "key": { "item": "sluice crank" } }
+        ],
+        "landmarks": ["a great bronze bell hung from a root-wrapped beam", "a broken dam across the river above the barrow mouth", "the Teeth of Kaudru rising behind it"],
+        "hazards": ["the walking dead", "a cairn roof that will come down if it's blasted", "the river backing up over the barrow mouth when the sluice shuts"]
+      }
+    }
+  ],
+  "cast": [
+    {
+      "id": "ilsa",
+      "name": "Ilsa",
+      "role": "druid singer",
+      "faction": "f-green-choir",
+      "location": "loc-ford",
+      "room": "choir-camp",
+      "disposition": 0.4,
+      "voice": "soft and unhurried, speaks of land as if it were a person; hums between sentences",
+      "wants": "to see the wild grow back over the barrow and the flats, even if it costs Mebe its fields",
+      "knows": ["the river runs cold out of Bethorn Downs past the barrow", "the dead walk with the cold", "a heartwood seed rooted in the barrow's deepest room will hold the dead in its roots", "Thaurd Flats was a forest once"]
+    },
+    {
+      "id": "hesk",
+      "name": "Reeve Hesk Marr",
+      "role": "town reeve",
+      "faction": "f-kuharm",
+      "location": "loc-mebe",
+      "room": "reeve-hall",
+      "disposition": 0.1,
+      "voice": "clipped and tired; counts everything, spears and debts alike",
+      "wants": "Mebe saved without owing the Choir, the Ashwrights or anyone else",
+      "knows": ["the dead come down the river path from Bethorn Downs", "the Moot will send no help", "the reeves of Mebe keep the bone key to the barrow's inner door", "old Tamm's family built the dam"]
+    },
+    {
+      "id": "tamm",
+      "name": "Old Tamm",
+      "role": "miller",
+      "faction": null,
+      "location": "loc-mebe",
+      "room": "mill",
+      "disposition": 0.3,
+      "voice": "gruff, practical, talks over the noise of the wheel",
+      "wants": "the river running warm and full again, so the wheel turns",
+      "knows": ["the dam above the barrow is broken", "shutting the sluice backs the river up over the barrow mouth", "the sluice wheel needs his crank"]
+    },
+    {
+      "id": "dorra",
+      "name": "Dorra Kell",
+      "role": "prospector",
+      "faction": "f-ashwrights",
+      "location": "loc-mebe",
+      "room": "market-square",
+      "disposition": 0.1,
+      "voice": "blunt, amused, smells of sulphur; names a price before she names herself",
+      "wants": "the barrow's bronze, and mining rights over Bethorn Downs for the Ashwrights",
+      "knows": ["three blasting charges under a barrow roof will bring it down", "she came from the Slag of Muggarn", "the Choir hates the Ashwrights"]
+    },
+    {
+      "id": "bellwarden",
+      "name": "The Bellwarden",
+      "role": "lich steward",
+      "faction": "f-hollow-court",
+      "location": "loc-barrow",
+      "room": "bell-chamber",
+      "disposition": -0.6,
+      "voice": "courteous, dry and ancient; never raises its voice; finds the living tiresome",
+      "wants": "the bell rung in the Court's name, so the dead come home and Bethorn Downs falls under the Court's shadow",
+      "knows": ["the wardens rang the bell to call the dead home", "with no summons the dead wander downhill to warmth and water", "who answers the bell"]
+    }
+  ],
+  "dialogs": [
+    {
+      "id": "d-ilsa",
+      "speaker": "ilsa",
+      "start": "n-greet",
+      "nodes": {
+        "n-greet": {
+          "text": "You came over the dry flats on foot? Then you've felt the river running cold. Sit. The water's singing wrong, and I'd know.",
+          "choices": [
+            { "text": "What's wrong with the water?", "to": "n-cold" },
+            { "text": "Who are you?", "to": "n-who" },
+            { "text": "I've no time for songs." }
+          ]
+        },
+        "n-who": {
+          "text": "Ilsa, of the Green Choir. We sing the wild back where people broke it. Thaurd Flats was a forest once. It remembers.",
+          "choices": [
+            { "text": "And the river?", "to": "n-cold" },
+            { "text": "Goodbye." }
+          ]
+        },
+        "n-cold": {
+          "text": "It comes down out of Bethorn Downs, past the old wardens' barrow under the Teeth of Kaudru. Something in there has woken, and the dead walk with the cold. Mebe drinks that water. Mebe will be next.",
+          "effects": { "flags": { "heard-of-barrow": true } },
+          "choices": [
+            { "text": "How do I stop it?", "to": "n-way" },
+            { "text": "Then I'll warn Mebe.", "to": "n-warn" }
+          ]
+        },
+        "n-warn": {
+          "text": "Warn them. The reeve won't hear it from me. The Moot thinks every tree we plant is a field stolen.",
+          "choices": [
+            { "text": "How would you stop it?", "to": "n-way" },
+            { "text": "Farewell." }
+          ]
+        },
+        "n-way": {
+          "text": "Take this heartwood seed into the barrow's deepest room and let it root. The wood will grow over the barrow and hold the dead down in its roots. It won't stop at the barrow, though. The downs will go to forest, and some of Mebe's fields with them.",
+          "choices": [
+            { "text": "I'll take it.", "to": "n-take", "effects": { "give": [{ "item": "heartwood seed" }], "attitude": [{ "character": "ilsa", "delta": 0.2 }] } },
+            { "text": "Mebe's fields feed a town. There must be another way.", "to": "n-other" },
+            { "text": "Your forest can keep its roots.", "effects": { "attitude": [{ "character": "ilsa", "delta": -0.2 }] } }
+          ]
+        },
+        "n-other": {
+          "text": "There's always another way. The Moot will want to wall it up, the miners to blow it up. Ask them which costs less, then come back.",
+          "choices": [
+            { "text": "Give me the seed anyway, in case.", "to": "n-take", "effects": { "give": [{ "item": "heartwood seed" }] } },
+            { "text": "I'll ask." }
+          ]
+        },
+        "n-take": {
+          "text": "Sing to it when you plant it. Anything at all. It likes to be sung to.",
+          "choices": []
+        }
+      }
+    },
+    {
+      "id": "d-hesk",
+      "speaker": "hesk",
+      "start": "n-greet",
+      "nodes": {
+        "n-greet": {
+          "text": "Another traveller with road dust on them. If you've come to trade, the market's by the river gate. If you've come about the dead, sit down.",
+          "choices": [
+            { "text": "About the dead.", "to": "n-dead" },
+            { "text": "The Choir singer at the ford sent me.", "to": "n-choir", "requires": [{ "kind": "flag", "flag": "heard-of-barrow" }] },
+            { "text": "Just passing through." }
+          ]
+        },
+        "n-choir": {
+          "text": "Ilsa. She'd plant an oak in my hall if I let her. She's not wrong about the barrow, though.",
+          "choices": [
+            { "text": "Tell me about the barrow.", "to": "n-dead" }
+          ]
+        },
+        "n-dead": {
+          "text": "Three nights now they've come down the river path from Bethorn Downs. The shepherds first, then the Thevu road patrol. The Moot sends no help: a river town holds its own river, they say. The barrow under the Teeth of Kaudru is the old wardens' tomb. Its inner door takes a key the reeves of Mebe have kept for two hundred years.",
+          "choices": [
+            { "text": "Give me the key and I'll go in.", "to": "n-key" },
+            { "text": "What's in there?", "to": "n-what" },
+            { "text": "Why haven't you gone yourself?", "to": "n-why" }
+          ]
+        },
+        "n-what": {
+          "text": "The wardens' bell. The old tales say they rang it to call the dead home, and stopped ringing it when they learned who answers.",
+          "choices": [
+            { "text": "Give me the key.", "to": "n-key" },
+            { "text": "I'll think on it." }
+          ]
+        },
+        "n-why": {
+          "text": "Because I've a town to hold and twelve spears to hold it with. Go or don't. The dead won't wait for you to decide.",
+          "effects": { "attitude": [{ "character": "hesk", "delta": -0.1 }] },
+          "choices": [
+            { "text": "Give me the key.", "to": "n-key" },
+            { "text": "Then I'll go.", "to": "n-key" }
+          ]
+        },
+        "n-key": {
+          "text": "Here. Bone, older than the town. Whatever you do in there, don't make me regret this. And if old Tamm at the mill tells you about the sluice, hear him out. His family built the dam.",
+          "effects": { "give": [{ "item": "bone key" }], "flags": { "knows-of-tamm": true } },
+          "choices": []
+        },
+        "n-after": {
+          "text": "So. The river runs warm again. Tell me what you did.",
+          "choices": [
+            { "text": "I shut the old sluice. The barrow is under the river, and Bethorn Downs with it.", "to": "n-thanks", "requires": [{ "kind": "flag", "flag": "path-drowned" }] },
+            { "text": "I brought the barrow's roof down on them with Ashwright powder.", "to": "n-miners", "requires": [{ "kind": "flag", "flag": "path-buried" }] },
+            { "text": "The Choir's wood holds them now.", "to": "n-forest", "requires": [{ "kind": "flag", "flag": "path-grown" }] },
+            { "text": "I destroyed the Bellwarden.", "to": "n-thanks", "requires": [{ "kind": "flag", "flag": "path-slain" }] },
+            { "text": "I made a bargain. They answer the bell now, and the bell answers to the Hollow Court.", "to": "n-traitor", "requires": [{ "kind": "flag", "flag": "path-bargained" }] }
+          ]
+        },
+        "n-thanks": {
+          "text": "Then Mebe owes you, and Mebe pays its debts. Eat, drink, and take the road when you're ready.",
+          "effects": { "attitude": [{ "faction": "f-kuharm", "delta": 0.3 }, { "character": "hesk", "delta": 0.4 }], "endRun": "won" },
+          "choices": []
+        },
+        "n-miners": {
+          "text": "And now the Ashwrights will want the downs for their trouble. Better miners than the dead, I suppose. Mebe thanks you.",
+          "effects": { "attitude": [{ "faction": "f-kuharm", "delta": 0.2 }, { "character": "hesk", "delta": 0.2 }], "endRun": "won" },
+          "choices": []
+        },
+        "n-forest": {
+          "text": "Forest. On my fields. Well. The dead are worse neighbours than trees. Go, before I think about it too long.",
+          "effects": { "attitude": [{ "character": "hesk", "delta": -0.2 }], "endRun": "won" },
+          "choices": []
+        },
+        "n-traitor": {
+          "text": "You sold the downs to the Hollow Court. Get out of my town. If the Moot sees you again, it will hang you.",
+          "effects": { "attitude": [{ "faction": "f-kuharm", "delta": -0.6 }, { "character": "hesk", "delta": -1 }], "endRun": "won" },
+          "choices": []
+        }
+      }
+    },
+    {
+      "id": "d-tamm",
+      "speaker": "tamm",
+      "start": "n-greet",
+      "nodes": {
+        "n-greet": {
+          "text": "Mind the wheel. It's turning slow. The river's low and cold both. What do you want?",
+          "choices": [
+            { "text": "The reeve says your family built the dam.", "to": "n-dam", "requires": [{ "kind": "flag", "flag": "knows-of-tamm" }] },
+            { "text": "What's wrong with the river?", "to": "n-river" },
+            { "text": "Nothing." }
+          ]
+        },
+        "n-river": {
+          "text": "There's an old dam up in Bethorn Downs, above the barrow. My great-grandfather's work, broken now. The river slipped round it, and the cold comes down with it since the barrow woke.",
+          "choices": [
+            { "text": "Tell me about the dam.", "to": "n-dam" },
+            { "text": "Thanks." }
+          ]
+        },
+        "n-dam": {
+          "text": "The sluice house still stands. Shut the gates and the river backs up over the barrow mouth. You'd drown the lot of them, dead and all. You'd drown Bethorn Downs with it, mind. Good grazing, that. Under water for a generation.",
+          "effects": { "flags": { "knows-sluice": true } },
+          "choices": [
+            { "text": "Give me what I need to shut it.", "to": "n-crank" },
+            { "text": "Drowning a valley is a high price.", "to": "n-price" }
+          ]
+        },
+        "n-price": {
+          "text": "It is. So's a dead town. You choose. I only know the wheel.",
+          "choices": [
+            { "text": "Give me the crank.", "to": "n-crank" },
+            { "text": "I'll find another way." }
+          ]
+        },
+        "n-crank": {
+          "text": "Here's the crank for the sluice wheel. Turn it till it won't turn any more, then run uphill.",
+          "effects": { "give": [{ "item": "sluice crank" }], "attitude": [{ "character": "tamm", "delta": 0.1 }] },
+          "choices": []
+        }
+      }
+    },
+    {
+      "id": "d-dorra",
+      "speaker": "dorra",
+      "start": "n-greet",
+      "nodes": {
+        "n-greet": {
+          "text": "Ashwright, out of the Slag of Muggarn. Selling iron, buying bronze. You've the look of someone going somewhere that has bronze in it.",
+          "choices": [
+            { "text": "There's a bronze bell in the barrow under the Teeth.", "to": "n-bell", "requires": [{ "kind": "objective", "id": "o-mebe", "state": "done" }] },
+            { "text": "What do you sell?", "to": "n-sell" },
+            { "text": "No." }
+          ]
+        },
+        "n-sell": {
+          "text": "Iron. Powder. Advice, which is free, and which you won't take.",
+          "choices": [
+            { "text": "Powder?", "to": "n-bell" },
+            { "text": "Goodbye." }
+          ]
+        },
+        "n-bell": {
+          "text": "Blasting charges. Set three under a barrow's roof and it comes down on whatever's inside. It'll be a heap of slag and ash where the downs were, but nothing walks out of it. My price: the bell's bronze is mine, and the Ashwrights dig those downs after.",
+          "choices": [
+            { "text": "Deal.", "to": "n-deal", "effects": { "give": [{ "item": "blasting charge", "count": 3 }], "attitude": [{ "faction": "f-ashwrights", "delta": 0.2 }] } },
+            { "text": "The Choir would never forgive that.", "to": "n-choir" },
+            { "text": "No deal." }
+          ]
+        },
+        "n-choir": {
+          "text": "The Choir forgives nothing anyway. They'd have us all living in trees.",
+          "choices": [
+            { "text": "Fine. Deal.", "to": "n-deal", "effects": { "give": [{ "item": "blasting charge", "count": 3 }], "attitude": [{ "faction": "f-ashwrights", "delta": 0.2 }] } },
+            { "text": "No." }
+          ]
+        },
+        "n-deal": {
+          "text": "Under the roof of the biggest room, all three. Light them and don't stop running till you see sky.",
+          "choices": []
+        }
+      }
+    },
+    {
+      "id": "d-bellwarden",
+      "speaker": "bellwarden",
+      "start": "n-greet",
+      "nodes": {
+        "n-greet": {
+          "text": "A living thing, carrying the reeves' key. How long since one of you came to ring for us. I am the Bellwarden. Put down your weapon. It bores me.",
+          "choices": [
+            { "text": "Why do the dead walk on Mebe?", "to": "n-why" },
+            { "text": "What do you want?", "to": "n-want" },
+            { "text": "Plant the heartwood seed at the bell's foot and sing.", "to": "n-planted", "requires": [{ "kind": "has", "item": "heartwood seed" }] },
+            { "text": "I've come to end you.", "to": "n-fight" }
+          ]
+        },
+        "n-why": {
+          "text": "Because no one rings the bell. The dead were promised a home and a summons. With no summons they wander, and they wander downhill, to the water and the warm.",
+          "choices": [
+            { "text": "What do you want?", "to": "n-want" },
+            { "text": "Then I'll silence you and your bell for good.", "to": "n-fight" }
+          ]
+        },
+        "n-want": {
+          "text": "Ring the bell, in the Court's name. Those who answer will come home and stay, and Mebe may keep its little lamps. In return the downs are ours, and the shadow with them. Wear this ring, so we know you.",
+          "choices": [
+            {
+              "text": "Ring it. For the Court.",
+              "to": "n-rung",
+              "effects": {
+                "atlas": [
+                  { "kind": "raise-dead", "regions": [2159], "magnitude": 0.4, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } },
+                  { "kind": "shadow", "regions": [2159, 2141], "magnitude": 0.5, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } },
+                  { "kind": "faction-presence", "regions": [2159], "magnitude": 0.5, "detail": { "faction": "f-hollow-court" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } },
+                  { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Rung Bell", "kind": "bell tower" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } }
+                ],
+                "attitude": [{ "faction": "f-hollow-court", "delta": 0.8 }, { "faction": "f-kuharm", "delta": -0.4 }, { "faction": "f-green-choir", "delta": -0.3 }],
+                "give": [{ "item": "bellwarden's ring" }],
+                "flags": { "dead-stopped": true, "path-bargained": true }
+              }
+            },
+            { "text": "No.", "to": "n-fight" }
+          ]
+        },
+        "n-rung": {
+          "text": "Listen. They are coming home. You may go. The dark will remember you kindly.",
+          "choices": []
+        },
+        "n-planted": {
+          "text": "Roots? Roots, in my hall? Stop that noise. Stop it. The wood, it sings, it holds, it holds them all down, it holds me...",
+          "effects": {
+            "atlas": [
+              { "kind": "overgrow", "regions": [2159], "magnitude": 0.9, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } },
+              { "kind": "overgrow", "regions": [2039], "magnitude": 0.3, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } },
+              { "kind": "lay-dead", "regions": [2159], "magnitude": 0.6, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } },
+              { "kind": "faction-presence", "regions": [2159], "magnitude": 0.5, "detail": { "faction": "f-green-choir" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } },
+              { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Singing Wood", "kind": "grove" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } }
+            ],
+            "attitude": [{ "faction": "f-green-choir", "delta": 0.4 }, { "faction": "f-kuharm", "delta": -0.2 }, { "faction": "f-ashwrights", "delta": -0.2 }, { "character": "ilsa", "delta": 0.5 }],
+            "flags": { "dead-stopped": true, "path-grown": true }
+          },
+          "choices": []
+        },
+        "n-fight": {
+          "text": "Then come and learn what the wardens learned.",
+          "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-barrow", "count": 4 }] },
+          "choices": []
+        }
+      }
+    }
+  ],
+  "objectives": [
+    {
+      "id": "o-mebe",
+      "text": "Take word of the cold river to Mebe and speak to its reeve.",
+      "location": "loc-mebe",
+      "when": [],
+      "done": [{ "kind": "talked", "character": "hesk" }],
+      "outcome": { "flags": { "warned-mebe": true } }
+    },
+    {
+      "id": "o-barrow",
+      "text": "Find where the dead come from: the wardens' barrow in Bethorn Downs, under the Teeth of Kaudru.",
+      "location": "loc-barrow",
+      "when": [{ "kind": "objective", "id": "o-mebe", "state": "done" }],
+      "done": [{ "kind": "reached", "location": "loc-barrow", "room": "ossuary" }],
+      "outcome": { "flags": { "found-barrow": true } }
+    },
+    {
+      "id": "o-end",
+      "text": "Stop the dead before Mebe falls: drown the barrow, bring it down, grow it over, bargain with what rules it, or destroy it.",
+      "location": "loc-barrow",
+      "when": [{ "kind": "objective", "id": "o-barrow", "state": "done" }],
+      "done": [{ "kind": "flag", "flag": "dead-stopped" }],
+      "outcome": { "unlock": [{ "dialog": "d-hesk", "node": "n-after" }] },
+      "failed": {
+        "when": [{ "kind": "time", "after": 2400 }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
+        "outcome": {
+          "atlas": [
+            { "kind": "ruin", "regions": [2039], "magnitude": 0.7, "cause": { "by": "story", "ref": "the-bell-under-kaudru/o-end/failed" } },
+            { "kind": "raise-dead", "regions": [2039, 2159], "magnitude": 0.5, "cause": { "by": "story", "ref": "the-bell-under-kaudru/o-end/failed" } },
+            { "kind": "mark", "regions": [2039], "magnitude": 1, "location": "loc-mebe", "detail": { "name": "Mebe's Last Night", "kind": "mass grave" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/o-end/failed" } }
+          ],
+          "attitude": [{ "faction": "f-kuharm", "delta": -0.3 }],
+          "endRun": "lost"
+        }
+      }
+    },
+    {
+      "id": "o-return",
+      "text": "Go back to Reeve Hesk in Mebe and tell him what you did.",
+      "location": "loc-mebe",
+      "when": [{ "kind": "objective", "id": "o-end", "state": "done" }],
+      "done": [{ "kind": "talked", "character": "hesk", "node": "n-after" }],
+      "outcome": { "flags": { "returned": true } }
+    }
+  ],
+  "happenings": [
+    {
+      "when": [{ "kind": "time", "after": 300 }],
+      "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-barrow", "count": 4 }] }
+    },
+    {
+      "when": [{ "kind": "time", "after": 1200 }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
+      "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-mebe", "count": 6 }], "flags": { "mebe-besieged": true } }
+    },
+    {
+      "when": [{ "kind": "has", "item": "sluice crank" }, { "kind": "event", "event": "flooded", "location": "loc-barrow" }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
+      "effects": {
+        "atlas": [
+          { "kind": "flood", "regions": [2159], "magnitude": 0.8, "level": 116, "location": "loc-barrow", "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } },
+          { "kind": "lay-dead", "regions": [2159], "magnitude": 0.7, "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } },
+          { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Drowned Barrow", "kind": "drowned ruin" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } }
+        ],
+        "attitude": [{ "faction": "f-kuharm", "delta": 0.2 }, { "character": "tamm", "delta": 0.3 }],
+        "flags": { "dead-stopped": true, "path-drowned": true }
+      }
+    },
+    {
+      "when": [{ "kind": "has", "item": "blasting charge", "count": 1 }, { "kind": "event", "event": "collapsed", "location": "loc-barrow" }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
+      "effects": {
+        "atlas": [
+          { "kind": "bury", "regions": [2159], "magnitude": 4, "detail": { "material": "ash" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } },
+          { "kind": "ruin", "regions": [2159], "magnitude": 0.5, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } },
+          { "kind": "lay-dead", "regions": [2159], "magnitude": 0.8, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } },
+          { "kind": "faction-presence", "regions": [2159], "magnitude": 0.5, "detail": { "faction": "f-ashwrights" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } },
+          { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Slag Cairn", "kind": "collapsed barrow" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } }
+        ],
+        "attitude": [{ "faction": "f-ashwrights", "delta": 0.3 }, { "faction": "f-green-choir", "delta": -0.4 }, { "faction": "f-kuharm", "delta": 0.1 }],
+        "flags": { "dead-stopped": true, "path-buried": true }
+      }
+    },
+    {
+      "when": [{ "kind": "killed", "character": "bellwarden" }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
+      "effects": {
+        "atlas": [
+          { "kind": "lay-dead", "regions": [2159], "magnitude": 0.8, "cause": { "by": "story", "ref": "the-bell-under-kaudru/slain" } },
+          { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Bellwarden's Grave", "kind": "grave" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/slain" } }
+        ],
+        "attitude": [{ "faction": "f-kuharm", "delta": 0.2 }, { "faction": "f-hollow-court", "delta": -0.3 }],
+        "flags": { "dead-stopped": true, "path-slain": true }
+      }
+    }
+  ]
+}

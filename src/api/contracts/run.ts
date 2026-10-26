@@ -15,6 +15,15 @@ export interface RunRecord {
   events: AtlasEvent[];
 }
 
+/** Who's playing, as the GM reads them: the hero and what their past runs left (the GM's brief). */
+export interface PlayerRecord {
+  hero: string;
+  /** past runs, newest last */
+  runs: RunRecord[];
+  /** standing with each faction (−1..1), from what they did */
+  standing: Record<string, number>;
+}
+
 /** The run as the game drives it. */
 export interface Run {
   readonly story: SessionStory;
@@ -23,6 +32,10 @@ export interface Run {
   /** something happened (a sim or unit event, a dialog choice, an item picked up): conditions checked */
   note(fact: import('./story').Condition): void;
   flag(name: string): boolean;
+  /** does a condition hold now (the dialog asks it of a choice's `requires`) */
+  holds(c: import('./story').Condition): boolean;
+  /** the run's clock: `time` conditions, happenings (seconds) */
+  update(dt: number): void;
   end(how: RunRecord['end']): RunRecord;
   onObjective: ((id: string, state: 'shown' | 'done' | 'failed') => void)[];
 }

@@ -5734,6 +5734,155 @@ classed sea / river (a source) / other / dry.
   gain. It stays off. The band is vertical (above and below the window), so the LOD
   rings never cover it and there are no band draws to skip for them.
 
+## Round 83 (2026-10-26, `dialog`) — dialog, the run, story cameras; `?story=demo`
+
+The user: "get dialogue in and basic cameras so we have a way to communicate what is going on." The GM (branch
+`gm`) writes a SessionStory as data offline; these systems play it (docs/SYSTEMS.md systems 10, 11, part of 5),
+coded against src/api/contracts only.
+
+- **Dialog** (src/dialog/dialog.ts, `DialogBox implements Dialog`). A panel across the bottom, phone first:
+  speaker name, role and a portrait slot (a coloured initial until there are pictures), the line typed at 50
+  characters a second (a tap shows it all; prefers-reduced-motion shows it at once), then the answers as
+  buttons at least 52 px tall, numbered (1–9 on a keyboard). A scrim over the rest of the screen takes every
+  touch, wheel and key while a talk is open, so the game's controls get nothing. It knows nothing of runs:
+  a choice's `requires` is asked of a `check` callback; nodes said and choices made go out on `onNode` and
+  `onChoice`. A choice's index is its index in the node's `choices`, hidden ones counted, so a `chose`
+  condition means the same thing whatever was shown. Styled by custom properties (dialog.css).
+- **Run** (src/run/run.ts, `StoryRun implements Run`). Keeps the facts noted (talked, chose, reached,
+  killed, event), the flags, the items given, attitudes (each cast member's disposition plus shifts), the
+  clock. Each fact re-checks objectives (hidden → shown when `when` holds → done when `done` holds, or
+  failed) and happenings until nothing changes (64 passes and it throws: a story that doesn't settle is a
+  bug). Outcomes: flags, attitudes, give, unlock (where a tree opens next: `entry(tree)`), spawn (told to
+  `onOutcome` for the game), endRun, and AtlasEvents applied to the WorldState at once (the atlas scale
+  "when a story event fires"), each with an id, the run number and the cause's ref (the objective or
+  `dialog/node`). `end(how)` makes the RunRecord (deeds: objectives done, failed and left undone, what
+  was said, faction shifts; the events).
+- **Validator** (src/run/validate.ts). A story is checked before it's played: unique ids, every reference
+  (cast locations, speakers, next nodes, condition targets, choice indices, unlocks, spawn places, an
+  atlas event's `detail.location`) resolves. One StoryError lists every problem, so the GM fixes them in
+  one go; nothing is guessed. The GM step (SYSTEMS order 3) can use it as its check.
+- **Story cameras** (src/story/camera.ts, `StoryCamera`). On the fixed camera's target and zoom:
+  `frame(at)` eases there (the point placed 32% down the screen, over the dialog panel) and holds until
+  `release()`; `reveal(at)` eases there, holds (a tap skips), eases back; `look(at)` an opening shot left
+  with the player; `follow(get)` a spring after a moving point while no shot runs. Every move starts from
+  where the camera is (interruptible without a jump); zoom eases in log space; a reveal set off during a
+  talk waits for it, then goes from the speaker, not home first. While a shot holds a point it's kept seen
+  through the cutaway: Dither.see, and the Slice cut over it (then let back up); with ?cutaway=1 the
+  level's own dither and slice are used, the puck's slice paused while a shot runs.
+- **Play** (src/story/play.ts, `StoryPlay`). Wires them over the world API: the cast stand where a Stage
+  puts them (a pillar built with terrain.build, a badge over it to tap); the player's position (the
+  camera's target, the god's-eye game's) noted `reached` inside a staged location; a done objective gets a
+  reveal of where its change is seen (an atlas event's `detail.location`, else the objective's); outcomes'
+  atlas events realised at play scale where they can be (overgrow: plants grown and petals, flood: water,
+  mark: a cairn), the rest left to the atlas; an end card with the record. The Stage (where locations and
+  people are in this window) is what the region generator will hand over; for now it's hand-written.
+- **The demo** (`?skipmenu=1&story=demo`, the valley): src/story/demo/story.json, marked PLACEHOLDER — Wren
+  the seed-keeper, Harlan the old warden, Ves the company surveyor; branching talks (a choice shown only
+  after talking to Harlan, one only once you've promised); "Promise Wren, then go to the old sluice" done
+  by a choice and a visit; its outcome an overgrow and a mark in the MemoryWorldState, the camp greening in
+  a reveal shot; telling Wren (her unlocked node) wins the run. The opening eases the camera to the camp
+  (the phone's default view of the whole valley put the three markers on top of each other).
+- Tests: scripts/storytest.mjs drives the run and the validator through their APIs in Node (Vite loads the
+  TypeScript; no browser): 19 checks. scripts/storyshot.mjs plays the demo headlessly at 412×915 (markers,
+  the talk, the reveal, the end card).
+- Measured: nothing per frame worth timing — the run works only when a fact is noted (or a `time` edge
+  passes); the badges are a projection and a transform each.
+- The world API's `Sim` type now names `plants` (attachSim always made it; the type left it out).
+
+### `dialog` — onto places' contracts (the GM's and D7's): workarounds dropped
+
+- Merged origin/places (e63a874 and after). The run and the dialog now use the contract's shapes:
+  `Run.holds(c)` takes one condition (lists are AND: `StoryRun.all(conds)`; `any` is OR); `update(dt)` is
+  the contract's; `Dialog.onNode` is the contract's (DialogBox had it already); `open(tree)` opens at its
+  most recently unlocked node (DialogBox asks an `entry` callback: the run's) — the caller no longer passes it.
+- Faction attitudes go to the world: an Outcome's `attitude` with a faction becomes a `faction-attitude`
+  AtlasEvent (in the region of the objective's location, else the speaker's, else the story's first place).
+  The run's own shift table is gone.
+- The RunRecord goes to `WorldState.record` (the `record` callback is gone). The run's number defaults to
+  the snapshot's `run`, the one to come (`record` moves it on).
+- An AtlasEvent's place is `location` (was `detail.location` in the demo); the validator checks it, a
+  flood's `level`, faction-* events' `detail.faction` and magnitudes (−1..1 for faction-*, 0..1 the rest
+  but bury).
+- The validator: the GM's storycheck (origin/gm src/gm/storycheck.ts) is the fuller one (shapes, names,
+  reachability, against a WorldSnapshot). run/validate.ts stays as what a run checks before it plays,
+  without a snapshot (a run's world needn't be a wiki), and it knows the newer contract (`any`,
+  `faction-attitude`, `level`, `location`, `room`), which storycheck's kind lists don't yet.
+- The GM's the-bell-under-kaudru.json fails it in two places: its happening's flood has `magnitude: 116`
+  and no `level` (written before the contract split them). It isn't staged: its regions are the atlas's
+  (2341, 2039, 2159), and a stage there needs the atlas level's window. That's next, once its places
+  have positions from the region generator.
+- storytest: 20 checks (faction attitudes in the world, the record in world.runs, `any`).
+## Round 84 — the game master's pipeline: the world wiki, docs/GM.md, the validator, the first story (gm)
+
+The user (round 83): "have a GM (for now we can use a subagent with GM context and tools) take the world state
+wiki and offline create a session story as data that we can use to create the locations, dialogues,
+objectives and world effects." This is SYSTEMS.md step 3. Everything here sits behind the GM's adapter
+(src/gm/). The contracts in src/api/contracts are unchanged; the changes I'd propose are at the end.
+
+- **Why cache the atlas's facts.** The GM is a subagent with files and a shell, not a GPU, and the atlas is
+  built on the GPU. So one headless run (`scripts/worldwiki.mjs --pull`, `?atlas=view`, about a minute)
+  exports what the wiki needs (src/gm/atlas-facts.ts) to data/atlas/seed1.json. That's 2.2 MB: 7772
+  regions, 140 sites, 166 roads, and the spawn at cell 13716,5536 in region 2341. Everything after runs in
+  Node from the cache: the wiki takes about 2 s, the validator well under a second.
+- **Why the wiki is a snapshot plus more.** WorldSnapshot holds the regions' names, kinds and states, the
+  factions and the history. A GM also needs the land itself (tier, climate, ground heights for flood
+  levels, rivers, neighbours) and the settlements and roads, and the snapshot has no place for those yet.
+  So the wiki JSON carries a WorldSnapshot (what the validator and FileGM check against) beside those
+  tables. The markdown covers the world, the factions, the start, every region within 1400 of the start
+  (177) and every settlement within 2600 (14). At about 38 k characters it can be read in one go.
+- **Why placeholder factions.** None exist yet, and diplomacy is the user's to design, but a story needs
+  someone to turn. So a deterministic table seeds them: each continent's settlements are clustered into
+  realms (5 realms on seed 1, because the main continent has 127 of the 140 sites), plus four world
+  factions placed by the kind of land. The wiki and ARCHITECTURE mark them as placeholders.
+- **Why the validator is strict and simulates.** A subagent's story can fail in ways a type check misses: a
+  node nothing leads to, a key no one gives, an objective waiting on one that can't be done, a flood with
+  "magnitude 0.5" when the contract means a z level. The validator runs a fixed point over what could
+  happen and reports each problem with its path. scripts/gmtest.mjs breaks the first story 18 ways, and
+  the validator catches all 18.
+- **Being the GM once.** I read data/wiki/seed1.md and wrote data/stories/the-bell-under-kaudru.json near
+  the spawn.
+  - 3 locations: the Thaurd ford camp, Mebe `s139`, and the Wardens' Barrow in Bethorn Downs (2159).
+  - 5 cast, 5 dialogs (34 nodes), 4 objectives.
+  - Five endings, each changing Bethorn Downs a different way: drowned (a flood to z 116 over ground
+    105–132), buried in ash, overgrown by the Choir, given to the Hollow Court's shadow, or left with a
+    grave.
+  - A clock fails the run: Mebe is ruined and its dead rise.
+
+  It passed the validator on the first run. The 18 breakages above show the validator isn't just lenient.
+- **Contract changes I'd propose** (not made; BACKLOG G6):
+  - WorldSnapshot gets `seed` and settlement records;
+  - story.ts gets comments for the semantics in docs/GM.md "The format";
+  - `StoryCharacter.room`;
+  - an OR condition;
+  - `faction-presence` with a negative magnitude;
+  - `PlayerRecord` in run.ts.
+
+## Round 84 — the GM on the contracts' new fields (gm, after places' contract changes)
+
+places took the GM's proposals and the dialog agent's: Condition `any`, `StoryCharacter.room`,
+`AtlasEvent.level` (a flood's z, its magnitude now 0..1) and `.location` (a story location), the
+`faction-attitude` kind (applied once), faction-presence −1..1, `WorldSnapshot.seed` and `.settlements`,
+`WorldState.record`, `Dialog.onNode`, `Run.holds`/`update`, and `PlayerRecord` in run.ts. Merged into `gm`.
+
+- **The validator broke the build, on purpose.** Its kind lists carry compile-time checks against
+  world.ts's and story.ts's unions. Merging places made those checks fail until `faction-attitude` and
+  `any` were added. Now it also checks:
+  - a flood has a `level` (against the ground) and a 0..1 magnitude, and no other kind has a level;
+  - `location` is a story location inside the event's regions, and a location in `detail` is refused;
+  - faction-presence and faction-attitude are −1..1 with a snapshot faction;
+  - an `any` has at least two conditions, and play treats it as OR;
+  - a cast `room` is a room of its location, and in play the character is only met once that room can be
+    reached;
+  - `from.seed` matches the world's seed.
+
+  gmtest now breaks the story 26 ways (8 new), and every one is caught.
+- **The Bell story:** its flood is now magnitude 0.8 with `level` 116 and `location` loc-barrow. Its marks
+  name where they stand (the barrow, Mebe). Each person has a room: the Bellwarden waits behind the bone
+  door, so meeting it needs the key. It's clean again.
+- **The wiki** now uses the snapshot for the seed and the settlements (settlement.ts records). What the
+  atlas placed each settlement for (setting, cell, roads) moved to `sites` beside the snapshot.
+- docs/GM.md covers the new fields, and the meanings it had fixed are now the contracts' own comments.
+
 ## Round 83 — the perf ceiling: the heightfield alone (`ceiling`, an experiment)
 
 The user: "Can we see how fast things work if we did a heightmap only renderer

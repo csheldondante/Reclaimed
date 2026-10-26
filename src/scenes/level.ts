@@ -39,6 +39,8 @@ import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
 import { Puck } from '../api/puck';
+import { StoryPlay } from '../story/play';
+import { demoStory } from '../story/demo';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
@@ -161,6 +163,10 @@ export class LevelScene implements Scene {
   cutaway?: { puck: Puck; slice: Slice; orbit: Orbit; dither: Dither };
   /** a stand-in character's feet kept seen (Dither) for ?cutaway (scripts/cutshot.mjs); none when unset */
   cutFeet?: [number, number, number];
+  /** round 83 (dialog): ?story=demo — a SessionStory played here (story/play.ts: the run, dialog, story cameras) */
+  storyPlay?: StoryPlay;
+  /** the story's own dither and slice when ?cutaway isn't on (speakers kept seen) */
+  private storyCut?: { dither: Dither; slice: Slice };
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
@@ -692,8 +698,11 @@ export class LevelScene implements Scene {
       (x / camera.viewportW) * this.renderW,
       (y / camera.viewportH) * this.renderH,
     ];
+    // (round 83, dialog: a talk or a story shot has the screen — a tap cuts a reveal short, the rest waits)
+    const held = () => !!this.storyPlay?.holdsInput;
     this.controls = new Controls(host.canvas, {
       tap: (sx, sy) => {
+        if (held()) return void this.storyPlay!.cam.skip();
         // (round 83: flying, the pointer only turns the view)
         if (camera.fly) return;
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
@@ -711,6 +720,7 @@ export class LevelScene implements Scene {
         core.renderer.pick(rx, ry).then((hit) => this.powers.tap(hit, wx, wy, sx, sy));
       },
       dragStart: (sx, sy) => {
+        if (held()) return false;
         if (camera.fly) {
           this.flyDrag = [sx, sy];
           return true;
@@ -788,6 +798,7 @@ export class LevelScene implements Scene {
         if (this.editor?.tool === 'town') this.pickTown(sx, sy);
       },
       pan: (dx, dy) => {
+        if (held()) return;
         // (flying: a right drag looks round)
         if (camera.fly) {
           camera.fly.yaw -= dx * 0.004;
@@ -798,7 +809,9 @@ export class LevelScene implements Scene {
         camera.target[0] -= wx;
         camera.target[1] -= wy;
       },
-      zoomAt,
+      zoomAt: (sx, sy, f) => {
+        if (!held()) zoomAt(sx, sy, f);
+      },
     });
 
     const signal = this.abort.signal;
@@ -1177,6 +1190,32 @@ export class LevelScene implements Scene {
       weather.holdNatural(600);
       void this.runIntro();
     } else this.openValley();
+    // round 83 (dialog): ?story=demo — a story played on this level
+    const storyId = host.params.get('story');
+    if (storyId) void this.startStory(storyId);
+  }
+
+  /** ?story=<id>: the run, the dialog, the objective list and the story cameras over the world API (story/play.ts) */
+  private async startStory(id: string): Promise<void> {
+    if (id !== 'demo') throw new Error(`?story=${id}: no such story (demo)`);
+    const api = (this.worldApi ??= attachSim(this.core));
+    const t = api.terrain!;
+    const camera = this.core.camera;
+    // (the cutaway's dither and slice when ?cutaway=1 runs them, else the story's own)
+    let cut: { dither: Dither; slice: Slice };
+    if (CUTAWAY) cut = this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) };
+    else cut = this.storyCut = { dither: new Dither(t, camera), slice: new Slice(t, camera) };
+    const { story, stage, world } = demoStory();
+    this.storyPlay = await StoryPlay.start({
+      ui: this.host.ui,
+      camera,
+      api,
+      world,
+      story,
+      stage,
+      cut,
+    });
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.story = Object.assign(this.storyPlay, { world });
   }
 
   /** Grow the reach from the green as it is now (story levels; ~1 Hz). */
@@ -1273,7 +1312,9 @@ export class LevelScene implements Scene {
     const k = this.keys;
     if (this.drive) this.driveOn(dt);
     else if (camera.fly) this.flyKeys(dt);
-    else {
+    else if (this.storyPlay?.holdsInput) {
+      // (a talk or a story shot has the camera)
+    } else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
     if (k.has('d') || k.has('arrowright')) kx += 1;
     if (k.has('w') || k.has('arrowup')) ky -= 1;
@@ -1376,12 +1417,18 @@ export class LevelScene implements Scene {
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's
     // stand-in character, kept seen)
+    // (round 83, dialog: the story's run, cameras and badges; its own cut when the cutaway's not on)
+    if (this.storyPlay) {
+      this.storyPlay.update(dt);
+      if (this.storyCut && !camera.fly) this.storyCut.dither.update(dt);
+    }
     if (CUTAWAY && !camera.fly) {
       const t = (this.worldApi ??= attachSim(core)).terrain!;
       const c = (this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
       c.puck.update(dt);
       const p = c.puck.pos;
-      if (p) {
+      // (a story shot cuts the slice over what it frames: story/camera.ts)
+      if (p && !this.storyPlay?.cam.busy) {
         c.slice.update(p[0], p[1], p[2], dt);
         c.orbit.update(p[0], p[1], p[2], dt);
       }
@@ -2337,6 +2384,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.atlasCtl?.remove();
     this.far?.dispose();
+    this.storyPlay?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

@@ -1112,3 +1112,80 @@ strokes one after another, cyclones, parked storms, scripted lightning
 natural storm and one dust storm), and measures each gate from readbacks
 (surface, contam, oil, moisture, water, driftTex): share closed, share
 fertile, amount of its stuff left.
+
+## Dialog, the run and story cameras (round 83, branch `dialog`; docs/SYSTEMS.md 10, 11, 5)
+
+Coded against src/api/contracts (dialog.ts, run.ts, story.ts, world.ts); each piece knows only its inputs:
+
+- `src/dialog/dialog.ts` — `DialogBox implements Dialog`: `open(tree, at?) → path`, `isOpen`, `onChoice`;
+  beyond the contract `onNode(tree, node)` (each node said: the run applies its effects and notes
+  `talked`), `onOpen` / `onClose`, `close()`. Choices filtered by a `check(conds)` callback; indices are the
+  node's own (hidden ones counted). DOM in `#ui`: `.dlg-scrim` (swallows input while open) and `.dlg`.
+- `src/run/run.ts` — `StoryRun implements Run` over a SessionStory and a WorldState: `note(fact)`,
+  `update(dt)` (the clock), `holds(c)` (`all(conds)` for a list), `objectives()`, `flag`, `has(item)`, `attitude(character)`,
+  `entry(tree)` (its last unlocked node), `hear(dialog)`, `end(how) → RunRecord`; events `onObjective`,
+  `onOutcome(outcome, cause)`, `onEnd`. AtlasEvents (and faction attitudes, as `faction-attitude`) go to
+  `WorldState.apply` when the outcome fires; the RunRecord to `WorldState.record`.
+- `src/run/validate.ts` — `validateStory(json) → SessionStory`, or a `StoryError` listing every problem
+  (references only, no snapshot needed; the GM's storycheck is the full check).
+- `src/run/hud.ts` — `ObjectiveHud(root, run)`: the shown objectives, bottom left.
+- `src/story/camera.ts` — `StoryCamera(camera, { dither?, slice? })`: `frame`/`release`, `reveal`, `look`,
+  `follow`, `skip`, `idle`, `busy`, `update(dt)`. Writes only `camera.target` and `camera.zoom`; the
+  cutaway through Dither.see / Slice.update.
+- `src/story/play.ts` — `StoryPlay.start({ ui, camera, api, world, story, stage, cut })`: the above over the
+  world API (terrain for heights and the cast's pillars; plants, water, fx for play-scale stand-ins of
+  atlas events). `Stage` maps story locations and cast to world positions: the region generator's output
+  later, hand-written now. `holdsInput`: the level's controls wait (a tap skips a reveal).
+- `src/story/demo/` — `?story=demo`: a placeholder story (JSON) and its stage in the valley; the level
+  (`LevelScene.startStory`) makes a MemoryWorldState for it. `window.reclaimed.story` is the StoryPlay.
+## The game master (round 84, branch `gm`; docs/GM.md, docs/SYSTEMS.md system 9)
+
+The GM writes a run's `SessionStory` (src/api/contracts/story.ts) offline, from the world wiki. For now it is a
+Claude subagent run with docs/GM.md as its context. Later it will be a model called behind the same interface.
+
+- **The wiki's facts.** `src/gm/atlas-facts.ts` `atlasFacts(atlas)` reads a built Atlas without changing it (its
+  defs, landforms, regionOf, macro heights, river nodes, stamps and settlement). It gives each region's kind,
+  tier, climate, ground min/mean/max, neighbours, river and lava nodes and stamps. Sites: world point, level
+  cell, size, setting, region. Roads: their ends, the regions they pass and their crossings. Also
+  Atlas.spawn and its region. `scripts/worldwiki.mjs --pull` runs it once in a page (headless,
+  `?atlas=view`) and caches it to `data/atlas/seed<N>.json`, so nothing after needs the browser.
+- **The wiki.** `src/gm/wiki.ts` has `buildWiki(facts) → WorldWiki` and `wikiMarkdown(wiki, {around, radius})`.
+  Both are pure and deterministic, and run in Node and the browser.
+  - A `WorldSnapshot`: version 0, the atlas's `seed`, run 0 (the run to come), every region fresh except
+    for faction presence, and the `settlements` (settlement.ts's draft shape).
+  - Beside it: geography (`regions`), `sites` (each settlement's setting, atlas size, cell and roads),
+    `roads`, `continents` and `factions` (marked as placeholders).
+  - Names (regions, continents, settlements) come from a syllable table, one tongue a continent.
+  - **Factions are placeholders.** Realms are each continent's settlements clustered (about 32 a realm,
+    named for the seat). Four world factions (Ashwrights, Green Choir, Hollow Court, Salt Fleet) are present
+    where their kinds of land are. They wait for the user's diplomacy design.
+  - Output: `data/wiki/seed<N>.json` and `.md`.
+- **The validator.** `src/gm/storycheck.ts` has `checkStory(story, world) → string[]` (every problem; empty
+  means clean) and `checkWorldFrom(json)` (a wiki or a bare snapshot). It checks:
+  - shapes against story.ts, with no extra keys;
+  - every reference, item spellings, and flags set before they're needed;
+  - AtlasEvent kinds and magnitudes: a flood's `level` against the region's ground (when the wiki gives it),
+    faction-presence and faction-attitude −1..1, `location` a story location in the event's regions;
+  - `any` conditions, cast `room`s, and `from` (version, run to come, seed) against the snapshot;
+  - then a fixed point over what can happen: every node reachable, every objective shown and done, every
+    happening fired, every room reached through its locks, a way to win and a way to lose, and an AtlasEvent
+    somewhere.
+
+  Its runtime lists of kinds have compile-time checks that they cover world.ts's and story.ts's unions.
+  CLI: `scripts/storycheck.mjs`.
+- **The adapter.** `src/gm/gm.ts`: `GameMaster.brief(snapshot, player: PlayerRecord) → Promise<SessionStory>`.
+  `FileGM(ids, load)` serves the first listed story whose `from` matches the snapshot's version and run, and
+  validates it again. It throws on a story with problems, and when no story was written for this world.
+  `fetchGM(ids)` loads `data/stories/<id>.json` from the dev server. The player is run.ts's `PlayerRecord`.
+- **The format's meanings** (now in story.ts's, dialog.ts's and run.ts's comments; docs/GM.md "The format"):
+  - conditions in a list are ANDed, `any` ORs its own;
+  - a happening fires once;
+  - a talk opens at its most recently unlocked node, else at its start;
+  - a brief's first room is its way in;
+  - `time.after` is seconds of run time;
+  - a flag condition with `value: false` holds while the flag is unset.
+- Node runs the gm modules directly (type stripping). So they import only types, or runtime modules with a
+  `.ts` extension (tsconfig `allowImportingTsExtensions`), and use no TS-only runtime syntax (no parameter
+  properties, no enums).
+- Test: `scripts/gmtest.mjs`. The first story and docs/GM.md's example come out clean, 18 kinds of mistake
+  are caught, and FileGM serves and refuses as it should.
