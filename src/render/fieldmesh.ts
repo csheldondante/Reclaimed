@@ -121,7 +121,8 @@ export class FieldMesh {
       device.queue.writeBuffer(this.region, 0, new ArrayBuffer(REGION_BYTES));
       return;
     }
-    const h = Number(q.get('meshh') ?? 1);
+    // (perfopt, ?bandh=: the band's own sample spacing — a coarser mesh for the land above and below the window)
+    const h = Number((src ? q.get('bandh') : null) ?? q.get('meshh') ?? 1);
     // (?meshroom=: the window's room a chunk, times the default — round 79, to tell holes from out of room)
     if (!src && q.get('meshroom')) room = Number(q.get('meshroom'));
     const W = world.w + 0.5;

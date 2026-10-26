@@ -5062,3 +5062,28 @@ differently:
   But a cliff's face changes: smoother, lighter, its rock facets weaker
   (scratch ng-cmp) — the field's normals carry the warp's detail. A flag.
 
+
+## Round 83 — a coarser band; smaller chunks and a shorter look at new chunks tried (perfopt)
+
+- `?bandh=2`: the band (the land above and below the window's z) meshed at
+  its own sample spacing, 2: a quarter of its triangles and its rebuilds a
+  quarter the samples. Drawbench: the band's draw 0.37 → 0.10 ms, the
+  G-buffer pass 0.30 → 0.19. In the frame at 12304,5457 the band is the low
+  land to the south; coarse, it looks the same (scratch band-cmp: default,
+  no band, bandh=2). The window keeps spacing 1. A candidate default for low
+  once the phone has seen it (a cliff in the band would be softer).
+- Tried, `meshchunk=16` (the mesh's chunks 16 cells: a rebuild a quarter
+  the work): each rebuild pass's worst frame fell to a third (sample 1.39 →
+  0.41 units, the band's ~1.3 → 0.5), but four times the chunks to build
+  after a slide: with one slot (or two) a backlog of 144 chunks riding, the
+  new land grey for seconds; with the slots to keep up, the same work a
+  frame as 32. The spike is the slots × the chunk's area — no win. Taken
+  out.
+- Tried, `nearframes=2` (a chunk just come near looked at for 2 frames
+  even asleep, not 10, since the owed word remembers what found no slot):
+  the change pass's total the same (0.62 units). Taken out.
+- The rebuild's worst frames in a ride (renderprep units): the change pass
+  1.6–3, sample ~1, verts ~1–2, quads ~0.6–1.5 — a rebuild frame adds
+  ~4–5 units to the ~9 of a frame (draw 5.8, shadow 2.2): the phone's
+  spikes. The change pass's worst is the largest single piece.
+
