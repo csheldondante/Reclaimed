@@ -31,7 +31,8 @@ export interface DialogChoice {
 
 /** The dialog system as a game uses it. */
 export interface Dialog {
-  /** open a tree (at its start, or a node); resolves when the talk ends, with the path taken */
+  /** open a tree: at `at`, else its most recently unlocked node (Outcome.unlock), else its start; resolves
+   *  when the talk ends, with the path taken */
   open(tree: DialogTree, at?: string): Promise<{ node: string; choice: number }[]>;
   /** is a talk open (the game pauses its controls) */
   readonly isOpen: boolean;

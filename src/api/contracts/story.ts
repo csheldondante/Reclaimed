@@ -19,7 +19,8 @@ export interface SessionStory {
   cast: StoryCharacter[];
   dialogs: DialogTree[];
   objectives: Objective[];
-  /** world effects that happen on their own as the run goes (a storm rolls in at a time, a city falls) */
+  /** world effects that happen on their own as the run goes (a storm rolls in at a time, a city falls); each
+   *  fires once */
   happenings: { when: Condition[]; effects: Outcome }[];
 }
 
@@ -32,7 +33,8 @@ export interface StoryLocation {
   kind: string;
   /** a settlement's id (settlement.ts) when it's one */
   settlement?: string;
-  /** what the generator should make there: rooms and connections, locks and their keys, landmarks */
+  /** what the generator should make there: rooms and connections (the first room is the way in), locks and
+   *  their keys, landmarks */
   brief: {
     rooms?: { id: string; kind: string; size?: 'small' | 'medium' | 'large' }[];
     connections?: { from: string; to: string; lock?: string }[];
@@ -51,6 +53,8 @@ export interface StoryCharacter {
   role: string;
   faction: FactionId | null;
   location: string;
+  /** the room of its location they're found in (its brief's first room, the way in, when absent) */
+  room?: string;
   /** −1 hostile .. 1 friendly toward the player, to start */
   disposition: number;
   /** how they speak (for dialog and voice) */
@@ -71,8 +75,13 @@ export interface Objective {
   failed?: { when: Condition[]; outcome: Outcome };
 }
 
-/** What the run checks: things the player and the world do (the sim's and the units' events). */
+/**
+ * What the run checks: things the player and the world do (the sim's and the units' events). A list of
+ * conditions holds when all of them do (AND); `any` holds when one of its own does (OR). `time.after` is
+ * seconds into the run; a `flag` with `value: false` holds while the flag is unset.
+ */
 export type Condition =
+  | { kind: 'any'; of: Condition[] }
   | { kind: 'talked'; character: string; node?: string }
   | { kind: 'chose'; dialog: string; node: string; choice: number }
   | { kind: 'has'; item: string; count?: number }

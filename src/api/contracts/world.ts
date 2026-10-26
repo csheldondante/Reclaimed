@@ -74,8 +74,10 @@ export interface AtlasEvent {
   /** the regions it touches (or an area, world cells, for a shaped event: a crater, a lava field) */
   regions: RegionId[];
   area?: { at: [number, number]; radius: number };
-  /** how strong, 0..1 (for a bury: cells; for a flood: a level) */
+  /** how strong: 0..1 (a bury: cells; faction-presence: −1..1, a faction can lose ground) */
   magnitude: number;
+  /** a flood's water level (world z); a flood needs it, the rest ignore it */
+  level?: number;
   /** extra for the kind: the storm's kind, the burying material, the faction, the mark */
   detail?: Record<string, unknown>;
   /** which run it happened in, and why */
@@ -97,9 +99,13 @@ export interface Faction {
 /** The world's state as the GM and the overmap read it: the world wiki's facts. */
 export interface WorldSnapshot {
   version: number;
+  /** the atlas's seed (a story's `from.seed` is checked against it) */
+  seed: number;
   run: number;
   regions: { id: RegionId; name: string; kind: string; state: RegionState; settlements: string[] }[];
   factions: Faction[];
+  /** the settlements the regions' `settlements` name (settlement.ts) */
+  settlements: import('./settlement').Settlement[];
   history: AtlasEvent[];
   /** what past runs did and how they ended (run.ts RunRecord) */
   runs: import('./run').RunRecord[];
