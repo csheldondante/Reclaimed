@@ -547,6 +547,8 @@ export class Streamer {
     for (const f of core.onShift) f(dx, dy * ROW_H, 0);
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
     core.renderer.fieldMesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
+    // (round 83: the shore field made again for the window where it is now)
+    core.renderer.shore.dirty();
     core.renderer.band?.mesh.shift(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
     record('slide.grids', performance.now() - tSync);
     core.renderer.band?.shift(dx, dy);

@@ -5563,6 +5563,23 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   slide holds the sim, so the moment passed with no tick: the ring had been
   making them. Drowsy now for 8 of the sim's ticks (Sleep.update's `tick`).
   atlasworldtest 6/6 (riding: 0 of 256 chunks awake; every column top read).
+- The sea's swell off a shore field (the user: "use SDF for the water to
+  make waves from large bodies come into the shore (they look off right now
+  and random)"; "rivers should flow downstream and water in the ocean should
+  be waves coming into the shore"). The water shader guessed the distance
+  to shore from the depth's slope over each triangle of the cell centres
+  (piecewise, noisy) and laid crests across the wind. Now render/shore.ts,
+  shore.wgsl: jump flooding over the window's water (a shore: a dry column
+  beside a wet one) gives every column its nearest shore point (an
+  rgba32float texture, render.wgsl shoreTex, binding 24), made every second
+  and after a slide (9 passes of 256²). fsWater's swellAt: the true
+  distance and the way to the shore — crests parallel to it whose phase
+  falls toward it as time goes (they run in), sharpening in the last cells,
+  tilting the surface for the light, foam where they break; only open water
+  (the shore's distance six cells out to sea, three or more) and still water
+  (a river's flow has its streaks down it, no swell). scripts/watershot.mjs
+  --at coast (a warm coast found on the atlas): rings of swell round an
+  island, moving in between frames.
 
 ## Round 83 — caves left out of the mesh but near the player (`?cavemesh=near`) (perfopt)
 

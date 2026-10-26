@@ -623,6 +623,45 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
 // the player's reach on a story level (game/reach.ts): 1 inside, 0.5 at
 // its edge, 0 in the fog beyond; 1 everywhere elsewhere
 @group(0) @binding(23) var reachTex: texture_2d<f32>;
+/** (round 83) the nearest shore to each column (render/shore.ts, shore.wgsl): xy its point, z 1 when there is one */
+@group(0) @binding(24) var shoreTex: texture_2d<f32>;
+
+/**
+ * The swell off the shore field at p (round 83, the user: "use SDF for the water to make waves from large
+ * bodies come into the shore"; "water in the ocean should be waves coming into the shore"): the distance to
+ * the nearest shore and the way to it; crests parallel to the shore running in (their phase falls toward it
+ * as time goes), steeper in the shallows; only open water swells — a wide body (far from shore a little way
+ * out to sea), not a river (its flow) or a pond: its height and slope (−1..1), strength, the crest's
+ * sharpness 0..1, the distance (cells; 1e3 none) and the way to the shore.
+ */
+struct Swell { h: f32, slope: f32, amp: f32, crest: f32, dist: f32, dir: vec2<f32> };
+fn swellAt(p: vec2<f32>, cell: vec2<i32>, flow: f32, wind: f32) -> Swell {
+  var o = Swell(0.0, 0.0, 0.0, 0.0, 1e3, vec2<f32>(0.0));
+  let sh = textureLoad(shoreTex, clampCell(cell), 0);
+  if (sh.z < 0.5) { return o; }
+  let toS = sh.xy - p;
+  let dist = length(toS);
+  let dir = toS / max(dist, 1e-3);
+  // (how open: the shore's distance six cells out to sea)
+  let q = p - dir * 6.0;
+  let so = textureLoad(shoreTex, clampCell(cellAt(q)), 0);
+  let dOut = select(0.0, length(so.xy - q), so.z > 0.5);
+  let open = smoothstep(3.0, 10.0, dOut) * (1.0 - smoothstep(0.01, 0.06, flow));
+  if (open <= 0.0) { return o; }
+  // (along the shore a slow wobble: the crests not ruled lines)
+  let along = dot(p, vec2<f32>(-dir.y, dir.x));
+  let wob = vnoise(vec2<f32>(along * 0.06, dist * 0.04) + 3.0) * 2.4;
+  let ph = dist * 0.7 - G.time * (1.5 + 0.3 * wind) + wob;
+  let shoal = smoothstep(16.0, 2.0, dist);
+  o.amp = open * (0.3 + 0.7 * shoal) * (0.7 + 0.3 * wind);
+  o.h = sin(ph);
+  o.slope = cos(ph);
+  // (a crest sharpens as it nears the shore: the wave's front steepens)
+  o.crest = pow(0.5 + 0.5 * sin(ph), mix(2.0, 6.0, shoal));
+  o.dist = dist;
+  o.dir = dir;
+  return o;
+}
 
 fn reachAt(p: vec2<f32>) -> f32 {
   let t = triAt(p);
@@ -1379,7 +1418,10 @@ fn fsWater(in: VOut) -> FOut {
     // (shallow puddles lie still: the ripples fade out below ~0.7 deep)
     let rough = (0.5 + clamp(lw / 5.0, 0.0, 2.0)) * smoothstep(0.1, 0.7, d);
     // (the waves' crests lie across the wind: round 41)
-    let nn = windWaves(in.wpos.xy, in.wpos.z, rough);
+    var nn = windWaves(in.wpos.xy, in.wpos.z, rough);
+    // (round 83) the swell off the shore: its slope across the crests tilts the surface
+    let sw = swellAt(in.wpos.xy, cell, flow, clamp(lw / 4.0, 0.0, 1.0));
+    nn = normalize(nn + vec3<f32>(sw.dir * sw.amp * 0.3 * sw.slope, 0.0));
     // Stylised for the fixed view: ripple slopes facing the sun brighten, and the
     // half-vector is biased toward vertical so glints appear on ordinary
     // ripples instead of only at one viewing angle.
@@ -1416,23 +1458,14 @@ fn fsWater(in: VOut) -> FOut {
       let st = flowStreaks(in.wpos.xy, fv, d) * smoothstep(0.005, 0.06, flow) * (1.0 - sludge);
       col += vec3<f32>(0.10, 0.12, 0.12) * smoothstep(0.55, 0.9, st) * (1.0 - 0.7 * G.sky.w);
     }
-    // the shore: swell lines running in to the shallows, foam where they
-    // break, more where the wind blows on shore and the stronger it is
-    let gl2 = length(dg);
-    let toShore = -dg / max(gl2, 1e-5);
-    let dist = d / max(gl2, 0.03);
-    let onshore = clamp(dot(wv / max(lw, 1e-3), toShore), 0.0, 1.0) * clamp(lw / 4.0, 0.0, 1.0);
-    let alongN = vnoise(wo(in.wpos.xy) * 0.6 + 5.0);
-    // (dist is only piecewise smooth, over the centres' triangles: broad
-    // soft crests, so the joins don't show)
-    let crest = sin(min(dist, 3.0) * 1.8 + t * (1.6 + onshore) + alongN * 5.0);
-    let near = smoothstep(2.6, 0.6, dist) * smoothstep(0.012, 0.03, d);
-    // (a running stream has no swell: its banks are all near)
-    let swell = near * smoothstep(0.55, 0.95, crest) * (0.2 + 0.6 * onshore) * (1.0 - smoothstep(0.01, 0.06, flow));
+    // the shore (round 83: the shore field): the swell's crests catch the light, and break into foam in the
+    // last few cells — more in the wind
     let froth = smoothstep(0.3, 0.65, vnoise(wo(in.wpos.xy) * 2.2 + vec2<f32>(t * 0.35, -t * 0.2)));
-    let sf = swell * (1.0 - sludge * 0.7) * froth;
-    col = mix(col, vec3<f32>(0.8, 0.82, 0.8) * (1.0 - 0.75 * G.sky.w), sf * 0.65);
-    alpha = max(alpha, sf * 0.8);
+    col *= 1.0 + 0.12 * sw.amp * sw.h;
+    let brk = sw.amp * smoothstep(7.0, 1.0, sw.dist) * smoothstep(0.55, 0.95, sw.crest) * smoothstep(0.012, 0.03, d);
+    let sf = brk * (1.0 - sludge * 0.7) * (0.55 + 0.45 * froth);
+    col = mix(col, vec3<f32>(0.82, 0.84, 0.82) * (1.0 - 0.75 * G.sky.w), sf * 0.75);
+    alpha = max(alpha, sf * 0.85);
     // rain rings
     let rain = rainAt(in.wpos.xy);
     if (meshOn) {
