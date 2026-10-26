@@ -5512,4 +5512,12 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   URL is expanded before any module reads it; index.html's inline copy is
   gone. Another page (the hoverbike) imports the boot first, or calls
   applyPhoneFlags with its own tier rule.
-
+- Rock judged only where an edit cut it (the perf agent: single 1–3 s
+  frames riding 10a5c81 that f884cc7 didn't have). The integrity system's
+  dirty boxes came from land coming in (every region a slide brings), from
+  cyclones (a box radius × 2.5 round each, a hundred cells and more), from
+  forms arriving — and the rock pass flood-filled all the rock in each: a
+  64² region is a million cells. Now a box carries whether an edit cut the
+  ground there (markDirty/markBox `rock`: the world API's edits and the
+  sandbox's smash set it), and the rock pass looks only in those, 72 cells
+  across at most: the ground as it was made stands until something cuts it.

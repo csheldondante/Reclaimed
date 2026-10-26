@@ -19,6 +19,8 @@ import { ignoreTeardown } from '../gpu/pipeline';
 import { cellPos, ROW_H } from '../world/lattice';
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
+/** (round 83) the widest dirty box the rock pass looks in (cells): an edit's, a crater's */
+const ROCK_BOX = 72;
 
 // Impacts (round 21: "crumble much more easily, break up more; impacts make
 // dust"): a body that hits something at IMPACT_BREAK cells/s or more
@@ -38,7 +40,8 @@ export class Integrity {
   private world: WorldVox;
   /** boxes to analyse: x0, y0, x1, y1, passes left (edits reach the GPU a
    *  tick after they are queued, so each box is looked at twice) */
-  private dirty: [number, number, number, number, number][] = [];
+  /** boxes to analyse: x0, y0, x1, y1, passes left, 1 if rock is judged there too (an edit cut it) */
+  private dirty: [number, number, number, number, number, number][] = [];
   private t = 0;
   private busy = false;
   /** chips where something crumbles or a body hits hard */
@@ -72,12 +75,15 @@ export class Integrity {
     this.bodies.onImpact = (b, speed, at) => this.impact(b, speed, at);
   }
 
-  /** Structures around (x, y) within r may have changed. */
-  markDirty(x: number, y: number, r: number): void {
-    this.markBox(x - r, y - r, x + r, y + r);
+  /**
+   * Structures around (x, y) within r may have changed; `rock` (round 83): an edit cut the ground there — rock
+   * is judged too (land come in, a cyclone passing: structures only, the ground as it was made stands).
+   */
+  markDirty(x: number, y: number, r: number, rock = false): void {
+    this.markBox(x - r, y - r, x + r, y + r, rock);
   }
-  markBox(x0: number, y0: number, x1: number, y1: number): void {
-    this.dirty.push([x0, y0, x1, y1, 2]);
+  markBox(x0: number, y0: number, x1: number, y1: number, rock = false): void {
+    this.dirty.push([x0, y0, x1, y1, 2, rock ? 1 : 0]);
   }
 
   /** The visible top of a column: solid ground plus loose ground, or a fallen body's top. */
@@ -295,20 +301,24 @@ export class Integrity {
     const boxes = this.dirty;
     this.dirty = [];
     this.stats.passes++;
-    for (const [x0, y0, x1, y1, left] of boxes) {
-      if (left > 1) this.dirty.push([x0, y0, x1, y1, left - 1]);
+    for (const [x0, y0, x1, y1, left, rock] of boxes) {
+      if (left > 1) this.dirty.push([x0, y0, x1, y1, left - 1, rock]);
       const r = analyse(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
-      // (round 83: rock too — islands fall, overhangs past their span and undercut spires give)
-      const rk = analyseRock(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
-      r.bodies.push(...rk.bodies);
-      r.crumble.push(...rk.crumble);
+      // (round 83: rock too — islands fall, overhangs past their span and undercut spires give — in a box an
+      // edit's size: a cyclone's marks a box a hundred cells across and more, the rock in it millions of
+      // cells, a pass of seconds; a cyclone doesn't cut rock)
+      if (rock && x1 - x0 <= ROCK_BOX && y1 - y0 <= ROCK_BOX) {
+        const rk = analyseRock(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
+        r.bodies.push(...rk.bodies);
+        r.crumble.push(...rk.crumble);
+      }
       if (r.crumble.length) {
         this.removeCells(r.crumble);
         this.spillRubble(r.crumble);
         this.stats.crumbled += r.crumble.length;
         this.chips(r.crumble.map((c) => [c.x + 0.5, c.y + 0.5, c.z + 0.5]), 4);
         // what the cut held is looked at again next pass (it now hangs free)
-        this.markBox(x0, y0, x1, y1);
+        this.markBox(x0, y0, x1, y1, rock === 1);
       }
       for (const cells of r.bodies) {
         this.removeCells(cells);
