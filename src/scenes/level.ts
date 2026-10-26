@@ -1318,7 +1318,7 @@ export class LevelScene implements Scene {
     void this.stream?.update();
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
     if (this.sleep) {
-      globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms);
+      globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
@@ -2162,7 +2162,7 @@ export class LevelScene implements Scene {
         return;
       }
       core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
-      this.integrity?.markDirty(x, y, ed.radius + 14, ed.radius);
+      this.integrity?.markDirty(x, y, ed.radius + 14);
       core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
     }, ignoreTeardown);
   }

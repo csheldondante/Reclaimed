@@ -149,7 +149,8 @@ try {
   check('units stay on the land they stood on through the slides (they move with the window)', r.units > 0 && r.driftMax < 12 && (r.onLandN === 0 || r.offLandMax < 2.5), { units: r.units, driftMax: r.driftMax, inWindow: r.onLandN, offLandMax: r.offLandMax });
   check('the terrain reads after the slides: fresh, no column top 0 (asleep or not)', r.fresh && r.zeros === 0, { fresh: r.fresh, zeros: r.zeros, of: r.sampled, byX: r.zx, byY: r.zy, cpuSurfaceZeros: r.surfZeros });
   check('a warp: the window somewhere else, the land there read fresh, onWarp told', r.warp.warped && Math.abs(r.warp.mid[0] - 5040) < 40 && Math.abs(r.warp.mid[1] - 12672) < 40 && r.warp.zeros === 0 && r.warp.fresh, r.warp);
-  check('the sea held, sleep on, the terrain under the target', r.seaZ > -1e8 && r.awake > 0 && r.awake < r.chunks && r.height > 0, { seaZ: r.seaZ, awake: r.awake, of: r.chunks, height: r.height, world: r.world });
+  // (round 83: the player's whereabouts wake nothing (sleep.ts WAKE_NEAR) — the ride did nothing, so nothing need be awake)
+  check('the sea held, sleep on, the terrain under the target', r.seaZ > -1e8 && r.awake < r.chunks && r.height > 0, { seaZ: r.seaZ, awake: r.awake, of: r.chunks, height: r.height, world: r.world });
 } finally {
   await browser.close();
 }
