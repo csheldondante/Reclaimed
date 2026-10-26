@@ -29,7 +29,9 @@ async function main() {
   const canvas = document.getElementById('world') as HTMLCanvasElement;
   const ui = document.getElementById('ui')!;
   const gpu = await initGpu(canvas);
-  const profiler = new Profiler(gpu.device, gpu.hasTimestamps);
+  // (round 82, ?readback=0: no GPU readbacks every frame or few — no timestamps, the mesh's chunk records, the
+  // draw counts — to tell whether they stall a phone's frames: render/renderer.ts READBACK)
+  const profiler = new Profiler(gpu.device, gpu.hasTimestamps && params.get('readback') !== '0');
   const host: Host = { gpu, profiler, quality, qualityName, params, canvas, ui };
   const audio = new Ambience();
   if (params.get('audio') === '1') new AudioDebug(ui, audio);

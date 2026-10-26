@@ -4850,4 +4850,15 @@ worst case doesn't make sense".
   detail (specks, chips, strata, the water film, plants, the fields) ~5 ms
   of that. `?look=full|lookup|flat` (renderer.ts, meshdraw.wgsl
   MESH_LOOK) for the phone to measure the same; shots78/look-compare.png.
+- The phone with `look=lookup` / `flat`: smoother, but p95 still 80–100
+  ms; with `skip=render` p95 = p50. So the spikes are something in the
+  render path that only some frames do. Suspects: the mesh rebuilds (new
+  land in view every few frames riding; one rebuild frame's passes run to
+  1–2 ms each on the desktop, the band's sampling once 13 ms — a phone
+  ~8× that), and the readbacks (the mesh's chunk records every 10 frames,
+  window and band; the draw counts every 250 ms; the timestamps every
+  frame) if the phone's driver drains its queue for them. `?readback=0`
+  turns all three off (no GPU timings then; the culling uses the window's
+  top for every chunk). With `skip=meshprep,band` (no rebuilds) and
+  `drive=0` (no new land), the phone tells them apart.
 

@@ -19,7 +19,7 @@ import gridsWgsl from '../shaders/grids.wgsl?raw';
 import structPrepWgsl from '../shaders/structprep.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
-import { FieldMesh } from './fieldmesh';
+import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
 import { CAMERA_BYTES, type Camera } from './camera';
@@ -671,7 +671,7 @@ export class Renderer {
     if (!this.countBusy) {
       enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 64);
       this.countBusy = true;
-      this.countNeeded = true;
+      this.countNeeded = READBACK;
     }
   }
 

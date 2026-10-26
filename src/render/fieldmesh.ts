@@ -17,6 +17,9 @@ import gridsWgsl from '../shaders/grids.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import fieldMeshWgsl from '../shaders/fieldmesh.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
+
+/** round 82: ?readback=0 — the renderer's and the mesh's periodic readbacks off (main.ts: the timestamps too) */
+export const READBACK = new URLSearchParams(location.search).get('readback') !== '0';
 import type { Camera } from './camera';
 
 /** bytes of the layout uniform (meshregion.wgsl MeshRegion) */
@@ -322,7 +325,7 @@ export class FieldMesh {
       pass.end();
     });
     this.profiler.dispatches += 5;
-    if (!this.statBusy && this.statEvery++ % 10 === 0) {
+    if (READBACK && !this.statBusy && this.statEvery++ % 10 === 0) {
       enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
       this.statBusy = true;
       this.statNeeded = true;
