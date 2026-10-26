@@ -17,6 +17,7 @@
 
 import { cellRange, columnSlots, readSlot, type PackedWorld } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
+import { NDIR, nbr } from '../world/lattice';
 
 export interface Voxel {
   x: number;
@@ -414,275 +415,173 @@ export function isRock(m: number): boolean {
   return !!d && d.state === MatState.Solid && d.strength >= 1;
 }
 
-/** How far rock hangs over air before it gives, a cell of its thickness (materials.ts `span`; Infinity: never) */
+/** How far rock hangs over air before it gives, columns for each cell of its thickness (materials.ts `span`; Infinity: never) */
 const ROCK_SPAN = 3;
-/** the rock pass looks this far under the box's lowest ground (what's deeper stands on what's under it) */
-const ROCK_DEPTH = 32;
-/** a neck: rock this many cells or more standing on a section under NECK_SHARE of its own mean section */
-const NECK_MASS = 24;
 /** rock freed in fewer cells than this stays where it is (a crumb), not a body */
 const MIN_BODY = 8;
-const NECK_SHARE = 0.5;
+/** runs in neighbouring columns overlapping by this much (cells) hold each other up */
+const OVERLAP = 0.5;
+/** a hanging piece reaching this many runs is held (a cave's roof, joined on and on): the flood stops there */
+const MAX_PIECE = 4096;
+
+interface Run {
+  x: number;
+  y: number;
+  z0: number;
+  z1: number;
+  /** its intervals (each its own material) */
+  ivs: { z0: number; z1: number; mat: number }[];
+  /** resting on something under it (or the bedrock) */
+  stands: boolean;
+  span: number;
+}
 
 /**
- * Rock (round 83, the user: undercut rock left floating; "Islands + weak overhangs", falling as bodies; "If
+ * Rock (round 83, the user: undercut rock left floating — "Islands + weak overhangs", falling as bodies; "If
  * things are breaking just make a material that is stronger so they don't break"; "Make sure to get the
- * boundary correct and assume it is firmly anchored there"; "I want to topple spires of stone"). In the box,
- * from ROCK_DEPTH under its lowest ground up; what reaches past the box's sides or the map's edge, and the
- * box's floor, hold firmly:
- *  - islands: rock no longer joined to what holds it, nor resting on or keyed into anything else, falls (a
- *    body: it tips and tumbles as it goes);
- *  - overhangs: rock over air reaches at most its material's span (cells) × its thickness (its run up the
- *    column) from rock standing on what holds it; past that, the line where it gives crumbles;
- *  - necks: rock standing on a section much narrower than its own (a spire undercut) snaps there.
- * What's cut loose is an island the next pass drops. Structures keep their own rules (analyse); rock holds them.
+ * boundary correct and assume it is firmly anchored there"; "check columns not cells … overlapping intervals
+ * of material for lateral support and vertical material for support from below. If it is supported from
+ * below it can stand … if it is just supported laterally that's the only time you need to do any flood";
+ * "you don't need to check all of them just the ones that we woke up"). From the columns an edit changed
+ * (`seeds`) and the six round each, by the columns' intervals:
+ *  - a run of rock resting on anything under it (or the bedrock) stands — nothing to look at;
+ *  - a run with air under it hangs: held sideways by what it overlaps in the six columns round it — a run
+ *    that stands, anything solid that isn't rock, the map's edge — or through the hanging runs it overlaps
+ *    (the only flood, from the hanging runs by the seeds, a piece at a time; a piece of MAX_PIECE runs is held);
+ *  - a hanging piece nothing holds falls as a body (tipping and tumbling as it goes);
+ *  - a hanging run further than its material's span × its thickness (columns) from what holds it gives: the
+ *    first such next to one that doesn't crumbles; what it held falls the next pass.
+ * Structures keep their own rules (analyse); rock holds them.
  */
-export function analyseRock(world: WorldVox, x0: number, y0: number, x1: number, y1: number): Fracture {
-  x0 = Math.max(0, Math.floor(x0));
-  y0 = Math.max(0, Math.floor(y0));
-  x1 = Math.min(world.w, Math.ceil(x1));
-  y1 = Math.min(world.h, Math.ceil(y1));
-  const W = x1 - x0;
-  const D = y1 - y0;
+export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>): Fracture {
   const result: Fracture = { bodies: [], crumble: [] };
-  if (W <= 0 || D <= 0) return result;
-  const zMax = world.packed.dims.zMax;
-  let low = Infinity;
-  for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) low = Math.min(low, world.baseTop(x, y));
-  const zLo = Math.max(0, Math.floor(low) - ROCK_DEPTH);
-  const Z = zMax - zLo;
-  if (Z <= 0) return result;
-  const N = W * D * Z;
-  const mat = new Uint8Array(N);
-  const idx = (x: number, y: number, z: number) => ((z - zLo) * D + (y - y0)) * W + (x - x0);
-  for (let y = y0; y < y1; y++)
-    for (let x = x0; x < x1; x++) {
-      const { base, k } = columnSlots(world.packed, x, y);
-      for (let s = 0; s < k; s++) {
-        const iv = readSlot(world.slots, base + s);
-        if (!iv) break;
-        const [c0, c1] = cellRange(iv.z0, iv.z1);
-        for (let z = Math.max(c0, zLo); z < c1 && z < zMax; z++) mat[idx(x, y, z)] = iv.mat;
-      }
+  const cache = new Map<number, Run[]>();
+  const ivCache = new Map<number, { z0: number; z1: number; mat: number }[]>();
+  const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h;
+  const colIvs = (x: number, y: number) => {
+    const key = y * 65536 + x;
+    let out = ivCache.get(key);
+    if (out) return out;
+    out = [];
+    const { base, k } = columnSlots(world.packed, x, y);
+    for (let s = 0; s < k; s++) {
+      const iv = readSlot(world.slots, base + s);
+      if (!iv) break;
+      out.push({ z0: iv.z0, z1: iv.z1, mat: iv.mat });
     }
-  const rock = new Uint8Array(256);
-  const loose = new Uint8Array(256);
-  const span = new Float32Array(256);
-  for (let m = 0; m < MATERIALS.length; m++) {
-    rock[m] = isRock(m) ? 1 : 0;
-    loose[m] = MATERIALS[m].state === MatState.Granular ? 1 : 0;
-    span[m] = MATERIALS[m].span ?? ROCK_SPAN;
-  }
-  const NB = [
-    [1, 0, 0],
-    [-1, 0, 0],
-    [0, 1, 0],
-    [0, -1, 0],
-    [0, 0, 1],
-    [0, 0, -1],
-  ];
-  const coord = (i: number): [number, number, number] => {
-    const x = i % W;
-    const r = (i - x) / W;
-    const y = r % D;
-    return [x + x0, y + y0, (r - y) / D + zLo];
+    ivCache.set(key, out);
+    return out;
   };
-  const inBox = (x: number, y: number, z: number) => x >= x0 && y >= y0 && x < x1 && y < y1 && z >= zLo && z < zMax;
-  // held firmly: the box's floor; what goes on past its sides; the map's edge; anything solid beside or
-  // under it that isn't rock (loose ground only under it)
-  const held = new Uint8Array(N);
-  for (let i = 0; i < N; i++) {
-    if (!rock[mat[i]]) continue;
-    const [x, y, z] = coord(i);
-    if (z === zLo) {
-      held[i] = 1;
-      continue;
-    }
-    for (const [dx, dy, dz] of NB) {
-      const nx = x + dx;
-      const ny = y + dy;
-      const nz = z + dz;
-      if (nz >= zMax) continue;
-      if (nx < 0 || ny < 0 || nx >= world.w || ny >= world.h) {
-        held[i] = 1;
-        break;
-      }
-      if (!inBox(nx, ny, nz)) {
-        if (world.matAt(nx, ny, nz) !== 0) {
-          held[i] = 1;
-          break;
-        }
+  /** the column's runs of rock (touching intervals of rock are one) */
+  const runsAt = (x: number, y: number): Run[] => {
+    const key = y * 65536 + x;
+    let rs = cache.get(key);
+    if (rs) return rs;
+    rs = [];
+    let below: { z1: number } | null = null;
+    for (const iv of colIvs(x, y)) {
+      if (!isRock(iv.mat)) {
+        below = iv;
         continue;
       }
-      const m = mat[idx(nx, ny, nz)];
-      if (m !== 0 && !rock[m] && (dz < 0 || !loose[m])) {
-        held[i] = 1;
+      const last = rs[rs.length - 1];
+      const span = MATERIALS[iv.mat].span ?? ROCK_SPAN;
+      if (last && Math.abs(iv.z0 - last.z1) < 1e-3) {
+        last.z1 = iv.z1;
+        last.ivs.push(iv);
+        last.span = Math.min(last.span, span);
+      } else rs.push({ x, y, z0: iv.z0, z1: iv.z1, ivs: [iv], stands: iv.z0 < 1e-3 || (!!below && Math.abs(iv.z0 - below.z1) < 1e-3), span });
+      below = iv;
+    }
+    cache.set(key, rs);
+    return rs;
+  };
+  const overlaps = (a: { z0: number; z1: number }, b: { z0: number; z1: number }) => Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) >= OVERLAP;
+  const solid = (m: number) => MATERIALS[m]?.state === MatState.Solid;
+  /** the hanging runs beside r (overlapping it), and whether anything that holds is beside it */
+  const besides = (r: Run): { held: boolean; next: Run[] } => {
+    let held = false;
+    const next: Run[] = [];
+    for (let k = 0; k < NDIR; k++) {
+      const [nx, ny] = nbr(r.x, r.y, k);
+      if (!inMap(nx, ny)) {
+        held = true;
+        continue;
+      }
+      for (const o of runsAt(nx, ny)) {
+        if (!overlaps(o, r)) continue;
+        if (o.stands) held = true;
+        else next.push(o);
+      }
+      if (!held) for (const iv of colIvs(nx, ny)) if (!isRock(iv.mat) && solid(iv.mat) && overlaps(iv, r)) held = true;
+    }
+    return { held, next };
+  };
+  const cells = (r: Run) => {
+    const out: Voxel[] = [];
+    for (const iv of r.ivs) {
+      const [c0, c1] = cellRange(iv.z0, iv.z1);
+      for (let z = Math.max(0, c0); z < c1; z++) out.push({ x: r.x, y: r.y, z, mat: iv.mat });
+    }
+    return out;
+  };
+  // the hanging runs by the seeds
+  const start: Run[] = [];
+  const seen = new Set<Run>();
+  for (const [sx, sy] of seeds) {
+    const cols: [number, number][] = [[sx, sy]];
+    for (let k = 0; k < NDIR; k++) cols.push(nbr(sx, sy, k));
+    for (const [x, y] of cols) if (inMap(x, y)) for (const r of runsAt(x, y)) if (!r.stands) start.push(r);
+  }
+  for (const s of start) {
+    if (seen.has(s)) continue;
+    // its piece: the hanging runs joined to it; what of it is held beside, and how far each is from that
+    const piece: Run[] = [s];
+    seen.add(s);
+    const next = new Map<Run, Run[]>();
+    const held: Run[] = [];
+    let big = false;
+    for (let h = 0; h < piece.length; h++) {
+      const r = piece[h];
+      const b = besides(r);
+      next.set(r, b.next);
+      if (b.held) held.push(r);
+      for (const o of b.next)
+        if (!seen.has(o)) {
+          seen.add(o);
+          piece.push(o);
+        }
+      if (piece.length >= MAX_PIECE) {
+        big = true;
         break;
       }
     }
-  }
-  const vox = (i: number): Voxel => {
-    const [x, y, z] = coord(i);
-    return { x, y, z, mat: mat[i] };
-  };
-  const crumble = new Set<number>();
-  const comp = new Int32Array(N).fill(-1);
-  let nComp = 0;
-  for (let start = 0; start < N; start++) {
-    if (!rock[mat[start]] || comp[start] >= 0) continue;
-    const cells: number[] = [start];
-    comp[start] = nComp;
-    let anyHeld = false;
-    for (let h = 0; h < cells.length; h++) {
-      const i = cells[h];
-      if (held[i]) anyHeld = true;
-      const [x, y, z] = coord(i);
-      for (const [dx, dy, dz] of NB) {
-        if (!inBox(x + dx, y + dy, z + dz)) continue;
-        const j = idx(x + dx, y + dy, z + dz);
-        if (rock[mat[j]] && comp[j] < 0) {
-          comp[j] = nComp;
-          cells.push(j);
-        }
-      }
-    }
-    const c = nComp++;
-    if (!anyHeld) {
-      // (a crumb stays: a body that small, settled on another, was written back over air and found free
-      // again pass after pass; crumbled, its rubble set off more)
-      if (cells.length >= MIN_BODY) result.bodies.push(cells.map(vox));
+    if (big) continue;
+    if (!held.length) {
+      const vox = piece.flatMap(cells);
+      if (vox.length >= MIN_BODY) result.bodies.push(vox);
       continue;
     }
-    // standing: held, or on an unbroken stack of the piece down to what is (index order is z-major)
-    cells.sort((a, b) => a - b);
-    const at = new Map<number, number>();
-    cells.forEach((i, k) => at.set(i, k));
-    const stand = new Uint8Array(cells.length);
-    for (let k = 0; k < cells.length; k++) {
-      const i = cells[k];
-      const [x, y, z] = coord(i);
-      const below = z > zLo ? idx(x, y, z - 1) : -1;
-      if (held[i] || (below >= 0 && comp[below] === c && stand[at.get(below)!])) stand[k] = 1;
-    }
-    // hanging: how far through the piece from what stands, against its reach (span × its run up the column)
-    const dist = new Int32Array(cells.length).fill(-1);
-    let frontier: number[] = [];
-    for (let k = 0; k < cells.length; k++)
-      if (stand[k]) {
-        dist[k] = 0;
-        frontier.push(k);
-      }
-    if (frontier.length === cells.length) continue;
-    for (let d = 1; frontier.length; d++) {
-      const next: number[] = [];
-      for (const k of frontier) {
-        const [x, y, z] = coord(cells[k]);
-        for (const [dx, dy, dz] of NB) {
-          if (!inBox(x + dx, y + dy, z + dz)) continue;
-          const j = idx(x + dx, y + dy, z + dz);
-          if (comp[j] !== c) continue;
-          const kj = at.get(j)!;
-          if (dist[kj] >= 0) continue;
-          dist[kj] = d;
-          next.push(kj);
+    const dist = new Map<Run, number>();
+    let frontier = held;
+    for (const r of held) dist.set(r, 1);
+    while (frontier.length) {
+      const nf: Run[] = [];
+      for (const r of frontier)
+        for (const o of next.get(r)!) {
+          if (dist.has(o)) continue;
+          dist.set(o, dist.get(r)! + 1);
+          nf.push(o);
         }
-      }
-      frontier = next;
+      frontier = nf;
     }
-    const runOf = (x: number, y: number, z: number) => {
-      let a = z;
-      while (a + 1 < zMax && comp[idx(x, y, a + 1)] === c) a++;
-      let b = z;
-      while (b - 1 >= zLo && comp[idx(x, y, b - 1)] === c) b--;
-      return a - b + 1;
-    };
-    const over = (k: number) => {
-      if (dist[k] <= 0) return false;
-      const [x, y, z] = coord(cells[k]);
-      return dist[k] > span[mat[cells[k]]] * runOf(x, y, z);
-    };
-    // the line where it gives: past its reach, next to what isn't
-    for (let k = 0; k < cells.length; k++) {
-      if (!over(k)) continue;
-      const [x, y, z] = coord(cells[k]);
-      for (const [dx, dy, dz] of NB) {
-        if (!inBox(x + dx, y + dy, z + dz)) continue;
-        const j = idx(x + dx, y + dy, z + dz);
-        if (comp[j] !== c) continue;
-        const kj = at.get(j)!;
-        if (dist[kj] < dist[k] && !over(kj)) {
-          crumble.add(cells[k]);
-          break;
-        }
-      }
+    // past its reach: the first such next to one that isn't (or to what holds it)
+    const over = (r: Run) => dist.get(r)! > r.span * (r.z1 - r.z0);
+    for (const r of piece) {
+      if (!over(r)) continue;
+      const d = dist.get(r)!;
+      if (d === 1 || next.get(r)!.some((o) => dist.get(o)! < d && !over(o))) result.crumble.push(...cells(r));
     }
   }
-  // necks: the rock built up from the top down a layer at a time (union–find); a piece over layer z that
-  // nothing holds but its foot, standing on far less than its own mean section, snaps at its foot
-  const parent = new Int32Array(N).fill(-1);
-  const find = (i: number): number => {
-    while (parent[i] !== i) {
-      parent[i] = parent[parent[i]];
-      i = parent[i];
-    }
-    return i;
-  };
-  const mass = new Int32Array(N);
-  const top = new Int32Array(N);
-  const heldR = new Uint8Array(N);
-  const cut = new Uint8Array(N);
-  const union = (a: number, b: number) => {
-    const ra = find(a);
-    const rb = find(b);
-    if (ra === rb) return;
-    parent[rb] = ra;
-    mass[ra] += mass[rb];
-    top[ra] = Math.max(top[ra], top[rb]);
-    heldR[ra] |= heldR[rb];
-    cut[ra] |= cut[rb];
-  };
-  const layer = W * D;
-  for (let z = zMax - 1; z >= zLo; z--) {
-    const o = (z - zLo) * layer;
-    // the feet of the pieces over this layer: their cells with rock under them
-    const feet = new Map<number, number[]>();
-    if (z < zMax - 1)
-      for (let q = 0; q < layer; q++) {
-        const up = o + layer + q;
-        if (parent[up] < 0 || !rock[mat[o + q]]) continue;
-        const r = find(up);
-        let f = feet.get(r);
-        if (!f) feet.set(r, (f = []));
-        f.push(up);
-      }
-    for (const [r, f] of feet) {
-      if (heldR[r] || cut[r] || mass[r] < NECK_MASS) continue;
-      const mean = mass[r] / (top[r] - z);
-      if (f.length < NECK_SHARE * mean) {
-        for (const i of f) crumble.add(i);
-        cut[r] = 1;
-      }
-    }
-    // this layer joins: its cells, with each other and with what's over them
-    for (let q = 0; q < layer; q++) {
-      const i = o + q;
-      if (!rock[mat[i]]) continue;
-      parent[i] = i;
-      mass[i] = 1;
-      top[i] = z;
-      heldR[i] = held[i] && z > zLo ? 1 : 0;
-      cut[i] = 0;
-    }
-    for (let q = 0; q < layer; q++) {
-      const i = o + q;
-      if (parent[i] < 0) continue;
-      const x = q % W;
-      if (x + 1 < W && parent[i + 1] >= 0) union(i, i + 1);
-      if (q + W < layer && parent[i + W] >= 0) union(i, i + W);
-      // (a piece cut at its foot isn't joined to what's under it: it hangs free, the next pass drops it)
-      if (z < zMax - 1 && parent[i + layer] >= 0 && !cut[find(i + layer)]) union(i, i + layer);
-    }
-  }
-  for (const i of crumble) result.crumble.push(vox(i));
   return result;
 }

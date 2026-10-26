@@ -5521,3 +5521,17 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   ground there (markDirty/markBox `rock`: the world API's edits and the
   sandbox's smash set it), and the rock pass looks only in those, 72 cells
   across at most: the ground as it was made stands until something cuts it.
+- Rock by its columns, from what was cut (the user: "check columns not
+  cells … if it is supported from below it can stand … if it is just
+  supported laterally that's the only time you need to do any flood";
+  "you don't need to check all of them just the ones that we woke up").
+  analyseRock now takes the columns an edit cut (Integrity.markCut: the
+  edit's own radius, looked at two passes; what crumbles is looked at
+  again) and works on the columns' intervals: a run of rock resting on
+  anything stands and isn't looked at; a run over air is held by what it
+  overlaps (half a cell or more) in the six columns round it — a standing
+  run, a solid that isn't rock, the map's edge — or through the hanging runs
+  it overlaps, the only flood (a piece of 4 096 runs is held). Tens of runs
+  a crater, not a box's million cells. The neck rule went (supported from
+  below, it stands; cut free, it falls and tips as a body). Committed
+  untested in a browser (the user's own was open: the GPU shared).
