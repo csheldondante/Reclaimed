@@ -33,6 +33,7 @@ worked on in parallel:
 | `stream` | `C:/Projects/Reclaimed-stream` | `npm run dev -- --port 5199` |
 | `atlas` | `C:/Projects/Reclaimed-atlas` | `npm run dev -- --port 5203` |
 | `places` | `C:/Projects/Reclaimed-places` | `npm run dev -- --port 5207` |
+| `perfopt` | `C:/Projects/Reclaimed-perfopt` | `npm run dev -- --port 5211` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
