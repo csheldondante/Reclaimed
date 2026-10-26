@@ -104,6 +104,7 @@ export interface WorldSnapshot {
   version: number;
   /** the atlas's seed (a story's `from.seed` is checked against it) */
   seed: number;
+  /** the run to come (the first is 0; WorldState.record moves it on) */
   run: number;
   regions: { id: RegionId; name: string; kind: string; state: RegionState; settlements: string[] }[];
   factions: Faction[];
