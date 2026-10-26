@@ -25,6 +25,13 @@ async function main() {
   const qualityName = params.get('q') ?? 'low';
   const quality = QUALITY[qualityName];
   if (!quality) throw new Error(`unknown quality "${qualityName}" (use low|medium|high)`);
+  // (round 82: ?slots=N — the mesh's rebuilds a frame, overriding the tier's, to A/B on the phone)
+  const slots = params.get('slots');
+  if (slots !== null) {
+    const n = Number(slots);
+    if (!Number.isInteger(n) || n < 1 || n > 8) throw new Error(`?slots=${slots}: 1..8`);
+    quality.meshSlots = n;
+  }
 
   const canvas = document.getElementById('world') as HTMLCanvasElement;
   const ui = document.getElementById('ui')!;
@@ -90,11 +97,24 @@ async function main() {
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
 
+  // (round 82: at most two frames on the GPU at once — a frame waits, its time carried to the next, while the
+  // GPU catches up. Nothing held the CPU back before but the timing readbacks; without them (?perf=lite, or
+  // the overlay closed) a phone's GPU fell behind and froze for up to a second. ?pace=0 turns it off.)
+  const pace = params.get('pace') !== '0';
+  let inFlight = 0;
   let last = performance.now();
   const frame = (now: number) => {
+    if (pace && inFlight >= 2) {
+      requestAnimationFrame(frame);
+      return;
+    }
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
     scene?.frame(now, dt);
+    if (pace) {
+      inFlight++;
+      gpu.device.queue.onSubmittedWorkDone().then(() => inFlight--);
+    }
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

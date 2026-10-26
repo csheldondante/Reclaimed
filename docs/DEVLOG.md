@@ -4875,4 +4875,14 @@ worst case doesn't make sense".
 - Readbacks: the GPU timings and the draw counts only while the perf
   overlay is open (Profiler.active; the scripts open it with perf=1); the
   mesh's chunk records every 60th frame, not 10th.
-
+- The user, after that batch: the phone "now freezes periodically for what
+  seems like .25-1s". Not on the desktop (rides with perf=1 and perf=lite:
+  worst 42–51 ms, no freezes) — its GPU keeps up. The likely cause: nothing
+  limited the frames queued on the GPU; the timing readback every frame
+  had done it by the way (a mapAsync waits on its frame), and with it off
+  (perf=lite, the overlay closed) a phone GPU slower than the frames can
+  fall behind and stall in a burst. Now main.ts paces: at most two frames
+  submitted and not done (queue.onSubmittedWorkDone); a frame over that
+  waits for the next animation frame, its time carried (`?pace=0` off).
+  The other suspect, low's one rebuild slot (a backlog after a slide):
+  `?slots=N` overrides the tier's meshSlots to A/B it.
