@@ -4813,7 +4813,18 @@ worst case doesn't make sense".
   the field reaches (3 + two samples) aren't evaluated: its rebuild after a
   pack sampled the window's whole height (13.4 ms in one frame). Mesh
   identical.
-- Open: the draw pass goes from 4 to 15–33 ms on some frames (gpuLong);
-  timing on this desktop is noisy (other GPU users), the totals steadier
-  than the maxima.
-
+- The draw pass's 15–33 ms frames are the laptop's own (an Intel Arc 140T,
+  integrated: it shares its power and heat with the CPU): a cool run had
+  none (worst draw 5.6 ms), the next runs more and more whatever was left
+  out (shadows off made it worse); the same baseline warm, p95 10.6 → 17.3.
+  A phone throttles the same way, so the total work is what to cut.
+- scripts/drawbench.mjs: one still frame (sim stopped), each piece of the
+  draw left out in turn (Renderer.skip, changed at run time), interleaved
+  rounds. Low (94k pixels): the draw 4.5 ms, of it the terrain mesh 2.1,
+  the band 0.35, the rest within the noise. Not triangles (`?meshh=2`, a
+  quarter of the indices: the same), not the draw calls (56; the band's 56
+  cost 0.35), not the vertex noise; pixels: 94k 2.6 ms, 377k 3.4, 1.5M 7.6
+  — about 2.4 ms fixed. Not explained yet; it may be this backend's (Dawn
+  on D3D11), so the phone (Vulkan) decides: A/B links to the user.
+- A still frame's other passes: shadow 0.5, renderprep 0.4 (every frame:
+  P4), the mesh's change pass 0.2, the sim's ~0.1 each.

@@ -89,6 +89,7 @@ try {
       cpu: R.scene.cpuWorst?.() ?? null,
       long: R.scene.longFrames,
       gpuLong: R.core.host.profiler.gpuLong,
+      drawMax: +(R.core.host.profiler.maxMs.get('draw') ?? 0).toFixed(1),
       meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };

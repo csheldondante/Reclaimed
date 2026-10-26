@@ -62,9 +62,11 @@ export interface RenderOptions {
 
 // (perf branch: ?skip=opaque,tops,plants,prisms,mesh,bodies,structs,voxels,skins,water,particles,rain,shadow,prep,meshprep
 // leaves that piece out of the frame, to measure what it costs: scripts/perfprofile.mjs)
-const SKIP = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(',').filter(Boolean));
+export const SKIP = new Set((new URLSearchParams(location.search).get('skip') ?? '').split(',').filter(Boolean));
 
 export class Renderer {
+  /** (round 82) the pieces left out, changed at run time by scripts/drawbench.mjs */
+  static readonly skip = SKIP;
   private prep: ComputeKernel;
   private prepGroup: GPUBindGroup;
   private vegPrep: ComputeKernel;
@@ -611,7 +613,7 @@ export class Renderer {
         this.band.mesh.draw(pass);
       }
     }
-    for (const f of this.extraDraws) f(pass, opts.clear);
+    for (const f of SKIP.has('far') ? [] : this.extraDraws) f(pass, opts.clear);
     if (this.bodyCount > 0 && !SKIP.has('bodies')) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);
