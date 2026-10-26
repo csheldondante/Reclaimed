@@ -180,7 +180,8 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   if (li == 0u) { atomicStore(&wgO, 0u); atomicStore(&wgS, 0u); atomicStore(&wgT, 0u); }
   workgroupBarrier();
-  let inside = id.x < G.mapW && id.y < G.mapH;
+  // (hybrid: no plants on a heightfield chunk — the LOD rings draw its land)
+  let inside = id.x < G.mapW && id.y < G.mapH && !heightfieldCol(id.xy);
   var n = 0u;
   var pl = VegPlan(false, false, 0.0, 0.0, 0u, false, 0u);
   var top = 0.0;

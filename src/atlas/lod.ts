@@ -19,7 +19,7 @@ const REFRESH_S = 0.4;
 const BANDS = 8;
 
 export class LodRings {
-  /** each ring's slots: top and colour, rings × n² (lod.wgsl lodOut) */
+  /** each ring's slots: top, colour, the ground, the rock — rings × n² (lod.wgsl lodOut) */
   readonly data: GPUBuffer;
   /** far.wgsl LodD */
   readonly uni: GPUBuffer;
@@ -50,7 +50,7 @@ export class LodRings {
     if (spacings.length > MAX_RINGS) throw new Error(`LodRings: at most ${MAX_RINGS} rings`);
     if ((n - 1) % 8 !== 0) throw new Error('LodRings: (n − 1) a multiple of 8');
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.data = device.createBuffer({ label: 'lod rings', size: spacings.length * n * n * 8, usage: S });
+    this.data = device.createBuffer({ label: 'lod rings', size: spacings.length * n * n * 16, usage: S | GPUBufferUsage.COPY_SRC });
     this.uni = device.createBuffer({ label: 'lod draw', size: LOD_UNI_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.atlasParams = device.createBuffer({ label: 'lod atlas params', size: atlas.paramBuf.size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     atlas.writeParams({}, this.atlasParams);

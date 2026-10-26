@@ -1288,6 +1288,18 @@ export class Renderer {
     this.shore.dirty();
   }
 
+  /** (hybrid) the mesh chunks wanted (FieldMesh.setWanted): the window's and the band's, the same grid */
+  private meshWant: Uint8Array | null = null;
+  /**
+   * (hybrid, ?hybrid=1) Which of the window's mesh chunks are voxels — built and drawn by the field mesh and the
+   * band's — per chunk (fieldMesh.chunkGrid's order), or null for all; the rest are the LOD rings' (far.wgsl).
+   */
+  setMeshWanted(want: Uint8Array | null): void {
+    this.meshWant = want ? want.slice() : null;
+    this.fieldMesh.setWanted(want);
+    this.band?.mesh.setWanted(want);
+  }
+
   private edgesOpen = false;
   /** (round 83) the nearest shore to every column (render/shore.ts): made every second, and after the window moves */
   readonly shore: ShoreField;
@@ -1308,6 +1320,7 @@ export class Renderer {
     if (!this.fieldMesh.on || !this.meshGroupOf || this.band) return this.band;
     this.band = new OutsideBand(this.device, this.world, this.profiler, zSpan, Math.min(3, this.meshSlots ?? 3));
     if (this.edgesOpen) this.band.mesh.openEdges();
+    if (this.meshWant) this.band.mesh.setWanted(this.meshWant);
     this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
     return this.band;
   }

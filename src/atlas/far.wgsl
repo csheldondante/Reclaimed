@@ -76,6 +76,8 @@ fn farCut(p: vec3<f32>, px: vec2<f32>) -> bool {
  */
 fn underFocus(l: vec2<f32>, z: f32) -> f32 {
   if (FP.focus.w < 0.5 || FC.pos.w > 0.5) { return z; }
+  // (hybrid: the window's own land the rings draw is the land itself — never pressed down)
+  if (LD.mesh.z > 0.5 && all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy)) { return z; }
   let ah = dot(l - FP.focus.xy, normalize(FC.eye.xy));
   return mix(z, min(z, FP.focus.z), smoothstep(0.0, 24.0, ah));
 }
@@ -115,7 +117,18 @@ fn meshBuilt(l: vec2<f32>) -> bool {
   // made again; word 0 its indices)
   return h != FRESH && h != 0u && meshSt[b + MS_INDICES] > 0u;
 }
-@group(0) @binding(45) var<storage, read> lodT: array<vec2<f32>>;
+/** (hybrid) Is l (window coordinates, in a built chunk) within SKIRT of an edge whose neighbour isn't built? */
+const SKIRT: f32 = 0.9;
+fn skirt(l: vec2<f32>) -> bool {
+  if (LD.mesh.z < 0.5) { return false; }
+  let f = l - floor(l / LD.mesh.xy) * LD.mesh.xy;
+  if (f.x < SKIRT && !meshBuilt(l - vec2<f32>(SKIRT * 2.0, 0.0))) { return true; }
+  if (f.x > LD.mesh.x - SKIRT && !meshBuilt(l + vec2<f32>(SKIRT * 2.0, 0.0))) { return true; }
+  if (f.y < SKIRT && !meshBuilt(l - vec2<f32>(0.0, SKIRT * 2.0))) { return true; }
+  if (f.y > LD.mesh.y - SKIRT && !meshBuilt(l + vec2<f32>(0.0, SKIRT * 2.0))) { return true; }
+  return false;
+}
+@group(0) @binding(45) var<storage, read> lodT: array<vec4<f32>>;
 @group(0) @binding(46) var<uniform> LD: LodD;
 
 /** in the outermost ring's square (window coordinates): the rings draw it */
@@ -242,6 +255,9 @@ struct LOut {
   @location(2) col: vec3<f32>,
   @location(3) dist: f32,
   @location(4) @interpolate(flat) ring: u32,
+  /** (hybrid) the rock its steep faces show, and the top's and the rock's materials */
+  @location(5) rock: vec3<f32>,
+  @location(6) @interpolate(flat) mats: vec2<u32>,
 }
 
 fn lodPmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
@@ -253,6 +269,20 @@ fn lodTexel(k: u32, i: vec2<i32>) -> vec4<f32> {
   let c = clamp(i, vec2<i32>(0), vec2<i32>(n - 1)) + vec2<i32>(L.xy);
   let t = lodT[k * u32(n * n) + u32(lodPmod(c.y, n) * n + lodPmod(c.x, n))];
   return vec4<f32>(t.x, unpack4x8unorm(bitcast<u32>(t.y)).rgb);
+}
+
+/** (hybrid) ring k's texel i, the whole slot: top, colour (bits), the ground under any water, the rock (bits) */
+fn lodSlot(k: u32, i: vec2<i32>) -> vec4<f32> {
+  let L = LD.lv[k];
+  let n = i32(L.w);
+  let c = clamp(i, vec2<i32>(0), vec2<i32>(n - 1)) + vec2<i32>(L.xy);
+  return lodT[k * u32(n * n) + u32(lodPmod(c.y, n) * n + lodPmod(c.x, n))];
+}
+
+/** (hybrid) Is l (window coordinates) in the window, its land the window's (a field mesh there)? Then what
+ *  the rings draw there is picked as the window's columns, and never pressed under the focus. */
+fn inWindowLand(l: vec2<f32>) -> bool {
+  return LD.mesh.z > 0.5 && all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy);
 }
 
 /** ring k at l (window coordinates), bilinear: its top and colour */
@@ -277,6 +307,7 @@ fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOu
   let ij = vec2<i32>(i32(vi % n), i32(vi / n));
   let local = lodCorner(k) + vec2<f32>(ij) * s;
   var t = lodTexel(k, ij);
+  let slot = lodSlot(k, ij);
   // (toward the edge, what the next ring out — or the far land — is there)
   let e = f32(min(min(ij.x, i32(n) - 1 - ij.x), min(ij.y, i32(n) - 1 - ij.y)));
   let a = clamp((16.0 - e) / 14.0, 0.0, 1.0);
@@ -301,30 +332,118 @@ fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOu
   o.col = t.yzw;
   o.dist = length(local - FP.mid.xy) / (f32(u32(FP.mid.z) - 1u) * 0.5 * FP.win.z);
   o.ring = k;
+  let ca = unpack4x8unorm(bitcast<u32>(slot.y));
+  let ra = unpack4x8unorm(bitcast<u32>(slot.w));
+  o.rock = ra.rgb;
+  o.mats = vec2<u32>(u32(round(ca.a * 255.0)), u32(round(ra.a * 255.0)));
   return o;
+}
+
+// ---- (hybrid) the rings' look: rock on the steep faces, in beds; the light from finer normals ----------------
+
+fn farHash(p: vec2<i32>) -> f32 {
+  var h = bitcast<u32>(p.x) * 374761393u + bitcast<u32>(p.y) * 668265263u;
+  h = (h ^ (h >> 13u)) * 1274126177u;
+  return f32(h ^ (h >> 16u)) / 4294967295.0;
+}
+fn farVnoise(p: vec2<f32>) -> f32 {
+  let i = vec2<i32>(floor(p));
+  let f = smoothstep(vec2<f32>(0.0), vec2<f32>(1.0), fract(p));
+  let a = mix(farHash(i), farHash(i + vec2<i32>(1, 0)), f.x);
+  let b = mix(farHash(i + vec2<i32>(0, 1)), farHash(i + vec2<i32>(1, 1)), f.x);
+  return mix(a, b, f.y);
+}
+fn farFbm2(p: vec2<f32>) -> f32 {
+  return farVnoise(p) * 0.55 + farVnoise(p * 2.03 + 17.0) * 0.3 + farVnoise(p * 4.1 + 41.0) * 0.15;
+}
+/** the beds a rock face shows at world xy w and window z (as render.wgsl strata) */
+fn farStrata(w: vec2<f32>, z0: f32) -> f32 {
+  let z = z0 + 6.0 * farFbm2(w * 0.01) + 1.2 * farFbm2(w * 0.045);
+  let bed = smoothstep(0.32, 0.68, farFbm2(vec2<f32>(z * 0.3, 3.7)));
+  let lam = 0.5 + 0.5 * sin(z * 2.3 + 2.0 * farFbm2(w * 0.03));
+  return bed * 0.8 + lam * 0.2;
+}
+/** a rock's colour across its beds (render.wgsl's tints: sandstone, basalt, soil, stone and the rest) */
+fn farBedTint(m: u32, b: f32) -> vec3<f32> {
+  if (m == 30u) { return mix(vec3<f32>(1.16, 1.02, 0.84), vec3<f32>(0.84, 0.74, 0.74), b); }
+  if (m == 23u) { return mix(vec3<f32>(0.92, 0.94, 1.0), vec3<f32>(1.1, 0.96, 0.86), b); }
+  if (m == 2u) { return mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), b); }
+  return mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), b);
+}
+
+struct RingLook { c: vec3<f32>, rock: bool }
+
+/**
+ * (hybrid) A ring's colour at v, `facet` its triangle's own normal (finer than the vertices' — on the 1-cell
+ * ring, a cell's): where the surface is steeper than ~60 degrees, the region's rock in its beds instead of the
+ * top's colour stretched down the face; lit by the sun, the sky above and a little bounce.
+ */
+fn ringLook(v: LOut, facet: vec3<f32>) -> RingLook {
+  let sn = normalize(v.nrm);
+  let n = normalize(mix(sn, facet, 0.6));
+  let up = min(sn.z, facet.z * 0.5 + sn.z * 0.5);
+  let rk = 1.0 - smoothstep(0.44, 0.56, up);
+  var c = v.col;
+  if (rk > 0.0) {
+    let w = v.local.xy + FP.org.xy;
+    let b = farStrata(w, v.local.z);
+    let grain = 0.9 + 0.2 * farVnoise(vec2<f32>(w.x + w.y, v.local.z) * 1.7);
+    c = mix(c, v.rock * farBedTint(v.mats.y, b) * grain, rk);
+  }
+  let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
+  let fill = normalize(vec3<f32>(-0.5, -0.4, 0.3));
+  let lit = 0.3 + 0.16 * n.z + 0.72 * max(dot(n, sun), 0.0) + 0.12 * max(dot(n, fill), 0.0);
+  return RingLook(c * lit, rk > 0.5);
+}
+
+/** (hybrid) the window column whose hexagon holds w (window coordinates; common.wgsl cellAt) */
+fn farCellAt(w: vec2<f32>) -> vec2<i32> {
+  let RH = 0.8660254;
+  let r0 = (w.y - 0.5 * RH) / RH;
+  let a = vec2<f32>(w.x - 0.5 - 0.5 * r0, r0);
+  let c = vec3<f32>(a.x, a.y, -a.x - a.y);
+  var r = round(c);
+  let d = abs(r - c);
+  if (d.x > d.y && d.x > d.z) { r.x = -r.y - r.z; } else if (d.y > d.z) { r.y = -r.x - r.z; }
+  let q = vec2<i32>(i32(r.x), i32(r.y));
+  return vec2<i32>(q.x + (q.y - (q.y & 1)) / 2, q.y);
 }
 
 @fragment
 fn fsLod(v: LOut) -> FOutF {
+  // (derivatives before any discard: the triangle's own normal, up)
+  var facet = normalize(cross(dpdx(v.local), dpdy(v.local)));
+  if (facet.z < 0.0) { facet = -facet; }
   let l = v.local.xy;
   // the window's own land is the columns' — where its mesh is built (round 83: till then, the ring's top, so
   // land just come in isn't a hole while its chunks are made); a finer ring's square is that ring's
-  if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy) && meshBuilt(l)) { discard; }
+  // (hybrid: but a skirt — a strip of a cell along a built chunk's edge where the chunk beside it is the
+  // rings': the mesh and the rings meet there from the same ground, and the strip closes the hairline between)
+  if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy) && meshBuilt(l) && !skirt(l)) { discard; }
   if (v.ring > 0u) {
     let F = LD.lv[v.ring - 1u];
     let fc = lodCorner(v.ring - 1u);
     if (all(l > fc) && all(l < fc + (F.w - 1.0) * F.z)) { discard; }
   }
   if (farCut(v.local, v.pos.xy)) { discard; }
-  let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
-  let lit = 0.45 + 0.7 * max(dot(normalize(v.nrm), sun), 0.0);
-  var c = v.col * lit;
+  let look = ringLook(v, facet);
+  var c = look.c;
   var fog = smoothstep(0.55, 1.0, v.dist);
   if (FC.pos.w > 0.5) { fog = max(fog, smoothstep(300.0, 2600.0, length(v.local - FC.pos.xyz))); }
   c = mix(c, FP.fog.rgb, fog);
   var o: FOutF;
   o.color = vec4<f32>(c, 1.0);
   o.pick = vec2<u32>(0u, 0u);
+  // (hybrid: the window's land the rings draw is picked as its columns are — meshdraw.wgsl's encoding)
+  if (inWindowLand(l)) {
+    let cell = farCellAt(l);
+    let mw = i32(floor(FP.win.x));
+    let mh = i32(round(FP.win.y / 0.8660254));
+    if (all(cell >= vec2<i32>(0)) && cell.x < mw && cell.y < mh) {
+      let m = select(v.mats.x, v.mats.y, look.rock);
+      o.pick = vec2<u32>(u32(cell.y * mw + cell.x) + 1u, m | (u32(clamp(v.local.z, 0.0, 255.0)) << 8u));
+    }
+  }
   return o;
 }
 

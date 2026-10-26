@@ -50,6 +50,7 @@ import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
 import { qRotate, qYawPitchRoll } from '../grids/structures';
+import { HybridChunks } from './hybrid';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -110,6 +111,11 @@ export class LevelScene implements Scene {
    *  far.ts's rings (?near=1: a ring a cell apart first, the default; 2: the usual four) and the far land; no sim,
    *  no streaming, no mesh, no prep, no shadow, no HUD or audio. The window is still built at the start. */
   private ceiling = new URLSearchParams(location.search).get('ceiling') === '1';
+  /** ?hybrid=1 (the atlas level): voxels only where they're needed — the field mesh, the band and the sim's
+   *  chunks where the land isn't a heightfield, near the focus, or edited; the LOD rings (a 1-cell ring first)
+   *  draw the rest of the window's land (scenes/hybrid.ts). ?vradius= the focus's radius (world units, 40). */
+  private hybridOn = new URLSearchParams(location.search).get('hybrid') === '1';
+  hybrid?: HybridChunks;
   private ticksAvg = 1;
   /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
   private frameMs: number[] = [];
@@ -439,6 +445,8 @@ export class LevelScene implements Scene {
     // (the last long frames and what ran in them: '-' is the GPU's or the browser's)
     for (const l of this.longFrames.slice(-3)) out.push(`long ${l.slice(0, 90)}`);
     if (this.sleep) out.push(`awake chunks ${this.sleep.awake} of ${(this.core.dims.w / CHUNK) * (this.core.dims.h / CHUNK)}`);
+    const hs = this.hybrid?.stats;
+    if (hs) out.push(`hybrid voxel chunks ${hs.voxel} of ${hs.chunks} (land ${hs.land}, edited ${hs.edited}, near ${hs.near}); drawn ${this.core.renderer.fieldMesh.drawn}`);
     return out;
   }
 
@@ -1057,6 +1065,22 @@ export class LevelScene implements Scene {
         // coarser ones, fewer vertices)
         const lodQ = new URLSearchParams(location.search).get('lod');
         const lod = lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
+        if (this.hybridOn && !this.ceiling) {
+          // (the window's heightfield chunks are the 1-cell ring's, near the camera; ?ringn= its vertices a side)
+          const ringN = Number(host.params.get('ringn') ?? 193);
+          this.far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, { spacings: [1, 2, 4, 8, 16], n: ringN });
+          const fm = core.renderer.fieldMesh;
+          if (!fm.on) throw new Error('?hybrid=1 needs the field mesh (not with ?mesh=0)');
+          const [nx, ny, side] = fm.chunkGrid;
+          const S = this.stream;
+          const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 40));
+          this.hybrid = h;
+          S.onRelief.push((x0, y0, x1, y1) => h.landBox(x0, y0, x1, y1));
+          S.onSlide.push((dx, dy, dz) => {
+            if (!dz) h.shift(dx / side, dy / side);
+          });
+          S.onWarp.push(() => h.clear());
+        }
         if (this.ceiling) {
           const near = Number(host.params.get('near') ?? 1);
           // (?ringn=: vertices a side of each ring, 193 the usual; (n − 1) a multiple of 8 — lod.ts checks)
@@ -1336,6 +1360,16 @@ export class LevelScene implements Scene {
       globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;
       globals.settle = this.sleep.settling.map((s) => s.rect);
+    }
+    // (hybrid) what's voxels this frame: the events edit what they touch; the focus is the camera's target
+    if (this.hybrid) {
+      for (const e of globals.events) this.hybrid.edit(e.x, e.y, e.radius);
+      const want = this.hybrid.update(camera.fly ? [camera.fly.pos[0], camera.fly.pos[1]] : [camera.target[0], camera.target[1]]);
+      if (want) {
+        core.renderer.setMeshWanted(want);
+        globals.hfield = { bits: this.hybrid.bits(), across: core.renderer.fieldMesh.chunkGrid[0], side: core.renderer.fieldMesh.chunkGrid[2] };
+      }
+      this.hybrid.count(core.renderer.fieldMesh.drawn);
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);

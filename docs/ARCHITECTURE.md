@@ -393,6 +393,40 @@ far land's `farAt`; a ring discards the window's square and the finer
 ring's; the far land discards the outermost ring's square, and with rings
 draws its near side too.
 
+The hybrid renderer (round 84, `?hybrid=1` on the atlas level, branch
+`hybrid`; scenes/hybrid.ts): voxels only where they're needed, the
+heightfield everywhere else. The window's mesh chunks (32 cells across, 32
+rows down) are each either voxels — the field mesh and the band built and
+drawn there, the window's water, plants and sheets prepared there — or the
+heightfield's: never built (FieldMesh.setWanted: not looked at, not drawn,
+a built one emptied — its indices 0, its hash FRESH), so far.wgsl's
+`meshBuilt` is false and the rings (a 1-cell ring first: spacings 1, 2, 4,
+8, 16) draw its land. A chunk is voxels when (HybridChunks.update) its land
+isn't a heightfield — Streamer.relief / gapTop / colTop, made per column as
+land comes in (writeNow, editLive, the first window) and moved with the
+window: a form standing on the ground or cut into it (the top off the
+ground's own by more than 0.75), or a gap between runs open to the air (a
+neighbour's top under its roof: an overhang's lip, a cave mouth, a bridge,
+a tunnel's portal; a cave under its neighbours' tops is buried and doesn't
+count) — or it's within `?vradius=` (40) of the camera's target, or a world
+event (Globals.events) has touched it (kept while it's in the window). The
+choice reaches the renderer as Renderer.setMeshWanted (the window's mesh and
+the band's) and the GPU as Globals.hfield (a bit a mesh chunk, `ocean.yz`
+the chunks across and their side; common.wgsl `heightfieldCol`):
+renderprep and vegprep prepare nothing in a heightfield chunk — its water
+too is the rings' (the river's and the sea's level, lod.wgsl). The rings in
+the window are never pressed under the focus (underFocus) and write the pick
+target as the columns do (meshdraw.wgsl's encoding, the top's or the rock's
+material), so powers land on heightfield chunks; along a voxel chunk's edge
+with a heightfield neighbour they draw a skirt (a 0.9-cell strip, far.wgsl
+`skirt`) over the hairline between the two. The window's layers stay the
+truth for every column (physics, queries, the sim where it's awake). The
+rings' look (fsLod `ringLook`): where the surface is steeper than ~60° (the
+vertex normal and the triangle's own) the region's rock (lod.wgsl writes
+the rock's albedo and material beside the top's) in beds (render.wgsl's
+strata), lit by the sun, the sky and a bounce; no green from 70 over the
+sea up (as colFinish's plants).
+
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the
 loose sheet) are hex prisms, 30 vertices: the top in four triangles with one
 flat normal (the plane through its corners, cached per cell by render-fields)

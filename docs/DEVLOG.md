@@ -5781,3 +5781,70 @@ the GPU's timestamps; at this size it's small, and the frame is the display's.
 So the ceiling's floor is a screen-sized grid: about one vertex per few pixels,
 which the rings at n 193 overshoot at the low tier's resolution. (The game's
 own rings are in its 4.0 ms draw too: n 193 × 4.)
+
+
+## Round 84 — the hybrid renderer: voxels only where they're needed (`hybrid`, `?hybrid=1`)
+
+The ceiling (round 83) drew the atlas as a heightfield alone at ~2.5 ms of GPU a
+frame against ~8.4 for the game; on the phone "the performance was solid and
+very usable". Its weakness is the cliffs: a slope between vertices with the
+plateau's colour stretched down it, no overhangs, lips, arches or cave mouths.
+The user: "Yes I think a hybrid approach makes sense to build." So `?hybrid=1`
+on the atlas level (the full game stays the default; docs/ARCHITECTURE.md has
+the contract):
+
+- **Each mesh chunk (32 × 32 rows) is voxels or the heightfield's.** Voxels:
+  the field mesh and the band built and drawn there, the window's water, plants
+  and sheets prepared there. The heightfield's: never built — FieldMesh.
+  setWanted keeps it out of the change pass, the rebuild and the draw (one built
+  before is emptied: indices 0, hash FRESH) — so far.wgsl's `meshBuilt` is
+  false and the LOD rings draw it, a 1-cell ring first (spacings 1–16, as the
+  ceiling's near 1). renderprep and vegprep skip it through Globals.hfield (a
+  bit a mesh chunk, like the sleep mask): its water is the rings' too (the
+  sea's and the river's level, lod.wgsl) — the sim's water drawn over the rings
+  stood off them in sheets where the carved bed and the ground differ.
+- **What needs voxels** (scenes/hybrid.ts HybridChunks): the land, decided as it
+  comes in — Streamer.relief / gapTop / colTop per column (writeNow, editLive,
+  the first window; moved with a slide): a form on the ground or cut into it
+  (the top off the ground's own by over 0.75) or a gap between runs **open to
+  the air** (a neighbour's top under its roof: an overhang's lip, a cave mouth,
+  a bridge, a tunnel's portal). The first try counted every gap: 58 of 72
+  chunks at the first spawn, because 21% of the window's columns hold buried
+  caves (stone over stone, sandstone over sandstone, under the hills). Buried
+  ones nobody sees from the sky; only exposed gaps count now: 1 of 72 there, 27
+  at a mesa's rim. Then the focus (`?vradius=`, 40 world units round the
+  camera's target: ~12 chunks), and what a world event touched (kept while it's
+  in the window). Over a 30 s ride the mean is 21.7 chunks voxels of 72, 17.9
+  drawn.
+- **Seams.** The rings and the columns come from the same `ground()`: over the
+  first spawn's ring texels the window's column tops differ from the 1-cell
+  ring's by 0.0 on average, 0.10 absolute (more only at river banks, where the
+  ring stands at the river's level). A hairline still showed the sky along a
+  voxel chunk's edge; the rings draw a skirt there (a 0.9-cell strip inside the
+  voxel chunk where its neighbour is the rings'). In the window the rings are
+  never pressed under the focus (underFocus made a grey shelf of them), and
+  they write the pick target as the columns do, so a tap on a heightfield
+  chunk lands (and the event it makes turns the chunk to voxels).
+- **The rings' look** (all of them, the game's too): where the surface is
+  steeper than ~60° (the vertex normal and the triangle's own, which on the
+  1-cell ring is a cell's) the region's rock — lod.wgsl now writes the rock's
+  albedo and material beside the top's — in beds (render.wgsl's strata, a
+  local copy of the noise), lit by sun, sky and a little bounce. The rings'
+  green stops 70 over the sea as colFinish's plants do: at the mesa the
+  plateau was green in the rings and bare dirt in the columns.
+
+driveprofile, q=low, 412×915 dpr 2.6, drive 18 at 12304,5457, 30 s, this
+machine's iGPU shared with other agents (the clocks drift between runs: the
+same build gave a draw of 1.9 and 4.0 ms in two runs):
+
+| run | p50 | p95 | p99 | worst | GPU ms/frame | draw | gbuffer | renderprep | shadow |
+|---|---|---|---|---|---|---|---|---|---|
+| full game | 9.9 | 10.5 | 12.4 | 62 | 5.99 | 2.87 | 0.43 | 0.26 | 0.17 |
+| hybrid | 9.9 | 10.5 | 12.6 | 48 | 4.01 | 1.90 | 0.16 | 0.13 | 0.08 |
+| ceiling | 9.9 | 10.3 | 10.6 | 15 | 2.58 | 2.53 | – | – | – |
+
+Missing on a heightfield chunk (BACKLOG P13): its plants (grass, trees), the
+sim's water moving (the rings' water is flat colour), the roads' paint, the
+look's detail (the mesh's material lookup, stains, wetness). The sim still
+runs where Sleep has it awake (storms, land settling) though nothing of it is
+drawn on a heightfield chunk.

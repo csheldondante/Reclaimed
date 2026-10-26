@@ -16,18 +16,20 @@ struct LodP {
   at: vec4<u32>,
 }
 @group(0) @binding(50) var<uniform> LP: LodP;
-/** a slot: its top (world z) and its colour (pack4x8unorm, bitcast); a ring's texel (I, J) is in slot
- *  (I mod n, J mod n) — moving the ring makes only the texels new to it */
-@group(0) @binding(51) var<storage, read_write> lodOut: array<vec2<f32>>;
+/** a slot: its top (world z), its colour (pack4x8unorm, bitcast: rgb, its material / 255 in a), (hybrid) the
+ *  ground under any water (world z), the rock its faces show (rgb, its material / 255 in a); a ring's texel
+ *  (I, J) is in slot (I mod n, J mod n) — moving the ring makes only the texels new to it */
+@group(0) @binding(51) var<storage, read_write> lodOut: array<vec4<f32>>;
 /** each material's albedo (materials.ts) */
 @group(0) @binding(52) var<storage, read> lodAlbedo: array<vec4<f32>>;
 
 fn pmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
 
-/** a region's ground: its top's colour, green where it grows */
-fn regionColour(r: Region) -> vec3<f32> {
+/** a region's ground at height h: its top's colour, green where it grows */
+fn regionColour(r: Region, h: f32) -> vec3<f32> {
   let c = lodAlbedo[r.topMat].rgb;
-  return mix(c, vec3<f32>(0.34, 0.52, 0.2), 0.65 * smoothstep(0.3, 0.7, r.veg));
+  // (hybrid: no green from 70 over the sea up — the columns' plants stop there, forms.wgsl colFinish)
+  return mix(c, vec3<f32>(0.34, 0.52, 0.2), 0.65 * smoothstep(0.3, 0.7, r.veg) * (1.0 - smoothstep(AP.sea + 58.0, AP.sea + 70.0, h)));
 }
 
 @compute @workgroup_size(8, 8)
@@ -49,7 +51,13 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   if (g.ov.z > g.ov.y && g.ov.x > h) { h = g.ov.x; }
   h += g.loose;
   // (the two regions' grounds blended as the ground's own border is: no steps of the macro map's texels)
-  var c = mix(regionColour(regs[g.b]), regionColour(regs[g.a]), clamp(g.w, 0.0, 1.0));
+  var c = mix(regionColour(regs[g.b], h), regionColour(regs[g.a], h), clamp(g.w, 0.0, 1.0));
+  // (hybrid: what's on top, and the rock under it — the faces too steep to hold the top show it, far.wgsl)
+  let ra = regs[select(g.b, g.a, g.w >= 0.5)];
+  var mat = ra.topMat;
+  let rock = ra.rockMat;
+  if (g.smat != 0u) { mat = g.smat; }
+  if (g.loose > 0.1) { mat = g.lmat; }
   if (g.smat != 0u) { c = lodAlbedo[g.smat].rgb; }
   if (g.cap != 0u) { c = vec3<f32>(0.18, 0.17, 0.18); }
   if (g.loose > 0.1) { c = mix(c, lodAlbedo[g.lmat].rgb, clamp(g.loose, 0.0, 1.0)); }
@@ -64,5 +72,7 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
     c = select(vec3<f32>(0.2, 0.4, 0.55), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u);
   }
   if (g.clava > 0.05) { c = mix(c, vec3<f32>(1.0, 0.4, 0.06), clamp(g.clava, 0.0, 1.0)); }
-  lodOut[LP.at.x + id.y * u32(n) + id.x] = vec2<f32>(top, bitcast<f32>(pack4x8unorm(vec4<f32>(c, 1.0))));
+  let ca = pack4x8unorm(vec4<f32>(c, f32(mat) / 255.0));
+  let rc = pack4x8unorm(vec4<f32>(lodAlbedo[rock].rgb, f32(rock) / 255.0));
+  lodOut[LP.at.x + id.y * u32(n) + id.x] = vec4<f32>(top, bitcast<f32>(ca), h, bitcast<f32>(rc));
 }
