@@ -53,5 +53,29 @@ export const WIND_K = (() => {
   return Math.max(1, Math.round(TICK_HZ / hz));
 })();
 
+/**
+ * The gradual fields' rate (?fieldhz=N, updates a second — DECISIONS round 83: "can be far less frequent. Every
+ * second or more apart"): moisture, contamination, climate and ecology run every max(their period, TICK_HZ / N)
+ * ticks, each update the time since (their kernels' step × K, fieldPass). Wilt and fire stay every tick: they see
+ * one-tick events (taps, lightning).
+ */
+const FIELD_HZ = Number(params.get('fieldhz') ?? 0);
+if (!(FIELD_HZ >= 0)) throw new Error(`?fieldhz=${params.get('fieldhz')}: updates a second`);
+/** a gradual field's period (ticks) for its own period p0, and K = that / p0 */
+export function fieldPeriod(p0: number): { period: number; k: number } {
+  const p = FIELD_HZ > 0 ? Math.max(p0, Math.round(TICK_HZ / FIELD_HZ)) : p0;
+  return { period: p, k: p / p0 };
+}
+/** a gradual field's kernel source with its step K times as long (simStep, perTick, relaxTick within it) */
+export function fieldPass(src: string, k: number): string {
+  if (k === 1) return src;
+  const pre = `const FIELD_K: f32 = ${k.toFixed(6)};
+fn fieldStep() -> f32 { return simStep() * FIELD_K; }
+fn fieldChance(p: f32) -> f32 { return 1.0 - pow(1.0 - clamp(p, 0.0, 1.0), fieldStep()); }
+fn fieldRelax(k: f32) -> f32 { return 1.0 - pow(1.0 - clamp(k, 0.0, 1.0), fieldStep()); }
+`;
+  return pre + src.replaceAll('simStep()', 'fieldStep()').replaceAll('perTick(', 'fieldChance(').replaceAll('relaxTick(', 'fieldRelax(');
+}
+
 /** the WGSL constant a flow's kernels read (common.wgsl flowFrozen) */
 export const flowConst = (f: Flow) => `const FLOW_N: u32 = ${flowN(f)}u;\n`;

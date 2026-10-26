@@ -36,7 +36,7 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 import { SETTLE, SLEEP_MORE } from './sleep';
-import { FLOW_SUB, WIND_K, flowConst } from './flow';
+import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst } from './flow';
 
 /**
  * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
@@ -183,16 +183,22 @@ export class OilSystem implements SimSystem {
   }
 }
 
+const CONTAM_P = fieldPeriod(1);
+const MOIST_P = fieldPeriod(1);
+const ECO_P = fieldPeriod(15);
+const CLIMATE_P = fieldPeriod(4);
+
 export class ContaminationSystem implements SimSystem {
   readonly name = 'contamination';
-  readonly period = 1;
+  // (perfopt, ?fieldhz=: sim/flow.ts)
+  readonly period = CONTAM_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'contamination',
-      contamWgsl + flowWgsl,
+      fieldPass(contamWgsl, CONTAM_P.k) + flowWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'rw' },
       { 3: world.waterPrev, 4: world.water, 5: world.flux, 6: world.contam, 7: world.contamNext, 8: world.veg, 9: world.contamDelta },
     );
@@ -205,14 +211,14 @@ export class ContaminationSystem implements SimSystem {
 
 export class MoistureSystem implements SimSystem {
   readonly name = 'moisture';
-  readonly period = 1;
+  readonly period = MOIST_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'moisture',
-      moistureWgsl + slopeWgsl,
+      fieldPass(moistureWgsl, MOIST_P.k) + slopeWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 17: 'tex' },
       { 3: world.water, 4: world.moisture, 5: world.moistureNext, 6: world.veg, 7: world.surface, 17: world.driftView },
     );
@@ -246,14 +252,14 @@ export class WiltSystem implements SimSystem {
 
 export class EcologySystem implements SimSystem {
   readonly name = 'ecology';
-  readonly period = 15;
+  readonly period = ECO_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'ecology',
-      ecologyWgsl + slopeWgsl,
+      fieldPass(ecologyWgsl, ECO_P.k) + slopeWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read', 17: 'tex' },
       { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire, 17: world.driftView },
     );
@@ -375,14 +381,14 @@ export class SedimentSystem implements SimSystem {
  */
 export class ClimateSystem implements SimSystem {
   readonly name = 'climate';
-  readonly period = 4;
+  readonly period = CLIMATE_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'climate',
-      climateWgsl,
+      fieldPass(climateWgsl, CLIMATE_P.k),
       { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
       { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.veg, 7: world.moisture, 8: world.fire, 9: world.lava },
       true,

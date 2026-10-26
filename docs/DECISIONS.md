@@ -46,6 +46,10 @@ flag on `perfopt` and A/B'd on the phone):
   contain floating pieces — the generator's job, not a wake.
 - **The phone:** "Deferred shading helped a lot on my phone." It stays the
   default.
+- **The phone, later:** "The current iteration of perf branch is crushing
+  it. About 16ms for p95!" — /perfopt/ with `lite=1&settle=0&inplace=1&
+  sleepmore=1` (the deferred terrain the default). Plan: these become the
+  phone tier's defaults when perfopt is merged.
 
 ## 2026-10-26 — round 82 (session 5, `places`) — where the phone's frame goes
 

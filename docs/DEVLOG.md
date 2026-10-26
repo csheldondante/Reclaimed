@@ -5328,3 +5328,20 @@ pieces. And the phone: "Deferred shading helped a lot" — it stays the default.
   within 1/N s of the player's movement. Storms need nothing: they are
   analytic on the GPU (stormDist) and a few dozen lines of CPU a frame.
 
+- `?fieldhz=N` (sim/flow.ts `fieldPeriod`, `fieldPass`): moisture,
+  contamination, climate and ecology run every max(their period,
+  TICK_HZ / N) ticks, each update the time since (their kernels' simStep,
+  perTick, relaxTick become fieldStep — × K, the ratio to their own period
+  — fieldChance, fieldRelax). Wilt and fire stay every tick (one-tick taps
+  and lightning). First try wrote K as `${k}.0` (7.5.0 when K wasn't whole:
+  the climate kernel didn't compile — and the frame went on, its command
+  buffers invalid, no fatal overlay: worth a look on its own). worldapitest
+  16/16 with fieldhz=1&simhz=30&windhz=15.
+- Riding (two runs each; renderprep 0.33–0.67 ms — the laptop's clocks all
+  over): the sim a frame, default 1.14/2.37 ms; settle=0&inplace=1&
+  sleepmore=1&simhz=30 0.90/1.06; + windhz=15&fieldhz=1 0.97/0.86. In
+  renderprep units a tick 6.08/7.92 → 6.75/5.55 → 5.15/4.91.
+- The phone (the user): "The current iteration of perf branch is crushing
+  it. About 16ms for p95!" with lite=1&settle=0&inplace=1&sleepmore=1 —
+  p95 from 80–100 ms (round 82) to 16, the frame rate's own.
+
