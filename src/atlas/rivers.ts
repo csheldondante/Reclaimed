@@ -216,7 +216,7 @@ export function findRivers(opt: {
       const dn = f[o + 6];
       const A = 2 * w * Math.max(0.3, (2 / 3) * dn - 0.3);
       const dist = next !== k ? Math.hypot(((i % n) - (d % n)) * cell, (Math.floor(i / n) - Math.floor(d / n)) * cell) || cell : cell;
-      const slope = Math.min(fall, 12) / dist;
+      const slope = Math.max(0, Math.min(fall, 12)) / dist;
       const v = Math.min(0.8, Math.min(0.45, Math.max(0.06, 0.5 * Math.sqrt(Q / A))) * (1 + Math.min(slope * 6, 1.5)));
       f[o + 7] = v;
       speeds.push(v);

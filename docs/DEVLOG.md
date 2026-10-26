@@ -5809,3 +5809,27 @@ Open: a woken reach above a fall still empties down it (the pipes have no weir: 
 the head difference, not the critical flow) — the pull holds it; the channel's deep middle shows its
 silt bed as a grey stripe through the water; the watershed's discharge doesn't yet reach the sea's
 mouths' look; `?settletol` reads `waterChange` per chunk by index, not moved on a slide.
+
+## Round 84 — rivers: the final measurements, a node's speed never negative (rivers)
+
+- rivers.ts: a node whose next lies higher (a river's mouth onto a lake above it) had a negative level
+  fall, so a negative rapids factor — the slowest speed came out −1.56 (riverStats.speed). The fall is
+  counted from 0. Default atlas: 55,146 nodes (15,441 lava), 478 falls; the water nodes' median
+  discharge 1.0 cells³ a step and speed 0.105 cells a step (max 0.8). The pipes' steady surface slope
+  for that discharge is 15× the level's own fall (median, riverStats.pipeSlope) — the atlas's rivers
+  are far steeper-fed than the pipes could carry at their slope, which is why the flow is drawn from
+  the table and the woken pipes need the pull.
+- The defaults with the table (riverpull 0.02, settletol 0.01, falls only the way the river runs), the
+  same river (3884,13288): woken round an event, the river's columns +1.5 % in 5 s (near: +2.7 %, the
+  pull refilling what the falls dropped); every chunk woken, −12.4 % (−28.9 % without the pull).
+  `?rivers=hold` for comparison: woken, 0.3 % — but it had flooded in the warmup, 4,936 wet columns off
+  the river (16,173 cells³ in the window to the table's 7,420).
+- Settling: with the pull, a woken stretch near a fall didn't come under 0.01 (or 0.05) a step in the
+  60 s cap — likely the woken pipes at a fall's lip and the held lip beside them trade water every step, and
+  the pull refills it; the cap froze it. Open: measure the settling by the chunk's net change (in − out)
+  rather than its busiest column, or a weir at a lip.
+- In the shots a grey stripe runs down the river's middle — its silt bed (forms.wgsl: silt under the middle
+  half), in `?rivers=sim` as well, where the water there looks drained; with the table it shows through
+  the water. Open: whether the water's surface is drawn over a steeply carved middle (the water corners'
+  SHEET_STEP). The river's width stepping at node boundaries is the generator's (riverAt's nearest-node
+  segments), in both.
