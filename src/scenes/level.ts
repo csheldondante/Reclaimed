@@ -1053,6 +1053,8 @@ export class LevelScene implements Scene {
         const lodQ = new URLSearchParams(location.search).get('lod');
         const lod = lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
         const far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, lod);
+        // (round 83: the rings draw past the window's edge — no wall down it)
+        if (far.lod) core.renderer.openEdges();
         this.far = far;
         const S = this.stream;
         core.renderer.extraDraws.push((pass, clear) => {

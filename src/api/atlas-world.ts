@@ -148,6 +148,8 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   });
   if (opts.far !== false) {
     const far = new FarLand(host.gpu.device, atlas, core.renderer.targets);
+    // (round 83: the rings draw past the window's edge — no wall down it)
+    if (far.lod) core.renderer.openEdges();
     core.renderer.extraDraws.push((pass, clear) => {
       far.org = [stream.origin[0], stream.origin[1] * ROW_H, stream.oz];
       far.win = [dims.w + 0.5, dims.h * ROW_H];

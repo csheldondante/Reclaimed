@@ -5446,3 +5446,14 @@ camera's cut (`cutOn`); the gem look and the sections are in meshShade, so
 the deferred resolve has them. Riding at the phone tier (driveprofile, 30 s,
 the desktop): p95 10.5 ms, worst 43, no hitch over 50 ms, the GPU 5.4 ms a
 frame (15.0 before the merge, rings and all).
+- The window's edge open (the user: "whenever I pan it draws the side of
+  the current cells even if they are going to be covered by neighbors").
+  Off the map the field was air, so the mesh closed the window's edge with
+  a wall down to the bedrock (scripts/edgeshot.mjs, the window held, the
+  camera by its near edge: a cliff of rock and caves' sections); after a
+  slide the chunks by the old edge kept it until they were made again.
+  With the atlas's rings drawn past the edge, the edge is open
+  (`Renderer.openEdges`, MR.ze.w; fieldmesh.wgsl colDist: an off-map column
+  is the edge column, going on) — no wall; the rings cover what's past it.
+  Without rings (`?lod=0`, the valley, the noise-streamed level) the wall
+  stays: an open edge there shows the ground's shell from under.

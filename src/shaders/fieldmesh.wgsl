@@ -61,9 +61,14 @@ const FAR: f32 = 3.0;
 const FILLET: f32 = 0.6;
 
 /** Vertical signed distance to column q's solid at height z (negative inside). */
-fn colDist(q: vec2<i32>, z: f32) -> f32 {
-  // (off the map is air: the map's edge closes in a wall)
-  if (!inMap(q)) { return FAR; }
+fn colDist(q0: vec2<i32>, z: f32) -> f32 {
+  // (off the map is air: the map's edge closes in a wall; round 83, a streamed window's edge is open — MR.ze.w
+  // 1: the edge column goes on past it, no wall)
+  var q = q0;
+  if (!inMap(q)) {
+    if (MR.ze.w < 0.5) { return FAR; }
+    q = clampCell(q);
+  }
   // (round 79: the bedrock's top is MR.zb.y — 0 in the window, the world's floor in the band under it)
   let bz = MR.zb.y;
   if (z < bz) { return max(z - bz, -FAR); }

@@ -1223,9 +1223,22 @@ export class Renderer {
    * Draw what lies outside the streamed window too (round 79: the atlas level; render/band.ts), up to the
    * world's height. The streamer packs it (Streamer → band.update).
    */
+  private edgesOpen = false;
+
+  /**
+   * (round 83) The window's edge open (FieldMesh.openEdges): no wall down it — for a streamed window with
+   * land drawn past its edge (the atlas's rings), which covers what the open edge shows under the ground.
+   */
+  openEdges(): void {
+    this.edgesOpen = true;
+    this.fieldMesh.openEdges();
+    this.band?.mesh.openEdges();
+  }
+
   enableBand(zSpan: number): OutsideBand | undefined {
     if (!this.fieldMesh.on || !this.meshGroupOf || this.band) return this.band;
     this.band = new OutsideBand(this.device, this.world, this.profiler, zSpan, Math.min(3, this.meshSlots ?? 3));
+    if (this.edgesOpen) this.band.mesh.openEdges();
     this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
     return this.band;
   }

@@ -234,11 +234,26 @@ export class FieldMesh {
     if (!this.on || !this.src) return;
     const f = new Float32Array(this.layout);
     f.set([-oz - 1, -oz, 1e30, 0], 16);
-    f.set([0, zMax, 1, 0], 20);
+    f.set([0, zMax, 1, this.openEdge], 20);
     this.device.queue.writeBuffer(this.region, 0, this.layout);
     this.zLo = -oz - 1;
     this.zHi = this.src.zSpan - oz;
     this.tops.fill(this.zHi);
+  }
+
+  private openEdge = 0;
+
+  /**
+   * (round 83, the user: "whenever I pan it draws the side of the current cells even if they are going to
+   * be covered by neighbors") A streamed window's edge is open: past it each edge column goes on as it is
+   * (fieldmesh.wgsl colDist, MR.ze.w), so the mesh makes no wall down the window's edge — a wall that stayed
+   * in the chunks by the old edge after a slide until they were made again. A level's own map keeps its wall.
+   */
+  openEdges(): void {
+    this.openEdge = 1;
+    if (!this.on) return;
+    new Float32Array(this.layout)[23] = 1;
+    this.device.queue.writeBuffer(this.region, 0, this.layout);
   }
 
   /** The vertices (meshdraw.wgsl binding 3). */
