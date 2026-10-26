@@ -35,13 +35,15 @@ async function main() {
   const host: Host = { gpu, profiler, quality, qualityName, params, canvas, ui };
   const audio = new Ambience();
   if (params.get('audio') === '1') new AudioDebug(ui, audio);
-  const perf = new PerfOverlay(ui, params.get('perf') === '1');
-  // (round 82: the GPU's timings and the draw counts are read back only while the overlay is open)
-  profiler.active = perf.visible;
+  const perf = new PerfOverlay(ui, params.get('perf') === '1' || params.get('perf') === 'lite');
+  // (round 82: the GPU's timings and the draw counts are read back only while the overlay is open; ?perf=lite
+  // opens it with neither — the frame times without the readbacks)
+  const lite = params.get('perf') === 'lite';
+  profiler.active = perf.visible && !lite;
   window.addEventListener('keydown', (e) => {
     if (e.key === '`') {
       perf.toggle();
-      profiler.active = perf.visible;
+      profiler.active = perf.visible && !lite;
     }
   });
 
