@@ -1396,12 +1396,6 @@ export class LevelScene implements Scene {
 
     // (a slide in progress: the sim waits for the regions coming in)
     void this.stream?.update();
-    // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
-    if (this.sleep) {
-      globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
-      globals.drowse = this.sleep.drowse;
-      globals.settle = this.sleep.settling.map((s) => s.rect);
-    }
     // (hybrid) what's voxels this frame: the events edit what they touch; the focus is the camera's target
     if (this.hybrid) {
       for (const e of globals.events) this.hybrid.edit(e.x, e.y, e.radius);
@@ -1409,8 +1403,16 @@ export class LevelScene implements Scene {
       if (want) {
         core.renderer.setMeshWanted(want);
         globals.hfield = { bits: this.hybrid.bits(), across: core.renderer.fieldMesh.chunkGrid[0], side: core.renderer.fieldMesh.chunkGrid[2] };
+        // (the sim only where the voxels are: nothing wakes a heightfield chunk — storms, land settling)
+        this.sleep?.only(this.hybrid.sleepFilter(dims.w / CHUNK, dims.h / CHUNK));
       }
       this.hybrid.count(core.renderer.fieldMesh.drawn);
+    }
+    // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
+    if (this.sleep) {
+      globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
+      globals.drowse = this.sleep.drowse;
+      globals.settle = this.sleep.settling.map((s) => s.rect);
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);

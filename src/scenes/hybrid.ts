@@ -196,6 +196,21 @@ export class HybridChunks {
     return this.hfBits;
   }
 
+  /**
+   * (Sleep.only) Per sim chunk (`side` columns across and rows down, cx × cy of them): 1 where its mesh chunk is
+   * voxels — the sim wakes only there.
+   */
+  sleepFilter(cx: number, cy: number, side = 16): Uint8Array {
+    const f = new Uint8Array(cx * cy);
+    for (let j = 0; j < cy; j++)
+      for (let i = 0; i < cx; i++) {
+        const mx = Math.min(this.nx - 1, Math.floor((i * side + side / 2) / this.side));
+        const my = Math.min(this.ny - 1, Math.floor((j * side + side / 2) / this.side));
+        f[j * cx + i] = this.want[my * this.nx + mx];
+      }
+    return f;
+  }
+
   /** each frame for the profile: the chunks wanted, the mesh chunks drawn */
   count(drawn: number): void {
     this.totals.frames++;

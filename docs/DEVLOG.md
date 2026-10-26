@@ -5994,6 +5994,11 @@ same build gave a draw of 1.9 and 4.0 ms in two runs):
 
 Missing on a heightfield chunk (BACKLOG P13): its plants (grass, trees), the
 sim's water moving (the rings' water is flat colour), the roads' paint, the
-look's detail (the mesh's material lookup, stains, wetness). The sim still
-runs where Sleep has it awake (storms, land settling) though nothing of it is
-drawn on a heightfield chunk.
+look's detail (the mesh's material lookup, stains, wetness).
+
+- **The sim only where the voxels are** (the next commit): Sleep.only — a
+  heightfield chunk never wakes (a storm raining on it, land coming in to
+  settle), since nothing of the sim there is drawn; a world event turns its
+  chunk to voxels first (the hybrid's choice now runs before Sleep's update,
+  the same frame), so what the player does there still wakes it. A storm
+  spawned by the first spawn: 20 sim chunks awake, none outside the voxels.

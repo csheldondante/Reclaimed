@@ -420,7 +420,8 @@ target as the columns do (meshdraw.wgsl's encoding, the top's or the rock's
 material), so powers land on heightfield chunks; along a voxel chunk's edge
 with a heightfield neighbour they draw a skirt (a 0.9-cell strip, far.wgsl
 `skirt`) over the hairline between the two. The window's layers stay the
-truth for every column (physics, queries, the sim where it's awake). The
+truth for every column (physics, queries, the sim where it's awake); the
+sim wakes only in voxel chunks (Sleep.only, HybridChunks.sleepFilter). The
 rings' look (fsLod `ringLook`): where the surface is steeper than ~60° (the
 vertex normal and the triangle's own) the region's rock (lod.wgsl writes
 the rock's albedo and material beside the top's) in beds (render.wgsl's
