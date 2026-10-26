@@ -20,7 +20,9 @@ const extra = opt('extra', '');
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${vw},${vh}`],
+  // (perfopt, --uncapped: no vsync, frames as fast as the GPU goes — it stays busy, so its clocks stay up and a
+  // pass's time is its work, not the power state's; the frame time is then the GPU's cost)
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${vw},${vh}`].concat(argv.includes('--uncapped') ? ['--disable-gpu-vsync', '--disable-frame-rate-limit'] : []),
   defaultViewport: { width: vw, height: vh, deviceScaleFactor: dpr },
   protocolTimeout: 600000,
 });
@@ -90,11 +92,14 @@ try {
       long: R.scene.longFrames,
       gpuLong: R.core.host.profiler.gpuLong,
       drawMax: +(R.core.host.profiler.maxMs.get('draw') ?? 0).toFixed(1),
+      // (perfopt: each pass's mean a frame over the ride, from the raw totals — the draw's with ?defer's G-buffer)
+      perFrame: Object.fromEntries(['draw', 'gbuffer', 'shadow', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
       meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };
   });
   console.log(JSON.stringify(r));
+  console.log(`SUMMARY p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} h50 ${r.hitches50} | per frame: ${Object.entries(r.perFrame).map(([k, v]) => `${k} ${v}`).join(', ')} | meshTotal ${Object.values(r.meshTotal).reduce((a, b) => a + b, 0).toFixed(0)} ms`);
 } finally {
   await browser.close();
 }

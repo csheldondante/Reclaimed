@@ -49,7 +49,7 @@ try {
   }
   const p = await browser.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
-  await p.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&q=high&speed=0&cutaway=1${level === 'atlas' ? `&at=${at}` : ''}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&q=high&speed=0&cutaway=1${level === 'atlas' ? `&at=${at}` : ''}${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.api, { timeout: 240000 });
   await sleep(20000);
   await p.evaluate(() => window.reclaimed.api.terrain.refresh());

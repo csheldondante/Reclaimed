@@ -14,7 +14,8 @@
 @group(0) @binding(5) var<storage, read> meshState: array<u32>;
 
 struct MOut {
-  @builtin(position) pos: vec4<f32>,
+  // (invariant: the depth prepass (?prepass=1) draws the same vertices and the look's pass tests equal against it)
+  @builtin(position) @invariant pos: vec4<f32>,
   @location(0) wpos: vec3<f32>,
   @location(1) nrm: vec3<f32>,
   @location(2) share: f32,
@@ -38,6 +39,25 @@ fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
   o.word = a.w;
   o.tint = 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02));
   return o;
+}
+
+/** (perfopt, ?prepass=1) The depth prepass: the mesh's depth only, so the look's pass shades each pixel once. */
+@fragment
+fn fsMeshZ(in: MOut) -> FOut {
+  var f: FOut;
+  f.color = vec4<f32>(0.0);
+  f.pick = vec2<u32>(0u);
+  return f;
+}
+
+/** the prepass with the cutaway on (its discard keeps the depth of what the cut opens) */
+@fragment
+fn fsMeshZCut(in: MOut) -> FOut {
+  if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  var f: FOut;
+  f.color = vec4<f32>(0.0);
+  f.pick = vec2<u32>(0u);
+  return f;
 }
 
 /** What a fragment of column q's surface is made of: x its material, y the
@@ -88,6 +108,71 @@ fn groundAlbedo(m: u32) -> vec3<f32> {
 @fragment
 fn fsMesh(in: MOut) -> FOut {
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  return meshShade(in);
+}
+
+// ---- (perfopt, ?defer=1) deferred: the mesh drawn to a G-buffer, its look shaded once a pixel ----------------
+// At the phone's resolution (low: half the CSS pixels, dpr 1) a cell is ~1.3 pixels, so the mesh's triangles
+// are about a pixel each: the GPU shades a 2 x 2 quad for every triangle touching a pixel (up to four times
+// the look a pixel), and everything drawn behind the front surface too. Here the mesh's pass writes only
+// what the look needs (where, the normal, the structure word and share, the tint: two uint targets) and a
+// full-screen pass shades each pixel once.
+struct GOut { @location(0) g0: vec4<u32>, @location(1) g1: vec2<u32> };
+@group(0) @binding(40) var gbuf0: texture_2d<u32>;
+@group(0) @binding(41) var gbuf1: texture_2d<u32>;
+
+/** g0: the point's xyz (bits), w the normal (octahedral, 15 bits a side) | the source (bit 30: 1 the window's,
+ *  0 the band's — MR.zb.w) | drawn (bit 31); g1: the structure word, share and tint / 2 (unorm16 each) */
+fn gPack(in: MOut) -> GOut {
+  let n = normalize(in.nrm);
+  var o = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+  if (n.z < 0.0) { o = (1.0 - abs(o.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), o >= vec2<f32>(0.0)); }
+  let q = vec2<u32>(round(clamp(o * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 32767.0));
+  var g: GOut;
+  g.g0 = vec4<u32>(bitcast<u32>(in.wpos.x), bitcast<u32>(in.wpos.y), bitcast<u32>(in.wpos.z), q.x | (q.y << 15u) | (u32(MR.zb.w) << 30u) | (1u << 31u));
+  g.g1 = vec2<u32>(in.word, pack2x16unorm(vec2<f32>(in.share, in.tint * 0.5)));
+  return g;
+}
+
+@fragment
+fn fsMeshG(in: MOut) -> GOut { return gPack(in); }
+
+@fragment
+fn fsMeshGCut(in: MOut) -> GOut {
+  if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  return gPack(in);
+}
+
+/** a triangle over the whole screen */
+@vertex
+fn vsFull(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+  let p = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+  return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+/** the look, a pixel at a time, from the G-buffer (drawn once for the window's source, once for the band's) */
+@fragment
+fn fsMeshResolve(@builtin(position) pos: vec4<f32>) -> FOut {
+  let px = vec2<i32>(pos.xy);
+  let a = textureLoad(gbuf0, px, 0);
+  if ((a.w >> 31u) == 0u || ((a.w >> 30u) & 1u) != u32(MR.zb.w)) { discard; }
+  let b = textureLoad(gbuf1, px, 0);
+  let o = vec2<f32>(f32(a.w & 32767u), f32((a.w >> 15u) & 32767u)) / 32767.0 * 2.0 - 1.0;
+  var n = vec3<f32>(o, 1.0 - abs(o.x) - abs(o.y));
+  if (n.z < 0.0) { n = vec3<f32>((1.0 - abs(n.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0)), n.z); }
+  let st = unpack2x16unorm(b.y);
+  var m: MOut;
+  m.pos = pos;
+  m.wpos = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z));
+  m.nrm = normalize(n);
+  m.share = st.x;
+  m.word = b.x;
+  m.tint = st.y * 2.0;
+  return meshShade(m);
+}
+
+/** The look of the mesh's surface at a point (the forward pass's and the deferred resolve's). */
+fn meshShade(in: MOut) -> FOut {
   // (round 82, V21: the inside of the ground, seen only where the cutaway opened it — a section through the
   // rock, dark and flat, not its far side lit as if it were outside. Its normal, not the winding: the mesh's
   // triangles face either way.)

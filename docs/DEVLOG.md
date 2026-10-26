@@ -4926,3 +4926,51 @@ worst case doesn't make sense".
   can catch the new land half-written (floorAt then wrong) — a game's
   character needs the mirror fresh after a slide (open).
 
+
+## Round 83 — the terrain's look shaded once a pixel: deferred (perfopt)
+
+Why: the user's first priority, the pixel shader. At low quality (render
+scale 0.5, dpr 1: 206 × 457 on a 412 × 915 phone) the camera's zoom is
+2.6 CSS pixels a cell, 1.3 rendered — a mesh triangle is under a pixel.
+A GPU shades 2 × 2 quads, so each triangle touching a pixel ran the whole
+look for up to four, and the surfaces behind the front one too (the round-82
+"2.4 ms fixed whatever the pixels": at the phone's size the quads, not the
+pixels, are the work). The fix is the old one for tiny triangles: deferred
+shading. A `gbuffer` pass draws the mesh into two uint targets (the point's
+xyz, its normal packed octahedral with the window/band bit, the structure
+word, share and tint: 24 bytes a pixel) and the depth; the world pass then
+shades each pixel once from them in a full-screen triangle (one per source:
+the window's and the band's layers are different buffers, and the fragment
+stage is at its eight storage buffers) and draws the rest over it. The look
+is the same function (`meshShade`) as the forward pass. On by default;
+`?defer=0` the forward draw (renderer.ts `Renderer.opts.defer`, switchable at
+run time for drawbench).
+
+- Tried first: a depth prepass (`?prepass=1`, the mesh's depth, then its
+  look tested less-equal): it only removes the surfaces behind, not the
+  quads — drawbench draw 3.55 → 3.24 ms (mesh's share 2.47 → 2.16). Kept as a
+  flag (it applies with `defer=0`).
+- drawbench (still frame at 12304,5457, phone viewport, low; interleaved,
+  4 rounds; the laptop's clocks drift with load, so also against renderprep
+  — the same work every frame — as a yardstick): draw 3.24 → 1.51 ms, the
+  terrain's own share (draw less the draw without the mesh) 2.28 → 0.55 ms
+  (−76 %); in renderprep units 8.8 → 4.1 (no mesh 2.5). A second, warm run:
+  draw/ref 11.3 → 5.4 (no mesh 3.3).
+- Riding (driveprofile, 25 s, phone viewport): the desktop holds 100 Hz
+  either way, and at a lighter load its GPU clocks down (every pass, even
+  renderprep, reads ~1.8× slower in the deferred rides), so the per-pass
+  times there don't compare; draw+gbuffer in renderprep units 10.2 → 7.2.
+  The phone's GPU is saturated (p50 30 ms), its clocks up: its frame times
+  decide.
+- The same picture: shots of the same frame default/deferred differ less
+  than two default shots a second apart (animated plants and water); the
+  cutaway's slice and its dark sections the same (scripts/cutshot.mjs
+  --extra, valley cave and cliff, mean 1.1/255); picking the same
+  (renderer.pick at two points).
+- Tooling: drawbench pieces `@name[=v]` set `Renderer.opts` at run time and
+  print renderprep (`ref`) and draw/ref; driveprofile prints a SUMMARY line
+  with each pass's mean a frame from the raw totals; `--uncapped` (no vsync)
+  was tried for pinned clocks: the timestamps then overlap and read 3×
+  inflated — not usable. cutshot takes --extra.
+
+streamtest 8/8, atlasworldtest passes.

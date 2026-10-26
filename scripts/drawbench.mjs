@@ -22,7 +22,9 @@ const pieces = opt('pieces', 'none,mesh,band,far,shadow,water,prisms,plants,tops
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${vw},${vh}`],
+  // (perfopt, --uncapped: no vsync, frames as fast as the GPU goes — it stays busy, so its clocks stay up and a
+  // pass's time is its work, not the power state's; the frame time is then the GPU's cost)
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${vw},${vh}`].concat(argv.includes('--uncapped') ? ['--disable-gpu-vsync', '--disable-frame-rate-limit'] : []),
   defaultViewport: { width: vw, height: vh, deviceScaleFactor: dpr },
   protocolTimeout: 600000,
 });
@@ -37,29 +39,43 @@ try {
   const r = await p.evaluate(
     async (pieces, frames, rounds) => {
       const SKIP = window.reclaimed.core.renderer.constructor.skip;
+      // (perfopt: a piece's part '@name' or '@name=value' sets Renderer.opts.name instead — a run-time switch)
+      const OPTS = window.reclaimed.core.renderer.constructor.opts;
+      const opts0 = { ...OPTS };
       const prof = window.reclaimed.core.host.profiler;
       const raf = () => new Promise((res) => requestAnimationFrame(res));
       const res = {};
       for (let k = 0; k < rounds; k++)
         for (const piece of pieces) {
           SKIP.clear();
-          if (piece !== 'none') for (const s of piece.split('+')) SKIP.add(s);
+          Object.assign(OPTS, opts0);
+          if (piece !== 'none')
+            for (const s of piece.split('+')) {
+              if (!s.startsWith('@')) SKIP.add(s);
+              else {
+                const [k, v] = s.slice(1).split('=');
+                OPTS[k] = v === undefined ? true : isNaN(Number(v)) ? v : Number(v);
+              }
+            }
           for (let f = 0; f < 10; f++) await raf();
           prof.resetTotals();
           for (let f = 0; f < frames; f++) await raf();
           const n = Math.max(prof.framesResolved, 1);
-          const o = (res[piece] ??= { draw: 0, shadow: 0, gpu: 0, n: 0 });
-          o.draw += (prof.totalMs.get('draw') ?? 0) / n;
+          const o = (res[piece] ??= { draw: 0, shadow: 0, gpu: 0, ref: 0, n: 0 });
+          o.draw += ((prof.totalMs.get('draw') ?? 0) + (prof.totalMs.get('gbuffer') ?? 0)) / n; // (perfopt: ?defer's G-buffer pass counted with the draw)
           o.shadow += (prof.totalMs.get('shadow') ?? 0) / n;
           o.gpu += prof.gpuTotalMs / n;
+          // (perfopt: renderprep, the same work whatever's drawn — a yardstick for the GPU's clocks)
+          o.ref += (prof.totalMs.get('renderprep') ?? 0) / n;
           o.n++;
           if (piece === 'none' && k === rounds - 1) o.top = [...prof.totalMs].map(([kk, v]) => [kk, v / n]).sort((x, y) => y[1] - x[1]).slice(0, 14).map(([kk, v]) => `${kk} ${v.toFixed(2)}`).join(', ');
         }
       SKIP.clear();
+      Object.assign(OPTS, opts0);
       const R = window.reclaimed.core.renderer;
       console.log('drawn', R.fieldMesh.drawn, 'band', R.band?.mesh.drawn, 'stats', JSON.stringify(R.fieldMesh.stats));
       const out = {};
-      for (const [k, o] of Object.entries(res)) out[k] = { top: o.top, draw: +(o.draw / o.n).toFixed(2), shadow: +(o.shadow / o.n).toFixed(2), gpu: +(o.gpu / o.n).toFixed(2) };
+      for (const [k, o] of Object.entries(res)) out[k] = { top: o.top, draw: +(o.draw / o.n).toFixed(2), shadow: +(o.shadow / o.n).toFixed(2), gpu: +(o.gpu / o.n).toFixed(2), ref: +(o.ref / o.n).toFixed(3) };
       return out;
     },
     pieces,
@@ -68,7 +84,7 @@ try {
   );
   const base = r.none;
   console.log('passes (still frame):', r.none.top);
-  for (const [k, o] of Object.entries(r)) console.log(k.padEnd(10), `draw ${o.draw.toFixed(2)}`, `shadow ${o.shadow.toFixed(2)}`, `gpu ${o.gpu.toFixed(2)}`, k === 'none' ? '' : `saves draw ${(base.draw - o.draw).toFixed(2)}, gpu ${(base.gpu - o.gpu).toFixed(2)}`);
+  for (const [k, o] of Object.entries(r)) console.log(k.padEnd(10), `draw ${o.draw.toFixed(2)}`, `shadow ${o.shadow.toFixed(2)}`, `gpu ${o.gpu.toFixed(2)}`, `ref ${o.ref.toFixed(3)}`, `draw/ref ${(o.draw / o.ref).toFixed(1)}`, k === 'none' ? '' : `saves draw ${(base.draw - o.draw).toFixed(2)}, gpu ${(base.gpu - o.gpu).toFixed(2)}`);
 } finally {
   await browser.close();
 }

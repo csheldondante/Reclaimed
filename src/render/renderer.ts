@@ -67,6 +67,14 @@ export const SKIP = new Set((new URLSearchParams(location.search).get('skip') ??
 export class Renderer {
   /** (round 82) the pieces left out, changed at run time by scripts/drawbench.mjs */
   static readonly skip = SKIP;
+  /** (perfopt) run-time switches for A/B (scripts/drawbench.mjs flips them): prepass — the terrain mesh's depth
+   *  first, then its look tested equal, so each pixel's look is shaded once (?prepass=1) */
+  static readonly opts = {
+    prepass: new URLSearchParams(location.search).get('prepass') === '1',
+    /** the mesh drawn to a G-buffer and its look shaded once a pixel in a full-screen pass (meshdraw.wgsl; on by
+     *  default, ?defer=0 the forward draw) */
+    defer: new URLSearchParams(location.search).get('defer') !== '0',
+  };
   private prep: ComputeKernel;
   private prepGroup: GPUBindGroup;
   private vegPrep: ComputeKernel;
@@ -99,6 +107,15 @@ export class Renderer {
   /** the field mesh (G13 h: ?mesh=1) */
   readonly fieldMesh: FieldMesh;
   private meshPipe?: GPURenderPipeline;
+  /** (perfopt, ?prepass=1) the mesh's depth-only pipelines (no cut, cut) and its look tested less-equal, made on first use */
+  private meshPre?: { z: GPURenderPipeline; zCut: GPURenderPipeline; look: GPURenderPipeline };
+  private meshPreMake?: () => { z: GPURenderPipeline; zCut: GPURenderPipeline; look: GPURenderPipeline };
+  /** (perfopt, ?defer=1) the G-buffer pipelines (no cut, cut), the resolve, its groups (window, band), made on first use */
+  private meshDef?: { g: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline; groups: GPUBindGroup[]; tex: GPUTexture[]; band?: OutsideBand };
+  private meshEntries!: (src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => GPUBindGroupEntry[];
+  private meshResources!: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
+  private meshDefMake?: () => { g: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline };
+  private meshResolveLayout?: GPUBindGroupLayout;
   /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
   readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
   /** what an extra draw renders into, and the camera it reads (render.wgsl Camera) */
@@ -400,8 +417,67 @@ export class Renderer {
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: depthStencil(true),
       });
+      const meshPl = device.createPipelineLayout({ bindGroupLayouts: [meshLayout] });
+      // (perfopt, ?defer=1: the G-buffer's pass and the resolve's layout — the mesh's plus the G-buffer)
+      const resolveLayout = makeLayout(
+        device,
+        'mesh-resolve',
+        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex' },
+        VF,
+        { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+      );
+      this.meshResolveLayout = resolveLayout;
+      this.meshDefMake = () => {
+        const g = (entryPoint: string) =>
+          device.createRenderPipeline({
+            label: `mesh-${entryPoint}`,
+            layout: meshPl,
+            vertex: { module: meshModule, entryPoint: 'vsMesh' },
+            fragment: { module: meshModule, entryPoint, targets: [{ format: 'rgba32uint' }, { format: 'rg32uint' }] },
+            primitive: { topology: 'triangle-list', cullMode: 'none' },
+            depthStencil: depthStencil(true),
+          });
+        return {
+          g: g('fsMeshG'),
+          gCut: g('fsMeshGCut'),
+          resolve: device.createRenderPipeline({
+            label: 'mesh-resolve',
+            layout: device.createPipelineLayout({ bindGroupLayouts: [resolveLayout] }),
+            vertex: { module: meshModule, entryPoint: 'vsFull' },
+            fragment: { module: meshModule, entryPoint: 'fsMeshResolve', targets: [{ format }, { format: PICK_FORMAT }] },
+            primitive: { topology: 'triangle-list' },
+            depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' },
+          }),
+        };
+      };
+      this.meshPreMake = () => {
+        const z = (entryPoint: string) =>
+          device.createRenderPipeline({
+            label: `mesh-${entryPoint}`,
+            layout: meshPl,
+            vertex: { module: meshModule, entryPoint: 'vsMesh' },
+            fragment: { module: meshModule, entryPoint, targets: [{ format, writeMask: 0 }, { format: PICK_FORMAT, writeMask: 0 }] },
+            primitive: { topology: 'triangle-list', cullMode: 'none' },
+            depthStencil: depthStencil(true),
+          });
+        return {
+          z: z('fsMeshZ'),
+          zCut: z('fsMeshZCut'),
+          look: device.createRenderPipeline({
+            label: 'mesh-look',
+            layout: meshPl,
+            vertex: { module: meshModule, entryPoint: 'vsMesh' },
+            fragment: { module: meshModule, entryPoint: 'fsMesh', targets: [{ format }, { format: PICK_FORMAT }] },
+            primitive: { topology: 'triangle-list', cullMode: 'none' },
+            depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'less-equal' },
+          }),
+        };
+      };
       // (round 79: or the band's — its mesh, chunk table and layers)
-      this.meshGroupOf = (cam, shadow, src) => makeBindGroup(device, 'mesh-draw', meshLayout, {
+      this.meshEntries = (src, cam = this.camBuf, shadow = this.shadowView) =>
+        Object.entries(this.meshResources(cam, shadow, src)).map(([b, r]) => ({ binding: Number(b), resource: r instanceof GPUBuffer ? { buffer: r } : r }));
+      this.meshGroupOf = (cam, shadow, src) => makeBindGroup(device, 'mesh-draw', meshLayout, this.meshResources(cam, shadow, src));
+      this.meshResources = (cam, shadow, src) => ({
         0: world.globals,
         1: src.chunks,
         2: world.materials,
@@ -590,15 +666,41 @@ export class Renderer {
     if (this.band && !SKIP.has('band') && turn === 1) this.band.mesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow')) this.encodeShadow(enc);
 
+    // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
+    const def = this.meshPipe && !SKIP.has('mesh') && Renderer.opts.defer ? this.encodeGBuffer(enc, cam) : undefined;
     const pass = enc.beginRenderPass({
       label: 'world',
       colorAttachments: [
         { view: target, clearValue: { r: opts.clear[0], g: opts.clear[1], b: opts.clear[2], a: 1 }, loadOp: 'clear', storeOp: 'store' },
         { view: this.pickTex!.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
       ],
-      depthStencilAttachment: { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      depthStencilAttachment: def
+        ? { view: this.depth!.createView(), depthLoadOp: 'load', depthStoreOp: 'store' }
+        : { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
       timestampWrites: this.profiler.timestamps('draw'),
     });
+    if (def) {
+      pass.setPipeline(def.resolve);
+      pass.setBindGroup(0, def.groups[0]);
+      pass.draw(3);
+      if (this.band && !SKIP.has('band')) {
+        pass.setBindGroup(0, def.groups[1]);
+        pass.draw(3);
+      }
+    }
+    // (perfopt, ?prepass=1: the terrain mesh's depth first — its look is then shaded once a pixel, not for
+    // every surface behind it drawn before the one in front)
+    const pre = !def && this.meshPipe && !SKIP.has('mesh') && Renderer.opts.prepass ? (this.meshPre ??= this.meshPreMake!()) : undefined;
+    if (pre) {
+      const f = cam.focus;
+      pass.setPipeline(f && f[3] !== 0 ? pre.zCut : pre.z);
+      pass.setBindGroup(0, this.meshGroup!);
+      this.fieldMesh.draw(pass);
+      if (this.band && !SKIP.has('band')) {
+        pass.setBindGroup(0, this.bandGroup!);
+        this.band.mesh.draw(pass);
+      }
+    }
     pass.setPipeline(this.opaquePipe);
     pass.setBindGroup(0, this.opaqueGroup);
     if (!SKIP.has('opaque')) pass.drawIndirect(this.indirect, 0);
@@ -611,8 +713,8 @@ export class Renderer {
       pass.drawIndirect(s.indirect, 0);
       this.profiler.draws++;
     }
-    if (this.meshPipe && !SKIP.has('mesh')) {
-      pass.setPipeline(this.meshPipe);
+    if (this.meshPipe && !SKIP.has('mesh') && !def) {
+      pass.setPipeline(pre ? pre.look : this.meshPipe);
       pass.setBindGroup(0, this.meshGroup!);
       this.fieldMesh.draw(pass);
       this.profiler.draws++;
@@ -678,6 +780,64 @@ export class Renderer {
       this.countBusy = true;
       this.countNeeded = READBACK && this.profiler.active;
     }
+  }
+
+  /**
+   * (perfopt, ?defer=1) The terrain mesh into the G-buffer (meshdraw.wgsl gPack) and the depth: what the
+   * resolve shades a pixel at a time. The textures follow the render target's size.
+   */
+  private encodeGBuffer(enc: GPUCommandEncoder, cam: Camera): { resolve: GPURenderPipeline; groups: GPUBindGroup[] } {
+    const depth = this.depth!;
+    if (!this.meshDef || this.meshDef.tex[0].width !== depth.width || this.meshDef.tex[0].height !== depth.height) {
+      const p = this.meshDef ?? { ...this.meshDefMake!(), groups: [], tex: [] };
+      for (const t of p.tex) t.destroy();
+      const usage = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+      p.tex = [
+        this.device.createTexture({ label: 'gbuf0', size: [depth.width, depth.height], format: 'rgba32uint', usage }),
+        this.device.createTexture({ label: 'gbuf1', size: [depth.width, depth.height], format: 'rg32uint', usage }),
+      ];
+      this.profiler.trackMemory('gbuffer', depth.width * depth.height * 24);
+      p.groups = [];
+      this.meshDef = p;
+    }
+    const d = this.meshDef;
+    // (the groups: the band's comes and goes — made again when it's missing)
+    if (!d.groups.length || d.band !== this.band) {
+      d.band = this.band;
+      const g0 = d.tex[0].createView();
+      const g1 = d.tex[1].createView();
+      const mk = (src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) =>
+        this.device.createBindGroup({
+          label: 'mesh-resolve',
+          layout: this.meshResolveLayout!,
+          entries: [
+            ...this.meshEntries(src),
+            { binding: 40, resource: g0 },
+            { binding: 41, resource: g1 },
+          ],
+        });
+      d.groups = [mk({ mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers })];
+      if (this.band) d.groups.push(mk({ mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers }));
+    }
+    const pass = enc.beginRenderPass({
+      label: 'gbuffer',
+      colorAttachments: [
+        { view: d.tex[0].createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
+        { view: d.tex[1].createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store' },
+      ],
+      depthStencilAttachment: { view: depth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      timestampWrites: this.profiler.timestamps('gbuffer'),
+    });
+    const f = cam.focus;
+    pass.setPipeline(f && f[3] !== 0 ? d.gCut : d.g);
+    pass.setBindGroup(0, this.meshGroup!);
+    this.fieldMesh.draw(pass);
+    if (this.band && !SKIP.has('band')) {
+      pass.setBindGroup(0, this.bandGroup!);
+      this.band.mesh.draw(pass);
+    }
+    pass.end();
+    return d;
   }
 
   /**

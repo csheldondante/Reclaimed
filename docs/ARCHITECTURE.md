@@ -392,6 +392,19 @@ layer, blended with the one below when thin), so the look still comes from
 the intervals; plants, stains and wetness are blended over the three
 nearest cells; rock gets facets and rubble, trash and ruins chips (the
 detail layer).
+The mesh's look is shaded deferred (perfopt; renderer.ts `encodeGBuffer`,
+meshdraw.wgsl `gPack`, `fsMeshResolve`; `?defer=0` the forward draw): a
+`gbuffer` pass draws the mesh (window and band) into two uint targets —
+the point (xyz bits) and its octahedral normal with the source bit (1 the
+window's, `MR.zb.w`) and a drawn bit; the structure word and share and the
+tint — and the depth; the world pass loads that depth and first draws a
+full-screen triangle per source (its own bind group: that source's chunk
+table, layers and region) that shades each pixel of its source once
+(`meshShade`, the same function the forward `fsMesh` calls), writing the
+colour and the pick; the rest draws over it as before. With the cutaway on
+the G-buffer pass's pipeline discards (`fsMeshGCut`). Why: at the phone's
+resolution a mesh triangle is about a pixel, and the forward draw shaded
+2 × 2 quads per triangle and every surface behind the front one.
 The terrain field is looked up 0.45 cells of 3D noise to the side
 (`terrainWarp`, meshregion.wgsl), so cliffs bulge and recede; the draw
 shader looks materials up at the same place. Only chunks near the view
