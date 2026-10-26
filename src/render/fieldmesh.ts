@@ -325,7 +325,8 @@ export class FieldMesh {
       pass.end();
     });
     this.profiler.dispatches += 5;
-    if (READBACK && !this.statBusy && this.statEvery++ % 10 === 0) {
+    // (round 82: every 60th time, not 10th — the chunks' tops for the culling move slowly)
+    if (READBACK && !this.statBusy && this.statEvery++ % 60 === 0) {
       enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
       this.statBusy = true;
       this.statNeeded = true;

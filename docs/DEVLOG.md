@@ -4861,4 +4861,18 @@ worst case doesn't make sense".
   turns all three off (no GPU timings then; the culling uses the window's
   top for every chunk). With `skip=meshprep,band` (no rebuilds) and
   `drive=0` (no new land), the phone tells them apart.
+- The phone: `skip=meshprep,band` (no rebuilds) took the spikes down
+  ~40 %, the most of the four; `readback=0` couldn't be told (the world's
+  stats the overlay still showed are the sim's own readback — the progress
+  bar's, on under skip=render too, so not the spikes). The user's order:
+  the pixel shader, the mesh simplified or spread over frames, the
+  readbacks off or async.
+- Rebuilds spread: with a band, the window's mesh and the band's look for
+  changes and rebuild on alternate frames (a frame never does both); low's
+  meshSlots 3 → 1 (the band's slots the quality's too, at most 3). Desktop
+  ride, each rebuild pass's worst frame: window sample 0.58 → 0.27 ms,
+  band sample 13 → 0.7; the change passes' totals ~halved.
+- Readbacks: the GPU timings and the draw counts only while the perf
+  overlay is open (Profiler.active; the scripts open it with perf=1); the
+  mesh's chunk records every 60th frame, not 10th.
 

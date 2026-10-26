@@ -14,7 +14,7 @@ import { PerfOverlay } from './ui/perf-overlay';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
-  low: { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2, particles: 16384, agentSweeps: 2, shadowSize: 1024, meshSlots: 3 },
+  low: { renderScale: 0.5, maxDpr: 1, rain: 1500, maxTicksPerFrame: 2, particles: 16384, agentSweeps: 2, shadowSize: 1024, meshSlots: 1 },
   medium: { renderScale: 0.75, maxDpr: 1.5, rain: 3000, maxTicksPerFrame: 3, particles: 32768, agentSweeps: 4, meshSlots: 5 },
   high: { renderScale: 1, maxDpr: 2, rain: 6000, maxTicksPerFrame: 4, particles: 65536, agentSweeps: 8 },
 };
@@ -36,8 +36,13 @@ async function main() {
   const audio = new Ambience();
   if (params.get('audio') === '1') new AudioDebug(ui, audio);
   const perf = new PerfOverlay(ui, params.get('perf') === '1');
+  // (round 82: the GPU's timings and the draw counts are read back only while the overlay is open)
+  profiler.active = perf.visible;
   window.addEventListener('keydown', (e) => {
-    if (e.key === '`') perf.toggle();
+    if (e.key === '`') {
+      perf.toggle();
+      profiler.active = perf.visible;
+    }
   });
 
   let scene: Scene | null = null;

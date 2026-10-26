@@ -23,7 +23,7 @@ const browser = await puppeteer.launch({
 try {
   const p = await browser.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
-  await p.goto(`${url}/?skipmenu=1&level=valley&tutorial=0&q=low${extra}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=valley&tutorial=0&q=low&perf=1${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.core, { timeout: 240000 });
   const r = await p.evaluate(
     async (speed, frames, mods) => {

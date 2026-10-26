@@ -30,7 +30,7 @@ try {
   const p = await browser.newPage();
   p.on('console', (m) => m.text().startsWith('drawn') && console.log(m.text()));
   p.on('pageerror', (e) => console.log('pageerror', e.message));
-  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=${q}&at=${at}&speed=0${opt('extra', '')}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=${q}&at=${at}&speed=0&perf=1${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   if (zoom) await p.evaluate((z) => (window.reclaimed.camera.zoom = z), Number(zoom));
   await new Promise((r) => setTimeout(r, 8000));

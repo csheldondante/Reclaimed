@@ -35,6 +35,8 @@ export class OutsideBand {
     profiler: Profiler,
     /** the world's height (the atlas's zTop) */
     zSpan: number,
+    /** chunks rebuilt a frame (the quality's meshSlots, at most 3) */
+    slots = 3,
   ) {
     const { w, h } = world;
     const cx = w / CHUNK;
@@ -48,7 +50,7 @@ export class OutsideBand {
     // (no structures out there: an empty frame table)
     const frames = world.buf('band frames', world.strFrames.size, S);
     const vox = world.buf('band vox', 16, S);
-    this.mesh = new FieldMesh(device, world, profiler, true, 2, { name: 'band', chunks: this.chunks, layers: this.layers, frames, vox, zSpan, slots: 3 });
+    this.mesh = new FieldMesh(device, world, profiler, true, 2, { name: 'band', chunks: this.chunks, layers: this.layers, frames, vox, zSpan, slots });
   }
 
   /** What's outside every column (world z, Streamer.outside) packed in window z at oz. */

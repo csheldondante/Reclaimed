@@ -8,6 +8,8 @@ const RING = 3;
 
 export class Profiler {
   readonly enabled: boolean;
+  /** (round 82) timing taken only while someone looks (the perf overlay open, or a script): a readback every frame */
+  active = true;
   private querySet?: GPUQuerySet;
   private resolveBuf?: GPUBuffer;
   private staging: { buf: GPUBuffer; busy: boolean }[] = [];
@@ -54,7 +56,7 @@ export class Profiler {
 
   /** Timestamp writes for a pass, or undefined when unsupported / out of slots. */
   timestamps(name: string): GPUComputePassTimestampWrites | undefined {
-    if (!this.querySet || this.next + 2 > MAX_QUERIES) return undefined;
+    if (!this.querySet || !this.active || this.next + 2 > MAX_QUERIES) return undefined;
     const i = this.next;
     this.next += 2;
     this.names.push(name);

@@ -146,6 +146,8 @@ export class Renderer {
   readonly opaqueCapacity: number;
   /** Last-known instance counts (async readback, for the perf overlay). */
   instanceCounts = { opaque: 0, water: 0, tops: 0, prisms: 0, plants: 0 };
+  /** frames, for the window's and the band's mesh turns (round 82) */
+  private meshTurn = 0;
   private countBuf: GPUBuffer;
   private countBusy = false;
   private countNeeded = false;
@@ -162,7 +164,7 @@ export class Renderer {
     /** the field mesh's room a chunk, times its default */
     meshRoom = 1,
     /** field mesh chunks rebuilt a frame (quality `meshSlots`; round 81) */
-    meshSlots?: number,
+    private meshSlots?: number,
   ) {
     const N = world.cells;
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
@@ -581,8 +583,11 @@ export class Renderer {
       pass.end();
       this.profiler.dispatches += 2;
     }
-    if (!SKIP.has('meshprep')) this.fieldMesh.encode(enc, cam);
-    if (this.band && !SKIP.has('band')) this.band.mesh.encode(enc, cam);
+    // (round 82: with a band, the window's mesh and the band's look for changes and rebuild on alternate frames —
+    // a frame never rebuilds both: on the phone the rebuilds were the biggest share of the p95 spikes)
+    const turn = this.meshTurn++ & 1;
+    if (!SKIP.has('meshprep') && (!this.band || turn === 0)) this.fieldMesh.encode(enc, cam);
+    if (this.band && !SKIP.has('band') && turn === 1) this.band.mesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow')) this.encodeShadow(enc);
 
     const pass = enc.beginRenderPass({
@@ -671,7 +676,7 @@ export class Renderer {
     if (!this.countBusy) {
       enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 64);
       this.countBusy = true;
-      this.countNeeded = READBACK;
+      this.countNeeded = READBACK && this.profiler.active;
     }
   }
 
@@ -775,7 +780,7 @@ export class Renderer {
    */
   enableBand(zSpan: number): OutsideBand | undefined {
     if (!this.fieldMesh.on || !this.meshGroupOf || this.band) return this.band;
-    this.band = new OutsideBand(this.device, this.world, this.profiler, zSpan);
+    this.band = new OutsideBand(this.device, this.world, this.profiler, zSpan, Math.min(3, this.meshSlots ?? 3));
     this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
     return this.band;
   }
