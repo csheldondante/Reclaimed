@@ -1,14 +1,15 @@
 // Explicit bind-group-layout helpers. We use explicit layouts (not 'auto') so a
 // shader can include shared WGSL snippets that declare bindings it does not use.
 
-/** 'tex' = sampled float texture (textureLoad), 'stex' = write-only rgba32float storage texture,
+/** 'tex' = sampled float texture (textureLoad), 'utex' = uint texture (textureLoad), 'stex' = write-only rgba32float storage texture,
  *  'depth' = depth texture, 'csampler' = comparison sampler (shadow lookups) */
-export type BindKind = 'uniform' | 'read' | 'rw' | 'tex' | 'stex' | 'depth' | 'csampler';
+export type BindKind = 'uniform' | 'read' | 'rw' | 'tex' | 'utex' | 'stex' | 'depth' | 'csampler';
 export type BindSpec = Record<number, BindKind>;
 
 function layoutEntries(spec: BindSpec, visibility: GPUShaderStageFlags): GPUBindGroupLayoutEntry[] {
   return Object.entries(spec).map(([b, kind]): GPUBindGroupLayoutEntry => {
     if (kind === 'tex') return { binding: Number(b), visibility, texture: { sampleType: 'unfilterable-float' } };
+    if (kind === 'utex') return { binding: Number(b), visibility, texture: { sampleType: 'uint' } };
     if (kind === 'stex') return { binding: Number(b), visibility, storageTexture: { access: 'write-only', format: 'rgba32float' } };
     if (kind === 'depth') return { binding: Number(b), visibility, texture: { sampleType: 'depth' } };
     if (kind === 'csampler') return { binding: Number(b), visibility, sampler: { type: 'comparison' } };

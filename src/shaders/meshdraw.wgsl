@@ -14,7 +14,8 @@
 @group(0) @binding(5) var<storage, read> meshState: array<u32>;
 
 struct MOut {
-  @builtin(position) pos: vec4<f32>,
+  // (invariant: the depth prepass (?prepass=1) draws the same vertices and the look's pass tests equal against it)
+  @builtin(position) @invariant pos: vec4<f32>,
   @location(0) wpos: vec3<f32>,
   @location(1) nrm: vec3<f32>,
   @location(2) share: f32,
@@ -36,8 +37,47 @@ fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
   o.nrm = vec3<f32>(bitcast<f32>(b.x), bitcast<f32>(b.y), bitcast<f32>(b.z));
   o.share = bitcast<f32>(b.w);
   o.word = a.w;
-  o.tint = 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02));
+  o.tint = meshTint(p);
   return o;
+}
+
+/** large-scale ground patchiness at p (the forward pass's per vertex; the deferred resolve's per pixel) */
+fn meshTint(p: vec3<f32>) -> f32 { return 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + vec2<f32>(p.z * 0.02)); }
+
+/** (perfopt) the mesh's vertex without the tint: the shadow pass's and the G-buffer's (the resolve takes the tint a pixel) */
+@vertex
+fn vsMeshG(@builtin(vertex_index) vi: u32) -> MOut {
+  let a = instances[vi * 2u];
+  let b = instances[vi * 2u + 1u];
+  let ob = offBase() + (vi / MR.k.z) * 4u;
+  let p = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z)) + vec3<f32>(bitcast<f32>(meshState[ob]), bitcast<f32>(meshState[ob + 1u]), bitcast<f32>(meshState[ob + 2u]));
+  var o: MOut;
+  o.pos = CAM.viewProj * vec4<f32>(p, 1.0);
+  o.wpos = p;
+  o.nrm = vec3<f32>(bitcast<f32>(b.x), bitcast<f32>(b.y), bitcast<f32>(b.z));
+  o.share = bitcast<f32>(b.w);
+  o.word = a.w;
+  o.tint = 1.0;
+  return o;
+}
+
+/** (perfopt, ?prepass=1) The depth prepass: the mesh's depth only, so the look's pass shades each pixel once. */
+@fragment
+fn fsMeshZ(in: MOut) -> FOut {
+  var f: FOut;
+  f.color = vec4<f32>(0.0);
+  f.pick = vec2<u32>(0u);
+  return f;
+}
+
+/** the prepass with the cutaway on (its discard keeps the depth of what the cut opens) */
+@fragment
+fn fsMeshZCut(in: MOut) -> FOut {
+  if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  var f: FOut;
+  f.color = vec4<f32>(0.0);
+  f.pick = vec2<u32>(0u);
+  return f;
 }
 
 /** What a fragment of column q's surface is made of: x its material, y the
@@ -88,6 +128,105 @@ fn groundAlbedo(m: u32) -> vec3<f32> {
 @fragment
 fn fsMesh(in: MOut) -> FOut {
   if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  return meshShade(in);
+}
+
+// ---- (perfopt, ?defer=1) deferred: the mesh drawn to a G-buffer, its look shaded once a pixel ----------------
+// At the phone's resolution (low: half the CSS pixels, dpr 1) a cell is ~1.3 pixels, so the mesh's triangles
+// are about a pixel each: the GPU shades a 2 x 2 quad for every triangle touching a pixel (up to four times
+// the look a pixel), and everything drawn behind the front surface too. Here the mesh's pass writes only
+// what the look needs (where, the normal, the structure word and share, the tint: two uint targets) and a
+// full-screen pass shades each pixel once.
+struct GOut { @location(0) g0: vec4<u32>, @location(1) g1: vec2<u32> };
+@group(0) @binding(40) var gbuf0: texture_2d<u32>;
+@group(0) @binding(41) var gbuf1: texture_2d<u32>;
+
+/** g0: the point's xyz (bits), w the normal (octahedral, 15 bits a side) | the source (bit 30: 1 the window's,
+ *  0 the band's — MR.zb.w) | drawn (bit 31); g1: the structure word, the share (unorm16; the tint is the resolve's) */
+fn gPack(in: MOut) -> GOut {
+  let n = normalize(in.nrm);
+  var o = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
+  if (n.z < 0.0) { o = (1.0 - abs(o.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), o >= vec2<f32>(0.0)); }
+  let q = vec2<u32>(round(clamp(o * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 32767.0));
+  var g: GOut;
+  g.g0 = vec4<u32>(bitcast<u32>(in.wpos.x), bitcast<u32>(in.wpos.y), bitcast<u32>(in.wpos.z), q.x | (q.y << 15u) | (u32(MR.zb.w) << 30u) | (1u << 31u));
+  g.g1 = vec2<u32>(in.word, pack2x16unorm(vec2<f32>(in.share, 0.0)));
+  return g;
+}
+
+@fragment
+fn fsMeshG(in: MOut) -> GOut { return gPack(in); }
+
+@fragment
+fn fsMeshGCut(in: MOut) -> GOut {
+  if (cutAway(in.wpos, in.pos.xy)) { discard; }
+  return gPack(in);
+}
+
+/** a triangle over the whole screen */
+@vertex
+fn vsFull(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
+  let p = vec2<f32>(f32((vi << 1u) & 2u), f32(vi & 2u));
+  return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+
+/** the look, a pixel at a time, from the G-buffer (drawn once for the window's source, once for the band's) */
+@fragment
+fn fsMeshResolve(@builtin(position) pos: vec4<f32>) -> FOut { return resolveAt(pos); }
+
+/** (perfopt, ?tcache=N) the resolve into the terrain's cached layer: its depth too (a colour target: the
+ *  composite reads it back and writes it as the frame's depth, moved by the camera's since) */
+struct COut { @location(0) color: vec4<f32>, @location(1) pick: vec2<u32>, @location(2) depth: f32 };
+@fragment
+fn fsMeshResolveC(@builtin(position) pos: vec4<f32>) -> COut {
+  let f = resolveAt(pos);
+  let a = textureLoad(gbuf0, vec2<i32>(pos.xy), 0);
+  let p = CAM.viewProj * vec4<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z), 1.0);
+  var o: COut;
+  o.color = f.color;
+  o.pick = f.pick;
+  o.depth = p.z / p.w;
+  return o;
+}
+
+fn resolveAt(pos: vec4<f32>) -> FOut {
+  let px = vec2<i32>(pos.xy);
+  let a = textureLoad(gbuf0, px, 0);
+  if ((a.w >> 31u) == 0u || ((a.w >> 30u) & 1u) != u32(MR.zb.w)) { discard; }
+  let b = textureLoad(gbuf1, px, 0);
+  let o = vec2<f32>(f32(a.w & 32767u), f32((a.w >> 15u) & 32767u)) / 32767.0 * 2.0 - 1.0;
+  var n = vec3<f32>(o, 1.0 - abs(o.x) - abs(o.y));
+  if (n.z < 0.0) { n = vec3<f32>((1.0 - abs(n.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0)), n.z); }
+  let st = unpack2x16unorm(b.y);
+  var m: MOut;
+  m.pos = pos;
+  m.wpos = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z));
+  m.nrm = normalize(n);
+  m.share = st.x;
+  m.word = b.x;
+  m.tint = meshTint(m.wpos);
+  return meshShade(m);
+}
+
+/** (perfopt, ?nodetail=: the look's pieces left out, Camera.eye.w bits 2+ — renderer.ts DETAIL_BITS) */
+fn noDetail(bit: u32) -> bool { return ((u32(CAM.eye.w) >> 2u) & bit) != 0u; }
+const ND_STRATA: u32 = 1u;
+const ND_WATER: u32 = 2u;
+const ND_PLANTS: u32 = 4u;
+const ND_STAINS: u32 = 8u;
+const ND_STRUCT: u32 = 16u;
+const ND_WARP: u32 = 64u;
+const ND_FIELDS: u32 = 128u;
+const ND_SPECKS: u32 = 256u;
+
+/** (perfopt, ?nodetail=fields) the cell's own fields, not blended over three */
+fn cellFields1(xy: vec2<f32>) -> vec4<f32> {
+  let j = colIdxI(clampCell(cellAt(xy)));
+  return vec4<f32>(contam[j].x, veg[j], fields[j].y, wilt[j].y);
+}
+
+/** The look of the mesh's surface at a point (the forward pass's and the deferred resolve's). */
+fn meshShade(in: MOut) -> FOut {
   // (round 82, V21: the inside of the ground, seen only where the cutaway opened it — a section through the
   // rock, dark and flat, not its far side lit as if it were outside. Its normal, not the winding: the mesh's
   // triangles face either way.)
@@ -112,14 +251,17 @@ fn fsMesh(in: MOut) -> FOut {
   // between cells of different ground come out ragged, not hexagons)
   let jit = vec3<i32>(floor(in.wpos * 4.0 - nrm * 0.02));
   let jo = vec2<f32>(randv(jit + vec3<i32>(41, 0, 0)), randv(jit + vec3<i32>(0, 43, 0))) - 0.5;
-  let cell = clampCell(cellAt(terrainWarp(ip) + jo * 0.6));
+  // (?nodetail=warp: looked up where it is, not warped and jittered — the borders hexagons again)
+  var cell: vec2<i32>;
+  if (noDetail(ND_WARP)) { cell = clampCell(cellAt(ip.xy)); } else { cell = clampCell(cellAt(terrainWarp(ip) + jo * 0.6)); }
   let ci = colIdxI(cell);
   let up = nrm.z > 0.55;
   let lk = meshLook(cell, ip.z, up);
   var mat = lk.mat;
   // the cells' own fields blended over the three nearest (no hexagons in
   // the plants or stains): contamination, plants, wetness, withering
-  let cf = cellFields(in.wpos.xy);
+  var cf: vec4<f32>;
+  if (noDetail(ND_FIELDS)) { cf = cellFields1(in.wpos.xy); } else { cf = cellFields(in.wpos.xy); }
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   // (?look=lookup: the interval's material and the lighting, none of the detail)
@@ -139,9 +281,9 @@ fn fsMesh(in: MOut) -> FOut {
   let n2 = randv(sub + vec3<i32>(71, 13, 5));
   // (round 79: on a steep face less of it — the beds read as sheets, not a mosaic of cells)
   let steep = 1.0 - smoothstep(0.3, 0.7, abs(nrm.z));
-  alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1);
+  if (!noDetail(ND_SPECKS)) { alb *= 1.0 + mix(1.0, 0.35, steep) * (0.12 * randv(vc) + 0.08 * n1 - 0.1); }
   alb *= in.tint;
-  if (mat >= 1u && mat <= 4u) {
+  if (mat >= 1u && mat <= 4u && !noDetail(ND_STRATA)) {
     // (round 79: strata — render.wgsl)
     let band = strata(in.wpos);
     if (mat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
@@ -149,7 +291,7 @@ fn fsMesh(in: MOut) -> FOut {
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
-  if (mat == 23u || mat == 30u) { alb *= strataTint(mat, strata(in.wpos)); }
+  if ((mat == 23u || mat == 30u) && !noDetail(ND_STRATA)) { alb *= strataTint(mat, strata(in.wpos)); }
   if (mat == MAT_LEAFLIT) {
     // fallen leaves (round 51), as fsBox
     var tc = autumnLeaf(select(0u, 2u, n2 > 0.82), fract(n2 * 3.7));
@@ -168,7 +310,7 @@ fn fsMesh(in: MOut) -> FOut {
     alb = toLinear(tc) * (0.75 + 0.35 * n1);
     if (mat == MAT_LITTER && n1 < 0.5) { alb = toLinear(vec3<f32>(0.45, 0.36, 0.27)) * (0.85 + 0.3 * n2); }
   }
-  if (isTop) {
+  if (isTop && !noDetail(ND_STAINS)) {
     let c = cf.x;
     let stain = smoothstep(0.12, 1.1, c);
     let oil = mix(vec3<f32>(0.10, 0.09, 0.06), vec3<f32>(0.42, 0.40, 0.12), smoothstep(0.55, 0.95, n2));
@@ -178,7 +320,7 @@ fn fsMesh(in: MOut) -> FOut {
   alb *= 1.0 - MATS[mat].eco.w * 0.5 * smoothstep(0.15, 0.9, cf.z);
   // plant cover on tops, a few tufts of it up the slopes
   // (plants on a face only near its top: a cut face isn't green all the way down — round 79)
-  let v = select(cf.y, 0.0, !isTop && in.wpos.z < lk.top - 2.5);
+  let v = select(cf.y, 0.0, (!isTop && in.wpos.z < lk.top - 2.5) || noDetail(ND_PLANTS));
   if (v > 0.0) {
     let cover = select(smoothstep(0.8, 3.0, v) * 0.55 * (0.5 + 0.5 * n2), smoothstep(0.0, 1.2, v), isTop);
     if (n1 < cover) {
@@ -187,11 +329,19 @@ fn fsMesh(in: MOut) -> FOut {
       // (it turns with the season, as fsBox)
       g = mix(g, seasonGrass(g, fbm2(wo(in.wpos.xy) * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, v));
       alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
+      // (perfopt, ?tufts=0: no tuft boxes — their look painted here instead: on soil-like ground, a quarter cell
+      // in shade here and there, as many as vegplan.wgsl would stand there)
+      if (!TUFTS_DRAWN && isTop && MATS[lk.mat].eco.x >= 2.0) {
+        let tr = randv(vec3<i32>(vec2<i32>(floor(in.wpos.xy * 4.0)), 911));
+        // (a tuft's shaded side, or its lit top)
+        let d = smoothstep(1.2, 2.5, v);
+        if (tr < d * 0.32) { alb *= 0.5; } else if (tr < d * 0.44) { alb *= 1.25; }
+      }
     }
   }
   // a structure's face: its moss, and the sand lying against it
   let sw = smoothstep(0.35, 0.65, in.share);
-  if (sw > 0.0 && in.word != 0u) {
+  if (sw > 0.0 && in.word != 0u && !noDetail(ND_STRUCT)) {
     let w = in.word;
     let r = randv(vec3<i32>(floor(in.wpos * 1.0 - nrm * 0.02)) + vec3<i32>(3, 9, 27));
     var sa = toLinear(MATS[voxMatR(w)].albedo.rgb) * (0.88 + 0.24 * r);
@@ -214,7 +364,8 @@ fn fsMesh(in: MOut) -> FOut {
   // water on the ground: a film where it runs too thin to clear the
   // smoothed ground (the sheet draws the rest), darker wet ground above the
   // water's edge, and the swash running up and back (round 41)
-  let wt = cellWater(in.wpos.xy);
+  var wt = CellWater(0.0, 0.0, 0.0, vec2<f32>(0.0));
+  if (!noDetail(ND_WATER)) { wt = cellWater(in.wpos.xy); }
   var film = 0.0;
   var filmN = nrm;
   if (wt.wet > 0.0 && nrm.z > 0.2 && sw < 0.5) {

@@ -25,6 +25,7 @@
 
 import type { WorldCore } from '../scenes/world-core';
 import { TICK_DT } from '../sim/simulation';
+import { WIND_K } from '../sim/flow';
 import type { SimSystem } from '../sim/system';
 import { MAX_BLOWS } from '../sim/world-gpu';
 import { MATERIALS } from '../world/materials';
@@ -157,7 +158,8 @@ function strokeEntry(from: [number, number], to: [number, number], radius: numbe
 
 export class Wind implements SimSystem {
   readonly name = 'wind-blows';
-  readonly period = 1;
+  // (perfopt, ?windhz=: with the wind field, its time the ticks between — sim/flow.ts)
+  readonly period = WIND_K;
   private blows: Blow[] = [];
   private strokes: Entry[] = [];
   private movers = new Map<string | number, Mover>();
@@ -264,10 +266,10 @@ export class Wind implements SimSystem {
   }
 
   encode(): void {
-    this.clock += TICK_DT;
+    this.clock += TICK_DT * WIND_K;
     // (ended blows go; the rest age by a tick)
     this.blows = this.blows.filter((b) => b.left > 0);
-    for (const b of this.blows) b.left -= TICK_DT;
+    for (const b of this.blows) b.left -= TICK_DT * WIND_K;
     const list: Entry[] = this.blows.map((b) => ({ ...b, dir: [...b.dir] as [number, number] }));
     list.push(...this.strokes);
     this.strokes = [];

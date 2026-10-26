@@ -148,7 +148,9 @@ fn runGround(q: vec2<i32>) -> f32 {
   let j = colIdxI(q);
   return max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q));
 }
-fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0; }
+// (perfopt, simhz: every use is a spawn's chance a 60 Hz tick, `rare(..) < p` — divided by simStep() it's S times
+// as likely, S ticks' worth of spawning a tick)
+fn rare(x: u32, y: u32, salt: u32) -> f32 { return f32(hash3(x, y, G.tick ^ salt)) / 4294967296.0 / simStep(); }
 
 fn depositAt(pos: vec3<f32>, payload: f32) {
   let c = cellAt(pos.xy);
@@ -195,7 +197,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   if (fl.y > 0.0) {
     let way = u32(fl.w) % 8u;
     let fmat = u32(fl.w) / 8u;
-    let rate = min(fl.y * RUN_GRAINS * 0.5, 3.0) * min(f32(arrayLength(&parts)) / 65536.0, 1.0);
+    let rate = min(fl.y * RUN_GRAINS * 0.5, 3.0) * min(f32(arrayLength(&parts)) / 65536.0, 1.0) * simStep();
     let nG = u32(rate) + select(0u, 1u, r1 < fract(rate));
     for (var k = 0u; k < nG; k++) {
       let hk = hash3(id.x, id.y, G.tick ^ (0x7a11u + k * 977u));

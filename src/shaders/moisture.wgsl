@@ -26,12 +26,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var avg = 0.0;
   for (var k = 0u; k < NDIR; k++) { avg += moistIn[colIdxI(clampCell(nbr(p, k)))]; }
   avg /= f32(NDIR);
-  var nm = m + (avg - m) * 0.06;
-  nm += rainAt(cellPos(p)) * 0.006;
-  if (water[i] > 0.01) { nm += 0.02; }
+  // (perfopt, simhz: S 60 Hz ticks' spreading, wetting and drying a tick)
+  let S = simStep();
+  var nm = m + (avg - m) * relaxTick(0.06);
+  nm += rainAt(cellPos(p)) * 0.006 * S;
+  if (water[i] > 0.01) { nm += 0.02 * S; }
   // drying: ~3 minutes for bare soil, much slower under established plants
   let retain = 1.0 - 0.85 * smoothstep(0.5, 3.0, veg[i]);
   let hold = mix(1.0, 0.35, flatness(p));
-  nm -= (0.00003 + 0.00012 * m) * retain * hold;
+  nm -= (0.00003 + 0.00012 * m) * retain * hold * S;
   moistOut[i] = clamp(nm, 0.0, 1.0);
 }

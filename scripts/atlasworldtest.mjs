@@ -3,6 +3,8 @@
 // aw.frame(target), the sim's ticks unless a slide runs, a render), the window sliding after it.
 //   node scripts/atlasworldtest.mjs [--url http://localhost:5207]
 import puppeteer from 'puppeteer-core';
+// (perfopt: --extra "&flag=v" appended to the page's URL)
+const EXTRA = process.argv.includes('--extra') ? process.argv[process.argv.indexOf('--extra') + 1] : '';
 const argv = process.argv.slice(2);
 const url = argv.includes('--url') ? argv[argv.indexOf('--url') + 1] : 'http://localhost:5207';
 let failed = false;
@@ -20,7 +22,7 @@ try {
   const p = await browser.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
   // (a page with a host: the valley, small and quick; its own world is left alone)
-  await p.goto(`${url}/?skipmenu=1&level=valley&tutorial=0&q=low`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=valley&tutorial=0&q=low${EXTRA}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.core, { timeout: 240000 });
   const r = await p.evaluate(async () => {
     const { createAtlasWorld } = await import('/src/api/atlas-world.ts');

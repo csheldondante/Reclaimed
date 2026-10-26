@@ -44,10 +44,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // layer of sand or dirt is ground to grow in
   } else if (fire[i] > 0.15) {
     // burning: grass goes in a moment, trees take longer
-    v = max(0.0, v - fire[i] * mix(0.6, 0.12, smoothstep(2.0, 4.0, v)));
+    v = max(0.0, v - fire[i] * mix(0.6, 0.12, smoothstep(2.0, 4.0, v)) * simStep());
   } else if (wl.y > 0.4) {
     // browned: withers away
-    v = max(0.0, v - 0.04 * wl.y);
+    v = max(0.0, v - 0.04 * wl.y * simStep());
     if (v < 0.05) { v = 0.0; }
   } else if (v > 0.0) {
     // pioneers (moss, grass) establish quickly; woody stages take much longer.
@@ -60,9 +60,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let patchy = smoothstep(0.42, 0.58, fbm2((vec2<f32>(p) + G.org.zw) * 0.022 + 7.0));
     let woodland = flatness(p) * smoothstep(0.3, 0.55, wet) * patchy;
     if (v > 3.3 && woodland < 0.5) { rate = 0.0; }
-    v += rate;
-    if (v > cap) { v = max(cap, v - 0.02); }
-    if (wet < 0.04) { v -= 0.003; }
+    // (perfopt, simhz: S updates' worth)
+    v += rate * simStep();
+    if (v > cap) { v = max(cap, v - 0.02 * simStep()); }
+    if (wet < 0.04) { v -= 0.003 * simStep(); }
     if (v < 0.05) { v = 0.0; }
   } else if (G.rules.x > 0.5) {
     // story rules (round 30): bare ground is only ever colonised by seeds
@@ -80,7 +81,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     neigh += 0.6 * smoothstep(2.5, 4.0, vegIn[colIdxI(q2)]);
     // spreading plants also try their luck on bad ground (and wither there)
     let chance = (neigh * 0.1 * (0.3 + 0.7 * tox) + 0.0003 * tox) * suit * mf;
-    if (cap > 0.0 && r < chance) { v = 0.25; }
+    if (cap > 0.0 && r < perTick(chance)) { v = 0.25; }
   }
   vegOut[i] = clamp(v, 0.0, 5.0);
 }

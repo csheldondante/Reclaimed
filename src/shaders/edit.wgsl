@@ -71,6 +71,8 @@ const FELLED: f32 = 2.2;
 const CRATER_RING: f32 = 2.5;
 const STROKE_START: u32 = 512u;
 const DT_E: f32 = 1.0 / 60.0;
+/** (perfopt, simhz) the world time a tick stands for */
+fn dtE() -> f32 { return DT_E * simStep(); }
 const MAT_SILT_E: u32 = 22u;
 
 /** Materials that pour into the loose layer (drift.wgsl) rather than as cells. */
@@ -254,9 +256,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // pours land after the fall; bedrock rises steadily
   if (pending > 0.0) {
     if (timer > 0.0) {
-      timer = max(timer - DT_E, 0.0);
+      timer = max(timer - dtE(), 0.0);
     } else {
-      let r = min(pending, select(POUR_RATE, UPLIFT_RATE, op == OP_BEDROCK) * DT_E);
+      let r = min(pending, select(POUR_RATE, UPLIFT_RATE, op == OP_BEDROCK) * dtE());
       pending -= r;
       // dust lands in the drift layer (fractional); everything else as cells
       if (isLoose(mat)) {

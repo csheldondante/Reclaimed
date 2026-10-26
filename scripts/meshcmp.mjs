@@ -21,7 +21,7 @@ const browser = await puppeteer.launch({
 try {
   const p = await browser.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
-  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&at=${at}&speed=0`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&at=${at}&speed=0${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await p.evaluate((z) => (window.reclaimed.camera.zoom = z), zoom);
   await new Promise((r) => setTimeout(r, wait));

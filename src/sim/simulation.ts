@@ -30,7 +30,9 @@ import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
 import { ProjectSystem, StructTickSystem } from '../grids/systems';
 
-export const TICK_HZ = 60;
+// (perfopt: the tick rate, ?simhz= — sim/flow.ts)
+export { TICK_HZ } from './flow';
+import { TICK_HZ } from './flow';
 export const TICK_DT = 1 / TICK_HZ;
 
 export class Simulation {
@@ -122,7 +124,8 @@ export class Simulation {
     const sent = globals.events.slice(0, MAX_EVENTS);
     this.edit.pending = sent.some((e) => e.kind === EventKind.Edit);
     globals.events = globals.events.slice(MAX_EVENTS);
-    if (globals.gusts.length > 1) {
+    // (perfopt, ?windhz=: the strokes wait for the wind field's next update)
+    if (globals.gusts.length > 1 && this.tick % this.wind.period === 0) {
       for (const gg of globals.gusts.slice(1)) gg.len = 0;
       globals.strokeSent = true;
     }

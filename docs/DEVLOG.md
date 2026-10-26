@@ -5002,3 +5002,447 @@ worst case doesn't make sense".
   between violet and pale blue, a glint off the facets turned to the sun,
   the sky's rim at grazing angles, a glow of its own (more at night). The
   far land's giants were faceted meshes already.
+
+## Round 83 — the terrain's look shaded once a pixel: deferred (perfopt)
+
+Why: the user's first priority, the pixel shader. At low quality (render
+scale 0.5, dpr 1: 206 × 457 on a 412 × 915 phone) the camera's zoom is
+2.6 CSS pixels a cell, 1.3 rendered — a mesh triangle is under a pixel.
+A GPU shades 2 × 2 quads, so each triangle touching a pixel ran the whole
+look for up to four, and the surfaces behind the front one too (the round-82
+"2.4 ms fixed whatever the pixels": at the phone's size the quads, not the
+pixels, are the work). The fix is the old one for tiny triangles: deferred
+shading. A `gbuffer` pass draws the mesh into two uint targets (the point's
+xyz, its normal packed octahedral with the window/band bit, the structure
+word, share and tint: 24 bytes a pixel) and the depth; the world pass then
+shades each pixel once from them in a full-screen triangle (one per source:
+the window's and the band's layers are different buffers, and the fragment
+stage is at its eight storage buffers) and draws the rest over it. The look
+is the same function (`meshShade`) as the forward pass. On by default;
+`?defer=0` the forward draw (renderer.ts `Renderer.opts.defer`, switchable at
+run time for drawbench).
+
+- Tried first: a depth prepass (`?prepass=1`, the mesh's depth, then its
+  look tested less-equal): it only removes the surfaces behind, not the
+  quads — drawbench draw 3.55 → 3.24 ms (mesh's share 2.47 → 2.16). Kept as a
+  flag (it applies with `defer=0`).
+- drawbench (still frame at 12304,5457, phone viewport, low; interleaved,
+  4 rounds; the laptop's clocks drift with load, so also against renderprep
+  — the same work every frame — as a yardstick): draw 3.24 → 1.51 ms, the
+  terrain's own share (draw less the draw without the mesh) 2.28 → 0.55 ms
+  (−76 %); in renderprep units 8.8 → 4.1 (no mesh 2.5). A second, warm run:
+  draw/ref 11.3 → 5.4 (no mesh 3.3).
+- Riding (driveprofile, 25 s, phone viewport): the desktop holds 100 Hz
+  either way, and at a lighter load its GPU clocks down (every pass, even
+  renderprep, reads ~1.8× slower in the deferred rides), so the per-pass
+  times there don't compare; draw+gbuffer in renderprep units 10.2 → 7.2.
+  The phone's GPU is saturated (p50 30 ms), its clocks up: its frame times
+  decide.
+- The same picture: shots of the same frame default/deferred differ less
+  than two default shots a second apart (animated plants and water); the
+  cutaway's slice and its dark sections the same (scripts/cutshot.mjs
+  --extra, valley cave and cliff, mean 1.1/255); picking the same
+  (renderer.pick at two points).
+- Tooling: drawbench pieces `@name[=v]` set `Renderer.opts` at run time and
+  print renderprep (`ref`) and draw/ref; driveprofile prints a SUMMARY line
+  with each pass's mean a frame from the raw totals; `--uncapped` (no vsync)
+  was tried for pinned clocks: the timestamps then overlap and read 3×
+  inflated — not usable. cutshot takes --extra.
+
+streamtest 8/8, atlasworldtest passes.
+
+## Round 83 — what's left of the draw: plant tufts, the shadow map and the prep every Nth frame (perfopt)
+
+Why: with the terrain deferred, drawbench's pieces (still frame, phone
+viewport, low; the draw incl. the G-buffer 1.9 ms): the terrain mesh 0.77
+(its G-buffer pass 0.33), plants 0.45–0.58 (!), band 0.41, water 0.34, tops
+0.25, far land 0.23, opaque prisms 0.16; the shadow pass 0.6; renderprep
+(+vegprep) 0.42 every frame. Three flags for the phone, none on by default
+(each changes what's seen a little):
+
+- `?tufts=0`: no grass tufts. 18 300 plant boxes in that frame, most of them
+  tufts: quarter-cell boxes, a third of a pixel wide at low — 110 k
+  triangles for 94 k pixels. Without them: plants' draw 0.45 → 0.06 ms, the
+  shadow pass 0.59 → 0.45 (two runs each). The trees, shrubs and flowers
+  stay; the meadow loses some darker speckle (the mesh's plant cover still
+  greens it): scratch shots tf-cmp.
+- `?shadowevery=N`: the sun's map drawn every Nth frame, kept with the light
+  matrix it was drawn with (the lookups stay right as the camera moves);
+  drawn again at once after a slide (FieldMesh.slides) or when the box it
+  covers (the chunks near the view) moves. N=2: shadow 0.57 → 0.29 ms; 3:
+  0.18. What moves (bodies, the bike, swaying plants) casts up to N−1
+  frames late.
+- `?prepevery=N`: the prisms', water's and plants' instance lists (renderprep,
+  vegprep; their indirect counts kept too) made every Nth frame, at once
+  after a slide; the structures' every frame. N=2: 0.42 → 0.20 ms. What
+  changed shows a frame late (a crater's prisms, a new plant).
+- Riding with shadowevery=4&prepevery=4: no visible error in a shot mid-ride.
+
+
+## Round 83 — the rebuild's idle workgroups; a stagger for the change pass that didn't pay (perfopt)
+
+Why: the user's second priority, the mesh's rebuilds. A rebuild's three
+passes run over a chunk's whole height of samples (the window's z span),
+while its surface lies between its lowest boundary and its top.
+
+- makeVerts and makeQuads: a workgroup whose four samples of z (and those
+  either side it reads) are all under the chunk's bottom (−FAR) or all over
+  its top (FAR) returns after its job (the job's words read again with
+  workgroupUniformLoad: the uniformity analysis takes a Job, which holds the
+  thread's sample, as non-uniform). Mesh identical (meshcmp: window 209 528
+  vertices, band 75 616, the same sums). Riding (in renderprep units, the
+  clocks drift): verts 0.274/0.288 → 0.245/0.263, quads 0.166/0.171 →
+  0.138/0.135 — ~12 %: most of the work is the field at the samples and the
+  eight fields a vertex (its gradient, its share), not the empty height.
+  `?idleskip=0` off (for meshcmp).
+- Tried: hashing a chunk with nothing owed every third turn, staggered by
+  chunk (`hashevery`): the change pass's total didn't move (0.60 → 0.59
+  units) — its cost is the passes themselves (two a turn, a workgroup a
+  chunk), not the columns hashed. Taken out.
+- driveprofile's SUMMARY adds the draw, shadow and each rebuild pass in
+  renderprep units; meshcmp takes --extra. vegprep.wgsl and fieldmesh.wgsl
+  back to LF (an edit had made them CRLF).
+
+
+## Round 83 — the shadow map's size, faces wound out of the solid, normals from the samples (perfopt)
+
+Why: after the deferred look, the desktop's still frame: draw 1.7 ms (the
+G-buffer pass 0.3), shadow 0.56 — both mostly vertices (the whole window is
+in view at the phone's zoom: 56 chunks, 210 k mesh vertices, 75 k the
+band's). Each tried for the phone, whose tile-based GPU bins and stores
+differently:
+
+- `?shadowsize=N` (256/512/1024/2048) overrides the tier's map (low 1024²:
+  5 texels a cell, the screen 1.3 pixels a cell — the map is eleven times
+  the screen's pixels, drawn and stored every frame). Desktop: shadow 0.58 →
+  0.54 ms at 512, 0.53 at 256 (it's the casters' vertices here); 512 a
+  little softer, 256 blurred (scratch sh-cmp). For the phone: 512.
+- The shadow and G-buffer passes use `vsMeshG` (no tint: three value
+  noises a vertex, twice a frame); the resolve takes the tint a pixel
+  (`meshTint`). No change measured on the desktop (its compiler likely
+  dropped the unused output already); the phone's may not.
+- Tried: fitting the sun's box to the chunks in view, up to their tops
+  (casters up-sun still in its depth): at the phone's zoom every chunk of
+  the window is in view (56 of 68 near, 72 cast), so nothing changed. Taken
+  out.
+- `?cull=1`: makeQuads winds each quad out of the solid (as listed the X
+  quad faces +X, Y −Y, Z +Z; turned when the base sample is outside) and
+  the G-buffer pass culls back faces (not with the cutaway: it shows the
+  inside). The mesh's sums are unchanged (order only); the picture the same
+  (within two shots' noise). Desktop: no change (0 ms) — the phone to tell.
+- `?normals=grid`: makeVerts takes a vertex's normal from the samples
+  (central differences at the cell's corners, trilinear to the vertex)
+  instead of six more fields; and the share's terrain field only where a
+  structure is near (always: the default too — mesh identical, meshcmp).
+  Riding: verts 0.256 → 0.175 units (−32 %), the mesh's passes 1.2 → 1.1.
+  But a cliff's face changes: smoother, lighter, its rock facets weaker
+  (scratch ng-cmp) — the field's normals carry the warp's detail. A flag.
+
+
+## Round 83 — a coarser band; smaller chunks and a shorter look at new chunks tried (perfopt)
+
+- `?bandh=2`: the band (the land above and below the window's z) meshed at
+  its own sample spacing, 2: a quarter of its triangles and its rebuilds a
+  quarter the samples. Drawbench: the band's draw 0.37 → 0.10 ms, the
+  G-buffer pass 0.30 → 0.19. In the frame at 12304,5457 the band is the low
+  land to the south; coarse, it looks the same (scratch band-cmp: default,
+  no band, bandh=2). The window keeps spacing 1. A candidate default for low
+  once the phone has seen it (a cliff in the band would be softer).
+- Tried, `meshchunk=16` (the mesh's chunks 16 cells: a rebuild a quarter
+  the work): each rebuild pass's worst frame fell to a third (sample 1.39 →
+  0.41 units, the band's ~1.3 → 0.5), but four times the chunks to build
+  after a slide: with one slot (or two) a backlog of 144 chunks riding, the
+  new land grey for seconds; with the slots to keep up, the same work a
+  frame as 32. The spike is the slots × the chunk's area — no win. Taken
+  out.
+- Tried, `nearframes=2` (a chunk just come near looked at for 2 frames
+  even asleep, not 10, since the owed word remembers what found no slot):
+  the change pass's total the same (0.62 units). Taken out.
+- The rebuild's worst frames in a ride (renderprep units): the change pass
+  1.6–3, sample ~1, verts ~1–2, quads ~0.6–1.5 — a rebuild frame adds
+  ~4–5 units to the ~9 of a frame (draw 5.8, shadow 2.2): the phone's
+  spikes. The change pass's worst is the largest single piece.
+
+
+## Round 83 — what's left of the look; the world pass's depth and pick not stored (perfopt)
+
+Why: to see what's left of the pixel shader with the look deferred.
+
+- Drawbench with the look cut down (deferred): look=flat, the terrain's
+  share 0.16 ms; lookup 0.44; full ~0.47–0.6. `?nodetail=` (run-time bits
+  in Camera.eye.w from bit 2: strata, water, plants, stains, struct, shadow
+  (every draw's shadow lookups), warp (the cell looked up where the point is,
+  not warped and jittered), fields (the cell's own, not three blended),
+  specks): each piece alone within the noise (±0.2 ms); all of them 0.13 ms.
+  The resolve is ~0.2 ms of the terrain's 0.47 on the desktop — the
+  G-buffer pass (vertices) is the rest: the pixel shader is no longer the
+  terrain's cost here. On the phone, whose pixels cost more, `nodetail`
+  tells what each piece costs there.
+- The world pass discards its depth (nothing reads it after) and its pick
+  target unless a pick is asked for that frame: on a tile-based GPU 12
+  bytes a pixel not written out every frame. Picks the same (two points).
+- Tried: the sun's camera leaving out the quarter-cell plants (a flag in its
+  eye.w, the vertex shader degenerating them): no change — their vertex
+  shader still runs; `?tufts=0` (not emitted at all) is what saves. Taken out.
+- Where a still frame's GPU goes now (desktop, phone viewport): draw 1.5 ms
+  (the terrain 0.47 of it: G-buffer 0.28, resolve ~0.2; plants ~0.45;
+  water 0.34; band 0.37 or 0.1 with bandh=2), shadow 0.6 (the mesh's 72
+  casting chunks and the plants' 330 k vertices), renderprep 0.35.
+
+
+## Round 83 — the shadow map's static casters cached (perfopt)
+
+Why: the shadow pass (0.6 ms on the still frame) is now the largest single
+piece of the render after the draw: the terrain mesh's 72 casting chunks
+and the plants every frame, though the terrain barely changes.
+
+- `?shadowcache=N`: the static casters (the terrain mesh, the prisms and
+  tops) drawn into their own depth map every Nth frame, with the light
+  matrix kept between (as shadowevery: redrawn at once after a slide or
+  when the box moves); every frame that map is copied into the sun's map
+  and the moving casters (plants, structures, bodies, skins) drawn over it.
+  Drawbench: shadow 0.59 → 0.32 ms (N=4), 0.26 (N=8); shadowevery=4 0.15
+  (everything kept). A rebuilt chunk's shadow (a new crater) shows up to N
+  frames late; what moves casts on time. Same picture (within shots' noise);
+  riding with N=8 nothing wrong in a shot.
+- drawbench counts `shadow-static` with the shadow.
+
+
+## Round 83 — tufts painted on the ground when their boxes are off (perfopt)
+
+Why: `?tufts=0` is the plants' biggest saving (their draw 0.45 → 0.06 ms,
+the shadow 0.59 → 0.45) but the meadow lost its dark speckle. With it, the
+terrain's look paints them (meshdraw.wgsl, `TUFTS_DRAWN` false): on
+soil-like ground with plant cover, a quarter-cell hash — about a third of
+them a tuft's shaded side (×0.5), a tenth its lit top (×1.25), as dense as
+vegplan.wgsl's tufts (smoothstep(1.2, 2.5, veg)). At the phone's 1.3 pixels
+a cell a tuft box was a third of a pixel; the painted ones read nearly the
+same (scratch tf4-cmp: default left, tufts=0 right).
+
+
+## Round 83 — `?lite=1`, the phone's set (perfopt)
+
+- index.html expands `?lite=1` into tufts=0, shadowcache=4, prepevery=2,
+  bandh=2, shadowsize=512 (each only where the URL doesn't give it) before
+  any module reads the URL: one link for the phone, and any piece can be
+  turned back (`&lite=1&shadowcache=0`).
+- Tried for the water (0.35 ms of the draw): its surface detail left out
+  (ripples, glint, foam, swell, rain rings) saved 0.06 ms — the water's cost
+  is its sheet's vertices (9.5 k columns × 18, three neighbours' levels a
+  vertex), not its pixels. Taken out.
+- Riding, desktop, the render's passes a frame (draw + G-buffer + shadow +
+  prep, ms): forward (defer=0) 4.3; the default now 2.95; the lite set 1.9.
+
+
+## Round 83 — `?ticks=N`: the sim's share of a slow frame (perfopt)
+
+Why: the sim runs at 60 Hz, up to the tier's ticks a frame (low 2). With
+`skip=render` the phone runs 60 fps: one tick a frame. Drawing, at 30 fps,
+each frame runs two ticks — the sim's GPU work a frame doubles as soon as
+the render slows it under 60, and a frame that runs long makes the next
+one run two: the render's cost is amplified in the frame time. `?ticks=1`
+caps it at one (the sim then runs slower than real time under 60 fps — a
+diagnostic, not a setting): on the phone, the difference to the default is
+the second tick's share of the frame. Not measurable on the desktop (it
+runs 100 fps, under a tick a frame).
+
+- (later) `?cull=1` culls in the shadow pass too: the mesh's faces turned
+  from the sun (a shell's sun-facing side casts). Same picture; the desktop
+  again no change (its rasteriser drops them as cheaply as it draws them);
+  a tile-based GPU bins fewer — the phone to tell.
+- Tried `meshh=1.5`: not a lattice the chunks tile (ground missing, holes).
+  Only 1 and 2 work.
+
+
+## Round 83 — the terrain's cached layer: the user's baked tiles, first step (perfopt)
+
+Why: the user's fourth item, "render static terrain to iso tiles … relit per
+frame, characters and particles composited over"; with the look deferred,
+the terrain was the largest piece of the draw left (G-buffer 0.28 ms +
+resolve ~0.2 on the still frame). The simplest form that works with a
+moving camera: one layer the size of the screen and a margin, not tiles.
+
+- `?tcache=N` (renderer.ts terrainCacheMode, tcPrepare, encodeTerrainCache;
+  tcache.wgsl): every Nth frame the terrain (window and band, the chunks
+  near the view) is drawn deferred into a layer 24 render pixels larger
+  than the screen each side (its camera the frame's, clip x and y scaled),
+  the resolve writing colour, pick and depth (fsMeshResolveC; depth as an
+  r32float target). Between, the camera is snapped to the layer's pixels
+  (its translation in camData moved by under a pixel, so the shift since
+  the layer is whole pixels — everything that frame draws with the snapped
+  camera; the CPU's camera is untouched) and a full-screen draw copies the
+  layer in, shifted, writing the depth (moved by the camera's along the
+  view: the orthographic depth is linear) and the picks; plants, water,
+  bodies and particles draw over it as before. Drawn again at once after a
+  slide (the picks are the window's cells), a turn or zoom (the matrix's
+  rotation and scale must match exactly), a new size, the margin used up,
+  the band replaced; off with the cutaway or the free camera.
+- Riding at 18 (the drive zooms with speed but mostly holds), 87 % of
+  frames reuse it at N=8. Drawbench (still frame): draw 1.89 → 1.25 ms at
+  N=4 (the mesh's whole share 0.78; the layer saves 0.64). Riding, in
+  renderprep units: draw 7.2–7.3 → 5.6–5.8.
+- The cost: what's in the terrain's look that moves — the water film's
+  swash and streaks, the wet glint, cloud shadows, the shadows of what
+  moves (the bike, bodies) on the ground — updates every Nth frame; the
+  camera moves in whole pixels (the render's: at low, two CSS pixels).
+  A refresh frame costs what a frame costs now: it lowers the average, not
+  the worst frame.
+- Next for it: refresh a band of the layer a frame (chunks culled to it)
+  instead of the whole every Nth — no refresh frames; tiles keyed to world
+  chunks (keep them across slides; bake them at a higher resolution for
+  crisper lines); per 90° step for the turning view.
+
+
+## Round 83 — the simulation's cost: land comes in settled; the layers rewritten in place (perfopt)
+
+Why: the user's directions (DECISIONS round 83). Measured first, riding
+(driveprofile now prints `ticks` and every pass's mean a frame; scratch
+dps.mjs sums the passes that aren't the render's): the sim is ~2 ms of
+GPU a tick on the desktop (6.2–7.9 renderprep units) — at 30 fps the phone
+runs two a frame. The largest: edit 0.26 ms a tick, project 0.20, surface
+0.20, structure 0.16, sediment-out 0.15, renderfields 0.14, particles 0.13,
+sediment 0.11, lava 0.08, agents 0.07. Not timed at all: the full-buffer
+copies between passes (copyBufferToBuffer is outside the timed passes) —
+the layers are 16 MB in the atlas's window, and the editor's brush (always
+on in the sandbox) and the structures each copied them back whole every
+tick: 32 MB a tick, ~2 GB/s of a phone's bandwidth at 60 ticks.
+
+- `?settle=0` (sim/sleep.ts `SETTLE`, `settleAll`): land that comes in — a
+  slide's new chunks, the window cut again in z, a warp, the first window —
+  doesn't wake for 1.5–2 s to settle; it falls asleep at once (drowsy a
+  moment: its layers carried through). Awake chunks riding were 48–118 of
+  256 (the player's ring plus the settling); the sim a tick 6.24/7.91 →
+  5.25/5.38 units (−16 to −32 %). Not yet looked at: whether what comes in
+  unsettled looks wrong (the user: fix that in the generator) — rivers
+  especially: the flux isn't frozen with a region (keep: false), so a river
+  come in asleep has none and its surface is drawn still until something
+  wakes it (next: freeze the flux with the region, and a generated river's
+  flux from the generator).
+- `?inplace=1` (sim/systems.ts `INPLACE`, `columnPass`): the brush, the
+  structures and the layer pulls rewrite the layers in place (each thread
+  its own column: the brush and the pulls read only it; the structures read
+  their neighbours' support — one tick's Gauss–Seidel instead of Jacobi)
+  instead of into layersNext copied back whole; and the brush runs only for
+  5 s after an edit (a pour lands up to 3.9 s after the press). The timed
+  sim a tick 5.30 → 4.6 units with settle=0 (the brush's pass gone), plus
+  the two 16 MB copies a tick, untimed. brushtest 5/5, pulltest 6/6,
+  buildtest 4/4, worldapitest all ok with inplace=1&settle=0.
+
+- (later) `?settle=0` also gives rivers their flow: a column come in asleep
+  with water and no flux takes, while drowsy, the pipes' steady state for its
+  levels at once (water_flux.wgsl: f = GAIN (H − Hn) / (1 − FRICTION),
+  capped at its depth) — drawn flowing, frozen; and the flux is frozen with
+  its region (streamer `keep`), so land that comes back keeps its flow.
+  Riding 15 s: wet columns with no flux 17 of 5 148 (default) / 205 of 10 605
+  (settle=0). More water stands with settle=0 (10.6 k wet columns against
+  5.1 k): the generated water isn't at rest — the default's settling drains
+  it. The user's rule applies: fix it in the generator (open).
+- `?sleepmore=1` (sim/sleep.ts `SLEEP_MORE`): the surface and render-field
+  passes skip sleeping chunks too, but drowsy ones; every chunk is drowsy for
+  0.25 s after any slide (the derived textures moved — round 80 kept the
+  surface pass awake for exactly that: "levels stay 0 for columns in
+  sleeping chunks"). With settle=0&inplace=1: the sim a tick 4.66–4.70 →
+  3.75–3.80 units (surface 0.24 → 0.05 ms, render fields 0.15 → 0.05).
+  atlasworldtest 6/6 (its "no column top 0 after the slides" included) and
+  streamtest 8/8 with sleepmore=1&settle=0&inplace=1.
+
+
+## Round 83 — the tick rate (`?simhz=30|15`), the flows' own rates (`?flowhz=`), loose ground settled in the generator (perfopt)
+
+Why: the user's directions (DECISIONS round 83): "Simulation can absolutely
+be 30 Hz or even 15"; every animated flow cached and drawn moving, its update
+rate its own, full rate only where disturbed; streamed land with no floating
+pieces. And the phone: "Deferred shading helped a lot" — it stays the default.
+
+- `?simhz=60|30|15` (sim/flow.ts `TICK_HZ`; simulation.ts re-exports it):
+  the systems' rates were written per 60 Hz tick (G.dt was 1/60 and almost
+  no kernel read it). common.wgsl `simStep()` (G.dt × 60: 1, 2 or 4) and
+  `perTick(p)` (a chance over the tick), `relaxTick(k)` (a decay or a
+  relaxation over the tick) scale them so the world runs at the same speed in
+  its time: moisture, contamination (its transport by the water's flux too),
+  fire (burning, and the chances of catching), wilt, ecology, climate (its
+  DT_C), the structures' chances (support still relaxes a cell a tick, so a
+  collapse spreads at the tick rate), the brush's pours (DT_E), sediment
+  (DT_D, slumps, wind smoothing, piping, faces, falls, the shaking's age;
+  slumps and smoothing capped at a sixth of the excess a neighbour — more
+  over-corrects into a checkerboard), particles (every spawn chance and the
+  grains a running stream sheds), the wind field and the sway (their DT).
+  The water's, oil's and lava's pipes are stable only at the 60 Hz step:
+  tried scaled (the pipes' gain and the flux moved × the step) — a pond
+  then over-corrects (6 pipes × twice the gain is over 1) and the sloshing
+  water carried soil into a dug hole: the sandbox's dig, −1.71 at 60 Hz,
+  filled back to −0.27 at 30 (scratch digtest.mjs). So they run `FLOW_SUB`
+  60 Hz substeps a tick instead (cheap passes); the dig then holds at −2.0
+  at 30 and 15 Hz. api/water.ts reads the flux as a 60 Hz tick's whatever
+  the rate. worldapitest: 16/16 at 30 Hz; at 15 all but "warmup with
+  debris" (its warmup counts ticks: 600 are 40 s at 15 Hz).
+  Riding (settle=0&inplace=1&sleepmore=1, two runs each; the laptop was
+  warm): the sim a frame 1.74/1.93 ms → 1.11/0.93 at 30 Hz → 0.65/0.63 at 15
+  (−45 %, −65 %); a tick costs more (the flows' substeps), a frame less.
+  At 30 fps the phone ran two ticks a frame; at 30 Hz, one.
+- `?flowhz=water:4,oil:4,lava:2,sediment:1` (sim/flow.ts `flowN`,
+  common.wgsl `slowTick`, `flowFrozen`): a sleeping chunk's flow is frozen
+  (drawn moving from its frozen flux: the default, as round 80 had it); with
+  a rate it's updated that many times a second instead, staggered over the
+  chunks, at the 60 Hz step (slow motion — which keeps the pipes stable while
+  it settles); awake (the player near, an event, a storm), every tick. One
+  mechanism for water, oil, lava and sediment, a rate each, for the user to
+  tune on the phone. Not measured yet (default off).
+- `?settle=0` now also drops a streamed column's loose intervals with air
+  under them onto their support (streamer.ts `settleLoose`, in cutRegion:
+  the generator's output, before it's cut into the window); solids stay
+  (overhangs, arches). Counted in the streamer's stats (`settled`).
+
+- `?windhz=N` (sim/flow.ts `WIND_K`): the wind field and the world API's
+  blows and wakes run every TICK_HZ / N ticks, each update the time since
+  (DT × the ticks between, the spreading relaxed over them too); the
+  player's strokes and a mover's wake wait for the next update — the wake's
+  segment then covers everything since (api/wind.ts: its clock and the
+  blows' timers by the ticks between). worldapitest 16/16 with windhz=15
+  (the first try, with the API's wakes still painted every tick, lost three
+  quarters of a wake: "wake trails behind" failed). The field still reacts
+  within 1/N s of the player's movement. Storms need nothing: they are
+  analytic on the GPU (stormDist) and a few dozen lines of CPU a frame.
+
+- `?fieldhz=N` (sim/flow.ts `fieldPeriod`, `fieldPass`): moisture,
+  contamination, climate and ecology run every max(their period,
+  TICK_HZ / N) ticks, each update the time since (their kernels' simStep,
+  perTick, relaxTick become fieldStep — × K, the ratio to their own period
+  — fieldChance, fieldRelax). Wilt and fire stay every tick (one-tick taps
+  and lightning). First try wrote K as `${k}.0` (7.5.0 when K wasn't whole:
+  the climate kernel didn't compile — and the frame went on, its command
+  buffers invalid, no fatal overlay: worth a look on its own). worldapitest
+  16/16 with fieldhz=1&simhz=30&windhz=15.
+- Riding (two runs each; renderprep 0.33–0.67 ms — the laptop's clocks all
+  over): the sim a frame, default 1.14/2.37 ms; settle=0&inplace=1&
+  sleepmore=1&simhz=30 0.90/1.06; + windhz=15&fieldhz=1 0.97/0.86. In
+  renderprep units a tick 6.08/7.92 → 6.75/5.55 → 5.15/4.91.
+- The phone (the user): "The current iteration of perf branch is crushing
+  it. About 16ms for p95!" with lite=1&settle=0&inplace=1&sleepmore=1 —
+  p95 from 80–100 ms (round 82) to 16, the frame rate's own.
+
+
+## Round 83 — the phone's set as the low tier's defaults (perfopt)
+
+Why: the user's phone, "About 16ms for p95!", with lite=1&settle=0&
+inplace=1&sleepmore=1. index.html now expands that set on the low tier (no
+`q`, or `q=low` — the default, for phones): tufts=0, shadowcache=4,
+prepevery=2, bandh=2, shadowsize=512, settle=0, inplace=1, sleepmore=1 —
+each only where the URL doesn't give it (so `&settle=1`, `&tufts=1` … turn
+one back), all of them off with `?phone=0`; `?lite=1` still adds the render
+half on any tier. The deferred terrain was already the default. Not in it
+(not yet seen on the phone): simhz, flowhz, windhz, fieldhz, tcache, cull,
+normals. streamtest 8/8, atlasworldtest 6/6, worldapitest 16/16 with the
+new defaults; build clean.
+
+## Round 83 — perfopt merged into places
+
+The user, on the phone: the perf branch "crushing it. About 16ms for p95!"
+(deferred, lite, settle=0, inplace=1, sleepmore=1). Merged at 33f4ab5: the
+low tier's defaults are the phone set (index.html expands it when q is
+absent or low; each flag overridable, `?phone=0` the whole set off).
+`Camera.focus` (perfopt's prepass, G-buffer and terrain cache) became the
+camera's cut (`cutOn`); the gem look and the sections are in meshShade, so
+the deferred resolve has them. Riding at the phone tier (driveprofile, 30 s,
+the desktop): p95 10.5 ms, worst 43, no hitch over 50 ms, the GPU 5.4 ms a
+frame (15.0 before the merge, rings and all).

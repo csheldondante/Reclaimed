@@ -21,6 +21,10 @@ import type { WorldGpu } from '../sim/world-gpu';
 /** round 82: ?readback=0 — the renderer's and the mesh's periodic readbacks off (main.ts: the timestamps too) */
 export const READBACK = new URLSearchParams(location.search).get('readback') !== '0';
 import type { Camera } from './camera';
+/** perfopt: the rebuild's workgroups wholly under a chunk's bottom or over its top return at once (?idleskip=0 off) */
+const IDLE_SKIP = `const IDLE_SKIP: bool = ${new URLSearchParams(location.search).get('idleskip') !== '0'};`;
+/** perfopt, ?normals=grid: the vertices' normals from the samples, not six more fields a vertex */
+const NORMALS_GRID = `const NORMALS_GRID: bool = ${new URLSearchParams(location.search).get('normals') === 'grid'};`;
 
 /** bytes of the layout uniform (meshregion.wgsl MeshRegion) */
 export const REGION_BYTES = 96;
@@ -75,6 +79,8 @@ export class FieldMesh {
   private slots = 0;
   /** chunks drawn last frame (after culling) */
   drawn = 0;
+  /** (perfopt) slides so far: what's cached in window coordinates (the shadow map, the prepared instances) is stale after one */
+  slides = 0;
   /** the z its chunks' boxes start at and reach to at most (window z; the band's move with the window's oz) */
   private zLo = -1;
   private zHi = 0;
@@ -115,7 +121,8 @@ export class FieldMesh {
       device.queue.writeBuffer(this.region, 0, new ArrayBuffer(REGION_BYTES));
       return;
     }
-    const h = Number(q.get('meshh') ?? 1);
+    // (perfopt, ?bandh=: the band's own sample spacing — a coarser mesh for the land above and below the window)
+    const h = Number((src ? q.get('bandh') : null) ?? q.get('meshh') ?? 1);
     // (?meshroom=: the window's room a chunk, times the default — round 79, to tell holes from out of room)
     if (!src && q.get('meshroom')) room = Number(q.get('meshroom'));
     const W = world.w + 0.5;
@@ -174,7 +181,7 @@ export class FieldMesh {
     this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8, GPUBufferUsage.STORAGE);
     this.statBuf = world.buf(`${pre}meshStats`, stateWords * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, fieldMeshWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
     const spec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 30: 'uniform' } as const;
     const group = (k: ComputeKernel) =>
       makeBindGroup(device, 'fieldmesh', k.layout, {
@@ -256,11 +263,12 @@ export class FieldMesh {
    */
   shift(dcx: number, dcy: number, t: [number, number, number]): void {
     if (!this.on) return;
+    this.slides++;
     const dev = this.device;
     if (!this.shiftK) {
       this.stateOld = this.world.buf('meshStateOld', this.state.size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
       this.shiftUni = dev.createBuffer({ label: 'mesh shift', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, fieldMeshWgsl];
+      const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
       this.shiftK = makeCompute(dev, 'fieldmesh-shift', parts, { 0: 'uniform', 9: 'rw', 10: 'read', 30: 'uniform', 31: 'uniform' }, 'shiftChunks');
       this.shiftGroup = makeBindGroup(dev, 'fieldmesh-shift', this.shiftK.layout, { 0: this.world.globals, 9: this.state, 10: this.stateOld, 30: this.region, 31: this.shiftUni });
     }
@@ -425,6 +433,17 @@ export class FieldMesh {
     }
     this.drawn = n;
     this.profiler.draws += n;
+  }
+
+  /** (perfopt, the terrain's cached layer: a margin past the screen) Draw the chunks near the view. */
+  drawNear(pass: GPURenderPassEncoder): void {
+    if (!this.on) return;
+    pass.setIndexBuffer(this.indices, 'uint32');
+    for (let c = 0; c < this.nx * this.ny; c++) {
+      if (!this.near[c]) continue;
+      pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+      this.profiler.draws++;
+    }
   }
 
   /** Draw the chunks in the sun's box (the shadow pass: what's out of view but up-sun casts too). */

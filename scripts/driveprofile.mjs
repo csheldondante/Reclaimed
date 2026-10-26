@@ -20,7 +20,9 @@ const extra = opt('extra', '');
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${vw},${vh}`],
+  // (perfopt, --uncapped: no vsync, frames as fast as the GPU goes — it stays busy, so its clocks stay up and a
+  // pass's time is its work, not the power state's; the frame time is then the GPU's cost)
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${vw},${vh}`].concat(argv.includes('--uncapped') ? ['--disable-gpu-vsync', '--disable-frame-rate-limit'] : []),
   defaultViewport: { width: vw, height: vh, deviceScaleFactor: dpr },
   protocolTimeout: 600000,
 });
@@ -58,6 +60,7 @@ try {
     s.worstMs = 0;
     s.frameMs = [];
     window.__all = [];
+    window.__tick0 = window.reclaimed.core.sim.tick;
     const tick = () => {
       window.__all.push(performance.now());
       requestAnimationFrame(tick);
@@ -90,11 +93,17 @@ try {
       long: R.scene.longFrames,
       gpuLong: R.core.host.profiler.gpuLong,
       drawMax: +(R.core.host.profiler.maxMs.get('draw') ?? 0).toFixed(1),
+      // (perfopt: each pass's mean a frame over the ride, from the raw totals — the draw's with ?defer's G-buffer)
+      perFrame: Object.fromEntries(['draw', 'gbuffer', 'tcache-g', 'tcache-r', 'shadow', 'shadow-static', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
+      // (perfopt: every pass's mean a frame over the ride, the largest first)
+      ticks: R.core.sim.tick - window.__tick0,
+      allPerFrame: Object.fromEntries([...R.core.host.profiler.totalMs].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => [k, +(v / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(3)])),
       meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };
   });
   console.log(JSON.stringify(r));
+  console.log(`SUMMARY p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} h50 ${r.hitches50} | per frame: ${Object.entries(r.perFrame).map(([k, v]) => `${k} ${v}`).join(', ')} | meshTotal ${Object.values(r.meshTotal).reduce((a, b) => a + b, 0).toFixed(0)} ms | in renderprep units (the clocks drift): draw ${((r.perFrame.draw + r.perFrame.gbuffer + r.perFrame['tcache-g'] + r.perFrame['tcache-r']) / r.perFrame.renderprep).toFixed(2)}, shadow ${(r.perFrame.shadow / r.perFrame.renderprep).toFixed(2)}, mesh ${Object.entries(['hash', 'sample', 'verts', 'quads'].reduce((o, k) => ((o[k] = Object.entries(r.meshTotal).filter(([n]) => n.endsWith(k)).reduce((a, [, v]) => a + v, 0) / (r.perFrame.renderprep * r.frames)), o), {})).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(' ')}`);
 } finally {
   await browser.close();
 }

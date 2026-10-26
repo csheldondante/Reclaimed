@@ -23,7 +23,7 @@ try {
   const p = await browser.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
   p.on('console', (m) => m.type() === 'error' && console.log('console', m.text()));
-  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&slots=${slots}&at=${at}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&slots=${slots}&at=${at}${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await sleep(15000);
   // the state's built hashes (word 5) of the window's chunks, and those owed (word 6 ≠ 5) among the near

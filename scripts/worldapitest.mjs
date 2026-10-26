@@ -41,7 +41,7 @@ try {
       console.log('console.error:', m.text().slice(0, 800));
     }
   });
-  await page.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&tod=0.4`, { waitUntil: 'load' });
+  await page.goto(`${url}/?skipmenu=1&level=${level}&tutorial=0&tod=0.4${opt('extra', '')}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.reclaimed?.core, { timeout: 90000 });
   await new Promise((r) => setTimeout(r, 3000));
   const run = (fn, ...a) => page.evaluate(fn, ...a);

@@ -430,6 +430,40 @@ layer, blended with the one below when thin), so the look still comes from
 the intervals; plants, stains and wetness are blended over the three
 nearest cells; rock gets facets and rubble, trash and ruins chips (the
 detail layer).
+The mesh's look is shaded deferred (perfopt; renderer.ts `encodeGBuffer`,
+meshdraw.wgsl `gPack`, `fsMeshResolve`; `?defer=0` the forward draw): a
+`gbuffer` pass draws the mesh (window and band) into two uint targets —
+the point (xyz bits) and its octahedral normal with the source bit (1 the
+window's, `MR.zb.w`) and a drawn bit; the structure word and share and the
+tint — and the depth; the world pass loads that depth and first draws a
+full-screen triangle per source (its own bind group: that source's chunk
+table, layers and region) that shades each pixel of its source once
+(`meshShade`, the same function the forward `fsMesh` calls), writing the
+colour and the pick; the rest draws over it as before. With the cutaway on
+the G-buffer pass's pipeline discards (`fsMeshGCut`). Why: at the phone's
+resolution a mesh triangle is about a pixel, and the forward draw shaded
+2 × 2 quads per triangle and every surface behind the front one.
+Run-time switches for A/B (`Renderer.opts`, each from a URL flag;
+scripts/drawbench.mjs sets them with `@name=value` pieces): `defer`,
+`prepass`, `cull` (the G-buffer pass culls faces turned away; the mesh's
+quads are wound out of the solid), `shadowEvery` (the shadow map and the
+light matrix it was drawn with kept for N frames, redrawn after a slide —
+`FieldMesh.slides` — or a new box), `shadowCache` (the static casters —
+mesh, prisms — into `shadowStatic` every N frames with the matrix kept,
+copied into the map each frame and the moving casters drawn over it),
+`prepEvery` (renderprep's and vegprep's
+instance lists kept N frames), `noDetail` (bits of the look left out,
+carried to the shaders in `Camera.eye.w` from bit 2: meshdraw.wgsl `ND_*`).
+The terrain's cached layer (`?tcache=N`, `Renderer.opts.tcache`; tcache.wgsl):
+the terrain drawn deferred every Nth frame into a layer 24 render pixels
+past the screen each side (colour, pick, depth as r32float); between, the
+frame's camera (camData only) is snapped to the layer's pixels and a
+full-screen draw copies the layer in, shifted, with its depth (frag_depth)
+and picks, before the rest of the world pass. Redrawn after a slide, a turn
+or zoom, a resize or when the shift passes the margin; off with the cutaway
+and the free camera.
+The world pass discards its depth and, unless a pick is asked for, its pick
+target (nothing reads them after it).
 The terrain field is looked up 0.45 cells of 3D noise to the side
 (`terrainWarp`, meshregion.wgsl), so cliffs bulge and recede; the draw
 shader looks materials up at the same place. Only chunks near the view
@@ -806,6 +840,24 @@ its edge:
   storms over 0.2 intensity, a slide's new chunks (1.5 s), everything
   after a slide in z (2 s), coarse events in sight, integrity's column
   writes, placed models (WorldCore.sleep). `?sleep=0` off.
+  (perfopt, round 83; the low tier's defaults from index.html, `?phone=0`
+  off) `settle=0`: land that comes in doesn't wake to settle — drowsy at
+  once; a river come in takes the pipes' steady flux for its levels while
+  drowsy (water_flux.wgsl FLUX_SEED), the flux is frozen with its region,
+  and a streamed column's loose intervals over air are dropped onto their
+  support (streamer.ts `settleLoose`). `sleepmore=1`: surface and render
+  fields skip sleeping chunks too, every chunk drowsy for 0.25 s after any
+  slide. `inplace=1`: edit, structure and layer pulls rewrite the layers in
+  place (no layersNext copied back); the brush runs 5 s after an edit.
+- **The simulation's rates** (perfopt, round 83, sim/flow.ts): `?simhz=60|30
+  |15` the tick rate — the kernels' per-60 Hz-tick rates scale by
+  common.wgsl `simStep()` (G.dt × 60), `perTick`, `relaxTick`; water, oil
+  and lava run `FLOW_SUB` 60 Hz substeps a tick (their pipes' stability).
+  `?flowhz=water:N,oil:N,lava:N,sediment:N` a sleeping chunk's flow updated
+  N times a second (staggered, common.wgsl `slowTick`, `flowFrozen`) instead
+  of frozen. `?windhz=N` the wind field and the API's blows every TICK_HZ/N
+  ticks, strokes held for it. `?fieldhz=N` moisture, contamination,
+  climate, ecology N times a second (their kernels' step × K: `fieldPass`).
 - The sea in a streamed window (round 79): `Globals.ocean.x` (`seaZ`, window z; the atlas level sets it
   from the start) — water_flux.wgsl's off-map neighbour stands at least at it, so the sea doesn't drain out
   of the window's edges (it did: in seconds, during the warmup). The atlas's sea is at 90 (was 28: 27

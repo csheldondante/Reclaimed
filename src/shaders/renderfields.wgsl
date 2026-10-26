@@ -128,6 +128,10 @@ fn taperCorner(ring: array<vec2<i32>, 6>, sum0: f32, n0: f32, kind: u32) -> f32 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  // (perfopt, ?sleepmore=1: a sleeping chunk's fields can't change — its moisture, fire, lava, water and flux
+  // are frozen; with the field mesh no sun march — so it's skipped, except while drowsy: just fallen asleep,
+  // just come in, or after any slide, when the fields were moved)
+  if (SLEEP_MORE && MR.n.w != 0u && asleep(id.xy) && !drowsy(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
 

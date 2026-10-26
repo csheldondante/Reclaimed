@@ -29,7 +29,7 @@ fn bedAt(q: vec2<i32>) -> f32 {
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // (a sleeping chunk: round 80)
-  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
+  if (id.x >= G.mapW || id.y >= G.mapH || flowFrozen(id.xy, FLOW_N)) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let L = lava[i];

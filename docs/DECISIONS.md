@@ -50,6 +50,53 @@ each was implemented.
 - "Simulation can absolutely be 30 Hz or even 15 probably." Gradual fields
   (moisture, contamination, wilt, climate, ecology) "far less frequent.
   Every second or more apart."
+## 2026-10-26 — round 83 (session 5, `perfopt`) — cutting the simulation's cost
+
+The user, on what the simulation must cost (each to be tried behind a URL
+flag on `perfopt` and A/B'd on the phone):
+
+- **Tick rate:** "Simulation can absolutely be 30 Hz or even 15 probably."
+  Systems that use per-tick constants rather than dt must still run at the
+  same speed in world time (water, fire, ecology, …).
+- **Streamed land arrives settled:** "Generated land should come in
+  settled"; "We don't need to simulate a map cell we stream." A slide's new
+  chunks don't wake. Where streamed land looks wrong unsettled (sediment,
+  placement, water not at rest), "sediment that looks unrealistic or bad
+  placement should be fixed in the cheap generator" — not by simulating.
+- **Water steady state:** "steady state for water flow being something you
+  can cache so no tick is necessary most of the time. We can then run
+  simulation on demand and cache when it has run for a bit and localize
+  real simulation to player actions." Water and flux simulate only where
+  something disturbed them (an edit, an event, rain or a storm), then
+  settle and sleep; generated rivers and seas arrive at rest.
+- **Gradual fields** (moisture, contamination, wilt, climate, ecology and
+  the like) "can be far less frequent. Every second or more apart."
+- **Wind** stays simulated: "one of the most satisfying things to see your
+  movement cause things go away in reaction … the way wind moves is the
+  coolest thing in the simulation." Lower fidelity is fine (a coarser grid,
+  a lower rate) but it must still react visibly to the player's movement —
+  not replaced with noise.
+- **Water, corrected:** "Water should still appear to run and not sleep. What
+  I'm saying is we don't need to keep simulating it. Freeze the current flow
+  and just stop updating the depths so it looks like it is flowing but is
+  just a rendering trick." Real water simulation resumes only where something
+  disturbs it (an edit, an event, rain, the player). "You can use this trick
+  in the storm too. It can update less frequently but render flow." The wind
+  field likewise where it isn't reacting to the player.
+- **Every animated flow:** "Can we generalize the flows to water magma and
+  sediment? Any animated flow can decrease the ticks and cache the flow state
+  and show animated flow hopefully and we can tune the actual update
+  frequency based on what looks convincing and good." One mechanism, each
+  flow's rate its own flag, full rate only where disturbed.
+- **Floating sections:** "The terrain has floating sections that don't
+  settle" (with the settle flags): streamed columns and forms must not
+  contain floating pieces — the generator's job, not a wake.
+- **The phone:** "Deferred shading helped a lot on my phone." It stays the
+  default.
+- **The phone, later:** "The current iteration of perf branch is crushing
+  it. About 16ms for p95!" — /perfopt/ with `lite=1&settle=0&inplace=1&
+  sleepmore=1` (the deferred terrain the default). Plan: these become the
+  phone tier's defaults when perfopt is merged.
 
 ## 2026-10-26 — round 82 (session 5, `places`) — where the phone's frame goes
 

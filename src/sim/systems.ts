@@ -35,6 +35,22 @@ import townStampWgsl from '../shaders/townstamp.wgsl?raw';
 import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
+import { SETTLE, SLEEP_MORE } from './sleep';
+import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst } from './flow';
+
+/**
+ * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
+ * pulls — write the layers in place instead of into layersNext copied back whole (16 MB a tick each in the atlas's
+ * window: on a phone the bandwidth of the copies alone was a share of the frame). Each thread rewrites only its
+ * own column (the structures read their neighbours' support: one tick's Gauss-Seidel instead of Jacobi). With
+ * it the brush runs only while an edit is in flight (a pour lands for up to ~4 s after the press).
+ */
+export const INPLACE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('inplace') === '1';
+/** a column pass's code and its two layer bindings, in place or not */
+const columnPass = (code: string, world: WorldGpu) =>
+  INPLACE ? { code: code.replaceAll('layersIn[', 'layersOut['), in: world.layersNext, out: world.layers } : { code, in: world.layers, out: world.layersNext };
+/** (perfopt, inplace) ticks the brush runs after an edit (the longest pour's fall, 3.9 s, and some) */
+const EDIT_LINGER = 300;
 
 const BASE: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform' };
 const WITH_ALL = [commonWgsl, layersWgsl, materialsWgsl];
@@ -69,7 +85,8 @@ export class SurfaceSystem implements SimSystem {
       device,
       world,
       'surface',
-      surfaceWgsl,
+      `const SLEEP_MORE: bool = ${SLEEP_MORE};
+` + surfaceWgsl,
       { 3: 'read', 4: 'rw', 16: 'stex', 19: 'tex', 20: 'stex', 28: 'tex', 30: 'stex' },
       { 3: world.layers, 4: world.surface, 16: world.driftView, 19: world.airView, 20: world.strataView, 28: world.projView, 30: world.levelsView },
       true,
@@ -89,15 +106,15 @@ export class StructureSystem implements SimSystem {
       device,
       world,
       'structure',
-      structureWgsl + flowWgsl,
+      columnPass(structureWgsl, world).code + flowWgsl,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
-      { 3: world.layers, 4: world.layersNext, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
+      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
       true,
     );
   }
   encode(enc: GPUCommandEncoder): void {
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 
@@ -111,7 +128,7 @@ export class WaterSystem implements SimSystem {
       device,
       world,
       'water-flux',
-      waterFluxWgsl,
+      `const FLUX_SEED: bool = ${!SETTLE};\n` + flowConst('water') + waterFluxWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex' },
       { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView },
     );
@@ -119,15 +136,18 @@ export class WaterSystem implements SimSystem {
       device,
       world,
       'water-depth',
-      waterDepthWgsl,
+      flowConst('water') + waterDepthWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read' },
       { 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface },
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, 'water-flux', this.flux.k, this.flux.group, this.world.groups);
-    dispatch(enc, this.prof, 'water-depth', this.depth.k, this.depth.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.waterNext, 0, this.world.water, 0, this.world.water.size);
+    // (perfopt, simhz: the pipes stable only at the 60 Hz step — FLOW_SUB of them a tick, sim/flow.ts)
+    for (let s = 0; s < FLOW_SUB; s++) {
+      dispatch(enc, this.prof, 'water-flux', this.flux.k, this.flux.group, this.world.groups);
+      dispatch(enc, this.prof, 'water-depth', this.depth.k, this.depth.group, this.world.groups);
+      enc.copyBufferToBuffer(this.world.waterNext, 0, this.world.water, 0, this.world.water.size);
+    }
   }
 }
 
@@ -141,7 +161,7 @@ export class OilSystem implements SimSystem {
       device,
       world,
       'oil-flux',
-      oilFluxWgsl,
+      flowConst('oil') + oilFluxWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'read', 17: 'tex' },
       { 3: world.surface, 4: world.water, 5: world.oil, 6: world.oilFlux, 7: world.flux, 17: world.driftView },
     );
@@ -149,28 +169,36 @@ export class OilSystem implements SimSystem {
       device,
       world,
       'oil-depth',
-      oilDepthWgsl,
+      flowConst('oil') + oilDepthWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'rw', 17: 'tex' },
       { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface, 9: world.fire, 10: world.oilStored, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, 'oil-flux', this.flux.k, this.flux.group, this.world.groups);
-    dispatch(enc, this.prof, 'oil-depth', this.depth.k, this.depth.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.oilNext, 0, this.world.oil, 0, this.world.oil.size);
+    for (let s = 0; s < FLOW_SUB; s++) {
+      dispatch(enc, this.prof, 'oil-flux', this.flux.k, this.flux.group, this.world.groups);
+      dispatch(enc, this.prof, 'oil-depth', this.depth.k, this.depth.group, this.world.groups);
+      enc.copyBufferToBuffer(this.world.oilNext, 0, this.world.oil, 0, this.world.oil.size);
+    }
   }
 }
 
+const CONTAM_P = fieldPeriod(1);
+const MOIST_P = fieldPeriod(1);
+const ECO_P = fieldPeriod(15);
+const CLIMATE_P = fieldPeriod(4);
+
 export class ContaminationSystem implements SimSystem {
   readonly name = 'contamination';
-  readonly period = 1;
+  // (perfopt, ?fieldhz=: sim/flow.ts)
+  readonly period = CONTAM_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'contamination',
-      contamWgsl + flowWgsl,
+      fieldPass(contamWgsl, CONTAM_P.k) + flowWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'rw' },
       { 3: world.waterPrev, 4: world.water, 5: world.flux, 6: world.contam, 7: world.contamNext, 8: world.veg, 9: world.contamDelta },
     );
@@ -183,14 +211,14 @@ export class ContaminationSystem implements SimSystem {
 
 export class MoistureSystem implements SimSystem {
   readonly name = 'moisture';
-  readonly period = 1;
+  readonly period = MOIST_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'moisture',
-      moistureWgsl + slopeWgsl,
+      fieldPass(moistureWgsl, MOIST_P.k) + slopeWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 17: 'tex' },
       { 3: world.water, 4: world.moisture, 5: world.moistureNext, 6: world.veg, 7: world.surface, 17: world.driftView },
     );
@@ -224,14 +252,14 @@ export class WiltSystem implements SimSystem {
 
 export class EcologySystem implements SimSystem {
   readonly name = 'ecology';
-  readonly period = 15;
+  readonly period = ECO_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'ecology',
-      ecologyWgsl + slopeWgsl,
+      fieldPass(ecologyWgsl, ECO_P.k) + slopeWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read', 17: 'tex' },
       { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire, 17: world.driftView },
     );
@@ -252,7 +280,8 @@ export class RenderFieldsSystem implements SimSystem {
       device,
       world,
       'renderfields',
-      terrainShapeWgsl + meshRegionWgsl + renderFieldsWgsl + flowWgsl,
+      terrainShapeWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
+` + renderFieldsWgsl + flowWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 30: 'uniform' },
       { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 30: world.meshRegion },
     );
@@ -265,11 +294,13 @@ export class RenderFieldsSystem implements SimSystem {
 /** The player's persistent wind field (windfield.wgsl): advect, spread, decay, stamp strokes. */
 export class WindFieldSystem implements SimSystem {
   readonly name = 'windfield';
-  readonly period = 1;
+  // (perfopt, ?windhz=: every WIND_K ticks, each update the time since — sim/flow.ts)
+  readonly period = WIND_K;
   private s;
   private groups: [number, number];
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'windfield', windFieldWgsl, { 15: 'tex', 16: 'stex', 30: 'read', 31: 'read' }, { 15: world.windFieldView, 16: world.windFieldNextView, 30: world.physPuff, 31: world.windBlows });
+    this.s = kernel(device, world, 'windfield', `const WIND_K: f32 = ${WIND_K}.0;
+` + windFieldWgsl, { 15: 'tex', 16: 'stex', 30: 'read', 31: 'read' }, { 15: world.windFieldView, 16: world.windFieldNextView, 30: world.physPuff, 31: world.windBlows });
     this.groups = [Math.ceil(world.windField.width / 8), Math.ceil(world.windField.height / 8)];
   }
   encode(enc: GPUCommandEncoder): void {
@@ -289,9 +320,9 @@ export class EditSystem implements SimSystem {
       device,
       world,
       'edit',
-      editWgsl,
+      columnPass(editWgsl, world).code,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex', 26: 'stex' },
-      { 3: world.layers, 4: world.layersNext, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView, 26: world.editResultView },
+      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView, 26: world.editResultView },
       true,
     );
   }
@@ -299,11 +330,14 @@ export class EditSystem implements SimSystem {
   pending = false;
   /** Run every tick (the sandbox: pours keep landing after the press). */
   always = false;
+  /** (perfopt, inplace) ticks since the last edit: with `always`, the brush runs EDIT_LINGER ticks after one */
+  private idle = 1e9;
   encode(enc: GPUCommandEncoder): void {
-    if (!this.pending && !this.always) return;
+    this.idle = this.pending ? 0 : this.idle + 1;
+    if (!this.pending && !(this.always && (!INPLACE || this.idle < EDIT_LINGER))) return;
     this.pending = false;
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
     const size = [this.world.w, this.world.h];
     enc.copyTextureToTexture({ texture: this.world.editStateNext }, { texture: this.world.editState }, size);
   }
@@ -320,7 +354,7 @@ export class SedimentSystem implements SimSystem {
   private out;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, sedimentWgsl + flowWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, flowConst('sediment') + sedimentWgsl + flowWgsl];
     const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView, 30: world.shakeView };
     const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' }, 'outflow');
     this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex }) };
@@ -328,7 +362,7 @@ export class SedimentSystem implements SimSystem {
       device,
       world,
       'sediment',
-      sedimentWgsl + flowWgsl,
+      flowConst('sediment') + sedimentWgsl + flowWgsl,
       { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' },
       { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
       true,
@@ -347,14 +381,14 @@ export class SedimentSystem implements SimSystem {
  */
 export class ClimateSystem implements SimSystem {
   readonly name = 'climate';
-  readonly period = 4;
+  readonly period = CLIMATE_P.period;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
       'climate',
-      climateWgsl,
+      fieldPass(climateWgsl, CLIMATE_P.k),
       { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
       { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.veg, 7: world.moisture, 8: world.fire, 9: world.lava },
       true,
@@ -551,9 +585,9 @@ export class LayerPullSystem implements SimSystem {
       device,
       world,
       'layerpull',
-      layerPullWgsl,
+      columnPass(layerPullWgsl, world).code,
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'uniform', 7: 'stex' },
-      { 3: world.layers, 4: world.layersNext, 5: this.given, 6: this.params, 7: world.shakeView },
+      { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: this.given, 6: this.params, 7: world.shakeView },
       true,
     );
   }
@@ -574,7 +608,7 @@ export class LayerPullSystem implements SimSystem {
     // (written before this tick's submit: one batch a tick)
     this.device.queue.writeBuffer(this.params, 0, buf);
     dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
+    if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
 

@@ -224,6 +224,30 @@ fn triAt(w: vec2<f32>) -> Tri {
 // Per-direction quantities (flux, sediment lanes): one f32 per direction.
 // Arrays have no arithmetic, so the few operations needed are functions.
 alias Dirs = array<f32, 6>;
+/**
+ * (perfopt, ?simhz=30|15 — DECISIONS round 83) The 60 Hz ticks of world time one tick stands for: 1 at 60 Hz, 2
+ * at 30, 4 at 15. The systems' rates were written per 60 Hz tick; they scale by it so the world runs at the same
+ * speed in its time whatever the tick rate: an increment × simStep(), a chance perTick(p), a decay or a
+ * relaxation relaxTick(k).
+ */
+fn simStep() -> f32 { return G.dt * 60.0; }
+/** a chance p a 60 Hz tick, over this tick */
+fn perTick(p: f32) -> f32 { return 1.0 - pow(1.0 - clamp(p, 0.0, 1.0), simStep()); }
+/** a fraction k a 60 Hz tick (a relaxation toward, a decay by), over this tick */
+fn relaxTick(k: f32) -> f32 { return 1.0 - pow(1.0 - clamp(k, 0.0, 1.0), simStep()); }
+
+/**
+ * (perfopt, ?flowhz= — sim/flow.ts) Is this tick a sleeping chunk's turn to update a flow that runs every n ticks
+ * asleep (0: never — frozen, drawn moving from its frozen flux)? Staggered over the chunks.
+ */
+fn slowTick(q: vec2<u32>, n: u32) -> bool {
+  if (n == 0u) { return false; }
+  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
+  return ((G.tick + c * 7u) % n) == 0u;
+}
+/** a flow's column frozen this tick: asleep, and not its slow turn */
+fn flowFrozen(q: vec2<u32>, n: u32) -> bool { return asleep(q) && !slowTick(q, n); }
+
 fn dZero() -> Dirs { return Dirs(0.0, 0.0, 0.0, 0.0, 0.0, 0.0); }
 fn dSum(a: Dirs) -> f32 { return a[0] + a[1] + a[2] + a[3] + a[4] + a[5]; }
 fn dScale(a: Dirs, s: f32) -> Dirs { var o = a; for (var k = 0u; k < NDIR; k++) { o[k] = a[k] * s; } return o; }
