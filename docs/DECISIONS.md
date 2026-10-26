@@ -24,6 +24,9 @@ each was implemented.
 - What the sim must do (P11): water's steady state is cached, so no tick is
   needed most of the time: "run simulation on demand and cache when it has
   run for a bit and localize real simulation to player actions."
+  Water still looks like it runs: "Water should still appear to run and not
+  sleep … Freeze the current flow and just stop updating the depths so it
+  looks like it is flowing but is just a rendering trick."
 - "We don't need to simulate a map cell we stream." Generated land comes in
   settled; "sediment that looks unrealistic or bad placement should be
   fixed in the cheap generator."
