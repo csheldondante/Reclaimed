@@ -5131,3 +5131,15 @@ and the plants every frame, though the terrain barely changes.
   riding with N=8 nothing wrong in a shot.
 - drawbench counts `shadow-static` with the shadow.
 
+
+## Round 83 — tufts painted on the ground when their boxes are off (perfopt)
+
+Why: `?tufts=0` is the plants' biggest saving (their draw 0.45 → 0.06 ms,
+the shadow 0.59 → 0.45) but the meadow lost its dark speckle. With it, the
+terrain's look paints them (meshdraw.wgsl, `TUFTS_DRAWN` false): on
+soil-like ground with plant cover, a quarter-cell hash — about a third of
+them a tuft's shaded side (×0.5), a tenth its lit top (×1.25), as dense as
+vegplan.wgsl's tufts (smoothstep(1.2, 2.5, veg)). At the phone's 1.3 pixels
+a cell a tuft box was a third of a pixel; the painted ones read nearly the
+same (scratch tf4-cmp: default left, tufts=0 right).
+

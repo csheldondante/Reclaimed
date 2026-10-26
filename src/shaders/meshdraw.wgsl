@@ -312,6 +312,14 @@ fn meshShade(in: MOut) -> FOut {
       // (it turns with the season, as fsBox)
       g = mix(g, seasonGrass(g, fbm2(wo(in.wpos.xy) * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, v));
       alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
+      // (perfopt, ?tufts=0: no tuft boxes — their look painted here instead: on soil-like ground, a quarter cell
+      // in shade here and there, as many as vegplan.wgsl would stand there)
+      if (!TUFTS_DRAWN && isTop && MATS[lk.mat].eco.x >= 2.0) {
+        let tr = randv(vec3<i32>(vec2<i32>(floor(in.wpos.xy * 4.0)), 911));
+        // (a tuft's shaded side, or its lit top)
+        let d = smoothstep(1.2, 2.5, v);
+        if (tr < d * 0.32) { alb *= 0.5; } else if (tr < d * 0.44) { alb *= 1.25; }
+      }
     }
   }
   // a structure's face: its moss, and the sand lying against it
