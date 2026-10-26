@@ -5113,3 +5113,21 @@ Why: to see what's left of the pixel shader with the look deferred.
   water 0.34; band 0.37 or 0.1 with bandh=2), shadow 0.6 (the mesh's 72
   casting chunks and the plants' 330 k vertices), renderprep 0.35.
 
+
+## Round 83 — the shadow map's static casters cached (perfopt)
+
+Why: the shadow pass (0.6 ms on the still frame) is now the largest single
+piece of the render after the draw: the terrain mesh's 72 casting chunks
+and the plants every frame, though the terrain barely changes.
+
+- `?shadowcache=N`: the static casters (the terrain mesh, the prisms and
+  tops) drawn into their own depth map every Nth frame, with the light
+  matrix kept between (as shadowevery: redrawn at once after a slide or
+  when the box moves); every frame that map is copied into the sun's map
+  and the moving casters (plants, structures, bodies, skins) drawn over it.
+  Drawbench: shadow 0.59 → 0.32 ms (N=4), 0.26 (N=8); shadowevery=4 0.15
+  (everything kept). A rebuilt chunk's shadow (a new crater) shows up to N
+  frames late; what moves casts on time. Same picture (within shots' noise);
+  riding with N=8 nothing wrong in a shot.
+- drawbench counts `shadow-static` with the shadow.
+

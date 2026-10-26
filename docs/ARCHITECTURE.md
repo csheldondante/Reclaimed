@@ -410,7 +410,10 @@ scripts/drawbench.mjs sets them with `@name=value` pieces): `defer`,
 `prepass`, `cull` (the G-buffer pass culls faces turned away; the mesh's
 quads are wound out of the solid), `shadowEvery` (the shadow map and the
 light matrix it was drawn with kept for N frames, redrawn after a slide —
-`FieldMesh.slides` — or a new box), `prepEvery` (renderprep's and vegprep's
+`FieldMesh.slides` — or a new box), `shadowCache` (the static casters —
+mesh, prisms — into `shadowStatic` every N frames with the matrix kept,
+copied into the map each frame and the moving casters drawn over it),
+`prepEvery` (renderprep's and vegprep's
 instance lists kept N frames), `noDetail` (bits of the look left out,
 carried to the shaders in `Camera.eye.w` from bit 2: meshdraw.wgsl `ND_*`).
 The world pass discards its depth and, unless a pick is asked for, its pick

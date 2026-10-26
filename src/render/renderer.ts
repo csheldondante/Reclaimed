@@ -94,6 +94,9 @@ export class Renderer {
         if (b === undefined) throw new Error(`?nodetail=${k}: one of ${Object.keys(DETAIL_BITS).join(', ')}`);
         return m | b;
       }, 0),
+    /** the sun's map's static casters (the terrain mesh, the prisms) drawn every Nth frame into a cache, copied in
+     *  and the moving ones (plants, structures, bodies) drawn over it every frame (?shadowcache=N; 0 off) */
+    shadowCache: Number(new URLSearchParams(location.search).get('shadowcache') ?? 0),
     shadowEvery: Number(new URLSearchParams(location.search).get('shadowevery') ?? 1),
     /** the prisms' and plants' instance lists made every Nth frame (?prepevery=N): a frame's lag on what changed;
      *  made again at once after a slide */
@@ -190,7 +193,9 @@ export class Renderer {
   /** frames, for the window's and the band's mesh turns (round 82) */
   private meshTurn = 0;
   /** (perfopt, shadowEvery) the light matrix and lookup bias the shadow map holds, when it was drawn, the box, the slides */
-  private shadowAt = { m: new Float32Array(16), bias: 0, frame: -1e9, rect: '', slides: -1 };
+  private shadowAt = { m: new Float32Array(16), bias: 0, frame: -1e9, rect: '', slides: -1, cached: false };
+  /** (perfopt, shadowCache) the static casters' depth, copied into the sun's map each frame */
+  private shadowStatic?: GPUTexture;
   /** (perfopt, prepEvery) when the instance lists were last made, and the slides then */
   private prepAt = { frame: -1e9, slides: -1 };
   private frameNo = 0;
@@ -239,7 +244,7 @@ export class Renderer {
     this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom, undefined, meshSlots);
     // (a texel when there's no shadow pass: the draw shaders still bind one)
     const ss = this.fieldMesh.on ? shadowSize : 1;
-    this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING });
+    this.shadowTex = device.createTexture({ label: 'shadow', size: [ss, ss], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     this.shadowView = this.shadowTex.createView();
     this.shadowSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' });
     profiler.trackMemory('shadow', ss * ss * 4);
@@ -633,6 +638,7 @@ export class Renderer {
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
   destroy(): void {
     this.shadowTex.destroy();
+    this.shadowStatic?.destroy();
     this.depth?.destroy();
     this.pickTex?.destroy();
   }
@@ -702,7 +708,7 @@ export class Renderer {
     const turn = this.meshTurn++ & 1;
     if (!SKIP.has('meshprep') && (!this.band || turn === 0)) this.fieldMesh.encode(enc, cam);
     if (this.band && !SKIP.has('band') && turn === 1) this.band.mesh.encode(enc, cam);
-    if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc);
+    if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc, shadowDue);
 
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
     const def = this.meshPipe && !SKIP.has('mesh') && Renderer.opts.defer ? this.encodeGBuffer(enc, cam) : undefined;
@@ -886,8 +892,9 @@ export class Renderer {
    * enough for one map) looking along the light, into both cameras — the
    * view's, to look shadows up, and the sun's own, to draw them.
    */
-  /** (returns whether the shadow map is drawn this frame: perfopt's shadowEvery) */
-  private writeLight(sun: [number, number, number]): boolean {
+  /** (returns whether the shadow map is drawn this frame — perfopt's shadowEvery — and with shadowCache whether
+   *  its static casters are: 'all', 'moving' (the cache copied in, the moving casters over it) or false) */
+  private writeLight(sun: [number, number, number]): 'all' | 'moving' | false {
     const f = [-sun[0], -sun[1], -sun[2]];
     const fl = Math.hypot(f[0], f[1], f[2]) || 1;
     f[0] /= fl;
@@ -924,15 +931,16 @@ export class Renderer {
     // (perfopt, ?shadowevery=N: between redraws the map and the matrix it was drawn with are kept — the lookups
     // stay consistent while the camera moves; a slide (the land moved under the window's coordinates) or a new box
     // draws it at once)
-    const se = Math.max(1, Renderer.opts.shadowEvery | 0);
+    const sc = Math.max(0, Renderer.opts.shadowCache | 0);
+    const se = sc > 1 ? sc : Math.max(1, Renderer.opts.shadowEvery | 0);
     const S = this.shadowAt;
     const rect = `${x0},${y0},${x1},${y1}`;
-    if (se > 1 && this.frameNo - S.frame < se && S.rect === rect && S.slides === this.fieldMesh.slides) {
+    if (se > 1 && this.frameNo - S.frame < se && S.rect === rect && S.slides === this.fieldMesh.slides && S.cached === sc > 1) {
       cf.set(S.m, CAMERA_BYTES / 4);
       cf[23] = S.bias;
-      return false;
+      return sc > 1 ? 'moving' : false;
     }
-    this.shadowAt = { m, bias: 0.25 * sz, frame: this.frameNo, rect, slides: this.fieldMesh.slides };
+    this.shadowAt = { m, bias: 0.25 * sz, frame: this.frameNo, rect, slides: this.fieldMesh.slides, cached: sc > 1 };
     cf.set(m, CAMERA_BYTES / 4);
     this.fieldMesh.castCull(m);
     // the lookup's depth bias: a quarter of a cell along the light
@@ -945,26 +953,48 @@ export class Renderer {
     // (round 82: no cutaway from the sun — what's cut still casts)
     lf.fill(0, CAMERA_FOCUS_OFFSET / 4, CAMERA_FOCUS_OFFSET / 4 + 4);
     this.device.queue.writeBuffer(this.lightCamBuf, 0, this.lightCamData);
-    return true;
+    return 'all';
   }
 
   /** The sun's shadow map: every built mesh chunk, the prisms, plants, structures and bodies, depth only. */
-  private encodeShadow(enc: GPUCommandEncoder): void {
+  private encodeShadow(enc: GPUCommandEncoder, due: 'all' | 'moving'): void {
     const g = this.shadowGroups!;
+    // (perfopt, ?shadowcache=N: the static casters into their own map every Nth frame, copied in every frame)
+    const cache = Renderer.opts.shadowCache > 1;
+    if (cache && (!this.shadowStatic || this.shadowStatic.width !== this.shadowTex.width)) {
+      this.shadowStatic?.destroy();
+      this.shadowStatic = this.device.createTexture({ label: 'shadow-static', size: [this.shadowTex.width, this.shadowTex.height], format: SHADOW_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+      due = 'all';
+    }
+    const statics = (pass: GPURenderPassEncoder) => {
+      pass.setPipeline(this.shadowMeshPipe!);
+      pass.setBindGroup(0, g.mesh);
+      this.fieldMesh.drawCasters(pass);
+      pass.setPipeline(this.shadowOpaquePipe!);
+      pass.setBindGroup(0, g.opaque);
+      pass.drawIndirect(this.indirect, 0);
+      pass.setBindGroup(0, g.tops);
+      pass.drawIndirect(this.indirect, 48);
+    };
+    if (cache && due === 'all') {
+      const sp = enc.beginRenderPass({
+        label: 'shadow-static',
+        colorAttachments: [],
+        depthStencilAttachment: { view: this.shadowStatic!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+        timestampWrites: this.profiler.timestamps('shadow-static'),
+      });
+      statics(sp);
+      sp.end();
+    }
+    if (cache) enc.copyTextureToTexture({ texture: this.shadowStatic! }, { texture: this.shadowTex }, [this.shadowTex.width, this.shadowTex.height]);
     const pass = enc.beginRenderPass({
       label: 'shadow',
       colorAttachments: [],
-      depthStencilAttachment: { view: this.shadowView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      depthStencilAttachment: { view: this.shadowView, depthClearValue: 1, depthLoadOp: cache ? 'load' : 'clear', depthStoreOp: 'store' },
       timestampWrites: this.profiler.timestamps('shadow'),
     });
-    pass.setPipeline(this.shadowMeshPipe!);
-    pass.setBindGroup(0, g.mesh);
-    this.fieldMesh.drawCasters(pass);
+    if (!cache) statics(pass);
     pass.setPipeline(this.shadowOpaquePipe!);
-    pass.setBindGroup(0, g.opaque);
-    pass.drawIndirect(this.indirect, 0);
-    pass.setBindGroup(0, g.tops);
-    pass.drawIndirect(this.indirect, 48);
     pass.setBindGroup(0, g.plants);
     pass.drawIndirect(this.indirect, 32);
     pass.setPipeline(this.shadowBodyPipe!);
