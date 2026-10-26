@@ -21,6 +21,12 @@ each was implemented.
 - "I would rather orchestrate and plan these systems in parallel and abstract them behind an API so we can
   iterate and improve them all across multiple sessions. Fixing the performance and quality of the fluid
   simulation or destruction shouldn't fundamentally matter to dialogue or the atlas updates." → docs/SYSTEMS.md.
+- The order: the contracts first ("Yes"); then dialogue and basic cameras "so we have a way to communicate
+  what is going on"; a GM — for now a subagent with GM context and tools — takes the world state wiki and
+  offline writes a session story as data (locations, dialogues, objectives, world effects); dialogue and
+  settlements first, agents as workers or hostile, settlements in the data structure the city management
+  game will use; the user's ideas for items, units and diplomacy to be talked through first, a first pass of
+  their data in play before heroes or their stories.
 
 ## 2026-10-26 — round 83 (session 5, `places`) — the puck, separate cuts, LOD
 

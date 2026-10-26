@@ -235,15 +235,24 @@ run end (11) ──queued AtlasEvents──▶ world state (1)
   `perfopt`) behind URL flags, and merge back when they win.
 - The headless browser and the GPU are shared: agents ask "main" for them.
 
-## Order (proposed, for the user to confirm)
+## Order (the user, round 83)
 
-The spine is atlas events: they connect the story to visible change, and every other system hangs off them.
-1. API skeletons for 1, 3 (RegionBrief), 9 (adapter) and 11 as interfaces with stubs, plus RegionState
-   realised at arrival for two events (bury in ash, overgrow).
-2. A first vertical slice:
-   - a place from a brief (rooms and a lock/key);
-   - a few agents working;
-   - one GM objective;
-   - an outcome writing an AtlasEvent;
-   - the next run arriving changed.
-3. Then, in parallel by owner: unit and item generators, dialog, flow and rivers (quality only), camera.
+The user: "get dialogue in and basic cameras so we have a way to communicate what is going on"; "a GM (for now
+a subagent with GM context and tools) take the world state wiki and offline create a session story as data
+that we can use to create the locations, dialogues, objectives and world effects"; "dialogue and settlements
+first … agents that are workers or hostile … the settlements at least use the same data structure we plan
+to expose to the city management game"; items, units and diplomacy are the user's ideas to talk through
+first — "it will feel more cohesive if we have at least the first pass at the data structure for that in play
+before creating heroes or their stories".
+
+1. ✓ The contracts as types (`src/api/contracts/`): world.ts (RegionState, AtlasEvent, Faction,
+   WorldSnapshot, WorldState), story.ts (SessionStory: locations, cast, dialogs, objectives, conditions,
+   outcomes), dialog.ts, run.ts, settlement.ts (a DRAFT, for the user's ideas), and a reference
+   MemoryWorldState (world-state.ts).
+2. Dialog: the system that plays a DialogTree (phone-first UI, choices, effects through Outcome) and basic
+   cameras to frame a talk and show what's happening (a cut to a speaker, a reveal of a world effect).
+3. The GM: a subagent with the GM's context and tools reads a WorldSnapshot and writes a SessionStory (JSON),
+   offline; a validator checks it against story.ts (every reference resolves).
+4. Settlements and agents: the settlement data (with the city game's needs), placed by the region generator,
+   worked by agents (workers) and raided by hostile ones; items, units and diplomacy after the user's ideas.
+5. Then heroes and their stories on top.
