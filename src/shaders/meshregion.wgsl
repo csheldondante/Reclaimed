@@ -13,7 +13,10 @@
 //      goes on up (the live mesh: what's above is the band's; else far up)
 //   ze the quads made: those whose base sample's z is in [x, y), or (z = 1)
 //      outside it — the live mesh its window's, the band what's outside
-struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32> };
+//   cv (perfopt, ?cavemesh=near) w 1: the mesh leaves out what's more than CAVE_DEEP under the lowest top of a
+//      sample's cell and its neighbours (caves, the insides of hills: under the ground, never seen from the
+//      sky), except within z of (x, y) — the cut's focus, where the player is under a roof
+struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32>, cv: vec4<f32> };
 @group(0) @binding(30) var<uniform> MR: MeshRegion;
 
 /**

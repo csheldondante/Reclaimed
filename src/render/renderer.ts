@@ -717,6 +717,8 @@ export class Renderer {
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
     this.fieldMesh.cull(cam);
+    // (perfopt, ?cavemesh=near: the caves meshed round the player when the cut slices a roof off; all when flying)
+    this.fieldMesh.setCaves(cam.cut.slice !== null ? [cam.target[0], cam.target[1]] : null, !!cam.fly);
     this.band?.mesh.cull(cam);
     this.frameNo++;
     const shadowDue = this.fieldMesh.on ? this.writeLight(opts.sun) : false;

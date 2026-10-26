@@ -5542,3 +5542,30 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   50 ms, the integrity pass 6.2 ms at most; riding (driveprofile) low p95
   9.6, high 16.9. The perf agent audits the code for the same antipattern
   (the intervals expanded into cells, whole boxes scanned).
+
+## Round 83 — caves left out of the mesh but near the player (`?cavemesh=near`) (perfopt)
+
+Why: the coordinator's measurement riding at the phone tier: caves ~1.1 ms a
+frame (0.44 generation, 0.26 sim, ~0.4 drawing). The draw's share is the
+mesh's cave surfaces — inside the ground, never seen from the sky, but drawn
+(the G-buffer pass and the shadow pass are vertex-bound).
+
+- `?cavemesh=near` (fieldmesh.wgsl `columnTops`, `CAVE_DEEP`; MeshRegion `cv`,
+  112 bytes now): a rebuild's first pass writes, for each sample column, the
+  lowest top (any material) of its cell and the six round it, less 4 cells;
+  the sample pass makes what's under that solid — caves, the insides of hills.
+  Cave mouths on cliffs and skylights stay (the low neighbour's top keeps
+  them). Near the cut's focus (the camera's target, 48 cells, while the cut
+  slices a roof off: the player under one) everything is meshed; flying,
+  everything. A change of focus rebuilds the chunks it touches
+  (`FieldMesh.setCaves`: their built hash set to 1 — they stay drawn until
+  each is rebuilt).
+- At 12304,5457: the window's mesh 173.7 k → 121.8 k vertices (−30 %); the
+  picture the same but a small dark hole on a slope (a skylight into a cave,
+  seen through: the cave's far walls are under the neighbours' tops — they're
+  now a flat cap). Timing not measured (the GPU was shared at the time).
+- Not done: generating the caves lazily (the 0.44 ms of generation and the
+  sim's share) — the columns would need their caves carved later, near the
+  player, from the atlas's cave noise (forms.wgsl caveVoids) into the
+  window's layers.
+

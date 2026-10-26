@@ -27,7 +27,11 @@ const IDLE_SKIP = `const IDLE_SKIP: bool = ${new URLSearchParams(location.search
 const NORMALS_GRID = `const NORMALS_GRID: bool = ${new URLSearchParams(location.search).get('normals') === 'grid'};`;
 
 /** bytes of the layout uniform (meshregion.wgsl MeshRegion) */
-export const REGION_BYTES = 96;
+export const REGION_BYTES = 112;
+/** (perfopt, ?cavemesh=near) the window's mesh leaves out the caves and the insides of hills, but near the cut */
+const CAVE_MESH = new URLSearchParams(location.search).get('cavemesh') === 'near';
+/** cells round the cut's focus where the caves are meshed */
+const CAVE_NEAR = 48;
 /** a chunk's side, world units */
 const CHUNK = 32;
 const ROW_H = Math.sqrt(3) / 2;
@@ -178,7 +182,8 @@ export class FieldMesh {
     }
     device.queue.writeBuffer(this.state, 0, init);
     const s = this.side + 3;
-    this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8, GPUBufferUsage.STORAGE);
+    // (and after the samples, perfopt's cavemesh: a float a sample column a slot, what's left out under it)
+    this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8 + this.slots * s * s * 4, GPUBufferUsage.STORAGE);
     this.statBuf = world.buf(`${pre}meshStats`, stateWords * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
@@ -203,7 +208,7 @@ export class FieldMesh {
     this.argsGroup = group(this.argsK);
     this.hashF = makeCompute(device, 'fieldmesh-hash-fresh', parts, spec, 'hashFresh');
     this.hashFGroup = group(this.hashF);
-    for (const entry of ['sampleField', 'makeVerts', 'makeQuads']) {
+    for (const entry of ['columnTops', 'sampleField', 'makeVerts', 'makeQuads']) {
       const k = makeCompute(device, `fieldmesh-${entry}`, parts, spec, entry);
       this.kernels.push(k);
       this.groups.push(group(k));
@@ -230,6 +235,43 @@ export class FieldMesh {
    * A band's z (round 79): the window is at oz, zMax high — its samples from the world's floor (window z
    * −oz) up the world's height, the bedrock under the floor, no run going on up, quads outside [0, zMax).
    */
+  /** (perfopt, cavemesh) the window's: the caves left out of the mesh (but near the focus) */
+  private caveOn = false;
+  private caveFocus: [number, number, number] | null = null;
+
+  /**
+   * (perfopt, ?cavemesh=near) Where the caves are meshed: round the cut's focus (x, y, radius — the player under
+   * a roof), or nowhere; off (every cave meshed) while flying. A change rebuilds the chunks it touches (their mesh
+   * stays drawn until each is rebuilt).
+   */
+  setCaves(focus: [number, number] | null, fly: boolean): void {
+    if (!this.on || this.src || !CAVE_MESH) return;
+    const on = !fly;
+    const f: [number, number, number] | null = focus ? [focus[0], focus[1], CAVE_NEAR] : null;
+    const old = this.caveFocus;
+    const moved = (f === null) !== (old === null) || (f && old && Math.hypot(f[0] - old[0], f[1] - old[1]) > CAVE_NEAR / 4);
+    if (on === this.caveOn && !moved) return;
+    const all = on !== this.caveOn;
+    this.caveOn = on;
+    this.caveFocus = f;
+    const fl = new Float32Array(this.layout);
+    fl.set([f?.[0] ?? 0, f?.[1] ?? 0, f?.[2] ?? 0, on ? 1 : 0], 24);
+    this.device.queue.writeBuffer(this.region, 96, this.layout, 96, 16);
+    // (rebuilt: every chunk when it turns on or off; else those the old and new circles touch)
+    const touch = (c: [number, number, number] | null, cx: number, cy: number) => {
+      if (!c) return false;
+      const x = Math.max(cx * CHUNK, Math.min(c[0], (cx + 1) * CHUNK));
+      const y = Math.max(cy * CHUNK * ROW_H, Math.min(c[1], (cy + 1) * CHUNK * ROW_H));
+      return Math.hypot(x - c[0], y - c[1]) <= c[2] + 4;
+    };
+    for (let cy = 0; cy < this.ny; cy++)
+      for (let cx = 0; cx < this.nx; cx++) {
+        if (!all && !touch(old, cx, cy) && !touch(f, cx, cy)) continue;
+        // (word 5, the hash it was built from: anything not this one rebuilds it; not FRESH, so it stays drawn)
+        this.device.queue.writeBuffer(this.state, (CHUNK0 + (cy * this.nx + cx) * CSTRIDE + 5) * 4, new Uint32Array([1]));
+      }
+  }
+
   setBand(oz: number, zMax: number): void {
     if (!this.on || !this.src) return;
     const f = new Float32Array(this.layout);
@@ -346,7 +388,9 @@ export class FieldMesh {
       enc.copyBufferToBuffer(this.state, this.argsAt, this.args, 0, 12);
     }
     this.kernels.forEach((k, i) => {
-      const name = this.pre + ['fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
+      const name = this.pre + ['fieldmesh-tops', 'fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
+      // (the tops only for cavemesh)
+      if (i === 0 && !this.caveOn) return;
       const pass = enc.beginComputePass({ label: name, timestampWrites: this.profiler.timestamps(name) });
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, this.groups[i]);
