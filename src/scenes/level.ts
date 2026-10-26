@@ -1063,6 +1063,9 @@ export class LevelScene implements Scene {
           far.zMax = dims.zMax;
           const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;
           far.mid = [c[0], c[1]];
+          // (the puck keeps the target's height on the ground; without it the height isn't the ground's)
+          const [tx, ty, tz] = core.camera.target;
+          far.focus = core.camera.fly ? null : [tx, ty, this.cutaway ? tz : this.heightAt(tx, ty)];
           far.draw(pass, clear);
         });
       }

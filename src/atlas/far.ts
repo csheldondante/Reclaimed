@@ -9,13 +9,17 @@ import { KINDS, warmth } from './regions';
 import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
 import { LodRings } from './lod';
+import { ROW_H } from '../world/lattice';
 
-const UNI_BYTES = 80;
+const UNI_BYTES = 96;
 /** vertices a side, and world units between them */
 const G = 161;
 const SPACING = 32;
 
 export interface FarTargets {
+  /** (round 83) the window's field mesh: its state (which chunks are built) and chunks across and down — the
+   *  rings fill the chunks not built yet; absent: the rings never draw in the window */
+  mesh?: { state: GPUBuffer; grid: [number, number, number] };
   format: GPUTextureFormat;
   pickFormat: GPUTextureFormat;
   depthFormat: GPUTextureFormat;
@@ -46,6 +50,9 @@ export class FarLand {
   mid: [number, number] = [128, 128];
   /** the window's height (what's above it is drawn here, over the window too) */
   zMax = 248;
+  /** (round 83) what the view is on (window coordinates; the camera's target): the land on the eye's side of
+   *  it is kept under it (far.wgsl underFocus); null: none (flying) */
+  focus: [number, number, number] | null = null;
 
   constructor(
     private device: GPUDevice,
@@ -108,12 +115,15 @@ export class FarLand {
         { binding: 43, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 45, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 46, visibility: VF, buffer: { type: 'uniform' } },
+        { binding: 47, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.lod = lod ? new LodRings(device, atlas, lod.spacings, lod.n) : null;
+    if (this.lod && t.mesh) this.lod.meshGrid = [t.mesh.grid[2], t.mesh.grid[2] * ROW_H, t.mesh.grid[0], t.mesh.grid[1]];
+    const meshState = t.mesh?.state ?? device.createBuffer({ label: 'lod no mesh', size: 16, usage: GPUBufferUsage.STORAGE });
     // (no rings: an empty LodD, its count 0)
     const lodData = this.lod?.data ?? device.createBuffer({ label: 'lod none', size: 16, usage: GPUBufferUsage.STORAGE });
-    const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: 80, usage: GPUBufferUsage.UNIFORM });
+    const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: 96, usage: GPUBufferUsage.UNIFORM });
     this.group = device.createBindGroup({
       label: 'far',
       layout,
@@ -125,6 +135,7 @@ export class FarLand {
         { binding: 43, resource: { buffer: atlas.coarse.cells } },
         { binding: 45, resource: { buffer: lodData } },
         { binding: 46, resource: { buffer: lodUni } },
+        { binding: 47, resource: { buffer: meshState } },
       ],
     });
     const module = device.createShaderModule({ label: 'far', code: farW });
@@ -200,6 +211,7 @@ export class FarLand {
     f.set([this.mid[0], this.mid[1], G, a.p.sea], 8);
     f.set([fog[0], fog[1], fog[2], 1], 12);
     f.set([a.worldW, a.worldH, a.p.n / 2, a.coarse.cn], 16);
+    if (this.focus) f.set([...this.focus, 1], 20);
     this.device.queue.writeBuffer(this.uni, 0, f);
     const now = performance.now();
     if (this.lod) {

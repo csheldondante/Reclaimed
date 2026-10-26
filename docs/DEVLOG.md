@@ -5457,6 +5457,37 @@ frame (15.0 before the merge, rings and all).
   is the edge column, going on) — no wall; the rings cover what's past it.
   Without rings (`?lod=0`, the valley, the noise-streamed level) the wall
   stays: an open edge there shows the ground's shell from under.
+- Land just come in drawn before its mesh is (the user: "draw the top
+  layer further out then swap in asynchronously" — the rings are that top
+  layer). The rings left out the whole window; now only where the window's
+  mesh chunk is built and drawn (far.wgsl meshBuilt: the field mesh's state
+  bound to the rings, word 5 not FRESH and word 0, its indices, not 0). And
+  no mesh is made while a slide is writing its land (Renderer.holdMesh, set
+  with Streamer.busy): chunks made from land half written came out half
+  made — cave pieces, no ground — till they were made again, seconds with
+  one rebuild a frame. scripts/slideshot.mjs (a slide forced, one rebuild a
+  frame): before, holes for over 400 ms; now the rings' ground in the
+  chunks not made yet, each sharpening as it's made. (The mesh's chunks
+  are 32 cells, not the layers' 16: FieldMesh.chunkGrid says.)
+- What the hidden layers cost riding (driveprofile, 30 s, the phone tier on
+  the desktop's GPU, ms a frame): the band (what's over and under the
+  window's heights) 0.5 meshing + ~2.0 drawing of 10.2 — `?skip=band`
+  draw 5.3 → 3.3; the caves (`?a.caveDepth=9999`) 0.44 of the generation
+  (2.00 → 1.56), 0.26 of the sim, ~0.4 of the draw. The field mesh's own
+  1.4 is mostly the ground's surface (it skips the rock under it, round 81).
+- The rings and the cuts (the user: "LOD rings don't interact correctly with
+  dithering and I think we should maybe not render the ones in the direction
+  of the camera from the focus"). far.wgsl's camera now carries the cut
+  (render.wgsl Camera's cut, see, boxes): the rings, the far land and the
+  giants past the window are cut as the window's ground is — over the
+  slice, in a kept-seen point's hole (dithered). And the land on the eye's
+  side of the focus (the camera's target; the ground under it without the
+  puck) is kept under the focus's height, easing in over 24 units
+  (far.wgsl underFocus; the fixed view only): nothing past the window rises
+  between the eye and what the view is on, and nothing's left out (left
+  out, the screen's foot would show the sky through the heightfield).
+  scripts/cutlod.mjs: by the near edge zoomed out, a wide hole forced, a
+  slice forced.
 
 ## Round 83 — the deferred pipelines compiled off the main thread; one copy of the phone's flags (perfopt)
 

@@ -256,6 +256,12 @@ export class FieldMesh {
     this.device.queue.writeBuffer(this.region, 0, this.layout);
   }
 
+  /** chunks across and down (the state's records: meshregion.wgsl CHUNK0, CSTRIDE), and a chunk's cells across
+   *  (CHUNK rows down) */
+  get chunkGrid(): [number, number, number] {
+    return [this.nx, this.ny, CHUNK];
+  }
+
   /** The vertices (meshdraw.wgsl binding 3). */
   get vertexBuffer(): GPUBuffer {
     return this.verts;
