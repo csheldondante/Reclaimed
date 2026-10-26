@@ -5542,3 +5542,12 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   50 ms, the integrity pass 6.2 ms at most; riding (driveprofile) low p95
   9.6, high 16.9. The perf agent audits the code for the same antipattern
   (the intervals expanded into cells, whole boxes scanned).
+- Every cut judged, whoever made it (the user: "the meteors and sandbox
+  tools don't wake up the rocks … it just hovers"). Only the world API's
+  edits marked the integrity system; the sandbox's tools and the level's
+  meteors queue their Edit events straight on Globals.events. Now the sim
+  tells taps each tick's events as they're sent (Simulation.eventTaps) and
+  the integrity system marks every one that takes ground away (dig, smash,
+  crater, take: the op in the event's z) — its radius cut. rockshot.mjs:
+  the meteor's own event (a crater 12 across) at a spire's foot frees its
+  top (44 cells, a body).

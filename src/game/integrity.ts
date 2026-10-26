@@ -17,6 +17,13 @@ import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
 import { ignoreTeardown } from '../gpu/pipeline';
 import { cellAt, cellPos, ROW_H } from '../world/lattice';
+import { EventKind } from '../sim/globals';
+
+/** edit.wgsl's ops that take ground away (an Edit event's z: op · 32 + material + 512 + tag · 1024) */
+const OP_DIG = 2;
+const OP_SMASH = 12;
+const OP_CRATER = 13;
+const OP_TAKE = 14;
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 
@@ -72,6 +79,16 @@ export class Integrity {
     };
     this.bodies.onWake = () => this.project();
     this.bodies.onImpact = (b, speed, at) => this.impact(b, speed, at);
+    // (round 83, the user: "the meteors and sandbox tools don't wake up the rocks") every edit that takes
+    // ground away — a dig, a smash, a crater (a meteor's), a take — whoever queued it (the world API, the
+    // sandbox's tools, the level's meteors): what it cut is judged, the rock by its columns
+    core.sim.eventTaps.push((sent) => {
+      for (const e of sent) {
+        if (e.kind !== EventKind.Edit) continue;
+        const op = ((e.z ?? 0) & 511) >> 5;
+        if (op === OP_DIG || op === OP_SMASH || op === OP_CRATER || op === OP_TAKE) this.markDirty(e.x, e.y, e.radius + 14, Math.max(0.5, e.radius));
+      }
+    });
   }
 
   /**

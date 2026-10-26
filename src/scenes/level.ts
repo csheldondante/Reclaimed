@@ -2162,7 +2162,7 @@ export class LevelScene implements Scene {
         return;
       }
       core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
-      this.integrity?.markDirty(x, y, ed.radius + 14, ed.radius);
+      this.integrity?.markDirty(x, y, ed.radius + 14);
       core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
     }, ignoreTeardown);
   }

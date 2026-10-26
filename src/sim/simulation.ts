@@ -55,6 +55,8 @@ export class Simulation {
   private globalsData = new ArrayBuffer(GLOBALS_BYTES);
   /** Per-system CPU encode time (ms, smoothed). */
   readonly cpuMs = new Map<string, number>();
+  /** (round 83) told each tick's events as they're sent to the GPU, whoever queued them (Integrity: what cut the ground) */
+  readonly eventTaps: ((sent: readonly GlobalsState['events'][number][]) => void)[] = [];
 
   constructor(
     private device: GPUDevice,
@@ -122,6 +124,7 @@ export class Simulation {
     // stroke segments stamped into the wind field (gusts[1..]). A tick
     // carries MAX_EVENTS; the rest wait for the next tick rather than being lost
     const sent = globals.events.slice(0, MAX_EVENTS);
+    for (const tap of this.eventTaps) tap(sent);
     this.edit.pending = sent.some((e) => e.kind === EventKind.Edit);
     globals.events = globals.events.slice(MAX_EVENTS);
     // (perfopt, ?windhz=: the strokes wait for the wind field's next update)

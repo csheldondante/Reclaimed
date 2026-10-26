@@ -27,7 +27,7 @@ try {
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await sleep(12000);
   const stats = () => p.evaluate(() => JSON.stringify(window.reclaimed.integrity?.()?.stats ?? null));
-  for (const [name, side] of [['cut', 0], ['neck', 1]]) {
+  for (const [name, side] of [['cut', 0], ['meteor', 1]]) {
     const at = await p.evaluate(async (side) => {
       const R = window.reclaimed;
       R.stream.auto = false;
@@ -50,9 +50,10 @@ try {
         const t = window.reclaimed.api.terrain;
         await t.refresh();
         const top = t.heightAt(a.x, a.y);
-        // cut: a bowl through its middle; neck: a bowl at its foot from one side
+        // cut: a bowl through its middle (the world API); meteor: the level's meteor's own event (a crater 12
+        // across, straight to the sim's queue as the sandbox's tools and meteors send theirs) at its foot
         if (side === 0) t.crater(a.x, a.y, { radius: 1.6, z: a.z + (top - a.z) * 0.45 });
-        else t.crater(a.x + 2.2, a.y, { radius: 1.8, z: a.z + 2 });
+        else window.reclaimed.core.globals.events.push({ kind: 5, x: a.x + 4, y: a.y, z: 13 * 32 + 512, radius: 30, strength: a.z + 1 });
       },
       at,
       side,
