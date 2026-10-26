@@ -75,6 +75,8 @@ export class FieldMesh {
   private slots = 0;
   /** chunks drawn last frame (after culling) */
   drawn = 0;
+  /** (perfopt) slides so far: what's cached in window coordinates (the shadow map, the prepared instances) is stale after one */
+  slides = 0;
   /** the z its chunks' boxes start at and reach to at most (window z; the band's move with the window's oz) */
   private zLo = -1;
   private zHi = 0;
@@ -256,6 +258,7 @@ export class FieldMesh {
    */
   shift(dcx: number, dcy: number, t: [number, number, number]): void {
     if (!this.on) return;
+    this.slides++;
     const dev = this.device;
     if (!this.shiftK) {
       this.stateOld = this.world.buf('meshStateOld', this.state.size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);

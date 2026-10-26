@@ -196,6 +196,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     if (lay > 0.0 && !buriedAt(vec2<i32>(id.xy))) { top = f32(sfZ(s)) + lay; }
     let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));
     pl = vegPlan(id.x, id.y, veg[i], gm);
+    // (perfopt, ?tufts=0: no grass tufts — quarter-cell boxes, a third of a pixel at low; the mesh's plant cover draws the grass)
+    if (!TUFTS) { pl.tufts = 0u; }
     tap = wilt[i];
     n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree) + pl.tufts + select(0u, 1u, pl.flower);
     if (G.misc.w > 0.5) { n = fineCount(veg[i], gm, id.xy); }

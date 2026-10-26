@@ -4974,3 +4974,31 @@ run time for drawbench).
   inflated — not usable. cutshot takes --extra.
 
 streamtest 8/8, atlasworldtest passes.
+
+## Round 83 — what's left of the draw: plant tufts, the shadow map and the prep every Nth frame (perfopt)
+
+Why: with the terrain deferred, drawbench's pieces (still frame, phone
+viewport, low; the draw incl. the G-buffer 1.9 ms): the terrain mesh 0.77
+(its G-buffer pass 0.33), plants 0.45–0.58 (!), band 0.41, water 0.34, tops
+0.25, far land 0.23, opaque prisms 0.16; the shadow pass 0.6; renderprep
+(+vegprep) 0.42 every frame. Three flags for the phone, none on by default
+(each changes what's seen a little):
+
+- `?tufts=0`: no grass tufts. 18 300 plant boxes in that frame, most of them
+  tufts: quarter-cell boxes, a third of a pixel wide at low — 110 k
+  triangles for 94 k pixels. Without them: plants' draw 0.45 → 0.06 ms, the
+  shadow pass 0.59 → 0.45 (two runs each). The trees, shrubs and flowers
+  stay; the meadow loses some darker speckle (the mesh's plant cover still
+  greens it): scratch shots tf-cmp.
+- `?shadowevery=N`: the sun's map drawn every Nth frame, kept with the light
+  matrix it was drawn with (the lookups stay right as the camera moves);
+  drawn again at once after a slide (FieldMesh.slides) or when the box it
+  covers (the chunks near the view) moves. N=2: shadow 0.57 → 0.29 ms; 3:
+  0.18. What moves (bodies, the bike, swaying plants) casts up to N−1
+  frames late.
+- `?prepevery=N`: the prisms', water's and plants' instance lists (renderprep,
+  vegprep; their indirect counts kept too) made every Nth frame, at once
+  after a slide; the structures' every frame. N=2: 0.42 → 0.20 ms. What
+  changed shows a frame late (a crater's prisms, a new plant).
+- Riding with shadowevery=4&prepevery=4: no visible error in a shot mid-ride.
+

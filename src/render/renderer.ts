@@ -74,6 +74,12 @@ export class Renderer {
     /** the mesh drawn to a G-buffer and its look shaded once a pixel in a full-screen pass (meshdraw.wgsl; on by
      *  default, ?defer=0 the forward draw) */
     defer: new URLSearchParams(location.search).get('defer') !== '0',
+    /** the sun's shadow map drawn every Nth frame (?shadowevery=N; 1 every frame): kept with the light matrix it was
+     *  drawn with, so it stays right as the camera moves; drawn again at once after a slide or when the box it covers moves */
+    shadowEvery: Number(new URLSearchParams(location.search).get('shadowevery') ?? 1),
+    /** the prisms' and plants' instance lists made every Nth frame (?prepevery=N): a frame's lag on what changed;
+     *  made again at once after a slide */
+    prepEvery: Number(new URLSearchParams(location.search).get('prepevery') ?? 1),
   };
   private prep: ComputeKernel;
   private prepGroup: GPUBindGroup;
@@ -165,6 +171,11 @@ export class Renderer {
   instanceCounts = { opaque: 0, water: 0, tops: 0, prisms: 0, plants: 0 };
   /** frames, for the window's and the band's mesh turns (round 82) */
   private meshTurn = 0;
+  /** (perfopt, shadowEvery) the light matrix and lookup bias the shadow map holds, when it was drawn, the box, the slides */
+  private shadowAt = { m: new Float32Array(16), bias: 0, frame: -1e9, rect: '', slides: -1 };
+  /** (perfopt, prepEvery) when the instance lists were last made, and the slides then */
+  private prepAt = { frame: -1e9, slides: -1 };
+  private frameNo = 0;
   private countBuf: GPUBuffer;
   private countBusy = false;
   private countNeeded = false;
@@ -251,7 +262,9 @@ export class Renderer {
       31: this.camBuf,
     });
 
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshRegionWgsl, vegprepWgsl], {
+    // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
+    const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshRegionWgsl, tufts, vegprepWgsl], {
       0: 'uniform',
       2: 'uniform',
       3: 'read',
@@ -632,16 +645,22 @@ export class Renderer {
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0);
     this.fieldMesh.cull(cam);
     this.band?.mesh.cull(cam);
-    if (this.fieldMesh.on) this.writeLight(opts.sun);
+    this.frameNo++;
+    const shadowDue = this.fieldMesh.on ? this.writeLight(opts.sun) : false;
+    // (perfopt, ?prepevery=N: the instance lists kept from an earlier frame — their counts too)
+    const pe = Math.max(1, Renderer.opts.prepEvery | 0);
+    const prepDue = pe <= 1 || this.frameNo - this.prepAt.frame >= pe || this.prepAt.slides !== this.fieldMesh.slides;
+    if (prepDue) this.prepAt = { frame: this.frameNo, slides: this.fieldMesh.slides };
     this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
     if (this.world.strVoxels > 0) this.device.queue.writeBuffer(this.structIndirect, 0, new Uint32Array([36, 0, 0, 0]));
-    this.device.queue.writeBuffer(
-      this.indirect,
-      0,
-      new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0, VERTS_PER_TOP, 0, 0, 0, this.topsBase]),
-    );
+    if (prepDue)
+      this.device.queue.writeBuffer(
+        this.indirect,
+        0,
+        new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0, VERTS_PER_TOP, 0, 0, 0, this.topsBase]),
+      );
 
-    if (!SKIP.has('prep')) {
+    if (!SKIP.has('prep') && prepDue) {
       const pass = enc.beginComputePass({ label: 'renderprep', timestampWrites: this.profiler.timestamps('renderprep') });
       pass.setPipeline(this.prep.pipeline);
       pass.setBindGroup(0, this.prepGroup);
@@ -664,7 +683,7 @@ export class Renderer {
     const turn = this.meshTurn++ & 1;
     if (!SKIP.has('meshprep') && (!this.band || turn === 0)) this.fieldMesh.encode(enc, cam);
     if (this.band && !SKIP.has('band') && turn === 1) this.band.mesh.encode(enc, cam);
-    if (this.shadowGroups && !SKIP.has('shadow')) this.encodeShadow(enc);
+    if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc);
 
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
     const def = this.meshPipe && !SKIP.has('mesh') && Renderer.opts.defer ? this.encodeGBuffer(enc, cam) : undefined;
@@ -845,7 +864,8 @@ export class Renderer {
    * enough for one map) looking along the light, into both cameras — the
    * view's, to look shadows up, and the sun's own, to draw them.
    */
-  private writeLight(sun: [number, number, number]): void {
+  /** (returns whether the shadow map is drawn this frame: perfopt's shadowEvery) */
+  private writeLight(sun: [number, number, number]): boolean {
     const f = [-sun[0], -sun[1], -sun[2]];
     const fl = Math.hypot(f[0], f[1], f[2]) || 1;
     f[0] /= fl;
@@ -879,6 +899,18 @@ export class Renderer {
     m.set([r[0] * sx, u[0] * sy, f[0] * sz, 0, r[1] * sx, u[1] * sy, f[1] * sz, 0, r[2] * sx, u[2] * sy, f[2] * sz, 0]);
     m.set([-(lo[0] + hi[0]) / 2 * sx, -(lo[1] + hi[1]) / 2 * sy, -lo[2] * sz, 1], 12);
     const cf = new Float32Array(this.camData);
+    // (perfopt, ?shadowevery=N: between redraws the map and the matrix it was drawn with are kept — the lookups
+    // stay consistent while the camera moves; a slide (the land moved under the window's coordinates) or a new box
+    // draws it at once)
+    const se = Math.max(1, Renderer.opts.shadowEvery | 0);
+    const S = this.shadowAt;
+    const rect = `${x0},${y0},${x1},${y1}`;
+    if (se > 1 && this.frameNo - S.frame < se && S.rect === rect && S.slides === this.fieldMesh.slides) {
+      cf.set(S.m, CAMERA_BYTES / 4);
+      cf[23] = S.bias;
+      return false;
+    }
+    this.shadowAt = { m, bias: 0.25 * sz, frame: this.frameNo, rect, slides: this.fieldMesh.slides };
     cf.set(m, CAMERA_BYTES / 4);
     this.fieldMesh.castCull(m);
     // the lookup's depth bias: a quarter of a cell along the light
@@ -891,6 +923,7 @@ export class Renderer {
     // (round 82: no cutaway from the sun — what's cut still casts)
     lf.fill(0, CAMERA_FOCUS_OFFSET / 4, CAMERA_FOCUS_OFFSET / 4 + 4);
     this.device.queue.writeBuffer(this.lightCamBuf, 0, this.lightCamData);
+    return true;
   }
 
   /** The sun's shadow map: every built mesh chunk, the prisms, plants, structures and bodies, depth only. */
