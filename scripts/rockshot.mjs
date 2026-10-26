@@ -64,6 +64,25 @@ try {
     console.log(name, await stats());
     console.log(name, 'bodies', await p.evaluate(() => JSON.stringify((window.reclaimed.integrity?.()?.bodies.list ?? []).map((b) => [b.local.length, Math.round(b.pos[2])]).slice(0, 40))));
   }
+  // frame times with the bodies about (resting): the integrity system's readbacks
+  const ft = await p.evaluate(
+    () =>
+      new Promise((done) => {
+        const t = [];
+        let last = performance.now();
+        const end = last + 15000;
+        const f = (now) => {
+          t.push(now - last);
+          last = now;
+          if (now < end) requestAnimationFrame(f);
+          else done(t);
+        };
+        requestAnimationFrame(f);
+      }),
+  );
+  const s = [...ft].sort((a, b) => a - b);
+  const q = (k) => +s[Math.floor(k * (s.length - 1))].toFixed(1);
+  console.log('after', JSON.stringify({ frames: ft.length, p50: q(0.5), p95: q(0.95), worst: q(1), over50: ft.filter((x) => x > 50).length }), await stats());
 } finally {
   await browser.close();
 }

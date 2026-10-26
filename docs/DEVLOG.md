@@ -5535,3 +5535,10 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   a crater, not a box's million cells. The neck rule went (supported from
   below, it stands; cut free, it falls and tips as a body). Committed
   untested in a browser (the user's own was open: the GPU shared).
+- Checked (scripts/rockshot.mjs, scripts/craterbench.mjs; the atlas level,
+  the desktop): a spire cut through drops its top (52 cells) as one body,
+  passes 0.5 ms; with it resting, 15 s at p50 8.3, p95 8.4, worst 8.8 ms;
+  a crater every half second for 15 s (30) p95 8.4, worst 25, no frame over
+  50 ms, the integrity pass 6.2 ms at most; riding (driveprofile) low p95
+  9.6, high 16.9. The perf agent audits the code for the same antipattern
+  (the intervals expanded into cells, whole boxes scanned).
