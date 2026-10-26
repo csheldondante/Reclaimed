@@ -35,6 +35,8 @@ import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import type { MapData } from '../world/mapgen';
 import { Sleep } from '../sim/sleep';
+import { installFlow, type FlowKit } from '../flow/install';
+import { FLOWLAB } from '../levels/flowlab';
 import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
@@ -105,6 +107,8 @@ export class LevelScene implements Scene {
   private fps = 60;
  /** sleep and wake (round 80, sim/sleep.ts): the atlas level's; ?sleep=0 off */
   private sleep?: Sleep;
+  /** (?flow=1, docs/ARCHITECTURE.md "The flow model") the flow model: liquids as runs, steady state freezing */
+  private flow?: FlowKit & { lab?: { breach: (spring?: number) => void } };
   private noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
   private ticksAvg = 1;
   /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
@@ -191,6 +195,14 @@ export class LevelScene implements Scene {
     const dims = { w: 256, h: 256, zMax: level.zMax ?? 64 };
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
     this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
+    // (?flow=1, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
+    if (host.params.get('flow') === '1' && !level.atlas) {
+      this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);
+      this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
+      this.core.sleep = this.sleep;
+      const kit = installFlow(this.core, this.sleep);
+      this.flow = { ...kit, lab: level.flowSetup?.(kit) };
+    }
     // (grids, the rendering branch, opens in free play; ?mode=story for the story's rules)
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
     this.core.globals.story = this.story;
@@ -519,6 +531,12 @@ export class LevelScene implements Scene {
     // (a streamed world: none — the strips that come in later get no such start)
     s.core.globals.debrisBoost = opts.map || level.stream ? 1 : 10;
     await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology');
+    // (?flow=1) everything awake a moment after the warmup: the steady state then lets what's near steady
+    // sleep (the generator's steady land frozen at once) and keeps what still flows unsteadily awake
+    if (s.flow) {
+      s.sleep?.wakeAll(1, performance.now() / 1000);
+      s.flow.steady.judgeAll = true;
+    }
     s.core.globals.debrisBoost = 1;
     s.attach();
     return s;
@@ -1087,6 +1105,20 @@ export class LevelScene implements Scene {
       }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
+      // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
+      flow: this.flow && {
+        ...this.flow,
+        sleep: this.sleep,
+        breach: (spring?: number) => {
+          const plug = FLOWLAB.notch;
+          for (let y = plug.y0; y < plug.y1; y += 2) {
+            const [x, wy] = cellPos((plug.plug[0] + plug.plug[1]) / 2, y + 0.5);
+            for (let k = 0; k < 3; k++) this.core.globals.events.push({ kind: EventKind.Edit, x, y: wy, z: 2 * 32 + 512, radius: 2.2, strength: 4 });
+          }
+          this.flow?.lab?.breach(spring);
+        },
+      },
       stream: this.stream,
       atlas: this.opts.atlas?.atlas,
       toggleFly: () => this.toggleFly(),

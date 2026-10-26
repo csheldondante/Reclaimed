@@ -64,6 +64,19 @@ export class Sleep {
   /** the sim's tick at the last update */
   private tick = 0;
 
+  /** (?flow=1, flow/steady.ts) how long an event keeps its chunks awake (s): the steady state then decides */
+  eventSecs = EVENT_S;
+
+  /** wake chunk k (chunk index) for `secs` from `now` (flow/steady.ts: kept awake while unsteady) */
+  wakeChunk(k: number, secs: number, now: number): void {
+    this.until[k] = Math.max(this.until[k], now + secs);
+  }
+
+  /** is chunk k awake at `now`? */
+  isAwake(k: number, now: number): boolean {
+    return this.until[k] > now;
+  }
+
   /** wake the chunks a circle (world units, window) touches for `secs` from `now` */
   wake(x: number, y: number, r: number, secs: number, now: number): void {
     const x0 = Math.max(0, Math.floor((x - r) / CHUNK));
@@ -112,7 +125,7 @@ export class Sleep {
   update(now: number, near: [number, number, number] | null, events: WorldEvent[], storms: { x: number; y: number; radius: number; intensity: number }[], tick = this.tick): Uint32Array {
     this.tick = tick;
     if (near && WAKE_NEAR) this.wake(near[0], near[1], near[2], NEAR_S, now);
-    for (const e of events) this.wake(e.x, e.y, e.radius + CHUNK, EVENT_S, now);
+    for (const e of events) this.wake(e.x, e.y, e.radius + CHUNK, this.eventSecs, now);
     for (const s of storms) if (s.intensity > 0.2) this.wake(s.x, s.y, s.radius, NEAR_S, now);
     this.mask.fill(0);
     this.drowse.fill(0);

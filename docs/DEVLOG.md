@@ -5580,3 +5580,53 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   (a river's flow has its streaks down it, no swell). scripts/watershot.mjs
   --at coast (a warm coast found on the atlas): rings of swell round an
   island, moving in between frames.
+
+## Round 84 — one model of material flow: liquids as runs in the columns, falls that arc, steady state frozen (flow)
+
+The user (DECISIONS round 84): a unified model of material flow, for waterfalls out of underground streams and
+lava flows; a fall that arcs out, steady from column to column; "think noita physics … in a compressed column
+space and adding in velocity … plausibility and spectacle not realism"; steady flow frozen as an animation and
+found again when perturbed, with a tolerance; a frozen region's flux kept proportional to its supply. Behind
+`?flow=1`; the design is in ARCHITECTURE "The flow model".
+
+- **Why runs in the gaps, not intervals of the layers.** Water as one depth per column on top of the ground
+  can't be in a tunnel or fall through the air. A liquid run now lies on the floor of any gap of a column (the
+  air between two solid or granular intervals, or the open air on top), up to four a column. They live in the
+  flow module's own buffer, not in the layers: a liquid moving every tick would otherwise be a layer write
+  every tick per wet column (sediment, the surface pass, renderprep and every other layer reader would see
+  water intervals to skip), and the open run stays exactly the water contract, so the ~15 readers of `water`
+  didn't change. The only layer writes are lava setting into basalt (measured: 4–8 columns a tick while the
+  vent pours, 0 once it has set; water: none).
+- **Why one kernel set with a liquid's numbers.** Water and lava differ by gain, friction, yield, thickness,
+  heat and setting (LiquidKind); everything else — the gaps, the targets, the falls, the steady state — is the
+  same code, so a fall of lava arcs like water's. Loose ground stays the sediment system's: it is the layers
+  (strata, repose, wind) and changes the gaps; a granular kind of the same kernel for *moving* sand (a pour
+  off a ledge) is BACKLOG FL4.
+- **Why streams move a column a tick.** A stream's state (volume, height, vertical speed, horizontal velocity,
+  where it enters the next column) is carried column to column along its exact ballistic path through each
+  hexagon, so a steady outflow is a steady parabola and mass is conserved (each tick's packet passes on or
+  lands). It goes faster than real time across the arc; the shape is right, and the steady state is what's
+  seen. The lip speed is the critical flow's for its discharge, 2 (g q)^(1/3): the pipe model's depth at a lip
+  is a grid artefact (it empties each tick), its discharge isn't — the first try (flux / edge / depth) gave
+  12 cells/s for everything, the second (sqrt(g d)) a fall that hugged the cliff.
+- **Steady state.** Per chunk, net change (runs and bed) against throughput, a window at a time. Throughput
+  was first each column's gross outflow: a lava pool sloshing in its crater counted as throughput and the
+  pool, filling at 0.1 cells³ a tick, was judged steady and frozen. Now it is the length of each column's net
+  flow vector (a river's discharge; a pool's sloshing cancels). Defaults ?steadytol=0.1, ?steadyfloor=1e-3,
+  ?steadywin=30: at 0.02 / 2e-4 two chunks under the pool's fall never settled (the landing column changes
+  by the stream's packets), and the user's "small residual drift while frozen is fine".
+- **Frozen and rescaled.** A frozen column beside an awake chunk checks its balance; its chunk's edge inflow
+  and outflow, read back, rescale its flux (and its streams, and the water contract's flux) by in / out for
+  one step without simulating (the user's "keep the flow proportional and then zero out when they get too
+  low"); zero when it dries; past 4× either way, or something arriving where nothing flowed, it wakes.
+- **Measured** (scripts/flowlab.mjs, the flow lab, desktop Intel Xe-LPG at the low tier (the phone's flags),
+  GPU ms a frame at ~0.6 ticks a frame): the old water system on the same level 0.032 (water-flux 0.020,
+  water-depth 0.012). The flow model awake (the pool pouring, 13–18 chunks awake): water 0.28 (flux 0.08,
+  jets 0.03, depth 0.14, publish 0.015, prep 0.036) and lava 0.26 — about 8× the old water each, mostly
+  every column's gap scan and the neighbour checks of dry columns (FL3: skip dry chunks, skip lava where
+  there is none). Everything frozen (awake chunks 0): the simulation passes aren't dispatched; prep only,
+  water 0.028 + lava 0.034 ms — and the frozen pool still pours: 848 pixels of the fall change between GIF
+  frames at no simulation.
+- Found on the way: the prep kernel at 9 storage buffers (the chunk table it doesn't use: dropped from its
+  layout); the warmup ends past the 1.5 s settle, so everything fell asleep before the steady state had
+  judged it — now everything is judged once after the warmup (Steady.judgeAll) and what's unsteady is kept.

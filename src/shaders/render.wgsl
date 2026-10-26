@@ -254,7 +254,8 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   // soft ground: the column's top is drawn sloped (terrainshape.wgsl)
   let soft = (b.flags & FLAG_TOP_R) != 0u && MATS[b.mat].look.x > 0.0;
   // water and drifted dust: smooth sheets through their corner levels
-  let liquid = b.mat == MAT_WATER || b.mat == MAT_DRIFT;
+  // ((?flow=1) a liquid run of the flow module, FLAG_RUN: flat, shaded by shadeRun)
+  let liquid = (b.mat == MAT_WATER || b.mat == MAT_DRIFT) && (b.flags & FLAG_RUN) == 0u;
   var p: vec3<f32>;
   var n: vec3<f32>;
   var shown = true;
@@ -293,7 +294,7 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
       if (!sheetGap(b.cell, (m + 5u) % 6u, nb) && !sheetGap(b.cell, m, nb)) { shown = false; }
     }
     // water: no side inside a continuous body of water
-    if (b.mat == MAT_WATER) {
+    if (b.mat == MAT_WATER && (b.flags & FLAG_RUN) == 0u) {
       let q = nbr(b.cell, k);
       if (inMap(q)) {
         let jq = colIdxI(q);
@@ -430,7 +431,8 @@ fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   var o: VOut;
   let b = unpackBox(instances[ii]);
   var shown: bool;
-  if ((u32(CAM.eye.w) & 2u) != 0u && b.mat == MAT_WATER) { shown = waterSheetVertex(b, vi, &o); }
+  if ((b.flags & FLAG_RUN) != 0u) { shown = instVertex(b, vi, &o) && (b.hex || vi < 18u); }
+  else if ((u32(CAM.eye.w) & 2u) != 0u && b.mat == MAT_WATER) { shown = waterSheetVertex(b, vi, &o); }
   else { shown = instVertex(b, vi, &o); }
   if (!shown) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
   return o;
@@ -1389,6 +1391,7 @@ fn fsWater(in: VOut) -> FOut {
   let ddx = dpdx(d);
   let ddy = dpdy(d);
   if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
+  if ((in.info.y & FLAG_RUN) != 0u) { return shadeRun(in, ci); }
   if (MATS[in.info.x].look.y > 0.0) { return shadeGlass(in, ci); }
   if (in.nrm.z > 0.5 && d < 0.02) { discard; }
   let det = ex.x * ey.y - ex.y * ey.x;
@@ -1501,6 +1504,36 @@ fn fsWater(in: VOut) -> FOut {
 }
 
 const WATER_MIN_R: f32 = 0.012;
+
+// (?flow=1, flow/liquid.ts) a liquid run of the flow module: flat prisms under rock, narrow boxes for the falling
+// streams (FLAG_DETAIL), drawn blended
+const FLAG_RUN: u32 = 2048u;
+
+/** A flow-module liquid run: a falling stream white and streaked, running down; a run under rock dark water; lava glowing. */
+fn shadeRun(in: VOut, ci: u32) -> FOut {
+  let fall = (in.info.y & FLAG_DETAIL) != 0u;
+  let t = G.time;
+  let cellR = vec2<i32>(floor(wo(in.wpos.xy) * 3.0));
+  let streak = smoothstep(0.3, 0.9, fract(in.wpos.z * 0.35 + t * 2.4 + randv(vec3<i32>(cellR, 9))));
+  var col: vec3<f32>;
+  var alpha: f32;
+  if (in.info.x == MAT_LAVA_M) {
+    let glow = 0.5 + 0.5 * vnoise(wo(in.wpos.xy) * 2.0 + vec2<f32>(0.0, in.wpos.z * 0.7 + t * 2.0));
+    col = toLinear(vec3<f32>(1.0, 0.4, 0.07)) * (1.4 + 1.4 * glow) + toLinear(vec3<f32>(0.25, 0.05, 0.02)) * lighting(in.wpos, in.nrm);
+    alpha = 0.97;
+  } else if (fall) {
+    col = mix(toLinear(vec3<f32>(0.5, 0.66, 0.72)), toLinear(vec3<f32>(0.93, 0.96, 0.96)), 0.35 + 0.65 * streak) * lighting(in.wpos, in.nrm);
+    alpha = 0.5 + 0.4 * streak;
+  } else {
+    col = toLinear(vec3<f32>(0.1, 0.24, 0.29)) * lighting(in.wpos, in.nrm);
+    alpha = 0.82;
+  }
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), alpha);
+  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  return o;
+}
 
 
 /**

@@ -12,6 +12,16 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 84 (2026-10-26, session 5, `flow`) — one model of material flow (DECISIONS round 84)
+
+| id | item | size | status |
+|---|---|---|---|
+| FL1 | Liquids as runs in the columns' gaps (`?flow=1`): water and lava one kernel set with a liquid's numbers; water under rock (caves, tunnels) runs along the floor and out of the mouth; a run off a ledge leaves as a ballistic stream (an arc), spray where it lands; lava cools and sets into basalt. **Done (this commit):** flow/liquid.ts, liquid.wgsl, the flow lab (`?flow=1&level=flowlab`, scripts/flowlab.mjs). | L | done |
+| FL2 | Steady state frozen (near steady, a tolerance a chunk; `?steadytol= ?steadyfloor= ?steadywin= ?waketol=`): what's steady sleeps and is drawn from its last flux; a frozen chunk whose supply changes is rescaled (`?rescalemax=`), zeroed when it dries, woken past that or by an edit. **Done (this commit):** flow/steady.ts. | M | done |
+| FL3 | The flow model by default: the valley, the sandbox and the atlas (the streamed window's slides move the runs and jets; the rivers agent's steady rivers seeded into it), oil as a third liquid (density: it floats), lava in the sandbox's beam and volcanoes (sim/lava.ts folded in), the old water system removed | L | open |
+| FL4 | Moving loose ground in the same kernel (the user's "sand endlessly spilling out of a basin"): sand with its repose as the sideways threshold, set into the layers at once when at rest, so a pour off a ledge arcs and freezes like water; the frozen pour rescaled as its basin empties (the sediment's air texture scaled with it) | M | open |
+| FL5 | Streams thinner and smoother: a ribbon along the arc instead of a box a column; foam where a fall lands in water; the old lava's look (crust, glow edge) for the lava runs | S | open |
+
 ## Rounds 76–78 (2026-10-25, session 5, `places`) — the game's direction: readable places, an overmap
 
 The user stepped back (DECISIONS rounds 76–78): a roguelite on an overmap, hero roles, an LLM game master

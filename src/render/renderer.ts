@@ -214,6 +214,8 @@ export class Renderer {
   private voxelSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
   /** more prisms for the opaque pipeline (lava: sim/lava.ts) */
   private prismSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
+  /** (?flow=1) more for the water pipeline: liquid runs under rock, falling streams (flow/liquid.ts) */
+  private waterSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
   private noShadowView?: GPUTextureView;
   private groupFor!: (inst: GPUBuffer, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
   private shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
@@ -688,6 +690,11 @@ export class Renderer {
     this.prismSources.push({ indirect, group: this.groupFor(inst) });
   }
 
+  /** Draw these instances (renderprep's form; flag 2048: a liquid run, render.wgsl shadeRun) with the water pipeline too. */
+  addWaterPrisms(inst: GPUBuffer, indirect: GPUBuffer): void {
+    this.waterSources.push({ indirect, group: this.groupFor(inst) });
+  }
+
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
   destroy(): void {
     this.shadowTex.destroy();
@@ -861,6 +868,11 @@ export class Renderer {
     pass.setPipeline(this.waterPipe);
     pass.setBindGroup(0, this.waterGroup);
     if (!SKIP.has('water')) pass.drawIndirect(this.indirect, 16);
+    for (const s of SKIP.has('water') ? [] : this.waterSources) {
+      pass.setBindGroup(0, s.group);
+      pass.drawIndirect(s.indirect, 0);
+      this.profiler.draws++;
+    }
     pass.setPipeline(this.partPipe);
     pass.setBindGroup(0, this.partGroup);
     if (!SKIP.has('particles')) pass.draw(6, this.world.particleCap);
