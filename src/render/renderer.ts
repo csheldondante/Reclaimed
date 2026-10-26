@@ -18,11 +18,13 @@ import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import structPrepWgsl from '../shaders/structprep.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
+import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
+import { ShoreField } from './shore';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from './camera';
 import { OutsideBand } from './band';
 
@@ -103,6 +105,8 @@ export class Renderer {
     /** the terrain drawn into a cached layer every Nth frame (a margin past the screen), copied in each frame moved
      *  by the camera, which is snapped to its pixels (?tcache=N; 0 off; not with the cutaway or the free camera) */
     tcache: Number(new URLSearchParams(location.search).get('tcache') ?? 0),
+    /** the band's G-buffer draw culls the faces turned from the eye (?bandcull=1) */
+    bandcull: new URLSearchParams(location.search).get('bandcull') === '1',
     shadowEvery: Number(new URLSearchParams(location.search).get('shadowevery') ?? 1),
     /** the prisms' and plants' instance lists made every Nth frame (?prepevery=N): a frame's lag on what changed;
      *  made again at once after a slide */
@@ -255,6 +259,8 @@ export class Renderer {
     private meshSlots?: number,
   ) {
     const N = world.cells;
+    // (round 83) the nearest shore to every column: the water's swell (render.wgsl shoreTex)
+    this.shore = new ShoreField(device, world, world.w, world.h);
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
     // drawn with fewer vertices
     this.opaqueCapacity = N * (world.maxK + 1);
@@ -287,7 +293,7 @@ export class Renderer {
     profiler.trackMemory('shadow', ss * ss * 4);
     // (?skip=cull: every column, as before the view culling)
     const cullOff = `const CULL_OFF: bool = ${SKIP.has('cull')};`;
-    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshRegionWgsl, cullOff, renderprepWgsl], {
+    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], {
       0: 'uniform',
       1: 'read',
       2: 'uniform',
@@ -324,7 +330,7 @@ export class Renderer {
 
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
     const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshRegionWgsl, tufts, vegprepWgsl], {
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, vegprepWgsl], {
       0: 'uniform',
       2: 'uniform',
       3: 'read',
@@ -374,6 +380,7 @@ export class Renderer {
         17: 'tex',
         19: 'tex',
         23: 'tex',
+        24: 'tex',
         25: 'depth',
         26: 'csampler',
       },
@@ -425,6 +432,7 @@ export class Renderer {
         17: world.driftView,
         19: world.strataView,
         23: world.reachView,
+        24: this.shore.view,
         25: shadow,
         26: this.shadowSampler,
       });
@@ -481,7 +489,7 @@ export class Renderer {
       // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
       const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
       if (look === undefined) throw new Error('?look= must be full, lookup or flat');
-      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
       this.meshPipe = device.createRenderPipeline({
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
@@ -735,6 +743,8 @@ export class Renderer {
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
     this.fieldMesh.cull(cam);
+    // (perfopt, ?cavemesh=near: the caves meshed round the player when the cut slices a roof off; all when flying)
+    this.fieldMesh.setCaves(cam.cut.slice !== null ? [cam.target[0], cam.target[1]] : null, !!cam.fly);
     this.band?.mesh.cull(cam);
     this.frameNo++;
     const shadowDue = this.fieldMesh.on ? this.writeLight(opts.sun) : false;
@@ -753,6 +763,7 @@ export class Renderer {
         new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0, VERTS_PER_TOP, 0, 0, 0, this.topsBase]),
       );
 
+    if (!SKIP.has('shore')) this.shore.encode(enc, performance.now());
     if (!SKIP.has('prep') && prepDue) {
       const pass = enc.beginComputePass({ label: 'renderprep', timestampWrites: this.profiler.timestamps('renderprep') });
       pass.setPipeline(this.prep.pipeline);
@@ -1118,6 +1129,9 @@ export class Renderer {
     pass.setBindGroup(0, this.meshGroup!);
     this.fieldMesh.draw(pass);
     if (this.band && !SKIP.has('band')) {
+      // (perfopt, ?bandcull=1: the band's faces turned from the eye culled — the land over and under the window seen
+      // from outside, its undersides and insides never; not with the cut, which opens them)
+      if (Renderer.opts.bandcull && !cutOn(cam)) pass.setPipeline(d.gBack);
       pass.setBindGroup(0, this.bandGroup!);
       this.band.mesh.draw(pass);
     }
@@ -1263,7 +1277,20 @@ export class Renderer {
    * Draw what lies outside the streamed window too (round 79: the atlas level; render/band.ts), up to the
    * world's height. The streamer packs it (Streamer → band.update).
    */
+  /**
+   * (round 83) The streamed window moved by (dcx, dcy) mesh chunks, its vertices translated by t (world units):
+   * what's drawn from the window follows — the meshes (the window's and the band's), the shore field.
+   * dcx 1 << 12: every chunk made again (a warp).
+   */
+  windowMoved(dcx: number, dcy: number, t: [number, number, number]): void {
+    this.fieldMesh.shift(dcx, dcy, t);
+    this.band?.mesh.shift(dcx, dcy, t);
+    this.shore.dirty();
+  }
+
   private edgesOpen = false;
+  /** (round 83) the nearest shore to every column (render/shore.ts): made every second, and after the window moves */
+  readonly shore: ShoreField;
   /** (round 83) no mesh made while set: a streamed window's slide is writing its land (Streamer.busy) */
   holdMesh = false;
 

@@ -171,7 +171,7 @@ fn chunkRect(c: u32) -> vec4<f32> {
 }
 
 /** a chunk with nothing built (new, or come in fresh with a slide): its built hash */
-const FRESH: u32 = 0x9e3779b9u;
+// (FRESH: meshstate.wgsl)
 
 // (round 73) two passes a frame: the chunks with nothing built claim the rebuild slots first — a
 // strip that slid in fresh mustn't wait behind chunks whose leaf litter moved a sixteenth
@@ -391,6 +391,36 @@ fn samplePos(j: Job, l: vec3<u32>) -> vec3<f32> {
   return vec3<f32>(f32(g.x) * MR.o.y, f32(g.y) * MR.o.w, MR.zb.x + (f32(l.z) - 1.0) * MR.o.y);
 }
 
+// ---- (perfopt, ?cavemesh=near: MR.cv) the caves left out ------------------------------------------------
+/** samples this far under the lowest top round them are solid to the mesh */
+const CAVE_DEEP: f32 = 4.0;
+fn topsIdx(j: Job, l: vec3<u32>) -> u32 { return MR.k.y * slotSamples() * 2u + j.slot * sideN() * sideN() + l.x + sideN() * l.y; }
+
+/** column q's top (its highest interval's, any material); off the map, nothing (no cave left out there) */
+fn colTopAt(q: vec2<i32>) -> f32 {
+  if (!inMap(q)) { return -1e9; }
+  let cs = colSlots(u32(q.x), u32(q.y));
+  var t = MR.zb.y;
+  for (var i = 0u; i < cs.y; i++) {
+    let v = layers[cs.x + i];
+    if (ivEmpty(v)) { break; }
+    t = ivZ1(v);
+  }
+  return t;
+}
+
+/** each sample column's floor of what's meshed: CAVE_DEEP under the lowest top of its cell and the six round it */
+@compute @workgroup_size(4, 4, 4)
+fn columnTops(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+  let j = job(id, li);
+  if (!j.ok || j.l.z != 0u || MR.cv.w < 0.5) { return; }
+  let p = samplePos(j, j.l);
+  let c = cellAt(p.xy);
+  var m = colTopAt(c);
+  for (var k = 0u; k < NDIR; k++) { m = min(m, colTopAt(nbr(c, k))); }
+  scratch[topsIdx(j, j.l)] = bitcast<u32>(m - CAVE_DEEP);
+}
+
 @compute @workgroup_size(4, 4, 4)
 fn sampleField(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   let j = job(id, li);
@@ -404,6 +434,11 @@ fn sampleField(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invo
   // whole height, 13 ms in a frame.)
   let inner = MR.ze.z > 0.5 && p.z > MR.ze.x + FAR + 2.0 * MR.o.y && p.z < MR.ze.y - FAR - 2.0 * MR.o.y;
   if (p.z < j.bot - 3.0) { d = -FAR; } else if (p.z <= j.top + 2.0 && !inner) { d = field(p); }
+  // (perfopt, cavemesh: deep under the ground, solid — but near the cut's focus)
+  if (MR.cv.w > 0.5) {
+    let fx = p.xy - MR.cv.xy;
+    if (p.z < bitcast<f32>(scratch[topsIdx(j, j.l)]) && dot(fx, fx) > MR.cv.z * MR.cv.z) { d = -FAR; }
+  }
   scratch[sampleIdx(j, j.l)] = bitcast<u32>(d);
 }
 

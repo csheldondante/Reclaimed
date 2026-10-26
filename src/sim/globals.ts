@@ -146,6 +146,8 @@ export interface GlobalsState {
   sleep?: Uint32Array;
   /** a bit a chunk, set: just fallen asleep (round 80; 64 words) */
   drowse?: Uint32Array;
+  /** (perfopt) land come in, settling its water: rects of columns (x, y, w, h; CPU only — sim/sleep.ts) */
+  settle?: [number, number, number, number][];
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
   strokeSent?: boolean;
 }

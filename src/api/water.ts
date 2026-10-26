@@ -12,8 +12,10 @@ import type { Mirror } from './mirror';
 import { blendedTop } from './smooth';
 import type { SampleOpts } from './terrain';
 
-const OP_WATER = 3;
-const OP_DRAIN = 9;
+import { OP } from '../sim/edit-ops';
+
+const OP_WATER = OP.WATER;
+const OP_DRAIN = OP.DRAIN;
 /** edit.wgsl: water added per tick of an OP_WATER event, per unit strength (at the centre) */
 const WATER_PER_STRENGTH = 0.02;
 const DRAIN_PER_STRENGTH = 0.03;
