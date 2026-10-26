@@ -3,9 +3,9 @@
 
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
-import { cellAt, cellPos } from '../world/lattice';
+import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { EDIT_TAGS } from '../sim/world-gpu';
-import { columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
+import { CHUNK, columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
 import { MAT, MATERIALS, MatState } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, type MaterialName } from './common';
 import { PULL_SLOTS } from '../sim/systems';
@@ -172,7 +172,9 @@ export class Terrain {
   ) {
     const w = core.world;
     mirror.addBuffer('surface', w.surface);
-    mirror.addBuffer('layers', w.layers);
+    // (perfopt, ?mirror=near: by pages round the camera's target between whole reads — api/mirror.ts)
+    const p = core.packed;
+    mirror.addBuffer('layers', w.layers, { chunksX: p.chunksX, chunksY: p.chunksY, chunkTable: p.chunkTable, slotBytes: SLOT_WORDS * 4, chunk: CHUNK, rowH: ROW_H, focus: () => [core.camera.target[0], core.camera.target[1]] });
     mirror.addTexture('drift', w.drift);
     mirror.addTexture('levels', w.levels);
   }

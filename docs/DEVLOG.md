@@ -5590,3 +5590,54 @@ mesh's cave surfaces — inside the ground, never seen from the sky, but drawn
   player, from the atlas's cave noise (forms.wgsl caveVoids) into the
   window's layers.
 
+
+## Round 83 — the audit: dense cells and whole reads where the runs would do (perfopt)
+
+Why: the coordinator's analyseRock fix (a 64² box unpacked to a million
+cells, 1–3 s frames) — the user: look for the same elsewhere. Measured at the
+phone tier on the desktop (scratch integ.mjs: a 20 s ride, the integrity
+passes' CPU time and what the readbacks copy; fraccmp.mjs: analyse() on the
+same boxes both ways, results compared). The user's game was open in their
+browser part of the time: GPU timings then contended (the CPU ones less so).
+
+- fracture.ts `analyse` (structures; every box integrity marks — land come in,
+  64² regions, riding; cyclones r × 2.5; forms): unpacked every column of the
+  box into a W × D × zMax cell grid (1 M cells for a region) and scanned all of
+  it to seed the floods. `?fracture=runs`: only the structural runs are
+  unpacked (a sparse map), the floods seeded from them, any other cell looked
+  up in its column when asked; nothing structural → nothing done. Same
+  results (bodies and crumbled cells compared on 12 boxes, atlas and valley);
+  atlas regions 15–24 → 0.4–2.3 ms, the valley's (towers, ruins) 4–20 →
+  0.2–8.5, the whole valley 172 → 74 ms.
+- fracture.ts `WorldVox` (matAt, colTop, baseTop, runTop): read slots through
+  readSlot — a Float32Array view and an object a slot — and baseTop built an
+  array a call; the bodies call them for every collision point of every
+  substep. Now read in place (a float view kept, made again when the slots
+  change): no allocation. Same values (knocktest 6/6; pillar and phys runs
+  fall and settle as before).
+- integrity.ts `update`: read all of the layers back (16 MB in the atlas's
+  window) and the drift texture every 0.35 s while anything was dirty — riding,
+  every region come in — and every 1 s while bodies exist. `?intread=near`:
+  only the chunks a pass looks at (the dirty boxes + 6, the cut columns + 24,
+  the bodies + 4) into a CPU copy of the whole; whole again after a slide
+  (the pages move). Riding 20 s: 160 MB → 81 MB read back (the slides' whole
+  reads are most of what's left), the passes' CPU 9–35 ms → 0.8–5.4 ms (with
+  fracture=runs).
+- api/mirror.ts (the world API's mirror, on whenever a game attaches it — the
+  hoverbike, ?cutaway): every 250 ms a new 20 MB staging buffer, every source
+  copied out (the layers 16 MB of it). The staging buffer is kept now; and
+  `?mirror=near`: the layers (`addBuffer(name, buf, paged)`) are read whole
+  every 8th read and after a slide, between only their pages within 48 cells
+  of the camera's target, written into the copy in place (its views kept).
+  worldapitest 16/16 with mirror=near&intread=near&fracture=runs; a read's
+  median 12.9 → 8.1 ms.
+- Left as found (listed for later): level.ts `metalSize` reads the whole
+  layers back for a tap's metal flood (once a tap: the chunks round it would
+  do); level.ts reads surface, veg, water (256 KB each) every second and the
+  particle counters twice a second, each through a new staging buffer
+  (WorldCore.readBuffer makes one a call: a kept one, or one read of the four,
+  would do); bodies.ts keeps a free body as a voxel list and collision points
+  (the user asks why not columns: a body rotates, so its runs would be along
+  its own z — a pillar's 100 voxels one run; packing, collision and the
+  projection would walk runs, not voxels; not done).
+
