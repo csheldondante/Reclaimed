@@ -5475,3 +5475,16 @@ frame (15.0 before the merge, rings and all).
   draw 5.3 → 3.3; the caves (`?a.caveDepth=9999`) 0.44 of the generation
   (2.00 → 1.56), 0.26 of the sim, ~0.4 of the draw. The field mesh's own
   1.4 is mostly the ground's surface (it skips the rock under it, round 81).
+- The rings and the cuts (the user: "LOD rings don't interact correctly with
+  dithering and I think we should maybe not render the ones in the direction
+  of the camera from the focus"). far.wgsl's camera now carries the cut
+  (render.wgsl Camera's cut, see, boxes): the rings, the far land and the
+  giants past the window are cut as the window's ground is — over the
+  slice, in a kept-seen point's hole (dithered). And the land on the eye's
+  side of the focus (the camera's target; the ground under it without the
+  puck) is kept under the focus's height, easing in over 24 units
+  (far.wgsl underFocus; the fixed view only): nothing past the window rises
+  between the eye and what the view is on, and nothing's left out (left
+  out, the screen's foot would show the sky through the heightfield).
+  scripts/cutlod.mjs: by the near edge zoomed out, a wide hole forced, a
+  slice forced.

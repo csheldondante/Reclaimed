@@ -156,6 +156,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
       far.zMax = dims.zMax;
       const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;
       far.mid = [c[0], c[1]];
+      far.focus = core.camera.fly ? null : [core.camera.target[0], core.camera.target[1], core.camera.target[2]];
       far.draw(pass, clear);
     });
   }

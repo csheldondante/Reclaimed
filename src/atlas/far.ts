@@ -11,7 +11,7 @@ import farW from './far.wgsl?raw';
 import { LodRings } from './lod';
 import { ROW_H } from '../world/lattice';
 
-const UNI_BYTES = 80;
+const UNI_BYTES = 96;
 /** vertices a side, and world units between them */
 const G = 161;
 const SPACING = 32;
@@ -50,6 +50,9 @@ export class FarLand {
   mid: [number, number] = [128, 128];
   /** the window's height (what's above it is drawn here, over the window too) */
   zMax = 248;
+  /** (round 83) what the view is on (window coordinates; the camera's target): the land on the eye's side of
+   *  it is kept under it (far.wgsl underFocus); null: none (flying) */
+  focus: [number, number, number] | null = null;
 
   constructor(
     private device: GPUDevice,
@@ -208,6 +211,7 @@ export class FarLand {
     f.set([this.mid[0], this.mid[1], G, a.p.sea], 8);
     f.set([fog[0], fog[1], fog[2], 1], 12);
     f.set([a.worldW, a.worldH, a.p.n / 2, a.coarse.cn], 16);
+    if (this.focus) f.set([...this.focus, 1], 20);
     this.device.queue.writeBuffer(this.uni, 0, f);
     const now = performance.now();
     if (this.lod) {

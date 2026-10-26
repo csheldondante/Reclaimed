@@ -11,6 +11,10 @@ struct FarCam {
   viewport: vec4<f32>,
   light: mat4x4<f32>,
   pos: vec4<f32>,
+  // (round 83) what's cut from the view, as render.wgsl Camera (camera.ts Cut)
+  cut: vec4<f32>,
+  see: array<vec4<f32>, 4>,
+  boxes: array<vec4<f32>, 8>,
 }
 struct FarP {
   /** the window's cell (0, 0) in the world (world units), and its oz; the window's size (world units) */
@@ -21,6 +25,59 @@ struct FarP {
   fog: vec4<f32>,
   /** the world (it wraps), the map's texels a side, the sea, the coarse world's cells a side */
   world: vec4<f32>,
+  /** (round 83) the view's focus (window coordinates; w 1: on): the land on the eye's side of it kept under it */
+  focus: vec4<f32>,
+}
+
+/** toward the eye from p (as render.wgsl toEye) */
+fn farEye(p: vec3<f32>) -> vec3<f32> {
+  if (FC.pos.w > 0.5) { return normalize(FC.pos.xyz - p); }
+  return FC.eye.xyz;
+}
+
+/** 4 × 4 ordered dither, 0..1 (render.wgsl bayer4) */
+fn farBayer(px: vec2<f32>) -> f32 {
+  let i = vec2<u32>(px) & vec2<u32>(3u);
+  let m = array<u32, 16>(0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u);
+  return (f32(m[i.y * 4u + i.x]) + 0.5) / 16.0;
+}
+
+/**
+ * (round 83, the user: "LOD rings don't interact correctly with dithering") Is p cut from the view — over the
+ * slice, or in a kept-seen point's hole (dithered)? As render.wgsl cutAway; the boxes that limit a hole too.
+ */
+fn farCut(p: vec3<f32>, px: vec2<f32>) -> bool {
+  if (FC.cut.w > 0.5 && p.z > FC.cut.x) { return true; }
+  let n = u32(FC.cut.y);
+  if (n == 0u) { return false; }
+  let e = farEye(p);
+  var k = 0.0;
+  for (var i = 0u; i < n; i++) {
+    let s = FC.see[i];
+    let v = p - s.xyz;
+    let along = dot(v, e);
+    k = max(k, (1.0 - smoothstep(s.w * 0.7, s.w, length(v - along * e))) * smoothstep(1.0, 2.0, along) * smoothstep(0.0, 0.8, p.z - s.z));
+  }
+  let nb = u32(FC.cut.z);
+  if (nb > 0u) {
+    var inside = false;
+    for (var i = 0u; i < nb; i++) {
+      if (all(p >= FC.boxes[i * 2u].xyz - vec3<f32>(0.5)) && all(p <= FC.boxes[i * 2u + 1u].xyz + vec3<f32>(0.5))) { inside = true; }
+    }
+    if (!inside) { return false; }
+  }
+  return k > farBayer(px);
+}
+
+/**
+ * (round 83, the user: "maybe not render the ones in the direction of the camera from the focus") The land
+ * on the eye's side of the focus kept under the focus's height (over 24 world units: none at the focus), so
+ * nothing past the window rises between the eye and what the camera's on. The fixed view only.
+ */
+fn underFocus(l: vec2<f32>, z: f32) -> f32 {
+  if (FP.focus.w < 0.5 || FC.pos.w > 0.5) { return z; }
+  let ah = dot(l - FP.focus.xy, normalize(FC.eye.xy));
+  return mix(z, min(z, FP.focus.z), smoothstep(0.0, 24.0, ah));
 }
 
 @group(0) @binding(10) var<uniform> FC: FarCam;
@@ -134,7 +191,7 @@ fn vsFar(@builtin(vertex_index) vi: u32) -> FOutV {
   // (the sea stands at its level; under the window it sinks away, so the columns' land is drawn over it
   // and the two meet at the window's edge without a gap)
   let inset = min(min(local.x, FP.win.x - local.x), min(local.y, FP.win.y - local.y));
-  let z = max(a.x, FP.mid.w) - FP.org.z - 80.0 * clamp(inset / 12.0, 0.0, 1.0);
+  let z = underFocus(local, max(a.x, FP.mid.w) - FP.org.z - 80.0 * clamp(inset / 12.0, 0.0, 1.0));
   var o: FOutV;
   o.local = vec3<f32>(local, z);
   o.pos = FC.viewProj * vec4<f32>(local, z, 1.0);
@@ -160,6 +217,7 @@ fn fsFar(v: FOutV) -> FOutF {
   // to rise between the eye and the window)
   if (FC.pos.w < 0.5 && l.x > 2.0 && l.y > 2.0 && LD.info.x < 0.5) { discard; }
   if (inLod(l)) { discard; }
+  if (farCut(v.local, v.pos.xy)) { discard; }
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(v.nrm, sun), 0.0);
   var c = v.col * lit;
@@ -236,7 +294,7 @@ fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOu
   }
   let hx = lodTexel(k, ij + vec2<i32>(1, 0)).x - lodTexel(k, ij - vec2<i32>(1, 0)).x;
   let hy = lodTexel(k, ij + vec2<i32>(0, 1)).x - lodTexel(k, ij - vec2<i32>(0, 1)).x;
-  let z = t.x - FP.org.z;
+  let z = underFocus(local, t.x - FP.org.z);
   var o: LOut;
   o.local = vec3<f32>(local, z);
   o.pos = FC.viewProj * vec4<f32>(local, z, 1.0);
@@ -258,6 +316,7 @@ fn fsLod(v: LOut) -> FOutF {
     let fc = lodCorner(v.ring - 1u);
     if (all(l > fc) && all(l < fc + (F.w - 1.0) * F.z)) { discard; }
   }
+  if (farCut(v.local, v.pos.xy)) { discard; }
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(normalize(v.nrm), sun), 0.0);
   var c = v.col * lit;
@@ -341,6 +400,7 @@ fn fsGiant(v: GOut) -> FOutF {
   let inWin = l.x > 0.0 && l.y > 0.0 && l.x < FP.win.x && l.y < FP.win.y;
   if (inWin && v.local.z >= 0.0 && v.local.z < FP.win.w) { discard; }
   if (FC.pos.w < 0.5 && !inWin && l.x > 2.0 && l.y > 2.0) { discard; }
+  if (farCut(v.local, v.pos.xy)) { discard; }
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let d = max(dot(v.nrm, sun), 0.0);
   // quartz: pale violet, its faces catching the light, a glow of its own
