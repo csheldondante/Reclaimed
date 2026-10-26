@@ -204,7 +204,7 @@ export class WorldCore {
     }
     this.renderer.encode(enc, context.getCurrentTexture().createView(), this.camera, {
       // (round 82, V21: under a slice what's cut open of the rock, past every surface, is dark — a section)
-      clear: (this.camera.focus?.[3] ?? 0) < 0 ? SECTION_DARK : flashSky(this.light.clear, this.globals.flash),
+      clear: this.camera.cut.slice !== null ? SECTION_DARK : flashSky(this.light.clear, this.globals.flash),
       sun: this.light.dir,
       rainParticles: Math.round(this.weather.storms.reduce((a, st) => a + q.rain * 0.55 * st.intensity * (st.radius / 26), 0)),
     });

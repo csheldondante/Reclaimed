@@ -33,6 +33,22 @@ struct FarCoarse {
 }
 @group(0) @binding(43) var<storage, read> coarseF: array<FarCoarse>;
 
+/** the rings of less detail round the window (round 83, lod.ts / lod.wgsl) */
+struct LodD {
+  /** each ring: its texel (0, 0) (window coordinates), its spacing, texels a side */
+  lv: array<vec4<f32>, 4>,
+  /** how many rings (0: none), the outermost's texel (0, 0) and its span */
+  info: vec4<f32>,
+}
+@group(0) @binding(45) var<storage, read> lodT: array<vec2<f32>>;
+@group(0) @binding(46) var<uniform> LD: LodD;
+
+/** in the outermost ring's square (window coordinates): the rings draw it */
+fn inLod(l: vec2<f32>) -> bool {
+  let o = LD.info.yz;
+  return LD.info.x > 0.5 && all(l > o) && all(l < o + LD.info.w);
+}
+
 struct FOutV {
   @builtin(position) pos: vec4<f32>,
   @location(0) local: vec3<f32>,
@@ -120,11 +136,102 @@ fn fsFar(v: FOutV) -> FOutF {
   if (l.x > 24.0 && l.y > 24.0 && l.x < FP.win.x - 24.0 && l.y < FP.win.y - 24.0) { discard; }
   // (the fixed view looks from +x +y: land can only stand between the eye and the window where it's
   // past both of the window's near edges — what's beyond either far edge is drawn, the rest not)
-  if (FC.pos.w < 0.5 && l.x > 2.0 && l.y > 2.0) { discard; }
+  // (round 83: with the rings, all of it — what stands past both near edges is past the rings, too far
+  // to rise between the eye and the window)
+  if (FC.pos.w < 0.5 && l.x > 2.0 && l.y > 2.0 && LD.info.x < 0.5) { discard; }
+  if (inLod(l)) { discard; }
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(v.nrm, sun), 0.0);
   var c = v.col * lit;
   // fading into the sky toward the grid's edge (and with distance from a free camera)
+  var fog = smoothstep(0.55, 1.0, v.dist);
+  if (FC.pos.w > 0.5) { fog = max(fog, smoothstep(300.0, 2600.0, length(v.local - FC.pos.xyz))); }
+  c = mix(c, FP.fog.rgb, fog);
+  var o: FOutF;
+  o.color = vec4<f32>(c, 1.0);
+  o.pick = vec2<u32>(0u, 0u);
+  return o;
+}
+
+// ---- the rings (round 83, lod.ts) ---------------------------------------------------
+// A ring an instance: its grid of n × n texels (lod.wgsl: the ground's top and colour). Toward its edge
+// (its last 16 texels) a ring melts into the next one out — at its edge it's what that ring is there,
+// so the two meet without a crack; the outermost melts into the far land the same way.
+
+struct LOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) local: vec3<f32>,
+  @location(1) nrm: vec3<f32>,
+  @location(2) col: vec3<f32>,
+  @location(3) dist: f32,
+  @location(4) @interpolate(flat) ring: u32,
+}
+
+fn lodTexel(k: u32, i: vec2<i32>) -> vec4<f32> {
+  let n = i32(LD.lv[k].w);
+  let c = clamp(i, vec2<i32>(0), vec2<i32>(n - 1));
+  let t = lodT[k * u32(n * n) + u32(c.y * n + c.x)];
+  return vec4<f32>(t.x, unpack4x8unorm(bitcast<u32>(t.y)).rgb);
+}
+
+/** ring k at l (window coordinates), bilinear: its top and colour */
+fn lodAt(k: u32, l: vec2<f32>) -> vec4<f32> {
+  let L = LD.lv[k];
+  let q = (l - L.xy) / L.z;
+  let i0 = vec2<i32>(floor(q));
+  let f = q - floor(q);
+  let a = mix(lodTexel(k, i0), lodTexel(k, i0 + vec2<i32>(1, 0)), f.x);
+  let b = mix(lodTexel(k, i0 + vec2<i32>(0, 1)), lodTexel(k, i0 + vec2<i32>(1, 1)), f.x);
+  return mix(a, b, f.y);
+}
+
+@vertex
+fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOut {
+  let L = LD.lv[k];
+  let n = u32(L.w);
+  let s = L.z;
+  let ij = vec2<i32>(i32(vi % n), i32(vi / n));
+  let local = L.xy + vec2<f32>(ij) * s;
+  var t = lodTexel(k, ij);
+  // (toward the edge, what the next ring out — or the far land — is there)
+  let e = f32(min(min(ij.x, i32(n) - 1 - ij.x), min(ij.y, i32(n) - 1 - ij.y)));
+  let a = clamp((16.0 - e) / 14.0, 0.0, 1.0);
+  if (a > 0.0) {
+    var w: vec4<f32>;
+    if (k + 1u < u32(LD.info.x)) {
+      w = lodAt(k + 1u, local);
+    } else {
+      let p = local + FP.org.xy;
+      let fa = farAt(p);
+      w = vec4<f32>(max(fa.x, FP.mid.w), farColour(p, fa.x, fa.y, fa.z));
+    }
+    t = mix(t, w, a);
+  }
+  let hx = lodTexel(k, ij + vec2<i32>(1, 0)).x - lodTexel(k, ij - vec2<i32>(1, 0)).x;
+  let hy = lodTexel(k, ij + vec2<i32>(0, 1)).x - lodTexel(k, ij - vec2<i32>(0, 1)).x;
+  let z = t.x - FP.org.z;
+  var o: LOut;
+  o.local = vec3<f32>(local, z);
+  o.pos = FC.viewProj * vec4<f32>(local, z, 1.0);
+  o.nrm = normalize(vec3<f32>(-hx / (2.0 * s), -hy / (2.0 * s), 1.0));
+  o.col = t.yzw;
+  o.dist = length(local - FP.mid.xy) / (f32(u32(FP.mid.z) - 1u) * 0.5 * FP.win.z);
+  o.ring = k;
+  return o;
+}
+
+@fragment
+fn fsLod(v: LOut) -> FOutF {
+  let l = v.local.xy;
+  // the window's own land is the columns'; a finer ring's square is that ring's
+  if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy)) { discard; }
+  if (v.ring > 0u) {
+    let F = LD.lv[v.ring - 1u];
+    if (all(l > F.xy) && all(l < F.xy + (F.w - 1.0) * F.z)) { discard; }
+  }
+  let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
+  let lit = 0.45 + 0.7 * max(dot(normalize(v.nrm), sun), 0.0);
+  var c = v.col * lit;
   var fog = smoothstep(0.55, 1.0, v.dist);
   if (FC.pos.w > 0.5) { fog = max(fog, smoothstep(300.0, 2600.0, length(v.local - FC.pos.xyz))); }
   c = mix(c, FP.fog.rgb, fog);

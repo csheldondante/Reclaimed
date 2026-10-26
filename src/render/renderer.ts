@@ -22,11 +22,11 @@ import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import type { WorldGpu } from '../sim/world-gpu';
-import { CAMERA_BYTES, CAMERA_FOCUS_OFFSET, type Camera } from './camera';
+import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from './camera';
 import { OutsideBand } from './band';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
-const CAM_BYTES = CAMERA_BYTES + 64 + 16 + 16;
+const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
 /** the sun's shadow map, texels a side (the whole map: ~0.15 cells a texel on 256²) */
 const SHADOW_SIZE = 2048;
 const SHADOW_FORMAT: GPUTextureFormat = 'depth32float';
@@ -729,7 +729,7 @@ export class Renderer {
     lf.set(m, 0);
     lf.set([-f[0], -f[1], -f[2], cf[19]], 16);
     // (round 82: no cutaway from the sun — what's cut still casts)
-    lf.fill(0, CAMERA_FOCUS_OFFSET / 4, CAMERA_FOCUS_OFFSET / 4 + 4);
+    lf.fill(0, CAMERA_CUT_OFFSET / 4, (CAMERA_CUT_OFFSET + CAMERA_CUT_BYTES) / 4);
     this.device.queue.writeBuffer(this.lightCamBuf, 0, this.lightCamData);
   }
 

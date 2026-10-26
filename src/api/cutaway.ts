@@ -1,99 +1,45 @@
 // ---- api/cutaway.ts -----------------------------------------------------------
-// The character always seen (round 82, V21). The user: "Imagine the camera as puck following gravity and
-// sliding along a surface. When that surface goes below other surfaces I think we want to dither and show
-// the surface" — "if you are inside a cave that opens onto a beach I expect to see the beach and cave
-// interior not the cliffs above" — "Dithering or an outline make sense for small obstacles but very large
-// obstacles probably should rotate the camera to an angle that isn't occluded and being in a lower layer
-// should probably just skip rendering the layers above".
+// Keeping what matters in sight (round 82, V21; round 83 split it). Three mechanisms, each on its own — a
+// game uses any of them, each with whatever point it cares about (the user: "They should be independent
+// mechanisms. There should be an API to set certain surfaces or 3d points as ditherable"):
+// - Slice: a point under a roof (a cave, an overhang) — nothing over the roof's underside is drawn, the whole
+//   view, lowered over a moment rather than at once; what solid it cuts shows dark (a section, as a plan
+//   shows). "being in a lower layer should probably just skip rendering the layers above".
+// - Orbit: a large obstacle (a cliff, a mountain) between a point and the eye turns the view, on a spring,
+//   to the nearest angle it's seen from, and stays there ("Camera orbit actually works well but it feels
+//   weird that it is not continuous").
+// - Dither: points a game keeps seen (a character) — what stands in front of one is dithered out round it
+//   while it's hidden, opening and closing like an iris; surfaces (boxes) a game marks limit what may be.
+//   Nothing is seen by default: the camera's puck (api/puck.ts) isn't one.
+// The shadows are the world's as it stands (the sun's camera cuts nothing).
 //
-// A puck rests on the floor under the character (it falls to it: a jump leaves it on the ground) and slides
-// with it. Each frame it looks up at the eye:
-// - under a roof (rock over the puck: a cave, an overhang) — a slice: nothing over the roof's underside is
-//   drawn, the whole view; what solid it cuts shows dark (render.wgsl cutAway, a section as a plan shows);
-// - in the open, something low in front (a tree, a wall, a rock) — a hole: dithered out round the character,
-//   opening and closing like an iris;
-// - in the open, something large in front (a cliff, a mountain) — the view turns, the shortest way, to the
-//   nearest angle the puck is seen from, and stays there.
-// The shadows are the world's as it stands.
-//
-//   const cut = new Cutaway(sim.terrain, core.camera)
-//   each frame, before drawing:  cut.update(x, y, z, dt)   // the character's feet (world)
+//   const slice = new Slice(sim.terrain, core.camera), orbit = new Orbit(sim.terrain, core.camera)
+//   const dither = new Dither(sim.terrain, core.camera)
+//   each frame, before drawing:
+//     slice.update(x, y, floor, dt); orbit.update(x, y, floor, dt)   // e.g. the puck's
+//     dither.see('rider', fx, fy, fz); dither.update(dt)                 // the character's feet
 
 import type { Camera } from '../render/camera';
 import type { Terrain } from './terrain';
 
-type Mode = 'clear' | 'hole' | 'slice' | 'turn';
 type Solid = { z0: number; z1: number }[] | null;
 
-export class Cutaway {
-  /** a hole's radius on screen (world units) */
-  radius = 9;
-  /** what's in front no higher than this over the puck's floor (cells) is cut with a hole; higher, the view turns */
-  large = 8;
-  /** seconds for a hole to open or close */
-  ease = 0.3;
-  /** radians a second the view turns at, at most */
-  turnRate = 2.5;
-  /** what the last look found */
-  mode: Mode = 'clear';
-  /** 0 closed .. 1 open (the hole) */
-  open = 0;
-  /** the puck's floor (world z), once known */
-  floor: number | null = null;
-  /** the view's azimuth being turned to */
-  private aim: number | null = null;
+/** the columns' solid looked at (this frame's), and the lines of sight through them */
+class Sight {
   private cols = new Map<number, Solid>();
-
+  private gen = -1;
   constructor(
     private terrain: Terrain,
     private camera: Camera,
   ) {}
 
-  /** Each frame, before drawing: the character's feet (world). Writes the camera's `focus`, may turn it. */
-  update(x: number, y: number, z: number, dt: number): void {
-    this.cols.clear();
-    const f = this.terrain.floorAt(x, y, z + 0.5);
-    if (f !== null) this.floor = this.floor === null || Math.abs(f - this.floor) > 4 ? f : this.floor + (f - this.floor) * Math.min(1, dt * 12);
-    const cam = this.camera;
-    if (this.floor === null) {
-      cam.focus = null;
-      return;
+  /** the solid in the column at (x, y), bottom up (cached until the next frame) */
+  solidAt(x: number, y: number): Solid {
+    const g = performance.now() >> 4;
+    if (g !== this.gen) {
+      this.cols.clear();
+      this.gen = g;
     }
-    const floor = this.floor;
-    const roof = this.roofOver(x, y, floor);
-    const step = dt / Math.max(this.ease, 1e-3);
-    if (roof !== null) {
-      // under a roof: the layer it's in, seen from above
-      this.mode = 'slice';
-      this.open = 0;
-      cam.focus = [x, y, roof - 0.05, -1];
-    } else {
-      const hidden = this.hiddenBy(x, y, floor, cam.azimuth);
-      if (hidden === null) this.mode = 'clear';
-      else if (hidden <= this.large) this.mode = 'hole';
-      else {
-        // the nearest angle it's seen from, either way round, in steps of 15°
-        const turn = this.aim === null ? this.clearAngle(x, y, floor, cam.azimuth) : null;
-        if (turn !== null) this.aim = turn;
-        this.mode = this.aim !== null ? 'turn' : 'hole';
-      }
-      this.open = Math.max(0, Math.min(1, this.open + (this.mode === 'hole' ? step : -step)));
-      const r = this.radius * smooth(this.open);
-      cam.focus = r > 0.05 ? [x, y, floor, r] : null;
-    }
-    if (this.aim !== null) {
-      let d = this.aim - cam.azimuth;
-      d -= Math.round(d / (2 * Math.PI)) * 2 * Math.PI;
-      const s = this.turnRate * dt;
-      if (Math.abs(d) <= s) {
-        cam.azimuth = this.aim;
-        this.aim = null;
-      } else cam.azimuth += Math.sign(d) * s * Math.min(1, Math.abs(d) / 0.4 + 0.25);
-    }
-  }
-
-  /** The solid in the column at (x, y), bottom up (this frame's). */
-  private solidAt(x: number, y: number): Solid {
     const key = Math.floor(y) * 65536 + Math.floor(x);
     let s = this.cols.get(key);
     if (s === undefined) {
@@ -103,13 +49,69 @@ export class Cutaway {
     return s;
   }
 
-  /** The lowest underside of rock over the puck (its column and the ring round it, within 12 cells), or null. */
+  /**
+   * How high over `floor` what hides (x, y, z) from the eye at azimuth `az` rises (cells), or null if nothing
+   * does; what the slice leaves out (over the camera's slice) hides nothing.
+   */
+  hiddenBy(x: number, y: number, z: number, floor: number, az: number): number | null {
+    const el = Math.asin(Math.max(-1, Math.min(1, this.camera.eye[2])));
+    const ex = Math.cos(az) * Math.cos(el);
+    const ey = Math.sin(az) * Math.cos(el);
+    const ez = Math.sin(el);
+    const cut = this.camera.cut.slice ?? Infinity;
+    let top: number | null = null;
+    for (let t = 1; t <= 60; t += 0.5) {
+      const pz = z + ez * t;
+      if (pz > cut) break;
+      const s = this.solidAt(x + ex * t, y + ey * t);
+      if (!s?.length) continue;
+      if (s.some((v) => pz >= v.z0 && pz < v.z1)) {
+        const h = Math.min(cut, s[s.length - 1].z1) - floor;
+        top = top === null ? h : Math.max(top, h);
+      }
+    }
+    return top;
+  }
+}
+
+/** A point under a roof: the view cut at the roof's underside. */
+export class Slice {
+  /** the slice lowers and lifts at this rate (1/s) */
+  rate = 6;
+  /** the slice's height (world z) when cut; null none */
+  get z(): number | null {
+    return this.at;
+  }
+  private at: number | null = null;
+  private sight: Sight;
+  constructor(
+    terrain: Terrain,
+    private camera: Camera,
+  ) {
+    this.sight = new Sight(terrain, camera);
+  }
+
+  /** Each frame: the point (its floor, world z). Writes the camera's `cut.slice`. */
+  update(x: number, y: number, floor: number, dt: number): void {
+    const roof = this.roofOver(x, y, floor);
+    // (from high over the roof: the mountain over a cave is peeled off down to it, and back up when it's left)
+    const high = floor + 60;
+    const k = Math.min(1, dt * this.rate);
+    if (roof !== null) this.at = (this.at ?? high) + (roof - 0.05 - (this.at ?? high)) * k;
+    else if (this.at !== null) {
+      this.at += (high + 5 - this.at) * k;
+      if (this.at >= high) this.at = null;
+    }
+    this.camera.cut.slice = this.at;
+  }
+
+  /** The lowest underside of rock over the point (its column and the ring round it, within 12 cells), or null. */
   private roofOver(x: number, y: number, floor: number): number | null {
     let roof: number | null = null;
     let n = 0;
     let covered = 0;
     for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
-      const s = this.solidAt(x + dx, y + dy);
+      const s = this.sight.solidAt(x + dx, y + dy);
       if (!s) continue;
       n++;
       const over = s.find((v) => v.z0 > floor + 1.5 && v.z0 < floor + 12);
@@ -120,39 +122,134 @@ export class Cutaway {
     // (most of it covered: a cave's mouth, half in the open, isn't)
     return covered * 2 > n ? roof : null;
   }
+}
 
-  /** How high over the floor what hides the puck from the eye at azimuth `az` rises (cells), or null if nothing. */
-  private hiddenBy(x: number, y: number, floor: number, az: number): number | null {
-    const el = Math.asin(Math.max(-1, Math.min(1, this.camera.eye[2])));
-    const ex = Math.cos(az) * Math.cos(el);
-    const ey = Math.sin(az) * Math.cos(el);
-    const ez = Math.sin(el);
-    const z0 = floor + 1.2;
-    let top: number | null = null;
-    for (let t = 1; t <= 60; t += 0.5) {
-      const px = x + ex * t;
-      const py = y + ey * t;
-      const pz = z0 + ez * t;
-      const s = this.solidAt(px, py);
-      if (!s?.length) continue;
-      if (s.some((v) => pz >= v.z0 && pz < v.z1)) {
-        const h = s[s.length - 1].z1 - floor;
-        top = top === null ? h : Math.max(top, h);
-      }
-    }
-    return top;
+/** A large obstacle between a point and the eye turns the view, on a spring, to where it's seen from. */
+export class Orbit {
+  /** what hides the point no higher than this over its floor (cells) doesn't turn the view */
+  large = 8;
+  /** the spring (1/s: its natural rate; critically damped) */
+  rate = 2.6;
+  /** radians a second, at most */
+  maxSpeed = 2.2;
+  /** the azimuth it's turning to; null at rest */
+  goal: number | null = null;
+  private speed = 0;
+  private look = 0;
+  private sight: Sight;
+  constructor(
+    terrain: Terrain,
+    private camera: Camera,
+  ) {
+    this.sight = new Sight(terrain, camera);
   }
 
-  /** The nearest azimuth (15° steps either way) the puck is seen from, or null if none. */
-  private clearAngle(x: number, y: number, floor: number, az: number): number | null {
-    const step = Math.PI / 12;
-    for (let k = 1; k <= 12; k++)
-      for (const s of [1, -1]) {
-        const a = az + s * k * step;
-        if (this.hiddenBy(x, y, floor, a) === null) return a;
+  /** Each frame: the point kept seen (world) and its floor. Turns the camera's `azimuth`. */
+  update(x: number, y: number, floor: number, dt: number): void {
+    const cam = this.camera;
+    // (looked again every 0.15 s, turning or not: the goal follows the point as it moves)
+    this.look -= dt;
+    if (this.look <= 0) {
+      this.look = 0.15;
+      this.choose(x, y, floor);
+    }
+    const w = this.rate;
+    if (this.goal !== null) {
+      const d = wrap(this.goal - cam.azimuth);
+      this.speed += (w * w * d - 2 * w * this.speed) * dt;
+      if (Math.abs(d) < 0.003 && Math.abs(this.speed) < 0.01) {
+        this.goal = null;
+        this.speed = 0;
       }
-    return null;
+    } else this.speed -= 2 * w * this.speed * dt;
+    this.speed = Math.max(-this.maxSpeed, Math.min(this.maxSpeed, this.speed));
+    cam.azimuth = wrap(cam.azimuth + this.speed * dt);
+  }
+
+  /** The goal: kept while the point's seen from it; else the nearest angle (5° steps either way) it is, and 10° on. */
+  private choose(x: number, y: number, floor: number): void {
+    const from = this.goal ?? this.camera.azimuth;
+    const h = this.sight.hiddenBy(x, y, floor + 1.2, floor, from);
+    if (h === null || h <= this.large) return;
+    const step = Math.PI / 36;
+    for (let k = 1; k <= 36; k++)
+      for (const s of [1, -1]) {
+        const a = from + s * k * step;
+        if (this.clear(x, y, floor, a)) {
+          const on = a + s * 2 * step;
+          this.goal = wrap(this.clear(x, y, floor, on) ? on : a);
+          return;
+        }
+      }
+  }
+
+  private clear(x: number, y: number, floor: number, az: number): boolean {
+    const h = this.sight.hiddenBy(x, y, floor + 1.2, floor, az);
+    return h === null || h <= this.large;
   }
 }
 
+/** Points kept seen (what's in front dithered out round them while they're hidden); surfaces that may be. */
+export class Dither {
+  /** a hole's radius on screen (world units) */
+  radius = 9;
+  /** seconds for a hole to open or close */
+  ease = 0.3;
+  private points = new Map<string, { x: number; y: number; z: number; r: number; open: number }>();
+  private boxes = new Map<string, [number, number, number, number, number, number]>();
+  private sight: Sight;
+  constructor(
+    terrain: Terrain,
+    private camera: Camera,
+  ) {
+    this.sight = new Sight(terrain, camera);
+  }
+
+  /** Keep the point (world; e.g. a character's feet) seen, a hole `radius` round it; call each frame it moves. At most 4. */
+  see(id: string, x: number, y: number, z: number, radius = this.radius): void {
+    const p = this.points.get(id);
+    if (p) Object.assign(p, { x, y, z, r: radius });
+    else {
+      if (this.points.size >= MAX_SEE) throw new Error(`Dither.see: at most ${MAX_SEE} points (render.wgsl Camera.see)`);
+      this.points.set(id, { x, y, z, r: radius, open: 0 });
+    }
+  }
+
+  forget(id: string): void {
+    this.points.delete(id);
+  }
+
+  /**
+   * Mark a surface (the box lo..hi, world) as what may be dithered: once any is marked, only what's in one is.
+   * At most 4.
+   */
+  surface(id: string, lo: [number, number, number], hi: [number, number, number]): void {
+    if (!this.boxes.has(id) && this.boxes.size >= MAX_BOX) throw new Error(`Dither.surface: at most ${MAX_BOX} (render.wgsl Camera.boxes)`);
+    this.boxes.set(id, [...lo, ...hi]);
+  }
+
+  unsurface(id: string): void {
+    this.boxes.delete(id);
+  }
+
+  /** Each frame, before drawing: the holes open (hidden) or close. Writes the camera's `cut.see` and `cut.boxes`. */
+  update(dt: number): void {
+    const step = dt / Math.max(this.ease, 1e-3);
+    const see: [number, number, number, number][] = [];
+    for (const p of this.points.values()) {
+      const hidden = this.sight.hiddenBy(p.x, p.y, p.z + 1.2, p.z, this.camera.azimuth) !== null;
+      p.open = Math.max(0, Math.min(1, p.open + (hidden ? step : -step)));
+      const r = p.r * smooth(p.open);
+      if (r > 0.05) see.push([p.x, p.y, p.z, r]);
+    }
+    this.camera.cut.see = see;
+    this.camera.cut.boxes = [...this.boxes.values()];
+  }
+}
+
+/** render.wgsl Camera.see, Camera.boxes */
+export const MAX_SEE = 4;
+export const MAX_BOX = 4;
+
 const smooth = (t: number) => t * t * (3 - 2 * t);
+const wrap = (a: number) => a - Math.round(a / (2 * Math.PI)) * 2 * Math.PI;

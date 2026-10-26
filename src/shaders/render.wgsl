@@ -11,9 +11,13 @@ struct Camera {
   light: mat4x4<f32>,
   // where the eye is (round 69: the free camera, perspective), w 1 when it's there; 0: the fixed view
   pos: vec4<f32>,
-  // (round 82, V21) the cutaway (api/cutaway.ts, render.wgsl cutReach): x, y, z the character's floor and w a
-  // hole's radius on screen; or z a slice's height and w −1; 0: none
-  focus: vec4<f32>,
+  // (round 83, V21) what's cut from the view (api/cutaway.ts; camera.ts Cut): x a slice's height (w 1: on),
+  // y how many points are kept seen, z how many boxes may be dithered
+  cut: vec4<f32>,
+  // the points kept seen: xyz the point's base, w a hole's radius on screen (world units)
+  see: array<vec4<f32>, 4>,
+  // what may be dithered: lo xyz, hi xyz (two a box)
+  boxes: array<vec4<f32>, 8>,
 };
 
 /** 4 × 4 ordered dither, 0..1 (a pixel's threshold) */
@@ -24,35 +28,47 @@ fn bayer4(px: vec2<f32>) -> f32 {
 }
 
 /**
- * The cutaway's reach at p (round 82, V21 â€” api/cutaway.ts). Two kinds:
- * - a hole (focus.w > 0, its radius on screen): what's in front of the character (over a cell and a half
- *   toward the eye) and over its floor (focus.z), near it on screen â€” a tree, a wall, a rock â€” thinning over
- *   the outer third of the circle;
- * - a slice (focus.w < 0): the character under a roof (a cave, an overhang) â€” everything over focus.z
- *   (the roof's underside) isn't drawn, the whole view: the layer it's in, seen from above.
+ * How far into a kept-seen point's hole p is, 0..1 (round 83, V21: api/cutaway.ts Dither): in front of the
+ * point (over a cell and a half toward the eye) and over its base, near it on screen, thinning over the
+ * outer third of the circle; where boxes are marked, only in one of them.
  */
-fn cutReach(p: vec3<f32>) -> f32 {
-  let f = CAM.focus;
-  if (f.w == 0.0) { return 0.0; }
-  if (f.w < 0.0) { return 1.0; }
+fn seeReach(p: vec3<f32>) -> f32 {
+  let n = u32(CAM.cut.y);
+  if (n == 0u) { return 0.0; }
   let e = toEye(p);
-  let v = p - f.xyz;
-  let along = dot(v, e);
-  return (1.0 - smoothstep(f.w * 0.7, f.w, length(v - along * e))) * smoothstep(1.0, 2.0, along);
+  var k = 0.0;
+  for (var i = 0u; i < n; i++) {
+    let s = CAM.see[i];
+    let v = p - s.xyz;
+    let along = dot(v, e);
+    let r = (1.0 - smoothstep(s.w * 0.7, s.w, length(v - along * e))) * smoothstep(1.0, 2.0, along) * smoothstep(0.0, 0.8, p.z - s.z);
+    k = max(k, r);
+  }
+  let nb = u32(CAM.cut.z);
+  if (nb > 0u) {
+    var inside = false;
+    for (var i = 0u; i < nb; i++) {
+      let lo = CAM.boxes[i * 2u].xyz - vec3<f32>(0.5);
+      let hi = CAM.boxes[i * 2u + 1u].xyz + vec3<f32>(0.5);
+      if (all(p >= lo) && all(p <= hi)) { inside = true; }
+    }
+    if (!inside) { return 0.0; }
+  }
+  return k;
 }
 
-/** Is p where the cutaway opened the view? A surface seen from inside the solid there is drawn dark (a section). */
-fn inCut(p: vec3<f32>) -> bool { return cutReach(p) > 0.5; }
+/** over the slice (round 83, V21: api/cutaway.ts Slice) */
+fn sliced(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 && p.z > CAM.cut.x; }
+
+/** Is p where the view was cut open (the slice on, or in a hole)? A surface seen from inside the solid there is drawn dark (a section). */
+fn inCut(p: vec3<f32>) -> bool { return CAM.cut.w > 0.5 || seeReach(p) > 0.5; }
 
 /**
- * (round 82, V21: the character always seen â€” api/cutaway.ts) Is this point cut away? The hole is dithered
- * (it opens and closes as an iris), the slice is sharp. The shadow pass doesn't cut: the light stays.
+ * Is this point cut away (round 83, V21)? Over the slice, sharply; in a kept-seen point's hole, dithered (it
+ * opens and closes as an iris). The shadow pass doesn't cut: the light stays.
  */
 fn cutAway(p: vec3<f32>, px: vec2<f32>) -> bool {
-  let f = CAM.focus;
-  if (f.w < 0.0) { return p.z > f.z; }
-  let k = cutReach(p) * smoothstep(0.0, 0.8, p.z - f.z);
-  return k > bayer4(px);
+  return sliced(p) || seeReach(p) > bayer4(px);
 }
 
 /** toward the eye from p: one way for the fixed (orthographic) view, from where it is for the free one */

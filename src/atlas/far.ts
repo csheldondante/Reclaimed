@@ -8,6 +8,7 @@ import { MATERIALS } from '../world/materials';
 import { KINDS, warmth } from './regions';
 import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
+import { LodRings } from './lod';
 
 const UNI_BYTES = 80;
 /** vertices a side, and world units between them */
@@ -28,6 +29,12 @@ export class FarLand {
   private index: GPUBuffer;
   private textures: GPUTexture[];
   private count: number;
+  /** the rings of less detail between the window and this (round 83, lod.ts); none: ?lod=0 */
+  readonly lod: LodRings | null;
+  private lodPipe?: GPURenderPipeline;
+  private lodIndex?: GPUBuffer;
+  private lodCount = 0;
+  private lodLast = performance.now();
   /** the giants (Atlas.giants): their pipeline, their buffer, how many */
   private gPipe?: GPURenderPipeline;
   private gGroup?: GPUBindGroup;
@@ -44,6 +51,8 @@ export class FarLand {
     private device: GPUDevice,
     private atlas: Atlas,
     t: FarTargets,
+    /** the rings' spacings (finest first) and vertices a side; null: none */
+    lod: { spacings: number[]; n: number } | null = { spacings: [2, 4, 8, 16], n: 193 },
   ) {
     const n = atlas.p.n;
     const m = n / 2;
@@ -97,8 +106,14 @@ export class FarLand {
         { binding: 41, visibility: GPUShaderStage.VERTEX, texture: { sampleType: 'unfilterable-float' } },
         { binding: 42, visibility: GPUShaderStage.VERTEX, texture: { sampleType: 'float' } },
         { binding: 43, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 45, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
+        { binding: 46, visibility: VF, buffer: { type: 'uniform' } },
       ],
     });
+    this.lod = lod ? new LodRings(device, atlas, lod.spacings, lod.n) : null;
+    // (no rings: an empty LodD, its count 0)
+    const lodData = this.lod?.data ?? device.createBuffer({ label: 'lod none', size: 16, usage: GPUBufferUsage.STORAGE });
+    const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: 80, usage: GPUBufferUsage.UNIFORM });
     this.group = device.createBindGroup({
       label: 'far',
       layout,
@@ -108,6 +123,8 @@ export class FarLand {
         { binding: 41, resource: ht.createView() },
         { binding: 42, resource: ct.createView() },
         { binding: 43, resource: { buffer: atlas.coarse.cells } },
+        { binding: 45, resource: { buffer: lodData } },
+        { binding: 46, resource: { buffer: lodUni } },
       ],
     });
     const module = device.createShaderModule({ label: 'far', code: farW });
@@ -119,6 +136,28 @@ export class FarLand {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
     });
+    if (lod) {
+      const m = lod.n;
+      const li = new Uint32Array((m - 1) * (m - 1) * 6);
+      let q = 0;
+      for (let j = 0; j < m - 1; j++)
+        for (let i = 0; i < m - 1; i++) {
+          const a = j * m + i;
+          li.set([a, a + 1, a + m, a + 1, a + m + 1, a + m], q);
+          q += 6;
+        }
+      this.lodCount = li.length;
+      this.lodIndex = device.createBuffer({ label: 'lod index', size: li.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+      device.queue.writeBuffer(this.lodIndex, 0, li);
+      this.lodPipe = device.createRenderPipeline({
+        label: 'lod',
+        layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+        vertex: { module, entryPoint: 'vsLod' },
+        fragment: { module, entryPoint: 'fsLod', targets: [{ format: t.format }, { format: t.pickFormat }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
+      });
+    }
     // the giants beyond the window (round 75)
     this.gCount = atlas.giants.length / GIANT_FLOATS;
     if (this.gCount) {
@@ -162,6 +201,17 @@ export class FarLand {
     f.set([fog[0], fog[1], fog[2], 1], 12);
     f.set([a.worldW, a.worldH, a.p.n / 2, a.coarse.cn], 16);
     this.device.queue.writeBuffer(this.uni, 0, f);
+    const now = performance.now();
+    if (this.lod) {
+      this.lod.update(this.mid, this.org, (now - this.lodLast) / 1000);
+      if (this.lod.ready) {
+        pass.setPipeline(this.lodPipe!);
+        pass.setBindGroup(0, this.group);
+        pass.setIndexBuffer(this.lodIndex!, 'uint32');
+        pass.drawIndexed(this.lodCount, this.lod.spacings.length);
+      }
+    }
+    this.lodLast = now;
     pass.setPipeline(this.pipe);
     pass.setBindGroup(0, this.group);
     pass.setIndexBuffer(this.index, 'uint32');
@@ -177,6 +227,8 @@ export class FarLand {
     for (const t of this.textures) t.destroy();
     this.index.destroy();
     this.uni.destroy();
+    this.lod?.dispose();
+    this.lodIndex?.destroy();
     this.gBuf?.destroy();
   }
 }

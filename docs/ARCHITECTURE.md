@@ -346,14 +346,47 @@ columns) divides by w and keeps what's behind the eye; picking flies a ray
 into the ground (`groundAt`). A streamed window follows the camera's
 position.
 
-The cutaway (round 82, V21; api/cutaway.ts): a game calls
-`Cutaway.update(feet x, y, z, dt)` each frame; it writes `Camera.focus`
-(render.wgsl `Camera.focus`: x, y, the floor, w a hole's radius; or z a
-slice's height, w −1; null none) and may turn `Camera.azimuth`. The terrain
-mesh (fsMesh) and the prisms (fsBox) discard what `cutAway` cuts; fsMesh
-draws a surface seen from inside, within the cut, dark (a section), and
-WorldCore clears to the same dark under a slice. The shadow pass's camera
-has no focus.
+The camera's puck and what's cut from the view (round 83, V21; api/puck.ts,
+api/cutaway.ts), each on its own:
+- `Puck.update(dt)` after the camera's input: what moved `Camera.target`
+  since the puck wrote it (a pan, a zoom, a director's shot, a slide) moves
+  the puck with it, then it picks the screen's middle (the first surface
+  drawn along the eye's line; over `cut.slice` isn't) and goes to the floor
+  on that point's vertical line nearest its own height: along the eye's line
+  at once (unseen in the orthographic view), across the screen on a
+  critically damped spring with a velocity. It writes `Camera.target`.
+- `Slice.update(x, y, floor, dt)`: rock 1.5–12 over most of the point and
+  the ring round it, so `Camera.cut.slice` eases from 60 over down to the
+  roof's underside (and back up, then null).
+- `Orbit.update(x, y, floor, dt)`: solid more than `large` (8) over the
+  floor between the point and the eye gives a goal azimuth (the nearest
+  clear one in 5° steps, 10° on), looked at again every 0.15 s;
+  `Camera.azimuth` turns to it on a critically damped spring (≤ 2.2 rad/s).
+- `Dither.see(id, x, y, z, r)` / `surface(id, lo, hi)` / `update(dt)`: up
+  to 4 points kept seen (a hole opens round one while something hides it)
+  and up to 4 boxes that limit what may be dithered.
+render.wgsl `Camera.cut` (x the slice's height, y points, z boxes, w the
+slice on), `see[4]`, `boxes[8]` (CAMERA_CUT_OFFSET, CAMERA_CUT_BYTES 208).
+fsMesh and fsBox discard what `cutAway` cuts (over the slice; in a hole,
+by a 4 × 4 ordered dither); fsMesh draws a surface seen from inside, within
+the cut, dark (a section), and WorldCore clears to the same dark under a
+slice. The sun's camera has the cut zeroed. `?cutaway=1` (the level): the
+puck, slice and orbit on the camera.
+
+The rings of less detail (round 83, atlas/lod.ts, lod.wgsl, far.wgsl
+vsLod): between the window and the far land, rings centred on the camera,
+`n` vertices a side (193; `?lod=low` 129 and spacings 4, 8, 16; `?lod=0`
+none), 2, 4, 8, 16 cells apart. Each is a dispatch of `lodHeight` (the
+atlas's `ground()`: the top (a mesa's lip, what's loose, the sea's or a
+river's level over it) and a colour (the two regions' grounds blended by
+the ground's border weight, oddities, ash, snow, water, lava)) into
+`LodRings.data`, made again when the camera moves 8 of its spacings, on a
+slide, and one ring every 3 s (the coarse world). Each ring's last 16
+texels melt into the next ring out (at its edge it is that ring there: a
+ring's square is on the next one's lattice) and the outermost into the
+far land's `farAt`; a ring discards the window's square and the finer
+ring's; the far land discards the outermost ring's square, and with rings
+draws its near side too.
 
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the
 loose sheet) are hex prisms, 30 vertices: the top in four triangles with one

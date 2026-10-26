@@ -3,6 +3,25 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-26 — round 83 (session 5, `places`) — the puck, separate cuts, LOD
+
+- "I think this camera is buggier than it is worth": the puck again, tracked
+  differently: "surface constrained and slightly springy … track velocity in
+  3d so it doesn't suddenly snap up a cliff … slide over surfaces at some
+  elastic rate. For the god eye I would just make it slide along to the point
+  on the surface the center of the camera is aimed at and the pick of where
+  that is would depend on what is visible … the puck should slide toward the
+  vertical axis the camera pick makes and that way it will go into caves
+  naturally if they are there."
+- The slice, the orbit and the dithering are independent mechanisms: "There
+  should be an API to set certain surfaces or 3d points as ditherable and we
+  should not have the puck be one."
+- "Camera orbit actually works well but it feels weird that it is not
+  continuous. I want it to move more smoothly."
+- LOD: "I want some sort of LOD so that I can zoom out and still see more of
+  the map loaded … things pop in a lot right now". Heightfield rings
+  (a clipmap) chosen over mipmapped voxel columns; on `places`.
+
 ## 2026-10-26 — round 82 (session 5, `places`) — where the phone's frame goes
 
 - The phone: leaving out the terrain mesh and the shadows is 20–40 % off the

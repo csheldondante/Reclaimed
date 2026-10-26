@@ -4926,3 +4926,43 @@ worst case doesn't make sense".
   can catch the new land half-written (floorAt then wrong) — a game's
   character needs the mirror fresh after a slide (open).
 
+## Round 83 — the camera's puck, the cuts apart, rings of less detail (places)
+
+- The camera's puck (V21, the user: DECISIONS round 83). api/puck.ts: the
+  camera's target is the puck. What moved the target since the puck wrote
+  it (a pan, a zoom, a slide) moves it at once, then it picks the screen's
+  middle (the first surface drawn along the eye's line; over the slice
+  isn't) and, of the floors on that point's vertical line (solid, loose or
+  water's top, 1.5 of room over it), goes to the one nearest its own height:
+  panning into a cave's mouth it goes in, not up the mountain over it. The
+  part of a move along the eye's line can't be seen (orthographic) and is
+  taken at once; the rest, across the screen, on a critically damped spring
+  (5/s, ≤ 60 u/s) with its velocity, so a cliff is a slide, not a snap.
+  scripts/lodshot.mjs pans the valley six times: the puck's height 18 → 13
+  → 17 → 27 → 26 → 19 → 24, each settled within a quarter second of the
+  stop.
+- The cuts apart (the user: independent; the puck not ditherable).
+  api/cutaway.ts: Slice (the roof's underside, eased from 60 over down to
+  it and back; it peeled off at once before), Orbit (the goal looked at
+  every 0.15 s while turning, 5° steps and 10° past the edge; the azimuth on
+  a critically damped spring. Before: 15° steps, a constant rate, the goal
+  fixed till reached: "not continuous"), Dither (`see` up to 4 points,
+  `surface` up to 4 boxes; a hole opens round a point while something
+  hides it). Camera.focus became `Camera.cut` (render.wgsl `cut`, `see[4]`,
+  `boxes[8]`; 208 bytes after `pos`). scripts/cutshot.mjs (the old
+  Cutaway's) removed.
+- Rings of less detail (V23, the user: "I want some sort of LOD so that I
+  can zoom out and still see more of the map loaded"). atlas/lod.ts,
+  lod.wgsl: rings of the atlas's own ground() (what the columns are made
+  from) at 2, 4, 8, 16 cells a vertex, 193² each, centred on the camera;
+  each made again by a dispatch when the camera's moved 8 of its spacings,
+  on a slide, and one every 3 s for the coarse world. Drawn by far.wgsl
+  vsLod, an instance a ring: its last 16 texels melt into the next ring out
+  (its edge on that ring's lattice: no cracks), the outermost into the far
+  land. The far land had left out its near side (it could stand in front of
+  the window); past the rings it's too far to, so it's drawn. Zoomed out on
+  the atlas (shots78 lod-on / lod-off): the window was an island over grey
+  with the 32-cell far land behind it; now it sits in the land all round,
+  and the seam at its edge is level. Colours stepped by the macro map's
+  texels at first (16 cells); the two regions' grounds are now blended by
+  the ground's own border weight. `?lod=0` off, `?lod=low` (4, 8, 16; 129²).

@@ -37,9 +37,10 @@ import type { MapData } from '../world/mapgen';
 import { Sleep } from '../sim/sleep';
 import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
-import { Cutaway } from '../api/cutaway';
+import { Dither, Orbit, Slice } from '../api/cutaway';
+import { Puck } from '../api/puck';
 
-/** round 82, V21: ?cutaway=1 — the cutaway round the camera's target */
+/** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 import { cpuLine, cpuStats, frameSteps } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
@@ -146,9 +147,9 @@ export class LevelScene implements Scene {
   agents!: Agents;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
-  /** round 82, V21: ?cutaway (api/cutaway.ts) */
-  private cutaway?: Cutaway;
-  /** a stand-in character's feet for ?cutaway (scripts/cutshot.mjs); the camera's target when unset */
+  /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
+  cutaway?: { puck: Puck; slice: Slice; orbit: Orbit; dither: Dither };
+  /** a stand-in character's feet kept seen (Dither) for ?cutaway (scripts/cutshot.mjs); none when unset */
   cutFeet?: [number, number, number];
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
@@ -1027,7 +1028,11 @@ export class LevelScene implements Scene {
       if (a) this.atlasControls();
       // the land beyond the window (round 73): the atlas's ground and the coarse world, out to the sky
       if (a) {
-        const far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets);
+        // (round 83: the rings of less detail between the window and the far land — ?lod=0 none, ?lod=low three
+        // coarser ones, fewer vertices)
+        const lodQ = new URLSearchParams(location.search).get('lod');
+        const lod = lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
+        const far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, lod);
         this.far = far;
         const S = this.stream;
         core.renderer.extraDraws.push((pass, clear) => {
@@ -1293,12 +1298,20 @@ export class LevelScene implements Scene {
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
-    // (round 82, V21: ?cutaway=1 — the cutaway round the camera's target, as a game puts it round its
-    // character's feet; `cutFeet` for a script's stand-in character)
-    if (CUTAWAY) {
-      this.cutaway ??= new Cutaway((this.worldApi ??= attachSim(core)).terrain!, camera);
-      const [fx, fy, fz] = this.cutFeet ?? camera.target;
-      this.cutaway.update(fx, fy, fz, dt);
+    // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's
+    // stand-in character, kept seen)
+    if (CUTAWAY && !camera.fly) {
+      const t = (this.worldApi ??= attachSim(core)).terrain!;
+      const c = (this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
+      c.puck.update(dt);
+      const p = c.puck.pos;
+      if (p) {
+        c.slice.update(p[0], p[1], p[2], dt);
+        c.orbit.update(p[0], p[1], p[2], dt);
+      }
+      if (this.cutFeet) c.dither.see('feet', ...this.cutFeet);
+      else c.dither.forget('feet');
+      c.dither.update(dt);
     }
     core.render();
 

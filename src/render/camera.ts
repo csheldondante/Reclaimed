@@ -11,8 +11,20 @@ export type Mat4 = Float32Array;
 export const CAMERA_BYTES = 96;
 /** where the eye is (render.wgsl Camera.pos: xyz, w 1 when flying), after the light's matrix the renderer writes at CAMERA_BYTES */
 export const CAMERA_POS_OFFSET = CAMERA_BYTES + 64;
-/** the cutaway after it (render.wgsl Camera.focus, round 82) */
-export const CAMERA_FOCUS_OFFSET = CAMERA_POS_OFFSET + 16;
+/** what's cut from the view after it (render.wgsl Camera.cut, see, boxes; round 83) */
+export const CAMERA_CUT_OFFSET = CAMERA_POS_OFFSET + 16;
+/** cut (a vec4), see (4 vec4s), boxes (4 boxes, 2 vec4s each) */
+export const CAMERA_CUT_BYTES = 16 + 4 * 16 + 8 * 16;
+
+/** What's cut from the view (api/cutaway.ts: Slice, Dither) — the sun's camera cuts nothing. */
+export interface Cut {
+  /** nothing over this height (world z) is drawn; null: no slice */
+  slice: number | null;
+  /** points kept seen: x, y, z (the point's base: what's over it in front is dithered) and a radius on screen (world units) */
+  see: [number, number, number, number][];
+  /** what may be dithered (lo xyz, hi xyz; world): none marked, anything */
+  boxes: [number, number, number, number, number, number][];
+}
 
 /** the free camera: where it is (world), which way it looks (radians), its vertical field of view */
 export interface Fly {
@@ -37,11 +49,8 @@ export class Camera {
   readonly eye: [number, number, number] = [0, 0, 0];
   /** flying (perspective) when set */
   fly: Fly | null = null;
-  /**
-   * (round 82, V21) The cutaway: the character's feet (world x, y, z) and a radius (world units, on screen).
-   * What's in front of it near it is dithered out, so it's always seen without turning the view. null: none.
-   */
-  focus: [number, number, number, number] | null = null;
+  /** (round 83, V21) what's cut from the view: api/cutaway.ts writes it */
+  cut: Cut = { slice: null, see: [], boxes: [] };
 
   /** the way a flying camera looks, and its right and up */
   basis(): { f: [number, number, number]; r: [number, number, number]; u: [number, number, number] } {
@@ -215,6 +224,13 @@ export class Camera {
     // (flying: px a unit at distance 1 — what's sized by it divides by its depth)
     f.set([this.viewportW, this.viewportH, this.fly ? this.focal : this.zoom, 0], 20);
     if (out.byteLength >= CAMERA_POS_OFFSET + 16) f.set(this.fly ? [...this.fly.pos, 1] : [0, 0, 0, 0], CAMERA_POS_OFFSET / 4);
-    if (out.byteLength >= CAMERA_FOCUS_OFFSET + 16) f.set(this.focus ?? [0, 0, 0, 0], CAMERA_FOCUS_OFFSET / 4);
+    if (out.byteLength >= CAMERA_CUT_OFFSET + CAMERA_CUT_BYTES) {
+      const c = this.cut;
+      const o = CAMERA_CUT_OFFSET / 4;
+      f.fill(0, o, o + CAMERA_CUT_BYTES / 4);
+      f.set([c.slice ?? 0, c.see.length, c.boxes.length, c.slice === null ? 0 : 1], o);
+      c.see.forEach((p, i) => f.set(p, o + 4 + i * 4));
+      c.boxes.forEach((b, i) => f.set([b[0], b[1], b[2], 0, b[3], b[4], b[5], 0], o + 20 + i * 8));
+    }
   }
 }
