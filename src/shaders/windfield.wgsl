@@ -25,7 +25,7 @@ const BLOW_S: f32 = 0.12;
 
 const DT_W: f32 = 1.0 / 60.0;
 /** (perfopt, simhz) the world time a tick stands for */
-fn dtW() -> f32 { return DT_W * simStep(); }
+fn dtW() -> f32 { return DT_W * simStep() * WIND_K; }
 const DECAY_S: f32 = 7.0;
 const MAX_W: f32 = 24.0;
 
@@ -47,7 +47,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   v = windField(c - v * dtW() * 0.3);
   // spread
   let avg = (texAt(t + vec2<i32>(1, 0)) + texAt(t - vec2<i32>(1, 0)) + texAt(t + vec2<i32>(0, 1)) + texAt(t - vec2<i32>(0, 1))) * 0.25;
-  v = mix(v, avg, 0.06);
+  v = mix(v, avg, 1.0 - pow(0.94, simStep() * WIND_K));
   // die down
   v *= exp(-dtW() / DECAY_S);
   // painted wind is wilder under a storm (round 10), and never quite

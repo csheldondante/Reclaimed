@@ -5317,3 +5317,14 @@ pieces. And the phone: "Deferred shading helped a lot" — it stays the default.
   the generator's output, before it's cut into the window); solids stay
   (overhangs, arches). Counted in the streamer's stats (`settled`).
 
+- `?windhz=N` (sim/flow.ts `WIND_K`): the wind field and the world API's
+  blows and wakes run every TICK_HZ / N ticks, each update the time since
+  (DT × the ticks between, the spreading relaxed over them too); the
+  player's strokes and a mover's wake wait for the next update — the wake's
+  segment then covers everything since (api/wind.ts: its clock and the
+  blows' timers by the ticks between). worldapitest 16/16 with windhz=15
+  (the first try, with the API's wakes still painted every tick, lost three
+  quarters of a wake: "wake trails behind" failed). The field still reacts
+  within 1/N s of the player's movement. Storms need nothing: they are
+  analytic on the GPU (stormDist) and a few dozen lines of CPU a frame.
+

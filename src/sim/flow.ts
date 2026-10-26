@@ -42,5 +42,16 @@ export function flowN(f: Flow): number {
   return hz > 0 ? Math.max(1, Math.round(TICK_HZ / hz)) : 0;
 }
 
+/**
+ * The wind field's rate (?windhz=N, updates a second; the tick rate by default): between updates it's drawn and felt
+ * as it last was; an update covers the time since (its DT × the ticks between). The player's strokes wait for the
+ * next update (simulation.ts), so it reacts within 1/N s. DECISIONS round 83: kept simulated, lower fidelity fine.
+ */
+export const WIND_K = (() => {
+  const hz = Number(params.get('windhz') ?? TICK_HZ);
+  if (!(hz > 0)) throw new Error(`?windhz=${params.get('windhz')}: updates a second`);
+  return Math.max(1, Math.round(TICK_HZ / hz));
+})();
+
 /** the WGSL constant a flow's kernels read (common.wgsl flowFrozen) */
 export const flowConst = (f: Flow) => `const FLOW_N: u32 = ${flowN(f)}u;\n`;

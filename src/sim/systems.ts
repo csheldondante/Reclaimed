@@ -36,7 +36,7 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 import { SETTLE, SLEEP_MORE } from './sleep';
-import { FLOW_SUB, flowConst } from './flow';
+import { FLOW_SUB, WIND_K, flowConst } from './flow';
 
 /**
  * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
@@ -288,11 +288,13 @@ export class RenderFieldsSystem implements SimSystem {
 /** The player's persistent wind field (windfield.wgsl): advect, spread, decay, stamp strokes. */
 export class WindFieldSystem implements SimSystem {
   readonly name = 'windfield';
-  readonly period = 1;
+  // (perfopt, ?windhz=: every WIND_K ticks, each update the time since — sim/flow.ts)
+  readonly period = WIND_K;
   private s;
   private groups: [number, number];
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'windfield', windFieldWgsl, { 15: 'tex', 16: 'stex', 30: 'read', 31: 'read' }, { 15: world.windFieldView, 16: world.windFieldNextView, 30: world.physPuff, 31: world.windBlows });
+    this.s = kernel(device, world, 'windfield', `const WIND_K: f32 = ${WIND_K}.0;
+` + windFieldWgsl, { 15: 'tex', 16: 'stex', 30: 'read', 31: 'read' }, { 15: world.windFieldView, 16: world.windFieldNextView, 30: world.physPuff, 31: world.windBlows });
     this.groups = [Math.ceil(world.windField.width / 8), Math.ceil(world.windField.height / 8)];
   }
   encode(enc: GPUCommandEncoder): void {
