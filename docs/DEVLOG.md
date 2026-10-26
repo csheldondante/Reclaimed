@@ -5170,3 +5170,10 @@ diagnostic, not a setting): on the phone, the difference to the default is
 the second tick's share of the frame. Not measurable on the desktop (it
 runs 100 fps, under a tick a frame).
 
+- (later) `?cull=1` culls in the shadow pass too: the mesh's faces turned
+  from the sun (a shell's sun-facing side casts). Same picture; the desktop
+  again no change (its rasteriser drops them as cheaply as it draws them);
+  a tile-based GPU bins fewer — the phone to tell.
+- Tried `meshh=1.5`: not a lattice the chunks tile (ground missing, holes).
+  Only 1 and 2 work.
+

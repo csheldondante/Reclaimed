@@ -81,8 +81,8 @@ export class Renderer {
     defer: new URLSearchParams(location.search).get('defer') !== '0',
     /** the sun's shadow map drawn every Nth frame (?shadowevery=N; 1 every frame): kept with the light matrix it was
      *  drawn with, so it stays right as the camera moves; drawn again at once after a slide or when the box it covers moves */
-    /** the G-buffer pass culls the mesh's faces turned from the eye (?cull=1; fieldmesh.wgsl winds them out of
-     *  the solid); not while the cutaway is on: it shows the inside */
+    /** the G-buffer pass culls the mesh's faces turned from the eye, the shadow pass those turned from the sun
+     *  (?cull=1; fieldmesh.wgsl winds them out of the solid); the G-buffer not while the cutaway is on: it shows the inside */
     cull: new URLSearchParams(location.search).get('cull') === '1',
     /** the terrain look's pieces left out (?nodetail=strata,water,plants,stains,struct,shadow,warp,fields,specks;
      *  meshdraw.wgsl ND_*): Camera.eye.w bits 2 up, read at run time — to find what the look's cost is */
@@ -172,6 +172,8 @@ export class Renderer {
   private shadowOpaquePipe?: GPURenderPipeline;
   private shadowBodyPipe?: GPURenderPipeline;
   private shadowMeshPipe?: GPURenderPipeline;
+  /** (perfopt, ?cull=1) the mesh into the sun's map, the faces turned from the sun culled */
+  private shadowMeshCullPipe?: GPURenderPipeline;
   /** more voxel instances drawn like the structures' (physics bodies): instances, indirect args, and their draw and shadow groups */
   private voxelSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
   /** more prisms for the opaque pipeline (lava: sim/lava.ts) */
@@ -546,6 +548,13 @@ export class Renderer {
       this.shadowBodyPipe = shadowPipe('shadow-bodies', pl, drawModule, 'vsBody');
       this.shadowSkinPipe = shadowPipe('shadow-skins', pl, drawModule, 'vsSkin');
       this.shadowMeshPipe = shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMeshG');
+      this.shadowMeshCullPipe = device.createRenderPipeline({
+        label: 'shadow-mesh-cull',
+        layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
+        vertex: { module: meshModule, entryPoint: 'vsMeshG' },
+        primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: MESH_FRONT },
+        depthStencil: shadowDepth,
+      });
       // (the pass draws into the map, so its groups bind a stand-in texel there)
       const none = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
       this.noShadowView = none;
@@ -967,7 +976,7 @@ export class Renderer {
       due = 'all';
     }
     const statics = (pass: GPURenderPassEncoder) => {
-      pass.setPipeline(this.shadowMeshPipe!);
+      pass.setPipeline(Renderer.opts.cull ? this.shadowMeshCullPipe! : this.shadowMeshPipe!);
       pass.setBindGroup(0, g.mesh);
       this.fieldMesh.drawCasters(pass);
       pass.setPipeline(this.shadowOpaquePipe!);
