@@ -34,6 +34,15 @@ async function main() {
     if (![256, 512, 1024, 2048].includes(n)) throw new Error(`?shadowsize=${shadowSize}: 256, 512, 1024 or 2048`);
     quality.shadowSize = n;
   }
+  // (perfopt: ?ticks=N — the sim's ticks a frame at most, overriding the tier's (low 2). Below 60 fps a frame runs
+  // two ticks, so a slow frame's GPU work grows by a whole tick; 1 tells how much of the phone's frame that is —
+  // the sim then runs slower than real time whenever the frame rate is under 60)
+  const ticks = params.get('ticks');
+  if (ticks !== null) {
+    const n = Number(ticks);
+    if (!Number.isInteger(n) || n < 1 || n > 8) throw new Error(`?ticks=${ticks}: 1..8`);
+    quality.maxTicksPerFrame = n;
+  }
   const slots = params.get('slots');
   if (slots !== null) {
     const n = Number(slots);

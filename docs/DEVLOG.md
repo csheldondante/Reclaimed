@@ -5157,3 +5157,16 @@ same (scratch tf4-cmp: default left, tufts=0 right).
 - Riding, desktop, the render's passes a frame (draw + G-buffer + shadow +
   prep, ms): forward (defer=0) 4.3; the default now 2.95; the lite set 1.9.
 
+
+## Round 83 — `?ticks=N`: the sim's share of a slow frame (perfopt)
+
+Why: the sim runs at 60 Hz, up to the tier's ticks a frame (low 2). With
+`skip=render` the phone runs 60 fps: one tick a frame. Drawing, at 30 fps,
+each frame runs two ticks — the sim's GPU work a frame doubles as soon as
+the render slows it under 60, and a frame that runs long makes the next
+one run two: the render's cost is amplified in the frame time. `?ticks=1`
+caps it at one (the sim then runs slower than real time under 60 fps — a
+diagnostic, not a setting): on the phone, the difference to the default is
+the second tick's share of the frame. Not measurable on the desktop (it
+runs 100 fps, under a tick a frame).
+
