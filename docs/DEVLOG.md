@@ -5625,8 +5625,10 @@ found again when perturbed, with a tolerance; a frozen region's flux kept propor
   jets 0.03, depth 0.14, publish 0.015, prep 0.036) and lava 0.26 — about 8× the old water each, mostly
   every column's gap scan and the neighbour checks of dry columns (FL3: skip dry chunks, skip lava where
   there is none). Everything frozen (awake chunks 0): the simulation passes aren't dispatched; prep only,
-  water 0.028 + lava 0.034 ms — and the frozen pool still pours: 848 pixels of the fall change between GIF
-  frames at no simulation.
+  water 0.03–0.05 + lava 0.03–0.06 ms — and the frozen pool still pours: 2 116 pixels change between the
+  frozen pool's GIF frames (2 948 at the tunnel's fall) with no simulation. With the defaults the breached
+  pool (its spring on), the trench and the vent (stopped) were all near steady and asleep 35 s after the
+  breach; the arc from the side: scripts/flowlab.mjs `pool-side`.
 - Found on the way: the prep kernel at 9 storage buffers (the chunk table it doesn't use: dropped from its
   layout); the warmup ends past the 1.5 s settle, so everything fell asleep before the steady state had
   judged it — now everything is judged once after the warmup (Steady.judgeAll) and what's unsteady is kept.
