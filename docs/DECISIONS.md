@@ -55,7 +55,12 @@ each was implemented.
   steady flow frozen: "show the animation of sand endlessly spilling out of a
   basin. Think flux. As long as our section has material going in matching
   material out it is in steady state and we only need to find that again
-  when we perturb it." Rivers: the atlas's watersheds and their flow as a
+  when we perturb it." The rules simple: "Water and loose materials may
+  appear along multiple intervals in a column but the update rules should be
+  fairly simple. Think noita physics which just checks for adjacent
+  emptiness and moves pixels over. We are just doing this in a compressed
+  column space and adding in velocity. The goal is plausibility and
+  spectacle not realism." Rivers: the atlas's watersheds and their flow as a
   function of dryness precomputed; the unperturbed basin a steady state, its
   flow "strictly a render artifact computed at the atlas level".
 - What the sim must do (P11): water's steady state is cached, so no tick is
