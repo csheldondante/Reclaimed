@@ -5812,3 +5812,73 @@ coded against src/api/contracts only.
   (2341, 2039, 2159), and a stage there needs the atlas level's window. That's next, once its places
   have positions from the region generator.
 - storytest: 20 checks (faction attitudes in the world, the record in world.runs, `any`).
+## Round 84 — the game master's pipeline: the world wiki, docs/GM.md, the validator, the first story (gm)
+
+The user (round 83): "have a GM (for now we can use a subagent with GM context and tools) take the world state
+wiki and offline create a session story as data that we can use to create the locations, dialogues,
+objectives and world effects." This is SYSTEMS.md step 3. Everything here sits behind the GM's adapter
+(src/gm/). The contracts in src/api/contracts are unchanged; the changes I'd propose are at the end.
+
+- **Why cache the atlas's facts.** The GM is a subagent with files and a shell, not a GPU, and the atlas is
+  built on the GPU. So one headless run (`scripts/worldwiki.mjs --pull`, `?atlas=view`, about a minute)
+  exports what the wiki needs (src/gm/atlas-facts.ts) to data/atlas/seed1.json. That's 2.2 MB: 7772
+  regions, 140 sites, 166 roads, and the spawn at cell 13716,5536 in region 2341. Everything after runs in
+  Node from the cache: the wiki takes about 2 s, the validator well under a second.
+- **Why the wiki is a snapshot plus more.** WorldSnapshot holds the regions' names, kinds and states, the
+  factions and the history. A GM also needs the land itself (tier, climate, ground heights for flood
+  levels, rivers, neighbours) and the settlements and roads, and the snapshot has no place for those yet.
+  So the wiki JSON carries a WorldSnapshot (what the validator and FileGM check against) beside those
+  tables. The markdown covers the world, the factions, the start, every region within 1400 of the start
+  (177) and every settlement within 2600 (14). At about 38 k characters it can be read in one go.
+- **Why placeholder factions.** None exist yet, and diplomacy is the user's to design, but a story needs
+  someone to turn. So a deterministic table seeds them: each continent's settlements are clustered into
+  realms (5 realms on seed 1, because the main continent has 127 of the 140 sites), plus four world
+  factions placed by the kind of land. The wiki and ARCHITECTURE mark them as placeholders.
+- **Why the validator is strict and simulates.** A subagent's story can fail in ways a type check misses: a
+  node nothing leads to, a key no one gives, an objective waiting on one that can't be done, a flood with
+  "magnitude 0.5" when the contract means a z level. The validator runs a fixed point over what could
+  happen and reports each problem with its path. scripts/gmtest.mjs breaks the first story 18 ways, and
+  the validator catches all 18.
+- **Being the GM once.** I read data/wiki/seed1.md and wrote data/stories/the-bell-under-kaudru.json near
+  the spawn.
+  - 3 locations: the Thaurd ford camp, Mebe `s139`, and the Wardens' Barrow in Bethorn Downs (2159).
+  - 5 cast, 5 dialogs (34 nodes), 4 objectives.
+  - Five endings, each changing Bethorn Downs a different way: drowned (a flood to z 116 over ground
+    105–132), buried in ash, overgrown by the Choir, given to the Hollow Court's shadow, or left with a
+    grave.
+  - A clock fails the run: Mebe is ruined and its dead rise.
+
+  It passed the validator on the first run. The 18 breakages above show the validator isn't just lenient.
+- **Contract changes I'd propose** (not made; BACKLOG G6):
+  - WorldSnapshot gets `seed` and settlement records;
+  - story.ts gets comments for the semantics in docs/GM.md "The format";
+  - `StoryCharacter.room`;
+  - an OR condition;
+  - `faction-presence` with a negative magnitude;
+  - `PlayerRecord` in run.ts.
+
+## Round 84 — the GM on the contracts' new fields (gm, after places' contract changes)
+
+places took the GM's proposals and the dialog agent's: Condition `any`, `StoryCharacter.room`,
+`AtlasEvent.level` (a flood's z, its magnitude now 0..1) and `.location` (a story location), the
+`faction-attitude` kind (applied once), faction-presence −1..1, `WorldSnapshot.seed` and `.settlements`,
+`WorldState.record`, `Dialog.onNode`, `Run.holds`/`update`, and `PlayerRecord` in run.ts. Merged into `gm`.
+
+- **The validator broke the build, on purpose.** Its kind lists carry compile-time checks against
+  world.ts's and story.ts's unions. Merging places made those checks fail until `faction-attitude` and
+  `any` were added. Now it also checks:
+  - a flood has a `level` (against the ground) and a 0..1 magnitude, and no other kind has a level;
+  - `location` is a story location inside the event's regions, and a location in `detail` is refused;
+  - faction-presence and faction-attitude are −1..1 with a snapshot faction;
+  - an `any` has at least two conditions, and play treats it as OR;
+  - a cast `room` is a room of its location, and in play the character is only met once that room can be
+    reached;
+  - `from.seed` matches the world's seed.
+
+  gmtest now breaks the story 26 ways (8 new), and every one is caught.
+- **The Bell story:** its flood is now magnitude 0.8 with `level` 116 and `location` loc-barrow. Its marks
+  name where they stand (the barrow, Mebe). Each person has a room: the Bellwarden waits behind the bone
+  door, so meeting it needs the key. It's clean again.
+- **The wiki** now uses the snapshot for the seed and the settlements (settlement.ts records). What the
+  atlas placed each settlement for (setting, cell, roads) moved to `sites` beside the snapshot.
+- docs/GM.md covers the new fields, and the meanings it had fixed are now the contracts' own comments.
