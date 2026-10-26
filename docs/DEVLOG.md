@@ -5002,3 +5002,28 @@ viewport, low; the draw incl. the G-buffer 1.9 ms): the terrain mesh 0.77
   changed shows a frame late (a crater's prisms, a new plant).
 - Riding with shadowevery=4&prepevery=4: no visible error in a shot mid-ride.
 
+
+## Round 83 — the rebuild's idle workgroups; a stagger for the change pass that didn't pay (perfopt)
+
+Why: the user's second priority, the mesh's rebuilds. A rebuild's three
+passes run over a chunk's whole height of samples (the window's z span),
+while its surface lies between its lowest boundary and its top.
+
+- makeVerts and makeQuads: a workgroup whose four samples of z (and those
+  either side it reads) are all under the chunk's bottom (−FAR) or all over
+  its top (FAR) returns after its job (the job's words read again with
+  workgroupUniformLoad: the uniformity analysis takes a Job, which holds the
+  thread's sample, as non-uniform). Mesh identical (meshcmp: window 209 528
+  vertices, band 75 616, the same sums). Riding (in renderprep units, the
+  clocks drift): verts 0.274/0.288 → 0.245/0.263, quads 0.166/0.171 →
+  0.138/0.135 — ~12 %: most of the work is the field at the samples and the
+  eight fields a vertex (its gradient, its share), not the empty height.
+  `?idleskip=0` off (for meshcmp).
+- Tried: hashing a chunk with nothing owed every third turn, staggered by
+  chunk (`hashevery`): the change pass's total didn't move (0.60 → 0.59
+  units) — its cost is the passes themselves (two a turn, a workgroup a
+  chunk), not the columns hashed. Taken out.
+- driveprofile's SUMMARY adds the draw, shadow and each rebuild pass in
+  renderprep units; meshcmp takes --extra. vegprep.wgsl and fieldmesh.wgsl
+  back to LF (an edit had made them CRLF).
+

@@ -351,6 +351,25 @@ fn claim(j: Job, n: u32, li: u32, word: u32, cap: u32) -> u32 {
   return base + off;
 }
 
+/**
+ * (perfopt) A workgroup whose 4 samples of z (and the ones either side it reads) are all under the chunk's
+ * lowest boundary (solid, -FAR) or all over its top (air, FAR) has no surface: it returns before reading the
+ * scratch. Most of a chunk's height is one or the other. Uniform: the workgroup's id and the job's words.
+ */
+fn idleBlock(wid: vec3<u32>) -> bool {
+  if (!IDLE_SKIP) { return false; }
+  // (the job's words again, not the Job: the analysis takes a struct with a thread's sample in it as non-uniform)
+  let w = workgroupUniformLoad(&wgJob);
+  if (w.x == NONE) { return true; }
+  let top = bitcast<f32>(w.y);
+  let bot = MR.zb.y + bitcast<f32>(w.w);
+  let zs = (MR.n.z + 3u) / 4u * 4u;
+  let z0 = (wid.z * 4u) % zs;
+  let lo = MR.zb.x + (f32(z0) - 2.0) * MR.o.y;
+  let hi = MR.zb.x + (f32(z0) + 5.0) * MR.o.y;
+  return hi < bot - 3.0 - MR.o.y || lo > top + 2.0 + MR.o.y;
+}
+
 fn sampleIdx(j: Job, l: vec3<u32>) -> u32 { return j.slot * slotSamples() * 2u + l.x + sideN() * (l.y + sideN() * l.z); }
 fn fieldAt(j: Job, l: vec3<u32>) -> f32 { return bitcast<f32>(scratch[sampleIdx(j, l)]); }
 fn cellVert(j: Job, l: vec3<u32>) -> u32 { return scratch[sampleIdx(j, l) + slotSamples()]; }
@@ -387,8 +406,13 @@ const EDGE = array<vec2<u32>, 12>(
   vec2<u32>(0u, 4u), vec2<u32>(1u, 5u), vec2<u32>(2u, 6u), vec2<u32>(3u, 7u));
 
 @compute @workgroup_size(4, 4, 4)
-fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
   let j = job(id, li);
+  if (idleBlock(wid)) {
+    // (no vertex in it: the cells' records say so for the quads)
+    if (j.ok) { scratch[sampleIdx(j, j.l) + slotSamples()] = NONE; }
+    return;
+  }
   var ci = 0u;
   var v: array<f32, 8>;
   var has = false;
@@ -446,9 +470,12 @@ fn quadVerts(j: Job, a: vec3<u32>, b: vec3<u32>, c: vec3<u32>, d: vec3<u32>) -> 
 }
 
 @compute @workgroup_size(4, 4, 4)
-fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
   let j = job(id, li);
   let l = j.l;
+  // (the chunk is built from the hash it was found with — before the idle return: the first sample's workgroup may be idle)
+  if (j.ok && all(l == vec3<u32>(1u))) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
+  if (idleBlock(wid)) { return; }
   // up to three quads: the edges from this sample along +x, +y, +z (two
   // triangles each, joining the four cells round the edge)
   var q: array<vec4<u32>, 3>;
@@ -457,8 +484,6 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
   // (round 79: and whose base sample is in the mesh's z range — the window's, or the band's outside it)
   let bz0 = MR.zb.x + (f32(l.z) - 1.0) * MR.o.y;
   let inZ = (bz0 >= MR.ze.x && bz0 < MR.ze.y) != (MR.ze.z > 0.5);
-  // (the chunk is built from the hash it was found with)
-  if (j.ok && all(l == vec3<u32>(1u))) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
   if (j.ok && inZ && l.x >= 1u && l.y >= 1u && l.x <= MR.k.x && l.y <= MR.k.x && l.z >= 1u && l.z + 2u <= MR.n.z) {
     let s0 = fieldAt(j, l) < 0.0;
     let X = vec3<u32>(1u, 0u, 0u);
