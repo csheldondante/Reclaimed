@@ -26,6 +26,9 @@ const DROWSE_S = 0.25;
 /** (perfopt, ?settle=0 — DECISIONS round 83: "Generated land should come in settled"; "We don't need to simulate a
  *  map cell we stream") land come in — a slide's new chunks, the window cut again in z, a warp, the first window —
  *  doesn't wake to settle: it falls asleep at once (drowsy for a moment: its layers carried through) */
+/** (perfopt, ?sleepmore=1) the surface and render-field passes skip sleeping chunks too (but drowsy ones): every
+ *  chunk is drowsy for DROWSE_S after any slide, its derived textures moved */
+export const SLEEP_MORE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('sleepmore') === '1';
 export const SETTLE = typeof location === 'undefined' || new URLSearchParams(location.search).get('settle') !== '0';
 
 export class Sleep {
@@ -69,7 +72,11 @@ export class Sleep {
   }
 
   /** the window slid (dx, dy columns, whole chunks): the chunks go with the land, the new ones wake to settle */
+  /** (sleepmore) when the window last slid: every chunk drowsy for DROWSE_S after */
+  private slidAt = -1e9;
+
   shift(dx: number, dy: number, now: number): void {
+    this.slidAt = now;
     const dcx = dx / CHUNK;
     const dcy = dy / CHUNK;
     const old = this.until.slice();
@@ -93,7 +100,7 @@ export class Sleep {
       if (this.until[k] > now) awake++;
       else {
         this.mask[k >> 5] |= 1 << (k & 31);
-        if (now - this.until[k] < DROWSE_S) this.drowse[k >> 5] |= 1 << (k & 31);
+        if (now - this.until[k] < DROWSE_S || (SLEEP_MORE && now - this.slidAt < DROWSE_S)) this.drowse[k >> 5] |= 1 << (k & 31);
       }
     }
     this.awake = awake;

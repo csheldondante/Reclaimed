@@ -5,6 +5,8 @@
 //
 //   node scripts/streamtest.mjs [--url http://localhost:5199] [--out stream]
 import puppeteer from 'puppeteer-core';
+// (perfopt: --extra "&flag=v" appended to the page's URL)
+const EXTRA = process.argv.includes('--extra') ? process.argv[process.argv.indexOf('--extra') + 1] : '';
 
 const argv = process.argv.slice(2);
 const opt = (k, d) => {
@@ -40,7 +42,7 @@ try {
       console.log('console.error:', m.text().slice(0, 800));
     }
   });
-  await page.goto(`${url}/?skipmenu=1&level=stream&tutorial=0&tod=0.4`, { waitUntil: 'load' });
+  await page.goto(`${url}/?skipmenu=1&level=stream&tutorial=0&tod=0.4${EXTRA}`, { waitUntil: 'load' });
   await page.waitForFunction(() => window.reclaimed?.stream, { timeout: 120000 });
   await wait(3000);
   await page.evaluate(() => (window.reclaimed.stream.auto = false));

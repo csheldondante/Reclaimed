@@ -5252,3 +5252,21 @@ tick: 32 MB a tick, ~2 GB/s of a phone's bandwidth at 60 ticks.
   the two 16 MB copies a tick, untimed. brushtest 5/5, pulltest 6/6,
   buildtest 4/4, worldapitest all ok with inplace=1&settle=0.
 
+- (later) `?settle=0` also gives rivers their flow: a column come in asleep
+  with water and no flux takes, while drowsy, the pipes' steady state for its
+  levels at once (water_flux.wgsl: f = GAIN (H − Hn) / (1 − FRICTION),
+  capped at its depth) — drawn flowing, frozen; and the flux is frozen with
+  its region (streamer `keep`), so land that comes back keeps its flow.
+  Riding 15 s: wet columns with no flux 17 of 5 148 (default) / 205 of 10 605
+  (settle=0). More water stands with settle=0 (10.6 k wet columns against
+  5.1 k): the generated water isn't at rest — the default's settling drains
+  it. The user's rule applies: fix it in the generator (open).
+- `?sleepmore=1` (sim/sleep.ts `SLEEP_MORE`): the surface and render-field
+  passes skip sleeping chunks too, but drowsy ones; every chunk is drowsy for
+  0.25 s after any slide (the derived textures moved — round 80 kept the
+  surface pass awake for exactly that: "levels stay 0 for columns in
+  sleeping chunks"). With settle=0&inplace=1: the sim a tick 4.66–4.70 →
+  3.75–3.80 units (surface 0.24 → 0.05 ms, render fields 0.15 → 0.05).
+  atlasworldtest 6/6 (its "no column top 0 after the slides" included) and
+  streamtest 8/8 with sleepmore=1&settle=0&inplace=1.
+

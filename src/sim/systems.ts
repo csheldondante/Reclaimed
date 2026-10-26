@@ -35,7 +35,7 @@ import townStampWgsl from '../shaders/townstamp.wgsl?raw';
 import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
-import { SETTLE } from './sleep';
+import { SETTLE, SLEEP_MORE } from './sleep';
 
 /**
  * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
@@ -84,7 +84,8 @@ export class SurfaceSystem implements SimSystem {
       device,
       world,
       'surface',
-      surfaceWgsl,
+      `const SLEEP_MORE: bool = ${SLEEP_MORE};
+` + surfaceWgsl,
       { 3: 'read', 4: 'rw', 16: 'stex', 19: 'tex', 20: 'stex', 28: 'tex', 30: 'stex' },
       { 3: world.layers, 4: world.surface, 16: world.driftView, 19: world.airView, 20: world.strataView, 28: world.projView, 30: world.levelsView },
       true,
@@ -267,7 +268,8 @@ export class RenderFieldsSystem implements SimSystem {
       device,
       world,
       'renderfields',
-      terrainShapeWgsl + meshRegionWgsl + renderFieldsWgsl + flowWgsl,
+      terrainShapeWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
+` + renderFieldsWgsl + flowWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 30: 'uniform' },
       { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 30: world.meshRegion },
     );
