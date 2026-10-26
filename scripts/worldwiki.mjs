@@ -59,4 +59,4 @@ const out = path.join(root, 'data', 'wiki');
 fs.mkdirSync(out, { recursive: true });
 fs.writeFileSync(path.join(out, `seed${seed}.json`), JSON.stringify(wiki));
 fs.writeFileSync(path.join(out, `seed${seed}.md`), md);
-console.log(`wrote data/wiki/seed${seed}.json (${wiki.snapshot.regions.length} regions, ${wiki.settlements.length} settlements, ${wiki.snapshot.factions.length} factions) and data/wiki/seed${seed}.md (${md.length} chars)`);
+console.log(`wrote data/wiki/seed${seed}.json (${wiki.snapshot.regions.length} regions, ${wiki.snapshot.settlements.length} settlements, ${wiki.snapshot.factions.length} factions) and data/wiki/seed${seed}.md (${md.length} chars)`);

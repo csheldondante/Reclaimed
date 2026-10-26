@@ -1,6 +1,6 @@
 # World wiki — seed 1
 
-World version 0, run 0. Made by scripts/worldwiki.mjs from the atlas (data/atlas/seed1.json); the JSON form is data/wiki/seed1.json (a WorldSnapshot plus geography, settlements and roads). Ids here are the ones a SessionStory must use: regions are numbers, settlements `s<n>`, factions `f-<name>`.
+World version 0, run 0. Made by scripts/worldwiki.mjs from the atlas (data/atlas/seed1.json); the JSON form is data/wiki/seed1.json (a WorldSnapshot with the settlements, plus geography, sites and roads). Ids here are the ones a SessionStory must use: regions are numbers, settlements `s<n>`, factions `f-<name>`.
 
 ## How to read this
 

@@ -20,12 +20,12 @@ import type { Condition, Outcome, SessionStory } from '../api/contracts/story';
 
 export const ATLAS_EVENT_KINDS = [
   'sink', 'raise', 'bury', 'overgrow', 'freeze', 'thaw', 'storm', 'clear-storm', 'shadow', 'light',
-  'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'mark',
+  'raise-dead', 'lay-dead', 'flood', 'drain', 'burn', 'ruin', 'rebuild', 'faction-presence', 'faction-attitude', 'mark',
 ] as const satisfies readonly AtlasEventKind[];
 /** (a compile error here: world.ts has a kind the list above lacks) */
 export const ATLAS_EVENT_KINDS_COMPLETE: [Exclude<AtlasEventKind, (typeof ATLAS_EVENT_KINDS)[number]>] extends [never] ? true : false = true;
 
-const CONDITION_KINDS = ['talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time'] as const satisfies readonly Condition['kind'][];
+const CONDITION_KINDS = ['any', 'talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time'] as const satisfies readonly Condition['kind'][];
 export const CONDITION_KINDS_COMPLETE: [Exclude<Condition['kind'], (typeof CONDITION_KINDS)[number]>] extends [never] ? true : false = true;
 const SIM_EVENTS = ['collapsed', 'flooded', 'burned', 'built', 'dug'];
 const STORMS = ['rain', 'dust', 'snow', 'ash', 'arcane'];
@@ -94,8 +94,8 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
   if (isObj(s.from)) {
     keys('story.from', s.from, ['worldVersion', 'run', 'seed']);
     if (s.from.worldVersion !== snap.version) bad('story.from.worldVersion', `${s.from.worldVersion}, but the snapshot is version ${snap.version}`);
-    if (s.from.run !== snap.run) bad('story.from.run', `${s.from.run}, but the snapshot is at run ${snap.run}`);
-    int('story.from.seed', s.from.seed, 0);
+    if (s.from.run !== snap.run) bad('story.from.run', `${s.from.run}, but the snapshot's run to come is ${snap.run}`);
+    if (int('story.from.seed', s.from.seed, 0) && s.from.seed !== snap.seed) bad('story.from.seed', `${s.from.seed}, but the world's seed is ${snap.seed}`);
   } else bad('story.from', 'expected an object');
 
   const locations = arr('story.locations', s.locations).filter(isObj);
@@ -146,12 +146,13 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
   const castById = new Map<string, J>();
   cast.forEach((c, i) => {
     const at = `cast[${i}](${c.id})`;
-    keys(at, c, ['id', 'name', 'role', 'faction', 'location', 'disposition', 'voice', 'wants', 'knows']);
+    keys(at, c, ['id', 'name', 'role', 'faction', 'location', 'disposition', 'voice', 'wants', 'knows'], ['room']);
     id(`${at}.id`, c.id);
     unique(at, c.id, 'a cast member');
     for (const k of ['name', 'role', 'voice', 'wants']) str(`${at}.${k}`, c[k]);
     if (c.faction !== null && !factionIds.has(c.faction as string)) bad(`${at}.faction`, `faction ${JSON.stringify(c.faction)} isn't in the snapshot (null: none)`);
     if (!locById.has(c.location as string)) bad(`${at}.location`, `location ${JSON.stringify(c.location)} isn't one of the story's`);
+    else if (c.room !== undefined && !roomsOf.get(c.location as string)!.has(c.room as string)) bad(`${at}.room`, `${c.location} has no room ${JSON.stringify(c.room)}`);
     num(`${at}.disposition`, c.disposition, -1, 1);
     arr(`${at}.knows`, c.knows).forEach((k, j) => str(`${at}.knows[${j}]`, k));
     castById.set(c.id as string, c);
@@ -193,6 +194,11 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
     const k = c.kind as string;
     if (!CONDITION_KINDS.includes(k as Condition['kind'])) return bad(`${at}.kind`, `${JSON.stringify(k)} isn't a condition kind (${CONDITION_KINDS.join(', ')})`);
     switch (k) {
+      case 'any':
+        keys(at, c, ['kind', 'of']);
+        if (arr(`${at}.of`, c.of).length < 2) bad(`${at}.of`, 'an "any" needs two or more conditions (one is just that condition)');
+        conds(`${at}.of`, c.of ?? []);
+        break;
       case 'talked':
         keys(at, c, ['kind', 'character'], ['node']);
         if (!castById.has(c.character as string)) bad(`${at}.character`, `${JSON.stringify(c.character)} isn't in the cast`);
@@ -253,7 +259,7 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
     arr(`${at}.atlas`, o.atlas ?? []).forEach((e, i) => {
       const ea = `${at}.atlas[${i}]`;
       if (!isObj(e)) return bad(ea, 'expected an AtlasEvent (without id and run)');
-      keys(ea, e, ['kind', 'regions', 'magnitude', 'cause'], ['area', 'detail']);
+      keys(ea, e, ['kind', 'regions', 'magnitude', 'cause'], ['area', 'detail', 'level', 'location']);
       if ('id' in e || 'run' in e) bad(ea, 'a story leaves "id" and "run" to the run');
       const k = e.kind as string;
       if (!ATLAS_EVENT_KINDS.includes(k as AtlasEventKind)) bad(`${ea}.kind`, `${JSON.stringify(k)} isn't an AtlasEvent kind (${ATLAS_EVENT_KINDS.join(', ')})`);
@@ -261,14 +267,22 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
       if (!regs.length) bad(`${ea}.regions`, 'is empty');
       for (const r of regs) if (!regionIds.has(r as number)) bad(`${ea}.regions`, `region ${JSON.stringify(r)} isn't in the snapshot`);
       if (k === 'bury') num(`${ea}.magnitude`, e.magnitude, 0.5, 40);
-      else if (k === 'flood') {
-        if (num(`${ea}.magnitude`, e.magnitude, 0, 1000) && world.ground)
+      else if (k === 'faction-presence' || k === 'faction-attitude') num(`${ea}.magnitude`, e.magnitude, -1, 1);
+      else num(`${ea}.magnitude`, e.magnitude, 0, 1);
+      if (k === 'flood') {
+        if (e.level === undefined) bad(`${ea}.level`, 'a flood needs its level (world z); its magnitude is a 0..1 strength');
+        else if (num(`${ea}.level`, e.level, 0, 1000) && world.ground)
           for (const r of regs) {
             const g = world.ground(r as number);
-            if (g && (e.magnitude as number) <= g.min) bad(`${ea}.magnitude`, `a flood at z ${e.magnitude} stands under all of region ${r}'s ground (${g.min}..${g.max}): it floods nothing`);
-            if (g && (e.magnitude as number) > g.max + 30) bad(`${ea}.magnitude`, `a flood at z ${e.magnitude} is far over region ${r}'s ground (${g.min}..${g.max}): a level is a world z, not a 0..1 strength`);
+            if (g && (e.level as number) <= g.min) bad(`${ea}.level`, `a flood at z ${e.level} stands under all of region ${r}'s ground (${g.min}..${g.max}): it floods nothing`);
+            if (g && (e.level as number) > g.max + 30) bad(`${ea}.level`, `a flood at z ${e.level} is far over region ${r}'s ground (${g.min}..${g.max})`);
           }
-      } else num(`${ea}.magnitude`, e.magnitude, 0, 1);
+      } else if (e.level !== undefined) bad(`${ea}.level`, `only a flood has a level (this is a ${k})`);
+      if (e.location !== undefined) {
+        const l = locById.get(e.location as string);
+        if (!l) bad(`${ea}.location`, `${JSON.stringify(e.location)} isn't one of the story's locations`);
+        else if (!regs.includes(l.region)) bad(`${ea}.location`, `${e.location} is in region ${l.region}, which the event doesn't touch (${regs.join(', ')})`);
+      }
       if (e.area !== undefined) {
         if (!isObj(e.area) || !Array.isArray(e.area.at) || e.area.at.length !== 2) bad(`${ea}.area`, 'expected { at: [x, y], radius }');
         else num(`${ea}.area.radius`, e.area.radius, 1);
@@ -277,7 +291,8 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
       if (e.detail !== undefined && !isObj(e.detail)) bad(`${ea}.detail`, 'expected an object');
       if (k === 'storm' && !STORMS.includes(d.storm as string)) bad(`${ea}.detail.storm`, `a storm needs detail.storm: ${STORMS.join(', ')}`);
       if (k === 'bury' && !BURY.includes(d.material as string)) bad(`${ea}.detail.material`, `a bury needs detail.material: ${BURY.join(', ')}`);
-      if (k === 'faction-presence' && !factionIds.has(d.faction as string)) bad(`${ea}.detail.faction`, `faction-presence needs a snapshot faction, got ${JSON.stringify(d.faction)}`);
+      if ((k === 'faction-presence' || k === 'faction-attitude') && !factionIds.has(d.faction as string)) bad(`${ea}.detail.faction`, `${k} needs a snapshot faction, got ${JSON.stringify(d.faction)}`);
+      if ('location' in d) bad(`${ea}.detail.location`, 'a story location goes on the event itself (AtlasEvent.location)');
       if (k === 'mark') {
         str(`${ea}.detail.name`, d.name);
         str(`${ea}.detail.kind`, d.kind);
@@ -447,11 +462,12 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
       case 'objective': return (c.state === 'done' ? can.done : can.failed).has(c.id);
       case 'flag': return c.value === false ? true : can.flags.has(c.flag);
       case 'time': return true;
+      case 'any': return c.of.some(holds);
     }
   };
   const reachedChar = (ch: string) => {
     const c = st.cast.find((x) => x.id === ch);
-    return !!c && can.rooms.has(`${c.location}.`);
+    return !!c && can.rooms.has(c.room === undefined ? `${c.location}.` : `${c.location}.${c.room}`);
   };
   const all = (cs: Condition[] | undefined) => (cs ?? []).every(holds);
   let fireCount = 0;

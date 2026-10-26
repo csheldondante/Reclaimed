@@ -80,6 +80,7 @@
       "role": "druid singer",
       "faction": "f-green-choir",
       "location": "loc-ford",
+      "room": "choir-camp",
       "disposition": 0.4,
       "voice": "soft and unhurried, speaks of land as if it were a person; hums between sentences",
       "wants": "to see the wild grow back over the barrow and the flats, even if it costs Mebe its fields",
@@ -91,6 +92,7 @@
       "role": "town reeve",
       "faction": "f-kuharm",
       "location": "loc-mebe",
+      "room": "reeve-hall",
       "disposition": 0.1,
       "voice": "clipped and tired; counts everything, spears and debts alike",
       "wants": "Mebe saved without owing the Choir, the Ashwrights or anyone else",
@@ -102,6 +104,7 @@
       "role": "miller",
       "faction": null,
       "location": "loc-mebe",
+      "room": "mill",
       "disposition": 0.3,
       "voice": "gruff, practical, talks over the noise of the wheel",
       "wants": "the river running warm and full again, so the wheel turns",
@@ -113,6 +116,7 @@
       "role": "prospector",
       "faction": "f-ashwrights",
       "location": "loc-mebe",
+      "room": "market-square",
       "disposition": 0.1,
       "voice": "blunt, amused, smells of sulphur; names a price before she names herself",
       "wants": "the barrow's bronze, and mining rights over Bethorn Downs for the Ashwrights",
@@ -124,6 +128,7 @@
       "role": "lich steward",
       "faction": "f-hollow-court",
       "location": "loc-barrow",
+      "room": "bell-chamber",
       "disposition": -0.6,
       "voice": "courteous, dry and ancient; never raises its voice; finds the living tiresome",
       "wants": "the bell rung in the Court's name, so the dead come home and Bethorn Downs falls under the Court's shadow",
@@ -381,7 +386,7 @@
                   { "kind": "raise-dead", "regions": [2159], "magnitude": 0.4, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } },
                   { "kind": "shadow", "regions": [2159, 2141], "magnitude": 0.5, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } },
                   { "kind": "faction-presence", "regions": [2159], "magnitude": 0.5, "detail": { "faction": "f-hollow-court" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } },
-                  { "kind": "mark", "regions": [2159], "magnitude": 1, "detail": { "name": "The Rung Bell", "kind": "bell tower" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } }
+                  { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Rung Bell", "kind": "bell tower" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-want/0" } }
                 ],
                 "attitude": [{ "faction": "f-hollow-court", "delta": 0.8 }, { "faction": "f-kuharm", "delta": -0.4 }, { "faction": "f-green-choir", "delta": -0.3 }],
                 "give": [{ "item": "bellwarden's ring" }],
@@ -403,7 +408,7 @@
               { "kind": "overgrow", "regions": [2039], "magnitude": 0.3, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } },
               { "kind": "lay-dead", "regions": [2159], "magnitude": 0.6, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } },
               { "kind": "faction-presence", "regions": [2159], "magnitude": 0.5, "detail": { "faction": "f-green-choir" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } },
-              { "kind": "mark", "regions": [2159], "magnitude": 1, "detail": { "name": "The Singing Wood", "kind": "grove" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } }
+              { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Singing Wood", "kind": "grove" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/d-bellwarden/n-planted" } }
             ],
             "attitude": [{ "faction": "f-green-choir", "delta": 0.4 }, { "faction": "f-kuharm", "delta": -0.2 }, { "faction": "f-ashwrights", "delta": -0.2 }, { "character": "ilsa", "delta": 0.5 }],
             "flags": { "dead-stopped": true, "path-grown": true }
@@ -448,7 +453,7 @@
           "atlas": [
             { "kind": "ruin", "regions": [2039], "magnitude": 0.7, "cause": { "by": "story", "ref": "the-bell-under-kaudru/o-end/failed" } },
             { "kind": "raise-dead", "regions": [2039, 2159], "magnitude": 0.5, "cause": { "by": "story", "ref": "the-bell-under-kaudru/o-end/failed" } },
-            { "kind": "mark", "regions": [2039], "magnitude": 1, "detail": { "name": "Mebe's Last Night", "kind": "mass grave" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/o-end/failed" } }
+            { "kind": "mark", "regions": [2039], "magnitude": 1, "location": "loc-mebe", "detail": { "name": "Mebe's Last Night", "kind": "mass grave" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/o-end/failed" } }
           ],
           "attitude": [{ "faction": "f-kuharm", "delta": -0.3 }],
           "endRun": "lost"
@@ -477,9 +482,9 @@
       "when": [{ "kind": "has", "item": "sluice crank" }, { "kind": "event", "event": "flooded", "location": "loc-barrow" }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
       "effects": {
         "atlas": [
-          { "kind": "flood", "regions": [2159], "magnitude": 116, "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } },
+          { "kind": "flood", "regions": [2159], "magnitude": 0.8, "level": 116, "location": "loc-barrow", "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } },
           { "kind": "lay-dead", "regions": [2159], "magnitude": 0.7, "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } },
-          { "kind": "mark", "regions": [2159], "magnitude": 1, "detail": { "name": "The Drowned Barrow", "kind": "drowned ruin" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } }
+          { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Drowned Barrow", "kind": "drowned ruin" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/drowned" } }
         ],
         "attitude": [{ "faction": "f-kuharm", "delta": 0.2 }, { "character": "tamm", "delta": 0.3 }],
         "flags": { "dead-stopped": true, "path-drowned": true }
@@ -493,7 +498,7 @@
           { "kind": "ruin", "regions": [2159], "magnitude": 0.5, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } },
           { "kind": "lay-dead", "regions": [2159], "magnitude": 0.8, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } },
           { "kind": "faction-presence", "regions": [2159], "magnitude": 0.5, "detail": { "faction": "f-ashwrights" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } },
-          { "kind": "mark", "regions": [2159], "magnitude": 1, "detail": { "name": "The Slag Cairn", "kind": "collapsed barrow" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } }
+          { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Slag Cairn", "kind": "collapsed barrow" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/buried" } }
         ],
         "attitude": [{ "faction": "f-ashwrights", "delta": 0.3 }, { "faction": "f-green-choir", "delta": -0.4 }, { "faction": "f-kuharm", "delta": 0.1 }],
         "flags": { "dead-stopped": true, "path-buried": true }
@@ -504,7 +509,7 @@
       "effects": {
         "atlas": [
           { "kind": "lay-dead", "regions": [2159], "magnitude": 0.8, "cause": { "by": "story", "ref": "the-bell-under-kaudru/slain" } },
-          { "kind": "mark", "regions": [2159], "magnitude": 1, "detail": { "name": "The Bellwarden's Grave", "kind": "grave" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/slain" } }
+          { "kind": "mark", "regions": [2159], "magnitude": 1, "location": "loc-barrow", "detail": { "name": "The Bellwarden's Grave", "kind": "grave" }, "cause": { "by": "story", "ref": "the-bell-under-kaudru/slain" } }
         ],
         "attitude": [{ "faction": "f-kuharm", "delta": 0.2 }, { "faction": "f-hollow-court", "delta": -0.3 }],
         "flags": { "dead-stopped": true, "path-slain": true }

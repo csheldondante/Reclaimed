@@ -7,19 +7,9 @@
 // is an error, never patched.
 
 import type { WorldSnapshot } from '../api/contracts/world';
-import type { RunRecord } from '../api/contracts/run';
+import type { PlayerRecord } from '../api/contracts/run';
 import type { SessionStory } from '../api/contracts/story';
 import { checkStory } from './storycheck.ts';
-
-/** who's playing, as the GM reads it (a draft: the run system will own it — docs/GM.md, contract proposals) */
-export interface PlayerRecord {
-  /** the hero chosen for this run (a role: lich, hoverbike knight …) */
-  hero: string;
-  /** the runs this player has played in this world, oldest first */
-  runs: RunRecord[];
-  /** where the run starts (world cells), when the game has chosen; else the GM chooses */
-  at?: [number, number];
-}
 
 export interface GameMaster {
   /** the session story for the next run */

@@ -5778,3 +5778,29 @@ objectives and world effects." This is SYSTEMS.md step 3. Everything here sits b
   - an OR condition;
   - `faction-presence` with a negative magnitude;
   - `PlayerRecord` in run.ts.
+
+## Round 84 — the GM on the contracts' new fields (gm, after places' contract changes)
+
+places took the GM's proposals and the dialog agent's: Condition `any`, `StoryCharacter.room`,
+`AtlasEvent.level` (a flood's z, its magnitude now 0..1) and `.location` (a story location), the
+`faction-attitude` kind (applied once), faction-presence −1..1, `WorldSnapshot.seed` and `.settlements`,
+`WorldState.record`, `Dialog.onNode`, `Run.holds`/`update`, and `PlayerRecord` in run.ts. Merged into `gm`.
+
+- **The validator broke the build, on purpose.** Its kind lists carry compile-time checks against
+  world.ts's and story.ts's unions. Merging places made those checks fail until `faction-attitude` and
+  `any` were added. Now it also checks:
+  - a flood has a `level` (against the ground) and a 0..1 magnitude, and no other kind has a level;
+  - `location` is a story location inside the event's regions, and a location in `detail` is refused;
+  - faction-presence and faction-attitude are −1..1 with a snapshot faction;
+  - an `any` has at least two conditions, and play treats it as OR;
+  - a cast `room` is a room of its location, and in play the character is only met once that room can be
+    reached;
+  - `from.seed` matches the world's seed.
+
+  gmtest now breaks the story 26 ways (8 new), and every one is caught.
+- **The Bell story:** its flood is now magnitude 0.8 with `level` 116 and `location` loc-barrow. Its marks
+  name where they stand (the barrow, Mebe). Each person has a room: the Bellwarden waits behind the bone
+  door, so meeting it needs the key. It's clean again.
+- **The wiki** now uses the snapshot for the seed and the settlements (settlement.ts records). What the
+  atlas placed each settlement for (setting, cell, roads) moved to `sites` beside the snapshot.
+- docs/GM.md covers the new fields, and the meanings it had fixed are now the contracts' own comments.

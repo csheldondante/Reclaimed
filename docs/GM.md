@@ -32,9 +32,13 @@ people, rooms, items and history, as long as they sit in what exists.
   usable), the start (its cell and region), every region near the start (kind, tier, climate, ground
   heights, rivers and lava, faction presence, neighbours), and the settlements near it (size, setting,
   faction, roads and their crossings). Ids in the wiki are the ids you must use.
-- **The same facts as JSON**, `data/wiki/seed<N>.json`: `snapshot` (a WorldSnapshot, src/api/contracts/world.ts),
-  `regions` (geography), `settlements`, `roads`, `factions`. Search it when the markdown doesn't reach far
-  enough.
+- **The same facts as JSON**, `data/wiki/seed<N>.json`:
+  - `snapshot`: a WorldSnapshot (src/api/contracts/world.ts) with the world's `seed`, `version`, `run` (the
+    run to come), regions and their states, `factions` and `settlements`;
+  - beside it: `regions` (geography), `sites` (each settlement's setting, cell and roads), `roads` and
+    `factions` (with whether each is a placeholder).
+
+  Search it when the markdown doesn't reach far enough.
 - **The contract**, `src/api/contracts/story.ts` (with dialog.ts and world.ts): the exact types.
 - **The validator**, `node scripts/storycheck.mjs data/stories/<id>.json`. Run it on your story until it
   prints `ok`.
@@ -46,8 +50,8 @@ people, rooms, items and history, as long as they sit in what exists.
    hundred to about 1500 world units), 3–5 people, 2–4 objectives that chain (shown as the last is done),
    and 1–3 ways the run can end.
 2. **Choices with consequences the world remembers.** At least one choice must change the world through
-   AtlasEvents: bury, flood, overgrow, freeze, shadow, raise the dead, ruin, or turn a faction
-   (`attitude` on a faction plus a `faction-presence`). Make the options trade one thing the player
+   AtlasEvents: bury, flood, overgrow, freeze, shadow, raise the dead, ruin, or turn a faction (a
+   `faction-attitude` event, or `attitude` on a faction, plus a `faction-presence`). Make the options trade one thing the player
    cares about for another. Drowning the barrow saves the town but loses the grazing. The Choir's wood
    holds the dead but takes the fields. A bargain saves the town and gives the downs to the dark. Leave a
    `mark` (a grave, a drowned ruin, a named grove) so the overmap and the next run can show what happened.
@@ -59,24 +63,27 @@ people, rooms, items and history, as long as they sit in what exists.
    character to win over, or an objective done. Landmarks and hazards are short phrases the generator and
    the camera can show ("a great bronze bell hung from a root-wrapped beam"), not paragraphs.
 5. **People with wants.** Each has a role (what the unit generator makes), a faction from the snapshot or
-   null, a voice (how they talk, in a line), a want that pulls against someone else's, and what they know.
-   Give each a dialog unless they only fight.
+   null, a place (a location, and a `room` in it; the first room when absent), a voice (how they talk, in
+   a line), a want that pulls against someone else's, and what they know. Give each a dialog unless they
+   only fight.
 6. **Dialog that branches.** A start node, 2–3 choices a node, and paths that lead to different outcomes.
    Gate choices with `requires` on things the player did (a flag, an item, an objective). Not every option
    must advance the plot: opening a question is a real option. Every node must be reachable. End a talk
    with a node that has no choices, or a choice with no `to`.
-7. **Factions move.** Shift attitudes (`attitude` with a faction, −2..2; the world clamps) where the
-   player's choice would. Use presence (`faction-presence`) when a faction takes or loses ground. The
-   factions are placeholders until the user's diplomacy design. Use them as the wiki describes them.
-8. **Use the land.** Read each region's kind, climate, rivers and ground heights. A flood's level is a world
-   z: pick one a few cells over the region's mean ground (between its min and max). A bury is in cells (2–6
+7. **Factions move.** Shift attitudes where the player's choice would. A `faction-attitude` AtlasEvent
+   (detail.faction, −1..1, applied once) is the world remembering how a faction feels about the player.
+   An Outcome's `attitude` with a faction (−2..2; the world clamps) is the run's own shift. Use
+   `faction-presence` (−1..1) when a faction takes or loses ground in a region. The factions are
+   placeholders until the user's diplomacy design. Use them as the wiki describes them.
+8. **Use the land.** Read each region's kind, climate, rivers and ground heights. A flood's `level` is a
+   world z: pick one a few cells over the region's mean ground (between its min and max). A bury is in cells (2–6
    reads as a deep layer). A river town floods, a lava field burns, a range shelters the dead.
 
 ## Hard constraints (the validator checks every one)
 
 - **Every reference resolves.** Regions exist in the snapshot. A location's `settlement` is a snapshot
   settlement in that location's `region`. Factions exist in the snapshot, or are null. A cast member's
-  `location` is one of the story's locations. A dialog's `speaker` is in the cast. Its `start` and every
+  `location` is one of the story's locations, and its `room` one of that location's rooms. A dialog's `speaker` is in the cast. Its `start` and every
   choice's `to` are its own nodes. Conditions name real cast, dialogs, nodes, choice indices (counted from
   0), locations, rooms and objectives. Unlocks name real nodes.
 - **Ids are unique across the story** (locations, cast, dialogs, objectives), in lowercase-with-dashes.
@@ -91,24 +98,28 @@ people, rooms, items and history, as long as they sit in what exists.
   - the run can be won and lost;
   - something the player can do writes an AtlasEvent.
 - **Outcomes only through Outcome.** World changes are `atlas` events (kinds from world.ts AtlasEventKind,
-  `cause: { by: "story", ref }`, no `id` or `run`: the run fills those). People change through
+  `cause: { by: "story", ref }`, no `id` or `run`: the run fills those). An event can name where in its
+  region it shows with `location`, a story location id in one of its `regions` (not in `detail`). People change through
   `attitude`, things through `give` and `spawn`, the story through `flags`, `unlock` and `endRun`.
-- **Magnitudes:** 0..1 for most kinds. `bury` is in cells (0.5..40) with `detail.material` ash, sand or
-  silt. `flood` is a world z level over some of the region's ground. `storm` needs `detail.storm`.
-  `faction-presence` needs `detail.faction`. `mark` needs `detail.name` and `detail.kind`.
+- **Magnitudes:**
+  - 0..1 for most kinds, a flood's included (its strength);
+  - `bury` is in cells (0.5..40), with `detail.material` ash, sand or silt;
+  - `faction-presence` and `faction-attitude` are −1..1, with `detail.faction` a snapshot faction.
+
+  A `flood` needs `level`, a world z over some of the region's ground; no other kind has a level. `storm`
+  needs `detail.storm`. `mark` needs `detail.name` and `detail.kind`.
 - **No prose outside the fields.** No extra keys, no comments. Everything a player reads is in `title`,
   `premise`, `text`, names, `voice`, `wants` and `knows`.
-- `from` is `{ worldVersion: snapshot.version, run: snapshot.run, seed: <the atlas seed> }`: the world it
-  was written for.
+- `from` is `{ worldVersion: snapshot.version, run: snapshot.run, seed: snapshot.seed }`: the world it was
+  written for. `snapshot.run` is the run to come.
 - The file is `data/stories/<id>.json`.
 
 ## The format: how the game reads a SessionStory
 
-The types are in src/api/contracts/story.ts. Where the types leave the meaning open, these are the meanings
-(round 84, until the run system's owner says otherwise):
+The types are in src/api/contracts/story.ts. Its comments carry these meanings, as do dialog.ts and run.ts:
 
-- **Conditions in a list all must hold** (AND). For OR, write two objectives or two happenings, or set
-  one flag from several outcomes.
+- **Conditions in a list all must hold** (AND). For OR, use `{ kind: "any", of: [...] }` (two or more
+  conditions; it holds when one does).
 - `talked { character }` holds once the player has opened any talk with them, and `talked { character,
   node }` once that node has been shown. `chose` holds once that choice was taken.
 - `reached { location }` holds on arriving at the location (its first room). With a `room`, it holds on
@@ -122,14 +133,15 @@ The types are in src/api/contracts/story.ts. Where the types leave the meaning o
   all of `done` hold, and then its `outcome` applies once. It fails when `failed.when` all hold before it's
   done, and then `failed.outcome` applies once.
 - **A happening** fires once, the first time all of its `when` hold.
-- **A dialog** opens at its `start`, or at the node most recently unlocked by an outcome's `unlock`. A
+- **A dialog** opens at its `start`, or at the node most recently unlocked by an outcome's `unlock`
+  (dialog.ts `open`). A
   node's `effects` apply when it's shown, and a choice's when it's taken. A choice whose `requires`
   doesn't hold isn't shown.
 - **`endRun`** ends the run when its outcome applies: `won` or `lost`. The hero's death in play also ends
   it, `lost`, outside the story.
 - **Locations:** `region` is a snapshot region id. `kind` is free (settlement, ruin, camp, cave, shrine,
-  lair …). A settlement location names its `settlement` (`s<n>`). Characters stand somewhere in their
-  location.
+  lair …). A settlement location names its `settlement` (`s<n>`). Characters stand in their `room`, or
+  in the way in.
 
 ## A worked example
 
@@ -229,7 +241,7 @@ A session runs the GM as a Claude subagent. Make a story for a world version and
 4. **Serve it.** `FileGM` (src/gm/gm.ts) gives the game the first listed story written for the world's
    version and run. It runs the validator again and throws on any problem. It also throws when no story
    was written for that world. In the browser, `fetchGM(['<id>', …])` reads data/stories/ from the dev
-   server.
+   server. The player is a `PlayerRecord` (run.ts: the hero, past runs, standing with each faction).
 
 Later, a model-calling GM implements the same `GameMaster.brief(snapshot, player)`. It sends this document,
 the wiki and the player record as the prompt, runs `checkStory` on the reply, and asks again with the

@@ -34,7 +34,15 @@ const muts = {
   'a node only an outcome that never fires unlocks': (s) => (s.objectives[2].outcome = {}),
   'an item spelled two ways': (s) => (s.dialogs[1].nodes['n-key'].effects.give[0].item = 'Bone Key'),
   'prose outside the fields': (s) => (s.cast[0].backstory = 'long ago'),
-  'a flood level as a 0..1 strength': (s) => (s.happenings[2].effects.atlas[0].magnitude = 0.5),
+  'a flood level under the ground': (s) => (s.happenings[2].effects.atlas[0].level = 0.5),
+  'a flood without its level': (s) => delete s.happenings[2].effects.atlas[0].level,
+  'a flood strength over 1': (s) => (s.happenings[2].effects.atlas[0].magnitude = 116),
+  'a story location in detail': (s) => (s.happenings[2].effects.atlas[0].detail = { location: 'loc-barrow' }),
+  'an event at a location outside its regions': (s) => (s.happenings[2].effects.atlas[0].location = 'loc-mebe'),
+  'an "any" of one': (s) => (s.objectives[0].done = [{ kind: 'any', of: [{ kind: 'talked', character: 'hesk' }] }]),
+  'a cast member in a room their location lacks': (s) => (s.cast[4].room = 'kitchen'),
+  'a faction-attitude without a faction': (s) => s.happenings[2].effects.atlas.push({ kind: 'faction-attitude', regions: [2159], magnitude: 0.2, cause: { by: 'story' } }),
+  'a seed that is not the world seed': (s) => (s.from.seed = 7),
   'an AtlasEvent kind that does not exist': (s) => (s.happenings[2].effects.atlas[0].kind = 'drown'),
   'a lock without a key': (s) => s.locations[2].brief.keys.pop(),
   'a choice index out of range': (s) => (s.objectives[0].done = [{ kind: 'chose', dialog: 'd-hesk', node: 'n-greet', choice: 7 }]),
@@ -56,9 +64,9 @@ for (const [name, f] of Object.entries(muts)) {
 
 // the adapter: a story for this world, and none for another
 const gm = new FileGM([id], async (sid) => read(`data/stories/${sid}.json`));
-const story = await gm.brief(wiki.snapshot, { hero: 'hookshot knight', runs: [] });
+const story = await gm.brief(wiki.snapshot, { hero: 'hookshot knight', runs: [], standing: {} });
 check('FileGM.brief serves the story for world 0, run 0', story.id === id);
 const later = { ...wiki.snapshot, run: 1 };
-const err = await gm.brief(later, { hero: 'hookshot knight', runs: [] }).then(() => null, (e) => e.message);
+const err = await gm.brief(later, { hero: 'hookshot knight', runs: [], standing: {} }).then(() => null, (e) => e.message);
 check('FileGM.brief refuses when no story was written for the world', !!err && err.includes('no story written'), err ?? '');
 process.exit(failed ? 1 : 0);

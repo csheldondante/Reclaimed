@@ -1092,9 +1092,10 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   `?atlas=view`) and caches it to `data/atlas/seed<N>.json`, so nothing after needs the browser.
 - **The wiki.** `src/gm/wiki.ts` has `buildWiki(facts) → WorldWiki` and `wikiMarkdown(wiki, {around, radius})`.
   Both are pure and deterministic, and run in Node and the browser.
-  - A `WorldSnapshot`: version 0, run 0, every region fresh except for faction presence.
-  - Beside it: geography (`regions`), `settlements` (settlement.ts's draft shape plus setting, atlas size,
-    cell and roads), `roads`, `continents` and `factions`.
+  - A `WorldSnapshot`: version 0, the atlas's `seed`, run 0 (the run to come), every region fresh except
+    for faction presence, and the `settlements` (settlement.ts's draft shape).
+  - Beside it: geography (`regions`), `sites` (each settlement's setting, atlas size, cell and roads),
+    `roads`, `continents` and `factions` (marked as placeholders).
   - Names (regions, continents, settlements) come from a syllable table, one tongue a continent.
   - **Factions are placeholders.** Realms are each continent's settlements clustered (about 32 a realm,
     named for the seat). Four world factions (Ashwrights, Green Choir, Hollow Court, Salt Fleet) are present
@@ -1104,7 +1105,9 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   means clean) and `checkWorldFrom(json)` (a wiki or a bare snapshot). It checks:
   - shapes against story.ts, with no extra keys;
   - every reference, item spellings, and flags set before they're needed;
-  - AtlasEvent kinds and magnitudes (a flood's level against the region's ground, when the wiki gives it);
+  - AtlasEvent kinds and magnitudes: a flood's `level` against the region's ground (when the wiki gives it),
+    faction-presence and faction-attitude −1..1, `location` a story location in the event's regions;
+  - `any` conditions, cast `room`s, and `from` (version, run to come, seed) against the snapshot;
   - then a fixed point over what can happen: every node reachable, every objective shown and done, every
     happening fired, every room reached through its locks, a way to win and a way to lose, and an AtlasEvent
     somewhere.
@@ -1114,10 +1117,9 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
 - **The adapter.** `src/gm/gm.ts`: `GameMaster.brief(snapshot, player: PlayerRecord) → Promise<SessionStory>`.
   `FileGM(ids, load)` serves the first listed story whose `from` matches the snapshot's version and run, and
   validates it again. It throws on a story with problems, and when no story was written for this world.
-  `fetchGM(ids)` loads `data/stories/<id>.json` from the dev server. `PlayerRecord` is a draft here until the
-  run system owns it.
-- **Semantics the types leave open** (docs/GM.md "The format"):
-  - conditions in a list are ANDed;
+  `fetchGM(ids)` loads `data/stories/<id>.json` from the dev server. The player is run.ts's `PlayerRecord`.
+- **The format's meanings** (now in story.ts's, dialog.ts's and run.ts's comments; docs/GM.md "The format"):
+  - conditions in a list are ANDed, `any` ORs its own;
   - a happening fires once;
   - a talk opens at its most recently unlocked node, else at its start;
   - a brief's first room is its way in;

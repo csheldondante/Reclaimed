@@ -1,8 +1,9 @@
 // The world wiki (round 84, docs/GM.md): the facts the GM reads, made from the atlas's facts
 // (src/gm/atlas-facts.ts, cached in data/atlas/). Pure and deterministic: the same atlas makes the same
 // wiki. Two forms of the same facts:
-//  - WorldWiki (JSON): a WorldSnapshot (src/api/contracts/world.ts) plus what the snapshot has no place for
-//    yet: each region's geography, the settlements (settlement.ts's draft shape) and the roads;
+//  - WorldWiki (JSON): a WorldSnapshot (src/api/contracts/world.ts: regions, factions, the seed, the
+//    settlements in settlement.ts's draft shape) plus what the snapshot has no place for: each region's
+//    geography, each settlement's site (its setting, cell, roads) and the roads;
 //  - markdown (wikiMarkdown): the readable wiki, detailed around a point (the start).
 // Names and factions are made here. Factions are PLACEHOLDERS (a deterministic table seeded from the
 // regions and settlements) until the user's diplomacy design: see `placeholder` in WikiFaction.
@@ -35,8 +36,22 @@ export interface WikiRegion {
   stamps: string[];
 }
 
-/** a settlement: the draft Settlement (settlement.ts) plus what the atlas placed it for */
-export interface WikiSettlement extends Settlement {
+/** a settlement: the draft Settlement (settlement.ts) plus what the atlas placed it for (while the wiki is
+ *  built; the snapshot keeps the Settlement, `sites` the rest) */
+interface WikiSettlement extends Settlement {
+  /** cliffside, port, river, mountain flank, crater rim, plain */
+  setting: string;
+  /** the atlas's size: village, town, city, metropolis */
+  atlasSize: string;
+  /** the level's cell (?at=x,y) */
+  cell: [number, number];
+  /** settlements it has a road to */
+  roads: string[];
+}
+
+export interface WikiSite {
+  /** the settlement's id */
+  id: string;
   /** cliffside, port, river, mountain flank, crater rim, plain */
   setting: string;
   /** the atlas's size: village, town, city, metropolis */
@@ -74,7 +89,8 @@ export interface WorldWiki {
   snapshot: WorldSnapshot;
   regions: WikiRegion[];
   continents: { id: number; name: string; area: number; regions: number; settlements: number }[];
-  settlements: WikiSettlement[];
+  /** what the atlas placed each settlement (snapshot.settlements) for */
+  sites: WikiSite[];
   roads: WikiRoad[];
   factions: WikiFaction[];
 }
@@ -297,6 +313,7 @@ export function buildWiki(f: AtlasFacts): WorldWiki {
   for (const s of settlements) bySite.set(s.region, [...(bySite.get(s.region) ?? []), s.id]);
   const snapshot: WorldSnapshot = {
     version: 0,
+    seed,
     run: 0,
     regions: regions.map((r) => {
       const state: RegionState = freshRegion();
@@ -304,6 +321,7 @@ export function buildWiki(f: AtlasFacts): WorldWiki {
       return { id: r.id, name: r.name, kind: r.kind, state, settlements: bySite.get(r.id) ?? [] };
     }),
     factions: factions.map(({ placeholder: _p, seat: _s, type: _t, ...fac }) => fac),
+    settlements: settlements.map(({ setting: _s, atlasSize: _a, cell: _c, roads: _r, ...st }) => st),
     history: [],
     runs: [],
   };
@@ -319,7 +337,7 @@ export function buildWiki(f: AtlasFacts): WorldWiki {
     snapshot,
     regions,
     continents,
-    settlements,
+    sites: settlements.map((x) => ({ id: x.id, setting: x.setting, atlasSize: x.atlasSize, cell: x.cell, roads: x.roads })),
     roads,
     factions,
   };
@@ -338,7 +356,8 @@ export function wikiMarkdown(w: WorldWiki, opt: { around?: [number, number]; rad
   const reg = (id: number) => w.regions[id];
   const st = (id: number) => w.snapshot.regions[id].state;
   const fac = new Map(w.factions.map((f) => [f.id, f]));
-  const set = new Map(w.settlements.map((s) => [s.id, s]));
+  const siteOf = new Map(w.sites.map((s) => [s.id, s]));
+  const set = new Map(w.snapshot.settlements.map((s) => [s.id, { ...s, ...siteOf.get(s.id)! }]));
   const pres = (p: RegionState['presence']) =>
     Object.entries(p)
       .sort((a, b) => b[1]! - a[1]!)
@@ -349,7 +368,7 @@ export function wikiMarkdown(w: WorldWiki, opt: { around?: [number, number]; rad
   const home = reg(w.spawn.region);
   L.push(`# World wiki — seed ${w.seed}`);
   L.push('');
-  L.push(`World version ${w.snapshot.version}, run ${w.snapshot.run}. Made by scripts/worldwiki.mjs from the atlas (data/atlas/seed${w.seed}.json); the JSON form is data/wiki/seed${w.seed}.json (a WorldSnapshot plus geography, settlements and roads). Ids here are the ones a SessionStory must use: regions are numbers, settlements \`s<n>\`, factions \`f-<name>\`.`);
+  L.push(`World version ${w.snapshot.version}, run ${w.snapshot.run}. Made by scripts/worldwiki.mjs from the atlas (data/atlas/seed${w.seed}.json); the JSON form is data/wiki/seed${w.seed}.json (a WorldSnapshot with the settlements, plus geography, sites and roads). Ids here are the ones a SessionStory must use: regions are numbers, settlements \`s<n>\`, factions \`f-<name>\`.`);
   L.push('');
   L.push('## How to read this');
   L.push('');
@@ -394,7 +413,7 @@ export function wikiMarkdown(w: WorldWiki, opt: { around?: [number, number]; rad
     L.push(`${r.id} | ${r.name} | ${r.kind} | ${r.tier ?? '-'} | ${r.climate} | ${r.ground.min}/${r.ground.mean}/${r.ground.max} | ${water} | ${r.stamps.join(', ') || '-'} | ${ss} | ${pres(st(r.id).presence)} | ${r.neighbours.join(' ')} | ${Math.round(near(r.centre))}`);
   }
   L.push('');
-  const towns = w.settlements.filter((s) => near(s.at) <= R).sort((a, b) => near(a.at) - near(b.at));
+  const towns = [...set.values()].filter((s) => near(s.at) <= R).sort((a, b) => near(a.at) - near(b.at));
   L.push(`## Settlements within ${R} of the start (${towns.length})`);
   L.push('');
   for (const s of towns) {
