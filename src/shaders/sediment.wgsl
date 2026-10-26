@@ -57,6 +57,8 @@
 fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
 
 const DT_D: f32 = 2.0 / 60.0; // the system runs every other tick
+/** (perfopt, simhz) the world time an update stands for */
+fn dtD() -> f32 { return DT_D * simStep(); }
 const CARRY: f32 = 0.25;      // cells of depth lifted per second per cell/s over the threshold
 // (per neighbour: the hex grid has six, each 2/3 the square grid's four —
 // the same continuum rate, water_flux.wgsl)
@@ -233,7 +235,8 @@ const SHAKE_RUSH: f32 = 0.5;
 /** How hard q's ground is shaken now (0..1, fading). */
 fn shakeAt(q: vec2<i32>) -> f32 {
   let sh = textureLoad(shakeTex, q, 0);
-  let age = f32(G.tick) - sh.x;
+  // (perfopt, simhz: its age in 60 Hz ticks)
+  let age = (f32(G.tick) - sh.x) * simStep();
   return select(0.0, sh.y * (1.0 - age / SHAKE_TICKS), sh.y > 0.0 && age >= 0.0 && age < SHAKE_TICKS);
 }
 
@@ -328,7 +331,7 @@ fn windOut(q: vec2<i32>) -> Dirs {
   if (sum < 1e-4) { return dZero(); }
   // (at most a quarter of the top per pass: larger steps made neighbouring
   // columns over-correct each other into a checkerboard — round 17)
-  let total = min(top * 0.25, carry * (ws - lift) * DT_D);
+  let total = min(top * 0.25, carry * (ws - lift) * dtD());
   return dScale(wt, total / sum);
 }
 
@@ -344,7 +347,7 @@ fn waterOut(q: vec2<i32>) -> Dirs {
   let thr = MATS[m].loose.w;
   if (sp < thr) { return dZero(); }
   let mob = MATS[m].loose.z * (1.0 - 0.8 * held(q));
-  let total = min(top * 0.2, (sp - thr) * 1.5 * mob * DT_D * 30.0);
+  let total = min(top * 0.2, (sp - thr) * 1.5 * mob * dtD() * 30.0);
   let wt = dSplit(v);
   let sum = dSum(wt);
   if (sum < 1e-6) { return dZero(); }
@@ -372,7 +375,7 @@ fn pipeOut(q: vec2<i32>) -> Dirs {
   if (!(hi > h - 4.0 && hi - lo > PIPE_HEAD && lo < h)) { return dZero(); }
   let m = driftMatAt(q);
   var o = dZero();
-  o[loDir] = min(top * 0.25, (hi - lo - PIPE_HEAD) * PIPE_RATE * (1.0 - MATS[m].sim.w * 0.5));
+  o[loDir] = min(top * 0.25, (hi - lo - PIPE_HEAD) * PIPE_RATE * simStep() * (1.0 - MATS[m].sim.w * 0.5));
   return o;
 }
 
@@ -400,7 +403,8 @@ fn slumpOut(q: vec2<i32>) -> Dirs {
   // (shaken: roots let go, and it slides faster)
   let sk = shakeAt(q);
   let hd = held(q) * (1.0 - sk);
-  let rate = SLUMP * (1.0 + SHAKE_RUSH * sk);
+  // (a sixth of the excess to each neighbour at most: more over-corrects into a checkerboard)
+  let rate = min(SLUMP * (1.0 + SHAKE_RUSH * sk) * simStep(), 0.15);
   var o = dZero();
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
@@ -429,7 +433,7 @@ fn smoothOut(q: vec2<i32>) -> Dirs {
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
     if (!inMap(n)) { continue; }
-    o[k] = max(here - seenAt(n, here), 0.0) * WIND_SMOOTH * (1.0 - held(q));
+    o[k] = max(here - seenAt(n, here), 0.0) * min(WIND_SMOOTH * simStep(), 0.15) * (1.0 - held(q));
   }
   let s = dSum(o);
   if (s > top * 0.6) { o = dScale(o, top * 0.6 / s); }
@@ -586,7 +590,7 @@ fn spillOut(p: vec2<i32>) -> Spill {
       // it needs a slot there, unless it joins the floor
       let joins = ivMat(fl) == m;
       if (qn >= qs.y && !joins) { continue; }
-      var amt = min((drop - rep) * FACE, (b - a) * 0.25);
+      var amt = min((drop - rep) * FACE * simStep(), (b - a) * 0.25);
       if (g1 < 1e8) { amt = min(amt, (g1 - g0) * 0.5); }
       if (amt > sp.amt[k]) {
         sp.amt[k] = amt;
@@ -604,7 +608,7 @@ fn spillOut(p: vec2<i32>) -> Spill {
 @compute @workgroup_size(8, 8)
 fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   // (a sleeping chunk: round 80)
-  if (id.x >= G.mapW || id.y >= G.mapH || asleep(id.xy)) { return; }
+  if (id.x >= G.mapW || id.y >= G.mapH || flowFrozen(id.xy, FLOW_N)) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let mat = driftMatAt(p);
@@ -657,7 +661,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   // (round 80: asleep — what lands here fades: the ground doesn't change, V12)
-  if (asleep(id.xy)) {
+  if (flowFrozen(id.xy, FLOW_N)) {
     deposit[i] = vec4<f32>(0.0);
     return;
   }
@@ -716,13 +720,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let rr = length(cellPos(p) - ds.xy) / ds.z;
     if (rr > 1.2) { continue; }
     let w = windAt(vec3<f32>(cellPos(p), here + 0.5));
-    dust += ds.w / 8.0 * smoothstep(1.2, 0.4, rr) * 0.06 * DT_D * (0.15 + 0.85 * shelter(p, w));
+    dust += ds.w / 8.0 * smoothstep(1.2, 0.4, rr) * 0.06 * dtD() * (0.15 + 0.85 * shelter(p, w));
   }
   // a dying cyclone drops the dust it carried in a pile around its eye
   for (var c = 0u; c < MAX_CYCLONES; c++) {
     if (G.cyclones[c].b.z <= 0.0) { continue; }
     let rr = length(cellPos(p) - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
-    dust += smoothstep(1.6, 0.0, rr) * 0.6 * DT_D;
+    dust += smoothstep(1.6, 0.0, rr) * 0.6 * dtD();
   }
   // dust that came down from the air here (carried by particles)
   dust += f32(atomicExchange(&exchange[G.mapW * G.mapH + i], 0)) / 100000.0;
@@ -876,7 +880,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
       if (matState(ivMat(v)) == ST_GRANULAR && z0 > fl + 1e-4) {
-        let f = min(FALL, z0 - fl);
+        let f = min(FALL * simStep(), z0 - fl);
         // (it streams down as grains: the particles show the fall)
         if (z1 - z0 > 0.05) { textureStore(airOut, p, vec4<f32>(own[0], min(z1 - z0, 2.0) * 0.1, z0, 6.0 + 8.0 * f32(ivMat(v)))); }
         z0 -= f;

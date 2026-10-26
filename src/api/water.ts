@@ -3,7 +3,8 @@
 
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
-import { TICK_HZ } from '../sim/simulation';
+// (the flux is a 60 Hz tick's volume whatever the tick rate: perfopt, simhz)
+const FLUX_HZ = 60;
 import { DIRV } from '../world/lattice';
 import { sfZ } from '../world/layout';
 import { columnAt } from './common';
@@ -84,7 +85,7 @@ export class Water {
       vx += DIRV[d][0] * q[i * 6 + d];
       vy += DIRV[d][1] * q[i * 6 + d];
     }
-    return [(vx / depth) * TICK_HZ, (vy / depth) * TICK_HZ];
+    return [(vx / depth) * FLUX_HZ, (vy / depth) * FLUX_HZ];
   }
 
   /**

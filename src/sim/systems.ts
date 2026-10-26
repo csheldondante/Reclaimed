@@ -36,6 +36,7 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 import { SETTLE, SLEEP_MORE } from './sleep';
+import { FLOW_SUB, flowConst } from './flow';
 
 /**
  * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
@@ -127,7 +128,7 @@ export class WaterSystem implements SimSystem {
       device,
       world,
       'water-flux',
-      `const FLUX_SEED: bool = ${!SETTLE};` + waterFluxWgsl,
+      `const FLUX_SEED: bool = ${!SETTLE};\n` + flowConst('water') + waterFluxWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex' },
       { 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView },
     );
@@ -135,15 +136,18 @@ export class WaterSystem implements SimSystem {
       device,
       world,
       'water-depth',
-      waterDepthWgsl,
+      flowConst('water') + waterDepthWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read' },
       { 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface },
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, 'water-flux', this.flux.k, this.flux.group, this.world.groups);
-    dispatch(enc, this.prof, 'water-depth', this.depth.k, this.depth.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.waterNext, 0, this.world.water, 0, this.world.water.size);
+    // (perfopt, simhz: the pipes stable only at the 60 Hz step — FLOW_SUB of them a tick, sim/flow.ts)
+    for (let s = 0; s < FLOW_SUB; s++) {
+      dispatch(enc, this.prof, 'water-flux', this.flux.k, this.flux.group, this.world.groups);
+      dispatch(enc, this.prof, 'water-depth', this.depth.k, this.depth.group, this.world.groups);
+      enc.copyBufferToBuffer(this.world.waterNext, 0, this.world.water, 0, this.world.water.size);
+    }
   }
 }
 
@@ -157,7 +161,7 @@ export class OilSystem implements SimSystem {
       device,
       world,
       'oil-flux',
-      oilFluxWgsl,
+      flowConst('oil') + oilFluxWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'read', 17: 'tex' },
       { 3: world.surface, 4: world.water, 5: world.oil, 6: world.oilFlux, 7: world.flux, 17: world.driftView },
     );
@@ -165,15 +169,17 @@ export class OilSystem implements SimSystem {
       device,
       world,
       'oil-depth',
-      oilDepthWgsl,
+      flowConst('oil') + oilDepthWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'rw', 17: 'tex' },
       { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface, 9: world.fire, 10: world.oilStored, 17: world.driftView },
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, 'oil-flux', this.flux.k, this.flux.group, this.world.groups);
-    dispatch(enc, this.prof, 'oil-depth', this.depth.k, this.depth.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.oilNext, 0, this.world.oil, 0, this.world.oil.size);
+    for (let s = 0; s < FLOW_SUB; s++) {
+      dispatch(enc, this.prof, 'oil-flux', this.flux.k, this.flux.group, this.world.groups);
+      dispatch(enc, this.prof, 'oil-depth', this.depth.k, this.depth.group, this.world.groups);
+      enc.copyBufferToBuffer(this.world.oilNext, 0, this.world.oil, 0, this.world.oil.size);
+    }
   }
 }
 
@@ -340,7 +346,7 @@ export class SedimentSystem implements SimSystem {
   private out;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, sedimentWgsl + flowWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, flowConst('sediment') + sedimentWgsl + flowWgsl];
     const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView, 30: world.shakeView };
     const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' }, 'outflow');
     this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex }) };
@@ -348,7 +354,7 @@ export class SedimentSystem implements SimSystem {
       device,
       world,
       'sediment',
-      sedimentWgsl + flowWgsl,
+      flowConst('sediment') + sedimentWgsl + flowWgsl,
       { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' },
       { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
       true,

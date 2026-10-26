@@ -37,7 +37,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var cs = max(0.0, c.x + f32(atomicExchange(&contamDelta[i], 0)) / 100000.0);
   let dp = waterPrev[i];
   let f = flux[i];
-  let out = dSum(f);
+  // (perfopt, simhz: the water moved S 60 Hz ticks' flux this tick; the rates S ticks' worth)
+  let S = simStep();
+  let out = dSum(f) * S;
   var frac = 0.0;
   if (dp > 1e-6) { frac = min(1.0, out / dp); }
   var cw = c.y * (1.0 - frac);
@@ -46,13 +48,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (!inMap(q)) { continue; }
     let j = colIdxI(q);
     let dq = waterPrev[j];
-    if (dq > 1e-6) { cw += contamIn[j].y * min(1.0, flux[j][k ^ 1u] / dq); }
+    if (dq > 1e-6) { cw += contamIn[j].y * min(1.0, flux[j][k ^ 1u] * S / dq); }
   }
   let d = water[i];
   if (d > 0.003) {
     // any water standing or flowing over a stain washes it (not just rain)
     let rate = DISSOLVE * min(d * 5.0, 1.0) + DISSOLVE_FLOW * min(length(netFlow(p)) * 10.0, 1.0);
-    let a = min(cs, rate * cs + rate * 0.02);
+    let a = min(cs, (relaxTick(rate) * cs + rate * 0.02 * S));
     cs -= a;
     cw += a;
   } else {
@@ -62,11 +64,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // thin solutions degrade; thick sludge barely does — it has to be diluted
   // and flushed away (rain, floods) before it breaks down (DECISIONS round 4)
   let conc = cw / max(d, 0.05);
-  cw *= 1.0 - WATER_DECAY / (1.0 + conc * conc * 6.0);
-  cs *= 1.0 - REMEDIATE * clamp(veg[i], 0.0, 5.0);
+  cw *= 1.0 - relaxTick(WATER_DECAY / (1.0 + conc * conc * 6.0));
+  cs *= 1.0 - relaxTick(REMEDIATE * clamp(veg[i], 0.0, 5.0));
   // rain leaches/dilutes surface contamination directly, so a passing storm
   // visibly cleans lightly polluted ground; heavy industrial deposits still
   // need sustained water (floods, repeated storms) to clear.
-  cs = max(0.0, cs - RAIN_LEACH * rainAt(cellPos(p)));
+  cs = max(0.0, cs - RAIN_LEACH * rainAt(cellPos(p)) * S);
   contamOut[i] = vec2<f32>(max(cs, 0.0), max(cw, 0.0));
 }

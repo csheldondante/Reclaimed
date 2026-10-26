@@ -133,7 +133,7 @@ fn chance(i: u32, salt: u32) -> f32 { return f32(hash3(i, G.tick, salt) >> 8u) /
 fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   // (a sleeping chunk, round 80: what it holds carried through - the next buffer is copied back over this one)
-  if (asleep(id.xy)) {
+  if (flowFrozen(id.xy, FLOW_N)) {
     let ia = colIdx(id.x, id.y);
     lavaOut[ia] = lava[ia];
     return;

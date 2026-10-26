@@ -30,7 +30,9 @@ import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
 import { ProjectSystem, StructTickSystem } from '../grids/systems';
 
-export const TICK_HZ = 60;
+// (perfopt: the tick rate, ?simhz= — sim/flow.ts)
+export { TICK_HZ } from './flow';
+import { TICK_HZ } from './flow';
 export const TICK_DT = 1 / TICK_HZ;
 
 export class Simulation {

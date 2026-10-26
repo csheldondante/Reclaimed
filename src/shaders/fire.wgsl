@@ -79,12 +79,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // trees still go out)
     let oilFire = smoothstep(0.004, 0.03, oil[i]);
     let damp = select(0.0, 1.0, wetGround > 0.08) + (rain * 0.35 + smoothstep(0.4, 0.9, wet) * 0.15 * (1.0 - 0.8 * forest)) * (1.0 - oilFire);
-    f += (min(fuel, 1.0) * 0.04 - 0.015) - damp * 0.125;
-    if (fuel < 0.05) { f -= 0.04; }
+    // (perfopt, simhz: S 60 Hz ticks' burning a tick, and the chances of catching over them)
+    f += ((min(fuel, 1.0) * 0.04 - 0.015) - damp * 0.125) * simStep();
+    if (fuel < 0.05) { f -= 0.04 * simStep(); }
   } else if (fuel > 0.1 && wetGround < 0.05) {
     // an ember landed here last tick
     let sk = textureLoad(sparkTex, p, 0).x;
-    if (sk > 0.0 && f32(G.tick) - sk < 1.5 && r < EMBER_CATCH * min(fuel, 1.0) * (1.0 - smoothstep(0.3, 0.8, wet)) * (1.0 - rain)) { f = 0.5; }
+    if (sk > 0.0 && f32(G.tick) - sk < 1.5 && r < perTick(EMBER_CATCH * min(fuel, 1.0) * (1.0 - smoothstep(0.3, 0.8, wet)) * (1.0 - rain))) { f = 0.5; }
     // catch from burning neighbours (wind carries flames downwind)
     var heat = 0.0;
     for (var k = 0u; k < NDIR; k++) {
@@ -105,7 +106,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // (rain doesn't stop flames spreading across oil either)
     let rainStop = select(min(rain, 1.0), 0.0, oil[i] > 0.004);
     let chance = heat * min(fuel, 1.5) * select(dry, 1.0, oil[i] > 0.004) * (1.0 - rainStop) * rate;
-    if (r < chance) { f = 0.5; }
+    if (r < perTick(chance)) { f = 0.5; }
   }
   fireOut[i] = clamp(f, 0.0, 1.0);
 }

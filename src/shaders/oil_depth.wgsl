@@ -22,7 +22,7 @@ const STAIN_PER_OIL: f32 = 1.5;
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)
-  if (asleep(id.xy)) {
+  if (flowFrozen(id.xy, FLOW_N)) {
     let ia = colIdx(id.x, id.y);
     oilOut[ia] = oil[ia];
     return;

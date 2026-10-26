@@ -33,6 +33,36 @@ import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
 import { SETTLE } from '../sim/sleep';
+import { MATERIALS, MatState } from '../world/materials';
+
+/**
+ * (perfopt, ?settle=0 — DECISIONS round 83: land comes in settled, "fixed in the cheap generator") A column's loose
+ * intervals with air under them dropped onto what's under them (touching the same material, joined), as the sediment
+ * pass would have let them fall had the land woken to settle. Solids stay where they are (overhangs, arches).
+ */
+export function settleLoose(col: Interval[]): number {
+  let moved = 0;
+  let support = -Infinity;
+  for (let k = 0; k < col.length; k++) {
+    const iv = col[k];
+    if (MATERIALS[iv.mat]?.state === MatState.Granular && k > 0 && iv.z0 > support + 1e-3) {
+      const drop = iv.z0 - support;
+      iv.z0 -= drop;
+      iv.z1 -= drop;
+      moved++;
+      const below = col[k - 1];
+      if (below.mat === iv.mat && Math.abs(below.z1 - iv.z0) < 1e-3) {
+        below.z1 = iv.z1;
+        col.splice(k, 1);
+        k--;
+        support = below.z1;
+        continue;
+      }
+    }
+    support = iv.z1;
+  }
+  return moved;
+}
 
 /** columns a side of a region: what the window slides by (whole chunks, an even number of rows) */
 export const REGION = 64;
@@ -132,6 +162,8 @@ export interface SlideStats {
   fitted: number;
   /** regions that came back changed (the coarse world: LandSource.changes) */
   changed: number;
+  /** (perfopt, settle=0) columns come in with loose ground dropped onto its support (settleLoose) */
+  settled: number;
   /** the last slide: ms from start to the regions coming in written */
   lastMs: number;
 }
@@ -147,7 +179,7 @@ export class Streamer {
   busy = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0 };
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
   /** the world height of the window's z = 0 */
@@ -569,6 +601,8 @@ export class Streamer {
     for (let y = 0; y < R; y++)
       for (let x = 0; x < R; x++) {
         const i = y * R + x;
+        // (perfopt, settle=0: nothing loose comes in floating — it won't wake to fall)
+        if (!SETTLE && settleLoose(land.cols[i])) this.stats.settled++;
         const cut = splitColumn(land.cols[i], oz, zMax);
         outside.push(cut.outside);
         this.place(layers, x, y, cut.inside);

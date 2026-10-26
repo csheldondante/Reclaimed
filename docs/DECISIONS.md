@@ -29,6 +29,23 @@ flag on `perfopt` and A/B'd on the phone):
   coolest thing in the simulation." Lower fidelity is fine (a coarser grid,
   a lower rate) but it must still react visibly to the player's movement —
   not replaced with noise.
+- **Water, corrected:** "Water should still appear to run and not sleep. What
+  I'm saying is we don't need to keep simulating it. Freeze the current flow
+  and just stop updating the depths so it looks like it is flowing but is
+  just a rendering trick." Real water simulation resumes only where something
+  disturbs it (an edit, an event, rain, the player). "You can use this trick
+  in the storm too. It can update less frequently but render flow." The wind
+  field likewise where it isn't reacting to the player.
+- **Every animated flow:** "Can we generalize the flows to water magma and
+  sediment? Any animated flow can decrease the ticks and cache the flow state
+  and show animated flow hopefully and we can tune the actual update
+  frequency based on what looks convincing and good." One mechanism, each
+  flow's rate its own flag, full rate only where disturbed.
+- **Floating sections:** "The terrain has floating sections that don't
+  settle" (with the settle flags): streamed columns and forms must not
+  contain floating pieces — the generator's job, not a wake.
+- **The phone:** "Deferred shading helped a lot on my phone." It stays the
+  default.
 
 ## 2026-10-26 — round 82 (session 5, `places`) — where the phone's frame goes
 

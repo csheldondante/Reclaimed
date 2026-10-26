@@ -10,6 +10,8 @@
 @group(0) @binding(4) var<storage, read_write> bend: array<vec4<f32>>;
 
 const DT_S: f32 = 1.0 / 60.0;
+/** (perfopt, simhz) the world time a tick stands for */
+fn dtS() -> f32 { return DT_S * simStep(); }
 
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -29,6 +31,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let k = select(1.6, 7.0, pushing);
   let damp = select(1.1, 4.2, pushing);
   let acc = (aim - pos) * k - vel * damp;
-  let v2 = vel + acc * DT_S;
-  bend[i] = vec4<f32>(pos + v2 * DT_S, v2);
+  let v2 = vel + acc * dtS();
+  bend[i] = vec4<f32>(pos + v2 * dtS(), v2);
 }

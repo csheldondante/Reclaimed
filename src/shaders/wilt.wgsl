@@ -72,29 +72,29 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   } else if (fire[i] > 0.15) {
     b = 1.0; // scorched
   } else if (v > 0.05) {
-    if (oiled) { b += 0.15 * PER_TICK; }
-    else if (h > 0.7) { b += (h - 0.6) * 0.08 * PER_TICK; }
-    else { b -= 0.04 * PER_TICK; }
+    if (oiled) { b += 0.15 * PER_TICK * simStep(); }
+    else if (h > 0.7) { b += (h - 0.6) * 0.08 * PER_TICK * simStep(); }
+    else { b -= 0.04 * PER_TICK * simStep(); }
   } else {
-    b -= 0.08 * PER_TICK;
+    b -= 0.08 * PER_TICK * simStep();
   }
-  b += galeBrown;
+  b += galeBrown * simStep();
 
   // the player's plantings
   var good = s.z;
   if (good > 0.0) {
     let tier = floor(good);
-    good = tier + min(fract(good) + 1.0 / (2.5 * 60.0), 0.999);
+    good = tier + min(fract(good) + simStep() / (2.5 * 60.0), 0.999);
     if (h > 0.7 || b > 0.5) { good = 0.0; } // the ground turned bad: gone
   }
   var bad = s.w;
   if (bad > 0.0) {
     let tier = floor(bad);
-    var ph = fract(bad) + 1.0 / (doomTime(tier) * 60.0);
+    var ph = fract(bad) + simStep() / (doomTime(tier) * 60.0);
     // once it has browned, a gust breaks it up early (round 12; flakes: particles)
     if (ph > 0.25) {
       let gw = length(windAt(vec3<f32>(cellPos(vec2<i32>(id.xy)), f32(sfZ(surface[i])) + 0.5)));
-      ph += max(gw - 7.0, 0.0) * 0.0015;
+      ph += max(gw - 7.0, 0.0) * 0.0015 * simStep();
     }
     bad = select(tier + ph, 0.0, ph >= 0.999);
     b = max(b, smoothstep(0.25, 0.6, ph)); // it browns as it dies

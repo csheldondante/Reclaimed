@@ -5270,3 +5270,50 @@ tick: 32 MB a tick, ~2 GB/s of a phone's bandwidth at 60 ticks.
   atlasworldtest 6/6 (its "no column top 0 after the slides" included) and
   streamtest 8/8 with sleepmore=1&settle=0&inplace=1.
 
+
+## Round 83 — the tick rate (`?simhz=30|15`), the flows' own rates (`?flowhz=`), loose ground settled in the generator (perfopt)
+
+Why: the user's directions (DECISIONS round 83): "Simulation can absolutely
+be 30 Hz or even 15"; every animated flow cached and drawn moving, its update
+rate its own, full rate only where disturbed; streamed land with no floating
+pieces. And the phone: "Deferred shading helped a lot" — it stays the default.
+
+- `?simhz=60|30|15` (sim/flow.ts `TICK_HZ`; simulation.ts re-exports it):
+  the systems' rates were written per 60 Hz tick (G.dt was 1/60 and almost
+  no kernel read it). common.wgsl `simStep()` (G.dt × 60: 1, 2 or 4) and
+  `perTick(p)` (a chance over the tick), `relaxTick(k)` (a decay or a
+  relaxation over the tick) scale them so the world runs at the same speed in
+  its time: moisture, contamination (its transport by the water's flux too),
+  fire (burning, and the chances of catching), wilt, ecology, climate (its
+  DT_C), the structures' chances (support still relaxes a cell a tick, so a
+  collapse spreads at the tick rate), the brush's pours (DT_E), sediment
+  (DT_D, slumps, wind smoothing, piping, faces, falls, the shaking's age;
+  slumps and smoothing capped at a sixth of the excess a neighbour — more
+  over-corrects into a checkerboard), particles (every spawn chance and the
+  grains a running stream sheds), the wind field and the sway (their DT).
+  The water's, oil's and lava's pipes are stable only at the 60 Hz step:
+  tried scaled (the pipes' gain and the flux moved × the step) — a pond
+  then over-corrects (6 pipes × twice the gain is over 1) and the sloshing
+  water carried soil into a dug hole: the sandbox's dig, −1.71 at 60 Hz,
+  filled back to −0.27 at 30 (scratch digtest.mjs). So they run `FLOW_SUB`
+  60 Hz substeps a tick instead (cheap passes); the dig then holds at −2.0
+  at 30 and 15 Hz. api/water.ts reads the flux as a 60 Hz tick's whatever
+  the rate. worldapitest: 16/16 at 30 Hz; at 15 all but "warmup with
+  debris" (its warmup counts ticks: 600 are 40 s at 15 Hz).
+  Riding (settle=0&inplace=1&sleepmore=1, two runs each; the laptop was
+  warm): the sim a frame 1.74/1.93 ms → 1.11/0.93 at 30 Hz → 0.65/0.63 at 15
+  (−45 %, −65 %); a tick costs more (the flows' substeps), a frame less.
+  At 30 fps the phone ran two ticks a frame; at 30 Hz, one.
+- `?flowhz=water:4,oil:4,lava:2,sediment:1` (sim/flow.ts `flowN`,
+  common.wgsl `slowTick`, `flowFrozen`): a sleeping chunk's flow is frozen
+  (drawn moving from its frozen flux: the default, as round 80 had it); with
+  a rate it's updated that many times a second instead, staggered over the
+  chunks, at the 60 Hz step (slow motion — which keeps the pipes stable while
+  it settles); awake (the player near, an event, a storm), every tick. One
+  mechanism for water, oil, lava and sediment, a rate each, for the user to
+  tune on the phone. Not measured yet (default off).
+- `?settle=0` now also drops a streamed column's loose intervals with air
+  under them onto their support (streamer.ts `settleLoose`, in cutRegion:
+  the generator's output, before it's cut into the window); solids stay
+  (overhangs, arches). Counted in the streamer's stats (`settled`).
+

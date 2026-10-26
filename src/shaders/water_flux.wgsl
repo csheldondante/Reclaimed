@@ -24,7 +24,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // (a sleeping chunk: round 80 — its flux frozen as it is, the surface drawn moving by it. perfopt, ?settle=0:
   // land come in asleep has none — a river would be drawn still — so while it's drowsy (just come in) a column
   // with no flux takes the pipes' steady state for its levels at once: f = GAIN (H - Hn) / (1 - FRICTION))
-  let seed = asleep(id.xy);
+  let seed = flowFrozen(id.xy, FLOW_N);
   if (seed && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
   let d = water[i];
   if (d <= 1e-5) { flux[i] = dZero(); return; }

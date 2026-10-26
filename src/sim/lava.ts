@@ -14,6 +14,7 @@ import lavaWgsl from '../shaders/lava.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import type { WorldGpu } from './world-gpu';
 import { TICK_DT } from './simulation';
+import { FLOW_SUB, flowConst } from './flow';
 
 export const MAX_VENTS = 4;
 
@@ -91,12 +92,12 @@ export class LavaSystem implements SimSystem {
       const g = makeBindGroup(device, name, k.layout, Object.fromEntries(Object.keys(all).map((n) => [n, b[Number(n)]])));
       this.k[name] = { k, g };
     };
-    kernel('lava-flux', [commonWgsl, materialsWgsl, lavaFluxWgsl], { 3: 'read', 4: 'read', 5: 'rw', 17: 'tex', 21: 'tex' }, 'main', {
+    kernel('lava-flux', [commonWgsl, materialsWgsl, flowConst('lava') + lavaFluxWgsl], { 3: 'read', 4: 'read', 5: 'rw', 17: 'tex', 21: 'tex' }, 'main', {
       3: world.surface,
       4: world.lava,
       5: world.lavaFlux,
     });
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, lavaWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, flowConst('lava') + lavaWgsl];
     kernel('lava-depth', parts, { 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 12: 'rw', 13: 'rw', 22: 'uniform', 23: 'tex', 24: 'stex', 29: 'tex', 30: 'tex' }, 'depth');
     kernel('lava-prep', parts, { 3: 'read', 8: 'rw', 9: 'rw' }, 'prep');
   }
@@ -139,10 +140,13 @@ export class LavaSystem implements SimSystem {
     this.writeUniforms(TICK_DT);
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0]));
     const run = (name: string) => dispatch(enc, this.prof, name, this.k[name].k, this.k[name].g, this.world.groups);
-    run('lava-flux');
-    run('lava-depth');
-    enc.copyTextureToTexture({ texture: this.spillNext }, { texture: this.spill }, { width: this.world.w, height: this.world.h });
-    enc.copyBufferToBuffer(this.world.lavaNext, 0, this.world.lava, 0, this.world.lava.size);
+    // (perfopt, simhz: FLOW_SUB 60 Hz steps a tick, sim/flow.ts)
+    for (let s = 0; s < FLOW_SUB; s++) {
+      run('lava-flux');
+      run('lava-depth');
+      enc.copyTextureToTexture({ texture: this.spillNext }, { texture: this.spill }, { width: this.world.w, height: this.world.h });
+      enc.copyBufferToBuffer(this.world.lavaNext, 0, this.world.lava, 0, this.world.lava.size);
+    }
     run('lava-prep');
   }
 }

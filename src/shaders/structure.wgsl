@@ -55,7 +55,7 @@ fn hydraulicDamage(p: vec2<i32>, z0: f32, z1: f32, dmg: u32, m: u32, salt: u32) 
   }
   let strength = MATS[m].sim.w;
   var chance = 0.0;
-  if (dmg > 0u && head > HEAD_MIN) { chance += (head - HEAD_MIN) * HEAD_RATE; }
+  if (dmg > 0u && head > HEAD_MIN) { chance += (head - HEAD_MIN) * HEAD_RATE * simStep(); }
   // only what is already cracked (lightning, cyclones, heat) wears in fast
   // water: intact concrete and asphalt hold (round 15)
   if (dmg > 0u && flow > 0.1) { chance += (flow - 0.1) * FLOW_RATE * (1.2 - strength); }
@@ -146,7 +146,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // goes down a cell at a time and its last cell is left as loose ash,
       // which wind and water can then carry away
       // the cyclone tears compacted waste apart into loose litter it can strip
-      if (m == MAT_TRASH_S && i + 1u == n && cycloneAt(cellPos(p)) > 0.4 && rand3(id.x, id.y, G.tick ^ 0x7c1u) < 0.01) {
+      if (m == MAT_TRASH_S && i + 1u == n && cycloneAt(cellPos(p)) > 0.4 && rand3(id.x, id.y, G.tick ^ 0x7c1u) < perTick(0.01)) {
         layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
         prevTop = z1;
         prevSup = s;
@@ -157,7 +157,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // trash heaps)
       if (m == MAT_TRASH_S && i + 1u == n) {
         let flow = length(netFlow(p));
-        if (flow > 0.02 && rand3(id.x, id.y, G.tick ^ 0x3a5u) < (flow - 0.02) * 0.5) {
+        if (flow > 0.02 && rand3(id.x, id.y, G.tick ^ 0x3a5u) < perTick((flow - 0.02) * 0.5)) {
           // (the top interval: split off its top cell as litter, then stop)
           if (z1 - 1.0 <= z0 || i + 1u >= cs.y) {
             layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);
@@ -177,7 +177,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         prevSup = s;
         continue;
       }
-      if (m == MAT_TRASH_S && i + 1u == n && selfFire > 0.3 && rand3(id.x, id.y, G.tick ^ 0xa5u) < 0.03 * selfFire) {
+      if (m == MAT_TRASH_S && i + 1u == n && selfFire > 0.3 && rand3(id.x, id.y, G.tick ^ 0xa5u) < perTick(0.03 * selfFire)) {
         layersOut[cs.x + i] = select(ivPack(z0, z1, MAT_ASH_S, 0u), ivPack(z0, z1 - 1.0, m, ivAux(v)), z1 - 1.0 > z0);
         prevTop = z1;
         prevSup = s;
@@ -201,12 +201,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       let ez = evZ(e);
       if (length(cellPos(p) - ev.xy) < ev.z && f32(ez) + 1.0 >= z0 && f32(ez) <= z1) { dmg = min(15u, dmg + u32(ev.w)); }
     }
-    if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < HEAT_RATE * heat * (1.2 - MATS[m].sim.w)) {
+    if (heat > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0x4ea7u) < perTick(HEAT_RATE * heat * (1.2 - MATS[m].sim.w))) {
       dmg = min(15u, dmg + 1u);
     }
     // the cyclone batters what stands in it (round 12: ruins and wrecks — not plants)
     let cyc = cycloneAt(cellPos(p));
-    if (cyc > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0xc1c1u) < cyc * 0.02 * (1.3 - MATS[m].sim.w)) {
+    if (cyc > 0.3 && rand3(id.x * 16u + i, id.y, G.tick ^ 0xc1c1u) < perTick(cyc * 0.02 * (1.3 - MATS[m].sim.w))) {
       dmg = min(15u, dmg + 1u);
     }
     if (!touching) {

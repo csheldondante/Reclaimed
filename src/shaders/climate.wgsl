@@ -23,6 +23,8 @@
 @group(0) @binding(9) var<storage, read> lavaC: array<vec4<f32>>;
 
 const DT_C: f32 = 4.0 / 60.0;
+/** (perfopt, simhz) the world time an update stands for */
+fn dtC() -> f32 { return DT_C * simStep(); }
 // as water_depth.wgsl's: depth a storm of intensity 1 drops a tick
 const RAIN_RATE_C: f32 = 0.0012;
 // a cold storm drops half as much as it would rain (the game's rain is
@@ -68,7 +70,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // a cold storm's snow, and the trees' leaves, land through the deposit
   let dep = deposit[i];
-  let snow = rainAt(cellPos(p)) * RAIN_RATE_C * 4.0 * snowShare(t) * SNOW_FALL;
+  let snow = rainAt(cellPos(p)) * RAIN_RATE_C * 4.0 * simStep() * snowShare(t) * SNOW_FALL;
   // (light snow in drops of LEAF_DROP now and then, as the leaves)
   var fall = snow;
   if (snow < LEAF_DROP) { fall = select(0.0, LEAF_DROP, rand3(id.x, id.y, G.tick ^ 0x5a0du) < snow / LEAF_DROP); }
@@ -79,7 +81,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // (round 51: most of them in the fall) — in drops of LEAF_DROP now and
     // then: a sliver thinner than a thousandth of a cell is a spent top to
     // the sediment pass, which threw every drop away
-    let rate = LEAF_RATE * DT_C * (0.2 + 6.0 * seasonShed());
+    let rate = LEAF_RATE * dtC() * (0.2 + 6.0 * seasonShed());
     if (rand3(id.x, id.y, G.tick ^ 0x1eafu) < rate / LEAF_DROP) {
       deposit[i] = vec4<f32>(dep.x, LEAF_DROP, f32(MAT_LEAFLIT), dep.w);
     }
@@ -88,18 +90,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let m = ivMat(top);
   let d = ivZ1(top) - ivZ0(top);
   if (m == MAT_SNOW && t > 0.5) {
-    let melt = min(d, MELT_SNOW * (t - 0.5) * DT_C);
+    let melt = min(d, MELT_SNOW * (t - 0.5) * dtC());
     arr[n - 1u] = ivPack(ivZ0(top), ivZ1(top) - melt, m, ivAux(top));
     wd += melt;
     changed = true;
   } else if (m == MAT_ICE && t > 0.5) {
-    let melt = min(d, MELT_ICE * (t - 0.5) * DT_C);
+    let melt = min(d, MELT_ICE * (t - 0.5) * dtC());
     arr[n - 1u] = ivPack(ivZ0(top), ivZ1(top) - melt, m, ivAux(top));
     wd += melt * 0.9;
     changed = true;
   } else if (wd > 0.01 && t < -0.5) {
     // the water freezes onto the ground under it (ice is a little bulkier)
-    let f = min(wd, FREEZE * (-0.5 - t) * DT_C);
+    let f = min(wd, FREEZE * (-0.5 - t) * dtC());
     wd -= f;
     if (m == MAT_ICE) {
       arr[n - 1u] = ivPack(ivZ0(top), ivZ1(top) + f / 0.9, m, ivAux(top));
@@ -116,7 +118,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // leaves rot into the soil under them
     let below = arr[n - 2u];
     if (ivMat(below) == MAT_SOIL_C && abs(ivZ1(below) - ivZ0(top)) < 1e-3) {
-      let r = min(d, ROT * DT_C);
+      let r = min(d, ROT * dtC());
       let s1 = ivZ1(below) + r * 0.5;
       arr[n - 2u] = ivPack(ivZ0(below), s1, MAT_SOIL_C, ivAux(below));
       arr[n - 1u] = ivPack(s1, max(ivZ1(top) - r * 0.5, s1), m, ivAux(top));
