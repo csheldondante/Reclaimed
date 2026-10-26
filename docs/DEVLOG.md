@@ -5563,3 +5563,51 @@ the first frame that drew deferred (`meshDefMake`), compiled then.
   slide holds the sim, so the moment passed with no tick: the ring had been
   making them. Drowsy now for 8 of the sim's ticks (Sleep.update's `tick`).
   atlasworldtest 6/6 (riding: 0 of 256 chunks awake; every column top read).
+
+## Round 83 — the perf ceiling: the heightfield alone (`ceiling`, an experiment)
+
+The user: "Can we see how fast things work if we did a heightmap only renderer
+streaming in chunks and just using their top material height and color? I just
+want to understand what a ceiling on perf is on the phone here." `?ceiling=1` on
+the atlas level: each frame only the drive's camera and one render pass (Renderer
+.encodeCeiling: colour + depth, no pick target) of far.ts's rings and far land
+(far.wgsl fsCeilLod / fsCeilFar: the column's colour, lambert from the sun, a
+little height tint, the fog). No sim, no streaming, no field mesh, no renderprep,
+no shadow, no band, no plants or particles, no HUD or audio updates. The rings
+are lod.wgsl's lodHeight — the atlas's own `ground()`, a top and a packed colour
+a texel, world-anchored in toroidal slots, so a move makes only the new strips —
+with a ring a cell apart first (`?near=1`, the default: spacings 1, 2, 4, 8, 16;
+`?near=2`: the usual four). LodD holds 5 rings now (LOD_UNI_BYTES 7·16). The
+window is still built at the start (the level's set-up needs it); it doesn't
+slide — the camera leaves it behind, its target's height following the macro
+ground (atlas.hmac). `?ringn=` sets the rings' vertices a side (193 usual). The
+lod strips are timed in the profiler now (`lod <spacing>`).
+
+driveprofile.mjs, q=low, 412×915 at dpr 2.6 (render 206×457), drive 18, at
+12304,5457, 30 s, this machine's Intel Xe-LPG iGPU (vsync ~100 Hz; other agents
+shared the machine but no other headless run was open during these):
+
+| run | p50 | p95 | p99 | worst | hitches >50 | GPU ms/frame |
+|---|---|---|---|---|---|---|
+| the game (no ceiling) | 9.9 | 10.9 | 20.1 | 57 | 3 | 8.4 (draw 4.0, gbuffer 0.55, renderprep 0.34, shadow 0.38, the rest mesh/sim) |
+| ceiling, near 1 (n 193) | 9.9 | 10.2 | 10.5 | 20 | 0 | 2.5–2.9 (draw 2.77, lod strips 0.04) |
+| ceiling, near 2 (n 193) | 9.9 | 10.2 | 10.6 | 22 | 0 | 2.2–2.4 (draw 2.17, strips 0.02) |
+| ceiling, near 1, n 97 | 9.9 | 10.2 | 10.6 | 35 | 0 | 1.0–1.2 (draw 1.24) |
+| ceiling, near 1, n 65 | 9.9 | 10.2 | 10.6 | 21 | 0 | 0.6–1.1 (draw 1.14) |
+
+(Uncapped, --uncapped: GPU 9.13 game, 2.51 near 1, 2.23 near 2 — the frame
+times there are bimodal by pacing and say nothing.) Every capped run sits at the
+display's interval: the frame time no longer says what it costs, the GPU does.
+
+What's left in the ceiling: the draw, and in it the vertices. Five rings of
+193² is 186k vertices and 1.1M triangles for 94k pixels — each vertex reads
+its texel and four neighbours (the normal), and in the melt band at a ring's
+edge the next ring's four (or the far land's eight); triangles far smaller than
+a pixel. Halving the vertices a side (n 97) halves the draw (2.77 → 1.24 ms);
+n 65 barely less again (the far grid, 161², and the fixed cost). The strips
+the move makes cost 0.04 ms a frame on average (one dispatch a ring that moved
+8 of its spacings; the 1-cell ring every 8 cells). The canvas present isn't in
+the GPU's timestamps; at this size it's small, and the frame is the display's.
+So the ceiling's floor is a screen-sized grid: about one vertex per few pixels,
+which the rings at n 193 overshoot at the low tier's resolution. (The game's
+own rings are in its 4.0 ms draw too: n 193 × 4.)

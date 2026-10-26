@@ -94,7 +94,7 @@ struct FarCoarse {
 struct LodD {
   /** each ring: its corner (world texel indices: texel (I, J) at (I, J) · spacing in the world; held in slot
    *  (I mod n, J mod n)), its spacing, texels a side */
-  lv: array<vec4<f32>, 4>,
+  lv: array<vec4<f32>, 5>,
   /** how many rings (0: none), the outermost's corner (window coordinates) and its span */
   info: vec4<f32>,
   /** (round 83) the window's mesh chunks: a chunk's width and depth (window units), chunks across and down;
@@ -412,4 +412,33 @@ fn fsGiant(v: GOut) -> FOutF {
   o.color = vec4<f32>(c, 1.0);
   o.pick = vec2<u32>(0u, 0u);
   return o;
+}
+
+// ---- ?ceiling=1 (the perf ceiling: the heightfield alone) ----------------------------
+// Only the rings and the far land, into the colour target alone (no pick, no window, nothing cut): the
+// cheapest look of the world — the column's colour, lambert from the sun, a little height tint, the fog.
+
+fn ceilShade(col: vec3<f32>, nrm: vec3<f32>, local: vec3<f32>, dist: f32) -> vec4<f32> {
+  let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
+  let lit = 0.45 + 0.7 * max(dot(normalize(nrm), sun), 0.0);
+  let up = smoothstep(FP.mid.w, FP.mid.w + 160.0, local.z + FP.org.z);
+  let c = col * lit * (0.94 + 0.12 * up);
+  return vec4<f32>(mix(c, FP.fog.rgb, smoothstep(0.55, 1.0, dist)), 1.0);
+}
+
+@fragment
+fn fsCeilLod(v: LOut) -> @location(0) vec4<f32> {
+  let l = v.local.xy;
+  if (v.ring > 0u) {
+    let F = LD.lv[v.ring - 1u];
+    let fc = lodCorner(v.ring - 1u);
+    if (all(l > fc) && all(l < fc + (F.w - 1.0) * F.z)) { discard; }
+  }
+  return ceilShade(v.col, v.nrm, v.local, v.dist);
+}
+
+@fragment
+fn fsCeilFar(v: FOutV) -> @location(0) vec4<f32> {
+  if (inLod(v.local.xy)) { discard; }
+  return ceilShade(v.col, v.nrm, v.local, v.dist);
 }

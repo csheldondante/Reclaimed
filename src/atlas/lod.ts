@@ -11,9 +11,9 @@ import { MATERIALS } from '../world/materials';
 import type { Atlas } from './atlas';
 import lodW from './lod.wgsl?raw';
 
-/** far.wgsl LodD: a vec4 a ring (4), then info, then the window's mesh chunks */
-export const LOD_UNI_BYTES = 6 * 16;
-const MAX_RINGS = 4;
+/** far.wgsl LodD: a vec4 a ring (5: ?ceiling's 1-cell ring and the four), then info, then the window's mesh chunks */
+export const LOD_UNI_BYTES = 7 * 16;
+const MAX_RINGS = 5;
 /** seconds between one eighth of a ring made again and the next (the coarse world changes slowly) */
 const REFRESH_S = 0.4;
 const BANDS = 8;
@@ -109,7 +109,8 @@ export class LodRings {
       new Float32Array(ab, 16, 4).set([s, n, 0, 0]);
       new Uint32Array(ab, 32, 4).set([i * n * n, r0, r1, 0]);
       this.device.queue.writeBuffer(this.ringParams[i], 0, ab);
-      const cp = enc.beginComputePass({ label: 'lod' });
+      // (timed in the game's profiler when the level lends it: ?ceiling's strips)
+      const cp = enc.beginComputePass({ label: 'lod', timestampWrites: this.atlas.profiler?.timestamps(`lod ${s}`) });
       cp.setPipeline(k.pipeline);
       cp.setBindGroup(0, this.groups[i]);
       cp.dispatchWorkgroups(Math.ceil(n / 8), Math.ceil(n / 8));

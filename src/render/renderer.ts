@@ -712,6 +712,24 @@ export class Renderer {
     });
   }
 
+  /**
+   * ?ceiling=1 (the perf ceiling: a heightfield alone): the camera written and one pass — the colour target
+   * cleared, the depth, `draw` (far.ts's rings and far land) — nothing prepared, no mesh, no shadow, no pick.
+   */
+  encodeCeiling(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, clear: [number, number, number], draw: (pass: GPURenderPassEncoder) => void): void {
+    cam.write(this.camData);
+    this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
+    const pass = enc.beginRenderPass({
+      label: 'ceiling',
+      colorAttachments: [{ view: target, clearValue: { r: clear[0], g: clear[1], b: clear[2], a: 1 }, loadOp: 'clear', storeOp: 'store' }],
+      depthStencilAttachment: { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+      timestampWrites: this.profiler.timestamps('draw'),
+    });
+    draw(pass);
+    pass.end();
+    this.profiler.draws += 2;
+  }
+
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
     cam.write(this.camData);
     // look flags (render.wgsl Camera.eye.w)

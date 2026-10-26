@@ -8,7 +8,7 @@ import { MATERIALS } from '../world/materials';
 import { KINDS, warmth } from './regions';
 import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
-import { LodRings } from './lod';
+import { LOD_UNI_BYTES, LodRings } from './lod';
 import { ROW_H } from '../world/lattice';
 
 const UNI_BYTES = 96;
@@ -60,7 +60,11 @@ export class FarLand {
     t: FarTargets,
     /** the rings' spacings (finest first) and vertices a side; null: none */
     lod: { spacings: number[]; n: number } | null = { spacings: [2, 4, 8, 16], n: 193 },
+    /** ?ceiling=1 (the perf ceiling): the rings and the far land alone, into the colour target only (no pick
+     *  target, no window cut out of them, no giants) — Renderer.encodeCeiling's pass */
+    readonly ceiling = false,
   ) {
+    if (ceiling && !lod) throw new Error('FarLand: ?ceiling=1 draws the rings — not with ?lod=0');
     const n = atlas.p.n;
     const m = n / 2;
     // heights (averaged 2 × 2) and colours (each region kind's ground: its top's colour, green where
@@ -123,7 +127,7 @@ export class FarLand {
     const meshState = t.mesh?.state ?? device.createBuffer({ label: 'lod no mesh', size: 16, usage: GPUBufferUsage.STORAGE });
     // (no rings: an empty LodD, its count 0)
     const lodData = this.lod?.data ?? device.createBuffer({ label: 'lod none', size: 16, usage: GPUBufferUsage.STORAGE });
-    const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: 96, usage: GPUBufferUsage.UNIFORM });
+    const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: LOD_UNI_BYTES, usage: GPUBufferUsage.UNIFORM });
     this.group = device.createBindGroup({
       label: 'far',
       layout,
@@ -143,7 +147,7 @@ export class FarLand {
       label: 'far',
       layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
       vertex: { module, entryPoint: 'vsFar' },
-      fragment: { module, entryPoint: 'fsFar', targets: [{ format: t.format }, { format: t.pickFormat }] },
+      fragment: { module, entryPoint: ceiling ? 'fsCeilFar' : 'fsFar', targets: ceiling ? [{ format: t.format }] : [{ format: t.format }, { format: t.pickFormat }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
     });
@@ -164,13 +168,13 @@ export class FarLand {
         label: 'lod',
         layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
         vertex: { module, entryPoint: 'vsLod' },
-        fragment: { module, entryPoint: 'fsLod', targets: [{ format: t.format }, { format: t.pickFormat }] },
+        fragment: { module, entryPoint: ceiling ? 'fsCeilLod' : 'fsLod', targets: ceiling ? [{ format: t.format }] : [{ format: t.format }, { format: t.pickFormat }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: { format: t.depthFormat, depthWriteEnabled: true, depthCompare: 'less' },
       });
     }
     // the giants beyond the window (round 75)
-    this.gCount = atlas.giants.length / GIANT_FLOATS;
+    this.gCount = ceiling ? 0 : atlas.giants.length / GIANT_FLOATS;
     if (this.gCount) {
       this.gBuf = device.createBuffer({ label: 'far giants', size: atlas.giants.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
       device.queue.writeBuffer(this.gBuf, 0, atlas.giants);
