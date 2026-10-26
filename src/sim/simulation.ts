@@ -50,6 +50,8 @@ export class Simulation {
   /** the town's columns (round 65): build/town.ts */
   readonly town: TownStampSystem;
   readonly shadow: RenderFieldsSystem;
+  /** (perfopt) the water: its settling passes run while land just come in is drowsy */
+  readonly water!: WaterSystem;
   readonly particles: ParticleSystem;
   tick = 0;
   private globalsData = new ArrayBuffer(GLOBALS_BYTES);
@@ -85,7 +87,7 @@ export class Simulation {
       new ProjectSystem(device, world, profiler),
       new StructureSystem(device, world, profiler),
       this.surface,
-      new WaterSystem(device, world, profiler),
+      (this.water = new WaterSystem(device, world, profiler)),
       new OilSystem(device, world, profiler),
       new ContaminationSystem(device, world, profiler),
       new MoistureSystem(device, world, profiler),
@@ -132,6 +134,8 @@ export class Simulation {
       for (const gg of globals.gusts.slice(1)) gg.len = 0;
       globals.strokeSent = true;
     }
+    // (perfopt: land just come in — drowsy — settles its water: WaterSystem.settling)
+    this.water.settling = globals.settle ?? [];
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;

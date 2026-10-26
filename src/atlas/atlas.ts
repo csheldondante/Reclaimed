@@ -379,7 +379,10 @@ export class Atlas {
     const hmacB = mk('hmac', N * 4);
     // every pipeline at once, off the main thread (D3D compiles are the slow part of making the atlas)
     const bm = makeModule(dev, 'atlas build', this.parts(buildW));
-    const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, formsW));
+    // (perfopt, ?riverhold=1: rivers hold their level — forms.wgsl RIVER_HOLD; off by default: it floods the banks)
+    const hold = new URLSearchParams(location.search).get('riverhold') === '1';
+    const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, `const RIVER_HOLD: bool = ${hold};
+`, formsW));
     const K = (entry: string, spec: BindSpec, m = bm) => makeComputeAsync(dev, `atlas ${entry}`, m, { 0: 'uniform', ...spec }, entry);
     const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed, kSeedV, kOutV, kSeedL, kOutL] = await this.time('compile', () =>
       Promise.all([

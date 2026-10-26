@@ -104,6 +104,8 @@ export class Renderer {
     /** the terrain drawn into a cached layer every Nth frame (a margin past the screen), copied in each frame moved
      *  by the camera, which is snapped to its pixels (?tcache=N; 0 off; not with the cutaway or the free camera) */
     tcache: Number(new URLSearchParams(location.search).get('tcache') ?? 0),
+    /** the band's G-buffer draw culls the faces turned from the eye (?bandcull=1) */
+    bandcull: new URLSearchParams(location.search).get('bandcull') === '1',
     shadowEvery: Number(new URLSearchParams(location.search).get('shadowevery') ?? 1),
     /** the prisms' and plants' instance lists made every Nth frame (?prepevery=N): a frame's lag on what changed;
      *  made again at once after a slide */
@@ -1108,6 +1110,9 @@ export class Renderer {
     pass.setBindGroup(0, this.meshGroup!);
     this.fieldMesh.draw(pass);
     if (this.band && !SKIP.has('band')) {
+      // (perfopt, ?bandcull=1: the band's faces turned from the eye culled — the land over and under the window seen
+      // from outside, its undersides and insides never; not with the cut, which opens them)
+      if (Renderer.opts.bandcull && !cutOn(cam)) pass.setPipeline(d.gBack);
       pass.setBindGroup(0, this.bandGroup!);
       this.band.mesh.draw(pass);
     }

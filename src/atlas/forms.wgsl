@@ -690,6 +690,10 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else {
       o.water = max(o.water, g.rl - 0.3 - surf);
       if (g.rx < 0.6) { o.spring = RIVER_SPRING; }
+      // (perfopt, ?riverhold=1 — the user: "all generators make a steady state"): the river's water holds its level
+      // rather than a spring pouring a constant flow in — negative, the depth it's topped up to (water_depth.wgsl):
+      // what comes down from upstream, past the window. The generated river then is the pipes' steady state.
+      if (RIVER_HOLD && o.water > 0.02) { o.spring = -o.water; }
     }
   }
   var m = moistureAt(p, g.coast, R.moist);

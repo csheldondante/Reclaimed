@@ -5658,3 +5658,44 @@ browser part of the time: GPU timings then contended (the CPU ones less so).
   its own z — a pillar's 100 voxels one run; packing, collision and the
   projection would walk runs, not voxels; not done).
 
+
+## Round 83 — the generator's water at rest: what's out of balance; settling and river-hold tried (perfopt)
+
+Why: the user: "all generators make a steady state so when we arrive nothing
+is simulated until the player interacts with it" — they saw water rush in on
+arrival. scripts/waterrest.mjs: the atlas level (phone tier: land comes in
+asleep), every chunk woken with no edits, the water read before and 5 s after,
+classed sea / river (a source) / other / dry.
+
+- Out of balance: the rivers. A river is filled to its level (rl − 0.3) and fed
+  by springs (0.0008 a tick along its middle); the pipes' steady state for those
+  springs is far thinner on a slope (the outflow cap binds: about the river's
+  accumulated spring discharge a tick). Woken: 3 378 of 4 929 river columns
+  change by over 0.05 in 5 s, the window's water 3 466 → 3 035 (−12 %), and
+  converged (2 048 steps) it's ~2 500 (−27 %). Other water (the coarse world's
+  lakes, tubes) moves in 161 columns. One basin fed by springs with no outlet
+  rises ~1.3 cells in 5 s: never at rest.
+- Fixed: Sleep.settleAll's drowsy window for the first window was counted
+  from tick 0, after the level's warmup had run hundreds — the first window
+  was never drowsy (532015d).
+- Tried, kept as a measuring tool only (`?settleiters=N`, default 0): the new
+  land's water settled on arrival — water flux/depth ping-ponged over the
+  rect of land just come in (one compute pass, no copies; sim/sleep.ts
+  `settling` rects, 64 ticks each). 2 048 steps: river columns moving 3 378 →
+  ~700, the moved volume 539 → ~190 — but ~44 ms of GPU in a tick for a whole
+  window. Not the generator's fix.
+- Tried, `?riverhold=1` (default off): a river's source holds its level
+  instead of a spring's constant flow (forms.wgsl RIVER_HOLD writes
+  waterSource = −depth; water_depth.wgsl tops a negative-source column up to
+  that depth, at most 0.5 a tick) — what comes down from upstream, past the
+  window, so the generated river would be the pipes' steady state by
+  construction, its flux (FLUX_SEED) the flow it keeps. A breach works
+  (scripts/breach.mjs: a hole dug by a held river fills, ~31 units in 1 s, the
+  river stays at 0.70 and flows on). But it floods: the held level is above the
+  ground beside the channel in many places, and within 4 s of the load the
+  window's water goes 3.5 k → 44 k, wet columns 9.9 k → 22 k. A held river needs
+  banks at least as high as its level (the generator carving the channel and
+  keeping its banks), or a hold limited to its own discharge.
+- Rivers now go to the `rivers` branch's agent; these are its baseline and
+  tools (scripts/waterrest.mjs, scripts/breach.mjs).
+
