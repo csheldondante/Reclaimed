@@ -66,6 +66,7 @@ export type AtlasEventKind =
   | 'ruin'
   | 'rebuild'
   | 'faction-presence'
+  | 'faction-attitude'
   | 'mark';
 
 export interface AtlasEvent {
@@ -74,8 +75,12 @@ export interface AtlasEvent {
   /** the regions it touches (or an area, world cells, for a shaped event: a crater, a lava field) */
   regions: RegionId[];
   area?: { at: [number, number]; radius: number };
-  /** how strong, 0..1 (for a bury: cells; for a flood: a level) */
+  /** how strong: 0..1 (a bury: cells; faction-presence: −1..1, a faction can lose ground) */
   magnitude: number;
+  /** a flood's water level (world z); a flood needs it, the rest ignore it */
+  level?: number;
+  /** where in its region it shows: a story location's id (the GM knows places, not cells) */
+  location?: string;
   /** extra for the kind: the storm's kind, the burying material, the faction, the mark */
   detail?: Record<string, unknown>;
   /** which run it happened in, and why */
@@ -97,9 +102,14 @@ export interface Faction {
 /** The world's state as the GM and the overmap read it: the world wiki's facts. */
 export interface WorldSnapshot {
   version: number;
+  /** the atlas's seed (a story's `from.seed` is checked against it) */
+  seed: number;
+  /** the run to come (the first is 0; WorldState.record moves it on) */
   run: number;
   regions: { id: RegionId; name: string; kind: string; state: RegionState; settlements: string[] }[];
   factions: Faction[];
+  /** the settlements the regions' `settlements` name (settlement.ts) */
+  settlements: import('./settlement').Settlement[];
   history: AtlasEvent[];
   /** what past runs did and how they ended (run.ts RunRecord) */
   runs: import('./run').RunRecord[];
@@ -112,6 +122,8 @@ export interface WorldState {
   apply(e: AtlasEvent): void;
   history(region?: RegionId): AtlasEvent[];
   snapshot(): WorldSnapshot;
+  /** keep a finished run (what the GM and the overmap read in the snapshot's `runs`) */
+  record(run: import('./run').RunRecord): void;
   /** told after each change: the overmap and the generators listen */
   onChange: ((region: RegionId, before: RegionState, after: RegionState) => void)[];
 }
