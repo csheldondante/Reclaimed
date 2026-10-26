@@ -21,6 +21,19 @@ each was implemented.
 - LOD: "I want some sort of LOD so that I can zoom out and still see more of
   the map loaded … things pop in a lot right now". Heightfield rings
   (a clipmap) chosen over mipmapped voxel columns; on `places`.
+- What the sim must do (P11): water's steady state is cached, so no tick is
+  needed most of the time: "run simulation on demand and cache when it has
+  run for a bit and localize real simulation to player actions."
+- "We don't need to simulate a map cell we stream." Generated land comes in
+  settled; "sediment that looks unrealistic or bad placement should be
+  fixed in the cheap generator."
+- The wind field stays simulated: "one of the most satisfying things to see
+  your movement cause things go away in reaction … you may not need high
+  fidelity simulation but the way wind moves is the coolest thing in the
+  simulation."
+- "Simulation can absolutely be 30 Hz or even 15 probably." Gradual fields
+  (moisture, contamination, wilt, climate, ecology) "far less frequent.
+  Every second or more apart."
 
 ## 2026-10-26 — round 82 (session 5, `places`) — where the phone's frame goes
 
