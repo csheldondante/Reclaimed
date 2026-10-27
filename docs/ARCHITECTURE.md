@@ -350,6 +350,11 @@ columns) divides by w and keeps what's behind the eye; picking flies a ray
 into the ground (`groundAt`). A streamed window follows the camera's
 position.
 
+(Round 90) The player turns the fixed view round the ground under the screen's middle (render/turn.ts `Turn`,
+the atlas level's ↺ ↻ and Q / E): it writes `Camera.azimuth`, as round 82's Orbit does; nothing downstream
+assumes the fixed π/4 — the draw, culling, picking, the shadow box and the far land read the camera's matrix or
+`eye`.
+
 The camera's puck and what's cut from the view (round 83, V21; api/puck.ts,
 api/cutaway.ts), each on its own:
 - `Puck.update(dt)` after the camera's input: what moved `Camera.target`

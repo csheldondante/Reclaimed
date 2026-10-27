@@ -416,7 +416,7 @@ export class Streamer {
   /** Start making the land a slide of (dx, dy) would bring in (what's frozen needs nothing). */
   prefetch(dx: number, dy: number): void {
     const R = this.R;
-    for (const [lx, ly] of this.enteringFor(dx, dy)) {
+    for (const [lx, ly] of this.nearFirst(this.enteringFor(dx, dy), dx, dy)) {
       const wx = this.origin[0] + dx + lx;
       const wy = this.origin[1] + dy + ly;
       const key = this.key(wx / R, wy / R);
@@ -425,6 +425,20 @@ export class Streamer {
       job.catch(() => this.pending.delete(key));
       this.pending.set(key, job);
     }
+  }
+
+  /**
+   * (round 90, the user: "prioritize tiles close to the center of the screen but load others late") Regions
+   * (local corners in the window after a slide of (dx, dy)) nearest the camera's target first: the land is made a
+   * tile a frame in the order it's asked for (atlas.ts tileGate), so what's under the middle of the screen comes in
+   * first and the strip's far ends later.
+   */
+  private nearFirst(regions: [number, number][], dx: number, dy: number): [number, number][] {
+    const [x, yw] = this.core.camera.target;
+    const y = yw / ROW_H;
+    const h = this.R / 2;
+    const d = ([lx, ly]: [number, number]) => Math.hypot(lx + dx + h - x, ly + dy + h - y);
+    return [...regions].sort((a, b) => d(a) - d(b));
   }
 
   /** the regions of a strip of the window (local cells x0..x1, y0..y1), as [local x, local y] corners */
@@ -447,7 +461,8 @@ export class Streamer {
     const rc = R / CHUNK;
     // what leaves (old window cells) and what comes in (new window cells)
     const leaving = dx > 0 ? this.strip(0, dx, 0, H) : dx < 0 ? this.strip(W + dx, W, 0, H) : dy > 0 ? this.strip(0, W, 0, dy) : this.strip(0, W, H + dy, H);
-    const entering = this.enteringFor(dx, dy);
+    // (round 90: nearest the camera first — what's written first, and what's made first when it wasn't asked ahead)
+    const entering = this.nearFirst(this.enteringFor(dx, dy), dx, dy);
 
     // ---- 1. freeze what leaves: copies into one staging buffer ---------------
     const enc = dev.createCommandEncoder({ label: 'stream slide' });

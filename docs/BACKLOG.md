@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 90 (2026-10-27, session 5, `phonecam`) — more of the atlas on the phone, turning the view (DECISIONS round 90)
+
+| id | item | size | status |
+|---|---|---|---|
+| R1 | "increase the range of tiles that load": the streamed window wider on the phone tier — 320 by default (measured: same p95 and GPU ms as 256; 384 is +2.1 ms GPU and a 158 MB buffer past the 128 MB many phones allow) | S | done (phonecam) |
+| R2 | "a setting for how far out it will build": the range button (bottom left, 256/320/384, kept per viewer, a reload; `?win=` wins) | S | done (phonecam) |
+| R3 | "prioritize tiles close to the center of the screen but load others late": a slide's regions made and written nearest the camera first (Streamer.nearFirst), a tile a frame | S | done (phonecam) |
+| R4 | "a button or bar to rotate the camera": ↺ ↻ (a sixth of a turn a tap, eased; held, continuous), Q / E; round the ground under the screen's middle | S | done (phonecam) |
+| R5 | A range past 384 on phones whose adapters give more than 128 MB a binding (or the largest per-column buffer split) | M | open |
+| R6 | Two-finger twist to turn the view (the buttons for now) | S | open |
+
 ## Round 88 (2026-10-27, session 5, `seawall`) — a wall of water by the sea (DECISIONS round 88)
 
 | id | item | size | status |

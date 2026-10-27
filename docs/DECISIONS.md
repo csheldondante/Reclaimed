@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 90 (session 5, `phonecam`) — more of the atlas on the phone, and turning the view
+
+- The user, on the phone at the atlas level in sandbox mode: "For the atlas in sandbox mode on the phone the can we
+  increase the range of tiles that load and add a button or bar to rotate the camera?"
+- And: "Maybe We can prioritize tiles close to the center of the screen but load others late? And have a setting for
+  how far out it will build?"
+- → The streamed window's side is a range setting (bottom-left button: 256 / 320 / 384 cells; kept per viewer, `?win=`
+  wins), the phone tier's default wider by measurement (DEVLOG round 90); a slide's regions are made and written
+  nearest the camera first (the far ends of the strip a tile a frame after). The view turns again on the atlas
+  level — ↺ ↻ (a tap a sixth of a turn, eased; held, it turns on), Q / E — reversing the 2026-10-07 removal there
+  at the user's ask (the cutaway's large-obstacle turn, round 82, was the first exception).
+
 ## 2026-10-27 — round 88 (session 5, `seawall`) — a wall of water by the sea
 
 - The user, on the phone at the atlas level (the phone's defaults: hybrid, rivers=table, simcull): "I did find what

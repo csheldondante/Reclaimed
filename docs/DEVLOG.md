@@ -6557,3 +6557,51 @@ depression-filled level of findRivers) runs 12 wide over coastal ground at 101-1
 banks — 167 wall faces. Either the hollow is filled as a lake to its spill level (needs the per-texel fill on the
 GPU; where the fine ground lacks the macro rim it's a wall again) or the river runs on the hollow's floor (its level
 the ground's + its depth past the levee's reach). The user's call.
+
+## Round 90 — more of the atlas on the phone, and turning the view (`phonecam`)
+
+The user, on the phone at the atlas level in sandbox mode: "can we increase the range of tiles that load and add a
+button or bar to rotate the camera?" — and then "Maybe We can prioritize tiles close to the center of the screen but
+load others late? And have a setting for how far out it will build?" (DECISIONS round 90).
+
+**The range.** The streamed window's side (`?win=`, whole regions of 64) is now a setting: scenes/range.ts. `?win=`
+wins; else the viewer's own choice (localStorage `reclaimed.atlasRange`, read and written in try/catch); else the
+tier's default — 320 on the phone tier, 256 elsewhere. The bottom-left range button steps 256 → 320 → 384 and reloads
+(the window's buffers are made with the level). Measured at q=low 412x915 on the desktop iGPU (the phone proxy):
+scripts/driveprofile.mjs at 12304,5457 (speed 18, 30 s, the phone flags: hybrid, simcull, rivers=table) and
+scripts/rangeprobe.mjs (the world's and the renderer's GPU buffers summed, the JS heap, 8 s after the level):
+
+| win | p50 | p95 | p99 | worst | >50 ms | GPU ms/frame | draw | slide (last, ms) | load (s) | GPU buffers | largest buffer | JS heap |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 256 | 9.9 | 10.8 | 16.3 | 75 | 4 | 8.94 | 4.91 | 140 | 36 | 312 MB | 67.5 MB | 139 MB |
+| 320 | 9.9 | 10.7 | 14.4 | 147 | 1 | 8.94 | 4.79 | 198 | 38 | 453 MB | 103 MB | 190 MB |
+| 384 | 9.8 | 10.9 | 16.6 | 100 | 2 | 11.07 | 5.42 | 222 | 43 | 656 MB | 158 MB | 267 MB |
+
+320 is the phone's default: the frame and the GPU's time are 256's (the hybrid draws the added land as heightfield
+chunks), 1.56× the land in detail; one frame of 147 ms in the ride against 256's four over 50 (noise on one ride —
+the slide itself is spread, a tile a frame). 384 costs 2.1 ms more GPU a frame, 656 MB of buffers, and its largest
+buffer (158 MB) is past 128 MB — WebGPU's default maxStorageBufferBindingSize, which many phones' adapters stop at
+(the desktop gives 2048): it stays a choice, not the default. The LOD rings and the far land already reach past what
+the phone's widest zoom shows (the 16-cell ring is ~3000 cells across), so they're unchanged.
+
+**Nearest first.** A slide brings in a strip of regions (5 at 320); each region's columns are made a tile a frame,
+in the order asked (atlas.ts tileGate). The streamer now asks for them — and writes them — nearest the camera's
+target first (Streamer.nearFirst, in prefetch and in the slide), so what's under the middle of the screen comes in
+first and the strip's ends after, already spread over frames.
+
+**Turning the view.** render/turn.ts `Turn`: steps of a sixth of a turn from the fixed view's π/4 (the hex lattice
+looks the same from every one), eased on a critically damped spring (sub-stepped: a slow frame doesn't overshoot),
+steps adding up while it eases; held past 0.3 s a button turns on continuously (1.6 rad/s) and stays where it's let
+go. It writes `Camera.azimuth` (round 82's Orbit already turned it: the draw, the culling, the pick, the shadow box
+(the field mesh's near rect from the view), the far land's press under the focus (`FC.eye`) and the rings were
+already the azimuth's, not the fixed view's). The turn goes round the ground under the screen's middle (the target
+is put there first: it was 7 over it, and the ground swung ~10 cells). Bottom left, clear of the tool panel (top
+right) and the atlas buttons (bottom right): ↺ ↻ (52 px) and the range button; Q / E on a keyboard (not flying —
+there they're down and up — nor with the place tool, whose E turns the model). With ?cutaway=1 a step is the Orbit's
+goal (it owns the azimuth there). Coming back from the free camera the view faces the way the flyer looked.
+scripts/turnshot.mjs (the buttons tapped at phone size, touch): the ground under the middle 119.2,102,117.4 at
+45°, 105°, 165°, 225° and after a 1.2 s hold (307°); no errors. Shots: C:/Projects/shots88/phonecam/turn-0..3.png,
+turn-held.png (320, the default), turn320-*.png (before the pivot fix).
+
+Not changed: the window's edge still shows where the rings past it are pressed under the focus (P13/W3) — from
+every angle now, as from the fixed one.
