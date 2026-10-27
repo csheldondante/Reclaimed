@@ -6617,8 +6617,8 @@ code: on the map's first open the level runs gm/atlas-facts.ts `atlasFacts` on t
 match data/wiki/seed1.json), and gm/map-names.ts turns the wiki into labels: each continent (at its land nearest the
 circular mean of its regions, a torus), every region (seas and lakes their own kinds), every settlement by its size —
 7917 labels, made in 59–62 ms on the desktop (14 ms of it the wiki in Node). The map doesn't make names: label
-sources are a contract (api/map-labels.ts: a name, a kind, a world point, a weight), so the `lakes` branch's lakes
-are one more source (BACKLOG N7); the wiki's own lake regions are labelled already. The map styles each kind
+sources are a contract (api/map-labels.ts: a name, a kind, a world point, a weight), so the atlas's own lakes (merged
+from `lakes`; unnamed yet — the wiki would name them) are one more source (BACKLOG N7); the wiki's own lake regions are labelled already. The map styles each kind
 (Georgia, cream on a dark halo like the sites' dots; seas and lakes italic blue, regions italic, continents spaced
 capitals), shows a kind only in its zooms — metropolises always, cities to 3 texels a pixel, towns to 1.4, villages
 to 0.7, regions/seas/lakes while they're 34 px across, continents while 40 px across and not closer than 0.6 — and
@@ -6677,3 +6677,211 @@ after p95 10.7, p99 13.7, GPU 9.01 ms (noise). No new GPU buffers; the labels ar
 Not done (BACKLOG N5–N7): a window shaped to the view (long along it, as the portrait view's ground is), plants and
 roads past the window, the eye's side's flat floor. Shots: C:/Projects/shots88/phonecam/names-*.png (view, turned,
 north, map, map-out, map-in, map-in2), edge-before.gif / edge-after.gif (the drive at 40), ring193.png / grain.png.
+## Round 88 — no floating rock (`collapse`)
+
+Why: the user on the phone (DECISIONS round 88): "It still fails to make some unsupported structures wake up and fall
+though. So worth testing on a wider column and seeing if only parts of it fall"; "first step is fixing the floating
+rocks". Test first: scripts/floatsweep.mjs (the atlas level, q=low, hybrid=1, 412×915) writes 31 structures into the
+window's columns — towers 3/6/10/16 across × 10/40/100 tall, banded towers (soil, sand, concrete every few cells, as
+the atlas's strata), concrete, stone on a concrete plinth, slabs on necks, bridges, an arch, an arm — mostly far from
+the camera (heightfield chunks), cuts them partly and fully by the break tool's events, the meteor tool, the world
+API's crater (a tank's or hero's shot), take, dig, the player's taps through the pointer, the heat beam and a great
+meteor, and at the end counts on a fresh readback of the whole window every run with something solid in it and no
+way to the ground (its own flood from the window's floor over overlapping runs). scripts/rockcpu.mjs does the same
+for the judge alone on the CPU (random worlds, towers, slabs, bridges, random sphere cuts; `--judge` another
+fracture.ts).
+
+Round 87's code, measured: the sweep's subset left 107-381 runs floating (banded towers: only the part under the
+first band fell; concrete towers, stone on concrete, a slab: nothing or part); rockcpu failed 3 of 30 worlds. Found:
+
+- Runs were the rock's alone, standing on *whatever* was under them: a band of soil or concrete in a tower held up
+  everything above it, though the band itself hung free; the soil on a falling run stayed. Now a run is a column's
+  touching intervals of every material (fracture.ts columnRuns); it stands only if it reaches the window's floor;
+  runs hold each other sideways through intervals that hold (solid, plants) overlapping by half a cell (`joined`).
+  Any hanging run with something solid in it is judged, so structures undercut fall the same way as rock.
+- A pass threw (`next.get(...) is not iterable`, seen in the sweep's page errors) when a piece's flood reached runs
+  an earlier, held piece had stopped at MAX_PIECE — everything after it in that pass went unjudged, and the runs
+  short of it were taken as a piece of their own. A piece joined to one judged held is held now.
+- A piece held nowhere stopped at 65 536 runs and fell as far as it was followed: now it's followed to its end.
+- The pass reads back only the chunks round its seeds; a wide piece reaching past them was judged on columns
+  the CPU's copy last saw long before (and a fall writes those columns back). Now such a piece is left, its
+  chunks read and it's judged again at once (Fracture.need / undecided, Integrity.needChunks; `rereads` in stats).
+  A read that comes back after a slide doesn't count as a look (the seeds were spent on it).
+- The rock pass runs before the structures' boxes, so it takes what hangs free whole first.
+- The break tool, the dig and the meteor woke structures into physics bodies, pinned at the foot (towertest's
+  concrete tower: 15 taps): now they cut the ground as for stone, and the pieces fall as the columns' own.
+- A great meteor's window edit changes columns with no event: they're seeds now (Integrity.cutCols).
+- A piece that caught up with one falling under it landed on it mid-air, ground again up there when the lower
+  one fell on (the sweep's slab on a one-column neck, split in four): it rides down on it now (ColumnBodies).
+- After a meteor, crusts of basalt and films of stone a few hundredths thick floated over slivers of air: the
+  sediment pass let loose ground run out sideways (an exposed face, sediment.wgsl spill) from under what lay on
+  it. Loose intervals under something solid (through the loose ones between) stay put now; the meteor's rim and
+  the beam's bore are also judged once a second while they melt and set (Integrity.watch, 15 s / 6 s).
+
+Measured after (desktop iGPU, D3D11): floatsweep 31/31, 0 floating runs in the window before and after the sweep
+(each case settled in 2.6-6.5 s, 17.7 s with a meteor's watch); rockcpu 150 worlds × 60 cuts with none left
+floating, the judge's slowest call 6 ms; the slowest pass in the sweep 12-15 ms (a 14-across, 70-tall banded tower
+cut through: 178 columns × 10 runs), typical 0.1-5 ms. towertest 5/5 (spire 69 ms, wide 80, concrete *one tap*,
+71 ms, meteor 94, tall 59). driveprofile (q=low 412×915, 25 s): p50 9.9 → 9.8 ms, p95 10.6 → 10.6, GPU 7.89 →
+8.06 ms a frame (noise: sediment 0.05 → 0.06). GIFs: C:/Projects/shots88/collapse/before-wide-banded.gif (a
+12-across, 45-tall tower banded with soil, tapped through at its foot: only the part under the first band falls,
+the rest stays in the air) and after-wide-banded.gif (all of it comes down). The heat-beam case didn't bore through
+headlessly (nothing cut, nothing floats); its path is towertest's and round 87's. Open: BACKLOG C13 (GPU-made
+changes elsewhere — a volcano's flows — aren't judged).
+
+## Round 90 — the atlas owns its lakes (`lakes`, BACKLOG W2)
+
+The user, on W2 (a rivers=table river held at 123.6 over ground at 101–118 at 1040,13551, 167 wall faces): "For the
+rivers why does the river height lie above the dip? Is it because the river exits going higher? If so can we
+compute that the region is flooded at the atlas level?" Yes: findRivers's priority flood fills every hollow to the
+height it spills out at, and a river's level is that filled level; only the river's own columns were given it, so
+its water stood over the rest of the hollow (and the levee, RIVER_LEVEE 12, couldn't raise banks that far).
+
+What changed:
+- rivers.ts: from the fill, each 8-connected component of texels whose filled level is over the ground by LAKE_EPS
+  (0.25; less is a flat the flood only tilted) is a lake when its water would stand LAKE_DEPTH (2.5) deep and
+  LAKE_CATCH (30 dryness-weighted texels) drains into it: level the spill height (its lowest filled level), the
+  outlet the rim texel it spills over, rivers in and out, its regions (`AtlasLake`). A river's level in a lake is
+  the lake's; in a hollow too shallow or dry for one, the floor's (it follows the floor). Lava stops at a lake.
+  Per texel a u16: the lake's id + 1, LAKE_IN set inside, unset on its rim (land texels within LAKE_RING 2 whose
+  filled level is near the lake's — not the valley past its outlet; a texel two rims reach is the higher lake's).
+  Seed 1: 813 lakes (median 14 texels, the biggest 11115 — 100 texels across), 176 deeper than 10, 327 with a
+  river in; +~35 ms to findRivers (435–505 ms in all).
+- The table and the ids go after the river nodes in riverBuf (the crater block's words 1 and 2 say where; 0
+  none), so no new binding. compose.wgsl `lakeAt`: of the four texels round a point, the lake most of them are
+  inside of and how much (bilinear). Over half: `Ground.lkw`, its water may stand there. Less: its rim — the
+  ground raised to a bank LAKE_BANK (0.4) to 1.9 over the level, before any river cuts it. The bank is what makes
+  a wall impossible: every column next to one where the lake's water may stand is either under that too or at
+  least 0.4 over the level. Rivers: none cuts a channel or valley under a lake's water (the trench filled with
+  what slid down its sides and the water stood over it); one lower than the lake (past its outlet, to the sea)
+  doesn't cut the bank where the lake's water is near.
+- colFinish (forms.wgsl): every column with `lkw` under the level gets water to it — form tops and holes too (a
+  crystal's top under the water stood dry, a wall round it); no lava-tube skylights under a lake; silt under the
+  water, but no loose cover on a steep bed (slope ≥ 0.8: the sediment slid down into the hollows at once and the
+  water over them stood a few cells over the lake); sand at the waterline where flat (a beach, slope < 1.2), the
+  rock bare where steep. Wet margins (moisture 0.8).
+- A lake's water is not a river's: no riverFlow, nothing held to a table — still water, asleep as the land comes
+  in (its steady state, settle off with rivers=table), simulated where woken like any other. (Tried first: held
+  like a table river, then carried as is where held. A held column feeds what's woken beside it the pipes'
+  steady flux for its level and keeps its own water: a woken chunk next to held lake columns stood 20–48 deep
+  over the lake's level.)
+- The far rings (lod.wgsl), the atlas viewer (view.wgsl) and the atlas map (api/atlas-map.ts) draw lakes; sites
+  keep out of a coarse cell more than half in a lake (wet sites 11 → 6 of 140); the wiki names them
+  (`WorldWiki.lakes`, "Lake/Mere/Water/Loch <name>", "Tarn/Pool" for small ones, in the land's tongue; the
+  markdown lists those near the start); contracts/world.ts `Lake` and `lakeFlood` (a lake as the flood it is:
+  its regions, its level — RegionState-compatible). AtlasFacts gets `lakes` (the data/atlas cache needs
+  `node scripts/worldwiki.mjs --pull` again to carry them).
+- `?lakes=0`: found but not realised (the A/B's before).
+
+Measured (scripts/lakeprobe.mjs: q=low 412x915, the atlas level, 35 s after load; a wall face is a wet column
+standing more than 3 over a neighbour's level, wet or dry, not counting a sheet over a fall's lip; the W2 spot,
+the 8 biggest lakes at their middle and their outlet):
+
+| spot | before (`lakes=0`) | after |
+|---|---|---|
+| W2, 1040,13551 | 154 | 2 |
+| lake 493 middle (123.25, 21 deep) | 747 | 0 (64409 of 64490 wet columns at its level) |
+| lake 220 middle (109.71, 40 deep) | 2005 | 0 |
+| lake 669 middle (a dry hollow before: no river through) | 0 | 0 |
+| lake 669 outlet | 1591 | 28 |
+| lake 220 outlet | 1035 | 292 (276 a river's, as before: not a lake's) |
+| lake 600 middle / outlet | 68 / 180 | 45 / 29 |
+| lake 1 outlet | 1011 | 6 (a river's) |
+| lake 253 outlet | 395 | 4 |
+| lake 726 outlet | 1511 | 269 (213 other water, 34 river, 22 lake) |
+| lake 724 outlet | 632 | 0 |
+| the 8 middles | — | 0 walls, at their level, except 600's 45 |
+
+What's left (BACKLOG W4–W6): where a giant crystal or a form with a gap under it leans over a lake (the column's
+top out of the window: waterInWindow gives it no water — 600's 45, W2's 2); a woken chunk beside a held river
+mouth is fed over the lake's level (669 outlet's 28); the rivers' own walls past the outlets (lake 220's 276,
+there before).
+
+Perf (scripts/driveprofile.mjs, q=low 412x915, the default ride): lakes=0 p50 9.8 p95 11.2 ms, GPU 11.6 ms a
+frame; lakes p50 9.8 p95 10.7, GPU 9.1 (run to run noise is larger than the change); atlas-colHeight 1.42 → 1.48
+ms a batch (the lake lookup: four more loads a column), the rings' passes the same. No new per-frame work: a lake
+asleep costs what any sleeping water does.
+
+Shots: C:/Projects/shots88/lakes/shore-0-z8.png (lake 493's outlet zoomed in: the shore continuous, the river
+leaving), shore-*-zdef.png at the default zoom, final-*.png the survey, before-*.png with lakes=0.
+  coming down on its stub).
+
+
+---
+
+## 2026-10-27 — rounds 88–89 (session 5, `settlements`): settlements with agents working round them
+
+Why: the user, round 88: "I would like to see settlements with agents working around them"; round 89: quarry,
+felling, hauling and building as the first jobs, farming and houses bringing more people, "vegetation and
+settlements should work similarly … fields with intensity and maybe some material", settlements by rivers and
+resources, quarries and mines "built into the ground/hills in ways that look cool". Round 83 asked that the
+settlements use the city game's data structure; round 85 gave the grids (Townscaper's, Voronoi on contours,
+Bulwark's rings).
+
+- **Records** (src/settle/records.ts). The wiki is built live from the atlas (`buildWiki(atlasFacts(atlas))`, the
+  same code scripts/worldwiki.mjs runs), so a settlement's id (`s<n>`), name, region and realm are the ones the
+  GM's stories use. A civ profile by the realm's era and the site's setting (data/recipes/civs.json); seed 1 has
+  only medieval realms, so where the Ashwrights (industrial) work the land a town is a foundry town, and half the
+  cliff cities are the keepers of old law's — until the GM's eras say otherwise. A quarter stand over an older
+  ruin; raiders camp by some (the region's hostile power when there is one, else outlaws).
+- **Grids** (src/settle/grids.ts, R6). Every style makes lots; every lot is cut the same way (a ring of yard
+  quads, then the inset polygon centre-to-midpoints), so each district is a `CellGrid` the existing `Town` builds on
+  — walls, floors, doors, windows and roofs from the neighbours, unchanged. Yards between lots are the alleys the
+  agents walk. `Town` now takes a grid (the interface is TownGrid's own members).
+- **Arrival** (Atlas.landHooks, plan.ts). The first region of a settlement's box to be made plans it on the raw
+  ground of the whole box, once; each region of the box is stamped from the plan as it comes. So the buildings are
+  real matter in the columns from the first frame (water, fire, collapse and the agents' surfaces all see them),
+  frozen and thawed with the land, and the same whichever region arrives first (settletest: the same seed plans
+  the same columns). Planning all 140 sites on made-up ground: ~21 ms each in Node (the growth field and the
+  quarry's search are most of it).
+- **The field** (src/settle/field.ts, round 89). A settlement is a growth field over its box: intensity and a kind
+  (its style) per 3-unit cell, the ecology pass's shape (grow toward suitability, spread along what suits, colonise
+  from strong neighbours, a stronger kind takes over where it suits better). Suitability: flat dry ground, more
+  near water, rock and the woods. Grown from the middle for as long as the town has stood (by its size); civic
+  buildings at the middle, houses on the lots where it's past 0.35, taller where it's stronger; the next two lots
+  are houses still to build, the rest wait for it. In play it steps every 8 s while the grain lasts, and opens the
+  strongest free lot when nothing's being built.
+- **Quarries.** A terraced pit (benches every 2.2 cells in, a ramp down one side, a crane at the rim) or, where a
+  hill rises within 10 cells, an adit: the forecourt cut level, a tunnel 3 wide and 2.9 high under the rock that
+  stays over it (ColumnPlan.hole), timber posts at its mouth; a spoil heap of rubble beside either.
+- **Units** (src/units/agent-units.ts): the runstory branch's `Units` contract on the GPU agents. Jobs are groups
+  and fields; per-unit goals share three goal fields by where. Hostiles hunt what's in their sight (the agents'
+  targets), the GPU's swings come back as damage; guards strike on the CPU. The agents needed: 12 fields (the
+  rounds want one a leg), 48 seeds, `spawn({ hp })`, a work pose (`workPose`: the figure bent forward, a tool in
+  front — the user wanted to see them "look when working"), unseeded fields cleared once instead of rewritten
+  every sweep, and an idle pass that does nothing (no units, nothing seeded: no peel, no sweeps — the atlas level
+  paid for the peel with nobody on it).
+- **Life** (src/settle/life.ts). Each role a round, each leg a field: miners take the quarry's floor exactly and
+  heap it, woodcutters fell real trees and heap the logs, builders carry from the heaps to the site where every
+  1.2 cells³ a block stands (a `Town` over the site's lot in window coordinates through the town stamp; each
+  cell's floor fixed relative to the door's ground, so the grid can be made again when the window slides without
+  the house jumping onto its own roof). A finished house is a Building + Instance and four more people. Farmers
+  carry sheaves to the granary. A raid: the camp marches on the plaza, workers run home, the guards meet it.
+- Tests: scripts/settletest.mjs (the planner through its API, no browser: all four grid styles used, every
+  settlement with homes, a hall, a store, fields; ruins adapted with their history; nothing built in a pond; the
+  same seed the same plan; `--png` top views), scripts/settlementtest.mjs (in play: the town, its people, the cost,
+  the raid; screenshots and GIFs).
+- **First run in play** (scripts/settlementtest.mjs, the atlas level at the phone tier: q=low, 412×915, the hybrid
+  on; `?town=1` the nearest town to the spawn with a camp — Rudag, s42, river guilds, irregular core + radial
+  homes, over a ruin): the records in 58 ms at load, the town planned once in 49 ms on 16 raw tiles, 1,455 columns
+  stamped; 36 people out (budget 28 + the camp's 7 raiders). Standing at the town for 15 s: frames p50 9.7 ms,
+  p95 11.3 ms; the GPU 5.6 ms a frame, the agents' pass 0.95 ms of it (sweeps 2 on the phone tier). A raid of 7
+  against 4 guards: repelled, all 7 raiders dead and 4 of the town's. Fixes it found: `?settle=0` was already the
+  phone tier's flag (the streamer's settling; phone-flags.ts), so the system's off switch is `?towns=0`; a sheaf
+  can't be a carried load (leaves aren't ground: it's drawn as sand); a river town's site is on its river, so its
+  middle moves to the nearest dry level ground beside it; a quarry outside its own region had no rights and the
+  miners stood idle — the quarry is now sought in its own region first.
+- **Seen working, and the cost** (three more runs, Rudag at the phone tier). Over a run: ~2.7 cells³ quarried,
+  3.2 of logs felled, 2.4 heaped, 1.7 brought into the house going up (its first block stood); a raid of 7 against
+  4 guards repelled each time (7 raiders and 3–4 of the town dead). The workers were in the shots but hard to
+  see: a 1-cell figure in canvas colours at the phone's half resolution is a few pixels against plaster and grass —
+  now 1.4 cells tall in a yellow tunic (guards in steel, raiders in brick red), and the close-ups at 6–9× the
+  default zoom; a probe (40 spawned at the plaza, with the hybrid and without) confirmed they draw both ways.
+  Cost at the town, 36 units: frames p50 9.7–9.9 ms, p95 11.3–11.6 ms, the same as the town with nobody out
+  (`?townfolk=0`: 9.8 / 11.5) — the frame is vsync's; the GPU's own sum swings with its clocks (5.4–11.9 ms a
+  frame, the agents' pass 0.95–3.5 ms of it, the same scene). The idle town (nobody out) seeded its fields
+  anyway, so the agents' pass ran with no one to read it: nothing is seeded now when nobody's out. A new load
+  replaces what a unit held (a raid's flight left loads in hands).
+- Shots and GIFs: C:/Projects/shots88/settlements/ — town-phone-default.png (default zoom), town-phone-zoom.png,
+  town-phone-debug.png (`?towndebug=1`: grid, lots, field, spots, people by phase), town-phone-workers.gif,
+  town-phone-quarry.gif / -site.gif / -heaps.gif (close-ups), raid-phone.gif; plan-*.png (the planner's top views).

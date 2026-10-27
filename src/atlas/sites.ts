@@ -74,6 +74,8 @@ export interface SiteInput {
   contOf: Int32Array;
   /** per texel: a river's node there (≠ 0) */
   river: Uint32Array;
+  /** (round 90) per texel: a lake's (rivers.ts LAKE_IN set inside one) — no settlement stands in a lake */
+  lake?: Uint16Array;
   craters: Float32Array;
   craterWords: number;
   worldW: number;
@@ -105,15 +107,19 @@ export function settle(inp: SiteInput): Settlement {
   const lf = new Int32Array(M);
   const cont = new Int32Array(M);
   const riv = new Uint8Array(M);
+  const lakeC = new Uint8Array(M);
   for (let cy = 0; cy < m; cy++)
     for (let cx = 0; cx < m; cx++) {
       let s = 0;
       let rv = 0;
+      let lk = 0;
       for (let k = 0; k < C * C; k++) {
         const t = (cy * C + (k >> 2)) * n + cx * C + (k & 3);
         s += hmac[t];
         if (inp.river[t]) rv = 1;
+        if (inp.lake && inp.lake[t] & 0x8000) lk++;
       }
+      lakeC[cy * m + cx] = lk * 2 >= C * C ? 1 : 0;
       const c = cy * m + cx;
       const mid = (cy * C + 2) * n + cx * C + 2;
       h[c] = s / (C * C);
@@ -122,7 +128,7 @@ export function settle(inp: SiteInput): Settlement {
       riv[c] = rv;
     }
   const wrap = (x: number, y: number) => ((((y % m) + m) % m) * m + (((x % m) + m) % m)) | 0;
-  const land = (c: number) => lf[c] >= 0 && h[c] > inp.sea;
+  const land = (c: number) => lf[c] >= 0 && h[c] > inp.sea && !lakeC[c];
   // (a road's way: any land the continent's, a cell under the sea's level in it — a river's mouth, a lake, a
   // crater's floor — dear, bridged: they split a continent's roads where they cut it)
   const way = (c: number) => lf[c] >= 0;

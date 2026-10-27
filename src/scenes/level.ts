@@ -18,6 +18,9 @@ import { Physics } from '../physics/physics';
 import type { LavaSystem } from '../sim/lava';
 import { installPhysics } from '../physics/install';
 import { installAgents } from '../agents/install';
+import { Settlements } from '../settle/settlements';
+import { TownDebug } from '../settle/debug';
+import { AgentUnits } from '../units/agent-units';
 import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
@@ -49,7 +52,7 @@ import { demoStory } from '../story/demo';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
-import { cpuLine, cpuStats, frameSteps } from '../gpu/cpustat';
+import { cpuLine, cpuStats, frameSteps, timed } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
@@ -73,7 +76,7 @@ export interface LevelOptions {
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -204,6 +207,10 @@ export class LevelScene implements Scene {
   physics?: Physics;
   /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
   agents!: Agents;
+  /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
+  settlements?: Settlements;
+  units?: AgentUnits;
+  private townDebug?: TownDebug;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -221,7 +228,6 @@ export class LevelScene implements Scene {
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
   private beamWoke = -Infinity;
-  private digWoke = -Infinity;
   private beamLine?: SVGLineElement;
   private beamDot?: SVGCircleElement;
   private beamPicking = false;
@@ -565,16 +571,20 @@ export class LevelScene implements Scene {
     // window's columns have been read back and changed; its bowl goes in with them)
     if (e.kind === EV.meteor && cx === Math.round(ex) && cy === Math.round(ey)) this.impactFx([px, py, this.core.map.surface[cy * W + cx]], 12);
     const t0 = performance.now();
+    // (round 88) the columns it changes: what hangs by them is judged (it lowers tops — an arm, a bridge's pier)
+    const changed: number[] = [];
     const n = await S.editLive(x0, y0, x1, y1, (x, y) => {
       const gx = S.origin[0] + x;
       const gy = S.origin[1] + y;
       const d = eventAt(e, gx + 0.5 + 0.5 * (((gy % 2) + 2) % 2), (gy + 0.5) * ROW_H, worldW, worldH);
+      if (d && (Math.abs(d.dr) >= 0.05 || d.dl >= 0.05)) changed.push(y * 65536 + x);
       return { ...d, cap: e.kind === EV.cone ? MAT.Basalt : 0 };
     });
     this.editLiveMs = performance.now() - t0;
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
     // (round 86: every column written again — what was falling is looked at again where it stopped)
     this.integrity?.clear(true);
+    if (n) this.integrity?.cutCols(changed);
     const z = this.core.map.surface[cy * W + cx];
     if (e.kind === EV.meteor && n) this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: 13 * 32 + 512, radius: 12 * 2.5, strength: z });
     if (e.kind === EV.cone && n) this.lava?.addVent(px, py, 60, 12, 3, 0);
@@ -695,8 +705,21 @@ export class LevelScene implements Scene {
       const zMax = level.zMax ?? 64;
       // (the atlas is taller than the window: it slides in z — round 69)
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
+      // (round 88) the settlements' records, and their hook on the land, before the first window is made
+      const settlements = host.params.get('towns') === '0' ? undefined : new Settlements(atlas);
       const at = host.params.get('at');
-      const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
+      // (?town=s12: start at that settlement; ?town=1 the nearest to the spawn)
+      const town = host.params.get('town');
+      let [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
+      if (town && settlements) {
+        const sp = atlas.spawn();
+        // (the nearest town or city with a camp by it: workers and a raid to see)
+        const camped = new Set(settlements.seeds.filter((x) => x.campId).map((x) => x.rec.id));
+        const s = town === '1' ? settlements.near([sp[0], sp[1] * ROW_H], 1e9).find((x) => (x.size === 'town' || x.size === 'city') && camped.has(x.id)) : settlements.settlement(town);
+        if (!s) throw new Error(`?town=${town}: no such settlement`);
+        cx = Math.round(s.at[0]);
+        cy = Math.round(s.at[1] / ROW_H);
+      }
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
@@ -705,7 +728,7 @@ export class LevelScene implements Scene {
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
       atlas.profiler = host.profiler;
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground } };
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
@@ -1330,8 +1353,60 @@ export class LevelScene implements Scene {
               if (b) integ.markBox(...b);
             }
       }
+      // (round 88) the settlements: planned and built as their land comes in (Atlas.landHooks, set before the
+      // first window); lived in near the camera — their people as units on the agents
+      const st = a?.settlements;
+      if (st) {
+        const units = new AgentUnits(this.agents);
+        this.units = units;
+        this.settlements = st;
+        core.onShift.push((dx, dy, dz) => units.shift(dx, dy, dz));
+        const S = this.stream;
+        S.onWarp.push(() => {
+          st.life?.dispose();
+          st.life = null;
+        });
+        // (the window's moves: a house being built has its grid made again in the new window)
+        let epoch = 0;
+        S.onSlide.push(() => epoch++);
+        S.onWarp.push(() => epoch++);
+        const terrainApi = () => {
+          const t = (this.worldApi ??= attachSim(core)).terrain;
+          if (!t) throw new Error('settlements: the world API has no terrain');
+          return t;
+        };
+        const plants = () => {
+          const p = (this.worldApi ??= attachSim(core)).plants;
+          if (!p) throw new Error('settlements: the world API has no plants');
+          return p;
+        };
+        st.play({
+          units,
+          origin: () => [S.origin[0], S.origin[1]],
+          dims: { w: dims.w, h: dims.h },
+          focus: () => [core.camera.target[0], core.camera.target[1]],
+          trees: (at, r) => plants().treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+          fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
+          take: (at, n) => terrainApi().take(at[0], at[1], n),
+          put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
+          townIO: {
+            ground: (col) => terrainApi().heightAt(...cellPos(col % dims.w, Math.floor(col / dims.w))) ?? 0,
+            stamp: (stamps) => core.sim.town.stamp(stamps),
+            zMax: dims.zMax,
+          },
+          epoch: () => epoch,
+          ready: (at) => (this.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
+          budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
+        });
+        if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
+      }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
+      // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
+      settlements: this.settlements,
+      units: this.units,
+      townDebug: this.townDebug,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
       flow: this.flow && {
@@ -1564,6 +1639,12 @@ export class LevelScene implements Scene {
     if (this.opts.atlas) this.stepGeysers(dt * this.speed);
     // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms)
     if (this.opts.atlas && ++this.coarseFrame % 4 === 0) this.opts.atlas.atlas.coarse.step(1);
+    // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
+    if (this.units && !this.stream?.busy) {
+      this.units.update(dt * this.speed);
+      timed('settle', () => this.settlements!.update(dt * this.speed));
+      this.townDebug?.draw();
+    }
 
     const simDt = dt * this.speed;
     if (this.hoverWorld) powers.hover(this.hoverWorld[0], this.hoverWorld[1], dt);
@@ -2413,9 +2494,12 @@ export class LevelScene implements Scene {
     }
     // the rim's ground molten, glowing past it; a molten pool in the bowl (no cone)
     this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5);
+    // (round 88: the rim melting and setting over the next seconds — judged until it's done)
+    this.integrity?.watch(x, y, BOWL * 1.6, 15);
     this.lava?.addVent(x, y, 2.5, 12, 3, 0);
     const phys = this.physics;
-    if (phys) void this.wake(x, y, -1, BOWL + 2).then(() => phys.blast([x, y, z], BOWL, 28));
+    // (round 88: what the bowl undercut falls as the columns' pieces — the ruins there aren't woken into bodies first)
+    if (phys) phys.blast([x, y, z], BOWL, 28);
   }
 
   /** Open a volcano vent where the pointer is (sim/lava.ts). */
@@ -2594,14 +2678,15 @@ export class LevelScene implements Scene {
       // physics (docs/PHYSICS.md): a ruin hit comes alive first, then a blast
       // where it hit — what's inside crumbles, what's near is thrown — and the
       // ground there is smashed as before
+      // (round 88, the user: a concrete tower came down "through the old physics path after 15 taps" — the ruin
+      // there woken into physics bodies, its foot pinned: the ground is cut as stone is, what it held falls as the
+      // columns' own pieces; physics bodies already about are still blown about and broken by it)
       if (this.physics) {
         const phys = this.physics;
         const body = (hit.flags & 0x8000) !== 0;
-        void (body ? Promise.resolve() : this.wake(x, y, at[2], ed.radius + 2)).then(() => {
-          phys.blast(at, Math.max(1, ed.radius * 0.5), 6);
-          if (!body) core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
-          core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
-        });
+        phys.blast(at, Math.max(1, ed.radius * 0.5), 6);
+        if (!body) core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
+        core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
         return;
       }
       // a fallen body under the cursor: break it in its own frame (round 18)
@@ -2632,12 +2717,8 @@ export class LevelScene implements Scene {
     const z = op * 32 + ed.material + (this.strokeStart ? 512 : 0);
     this.strokeStart = false;
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z, radius: ed.radius, strength: layered ? ed.layers : ed.strength });
-    // digging under a ruin of the map's wakes it (round 48: it fell, rather
-    // than hanging over the hole); a few times a second, each wake reads the layers back
-    if (this.physics && ed.tool === 'dig' && performance.now() - this.digWoke > 300) {
-      this.digWoke = performance.now();
-      void this.wake(x, y, -1, ed.radius + 1);
-    }
+    // (round 48 woke a ruin dug under into physics bodies; round 88: the dig's cut is judged as every cut is —
+    // what it undercut falls as the columns' pieces, Integrity's tap)
   }
 
   /** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */

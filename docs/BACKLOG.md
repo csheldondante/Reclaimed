@@ -22,7 +22,7 @@ user) · `deferred` (agreed for later).
 | N4 | "I easily hit the edge of the loaded ground" — measured (DEVLOG round 91): at the phone's zoom 52–66% of a portrait screen is past the 320 window at any time (the view's ground is ~158 × 700 cells, the window 320 × 320); panning outran the slides to 45 cells of the window's edge. Done: the camera kept a region in from the edge (min 64), the land asked for where the camera's heading (1 s ahead), the rings past the window given the window's grain a cell | M | done (phonecam), partly: N5–N7 |
 | N5 | The window shaped to the view: on a portrait phone the view's ground is long along the view and narrow across — a window longer than wide, turned with the view (or a split per-column buffer, R5, for a wider one under 128 MB) | L | open |
 | N6 | Past the window: plants and roads on the rings (P13's "Left"), the ground's colour the window's (the window's grass is brighter and speckled); the eye's side pressed under the focus reads as a flat floor | M | open |
-| N7 | A lakes label source (the `lakes` branch's named lakes, kind 'lake') plugged into the map: the contract is there; the wiki's own lake regions are labelled already | S | open |
+| N7 | The atlas's own lakes (`Atlas.lakes`, merged from `lakes` into places in round 91) on the map as labels: they need names first, and those belong in the wiki (buildWiki names regions and settlements, not the atlas's lakes) — then a label source of kind 'lake' (api/map-labels.ts); the wiki's lake regions are labelled already | S | open |
 
 ## Round 90 (2026-10-27, session 5, `phonecam`) — more of the atlas on the phone, turning the view (DECISIONS round 90)
 
@@ -40,8 +40,42 @@ user) · `deferred` (agreed for later).
 | id | item | size | status |
 |---|---|---|---|
 | W1 | "a steep wall of water" by the sea: where the window's floor is over 0 (a warp or a slide up by a coast), the sea's columns cut off under the floor came in dry and drained what ran in; the sea beside stood over them 26 tall (151 faces at 11600,18213) | S | done (seawall): layout.ts waterInWindow in the four cuts, water_depth.wgsl holds a cut-off column under the sea; 0 faces after |
-| W2 | A rivers=table river held over a macro hollow deeper than its levee (RIVER_LEVEE 12): its water 17-22 deep over the hollow's floor with no banks (1040,13551: a river at 123.6, the depression's spill height, over coastal ground at 101-118; 167 faces). Fill the hollow as a lake to its spill level (the per-texel fill on the GPU), or the river runs on the hollow's floor past the levee's reach? | M | asked |
+| W2 | A rivers=table river held over a macro hollow deeper than its levee (RIVER_LEVEE 12): its water 17-22 deep over the hollow's floor with no banks (1040,13551: a river at 123.6, the depression's spill height, over coastal ground at 101-118; 167 faces). Fill the hollow as a lake to its spill level (the per-texel fill on the GPU), or the river runs on the hollow's floor past the levee's reach? | M | done (lakes, round 90: the atlas keeps lakes — DEVLOG round 90; 154 → 2 faces here, the lakes' middles 0) |
+| W4 | (round 90) A giant crystal or a form with a gap under it leaning over a lake: the column's top is out of the window, waterInWindow gives it no water — a dry pocket beside the lake (lake 600: 45 faces; W2's spot: 2) | S | open |
+| W5 | (round 90) A woken chunk beside a held river's mouth into a lake is fed the river's steady flux and stands a few cells over the lake's level (lake 669's outlet: 28 faces); and what woke it, with no player there | S | open |
+| W6 | (round 90) The rivers' own walls past some lake outlets (lake 220's outlet: 276 faces, there before the lakes): a river held over lower ground beside it | M | open |
+| W7 | (round 90) Reeds at a lake's flat shore (now sand, wet margins) | S | open |
 | W3 | The window's near edges show as tall walls of strata at the default zoom where the rings past them are pressed under the focus (the hybrid's known "window's edge visible", P13) — not water, but it reads as a wall by the sea when the window's floor is raised | M | open (P13) |
+
+## Round 88 (2026-10-27, session 5, `collapse`) — no floating rock (DECISIONS round 88)
+
+| id | item | size | status |
+|---|---|---|---|
+| C9 | Floating rock after a cut: runs of every material (a band of soil or concrete in a tower left everything over it standing on it, in the air), pieces followed to their end (no 65 536 cap dropping part), a piece joined to a held one held (round 87's pass threw there and judged nothing after), pieces reaching columns not read back judged once they are; scripts/floatsweep.mjs (ground truth: a flood from the ground over the whole window) and scripts/rockcpu.mjs (the same on the CPU, random worlds and cuts) | M | done (collapse) |
+| C10 | Concrete and other structures cut by the break tool, a dig or a meteor fall as the columns' pieces (they were woken into physics bodies, pinned at the foot: 15 taps to bring a tower down) | S | done (collapse) |
+| C11 | A piece that caught up with one falling under it landed on it mid-air (left over the air when the lower one landed): it rides down on it now | S | done (collapse) |
+| C12 | Loose ground ran out sideways from under what lay on it (sediment.wgsl spills), leaving slabs and basalt crusts over air after a meteor: the loose under something solid stays; a meteor's rim and the beam's bore are watched as they melt and set (Integrity.watch) | S | done (collapse) |
+| C13 | The GPU still changes ground the integrity system doesn't hear about (lava setting elsewhere — a volcano's flows, the sim's own slumps): nothing checks those columns. A slow rotating sweep of the window (floatingRuns over a stripe a second) would catch any; not needed by the sweep's tools | S | open |
+## Rounds 88–89 (2026-10-27, session 5, `settlements`) — settlements with agents working round them (DECISIONS rounds 88, 89)
+
+| id | item | size | status |
+|---|---|---|---|
+| ST1 | Settlement records from the atlas's sites (the wiki's ids and names), a civ profile each by era and setting, a camp of raiders near some, the box they're planned over; stores advancing by rates out of play | M | done (this commit; src/settle/records.ts, settlements.ts) |
+| ST2 | Districts on overlay grids: radial (rings and spokes) and contour-Voronoi beside the irregular and orthogonal ones, every style cut into lots → yard and footprint quads (a CellGrid the town builds on) | M | done (this commit; src/settle/grids.ts; R6) |
+| ST3 | Realised as land arrives (Atlas.landHooks): buildings as Building + Instance (derived use), storeys, the civ's materials, the plaza's well and stalls, the wall with gates and towers, fields, a ruined tower adapted into homes, the camp's tents; deterministic from the seed and the raw ground | M | done (this commit; plan.ts) |
+| ST4 | The Units contract (runstory's) on the GPU agents: jobs as groups and shared fields, hostiles hunting what's in sight, guards striking, swing events as damage, died/hurt/noticed | M | done (this commit; src/units/agent-units.ts) |
+| ST5 | Workers near the player (round 89's first jobs): miners dig the quarry (exact takes) and heap it, woodcutters fell real trees and heap the logs, builders carry from the heaps to a house going up block by block (a finished house is a Building + Instance and brings four more people), farmers carry sheaves to the granary; guards; a raid from the camp met by the guards; a work pose (bent to a tool) | L | done (this commit; life.ts) |
+| ST6 | Quarries cut into the land (round 89): a terraced pit with a ramp and a crane, or an adit timbered into a hillside with its forecourt cut level; spoil heaps | M | done (this commit; more: mines that go deeper in play, cranes that move, carts on rails) |
+| ST7 | Settlements as a growth field (round 89): intensity + style per cell, suitability from flat dry ground, water, rock and woods; grown from the middle at arrival (its lots built where it's strong), stepping on in play as the grain allows and opening lots for the builders | M | done (this commit; field.ts — the field is per settlement's box; an atlas-wide field (siting, settlements merging and spreading), safety from camps, and sharing the field with vegetation still open) |
+| ST8 | `?towndebug=1`: the live settlement's grid, lots, spots, field, people by phase, stores and trips; the API on `reclaimed.settlements` (near, settlement, all, live, plan, raid, events built/died/raided, toWindow/toWorld) and `reclaimed.units` | S | done (this commit) |
+| ST9 | An atlas-wide settlement field: where people settle and spread (rivers, resources), towns growing into each other, new hamlets; vegetation on the same machinery (GrowthField) | L | open |
+| ST10 | Mines that go into the hill in play (the adit's face cut further: a carve at height, not the column's top), ore as a resource with mineral rights; carts | M | open |
+| ST11 | Settlements more than one at once in play, and their people seen walking the roads between them (traders, travellers) | M | open |
+| ST12 | Units that leave the window stay (now a settlement's people go when it leaves play; the story's named characters are kept by the runstory side) | S | open |
+| ST13 | Colour per unit (the contract's `colour`): the agents draw a kind's or a group's colour; a per-unit tint needs a word in the unit | S | open |
+| ST14 | Paths between buildings and resources (round 91): worn ways from the houses to the quarry, the woods, the fields, the heaps and the well, drawn on the ground; found by where the agents walk most (a traffic field) if a plan alone doesn't place them well | M | open |
+| ST15 | Agents on paths move between known places (a path graph, not the flow field each step): cheaper to update, the flow field only off the paths (round 91) | M | open |
+| ST16 | Every settler a person with an id and a serialized record (name, role, kin, home, history: the diplomacy's party), so the player can talk to anyone and the GM can introduce characters from them; kept between runs (round 91; with ST12, R8) | M | open |
 
 ## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
 
@@ -95,9 +129,9 @@ user) · `deferred` (agreed for later).
 | R1 | The recipe model's contracts: kinds and tags, slots, recipes (assemble, craft, train, adapt, salvage), instances (parts, material, condition, owner, place, history), capability rules, civilization profiles (knowledge by mastery: uses, repairs, makes, understands), a Look hook; the reference implementation (compose.ts: `derive`, `plan`); scripts/recipetest.mjs | M | done (this commit) |
 | R2 | Diplomacy's contracts: interactions between factions and people (RimWorld-like, fading, quoted by dialog), agreements (war, truce, peace, alliance, trade, land rights, mineral rights, passage, tribute, vassalage), opinions and stances derived; MemoryDiplomacy | M | done (this commit) |
 | R3 | Settlements on overlay grids (irregular, contour Voronoi, radial, orthogonal), buildings as instances with a derived use, adaptive reuse (`founded.over`), jobs that need rights | S | done (this commit; the generators for contour-Voronoi and radial grids are R6) |
-| R4 | The first content as data (data/recipes/): materials (with ageing), ~30 kinds, the core capability rules, a few civ profiles from the atlas's eras; the world state keeps things and diplomacy between runs (WorldSnapshot) | M | open |
+| R4 | The first content as data (data/recipes/): materials (with ageing), ~30 kinds, the core capability rules, a few civ profiles from the atlas's eras; the world state keeps things and diplomacy between runs (WorldSnapshot) | M | minimal done (settlements: data/recipes/core.json — 15 materials with ageing, 18 kinds, 6 recipes, 11 rules; civs.json — 6 profiles); keeping things and diplomacy in the WorldSnapshot open |
 | R5 | Units from compositions: the unit generator (system 6) makes a unit as an Instance from a role, a civ and what's at hand (`plan`), its stats and abilities from `derive` | M | open |
-| R6 | Grid generators: Voronoi on height contours and radial rings and spokes beside build/towngrid.ts, picked by CivProfile.builds.grids | M | open |
+| R6 | Grid generators: Voronoi on height contours and radial rings and spokes beside build/towngrid.ts, picked by CivProfile.builds.grids | M | done (settlements: src/settle/grids.ts, ST2) |
 | R7 | Legacy between runs: what a run leaves (bodies, gear, wrecks, buildings) becomes Instances placed `in: 'region'` (buried, scattered, hoard) and the region generator places them on arrival; materials age between runs | M | open |
 | R8 | Dialog and the GM read diplomacy: `memories(who, about)` in talks ("you spared my brother"), agreements in the wiki and stories; story Outcomes that note interactions and make or break agreements | S | open |
 

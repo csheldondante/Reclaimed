@@ -27,6 +27,40 @@ each was implemented.
   level — ↺ ↻ (a tap a sixth of a turn, eased; held, it turns on), Q / E — reversing the 2026-10-07 removal there
   at the user's ask (the cutaway's large-obstacle turn, round 82, was the first exception).
 
+## 2026-10-27 — round 91 (session 5, `places`) — lakes and settlements merged; paths, people with ids
+
+- "Lakes look good!" → `lakes` merged into `places`.
+- "Settlements look decent but I think we should add paths between buildings and resources we could even run
+  agents to find heavily trafficked paths if needed but I think that's all good for the Todo. Updating them when
+  on paths and just moving between known locations should be even cheaper. I would probably give them an id and
+  some sort of serialization so we can let players talk to anyone and introduce characters that way."
+  → `settlements` merged; ST14-ST16.
+- The falling rock (round 88's collapse work) is the one the user is "most concerned about" — to test next.
+
+## 2026-10-27 — round 90 (session 5, `lakes`) — the atlas owns its lakes
+
+- The user, on BACKLOG W2 (a table river held over a hollow, its water standing with no banks), verbatim: "For the
+  rivers why does the river height lie above the dip? Is it because the river exits going higher? If so can we
+  compute that the region is flooded at the atlas level?"
+- → Yes: rivers.ts's priority flood fills every hollow to the height it spills out at, and a river's level is
+  that filled level; only the river's own columns had it, so its water stood over the rest of the hollow. Now the
+  atlas keeps each filled hollow deep and wet enough as a lake (its level the spill height, its outlet, the rivers
+  in and out), named in the wiki, drawn on the map and in the far rings, and the region generator realises it on
+  arrival: the basin filled to the level and held still, its shore a bank over the level (DEVLOG round 90).
+
+## 2026-10-27 — round 88 (session 5, `collapse`) — no floating rock
+
+- The user, testing on the phone, verbatim: "The collapse code render looks much better! It still fails to make
+  some unsupported structures wake up and fall though. So worth testing on a wider column and seeing if only parts
+  of it fall."
+- And: "I also, think we can do even more with the collapse code but first step is fixing the floating rocks. We
+  can work on making them more physics enabled as future work".
+- → After any edit, every run with no support path to the ground falls, in full: a column's runs are its touching
+  intervals of every material (not the rock's alone), a hanging piece is followed to its end, structures (concrete
+  and the rest) cut by the break tool, a dig or a meteor fall the same way as rock (not woken into physics bodies);
+  the ground truth (a flood from the ground) is what the tests count. Toppling and more physics: later (BACKLOG
+  C4, C5, C7).
+
 ## 2026-10-27 — round 88 (session 5, `seawall`) — a wall of water by the sea
 
 - The user, on the phone at the atlas level (the phone's defaults: hybrid, rivers=table, simcull): "I did find what
@@ -34,6 +68,31 @@ each was implemented.
   the sea's columns cut off under a raised window floor came in dry and drained whatever ran in; they now hold the
   sea from the floor up to its level. A second wall (a table river held over a macro hollow) is a judgement call,
   BACKLOG W2.
+## 2026-10-27 — round 89 (session 5, `settlements`) — the first jobs; settlements as a field; quarries
+
+- The user, verbatim: "We have the flow field based agents right? I'm curious to see how they navigate a settlement
+  and look when working. I think quarry and felling trees, hauling and building make sense as the first jobs (maybe
+  farming and houses to spawn more agents?) I think vegetation and settlements should work similarly actually. Both
+  are fields with intensity and maybe some material (different biomes or settlement styles) and sensitive to
+  conditions on the map grow and spread. Settlements along rivers and near resources make sense and hopefully
+  quarries and mines can be built into the ground/hills in ways that look cool."
+- → First jobs: quarrying (the ground taken exactly and heaped), felling real trees (logs heaped), hauling from the
+  heaps and building a house block by block; farming feeds growth; a finished house brings more people. A work pose
+  (bent to a tool) so working reads. A settlement is a growth field (intensity + style, suitability from the land,
+  water and resources; the ecology pass's shape, src/settle/field.ts) realised on its grids where it's strong, and
+  growing in play as it's fed. Quarries: terraced pits with a ramp and a crane, or adits timbered into hillsides,
+  with spoil heaps.
+
+## 2026-10-27 — round 88 (session 5, `settlements`) — settlements with agents working round them
+
+- The user, verbatim: "I would like to see settlements with agents working around them".
+- (Round 83: settlements first, agents that are workers or hostile, "the settlements at least use the same data
+  structure we plan to expose to the city management game"; round 85: overlay grids — "irregular grids like
+  townscaper or build voronoi on height contours for modern or use radial sets like the game bulwark".)
+- → Branch `settlements`: every atlas site a Settlement record (settlement.ts) with a civ profile, districts on the
+  four grid styles, buildings as recipe Instances realised as voxels when the land arrives; workers and guards as
+  units (the `Units` contract, runstory's, implemented on the GPU agents) walking their rounds near the player;
+  raiders' camps whose raids the guards meet.
 
 ## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
 

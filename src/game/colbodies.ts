@@ -143,14 +143,23 @@ export class ColumnBodies {
     return b;
   }
 
+  /** the piece holding up the run last asked about (support), if it's another piece's run and not the base's */
+  private by: FallingBody | null = null;
+
   /** the top of what holds a run whose bottom is at z in column k: the base's, or another piece's (not b's) */
   private support(k: number, z: number, b: FallingBody): number {
     let s = 0;
+    this.by = null;
     for (const iv of this.base.get(k) ?? []) if (iv.z1 <= z + 1e-3) s = Math.max(s, iv.z1);
     for (const o of this.users.get(k) ?? []) {
       if (o === b) continue;
       const c = o.colAt.get(k);
-      if (c) for (const iv of c.ivs) if (iv.z1 + o.dz <= z + 1e-3) s = Math.max(s, iv.z1 + o.dz);
+      if (c)
+        for (const iv of c.ivs)
+          if (iv.z1 + o.dz <= z + 1e-3 && iv.z1 + o.dz > s) {
+            s = iv.z1 + o.dz;
+            this.by = o;
+          }
     }
     return s;
   }
@@ -166,6 +175,10 @@ export class ColumnBodies {
       // the gap under it: the least over its runs
       let gap = Infinity;
       let at: [number, number, number] = [0, 0, 0];
+      let on: FallingBody | null = null;
+      // (round 88) the least gap over what's ground (the base, or a piece that isn't falling any more)
+      let gapG = Infinity;
+      let atG: [number, number, number] = [0, 0, 0];
       for (const c of b.cols) {
         const k = key(c.x, c.y);
         for (const iv of c.ivs) {
@@ -174,11 +187,27 @@ export class ColumnBodies {
           if (g < gap) {
             gap = g;
             at = [c.x, c.y, z];
+            on = this.by;
+          }
+          if (!this.by && g < gapG) {
+            gapG = g;
+            atG = [c.x, c.y, z];
           }
         }
       }
       const move = -v * dt;
-      if (move >= gap || b.age > MAX_AGE) {
+      // (a tie: it's on the ground)
+      if (gapG <= gap + 1e-6) {
+        gap = gapG;
+        at = atG;
+        on = null;
+      }
+      // (round 88) caught up with a piece falling under it: it rides down on that one, at its speed — it landed
+      // on it mid-air before, ground again up there while the one under it fell on (the sweep's floating slabs)
+      if (move >= gap && on && this.list.includes(on) && b.age <= MAX_AGE) {
+        b.dz -= gap;
+        b.vz = Math.max(v, on.vz);
+      } else if (move >= gap || b.age > MAX_AGE) {
         b.dz -= Math.min(gap, move);
         at[2] -= Math.min(gap, move);
         landed.push({ body: b, speed: -v, at });

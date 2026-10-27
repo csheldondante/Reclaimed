@@ -33,7 +33,7 @@ import { landformsOf, tiersOf, type Landform } from './landforms';
 import { settle, type Settlement } from './sites';
 import { buildWays, stampWays, type Ways } from './ways';
 import { timed } from '../gpu/cpustat';
-import { findRivers, NODE_WORDS } from './rivers';
+import { findRivers, LAKE_WORDS, NODE_WORDS, type AtlasLake } from './rivers';
 import { RIVERS } from '../sim/world-gpu';
 import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
@@ -158,7 +158,7 @@ interface Extra {
 const PARAM_BYTES = 144;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 16;
-const COLG_BYTES = 88;
+const COLG_BYTES = 96;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;
@@ -252,9 +252,13 @@ export class Atlas {
   settlement: Settlement = { sites: [], roads: [], ms: 0 };
   /** the roads and their crossings, graded, to be built into the columns (round 79, ways.ts) */
   ways: Ways = { points: [], lifts: [], bins: new Map(), counts: [], ms: 0 };
-  riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0, speed: [0, 0, 0] as [number, number, number], discharge: 0, pipeSlope: 0 };
+  riverStats = { nodes: 0, lava: 0, waterfalls: 0, lakes: 0, ms: 0, speed: [0, 0, 0] as [number, number, number], discharge: 0, pipeSlope: 0 };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
+  /** (round 90, rivers.ts) the lakes: each filled hollow kept as one, and per texel which (rivers.ts LAKE_IN: its
+   *  id + 1, the bit set inside it, unset on its rim) */
+  lakes: AtlasLake[] = [];
+  lakeAt: Uint16Array = new Uint16Array(0);
   /** the coarse world (round 71): what changes at the world's scale, out of sight */
   readonly coarse: Coarse;
   /** the giants (round 75): crystals the size of mountains, GIANT_FLOATS each — x, y (world), base, height,
@@ -459,10 +463,14 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     this.writeParams();
     // the craters first (round 78): the continents' noise takes them
     this.makeCraters();
+    let lakeOff = [0, 0];
     const writeCraters = () => {
       const blk = new Float32Array(CRATER_BLOCK);
       new Uint32Array(blk.buffer)[0] = this.craters.length / CRATER_WORDS;
       blk.set(this.craters, 4);
+      // (round 90: words 1 and 2 of the block — where the lakes' table and the per-texel lake ids start in the
+      // buffer, words; 0 none: compose.wgsl lakeAt)
+      new Uint32Array(blk.buffer).set(lakeOff, 1);
       dev.queue.writeBuffer(this.riverBuf, N * 4, blk);
     };
     writeCraters();
@@ -540,12 +548,24 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
       }
       return findRivers({ n, hmac: this.hmac, water, volcanic, regionOf: this.regionOf, sea: p.sea, worldW: this.worldW, worldH: this.worldH });
     });
-    this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, ms: rv.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: rv.pipeSlope };
+    this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, lakes: rv.lakes.length, ms: rv.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: rv.pipeSlope };
     this.riverNodes = rv.nodes;
+    this.lakes = rv.lakes;
+    this.lakeAt = rv.lakeAt;
+    // (round 90) after the nodes: the lakes' table (LAKE_WORDS each: the level), then the per-texel ids, two to a word
+    const nodeBytes = Math.max(rv.nodes.byteLength, NODE_WORDS * 4);
+    const lakeTab = new Float32Array(Math.max(rv.lakes.length, 1) * LAKE_WORDS);
+    for (const lk of rv.lakes) lakeTab[lk.id * LAKE_WORDS] = lk.level;
+    const tabOff = N + CRATER_BLOCK + nodeBytes / 4;
+    // (?lakes=0: the lakes found but not realised — the before of an A/B; the rivers' levels are the lakes' still)
+    const realise = new URLSearchParams(location.search).get('lakes') !== '0';
+    lakeOff = rv.lakes.length && realise ? [tabOff, tabOff + lakeTab.length] : [0, 0];
     this.riverBuf.destroy();
-    this.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (N + CRATER_BLOCK) * 4 + Math.max(rv.nodes.byteLength, NODE_WORDS * 4), usage: S });
+    this.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (N + CRATER_BLOCK) * 4 + nodeBytes + lakeTab.byteLength + rv.lakeAt.byteLength, usage: S });
     writeCraters();
     dev.queue.writeBuffer(this.riverBuf, (N + CRATER_BLOCK) * 4, rv.nodes);
+    dev.queue.writeBuffer(this.riverBuf, tabOff * 4, lakeTab);
+    dev.queue.writeBuffer(this.riverBuf, (tabOff + lakeTab.length) * 4, rv.lakeAt);
     dev.queue.writeBuffer(key, 0, rv.nodeAt);
     await this.time('jfa rivers', async () => {
       await jfa(kSeedV, { 2: key }, kOutV, { 2: key });
@@ -564,7 +584,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
       }
       const lfOf = new Int32Array(N);
       for (let i = 0; i < N; i++) lfOf[i] = this.landformOf[this.regionOf[i]];
-      this.settlement = settle({ n, seed: p.seed, hmac: this.hmac, landformOf: lfOf, forms: this.landforms, contOf, river: rv.nodeAt, craters: this.craters, craterWords: CRATER_WORDS, worldW: this.worldW, worldH: this.worldH, sea: p.sea, count: p.sites });
+      this.settlement = settle({ n, seed: p.seed, hmac: this.hmac, landformOf: lfOf, forms: this.landforms, contOf, river: rv.nodeAt, lake: rv.lakeAt, craters: this.craters, craterWords: CRATER_WORDS, worldW: this.worldW, worldH: this.worldH, sea: p.sea, count: p.sites });
     });
     await this.time('ways (cpu)', () => {
       this.ways = buildWays({ settlement: this.settlement, ground: (x, y) => this.macroAt(x, y), worldW: this.worldW, worldH: this.worldH, sea: p.sea });
@@ -1117,8 +1137,15 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
   /** columns that had more intervals than the window holds (their smallest gaps filled: landFrom) */
   gapsFilled = 0;
 
+  /**
+   * (round 88) What's built on land as it's made: called with each region's land after the ways (the
+   * settlements' buildings, fields and walls: src/settle/settlements.ts). `raw` lands skip them (the ground a
+   * settlement is planned on).
+   */
+  readonly landHooks: ((land: RegionLand, x0: number, y0: number, w: number, h: number, spread: boolean) => Promise<void>)[] = [];
+
   /** A region's land for the streamer (world/streamgen.ts RegionLand), in world z (the streamer cuts it at its window). */
-  async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity, spread = false): Promise<RegionLand> {
+  async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity, spread = false, raw = false): Promise<RegionLand> {
     if (y0 & 1) throw new Error('a region starts on an even row');
     const c = await this.columns(x0, y0, w, h, spread);
     const land = timed('land', () => landFrom(c, x0, y0, K));
@@ -1141,6 +1168,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
         }
     // the roads, their crossings and the sites' plazas (round 79, ways.ts)
     this.waysStamped += timed('ways', () => stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH));
+    if (!raw) for (const f of this.landHooks) await f(land, x0, y0, w, h, spread);
     return land;
   }
 
