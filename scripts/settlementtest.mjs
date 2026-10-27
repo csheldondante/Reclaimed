@@ -63,6 +63,8 @@ try {
   console.log(`level up in ${((Date.now() - t0) / 1000).toFixed(0)} s`);
   // (the first load after a server start is slow: give it its 30 s)
   await sleep(30000);
+  // (the sandbox's tool bar and the perf text off the view: the town's what's being looked at)
+  await page.addStyleTag({ content: '.editor{display:none!important}' });
   const fatal = await page.$eval('.fatal', (e) => e.textContent).catch(() => null);
   ok(!fatal, `no fatal overlay${fatal ? `: ${fatal}` : ''}`);
   const info = await page.evaluate(() => {
@@ -74,13 +76,13 @@ try {
       stats: st.stats,
       live: s && { id: s.id, name: s.name, size: s.size, grids: s.grids.map((g) => g.style), buildings: s.buildings.length, people: s.people, stores: s.stores, camp: !!p?.camp, ruin: !!s.founded?.over },
       units: R.units.stats,
-      cpu: [...(R.scene.cpuWorst?.() ?? [])].slice?.(0, 8) ?? null,
+
     };
   });
   console.log(JSON.stringify(info));
   ok(info.stats.planned > 0 && info.stats.stamped > 0, `planned ${info.stats.planned}, ${info.stats.stamped} columns stamped`);
   ok(!!info.live, `a settlement is live: ${info.live?.name}`);
-  const extraNoFolk = extra.includes('townfolk=0') || extra.includes('settle=0');
+  const extraNoFolk = extra.includes('townfolk=0') || extra.includes('towns=0');
   if (!extraNoFolk) ok(info.units.units > 5, `its people are out: ${info.units.units}`);
   // the cost, standing at the town (the perf overlay's numbers)
   await page.evaluate(() => {
@@ -106,6 +108,10 @@ try {
   });
   console.log(`PERF ${tag}: frame p50 ${perf.p50} p95 ${perf.p95} ms, GPU ${perf.gpu} ms/frame (agents ${perf.agents}), units ${perf.units.units}, trips ${perf.trips}, moved ${JSON.stringify(perf.moved)}, blocks ${perf.blocks}, houses ${perf.houses}`);
   console.log(JSON.stringify(perf.per));
+  await page.screenshot({ path: `${out}/town-${tag}-debug.png` });
+  console.log(`saved ${out}/town-${tag}-debug.png`);
+  await page.evaluate(() => window.reclaimed.townDebug?.show(false));
+  await sleep(500);
   await page.screenshot({ path: `${out}/town-${tag}-default.png` });
   console.log(`saved ${out}/town-${tag}-default.png`);
   if (!extraNoFolk) {
@@ -124,6 +130,27 @@ try {
     await page.screenshot({ path: `${out}/town-${tag}-zoom.png` });
     console.log(`saved ${out}/town-${tag}-zoom.png`);
     if (!argv.includes('--nogif')) await gif(page, `${out}/town-${tag}-workers.gif`, 30, 200);
+    // closer, at the quarry, then the house going up
+    for (const [what, kind] of [['quarry', 'mine'], ['site', 'site'], ['heaps', 'pile']]) {
+      const ok2 = await page.evaluate((kind) => {
+        const R = window.reclaimed;
+        const st = R.settlements;
+        const s = st.live();
+        const p = st.plan(s.id);
+        const seed = st.seeds.find((x) => x.rec.id === s.id);
+        const sp = kind === 'site' ? p.sites.find((x) => !x.finished) && { at: p.sites.find((x) => !x.finished).door } : p.spots.find((x) => x.kind === kind);
+        if (!sp) return false;
+        const [x, y] = st.toWindow([sp.at[0] + seed.box.x0, sp.at[1] + seed.box.y0 * 0.8660254]);
+        R.camera.target[0] = x;
+        R.camera.target[1] = y;
+        R.camera.zoom = window.__zoom * 4.5;
+        return true;
+      }, kind);
+      if (!ok2) continue;
+      await sleep(3000);
+      await page.screenshot({ path: `${out}/town-${tag}-${what}.png` });
+      if (!argv.includes('--nogif')) await gif(page, `${out}/town-${tag}-${what}.gif`, 30, 250);
+    }
     // the raid: the camp marches on the town, the guards meet it
     const raid = await page.evaluate(() => {
       const R = window.reclaimed;

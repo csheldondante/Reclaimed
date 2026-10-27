@@ -23,9 +23,17 @@ export class TownDebug {
     ui.appendChild(this.panel);
   }
 
+  /** shown or not (reclaimed.townDebug.show(false) for a clean shot) */
+  show(on: boolean): void {
+    this.on = on;
+    this.svg.style.display = on ? '' : 'none';
+    this.panel.style.display = on ? '' : 'none';
+  }
+  private on = true;
+
   draw(): void {
     // (a few times a second is plenty)
-    if (this.frame++ % 3) return;
+    if (!this.on || this.frame++ % 3) return;
     const life = this.st.life;
     const rec = life?.rec;
     const plan = rec ? this.st.plan(rec.id) : null;
@@ -37,9 +45,10 @@ export class TownDebug {
     const seed = this.st.seeds.find((s) => s.rec.id === rec.id)!;
     const ox = seed.box.x0;
     const oy = seed.box.y0 * ROW_H;
-    const P = (lx: number, ly: number, dz = 0.3) => {
+    /** a local point on screen, at the ground there (or at `z`, a window height: a lot's outline flat at its yard's) */
+    const P = (lx: number, ly: number, dz = 0.3, z?: number) => {
       const [x, y] = this.st.toWindow([lx + ox, ly + oy]);
-      const [sx, sy] = this.camera.project(x, y, this.heightAt(x, y) + dz);
+      const [sx, sy] = this.camera.project(x, y, (z ?? this.heightAt(x, y)) + dz);
       return `${sx.toFixed(1)},${sy.toFixed(1)}`;
     };
     const out: string[] = [];
@@ -58,8 +67,10 @@ export class TownDebug {
         const use = plan.lotUse.get(`${gid}:${lot.id}`);
         if (fields && use !== 'field') continue;
         const stroke = fields ? '#a84' : use ? '#fff' : '#fff6';
+        const [yx, yy] = this.st.toWindow([lg.centre(lot.yard[0])[0] + ox, lg.centre(lot.yard[0])[1] + oy]);
+        const zl = this.heightAt(yx, yy);
         for (const c of lot.inner) {
-          const pts = [0, 1, 2, 3].map((k) => P(...lg.corner(c, k))).join(' ');
+          const pts = [0, 1, 2, 3].map((k) => P(...lg.corner(c, k), 0.3, zl)).join(' ');
           out.push(`<polygon points="${pts}" fill="none" stroke="${stroke}" stroke-width="${use ? 1.2 : 0.6}"/>`);
         }
         if (use && !fields) {

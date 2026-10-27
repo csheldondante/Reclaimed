@@ -6553,3 +6553,13 @@ Bulwark's rings).
   settlement with homes, a hall, a store, fields; ruins adapted with their history; nothing built in a pond; the
   same seed the same plan; `--png` top views), scripts/settlementtest.mjs (in play: the town, its people, the cost,
   the raid; screenshots and GIFs).
+- **First run in play** (scripts/settlementtest.mjs, the atlas level at the phone tier: q=low, 412×915, the hybrid
+  on; `?town=1` the nearest town to the spawn with a camp — Rudag, s42, river guilds, irregular core + radial
+  homes, over a ruin): the records in 58 ms at load, the town planned once in 49 ms on 16 raw tiles, 1,455 columns
+  stamped; 36 people out (budget 28 + the camp's 7 raiders). Standing at the town for 15 s: frames p50 9.7 ms,
+  p95 11.3 ms; the GPU 5.6 ms a frame, the agents' pass 0.95 ms of it (sweeps 2 on the phone tier). A raid of 7
+  against 4 guards: repelled, all 7 raiders dead and 4 of the town's. Fixes it found: `?settle=0` was already the
+  phone tier's flag (the streamer's settling; phone-flags.ts), so the system's off switch is `?towns=0`; a sheaf
+  can't be a carried load (leaves aren't ground: it's drawn as sand); a river town's site is on its river, so its
+  middle moves to the nearest dry level ground beside it; a quarry outside its own region had no rights and the
+  miners stood idle — the quarry is now sought in its own region first.

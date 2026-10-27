@@ -135,10 +135,10 @@ export class SettlementLife implements Routine {
     const total = roles.reduce((s, p) => s + p.count, 0);
     const scale = Math.min(1, budget / Math.max(1, total));
     for (const p of [...roles].sort((a, b) => (a.role === 'guard' ? -1 : b.role === 'guard' ? 1 : 0))) {
-      const n = Math.max(1, Math.round(p.count * scale));
+      const n = budget <= 0 ? 0 : Math.max(1, Math.round(p.count * scale));
       for (let i = 0; i < n; i++) this.spawnOne(p.role, i, posts);
     }
-    if (camp) {
+    if (camp && budget > 0) {
       const at = spots.find((s) => s.kind === 'camp')?.w;
       const n = camp.people.find((p) => p.hostile)?.count ?? 0;
       if (at)
@@ -450,7 +450,7 @@ export class SettlementLife implements Routine {
           this.carry(u, w, { material: 'log', amount: Math.min(logs, 0.8), real: true }, 'toPile');
         } else w.phase = 'toWork';
       } else {
-        this.carry(u, w, { material: 'leaves', amount: 0.3, real: false }, 'toStore');
+        this.carry(u, w, { material: 'sand', amount: 0.3, real: false }, 'toStore');
       }
     } finally {
       if (w.phase === 'lifting') w.phase = 'toWork';

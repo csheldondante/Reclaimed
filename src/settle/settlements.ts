@@ -237,7 +237,7 @@ export class Settlements {
           top[j] = col.length ? col[col.length - 1].mat : 0;
         }
     });
-    const plan = timed('plan', () => planSettlement({ ...s, ground, water, top, veg, sea: this.atlas.p.sea }));
+    const plan = timed('plan', () => planSettlement({ ...s, ground, water, top, veg, sea: this.atlas.p.sea, regionAt: (x, y) => this.regionAt(x + s.box.x0, y + s.box.y0 * ROW_H) }));
     for (const [k, t] of plan.things) this.things.set(k, t);
     if (plan.camp) this.recs.set(plan.camp.id, plan.camp);
     this.done.set(s.rec.id, plan);

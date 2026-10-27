@@ -586,14 +586,16 @@ export class LevelScene implements Scene {
       // (the atlas is taller than the window: it slides in z — round 69)
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
       // (round 88) the settlements' records, and their hook on the land, before the first window is made
-      const settlements = host.params.get('settle') === '0' ? undefined : new Settlements(atlas);
+      const settlements = host.params.get('towns') === '0' ? undefined : new Settlements(atlas);
       const at = host.params.get('at');
       // (?town=s12: start at that settlement; ?town=1 the nearest to the spawn)
       const town = host.params.get('town');
       let [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
       if (town && settlements) {
         const sp = atlas.spawn();
-        const s = town === '1' ? settlements.near([sp[0], sp[1] * ROW_H], 1e9).find((x) => x.size === 'town' || x.size === 'city') : settlements.settlement(town);
+        // (the nearest town or city with a camp by it: workers and a raid to see)
+        const camped = new Set(settlements.seeds.filter((x) => x.campId).map((x) => x.rec.id));
+        const s = town === '1' ? settlements.near([sp[0], sp[1] * ROW_H], 1e9).find((x) => (x.size === 'town' || x.size === 'city') && camped.has(x.id)) : settlements.settlement(town);
         if (!s) throw new Error(`?town=${town}: no such settlement`);
         cx = Math.round(s.at[0]);
         cy = Math.round(s.at[1] / ROW_H);
@@ -1284,6 +1286,7 @@ export class LevelScene implements Scene {
       // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
       settlements: this.settlements,
       units: this.units,
+      townDebug: this.townDebug,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
       flow: this.flow && {

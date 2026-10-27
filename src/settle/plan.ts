@@ -86,6 +86,8 @@ export interface PlanInput {
   top: Uint8Array;
   /** per box column: the plants' succession (trees past 3.6: the woods' reach) */
   veg: Float32Array;
+  /** the atlas region at a local point (a quarry in its own region needs no rights) */
+  regionAt?: (x: number, y: number) => number;
   sea: number;
 }
 
@@ -216,8 +218,8 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   // (world = local + (x0, y0 × ROW_H): the box's first row is even)
   const ox = box.x0;
   const oy = box.y0 * ROW_H;
-  const cx = rec.at[0] - ox;
-  const cy = rec.at[1] - oy;
+  let cx = rec.at[0] - ox;
+  let cy = rec.at[1] - oy;
   const centre: Pt = [cx, cy];
   const colAt = (x: number, y: number) => {
     const [rx, ry] = cellAt(x, y);
@@ -229,6 +231,37 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
   };
   const built = BUILT[rec.size];
   const R = built.R;
+  // (a river town's site is on its river: its middle moved to the nearest dry, level ground beside it — the record
+  // says where it stands)
+  const dryAt = (x: number, y: number) => {
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let k = 0; k < 9; k++) {
+      const a = (k / 9) * Math.PI * 2;
+      const d = k === 0 ? 0 : 6;
+      const c = colAt(x + Math.cos(a) * d, y + Math.sin(a) * d);
+      if (c < 0 || inp.water[c] > 0.05 || inp.ground[c] < inp.sea + 0.8) return Infinity;
+      lo = Math.min(lo, inp.ground[c]);
+      hi = Math.max(hi, inp.ground[c]);
+    }
+    return hi - lo;
+  };
+  if (dryAt(cx, cy) > 3) {
+    search: for (let d = 3; d <= R * 1.5; d += 3)
+      for (let k = 0; k < 16; k++) {
+        const a = (k / 16) * Math.PI * 2;
+        const x = cx + Math.cos(a) * d;
+        const y = cy + Math.sin(a) * d;
+        if (dryAt(x, y) <= 3) {
+          cx = x;
+          cy = y;
+          break search;
+        }
+      }
+    centre[0] = cx;
+    centre[1] = cy;
+    rec.at = [cx + ox, cy + oy];
+  }
   const run = 0;
   const made = (who: FactionId | null, note: string): ThingEvent[] => [{ what: 'made', run, by: who ? { faction: who } : undefined, note }];
   const thing = (t: Omit<Instance, 'history' | 'parts' | 'condition'> & Partial<Pick<Instance, 'history' | 'parts' | 'condition'>>): string => {
@@ -610,7 +643,9 @@ export function planSettlement(inp: PlanInput): SettlementPlan {
           }
         }
         const rock = inp.top[c0] === MAT.Stone || inp.top[c0] === MAT.Basalt || inp.top[c0] === MAT.Sandstone ? 2 : 0;
-        const sc = rock + Math.min(rise, 10) * 0.4 + r() * 0.5 - ring * 0.3;
+        // (its own region's ground first: elsewhere it needs mineral rights there)
+        const own = !inp.regionAt || inp.regionAt(...at) === rec.region ? 3 : 0;
+        const sc = own + rock + Math.min(rise, 10) * 0.4 + r() * 0.5 - ring * 0.3;
         if (!best || sc > best.s) best = { at, s: sc, dir, rise };
       }
     if (best) {
