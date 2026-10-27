@@ -53,6 +53,11 @@ struct LavaU {
   // each vent's cone while it rises (round 48): x how fast its peak rises
   // (cells/s; 0: not rising), y its radius, z its crater's radius
   cones: array<vec4<f32>, 4>,
+  // (round 86) a meteor's blast, one tick: the ground in a ring round its bowl (x, y the middle, z the bowl's
+  // radius, w the ring's outer radius) heated past melting - blast2.x cells of it at the bowl's rim, none at the
+  // ring's edge, which only glows; blast2.y 1 on
+  blast: vec4<f32>,
+  blast2: vec4<f32>,
 };
 @group(0) @binding(22) var<uniform> LU: LavaU;
 
@@ -181,6 +186,12 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     if (cn.x > 0.0) { rise += cn.x * coneShape(cp - vv.xy, cn.y, cn.z, fract(vv.x * 0.37 + vv.y * 0.71) * 6.28); }
   }
   let spring = textureLoad(springL, p, 0).x;
+  // (round 86) a meteor's blast: the rim's ground molten (it runs off the top as lava below), glowing past it
+  let bo = length(cp - LU.blast.xy);
+  if (LU.blast2.y > 0.5 && bo >= LU.blast.z - 1.0 && bo < LU.blast.w) {
+    let t = clamp((bo - LU.blast.z) / max(LU.blast.w - LU.blast.z, 0.5), 0.0, 1.0);
+    gh = max(gh, MELT + LATENT * LU.blast2.x * (1.0 - t) * (1.0 - t));
+  }
   if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0 && spring <= 0.0) {
     lavaOut[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     textureStore(spillOut, p, vec4<f32>(0.0, 0.0, 0.0, f32(u32(sp.w) & 7u)));

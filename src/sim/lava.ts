@@ -61,7 +61,7 @@ export class LavaSystem implements SimSystem {
     // a prism per column, then (for the smooth sheet) the six levels round each: 2 vec4
     this.inst = world.buf('lavaInst', world.cells * 16 * 3, GPUBufferUsage.STORAGE);
     this.indirect = world.buf('lavaIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.uni = world.buf('lavaU', 32 + 32 * MAX_VENTS, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.uni = world.buf('lavaU', 64 + 32 * MAX_VENTS, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const tsize = { width: world.w, height: world.h };
     this.spill = device.createTexture({ label: 'lavaSpill', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     this.spillNext = device.createTexture({ label: 'lavaSpillNext', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC });
@@ -119,8 +119,20 @@ export class LavaSystem implements SimSystem {
     this.vents.push({ x, y, rate, radius, left: seconds, cone: { height, radius: Math.max(6, height * 0.7), crater: 2.5, riseS, risen: height > 0 ? 0 : riseS } });
   }
 
+  /** (round 86) a meteor's blast for the next tick (lava.wgsl LavaU.blast) */
+  private blastQ: [number, number, number, number, number] | null = null;
+
+  /**
+   * (round 86, the user: "a shockwave that makes the nearby material melt as magma and glow") The ground round a
+   * meteor's bowl (radius rIn) out to rOut heated past melting for a tick: `depth` cells of it at the bowl's rim run
+   * off as lava (none at rOut, where it only glows); it flows, cools and sets to basalt as any lava does.
+   */
+  blast(x: number, y: number, rIn: number, rOut: number, depth: number): void {
+    this.blastQ = [x, y, rIn, rOut, depth];
+  }
+
   private writeUniforms(dt: number): void {
-    const u = new Float32Array(8 + 8 * MAX_VENTS);
+    const u = new Float32Array(16 + 8 * MAX_VENTS);
     const b = this.beam;
     if (b) {
       // (the way it points, level: the bore's melt runs back along it)
@@ -140,6 +152,10 @@ export class LavaSystem implements SimSystem {
       u.set([v.x, v.y, v.rate, rising ? 0 : v.radius], 8 + 4 * i);
       u.set([rising ? c.height / c.riseS : 0, c.radius, c.crater, 0], 8 + 4 * MAX_VENTS + 4 * i);
     });
+    // (each of the tick's FLOW_SUB steps raises the ring's heat to the same mark again: a share each)
+    const bq = this.blastQ;
+    if (bq) u.set([bq[0], bq[1], bq[2], bq[3], bq[4] / FLOW_SUB, 1, 0, 0], 8 + 8 * MAX_VENTS);
+    this.blastQ = null;
     this.device.queue.writeBuffer(this.uni, 0, u);
   }
 

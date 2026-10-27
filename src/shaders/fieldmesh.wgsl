@@ -55,6 +55,8 @@
 @group(0) @binding(9) var<storage, read_write> state: array<atomic<u32>>;
 
 const NONE: u32 = 0xffffffffu;
+/** (round 86) a near word's bit: the CPU marked the chunk urgent (fieldmesh.ts urgent) */
+const URGENT_BIT: u32 = 0x10000u;
 /** How far either field reaches (cells): past it, it's just "far". */
 const FAR: f32 = 3.0;
 /** The smooth minimum's reach (the fillet where terrain meets a structure). */
@@ -204,6 +206,8 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   // (and only a chunk that was near the view already — one just come near is looked at once: it may have
   // changed out of sight before it fell asleep)
   let nearW = atomicLoad(&state[CHUNK0 + MR.n.x * MR.n.y * CSTRIDE + c]);
+  // (round 86: marked urgent by the CPU — URGENT_BIT in its near word: always looked at, any slot)
+  let urgent = (nearW & URGENT_BIT) != 0u;
   var still = false;
   // (round 82: nor one owed a rebuild — found changed when every slot was taken: word 6 its new hash, not yet
   // built. Before, it fell asleep owed, past its drowsy quarter second, and stayed stale until it left the view.)
@@ -264,6 +268,12 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   let b = cbase(c);
   if (h == atomicLoad(&state[b + 5u])) {
     // (changed back before it was rebuilt: owed nothing)
+    atomicStore(&state[b + 6u], h);
+    return;
+  }
+  // (round 86: the slots past MR.pr.x are the urgent chunks'; the rest take turns at the first MR.pr.x — counted in
+  // the args' spare word, argsBase() + 3, zeroed by the CPU each frame)
+  if (!urgent && atomicAdd(&state[argsBase() + 3u], 1u) >= MR.pr.x) {
     atomicStore(&state[b + 6u], h);
     return;
   }

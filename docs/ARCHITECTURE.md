@@ -1144,6 +1144,43 @@ all are asleep), or when a cyclone passes (small bodies are carried). Break
 on a body removes voxels in its frame and splits it; a budget (64 bodies /
 16k voxels) crumbles the oldest small ones into loose ground (`deposit` .yz).
 
+Falling pieces in the columns (round 86, `collapse`; DECISIONS round 86): what
+the integrity system frees no longer becomes a cube body. `game/colbodies.ts`
+`ColumnBodies` keeps a piece as its runs, column by column (the rock's whole
+runs from analyseRock's `Fracture.pieces`, fractional ends kept; a structure's
+cells joined into runs), plus an offset `dz` and a speed (the same feel:
+gravity 10, drag, 4 cells/s at most; straight down). Each frame the columns it
+covers are written to the GPU's layers as their *base* (what the column holds
+without the falling pieces) plus every piece there at its offset; the CPU copy
+(`WorldVox.slots`) holds only the base, so analyses and the pieces' own
+collision (the gap under each run to the highest base top or another piece)
+never see a piece in flight, and a readback that brings one back is overwritten
+by the bases (`restoreCpu`; columns written while a readback was in flight are
+put back too: `Integrity.inflight`). The field mesh meshes the piece as the
+ground it was — same look, shading, hybrid voxel chunks — split from what's
+under it, the chunks marked urgent (below). Landing: hit at 1.2 cells/s or
+more, the rim columns of its foot within the impact radius crumble (rubble
+through `deposit`, chips thrown at the impact speed, dust); a piece of 16
+cells or fewer crumbles whole; the rest is committed (base + runs, CPU and
+GPU) and its columns judged again. The old `Bodies` (cube voxels, the
+projection) stays for API compatibility, empty.
+
+Field mesh urgency (round 86): `FieldMesh.urgent(x0, y0, x1, y1, frames)`
+marks the chunks over a world rect; their near word carries `URGENT_BIT`
+(0x10000) for those frames: always hashed (even asleep), allowed the
+`URGENT_SLOTS` (4) rebuild slots over the tier's ordinary ones
+(`MeshRegion.pr.x`; `k.y` is both; the ordinary count lives in the rebuild
+args' spare word), and the window's mesh is looked at every frame while any
+is marked (not on the band's alternate turn). The level marks the cuts
+(dig, smash, crater, take; a crater by its bowl) and the integrity system its
+falling pieces. `MeshRegion` is 128 bytes (`pr`).
+
+The integrity pass (round 86): a cut sent this tick (`Simulation.eventTaps`)
+makes the next pass start at once rather than on the 0.35 s timer — its
+readback is submitted after the tick that carried the cut — and reads back
+only the chunks it looks at by default (`?intread=all`: all the layers, as
+before); the drift texture is no longer read (the cube bodies used it).
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and

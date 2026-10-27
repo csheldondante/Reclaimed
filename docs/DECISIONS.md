@@ -3,6 +3,40 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
+
+- The user, testing `collapse` on the phone: "Waterfalls and the meteor look fantastic! However, the collapse
+  didn't work for me on mobile at all. I was able to completely destroy the base of a tower and it stayed
+  standing (it might have been taller than one cell though)".
+- And: "Why do cells matter here? Shouldn't we care only about columns?" → the rock's limits count runs and
+  columns, not cells (fracture.ts MAX_PIECE / MAX_FLOOD in runs; a piece too small to fall crumbles rather than
+  staying); a piece is never held for being big or for going on above the window.
+
+
+## 2026-10-26 — round 86 (session 5, `collapse`) — rock collapse and meteors, tested on the phone
+
+- The user, verbatim: "The rock collapsing seems very broken. There is a large lag from a meteor to when the
+  material is destroyed (maybe intentional and it is melting?) but I would expect it to be like a delete with a
+  shockwave that makes the nearby material melt as magma and glow. The actual collum has a long delay and then
+  converts to voxels before collapsing. I strongly recommend we simulate as voxels but split the mesh and have
+  the rock column fall and just weight vertices to voxels (although rock I don't expect to flex only crumble).
+  But performance is now very very good! Totally fixed on mobile"
+- And: "Oh it should also probably make a big cloud of dust for the deleted material and maybe sparks that fly
+  with the shockwave."
+- → A meteor is a delete: the bowl gone the next tick, its chunks meshed that frame, with a flash, a shockwave
+  ring of dust and embers, a dust cloud sized to what was taken, and the rim melted to lava that glows and cools
+  to basalt. What it undercut is judged at once. Pieces fall in the columns' own format (the user's round-83
+  question, "is there a reason we don't use the column format for all the voxel based free bodies"): meshed as
+  the ground is, split from it; rigid while whole, crumbling at the foot where they land. Kept from round 83:
+  columns, not cells; supported from below stands; flood only for laterally supported runs; only the woken
+  columns; islands fall; the boundary anchored; stronger materials don't break. Still open: toppling spires,
+  the weight idea (a hanging piece's mass against its contact area × strength).
+
+
+>>>>>>> origin/collapse
 ## 2026-10-26 — round 87 (session 5, `places`) — the second phone test
 
 - "Waterfalls and the meteor look fantastic! However, the collapse didn't work for me on mobile at all. I was able to

@@ -9,6 +9,7 @@ import { gatesOf, levelById, type LevelDef } from '../game/levels';
 import { Trial } from '../game/trial';
 import { DIFFICULTY_LEVEL, loadDifficulty, loadLevelProgress, saveProgress, type Difficulty } from '../game/progress';
 import { EventKind } from '../sim/globals';
+import { CUTS, OP, editOpOf } from '../sim/edit-ops';
 import { EDIT_OP, Editor, LAYER_TOOLS } from '../ui/editor';
 import { Controls } from '../input/controls';
 import { ignoreTeardown } from '../gpu/pipeline';
@@ -442,21 +443,32 @@ export class LevelScene implements Scene {
     const y0 = Math.floor(ey - rc);
     const y1 = Math.ceil(ey + rc);
     if (x1 < 0 || y1 < 0 || x0 >= W || y0 >= H) return;
+    const cx = Math.min(W - 1, Math.max(0, Math.round(ex)));
+    const cy = Math.min(H - 1, Math.max(0, Math.round(ey)));
+    const [px, py] = cellPos(cx, cy);
+    // (round 86: a meteor's blast at once — the flash, the shockwave, the dust, the rim melting — not after the
+    // window's columns have been read back and changed; its bowl goes in with them)
+    if (e.kind === EV.meteor && cx === Math.round(ex) && cy === Math.round(ey)) this.impactFx([px, py, this.core.map.surface[cy * W + cx]], 12);
+    const t0 = performance.now();
     const n = await S.editLive(x0, y0, x1, y1, (x, y) => {
       const gx = S.origin[0] + x;
       const gy = S.origin[1] + y;
       const d = eventAt(e, gx + 0.5 + 0.5 * (((gy % 2) + 2) % 2), (gy + 0.5) * ROW_H, worldW, worldH);
       return { ...d, cap: e.kind === EV.cone ? MAT.Basalt : 0 };
     });
+    this.editLiveMs = performance.now() - t0;
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
-    this.integrity?.clear();
-    const cx = Math.min(W - 1, Math.max(0, Math.round(ex)));
-    const cy = Math.min(H - 1, Math.max(0, Math.round(ey)));
-    const [px, py] = cellPos(cx, cy);
+    // (round 86: every column written again — what was falling is looked at again where it stopped)
+    this.integrity?.clear(true);
     const z = this.core.map.surface[cy * W + cx];
-    if (e.kind === EV.meteor && n) this.impact([px, py, z]);
+    if (e.kind === EV.meteor && n) this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: 13 * 32 + 512, radius: 12 * 2.5, strength: z });
     if (e.kind === EV.cone && n) this.lava?.addVent(px, py, 60, 12, 3, 0);
   }
+
+  /** (round 86) the last coarse event's window edit, read back, changed and written (ms): the latency probe reads it */
+  editLiveMs = 0;
+  /** (round 87) when the beam's bore was last judged (performance.now, ms) */
+  private beamCutAt = 0;
 
   /** The free camera on (from where the fixed view looks from, the same way) or off (looking at the ground under the screen's middle). */
   toggleFly(): void {
@@ -723,8 +735,11 @@ export class LevelScene implements Scene {
         integ.breakBodies([x, y, z], 2.6);
         integ.markDirty(x, y, 16);
       };
-      this.integrity.onChips = (x, y, z, count) => {
-        core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: 3, spread: 0.8 });
+      // (round 86: a piece falling in the columns — the hybrid's chunks under it voxels from then on)
+      integ.onTouched = (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2);
+      // (round 86: a piece landing hard throws its chips faster, up and out)
+      this.integrity.onChips = (x, y, z, count, speed) => {
+        core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: speed ?? 3, spread: 0.8, vel: speed ? [0, 0, speed * 0.6] : undefined });
         this.audio.chip(camera.project(x, y, z)[0] / camera.viewportW);
       };
       this.integrity.onCollapse = (x, y, z, amount) => this.audio.collapse(amount, camera.project(x, y, z)[0] / camera.viewportW);
@@ -924,6 +939,8 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // (round 87) the sandbox's tool bar: editor().select('smash') as a tap on its button would (scripts/towertest.mjs)
+      editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
       agents: this.agents,
       // physics voxels (sandbox): phys.drop('steel', 5, 1, 10, x, y, 6) — a w × d × h box
@@ -1185,6 +1202,9 @@ export class LevelScene implements Scene {
       const integ = this.integrity;
       if (a && integ) {
         this.stream.onArrive.push((x0, y0, x1, y1) => integ.markBox(x0, y0, x1, y1));
+        // (round 87: what's above the window comes down with a piece that reaches its top)
+        const S = this.stream;
+        integ.above = { take: (x, y) => S.takeAbove(x, y), put: (x, y, ivs) => S.putAbove(x, y, ivs) };
         const m = a.map.structural;
         if (m)
           for (let y = 0; y < dims.h; y += REGION)
@@ -1214,6 +1234,9 @@ export class LevelScene implements Scene {
       stream: this.stream,
       atlas: this.opts.atlas?.atlas,
       toggleFly: () => this.toggleFly(),
+      // (round 86) the meteor tool's landing at world (x, y, z) now, without its flight; the last great meteor's window edit (ms)
+      meteorNow: (x: number, y: number, z: number) => this.impact([x, y, z]),
+      editLiveMs: () => this.editLiveMs,
       // the coarse world's events at a window cell (round 71): coarse.meteor(x, y, r), coarse.erupt(x, y)
       // (round 80: `coarse`, not `world` — that's the GPU world, as everything else reads it: worldapitest broke)
       coarse: {
@@ -1473,6 +1496,13 @@ export class LevelScene implements Scene {
     // (a slide in progress: the sim waits for the regions coming in)
     void this.stream?.update();
     // (hybrid) what's voxels this frame: the events edit what they touch; the focus is the camera's target
+    // (round 86) a cut's chunks (a dig, a crater) are meshed the next frame, whatever the tier's rebuild budget (fieldmesh.ts urgent)
+    // (a crater's radius is its ejecta's, 2.5 times its bowl's: the dust lands later, through the sediment)
+    for (const e of globals.events) {
+      if (e.kind !== EventKind.Edit || !CUTS.has(editOpOf(e.z ?? 0))) continue;
+      const r = editOpOf(e.z ?? 0) === OP.CRATER ? e.radius / 2.5 + 2 : e.radius;
+      core.renderer.fieldMesh.urgent(e.x - r, e.y - r, e.x + r, e.y + r);
+    }
     if (this.hybrid) {
       for (const e of globals.events) this.hybrid.edit(e.x, e.y, e.radius, e.kind);
       const hy = this.hybrid;
@@ -1534,6 +1564,12 @@ export class LevelScene implements Scene {
     this.stepMeteors(dt);
     this.drawRing();
     if (this.beamAt && this.physics && !this.beamPicking) this.aimBeam(this.beamAt);
+    // (round 87: the beam bores through rock with no edit event — what it undercuts is judged while it's held)
+    const lb = this.lava?.beam;
+    if (lb && this.integrity && performance.now() - this.beamCutAt > 250) {
+      this.beamCutAt = performance.now();
+      this.integrity.cutAt(lb.at[0], lb.at[1], lb.radius + 1.5);
+    }
     if (this.integrity) {
       // cyclones batter what they pass: look there
       for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
@@ -2184,23 +2220,74 @@ export class LevelScene implements Scene {
     }
   }
 
-  private impact([x, y, z]: [number, number, number]): void {
+  /**
+   * A meteor lands at (x, y, z) (round 48). Round 86 — the user: "I would expect it to be like a delete with a
+   * shockwave that makes the nearby material melt as magma and glow"; "it should also probably make a big cloud of
+   * dust for the deleted material and maybe sparks that fly with the shockwave". The bowl goes on the sim's next
+   * tick (edit.wgsl OP_CRATER, the frame after this one; its chunks meshed that frame: fieldmesh.ts urgent; what it
+   * undercut judged at once: Integrity's tap), with the blast (impactFx). `crater` false: the blast only (the
+   * atlas's great meteor makes its own crater).
+   */
+  private impact([x, y, z]: [number, number, number], crater = true): void {
+    const BOWL = 12;
+    if (crater) this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: 13 * 32 + 512, radius: BOWL * 2.5, strength: z });
+    this.impactFx([x, y, z], BOWL);
+  }
+
+  /** (round 86) about how many cells a meteor's bowl of radius `bowl` hitting at height z takes away (edit.wgsl OP_CRATER's ellipsoid, the surface as last read) */
+  private bowlVolume(x: number, y: number, z: number, bowl: number): number {
+    const { w: W, h: H } = this.core.dims;
+    const surf = this.core.map.surface;
+    const [c0x, c0y] = cellAt(x - bowl, y - bowl);
+    const [c1x, c1y] = cellAt(x + bowl, y + bowl);
+    let v = 0;
+    for (let cy = Math.max(0, c0y); cy <= Math.min(H - 1, c1y); cy++)
+      for (let cx = Math.max(0, c0x); cx <= Math.min(W - 1, c1x); cx++) {
+        const [px, py] = cellPos(cx, cy);
+        const d = Math.hypot(px - x, py - y) / bowl;
+        if (d >= 1) continue;
+        const hz = bowl * Math.sqrt(1 - d * d);
+        const lo = Math.max(z - hz * 0.7, 2);
+        v += Math.max(0, Math.min(surf[cy * W + cx], z + hz * 1.5) - lo);
+      }
+    return v;
+  }
+
+  /**
+   * (round 86) What a meteor's landing looks like: the flash; a ring of dust and embers racing out from the bowl's
+   * rim (the shockwave — the wind's ripples carry on past it, lifting the loose ground); a cloud of dust as big as
+   * what the bowl took away (capped by the tier's particles); chips and smoke; the ground round the rim melted to
+   * lava and glowing past it (lava.ts blast: it cools to basalt); a molten pool in the bowl.
+   */
+  private impactFx([x, y, z]: [number, number, number], BOWL: number): void {
     const { core } = this;
     const g = core.globals;
-    const BOWL = 12;
-    g.events.push({ kind: EventKind.Edit, x, y, z: 13 * 32 + 512, radius: BOWL * 2.5, strength: z });
     for (let k = 0; k < 6; k++) g.events.push({ kind: EventKind.Ripple, x, y, radius: 55, strength: 16 });
     g.flash = 1;
     const parts = core.sim.particles;
     const dust = MAT.Drift;
-    parts.burst({ kind: PK.Haze, x, y, z: z + 1, count: 500, speed: 16, spread: BOWL, payload: dust });
-    parts.burst({ kind: PK.Haze, x, y, z: z + 4, count: 400, speed: 9, spread: BOWL * 0.6, payload: MAT.Ash });
-    parts.burst({ kind: PK.Haze, x, y, z: z + 10, count: 300, speed: 4, spread: BOWL * 0.4, payload: MAT.Ash });
+    // the cloud: a grain of haze for every two cells taken, within an eighth of the tier's particles
+    const vol = this.bowlVolume(x, y, z, BOWL);
+    const budget = core.world.particleCap / 8;
+    const cloud = Math.min(budget, Math.max(600, vol * 0.5));
+    parts.burst({ kind: PK.Haze, x, y, z: z + 1, count: Math.round(cloud * 0.4), speed: 16, spread: BOWL, payload: dust });
+    parts.burst({ kind: PK.Haze, x, y, z: z + 4, count: Math.round(cloud * 0.35), speed: 9, spread: BOWL * 0.6, payload: MAT.Ash });
+    parts.burst({ kind: PK.Haze, x, y, z: z + 10, count: Math.round(cloud * 0.25), speed: 4, spread: BOWL * 0.4, payload: MAT.Ash });
     parts.burst({ kind: PK.Dust, x, y, z: z + 1, count: 300, speed: 14, spread: BOWL * 0.7 });
     parts.burst({ kind: PK.Chip, x, y, z: z + 1, count: 160, speed: 22, spread: BOWL * 0.5 });
     parts.burst({ kind: PK.Ember, x, y, z: z + 1, count: 90, speed: 18, spread: BOWL * 0.4 });
     parts.burst({ kind: PK.Smoke, x, y, z: z + 2, count: 150, speed: 5, spread: BOWL * 0.5 });
-    // a molten pool in the bowl (no cone)
+    // the shockwave: dust low along the ground and embers, out every way from the rim
+    const RING = 16;
+    for (let k = 0; k < RING; k++) {
+      const a = (k / RING) * Math.PI * 2;
+      const [dx, dy] = [Math.cos(a), Math.sin(a)];
+      const at = { x: x + dx * BOWL * 0.9, y: y + dy * BOWL * 0.9, z: z + 0.8 };
+      parts.burst({ kind: PK.Haze, ...at, count: 14, speed: 1.5, spread: 1.5, payload: dust, vel: [dx * 22, dy * 22, 1] });
+      parts.burst({ kind: PK.Ember, ...at, count: 5, speed: 2, spread: 1, vel: [dx * 16, dy * 16, 5] });
+    }
+    // the rim's ground molten, glowing past it; a molten pool in the bowl (no cone)
+    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5);
     this.lava?.addVent(x, y, 2.5, 12, 3, 0);
     const phys = this.physics;
     if (phys) void this.wake(x, y, -1, BOWL + 2).then(() => phys.blast([x, y, z], BOWL, 28));

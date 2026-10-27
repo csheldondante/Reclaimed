@@ -12,6 +12,24 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
+
+| id | item | size | status |
+|---|---|---|---|
+| C1 | A meteor is a delete: the bowl gone the frame after it lands, its chunks meshed that frame (urgent rebuild slots, every tier); a flash, a shockwave ring of dust and embers, a dust cloud sized to what the bowl took (capped by the tier), the rim melted to lava, glowing, cooling to basalt (lava.ts blast). The atlas's great meteor: its blast at once, its window edit after the readback | M | done (collapse, verified: latencyprobe) |
+| C2 | What a cut undercut judged at once: the pass starts on the cut (not the 0.35 s timer), reads back only the chunks near (`?intread=all` the old whole read), one look is enough | S | done (collapse, verified: latencyprobe) |
+| C3 | Freed pieces fall in the columns' own format (colbodies.ts): meshed as the ground (no cube voxels), split from it, rigid; landing hard crumbles the rim of the foot (rubble, chips thrown, dust); committed as ground where they land | M | done (collapse, verified: GIFs shots86) |
+| C4 | Toppling spires: a tall freed piece whose centre is off its foot tips over (needs rotation: re-rasterising a turned piece into the columns, or a mesh of its own drawn with a transform) | M | open |
+| C5 | The weight idea: a hanging piece's mass against its contact area × strength (snapping necks under load) | M | open (DECISIONS round 83) |
+| C6 | The atlas's great meteor's window edit on the GPU (it reads back and writes the whole window: the far crater lands after that, the bowl and blast at once) | M | open |
+| C7 | Pieces shatter into flying chunks on a big impact (now: the foot's rim crumbles to rubble and chips; the rest lands whole) | S | open |
+| C8 | Round 87: a fully undercut tower stayed standing on the phone — the beam's bore not judged, the part above the window never coming down, limits in cells, structures past the box skipped; fixed by reading the paths; scripts/towertest.mjs (the player's tools, 412x915, low) to run | M | done (collapse; towertest 5/5) |
+
+
+>>>>>>> origin/collapse
 ## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
 
 | id | item | size | status |

@@ -6441,6 +6441,7 @@ flow's wakeChunk and the hybrid's filter, and wakeChunk honours the filter).
   served, most likely).
 - atlasworldtest 6/6; driveprofile (atlas, low tier, 18/s, 20 s): GPU 6.99 ms a frame, p95 10.8, p99 19.2.
 - The round-86 GIFs remade after the spray's budget cut (C:/Projects/shots86/flow after-*): breach to plain
+<<<<<<< HEAD
   2.57 s.
 ## 2026-10-26 — round 86: the hybrid's heightfield chunks drawn as a grid with the voxels' look; storms everywhere (`hybrid`)
 
@@ -6493,3 +6494,77 @@ lower.
 After merging simcull (places fd5f53e), the same build, the same runs: riding GPU 6.46 ms a frame (draw 3.37, gbuffer
 0.27, 54.5 grid chunks), a storm overhead 10.76 (p95 10.7-10.8 both). Not interleaved with places this time (the
 GPU was lent for two runs): the clocks drift by up to a ms between sessions.
+=======
+  2.57 s.
+
+## Round 86 — rock collapse and meteors made immediate; pieces fall in the columns (collapse)
+
+Why: the user on the phone (DECISIONS round 86): a long lag from a meteor to the ground going, the column
+"converts to voxels before collapsing"; "simulate as voxels but split the mesh"; a big dust cloud and sparks.
+
+- Meteor (level.ts impact/impactFx): the bowl's edit goes on the next tick as before; its chunks are now meshed
+  that frame (FieldMesh.urgent: 4 rebuild slots over the tier's own — low had 1, on alternate frames with the
+  band, so a crater took 10+ frames to show). A shockwave ring (16 bursts of dust and embers thrown out from
+  the rim), a dust cloud sized to the bowl's volume (capped at an eighth of the tier's particles), and the rim
+  melted to lava, glowing past it (lava.wgsl/lava.ts `blast`: the ground's heat raised past melting for a tick;
+  it cools to basalt as any lava). The atlas's great meteor: its blast at once, before its window edit (a
+  whole readback and write: editLiveMs exposed; BACKLOG C6).
+- Collapse latency (integrity.ts): a cut sent this tick starts the next pass at once (its readback submitted
+  after that tick), not on the 0.35 s timer; only the chunks near are read back by default (`?intread=all`
+  the old whole read); the drift texture isn't read any more.
+- Pieces (colbodies.ts, ARCHITECTURE "Falling pieces in the columns"): a freed piece is its runs and an
+  offset, written into the GPU's columns every frame over their base — meshed as the ground, split from it,
+  no cube voxels; loose ground on it rides down; landing hard crumbles the rim of its foot (rubble, chips
+  thrown, dust), the rest is ground again and its columns judged. Structures' tipping pieces now stand
+  (they came down in place every pass; toppling is C4).
+- Measured (scripts/latencyprobe.mjs, the atlas level, desktop iGPU headless at ~100 fps; before = places
+  3b8e5fc, after = this branch; ms from the event):
+  - meteor at a spire's foot, low: the GPU column lower 50 → 2, its mesh chunk rebuilt **605 → 2** (high
+    44 → 2); the freed piece spawned 100 → 40 and moving at 40 (before: a cube body);
+  - a cut through a spire's middle, low: piece spawned and moving **365–968 → 49** (high 365 → 20); a
+    6-radius pillar's piece (46 columns) 125;
+  - the great meteor, low: its window edit 91 ms (high 91–170, one long frame), its chunk meshed 92 (high
+    before 731).
+- Fixed after the first measurements: fracture's runs by default (`?fracture=dense` the old whole box: a
+  pass's CPU 28–38 ms on a crater's 88² box); a falling piece's columns written every other frame on the
+  phone's tier (`?fallevery=N`): the 46-column piece's mesh passes 571 → 423 ms over 4 s, its layer writes
+  12 374 → 5 934 (one writeBuffer a column a write — 46 a frame at most; not batched: fine at this size).
+- craterbench, low (30 craters in 15 s): p95 10.2 → 10.1, worst 39.4 → 19.5, none over 50 ms.
+  driveprofile, low, 18/s riding (after includes the rivers merge): p95 10.6 → 10.7, p99 14.6 → 15.2–19.9,
+  worst 54 → 69–72, GPU 7.42 → 7.66 ms a frame.
+- GIFs: C:/Projects/shots86/before-meteor.gif, after-meteor.gif (the bowl gone at once, the rim molten and
+  glowing), before-cut.gif (the top pops to grey cubes), after-cut.gif (the top falls as the spire's own mesh).
+- Left as designed: while a piece falls, what the sim does in its columns is written over (sand slumping
+  onto it, a lava set); the falls are short (4 cells/s, the round-20 feel).
+
+## Round 87 — the collapse on a real tower: what held it up (collapse)
+
+Why: the user on the phone (DECISIONS round 87): a tower with its base destroyed stayed standing; "Why do cells
+matter here? Shouldn't we care only about columns?" Found by reading the paths, then checked with the regression
+scripts/towertest.mjs (below):
+
+- The heat beam bores through rock in lava.wgsl with no edit event: nothing told the integrity system. Now the
+  level judges the beam's spot as a cut every 0.25 s while it's held (Integrity.cutAt, at once).
+- A spire taller than the window (the atlas's spires reach 120 cells; the window holds 248 with the ground
+  mid-way): its top is Streamer.outside, drawn by the band, and never came down. A piece with a run at the
+  window's top now takes the runs above it (Streamer.takeAbove, the band repacked: OutsideBand.packColumns),
+  falls with them (written clipped to the window) and gives back what's still above the window where it lands
+  (putAbove).
+- Limits in runs, not cells: a hanging piece reaching MAX_PIECE (4096) runs is held only if something holds it;
+  held nowhere it floods on to MAX_FLOOD (65 536 runs) and falls as far as followed. Rock freed under 8 cells
+  of volume crumbles to rubble instead of staying where it was (floating). Rock that gives is cut out by its
+  runs (fractional ends too), not as integer cells (which left slivers hanging).
+- A structure going on past its analysis box was skipped silently (touchesEdge): now the box is looked at
+  again twice the size (to 256).
+- A bug from round 86's own last change: apply() built the pieces from the cell lists, so once the rock came
+  as runs only it would have dropped them — now rock pieces and structure cells are both spawned.
+- simcull (merged): a falling piece's chunks are woken every frame (touch), so they're live.
+- scripts/towertest.mjs (the atlas level, q=low, the hybrid on, 412×915; the tool picked as its button would,
+  the screen tapped at the tower's foot — the real pointer path): 5/5 pass. A stone spire r2.5 h40, smash: one
+  tap, the piece in 45–56 ms; stone r4.5 h70 (the 8 × 8-column tower): two taps, 38–52 ms; the meteor tool on
+  r3 h50: 64–91 ms after it lands; a tower run up to the window's top with 24 cells on above it (outside): the
+  piece in 50 ms and what was above came down with it (24 → 16 over the top); concrete r2.5 h30: the smash wakes
+  it into the physics voxels (phys.wgsl), which bring it down — 15 taps, no integrity piece (the physics' own
+  path; not this system's). GIF: C:/Projects/shots86/tall-tower.gif (the 70-tall tower cut through, its top
+  coming down on its stub).
+>>>>>>> origin/collapse

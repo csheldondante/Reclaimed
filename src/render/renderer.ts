@@ -858,7 +858,8 @@ export class Renderer {
     // (round 82: with a band, the window's mesh and the band's look for changes and rebuild on alternate frames —
     // a frame never rebuilds both: on the phone the rebuilds were the biggest share of the p95 spikes)
     const turn = this.meshTurn++ & 1;
-    if (!SKIP.has('meshprep') && !this.holdMesh && (!this.band || turn === 0)) this.fieldMesh.encode(enc, cam);
+    // (round 86: but chunks marked urgent — an edit's, a falling piece's — are looked at every frame)
+    if (!SKIP.has('meshprep') && !this.holdMesh && (!this.band || turn === 0 || this.fieldMesh.hasUrgent)) this.fieldMesh.encode(enc, cam);
     if (this.band && !SKIP.has('band') && !this.holdMesh && turn === 1) this.band.mesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc, shadowDue);
 

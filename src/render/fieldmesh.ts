@@ -28,7 +28,7 @@ const IDLE_SKIP = `const IDLE_SKIP: bool = ${new URLSearchParams(location.search
 const NORMALS_GRID = `const NORMALS_GRID: bool = ${new URLSearchParams(location.search).get('normals') === 'grid'};`;
 
 /** bytes of the layout uniform (meshregion.wgsl MeshRegion) */
-export const REGION_BYTES = 112;
+export const REGION_BYTES = 128;
 /** (perfopt, ?cavemesh=near) the window's mesh leaves out the caves and the insides of hills, but near the cut */
 const CAVE_MESH = new URLSearchParams(location.search).get('cavemesh') === 'near';
 /** cells round the cut's focus where the caves are meshed */
@@ -41,6 +41,15 @@ const CHUNK0 = 16;
 const CSTRIDE = 13;
 /** meshstate.wgsl FRESH: a record's hash when nothing is built */
 const FRESH_HASH = 0x9e3779b9;
+/**
+ * (round 86) rebuild slots a frame kept for the chunks the CPU marks urgent (`urgent`: an edit's, a falling piece's),
+ * over the tier's own — low's one, on alternate frames with the band, made a crater's chunks show over ten frames
+ * and would let a falling piece's two chunks take turns. They cost only when used (the rebuild is dispatched for
+ * what was found).
+ */
+const URGENT_SLOTS = 4;
+/** fieldmesh.wgsl URGENT_BIT: in a chunk's near word, marked urgent */
+const URGENT_BIT = 0x10000;
 /** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
 const TOP_PAD = 4;
 
@@ -141,6 +150,9 @@ export class FieldMesh {
     this.nz = Math.ceil(((src?.zSpan ?? world.zMax) + 2) / h) + 2;
     // rebuild slots a frame: their scratch is the big cost in memory
     this.slots = src?.slots ?? (h >= 1 ? (slots ?? 8) : 3);
+    // (the window's: the urgent slots over them — at most 14, the state's slot list)
+    this.ordinary = this.slots;
+    if (!src) this.slots = Math.min(14, this.slots + URGENT_SLOTS);
     // room per chunk: ~1.3k vertices per 1000 columns at spacing 1 (~5k at
     // 0.5; DEVLOG 2026-10-22), a chunk ~1.2k columns, four times that for
     // cliffs and caves
@@ -153,6 +165,7 @@ export class FieldMesh {
     f.set([CHUNK, h, CHUNK * ROW_H, h * ROW_H], 0);
     u.set([this.nx, this.ny, this.nz, 1], 4);
     u.set([this.side, this.slots, vertsPer, indicesPer], 8);
+    u.set([this.ordinary, 0, 0, 0], 28);
     // every column is the mesh's
     f.set([-1, -1, W + 1, H + 1], 12);
     // (round 79) the window's: samples from 0, bedrock under 0, a run cut at its top goes on up (the
@@ -399,14 +412,60 @@ export class FieldMesh {
     }
   }
 
+  /** the rebuild slots a frame for any change (the rest are the urgent chunks') */
+  private ordinary = 0;
+  /** (round 86) per chunk: frames it stays urgent */
+  private urgentLeft = new Uint8Array(0);
+  private nearOut = new Uint32Array(0);
+  private urgentN = 0;
+
+  /**
+   * (round 86) The chunks over world rect (x0, y0)–(x1, y1) changed because of the player — an edit, a piece
+   * falling: for the next `frames` frames they're looked at every frame (asleep or not, the band's turn or not)
+   * and take the urgent slots, so the change shows the next frame.
+   */
+  urgent(x0: number, y0: number, x1: number, y1: number, frames = 3): void {
+    if (!this.on || this.src) return;
+    const n = this.nx * this.ny;
+    if (this.urgentLeft.length !== n) this.urgentLeft = new Uint8Array(n);
+    const i0 = Math.max(0, Math.floor((x0 - 3) / CHUNK));
+    const i1 = Math.min(this.nx - 1, Math.floor((x1 + 3) / CHUNK));
+    const j0 = Math.max(0, Math.floor((y0 - 3) / (CHUNK * ROW_H)));
+    const j1 = Math.min(this.ny - 1, Math.floor((y1 + 3) / (CHUNK * ROW_H)));
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) {
+        const c = j * this.nx + i;
+        if (!this.urgentLeft[c]) this.urgentN++;
+        this.urgentLeft[c] = Math.max(this.urgentLeft[c], frames);
+      }
+  }
+
+  /** (round 86) any chunk marked urgent: the window's mesh looks for changes this frame, whoever's turn it is */
+  get hasUrgent(): boolean {
+    return this.urgentN > 0;
+  }
+
   /** Find the chunks near the view that changed and rebuild a few of them. */
   encode(enc: GPUCommandEncoder, cam: Camera): void {
     if (!this.on) return;
     const chunks = this.nx * this.ny;
     this.device.queue.writeBuffer(this.state, 0, new Uint32Array([0]));
+    // (round 86: the ordinary slots' count, the args' spare word)
+    this.device.queue.writeBuffer(this.state, this.argsAt + 12, new Uint32Array([0]));
     // (state word 15: the frame, so the second hash pass knows what the first took)
     this.device.queue.writeBuffer(this.state, 15 * 4, new Uint32Array([++this.frameNo]));
-    this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, this.near);
+    let nearW = this.near;
+    if (this.urgentN > 0) {
+      if (this.nearOut.length !== chunks) this.nearOut = new Uint32Array(chunks);
+      nearW = this.nearOut;
+      nearW.set(this.near);
+      for (let c = 0; c < chunks; c++) {
+        if (!this.urgentLeft[c]) continue;
+        if (nearW[c]) nearW[c] |= URGENT_BIT;
+        if (--this.urgentLeft[c] === 0) this.urgentN--;
+      }
+    }
+    this.device.queue.writeBuffer(this.state, (CHUNK0 + chunks * CSTRIDE) * 4, nearW);
     // (round 80: a band only changes when it's packed — every chunk looked at for a few seconds after; else
     // only the fresh ones, those come into view)
     const passes = this.src && this.framesSincePack > 180 ? ([[this.hashF, this.hashFGroup]] as const) : ([[this.hashF, this.hashFGroup], [this.hash, this.hashGroup]] as const);

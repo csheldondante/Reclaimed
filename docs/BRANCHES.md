@@ -175,6 +175,7 @@ it is. Round 69 (atlas) slides the window in z too (`Streamer.oz`,
 
 | Branch | What | Try |
 |---|---|---|
+| `collapse` | Round 86 (from `places`): rock collapse and meteors made immediate — a meteor deletes its bowl the next frame with a flash, a shockwave ring, a dust cloud and the rim melted to lava; what it undercut is judged at once (no 0.35 s timer, only the chunks near read back); freed pieces fall in the columns' own format, meshed as the ground (no cubes), crumbling at the foot where they land | /Reclaimed/collapse/?skipmenu=1&level=atlas |
 | `ceiling` | The perf ceiling: a heightfield of the atlas's ground only (`?ceiling=1`): GPU 8.4 → 2.5 ms a frame on the desktop's iGPU; the rings' vertices are what's left | /Reclaimed/ceiling/?skipmenu=1&level=atlas&drive=18&perf=lite&ceiling=1 |
 | `hybrid` | The hybrid renderer (from ceiling + places): `?hybrid=1` — voxels only in the chunks that need them (forms, gaps open to the air, near the focus, edited), the LOD rings with rock on steep faces everywhere else | /Reclaimed/hybrid/?skipmenu=1&level=atlas&hybrid=1&drive=18&perf=lite |
 | `hybrid` | The hybrid renderer (from ceiling + places): `?hybrid=1` — voxels only in the chunks that need them (forms, gaps open to the air, near the focus, edited); round 86 the rest of the window a grid through its own column tops with the voxels' look (storms wet it, sheets run, plants, no square seam), the LOD rings past it | /Reclaimed/hybrid/?skipmenu=1&level=atlas&drive=18&perf=lite |
