@@ -9,7 +9,7 @@
 // regions and settlements) until the user's diplomacy design: see `placeholder` in WikiFaction.
 // (Runs in Node too, for scripts/worldwiki.mjs and scripts/storycheck.mjs: runtime imports carry `.ts`.)
 
-import type { Faction, FactionId, RegionState, WorldSnapshot } from '../api/contracts/world';
+import type { Faction, FactionId, Lake, RegionState, WorldSnapshot } from '../api/contracts/world';
 import type { Settlement } from '../api/contracts/settlement';
 import type { AtlasFacts, RegionFacts } from './atlas-facts';
 import { freshRegion } from '../api/contracts/world.ts';
@@ -93,6 +93,8 @@ export interface WorldWiki {
   sites: WikiSite[];
   roads: WikiRoad[];
   factions: WikiFaction[];
+  /** (round 90) the lakes the atlas keeps, named (the bigger first); with their middle's cell (?at=x,y) */
+  lakes: (Lake & { cell: [number, number] })[];
 }
 
 // ---- names ----------------------------------------------------------------------------------------
@@ -329,6 +331,18 @@ export function buildWiki(f: AtlasFacts): WorldWiki {
   const continents = contIds
     .filter((c) => f.sites.some((s) => s.cont === c) || contArea.get(c)! > 2000)
     .map((c) => ({ id: c, name: contName.get(c)!, area: contArea.get(c)!, regions: f.regions.filter((r) => r.land && r.cont === c).length, settlements: f.sites.filter((s) => s.cont === c).length }));
+  // lakes (round 90): named in the tongue of the land they lie in, the bigger first; a small pond is a Tarn or a Pool
+  const lakes = (f.lakes ?? [])
+    .slice()
+    .sort((a, b) => b.area - a.area || a.id - b.id)
+    .map((l) => {
+      const rr = rng(seed * 11 + l.id * 977 + 5);
+      const r0 = f.regions[l.regions[0]];
+      const t = r0?.land ? tongue.get(r0.cont)! : Math.floor(rr() * TONGUES.length);
+      const proper = name(t, 3_000_000 + l.id);
+      const noun = pickOf(l.area >= 40 ? ['Lake', 'Mere', 'Water', 'Loch'] : ['Tarn', 'Pool', 'Mere'], rr);
+      return { id: l.id, name: rr() < 0.7 ? `${noun} ${proper}` : `${proper} ${noun}`, level: l.level, at: l.at, outlet: l.outlet, area: l.area, depth: l.depth, regions: l.regions, inflow: l.inflow, outflow: l.outflow, cell: l.cell };
+    });
   const ROW_H = Math.sqrt(3) / 2;
   return {
     version: WIKI_VERSION,
@@ -341,6 +355,7 @@ export function buildWiki(f: AtlasFacts): WorldWiki {
     sites: settlements.map((x) => ({ id: x.id, setting: x.setting, atlasSize: x.atlasSize, cell: x.cell, roads: x.roads })),
     roads,
     factions,
+    lakes,
   };
 }
 
@@ -413,6 +428,11 @@ export function wikiMarkdown(w: WorldWiki, opt: { around?: [number, number]; rad
     const ss = w.snapshot.regions[r.id].settlements.map((s) => `${set.get(s)!.name} \`${s}\``).join(', ') || '-';
     L.push(`${r.id} | ${r.name} | ${r.kind} | ${r.tier ?? '-'} | ${r.climate} | ${r.ground.min}/${r.ground.mean}/${r.ground.max} | ${water} | ${r.stamps.join(', ') || '-'} | ${ss} | ${pres(st(r.id).presence)} | ${r.neighbours.join(' ')} | ${Math.round(near(r.centre))}`);
   }
+  L.push('');
+  const ponds = (w.lakes ?? []).filter((l) => near(l.at) <= R).sort((a, b) => near(a.at) - near(b.at));
+  L.push(`## Lakes within ${R} of the start (${ponds.length})`);
+  L.push('');
+  for (const l of ponds) L.push(`- **${l.name}** (lake ${l.id}): water at z ${l.level}, ${l.depth} deep at most, ${l.area} texels; in ${l.regions.map((r) => `${reg(r).name} (${r})`).join(', ')}; ${l.inflow} river${l.inflow === 1 ? '' : 's'} in${l.outflow ? ', one out' : ', none out'}; cell ${l.cell.join(',')}; ${Math.round(near(l.at))} from the start.`);
   L.push('');
   const towns = [...set.values()].filter((s) => near(s.at) <= R).sort((a, b) => near(a.at) - near(b.at));
   L.push(`## Settlements within ${R} of the start (${towns.length})`);

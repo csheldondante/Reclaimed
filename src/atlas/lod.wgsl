@@ -67,6 +67,10 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   if (h < AP.sea) {
     top = AP.sea;
     c = mix(vec3<f32>(0.2, 0.36, 0.42), vec3<f32>(0.08, 0.18, 0.3), clamp((AP.sea - h) / 20.0, 0.0, 1.0));
+  } else if (g.lkw && g.lk > h) {
+    // (round 90) a lake, at its level
+    top = g.lk;
+    c = mix(vec3<f32>(0.2, 0.4, 0.5), vec3<f32>(0.1, 0.24, 0.36), clamp((g.lk - h) / 12.0, 0.0, 1.0));
   } else if (g.rx < 1.0 && g.rl > h) {
     top = g.rl;
     c = select(vec3<f32>(0.2, 0.4, 0.55), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u);

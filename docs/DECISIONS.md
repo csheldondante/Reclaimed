@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 90 (session 5, `lakes`) — the atlas owns its lakes
+
+- The user, on BACKLOG W2 (a table river held over a hollow, its water standing with no banks), verbatim: "For the
+  rivers why does the river height lie above the dip? Is it because the river exits going higher? If so can we
+  compute that the region is flooded at the atlas level?"
+- → Yes: rivers.ts's priority flood fills every hollow to the height it spills out at, and a river's level is
+  that filled level; only the river's own columns had it, so its water stood over the rest of the hollow. Now the
+  atlas keeps each filled hollow deep and wet enough as a lake (its level the spill height, its outlet, the rivers
+  in and out), named in the wiki, drawn on the map and in the far rings, and the region generator realises it on
+  arrival: the basin filled to the level and held still, its shore a bank over the level (DEVLOG round 90).
+
 ## 2026-10-27 — round 88 (session 5, `seawall`) — a wall of water by the sea
 
 - The user, on the phone at the atlas level (the phone's defaults: hybrid, rivers=table, simcull): "I did find what

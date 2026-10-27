@@ -64,6 +64,20 @@ export interface RoadFacts {
   crossings: { kind: string; region: number }[];
 }
 
+/** (round 90, atlas/rivers.ts AtlasLake) a lake: its level (world z), middle and outlet (world units), area (texels) */
+export interface LakeFacts {
+  id: number;
+  level: number;
+  at: [number, number];
+  cell: [number, number];
+  outlet: [number, number];
+  area: number;
+  depth: number;
+  regions: number[];
+  inflow: number;
+  outflow: boolean;
+}
+
 export interface AtlasFacts {
   version: number;
   params: { seed: number; style: number; n: number; cols: number; rows: number; worldW: number; worldH: number; sea: number };
@@ -72,6 +86,8 @@ export interface AtlasFacts {
   regions: RegionFacts[];
   sites: SiteFacts[];
   roads: RoadFacts[];
+  /** (round 90; absent in caches pulled before lakes) */
+  lakes?: LakeFacts[];
 }
 
 const STAMP_NAMES = Object.fromEntries(Object.entries(STAMP).map(([k, v]) => [v, k])) as Record<number, string>;
@@ -170,5 +186,6 @@ export function atlasFacts(a: Atlas): AtlasFacts {
     regions,
     sites,
     roads,
+    lakes: a.lakes.map((l) => ({ id: l.id, level: l.level, at: l.at, cell: cellAt(l.at[0], l.at[1]), outlet: l.outlet, area: l.texels, depth: l.depth, regions: l.regions, inflow: l.inflow, outflow: l.outflow >= 0 })),
   };
 }

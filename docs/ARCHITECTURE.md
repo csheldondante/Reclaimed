@@ -677,6 +677,20 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   flow along the segment, colFinish writes it with the depth to the
   `riverFlow` contract texture, and the water holds an unwoken river there.) The ground is made
   twice: first without rivers (to find them on), then with them.
+- Lakes (round 90, `rivers.ts` AtlasLake, `Atlas.lakes` / `lakeAt`): the priority flood's filled hollows deep
+  (LAKE_DEPTH) and wet (LAKE_CATCH) enough, each a lake — its level the spill height, its outlet, rivers in and out,
+  its regions; a river's level in a lake is the lake's, in a hollow too small for one the floor's. Per texel a u16
+  (the lake's id + 1, LAKE_IN set inside, unset on its rim: land texels within LAKE_RING whose filled level is near
+  the lake's) and a table (the level) follow the river nodes in `riverBuf`; the crater block's words 1 and 2 say
+  where (0: none). compose.wgsl `lakeAt` picks the lake most of the four texels round a point are inside of and how
+  much (bilinear): over half, `Ground.lkw` (its water may stand there); less, the rim — the ground raised to a bank
+  LAKE_BANK and more over the level, before any river cuts it (a river through a lake cuts no channel under its
+  water; one lower than the lake doesn't cut its bank where its water is near). colFinish fills every column under
+  the level with `lkw` (form tops and holes too; no tube skylights under it; no loose cover on a steep bed), bedded
+  in silt, sand at the waterline where flat; its `riverFlow` is (0, 0, depth, −1): w < 0 a lake's (riverheld.wgsl
+  `RiverHere.lake`: held asleep is carried as it is, never relaxed or pulled to a depth). The rings (lod.wgsl), the
+  viewer (view.wgsl) and the atlas map draw it; sites keep out of lakes; the wiki names them (`WorldWiki.lakes`,
+  contracts/world.ts `Lake`, `lakeFlood`).
 - The coarse world (round 72, `coarse.ts`, `coarse.wgsl`): the torus at
   `coarseN`² cells (512: 32 world units each), what has changed from the
   atlas — rock taken or added, loose ground (its material), water, the

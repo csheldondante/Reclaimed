@@ -36,6 +36,9 @@ struct ColG {
   rvx: f32,
   rvy: f32,
   rd: f32,
+  /** (round 90) a lake's level here (0: none) and 1 where its water may stand (compose.wgsl Ground.lk, lkw) */
+  lk: f32,
+  lkw: f32,
 }
 
 @group(0) @binding(30) var<storage, read_write> colG: array<ColG>;
@@ -70,10 +73,11 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   // (round 84, ?rivers=table — the user: "the generator make things start in steady state"): a water river's banks
   // stand at least a little over its level, so what it holds stays in its channel — where the ground beside it lies
   // lower (the river's level is the filled ground's: it crosses hollows) up to RIVER_LEVEE under it, a levee
-  if (RIVER_TABLE && g.rflags == 0u && g.rl > 0.0 && g.rx >= 0.95 && g.rx < 1.9 && h < g.rl + 0.2 && h > g.rl - RIVER_LEVEE) {
+  // (round 90: not in a lake — its water stands over the river's banks)
+  if (RIVER_TABLE && g.rflags == 0u && g.rl > 0.0 && g.rx >= 0.95 && g.rx < 1.9 && h < g.rl + 0.2 && h > g.rl - RIVER_LEVEE && !g.lkw) {
     h = g.rl + 0.2 * smoothstep(1.9, 1.3, g.rx);
   }
-  colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat, g.rvel.x, g.rvel.y, g.rd);
+  colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat, g.rvel.x, g.rvel.y, g.rd, g.lk, select(0.0, 1.0, g.lkw));
 }
 
 /** (round 84) the deepest hollow beside a river its bank is raised over (columns more below it are left: a lake's) */

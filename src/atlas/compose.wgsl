@@ -321,6 +321,53 @@ fn riverAt(p: vec2<f32>) -> River {
   return r;
 }
 
+/**
+ * (round 90, rivers.ts AtlasLake) The lake at p: of the texels round it (rivers.ts LAKE_IN: a lake's id + 1, the
+ * bit set inside it, unset on its rim), the lake most of them are inside of, and how much (bilinear, 0..1); 0
+ * none. Its table and the ids are after the river nodes (the crater block's words 1 and 2 say where; 0: none).
+ */
+struct LakeHere {
+  level: f32,
+  m: f32,
+}
+
+fn lakeAt(p: vec2<f32>) -> LakeHere {
+  var o: LakeHere;
+  o.level = 0.0;
+  o.m = 0.0;
+  let tab = riverBuf[AP.n * AP.n + 1u];
+  if (tab == 0u) { return o; }
+  let ids0 = riverBuf[AP.n * AP.n + 2u];
+  let t = torusU(p) * f32(AP.n) - 0.5;
+  let i0 = vec2<i32>(floor(t));
+  let f = t - floor(t);
+  var ids: array<u32, 4>;
+  let w = array<f32, 4>((1.0 - f.x) * (1.0 - f.y), f.x * (1.0 - f.y), (1.0 - f.x) * f.y, f.x * f.y);
+  var some = false;
+  for (var k = 0; k < 4; k++) {
+    let j = texIdxW(i0 + vec2<i32>(k & 1, k >> 1));
+    ids[k] = (riverBuf[ids0 + (j >> 1u)] >> ((j & 1u) * 16u)) & 0xffffu;
+    some = some || ids[k] != 0u;
+  }
+  if (!some) { return o; }
+  var bm = -1.0;
+  for (var k = 0; k < 4; k++) {
+    let id = ids[k] & 0x7fffu;
+    if (id == 0u) { continue; }
+    var m = 0.0;
+    for (var q = 0; q < 4; q++) {
+      if ((ids[q] & 0x7fffu) == id && (ids[q] & 0x8000u) != 0u) { m += w[q]; }
+    }
+    let L = bitcast<f32>(riverBuf[tab + (id - 1u) * 2u]);
+    if (m > bm || (m == bm && L > o.level)) {
+      bm = m;
+      o.level = L;
+    }
+  }
+  o.m = bm;
+  return o;
+}
+
 struct Macro {
   a: u32,
   b: u32,
@@ -431,6 +478,10 @@ struct Ground {
   /** (round 84) the river's flow at the reference wetness (cells a tick, downstream) and its depth at the line */
   rvel: vec2<f32>,
   rd: f32,
+  /** (round 90) a lake here: its level (0: none), and whether its water may stand here (false: its rim, raised to
+   *  a bank over the level) */
+  lk: f32,
+  lkw: bool,
   /** the coarse world here (coarseAt): loose ground on top and its material, water, lava, what added rock is */
   loose: f32,
   lmat: u32,
@@ -778,11 +829,35 @@ fn ground(p: vec2<f32>) -> Ground {
   g.cap = select(0u, co.cap, co.dr > 0.3);
   // a river's channel, and the valley it cuts (its sides steep, so it cuts gorges through high
   // ground); its level only falls, all at once where the ground drops away: a waterfall
+  // (round 90) a lake: its water stands where the ground is under its level, most of the way inside it; on its rim
+  // the ground is a bank over the level (a beach rising from the water), so no water stands over lower ground
+  // past it (where the macro rim is lower between its texels). Before the river's channel: the river out cuts
+  // through the bank at the outlet.
+  let lh = lakeAt(p);
+  g.lk = lh.level;
+  g.lkw = false;
+  if (lh.level > 0.0) {
+    if (lh.m >= 0.5) {
+      g.lkw = true;
+    } else {
+      let bank = lh.level + LAKE_BANK + 3.0 * (0.5 - lh.m);
+      if (g.h < bank) {
+        g.hlo += bank - g.h;
+        g.h = bank;
+      }
+    }
+  }
   g.rl = -1.0;
   g.rx = 9.0;
   g.rflags = 0u;
   let rv = riverAt(p);
-  if (rv.on && rv.x < 4.0) {
+  // (round 90: a river lower than a lake beside it — past its outlet, to the sea — doesn't cut the lake's bank where
+  // the lake's water is near: no channel or valley side lies under the water standing beside it)
+  let lowR = lh.level > 0.0 && !g.lkw && lh.m > 0.2 && rv.level < lh.level - 1.0;
+  // (and none cuts a channel under a lake's water: the river runs into the lake and out at its outlet, still in
+  // between — a trench in its bed only filled with what slid down its sides, the held water standing over it)
+  let inLake = g.lkw && g.h < lh.level;
+  if (rv.on && rv.x < 4.0 && !lowR && !inLake) {
     var cut = rv.level + (rv.x - 1.0) * rv.w * 2.5;
     if (rv.x < 1.0) { cut = rv.level - rv.depth * (1.0 - rv.x * rv.x); }
     g.h = min(g.h, cut);
@@ -822,6 +897,9 @@ fn ground(p: vec2<f32>) -> Ground {
   g.h = clamp(g.h, 1.0, AP.zTop);
   return g;
 }
+
+/** (round 90) a lake's bank stands this far over its water at the shore (compose.wgsl ground) */
+const LAKE_BANK: f32 = 0.4;
 
 /** 0 at the poles, 1 at the equator (the torus's v: poles at 0 and 1, the equator at ½) */
 fn warmth(p: vec2<f32>) -> f32 { return 0.5 - 0.5 * cos(6.2831853 * torusU(p).y); }
