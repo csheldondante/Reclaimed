@@ -57,6 +57,17 @@ each was implemented.
   height, pulled apart by an off-centre weight — not only by crushing (round 92's CRUSH 300 a column let two
   columns hold 600 cells). Basalt: the meteor's rim no longer melts the tops of what stands over the bowl (C19),
   what the rim's watch judges is weighed, basalt films a hundredth over what's under them touch it.
+## 2026-10-27 — round 95 (session 5, `rockbody`) — rock as a rigid body while it falls
+
+- The user, verbatim: "It could be fun to spin up a new rock agent to make the disjoint chunk a rigidbody during
+  falling but I know the rigidbody sim needs tuning (still probably worth making an experiment for me to play
+  with and give feedback on)" → branch `rockbody`, `?rockbody=1` (default off), its knobs on a panel in the rock lab.
+- Then, verbatim: "Ok so the rigidbody sim should definitely render the mesh not cubes. It can use cubes to
+  simulate the motion but just anchor the vertices to the cubes" → the piece's own field mesh, made once when it
+  breaks free and moved with its body; the cubes hidden (`rbcubes=1` shows them), casting the shadow.
+- Earlier (round 86), still the brief: "I strongly recommend we simulate as voxels but split the mesh and have the
+  rock column fall and just weight vertices to voxels (although rock I don't expect to flex only crumble)" and "it
+  should also probably make a big cloud of dust … and maybe sparks".
 
 ## 2026-10-27 — round 92 (session 5, `collapse`) — what holds rock up; the meteor-made floaters
 

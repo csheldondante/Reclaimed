@@ -7220,6 +7220,9 @@ pages, 627 free after it: a burst of fresh chunks after slides, not a leak (they
 shrinking (WM6) is the cost. scripts/stalemesh.mjs (40 edits, one rebuild slot): owed 1 → 1 before, 2 → 2 now, 3
 stale found both ways. latencyprobe (cut): the column lowered 313–340 ms after the ask both ways, the chunk rebuilt
 1–10 ms after that.
+- (round 94, after the confirming shot) The objective's line was drawn as a strip across the screen's bottom
+  edge, not under the objective: its class `.hint` is also the level's hint bar's (ui/style.css, positioned
+  absolutely). It's `.obj-where` now. places 1a8e48a merged (DEVLOG and DECISIONS kept from both sides).
 
 ## Round 95 — rock as a rigid body while it falls (`rockbody`, `?rockbody=1`)
 
@@ -7388,3 +7391,12 @@ top on a leg a fifth of it, a smash at the leg's edge: places holds it, round 96
 (C:/Projects/shots88/collapse3/before-fifth-leg.gif, after-fifth-leg.gif); a slide in z with a piece falling 156 ms,
 settling 1 ms. driveprofile (q=low 412×915, 25 s): places p50 9.8 p95 14.3 GPU 11.12 ms → 9.8 / 14.4 / 11.59 (noise;
 both above round 92's 9.75 GPU: the merges).
+
+## 2026-10-27 — round 97: rock bodies merged into places, on by default in the atlas and the rock lab
+
+Why: the user played rockbody (round 95, cb41e7f) on the phone ("the rigidbody version is much better") and asked
+for it in the atlas ("push to atlas"; "Please merge the rigidbody version I played"). Merged as played; the only
+change is the default: `ROCKBODY` is on when `level=atlas` or `level=rocklab`, `?rockbody=0` turns it off and
+`?rockbody=1` turns it on elsewhere. Its round-95 measurements stand (floatsweep 0 floating with it on; ~0.3 ms GPU a
+body). Collapse round 96 (thin legs buckle, the knobs) and rockbody's round-96 tuning (weightier, metal on the GPU
+solver, a one-sided cut leaning over) follow on top.
