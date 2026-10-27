@@ -14,7 +14,7 @@
 // maps: the viewer draws it per pixel and `columns` per cell, the same code.
 
 import { makeBindGroup, makeCompute, makeComputeAsync, makeModule, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
-import { ColumnGrid, addTop, fitColumn, lowerTop, splitColumn, type Interval, type WorldDims } from '../world/layout';
+import { ColumnGrid, addTop, fitColumn, lowerTop, splitColumn, waterInWindow, type Interval, type WorldDims } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
 import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
@@ -1217,7 +1217,9 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
           grid.cols[j] = cut.inside;
           outside[j] = cut.outside;
           const top = cut.inside.length > 0 && !cut.outside.some((iv) => iv.z0 >= oz + zMax - 1e-4);
-          land.water[j] = top ? t.water[i] : 0;
+          // (round 88: over the floor where the ground is under it — the sea's — layout.ts waterInWindow)
+          const tc = t.cols[i];
+          land.water[j] = waterInWindow(cut, oz, zMax, tc[tc.length - 1].z1 + t.water[i]);
           land.moisture[j] = t.moisture[i];
           land.vegetation[j] = t.vegetation[i];
           land.surface[j] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;

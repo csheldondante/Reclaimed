@@ -12,14 +12,13 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
-## Round 89 (2026-10-27, session 5) — settlements as fields, the water epic (DECISIONS round 89)
+## Round 88 (2026-10-27, session 5, `seawall`) — a wall of water by the sea (DECISIONS round 88)
 
 | id | item | size | status |
 |---|---|---|---|
-| S1 | Settlements' first jobs: quarry, fell trees, haul, build; then farming, and houses that spawn more agents; the flow-field agents seen navigating a town and working | L | wip (`settlements`) |
-| S2 | Settlements as fields like vegetation: intensity and a style ("material": the civ's style), sensitive to the map's conditions (rivers, resources, slope), growing and spreading; buildings and districts are the field realised on the overlay grids; one field machinery shared with vegetation | L | wip (`settlements`) |
-| S3 | Quarries and mines cut into the ground and hills so they look good: terraced pits, adits into hillsides, spoil heaps, ramps | M | wip (`settlements`) |
-| W1 | The water epic: river shapes with less isotropy and more variety (meanders, braids, gorges, rapids, deltas), vegetation along banks; waterfalls from the flow model on the atlas; then ships | L | open (after vegetation, building, mapgen) |
+| W1 | "a steep wall of water" by the sea: where the window's floor is over 0 (a warp or a slide up by a coast), the sea's columns cut off under the floor came in dry and drained what ran in; the sea beside stood over them 26 tall (151 faces at 11600,18213) | S | done (seawall): layout.ts waterInWindow in the four cuts, water_depth.wgsl holds a cut-off column under the sea; 0 faces after |
+| W2 | A rivers=table river held over a macro hollow deeper than its levee (RIVER_LEVEE 12): its water 17-22 deep over the hollow's floor with no banks (1040,13551: a river at 123.6, the depression's spill height, over coastal ground at 101-118; 167 faces). Fill the hollow as a lake to its spill level (the per-texel fill on the GPU), or the river runs on the hollow's floor past the levee's reach? | M | asked |
+| W3 | The window's near edges show as tall walls of strata at the default zoom where the rings past them are pressed under the focus (the hybrid's known "window's edge visible", P13) — not water, but it reads as a wall by the sea when the window's floor is raised | M | open (P13) |
 
 ## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
 
@@ -35,7 +34,6 @@ user) · `deferred` (agreed for later).
 | C8 | Round 87: a fully undercut tower stayed standing on the phone — the beam's bore not judged, the part above the window never coming down, limits in cells, structures past the box skipped; fixed by reading the paths; scripts/towertest.mjs (the player's tools, 412x915, low) to run | M | done (collapse; towertest 5/5) |
 
 
->>>>>>> origin/collapse
 ## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
 
 | id | item | size | status |
