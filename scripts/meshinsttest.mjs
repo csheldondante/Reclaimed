@@ -109,7 +109,7 @@ try {
     }
   } else if (mode === 'rock') {
     const p = await page();
-    await p.goto(`${url}/?skipmenu=1&level=rocklab&tutorial=0&q=low&perf=1&rockbody=1&meshinst=1${extra}`, { waitUntil: 'load' });
+    await p.goto(`${url}/?skipmenu=1&level=rocklab&tutorial=0&q=low&perf=${opt("perf", "1")}&rockbody=1&meshinst=1${extra}`, { waitUntil: 'load' });
     await p.waitForFunction(() => window.reclaimed?.integrity?.(), { timeout: 240000 });
     await sleep(wait);
     console.log('fatal:', await fatal(p));
