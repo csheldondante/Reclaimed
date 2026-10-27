@@ -1,6 +1,6 @@
 // Round 92: the rock lab's (level=rocklab) pieces cut the player's way and filmed: the break tool (or the meteor)
 // picked and the screen tapped at a piece's foot, at the phone tier. Its ground truth after: floating runs (none).
-//   node scripts/rocklabgif.mjs [--url http://localhost:5271] [--piece thin|wide|arm|arch|offset|pillar|banded|concrete|waist]
+//   node scripts/rocklabgif.mjs [--url http://localhost:5271] [--piece thin|wide|arm|arch|offset|pillar|banded|concrete|waist|bridge|tower]
 //     [--tool smash|meteor] [--taps 3] [--gif out.gif] [--extra "&rockbody=1"] [--secs 9] [--dx 0 --dy 0 (the tap moved, cells)]
 //     [--zoom 5] (round 95: the rigid rock's bodies, breaks and step time logged each second)
 import puppeteer from 'puppeteer-core';
@@ -21,7 +21,7 @@ const gif = opt('gif', '');
 const extra = opt('extra', '');
 const secs = Number(opt('secs', 9));
 // (rocklab.ts: three rows of three, 22 apart round the camera's opening target; where to tap each, from its middle)
-const AT = { thin: [0, 0, 0, 0, 4], wide: [1, 0, -2.5, 0, 4], arm: [2, 0, -3.5, 0, 29], arch: [0, 1, -6, 0, 3], offset: [1, 1, -1.8, 0, 4], pillar: [2, 1, 6, 0, 1], banded: [0, 2, 0, 0, 3], concrete: [1, 2, 0, 0, 3], waist: [2, 2, 2.5, 0, 20] };
+const AT = { thin: [0, 0, 2.2, 0, 4], wide: [1, 0, -2.5, 0, 4], arm: [2, 0, -3.5, 0, 29], arch: [0, 1, -6, 0, 3], offset: [1, 1, -1.8, 0, 4], pillar: [2, 1, 6, 0, 1], bridge: [0, 3, -9, 0, 7], tower: [1, 3, 3, 3, 1], banded: [0, 2, 0, 0, 3], concrete: [1, 2, 0, 0, 3], waist: [2, 2, 2.5, 0, 20] };
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',

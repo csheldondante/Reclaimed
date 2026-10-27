@@ -194,6 +194,8 @@ export class Renderer {
   private rockPoolSeen = -1;
   private makeRockDraw?: (rm: RockMesh) => { pipe: GPURenderPipeline; group: () => GPUBindGroup };
   private rockGroupOf?: () => GPUBindGroup;
+  /** (round 96) the physics voxels' particle buffers the rock mesh is skinned to (setRockParticles) */
+  private rockParticles?: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer };
   /** (round 95) of the body voxels, the first this many are drawn (the rest only cast shadows: the rigid rock's, its mesh drawn) */
   private bodyShown = 0;
   private meshResources!: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
@@ -694,9 +696,9 @@ export class Renderer {
         const layout = makeLayout(
           device,
           'rock-mesh',
-          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'uniform' },
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'uniform', 32: 'read', 33: 'read', 34: 'read' },
           VF,
-          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );
         const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl, rockMeshWgsl]);
         const pipe = device.createRenderPipeline({
@@ -707,7 +709,12 @@ export class Renderer {
           primitive: { topology: 'triangle-list', cullMode: 'none' },
           depthStencil: depthStencil(true),
         });
-        const group = () => makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(this.camBuf, this.shadowView, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni });
+        // (round 96: the physics voxels' particles, the metal's mesh skinned to them; a stand-in without them)
+        const none = device.createBuffer({ label: 'rock no particles', size: 64, usage: GPUBufferUsage.STORAGE });
+        const group = () => {
+          const p = this.rockParticles;
+          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(this.camBuf, this.shadowView, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.px ?? none, 33: p?.pr ?? none, 34: p?.pq ?? none });
+        };
         return { pipe, group };
       };
       const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = this.shadowView) => this.meshGroupOf!(cam, shadow, { mesh: this.fieldMesh, chunks: world.chunks, layers: world.layers });
@@ -1661,6 +1668,12 @@ export class Renderer {
     this.rockGroup = group();
     this.rockPoolSeen = rm.mesh.poolVersion;
     return rm;
+  }
+
+  /** (round 96) The physics voxels' particles, for the rock mesh's skinned draws (the metal's). */
+  setRockParticles(p: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer }): void {
+    this.rockParticles = p;
+    if (this.rockGroupOf) this.rockGroup = this.rockGroupOf();
   }
 
   /** Call after submit to start async readbacks requested during encode. */

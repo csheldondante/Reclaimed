@@ -43,8 +43,8 @@ import { RiverWet } from '../weather/riverwet';
 import { RIVERS } from '../sim/world-gpu';
 import { installFlow, type FlowKit } from '../flow/install';
 import { FLOWLAB } from '../levels/flowlab';
-import { mountRockPanel } from '../ui/rockpanel';
-import { RB } from '../game/rockbodies';
+import { mountRockPanel } from '../ui/rockbodypanel';
+import { RB, rockbodyFor } from '../game/rockbodies';
 import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
@@ -873,7 +873,7 @@ export class LevelScene implements Scene {
       core.sim.edit.always = true;
       // the physics playground (F7, G5): what breaks free falls as rigid
       // pieces; the structure system only collapses damage
-      const integ = new Integrity(core);
+      const integ = new Integrity(core, rockbodyFor(this.level.id));
       this.integrity = integ;
       core.integrity = integ;
       // lightning seeks what you see (loose ground, fallen bodies) and breaks
@@ -898,6 +898,11 @@ export class LevelScene implements Scene {
       };
       // (round 95, ?rockbody=1) rock hitting the ground hard throws sparks, up and out
       this.integrity.onSparks = (x, y, z, count, speed) => core.sim.particles.burst({ kind: PK.Spark, x, y, z, count, speed, spread: 0.4, vel: [0, 0, speed * 0.4] });
+      // (round 96) metal goes to the physics voxels, its mesh skinned to them
+      if (this.integrity.rigid && this.physics) {
+        this.integrity.physics = this.physics;
+        core.renderer.setRockParticles(this.physics.buffers);
+      }
       // (round 95) the rigid rock's knobs in the rock lab
       const rigid = this.integrity.rigid;
       if (rigid && this.level.id === 'rocklab')
@@ -2621,7 +2626,7 @@ export class LevelScene implements Scene {
       parts.burst({ kind: PK.Ember, ...at, count: 5, speed: 2, spread: 1, vel: [dx * 16, dy * 16, 5] });
     }
     // the rim's ground molten, glowing past it; a molten pool in the bowl (no cone)
-    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5);
+    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5, z);
     // (round 88: the rim melting and setting over the next seconds — judged until it's done)
     this.integrity?.watch(x, y, BOWL * 1.6, 15);
     this.lava?.addVent(x, y, 2.5, 12, 3, 0);

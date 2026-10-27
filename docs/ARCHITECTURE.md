@@ -1293,6 +1293,25 @@ draws the parent's slot split by the fragments' Voronoi seeds (a ghost, `BUILD_F
 a settled body's mesh stays 6 frames. The cubes are only drawn for a body with no slot (too big: over 3 × 3 mesh
 chunks, or no room) or with `RB.cubes`; they always cast the shadow (`Renderer.setBodies(data, count, shown)`: the
 main pass draws the first `shown`).
+Round 96: on by default in the atlas and the rock lab (`rockbodyFor(level.id)`; `?rockbody=0|1`). Metal (steel,
+rust) isn't the judges' with it on: `Integrity.takeMetal` strips it from what they found and `wakeMetal` takes
+everything of it connected (26 round, METAL_MAX cells) out of both copies into one physics body
+(`Physics.spawnLattice`; cells on other ground pinned, as wake.ts does), set by the level (`Integrity.physics`).
+It's drawn as its particles' voxels; `?rbskin=1` (an experiment) gives it a rock-mesh slot meshed as stone and drawn
+skinned per vertex to the particle of its cell (`RockDraw.skin`: rockmesh.wgsl reads the particles' positions, rest
+and rotations at bindings 32–34, `Renderer.setRockParticles`; `Physics.buffers`), tearing where a triangle
+stretches past 1.6× or its particle is gone. A one-sided failure leans (round 96 (2)): with `rotate`, neck() turns
+any off-centre give (tips, snaps, buckle, a crush with the weight off the leg's middle) into a tip — over the hull edge
+the centre of mass is past, or over `facingEdge` (the edge it lies toward) with the rest of the leg's top two cells
+crumbled — and the body leans (`RockBody.tipping`: undamped, not at rest) till it comes down.
+Round 96: the piece above a cut also fails on a slender leg — `ROCK.BUCKLE × strength × I / L²` (I the leg's least
+second moment from its columns, L from where the piece would land to the cut; only a leg free over more than 2√A
+buckles) — or when its weight off the leg's middle pulls on the leg's far side past `ROCK.TENSILE × strength`
+(fracture.ts `legOf`); a piece already resting (a quarter of its hanging runs within a cell of what's under them,
+its centre over those) isn't judged off its leg. ROCK and a material's `bear` are set from the address
+(`?crush=` … `?bear=sand:0.1`) or the rock lab's panel (src/ui/rockpanel.ts), logged `[rock]`. The rim's watch
+weighs; the columns a piece left are judged again (weighed); intervals within `FILM_GAP` (0.02) touch. The meteor's
+blast melts only columns whose top is within `BLAST_UP` (4) of where it hit (lava.wgsl, `LavaU.blast2.z`).
 
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
