@@ -163,7 +163,16 @@ Units that walk, work, build, shape terrain, fight and flee.
   - `noticed(player)`
   - `attitude-changed`
 
-### 7. Items ○
+### 7. Things: items, units, vehicles, buildings as compositions ◐ — `places` (round 85)
+- **Has (contracts):** src/api/contracts/recipe.ts — kinds and tags, slots, recipes (assemble, craft, train,
+  adapt, salvage), instances with parts, material, condition, owner, place and history; capability rules;
+  civilization profiles (what a people uses, repairs, makes, understands); compose.ts `derive` and `plan`.
+  One model for units, items, vehicles and buildings (DECISIONS round 85).
+- **Diplomacy (contracts):** src/api/contracts/diplomacy.ts — interactions between factions and people,
+  fading, for dialog; agreements beyond war and peace (trade, land and mineral rights, passage, tribute);
+  opinions derived; MemoryDiplomacy.
+
+### 7b. Items (generators) ○
 - **API:**
   - `itemgen.make(kind, era, rarity, seed) → ItemKind`
   - `items.spawn(item, at)`
@@ -266,6 +275,8 @@ before creating heroes or their stories".
    cameras to frame a talk and show what's happening (a cut to a speaker, a reveal of a world effect).
 3. ◐ (round 84, `gm`) The GM: a subagent with the GM's context and tools reads a WorldSnapshot and writes a SessionStory (JSON),
    offline; a validator checks it against story.ts (every reference resolves).
+4. ◐ (round 85) The data for items, units and diplomacy: recipe.ts, compose.ts, diplomacy.ts; settlements on
+   overlay grids with buildings as things.
 4. Settlements and agents: the settlement data (with the city game's needs), placed by the region generator,
    worked by agents (workers) and raided by hostile ones; items, units and diplomacy after the user's ideas.
 5. Then heroes and their stories on top.

@@ -3,6 +3,37 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-26 — round 85 (session 5, `places`) — recipes, civilizations, legacy; diplomacy; grids
+
+- **Recipe-driven civilizations and legacy.** "Units, items, vehicles, buildings, and even civilizations are
+  compositions of reusable ingredients, defined through a shared, data-driven recipe system." A knight is a
+  person + training + armour + a mount, and the mount can be a horse or a hoverbike ("a medieval hover knight");
+  a mech can take a bow with compatible controls; a furnace, a reactor or a magic stone can satisfy a power
+  requirement "with different capabilities and consequences"; buildings (housing, hospitals, universities,
+  factories, communes) come from combinations of structures, facilities, resources and functions; adaptive
+  reuse ("a primitive civilization might convert an ancient ruined megastructure into apartments").
+- Resources and artifacts exist physically; units mine, excavate, salvage, manufacture, trade and combine them.
+  "Possessing technology and knowing how to reproduce it are distinct." Destroyed buildings, abandoned
+  equipment, fallen civilizations and past runs all feed the future economy: Explore → Extract → Combine →
+  Deploy → Leave behind → Rediscover.
+- Materials keep physical and visual properties (copper's patina, red steel, local stone and wood shape
+  equipment and architecture). Civilizations have parameterised technology, cultural preferences,
+  architectural styles and production choices; their look follows geography, resources, history and
+  technology, "rather than an arbitrary faction skin".
+- **For now the data model only**, not editors or animation: (1) recipes, (2) instances (composition, condition,
+  ownership, provenance), (3) derived capabilities as separate rules, (4) civilization profiles, (5)
+  presentation later from the same data. "Minimal, extensible, and shared across entity types. Avoid
+  hardcoding every possible combination." → src/api/contracts/recipe.ts, compose.ts.
+- **Grids.** "Overlay grids for our cities": irregular grids like Townscaper, Voronoi on height contours for
+  modern, radial sets like Bulwark — "interesting looking and varied." → settlement.ts `SettlementGrid`.
+- **Diplomacy** "should work by holding the history of factions and individual interactions like rimworld so
+  they can come up in dialog. It should also have more than peace or war it should have land and mineral
+  rights and trade agreements." → src/api/contracts/diplomacy.ts.
+- **The simulation's dispatches:** "only simulate things that need it and the whole point of the laminar flows
+  (steady state) and scalar drop is it limits how long we need to simulate and lets us cache simulation
+  results" — cutting the dispatches over asleep land approved (branch `simcull`).
+- **Hybrid:** "Hybrid is awesome and definitely should be merged!"
+
 ## 2026-10-26 — round 83 (session 5, `places`) — the why: an engine for legacy games
 
 - Reclaimed began as an atmospheric sandbox (wind helping nature regrow; satisfying floods and wind that

@@ -12,6 +12,19 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 85 (2026-10-26, session 5, `places`) — recipes, civilizations, diplomacy, grids (DECISIONS round 85)
+
+| id | item | size | status |
+|---|---|---|---|
+| R1 | The recipe model's contracts: kinds and tags, slots, recipes (assemble, craft, train, adapt, salvage), instances (parts, material, condition, owner, place, history), capability rules, civilization profiles (knowledge by mastery: uses, repairs, makes, understands), a Look hook; the reference implementation (compose.ts: `derive`, `plan`); scripts/recipetest.mjs | M | done (this commit) |
+| R2 | Diplomacy's contracts: interactions between factions and people (RimWorld-like, fading, quoted by dialog), agreements (war, truce, peace, alliance, trade, land rights, mineral rights, passage, tribute, vassalage), opinions and stances derived; MemoryDiplomacy | M | done (this commit) |
+| R3 | Settlements on overlay grids (irregular, contour Voronoi, radial, orthogonal), buildings as instances with a derived use, adaptive reuse (`founded.over`), jobs that need rights | S | done (this commit; the generators for contour-Voronoi and radial grids are R6) |
+| R4 | The first content as data (data/recipes/): materials (with ageing), ~30 kinds, the core capability rules, a few civ profiles from the atlas's eras; the world state keeps things and diplomacy between runs (WorldSnapshot) | M | open |
+| R5 | Units from compositions: the unit generator (system 6) makes a unit as an Instance from a role, a civ and what's at hand (`plan`), its stats and abilities from `derive` | M | open |
+| R6 | Grid generators: Voronoi on height contours and radial rings and spokes beside build/towngrid.ts, picked by CivProfile.builds.grids | M | open |
+| R7 | Legacy between runs: what a run leaves (bodies, gear, wrecks, buildings) becomes Instances placed `in: 'region'` (buried, scattered, hoard) and the region generator places them on arrival; materials age between runs | M | open |
+| R8 | Dialog and the GM read diplomacy: `memories(who, about)` in talks ("you spared my brother"), agreements in the wiki and stories; story Outcomes that note interactions and make or break agreements | S | open |
+
 ## Round 83 (2026-10-26, `dialog`) — dialog, the run, story cameras (docs/SYSTEMS.md 10, 11, 5)
 
 | id | item | size | status |
@@ -40,7 +53,7 @@ session story offline as data. docs/GM.md is the GM's context and says how a ses
 | G5 | The adapter: src/gm/gm.ts `GameMaster.brief`, `FileGM`, `fetchGM` | S | done (this commit) |
 | G6 | Contract changes to propose to the contracts' owner (not made): WorldSnapshot gets `seed` and settlement records (the wiki carries them beside it for now); story.ts comments for the semantics in docs/GM.md "The format" (AND lists, a happening fires once, a talk opens at its last unlocked node, the first room is the way in, time in seconds); `StoryCharacter.room`; an `any` condition (OR); `faction-presence` with a negative magnitude (a faction losing ground); `PlayerRecord` in run.ts | S | done (places e63a874, ed1ccf0, b80a908; the GM on them: this commit) |
 | G7 | A GM that calls a model at run start behind `GameMaster.brief`: the prompt from docs/GM.md, the wiki and the player record; `checkStory` on the reply; a retry with the problems until it's clean | M | open |
-| G8 | Factions from the user's diplomacy design, replacing the wiki's placeholder table (realms from settlement clusters, four world factions) | M | waits (the user's ideas) |
+| G8 | Factions from the user's diplomacy design, replacing the wiki's placeholder table (realms from settlement clusters, four world factions) | M | open (the design: round 85, diplomacy.ts) |
 | G9 | Play the first story: the dialog system (step 2) opens its trees, the run tracks objectives and happenings, the world state applies its AtlasEvents, and the region generator builds its briefs | L | waits (steps 2, 4) |
 | G10 | The wiki after runs: history, marks and past runs in the markdown once events are applied (MemoryWorldState → snapshot → wiki); region names kept stable if the namer changes | S | open |
 

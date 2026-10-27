@@ -5882,3 +5882,26 @@ places took the GM's proposals and the dialog agent's: Condition `any`, `StoryCh
 - **The wiki** now uses the snapshot for the seed and the settlements (settlement.ts records). What the
   atlas placed each settlement for (setting, cell, roads) moved to `sites` beside the snapshot.
 - docs/GM.md covers the new fields, and the meanings it had fixed are now the contracts' own comments.
+
+## 2026-10-26 — round 85: things as compositions, diplomacy, settlement grids (contracts)
+
+The user's design (DECISIONS round 85) calls for one recipe system for units, items, vehicles, buildings and
+civilizations, with legacy carried between runs. They asked for the data model first. Why it's shaped this way:
+- **Tags and slots, not a type per combination.** A slot accepts any thing whose tags fit, so a hover knight
+  takes no new code: a hoverbike is a `mount`. Stats come from rules over the composition's tags. A part's tags
+  show as `slot:tag`, so a rule can say "a knight whose mount is a vehicle hovers". A hoverbike's power slot
+  takes a power cell or a magic stone. The magic stone adds `glows`, which gives the user's "different
+  consequences" a place to live.
+- **Derived, never stored.** Capabilities are recomputed from the parts. Swapping a mount, wearing armour down
+  or dropping a power cell changes the result without any sync.
+- **Mastery separate from possession.** A people's knowledge of a recipe is uses, repairs, makes or
+  understands. `plan` refuses a craft without `makes`. So a medieval people can ride dug-up hoverbikes but can't
+  build them, which the user asked for by name.
+- **Provenance on every thing**, and a `Place` that can be `in: 'region'` (buried, scattered, a hoard). What a
+  run leaves becomes things a later people can find (R7).
+- **Diplomacy as a record**, RimWorld style. Opinions are the faded sum of deeds plus standing agreements, so
+  dialog can quote the deeds behind an opinion (`because`, `memories`). Rights and trade are agreements with
+  places, resources, shares and flows. Units ask `rights(region, at)` before they mine.
+- **Settlements:** overlay grids of several styles, and buildings as things, so a ruin can be adapted. The city
+  game edits the same records.
+scripts/recipetest.mjs checks all of this: 12 checks, all passing.

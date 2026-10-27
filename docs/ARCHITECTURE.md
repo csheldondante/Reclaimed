@@ -1155,3 +1155,24 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   properties, no enums).
 - Test: `scripts/gmtest.mjs`. The first story and docs/GM.md's example come out clean, 18 kinds of mistake
   are caught, and FileGM serves and refuses as it should.
+
+## Things and diplomacy (round 85, src/api/contracts)
+
+- **recipe.ts.** Everything made is an `Instance` of a `Kind` (tags, base stats, slots). Its `parts` fill slots by
+  tag (`TagQuery`), so a hoverbike fills a knight's `mount` slot as a horse does. A `Recipe` says how things
+  combine (assemble keeps parts, craft uses them up, train adds a skill tag, adapt gives an existing thing new
+  parts and function, salvage takes it apart). `CapabilityRule`s (data) read the composition's tags — its own
+  plus each part's as `slot:tag`, and `has:slot` — and give stats, abilities, tags and unmet requirements.
+  `CivProfile.knowledge` holds a mastery per recipe: uses, repairs, makes or understands.
+- **compose.ts.** `derive(catalogue, id)` gives a thing's capabilities, parts first. Nothing stores them, and
+  condition scales the stats. `plan(catalogue, civ, recipe, at, facilities)` fills a recipe's slots from what's
+  at hand, or says why it can't: making needs `makes`.
+- **diplomacy.ts.** `Interaction`s are a party's deed to another. Each has a weight (−1..1) and a half-life in
+  runs; witnesses and kin take half. `Agreement`s are terms: war, truce, peace, alliance, trade (flows), land
+  rights, mineral rights (share), passage, tribute or vassalage, with places and resources. An `Opinion` (value,
+  stance, the interactions behind it) is derived. Breaking an agreement notes a broke-word interaction.
+  MemoryDiplomacy is the reference implementation.
+- **settlement.ts.** A settlement lays its districts out on overlay `SettlementGrid`s (irregular, contour
+  Voronoi, radial, orthogonal). Its buildings are things on grid cells, and their `use` is derived.
+  `founded.over` records adaptive reuse.
+- Test: scripts/recipetest.mjs.

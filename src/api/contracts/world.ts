@@ -97,6 +97,8 @@ export interface Faction {
   era: 'ancient' | 'medieval' | 'industrial' | 'modern' | 'post-apocalyptic' | 'sci-fi' | 'magical';
   attitude: number;
   relations: Partial<Record<FactionId, number>>;
+  /** its civilization's profile (recipe.ts CivProfile: knowledge, tastes, how it builds) */
+  civ?: string;
 }
 
 /** The world's state as the GM and the overmap read it: the world wiki's facts. */

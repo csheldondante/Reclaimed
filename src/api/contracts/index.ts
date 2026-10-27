@@ -5,3 +5,7 @@ export * from './dialog';
 export * from './run';
 export * from './settlement';
 export * from './world-state';
+export * from './recipe';
+export * from './compose';
+export * from './diplomacy';
+export * from './diplomacy-memory';

@@ -232,6 +232,7 @@ export function buildWiki(f: AtlasFacts): WorldWiki {
     radius: RADIUS[s.size],
     size: SIZE[s.size],
     condition: 'thriving',
+    grids: [],
     buildings: [],
     people: [],
     stores: {},
