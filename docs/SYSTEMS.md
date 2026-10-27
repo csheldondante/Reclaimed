@@ -149,6 +149,7 @@ Everything that makes the local world react. Its quality and cost are its own bu
 ### 6. Units and agents ◐ — branch `agents` (and the hoverbike session's heroes)
 Units that walk, work, build, shape terrain, fight and flee.
 - **Has:** docs/AGENTS.md (walkable surfaces from intervals, flow-field groups, jobs as fields; on `agents`).
+- **Contract (round 88, `runstory`):** src/api/contracts/units.ts `Units` (spawn, query, order, hit, setHostile, watch actors; died / hurt / noticed); src/units/simple.ts `SimpleUnits` the CPU stand-in until the GPU agents implement it.
 - **Not yet:** a unit generator (archetypes by role, faction and era); attitudes tied to factions; work that
   visibly shapes terrain in play (it goes through the world API's edits like any other).
 - **API:**

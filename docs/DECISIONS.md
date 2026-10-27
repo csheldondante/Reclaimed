@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 88 (session 5, `runstory`) — a hero in a run story
+
+- The user, verbatim: "I would like to try spawning as a character like in hoverbike and talking to people or going
+  places or fighting things for a run story."
+- → Branch `runstory`: an on-foot hero behind a `Hero` contract (the hoverbike game's heroes plug in instead), the
+  Bell story staged on the atlas level near the spawn, its cast as units (a `Units` contract the settlements' GPU
+  agents will implement), talks, objectives, happenings, fights, death ends the run; `?run=bell`.
+
 ## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
 
 - The user, testing `collapse` on the phone: "Waterfalls and the meteor look fantastic! However, the collapse
@@ -33,7 +41,6 @@ each was implemented.
   the weight idea (a hanging piece's mass against its contact area × strength).
 
 
->>>>>>> origin/collapse
 ## 2026-10-26 — round 87 (session 5, `places`) — the second phone test
 
 - "Waterfalls and the meteor look fantastic! However, the collapse didn't work for me on mobile at all. I was able to

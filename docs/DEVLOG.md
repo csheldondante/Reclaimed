@@ -6497,4 +6497,19 @@ scripts/towertest.mjs (below):
   it into the physics voxels (phys.wgsl), which bring it down — 15 taps, no integrity piece (the physics' own
   path; not this system's). GIF: C:/Projects/shots86/tall-tower.gif (the 70-tall tower cut through, its top
   coming down on its stub).
->>>>>>> origin/collapse
+
+## 2026-10-27 — round 88, `runstory`: the Units contract (first, so the settlements agent can implement it)
+
+Why: the user (round 88) wants to spawn as a character and talk to people, go places and fight things in a run
+story. The cast and the hostiles need to be units (BACKLOG D6), and the `settlements` branch is building the GPU
+agents at the same time; main asked for a small, general contract to code against first.
+
+- src/api/contracts/units.ts `Units`: spawn(kind, at, faction, { name, character, settlement, role, hostile,
+  health, sight, speed, damage, colour, job }), get, query(near, r), byCharacter, order(id | ids, job: guard,
+  go, patrol, attack, follow, flee, work), setHostile, hit(id, damage, by), remove, watch(actor), shift (a
+  streamed window's slide), update; events died, hurt, noticed. `Actor`: what isn't a unit but takes part (the
+  hero): hostile units notice, chase and hit it through `Actor.hurt`.
+- src/units/simple.ts `SimpleUnits`: the CPU implementation (a few dozen units): straight-line steering over
+  the world API's heightAt (a climb over 1.6 cells refused, sliding along the face), push-apart, a readable
+  fight (a 0.45 s wind-up, then the blow lands if still in reach; a flinch and knockback when hit; the dead lie
+  4 s). The GPU agents replace it behind the same interface.

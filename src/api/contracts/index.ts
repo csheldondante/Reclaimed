@@ -9,3 +9,4 @@ export * from './recipe';
 export * from './compose';
 export * from './diplomacy';
 export * from './diplomacy-memory';
+export * from './units';
