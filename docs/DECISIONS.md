@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 88 (session 5, `collapse`) — no floating rock
+
+- The user, testing on the phone, verbatim: "The collapse code render looks much better! It still fails to make
+  some unsupported structures wake up and fall though. So worth testing on a wider column and seeing if only parts
+  of it fall."
+- And: "I also, think we can do even more with the collapse code but first step is fixing the floating rocks. We
+  can work on making them more physics enabled as future work".
+- → After any edit, every run with no support path to the ground falls, in full: a column's runs are its touching
+  intervals of every material (not the rock's alone), a hanging piece is followed to its end, structures (concrete
+  and the rest) cut by the break tool, a dig or a meteor fall the same way as rock (not woken into physics bodies);
+  the ground truth (a flood from the ground) is what the tests count. Toppling and more physics: later (BACKLOG
+  C4, C5, C7).
+
 ## 2026-10-27 — round 88 (session 5, `seawall`) — a wall of water by the sea
 
 - The user, on the phone at the atlas level (the phone's defaults: hybrid, rivers=table, simcull): "I did find what

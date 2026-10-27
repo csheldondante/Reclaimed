@@ -6557,3 +6557,55 @@ depression-filled level of findRivers) runs 12 wide over coastal ground at 101-1
 banks — 167 wall faces. Either the hollow is filled as a lake to its spill level (needs the per-texel fill on the
 GPU; where the fine ground lacks the macro rim it's a wall again) or the river runs on the hollow's floor (its level
 the ground's + its depth past the levee's reach). The user's call.
+
+## Round 88 — no floating rock (`collapse`)
+
+Why: the user on the phone (DECISIONS round 88): "It still fails to make some unsupported structures wake up and fall
+though. So worth testing on a wider column and seeing if only parts of it fall"; "first step is fixing the floating
+rocks". Test first: scripts/floatsweep.mjs (the atlas level, q=low, hybrid=1, 412×915) writes 31 structures into the
+window's columns — towers 3/6/10/16 across × 10/40/100 tall, banded towers (soil, sand, concrete every few cells, as
+the atlas's strata), concrete, stone on a concrete plinth, slabs on necks, bridges, an arch, an arm — mostly far from
+the camera (heightfield chunks), cuts them partly and fully by the break tool's events, the meteor tool, the world
+API's crater (a tank's or hero's shot), take, dig, the player's taps through the pointer, the heat beam and a great
+meteor, and at the end counts on a fresh readback of the whole window every run with something solid in it and no
+way to the ground (its own flood from the window's floor over overlapping runs). scripts/rockcpu.mjs does the same
+for the judge alone on the CPU (random worlds, towers, slabs, bridges, random sphere cuts; `--judge` another
+fracture.ts).
+
+Round 87's code, measured: the sweep's subset left 107-381 runs floating (banded towers: only the part under the
+first band fell; concrete towers, stone on concrete, a slab: nothing or part); rockcpu failed 3 of 30 worlds. Found:
+
+- Runs were the rock's alone, standing on *whatever* was under them: a band of soil or concrete in a tower held up
+  everything above it, though the band itself hung free; the soil on a falling run stayed. Now a run is a column's
+  touching intervals of every material (fracture.ts columnRuns); it stands only if it reaches the window's floor;
+  runs hold each other sideways through intervals that hold (solid, plants) overlapping by half a cell (`joined`).
+  Any hanging run with something solid in it is judged, so structures undercut fall the same way as rock.
+- A pass threw (`next.get(...) is not iterable`, seen in the sweep's page errors) when a piece's flood reached runs
+  an earlier, held piece had stopped at MAX_PIECE — everything after it in that pass went unjudged, and the runs
+  short of it were taken as a piece of their own. A piece joined to one judged held is held now.
+- A piece held nowhere stopped at 65 536 runs and fell as far as it was followed: now it's followed to its end.
+- The pass reads back only the chunks round its seeds; a wide piece reaching past them was judged on columns
+  the CPU's copy last saw long before (and a fall writes those columns back). Now such a piece is left, its
+  chunks read and it's judged again at once (Fracture.need / undecided, Integrity.needChunks; `rereads` in stats).
+  A read that comes back after a slide doesn't count as a look (the seeds were spent on it).
+- The rock pass runs before the structures' boxes, so it takes what hangs free whole first.
+- The break tool, the dig and the meteor woke structures into physics bodies, pinned at the foot (towertest's
+  concrete tower: 15 taps): now they cut the ground as for stone, and the pieces fall as the columns' own.
+- A great meteor's window edit changes columns with no event: they're seeds now (Integrity.cutCols).
+- A piece that caught up with one falling under it landed on it mid-air, ground again up there when the lower
+  one fell on (the sweep's slab on a one-column neck, split in four): it rides down on it now (ColumnBodies).
+- After a meteor, crusts of basalt and films of stone a few hundredths thick floated over slivers of air: the
+  sediment pass let loose ground run out sideways (an exposed face, sediment.wgsl spill) from under what lay on
+  it. Loose intervals under something solid (through the loose ones between) stay put now; the meteor's rim and
+  the beam's bore are also judged once a second while they melt and set (Integrity.watch, 15 s / 6 s).
+
+Measured after (desktop iGPU, D3D11): floatsweep 31/31, 0 floating runs in the window before and after the sweep
+(each case settled in 2.6-6.5 s, 17.7 s with a meteor's watch); rockcpu 150 worlds × 60 cuts with none left
+floating, the judge's slowest call 6 ms; the slowest pass in the sweep 12-15 ms (a 14-across, 70-tall banded tower
+cut through: 178 columns × 10 runs), typical 0.1-5 ms. towertest 5/5 (spire 69 ms, wide 80, concrete *one tap*,
+71 ms, meteor 94, tall 59). driveprofile (q=low 412×915, 25 s): p50 9.9 → 9.8 ms, p95 10.6 → 10.6, GPU 7.89 →
+8.06 ms a frame (noise: sediment 0.05 → 0.06). GIFs: C:/Projects/shots88/collapse/before-wide-banded.gif (a
+12-across, 45-tall tower banded with soil, tapped through at its foot: only the part under the first band falls,
+the rest stays in the air) and after-wide-banded.gif (all of it comes down). The heat-beam case didn't bore through
+headlessly (nothing cut, nothing floats); its path is towertest's and round 87's. Open: BACKLOG C13 (GPU-made
+changes elsewhere — a volcano's flows — aren't judged).
