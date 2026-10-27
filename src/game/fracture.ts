@@ -37,6 +37,10 @@ export interface Fracture {
   crumbleRuns?: RunPiece;
   /** (round 87) a structure went on past the box: not judged (look again over a bigger box) */
   beyond?: boolean;
+  /** (round 88, analyseRock) columns a piece reached that the CPU's copy doesn't hold as they are now: read them */
+  need?: [number, number][];
+  /** (round 88, analyseRock) the seeds of the pieces left for that: judged again once they're read */
+  undecided?: [number, number][];
 }
 
 /** (round 86) a piece of rock by its columns: each one's runs (window z, fractional ends kept) */
@@ -506,13 +510,29 @@ const MIN_BODY = 8;
 const OVERLAP = 0.5;
 /**
  * A hanging piece reaching this many runs that is held somewhere (a cave's roof, joined on and on) is held: the
- * flood stops there, its reach not judged. (Round 87: one reaching it held nowhere yet floods on, to MAX_FLOOD
- * runs; past that it falls as far as it was followed — the rest is judged when it lands. Runs, not cells: a
- * tower 8 columns across and 70 tall is 64 runs.)
+ * flood stops there, its reach not judged. (Round 88: one held nowhere floods on to its end, however far — it
+ * falls whole or not at all; round 87 stopped at 65536 runs and dropped what it had followed, leaving the rest
+ * floating. Runs, not cells: a tower 8 columns across and 70 tall is 64 runs.)
  */
 const MAX_PIECE = 4096;
-const MAX_FLOOD = 65536;
 
+/** (round 88) what holds a neighbour's run up sideways: solid ground of any strength, a plant's wood — not loose ground or a liquid */
+const sideHolds = (m: number) => {
+  const s = MATERIALS[m]?.state;
+  return s === MatState.Solid || s === MatState.Vegetation;
+};
+/** (round 88) what a column's runs are made of: anything but air and a liquid (loose ground lying on rock is part of its run) */
+const isMatter = (m: number) => {
+  const s = MATERIALS[m]?.state;
+  return s !== undefined && s !== MatState.Empty && s !== MatState.Liquid;
+};
+
+/**
+ * (round 88) A column's runs: its intervals touching one another, whatever they're made of (rock, a structure on
+ * it, the loose ground on that) — a run either reaches the window's floor (it stands: what's under the window holds
+ * it) or it hangs over air. Round 87's runs were the rock's alone, standing on whatever was under them — a run of
+ * stone on a block of concrete that itself hung free stood, and the soil on a falling run of rock stayed in the air.
+ */
 interface Run {
   x: number;
   y: number;
@@ -520,9 +540,46 @@ interface Run {
   z1: number;
   /** its intervals (each its own material) */
   ivs: { z0: number; z1: number; mat: number }[];
-  /** resting on something under it (or the bedrock) */
+  /** it reaches the window's floor */
   stands: boolean;
+  /** its rock's span (Infinity: no rock in it — a structure, judged by analyse) */
   span: number;
+  /** something solid in it (only such runs are judged: a plant's leaves hanging from it go with it) */
+  solid: boolean;
+}
+
+/** (round 88) the runs of a column from its intervals */
+function columnRuns(x: number, y: number, ivs: { z0: number; z1: number; mat: number }[]): Run[] {
+  const rs: Run[] = [];
+  let last: Run | null = null;
+  for (const iv of ivs) {
+    if (!isMatter(iv.mat)) {
+      last = null;
+      continue;
+    }
+    const span = isRock(iv.mat) ? (MATERIALS[iv.mat].span ?? ROCK_SPAN) : Infinity;
+    const solid = MATERIALS[iv.mat].state === MatState.Solid;
+    if (last && Math.abs(iv.z0 - last.z1) < 1e-3) {
+      last.z1 = iv.z1;
+      last.ivs.push(iv);
+      last.span = Math.min(last.span, span);
+      last.solid ||= solid;
+    } else {
+      last = { x, y, z0: iv.z0, z1: iv.z1, ivs: [iv], stands: iv.z0 < 1e-3, span, solid };
+      rs.push(last);
+    }
+  }
+  return rs;
+}
+
+/** (round 88) do runs a and b (neighbouring columns) hold each other: intervals that hold sideways overlapping by OVERLAP */
+function joined(a: Run, b: Run): boolean {
+  if (Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) < OVERLAP) return false;
+  for (const p of a.ivs) {
+    if (!sideHolds(p.mat)) continue;
+    for (const q of b.ivs) if (sideHolds(q.mat) && Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0) >= OVERLAP) return true;
+  }
+  return false;
 }
 
 /**
@@ -532,64 +589,44 @@ interface Run {
  * of material for lateral support and vertical material for support from below. If it is supported from
  * below it can stand … if it is just supported laterally that's the only time you need to do any flood";
  * "you don't need to check all of them just the ones that we woke up"). From the columns an edit changed
- * (`seeds`) and the six round each, by the columns' intervals:
- *  - a run of rock resting on anything under it (or the bedrock) stands — nothing to look at;
- *  - a run with air under it hangs: held sideways by what it overlaps in the six columns round it — a run
- *    that stands, anything solid that isn't rock, the map's edge — or through the hanging runs it overlaps
- *    (the only flood, from the hanging runs by the seeds, a piece at a time; a piece of MAX_PIECE runs is held);
- *  - a hanging piece nothing holds falls as a body (tipping and tumbling as it goes);
- *  - a hanging run further than its material's span × its thickness (columns) from what holds it gives: the
+ * (`seeds`) and the six round each, by the columns' runs (round 88: every material's, columnRuns):
+ *  - a run reaching the window's floor stands — nothing to look at;
+ *  - a run with air under it hangs: held sideways by a run it's joined to (`joined`) that stands, or the map's
+ *    edge — or through the hanging runs it's joined to (the only flood, from the hanging runs by the seeds, a
+ *    piece at a time; a held piece of MAX_PIECE runs is held; one held nowhere is followed to its end);
+ *  - a hanging piece nothing holds falls, whole;
+ *  - a hanging run further than its rock's span × its thickness (columns) from what holds it gives: the
  *    first such next to one that doesn't crumbles; what it held falls the next pass.
- * Structures keep their own rules (analyse); rock holds them.
+ * A piece is complete if an edit could have cut it free: whatever lost its way to the ground lost it through
+ * what the edit took, so it holds a run in a cut column or beside one. `known` (round 88): the columns the CPU's
+ * copy holds as they are now — a piece reaching any other is left (`need`: those columns; `undecided`: its seeds),
+ * to be read and judged again.
+ * Structures keep their own rules (analyse: snapping, tipping); what hangs free here falls whatever it's made of.
  */
-export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>): Fracture {
-  const result: Fracture = { bodies: [], crumble: [], pieces: [], crumbleRuns: [] };
+export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, known?: (x: number, y: number) => boolean): Fracture {
+  const result: Fracture = { bodies: [], crumble: [], pieces: [], crumbleRuns: [], need: [], undecided: [] };
   const cache = new Map<number, Run[]>();
-  const ivCache = new Map<number, { z0: number; z1: number; mat: number }[]>();
   const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h;
-  const colIvs = (x: number, y: number) => {
-    const key = y * 65536 + x;
-    let out = ivCache.get(key);
-    if (out) return out;
-    out = [];
-    const { base, k } = columnSlots(world.packed, x, y);
-    for (let s = 0; s < k; s++) {
-      const iv = readSlot(world.slots, base + s);
-      if (!iv) break;
-      out.push({ z0: iv.z0, z1: iv.z1, mat: iv.mat });
-    }
-    ivCache.set(key, out);
-    return out;
-  };
-  /** the column's runs of rock (touching intervals of rock are one) */
+  const unknown = new Set<number>();
   const runsAt = (x: number, y: number): Run[] => {
     const key = y * 65536 + x;
     let rs = cache.get(key);
     if (rs) return rs;
-    rs = [];
-    let below: { z1: number } | null = null;
-    for (const iv of colIvs(x, y)) {
-      if (!isRock(iv.mat)) {
-        below = iv;
-        continue;
-      }
-      const last = rs[rs.length - 1];
-      const span = MATERIALS[iv.mat].span ?? ROCK_SPAN;
-      if (last && Math.abs(iv.z0 - last.z1) < 1e-3) {
-        last.z1 = iv.z1;
-        last.ivs.push(iv);
-        last.span = Math.min(last.span, span);
-      } else rs.push({ x, y, z0: iv.z0, z1: iv.z1, ivs: [iv], stands: iv.z0 < 1e-3 || (!!below && Math.abs(iv.z0 - below.z1) < 1e-3), span });
-      below = iv;
+    const ivs: { z0: number; z1: number; mat: number }[] = [];
+    const { base, k } = columnSlots(world.packed, x, y);
+    for (let s = 0; s < k; s++) {
+      const iv = readSlot(world.slots, base + s);
+      if (!iv) break;
+      ivs.push({ z0: iv.z0, z1: iv.z1, mat: iv.mat });
     }
+    rs = columnRuns(x, y, ivs);
     cache.set(key, rs);
     return rs;
   };
-  const overlaps = (a: { z0: number; z1: number }, b: { z0: number; z1: number }) => Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) >= OVERLAP;
-  const solid = (m: number) => MATERIALS[m]?.state === MatState.Solid;
-  /** the hanging runs beside r (overlapping it), and whether anything that holds is beside it */
-  const besides = (r: Run): { held: boolean; next: Run[] } => {
+  /** the hanging runs joined to r, and whether it's held (a standing run joined to it, the map's edge) */
+  const besides = (r: Run): { held: boolean; next: Run[]; stale: boolean } => {
     let held = false;
+    let stale = false;
     const next: Run[] = [];
     for (let k = 0; k < NDIR; k++) {
       const [nx, ny] = nbr(r.x, r.y, k);
@@ -597,48 +634,66 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>):
         held = true;
         continue;
       }
+      if (known && !known(nx, ny)) {
+        stale = true;
+        unknown.add(ny * 65536 + nx);
+      }
       for (const o of runsAt(nx, ny)) {
-        if (!overlaps(o, r)) continue;
+        if (!joined(o, r)) continue;
         if (o.stands) held = true;
         else next.push(o);
       }
-      if (!held) for (const iv of colIvs(nx, ny)) if (!isRock(iv.mat) && solid(iv.mat) && overlaps(iv, r)) held = true;
     }
-    return { held, next };
+    return { held, next, stale };
   };
   const runsOf = (rs: Run[]): RunPiece => rs.map((r) => ({ x: r.x, y: r.y, ivs: r.ivs.map((iv) => ({ ...iv })) }));
   // the hanging runs by the seeds
-  const start: Run[] = [];
-  const seen = new Set<Run>();
+  const start: { r: Run; seed: [number, number] }[] = [];
+  /** the runs followed so far, by the piece (its first run) they were found in */
+  const seen = new Map<Run, Run>();
   for (const [sx, sy] of seeds) {
     const cols: [number, number][] = [[sx, sy]];
     for (let k = 0; k < NDIR; k++) cols.push(nbr(sx, sy, k));
-    for (const [x, y] of cols) if (inMap(x, y)) for (const r of runsAt(x, y)) if (!r.stands) start.push(r);
+    for (const [x, y] of cols) if (inMap(x, y)) for (const r of runsAt(x, y)) if (!r.stands && r.solid) start.push({ r, seed: [sx, sy] });
   }
-  for (const s of start) {
+  for (const { r: s, seed } of start) {
     if (seen.has(s)) continue;
     // its piece: the hanging runs joined to it; what of it is held beside, and how far each is from that
     const piece: Run[] = [s];
-    seen.add(s);
+    seen.set(s, s);
     const next = new Map<Run, Run[]>();
     const held: Run[] = [];
     let big = false;
+    let stale = !!known && !known(s.x, s.y);
     for (let h = 0; h < piece.length; h++) {
       const r = piece[h];
       const b = besides(r);
       next.set(r, b.next);
       if (b.held) held.push(r);
-      for (const o of b.next)
-        if (!seen.has(o)) {
-          seen.add(o);
+      for (const o of b.next) {
+        const of = seen.get(o);
+        if (of === undefined) {
+          seen.set(o, s);
           piece.push(o);
-        }
-      if ((piece.length >= MAX_PIECE && held.length) || piece.length >= MAX_FLOOD) {
+        } else if (of !== s) big = true;
+      }
+      if (b.stale) stale = true;
+      // (round 88) joined to a piece judged held before (followed to MAX_PIECE, not to its end): held with it.
+      // Round 87 took the runs short of it as a piece of their own — falling from what holds them, or a pass that
+      // threw (next.get of a run not in the piece) and judged nothing after it
+      if (big || (piece.length >= MAX_PIECE && held.length)) {
         big = true;
         break;
       }
     }
-    if (big && held.length) continue;
+    if (big) continue;
+    // (round 88) it reaches columns the copy doesn't hold as they are: read them, judge it again
+    if (stale && !held.length) {
+      for (const k of unknown) result.need!.push([k % 65536, Math.floor(k / 65536)]);
+      unknown.clear();
+      result.undecided!.push(seed);
+      continue;
+    }
     if (!held.length) {
       const volume = piece.reduce((s, r) => s + r.z1 - r.z0, 0);
       if (volume >= MIN_BODY) result.pieces!.push(runsOf(piece));
@@ -667,4 +722,55 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>):
     }
   }
   return result;
+}
+
+/**
+ * (round 88) The ground truth the tests hold the game to: every run of the window (columnRuns) that holds something
+ * solid and has no way to the ground — a flood from every run reaching the window's floor (and every run of the
+ * map's edge columns: held there, as analyseRock takes it) through the runs joined to them. What's left over floats.
+ */
+export function floatingRuns(world: WorldVox): { runs: number; floating: { x: number; y: number; z0: number; z1: number; mat: number }[] } {
+  const W = world.w;
+  const H = world.h;
+  const cols: Run[][] = new Array(W * H);
+  let runs = 0;
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const ivs: { z0: number; z1: number; mat: number }[] = [];
+      const { base, k } = columnSlots(world.packed, x, y);
+      for (let s = 0; s < k; s++) {
+        const iv = readSlot(world.slots, base + s);
+        if (!iv) break;
+        ivs.push({ z0: iv.z0, z1: iv.z1, mat: iv.mat });
+      }
+      cols[y * W + x] = columnRuns(x, y, ivs);
+      runs += cols[y * W + x].length;
+    }
+  const reached = new Set<Run>();
+  const queue: Run[] = [];
+  for (let y = 0; y < H; y++)
+    for (let x = 0; x < W; x++) {
+      const edge = x === 0 || y === 0 || x === W - 1 || y === H - 1;
+      for (const r of cols[y * W + x])
+        if (r.stands || edge) {
+          reached.add(r);
+          queue.push(r);
+        }
+    }
+  for (let h = 0; h < queue.length; h++) {
+    const r = queue[h];
+    for (let k = 0; k < NDIR; k++) {
+      const [nx, ny] = nbr(r.x, r.y, k);
+      if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+      for (const o of cols[ny * W + nx])
+        if (!reached.has(o) && joined(o, r)) {
+          reached.add(o);
+          queue.push(o);
+        }
+    }
+  }
+  const floating: { x: number; y: number; z0: number; z1: number; mat: number }[] = [];
+  for (const c of cols)
+    for (const r of c) if (!reached.has(r) && r.solid) floating.push({ x: r.x, y: r.y, z0: r.z0, z1: r.z1, mat: r.ivs.find((iv) => MATERIALS[iv.mat].state === MatState.Solid)!.mat });
+  return { runs, floating };
 }

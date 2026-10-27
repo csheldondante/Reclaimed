@@ -20,6 +20,16 @@ user) · `deferred` (agreed for later).
 | W2 | A rivers=table river held over a macro hollow deeper than its levee (RIVER_LEVEE 12): its water 17-22 deep over the hollow's floor with no banks (1040,13551: a river at 123.6, the depression's spill height, over coastal ground at 101-118; 167 faces). Fill the hollow as a lake to its spill level (the per-texel fill on the GPU), or the river runs on the hollow's floor past the levee's reach? | M | asked |
 | W3 | The window's near edges show as tall walls of strata at the default zoom where the rings past them are pressed under the focus (the hybrid's known "window's edge visible", P13) — not water, but it reads as a wall by the sea when the window's floor is raised | M | open (P13) |
 
+## Round 88 (2026-10-27, session 5, `collapse`) — no floating rock (DECISIONS round 88)
+
+| id | item | size | status |
+|---|---|---|---|
+| C9 | Floating rock after a cut: runs of every material (a band of soil or concrete in a tower left everything over it standing on it, in the air), pieces followed to their end (no 65 536 cap dropping part), a piece joined to a held one held (round 87's pass threw there and judged nothing after), pieces reaching columns not read back judged once they are; scripts/floatsweep.mjs (ground truth: a flood from the ground over the whole window) and scripts/rockcpu.mjs (the same on the CPU, random worlds and cuts) | M | done (collapse) |
+| C10 | Concrete and other structures cut by the break tool, a dig or a meteor fall as the columns' pieces (they were woken into physics bodies, pinned at the foot: 15 taps to bring a tower down) | S | done (collapse) |
+| C11 | A piece that caught up with one falling under it landed on it mid-air (left over the air when the lower one landed): it rides down on it now | S | done (collapse) |
+| C12 | Loose ground ran out sideways from under what lay on it (sediment.wgsl spills), leaving slabs and basalt crusts over air after a meteor: the loose under something solid stays; a meteor's rim and the beam's bore are watched as they melt and set (Integrity.watch) | S | done (collapse) |
+| C13 | The GPU still changes ground the integrity system doesn't hear about (lava setting elsewhere — a volcano's flows, the sim's own slumps): nothing checks those columns. A slow rotating sweep of the window (floatingRuns over a stripe a second) would catch any; not needed by the sweep's tools | S | open |
+
 ## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
 
 | id | item | size | status |
