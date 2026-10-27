@@ -46,6 +46,8 @@ import { Dither, Orbit, Slice } from '../api/cutaway';
 import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
 import { demoStory } from '../story/demo';
+import { HeroRun } from '../story/hero-run';
+import { MemoryWorldState, type SessionStory } from '../api/contracts';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
@@ -208,6 +210,8 @@ export class LevelScene implements Scene {
   storyPlay?: StoryPlay;
   /** the story's own dither and slice when ?cutaway isn't on (speakers kept seen) */
   private storyCut?: { dither: Dither; slice: Slice };
+  /** round 88 (runstory): ?run=bell on the atlas level — a run story played as a hero (story/hero-run.ts) */
+  heroRun?: HeroRun;
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
@@ -1292,6 +1296,63 @@ export class LevelScene implements Scene {
     // round 83 (dialog): ?story=demo — a story played on this level
     const storyId = host.params.get('story');
     if (storyId) void this.startStory(storyId);
+    // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
+    const runId = host.params.get('run');
+    if (runId) void this.startRun(runId);
+  }
+
+  /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts) */
+  private async startRun(id: string): Promise<void> {
+    const stories: Record<string, () => Promise<{ default: unknown }>> = { bell: () => import('../../data/stories/the-bell-under-kaudru.json') };
+    if (!stories[id]) throw new Error(`?run=${id}: no such run story (${Object.keys(stories).join(', ')})`);
+    const a = this.opts.atlas;
+    if (!a || !this.stream) throw new Error('?run= plays on the atlas level (?level=atlas)');
+    const story = (await stories[id]()).default as SessionStory;
+    // (the world it was written for: its factions and regions — data/wiki/seed1.run.json, cut from the GM's wiki)
+    const wiki = (await import('../../data/wiki/seed1.run.json')).default as unknown as { seed: number; factions: ConstructorParameters<typeof MemoryWorldState>[2]; regions: { id: number; name: string; kind: string }[] };
+    if (a.atlas.p.seed !== story.from.seed) throw new Error(`?run=${id}: written for the atlas seed ${story.from.seed}, this is ${a.atlas.p.seed}`);
+    const world = new MemoryWorldState(wiki.seed, wiki.regions, wiki.factions);
+    const api = (this.worldApi ??= attachSim(this.core));
+    const t = api.terrain!;
+    const { core } = this;
+    const camera = core.camera;
+    const S = this.stream;
+    const at = this.host.params.get('at');
+    const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : a.atlas.spawn();
+    // (a world cell → the window; world units → the window, the shortest way round the torus)
+    const { cols, rows } = a.atlas.p;
+    const near = (v: number, o: number, n: number) => o + ((((v - o) % n) + n * 1.5) % n) - n / 2;
+    const toWin = (wx: number, wyUnits: number): [number, number] => {
+      const ox = S.origin[0];
+      const oy = S.origin[1] * ROW_H;
+      return [near(wx, ox + core.dims.w / 2, cols) - ox, near(wyUnits, oy + (core.dims.h * ROW_H) / 2, rows * ROW_H) - oy];
+    };
+    const spawn = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
+    this.heroRun = await HeroRun.start({
+      ui: this.host.ui,
+      camera,
+      api,
+      story,
+      world,
+      spawn,
+      // (where the atlas has it: its settlement's site, else its region's centre)
+      spot: (l) => {
+        const site = l.settlement ? a.atlas.settlement.sites[Number(l.settlement.replace(/^s/, ''))] : undefined;
+        if (site) return toWin(site.x, site.y);
+        const d = a.atlas.defs[l.region];
+        if (!d) throw new Error(`?run=${id}: no region ${l.region} in the atlas`);
+        return toWin(d.stat.cx * a.atlas.worldW, d.stat.cy * a.atlas.worldH);
+      },
+      size: [core.dims.w, core.dims.h * ROW_H],
+      orbit: new Orbit(t, camera),
+      dither: new Dither(t, camera),
+      renderer: core.renderer,
+      device: this.host.gpu.device,
+      groundAt: (sx, sy) => camera.groundAt(sx, sy, this.heightAt),
+      say: (s, sec) => this.hud.say(s, sec ?? 4),
+    });
+    core.onShift.push((dx, dy, dz) => this.heroRun?.shift(-dx, -dy, -dz));
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.run = Object.assign(this.heroRun, { world });
   }
 
   /** ?story=<id>: the run, the dialog, the objective list and the story cameras over the world API (story/play.ts) */
@@ -1411,8 +1472,8 @@ export class LevelScene implements Scene {
     const k = this.keys;
     if (this.drive) this.driveOn(dt);
     else if (camera.fly) this.flyKeys(dt);
-    else if (this.storyPlay?.holdsInput) {
-      // (a talk or a story shot has the camera)
+    else if (this.storyPlay?.holdsInput || this.heroRun) {
+      // (a talk or a story shot has the camera; a hero run has the keys)
     } else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
     if (k.has('d') || k.has('arrowright')) kx += 1;
@@ -1537,6 +1598,8 @@ export class LevelScene implements Scene {
       this.storyPlay.update(dt);
       if (this.storyCut && !camera.fly) this.storyCut.dither.update(dt);
     }
+    // (round 88: the hero run — hero, units, its story, the chase camera)
+    if (this.heroRun && !camera.fly) this.heroRun.update(dt);
     if (CUTAWAY && !camera.fly) {
       const t = (this.worldApi ??= attachSim(core)).terrain!;
       const c = (this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
@@ -2557,6 +2620,7 @@ export class LevelScene implements Scene {
     this.atlasCtl?.remove();
     this.far?.dispose();
     this.storyPlay?.dispose();
+    this.heroRun?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

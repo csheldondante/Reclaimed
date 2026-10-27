@@ -66,6 +66,12 @@
   letter-spacing: 0.03em;
 }
 .story-badge.mute { pointer-events: none; opacity: 0.6; }
+/* (round 88: the cast as units) turned hostile: red, and tapping attacks; dead: gone */
+.story-badge.foe .i { background: #c4493a; color: #fff3ea; }
+.story-badge.foe .n { color: #ffb7a6; }
+.story-badge.gone { display: none !important; }
+/* the end card's second button (round 88: try again) */
+.story-end button + button { border-color: rgba(236, 230, 216, 0.3); background: rgba(236, 230, 216, 0.08); }
 .story-badge:active .i { transform: scale(0.92); }
 @keyframes story-bob { 50% { translate: 0 -3px; } }
 

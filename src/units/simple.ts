@@ -26,7 +26,7 @@ const STEP = 1.6;
 /** seconds: a swing's wind-up, between swings, a flinch, how long the dead lie */
 const WINDUP = 0.45;
 const COOLDOWN = 1.1;
-const HURT = 0.3;
+const HURT = 0.15;
 const CORPSE = 4;
 
 interface Unit {
@@ -132,14 +132,13 @@ export class SimpleUnits implements Units {
     if (!u.v.alive) return;
     u.v.health = Math.max(0, u.v.health - damage);
     u.flinch = HURT;
-    u.swing = 0;
     // (knocked back, away from what hit it)
     const from = by === null ? null : this.posOf(by);
     if (from) {
       const dx = u.v.at[0] - from[0];
       const dy = u.v.at[1] - from[1];
       const d = Math.hypot(dx, dy) || 1;
-      u.push = [(dx / d) * 7, (dy / d) * 7];
+      u.push = [(dx / d) * 4, (dy / d) * 4];
     }
     // (struck, it fights back: whoever hit it)
     if (by !== null && u.v.hostile) u.target = by;

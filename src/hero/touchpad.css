@@ -1,0 +1,92 @@
+/* The hero's controls (hero/touchpad.ts): a stick where the finger lands, the swing and the context button
+   bottom right (thumb reach), the health bar top left. */
+.hero-pad {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  pointer-events: auto;
+}
+.hero-stick {
+  display: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 112px;
+  height: 112px;
+  margin: -56px 0 0 -56px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  background: rgba(20, 20, 20, 0.18);
+  pointer-events: none;
+}
+.hero-knob {
+  position: absolute;
+  left: 32px;
+  top: 32px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.hero-btn {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  border: 0;
+  border-radius: 50%;
+  color: #f4efe2;
+  font: 700 30px var(--font, system-ui, sans-serif);
+  touch-action: manipulation;
+  pointer-events: auto;
+  z-index: 31;
+  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.45);
+  -webkit-tap-highlight-color: transparent;
+}
+.hero-attack {
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 70px);
+  width: 78px;
+  height: 78px;
+  background: rgba(150, 52, 36, 0.88);
+}
+.hero-attack:active { transform: scale(0.94); background: rgba(190, 70, 46, 0.95); }
+.hero-action {
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 160px);
+  min-width: 78px;
+  height: 52px;
+  padding: 0 18px;
+  border-radius: 26px;
+  background: rgba(46, 88, 120, 0.92);
+  font-size: 17px;
+  white-space: nowrap;
+}
+.hero-health {
+  position: absolute;
+  left: max(12px, env(safe-area-inset-left));
+  top: calc(max(12px, env(safe-area-inset-top)) + 44px);
+  width: min(180px, 44vw);
+  height: 14px;
+  border-radius: 7px;
+  background: rgba(20, 18, 16, 0.7);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  z-index: 31;
+}
+.hero-health::after {
+  content: attr(data-hp);
+  position: absolute;
+  left: calc(100% + 8px);
+  top: -2px;
+  color: #f1ebdd;
+  font: 600 13px var(--font, system-ui, sans-serif);
+  text-shadow: 0 1px 2px #000;
+  white-space: nowrap;
+}
+.hero-health-fill {
+  height: 100%;
+  width: 100%;
+  border-radius: 7px;
+  background: linear-gradient(#d9614a, #a83a2a);
+  transition: width 0.2s;
+}
+.hero-health.low .hero-health-fill { animation: hero-low 0.8s ease-in-out infinite; }
+@keyframes hero-low { 50% { opacity: 0.5; } }

@@ -178,6 +178,7 @@ export function validateStory(data: unknown): SessionStory {
       if (a.character !== undefined) need(cast.has(a.character), `${at}: attitude of unknown character "${a.character}"`);
     }
     for (const sp of o.spawn ?? []) need(locations.has(sp.location), `${at}: spawn at unknown location "${sp.location}"`);
+    for (const c of o.hostile ?? []) need(cast.has(c), `${at}: unknown character "${c}" turns hostile`);
     for (const u of o.unlock ?? []) {
       const t = trees.get(u.dialog);
       need(t && u.node in t.nodes, `${at}: unlocks unknown node "${u.dialog}/${u.node}"`);

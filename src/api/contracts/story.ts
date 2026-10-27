@@ -98,7 +98,10 @@ export interface Outcome {
   attitude?: { faction?: FactionId; character?: string; delta: number }[];
   flags?: Record<string, boolean>;
   give?: { item: string; count?: number }[];
-  spawn?: { role: string; faction: FactionId | null; location: string; count?: number }[];
+  /** units appear there (`hostile`: they fight the player — round 88) */
+  spawn?: { role: string; faction: FactionId | null; location: string; count?: number; hostile?: boolean }[];
+  /** (round 88) these cast members turn on the player (a talk gone to a fight): their units fight */
+  hostile?: string[];
   /** dialog nodes it opens */
   unlock?: { dialog: string; node: string }[];
   /** the run ends (a win, a fall) */
