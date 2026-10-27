@@ -3,6 +3,24 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 88 (session 5, `places`) — the third phone test; what's next
+
+- **Hoverbike** on places 4193918: "The performance has more noticable hiccups in this mode but is still adequate for now."
+- **Collapse:** "The collapse code render looks much better! It still fails to make some unsupported structures wake up
+  and fall though. So worth testing on a wider column and seeing if only parts of it fall." Then: "I also, think we can
+  do even more with the collapse code but first step is fixing the floating rocks. We can work on making them more
+  physics enabled as future work" (branch `collapse`).
+- **Meteors:** "The meteors look awesome." **Waterfalls:** "I didn't find waterfalls in the atlas levels" (the flow
+  model isn't on the atlas yet).
+- **Sea:** "I did find what looks like a bug with sea level where I saw a steep wall of water" (branch `seawall`).
+- "Overall this is really coming together."
+- **What's next:** "I would like to see settlements with agents working around them" (branch `settlements`) "and I would
+  like to try spawning as a character like in hoverbike and talking to people or going places or fighting things for
+  a run story" (branch `runstory`).
+- **Then:** "In terms of work I would love to improve the vegetation and building next and then do even more mapgen since
+  I find that stuff the most fun."
+- "I should also like to test a reclaimed like level with wind to make sure that's still fun as before."
+
 ## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
 
 - The user, testing `collapse` on the phone: "Waterfalls and the meteor look fantastic! However, the collapse
