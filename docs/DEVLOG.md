@@ -6892,3 +6892,78 @@ Why: `lakes` (round 90) names the atlas's lakes in the wiki, but the cached atla
 pulled before it. Pulled again on `places` after merging lakes and settlements: 7772 regions, 140 sites, 171 roads;
 the markdown now names its lakes (39 mentions round the spawn). The merged build loads clean at q=low 412x915 with
 813 lakes and 141 settlements (shots88/merge91/).
+
+## 2026-10-27 — round 93 (session 5, `winmem`): what the streamed window spends its memory on
+
+Why: the user asked what makes the window so expensive and what to prioritise before shaping it to the view
+(DECISIONS round 93). Measured with scripts/memprobe.mjs (new: every GPU buffer under the world and the renderer by
+its label, the mesh's chunks built, the instance lists' counts against their room), the atlas level at q=low
+412×915, win 320, `at=11956,15471`, the desktop iGPU, 40 s settled then a 12 s pan (WASD, 24–26 slides).
+
+**What was expensive.** 465 MB of GPU buffers, ~4.5 KB a column against the world's own ~0.5 KB (layers). Most of
+it room nobody used: the field mesh reserved a chunk's worst case (vertsPer = 6144 × the level's room 5 = 30,720
+vertices, 32 B each, and six indices a vertex) for **every chunk of the window** — 110 chunks — though the hybrid
+meshes only those near the view (13 settled, 12–17 panning, 35k vertices in all: 0.6% of the room); and the instance
+lists were sized for every interval of every column (opaque 1.74 M boxes; 14k–28k used with the mesh drawing the
+ground), every plant box, four blended boxes a column.
+
+**What changed.**
+1. *No per-chunk indices* (main's suggestion): quads are four chunk-local vertices (16 bits each, 8 B a quad) in the
+   pool's pages, drawn through one shared quad index buffer (corners 0 1 2, 0 2 3 repeated: 0.7 MB for the window,
+   0.3 the band) with the range's base vertex; the vertex shader reads the quad's corner, then the vertex
+   (meshdraw.wgsl meshVert). Indexed, so the corners shared by a quad's two triangles are shaded once (4 vertex
+   invocations a quad, not 6 as unindexed would be).
+2. *A page pool for the mesh* (fieldmesh.wgsl countVerts/allocVerts/countQuads/allocQuads; ARCHITECTURE): 16 KB pages
+   handed to the chunks built, given back when a chunk is rebuilt, unwanted or slides out; it starts at 3 pages a
+   chunk and grows by half when a rebuild finds no pages (STARVED: owed and made again; the rings draw its land
+   meanwhile) or under a fifth is free. Past one binding's room (min(128 MB, the adapter's)) it's an UnsupportedError
+   — our call over a silent fallback, the brief's either/or. The window's and the band's each have one.
+3. *Instance lists grown on demand*: a tenth of the worst case to start; a write past the room is left out and the
+   count clamped (so a draw never reads past its list), the raw count read back, the list grown to 1.5× (at least
+   1.25× what was asked) when a frame asks for over 85%.
+Both on in this branch; `?meshpool=0` and `?instgrow=0` are the old layout to compare.
+
+**Per buffer, win 320 (MB)** — before (= main's numbers), after settled, after the pan:
+
+| buffer | before | after | after pan | note |
+|---|---|---|---|---|
+| meshVerts → meshPool | 103.1 | 5.2 | 24.5 | pages as built; grew twice in the pan's burst of rebuilds (W6: never shrinks) |
+| meshIndices → meshQuadIndex | 77.3 | 0.7 | 0.7 | one shared pattern |
+| band meshVerts → band meshPool | 10.3 | 5.2 | 5.2 | |
+| band meshIndices | 7.7 | 0.3 | 0.3 | |
+| instOpaque | 29.7 | 5.8 | 5.8 | 3.3 of it the tops' list (two a column: its worst case, kept) |
+| instPlant | 20.3 | 2.0 | 2.0 | |
+| instWater | 6.3 | 0.6 | 0.6 | |
+| layers + layersNext | 25 + 25 | same | same | the world itself, twice (W4) |
+| agentDist / agentNav / agentShove | 18.8 / 6.3 / 3.1 | same | same | 12 fields × 4 levels × f32 a column (W4) |
+| band layers | 18.8 | same | same | |
+| sedOut | 16.4 | same | same | 7 × Dirs a column (W4) |
+| meshScratch | 11.8 | same | same | per rebuild slot × the window's height, not per chunk |
+| structInst / lavaInst | 8 / 4.7 | same | same | |
+| streamScratch | 3.1 | 3.1 | 21.9 | the largest per-column buffer's size once a slide needs it (both layouts) |
+| **total** | **465.2** | **230.1** | **268.3** | |
+| **largest binding** | **103.1** (meshVerts) | **25** (layers) | **25** | |
+
+A 448 × 320 window (`?win=448&winh=320`): 648.5 MB and a 140.6 MB meshVerts the old way (past the 128 MB many phones
+bind); 326 MB and 35 MB (layers) the largest now.
+
+**Frame times** (driveprofile, 30 s ride, q=low 412×915, win 320): before p50 9.9, p95 13.8, p99 21.3 ms, GPU 11.6
+ms a frame (draw 6.4); after p50 9.9, p95 13.6, p99 22.1, GPU 10.9 (draw 5.8). The mesh's own passes 901 → 1149 ms
+over the ride (the count and alloc passes; still ~0.04 ms a frame). 448 × 320 pooled: p50 9.8, p95 17.4, p99 26.8,
+GPU 12.2. **Look**: the same view both ways (shots88/winmem/vis-ab.png; 2.8% of pixels differ, the water's and the
+plants' motion).
+
+**The view-shaped window** (experiment `?winh=`: the window's rows other than its side, in world axes, fixed at
+load; the streamer and the sim already take w ≠ h — the grep for square assumptions found none in the systems,
+only the atlas callers passing `h: W`, now `h: Hr`). edgeprobe (new `--face deg`), pan, the phone's zoom, % of the
+screen past the window: 320² 52.8 (facing 45°, the default) / 52.9 (150°); 448 × 320 46.3 / **39.9**; 320 × 448
+(facing 150°) 51.4; 384² (150°) 43.8. So a window long along x pays only when the view looks along x (150° is 30°
+off it); at the default 45° the view's ground runs diagonally and only more columns help. Shaped to the view, it has
+to turn with it; re-shaping by slides needs every per-column buffer addressed by region rather than w × h (BACKLOG
+W5). With the pool, 448 × 320 costs 326 MB — under the old 320².
+
+**Still per window cell** (looked at, not changed: none is cheap). agentDist is 12 distance fields × 4 surface
+levels × f32 for every column (agents/agents.ts) — agents are only round settlements, so fields over a settlement's
+box (or f16, half) would do; it's the agents' layout to change, behind their contract. sedOut is the sediment pass's
+per-column outbox (7 × six directions × 4 B), written and read within a tick, every column though only awake tiles
+run (simcull's tiles could index a compact one). layersNext doubles the layers. Together ~60 MB at 320 (BACKLOG W4).

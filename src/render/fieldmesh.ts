@@ -38,7 +38,7 @@ const CHUNK = 32;
 const ROW_H = Math.sqrt(3) / 2;
 /** fieldmesh.wgsl CHUNK0, CSTRIDE (u32s) */
 const CHUNK0 = 16;
-const CSTRIDE = 13;
+const CSTRIDE = 14;
 /** meshstate.wgsl FRESH: a record's hash when nothing is built */
 const FRESH_HASH = 0x9e3779b9;
 /**
@@ -52,6 +52,30 @@ const URGENT_SLOTS = 4;
 const URGENT_BIT = 0x10000;
 /** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
 const TOP_PAD = 4;
+
+/**
+ * (round 93; on unless ?meshpool=0, measured: DEVLOG round 93) The page pool (meshregion.wgsl): the vertices and quads in 16 KB pages of one buffer,
+ * handed to the chunks built — sized by what's built, not every chunk's worst case — and drawn through one shared
+ * quad index buffer (meshdraw.wgsl meshVert). It starts at POOL_START pages a chunk and grows by half when the GPU reports a rebuild
+ * it couldn't give pages (starved) or the free pages fall under a fifth; past one binding's room (128 MB at most)
+ * it's an UnsupportedError, thrown at the next frame.
+ */
+export const MESH_POOL = new URLSearchParams(location.search).get('meshpool') !== '0';
+const PAGE_BYTES = 16384;
+const VPP = 512;
+const QPP = 2048;
+/** pages a chunk the pool starts with (vertices and quads together) */
+const POOL_START = 3;
+/** a range table's header words (meshregion.wgsl rtBase) */
+const RT_HEAD = 8;
+/** the free stack's header words (meshregion.wgsl freeBase) */
+const FREE_HEAD = 8;
+/** what one binding of the pool may hold at most, whatever the GPU allows */
+const POOL_MAX_BYTES = 128 * 2 ** 20;
+/** frames between reads of the free stack's header */
+const POOL_READ_EVERY = 15;
+/** a record's word 13: its range's pages to be given back (fieldmesh.wgsl RELEASE) */
+const RELEASE = 1;
 
 /**
  * What a field mesh is made from (round 79): by default the window's own layers; or a band's — the
@@ -156,16 +180,22 @@ export class FieldMesh {
     // room per chunk: ~1.3k vertices per 1000 columns at spacing 1 (~5k at
     // 0.5; DEVLOG 2026-10-22), a chunk ~1.2k columns, four times that for
     // cliffs and caves
-    const vertsPer = Math.ceil((6144 * room) / (h * h) / 64) * 64;
+    // (round 93, the page pool: a quad's vertices are 16 bits, so a chunk holds 65536 at most; its room is only
+    // the length of its page tables there — it costs nothing until it's used)
+    const vertsPer = Math.min(Math.ceil((6144 * room) / (h * h) / 64) * 64, MESH_POOL ? 65536 : Infinity);
     const indicesPer = vertsPer * 6;
     const chunks = this.nx * this.ny;
+    this.pool = MESH_POOL;
+    this.vpt = Math.ceil(vertsPer / VPP);
+    this.qpt = Math.ceil(vertsPer / QPP);
+    this.maxPages = Math.floor(Math.min(POOL_MAX_BYTES, device.limits.maxStorageBufferBindingSize) / PAGE_BYTES);
     const ab = new ArrayBuffer(REGION_BYTES);
     const f = new Float32Array(ab);
     const u = new Uint32Array(ab);
     f.set([CHUNK, h, CHUNK * ROW_H, h * ROW_H], 0);
     u.set([this.nx, this.ny, this.nz, 1], 4);
     u.set([this.side, this.slots, vertsPer, indicesPer], 8);
-    u.set([this.ordinary, 0, 0, 0], 28);
+    u.set(this.pool ? [this.ordinary, this.vpt, this.qpt, 1] : [this.ordinary, 0, 0, 0], 28);
     // every column is the mesh's
     f.set([-1, -1, W + 1, H + 1], 12);
     // (round 79) the window's: samples from 0, bedrock under 0, a run cut at its top goes on up (the
@@ -178,33 +208,56 @@ export class FieldMesh {
     const pre = src ? `${src.name} ` : '';
     this.pre = pre;
 
-    const vb = chunks * vertsPer * 32;
-    if (vb > device.limits.maxStorageBufferBindingSize) {
-      throw new UnsupportedError(`the ${src?.name ?? 'window'}'s mesh needs ${(vb / 2 ** 20).toFixed(0)} MB in one buffer; this GPU binds ${(device.limits.maxStorageBufferBindingSize / 2 ** 20).toFixed(0)} MB (a smaller ?win=)`);
+    if (this.pool) {
+      // (round 93: the pool — a few pages a chunk to start, grown as the GPU asks; an index buffer it doesn't use)
+      this.pages = Math.min(this.maxPages, Math.max(64, chunks * POOL_START));
+      this.verts = world.buf(`${pre}meshPool`, this.pages * PAGE_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+      // (one quad's corners 0 1 2, 0 2 3 repeated for a chunk's most quads: every range's draw reads it, its base vertex
+      // r · 4 · vertsPer — meshdraw.wgsl meshVert)
+      const qi = new Uint32Array(indicesPer);
+      for (let q = 0; q < vertsPer; q++) qi.set([4 * q, 4 * q + 1, 4 * q + 2, 4 * q, 4 * q + 2, 4 * q + 3], q * 6);
+      this.indices = world.buf(`${pre}meshQuadIndex`, qi.byteLength, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST);
+      device.queue.writeBuffer(this.indices, 0, qi);
+    } else {
+      const vb = chunks * vertsPer * 32;
+      if (vb > device.limits.maxStorageBufferBindingSize) {
+        throw new UnsupportedError(`the ${src?.name ?? 'window'}'s mesh needs ${(vb / 2 ** 20).toFixed(0)} MB in one buffer; this GPU binds ${(device.limits.maxStorageBufferBindingSize / 2 ** 20).toFixed(0)} MB (a smaller ?win=)`);
+      }
+      // (COPY_SRC: the world API's smooth sampling is checked against it, scripts/worldapitest.mjs)
+      this.verts = world.buf(`${pre}meshVerts`, chunks * vertsPer * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
+      this.indices = world.buf(`${pre}meshIndices`, chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
     }
-    // (COPY_SRC: the world API's smooth sampling is checked against it, scripts/worldapitest.mjs)
-    this.verts = world.buf(`${pre}meshVerts`, chunks * vertsPer * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC);
-    this.indices = world.buf(`${pre}meshIndices`, chunks * indicesPer * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDEX);
     // (then four words a range: its translation — meshregion.wgsl offBase)
-    // (then (round 81) three: the rebuild's dispatch — fieldmesh.wgsl rebuildArgs)
-    const stateWords = CHUNK0 + chunks * (CSTRIDE + 1) + chunks * 4 + 4;
-    this.argsAt = (stateWords - 4) * 4;
+    // (then (round 81) four: the rebuild's dispatch — fieldmesh.wgsl rebuildArgs)
+    // (then (round 93, the pool) a table a range, and the free stack: meshregion.wgsl rtBase, freeBase)
+    const argsWord = CHUNK0 + chunks * (CSTRIDE + 1) + chunks * 4;
+    this.freeAt = argsWord + 4 + chunks * (RT_HEAD + this.vpt + this.qpt);
+    const stateWords = this.pool ? this.freeAt + FREE_HEAD + this.maxPages : argsWord + 4;
+    this.argsAt = argsWord * 4;
     this.args = world.buf(`${pre}meshArgs`, 16, GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.state = world.buf(`${pre}meshState`, stateWords * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const init = new Uint32Array(stateWords);
     for (let c = 0; c < chunks; c++) {
-      init.set([0, 1, c * indicesPer, c * vertsPer, 0], CHUNK0 + c * CSTRIDE);
+      // (the pool's draws all read the one quad index buffer from 0, the range's corners from r · 4 · vertsPer)
+      init.set(this.pool ? [0, 1, 0, c * vertsPer * 4, 0] : [0, 1, c * indicesPer, c * vertsPer, 0], CHUNK0 + c * CSTRIDE);
       init[CHUNK0 + c * CSTRIDE + 10] = c;
+    }
+    // (the pool's pages: the first alloc pass pushes them all on the free stack)
+    if (this.pool) {
+      init[this.freeAt + 1] = this.pages;
+      init[this.freeAt + 4] = 0xffffffff;
     }
     device.queue.writeBuffer(this.state, 0, init);
     const s = this.side + 3;
     // (and after the samples, perfopt's cavemesh: a float a sample column a slot, what's left out under it)
     this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8 + this.slots * s * s * 4, GPUBufferUsage.STORAGE);
-    this.statBuf = world.buf(`${pre}meshStats`, stateWords * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    // (the stats' readback: the records, the near words and translations — not the pool's tables)
+    this.statBuf = world.buf(`${pre}meshStats`, this.argsAt + 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    if (this.pool) this.freeBuf = world.buf(`${pre}meshFreeRead`, FREE_HEAD * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshStateWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
     const spec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 30: 'uniform' } as const;
-    const group = (k: ComputeKernel) =>
+    this.makeGroup = (k: ComputeKernel) =>
       makeBindGroup(device, 'fieldmesh', k.layout, {
         0: world.globals,
         1: src?.chunks ?? world.chunks,
@@ -219,16 +272,89 @@ export class FieldMesh {
         30: this.region,
       });
     this.hash = makeCompute(device, 'fieldmesh-hash', parts, spec, 'hashChunks');
-    this.hashGroup = group(this.hash);
     this.argsK = makeCompute(device, 'fieldmesh-args', parts, spec, 'rebuildArgs');
-    this.argsGroup = group(this.argsK);
     this.hashF = makeCompute(device, 'fieldmesh-hash-fresh', parts, spec, 'hashFresh');
-    this.hashFGroup = group(this.hashF);
-    for (const entry of ['columnTops', 'sampleField', 'makeVerts', 'makeQuads']) {
+    // (round 93, the pool: the count and alloc passes between — the alloc ones a single workgroup, dispatched direct)
+    const steps = this.pool
+      ? (['columnTops', 'sampleField', 'countVerts', 'allocVerts', 'makeVerts', 'countQuads', 'allocQuads', 'makeQuads'] as const)
+      : (['columnTops', 'sampleField', 'makeVerts', 'makeQuads'] as const);
+    const names: Record<string, string> = { columnTops: 'tops', sampleField: 'sample', countVerts: 'count', allocVerts: 'alloc', makeVerts: 'verts', countQuads: 'qcount', allocQuads: 'qalloc', makeQuads: 'quads' };
+    for (const entry of steps) {
       const k = makeCompute(device, `fieldmesh-${entry}`, parts, spec, entry);
       this.kernels.push(k);
-      this.groups.push(group(k));
+      this.steps.push({ name: `fieldmesh-${names[entry]}`, direct: entry.startsWith('alloc'), tops: entry === 'columnTops' });
     }
+    this.makeGroups();
+  }
+
+  /** (round 93) the compute groups — made again when the pool grows (its buffer is new) */
+  private makeGroup!: (k: ComputeKernel) => GPUBindGroup;
+  private makeGroups(): void {
+    this.hashGroup = this.makeGroup(this.hash);
+    this.argsGroup = this.makeGroup(this.argsK);
+    this.hashFGroup = this.makeGroup(this.hashF);
+    this.groups = this.kernels.map((k) => this.makeGroup(k));
+  }
+  private steps: { name: string; direct: boolean; tops: boolean }[] = [];
+
+  // ---- (round 93) the page pool ----------------------------------------------------------------------------
+  private pool = false;
+  /** vertex and quad pages a range's table holds; the pool's pages now and at most */
+  private vpt = 0;
+  private qpt = 0;
+  private pages = 0;
+  private maxPages = 0;
+  /** the free stack's header (state words) */
+  private freeAt = 0;
+  private freeBuf?: GPUBuffer;
+  private freeBusy = false;
+  private freeNeeded = false;
+  private freeEvery = 0;
+  /** what the last read of the free stack said */
+  poolStats = { pages: 0, free: 0, starved: 0, grown: 0, mb: 0, low: 0, most: 0 };
+  /** bumped when the pool's buffer is replaced: the draw groups that bind it are made again (renderer.ts) */
+  poolVersion = 0;
+  private poolError: Error | null = null;
+
+  /** Grow the pool to `pages` pages: a new buffer, the old one's pages copied in, the new pages for the GPU to push. */
+  private grow(pages: number): void {
+    const want = Math.min(this.maxPages, pages);
+    if (want <= this.pages) {
+      this.poolError = new UnsupportedError(`the ${this.src?.name ?? 'window'}'s mesh needs more than ${((this.maxPages * PAGE_BYTES) / 2 ** 20).toFixed(0)} MB of pages, one binding's room on this GPU (a smaller ?win=)`);
+      return;
+    }
+    const old = this.verts;
+    this.verts = this.world.buf(`${this.pre}meshPool`, want * PAGE_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+    const enc = this.device.createCommandEncoder({ label: 'mesh pool grow' });
+    enc.copyBufferToBuffer(old, 0, this.verts, 0, old.size);
+    this.device.queue.submit([enc.finish()]);
+    this.pages = want;
+    this.device.queue.writeBuffer(this.state, (this.freeAt + 1) * 4, new Uint32Array([want]));
+    this.makeGroups();
+    this.poolVersion++;
+    this.poolStats.grown++;
+    // (destroyed once the frames that may still use it are done)
+    this.retired.push({ buf: old, frames: 3 });
+  }
+  /** pages the pool is to grow to (the free stack's readback asks; maintain does it) */
+  private growTo = 0;
+  private retired: { buf: GPUBuffer; frames: number }[] = [];
+
+  /**
+   * (round 93) Once a frame, before anything is encoded: grow the pool if the GPU asked, retire old buffers; its
+   * version (renderer.ts makes the draw groups again when it changes). Out of room on this GPU: thrown here.
+   */
+  maintain(): number {
+    if (!this.pool) return 0;
+    if (this.poolError) throw this.poolError;
+    for (const r of this.retired) if (--r.frames <= 0) r.buf.destroy();
+    this.retired = this.retired.filter((r) => r.frames > 0);
+    if (this.growTo > this.pages) {
+      this.grow(this.growTo);
+      this.growTo = 0;
+      if (this.poolError) throw this.poolError;
+    }
+    return this.poolVersion;
   }
 
   private layout = new ArrayBuffer(REGION_BYTES);
@@ -310,6 +436,8 @@ export class FieldMesh {
       // (its indices 0 — drawn as nothing — and its hash FRESH: built anew when it's wanted again)
       this.device.queue.writeBuffer(this.state, (CHUNK0 + c * CSTRIDE) * 4, new Uint32Array([0]));
       this.device.queue.writeBuffer(this.state, (CHUNK0 + c * CSTRIDE + 5) * 4, new Uint32Array([FRESH_HASH]));
+      // (round 93, the pool: its pages given back — fieldmesh.wgsl allocVerts)
+      if (this.pool) this.device.queue.writeBuffer(this.state, (CHUNK0 + c * CSTRIDE + 13) * 4, new Uint32Array([RELEASE]));
     }
     this.wanted = want ? want.slice() : null;
     this.wantedCount = want ? want.reduce((s, v) => s + (v ? 1 : 0), 0) : n;
@@ -487,16 +615,26 @@ export class FieldMesh {
       enc.copyBufferToBuffer(this.state, this.argsAt, this.args, 0, 12);
     }
     this.kernels.forEach((k, i) => {
-      const name = this.pre + ['fieldmesh-tops', 'fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
+      const st = this.steps[i];
+      const name = this.pre + st.name;
       // (the tops only for cavemesh)
-      if (i === 0 && !this.caveOn) return;
+      if (st.tops && !this.caveOn) return;
       const pass = enc.beginComputePass({ label: name, timestampWrites: this.profiler.timestamps(name) });
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, this.groups[i]);
-      pass.dispatchWorkgroupsIndirect(this.args, 0);
+      // (round 93: the pool's alloc passes are one workgroup every frame — the releases are given back even when nothing's rebuilt)
+      if (st.direct) pass.dispatchWorkgroups(1);
+      else pass.dispatchWorkgroupsIndirect(this.args, 0);
       pass.end();
+      this.profiler.dispatches++;
     });
-    this.profiler.dispatches += 5;
+    this.profiler.dispatches += 2;
+    // (round 93: the free stack's header, now and then — the pool grows when it runs short)
+    if (this.pool && READBACK && !this.freeBusy && this.freeEvery++ % POOL_READ_EVERY === 0) {
+      enc.copyBufferToBuffer(this.state, this.freeAt * 4, this.freeBuf!, 0, FREE_HEAD * 4);
+      this.freeBusy = true;
+      this.freeNeeded = true;
+    }
     // (round 82: every 60th time, not 10th — the chunks' tops for the culling move slowly)
     if (READBACK && !this.statBusy && this.statEvery++ % 60 === 0) {
       enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
@@ -588,14 +726,19 @@ export class FieldMesh {
       }
   }
 
-  /** Draw the chunks in view (one indexed indirect draw each). */
+  /** chunk c's draw: its record's first five words */
+  private drawChunk(pass: GPURenderPassEncoder, c: number): void {
+    pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+  }
+
+  /** Draw the chunks in view (one indirect draw each). */
   draw(pass: GPURenderPassEncoder): void {
     if (!this.on) return;
     pass.setIndexBuffer(this.indices, 'uint32');
     let n = 0;
     for (let c = 0; c < this.nx * this.ny; c++) {
       if (!this.inView[c]) continue;
-      pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+      this.drawChunk(pass, c);
       n++;
     }
     this.drawn = n;
@@ -608,7 +751,7 @@ export class FieldMesh {
     pass.setIndexBuffer(this.indices, 'uint32');
     for (let c = 0; c < this.nx * this.ny; c++) {
       if (!this.near[c]) continue;
-      pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+      this.drawChunk(pass, c);
       this.profiler.draws++;
     }
   }
@@ -619,12 +762,28 @@ export class FieldMesh {
     pass.setIndexBuffer(this.indices, 'uint32');
     for (let c = 0; c < this.nx * this.ny; c++) {
       if (!this.casts[c]) continue;
-      pass.drawIndexedIndirect(this.state, (CHUNK0 + c * CSTRIDE) * 4);
+      this.drawChunk(pass, c);
       this.profiler.draws++;
     }
   }
 
   afterSubmit(): void {
+    if (this.freeNeeded) {
+      this.freeNeeded = false;
+      const fb = this.freeBuf!;
+      fb.mapAsync(GPUMapMode.READ).then(() => {
+        const u = new Uint32Array(fb.getMappedRange().slice(0));
+        fb.unmap();
+        this.freeBusy = false;
+        const [top, , pushed, starved, low, most] = u;
+        // (pages not yet pushed — added by a grow the GPU hasn't seen — count as free)
+        const free = top + Math.max(0, this.pages - pushed);
+        const was = this.poolStats.starved;
+        this.poolStats = { ...this.poolStats, pages: this.pages, free, starved, mb: +((this.pages * PAGE_BYTES) / 2 ** 20).toFixed(1), low: low === 0xffffffff ? -1 : low, most };
+        // (short of pages — a rebuild found none, or under a fifth left: half again as many)
+        if (starved > was || free < this.pages / 5) this.growTo = Math.max(this.growTo, Math.ceil(this.pages * 1.5));
+      }, ignoreTeardown);
+    }
     if (!this.statNeeded) return;
     this.statNeeded = false;
     const buf = this.statBuf!;

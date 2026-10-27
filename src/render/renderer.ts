@@ -43,6 +43,15 @@ const VERTS_PER_TOP = 12;
 /** Extra instances a column may emit beyond its slots (shrub/trunk+crown, tufts, flower). */
 // per cell worst case: plan (tree 2 + tufts 3 + flower 1) + a planting (6) + drift (1)
 const VEG_INSTANCES = 13;
+/**
+ * (round 93; on unless ?instgrow=0, measured: DEVLOG round 93) The instance lists sized to use, not their worst case (a column's every interval, every
+ * plant box, four blended boxes): they start at INST_START of a list's worst case and grow by half (to at least
+ * 1.25 × what was asked) when a frame asks for more than INST_GROW_AT of the room (renderprep.wgsl putO, putW;
+ * vegprep.wgsl putP, clampVeg — the writes past the room are left out and the counts clamped meanwhile).
+ */
+const INST_GROW = new URLSearchParams(location.search).get('instgrow') !== '0';
+const INST_START = 0.1;
+const INST_GROW_AT = 0.85;
 const PICK_FORMAT: GPUTextureFormat = 'rg32uint';
 
 /** What the pick target says is under a pixel. */
@@ -212,9 +221,9 @@ export class Renderer {
   private bodyCount = 0;
   static readonly MAX_BODY_VOXELS = 16384;
   private rainGroup: GPUBindGroup;
-  readonly instOpaque: GPUBuffer;
-  readonly instPlant: GPUBuffer;
-  readonly instWater: GPUBuffer;
+  instOpaque: GPUBuffer;
+  instPlant: GPUBuffer;
+  instWater: GPUBuffer;
   readonly indirect: GPUBuffer;
   private camBuf: GPUBuffer;
   private camData = new ArrayBuffer(CAM_BYTES);
@@ -236,7 +245,7 @@ export class Renderer {
   /** (?flow=1) more for the water pipeline: liquid runs under rock, falling streams (flow/liquid.ts) */
   private waterSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
   private noShadowView?: GPUTextureView;
-  private groupFor!: (inst: GPUBuffer, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
+  private groupFor!: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
   private shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
   /** ?smooth=0: tops lit flat, a hexagon at a time (the look before G13). */
   private flatTops = new URLSearchParams(location.search).get('smooth') === '0';
@@ -246,7 +255,21 @@ export class Renderer {
   private pickBusy = false;
   private pickRequest?: { x: number; y: number; resolve: (hit: PickHit | null) => void };
   private pickPending?: (hit: PickHit | null) => void;
-  readonly opaqueCapacity: number;
+  opaqueCapacity: number;
+  /** (round 93) the plant and blended lists' room (instances) */
+  plantCapacity = 0;
+  waterCapacity = 0;
+  /** (round 93, instgrow) the lists' room asked for by the last count readback (0: none), and how often they grew */
+  private instGrowTo = { opaque: 0, plant: 0, water: 0 };
+  instGrown = 0;
+  /** the raw counts asked for (before the clamp), last read */
+  instAsked = { opaque: 0, water: 0, plants: 0 };
+  private clampW!: ComputeKernel;
+  private clampV!: ComputeKernel;
+  private clampWGroup!: GPUBindGroup;
+  private clampVGroup!: GPUBindGroup;
+  private prepEntries!: () => Record<number, GPUBuffer | GPUTextureView>;
+  private vegEntries!: () => Record<number, GPUBuffer | GPUTextureView>;
   /** Last-known instance counts (async readback, for the perf overlay). */
   instanceCounts = { opaque: 0, water: 0, tops: 0, prisms: 0, plants: 0 };
   /** frames, for the window's and the band's mesh turns (round 82) */
@@ -281,25 +304,30 @@ export class Renderer {
     this.shore = new ShoreField(device, world, world.w, world.h);
     // column intervals and the loose sheet (hex prisms); plants (boxes) apart,
     // drawn with fewer vertices
-    this.opaqueCapacity = N * (world.maxK + 1);
+    // (round 93, instgrow: a tenth of each worst case to start, grown as asked)
+    const f = INST_GROW ? INST_START : 1;
+    this.opaqueCapacity = Math.ceil(N * (world.maxK + 1) * f);
     // + the tops list after it (renderprep.wgsl: two per column at most), from
     // a storage-offset-aligned instance (256 bytes)
     this.topsBase = Math.ceil(this.opaqueCapacity / 16) * 16;
     this.instOpaque = world.buf('instOpaque', (this.topsBase + 2 * N) * 16, GPUBufferUsage.STORAGE);
-    this.instPlant = world.buf('instPlant', N * VEG_INSTANCES * 16, GPUBufferUsage.STORAGE);
+    this.plantCapacity = Math.ceil(N * VEG_INSTANCES * f);
+    this.instPlant = world.buf('instPlant', this.plantCapacity * 16, GPUBufferUsage.STORAGE);
     // up to four blended boxes per column: water, oil, two see-through solids (renderprep.wgsl GLASS_MAX)
-    this.instWater = world.buf('instWater', N * 4 * 16, GPUBufferUsage.STORAGE);
+    this.waterCapacity = Math.ceil(N * 4 * f);
+    this.instWater = world.buf('instWater', this.waterCapacity * 16, GPUBufferUsage.STORAGE);
     // draw args: [0..3] opaque prisms, [4..7] water, [8..11] plants, [12..15]
-    // tops alone; [16] where the tops start in instOpaque (renderprep.wgsl)
+    // tops alone; [16] where the tops start in instOpaque (renderprep.wgsl); (round 93) [20..22] the prisms',
+    // water's and plants' counts before they were held to their lists' room
     this.indirect = world.buf(
       'indirect',
-      80,
+      96,
       GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     );
     this.camBuf = world.buf('camera', CAM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.lightCamBuf = world.buf('lightCamera', CAM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
-    this.countBuf = world.buf('counts', 64,GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.countBuf = world.buf('counts', 96, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
     const format = this.colorFormat;
     this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom, undefined, meshSlots);
@@ -311,7 +339,7 @@ export class Renderer {
     profiler.trackMemory('shadow', ss * ss * 4);
     // (?skip=cull: every column, as before the view culling)
     const cullOff = `const CULL_OFF: bool = ${SKIP.has('cull')};`;
-    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], {
+    const prepSpec = {
       0: 'uniform',
       1: 'read',
       2: 'uniform',
@@ -327,8 +355,11 @@ export class Renderer {
       21: 'tex',
       30: 'uniform',
       31: 'uniform',
-    });
-    this.prepGroup = makeBindGroup(device, 'renderprep', this.prep.layout, {
+    } as const;
+    this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], prepSpec);
+    // (round 93: and the blended list's clamp, after it — renderprep.wgsl clampWater)
+    this.clampW = makeCompute(device, 'renderprep-clamp', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], prepSpec, 'clampWater');
+    this.prepEntries = () => ({
       0: world.globals,
       1: world.chunks,
       2: world.materials,
@@ -345,10 +376,12 @@ export class Renderer {
       30: this.fieldMesh.region,
       31: this.camBuf,
     });
+    this.prepGroup = makeBindGroup(device, 'renderprep', this.prep.layout, this.prepEntries());
+    this.clampWGroup = makeBindGroup(device, 'renderprep-clamp', this.clampW.layout, this.prepEntries());
 
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
     const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, vegprepWgsl], {
+    const vegSpec = {
       0: 'uniform',
       2: 'uniform',
       3: 'read',
@@ -361,8 +394,10 @@ export class Renderer {
       14: 'tex',
       17: 'tex',
       30: 'uniform',
-    });
-    this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, {
+    } as const;
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, vegprepWgsl], vegSpec);
+    this.clampV = makeCompute(device, 'vegprep-clamp', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, vegprepWgsl], vegSpec, 'clampVeg');
+    this.vegEntries = () => ({
       0: world.globals,
       2: world.materials,
       3: world.surface,
@@ -376,6 +411,8 @@ export class Renderer {
       17: world.driftView,
       30: this.fieldMesh.region,
     });
+    this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, this.vegEntries());
+    this.clampVGroup = makeBindGroup(device, 'vegprep-clamp', this.clampV.layout, this.vegEntries());
 
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
     const drawLayout = makeLayout(
@@ -800,7 +837,75 @@ export class Renderer {
     this.profiler.draws += 2;
   }
 
+  /** (round 93, the mesh's page pool) the pools' versions summed when the mesh's draw groups were last made */
+  private meshPoolSeen = 0;
+
+  /** (round 93) Let the meshes grow their page pools; a pool's buffer replaced, the groups that bind it are made again. */
+  /**
+   * (round 93, instgrow) Grow the instance lists the last count asked to: new buffers (what's in them is made
+   * again every frame — nothing to copy), the groups that bind them made again. The old ones go a few frames on.
+   */
+  private syncInst(): void {
+    const g = this.instGrowTo;
+    if (!g.opaque && !g.plant && !g.water) return;
+    this.instGrowTo = { opaque: 0, plant: 0, water: 0 };
+    const N = this.world.cells;
+    const old: GPUBuffer[] = [];
+    if (g.opaque) {
+      old.push(this.instOpaque);
+      this.opaqueCapacity = g.opaque;
+      this.topsBase = Math.ceil(g.opaque / 16) * 16;
+      this.instOpaque = this.world.buf('instOpaque', (this.topsBase + 2 * N) * 16, GPUBufferUsage.STORAGE);
+    }
+    if (g.plant) {
+      old.push(this.instPlant);
+      this.plantCapacity = g.plant;
+      this.instPlant = this.world.buf('instPlant', g.plant * 16, GPUBufferUsage.STORAGE);
+    }
+    if (g.water) {
+      old.push(this.instWater);
+      this.waterCapacity = g.water;
+      this.instWater = this.world.buf('instWater', g.water * 16, GPUBufferUsage.STORAGE);
+    }
+    const dev = this.device;
+    this.prepGroup = makeBindGroup(dev, 'renderprep', this.prep.layout, this.prepEntries());
+    this.clampWGroup = makeBindGroup(dev, 'renderprep-clamp', this.clampW.layout, this.prepEntries());
+    this.vegPrepGroup = makeBindGroup(dev, 'vegprep', this.vegPrep.layout, this.vegEntries());
+    this.clampVGroup = makeBindGroup(dev, 'vegprep-clamp', this.clampV.layout, this.vegEntries());
+    this.opaqueGroup = this.groupFor(this.instOpaque);
+    this.topsGroup = this.groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 });
+    this.plantGroup = this.groupFor(this.instPlant);
+    this.waterGroup = this.groupFor(this.instWater);
+    if (this.shadowGroups && this.noShadowView) {
+      const L = this.lightCamBuf;
+      this.shadowGroups.opaque = this.groupFor(this.instOpaque, L, this.noShadowView);
+      this.shadowGroups.tops = this.groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 }, L, this.noShadowView);
+      this.shadowGroups.plants = this.groupFor(this.instPlant, L, this.noShadowView);
+    }
+    // (the instance lists, kept from an earlier frame with ?prepevery, are made again now)
+    this.prepAt.frame = -1e9;
+    this.instGrown++;
+    setTimeout(() => old.forEach((b) => b.destroy()), 1000);
+  }
+
+  private syncMeshPool(): void {
+    const v = this.fieldMesh.maintain() + (this.band?.mesh.maintain() ?? 0);
+    if (v === this.meshPoolSeen || !this.meshGroupOf) return;
+    this.meshPoolSeen = v;
+    const win = { mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers };
+    this.meshGroup = this.meshGroupOf(this.camBuf, this.shadowView, win);
+    if (this.band) this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
+    if (this.shadowGroups) this.shadowGroups.mesh = this.meshGroupOf(this.lightCamBuf, this.noShadowView!, win);
+    if (this.meshDef) this.meshDef.groups = [];
+    if (this.tc) {
+      for (const t of Object.values(this.tc.tex)) t.destroy();
+      this.tc = undefined;
+    }
+  }
+
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
+    this.syncMeshPool();
+    this.syncInst();
     cam.write(this.camData);
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
@@ -852,6 +957,13 @@ export class Renderer {
         pass.dispatchWorkgroups(Math.ceil(this.world.strVoxels / 64));
         this.profiler.dispatches++;
       }
+      // (round 93: the counts held to the lists' room — the raw ones kept for the CPU)
+      pass.setPipeline(this.clampW.pipeline);
+      pass.setBindGroup(0, this.clampWGroup);
+      pass.dispatchWorkgroups(1);
+      pass.setPipeline(this.clampV.pipeline);
+      pass.setBindGroup(0, this.clampVGroup);
+      pass.dispatchWorkgroups(1);
       pass.end();
       this.profiler.dispatches += 2;
     }
@@ -993,9 +1105,10 @@ export class Renderer {
       } else resolve(null);
     }
     if (!this.countBusy) {
-      enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 64);
+      enc.copyBufferToBuffer(this.indirect, 0, this.countBuf, 0, 96);
       this.countBusy = true;
-      this.countNeeded = READBACK && this.profiler.active;
+      // (round 93: the lists' growth reads them too)
+      this.countNeeded = READBACK && (this.profiler.active || INST_GROW);
     }
   }
 
@@ -1505,6 +1618,12 @@ export class Renderer {
       this.countBuf.mapAsync(GPUMapMode.READ).then(() => {
         const u = new Uint32Array(this.countBuf.getMappedRange());
         this.instanceCounts = { opaque: u[1] + u[9] + u[13], water: u[5], tops: u[13], prisms: u[1], plants: u[9] };
+        // (round 93) what was asked for before the clamp; a list asked for more than INST_GROW_AT of its room grows
+        this.instAsked = { opaque: u[20], water: u[21], plants: u[22] };
+        if (INST_GROW) {
+          const want = (asked: number, cap: number) => (asked > cap * INST_GROW_AT ? Math.max(Math.ceil(cap * 1.5), Math.ceil(asked * 1.25)) : 0);
+          this.instGrowTo = { opaque: want(u[20], this.opaqueCapacity), plant: want(u[22], this.plantCapacity), water: want(u[21], this.waterCapacity) };
+        }
         this.countBuf.unmap();
         // throttle: allow another readback in a little while
         setTimeout(() => (this.countBusy = false), 250);

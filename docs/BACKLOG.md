@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 93 (2026-10-27, session 5, `winmem`) — what the window's memory goes on (DECISIONS round 93)
+
+| id | item | size | status |
+|---|---|---|---|
+| W1 | "what about the current layout takes so much memory?": every GPU buffer measured by label at win 320 and 448 × 320 and what of it is used (scripts/memprobe.mjs; DEVLOG round 93's table) | S | done (winmem) |
+| W2 | The field mesh's room for every chunk's worst case (meshVerts + meshIndices 180 MB at 320, the band's 18): a page pool sized by what's built, one shared quad index buffer, grown on demand, an UnsupportedError past one binding | M | done (winmem; on, `?meshpool=0` off) |
+| W3 | The instance lists sized for every interval of every column (opaque 30 MB, plants 20, blended 6): a tenth to start, writes past the room left out and the counts clamped, grown when asked for more than 85% | S | done (winmem; on, `?instgrow=0` off) |
+| W4 | Still per window cell, not per use: agentDist (12 fields × 4 levels × f32 a column, 18.8 MB; agents only round settlements), sedOut (7 × Dirs a column, 16.4 MB; sediment only where awake), layersNext (25 MB, a second copy of the layers), the band's layers (18.8), meshScratch (11.8, per rebuild slot × the window's whole height), structInst (8), lavaInst (4.7), the physics' ~25 | M | open |
+| W5 | The window shaped to the view and turned with it (N5): `?winh=` (a rectangle in world axes, fixed at load) measured — 448 × 320 has 40% of the screen past it facing along x against 53% for 320², but nothing gained facing along y; turning re-shaping it by slides needs the per-column buffers addressed by region (a region-paged window), not w × h | L | open (experiment `?winh=`) |
+| W6 | The mesh pool grows but never shrinks (a burst of rebuilds after slides grew it to 743 pages, 9% used after) | S | open |
+
 ## Round 91 (2026-10-27, session 5, `phonecam`) — names on the map, a compass, the edge of the land (DECISIONS round 91)
 
 | id | item | size | status |
@@ -20,7 +31,7 @@ user) · `deferred` (agreed for later).
 | N2 | "a directional compas for the way your are facing": a compass on the game view over the turn buttons (ui/compass.ts), the map's north; a tap faces north; on the map the player's dot has a wedge the way the view faces and the view's footprint | S | done (phonecam) |
 | N3 | The map was the world's mirror image (world +x to the right of north): drawn now as seen from above, +x to the left | S | done (phonecam) |
 | N4 | "I easily hit the edge of the loaded ground" — measured (DEVLOG round 91): at the phone's zoom 52–66% of a portrait screen is past the 320 window at any time (the view's ground is ~158 × 700 cells, the window 320 × 320); panning outran the slides to 45 cells of the window's edge. Done: the camera kept a region in from the edge (min 64), the land asked for where the camera's heading (1 s ahead), the rings past the window given the window's grain a cell | M | done (phonecam), partly: N5–N7 |
-| N5 | The window shaped to the view: on a portrait phone the view's ground is long along the view and narrow across — a window longer than wide, turned with the view (or a split per-column buffer, R5, for a wider one under 128 MB) | L | open |
+| N5 | The window shaped to the view: on a portrait phone the view's ground is long along the view and narrow across — a window longer than wide, turned with the view (or a split per-column buffer, R5, for a wider one under 128 MB) | L | open (round 93, winmem: measured, W5; the pool makes wider windows fit, W2) |
 | N6 | Past the window: plants and roads on the rings (P13's "Left"), the ground's colour the window's (the window's grass is brighter and speckled); the eye's side pressed under the focus reads as a flat floor | M | open |
 | N7 | The atlas's own lakes (`Atlas.lakes`, merged from `lakes` into places in round 91) on the map as labels: they need names first, and those belong in the wiki (buildWiki names regions and settlements, not the atlas's lakes) — then a label source of kind 'lake' (api/map-labels.ts); the wiki's lake regions are labelled already | S | done (phonecam, after places cdf0d95: the wiki names them now; gm/map-names.ts labels `wiki.lakes`, shown while 14 px across) |
 

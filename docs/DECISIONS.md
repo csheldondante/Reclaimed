@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 93 (session 5, `winmem`) — what the streamed window spends its memory on
+
+- The user: "I think a loaded area shaped like the view could work but what about the current layout takes so much
+  memory? We can also do better visual detail further out but it would help to know what is expensive in terms of
+  memory and what to prioritize."
+- Then: "Yes just have it work in another branch and set up experiments for anything risky."
+- → Branch `winmem` (from `phonecam`). Measured buffer by buffer (DEVLOG round 93): at the phone's 320 window the GPU
+  held 465 MB, ~4.5 KB a column against the world's own ~0.5 KB — most of it the field mesh's room for every chunk's
+  worst case (meshVerts 103 MB, meshIndices 77) and instance lists sized for every interval of every column (56 MB).
+  The mesh now takes pages from a pool for what's built and draws through one shared quad index buffer; the
+  instance lists start small and grow. **Both on in this branch** (our call: measured the same frame times and look,
+  half the memory; `?meshpool=0`, `?instgrow=0` give the old layout to compare on the phone). The view-shaped window
+  is an experiment (`?winh=`: rows other than the side, fixed at load) — it only pays when the view looks along the
+  long axis, so the real one has to turn with the view (BACKLOG W5).
+
 ## 2026-10-27 — round 91 (session 5, `phonecam`) — names on the map, a compass, the edge of the land
 
 - The user, on the phone at the atlas level: "I think the map needs to show you names of place and a directional

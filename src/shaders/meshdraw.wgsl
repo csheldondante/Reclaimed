@@ -24,12 +24,42 @@ struct MOut {
   @location(4) tint: f32,
 };
 
+/** a mesh vertex's two words and its range (round 93: through the page pool's quads when MR.pr.w is 1) */
+struct MV { a: vec4<u32>, b: vec4<u32>, r: u32 };
+
+/**
+ * (round 93) Vertex `vi` of a draw: indexed, the vertex itself (vi / MR.k.z its range); in the page pool, a quad's
+ * corner — one shared index buffer (four corners a quad: 0 1 2, 0 2 3), the range's base vertex r · 4 · MR.k.z —
+ * the quad's four chunk-local vertices read from its page, the vertex from its own (meshregion.wgsl rtBase).
+ */
+fn meshVert(vi: u32) -> MV {
+  var m: MV;
+  var i = vi * 2u;
+  if (meshPool()) {
+    m.r = vi / (MR.k.z * 4u);
+    let loc = vi % (MR.k.z * 4u);
+    let q = loc / 4u;
+    let c = loc % 4u;
+    let rb = rtBase(m.r);
+    let e = instances[meshState[rb + 8u + MR.pr.y + q / QPP] * PAGE_VEC4 + (q % QPP) / 2u];
+    let pr = select(e.xy, e.zw, (q & 1u) == 1u);
+    let v = (select(pr.x, pr.y, c >= 2u) >> (16u * (c & 1u))) & 0xffffu;
+    i = meshState[rb + 8u + v / VPP] * PAGE_VEC4 + (v % VPP) * 2u;
+  } else {
+    m.r = vi / MR.k.z;
+  }
+  m.a = instances[i];
+  m.b = instances[i + 1u];
+  return m;
+}
+
 @vertex
 fn vsMesh(@builtin(vertex_index) vi: u32) -> MOut {
-  let a = instances[vi * 2u];
-  let b = instances[vi * 2u + 1u];
+  let mv = meshVert(vi);
+  let a = mv.a;
+  let b = mv.b;
   // (where it was made, moved by the slides since: its range's translation)
-  let ob = offBase() + (vi / MR.k.z) * 4u;
+  let ob = offBase() + mv.r * 4u;
   let p = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z)) + vec3<f32>(bitcast<f32>(meshState[ob]), bitcast<f32>(meshState[ob + 1u]), bitcast<f32>(meshState[ob + 2u]));
   var o: MOut;
   o.pos = CAM.viewProj * vec4<f32>(p, 1.0);
@@ -47,9 +77,10 @@ fn meshTint(p: vec3<f32>) -> f32 { return 0.82 + 0.36 * fbm2(wo(p.xy) * 0.045 + 
 /** (perfopt) the mesh's vertex without the tint: the shadow pass's and the G-buffer's (the resolve takes the tint a pixel) */
 @vertex
 fn vsMeshG(@builtin(vertex_index) vi: u32) -> MOut {
-  let a = instances[vi * 2u];
-  let b = instances[vi * 2u + 1u];
-  let ob = offBase() + (vi / MR.k.z) * 4u;
+  let mv = meshVert(vi);
+  let a = mv.a;
+  let b = mv.b;
+  let ob = offBase() + mv.r * 4u;
   let p = vec3<f32>(bitcast<f32>(a.x), bitcast<f32>(a.y), bitcast<f32>(a.z)) + vec3<f32>(bitcast<f32>(meshState[ob]), bitcast<f32>(meshState[ob + 1u]), bitcast<f32>(meshState[ob + 2u]));
   var o: MOut;
   o.pos = CAM.viewProj * vec4<f32>(p, 1.0);

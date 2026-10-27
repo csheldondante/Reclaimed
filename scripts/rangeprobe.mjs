@@ -27,7 +27,7 @@ try {
     await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
     const loadS = (Date.now() - t0) / 1000;
     await new Promise((r) => setTimeout(r, 8000));
-    const r = await p.evaluate(() => {
+    const r = await p.evaluate((ALL) => {
       const R = window.reclaimed;
       const seen = new Set();
       const bufs = [];
@@ -38,7 +38,7 @@ try {
           if (v instanceof GPUBuffer) {
             if (!seen.has(v)) {
               seen.add(v);
-              bufs.push([`${path}.${k}`, v.size]);
+              bufs.push([v.label || `${path}.${k}`, v.size]);
             }
           } else if (v && typeof v === 'object' && !(v instanceof GPUDevice) && !ArrayBuffer.isView(v) && !(v instanceof HTMLElement)) walk(v, `${path}.${k}`, depth + 1);
         }
@@ -51,11 +51,13 @@ try {
         dims: R.core.dims,
         gpuMB: mb(bufs.reduce((s, b) => s + b[1], 0)),
         largest: bufs.slice(0, 6).map(([k, v]) => `${k} ${mb(v)}`),
+        // (round 93, --all: every buffer of half a MB or more, by its label)
+        all: ALL ? bufs.filter(([, v]) => v >= 2 ** 19).map(([k, v]) => `${k} ${mb(v)}`) : undefined,
         heapMB: performance.memory ? mb(performance.memory.usedJSHeapSize) : null,
         maxBinding: mb(R.core.host.gpu.device.limits.maxStorageBufferBindingSize),
         maxBuffer: mb(R.core.host.gpu.device.limits.maxBufferSize),
       };
-    });
+    }, argv.includes('--all'));
     console.log(`WIN ${w} load ${loadS.toFixed(1)} s ${JSON.stringify(r)}`);
     await p.close();
   }
