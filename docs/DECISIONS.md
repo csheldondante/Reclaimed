@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 98 (session 5, `streamspeed`) — streaming ahead of the camera
+
+- The user: "I think our next goal should be to see if we can get streaming to stay ahead of the camera and how fast
+  we can get the camera moving without losing fidelity"
+- → `streamspeed`: measured the streamer's pipeline end to end at the phone tier (scripts/speedsweep.mjs); a slide
+  now waits for its land and is written in a frame or two, not held `busy` while it's made; the tiles of the
+  region build paced by the frame's time; the arrived chunks' meshes made urgent (DEVLOG round 98).
+
 ## 2026-10-27 — round 94 (session 5, `runstory`) — where to go, and the hero too slow
 
 - The user, on the phone: "The story doesn't actually have the map improvements so I don't know which direction

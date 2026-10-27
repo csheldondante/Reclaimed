@@ -54,6 +54,8 @@ import { MemoryWorldState, type SessionStory } from '../api/contracts';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
+/** (round 98) ?flyspeed=: the free camera's speed (cells a second; Shift 120) — on a phone, the speed ✈'s ⇧ flies at */
+const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ?? 35);
 import { cpuLine, cpuStats, frameSteps, timed } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
@@ -180,6 +182,13 @@ export class LevelScene implements Scene {
   /** ?drive=speed (round 79): the camera drives itself along the atlas's nearest road at that many cells a
    *  second, zooming out with speed as the hoverbike's does — a stand-in for riding, to profile on a phone */
   private drive?: { speed: number; path: [number, number][]; s: number; dir: number; zoom: number };
+  /**
+   * (round 98) ?pan=speed[,deg]: the camera pans itself in a straight line at that many cells a second — up the screen,
+   * or `deg` (world, 0 along +x, 90 along +y) — at the view's own zoom; ?panturn=s,deg turns it by deg over a second
+   * after s seconds. Like a held pan it waits at the window's edge clamp when the slides don't keep up
+   * (scripts/speedsweep.mjs measures how far it got against how far it was asked to go). The phone's way to try a speed.
+   */
+  private pan?: { speed: number; dir: [number, number]; t: number; turnAt: number; turnBy: number; turned: number; asked: number };
   /** slow readbacks of veg and water for positional audio (refreshed ~1 Hz) */
   private vegCache?: Float32Array;
   private waterCache?: Float32Array;
@@ -627,7 +636,7 @@ export class LevelScene implements Scene {
 
   /** the main thread's worst steps (round 80, for driveprofile) */
   cpuWorst(): Record<string, { max: number; n: number }> {
-    return Object.fromEntries([...cpuStats.entries()].map(([k, v]) => [k, { max: +v.max.toFixed(1), n: v.n }]));
+    return Object.fromEntries([...cpuStats.entries()].map(([k, v]) => [k, { max: +v.max.toFixed(1), n: v.n, mean: +(v.sum / Math.max(1, v.n)).toFixed(2) }]));
   }
 
   /** the phone's profile (round 79): frame times over the last 300 frames, hitches, the streamer's slides */
@@ -672,12 +681,31 @@ export class LevelScene implements Scene {
     this.core.camera.zoom = d.zoom / (1 + d.speed / 40);
   }
 
+  /** ?pan: a straight line at its speed (world units a second), turning once if asked */
+  private panOn(dt: number): void {
+    const p = this.pan!;
+    const cam = this.core.camera;
+    p.t += dt;
+    if (p.turnBy && p.t > p.turnAt && p.turned < 1) {
+      const step = Math.min(1 - p.turned, dt);
+      p.turned += step;
+      const a = ((p.turnBy * Math.PI) / 180) * step;
+      const [x, y] = p.dir;
+      p.dir = [x * Math.cos(a) - y * Math.sin(a), x * Math.sin(a) + y * Math.cos(a)];
+    }
+    // (cells a second along the ground: a row is ROW_H world units)
+    const d = p.speed * dt;
+    p.asked += d;
+    cam.target[0] += p.dir[0] * d;
+    cam.target[1] += p.dir[1] * d;
+  }
+
   /** Flying: WASD along the view (level), Q/E down and up; the window's middle follows the camera. */
   private flyKeys(dt: number): void {
     const { camera, dims } = this.core;
     const fly = camera.fly!;
     const k = this.keys;
-    const speed = (k.has('shift') ? 120 : 35) * dt;
+    const speed = (k.has('shift') ? 120 : FLY_SPEED) * dt;
     const { f } = camera.basis();
     const hl = Math.hypot(f[0], f[1]) || 1;
     const fx = f[0] / hl;
@@ -1264,6 +1292,19 @@ export class LevelScene implements Scene {
         }
         this.drive = { speed: dv, path, s: sNear, dir: 1, zoom: core.camera.zoom };
       }
+      // (round 98) ?pan=speed[,deg] ?panturn=s,deg
+      const pv = (host.params.get('pan') ?? '').split(',').map(Number);
+      if (pv[0] > 0) {
+        let dir: [number, number];
+        if (pv.length > 1 && Number.isFinite(pv[1])) dir = [Math.cos((pv[1] * Math.PI) / 180), Math.sin((pv[1] * Math.PI) / 180)];
+        else {
+          const [ux, uy] = core.camera.screenDeltaToWorld(0, -1);
+          const l = Math.hypot(ux, uy) || 1;
+          dir = [ux / l, uy / l];
+        }
+        const pt = (host.params.get('panturn') ?? '').split(',').map(Number);
+        this.pan = { speed: pv[0], dir, t: 0, turnAt: pt[0] || 0, turnBy: pt[1] || 0, turned: 0, asked: 0 };
+      }
       this.stream.onSlide.push((dx, dy, dz) => {
         // what the level keeps in window coordinates
         shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
@@ -1718,6 +1759,7 @@ export class LevelScene implements Scene {
     let ky = 0;
     const k = this.keys;
     if (this.drive) this.driveOn(dt);
+    else if (this.pan && !camera.fly) this.panOn(dt);
     else if (camera.fly) this.flyKeys(dt);
     else if (this.storyPlay?.holdsInput || this.heroRun) {
       // (a talk or a story shot has the camera; a hero run has the keys)
