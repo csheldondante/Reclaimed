@@ -6486,8 +6486,8 @@ Why: the user on the phone (DECISIONS round 86): a long lag from a meteor to the
 ## Round 87 — the collapse on a real tower: what held it up (collapse)
 
 Why: the user on the phone (DECISIONS round 87): a tower with its base destroyed stayed standing; "Why do cells
-matter here? Shouldn't we care only about columns?" Found by reading the paths (not yet reproduced in a browser:
-the shared GPU was queued; scripts/towertest.mjs is the regression, run it next):
+matter here? Shouldn't we care only about columns?" Found by reading the paths, then checked with the regression
+scripts/towertest.mjs (below):
 
 - The heat beam bores through rock in lava.wgsl with no edit event: nothing told the integrity system. Now the
   level judges the beam's spot as a cut every 0.25 s while it's held (Integrity.cutAt, at once).
@@ -6505,3 +6505,11 @@ the shared GPU was queued; scripts/towertest.mjs is the regression, run it next)
 - A bug from round 86's own last change: apply() built the pieces from the cell lists, so once the rock came
   as runs only it would have dropped them — now rock pieces and structure cells are both spawned.
 - simcull (merged): a falling piece's chunks are woken every frame (touch), so they're live.
+- scripts/towertest.mjs (the atlas level, q=low, the hybrid on, 412×915; the tool picked as its button would,
+  the screen tapped at the tower's foot — the real pointer path): 5/5 pass. A stone spire r2.5 h40, smash: one
+  tap, the piece in 45–56 ms; stone r4.5 h70 (the 8 × 8-column tower): two taps, 38–52 ms; the meteor tool on
+  r3 h50: 64–91 ms after it lands; a tower run up to the window's top with 24 cells on above it (outside): the
+  piece in 50 ms and what was above came down with it (24 → 16 over the top); concrete r2.5 h30: the smash wakes
+  it into the physics voxels (phys.wgsl), which bring it down — 15 taps, no integrity piece (the physics' own
+  path; not this system's). GIF: C:/Projects/shots86/tall-tower.gif (the 70-tall tower cut through, its top
+  coming down on its stub).

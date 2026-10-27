@@ -86,12 +86,23 @@ try {
           const S = R.stream;
           const { w, zMax } = R.core.dims;
           const ROW_H = Math.sqrt(3) / 2;
+          // (the build stops 2 under the window's top: those columns are run up to it, as a slide cuts a column
+          // that goes on — and on above it, outside)
+          const slots = new Uint32Array((await R.readBuffer('layers')).buffer);
+          const f32 = new Float32Array(slots.buffer);
+          const pk = R.core.packed;
+          const dev = R.core.host.gpu.device;
           let n = 0;
           for (let cy = Math.floor(a.y / ROW_H) - 6; cy <= Math.floor(a.y / ROW_H) + 6; cy++)
             for (let cx = Math.floor(a.x) - 6; cx <= Math.floor(a.x) + 6; cx++) {
-              const wx = cx + 0.5 + 0.5 * (cy & 1);
-              const wy = (cy + 0.5) * ROW_H;
-              if ((t.heightAt(wx, wy) ?? 0) < zMax - 0.5) continue;
+              const ci = Math.floor(cy / 16) * pk.chunksX + Math.floor(cx / 16);
+              const k = pk.chunkTable[ci * 2 + 1];
+              const base = pk.chunkTable[ci * 2] + ((cy % 16) * 16 + (cx % 16)) * k;
+              let last = -1;
+              for (let s = 0; s < k; s++) if (slots[(base + s) * 4 + 1] !== 0) last = s;
+              if (last < 0 || f32[(base + last) * 4 + 1] < zMax - 3 || (slots[(base + last) * 4 + 2] & 255) !== 1) continue;
+              f32[(base + last) * 4 + 1] = zMax;
+              for (const b of [R.core.world.layers, R.core.world.layersNext]) if (b) dev.queue.writeBuffer(b, (base + last) * 16, slots, (base + last) * 4, 4);
               S.outside[cy * w + cx].push({ z0: S.oz + zMax, z1: S.oz + zMax + 24, mat: 1 });
               n++;
             }
@@ -152,7 +163,20 @@ try {
       const I = window.reclaimed.integrity();
       return { top: window.reclaimed.api.terrain.heightAt(a.x, a.y), falling: I.falling.list.length, stats: I.stats };
     }, at);
-    const ok = spawnedMs !== null && spawnedMs <= LIMIT && after.top < top0 - 3;
+    // (a structure the smash wakes is the physics voxels' — it comes down there, not as a piece: it must be down)
+    const physicsDown = c.mat !== 'stone' && after.top < at.z + 5;
+    const above = c.height === 'top' ? await p.evaluate((a) => {
+      const R = window.reclaimed;
+      const ROW_H = Math.sqrt(3) / 2;
+      const cy = Math.round(a.y / ROW_H - 0.5);
+      const cx = Math.round(a.x - 0.5 - 0.5 * (cy & 1));
+      // (how far over the window's top its runs above still reach: 24 before, less what it fell)
+      const top = R.stream.oz + R.core.dims.zMax;
+      return Math.max(0, ...R.stream.outside[cy * R.core.dims.w + cx].filter((iv) => iv.z0 >= top - 1e-3).map((iv) => iv.z1 - top));
+    }, at) : 0;
+    // (the tall one still goes on to the window's top after its fall: what's above it must have come down)
+    const ok = ((spawnedMs !== null && spawnedMs <= LIMIT) || physicsDown) && (c.height === 'top' ? above < 21 : after.top < top0 - 3);
+    if (c.height === 'top') console.log('above the window over its middle now reaches', above, '(24 before)');
     if (!ok) fails++;
     console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name}: ${c.mat} r${c.radius} h${c.height} by ${c.tool}: ${taps} tap(s), piece in ${spawnedMs} ms (limit ${LIMIT}), top ${top0?.toFixed(1)} → ${after.top?.toFixed(1)} (window top ${at.zMax}), falling now ${after.falling}`);
     if (shots.length) {
