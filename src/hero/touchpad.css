@@ -90,3 +90,6 @@
 }
 .hero-health.low .hero-health-fill { animation: hero-low 0.8s ease-in-out infinite; }
 @keyframes hero-low { 50% { opacity: 0.5; } }
+/* (round 94) run: a toggle, left of the swing */
+.hero-run { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 78px); right: calc(max(16px, env(safe-area-inset-right)) + 92px); width: 60px; height: 60px; font-size: 26px; background: rgba(40, 46, 52, 0.85); }
+.hero-run.on { background: rgba(70, 130, 70, 0.95); box-shadow: 0 0 0 3px #b9d77e, 0 3px 10px rgba(0, 0, 0, 0.45); }

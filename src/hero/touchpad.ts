@@ -30,6 +30,9 @@ export class TouchPad implements HeroController {
   private knob: HTMLDivElement;
   private attackBtn: HTMLButtonElement;
   private actionBtn: HTMLButtonElement;
+  private runBtn: HTMLButtonElement;
+  /** running (the toggle) */
+  running = false;
   private bar: HTMLDivElement;
   private fill: HTMLDivElement;
   private stick: { id: number; x0: number; y0: number; x: number; y: number; t0: number; moved: boolean } | null = null;
@@ -61,11 +64,20 @@ export class TouchPad implements HeroController {
     this.attackBtn.textContent = '⚔';
     this.attackBtn.title = 'Swing (Space)';
     this.actionBtn = el('hero-btn hero-action', 'button') as HTMLButtonElement;
+    // (round 94) run: a toggle (Shift held on a keyboard)
+    this.runBtn = el('hero-btn hero-run', 'button') as HTMLButtonElement;
+    this.runBtn.textContent = '🏃';
+    this.runBtn.title = 'Run (Shift)';
+    this.runBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+    this.runBtn.addEventListener('click', () => {
+      this.running = !this.running;
+      this.runBtn.classList.toggle('on', this.running);
+    });
     this.actionBtn.style.display = 'none';
     this.bar = el('hero-health') as HTMLDivElement;
     this.fill = el('hero-health-fill') as HTMLDivElement;
     this.bar.append(this.fill);
-    ui.append(this.attackBtn, this.actionBtn, this.bar);
+    ui.append(this.attackBtn, this.actionBtn, this.runBtn, this.bar);
     const signal = this.abort.signal;
     const stop = (e: Event) => e.stopPropagation();
     for (const b of [this.attackBtn, this.actionBtn]) b.addEventListener('pointerdown', stop, { signal });
@@ -155,7 +167,7 @@ export class TouchPad implements HeroController {
         if (e.target instanceof HTMLInputElement) return;
         const k = e.key.toLowerCase();
         // (its own keys go no further: the level's pan, lens and tools don't see them)
-        if (!/^(w|a|s|d|e|j| |arrow.*)$/.test(k) || e.ctrlKey || e.metaKey) return;
+        if (!/^(w|a|s|d|e|j| |shift|arrow.*)$/.test(k) || e.ctrlKey || e.metaKey) return;
         e.stopPropagation();
         this.keys.add(k);
         if (k === ' ' || k === 'j') {
@@ -187,7 +199,7 @@ export class TouchPad implements HeroController {
 
   /** hide the controls (a talk has the screen) */
   set hidden(on: boolean) {
-    for (const e of [this.attackBtn, this.bar]) e.style.visibility = on ? 'hidden' : '';
+    for (const e of [this.attackBtn, this.runBtn, this.bar]) e.style.visibility = on ? 'hidden' : '';
     if (on) {
       this.actionBtn.style.display = 'none';
       this.release();
@@ -217,12 +229,12 @@ export class TouchPad implements HeroController {
     const move: [number, number] = [-Math.sin(az) * jx + Math.cos(az) * jy, Math.cos(az) * jx + Math.sin(az) * jy];
     const attack = this.attackTap || this.attackHeld || !!this.scripted?.attack || this.keys.has(' ') || this.keys.has('j');
     this.attackTap = false;
-    return { move, attack };
+    return { move, attack, sprint: this.running || this.keys.has('shift') };
   }
 
   dispose(): void {
     this.abort.abort();
-    for (const e of [this.surface, this.attackBtn, this.actionBtn, this.bar]) e.remove();
+    for (const e of [this.surface, this.attackBtn, this.actionBtn, this.runBtn, this.bar]) e.remove();
   }
 
   private knobAt(st: { x0: number; y0: number; x: number; y: number }): [number, number] {

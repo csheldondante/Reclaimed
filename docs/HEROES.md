@@ -33,7 +33,7 @@ interface Hero {
   readonly camera: HeroCamera;      // { zoom, behind (Orbit.prefer.dead, radians), firm? }
   position(): V3; heading(): number; speed(): number;
   readonly health: number; readonly maxHealth: number; readonly alive: boolean;
-  update(dt: number, intent: HeroIntent): void;   // { move: [x, y] world direction 0..1, goTo?, attack?, use?: string[] }
+  update(dt: number, intent: HeroIntent): void;   // { move: [x, y] world direction 0..1, goTo?, attack?, sprint?, use?: string[] }
   place(at: V2): void;
   shift(dx: number, dy: number, dz: number): void; // the streamed window slid
   readonly hurt: ((damage: number, by: string) => void)[];

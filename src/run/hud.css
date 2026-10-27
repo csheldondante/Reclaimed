@@ -2,11 +2,12 @@
 .objectives {
   position: absolute;
   left: max(12px, env(safe-area-inset-left));
-  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 62px);
+  /* (round 94: over the turn buttons and the map's row too) */
+  bottom: calc(max(16px, env(safe-area-inset-bottom)) + 124px);
   display: flex;
   flex-direction: column;
   gap: 6px;
-  max-width: min(320px, 62vw);
+  max-width: min(320px, 56vw);
   pointer-events: none;
   z-index: 30;
 }
@@ -42,3 +43,5 @@
 .objective.failed { border-left-color: #d9735e; }
 .objective.failed .mark { border-color: #d9735e; }
 .objective.failed .text { text-decoration: line-through; opacity: 0.6; }
+/* (round 94) where the shown objective is: under its text */
+.objective .hint { display: block; margin-top: 3px; color: #f2c14e; font-weight: 600; font-size: 13px; }

@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 94 (session 5, `runstory`) — where to go, and the hero too slow
+
+- The user, on the phone: "The story doesn't actually have the map improvements so I don't know which direction
+  to walk... You could also add an indicator of where to go."
+- And: "Keep warp on for now because the character is way too slow".
+- → `runstory` has phonecam's map (the wiki's names, the compass, the turn buttons, the range setting). The
+  current objective's target (a person, a place or a door, from the story's own conditions) is shown as a marker
+  over it or an arrow at the screen's edge with the distance, as a pin on the map with the hero's dot and
+  facing, and as a line under the objective ("→ Reeve Hesk Marr · north-east · 140 m"). The map's warp stays
+  on in a run and takes the hero with it. The walk is faster (8 cells/s, was 5.5), with a run toggle (×1.7).
+
 ## 2026-10-27 — round 88 (session 5, `runstory`) — a hero in a run story
 
 - The user, verbatim: "I would like to try spawning as a character like in hoverbike and talking to people or going

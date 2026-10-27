@@ -31,6 +31,7 @@ import { TouchPad } from '../hero/touchpad';
 import { MAT } from '../world/materials';
 import { StoryPlay, type Stage } from './play';
 import { stageStory } from './stage-gen';
+import { Waypoint, describe, objectiveTarget, type Target } from './waypoint';
 import type { V3 } from './camera';
 
 /** cells: near enough to talk; a tap this near a figure (CSS px) picks it */
@@ -82,6 +83,7 @@ export class HeroRun {
     this.units.watch(this.hero.actor);
     this.pad = new TouchPad(d.ui, d.camera);
     this.figures = new Figures(d.device, d.renderer);
+    this.waypoint = new Waypoint(d.ui);
     this.pad.onTap = (sx, sy) => this.tap(sx, sy);
     this.pad.onAction = () => {
       const c = this.talkable();
@@ -256,7 +258,28 @@ export class HeroRun {
     play.update(dt);
     this.d.dither?.update(dt);
     this.draw();
+    // (round 94) where to go: the marker or the edge arrow, and the objective's line ("Mebe · north-east · 140 m")
+    this.target = this.ended || talking ? null : objectiveTarget({ story: this.d.story, run: play.run, stage: this.stage, units: this.units, unitOf: (c) => play.unitOf(c), heightAt: (x, y) => this.d.api.terrain!.heightAt(x, y) });
+    this.waypoint.update(this.target, p, this.d.camera);
+    this.hintT -= dt;
+    if (this.hintT <= 0) {
+      this.hintT = 0.3;
+      const t = this.target;
+      if (t) play.hud.hint(t.objective, `→ ${t.name}${t.place ? ` in ${t.place}` : ''}${t.needs ? ` (needs the ${t.needs})` : ''} · ${describe(p, t.at)}`);
+    }
+    // (round 94) a warp put the hero down elsewhere: once the ground there is read
+    if (this.placeAt && this.d.api.fresh && this.d.api.terrain!.heightAt(this.placeAt[0], this.placeAt[1], { smooth: true }) !== null) {
+      this.hero.place(this.placeAt);
+      this.placeAt = null;
+    }
   }
+
+  /** the current objective's target (story/waypoint.ts): the map pins it */
+  target: Target | null = null;
+  private hintT = 0;
+  private readonly waypoint: Waypoint;
+  /** (round 94) where a warp put the hero (window x, y), waiting for the ground there */
+  private placeAt: [number, number] | null = null;
 
   /** the window slid: what's kept in window coordinates moves */
   shift(dx: number, dy: number, dz: number): void {
@@ -266,7 +289,20 @@ export class HeroRun {
     if (this.goTo) this.goTo = [this.goTo[0] + dx, this.goTo[1] + dy];
   }
 
+  /**
+   * (round 94; the user: "Keep warp on for now because the character is way too slow") The map warped the window:
+   * everything kept moves by the jump (the story's places stay where they are on the atlas, far off now), and
+   * the hero is put down at `at` (window x, y) once the ground there is read.
+   */
+  warped(dx: number, dy: number, dz: number, at: [number, number]): void {
+    this.shift(dx, dy, dz);
+    this.approach = null;
+    this.goTo = null;
+    this.placeAt = at;
+  }
+
   dispose(): void {
+    this.waypoint.dispose();
     this.pad.dispose();
     this.figures.dispose();
     this.play?.dispose();

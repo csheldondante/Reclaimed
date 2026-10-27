@@ -41,6 +41,8 @@ export interface Stage {
 export interface StageLock {
   id: string;
   location: string;
+  /** (round 94) the room it shuts (behind it) */
+  room?: string;
   at: [number, number];
   /** what opens it: an item held, a character talked to, an objective done */
   key: { item?: string; character?: string; objective?: string };

@@ -7006,3 +7006,52 @@ Why: `lakes` (round 90) names the atlas's lakes in the wiki, but the cached atla
 pulled before it. Pulled again on `places` after merging lakes and settlements: 7772 regions, 140 sites, 171 roads;
 the markdown now names its lakes (39 mentions round the spawn). The merged build loads clean at q=low 412x915 with
 813 lakes and 141 settlements (shots88/merge91/).
+
+## 2026-10-27 — round 94, `runstory`: where to go (an arrow, a pin, a line), phonecam's map, warp in a run, a faster hero
+
+Why: the user, on the phone (DECISIONS round 94): "The story doesn't actually have the map improvements so I
+don't know which direction to walk... You could also add an indicator of where to go", and "Keep warp on for
+now because the character is way too slow".
+
+- **phonecam merged** (the atlas map with the wiki's names, the compass, the turn buttons, the range setting).
+  Conflicts in index.ts and level.ts kept both sides; doc conflicts kept both. The player's turn of the view
+  waits during a hero run: the chase camera's Orbit has the azimuth.
+- **Where to go** (story/waypoint.ts). `objectiveTarget` reads the first shown objective's own `done`
+  conditions:
+  - `talked` or `killed` → that cast member's unit;
+  - `reached` → the room or the place;
+  - only a flag (o-end: stop the dead) → whoever at the objective's location has a dialog, else the location;
+  - a shut lock in front of the target's room → the door, with what opens it if the hero hasn't got it
+    (StageLock.room, from the brief's connection).
+
+  No story's names are in the code. It's shown three ways:
+  - (a) a bobbing marker with the name over the target in view, else a big arrow at the screen's edge
+    (kept above the controls) with the distance;
+  - (b) on the atlas map, a pin with the target's name, the hero's dot and the wedge the way the hero faces.
+    These are additive AtlasMap options: `marks`, `playerAt`, `facing`, `canWarp`;
+  - (c) a line under the objective: "→ Reeve Hesk Marr in Mebe · north · 120 m". The compass is the map's
+    (north world −y, east −x), a cell taken as a metre. The objective list moved up over phonecam's turn
+    buttons, where the line was hidden.
+- **The atlas changed under the story:** with places' regenerated atlas, site 139 (the story's Mebe) is now a
+  cliffside town in region 6128, ~1000 cells off, and Mebe was being staged south of the spawn instead of
+  north. A named settlement is used only while it's still in the story's region; otherwise its region's
+  centre, with a console warning.
+- **Warp stays on in a run** (RS14). The map's warp shifts everything the run keeps by the jump. The hero is put
+  down where the level puts the camera (the window's middle) once the ground there is read, and the story's
+  places stay where they are on the atlas, far off; the arrow and the line then point there ("south-west ·
+  1050 m").
+- **Speed** (RS15): walking 5.5 → 8 cells/s, and a run toggle (🏃 beside the swing; Shift) at ×1.7 (13.6 cells/s).
+  The herotest walks are ~30% quicker (the reeve's hall 22.2 → 15.2 s of play); the fight is the same (the
+  Bellwarden down in 6.7 s, the hero at 16/20).
+
+Measured (scripts/runtest.mjs, q=low 412×915, the phone's flags as deployed):
+- won, all passed: the first objective points at the reeve (from its `talked` condition); an edge arrow
+  "115 m"; the line "→ Reeve Hesk Marr · south · 115 m" (before the site fix); the map with the pin, the dot and
+  the facing; following the arrow for 7 s: 116 → 61 cells; then the whole story to the won card;
+- warp: the hero went with a map warp, 1182 cells across the atlas, stood at the view's middle, and the run
+  went on with o-mebe shown;
+- lost: passed.
+- One run of three failed the last talk with Hesk (2.2 cells from him, `canTalk` true, nothing open). It
+  passed on the next run, with the next commit's debug output added; not found yet (RS17).
+
+Shots: C:/Projects/shots88/run/09-arrow.png, 10-map-pin.png, 11-follow-arrow.gif, 12-after-warp.png.

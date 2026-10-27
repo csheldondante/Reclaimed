@@ -1390,6 +1390,13 @@ against a contract and knows only its inputs:
   `data/wiki/seed1.run.json` (the factions and the story's regions, cut from the GM's 4 MB wiki). The spawn
   and the spots go into window coordinates the shortest way round the torus, and `core.onShift` shifts the
   run when the window slides.
+- (round 94) `src/story/waypoint.ts` — `objectiveTarget({ story, run, stage, units, unitOf, heightAt }) →
+  Target` (a person, a place or a door, from the shown objective's own conditions) and `Waypoint` (a marker in
+  view, an edge arrow with the distance), plus `describe(from, to)` ("north-east · 140 m"). HeroRun shows it,
+  and puts the line under the objective with `ObjectiveHud.hint(id, text)`. The level gives the atlas map
+  `marks` (the target's pin), `playerAt` and `facing` (the hero's dot and wedge). AtlasMap's additive options:
+  `marks`, `playerAt`, `facing`, `canWarp`. A map warp in a run calls `HeroRun.warped(dx, dy, dz, at)`.
+  `HeroIntent.sprint` is the run toggle.
 - Story contract (additive): `Outcome.spawn[].hostile`, `Outcome.hostile` (cast ids); storycheck and
   validate accept and check them.
 ## The game master (round 84, branch `gm`; docs/GM.md, docs/SYSTEMS.md system 9)

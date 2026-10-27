@@ -1545,7 +1545,13 @@ export class LevelScene implements Scene {
       // (where the atlas has it: its settlement's site, else its region's centre)
       spot: (l) => {
         const site = l.settlement ? a.atlas.settlement.sites[Number(l.settlement.replace(/^s/, ''))] : undefined;
-        if (site) return toWin(site.x, site.y);
+        // (round 94: the atlas's sites are numbered as it makes them — a site the story names must still be in
+        // the story's region; after a change to the atlas it can be another town far off: then the region's
+        // centre, said in the console)
+        const A = a.atlas;
+        const regionAt = (x: number, y: number) => A.regionOf[(((Math.floor((y / A.worldH) * A.p.n) % A.p.n) + A.p.n) % A.p.n) * A.p.n + ((((Math.floor((x / A.worldW) * A.p.n)) % A.p.n) + A.p.n) % A.p.n)];
+        if (site && regionAt(site.x, site.y) === l.region) return toWin(site.x, site.y);
+        if (site) console.warn(`?run=${id}: ${l.id}'s settlement ${l.settlement} is in region ${regionAt(site.x, site.y)} now, not ${l.region} (the atlas changed since the story was written): placed by the region's centre`);
         const d = a.atlas.defs[l.region];
         if (!d) throw new Error(`?run=${id}: no region ${l.region} in the atlas`);
         return toWin(d.stat.cx * a.atlas.worldW, d.stat.cy * a.atlas.worldH);
@@ -1558,7 +1564,33 @@ export class LevelScene implements Scene {
       groundAt: (sx, sy) => camera.groundAt(sx, sy, this.heightAt),
       say: (s, sec) => this.hud.say(s, sec ?? 4),
     });
-    core.onShift.push((dx, dy, dz) => this.heroRun?.shift(-dx, -dy, -dz));
+    // (the window's origin as the run last knew it: a slide shifts the run by its step, a warp by its jump)
+    let org: [number, number, number] = [S.origin[0], S.origin[1], S.oz];
+    core.onShift.push((dx, dy, dz) => {
+      this.heroRun?.shift(-dx, -dy, -dz);
+      org = [S.origin[0], S.origin[1], S.oz];
+    });
+    // (round 94; the user: "Keep warp on for now because the character is way too slow") the map's warp moves
+    // the hero: put down where the level puts the camera (the window's middle); the story's places stay put
+    S.onWarp.push((ox, oy, oz) => {
+      const t = camera.target;
+      this.heroRun?.warped(org[0] - ox, (org[1] - oy) * ROW_H, org[2] - oz, [t[0], t[1]]);
+      org = [ox, oy, oz];
+    });
+    // (round 94) the atlas map: the hero's dot and wedge, the objective's pin
+    const map = this.atlasMap;
+    if (map) {
+      const cell = (x: number, y: number): [number, number] => [S.origin[0] + x, S.origin[1] + y / ROW_H];
+      map.playerAt = () => {
+        const h = this.heroRun?.hero.position();
+        return h ? cell(h[0], h[1]) : null;
+      };
+      map.facing = () => this.heroRun?.hero.heading() ?? null;
+      map.marks = () => {
+        const tg = this.heroRun?.target;
+        return tg ? [{ at: cell(tg.at[0], tg.at[1]), name: tg.name }] : [];
+      };
+    }
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.run = Object.assign(this.heroRun, { world });
   }
 

@@ -28,6 +28,20 @@ export class ObjectiveHud {
     this.el.remove();
   }
 
+  /** (round 94) a line under a shown objective: where to go (null: none). Writes the DOM only when it changes. */
+  hint(id: string, text: string | null): void {
+    const row = this.rows.get(id);
+    if (!row) return;
+    let h = row.querySelector('.hint') as HTMLSpanElement | null;
+    if (text === null) return void h?.remove();
+    if (!h) {
+      h = document.createElement('span');
+      h.className = 'hint';
+      row.querySelector('.text')!.append(h);
+    }
+    if (h.textContent !== text) h.textContent = text;
+  }
+
   private show(id: string): void {
     if (this.rows.has(id)) return;
     const o = this.run.objective(id);

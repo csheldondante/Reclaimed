@@ -12,7 +12,9 @@ import type { Hero, HeroAbility, HeroCamera, HeroIntent, HeroWorld } from '../ap
 import type { Actor, UnitView, V2, V3 } from '../api/contracts/units';
 import { canStep, findPath } from './path';
 
-const SPEED = 5.5;
+/** cells a second walking (round 94: 5.5 was "way too slow" on the phone), and running (×SPRINT) */
+const SPEED = 8;
+const SPRINT = 1.7;
 export const STEP = 2.5;
 /** water deeper than this (cells) it won't wade into */
 const DEEP = 1.2;
@@ -165,18 +167,19 @@ export class Walker implements Hero {
     const m = Math.min(1, Math.hypot(mx, my));
     this.pace = 0;
     if (m > 0.05 && this.swingT === 0) {
-      const s = SPEED * m * dt;
+      const v = SPEED * (it.sprint ? SPRINT : 1);
+      const s = v * m * dt;
       this.head = turn(this.head, Math.atan2(my, mx), dt * 14);
       const ux = mx / Math.hypot(mx, my);
       const uy = my / Math.hypot(mx, my);
-      if (this.stride(ux * s, uy * s)) this.pace = SPEED * m;
+      if (this.stride(ux * s, uy * s)) this.pace = v * m;
       else {
         // (a face too steep: along it, whichever way goes)
         const a = Math.atan2(uy, ux);
         for (const side of [1, -1]) {
           const b = a + side * Math.PI * 0.35;
           if (this.stride(Math.cos(b) * s * 0.7, Math.sin(b) * s * 0.7)) {
-            this.pace = SPEED * m * 0.7;
+            this.pace = v * m * 0.7;
             break;
           }
         }

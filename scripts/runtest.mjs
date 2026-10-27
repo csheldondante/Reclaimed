@@ -240,6 +240,7 @@ async function talkTo(p, who) {
     else if (s.busy) await p.mouse.click(206, 300);
     await sleep(800);
   }
+  console.log(`     could not talk to ${who}: ${JSON.stringify(await p.evaluate((who) => { const r = window.reclaimed.run; const u = r.units.get(r.play.unitOf(who)); const h = r.hero.position(); const sp = u && window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2); const el = sp && document.elementFromPoint(sp[0], sp[1]); return { sp, el: el && (el.className || el.tagName), u: u && { at: u.at, alive: u.alive, hostile: u.hostile, state: u.state }, can: r.play.canTalk(who), hero: h, busy: r.play.cam.busy, open: r.play.dialog.isOpen, ended: r.play.run.over }; }, who))}`);
   return false;
 }
 
@@ -286,6 +287,7 @@ async function won() {
   });
   console.log(`     staged: ${JSON.stringify(stage)}`);
   await shot(p, '01-spawn');
+  await whereToGo(p);
   // Ilsa, at the ford
   ok(await talkTo(p, 'ilsa'), 'tapped Ilsa: the hero walked up and the talk opened');
   await sleep(1200);
@@ -383,6 +385,98 @@ async function won() {
   await p.close();
 }
 
+/** (round 94) where to go: the arrow or marker, the objective's line, the map's pin; then a walk after the arrow */
+async function whereToGo(p) {
+  const w = await p.evaluate(() => {
+    const r = window.reclaimed.run;
+    const vis = (s) => {
+      const e = document.querySelector(s);
+      return !!e && e.style.display !== 'none';
+    };
+    return { target: r.target && { name: r.target.name, kind: r.target.kind }, arrow: vis('.wp-arrow'), marker: vis('.wp-marker'), hint: document.querySelector('.objective .hint')?.textContent ?? null, dist: document.querySelector('.wp-dist')?.textContent };
+  });
+  ok(w.target?.name === 'Reeve Hesk Marr' && w.target.kind === 'person', `the first objective points at the reeve (${JSON.stringify(w.target)}), from the story's own "talked" condition`);
+  ok(w.arrow || w.marker, `an arrow at the screen's edge (${w.arrow}, ${w.dist}) or a marker over him (${w.marker})`);
+  ok(!!w.hint && /Reeve Hesk Marr/.test(w.hint) && /(north|south|east|west)/.test(w.hint) && / m$/.test(w.hint), `the objective says where: "${w.hint}"`);
+  await shot(p, '09-arrow');
+  // the map: the 🗺 button, as a tap on it
+  const mapBtn = await p.$('button[title^="the atlas map"]');
+  ok(!!mapBtn, 'the map button is there');
+  if (mapBtn) {
+    await mapBtn.click();
+    await sleep(2500);
+    const m = await p.evaluate(() => {
+      const map = window.reclaimed.scene.atlasMap;
+      return { open: map.isOpen, marks: map.marks?.().map((x) => x.name), player: map.playerAt?.(), facing: map.facing?.(), warp: map.canWarp };
+    });
+    ok(m.open && m.marks?.includes('Reeve Hesk Marr') && m.player && typeof m.facing === 'number', `the map open with the objective's pin (${m.marks}) and the hero's dot and facing; warp ${m.warp ? 'on' : 'off'}`);
+    await shot(p, '10-map-pin');
+    await p.keyboard.press('Escape');
+    await sleep(600);
+  }
+  // after the arrow: the stick pushed the way it points, a few seconds (the GIF), the distance coming down
+  const d0 = await p.evaluate(() => {
+    const r = window.reclaimed.run;
+    const h = r.hero.position();
+    return Math.hypot(r.target.at[0] - h[0], r.target.at[1] - h[1]);
+  });
+  await gif(p, '11-follow-arrow', async () => {
+    const t0 = Date.now();
+    while (Date.now() - t0 < 7000) {
+      await p.evaluate(() => {
+        const r = window.reclaimed.run;
+        const el = document.querySelector('.wp-arrow');
+        const m = /rotate\(([-\d.]+)rad\)/.exec(el?.style.transform ?? '');
+        // (the arrow's screen angle is the stick's: up the screen is away from the camera)
+        const a = m ? Number(m[1]) : null;
+        r.pad.scripted = a === null ? null : { stick: [Math.cos(a) * 56, Math.sin(a) * 56] };
+      });
+      await sleep(150);
+    }
+    await p.evaluate(() => (window.reclaimed.run.pad.scripted = null));
+  });
+  const d1 = await p.evaluate(() => {
+    const r = window.reclaimed.run;
+    const h = r.hero.position();
+    return Math.hypot(r.target.at[0] - h[0], r.target.at[1] - h[1]);
+  });
+  ok(d1 < d0 - 20, `following the arrow for 7 s: ${d0.toFixed(0)} → ${d1.toFixed(0)} cells to the reeve`);
+}
+
+/** (round 94) the map's warp in a run: the hero goes with it, the story goes on */
+async function warp() {
+  console.log('--- warp: the map moves the hero, the run goes on');
+  const p = await open();
+  await sleep(12000);
+  const before = await p.evaluate(() => {
+    const R = window.reclaimed;
+    const h = R.run.hero.position();
+    return { cell: R.scene.atlasMap.playerAt(), h };
+  });
+  await (await p.$('button[title^="the atlas map"]')).click();
+  await sleep(2500);
+  // a tap on the map a little way from the middle: a warp there
+  await p.mouse.click(206 + 60, 457 - 40);
+  for (let k = 0; k < 60; k++) {
+    await sleep(1000);
+    const done = await p.evaluate(() => !window.reclaimed.scene.atlasMap.isOpen && window.reclaimed.api.fresh);
+    if (done) break;
+  }
+  await sleep(4000);
+  const after = await p.evaluate(() => {
+    const R = window.reclaimed;
+    const h = R.run.hero.position();
+    const t = R.camera.target;
+    return { cell: R.scene.atlasMap.playerAt(), h, t, over: R.run.play.run.over, shown: R.run.play.run.objectives().filter((o) => o.state === 'shown').map((o) => o.id), hint: document.querySelector('.objective .hint')?.textContent };
+  });
+  const moved = Math.hypot(after.cell[0] - before.cell[0], after.cell[1] - before.cell[1]);
+  ok(moved > 100, `the hero went with the warp: ${moved.toFixed(0)} cells across the atlas`);
+  ok(Math.hypot(after.h[0] - after.t[0], after.h[1] - after.t[1]) < 6, 'it stands where the view is (the window\'s middle)');
+  ok(!after.over && after.shown.length > 0 && !!after.hint, `the run goes on: ${after.shown} shown, "${after.hint}"`);
+  await shot(p, '12-after-warp');
+  await p.close();
+}
+
 async function lost() {
   console.log('--- lost: the hero dies');
   const p = await open();
@@ -410,6 +504,7 @@ async function lost() {
 try {
   if (!only || only === 'won') await won();
   if (!only || only === 'lost') await lost();
+  if (!only || only === 'warp') await warp();
 } catch (e) {
   console.log('FAIL', e.stack ?? e);
   fails++;

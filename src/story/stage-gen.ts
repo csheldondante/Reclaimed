@@ -127,7 +127,7 @@ export function stageStory(story: SessionStory, d: StageGenDeps): StageGen {
       const mat = lockMaterial(cn.lock);
       build(p[0], p[1], mat, 2.8, WALL_H);
       const key = l.brief.keys?.find((k) => k.lock === cn.lock)?.key ?? {};
-      stage.locks!.push({ id: cn.lock, location: l.id, at: p, key, material: mat, open: false });
+      stage.locks!.push({ id: cn.lock, location: l.id, room: cn.to, at: p, key, material: mat, open: false });
     }
     // the landmarks
     for (const lm of l.brief.landmarks ?? []) edits += landmark(lm, l, rooms, rs, d);

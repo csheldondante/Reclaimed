@@ -24,6 +24,8 @@ export interface HeroIntent {
   goTo?: V2 | null;
   /** the main ability this frame (a swing): held or tapped */
   attack?: boolean;
+  /** (round 94) run: faster, for crossing open ground (the user: "the character is way too slow") */
+  sprint?: boolean;
   /** other abilities, by id, used this frame */
   use?: string[];
 }
