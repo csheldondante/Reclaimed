@@ -6609,3 +6609,79 @@ cut through: 178 columns × 10 runs), typical 0.1-5 ms. towertest 5/5 (spire 69 
 the rest stays in the air) and after-wide-banded.gif (all of it comes down). The heat-beam case didn't bore through
 headlessly (nothing cut, nothing floats); its path is towertest's and round 87's. Open: BACKLOG C13 (GPU-made
 changes elsewhere — a volcano's flows — aren't judged).
+
+## Round 90 — the atlas owns its lakes (`lakes`, BACKLOG W2)
+
+The user, on W2 (a rivers=table river held at 123.6 over ground at 101–118 at 1040,13551, 167 wall faces): "For the
+rivers why does the river height lie above the dip? Is it because the river exits going higher? If so can we
+compute that the region is flooded at the atlas level?" Yes: findRivers's priority flood fills every hollow to the
+height it spills out at, and a river's level is that filled level; only the river's own columns were given it, so
+its water stood over the rest of the hollow (and the levee, RIVER_LEVEE 12, couldn't raise banks that far).
+
+What changed:
+- rivers.ts: from the fill, each 8-connected component of texels whose filled level is over the ground by LAKE_EPS
+  (0.25; less is a flat the flood only tilted) is a lake when its water would stand LAKE_DEPTH (2.5) deep and
+  LAKE_CATCH (30 dryness-weighted texels) drains into it: level the spill height (its lowest filled level), the
+  outlet the rim texel it spills over, rivers in and out, its regions (`AtlasLake`). A river's level in a lake is
+  the lake's; in a hollow too shallow or dry for one, the floor's (it follows the floor). Lava stops at a lake.
+  Per texel a u16: the lake's id + 1, LAKE_IN set inside, unset on its rim (land texels within LAKE_RING 2 whose
+  filled level is near the lake's — not the valley past its outlet; a texel two rims reach is the higher lake's).
+  Seed 1: 813 lakes (median 14 texels, the biggest 11115 — 100 texels across), 176 deeper than 10, 327 with a
+  river in; +~35 ms to findRivers (435–505 ms in all).
+- The table and the ids go after the river nodes in riverBuf (the crater block's words 1 and 2 say where; 0
+  none), so no new binding. compose.wgsl `lakeAt`: of the four texels round a point, the lake most of them are
+  inside of and how much (bilinear). Over half: `Ground.lkw`, its water may stand there. Less: its rim — the
+  ground raised to a bank LAKE_BANK (0.4) to 1.9 over the level, before any river cuts it. The bank is what makes
+  a wall impossible: every column next to one where the lake's water may stand is either under that too or at
+  least 0.4 over the level. Rivers: none cuts a channel or valley under a lake's water (the trench filled with
+  what slid down its sides and the water stood over it); one lower than the lake (past its outlet, to the sea)
+  doesn't cut the bank where the lake's water is near.
+- colFinish (forms.wgsl): every column with `lkw` under the level gets water to it — form tops and holes too (a
+  crystal's top under the water stood dry, a wall round it); no lava-tube skylights under a lake; silt under the
+  water, but no loose cover on a steep bed (slope ≥ 0.8: the sediment slid down into the hollows at once and the
+  water over them stood a few cells over the lake); sand at the waterline where flat (a beach, slope < 1.2), the
+  rock bare where steep. Wet margins (moisture 0.8).
+- A lake's water is not a river's: no riverFlow, nothing held to a table — still water, asleep as the land comes
+  in (its steady state, settle off with rivers=table), simulated where woken like any other. (Tried first: held
+  like a table river, then carried as is where held. A held column feeds what's woken beside it the pipes'
+  steady flux for its level and keeps its own water: a woken chunk next to held lake columns stood 20–48 deep
+  over the lake's level.)
+- The far rings (lod.wgsl), the atlas viewer (view.wgsl) and the atlas map (api/atlas-map.ts) draw lakes; sites
+  keep out of a coarse cell more than half in a lake (wet sites 11 → 6 of 140); the wiki names them
+  (`WorldWiki.lakes`, "Lake/Mere/Water/Loch <name>", "Tarn/Pool" for small ones, in the land's tongue; the
+  markdown lists those near the start); contracts/world.ts `Lake` and `lakeFlood` (a lake as the flood it is:
+  its regions, its level — RegionState-compatible). AtlasFacts gets `lakes` (the data/atlas cache needs
+  `node scripts/worldwiki.mjs --pull` again to carry them).
+- `?lakes=0`: found but not realised (the A/B's before).
+
+Measured (scripts/lakeprobe.mjs: q=low 412x915, the atlas level, 35 s after load; a wall face is a wet column
+standing more than 3 over a neighbour's level, wet or dry, not counting a sheet over a fall's lip; the W2 spot,
+the 8 biggest lakes at their middle and their outlet):
+
+| spot | before (`lakes=0`) | after |
+|---|---|---|
+| W2, 1040,13551 | 154 | 2 |
+| lake 493 middle (123.25, 21 deep) | 747 | 0 (64409 of 64490 wet columns at its level) |
+| lake 220 middle (109.71, 40 deep) | 2005 | 0 |
+| lake 669 middle (a dry hollow before: no river through) | 0 | 0 |
+| lake 669 outlet | 1591 | 28 |
+| lake 220 outlet | 1035 | 292 (276 a river's, as before: not a lake's) |
+| lake 600 middle / outlet | 68 / 180 | 45 / 29 |
+| lake 1 outlet | 1011 | 6 (a river's) |
+| lake 253 outlet | 395 | 4 |
+| lake 726 outlet | 1511 | 269 (213 other water, 34 river, 22 lake) |
+| lake 724 outlet | 632 | 0 |
+| the 8 middles | — | 0 walls, at their level, except 600's 45 |
+
+What's left (BACKLOG W4–W6): where a giant crystal or a form with a gap under it leans over a lake (the column's
+top out of the window: waterInWindow gives it no water — 600's 45, W2's 2); a woken chunk beside a held river
+mouth is fed over the lake's level (669 outlet's 28); the rivers' own walls past the outlets (lake 220's 276,
+there before).
+
+Perf (scripts/driveprofile.mjs, q=low 412x915, the default ride): lakes=0 p50 9.8 p95 11.2 ms, GPU 11.6 ms a
+frame; lakes p50 9.8 p95 10.7, GPU 9.1 (run to run noise is larger than the change); atlas-colHeight 1.42 → 1.48
+ms a batch (the lake lookup: four more loads a column), the rings' passes the same. No new per-frame work: a lake
+asleep costs what any sleeping water does.
+
+Shots: C:/Projects/shots88/lakes/shore-0-z8.png (lake 493's outlet zoomed in: the shore continuous, the river
+leaving), shore-*-zdef.png at the default zoom, final-*.png the survey, before-*.png with lakes=0.

@@ -687,8 +687,8 @@ is `n` × `n` texels over it (2048: a texel ~8 cells).
   LAKE_BANK and more over the level, before any river cuts it (a river through a lake cuts no channel under its
   water; one lower than the lake doesn't cut its bank where its water is near). colFinish fills every column under
   the level with `lkw` (form tops and holes too; no tube skylights under it; no loose cover on a steep bed), bedded
-  in silt, sand at the waterline where flat; its `riverFlow` is (0, 0, depth, −1): w < 0 a lake's (riverheld.wgsl
-  `RiverHere.lake`: held asleep is carried as it is, never relaxed or pulled to a depth). The rings (lod.wgsl), the
+  in silt, sand at the waterline where flat; no `riverFlow`: a lake's water is still water, asleep as it comes in,
+  simulated where woken (held like a table river, it fed what woke beside it over its level). The rings (lod.wgsl), the
   viewer (view.wgsl) and the atlas map draw it; sites keep out of lakes; the wiki names them (`WorldWiki.lakes`,
   contracts/world.ts `Lake`, `lakeFlood`).
 - The coarse world (round 72, `coarse.ts`, `coarse.wgsl`): the torus at

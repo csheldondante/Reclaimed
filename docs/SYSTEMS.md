@@ -44,7 +44,9 @@ Each entry: status (✓ built, ◐ partly, ○ not started), owner branch, API s
 
 ### 1. World state (atlas scale) ◐ — branch `places`
 The persistent world between runs: the atlas, its regions, and each region's state.
-- **Has:** the atlas (generation, rivers, sites, roads, the coarse world: craters, ash, set lava). Region
+- **Has:** the atlas (generation, rivers, lakes — round 90, `Atlas.lakes`, contracts/world.ts `Lake`: a filled
+  hollow at its spill height, like a flood with a level, `lakeFlood` — sites, roads, the coarse world: craters,
+  ash, set lava). Region
   state isn't a first-class record yet.
 - **API:**
   - `world.region(id) → RegionState`

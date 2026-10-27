@@ -121,7 +121,7 @@ try {
             for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
               const j = (y + dy) * W + x + dx;
               const nl = z(j) + Math.max(w[j], 0);
-              if (w[j] <= 0.05 && !shore && level !== null && Math.abs(lv + oz - level) < 0.35 && Math.abs(x - W / 2) < W / 4 && Math.abs(y - H / 2) < H / 4) shore = [x, y, lv];
+              if (w[j] <= 0.05 && !shore && w[i] > 0.5 && (level === null || Math.abs(lv + oz - level) < 0.35) && Math.abs(x - W / 2) < W / 4 && Math.abs(y - H / 2) < H / 4) shore = [x, y, lv];
               // (into a fall's sheet: the lip of a fall, not a wall)
               if (lv - nl > step && w[i] > sheet && !(w[j] > 0.1 && w[j] <= sheet) && ++by[kind(i)]) walls.push([x, y, +(lv + oz).toFixed(1), +(nl + oz).toFixed(1), +w[i].toFixed(1), +w[j].toFixed(1)]);
             }
