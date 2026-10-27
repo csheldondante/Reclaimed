@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 89 (session 5, `places`) — settlements like vegetation; the water epic
+
+- "Yeah carry out in that order." "The original test valley still works well! The water looks better than before."
+- "We have the flow field based agents right? I'm curious to see how they navigate a settlement and look when working.
+  I think quarry and felling trees, hauling and building make sense as the first jobs (maybe farming and houses to
+  spawn more agents?) I think vegetation and settlements should work similarly actually. Both are fields with
+  intensity and maybe some material (different biomes or settlement styles) and sensitive to conditions on the map
+  grow and spread. Settlements along rivers and near resources make sense and hopefully quarries and mines can be
+  built into the ground/hills in ways that look cool."
+- "I'm also excited to eventually add ships and I think that will wait for a general epic to improve the water
+  (simulation is neat but river shapes need work I think and have too much isotropy and not enough variety or
+  vegetation along banks)" (BACKLOG W1).
+
 ## 2026-10-27 — round 88 (session 5, `places`) — the third phone test; what's next
 
 - **Hoverbike** on places 4193918: "The performance has more noticable hiccups in this mode but is still adequate for now."

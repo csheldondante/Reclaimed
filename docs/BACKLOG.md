@@ -12,6 +12,15 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 89 (2026-10-27, session 5) — settlements as fields, the water epic (DECISIONS round 89)
+
+| id | item | size | status |
+|---|---|---|---|
+| S1 | Settlements' first jobs: quarry, fell trees, haul, build; then farming, and houses that spawn more agents; the flow-field agents seen navigating a town and working | L | wip (`settlements`) |
+| S2 | Settlements as fields like vegetation: intensity and a style ("material": the civ's style), sensitive to the map's conditions (rivers, resources, slope), growing and spreading; buildings and districts are the field realised on the overlay grids; one field machinery shared with vegetation | L | wip (`settlements`) |
+| S3 | Quarries and mines cut into the ground and hills so they look good: terraced pits, adits into hillsides, spoil heaps, ramps | M | wip (`settlements`) |
+| W1 | The water epic: river shapes with less isotropy and more variety (meanders, braids, gorges, rapids, deltas), vegetation along banks; waterfalls from the flow model on the atlas; then ships | L | open (after vegetation, building, mapgen) |
+
 ## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
 
 | id | item | size | status |
