@@ -17,6 +17,8 @@ const at = opt('at', '');
 const [vw, vh] = opt('size', '412x915').split('x').map(Number);
 const dpr = Number(opt('dpr', '2.6'));
 const extra = opt('extra', '');
+// (round 86, --eval js: run in the page once it's settled, before the measuring starts — e.g. a storm spawned)
+const evalJs = opt('eval', '');
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
@@ -49,6 +51,10 @@ try {
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   // (settled first: the first seconds build the mesh)
   await new Promise((r) => setTimeout(r, 5000));
+  if (evalJs) {
+    console.log('eval', await p.evaluate(evalJs));
+    await new Promise((r) => setTimeout(r, 3000));
+  }
   await p.evaluate(() => {
     const s = window.reclaimed.scene;
     s.hitches = 0;
@@ -59,7 +65,7 @@ try {
     s.longFrames = [];
     s.worstMs = 0;
     s.frameMs = [];
-    if (s.hybrid) s.hybrid.totals = { frames: 0, voxel: 0, drawn: 0 };
+    if (s.hybrid) s.hybrid.totals = { frames: 0, voxel: 0, drawn: 0, grid: 0 };
     window.__all = [];
     window.__tick0 = window.reclaimed.core.sim.tick;
     const tick = () => {
@@ -99,7 +105,7 @@ try {
       // (perfopt: every pass's mean a frame over the ride, the largest first)
       ticks: R.core.sim.tick - window.__tick0,
       // (hybrid: the mean voxel chunks wanted and mesh chunks drawn a frame, of the grid's)
-      hybrid: R.scene.hybrid ? { chunks: R.scene.hybrid.stats.chunks, voxel: +(R.scene.hybrid.totals.voxel / Math.max(1, R.scene.hybrid.totals.frames)).toFixed(1), drawn: +(R.scene.hybrid.totals.drawn / Math.max(1, R.scene.hybrid.totals.frames)).toFixed(1) } : { drawn: R.core.renderer.fieldMesh.drawn },
+      hybrid: R.scene.hybrid ? { chunks: R.scene.hybrid.stats.chunks, voxel: +(R.scene.hybrid.totals.voxel / Math.max(1, R.scene.hybrid.totals.frames)).toFixed(1), drawn: +(R.scene.hybrid.totals.drawn / Math.max(1, R.scene.hybrid.totals.frames)).toFixed(1), grid: +((R.scene.hybrid.totals.grid ?? 0) / Math.max(1, R.scene.hybrid.totals.frames)).toFixed(1) } : { drawn: R.core.renderer.fieldMesh.drawn },
       allPerFrame: Object.fromEntries([...R.core.host.profiler.totalMs].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => [k, +(v / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(3)])),
       meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),

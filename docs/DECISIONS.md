@@ -10,11 +10,18 @@ each was implemented.
   completely destroy the base of a tower and it stayed standing (it might have been taller than one cell though)".
   The flow model is merged into places (still behind `?flow=1`). The meteor stays on `collapse` until the tower bug
   is fixed there.
+- The hybrid's storms (heightfield chunks drawn with the voxels' look, storms across the window): "Riding is smooth
+  enough. It does get worse under the storm but I think acceptably for now. I would not pursue it further yet."
+  Merged; its storm cost is left as it is.
 
 ## 2026-10-26 — round 86 (session 5, `places`) — the phone test: rivers, falls, collapse
 
 - **Performance:** "performance is now very very good! Totally fixed on mobile" (the hybrid by default on the phone tier).
 - **Rivers:** "the rivers look good!" Merged; `rivers=table` is the atlas level's default.
+- **Storms on the hybrid** (branch `hybrid`): "the surface flow was also visually really nice and I would like to verify
+  that still looks good" — with the hybrid, a storm's wetting and sheet flow stopped at the voxel island round the
+  focus (the heightfield chunks flat olive beyond it, a square patch, ponds ending at its edge). The phone's speed is to
+  be kept ("performance is now very very good!").
 - **Falls** (branch `flow`): "The waterfalls move way way too fast at 1x and visually it doesn't look as good as the old
   approach or the sand particles which look fantastic."
 - **Rock collapse:** "The rock collapsing seems very broken. There is a large lag from a meteor to when the material is

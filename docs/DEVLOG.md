@@ -6442,3 +6442,54 @@ flow's wakeChunk and the hybrid's filter, and wakeChunk honours the filter).
 - atlasworldtest 6/6; driveprofile (atlas, low tier, 18/s, 20 s): GPU 6.99 ms a frame, p95 10.8, p99 19.2.
 - The round-86 GIFs remade after the spray's budget cut (C:/Projects/shots86/flow after-*): breach to plain
   2.57 s.
+## 2026-10-26 — round 86: the hybrid's heightfield chunks drawn as a grid with the voxels' look; storms everywhere (`hybrid`)
+
+The user, on the hybrid at the phone default: "the surface flow was also visually really nice and I would like to
+verify that still looks good" — and "performance is now very very good!". In a storm the wetting and the sheet flow
+stopped at the voxel island round the focus (C:/Projects/shots86/storm-h1.png): the heightfield chunks were the 1-cell
+ring's flat olive (a region colour, its own sun, no speckle, no cloud shade), so the island read as a square patch and
+ponds ended at its edge. The sim slept there too (Sleep.only), so no rain landed.
+
+Why a grid and not a better ring shader: inside the window every column's layers, water, plants, wetness and stains
+are already there — the rings drew the atlas's ground instead, from another source, with another look. So a
+heightfield chunk is now drawn from the window's own columns: a lattice through their centres (the hex rows make a
+triangular lattice; 34 x 34 vertices a chunk, overlapping its neighbours by a cell, an overlapping vertex held within
+1.5 of its edge's top) at each column's top (surface + drift), into the same G-buffer and resolve as the mesh
+(meshdraw.wgsl vsGrid, fsMeshG; forward, cut and shadow variants). The look is meshShade's — speckle, grass, flower
+dots, sand, strata, stains, wet darkening, the water film with its streaks, the shadow map, the cloud shade — so the
+seam can't be told. Nothing is built: no field-mesh rebuild, ~1.2 k vertices a chunk. renderprep and vegprep run in
+those chunks again (Globals.hfield now marks only the rings' chunks — land past the window's floor or ceiling, or
+come in under 0.4 s ago), so their trees, water and sheets are drawn as on the voxels; the earlier reason to skip them
+(the sim's water stood off the rings' ground) is gone, the grid is the water's own ground.
+
+Storms: the sim may wake in a grid chunk within `?stormreach=` (110 world units) of the focus, or one an event touched
+(HybridChunks.sleepFilter); Sleep's rules then wake it where a storm rains, and settletol keeps it till the water
+settles. Lightning, fires, taps and gusts no longer turn chunks to voxels (the grid shows what they do); edits and
+chips still do. Past the reach the ground is darkened under the storm (meshShade: stormCover where the chunk is
+asleep); past the window the rings draw the storm's shade, wet ground, water in their hollows and streaked sheets
+running down the slope (far.wgsl farStorm, the storms in FarP).
+
+Shots (C:/Projects/shots86/hybrid/, before = places, after = this; a storm spawned at the target, 25 s on): at
+zoom 10 the whole view is speckled, wet and shaded with no edge (after-900x700-z10.png, after-412x915-z10.png vs
+before-*); at the default zoom the window is wet to its edge (after-*-def.png). GIFs after-*.gif. On the first spawn,
+57-60 of 72 chunks are the grid's, 12-15 voxels, 0 the rings'.
+
+driveprofile, low tier, 412x915 dpr 2.6, desktop iGPU (shared), 20 s, interleaved (GPU ms a frame; p95 is vsync's):
+
+| run | p95 | p99 | GPU | draw | gbuffer | shadow (+static) | renderprep |
+|---|---|---|---|---|---|---|---|
+| places, riding 18/s | 10.7 | 20.8 | 7.28 | 3.46 | 0.18 | 0.11 + 0.04 | 0.20 |
+| grid, riding 18/s | 10.8 | 17.0 | 8.54 | 4.38 | 0.33 | 0.22 + 0.07 | 0.33 |
+| places, storm, still | 10.7 | 12.0 | 9.21 | 4.17 | 0.15 | 0.11 + 0.04 | 0.21 |
+| grid, storm, still | 10.7 | 20.7 | 11.59 | 5.18 | 0.26 | 0.14 + 0.06 | 0.33 |
+| grid, storm, stormreach=50 | 10.6 | 11.1 | 10.75 | 5.28 | 0.30 | 0.15 + 0.07 | 0.34 |
+
+The grid costs ~1.3 ms riding: the resolve shades every window pixel with meshShade (the rings' look was a few
+instructions), plus the grid in the G-buffer and shadow and the prep over 53 more chunks — about the full game's
+draw (9.07 ms riding in round 85), without its mesh builds or its sim. In a storm the storm's sim adds ~1.4 ms at
+reach 110 (~0.6 at 50). Next if the phone shows it: a cheaper look where a cell is under a pixel or two, `stormreach`
+lower.
+
+After merging simcull (places fd5f53e), the same build, the same runs: riding GPU 6.46 ms a frame (draw 3.37, gbuffer
+0.27, 54.5 grid chunks), a storm overhead 10.76 (p95 10.7-10.8 both). Not interleaved with places this time (the
+GPU was lent for two runs): the clocks drift by up to a ms between sessions.

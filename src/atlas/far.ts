@@ -12,7 +12,7 @@ import meshStateW from '../shaders/meshstate.wgsl?raw';
 import { LOD_UNI_BYTES, LodRings } from './lod';
 import { ROW_H } from '../world/lattice';
 
-const UNI_BYTES = 96;
+const UNI_BYTES = 96 + 5 * 16;
 /** vertices a side, and world units between them */
 const G = 161;
 const SPACING = 32;
@@ -54,6 +54,8 @@ export class FarLand {
   /** (round 83) what the view is on (window coordinates; the camera's target): the land on the eye's side of
    *  it is kept under it (far.wgsl underFocus); null: none (flying) */
   focus: [number, number, number] | null = null;
+  /** (round 86) the storms (window coordinates; far.wgsl farStorm): drawn on the land the rings draw */
+  storms: { x: number; y: number; radius: number; intensity: number }[] = [];
 
   constructor(
     private device: GPUDevice,
@@ -207,6 +209,11 @@ export class FarLand {
     }
   }
 
+  /** (round 86, the hybrid) the window's mesh chunks its grid draws (a bit each): the rings leave them to it */
+  setGrid(bits: Uint32Array): void {
+    this.lod?.gridBits.set(bits);
+  }
+
   /** Draw it (the world pass), the fog the sky's colour. */
   draw(pass: GPURenderPassEncoder, fog: [number, number, number]): void {
     const a = this.atlas;
@@ -217,6 +224,9 @@ export class FarLand {
     f.set([fog[0], fog[1], fog[2], 1], 12);
     f.set([a.worldW, a.worldH, a.p.n / 2, a.coarse.cn], 16);
     if (this.focus) f.set([...this.focus, 1], 20);
+    const ns = Math.min(4, this.storms.length);
+    for (let i = 0; i < ns; i++) f.set([this.storms[i].x, this.storms[i].y, this.storms[i].radius, Math.min(1, this.storms[i].intensity)], 24 + i * 4);
+    f.set([ns, (performance.now() / 1000) % 1000, 0, 0], 40);
     this.device.queue.writeBuffer(this.uni, 0, f);
     const now = performance.now();
     if (this.lod) {

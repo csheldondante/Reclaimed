@@ -435,6 +435,28 @@ the rock's albedo and material beside the top's) in beds (render.wgsl's
 strata), lit by the sun, the sky and a bounce; no green from 70 over the
 sea up (as colFinish's plants).
 
+Round 86 (the grid): a heightfield chunk is one of two kinds. Most are the
+**grid's** — their columns' tops all within the window's z, their land come
+in over 0.4 s ago — drawn by the renderer as a lattice through the window's
+own column centres (the hex rows are a triangular lattice) at each column's
+top (surface + drift), 34 x 34 vertices a chunk (its 32 columns and one past
+each edge, overlapping its neighbours by a cell), with the mesh's own
+fragment shaders (meshdraw.wgsl vsGrid / vsGridG into fsMeshG, fsMesh, the
+shadow pass): the look is meshShade's, so the seam with a voxel chunk can't
+be seen. Renderer.setGrid(on, lo, hi) takes the chunks and their tops' span
+(the culling's boxes). Only the rest — land past the window's floor or
+ceiling, land just come in — is the **rings'**: Globals.hfield now holds
+only those (renderprep and vegprep prepare the grid's chunks: their water,
+plants and sheets are the window's, drawn on the window's own columns), and
+far.wgsl's LodD.grid (a bit a chunk) keeps the rings out of the grid's
+chunks. The sim may wake in a grid chunk within `?stormreach=` (110) of the
+focus, or one an event touched (HybridChunks.sleepFilter); Sleep's own rules
+then wake it (a storm raining). Only edits and chips (what can cut shapes a
+heightfield can't hold) turn a chunk to voxels now. A storm over land whose
+sim is asleep darkens it all the same (meshShade: stormCover where asleep),
+and the rings past the window draw a storm's shade, wet ground, water in
+hollows and sheets running down slopes (far.wgsl farStorm; FarP.storms).
+
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the
 loose sheet) are hex prisms, 30 vertices: the top in four triangles with one
 flat normal (the plane through its corners, cached per cell by render-fields)

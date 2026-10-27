@@ -500,7 +500,7 @@ export class LevelScene implements Scene {
     for (const l of this.longFrames.slice(-3)) out.push(`long ${l.slice(0, 90)}`);
     if (this.sleep) out.push(`awake chunks ${this.sleep.awake} of ${(this.core.dims.w / CHUNK) * (this.core.dims.h / CHUNK)}`);
     const hs = this.hybrid?.stats;
-    if (hs) out.push(`hybrid voxel chunks ${hs.voxel} of ${hs.chunks} (land ${hs.land}, edited ${hs.edited}, near ${hs.near}); drawn ${this.core.renderer.fieldMesh.drawn}`);
+    if (hs) out.push(`hybrid voxel chunks ${hs.voxel} of ${hs.chunks} (land ${hs.land}, edited ${hs.edited}, near ${hs.near}); drawn ${this.core.renderer.fieldMesh.drawn}; grid ${hs.grid} (sim may wake ${hs.simmed}), rings ${hs.ring}`);
     return out;
   }
 
@@ -1143,11 +1143,13 @@ export class LevelScene implements Scene {
           if (!fm.on) throw new Error('?hybrid=1 needs the field mesh (not with ?mesh=0)');
           const [nx, ny, side] = fm.chunkGrid;
           const S = this.stream;
-          const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 40));
+          // (round 86: ?stormreach= world units round the focus within which a heightfield chunk's sim may wake)
+          const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 40), () => ({ oz: S.oz, zMax: dims.zMax }), Number(host.params.get('stormreach') ?? 110));
           this.hybrid = h;
           S.onRelief.push((x0, y0, x1, y1) => h.landBox(x0, y0, x1, y1));
           S.onSlide.push((dx, dy, dz) => {
             if (!dz) h.shift(dx / side, dy / side);
+            else h.zMoved();
           });
           S.onWarp.push(() => h.clear());
         }
@@ -1172,6 +1174,7 @@ export class LevelScene implements Scene {
           // (the puck keeps the target's height on the ground; without it the height isn't the ground's)
           const [tx, ty, tz] = core.camera.target;
           far.focus = core.camera.fly ? null : [tx, ty, this.cutaway ? tz : this.heightAt(tx, ty)];
+          far.storms = core.weather.storms;
           far.draw(pass, clear);
         });
       }
@@ -1471,13 +1474,17 @@ export class LevelScene implements Scene {
     void this.stream?.update();
     // (hybrid) what's voxels this frame: the events edit what they touch; the focus is the camera's target
     if (this.hybrid) {
-      for (const e of globals.events) this.hybrid.edit(e.x, e.y, e.radius);
-      const want = this.hybrid.update(camera.fly ? [camera.fly.pos[0], camera.fly.pos[1]] : [camera.target[0], camera.target[1]]);
-      if (want) {
-        core.renderer.setMeshWanted(want);
-        globals.hfield = { bits: this.hybrid.bits(), across: core.renderer.fieldMesh.chunkGrid[0], side: core.renderer.fieldMesh.chunkGrid[2] };
-        // (the sim only where the voxels are: nothing wakes a heightfield chunk — storms, land settling)
-        this.sleep?.only(this.hybrid.sleepFilter(dims.w / CHUNK, dims.h / CHUNK));
+      for (const e of globals.events) this.hybrid.edit(e.x, e.y, e.radius, e.kind);
+      const hy = this.hybrid;
+      if (hy.update(camera.fly ? [camera.fly.pos[0], camera.fly.pos[1]] : [camera.target[0], camera.target[1]])) {
+        core.renderer.setMeshWanted(hy.wanted);
+        // (round 86: the heightfield chunks the grid draws — the window's own columns, the mesh's look — and the
+        // rest the rings')
+        core.renderer.setGrid(hy.grid, hy.lo, hy.hi);
+        this.far?.setGrid(hy.gridBits());
+        globals.hfield = { bits: hy.bits(), across: core.renderer.fieldMesh.chunkGrid[0], side: core.renderer.fieldMesh.chunkGrid[2] };
+        // (the sim where the voxels are, and the grid's within the storms' reach — a storm raining there wakes it)
+        this.sleep?.only(hy.sleepFilter(dims.w / CHUNK, dims.h / CHUNK));
       }
       this.hybrid.count(core.renderer.fieldMesh.drawn);
     }

@@ -27,6 +27,24 @@ struct FarP {
   world: vec4<f32>,
   /** (round 83) the view's focus (window coordinates; w 1: on): the land on the eye's side of it kept under it */
   focus: vec4<f32>,
+  /** (round 86) the storms (window coordinates: x, y, radius, how strong 0..1), how many, the time (s) */
+  storms: array<vec4<f32>, 4>,
+  rain: vec4<f32>,
+}
+
+/**
+ * (round 86) How a storm lies on the land the rings draw at l (window coordinates): x its cloud's shade, y how
+ * wet the ground is under it (as the window's sim makes it there — the mesh darkens its wet ground, a film
+ * where it runs). A disc a storm, its edge softened (common.wgsl stormCover's falloff).
+ */
+fn farStorm(l: vec2<f32>) -> vec2<f32> {
+  var o = vec2<f32>(0.0);
+  for (var i = 0u; i < u32(FP.rain.x); i++) {
+    let s = FP.storms[i];
+    let d = length(l - s.xy) / max(s.z, 1.0);
+    o = max(o, s.w * vec2<f32>(smoothstep(1.15, 1.0, d), smoothstep(1.25, 0.55, d)));
+  }
+  return o;
 }
 
 /** toward the eye from p (as render.wgsl toEye) */
@@ -102,6 +120,8 @@ struct LodD {
   /** (round 83) the window's mesh chunks: a chunk's width and depth (window units), chunks across and down;
    *  0: the rings never draw in the window */
   mesh: vec4<f32>,
+  /** (round 86, the hybrid) a bit a mesh chunk, set: the window's grid draws it (renderer.ts setGrid) */
+  grid: array<vec4<u32>, 16>,
 }
 /** the window's field mesh's state (its published layout: meshstate.wgsl, included before this) */
 @group(0) @binding(47) var<storage, read> meshSt: array<u32>;
@@ -117,15 +137,27 @@ fn meshBuilt(l: vec2<f32>) -> bool {
   // made again; word 0 its indices)
   return h != FRESH && h != 0u && meshSt[b + MS_INDICES] > 0u;
 }
-/** (hybrid) Is l (window coordinates, in a built chunk) within SKIRT of an edge whose neighbour isn't built? */
+/** (round 86, the hybrid) Is l (window coordinates) in a chunk the window's grid draws (meshdraw.wgsl vsGrid)? */
+fn gridChunk(l: vec2<f32>) -> bool {
+  if (LD.mesh.z < 0.5) { return false; }
+  let c = vec2<i32>(floor(l / LD.mesh.xy));
+  if (any(c < vec2<i32>(0)) || c.x >= i32(LD.mesh.z) || c.y >= i32(LD.mesh.w)) { return false; }
+  let k = u32(c.y * i32(LD.mesh.z) + c.x);
+  if (k >= 2048u) { return false; }
+  return ((LD.grid[k >> 7u][(k >> 5u) & 3u] >> (k & 31u)) & 1u) != 0u;
+}
+/** the window draws l itself: its mesh is built there, or its grid draws it */
+fn windowDraws(l: vec2<f32>) -> bool { return meshBuilt(l) || gridChunk(l); }
+/** (hybrid) Is l (window coordinates, in a built chunk) within SKIRT of an edge whose neighbour isn't built (nor
+ *  the grid's: its lattice overlaps the chunks beside it by a cell)? */
 const SKIRT: f32 = 0.9;
 fn skirt(l: vec2<f32>) -> bool {
   if (LD.mesh.z < 0.5) { return false; }
   let f = l - floor(l / LD.mesh.xy) * LD.mesh.xy;
-  if (f.x < SKIRT && !meshBuilt(l - vec2<f32>(SKIRT * 2.0, 0.0))) { return true; }
-  if (f.x > LD.mesh.x - SKIRT && !meshBuilt(l + vec2<f32>(SKIRT * 2.0, 0.0))) { return true; }
-  if (f.y < SKIRT && !meshBuilt(l - vec2<f32>(0.0, SKIRT * 2.0))) { return true; }
-  if (f.y > LD.mesh.y - SKIRT && !meshBuilt(l + vec2<f32>(0.0, SKIRT * 2.0))) { return true; }
+  if (f.x < SKIRT && !windowDraws(l - vec2<f32>(SKIRT * 2.0, 0.0))) { return true; }
+  if (f.x > LD.mesh.x - SKIRT && !windowDraws(l + vec2<f32>(SKIRT * 2.0, 0.0))) { return true; }
+  if (f.y < SKIRT && !windowDraws(l - vec2<f32>(0.0, SKIRT * 2.0))) { return true; }
+  if (f.y > LD.mesh.y - SKIRT && !windowDraws(l + vec2<f32>(0.0, SKIRT * 2.0))) { return true; }
   return false;
 }
 @group(0) @binding(45) var<storage, read> lodT: array<vec4<f32>>;
@@ -258,6 +290,8 @@ struct LOut {
   /** (hybrid) the rock its steep faces show, and the top's and the rock's materials */
   @location(5) rock: vec3<f32>,
   @location(6) @interpolate(flat) mats: vec2<u32>,
+  /** (round 86) how far under its neighbours the texel lies (world units: a hollow, where a storm's water stands) */
+  @location(7) hollow: f32,
 }
 
 fn lodPmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
@@ -336,6 +370,8 @@ fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOu
   let ra = unpack4x8unorm(bitcast<u32>(slot.w));
   o.rock = ra.rgb;
   o.mats = vec2<u32>(u32(round(ca.a * 255.0)), u32(round(ra.a * 255.0)));
+  let nb = lodTexel(k, ij + vec2<i32>(1, 0)).x + lodTexel(k, ij - vec2<i32>(1, 0)).x + lodTexel(k, ij + vec2<i32>(0, 1)).x + lodTexel(k, ij - vec2<i32>(0, 1)).x;
+  o.hollow = nb * 0.25 - slot.z;
   return o;
 }
 
@@ -419,7 +455,9 @@ fn fsLod(v: LOut) -> FOutF {
   // land just come in isn't a hole while its chunks are made); a finer ring's square is that ring's
   // (hybrid: but a skirt — a strip of a cell along a built chunk's edge where the chunk beside it is the
   // rings': the mesh and the rings meet there from the same ground, and the strip closes the hairline between)
-  if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy) && meshBuilt(l) && !skirt(l)) { discard; }
+  // (round 86: and where the window's grid draws a heightfield chunk, all of it — the grid's own lattice overlaps
+  // its neighbours by a cell)
+  if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy) && (gridChunk(l) || (meshBuilt(l) && !skirt(l)))) { discard; }
   if (v.ring > 0u) {
     let F = LD.lv[v.ring - 1u];
     let fc = lodCorner(v.ring - 1u);
@@ -428,6 +466,33 @@ fn fsLod(v: LOut) -> FOutF {
   if (farCut(v.local, v.pos.xy)) { discard; }
   let look = ringLook(v, facet);
   var c = look.c;
+  // (round 86) a storm over it: the cloud's shade, the ground dark with rain, water standing in the hollows, and
+  // sheets of it running down the slopes (the window's sim does this where it's awake; here it's drawn)
+  if (FP.rain.x > 0.5) {
+    let st = farStorm(l);
+    if (st.x + st.y > 0.0) {
+      let w = l + FP.org.xy;
+      c *= 1.0 - 0.45 * st.x;
+      c *= 1.0 - 0.3 * smoothstep(0.15, 0.9, st.y) * select(1.0, 0.4, look.rock);
+      let water = vec3<f32>(0.25, 0.36, 0.38) * (1.0 - 0.45 * st.x);
+      // (the hollows fill: deeper ones first, ragged at their edge)
+      let pool = st.y * smoothstep(0.04, 0.3, v.hollow + 0.12 * (farVnoise(w * 0.7) - 0.5));
+      // (down the slope: the normal's tilt; streaks across it, running down)
+      let sn = normalize(v.nrm);
+      let tilt = length(sn.xy);
+      if (tilt > 0.02) {
+        let dn = sn.xy / tilt;
+        let along = dot(w, dn);
+        let across = dot(w, vec2<f32>(-dn.y, dn.x));
+        let run = fract(along * 0.45 - FP.rain.y * (0.6 + 2.0 * tilt) + farVnoise(vec2<f32>(across * 0.8, 3.1)) * 3.0);
+        let streak = smoothstep(0.82, 0.95, run) * smoothstep(0.35, 0.75, farVnoise(vec2<f32>(across * 1.3, along * 0.08)));
+        let sheet = st.y * smoothstep(0.03, 0.12, tilt) * (1.0 - smoothstep(0.55, 0.8, tilt)) * select(1.0, 0.3, look.rock);
+        c = mix(c, water, sheet * 0.35);
+        c += vec3<f32>(0.16, 0.18, 0.18) * streak * sheet;
+      }
+      c = mix(c, water, pool * 0.85);
+    }
+  }
   var fog = smoothstep(0.55, 1.0, v.dist);
   if (FC.pos.w > 0.5) { fog = max(fog, smoothstep(300.0, 2600.0, length(v.local - FC.pos.xyz))); }
   c = mix(c, FP.fog.rgb, fog);
