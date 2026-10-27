@@ -6176,3 +6176,7 @@ flow's wakeChunk and the hybrid's filter, and wakeChunk honours the filter).
   trench's flow stays over the tolerance (BACKLOG FL11). driveprofile (atlas, low tier, 18/s, 20 s): GPU
   7.54 ms a frame, p95 10.7, p99 18 (round 85: 7.43, 10.6, 13.1; the flow model isn't on the atlas — the
   particle and draw-shader changes only).
+- The GIFs (C:\Projects\shots86low: before-/after- flow, old water, sand; compare-side.png) and the flowlab
+  numbers above predate the last change in this commit: the spray's budget cut (no drops off a trickle under
+  0.2 cells³/s, 0.35 a cell³/s instead of 0.5, the splash and mist a little thinner) after the frozen
+  lab drew 2.6 ms (0.8 before) with every trickle spraying; not re-measured (the shared GPU's queue).
