@@ -7257,3 +7257,10 @@ with its name over it, overgrowth, a flood) where they happened.
 her bark; saw the barrow; once only; the Bellwarden killed → its line, dead-stopped; the talk with Hesk queued) and
 the restore round trip (runs, history, the grave, region states): all passed. storycheck: the same 11 problems as on
 places (the story's f-kuharm faction and s139's region against seed1.json), none new.
+- (round 97, after GameplayGM's slice smoke on the real GPU; cc54391, b2ed058) Three fixes. A place is `saw` from
+  within SIGHT of one of its rooms, not of its staged circle: the barrow's circle is 44 cells round and took in the
+  spawn, so its line fired at the start. StoryCamera.next with no home left (its ease home already taken by another
+  shot: a reveal over a reveal, both skipped) read null: it now leaves the view where it is. A faction's attitude
+  deed names the faction ("won over: Kuharm Moot"), not its id. The slice's loop passed: the hover rider's run won
+  through the talks (Hesk's talk opening as an event), the knight's lost, the first run's marks there on the
+  second, the answers shown at 412 x 915 with reduced motion.

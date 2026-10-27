@@ -30,6 +30,7 @@ engine's additive changes for it.
 | HA8 | `HeroRunDeps.ownCamera`: a game that drives its own chase camera (the hoverbike's leads the bike, follows jumps, frames a laser dot) while no story shot has it | S | done (this commit) |
 | HA9 | A talk event's speaker far off waits for the player to come by; a `saw` is noted once — a "came back into sight" (since an event) would need facts with times | S | open |
 | HA10 | AgentUnits (the settlements' Units on the GPU agents) and the hoverbike game's Foes both drive sim.agents' kinds, groups and fields: one owner per agents system, or a registry of kinds, groups and fields both take from | M | open |
+| HA11 | A run's story is the same story again: the second run replays the Bell with the Bellwarden standing beside his own grave. The GM should write the next run from the world as the last one left it | M | open (the GM) |
 
 ## Round 88 (2026-10-27, session 5, `runstory`) — a run story as a hero (DECISIONS round 88)
 
