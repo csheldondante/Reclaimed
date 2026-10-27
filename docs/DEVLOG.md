@@ -6967,3 +6967,11 @@ levels × f32 for every column (agents/agents.ts) — agents are only round sett
 box (or f16, half) would do; it's the agents' layout to change, behind their contract. sedOut is the sediment pass's
 per-column outbox (7 × six directions × 4 B), written and read within a tick, every column though only awake tiles
 run (simcull's tiles could index a compact one). layersNext doubles the layers. Together ~60 MB at 320 (BACKLOG W4).
+
+**Checked after** (a second run): the pool's own count (free-stack header words 4, 5: the fewest pages free since
+the start, the most one rebuild asked for) — settled 232 of 330 free at the lowest, 12 pages the largest take; in the
+pan the stack ran dry (24 rebuilds starved and made again, the pool grown 330 → 495 → 743 pages), the largest take 20
+pages, 627 free after it: a burst of fresh chunks after slides, not a leak (they're given back) — so it never
+shrinking (W6) is the cost. scripts/stalemesh.mjs (40 edits, one rebuild slot): owed 1 → 1 before, 2 → 2 now, 3
+stale found both ways. latencyprobe (cut): the column lowered 313–340 ms after the ask both ways, the chunk rebuilt
+1–10 ms after that.
