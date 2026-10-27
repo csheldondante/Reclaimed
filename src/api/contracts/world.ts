@@ -88,6 +88,34 @@ export interface AtlasEvent {
   cause: { by: 'story' | 'player' | 'world'; ref?: string };
 }
 
+/**
+ * (round 90) A lake the atlas keeps: a hollow its rivers fill to the height they spill out at (atlas/rivers.ts
+ * AtlasLake). Like a flood with a level (RegionState.flooded, AtlasEvent 'flood'), held in its basin: the region
+ * generator realises it on arrival, the basin filled to `level` at steady state, its shore a bank over the
+ * level. `lakeFlood` is the AtlasEvent that says the same of its regions (a story raising or draining one).
+ */
+export interface Lake {
+  id: number;
+  name: string;
+  /** its water's level (world z) */
+  level: number;
+  /** world units: its middle, and where it spills out (its river leaves there) */
+  at: [number, number];
+  outlet: [number, number];
+  /** macro texels, and the deepest water over the macro ground (cells) */
+  area: number;
+  depth: number;
+  regions: RegionId[];
+  /** rivers running in; whether one runs out */
+  inflow: number;
+  outflow: boolean;
+}
+
+/** a lake as the flood it is (its regions, its level): for a WorldState that keeps lakes as floods */
+export function lakeFlood(l: Lake, run: number): AtlasEvent {
+  return { id: `lake-${l.id}`, kind: 'flood', regions: l.regions, area: { at: l.at, radius: Math.sqrt(l.area) * 4 }, magnitude: 1, level: l.level, run, cause: { by: 'world', ref: l.name } };
+}
+
 /** A faction: who it is, what it wants, how it feels about the player and the others (−1 hostile .. 1 allied). */
 export interface Faction {
   id: FactionId;

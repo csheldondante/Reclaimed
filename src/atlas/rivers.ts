@@ -34,9 +34,50 @@ export const RIVER_LAVA = 1;
 export const RIVER_RUNOFF = 0.002;
 const PIPE_Q = 0.08 / 0.015 / 2;
 
+/**
+ * (round 90, BACKLOG W2 — the user: "For the rivers why does the river height lie above the dip? Is it because the
+ * river exits going higher? If so can we compute that the region is flooded at the atlas level?") The priority
+ * flood fills every hollow to its spill height; a filled hollow is a lake when its water would stand LAKE_DEPTH
+ * deep or more and LAKE_CATCH (texels, dryness-weighted, as `acc`) or more drains into it. Its extent: the texels
+ * whose filled level is over the ground by LAKE_EPS (less is a flat the flood only tilted); its level: the spill
+ * height (the lowest filled level in it); its outlet: the rim texel it spills over. A shallower or drier hollow
+ * isn't kept: a river through it follows its floor.
+ */
+const LAKE_EPS = 0.25;
+const LAKE_DEPTH = 2.5;
+const LAKE_CATCH = 30;
+/** the rim round a lake (texels, 8 neighbours) the region generator raises its shore on (compose.wgsl lakeAt) */
+const LAKE_RING = 2;
+/** per texel (Rivers.lakeAt): the lake's id + 1 in the low 15 bits; this bit set inside it (unset: its rim) */
+export const LAKE_IN = 0x8000;
+/** u32 words a lake in the GPU's table (compose.wgsl lakeAt): its level, 0 */
+export const LAKE_WORDS = 2;
+
+export interface AtlasLake {
+  id: number;
+  /** its water's level (world z): the spill height */
+  level: number;
+  /** texels of the macro map, and the deepest water over the macro ground */
+  texels: number;
+  depth: number;
+  /** world units: its middle (the mean of its texels), the outlet (the rim texel it spills over) */
+  at: [number, number];
+  outlet: [number, number];
+  /** what drains into it (texels, dryness-weighted) */
+  catchment: number;
+  /** river nodes running into it from outside, and the node of the river leaving it (−1: none) */
+  inflow: number;
+  outflow: number;
+  /** the regions (dense ids) it lies in */
+  regions: number[];
+}
+
 export interface Rivers {
   /** NODE_WORDS a node: x, y (world), level, width, next (index), flags, depth, 0 */
   nodes: Uint32Array;
+  /** (round 90) the lakes, and per texel which (LAKE_IN) */
+  lakes: AtlasLake[];
+  lakeAt: Uint16Array;
   count: number;
   /** per texel: its node + 1 (0: none) — the JFA's seeds */
   nodeAt: Uint32Array;
@@ -144,6 +185,98 @@ export function findRivers(opt: {
     const i = order[k];
     if (down[i] >= 0) acc[down[i]] += acc[i];
   }
+  // (round 90) the lakes: each filled hollow (8 neighbours) deep and wet enough
+  const lakes: AtlasLake[] = [];
+  const lakeAt = new Uint16Array(N);
+  const mems: number[][] = [];
+  const filled = (i: number) => !water[i] && fill[i] > hmac[i] + LAKE_EPS;
+  const seen = new Uint8Array(N);
+  const stack: number[] = [];
+  // (a river's level: the filled ground's, the lake's level in a lake, the floor in a hollow too small for one)
+  const lev = new Float32Array(fill);
+  for (let s = 0; s < N; s++) {
+    if (seen[s] || !filled(s)) continue;
+    const mem: number[] = [];
+    seen[s] = 1;
+    stack.push(s);
+    let i0 = s;
+    let lo = Infinity;
+    while (stack.length) {
+      const c = stack.pop()!;
+      mem.push(c);
+      if (fill[c] < fill[i0]) i0 = c;
+      lo = Math.min(lo, hmac[c]);
+      for (let k = 0; k < 8; k++) {
+        const j = nb(c, k);
+        if (!seen[j] && filled(j)) {
+          seen[j] = 1;
+          stack.push(j);
+        }
+      }
+    }
+    const L = fill[i0];
+    if (L - lo < LAKE_DEPTH || acc[i0] < LAKE_CATCH) {
+      for (const c of mem) lev[c] = hmac[c];
+      continue;
+    }
+    if (lakes.length >= LAKE_IN - 1) throw new Error(`atlas: more than ${LAKE_IN - 2} lakes`);
+    const id = lakes.length;
+    const x0 = s % n;
+    const y0 = (s - x0) / n;
+    let sx = 0;
+    let sy = 0;
+    const regs = new Set<number>();
+    for (const c of mem) {
+      lakeAt[c] = (id + 1) | LAKE_IN;
+      lev[c] = L;
+      const x = c % n;
+      const y = (c - x) / n;
+      // (unwrapped round its first texel: a lake may straddle the torus's seam)
+      sx += x0 + ((((x - x0 + n / 2) % n) + n) % n) - n / 2;
+      sy += y0 + ((((y - y0 + n / 2) % n) + n) % n) - n / 2;
+      regs.add(opt.regionOf[c]);
+    }
+    const o = down[i0] >= 0 ? down[i0] : i0;
+    const wx = (t: number) => (((t + 0.5) / n) * opt.worldW + opt.worldW) % opt.worldW;
+    const wy = (t: number) => (((t + 0.5) / n) * opt.worldH + opt.worldH) % opt.worldH;
+    lakes.push({
+      id,
+      level: +L.toFixed(2),
+      texels: mem.length,
+      depth: +(L - lo).toFixed(1),
+      at: [Math.round(wx(sx / mem.length)), Math.round(wy(sy / mem.length))],
+      outlet: [Math.round(wx(o % n)), Math.round(wy(Math.floor(o / n)))],
+      catchment: Math.round(acc[i0]),
+      inflow: 0,
+      outflow: -1,
+      regions: [...regs].sort((a, b) => a - b),
+    });
+    mems.push(mem);
+  }
+  // each lake's rim: land texels within LAKE_RING of it whose filled level is near the lake's (not the valley past
+  // its outlet); a texel two lakes' rims reach is the higher's (its shore must stand over the higher water)
+  const byLevel = lakes.slice().sort((a, b) => b.level - a.level);
+  const ringOf = new Uint8Array(N);
+  for (const lk of byLevel) {
+    let front = mems[lk.id];
+    const mark = new Set<number>(front);
+    for (let r = 0; r < LAKE_RING; r++) {
+      const next: number[] = [];
+      for (const c of front)
+        for (let k = 0; k < 8; k++) {
+          const j = nb(c, k);
+          if (mark.has(j)) continue;
+          mark.add(j);
+          if (water[j] || fill[j] < lk.level - 0.5) continue;
+          next.push(j);
+          if (!(lakeAt[j] & LAKE_IN) && !ringOf[j]) {
+            lakeAt[j] = lk.id + 1;
+            ringOf[j] = 1;
+          }
+        }
+      front = next;
+    }
+  }
   // the nodes: rivers (and the water each runs into), then lava
   const nodeAt = new Uint32Array(N);
   const xs: number[] = [];
@@ -177,7 +310,7 @@ export function findRivers(opt: {
     for (let s = 0; s < LAVA_RUN && i >= 0; s++) {
       add(i, RIVER_LAVA);
       lava++;
-      if (water[i]) break;
+      if (water[i] || lakeAt[i] & LAKE_IN) break;
       i = down[i];
     }
   }
@@ -202,12 +335,19 @@ export function findRivers(opt: {
     const o = k * NODE_WORDS;
     f[o] = ((x + 0.5) / n) * opt.worldW;
     f[o + 1] = ((y + 0.5) / n) * opt.worldH;
-    f[o + 2] = water[i] ? sea - 0.4 : fill[i];
+    f[o + 2] = water[i] ? sea - 0.4 : lev[i];
     f[o + 3] = w;
     nodes[o + 4] = next;
     nodes[o + 5] = flags[k];
     f[o + 6] = lv ? 1.4 : Math.min(3.5, Math.max(1.2, w * 0.3));
-    const fall = next !== k ? fill[i] - (water[d] ? sea : fill[d]) : 0;
+    const fall = next !== k ? Math.max(0, lev[i] - (water[d] ? sea : lev[d])) : 0;
+    // (round 90) a river into a lake, and the one out of it
+    if (!lv && d >= 0) {
+      const li = lakeAt[i] & LAKE_IN ? (lakeAt[i] & 0x7fff) - 1 : -1;
+      const ld = lakeAt[d] & LAKE_IN ? (lakeAt[d] & 0x7fff) - 1 : -1;
+      if (ld >= 0 && li !== ld) lakes[ld].inflow++;
+      if (li >= 0 && ld !== li && nodeAt[d]) lakes[li].outflow = nodeAt[d] - 1;
+    }
     if (fall > 12) waterfalls++;
     // (round 84) the speed at the reference wetness: the discharge over the wetted section (the carve's parabola,
     // filled to 0.3 under the level), the square root taken so a brook still moves; quicker where the level falls
@@ -229,6 +369,8 @@ export function findRivers(opt: {
   const r3 = (x: number) => +x.toFixed(3);
   return {
     nodes,
+    lakes,
+    lakeAt,
     count,
     nodeAt,
     lava,

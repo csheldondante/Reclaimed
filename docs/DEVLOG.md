@@ -6575,6 +6575,125 @@ banks — 167 wall faces. Either the hollow is filled as a lake to its spill lev
 GPU; where the fine ground lacks the macro rim it's a wall again) or the river runs on the hollow's floor (its level
 the ground's + its depth past the levee's reach). The user's call.
 
+## Round 90 — more of the atlas on the phone, and turning the view (`phonecam`)
+
+The user, on the phone at the atlas level in sandbox mode: "can we increase the range of tiles that load and add a
+button or bar to rotate the camera?" — and then "Maybe We can prioritize tiles close to the center of the screen but
+load others late? And have a setting for how far out it will build?" (DECISIONS round 90).
+
+**The range.** The streamed window's side (`?win=`, whole regions of 64) is now a setting: scenes/range.ts. `?win=`
+wins; else the viewer's own choice (localStorage `reclaimed.atlasRange`, read and written in try/catch); else the
+tier's default — 320 on the phone tier, 256 elsewhere. The bottom-left range button steps 256 → 320 → 384 and reloads
+(the window's buffers are made with the level). Measured at q=low 412x915 on the desktop iGPU (the phone proxy):
+scripts/driveprofile.mjs at 12304,5457 (speed 18, 30 s, the phone flags: hybrid, simcull, rivers=table) and
+scripts/rangeprobe.mjs (the world's and the renderer's GPU buffers summed, the JS heap, 8 s after the level):
+
+| win | p50 | p95 | p99 | worst | >50 ms | GPU ms/frame | draw | slide (last, ms) | load (s) | GPU buffers | largest buffer | JS heap |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 256 | 9.9 | 10.8 | 16.3 | 75 | 4 | 8.94 | 4.91 | 140 | 36 | 312 MB | 67.5 MB | 139 MB |
+| 320 | 9.9 | 10.7 | 14.4 | 147 | 1 | 8.94 | 4.79 | 198 | 38 | 453 MB | 103 MB | 190 MB |
+| 384 | 9.8 | 10.9 | 16.6 | 100 | 2 | 11.07 | 5.42 | 222 | 43 | 656 MB | 158 MB | 267 MB |
+
+320 is the phone's default: the frame and the GPU's time are 256's (the hybrid draws the added land as heightfield
+chunks), 1.56× the land in detail; one frame of 147 ms in the ride against 256's four over 50 (noise on one ride —
+the slide itself is spread, a tile a frame). 384 costs 2.1 ms more GPU a frame, 656 MB of buffers, and its largest
+buffer (158 MB) is past 128 MB — WebGPU's default maxStorageBufferBindingSize, which many phones' adapters stop at
+(the desktop gives 2048): it stays a choice, not the default. The LOD rings and the far land already reach past what
+the phone's widest zoom shows (the 16-cell ring is ~3000 cells across), so they're unchanged.
+
+**Nearest first.** A slide brings in a strip of regions (5 at 320); each region's columns are made a tile a frame,
+in the order asked (atlas.ts tileGate). The streamer now asks for them — and writes them — nearest the camera's
+target first (Streamer.nearFirst, in prefetch and in the slide), so what's under the middle of the screen comes in
+first and the strip's ends after, already spread over frames.
+
+**Turning the view.** render/turn.ts `Turn`: steps of a sixth of a turn from the fixed view's π/4 (the hex lattice
+looks the same from every one), eased on a critically damped spring (sub-stepped: a slow frame doesn't overshoot),
+steps adding up while it eases; held past 0.3 s a button turns on continuously (1.6 rad/s) and stays where it's let
+go. It writes `Camera.azimuth` (round 82's Orbit already turned it: the draw, the culling, the pick, the shadow box
+(the field mesh's near rect from the view), the far land's press under the focus (`FC.eye`) and the rings were
+already the azimuth's, not the fixed view's). The turn goes round the ground under the screen's middle (the target
+is put there first: it was 7 over it, and the ground swung ~10 cells). Bottom left, clear of the tool panel (top
+right) and the atlas buttons (bottom right): ↺ ↻ (52 px) and the range button; Q / E on a keyboard (not flying —
+there they're down and up — nor with the place tool, whose E turns the model). With ?cutaway=1 a step is the Orbit's
+goal (it owns the azimuth there). Coming back from the free camera the view faces the way the flyer looked.
+scripts/turnshot.mjs (the buttons tapped at phone size, touch): the ground under the middle 119.2,102,117.4 at
+45°, 105°, 165°, 225° and after a 1.2 s hold (307°); no errors. Shots: C:/Projects/shots88/phonecam/turn-0..3.png,
+turn-held.png (320, the default), turn320-*.png (before the pivot fix).
+
+Not changed: the window's edge still shows where the rings past it are pressed under the focus (P13/W3) — from
+every angle now, as from the fixed one.
+
+## Round 91 — names on the map, a compass, the edge of the land (`phonecam`)
+
+The user, on the phone at the atlas level: "I think the map needs to show you names of place and a directional
+compas for the way your are facing. I notice that I easily hit the edge of the loaded ground" (DECISIONS round 91).
+
+**Names.** The map writes the world wiki's names — the ones the GM's stories use — because they're made by the same
+code: on the map's first open the level runs gm/atlas-facts.ts `atlasFacts` on the live atlas and gm/wiki.ts
+`buildWiki` on that (in Node from data/atlas's cache, the same function: all 7772 region names and the settlements
+match data/wiki/seed1.json), and gm/map-names.ts turns the wiki into labels: each continent (at its land nearest the
+circular mean of its regions, a torus), every region (seas and lakes their own kinds), every settlement by its size —
+7917 labels, made in 59–62 ms on the desktop (14 ms of it the wiki in Node). The map doesn't make names: label
+sources are a contract (api/map-labels.ts: a name, a kind, a world point, a weight), and the atlas's own lakes (merged
+from `lakes`, named by the wiki since places cdf0d95) are labelled from `wiki.lakes`, shown while 14 px across (N7); the wiki's own lake regions are labelled already. The map styles each kind
+(Georgia, cream on a dark halo like the sites' dots; seas and lakes italic blue, regions italic, continents spaced
+capitals), shows a kind only in its zooms — metropolises always, cities to 3 texels a pixel, towns to 1.4, villages
+to 0.7, regions/seas/lakes while they're 34 px across, continents while 40 px across and not closer than 0.6 — and
+places them heaviest first, a label left out where it would overlap one already placed (the continents only avoid
+each other: they're under everything), clear of the rose, the buttons and the note. The note says which region
+you're in ("Haura Downs · 11916, 15437").
+
+**The map was a mirror image.** The game's view is the world seen from above (screen right is the view's forward
+turned clockwise: camera.ts screenDeltaToWorld), but the map drew world x to the right and y down — the world's
+mirror: facing north (the map's up), a town on the screen's right was on the map's left. A compass would have made
+that plain. The map is now drawn with world +x to the left (north −y the map's up, as before): the image flipped in
+x, the hill shading's sun moved to stay in the upper left, pan and tap inverted to match.
+
+**The compass.** ui/compass.ts, over the turn buttons: the needle is the map's north on the screen —
+atan2(−cos az, sin az) clockwise from up (north (0, −1) against the view's forward (−cos az, −sin az) and its right
+(−sin az, cos az)). Measured (scripts/mapnames.mjs, touch): az 45° → −45°, a ↻ tap → 105° → 15°, the compass tapped →
+90° → 0°. A tap faces north (`Turn.face`, the short way round, eased; our call — a map app's habit; a turn step after
+it goes back onto the sixths). On the map the player's dot has a wedge the way the view faces and the view's
+footprint on the ground (the screen's corners), both turning with the view; a rose in the corner.
+
+**The edge — measured first.** scripts/edgeprobe.mjs at 412×915 q=low, win 320, at 11956,15471: each frame the camera
+target's distance to the window's edge, and a 9 × 19 grid over the screen (the ground plane at the target's height)
+— how much lies past the window and how much on regions a slide has moved over but not written yet
+(`Streamer.unwritten`, added for it). Panning (W held: ~150 cells a second up the screen, a brisk swipe) and the
+drive at 40 cells a second (`?drive=40`, the hoverbike's stand-in: it zooms out with speed):
+
+| run | target min to edge | view past the window | view on unwritten | busy | slides | slide ms p50 / max | p95 |
+|---|---|---|---|---|---|---|---|
+| pan, before | 45 | 52.4% | 3.0% (max 9.4%) | 67% | 62 | 174 / 387 | 18.4 |
+| pan, after | **64** | 52.4% | 3.5% (max 9.4%) | 91% | 64 | 280 / 495 | 18.0 |
+| pan turned 105°, before | 54 | 59.1% | – | 80% | 57 | 271 / 493 | 14.6 |
+| pan turned 105°, after | **88** | 59.0% | 1.6% | 47% | 62 | 117 / 310 | 14.8 |
+| drive 40, before | 108 | 65.8% | 0.3% | 7% | 13 | 106 / 207 | 10.5 |
+| drive 40, after | 106 | 65.7% | 0.6% | 15% | 13 | 229 / 288 | 10.7 |
+
+("before": the turned row the old build on its own server, the others this build with `&lead=0` before the clamp;
+the slide times vary run to run by 2×.) What it says: **the edge is in view all the time, not only when moving.** At
+the phone's zoom (2.6) a portrait screen sees ground ~158 cells across and ~700 along the view (the 2:1 view
+doubles the screen's height on the ground), the window is 320 × 320: half to two thirds of the screen is past the
+window, drawn by the LOD rings — coarser (2- and 4-cell steps there), smooth-coloured, without the window's plants,
+roads and speckled grass, and on the eye's side pressed under the focus. No window that fits a phone's 128 MB binding
+(384's largest buffer is 158 MB) covers that, at any turn. And panning outran the slides (a slide a region, ~0.1–0.3 s;
+~3 a second needed): the camera ran to 45 cells of the edge.
+
+**What changed.** (1) The camera is kept a region (64) in from the window's edge (level.ts: the target's clamp was
+the window itself): a pan faster than the slides waits for them there, the middle of the screen always on built land
+(min 45 → 64; turned, 54 → 88). (2) The streamer follows the camera's motion (`Streamer.vel`, smoothed over a quarter
+second): the land where it'll be a second on (`?lead=`, 0 the old way) is asked for ahead — the next strip, and the
+one after when that's past the next slide's reach. Sliding early for where it's heading was tried and dropped: on the
+drive's winding road it slid 30 times to 13 (back at each bend) for no nearer edge. (3) The rings' ground past the
+window has the window's grain — each hexagon a little lighter or darker by its world cell, fading out where a cell is
+under a pixel (far.wgsl fsLod; the cell size from fwidth before the discards) — so it reads less as a blur.
+Frame time unchanged: driveprofile (speed 18, 30 s, 12304,5457, win 320): before p95 10.7, p99 15.5, GPU 9.82 ms;
+after p95 10.7, p99 13.7, GPU 9.01 ms (noise). No new GPU buffers; the labels are CPU (~8k small objects).
+
+Not done (BACKLOG N5–N7): a window shaped to the view (long along it, as the portrait view's ground is), plants and
+roads past the window, the eye's side's flat floor. Shots: C:/Projects/shots88/phonecam/names-*.png (view, turned,
+north, map, map-out, map-in, map-in2), edge-before.gif / edge-after.gif (the drive at 40), ring193.png / grain.png.
 ## Round 88 — no floating rock (`collapse`)
 
 Why: the user on the phone (DECISIONS round 88): "It still fails to make some unsupported structures wake up and fall
@@ -6724,3 +6843,166 @@ fight, the AtlasEvents, back to Hesk, "I destroyed the Bellwarden", RunRecord wo
 the end card; lost: the hero falls, RunRecord lost; no page errors). scripts/herotest.mjs all passed, its
 stand-in ground now built like edit.wgsl (soft rims): 7/7 walks room to room, the return from the bell
 chamber included.
+## Round 90 — the atlas owns its lakes (`lakes`, BACKLOG W2)
+
+The user, on W2 (a rivers=table river held at 123.6 over ground at 101–118 at 1040,13551, 167 wall faces): "For the
+rivers why does the river height lie above the dip? Is it because the river exits going higher? If so can we
+compute that the region is flooded at the atlas level?" Yes: findRivers's priority flood fills every hollow to the
+height it spills out at, and a river's level is that filled level; only the river's own columns were given it, so
+its water stood over the rest of the hollow (and the levee, RIVER_LEVEE 12, couldn't raise banks that far).
+
+What changed:
+- rivers.ts: from the fill, each 8-connected component of texels whose filled level is over the ground by LAKE_EPS
+  (0.25; less is a flat the flood only tilted) is a lake when its water would stand LAKE_DEPTH (2.5) deep and
+  LAKE_CATCH (30 dryness-weighted texels) drains into it: level the spill height (its lowest filled level), the
+  outlet the rim texel it spills over, rivers in and out, its regions (`AtlasLake`). A river's level in a lake is
+  the lake's; in a hollow too shallow or dry for one, the floor's (it follows the floor). Lava stops at a lake.
+  Per texel a u16: the lake's id + 1, LAKE_IN set inside, unset on its rim (land texels within LAKE_RING 2 whose
+  filled level is near the lake's — not the valley past its outlet; a texel two rims reach is the higher lake's).
+  Seed 1: 813 lakes (median 14 texels, the biggest 11115 — 100 texels across), 176 deeper than 10, 327 with a
+  river in; +~35 ms to findRivers (435–505 ms in all).
+- The table and the ids go after the river nodes in riverBuf (the crater block's words 1 and 2 say where; 0
+  none), so no new binding. compose.wgsl `lakeAt`: of the four texels round a point, the lake most of them are
+  inside of and how much (bilinear). Over half: `Ground.lkw`, its water may stand there. Less: its rim — the
+  ground raised to a bank LAKE_BANK (0.4) to 1.9 over the level, before any river cuts it. The bank is what makes
+  a wall impossible: every column next to one where the lake's water may stand is either under that too or at
+  least 0.4 over the level. Rivers: none cuts a channel or valley under a lake's water (the trench filled with
+  what slid down its sides and the water stood over it); one lower than the lake (past its outlet, to the sea)
+  doesn't cut the bank where the lake's water is near.
+- colFinish (forms.wgsl): every column with `lkw` under the level gets water to it — form tops and holes too (a
+  crystal's top under the water stood dry, a wall round it); no lava-tube skylights under a lake; silt under the
+  water, but no loose cover on a steep bed (slope ≥ 0.8: the sediment slid down into the hollows at once and the
+  water over them stood a few cells over the lake); sand at the waterline where flat (a beach, slope < 1.2), the
+  rock bare where steep. Wet margins (moisture 0.8).
+- A lake's water is not a river's: no riverFlow, nothing held to a table — still water, asleep as the land comes
+  in (its steady state, settle off with rivers=table), simulated where woken like any other. (Tried first: held
+  like a table river, then carried as is where held. A held column feeds what's woken beside it the pipes'
+  steady flux for its level and keeps its own water: a woken chunk next to held lake columns stood 20–48 deep
+  over the lake's level.)
+- The far rings (lod.wgsl), the atlas viewer (view.wgsl) and the atlas map (api/atlas-map.ts) draw lakes; sites
+  keep out of a coarse cell more than half in a lake (wet sites 11 → 6 of 140); the wiki names them
+  (`WorldWiki.lakes`, "Lake/Mere/Water/Loch <name>", "Tarn/Pool" for small ones, in the land's tongue; the
+  markdown lists those near the start); contracts/world.ts `Lake` and `lakeFlood` (a lake as the flood it is:
+  its regions, its level — RegionState-compatible). AtlasFacts gets `lakes` (the data/atlas cache needs
+  `node scripts/worldwiki.mjs --pull` again to carry them).
+- `?lakes=0`: found but not realised (the A/B's before).
+
+Measured (scripts/lakeprobe.mjs: q=low 412x915, the atlas level, 35 s after load; a wall face is a wet column
+standing more than 3 over a neighbour's level, wet or dry, not counting a sheet over a fall's lip; the W2 spot,
+the 8 biggest lakes at their middle and their outlet):
+
+| spot | before (`lakes=0`) | after |
+|---|---|---|
+| W2, 1040,13551 | 154 | 2 |
+| lake 493 middle (123.25, 21 deep) | 747 | 0 (64409 of 64490 wet columns at its level) |
+| lake 220 middle (109.71, 40 deep) | 2005 | 0 |
+| lake 669 middle (a dry hollow before: no river through) | 0 | 0 |
+| lake 669 outlet | 1591 | 28 |
+| lake 220 outlet | 1035 | 292 (276 a river's, as before: not a lake's) |
+| lake 600 middle / outlet | 68 / 180 | 45 / 29 |
+| lake 1 outlet | 1011 | 6 (a river's) |
+| lake 253 outlet | 395 | 4 |
+| lake 726 outlet | 1511 | 269 (213 other water, 34 river, 22 lake) |
+| lake 724 outlet | 632 | 0 |
+| the 8 middles | — | 0 walls, at their level, except 600's 45 |
+
+What's left (BACKLOG W4–W6): where a giant crystal or a form with a gap under it leans over a lake (the column's
+top out of the window: waterInWindow gives it no water — 600's 45, W2's 2); a woken chunk beside a held river
+mouth is fed over the lake's level (669 outlet's 28); the rivers' own walls past the outlets (lake 220's 276,
+there before).
+
+Perf (scripts/driveprofile.mjs, q=low 412x915, the default ride): lakes=0 p50 9.8 p95 11.2 ms, GPU 11.6 ms a
+frame; lakes p50 9.8 p95 10.7, GPU 9.1 (run to run noise is larger than the change); atlas-colHeight 1.42 → 1.48
+ms a batch (the lake lookup: four more loads a column), the rings' passes the same. No new per-frame work: a lake
+asleep costs what any sleeping water does.
+
+Shots: C:/Projects/shots88/lakes/shore-0-z8.png (lake 493's outlet zoomed in: the shore continuous, the river
+leaving), shore-*-zdef.png at the default zoom, final-*.png the survey, before-*.png with lakes=0.
+  coming down on its stub).
+
+
+---
+
+## 2026-10-27 — rounds 88–89 (session 5, `settlements`): settlements with agents working round them
+
+Why: the user, round 88: "I would like to see settlements with agents working around them"; round 89: quarry,
+felling, hauling and building as the first jobs, farming and houses bringing more people, "vegetation and
+settlements should work similarly … fields with intensity and maybe some material", settlements by rivers and
+resources, quarries and mines "built into the ground/hills in ways that look cool". Round 83 asked that the
+settlements use the city game's data structure; round 85 gave the grids (Townscaper's, Voronoi on contours,
+Bulwark's rings).
+
+- **Records** (src/settle/records.ts). The wiki is built live from the atlas (`buildWiki(atlasFacts(atlas))`, the
+  same code scripts/worldwiki.mjs runs), so a settlement's id (`s<n>`), name, region and realm are the ones the
+  GM's stories use. A civ profile by the realm's era and the site's setting (data/recipes/civs.json); seed 1 has
+  only medieval realms, so where the Ashwrights (industrial) work the land a town is a foundry town, and half the
+  cliff cities are the keepers of old law's — until the GM's eras say otherwise. A quarter stand over an older
+  ruin; raiders camp by some (the region's hostile power when there is one, else outlaws).
+- **Grids** (src/settle/grids.ts, R6). Every style makes lots; every lot is cut the same way (a ring of yard
+  quads, then the inset polygon centre-to-midpoints), so each district is a `CellGrid` the existing `Town` builds on
+  — walls, floors, doors, windows and roofs from the neighbours, unchanged. Yards between lots are the alleys the
+  agents walk. `Town` now takes a grid (the interface is TownGrid's own members).
+- **Arrival** (Atlas.landHooks, plan.ts). The first region of a settlement's box to be made plans it on the raw
+  ground of the whole box, once; each region of the box is stamped from the plan as it comes. So the buildings are
+  real matter in the columns from the first frame (water, fire, collapse and the agents' surfaces all see them),
+  frozen and thawed with the land, and the same whichever region arrives first (settletest: the same seed plans
+  the same columns). Planning all 140 sites on made-up ground: ~21 ms each in Node (the growth field and the
+  quarry's search are most of it).
+- **The field** (src/settle/field.ts, round 89). A settlement is a growth field over its box: intensity and a kind
+  (its style) per 3-unit cell, the ecology pass's shape (grow toward suitability, spread along what suits, colonise
+  from strong neighbours, a stronger kind takes over where it suits better). Suitability: flat dry ground, more
+  near water, rock and the woods. Grown from the middle for as long as the town has stood (by its size); civic
+  buildings at the middle, houses on the lots where it's past 0.35, taller where it's stronger; the next two lots
+  are houses still to build, the rest wait for it. In play it steps every 8 s while the grain lasts, and opens the
+  strongest free lot when nothing's being built.
+- **Quarries.** A terraced pit (benches every 2.2 cells in, a ramp down one side, a crane at the rim) or, where a
+  hill rises within 10 cells, an adit: the forecourt cut level, a tunnel 3 wide and 2.9 high under the rock that
+  stays over it (ColumnPlan.hole), timber posts at its mouth; a spoil heap of rubble beside either.
+- **Units** (src/units/agent-units.ts): the runstory branch's `Units` contract on the GPU agents. Jobs are groups
+  and fields; per-unit goals share three goal fields by where. Hostiles hunt what's in their sight (the agents'
+  targets), the GPU's swings come back as damage; guards strike on the CPU. The agents needed: 12 fields (the
+  rounds want one a leg), 48 seeds, `spawn({ hp })`, a work pose (`workPose`: the figure bent forward, a tool in
+  front — the user wanted to see them "look when working"), unseeded fields cleared once instead of rewritten
+  every sweep, and an idle pass that does nothing (no units, nothing seeded: no peel, no sweeps — the atlas level
+  paid for the peel with nobody on it).
+- **Life** (src/settle/life.ts). Each role a round, each leg a field: miners take the quarry's floor exactly and
+  heap it, woodcutters fell real trees and heap the logs, builders carry from the heaps to the site where every
+  1.2 cells³ a block stands (a `Town` over the site's lot in window coordinates through the town stamp; each
+  cell's floor fixed relative to the door's ground, so the grid can be made again when the window slides without
+  the house jumping onto its own roof). A finished house is a Building + Instance and four more people. Farmers
+  carry sheaves to the granary. A raid: the camp marches on the plaza, workers run home, the guards meet it.
+- Tests: scripts/settletest.mjs (the planner through its API, no browser: all four grid styles used, every
+  settlement with homes, a hall, a store, fields; ruins adapted with their history; nothing built in a pond; the
+  same seed the same plan; `--png` top views), scripts/settlementtest.mjs (in play: the town, its people, the cost,
+  the raid; screenshots and GIFs).
+- **First run in play** (scripts/settlementtest.mjs, the atlas level at the phone tier: q=low, 412×915, the hybrid
+  on; `?town=1` the nearest town to the spawn with a camp — Rudag, s42, river guilds, irregular core + radial
+  homes, over a ruin): the records in 58 ms at load, the town planned once in 49 ms on 16 raw tiles, 1,455 columns
+  stamped; 36 people out (budget 28 + the camp's 7 raiders). Standing at the town for 15 s: frames p50 9.7 ms,
+  p95 11.3 ms; the GPU 5.6 ms a frame, the agents' pass 0.95 ms of it (sweeps 2 on the phone tier). A raid of 7
+  against 4 guards: repelled, all 7 raiders dead and 4 of the town's. Fixes it found: `?settle=0` was already the
+  phone tier's flag (the streamer's settling; phone-flags.ts), so the system's off switch is `?towns=0`; a sheaf
+  can't be a carried load (leaves aren't ground: it's drawn as sand); a river town's site is on its river, so its
+  middle moves to the nearest dry level ground beside it; a quarry outside its own region had no rights and the
+  miners stood idle — the quarry is now sought in its own region first.
+- **Seen working, and the cost** (three more runs, Rudag at the phone tier). Over a run: ~2.7 cells³ quarried,
+  3.2 of logs felled, 2.4 heaped, 1.7 brought into the house going up (its first block stood); a raid of 7 against
+  4 guards repelled each time (7 raiders and 3–4 of the town dead). The workers were in the shots but hard to
+  see: a 1-cell figure in canvas colours at the phone's half resolution is a few pixels against plaster and grass —
+  now 1.4 cells tall in a yellow tunic (guards in steel, raiders in brick red), and the close-ups at 6–9× the
+  default zoom; a probe (40 spawned at the plaza, with the hybrid and without) confirmed they draw both ways.
+  Cost at the town, 36 units: frames p50 9.7–9.9 ms, p95 11.3–11.6 ms, the same as the town with nobody out
+  (`?townfolk=0`: 9.8 / 11.5) — the frame is vsync's; the GPU's own sum swings with its clocks (5.4–11.9 ms a
+  frame, the agents' pass 0.95–3.5 ms of it, the same scene). The idle town (nobody out) seeded its fields
+  anyway, so the agents' pass ran with no one to read it: nothing is seeded now when nobody's out. A new load
+  replaces what a unit held (a raid's flight left loads in hands).
+- Shots and GIFs: C:/Projects/shots88/settlements/ — town-phone-default.png (default zoom), town-phone-zoom.png,
+  town-phone-debug.png (`?towndebug=1`: grid, lots, field, spots, people by phase), town-phone-workers.gif,
+  town-phone-quarry.gif / -site.gif / -heaps.gif (close-ups), raid-phone.gif; plan-*.png (the planner's top views).
+
+## 2026-10-27 — round 91: the world wiki pulled again after the lakes merge
+
+Why: `lakes` (round 90) names the atlas's lakes in the wiki, but the cached atlas facts (data/atlas/seed1.json) were
+pulled before it. Pulled again on `places` after merging lakes and settlements: 7772 regions, 140 sites, 171 roads;
+the markdown now names its lakes (39 mentions round the spawn). The merged build loads clean at q=low 412x915 with
+813 lakes and 141 settlements (shots88/merge91/).

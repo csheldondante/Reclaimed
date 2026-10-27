@@ -1,0 +1,77 @@
+{
+  "about": "Civilization profiles (round 88; recipe.ts CivProfile) and what picks them: a realm's era (wiki factions) and the site's setting (atlas sites). `look` is presentation: the world materials its buildings are drawn in (walls, roofs, foundations, trim), until the Look layer reads the same data. `camp` profiles are the hostile camps'.",
+  "civs": [
+    {
+      "era": ["medieval"], "settings": ["cliffside", "mountain flank", "crater rim"],
+      "look": { "wall": "fieldstone", "roof": "timber", "foundation": "fieldstone", "trim": "timber" },
+      "profile": {
+        "id": "hill-holds", "name": "the hill holds",
+        "knowledge": { "house": "makes", "hall": "makes", "granary": "makes", "field": "makes", "masonry": "makes", "smithing": "repairs" },
+        "facilities": ["hearth", "kiln"],
+        "prefers": { "materials": { "fieldstone": 0.9, "timber": 0.5 }, "tags": { "fortified": 0.8, "ornate": -0.2 } },
+        "builds": { "grids": ["radial", "contour-voronoi"], "architecture": ["fortified", "rings", "squat"], "storeys": [1, 2] },
+        "values": { "honour": 0.7, "trade": 0.3, "faith": 0.5 }
+      }
+    },
+    {
+      "era": ["medieval"], "settings": ["port", "river", "plain"],
+      "look": { "wall": "plaster", "roof": "tile", "foundation": "fieldstone", "trim": "timber" },
+      "profile": {
+        "id": "river-guilds", "name": "the river guilds",
+        "knowledge": { "house": "makes", "hall": "makes", "granary": "makes", "field": "makes", "smithing": "makes", "masonry": "repairs" },
+        "facilities": ["hearth", "forge", "kiln", "workshop"],
+        "prefers": { "materials": { "plaster": 0.8, "tile": 0.8, "timber": 0.3 }, "tags": { "trade": 0.9, "ornate": 0.4 } },
+        "builds": { "grids": ["irregular", "radial"], "architecture": ["market", "gabled"], "storeys": [1, 3] },
+        "values": { "trade": 0.9, "growth": 0.6, "honour": 0.3 }
+      }
+    },
+    {
+      "era": ["industrial"], "settings": [],
+      "look": { "wall": "brick", "roof": "steel", "foundation": "concrete", "trim": "steel" },
+      "profile": {
+        "id": "foundry-towns", "name": "the foundry towns",
+        "knowledge": { "house": "makes", "hall": "makes", "granary": "makes", "field": "makes", "smithing": "understands", "masonry": "makes", "apartments": "makes" },
+        "facilities": ["forge", "kiln", "foundry", "workshop"],
+        "prefers": { "materials": { "brick": 0.9, "steel": 0.7, "concrete": 0.5 }, "tags": { "tall": 0.6, "ornate": -0.5 } },
+        "builds": { "grids": ["contour-voronoi", "orthogonal"], "architecture": ["terraces", "tall", "chimneys"], "storeys": [2, 4] },
+        "values": { "growth": 0.9, "trade": 0.6, "faith": 0.1 }
+      }
+    },
+    {
+      "era": ["ancient"], "settings": [],
+      "look": { "wall": "sandstone", "roof": "sandstone", "foundation": "sandstone", "trim": "fieldstone" },
+      "profile": {
+        "id": "old-law", "name": "the keepers of old law",
+        "knowledge": { "house": "makes", "hall": "makes", "granary": "makes", "field": "makes", "masonry": "understands", "apartments": "makes" },
+        "facilities": ["hearth", "kiln", "shrine"],
+        "prefers": { "materials": { "sandstone": 1, "fieldstone": 0.4 }, "tags": { "ornate": 0.8, "faith": 1 } },
+        "builds": { "grids": ["radial", "orthogonal"], "architecture": ["courtyards", "flat-roofs", "temple"], "storeys": [1, 2] },
+        "values": { "faith": 1, "honour": 0.6, "secrecy": 0.4 }
+      }
+    },
+    {
+      "era": ["free"], "settings": [],
+      "look": { "wall": "timber", "roof": "tile", "foundation": "fieldstone", "trim": "timber" },
+      "profile": {
+        "id": "free-folk", "name": "the free folk",
+        "knowledge": { "house": "makes", "granary": "makes", "field": "makes", "hall": "repairs", "masonry": "uses" },
+        "facilities": ["hearth"],
+        "prefers": { "materials": { "timber": 0.9 }, "tags": { "fortified": 0.3 } },
+        "builds": { "grids": ["irregular", "contour-voronoi"], "architecture": ["cottages"], "storeys": [1, 2] },
+        "values": { "growth": 0.4, "honour": 0.4, "trade": 0.4 }
+      }
+    },
+    {
+      "camp": true, "era": ["post-apocalyptic", "raiders"], "settings": [],
+      "look": { "wall": "canvas", "roof": "canvas", "foundation": "timber", "trim": "rust" },
+      "profile": {
+        "id": "raiders", "name": "the raiders",
+        "knowledge": { "camp": "makes", "smithing": "uses" },
+        "facilities": [],
+        "prefers": { "materials": { "canvas": 0.6, "rust": 0.6 }, "tags": { "ranged": 0.5 } },
+        "builds": { "grids": ["orthogonal"], "architecture": ["tents"], "storeys": [1, 1] },
+        "values": { "honour": 0.1, "trade": 0.2 }
+      }
+    }
+  ]
+}

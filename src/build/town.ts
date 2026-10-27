@@ -14,7 +14,7 @@
 //    neighbour's floor, if that's no lower and less than a level higher, so
 //    a building's rooms line up), on a stone foundation down to the ground.
 // What stands is real matter (townstamp.wgsl): intervals in the columns.
-import { TownGrid, type TownGridOpts } from './towngrid';
+import { TownGrid, type CellGrid, type TownGridOpts } from './towngrid';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos } from '../world/lattice';
 import type { ColumnStamp } from '../sim/systems';
@@ -46,7 +46,7 @@ export interface Block {
 type Iv = { z0: number; z1: number; mat: number };
 
 export class Town {
-  readonly grid: TownGrid;
+  readonly grid: CellGrid;
   /** per cell, a bit a level */
   readonly mask: Uint8Array;
   /**
@@ -64,8 +64,9 @@ export class Town {
   wallMat: number = MAT.Plaster;
   roofMat: number = MAT.Tile;
 
-  constructor(readonly w: number, readonly h: number, private io: TownIO, opts: TownGridOpts = {}) {
-    this.grid = new TownGrid(w, h, opts);
+  /** `opts`: Townscaper's grid's, or a grid already made (round 88: the settlements' generators) */
+  constructor(readonly w: number, readonly h: number, private io: TownIO, opts: TownGridOpts | { grid: CellGrid } = {}) {
+    this.grid = 'grid' in opts ? opts.grid : new TownGrid(w, h, opts);
     this.mask = new Uint8Array(this.grid.count);
     this.plans = new Uint8Array(this.grid.count);
     this.base = new Float32Array(this.grid.count).fill(NaN);

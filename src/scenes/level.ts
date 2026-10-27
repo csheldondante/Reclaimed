@@ -18,6 +18,9 @@ import { Physics } from '../physics/physics';
 import type { LavaSystem } from '../sim/lava';
 import { installPhysics } from '../physics/install';
 import { installAgents } from '../agents/install';
+import { Settlements } from '../settle/settlements';
+import { TownDebug } from '../settle/debug';
+import { AgentUnits } from '../units/agent-units';
 import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
@@ -51,7 +54,7 @@ import { MemoryWorldState, type SessionStory } from '../api/contracts';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
-import { cpuLine, cpuStats, frameSteps } from '../gpu/cpustat';
+import { cpuLine, cpuStats, frameSteps, timed } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
@@ -60,6 +63,12 @@ import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
 import { qRotate, qYawPitchRoll } from '../grids/structures';
 import { HybridChunks } from './hybrid';
+import { atlasRange, chooseRange, nextRange } from './range';
+import { Turn, TURN_STEP } from '../render/turn';
+import { Compass, NORTH_AZIMUTH } from '../ui/compass';
+import { wikiLabels } from '../gm/map-names';
+import { atlasFacts } from '../gm/atlas-facts';
+import { buildWiki } from '../gm/wiki';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -69,7 +78,7 @@ export interface LevelOptions {
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -200,6 +209,10 @@ export class LevelScene implements Scene {
   physics?: Physics;
   /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
   agents!: Agents;
+  /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
+  settlements?: Settlements;
+  units?: AgentUnits;
+  private townDebug?: TownDebug;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -342,6 +355,8 @@ export class LevelScene implements Scene {
     });
   }
   private atlasCtl?: HTMLDivElement;
+  /** (round 91: scripts/mapnames.mjs reads its labelStats) */
+  atlasMap?: AtlasMap;
   private far?: FarLand;
 
   /**
@@ -377,7 +392,17 @@ export class LevelScene implements Scene {
       const map = new AtlasMap(
         { atlas: a.atlas, core: this.core, stream: S, warp: (x, y) => warpWindow(a.atlas, S, dims, x, y), toWorld: (x, y) => [S.origin[0] + x, S.origin[1] + y / ROW_H] },
         this.host.ui,
+        // (round 91: the world wiki's names — the GM's, made by the same code from this atlas — on the map)
+        {
+          labels: [
+            () => {
+              const f = atlasFacts(a.atlas);
+              return wikiLabels(buildWiki(f), (id) => f.regions[id].area);
+            },
+          ],
+        },
       );
+      this.atlasMap = map;
       btn('🗺', 'the atlas map: where you are; tap a place to warp there').addEventListener('click', () => map.toggle());
     }
     const fly = btn('✈', 'free camera (F)');
@@ -410,6 +435,103 @@ export class LevelScene implements Scene {
     btn('🌋', 'an eruption at the middle of the screen (V at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy))));
     this.host.ui.appendChild(d);
     this.atlasCtl = d;
+    this.turnControls();
+  }
+
+  /** (round 90) the player's turn of the view (render/turn.ts), when there is one: the atlas level's */
+  private turn?: Turn;
+  private turnCtl?: HTMLDivElement;
+  /** (round 91) the compass over the turn buttons: the way the view faces; a tap faces north */
+  private compass?: Compass;
+
+  /**
+   * (round 90, the user on the phone: "add a button or bar to rotate the camera") Bottom left, clear of the tool
+   * panel (top right) and the atlas buttons (bottom right): turn the view a sixth either way (a tap; held, it turns
+   * on), Q / E on a keyboard; and the range — how far out the land is built in detail (scenes/range.ts; a reload).
+   */
+  private turnControls(): void {
+    const camera = this.core.camera;
+    const turn = (this.turn = new Turn(camera));
+    const d = document.createElement('div');
+    d.className = 'turn-ctl';
+    d.style.cssText = 'position:absolute;left:8px;bottom:8px;display:flex;gap:8px;align-items:center;z-index:5;';
+    const btn = (label: string, title: string) => {
+      const b = document.createElement('button');
+      b.textContent = label;
+      b.title = title;
+      b.style.cssText = 'min-width:52px;height:52px;font:24px system-ui,sans-serif;border-radius:26px;border:1px solid #888;background:rgba(20,22,24,0.8);color:#eee;touch-action:none;user-select:none;-webkit-user-select:none;';
+      d.appendChild(b);
+      return b;
+    };
+    // (a tap steps; held past 0.3 s it turns on until let go, and stays where it's let go)
+    const press = (b: HTMLButtonElement, dir: number) => {
+      let timer = 0;
+      let on = false;
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        b.setPointerCapture(e.pointerId);
+        on = false;
+        timer = window.setTimeout(() => {
+          on = true;
+          this.turnPivot();
+          turn.held = dir;
+        }, 300);
+      });
+      const up = (step: boolean) => {
+        clearTimeout(timer);
+        if (on) turn.held = 0;
+        else if (step) this.turnStep(dir);
+        on = false;
+      };
+      b.addEventListener('pointerup', () => up(true));
+      b.addEventListener('pointercancel', () => up(false));
+    };
+    press(btn('↺', 'turn the view (Q; hold to turn on)'), -1);
+    press(btn('↻', 'turn the view (E; hold to turn on)'), 1);
+    const W = this.core.dims.w;
+    const r = btn(`${W}`, 'range: how far out the land is built in detail (cells across; reloads)');
+    r.style.font = '13px system-ui,sans-serif';
+    r.style.borderRadius = '8px';
+    r.addEventListener('click', () => chooseRange(nextRange(W)));
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (e.repeat || e.ctrlKey || e.metaKey || e.target instanceof HTMLInputElement) return;
+        // (flying, Q / E are down and up; with the place tool, E turns the model)
+        if (camera.fly || this.editor?.tool === 'place') return;
+        const k = e.key.toLowerCase();
+        if (k === 'q') this.turnStep(-1);
+        if (k === 'e') this.turnStep(1);
+      },
+      { signal: this.abort.signal },
+    );
+    this.host.ui.appendChild(d);
+    this.turnCtl = d;
+    const compass = (this.compass = new Compass(this.host.ui));
+    compass.update(camera.azimuth);
+    compass.onTap = () => {
+      if (camera.fly) return;
+      this.turnPivot();
+      const c = CUTAWAY ? this.cutaway : undefined;
+      if (c) c.orbit.goal = camera.azimuth + Math.atan2(Math.sin(NORTH_AZIMUTH - camera.azimuth), Math.cos(NORTH_AZIMUTH - camera.azimuth));
+      else turn.face(NORTH_AZIMUTH);
+    };
+  }
+
+  /** (the turn goes round the ground under the screen's middle, not a point over it: what's there stays there) */
+  private turnPivot(): void {
+    const cam = this.core.camera;
+    if (cam.fly || this.cutaway) return;
+    cam.target = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, this.heightAt);
+  }
+
+  /** a step of the view's turn: the cutaway's Orbit takes it when it's on (it owns the azimuth there) */
+  private turnStep(dir: number): void {
+    if (this.core.camera.fly) return;
+    this.turnPivot();
+    const c = CUTAWAY ? this.cutaway : undefined;
+    if (c) c.orbit.goal = this.core.camera.azimuth + dir * TURN_STEP;
+    else this.turn?.step(dir);
   }
   private coarseFrame = 0;
 
@@ -482,6 +604,8 @@ export class LevelScene implements Scene {
     const { camera } = this.core;
     if (camera.fly) {
       const g = camera.groundAt(camera.viewportW / 2, camera.viewportH / 2, this.heightAt);
+      // (round 90: the view turned the way the flyer looked, when the view turns — the atlas level's)
+      if (this.turn) camera.azimuth = camera.fly.yaw + Math.PI;
       camera.fly = null;
       camera.target = [g[0], g[1], g[2]];
       this.editor?.setVisible(true);
@@ -585,17 +709,30 @@ export class LevelScene implements Scene {
       const zMax = level.zMax ?? 64;
       // (the atlas is taller than the window: it slides in z — round 69)
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
+      // (round 88) the settlements' records, and their hook on the land, before the first window is made
+      const settlements = host.params.get('towns') === '0' ? undefined : new Settlements(atlas);
       const at = host.params.get('at');
-      const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
+      // (?town=s12: start at that settlement; ?town=1 the nearest to the spawn)
+      const town = host.params.get('town');
+      let [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
+      if (town && settlements) {
+        const sp = atlas.spawn();
+        // (the nearest town or city with a camp by it: workers and a raid to see)
+        const camped = new Set(settlements.seeds.filter((x) => x.campId).map((x) => x.rec.id));
+        const s = town === '1' ? settlements.near([sp[0], sp[1] * ROW_H], 1e9).find((x) => (x.size === 'town' || x.size === 'city') && camped.has(x.id)) : settlements.settlement(town);
+        if (!s) throw new Error(`?town=${town}: no such settlement`);
+        cx = Math.round(s.at[0]);
+        cy = Math.round(s.at[1] / ROW_H);
+      }
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
-      const W = Number(host.params.get('win') ?? 256);
-      if (!(W >= 256 && W % REGION === 0)) throw new Error(`?win= must be 256 or more, whole regions of ${REGION}`);
+      // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
+      const W = atlasRange(host.params);
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
       atlas.profiler = host.profiler;
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground } };
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
@@ -1220,8 +1357,60 @@ export class LevelScene implements Scene {
               if (b) integ.markBox(...b);
             }
       }
+      // (round 88) the settlements: planned and built as their land comes in (Atlas.landHooks, set before the
+      // first window); lived in near the camera — their people as units on the agents
+      const st = a?.settlements;
+      if (st) {
+        const units = new AgentUnits(this.agents);
+        this.units = units;
+        this.settlements = st;
+        core.onShift.push((dx, dy, dz) => units.shift(dx, dy, dz));
+        const S = this.stream;
+        S.onWarp.push(() => {
+          st.life?.dispose();
+          st.life = null;
+        });
+        // (the window's moves: a house being built has its grid made again in the new window)
+        let epoch = 0;
+        S.onSlide.push(() => epoch++);
+        S.onWarp.push(() => epoch++);
+        const terrainApi = () => {
+          const t = (this.worldApi ??= attachSim(core)).terrain;
+          if (!t) throw new Error('settlements: the world API has no terrain');
+          return t;
+        };
+        const plants = () => {
+          const p = (this.worldApi ??= attachSim(core)).plants;
+          if (!p) throw new Error('settlements: the world API has no plants');
+          return p;
+        };
+        st.play({
+          units,
+          origin: () => [S.origin[0], S.origin[1]],
+          dims: { w: dims.w, h: dims.h },
+          focus: () => [core.camera.target[0], core.camera.target[1]],
+          trees: (at, r) => plants().treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+          fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
+          take: (at, n) => terrainApi().take(at[0], at[1], n),
+          put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
+          townIO: {
+            ground: (col) => terrainApi().heightAt(...cellPos(col % dims.w, Math.floor(col / dims.w))) ?? 0,
+            stamp: (stamps) => core.sim.town.stamp(stamps),
+            zMax: dims.zMax,
+          },
+          epoch: () => epoch,
+          ready: (at) => (this.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
+          budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
+        });
+        if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
+      }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
+      // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
+      settlements: this.settlements,
+      units: this.units,
+      townDebug: this.townDebug,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
       flow: this.flow && {
@@ -1507,8 +1696,12 @@ export class LevelScene implements Scene {
       this.ceilingFrame(dt, cpu0);
       return;
     }
-    camera.target[0] = Math.max(0, Math.min(dims.w, camera.target[0]));
-    camera.target[1] = Math.max(0, Math.min(dims.h * ROW_H, camera.target[1]));
+    // (round 91, the user: "I easily hit the edge of the loaded ground") A streamed window keeps the camera a region
+    // in from its edge: a pan faster than the slides waits for them there (the strip a slide brings in is a region
+    // wide and comes in over frames), instead of running on to the window's edge
+    const edge = this.stream ? REGION : 0;
+    camera.target[0] = Math.max(edge, Math.min(dims.w - edge, camera.target[0]));
+    camera.target[1] = Math.max(edge * ROW_H, Math.min((dims.h - edge) * ROW_H, camera.target[1]));
     if (this.reach) {
       this.reachRefresh -= dt;
       if (this.reachRefresh <= 0) {
@@ -1522,6 +1715,12 @@ export class LevelScene implements Scene {
     if (this.opts.atlas) this.stepGeysers(dt * this.speed);
     // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms)
     if (this.opts.atlas && ++this.coarseFrame % 4 === 0) this.opts.atlas.atlas.coarse.step(1);
+    // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
+    if (this.units && !this.stream?.busy) {
+      this.units.update(dt * this.speed);
+      timed('settle', () => this.settlements!.update(dt * this.speed));
+      this.townDebug?.draw();
+    }
 
     const simDt = dt * this.speed;
     if (this.hoverWorld) powers.hover(this.hoverWorld[0], this.hoverWorld[1], dt);
@@ -1618,6 +1817,10 @@ export class LevelScene implements Scene {
     }
     // (round 88: the hero run — hero, units, its story, the chase camera)
     if (this.heroRun && !camera.fly) this.heroRun.update(dt);
+    // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
+    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun) this.turn.update(dt);
+    // (round 91: the compass follows the view, flying too — the flyer's look)
+    this.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
     if (CUTAWAY && !camera.fly) {
       const t = (this.worldApi ??= attachSim(core)).terrain!;
       const c = (this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
@@ -2636,6 +2839,8 @@ export class LevelScene implements Scene {
   dispose(): void {
     this.abort.abort();
     this.atlasCtl?.remove();
+    this.turnCtl?.remove();
+    this.compass?.remove();
     this.far?.dispose();
     this.storyPlay?.dispose();
     this.heroRun?.dispose();

@@ -5,11 +5,35 @@
 // snow by latitude and height), its roads and sites — then shown panned and zoomed: the window a box, the
 // player a dot. Drag to pan, wheel or ± to zoom, tap a place to warp there (AtlasWorld.warp), × or Esc to
 // close. Nothing runs while it's closed.
+// (Round 91, the user: "the map needs to show you names of place and a directional compas for the way your are
+// facing") Names from label sources (api/map-labels.ts: the world wiki's, gm/map-names.ts), decluttered by the
+// zoom; the player's dot has a wedge the way the camera faces and the view's footprint on the ground, both
+// turning with the view; a compass rose in the corner. North is the map's up — world −y — and the map is drawn
+// as the world is seen from above (world +x to the left of north: before round 91 the map was the world's mirror
+// image, x to the right, which the game's turned view and a compass would have made plain).
 //
-//   const map = new AtlasMap(aw)        // a button or key in the game: map.toggle()
+//   const map = new AtlasMap(aw, parent, { labels: [atlasWikiLabels(atlas)] })   // map.toggle() from a button
 //   map.onWarp = (cx, cy) => …          // optional: before the warp (the game's own bookkeeping)
 
 import type { AtlasWorld } from './atlas-world';
+import { LAKE_IN } from '../atlas/rivers';
+import type { LabelKind, LabelSource, MapLabel } from './map-labels';
+
+/** each kind's look, and the zooms it shows at: from `min` up to `max` texels a css pixel, and only while what it
+ *  names is `px` css pixels across or more (√weight texels: an area's side) when `px` is set */
+const LABEL_STYLE: Record<LabelKind, { font: string; size: number; fill: string; halo: string; max: number; px?: number; min?: number; caps?: boolean }> = {
+  continent: { font: '600 22px Georgia, "Times New Roman", serif', size: 22, fill: 'rgba(255,243,214,0.8)', halo: 'rgba(30,20,10,0.6)', max: 99, min: 0.6, px: 40, caps: true },
+  metropolis: { font: '700 16px Georgia, "Times New Roman", serif', size: 16, fill: '#fbefcf', halo: '#24180c', max: 99 },
+  city: { font: '600 14px Georgia, "Times New Roman", serif', size: 14, fill: '#f8ecc8', halo: '#24180c', max: 3 },
+  town: { font: '13px Georgia, "Times New Roman", serif', size: 13, fill: '#f3e6c2', halo: '#24180c', max: 1.4 },
+  lake: { font: 'italic 12px Georgia, "Times New Roman", serif', size: 12, fill: '#cfe8f7', halo: '#0d2230', max: 2, px: 14 },
+  region: { font: 'italic 12px Georgia, "Times New Roman", serif', size: 12, fill: '#efe2c4', halo: 'rgba(28,20,12,0.85)', max: 2, px: 34 },
+  village: { font: '12px Georgia, "Times New Roman", serif', size: 12, fill: '#eadcb8', halo: '#24180c', max: 0.7 },
+  sea: { font: 'italic 12px Georgia, "Times New Roman", serif', size: 12, fill: '#bcdcf0', halo: '#0b1e2b', max: 2, px: 34 },
+};
+/** who's placed first where two would overlap (the continents are under everything: they only avoid each other) */
+const LABEL_ORDER: LabelKind[] = ['metropolis', 'city', 'town', 'lake', 'region', 'village', 'sea'];
+const SITE_KINDS = new Set<LabelKind>(['metropolis', 'city', 'town', 'village']);
 
 /** what the map needs of an atlas world (the API's, or the atlas level's own) */
 export type MapWorld = Pick<AtlasWorld, 'atlas' | 'core' | 'stream' | 'warp' | 'toWorld'>;
@@ -25,12 +49,19 @@ export class AtlasMap {
   private timer = 0;
   private note: HTMLDivElement;
   private busy = false;
+  /** the labels (made when the map is first opened), by kind, heaviest first */
+  private labels: Map<LabelKind, MapLabel[]> | null = null;
+  /** the names of the atlas regions the labels name (the note says where the player is) */
+  private regionName = new Map<number, string>();
+  /** how many labels, and the ms they took to make (the first open) */
+  labelStats: { count: number; ms: number } | null = null;
   /** called with the world cell before a warp */
   onWarp?: (cx: number, cy: number) => void;
 
   constructor(
     private aw: MapWorld,
     parent: HTMLElement = document.body,
+    private opts: { labels?: LabelSource[] } = {},
   ) {
     const el = document.createElement('div');
     el.style.cssText = 'position:fixed;inset:0;z-index:50;background:rgba(10,14,20,0.92);display:none;touch-action:none;user-select:none;';
@@ -74,6 +105,17 @@ export class AtlasMap {
 
   open(): void {
     this.img ??= this.paint();
+    if (!this.labels) {
+      const t0 = performance.now();
+      this.labels = new Map();
+      for (const l of (this.opts.labels ?? []).flatMap((f) => f())) {
+        if (!this.labels.has(l.kind)) this.labels.set(l.kind, []);
+        this.labels.get(l.kind)!.push(l);
+        if (l.region !== undefined) this.regionName.set(l.region, l.name);
+      }
+      for (const ls of this.labels.values()) ls.sort((x, y) => y.weight - x.weight);
+      this.labelStats = { count: [...this.labels.values()].reduce((n, ls) => n + ls.length, 0), ms: Math.round(performance.now() - t0) };
+    }
     this.el.style.display = '';
     this.scale = this.scale === 1 ? Math.max(0.5, 800 / Math.max(innerWidth, 1)) : this.scale;
     this.centre();
@@ -107,11 +149,19 @@ export class AtlasMap {
         let r: number;
         let g: number;
         let b: number;
+        // (round 90: a lake, inside its extent where its level is over the ground)
+        const lk = a.lakeAt.length ? a.lakeAt[y * n + x] : 0;
+        const lv = lk & LAKE_IN ? a.lakes[(lk & 0x7fff) - 1].level : -Infinity;
         if (z < sea) {
           const t = Math.min(1, (sea - z) / 70);
           r = 40 - 22 * t;
           g = 92 - 50 * t;
           b = 128 - 40 * t;
+        } else if (lv > z) {
+          const t = Math.min(1, (lv - z) / 20);
+          r = 56 - 26 * t;
+          g = 112 - 44 * t;
+          b = 150 - 30 * t;
         } else {
           const e = z - sea;
           // lowland green → upland tan → rock grey; snow where it's cold
@@ -126,8 +176,9 @@ export class AtlasMap {
             g += (240 - g) * s;
             b += (244 - b) * s;
           }
-          // the sun from the north-west: brighter on the slopes facing it
-          const sh = Math.max(0.55, Math.min(1.35, 1 + ((at(x - 1, y - 1) - at(x + 1, y + 1)) * 0.012)));
+          // the sun from the north-west — the screen's upper left: north is −y, west +x (drawn as seen from
+          // above: world +x to the left) — brighter on the slopes facing it
+          const sh = Math.max(0.55, Math.min(1.35, 1 + ((at(x + 1, y - 1) - at(x - 1, y + 1)) * 0.012)));
           r *= sh;
           g *= sh;
           b *= sh;
@@ -186,6 +237,17 @@ export class AtlasMap {
     this.draw();
   }
 
+  /** texels (the map image's) → css pixels on the canvas, the nearest copy on the torus: world +x to the left */
+  private toPx(tx: number, ty: number, W: number, H: number): [number, number] {
+    const n = this.aw.atlas.p.n;
+    let dx = tx - this.vx;
+    let dy = ty - this.vy;
+    dx -= Math.round(dx / n) * n;
+    dy -= Math.round(dy / n) * n;
+    const k = 1 / this.scale;
+    return [W / 2 - dx * k, H / 2 + dy * k];
+  }
+
   private draw(): void {
     if (!this.isOpen || !this.img) return;
     const c = this.canvas;
@@ -204,37 +266,147 @@ export class AtlasMap {
     const a = this.aw.atlas;
     const n = a.p.n;
     const k = 1 / this.scale;
-    // (the torus: the image again either side, where the view runs past an edge)
-    const ox = W / 2 - this.vx * k;
+    // (the torus: the image again either side, where the view runs past an edge; mirrored in x — +x to the left)
+    const ox = W / 2 + this.vx * k;
     const oy = H / 2 - this.vy * k;
     for (let j = -1; j <= 1; j++)
       for (let i = -1; i <= 1; i++) {
-        const x = ox + i * n * k;
+        const x = ox - i * n * k;
         const y = oy + j * n * k;
-        if (x > W || y > H || x + n * k < 0 || y + n * k < 0) continue;
-        ctx.drawImage(this.img, x, y, n * k, n * k);
+        if (x - n * k > W || y > H || x < 0 || y + n * k < 0) continue;
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.scale(-1, 1);
+        ctx.drawImage(this.img, 0, 0, n * k, n * k);
+        ctx.restore();
       }
-    // the window and the player
+    const cellPx = (cx: number, cy: number) => this.toPx((cx / a.p.cols) * n, (cy / a.p.rows) * n, W, H);
+    // the window
     const S = this.aw.stream;
-    const toPx = (cx: number, cy: number): [number, number] => {
-      let tx = (cx / a.p.cols) * n - this.vx;
-      let ty = (cy / a.p.rows) * n - this.vy;
-      tx -= Math.round(tx / n) * n;
-      ty -= Math.round(ty / n) * n;
-      return [W / 2 + tx * k, H / 2 + ty * k];
-    };
     const dims = this.aw.core.dims;
-    const [wx, wy] = toPx(S.origin[0], S.origin[1]);
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.5;
-    ctx.strokeRect(wx, wy, (dims.w / a.p.cols) * n * k, (dims.h / a.p.rows) * n * k);
-    const [px, py] = toPx(...this.player());
+    const [wx, wy] = cellPx(S.origin[0], S.origin[1]);
+    const ww = (dims.w / a.p.cols) * n * k;
+    ctx.strokeStyle = 'rgba(255,255,255,0.7)';
+    ctx.lineWidth = 1.2;
+    ctx.strokeRect(wx - ww, wy, ww, (dims.h / a.p.rows) * n * k);
+    this.drawLabels(ctx, W, H);
+    // the player: the view's footprint on the ground (the screen's corners at the target's height), a wedge
+    // the way the camera faces, the dot
+    const cam = this.aw.core.camera;
+    const t = cam.target;
+    const corner = (sx: number, sy: number) => {
+      const [dx, dy] = cam.screenDeltaToWorld(sx, sy);
+      return cellPx(...this.aw.toWorld(t[0] + dx, t[1] + dy));
+    };
+    const hw = cam.viewportW / 2;
+    const hh = cam.viewportH / 2;
+    const box = [corner(-hw, -hh), corner(hw, -hh), corner(hw, hh), corner(-hw, hh)];
+    ctx.beginPath();
+    box.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.fillStyle = 'rgba(255,80,60,0.12)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(255,120,100,0.8)';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    const [px, py] = cellPx(...this.player());
+    // (the camera looks along (−cos az, −sin az) in the world: on the map, +x to the left, (cos az, −sin az))
+    const fa = Math.atan2(-Math.sin(cam.azimuth), Math.cos(cam.azimuth));
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.arc(px, py, 30, fa - 0.5, fa + 0.5);
+    ctx.closePath();
+    const g = ctx.createRadialGradient(px, py, 4, px, py, 30);
+    g.addColorStop(0, 'rgba(255,60,48,0.9)');
+    g.addColorStop(1, 'rgba(255,60,48,0)');
+    ctx.fillStyle = g;
+    ctx.fill();
     ctx.fillStyle = '#ff3030';
+    ctx.strokeStyle = '#2a0a06';
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
     ctx.arc(px, py, 5, 0, Math.PI * 2);
     ctx.fill();
+    ctx.stroke();
+    this.drawRose(ctx);
     const [pcx, pcy] = this.player();
-    this.note.textContent = this.busy ? 'warping…' : `you: ${pcx.toFixed(0)}, ${pcy.toFixed(0)}  ·  drag to pan, tap to warp`;
+    const tx = ((Math.floor((pcx / a.p.cols) * n) % n) + n) % n;
+    const ty = ((Math.floor((pcy / a.p.rows) * n) % n) + n) % n;
+    const here = this.regionName.get(a.regionOf[ty * n + tx]);
+    this.note.textContent = this.busy ? 'warping…' : `${here ? `${here}  ·  ` : ''}${pcx.toFixed(0)}, ${pcy.toFixed(0)}  ·  drag to pan, tap to warp`;
+  }
+
+  /** the names: each kind that shows at this zoom, heaviest first, none over one already placed */
+  private drawLabels(ctx: CanvasRenderingContext2D, W: number, H: number): void {
+    if (!this.labels) return;
+    const a = this.aw.atlas;
+    const n = a.p.n;
+    const sx = n / a.worldW;
+    const sy = n / a.worldH;
+    type Box = [number, number, number, number];
+    const free = (b: Box, among: Box[]) => !among.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]);
+    ctx.lineJoin = 'round';
+    ctx.textAlign = 'center';
+    const put = (kind: LabelKind, among: Box[]) => {
+      const st = LABEL_STYLE[kind];
+      const ls = this.labels!.get(kind);
+      if (!ls || this.scale > st.max || this.scale < (st.min ?? 0)) return;
+      ctx.font = st.font;
+      ctx.letterSpacing = st.caps ? '4px' : '0px';
+      const site = SITE_KINDS.has(kind);
+      ctx.textBaseline = site ? 'bottom' : 'middle';
+      for (const l of ls) {
+        // (heaviest first: once one is too small to show, so are the rest)
+        if (st.px && Math.sqrt(l.weight) / this.scale < st.px) break;
+        const [x, yc] = this.toPx(l.x * sx, l.y * sy, W, H);
+        if (x < -300 || x > W + 300 || yc < -40 || yc > H + 40) continue;
+        // (a settlement's name over its dot)
+        const y = site ? yc - 5 : yc;
+        const text = st.caps ? l.name.toUpperCase() : l.name;
+        const w = ctx.measureText(text).width;
+        const b: Box = site ? [x - w / 2 - 2, y - st.size - 1, x + w / 2 + 2, y + 1] : [x - w / 2 - 2, y - st.size / 2 - 1, x + w / 2 + 2, y + st.size / 2 + 1];
+        if (b[2] < 0 || b[0] > W || b[3] < 0 || b[1] > H || !free(b, among)) continue;
+        among.push(b);
+        ctx.strokeStyle = st.halo;
+        ctx.lineWidth = 3;
+        ctx.strokeText(text, x, y);
+        ctx.fillStyle = st.fill;
+        ctx.fillText(text, x, y);
+      }
+    };
+    // (kept clear: the rose, the buttons, the note)
+    const ui: Box[] = [[0, 0, 70, 76], [W - 200, 0, W, 60], [0, H - 30, W, H]];
+    // the continents under everything, avoiding only each other
+    put('continent', [...ui]);
+    const placed: Box[] = [...ui];
+    for (const kind of LABEL_ORDER) put(kind, placed);
+    ctx.letterSpacing = '0px';
+  }
+
+  /** a compass rose in the corner: north is the map's up */
+  private drawRose(ctx: CanvasRenderingContext2D): void {
+    ctx.save();
+    ctx.translate(34, 40);
+    ctx.fillStyle = 'rgba(20,16,10,0.6)';
+    ctx.beginPath();
+    ctx.arc(0, 0, 26, 0, Math.PI * 2);
+    ctx.fill();
+    for (let i = 0; i < 4; i++) {
+      ctx.beginPath();
+      ctx.moveTo(0, -18);
+      ctx.lineTo(4.5, 0);
+      ctx.lineTo(-4.5, 0);
+      ctx.closePath();
+      ctx.fillStyle = i === 0 ? '#e0483a' : '#e9dcb8';
+      ctx.fill();
+      ctx.rotate(Math.PI / 2);
+    }
+    ctx.fillStyle = '#fbefcf';
+    ctx.font = '700 11px Georgia, serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('N', 0, -22 + 0.5);
+    ctx.restore();
   }
 
   private listen(): void {
@@ -249,7 +421,8 @@ export class AtlasMap {
       const dx = e.clientX - down.x;
       const dy = e.clientY - down.y;
       if (Math.hypot(dx, dy) > 6) down.moved = true;
-      this.vx = down.vx - dx * this.scale;
+      // (+x to the left: the land follows the finger)
+      this.vx = down.vx + dx * this.scale;
       this.vy = down.vy - dy * this.scale;
       this.draw();
     });
@@ -261,7 +434,7 @@ export class AtlasMap {
       const a = this.aw.atlas;
       const n = a.p.n;
       const r = this.canvas.getBoundingClientRect();
-      const tx = this.vx + (e.clientX - r.left - r.width / 2) * this.scale;
+      const tx = this.vx - (e.clientX - r.left - r.width / 2) * this.scale;
       const ty = this.vy + (e.clientY - r.top - r.height / 2) * this.scale;
       const cx = (((tx / n) % 1) + 1) % 1 * a.p.cols;
       const cy = (((ty / n) % 1) + 1) % 1 * a.p.rows;

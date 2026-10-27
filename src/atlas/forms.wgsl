@@ -380,6 +380,19 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
       cover = max(cover, 1.0);
     }
   }
+  // (round 90) a lake's shore: silt under its water, sand at the waterline where it's flat enough (a beach); where
+  // it's steep the shore is the rock's own (a cliff into the water)
+  // (under the water nothing loose lies where it would slide: a lake comes in still, its water held — what slid into a
+  // hollow would stand the water over the lake's level; on a steep bed the rock is bare)
+  if (g.lk > 0.0 && !river) {
+    if (g.lkw > 0.5 && top < g.lk - 0.6) {
+      topMat = MAT_SILT;
+      cover = select(0.0, 1.0, slope < 0.8);
+    } else if (top < g.lk + 1.5 && slope < 1.2) {
+      topMat = MAT_SAND;
+      cover = max(cover, 1.0);
+    }
+  }
   // set lava, a cone: the rock added is basalt at the top
   if (g.cap != 0u && !river) {
     topMat = g.cap;
@@ -456,7 +469,8 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
       vl[nv] = vec2<f32>(net.zc - hh, net.zc + hh);
       nv++;
     }
-    if (net.sky && net.d < net.r * 0.85) {
+    // (round 90: no skylight under a lake — its water would stand over the hole, the loose ground sliding in)
+    if (net.sky && net.d < net.r * 0.85 && !(g.lkw > 0.5 && g.lk > top)) {
       vl[nv] = vec2<f32>(net.zc, 1e9);
       nv++;
     }
@@ -691,6 +705,11 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
   // the open ground (not a form's top, not a hole in it): below the sea, water
   let open = !surfForm && abs(surf - topL) < 0.01;
   if (open) { o.water = max(max(AP.sea - topL, 0.0), g.cw); }
+  // (round 90) a lake: its water to its level (the atlas's steady state: held still, riverFlow with no flow)
+  // (on whatever's on top under its level too — a boulder, a form's top, a skylight down into a cave: flooded, no
+  // dry island or hole under the water)
+  let lake = g.lkw > 0.5 && g.lk > surf;
+  if (lake) { o.water = max(o.water, g.lk - surf); }
   // the coarse world's lava, where it's still running
   if (open && g.clava > 0.05) { o.lava = g.clava; }
   // a skylight onto a tube: its water or lava, a little below the tube's middle
@@ -715,7 +734,7 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
       // (round 84, ?rivers=table) where the bed steps down (a fall, a chute: RIVER_FALL a step) the water is a sheet
       // pouring over it, quick — not a pool the pipes would empty down the step when woken
       var fall = 1.0;
-      if (RIVER_TABLE && drop > RIVER_FALL) {
+      if (RIVER_TABLE && drop > RIVER_FALL && !lake) {
         o.water = min(o.water, RIVER_SHEET);
         fall = 2.0;
       }
@@ -726,8 +745,16 @@ fn colFinish(@builtin(global_invocation_id) gid: vec3<u32>) {
       }
     }
   }
+  // (round 90: a lake's water isn't a river's — no riverFlow, nothing held to a table: still water, asleep as the land
+  // comes in (its steady state), simulated where woken like any other. Held lake columns fed whatever woke beside
+  // them their whole depth a step and kept it: a woken chunk's water stood 20-48 deep over the lake's level)
+  if (lake) {
+    o.rvx = 0.0;
+    o.rvy = 0.0;
+    o.rd = 0.0;
+  }
   var m = moistureAt(p, g.coast, R.moist);
-  if (wet || (river && !lavaR)) { m = max(m, 0.8); }
+  if (wet || (river && !lavaR) || lake || (g.lk > 0.0 && top < g.lk + 2.0)) { m = max(m, 0.8); }
   o.moisture = m;
   o.veg = 0.0;
   if (o.water == 0.0 && o.lava == 0.0 && !snowy && R.veg > 0.0 && surf < AP.sea + 70.0) {

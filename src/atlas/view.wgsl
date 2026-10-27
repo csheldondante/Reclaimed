@@ -66,6 +66,8 @@ fn fs(v: VOut) -> @location(0) vec4<f32> {
       if (g.smat == 34u) { c = vec3<f32>(0.9, 0.55, 0.6) * sh; }
       if (g.smat == 33u) { c = vec3<f32>(0.75, 0.32, 0.3) * sh; }
       // (rivers: blue, lava: orange)
+      // (round 90: a lake, deeper bluer)
+      if (g.lkw && g.lk > g.h) { c = mix(vec3<f32>(0.24, 0.46, 0.62), vec3<f32>(0.1, 0.25, 0.45), clamp((g.lk - g.h) / 12.0, 0.0, 1.0)); }
       if (g.rx < 1.0 && g.h >= AP.sea) { c = select(vec3<f32>(0.2, 0.42, 0.7), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u) * mix(1.0, sh, 0.5); }
       // (round 71: the coarse world — set lava's basalt dark, ash grey, rubble brown, running lava glowing)
       if (g.cap != 0u) { c = vec3<f32>(0.16, 0.15, 0.16) * sh; }
