@@ -6617,8 +6617,8 @@ code: on the map's first open the level runs gm/atlas-facts.ts `atlasFacts` on t
 match data/wiki/seed1.json), and gm/map-names.ts turns the wiki into labels: each continent (at its land nearest the
 circular mean of its regions, a torus), every region (seas and lakes their own kinds), every settlement by its size —
 7917 labels, made in 59–62 ms on the desktop (14 ms of it the wiki in Node). The map doesn't make names: label
-sources are a contract (api/map-labels.ts: a name, a kind, a world point, a weight), so the atlas's own lakes (merged
-from `lakes`; unnamed yet — the wiki would name them) are one more source (BACKLOG N7); the wiki's own lake regions are labelled already. The map styles each kind
+sources are a contract (api/map-labels.ts: a name, a kind, a world point, a weight), and the atlas's own lakes (merged
+from `lakes`, named by the wiki since places cdf0d95) are labelled from `wiki.lakes`, shown while 14 px across (N7); the wiki's own lake regions are labelled already. The map styles each kind
 (Georgia, cream on a dark halo like the sites' dots; seas and lakes italic blue, regions italic, continents spaced
 capitals), shows a kind only in its zooms — metropolises always, cities to 3 texels a pixel, towns to 1.4, villages
 to 0.7, regions/seas/lakes while they're 34 px across, continents while 40 px across and not closer than 0.6 — and

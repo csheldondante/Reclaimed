@@ -26,7 +26,7 @@ const LABEL_STYLE: Record<LabelKind, { font: string; size: number; fill: string;
   metropolis: { font: '700 16px Georgia, "Times New Roman", serif', size: 16, fill: '#fbefcf', halo: '#24180c', max: 99 },
   city: { font: '600 14px Georgia, "Times New Roman", serif', size: 14, fill: '#f8ecc8', halo: '#24180c', max: 3 },
   town: { font: '13px Georgia, "Times New Roman", serif', size: 13, fill: '#f3e6c2', halo: '#24180c', max: 1.4 },
-  lake: { font: 'italic 12px Georgia, "Times New Roman", serif', size: 12, fill: '#cfe8f7', halo: '#0d2230', max: 2, px: 30 },
+  lake: { font: 'italic 12px Georgia, "Times New Roman", serif', size: 12, fill: '#cfe8f7', halo: '#0d2230', max: 2, px: 14 },
   region: { font: 'italic 12px Georgia, "Times New Roman", serif', size: 12, fill: '#efe2c4', halo: 'rgba(28,20,12,0.85)', max: 2, px: 34 },
   village: { font: '12px Georgia, "Times New Roman", serif', size: 12, fill: '#eadcb8', halo: '#24180c', max: 0.7 },
   sea: { font: 'italic 12px Georgia, "Times New Roman", serif', size: 12, fill: '#bcdcf0', halo: '#0b1e2b', max: 2, px: 34 },

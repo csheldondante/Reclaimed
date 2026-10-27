@@ -2,7 +2,7 @@
 // stories use, because they're made by the same code from the same atlas — atlasFacts (gm/atlas-facts.ts) then
 // buildWiki (gm/wiki.ts), here in the page from the live atlas instead of from data/wiki's cache, so a world of
 // any seed is named as its wiki would name it. Continents (at the land nearest the middle of their regions),
-// every region (the seas, the lakes, the land), every settlement by its size.
+// every region (the seas, the lakes, the land), the atlas's lakes, every settlement by its size.
 
 // (Runs in Node too, for scripts: type imports only.)
 import type { LabelKind, MapLabel } from '../api/map-labels';
@@ -43,6 +43,8 @@ export function wikiLabels(w: WorldWiki, area: (region: number) => number): MapL
     const kind: LabelKind = r.kind === 'ocean' ? 'sea' : r.kind === 'lake' ? 'lake' : 'region';
     out.push({ name: r.name, kind, x: r.centre[0], y: r.centre[1], weight: area(r.id), region: r.id });
   }
+  // the atlas's own lakes (round 90, named by the wiki since the lakes merge)
+  for (const l of w.lakes ?? []) out.push({ name: l.name, kind: 'lake', x: l.at[0], y: l.at[1], weight: l.area });
   const RANK: Record<string, number> = { village: 1, town: 2, city: 3, metropolis: 4 };
   w.sites.forEach((site, i) => {
     const s = w.snapshot.settlements[i];
