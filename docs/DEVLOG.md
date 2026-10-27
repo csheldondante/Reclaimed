@@ -7264,3 +7264,7 @@ places (the story's f-kuharm faction and s139's region against seed1.json), none
   deed names the faction ("won over: Kuharm Moot"), not its id. The slice's loop passed: the hover rider's run won
   through the talks (Hesk's talk opening as an event), the knight's lost, the first run's marks there on the
   second, the answers shown at 412 x 915 with reduced motion.
+- (round 97) scripts/runtest.mjs on heroapi (the level's ?run= now through startAtlasRun): lost and warp passed; won
+  failed once at its very end (back at Hesk, no talk: RS17's 1-in-3 flake on places, the same print) and passed on
+  the rerun. The failure print now lists the talks opened and closed since the walk back, the queued talk events,
+  the camera's target and zoom and whether it follows, to pin RS17 down next time.

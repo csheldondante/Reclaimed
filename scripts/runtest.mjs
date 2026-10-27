@@ -242,7 +242,7 @@ async function talkTo(p, who) {
     else if (s.busy) await p.mouse.click(206, 300);
     await sleep(800);
   }
-  console.log(`     could not talk to ${who}: ${JSON.stringify(await p.evaluate((who) => { const r = window.reclaimed.run; const u = r.units.get(r.play.unitOf(who)); const h = r.hero.position(); const sp = u && window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2); const el = sp && document.elementFromPoint(sp[0], sp[1]); return { sp, el: el && (el.className || el.tagName), u: u && { at: u.at, alive: u.alive, hostile: u.hostile, state: u.state }, can: r.play.canTalk(who), hero: h, busy: r.play.cam.busy, open: r.play.dialog.isOpen, ended: r.play.run.over }; }, who))}`);
+  console.log(`     could not talk to ${who}: ${JSON.stringify(await p.evaluate((who) => { const r = window.reclaimed.run; const u = r.units.get(r.play.unitOf(who)); const h = r.hero.position(); const sp = u && window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2); const el = sp && document.elementFromPoint(sp[0], sp[1]); return { sp, el: el && (el.className || el.tagName), u: u && { at: u.at, alive: u.alive, hostile: u.hostile, state: u.state }, can: r.play.canTalk(who), hero: h, busy: r.play.cam.busy, open: r.play.dialog.isOpen, ended: r.play.run.over, queued: r.play.talks, talks: window.__talks, cam: window.reclaimed.camera.target.map((v) => +v.toFixed(1)), zoom: window.reclaimed.camera.zoom, follows: !!r.play.cam.following }; }, who))}`);
   return false;
 }
 
@@ -372,6 +372,13 @@ async function won() {
   const hist = await p.evaluate(() => window.reclaimed.run.world.history().map((e) => `${e.kind}@${e.regions.join(',')}`));
   ok(hist.includes('lay-dead@2159') && hist.includes('mark@2159'), `its AtlasEvents applied to the MemoryWorldState (${hist.join(' ')})`);
   // back to Mebe
+  // (round 97: every talk opened and closed from here on, for the failure print)
+  await p.evaluate(() => {
+    const d = window.reclaimed.run.play.dialog;
+    window.__talks = [];
+    d.onOpen.push((t) => window.__talks.push(`open ${t.id} ${Math.round(performance.now())}`));
+    d.onClose.push((t, path) => window.__talks.push(`close ${t.id} ${JSON.stringify(path)} ${Math.round(performance.now())}`));
+  });
   for (const room of ['ossuary', 'cairn-gate']) await walkTo(p, await roomAt(p, 'loc-barrow', room), 'out of the barrow', 3);
   ok(await walkTo(p, await roomAt(p, 'loc-mebe', 'market-square'), 'back to Mebe', 3), 'walked back to Mebe');
   ok(await walkTo(p, await roomAt(p, 'loc-mebe', 'reeve-hall'), "the reeve's hall", 3), "…into the reeve's hall");
