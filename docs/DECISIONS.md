@@ -33,7 +33,6 @@ each was implemented.
   the weight idea (a hanging piece's mass against its contact area × strength).
 
 
->>>>>>> origin/collapse
 ## 2026-10-26 — round 87 (session 5, `places`) — the second phone test
 
 - "Waterfalls and the meteor look fantastic! However, the collapse didn't work for me on mobile at all. I was able to

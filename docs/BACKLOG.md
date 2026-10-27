@@ -26,7 +26,6 @@ user) · `deferred` (agreed for later).
 | C8 | Round 87: a fully undercut tower stayed standing on the phone — the beam's bore not judged, the part above the window never coming down, limits in cells, structures past the box skipped; fixed by reading the paths; scripts/towertest.mjs (the player's tools, 412x915, low) to run | M | done (collapse; towertest 5/5) |
 
 
->>>>>>> origin/collapse
 ## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
 
 | id | item | size | status |

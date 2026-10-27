@@ -6497,4 +6497,3 @@ scripts/towertest.mjs (below):
   it into the physics voxels (phys.wgsl), which bring it down — 15 taps, no integrity piece (the physics' own
   path; not this system's). GIF: C:/Projects/shots86/tall-tower.gif (the 70-tall tower cut through, its top
   coming down on its stub).
->>>>>>> origin/collapse
