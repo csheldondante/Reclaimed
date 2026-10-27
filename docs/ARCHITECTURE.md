@@ -202,13 +202,10 @@ where pieces turn to particles on impact is P3.
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
-<<<<<<< HEAD
 | riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
 | (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
-=======
 | (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
 | riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
->>>>>>> origin/flow
 | oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
 | oilStored | vec2 (amount, roof z) sealed in closed tanks | oil (releases on breach, burns inside) | fire (fuel) |
 | contam | vec2 (soil, dissolved) | contamination | ecology, particles, draw, stats |
