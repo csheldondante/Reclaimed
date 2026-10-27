@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-26 — round 87 (session 5, `places`) — the second phone test
+
+- "Waterfalls and the meteor look fantastic! However, the collapse didn't work for me on mobile at all. I was able to
+  completely destroy the base of a tower and it stayed standing (it might have been taller than one cell though)".
+  The flow model is merged into places (still behind `?flow=1`). The meteor stays on `collapse` until the tower bug
+  is fixed there.
+
 ## 2026-10-26 — round 86 (session 5, `places`) — the phone test: rivers, falls, collapse
 
 - **Performance:** "performance is now very very good! Totally fixed on mobile" (the hybrid by default on the phone tier).
@@ -16,6 +23,36 @@ each was implemented.
   just weight vertices to voxels (although rock I don't expect to flex only crumble)." Then: "it should also probably
   make a big cloud of dust for the deleted material and maybe sparks that fly with the shockwave." (branch `collapse`)
 
+## 2026-10-26 — round 86 (`flow`, on the phone) — falls at their own pace, a sheet not columns
+
+- "The waterfalls move way way too fast at 1x and visually it doesn't look as good as the old approach or the
+  sand particles which look fantastic."
+- "The waterfall trajectory looks decent by the way it's just that the columns have gaps and the rendering
+  isn't great." (Keep the arc; a continuous sheet along it, no holes between cells.)
+- (On the `rivers` branch: "the rivers look good!")
+
+## 2026-10-26 — round 84 (session 5, `flow`) — one model of material flow, steady state frozen
+
+- "I thought the water and loose materials had essentially the same simulation but with 0 angle of repose
+  for water? It doesn't have to work that way but a unified model of material flow would be great for
+  waterfalls emerging from underground streams or lava flows." "It would also ideally let us compute a
+  water fall that actually arcs out (steady flow from column to column so that it makes an arc)."
+- "The unified system should also support a steady state. Let's make it so we can freeze the actual
+  simulation and just show the animation of sand endlessly spilling out of a basin. Think flux. As long as
+  our section has material going in matching material out it is in steady state and we only need to find
+  that again when we perturb it."
+- "The idea is that solids can use columns to cheaply compute collapse and fracture in the vertical
+  direction. Then sleep like any other physics system. The water and loose materials can sit in intervals on
+  top of that and then simulate flow but we treat steady state flow as sleeping."
+- "Water and loose materials may appear along multiple intervals in a column but the update rules should be
+  fairly simple. Think noita physics which just checks for adjacent emptiness and moves pixels over. We are
+  just doing this in a compressed column space and adding in velocity. The goal is plausibility and
+  spectacle not realism."
+- "We can have a tolerance and decide when we are close enough to steady state to freeze and treat it as an
+  animation only. The goal here is to have the generator make things start in steady state and the
+  simulation can then take over until it finds another near steady state then freeze things."
+- "Do we use the flux to just adjust steady state for a region? Like we could keep the flow proportional and
+  then zero out when they get too low."
 ## 2026-10-26 — round 85 (session 5, `places`) — recipes, civilizations, legacy; diplomacy; grids
 
 - **Recipe-driven civilizations and legacy.** "Units, items, vehicles, buildings, and even civilizations are

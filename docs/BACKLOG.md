@@ -23,6 +23,26 @@ user) · `deferred` (agreed for later).
 | T5 | Bodies drawn as the terrain's own mesh, split off (vertices tied to their voxels), rigid while whole, crumbling on impact; no pop to cubes | L | wip (`collapse`) |
 | T6 | The title menu's atlas gets `rivers=table` too (now it's set from `level=atlas` in the URL) | S | open |
 
+## Round 86 (2026-10-26, `flow`) — the falls on the phone (DECISIONS round 86)
+
+| id | item | size | status |
+|---|---|---|---|
+| FL6 | Falls at their own pace: a stream moved a column a step whatever its speed (a 24-cell fall reached the plain 0.67 s after the breach, 1.85 s is its free fall alone); now a column holds the water in flight over it and passes it on as its path crosses (2.55 s). Over a lip no more than the critical flow. **Done (this commit):** liquid.wgsl jets/flux. | M | done |
+| FL7 | Falls look like water, not columns with gaps: one stream off a lip (its falls' mean direction), drawn as a sheet along its parabola (a curtain and a band, segments cross-faded), shading that rides the water at the sim's time, spray on the stream's path (K_DROP particles), splash and mist at the foot. **Done (this commit)** (FL5's ribbon). | M | done |
+| FL8 | Water arriving over a sleeping chunk was lost (a sleeping column took no stream in, nor its landing): now it is carried, held aloft, and wakes the chunk. **Done (this commit).** | S | done |
+| FL9 | The particles stepped 1/60 s a tick at any tick rate (?simhz=30: half speed); now DT x simStep(). The flow model at ?simhz=30|15 (FLOW_SUB substeps). **Done (this commit)** — untested on the phone at 30 Hz. | S | done |
+| FL10 | Still a few strands where a wide lip's columns leave at different speeds (each column's discharge sets its speed); merge a lip's columns into one sheet (or widen with the discharge) if the user wants a single curtain | S | open |
+| FL11 | The pool now drains at the critical flow (~18 s, was ~2 s): the lab's trench stays unsteady longer, everything asleep after ~3 min (was 35 s); check the freeze tolerance against slow drains | S | open |
+
+## Round 84 (2026-10-26, session 5, `flow`) — one model of material flow (DECISIONS round 84)
+
+| id | item | size | status |
+|---|---|---|---|
+| FL1 | Liquids as runs in the columns' gaps (`?flow=1`): water and lava one kernel set with a liquid's numbers; water under rock (caves, tunnels) runs along the floor and out of the mouth; a run off a ledge leaves as a ballistic stream (an arc), spray where it lands; lava cools and sets into basalt. **Done (this commit):** flow/liquid.ts, liquid.wgsl, the flow lab (`?flow=1&level=flowlab`, scripts/flowlab.mjs). | L | done |
+| FL2 | Steady state frozen (near steady, a tolerance a chunk; `?steadytol= ?steadyfloor= ?steadywin= ?waketol=`): what's steady sleeps and is drawn from its last flux; a frozen chunk whose supply changes is rescaled (`?rescalemax=`), zeroed when it dries, woken past that or by an edit. **Done (this commit):** flow/steady.ts. | M | done |
+| FL3 | The flow model by default: the valley, the sandbox and the atlas (the streamed window's slides move the runs and jets; the rivers agent's steady rivers seeded into it), oil as a third liquid (density: it floats), lava in the sandbox's beam and volcanoes (sim/lava.ts folded in), the old water system removed | L | open |
+| FL4 | Moving loose ground in the same kernel (the user's "sand endlessly spilling out of a basin"): sand with its repose as the sideways threshold, set into the layers at once when at rest, so a pour off a ledge arcs and freezes like water; the frozen pour rescaled as its basin empties (the sediment's air texture scaled with it) | M | open |
+| FL5 | Streams thinner and smoother: a ribbon along the arc instead of a box a column; foam where a fall lands in water; the old lava's look (crust, glow edge) for the lava runs. **The ribbon and the splash/mist done in round 86 (FL7)**; the lava's crust look still open | S | open |
 ## Round 85 (2026-10-26, session 5, `places`) — recipes, civilizations, diplomacy, grids (DECISIONS round 85)
 
 | id | item | size | status |

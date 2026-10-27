@@ -254,7 +254,8 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   // soft ground: the column's top is drawn sloped (terrainshape.wgsl)
   let soft = (b.flags & FLAG_TOP_R) != 0u && MATS[b.mat].look.x > 0.0;
   // water and drifted dust: smooth sheets through their corner levels
-  let liquid = b.mat == MAT_WATER || b.mat == MAT_DRIFT;
+  // ((?flow=1) a liquid run of the flow module, FLAG_RUN: flat, shaded by shadeRun)
+  let liquid = (b.mat == MAT_WATER || b.mat == MAT_DRIFT) && (b.flags & FLAG_RUN) == 0u;
   var p: vec3<f32>;
   var n: vec3<f32>;
   var shown = true;
@@ -293,7 +294,7 @@ fn prismVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
       if (!sheetGap(b.cell, (m + 5u) % 6u, nb) && !sheetGap(b.cell, m, nb)) { shown = false; }
     }
     // water: no side inside a continuous body of water
-    if (b.mat == MAT_WATER) {
+    if (b.mat == MAT_WATER && (b.flags & FLAG_RUN) == 0u) {
       let q = nbr(b.cell, k);
       if (inMap(q)) {
         let jq = colIdxI(q);
@@ -430,10 +431,78 @@ fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
   var o: VOut;
   let b = unpackBox(instances[ii]);
   var shown: bool;
-  if ((u32(CAM.eye.w) & 2u) != 0u && b.mat == MAT_WATER) { shown = waterSheetVertex(b, vi, &o); }
+  // ((?flow=1) a stream of the flow module: its sheet along its path; a run under rock: a flat prism)
+  if ((b.flags & (FLAG_RUN | FLAG_DETAIL)) == (FLAG_RUN | FLAG_DETAIL)) { shown = streamVertex(ii, vi, &o); }
+  else if ((b.flags & FLAG_RUN) != 0u) { shown = vi < 30u && instVertex(b, vi, &o) && (b.hex || vi < 18u); }
+  else if ((u32(CAM.eye.w) & 2u) != 0u && b.mat == MAT_WATER) { shown = waterSheetVertex(b, vi, &o); }
   else { shown = instVertex(b, vi, &o); }
   if (!shown) { o.pos = vec4<f32>(0.0, 0.0, -2.0, 1.0); }
   return o;
+}
+
+// (?flow=1, round 86) a stream's sheet: liquid.wgsl prep's header (the column, z and vz it enters with, mat |
+// flags) and two vec4 after the list's room (a third of the buffer): where it enters (world xy), its velocity xy;
+// the front (how far along its path it's drawn, s), its time since the lip, the volume a second, heat.
+// STREAM_G: liquid.wgsl GF (keep the two the same).
+const STREAM_G: f32 = 14.0;
+const STREAM_Q = array<vec2<f32>, 6>(vec2<f32>(0.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0));
+
+/** a stream's point and tangent t seconds along its path from where it enters */
+fn streamAt(e: vec3<f32>, u: vec2<f32>, vz: f32, t: f32) -> vec3<f32> { return vec3<f32>(e.xy + u * t, e.z + vz * t - 0.5 * STREAM_G * t * t); }
+fn streamSide(u: vec2<f32>) -> vec2<f32> {
+  let us = length(u);
+  return select(vec2<f32>(1.0, 0.0), vec2<f32>(-u.y, u.x) / us, us > 1e-3);
+}
+/** the sheet's width across the flow (curtain) and its thickness in the arc's plane, for its rate */
+fn streamWidth(rate: f32, tl: f32) -> vec2<f32> {
+  // (a column's water across a cell, so the neighbours' curtains overlap into one sheet; spreading as it falls)
+  let spread = 1.0 + 0.6 * min(tl, 2.0);
+  let w = mix(0.4, 1.5, smoothstep(0.05, 1.5, rate)) * spread;
+  return vec2<f32>(w, w * 0.7);
+}
+
+/**
+ * A stream over its column as two ribbons along its parabola, three segments each: a curtain across the flow
+ * (as wide as the water a column carries, so neighbours' join into one sheet) and a band in the arc's plane (the
+ * arc seen side on). Parameterised by the time along the path (tint: interpolated), so the shading scrolls with
+ * the water at its own speed; flat: bmin the entry, boff (u, vz), bsize (width, thickness, ribbon), zr (time
+ * since the lip, rate).
+ */
+fn streamVertex(ii: u32, vi: u32, out: ptr<function, VOut>) -> bool {
+  let h = instances[ii];
+  let cap = arrayLength(&instances) / 3u;
+  let d0 = bitcast<vec4<f32>>(instances[cap + 2u * ii]);
+  let d1 = bitcast<vec4<f32>>(instances[cap + 2u * ii + 1u]);
+  let e = vec3<f32>(d0.xy, bitcast<f32>(h.y));
+  let vz = bitcast<f32>(h.z);
+  let u = d0.zw;
+  let ribbon = vi / 18u;
+  let c = STREAM_Q[vi % 6u];
+  // (from a little before its entry to a little past its exit, along its own path, faded in and out there: a
+  // column's stream enters where the streams it gathered left theirs - on average - so the segments cross-fade
+  // into each other instead of leaving gaps)
+  let ext = min(0.45 / max(length(vec3<f32>(u, vz)), 1.0), max(d1.x, 0.02));
+  let t = -ext + (d1.x + 2.0 * ext) * (f32((vi % 18u) / 6u) + c.x) / 3.0;
+  let side = vec3<f32>(streamSide(u), 0.0);
+  let tg = normalize(vec3<f32>(u, vz - STREAM_G * t) + vec3<f32>(0.0, 0.0, -1e-4));
+  let nArc = normalize(cross(tg, side));
+  let wd = streamWidth(d1.z, d1.y + t);
+  var across = side * wd.x * 0.5;
+  var n = nArc;
+  if (ribbon == 1u) { across = nArc * wd.y * 0.5; n = side; }
+  let p = streamAt(e, u, vz, t) + across * c.y;
+  if (dot(n, toEye(p)) < 0.0) { n = -n; }
+  (*out).pos = CAM.viewProj * vec4<f32>(p, 1.0);
+  (*out).wpos = p;
+  (*out).nrm = n;
+  (*out).tint = t;
+  (*out).info = vec2<u32>(h.w & 0xffu, (h.w >> 8u) & 0xfffu);
+  (*out).bmin = e;
+  (*out).boff = vec3<f32>(u, vz);
+  (*out).bsize = vec3<f32>(d1.x, ext, f32(ribbon));
+  (*out).zr = vec2<f32>(d1.y, d1.z);
+  (*out).sides = 0u;
+  return true;
 }
 
 /** The water's level on q if it's wet (x; y 1), else its ground (x; y 0). */
@@ -1391,6 +1460,7 @@ fn fsWater(in: VOut) -> FOut {
   let ddx = dpdx(d);
   let ddy = dpdy(d);
   if (in.info.x == MAT_OIL) { return shadeOil(in, ci); }
+  if ((in.info.y & FLAG_RUN) != 0u) { return shadeRun(in, ci); }
   if (MATS[in.info.x].look.y > 0.0) { return shadeGlass(in, ci); }
   if (in.nrm.z > 0.5 && d < 0.02) { discard; }
   let det = ex.x * ey.y - ex.y * ey.x;
@@ -1506,6 +1576,95 @@ fn fsWater(in: VOut) -> FOut {
 }
 
 const WATER_MIN_R: f32 = 0.012;
+
+// (?flow=1, flow/liquid.ts) a liquid run of the flow module: flat prisms under rock, narrow boxes for the falling
+// streams (FLAG_DETAIL), drawn blended
+const FLAG_RUN: u32 = 2048u;
+
+/** the simulation's time (s): what the flows' looks scroll by - paused, they stand; at any tick rate, as the sim */
+fn simTime() -> f32 { return f32(G.tick) * G.dt; }
+
+/**
+ * (round 86) A stream's sheet: its pattern rides the water - a point of it is (time along the path - the sim's
+ * time), constant for a parcel of water - so the streaks fall at the fall's own speed and stretch as it speeds up.
+ * Glassy where it leaves the lip, aerated white the longer it falls, ragged at its edges and breaking up below.
+ */
+fn shadeStream(in: VOut, ci: u32) -> FOut {
+  let e = in.bmin;
+  let u = in.boff.xy;
+  let vz = in.boff.z;
+  let t = in.tint;
+  let tl = in.zr.x + t;
+  let axis = streamAt(e, u, vz, t);
+  let side = vec3<f32>(streamSide(u), 0.0);
+  let tg = normalize(vec3<f32>(u, vz - STREAM_G * t) + vec3<f32>(0.0, 0.0, -1e-4));
+  let band = in.bsize.z > 0.5;
+  let nArc = normalize(cross(tg, side));
+  let acr = select(side, nArc, band);
+  let wd = streamWidth(in.zr.y, tl);
+  let hw = select(wd.x, wd.y, band) * 0.5;
+  let x = dot(in.wpos - axis, acr);
+  let xn = x / max(hw, 1e-3);
+  // (lit by the path's own normal, not the triangles': no facets along it)
+  var nrm = select(nArc, side, band);
+  if (dot(nrm, toEye(in.wpos)) < 0.0) { nrm = -nrm; }
+  // (faded in and out over the bits drawn before its entry and past its exit: neighbours' sum to one)
+  let ext = in.bsize.y;
+  let lead = smoothstep(-ext, ext, t) * (1.0 - smoothstep(in.bsize.x - ext, in.bsize.x + ext, t));
+  let ph = tl - simTime();
+  // (lanes across it in world units: the curtain's neighbours line up)
+  let lx = select(dot(in.wpos.xy, side.xy), x, band);
+  let n1 = vnoise(vec2<f32>(lx * 2.5, ph * 5.0));
+  let n2 = vnoise(vec2<f32>(lx * 7.0 + 3.1, ph * 11.0));
+  let st = n1 * 0.6 + n2 * 0.4;
+  var col: vec3<f32>;
+  var alpha: f32;
+  if (in.info.x == MAT_LAVA_M) {
+    let glow = 0.5 + 0.5 * vnoise(vec2<f32>(lx * 3.0, ph * 4.0));
+    col = toLinear(vec3<f32>(1.0, 0.4, 0.07)) * (1.4 + 1.4 * glow) + toLinear(vec3<f32>(0.25, 0.05, 0.02)) * lighting(in.wpos, nrm);
+    alpha = 0.97 * (1.0 - smoothstep(0.75, 1.0, abs(xn))) * lead;
+  } else {
+    let aer = smoothstep(0.0, 0.9, tl);
+    let glassy = toLinear(vec3<f32>(0.33, 0.52, 0.58));
+    let white = toLinear(vec3<f32>(0.93, 0.95, 0.96));
+    let streak = smoothstep(0.45, 0.8, st);
+    col = mix(glassy, white, clamp(0.2 + 0.55 * aer + 0.4 * streak, 0.0, 1.0)) * (0.72 + 0.4 * n1) * lighting(in.wpos, nrm);
+    // (a glint down the glassy part, where it's smooth)
+    col += toLinear(vec3<f32>(0.5, 0.55, 0.6)) * (1.0 - aer) * smoothstep(0.72, 0.9, n2) * 0.5 * (1.0 - 0.8 * G.sky.w);
+    let ragged = abs(xn) + (n1 - 0.5) * 0.5;
+    let edge = 1.0 - smoothstep(0.6, 1.0, ragged);
+    // (breaking up as it falls: gaps open in the sheet lower down)
+    let holes = smoothstep(0.15, 0.4, st + 0.45 * (1.0 - aer));
+    // (a trickle faint: what a column carries decides how much it shows)
+    alpha = (0.6 + 0.3 * streak) * edge * mix(1.0, holes, 0.3 * aer) * smoothstep(0.03, 0.8, in.zr.y) * lead;
+  }
+  if (alpha < 0.01) { discard; }
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), alpha);
+  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  return o;
+}
+
+/** A flow-module liquid run under rock: dark water; lava glowing. (Streams: shadeStream.) */
+fn shadeRun(in: VOut, ci: u32) -> FOut {
+  if ((in.info.y & FLAG_DETAIL) != 0u) { return shadeStream(in, ci); }
+  var col: vec3<f32>;
+  var alpha: f32;
+  if (in.info.x == MAT_LAVA_M) {
+    let glow = 0.5 + 0.5 * vnoise(wo(in.wpos.xy) * 2.0 + vec2<f32>(0.0, simTime() * 2.0));
+    col = toLinear(vec3<f32>(1.0, 0.4, 0.07)) * (1.4 + 1.4 * glow) + toLinear(vec3<f32>(0.25, 0.05, 0.02)) * lighting(in.wpos, in.nrm);
+    alpha = 0.97;
+  } else {
+    col = toLinear(vec3<f32>(0.1, 0.24, 0.29)) * lighting(in.wpos, in.nrm);
+    alpha = 0.82;
+  }
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), alpha);
+  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  return o;
+}
 
 
 /**

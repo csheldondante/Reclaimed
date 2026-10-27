@@ -9,6 +9,8 @@ import { generateSandbox } from '../world/sandbox';
 import { generateLandforms } from '../world/landforms';
 import { generateStreamWindow } from '../world/streamgen';
 import { generateTrials } from '../levels/trials';
+import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
+import type { FlowKit } from '../flow/install';
 import type { GateSpec } from '../world/kit';
 
 /** What the title-screen model for a level looks like (menumap.ts builds it). */
@@ -40,6 +42,8 @@ export interface LevelDef {
   atlas?: boolean;
   /** the field mesh's room a chunk, times its default (rough land) */
   meshRoom?: number;
+  /** (?flow=1) its springs and scripts, once the flow model is in (docs/ARCHITECTURE.md "The flow model") */
+  flowSetup?: (kit: FlowKit) => { breach: (spring?: number) => void };
 }
 
 export const LEVELS: LevelDef[] = [
@@ -100,6 +104,16 @@ export const LEVELS: LevelDef[] = [
     stream: true,
     atlas: true,
     meshRoom: 5,
+  },
+  {
+    id: 'flowlab',
+    name: 'The Flow Lab',
+    blurb: 'A pool on a ledge, a stream in a tunnel, a lava vent: the flow model (?flow=1).',
+    model: 'sign',
+    generate: (dims) => generateFlowlab(dims),
+    sandbox: true,
+    hidden: true,
+    flowSetup: setupFlowlab,
   },
   {
     id: 'sandbox',

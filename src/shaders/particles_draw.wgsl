@@ -93,6 +93,12 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 0.5 + age * 3.0 + sr;
     soft = 1.0;
   }
+  else if (kind == 8u && P.m.w == 3u) { // (round 86) mist at a waterfall's foot: faint, white, swelling as it drifts off
+    let age = clamp(1.0 - P.p.w / 2.6, 0.0, 1.0);
+    col = vec4<f32>(vec3<f32>(0.9, 0.93, 0.95), 0.26 * (1.0 - age) * clamp(age * 6.0, 0.0, 1.0));
+    size = 0.45 + age * 1.8 + sr * 0.4;
+    soft = 1.0;
+  }
   else if (kind == 8u) { // smoke: grows and thins as it rises
     let age = clamp(1.0 - P.p.w / 11.0, 0.0, 1.0);
     col = vec4<f32>(vec3<f32>(0.22, 0.21, 0.2) + age * 0.15, 0.45 * (1.0 - age) * clamp(P.p.w, 0.0, 1.0));
@@ -159,6 +165,10 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
     size = 0.07 + sr * 0.05;
     col = vec4<f32>(0.95, 0.96, 1.0, 0.9);
   }
+  else if (kind == 24u) { // (round 86) spray off a falling stream: white water, drawn streaked along its motion
+    size = 0.05 + sr * 0.05;
+    col = vec4<f32>(mix(vec3<f32>(0.72, 0.84, 0.9), vec3<f32>(0.97, 0.98, 1.0), sr2), 0.8);
+  }
   else if (kind == 22u) { // running grain (loose ground on the move): the material's colour
     size = 0.1 + sr * 0.07;
     col = vec4<f32>(dustColour(P.m.w) * (0.78 + 0.22 * sr2), 1.0);
@@ -192,14 +202,25 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   if (kind == 13u) { shape = vec2<f32>(1.7, 0.9); }
   if (kind == 14u) { shape = vec2<f32>(1.3, 1.0); }
   if (kind == 10u) { shape = vec2<f32>(1.6, 0.8); }
-  let ndc = c * shape * px * 2.0 / CAM.viewport.xy;
+  var ndc = c * shape * px * 2.0 / CAM.viewport.xy;
+  // (spray: stretched along where it goes on screen - the streak it draws in ~1/40 s)
+  if (kind == 24u) {
+    let ahead = CAM.viewProj * vec4<f32>(P.p.xyz + P.v.xyz * 0.012, 1.0);
+    let dpx = (ahead.xy / max(ahead.w, 1e-4) - center.xy / cw) * CAM.viewport.xy * 0.5;
+    let l = length(dpx);
+    if (l > 1e-3) {
+      let ax = dpx / l;
+      let st = max(1.0, l / max(px, 1e-3));
+      ndc = (ax * c.x * st + vec2<f32>(-ax.y, ax.x) * c.y) * px * 2.0 / CAM.viewport.xy;
+    }
+  }
   o.pos = vec4<f32>(center.xy + ndc * cw, center.z - 0.0005 * cw, cw);
   // (behind the free camera: nothing)
   if (center.w <= 0.0) { o.pos = vec4<f32>(2.0, 2.0, 2.0, 1.0); }
   o.col = col;
   o.uv = c;
   o.soft = soft;
-  let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u;
+  let mote = kind == 1u || kind == 21u || kind == 22u || kind == 23u || kind == 24u;
   o.shapeInfo = vec2<f32>(select(select(0.0, 2.0, mote), 1.0, kind == 10u), select(sin(G.time * 12.0 + sr * 60.0), 0.35, perched));
   return o;
 }
