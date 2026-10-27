@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 88 (session 5, `seawall`) — a wall of water by the sea
+
+- The user, on the phone at the atlas level (the phone's defaults: hybrid, rivers=table, simcull): "I did find what
+  looks like a bug with sea level where I saw a steep wall of water." → found and fixed (DEVLOG round 88, seawall):
+  the sea's columns cut off under a raised window floor came in dry and drained whatever ran in; they now hold the
+  sea from the floor up to its level. A second wall (a table river held over a macro hollow) is a judgement call,
+  BACKLOG W2.
+
 ## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
 
 - The user, testing `collapse` on the phone: "Waterfalls and the meteor look fantastic! However, the collapse

@@ -949,6 +949,9 @@ its edge:
   of the window's edges (it did: in seconds, during the warmup). The atlas's sea is at 90 (was 28: 27
   deep at most over the floor); the ocean floor drops off near the shore (0.9 × depth over 90) then
   shelves (3 × over 70–650).
+  Round 88: a column whose ground lies under the window's floor (nothing inside) under the sea holds the sea from
+  the floor up — layout.ts `waterInWindow` wherever a column is cut at oz (Atlas.window, Streamer cutRegion /
+  reslice / slideZNow), and water_depth.wgsl drains such a column only where there's no sea (ocean.x <= 0).
 - Strata (round 79, render.wgsl `strata`, `strataTint`): rock's beds by height (a noise up the column,
   dipping only over long distances), on stone, soil, basalt and sandstone; bedded rocks (basalt,
   sandstone, obsidian) faceted as stone (they were chips, like rubble); on steep faces less per-cell
