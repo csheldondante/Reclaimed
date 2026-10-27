@@ -10,6 +10,7 @@
 //   map.onWarp = (cx, cy) => …          // optional: before the warp (the game's own bookkeeping)
 
 import type { AtlasWorld } from './atlas-world';
+import { LAKE_IN } from '../atlas/rivers';
 
 /** what the map needs of an atlas world (the API's, or the atlas level's own) */
 export type MapWorld = Pick<AtlasWorld, 'atlas' | 'core' | 'stream' | 'warp' | 'toWorld'>;
@@ -107,11 +108,19 @@ export class AtlasMap {
         let r: number;
         let g: number;
         let b: number;
+        // (round 90: a lake, inside its extent where its level is over the ground)
+        const lk = a.lakeAt.length ? a.lakeAt[y * n + x] : 0;
+        const lv = lk & LAKE_IN ? a.lakes[(lk & 0x7fff) - 1].level : -Infinity;
         if (z < sea) {
           const t = Math.min(1, (sea - z) / 70);
           r = 40 - 22 * t;
           g = 92 - 50 * t;
           b = 128 - 40 * t;
+        } else if (lv > z) {
+          const t = Math.min(1, (lv - z) / 20);
+          r = 56 - 26 * t;
+          g = 112 - 44 * t;
+          b = 150 - 30 * t;
         } else {
           const e = z - sea;
           // lowland green → upland tan → rock grey; snow where it's cold

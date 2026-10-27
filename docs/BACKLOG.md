@@ -17,7 +17,11 @@ user) · `deferred` (agreed for later).
 | id | item | size | status |
 |---|---|---|---|
 | W1 | "a steep wall of water" by the sea: where the window's floor is over 0 (a warp or a slide up by a coast), the sea's columns cut off under the floor came in dry and drained what ran in; the sea beside stood over them 26 tall (151 faces at 11600,18213) | S | done (seawall): layout.ts waterInWindow in the four cuts, water_depth.wgsl holds a cut-off column under the sea; 0 faces after |
-| W2 | A rivers=table river held over a macro hollow deeper than its levee (RIVER_LEVEE 12): its water 17-22 deep over the hollow's floor with no banks (1040,13551: a river at 123.6, the depression's spill height, over coastal ground at 101-118; 167 faces). Fill the hollow as a lake to its spill level (the per-texel fill on the GPU), or the river runs on the hollow's floor past the levee's reach? | M | asked |
+| W2 | A rivers=table river held over a macro hollow deeper than its levee (RIVER_LEVEE 12): its water 17-22 deep over the hollow's floor with no banks (1040,13551: a river at 123.6, the depression's spill height, over coastal ground at 101-118; 167 faces). Fill the hollow as a lake to its spill level (the per-texel fill on the GPU), or the river runs on the hollow's floor past the levee's reach? | M | done (lakes, round 90: the atlas keeps lakes — DEVLOG round 90; 154 → 2 faces here, the lakes' middles 0) |
+| W4 | (round 90) A giant crystal or a form with a gap under it leaning over a lake: the column's top is out of the window, waterInWindow gives it no water — a dry pocket beside the lake (lake 600: 45 faces; W2's spot: 2) | S | open |
+| W5 | (round 90) A woken chunk beside a held river's mouth into a lake is fed the river's steady flux and stands a few cells over the lake's level (lake 669's outlet: 28 faces); and what woke it, with no player there | S | open |
+| W6 | (round 90) The rivers' own walls past some lake outlets (lake 220's outlet: 276 faces, there before the lakes): a river held over lower ground beside it | M | open |
+| W7 | (round 90) Reeds at a lake's flat shore (now sand, wet margins) | S | open |
 | W3 | The window's near edges show as tall walls of strata at the default zoom where the rings past them are pressed under the focus (the hybrid's known "window's edge visible", P13) — not water, but it reads as a wall by the sea when the window's floor is raised | M | open (P13) |
 
 ## Round 88 (2026-10-27, session 5, `collapse`) — no floating rock (DECISIONS round 88)
