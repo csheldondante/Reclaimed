@@ -65,6 +65,11 @@ export interface RenderOptions {
 
 /** (perfopt) the winding of the mesh's faces out of the solid on screen (fieldmesh.wgsl makeQuads; ?front=cw to try the other) */
 const MESH_FRONT: GPUFrontFace = new URLSearchParams(location.search).get('front') === 'cw' ? 'cw' : 'ccw';
+/** (round 86) ?hybrid=1 (phone-flags' LITE_SET on the low tier): the window's heightfield chunks drawn as a grid
+ *  (meshdraw.wgsl vsGrid) — its pipelines made */
+const HYBRID = new URLSearchParams(location.search).get('hybrid') === '1';
+/** meshdraw.wgsl GRID_N: a grid chunk's lattice, vertices a side (its 32 columns and one past each edge) */
+const GRID_N = 34;
 /** (perfopt) the look's pieces ?nodetail= can leave out (meshdraw.wgsl ND_*; shadow: render.wgsl lighting) */
 const DETAIL_BITS: Record<string, number> = { strata: 1, water: 2, plants: 4, stains: 8, struct: 16, shadow: 32, warp: 64, fields: 128, specks: 256 };
 
@@ -180,6 +185,17 @@ export class Renderer {
     return this.meshPipesReady ?? Promise.resolve();
   }
   private meshResolveLayout?: GPUBindGroupLayout;
+  /** (round 86, the hybrid) the grid's pipelines (G-buffer, with the cut, forward, the sun's) and its lattice's
+   *  triangles (one chunk's: drawn with each chunk's base vertex) */
+  private gridPipes?: { g: GPURenderPipeline; gCut: GPURenderPipeline; fwd: GPURenderPipeline; shadow: GPURenderPipeline; index: GPUBuffer; count: number };
+  /** (round 86) per mesh chunk: the grid draws it, the lowest and highest of its tops (window z); null: none */
+  private gridOn: { on: Uint8Array; lo: Float32Array; hi: Float32Array } | null = null;
+  /** per mesh chunk: the grid's in view, near it (the terrain cache's margin), in the sun's box */
+  private gridView = new Uint8Array(0);
+  private gridNear = new Uint8Array(0);
+  private gridCasts = new Uint8Array(0);
+  /** grid chunks drawn last frame */
+  gridDrawn = 0;
   /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
   readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
   /** what an extra draw renders into, and the camera it reads (render.wgsl Camera) */
@@ -485,7 +501,7 @@ export class Renderer {
         // (a stage has eight storage buffers: the vertices and the mesh's
         // state (its translations) are the vertex stage's, the look's and the
         // water's (its film) the fragments')
-        { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+        { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
       );
       // (round 82, ?look=: the terrain's pixel shader cut down, to measure it on a phone — full (default), lookup
       // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
@@ -507,7 +523,7 @@ export class Renderer {
         'mesh-resolve',
         { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex' },
         VF,
-        { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 11, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+        { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
       );
       this.meshResolveLayout = resolveLayout;
       this.meshPipesReady = (async () => {
@@ -534,6 +550,43 @@ export class Renderer {
           }),
         ]);
         this.meshPipes = { g: gp, gBack, gCut, resolve };
+        // (round 86, the hybrid: the window's heightfield chunks as a grid through its columns' tops, the mesh's look)
+        if (HYBRID) {
+          const gr = (label: string, vertex: string, fragment: string | null, targets: GPUColorTargetState[], depth: GPUDepthStencilState) =>
+            device.createRenderPipelineAsync({
+              label,
+              layout: meshPl,
+              vertex: { module: meshModule, entryPoint: vertex },
+              fragment: fragment ? { module: meshModule, entryPoint: fragment, targets } : undefined,
+              primitive: { topology: 'triangle-list', cullMode: 'none' },
+              depthStencil: depth,
+            });
+          const gt: GPUColorTargetState[] = [{ format: 'rgba32uint' }, { format: 'rg32uint' }];
+          const ft: GPUColorTargetState[] = [{ format }, { format: PICK_FORMAT }];
+          const [gg, ggCut, gFwd, gShadow] = await Promise.all([
+            gr('grid-g', 'vsGridG', 'fsMeshG', gt, depthStencil(true)),
+            gr('grid-g-cut', 'vsGridG', 'fsMeshGCut', gt, depthStencil(true)),
+            gr('grid', 'vsGrid', 'fsMesh', ft, depthStencil(true)),
+            gr('shadow-grid', 'vsGridG', null, [], { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 }),
+          ]);
+          const idx = new Uint32Array((GRID_N - 1) * (GRID_N - 1) * 6);
+          let o = 0;
+          // (the lattice's rows start at the chunk's row -1: an even lattice row is an odd row of the window's,
+          // its next row shifted half a cell back; an odd one an even row, its next shifted half a cell on —
+          // meshdraw.wgsl gridAt)
+          for (let r = 0; r < GRID_N - 1; r++)
+            for (let i = 0; i < GRID_N - 1; i++) {
+              const a = r * GRID_N + i;
+              const b = a + 1;
+              const c = a + GRID_N;
+              const d = c + 1;
+              idx.set((r & 1) === 1 ? [a, b, c, b, d, c] : [a, b, d, a, d, c], o);
+              o += 6;
+            }
+          const ib = device.createBuffer({ label: 'grid index', size: idx.byteLength, usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST });
+          device.queue.writeBuffer(ib, 0, idx);
+          this.gridPipes = { g: gg, gCut: ggCut, fwd: gFwd, shadow: gShadow, index: ib, count: idx.length };
+        }
         // (the terrain's cached layer's, when it's asked for: ?tcache)
         if (Renderer.opts.tcache > 0) await this.tcPipesMake();
       })();
@@ -745,6 +798,17 @@ export class Renderer {
     // look flags (render.wgsl Camera.eye.w)
     new Float32Array(this.camData)[19] = (this.flatTops ? 1 : 0) | (this.fieldMesh.on ? 2 : 0) | (Renderer.opts.noDetail << 2);
     this.fieldMesh.cull(cam);
+    // (round 86: the grid's chunks in view, and near it for the terrain cache)
+    if (this.gridLive) {
+      const n = this.gridOn!.on.length;
+      if (this.gridView.length !== n) {
+        this.gridView = new Uint8Array(n);
+        this.gridNear = new Uint8Array(n);
+        this.gridCasts = new Uint8Array(n);
+      }
+      this.gridCull(cam.viewProj, this.gridView, 1, true);
+      this.gridCull(cam.viewProj, this.gridNear, 1.5, true);
+    }
     // (perfopt, ?cavemesh=near: the caves meshed round the player when the cut slices a roof off; all when flying)
     this.fieldMesh.setCaves(cam.cut.slice !== null ? [cam.target[0], cam.target[1]] : null, !!cam.fly);
     this.band?.mesh.cull(cam);
@@ -856,6 +920,12 @@ export class Renderer {
       if (this.band && !SKIP.has('band')) {
         pass.setBindGroup(0, this.bandGroup!);
         this.band.mesh.draw(pass);
+      }
+      // (round 86: the grid, forward — not in the depth prepass: it's drawn tested as the rest is)
+      if (this.gridLive) {
+        pass.setPipeline(this.gridPipes!.fwd);
+        pass.setBindGroup(0, this.meshGroup!);
+        this.gridDrawn = this.drawGrid(pass, this.gridView);
       }
     }
     for (const f of SKIP.has('far') ? [] : this.extraDraws) f(pass, opts.clear);
@@ -1061,6 +1131,11 @@ export class Renderer {
       g.setBindGroup(0, T.gGroups[1]);
       this.band.mesh.drawNear(g);
     }
+    if (this.gridLive) {
+      g.setPipeline(this.gridPipes!.g);
+      g.setBindGroup(0, T.gGroups[0]);
+      this.drawGrid(g, this.gridNear);
+    }
     g.end();
     const r = enc.beginRenderPass({
       label: 'tcache-resolve',
@@ -1137,6 +1212,11 @@ export class Renderer {
       pass.setBindGroup(0, this.bandGroup!);
       this.band.mesh.draw(pass);
     }
+    if (this.gridLive) {
+      pass.setPipeline(cutOn(cam) ? this.gridPipes!.gCut : this.gridPipes!.g);
+      pass.setBindGroup(0, this.meshGroup!);
+      this.gridDrawn = this.drawGrid(pass, this.gridView);
+    }
     pass.end();
     return d;
   }
@@ -1197,6 +1277,7 @@ export class Renderer {
     this.shadowAt = { m, bias: 0.25 * sz, frame: this.frameNo, rect, slides: this.fieldMesh.slides, cached: sc > 1 };
     cf.set(m, CAMERA_BYTES / 4);
     this.fieldMesh.castCull(m);
+    if (this.gridLive) this.gridCull(m, this.gridCasts, 1, false);
     // the lookup's depth bias: a quarter of a cell along the light
     cf[23] = 0.25 * sz;
     // the sun's own camera: its matrix as the view, looking from the sun
@@ -1224,6 +1305,10 @@ export class Renderer {
       pass.setPipeline(Renderer.opts.cull ? this.shadowMeshCullPipe! : this.shadowMeshPipe!);
       pass.setBindGroup(0, g.mesh);
       this.fieldMesh.drawCasters(pass);
+      if (this.gridLive && this.gridCasts.length) {
+        pass.setPipeline(this.gridPipes!.shadow);
+        this.drawGrid(pass, this.gridCasts);
+      }
       pass.setPipeline(this.shadowOpaquePipe!);
       pass.setBindGroup(0, g.opaque);
       pass.drawIndirect(this.indirect, 0);
@@ -1300,6 +1385,67 @@ export class Renderer {
     this.meshWant = want ? want.slice() : null;
     this.fieldMesh.setWanted(want);
     this.band?.mesh.setWanted(want);
+  }
+
+  /**
+   * (round 86, the hybrid) The window's heightfield chunks the grid draws (meshdraw.wgsl vsGrid: a lattice through
+   * the window's own columns' tops, the mesh's look), per mesh chunk (fieldMesh.chunkGrid's order) 1 or 0, and
+   * each chunk's lowest and highest top (window z: its box for the culling); null: none.
+   */
+  setGrid(on: Uint8Array | null, lo?: Float32Array, hi?: Float32Array): void {
+    this.gridOn = on && lo && hi ? { on: on.slice(), lo: lo.slice(), hi: hi.slice() } : null;
+  }
+
+  /** which grid chunks are in the box of clip space `m` (the view's, or the sun's) within e of the screen */
+  private gridCull(m: Float32Array, out: Uint8Array, e: number, perspective: boolean): void {
+    out.fill(0);
+    const G = this.gridOn;
+    if (!G) return;
+    const [nx, , side] = this.fieldMesh.chunkGrid;
+    const ROW = Math.sqrt(3) / 2;
+    for (let c = 0; c < G.on.length; c++) {
+      if (!G.on[c]) continue;
+      const cx = c % nx;
+      const cy = Math.floor(c / nx);
+      let lx = Infinity;
+      let ly = Infinity;
+      let hx = -Infinity;
+      let hy = -Infinity;
+      let behind = false;
+      for (let k = 0; k < 8; k++) {
+        const x = (cx + (k & 1)) * side + (k & 1 ? 1 : -1);
+        const y = (cy + ((k >> 1) & 1)) * side * ROW + (k & 2 ? 1 : -1);
+        const z = k & 4 ? G.hi[c] + 1 : G.lo[c] - 1;
+        const w = perspective ? m[3] * x + m[7] * y + m[11] * z + m[15] : 1;
+        if (w <= 1e-3) behind = true;
+        const px = (m[0] * x + m[4] * y + m[8] * z + m[12]) / Math.max(w, 1e-3);
+        const py = (m[1] * x + m[5] * y + m[9] * z + m[13]) / Math.max(w, 1e-3);
+        lx = Math.min(lx, px);
+        ly = Math.min(ly, py);
+        hx = Math.max(hx, px);
+        hy = Math.max(hy, py);
+      }
+      out[c] = behind || (hx >= -e && lx <= e && hy >= -e && ly <= e) ? 1 : 0;
+    }
+  }
+
+  /** draw the grid's chunks marked in `which` (the pipeline and group set) */
+  private drawGrid(pass: GPURenderPassEncoder, which: Uint8Array): number {
+    const P = this.gridPipes!;
+    pass.setIndexBuffer(P.index, 'uint32');
+    let n = 0;
+    for (let c = 0; c < which.length; c++) {
+      if (!which[c]) continue;
+      pass.drawIndexed(P.count, 1, 0, c * GRID_N * GRID_N);
+      n++;
+    }
+    this.profiler.draws += n;
+    return n;
+  }
+
+  /** the grid has something to draw this frame (its pipelines in, chunks of it) */
+  private get gridLive(): boolean {
+    return !!this.gridPipes && !!this.gridOn && !SKIP.has('grid');
   }
 
   private edgesOpen = false;

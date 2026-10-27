@@ -61,6 +61,68 @@ fn vsMeshG(@builtin(vertex_index) vi: u32) -> MOut {
   return o;
 }
 
+// ---- (hybrid, round 86) the window's heightfield chunks: a grid through its own columns' tops ----------------
+// A chunk whose land is a heightfield of the ground isn't meshed (no build, a few hundred vertices, not
+// thousands); it's drawn as a lattice through its columns' centres (the hex rows are a triangular lattice) at
+// each column's top — the window's own columns, so its water, plants, wetness and stains sit on it — and shaded
+// by the mesh's own look (meshShade), so it can't be told from the voxels beside it. A chunk's lattice is its
+// 32 x 32 columns and one past each edge (GRID_N a side), so it overlaps whatever is next to it by a cell.
+// Drawn indexed with the base vertex at chunk c's first: vertex_index / GRID_N^2 is the chunk (renderer.ts).
+// The mesh chunks across and their side are Globals.ocean.yz (hybrid).
+const GRID_N: u32 = 34u;
+
+/** column q's top (window z): its surface and what's loose on it (as cellWater's level) */
+fn gridTop(q: vec2<i32>) -> f32 {
+  let c = clampCell(q);
+  return sfZ(surface[colIdxI(c)]) + driftAt(c);
+}
+
+/** column q's centre (window coordinates) */
+fn gridAt(q: vec2<i32>) -> vec2<f32> { return vec2<f32>(f32(q.x) + 0.5 + 0.5 * f32(q.y & 1), (f32(q.y) + 0.5) * 0.8660254); }
+
+fn gridVertex(vi: u32) -> MOut {
+  let per = GRID_N * GRID_N;
+  let c = vi / per;
+  let k = vi % per;
+  let side = i32(G.ocean.z);
+  let nx = max(u32(G.ocean.y), 1u);
+  let lo = vec2<i32>(i32(c % nx), i32(c / nx)) * side;
+  let q = clampCell(lo - vec2<i32>(1) + vec2<i32>(i32(k % GRID_N), i32(k / GRID_N)));
+  var z = gridTop(q);
+  // (past the chunk's edge — the cell it overlaps its neighbour by — kept near the edge's own top: a form or a
+  // cliff just inside a voxel chunk doesn't pull a slope out of this one)
+  let qi = clamp(q, lo, lo + vec2<i32>(side - 1));
+  if (any(qi != q)) {
+    let zi = gridTop(qi);
+    z = clamp(z, zi - 1.5, zi + 1.5);
+  }
+  // the normal from the neighbours: along the row, and the rows above and below (their two columns straddling q)
+  let o = q.y & 1;
+  let hx = gridTop(q + vec2<i32>(1, 0)) - gridTop(q - vec2<i32>(1, 0));
+  let up = 0.5 * (gridTop(vec2<i32>(q.x + o - 1, q.y + 1)) + gridTop(vec2<i32>(q.x + o, q.y + 1)));
+  let dn = 0.5 * (gridTop(vec2<i32>(q.x + o - 1, q.y - 1)) + gridTop(vec2<i32>(q.x + o, q.y - 1)));
+  let p = vec3<f32>(gridAt(q), z);
+  var m: MOut;
+  m.pos = CAM.viewProj * vec4<f32>(p, 1.0);
+  m.wpos = p;
+  m.nrm = normalize(vec3<f32>(-hx / 2.0, -(up - dn) / (2.0 * 0.8660254), 1.0));
+  m.share = 0.0;
+  m.word = 0u;
+  m.tint = 1.0;
+  return m;
+}
+
+@vertex
+fn vsGrid(@builtin(vertex_index) vi: u32) -> MOut {
+  var m = gridVertex(vi);
+  m.tint = meshTint(m.wpos);
+  return m;
+}
+
+/** (the shadow pass's and the G-buffer's: the resolve takes the tint a pixel) */
+@vertex
+fn vsGridG(@builtin(vertex_index) vi: u32) -> MOut { return gridVertex(vi); }
+
 /** (perfopt, ?prepass=1) The depth prepass: the mesh's depth only, so the look's pass shades each pixel once. */
 @fragment
 fn fsMeshZ(in: MOut) -> FOut {
@@ -262,6 +324,9 @@ fn meshShade(in: MOut) -> FOut {
   // the plants or stains): contamination, plants, wetness, withering
   var cf: vec4<f32>;
   if (noDetail(ND_FIELDS)) { cf = cellFields1(in.wpos.xy); } else { cf = cellFields(in.wpos.xy); }
+  // (hybrid, round 86: a storm over land whose sim is asleep — a heightfield chunk past the storms' reach,
+  // scenes/hybrid.ts — is wet under it all the same, as if it had rained there)
+  if (G.numStorms > 0u && asleep(vec2<u32>(cell))) { cf.z = max(cf.z, 0.9 * stormCover(in.wpos.xy)); }
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   // (?look=lookup: the interval's material and the lighting, none of the detail)

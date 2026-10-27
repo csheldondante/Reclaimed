@@ -7,6 +7,10 @@ each was implemented.
 
 - **Performance:** "performance is now very very good! Totally fixed on mobile" (the hybrid by default on the phone tier).
 - **Rivers:** "the rivers look good!" Merged; `rivers=table` is the atlas level's default.
+- **Storms on the hybrid** (branch `hybrid`): "the surface flow was also visually really nice and I would like to verify
+  that still looks good" — with the hybrid, a storm's wetting and sheet flow stopped at the voxel island round the
+  focus (the heightfield chunks flat olive beyond it, a square patch, ponds ending at its edge). The phone's speed is to
+  be kept ("performance is now very very good!").
 - **Falls** (branch `flow`): "The waterfalls move way way too fast at 1x and visually it doesn't look as good as the old
   approach or the sand particles which look fantastic."
 - **Rock collapse:** "The rock collapsing seems very broken. There is a large lag from a meteor to when the material is

@@ -11,8 +11,9 @@ import { MATERIALS } from '../world/materials';
 import type { Atlas } from './atlas';
 import lodW from './lod.wgsl?raw';
 
-/** far.wgsl LodD: a vec4 a ring (5: ?ceiling's 1-cell ring and the four), then info, then the window's mesh chunks */
-export const LOD_UNI_BYTES = 7 * 16;
+/** far.wgsl LodD: a vec4 a ring (5: ?ceiling's 1-cell ring and the four), then info, then the window's mesh chunks,
+ *  then (round 86, the hybrid) a bit a mesh chunk the window's grid draws (64 words) */
+export const LOD_UNI_BYTES = 7 * 16 + 256;
 const MAX_RINGS = 5;
 /** seconds between one eighth of a ring made again and the next (the coarse world changes slowly) */
 const REFRESH_S = 0.4;
@@ -38,6 +39,9 @@ export class LodRings {
   /** (round 83) the window's mesh chunks (cells across a chunk, rows, chunks across, down) — the rings fill those
    *  not built yet; null: never inside the window */
   meshGrid: [number, number, number, number] | null = null;
+  /** (round 86, the hybrid) a bit a mesh chunk, set: the window's grid draws it (renderer.ts setGrid) — the rings
+   *  leave it, as they leave a built one */
+  readonly gridBits = new Uint32Array(64);
 
   constructor(
     private device: GPUDevice,
@@ -126,6 +130,7 @@ export class LodRings {
     const outer = this.made[this.made.length - 1]!;
     f.set([this.spacings.length, outer[0] * sOut - org[0], outer[1] * sOut - org[1], (n - 1) * sOut], MAX_RINGS * 4);
     if (this.meshGrid) f.set(this.meshGrid, MAX_RINGS * 4 + 4);
+    new Uint32Array(f.buffer).set(this.gridBits, MAX_RINGS * 4 + 8);
     this.device.queue.writeBuffer(this.uni, 0, f);
   }
 
