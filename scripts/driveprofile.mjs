@@ -111,6 +111,10 @@ try {
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };
   });
+  // (round 99, meshinst) the trees drawn per species as the ride ends, and a shot (--shot path)
+  const mi = await p.evaluate(async () => { const R = window.reclaimed; const m = R.core.renderer.meshInst; return m ? await m.counts(R.core.host.gpu.device, R.core.renderer.indirect) : null; });
+  if (mi) console.log(`MESHINST trees ${JSON.stringify(mi)}`);
+  if (opt('shot', '')) await p.screenshot({ path: opt('shot', '') });
   console.log(JSON.stringify(r));
   console.log(`HYBRID ${JSON.stringify(r.hybrid)}`);
   console.log(`SUMMARY p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} h50 ${r.hitches50} | per frame: ${Object.entries(r.perFrame).map(([k, v]) => `${k} ${v}`).join(', ')} | meshTotal ${Object.values(r.meshTotal).reduce((a, b) => a + b, 0).toFixed(0)} ms | in renderprep units (the clocks drift): draw ${((r.perFrame.draw + r.perFrame.gbuffer + r.perFrame['tcache-g'] + r.perFrame['tcache-r']) / r.perFrame.renderprep).toFixed(2)}, shadow ${(r.perFrame.shadow / r.perFrame.renderprep).toFixed(2)}, mesh ${Object.entries(['hash', 'sample', 'verts', 'quads'].reduce((o, k) => ((o[k] = Object.entries(r.meshTotal).filter(([n]) => n.endsWith(k)).reduce((a, [, v]) => a + v, 0) / (r.perFrame.renderprep * r.frames)), o), {})).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(' ')}`);

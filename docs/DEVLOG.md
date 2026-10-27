@@ -7430,3 +7430,54 @@ Measured with the default on (the atlas at the phone tier, every system on, the 
 (q=low 412×915, 25 s): `&rockbody=0` p50 9.8 p95 12.9 GPU 4.65 ms a frame, on p50 9.9 p95 13.3 GPU 4.75 (noise).
 A regression on places 0f0abdf reported from the phone (no tipping) didn't reproduce headlessly: there the rock bodies
 are on and the off-centre top tips at 0.6–0.95 rad/s as on cb41e7f (the phone's cached page, likely).
+
+## 2026-10-27 — round 99: External intervals and instanced meshes (`meshinst`, `?meshinst=1`, default off)
+
+Why: the user (DECISIONS round 99) asked whether ordinary meshes or instanced sprites can be mixed into the columns
+"so that we let a skewed mesh be buried instead of turning back into an ordinary layer", the layer "skipped and
+marked as being in an external system so that it can properly support columns over it and interact", and wants
+characters, buildings and trees as meshes and instancing, "faster on phone".
+
+What (ARCHITECTURE "External intervals and instanced meshes"):
+- **The contract** (src/sim/external.ts): `MAT.External` (39), aux = the fallback material; an `ExternalRegistry`
+  (instance → its intervals) through which owners claim and release cells; `verify` after each read of the ground
+  tells an owner its instance was cut, `takeExternal` that the rock judge found it loose, `orphans` turns unowned
+  External intervals back to ground after a whole read. The sims see rock that never gives; the field mesh
+  (fieldMat), the prisms (renderprep) and the hybrid grid (the chunk made voxels) don't draw it.
+- **The systems audit** (every kernel that writes intervals: grep ivPack): edit (dig, crater, smash: cut — a smash
+  turns it to rubble, rubbleOf), lava (melt, the lift under a setting flow: cut/moved), layerpull (moves what's over
+  a pulled layer: moved), landbrush, townstamp (authoring: overwrite), sediment (piles on it; joins touching
+  intervals of a material and drops aux — why the registry, not aux, says who owns what), climate (only snow and ice
+  tops), structure (strength 1: ground, never structural), liquid/flow (solid), agents' nav and phys (solid),
+  surface (its top is the column's top: water, plants and the loose sheet stand on it), ecology (growthCap 1.2:
+  moss on a boulder; what stops trees being External, BACKLOG MI6). CPU: fracture.ts (isRock: judged as rock;
+  bear 1), integrity (writes, reads, the judge), the streamer (freezes it: released before a slide), the world API
+  (`materialAt` says 'external').
+- **The instanced renderer** (render/meshinst.ts, shaders/meshinst.wgsl): kinds in one vertex and one index buffer,
+  instances (an affine with lean/skew + part params) in one storage buffer, one drawIndexedIndirect a kind in the
+  world pass and in the shadow pass, flat-shaded from derivatives, lit/hazed/cut away like the terrain.
+- **Trees** (render/treemesh.ts: broadleaf 3 lumps, conifer 3 cones, birch 2 lumps, the old giant 4; 197 vertices,
+  284 triangles for all four): vegprep writes an instance where it wrote the trunk and canopy boxes (the canopy's
+  40-step ray march is gone with them). A bug on the way: vegprep returns early for a column with nothing in its
+  lists, and a meshed tree takes no room — every tree on a column without tufts (the phone: tufts=0) was skipped.
+- **The resting rock** (integrity.ts restRigid): a rigid body at rest stays its mesh at its last transform and claims
+  its columns as External (down to the ground within 3 cells: the first try claimed only its cells, a boulder
+  touching at a corner, and the judge, weighing by columns, found it tipping and let it go at once — loose 1 of 1);
+  the rock mesh now also draws into the sun's shadow map (a resting rock has no cubes casting one).
+
+Measured (desktop iGPU, D3D11, the atlas at the phone tier q=low 412×915, every system on, 1×; scripts/meshinsttest.mjs,
+scripts/driveprofile.mjs):
+- **Forest, still** (`forest`: a wood grown round the camera, radius 70; 10 s): boxes p50 9.8 p95 10.9 ms, GPU 5.50
+  ms (draw 2.71, shadow 0.20); meshes 704 trees (312 broadleaf, 267 conifer, 109 birch, 16 giants) p50 9.8 p95 10.6,
+  GPU 5.70 (draw 2.81, shadow 0.24); 4 more draws in each pass; plant boxes 18 078 → 16 651 (the trees' 1 408; the
+  rest is shrubs and flowers). A wash at best on this GPU: the canopy march saved is about what the meshes' vertices
+  and shadows cost; the trees were never the phone's cost.
+- **Riding** (driveprofile 20 s from 15024,14337; ~20 trees in view): off p50 9.9 p95 13.4 GPU 4.50; on p50 9.9 p95
+  13.4 GPU 4.87 (draw 1.59 → 1.78) — one run each, within the ride's noise (±0.4).
+- **Memory**: +2.1 MB (instances 4 × 8192 × 64 B; the meshes 8 KB); the rock mesh's slots as before (72 blocks).
+- **The resting rock** (`rock`, the rock lab): a boulder of 138 cells dropped turning broke into 2 and both came to
+  rest as meshes: 2 instances, 163 cells External, nothing written back; the judge weighed them (weighed 3) and held
+  them. 4 layers of sand poured on: `external 12.0–16.4, sand 16.4–18.9` — buried, holding it, still drawn as its
+  mesh. A dig into one: cut 1, released 1 (its cells stone where they were, its mesh gone), the other still resting.
+  verify + orphans ≤ 0.1 ms a pass.
+Shots: C:/Projects/shots88/meshinst/ (forest_boxes/mesh, drive_0/1, rock_*).

@@ -218,7 +218,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     // (a meshed column with nothing built on it and no water draws nothing
     // here: its neighbours needn't be looked at)
     var needN = !meshCol || d > WATER_MIN;
-    if (meshCol) { for (var k = 0u; k < run; k++) { if (!fieldMat(ivMat(col[k]))) { needN = true; } } }
+    if (meshCol) { for (var k = 0u; k < run; k++) { if (!fieldMat(ivMat(col[k])) && ivMat(col[k]) != MAT_EXTERNAL) { needN = true; } } }
     for (var k = 0u; k < run; k++) { if (glassMat(ivMat(col[k])) && nGlass < GLASS_MAX) { nGlass += 1u; } }
     if (needN || nGlass > 0u) {
       for (var k = 0u; k < NDIR; k++) { gt[k] = groundTop(nbr(p, k)); }
@@ -232,6 +232,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     for (var k = 0u; k < run; k++) {
       let v = layers[cs.x + k];
       if (meshCol && fieldMat(ivMat(v))) { continue; }
+      // (round 99: an external system's interval is its owner's to draw: sim/external.ts)
+      if (ivMat(v) == MAT_EXTERNAL) { continue; }
       if (glassMat(ivMat(v))) { continue; }
       let h = hideOf(&col, k, run, gt, coverZ, coverSides);
       if (h != HIDE_ALL) { nVis += 1u; }
@@ -260,6 +262,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   for (var k = 0u; k < run; k++) {
     let v = col[k];
     if (meshCol && fieldMat(ivMat(v))) { continue; }
+    if (ivMat(v) == MAT_EXTERNAL) { continue; }
     let glass = glassMat(ivMat(v));
     if (glass && g >= GLASS_MAX) { continue; }
     var gk = gt;

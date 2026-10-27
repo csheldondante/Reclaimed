@@ -16,6 +16,9 @@
 // flowers shed by the wind (< 1) stand as bare stems until they regrow
 @group(0) @binding(8) var<storage, read> petals: array<f32>;
 @group(0) @binding(9) var<storage, read_write> instPlant: array<vec4<u32>>;
+// (round 99, ?meshinst=1: TREE_MESH) the trees as instances of their species' mesh (render/meshinst.ts: four vec4s
+// each, CAP a species), their draw args' instance counts in `indirect` from MI_ARGS (five words a species)
+@group(0) @binding(10) var<storage, read_write> instTree: array<vec4<f32>>;
 
 // (round 93) The instance lists may be smaller than their worst case (renderer.ts instgrow, ?instgrow=0 off): a write past
 // one's room is left out, the count clamped after (clampVeg) and the raw count kept for the CPU, which grows it.
@@ -181,6 +184,32 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
   return o;
 }
 
+/**
+ * (round 99, TREE_MESH) Column c's tree as an instance of its species' mesh: turned, leaning a little (a skew), its
+ * trunk and crown the heights the boxes had (the crown from the trunk's top, the old giant's half a cell lower).
+ */
+fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
+  let k = min(pl.species, MI_N - 1u);
+  let j = atomicAdd(&indirect[MI_ARGS + k * 5u + 1u], 1u);
+  if (j >= MI_CAP) { return; }
+  let at = cellPos(vec2<i32>(c));
+  let yaw = rand3(c.x, c.y, 517u) * 6.2831853;
+  let lx = (rand3(c.x, c.y, 518u) - 0.5) * 0.14;
+  let ly = (rand3(c.x, c.y, 519u) - 0.5) * 0.14;
+  let s = 0.9 + 0.2 * rand3(c.x, c.y, 520u);
+  let cs = cos(yaw) * s;
+  let sn = sin(yaw) * s;
+  var half = 1.5;
+  if (k == 2u) { half = 1.15; }
+  if (k == 3u) { half = 2.5; }
+  let base = select(pl.trunk, pl.trunk - 0.5, k == 3u);
+  let o = (k * MI_CAP + j) * 4u;
+  instTree[o] = vec4<f32>(cs, -sn, lx, at.x);
+  instTree[o + 1u] = vec4<f32>(sn, cs, ly, at.y);
+  instTree[o + 2u] = vec4<f32>(0.0, 0.0, 1.0, top);
+  instTree[o + 3u] = vec4<f32>(pl.trunk + 0.5, base, pl.crown + select(0.0, 0.5, k == 3u), half);
+}
+
 // vegPlan(): vegplan.wgsl (prepended)
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -206,7 +235,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     // (perfopt, ?tufts=0: no grass tufts — quarter-cell boxes, a third of a pixel at low; the mesh's plant cover draws the grass)
     if (!TUFTS) { pl.tufts = 0u; }
     tap = wilt[i];
-    n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree) + pl.tufts + select(0u, 1u, pl.flower);
+    n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree && !TREE_MESH) + pl.tufts + select(0u, 1u, pl.flower);
     if (G.misc.w > 0.5) { n = fineCount(veg[i], gm, id.xy); }
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
   }
@@ -228,7 +257,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     baseT = atomicLoad(&indirect[16]) + atomicAdd(&indirect[13], atomicLoad(&wgT));
   }
   workgroupBarrier();
-  if (!inside || n + nS + nT == 0u) { return; }
+  // (round 99: a tree drawn as a mesh takes no room in the lists, but is still written)
+  if (!inside || (n + nS + nT == 0u && !(TREE_MESH && pl.tree))) { return; }
   var o = baseO + off;
   let qx = id.x * 4u;
   let qy = id.y * 4u;
@@ -249,7 +279,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     putP(o, mkInst(id.x, id.y, 1u, 1u, top, top + 1.0, MAT_LEAVES, FLAG_VEG));
     o += 1u;
   }
-  if (pl.tree && G.misc.w < 0.5) {
+  if (pl.tree && G.misc.w < 0.5 && TREE_MESH) {
+    treeInstance(id.xy, top, pl);
+  }
+  if (pl.tree && G.misc.w < 0.5 && !TREE_MESH) {
     // half-cell trunk, then the canopy box (sub-voxel crown) above it
     let sp = pl.species << 16u;
     var trunk = mkInst(qx + 1u, qy + 1u, 2u, 2u, top, top + pl.trunk + 0.5, MAT_WOOD, FLAG_VEG | FLAG_DETAIL);
@@ -299,4 +332,8 @@ fn clampVeg() {
   let p = atomicLoad(&indirect[9]);
   atomicStore(&indirect[22], p);
   atomicStore(&indirect[9], min(p, arrayLength(&instPlant)));
+  // (round 99) the trees' counts held to their room (MI_CAP a species)
+  if (TREE_MESH) {
+    for (var k = 0u; k < MI_N; k++) { atomicMin(&indirect[MI_ARGS + k * 5u + 1u], MI_CAP); }
+  }
 }

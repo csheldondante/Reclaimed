@@ -187,6 +187,69 @@ now; slot-major is a one-line change in `colSlots`) is measured before it is
 changed. Bodies (rigid pieces) are left as they are; a destruction model
 where pieces turn to particles on impact is P3.
 
+### External intervals and instanced meshes (round 99, branch `meshinst`, `?meshinst=1`)
+
+The user (DECISIONS round 99): "let a skewed mesh be buried instead of turning back into an ordinary layer … the
+layer needs to be skipped and marked as being in an external system so that it can properly support columns over it
+and interact." Code: `src/sim/external.ts` (the contract and registry), `src/render/meshinst.ts` +
+`src/shaders/meshinst.wgsl` (the instanced renderer), `src/render/treemesh.ts` (the tree kinds).
+
+**The interval.** `MAT.External` (39): an interval owned by an external system, aux = the material it becomes if its
+owner lets go (0: stone). To the sims it is rock that never gives by itself (strength 1, bear 1, `span: Infinity`;
+not structural): it holds what's put on it, water and lava go round it, loose ground piles on it, moss takes on its
+top (growthCap 1.2). The terrain's draws skip it: the field mesh (meshregion.wgsl `fieldMat` is false for it, so the
+mesher treats it as air — the faces of the ground round it are drawn, buried parts of the owner's mesh are hidden by
+them), the prisms (renderprep.wgsl skips it), the hybrid grid (an owner's columns are touched: the chunk becomes
+voxels — `Integrity.onTouched` → `HybridChunks.edit`), the band and far bake (they never see it: it lives only in
+the streamed window, see slides below).
+
+**Who writes them.** Only an owner, through `ExternalRegistry.claim(owner, cols, fallback)` — it claims the free
+parts of each column span asked for (air or a liquid; ground already there is where the thing is buried, not
+claimed) — and `release(id)` (what's left becomes the fallback material in place). The registry is the truth of who
+owns what (instance → its intervals, window cells); nothing reads ownership from the GPU's words, because the sims
+may move, join or cut intervals (sediment joins touching ones of a material and drops aux; most writers keep aux).
+
+**How an owner is told.**
+- *Cut*: after each read of the ground into the integrity system's CPU copy (an edit, a meteor, a body moving),
+  `verify` checks every instance there still holds each cell it claimed; one that lost any (dug, smashed to rubble,
+  melted, moved by a pull or lava's lift) is cut — `onLost(inst, 'cut')`.
+- *Loose*: the rock judge (fracture.ts analyseRock) judges External runs like any rock; a piece or a run that gives
+  containing them has those intervals turned to their fallback material in the analysis (`Integrity.takeExternal`)
+  and their instances told — `onLost(inst, 'loose')` — before it falls as ordinary rock.
+- *Orphans*: after a whole read (a slide, an undo, a warp), External intervals no instance claims become their
+  fallback material (`orphans`, a scan of the copy's words).
+- The owner must release or take back the instance in `onLost`; the registry releases it otherwise.
+
+**What the sims may assume.** That an External interval is solid ground (they need not know of owners); that it
+does not move or change by itself; that its owner draws it. What owners may assume: that the cells they claimed
+stay External until a sim cuts or moves them, which they hear of within a judge's pass of the read (0.35 s, at
+once after an edit); nothing about aux.
+
+**Slides.** Before the window slides (Integrity.settle), an instance in the strip leaving (all of them, for a slide in
+z or a warp) is released to ground: the streamer freezes columns as they are and no owner exists over there; after
+it (Integrity.slid) the registry and the owners' transforms move with the land.
+
+**First owner: the resting rock** (`OWNER_ROCK`, game/integrity.ts `restRigid`). A rigid rock body (rockbodies.ts)
+that comes to rest keeps its mesh (render/rockmesh.ts, its slot drawn at the body's last transform, and now in the
+sun's shadow pass too: it has no cubes casting one) and claims its cells: per column from its lowest to its highest
+cell, down to the ground under it where that's within REST_FILL (3) cells (what it stands on: the judge weighs by
+columns). At most REST_MAX (16) rest at once, and a falling body short of mesh room takes the oldest's: the oldest
+becomes ground (the round-95 behaviour). Cut or loose: it becomes ground in place (stone, or its own material), its
+mesh lingers 6 frames, and the judge looks at what's left — a piece of it hanging free falls as a new body.
+
+**The instanced renderer.** Mesh kinds in one vertex buffer (x, y, z, part) and one index buffer; instances in one
+storage buffer (MI_CAP 8192 a kind; four vec4s: three affine rows — turn, scale, lean, skew; translation in w — and
+params: trunk height, crown base, crown height, crown half-width: parts 0 and 1 are stretched to them, part 2 is taken
+as it is). One `drawIndexedIndirect` a kind from the renderer's indirect buffer at MI_ARGS_WORD (24: five words a
+kind), in the world pass after the plants and in the shadow pass after them; first instance 0 (no
+indirect-first-instance feature needed: the kind comes from the vertex's index range, MI_KINDS). Lit with render.wgsl
+`lighting`, hazed, cut away with `cutAway`; flat-shaded from the position's derivatives (shared vertices). The wind's
+lean from `bend` (sway.wgsl), the season from Globals.
+
+**First consumer: trees.** vegprep.wgsl (`TREE_MESH`, its binding 10) writes a tree instance where it would have
+written the trunk and crown boxes (vegplan.wgsl: the same places, species and heights; a random turn, a lean of up to
+±0.07 a cell up, ±10% size); the player's plantings stay boxes. The trees are not External yet (see BACKLOG MI6).
+
 ## Contract buffers (src/sim/world-gpu.ts)
 
 | buffer | type | written by | read by |
