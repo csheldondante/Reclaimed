@@ -20,16 +20,56 @@ struct LodP {
  *  ground under any water (world z), the rock its faces show (rgb, its material / 255 in a); a ring's texel
  *  (I, J) is in slot (I mod n, J mod n) — moving the ring makes only the texels new to it */
 @group(0) @binding(51) var<storage, read_write> lodOut: array<vec4<f32>>;
-/** each material's albedo (materials.ts) */
-@group(0) @binding(52) var<storage, read> lodAlbedo: array<vec4<f32>>;
+/** each material's albedo (materials.ts; round 93: a uniform — the kernel's storage buffers are at the limit) */
+@group(0) @binding(52) var<uniform> lodAlbedo: array<vec4<f32>, 64>;
+/** (round 93) the atlas's ways binned (lod.ts wayBins): nbx, nby, the bin's side (bits), 0; nbx·nby + 1 offsets into
+ *  the points after them; a point a word (x · 3 | y · 3 << 16, world units) — each in every bin within WAY_REACH of it */
+@group(0) @binding(53) var<storage, read> lodWays: array<u32>;
+const WAY_REACH: f32 = 3.2;
+/** ways.ts HALF: a way's half width (paved) */
+const WAY_HALF: f32 = 2.2;
+
+/** (round 93) the distance from world point p to the nearest way's point (≤ WAY_REACH) */
+fn wayDist(p: vec2<f32>) -> f32 {
+  let nbx = lodWays[0];
+  let nby = lodWays[1];
+  let bs = bitcast<f32>(lodWays[2]);
+  if (nbx == 0u) { return WAY_REACH; }
+  let b = vec2<u32>(clamp(vec2<i32>(floor(p / bs)), vec2<i32>(0), vec2<i32>(i32(nbx) - 1, i32(nby) - 1)));
+  let k = b.y * nbx + b.x;
+  let o = 4u + nbx * nby + 1u;
+  let a0 = lodWays[4u + k];
+  let a1 = lodWays[5u + k];
+  let size = vec2<f32>(AP.worldW, AP.worldH);
+  var d2 = WAY_REACH * WAY_REACH;
+  for (var i = a0; i < a1; i++) {
+    let w = lodWays[o + i];
+    var d = vec2<f32>(f32(w & 0xffffu), f32(w >> 16u)) / 3.0 - p;
+    d -= round(d / size) * size;
+    d2 = min(d2, dot(d, d));
+  }
+  return sqrt(d2);
+}
+
+/** (round 93) the plants a column starts with (forms.wgsl colFinish's o.veg, the window's: 0..4.2) at world point p */
+fn startVeg(p: vec2<f32>, R: Region, g: Ground, h: f32, snowy: bool, wet: bool) -> f32 {
+  if (R.veg <= 0.0 || snowy || h >= AP.sea + 70.0 || g.smat != 0u || g.cap != 0u || R.cover <= 0.0) { return 0.0; }
+  var m = moistureAt(p, g.coast, R.moist);
+  if (wet || g.rx < 1.0 || (g.lk > 0.0 && h < g.lk + 2.0)) { m = max(m, 0.8); }
+  let woods = smoothstep(0.05, 0.35, pfbm(torusU(p), perOf(55.0), 3u, AP.seed + 6u)) * smoothstep(AP.sea + 60.0, AP.sea + 20.0, h);
+  let x = i32(floor(p.x));
+  let y = i32(floor(p.y / ROW_H_A));
+  let v = clamp(R.veg * (1.0 + m * 1.6 + woods * 2.2) + (hf(hash2u(x, y, AP.seed + 7u)) - 0.5) * 0.6, 0.0, 4.2);
+  let lz = select(0.0, g.loose, g.loose > 0.05 && g.lmat != 0u);
+  return v * clamp(1.0 - lz * 2.0, 0.0, 1.0);
+}
 
 fn pmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
 
-/** a region's ground at height h: its top's colour, green where it grows */
+/** a region's ground at height h: its top's colour (round 93: bare — its plants are drawn from the slot's veg, as the
+ *  window draws them, far.wgsl ringPlants) */
 fn regionColour(r: Region, h: f32) -> vec3<f32> {
-  let c = lodAlbedo[r.topMat].rgb;
-  // (hybrid: no green from 70 over the sea up — the columns' plants stop there, forms.wgsl colFinish)
-  return mix(c, vec3<f32>(0.34, 0.52, 0.2), 0.65 * smoothstep(0.3, 0.7, r.veg) * (1.0 - smoothstep(AP.sea + 58.0, AP.sea + 70.0, h)));
+  return lodAlbedo[r.topMat].rgb;
 }
 
 @compute @workgroup_size(8, 8)
@@ -61,7 +101,31 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   if (g.smat != 0u) { c = lodAlbedo[g.smat].rgb; }
   if (g.cap != 0u) { c = vec3<f32>(0.18, 0.17, 0.18); }
   if (g.loose > 0.1) { c = mix(c, lodAlbedo[g.lmat].rgb, clamp(g.loose, 0.0, 1.0)); }
-  if (temperature(p, h) < 0.0 && h > AP.sea) { c = vec3<f32>(0.86, 0.88, 0.92); }
+  let snowy = temperature(p, h) < 0.0;
+  if (snowy && h > AP.sea) {
+    c = vec3<f32>(0.86, 0.88, 0.92);
+    // (round 93: and snow's its top, as the window's — no grass drawn over it)
+    if (g.smat == 0u && g.cap == 0u) { mat = 25u; }
+  }
+  // (round 93: the window's top where it's wet — sand or silt by the sea, a lake's beach, a river's bed —
+  // forms.wgsl colFinish; and the plants it starts with, and the ways)
+  let wet = h < AP.sea + 1.2;
+  let river = g.rx < 1.0;
+  if (wet && !snowy && g.smat == 0u && g.loose <= 0.1) {
+    mat = select(3u, 22u, ra.topMat == 22u);
+    c = lodAlbedo[mat].rgb;
+  }
+  if (river && g.rflags != 1u && g.smat == 0u && g.loose <= 0.1) {
+    mat = select(3u, 22u, g.rx < 0.5);
+    c = lodAlbedo[mat].rgb;
+  }
+  if (g.lk > 0.0 && !river && g.lkw && h < g.lk + 1.5 && h >= g.lk - 0.6) {
+    mat = 3u;
+    c = lodAlbedo[mat].rgb;
+  }
+  var veg = select(startVeg(p, ra, g, h, snowy, wet), 0.0, h < AP.sea || (g.lkw && g.lk > h) || (river && g.rl > h));
+  let wd = wayDist(p);
+  if (wd < WAY_HALF + 0.5) { veg = 0.0; }
   var top = h;
   // water over it: the sea, a river (lava glowing)
   if (h < AP.sea) {
@@ -77,6 +141,8 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (g.clava > 0.05) { c = mix(c, vec3<f32>(1.0, 0.4, 0.06), clamp(g.clava, 0.0, 1.0)); }
   let ca = pack4x8unorm(vec4<f32>(c, f32(mat) / 255.0));
-  let rc = pack4x8unorm(vec4<f32>(lodAlbedo[rock].rgb, f32(rock) / 255.0));
+  // (round 93: the rock's material, the plants (0..4.2 in 1/60), the way's distance (0..WAY_REACH) — the rock's colour is
+  // its material's, far.wgsl)
+  let rc = (rock & 0xffu) | (u32(round(clamp(veg, 0.0, 4.25) * 60.0)) << 8u) | (u32(round(wd / WAY_REACH * 255.0)) << 16u);
   lodOut[LP.at.x + id.y * u32(n) + id.x] = vec4<f32>(top, bitcast<f32>(ca), h, bitcast<f32>(rc));
 }

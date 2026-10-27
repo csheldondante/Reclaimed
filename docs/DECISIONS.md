@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 93 (session 5, `fardetail`) — detail past the window, cheap
+
+- The user, on main's option 5 (plants, roads and grass colour on the far land, baked once as 2D maps): "I'm also
+  curious about number 5 and it seems like that could be fairly cheap and fast and resolve much of the visual pop in
+  on its own. Maybe have another agent explore that in parallel?"
+- Earlier (round 91): "I notice that I easily hit the edge of the loaded ground"
+- → The LOD rings past the window bake, once per texel as they already do, the plants the window's columns start
+  with and the distance to the atlas's ways, and draw them the window's way (its ground colour, grass, paved ways,
+  painted trees, its light); the near side no longer pressed flat. `?fd=0` the old look. See DEVLOG round 93.
+
 ## 2026-10-27 — round 91 (session 5, `phonecam`) — names on the map, a compass, the edge of the land
 
 - The user, on the phone at the atlas level: "I think the map needs to show you names of place and a directional

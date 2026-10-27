@@ -445,6 +445,15 @@ the rock's albedo and material beside the top's) in beds (render.wgsl's
 strata), lit by the sun, the sky and a bounce; no green from 70 over the
 sea up (as colFinish's plants).
 
+Round 93 (`fardetail`): the rings' slot's last word is the rock's material, the
+plants the window's columns start with (colFinish's rule; 1/60 a step) and the
+distance to the nearest way (lod.ts `wayBins`: the atlas's way points binned
+once, a storage buffer; the albedos a uniform, `farAlbedo`, shared with
+far.wgsl). fsLod draws them with `ringWindowLook` (meshShade's ground, grass,
+flowers, paving and water; render.wgsl's lighting and haze from the Globals the
+level hands FarLand a frame as `FarLight`; painted trees over a wood's ground)
+unless `?fd=0`. underFocus keeps the land only under the eye's line to the focus.
+
 Round 86 (the grid): a heightfield chunk is one of two kinds. Most are the
 **grid's** — their columns' tops all within the window's z, their land come
 in over 0.4 s ago — drawn by the renderer as a lattice through the window's

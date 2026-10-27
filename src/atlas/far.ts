@@ -12,10 +12,23 @@ import meshStateW from '../shaders/meshstate.wgsl?raw';
 import { LOD_UNI_BYTES, LodRings } from './lod';
 import { ROW_H } from '../world/lattice';
 
-const UNI_BYTES = 96 + 5 * 16;
+const UNI_BYTES = 96 + 10 * 16;
 /** vertices a side, and world units between them */
 const G = 161;
 const SPACING = 32;
+
+/** (round 93) the window's light and look (the Globals' — render.wgsl lighting), for the rings to be lit as it is */
+export interface FarLight {
+  /** the sun's way (Globals.sun) and its colour (Globals.sunCol: rgb × intensity) */
+  sun: readonly number[];
+  sunCol: readonly number[];
+  /** the sky's ambient rgb and the night 0..1 (Globals.sky) */
+  sky: readonly number[];
+  /** the window's first cell (Globals.origin) */
+  origin: readonly number[];
+  season: number;
+  pollution: number;
+}
 
 export interface FarTargets {
   /** (round 83) the window's field mesh: its state (which chunks are built) and chunks across and down — the
@@ -56,6 +69,13 @@ export class FarLand {
   focus: [number, number, number] | null = null;
   /** (round 86) the storms (window coordinates; far.wgsl farStorm): drawn on the land the rings draw */
   storms: { x: number; y: number; radius: number; intensity: number }[] = [];
+  /** (round 93) the window's light (the level sets it a frame); null: the rings' own look */
+  light: FarLight | null = null;
+  /** (round 93, ?fd=0: off) the rings drawn with the window's look — its ground colour, plants, ways, trees, light */
+  windowLook = new URLSearchParams(location.search).get('fd') !== '0';
+  /** (round 93, ?fdveg=) the plants the window's sim has grown on soil and silt by now — the rings draw at least this
+   *  there (its columns start barer; the window greens over in play) */
+  grownVeg = Number(new URLSearchParams(location.search).get('fdveg') ?? 1.6);
 
   constructor(
     private device: GPUDevice,
@@ -123,6 +143,7 @@ export class FarLand {
         { binding: 45, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 46, visibility: VF, buffer: { type: 'uniform' } },
         { binding: 47, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 48, visibility: VF, buffer: { type: 'uniform' } },
       ],
     });
     this.lod = lod ? new LodRings(device, atlas, lod.spacings, lod.n) : null;
@@ -131,6 +152,7 @@ export class FarLand {
     // (no rings: an empty LodD, its count 0)
     const lodData = this.lod?.data ?? device.createBuffer({ label: 'lod none', size: 16, usage: GPUBufferUsage.STORAGE });
     const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: LOD_UNI_BYTES, usage: GPUBufferUsage.UNIFORM });
+    const albedoU = this.lod?.albedo ?? device.createBuffer({ label: 'far no albedo', size: 64 * 16, usage: GPUBufferUsage.UNIFORM });
     this.group = device.createBindGroup({
       label: 'far',
       layout,
@@ -143,6 +165,7 @@ export class FarLand {
         { binding: 45, resource: { buffer: lodData } },
         { binding: 46, resource: { buffer: lodUni } },
         { binding: 47, resource: { buffer: meshState } },
+        { binding: 48, resource: { buffer: albedoU } },
       ],
     });
     const module = device.createShaderModule({ label: 'far', code: meshStateW + '\n' + farW });
@@ -227,6 +250,14 @@ export class FarLand {
     const ns = Math.min(4, this.storms.length);
     for (let i = 0; i < ns; i++) f.set([this.storms[i].x, this.storms[i].y, this.storms[i].radius, Math.min(1, this.storms[i].intensity)], 24 + i * 4);
     f.set([ns, (performance.now() / 1000) % 1000, 0, 0], 40);
+    const L = this.light;
+    if (L) {
+      f.set([L.sun[0], L.sun[1], L.sun[2], 1 - L.sky[3]], 44);
+      f.set([L.sunCol[0], L.sunCol[1], L.sunCol[2], 0], 48);
+      f.set([L.sky[0], L.sky[1], L.sky[2], L.sky[3]], 52);
+      f.set([L.origin[0], L.origin[1] * ROW_H, L.origin[0], L.origin[1]], 56);
+      f.set([L.season, L.pollution, this.windowLook ? 1 : 0, this.grownVeg], 60);
+    }
     this.device.queue.writeBuffer(this.uni, 0, f);
     const now = performance.now();
     if (this.lod) {

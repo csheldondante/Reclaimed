@@ -18,6 +18,50 @@ const MAX_RINGS = 5;
 /** seconds between one eighth of a ring made again and the next (the coarse world changes slowly) */
 const REFRESH_S = 0.4;
 const BANDS = 8;
+/** lod.wgsl lodAlbedo's size */
+const ALBEDOS = 64;
+/** (round 93) lod.wgsl WAY_REACH; world units a bin's side */
+const WAY_REACH = 3.2;
+const WAY_BIN = 64;
+/** ways.ts WAY.tunnel, WAY.lift: not on the ground */
+const WAY_UNDER = [1, 4];
+
+/**
+ * (round 93) The atlas's ways for the rings (lod.wgsl wayDist): a grid of WAY_BIN bins over the world, each listing
+ * every way point within WAY_REACH of it (a point in up to four), a word a point (x · 3 | y · 3 << 16) — made once.
+ * Header: bins across, down, the bin's side (f32 bits), 0; then bins + 1 offsets; then the points.
+ */
+export function wayBins(atlas: Atlas): Uint32Array {
+  const W = atlas.worldW;
+  const H = atlas.worldH;
+  const nbx = Math.ceil(W / WAY_BIN);
+  const nby = Math.ceil(H / WAY_BIN);
+  const counts = new Uint32Array(nbx * nby);
+  const pts = atlas.ways.points.filter((p) => !WAY_UNDER.includes(p.kind));
+  const binsOf = (x: number, y: number, f: (k: number) => void) => {
+    const i0 = Math.floor((x - WAY_REACH) / WAY_BIN);
+    const i1 = Math.floor((x + WAY_REACH) / WAY_BIN);
+    const j0 = Math.floor((y - WAY_REACH) / WAY_BIN);
+    const j1 = Math.floor((y + WAY_REACH) / WAY_BIN);
+    for (let j = j0; j <= j1; j++)
+      for (let i = i0; i <= i1; i++) f(((j % nby) + nby) % nby * nbx + (((i % nbx) + nbx) % nbx));
+  };
+  for (const p of pts) binsOf(p.x, p.y, (k) => counts[k]++);
+  const off = new Uint32Array(nbx * nby + 1);
+  for (let k = 0; k < nbx * nby; k++) off[k + 1] = off[k] + counts[k];
+  const out = new Uint32Array(4 + off.length + off[nbx * nby]);
+  out[0] = nbx;
+  out[1] = nby;
+  out[2] = new Uint32Array(new Float32Array([WAY_BIN]).buffer)[0];
+  out.set(off, 4);
+  const fill = off.slice(0, nbx * nby);
+  const base = 4 + off.length;
+  for (const p of pts) {
+    const w = (Math.min(65535, Math.round(p.x * 3)) | (Math.min(65535, Math.round(p.y * 3)) << 16)) >>> 0;
+    binsOf(p.x, p.y, (k) => (out[base + fill[k]++] = w));
+  }
+  return out;
+}
 
 export class LodRings {
   /** each ring's slots: top, colour, the ground, the rock — rings × n² (lod.wgsl lodOut) */
@@ -28,7 +72,12 @@ export class LodRings {
   private groups: GPUBindGroup[] = [];
   private atlasParams: GPUBuffer;
   private ringParams: GPUBuffer[];
-  private albedo: GPUBuffer;
+  /** each material's albedo (ALBEDOS vec4s; a uniform: lod.wgsl, far.wgsl) */
+  readonly albedo: GPUBuffer;
+  /** (round 93) the ways binned (wayBins) */
+  private ways: GPUBuffer;
+  /** the GPU bytes the rings hold (their slots, the ways, the albedos) */
+  readonly bytes: number;
   /** each ring's corner as made (world texel indices), null: not yet */
   private made: ([number, number] | null)[];
   private refresh = REFRESH_S;
@@ -59,16 +108,23 @@ export class LodRings {
     this.atlasParams = device.createBuffer({ label: 'lod atlas params', size: atlas.paramBuf.size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     atlas.writeParams({}, this.atlasParams);
     this.ringParams = spacings.map(() => device.createBuffer({ label: 'lod ring', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
-    const alb = new Float32Array(Math.max(1, MATERIALS.length) * 4);
+    // (round 93: a uniform — the kernel's storage buffers are at WebGPU's 8; far.wgsl reads it too)
+    if (MATERIALS.length > ALBEDOS) throw new Error(`LodRings: more than ${ALBEDOS} materials`);
+    const alb = new Float32Array(ALBEDOS * 4);
     MATERIALS.forEach((m, i) => alb.set([...m.albedo, 1], i * 4));
-    this.albedo = device.createBuffer({ label: 'lod albedo', size: alb.byteLength, usage: S });
+    this.albedo = device.createBuffer({ label: 'lod albedo', size: alb.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.albedo, 0, alb);
+    // (round 93) the ways, binned for the rings' kernel (made once)
+    const wb = wayBins(atlas);
+    this.ways = device.createBuffer({ label: 'lod ways', size: wb.byteLength, usage: S });
+    device.queue.writeBuffer(this.ways, 0, wb);
+    this.bytes = this.data.size + wb.byteLength + alb.byteLength;
     this.made = spacings.map(() => null);
     const module = makeModule(device, 'lod', atlas.parts(lodW));
-    void makeComputeAsync(device, 'lod', module, { 0: 'uniform', 20: 'read', 21: 'read', 22: 'read', 23: 'read', 25: 'read', 26: 'read', 50: 'uniform', 51: 'rw', 52: 'read' }, 'lodHeight').then((k) => {
+    void makeComputeAsync(device, 'lod', module, { 0: 'uniform', 20: 'read', 21: 'read', 22: 'read', 23: 'read', 25: 'read', 26: 'read', 50: 'uniform', 51: 'rw', 52: 'uniform', 53: 'read' }, 'lodHeight').then((k) => {
       const a = this.atlas;
       this.groups = this.ringParams.map((rp) =>
-        makeBindGroup(device, 'lod ring', k.layout, { 0: this.atlasParams, 20: a.region, 21: a.dist, 22: a.regs, 23: a.pat, 25: a.riverBuf, 26: a.coarse.cells, 50: rp, 51: this.data, 52: this.albedo }),
+        makeBindGroup(device, 'lod ring', k.layout, { 0: this.atlasParams, 20: a.region, 21: a.dist, 22: a.regs, 23: a.pat, 25: a.riverBuf, 26: a.coarse.cells, 50: rp, 51: this.data, 52: this.albedo, 53: this.ways }),
       );
       this.kernel = k;
     });
@@ -139,6 +195,7 @@ export class LodRings {
     this.uni.destroy();
     this.atlasParams.destroy();
     this.albedo.destroy();
+    this.ways.destroy();
     for (const b of this.ringParams) b.destroy();
   }
 }

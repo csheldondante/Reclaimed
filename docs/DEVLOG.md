@@ -6892,3 +6892,75 @@ Why: `lakes` (round 90) names the atlas's lakes in the wiki, but the cached atla
 pulled before it. Pulled again on `places` after merging lakes and settlements: 7772 regions, 140 sites, 171 roads;
 the markdown now names its lakes (39 mentions round the spawn). The merged build loads clean at q=low 412x915 with
 813 lakes and 141 settlements (shots88/merge91/).
+
+## Round 93 — the land past the window drawn the window's way (`fardetail`, BACKLOG N6)
+
+The user, on main's option 5 (plants, roads and grass colour on the far land, baked once as 2D maps): "I'm also
+curious about number 5 and it seems like that could be fairly cheap and fast and resolve much of the visual pop in on
+its own" (DECISIONS round 93; round 91: "I easily hit the edge of the loaded ground").
+
+**Measured first** (scripts/fdshot.mjs, new: q=low 412×915, the phone's zoom, a shot plain and one with the window's
+edge drawn over it, and the seam's colour — 5 × 5 pixel means 4 cells either side of the edge, along it — at
+11956,15471, the towns at 12176,15632 and 11632,16113, the drive's 12304,5457; straight and turned 105°). What
+differed across the edge, biggest first:
+1. **The grass.** The window's ground is grass by the plants its columns start with and its sim grows (a quarter
+   cell green where its random is under the cover, each a little lighter or darker, flowers), lit by the day's sun and
+   sky in linear light; the rings' was a region's top colour mixed 65% with one green, in sRGB, lit by a fixed sun — a
+   dull olive blur (window grass ~(130,195,76), the rings' ~(122,126,95) in the shot).
+2. **The near side pressed flat** under the focus's height (underFocus): turned, at a town, a white or green floor
+   where the land falls away — the seam's |dLuma| 29.5 there.
+3. **Ways**: none past the window (the atlas's roads stop at the edge), the window's are brick-paved.
+4. **Water**: the rings' sea a saturated blue, the window's grey-teal with ripples and foam.
+5. Trees (the window's boxes; none past it), towns (the window's plans; none past it), shadows.
+
+**What changed.** All of it is baked where the rings already bake (lod.wgsl `lodHeight`: once a texel as it comes
+into a ring — a camera move of 8 spacings makes only the new strips — and a band of a ring every 0.4 s); nothing new
+runs a frame but the light. The slot stays 16 bytes: its last word, the rock's colour, is now the rock's material (its
+albedo looked up: `farAlbedo`, a 64-entry uniform), **the plants the window's columns start with** (forms.wgsl
+colFinish's rule exactly: the region's veg, the moisture, the woods' noise, its random; 0 under water, snow, an oddity,
+set lava, over sea + 70; 1/60 a step) and **the distance to the nearest way** (0..3.2 world units: lod.ts `wayBins`
+bins the atlas's 98 533 way points — roads, switchbacks, bridges and the plazas; not tunnels or lifts — into 64-unit
+bins, each point in every bin within reach, a word a point; made once, 0.72 MB). The top's material is the window's
+where it's wet (sand or silt by the sea, a lake's beach, a river's bed) and snow where it's freezing. The albedos moved
+from a storage buffer to a uniform: the kernel was at WebGPU's 8 storage buffers, the ways take the place.
+far.wgsl `ringWindowLook` draws it as meshdraw.wgsl meshShade does: the top's albedo in linear light with the window's
+large-scale tint (meshTint, per vertex: the same noise and G.org) and its specks a cell; the grass by the plants
+(meshShade's colours, its season turn, the painted tufts' shade, flowers), a quarter cell's pattern while a pixel is
+under 1.5 cells, its average past that; paved ways (brick, edge antialiased from the distance's fwidth); water by its
+depth over its bed (fsWater's colours, ~1.9× for its ripples and foam, a fleck a quarter cell); lit by render.wgsl's
+lighting without shadows (the Globals' sun, its colour, the sky, the night: FarP.sun/sunCol/sky, set by the level a
+frame — `FarLight`) and its haze, then sRGB. **Trees** where the plants are a wood's (vegplan.wgsl: v ≥ 3.6, 4.5% of
+cells — here a 3-unit lattice square in three): no geometry — a crown drawn where it stands on the screen (a point h up
+lands h / tan(elevation) further from the eye on the ground: the ground fragments that see it paint it, lit as a ball),
+broadleaf or conifer, its shadow on the ground the sun's way; up to 25 lattice squares a pixel, only on a wood's ground.
+**The window's sim greens its soil over** (65% reclaimed at the start: the shots' window is grass where its columns
+started bare); the rings draw at least `?fdveg=` (1.6) on soil, silt and leaf litter — a judgement call: the window's
+plants then the rings' read the same, but a bare patch the window keeps bare is green past it.
+**The near side**: underFocus now keeps the land only under the line from the focus to the eye (× 0.85) — what
+would rise into it — not under the focus's height: the land past the window on the eye's side has its own shape (the
+turned town: the seam's |dLuma| 29.5 → 17.8, |dChroma| 16.3 → 6.6).
+`?fd=0` draws the old look (the bake is the new one either way: its plants are drawn only by the new look).
+
+**Measured after** (the same spots; seam |dLuma| / |dChroma|, lower is less of an edge — a crude number: the land's
+own changes across the edge count too):
+
+| spot | before | after |
+|---|---|---|
+| start | 22.9 / 16.1 | 21.6 / 14.8 |
+| start turned 105° | 27.2 / 18.0 | 25.6 / 17.3 |
+| town 12176,15632 | 11.3 / 7.0 | 12.2 / 7.0 |
+| town turned 105° | 29.5 / 16.3 | 17.8 / 6.6 |
+
+The start's seam is the window's sea and snow against the rings' — the window's own content, not the look. By eye
+(C:/Projects/shots88/fardetail/before-*.png, after2-*.png, after3-start-t0.png with the speckle and flowers): the far grass is the window's green, the roads run on past
+the edge, the near side has its slopes.
+driveprofile (q=low 412×915, 12304,5457, speed 18, 30 s; the desktop iGPU): before p50 9.8, p95 10.7, p99 14.5, worst
+72, draw 5.33 ms, GPU 9.30 ms/frame; after p50 9.9, p95 10.7, p99 15.6, worst 64, draw 5.69 ms, GPU 9.84 ms/frame —
+**+0.36 ms of draw** (the rings' fragments: the look and the trees), the rest run to run noise (agents 0.26 → 0.55).
+The rings' dispatches unchanged (lod 1–16: 0.4–1.0 ms each, when one runs). Memory: the rings hold 3.71 MB (the slots'
+2.98 MB as before; the ways 0.72 MB new; the albedos 1 KB). edgeprobe (pan, W held) unchanged: 53% of the view past the
+window (the window's size is winmem's), the slides as before. Pan GIFs: pan-before.gif, pan-after.gif.
+
+Not done (BACKLOG N6): towns past the window (the window's plans are made only when their land arrives — planned
+ones could be baked into the rings the way the ways are); the window's real trees pop in as its chunks build (the
+painted crowns stand where the lattice puts them, not where vegplan's do); shadows and clouds on the rings.

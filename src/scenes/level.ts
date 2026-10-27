@@ -1332,6 +1332,9 @@ export class LevelScene implements Scene {
           const [tx, ty, tz] = core.camera.target;
           far.focus = core.camera.fly ? null : [tx, ty, this.cutaway ? tz : this.heightAt(tx, ty)];
           far.storms = core.weather.storms;
+          // (round 93: the window's light, for the rings to be lit as it is)
+          const G = core.globals;
+          far.light = { sun: G.sun, sunCol: G.sunCol, sky: G.sky, origin: G.origin ?? [0, 0], season: G.season ?? 0, pollution: G.pollution };
           far.draw(pass, clear);
         });
       }
@@ -1425,6 +1428,8 @@ export class LevelScene implements Scene {
       },
       stream: this.stream,
       atlas: this.opts.atlas?.atlas,
+      // (round 93) the land past the window: far.lod.bytes, far.windowLook, far.grownVeg
+      far: this.far,
       toggleFly: () => this.toggleFly(),
       // (round 86) the meteor tool's landing at world (x, y, z) now, without its flight; the last great meteor's window edit (ms)
       meteorNow: (x: number, y: number, z: number) => this.impact([x, y, z]),
