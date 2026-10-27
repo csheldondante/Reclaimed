@@ -7028,8 +7028,9 @@ the plan itself is 26–82 ms of CPU (measured below) — a phone's frame severa
 **How the rough ground matches the raw.** It is the columns' own starting function (compose.wgsl `ground`, the
 mesa's lip, what's loose on it, the sea's, lakes' and rivers' levels, the ways stamped) — what it lacks is the atlas's
 forms (rocks, arches, the lattice's pieces stood on the ground) and caves. Where a town stands (flat, dry ground by
-the plan's own choice) those are rare. IoU of the far plan's cover with the exact plan's, measured where a town's land
-came in after its far plan: see the table below.
+the plan's own choice) those are rare. Measured on the drive (12304,5457, `&drive=18`, 90 s): the city s55 was far
+planned, then its land came in and the window planned it exactly — **IoU 0.976** of their tops' cover (1-unit texels):
+the window builds the town the bake drew.
 
 **Measured** (the desktop iGPU; driveprofile q=low 412×915 at 12304,5457, speed 18, 30 s, everything in play):
 
@@ -7056,8 +7057,12 @@ lighter past the edge: the woods' shade there is averaged, not each painted crow
 edge differs from the bake as much as it did from round 93's look, so a region entering the window changes as it did
 — no fade was added (open: FB5).
 
-Shots (C:/Projects/shots88/farbake/): before-/after-s56-d{250,500,1000}-t{0,105}.png — the city s56 (12272, 6937) seen
-from 250, 500 and 1000 world units, straight and turned 105°; fd-before-/fd-after-* the seam shots.
+Shots (C:/Projects/shots88/farbake/, scripts/farshot.mjs): before-/after-12432_5335-d{250,500,1000}-t{0,105}.png — the
+city s55 seen with the camera 250, 500 and 1000 world units from it (zoom 300 / d, so it stands as far up the view),
+straight and turned 105° (turned at 250 the clearest: the bake's town — roofs, plaza, fields' edges — past the window
+where round 93 had only the plaza's paving); before-/after-s56-* the same on a coast (the window in the sea; the
+editor's panel over it); fd-before-/fd-after-* the seam shots. Also seen: lava rivers past the window now glow as
+unbroken lines (the bake's lava is drawn unlit), round 93's broken dashes.
 ## Round 92 — what holds rock up; the meteor-made floaters (`collapse`)
 
 Why: the user (DECISIONS round 92) — a huge pillar top stayed up on a two-column leg after a meteor at its foot (a
