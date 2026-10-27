@@ -43,6 +43,9 @@ export interface Fracture {
   undecided?: [number, number][];
   /** (round 92, analyseRock) why what fell fell: held nowhere, a joint's load, crushed under it, tipped (counts) */
   why?: { free: number; load: number; crush: number; tip: number };
+  /** (round 95, RockOpts.rotate) pieces that tip: the index in `pieces`, the edge they tip over (world x, y at
+   *  height z, its direction a horizontal unit vector, turned the way it tips: right-handed about it) */
+  tips?: { piece: number; pivot: [number, number, number]; axis: [number, number, number] }[];
 }
 
 /** (round 86) a piece of rock by its columns: each one's runs (window z, fractional ends kept) */
@@ -662,6 +665,11 @@ export interface RockOpts {
    * leaning spire there stood untouched and fell)
    */
   weigh?: boolean | ((x: number, y: number) => boolean);
+  /**
+   * (round 95, `?rockbody=1`) what tips turns: a piece whose centre of mass is off what it stands on isn't dropped
+   * through crushed columns — it's cut free above them (they stand) and its edge reported (`tips`), to topple about
+   */
+  rotate?: boolean;
 }
 
 /**
@@ -698,7 +706,7 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
   const weigh = weighAll !== false;
   /** (round 92) runs a neck's flood found keyed into the land above a height: any flood from that height or lower is */
   const keyedAt = new Map<Run, number>();
-  const result: Fracture = { bodies: [], crumble: [], pieces: [], crumbleRuns: [], need: [], undecided: [], why: { free: 0, load: 0, crush: 0, tip: 0 } };
+  const result: Fracture = { bodies: [], crumble: [], pieces: [], crumbleRuns: [], need: [], undecided: [], why: { free: 0, load: 0, crush: 0, tip: 0 }, tips: [] };
   const cache = new Map<number, Run[]>();
   const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h;
   const unknown = new Set<number>();
@@ -958,6 +966,19 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     if (M <= bear && !tips) return;
     if (tips) result.why!.tip++;
     else result.why!.crush++;
+    // (round 95) it turns over the edge of what it stands on: cut free above it, nothing crushed
+    if (tips && opts.rotate) {
+      const fall: RunPiece = [];
+      for (const r of list) {
+        const up = clipIvs(r, B.get(r)!.z0);
+        if (up.length) fall.push({ x: r.x, y: r.y, ivs: up });
+      }
+      const e = hullEdge(foot, mx / M, my / M);
+      result.tips!.push({ piece: result.pieces!.length, pivot: [e.at[0], e.at[1], zc], axis: [e.axis[0], e.axis[1], 0] });
+      result.pieces!.push(fall);
+      for (const r of list) seen.set(r, piece[0]);
+      return;
+    }
     // it gives: the standing columns under it crush from where it would land to zc; it all falls from there
     let land = 0;
     for (const r of piece) {
@@ -979,6 +1000,53 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     // (what's in it isn't judged again this pass)
     for (const r of list) seen.set(r, piece[0]);
   }
+}
+
+/**
+ * (round 95) The edge of these columns' hull (world centres, a cell across) that (cx, cy) lies furthest outside: the
+ * point on it nearest (cx, cy) and its direction, signed so that turning right-handed about it carries (cx, cy) out
+ * and down.
+ */
+function hullEdge(cols: [number, number][], cx: number, cy: number): { at: [number, number]; axis: [number, number] } {
+  const hull = hullOf(cols);
+  let best = { at: [cx, cy] as [number, number], axis: [1, 0] as [number, number] };
+  let worst = Infinity;
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i];
+    const b = hull[(i + 1) % hull.length];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const ux = (b[0] - a[0]) / L;
+    const uy = (b[1] - a[1]) / L;
+    // (counter-clockwise hull: inside is to the left, the signed distance negative outside)
+    const s = (ux * (cy - a[1]) - uy * (cx - a[0]));
+    if (s < worst) {
+      worst = s;
+      const t = Math.max(0, Math.min(L, (cx - a[0]) * ux + (cy - a[1]) * uy));
+      // (about u, right-handed, up turns toward u × up = (uy, -ux): to the right of a→b, outside)
+      best = { at: [a[0] + ux * t, a[1] + uy * t], axis: [ux, uy] };
+    }
+  }
+  return best;
+}
+
+/** (round 95) the convex hull (counter-clockwise) of columns (world centres, each a cell across) */
+function hullOf(cols: [number, number][]): [number, number][] {
+  const pts: [number, number][] = [];
+  for (const [x, y] of cols) pts.push([x - 0.5, y - 0.5], [x + 0.5, y - 0.5], [x - 0.5, y + 0.5], [x + 0.5, y + 0.5]);
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: [number, number][] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  return lower.slice(0, -1).concat(upper.slice(0, -1));
 }
 
 /** (round 92) Is (cx, cy) over the convex hull of these columns (world centres, each a cell across), within `give`? */

@@ -20,6 +20,8 @@ const q = opt('q', 'low');
 const gif = opt('gif', '');
 const gifCase = opt('gifcase', 'tall');
 const LIMIT = Number(opt('limit', 200));
+// (round 95, --extra "&rockbody=1": more of the page's params)
+const extra = opt('extra', '');
 const CASES = [
   { name: 'spire', mat: 'stone', radius: 2.5, height: 40, tool: 'smash' },
   { name: 'wide', mat: 'stone', radius: 4.5, height: 70, tool: 'smash' },
@@ -47,7 +49,7 @@ try {
     console.log('pageerror', e.message);
   });
   p.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.log('console', m.text()));
-  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await sleep(12000);
   // (round 92: 12 apart round the camera — the streamer is on: 16 apart took the last past its reach, and it slid)

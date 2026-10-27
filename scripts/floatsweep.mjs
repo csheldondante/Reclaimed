@@ -23,6 +23,8 @@ const url = opt('url', 'http://localhost:5271');
 const gif = opt('gif', '');
 const gifCase = opt('gifcase', 'wide-banded-taps');
 const only = opt('only', '');
+// (round 95, --extra "&rockbody=1": more of the page's params)
+const extra = opt('extra', '');
 // (--where near|far: every case by the camera, or every one far from it)
 const where = opt('where', '');
 // (--linger s: each case looked at again that long after it settled — what floats later, and its column)
@@ -71,7 +73,7 @@ try {
     console.log('pageerror', e.message);
   });
   p.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.log('console', m.text()));
-  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&hybrid=1&level=atlas`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&hybrid=1&level=atlas${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.integrity?.(), { timeout: 240000 });
   await sleep(30000);
   // the helpers: the window's columns read and written, the ground-truth scan
@@ -234,7 +236,7 @@ try {
       /** quiet: nothing falling, nothing waiting to be judged */
       quiet() {
         const I = R.integrity();
-        return !I.falling.list.length && !(I.watches?.length) && !I.rockSeeds.size && !I.dirty.length && !I.busy && !R.core.globals.events.length;
+        return !I.falling.list.length && !(I.rigid?.list.length) && !(I.watches?.length) && !I.rockSeeds.size && !I.dirty.length && !I.busy && !R.core.globals.events.length;
       },
     };
     window.__fs = F;

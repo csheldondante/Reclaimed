@@ -92,6 +92,8 @@ export interface MeshSource {
   zSpan: number;
   /** chunks rebuilt a frame */
   slots: number;
+  /** (round 95) the page pool's pages to start with (default: a few a chunk of the window) */
+  pages?: number;
 }
 
 export class FieldMesh {
@@ -210,7 +212,7 @@ export class FieldMesh {
 
     if (this.pool) {
       // (round 93: the pool — a few pages a chunk to start, grown as the GPU asks; an index buffer it doesn't use)
-      this.pages = Math.min(this.maxPages, Math.max(64, chunks * POOL_START));
+      this.pages = Math.min(this.maxPages, src?.pages ?? Math.max(64, chunks * POOL_START));
       this.verts = world.buf(`${pre}meshPool`, this.pages * PAGE_BYTES, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
       // (one quad's corners 0 1 2, 0 2 3 repeated for a chunk's most quads: every range's draw reads it, its base vertex
       // r · 4 · vertsPer — meshdraw.wgsl meshVert)
@@ -697,6 +699,25 @@ export class FieldMesh {
       }
     // (none near: nothing shows; the rect is the map's, harmlessly)
     this.nearRect = r[0] <= r[2] ? r : [0, 0, this.nx * CHUNK, this.ny * CHUNK * ROW_H];
+  }
+
+  /**
+   * (round 95, render/rockmesh.ts) A mesh of its own, not the camera's: exactly these chunks (1) are near (looked at
+   * for changes, rebuilt) and drawn.
+   */
+  pin(on: Uint8Array): void {
+    if (!this.on) return;
+    const chunks = this.nx * this.ny;
+    if (this.near.length !== chunks) {
+      this.near = new Uint32Array(chunks);
+      this.inView = new Uint8Array(chunks);
+      this.casts = new Uint8Array(chunks);
+      this.tops = new Float32Array(chunks).fill(this.zHi);
+    }
+    for (let c = 0; c < chunks; c++) {
+      this.inView[c] = on[c] ? 1 : 0;
+      this.near[c] = on[c] ? (this.near[c] === 0 ? 11 : Math.max(1, this.near[c] - 1)) : 0;
+    }
   }
 
   /** Which chunks lie in the sun's box (its clip space, `light`): they cast into the shadow map. */
