@@ -6060,3 +6060,54 @@ and is on by default on the low (phone) tier through phone-flags' LITE_SET, so `
 The medium and high tiers keep full voxels until the open items are done (plants on heightfield chunks, the rings' water, roads, the seam's colour; BACKLOG P13).
 It only applies to the atlas level, and `?mesh=0` with it is an error, not a fallback.
 Measured on the merged places build: driveprofile, low tier, 18/s for 20 s, desktop iGPU. By default (hybrid on) the GPU took 7.43 ms a frame, with 15 of 72 chunks voxels; p95 was 10.6 and p99 13.1. With `&hybrid=0` it took 9.07 ms, with 55 chunks drawn; p95 was 10.7 and p99 14.9. atlasworldtest passes 6/6.
+
+## 2026-10-26 — round 85: the sim isn't dispatched over what sleeps (branch `simcull`)
+
+The user (round 85): "only simulate things that need it and the whole point of the laminar flows (steady state)
+and scalar drop is it limits how long we need to simulate and lets us cache simulation results … to avoid
+dispatching for dead things I think it makes sense." The hybrid's measurement had ~3.5 ms of the phone's frame in
+the rest of the game, the sim's kernels among it: they skipped sleeping chunks but were still dispatched over the
+whole streamed window (256 x 256 columns, 256 chunks), every thread reading the mask and returning, and the
+ping-pong fields copied their whole buffers back each tick (untimed: copies aren't passes).
+
+- **What changed** (sim/cull.ts): Simulation.step makes, on the CPU from the same Globals.sleep and drowse masks
+  the kernels read, the list of chunks live this tick (awake, drowsy, or on a `?flowhz=` flow's slow turn). The
+  passes with an asleep branch (structure, edit, water, oil, lava flux and depth, sediment and its outflow,
+  contamination, moisture, fire, wilt, ecology, climate; surface with sleepmore) are compiled with a wrapper entry
+  that finds its columns from the list, and dispatched over it: four 8 x 8 workgroups a live chunk, nothing at all
+  when none is. Their copies back run over the same list. The CPU knows the count when it encodes, so no indirect
+  dispatch or GPU compaction was needed (the simplest thing). A sleeping chunk is then exactly what its asleep
+  branch made it: the current buffers untouched; only the next buffers, which nothing else reads, go stale.
+  Steady-state water still looks flowing: the frozen flux isn't touched, the render reads it as before.
+- **Correct, bit for bit:** scripts/culltest.mjs (new). The atlas at rest, a flood and a fire set by the camera
+  (26 chunks wake), then all asleep again. Read 4 s apart while asleep, water, flux, fire, veg, moisture, contam,
+  lava and oil don't change in a single column; the chunks never woken (nor next to one) hold what they held
+  before the flood; the flood's water stays; 3 574 columns still flow. Water's volume after the same flood is
+  3648.8 with and without culling. With `flowhz=water:4,lava:2,sediment:1` (the slow-turn lists) both modes drain
+  alike (3614.6 vs 3613.3). atlasworldtest 6/6, worldapitest 16/16, craterbench (30 craters, p95 10.2, worst 29)
+  pass with it.
+- **Measured** (driveprofile, low tier, 412 x 915, desktop iGPU, on places with the hybrid; ride 18/s 15 s, idle
+  at rest 12 s; off/on interleaved; GPU ms a frame, all passes over the run / frames resolved; the GPU's clocks
+  drifted between pairs, so compare within a pair):
+
+| pair | GPU off | GPU on | sim passes off | sim passes on |
+|---|---|---|---|---|
+| ride 1 | 8.23 | 7.75 | 1.205 | 0.907 |
+| ride 2 | 7.53 | 7.22 | 1.049 | 0.844 |
+| idle 1 | 7.08 | 6.30 | 1.069 | 0.740 |
+| idle 2 | 7.24 | 6.78 | 1.047 | 0.831 |
+| ride (before hybrid) | 4.23 | 3.97 | 0.629 | 0.484 |
+| idle (before hybrid) | 3.85 | 3.38 | 0.611 | 0.422 |
+
+  Riding, the culled passes go from ~0.35 ms a frame to ~0.04 (structure 0.055 → 0.019 for the land coming in
+  drowsy, water-flux 0.022 → 0.003, lava-depth 0.047 → 0.002, the rest 0 to 0.001); the copies back that are
+  left cost 0.004. The frame's GPU span falls more than the passes (0.3–0.8 ms) because the whole-buffer copies
+  (seven fields, ~3 MB a tick) are gone too. One pass got dearer: lava-prep 0.012 → 0.03 (it now reads the lava
+  buffer cold, no lava-depth before it to warm the cache). On a phone the same work scales with its weaker GPU.
+- **Default on** (`?simcull=0` off): equal results, a clear win. `?settleiters=` (off by default) is an error
+  with it (its passes read waterNext as the water everywhere): `?simcull=0` for that.
+- **What's left of the sim over the whole window** (by design, they don't sleep; P14's Left): particles-emit
+  0.21–0.24 ms, project 0.14–0.16, the wind field 0.10, agents 0.09–0.11, petals 0.06–0.07, particles-update 0.06,
+  sway 0.05, lava-prep 0.03 — ~0.75 ms of the ~0.8 left. Emission is the ambient dust and leaves (visual: could run
+  sleeping chunks at a fraction of the rate, its chances scaled); project could skip when no structure or body is
+  in the window; `?windhz=` already lowers the wind field's rate.

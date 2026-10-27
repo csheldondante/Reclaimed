@@ -884,6 +884,24 @@ its edge:
   fields skip sleeping chunks too, every chunk drowsy for 0.25 s after any
   slide. `inplace=1`: edit, structure and layer pulls rewrite the layers in
   place (no layersNext copied back); the brush runs 5 s after an edit.
+- **Not dispatched over what sleeps** (round 85, sim/cull.ts; on by default,
+  `?simcull=0` off). Simulation.step makes, from the same Globals.sleep and
+  drowse masks, a list of the chunks live this tick (WorldGpu.tiles,
+  `AwakeTiles`): awake, drowsy, or, for a flow with a `?flowhz=` rate, on its
+  slow turn (one list per rate n, made on first ask; a uniform of chunk
+  indices). The passes skipped asleep (above; surface only with sleepmore)
+  are compiled with a wrapper (`cullSource`: the kernel's 8 × 8
+  global-id entry renamed, a new one that finds its columns from the list,
+  four workgroups a chunk) and dispatched over the list (`dispatchTiles`; no
+  pass when it's empty). Their copies back (water, oil, lava, contamination,
+  moisture, fire, veg) run over the same list (`TileCopy`), so a sleeping
+  chunk's current buffers are never touched and its next buffers go stale.
+  Contract: nothing but a field's own pass and copy reads its next buffer;
+  anything that writes a current buffer of a sleeping chunk (particles on
+  veg, place ops on water) keeps what it wrote, as before. `?settleiters=`
+  needs `?simcull=0` (its passes read waterNext as the water everywhere).
+  Not culled (they run everywhere by design): particles, project, agents,
+  wind field, sway, render fields, lava-prep, stats.
 - **The simulation's rates** (perfopt, round 83, sim/flow.ts): `?simhz=60|30
   |15` the tick rate — the kernels' per-60 Hz-tick rates scale by
   common.wgsl `simStep()` (G.dt × 60), `perTick`, `relaxTick`; water, oil

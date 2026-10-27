@@ -35,9 +35,11 @@ import landBrushWgsl from '../shaders/landbrush.wgsl?raw';
 import townStampWgsl from '../shaders/townstamp.wgsl?raw';
 import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
+import { TILES_BINDING as TILES } from './cull';
 import { STATS_COUNT, type WorldGpu } from './world-gpu';
 import { SETTLE, SLEEP_MORE } from './sleep';
-import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst } from './flow';
+import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
+import { LIVE, cullKernel, dispatchTiles } from './cull';
 
 /**
  * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
@@ -67,14 +69,37 @@ function kernel(
   /** Bind the chunk table (layers.wgsl). Off for kernels that never touch layers,
    *  so they don't spend one of the 8 storage-buffer slots on it. */
   useLayers = false,
+  /** (round 85, simcull — sim/cull.ts) a pass that skips sleeping chunks: dispatched over the live ones only,
+   *  the list for this flow's sleeping rate (LIVE: none) */
+  cull?: number,
 ) {
-  const parts = useLayers ? [...WITH_ALL, src] : [commonWgsl, materialsWgsl, src];
+  let parts = useLayers ? [...WITH_ALL, src] : [commonWgsl, materialsWgsl, src];
   const base: BindSpec = useLayers ? BASE : { 0: 'uniform', 2: 'uniform' };
-  const k = makeCompute(device, label, parts, { ...base, ...spec });
+  let all: BindSpec = { ...base, ...spec };
   const bound: Record<number, GPUBuffer | GPUTextureView> = { 0: world.globals, 2: world.materials, ...buffers };
+  const culled = cull !== undefined && world.tiles !== null;
+  if (culled) {
+    const c = cullKernel(world.tiles!, parts.join('\n'), all, 'main', cull);
+    parts = [c.code];
+    all = c.spec;
+    bound[TILES] = c.buf;
+  }
+  const k = makeCompute(device, label, parts, all);
   if (useLayers) bound[1] = world.chunks;
   const group = makeBindGroup(device, label, k.layout, bound);
-  return { k, group };
+  return { k, group, cull: culled ? cull : undefined };
+}
+
+/** a kernel() pass, over the live chunks when it's culled (sim/cull.ts), else the whole window */
+function run(enc: GPUCommandEncoder, prof: Profiler, name: string, s: { k: ComputeKernel; group: GPUBindGroup; cull?: number }, world: WorldGpu): void {
+  if (s.cull !== undefined) dispatchTiles(enc, prof, name, s.k, s.group, world.tiles!, s.cull);
+  else dispatch(enc, prof, name, s.k, s.group, world.groups);
+}
+
+/** a ping-pong field's copy back (next -> current, `words` u32 a column): over the live chunks when culled */
+function copyBack(enc: GPUCommandEncoder, prof: Profiler, world: WorldGpu, src: GPUBuffer, dst: GPUBuffer, words: number, cull: number | undefined): void {
+  if (cull !== undefined) world.tileCopy!.copy(enc, prof, src, dst, words, cull);
+  else enc.copyBufferToBuffer(src, 0, dst, 0, dst.size);
 }
 
 export class SurfaceSystem implements SimSystem {
@@ -91,10 +116,12 @@ export class SurfaceSystem implements SimSystem {
       { 3: 'read', 4: 'rw', 16: 'stex', 19: 'tex', 20: 'stex', 28: 'tex', 30: 'stex' },
       { 3: world.layers, 4: world.surface, 16: world.driftView, 19: world.airView, 20: world.strataView, 28: world.projView, 30: world.levelsView },
       true,
+      // (it skips sleeping chunks only with ?sleepmore=1)
+      SLEEP_MORE ? LIVE : undefined,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    run(enc, this.prof, this.name, this.s, this.world);
   }
 }
 
@@ -111,10 +138,11 @@ export class StructureSystem implements SimSystem {
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
       { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.stats, 6: world.surface, 7: world.water, 8: world.flux, 9: world.fire },
       true,
+      LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    run(enc, this.prof, this.name, this.s, this.world);
     if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
   }
 }
@@ -155,6 +183,8 @@ export class WaterSystem implements SimSystem {
         `const FLUX_SEED: bool = ${!SETTLE};\nconst SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterFluxWgsl,
         { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 31: 'uniform' },
         { 3: world.surface, 4: settle ? world.waterNext : world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 31: this.rect },
+        false,
+        settle ? undefined : flowN('water'),
       );
     const depthK = (settle: boolean) =>
       kernel(
@@ -165,7 +195,11 @@ export class WaterSystem implements SimSystem {
         { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 31: 'uniform' },
         // (a settling pass's second half: from the next buffer back into the water — the passes ping-pong)
         { 3: settle ? world.waterNext : world.water, 4: world.flux, 5: world.waterSource, 6: settle ? world.water : world.waterNext, 7: world.waterPrev, 8: world.surface, 31: this.rect },
+        false,
+        settle ? undefined : flowN('water'),
       );
+    // (the settling passes read the next buffer as the water everywhere: a culled tick leaves it stale asleep)
+    if (SETTLE_ITERS && world.tiles) throw new Error('?settleiters= needs ?simcull=0: the settling passes read the next buffer as the water everywhere');
     this.flux = fluxK(false);
     this.depth = depthK(false);
     // (settling: B — flux from the next buffer, depth from it back into the water; A — the same kernels with the
@@ -213,9 +247,9 @@ export class WaterSystem implements SimSystem {
     }
     // (perfopt, simhz: the pipes stable only at the 60 Hz step — FLOW_SUB of them a tick, sim/flow.ts)
     for (let s = 0; s < FLOW_SUB; s++) {
-      dispatch(enc, this.prof, 'water-flux', this.flux.k, this.flux.group, this.world.groups);
-      dispatch(enc, this.prof, 'water-depth', this.depth.k, this.depth.group, this.world.groups);
-      enc.copyBufferToBuffer(this.world.waterNext, 0, this.world.water, 0, this.world.water.size);
+      run(enc, this.prof, 'water-flux', this.flux, this.world);
+      run(enc, this.prof, 'water-depth', this.depth, this.world);
+      copyBack(enc, this.prof, this.world, this.world.waterNext, this.world.water, 1, this.depth.cull);
     }
   }
 }
@@ -233,6 +267,8 @@ export class OilSystem implements SimSystem {
       flowConst('oil') + oilFluxWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'read', 17: 'tex' },
       { 3: world.surface, 4: world.water, 5: world.oil, 6: world.oilFlux, 7: world.flux, 17: world.driftView },
+      false,
+      flowN('oil'),
     );
     this.depth = kernel(
       device,
@@ -241,13 +277,15 @@ export class OilSystem implements SimSystem {
       flowConst('oil') + oilDepthWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'rw', 17: 'tex' },
       { 3: world.oil, 4: world.oilFlux, 5: world.oilNext, 6: world.water, 7: world.contamDelta, 8: world.surface, 9: world.fire, 10: world.oilStored, 17: world.driftView },
+      false,
+      flowN('oil'),
     );
   }
   encode(enc: GPUCommandEncoder): void {
     for (let s = 0; s < FLOW_SUB; s++) {
-      dispatch(enc, this.prof, 'oil-flux', this.flux.k, this.flux.group, this.world.groups);
-      dispatch(enc, this.prof, 'oil-depth', this.depth.k, this.depth.group, this.world.groups);
-      enc.copyBufferToBuffer(this.world.oilNext, 0, this.world.oil, 0, this.world.oil.size);
+      run(enc, this.prof, 'oil-flux', this.flux, this.world);
+      run(enc, this.prof, 'oil-depth', this.depth, this.world);
+      copyBack(enc, this.prof, this.world, this.world.oilNext, this.world.oil, 1, this.depth.cull);
     }
   }
 }
@@ -270,11 +308,13 @@ export class ContaminationSystem implements SimSystem {
       fieldPass(contamWgsl, CONTAM_P.k) + flowWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'rw' },
       { 3: world.waterPrev, 4: world.water, 5: world.flux, 6: world.contam, 7: world.contamNext, 8: world.veg, 9: world.contamDelta },
+      false,
+      LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.contamNext, 0, this.world.contam, 0, this.world.contam.size);
+    run(enc, this.prof, this.name, this.s, this.world);
+    copyBack(enc, this.prof, this.world, this.world.contamNext, this.world.contam, 2, this.s.cull);
   }
 }
 
@@ -290,11 +330,13 @@ export class MoistureSystem implements SimSystem {
       fieldPass(moistureWgsl, MOIST_P.k) + slopeWgsl,
       { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 7: 'read', 17: 'tex' },
       { 3: world.water, 4: world.moisture, 5: world.moistureNext, 6: world.veg, 7: world.surface, 17: world.driftView },
+      false,
+      LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.moistureNext, 0, this.world.moisture, 0, this.world.moisture.size);
+    run(enc, this.prof, this.name, this.s, this.world);
+    copyBack(enc, this.prof, this.world, this.world.moistureNext, this.world.moisture, 1, this.s.cull);
   }
 }
 
@@ -312,10 +354,12 @@ export class WiltSystem implements SimSystem {
       wiltWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'rw', 15: 'tex', 17: 'tex' },
       { 3: world.surface, 4: world.contam, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.oil, 9: world.fire, 10: world.wilt, 15: world.windFieldView, 17: world.driftView },
+      false,
+      LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    run(enc, this.prof, this.name, this.s, this.world);
   }
 }
 
@@ -331,11 +375,13 @@ export class EcologySystem implements SimSystem {
       fieldPass(ecologyWgsl, ECO_P.k) + slopeWgsl,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read', 17: 'tex' },
       { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire, 17: world.driftView },
+      false,
+      LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.vegNext, 0, this.world.veg, 0, this.world.veg.size);
+    run(enc, this.prof, this.name, this.s, this.world);
+    copyBack(enc, this.prof, this.world, this.world.vegNext, this.world.veg, 1, this.s.cull);
   }
 }
 
@@ -393,6 +439,7 @@ export class EditSystem implements SimSystem {
       { 3: 'read', 4: 'rw', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 16: 'stex', 17: 'tex', 18: 'tex', 26: 'stex' },
       { 3: columnPass('', world).in, 4: columnPass('', world).out, 5: world.water, 6: world.oil, 7: world.contam, 8: world.veg, 9: world.deposit, 16: world.editStateNextView, 17: world.driftView, 18: world.editStateView, 26: world.editResultView },
       true,
+      LIVE,
     );
   }
   /** The tick carries an edit. */
@@ -405,7 +452,7 @@ export class EditSystem implements SimSystem {
     this.idle = this.pending ? 0 : this.idle + 1;
     if (!this.pending && !(this.always && (!INPLACE || this.idle < EDIT_LINGER))) return;
     this.pending = false;
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    run(enc, this.prof, this.name, this.s, this.world);
     if (!INPLACE) enc.copyBufferToBuffer(this.world.layersNext, 0, this.world.layers, 0, this.world.layers.size);
     const size = [this.world.w, this.world.h];
     enc.copyTextureToTexture({ texture: this.world.editStateNext }, { texture: this.world.editState }, size);
@@ -425,8 +472,13 @@ export class SedimentSystem implements SimSystem {
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
     const parts = [commonWgsl, layersWgsl, materialsWgsl, flowConst('sediment') + sedimentWgsl + flowWgsl];
     const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView, 30: world.shakeView };
-    const outK = makeCompute(device, 'sediment-out', parts, { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' }, 'outflow');
-    this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex }) };
+    const outSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' };
+    const outRes: Record<number, GPUBuffer | GPUTextureView> = { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex };
+    const n = flowN('sediment');
+    const c = world.tiles ? cullKernel(world.tiles, parts.join('\n'), outSpec, 'outflow', n) : null;
+    if (c) outRes[TILES] = c.buf;
+    const outK = c ? makeCompute(device, 'sediment-out', [c.code], c.spec, 'outflow') : makeCompute(device, 'sediment-out', parts, outSpec, 'outflow');
+    this.out = { k: outK, group: makeBindGroup(device, 'sediment-out', outK.layout, outRes), cull: c ? n : undefined };
     this.s = kernel(
       device,
       world,
@@ -435,11 +487,12 @@ export class SedimentSystem implements SimSystem {
       { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' },
       { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
       true,
+      flowN('sediment'),
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, 'sediment-out', this.out.k, this.out.group, this.world.groups);
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    run(enc, this.prof, 'sediment-out', this.out, this.world);
+    run(enc, this.prof, this.name, this.s, this.world);
   }
 }
 
@@ -461,10 +514,11 @@ export class ClimateSystem implements SimSystem {
       { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
       { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.veg, 7: world.moisture, 8: world.fire, 9: world.lava },
       true,
+      LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    run(enc, this.prof, this.name, this.s, this.world);
   }
 }
 
@@ -494,11 +548,13 @@ export class FireSystem implements SimSystem {
       fireWgsl,
       { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'read', 15: 'tex', 22: 'tex' },
       { 3: world.fire, 4: world.fireNext, 5: world.oil, 6: world.veg, 7: world.moisture, 8: world.water, 9: world.surface, 10: world.oilStored, 15: world.windFieldView, 22: world.sparkView },
+      false,
+      LIVE,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
-    enc.copyBufferToBuffer(this.world.fireNext, 0, this.world.fire, 0, this.world.fire.size);
+    run(enc, this.prof, this.name, this.s, this.world);
+    copyBack(enc, this.prof, this.world, this.world.fireNext, this.world.fire, 1, this.s.cull);
   }
 }
 
