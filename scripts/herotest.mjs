@@ -41,8 +41,11 @@ try {
     },
   };
   const spots = { 'loc-ford': [128, 111], 'loc-mebe': [348, -533], 'loc-barrow': [622, -323] };
-  const { stage, edits } = stageStory(story, { terrain, spawn: [128, 111], spot: (l) => spots[l.id], size: [256, 222] });
-  ok(Object.keys(stage.locations).length === 3 && Object.keys(stage.cast).length === 5, `three places and five people staged (${edits} edits)`);
+  const { stage, pieces } = stageStory(story, { terrain, spawn: [128, 111], spot: (l) => spots[l.id], size: [256, 222] });
+  // (round 99: the generator hands back pieces; built here as the world API's edits would lay them)
+  for (const p of pieces) if (!p.grow) terrain.build(p.at[0], p.at[1], p.material, { radius: p.radius, layers: p.layers });
+  ok(Object.keys(stage.locations).length === 3 && Object.keys(stage.cast).length === 5, `three places and five people staged (${pieces.length} pieces)`);
+  ok(stage.locks.every((k) => pieces.some((p) => p.tag === `lock:${k.id}`)), "each lock's plug is a piece tagged with it");
   ok(stage.locks.map((l) => l.id).sort().join() === 'bone-door,sluice-wheel', 'the two locks are doors');
   const rooms = Object.entries(stage.rooms).flatMap(([l, rs]) => Object.entries(rs).map(([id, r]) => ({ id: `${l}/${id}`, ...r })));
   let apart = true;
@@ -88,6 +91,71 @@ try {
         for (const ll of Object.keys(R)) console.log(`     rooms ${ll}: ${JSON.stringify(Object.fromEntries(Object.entries(R[ll]).map(([k, v]) => [k, v.at.map((x) => +x.toFixed(0))])))}`);
       }
     }
+  }
+
+  // (round 99, runstream) the stage in world cells, stamped into the land as it arrives (story/stage-land.ts)
+  {
+    const { StageLand } = await v.ssrLoadModule('/src/story/stage-land.ts');
+    const { ROW_H } = await v.ssrLoadModule('/src/world/lattice.ts');
+    const atlas = { p: { cols: 1024, rows: 1024 }, landHooks: [] };
+    const land = new StageLand(atlas);
+    // (the window's origin at (1000, 500): the stage straddles the world's x seam)
+    const ox = 1000;
+    const oy = 500;
+    const wrap = (x, n) => ((x % n) + n) % n;
+    land.add(pieces.map((p) => ({ ...p, at: [wrap(ox + p.at[0], 1024), wrap(oy * ROW_H + p.at[1], 1024 * ROW_H)] })));
+    ok(atlas.landHooks.length === 1, 'the stage land is an Atlas.landHooks hook');
+    // a region of flat land (ground at 100), as the atlas hands one over
+    const region = (x0, y0) => {
+      const w = 64;
+      const cols = Array.from({ length: w * w }, () => [{ z0: 0, z1: 100, mat: 1 }]);
+      return { x0, y0, w, h: w, cols, surface: new Float32Array(w * w).fill(100), water: new Float32Array(w * w), moisture: new Float32Array(w * w), vegetation: new Float32Array(w * w), contam: new Float32Array(w * w * 2) };
+    };
+    // (every region of the window: the seam crossed with x0 past the world's edge, as a slide's origin runs on)
+    let raised = 0;
+    const lands = [];
+    for (let ry = 0; ry < 256; ry += 64)
+      for (let rx = 0; rx < 256; rx += 64) {
+        const l = region(ox + rx, oy + ry);
+        await atlas.landHooks[0](l, l.x0, l.y0, 64, 64, false);
+        raised += [...l.surface].filter((z) => z > 100.5).length;
+        lands.push(l);
+      }
+    const walls = land.pieces.filter((p) => p.tag === 'wall');
+    ok(raised > 500 && walls.every((p) => p.base === 100), `the window's regions stamped: ${raised} columns raised, every wall's base the ground's (${land.stats.regions} regions)`);
+    // the same piece's column in the region it lies in: raised by its layers
+    const k = stage.locks.find((x) => x.id === 'bone-door');
+    const at = [k.at[0], k.at[1]];
+    const topAt = (ls, x, y) => {
+      const cy = Math.floor(y / ROW_H);
+      const cx = Math.floor(x - 0.5 * (cy & 1));
+      const l = ls.find((r) => cx >= r.x0 - ox && cx < r.x0 - ox + 64 && cy >= r.y0 - oy && cy < r.y0 - oy + 64);
+      return l.surface[(cy - (l.y0 - oy)) * 64 + (cx - (l.x0 - ox))];
+    };
+    ok(topAt(lands, ...at) > 105, `the bone door's plug stands (${topAt(lands, ...at).toFixed(1)})`);
+    // opened in play: the next stamp leaves it out; the walls stay
+    land.open('lock:bone-door');
+    const again = [];
+    for (let ry = 0; ry < 256; ry += 64)
+      for (let rx = 0; rx < 256; rx += 64) {
+        const l = region(ox + rx, oy + ry);
+        await atlas.landHooks[0](l, l.x0, l.y0, 64, 64, false);
+        again.push(l);
+      }
+    const w0 = walls[0];
+    const wAt = [wrap(w0.at[0] - ox + 1024 / 2, 1024) - 1024 / 2, w0.at[1] - oy * ROW_H];
+    ok(topAt(again, ...at) < 101 && topAt(again, ...wAt) > 104, `after the door's opened, its land stamped again: the plug gone (${topAt(again, ...at).toFixed(1)}), a wall still up (${topAt(again, ...wAt).toFixed(1)})`);
+    // a wall seen standing, then found down: gone from the next stamp
+    const toWin = (p) => [wrap(p[0] - ox + 512, 1024) - 512, p[1] - oy * ROW_H];
+    let down = false;
+    const hz = (x, y) => (down && Math.hypot(x - wAt[0], y - wAt[1]) < 0.01 ? 100 : 106);
+    land.watch(hz, toWin, 0);
+    const seen = w0.seen;
+    down = true;
+    land.watch(hz, toWin, 0);
+    ok(seen === true && w0.gone === true && land.stats.broken === 1, `a wall seen standing then down is gone (broken ${land.stats.broken})`);
+    land.dispose();
+    ok(atlas.landHooks.length === 0, 'disposed: the hook is out');
   }
 
   // the fight: on open ground

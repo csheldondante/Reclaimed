@@ -7475,3 +7475,48 @@ Measured with the default on (the atlas at the phone tier, every system on, the 
 (q=low 412×915, 25 s): `&rockbody=0` p50 9.8 p95 12.9 GPU 4.65 ms a frame, on p50 9.9 p95 13.3 GPU 4.75 (noise).
 A regression on places 0f0abdf reported from the phone (no tipping) didn't reproduce headlessly: there the rock bodies
 are on and the off-centre top tips at 0.6–0.95 rad/s as on cb41e7f (the phone's cached page, likely).
+
+## 2026-10-27 — round 99 (`runstream`): the world streams during a run
+
+**Why.** The user, after playing the GameplayGM slice: "The controls are integrated but why is the streaming
+disabled?" startAtlasRun set `Streamer.auto = false` (RS9) because stage-gen built the story's places as world-API
+edits in window coordinates once at the start: an edit queued across a slide lands a region off, and a warp makes
+the window again from the atlas, dropping them (RS16, confirmed: the old code had no way to bring them back).
+
+**What.**
+- The stage generator returns pieces (StagePiece: a disc of a material, its layers, a tag) instead of editing.
+  startAtlasRun keeps them in world cells in a `StageLand` (story/stage-land.ts), an `Atlas.landHooks` hook like
+  the settlements': every region's land, as the atlas makes it, gets the pieces over it laid on its columns.
+  To get them into the window already in play, the window is made again in place once (`Streamer.warp` to its own
+  origin: 1.2-1.8 s on the desktop iGPU at q=low, in the run's start, which already waits on the window settling).
+  After that the first arrival of a region and every warp stamp it; a slide freezes and thaws it with everything.
+- The stacking follows the edits it replaces: the world's queue took four edits a tick, one tick's edits share a
+  column (edit.wgsl's `given`: the tallest), the next tick's go on top. The first version took the tallest of all
+  pieces on a column: walls 6 high whose soft rims were steps, and `won` failed with the hero up on a wall's top
+  after the fight; with the fours stacked it passes.
+- The stage (locations, rooms, cast spots, locks) is in world units (`StageFrame`, HeroRun `frame`); `reached`,
+  `saw`, the locks, the talk queue, spawns and the waypoint measure through `toWin`. A pillar cast member and the
+  marks' names are kept in world units too; only heights shift.
+- What play changes that lasts, as a diff in world cells (`StoryPlayDeps.lasting`): an opened lock's plug isn't
+  stamped again; a cast member's grave (new: a low stone mound where they fell) and a mark's cairn are added as
+  pieces; `StageLand.watch` (1 Hz) drops a piece seen standing whose middle has come down (a broken wall).
+- HeroRun shifts only its own SimpleUnits on a slide (a game's own, the GPU agents, follow WorldCore.onShift
+  themselves); a warp shifts them by the jump, so the cast keep their world spots while their land is away.
+- streamer.ts (one block, step 4 of a slide): the world's queued events shift with the window, so an edit queued
+  across a slide lands where it was aimed (any edit, not just the run's).
+- After the window's remake the derived surface reads 0 until the sim's next tick: the cast were spawned at z 0
+  (off the screen, every talk failed) until the start waited for the spawn's ground to read as it did before.
+
+**Measured** (runtest on the desktop iGPU, q=low 412 x 915, every system on, the streamer on, 1x):
+- won, lost, warp, far: all passed (won once more on its own after the stacking fix).
+- warp: 1131 cells away and back: 510 pieces seen both times, 510 at the same height, 504 -> 504 standing; the
+  locks and the five cast as they were. Stamps: 884 columns in 6 regions at the start, 1768 / 12 after the warp back.
+- far (new): the bone door opened, the hero ridden 208 cells away (8 cells every 0.5 s) and back: 5 slides, 15
+  regions frozen, 10 thawed; 572 of 572 pieces at the same height, the door still open, the cast in place; then
+  walked through the open door into the bell chamber, `reached` noted.
+- herotest: the stage land stamps a window across the world's seam, an opened lock's plug is gone from the next
+  stamp, a wall seen standing then down is dropped, the hook comes out on dispose.
+- RS17 (the occasional failed Hesk talk) didn't happen in the passing runs; the failure print is kept.
+- Not measured with driveprofile: no per-frame GPU work changed; per frame the run adds nothing, once a second
+  StageLand.watch reads ~600 heights from the CPU mirror.
+

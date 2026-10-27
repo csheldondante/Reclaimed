@@ -1,10 +1,15 @@
 // ---- story/atlas-run.ts -----------------------------------------------------------
 // (round 97, heroapi) A run story on an atlas world, for any game: what scenes/level.ts did for `?run=` in one
 // call, so a hero game (the hoverbike game, over createAtlasWorld) starts the same run with its own hero, units
-// and controller. It holds the window still round the spawn (the story's places are built in window coordinates;
-// a run over the streamed world is BACKLOG RS9), maps each story location to its spot on the atlas (its
-// settlement's site while that's still in the story's region, else the region's centre), starts HeroRun, and
-// keeps it in step with the window: a slide shifts it, the map's warp moves the hero (the story's places stay).
+// and controller. It maps each story location to its spot on the atlas (its settlement's site while that's still in
+// the story's region, else the region's centre), starts HeroRun, and keeps it in step with the window: a slide
+// shifts the hero, the map's warp moves it.
+// (round 99, `runstream`; the user: "The controls are integrated but why is the streaming disabled?") The window
+// streams during the run (BACKLOG RS9, RS16): the stage is kept in world units (HeroRun's `frame`) and its places in
+// world cells (story/stage-land.ts), stamped into each region's land as the atlas makes it — the window made again
+// in place once so the places come in as land, then on every first arrival and after every warp; a slide keeps
+// them frozen with the rest. What play does to them that lasts (an opened lock, a grave, a broken wall) is kept as
+// a diff there.
 //
 //   const story = await loadRunStory('bell')
 //   const world = runWorld(story, savedSnapshot)          // the world it was written for, or as a save left it
@@ -21,6 +26,8 @@ import type { Streamer } from '../scenes/streamer';
 import type { WorldCore } from '../scenes/world-core';
 import { ROW_H } from '../world/lattice';
 import { HeroRun, type HeroRunDeps } from './hero-run';
+import type { StageFrame } from './play';
+import { StageLand } from './stage-land';
 
 /** The run stories a game can start by id (the GM's, written for the atlas seed 1). */
 export const RUN_STORIES: Record<string, { title: string; load: () => Promise<SessionStory> }> = {
@@ -81,8 +88,8 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
     const oy = S.origin[1] * ROW_H;
     return [near(wx, ox + core.dims.w / 2, cols) - ox, near(wyUnits, oy + (core.dims.h * ROW_H) / 2, rows * ROW_H) - oy];
   };
-  // (the camera to the spawn first, and the window let slide round it until it's still: the places are built in
-  // window coordinates, and edits queued across a slide would land a region off)
+  // (the camera to the spawn first, and the window let slide round it until it's still: the places are laid out
+  // round the spawn in the window)
   const s0 = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
   camera.target = [s0[0], s0[1], d.heightAt(s0[0], s0[1])];
   for (let quiet = 0, o = `${S.origin}`; quiet < 15; ) {
@@ -92,9 +99,39 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
       o = `${S.origin}`;
     } else quiet++;
   }
-  // (and then held there: the run's places are in this window — BACKLOG RS9)
-  S.auto = false;
   const spawn = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
+  // (round 99) the stage's frame: world units (x cells, y world units, on the torus) seen through the window as it is
+  const worldW = cols;
+  const worldH = rows * ROW_H;
+  const mod = (v: number, n: number) => ((v % n) + n) % n;
+  const frame: StageFrame = {
+    toWin: (p) => toWin(p[0], p[1]),
+    toWorld: (p) => [mod(S.origin[0] + p[0], worldW), mod(S.origin[1] * ROW_H + p[1], worldH)],
+  };
+  // (round 99) the places in world cells, stamped into the land as it's made (Atlas.landHooks)
+  const land = new StageLand(A);
+  const realise: HeroRunDeps['realise'] = async (pieces) => {
+    land.add(pieces.map((p) => ({ ...p, at: frame.toWorld(p.at) })));
+    // (the window made again where it is: its regions come in from the atlas, the places on them as land; the
+    // camera stays, the hero isn't down yet)
+    const cam = [...camera.target] as [number, number, number];
+    const t0 = performance.now();
+    const h0 = t.heightAt(spawn[0], spawn[1]);
+    await S.warp(S.origin[0], S.origin[1], S.oz);
+    camera.target = cam;
+    const ms = performance.now() - t0;
+    console.log(`[run] the stage stamped into the land: ${pieces.length} pieces, ${land.stats.stamped} columns in ${land.stats.regions} regions; the window made again in ${ms.toFixed(0)} ms`);
+    // (the ground read back with the places on it: the warp clears the derived surface until the sim's next tick
+    // makes it again, so a read straight after it can say 0 — waited for until the spawn's ground is back as it was,
+    // the stage leaving the spawn clear)
+    for (let k = 0; ; k++) {
+      await t.refresh();
+      const h = t.heightAt(spawn[0], spawn[1]);
+      if (api.fresh && h !== null && h0 !== null && Math.abs(h - h0) < 3) break;
+      if (k > 40) throw new Error(`run "${story.id}": the ground never read back after the stage was stamped`);
+      await new Promise((res) => setTimeout(res, 250));
+    }
+  };
   const regionAt = (x: number, y: number) => A.regionOf[(((Math.floor((y / A.worldH) * A.p.n) % A.p.n) + A.p.n) % A.p.n) * A.p.n + (((Math.floor((x / A.worldW) * A.p.n) % A.p.n) + A.p.n) % A.p.n)];
   const hr = await HeroRun.start({
     ui: d.ui,
@@ -125,7 +162,20 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
     ownCamera: d.ownCamera,
     again: d.again,
     remember: d.remember,
+    frame,
+    realise,
+    lasting: {
+      opened: (k) => land.open(`lock:${k.id}`),
+      built: (at, material, radius, layers, tag) => land.add([{ at: frame.toWorld(at), material, radius, layers, pass: 0, tag }]),
+    },
   });
+  // (round 99) a wall broken in play is gone from the next stamp: the places seen standing are watched
+  const watch = setInterval(() => {
+    if (S.busy) return;
+    land.watch((x, y) => t.heightAt(x, y), frame.toWin, S.oz);
+  }, 1000);
+  hr.cleanup.push(() => clearInterval(watch), () => land.dispose());
+  hr.land = land;
   // (the window's origin as the run last knew it: a slide shifts the run by its step, a warp by its jump)
   let org: [number, number, number] = [S.origin[0], S.origin[1], S.oz];
   core.onShift.push((dx, dy, dz) => {
@@ -133,7 +183,8 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
     org = [S.origin[0], S.origin[1], S.oz];
   });
   // (round 94; the user: "Keep warp on for now because the character is way too slow") the map's warp moves the
-  // hero: put down where the camera is (the window's middle); the story's places stay put
+  // hero: put down where the camera is (the window's middle); the story's places stay put (round 99: in world
+  // cells, stamped again as their land comes back)
   S.onWarp.push((ox, oy, oz) => {
     const c = camera.target;
     hr.warped(org[0] - ox, (org[1] - oy) * ROW_H, org[2] - oz, [c[0], c[1]]);

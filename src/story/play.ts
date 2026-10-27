@@ -11,6 +11,10 @@
 //   water, a `mark` raises a cairn). The rest is atlas scale only: the region generator realises it next time.
 // The Stage is what the region generator will hand over once it builds a story's locations (system 3): where
 // each place and person is in this window. Until then it's written by hand beside the story.
+// (round 99, `runstream`) On a streamed world the stage is kept in world units (`frame`: StageFrame) and seen
+// through the window as it is now — `reached`, `saw`, the locks and the talks all measure the stage's world spots
+// against the player through it, so a slide or a warp moves nothing of the stage. What play changes that lasts (an
+// opened lock, a grave, a mark's cairn) is told to `lasting`, which keeps it in world cells (story/stage-land.ts).
 //
 //   const play = await StoryPlay.start({ ui, camera, api, world, story, stage, cut: { dither, slice } })
 //   each frame: play.update(dt)     // `holdsInput`: a talk or a shot has the screen (the level's controls wait)
@@ -24,6 +28,7 @@ import { DialogBox } from '../dialog/dialog';
 import { StoryRun } from '../run/run';
 import { ObjectiveHud } from '../run/hud';
 import { StoryCamera, type V3 } from './camera';
+import { ROW_H } from '../world/lattice';
 import './play.css';
 
 /** Where a story's places and people are in this level's world (world x, y). */
@@ -48,6 +53,24 @@ export interface StageLock {
   key: { item?: string; character?: string; objective?: string };
   material: string;
   open: boolean;
+}
+
+/**
+ * (round 99) Where the stage's coordinates are: `toWin` a stage point into the window as it is now (the nearest way
+ * round a wrapping world), `toWorld` a window point onto the stage's. Without one, the stage is in window coordinates
+ * (a still window: the god's-eye level's stories).
+ */
+export interface StageFrame {
+  toWin(p: [number, number]): [number, number];
+  toWorld(p: [number, number]): [number, number];
+}
+
+/** (round 99) play's lasting changes to the stage (window x, y when they're made), for the stage's keeper */
+export interface StageLasting {
+  /** a lock opened: its plug taken */
+  opened(lock: StageLock): void;
+  /** something built (a cast member's pillar or grave, a mark's cairn) */
+  built(at: [number, number], material: string, radius: number, layers: number, tag: string): void;
 }
 
 export interface StoryPlayDeps {
@@ -82,6 +105,10 @@ export interface StoryPlayDeps {
    * cairn, an overgrowth, a flood) is realised where it happened as the run begins, so the world shows its marks
    */
   remember?: AtlasEvent[];
+  /** (round 99) the stage's coordinates (default: the window's) */
+  frame?: StageFrame;
+  /** (round 99) told what play changes that lasts (default: nobody — a still window keeps it) */
+  lasting?: StageLasting;
 }
 
 /** (round 97) cells: within this of a cast member (or a place's edge) counts as having seen them (`saw`) */
@@ -91,7 +118,10 @@ interface Placed {
   id: string;
   /** (round 88) its unit, when the cast are units */
   unit?: UnitId;
+  /** where they stand now (window; a unit's, followed each frame) */
   at: V3;
+  /** (round 99) a pillar's spot on the stage (stage coordinates): seen through the frame each frame */
+  home?: [number, number];
   height: number;
   badge: HTMLButtonElement;
   tree: DialogTree | null;
@@ -113,7 +143,7 @@ export class StoryPlay {
   /** (round 97) barks showing: over their speaker (or the narrator's, through `say`), and the time left */
   private barks: { el: HTMLDivElement; by: string; t: number }[] = [];
   /** (round 97) the world's marks seen at play scale: their names over them */
-  private marks: { el: HTMLDivElement; at: V3 }[] = [];
+  private marks: { el: HTMLDivElement; at: [number, number]; z: number }[] = [];
   /** (round 97) talks an outcome opened while another had the screen: opened in turn */
   private talks: { character: string; node?: string }[] = [];
 
@@ -161,13 +191,14 @@ export class StoryPlay {
     await t.refresh();
     for (const c of d.story.cast) {
       const s = d.stage.cast[c.id];
-      const ground = t.heightAt(s.at[0], s.at[1]);
-      if (ground === null) throw new Error(`story: character "${c.id}" stands at ${s.at} — outside the world`);
+      const at = p.win(s.at);
+      const ground = t.heightAt(at[0], at[1]);
+      if (ground === null) throw new Error(`story: character "${c.id}" stands at ${at} — outside the world`);
       // (round 88: as a unit, when there are units; else a pillar of their material)
       const big = /lich|warden|lord|king/.test(c.role);
-      const unit = d.units?.spawn(c.role, s.at, c.faction, { name: c.name, character: c.id, role: c.role, health: big ? 12 : 4, damage: big ? 2 : 1, sight: 12, speed: big ? 2.6 : 3 });
+      const unit = d.units?.spawn(c.role, at, c.faction, { name: c.name, character: c.id, role: c.role, health: big ? 12 : 4, damage: big ? 2 : 1, sight: 12, speed: big ? 2.6 : 3 });
       const height = unit !== undefined ? 2.6 : (s.height ?? 6);
-      if (unit === undefined) t.build(s.at[0], s.at[1], s.material, { radius: 1.3, layers: height });
+      if (unit === undefined) p.build(at, s.material, 1.3, height, `pillar:${c.id}`);
       const badge = document.createElement('button');
       badge.className = 'story-badge';
       badge.style.setProperty('--c', s.colour);
@@ -183,11 +214,15 @@ export class StoryPlay {
         else void p.talk(c.id);
       });
       p.layer.append(badge);
-      p.placed.set(c.id, { id: c.id, unit, at: [s.at[0], s.at[1], ground], height, badge, tree });
+      p.placed.set(c.id, { id: c.id, unit, at: [at[0], at[1], ground], home: unit === undefined ? [s.at[0], s.at[1]] : undefined, height, badge, tree });
     }
-    // (round 88) a unit dies: `killed` (a cast member's badge goes)
+    // (round 88) a unit dies: `killed` (a cast member's badge goes; round 99: a cast member's grave, a low stone
+    // mound where they fell, kept with the stage)
     d.units?.died.push((u) => {
-      if (u.character) p.placed.get(u.character)?.badge.classList.add('gone');
+      if (u.character && p.placed.has(u.character)) {
+        p.placed.get(u.character)!.badge.classList.add('gone');
+        p.build([u.at[0], u.at[1]], 'stone', 1.1, 1, `grave:${u.character}`);
+      }
       p.run.note({ kind: 'killed', character: u.character, unitKind: u.role });
     });
     // (the opening: the camera eases to where the first shown objective is, or the first cast member's place)
@@ -229,7 +264,8 @@ export class StoryPlay {
       const me = this.d.player?.() ?? (cam.target.slice() as V3);
       if (me) {
         for (const [id, l] of Object.entries(this.d.stage.locations)) {
-          const inside = Math.hypot(me[0] - l.at[0], me[1] - l.at[1]) <= l.radius;
+          const at = this.win(l.at);
+          const inside = Math.hypot(me[0] - at[0], me[1] - at[1]) <= l.radius;
           if (inside && !this.reached.has(id)) {
             this.reached.add(id);
             this.run.note({ kind: 'reached', location: id });
@@ -239,7 +275,8 @@ export class StoryPlay {
         for (const [loc, rooms] of Object.entries(this.d.stage.rooms ?? {}))
           for (const [room, r] of Object.entries(rooms)) {
             const key = `${loc}/${room}`;
-            const inside = Math.hypot(me[0] - r.at[0], me[1] - r.at[1]) <= r.radius;
+            const at = this.win(r.at);
+            const inside = Math.hypot(me[0] - at[0], me[1] - at[1]) <= r.radius;
             if (inside && !this.reached.has(key)) {
               this.reached.add(key);
               this.run.note({ kind: 'reached', location: loc, room });
@@ -302,27 +339,41 @@ export class StoryPlay {
     return undefined;
   }
 
-  /** (round 88) the window slid (a streamed world): what the stage keeps in window coordinates moves with it */
+  /**
+   * (round 88) the window slid (a streamed world): what's kept in window coordinates moves with it. (Round 99) With a
+   * `frame` the stage is in world units and stays: only heights (window z) and the window spots seen this frame move.
+   */
   shift(dx: number, dy: number, dz: number): void {
     const st = this.d.stage;
     const mv = (a: [number, number]) => {
       a[0] += dx;
       a[1] += dy;
     };
-    for (const l of Object.values(st.locations)) mv(l.at);
-    for (const c of Object.values(st.cast)) mv(c.at);
-    for (const rs of Object.values(st.rooms ?? {})) for (const r of Object.values(rs)) mv(r.at);
-    for (const k of st.locks ?? []) mv(k.at);
+    if (!this.d.frame) {
+      for (const l of Object.values(st.locations)) mv(l.at);
+      for (const c of Object.values(st.cast)) mv(c.at);
+      for (const rs of Object.values(st.rooms ?? {})) for (const r of Object.values(rs)) mv(r.at);
+      for (const k of st.locks ?? []) mv(k.at);
+      for (const p of this.placed.values()) if (p.home) mv(p.home);
+      for (const m of this.marks) mv(m.at);
+    }
     for (const p of this.placed.values()) {
       p.at[0] += dx;
       p.at[1] += dy;
       p.at[2] += dz;
     }
-    for (const m of this.marks) {
-      m.at[0] += dx;
-      m.at[1] += dy;
-      m.at[2] += dz;
-    }
+    for (const m of this.marks) m.z += dz;
+  }
+
+  /** (round 99) a stage point in the window as it is now */
+  private win(p: [number, number]): [number, number] {
+    return this.d.frame ? this.d.frame.toWin(p) : [p[0], p[1]];
+  }
+
+  /** (round 99) something built that lasts (window x, y): the world API's edit, and the stage's keeper told */
+  private build(at: [number, number], material: string, radius: number, layers: number, tag: string): void {
+    this.d.api.terrain?.build(at[0], at[1], material, { radius, layers });
+    this.d.lasting?.built(at, material, radius, layers, tag);
   }
 
   /** (round 97) a talk an outcome opened (`Outcome.talk`): at `node` when given */
@@ -350,7 +401,11 @@ export class StoryPlay {
       // (a place with rooms is seen from within SIGHT of one of them — its staged circle can be 40+ cells across, and
       // the spawn inside it; one without, from within SIGHT of its middle)
       const rooms = Object.values(this.d.stage.rooms?.[id] ?? {});
-      const gap = rooms.length ? Math.min(...rooms.map((r) => Math.hypot(me[0] - r.at[0], me[1] - r.at[1]) - r.radius)) : Math.hypot(me[0] - l.at[0], me[1] - l.at[1]);
+      const dist = (p: [number, number]) => {
+        const w = this.win(p);
+        return Math.hypot(me[0] - w[0], me[1] - w[1]);
+      };
+      const gap = rooms.length ? Math.min(...rooms.map((r) => dist(r.at) - r.radius)) : dist(l.at);
       if (gap > SIGHT) continue;
       this.seen.add(key);
       this.run.note({ kind: 'saw', location: id });
@@ -375,7 +430,8 @@ export class StoryPlay {
   private updateBarks(dt: number): void {
     const cam = this.d.camera;
     for (const m of this.marks) {
-      const [x, y] = cam.project(...m.at);
+      const w = this.win(m.at);
+      const [x, y] = cam.project(w[0], w[1], m.z);
       const on = x > -60 && x < cam.viewportW + 60 && y > -20 && y < cam.viewportH + 20;
       m.el.style.display = on ? '' : 'none';
       if (on) m.el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px)`;
@@ -393,9 +449,15 @@ export class StoryPlay {
     this.barks = this.barks.filter((b) => b.t > 0);
   }
 
-  /** a unit's cast member stands where their unit is */
+  /** a unit's cast member stands where their unit is (a pillar where the stage has it, seen through the window) */
   private follow(p: Placed): void {
-    if (p.unit === undefined) return;
+    if (p.unit === undefined) {
+      if (p.home) {
+        const w = this.win(p.home);
+        p.at = [w[0], w[1], p.at[2]];
+      }
+      return;
+    }
     const u = this.d.units!.get(p.unit);
     if (!u) return;
     p.at = u.at;
@@ -405,7 +467,8 @@ export class StoryPlay {
   /** (round 88) a locked doorway the player comes to: opened with its key, else they're told what it needs */
   private locks(me: V3): void {
     for (const k of this.d.stage.locks ?? []) {
-      if (k.open || Math.hypot(me[0] - k.at[0], me[1] - k.at[1]) > 4.5) continue;
+      const ka = this.win(k.at);
+      if (k.open || Math.hypot(me[0] - ka[0], me[1] - ka[1]) > 4.5) continue;
       const has =
         (k.key.item !== undefined && this.run.has(k.key.item) > 0) ||
         (k.key.character !== undefined && this.run.holds({ kind: 'talked', character: k.key.character })) ||
@@ -418,11 +481,12 @@ export class StoryPlay {
         if (t)
           for (let dy = -3.2; dy <= 3.2; dy += 0.7)
             for (let dx = -3.2; dx <= 3.2; dx += 0.7) {
-              const x = k.at[0] + dx;
-              const y = k.at[1] + dy;
+              const x = ka[0] + dx;
+              const y = ka[1] + dy;
               if (dx * dx + dy * dy <= 10.5 && t.materialAt(x, y) === k.material) void t.take(x, y, 12);
             }
-        this.d.api.fx?.burst('dust', k.at[0], k.at[1], (t?.heightAt(k.at[0], k.at[1]) ?? me[2]) + 1, { count: 30 });
+        this.d.lasting?.opened(k);
+        this.d.api.fx?.burst('dust', ka[0], ka[1], (t?.heightAt(ka[0], ka[1]) ?? me[2]) + 1, { count: 30 });
         this.d.say?.(`${k.key.item ? `The ${k.key.item} turns` : 'It opens'}: the ${k.id.replace(/-/g, ' ')} gives way`);
       } else {
         const now = performance.now();
@@ -447,8 +511,9 @@ export class StoryPlay {
   private where(location: string): V3 {
     const l = this.d.stage.locations[location];
     if (!l) throw new Error(`story: location "${location}" isn't on the stage`);
-    const z = this.d.api.terrain?.heightAt(l.at[0], l.at[1]) ?? this.d.camera.target[2];
-    return [l.at[0], l.at[1], z];
+    const at = this.win(l.at);
+    const z = this.d.api.terrain?.heightAt(at[0], at[1]) ?? this.d.camera.target[2];
+    return [at[0], at[1], z];
   }
 
   /** where an outcome happened: its objective's location, or the speaker of the dialog that caused it */
@@ -476,7 +541,7 @@ export class StoryPlay {
         const speaker = tree && this.d.story.cast.find((c) => c.id === tree.speaker && c.location === sp.location);
         const first = this.d.story.locations.find((l) => l.id === sp.location)?.brief.rooms?.[0]?.id;
         const room = first ? this.d.stage.rooms?.[sp.location]?.[first] : undefined;
-        const c = speaker ? this.placed.get(speaker.id)!.at : room ? room.at : this.where(sp.location);
+        const c = speaker ? this.placed.get(speaker.id)!.at : room ? this.win(room.at) : this.where(sp.location);
         const n = sp.count ?? 1;
         for (let k = 0; k < n; k++) {
           const a = (k / n) * Math.PI * 2 + 0.4;
@@ -503,8 +568,10 @@ export class StoryPlay {
   private realiseEvent(e: Omit<AtlasEvent, 'id' | 'run'>, cause: string | null): void {
     const api = this.d.api;
     const place = placeOf(e);
-    const at: V3 | null = e.area
-      ? [e.area.at[0], e.area.at[1], api.terrain?.heightAt(e.area.at[0], e.area.at[1]) ?? 0]
+    // (an area is in world cells: through the frame onto the window, when the stage has one)
+    const area = e.area ? (this.d.frame ? this.win([e.area.at[0], e.area.at[1] * ROW_H]) : e.area.at) : null;
+    const at: V3 | null = area
+      ? [area[0], area[1], api.terrain?.heightAt(area[0], area[1]) ?? 0]
       : place && this.d.stage.locations[place]
         ? this.where(place)
         : cause !== null
@@ -527,7 +594,7 @@ export class StoryPlay {
           api.water?.flood(at[0], at[1], { radius: r, depth: 1 + 2 * e.magnitude });
           break;
         case 'mark': {
-          api.terrain?.build(at[0] + 2, at[1] + 2, 'plaster', { radius: 1, layers: 3 });
+          this.build([at[0] + 2, at[1] + 2], 'plaster', 1, 3, `mark:${e.detail?.name ?? e.kind}`);
           // (round 97) and its name over it, so the world's marks read as such ("The Bellwarden's Grave")
           const name = e.detail?.name ? String(e.detail.name) : null;
           if (name) {
@@ -535,7 +602,8 @@ export class StoryPlay {
             el.className = 'story-mark';
             el.textContent = name;
             this.layer.append(el);
-            this.marks.push({ el, at: [at[0] + 2, at[1] + 2, at[2] + 3] });
+            const w: [number, number] = [at[0] + 2, at[1] + 2];
+            this.marks.push({ el, at: this.d.frame ? this.d.frame.toWorld(w) : w, z: at[2] + 3 });
           }
           break;
         }

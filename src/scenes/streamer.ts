@@ -666,6 +666,12 @@ export class Streamer {
     shiftGrid(this.ground, W, H, 1, dx, dy);
     for (const a of [this.relief, this.gapTop, this.colTop]) shiftGrid(a, W, H, 1, dx, dy);
     core.camera.shift(dx, dy * ROW_H, 0);
+    // (round 99, runstream) the world's queued events (edits past a tick's four wait for the next) are in window
+    // coordinates too: they land where they were aimed, not a region off
+    for (const ev of core.globals.events) {
+      ev.x -= dx;
+      ev.y -= dy * ROW_H;
+    }
     // (what the game installed that lives in window coordinates: units, bodies — round 80)
     for (const f of core.onShift) f(dx, dy * ROW_H, 0);
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)

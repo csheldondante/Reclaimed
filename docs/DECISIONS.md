@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 99 (session 5, `runstream`) — the world streams during a run
+
+- The user, after playing the GameplayGM slice, verbatim: "The controls are integrated but why is the streaming
+  disabled?"
+- → Branch `runstream`: the run no longer holds the window still (Streamer.auto stays on). The stage is kept in
+  world cells and stamped into the land as it arrives (like the settlements); warps and long rides keep the places,
+  the doors opened and the cast (BACKLOG RS9, RS16).
+
 ## 2026-10-27 — round 97 (session 5, `heroapi`) — the vertical slice: pick a hero, a run, its legacy
 
 - The user, verbatim: "I like boundaries and API contracts so keep it there but please update and spin up a build

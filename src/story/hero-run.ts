@@ -2,7 +2,8 @@
 // A run story played as a hero (round 88; the user: "I would like to try spawning as a character like in
 // hoverbike and talking to people or going places or fighting things for a run story").
 // Wires together, each through its own interface:
-// - the stage: the story's locations realised near the spawn (story/stage-gen.ts: rooms, locks, landmarks);
+// - the stage: the story's locations realised near the spawn (story/stage-gen.ts: rooms, locks, landmarks); on a
+//   streamed world kept in world units (`frame`) and stamped into the land (`realise`, story/stage-land.ts);
 // - the units (contracts/units.ts; SimpleUnits until the GPU agents implement it): the cast as units, the
 //   story's spawns, the fights;
 // - the hero (contracts/hero.ts; hero/walker.ts on foot) and its controller (hero/touchpad.ts);
@@ -29,8 +30,9 @@ import { Walker, STEP as WALK_STEP } from '../hero/walker';
 import { findPath } from '../hero/path';
 import { TouchPad } from '../hero/touchpad';
 import { MAT } from '../world/materials';
-import { StoryPlay, type Stage } from './play';
-import { stageStory } from './stage-gen';
+import { StoryPlay, type Stage, type StageFrame, type StageLasting } from './play';
+import { stageStory, type StagePiece } from './stage-gen';
+import type { StageLand } from './stage-land';
 import { Waypoint, describe, objectiveTarget, type Target } from './waypoint';
 import type { V3 } from './camera';
 
@@ -73,6 +75,20 @@ export interface HeroRunDeps {
   again?: () => void;
   /** (round 97) what past runs left (WorldState.history()): its marks realised at play scale as the run begins */
   remember?: AtlasEvent[];
+  /**
+   * (round 99, runstream) the stage kept in world units: the generator's places (made in window coordinates round
+   * the spawn) are moved onto it before the run plays, and everything measured against them goes through it
+   * (StoryPlay's StageFrame). Default: the stage stays in the window's coordinates (a still window).
+   */
+  frame?: StageFrame;
+  /**
+   * (round 99) build the stage's pieces (window x, y as made; resolves once they're in the window and its ground read
+   * back): a streamed world keeps them in world cells and stamps them into its land (story/stage-land.ts). Default:
+   * queued as the world API's edits, waited for.
+   */
+  realise?: (pieces: StagePiece[]) => Promise<void>;
+  /** (round 99) what play changes that lasts (an opened lock, a grave, a cairn): told to the stage's keeper */
+  lasting?: StageLasting;
 }
 
 export class HeroRun {
@@ -116,30 +132,37 @@ export class HeroRun {
       await new Promise((res) => setTimeout(res, 250));
     }
     const r = new HeroRun(d);
-    const { stage } = stageStory(d.story, {
+    const { stage, pieces } = stageStory(d.story, {
       terrain: t,
       waterAt: (x, y) => d.api.water?.depthAt(x, y) ?? null,
-      plants: d.api.plants,
       spawn: d.spawn,
       spot: d.spot,
       size: d.size,
     });
-    r.stage = stage;
-    // (the places' edits land a few a tick: the run starts on them built, the ground read again)
-    const queued = () => d.api.core.globals.events.length;
-    for (let k = 0; queued() > 0; k++) {
-      if (k > 200) throw new Error(`hero run: the stage's edits never landed (${queued()} queued)`);
-      await new Promise((res) => setTimeout(res, 100));
+    if (d.realise) await d.realise(pieces);
+    else {
+      for (const p of pieces) {
+        if (p.grow) d.api.plants?.grow(p.at[0], p.at[1], { radius: p.radius, strength: p.grow });
+        else t.build(p.at[0], p.at[1], p.material, { radius: p.radius, layers: p.layers });
+      }
+      // (the places' edits land a few a tick: the run starts on them built, the ground read again)
+      const queued = () => d.api.core.globals.events.length;
+      for (let k = 0; queued() > 0; k++) {
+        if (k > 200) throw new Error(`hero run: the stage's edits never landed (${queued()} queued)`);
+        await new Promise((res) => setTimeout(res, 100));
+      }
+      await new Promise((res) => setTimeout(res, 300));
     }
-    await new Promise((res) => setTimeout(res, 300));
     await t.refresh();
+    // (round 99) the stage onto its frame's coordinates (world units), made in the window as it was
+    r.stage = d.frame ? onFrame(stage, d.frame) : stage;
     r.play = await StoryPlay.start({
       ui: d.ui,
       camera: d.camera,
       api: d.api,
       world: d.world,
       story: d.story,
-      stage,
+      stage: r.stage,
       hero: r.hero.role,
       units: r.units,
       player: () => (r.hero.alive ? r.hero.position() : null),
@@ -152,6 +175,8 @@ export class HeroRun {
       opening: false,
       cut: { dither: d.dither },
       remember: d.remember,
+      frame: d.frame,
+      lasting: d.lasting,
     });
     r.hero.died.push(() => {
       d.say('You fall.', 4);
@@ -292,7 +317,7 @@ export class HeroRun {
     this.d.dither?.update(dt);
     this.draw();
     // (round 94) where to go: the marker or the edge arrow, and the objective's line ("Mebe · north-east · 140 m")
-    this.target = this.ended || talking ? null : objectiveTarget({ story: this.d.story, run: play.run, stage: this.stage, units: this.units, unitOf: (c) => play.unitOf(c), heightAt: (x, y) => this.d.api.terrain!.heightAt(x, y) });
+    this.target = this.ended || talking ? null : objectiveTarget({ story: this.d.story, run: play.run, stage: this.stage, units: this.units, unitOf: (c) => play.unitOf(c), heightAt: (x, y) => this.d.api.terrain!.heightAt(x, y), toWin: this.d.frame?.toWin });
     this.waypoint.update(this.target, p, this.d.camera);
     this.hintT -= dt;
     if (this.hintT <= 0) {
@@ -314,10 +339,14 @@ export class HeroRun {
   /** (round 94) where a warp put the hero (window x, y), waiting for the ground there */
   private placeAt: [number, number] | null = null;
 
-  /** the window slid: what's kept in window coordinates moves */
+  /**
+   * the window slid: what's kept in window coordinates moves (round 99: the units only when they're the run's own
+   * SimpleUnits — a game's own units keep themselves in step with the window, as the GPU agents do through
+   * WorldCore.onShift)
+   */
   shift(dx: number, dy: number, dz: number): void {
     this.hero.shift(dx, dy, dz);
-    this.units.shift(dx, dy, dz);
+    if (!this.d.units) this.units.shift(dx, dy, dz);
     this.play?.shift(dx, dy, dz);
     if (this.goTo) this.goTo = [this.goTo[0] + dx, this.goTo[1] + dy];
   }
@@ -334,7 +363,23 @@ export class HeroRun {
     this.placeAt = at;
   }
 
+  /** (round 99) a stage point (world units on a streamed world) in the window as it is now */
+  winOf(p: [number, number]): [number, number] {
+    return this.d.frame ? this.d.frame.toWin(p) : [p[0], p[1]];
+  }
+
+  /** (round 99) a window point on the stage's coordinates (world units on a streamed world) */
+  worldOf(p: [number, number]): [number, number] {
+    return this.d.frame ? this.d.frame.toWorld(p) : [p[0], p[1]];
+  }
+
+  /** (round 99) what's undone with the run (the stage's land hook, its watch) */
+  readonly cleanup: (() => void)[] = [];
+  /** (round 99) the stage's places in world cells, when a streamed world keeps them (startAtlasRun) */
+  land: StageLand | null = null;
+
   dispose(): void {
+    for (const f of this.cleanup) f();
     this.waypoint.dispose();
     this.pad.dispose();
     this.figures.dispose();
@@ -381,6 +426,18 @@ export class HeroRun {
     if (!this.d.units) for (const u of this.units.all?.() ?? []) poses.push(unitPose(u, this.t));
     this.figures.draw(poses);
   }
+}
+
+/** (round 99) a stage made in window coordinates, onto a frame's (every spot through `toWorld`) */
+function onFrame(s: Stage, f: StageFrame): Stage {
+  const w = (p: [number, number]) => f.toWorld(p);
+  const map = <T extends { at: [number, number] }>(o: Record<string, T>): Record<string, T> => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, { ...v, at: w(v.at) }]));
+  return {
+    locations: map(s.locations),
+    cast: map(s.cast),
+    rooms: s.rooms ? Object.fromEntries(Object.entries(s.rooms).map(([k, v]) => [k, map(v)])) : undefined,
+    locks: s.locks?.map((k) => ({ ...k, at: w(k.at) })),
+  };
 }
 
 function walkerPose(h: Walker): FigurePose {

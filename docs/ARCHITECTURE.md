@@ -1450,7 +1450,7 @@ against a contract and knows only its inputs:
 - `src/units/figures.ts` — `Figures`: the hero and units as a few voxels each, written from the CPU every frame
   into an instance buffer drawn by `Renderer.addVoxels` (units.wgsl's instance form: centre f32 × 3 + the
   material word with the size in bits 24–29 and the body glow for the hurt flash; a quaternion).
-- `src/story/stage-gen.ts` — `stageStory(story, deps) → { stage, edits }`: the region generator's first pass at
+- `src/story/stage-gen.ts` — `stageStory(story, deps) → { stage, pieces }` (round 99; was `edits`): the region generator's first pass at
   a story's briefs (system 3). Each location goes toward its real spot on the atlas (the settlement's site,
   else the region's centre), pulled in near the spawn. Its rooms are circles out from the first one along the
   connections: walled, with a doorway toward each neighbour, or open. Locks plug the far room's doorway;
@@ -1479,6 +1479,35 @@ against a contract and knows only its inputs:
   `HeroIntent.sprint` is the run toggle.
 - Story contract (additive): `Outcome.spawn[].hostile`, `Outcome.hostile` (cast ids); storycheck and
   validate accept and check them.
+## A run over the streamed world (round 99, branch `runstream`; BACKLOG RS9, RS16)
+
+The window streams during a run: nothing of the story is kept in window coordinates across a slide or a warp.
+
+- **Stage in world units.** `HeroRunDeps.frame` (a `StageFrame`, story/play.ts: `toWin(p)` a stage point into the
+  window as it is now, the nearest way round the torus; `toWorld(p)` back). startAtlasRun passes one; HeroRun moves
+  the generator's stage onto it before StoryPlay starts, so `HeroRun.stage` (locations, rooms, cast spots, locks) is
+  in **world units** (x cells, y world units = rows x ROW_H, on the torus). StoryPlay measures `reached`, `saw`, the
+  locks, the talk queue and the spawns' rooms through `toWin`; waypoint.ts `objectiveTarget` takes `toWin` (its
+  `Target.at` stays window coordinates, made each frame). `HeroRun.winOf(p)` / `HeroRun.worldOf(p)` convert for a game
+  or a script. Without a frame (the god's-eye `?story=`), the stage is the window's, as before.
+- **Places in world cells.** `stageStory` returns `{ stage, pieces }` (StagePiece: a disc of a material, `layers`
+  high, `pass` 0 or 1, a `tag`: `wall`, `landmark`, `lock:<id>`; `grow` for plants) instead of building.
+  `HeroRunDeps.realise(pieces)` builds them (default: the world API's edits, waited for). startAtlasRun's realise
+  keeps them in a `StageLand` (story/stage-land.ts), an `Atlas.landHooks` hook like the settlements': each region's
+  land, as the atlas makes it, gets the pieces over it laid on its columns' tops (edit.wgsl OP_BUILD's
+  smoothstep(1, 0.5, d) profile; overlapping pieces of a pass take the tallest). The window is made again in place
+  once (`Streamer.warp` to its own origin) so the places come in as land; after that every first arrival and every
+  warp stamps them; a slide freezes and thaws them with everything else.
+- **What lasts, as a diff.** `StoryPlayDeps.lasting` (`StageLasting`: `opened(lock)`, `built(at, material, radius,
+  layers, tag)`) hears an opened lock (its `lock:<id>` pieces gone from the next stamp), a cast member's grave and a
+  mark's cairn (added as pieces); `StageLand.watch` (once a second from startAtlasRun) finds a piece seen standing
+  whose top has come down (a broken wall) and drops it. `HeroRun.land` is the StageLand (`pieces`, `stats`).
+- **Units.** `HeroRun.shift` shifts the units only when they're its own SimpleUnits; a game's own units keep in step
+  with the window themselves (the GPU agents through `WorldCore.onShift`). A warp shifts the run's own by the jump,
+  so the cast keep their world spots while their land is away.
+- **Streamer (one block).** On an x/y slide the world's queued events (`globals.events`, window coordinates) shift
+  with the window, so an edit queued across a slide lands where it was aimed.
+
 ## Heroes from another game (round 97, branch `heroapi`; docs/HEROES.md)
 
 The hoverbike game (GameplayGM, which vendors Reclaimed as a submodule) plays a run story with its own heroes,
