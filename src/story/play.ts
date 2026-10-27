@@ -346,7 +346,12 @@ export class StoryPlay {
     }
     for (const [id, l] of Object.entries(this.d.stage.locations)) {
       const key = `l:${id}`;
-      if (this.seen.has(key) || Math.hypot(me[0] - l.at[0], me[1] - l.at[1]) > l.radius + SIGHT) continue;
+      if (this.seen.has(key)) continue;
+      // (a place with rooms is seen from within SIGHT of one of them — its staged circle can be 40+ cells across, and
+      // the spawn inside it; one without, from within SIGHT of its middle)
+      const rooms = Object.values(this.d.stage.rooms?.[id] ?? {});
+      const gap = rooms.length ? Math.min(...rooms.map((r) => Math.hypot(me[0] - r.at[0], me[1] - r.at[1]) - r.radius)) : Math.hypot(me[0] - l.at[0], me[1] - l.at[1]);
+      if (gap > SIGHT) continue;
       this.seen.add(key);
       this.run.note({ kind: 'saw', location: id });
     }

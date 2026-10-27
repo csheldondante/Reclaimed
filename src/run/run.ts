@@ -233,7 +233,8 @@ export class StoryRun implements Run {
       if (a.faction !== undefined) {
         // (a faction's attitude is the world's: an AtlasEvent in the region where it happened)
         atlas.push({ kind: 'faction-attitude', regions: [this.regionOf(cause)], magnitude: a.delta, detail: { faction: a.faction }, cause: { by: 'story' } });
-        this.deeds.push(`${a.delta > 0 ? 'won over' : 'turned against them'}: ${a.faction} (${a.delta > 0 ? '+' : ''}${a.delta})`);
+        // (round 97: the faction's name, as the player knows it)
+        this.deeds.push(`${a.delta > 0 ? 'won over' : 'turned against them'}: ${this.world.faction(a.faction)?.name ?? a.faction} (${a.delta > 0 ? '+' : ''}${a.delta})`);
       }
     }
     for (const u of o.unlock ?? []) this.unlocked.set(u.dialog, u.node);
