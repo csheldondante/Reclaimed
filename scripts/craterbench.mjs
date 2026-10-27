@@ -23,7 +23,7 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 try {
   const p = await browser.newPage();
   p.on('pageerror', (e) => console.log('pageerror', e.message));
-  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas${opt('extra', '')}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await sleep(12000);
   const r = await p.evaluate(

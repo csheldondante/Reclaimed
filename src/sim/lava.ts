@@ -14,7 +14,8 @@ import lavaWgsl from '../shaders/lava.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import type { WorldGpu } from './world-gpu';
 import { TICK_DT } from './simulation';
-import { FLOW_SUB, flowConst } from './flow';
+import { FLOW_SUB, flowConst, flowN } from './flow';
+import { TILES_BINDING, cullKernel, dispatchTiles } from './cull';
 
 export const MAX_VENTS = 4;
 
@@ -50,7 +51,7 @@ export class LavaSystem implements SimSystem {
   /** the bore's melt on its way out (lava.wgsl spill): read, and written each tick */
   private spill: GPUTexture;
   private spillNext: GPUTexture;
-  private k: Record<string, { k: ComputeKernel; g: GPUBindGroup }> = {};
+  private k: Record<string, { k: ComputeKernel; g: GPUBindGroup; cull?: number }> = {};
 
   constructor(
     private device: GPUDevice,
@@ -85,20 +86,26 @@ export class LavaSystem implements SimSystem {
       29: world.levelsView,
       30: world.lavaSpringView,
     };
-    const kernel = (name: string, parts: string[], spec: BindSpec, entry = 'main', over: Record<number, GPUBuffer | GPUTextureView> = {}) => {
-      const all: BindSpec = { 0: 'uniform', 2: 'uniform', ...spec };
-      const k = makeCompute(device, name, parts, all, entry);
-      const b = { ...res, ...over };
+    // (round 85, simcull — sim/cull.ts: `cull`, the flow's sleeping rate: dispatched over the live chunks only)
+    const kernel = (name: string, parts: string[], spec: BindSpec, entry = 'main', over: Record<number, GPUBuffer | GPUTextureView> = {}, cull?: number) => {
+      let all: BindSpec = { 0: 'uniform', 2: 'uniform', ...spec };
+      const b: Record<number, GPUBuffer | GPUTextureView> = { ...res, ...over };
+      const c = cull !== undefined && world.tiles ? cullKernel(world.tiles, parts.join('\n'), all, entry, cull) : null;
+      if (c) {
+        all = c.spec;
+        b[TILES_BINDING] = c.buf;
+      }
+      const k = makeCompute(device, name, c ? [c.code] : parts, all, entry);
       const g = makeBindGroup(device, name, k.layout, Object.fromEntries(Object.keys(all).map((n) => [n, b[Number(n)]])));
-      this.k[name] = { k, g };
+      this.k[name] = { k, g, cull: c ? cull : undefined };
     };
     kernel('lava-flux', [commonWgsl, materialsWgsl, flowConst('lava') + lavaFluxWgsl], { 3: 'read', 4: 'read', 5: 'rw', 17: 'tex', 21: 'tex' }, 'main', {
       3: world.surface,
       4: world.lava,
       5: world.lavaFlux,
-    });
+    }, flowN('lava'));
     const parts = [commonWgsl, layersWgsl, materialsWgsl, flowConst('lava') + lavaWgsl];
-    kernel('lava-depth', parts, { 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 12: 'rw', 13: 'rw', 22: 'uniform', 23: 'tex', 24: 'stex', 29: 'tex', 30: 'tex' }, 'depth');
+    kernel('lava-depth', parts, { 1: 'read', 3: 'read', 4: 'read', 5: 'rw', 6: 'rw', 7: 'rw', 12: 'rw', 13: 'rw', 22: 'uniform', 23: 'tex', 24: 'stex', 29: 'tex', 30: 'tex' }, 'depth', {}, flowN('lava'));
     kernel('lava-prep', parts, { 3: 'read', 8: 'rw', 9: 'rw' }, 'prep');
   }
 
@@ -139,13 +146,19 @@ export class LavaSystem implements SimSystem {
   encode(enc: GPUCommandEncoder): void {
     this.writeUniforms(TICK_DT);
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0]));
-    const run = (name: string) => dispatch(enc, this.prof, name, this.k[name].k, this.k[name].g, this.world.groups);
+    const run = (name: string) => {
+      const x = this.k[name];
+      if (x.cull !== undefined) dispatchTiles(enc, this.prof, name, x.k, x.g, this.world.tiles!, x.cull);
+      else dispatch(enc, this.prof, name, x.k, x.g, this.world.groups);
+    };
     // (perfopt, simhz: FLOW_SUB 60 Hz steps a tick, sim/flow.ts)
     for (let s = 0; s < FLOW_SUB; s++) {
       run('lava-flux');
       run('lava-depth');
       enc.copyTextureToTexture({ texture: this.spillNext }, { texture: this.spill }, { width: this.world.w, height: this.world.h });
-      enc.copyBufferToBuffer(this.world.lavaNext, 0, this.world.lava, 0, this.world.lava.size);
+      const cull = this.k['lava-depth'].cull;
+      if (cull !== undefined) this.world.tileCopy!.copy(enc, this.prof, this.world.lavaNext, this.world.lava, 4, cull);
+      else enc.copyBufferToBuffer(this.world.lavaNext, 0, this.world.lava, 0, this.world.lava.size);
     }
     run('lava-prep');
   }

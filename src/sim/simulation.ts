@@ -107,6 +107,8 @@ export class Simulation {
   /** Bring derived buffers (surface, shadow) up to date before the first tick. */
   prime(globals: GlobalsState): void {
     this.uploadGlobals(globals);
+    // (simcull: every chunk, the derived buffers made everywhere)
+    this.world.tiles?.update(this.tick);
     const enc = this.device.createCommandEncoder({ label: 'prime' });
     // the wind field starts as the map's own wind, before anything reads it
     this.wind.encode(enc);
@@ -136,6 +138,8 @@ export class Simulation {
     }
     // (perfopt: land just come in — drowsy — settles its water: WaterSystem.settling)
     this.water.settling = globals.settle ?? [];
+    // (round 85, simcull — sim/cull.ts: the chunks live this tick, from the same masks the kernels read)
+    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse);
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;
