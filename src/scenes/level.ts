@@ -35,7 +35,9 @@ import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import type { MapData } from '../world/mapgen';
-import { Sleep } from '../sim/sleep';
+import { SETTLE_TOL, Sleep } from '../sim/sleep';
+import { RiverWet } from '../weather/riverwet';
+import { RIVERS } from '../sim/world-gpu';
 import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
@@ -103,6 +105,40 @@ export class LevelScene implements Scene {
   private nextGroan = 20;
   private life = 0;
   private reclaimed = 0;
+  /** (round 84) the rivers' wetness (weather/riverwet.ts) */
+  private riverWet = new RiverWet();
+  /** (round 84, ?settletol) when the water's change per chunk was last read, and whether a read is in flight */
+  private settleReadAt = 0;
+  private settleReading = false;
+
+  /** (round 84) the water's most change per chunk since the last read (world-gpu waterChange), cleared; woken chunks
+   *  still settling are kept awake (Sleep.holdUnsettled) — twice a second */
+  private readSettling(): void {
+    const now = performance.now() / 1000;
+    if (this.settleReading || now - this.settleReadAt < 0.5) return;
+    this.settleReadAt = now;
+    this.settleReading = true;
+    const dev = this.host.gpu.device;
+    const src = this.core.world.waterChange;
+    const tmp = dev.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder();
+    enc.copyBufferToBuffer(src, 0, tmp, 0, src.size);
+    enc.clearBuffer(src);
+    dev.queue.submit([enc.finish()]);
+    tmp.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const ch = new Float32Array(tmp.getMappedRange().slice(0));
+        tmp.destroy();
+        this.settleReading = false;
+        this.sleep?.holdUnsettled(ch, performance.now() / 1000);
+      },
+      (e) => {
+        tmp.destroy();
+        this.settleReading = false;
+        ignoreTeardown(e);
+      },
+    );
+  }
   private completed = false;
   private saveTimer = 0;
   private speed: number;
@@ -546,7 +582,10 @@ export class LevelScene implements Scene {
     // A saved map was settled when it was saved: a short prime only.
     // (a streamed world: none — the strips that come in later get no such start)
     s.core.globals.debrisBoost = opts.map || level.stream ? 1 : 10;
-    await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology');
+    // (round 84, ?rivers=table: a streamed world's water comes in at the atlas's steady state — not run in the warmup,
+    // where nothing is asleep yet and its rivers would run unheld)
+    const still = level.stream && RIVERS === 'table';
+    await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
     s.core.globals.debrisBoost = 1;
     s.attach();
     return s;
@@ -1431,7 +1470,10 @@ export class LevelScene implements Scene {
       }
       this.hybrid.count(core.renderer.fieldMesh.drawn);
     }
+    // (round 84) the rivers' wetness: the season and the storms (weather/riverwet.ts)
+    globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
+    if (this.sleep && SETTLE_TOL > 0) this.readSettling();
     if (this.sleep) {
       globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;

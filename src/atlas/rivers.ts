@@ -20,6 +20,19 @@ const LAVA_RUN = 40;
 /** u32 words a node (compose.wgsl RiverNode) */
 export const NODE_WORDS = 8;
 export const RIVER_LAVA = 1;
+/**
+ * (rivers branch, round 84 — the user: "Find the atlas level rivers and what watersheds feed them … precompute the
+ * flow of those as a function of dryness … the unperturbed river basin as a steady state with no actual simulation
+ * and flow as strictly a render artifact computed at the atlas level") A node's discharge at the reference wetness:
+ * RIVER_RUNOFF cells³ a tick for each texel its watershed drains (acc: texels upstream, fewer where the latitude is
+ * dry). The water's pipes (water_flux.wgsl) carry a flow set by the level's fall, not by the depth — the steady
+ * surface slope for a discharge Q through a channel W columns wide is Q / (PIPE_Q · W), PIPE_Q = GAIN / (1 −
+ * FRICTION) / 2 — so the depth is the channel's (the carve's) and the speed is Q over the wetted section, quickened
+ * where the level falls fast (rapids). The rating for other wetness (Q × wet) is the riverFlow contract's
+ * (sim/world-gpu.ts RIVER_DEPTH_EXP, RIVER_SPEED_EXP).
+ */
+export const RIVER_RUNOFF = 0.002;
+const PIPE_Q = 0.08 / 0.015 / 2;
 
 export interface Rivers {
   /** NODE_WORDS a node: x, y (world), level, width, next (index), flags, depth, 0 */
@@ -30,6 +43,11 @@ export interface Rivers {
   lava: number;
   waterfalls: number;
   ms: number;
+  /** (round 84) the water nodes' reference speeds (cells a tick: min, median, max), discharge (median), and the
+   *  median ratio of the pipes' steady surface slope for that discharge to the level's own fall */
+  speed: [number, number, number];
+  discharge: number;
+  pipeSlope: number;
 }
 
 /** how dry a latitude is (regions.ts dryness: compose.wgsl moistureAt's latitude term) */
@@ -168,6 +186,10 @@ export function findRivers(opt: {
   const nodes = new Uint32Array(Math.max(count, 1) * NODE_WORDS);
   const f = new Float32Array(nodes.buffer);
   let waterfalls = 0;
+  const speeds: number[] = [];
+  const qs: number[] = [];
+  const ratio: number[] = [];
+  const cell = opt.worldW / n;
   for (let k = 0; k < count; k++) {
     const i = xs[k];
     const x = i % n;
@@ -185,7 +207,35 @@ export function findRivers(opt: {
     nodes[o + 4] = next;
     nodes[o + 5] = flags[k];
     f[o + 6] = lv ? 1.4 : Math.min(3.5, Math.max(1.2, w * 0.3));
-    if (next !== k && fill[i] - (water[d] ? sea : fill[d]) > 12) waterfalls++;
+    const fall = next !== k ? fill[i] - (water[d] ? sea : fill[d]) : 0;
+    if (fall > 12) waterfalls++;
+    // (round 84) the speed at the reference wetness: the discharge over the wetted section (the carve's parabola,
+    // filled to 0.3 under the level), the square root taken so a brook still moves; quicker where the level falls
+    if (!lv) {
+      const Q = RIVER_RUNOFF * acc[i];
+      const dn = f[o + 6];
+      const A = 2 * w * Math.max(0.3, (2 / 3) * dn - 0.3);
+      const dist = next !== k ? Math.hypot(((i % n) - (d % n)) * cell, (Math.floor(i / n) - Math.floor(d / n)) * cell) || cell : cell;
+      const slope = Math.max(0, Math.min(fall, 12)) / dist;
+      const v = Math.min(0.8, Math.min(0.45, Math.max(0.06, 0.5 * Math.sqrt(Q / A))) * (1 + Math.min(slope * 6, 1.5)));
+      f[o + 7] = v;
+      speeds.push(v);
+      qs.push(Q);
+      if (slope > 0) ratio.push(Q / (PIPE_Q * 2 * w) / slope);
+    }
   }
-  return { nodes, count, nodeAt, lava, waterfalls, ms: +(performance.now() - t0).toFixed(0) };
+  const med = (a: number[]) => (a.length ? a.sort((x, y) => x - y)[a.length >> 1] : 0);
+  const sp = speeds.slice().sort((x, y) => x - y);
+  const r3 = (x: number) => +x.toFixed(3);
+  return {
+    nodes,
+    count,
+    nodeAt,
+    lava,
+    waterfalls,
+    ms: +(performance.now() - t0).toFixed(0),
+    speed: [r3(sp[0] ?? 0), r3(med(sp)), r3(sp[sp.length - 1] ?? 0)],
+    discharge: r3(med(qs)),
+    pipeSlope: r3(med(ratio)),
+  };
 }

@@ -22,6 +22,19 @@ each was implemented.
   columns; islands fall; the boundary anchored; stronger materials don't break. Still open: toppling spires,
   the weight idea (a hanging piece's mass against its contact area × strength).
 
+## 2026-10-26 — round 86 (session 5, `places`) — the phone test: rivers, falls, collapse
+
+- **Performance:** "performance is now very very good! Totally fixed on mobile" (the hybrid by default on the phone tier).
+- **Rivers:** "the rivers look good!" Merged; `rivers=table` is the atlas level's default.
+- **Falls** (branch `flow`): "The waterfalls move way way too fast at 1x and visually it doesn't look as good as the old
+  approach or the sand particles which look fantastic."
+- **Rock collapse:** "The rock collapsing seems very broken. There is a large lag from a meteor to when the material is
+  destroyed (maybe intentional and it is melting?) but I would expect it to be like a delete with a shockwave that
+  makes the nearby material melt as magma and glow. The actual collum has a long delay and then converts to voxels
+  before collapsing. I strongly recommend we simulate as voxels but split the mesh and have the rock column fall and
+  just weight vertices to voxels (although rock I don't expect to flex only crumble)." Then: "it should also probably
+  make a big cloud of dust for the deleted material and maybe sparks that fly with the shockwave." (branch `collapse`)
+
 ## 2026-10-26 — round 85 (session 5, `places`) — recipes, civilizations, legacy; diplomacy; grids
 
 - **Recipe-driven civilizations and legacy.** "Units, items, vehicles, buildings, and even civilizations are

@@ -35,6 +35,8 @@ export interface MapData {
   lava?: Float32Array;
   /** Lava springs per column: the depth kept topped up and molten (world-gpu lavaSpring), if any. */
   lavaSpring?: Float32Array;
+  /** (round 84) The atlas's rivers at their steady state, four per column (world-gpu riverFlow), if any. */
+  riverFlow?: Float32Array;
   /** Columns the structural system should judge when the level starts (the atlas's weak forms), if any. */
   structural?: Uint8Array;
   /** Initial surface height for CPU-side queries (storm steering, camera). */

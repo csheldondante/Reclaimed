@@ -106,7 +106,8 @@ struct RiverNode {
   /** 1: lava */
   flags: u32,
   depth: f32,
-  _p: f32,
+  /** (round 84, rivers.ts) its speed at the reference wetness, cells a tick (0: lava) */
+  speed: f32,
 }
 // (one buffer: n² words of nearest node + 1, then the nodes, 8 words each — binding 26 is the coarse world's)
 @group(0) @binding(25) var<storage, read> riverBuf: array<u32>;
@@ -115,7 +116,7 @@ const CRATER_WORDS: u32 = 8u;
 const CRATER_BLOCK: u32 = 4u + 64u * CRATER_WORDS;
 fn riverNode(i: u32) -> RiverNode {
   let o = AP.n * AP.n + CRATER_BLOCK + i * 8u;
-  return RiverNode(bitcast<f32>(riverBuf[o]), bitcast<f32>(riverBuf[o + 1u]), bitcast<f32>(riverBuf[o + 2u]), bitcast<f32>(riverBuf[o + 3u]), riverBuf[o + 4u], riverBuf[o + 5u], bitcast<f32>(riverBuf[o + 6u]), 0.0);
+  return RiverNode(bitcast<f32>(riverBuf[o]), bitcast<f32>(riverBuf[o + 1u]), bitcast<f32>(riverBuf[o + 2u]), bitcast<f32>(riverBuf[o + 3u]), riverBuf[o + 4u], riverBuf[o + 5u], bitcast<f32>(riverBuf[o + 6u]), bitcast<f32>(riverBuf[o + 7u]));
 }
 
 // the coarse world (round 71, coarse.wgsl CCell): what has changed from the atlas, cell by cell
@@ -275,6 +276,8 @@ struct River {
   w: f32,
   depth: f32,
   flags: u32,
+  /** (round 84) its flow at the reference wetness: downstream along the segment, its node's speed (cells a tick) */
+  vel: vec2<f32>,
 }
 
 /** q moved by whole turns of the torus to be nearest p */
@@ -310,6 +313,7 @@ fn riverAt(p: vec2<f32>) -> River {
       r.level = mix(a.level, b.level, s);
       r.w = w;
       r.depth = mix(a.depth, b.depth, s);
+      r.vel = select(vec2<f32>(0.0), ab / sqrt(max(l2, 1e-12)), l2 > 1e-6) * mix(a.speed, b.speed, s);
       r.flags = a.flags & b.flags;
       if (a.flags == 1u && s < 0.5) { r.flags = 1u; }
     }
@@ -424,6 +428,9 @@ struct Ground {
   rl: f32,
   rx: f32,
   rflags: u32,
+  /** (round 84) the river's flow at the reference wetness (cells a tick, downstream) and its depth at the line */
+  rvel: vec2<f32>,
+  rd: f32,
   /** the coarse world here (coarseAt): loose ground on top and its material, water, lava, what added rock is */
   loose: f32,
   lmat: u32,
@@ -782,6 +789,8 @@ fn ground(p: vec2<f32>) -> Ground {
     g.rl = rv.level;
     g.rx = rv.x;
     g.rflags = rv.flags;
+    g.rvel = rv.vel;
+    g.rd = rv.depth;
   }
   // (no overhang where a river runs or the coarse world has changed the ground)
   if (g.rx < 3.0 || abs(co.dr) > 0.3) { g.ov = vec3<f32>(0.0); }
