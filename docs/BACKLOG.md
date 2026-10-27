@@ -12,6 +12,7 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+<<<<<<< HEAD
 ## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
 
 | id | item | size | status |
@@ -23,6 +24,8 @@ user) · `deferred` (agreed for later).
 | T5 | Bodies drawn as the terrain's own mesh, split off (vertices tied to their voxels), rigid while whole, crumbling on impact; no pop to cubes | L | wip (`collapse`) |
 | T6 | The title menu's atlas gets `rivers=table` too (now it's set from `level=atlas` in the URL) | S | open |
 
+=======
+>>>>>>> origin/flow
 ## Round 86 (2026-10-26, `flow`) — the falls on the phone (DECISIONS round 86)
 
 | id | item | size | status |
@@ -43,6 +46,20 @@ user) · `deferred` (agreed for later).
 | FL3 | The flow model by default: the valley, the sandbox and the atlas (the streamed window's slides move the runs and jets; the rivers agent's steady rivers seeded into it), oil as a third liquid (density: it floats), lava in the sandbox's beam and volcanoes (sim/lava.ts folded in), the old water system removed | L | open |
 | FL4 | Moving loose ground in the same kernel (the user's "sand endlessly spilling out of a basin"): sand with its repose as the sideways threshold, set into the layers at once when at rest, so a pour off a ledge arcs and freezes like water; the frozen pour rescaled as its basin empties (the sediment's air texture scaled with it) | M | open |
 | FL5 | Streams thinner and smoother: a ribbon along the arc instead of a box a column; foam where a fall lands in water; the old lava's look (crust, glow edge) for the lava runs. **The ribbon and the splash/mist done in round 86 (FL7)**; the lava's crust look still open | S | open |
+<<<<<<< HEAD
+=======
+## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
+
+| id | item | size | status |
+|---|---|---|---|
+| T1 | Rivers merged; `rivers=table` the atlas level's default | S | done (this commit) |
+| T2 | Falls at a plausible speed at 1x, looking as good as the old water's and the sand particles (spray, foam, a splash at the foot) | M | wip (`flow`) |
+| T3 | A meteor that deletes its crater at once: a shockwave, the rim melted to glowing magma, a big dust cloud for what it removed, sparks flying with the shockwave | M | wip (`collapse`) |
+| T4 | Collapse without lag: a cut to a falling body in the next frames, not after the readback timer | M | wip (`collapse`) |
+| T5 | Bodies drawn as the terrain's own mesh, split off (vertices tied to their voxels), rigid while whole, crumbling on impact; no pop to cubes | L | wip (`collapse`) |
+| T6 | The title menu's atlas gets `rivers=table` too (now it's set from `level=atlas` in the URL) | S | open |
+
+>>>>>>> origin/flow
 ## Round 85 (2026-10-26, session 5, `places`) — recipes, civilizations, diplomacy, grids (DECISIONS round 85)
 
 | id | item | size | status |

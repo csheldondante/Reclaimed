@@ -6111,6 +6111,75 @@ and is on by default on the low (phone) tier through phone-flags' LITE_SET, so `
 The medium and high tiers keep full voxels until the open items are done (plants on heightfield chunks, the rings' water, roads, the seam's colour; BACKLOG P13).
 It only applies to the atlas level, and `?mesh=0` with it is an error, not a fallback.
 Measured on the merged places build: driveprofile, low tier, 18/s for 20 s, desktop iGPU. By default (hybrid on) the GPU took 7.43 ms a frame, with 15 of 72 chunks voxels; p95 was 10.6 and p99 13.1. With `&hybrid=0` it took 9.07 ms, with 55 chunks drawn; p95 was 10.7 and p99 14.9. atlasworldtest passes 6/6.
+
+## Round 86 — falls at their own pace, drawn as a sheet with spray (flow)
+
+The user tested the flow lab on the phone (DECISIONS round 86): "The waterfalls move way way too fast at 1x and
+visually it doesn't look as good as the old approach or the sand particles which look fantastic", then "the
+waterfall trajectory looks decent … it's just that the columns have gaps and the rendering isn't great".
+places merged in first (the hybrid on the low tier, rivers, contracts; docs by union; Sleep keeps both the
+flow's wakeChunk and the hybrid's filter, and wakeChunk honours the filter).
+
+- **Why it was fast.** Not the tick rate, the sim's dt or the render's scroll (the streaks scrolled at
+  ~7 cells/s, the old water's speed): a stream's state moved on **one column every 60 Hz step** whatever its
+  speed — the path's shape was right (each column's exit time t and z − g t²/2), its timing wasn't. A column
+  a stream crosses in 0.1–0.3 s was crossed in 1/60 s, 6–18× fast, and a stream falling inside one column
+  landed in the step it arrived. Measured (scripts/fallcompare.mjs, the lab's pool, the plug dug the same
+  way): breach to the plain 24 cells below in **0.67 s** of sim time with the flow model, 0.55 s with the old
+  water (whose sheet moves a column a tick too) — the free fall alone takes 1.85 s at g = 14.
+- **Real time.** A column now holds the volume in flight over it (V) and its path's time across it (tc).
+  Nothing passes on before the stream's front has crossed (its age ≥ tc), then V dt / tc a step; in a
+  steady state V = rate × tc, the same flux as before, and fronts, changes and the water itself go at the
+  path's speed. Mass: what leaves a column is what the next one (or the landing) takes; the depth pass lands
+  this step's outflow (j3.z), not the in-flight volume. A fourth jet texture (j3: age, time since the lip,
+  outflow, carried). After: **2.55 s** breach to plain (0.5–0.7 s of it the notch filling).
+- **The critical flow over a lip.** With water now aloft as long as its fall takes, the pipe model's
+  momentum at a lip (it pours the whole depth off each step: 17× the critical discharge for a 2.6-deep pool)
+  put ~500 cells³ in the air over a pit at once; it landed together and stood 7 cells over the plateau (the
+  dark spikes in the first tries). Capped at √g d^(3/2) a unit of edge — plausible, and a fall that lasts
+  (the pool drains in ~18 s, not ~2).
+- **Lost water.** A stream arriving over a sleeping chunk was dropped (a frozen column took nothing in, its
+  landing went nowhere: the plain stayed dry, plainSum 0 at 9 s, with the pool losing 80 cells³). Now it is
+  carried on there (j3.w), what would land held aloft, and the chunk flagged to wake whatever its balance
+  (act z bit 2, steady.ts). After: the water reaches the plain and the totals add up (upper 584 + plain 98
+  at 9 s, the spring adding).
+- **One stream off a lip.** A run falling off two faces sent a stream down each, 60° apart, each at the
+  speed of its own face's flux: a fan of thin strands (the "gaps"). Now everything a run sends off its ledge
+  leaves with one velocity — its falls' mean direction (if within 60° of the face; round a pit or off a
+  ridge, each face's own), the speed for their mean discharge.
+- **The look** (render.wgsl streamVertex / shadeStream). A stream over its column is a sheet along its
+  parabola, not a box: a curtain across the flow (as wide as a column's water, spreading as it falls, so
+  neighbours join) and a band in the arc's plane (the arc side on), three segments each, begun a little
+  before the entry and ended past the exit with a cross-fade (a column's entry is the average of where the
+  streams it gathered left theirs, so segments meet without gaps). Lit by the path's own normal. Its pattern
+  is a function of (time along the path − the sim's time): it rides the water, falls at the fall's speed,
+  stretches as it speeds up, stands when the sim is paused, and agrees at any tick rate. Glassy off the lip,
+  aerated white lower down, ragged edges, gaps opening as it falls; a trickle faint by its rate.
+  Spray: liquid.wgsl prep spawns K_DROP particles along each stream's path with its velocity there (a
+  little scatter, more the longer it has fallen); particles.wgsl moves them with the flow model's gravity and
+  no drag, so they keep to the arc — the sand grains' look (small motes, streaked along their motion on
+  screen); gone where they meet ground or water. At the foot: splash (K_SPLASH) thrown up and out by the
+  impact, and mist (smoke state 3: faint, white, swelling). All scaled by the particle ring (the low tier's
+  16384: a quarter), none off a trickle.
+- **The tick rate.** The particles stepped 1/60 s a tick at any rate (at ?simhz=30 everything flew at half
+  speed): DT × simStep() now. The flow model runs FLOW_SUB 60 Hz substeps a tick at ?simhz=30|15 (a
+  uniform buffer each) instead of refusing.
+- **The lab.** The plug's breach digs three cells (its height) — at four a time it sank a ~20-deep shaft that
+  took the pool's first seconds. Scene D: a bank of sand behind a concrete wall on a plateau like the pool's
+  (its free sides at repose, so it lies still), for the sand's fall beside the water's.
+  scripts/fallcompare.mjs (flow / old water / sand GIFs at 1x, time to the plain), scripts/fallstill.mjs
+  (stills at times after the breach; --probe the streams drawn, LiquidSystem.probeStreams; --waterprobe).
+- **Measured** (flowlab.mjs pool + freeze, desktop Intel Xe-LPG, low tier, GPU ms a frame). Awake: water
+  passes 0.29 (flux 0.076, jets 0.039, depth 0.127, publish 0.012, prep 0.035) against 0.25 on the merged
+  build before the change; lava 0.25 vs 0.22; particles-update 0.039 both; draw 0.72 vs 0.55 (the sheets and
+  the spray). Freezing: everything asleep after ~3 min (35 s before) — the pool drains slowly now and the
+  trench's flow stays over the tolerance (BACKLOG FL11). driveprofile (atlas, low tier, 18/s, 20 s): GPU
+  7.54 ms a frame, p95 10.7, p99 18 (round 85: 7.43, 10.6, 13.1; the flow model isn't on the atlas — the
+  particle and draw-shader changes only).
+- The GIFs (C:/Projects/shots86/flow: before-/after- flow, old water, sand; compare-side.png) and the flowlab
+  numbers above predate the last change in this commit: the spray's budget cut (no drops off a trickle under
+  0.2 cells³/s, 0.35 a cell³/s instead of 0.5, the splash and mist a little thinner) after the frozen
+  lab drew 2.6 ms (0.8 before) with every trickle spraying; not re-measured (the shared GPU's queue).
 ## Round 84 — rivers at the atlas's steady state: held, drawn flowing, no simulation (rivers)
 
 The user: "all generators make a steady state so when we arrive nothing is simulated until the player
@@ -6362,3 +6431,14 @@ flow's wakeChunk and the hybrid's filter, and wakeChunk honours the filter).
   numbers above predate the last change in this commit: the spray's budget cut (no drops off a trickle under
   0.2 cells³/s, 0.35 a cell³/s instead of 0.5, the splash and mist a little thinner) after the frozen
   lab drew 2.6 ms (0.8 before) with every trickle spraying; not re-measured (the shared GPU's queue).
+## Round 87 — places merged into flow again (rivers=table on the atlas, simcull)
+
+- The coordinator's merge (flow-places 513dc37) showed flowlab with most of the land missing. Redone here: the
+  only conflicts were level.ts's imports and the warmup (places' warmup filter, then the flow model's wake and
+  judge) and the docs (union) — the src is byte-identical to flow-places. Headless (scripts/fallcompare's
+  browser, the real GPU) it renders flowlab whole at 640×480 and 900×700, after 3, 8 and 15 s, with &flow=1,
+  &flow=1&simcull=0, &flow=1&simcull=0&phone=0 and without the flow model: not reproduced (a stale build
+  served, most likely).
+- atlasworldtest 6/6; driveprofile (atlas, low tier, 18/s, 20 s): GPU 6.99 ms a frame, p95 10.8, p99 19.2.
+- The round-86 GIFs remade after the spray's budget cut (C:/Projects/shots86/flow after-*): breach to plain
+  2.57 s.
