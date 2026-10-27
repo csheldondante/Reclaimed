@@ -11,6 +11,7 @@ import { GLOBALS_BYTES } from './globals';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 import { MAX_PLACES } from '../world/places';
+import { AwakeTiles, SIM_CULL, TileCopy } from './cull';
 
 export const STATS_COUNT = 16;
 /** exact takes and puts in flight at once (edit.wgsl: the tag in the event's code bits 10-15) */
@@ -61,6 +62,10 @@ export class WorldGpu {
   readonly globals: GPUBuffer;
   readonly materials: GPUBuffer;
   readonly chunks: GPUBuffer;
+  /** (round 85, simcull — sim/cull.ts) the chunks live this tick, by a flow's sleeping rate (Simulation.step
+   *  makes them from the sleep mask), and the ping-pong fields' copy back over them; null without the flag */
+  readonly tiles: AwakeTiles | null;
+  readonly tileCopy: TileCopy | null;
 
   // canonical layered world (material physics owns writes)
   readonly layers: GPUBuffer;
@@ -406,6 +411,8 @@ export class WorldGpu {
     this.places = this.buf('places', N * 4, S);
     this.placeTable = this.buf('placeTable', MAX_PLACES * 4, S);
     this.sedOut = this.buf('sedOut', N * 7 * DIRS_BYTES, S);
+    this.tiles = SIM_CULL ? new AwakeTiles(device, w, h) : null;
+    this.tileCopy = this.tiles ? new TileCopy(device, this.globals, this.materials, this.tiles, N) : null;
   }
 
   private owned: GPUBuffer[] = [];
@@ -420,6 +427,7 @@ export class WorldGpu {
   destroy(): void {
     for (const b of this.owned) b.destroy();
     for (const t of this.textures) t.destroy();
+    this.tiles?.destroy();
     this.owned = [];
     this.textures = [];
   }
