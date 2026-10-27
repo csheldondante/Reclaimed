@@ -1220,6 +1220,26 @@ with one falling under it rides down on it rather than landing mid-air. The
 sandbox's break tool, dig and meteor no longer wake structures into physics
 bodies: everything they undercut falls through this path.
 
+What holds rock up, and the window sliding (round 92, `collapse`; DECISIONS round 92). Intervals touch face to
+face (`touch`) when they overlap by half a cell or by half the thinner one's thickness, and a column's intervals
+that overlap count as touching. A held piece is then weighed (`analyseRock` opts.weigh: true, or a test of the
+columns an edit itself changed — `Integrity.cutSeeds`, a crater's bowl and rim rather than its 30-cell ejecta —
+so the land as made stands and what an edit weakened is judged): (1) cross-sections from the far end in (its
+distance from what holds it): every part k or more steps out weighs its mass (cells × the table's `density`)
+against its joints to the runs k − 1 out, each `strength × min(ROCK.BEND h², ROCK.SHEAR h)` (h the overlap);
+the part most over gives there and falls (one break a pass); (2) else the piece above its lowest point zc with
+the standing runs it's joined to above zc (followed `ROCK.NECK_R` columns; past that, the map's edge or a run a
+flood before found so: keyed into the land) on the standing columns under it, each bearing `ROCK.CRUSH ×` the
+least `bear` down its run (materials.ts: rock 1, soil 0.3, sand 0.15 …); heavier than that, or its centre of
+mass off their hull (`ROCK.TIP_GIVE`), those columns crush from where it would land to zc and it falls straight
+(rotation: BACKLOG C4). `Fracture.why` counts the reasons. The streamer calls `onBeforeSlide(dx, dy, dz)`
+before a slide, a slide in z or a warp touches the columns: `Integrity.settle` lands every piece falling in the
+strip that leaves (all of them for a slide in z or a warp); `Streamer.columnsHeld` (a slide in z, a warp: the
+columns read back and written again) holds the integrity system (`Integrity.held`: nothing falls or is judged);
+`onSlide` → `Integrity.slid` moves the seeds, watches, boxes and the falling pieces (`ColumnBodies.shift`) with
+the land. Before, a piece falling when the window slid was frozen, cut again or written at its old place mid-air
+and forgotten — the meteor-made floaters.
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and

@@ -6773,3 +6773,87 @@ Why: `lakes` (round 90) names the atlas's lakes in the wiki, but the cached atla
 pulled before it. Pulled again on `places` after merging lakes and settlements: 7772 regions, 140 sites, 171 roads;
 the markdown now names its lakes (39 mentions round the spawn). The merged build loads clean at q=low 412x915 with
 813 lakes and 141 settlements (shots88/merge91/).
+
+## Round 92 — what holds rock up; the meteor-made floaters (`collapse`)
+
+Why: the user (DECISIONS round 92) — a huge pillar top stayed up on a two-column leg after a meteor at its foot (a
+hanging piece joined to any standing run was held whatever it weighed; round 83's span rule hardly ever fired),
+with a design ("connected components of solid intervals then look at total solid support under an interval …
+supports can be vertical or horizontal"), "where it breaks", tipping "now and we can add rotation later"; and
+"one of my screenshots the column is actually floating with zero visible support … a bug in when we trigger the
+logic". Then: "No it was meteor made floaters"; "I'm guessing it just never really tested with all the systems in
+play and it's an oversight"; and a playground ("like the one used for waterfalls").
+
+**The floater (test first).** scripts/meteorpillar.mjs: the atlas at the phone tier (q=low, hybrid=1, 412×915),
+natural pillars found from the window's columns (a region of spires, `at=9894,12901`: pillars through the
+window's top, the band) or a tower the world API builds; meteors at the foot through the pointer (meteorNow when
+the pick can't reach it), several in a row, the camera far (heightfield chunks), CPU throttled 5× over CDP; the
+ground truth (floatingRuns) after each and 30 s on, by world cell (the window slides under it); `--slide x|z` slides
+the window away and back while what the meteor freed is falling. Without slides nothing floated, 40 s on, with the
+rim's lava melting and setting — the magma hypothesis played no part (its one "floater" was the judge's, below).
+With a slide, round 88's code left the tower in the air over the molten crater, 27 runs from 133 to 157 over ground
+at 114 — the user's screenshot (C:/Projects/shots88/collapse2/before-meteor-slide.gif) — and nothing judged it
+again. Every test had turned the streamer off (`stream.auto = false`). Cause: the falling pieces live in window
+cells; the GPU's columns hold them mid-air at their offset. A slide in z reads the columns back and cuts them again
+(the piece mid-air became ground) and then Integrity.clear() forgot it; a slide along x or y froze a leaving
+region with a piece in it, and the pieces kept writing their old cells after the pages moved; the seeds, the rim's
+15 s watch and the dirty boxes stayed in old window cells too. Now: Streamer.onBeforeSlide(dx, dy, dz) →
+Integrity.settle lands at once every piece in the strip that leaves (all of them for a slide in z or a warp);
+Streamer.columnsHeld (only while a slide in z or a warp reads the columns back and writes them again — a slide
+along x or y moves them in one synchronous step) holds the integrity system (nothing falls or is judged);
+onSlide → Integrity.slid moves the seeds, watches, boxes and the falling pieces (ColumnBodies.shift) with the land.
+After: 0 floating either way (after-meteor-slide.gif: the tower lands in the crater); a slide in z holds 106 ms
+(578 ms at 5× throttle), settling 1.1 ms; along x nothing waits and the piece falls on across the slide. Natural
+spires, 3 meteors each at two pillars, far camera, slides in z, 5× throttle: 0 new floating runs (2 pieces fell,
+64 cells crumbled).
+
+**The judge's join rule** (the census of the window as made: 0 floating runs at the spawn, 12 on a mesa, 204 among
+the spires, 401 in the highlands, all there from the first frame). The user doubted the generator made any, rightly
+for most: 383 of the highlands' were thin tilted strata (under a cell thick) whose runs touch their neighbours by
+0.47 < OVERLAP 0.5; and a column's overlapping intervals (the meteor's ejecta laid a hundredth into the soil) were
+read as a run of their own, hanging. Now intervals touch when they overlap by half a cell or half the thinner one's
+thickness (fracture.ts `touch`), and overlapping intervals are one run. Floating as made after: highlands 23,
+spires 83 (mostly half-cell films), mesa 12 — seven of the mesa's are truly detached sandstone slabs 10 thick,
+1.5–49 cells over the ground (BACKLOG C18: to trace to the form that made them; not dropped at generation, as the
+user asked). The "islands dropped as land is made" try was reverted.
+
+**Support** (fracture.ts ROCK, the material table's `bear` and `density`). A held piece is weighed:
+- cross-sections from the far end in (its distance from what holds it): every part k or more steps out weighs
+  cells × density against its joints to the runs k − 1 out (and what holds it), each strength × min(BEND h²,
+  SHEAR h), h the overlap; BEND 3 (a slab a cell thick reaches 3 columns out: round 83's span), SHEAR 10 (thicker,
+  10 whatever its thickness). The part most over gives there and falls (one break a pass: what's left is judged
+  again). Summed across the part: the first try (each run handing its load on alone, as the user's "flood fill in
+  from the edges") broke a slab's edge row for its own length;
+- else the piece above its lowest point zc with the standing runs it's joined to above zc (followed NECK_R 16
+  columns; past that, the map's edge, MAX_PIECE or a run an earlier flood found so: keyed into the land, held) on
+  the standing columns under it: each bears CRUSH 300 × the least bear down its run (rock 1, concrete 0.8, steel
+  0.85, soil 0.3, rubble 0.4, sand 0.15, silt 0.2, ash, litter, drift 0.1, snow, leaf litter 0.05). Heavier, or its
+  centre of mass off their hull by more than TIP_GIVE 0.25, it gives: those columns crush to rubble from where it
+  would land to zc, and it falls (straight: rotation is C4/C21). This is also the waist cut part way round (the
+  core still standing: nothing hung free, nothing was judged);
+- only a piece an edit changed is weighed: Integrity.cutSeeds, the columns the edit itself cut (a crater's bowl and
+  rim, not its 30-cell ejecta; a landing; what crumbled), so the land as made stands; what floats is judged
+  wherever it is. `Fracture.why` counts the reasons.
+
+rockcpu.mjs's new cases (before → after): a big top on a 3-column leg falls (0 → 1512 cells), the same on a 44-column
+leg stands, an arm 22 out snaps 1 column from the wall (round 88: the tip crumbled 10 out), one 6 out stands, a top
+centred 6 off its leg tips (0 → 432) and centred stands, a waist with 4 columns left falls (0 → 4208), a nick stands,
+the same nick over a sand band falls, a cave 20 across keeps its roof when its wall is holed. Round 88's judge fails
+5 of them. The window judged whole as made with everything weighed (the worst case — in play only what an edit cut
+is): spawn 0; badlands 1 piece (53 cells); a mesa 1 (249); the spires 10 broken by load and 3 tipped (~900 cells:
+leaning spires); highlands 2.
+
+**The rock lab** (`level=rocklab`, src/levels/rocklab.ts, scripts/rocklabgif.mjs): a flat plain, nine pieces 22 apart
+by the camera (zoom 4.5): a top on a thin leg, the same on a wide leg, an arm off a wall, an arch, an off-centre top,
+a pillar for meteors, a banded tower (soil, concrete), a concrete tower, a waist. GIFs: before/after-thin-leg.gif
+(two breaks at the leg: round 88 keeps the top up; now it falls).
+
+Measured (desktop iGPU, D3D11): floatsweep 31/31, 0 floating before and after (streamer on; no slide in it);
+towertest 5/5 (towers 12 apart round the camera: 16 took the last past the streamer's reach, and it slid); rockcpu
+60 worlds × 40 cuts none floating, the judge 0.03 ms typical, 4.0 ms slowest (round 88: 0.9); the sweep's slowest
+pass 13.9 ms (banded-w14, as round 88's 12–15); the whole window judged at once 150–320 ms (the highlands 1347 ms
+before the neck's flood remembered what it found keyed into the land). driveprofile (q=low 412×915, 25 s): p50 9.9
+→ 9.9 ms, p95 11.8 → 11.6, GPU 10.18 → 9.75 ms a frame (noise). Tests now run with every system as the phone has it
+(the streamer included); meteorpillar's sites and towertest's heights follow the window when it slides. Open: C18
+(the mesa's detached slabs), C19 (a meteor's rim melts the column's top interval, not the rim's height), C20 (cube
+bodies dropped on any slide), C21 rotation.

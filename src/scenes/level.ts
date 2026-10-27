@@ -1149,11 +1149,17 @@ export class LevelScene implements Scene {
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, this.stream!.oz);
         if (a) core.globals.seaZ = a.atlas.p.sea - this.stream!.oz;
         if (dz) {
-          // (a slide in z: every column moved; what's falling or lying loose in window z goes)
+          // (a slide in z: every column moved; what's lying loose in window z goes)
           for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
-          this.integrity?.clear();
         }
+        // (round 92) what's waiting to be judged moves with the land (what was falling landed first: onBeforeSlide)
+        this.integrity?.slid(dx, dy, dz);
       });
+      // (round 92) before the window's columns are frozen, read back or moved: what's falling where they're frozen or
+      // cut again lands; nothing falls or is judged while they're read back and written again (a slide in z, a warp)
+      const S0 = this.stream;
+      this.stream.onBeforeSlide.push((dx, dy, dz) => this.integrity?.settle(dx, dy, dz));
+      if (this.integrity) this.integrity.held = () => S0.columnsHeld;
       // (round 80) a warp (the map's): the window somewhere else — what the level keeps in window coordinates again
       this.stream.onWarp.push((_ox, _oy, nz) => {
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, nz);
@@ -1458,7 +1464,7 @@ export class LevelScene implements Scene {
     // open framed on the valley; portrait phones get closer than the width
     // alone would allow (the map is a diamond, its middle is what matters)
     // (a story level opens close on its green)
-    if (first) this.core.camera.zoom = this.story ? 7 : Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300);
+    if (first) this.core.camera.zoom = this.story ? 7 : (this.level.zoom ?? Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300));
   }
 
   frame(now: number, dt: number): void {

@@ -50,13 +50,14 @@ try {
   await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await sleep(12000);
-  let side = -16;
+  // (round 92: 12 apart round the camera — the streamer is on: 16 apart took the last past its reach, and it slid)
+  let side = -24;
   for (const c of cases) {
     // build it beside the camera's target, look at it
     const at = await p.evaluate(
       async (c, side) => {
         const R = window.reclaimed;
-        R.stream.auto = false;
+        // (round 92: the streamer left on, as on the phone; the towers stay within its reach)
         const t = R.api.terrain;
         await t.refresh();
         const [cx, cy] = R.camera.target;
@@ -68,12 +69,13 @@ try {
         for (let k = 0; k < Math.ceil(h / 4); k++) t.build(x, y, c.mat, { radius: c.radius, layers: 4 });
         R.camera.target = [x, y, z + 8];
         R.camera.zoom = 7;
-        return { x, y, z, zMax };
+        // (round 92: the streamer is on — a slide in z, the camera over a tall tower, moves window z: oz kept)
+        return { x, y, z, zMax, oz: R.stream.oz };
       },
       c,
       side,
     );
-    side += 16;
+    side += 12;
     await sleep(5000);
     // (the tall one: a generated spire goes on above the window — what's outside its columns, drawn by the band)
     if (c.height === 'top')
@@ -113,11 +115,11 @@ try {
       );
     const top0 = await p.evaluate(async (a) => {
       await window.reclaimed.api.terrain.refresh();
-      return window.reclaimed.api.terrain.heightAt(a.x, a.y);
+      return window.reclaimed.api.terrain.heightAt(a.x, a.y) + window.reclaimed.stream.oz - a.oz;
     }, at);
     // the tool, as its button would pick it; taps at the tower's foot (its near side, a cell up)
     await p.evaluate((tool) => window.reclaimed.editor().select(tool), c.tool);
-    const tapAt = () => p.evaluate((a) => window.reclaimed.camera.project(a.x, a.y, a.z + 1.5), at);
+    const tapAt = () => p.evaluate((a) => window.reclaimed.camera.project(a.x, a.y, a.z + 1.5 - (window.reclaimed.stream.oz - a.oz)), at);
     const b0 = await p.evaluate(() => window.reclaimed.integrity().stats.bodies);
     let spawnedMs = null;
     let taps = 0;
@@ -161,7 +163,7 @@ try {
     const after = await p.evaluate(async (a) => {
       await window.reclaimed.api.terrain.refresh();
       const I = window.reclaimed.integrity();
-      return { top: window.reclaimed.api.terrain.heightAt(a.x, a.y), falling: I.falling.list.length, stats: I.stats };
+      return { top: window.reclaimed.api.terrain.heightAt(a.x, a.y) + window.reclaimed.stream.oz - a.oz, falling: I.falling.list.length, stats: I.stats, tiers: window.reclaimed.stream.stats.tiers };
     }, at);
     // (a structure the smash wakes is the physics voxels' — it comes down there, not as a piece: it must be down)
     const physicsDown = c.mat !== 'stone' && after.top < at.z + 5;
@@ -175,10 +177,10 @@ try {
       return Math.max(0, ...R.stream.outside[cy * R.core.dims.w + cx].filter((iv) => iv.z0 >= top - 1e-3).map((iv) => iv.z1 - top));
     }, at) : 0;
     // (the tall one still goes on to the window's top after its fall: what's above it must have come down)
-    const ok = ((spawnedMs !== null && spawnedMs <= LIMIT) || physicsDown) && (c.height === 'top' ? above < 21 : after.top < top0 - 3);
+    const ok = ((spawnedMs !== null && spawnedMs <= LIMIT) || physicsDown) && (c.height === 'top' ? above < 21 && (after.tiers === 0 || after.top < top0 - 3) : after.top < top0 - 3);
     if (c.height === 'top') console.log('above the window over its middle now reaches', above, '(24 before)');
     if (!ok) fails++;
-    console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name}: ${c.mat} r${c.radius} h${c.height} by ${c.tool}: ${taps} tap(s), piece in ${spawnedMs} ms (limit ${LIMIT}), top ${top0?.toFixed(1)} → ${after.top?.toFixed(1)} (window top ${at.zMax}), falling now ${after.falling}`);
+    console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name}: ${c.mat} r${c.radius} h${c.height} by ${c.tool}: ${taps} tap(s), piece in ${spawnedMs} ms (limit ${LIMIT}), top ${top0?.toFixed(1)} → ${after.top?.toFixed(1)} (window top ${at.zMax}), falling now ${after.falling}, slides in z ${after.tiers}; stats ${JSON.stringify(after.stats)}`);
     if (shots.length) {
       const enc = GIFEncoder();
       for (const s of shots) {
