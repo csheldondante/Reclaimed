@@ -194,6 +194,21 @@ export class Streamer {
   readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
+  /**
+   * (round 92) called with (dx, dy, dz) before a slide, a slide in z or a warp (0, 0, 0) touches the window's
+   * columns: what's mid-change in them is finished first (Integrity: a piece falling in a region leaving lands — one
+   * frozen mid-air, read back for a cut in z, or written on at its old place after the land moved under it, stayed
+   * in the air)
+   */
+  readonly onBeforeSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
+  /**
+   * (round 92) a slide in z or a warp under way: the window's columns are read back and all written again, so nothing
+   * else may write them meanwhile (a slide along x or y moves them in one synchronous step: nothing to hold)
+   */
+  get columnsHeld(): boolean {
+    return this.heldNow;
+  }
+  private heldNow = false;
   /** the world height of the window's z = 0 */
   oz = 0;
   /** per window column: its intervals above and below the window (world z) */
@@ -435,6 +450,7 @@ export class Streamer {
   }
 
   private async slideNow(dx: number, dy: number): Promise<void> {
+    for (const f of this.onBeforeSlide) f(dx, dy, 0);
     const tSync = performance.now();
     // (a readback that straddles the slide is stale: round 80)
     this.core.windowEpoch++;
@@ -886,6 +902,8 @@ export class Streamer {
     const t0 = performance.now();
     const { core, W, H, R } = this;
     try {
+      for (const f of this.onBeforeSlide) f(0, 0, 0);
+      this.heldNow = true;
       core.windowEpoch++;
       this.pending.clear();
       this.origin[0] = ox;
@@ -922,6 +940,7 @@ export class Streamer {
       for (const f of this.onWarp) f(ox, oy, oz);
     } finally {
       this.busy = false;
+      this.heldNow = false;
     }
     this.stats.lastMs = +(performance.now() - t0).toFixed(1);
   }
@@ -933,11 +952,14 @@ export class Streamer {
     const t0 = performance.now();
     try {
       const tz = performance.now();
+      for (const f of this.onBeforeSlide) f(0, 0, dz);
+      this.heldNow = true;
       this.core.windowEpoch++;
       await this.slideZNow(dz);
       record('slideZ', performance.now() - tz);
     } finally {
       this.busy = false;
+      this.heldNow = false;
     }
     this.stats.tiers++;
     this.stats.lastMs = +(performance.now() - t0).toFixed(1);

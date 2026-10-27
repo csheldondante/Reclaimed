@@ -77,7 +77,8 @@ try {
   // the helpers: the window's columns read and written, the ground-truth scan
   await p.evaluate(async () => {
     const R = window.reclaimed;
-    R.stream.auto = false;
+    // (round 92: the streamer left on, as on the phone — the camera stays within its reach; a slide moves the sites:
+    // they're counted, stream.stats.slides)
     const { MATERIALS, MatState, MAT } = await import('/src/world/materials.ts');
     const L = await import('/src/world/lattice.ts');
     const pk = R.core.packed;
@@ -182,8 +183,8 @@ try {
                 last = null;
                 continue;
               }
-              if (last && Math.abs(iv.z0 - last.z1) < 1e-3) {
-                last.z1 = iv.z1;
+              if (last && iv.z0 <= last.z1 + 1e-3) {
+                last.z1 = Math.max(last.z1, iv.z1);
                 last.ivs.push(iv);
               } else rs.push((last = { x, y, z0: iv.z0, z1: iv.z1, ivs: [iv], ok: false }));
             }
@@ -197,9 +198,14 @@ try {
                 r.ok = true;
                 q.push(r);
               }
+        // (round 92: touching face to face — by half a cell, or half the thinner one's thickness: fracture.ts touch)
+        const touch = (p0, p1, q0, q1) => {
+          const o = Math.min(p1, q1) - Math.max(p0, q0);
+          return o > 1e-3 && o >= Math.min(0.5, 0.5 * Math.min(p1 - p0, q1 - q0));
+        };
         const holds = (a, b) => {
-          if (Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) < 0.5) return false;
-          for (const i of a.ivs) if (side(i.mat)) for (const j of b.ivs) if (side(j.mat) && Math.min(i.z1, j.z1) - Math.max(i.z0, j.z0) >= 0.5) return true;
+          if (Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) <= 1e-3) return false;
+          for (const i of a.ivs) if (side(i.mat)) for (const j of b.ivs) if (side(j.mat) && touch(i.z0, i.z1, j.z0, j.z1)) return true;
           return false;
         };
         for (let h = 0; h < q.length; h++) {
@@ -422,7 +428,7 @@ try {
     const out = await p.evaluate(async () => {
       const F = window.__fs;
       const I = window.reclaimed.integrity();
-      return { floating: await F.scan(), stats: { ...I.stats } };
+      return { floating: await F.scan(), stats: { ...I.stats }, slides: window.reclaimed.stream.stats.slides + window.reclaimed.stream.stats.tiers };
     });
     // what floats round this site (and anywhere new)
     const mine = out.floating.filter((f) => Math.hypot(f.px - site[0], f.py - site[1]) < 40);
@@ -430,7 +436,7 @@ try {
     if (!ok) fails++;
     results.push({ name: c.name, ok, mine: mine.length });
     console.log(
-      `${ok ? 'PASS' : 'FAIL'} ${c.name} at (${site.map((v) => v.toFixed(0)).join(', ')}) ${isNear ? 'near' : 'far'}: ground ${G.toFixed(1)}, top ${built.zTop.toFixed(1)}, ${built.n} cells${built.bad ? `, ${built.bad} unwritten` : ''}; cut ${c.cut.tool} ${c.cut.part} (${cutInfo.n}); settled ${settled === null ? 'NO' : settled + ' ms'}; floating here ${mine.length}${mine.length ? ' ' + JSON.stringify(mine.slice(0, 4)) : ''}; window ${out.floating.length}; pieces ${out.stats.bodies}, crumbled ${out.stats.crumbled}, rereads ${out.stats.rereads ?? '-'}, last pass ${out.stats.lastMs.toFixed(1)} ms; middle now [${mid}]`,
+      `${ok ? 'PASS' : 'FAIL'} ${c.name} at (${site.map((v) => v.toFixed(0)).join(', ')}) ${isNear ? 'near' : 'far'}: ground ${G.toFixed(1)}, top ${built.zTop.toFixed(1)}, ${built.n} cells${built.bad ? `, ${built.bad} unwritten` : ''}; cut ${c.cut.tool} ${c.cut.part} (${cutInfo.n}); settled ${settled === null ? 'NO' : settled + ' ms'}; floating here ${mine.length}${mine.length ? ' ' + JSON.stringify(mine.slice(0, 4)) : ''}; window ${out.floating.length}; pieces ${out.stats.bodies}, crumbled ${out.stats.crumbled}, rereads ${out.stats.rereads ?? '-'}, slides ${out.slides}, last pass ${out.stats.lastMs.toFixed(1)} ms; middle now [${mid}]`,
     );
     if (linger) {
       await sleep(linger * 1000);

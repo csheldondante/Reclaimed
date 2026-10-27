@@ -12,6 +12,19 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 92 (2026-10-27, session 5, `collapse`) — what holds rock up; the meteor-made floaters (DECISIONS round 92)
+
+| id | item | size | status |
+|---|---|---|---|
+| C14 | Meteor-made floaters (the user's screenshots: a pillar hanging over a molten crater): a window slide (xy or z — the streamer following the camera) while a freed piece fell froze it, cut it again or kept writing it at its old place, mid-air, and forgot it; the seeds and the rim's watch stayed in old window cells. Now what falls in a leaving strip (or anywhere, for a slide in z or a warp) lands first, the rest moves with the land, nothing falls or is judged while the columns are read back and written again (Streamer.onBeforeSlide, columnsHeld; Integrity.settle, slid; ColumnBodies.shift) | M | done (collapse) |
+| C15 | Support (the user's design): a held piece's cross-sections from the far end in against its joints (strength × min(BEND h², SHEAR h)), breaking at the most overloaded; else the piece above its lowest point on the standing columns under it (CRUSH × bear, loose ground less) and tipping off their hull (it falls straight, crushing them); only pieces an edit changed are weighed (fracture.ts ROCK, materials.ts bear, density) | M | done (collapse; replaces C5's weight idea and round 83's span) |
+| C16 | The judge's join rule: thin strata (under a cell) touching their neighbours by less than half a cell read as floating (383 of the highlands' 401); a column's overlapping intervals (ejecta laid a hundredth into the soil) read as a run of their own | S | done (collapse) |
+| C17 | The rock lab (`level=rocklab`): test pieces by the camera — a big top on a thin leg, a wide leg, an arm, an arch, an off-centre top, a pillar, banded and concrete towers, a waist | S | done (collapse) |
+| C18 | Truly detached rock in the atlas as made, not the judge's: on a mesa (`at=6402,6596`) seven sandstone slabs 10 thick hang alone, 1.5–49 cells over the ground (162–164, 218–219 and round), in the spires a few: likely a form leaning faster than it is thick (the mesas' tilted spires, regions.ts lean to 0.35); to trace to its form and connect it to its host (the user: nothing they designed floats) | M | open |
+| C19 | A meteor's rim melts the column's top interval (lava.wgsl blast: "runs off the top of the column"), not the ground at the rim's height: an overhang's top melts where its underside is in the blast; the vent's pool sits on the top of a cut column (over the gap) | S | open |
+| C20 | The physics (cube) bodies are in window coordinates and are dropped on any slide (before: on a slide in z only) | S | open |
+| C21 | Rotation for what tips (C4): pieces fall straight now | M | open (C4) |
+
 ## Round 88 (2026-10-27, session 5, `seawall`) — a wall of water by the sea (DECISIONS round 88)
 
 | id | item | size | status |
@@ -32,7 +45,7 @@ user) · `deferred` (agreed for later).
 | C10 | Concrete and other structures cut by the break tool, a dig or a meteor fall as the columns' pieces (they were woken into physics bodies, pinned at the foot: 15 taps to bring a tower down) | S | done (collapse) |
 | C11 | A piece that caught up with one falling under it landed on it mid-air (left over the air when the lower one landed): it rides down on it now | S | done (collapse) |
 | C12 | Loose ground ran out sideways from under what lay on it (sediment.wgsl spills), leaving slabs and basalt crusts over air after a meteor: the loose under something solid stays; a meteor's rim and the beam's bore are watched as they melt and set (Integrity.watch) | S | done (collapse) |
-| C13 | The GPU still changes ground the integrity system doesn't hear about (lava setting elsewhere — a volcano's flows, the sim's own slumps): nothing checks those columns. A slow rotating sweep of the window (floatingRuns over a stripe a second) would catch any; not needed by the sweep's tools | S | open |
+| C13 | The GPU still changes ground the integrity system doesn't hear about (lava setting elsewhere — a volcano's flows, the sim's own slumps): nothing checks those columns. A slow rotating sweep of the window (floatingRuns over a stripe a second) would catch any; not needed by the sweep's tools | S | deferred (round 92, the user: "maybe we defer this unless doing so is more effort"; the meteor floaters weren't GPU-made — C14) |
 ## Rounds 88–89 (2026-10-27, session 5, `settlements`) — settlements with agents working round them (DECISIONS rounds 88, 89)
 
 | id | item | size | status |
@@ -62,7 +75,7 @@ user) · `deferred` (agreed for later).
 | C2 | What a cut undercut judged at once: the pass starts on the cut (not the 0.35 s timer), reads back only the chunks near (`?intread=all` the old whole read), one look is enough | S | done (collapse, verified: latencyprobe) |
 | C3 | Freed pieces fall in the columns' own format (colbodies.ts): meshed as the ground (no cube voxels), split from it, rigid; landing hard crumbles the rim of the foot (rubble, chips thrown, dust); committed as ground where they land | M | done (collapse, verified: GIFs shots86) |
 | C4 | Toppling spires: a tall freed piece whose centre is off its foot tips over (needs rotation: re-rasterising a turned piece into the columns, or a mesh of its own drawn with a transform) | M | open |
-| C5 | The weight idea: a hanging piece's mass against its contact area × strength (snapping necks under load) | M | open (DECISIONS round 83) |
+| C5 | The weight idea: a hanging piece's mass against its contact area × strength (snapping necks under load) | M | done (collapse, round 92: C15) |
 | C6 | The atlas's great meteor's window edit on the GPU (it reads back and writes the whole window: the far crater lands after that, the bowl and blast at once) | M | open |
 | C7 | Pieces shatter into flying chunks on a big impact (now: the foot's rim crumbles to rubble and chips; the rest lands whole) | S | open |
 | C8 | Round 87: a fully undercut tower stayed standing on the phone — the beam's bore not judged, the part above the window never coming down, limits in cells, structures past the box skipped; fixed by reading the paths; scripts/towertest.mjs (the player's tools, 412x915, low) to run | M | done (collapse; towertest 5/5) |
