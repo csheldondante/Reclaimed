@@ -151,8 +151,8 @@ export class ColumnBodies {
     return s;
   }
 
-  /** Every piece falls a step (its runs written at their new heights); what came down this step is returned (still in the list: `commit` it). */
-  update(dt: number): Landing[] {
+  /** Every piece falls a step (its runs written at their new heights, when `write`: the phone writes every other frame); what came down this step is returned (still in the list: `commit` it). */
+  update(dt: number, write = true): Landing[] {
     const landed: Landing[] = [];
     if (!this.list.length) return landed;
     const touched = new Set<number>();
@@ -184,7 +184,7 @@ export class ColumnBodies {
       }
       for (const c of b.cols) touched.add(key(c.x, c.y));
     }
-    for (const k of touched) this.writeGpu(k);
+    if (write) for (const k of touched) this.writeGpu(k);
     return landed;
   }
 

@@ -24,6 +24,19 @@ import { ColumnBodies, subtract, type ColPiece, type FallingBody, type Landing }
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 
 /**
+ * (round 86) A falling piece's columns written (and its chunks meshed again) every Nth frame: 2 on the phone's
+ * tier (no `q` or q=low), 1 otherwise; `?fallevery=N`. A 46-column piece's chunks rebuilt every frame cost the
+ * desktop's iGPU ~1.4 ms a frame of mesh passes; at 4 cells/s, every other frame is a step of 0.13 cells.
+ */
+const FALL_EVERY = (() => {
+  if (typeof location === 'undefined') return 1;
+  const q = new URLSearchParams(location.search);
+  const n = q.get('fallevery');
+  if (n) return Math.max(1, Number(n));
+  return (q.get('q') ?? 'low') === 'low' ? 2 : 1;
+})();
+
+/**
  * (perfopt, round 83 audit: ?intread=near) A pass reads back only the layers' chunks it looks at — round the dirty
  * boxes (4 cells), the cut columns (24: the rock hanging from them), the bodies (4) — into a CPU copy of all of
  * them, not all 16 MB of the atlas's window every 0.35 s while anything is dirty (riding: every region come in) or
@@ -54,6 +67,7 @@ export class Integrity {
    * readback submitted after the tick that made the cut — so one look is enough
    */
   private urgent = false;
+  private fallFrame = 0;
   /** (round 86) columns written while a readback was in flight: put back into the copy it brings (it predates them) */
   private inflight: Map<number, Interval[]> | null = null;
   /** chunks round what was touched: hybrid voxels from now on (the level: HybridChunks.edit); x0, y0, x1, y1 world */
@@ -351,7 +365,7 @@ export class Integrity {
     this.core.renderer.setBodies(data, count);
     // (round 86) the pieces falling in the columns: a step, their chunks meshed at once, what came down
     if (this.world.slots.length && dt > 0 && this.falling.list.length) {
-      for (const l of this.falling.update(dt)) this.land(l);
+      for (const l of this.falling.update(dt, ++this.fallFrame % FALL_EVERY === 0)) this.land(l);
       for (const b of this.falling.list) this.touch(b, false);
     }
     this.t -= dt;

@@ -6060,3 +6060,156 @@ and is on by default on the low (phone) tier through phone-flags' LITE_SET, so `
 The medium and high tiers keep full voxels until the open items are done (plants on heightfield chunks, the rings' water, roads, the seam's colour; BACKLOG P13).
 It only applies to the atlas level, and `?mesh=0` with it is an error, not a fallback.
 Measured on the merged places build: driveprofile, low tier, 18/s for 20 s, desktop iGPU. By default (hybrid on) the GPU took 7.43 ms a frame, with 15 of 72 chunks voxels; p95 was 10.6 and p99 13.1. With `&hybrid=0` it took 9.07 ms, with 55 chunks drawn; p95 was 10.7 and p99 14.9. atlasworldtest passes 6/6.
+## Round 84 — rivers at the atlas's steady state: held, drawn flowing, no simulation (rivers)
+
+The user: "all generators make a steady state so when we arrive nothing is simulated until the player
+interacts with it"; "rivers should flow downstream"; "Find the atlas level rivers and what watersheds
+feed them … precompute the flow of those as a function of dryness. Then the actual simulation treats the
+unperturbed river basin as a steady state with no actual simulation and flow as strictly a render
+artifact computed at the atlas level"; "we can have a tolerance and decide when we are close enough to
+steady state to freeze"; "keep the flow proportional and then zero out when they get too low".
+
+Why: a generated river wasn't the pipes' steady state. Springs along its middle fed 0.0008 a step; the
+pipes carry a flow set by the level's fall, not by depth, so the deep generated channel drained to a
+film within the level's 30 s warmup (the sim's window holds 2,086 cells³ of river where the generator
+made 7,378), and woken again it moved on (riverrest, wake all: 1,912 of 2,691 wet columns changed in
+5 s, −6 %). The perf agent's hold (sources topped to the generated depth) flooded the banks.
+
+What (`?rivers=table`; `sim`, the default, as before; `hold`, the perf agent's, for comparison):
+- **The table, at the atlas** (rivers.ts): each node's discharge is its watershed's — RIVER_RUNOFF
+  (0.002) cells³ a step for each texel drained through it (the drainage tree's accumulation, less where
+  the latitude is dry) — and its speed that over the channel's wetted section (the carve's parabola
+  filled to 0.3 under the level), square-rooted so a brook still moves, up to 2.5× where the level
+  falls fast (rapids). Node word 7. Stats on the default atlas: speeds 0.06 / median / 0.8 cells a
+  step (riverStats.speed); the pipes' own steady surface slope for that discharge is a small share of
+  the level's fall (riverStats.pipeSlope) — the pipes can't carry the river the atlas has at its slope,
+  which is why the flow is a render artifact and not the pipes'.
+- **Per column, when the land is made** (compose.wgsl riverAt → Ground.rvel, rd → ColG → forms.wgsl
+  colFinish → ColOut's spare words → atlas.ts landFrom): the flow along the river's segment and the
+  depth, into a new contract texture `riverFlow` (world-gpu.ts: xy flow, z the column's depth, w the
+  river's depth at its line), kept with its region by the streamer. No springs. Banks: the ground just
+  outside the channel (0.95–1.9 half-widths) raised to the level where it lay up to 12 under it (a
+  levee), so the river holds what it carries; where the bed steps down 1.5 or more the way the river
+  runs, its water is a 0.2 sheet poured over the step (fast: foam), not a pool to empty down it.
+- **Held** (riverheld.wgsl, in water_flux, water_depth, renderfields): a river's column asleep, or at
+  the window's edge (where the river comes in from the unsimulated world and goes on out), is the
+  table at the rivers' wetness — its depth eased to it (2 % a step), its flux the pipes' steady flux
+  for its levels (so what's awake beside it is fed as the river would feed it, and drains into it) —
+  and is drawn flowing by the table's flow (renderfields: flow × depth, as the pipes' net flow).
+  Woken (an edit, a power, a storm), the pipes run it; with `?riverpull=x` (0.02 by default with the
+  table) its column is pulled toward the table x a step: what comes down from past the window keeps
+  coming, a breach is fed and the river runs on past it. The renderer draws a woken river's column
+  with the table's flow (as deep as it still is) plus the pipes' own.
+- **Dryness** (weather/riverwet.ts → Globals ocean.y): 1 is the land as made; the season (wettest at
+  the thaw) and the storms raining move it, followed over ~20 s. The frozen pattern scales with it, no
+  simulation: at the line the depth × wet^0.6 (the level shifted with it across the channel, at most
+  0.28 over), the flow × wet^0.4; under 0.03 a dry bed. `?riverwet=x` holds it.
+- **Settled, then frozen** (`?settletol=x`, 0.01 by default with the table): water_depth.wgsl keeps,
+  per chunk, the most a column's water changed in a step (`waterChange`, atomicMax of the f32's bits);
+  the level reads and clears it twice a second, and a woken chunk whose time is up stays awake while
+  it's over the tolerance (60 s at most) — then sleeps, its last flux the animation, the river's
+  columns back to the table.
+- The atlas level's warmup (1,800 ticks, all awake) doesn't run the water with the table: the land
+  comes in at its steady state (the warmup had drained it before anything slept). `?settle` is off by
+  default with the table (`?settle=1` to settle land as it comes in).
+- Without the field mesh (the phone) the flow's heading reaches the water too: renderfields packs it
+  in w (1/1024 turns in the whole part, size/8 in the fraction; render.wgsl flowOf), so the streaks
+  and the foam run down the river there as well. With the table, foam goes by the water's speed (flow
+  over depth), not its net flow — a deep river carries a lot without being fast.
+
+Measured (scripts/riverrest.mjs: an atlas river found on riverNodes — temperate, 5–8 half-widths, not
+at its mouth — the level walked in with settle=0, every chunk asleep, then woken with no edit; wet
+columns over the sea, |Δdepth| > 0.05 in 5 s; node at 3884,13288):
+
+| | river held at | wake all: river cols changed, volume | wake an event (r 40): near, window |
+|---|---|---|---|
+| sim (before) | 2,086 cells³ (drained in warmup) | 1,912 of 2,691, −6.3 % | — |
+| table, warmup ran unheld | 18,673 (spilt onto banks) | 16,417 of 18,960, −19.9 % | — |
+| table + levees + still warmup | 7,378 | 3,979 of 4,522, −28.9 % (reaches above falls empty) | −6.3 %, −0.65 % |
+| table + riverpull 0.02 | 7,378 | 4,121 of 4,542, −13.5 % | −2.0 %, +0.12 % |
+
+The breach (riverrest --breach: a trench dug across the bank): it fills from the river and the river
+runs on past it (shots84/pull-breach-*.png). driveprofile at q=low, 20 s: p95 10.7 ms (sim) vs 10.4
+(table); water-flux + water-depth ≈ 0.05 ms a frame either way.
+
+Open: a woken reach above a fall still empties down it (the pipes have no weir: flux over a lip is
+the head difference, not the critical flow) — the pull holds it; the channel's deep middle shows its
+silt bed as a grey stripe through the water; the watershed's discharge doesn't yet reach the sea's
+mouths' look; `?settletol` reads `waterChange` per chunk by index, not moved on a slide.
+
+## Round 84 — rivers: the final measurements, a node's speed never negative (rivers)
+
+- rivers.ts: a node whose next lies higher (a river's mouth onto a lake above it) had a negative level
+  fall, so a negative rapids factor — the slowest speed came out −1.56 (riverStats.speed). The fall is
+  counted from 0. Default atlas: 55,146 nodes (15,441 lava), 478 falls; the water nodes' median
+  discharge 1.0 cells³ a step and speed 0.105 cells a step (max 0.8). The pipes' steady surface slope
+  for that discharge is 15× the level's own fall (median, riverStats.pipeSlope) — the atlas's rivers
+  are far steeper-fed than the pipes could carry at their slope, which is why the flow is drawn from
+  the table and the woken pipes need the pull.
+- The defaults with the table (riverpull 0.02, settletol 0.01, falls only the way the river runs), the
+  same river (3884,13288): woken round an event, the river's columns +1.5 % in 5 s (near: +2.7 %, the
+  pull refilling what the falls dropped); every chunk woken, −12.4 % (−28.9 % without the pull).
+  `?rivers=hold` for comparison: woken, 0.3 % — but it had flooded in the warmup, 4,936 wet columns off
+  the river (16,173 cells³ in the window to the table's 7,420).
+- Settling: with the pull, a woken stretch near a fall didn't come under 0.01 (or 0.05) a step in the
+  60 s cap — likely the woken pipes at a fall's lip and the held lip beside them trade water every step, and
+  the pull refills it; the cap froze it. Open: measure the settling by the chunk's net change (in − out)
+  rather than its busiest column, or a weir at a lip.
+- In the shots a grey stripe runs down the river's middle — its silt bed (forms.wgsl: silt under the middle
+  half), in `?rivers=sim` as well, where the water there looks drained; with the table it shows through
+  the water. Open: whether the water's surface is drawn over a steeply carved middle (the water corners'
+  SHEET_STEP). The river's width stepping at node boundaries is the generator's (riverAt's nearest-node
+  segments), in both.
+
+## 2026-10-26 — round 86: rivers merged, table rivers the atlas level's default
+
+The user tested the `rivers` branch on the phone and said "the rivers look good!" It is merged into places, and with
+`?level=atlas` in the URL the default is now `rivers=table`: rivers sit at the atlas's steady state, drawn flowing and
+held asleep until something wakes them. The valley levels keep `sim`, because their rivers aren't the atlas's; any
+level can still choose with `?rivers=`.
+- **The merge's one real conflict:** both sides had taken Globals `ocean.y`, hybrid for its mesh chunks across and
+  rivers for the rivers' wetness. Rivers' wetness moves to `ocean.w` (common.wgsl, riverheld.wgsl, globals.ts).
+- **Sleep:** the hybrid's filter is checked before the woke time is stamped, so a heightfield chunk that's refused a
+  wake doesn't restart its settle clock.
+- **SETTLE** follows `RIVERS` rather than re-reading the URL.
+- **Known:** picking the atlas from the title menu, with no `level=` in the URL, still gets `sim` rivers.
+
+## Round 86 — rock collapse and meteors made immediate; pieces fall in the columns (collapse)
+
+Why: the user on the phone (DECISIONS round 86): a long lag from a meteor to the ground going, the column
+"converts to voxels before collapsing"; "simulate as voxels but split the mesh"; a big dust cloud and sparks.
+
+- Meteor (level.ts impact/impactFx): the bowl's edit goes on the next tick as before; its chunks are now meshed
+  that frame (FieldMesh.urgent: 4 rebuild slots over the tier's own — low had 1, on alternate frames with the
+  band, so a crater took 10+ frames to show). A shockwave ring (16 bursts of dust and embers thrown out from
+  the rim), a dust cloud sized to the bowl's volume (capped at an eighth of the tier's particles), and the rim
+  melted to lava, glowing past it (lava.wgsl/lava.ts `blast`: the ground's heat raised past melting for a tick;
+  it cools to basalt as any lava). The atlas's great meteor: its blast at once, before its window edit (a
+  whole readback and write: editLiveMs exposed; BACKLOG C6).
+- Collapse latency (integrity.ts): a cut sent this tick starts the next pass at once (its readback submitted
+  after that tick), not on the 0.35 s timer; only the chunks near are read back by default (`?intread=all`
+  the old whole read); the drift texture isn't read any more.
+- Pieces (colbodies.ts, ARCHITECTURE "Falling pieces in the columns"): a freed piece is its runs and an
+  offset, written into the GPU's columns every frame over their base — meshed as the ground, split from it,
+  no cube voxels; loose ground on it rides down; landing hard crumbles the rim of its foot (rubble, chips
+  thrown, dust), the rest is ground again and its columns judged. Structures' tipping pieces now stand
+  (they came down in place every pass; toppling is C4).
+- Measured (scripts/latencyprobe.mjs, the atlas level, desktop iGPU headless at ~100 fps; before = places
+  3b8e5fc, after = this branch; ms from the event):
+  - meteor at a spire's foot, low: the GPU column lower 50 → 2, its mesh chunk rebuilt **605 → 2** (high
+    44 → 2); the freed piece spawned 100 → 40 and moving at 40 (before: a cube body);
+  - a cut through a spire's middle, low: piece spawned and moving **365–968 → 49** (high 365 → 20); a
+    6-radius pillar's piece (46 columns) 125;
+  - the great meteor, low: its window edit 91 ms (high 91–170, one long frame), its chunk meshed 92 (high
+    before 731).
+- Fixed after the first measurements: fracture's runs by default (`?fracture=dense` the old whole box: a
+  pass's CPU 28–38 ms on a crater's 88² box); a falling piece's columns written every other frame on the
+  phone's tier (`?fallevery=N`): the 46-column piece's mesh passes 571 → 423 ms over 4 s, its layer writes
+  12 374 → 5 934 (one writeBuffer a column a write — 46 a frame at most; not batched: fine at this size).
+- craterbench, low (30 craters in 15 s): p95 10.2 → 10.1, worst 39.4 → 19.5, none over 50 ms.
+  driveprofile, low, 18/s riding (after includes the rivers merge): p95 10.6 → 10.7, p99 14.6 → 15.2–19.9,
+  worst 54 → 69–72, GPU 7.42 → 7.66 ms a frame.
+- GIFs: C:/Projects/shots86/before-meteor.gif, after-meteor.gif (the bowl gone at once, the rim molten and
+  glowing), before-cut.gif (the top pops to grey cubes), after-cut.gif (the top falls as the spire's own mesh).
+- Left as designed: while a piece falls, what the sim does in its columns is written over (sand slumping
+  onto it, a lava set); the falls are short (4 cells/s, the round-20 feel).

@@ -157,7 +157,8 @@ const CAPACITY = 40;
  * (the box is mostly ground and air: a 64² region came in as a W × D × zMax grid, a million cells unpacked and
  * scanned, 12–27 ms a pass on the desktop while riding); any other cell is looked up in its column when asked.
  */
-export const fractureOpts = { runs: typeof location !== 'undefined' && new URLSearchParams(location.search).get('fracture') === 'runs' };
+/** (round 86: the runs by default — the same bodies and crumbs, round 83's audit; ?fracture=dense the whole box unpacked) */
+export const fractureOpts = { runs: typeof location === 'undefined' || new URLSearchParams(location.search).get('fracture') !== 'dense' };
 
 export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1: number): Fracture {
   x0 = Math.max(0, Math.floor(x0));

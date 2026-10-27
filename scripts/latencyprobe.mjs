@@ -24,6 +24,7 @@ const q = opt('q', 'low');
 const gif = opt('gif', '');
 const extra = opt('extra', '');
 const only = opt('only', 'meteor,cut,great').split(',');
+const radius = Number(opt('radius', 1.6));
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
@@ -52,6 +53,14 @@ try {
       const cy = Math.max(0, Math.round(y / ROW_H - 0.5));
       const cx = Math.max(0, Math.round(x - 0.5 - 0.5 * (cy & 1)));
       return [cx, cy];
+    };
+    // (writes into the layers counted, and the GPU's mesh passes summed, over a watch)
+    const q = dev.queue;
+    const wb = q.writeBuffer.bind(q);
+    window.__writes = 0;
+    q.writeBuffer = (b, ...rest) => {
+      if (b === R.core.world.layers) window.__writes++;
+      return wb(b, ...rest);
     };
     window.__probe = {
       cellOf,
@@ -98,7 +107,7 @@ try {
     };
   });
   const spire = (side) =>
-    p.evaluate(async (side) => {
+    p.evaluate(async (side, radius) => {
       const R = window.reclaimed;
       R.stream.auto = false;
       const t = R.api.terrain;
@@ -107,11 +116,11 @@ try {
       const x = cx + side;
       const y = cy;
       const z = t.heightAt(x, y);
-      for (let k = 0; k < 30; k++) t.build(x, y, 'stone', { radius: 1.6, layers: 1 });
+      for (let k = 0; k < 30; k++) t.build(x, y, 'stone', { radius, layers: 1 });
       R.camera.target = [x, y, z + 10];
       R.camera.zoom = 9;
       return { x, y, z };
-    }, side);
+    }, side, radius);
   const fire = (name, a) =>
     p.evaluate(
       async (name, a) => {
@@ -123,7 +132,7 @@ try {
           a.cx = a.x;
           a.cy = a.y;
           a.cz = a.z + (top - a.z) * 0.45;
-          t.crater(a.x, a.y, { radius: 1.6, z: a.cz });
+          t.crater(a.x, a.y, { radius: (a.r ?? 1.6) > 2 ? a.r * 1.5 : 1.6, z: a.cz });
         } else if (name === 'meteor') {
           a.cx = a.x + 4;
           a.cy = a.y;
@@ -150,13 +159,20 @@ try {
           const t0 = window.__t0;
           const out = { deleted: null, meshed: null, spawned: null, falling: null, ft: [] };
           const b0 = P.bodies();
+          window.__writes = 0;
+          const prof = window.reclaimed.core.host.profiler;
+          prof.resetTotals?.();
+          let maxWrites = 0;
+          let lastW = 0;
           let last = performance.now();
           let pending = 0;
           const f = (now) => {
             out.ft.push(now - last);
+            maxWrites = Math.max(maxWrites, window.__writes - lastW);
+            lastW = window.__writes;
             last = now;
             const at = now - t0;
-            if (out.deleted === null && pending < 3) {
+            if ((out.deleted === null || out.meshed === null) && pending < 3) {
               pending++;
               P.gpuTop(a.cx, a.cy).then((top) => {
                 pending--;
@@ -177,6 +193,15 @@ try {
               out.frames = s.length;
               delete out.ft;
               out.stats = window.reclaimed.integrity?.()?.stats;
+              out.editLiveMs = window.reclaimed.editLiveMs?.();
+              out.layerWrites = window.__writes;
+              out.fallingNow = (window.reclaimed.integrity?.()?.falling?.list ?? []).map((b) => [b.cols.length, +b.dz.toFixed(2), +b.vz.toFixed(2), +b.age.toFixed(1)]);
+              out.maxWritesFrame = maxWrites;
+              const mesh = {};
+              for (const [k, v] of prof.totalMs ?? []) if (k.includes('fieldmesh')) mesh[k] = +v.toFixed(1);
+              for (const [k, v] of prof.maxMs ?? []) if (k.includes('fieldmesh-sample') || k.includes('fieldmesh-verts')) mesh['max ' + k] = +v.toFixed(2);
+              out.mesh = mesh;
+              out.timing = window.reclaimed.integrity?.()?.timing;
               done(out);
             }
           };
@@ -188,6 +213,7 @@ try {
   let side = -14;
   for (const name of only) {
     const a = await spire(side);
+    a.r = radius;
     side += 14;
     await sleep(6000);
     // (the crater's middle as it'll be: measured before)

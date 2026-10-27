@@ -16,9 +16,9 @@ user) · `deferred` (agreed for later).
 
 | id | item | size | status |
 |---|---|---|---|
-| C1 | A meteor is a delete: the bowl gone the frame after it lands, its chunks meshed that frame (urgent rebuild slots, every tier); a flash, a shockwave ring of dust and embers, a dust cloud sized to what the bowl took (capped by the tier), the rim melted to lava, glowing, cooling to basalt (lava.ts blast). The atlas's great meteor: its blast at once, its window edit after the readback | M | wip (committed, not yet verified in a browser) |
-| C2 | What a cut undercut judged at once: the pass starts on the cut (not the 0.35 s timer), reads back only the chunks near (`?intread=all` the old whole read), one look is enough | S | wip (committed, not yet verified in a browser) |
-| C3 | Freed pieces fall in the columns' own format (colbodies.ts): meshed as the ground (no cube voxels), split from it, rigid; landing hard crumbles the rim of the foot (rubble, chips thrown, dust); committed as ground where they land | M | wip (committed, not yet verified in a browser) |
+| C1 | A meteor is a delete: the bowl gone the frame after it lands, its chunks meshed that frame (urgent rebuild slots, every tier); a flash, a shockwave ring of dust and embers, a dust cloud sized to what the bowl took (capped by the tier), the rim melted to lava, glowing, cooling to basalt (lava.ts blast). The atlas's great meteor: its blast at once, its window edit after the readback | M | done (collapse, verified: latencyprobe) |
+| C2 | What a cut undercut judged at once: the pass starts on the cut (not the 0.35 s timer), reads back only the chunks near (`?intread=all` the old whole read), one look is enough | S | done (collapse, verified: latencyprobe) |
+| C3 | Freed pieces fall in the columns' own format (colbodies.ts): meshed as the ground (no cube voxels), split from it, rigid; landing hard crumbles the rim of the foot (rubble, chips thrown, dust); committed as ground where they land | M | done (collapse, verified: GIFs shots86) |
 | C4 | Toppling spires: a tall freed piece whose centre is off its foot tips over (needs rotation: re-rasterising a turned piece into the columns, or a mesh of its own drawn with a transform) | M | open |
 | C5 | The weight idea: a hanging piece's mass against its contact area × strength (snapping necks under load) | M | open (DECISIONS round 83) |
 | C6 | The atlas's great meteor's window edit on the GPU (it reads back and writes the whole window: the far crater lands after that, the bowl and blast at once) | M | open |
@@ -30,9 +30,9 @@ user) · `deferred` (agreed for later).
 |---|---|---|---|
 | T1 | Rivers merged; `rivers=table` the atlas level's default | S | done (this commit) |
 | T2 | Falls at a plausible speed at 1x, looking as good as the old water's and the sand particles (spray, foam, a splash at the foot) | M | wip (`flow`) |
-| T3 | A meteor that deletes its crater at once: a shockwave, the rim melted to glowing magma, a big dust cloud for what it removed, sparks flying with the shockwave | M | wip (`collapse`) |
-| T4 | Collapse without lag: a cut to a falling body in the next frames, not after the readback timer | M | wip (`collapse`) |
-| T5 | Bodies drawn as the terrain's own mesh, split off (vertices tied to their voxels), rigid while whole, crumbling on impact; no pop to cubes | L | wip (`collapse`) |
+| T3 | A meteor that deletes its crater at once: a shockwave, the rim melted to glowing magma, a big dust cloud for what it removed, sparks flying with the shockwave | M | done (`collapse`: C1) |
+| T4 | Collapse without lag: a cut to a falling body in the next frames, not after the readback timer | M | done (`collapse`: C2) |
+| T5 | Bodies drawn as the terrain's own mesh, split off (vertices tied to their voxels), rigid while whole, crumbling on impact; no pop to cubes | L | done (`collapse`: C3) |
 | T6 | The title menu's atlas gets `rivers=table` too (now it's set from `level=atlas` in the URL) | S | open |
 
 ## Round 85 (2026-10-26, session 5, `places`) — recipes, civilizations, diplomacy, grids (DECISIONS round 85)
