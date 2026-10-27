@@ -87,6 +87,10 @@ const RUN_GRAINS: f32 = 30.0;
 @group(0) @binding(19) var airTex: texture_2d<f32>;
 // snow blown off the ground (round 50): a white fleck on the wind, a look
 const K_SNOW: u32 = 23u;
+// (round 86, ?flow=1) spray off a falling stream of water (liquid.wgsl prep spawns it along the stream's path);
+// DROP_G: the flow model's gravity (liquid.wgsl GF), so a drop keeps to the stream's arc
+const K_DROP: u32 = 24u;
+const DROP_G: f32 = 14.0;
 // (the funnel follows the spine: spineAt() in common.wgsl)
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
@@ -104,7 +108,8 @@ const B_FLEE: u32 = 0u;
 const B_SEEK: u32 = 1u;
 const B_PERCH: u32 = 2u;
 
-const DT: f32 = 1.0 / 60.0;
+// (a 60 Hz tick's; update() steps by DT60 x simStep(): round 86 - at ?simhz=30 the particles moved at half speed)
+const DT60: f32 = 1.0 / 60.0;
 const FIX: f32 = 100000.0;
 const MAT_SOIL: u32 = 2u;
 const MAT_SAND: u32 = 3u;
@@ -543,6 +548,7 @@ fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
 fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   let n = arrayLength(&parts);
   if (id.x >= n) { return; }
+  let DT = DT60 * simStep();
   var P = parts[id.x];
   if (P.p.w <= 0.0) { return; }
   var pos = P.p.xyz;
@@ -584,6 +590,18 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       vel = vec3<f32>((vel.xy - grad * 14.0 * DT) * max(1.0 - 3.5 * DT, 0.0), 0.0);
       if (steep < 0.45 && length(vel.xy) < 0.35) { parts[id.x].p.w = 0.0; return; }
     }
+    parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), P.m);
+    return;
+  }
+  if (kind == K_DROP) {
+    // (round 86) spray off a falling stream (liquid.wgsl prep): on the stream's own path - the flow model's
+    // gravity, no drag - so it moves with the fall at its speed; gone where it meets the ground, water or a wall
+    vel.z -= DROP_G * DT;
+    pos += vel * DT;
+    let c2 = cellAt(pos.xy);
+    if (!inMap(c2) || life <= 0.0) { parts[id.x].p.w = 0.0; return; }
+    let j2 = colIdxI(c2);
+    if (pos.z <= max(f32(sfZ(surface[j2])) + driftAt(c2), bodyTopAt(c2)) + water[j2]) { parts[id.x].p.w = 0.0; return; }
     parts[id.x] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, P.v.w), P.m);
     return;
   }

@@ -202,7 +202,13 @@ where pieces turn to particles on impact is P3.
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
+<<<<<<< HEAD
 | riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
+| (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
+=======
+| (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
+| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
+>>>>>>> origin/flow
 | oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
 | oilStored | vec2 (amount, roof z) sealed in closed tanks | oil (releases on breach, burns inside) | fire (fuel) |
 | contam | vec2 (soil, dissolved) | contamination | ecology, particles, draw, stats |
@@ -950,6 +956,78 @@ layers; a column queued twice keeps its latest stamp. Built matter starts
 at support 15 (aux 240). `api.town(opts)` makes the one town of a sim.
 The plan (`plans`, a mask a cell like `mask`) is what a building crew
 (agents/buildcrew.ts) builds toward; `delta()` is plan XOR what stands.
+
+## The flow model (round 84, branch `flow`, `?flow=1`)
+
+The user: "a unified model of material flow would be great for waterfalls emerging from underground streams or
+lava flows … a water fall that actually arcs out"; "think noita physics which just checks for adjacent emptiness
+and moves pixels over. We are just doing this in a compressed column space and adding in velocity"; steady flow
+frozen and drawn as an animation, woken only when perturbed. Behind `?flow=1` (any level but the atlas's; the
+test scenes: `?flow=1&level=flowlab`, src/levels/flowlab.ts).
+
+- **Gaps and runs.** A column's empty space is its gaps: the air between two solid or granular intervals of
+  the layers, and the open air on top (floor: the column's top, or a sleeping body on it). A liquid lies in a
+  gap as a run on its floor: slot 0 the open run, slots 1..3 runs under rock (a cave's, a tunnel's floor).
+  Liquids aren't intervals *of the layers* — a run is an interval in the column's gaps, held in the flow
+  module's own buffer — so a liquid tick writes no layers and no layer reader skips water (see "one system or
+  two" below).
+- **One kernel set, a liquid's numbers** (`flow/liquid.ts` LiquidKind, prepended as `LQ_*` constants to
+  `liquid.wgsl`): gain and friction (how far sideways, how much momentum), yield, thick (thin runs barely
+  move), heat (hot, set, runny), drop (what counts as a fall). Water and lava are two instances.
+- **Rules per run, per tick:** sideways into each neighbour's gap that spans the run's height (the highest
+  floor under its level) by the level difference, keeping last tick's flux (the pipe model's momentum and
+  look); no gap: a wall. Where the neighbour's level is more than `drop` under the run's floor, what goes that
+  way leaves as a **stream**: off the lip at the critical flow's speed for its discharge, `2 (g q)^(1/3)`, and
+  ballistic after (z − g t²/2, g = 14 cells/s² as the spray's particles), so a steady outflow draws a
+  steady parabola. **In real time** (round 86): a column holds the volume in flight over it (V) and the
+  time its path takes across it (tc); nothing passes on before the stream's front has crossed, then
+  V·dt/tc a step — in a steady state V = rate × tc, and a fall's front, its changes and its water go at the
+  path's own speed (it had moved a column a step, 10–20× fast). What a run sends off its ledge leaves with
+  one velocity, its falls' mean direction (within 60° of each face, else the face's own) at the speed for
+  their mean discharge, and no more than the critical flow, √g d^(3/2) a unit of edge, goes over a lip.
+  A stream arriving over a sleeping column that had none is carried on there (jets, j3.w = 1), what would
+  land held aloft, and its chunk flagged to wake (`act` z bit 2: woken whatever its balance).
+  It lands where its path meets the level under it (or a wall: it runs down the face). What flows in, lands,
+  springs or rains joins the run in the gap it arrives in; a run whose gap closed moves to the gap above; a
+  fourth run under rock is the deepest three kept, the rest counted (`act` w), never silent.
+- **Passes** (per 60 Hz step; at `?simhz=30|15` FLOW_SUB of them a tick, each its own uniforms): `flux` (each run's flux and its target per direction: a gap
+  index, fall, drain, wall) → `jets` (gather the streams coming on and the runs falling off a ledge; move each
+  through its column) → `depth` (gather; write the runs) → publish (water: the open runs into the water
+  contract with rain, springs, evaporation, and `flux`; lava: each run cools, boils the water over it, sets
+  into basalt in the layers below its setting point — the only layer writes) → `prep` (once a tick: the draw
+  lists; the spray along each stream's path — K_DROP particles set off on the path itself, the particles'
+  gravity the flow model's — and the splash and mist where it lands, all scaled by the particle ring's size). Records carry the step they were written at: a dry column writes nothing.
+  Runs and jets ping-pong by parity (bind groups, no copies).
+- **Contracts.** Water replaces the water system: its open runs ARE `water` (`waterPrev`, `flux`), so every
+  reader is unchanged and the edit brush, climate and old lava still write it. Runs under rock and streams
+  are the module's own (`<kind>Runs0/1`, `<kind>Flux`, `<kind>Emit`, four jet textures each way). Drawn:
+  `Renderer.addWaterPrisms` (a new list for the water pipeline: runs under rock as flat prisms, flag 2048
+  FLAG_RUN; streams, FLAG_RUN | FLAG_DETAIL, as a sheet along the path — render.wgsl `streamVertex`: a
+  curtain across the flow and a band in the arc's plane, three segments each, from the header and two vec4
+  after the list's room; `shadeStream` scrolls with the water: its pattern is a function of (time along the
+  path − the sim's time), so the streaks fall at the fall's speed, paused when the sim is), open lava through
+  `addPrisms` in lava's own instance form (the sandbox's beam and volcanoes keep sim/lava.ts).
+- **Steady state** (`flow/steady.ts`). `depth` adds per chunk the net change of its runs and its bed (the
+  loose ground moving) and its throughput (the length of each column's net flow vector: a river's discharge,
+  nothing for water sloshing in a pool); read back every `?steadywin=` ticks (30). A chunk whose net change
+  a tick is under `?steadyfloor=` + `?steadytol=` × throughput two windows running is let sleep (sim/sleep.ts:
+  every system skips it; its last flux kept and drawn — the sheet's flow, the fall's arc and spray; the
+  sediment's air texture keeps a pour's running grains); one that isn't is kept awake. Events wake for
+  1.5 s (`Sleep.eventSecs`) and the steady state decides after. With every chunk asleep the liquid passes
+  aren't dispatched at all (the step stands still), only `prep`.
+- **Frozen, rescaled** (the user: "keep the flow proportional and then zero out when they get too low"). A
+  sleeping column beside an awake chunk checks its balance each tick: its chunk's edge inflow and outflow
+  are summed. Past `?waketol=` the chunk is flagged; read back, its flux (and its streams' volume, and the
+  water contract's flux) is rescaled by in / out for one step, no simulation (`LiquidU.scale`, the frozen
+  paths apply it); under the floor, zeroed (dried up); a change past `?rescalemax=` (4×) either way, or
+  something arriving where nothing flowed, wakes it to find its new steady state. Shape changes (edits,
+  powers) wake it by their events.
+- **One system or two.** Loose ground stays in the sediment system and liquids are this one, sharing the
+  column/gap view of the layers (recommendation, round 84): granular ground is the layers themselves (strata,
+  repose, wind, wash; it *is* the ground, and it changes the gaps), liquids are what lies in the gaps (no
+  strata, per-run momentum, every tick). One kernel with granular numbers (repose for gain's threshold, set at
+  once when at rest) would carry *moving* sand — a pour off a ledge as an arc — the way lava already sets; the
+  next step, if wanted (BACKLOG FL4).
 
 ## Levels and the sandbox
 
