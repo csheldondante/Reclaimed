@@ -6885,3 +6885,10 @@ Bulwark's rings).
 - Shots and GIFs: C:/Projects/shots88/settlements/ — town-phone-default.png (default zoom), town-phone-zoom.png,
   town-phone-debug.png (`?towndebug=1`: grid, lots, field, spots, people by phase), town-phone-workers.gif,
   town-phone-quarry.gif / -site.gif / -heaps.gif (close-ups), raid-phone.gif; plan-*.png (the planner's top views).
+
+## 2026-10-27 — round 91: the world wiki pulled again after the lakes merge
+
+Why: `lakes` (round 90) names the atlas's lakes in the wiki, but the cached atlas facts (data/atlas/seed1.json) were
+pulled before it. Pulled again on `places` after merging lakes and settlements: 7772 regions, 140 sites, 171 roads;
+the markdown now names its lakes (39 mentions round the spawn). The merged build loads clean at q=low 412x915 with
+813 lakes and 141 settlements (shots88/merge91/).
