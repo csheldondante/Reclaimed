@@ -7268,3 +7268,210 @@ places (the story's f-kuharm faction and s139's region against seed1.json), none
   failed once at its very end (back at Hesk, no talk: RS17's 1-in-3 flake on places, the same print) and passed on
   the rerun. The failure print now lists the talks opened and closed since the walk back, the queued talk events,
   the camera's target and zoom and whether it follows, to pin RS17 down next time.
+
+## Round 95 — rock as a rigid body while it falls (`rockbody`, `?rockbody=1`)
+
+Why: the user (DECISIONS round 95) — "make the disjoint chunk a rigidbody during falling … an experiment for me to
+play with and give feedback on"; then "the rigidbody sim should definitely render the mesh not cubes. It can use
+cubes to simulate the motion but just anchor the vertices to the cubes". Round 86's brief stands: simulate as
+voxels, move the mesh with them, rock crumbles rather than flexing, a big cloud of dust and maybe sparks.
+
+**The body** (game/rockbodies.ts, pure CPU). A piece the judge frees becomes the lattice cells of its runs
+(rounded to whole cells) about their centre of mass: mass and inertia tensor from cells × density, a pose and a
+velocity. It knows the world only through `RockGround`, Integrity's probe of its CPU copy of the columns — a point
+in solid or loose ground is pushed out the top when within 0.6 of its run's top, else through the nearest hex face
+with air beside it. Each frame, up to 6 substeps of 1/120 s: gravity (`RB.gravity` × the falling pieces' 10
+cells/s²), a little air drag, a top speed, the spin damped; the exposed cube corners (inset) below the highest ground
+in reach (a broad phase once a frame) are the contacts — two sweeps of impulses with restitution on the first and
+Coulomb friction, then pushed out (the deepest first). At rest (under 0.3 cells/s and 0.15 rad/s for 0.6 s
+touching something, or after 20 s) it's written back. A tip: `analyseRock(…, { rotate: true })` no longer crushes
+the standing columns under a piece whose centre of mass is off them — it cuts it free above them and reports the
+hull edge it's off (`Fracture.tips`); the body starts turning about that edge (`RB.tipSpin`) with its centre moving
+as that turn carries it, and the contacts do the rest (it rolls off its stub). A hard hit (the speed into the
+ground at the point, over `RB.breakSpeed` × √strength) crumbles the cells round the point (rubble, chips, a dust
+cloud) and splits the rest round random seeds into up to six bodies thrown a little apart; pieces under 8 cells
+crumble, two generations deep at most. Every hit over 1.5 cells/s raises dust; over 0.6 × the break speed, sparks
+(`PK.Spark`, `Integrity.onSparks`).
+
+**Back into the columns** (Integrity.settleRigid). Each cell into the column under its centre, *down onto what's
+under it there* (in place of a liquid). The first try kept each cell's height: a body resting across a crater's
+edge left cells over its column's air, held by the cells beside them — till the lava melted those, and single
+stone cells floated (2–3 floating runs after a meteor in the rock lab). The columns are judged after (not weighed:
+the first try weighed them, and a heap's off-centre parts tipped, fell and settled over and over — 66 spawns from
+one top), and watched 4 s, as where a piece tore free (lava setting a skin on what was read just before; RB8).
+Windows: `settle` runs a leaving body on alone to rest and writes it before a slide; `slid` shifts the rest with the
+land and freezes them until the copy is read again; `clear` drops them. The phone's cap (`RB.maxBodies`, 10)
+settles the oldest first.
+
+**The mesh** (render/rockmesh.ts, shaders/rockmesh.wgsl). A third FieldMesh — the band's pattern, its own
+MeshSource — over a sparse copy of the layers: its chunk table points every column chunk at one empty block but
+the slots'. A body's cells are written once into a slot (a rectangle of mesh chunks, shifted whole columns and an
+even number of rows so the hex pattern holds, a margin round it) and meshed there by the same mesher, pinned
+(`FieldMesh.pin`: those chunks near and drawn, not the camera's). vsRock moves each vertex with its slot's body
+(spawn frame → world, a uniform at binding 31); fsRock shades it with the mesh's look as at the place it came from
+— the material from the copy's intervals, the strata, specks, facets and plants from the spawn frame's position —
+lit and shadowed where it is now. A break: the fragments' slots are meshed with their crack faces; till then (8
+frames) the parent's mesh is drawn split, each vertex moved with the fragment whose seed is nearest it, none where
+it crumbled. A settled body's mesh stays 6 frames while the ground's is made there. The cubes are drawn only for a
+body with no slot (over 3 × 3 mesh chunks, or no room: RB7) or with `rbcubes=1`; they always cast the shadow.
+
+**Knobs** (URL, and a fold-out panel top left in the rock lab with `rockbody=1`, which prints the URL line to keep
+them): `rbgrav` 1, `rbrest` 0.15, `rbfric` 0.6, `rbbreak` 9 cells/s (7 broke a top into 23 pieces: everything hit
+the cap), `rbdamp` 0.4 /s, `rbmax` 10, `rbspin` 0.5 rad/s, `rbmaxv` 14 cells/s, `rbscatter` 0.2, `rbcubes` 0.
+
+Measured (desktop iGPU, D3D11; every system on as the phone runs, the streamer included). floatsweep `--extra
+&rockbody=1`: all 29 cases pass, 0 floating before and after. towertest with it: wide, meteor, tall pass; concrete
+passed alone (it failed once after `wide` in the same run: its top unchanged — not followed up); spire fails with
+the flag off too here (no piece in 15 taps, the first case — the same off and on). meteorpillar on the atlas
+(`--params &rockbody=1`, a built tower): 0 new floating at 0, 5, 12, 20 s. The rock lab's pillar by a meteor, after
+the settle fix: 0 floating in three runs (before: 2–3). Cost (scripts/rockbodyperf.mjs, the rock lab at q=low
+412×915 dpr 2.6, bodies of ~380 cells turning in the air): GPU 9.63 ms a frame with none, 9.94 with one, 10.98 with
+ten (+0.03–0.13 ms a body; the rock mesh's change passes ~0.27 ms whenever any exist: RB9; the cubes into the
+shadow map 0.05 → 0.2 ms); the bodies' CPU step 0.06 ms for one, 0.8 ms for ten (no contacts: resting on the
+ground, the contacts' sweeps cost more — up to 1.5 ms seen with a heap). driveprofile (25 s, q=low 412×915):
+off p50 9.9 p95 15.8 GPU 12.3 ms; `&rockbody=1` with nothing falling p50 9.8 p95 16.5 GPU 11.7 (noise).
+GIFs: C:/Projects/shots88/rockbody/ — offset-top-tips.gif (the off-centre top tips off and rolls),
+thin-leg-falls.gif (the thin leg's top comes straight down — the judge crushes a leg cut round: RB6),
+pillar-meteor-breaks.gif (a tower in the meteor's crater breaks apart; before the settle fix), atlas-meteor-pillar.gif.
+Open: RB4–RB9.
+- (round 94, after the confirming shot) The objective's line was drawn as a strip across the screen's bottom
+  edge, not under the objective: its class `.hint` is also the level's hint bar's (ui/style.css, positioned
+  absolutely). It's `.obj-where` now. places 1a8e48a merged (DEVLOG and DECISIONS kept from both sides).
+
+## Round 96 — weightier rock, metal on the physics voxels, rock bodies on in the atlas (`rockbody`)
+
+Why: the user (DECISIONS round 96) — "a bit floaty … a little too much collision response … the primary reaction
+to collisions is to crumble and shatter with stone at scale"; "you want slow falls to convey scale not more
+acceleration"; then "Rock physics looks mostly right with the CPU version so don't sweat it too much. Just slightly
+weightier"; metal: "does it use the deformation physics the buildings do?"; and "push to atlas".
+
+**Rock, slightly weightier** (rockbodies.ts RB; gravity unchanged). Restitution 0.15 → 0.05; angular damping 0.4 →
+0.6; while it touches the ground its spin and horizontal speed are damped too (`rbcdamp` 1.5 /s: it lands and stays
+down rather than skating or spinning off); a hard hit crumbles a wider radius and breaks into more pieces
+(`rbcrumble` 1.4 ×); a big piece is weak for its weight — the break speed × (cells / 200)^−0.15 (`rbsize`: a
+1600-cell top breaks at 0.73 × the speed a 200-cell one does). The panel has the new knobs (and "show cubes").
+scripts/sidebyside.mjs puts two runs' frames side by side: rock-old-vs-new.gif (the off-centre top, round 95's
+knobs left, these right: it comes down beside its stub and stays, where round 95's skated on and split).
+
+**Metal — the answer.** No: the rigid rock (rockbodies.ts) is a CPU solver of its own; the buildings and the drop
+tool use physics.ts, the GPU voxel-particle solver (lattice shape matching: plastic bending past a yield, bonds that
+snap, heat, crumbling to loose ground). With rock bodies on, metal (steel, rust) now goes there: whatever the
+judges free or cut that has metal in it, the metal is taken out of what they found (`Integrity.takeMetal`) and woken
+whole (`wakeMetal`: everything of it connected, 26 round, out of both copies of the columns into one physics body,
+its cells resting on other ground pinned — wake.ts's rule), so it sags, bends and buckles where it's no longer held.
+Rock stays on the CPU bodies (the user's ruling). Option (b), every falling piece on the GPU solver, was not taken
+(the user, after seeing round 95 again).
+
+**Drawing the metal.** The plan was its field mesh skinned to the particles (rockmesh.wgsl `skin` draws: each vertex
+moved with the particle of its cell — the vertex a little inside the surface, its cell's particle or a neighbour's
+— and its rotation; a triangle stretched past 1.6 ×, or over a particle gone, not drawn). It doesn't work for
+metal: the field mesh leaves metal to the prisms (meshregion.wgsl fieldMat), and meshed as stone instead the bridge's
+girder (2 cells deep, 2 rows wide) and the tower's one-column legs make next to no surface (the slot's 96 cells: 14
+quads). So the metal is drawn as its particles' own voxels, each turned with its particle — as the woken buildings and
+the drop tool's bodies are; `?rbskin=1` keeps the skinned field mesh to try on thick metal (RB12: hex prisms per cell
+turned with their particles would be the world's own look for metal).
+
+**On in the atlas** (`rockbodyFor`: the atlas and the rock lab on by default, `?rockbody=0` off, `=1` on anywhere).
+
+GIFs: C:/Projects/shots88/rockbody2/ — bridge-undercut.gif (a pier broken: the girder sags and hangs from the other
+pier in a V), tower-legs-cut.gif (two legs cut: the frame tower buckles and folds into a heap), tower-meteor.gif (the
+meteor's blast turns the whole tower to dust — too big for it), rock-old-vs-new.gif.
+## Round 96 — the rock's knobs, thin legs, basalt (`collapse`)
+
+Why: the user, on round 92 on the phone's atlas (DECISIONS round 96): "Collapse works but I think meteors sometimes
+make basalt that resupports it. Also, it seems like small supports still support it in atlas is that a setting?"
+
+**Knobs.** Yes, a setting: fracture.ts ROCK — BEND 3 and SHEAR 10 (a joint between neighbouring columns holds
+strength × min(BEND h², SHEAR h)), CRUSH 300 (a column under a piece bears 300 × its bear), NECK_R 16 (how far the
+piece above a cut is followed before it's keyed into the land), TIP_GIVE 0.25 (how far its centre of mass may lie
+off what it stands on), and new BUCKLE 9000 and TENSILE 200 (below) — and each material's bear (rock 1, rubble 0.4,
+soil 0.3, silt 0.2, sand 0.15 …). All from the address (?bend= ?shear= ?crush= ?neck= ?tip= ?buckle= ?tensile=
+?bear=sand:0.1,soil:0.2), logged `[rock] {...}`; the rock lab has a panel (the "rock" button, src/ui/rockpanel.ts;
+?rockpanel=1 elsewhere) that changes them live.
+
+**Thin legs.** Round 92's piece above a cut failed only by crushing (CRUSH 300 a column: two columns held a top of
+600 cells, and a leg a fifth of its top held it whatever its height). A leg fails as a column does: Euler buckling,
+BUCKLE × strength × I / L² — I the least second moment of its columns' section (cells⁴; a round leg of A columns
+≈ A²/4π), L its free height from where the piece would land to the cut; only a leg free over more than 2√A buckles
+(a stubby one crushes) — and the pull on its far side from the weight off its middle, M × lever / W − M / A (W =
+I / its reach), past TENSILE × strength (fracture.ts `legOf`). BUCKLE is set so a top on a leg under a quarter of
+its footprint falls (rockcpu quarter-rule: legs of 14% and 22% fall, 34% and 52% stand); TENSILE 200 so the
+mesas' and spires' own small ledges stand when weighed (their pull 70–170 in the dry run; 60 broke 2–7 of them a
+window). A piece already resting on what's under it (a quarter of its hanging runs within a cell of what's under
+them, its centre of mass over those) isn't judged off its leg: judged failing, it had crushed its leg a cell a pass
+(the 29 488-cell mesa top in the dry run). The columns a piece left are judged again, weighed (a leg's stump);
+what a falling piece lands on is judged for floating only (weighed, floatsweep's 3-wide tower slumped on landing).
+The window judged whole as made (everything weighed, the worst case — in play only what an edit cut is): spawn 0,
+badlands 2 pieces (106 cells), mesa 11 (356, 10 of them the detached slabs, C18), spires 6 (780), highlands 5 (115):
+round 92's numbers. Meteors offline (scripts on a dumped spire window, six to eight pillars, the meteor 6–15 off the
+middle): the leg rules fire on a few (bend 1–2) and otherwise round 92's results.
+
+**"Only what an edit cut is weighed"**, checked: a meteor's cutSeeds are its bowl and rim (12 + 1.5); a piece is
+weighed if any of its runs, or a standing run holding it, is in one — a pillar's top hanging over the bowl is, and
+so its leg beside the crater is judged through it. Now also the rim's 15 s watch (it was floating-only) and the
+columns a fallen piece left.
+
+**Basalt.** Not reproduced: meteorpillar.mjs's 60 s watches (a built tower; three meteors each at two spires,
+far camera; all systems at 1×) gained a detector — the ground truth again with every basalt interval taken for
+air: what floats then that doesn't now is held by basalt alone. 0 at rest, before (places a57c7df) and after; the
+27–104 it reads mid-fall are the falling piece itself, moved between the two reads. Fixed at the root regardless:
+- C19: the blast melted the top interval of every column in its ring — a pillar by the bowl, the top of what hangs
+  over it — and that lava poured into the crater to set there. Now only a column whose top is within BLAST_UP (4)
+  of where the meteor hit melts (lava.wgsl, LavaU.blast2.z, Lava.blast's z);
+- the rim's watch weighs what it judges (a piece held only by basalt set against it is judged as a cut one is);
+- a column's intervals within FILM_GAP (0.02) touch: basalt films a hundredth over what's under them (the rockbody
+  agent saw films 6e-5 thick left hanging where a piece was cut out) are part of its run.
+
+**towertest's spire** (the rockbody agent: failing on places): the test built its tower and tapped at window cells
+while the camera's lead (phonecam) slid the window under it as the camera moved to the tower. It waits for the
+streamer to be still before building and follows the window (`window.__at`); towers 12 apart. 5/5.
+
+Measured (desktop iGPU, D3D11, every system on, 1×): rockcpu all 13 cases, 60 worlds × 40 cuts none floating, the
+judge 0.04 ms typical, 9.0 ms slowest; towertest 5/5 (pieces 99–194 ms after the tap, round 92: 47–129 — the
+places merges since, also on places alone); floatsweep 0 floating after the sweep; tower-w3-h100 didn't
+settle in 25 s, the same on places a57c7df alone: its foot's rim crumbled on each landing and it was committed
+over the gap the crumbs left, judged hanging, and fell again (86 pieces) — now a piece whose foot crumbled settles
+on down once without crumbling again (Integrity.land, FallingBody.broke; C26): it settles in 4.2 s, 1 piece; 31/31; the rock lab's
+top on a leg a fifth of it, a smash at the leg's edge: places holds it, round 96 drops it
+(C:/Projects/shots88/collapse3/before-fifth-leg.gif, after-fifth-leg.gif); a slide in z with a piece falling 156 ms,
+settling 1 ms. driveprofile (q=low 412×915, 25 s): places p50 9.8 p95 14.3 GPU 11.12 ms → 9.8 / 14.4 / 11.59 (noise;
+both above round 92's 9.75 GPU: the merges).
+
+## 2026-10-27 — round 97: rock bodies merged into places, on by default in the atlas and the rock lab
+
+Why: the user played rockbody (round 95, cb41e7f) on the phone ("the rigidbody version is much better") and asked
+for it in the atlas ("push to atlas"; "Please merge the rigidbody version I played"). Merged as played; the only
+change is the default: `ROCKBODY` is on when `level=atlas` or `level=rocklab`, `?rockbody=0` turns it off and
+`?rockbody=1` turns it on elsewhere. Its round-95 measurements stand (floatsweep 0 floating with it on; ~0.3 ms GPU a
+body). Collapse round 96 (thin legs buckle, the knobs) and rockbody's round-96 tuning (weightier, metal on the GPU
+solver, a one-sided cut leaning over) follow on top.
+
+## Round 96 (2) — a leg cut on one side leans the piece over and it falls like a tree (`rockbody`, with collapse round 96)
+
+Why: the user, testing collapse's round 96 (verbatim): "The pieces at those links don't seem to be tipping anymore.
+I still want them to lean and fall if you destroy one side". collapse round 96's leg checks in neck() — a slender
+leg buckling, the weight's pull off the leg's middle snapping its far side — fire before tipping does, and they crush
+the leg and drop the piece straight (as RB6 did here before).
+
+With rock bodies on (`RockOpts.rotate`), a piece leans whenever it gives off-centre: past its support's edge (tips),
+the far side pulled apart (snaps), a slender leg buckling, or crushed with the weight more than half a cell off the
+leg's middle; only a leg crushed under a centred weight drops it straight. A lean that isn't past the edge hinges on
+the edge of what's left of the leg on the weight's side (`facingEdge`: where the ray from the leg's middle through
+the centre of mass leaves its hull), and the rest of the leg gives under it — its top two cells crushed to rubble —
+so it pivots there, as a tree on what's left of its trunk. The body (rockbodies.ts) starts turning about that edge with
+its centre moving at no more than 2 cells/s (a tall piece over a low pivot started at 10 and shattered on its own
+stub), isn't broken by that first contact (1 s grace), and while it leans (`tipping`: till it comes down hard, 4 s at
+most) the ground doesn't damp it and it can't come to rest — the first try damped the lean out on the stub in a second
+and wrote the piece back where it stood. In the rock lab, the thin leg broken on its far side: the top and the leg
+over the cut turn from 0.12 to 0.39 rad/s over 2.3 s and come down beside it, breaking (thin-one-side-leans.gif); the
+pillar in front of the off-centre top, broken at its foot, leans over and falls (offset-one-side-leans.gif).
+
+Merged: origin/collapse round 96 (525aa83: its knobs panel is src/ui/rockpanel.ts — the rock bodies' moved to
+src/ui/rockbodypanel.ts), origin/places with the round-95 rock bodies on by default (rockbodyFor kept: the same levels
+by the level's id, so a level entered from the menu without `&level=` gets it too).
+
+Measured with the default on (the atlas at the phone tier, every system on, the streamer included): floatsweep 29/29,
+0 floating before and after; towertest 5/5 (spire, wide, concrete, meteor, tall: pieces in 82–187 ms); driveprofile
+(q=low 412×915, 25 s): `&rockbody=0` p50 9.8 p95 12.9 GPU 4.65 ms a frame, on p50 9.9 p95 13.3 GPU 4.75 (noise).
+A regression on places 0f0abdf reported from the phone (no tipping) didn't reproduce headlessly: there the rock bodies
+are on and the off-centre top tips at 0.6–0.95 rad/s as on cb41e7f (the phone's cached page, likely).

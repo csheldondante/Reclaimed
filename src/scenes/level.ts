@@ -43,6 +43,8 @@ import { RiverWet } from '../weather/riverwet';
 import { RIVERS } from '../sim/world-gpu';
 import { installFlow, type FlowKit } from '../flow/install';
 import { FLOWLAB } from '../levels/flowlab';
+import { mountRockPanel } from '../ui/rockbodypanel';
+import { RB, rockbodyFor } from '../game/rockbodies';
 import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
@@ -871,7 +873,7 @@ export class LevelScene implements Scene {
       core.sim.edit.always = true;
       // the physics playground (F7, G5): what breaks free falls as rigid
       // pieces; the structure system only collapses damage
-      const integ = new Integrity(core);
+      const integ = new Integrity(core, rockbodyFor(this.level.id));
       this.integrity = integ;
       core.integrity = integ;
       // lightning seeks what you see (loose ground, fallen bodies) and breaks
@@ -894,6 +896,17 @@ export class LevelScene implements Scene {
         core.sim.particles.burst({ kind: PK.Dust, x, y, z, count, speed: 1.4, spread });
         core.sim.particles.burst({ kind: PK.Haze, x, y, z: z + 0.5, count: Math.ceil(count / 5), speed: 0.8, payload: mat, spread: spread * 0.8 });
       };
+      // (round 95, ?rockbody=1) rock hitting the ground hard throws sparks, up and out
+      this.integrity.onSparks = (x, y, z, count, speed) => core.sim.particles.burst({ kind: PK.Spark, x, y, z, count, speed, spread: 0.4, vel: [0, 0, speed * 0.4] });
+      // (round 96) metal goes to the physics voxels, its mesh skinned to them
+      if (this.integrity.rigid && this.physics) {
+        this.integrity.physics = this.physics;
+        core.renderer.setRockParticles(this.physics.buffers);
+      }
+      // (round 95) the rigid rock's knobs in the rock lab
+      const rigid = this.integrity.rigid;
+      if (rigid && this.level.id === 'rocklab')
+        mountRockPanel(host.ui, () => `bodies ${rigid.list.length} drawn ${rigid.drawn} step ${rigid.stats.stepMs.toFixed(2)} ms breaks ${rigid.stats.breaks} settled ${rigid.stats.settled}`);
       core.globals.spanCollapse = false;
       weather.holdNatural(1e9);
     }
@@ -1085,6 +1098,8 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
+      rb: RB,
       // (round 87) the sandbox's tool bar: editor().select('smash') as a tap on its button would (scripts/towertest.mjs)
       editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
@@ -2536,7 +2551,7 @@ export class LevelScene implements Scene {
       parts.burst({ kind: PK.Ember, ...at, count: 5, speed: 2, spread: 1, vel: [dx * 16, dy * 16, 5] });
     }
     // the rim's ground molten, glowing past it; a molten pool in the bowl (no cone)
-    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5);
+    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5, z);
     // (round 88: the rim melting and setting over the next seconds — judged until it's done)
     this.integrity?.watch(x, y, BOWL * 1.6, 15);
     this.lava?.addVent(x, y, 2.5, 12, 3, 0);

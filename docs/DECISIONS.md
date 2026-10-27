@@ -19,6 +19,35 @@ each was implemented.
   missing answers fixed; the Bell story shows more (the dead on the road, barks); MemoryWorldState.restore for the
   world between runs. Hero select, the heroes and saving are GameplayGM's.
 
+## 2026-10-27 — round 96 (session 5, `rockbody`) — weightier rock, metal on the physics voxels, on in the atlas
+
+- The user, after playing round 95, verbatim: "Ok the rigidbody version is much better. The pieces still feel a bit
+  floaty and I think it is because they have a little too much collision response and I think the primary reaction
+  to collisions is to crumble and shatter with stone at scale. It would be interesting to have a different material
+  like metal (does it use the deformation physics the buildings do?)"
+- Then, verbatim: "No you want slow falls to convey scale not more acceleration. But otherwise yes this is good. GPU
+  solver is great if we can get it to work the way we want. As long as rendering still uses the mesh that's the
+  best of both worlds." → gravity stays 1.
+- Then, verbatim: "Rock physics looks mostly right with the CPU version so don't sweat it too much. Just slightly
+  weightier it was better the second time I tried it" → rock stays on the CPU bodies, a little less bounce and spin,
+  a little more crumbling; metal on the GPU solver (physics.ts, as the buildings and the drop tool).
+- And: "And then I think push to atlas" → rock bodies on by default in the atlas and the rock lab (`?rockbody=0` off).
+- Testing collapse round 96, verbatim: "The pieces at those links don't seem to be tipping anymore. I still want them
+  to lean and fall if you destroy one side" → a leg cut on one side leans the piece over and it falls (RB15). On
+  merging collapse into rockbody: "Oh I see merging them. Ok that's fine".
+
+## 2026-10-27 — round 95 (session 5, `rockbody`) — rock as a rigid body while it falls
+
+- The user, verbatim: "It could be fun to spin up a new rock agent to make the disjoint chunk a rigidbody during
+  falling but I know the rigidbody sim needs tuning (still probably worth making an experiment for me to play
+  with and give feedback on)" → branch `rockbody`, `?rockbody=1` (default off), its knobs on a panel in the rock lab.
+- Then, verbatim: "Ok so the rigidbody sim should definitely render the mesh not cubes. It can use cubes to
+  simulate the motion but just anchor the vertices to the cubes" → the piece's own field mesh, made once when it
+  breaks free and moved with its body; the cubes hidden (`rbcubes=1` shows them), casting the shadow.
+- Earlier (round 86), still the brief: "I strongly recommend we simulate as voxels but split the mesh and have the
+  rock column fall and just weight vertices to voxels (although rock I don't expect to flex only crumble)" and "it
+  should also probably make a big cloud of dust … and maybe sparks".
+
 ## 2026-10-27 — round 94 (session 5, `runstory`) — where to go, and the hero too slow
 
 - The user, on the phone: "The story doesn't actually have the map improvements so I don't know which direction
@@ -37,6 +66,28 @@ each was implemented.
 - → Branch `runstory`: an on-foot hero behind a `Hero` contract (the hoverbike game's heroes plug in instead), the
   Bell story staged on the atlas level near the spawn, its cast as units (a `Units` contract the settlements' GPU
   agents will implement), talks, objectives, happenings, fights, death ends the run; `?run=bell`.
+## 2026-10-27 — round 96 (session 5, `collapse`) — the rock's knobs, thin legs, basalt
+
+- The user, testing round 92 on the phone's atlas, verbatim: "Collapse works but I think meteors sometimes make
+  basalt that resupports it. Also, it seems like small supports still support it in atlas is that a setting?"
+- → Yes, they're settings: fracture.ts ROCK's constants (BEND, SHEAR, CRUSH, NECK_R, TIP_GIVE, and new BUCKLE,
+  TENSILE) and each material's bear, set from the page's address (?crush=, ?buckle=, ?tensile=, ?bear=sand:0.1 …)
+  or the rock lab's panel; logged as `[rock] …`. A thin leg now fails as a column does — buckling over its free
+  height, pulled apart by an off-centre weight — not only by crushing (round 92's CRUSH 300 a column let two
+  columns hold 600 cells). Basalt: the meteor's rim no longer melts the tops of what stands over the bowl (C19),
+  what the rim's watch judges is weighed, basalt films a hundredth over what's under them touch it.
+## 2026-10-27 — round 95 (session 5, `rockbody`) — rock as a rigid body while it falls
+
+- The user, verbatim: "It could be fun to spin up a new rock agent to make the disjoint chunk a rigidbody during
+  falling but I know the rigidbody sim needs tuning (still probably worth making an experiment for me to play
+  with and give feedback on)" → branch `rockbody`, `?rockbody=1` (default off), its knobs on a panel in the rock lab.
+- Then, verbatim: "Ok so the rigidbody sim should definitely render the mesh not cubes. It can use cubes to
+  simulate the motion but just anchor the vertices to the cubes" → the piece's own field mesh, made once when it
+  breaks free and moved with its body; the cubes hidden (`rbcubes=1` shows them), casting the shadow.
+- Earlier (round 86), still the brief: "I strongly recommend we simulate as voxels but split the mesh and have the
+  rock column fall and just weight vertices to voxels (although rock I don't expect to flex only crumble)" and "it
+  should also probably make a big cloud of dust … and maybe sparks".
+
 ## 2026-10-27 — round 92 (session 5, `collapse`) — what holds rock up; the meteor-made floaters
 
 - The user, on the collapse judge (a hanging piece joined to any standing run was held whatever it weighed; a

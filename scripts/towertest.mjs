@@ -20,6 +20,8 @@ const q = opt('q', 'low');
 const gif = opt('gif', '');
 const gifCase = opt('gifcase', 'tall');
 const LIMIT = Number(opt('limit', 200));
+// (round 95, --extra "&rockbody=1": more of the page's params)
+const extra = opt('extra', '');
 const CASES = [
   { name: 'spire', mat: 'stone', radius: 2.5, height: 40, tool: 'smash' },
   { name: 'wide', mat: 'stone', radius: 4.5, height: 70, tool: 'smash' },
@@ -47,33 +49,49 @@ try {
     console.log('pageerror', e.message);
   });
   p.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.log('console', m.text()));
-  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await sleep(12000);
   // (round 92: 12 apart round the camera — the streamer is on: 16 apart took the last past its reach, and it slid)
   let side = -24;
   for (const c of cases) {
     // build it beside the camera's target, look at it
-    const at = await p.evaluate(
-      async (c, side) => {
+    // look at where it goes, beside the camera's target (round 96: the streamer is on, and the camera's lead
+    // (phonecam) may slide the window as it moves — wait for that, then build where the spot is now)
+    let at = await p.evaluate((side) => {
+      const R = window.reclaimed;
+      const [cx, cy] = R.camera.target;
+      const x = cx + side;
+      const y = cy;
+      R.camera.target = [x, y, R.camera.target[2]];
+      R.camera.zoom = 7;
+      window.__at = (a) => {
+        const S = window.reclaimed.stream;
+        return { x: a.x - (S.origin[0] - a.ox), y: a.y - (S.origin[1] - a.oy) * (Math.sqrt(3) / 2), z: a.z - (S.oz - a.oz), dz: S.oz - a.oz };
+      };
+      return { x, y, z: 0, oz: R.stream.oz, ox: R.stream.origin[0], oy: R.stream.origin[1] };
+    }, side);
+    for (let k = 0, last = -1, still = 0; k < 40 && still < 4; k++) {
+      await sleep(500);
+      const n = await p.evaluate(() => (window.reclaimed.stream.busy ? -1 : window.reclaimed.stream.stats.slides + window.reclaimed.stream.stats.tiers));
+      still = n >= 0 && n === last ? still + 1 : 0;
+      last = n;
+    }
+    at = await p.evaluate(
+      async (c, a) => {
         const R = window.reclaimed;
-        // (round 92: the streamer left on, as on the phone; the towers stay within its reach)
         const t = R.api.terrain;
         await t.refresh();
-        const [cx, cy] = R.camera.target;
-        const x = cx + side;
-        const y = cy;
-        const z = t.heightAt(x, y);
+        const w = window.__at(a);
+        const z = t.heightAt(w.x, w.y);
         const zMax = R.core.dims.zMax;
         const h = c.height === 'top' ? zMax - z + 30 : c.height;
-        for (let k = 0; k < Math.ceil(h / 4); k++) t.build(x, y, c.mat, { radius: c.radius, layers: 4 });
-        R.camera.target = [x, y, z + 8];
-        R.camera.zoom = 7;
-        // (round 92: the streamer is on — a slide in z, the camera over a tall tower, moves window z: oz kept)
-        return { x, y, z, zMax, oz: R.stream.oz };
+        for (let k = 0; k < Math.ceil(h / 4); k++) t.build(w.x, w.y, c.mat, { radius: c.radius, layers: 4 });
+        R.camera.target = [w.x, w.y, z + 8];
+        return { x: w.x, y: w.y, z, zMax, oz: R.stream.oz, ox: R.stream.origin[0], oy: R.stream.origin[1] };
       },
       c,
-      side,
+      at,
     );
     side += 12;
     await sleep(5000);
@@ -115,11 +133,16 @@ try {
       );
     const top0 = await p.evaluate(async (a) => {
       await window.reclaimed.api.terrain.refresh();
-      return window.reclaimed.api.terrain.heightAt(a.x, a.y) + window.reclaimed.stream.oz - a.oz;
+      const w = window.__at(a);
+      return window.reclaimed.api.terrain.heightAt(w.x, w.y) + w.dz;
     }, at);
     // the tool, as its button would pick it; taps at the tower's foot (its near side, a cell up)
     await p.evaluate((tool) => window.reclaimed.editor().select(tool), c.tool);
-    const tapAt = () => p.evaluate((a) => window.reclaimed.camera.project(a.x, a.y, a.z + 1.5 - (window.reclaimed.stream.oz - a.oz)), at);
+    const tapAt = () =>
+      p.evaluate((a) => {
+        const w = window.__at(a);
+        return window.reclaimed.camera.project(w.x, w.y, w.z + 1.5);
+      }, at);
     const b0 = await p.evaluate(() => window.reclaimed.integrity().stats.bodies);
     let spawnedMs = null;
     let taps = 0;
@@ -163,15 +186,17 @@ try {
     const after = await p.evaluate(async (a) => {
       await window.reclaimed.api.terrain.refresh();
       const I = window.reclaimed.integrity();
-      return { top: window.reclaimed.api.terrain.heightAt(a.x, a.y) + window.reclaimed.stream.oz - a.oz, falling: I.falling.list.length, stats: I.stats, tiers: window.reclaimed.stream.stats.tiers };
+      const w = window.__at(a);
+      return { slides: window.reclaimed.stream.stats.slides, top: window.reclaimed.api.terrain.heightAt(w.x, w.y) + w.dz, falling: I.falling.list.length, stats: I.stats, tiers: window.reclaimed.stream.stats.tiers };
     }, at);
     // (a structure the smash wakes is the physics voxels' — it comes down there, not as a piece: it must be down)
     const physicsDown = c.mat !== 'stone' && after.top < at.z + 5;
     const above = c.height === 'top' ? await p.evaluate((a) => {
       const R = window.reclaimed;
       const ROW_H = Math.sqrt(3) / 2;
-      const cy = Math.round(a.y / ROW_H - 0.5);
-      const cx = Math.round(a.x - 0.5 - 0.5 * (cy & 1));
+      const w = window.__at(a);
+      const cy = Math.round(w.y / ROW_H - 0.5);
+      const cx = Math.round(w.x - 0.5 - 0.5 * (cy & 1));
       // (how far over the window's top its runs above still reach: 24 before, less what it fell)
       const top = R.stream.oz + R.core.dims.zMax;
       return Math.max(0, ...R.stream.outside[cy * R.core.dims.w + cx].filter((iv) => iv.z0 >= top - 1e-3).map((iv) => iv.z1 - top));
@@ -180,7 +205,7 @@ try {
     const ok = ((spawnedMs !== null && spawnedMs <= LIMIT) || physicsDown) && (c.height === 'top' ? above < 21 && (after.tiers === 0 || after.top < top0 - 3) : after.top < top0 - 3);
     if (c.height === 'top') console.log('above the window over its middle now reaches', above, '(24 before)');
     if (!ok) fails++;
-    console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name}: ${c.mat} r${c.radius} h${c.height} by ${c.tool}: ${taps} tap(s), piece in ${spawnedMs} ms (limit ${LIMIT}), top ${top0?.toFixed(1)} → ${after.top?.toFixed(1)} (window top ${at.zMax}), falling now ${after.falling}, slides in z ${after.tiers}; stats ${JSON.stringify(after.stats)}`);
+    console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name}: ${c.mat} r${c.radius} h${c.height} by ${c.tool}: ${taps} tap(s), piece in ${spawnedMs} ms (limit ${LIMIT}), top ${top0?.toFixed(1)} → ${after.top?.toFixed(1)} (window top ${at.zMax}), falling now ${after.falling}, slides ${after.slides} (in z ${after.tiers}); stats ${JSON.stringify(after.stats)}`);
     if (shots.length) {
       const enc = GIFEncoder();
       for (const s of shots) {

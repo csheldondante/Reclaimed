@@ -480,6 +480,11 @@ export class Physics implements SimSystem {
     for (const b of this.bodies) b.restCentre = [b.restCentre[0] - dx, b.restCentre[1] - dy, b.restCentre[2] - dz];
   }
 
+  /** (round 96) the particles' buffers, for a draw skinned to them (render/rockmesh.ts): positions, rest, rotations */
+  get buffers(): { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer } {
+    return { px: this.px, pr: this.pr, pq: this.pq };
+  }
+
   hasRoom(voxels: number, bodies = 1): boolean {
     return this.bodies.length + bodies <= MAX_BODIES && Math.max(this.used, FRAG_CAP) + voxels <= PV_CAP;
   }

@@ -13,6 +13,7 @@ import { MenuScene } from './scenes/menu';
 import type { MapData } from './world/mapgen';
 import type { Host, Quality, Scene } from './scenes/world-core';
 import { AudioDebug } from './ui/audio-debug';
+import { RockPanel } from './ui/rockpanel';
 import { PerfOverlay } from './ui/perf-overlay';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
@@ -62,6 +63,8 @@ async function main() {
   const host: Host = { gpu, profiler, quality, qualityName, params, canvas, ui };
   const audio = new Ambience();
   if (params.get('audio') === '1') new AudioDebug(ui, audio);
+  // (round 96) the rock's knobs: in the rock lab, or ?rockpanel=1
+  if (params.get('level') === 'rocklab' || params.get('rockpanel') === '1') new RockPanel(ui);
   const perf = new PerfOverlay(ui, params.get('perf') === '1' || params.get('perf') === 'lite');
   // (round 82: the GPU's timings and the draw counts are read back only while the overlay is open; ?perf=lite
   // opens it with neither — the frame times without the readbacks)

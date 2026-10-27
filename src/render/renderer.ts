@@ -27,6 +27,8 @@ import { RIVERS, type WorldGpu } from '../sim/world-gpu';
 import { ShoreField } from './shore';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from './camera';
 import { OutsideBand } from './band';
+import { RockMesh } from './rockmesh';
+import rockMeshWgsl from '../shaders/rockmesh.wgsl?raw';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
 const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
@@ -185,6 +187,17 @@ export class Renderer {
   private tcPipes?: { resolve: GPURenderPipeline; comp: GPURenderPipeline; compLayout: GPUBindGroupLayout };
   private meshPipes?: { g: GPURenderPipeline; gBack: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline };
   private meshModule?: GPUShaderModule;
+  /** (round 95, ?rockbody=1) the rigid rock's own mesh (enableRockMesh), its pipeline and group */
+  rockMesh?: RockMesh;
+  private rockPipe?: GPURenderPipeline;
+  private rockGroup?: GPUBindGroup;
+  private rockPoolSeen = -1;
+  private makeRockDraw?: (rm: RockMesh) => { pipe: GPURenderPipeline; group: () => GPUBindGroup };
+  private rockGroupOf?: () => GPUBindGroup;
+  /** (round 96) the physics voxels' particle buffers the rock mesh is skinned to (setRockParticles) */
+  private rockParticles?: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer };
+  /** (round 95) of the body voxels, the first this many are drawn (the rest only cast shadows: the rigid rock's, its mesh drawn) */
+  private bodyShown = 0;
   private meshResources!: (cam: GPUBuffer, shadow: GPUTextureView, src: { mesh: FieldMesh; chunks: GPUBuffer; layers: GPUBuffer }) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
   /** (perfopt) the deferred pipelines, compiled off the main thread from the start (createRenderPipelineAsync): the
    *  terrain draws forward until they're in — compiled on first use they froze the frame ~1.5 s after a load */
@@ -678,6 +691,32 @@ export class Renderer {
         25: shadow,
         26: this.shadowSampler,
       });
+      // (round 95) the rigid rock's mesh: the mesh's layout and look, one more uniform (its draws), its own vertex stage
+      this.makeRockDraw = (rm) => {
+        const layout = makeLayout(
+          device,
+          'rock-mesh',
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 31: 'uniform', 32: 'read', 33: 'read', 34: 'read' },
+          VF,
+          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+        );
+        const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl, rockMeshWgsl]);
+        const pipe = device.createRenderPipeline({
+          label: 'rock-mesh',
+          layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+          vertex: { module, entryPoint: 'vsRock' },
+          fragment: { module, entryPoint: 'fsRock', targets: [{ format }, { format: PICK_FORMAT }] },
+          primitive: { topology: 'triangle-list', cullMode: 'none' },
+          depthStencil: depthStencil(true),
+        });
+        // (round 96: the physics voxels' particles, the metal's mesh skinned to them; a stand-in without them)
+        const none = device.createBuffer({ label: 'rock no particles', size: 64, usage: GPUBufferUsage.STORAGE });
+        const group = () => {
+          const p = this.rockParticles;
+          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(this.camBuf, this.shadowView, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.px ?? none, 33: p?.pr ?? none, 34: p?.pq ?? none });
+        };
+        return { pipe, group };
+      };
       const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = this.shadowView) => this.meshGroupOf!(cam, shadow, { mesh: this.fieldMesh, chunks: world.chunks, layers: world.layers });
       this.meshGroup = meshGroupFor(this.camBuf);
       // the sun's shadow pass: the same vertex shaders, depth only, through the
@@ -743,8 +782,9 @@ export class Renderer {
    * The rigid bodies' voxels for this frame: per voxel centre xyz, material,
    * rotation quaternion xyzw (f32 bits; Bodies.pack writes them).
    */
-  setBodies(data: Uint32Array, count: number): void {
+  setBodies(data: Uint32Array, count: number, shown = count): void {
     this.bodyCount = Math.min(count, Renderer.MAX_BODY_VOXELS);
+    this.bodyShown = Math.min(shown, this.bodyCount);
     if (this.bodyCount > 0) this.device.queue.writeBuffer(this.bodyBuf, 0, data, 0, this.bodyCount * 8);
   }
 
@@ -889,6 +929,14 @@ export class Renderer {
   }
 
   private syncMeshPool(): void {
+    // (round 95) the rigid rock's mesh: its group made again when its pool grows
+    if (this.rockMesh && this.rockGroupOf) {
+      const rv = this.rockMesh.mesh.maintain();
+      if (rv !== this.rockPoolSeen) {
+        this.rockPoolSeen = rv;
+        this.rockGroup = this.rockGroupOf();
+      }
+    }
     const v = this.fieldMesh.maintain() + (this.band?.mesh.maintain() ?? 0);
     if (v === this.meshPoolSeen || !this.meshGroupOf) return;
     this.meshPoolSeen = v;
@@ -973,6 +1021,7 @@ export class Renderer {
     // (round 86: but chunks marked urgent — an edit's, a falling piece's — are looked at every frame)
     if (!SKIP.has('meshprep') && !this.holdMesh && (!this.band || turn === 0 || this.fieldMesh.hasUrgent)) this.fieldMesh.encode(enc, cam);
     if (this.band && !SKIP.has('band') && !this.holdMesh && turn === 1) this.band.mesh.encode(enc, cam);
+    if (this.rockMesh) this.rockMesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc, shadowDue);
 
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
@@ -1049,11 +1098,17 @@ export class Renderer {
       }
     }
     for (const f of SKIP.has('far') ? [] : this.extraDraws) f(pass, opts.clear);
-    if (this.bodyCount > 0 && !SKIP.has('bodies')) {
+    if (this.bodyShown > 0 && !SKIP.has('bodies')) {
       pass.setPipeline(this.bodyPipe);
       pass.setBindGroup(0, this.bodyGroup);
-      pass.draw(36, this.bodyCount);
+      pass.draw(36, this.bodyShown);
       this.profiler.draws++;
+    }
+    // (round 95) the rigid rock's mesh
+    if (this.rockMesh && this.rockPipe && this.rockMesh.count > 0 && !SKIP.has('rock')) {
+      pass.setPipeline(this.rockPipe);
+      pass.setBindGroup(0, this.rockGroup!);
+      this.rockMesh.draw(pass);
     }
     if (this.world.strVoxels > 0 && !SKIP.has('structs')) {
       pass.setPipeline(this.bodyPipe);
@@ -1599,9 +1654,32 @@ export class Renderer {
     return this.band;
   }
 
+  /**
+   * (round 95, ?rockbody=1) The rigid rock's own mesh (render/rockmesh.ts), drawn with the bodies; none without the
+   * field mesh.
+   */
+  enableRockMesh(): RockMesh | undefined {
+    if (!this.fieldMesh.on || !this.makeRockDraw || this.rockMesh) return this.rockMesh;
+    const rm = new RockMesh(this.device, this.world, this.profiler);
+    const { pipe, group } = this.makeRockDraw(rm);
+    this.rockMesh = rm;
+    this.rockPipe = pipe;
+    this.rockGroupOf = group;
+    this.rockGroup = group();
+    this.rockPoolSeen = rm.mesh.poolVersion;
+    return rm;
+  }
+
+  /** (round 96) The physics voxels' particles, for the rock mesh's skinned draws (the metal's). */
+  setRockParticles(p: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer }): void {
+    this.rockParticles = p;
+    if (this.rockGroupOf) this.rockGroup = this.rockGroupOf();
+  }
+
   /** Call after submit to start async readbacks requested during encode. */
   afterSubmit(): void {
     this.fieldMesh.afterSubmit();
+    this.rockMesh?.mesh.afterSubmit();
     this.band?.mesh.afterSubmit();
     if (this.pickPending) {
       const resolve = this.pickPending;
