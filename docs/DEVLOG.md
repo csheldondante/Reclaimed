@@ -6290,3 +6290,7 @@ instructions), plus the grid in the G-buffer and shadow and the prep over 53 mor
 draw (9.07 ms riding in round 85), without its mesh builds or its sim. In a storm the storm's sim adds ~1.4 ms at
 reach 110 (~0.6 at 50). Next if the phone shows it: a cheaper look where a cell is under a pixel or two, `stormreach`
 lower.
+
+After merging simcull (places fd5f53e), the same build, the same runs: riding GPU 6.46 ms a frame (draw 3.37, gbuffer
+0.27, 54.5 grid chunks), a storm overhead 10.76 (p95 10.7-10.8 both). Not interleaved with places this time (the
+GPU was lent for two runs): the clocks drift by up to a ms between sessions.
