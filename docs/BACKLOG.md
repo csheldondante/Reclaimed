@@ -12,6 +12,25 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 97 (2026-10-27, session 5, `heroapi`) — the hoverbike game's heroes in a run story (DECISIONS round 97)
+
+The user: "I like boundaries and API contracts so keep it there but please update and spin up a build with the story
+run structure". Ids HA. GameplayGM's side (hero select, its heroes, its controls, saving) is its own; these are the
+engine's additive changes for it.
+
+| id | item | size | status |
+|---|---|---|---|
+| HA1 | A run story on an atlas world for any game: story/atlas-run.ts `startAtlasRun` (LevelScene.startRun goes through it), `RUN_STORIES`, `loadRunStory`, `runWorld(story, snapshot?)` | S | done (this commit) |
+| HA2 | The hero claims its taps and gestures: `Hero.claims(sx, sy)` asked first; a game's controller through `HeroRunDeps.makeController` (`RunController`); talk as an intent (`HeroIntent.talk`); `Hero.goesTo` false for vehicles ("go closer to talk") | S | done (this commit) |
+| HA3 | A game's own units in a run (`HeroRunDeps.units`, drawn by themselves; `Units.all?()`): the hoverbike game's enemies are sim.agents, so whatever kills them (a fling, a fireball, a slash) is a `killed` the story counts | S | done (this commit; the Units over sim.agents are GameplayGM's) |
+| HA4 | Dialog as an event (the user: "trigger/predicate driven and tied to events like deaths and have dialogs just be such an event"): `Outcome.say` (barks), `Outcome.talk` (a dialog opens, waiting till the player is by the speaker), `Condition.saw` (a sighting), `Outcome.spawn[].toward`; happenings fire them | M | done (this commit) |
+| HA5 | The phone bug: dialog choices didn't show. A negative typing step (a frame's timestamp before the line's start) made the count −Infinity under reduced motion (cps Infinity): the line never finished, the answers never came | S | done (this commit; to confirm on the phone) |
+| HA6 | Show, not tell, a first pass on the Bell story: the dead walking down the road to Mebe from 8 s in, a bark when Ilsa and the barrow come into sight, the Bellwarden's dying line, Hesk calling the hero over once the dead are stopped; `Objective.short` for the objective list | S | done (this commit) |
+| HA7 | The world between runs: `MemoryWorldState.restore(snapshot)`; `HeroRunDeps.remember` realises past runs' play-scale events (a mark's cairn with its name over it, overgrowth, floods) at the run's start | S | done (this commit) |
+| HA8 | `HeroRunDeps.ownCamera`: a game that drives its own chase camera (the hoverbike's leads the bike, follows jumps, frames a laser dot) while no story shot has it | S | done (this commit) |
+| HA9 | A talk event's speaker far off waits for the player to come by; a `saw` is noted once — a "came back into sight" (since an event) would need facts with times | S | open |
+| HA10 | AgentUnits (the settlements' Units on the GPU agents) and the hoverbike game's Foes both drive sim.agents' kinds, groups and fields: one owner per agents system, or a registry of kinds, groups and fields both take from | M | open |
+
 ## Round 88 (2026-10-27, session 5, `runstory`) — a run story as a hero (DECISIONS round 88)
 
 The user: "I would like to try spawning as a character like in hoverbike and talking to people or going places

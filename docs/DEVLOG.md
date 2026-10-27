@@ -7223,3 +7223,37 @@ stale found both ways. latencyprobe (cut): the column lowered 313–340 ms after
 - (round 94, after the confirming shot) The objective's line was drawn as a strip across the screen's bottom
   edge, not under the objective: its class `.hint` is also the level's hint bar's (ui/style.css, positioned
   absolutely). It's `.obj-where` now. places 1a8e48a merged (DEVLOG and DECISIONS kept from both sides).
+
+## 2026-10-27 — round 97 (`heroapi`): the hoverbike game's heroes in a run story; dialog as an event
+
+**Why.** The user wants a vertical slice: pick a hero, play a run story with that hero's own mechanics, see what the
+run left in the world, go again. The hoverbike game (GameplayGM) owns its heroes, controls, enemies and saving; the
+engine owned a run story that only its on-foot Walker could play (HeroRun made its own TouchPad, SimpleUnits and
+camera follow, and LevelScene held the atlas wiring privately). "I like boundaries and API contracts so keep it
+there": every change here is additive.
+
+**What.** `startAtlasRun` is LevelScene.startRun's body, for any game with an atlas and its streamer; the level
+calls it too. HeroRun takes a game's `units` (drawn by themselves), `makeController`, `ownCamera`, `again` and
+`remember`, and asks `hero.claims` before a tap walks or talks. Dialog as an event: `Outcome.say` / `talk`,
+`Condition.saw` and `spawn.toward`, fired by the story's happenings. The objective list shows `Objective.short`.
+
+**The phone's missing answers.** DialogBox types a line on requestAnimationFrame, stepping by `now − last` where
+`last` is `performance.now()` at the line's start. A frame's timestamp is the frame's start, often before that
+`performance.now()`, so the first step was negative. At 50 characters a second that only cost a frame. Under
+reduced motion (cps = Infinity: phones with animations off, the battery saver) the step was −Infinity: the count
+never reached the line's length, the text stayed empty, and the answers (shown once it's typed) never came. The step
+is clamped at 0, and reduced motion shows the line at once.
+
+**Show, not tell (the Bell story).** Three walking dead set off from the barrow down the road to Mebe 8 s in (seen
+from the road; a narrator's line says it once); Ilsa calls out when she comes into sight; the barrow's mouth gets a
+line; the Bellwarden has a dying line; once the dead are stopped Hesk calls the hero over (a talk as an event, held
+until the hero is within 16 cells of him). The objective list reads "Warn Mebe's reeve", "Find the barrow"…
+
+**Between runs.** `MemoryWorldState.restore(snapshot)` and `HeroRunDeps.remember`: the game saves the WorldSnapshot
+after a run and restores it before the next; StoryPlay realises the history's play-scale events (a mark's cairn
+with its name over it, overgrowth, a flood) where they happened.
+
+**Tests.** scripts/herotest.mjs (Node) gains the event chain (t 9 s → the dead toward Mebe and its line; saw Ilsa →
+her bark; saw the barrow; once only; the Bellwarden killed → its line, dead-stopped; the talk with Hesk queued) and
+the restore round trip (runs, history, the grave, region states): all passed. storycheck: the same 11 problems as on
+places (the story's f-kuharm faction and s139's region against seed1.json), none new.

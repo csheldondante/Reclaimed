@@ -170,6 +170,8 @@ export class StoryRun implements Run {
         return this.facts.some((f) => f.kind === 'reached' && f.location === c.location && (c.room === undefined || f.room === c.room));
       case 'event':
         return this.facts.some((f) => f.kind === 'event' && f.event === c.event && (c.location === undefined || f.location === c.location));
+      case 'saw':
+        return this.facts.some((f) => f.kind === 'saw' && (c.character === undefined || f.character === c.character) && (c.location === undefined || f.location === c.location));
       case 'killed': {
         let n = 0;
         for (const f of this.facts)

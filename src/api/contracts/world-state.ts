@@ -28,6 +28,25 @@ export class MemoryWorldState implements WorldState {
     for (const f of factions) this.factions.set(f.id, f);
   }
 
+  /**
+   * (round 97, heroapi) The world as a snapshot left it (a save between runs): the regions' states, the factions,
+   * the history and the runs, so the next run starts on what the last one changed.
+   */
+  static restore(s: WorldSnapshot): MemoryWorldState {
+    const w = new MemoryWorldState(
+      s.seed,
+      s.regions.map((r) => ({ id: r.id, name: r.name, kind: r.kind })),
+      structuredClone(s.factions),
+    );
+    for (const r of s.regions) w.regions.set(r.id, structuredClone(r.state));
+    w.events.push(...structuredClone(s.history));
+    w.runs.push(...structuredClone(s.runs));
+    w.settlements.push(...structuredClone(s.settlements));
+    w.version = s.version;
+    w.run = s.run;
+    return w;
+  }
+
   region(id: RegionId): RegionState {
     let r = this.regions.get(id);
     if (!r) this.regions.set(id, (r = freshRegion()));

@@ -115,6 +115,40 @@ try {
   ok(a.hp > 0 && !a.warden, `swinging: the Bellwarden falls in ${a.t} s, the hero at ${a.hp} hp (${a.left} foes left)`);
   const b = fight(false);
   ok(b.hp === 0, `standing still: the hero falls in ${b.t} s`);
+
+  // (round 97, heroapi) dialog as an event: sightings and deaths fire barks and talks through the run's own
+  // happenings; and a world kept between runs (MemoryWorldState.restore) carries the first run's changes
+  const { StoryRun } = await v.ssrLoadModule('/src/run/run.ts');
+  const { MemoryWorldState } = await v.ssrLoadModule('/src/api/contracts/world-state.ts');
+  const wiki = JSON.parse(fs.readFileSync('data/wiki/seed1.run.json', 'utf8'));
+  const world = new MemoryWorldState(wiki.seed, wiki.regions, wiki.factions);
+  const run = new StoryRun(story, world, { hero: 'hover bike' });
+  const said = [];
+  const talks = [];
+  const spawned = [];
+  run.onOutcome.push((o) => {
+    for (const s of o.say ?? []) said.push(`${s.by ?? 'narrator'}: ${s.line}`);
+    if (o.talk) talks.push(o.talk.character);
+    for (const sp of o.spawn ?? []) spawned.push(sp);
+  });
+  run.update(9);
+  ok(spawned.some((s) => s.toward === 'loc-mebe') && said.some((s) => /walking toward Mebe/.test(s)), `t 9 s: the dead set off toward Mebe, and it's said (${said.at(-1)})`);
+  run.note({ kind: 'saw', character: 'ilsa' });
+  ok(said.some((s) => s.startsWith('ilsa:')), `saw Ilsa: her bark (${said.at(-1)})`);
+  run.note({ kind: 'saw', location: 'loc-barrow' });
+  ok(said.some((s) => /bell tolls/.test(s)), "saw the barrow: the narrator's line");
+  const n = said.length;
+  run.note({ kind: 'saw', character: 'ilsa' });
+  ok(said.length === n, 'a happening fires once: seeing Ilsa again says nothing');
+  run.note({ kind: 'killed', character: 'bellwarden', unitKind: 'lich steward' });
+  ok(said.some((s) => s.startsWith('bellwarden:')) && run.flag('dead-stopped'), 'the Bellwarden killed: its dying line, dead-stopped set');
+  ok(talks.includes('hesk'), 'the dead stopped: a talk with Hesk opens as an event (Outcome.talk)');
+  const rec = run.end('won');
+  const snap = JSON.parse(JSON.stringify(world.snapshot()));
+  const again = MemoryWorldState.restore(snap);
+  ok(again.run === 1 && again.runs.length === 1 && again.runs[0].end === 'won', `restored: the next run is ${again.run}, the last ${again.runs[0]?.end}`);
+  ok(again.history().length === rec.events.length && again.region(2159).marks.some((m) => m.name === "The Bellwarden's Grave"), `restored: ${again.history().length} events, the grave in region 2159`);
+  ok(again.region(2159).undead === world.region(2159).undead, 'restored: the region states as they were');
 } catch (e) {
   console.log('FAIL', e.stack ?? e);
   fails++;

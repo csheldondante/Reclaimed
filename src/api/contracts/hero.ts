@@ -28,6 +28,8 @@ export interface HeroIntent {
   sprint?: boolean;
   /** other abilities, by id, used this frame */
   use?: string[];
+  /** (round 97, heroapi) talk to whoever's near enough (the context button, E): talk as an intent the controller emits */
+  talk?: boolean;
 }
 
 /** Something a hero can do (a swing, a hookshot, a dash, a spell). */
@@ -81,10 +83,33 @@ export interface Hero {
   shift(dx: number, dy: number, dz: number): void;
   readonly hurt: ((damage: number, by: string) => void)[];
   readonly died: (() => void)[];
+  /**
+   * (round 97, heroapi) Does the hero take this tap (CSS px) for its own mechanics — a lich floating what's
+   * tapped, a mech's aim? Asked first: a claimed tap never walks the hero or opens a talk. Absent: never.
+   */
+  claims?(sx: number, sy: number): boolean;
+  /** (round 97, heroapi) false: it doesn't walk itself to `intent.goTo` (a vehicle): a tap on someone far tells the player to go closer */
+  readonly goesTo?: boolean;
 }
 
 /** Turns the player's input into a HeroIntent each frame (touch: a stick and buttons; desktop: keys). */
 export interface HeroController {
   intent(): HeroIntent;
   dispose(): void;
+}
+
+/**
+ * (round 97, heroapi) A controller a run drives (HeroRunDeps.makeController): the hero game's own (the hoverbike
+ * game's Controls) in place of the run's TouchPad. The run sets the hooks and calls the setters; each is optional.
+ */
+export interface RunController extends HeroController {
+  /** a tap (CSS px) the hero didn't claim: the run's (a person: walk up and talk; the ground: walk there) */
+  onTap?: ((sx: number, sy: number) => void) | null;
+  /** the context button pressed (talk to whoever's near) */
+  onAction?: (() => void) | null;
+  /** what the context button says (null: hidden) */
+  setAction?(label: string | null): void;
+  setHealth?(health: number, max: number): void;
+  /** hidden while a talk or the end card has the screen */
+  hidden?: boolean;
 }

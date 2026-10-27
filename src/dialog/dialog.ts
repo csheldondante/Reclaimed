@@ -188,7 +188,12 @@ export class DialogBox implements Dialog {
   private type = (now: number) => {
     const ty = this.typing;
     if (!ty) return;
-    ty.shown = Math.min(ty.full.length, ty.shown + ((now - this.last) / 1000) * this.cps);
+    // (round 97, the phone's missing answers: a frame's timestamp can come before the performance.now() taken when
+    // the line began, so the step was negative; with reduced motion (cps Infinity, on many phones with animations
+    // off) that made the count −Infinity, the line never finished typing and the answers never came. A step is
+    // never negative now, and reduced motion shows the line at once.)
+    const step = this.cps === Infinity ? ty.full.length : (Math.max(0, now - this.last) / 1000) * this.cps;
+    ty.shown = Math.min(ty.full.length, ty.shown + step);
     this.last = now;
     this.textEl.textContent = ty.full.slice(0, Math.floor(ty.shown));
     if (ty.shown >= ty.full.length) this.typed();

@@ -18,7 +18,7 @@ export class StoryError extends Error {
   }
 }
 
-const CONDITIONS = new Set(['any', 'talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time']);
+const CONDITIONS = new Set(['any', 'talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time', 'saw']);
 const EVENTS = new Set(['collapsed', 'flooded', 'burned', 'built', 'dug']);
 
 /** Check a story (parsed JSON or a literal): every reference resolves. Throws StoryError listing what's wrong. */
@@ -157,6 +157,11 @@ export function validateStory(data: unknown): SessionStory {
       case 'time':
         need(typeof c.after === 'number' && c.after >= 0, `${at}: time.after in seconds`);
         break;
+      case 'saw':
+        need((c.character === undefined) !== (c.location === undefined), `${at}: saw names a character or a location`);
+        if (c.character !== undefined) need(cast.has(c.character), `${at}: saw unknown character "${c.character}"`);
+        if (c.location !== undefined) need(locations.has(c.location), `${at}: saw unknown location "${c.location}"`);
+        break;
     }
   }
 
@@ -177,7 +182,18 @@ export function validateStory(data: unknown): SessionStory {
       need(a.character !== undefined || a.faction !== undefined, `${at}: an attitude change names neither a character nor a faction`);
       if (a.character !== undefined) need(cast.has(a.character), `${at}: attitude of unknown character "${a.character}"`);
     }
-    for (const sp of o.spawn ?? []) need(locations.has(sp.location), `${at}: spawn at unknown location "${sp.location}"`);
+    for (const sp of o.spawn ?? []) {
+      need(locations.has(sp.location), `${at}: spawn at unknown location "${sp.location}"`);
+      if (sp.toward !== undefined) need(locations.has(sp.toward), `${at}: spawn toward unknown location "${sp.toward}"`);
+    }
+    for (const b of o.say ?? []) {
+      need(typeof b.line === 'string' && b.line.length > 0, `${at}: a bark without a line`);
+      if (b.by !== undefined) need(cast.has(b.by), `${at}: a bark by unknown character "${b.by}"`);
+    }
+    if (o.talk) {
+      need(s.dialogs.some((d) => d.speaker === o.talk!.character), `${at}: talk opens "${o.talk.character}", who has no dialog`);
+      if (o.talk.node !== undefined) need(s.dialogs.some((d) => d.speaker === o.talk!.character && o.talk!.node! in d.nodes), `${at}: talk at unknown node "${o.talk.node}"`);
+    }
     for (const c of o.hostile ?? []) need(cast.has(c), `${at}: unknown character "${c}" turns hostile`);
     for (const u of o.unlock ?? []) {
       const t = trees.get(u.dialog);

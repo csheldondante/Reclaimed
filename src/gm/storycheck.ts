@@ -25,7 +25,7 @@ export const ATLAS_EVENT_KINDS = [
 /** (a compile error here: world.ts has a kind the list above lacks) */
 export const ATLAS_EVENT_KINDS_COMPLETE: [Exclude<AtlasEventKind, (typeof ATLAS_EVENT_KINDS)[number]>] extends [never] ? true : false = true;
 
-const CONDITION_KINDS = ['any', 'talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time'] as const satisfies readonly Condition['kind'][];
+const CONDITION_KINDS = ['any', 'talked', 'chose', 'has', 'reached', 'killed', 'event', 'objective', 'flag', 'time', 'saw'] as const satisfies readonly Condition['kind'][];
 export const CONDITION_KINDS_COMPLETE: [Exclude<Condition['kind'], (typeof CONDITION_KINDS)[number]>] extends [never] ? true : false = true;
 const SIM_EVENTS = ['collapsed', 'flooded', 'burned', 'built', 'dug'];
 const STORMS = ['rain', 'dust', 'snow', 'ash', 'arcane'];
@@ -171,7 +171,7 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
   const objById = new Map<string, J>();
   objectives.forEach((o, i) => {
     const at = `objectives[${i}](${o.id})`;
-    keys(at, o, ['id', 'text', 'when', 'done', 'outcome'], ['location', 'failed']);
+    keys(at, o, ['id', 'text', 'when', 'done', 'outcome'], ['location', 'failed', 'short']);
     id(`${at}.id`, o.id);
     unique(at, o.id, 'an objective');
     str(`${at}.text`, o.text);
@@ -249,13 +249,35 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
         keys(at, c, ['kind', 'after']);
         num(`${at}.after`, c.after, 0);
         break;
+      // (round 97, heroapi) a sighting: a cast member or a place
+      case 'saw':
+        keys(at, c, ['kind'], ['character', 'location']);
+        if ((c.character === undefined) === (c.location === undefined)) bad(at, 'saw names a character or a location');
+        if (c.character !== undefined && !castById.has(c.character as string)) bad(`${at}.character`, `${JSON.stringify(c.character)} isn't in the cast`);
+        if (c.location !== undefined && !locById.has(c.location as string)) bad(`${at}.location`, `${JSON.stringify(c.location)} isn't one of the story's locations`);
+        break;
     }
   };
   const conds = (at: string, v: unknown) => arr(at, v).forEach((c, i) => checkCond(`${at}[${i}]`, c));
   const checkOutcome = (at: string, o: unknown) => {
     if (o === undefined) return;
     if (!isObj(o)) return bad(at, 'expected an outcome object');
-    keys(at, o, [], ['atlas', 'attitude', 'flags', 'give', 'spawn', 'hostile', 'unlock', 'endRun']);
+    keys(at, o, [], ['atlas', 'attitude', 'flags', 'give', 'spawn', 'hostile', 'unlock', 'endRun', 'say', 'talk']);
+    // (round 97, heroapi) barks and a talk as an outcome
+    arr(`${at}.say`, o.say ?? []).forEach((b, i) => {
+      const ba = `${at}.say[${i}]`;
+      if (!isObj(b)) return bad(ba, 'expected an object');
+      keys(ba, b, ['line'], ['by', 'seconds']);
+      str(`${ba}.line`, b.line);
+      if (b.by !== undefined && !castById.has(b.by as string)) bad(`${ba}.by`, `${JSON.stringify(b.by)} isn't in the cast`);
+    });
+    if (o.talk !== undefined) {
+      if (!isObj(o.talk)) bad(`${at}.talk`, 'expected an object');
+      else {
+        keys(`${at}.talk`, o.talk, ['character'], ['node']);
+        if (!dialogs.some((d) => isObj(d) && d.speaker === (o.talk as { character: string }).character)) bad(`${at}.talk.character`, 'has no dialog');
+      }
+    }
     arr(`${at}.hostile`, o.hostile ?? []).forEach((c, i) => {
       if (!castById.has(c as string)) bad(`${at}.hostile[${i}]`, `${JSON.stringify(c)} isn't in the cast`);
     });
@@ -330,7 +352,8 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
     arr(`${at}.spawn`, o.spawn ?? []).forEach((g, i) => {
       const ga = `${at}.spawn[${i}]`;
       if (!isObj(g)) return bad(ga, 'expected an object');
-      keys(ga, g, ['role', 'faction', 'location'], ['count', 'hostile']);
+      keys(ga, g, ['role', 'faction', 'location'], ['count', 'hostile', 'toward']);
+      if (g.toward !== undefined && !locById.has(g.toward as string)) bad(`${ga}.toward`, `${JSON.stringify(g.toward)} isn't one of the story's locations`);
       if (g.hostile !== undefined && typeof g.hostile !== 'boolean') bad(`${ga}.hostile`, 'expected true or false');
       str(`${ga}.role`, g.role);
       if (g.faction !== null && !factionIds.has(g.faction as string)) bad(`${ga}.faction`, `${JSON.stringify(g.faction)} isn't in the snapshot (null: none)`);
@@ -466,6 +489,7 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
       case 'objective': return (c.state === 'done' ? can.done : can.failed).has(c.id);
       case 'flag': return c.value === false ? true : can.flags.has(c.flag);
       case 'time': return true;
+      case 'saw': return c.character !== undefined ? reachedChar(c.character) : can.rooms.has(`${c.location}.`);
       case 'any': return c.of.some(holds);
     }
   };

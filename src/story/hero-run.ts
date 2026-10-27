@@ -16,9 +16,9 @@
 //   const hr = await HeroRun.start({ ui, camera, api, story, world, spawn, spot, size, orbit, dither, renderer, device, groundAt, say })
 //   each frame: hr.update(dt)      // `holdsInput`: the level's own camera input waits (always, while it runs)
 
-import type { RunRecord, SessionStory, StoryLocation, WorldState } from '../api/contracts';
-import type { Hero, HeroWorld } from '../api/contracts/hero';
-import type { UnitView } from '../api/contracts/units';
+import type { AtlasEvent, RunRecord, SessionStory, StoryLocation, WorldState } from '../api/contracts';
+import type { Hero, HeroWorld, RunController } from '../api/contracts/hero';
+import type { Units, UnitView } from '../api/contracts/units';
 import type { Sim } from '../api/world';
 import type { Dither, Orbit } from '../api/cutaway';
 import type { Camera } from '../render/camera';
@@ -60,12 +60,25 @@ export interface HeroRunDeps {
   say: (text: string, seconds?: number) => void;
   /** the hero (default: on foot, hero/walker.ts); a hero game's own plugs in here and draws itself */
   makeHero?: (world: HeroWorld, at: [number, number]) => Hero;
+  /**
+   * (round 97, heroapi) the people and monsters (default: SimpleUnits, drawn here as figures). A game's own — the
+   * hoverbike game's GPU agents, whose deaths the story counts whatever killed them — draws itself.
+   */
+  units?: Units;
+  /** (round 97) the controller (default: the TouchPad); a hero game's own input, its unclaimed taps handed back through `onTap` */
+  makeController?: (hero: Hero) => RunController;
+  /** (round 97) the game drives the camera itself while no story shot has it (`cameraFree`): no follow, zoom or Orbit.prefer here */
+  ownCamera?: boolean;
+  /** (round 97) the end card's "Start a new run" (default: reload the page) */
+  again?: () => void;
+  /** (round 97) what past runs left (WorldState.history()): its marks realised at play scale as the run begins */
+  remember?: AtlasEvent[];
 }
 
 export class HeroRun {
-  readonly units: SimpleUnits;
+  readonly units: Units;
   readonly hero: Hero;
-  readonly pad: TouchPad;
+  readonly pad: RunController;
   readonly figures: Figures;
   play!: StoryPlay;
   stage!: Stage;
@@ -78,10 +91,10 @@ export class HeroRun {
   private constructor(private d: HeroRunDeps) {
     const t = d.api.terrain;
     if (!t) throw new Error('hero run: needs the world API terrain module');
-    this.units = new SimpleUnits(t);
+    this.units = d.units ?? new SimpleUnits(t);
     this.hero = (d.makeHero ?? ((w, at) => new Walker(w, at)))({ ground: t, units: this.units, water: d.api.water }, d.spawn);
     this.units.watch(this.hero.actor);
-    this.pad = new TouchPad(d.ui, d.camera);
+    this.pad = d.makeController?.(this.hero) ?? new TouchPad(d.ui, d.camera);
     this.figures = new Figures(d.device, d.renderer);
     this.waypoint = new Waypoint(d.ui);
     this.pad.onTap = (sx, sy) => this.tap(sx, sy);
@@ -135,9 +148,10 @@ export class HeroRun {
         const u = r.play.unitOf(id);
         if (u !== undefined) r.seek(u);
       },
-      again: () => location.reload(),
+      again: d.again ?? (() => location.reload()),
       opening: false,
       cut: { dither: d.dither },
+      remember: d.remember,
     });
     r.hero.died.push(() => {
       d.say('You fall.', 4);
@@ -147,17 +161,24 @@ export class HeroRun {
       r.ended = rec;
       r.pad.hidden = true;
     });
-    const cam = d.camera;
-    cam.zoom = r.hero.camera.zoom;
-    cam.target = [...r.hero.position()] as V3;
-    r.play.cam.follow(() => r.hero.position());
-    r.play.cam.followRate = 6;
+    if (!d.ownCamera) {
+      const cam = d.camera;
+      cam.zoom = r.hero.camera.zoom;
+      cam.target = [...r.hero.position()] as V3;
+      r.play.cam.follow(() => r.hero.position());
+      r.play.cam.followRate = 6;
+    }
     return r;
   }
 
   /** the run has the screen: the level's own pan, zoom and taps wait */
   get holdsInput(): boolean {
     return true;
+  }
+
+  /** (round 97) no story shot has the camera: a game that drives its own (`ownCamera`) may */
+  get cameraFree(): boolean {
+    return !this.play.cam.busy;
   }
 
   /** Talk to a cast member (as a tap on them, once there). */
@@ -183,16 +204,21 @@ export class HeroRun {
     const u = this.units.get(unit);
     if (!u?.alive) return;
     const who = u.character;
-    this.approach = {
-      id: unit,
-      talk: !u.hostile && !!who && this.play.canTalk(who),
-    };
+    const talk = !u.hostile && !!who && this.play.canTalk(who);
+    // (round 97) a hero that doesn't walk itself to a point (a vehicle): near enough, the talk opens; else it's told to go closer
+    if (this.hero.goesTo === false) {
+      const p = this.hero.position();
+      if (talk && Math.hypot(u.at[0] - p[0], u.at[1] - p[1]) <= TALK + 1) void this.talk(who!);
+      else if (talk) this.d.say(`Go closer to talk to ${u.name ?? who}`, 3);
+      return;
+    }
+    this.approach = { id: unit, talk };
     this.goTo = null;
   }
 
   update(dt: number): void {
     // (the first frame: the hero's own zoom, over whatever the level opened at)
-    if (this.t === 0) this.d.camera.zoom = this.hero.camera.zoom;
+    if (this.t === 0 && !this.d.ownCamera) this.d.camera.zoom = this.hero.camera.zoom;
     this.t += dt;
     const play = this.play;
     const talking = play.dialog.isOpen;
@@ -226,11 +252,16 @@ export class HeroRun {
         this.goTo = null;
       }
       it.attack = attack;
+      // (round 97) talk as an intent: whoever's near
+      if (it.talk) {
+        const c = this.talkable();
+        if (c) void this.talk(c);
+      }
       hero.update(dt, it);
       this.units.update(dt);
       // (what E or the button does: talk to whoever's near)
       const c = this.talkable();
-      this.pad.setAction(
+      this.pad.setAction?.(
         c
           ? `Talk to ${
               this.d.story.cast
@@ -241,19 +272,21 @@ export class HeroRun {
           : null,
       );
     }
-    this.pad.setHealth(hero.health, hero.maxHealth);
-    // the chase camera: drawn round behind the hero while it walks (not while a shot has the view)
+    this.pad.setHealth?.(hero.health, hero.maxHealth);
+    // the chase camera: drawn round behind the hero while it walks (not while a shot has the view; not when the game drives it)
     const p = hero.position();
-    const o = this.d.orbit;
-    o.prefer =
-      hero.speed() > 0.5
-        ? {
-            az: hero.heading() + Math.PI,
-            dead: hero.camera.behind,
-            firm: hero.camera.firm,
-          }
-        : null;
-    if (!play.cam.busy) o.update(p[0], p[1], p[2], dt);
+    if (!this.d.ownCamera) {
+      const o = this.d.orbit;
+      o.prefer =
+        hero.speed() > 0.5
+          ? {
+              az: hero.heading() + Math.PI,
+              dead: hero.camera.behind,
+              firm: hero.camera.firm,
+            }
+          : null;
+      if (!play.cam.busy) o.update(p[0], p[1], p[2], dt);
+    }
     this.d.dither?.see('hero', p[0], p[1], p[2] + 1);
     play.update(dt);
     this.d.dither?.update(dt);
@@ -319,11 +352,13 @@ export class HeroRun {
   private tap(sx: number, sy: number): void {
     if (this.play.cam.busy) return this.play.cam.skip();
     if (this.ended || !this.hero.alive) return;
+    // (round 97) the hero's own mechanics first: a tap it claims never walks it or opens a talk
+    if (this.hero.claims?.(sx, sy)) return;
     // (a person under the finger: the nearest figure on the screen within reach of it)
     const cam = this.d.camera;
     let best: UnitView | null = null;
     let bd = PICK_PX;
-    for (const u of this.units.all()) {
+    for (const u of this.units.all?.() ?? []) {
       if (!u.alive) continue;
       const [x, y] = cam.project(u.at[0], u.at[1], u.at[2] + 1.2);
       const dd = Math.hypot(x - sx, y - sy);
@@ -342,7 +377,8 @@ export class HeroRun {
     // (a Walker is drawn here; any other hero draws itself)
     const h = this.hero instanceof Walker ? this.hero : null;
     if (h) poses.push(walkerPose(h));
-    for (const u of this.units.all()) poses.push(unitPose(u, this.t));
+    // (a game's own units draw themselves)
+    if (!this.d.units) for (const u of this.units.all?.() ?? []) poses.push(unitPose(u, this.t));
     this.figures.draw(poses);
   }
 }

@@ -171,6 +171,8 @@ async function walkTo(p, to, what, tol = 1.6) {
       return { d, sx, sy, h, talking: r.play.dialog.isOpen, busy: r.play.cam.busy };
     }, to);
     if (s.d <= tol) return true;
+    // (round 97: a talk opened on the way, as an event — Hesk calls the hero over once the dead are stopped)
+    if (s.talking) return true;
     if (s.busy) {
       // (a reveal shot: a tap cuts it short)
       await p.mouse.click(206, 300);

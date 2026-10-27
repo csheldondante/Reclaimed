@@ -100,6 +100,8 @@ export interface Units {
   get(id: UnitId): UnitView | null;
   /** the units within `radius` of `near` (living ones unless `dead`), nearest first */
   query(near: V2, radius: number, opts?: { faction?: FactionId | null; hostile?: boolean; dead?: boolean }): UnitView[];
+  /** (round 97, heroapi) every unit, living and dead (a run picks what's under a tap, draws figures) */
+  all?(): readonly UnitView[];
   /** every unit standing for this story character */
   byCharacter(character: string): UnitView | null;
   /** give a unit (or several) a job */
