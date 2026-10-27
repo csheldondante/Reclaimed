@@ -3,36 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
-## 2026-10-27 — round 89 (session 5, `places`) — settlements like vegetation; the water epic
+## 2026-10-27 — round 88 (session 5, `seawall`) — a wall of water by the sea
 
-- "Yeah carry out in that order." "The original test valley still works well! The water looks better than before."
-- "We have the flow field based agents right? I'm curious to see how they navigate a settlement and look when working.
-  I think quarry and felling trees, hauling and building make sense as the first jobs (maybe farming and houses to
-  spawn more agents?) I think vegetation and settlements should work similarly actually. Both are fields with
-  intensity and maybe some material (different biomes or settlement styles) and sensitive to conditions on the map
-  grow and spread. Settlements along rivers and near resources make sense and hopefully quarries and mines can be
-  built into the ground/hills in ways that look cool."
-- "I'm also excited to eventually add ships and I think that will wait for a general epic to improve the water
-  (simulation is neat but river shapes need work I think and have too much isotropy and not enough variety or
-  vegetation along banks)" (BACKLOG W1).
-
-## 2026-10-27 — round 88 (session 5, `places`) — the third phone test; what's next
-
-- **Hoverbike** on places 4193918: "The performance has more noticable hiccups in this mode but is still adequate for now."
-- **Collapse:** "The collapse code render looks much better! It still fails to make some unsupported structures wake up
-  and fall though. So worth testing on a wider column and seeing if only parts of it fall." Then: "I also, think we can
-  do even more with the collapse code but first step is fixing the floating rocks. We can work on making them more
-  physics enabled as future work" (branch `collapse`).
-- **Meteors:** "The meteors look awesome." **Waterfalls:** "I didn't find waterfalls in the atlas levels" (the flow
-  model isn't on the atlas yet).
-- **Sea:** "I did find what looks like a bug with sea level where I saw a steep wall of water" (branch `seawall`).
-- "Overall this is really coming together."
-- **What's next:** "I would like to see settlements with agents working around them" (branch `settlements`) "and I would
-  like to try spawning as a character like in hoverbike and talking to people or going places or fighting things for
-  a run story" (branch `runstory`).
-- **Then:** "In terms of work I would love to improve the vegetation and building next and then do even more mapgen since
-  I find that stuff the most fun."
-- "I should also like to test a reclaimed like level with wind to make sure that's still fun as before."
+- The user, on the phone at the atlas level (the phone's defaults: hybrid, rivers=table, simcull): "I did find what
+  looks like a bug with sea level where I saw a steep wall of water." → found and fixed (DEVLOG round 88, seawall):
+  the sea's columns cut off under a raised window floor came in dry and drained whatever ran in; they now hold the
+  sea from the floor up to its level. A second wall (a table river held over a macro hollow) is a judgement call,
+  BACKLOG W2.
 
 ## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
 
@@ -64,7 +41,6 @@ each was implemented.
   the weight idea (a hanging piece's mass against its contact area × strength).
 
 
->>>>>>> origin/collapse
 ## 2026-10-26 — round 87 (session 5, `places`) — the second phone test
 
 - "Waterfalls and the meteor look fantastic! However, the collapse didn't work for me on mobile at all. I was able to

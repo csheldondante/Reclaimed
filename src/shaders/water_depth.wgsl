@@ -68,8 +68,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // a large lake evaporates the whole river inflow
   nd = max(0.0, nd - select(EVAP_DEEP, EVAP, nd < 0.08));
   // a column with nothing in it (round 69: the window slides in z, and the ground here is
-  // below its floor): what runs in falls on out of the window
-  if (sfCount(surface[i]) == 0u) { nd = 0.0; }
+  // below its floor): what runs in falls on out of the window — but not under the sea (round 88): there the
+  // column under the floor is the sea's, full, and the water stands on the floor at the sea's level (it drained
+  // in, the sea beside it stood as a wall over the dry floor)
+  if (sfCount(surface[i]) == 0u && G.ocean.x <= 0.0) { nd = 0.0; }
   // (round 84, ?rivers=table&riverpull=x: a woken river's column pulled toward the atlas's table by x a step — what
   // comes down from upstream past the window keeps coming: a breach is fed, the river runs on past it)
   if (RIVER_PULL > 0.0 && rh.on) { nd = mix(nd, rh.depth, RIVER_PULL); }

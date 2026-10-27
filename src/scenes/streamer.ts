@@ -27,7 +27,7 @@
 // still being read back from its last visit).
 
 import { record, timed } from '../gpu/cpustat';
-import { CHUNK, K_HEADROOM, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, type Interval } from '../world/layout';
+import { CHUNK, K_HEADROOM, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
@@ -695,9 +695,11 @@ export class Streamer {
         outside.push(cut.outside);
         this.place(layers, x, y, cut.inside);
         surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        // (round 88: the water the window holds — over the floor where the ground is under it, the sea's)
+        const col = land.cols[i];
+        land.water[i] = col.length ? waterInWindow(cut, oz, zMax, col[col.length - 1].z1 + land.water[i]) : 0;
         // (the ground's top out of the window: what lies on it isn't here)
         if (!topInside(cut, oz, zMax)) {
-          land.water[i] = 0;
           if (land.waterSource) land.waterSource[i] = 0;
           if (land.riverFlow) land.riverFlow.fill(0, i * 4, i * 4 + 4);
           if (land.lava) land.lava.fill(0, i * 4, i * 4 + 4);
@@ -851,12 +853,16 @@ export class Streamer {
         const was = this.columnOf(f.layers, x, y);
         const full = joinColumn(was, f.oz, f.outside[i]);
         const wasTop = was.length > 0 && !f.outside[i].some((iv) => iv.z0 >= f.oz + zMax);
+        // (round 88) its water's level (world z): over its top in the window, or over the floor where its ground was
+        // under it; none where its top was over the window
+        const level = f.oz + (was.length ? was[was.length - 1].z1 : 0) + (water ? water[i] : 0);
+        const overTop = f.outside[i].some((iv) => iv.z0 >= f.oz + zMax);
         const cut = splitColumn(full, this.oz, zMax);
         outside.push(cut.outside);
         this.place(layers, x, y, cut.inside);
         surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        if (water) water[i] = overTop ? 0 : waterInWindow(cut, this.oz, zMax, level);
         if (!(wasTop && topInside(cut, this.oz, zMax))) {
-          if (water) water[i] = 0;
           if (lava) lava.fill(0, i * 4, i * 4 + 4);
         } else if (lava && lava[i * 4] > 0) lava[i * 4 + 3] += f.oz - this.oz;
       }
@@ -965,13 +971,16 @@ export class Streamer {
           was.push(iv);
         }
         const wasTop = was.length > 0 && !this.outside[i].some((iv) => iv.z0 >= this.oz + zMax);
+        // (round 88) its water's level (world z), as reslice's
+        const level = this.oz + (was.length ? was[was.length - 1].z1 : 0) + water[i];
+        const overTop = this.outside[i].some((iv) => iv.z0 >= this.oz + zMax);
         const cut = splitColumn(joinColumn(was, this.oz, this.outside[i]), oz, zMax);
         if (fitColumn(cut.inside, this.colK)) this.stats.fitted++;
         this.outside[i] = cut.outside;
         out.set(packColumn(cut.inside, K), base * SLOT_WORDS);
         surf[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        water[i] = overTop ? 0 : waterInWindow(cut, oz, zMax, level);
         if (!(wasTop && topInside(cut, oz, zMax))) {
-          water[i] = 0;
           lava.fill(0, i * 4, i * 4 + 4);
         } else if (lava[i * 4] > 0) lava[i * 4 + 3] -= dz;
       }

@@ -6497,4 +6497,63 @@ scripts/towertest.mjs (below):
   it into the physics voxels (phys.wgsl), which bring it down — 15 taps, no integrity piece (the physics' own
   path; not this system's). GIF: C:/Projects/shots86/tall-tower.gif (the 70-tall tower cut through, its top
   coming down on its stub).
->>>>>>> origin/collapse
+
+## Round 88 — the sea held over a raised window floor (`seawall`)
+
+The user, on the phone at the atlas level (hybrid, rivers=table, simcull): "I did find what looks like a bug with
+sea level where I saw a steep wall of water."
+
+Looked for first (scripts/seawall.mjs: six coasts and river mouths, q=low 412x915, default zoom and 10; the window's
+water read back and every wet column standing over a neighbour's level by more than 3 counted,
+scripts/seawallprobe.mjs): where the window's floor is at 0 (oz 0, the usual at a coast) the window's sea and the
+rings' agree (both world 90; Globals ocean.x = 90 - oz), no sea column stands over its neighbours, and the open
+edges show no water face. The candidates in the brief (the seam, the hybrid grid, Renderer.openEdges, shore swell)
+were not it.
+
+The wall comes when the window's floor is over 0 by the sea — oz 32 or 64, which a warp picks at a coast with high
+land and which the window slides to when the player walks up a mountain (Streamer.slideZ, the ground under the
+camera over zMax - 40). Then the sea's floor near the shore lies under the window: those columns have nothing in
+the window (sfCount 0). They came in dry (Streamer.cutRegion / reslice / slideZNow and Atlas.window zeroed the
+water of any column whose top wasn't inside), and water_depth.wgsl emptied whatever ran into them each step
+("what runs in falls on out of the window", round 69). The sea beside them, held at its level by the edge rule,
+stood over the dry floor as a cliff of water: at 11600,18213 after one slide up (oz 32 -> 64, seaZ 26), 2404
+columns cut off, none wet, 151 wall faces all at the sea's level, 26 tall. And they drained the sea into nothing.
+
+The fix (the cause, both ends):
+- layout.ts `waterInWindow(cut, oz, zMax, level)`: what of a column's water lies in the window — over its top
+  there, or over the window's floor where its ground is under it, up to the water's level (world z: its ground's
+  top plus its depth); nothing where its top is over the window. The four places that cut columns (Atlas.window,
+  Streamer.cutRegion, reslice, slideZNow) use it: a column under the sea comes in, or keeps on a slide, the sea
+  from the floor up (depth seaZ), and one that comes back inside on a slide down gets its depth over the real
+  ground back (it was zeroed then too: wasTop was false for a cut-off column).
+- water_depth.wgsl: a column with nothing in it drains what runs in only where there's no sea (Globals ocean.x
+  <= 0, the -1e9 of a level without one); under the sea it's the sea's, full below the floor.
+  (A hollow on land under the window's floor would hold water too, if the window's floor is under the sea's level
+  there — the atlas has no dry land under the sea's level away from the sea, so it isn't seen.)
+
+In the hybrid, a chunk whose land is past the window's floor is the rings' (round 86: the atlas's sea at 90, the
+same level); the rest are the grid's, which draws the window's own water — now the sea over the floor where it
+drew the dry floor beside the sea's wall.
+
+driveprofile isn't the measure here: no GPU work was added (one comparison a column in water_depth), and the
+CPU's cuts already walk every column. The repro (scripts/seawallslide.mjs: the atlas level at 11600,18213, q=low
+412x915, the window slid up one tier as walking up the coast's mountain does, oz 32 -> 64):
+
+| | columns cut off under the floor | of them wet | wall faces (> 3 over a neighbour) | the sea's level (window z) |
+|---|---|---|---|---|
+| before (places) | 2404 | 0 | 151 (all at 26, the sea's) | 26.04 |
+| after | 2404 | 2404 | 0 | 26.04 |
+
+Shots: C:/Projects/shots88/sea/slide-before-z5.png / slide-after-z5.png (the cut-off shore, zoomed in: the ragged
+grey faces down the sea's edge are gone), -z2 at the phone's default zoom. The first survey (oz 0 coasts and river
+mouths, nothing wrong there): before-*.png.
+
+Perf: no GPU work added (one comparison in water_depth; on the CPU a few operations a column in the cuts, which
+already walk every column).
+
+Second wall found, not changed (BACKLOG W2): a rivers=table river held at its filled level over a macro hollow
+deeper than the levee holds (RIVER_LEVEE 12): at 1040,13551 a river at 123.6 (the hollow's spill height, the
+depression-filled level of findRivers) runs 12 wide over coastal ground at 101-118, its water 17-22 deep with no
+banks — 167 wall faces. Either the hollow is filled as a lake to its spill level (needs the per-texel fill on the
+GPU; where the fine ground lacks the macro rim it's a wall again) or the river runs on the hollow's floor (its level
+the ground's + its depth past the levee's reach). The user's call.
