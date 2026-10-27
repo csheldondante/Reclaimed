@@ -16,7 +16,9 @@
 //   cv (perfopt, ?cavemesh=near) w 1: the mesh leaves out what's more than CAVE_DEEP under the lowest top of a
 //      sample's cell and its neighbours (caves, the insides of hills: under the ground, never seen from the
 //      sky), except within z of (x, y) — the cut's focus, where the player is under a roof
-struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32>, cv: vec4<f32> };
+//   pr (round 86) x the rebuild slots a frame for any change (k.y is that and the urgent ones: a chunk the CPU
+//      marked — an edit's, a falling piece's — takes any slot, so what the player did shows the next frame)
+struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32>, cv: vec4<f32>, pr: vec4<u32> };
 @group(0) @binding(30) var<uniform> MR: MeshRegion;
 
 /**

@@ -30,6 +30,9 @@ export interface Voxel {
 export interface Fracture {
   bodies: Voxel[][];
   crumble: Voxel[];
+  /** (round 86) the rock's pieces as their runs, column by column (fractional ends kept), one per body; the
+   *  structures' come as cells only */
+  pieces?: { x: number; y: number; ivs: { z0: number; z1: number; mat: number }[] }[][];
 }
 
 /** Read-only voxel view of packed column slots (allocation-free lookups). */
@@ -275,8 +278,10 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
       continue;
     }
     const piece = solve(cells);
-    if (piece === 'tip') result.bodies.push(cells.map(vox));
-    else if (piece) {
+    // (round 86: a piece that would tip stands — pieces fall straight down in the columns (colbodies.ts), so one
+    // resting on its foot came down where it was every pass; toppling is BACKLOG C4)
+    if (piece === 'tip') continue;
+    if (piece) {
       result.crumble.push(...piece.crumble.map(vox));
       // what the cut held up is now an island: the next pass drops it
     }
@@ -519,7 +524,7 @@ interface Run {
  * Structures keep their own rules (analyse); rock holds them.
  */
 export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>): Fracture {
-  const result: Fracture = { bodies: [], crumble: [] };
+  const result: Fracture = { bodies: [], crumble: [], pieces: [] };
   const cache = new Map<number, Run[]>();
   const ivCache = new Map<number, { z0: number; z1: number; mat: number }[]>();
   const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h;
@@ -624,7 +629,10 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>):
     if (big) continue;
     if (!held.length) {
       const vox = piece.flatMap(cells);
-      if (vox.length >= MIN_BODY) result.bodies.push(vox);
+      if (vox.length >= MIN_BODY) {
+        result.bodies.push(vox);
+        result.pieces!.push(piece.map((r) => ({ x: r.x, y: r.y, ivs: r.ivs.map((iv) => ({ ...iv })) })));
+      }
       continue;
     }
     const dist = new Map<Run, number>();

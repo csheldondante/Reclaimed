@@ -6060,3 +6060,28 @@ and is on by default on the low (phone) tier through phone-flags' LITE_SET, so `
 The medium and high tiers keep full voxels until the open items are done (plants on heightfield chunks, the rings' water, roads, the seam's colour; BACKLOG P13).
 It only applies to the atlas level, and `?mesh=0` with it is an error, not a fallback.
 Measured on the merged places build: driveprofile, low tier, 18/s for 20 s, desktop iGPU. By default (hybrid on) the GPU took 7.43 ms a frame, with 15 of 72 chunks voxels; p95 was 10.6 and p99 13.1. With `&hybrid=0` it took 9.07 ms, with 55 chunks drawn; p95 was 10.7 and p99 14.9. atlasworldtest passes 6/6.
+
+## Round 86 — rock collapse and meteors made immediate; pieces fall in the columns (collapse)
+
+Why: the user on the phone (DECISIONS round 86): a long lag from a meteor to the ground going, the column
+"converts to voxels before collapsing"; "simulate as voxels but split the mesh"; a big dust cloud and sparks.
+
+- Meteor (level.ts impact/impactFx): the bowl's edit goes on the next tick as before; its chunks are now meshed
+  that frame (FieldMesh.urgent: 4 rebuild slots over the tier's own — low had 1, on alternate frames with the
+  band, so a crater took 10+ frames to show). A shockwave ring (16 bursts of dust and embers thrown out from
+  the rim), a dust cloud sized to the bowl's volume (capped at an eighth of the tier's particles), and the rim
+  melted to lava, glowing past it (lava.wgsl/lava.ts `blast`: the ground's heat raised past melting for a tick;
+  it cools to basalt as any lava). The atlas's great meteor: its blast at once, before its window edit (a
+  whole readback and write: editLiveMs exposed; BACKLOG C6).
+- Collapse latency (integrity.ts): a cut sent this tick starts the next pass at once (its readback submitted
+  after that tick), not on the 0.35 s timer; only the chunks near are read back by default (`?intread=all`
+  the old whole read); the drift texture isn't read any more.
+- Pieces (colbodies.ts, ARCHITECTURE "Falling pieces in the columns"): a freed piece is its runs and an
+  offset, written into the GPU's columns every frame over their base — meshed as the ground, split from it,
+  no cube voxels; loose ground on it rides down; landing hard crumbles the rim of its foot (rubble, chips
+  thrown, dust), the rest is ground again and its columns judged. Structures' tipping pieces now stand
+  (they came down in place every pass; toppling is C4).
+- **Not yet measured in a browser** (the shared GPU was queued for other agents when this was committed):
+  scripts/latencyprobe.mjs (meteor / cut / great: impact→GPU column lower, mesh chunk rebuilt, piece
+  spawned, piece moving, frame times) is ready; the before numbers are to be taken from origin/places with it.
+  Typecheck and build pass; colbodies' fall-and-commit checked in node on a 3-column spire.
