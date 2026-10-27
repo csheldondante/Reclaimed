@@ -1332,6 +1332,20 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 95 (2026-10-27, session 5, `rockbody`) — rock as a rigid body while it falls (DECISIONS round 95)
+
+| id | item | size | status |
+|---|---|---|---|
+| RB1 | `?rockbody=1`: what the rock judge frees, or what tips, falls as a rigid body (game/rockbodies.ts: mass, inertia, impulses at its corners against the CPU copy's columns, friction, restitution), turning about the edge it tips over; written back into the columns where it rests (no cell left over air) | M | done (rockbody; an experiment, default off — C21's rotation for what tips) |
+| RB2 | Drawn as its own mesh, not cubes (the user: "render the mesh not cubes … anchor the vertices to the cubes"): a slot of a third field mesh meshed once from its cells, moved per vertex with its body; a break drawn split by the fragments' seeds till theirs are built; `rbcubes=1` shows the cubes | M | done (rockbody) |
+| RB3 | Breaks on a hard hit (impact speed against `RB.breakSpeed × √strength`): crumbles round the point (rubble, chips, dust, sparks) and into up to six bodies; pieces under 8 cells crumble | S | done (rockbody) |
+| RB4 | The knobs (URL `rbgrav rbrest rbfric rbbreak rbdamp rbmax rbspin rbmaxv rbscatter rbcubes`, a panel in the rock lab) — for the user to tune | S | asked |
+| RB5 | Body against body: not simulated (pieces of a break pass through each other till they rest; resting ones are ground) | M | open |
+| RB6 | The thin leg's top comes straight down (the judge crushes the leg: CRUSH beats tipping when the leg is cut round) — a leg cut on one side low down should topple the leg with its top, like a tree; needs the judge to hand the standing leg above the cut to the body (C15's neck from the cut, not from the piece's lowest point) | M | open |
+| RB7 | A piece over 3 × 3 mesh chunks (~90 columns) or past the window's height gets no mesh (its cubes are drawn) | S | open |
+| RB8 | Lava setting a basalt skin (6e-5 thick) on what was read just before a piece was cut out leaves it in the air (seen in the rock lab's crater; now watched 4 s where a piece tore free) — collapse's round 96 basalt work | S | open (collapse) |
+| RB9 | The rock mesh's change passes run over every chunk of the window while a body exists (~0.25 ms GPU a frame): a list of the slots' chunks only | S | open |
+
 ## Round 92 (2026-10-27, session 5, `collapse`) — what holds rock up; the meteor-made floaters (DECISIONS round 92)
 
 | id | item | size | status |
@@ -1343,7 +1357,7 @@ user) · `deferred` (agreed for later).
 | C18 | Truly detached rock in the atlas as made, not the judge's: on a mesa (`at=6402,6596`) seven sandstone slabs 10 thick hang alone, 1.5–49 cells over the ground (162–164, 218–219 and round), in the spires a few: likely a form leaning faster than it is thick (the mesas' tilted spires, regions.ts lean to 0.35); to trace to its form and connect it to its host (the user: nothing they designed floats) | M | open |
 | C19 | A meteor's rim melts the column's top interval (lava.wgsl blast: "runs off the top of the column"), not the ground at the rim's height: an overhang's top melts where its underside is in the blast; the vent's pool sits on the top of a cut column (over the gap) | S | open |
 | C20 | The physics (cube) bodies are in window coordinates and are dropped on any slide (before: on a slide in z only) | S | open |
-| C21 | Rotation for what tips (C4): pieces fall straight now | M | open (C4) |
+| C21 | Rotation for what tips (C4): pieces fall straight now | M | wip (rockbody: `?rockbody=1`, RB1) |
 ## Round 93 (2026-10-27, session 5, `winmem`) — what the window's memory goes on (DECISIONS round 93)
 
 | id | item | size | status |

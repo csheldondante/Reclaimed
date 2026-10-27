@@ -1270,6 +1270,30 @@ columns read back and written again) holds the integrity system (`Integrity.held
 the land. Before, a piece falling when the window slid was frozen, cut again or written at its old place mid-air
 and forgotten — the meteor-made floaters.
 
+Rigid rock (round 95, `rockbody`, `?rockbody=1`, default off; DECISIONS round 95). With the flag, the rock judge's
+pieces (`Fracture.pieces`) are rigid bodies instead of column falls (structures' pieces still fall in the columns):
+`game/rockbodies.ts` (pure CPU: cells of the lattice about the centre of mass, mass and inertia from cells ×
+density, impulses at exposed cube corners with restitution and Coulomb friction, sleep, a break into pieces by
+impact speed against `RB.breakSpeed × √strength`) knows the world only through `RockGround` — `Integrity`'s probe of
+its CPU copy of the columns (in solid or loose ground: out the top within 0.6 of its run's top, else through the
+nearest open hex face). `analyseRock(…, { rotate: true })` returns a tipping piece cut free above the standing
+columns (not crushed) with the hull edge it tips over (`Fracture.tips`): the body starts turning about it
+(`RB.tipSpin`). `Integrity.spawnRigid` takes the piece's runs out of both copies; `settleRigid` writes its cells
+back where it rests (each down onto what's under it in its column — no cell left over air — in place of a liquid),
+seeds those columns (not weighed) and watches them 4 s. `settle` (before a slide) runs the leaving bodies on alone
+to rest and writes them; `slid` shifts the rest and freezes them (`RockBodies.frozen`) until the copy is read
+again. The phone cap `RB.maxBodies` settles the oldest first. Drawn: `render/rockmesh.ts` (`Renderer.enableRockMesh`)
+— a third `FieldMesh` (the band's pattern: `MeshSource` with `pages`, and `FieldMesh.pin` instead of the camera's
+cull) over a sparse layers copy whose chunk table points every column chunk at one empty block but the slots': a
+body's cells are written once into a slot (a rectangle of mesh chunks, shifted whole columns and an even number of
+rows) and meshed there; `rockmesh.wgsl` vsRock moves each vertex by its slot's body transform (spawn frame → world,
+`RockMesh.setDraws`: a uniform at binding 31 of the mesh layout), fsRock shades it with the mesh's look from where
+it came from (the copy's intervals, the spawn frame's strata, specks, facets, plants), lit where it is. A break
+draws the parent's slot split by the fragments' Voronoi seeds (a ghost, `BUILD_FRAMES`) while theirs are built;
+a settled body's mesh stays 6 frames. The cubes are only drawn for a body with no slot (too big: over 3 × 3 mesh
+chunks, or no room) or with `RB.cubes`; they always cast the shadow (`Renderer.setBodies(data, count, shown)`: the
+main pass draws the first `shown`).
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and
