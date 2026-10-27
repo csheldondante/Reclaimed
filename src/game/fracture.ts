@@ -1030,14 +1030,34 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     else if (M > bear) result.why!.crush++;
     else if (M > buckle) result.why!.buckle++;
     else result.why!.bend++;
-    // (round 95) it turns over the edge of what it stands on: cut free above it, nothing crushed
-    if (tips && opts.rotate) {
+    // (round 95) it turns over the edge of what it stands on: cut free above it, nothing crushed. (Round 96, the user:
+    // "I still want them to lean and fall if you destroy one side") Not only past the edge: a leg cut on one side —
+    // its far side pulled apart (snaps), a slender one buckling, or crushed with the weight off its middle — leans the
+    // piece over the edge it's nearest and it falls like a tree; only a leg crushed under a centred weight drops it
+    const leans = tips || snaps || M > buckle || lever > 0.5;
+    if (leans && opts.rotate) {
       const fall: RunPiece = [];
       for (const r of list) {
         const up = clipIvs(r, B.get(r)!.z0);
         if (up.length) fall.push({ x: r.x, y: r.y, ivs: up });
       }
-      const e = hullEdge(foot, mx / M, my / M);
+      // (past the edge: over that edge; a leg failing: over the edge of what's left of it on the side its weight is,
+      // the rest of the leg giving — its top two cells crushed — so it hinges there, as a tree on what's left of its
+      // trunk; the first try left the leg whole and the piece rocked on it and stood)
+      const e = tips ? hullEdge(foot, mx / M, my / M) : facingEdge(foot, mx / M, my / M);
+      if (!tips) {
+        const nx = e.axis[1];
+        const ny = -e.axis[0];
+        for (const r of list) {
+          if (!r.stands) continue;
+          const [px, py] = cellPos(r.x, r.y);
+          // (within a cell of the hinge's line: the hinge)
+          if ((e.at[0] - px) * nx + (e.at[1] - py) * ny <= 1.0) continue;
+          const ivs: { z0: number; z1: number; mat: number }[] = [];
+          for (const iv of r.ivs) if (iv.z1 > zc - 2 + 1e-3 && iv.z0 < zc - 1e-3) ivs.push({ z0: Math.max(iv.z0, zc - 2), z1: Math.min(iv.z1, zc), mat: iv.mat });
+          if (ivs.length) result.crumbleRuns!.push({ x: r.x, y: r.y, ivs });
+        }
+      }
       result.tips!.push({ piece: result.pieces!.length, pivot: [e.at[0], e.at[1], zc], axis: [e.axis[0], e.axis[1], 0] });
       result.pieces!.push(fall);
       for (const r of list) seen.set(r, piece[0]);
@@ -1090,6 +1110,48 @@ function hullEdge(cols: [number, number][], cx: number, cy: number): { at: [numb
       // (about u, right-handed, up turns toward u × up = (uy, -ux): to the right of a→b, outside)
       best = { at: [a[0] + ux * t, a[1] + uy * t], axis: [ux, uy] };
     }
+  }
+  return best;
+}
+
+/**
+ * (round 96) The edge of these columns' hull that (cx, cy) lies toward from their middle: the point where the ray from
+ * the middle through (cx, cy) leaves the hull, and the edge's direction, signed as hullEdge's (turning about it carries
+ * what's over it outward and down).
+ */
+function facingEdge(cols: [number, number][], cx: number, cy: number): { at: [number, number]; axis: [number, number] } {
+  const hull = hullOf(cols);
+  let mx = 0;
+  let my = 0;
+  for (const [x, y] of cols) {
+    mx += x;
+    my += y;
+  }
+  mx /= cols.length;
+  my /= cols.length;
+  let dx = cx - mx;
+  let dy = cy - my;
+  const dl = Math.hypot(dx, dy);
+  if (dl < 1e-6) return hullEdge(cols, cx, cy);
+  dx /= dl;
+  dy /= dl;
+  let best = { at: [mx, my] as [number, number], axis: [1, 0] as [number, number] };
+  let bestDot = -Infinity;
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i];
+    const b = hull[(i + 1) % hull.length];
+    const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    const ux = (b[0] - a[0]) / L;
+    const uy = (b[1] - a[1]) / L;
+    // (the outward normal: right of a→b on a counter-clockwise hull)
+    const d = uy * dx - ux * dy;
+    if (d <= bestDot) continue;
+    // where the ray meets this edge's line
+    const den = dx * uy - dy * ux;
+    const t = Math.abs(den) > 1e-6 ? ((a[0] - mx) * uy - (a[1] - my) * ux) / den : 0;
+    const s = Math.max(0, Math.min(L, (mx + dx * t - a[0]) * ux + (my + dy * t - a[1]) * uy));
+    bestDot = d;
+    best = { at: [a[0] + ux * s, a[1] + uy * s], axis: [ux, uy] };
   }
   return best;
 }

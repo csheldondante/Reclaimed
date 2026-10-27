@@ -1300,7 +1300,10 @@ everything of it connected (26 round, METAL_MAX cells) out of both copies into o
 It's drawn as its particles' voxels; `?rbskin=1` (an experiment) gives it a rock-mesh slot meshed as stone and drawn
 skinned per vertex to the particle of its cell (`RockDraw.skin`: rockmesh.wgsl reads the particles' positions, rest
 and rotations at bindings 32–34, `Renderer.setRockParticles`; `Physics.buffers`), tearing where a triangle
-stretches past 1.6× or its particle is gone.
+stretches past 1.6× or its particle is gone. A one-sided failure leans (round 96 (2)): with `rotate`, neck() turns
+any off-centre give (tips, snaps, buckle, a crush with the weight off the leg's middle) into a tip — over the hull edge
+the centre of mass is past, or over `facingEdge` (the edge it lies toward) with the rest of the leg's top two cells
+crumbled — and the body leans (`RockBody.tipping`: undamped, not at rest) till it comes down.
 Round 96: the piece above a cut also fails on a slender leg — `ROCK.BUCKLE × strength × I / L²` (I the leg's least
 second moment from its columns, L from where the piece would land to the cut; only a leg free over more than 2√A
 buckles) — or when its weight off the leg's middle pulls on the leg's far side past `ROCK.TENSILE × strength`

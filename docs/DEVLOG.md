@@ -7400,3 +7400,33 @@ change is the default: `ROCKBODY` is on when `level=atlas` or `level=rocklab`, `
 `?rockbody=1` turns it on elsewhere. Its round-95 measurements stand (floatsweep 0 floating with it on; ~0.3 ms GPU a
 body). Collapse round 96 (thin legs buckle, the knobs) and rockbody's round-96 tuning (weightier, metal on the GPU
 solver, a one-sided cut leaning over) follow on top.
+
+## Round 96 (2) — a leg cut on one side leans the piece over and it falls like a tree (`rockbody`, with collapse round 96)
+
+Why: the user, testing collapse's round 96 (verbatim): "The pieces at those links don't seem to be tipping anymore.
+I still want them to lean and fall if you destroy one side". collapse round 96's leg checks in neck() — a slender
+leg buckling, the weight's pull off the leg's middle snapping its far side — fire before tipping does, and they crush
+the leg and drop the piece straight (as RB6 did here before).
+
+With rock bodies on (`RockOpts.rotate`), a piece leans whenever it gives off-centre: past its support's edge (tips),
+the far side pulled apart (snaps), a slender leg buckling, or crushed with the weight more than half a cell off the
+leg's middle; only a leg crushed under a centred weight drops it straight. A lean that isn't past the edge hinges on
+the edge of what's left of the leg on the weight's side (`facingEdge`: where the ray from the leg's middle through
+the centre of mass leaves its hull), and the rest of the leg gives under it — its top two cells crushed to rubble —
+so it pivots there, as a tree on what's left of its trunk. The body (rockbodies.ts) starts turning about that edge with
+its centre moving at no more than 2 cells/s (a tall piece over a low pivot started at 10 and shattered on its own
+stub), isn't broken by that first contact (1 s grace), and while it leans (`tipping`: till it comes down hard, 4 s at
+most) the ground doesn't damp it and it can't come to rest — the first try damped the lean out on the stub in a second
+and wrote the piece back where it stood. In the rock lab, the thin leg broken on its far side: the top and the leg
+over the cut turn from 0.12 to 0.39 rad/s over 2.3 s and come down beside it, breaking (thin-one-side-leans.gif); the
+pillar in front of the off-centre top, broken at its foot, leans over and falls (offset-one-side-leans.gif).
+
+Merged: origin/collapse round 96 (525aa83: its knobs panel is src/ui/rockpanel.ts — the rock bodies' moved to
+src/ui/rockbodypanel.ts), origin/places with the round-95 rock bodies on by default (rockbodyFor kept: the same levels
+by the level's id, so a level entered from the menu without `&level=` gets it too).
+
+Measured with the default on (the atlas at the phone tier, every system on, the streamer included): floatsweep 29/29,
+0 floating before and after; towertest 5/5 (spire, wide, concrete, meteor, tall: pieces in 82–187 ms); driveprofile
+(q=low 412×915, 25 s): `&rockbody=0` p50 9.8 p95 12.9 GPU 4.65 ms a frame, on p50 9.9 p95 13.3 GPU 4.75 (noise).
+A regression on places 0f0abdf reported from the phone (no tipping) didn't reproduce headlessly: there the rock bodies
+are on and the off-centre top tips at 0.6–0.95 rad/s as on cb41e7f (the phone's cached page, likely).

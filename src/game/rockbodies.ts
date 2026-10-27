@@ -150,6 +150,12 @@ export interface RockBody {
   origin: V3;
   /** (render/rockmesh.ts) its mesh's slot, if it has one */
   slot?: number;
+  /**
+   * (round 96) s left of its tip: it's leaning over the edge it tips on — not damped on the ground, not at rest — till it
+   * has come down (a hard hit) or this runs out; the first try damped a lean out on its stub in a second and wrote it
+   * back where it stood
+   */
+  tipping: number;
 }
 
 /** What the bodies know of the world: a point (world) in the ground — how deep, and the way out — or null. */
@@ -228,8 +234,13 @@ export class RockBodies {
     if (!b) return null;
     this.stats.spawned++;
     if (tip) {
-      b.w = mul(tip.axis, RB.tipSpin);
+      // (round 96: its centre starting at no more than 2 cells/s — a tall piece's lean over a low pivot began at 10,
+      // and it shattered on its own stub; nor broken by that first contact)
+      const arm = Math.max(1, len(sub(b.pos, tip.pivot)));
+      b.w = mul(tip.axis, Math.min(RB.tipSpin, 2 / arm));
       b.v = cross(b.w, sub(b.pos, tip.pivot));
+      b.tipping = 4;
+      b.grace = 1;
     }
     return b;
   }
@@ -294,6 +305,7 @@ export class RockBodies {
       mat,
       contact: false,
       origin: add(origin, c),
+      tipping: 0,
     };
     this.shape(b);
     this.list.push(b);
@@ -343,6 +355,8 @@ export class RockBodies {
       for (let s = 0; s < n; s++) this.substep(b, h, top);
       b.age += dt;
       b.grace -= dt;
+      // (a lean ends when it has come down hard, or in time)
+      if (b.tipping > 0) b.tipping = b.hit > 3 && b.age > 0.3 ? 0 : b.tipping - dt;
       b.dustT += dt;
       if (b.hit > 1.5 && (b.dustT > 0.25 || b.hit > this.breakSpeedOf(b))) {
         b.dustT = 0;
@@ -427,12 +441,12 @@ export class RockBodies {
     const ql = Math.hypot(q[0], q[1], q[2], q[3]);
     b.q = [q[0] / ql, q[1] / ql, q[2] / ql, q[3] / ql];
     // (round 96) touching: the spin and the slide damped (a landed piece stays down)
-    if (b.contact && RB.contactDamp > 0) {
+    if (b.contact && RB.contactDamp > 0 && b.tipping <= 0) {
       const k = Math.exp(-RB.contactDamp * h);
       b.w = mul(b.w, k);
       b.v = [b.v[0] * k, b.v[1] * k, b.v[2]];
     }
-    if (b.contact && len(b.v) < REST_V && len(b.w) < REST_W) b.still += h;
+    if (b.contact && b.tipping <= 0 && len(b.v) < REST_V && len(b.w) < REST_W) b.still += h;
     else b.still = 0;
   }
 

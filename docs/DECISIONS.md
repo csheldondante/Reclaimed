@@ -16,6 +16,9 @@ each was implemented.
   weightier it was better the second time I tried it" → rock stays on the CPU bodies, a little less bounce and spin,
   a little more crumbling; metal on the GPU solver (physics.ts, as the buildings and the drop tool).
 - And: "And then I think push to atlas" → rock bodies on by default in the atlas and the rock lab (`?rockbody=0` off).
+- Testing collapse round 96, verbatim: "The pieces at those links don't seem to be tipping anymore. I still want them
+  to lean and fall if you destroy one side" → a leg cut on one side leans the piece over and it falls (RB15). On
+  merging collapse into rockbody: "Oh I see merging them. Ok that's fine".
 
 ## 2026-10-27 — round 95 (session 5, `rockbody`) — rock as a rigid body while it falls
 
