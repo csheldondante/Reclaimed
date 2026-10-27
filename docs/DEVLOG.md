@@ -6052,3 +6052,11 @@ civilizations, with legacy carried between runs. They asked for the data model f
 - **Settlements:** overlay grids of several styles, and buildings as things, so a ruin can be adapted. The city
   game edits the same records.
 scripts/recipetest.mjs checks all of this: 12 checks, all passing.
+
+## 2026-10-26 — round 85: the hybrid merged, the phone tier's default
+
+The user tried `hybrid` on the phone: "Hybrid is awesome and definitely should be merged!" It is merged into places
+and is on by default on the low (phone) tier through phone-flags' LITE_SET, so `?lite=1` turns it on for any tier and `&hybrid=0` turns it off.
+The medium and high tiers keep full voxels until the open items are done (plants on heightfield chunks, the rings' water, roads, the seam's colour; BACKLOG P13).
+It only applies to the atlas level, and `?mesh=0` with it is an error, not a fallback.
+Measured on the merged places build: driveprofile, low tier, 18/s for 20 s, desktop iGPU. By default (hybrid on) the GPU took 7.43 ms a frame, with 15 of 72 chunks voxels; p95 was 10.6 and p99 13.1. With `&hybrid=0` it took 9.07 ms, with 55 chunks drawn; p95 was 10.7 and p99 14.9. atlasworldtest passes 6/6.
