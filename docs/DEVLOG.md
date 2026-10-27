@@ -6498,6 +6498,23 @@ scripts/towertest.mjs (below):
   path; not this system's). GIF: C:/Projects/shots86/tall-tower.gif (the 70-tall tower cut through, its top
   coming down on its stub).
 
+## 2026-10-27 — round 88, `runstory`: the Units contract (first, so the settlements agent can implement it)
+
+Why: the user (round 88) wants to spawn as a character and talk to people, go places and fight things in a run
+story. The cast and the hostiles need to be units (BACKLOG D6), and the `settlements` branch is building the GPU
+agents at the same time; main asked for a small, general contract to code against first.
+
+- src/api/contracts/units.ts `Units`: spawn(kind, at, faction, { name, character, settlement, role, hostile,
+  health, sight, speed, damage, colour, job }), get, query(near, r), byCharacter, order(id | ids, job: guard,
+  go, patrol, attack, follow, flee, work), setHostile, hit(id, damage, by), remove, watch(actor), shift (a
+  streamed window's slide), update; events died, hurt, noticed. `Actor`: what isn't a unit but takes part (the
+  hero): hostile units notice, chase and hit it through `Actor.hurt`.
+- src/units/simple.ts `SimpleUnits`: the CPU implementation (a few dozen units): straight-line steering over
+  the world API's heightAt (a climb over 1.6 cells refused, sliding along the face), push-apart, a readable
+  fight (a 0.45 s wind-up, then the blow lands if still in reach; a flinch and knockback when hit; the dead lie
+  4 s). The GPU agents replace it behind the same interface.
+  coming down on its stub).
+
 ## Round 88 — the sea held over a raised window floor (`seawall`)
 
 The user, on the phone at the atlas level (hybrid, rivers=table, simcull): "I did find what looks like a bug with
@@ -6729,6 +6746,103 @@ the rest stays in the air) and after-wide-banded.gif (all of it comes down). The
 headlessly (nothing cut, nothing floats); its path is towertest's and round 87's. Open: BACKLOG C13 (GPU-made
 changes elsewhere — a volcano's flows — aren't judged).
 
+## 2026-10-27 — round 88, `runstory`: a run story played as a hero (`?run=bell`)
+
+Why: the user (round 88): "I would like to try spawning as a character like in hoverbike and talking to people or
+going places or fighting things for a run story." The slice: a hero on foot on the atlas level, the GM's Bell
+story staged near the spawn, its cast as units, talks, objectives, a fight, death ending the run. Each piece sits
+behind a contract, so the hoverbike game's heroes and the settlements' GPU agents can replace the stand-ins.
+ARCHITECTURE "A run story as a hero"; docs/HEROES.md is the hoverbike session's handoff.
+
+- **The hero** (contracts/hero.ts `Hero`; hero/walker.ts). It walks the world API's ground at the drawn
+  mesh's height. Climbs are judged on the columns' own tops half a cell ahead, because the smooth mesh rounds
+  a wall's foot into a ramp a stride at a time could walk up (the first browser run walked over every wall).
+  A tap's goal is reached by A* (hero/path.ts): a 1-cell grid of column tops, a step over 2.5 impassable,
+  cells beside a wall costing more so the way keeps to the middle of a doorway. The path is then pulled
+  straight along lines a body's width clear. Without it a tap across a walled room hung on the wall: the
+  browser run stuck in the reeve's hall. Its sword hits every hostile in a 70° arc, turning to the nearest
+  first, so a tap on a phone hits without aiming.
+- **The controller** (hero/touchpad.ts). A floating stick where the thumb lands, view-relative. A tap is a
+  person (walk up and talk, or go and fight one who's hostile) or the ground (walk there). ⚔, a "Talk to …"
+  button and the health bar go where a thumb reaches; WASD / Space / E on a desktop. It sits under the rest of
+  #ui, so the level's pan, gust and tools never see its pointers. The sandbox editor is hidden during a run.
+- **The camera.** StoryCamera.follow on the hero, zoom 14 (it was 8, which made the hero a speck on the phone
+  screenshot), and Orbit.prefer behind its heading (35°, firm past 80°) while it walks. A talk frames the
+  speaker, as before.
+- **Units** (contracts/units.ts, src/units/simple.ts; 2745211) and their figures (units/figures.ts): a few
+  voxels each, written from the CPU into a buffer drawn by Renderer.addVoxels, the hurt flash through the
+  body glow bits.
+- **The stage** (story/stage-gen.ts, D10). Each location goes toward its real spot on the atlas: s139 for
+  Mebe, the region centres for the ford (2341, the spawn's own) and the barrow (2159). The distances are
+  pulled in from 0, ~700 and ~800 cells to 22–95, so the run is a few minutes on foot. The rooms are laid
+  out along the brief's connections, away from the player, all within the window. Walls get doorways (≥ 3
+  cells; the first try's 1.4 was too narrow for the path grid); locks plug the far room's door (bone for the
+  bone door). Landmarks are matched by keyword: the bell on its post, the mill wheel, stepping stones, a ring
+  of logs for the oaks, the carts, the dam, the Teeth of Kaudru as three stone spires behind the barrow. The
+  stage's 249 edits land before the run starts (it waits for the queue to drain: the world takes four a tick).
+- **StoryPlay** with units: the cast are units, and their badges follow them. `killed` is noted when a unit
+  dies; rooms note `reached { location, room }`. A lock opens when the hero comes to it with the key. Only
+  the plug's columns are taken (`take`): a `dig` there took the floor too and left a pit too deep to climb
+  out of, which stuck the walk back. Spawns appear as units round the speaker or in the place's way in.
+- **Story contract (additive):** `Outcome.spawn[].hostile`, and `Outcome.hostile` (the cast members who turn on
+  the player). The Bell story's walking dead are `hostile: true`, and the Bellwarden's `n-fight` lists
+  `hostile: ["bellwarden"]`. storycheck and validate accept and check both; storycheck: ok.
+- **The window is held still during a run** (Streamer.auto off, after the camera has settled at the spawn).
+  The first browser run's places were built while the window slid round the spawn (it sat 43 cells off the
+  window's middle), and every queued edit landed a region off. A run over the streamed world is BACKLOG RS9.
+- **The fight's numbers** (herotest, flat ground): the hero has 20 hp and swings 1 a blow every 0.5 s; the
+  walking dead have 2 hp and the Bellwarden 12 (2 a blow); a unit's wind-up is 0.45 s and a blow lands if
+  still in reach. Swinging, the Bellwarden and four dead fall in 6.7 s with the hero at 14/20. Standing
+  still, the hero falls in 15.3 s. A unit's flinch no longer cancels its wind-up: the hero's swings stunned
+  everything and it took 0 damage.
+
+Measurements:
+- scripts/runtest.mjs, the atlas level at q=low, 412×915, through taps, the dialog's buttons and the swing.
+  Passing: tap Ilsa, talk, walk to Mebe and into the reeve's hall, talk to Hesk (the bone key; o-mebe done,
+  o-barrow shown), the barrow's cairn gate and ossuary (o-barrow done, o-end shown), the bone door opened,
+  the Bellwarden ("I've come to end you": 5 hostiles), the fight won (the hero standing; lay-dead and mark
+  on 2159 in the MemoryWorldState; o-end done, o-return shown), and the lost run (the hero dies; RunRecord
+  lost; the end card). The walk back to Mebe stuck in the first run because of the dig pit; the fix (above)
+  is checked by the run in this commit's last batch (see RS5).
+- scripts/herotest.mjs (Node): 12 rooms, none overlapping, all in the window; walked room to room through
+  doorways (5/5); the fight's balance as above.
+- driveprofile at q=low 412×915, standing at the spawn, 15 s, before → with the run walking: GPU 4.37 → 4.71
+  ms/frame; frame p50 9.9 → 9.9 ms, p95 10.4 → 10.7, p99 10.7 → 14.8, worst 18 → 19, no hitch over 50 ms.
+  The p99 is the world API's mirror reads, which the run turns on (as `?story=` does) — not new to this branch.
+- Shots and GIF: C:/Projects/shots88/run/ (01-spawn, 02-talk-ilsa, 03-objective-done, 04-talk-bellwarden,
+  05-fight.gif, 06-after-fight, 07-end-card, 08-lost).
+
+## 2026-10-27 — round 88, `runstory`: the walk back fixed; runtest passes end to end
+
+Why: main's run of runtest on 8740893 passed through the fight, then stuck "at 209.6,74.7 on the way back to
+Mebe". Debugged in the browser with probes (height maps round the hero, the route it would take, the walls'
+columns ring by ring):
+
+- The bell chamber's wall was one ring of hex columns, and it had slits (2–6° gaps). The square path grid
+  read them as open, so the route ran through a wall the hero couldn't pass. Walls are now two rings of
+  columns, 0.8 apart along them, and 6 high (was 4). A path cell is shut when anything within a body's
+  half-width (0.35) stands more than a step over its middle.
+- A build lays "full over the inner half, soft at the rim" (edit.wgsl). A wall's foot is a column half as
+  high, a stair 2 + 2 onto its top: the hero ended up on the reeve's hall wall. Climbs now count from the
+  lowest ground beside the walker within a step down (path.ts `canStep`; the walker, the units, A* and
+  clearLine all use it). Drops of more than a step are refused too: the hero fell into a river cut by
+  Mebe's square and couldn't climb out. With the ground beside it in the pit, counting from that lowest
+  ground refused every step, so pits more than a step down don't count.
+- Water: the walker won't wade into water deeper than 1.2 cells, but always wades out toward shallower water.
+  A path treats deep water as no way, unless the hero is already in it.
+- clearLine's side lines were judged from their own start: a line beginning on a wall's top rode along it.
+  Now nothing either side may stand more than a step over the middle line.
+- Locks open within 4.5 cells (was 3.4): the plug and the path's margin kept the hero 3.5 away.
+- runtest: on the way anywhere, the hero fights off whatever comes at it (the story's own walking dead arrive
+  at 300 s). A second try at a walk goes through the run's walkTo: a tap on a point inside a walled room can
+  land on the wall in front of it (camera.groundAt takes the wall's top under the finger). That one is a
+  game issue, BACKLOG RS11.
+
+Measured: scripts/runtest.mjs, all passed (won: Ilsa, Mebe and the bone key, the barrow, the bone door, the
+fight, the AtlasEvents, back to Hesk, "I destroyed the Bellwarden", RunRecord won with 14 deeds and 5 events,
+the end card; lost: the hero falls, RunRecord lost; no page errors). scripts/herotest.mjs all passed, its
+stand-in ground now built like edit.wgsl (soft rims): 7/7 walks room to room, the return from the bell
+chamber included.
 ## Round 90 — the atlas owns its lakes (`lakes`, BACKLOG W2)
 
 The user, on W2 (a rivers=table river held at 123.6 over ground at 101–118 at 1040,13551, 167 wall faces): "For the
@@ -6893,6 +7007,54 @@ pulled before it. Pulled again on `places` after merging lakes and settlements: 
 the markdown now names its lakes (39 mentions round the spawn). The merged build loads clean at q=low 412x915 with
 813 lakes and 141 settlements (shots88/merge91/).
 
+## 2026-10-27 — round 94, `runstory`: where to go (an arrow, a pin, a line), phonecam's map, warp in a run, a faster hero
+
+Why: the user, on the phone (DECISIONS round 94): "The story doesn't actually have the map improvements so I
+don't know which direction to walk... You could also add an indicator of where to go", and "Keep warp on for
+now because the character is way too slow".
+
+- **phonecam merged** (the atlas map with the wiki's names, the compass, the turn buttons, the range setting).
+  Conflicts in index.ts and level.ts kept both sides; doc conflicts kept both. The player's turn of the view
+  waits during a hero run: the chase camera's Orbit has the azimuth.
+- **Where to go** (story/waypoint.ts). `objectiveTarget` reads the first shown objective's own `done`
+  conditions:
+  - `talked` or `killed` → that cast member's unit;
+  - `reached` → the room or the place;
+  - only a flag (o-end: stop the dead) → whoever at the objective's location has a dialog, else the location;
+  - a shut lock in front of the target's room → the door, with what opens it if the hero hasn't got it
+    (StageLock.room, from the brief's connection).
+
+  No story's names are in the code. It's shown three ways:
+  - (a) a bobbing marker with the name over the target in view, else a big arrow at the screen's edge
+    (kept above the controls) with the distance;
+  - (b) on the atlas map, a pin with the target's name, the hero's dot and the wedge the way the hero faces.
+    These are additive AtlasMap options: `marks`, `playerAt`, `facing`, `canWarp`;
+  - (c) a line under the objective: "→ Reeve Hesk Marr in Mebe · north · 120 m". The compass is the map's
+    (north world −y, east −x), a cell taken as a metre. The objective list moved up over phonecam's turn
+    buttons, where the line was hidden.
+- **The atlas changed under the story:** with places' regenerated atlas, site 139 (the story's Mebe) is now a
+  cliffside town in region 6128, ~1000 cells off, and Mebe was being staged south of the spawn instead of
+  north. A named settlement is used only while it's still in the story's region; otherwise its region's
+  centre, with a console warning.
+- **Warp stays on in a run** (RS14). The map's warp shifts everything the run keeps by the jump. The hero is put
+  down where the level puts the camera (the window's middle) once the ground there is read, and the story's
+  places stay where they are on the atlas, far off; the arrow and the line then point there ("south-west ·
+  1050 m").
+- **Speed** (RS15): walking 5.5 → 8 cells/s, and a run toggle (🏃 beside the swing; Shift) at ×1.7 (13.6 cells/s).
+  The herotest walks are ~30% quicker (the reeve's hall 22.2 → 15.2 s of play); the fight is the same (the
+  Bellwarden down in 6.7 s, the hero at 16/20).
+
+Measured (scripts/runtest.mjs, q=low 412×915, the phone's flags as deployed):
+- won, all passed: the first objective points at the reeve (from its `talked` condition); an edge arrow
+  "115 m"; the line "→ Reeve Hesk Marr · south · 115 m" (before the site fix); the map with the pin, the dot and
+  the facing; following the arrow for 7 s: 116 → 61 cells; then the whole story to the won card;
+- warp: the hero went with a map warp, 1182 cells across the atlas, stood at the view's middle, and the run
+  went on with o-mebe shown;
+- lost: passed.
+- One run of three failed the last talk with Hesk (2.2 cells from him, `canTalk` true, nothing open). It
+  passed on the next run, with the next commit's debug output added; not found yet (RS17).
+
+Shots: C:/Projects/shots88/run/09-arrow.png, 10-map-pin.png, 11-follow-arrow.gif, 12-after-warp.png.
 ## Round 92 — what holds rock up; the meteor-made floaters (`collapse`)
 
 Why: the user (DECISIONS round 92) — a huge pillar top stayed up on a two-column leg after a meteor at its foot (a
@@ -7058,3 +7220,6 @@ pages, 627 free after it: a burst of fresh chunks after slides, not a leak (they
 shrinking (WM6) is the cost. scripts/stalemesh.mjs (40 edits, one rebuild slot): owed 1 → 1 before, 2 → 2 now, 3
 stale found both ways. latencyprobe (cut): the column lowered 313–340 ms after the ask both ways, the chunk rebuilt
 1–10 ms after that.
+- (round 94, after the confirming shot) The objective's line was drawn as a strip across the screen's bottom
+  edge, not under the objective: its class `.hint` is also the level's hint bar's (ui/style.css, positioned
+  absolutely). It's `.obj-where` now. places 1a8e48a merged (DEVLOG and DECISIONS kept from both sides).

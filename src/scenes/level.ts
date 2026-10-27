@@ -49,6 +49,8 @@ import { Dither, Orbit, Slice } from '../api/cutaway';
 import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
 import { demoStory } from '../story/demo';
+import { HeroRun } from '../story/hero-run';
+import { MemoryWorldState, type SessionStory } from '../api/contracts';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
@@ -221,6 +223,8 @@ export class LevelScene implements Scene {
   storyPlay?: StoryPlay;
   /** the story's own dither and slice when ?cutaway isn't on (speakers kept seen) */
   private storyCut?: { dither: Dither; slice: Slice };
+  /** round 88 (runstory): ?run=bell on the atlas level — a run story played as a hero (story/hero-run.ts) */
+  heroRun?: HeroRun;
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
@@ -1492,6 +1496,110 @@ export class LevelScene implements Scene {
     // round 83 (dialog): ?story=demo — a story played on this level
     const storyId = host.params.get('story');
     if (storyId) void this.startStory(storyId);
+    // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
+    const runId = host.params.get('run');
+    if (runId) void this.startRun(runId);
+  }
+
+  /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts) */
+  private async startRun(id: string): Promise<void> {
+    const stories: Record<string, () => Promise<{ default: unknown }>> = { bell: () => import('../../data/stories/the-bell-under-kaudru.json') };
+    if (!stories[id]) throw new Error(`?run=${id}: no such run story (${Object.keys(stories).join(', ')})`);
+    const a = this.opts.atlas;
+    if (!a || !this.stream) throw new Error('?run= plays on the atlas level (?level=atlas)');
+    const story = (await stories[id]()).default as SessionStory;
+    // (the world it was written for: its factions and regions — data/wiki/seed1.run.json, cut from the GM's wiki)
+    const wiki = (await import('../../data/wiki/seed1.run.json')).default as unknown as { seed: number; factions: ConstructorParameters<typeof MemoryWorldState>[2]; regions: { id: number; name: string; kind: string }[] };
+    if (a.atlas.p.seed !== story.from.seed) throw new Error(`?run=${id}: written for the atlas seed ${story.from.seed}, this is ${a.atlas.p.seed}`);
+    const world = new MemoryWorldState(wiki.seed, wiki.regions, wiki.factions);
+    const api = (this.worldApi ??= attachSim(this.core));
+    const t = api.terrain!;
+    const { core } = this;
+    const camera = core.camera;
+    const S = this.stream;
+    const at = this.host.params.get('at');
+    const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : a.atlas.spawn();
+    // (a world cell → the window; world units → the window, the shortest way round the torus)
+    const { cols, rows } = a.atlas.p;
+    const near = (v: number, o: number, n: number) => o + ((((v - o) % n) + n * 1.5) % n) - n / 2;
+    const toWin = (wx: number, wyUnits: number): [number, number] => {
+      const ox = S.origin[0];
+      const oy = S.origin[1] * ROW_H;
+      return [near(wx, ox + core.dims.w / 2, cols) - ox, near(wyUnits, oy + (core.dims.h * ROW_H) / 2, rows * ROW_H) - oy];
+    };
+    // (the camera to the spawn first, and the window let slide round it until it's still: the places are built
+    // in window coordinates, and edits queued across a slide would land a region off)
+    this.editor?.setVisible(false);
+    const s0 = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
+    camera.target = [s0[0], s0[1], this.heightAt(s0[0], s0[1])];
+    for (let quiet = 0, o = `${S.origin}`; quiet < 15; ) {
+      await new Promise((res) => setTimeout(res, 100));
+      if (S.busy || `${S.origin}` !== o) {
+        quiet = 0;
+        o = `${S.origin}`;
+      } else quiet++;
+    }
+    // (and then held there: the run's places are in this window, the hero walks within it — the land past its edge
+    // is drawn by the far rings. A run over a streamed world, places a region away, is BACKLOG H4.)
+    S.auto = false;
+    const spawn = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
+    this.heroRun = await HeroRun.start({
+      ui: this.host.ui,
+      camera,
+      api,
+      story,
+      world,
+      spawn,
+      // (where the atlas has it: its settlement's site, else its region's centre)
+      spot: (l) => {
+        const site = l.settlement ? a.atlas.settlement.sites[Number(l.settlement.replace(/^s/, ''))] : undefined;
+        // (round 94: the atlas's sites are numbered as it makes them — a site the story names must still be in
+        // the story's region; after a change to the atlas it can be another town far off: then the region's
+        // centre, said in the console)
+        const A = a.atlas;
+        const regionAt = (x: number, y: number) => A.regionOf[(((Math.floor((y / A.worldH) * A.p.n) % A.p.n) + A.p.n) % A.p.n) * A.p.n + ((((Math.floor((x / A.worldW) * A.p.n)) % A.p.n) + A.p.n) % A.p.n)];
+        if (site && regionAt(site.x, site.y) === l.region) return toWin(site.x, site.y);
+        if (site) console.warn(`?run=${id}: ${l.id}'s settlement ${l.settlement} is in region ${regionAt(site.x, site.y)} now, not ${l.region} (the atlas changed since the story was written): placed by the region's centre`);
+        const d = a.atlas.defs[l.region];
+        if (!d) throw new Error(`?run=${id}: no region ${l.region} in the atlas`);
+        return toWin(d.stat.cx * a.atlas.worldW, d.stat.cy * a.atlas.worldH);
+      },
+      size: [core.dims.w, core.dims.h * ROW_H],
+      orbit: new Orbit(t, camera),
+      dither: new Dither(t, camera),
+      renderer: core.renderer,
+      device: this.host.gpu.device,
+      groundAt: (sx, sy) => camera.groundAt(sx, sy, this.heightAt),
+      say: (s, sec) => this.hud.say(s, sec ?? 4),
+    });
+    // (the window's origin as the run last knew it: a slide shifts the run by its step, a warp by its jump)
+    let org: [number, number, number] = [S.origin[0], S.origin[1], S.oz];
+    core.onShift.push((dx, dy, dz) => {
+      this.heroRun?.shift(-dx, -dy, -dz);
+      org = [S.origin[0], S.origin[1], S.oz];
+    });
+    // (round 94; the user: "Keep warp on for now because the character is way too slow") the map's warp moves
+    // the hero: put down where the level puts the camera (the window's middle); the story's places stay put
+    S.onWarp.push((ox, oy, oz) => {
+      const t = camera.target;
+      this.heroRun?.warped(org[0] - ox, (org[1] - oy) * ROW_H, org[2] - oz, [t[0], t[1]]);
+      org = [ox, oy, oz];
+    });
+    // (round 94) the atlas map: the hero's dot and wedge, the objective's pin
+    const map = this.atlasMap;
+    if (map) {
+      const cell = (x: number, y: number): [number, number] => [S.origin[0] + x, S.origin[1] + y / ROW_H];
+      map.playerAt = () => {
+        const h = this.heroRun?.hero.position();
+        return h ? cell(h[0], h[1]) : null;
+      };
+      map.facing = () => this.heroRun?.hero.heading() ?? null;
+      map.marks = () => {
+        const tg = this.heroRun?.target;
+        return tg ? [{ at: cell(tg.at[0], tg.at[1]), name: tg.name }] : [];
+      };
+    }
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.run = Object.assign(this.heroRun, { world });
   }
 
   /** ?story=<id>: the run, the dialog, the objective list and the story cameras over the world API (story/play.ts) */
@@ -1611,8 +1719,8 @@ export class LevelScene implements Scene {
     const k = this.keys;
     if (this.drive) this.driveOn(dt);
     else if (camera.fly) this.flyKeys(dt);
-    else if (this.storyPlay?.holdsInput) {
-      // (a talk or a story shot has the camera)
+    else if (this.storyPlay?.holdsInput || this.heroRun) {
+      // (a talk or a story shot has the camera; a hero run has the keys)
     } else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
     if (k.has('d') || k.has('arrowright')) kx += 1;
@@ -1747,8 +1855,10 @@ export class LevelScene implements Scene {
       this.storyPlay.update(dt);
       if (this.storyCut && !camera.fly) this.storyCut.dither.update(dt);
     }
+    // (round 88: the hero run — hero, units, its story, the chase camera)
+    if (this.heroRun && !camera.fly) this.heroRun.update(dt);
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
-    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy) this.turn.update(dt);
+    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun) this.turn.update(dt);
     // (round 91: the compass follows the view, flying too — the flyer's look)
     this.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
     if (CUTAWAY && !camera.fly) {
@@ -2773,6 +2883,7 @@ export class LevelScene implements Scene {
     this.compass?.remove();
     this.far?.dispose();
     this.storyPlay?.dispose();
+    this.heroRun?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

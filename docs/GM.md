@@ -101,6 +101,9 @@ people, rooms, items and history, as long as they sit in what exists.
   `cause: { by: "story", ref }`, no `id` or `run`: the run fills those). An event can name where in its
   region it shows with `location`, a story location id in one of its `regions` (not in `detail`). People change through
   `attitude`, things through `give` and `spawn`, the story through `flags`, `unlock` and `endRun`.
+- **Fights (round 88).** A `spawn` that fights the player says `"hostile": true` (walking dead, raiders);
+  a talk that turns into a fight lists the cast members who turn on the player in the node's `"hostile": [ids]`
+  (the Bellwarden's `n-fight`). Killing a unit notes `killed { character, unitKind }` (its role).
 - **Magnitudes:**
   - 0..1 for most kinds, a flood's included (its strength);
   - `bury` is in cells (0.5..40), with `detail.material` ash, sand or silt;

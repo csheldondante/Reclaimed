@@ -1388,6 +1388,54 @@ Coded against src/api/contracts (dialog.ts, run.ts, story.ts, world.ts); each pi
   later, hand-written now. `holdsInput`: the level's controls wait (a tap skips a reveal).
 - `src/story/demo/` — `?story=demo`: a placeholder story (JSON) and its stage in the valley; the level
   (`LevelScene.startStory`) makes a MemoryWorldState for it. `window.reclaimed.story` is the StoryPlay.
+
+## A run story as a hero (round 88, branch `runstory`; docs/HEROES.md, docs/SYSTEMS.md 6, 8, 3)
+
+`?skipmenu=1&level=atlas&run=bell`: the GM's story played as a hero on the atlas level. Each piece is coded
+against a contract and knows only its inputs:
+
+- `src/api/contracts/units.ts` — `Units`: spawn(kind, at, faction, { name, character, settlement, role,
+  hostile, health, sight, speed, damage, colour, job }), get, query(near, r, filter), byCharacter, order(job),
+  setHostile, hit(id, damage, by), remove, watch(actor), shift, update; events died / hurt / noticed. `Actor`:
+  what takes part without being a unit (the hero). `src/units/simple.ts` `SimpleUnits` is the CPU stand-in;
+  the GPU agents (`settlements`) are to implement it.
+- `src/api/contracts/hero.ts` — `Hero` (an actor, abilities, a camera preference, position / heading / speed,
+  health, update(dt, HeroIntent), place, shift, hurt / died) and `HeroController` (intent()). `src/hero/walker.ts`
+  `Walker` on foot; `src/hero/touchpad.ts` `TouchPad` the phone-first controller (a floating stick, ⚔, a
+  context button; WASD / Space / E). It sits under the rest of #ui, over the canvas: the level's Controls see
+  none of its pointers.
+- `src/units/figures.ts` — `Figures`: the hero and units as a few voxels each, written from the CPU every frame
+  into an instance buffer drawn by `Renderer.addVoxels` (units.wgsl's instance form: centre f32 × 3 + the
+  material word with the size in bits 24–29 and the body glow for the hurt flash; a quaternion).
+- `src/story/stage-gen.ts` — `stageStory(story, deps) → { stage, edits }`: the region generator's first pass at
+  a story's briefs (system 3). Each location goes toward its real spot on the atlas (the settlement's site,
+  else the region's centre), pulled in near the spawn. Its rooms are circles out from the first one along the
+  connections: walled, with a doorway toward each neighbour, or open. Locks plug the far room's doorway;
+  landmarks are matched by keyword. All of it is made with the world API's `terrain.build`. Returns the
+  `Stage` (locations, cast, `rooms`, `locks`).
+- `src/story/play.ts` (additions) — with `units`, the cast stand as units (the badge follows them) and
+  `killed` is noted when a unit dies. An Outcome's `spawn` appears as units (`hostile` from the spawn), and
+  its `hostile` turns cast members on the player. Rooms note `reached { location, room }`. A lock opens when
+  the player comes to it holding its key (`terrain.dig`). The new methods are `shift`, `canTalk`, `unitOf`,
+  `characterOf`, and the options `onBadge` and `again`.
+- `src/story/hero-run.ts` — `HeroRun.start(deps)`: the stage, the units, the hero (`makeHero`, default Walker),
+  the pad, StoryPlay (`reached` from the hero), the chase camera (StoryCamera.follow, plus Orbit.prefer behind
+  the heading while it moves) and Dither. A tap on a person walks up and talks, or fights if they're hostile;
+  a tap on the ground walks there. The hero's death ends the run, lost. `window.reclaimed.run` is the HeroRun
+  (`.world`: its MemoryWorldState).
+- `LevelScene.startRun` — the atlas level only. It loads the story, and the world it was written for from
+  `data/wiki/seed1.run.json` (the factions and the story's regions, cut from the GM's 4 MB wiki). The spawn
+  and the spots go into window coordinates the shortest way round the torus, and `core.onShift` shifts the
+  run when the window slides.
+- (round 94) `src/story/waypoint.ts` — `objectiveTarget({ story, run, stage, units, unitOf, heightAt }) →
+  Target` (a person, a place or a door, from the shown objective's own conditions) and `Waypoint` (a marker in
+  view, an edge arrow with the distance), plus `describe(from, to)` ("north-east · 140 m"). HeroRun shows it,
+  and puts the line under the objective with `ObjectiveHud.hint(id, text)`. The level gives the atlas map
+  `marks` (the target's pin), `playerAt` and `facing` (the hero's dot and wedge). AtlasMap's additive options:
+  `marks`, `playerAt`, `facing`, `canWarp`. A map warp in a run calls `HeroRun.warped(dx, dy, dz, at)`.
+  `HeroIntent.sprint` is the run toggle.
+- Story contract (additive): `Outcome.spawn[].hostile`, `Outcome.hostile` (cast ids); storycheck and
+  validate accept and check them.
 ## The game master (round 84, branch `gm`; docs/GM.md, docs/SYSTEMS.md system 9)
 
 The GM writes a run's `SessionStory` (src/api/contracts/story.ts) offline, from the world wiki. For now it is a

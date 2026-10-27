@@ -255,7 +255,10 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
   const checkOutcome = (at: string, o: unknown) => {
     if (o === undefined) return;
     if (!isObj(o)) return bad(at, 'expected an outcome object');
-    keys(at, o, [], ['atlas', 'attitude', 'flags', 'give', 'spawn', 'unlock', 'endRun']);
+    keys(at, o, [], ['atlas', 'attitude', 'flags', 'give', 'spawn', 'hostile', 'unlock', 'endRun']);
+    arr(`${at}.hostile`, o.hostile ?? []).forEach((c, i) => {
+      if (!castById.has(c as string)) bad(`${at}.hostile[${i}]`, `${JSON.stringify(c)} isn't in the cast`);
+    });
     arr(`${at}.atlas`, o.atlas ?? []).forEach((e, i) => {
       const ea = `${at}.atlas[${i}]`;
       if (!isObj(e)) return bad(ea, 'expected an AtlasEvent (without id and run)');
@@ -327,7 +330,8 @@ export function checkStory(input: unknown, world: CheckWorld): string[] {
     arr(`${at}.spawn`, o.spawn ?? []).forEach((g, i) => {
       const ga = `${at}.spawn[${i}]`;
       if (!isObj(g)) return bad(ga, 'expected an object');
-      keys(ga, g, ['role', 'faction', 'location'], ['count']);
+      keys(ga, g, ['role', 'faction', 'location'], ['count', 'hostile']);
+      if (g.hostile !== undefined && typeof g.hostile !== 'boolean') bad(`${ga}.hostile`, 'expected true or false');
       str(`${ga}.role`, g.role);
       if (g.faction !== null && !factionIds.has(g.faction as string)) bad(`${ga}.faction`, `${JSON.stringify(g.faction)} isn't in the snapshot (null: none)`);
       if (!locById.has(g.location as string)) bad(`${ga}.location`, `${JSON.stringify(g.location)} isn't one of the story's locations`);

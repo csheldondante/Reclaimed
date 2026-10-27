@@ -1,0 +1,208 @@
+{
+ "from": "data/wiki/seed1.json (scripts/worldwiki.mjs): the factions and the Bell story regions, small enough for a phone",
+ "seed": 1,
+ "factions": [
+  {
+   "id": "f-kuharm",
+   "name": "The Kuharm Moot",
+   "ethos": "Lords and levies who hold the roads and tithe the harvest; proud, slow to trust, quick to take offence.",
+   "era": "medieval",
+   "attitude": -0.04,
+   "relations": {
+    "f-maukarn": -0.05,
+    "f-mauvek": 0.04,
+    "f-dunvar": 0.05,
+    "f-yaethshia": 0,
+    "f-ashwrights": 0,
+    "f-green-choir": -0.16,
+    "f-hollow-court": -0.8,
+    "f-salt-fleet": -0.4
+   },
+   "placeholder": true,
+   "seat": "s14",
+   "type": "realm"
+  },
+  {
+   "id": "f-maukarn",
+   "name": "The Maukarn Concord",
+   "ethos": "A council of guild towns that trades first and fights when trade fails; polite, counting, never forgetting a debt.",
+   "era": "medieval",
+   "attitude": 0.05,
+   "relations": {
+    "f-kuharm": -0.08,
+    "f-mauvek": 0.14,
+    "f-dunvar": -0.16,
+    "f-yaethshia": 0,
+    "f-ashwrights": -0.17,
+    "f-green-choir": -0.04,
+    "f-hollow-court": -0.8,
+    "f-salt-fleet": -0.4
+   },
+   "placeholder": true,
+   "seat": "s23",
+   "type": "realm"
+  },
+  {
+   "id": "f-mauvek",
+   "name": "The Mauvek Concord",
+   "ethos": "A council of guild towns that trades first and fights when trade fails; polite, counting, never forgetting a debt.",
+   "era": "medieval",
+   "attitude": 0.18,
+   "relations": {
+    "f-kuharm": -0.16,
+    "f-maukarn": 0.12,
+    "f-dunvar": 0.19,
+    "f-yaethshia": 0.18,
+    "f-ashwrights": 0.05,
+    "f-green-choir": -0.18,
+    "f-hollow-court": -0.8,
+    "f-salt-fleet": -0.4
+   },
+   "placeholder": true,
+   "seat": "s77",
+   "type": "realm"
+  },
+  {
+   "id": "f-dunvar",
+   "name": "The Dunvar Moot",
+   "ethos": "Lords and levies who hold the roads and tithe the harvest; proud, slow to trust, quick to take offence.",
+   "era": "medieval",
+   "attitude": -0.03,
+   "relations": {
+    "f-kuharm": 0.02,
+    "f-maukarn": -0.12,
+    "f-mauvek": 0.09,
+    "f-yaethshia": -0.03,
+    "f-ashwrights": 0.18,
+    "f-green-choir": -0.05,
+    "f-hollow-court": -0.8,
+    "f-salt-fleet": -0.4
+   },
+   "placeholder": true,
+   "seat": "s19",
+   "type": "realm"
+  },
+  {
+   "id": "f-yaethshia",
+   "name": "The Yaethshia Throne",
+   "ethos": "Lords and levies who hold the roads and tithe the harvest; proud, slow to trust, quick to take offence.",
+   "era": "medieval",
+   "attitude": 0.12,
+   "relations": {
+    "f-kuharm": -0.19,
+    "f-maukarn": -0.06,
+    "f-mauvek": -0.12,
+    "f-dunvar": -0.01,
+    "f-ashwrights": 0.03,
+    "f-green-choir": -0.11,
+    "f-hollow-court": -0.8,
+    "f-salt-fleet": -0.4
+   },
+   "placeholder": true,
+   "seat": "s47",
+   "type": "realm"
+  },
+  {
+   "id": "f-ashwrights",
+   "name": "The Ashwrights",
+   "ethos": "Miners and smelters of the burning lands: they tap lava, quarry basalt and sell iron to anyone. Blunt, fair in a deal, ruthless with the land.",
+   "era": "industrial",
+   "attitude": 0,
+   "relations": {
+    "f-kuharm": 0.19,
+    "f-maukarn": 0.04,
+    "f-mauvek": 0.02,
+    "f-dunvar": 0.02,
+    "f-yaethshia": -0.16,
+    "f-green-choir": -0.6,
+    "f-hollow-court": -0.8,
+    "f-salt-fleet": -0.4
+   },
+   "placeholder": true,
+   "seat": null,
+   "type": "world"
+  },
+  {
+   "id": "f-green-choir",
+   "name": "The Green Choir",
+   "ethos": "Druids who sing the wild back over ruins: they would let forest swallow every town. Gentle in speech, implacable in purpose.",
+   "era": "magical",
+   "attitude": 0.2,
+   "relations": {
+    "f-kuharm": 0.12,
+    "f-maukarn": 0.15,
+    "f-mauvek": 0.03,
+    "f-dunvar": -0.14,
+    "f-yaethshia": -0.09,
+    "f-ashwrights": -0.6,
+    "f-hollow-court": -0.8,
+    "f-salt-fleet": -0.4
+   },
+   "placeholder": true,
+   "seat": null,
+   "type": "world"
+  },
+  {
+   "id": "f-hollow-court",
+   "name": "The Hollow Court",
+   "ethos": "The dead that did not lie down, and the living who serve them; they want the world quiet, dark and theirs. Courteous, cold, patient.",
+   "era": "magical",
+   "attitude": -0.7,
+   "relations": {
+    "f-kuharm": -0.8,
+    "f-maukarn": -0.8,
+    "f-mauvek": -0.8,
+    "f-dunvar": -0.8,
+    "f-yaethshia": -0.8,
+    "f-ashwrights": -0.8,
+    "f-green-choir": -0.8,
+    "f-salt-fleet": -0.8
+   },
+   "placeholder": true,
+   "seat": null,
+   "type": "world"
+  },
+  {
+   "id": "f-salt-fleet",
+   "name": "The Salt Fleet",
+   "ethos": "Raiders and salvagers of the coasts in patched hulls; loyal to their crews, nothing else. Loud, greedy, superstitious about the sea.",
+   "era": "post-apocalyptic",
+   "attitude": -0.3,
+   "relations": {
+    "f-kuharm": -0.4,
+    "f-maukarn": -0.4,
+    "f-mauvek": -0.4,
+    "f-dunvar": -0.4,
+    "f-yaethshia": -0.4,
+    "f-ashwrights": -0.4,
+    "f-green-choir": -0.4,
+    "f-hollow-court": -0.8
+   },
+   "placeholder": true,
+   "seat": null,
+   "type": "world"
+  }
+ ],
+ "regions": [
+  {
+   "id": 2039,
+   "name": "Brumudarm Downs",
+   "kind": "plains"
+  },
+  {
+   "id": 2141,
+   "name": "the Teeth of Kaudru",
+   "kind": "range"
+  },
+  {
+   "id": 2159,
+   "name": "Bethorn Downs",
+   "kind": "plains"
+  },
+  {
+   "id": 2341,
+   "name": "Thaurd Flats",
+   "kind": "plains"
+  }
+ ]
+}

@@ -151,6 +151,7 @@ Everything that makes the local world react. Its quality and cost are its own bu
 ### 6. Units and agents ◐ — branch `agents` (and the hoverbike session's heroes)
 Units that walk, work, build, shape terrain, fight and flee.
 - **Has:** docs/AGENTS.md (walkable surfaces from intervals, flow-field groups, jobs as fields; on `agents`).
+- **Contract (round 88, `runstory`):** src/api/contracts/units.ts `Units` (spawn, query, order, hit, setHostile, watch actors; died / hurt / noticed); src/units/simple.ts `SimpleUnits` the CPU stand-in until the GPU agents implement it.
 - **Has (round 88, `settlements`):** the `Units` contract (api/contracts/units.ts, runstory's) on the GPU agents
   (src/units/agent-units.ts); settlements' people on their rounds (quarry, fell, haul, build, farm, guard) and raids
   (src/settle/life.ts). Settlements themselves (system 12's data, realised at arrival by system 3's hook):
@@ -187,7 +188,8 @@ Units that walk, work, build, shape terrain, fight and flee.
 - **Keys:** keys are items bound to a brief's locks (system 3).
 - **Events out:** `picked(item, by)`, `used(item, on)`.
 
-### 8. Heroes and controllers ◐ — the hoverbike session
+### 8. Heroes and controllers ◐ — the hoverbike session (the contract and an on-foot hero: `runstory`)
+- **Contract (round 88):** src/api/contracts/hero.ts `Hero`, `HeroController`; src/hero/walker.ts on foot, src/hero/touchpad.ts; how a hoverbike hero plugs in: docs/HEROES.md.
 - **Has:** hero prototypes:
   - a flying lich;
   - a hoverbike knight;

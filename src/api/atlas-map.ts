@@ -38,6 +38,13 @@ const SITE_KINDS = new Set<LabelKind>(['metropolis', 'city', 'town', 'village'])
 /** what the map needs of an atlas world (the API's, or the atlas level's own) */
 export type MapWorld = Pick<AtlasWorld, 'atlas' | 'core' | 'stream' | 'warp' | 'toWorld'>;
 
+/** (round 94) a pin on the map: a world cell, its name, its colour */
+export interface MapMark {
+  at: [number, number];
+  name: string;
+  colour?: string;
+}
+
 export class AtlasMap {
   readonly el: HTMLDivElement;
   private canvas: HTMLCanvasElement;
@@ -57,6 +64,14 @@ export class AtlasMap {
   labelStats: { count: number; ms: number } | null = null;
   /** called with the world cell before a warp */
   onWarp?: (cx: number, cy: number) => void;
+  /** (round 94) a tap warps (off during a run: travel is on foot) */
+  canWarp = true;
+  /** (round 94) where the player is (world cell), when it isn't the camera's target (a hero) */
+  playerAt?: () => [number, number] | null;
+  /** (round 94) the way the player faces (world radians: 0 is +x), for the wedge; else the camera's look */
+  facing?: () => number | null;
+  /** (round 94) pins on the map: where to go (a story's objective), each with its name */
+  marks?: () => MapMark[];
 
   constructor(
     private aw: MapWorld,
@@ -220,6 +235,8 @@ export class AtlasMap {
 
   /** the player's world cell: the camera's target */
   private player(): [number, number] {
+    const p = this.playerAt?.();
+    if (p) return p;
     const t = this.aw.core.camera.target;
     return this.aw.toWorld(t[0], t[1]);
   }
@@ -311,7 +328,9 @@ export class AtlasMap {
     ctx.stroke();
     const [px, py] = cellPx(...this.player());
     // (the camera looks along (−cos az, −sin az) in the world: on the map, +x to the left, (cos az, −sin az))
-    const fa = Math.atan2(-Math.sin(cam.azimuth), Math.cos(cam.azimuth));
+    // (a facing given — a hero's heading θ, world (cos θ, sin θ) — is on the map (−cos θ, sin θ))
+    const face = this.facing?.();
+    const fa = face != null ? Math.atan2(Math.sin(face), -Math.cos(face)) : Math.atan2(-Math.sin(cam.azimuth), Math.cos(cam.azimuth));
     ctx.beginPath();
     ctx.moveTo(px, py);
     ctx.arc(px, py, 30, fa - 0.5, fa + 0.5);
@@ -328,12 +347,42 @@ export class AtlasMap {
     ctx.arc(px, py, 5, 0, Math.PI * 2);
     ctx.fill();
     ctx.stroke();
+    // (round 94) the pins: a drop on a stalk, its name in a tag over it
+    for (const m of this.marks?.() ?? []) {
+      const [mx, my] = cellPx(m.at[0], m.at[1]);
+      const c = m.colour ?? '#f2c14e';
+      ctx.strokeStyle = '#1a1206';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(mx, my);
+      ctx.lineTo(mx, my - 14);
+      ctx.stroke();
+      ctx.fillStyle = c;
+      ctx.beginPath();
+      ctx.arc(mx, my - 20, 8, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#1a1206';
+      ctx.beginPath();
+      ctx.arc(mx, my - 20, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.font = '600 14px system-ui,sans-serif';
+      const tw = ctx.measureText(m.name).width;
+      ctx.fillStyle = 'rgba(20,16,10,0.85)';
+      ctx.fillRect(mx - tw / 2 - 6, my - 50, tw + 12, 20);
+      ctx.fillStyle = c;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(m.name, mx, my - 40);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    }
     this.drawRose(ctx);
     const [pcx, pcy] = this.player();
     const tx = ((Math.floor((pcx / a.p.cols) * n) % n) + n) % n;
     const ty = ((Math.floor((pcy / a.p.rows) * n) % n) + n) % n;
     const here = this.regionName.get(a.regionOf[ty * n + tx]);
-    this.note.textContent = this.busy ? 'warping…' : `${here ? `${here}  ·  ` : ''}${pcx.toFixed(0)}, ${pcy.toFixed(0)}  ·  drag to pan, tap to warp`;
+    this.note.textContent = this.busy ? 'warping…' : `${here ? `${here}  ·  ` : ''}${pcx.toFixed(0)}, ${pcy.toFixed(0)}  ·  drag to pan${this.canWarp ? ', tap to warp' : ''}`;
   }
 
   /** the names: each kind that shows at this zoom, heaviest first, none over one already placed */
@@ -429,7 +478,7 @@ export class AtlasMap {
     c.addEventListener('pointerup', (e) => {
       const d = down;
       down = null;
-      if (!d || d.moved || this.busy) return;
+      if (!d || d.moved || this.busy || !this.canWarp) return;
       // a tap: warp to the world cell under it
       const a = this.aw.atlas;
       const n = a.p.n;
