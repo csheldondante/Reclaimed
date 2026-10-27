@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
+
+| id | item | size | status |
+|---|---|---|---|
+| T1 | Rivers merged; `rivers=table` the atlas level's default | S | done (this commit) |
+| T2 | Falls at a plausible speed at 1x, looking as good as the old water's and the sand particles (spray, foam, a splash at the foot) | M | wip (`flow`) |
+| T3 | A meteor that deletes its crater at once: a shockwave, the rim melted to glowing magma, a big dust cloud for what it removed, sparks flying with the shockwave | M | wip (`collapse`) |
+| T4 | Collapse without lag: a cut to a falling body in the next frames, not after the readback timer | M | wip (`collapse`) |
+| T5 | Bodies drawn as the terrain's own mesh, split off (vertices tied to their voxels), rigid while whole, crumbling on impact; no pop to cubes | L | wip (`collapse`) |
+| T6 | The title menu's atlas gets `rivers=table` too (now it's set from `level=atlas` in the URL) | S | open |
+
 ## Round 85 (2026-10-26, session 5, `places`) — recipes, civilizations, diplomacy, grids (DECISIONS round 85)
 
 | id | item | size | status |

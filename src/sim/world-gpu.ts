@@ -25,8 +25,9 @@ const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY
  */
 export const RIVERS: 'sim' | 'hold' | 'table' = (() => {
   const q = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
-  // (perfopt's ?riverhold=1 is rivers=hold)
-  const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : 'sim');
+  // (perfopt's ?riverhold=1 is rivers=hold; round 86: table by default on the atlas level — the user: "the rivers
+  // look good!" — the valley levels keep sim, their rivers aren't the atlas's)
+  const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : q.get('level') === 'atlas' ? 'table' : 'sim');
   if (v !== 'sim' && v !== 'hold' && v !== 'table') throw new Error(`?rivers=${v}: sim, hold or table`);
   return v;
 })();

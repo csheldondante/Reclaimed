@@ -6160,3 +6160,16 @@ mouths' look; `?settletol` reads `waterChange` per chunk by index, not moved on 
   the water. Open: whether the water's surface is drawn over a steeply carved middle (the water corners'
   SHEET_STEP). The river's width stepping at node boundaries is the generator's (riverAt's nearest-node
   segments), in both.
+
+## 2026-10-26 — round 86: rivers merged, table rivers the atlas level's default
+
+The user tested the `rivers` branch on the phone and said "the rivers look good!" It is merged into places, and with
+`?level=atlas` in the URL the default is now `rivers=table`: rivers sit at the atlas's steady state, drawn flowing and
+held asleep until something wakes them. The valley levels keep `sim`, because their rivers aren't the atlas's; any
+level can still choose with `?rivers=`.
+- **The merge's one real conflict:** both sides had taken Globals `ocean.y`, hybrid for its mesh chunks across and
+  rivers for the rivers' wetness. Rivers' wetness moves to `ocean.w` (common.wgsl, riverheld.wgsl, globals.ts).
+- **Sleep:** the hybrid's filter is checked before the woke time is stamped, so a heightfield chunk that's refused a
+  wake doesn't restart its settle clock.
+- **SETTLE** follows `RIVERS` rather than re-reading the URL.
+- **Known:** picking the atlas from the title menu, with no `level=` in the URL, still gets `sim` rivers.

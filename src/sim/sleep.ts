@@ -39,7 +39,7 @@ export const SLEEP_MORE = typeof location !== 'undefined' && new URLSearchParams
 export const SETTLE = (() => {
   if (typeof location === 'undefined') return true;
   const v = new URLSearchParams(location.search).get('settle');
-  return v === null ? new URLSearchParams(location.search).get('rivers') !== 'table' : v !== '0';
+  return v === null ? RIVERS !== 'table' : v !== '0';
 })();
 /**
  * (round 83, the user: "all generators make a steady state so when we arrive nothing is simulated until the
