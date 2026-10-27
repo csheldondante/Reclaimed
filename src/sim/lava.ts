@@ -120,15 +120,16 @@ export class LavaSystem implements SimSystem {
   }
 
   /** (round 86) a meteor's blast for the next tick (lava.wgsl LavaU.blast) */
-  private blastQ: [number, number, number, number, number] | null = null;
+  private blastQ: [number, number, number, number, number, number] | null = null;
 
   /**
    * (round 86, the user: "a shockwave that makes the nearby material melt as magma and glow") The ground round a
    * meteor's bowl (radius rIn) out to rOut heated past melting for a tick: `depth` cells of it at the bowl's rim run
-   * off as lava (none at rOut, where it only glows); it flows, cools and sets to basalt as any lava does.
+   * off as lava (none at rOut, where it only glows); it flows, cools and sets to basalt as any lava does. (Round 92,
+   * C19) `z`: where it hit (window z) — only a column whose top is near it melts (lava.wgsl BLAST_UP).
    */
-  blast(x: number, y: number, rIn: number, rOut: number, depth: number): void {
-    this.blastQ = [x, y, rIn, rOut, depth];
+  blast(x: number, y: number, rIn: number, rOut: number, depth: number, z: number): void {
+    this.blastQ = [x, y, rIn, rOut, depth, z];
   }
 
   private writeUniforms(dt: number): void {
@@ -154,7 +155,7 @@ export class LavaSystem implements SimSystem {
     });
     // (each of the tick's FLOW_SUB steps raises the ring's heat to the same mark again: a share each)
     const bq = this.blastQ;
-    if (bq) u.set([bq[0], bq[1], bq[2], bq[3], bq[4] / FLOW_SUB, 1, 0, 0], 8 + 8 * MAX_VENTS);
+    if (bq) u.set([bq[0], bq[1], bq[2], bq[3], bq[4] / FLOW_SUB, 1, bq[5], 0], 8 + 8 * MAX_VENTS);
     this.blastQ = null;
     this.device.queue.writeBuffer(this.uni, 0, u);
   }

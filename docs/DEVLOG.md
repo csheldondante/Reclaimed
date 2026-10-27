@@ -7328,3 +7328,63 @@ turned with their particles would be the world's own look for metal).
 GIFs: C:/Projects/shots88/rockbody2/ — bridge-undercut.gif (a pier broken: the girder sags and hangs from the other
 pier in a V), tower-legs-cut.gif (two legs cut: the frame tower buckles and folds into a heap), tower-meteor.gif (the
 meteor's blast turns the whole tower to dust — too big for it), rock-old-vs-new.gif.
+## Round 96 — the rock's knobs, thin legs, basalt (`collapse`)
+
+Why: the user, on round 92 on the phone's atlas (DECISIONS round 96): "Collapse works but I think meteors sometimes
+make basalt that resupports it. Also, it seems like small supports still support it in atlas is that a setting?"
+
+**Knobs.** Yes, a setting: fracture.ts ROCK — BEND 3 and SHEAR 10 (a joint between neighbouring columns holds
+strength × min(BEND h², SHEAR h)), CRUSH 300 (a column under a piece bears 300 × its bear), NECK_R 16 (how far the
+piece above a cut is followed before it's keyed into the land), TIP_GIVE 0.25 (how far its centre of mass may lie
+off what it stands on), and new BUCKLE 9000 and TENSILE 200 (below) — and each material's bear (rock 1, rubble 0.4,
+soil 0.3, silt 0.2, sand 0.15 …). All from the address (?bend= ?shear= ?crush= ?neck= ?tip= ?buckle= ?tensile=
+?bear=sand:0.1,soil:0.2), logged `[rock] {...}`; the rock lab has a panel (the "rock" button, src/ui/rockpanel.ts;
+?rockpanel=1 elsewhere) that changes them live.
+
+**Thin legs.** Round 92's piece above a cut failed only by crushing (CRUSH 300 a column: two columns held a top of
+600 cells, and a leg a fifth of its top held it whatever its height). A leg fails as a column does: Euler buckling,
+BUCKLE × strength × I / L² — I the least second moment of its columns' section (cells⁴; a round leg of A columns
+≈ A²/4π), L its free height from where the piece would land to the cut; only a leg free over more than 2√A buckles
+(a stubby one crushes) — and the pull on its far side from the weight off its middle, M × lever / W − M / A (W =
+I / its reach), past TENSILE × strength (fracture.ts `legOf`). BUCKLE is set so a top on a leg under a quarter of
+its footprint falls (rockcpu quarter-rule: legs of 14% and 22% fall, 34% and 52% stand); TENSILE 200 so the
+mesas' and spires' own small ledges stand when weighed (their pull 70–170 in the dry run; 60 broke 2–7 of them a
+window). A piece already resting on what's under it (a quarter of its hanging runs within a cell of what's under
+them, its centre of mass over those) isn't judged off its leg: judged failing, it had crushed its leg a cell a pass
+(the 29 488-cell mesa top in the dry run). The columns a piece left are judged again, weighed (a leg's stump);
+what a falling piece lands on is judged for floating only (weighed, floatsweep's 3-wide tower slumped on landing).
+The window judged whole as made (everything weighed, the worst case — in play only what an edit cut is): spawn 0,
+badlands 2 pieces (106 cells), mesa 11 (356, 10 of them the detached slabs, C18), spires 6 (780), highlands 5 (115):
+round 92's numbers. Meteors offline (scripts on a dumped spire window, six to eight pillars, the meteor 6–15 off the
+middle): the leg rules fire on a few (bend 1–2) and otherwise round 92's results.
+
+**"Only what an edit cut is weighed"**, checked: a meteor's cutSeeds are its bowl and rim (12 + 1.5); a piece is
+weighed if any of its runs, or a standing run holding it, is in one — a pillar's top hanging over the bowl is, and
+so its leg beside the crater is judged through it. Now also the rim's 15 s watch (it was floating-only) and the
+columns a fallen piece left.
+
+**Basalt.** Not reproduced: meteorpillar.mjs's 60 s watches (a built tower; three meteors each at two spires,
+far camera; all systems at 1×) gained a detector — the ground truth again with every basalt interval taken for
+air: what floats then that doesn't now is held by basalt alone. 0 at rest, before (places a57c7df) and after; the
+27–104 it reads mid-fall are the falling piece itself, moved between the two reads. Fixed at the root regardless:
+- C19: the blast melted the top interval of every column in its ring — a pillar by the bowl, the top of what hangs
+  over it — and that lava poured into the crater to set there. Now only a column whose top is within BLAST_UP (4)
+  of where the meteor hit melts (lava.wgsl, LavaU.blast2.z, Lava.blast's z);
+- the rim's watch weighs what it judges (a piece held only by basalt set against it is judged as a cut one is);
+- a column's intervals within FILM_GAP (0.02) touch: basalt films a hundredth over what's under them (the rockbody
+  agent saw films 6e-5 thick left hanging where a piece was cut out) are part of its run.
+
+**towertest's spire** (the rockbody agent: failing on places): the test built its tower and tapped at window cells
+while the camera's lead (phonecam) slid the window under it as the camera moved to the tower. It waits for the
+streamer to be still before building and follows the window (`window.__at`); towers 12 apart. 5/5.
+
+Measured (desktop iGPU, D3D11, every system on, 1×): rockcpu all 13 cases, 60 worlds × 40 cuts none floating, the
+judge 0.04 ms typical, 9.0 ms slowest; towertest 5/5 (pieces 99–194 ms after the tap, round 92: 47–129 — the
+places merges since, also on places alone); floatsweep 0 floating after the sweep; tower-w3-h100 didn't
+settle in 25 s, the same on places a57c7df alone: its foot's rim crumbled on each landing and it was committed
+over the gap the crumbs left, judged hanging, and fell again (86 pieces) — now a piece whose foot crumbled settles
+on down once without crumbling again (Integrity.land, FallingBody.broke; C26): it settles in 4.2 s, 1 piece; 31/31; the rock lab's
+top on a leg a fifth of it, a smash at the leg's edge: places holds it, round 96 drops it
+(C:/Projects/shots88/collapse3/before-fifth-leg.gif, after-fifth-leg.gif); a slide in z with a piece falling 156 ms,
+settling 1 ms. driveprofile (q=low 412×915, 25 s): places p50 9.8 p95 14.3 GPU 11.12 ms → 9.8 / 14.4 / 11.59 (noise;
+both above round 92's 9.75 GPU: the merges).

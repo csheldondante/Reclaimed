@@ -47,6 +47,17 @@ each was implemented.
 - → Branch `runstory`: an on-foot hero behind a `Hero` contract (the hoverbike game's heroes plug in instead), the
   Bell story staged on the atlas level near the spawn, its cast as units (a `Units` contract the settlements' GPU
   agents will implement), talks, objectives, happenings, fights, death ends the run; `?run=bell`.
+## 2026-10-27 — round 96 (session 5, `collapse`) — the rock's knobs, thin legs, basalt
+
+- The user, testing round 92 on the phone's atlas, verbatim: "Collapse works but I think meteors sometimes make
+  basalt that resupports it. Also, it seems like small supports still support it in atlas is that a setting?"
+- → Yes, they're settings: fracture.ts ROCK's constants (BEND, SHEAR, CRUSH, NECK_R, TIP_GIVE, and new BUCKLE,
+  TENSILE) and each material's bear, set from the page's address (?crush=, ?buckle=, ?tensile=, ?bear=sand:0.1 …)
+  or the rock lab's panel; logged as `[rock] …`. A thin leg now fails as a column does — buckling over its free
+  height, pulled apart by an off-centre weight — not only by crushing (round 92's CRUSH 300 a column let two
+  columns hold 600 cells). Basalt: the meteor's rim no longer melts the tops of what stands over the bowl (C19),
+  what the rim's watch judges is weighed, basalt films a hundredth over what's under them touch it.
+
 ## 2026-10-27 — round 92 (session 5, `collapse`) — what holds rock up; the meteor-made floaters
 
 - The user, on the collapse judge (a hanging piece joined to any standing run was held whatever it weighed; a

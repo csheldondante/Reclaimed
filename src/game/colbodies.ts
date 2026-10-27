@@ -37,6 +37,8 @@ export interface FallingBody {
   box: [number, number, number, number];
   /** what it is mostly made of */
   mat: number;
+  /** (round 96) its foot crumbled when it hit: it settles onto what's under it and doesn't crumble again */
+  broke?: boolean;
 }
 
 /** A piece that came down: where it hit first (column x, y; z its bottom there) and how fast. */

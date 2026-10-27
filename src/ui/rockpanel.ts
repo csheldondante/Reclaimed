@@ -1,69 +1,56 @@
-// (round 95) The rigid rock's knobs (game/rockbodies.ts RB) as sliders, for the user to tune in the rock lab
-// (`level=rocklab&rockbody=1`): a small fold-out panel at the top left. Changes apply at once; the URL line under
-// them is what to paste to keep them (rbgrav=…&rbrest=…).
+// The rock's knobs (round 96, the user: "it seems like small supports still support it in atlas is that a setting?"):
+// fracture.ts ROCK's constants and a few materials' bear, live — a small panel, opened by its button, in the rock lab
+// (?level=rocklab) or anywhere with ?rockpanel=1. What a value does: fracture.ts ROCK's comment. The page's address
+// sets them too (?crush=, ?buckle=, ?bear=sand:0.1 …); what's in use is logged ([rock]) as it changes.
 
-import { RB } from '../game/rockbodies';
+import { ROCK } from '../game/fracture';
+import { MATERIALS } from '../world/materials';
 
-const KNOBS: { k: keyof typeof RB; url: string; label: string; min: number; max: number; step: number }[] = [
-  { k: 'gravity', url: 'rbgrav', label: 'gravity ×', min: 0.2, max: 4, step: 0.1 },
-  { k: 'restitution', url: 'rbrest', label: 'bounce', min: 0, max: 0.9, step: 0.05 },
-  { k: 'friction', url: 'rbfric', label: 'friction', min: 0, max: 1.5, step: 0.05 },
-  { k: 'breakSpeed', url: 'rbbreak', label: 'break speed', min: 1, max: 30, step: 0.5 },
-  { k: 'angDamp', url: 'rbdamp', label: 'spin damping', min: 0, max: 3, step: 0.05 },
-  { k: 'maxBodies', url: 'rbmax', label: 'max bodies', min: 1, max: 40, step: 1 },
-  { k: 'tipSpin', url: 'rbspin', label: 'tip spin', min: 0, max: 3, step: 0.05 },
-  { k: 'maxV', url: 'rbmaxv', label: 'top speed', min: 2, max: 40, step: 1 },
-  { k: 'scatter', url: 'rbscatter', label: 'scatter', min: 0, max: 1, step: 0.05 },
-  { k: 'contactDamp', url: 'rbcdamp', label: 'ground damping', min: 0, max: 6, step: 0.1 },
-  { k: 'sizeK', url: 'rbsize', label: 'big is weak', min: 0, max: 0.6, step: 0.05 },
-  { k: 'crumble', url: 'rbcrumble', label: 'crumble ×', min: 0.5, max: 3, step: 0.1 },
-  { k: 'cubes', url: 'rbcubes', label: 'show cubes', min: 0, max: 1, step: 1 },
+const KNOBS: { key: keyof typeof ROCK; label: string; step: number }[] = [
+  { key: 'BUCKLE', label: 'buckle (a leg: × I / L²)', step: 500 },
+  { key: 'TENSILE', label: 'tensile (a leg: its pull)', step: 5 },
+  { key: 'CRUSH', label: 'crush (a column bears, cells)', step: 25 },
+  { key: 'SHEAR', label: 'shear (a joint: × overlap)', step: 1 },
+  { key: 'BEND', label: 'bend (a joint: × overlap²)', step: 0.5 },
+  { key: 'TIP_GIVE', label: 'tip give (cells)', step: 0.05 },
+  { key: 'NECK_R', label: 'neck reach (columns)', step: 1 },
 ];
+const BEAR_MATS = ['sand', 'soil', 'rubble', 'snow'];
 
-export function mountRockPanel(parent: HTMLElement, stats: () => string): void {
-  const box = document.createElement('details');
-  box.style.cssText =
-    'position:absolute;left:8px;top:64px;z-index:20;background:rgba(20,18,16,0.82);color:#eee;font:12px system-ui,sans-serif;padding:6px 8px;border-radius:6px;max-width:220px;pointer-events:auto';
-  const sum = document.createElement('summary');
-  sum.textContent = 'rock bodies';
-  sum.style.cursor = 'pointer';
-  box.appendChild(sum);
-  const url = document.createElement('div');
-  url.style.cssText = 'font:10px monospace;word-break:break-all;opacity:0.8;margin-top:4px;user-select:all';
-  const info = document.createElement('div');
-  info.style.cssText = 'font:10px monospace;opacity:0.8;margin-top:2px';
-  const showUrl = () => (url.textContent = KNOBS.map((o) => `${o.url}=${RB[o.k]}`).join('&'));
-  for (const o of KNOBS) {
-    const row = document.createElement('label');
-    row.style.cssText = 'display:flex;align-items:center;gap:4px;margin:3px 0';
-    const name = document.createElement('span');
-    name.style.cssText = 'flex:0 0 78px';
-    name.textContent = o.label;
-    const input = document.createElement('input');
-    input.type = 'range';
-    input.min = String(o.min);
-    input.max = String(o.max);
-    input.step = String(o.step);
-    input.value = String(RB[o.k]);
-    input.style.cssText = 'flex:1;min-width:0';
-    const val = document.createElement('span');
-    val.style.cssText = 'flex:0 0 30px;text-align:right';
-    val.textContent = String(RB[o.k]);
-    input.addEventListener('input', () => {
-      RB[o.k] = Number(input.value);
-      val.textContent = input.value;
-      showUrl();
-    });
-    // (the panel's own presses don't reach the world)
-    for (const ev of ['pointerdown', 'touchstart', 'wheel']) row.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
-    row.append(name, input, val);
-    box.appendChild(row);
+export class RockPanel {
+  constructor(root: HTMLElement) {
+    const btn = document.createElement('button');
+    btn.textContent = 'rock';
+    btn.style.cssText = 'position:fixed;left:8px;bottom:88px;z-index:30;pointer-events:auto;font:12px sans-serif;padding:6px 10px;border-radius:8px;border:0;background:#2b2f33cc;color:#eee';
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;left:8px;bottom:124px;z-index:30;pointer-events:auto;display:none;font:12px sans-serif;color:#eee;background:#22262acc;padding:8px;border-radius:8px;max-width:240px';
+    const row = (label: string, value: number, step: number, set: (v: number) => void) => {
+      const l = document.createElement('label');
+      l.style.cssText = 'display:flex;justify-content:space-between;gap:6px;margin:2px 0';
+      l.textContent = label;
+      const i = document.createElement('input');
+      i.type = 'number';
+      i.step = String(step);
+      i.value = String(value);
+      i.style.cssText = 'width:64px';
+      i.addEventListener('change', () => {
+        const v = Number(i.value);
+        if (!Number.isFinite(v)) return;
+        set(v);
+        log();
+      });
+      l.appendChild(i);
+      el.appendChild(l);
+    };
+    for (const k of KNOBS) row(k.label, ROCK[k.key], k.step, (v) => (ROCK[k.key] = v));
+    for (const name of BEAR_MATS) {
+      const m = MATERIALS.find((d) => d.name === name);
+      if (m) row(`bear: ${name}`, m.bear ?? 0.2, 0.05, (v) => (m.bear = v));
+    }
+    const log = () => console.info(`[rock] ${JSON.stringify(ROCK)} bear ${JSON.stringify(Object.fromEntries(BEAR_MATS.map((n) => [n, MATERIALS.find((d) => d.name === n)?.bear])))}`);
+    btn.addEventListener('click', () => (el.style.display = el.style.display === 'none' ? 'block' : 'none'));
+    root.appendChild(btn);
+    root.appendChild(el);
+    log();
   }
-  for (const ev of ['pointerdown', 'touchstart', 'wheel']) box.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
-  showUrl();
-  box.append(url, info);
-  setInterval(() => {
-    if (box.open) info.textContent = stats();
-  }, 500);
-  parent.appendChild(box);
 }

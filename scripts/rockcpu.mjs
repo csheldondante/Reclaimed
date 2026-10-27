@@ -235,6 +235,41 @@ try {
       const r = w.judge(seeds);
       return { ok: r.fell > 2000, say: `banded with sand under the cut: ${r.fell.toFixed(0)} cells fell` };
     },
+    // (round 96) a top (radius 5, 6 thick) on a leg of 13 columns 30 tall: slender — it buckles
+    'slender-leg': () => {
+      const w = makeWorld(true);
+      const leg = w.disc(32, 28, 2);
+      for (const [x, y] of leg) w.put(x, y, 10, 46, MAT.Stone);
+      for (const [x, y] of w.disc(32, 28, 5)) w.put(x, y, 40, 46, MAT.Stone);
+      const r = w.judge(leg);
+      return { ok: r.fell > 300, say: `${leg.length}-column leg 30 tall: ${r.fell.toFixed(0)} cells fell` };
+    },
+    // the same top on the same leg 3 tall: stubby — it holds
+    'stubby-leg': () => {
+      const w = makeWorld(true);
+      const leg = w.disc(32, 28, 2);
+      for (const [x, y] of leg) w.put(x, y, 10, 19, MAT.Stone);
+      for (const [x, y] of w.disc(32, 28, 5)) w.put(x, y, 13, 19, MAT.Stone);
+      const r = w.judge(leg);
+      return { ok: r.fell === 0 && r.crumbled === 0, say: `${leg.length}-column leg 3 tall: ${r.fell.toFixed(0)} cells fell` };
+    },
+    // a big top (radius 6, 12 thick) on legs from an eighth to a half of its footprint, 22 tall: under a quarter falls
+    'quarter-rule': () => {
+      const out = [];
+      let ok = true;
+      for (const lr of [2.2, 2.8, 3.4, 4.2]) {
+        const w = makeWorld(true);
+        const leg = w.disc(32, 28, lr);
+        const top = w.disc(32, 28, 6);
+        for (const [x, y] of leg) w.put(x, y, 10, 44, MAT.Stone);
+        for (const [x, y] of top) w.put(x, y, 32, 44, MAT.Stone);
+        const r = w.judge(leg);
+        const share = leg.length / top.length;
+        out.push(`${(share * 100).toFixed(0)}%: ${r.fell > 500 ? 'fell' : 'stood'}`);
+        if ((share < 0.22 && r.fell < 500) || (share > 0.3 && r.fell > 0)) ok = false;
+      }
+      return { ok, say: out.join(', ') };
+    },
     // a cave (radius 10, 6 tall) under 20 of rock, a hole cut through its wall: its roof stands
     'cave-roof': () => {
       const w = makeWorld(true);
