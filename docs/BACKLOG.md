@@ -24,6 +24,28 @@ user) · `deferred` (agreed for later).
 | C19 | A meteor's rim melts the column's top interval (lava.wgsl blast: "runs off the top of the column"), not the ground at the rim's height: an overhang's top melts where its underside is in the blast; the vent's pool sits on the top of a cut column (over the gap) | S | open |
 | C20 | The physics (cube) bodies are in window coordinates and are dropped on any slide (before: on a slide in z only) | S | open |
 | C21 | Rotation for what tips (C4): pieces fall straight now | M | open (C4) |
+## Round 91 (2026-10-27, session 5, `phonecam`) — names on the map, a compass, the edge of the land (DECISIONS round 91)
+
+| id | item | size | status |
+|---|---|---|---|
+| N1 | "the map needs to show you names of place": the atlas map labels continents, regions, seas and lakes, settlements with the world wiki's own names (gm/map-names.ts: atlasFacts → buildWiki in the page, the GM's names), fewer zoomed out, none overlapping; label sources a contract (api/map-labels.ts) other systems add to | M | done (phonecam) |
+| N2 | "a directional compas for the way your are facing": a compass on the game view over the turn buttons (ui/compass.ts), the map's north; a tap faces north; on the map the player's dot has a wedge the way the view faces and the view's footprint | S | done (phonecam) |
+| N3 | The map was the world's mirror image (world +x to the right of north): drawn now as seen from above, +x to the left | S | done (phonecam) |
+| N4 | "I easily hit the edge of the loaded ground" — measured (DEVLOG round 91): at the phone's zoom 52–66% of a portrait screen is past the 320 window at any time (the view's ground is ~158 × 700 cells, the window 320 × 320); panning outran the slides to 45 cells of the window's edge. Done: the camera kept a region in from the edge (min 64), the land asked for where the camera's heading (1 s ahead), the rings past the window given the window's grain a cell | M | done (phonecam), partly: N5–N7 |
+| N5 | The window shaped to the view: on a portrait phone the view's ground is long along the view and narrow across — a window longer than wide, turned with the view (or a split per-column buffer, R5, for a wider one under 128 MB) | L | open |
+| N6 | Past the window: plants and roads on the rings (P13's "Left"), the ground's colour the window's (the window's grass is brighter and speckled); the eye's side pressed under the focus reads as a flat floor | M | open |
+| N7 | The atlas's own lakes (`Atlas.lakes`, merged from `lakes` into places in round 91) on the map as labels: they need names first, and those belong in the wiki (buildWiki names regions and settlements, not the atlas's lakes) — then a label source of kind 'lake' (api/map-labels.ts); the wiki's lake regions are labelled already | S | done (phonecam, after places cdf0d95: the wiki names them now; gm/map-names.ts labels `wiki.lakes`, shown while 14 px across) |
+
+## Round 90 (2026-10-27, session 5, `phonecam`) — more of the atlas on the phone, turning the view (DECISIONS round 90)
+
+| id | item | size | status |
+|---|---|---|---|
+| R1 | "increase the range of tiles that load": the streamed window wider on the phone tier — 320 by default (measured: same p95 and GPU ms as 256; 384 is +2.1 ms GPU and a 158 MB buffer past the 128 MB many phones allow) | S | done (phonecam) |
+| R2 | "a setting for how far out it will build": the range button (bottom left, 256/320/384, kept per viewer, a reload; `?win=` wins) | S | done (phonecam) |
+| R3 | "prioritize tiles close to the center of the screen but load others late": a slide's regions made and written nearest the camera first (Streamer.nearFirst), a tile a frame | S | done (phonecam) |
+| R4 | "a button or bar to rotate the camera": ↺ ↻ (a sixth of a turn a tap, eased; held, continuous), Q / E; round the ground under the screen's middle | S | done (phonecam) |
+| R5 | A range past 384 on phones whose adapters give more than 128 MB a binding (or the largest per-column buffer split) | M | open |
+| R6 | Two-finger twist to turn the view (the buttons for now) | S | open |
 
 ## Round 88 (2026-10-27, session 5, `seawall`) — a wall of water by the sea (DECISIONS round 88)
 

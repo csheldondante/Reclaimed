@@ -68,6 +68,11 @@ export function settleLoose(col: Interval[]): number {
 export const REGION = 64;
 /** ?slideskip=freeze,bufs,texs,mesh (round 80, measuring a slide's GPU burst only: what's left out is wrong) */
 const SLIDE_SKIP = new Set((typeof location === 'undefined' ? '' : new URLSearchParams(location.search).get('slideskip') ?? '').split(',').filter(Boolean));
+/**
+ * (round 91, ?lead=s) Seconds ahead the camera's motion is followed: the land where it will be then is asked for
+ * ahead of the slides. 0: the camera's own place only, as before round 91.
+ */
+const LEAD = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('lead')) ?? 1);
 /** cells the window slides by in z */
 export const TIER = 32;
 /** the field mesh's chunks: cells across and rows down (fieldmesh.ts CHUNK) — a slide is whole ones */
@@ -363,22 +368,64 @@ export class Streamer {
     return [x + this.origin[0], y + this.origin[1]];
   }
 
+  /** (round 91) the regions a slide under way has moved the window over but not written yet (local corners):
+   *  the window's land there is stale until they are (scripts/edgeprobe.mjs measures the view against it) */
+  unwritten: [number, number][] = [];
+
   /** land asked for ahead of a slide, by region key */
   private pending = new Map<string, Promise<Frozen>>();
 
+  /** (round 91) the camera's velocity (cells a second, world x and rows), smoothed; where it was, and when */
+  readonly vel: [number, number] = [0, 0];
+  private last: [number, number, number] | null = null;
+
+  /** the camera's velocity, from its target's world cell frame to frame (a jump — a warp — isn't motion) */
+  private track(): void {
+    const t = performance.now() / 1000;
+    const [x, yw] = this.core.camera.target;
+    const wx = this.origin[0] + x;
+    const wy = this.origin[1] + yw / ROW_H;
+    const l = this.last;
+    this.last = [wx, wy, t];
+    if (!l) return;
+    const dt = t - l[2];
+    const dx = wx - l[0];
+    const dy = wy - l[1];
+    if (dt <= 0) return;
+    if (dt > 0.5 || Math.hypot(dx, dy) > 2 * this.R) {
+      this.vel[0] = this.vel[1] = 0;
+      return;
+    }
+    // (over about a quarter of a second)
+    const a = Math.min(1, dt / 0.25);
+    this.vel[0] += (dx / dt - this.vel[0]) * a;
+    this.vel[1] += (dy / dt - this.vel[1]) * a;
+  }
+
   /** Slide when the camera has come within 1¼ regions of the window's edge (one axis a call);
-   *  ask for the land of the slide it's heading for once it's halfway there. */
+   *  ask for the land of the slide it's heading for once it's halfway there. (Round 91: or once where it will be
+   *  `LEAD` seconds on is — and the land of two slides when that's past the next one's reach.) */
   update(): Promise<void> | null {
+    this.track();
     if (this.busy || !this.auto) return null;
     const [x, yw] = this.core.camera.target;
     const y = yw / ROW_H;
     const R = this.R;
     const reach = R * 0.75;
     const near = R * 0.4;
-    if (x > this.W / 2 + near) this.prefetch(R, 0);
-    if (x < this.W / 2 - near) this.prefetch(-R, 0);
-    if (y > this.H / 2 + near) this.prefetch(0, R);
-    if (y < this.H / 2 - near) this.prefetch(0, -R);
+    const ahead = (v: number) => Math.max(-2 * R, Math.min(2 * R, v * LEAD));
+    const px = x + ahead(this.vel[0]);
+    const py = y + ahead(this.vel[1]);
+    const hx = this.W / 2;
+    const hy = this.H / 2;
+    if (Math.max(x, px) > hx + near) this.prefetch(R, 0);
+    if (Math.min(x, px) < hx - near) this.prefetch(-R, 0);
+    if (Math.max(y, py) > hy + near) this.prefetch(0, R);
+    if (Math.min(y, py) < hy - near) this.prefetch(0, -R);
+    if (px > hx + reach + R) this.prefetch(2 * R, 0);
+    if (px < hx - reach - R) this.prefetch(-2 * R, 0);
+    if (py > hy + reach + R) this.prefetch(0, 2 * R);
+    if (py < hy - reach - R) this.prefetch(0, -2 * R);
     // in z: the ground under the camera near the window's top or bottom
     const h = this.source.height;
     if (h) {
@@ -390,10 +437,12 @@ export class Streamer {
         if (g < 24 && this.oz > 0) return this.slideZ(-TIER);
       }
     }
-    if (x > this.W / 2 + reach) return this.slide(R, 0);
-    if (x < this.W / 2 - reach) return this.slide(-R, 0);
-    if (y > this.H / 2 + reach) return this.slide(0, R);
-    if (y < this.H / 2 - reach) return this.slide(0, -R);
+    // (the slide itself where the camera is: sliding early for where it's heading slid twice as often on a
+    // winding road — back again at each bend — for no nearer edge: DEVLOG round 91)
+    if (x > hx + reach) return this.slide(R, 0);
+    if (x < hx - reach) return this.slide(-R, 0);
+    if (y > hy + reach) return this.slide(0, R);
+    if (y < hy - reach) return this.slide(0, -R);
     return null;
   }
 
@@ -431,7 +480,7 @@ export class Streamer {
   /** Start making the land a slide of (dx, dy) would bring in (what's frozen needs nothing). */
   prefetch(dx: number, dy: number): void {
     const R = this.R;
-    for (const [lx, ly] of this.enteringFor(dx, dy)) {
+    for (const [lx, ly] of this.nearFirst(this.enteringFor(dx, dy), dx, dy)) {
       const wx = this.origin[0] + dx + lx;
       const wy = this.origin[1] + dy + ly;
       const key = this.key(wx / R, wy / R);
@@ -440,6 +489,20 @@ export class Streamer {
       job.catch(() => this.pending.delete(key));
       this.pending.set(key, job);
     }
+  }
+
+  /**
+   * (round 90, the user: "prioritize tiles close to the center of the screen but load others late") Regions
+   * (local corners in the window after a slide of (dx, dy)) nearest the camera's target first: the land is made a
+   * tile a frame in the order it's asked for (atlas.ts tileGate), so what's under the middle of the screen comes in
+   * first and the strip's far ends later.
+   */
+  private nearFirst(regions: [number, number][], dx: number, dy: number): [number, number][] {
+    const [x, yw] = this.core.camera.target;
+    const y = yw / ROW_H;
+    const h = this.R / 2;
+    const d = ([lx, ly]: [number, number]) => Math.hypot(lx + dx + h - x, ly + dy + h - y);
+    return [...regions].sort((a, b) => d(a) - d(b));
   }
 
   /** the regions of a strip of the window (local cells x0..x1, y0..y1), as [local x, local y] corners */
@@ -463,7 +526,8 @@ export class Streamer {
     const rc = R / CHUNK;
     // what leaves (old window cells) and what comes in (new window cells)
     const leaving = dx > 0 ? this.strip(0, dx, 0, H) : dx < 0 ? this.strip(W + dx, W, 0, H) : dy > 0 ? this.strip(0, W, 0, dy) : this.strip(0, W, H + dy, H);
-    const entering = this.enteringFor(dx, dy);
+    // (round 90: nearest the camera first — what's written first, and what's made first when it wasn't asked ahead)
+    const entering = this.nearFirst(this.enteringFor(dx, dy), dx, dy);
 
     // ---- 1. freeze what leaves: copies into one staging buffer ---------------
     const enc = dev.createCommandEncoder({ label: 'stream slide' });
@@ -638,9 +702,11 @@ export class Streamer {
       }
       return this.generate(this.origin[0] + lx, this.origin[1] + ly);
     });
+    this.unwritten = entering.slice();
     for (let k = 0; k < entering.length; k++) {
       const [lx, ly] = entering[k];
       this.write(await this.since(await coming[k], this.origin[0] + lx, this.origin[1] + ly), lx, ly);
+      this.unwritten = this.unwritten.filter(([x, y]) => x !== lx || y !== ly);
     }
     // (round 80: the band's pages went with the land; only what came in is packed)
     timed('band', () => this.core.renderer.band?.packFresh(this.outside, this.core.dims.zMax));

@@ -6558,6 +6558,125 @@ banks — 167 wall faces. Either the hollow is filled as a lake to its spill lev
 GPU; where the fine ground lacks the macro rim it's a wall again) or the river runs on the hollow's floor (its level
 the ground's + its depth past the levee's reach). The user's call.
 
+## Round 90 — more of the atlas on the phone, and turning the view (`phonecam`)
+
+The user, on the phone at the atlas level in sandbox mode: "can we increase the range of tiles that load and add a
+button or bar to rotate the camera?" — and then "Maybe We can prioritize tiles close to the center of the screen but
+load others late? And have a setting for how far out it will build?" (DECISIONS round 90).
+
+**The range.** The streamed window's side (`?win=`, whole regions of 64) is now a setting: scenes/range.ts. `?win=`
+wins; else the viewer's own choice (localStorage `reclaimed.atlasRange`, read and written in try/catch); else the
+tier's default — 320 on the phone tier, 256 elsewhere. The bottom-left range button steps 256 → 320 → 384 and reloads
+(the window's buffers are made with the level). Measured at q=low 412x915 on the desktop iGPU (the phone proxy):
+scripts/driveprofile.mjs at 12304,5457 (speed 18, 30 s, the phone flags: hybrid, simcull, rivers=table) and
+scripts/rangeprobe.mjs (the world's and the renderer's GPU buffers summed, the JS heap, 8 s after the level):
+
+| win | p50 | p95 | p99 | worst | >50 ms | GPU ms/frame | draw | slide (last, ms) | load (s) | GPU buffers | largest buffer | JS heap |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 256 | 9.9 | 10.8 | 16.3 | 75 | 4 | 8.94 | 4.91 | 140 | 36 | 312 MB | 67.5 MB | 139 MB |
+| 320 | 9.9 | 10.7 | 14.4 | 147 | 1 | 8.94 | 4.79 | 198 | 38 | 453 MB | 103 MB | 190 MB |
+| 384 | 9.8 | 10.9 | 16.6 | 100 | 2 | 11.07 | 5.42 | 222 | 43 | 656 MB | 158 MB | 267 MB |
+
+320 is the phone's default: the frame and the GPU's time are 256's (the hybrid draws the added land as heightfield
+chunks), 1.56× the land in detail; one frame of 147 ms in the ride against 256's four over 50 (noise on one ride —
+the slide itself is spread, a tile a frame). 384 costs 2.1 ms more GPU a frame, 656 MB of buffers, and its largest
+buffer (158 MB) is past 128 MB — WebGPU's default maxStorageBufferBindingSize, which many phones' adapters stop at
+(the desktop gives 2048): it stays a choice, not the default. The LOD rings and the far land already reach past what
+the phone's widest zoom shows (the 16-cell ring is ~3000 cells across), so they're unchanged.
+
+**Nearest first.** A slide brings in a strip of regions (5 at 320); each region's columns are made a tile a frame,
+in the order asked (atlas.ts tileGate). The streamer now asks for them — and writes them — nearest the camera's
+target first (Streamer.nearFirst, in prefetch and in the slide), so what's under the middle of the screen comes in
+first and the strip's ends after, already spread over frames.
+
+**Turning the view.** render/turn.ts `Turn`: steps of a sixth of a turn from the fixed view's π/4 (the hex lattice
+looks the same from every one), eased on a critically damped spring (sub-stepped: a slow frame doesn't overshoot),
+steps adding up while it eases; held past 0.3 s a button turns on continuously (1.6 rad/s) and stays where it's let
+go. It writes `Camera.azimuth` (round 82's Orbit already turned it: the draw, the culling, the pick, the shadow box
+(the field mesh's near rect from the view), the far land's press under the focus (`FC.eye`) and the rings were
+already the azimuth's, not the fixed view's). The turn goes round the ground under the screen's middle (the target
+is put there first: it was 7 over it, and the ground swung ~10 cells). Bottom left, clear of the tool panel (top
+right) and the atlas buttons (bottom right): ↺ ↻ (52 px) and the range button; Q / E on a keyboard (not flying —
+there they're down and up — nor with the place tool, whose E turns the model). With ?cutaway=1 a step is the Orbit's
+goal (it owns the azimuth there). Coming back from the free camera the view faces the way the flyer looked.
+scripts/turnshot.mjs (the buttons tapped at phone size, touch): the ground under the middle 119.2,102,117.4 at
+45°, 105°, 165°, 225° and after a 1.2 s hold (307°); no errors. Shots: C:/Projects/shots88/phonecam/turn-0..3.png,
+turn-held.png (320, the default), turn320-*.png (before the pivot fix).
+
+Not changed: the window's edge still shows where the rings past it are pressed under the focus (P13/W3) — from
+every angle now, as from the fixed one.
+
+## Round 91 — names on the map, a compass, the edge of the land (`phonecam`)
+
+The user, on the phone at the atlas level: "I think the map needs to show you names of place and a directional
+compas for the way your are facing. I notice that I easily hit the edge of the loaded ground" (DECISIONS round 91).
+
+**Names.** The map writes the world wiki's names — the ones the GM's stories use — because they're made by the same
+code: on the map's first open the level runs gm/atlas-facts.ts `atlasFacts` on the live atlas and gm/wiki.ts
+`buildWiki` on that (in Node from data/atlas's cache, the same function: all 7772 region names and the settlements
+match data/wiki/seed1.json), and gm/map-names.ts turns the wiki into labels: each continent (at its land nearest the
+circular mean of its regions, a torus), every region (seas and lakes their own kinds), every settlement by its size —
+7917 labels, made in 59–62 ms on the desktop (14 ms of it the wiki in Node). The map doesn't make names: label
+sources are a contract (api/map-labels.ts: a name, a kind, a world point, a weight), and the atlas's own lakes (merged
+from `lakes`, named by the wiki since places cdf0d95) are labelled from `wiki.lakes`, shown while 14 px across (N7); the wiki's own lake regions are labelled already. The map styles each kind
+(Georgia, cream on a dark halo like the sites' dots; seas and lakes italic blue, regions italic, continents spaced
+capitals), shows a kind only in its zooms — metropolises always, cities to 3 texels a pixel, towns to 1.4, villages
+to 0.7, regions/seas/lakes while they're 34 px across, continents while 40 px across and not closer than 0.6 — and
+places them heaviest first, a label left out where it would overlap one already placed (the continents only avoid
+each other: they're under everything), clear of the rose, the buttons and the note. The note says which region
+you're in ("Haura Downs · 11916, 15437").
+
+**The map was a mirror image.** The game's view is the world seen from above (screen right is the view's forward
+turned clockwise: camera.ts screenDeltaToWorld), but the map drew world x to the right and y down — the world's
+mirror: facing north (the map's up), a town on the screen's right was on the map's left. A compass would have made
+that plain. The map is now drawn with world +x to the left (north −y the map's up, as before): the image flipped in
+x, the hill shading's sun moved to stay in the upper left, pan and tap inverted to match.
+
+**The compass.** ui/compass.ts, over the turn buttons: the needle is the map's north on the screen —
+atan2(−cos az, sin az) clockwise from up (north (0, −1) against the view's forward (−cos az, −sin az) and its right
+(−sin az, cos az)). Measured (scripts/mapnames.mjs, touch): az 45° → −45°, a ↻ tap → 105° → 15°, the compass tapped →
+90° → 0°. A tap faces north (`Turn.face`, the short way round, eased; our call — a map app's habit; a turn step after
+it goes back onto the sixths). On the map the player's dot has a wedge the way the view faces and the view's
+footprint on the ground (the screen's corners), both turning with the view; a rose in the corner.
+
+**The edge — measured first.** scripts/edgeprobe.mjs at 412×915 q=low, win 320, at 11956,15471: each frame the camera
+target's distance to the window's edge, and a 9 × 19 grid over the screen (the ground plane at the target's height)
+— how much lies past the window and how much on regions a slide has moved over but not written yet
+(`Streamer.unwritten`, added for it). Panning (W held: ~150 cells a second up the screen, a brisk swipe) and the
+drive at 40 cells a second (`?drive=40`, the hoverbike's stand-in: it zooms out with speed):
+
+| run | target min to edge | view past the window | view on unwritten | busy | slides | slide ms p50 / max | p95 |
+|---|---|---|---|---|---|---|---|
+| pan, before | 45 | 52.4% | 3.0% (max 9.4%) | 67% | 62 | 174 / 387 | 18.4 |
+| pan, after | **64** | 52.4% | 3.5% (max 9.4%) | 91% | 64 | 280 / 495 | 18.0 |
+| pan turned 105°, before | 54 | 59.1% | – | 80% | 57 | 271 / 493 | 14.6 |
+| pan turned 105°, after | **88** | 59.0% | 1.6% | 47% | 62 | 117 / 310 | 14.8 |
+| drive 40, before | 108 | 65.8% | 0.3% | 7% | 13 | 106 / 207 | 10.5 |
+| drive 40, after | 106 | 65.7% | 0.6% | 15% | 13 | 229 / 288 | 10.7 |
+
+("before": the turned row the old build on its own server, the others this build with `&lead=0` before the clamp;
+the slide times vary run to run by 2×.) What it says: **the edge is in view all the time, not only when moving.** At
+the phone's zoom (2.6) a portrait screen sees ground ~158 cells across and ~700 along the view (the 2:1 view
+doubles the screen's height on the ground), the window is 320 × 320: half to two thirds of the screen is past the
+window, drawn by the LOD rings — coarser (2- and 4-cell steps there), smooth-coloured, without the window's plants,
+roads and speckled grass, and on the eye's side pressed under the focus. No window that fits a phone's 128 MB binding
+(384's largest buffer is 158 MB) covers that, at any turn. And panning outran the slides (a slide a region, ~0.1–0.3 s;
+~3 a second needed): the camera ran to 45 cells of the edge.
+
+**What changed.** (1) The camera is kept a region (64) in from the window's edge (level.ts: the target's clamp was
+the window itself): a pan faster than the slides waits for them there, the middle of the screen always on built land
+(min 45 → 64; turned, 54 → 88). (2) The streamer follows the camera's motion (`Streamer.vel`, smoothed over a quarter
+second): the land where it'll be a second on (`?lead=`, 0 the old way) is asked for ahead — the next strip, and the
+one after when that's past the next slide's reach. Sliding early for where it's heading was tried and dropped: on the
+drive's winding road it slid 30 times to 13 (back at each bend) for no nearer edge. (3) The rings' ground past the
+window has the window's grain — each hexagon a little lighter or darker by its world cell, fading out where a cell is
+under a pixel (far.wgsl fsLod; the cell size from fwidth before the discards) — so it reads less as a blur.
+Frame time unchanged: driveprofile (speed 18, 30 s, 12304,5457, win 320): before p95 10.7, p99 15.5, GPU 9.82 ms;
+after p95 10.7, p99 13.7, GPU 9.01 ms (noise). No new GPU buffers; the labels are CPU (~8k small objects).
+
+Not done (BACKLOG N5–N7): a window shaped to the view (long along it, as the portrait view's ground is), plants and
+roads past the window, the eye's side's flat floor. Shots: C:/Projects/shots88/phonecam/names-*.png (view, turned,
+north, map, map-out, map-in, map-in2), edge-before.gif / edge-after.gif (the drive at 40), ring193.png / grain.png.
 ## Round 88 — no floating rock (`collapse`)
 
 Why: the user on the phone (DECISIONS round 88): "It still fails to make some unsupported structures wake up and fall
