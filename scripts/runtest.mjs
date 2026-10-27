@@ -125,12 +125,43 @@ const onFigure = (p, sx, sy) =>
   );
 
 /** walk to a point: a tap on it when it's on the screen (the ground under the finger), else sent there by the run */
+/** anything hostile coming at the hero on the way (the story's own walking dead, at 300 s): fight it off first */
+async function fightOff(p) {
+  let fought = false;
+  for (let k = 0; k < 400; k++) {
+    const f = await p.evaluate(() => {
+      const r = window.reclaimed.run;
+      const h = r.hero.position();
+      const foes = r.hero.alive ? r.units.query([h[0], h[1]], 9, { hostile: true }) : [];
+      if (!foes.length) {
+        r.pad.scripted = null;
+        return false;
+      }
+      const t = foes[0];
+      const d = Math.hypot(t.at[0] - h[0], t.at[1] - h[1]);
+      if (d > 2.2) r.seek(t.id);
+      r.pad.scripted = { attack: d < 3 };
+      return true;
+    });
+    if (!f) break;
+    fought = true;
+    await sleep(150);
+  }
+  if (fought) console.log('     fought off what came at the hero on the way');
+  return fought;
+}
+
 async function walkTo(p, to, what, tol = 1.6) {
   const t0 = Date.now();
   let last = null;
   let still = 0;
   let sent = false;
   while (Date.now() - t0 < 60000) {
+    if (await fightOff(p)) {
+      sent = false;
+      still = 0;
+      last = null;
+    }
     const s = await p.evaluate((to) => {
       const r = window.reclaimed.run;
       const h = r.hero.position();
@@ -151,6 +182,23 @@ async function walkTo(p, to, what, tol = 1.6) {
     last = s.h;
     if (still > 10) {
       console.log(`     stuck at ${s.h.map((v) => v.toFixed(1))} on the way to ${what}`);
+      const dbg = await p.evaluate((to) => {
+        const r = window.reclaimed.run;
+        const t = window.reclaimed.api.terrain;
+        const h = r.hero.position();
+        const rows = [];
+        for (let dy = -6; dy <= 6; dy++) {
+          let s = '';
+          for (let dx = -8; dx <= 8; dx++) {
+            const z = t.heightAt(h[0] + dx, h[1] + dy);
+            s += dx === 0 && dy === 0 ? '@' : z === null ? '?' : z - h[2] > 2.5 ? '#' : h[2] - z > 2.5 ? 'v' : '.';
+          }
+          rows.push(s);
+        }
+        const near = r.units.query([h[0], h[1]], 4, { dead: true }).map((u) => `${u.role}${u.alive ? '' : '(dead)'}@${u.at.map((v) => v.toFixed(1))}`);
+        return { water: window.reclaimed.api.water?.depthAt(h[0], h[1]), route: r.route([h[0], h[1]], to), rows, near, mat: t.materialAt(h[0], h[1]), flat: t.heightAt(h[0], h[1]), smooth: t.heightAt(h[0], h[1], { smooth: true }) };
+      }, to);
+      console.log(`     ${JSON.stringify({ ...dbg, rows: undefined })}\n     ${dbg.rows.join('\n     ')}`);
       return false;
     }
     // (sent once; again only when it's stopped)
@@ -158,8 +206,11 @@ async function walkTo(p, to, what, tol = 1.6) {
       await sleep(700);
       continue;
     }
+    // (the first try a tap on it; again, sent there by the run — a tap on a point inside a walled room can land on
+    // the wall in front of it, the ground under the finger being the wall's top)
+    const tap = !sent;
     sent = true;
-    if (s.sx > 10 && s.sx < 402 && s.sy > 120 && s.sy < 700 && !(await onFigure(p, s.sx, s.sy))) await p.mouse.click(s.sx, s.sy);
+    if (tap && s.sx > 10 && s.sx < 402 && s.sy > 120 && s.sy < 700 && !(await onFigure(p, s.sx, s.sy))) await p.mouse.click(s.sx, s.sy);
     else await p.evaluate((to) => window.reclaimed.run.walkTo(to), to);
     await sleep(700);
   }
@@ -267,7 +318,7 @@ async function won() {
   ok(s.objectives['o-barrow'] === 'done' && s.objectives['o-end'] === 'shown', `reaching the ossuary: o-barrow done, o-end shown`);
   // (the bone door: walking to it with the key opens it)
   const door = await p.evaluate(() => window.reclaimed.run.stage.locks.find((l) => l.id === 'bone-door').at);
-  await walkTo(p, door, 'the bone door', 2.5);
+  await walkTo(p, door, 'the bone door', 4);
   await sleep(2500);
   ok(await p.evaluate(() => window.reclaimed.run.stage.locks.find((l) => l.id === 'bone-door').open), 'the bone door opened with the key');
   ok(await walkTo(p, await roomAt(p, 'loc-barrow', 'bell-chamber'), 'the bell chamber', 4), 'walked into the bell chamber');

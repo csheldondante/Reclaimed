@@ -6692,3 +6692,35 @@ Measurements:
   The p99 is the world API's mirror reads, which the run turns on (as `?story=` does) — not new to this branch.
 - Shots and GIF: C:/Projects/shots88/run/ (01-spawn, 02-talk-ilsa, 03-objective-done, 04-talk-bellwarden,
   05-fight.gif, 06-after-fight, 07-end-card, 08-lost).
+
+## 2026-10-27 — round 88, `runstory`: the walk back fixed; runtest passes end to end
+
+Why: main's run of runtest on 8740893 passed through the fight, then stuck "at 209.6,74.7 on the way back to
+Mebe". Debugged in the browser with probes (height maps round the hero, the route it would take, the walls'
+columns ring by ring):
+
+- The bell chamber's wall was one ring of hex columns, and it had slits (2–6° gaps). The square path grid
+  read them as open, so the route ran through a wall the hero couldn't pass. Walls are now two rings of
+  columns, 0.8 apart along them, and 6 high (was 4). A path cell is shut when anything within a body's
+  half-width (0.35) stands more than a step over its middle.
+- A build lays "full over the inner half, soft at the rim" (edit.wgsl). A wall's foot is a column half as
+  high, a stair 2 + 2 onto its top: the hero ended up on the reeve's hall wall. Climbs now count from the
+  lowest ground beside the walker within a step down (path.ts `canStep`; the walker, the units, A* and
+  clearLine all use it). Drops of more than a step are refused too: the hero fell into a river cut by
+  Mebe's square and couldn't climb out. With the ground beside it in the pit, counting from that lowest
+  ground refused every step, so pits more than a step down don't count.
+- Water: the walker won't wade into water deeper than 1.2 cells, but always wades out toward shallower water.
+  A path treats deep water as no way, unless the hero is already in it.
+- clearLine's side lines were judged from their own start: a line beginning on a wall's top rode along it.
+  Now nothing either side may stand more than a step over the middle line.
+- Locks open within 4.5 cells (was 3.4): the plug and the path's margin kept the hero 3.5 away.
+- runtest: on the way anywhere, the hero fights off whatever comes at it (the story's own walking dead arrive
+  at 300 s). A second try at a walk goes through the run's walkTo: a tap on a point inside a walled room can
+  land on the wall in front of it (camera.groundAt takes the wall's top under the finger). That one is a
+  game issue, BACKLOG RS11.
+
+Measured: scripts/runtest.mjs, all passed (won: Ilsa, Mebe and the bone key, the barrow, the bone door, the
+fight, the AtlasEvents, back to Hesk, "I destroyed the Bellwarden", RunRecord won with 14 deeds and 5 events,
+the end card; lost: the hero falls, RunRecord lost; no page errors). scripts/herotest.mjs all passed, its
+stand-in ground now built like edit.wgsl (soft rims): 7/7 walks room to room, the return from the bell
+chamber included.

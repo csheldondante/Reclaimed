@@ -25,7 +25,8 @@ import type { Camera } from '../render/camera';
 import type { Renderer } from '../render/renderer';
 import { SimpleUnits } from '../units/simple';
 import { Figures, unitPose, type FigurePose } from '../units/figures';
-import { Walker } from '../hero/walker';
+import { Walker, STEP as WALK_STEP } from '../hero/walker';
+import { findPath } from '../hero/path';
 import { TouchPad } from '../hero/touchpad';
 import { MAT } from '../world/materials';
 import { StoryPlay, type Stage } from './play';
@@ -77,7 +78,7 @@ export class HeroRun {
     const t = d.api.terrain;
     if (!t) throw new Error('hero run: needs the world API terrain module');
     this.units = new SimpleUnits(t);
-    this.hero = (d.makeHero ?? ((w, at) => new Walker(w, at)))({ ground: t, units: this.units }, d.spawn);
+    this.hero = (d.makeHero ?? ((w, at) => new Walker(w, at)))({ ground: t, units: this.units, water: d.api.water }, d.spawn);
     this.units.watch(this.hero.actor);
     this.pad = new TouchPad(d.ui, d.camera);
     this.figures = new Figures(d.device, d.renderer);
@@ -162,6 +163,11 @@ export class HeroRun {
     this.approach = null;
     this.goTo = null;
     await this.play.talk(id);
+  }
+
+  /** The way the hero would take from `from` to `to` (scripts: what a walk will do), null: none found. */
+  route(from: [number, number], to: [number, number]): [number, number][] | null {
+    return findPath(this.d.api.terrain!, from, to, { step: WALK_STEP });
   }
 
   /** Send the hero to a point (window x, y), as a tap on the ground would. */

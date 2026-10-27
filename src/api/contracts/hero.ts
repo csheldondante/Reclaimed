@@ -50,6 +50,8 @@ export interface HeroCamera {
 export interface HeroWorld {
   ground: { heightAt(x: number, y: number, opts?: { smooth?: boolean }): number | null };
   units: Units;
+  /** water standing at (x, y) (cells): a hero on foot doesn't wade in over DEEP */
+  water?: { depthAt(x: number, y: number): number | null };
 }
 
 export interface Hero {

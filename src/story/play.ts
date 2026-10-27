@@ -295,7 +295,7 @@ export class StoryPlay {
   /** (round 88) a locked doorway the player comes to: opened with its key, else they're told what it needs */
   private locks(me: V3): void {
     for (const k of this.d.stage.locks ?? []) {
-      if (k.open || Math.hypot(me[0] - k.at[0], me[1] - k.at[1]) > 3.4) continue;
+      if (k.open || Math.hypot(me[0] - k.at[0], me[1] - k.at[1]) > 4.5) continue;
       const has =
         (k.key.item !== undefined && this.run.has(k.key.item) > 0) ||
         (k.key.character !== undefined && this.run.holds({ kind: 'talked', character: k.key.character })) ||
@@ -310,7 +310,7 @@ export class StoryPlay {
             for (let dx = -3.2; dx <= 3.2; dx += 0.7) {
               const x = k.at[0] + dx;
               const y = k.at[1] + dy;
-              if (dx * dx + dy * dy <= 10.5 && t.materialAt(x, y) === k.material) void t.take(x, y, 8);
+              if (dx * dx + dy * dy <= 10.5 && t.materialAt(x, y) === k.material) void t.take(x, y, 12);
             }
         this.d.api.fx?.burst('dust', k.at[0], k.at[1], (t?.heightAt(k.at[0], k.at[1]) ?? me[2]) + 1, { count: 30 });
         this.d.say?.(`${k.key.item ? `The ${k.key.item} turns` : 'It opens'}: the ${k.id.replace(/-/g, ' ')} gives way`);

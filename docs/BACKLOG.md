@@ -23,12 +23,14 @@ or fighting things for a run story." Ids RS (H is taken).
 | RS2 | `Units` contract (contracts/units.ts) + SimpleUnits (CPU) + voxel figures; for the settlements agents to implement on the GPU agents | M | done (2745211; figures this commit) |
 | RS3 | The Bell story staged on the atlas (D10): stage-gen.ts realises the briefs near the spawn (rooms, doorways, locks and keys, landmarks), toward each place's real spot (its site, its region's centre), pulled in to 22–95 cells | M | done (this commit) |
 | RS4 | Fighting: hostile spawns (`spawn.hostile`) and cast turned hostile (`Outcome.hostile`), a readable swing (wind-up, flinch, knockback), the hero's health; death ends the run (lost) | S | done (this commit) |
-| RS5 | `?run=bell` + scripts/runtest.mjs (in the browser: walk, talk, choose, reach, open a lock, fight, return, won; and lost) + scripts/herotest.mjs (Node: layout, paths, the fight's balance) | S | done (this commit) |
+| RS5 | `?run=bell` + scripts/runtest.mjs (in the browser: walk, talk, choose, reach, open a lock, fight, return, won; and lost) + scripts/herotest.mjs (Node: layout, paths, the fight's balance) | S | done (runtest all passed after the walk-back fixes, DEVLOG) |
 | RS6 | The other ways to end the Bell story in play: the sluice (with the crank at the sluice house: flood the barrow, `event flooded`), the blasting charges (in the bell chamber: `event collapsed`), the heartwood seed; each needs a "use an item here" interaction | M | open |
 | RS7 | Units walk straight (SimpleUnits): they don't path round walls, so a chase can hang on a wall; the GPU agents' fields fix it | S | open (settlements) |
 | RS8 | Talk camera on the perspective camera (D9) and the hero's own models: the hoverbike game's heroes through `makeHero` | M | open (hoverbike session) |
 | RS9 | The run's window is held still (Streamer.auto off) so the places stay in it; a run over the streamed world (places a region or more away, the stage in world cells, built as their regions arrive) | M | open |
 | RS10 | Judgement calls for the user: the real distances pulled in (the Bell's places are 500–800 cells apart on the atlas; here 22–95); the fight's numbers (hero 20 hp, a blow 1; the dead 2 hp; the Bellwarden 12 hp, 2 a blow); regen out of a fight | S | asked |
+| RS11 | A tap on a point inside a walled room can pick the wall in front of it (camera.groundAt solves on the surface the eye sees, the wall's top): the hero walks to the wall. A pick that prefers the floor behind a wall when the view is over a room (or the cutaway's slice) | S | open |
+| RS12 | A happening's `faction-attitude` lands in the story's first location's region (StoryRun.regionOf has no location for a happening's cause): the Bellwarden slain shows "region 2341" on the end card, not 2159 — a happening could name its location | S | open |
 ## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
 
 | id | item | size | status |

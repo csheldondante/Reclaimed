@@ -18,22 +18,46 @@ export interface PathOpts {
   maxNodes?: number;
 }
 
+/**
+ * May a walker standing at (x, y) step to (ax, ay)? Not more than `step` up from the lowest ground (a step or less down) within a
+ * cell of where it stands — so the soft rim a build leaves at a wall's foot (a column half as high) is no stair
+ * onto the wall — nor more than `step` down (into a pit it couldn't climb out of).
+ */
+export function canStep(g: PathGround, x: number, y: number, ax: number, ay: number, step: number): boolean {
+  const here = g.heightAt(x, y);
+  const ahead = g.heightAt(ax, ay);
+  if (here === null || ahead === null || here - ahead > step) return false;
+  let low = here;
+  for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+    const q = g.heightAt(x + ox, y + oy);
+    if (q !== null && q < low && here - q <= step) low = q;
+  }
+  return ahead - low <= step;
+}
+
 /** can one walk straight from a to b, a body's width (WIDTH either side) clear (sampled every half cell) */
-export function clearLine(g: PathGround, a: V2, b: V2, step: number, drop = 6): boolean {
+export function clearLine(g: PathGround, a: V2, b: V2, step: number, drop = step): boolean {
   const d = Math.hypot(b[0] - a[0], b[1] - a[1]);
   const n = Math.max(1, Math.ceil(d / 0.5));
   const px = d > 0 ? (-(b[1] - a[1]) / d) * WIDTH : 0;
   const py = d > 0 ? ((b[0] - a[0]) / d) * WIDTH : 0;
-  for (const s of [0, 1, -1]) {
-    const ax = a[0] + px * s;
-    const ay = a[1] + py * s;
-    let prev = g.heightAt(s ? ax : a[0], s ? ay : a[1]);
-    if (prev === null) return false;
-    for (let k = 1; k <= n; k++) {
-      const z = g.heightAt(ax + ((b[0] - a[0]) * k) / n, ay + ((b[1] - a[1]) * k) / n);
-      if (z === null || z - prev > step || prev - z > drop) return false;
-      prev = z;
+  // (the middle line climbs no more than `step` a sample; either side of it, nothing stands more than `step`
+  // over the middle line beside it — a wall's top beside the way isn't a way)
+  let prev = g.heightAt(a[0], a[1]);
+  if (prev === null) return false;
+  let prev2 = prev;
+  for (let k = 1; k <= n; k++) {
+    const x = a[0] + ((b[0] - a[0]) * k) / n;
+    const y = a[1] + ((b[1] - a[1]) * k) / n;
+    const z = g.heightAt(x, y);
+    // (a climb from the lowest of the last cell's samples: no stair up a wall's soft rim)
+    if (z === null || z - Math.min(prev, prev2) > step || prev - z > drop) return false;
+    for (const s of [1, -1]) {
+      const q = g.heightAt(x + px * s, y + py * s);
+      if (q === null || q - z > step) return false;
     }
+    prev2 = prev;
+    prev = z;
   }
   return true;
 }
@@ -44,7 +68,7 @@ const WIDTH = 0.6;
 /** waypoints from `from` to `to` (not including `from`), or null when there's no way within the bounds */
 export function findPath(g: PathGround, from: V2, to: V2, o: PathOpts): V2[] | null {
   const step = o.step;
-  const drop = o.drop ?? 6;
+  const drop = o.drop ?? step;
   if (clearLine(g, from, to, step, drop)) return [to];
   const pad = o.pad ?? 48;
   const x0 = Math.floor(Math.min(from[0], to[0]) - pad);
@@ -58,8 +82,19 @@ export function findPath(g: PathGround, from: V2, to: V2, o: PathOpts): V2[] | n
   const zAt = (i: number) => {
     let z = zs[i];
     if (Number.isNaN(z)) {
-      const v = g.heightAt(x0 + (i % w) + 0.5, y0 + Math.floor(i / w) + 0.5);
-      z = zs[i] = v === null ? -1e9 : v;
+      // (its middle's height; shut (−1e9) when something within a body's half-width of it stands more than a
+      // step over that — a slit between wall columns narrower than a body stays shut, and a cell on a wall's
+      // foot isn't a way onto its top)
+      const cx = x0 + (i % w) + 0.5;
+      const cy = y0 + Math.floor(i / w) + 0.5;
+      const v = g.heightAt(cx, cy);
+      let shut = v === null;
+      for (const [ox, oy] of [[0.35, 0], [-0.35, 0], [0, 0.35], [0, -0.35]]) {
+        if (shut) break;
+        const q = g.heightAt(cx + ox, cy + oy);
+        shut = q === null || q - v! > step;
+      }
+      z = zs[i] = shut && i !== start ? -1e9 : (v ?? -1e9);
     }
     return z;
   };
@@ -138,6 +173,15 @@ export function findPath(g: PathGround, from: V2, to: V2, o: PathOpts): V2[] | n
     const x = i % w;
     const y = Math.floor(i / w);
     const z = zAt(i);
+    // (as canStep: a climb is from the lowest open ground beside it, so a wall's soft rim is no stair)
+    let low = z;
+    for (const [ex, ey] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const qx = x + ex;
+      const qy = y + ey;
+      if (qx < 0 || qy < 0 || qx >= w || qy >= h) continue;
+      const q = zAt(qy * w + qx);
+      if (q > -1e8 && q < low && z - q <= step) low = q;
+    }
     for (const [dx, dy, c] of D) {
       const nx = x + dx;
       const ny = y + dy;
@@ -145,7 +189,7 @@ export function findPath(g: PathGround, from: V2, to: V2, o: PathOpts): V2[] | n
       const j = ny * w + nx;
       if (closed[j]) continue;
       const nz = zAt(j);
-      if (nz < -1e8 || nz - z > step || z - nz > drop) continue;
+      if (nz < -1e8 || nz - low > step || z - nz > drop) continue;
       // (a diagonal only where both sides are open: no cutting a wall's corner)
       if (dx && dy) {
         const a = zAt(y * w + nx);

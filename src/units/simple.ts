@@ -12,6 +12,7 @@
 
 import type { Actor, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
+import { canStep } from '../hero/path';
 
 /** the ground under (x, y): the world API's Terrain does */
 export interface Ground {
@@ -323,10 +324,8 @@ export class SimpleUnits implements Units {
     // (the climb on the columns' own tops, a little ahead; the height it stands at, the drawn mesh's)
     const g = this.ground;
     const l = Math.hypot(dx, dy) || 1;
-    const here = g.heightAt(v.at[0], v.at[1]);
-    const ahead = g.heightAt(v.at[0] + dx + (dx / l) * 0.5, v.at[1] + dy + (dy / l) * 0.5);
     const z = g.heightAt(v.at[0] + dx, v.at[1] + dy, { smooth: true });
-    if (z === null || here === null || ahead === null || ahead - here > STEP) return false;
+    if (z === null || !canStep(g, v.at[0], v.at[1], v.at[0] + dx + (dx / l) * 0.5, v.at[1] + dy + (dy / l) * 0.5, STEP)) return false;
     v.at[0] += dx;
     v.at[1] += dy;
     v.at[2] = z;

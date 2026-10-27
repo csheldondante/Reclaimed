@@ -62,7 +62,7 @@ frames the speaker; then the view eases back.
 ## The run's rules a hero meets
 
 - `reached` comes from `position()`: the story's places and their rooms (BACKLOG D8).
-- A locked door (a brief's lock) opens when the hero comes within 3.4 cells of it holding its key.
+- A locked door (a brief's lock) opens when the hero comes within 4.5 cells of it holding its key.
 - Hostile units (`spawn.hostile`, or a cast member an outcome turns `hostile`) notice the actor within their
   sight, chase it and swing: a 0.45 s wind-up, then the blow lands if the actor is still in reach. The hero's
   `hurt` and `died` follow; dying ends the run, lost.

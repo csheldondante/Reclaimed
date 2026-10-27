@@ -39,7 +39,7 @@ export interface StageGenDeps {
 
 const SIZE = { small: 4.5, medium: 6, large: 7.5 } as const;
 const MARGIN = 30;
-const WALL_H = 4;
+const WALL_H = 6;
 const COLOURS = ['#b9d77e', '#e0b25c', '#8fb7d9', '#d98f7a', '#c6a5e0', '#9fd9c4', '#e0d17a'];
 
 /** what a room's kind is built as: walled in a material, or open */
@@ -104,11 +104,15 @@ export function stageStory(story: SessionStory, d: StageGenDeps): StageGen {
         // (a way in from outside too, for the brief's first room: toward the player)
         if (r === rooms[0]) doors.push(Math.atan2(d.spawn[1] - c[1], d.spawn[0] - c[0]));
         const gap = 2.4 / r.r;
-        const n = Math.ceil((2 * Math.PI * r.r) / 1.1);
-        for (let k = 0; k < n; k++) {
-          const a = (k / n) * Math.PI * 2;
-          if (doors.some((g) => Math.abs(wrap(a - g)) < gap)) continue;
-          build(c[0] + Math.cos(a) * r.r, c[1] + Math.sin(a) * r.r, wall, 0.9, WALL_H);
+        // (two rings of columns, 0.8 apart along them: one ring of hex columns leaves slits a body can't pass
+        // but a path on a square grid thinks it can — round 88, the hero stuck against the bell chamber's wall)
+        for (const rr of [r.r, r.r + 0.9]) {
+          const n = Math.ceil((2 * Math.PI * rr) / 0.8);
+          for (let k = 0; k < n; k++) {
+            const a = (k / n) * Math.PI * 2;
+            if (doors.some((g) => Math.abs(wrap(a - g)) < gap)) continue;
+            build(c[0] + Math.cos(a) * rr, c[1] + Math.sin(a) * rr, wall, 0.9, WALL_H);
+          }
         }
       }
     }

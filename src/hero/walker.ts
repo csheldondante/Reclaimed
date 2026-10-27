@@ -10,10 +10,12 @@
 
 import type { Hero, HeroAbility, HeroCamera, HeroIntent, HeroWorld } from '../api/contracts/hero';
 import type { Actor, UnitView, V2, V3 } from '../api/contracts/units';
-import { findPath } from './path';
+import { canStep, findPath } from './path';
 
 const SPEED = 5.5;
-const STEP = 2.5;
+export const STEP = 2.5;
+/** water deeper than this (cells) it won't wade into */
+const DEEP = 1.2;
 const REACH = 2.6;
 /** the arc's half-angle's cosine (about 70° either side) */
 const ARC = 0.33;
@@ -58,6 +60,10 @@ export class Walker implements Hero {
   /** the way to the goal (waypoints), and when to look for it again */
   private route: V2[] | null = null;
   private repath = 0;
+  /** the ground as a path sees it: deep water is no way */
+  private dry = { heightAt: (x: number, y: number) => (this.wading || (this.world.water?.depthAt(x, y) ?? 0) <= DEEP ? this.world.ground.heightAt(x, y) : null) };
+  /** in deep water already: a path ignores the water (the way out is through it) */
+  private wading = false;
   private faction: string | null;
 
   constructor(
@@ -145,7 +151,8 @@ export class Walker implements Hero {
       const g = this.goal;
       const end = this.route?.[this.route.length - 1];
       if (!this.route || !end || Math.hypot(end[0] - g[0], end[1] - g[1]) > 1.5 || this.repath <= 0) {
-        this.route = findPath(this.world.ground, [this.pos[0], this.pos[1]], g, { step: STEP }) ?? [g];
+        this.wading = (this.world.water?.depthAt(this.pos[0], this.pos[1]) ?? 0) > DEEP;
+        this.route = findPath(this.dry, [this.pos[0], this.pos[1]], g, { step: STEP }) ?? [g];
         this.repath = 3;
       }
       while (this.route.length > 1 && Math.hypot(this.route[0][0] - this.pos[0], this.route[0][1] - this.pos[1]) < 0.7) this.route.shift();
@@ -173,7 +180,7 @@ export class Walker implements Hero {
             break;
           }
         }
-        if (this.pace === 0 && this.goal) this.repath = 0;
+        if (this.pace === 0 && this.goal) this.repath = Math.min(this.repath, 0.5);
       }
       this.phase = (this.phase + (this.pace * dt) / 2.2) % 1;
     }
@@ -224,10 +231,12 @@ export class Walker implements Hero {
     // ramp a stride at a time could walk up)
     const g = this.world.ground;
     const l = Math.hypot(dx, dy) || 1;
-    const here = g.heightAt(this.pos[0], this.pos[1]);
-    const ahead = g.heightAt(this.pos[0] + dx + (dx / l) * 0.5, this.pos[1] + dy + (dy / l) * 0.5);
     const z = g.heightAt(this.pos[0] + dx, this.pos[1] + dy, { smooth: true });
-    if (z === null || here === null || ahead === null || ahead - here > STEP) return false;
+    if (z === null || !canStep(g, this.pos[0], this.pos[1], this.pos[0] + dx + (dx / l) * 0.5, this.pos[1] + dy + (dy / l) * 0.5, STEP)) return false;
+    // (not into water over DEEP — but always out of it, toward shallower: a hero that ends up in a river wades out)
+    const wet = (x: number, y: number) => this.world.water?.depthAt(x, y) ?? 0;
+    const wa = wet(this.pos[0] + dx + (dx / l) * 0.5, this.pos[1] + dy + (dy / l) * 0.5);
+    if (wa > DEEP && wa >= wet(this.pos[0], this.pos[1])) return false;
     this.pos[0] += dx;
     this.pos[1] += dy;
     return true;

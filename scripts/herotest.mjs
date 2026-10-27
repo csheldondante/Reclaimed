@@ -21,7 +21,20 @@ try {
   // (flat ground, a wall wherever something was built: what the stage generator and the walkers read)
   const built = [];
   const terrain = {
-    heightAt: (x, y) => (x < 0 || y < 0 || x > 256 || y > 222 ? null : built.some((b) => Math.hypot(b.x - x, b.y - y) <= b.r) ? 104 : 100),
+    // (as edit.wgsl lays a build: full over the inner half, soft at the rim — on hex-ish columns, a cell apart)
+    heightAt: (x, y) => {
+      if (x < 0 || y < 0 || x > 256 || y > 222) return null;
+      const cx = Math.round(x);
+      const cy = Math.round(y);
+      let h = 0;
+      for (const b of built) {
+        const d = Math.hypot(b.x - cx, b.y - cy) / b.r;
+        if (d >= 1) continue;
+        const s = Math.min(1, Math.max(0, (1 - d) / 0.5));
+        h = Math.max(h, 6 * s * s * (3 - 2 * s));
+      }
+      return 100 + h;
+    },
     build: (x, y, m, o) => built.push({ x, y, m, r: o.radius ?? 3 }),
     dig: (x, y, o) => {
       for (let i = built.length - 1; i >= 0; i--) if (Math.hypot(built[i].x - x, built[i].y - y) <= (o.radius ?? 3)) built.splice(i, 1);
@@ -46,11 +59,20 @@ try {
       ['loc-mebe', 'reeve-hall'],
       ['loc-barrow', 'cairn-gate'],
       ['loc-barrow', 'ossuary'],
+      ['open', 'bone-door'],
+      ['loc-barrow', 'bell-chamber'],
+      ['loc-mebe', 'reeve-hall'],
       ['loc-mebe', 'mill'],
       ['loc-ford', 'sapling-ring'],
     ];
     const hero = new Walker({ ground: terrain, units }, [128, 111]);
     for (const [l, r] of route) {
+      if (l === 'open') {
+        // (the lock opened, as the run does with the key)
+        const k = stage.locks.find((x) => x.id === r);
+        terrain.dig(k.at[0], k.at[1], { radius: 2.9 });
+        continue;
+      }
       const to = R[l][r].at;
       let t = 0;
       const t0 = performance.now();
