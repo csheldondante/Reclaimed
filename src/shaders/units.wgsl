@@ -552,7 +552,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
     // never step where there's no link, nor off the place its field is
     // confined to: slide along instead
     let nc = clampCell(cellAt(p2));
-    let fp = select(0u, AP.fieldPlace[min(fld, 3u)], fld < AP.n.z);
+    let fp = select(0u, AP.fieldPlace[min(fld, 11u) / 4u][min(fld, 11u) % 4u], fld < AP.n.z);
     if (k < NAV_K && any(nc != c)) {
       var ok = false;
       for (var d = 0u; d < NDIR; d++) {
@@ -639,6 +639,16 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
     let ax = vec3<f32>(-sin(yaw), cos(yaw), 0.0);
     q = qmul(vec4<f32>(ax * sin(dd.w * 0.5), cos(dd.w * 0.5)), q);
   }
+  // (round 88) at work (its group's pose bit) or swinging: bent forward to a tool in its hands, rocking
+  let gm = AP.groupMat[grp / 4u][grp % 4u];
+  let swinging = state == ST_SWING;
+  let working = (((gm >> 8u) & 1u) != 0u && state < ST_TUMBLE) || swinging;
+  if (working) {
+    let ph = f32(G.tick) * 0.13 + f32(u) * 1.7;
+    let bend = select(0.2 + 0.3 * max(sin(ph), -0.3), 0.55 * sin(min(dd.y / 0.6, 1.0) * 3.1416), swinging);
+    let ax = vec3<f32>(-sin(yaw), cos(yaw), 0.0);
+    q = qmul(vec4<f32>(ax * sin(bend * 0.5), cos(bend * 0.5)), q);
+  }
   let sp = length(b.xy);
   let bob = select(abs(sin(b.w * 6.2832)) * 0.05 * h * min(sp, 1.0), 0.0, state >= ST_TUMBLE);
   // alight: a flicker of heat; hurt: a white flash (fsBody's physics-voxel glow, bits 16-23)
@@ -650,12 +660,17 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   let n = select(3u, km.y, km.y > 0u);
   let cv = carried[u];
   let holds = cv.x > 0.5 && state < ST_TUMBLE;
-  let base = atomicAdd(&drawArgs[1], n + select(0u, 1u, holds));
+  let base = atomicAdd(&drawArgs[1], n + select(0u, 1u, holds) + select(0u, 1u, working));
   let centre = a.xyz + mid + vec3<f32>(0.0, 0.0, bob);
   if (holds) {
     // its load, held up over its head
     let e = cv.y;
     putVoxel(base + n, centre + qrotv(q, vec3<f32>(0.0, 0.0, h + e * 0.5 + 0.05) - mid), u32(cv.x) | (min(u32(e * 16.0 + 0.5), 63u) << 24u) | glow, q);
+  }
+  if (working) {
+    // the tool (a pick, an axe, a blade): out in front at the hands, steel
+    let tp = vec3<f32>(0.36 * h, 0.1 * h, h * 0.55) - mid;
+    putVoxel(base + n + select(0u, 1u, holds), centre + qrotv(q, tp), 20u | (4u << 24u) | glow, q);
   }
   if (km.y > 0u) {
     // the kind's model: voxels round its feet, turned its way
@@ -669,7 +684,7 @@ fn unitDraw(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   // the default figure: legs, torso (its kind's colour, else its group's), head
   var torso = kind.c.z;
-  if (torso == 0u) { torso = AP.groupMat[grp / 4u][grp % 4u]; }
+  if (torso == 0u) { torso = gm & 0xffu; }
   let lg = h * 0.27;
   let ts = h * 0.4;
   let code = vec3<u32>(vec3<f32>(lg, ts, lg) * 16.0 + 0.5);

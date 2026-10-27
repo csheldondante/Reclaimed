@@ -151,6 +151,11 @@ Everything that makes the local world react. Its quality and cost are its own bu
 ### 6. Units and agents ◐ — branch `agents` (and the hoverbike session's heroes)
 Units that walk, work, build, shape terrain, fight and flee.
 - **Has:** docs/AGENTS.md (walkable surfaces from intervals, flow-field groups, jobs as fields; on `agents`).
+- **Has (round 88, `settlements`):** the `Units` contract (api/contracts/units.ts, runstory's) on the GPU agents
+  (src/units/agent-units.ts); settlements' people on their rounds (quarry, fell, haul, build, farm, guard) and raids
+  (src/settle/life.ts). Settlements themselves (system 12's data, realised at arrival by system 3's hook):
+  `settlements.near(at, r)`, `settlement(id)`, `all()`, `live()`, `plan(id)`, `raid(id?)`; events `built`, `died`,
+  `raided` (src/settle/settlements.ts; ARCHITECTURE.md "Settlements and units in play").
 - **Not yet:** a unit generator (archetypes by role, faction and era); attitudes tied to factions; work that
   visibly shapes terrain in play (it goes through the world API's edits like any other).
 - **API:**

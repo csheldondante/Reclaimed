@@ -38,13 +38,13 @@ struct AgentParams {
   // x units, y seeds, z fields in use, w ticks
   n: vec4<u32>,
   // x, y, z (world), w the field it seeds
-  seeds: array<vec4<f32>, 32>,
+  seeds: array<vec4<f32>, 48>,
   // per group (16): the field it follows, and the material it's drawn in
   groupField: array<vec4<u32>, 4>,
   groupMat: array<vec4<u32>, 4>,
   // per field: the place it's confined to (0 anywhere; bit 31 a region,
   // else a room): its distances live only on that place's surfaces
-  fieldPlace: vec4<u32>,
+  fieldPlace: array<vec4<u32>, 3>,
   // x hits this tick, y targets, z events capacity, w the fields with seeds (bit per field)
   n2: vec4<u32>,
   // the kinds of unit (units.wgsl Kind)
@@ -53,7 +53,7 @@ struct AgentParams {
   hits: array<Hit, 32>,
   // what hostile kinds go for (the player's units): x, y, z (its feet), radius
   targets: array<vec4<f32>, 8>,
-  // x holds, y launches, z regroups this tick
+  // x holds, y launches, z regroups this tick, w the fields to clear (left without seeds: set unreachable once)
   n3: vec4<u32>,
   // units the game holds (a lich, a gorilla): where (x, y, z) and the slot (w)
   holds: array<vec4<f32>, 8>,
@@ -231,8 +231,12 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
     if (z < 0.0) { break; }
     for (var f = 0u; f < AP.n.z; f++) {
       // (confined: off its place, nothing; a field with no seeds: nowhere)
-      let fp = AP.fieldPlace[f];
-      if ((AP.n2.w & (1u << f)) == 0u || (fp != 0u && !onPlace(s, fp))) {
+      let fp = AP.fieldPlace[f / 4u][f % 4u];
+      if ((AP.n2.w & (1u << f)) == 0u) {
+        if (((AP.n3.w >> f) & 1u) != 0u) { dist[f * N + s] = FAR; }
+        continue;
+      }
+      if (fp != 0u && !onPlace(s, fp)) {
         dist[f * N + s] = FAR;
         continue;
       }

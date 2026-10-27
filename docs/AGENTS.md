@@ -58,7 +58,9 @@ cells) of air above it.
   fraction of a second.
 
 **Fields.** Each field holds a distance to its seeds on every surface.
-- `NFIELDS` (4) fields, shared by every group following the same one.
+- `NFIELDS` (12; 4 until round 88) fields, shared by every group following the same one. A field
+  with no seeds is set unreachable once and then skipped (round 88); with no units, nothing in
+  flight and nothing seeded, the pass does nothing at all.
 - Sweeps a tick, in place: the quality's `agentSweeps` (low 2, medium 4,
   high 8; `agents.sweeps` at run time). The fields' fixed cost is the map's
   size × the sweeps (about 0.2 ms a sweep on a 256 map on a desktop GPU), so
@@ -243,7 +245,7 @@ agents.toss('stone', 2, from, vel, hit?)  // a load flying free (a boulder a gia
 agents.inFlight                           // [{ id, material, amount, x, y, z }]
 ```
 
-Limits: 8,192 units, 16 groups, 4 fields, 32 seeds; each throws past its
+Limits: 8,192 units, 16 groups, 12 fields, 48 seeds (round 88); each throws past its
 limit.
 
 ## Measured (scripts/agentstest.mjs, the 256 × 256 sandbox)

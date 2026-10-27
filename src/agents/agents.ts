@@ -25,10 +25,10 @@ import { FieldReader } from './fieldreader';
 export const NAV_K = 4;
 /** unit slots (units.wgsl MAX_SLOTS: an id is generation × MAX_UNITS + slot) */
 export const MAX_UNITS = 8192;
-export const NFIELDS = 4;
+export const NFIELDS = 12;
 export const MAX_GROUPS = 16;
 export const MAX_KINDS = 8;
-const MAX_SEEDS = 32;
+const MAX_SEEDS = 48;
 const MAX_HITS = 32;
 const MAX_TARGETS = 8;
 const MAX_HOLDS = 8;
@@ -44,7 +44,7 @@ const P_SEEDS = 4;
 const P_GFIELD = P_SEEDS + MAX_SEEDS * 4;
 const P_GMAT = P_GFIELD + 16;
 const P_FPLACE = P_GMAT + 16;
-const P_N2 = P_FPLACE + 4;
+const P_N2 = P_FPLACE + 12;
 const P_KINDS = P_N2 + 4;
 const P_HITS = P_KINDS + MAX_KINDS * 12;
 const P_TARGETS = P_HITS + MAX_HITS * 16;
@@ -243,6 +243,9 @@ export class Agents implements SimSystem {
   private seeds: (Seed & { field: number })[] = [];
   private groupField = new Uint32Array(MAX_GROUPS).fill(0xffffffff);
   private fieldsUsed = 0;
+  private wasSeeded = 0;
+  /** per group: drawn at work (round 88: bent to a tool, a tool in hand) */
+  private groupPose = new Uint32Array(MAX_GROUPS);
   private kinds: (KindSpec | undefined)[] = [];
   private kindModel = new Uint32Array(MAX_KINDS * 4);
   private modelVoxels = 0;
@@ -253,6 +256,8 @@ export class Agents implements SimSystem {
   private launches: [number, number, number, number][] = [];
   private regroups: number[] = [];
   private ticks = 0;
+  /** the surfaces weren't peeled while idle (round 88): peel on the next tick that needs them */
+  private navStale = true;
   /** events that didn't fit the buffer, all told (0 normally) */
   dropped = 0;
 
@@ -404,7 +409,7 @@ export class Agents implements SimSystem {
    * surface there. Returns their ids (generation × MAX_UNITS + slot: an id
    * stays unique when its slot is reused).
    */
-  spawn(n: number, x: number, y: number, opts: { group?: number; kind?: number | string; spread?: number } = {}): number[] {
+  spawn(n: number, x: number, y: number, opts: { group?: number; kind?: number | string; spread?: number; hp?: number } = {}): number[] {
     const g = opts.group ?? 0;
     if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents: group ${g} out of 0..${MAX_GROUPS - 1}`);
     const kind = typeof opts.kind === 'string' ? this.kindId(opts.kind) : (opts.kind ?? 0);
@@ -427,7 +432,7 @@ export class Agents implements SimSystem {
       d[2] = 1e4;
       u[3] = g | (1 << 8) | (kind << 9) | (gen << 16);
       d[7] = Math.random();
-      d[8] = spec.hp;
+      d[8] = opts.hp ?? spec.hp;
       d[11] = a;
       d[15] = Math.random() * Math.PI * 2;
       this.device.queue.writeBuffer(this.units, slot * UNIT_BYTES, d);
@@ -485,6 +490,12 @@ export class Agents implements SimSystem {
     if (f >= NFIELDS) throw new Error(`agents: field ${f} out of 0..${NFIELDS - 1}`);
     this.groupField[g] = f < 0 ? 0xffffffff : f;
     this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
+  }
+
+  /** Group `g`'s units are drawn at work (round 88): bending to a tool in their hands, while they stand. */
+  workPose(g: number, on: boolean): void {
+    if (g < 0 || g >= MAX_GROUPS) throw new Error(`agents.workPose: group ${g} out of 0..${MAX_GROUPS - 1}`);
+    this.groupPose[g] = on ? 1 : 0;
   }
 
   /** Field `f`'s seeds (its distance is 0 there): a goal, a stockpile, a threat. */
@@ -953,12 +964,15 @@ export class Agents implements SimSystem {
     for (let g = 0; g < MAX_GROUPS; g++) {
       // (a group following nothing reads past the fields in use: it stands)
       u[P_GFIELD + g] = this.groupField[g] === 0xffffffff ? NFIELDS : this.groupField[g];
-      u[P_GMAT + g] = GROUP_MATS[g % GROUP_MATS.length];
+      u[P_GMAT + g] = GROUP_MATS[g % GROUP_MATS.length] | (this.groupPose[g] << 8);
     }
     u.set(this.fieldPlace, P_FPLACE);
     let seeded = 0;
     for (const s of this.seeds) seeded |= 1 << s.field;
     u.set([hits.length, this.targets.length, EVENT_CAP, seeded], P_N2);
+    // (round 88: a field left without seeds is set unreachable once, then skipped — not rewritten every sweep)
+    const clear = this.wasSeeded & ~seeded;
+    this.wasSeeded = seeded;
     this.kinds.forEach((k, i) => {
       if (!k) return;
       const o = P_KINDS + i * 12;
@@ -991,7 +1005,7 @@ export class Agents implements SimSystem {
     const holds = [...this.holds].slice(0, MAX_HOLDS);
     const launches = this.launches.splice(0, MAX_LAUNCHES);
     const regroups = this.regroups.splice(0, MAX_REGROUPS);
-    u.set([holds.length, launches.length, regroups.length, 0], P_N3);
+    u.set([holds.length, launches.length, regroups.length, clear], P_N3);
     u.set(regroups, P_REGROUPS);
     holds.forEach(([slot, p], i) => f.set([p[0], p[1], p[2], slot], P_HOLDS + i * 4));
     launches.forEach((l, i) => f.set(l, P_LAUNCHES + i * 4));
@@ -1002,8 +1016,16 @@ export class Agents implements SimSystem {
     // (the tick number rides in the params: the occupancy halves swap on it)
     this.writeParams(this.hits.splice(0, MAX_HITS));
     const [gx, gy] = this.world.groups;
+    // (round 88: no units, nothing in flight and no field seeded — nothing reads the surfaces or the fields, so
+    // neither is made; the first tick that needs them peels at once)
+    if (this.count - this.free.length === 0 && this.flights.length === 0 && this.seeds.length === 0) {
+      this.navStale = true;
+      this.ticks++;
+      return;
+    }
     const pass = enc.beginComputePass({ label: 'agents', timestampWrites: this.prof.timestamps('agents') });
-    if (this.ticks % PEEL_EVERY === 0) {
+    if (this.ticks % PEEL_EVERY === 0 || this.navStale) {
+      this.navStale = false;
       pass.setBindGroup(0, this.peelGroup);
       pass.setPipeline(this.k.surfaces.pipeline);
       pass.dispatchWorkgroups(gx, gy);

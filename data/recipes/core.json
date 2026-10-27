@@ -1,0 +1,61 @@
+{
+  "about": "The first content for the recipe model (round 88, BACKLOG R4 minimal; src/api/contracts/recipe.ts). Materials, the kinds a settlement is made of, how they're put together, and the rules that derive what a building is for. `voxel` names the world's material (src/world/materials.ts MAT) it is drawn as.",
+  "materials": [
+    { "id": "fieldstone", "name": "fieldstone", "tags": ["stone"], "props": { "hardness": 0.8, "weight": 0.9 }, "tint": [0.42, 0.41, 0.39], "voxel": "Stone" },
+    { "id": "sandstone", "name": "sandstone", "tags": ["stone", "soft"], "props": { "hardness": 0.5, "weight": 0.8 }, "ages": [{ "into": "sand", "rate": 0.01, "when": "wet" }], "tint": [0.78, 0.6, 0.42], "voxel": "Sandstone" },
+    { "id": "basalt", "name": "basalt", "tags": ["stone", "dark"], "props": { "hardness": 0.9, "weight": 1 }, "tint": [0.2, 0.2, 0.22], "voxel": "Basalt" },
+    { "id": "timber", "name": "timber", "tags": ["wood"], "props": { "hardness": 0.3, "weight": 0.4, "flammability": 0.8 }, "ages": [{ "into": "rotten-timber", "rate": 0.03, "when": "wet" }], "tint": [0.45, 0.31, 0.18], "voxel": "Wood" },
+    { "id": "log", "name": "logs", "tags": ["wood", "raw"], "props": { "hardness": 0.3, "weight": 0.5, "flammability": 0.8 }, "tint": [0.4, 0.28, 0.16], "voxel": "Log" },
+    { "id": "plaster", "name": "lime plaster", "tags": ["render"], "props": { "hardness": 0.3, "weight": 0.5 }, "tint": [0.86, 0.82, 0.74], "voxel": "Plaster" },
+    { "id": "tile", "name": "clay tile", "tags": ["ceramic"], "props": { "hardness": 0.5, "weight": 0.6 }, "tint": [0.62, 0.3, 0.2], "voxel": "Tile" },
+    { "id": "brick", "name": "brick", "tags": ["ceramic", "fired"], "props": { "hardness": 0.6, "weight": 0.8 }, "tint": [0.6, 0.3, 0.22], "voxel": "Brick" },
+    { "id": "concrete", "name": "concrete", "tags": ["stone", "ancient-make"], "props": { "hardness": 0.8, "weight": 1 }, "ages": [{ "into": "rubble", "rate": 0.005, "when": "always" }], "tint": [0.66, 0.65, 0.62], "voxel": "Concrete" },
+    { "id": "steel", "name": "steel", "tags": ["metal"], "props": { "hardness": 0.9, "weight": 1, "conductivity": 0.8 }, "ages": [{ "into": "rust", "rate": 0.05, "when": "wet" }], "tint": [0.55, 0.56, 0.58], "voxel": "Steel" },
+    { "id": "rust", "name": "rusted iron", "tags": ["metal", "aged"], "props": { "hardness": 0.5, "weight": 0.9 }, "tint": [0.5, 0.29, 0.17], "voxel": "Rust" },
+    { "id": "canvas", "name": "canvas", "tags": ["fibre"], "props": { "hardness": 0.05, "weight": 0.1, "flammability": 1 }, "tint": [0.76, 0.7, 0.55], "voxel": "Canvas" },
+    { "id": "soil", "name": "tilled soil", "tags": ["earth"], "props": { "fertility": 1 }, "tint": [0.45, 0.36, 0.27], "voxel": "Soil" },
+    { "id": "grain", "name": "grain", "tags": ["food", "crop"], "props": { "weight": 0.2 }, "tint": [0.85, 0.75, 0.4], "voxel": "Leaves" },
+    { "id": "ore", "name": "ore", "tags": ["raw", "mineral"], "props": { "weight": 1 }, "tint": [0.45, 0.4, 0.38], "voxel": "Stone" }
+  ],
+  "kinds": [
+    { "id": "person", "name": "person", "tags": ["person", "living"], "base": { "strength": 1, "speed": 1 } },
+    { "id": "room", "name": "room", "tags": ["room"] },
+    { "id": "hearth", "name": "hearth", "tags": ["facility", "hearth", "warmth"] },
+    { "id": "forge", "name": "forge", "tags": ["facility", "forge", "heat"] },
+    { "id": "kiln", "name": "kiln", "tags": ["facility", "kiln", "heat"] },
+    { "id": "bin", "name": "grain bin", "tags": ["facility", "storage"] },
+    { "id": "altar", "name": "altar", "tags": ["facility", "shrine"] },
+    { "id": "bench", "name": "workbench", "tags": ["facility", "workshop"] },
+    { "id": "house", "name": "house", "tags": ["structure", "building"], "slots": [{ "id": "room", "accepts": { "all": ["room"] }, "count": 1 }, { "id": "fitting", "accepts": { "all": ["facility"] }, "optional": true, "count": 2 }] },
+    { "id": "hall", "name": "hall", "tags": ["structure", "building", "large", "civic"], "slots": [{ "id": "room", "accepts": { "all": ["room"] }, "count": 1 }, { "id": "fitting", "accepts": { "all": ["facility"] }, "optional": true, "count": 3 }] },
+    { "id": "granary", "name": "granary", "tags": ["structure", "building"], "slots": [{ "id": "fitting", "accepts": { "all": ["storage"] }, "count": 1 }] },
+    { "id": "workshop", "name": "workshop", "tags": ["structure", "building"], "slots": [{ "id": "room", "accepts": { "all": ["room"] } }, { "id": "fitting", "accepts": { "all": ["facility"] }, "count": 1 }] },
+    { "id": "well", "name": "well", "tags": ["structure", "water", "civic"] },
+    { "id": "stall", "name": "market stall", "tags": ["structure", "trade", "civic"] },
+    { "id": "wall", "name": "town wall", "tags": ["structure", "fortification"] },
+    { "id": "field", "name": "field", "tags": ["land", "farmland"], "base": { "yield": 1 } },
+    { "id": "megastructure", "name": "ruined tower", "tags": ["structure", "ancient", "tall"], "material": "concrete" },
+    { "id": "camp", "name": "raiders' camp", "tags": ["structure", "camp", "hostile"], "material": "canvas" }
+  ],
+  "recipes": [
+    { "id": "house", "name": "build a house", "how": "assemble", "makes": "house", "slots": [{ "id": "room", "accepts": { "all": ["room"] } }], "needs": { "work": 40 } },
+    { "id": "hall", "name": "raise a hall", "how": "assemble", "makes": "hall", "slots": [{ "id": "room", "accepts": { "all": ["room"] } }], "needs": { "work": 160 } },
+    { "id": "granary", "name": "build a granary", "how": "assemble", "makes": "granary", "slots": [{ "id": "fitting", "accepts": { "all": ["storage"] } }], "needs": { "work": 60 } },
+    { "id": "smithy", "name": "fit out a smithy", "how": "assemble", "makes": "workshop", "slots": [{ "id": "room", "accepts": { "all": ["room"] } }, { "id": "fitting", "accepts": { "all": ["forge"] } }], "needs": { "facilities": [{ "all": ["forge"] }], "work": 80 }, "knowledge": "smithing" },
+    { "id": "apartments", "name": "make a ruin into homes", "how": "adapt", "subject": { "all": ["structure", "ancient"] }, "gains": ["adapted"], "slots": [{ "id": "room", "accepts": { "all": ["room"] }, "count": 1 }], "needs": { "work": 120 }, "knowledge": "masonry" },
+    { "id": "field", "name": "clear a field", "how": "assemble", "makes": "field", "slots": [], "needs": { "work": 20 } }
+  ],
+  "rules": [
+    { "id": "housing", "when": { "all": ["structure", "has:room"], "none": ["civic"] }, "tags": ["housing"], "add": { "beds": 4 } },
+    { "id": "tower-homes", "when": { "all": ["tall", "has:room"] }, "add": { "beds": 12 } },
+    { "id": "storage", "when": { "any": ["fitting:storage", "storage"] }, "tags": ["store"], "add": { "storage": 200 } },
+    { "id": "smithy", "when": { "all": ["fitting:forge"] }, "tags": ["smithy"], "abilities": ["make-tools"] },
+    { "id": "hearth", "when": { "all": ["fitting:hearth"] }, "add": { "warmth": 1 } },
+    { "id": "civic", "when": { "all": ["civic", "large"] }, "tags": ["meeting-hall"], "abilities": ["muster"] },
+    { "id": "shrine", "when": { "all": ["fitting:shrine"] }, "tags": ["temple"] },
+    { "id": "defence", "when": { "any": ["fortification"] }, "tags": ["defence"], "add": { "defence": 5 } },
+    { "id": "farmland", "when": { "all": ["farmland"] }, "tags": ["farm"], "add": { "grain": 2 } },
+    { "id": "ruin-unmet", "when": { "all": ["ancient", "structure"], "none": ["has:room"] }, "unmet": "a ruin: nobody lives in it until it's adapted" },
+    { "id": "worker", "when": { "all": ["person"] }, "abilities": ["work"] }
+  ]
+}
