@@ -548,6 +548,16 @@ fn spillOut(p: vec2<i32>) -> Spill {
     if (r < n && abs(ivZ1(v) - ivZ0(layers[cs.x + r])) > 1e-3) { break; }
     r -= 1u;
   }
+  // (round 88) the loose intervals under something solid, through the loose ones touching them: a bit each
+  var pinned = 0u;
+  var pin = false;
+  for (var t = n; t > 0u; t--) {
+    let v = layers[cs.x + t - 1u];
+    let loose = matState(ivMat(v)) == ST_GRANULAR;
+    let touch = t < n && abs(ivZ0(layers[cs.x + t]) - ivZ1(v)) < 1e-3;
+    pin = loose && touch && (pin || matState(ivMat(layers[cs.x + t])) != ST_GRANULAR);
+    if (pin) { pinned |= 1u << (t - 1u); }
+  }
   for (var si = 0u; si < n; si++) {
     let v = layers[cs.x + si];
     // (the run on top: only into a neighbour's air under a roof — the open
@@ -555,6 +565,9 @@ fn spillOut(p: vec2<i32>) -> Spill {
     let onTop = si >= r;
     let m = ivMat(v);
     if (matState(m) != ST_GRANULAR) { continue; }
+    // (round 88) loose ground holding up something solid resting on it stays: running out from under a slab of
+    // rock or basalt it left the slab over air (sand doesn't flow from under what lies on it — it would fall)
+    if ((pinned & (1u << si)) != 0u) { continue; }
     let a = ivZ0(v);
     let b = ivZ1(v);
     let rep = reposeAt(p, m);

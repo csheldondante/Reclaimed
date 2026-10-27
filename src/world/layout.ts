@@ -198,6 +198,18 @@ export function splitColumn(col: Interval[], oz: number, zMax: number): { inside
   return { inside, outside };
 }
 
+/**
+ * (round 88) A column's water once cut at oz: what of it lies in the window — the depth over its top there, or,
+ * where its ground lies under the window's floor (nothing inside: the sea's floor out of reach), over the floor,
+ * up to the water's level `level` (world z: its ground's top plus its depth). None where its top is over the
+ * window. (The sea's columns cut under the floor came in dry: the sea beside them stood over the floor as a wall.)
+ */
+export function waterInWindow(cut: { inside: Interval[]; outside: Interval[] }, oz: number, zMax: number, level: number): number {
+  if (cut.outside.some((iv) => iv.z0 >= oz + zMax - 1e-4)) return 0;
+  const top = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+  return Math.max(0, Math.min(level - oz, zMax) - top);
+}
+
 /** The whole column again (world z): what's in the window at oz, and what's outside it; pieces cut at the window's edges joined. */
 export function joinColumn(inside: Interval[], oz: number, outside: Interval[]): Interval[] {
   const all = [...outside.map((iv) => ({ z0: iv.z0, z1: iv.z1, mat: iv.mat })), ...inside.map((iv) => ({ z0: iv.z0 + oz, z1: iv.z1 + oz, mat: iv.mat, aux: iv.aux }))].sort((a, b) => a.z0 - b.z0);

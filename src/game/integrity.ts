@@ -12,7 +12,7 @@
 
 import { packColumn, readColumn, columnSlots, SLOT_WORDS, type Interval } from '../world/layout';
 import { MAT } from '../world/materials';
-import { analyse, analyseRock, WorldVox, type Fracture, type Voxel } from './fracture';
+import { analyse, analyseRock, floatingRuns, WorldVox, type Fracture, type Voxel } from './fracture';
 import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
 import { ignoreTeardown } from '../gpu/pipeline';
@@ -94,7 +94,7 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -155,7 +155,41 @@ export class Integrity {
   cutAt(x: number, y: number, r: number): void {
     this.markDirty(x, y, r + 14, Math.max(0.5, r));
     this.urgent = true;
+    // (round 88: the bore's melt drains on after the beam moves on)
+    this.watch(x, y, r + 1, 6);
   }
+
+  /**
+   * (round 88) These columns (window cells, y · 65536 + x) were changed by something that isn't an edit event — a
+   * great meteor's window edit: what hangs by them is judged, at once.
+   */
+  cutCols(keys: Iterable<number>): void {
+    for (const k of keys) this.rockSeeds.set(k, 2);
+    this.urgent = true;
+  }
+
+  /**
+   * (round 88, the tests' ground truth) The window's layers read back whole now: every run holding something solid
+   * with no way to the ground (fracture.ts floatingRuns), and how many runs there are.
+   */
+  async scan(): Promise<{ runs: number; floating: { x: number; y: number; z0: number; z1: number; mat: number }[]; ms: number }> {
+    const f = await this.core.readBuffer('layers');
+    const t0 = performance.now();
+    const r = floatingRuns(new WorldVox(this.core.packed, new Uint32Array(f.buffer, f.byteOffset, f.byteLength / 4)));
+    return { ...r, ms: performance.now() - t0 };
+  }
+
+  /**
+   * (round 88) The ground round (x, y) within r goes on changing for `secs` after an edit — a meteor's rim melting
+   * and setting to basalt over its bowl (lava.wgsl), a beam's bore draining: judged as cut once a second until then
+   * (the sweep's floating basalt crusts).
+   */
+  watch(x: number, y: number, r: number, secs: number): void {
+    const w = this.watches.find((w) => Math.hypot(w.x - x, w.y - y) < w.r / 2 && r <= w.r * 1.5);
+    if (w) w.left = Math.max(w.left, secs);
+    else this.watches.push({ x, y, r, left: secs, next: 0 });
+  }
+  private watches: { x: number; y: number; r: number; left: number; next: number }[] = [];
 
   /** (round 83) the columns within r of (x, y) were cut: the rock by them is judged, two passes */
   markCut(x: number, y: number, r: number): void {
@@ -190,6 +224,8 @@ export class Integrity {
     this.pendingLoose.clear();
     this.dirty = [];
     this.rockSeeds.clear();
+    // (a great meteor's window edit keeps watching its rim)
+    if (!reseed) this.watches = [];
     this.readEpoch = -1;
     if (reseed)
       for (const b of was)
@@ -385,6 +421,15 @@ export class Integrity {
       for (const b of this.falling.list) this.touch(b, false);
     }
     this.t -= dt;
+    for (const w of this.watches) {
+      w.left -= dt;
+      w.next -= dt;
+      if (w.next <= 0) {
+        w.next = 1;
+        this.markCut(w.x, w.y, w.r);
+      }
+    }
+    if (this.watches.length) this.watches = this.watches.filter((w) => w.left > 0);
     // (round 86: a cut waits for its event to be sent — the world API marks it as it's queued — then goes at once)
     const cutQueued = this.urgent && this.core.globals.events.some((e) => e.kind === EventKind.Edit && CUTS.has(editOpOf(e.z ?? 0)));
     const due = (this.urgent && !cutQueued) || this.t <= 0;
@@ -395,10 +440,16 @@ export class Integrity {
     this.busy = true;
     this.inflight = new Map();
     // the layers (structures, solid ground; the loose ground on them too)
-    const read = READ_NEAR ? this.readNear() : this.core.readBuffer('layers').then((f) => ((this.readBytes += f.byteLength), f));
+    const read = READ_NEAR ? this.readNear() : this.core.readBuffer('layers').then((f) => ((this.readBytes += f.byteLength), (this.fresh = null), f));
     void read.then((f) => {
       this.busy = false;
       this.timing.readAt = performance.now();
+      // (round 88: the window slid while it was read — nothing judged on that, the seeds kept for the next look)
+      if (f === 'slid') {
+        this.inflight = null;
+        this.urgent = true;
+        return;
+      }
       if (f) this.world.slots = new Uint32Array(f.buffer);
       // (what was written meanwhile, and the columns pieces fall through: as they are, not as the readback had them)
       for (const [k, col] of this.inflight ?? []) this.writeColumn(k % 65536, Math.floor(k / 65536), col, true, false);
@@ -484,16 +535,31 @@ export class Integrity {
 
   /** (intread=near) the window's epoch the CPU copy is of, and bytes read back so far (scripts read it) */
   private readEpoch = -1;
+  /**
+   * (round 88) the chunks (index in the chunk table) read back for this pass — the CPU copy holds them as the GPU
+   * has them now; null: all of it. A piece of rock reaching past them is judged once those it reached are read
+   * (`needChunks`): one falling from columns the copy last saw seconds ago would write them back as they were.
+   */
+  private fresh: Set<number> | null = null;
+  private needChunks = new Set<number>();
+  /** the chunk (index in the chunk table) a column is in */
+  private chunkOf(x: number, y: number): number {
+    return Math.floor(y / 16) * this.core.packed.chunksX + Math.floor(x / 16);
+  }
   readBytes = 0;
 
   /** (intread=near) the chunks a pass looks at, read back into the CPU copy of the layers (whole after a slide) */
-  private async readNear(): Promise<Float32Array | null> {
+  private async readNear(): Promise<Float32Array | null | 'slid'> {
     const core = this.core;
     if (!this.world.slots.length || core.windowEpoch !== this.readEpoch) {
       const e = core.windowEpoch;
       const f = await core.readBuffer('layers');
+      // (round 88: it slid again meanwhile — what came back is of neither)
+      if (core.windowEpoch !== e) return 'slid';
       this.readEpoch = e;
       this.readBytes += f.byteLength;
+      this.fresh = null;
+      this.needChunks.clear();
       return f;
     }
     const p = core.packed;
@@ -516,7 +582,11 @@ export class Integrity {
       for (const v of b.local) r = Math.max(r, Math.hypot(v.p[0], v.p[1], v.p[2]));
       box(b.pos[0] - r - 4, b.pos[1] - r - 4, b.pos[0] + r + 4, b.pos[1] + r + 4);
     }
+    // (round 88) the columns a piece reached last pass that the copy didn't hold as they are
+    for (const ci of this.needChunks) want.add(ci);
+    this.needChunks.clear();
     // (the pieces falling in the columns need nothing read: what they fall onto is their columns' base)
+    this.fresh = want;
     if (!want.size) return null;
     const dev = core.host.gpu.device;
     const ranges: [number, number][] = [];
@@ -541,7 +611,7 @@ export class Integrity {
     if (core.windowEpoch !== e) {
       tmp.destroy();
       this.readEpoch = -1;
-      return null;
+      return 'slid';
     }
     const all = new Uint32Array(tmp.getMappedRange());
     o = 0;
@@ -558,9 +628,32 @@ export class Integrity {
     const t0 = performance.now();
     // a sleeping body with nothing left under it (broken, dug, washed out) wakes
     for (const b of this.bodies.list) if (b.asleep && !this.bodies.supported(b)) this.bodies.wake(b);
+    this.stats.passes++;
+    // (round 83) rock, by the columns an edit cut: the hanging runs by them, and only those. (Round 88: first —
+    // it takes what hangs free whole, whatever it's made of; the structures' boxes then see what's left)
+    if (this.rockSeeds.size) {
+      const seeds: [number, number][] = [];
+      for (const [k, left] of this.rockSeeds) {
+        seeds.push([k % 65536, Math.floor(k / 65536)]);
+        if (left > 1) this.rockSeeds.set(k, left - 1);
+        else this.rockSeeds.delete(k);
+      }
+      const fresh = this.fresh;
+      const known = fresh ? (x: number, y: number) => fresh.has(this.chunkOf(x, y)) : undefined;
+      const r = analyseRock(this.world, seeds, known);
+      this.stats.rockSeeds += seeds.length;
+      // (round 88) a piece reaching columns not read this pass: they're read, it's judged again at once
+      if (r.undecided?.length) {
+        for (const [x, y] of r.need ?? []) this.needChunks.add(this.chunkOf(x, y));
+        for (const [x, y] of r.undecided) this.rockSeeds.set(y * 65536 + x, Math.max(1, this.rockSeeds.get(y * 65536 + x) ?? 0));
+        this.stats.rereads++;
+        this.urgent = true;
+      }
+      // (what gave: its columns looked at again, what it held now hanging free)
+      if (this.apply(r)) for (const c of r.crumbleRuns ?? []) this.rockSeeds.set(c.y * 65536 + c.x, 2);
+    }
     const boxes = this.dirty;
     this.dirty = [];
-    this.stats.passes++;
     for (const [x0, y0, x1, y1, left] of boxes) {
       if (left > 1) this.dirty.push([x0, y0, x1, y1, left - 1]);
       const r = analyse(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
@@ -575,18 +668,6 @@ export class Integrity {
         const h = x1 - x0;
         this.dirty.push([cx - h, cy - h, cx + h, cy + h, 1]);
       }
-    }
-    // (round 83) rock, by the columns an edit cut: the hanging runs by them, and only those
-    if (this.rockSeeds.size) {
-      const seeds: [number, number][] = [];
-      for (const [k, left] of this.rockSeeds) {
-        seeds.push([k % 65536, Math.floor(k / 65536)]);
-        if (left > 1) this.rockSeeds.set(k, left - 1);
-        else this.rockSeeds.delete(k);
-      }
-      const r = analyseRock(this.world, seeds);
-      // (what gave: its columns looked at again, what it held now hanging free)
-      if (this.apply(r)) for (const c of r.crumbleRuns ?? []) this.rockSeeds.set(c.y * 65536 + c.x, 2);
     }
     this.stats.lastMs = performance.now() - t0;
   }

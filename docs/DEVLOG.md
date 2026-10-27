@@ -6513,3 +6513,116 @@ agents at the same time; main asked for a small, general contract to code agains
   the world API's heightAt (a climb over 1.6 cells refused, sliding along the face), push-apart, a readable
   fight (a 0.45 s wind-up, then the blow lands if still in reach; a flinch and knockback when hit; the dead lie
   4 s). The GPU agents replace it behind the same interface.
+  coming down on its stub).
+
+## Round 88 — the sea held over a raised window floor (`seawall`)
+
+The user, on the phone at the atlas level (hybrid, rivers=table, simcull): "I did find what looks like a bug with
+sea level where I saw a steep wall of water."
+
+Looked for first (scripts/seawall.mjs: six coasts and river mouths, q=low 412x915, default zoom and 10; the window's
+water read back and every wet column standing over a neighbour's level by more than 3 counted,
+scripts/seawallprobe.mjs): where the window's floor is at 0 (oz 0, the usual at a coast) the window's sea and the
+rings' agree (both world 90; Globals ocean.x = 90 - oz), no sea column stands over its neighbours, and the open
+edges show no water face. The candidates in the brief (the seam, the hybrid grid, Renderer.openEdges, shore swell)
+were not it.
+
+The wall comes when the window's floor is over 0 by the sea — oz 32 or 64, which a warp picks at a coast with high
+land and which the window slides to when the player walks up a mountain (Streamer.slideZ, the ground under the
+camera over zMax - 40). Then the sea's floor near the shore lies under the window: those columns have nothing in
+the window (sfCount 0). They came in dry (Streamer.cutRegion / reslice / slideZNow and Atlas.window zeroed the
+water of any column whose top wasn't inside), and water_depth.wgsl emptied whatever ran into them each step
+("what runs in falls on out of the window", round 69). The sea beside them, held at its level by the edge rule,
+stood over the dry floor as a cliff of water: at 11600,18213 after one slide up (oz 32 -> 64, seaZ 26), 2404
+columns cut off, none wet, 151 wall faces all at the sea's level, 26 tall. And they drained the sea into nothing.
+
+The fix (the cause, both ends):
+- layout.ts `waterInWindow(cut, oz, zMax, level)`: what of a column's water lies in the window — over its top
+  there, or over the window's floor where its ground is under it, up to the water's level (world z: its ground's
+  top plus its depth); nothing where its top is over the window. The four places that cut columns (Atlas.window,
+  Streamer.cutRegion, reslice, slideZNow) use it: a column under the sea comes in, or keeps on a slide, the sea
+  from the floor up (depth seaZ), and one that comes back inside on a slide down gets its depth over the real
+  ground back (it was zeroed then too: wasTop was false for a cut-off column).
+- water_depth.wgsl: a column with nothing in it drains what runs in only where there's no sea (Globals ocean.x
+  <= 0, the -1e9 of a level without one); under the sea it's the sea's, full below the floor.
+  (A hollow on land under the window's floor would hold water too, if the window's floor is under the sea's level
+  there — the atlas has no dry land under the sea's level away from the sea, so it isn't seen.)
+
+In the hybrid, a chunk whose land is past the window's floor is the rings' (round 86: the atlas's sea at 90, the
+same level); the rest are the grid's, which draws the window's own water — now the sea over the floor where it
+drew the dry floor beside the sea's wall.
+
+driveprofile isn't the measure here: no GPU work was added (one comparison a column in water_depth), and the
+CPU's cuts already walk every column. The repro (scripts/seawallslide.mjs: the atlas level at 11600,18213, q=low
+412x915, the window slid up one tier as walking up the coast's mountain does, oz 32 -> 64):
+
+| | columns cut off under the floor | of them wet | wall faces (> 3 over a neighbour) | the sea's level (window z) |
+|---|---|---|---|---|
+| before (places) | 2404 | 0 | 151 (all at 26, the sea's) | 26.04 |
+| after | 2404 | 2404 | 0 | 26.04 |
+
+Shots: C:/Projects/shots88/sea/slide-before-z5.png / slide-after-z5.png (the cut-off shore, zoomed in: the ragged
+grey faces down the sea's edge are gone), -z2 at the phone's default zoom. The first survey (oz 0 coasts and river
+mouths, nothing wrong there): before-*.png.
+
+Perf: no GPU work added (one comparison in water_depth; on the CPU a few operations a column in the cuts, which
+already walk every column).
+
+Second wall found, not changed (BACKLOG W2): a rivers=table river held at its filled level over a macro hollow
+deeper than the levee holds (RIVER_LEVEE 12): at 1040,13551 a river at 123.6 (the hollow's spill height, the
+depression-filled level of findRivers) runs 12 wide over coastal ground at 101-118, its water 17-22 deep with no
+banks — 167 wall faces. Either the hollow is filled as a lake to its spill level (needs the per-texel fill on the
+GPU; where the fine ground lacks the macro rim it's a wall again) or the river runs on the hollow's floor (its level
+the ground's + its depth past the levee's reach). The user's call.
+
+## Round 88 — no floating rock (`collapse`)
+
+Why: the user on the phone (DECISIONS round 88): "It still fails to make some unsupported structures wake up and fall
+though. So worth testing on a wider column and seeing if only parts of it fall"; "first step is fixing the floating
+rocks". Test first: scripts/floatsweep.mjs (the atlas level, q=low, hybrid=1, 412×915) writes 31 structures into the
+window's columns — towers 3/6/10/16 across × 10/40/100 tall, banded towers (soil, sand, concrete every few cells, as
+the atlas's strata), concrete, stone on a concrete plinth, slabs on necks, bridges, an arch, an arm — mostly far from
+the camera (heightfield chunks), cuts them partly and fully by the break tool's events, the meteor tool, the world
+API's crater (a tank's or hero's shot), take, dig, the player's taps through the pointer, the heat beam and a great
+meteor, and at the end counts on a fresh readback of the whole window every run with something solid in it and no
+way to the ground (its own flood from the window's floor over overlapping runs). scripts/rockcpu.mjs does the same
+for the judge alone on the CPU (random worlds, towers, slabs, bridges, random sphere cuts; `--judge` another
+fracture.ts).
+
+Round 87's code, measured: the sweep's subset left 107-381 runs floating (banded towers: only the part under the
+first band fell; concrete towers, stone on concrete, a slab: nothing or part); rockcpu failed 3 of 30 worlds. Found:
+
+- Runs were the rock's alone, standing on *whatever* was under them: a band of soil or concrete in a tower held up
+  everything above it, though the band itself hung free; the soil on a falling run stayed. Now a run is a column's
+  touching intervals of every material (fracture.ts columnRuns); it stands only if it reaches the window's floor;
+  runs hold each other sideways through intervals that hold (solid, plants) overlapping by half a cell (`joined`).
+  Any hanging run with something solid in it is judged, so structures undercut fall the same way as rock.
+- A pass threw (`next.get(...) is not iterable`, seen in the sweep's page errors) when a piece's flood reached runs
+  an earlier, held piece had stopped at MAX_PIECE — everything after it in that pass went unjudged, and the runs
+  short of it were taken as a piece of their own. A piece joined to one judged held is held now.
+- A piece held nowhere stopped at 65 536 runs and fell as far as it was followed: now it's followed to its end.
+- The pass reads back only the chunks round its seeds; a wide piece reaching past them was judged on columns
+  the CPU's copy last saw long before (and a fall writes those columns back). Now such a piece is left, its
+  chunks read and it's judged again at once (Fracture.need / undecided, Integrity.needChunks; `rereads` in stats).
+  A read that comes back after a slide doesn't count as a look (the seeds were spent on it).
+- The rock pass runs before the structures' boxes, so it takes what hangs free whole first.
+- The break tool, the dig and the meteor woke structures into physics bodies, pinned at the foot (towertest's
+  concrete tower: 15 taps): now they cut the ground as for stone, and the pieces fall as the columns' own.
+- A great meteor's window edit changes columns with no event: they're seeds now (Integrity.cutCols).
+- A piece that caught up with one falling under it landed on it mid-air, ground again up there when the lower
+  one fell on (the sweep's slab on a one-column neck, split in four): it rides down on it now (ColumnBodies).
+- After a meteor, crusts of basalt and films of stone a few hundredths thick floated over slivers of air: the
+  sediment pass let loose ground run out sideways (an exposed face, sediment.wgsl spill) from under what lay on
+  it. Loose intervals under something solid (through the loose ones between) stay put now; the meteor's rim and
+  the beam's bore are also judged once a second while they melt and set (Integrity.watch, 15 s / 6 s).
+
+Measured after (desktop iGPU, D3D11): floatsweep 31/31, 0 floating runs in the window before and after the sweep
+(each case settled in 2.6-6.5 s, 17.7 s with a meteor's watch); rockcpu 150 worlds × 60 cuts with none left
+floating, the judge's slowest call 6 ms; the slowest pass in the sweep 12-15 ms (a 14-across, 70-tall banded tower
+cut through: 178 columns × 10 runs), typical 0.1-5 ms. towertest 5/5 (spire 69 ms, wide 80, concrete *one tap*,
+71 ms, meteor 94, tall 59). driveprofile (q=low 412×915, 25 s): p50 9.9 → 9.8 ms, p95 10.6 → 10.6, GPU 7.89 →
+8.06 ms a frame (noise: sediment 0.05 → 0.06). GIFs: C:/Projects/shots88/collapse/before-wide-banded.gif (a
+12-across, 45-tall tower banded with soil, tapped through at its foot: only the part under the first band falls,
+the rest stays in the air) and after-wide-banded.gif (all of it comes down). The heat-beam case didn't bore through
+headlessly (nothing cut, nothing floats); its path is towertest's and round 87's. Open: BACKLOG C13 (GPU-made
+changes elsewhere — a volcano's flows — aren't judged).

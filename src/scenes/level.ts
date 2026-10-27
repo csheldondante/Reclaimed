@@ -219,7 +219,6 @@ export class LevelScene implements Scene {
   /** sandbox: the heat beam's pointer while held */
   private beamAt?: [number, number];
   private beamWoke = -Infinity;
-  private digWoke = -Infinity;
   private beamLine?: SVGLineElement;
   private beamDot?: SVGCircleElement;
   private beamPicking = false;
@@ -454,16 +453,20 @@ export class LevelScene implements Scene {
     // window's columns have been read back and changed; its bowl goes in with them)
     if (e.kind === EV.meteor && cx === Math.round(ex) && cy === Math.round(ey)) this.impactFx([px, py, this.core.map.surface[cy * W + cx]], 12);
     const t0 = performance.now();
+    // (round 88) the columns it changes: what hangs by them is judged (it lowers tops — an arm, a bridge's pier)
+    const changed: number[] = [];
     const n = await S.editLive(x0, y0, x1, y1, (x, y) => {
       const gx = S.origin[0] + x;
       const gy = S.origin[1] + y;
       const d = eventAt(e, gx + 0.5 + 0.5 * (((gy % 2) + 2) % 2), (gy + 0.5) * ROW_H, worldW, worldH);
+      if (d && (Math.abs(d.dr) >= 0.05 || d.dl >= 0.05)) changed.push(y * 65536 + x);
       return { ...d, cap: e.kind === EV.cone ? MAT.Basalt : 0 };
     });
     this.editLiveMs = performance.now() - t0;
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
     // (round 86: every column written again — what was falling is looked at again where it stopped)
     this.integrity?.clear(true);
+    if (n) this.integrity?.cutCols(changed);
     const z = this.core.map.surface[cy * W + cx];
     if (e.kind === EV.meteor && n) this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: 13 * 32 + 512, radius: 12 * 2.5, strength: z });
     if (e.kind === EV.cone && n) this.lava?.addVent(px, py, 60, 12, 3, 0);
@@ -2366,9 +2369,12 @@ export class LevelScene implements Scene {
     }
     // the rim's ground molten, glowing past it; a molten pool in the bowl (no cone)
     this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5);
+    // (round 88: the rim melting and setting over the next seconds — judged until it's done)
+    this.integrity?.watch(x, y, BOWL * 1.6, 15);
     this.lava?.addVent(x, y, 2.5, 12, 3, 0);
     const phys = this.physics;
-    if (phys) void this.wake(x, y, -1, BOWL + 2).then(() => phys.blast([x, y, z], BOWL, 28));
+    // (round 88: what the bowl undercut falls as the columns' pieces — the ruins there aren't woken into bodies first)
+    if (phys) phys.blast([x, y, z], BOWL, 28);
   }
 
   /** Open a volcano vent where the pointer is (sim/lava.ts). */
@@ -2547,14 +2553,15 @@ export class LevelScene implements Scene {
       // physics (docs/PHYSICS.md): a ruin hit comes alive first, then a blast
       // where it hit — what's inside crumbles, what's near is thrown — and the
       // ground there is smashed as before
+      // (round 88, the user: a concrete tower came down "through the old physics path after 15 taps" — the ruin
+      // there woken into physics bodies, its foot pinned: the ground is cut as stone is, what it held falls as the
+      // columns' own pieces; physics bodies already about are still blown about and broken by it)
       if (this.physics) {
         const phys = this.physics;
         const body = (hit.flags & 0x8000) !== 0;
-        void (body ? Promise.resolve() : this.wake(x, y, at[2], ed.radius + 2)).then(() => {
-          phys.blast(at, Math.max(1, ed.radius * 0.5), 6);
-          if (!body) core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
-          core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
-        });
+        phys.blast(at, Math.max(1, ed.radius * 0.5), 6);
+        if (!body) core.globals.events.push({ kind: EventKind.Edit, x, y, z: 12 * 32, radius: ed.radius, strength: hit.z });
+        core.sim.particles.burst({ kind: PK.Chip, x, y, z: hit.z, count: 6 + ed.radius * 3, speed: 4, spread: ed.radius * 0.5 });
         return;
       }
       // a fallen body under the cursor: break it in its own frame (round 18)
@@ -2585,12 +2592,8 @@ export class LevelScene implements Scene {
     const z = op * 32 + ed.material + (this.strokeStart ? 512 : 0);
     this.strokeStart = false;
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z, radius: ed.radius, strength: layered ? ed.layers : ed.strength });
-    // digging under a ruin of the map's wakes it (round 48: it fell, rather
-    // than hanging over the hole); a few times a second, each wake reads the layers back
-    if (this.physics && ed.tool === 'dig' && performance.now() - this.digWoke > 300) {
-      this.digWoke = performance.now();
-      void this.wake(x, y, -1, ed.radius + 1);
-    }
+    // (round 48 woke a ruin dug under into physics bodies; round 88: the dig's cut is judged as every cut is —
+    // what it undercut falls as the columns' pieces, Integrity's tap)
   }
 
   /** How many columns within r of (x, y) have this top material (surface cache, ~1 s old). */

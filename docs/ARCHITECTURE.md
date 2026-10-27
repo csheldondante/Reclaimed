@@ -949,6 +949,9 @@ its edge:
   of the window's edges (it did: in seconds, during the warmup). The atlas's sea is at 90 (was 28: 27
   deep at most over the floor); the ocean floor drops off near the shore (0.9 × depth over 90) then
   shelves (3 × over 70–650).
+  Round 88: a column whose ground lies under the window's floor (nothing inside) under the sea holds the sea from
+  the floor up — layout.ts `waterInWindow` wherever a column is cut at oz (Atlas.window, Streamer cutRegion /
+  reslice / slideZNow), and water_depth.wgsl drains such a column only where there's no sea (ocean.x <= 0).
 - Strata (round 79, render.wgsl `strata`, `strataTint`): rock's beds by height (a noise up the column,
   dipping only over long distances), on stone, soil, basalt and sandstone; bedded rocks (basalt,
   sandstone, obsidian) faceted as stone (they were chips, like rubble); on steep faces less per-cell
@@ -1180,6 +1183,28 @@ makes the next pass start at once rather than on the 0.35 s timer — its
 readback is submitted after the tick that carried the cut — and reads back
 only the chunks it looks at by default (`?intread=all`: all the layers, as
 before); the drift texture is no longer read (the cube bodies used it).
+
+What hangs free (round 88, `collapse`; DECISIONS round 88): `fracture.ts`
+`analyseRock` judges *runs* — a column's touching intervals of anything but air
+and liquid (rock, a structure on it, the soil on that: `columnRuns`). A run
+reaching the window's floor stands; one over air is held through runs of the
+six neighbouring columns it is `joined` to (intervals that hold sideways —
+solid or plant — overlapping by half a cell) back to a standing run or the
+map's edge. From the runs in and beside the cut columns, each hanging piece is
+followed to its end (one held nowhere has no cap; a held one stops at 4096
+runs, and a piece joined to such is held with it) and falls whole, whatever
+it's made of; held, its rock past span × thickness gives. The pass reads back
+the chunks round its seeds; a piece reaching columns not read this pass is
+left (`Fracture.need` / `undecided`), those chunks read and the piece judged
+again at once (`Integrity.needChunks`), so a fall never writes back stale
+columns. Edits that aren't events say what they changed: `Integrity.cutAt`
+(the heat beam), `cutCols` (a great meteor's window edit), `watch(x, y, r, s)`
+(a meteor's rim melting and setting, the beam's bore draining: judged once a
+second). `floatingRuns(world)` is the ground truth the tests hold it to (a
+flood from every standing run). In `ColumnBodies` a piece that catches up
+with one falling under it rides down on it rather than landing mid-air. The
+sandbox's break tool, dig and meteor no longer wake structures into physics
+bodies: everything they undercut falls through this path.
 
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
