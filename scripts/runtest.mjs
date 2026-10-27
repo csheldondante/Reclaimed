@@ -393,7 +393,7 @@ async function whereToGo(p) {
       const e = document.querySelector(s);
       return !!e && e.style.display !== 'none';
     };
-    return { target: r.target && { name: r.target.name, kind: r.target.kind }, arrow: vis('.wp-arrow'), marker: vis('.wp-marker'), hint: document.querySelector('.objective .hint')?.textContent ?? null, dist: document.querySelector('.wp-dist')?.textContent };
+    return { target: r.target && { name: r.target.name, kind: r.target.kind }, arrow: vis('.wp-arrow'), marker: vis('.wp-marker'), hint: document.querySelector('.objective .obj-where')?.textContent ?? null, dist: document.querySelector('.wp-dist')?.textContent };
   });
   ok(w.target?.name === 'Reeve Hesk Marr' && w.target.kind === 'person', `the first objective points at the reeve (${JSON.stringify(w.target)}), from the story's own "talked" condition`);
   ok(w.arrow || w.marker, `an arrow at the screen's edge (${w.arrow}, ${w.dist}) or a marker over him (${w.marker})`);
@@ -467,7 +467,7 @@ async function warp() {
     const R = window.reclaimed;
     const h = R.run.hero.position();
     const t = R.camera.target;
-    return { cell: R.scene.atlasMap.playerAt(), h, t, over: R.run.play.run.over, shown: R.run.play.run.objectives().filter((o) => o.state === 'shown').map((o) => o.id), hint: document.querySelector('.objective .hint')?.textContent };
+    return { cell: R.scene.atlasMap.playerAt(), h, t, over: R.run.play.run.over, shown: R.run.play.run.objectives().filter((o) => o.state === 'shown').map((o) => o.id), hint: document.querySelector('.objective .obj-where')?.textContent };
   });
   const moved = Math.hypot(after.cell[0] - before.cell[0], after.cell[1] - before.cell[1]);
   ok(moved > 100, `the hero went with the warp: ${moved.toFixed(0)} cells across the atlas`);

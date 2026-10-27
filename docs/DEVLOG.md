@@ -7220,3 +7220,6 @@ pages, 627 free after it: a burst of fresh chunks after slides, not a leak (they
 shrinking (WM6) is the cost. scripts/stalemesh.mjs (40 edits, one rebuild slot): owed 1 → 1 before, 2 → 2 now, 3
 stale found both ways. latencyprobe (cut): the column lowered 313–340 ms after the ask both ways, the chunk rebuilt
 1–10 ms after that.
+- (round 94, after the confirming shot) The objective's line was drawn as a strip across the screen's bottom
+  edge, not under the objective: its class `.hint` is also the level's hint bar's (ui/style.css, positioned
+  absolutely). It's `.obj-where` now. places 1a8e48a merged (DEVLOG and DECISIONS kept from both sides).

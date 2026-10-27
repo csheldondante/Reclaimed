@@ -32,11 +32,11 @@ export class ObjectiveHud {
   hint(id: string, text: string | null): void {
     const row = this.rows.get(id);
     if (!row) return;
-    let h = row.querySelector('.hint') as HTMLSpanElement | null;
+    let h = row.querySelector('.obj-where') as HTMLSpanElement | null;
     if (text === null) return void h?.remove();
     if (!h) {
       h = document.createElement('span');
-      h.className = 'hint';
+      h.className = 'obj-where';
       row.querySelector('.text')!.append(h);
     }
     if (h.textContent !== text) h.textContent = text;
