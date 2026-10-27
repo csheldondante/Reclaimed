@@ -11,12 +11,42 @@ import { GLOBALS_BYTES } from './globals';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 import { MAX_PLACES } from '../world/places';
+import { AwakeTiles, SIM_CULL, TileCopy } from './cull';
 
 export const STATS_COUNT = 16;
 /** exact takes and puts in flight at once (edit.wgsl: the tag in the event's code bits 10-15) */
 export const EDIT_TAGS = 64;
 
 const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC;
+
+/**
+ * (round 84) How the atlas's rivers are kept: ?rivers=sim (as before: springs along each river's middle, the pipes
+ * from the land as it came in), hold (the perf agent's: each river column topped up to its depth), table (the
+ * atlas's steady state, riverFlow: held and drawn flowing with no simulation until something wakes it).
+ */
+export const RIVERS: 'sim' | 'hold' | 'table' = (() => {
+  const q = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
+  // (perfopt's ?riverhold=1 is rivers=hold; round 86: table by default on the atlas level — the user: "the rivers
+  // look good!" — the valley levels keep sim, their rivers aren't the atlas's)
+  const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : q.get('level') === 'atlas' ? 'table' : 'sim');
+  if (v !== 'sim' && v !== 'hold' && v !== 'table') throw new Error(`?rivers=${v}: sim, hold or table`);
+  return v;
+})();
+/** the riverFlow rating (above): depth and speed with the discharge */
+export const RIVER_DEPTH_EXP = 0.6;
+export const RIVER_SPEED_EXP = 0.4;
+/** (?rivers=table) ?riverpull=x: a woken river's column is pulled toward the table by x a step (0: the pipes alone;
+ *  0.02 by default — the pipes alone empty a reach above a fall down it, and the river upstream past the window
+ *  feeds what's woken only by its level's slope, a trickle) */
+export const RIVER_PULL = (() => {
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverpull');
+  return v === null ? (RIVERS === 'table' ? 0.02 : 0) : Number(v);
+})();
+/** ?riverwet=x: the rivers' wetness held at x (the climate's otherwise: common.wgsl riverWet) */
+export const RIVER_WET = (() => {
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverwet');
+  return v === null ? -1 : Number(v);
+})();
 
 /** blows the wind field takes a tick (api/wind.ts merges past it) */
 export const MAX_BLOWS = 256;
@@ -32,6 +62,10 @@ export class WorldGpu {
   readonly globals: GPUBuffer;
   readonly materials: GPUBuffer;
   readonly chunks: GPUBuffer;
+  /** (round 85, simcull — sim/cull.ts) the chunks live this tick, by a flow's sleeping rate (Simulation.step
+   *  makes them from the sleep mask), and the ping-pong fields' copy back over them; null without the flag */
+  readonly tiles: AwakeTiles | null;
+  readonly tileCopy: TileCopy | null;
 
   // canonical layered world (material physics owns writes)
   readonly layers: GPUBuffer;
@@ -46,6 +80,13 @@ export class WorldGpu {
   /** vec4 volume leaving toward +x,-x,+y,-y this tick */
   readonly flux: GPUBuffer;
   readonly waterSource: GPUBuffer;
+  /**
+   * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze")
+   * Per chunk (2 048 at most, sim/sleep.ts), the most an awake column's water changed in a step since the CPU last
+   * read it, as an f32's bits (atomicMax: positive floats order as their bits). water_depth.wgsl writes it; the level
+   * reads and clears it (Sleep.holdUnsettled keeps a woken chunk awake until it's under the tolerance).
+   */
+  readonly waterChange: GPUBuffer;
 
   // oil: second liquid, floats on water (oil system owns writes)
   readonly oil: GPUBuffer;
@@ -160,6 +201,20 @@ export class WorldGpu {
    *  kept at, and kept molten (0: none) — what's fed from below keeps flowing */
   readonly lavaSpring: GPUTexture;
   readonly lavaSpringView: GPUTextureView;
+  /**
+   * (round 84, ?rivers=table) The atlas's rivers at their steady state — written when land arrives, by whoever made
+   * it (the atlas: atlas/rivers.ts's table, forms.wgsl colFinish); 0 where no river runs:
+   *   x, y  the flow at the reference wetness (cells a 60 Hz step, downstream along the river)
+   *   z     the column's depth at the reference wetness (> 0: a river's column)
+   *   w     the river's depth at its line, there
+   * At wetness `wet` (common.wgsl riverWet: the season, the storms) the river carries wet × its discharge: its level
+   * stands RIVER_DEPTH_EXP higher (w · (wet^RIVER_DEPTH_EXP − 1)) and it runs wet^RIVER_SPEED_EXP as fast (riverAt
+   * in water_depth.wgsl, renderfields.wgsl). A river's column that nothing has woken is held there (no simulation:
+   * its depth that, its flux the pipes' steady flux for it) and drawn flowing by this flow; woken, the water's pipes
+   * take it from there, and fed from the held columns round it.
+   */
+  readonly riverFlow: GPUTexture;
+  readonly riverFlowView: GPUTextureView;
   /** ground shaken (layerpull.wgsl writes, sediment reads): x the tick it was shaken, y how hard (0..1): loose ground there slips at a lower angle for a while */
   readonly shake: GPUTexture;
   readonly shakeView: GPUTextureView;
@@ -238,6 +293,7 @@ export class WorldGpu {
     // per-direction quantities: one f32 per hex direction (common.wgsl Dirs)
     this.flux = this.buf('flux', N * DIRS_BYTES, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
+    this.waterChange = this.buf('waterChange', 2048 * 4, S);
     device.queue.writeBuffer(this.water, 0, map.water);
     device.queue.writeBuffer(this.waterSource, 0, map.waterSource);
 
@@ -330,6 +386,10 @@ export class WorldGpu {
       for (let k = 0; k < N; k++) t[k * 4] = map.lavaSpring[k];
       device.queue.writeTexture({ texture: this.lavaSpring }, t, { bytesPerRow: this.w * 16 }, dsize);
     }
+    this.riverFlow = device.createTexture({ label: 'riverFlow', size: dsize, format: 'rgba32float', usage: tusage });
+    this.textures.push(this.riverFlow);
+    this.riverFlowView = this.riverFlow.createView();
+    if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, map.riverFlow, { bytesPerRow: this.w * 16 }, dsize);
     this.shakeView = this.shake.createView();
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
     this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
@@ -351,6 +411,8 @@ export class WorldGpu {
     this.places = this.buf('places', N * 4, S);
     this.placeTable = this.buf('placeTable', MAX_PLACES * 4, S);
     this.sedOut = this.buf('sedOut', N * 7 * DIRS_BYTES, S);
+    this.tiles = SIM_CULL ? new AwakeTiles(device, w, h) : null;
+    this.tileCopy = this.tiles ? new TileCopy(device, this.globals, this.materials, this.tiles, N) : null;
   }
 
   private owned: GPUBuffer[] = [];
@@ -365,6 +427,7 @@ export class WorldGpu {
   destroy(): void {
     for (const b of this.owned) b.destroy();
     for (const t of this.textures) t.destroy();
+    this.tiles?.destroy();
     this.owned = [];
     this.textures = [];
   }

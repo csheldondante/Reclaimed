@@ -1380,10 +1380,12 @@ fn fsBox(in: VOut) -> FOut {
 }
 
 /** The water's flow at column j: with the field mesh renderfields stores
- *  its direction (x, w); without, only its speed (x here). */
+ *  it in x, w; without, packed in w (round 84: its heading and size — renderfields.wgsl packFlow). */
 fn flowOf(j: u32) -> vec2<f32> {
   if ((u32(CAM.eye.w) & 2u) != 0u) { return vec2<f32>(fields[j].x, fields[j].w); }
-  return vec2<f32>(fields[j].w, 0.0);
+  let w = fields[j].w;
+  let a = floor(w) / 1024.0 * 6.2831853;
+  return vec2<f32>(cos(a), sin(a)) * fract(w) * 8.0;
 }
 
 /**
@@ -1510,8 +1512,11 @@ fn fsWater(in: VOut) -> FOut {
     let meshOn = (u32(CAM.eye.w) & 2u) != 0u;
     let sub = vec3<i32>(floor(vec3<f32>(wo(in.wpos.xy) * 4.0, t * 6.0)));
     var fleck = step(0.72, randv(sub));
-    if (meshOn) { fleck = smoothstep(0.62, 0.85, flowStreaks(wo(in.wpos.xy) * 1.7, fv, d)); }
-    let foam = smoothstep(0.03, 0.25, flow) * fleck;
+    // (round 84: the flow's heading is known without the field mesh too — renderfields.wgsl packFlow)
+    if (meshOn || flow > 1e-4) { fleck = smoothstep(0.62, 0.85, flowStreaks(wo(in.wpos.xy) * 1.7, fv, d)); }
+    // (round 84, ?rivers=table: by the water's speed, not its net flow — a deep river held at the atlas's table
+    // carries a lot without being fast; it foams where it runs fast, at its rapids)
+    let foam = smoothstep(0.03, 0.25, select(flow, flow / max(d, 0.15) * 0.4, RIVER_FOAM_SPEED)) * fleck;
     col = mix(col, vec3<f32>(0.85, 0.85, 0.8), foam * 0.6);
     alpha = max(alpha, foam * 0.7);
     // a fall (round 69: the atlas's rivers over cliffs): water steep down a face is white water,
@@ -1523,8 +1528,8 @@ fn fsWater(in: VOut) -> FOut {
       col = mix(col, vec3<f32>(0.88, 0.9, 0.9) * (1.0 - 0.7 * G.sky.w), steepW * (0.5 + 0.45 * streak));
       alpha = max(alpha, steepW * (0.72 + 0.25 * streak));
     }
-    // the flow's streaks (with the field mesh, which knows its direction)
-    if (meshOn && flow > 0.005) {
+    // the flow's streaks (round 84: with or without the field mesh — both know its heading)
+    if (flow > 0.005) {
       let st = flowStreaks(in.wpos.xy, fv, d) * smoothstep(0.005, 0.06, flow) * (1.0 - sludge);
       col += vec3<f32>(0.10, 0.12, 0.12) * smoothstep(0.55, 0.9, st) * (1.0 - 0.7 * G.sky.w);
     }

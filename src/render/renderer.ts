@@ -23,7 +23,7 @@ import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
-import type { WorldGpu } from '../sim/world-gpu';
+import { RIVERS, type WorldGpu } from '../sim/world-gpu';
 import { ShoreField } from './shore';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from './camera';
 import { OutsideBand } from './band';
@@ -388,7 +388,9 @@ export class Renderer {
       },
       VF,
     );
-    const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl]);
+    // (round 84, ?rivers=table: foam by the water's speed — render.wgsl fsWater)
+    const riverFoam = `const RIVER_FOAM_SPEED: bool = ${RIVERS === 'table'};\n`;
+    const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [drawLayout] });
     const depthStencil = (write: boolean): GPUDepthStencilState => ({
       format: DEPTH_FORMAT,
@@ -491,7 +493,7 @@ export class Renderer {
       // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
       const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
       if (look === undefined) throw new Error('?look= must be full, lookup or flat');
-      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
       this.meshPipe = device.createRenderPipeline({
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),

@@ -16,6 +16,8 @@ const OIL_DENSITY: f32 = 0.88;
 const GAIN: f32 = 0.12 * 2.0 / 3.0;
 const FRICTION: f32 = 0.985;
 
+// (round 84, ?rivers=table: riverheld.wgsl) the atlas's rivers at their steady state
+@group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
 // (perfopt: a settling pass runs over the rect of the land just come in — x, y, w, h columns: sim/systems.ts)
 @group(0) @binding(31) var<uniform> SR: vec4<u32>;
 
@@ -29,9 +31,12 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // (a sleeping chunk: round 80 — its flux frozen as it is, the surface drawn moving by it. perfopt, ?settle=0:
   // land come in asleep has none — a river would be drawn still — so while it's drowsy (just come in) a column
   // with no flux takes the pipes' steady state for its levels at once: f = GAIN (H - Hn) / (1 - FRICTION))
+  // (round 84, ?rivers=table: a river's column nothing has woken is held at the atlas's steady state — its flux the
+  // pipes' steady flux for its levels, so what's awake beside it is fed as the river would feed it)
   // (a settling pass, SETTLE_PASS: its rect, the land just come in, the pipes as awake)
-  let seed = !SETTLE_PASS && flowFrozen(id.xy, FLOW_N);
-  if (seed && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
+  let held = !SETTLE_PASS && riverHeld(id.xy, riverHere(id.xy));
+  let seed = (!SETTLE_PASS && flowFrozen(id.xy, FLOW_N)) || held;
+  if (seed && !held && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
   let d = water[i];
   if (d <= 1e-5) { flux[i] = dZero(); return; }
   // (a body lying here is ground to the water: round 17)

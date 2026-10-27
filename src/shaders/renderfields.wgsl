@@ -16,6 +16,18 @@
 @group(0) @binding(9) var<storage, read> veg: array<f32>;
 // molten rock (lava.wgsl): x depth, y temperature, z the ground's heat
 @group(0) @binding(10) var<storage, read> lava: array<vec4<f32>>;
+// (round 84) the atlas's rivers at their steady state (riverheld.wgsl)
+@group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
+
+/** (round 84) the flow in one float, without the field mesh (x is the sun's march): its heading in 1/1024 turns in
+ *  the whole part, its size / FLOW_PACK in the fraction (render.wgsl flowOf) */
+const FLOW_PACK: f32 = 8.0;
+fn packFlow(v: vec2<f32>) -> f32 {
+  let l = length(v);
+  if (l < 1e-5) { return 0.0; }
+  let a = fract(atan2(v.y, v.x) / 6.2831853 + 1.0);
+  return floor(a * 1024.0) % 1024.0 + min(l / FLOW_PACK, 0.999);
+}
 
 /** How brightly column i's lava (or beam-hot ground) glows, 0..1. */
 fn lavaGlow(i: u32) -> f32 {
@@ -173,9 +185,16 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // (with the field mesh no march reads x: the flow's direction goes in x
   // and w, for the water's streaks — render.wgsl flowOf)
-  let fv = netFlow(p);
+  // (round 84, ?rivers=table: a river nothing has woken is drawn flowing by the atlas's table, not by its flux —
+  // riverheld.wgsl: the flow there times its depth, as the pipes' net flow would be)
+  var fv = netFlow(p);
+  let rh = riverHere(id.xy);
+  // (woken — a breach near it — the river still runs as the table has it, as deep as it still is, and the pipes' own
+  // flow on top: the water running off into the breach)
+  if (riverHeld(id.xy, rh)) { fv = rh.vel * waterDepth[i]; }
+  else if (rh.on) { fv += rh.vel * min(waterDepth[i], rh.depth); }
   if (MR.n.w != 0u) { fields[i] = vec4<f32>(fv.x, moisture[i], glow, fv.y); }
-  else { fields[i] = vec4<f32>(sz, moisture[i], glow, length(fv)); }
+  else { fields[i] = vec4<f32>(sz, moisture[i], glow, packFlow(fv)); }
   // the six corners (my two, and the four my neighbours own — the same
   // functions on the same inputs, so the same values they store), and the
   // planes of my tops through them (terrainshape.wgsl); a corner that isn't
