@@ -10,10 +10,11 @@
 
 import type { Hero, HeroAbility, HeroCamera, HeroIntent, HeroWorld } from '../api/contracts/hero';
 import type { Actor, UnitView, V2, V3 } from '../api/contracts/units';
+import { findPath } from './path';
 
 const SPEED = 5.5;
-const STEP = 1.6;
-const REACH = 2.2;
+const STEP = 2.5;
+const REACH = 2.6;
 /** the arc's half-angle's cosine (about 70° either side) */
 const ARC = 0.33;
 const SWING = 0.25;
@@ -33,7 +34,7 @@ export class Walker implements Hero {
   readonly id: string;
   readonly role = 'wanderer';
   readonly actor: Actor;
-  readonly camera: HeroCamera = { zoom: 11, behind: (35 * Math.PI) / 180, firm: (80 * Math.PI) / 180 };
+  readonly camera: HeroCamera = { zoom: 14, behind: (35 * Math.PI) / 180, firm: (80 * Math.PI) / 180 };
   readonly hurt: ((damage: number, by: string) => void)[] = [];
   readonly died: (() => void)[] = [];
   readonly abilities: HeroAbility[];
@@ -54,6 +55,9 @@ export class Walker implements Hero {
   private regen = 0;
   private push: V2 = [0, 0];
   private goal: V2 | null = null;
+  /** the way to the goal (waypoints), and when to look for it again */
+  private route: V2[] | null = null;
+  private repath = 0;
   private faction: string | null;
 
   constructor(
@@ -104,6 +108,7 @@ export class Walker implements Hero {
     this.pos[1] += dy;
     this.pos[2] += dz;
     if (this.goal) this.goal = [this.goal[0] + dx, this.goal[1] + dy];
+    this.route = null;
   }
 
   update(dt: number, it: HeroIntent): void {
@@ -133,13 +138,22 @@ export class Walker implements Hero {
     if (it.goTo !== undefined) this.goal = it.goTo;
     let [mx, my] = it.move;
     const tilt = Math.hypot(mx, my);
-    if (tilt > 0.05) this.goal = null;
+    this.repath -= dt;
+    if (tilt > 0.05) this.goal = this.route = null;
     else if (this.goal) {
-      const dx = this.goal[0] - this.pos[0];
-      const dy = this.goal[1] - this.pos[1];
-      const d = Math.hypot(dx, dy);
-      if (d < 0.8) this.goal = null;
-      else [mx, my] = [dx / d, dy / d];
+      // (a way round the walls: found again when the goal moves on, or now and then as it's followed)
+      const g = this.goal;
+      const end = this.route?.[this.route.length - 1];
+      if (!this.route || !end || Math.hypot(end[0] - g[0], end[1] - g[1]) > 1.5 || this.repath <= 0) {
+        this.route = findPath(this.world.ground, [this.pos[0], this.pos[1]], g, { step: STEP }) ?? [g];
+        this.repath = 3;
+      }
+      while (this.route.length > 1 && Math.hypot(this.route[0][0] - this.pos[0], this.route[0][1] - this.pos[1]) < 0.7) this.route.shift();
+      const w = this.route[0];
+      const d = w ? Math.hypot(w[0] - this.pos[0], w[1] - this.pos[1]) : 0;
+      // (there: at the goal, or as near as the way goes — beside a post it was sent to)
+      if (!w || Math.hypot(g[0] - this.pos[0], g[1] - this.pos[1]) < 0.8 || (this.route.length === 1 && d < 0.7)) this.goal = this.route = null;
+      else if (d > 1e-3) [mx, my] = [(w[0] - this.pos[0]) / d, (w[1] - this.pos[1]) / d];
     }
     const m = Math.min(1, Math.hypot(mx, my));
     this.pace = 0;
@@ -159,7 +173,7 @@ export class Walker implements Hero {
             break;
           }
         }
-        if (this.pace === 0 && this.goal) this.goal = null;
+        if (this.pace === 0 && this.goal) this.repath = 0;
       }
       this.phase = (this.phase + (this.pace * dt) / 2.2) % 1;
     }
@@ -206,8 +220,14 @@ export class Walker implements Hero {
   }
 
   private stride(dx: number, dy: number): boolean {
-    const z = this.world.ground.heightAt(this.pos[0] + dx, this.pos[1] + dy, { smooth: true });
-    if (z === null || z - this.pos[2] > STEP) return false;
+    // (the climb judged on the columns' own tops, a little ahead — the drawn mesh rounds a wall's foot into a
+    // ramp a stride at a time could walk up)
+    const g = this.world.ground;
+    const l = Math.hypot(dx, dy) || 1;
+    const here = g.heightAt(this.pos[0], this.pos[1]);
+    const ahead = g.heightAt(this.pos[0] + dx + (dx / l) * 0.5, this.pos[1] + dy + (dy / l) * 0.5);
+    const z = g.heightAt(this.pos[0] + dx, this.pos[1] + dy, { smooth: true });
+    if (z === null || here === null || ahead === null || ahead - here > STEP) return false;
     this.pos[0] += dx;
     this.pos[1] += dy;
     return true;

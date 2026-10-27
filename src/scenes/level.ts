@@ -1327,6 +1327,21 @@ export class LevelScene implements Scene {
       const oy = S.origin[1] * ROW_H;
       return [near(wx, ox + core.dims.w / 2, cols) - ox, near(wyUnits, oy + (core.dims.h * ROW_H) / 2, rows * ROW_H) - oy];
     };
+    // (the camera to the spawn first, and the window let slide round it until it's still: the places are built
+    // in window coordinates, and edits queued across a slide would land a region off)
+    this.editor?.setVisible(false);
+    const s0 = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
+    camera.target = [s0[0], s0[1], this.heightAt(s0[0], s0[1])];
+    for (let quiet = 0, o = `${S.origin}`; quiet < 15; ) {
+      await new Promise((res) => setTimeout(res, 100));
+      if (S.busy || `${S.origin}` !== o) {
+        quiet = 0;
+        o = `${S.origin}`;
+      } else quiet++;
+    }
+    // (and then held there: the run's places are in this window, the hero walks within it — the land past its edge
+    // is drawn by the far rings. A run over a streamed world, places a region away, is BACKLOG H4.)
+    S.auto = false;
     const spawn = toWin(cx + 0.5, (cy + 0.5) * ROW_H);
     this.heroRun = await HeroRun.start({
       ui: this.host.ui,

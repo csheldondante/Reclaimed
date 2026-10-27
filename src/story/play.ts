@@ -71,6 +71,8 @@ export interface StoryPlayDeps {
   say?: (text: string) => void;
   /** (round 88) a cast member's badge tapped (a hero walks up to them first); default: talk at once */
   onBadge?: (id: string) => void;
+  /** (round 88) false: no opening look at the first objective (a hero's run opens on the hero) */
+  opening?: boolean;
   /** (round 88) the end card offers a new run */
   again?: () => void;
 }
@@ -173,7 +175,7 @@ export class StoryPlay {
     // (the opening: the camera eases to where the first shown objective is, or the first cast member's place)
     const first = p.run.objectives().find((o) => o.state === 'shown');
     const open = (first && p.run.objective(first.id).location) ?? d.story.cast[0]?.location;
-    if (open) void p.cam.look(p.where(open));
+    if (open && d.opening !== false) void p.cam.look(p.where(open));
     return p;
   }
 
@@ -301,7 +303,7 @@ export class StoryPlay {
       if (has) {
         k.open = true;
         const t = this.d.api.terrain;
-        t?.dig(k.at[0], k.at[1], { radius: 2.1, layers: 6 });
+        t?.dig(k.at[0], k.at[1], { radius: 3, layers: 6 });
         this.d.api.fx?.burst('dust', k.at[0], k.at[1], (t?.heightAt(k.at[0], k.at[1]) ?? me[2]) + 1, { count: 30 });
         this.d.say?.(`${k.key.item ? `The ${k.key.item} turns` : 'It opens'}: the ${k.id.replace(/-/g, ' ')} gives way`);
       } else {
@@ -363,7 +365,7 @@ export class StoryPlay {
           const at: [number, number] = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
           const z = api.terrain?.heightAt(at[0], at[1]);
           if (z === null || z === undefined) continue;
-          units.spawn(sp.role, at, sp.faction, { role: sp.role, hostile: !!sp.hostile, health: 3, sight: 11, speed: 2.4 });
+          units.spawn(sp.role, at, sp.faction, { role: sp.role, hostile: !!sp.hostile, health: 2, sight: 11, speed: 2.4 });
           api.fx?.burst('dust', at[0], at[1], z + 0.5, { count: 12 });
         }
       }

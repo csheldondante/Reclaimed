@@ -103,7 +103,7 @@ export function stageStory(story: SessionStory, d: StageGenDeps): StageGen {
         const doors = r.doors.map((o) => Math.atan2(rs[o].at[1] - c[1], rs[o].at[0] - c[0]));
         // (a way in from outside too, for the brief's first room: toward the player)
         if (r === rooms[0]) doors.push(Math.atan2(d.spawn[1] - c[1], d.spawn[0] - c[0]));
-        const gap = 1.6 / r.r;
+        const gap = 2.4 / r.r;
         const n = Math.ceil((2 * Math.PI * r.r) / 1.1);
         for (let k = 0; k < n; k++) {
           const a = (k / n) * Math.PI * 2;
@@ -121,7 +121,7 @@ export function stageStory(story: SessionStory, d: StageGenDeps): StageGen {
       const g = Math.atan2(a[1] - b[1], a[0] - b[0]);
       const p: V2 = [b[0] + Math.cos(g) * rb, b[1] + Math.sin(g) * rb];
       const mat = lockMaterial(cn.lock);
-      build(p[0], p[1], mat, 1.9, WALL_H);
+      build(p[0], p[1], mat, 2.8, WALL_H);
       const key = l.brief.keys?.find((k) => k.lock === cn.lock)?.key ?? {};
       stage.locks!.push({ id: cn.lock, location: l.id, at: p, key, material: mat, open: false });
     }
@@ -195,12 +195,16 @@ function pick(d: StageGenDeps, ang: number, want: number, extent: number, rooms:
   const t = d.terrain;
   let best: V2 | null = null;
   let bestScore = Infinity;
-  for (const dd of [0, -8, 8, -16, 16])
-    for (const da of [0, -0.18, 0.18, -0.36, 0.36]) {
+  // (nearest its bearing first; turned up to ~70° and brought in up to 40 cells when the window's edge or
+  // another place is in the way)
+  const dds = [0, -8, 8, -16, 16, -24, -32, -40].filter((x) => want + x >= 12);
+  const das = [0, -0.18, 0.18, -0.36, 0.36, -0.6, 0.6, -0.9, 0.9, -1.2, 1.2];
+  for (const dd of dds)
+    for (const da of das) {
       const dist = want + dd;
       const a = ang + da;
       const p: V2 = [d.spawn[0] + Math.cos(a) * dist, d.spawn[1] + Math.sin(a) * dist];
-      if (p[0] < MARGIN || p[1] < MARGIN || p[0] > d.size[0] - MARGIN || p[1] > d.size[1] - MARGIN) continue;
+      if (p[0] < MARGIN * 0.5 || p[1] < MARGIN * 0.5 || p[0] > d.size[0] - MARGIN * 0.5 || p[1] > d.size[1] - MARGIN * 0.5) continue;
       // (every room inside the window and clear of what's taken: other places' rooms, the spawn)
       const clear = rooms.every((r) => {
         const x = p[0] + r.at[0];

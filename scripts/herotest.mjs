@@ -11,6 +11,7 @@ let fails = 0;
 const ok = (cond, what) => {
   console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`);
   if (!cond) fails++;
+  return cond;
 };
 try {
   const { stageStory } = await v.ssrLoadModule('/src/story/stage-gen.ts');
@@ -37,6 +38,36 @@ try {
   ok(rooms.every((r) => r.at[0] > 10 && r.at[0] < 246 && r.at[1] > 10 && r.at[1] < 212), 'every room in the window');
   for (const [l, v] of Object.entries(stage.locations)) console.log(`     ${l} at ${v.at.map((x) => x.toFixed(0))} (r ${v.radius.toFixed(0)}, ${Math.hypot(v.at[0] - 128, v.at[1] - 111).toFixed(0)} from the spawn)`);
 
+  // walking the stage: through doorways, room to room, as a tap on the ground sends the hero
+  {
+    const units = new SimpleUnits(terrain);
+    const R = stage.rooms;
+    const route = [
+      ['loc-mebe', 'reeve-hall'],
+      ['loc-barrow', 'cairn-gate'],
+      ['loc-barrow', 'ossuary'],
+      ['loc-mebe', 'mill'],
+      ['loc-ford', 'sapling-ring'],
+    ];
+    const hero = new Walker({ ground: terrain, units }, [128, 111]);
+    for (const [l, r] of route) {
+      const to = R[l][r].at;
+      let t = 0;
+      const t0 = performance.now();
+      for (; t < 90; t += 1 / 30) {
+        const p = hero.position();
+        if (Math.hypot(to[0] - p[0], to[1] - p[1]) < 3.5) break;
+        hero.update(1 / 30, { move: [0, 0], goTo: t === 0 ? to : undefined });
+      }
+      if (!ok(t < 90, `walked into ${l}/${r} in ${t.toFixed(1)} s of play (${(performance.now() - t0).toFixed(0)} ms to run)`)) {
+        const { findPath } = await v.ssrLoadModule('/src/hero/path.ts');
+        const p = hero.position();
+        console.log(`     stopped at ${p.map((x) => x.toFixed(1))}, the room at ${to.map((x) => x.toFixed(1))}; a path: ${JSON.stringify(findPath(terrain, [p[0], p[1]], to, { step: 2.5 }))}`);
+        for (const ll of Object.keys(R)) console.log(`     rooms ${ll}: ${JSON.stringify(Object.fromEntries(Object.entries(R[ll]).map(([k, v]) => [k, v.at.map((x) => +x.toFixed(0))])))}`);
+      }
+    }
+  }
+
   // the fight: on open ground
   const flat = { heightAt: () => 100 };
   const fight = (swing) => {
@@ -44,7 +75,7 @@ try {
     const hero = new Walker({ ground: flat, units }, [50, 50]);
     units.watch(hero.actor);
     const w = units.spawn('lich steward', [53, 50], 'f-hollow-court', { character: 'bellwarden', hostile: true, health: 12, damage: 2, sight: 12, speed: 2.6 });
-    for (let k = 0; k < 4; k++) units.spawn('walking dead', [53 + 3 * Math.cos(k * 1.6), 50 + 3 * Math.sin(k * 1.6)], 'f-hollow-court', { hostile: true, health: 3, sight: 11, speed: 2.4 });
+    for (let k = 0; k < 4; k++) units.spawn('walking dead', [53 + 3 * Math.cos(k * 1.6), 50 + 3 * Math.sin(k * 1.6)], 'f-hollow-court', { hostile: true, health: 2, sight: 11, speed: 2.4 });
     let t = 0;
     for (; t < 120 && hero.alive && units.get(w)?.alive; t += 1 / 60) {
       const p = hero.position();

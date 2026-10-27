@@ -48,7 +48,12 @@ async function open() {
   });
   p.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.log('console', m.text()));
   await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas&run=bell${extra}`, { waitUntil: 'load' });
-  await p.waitForFunction(() => window.reclaimed?.run?.play, { timeout: 240000 });
+  const errs = pageErrors;
+  for (let t = 0; !(await p.evaluate(() => !!window.reclaimed?.run?.play)); t += 1000) {
+    if (pageErrors > errs) throw new Error('the page failed while the run started');
+    if (t > 240000) throw new Error('the run never started');
+    await sleep(1000);
+  }
   const fatal = await p.$eval('.fatal', (e) => e.textContent).catch(() => null);
   if (fatal) throw new Error(`fatal: ${fatal}`);
   return p;
@@ -107,22 +112,31 @@ const state = (p) =>
     };
   });
 
-/** walk to a point by taps on the ground along the way (each tap: the ground under the finger) */
+/** is there a person under this point of the screen (a tap there would be on them, not the ground) */
+const onFigure = (p, sx, sy) =>
+  p.evaluate(
+    (sx, sy) => window.reclaimed.run.units.all().some((u) => {
+      if (!u.alive) return false;
+      const [x, y] = window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2);
+      return Math.hypot(x - sx, y - sy) < 44;
+    }),
+    sx,
+    sy,
+  );
+
+/** walk to a point: a tap on it when it's on the screen (the ground under the finger), else sent there by the run */
 async function walkTo(p, to, what, tol = 1.6) {
   const t0 = Date.now();
   let last = null;
   let still = 0;
+  let sent = false;
   while (Date.now() - t0 < 60000) {
     const s = await p.evaluate((to) => {
       const r = window.reclaimed.run;
       const h = r.hero.position();
       const d = Math.hypot(to[0] - h[0], to[1] - h[1]);
-      // (a tap a short way along: the point on the screen over the ground there, as a finger would)
-      const k = Math.min(1, 14 / Math.max(d, 1e-3));
-      const x = h[0] + (to[0] - h[0]) * k;
-      const y = h[1] + (to[1] - h[1]) * k;
-      const z = window.reclaimed.api.terrain.heightAt(x, y) ?? h[2];
-      const [sx, sy] = window.reclaimed.camera.project(x, y, z);
+      const z = window.reclaimed.api.terrain.heightAt(to[0], to[1]) ?? h[2];
+      const [sx, sy] = window.reclaimed.camera.project(to[0], to[1], z);
       return { d, sx, sy, h, talking: r.play.dialog.isOpen, busy: r.play.cam.busy };
     }, to);
     if (s.d <= tol) return true;
@@ -135,14 +149,21 @@ async function walkTo(p, to, what, tol = 1.6) {
     if (last && Math.hypot(s.h[0] - last[0], s.h[1] - last[1]) < 0.2) still++;
     else still = 0;
     last = s.h;
-    if (still > 8) {
+    if (still > 10) {
       console.log(`     stuck at ${s.h.map((v) => v.toFixed(1))} on the way to ${what}`);
       return false;
     }
-    if (s.sx > 10 && s.sx < 402 && s.sy > 120 && s.sy < 700) await p.mouse.click(s.sx, s.sy);
+    // (sent once; again only when it's stopped)
+    if (sent && still < 2) {
+      await sleep(700);
+      continue;
+    }
+    sent = true;
+    if (s.sx > 10 && s.sx < 402 && s.sy > 120 && s.sy < 700 && !(await onFigure(p, s.sx, s.sy))) await p.mouse.click(s.sx, s.sy);
     else await p.evaluate((to) => window.reclaimed.run.walkTo(to), to);
     await sleep(700);
   }
+  console.log(`     timed out on the way to ${what} (${JSON.stringify(last)} → ${to.map((v) => v.toFixed(1))})`);
   return false;
 }
 
@@ -157,7 +178,14 @@ async function talkTo(p, who) {
       return { open: false, sx, sy, busy: r.play.cam.busy };
     }, who);
     if (s.open) return true;
-    if (!s.busy && s.sx > 0 && s.sx < 412 && s.sy > 0 && s.sy < 915) await p.mouse.click(s.sx, s.sy);
+    const on = s.sx > 20 && s.sx < 392 && s.sy > 120 && s.sy < 700;
+    if (!s.busy && !on) {
+      // (off the screen: walk toward them until they're in view)
+      const at = await p.evaluate((who) => window.reclaimed.run.units.byCharacter(who).at, who);
+      await walkTo(p, at, who, 8);
+      continue;
+    }
+    if (!s.busy) await p.mouse.click(s.sx, s.sy);
     else if (s.busy) await p.mouse.click(206, 300);
     await sleep(800);
   }
@@ -203,7 +231,7 @@ async function won() {
   ok(s.objectives['o-mebe'] === 'shown', `spawned at ${s.hero}: "${'o-mebe'}" shown, ${s.units} units in play`);
   const stage = await p.evaluate(() => {
     const st = window.reclaimed.run.stage;
-    return { locs: Object.fromEntries(Object.entries(st.locations).map(([k, v]) => [k, v.at.map((x) => +x.toFixed(1))])), locks: st.locks.map((l) => l.id) };
+    return { locs: Object.fromEntries(Object.entries(st.locations).map(([k, v]) => [k, v.at.map((x) => +x.toFixed(1))])), rooms: Object.fromEntries(Object.entries(st.rooms).flatMap(([l, rs]) => Object.entries(rs).map(([k, v]) => [k, v.at.map((x) => +x.toFixed(0))]))), locks: st.locks.map((l) => [l.id, l.at.map((x) => +x.toFixed(0))]) };
   });
   console.log(`     staged: ${JSON.stringify(stage)}`);
   await shot(p, '01-spawn');
@@ -270,12 +298,9 @@ async function won() {
         const dx = t.at[0] - h[0];
         const dy = t.at[1] - h[1];
         const d = Math.hypot(dx, dy);
-        // (the stick, in screen px: world → screen with the camera's azimuth)
-        const az = window.reclaimed.camera.azimuth;
-        const jx = -Math.sin(az) * dx + Math.cos(az) * dy;
-        const jy = Math.cos(az) * dx + Math.sin(az) * dy;
-        const l = Math.hypot(jx, jy) || 1;
-        r.pad.scripted = { stick: d > 1.8 ? [(jx / l) * 56, (jy / l) * 56] : undefined, attack: d < 3 };
+        // (a tap on the foe when it's out of reach — the hero finds its way to it — and the swing held when it's close)
+        if (d > 2.2) r.seek(t.id);
+        r.pad.scripted = { attack: d < 3 };
         return { done: false, hp: r.hero.health, foes: foes.length };
       });
       if (f.done) return f;

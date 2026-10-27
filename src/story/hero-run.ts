@@ -16,26 +16,21 @@
 //   const hr = await HeroRun.start({ ui, camera, api, story, world, spawn, spot, size, orbit, dither, renderer, device, groundAt, say })
 //   each frame: hr.update(dt)      // `holdsInput`: the level's own camera input waits (always, while it runs)
 
-import type {
-  RunRecord,
-  SessionStory,
-  StoryLocation,
-  WorldState,
-} from "../api/contracts";
-import type { Hero, HeroWorld } from "../api/contracts/hero";
-import type { UnitView } from "../api/contracts/units";
-import type { Sim } from "../api/world";
-import type { Dither, Orbit } from "../api/cutaway";
-import type { Camera } from "../render/camera";
-import type { Renderer } from "../render/renderer";
-import { SimpleUnits } from "../units/simple";
-import { Figures, unitPose, type FigurePose } from "../units/figures";
-import { Walker } from "../hero/walker";
-import { TouchPad } from "../hero/touchpad";
-import { MAT } from "../world/materials";
-import { StoryPlay, type Stage } from "./play";
-import { stageStory } from "./stage-gen";
-import type { V3 } from "./camera";
+import type { RunRecord, SessionStory, StoryLocation, WorldState } from '../api/contracts';
+import type { Hero, HeroWorld } from '../api/contracts/hero';
+import type { UnitView } from '../api/contracts/units';
+import type { Sim } from '../api/world';
+import type { Dither, Orbit } from '../api/cutaway';
+import type { Camera } from '../render/camera';
+import type { Renderer } from '../render/renderer';
+import { SimpleUnits } from '../units/simple';
+import { Figures, unitPose, type FigurePose } from '../units/figures';
+import { Walker } from '../hero/walker';
+import { TouchPad } from '../hero/touchpad';
+import { MAT } from '../world/materials';
+import { StoryPlay, type Stage } from './play';
+import { stageStory } from './stage-gen';
+import type { V3 } from './camera';
 
 /** cells: near enough to talk; a tap this near a figure (CSS px) picks it */
 const TALK = 3;
@@ -80,14 +75,9 @@ export class HeroRun {
 
   private constructor(private d: HeroRunDeps) {
     const t = d.api.terrain;
-    if (!t) throw new Error("hero run: needs the world API terrain module");
-    this.units = new SimpleUnits({
-      heightAt: (x, y) => t.heightAt(x, y, { smooth: true }),
-    });
-    this.hero = (d.makeHero ?? ((w, at) => new Walker(w, at)))(
-      { ground: t, units: this.units },
-      d.spawn,
-    );
+    if (!t) throw new Error('hero run: needs the world API terrain module');
+    this.units = new SimpleUnits(t);
+    this.hero = (d.makeHero ?? ((w, at) => new Walker(w, at)))({ ground: t, units: this.units }, d.spawn);
     this.units.watch(this.hero.actor);
     this.pad = new TouchPad(d.ui, d.camera);
     this.figures = new Figures(d.device, d.renderer);
@@ -96,15 +86,20 @@ export class HeroRun {
       const c = this.talkable();
       if (c) void this.talk(c);
     };
-    this.hero.hurt.push(() =>
-      this.d.api.fx?.burst("dust", ...this.hero.position(), { count: 6 }),
-    );
+    this.hero.hurt.push(() => this.d.api.fx?.burst('dust', ...this.hero.position(), { count: 6 }));
   }
 
   static async start(d: HeroRunDeps): Promise<HeroRun> {
+    const t = d.api.terrain;
+    if (!t) throw new Error('hero run: needs the world API terrain module');
+    // (the ground read back first: a read of the window as it is now, the spawn's drawn height in it)
+    for (let k = 0; ; k++) {
+      await t.refresh();
+      if (d.api.fresh && t.heightAt(d.spawn[0], d.spawn[1], { smooth: true }) !== null) break;
+      if (k > 40) throw new Error(`hero run: the ground at the spawn (${d.spawn}) never read back`);
+      await new Promise((res) => setTimeout(res, 250));
+    }
     const r = new HeroRun(d);
-    const t = d.api.terrain!;
-    await t.refresh();
     const { stage } = stageStory(d.story, {
       terrain: t,
       waterAt: (x, y) => d.api.water?.depthAt(x, y) ?? null,
@@ -114,6 +109,14 @@ export class HeroRun {
       size: d.size,
     });
     r.stage = stage;
+    // (the places' edits land a few a tick: the run starts on them built, the ground read again)
+    const queued = () => d.api.core.globals.events.length;
+    for (let k = 0; queued() > 0; k++) {
+      if (k > 200) throw new Error(`hero run: the stage's edits never landed (${queued()} queued)`);
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    await new Promise((res) => setTimeout(res, 300));
+    await t.refresh();
     r.play = await StoryPlay.start({
       ui: d.ui,
       camera: d.camera,
@@ -130,11 +133,12 @@ export class HeroRun {
         if (u !== undefined) r.seek(u);
       },
       again: () => location.reload(),
+      opening: false,
       cut: { dither: d.dither },
     });
     r.hero.died.push(() => {
-      d.say("You fall.", 4);
-      r.play.run.end("lost");
+      d.say('You fall.', 4);
+      r.play.run.end('lost');
     });
     r.play.run.onEnd.push((rec) => {
       r.ended = rec;
@@ -179,6 +183,8 @@ export class HeroRun {
   }
 
   update(dt: number): void {
+    // (the first frame: the hero's own zoom, over whatever the level opened at)
+    if (this.t === 0) this.d.camera.zoom = this.hero.camera.zoom;
     this.t += dt;
     const play = this.play;
     const talking = play.dialog.isOpen;
@@ -221,7 +227,7 @@ export class HeroRun {
           ? `Talk to ${
               this.d.story.cast
                 .find((x) => x.id === c)!
-                .name.split(" ")
+                .name.split(' ')
                 .slice(-1)[0]
             }`
           : null,
@@ -240,7 +246,7 @@ export class HeroRun {
           }
         : null;
     if (!play.cam.busy) o.update(p[0], p[1], p[2], dt);
-    this.d.dither?.see("hero", p[0], p[1], p[2] + 1);
+    this.d.dither?.see('hero', p[0], p[1], p[2] + 1);
     play.update(dt);
     this.d.dither?.update(dt);
     this.draw();
@@ -258,14 +264,13 @@ export class HeroRun {
     this.pad.dispose();
     this.figures.dispose();
     this.play?.dispose();
-    this.d.dither?.forget("hero");
+    this.d.dither?.forget('hero');
   }
 
   /** the nearest cast member near enough to talk to */
   private talkable(): string | null {
     const p = this.hero.position();
-    for (const u of this.units.query([p[0], p[1]], TALK + 0.5))
-      if (u.character && this.play.canTalk(u.character)) return u.character;
+    for (const u of this.units.query([p[0], p[1]], TALK + 0.5)) if (u.character && this.play.canTalk(u.character)) return u.character;
     return null;
   }
 

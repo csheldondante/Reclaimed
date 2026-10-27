@@ -15,14 +15,14 @@ import type { FactionId } from '../api/contracts/world';
 
 /** the ground under (x, y): the world API's Terrain does */
 export interface Ground {
-  heightAt(x: number, y: number): number | null;
+  heightAt(x: number, y: number, opts?: { smooth?: boolean }): number | null;
 }
 
 /** cells: how near a blow lands from; how far a guard chases from its post */
 export const REACH = 1.6;
 const LEASH = 28;
 /** cells a stride may climb */
-const STEP = 1.6;
+const STEP = 2.5;
 /** seconds: a swing's wind-up, between swings, a flinch, how long the dead lie */
 const WINDUP = 0.45;
 const COOLDOWN = 1.1;
@@ -320,8 +320,13 @@ export class SimpleUnits implements Units {
   /** step by (dx, dy) if the ground there isn't too steep a climb → moved */
   private stride(u: Unit, dx: number, dy: number): boolean {
     const v = u.v;
-    const z = this.ground.heightAt(v.at[0] + dx, v.at[1] + dy);
-    if (z === null || z - v.at[2] > STEP) return false;
+    // (the climb on the columns' own tops, a little ahead; the height it stands at, the drawn mesh's)
+    const g = this.ground;
+    const l = Math.hypot(dx, dy) || 1;
+    const here = g.heightAt(v.at[0], v.at[1]);
+    const ahead = g.heightAt(v.at[0] + dx + (dx / l) * 0.5, v.at[1] + dy + (dy / l) * 0.5);
+    const z = g.heightAt(v.at[0] + dx, v.at[1] + dy, { smooth: true });
+    if (z === null || here === null || ahead === null || ahead - here > STEP) return false;
     v.at[0] += dx;
     v.at[1] += dy;
     v.at[2] = z;
