@@ -23,19 +23,31 @@ type M3 = number[];
 
 /**
  * The knobs (DECISIONS round 95: for the user to play with). URL: rbgrav, rbrest, rbfric, rbbreak, rbdamp, rbmax,
- * rbspin, rbmaxv, rbscatter; the rock lab's panel (`level=rocklab&rockbody=1`) sets them live.
+ * rbspin, rbmaxv, rbscatter, rbcdamp, rbsize, rbcrumble (round 96); the rock lab's panel (`level=rocklab&rockbody=1`) sets them live.
  */
 export const RB = {
   /** × the falling pieces' gravity (10 cells/s²) */
   gravity: 1,
   /** bounce: share of the speed into the ground given back (hits over 1.5 cells/s) */
-  restitution: 0.15,
+  restitution: 0.05,
   /** Coulomb friction at the contacts */
   friction: 0.6,
   /** impact speed (cells/s, into the ground at the point hit) that breaks rock of strength 1 (× √strength) */
   breakSpeed: 9,
   /** angular damping (1/s) */
-  angDamp: 0.4,
+  angDamp: 0.6,
+  /**
+   * (round 96, the user: "slightly weightier") the spin and the speed taken out while it touches the ground (1/s):
+   * a piece that lands stays down, it doesn't spin or skate off
+   */
+  contactDamp: 1.5,
+  /**
+   * (round 96) the square-cube law: the break speed × (cells / 200)^−size — a big piece is weak for its weight
+   * (0: every size alike)
+   */
+  sizeK: 0.15,
+  /** (round 96) × the radius that crumbles round a hard hit, and × the pieces it breaks into */
+  crumble: 1.4,
   /** bodies at once (the phone); past it the oldest is settled into the columns first */
   maxBodies: 10,
   /** a tipping piece's start: rad/s about the edge it tips over */
@@ -63,9 +75,20 @@ if (typeof location !== 'undefined') {
   num('rbmaxv', 'maxV');
   num('rbscatter', 'scatter');
   num('rbcubes', 'cubes');
+  num('rbcdamp', 'contactDamp');
+  num('rbsize', 'sizeK');
+  num('rbcrumble', 'crumble');
 }
-/** `?rockbody=1`: rock the judge frees falls as these (default off: the columns' own falling pieces) */
-export const ROCKBODY = typeof location !== 'undefined' && new URLSearchParams(location.search).get('rockbody') === '1';
+/**
+ * Whether rock the judge frees falls as these bodies (else the columns' own falling pieces): `?rockbody=1` / `=0`;
+ * (round 96, the user: "And then I think push to atlas") on by default in the atlas and the rock lab.
+ */
+export function rockbodyFor(levelId?: string): boolean {
+  const p = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('rockbody');
+  if (p === '1') return true;
+  if (p === '0') return false;
+  return levelId === 'atlas' || levelId === 'rocklab';
+}
 
 const G = 10; // cells/s² (colbodies.ts, bodies.ts: the falling pieces' feel)
 const AIR_DRAG = 0.1; // 1/s
@@ -321,7 +344,7 @@ export class RockBodies {
       b.age += dt;
       b.grace -= dt;
       b.dustT += dt;
-      if (b.hit > 1.5 && (b.dustT > 0.25 || b.hit > RB.breakSpeed)) {
+      if (b.hit > 1.5 && (b.dustT > 0.25 || b.hit > this.breakSpeedOf(b))) {
         b.dustT = 0;
         hits.push({ body: b, speed: b.hit, at: b.hitAt });
       }
@@ -403,6 +426,12 @@ export class RockBodies {
     const q: Q = [x + hh * (wx * w + wy * z - wz * y), y + hh * (wy * w + wz * x - wx * z), z + hh * (wz * w + wx * y - wy * x), w - hh * (wx * x + wy * y + wz * z)];
     const ql = Math.hypot(q[0], q[1], q[2], q[3]);
     b.q = [q[0] / ql, q[1] / ql, q[2] / ql, q[3] / ql];
+    // (round 96) touching: the spin and the slide damped (a landed piece stays down)
+    if (b.contact && RB.contactDamp > 0) {
+      const k = Math.exp(-RB.contactDamp * h);
+      b.w = mul(b.w, k);
+      b.v = [b.v[0] * k, b.v[1] * k, b.v[2]];
+    }
     if (b.contact && len(b.v) < REST_V && len(b.w) < REST_W) b.still += h;
     else b.still = 0;
   }
@@ -422,12 +451,12 @@ export class RockBodies {
     speed: number,
     at: V3,
   ): { rubble: { p: V3; mat: number }[]; pieces: RockBody[]; seeds: { s: V3; piece: RockBody | null }[]; hit: V3; rad: number } | null {
-    const thr = RB.breakSpeed * Math.sqrt(b.strength);
+    const thr = this.breakSpeedOf(b);
     if (speed < thr || b.grace > 0 || b.gen >= MAX_GEN) return null;
     const R = rotM(b.q);
     const hit = mtv(R, sub(at, b.pos));
     const toWorld = (p: V3) => add(b.pos, mv(R, p));
-    const rad = Math.min(3, 0.8 + 0.35 * (speed - thr));
+    const rad = Math.min(3 * RB.crumble, (0.8 + 0.35 * (speed - thr)) * RB.crumble);
     const rubble: { p: V3; mat: number }[] = [];
     const rest: RockCell[] = [];
     for (const k of b.cells) {
@@ -435,7 +464,7 @@ export class RockBodies {
       else rest.push(k);
     }
     // the rest into k parts round random seeds; each part's connected pieces
-    const parts = !rest.length ? 0 : rest.length < 3 * MIN_CHUNK ? 1 :Math.min(6, 2 + Math.floor((((speed / thr) ** 2 - 1) * rest.length) / 600));
+    const parts = !rest.length ? 0 : rest.length < 3 * MIN_CHUNK ? 1 :Math.min(Math.round(6 * RB.crumble), 2 + Math.floor((((speed / thr) ** 2 - 1) * rest.length * RB.crumble) / 600));
     const rand = rng(b.id * 7919 + Math.floor(speed * 100));
     const seeds: V3[] = [];
     for (let i = 0; i < parts; i++) seeds.push(rest[Math.floor(rand() * rest.length)].p);
@@ -507,6 +536,11 @@ export class RockBodies {
   /** its cells as lattice cells of the spawn frame (column x, y, cell z): what its mesh is made from */
   latCells(b: RockBody): { x: number; y: number; z: number; mat: number }[] {
     return b.cells.map((k) => ({ x: k.lat[0], y: k.lat[1], z: k.lat[2], mat: k.mat }));
+  }
+
+  /** (round 96) the impact speed that breaks it: its strength's, less for a big piece (the square-cube law: RB.sizeK) */
+  breakSpeedOf(b: RockBody): number {
+    return RB.breakSpeed * Math.sqrt(b.strength) * Math.pow(Math.max(1, b.cells.length) / 200, -RB.sizeK);
   }
 
   /** its cells' centres in the world as it lies now */

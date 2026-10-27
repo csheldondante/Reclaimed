@@ -7289,3 +7289,42 @@ Open: RB4–RB9.
 - (round 94, after the confirming shot) The objective's line was drawn as a strip across the screen's bottom
   edge, not under the objective: its class `.hint` is also the level's hint bar's (ui/style.css, positioned
   absolutely). It's `.obj-where` now. places 1a8e48a merged (DEVLOG and DECISIONS kept from both sides).
+
+## Round 96 — weightier rock, metal on the physics voxels, rock bodies on in the atlas (`rockbody`)
+
+Why: the user (DECISIONS round 96) — "a bit floaty … a little too much collision response … the primary reaction
+to collisions is to crumble and shatter with stone at scale"; "you want slow falls to convey scale not more
+acceleration"; then "Rock physics looks mostly right with the CPU version so don't sweat it too much. Just slightly
+weightier"; metal: "does it use the deformation physics the buildings do?"; and "push to atlas".
+
+**Rock, slightly weightier** (rockbodies.ts RB; gravity unchanged). Restitution 0.15 → 0.05; angular damping 0.4 →
+0.6; while it touches the ground its spin and horizontal speed are damped too (`rbcdamp` 1.5 /s: it lands and stays
+down rather than skating or spinning off); a hard hit crumbles a wider radius and breaks into more pieces
+(`rbcrumble` 1.4 ×); a big piece is weak for its weight — the break speed × (cells / 200)^−0.15 (`rbsize`: a
+1600-cell top breaks at 0.73 × the speed a 200-cell one does). The panel has the new knobs (and "show cubes").
+scripts/sidebyside.mjs puts two runs' frames side by side: rock-old-vs-new.gif (the off-centre top, round 95's
+knobs left, these right: it comes down beside its stub and stays, where round 95's skated on and split).
+
+**Metal — the answer.** No: the rigid rock (rockbodies.ts) is a CPU solver of its own; the buildings and the drop
+tool use physics.ts, the GPU voxel-particle solver (lattice shape matching: plastic bending past a yield, bonds that
+snap, heat, crumbling to loose ground). With rock bodies on, metal (steel, rust) now goes there: whatever the
+judges free or cut that has metal in it, the metal is taken out of what they found (`Integrity.takeMetal`) and woken
+whole (`wakeMetal`: everything of it connected, 26 round, out of both copies of the columns into one physics body,
+its cells resting on other ground pinned — wake.ts's rule), so it sags, bends and buckles where it's no longer held.
+Rock stays on the CPU bodies (the user's ruling). Option (b), every falling piece on the GPU solver, was not taken
+(the user, after seeing round 95 again).
+
+**Drawing the metal.** The plan was its field mesh skinned to the particles (rockmesh.wgsl `skin` draws: each vertex
+moved with the particle of its cell — the vertex a little inside the surface, its cell's particle or a neighbour's
+— and its rotation; a triangle stretched past 1.6 ×, or over a particle gone, not drawn). It doesn't work for
+metal: the field mesh leaves metal to the prisms (meshregion.wgsl fieldMat), and meshed as stone instead the bridge's
+girder (2 cells deep, 2 rows wide) and the tower's one-column legs make next to no surface (the slot's 96 cells: 14
+quads). So the metal is drawn as its particles' own voxels, each turned with its particle — as the woken buildings and
+the drop tool's bodies are; `?rbskin=1` keeps the skinned field mesh to try on thick metal (RB12: hex prisms per cell
+turned with their particles would be the world's own look for metal).
+
+**On in the atlas** (`rockbodyFor`: the atlas and the rock lab on by default, `?rockbody=0` off, `=1` on anywhere).
+
+GIFs: C:/Projects/shots88/rockbody2/ — bridge-undercut.gif (a pier broken: the girder sags and hangs from the other
+pier in a V), tower-legs-cut.gif (two legs cut: the frame tower buckles and folds into a heap), tower-meteor.gif (the
+meteor's blast turns the whole tower to dust — too big for it), rock-old-vs-new.gif.

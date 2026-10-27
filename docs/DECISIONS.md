@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 96 (session 5, `rockbody`) — weightier rock, metal on the physics voxels, on in the atlas
+
+- The user, after playing round 95, verbatim: "Ok the rigidbody version is much better. The pieces still feel a bit
+  floaty and I think it is because they have a little too much collision response and I think the primary reaction
+  to collisions is to crumble and shatter with stone at scale. It would be interesting to have a different material
+  like metal (does it use the deformation physics the buildings do?)"
+- Then, verbatim: "No you want slow falls to convey scale not more acceleration. But otherwise yes this is good. GPU
+  solver is great if we can get it to work the way we want. As long as rendering still uses the mesh that's the
+  best of both worlds." → gravity stays 1.
+- Then, verbatim: "Rock physics looks mostly right with the CPU version so don't sweat it too much. Just slightly
+  weightier it was better the second time I tried it" → rock stays on the CPU bodies, a little less bounce and spin,
+  a little more crumbling; metal on the GPU solver (physics.ts, as the buildings and the drop tool).
+- And: "And then I think push to atlas" → rock bodies on by default in the atlas and the rock lab (`?rockbody=0` off).
+
 ## 2026-10-27 — round 95 (session 5, `rockbody`) — rock as a rigid body while it falls
 
 - The user, verbatim: "It could be fun to spin up a new rock agent to make the disjoint chunk a rigidbody during

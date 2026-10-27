@@ -39,6 +39,11 @@ export interface RockDraw {
   m: number[];
   /** a ghost: its vertices go with the fragment whose seed (spawn frame) is nearest; none within `rad` of `hit` */
   ghost?: { seeds: [number, number, number, number][]; hit: [number, number, number]; rad: number };
+  /**
+   * (round 96) skinned to a physics body's particles instead (`m` unused): its first particle, its lattice's low
+   * corner (column x, y, cell z of the spawn frame) and size — each vertex goes with the particle of its cell
+   */
+  skin?: { offset: number; lo: [number, number, number]; dims: [number, number, number]; mat?: number };
 }
 
 interface Slot {
@@ -232,9 +237,12 @@ export class RockMesh {
       if (s) {
         const [i, j, a, b] = s.rect;
         d.set([i * MCHUNK, j * MCHUNK * ROW_H, (i + a) * MCHUNK, (j + b) * MCHUNK * ROW_H], o);
-        d.set([s.shift[0], s.shift[1], s.shift[2], r.ghost ? 1 : 0], o + 16);
+        d.set([s.shift[0], s.shift[1], s.shift[2], r.skin ? 2 : r.ghost ? 1 : 0], o + 16);
       } else d.set([1, 1, 0, 0], o);
-      d.set(r.m, o + 4);
+      if (r.skin) {
+        d.set([r.skin.offset, ...r.skin.lo], o + 4);
+        d.set([...r.skin.dims, r.skin.mat ?? 0], o + 8);
+      } else d.set(r.m, o + 4);
       if (r.ghost) {
         d.set([...r.ghost.hit, r.ghost.rad], o + 20);
         for (let k = 0; k < 6; k++) d.set(r.ghost.seeds[k] ?? [0, 0, 0, -1], o + 24 + k * 4);

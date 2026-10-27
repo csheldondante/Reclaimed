@@ -1293,6 +1293,14 @@ draws the parent's slot split by the fragments' Voronoi seeds (a ghost, `BUILD_F
 a settled body's mesh stays 6 frames. The cubes are only drawn for a body with no slot (too big: over 3 × 3 mesh
 chunks, or no room) or with `RB.cubes`; they always cast the shadow (`Renderer.setBodies(data, count, shown)`: the
 main pass draws the first `shown`).
+Round 96: on by default in the atlas and the rock lab (`rockbodyFor(level.id)`; `?rockbody=0|1`). Metal (steel,
+rust) isn't the judges' with it on: `Integrity.takeMetal` strips it from what they found and `wakeMetal` takes
+everything of it connected (26 round, METAL_MAX cells) out of both copies into one physics body
+(`Physics.spawnLattice`; cells on other ground pinned, as wake.ts does), set by the level (`Integrity.physics`).
+It's drawn as its particles' voxels; `?rbskin=1` (an experiment) gives it a rock-mesh slot meshed as stone and drawn
+skinned per vertex to the particle of its cell (`RockDraw.skin`: rockmesh.wgsl reads the particles' positions, rest
+and rotations at bindings 32–34, `Renderer.setRockParticles`; `Physics.buffers`), tearing where a triangle
+stretches past 1.6× or its particle is gone.
 
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 

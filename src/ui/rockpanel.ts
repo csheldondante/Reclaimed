@@ -14,6 +14,10 @@ const KNOBS: { k: keyof typeof RB; url: string; label: string; min: number; max:
   { k: 'tipSpin', url: 'rbspin', label: 'tip spin', min: 0, max: 3, step: 0.05 },
   { k: 'maxV', url: 'rbmaxv', label: 'top speed', min: 2, max: 40, step: 1 },
   { k: 'scatter', url: 'rbscatter', label: 'scatter', min: 0, max: 1, step: 0.05 },
+  { k: 'contactDamp', url: 'rbcdamp', label: 'ground damping', min: 0, max: 6, step: 0.1 },
+  { k: 'sizeK', url: 'rbsize', label: 'big is weak', min: 0, max: 0.6, step: 0.05 },
+  { k: 'crumble', url: 'rbcrumble', label: 'crumble ×', min: 0.5, max: 3, step: 0.1 },
+  { k: 'cubes', url: 'rbcubes', label: 'show cubes', min: 0, max: 1, step: 1 },
 ];
 
 export function mountRockPanel(parent: HTMLElement, stats: () => string): void {

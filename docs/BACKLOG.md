@@ -1332,6 +1332,16 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 96 (2026-10-27, session 5, `rockbody`) — weightier rock, metal on the physics voxels (DECISIONS round 96)
+
+| id | item | size | status |
+|---|---|---|---|
+| RB10 | Slightly weightier rock: less bounce (restitution 0.15 → 0.05) and spin (angular damping 0.4 → 0.6, and spin and slide damped while it touches the ground, `rbcdamp` 1.5), more crumbling on hard hits (`rbcrumble` 1.4: the radius crumbled and the pieces), a big piece weak for its weight (the break speed × (cells / 200)^−0.15, `rbsize`); gravity unchanged (the user: slow falls convey scale) | S | done (rockbody) |
+| RB11 | Metal on the physics voxels (physics.ts: the buildings' and the drop tool's solver — it bends plastically and snaps): metal the judges free or cut is woken whole, its cells on other ground pinned, out of the columns; the rock lab's steel bridge and steel tower | M | done (rockbody) |
+| RB12 | The metal drawn with a mesh skinned to its particles: the field mesh leaves metal to the prisms and can't hold its thin members (a girder 2 cells deep, a one-column leg mesh to nothing) — drawn as its particles' voxels for now; `?rbskin=1` tries the field mesh (meshed as stone, its material drawn) skinned per vertex to the particle of its cell; the next step: hex prisms per cell turned with their particles (the world's own look for metal) | M | open |
+| RB13 | Rock bodies on by default in the atlas and the rock lab (`?rockbody=0` off) | S | done (rockbody) |
+| RB14 | Woken metal stays physics voxels for good (as woken buildings do): it isn't written back into the columns at rest | S | open |
+
 ## Round 95 (2026-10-27, session 5, `rockbody`) — rock as a rigid body while it falls (DECISIONS round 95)
 
 | id | item | size | status |
@@ -1339,7 +1349,7 @@ user) · `deferred` (agreed for later).
 | RB1 | `?rockbody=1`: what the rock judge frees, or what tips, falls as a rigid body (game/rockbodies.ts: mass, inertia, impulses at its corners against the CPU copy's columns, friction, restitution), turning about the edge it tips over; written back into the columns where it rests (no cell left over air) | M | done (rockbody; an experiment, default off — C21's rotation for what tips) |
 | RB2 | Drawn as its own mesh, not cubes (the user: "render the mesh not cubes … anchor the vertices to the cubes"): a slot of a third field mesh meshed once from its cells, moved per vertex with its body; a break drawn split by the fragments' seeds till theirs are built; `rbcubes=1` shows the cubes | M | done (rockbody) |
 | RB3 | Breaks on a hard hit (impact speed against `RB.breakSpeed × √strength`): crumbles round the point (rubble, chips, dust, sparks) and into up to six bodies; pieces under 8 cells crumble | S | done (rockbody) |
-| RB4 | The knobs (URL `rbgrav rbrest rbfric rbbreak rbdamp rbmax rbspin rbmaxv rbscatter rbcubes`, a panel in the rock lab) — for the user to tune | S | asked |
+| RB4 | (round 96: the user's first feedback taken — RB10) The knobs (URL `rbgrav rbrest rbfric rbbreak rbdamp rbmax rbspin rbmaxv rbscatter rbcubes`, a panel in the rock lab) — for the user to tune | S | asked |
 | RB5 | Body against body: not simulated (pieces of a break pass through each other till they rest; resting ones are ground) | M | open |
 | RB6 | The thin leg's top comes straight down (the judge crushes the leg: CRUSH beats tipping when the leg is cut round) — a leg cut on one side low down should topple the leg with its top, like a tree; needs the judge to hand the standing leg above the cut to the body (C15's neck from the cut, not from the piece's lowest point) | M | open |
 | RB7 | A piece over 3 × 3 mesh chunks (~90 columns) or past the window's height gets no mesh (its cubes are drawn) | S | open |

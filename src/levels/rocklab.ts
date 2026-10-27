@@ -7,6 +7,8 @@
 //   middle: an arch (break one foot) · a top off to one side of its leg (nick the leg's far side: it tips) ·
 //           a tall pillar to drop a meteor by
 //   front:  a tower banded with soil and concrete · a concrete tower · a tower with a waist to cut part way round
+//   (round 96) in front of those, metal (with rockbody on it's woken into the physics voxels and bends): a steel girder
+//           bridge on two stone piers (break a pier) · a steel frame tower (a meteor at its feet)
 // The sandbox's tools (Break, Meteor, Heat beam, Dig) are on the panel.
 
 import { ColumnGrid, type Interval, type WorldDims } from '../world/layout';
@@ -105,6 +107,26 @@ export function generateRocklab(dims: WorldDims): MapData {
   {
     const [x, y] = at(2, 2);
     for (const [a, b] of disc(x, y, 4.5)) put(a, b, G - 2, G + 50, MAT.Stone);
+  }
+  // (round 96) metal: a fourth row
+  {
+    // a steel girder bridge on two stone piers 18 apart, its deck a girder 3 wide, 2 deep
+    const [x, y] = at(0, 3);
+    for (const dx of [-9, 9]) for (const [a, b] of disc(x + dx, y, 2)) put(a, b, G - 2, G + 14, MAT.Stone);
+    for (let wx = x - 11; wx <= x + 11; wx += 0.5) for (const [a, b] of disc(wx, y, 1.2)) put(a, b, G + 14, G + 16, MAT.Steel);
+  }
+  {
+    // a steel frame tower: four legs, braced every 8 cells, a platform on top
+    const [x, y] = at(1, 3);
+    const legs: [number, number][] = [[-3, -3], [3, -3], [3, 3], [-3, 3]];
+    for (const [lx, ly] of legs) for (const [a, b] of disc(x + lx, y + ly, 0.6)) put(a, b, G, G + 32, MAT.Steel);
+    for (let z = G + 8; z <= G + 32; z += 8)
+      for (let k = 0; k < 4; k++) {
+        const [ax, ay] = legs[k];
+        const [bx, by] = legs[(k + 1) % 4];
+        for (let t = 0; t <= 1; t += 0.05) for (const [a, b] of disc(x + ax + (bx - ax) * t, y + ay + (by - ay) * t, 0.6)) put(a, b, z, z + 1, MAT.Steel);
+      }
+    for (const [a, b] of disc(x, y, 4.5)) put(a, b, G + 32, G + 33, MAT.Steel);
   }
   const grid = new ColumnGrid(dims);
   for (let y = 0; y < h; y++)

@@ -20,8 +20,21 @@ import { cellAt, cellPos, nbr, DIRV, ROW_H } from '../world/lattice';
 import { EventKind } from '../sim/globals';
 import { CUTS, OP, editOpOf } from '../sim/edit-ops';
 import { ColumnBodies, subtract, type ColPiece, type FallingBody, type Landing } from './colbodies';
-import { RockBodies, RB, ROCKBODY, type RockBody, type RockGround, type V3 } from './rockbodies';
+import { RockBodies, RB, type RockBody, type RockGround, type V3 } from './rockbodies';
 import { BUILD_FRAMES, type RockDraw, type RockMesh } from '../render/rockmesh';
+import type { Physics, PhysBody } from '../physics/physics';
+
+/** (round 96) what bends: metal goes to the physics voxels (physics.ts), the rest of what falls stays rigid */
+const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust]);
+/** (round 96) cells of metal woken at once at most (wake.ts WAKE_MAX) */
+const METAL_MAX = 6000;
+/**
+ * (round 96, ?rbskin=1, an experiment) the metal drawn as a field mesh skinned to its particles (meshed as stone: the
+ * field leaves metal to the prisms). Off by default: the field mesh can't hold metal's thin members — a girder two
+ * cells deep, a tower's one-column legs mesh to nothing — so the metal is drawn as its particles' own voxels, each
+ * turned with its particle, as the woken buildings and the drop tool's bodies are.
+ */
+const SKIN_METAL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('rbskin') === '1';
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 
@@ -79,6 +92,14 @@ export class Integrity {
   private ghosts: { slot: number; frames: number; seeds: { s: V3; piece: RockBody | null }[]; hit: V3; rad: number }[] = [];
   private afterglow: { slot: number; m: number[]; frames: number }[] = [];
   /**
+   * (round 96, the user: "a different material like metal (does it use the deformation physics the buildings
+   * do?)") With rockbody on, metal that the judges free or cut is woken into the physics voxels (the GPU solver the
+   * buildings and the drop tool use: it bends, plastically, and snaps), whole — everything of it connected, its
+   * cells resting on other ground pinned — and drawn with its own mesh skinned to the particles.
+   */
+  physics?: Physics;
+  private metal: { body: PhysBody; slot: number; lo: [number, number, number]; dims: [number, number, number]; mat: number }[] = [];
+  /**
    * (round 86) a cut was sent this tick or since: the next pass starts at once (not on the 0.35 s timer), its
    * readback submitted after the tick that made the cut — so one look is enough
    */
@@ -120,7 +141,7 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -128,7 +149,11 @@ export class Integrity {
   static readonly MAX_SLEEPING = 64;
   static readonly MAX_SLEEP_VOXELS = 16384;
 
-  constructor(private core: WorldCore) {
+  constructor(
+    private core: WorldCore,
+    /** (round 95) rock the judge frees falls as rigid bodies (rockbodies.ts rockbodyFor) */
+    rockbody = false,
+  ) {
     this.world = new WorldVox(core.packed, new Uint32Array(0));
     this.bodies = new Bodies(this.world);
     const N = core.dims.w * core.dims.h;
@@ -142,7 +167,7 @@ export class Integrity {
     };
     this.bodies.onWake = () => this.project();
     this.bodies.onImpact = (b, speed, at) => this.impact(b, speed, at);
-    if (ROCKBODY) {
+    if (rockbody) {
       (this as { rigid: RockBodies | null }).rigid = new RockBodies(this.rockGround());
       this.rockMesh = core.renderer.enableRockMesh();
     }
@@ -873,6 +898,8 @@ export class Integrity {
 
   /** What an analysis found, done: what crumbles crumbles, what breaks free falls. Did anything crumble? */
   private apply(r: Fracture): boolean {
+    // (round 96) metal isn't the judges': it's woken into the physics voxels, whole, where they found it
+    if (this.rigid && this.physics) this.takeMetal(r);
     // (round 87) the rock's runs that gave: cut out whole (fractional ends too), their volume rubble beside them
     const gave = r.crumbleRuns ?? [];
     if (gave.length) {
@@ -1044,6 +1071,12 @@ export class Integrity {
   private rockDraws(): void {
     const rm = this.rockMesh;
     if (!rm || !this.rigid) return;
+    // (round 96: the physics voxels cleared — undo, a warp — take the metal's bodies with them)
+    if (this.physics && this.metal.length) {
+      const live = new Set(this.physics.bodies);
+      for (const mb of this.metal) if (!live.has(mb.body)) rm.release(mb.slot);
+      this.metal = this.metal.filter((mb) => live.has(mb.body));
+    }
     const draws: RockDraw[] = [];
     const index = new Map<RockBody, number>();
     const waiting = new Set<RockBody>();
@@ -1054,6 +1087,8 @@ export class Integrity {
       draws.push({ slot: waiting.has(b) || b.slot === undefined ? -1 : b.slot, m: this.rigid.matrix(b) });
     }
     for (const a of this.afterglow) draws.push({ slot: a.slot, m: a.m });
+    // (round 96) the metal: its mesh skinned to its particles
+    for (const mb of this.metal) draws.push({ slot: mb.slot, m: [], skin: { offset: mb.body.offset, lo: mb.lo, dims: mb.dims, mat: mb.mat } });
     for (const g of this.ghosts) {
       const seeds = g.seeds.map((s): [number, number, number, number] => [s.s[0], s.s[1], s.s[2], s.piece && index.has(s.piece) ? index.get(s.piece)! : -1]);
       draws.push({ slot: g.slot, m: [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0], ghost: { seeds, hit: g.hit, rad: g.rad } });
@@ -1063,6 +1098,147 @@ export class Integrity {
     this.afterglow = this.afterglow.filter((a) => a.frames > 0);
     for (const g of this.ghosts) if (--g.frames <= 0) rm.release(g.slot);
     this.ghosts = this.ghosts.filter((g) => g.frames > 0);
+  }
+
+  /** (round 96) The metal in what the judges found taken out of it, and woken (wakeMetal) where it was. */
+  private takeMetal(r: Fracture): void {
+    const at: [number, number, number][] = [];
+    const strip = (rp: { x: number; y: number; ivs: { z0: number; z1: number; mat: number }[] }[] | undefined) => {
+      for (const c of rp ?? []) {
+        const keep = c.ivs.filter((iv) => !METAL.has(iv.mat));
+        if (keep.length !== c.ivs.length) for (const iv of c.ivs) if (METAL.has(iv.mat)) at.push([c.x, c.y, Math.floor((iv.z0 + iv.z1) / 2)]);
+        c.ivs = keep;
+      }
+    };
+    for (const p of r.pieces ?? []) strip(p);
+    if (r.pieces) r.pieces = r.pieces.map((p) => p.filter((c) => c.ivs.length));
+    strip(r.crumbleRuns);
+    if (r.crumbleRuns) r.crumbleRuns = r.crumbleRuns.filter((c) => c.ivs.length);
+    const cellsOut = (vs: Voxel[]) => {
+      for (const v of vs) if (METAL.has(v.mat)) at.push([v.x, v.y, v.z]);
+      return vs.filter((v) => !METAL.has(v.mat));
+    };
+    r.crumble = cellsOut(r.crumble);
+    r.bodies = r.bodies.map(cellsOut).filter((b) => b.length);
+    if (at.length) this.wakeMetal(at);
+  }
+
+  /**
+   * (round 96) The metal connected to these cells (column x, y, cell z), out of the columns into the physics voxels:
+   * one body a connected piece (26 round), a cell resting on other ground pinned (a foundation: wake.ts), hidden — its
+   * mesh drawn instead, skinned to its particles.
+   */
+  private wakeMetal(seeds: [number, number, number][]): void {
+    const phys = this.physics!;
+    const { w: W, h: H } = this.core.dims;
+    const cols = new Map<number, Interval[]>();
+    const colAt = (x: number, y: number) => {
+      const k = y * 65536 + x;
+      let c = cols.get(k);
+      if (!c) cols.set(k, (c = readColumn(this.core.packed, this.world.slots, x, y)));
+      return c;
+    };
+    const key = (x: number, y: number, z: number) => (z * 8192 + y) * 8192 + x;
+    /** the metal cell at (x, y, z): its material, and whether it rests on other ground */
+    const metalAt = (x: number, y: number, z: number): { mat: number; pin: boolean } | null => {
+      if (x < 0 || y < 0 || x >= W || y >= H || z < 0) return null;
+      const col = colAt(x, y);
+      for (let k = 0; k < col.length; k++) {
+        const iv = col[k];
+        // (any metal in the cell, a sliver too: what a meteor's melt left of a member is taken with it, not left floating)
+        if (!METAL.has(iv.mat) || iv.z1 <= z + 0.01 || iv.z0 >= z + 0.99) continue;
+        const below = k > 0 ? col[k - 1] : null;
+        const pin = z === Math.floor(iv.z0 + 0.01) && (iv.z0 < 1e-3 || (!!below && Math.abs(below.z1 - iv.z0) < 1e-3 && !METAL.has(below.mat)));
+        return { mat: iv.mat, pin };
+      }
+      return null;
+    };
+    const cells = new Map<number, { x: number; y: number; z: number; mat: number; pin: boolean }>();
+    const queue: number[] = [];
+    for (const [x, y, z] of seeds) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const c = metalAt(x, y, z + dz);
+        const k = key(x, y, z + dz);
+        if (c && !cells.has(k)) {
+          cells.set(k, { x, y, z: z + dz, ...c });
+          queue.push(k);
+        }
+      }
+    }
+    for (let q = 0; q < queue.length && cells.size < METAL_MAX; q++) {
+      const c = cells.get(queue[q])!;
+      const around: [number, number][] = [[c.x, c.y]];
+      for (let d = 0; d < 6; d++) around.push(nbr(c.x, c.y, d));
+      for (const [nx, ny] of around)
+        for (let dz = -1; dz <= 1; dz++) {
+          const k = key(nx, ny, c.z + dz);
+          if (cells.has(k)) continue;
+          const n = metalAt(nx, ny, c.z + dz);
+          if (!n) continue;
+          cells.set(k, { x: nx, y: ny, z: c.z + dz, ...n });
+          queue.push(k);
+        }
+    }
+    if (!cells.size) return;
+    let lo: [number, number, number] = [Infinity, Infinity, Infinity];
+    let hi: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+    for (const c of cells.values()) {
+      lo = [Math.min(lo[0], c.x), Math.min(lo[1], c.y), Math.min(lo[2], c.z)];
+      hi = [Math.max(hi[0], c.x), Math.max(hi[1], c.y), Math.max(hi[2], c.z)];
+    }
+    const dims: [number, number, number] = [hi[0] - lo[0] + 1, hi[1] - lo[1] + 1, hi[2] - lo[2] + 1];
+    if (!phys.hasRoom(dims[0] * dims[1] * dims[2])) return;
+    const at = (x: number, y: number, z: number) => cells.get(key(lo[0] + x, lo[1] + y, lo[2] + z));
+    // (its mesh's slot first: without one its voxels are drawn, not hidden)
+    const list = [...cells.values()];
+    // (meshed as stone: the field leaves metal to the prisms — its own material drawn: RockDraw.skin.mat)
+    const mats = new Map<number, number>();
+    for (const c of list) mats.set(c.mat, (mats.get(c.mat) ?? 0) + 1);
+    const mat = [...mats].sort((a, b) => b[1] - a[1])[0][0];
+    const slot = SKIN_METAL ? this.rockMesh?.alloc(list.map((c) => ({ ...c, mat: MAT.Stone })))?.id : undefined;
+    const body = phys.spawnLattice(
+      dims,
+      (x, y, z) => at(x, y, z)?.mat ?? 0,
+      (x, y, z) => {
+        const [px, py] = cellPos(lo[0] + x, lo[1] + y);
+        return [px, py, lo[2] + z + 0.5];
+      },
+      { pinned: (x, y, z) => !!at(x, y, z)?.pin, hidden: slot !== undefined },
+    );
+    if (!body) {
+      if (slot !== undefined) this.rockMesh?.release(slot);
+      return;
+    }
+    // out of the columns (both copies)
+    const byCol = new Map<number, { z0: number; z1: number }[]>();
+    for (const c of cells.values()) {
+      const k = c.y * 65536 + c.x;
+      const l = byCol.get(k) ?? [];
+      l.push({ z0: c.z, z1: c.z + 1 });
+      byCol.set(k, l);
+    }
+    const touched: { x: number; y: number }[] = [];
+    for (const [k, cut] of byCol) {
+      const x = k % 65536;
+      const y = Math.floor(k / 65536);
+      // (only the metal goes: what else shares those heights stays)
+      const col = colAt(x, y);
+      const out: Interval[] = [];
+      for (const iv of col) {
+        if (!METAL.has(iv.mat)) out.push(iv);
+        else out.push(...subtract([iv], cut));
+      }
+      this.writeColumn(x, y, out);
+      touched.push({ x, y });
+      this.rockSeeds.set(k, 2);
+    }
+    this.touchCols(touched, true);
+    this.urgent = true;
+    if (slot !== undefined) this.metal.push({ body, slot, lo, dims, mat });
+    this.stats.bodies++;
+    this.stats.metal = (this.stats.metal ?? 0) + list.length;
+    const [fx, fy] = cellPos(Math.round((lo[0] + hi[0]) / 2), Math.round((lo[1] + hi[1]) / 2));
+    this.onCollapse?.(fx, fy, lo[2] + 0.5, list.length * 0.1);
   }
 
   /** (round 95) world points → the column indices + 0.5 toLoose and chips take */
