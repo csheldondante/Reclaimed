@@ -43,7 +43,7 @@ try {
       const built = [];
       let owed = 0;
       for (let c = 0; c < n; c++) {
-        const b = 16 + c * 13;
+        const b = 16 + c * 14;
         built.push(u[b + 5]);
         if (m.near[c] && u[b + 6] !== u[b + 5]) owed++;
       }

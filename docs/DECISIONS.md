@@ -21,6 +21,51 @@ each was implemented.
 - → The LOD rings past the window bake, once per texel as they already do, the plants the window's columns start
   with and the distance to the atlas's ways, and draw them the window's way (its ground colour, grass, paved ways,
   painted trees, its light); the near side no longer pressed flat. `?fd=0` the old look. See DEVLOG round 93.
+## 2026-10-27 — round 92 (session 5, `collapse`) — what holds rock up; the meteor-made floaters
+
+- The user, on the collapse judge (a hanging piece joined to any standing run was held whatever it weighed; a
+  huge pillar top stayed up on a two-column leg after a meteor at its foot), verbatim: "The way I would do it is
+  on editing a column (anything editing) I would wake it up. The simulation I would probably do is connected
+  components of solid intervals then look at total solid support under an interval and see if it is sufficient
+  for the volume of the connected section and if not collapse it. This can all be done pretty cheaply in column
+  space as connected components should be in 2d column space and only needs to be done when the structure
+  changes. You can also treat non solid material as support but I would weight it lower. If you want to make it
+  even better you could compute distance to the nearest lateral support for each column via JFA and flood fill in
+  from the edges by distance so that you sum column mass and support from neighbors. If the mass ever exceeds the
+  support then drop the column. ... Remember supports can be vertical or horizontal and we can get both pretty
+  cheaply with columns"
+- Answers to the agent's questions: "1 where it breaks 2 now and we can add rotation later 3 I'm not sure what
+  simulation changes break stone currently but maybe we defer this unless doing so is more effort". And: "note
+  that in one of my screenshots the column is actually floating with zero visible support so I think there is
+  still a bug in when we trigger the logic to run the check and wakeup the columns".
+- "Please have the rock agent make a playground like the one used for waterfalls as it is convenient for me to
+  test with too. (Although may miss the cause of bugs in atlas)" → `level=rocklab`.
+- On the agent's first finding (the atlas's generator leaving rock floating): "No it was meteor made floaters";
+  "The generator does not in my experience create floaters"; "I'm my experience there were never floating rock
+  chunks visible but I can't rule out that the overhang code the agent wrote didn't introduce any. Nothing I
+  designed does by construction." → islands are not dropped at generation (reverted); most of those "floaters"
+  were the judge's join rule (thin strata touching by 0.47 < 0.5), fixed in the judge.
+- The user's hypothesis: "It's probably something stupid like the meteor creates magma that seems to for some
+  reason drop from the top of the column and it probably treats that as support and goes back to sleep"; and
+  "I'm guessing it just never really tested with all the systems in play and it's an oversight". → The latter: the
+  tests all turned the streamer off (`stream.auto = false`); a slide (xy or z) while a meteor-freed piece fell
+  left it in the air, forgotten. Fixed; the tests now run with the streamer on.
+- → Support (round 92): breaks where it breaks (the most overloaded cross-section), tipping now (straight down;
+  rotation later, BACKLOG C4), only what an edit weakened is weighed; loose ground bears less (the table's `bear`).
+## 2026-10-27 — round 93 (session 5, `winmem`) — what the streamed window spends its memory on
+
+- The user: "I think a loaded area shaped like the view could work but what about the current layout takes so much
+  memory? We can also do better visual detail further out but it would help to know what is expensive in terms of
+  memory and what to prioritize."
+- Then: "Yes just have it work in another branch and set up experiments for anything risky."
+- → Branch `winmem` (from `phonecam`). Measured buffer by buffer (DEVLOG round 93): at the phone's 320 window the GPU
+  held 465 MB, ~4.5 KB a column against the world's own ~0.5 KB — most of it the field mesh's room for every chunk's
+  worst case (meshVerts 103 MB, meshIndices 77) and instance lists sized for every interval of every column (56 MB).
+  The mesh now takes pages from a pool for what's built and draws through one shared quad index buffer; the
+  instance lists start small and grow. **Both on in this branch** (our call: measured the same frame times and look,
+  half the memory; `?meshpool=0`, `?instgrow=0` give the old layout to compare on the phone). The view-shaped window
+  is an experiment (`?winh=`: rows other than the side, fixed at load) — it only pays when the view looks along the
+  long axis, so the real one has to turn with the view (BACKLOG WM5).
 
 ## 2026-10-27 — round 91 (session 5, `phonecam`) — names on the map, a compass, the edge of the land
 

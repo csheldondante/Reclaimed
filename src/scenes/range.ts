@@ -31,6 +31,18 @@ export function atlasRange(q: URLSearchParams): number {
   return W;
 }
 
+/**
+ * (round 93, an experiment: ?winh=) The window's rows, when not its side: a window deeper along y than across
+ * (or shallower) — whole regions, 256 or more. The view is turned round the target (Camera.azimuth), so this only
+ * fits the view when it looks along y; scripts/edgeprobe.mjs measures it (docs/DEVLOG.md round 93).
+ */
+export function atlasRows(q: URLSearchParams, w: number): number {
+  const v = q.get('winh');
+  const H = v !== null ? Number(v) : w;
+  if (!(H >= 256 && H % REGION === 0)) throw new Error(`?winh= must be 256 or more, whole regions of ${REGION}`);
+  return H;
+}
+
 /** the next choice after `w` (round the list) */
 export function nextRange(w: number): number {
   const i = RANGES.findIndex((r) => r > w);

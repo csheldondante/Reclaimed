@@ -10,6 +10,7 @@ import { generateLandforms } from '../world/landforms';
 import { generateStreamWindow } from '../world/streamgen';
 import { generateTrials } from '../levels/trials';
 import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
+import { generateRocklab } from '../levels/rocklab';
 import type { FlowKit } from '../flow/install';
 import type { GateSpec } from '../world/kit';
 
@@ -34,6 +35,8 @@ export interface LevelDef {
   story?: boolean;
   /** not on the title screen (test beds: ?skipmenu=1&level=<id>, or the sandbox's load list) */
   hidden?: boolean;
+  /** (round 92) the camera's zoom it opens at (default: from the screen's size) — the rock lab's pieces close */
+  zoom?: number;
   /** its height limit (cells; default 64): the wilds' ranges want more (round 64) */
   zMax?: number;
   /** the world is a window onto land without an edge (round 66: scenes/streamer.ts) */
@@ -114,6 +117,17 @@ export const LEVELS: LevelDef[] = [
     sandbox: true,
     hidden: true,
     flowSetup: setupFlowlab,
+  },
+  {
+    id: 'rocklab',
+    name: 'The Rock Lab',
+    blurb: 'Rock to break: a top on a thin leg, an arm, an arch, a pillar, banded towers (round 92).',
+    model: 'sign',
+    generate: (dims) => generateRocklab(dims),
+    sandbox: true,
+    hidden: true,
+    zMax: 96,
+    zoom: 4.5,
   },
   {
     id: 'sandbox',

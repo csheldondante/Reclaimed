@@ -5,7 +5,7 @@
 // window over but not written yet (Streamer.unwritten: stale land, a hole). Also the slides' latency.
 //   node scripts/edgeprobe.mjs [--url http://localhost:5261] [--mode pan|drive] [--speed 40] [--seconds 20]
 //     [--key w] [--extra "&win=320"] [--at 11956,15471] [--turn 0] [--gif out.gif --frames 30 --every 150]
-//     [--size 412x915] [--wait 35000]
+//     [--size 412x915] [--wait 35000] [--face deg]
 import puppeteer from 'puppeteer-core';
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
@@ -24,6 +24,8 @@ const key = opt('key', 'w');
 const extra = opt('extra', '');
 const at = opt('at', '11956,15471');
 const turn = Number(opt('turn', 0));
+// (round 93, --face deg: the view's azimuth itself, eased to through the level's Turn — 45 the default view)
+const face = opt('face', '');
 const gif = opt('gif', '');
 const frames = Number(opt('frames', 30));
 const every = Number(opt('every', 150));
@@ -48,6 +50,10 @@ try {
   await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&at=${at}${drive}${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await new Promise((r) => setTimeout(r, wait));
+  if (face !== '') {
+    await p.evaluate((d) => window.reclaimed.scene.turn.face((d * Math.PI) / 180), Number(face));
+    await new Promise((r) => setTimeout(r, 3000));
+  }
   if (turn) {
     // (the view turned first: a tap of the turn button per step)
     const btn = await p.$$('.turn-ctl button');

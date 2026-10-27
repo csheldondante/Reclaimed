@@ -28,6 +28,12 @@
 @group(0) @binding(8) var<storage, read_write> instWater: array<vec4<u32>>;
 // [0..3] opaque draw args, [4..7] water draw args (instanceCount at 1 and 5)
 @group(0) @binding(9) var<storage, read_write> indirect: array<atomic<u32>>;
+
+// (round 93) the lists may be smaller than their worst case (renderer.ts instgrow, ?instgrow=0 off): a write past one's room is
+// left out, the count clamped after (clampWater; the prisms' in vegprep.wgsl clampVeg) and the raw count kept for
+// the CPU, which grows it. The tops' room (two a column, after the prisms') is their worst case.
+fn putW(i: u32, v: vec4<u32>) { if (i < arrayLength(&instWater)) { instWater[i] = v; } }
+fn putO(i: u32, v: vec4<u32>) { if (i < arrayLength(&instOpaque) - 2u * G.mapW * G.mapH) { instOpaque[i] = v; } }
 // [12..15] the tops list: intervals whose six sides are all hidden are drawn
 // as their top alone (12 vertices against a prism's 30; draw is
 // vertex-bound). It lives in instOpaque from indirect[16] (set by the CPU;
@@ -265,7 +271,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     inst.w |= (ivAux(v) & 15u) << 16u; // structural damage → cracks
     if (glass) {
       // (counted whether hidden or not: an all-hidden one draws no face)
-      instWater[w] = inst;
+      putW(w, inst);
       w += 1u;
       g += 1u;
       continue;
@@ -274,7 +280,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
       instOpaque[baseT + offT] = inst;
       continue;
     }
-    instOpaque[o] = inst;
+    putO(o, inst);
     o += 1u;
   }
   // liquids lie on top of drifted dust (it sinks; round 13)
@@ -296,12 +302,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     }
     var wi = mkInst(id.x, id.y, 1u, 1u, bed, lv, MAT_WATER, 0u);
     wi.w |= hideBits(hide);
-    instWater[w] = wi;
+    putW(w, wi);
     w += 1u;
   }
   if (ol > OIL_MIN) {
     // oil floats on whatever water is here (even a thin film)
     let base = bed + max(d, 0.0);
-    instWater[w] = mkInst(id.x, id.y, 1u, 1u, base, base + max(ol, 0.06), MAT_OIL, 0u);
+    putW(w, mkInst(id.x, id.y, 1u, 1u, base, base + max(ol, 0.06), MAT_OIL, 0u));
   }
+}
+
+// (round 93) the blended list's count held to its room, the raw count kept in indirect word 21
+@compute @workgroup_size(1)
+fn clampWater() {
+  let w = atomicLoad(&indirect[5]);
+  atomicStore(&indirect[21], w);
+  atomicStore(&indirect[5], min(w, arrayLength(&instWater)));
 }

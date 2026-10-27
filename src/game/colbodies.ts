@@ -165,11 +165,11 @@ export class ColumnBodies {
   }
 
   /** Every piece falls a step (its runs written at their new heights, when `write`: the phone writes every other frame); what came down this step is returned (still in the list: `commit` it). */
-  update(dt: number, write = true): Landing[] {
+  update(dt: number, write = true, only?: FallingBody[]): Landing[] {
     const landed: Landing[] = [];
     if (!this.list.length) return landed;
     const touched = new Set<number>();
-    for (const b of this.list) {
+    for (const b of only ?? this.list) {
       b.age += dt;
       const v = Math.max(-MAX_V, (b.vz - G * dt) * Math.exp(-AIR_DRAG * dt));
       // the gap under it: the least over its runs
@@ -269,6 +269,28 @@ export class ColumnBodies {
    */
   restoreCpu(): void {
     for (const [k, base] of this.base) this.writeCpu(k % 65536, Math.floor(k / 65536), base);
+  }
+
+  /**
+   * (round 92) The window slid by (dx, dy) cells: every piece, and what's under it, moves with the land (the GPU's
+   * columns moved with it; those of a piece in the strip that left landed first: Integrity.settle).
+   */
+  shift(dx: number, dy: number): void {
+    const move = <T>(m: Map<number, T>) => {
+      const out = new Map<number, T>();
+      for (const [k, v] of m) out.set(key((k % 65536) - dx, Math.floor(k / 65536) - dy), v);
+      return out;
+    };
+    this.base = move(this.base);
+    this.users = move(this.users);
+    for (const b of this.list) {
+      for (const c of b.cols) {
+        c.x -= dx;
+        c.y -= dy;
+      }
+      b.colAt = new Map(b.cols.map((c) => [key(c.x, c.y), c]));
+      b.box = [b.box[0] - dx, b.box[1] - dy, b.box[2] - dx, b.box[3] - dy];
+    }
   }
 
   /** Forget every piece (the window moved, or its columns were all written again): what the GPU has stays. */

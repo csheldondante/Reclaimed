@@ -17,7 +17,7 @@
 
 import { CHUNK as CHUNK_V, SLOT_WORDS, cellRange, columnSlots, readSlot, type PackedWorld } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
-import { NDIR, nbr } from '../world/lattice';
+import { NDIR, cellPos, nbr } from '../world/lattice';
 
 export interface Voxel {
   x: number;
@@ -41,6 +41,8 @@ export interface Fracture {
   need?: [number, number][];
   /** (round 88, analyseRock) the seeds of the pieces left for that: judged again once they're read */
   undecided?: [number, number][];
+  /** (round 92, analyseRock) why what fell fell: held nowhere, a joint's load, crushed under it, tipped (counts) */
+  why?: { free: number; load: number; crush: number; tip: number };
 }
 
 /** (round 86) a piece of rock by its columns: each one's runs (window z, fractional ends kept) */
@@ -501,8 +503,20 @@ export function isRock(m: number): boolean {
   return !!d && d.state === MatState.Solid && d.strength >= 1;
 }
 
-/** How far rock hangs over air before it gives, columns for each cell of its thickness (materials.ts `span`; Infinity: never) */
-const ROCK_SPAN = 3;
+/**
+ * (round 92) What holds rock up (the user: "connected components of solid intervals then look at total solid
+ * support under an interval and see if it is sufficient for the volume of the connected section and if not
+ * collapse it … supports can be vertical or horizontal"). Masses are cells × density (rock 1), strengths the
+ * material table's (rock 1, concrete 0.8, steel 0.85, brick 0.6, wood 0.4 …).
+ *  - BEND, SHEAR: a joint between runs in neighbouring columns (their side-holding intervals overlapping by h cells)
+ *    holds strength × min(BEND h², SHEAR h) of load through it: a slab a cell thick reaches BEND (3) columns out
+ *    from what holds it (round 83's span), one three thick or more SHEAR (10), whatever its thickness;
+ *  - CRUSH: a column holding a piece up from below holds CRUSH × its bear (the least down its run: rock 1, soil
+ *    0.3, sand 0.15 …) — a top of 300 cells of rock on one column of rock, 45 on one of sand;
+ *  - NECK_R: the piece above a cut is followed this many columns from what hangs; past it it's keyed into the land
+ *    (a cliff, a ridge), held; TIP_GIVE: how far (cells) a piece's centre of mass may lie past what it stands on.
+ */
+export const ROCK = { BEND: 3, SHEAR: 10, CRUSH: 300, NECK_R: 16, TIP_GIVE: 0.25 };
 /** (round 87) rock freed in less than this (cells of volume) crumbles to rubble rather than falling as a body —
  *  it used to stay where it was, floating */
 const MIN_BODY = 8;
@@ -526,6 +540,14 @@ const isMatter = (m: number) => {
   const s = MATERIALS[m]?.state;
   return s !== undefined && s !== MatState.Empty && s !== MatState.Liquid;
 };
+/** (round 92) the table's bear, density (materials.ts) with their defaults */
+const bearOf = (m: number) => {
+  const d = MATERIALS[m];
+  if (!d) return 0;
+  if (d.bear !== undefined) return d.bear;
+  return d.state === MatState.Solid ? Math.min(1, d.strength) : d.state === MatState.Vegetation ? d.strength : 0.2;
+};
+const densityOf = (m: number) => MATERIALS[m]?.density ?? (MATERIALS[m]?.state === MatState.Vegetation ? 0.4 : 1);
 
 /**
  * (round 88) A column's runs: its intervals touching one another, whatever they're made of (rock, a structure on
@@ -542,8 +564,6 @@ interface Run {
   ivs: { z0: number; z1: number; mat: number }[];
   /** it reaches the window's floor */
   stands: boolean;
-  /** its rock's span (Infinity: no rock in it — a structure, judged by analyse) */
-  span: number;
   /** something solid in it (only such runs are judged: a plant's leaves hanging from it go with it) */
   solid: boolean;
 }
@@ -557,54 +577,128 @@ function columnRuns(x: number, y: number, ivs: { z0: number; z1: number; mat: nu
       last = null;
       continue;
     }
-    const span = isRock(iv.mat) ? (MATERIALS[iv.mat].span ?? ROCK_SPAN) : Infinity;
     const solid = MATERIALS[iv.mat].state === MatState.Solid;
-    if (last && Math.abs(iv.z0 - last.z1) < 1e-3) {
-      last.z1 = iv.z1;
+    // (round 92: or overlapping it — the sim's loose ground and basalt laid a hundredth into what's under them read
+    // as a run of their own, hanging: the meteor's ejecta on its rim counted floating)
+    if (last && iv.z0 <= last.z1 + 1e-3) {
+      last.z1 = Math.max(last.z1, iv.z1);
       last.ivs.push(iv);
-      last.span = Math.min(last.span, span);
       last.solid ||= solid;
     } else {
-      last = { x, y, z0: iv.z0, z1: iv.z1, ivs: [iv], stands: iv.z0 < 1e-3, span, solid };
+      last = { x, y, z0: iv.z0, z1: iv.z1, ivs: [iv], stands: iv.z0 < 1e-3, solid };
       rs.push(last);
     }
   }
   return rs;
 }
 
-/** (round 88) do runs a and b (neighbouring columns) hold each other: intervals that hold sideways overlapping by OVERLAP */
+/**
+ * (round 92) do intervals [p0, p1) and [q0, q1) in neighbouring columns touch face to face: they overlap by OVERLAP,
+ * or by half the thinner one's thickness (round 88 asked OVERLAP of all: a stratum under a cell thick, tilted, its
+ * runs a column apart overlapping by 0.47, read as floating — 383 of the highlands' 401 "floating" runs)
+ */
+function touch(p0: number, p1: number, q0: number, q1: number): boolean {
+  const o = Math.min(p1, q1) - Math.max(p0, q0);
+  return o > 1e-3 && o >= Math.min(OVERLAP, 0.5 * Math.min(p1 - p0, q1 - q0));
+}
+
+/** (round 88) do runs a and b (neighbouring columns) hold each other: intervals that hold sideways touching (`touch`) */
 function joined(a: Run, b: Run): boolean {
-  if (Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) < OVERLAP) return false;
+  if (Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) <= 1e-3) return false;
   for (const p of a.ivs) {
     if (!sideHolds(p.mat)) continue;
-    for (const q of b.ivs) if (sideHolds(q.mat) && Math.min(p.z1, q.z1) - Math.max(p.z0, q.z0) >= OVERLAP) return true;
+    for (const q of b.ivs) if (sideHolds(q.mat) && touch(p.z0, p.z1, q.z0, q.z1)) return true;
   }
   return false;
 }
 
 /**
- * Rock (round 83, the user: undercut rock left floating — "Islands + weak overhangs", falling as bodies; "If
- * things are breaking just make a material that is stronger so they don't break"; "Make sure to get the
- * boundary correct and assume it is firmly anchored there"; "check columns not cells … overlapping intervals
- * of material for lateral support and vertical material for support from below. If it is supported from
- * below it can stand … if it is just supported laterally that's the only time you need to do any flood";
- * "you don't need to check all of them just the ones that we woke up"). From the columns an edit changed
- * (`seeds`) and the six round each, by the columns' runs (round 88: every material's, columnRuns):
+ * (round 92) The joint between runs a and b (neighbouring columns), each from its own height up (a0, b0): how much
+ * their side-holding intervals overlap (h, cells) and what that holds (ROCK.BEND, SHEAR; Infinity: bedrock in it).
+ */
+function joint(a: Run, b: Run, a0 = -Infinity, b0 = -Infinity): { h: number; cap: number } {
+  let h = 0;
+  let s = 1;
+  let never = false;
+  let touches = false;
+  for (const p of a.ivs) {
+    if (!sideHolds(p.mat)) continue;
+    const p0 = Math.max(p.z0, a0);
+    for (const q of b.ivs) {
+      if (!sideHolds(q.mat)) continue;
+      const q0 = Math.max(q.z0, b0);
+      const o = Math.min(p.z1, q.z1) - Math.max(p0, q0);
+      if (o <= 0) continue;
+      if (touch(p0, p.z1, q0, q.z1)) touches = true;
+      h += o;
+      s = Math.min(s, MATERIALS[p.mat].strength, MATERIALS[q.mat].strength);
+      if (MATERIALS[p.mat].span === Infinity || MATERIALS[q.mat].span === Infinity) never = true;
+    }
+  }
+  if (!touches) return { h: 0, cap: 0 };
+  return { h, cap: never ? Infinity : s * Math.min(ROCK.BEND * h * h, ROCK.SHEAR * h) };
+}
+
+/** (round 92) a run's mass from height z0 up */
+function massOf(r: Run, z0 = -Infinity): number {
+  let m = 0;
+  for (const iv of r.ivs) m += Math.max(0, iv.z1 - Math.max(iv.z0, z0)) * densityOf(iv.mat);
+  return m;
+}
+
+/** (round 92) a run's intervals from height z0 up (cut there) */
+function clipIvs(r: Run, z0: number): { z0: number; z1: number; mat: number }[] {
+  const out: { z0: number; z1: number; mat: number }[] = [];
+  for (const iv of r.ivs) if (iv.z1 > z0 + 1e-3) out.push({ z0: Math.max(iv.z0, z0), z1: iv.z1, mat: iv.mat });
+  return out;
+}
+
+/** What one judging of the rock may do (Integrity: seams of land come in only fall what floats) */
+export interface RockOpts {
+  /**
+   * (round 92) weigh what's held: the joints' load, the piece above a cut on its columns, tipping (default true). A
+   * test of columns: only a piece with a run in one, or held by a run in one (what an edit cut), is weighed — the
+   * land as it was made stands, what an edit weakened is judged (a meteor's seeds reach its ejecta's 30 cells: a
+   * leaning spire there stood untouched and fell)
+   */
+  weigh?: boolean | ((x: number, y: number) => boolean);
+}
+
+/**
+ * Rock (round 83, the user: undercut rock left floating — "Islands + weak overhangs", falling as bodies; "check
+ * columns not cells … overlapping intervals of material for lateral support and vertical material for support
+ * from below"; "you don't need to check all of them just the ones that we woke up"). From the columns an edit
+ * changed (`seeds`) and the six round each, by the columns' runs (round 88: every material's, columnRuns):
  *  - a run reaching the window's floor stands — nothing to look at;
  *  - a run with air under it hangs: held sideways by a run it's joined to (`joined`) that stands, or the map's
  *    edge — or through the hanging runs it's joined to (the only flood, from the hanging runs by the seeds, a
  *    piece at a time; a held piece of MAX_PIECE runs is held; one held nowhere is followed to its end);
- *  - a hanging piece nothing holds falls, whole;
- *  - a hanging run further than its rock's span × its thickness (columns) from what holds it gives: the
- *    first such next to one that doesn't crumbles; what it held falls the next pass.
+ *  - a hanging piece nothing holds falls, whole.
+ * (Round 92, the user's: "look at total solid support under an interval and see if it is sufficient for the volume
+ * of the connected section and if not collapse it … flood fill in from the edges by distance so that you sum
+ * column mass and support from neighbors. If the mass ever exceeds the support then drop the column"; "where it
+ * breaks"; tipping "now and we can add rotation later") A held piece is then weighed (opts.weigh):
+ *  - its load, from the far end in (the reverse of its distance from what holds it): each run carries its own mass
+ *    and what's handed to it, and hands it on to the runs a step nearer (and what holds it) in proportion to what
+ *    each joint holds (`joint`). Where that's more than its joints hold, they give: it and what hangs beyond it
+ *    fall (pieces, as what broke free); one whose every held run gives falls whole;
+ *  - else the piece above the cut (`neck`): from its lowest point zc up — it and the standing runs it's joined to
+ *    above zc, followed NECK_R columns (past that it's keyed into the land: held) — on the standing columns under
+ *    it: if it weighs more than they bear (CRUSH × their bear), or its centre of mass lies off them (tipping: it
+ *    falls straight; rotation later), those columns crush from where it would land to zc and it all falls.
  * A piece is complete if an edit could have cut it free: whatever lost its way to the ground lost it through
  * what the edit took, so it holds a run in a cut column or beside one. `known` (round 88): the columns the CPU's
  * copy holds as they are now — a piece reaching any other is left (`need`: those columns; `undecided`: its seeds),
  * to be read and judged again.
  * Structures keep their own rules (analyse: snapping, tipping); what hangs free here falls whatever it's made of.
  */
-export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, known?: (x: number, y: number) => boolean): Fracture {
-  const result: Fracture = { bodies: [], crumble: [], pieces: [], crumbleRuns: [], need: [], undecided: [] };
+export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, known?: (x: number, y: number) => boolean, opts: RockOpts = {}): Fracture {
+  const weighAll = opts.weigh ?? true;
+  const cutAt = typeof weighAll === 'function' ? weighAll : null;
+  const weigh = weighAll !== false;
+  /** (round 92) runs a neck's flood found keyed into the land above a height: any flood from that height or lower is */
+  const keyedAt = new Map<Run, number>();
+  const result: Fracture = { bodies: [], crumble: [], pieces: [], crumbleRuns: [], need: [], undecided: [], why: { free: 0, load: 0, crush: 0, tip: 0 } };
   const cache = new Map<number, Run[]>();
   const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h;
   const unknown = new Set<number>();
@@ -623,15 +717,16 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     cache.set(key, rs);
     return rs;
   };
-  /** the hanging runs joined to r, and whether it's held (a standing run joined to it, the map's edge) */
-  const besides = (r: Run): { held: boolean; next: Run[]; stale: boolean } => {
-    let held = false;
+  /** the hanging runs joined to r, the standing ones (what holds it), the map's edge by it */
+  const besides = (r: Run): { held: boolean; next: Run[]; stand: Run[]; edge: boolean; stale: boolean } => {
+    let edge = false;
     let stale = false;
     const next: Run[] = [];
+    const stand: Run[] = [];
     for (let k = 0; k < NDIR; k++) {
       const [nx, ny] = nbr(r.x, r.y, k);
       if (!inMap(nx, ny)) {
-        held = true;
+        edge = true;
         continue;
       }
       if (known && !known(nx, ny)) {
@@ -640,13 +735,19 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
       }
       for (const o of runsAt(nx, ny)) {
         if (!joined(o, r)) continue;
-        if (o.stands) held = true;
+        if (o.stands) stand.push(o);
         else next.push(o);
       }
     }
-    return { held, next, stale };
+    return { held: edge || stand.length > 0, next, stand, edge, stale };
   };
   const runsOf = (rs: Run[]): RunPiece => rs.map((r) => ({ x: r.x, y: r.y, ivs: r.ivs.map((iv) => ({ ...iv })) }));
+  /** what's left free (no way to what holds it): a piece if big enough, else it crumbles */
+  const free = (rs: Run[]) => {
+    const volume = rs.reduce((s, r) => s + r.z1 - r.z0, 0);
+    if (volume >= MIN_BODY) result.pieces!.push(runsOf(rs));
+    else result.crumbleRuns!.push(...runsOf(rs));
+  };
   // the hanging runs by the seeds
   const start: { r: Run; seed: [number, number] }[] = [];
   /** the runs followed so far, by the piece (its first run) they were found in */
@@ -661,14 +762,14 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     // its piece: the hanging runs joined to it; what of it is held beside, and how far each is from that
     const piece: Run[] = [s];
     seen.set(s, s);
-    const next = new Map<Run, Run[]>();
+    const near = new Map<Run, ReturnType<typeof besides>>();
     const held: Run[] = [];
     let big = false;
     let stale = !!known && !known(s.x, s.y);
     for (let h = 0; h < piece.length; h++) {
       const r = piece[h];
       const b = besides(r);
-      next.set(r, b.next);
+      near.set(r, b);
       if (b.held) held.push(r);
       for (const o of b.next) {
         const of = seen.get(o);
@@ -688,40 +789,222 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     }
     if (big) continue;
     // (round 88) it reaches columns the copy doesn't hold as they are: read them, judge it again
-    if (stale && !held.length) {
+    if (stale && (!held.length || weigh)) {
       for (const k of unknown) result.need!.push([k % 65536, Math.floor(k / 65536)]);
       unknown.clear();
       result.undecided!.push(seed);
       continue;
     }
     if (!held.length) {
-      const volume = piece.reduce((s, r) => s + r.z1 - r.z0, 0);
-      if (volume >= MIN_BODY) result.pieces!.push(runsOf(piece));
-      else result.crumbleRuns!.push(...runsOf(piece));
+      free(piece);
+      result.why!.free++;
       continue;
     }
+    if (!weigh) continue;
+    if (cutAt && !piece.some((r) => cutAt(r.x, r.y) || near.get(r)!.stand.some((o) => cutAt(o.x, o.y)))) continue;
+    // (round 92) its load, from the far end in: what gives, and what hangs beyond it
     const dist = new Map<Run, number>();
     let frontier = held;
     for (const r of held) dist.set(r, 1);
     while (frontier.length) {
       const nf: Run[] = [];
       for (const r of frontier)
-        for (const o of next.get(r)!) {
+        for (const o of near.get(r)!.next) {
           if (dist.has(o)) continue;
           dist.set(o, dist.get(r)! + 1);
           nf.push(o);
         }
       frontier = nf;
     }
-    // past its reach: the first such next to one that isn't (or to what holds it)
-    const over = (r: Run) => dist.get(r)! > r.span * (r.z1 - r.z0);
-    for (const r of piece) {
-      if (!over(r)) continue;
-      const d = dist.get(r)!;
-      if (d === 1 || next.get(r)!.some((o) => dist.get(o)! < d && !over(o))) result.crumbleRuns!.push(...runsOf([r]));
+    // the cross-sections from the far end in: at each step k, every part of the piece k or more steps out (joined
+    // within that) weighs what it weighs and is held by the joints from its runs k out to those k - 1 out (and to
+    // what holds it); the part whose weight is the most over what its joints hold gives there — it falls (one break a
+    // pass: what's left is judged again). Summed across the part, not run by run: load spreads across a slab's
+    // width (round 92's first try, each run handing its load on alone, broke a slab's edge row for its own length)
+    let maxD = 0;
+    for (const d of dist.values()) maxD = Math.max(maxD, d);
+    const byD: Run[][] = Array.from({ length: maxD + 1 }, () => []);
+    for (const r of piece) byD[dist.get(r)!].push(r);
+    const up = new Map<Run, Run>();
+    const mass = new Map<Run, number>();
+    const find = (r: Run): Run => {
+      let p = up.get(r)!;
+      while (p !== up.get(p)) p = up.get(p)!;
+      let q = r;
+      while (q !== p) {
+        const n = up.get(q)!;
+        up.set(q, p);
+        q = n;
+      }
+      return p;
+    };
+    let worst = 1;
+    let breakAt: [Run, number] | null = null;
+    for (let k = maxD; k >= 1; k--) {
+      for (const r of byD[k]) {
+        up.set(r, r);
+        mass.set(r, massOf(r));
+      }
+      for (const r of byD[k])
+        for (const o of near.get(r)!.next) {
+          if (!up.has(o)) continue;
+          const a = find(r);
+          const b = find(o);
+          if (a === b) continue;
+          up.set(b, a);
+          mass.set(a, mass.get(a)! + mass.get(b)!);
+        }
+      const cap = new Map<Run, number>();
+      for (const r of byD[k]) {
+        const b = near.get(r)!;
+        let c = b.edge ? Infinity : 0;
+        for (const o of b.next) if (dist.get(o) === k - 1) c += joint(r, o).cap;
+        for (const o of b.stand) c += joint(r, o).cap;
+        const root = find(r);
+        cap.set(root, (cap.get(root) ?? 0) + c);
+      }
+      for (const [root, c] of cap) {
+        const ratio = mass.get(root)! / c;
+        if (ratio > worst) {
+          worst = ratio;
+          breakAt = [root, k];
+        }
+      }
     }
+    if (breakAt) {
+      // what's k or more out, joined to it within that: falls
+      const [r0, k] = breakAt;
+      const part = [r0];
+      const done = new Set<Run>(part);
+      for (let h = 0; h < part.length; h++)
+        for (const o of near.get(part[h])!.next)
+          if (!done.has(o) && dist.get(o)! >= k) {
+            done.add(o);
+            part.push(o);
+          }
+      free(part);
+      result.why!.load++;
+      continue;
+    }
+    neck(piece, seed);
   }
   return result;
+
+  /**
+   * (round 92) The piece above its lowest point: on what it stands on, or it falls (the user's "total solid
+   * support under an interval … sufficient for the volume of the connected section"; "supports can be vertical or
+   * horizontal").
+   */
+  function neck(piece: Run[], seed: [number, number]): void {
+    let zc = Infinity;
+    for (const r of piece) zc = Math.min(zc, r.z0);
+    /** the piece above zc: each run from its height up (the standing ones cut at zc) and its hops from the hanging piece */
+    const B = new Map<Run, { z0: number; hop: number }>();
+    const list: Run[] = [];
+    for (const r of piece) {
+      B.set(r, { z0: r.z0, hop: 0 });
+      list.push(r);
+    }
+    /** keyed into the land: what it reached is, from zc up */
+    const keyed = () => {
+      for (const r of list) keyedAt.set(r, Math.min(keyedAt.get(r) ?? Infinity, zc));
+    };
+    for (let h = 0; h < list.length; h++) {
+      const r = list[h];
+      const e = B.get(r)!;
+      for (let k = 0; k < NDIR; k++) {
+        const [nx, ny] = nbr(r.x, r.y, k);
+        // (the map's edge holds it; a column not read as it is now: not judged on it)
+        if (!inMap(nx, ny)) return keyed();
+        if (known && !known(nx, ny)) {
+          result.need!.push([nx, ny]);
+          result.undecided!.push(seed);
+          return;
+        }
+        for (const o of runsAt(nx, ny)) {
+          if (B.has(o)) continue;
+          const oz0 = o.stands ? zc : o.z0;
+          if (o.z1 - oz0 < OVERLAP || joint(r, o, e.z0, oz0).h <= 0) continue;
+          // (on past NECK_R columns, or past MAX_PIECE runs, or to what a flood before found so: keyed into the land, held)
+          if (e.hop + 1 > ROCK.NECK_R || list.length >= MAX_PIECE || (keyedAt.get(o) ?? -Infinity) >= zc) return keyed();
+          B.set(o, { z0: oz0, hop: e.hop + 1 });
+          list.push(o);
+        }
+      }
+    }
+    // what it weighs and where; what it stands on and what that bears
+    let M = 0;
+    let mx = 0;
+    let my = 0;
+    let bear = 0;
+    const foot: [number, number][] = [];
+    for (const r of list) {
+      const z0 = B.get(r)!.z0;
+      const m = massOf(r, z0);
+      const [px, py] = cellPos(r.x, r.y);
+      M += m;
+      mx += m * px;
+      my += m * py;
+      if (r.stands) {
+        let b = Infinity;
+        for (const iv of r.ivs) if (iv.z0 < zc) b = Math.min(b, bearOf(iv.mat));
+        if (r.ivs.some((iv) => iv.z0 < zc && MATERIALS[iv.mat].span === Infinity)) b = Infinity;
+        bear += ROCK.CRUSH * b;
+        foot.push([px, py]);
+      }
+    }
+    if (!foot.length || M <= 0) return;
+    const tips = !insideHull(foot, mx / M, my / M, ROCK.TIP_GIVE);
+    if (M <= bear && !tips) return;
+    if (tips) result.why!.tip++;
+    else result.why!.crush++;
+    // it gives: the standing columns under it crush from where it would land to zc; it all falls from there
+    let land = 0;
+    for (const r of piece) {
+      for (const o of runsAt(r.x, r.y)) if (o.z1 <= r.z0 + 1e-3) land = Math.max(land, o.z1);
+    }
+    const zs = Math.max(0, Math.min(land, zc - 1));
+    const fall: RunPiece = [];
+    for (const r of list) {
+      const z0 = B.get(r)!.z0;
+      if (r.stands) {
+        const ivs: { z0: number; z1: number; mat: number }[] = [];
+        for (const iv of r.ivs) if (iv.z1 > zs + 1e-3 && iv.z0 < zc - 1e-3) ivs.push({ z0: Math.max(iv.z0, zs), z1: Math.min(iv.z1, zc), mat: iv.mat });
+        if (ivs.length) result.crumbleRuns!.push({ x: r.x, y: r.y, ivs });
+        const up = clipIvs(r, zc);
+        if (up.length) fall.push({ x: r.x, y: r.y, ivs: up });
+      } else fall.push({ x: r.x, y: r.y, ivs: clipIvs(r, z0) });
+    }
+    result.pieces!.push(fall);
+    // (what's in it isn't judged again this pass)
+    for (const r of list) seen.set(r, piece[0]);
+  }
+}
+
+/** (round 92) Is (cx, cy) over the convex hull of these columns (world centres, each a cell across), within `give`? */
+function insideHull(cols: [number, number][], cx: number, cy: number, give: number): boolean {
+  const pts: [number, number][] = [];
+  for (const [x, y] of cols) pts.push([x - 0.5, y - 0.5], [x + 0.5, y - 0.5], [x - 0.5, y + 0.5], [x + 0.5, y + 0.5]);
+  pts.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lower: [number, number][] = [];
+  for (const p of pts) {
+    while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper: [number, number][] = [];
+  for (let i = pts.length - 1; i >= 0; i--) {
+    const p = pts[i];
+    while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  const hull = lower.slice(0, -1).concat(upper.slice(0, -1));
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i];
+    const b = hull[(i + 1) % hull.length];
+    if (cross(a, b, [cx, cy]) / Math.hypot(b[0] - a[0], b[1] - a[1]) < -give) return false;
+  }
+  return true;
 }
 
 /**
