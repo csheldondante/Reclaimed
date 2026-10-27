@@ -5632,3 +5632,482 @@ found again when perturbed, with a tolerance; a frozen region's flux kept propor
 - Found on the way: the prep kernel at 9 storage buffers (the chunk table it doesn't use: dropped from its
   layout); the warmup ends past the 1.5 s settle, so everything fell asleep before the steady state had
   judged it — now everything is judged once after the warmup (Steady.judgeAll) and what's unsteady is kept.
+- Encapsulation (the user: "Are you still practicing good encapsulation?"):
+  three leaks of this round closed. The field mesh's state layout (CHUNK0,
+  CSTRIDE, the built hash's word, its indices', FRESH) is published once in
+  shaders/meshstate.wgsl, included before meshregion.wgsl wherever that is
+  and before far.wgsl (the rings' meshBuilt read the numbers from their own
+  copy). The streamer tells the renderer the window moved (Renderer.
+  windowMoved: the meshes, the band's, the shore field) instead of reaching
+  into each. The edit ops are one table (sim/edit-ops.ts: OP, STROKE_START,
+  editOpOf, CUTS) for the world API, the plants and water modules and the
+  integrity system's tap. atlasworldtest 6/6, slideshot, craterbench (p95
+  10.2 ms) on it. Pages builds the experiment branches too (ceiling, rivers,
+  flow).
+## Round 83 — caves left out of the mesh but near the player (`?cavemesh=near`) (perfopt)
+
+Why: the coordinator's measurement riding at the phone tier: caves ~1.1 ms a
+frame (0.44 generation, 0.26 sim, ~0.4 drawing). The draw's share is the
+mesh's cave surfaces — inside the ground, never seen from the sky, but drawn
+(the G-buffer pass and the shadow pass are vertex-bound).
+
+- `?cavemesh=near` (fieldmesh.wgsl `columnTops`, `CAVE_DEEP`; MeshRegion `cv`,
+  112 bytes now): a rebuild's first pass writes, for each sample column, the
+  lowest top (any material) of its cell and the six round it, less 4 cells;
+  the sample pass makes what's under that solid — caves, the insides of hills.
+  Cave mouths on cliffs and skylights stay (the low neighbour's top keeps
+  them). Near the cut's focus (the camera's target, 48 cells, while the cut
+  slices a roof off: the player under one) everything is meshed; flying,
+  everything. A change of focus rebuilds the chunks it touches
+  (`FieldMesh.setCaves`: their built hash set to 1 — they stay drawn until
+  each is rebuilt).
+- At 12304,5457: the window's mesh 173.7 k → 121.8 k vertices (−30 %); the
+  picture the same but a small dark hole on a slope (a skylight into a cave,
+  seen through: the cave's far walls are under the neighbours' tops — they're
+  now a flat cap). Timing not measured (the GPU was shared at the time).
+- Not done: generating the caves lazily (the 0.44 ms of generation and the
+  sim's share) — the columns would need their caves carved later, near the
+  player, from the atlas's cave noise (forms.wgsl caveVoids) into the
+  window's layers.
+
+
+## Round 83 — the audit: dense cells and whole reads where the runs would do (perfopt)
+
+Why: the coordinator's analyseRock fix (a 64² box unpacked to a million
+cells, 1–3 s frames) — the user: look for the same elsewhere. Measured at the
+phone tier on the desktop (scratch integ.mjs: a 20 s ride, the integrity
+passes' CPU time and what the readbacks copy; fraccmp.mjs: analyse() on the
+same boxes both ways, results compared). The user's game was open in their
+browser part of the time: GPU timings then contended (the CPU ones less so).
+
+- fracture.ts `analyse` (structures; every box integrity marks — land come in,
+  64² regions, riding; cyclones r × 2.5; forms): unpacked every column of the
+  box into a W × D × zMax cell grid (1 M cells for a region) and scanned all of
+  it to seed the floods. `?fracture=runs`: only the structural runs are
+  unpacked (a sparse map), the floods seeded from them, any other cell looked
+  up in its column when asked; nothing structural → nothing done. Same
+  results (bodies and crumbled cells compared on 12 boxes, atlas and valley);
+  atlas regions 15–24 → 0.4–2.3 ms, the valley's (towers, ruins) 4–20 →
+  0.2–8.5, the whole valley 172 → 74 ms.
+- fracture.ts `WorldVox` (matAt, colTop, baseTop, runTop): read slots through
+  readSlot — a Float32Array view and an object a slot — and baseTop built an
+  array a call; the bodies call them for every collision point of every
+  substep. Now read in place (a float view kept, made again when the slots
+  change): no allocation. Same values (knocktest 6/6; pillar and phys runs
+  fall and settle as before).
+- integrity.ts `update`: read all of the layers back (16 MB in the atlas's
+  window) and the drift texture every 0.35 s while anything was dirty — riding,
+  every region come in — and every 1 s while bodies exist. `?intread=near`:
+  only the chunks a pass looks at (the dirty boxes + 6, the cut columns + 24,
+  the bodies + 4) into a CPU copy of the whole; whole again after a slide
+  (the pages move). Riding 20 s: 160 MB → 81 MB read back (the slides' whole
+  reads are most of what's left), the passes' CPU 9–35 ms → 0.8–5.4 ms (with
+  fracture=runs).
+- api/mirror.ts (the world API's mirror, on whenever a game attaches it — the
+  hoverbike, ?cutaway): every 250 ms a new 20 MB staging buffer, every source
+  copied out (the layers 16 MB of it). The staging buffer is kept now; and
+  `?mirror=near`: the layers (`addBuffer(name, buf, paged)`) are read whole
+  every 8th read and after a slide, between only their pages within 48 cells
+  of the camera's target, written into the copy in place (its views kept).
+  worldapitest 16/16 with mirror=near&intread=near&fracture=runs; a read's
+  median 12.9 → 8.1 ms.
+- Left as found (listed for later): level.ts `metalSize` reads the whole
+  layers back for a tap's metal flood (once a tap: the chunks round it would
+  do); level.ts reads surface, veg, water (256 KB each) every second and the
+  particle counters twice a second, each through a new staging buffer
+  (WorldCore.readBuffer makes one a call: a kept one, or one read of the four,
+  would do); bodies.ts keeps a free body as a voxel list and collision points
+  (the user asks why not columns: a body rotates, so its runs would be along
+  its own z — a pillar's 100 voxels one run; packing, collision and the
+  projection would walk runs, not voxels; not done).
+
+
+## Round 83 — the generator's water at rest: what's out of balance; settling and river-hold tried (perfopt)
+
+Why: the user: "all generators make a steady state so when we arrive nothing
+is simulated until the player interacts with it" — they saw water rush in on
+arrival. scripts/waterrest.mjs: the atlas level (phone tier: land comes in
+asleep), every chunk woken with no edits, the water read before and 5 s after,
+classed sea / river (a source) / other / dry.
+
+- Out of balance: the rivers. A river is filled to its level (rl − 0.3) and fed
+  by springs (0.0008 a tick along its middle); the pipes' steady state for those
+  springs is far thinner on a slope (the outflow cap binds: about the river's
+  accumulated spring discharge a tick). Woken: 3 378 of 4 929 river columns
+  change by over 0.05 in 5 s, the window's water 3 466 → 3 035 (−12 %), and
+  converged (2 048 steps) it's ~2 500 (−27 %). Other water (the coarse world's
+  lakes, tubes) moves in 161 columns. One basin fed by springs with no outlet
+  rises ~1.3 cells in 5 s: never at rest.
+- Fixed: Sleep.settleAll's drowsy window for the first window was counted
+  from tick 0, after the level's warmup had run hundreds — the first window
+  was never drowsy (532015d).
+- Tried, kept as a measuring tool only (`?settleiters=N`, default 0): the new
+  land's water settled on arrival — water flux/depth ping-ponged over the
+  rect of land just come in (one compute pass, no copies; sim/sleep.ts
+  `settling` rects, 64 ticks each). 2 048 steps: river columns moving 3 378 →
+  ~700, the moved volume 539 → ~190 — but ~44 ms of GPU in a tick for a whole
+  window. Not the generator's fix.
+- Tried, `?riverhold=1` (default off): a river's source holds its level
+  instead of a spring's constant flow (forms.wgsl RIVER_HOLD writes
+  waterSource = −depth; water_depth.wgsl tops a negative-source column up to
+  that depth, at most 0.5 a tick) — what comes down from upstream, past the
+  window, so the generated river would be the pipes' steady state by
+  construction, its flux (FLUX_SEED) the flow it keeps. A breach works
+  (scripts/breach.mjs: a hole dug by a held river fills, ~31 units in 1 s, the
+  river stays at 0.70 and flows on). But it floods: the held level is above the
+  ground beside the channel in many places, and within 4 s of the load the
+  window's water goes 3.5 k → 44 k, wet columns 9.9 k → 22 k. A held river needs
+  banks at least as high as its level (the generator carving the channel and
+  keeping its banks), or a hold limited to its own discharge.
+- Rivers now go to the `rivers` branch's agent; these are its baseline and
+  tools (scripts/waterrest.mjs, scripts/breach.mjs).
+
+### perfopt — lazy caves, step 1 (`?caves=mouths`, default off); the band's back faces culled (`?bandcull=1`, no gain)
+
+- The coordinator's lazy caves, travel first. With `?caves=mouths`, the atlas's columns
+  (forms.wgsl colFinish, `LAZY_CAVES`) make a column's caves only where they can
+  open to the air: where some neighbour's ground is under the rock kept over the caves
+  (`lowN < rockTop - caveDepth`). Inside the hills it makes none, so no cave noise is
+  evaluated and no runs are written. Why: the caves nobody can see cost generation, mesh
+  and memory in every streamed column.
+- Measured (driveprofile, ride, desktop, GPU shared with other agents): the atlas's
+  generation passes were already small on the ride, so there's no clear win there. The
+  G-buffer went 0.26 to 0.20 ms in one pair; a second pair was throttled. Fewer runs
+  should help the mesh and the band most where the hills are deep. That isn't measured
+  separately yet.
+- Look (A/B screenshots at the spawn, 600x600): the same except for one enclosed cave
+  that showed in the window's cut edge. Elsewhere there were only water-shimmer
+  differences (mean diff 1.6). The cost: enclosed caves are gone, so the cutaway and
+  digging into a hill find solid rock. Step 2, still to do: carve them in later, near
+  the player (or when a dig reaches one).
+- `?bandcull=1` (the band's G-buffer draw culls back faces) is still in. On a contended
+  GPU, two drawbench runs gave draw/ref 26.3 to 22.5 and 11.3 to 14.0, so no measurable
+  gain. It stays off. The band is vertical (above and below the window), so the LOD
+  rings never cover it and there are no band draws to skip for them.
+
+## Round 83 (2026-10-26, `dialog`) — dialog, the run, story cameras; `?story=demo`
+
+The user: "get dialogue in and basic cameras so we have a way to communicate what is going on." The GM (branch
+`gm`) writes a SessionStory as data offline; these systems play it (docs/SYSTEMS.md systems 10, 11, part of 5),
+coded against src/api/contracts only.
+
+- **Dialog** (src/dialog/dialog.ts, `DialogBox implements Dialog`). A panel across the bottom, phone first:
+  speaker name, role and a portrait slot (a coloured initial until there are pictures), the line typed at 50
+  characters a second (a tap shows it all; prefers-reduced-motion shows it at once), then the answers as
+  buttons at least 52 px tall, numbered (1–9 on a keyboard). A scrim over the rest of the screen takes every
+  touch, wheel and key while a talk is open, so the game's controls get nothing. It knows nothing of runs:
+  a choice's `requires` is asked of a `check` callback; nodes said and choices made go out on `onNode` and
+  `onChoice`. A choice's index is its index in the node's `choices`, hidden ones counted, so a `chose`
+  condition means the same thing whatever was shown. Styled by custom properties (dialog.css).
+- **Run** (src/run/run.ts, `StoryRun implements Run`). Keeps the facts noted (talked, chose, reached,
+  killed, event), the flags, the items given, attitudes (each cast member's disposition plus shifts), the
+  clock. Each fact re-checks objectives (hidden → shown when `when` holds → done when `done` holds, or
+  failed) and happenings until nothing changes (64 passes and it throws: a story that doesn't settle is a
+  bug). Outcomes: flags, attitudes, give, unlock (where a tree opens next: `entry(tree)`), spawn (told to
+  `onOutcome` for the game), endRun, and AtlasEvents applied to the WorldState at once (the atlas scale
+  "when a story event fires"), each with an id, the run number and the cause's ref (the objective or
+  `dialog/node`). `end(how)` makes the RunRecord (deeds: objectives done, failed and left undone, what
+  was said, faction shifts; the events).
+- **Validator** (src/run/validate.ts). A story is checked before it's played: unique ids, every reference
+  (cast locations, speakers, next nodes, condition targets, choice indices, unlocks, spawn places, an
+  atlas event's `detail.location`) resolves. One StoryError lists every problem, so the GM fixes them in
+  one go; nothing is guessed. The GM step (SYSTEMS order 3) can use it as its check.
+- **Story cameras** (src/story/camera.ts, `StoryCamera`). On the fixed camera's target and zoom:
+  `frame(at)` eases there (the point placed 32% down the screen, over the dialog panel) and holds until
+  `release()`; `reveal(at)` eases there, holds (a tap skips), eases back; `look(at)` an opening shot left
+  with the player; `follow(get)` a spring after a moving point while no shot runs. Every move starts from
+  where the camera is (interruptible without a jump); zoom eases in log space; a reveal set off during a
+  talk waits for it, then goes from the speaker, not home first. While a shot holds a point it's kept seen
+  through the cutaway: Dither.see, and the Slice cut over it (then let back up); with ?cutaway=1 the
+  level's own dither and slice are used, the puck's slice paused while a shot runs.
+- **Play** (src/story/play.ts, `StoryPlay`). Wires them over the world API: the cast stand where a Stage
+  puts them (a pillar built with terrain.build, a badge over it to tap); the player's position (the
+  camera's target, the god's-eye game's) noted `reached` inside a staged location; a done objective gets a
+  reveal of where its change is seen (an atlas event's `detail.location`, else the objective's); outcomes'
+  atlas events realised at play scale where they can be (overgrow: plants grown and petals, flood: water,
+  mark: a cairn), the rest left to the atlas; an end card with the record. The Stage (where locations and
+  people are in this window) is what the region generator will hand over; for now it's hand-written.
+- **The demo** (`?skipmenu=1&story=demo`, the valley): src/story/demo/story.json, marked PLACEHOLDER — Wren
+  the seed-keeper, Harlan the old warden, Ves the company surveyor; branching talks (a choice shown only
+  after talking to Harlan, one only once you've promised); "Promise Wren, then go to the old sluice" done
+  by a choice and a visit; its outcome an overgrow and a mark in the MemoryWorldState, the camp greening in
+  a reveal shot; telling Wren (her unlocked node) wins the run. The opening eases the camera to the camp
+  (the phone's default view of the whole valley put the three markers on top of each other).
+- Tests: scripts/storytest.mjs drives the run and the validator through their APIs in Node (Vite loads the
+  TypeScript; no browser): 19 checks. scripts/storyshot.mjs plays the demo headlessly at 412×915 (markers,
+  the talk, the reveal, the end card).
+- Measured: nothing per frame worth timing — the run works only when a fact is noted (or a `time` edge
+  passes); the badges are a projection and a transform each.
+- The world API's `Sim` type now names `plants` (attachSim always made it; the type left it out).
+
+### `dialog` — onto places' contracts (the GM's and D7's): workarounds dropped
+
+- Merged origin/places (e63a874 and after). The run and the dialog now use the contract's shapes:
+  `Run.holds(c)` takes one condition (lists are AND: `StoryRun.all(conds)`; `any` is OR); `update(dt)` is
+  the contract's; `Dialog.onNode` is the contract's (DialogBox had it already); `open(tree)` opens at its
+  most recently unlocked node (DialogBox asks an `entry` callback: the run's) — the caller no longer passes it.
+- Faction attitudes go to the world: an Outcome's `attitude` with a faction becomes a `faction-attitude`
+  AtlasEvent (in the region of the objective's location, else the speaker's, else the story's first place).
+  The run's own shift table is gone.
+- The RunRecord goes to `WorldState.record` (the `record` callback is gone). The run's number defaults to
+  the snapshot's `run`, the one to come (`record` moves it on).
+- An AtlasEvent's place is `location` (was `detail.location` in the demo); the validator checks it, a
+  flood's `level`, faction-* events' `detail.faction` and magnitudes (−1..1 for faction-*, 0..1 the rest
+  but bury).
+- The validator: the GM's storycheck (origin/gm src/gm/storycheck.ts) is the fuller one (shapes, names,
+  reachability, against a WorldSnapshot). run/validate.ts stays as what a run checks before it plays,
+  without a snapshot (a run's world needn't be a wiki), and it knows the newer contract (`any`,
+  `faction-attitude`, `level`, `location`, `room`), which storycheck's kind lists don't yet.
+- The GM's the-bell-under-kaudru.json fails it in two places: its happening's flood has `magnitude: 116`
+  and no `level` (written before the contract split them). It isn't staged: its regions are the atlas's
+  (2341, 2039, 2159), and a stage there needs the atlas level's window. That's next, once its places
+  have positions from the region generator.
+- storytest: 20 checks (faction attitudes in the world, the record in world.runs, `any`).
+## Round 84 — the game master's pipeline: the world wiki, docs/GM.md, the validator, the first story (gm)
+
+The user (round 83): "have a GM (for now we can use a subagent with GM context and tools) take the world state
+wiki and offline create a session story as data that we can use to create the locations, dialogues,
+objectives and world effects." This is SYSTEMS.md step 3. Everything here sits behind the GM's adapter
+(src/gm/). The contracts in src/api/contracts are unchanged; the changes I'd propose are at the end.
+
+- **Why cache the atlas's facts.** The GM is a subagent with files and a shell, not a GPU, and the atlas is
+  built on the GPU. So one headless run (`scripts/worldwiki.mjs --pull`, `?atlas=view`, about a minute)
+  exports what the wiki needs (src/gm/atlas-facts.ts) to data/atlas/seed1.json. That's 2.2 MB: 7772
+  regions, 140 sites, 166 roads, and the spawn at cell 13716,5536 in region 2341. Everything after runs in
+  Node from the cache: the wiki takes about 2 s, the validator well under a second.
+- **Why the wiki is a snapshot plus more.** WorldSnapshot holds the regions' names, kinds and states, the
+  factions and the history. A GM also needs the land itself (tier, climate, ground heights for flood
+  levels, rivers, neighbours) and the settlements and roads, and the snapshot has no place for those yet.
+  So the wiki JSON carries a WorldSnapshot (what the validator and FileGM check against) beside those
+  tables. The markdown covers the world, the factions, the start, every region within 1400 of the start
+  (177) and every settlement within 2600 (14). At about 38 k characters it can be read in one go.
+- **Why placeholder factions.** None exist yet, and diplomacy is the user's to design, but a story needs
+  someone to turn. So a deterministic table seeds them: each continent's settlements are clustered into
+  realms (5 realms on seed 1, because the main continent has 127 of the 140 sites), plus four world
+  factions placed by the kind of land. The wiki and ARCHITECTURE mark them as placeholders.
+- **Why the validator is strict and simulates.** A subagent's story can fail in ways a type check misses: a
+  node nothing leads to, a key no one gives, an objective waiting on one that can't be done, a flood with
+  "magnitude 0.5" when the contract means a z level. The validator runs a fixed point over what could
+  happen and reports each problem with its path. scripts/gmtest.mjs breaks the first story 18 ways, and
+  the validator catches all 18.
+- **Being the GM once.** I read data/wiki/seed1.md and wrote data/stories/the-bell-under-kaudru.json near
+  the spawn.
+  - 3 locations: the Thaurd ford camp, Mebe `s139`, and the Wardens' Barrow in Bethorn Downs (2159).
+  - 5 cast, 5 dialogs (34 nodes), 4 objectives.
+  - Five endings, each changing Bethorn Downs a different way: drowned (a flood to z 116 over ground
+    105–132), buried in ash, overgrown by the Choir, given to the Hollow Court's shadow, or left with a
+    grave.
+  - A clock fails the run: Mebe is ruined and its dead rise.
+
+  It passed the validator on the first run. The 18 breakages above show the validator isn't just lenient.
+- **Contract changes I'd propose** (not made; BACKLOG G6):
+  - WorldSnapshot gets `seed` and settlement records;
+  - story.ts gets comments for the semantics in docs/GM.md "The format";
+  - `StoryCharacter.room`;
+  - an OR condition;
+  - `faction-presence` with a negative magnitude;
+  - `PlayerRecord` in run.ts.
+
+## Round 84 — the GM on the contracts' new fields (gm, after places' contract changes)
+
+places took the GM's proposals and the dialog agent's: Condition `any`, `StoryCharacter.room`,
+`AtlasEvent.level` (a flood's z, its magnitude now 0..1) and `.location` (a story location), the
+`faction-attitude` kind (applied once), faction-presence −1..1, `WorldSnapshot.seed` and `.settlements`,
+`WorldState.record`, `Dialog.onNode`, `Run.holds`/`update`, and `PlayerRecord` in run.ts. Merged into `gm`.
+
+- **The validator broke the build, on purpose.** Its kind lists carry compile-time checks against
+  world.ts's and story.ts's unions. Merging places made those checks fail until `faction-attitude` and
+  `any` were added. Now it also checks:
+  - a flood has a `level` (against the ground) and a 0..1 magnitude, and no other kind has a level;
+  - `location` is a story location inside the event's regions, and a location in `detail` is refused;
+  - faction-presence and faction-attitude are −1..1 with a snapshot faction;
+  - an `any` has at least two conditions, and play treats it as OR;
+  - a cast `room` is a room of its location, and in play the character is only met once that room can be
+    reached;
+  - `from.seed` matches the world's seed.
+
+  gmtest now breaks the story 26 ways (8 new), and every one is caught.
+- **The Bell story:** its flood is now magnitude 0.8 with `level` 116 and `location` loc-barrow. Its marks
+  name where they stand (the barrow, Mebe). Each person has a room: the Bellwarden waits behind the bone
+  door, so meeting it needs the key. It's clean again.
+- **The wiki** now uses the snapshot for the seed and the settlements (settlement.ts records). What the
+  atlas placed each settlement for (setting, cell, roads) moved to `sites` beside the snapshot.
+- docs/GM.md covers the new fields, and the meanings it had fixed are now the contracts' own comments.
+
+## Round 83 — the perf ceiling: the heightfield alone (`ceiling`, an experiment)
+
+The user: "Can we see how fast things work if we did a heightmap only renderer
+streaming in chunks and just using their top material height and color? I just
+want to understand what a ceiling on perf is on the phone here." `?ceiling=1` on
+the atlas level: each frame only the drive's camera and one render pass (Renderer
+.encodeCeiling: colour + depth, no pick target) of far.ts's rings and far land
+(far.wgsl fsCeilLod / fsCeilFar: the column's colour, lambert from the sun, a
+little height tint, the fog). No sim, no streaming, no field mesh, no renderprep,
+no shadow, no band, no plants or particles, no HUD or audio updates. The rings
+are lod.wgsl's lodHeight — the atlas's own `ground()`, a top and a packed colour
+a texel, world-anchored in toroidal slots, so a move makes only the new strips —
+with a ring a cell apart first (`?near=1`, the default: spacings 1, 2, 4, 8, 16;
+`?near=2`: the usual four). LodD holds 5 rings now (LOD_UNI_BYTES 7·16). The
+window is still built at the start (the level's set-up needs it); it doesn't
+slide — the camera leaves it behind, its target's height following the macro
+ground (atlas.hmac). `?ringn=` sets the rings' vertices a side (193 usual). The
+lod strips are timed in the profiler now (`lod <spacing>`).
+
+driveprofile.mjs, q=low, 412×915 at dpr 2.6 (render 206×457), drive 18, at
+12304,5457, 30 s, this machine's Intel Xe-LPG iGPU (vsync ~100 Hz; other agents
+shared the machine but no other headless run was open during these):
+
+| run | p50 | p95 | p99 | worst | hitches >50 | GPU ms/frame |
+|---|---|---|---|---|---|---|
+| the game (no ceiling) | 9.9 | 10.9 | 20.1 | 57 | 3 | 8.4 (draw 4.0, gbuffer 0.55, renderprep 0.34, shadow 0.38, the rest mesh/sim) |
+| ceiling, near 1 (n 193) | 9.9 | 10.2 | 10.5 | 20 | 0 | 2.5–2.9 (draw 2.77, lod strips 0.04) |
+| ceiling, near 2 (n 193) | 9.9 | 10.2 | 10.6 | 22 | 0 | 2.2–2.4 (draw 2.17, strips 0.02) |
+| ceiling, near 1, n 97 | 9.9 | 10.2 | 10.6 | 35 | 0 | 1.0–1.2 (draw 1.24) |
+| ceiling, near 1, n 65 | 9.9 | 10.2 | 10.6 | 21 | 0 | 0.6–1.1 (draw 1.14) |
+
+(Uncapped, --uncapped: GPU 9.13 game, 2.51 near 1, 2.23 near 2 — the frame
+times there are bimodal by pacing and say nothing.) Every capped run sits at the
+display's interval: the frame time no longer says what it costs, the GPU does.
+
+What's left in the ceiling: the draw, and in it the vertices. Five rings of
+193² is 186k vertices and 1.1M triangles for 94k pixels — each vertex reads
+its texel and four neighbours (the normal), and in the melt band at a ring's
+edge the next ring's four (or the far land's eight); triangles far smaller than
+a pixel. Halving the vertices a side (n 97) halves the draw (2.77 → 1.24 ms);
+n 65 barely less again (the far grid, 161², and the fixed cost). The strips
+the move makes cost 0.04 ms a frame on average (one dispatch a ring that moved
+8 of its spacings; the 1-cell ring every 8 cells). The canvas present isn't in
+the GPU's timestamps; at this size it's small, and the frame is the display's.
+So the ceiling's floor is a screen-sized grid: about one vertex per few pixels,
+which the rings at n 193 overshoot at the low tier's resolution. (The game's
+own rings are in its 4.0 ms draw too: n 193 × 4.)
+
+
+## Round 84 — the hybrid renderer: voxels only where they're needed (`hybrid`, `?hybrid=1`)
+
+The ceiling (round 83) drew the atlas as a heightfield alone at ~2.5 ms of GPU a
+frame against ~8.4 for the game; on the phone "the performance was solid and
+very usable". Its weakness is the cliffs: a slope between vertices with the
+plateau's colour stretched down it, no overhangs, lips, arches or cave mouths.
+The user: "Yes I think a hybrid approach makes sense to build." So `?hybrid=1`
+on the atlas level (the full game stays the default; docs/ARCHITECTURE.md has
+the contract):
+
+- **Each mesh chunk (32 × 32 rows) is voxels or the heightfield's.** Voxels:
+  the field mesh and the band built and drawn there, the window's water, plants
+  and sheets prepared there. The heightfield's: never built — FieldMesh.
+  setWanted keeps it out of the change pass, the rebuild and the draw (one built
+  before is emptied: indices 0, hash FRESH) — so far.wgsl's `meshBuilt` is
+  false and the LOD rings draw it, a 1-cell ring first (spacings 1–16, as the
+  ceiling's near 1). renderprep and vegprep skip it through Globals.hfield (a
+  bit a mesh chunk, like the sleep mask): its water is the rings' too (the
+  sea's and the river's level, lod.wgsl) — the sim's water drawn over the rings
+  stood off them in sheets where the carved bed and the ground differ.
+- **What needs voxels** (scenes/hybrid.ts HybridChunks): the land, decided as it
+  comes in — Streamer.relief / gapTop / colTop per column (writeNow, editLive,
+  the first window; moved with a slide): a form on the ground or cut into it
+  (the top off the ground's own by over 0.75) or a gap between runs **open to
+  the air** (a neighbour's top under its roof: an overhang's lip, a cave mouth,
+  a bridge, a tunnel's portal). The first try counted every gap: 58 of 72
+  chunks at the first spawn, because 21% of the window's columns hold buried
+  caves (stone over stone, sandstone over sandstone, under the hills). Buried
+  ones nobody sees from the sky; only exposed gaps count now: 1 of 72 there, 27
+  at a mesa's rim. Then the focus (`?vradius=`, 40 world units round the
+  camera's target: ~12 chunks), and what a world event touched (kept while it's
+  in the window). Over a 30 s ride the mean is 21.7 chunks voxels of 72, 17.9
+  drawn.
+- **Seams.** The rings and the columns come from the same `ground()`: over the
+  first spawn's ring texels the window's column tops differ from the 1-cell
+  ring's by 0.0 on average, 0.10 absolute (more only at river banks, where the
+  ring stands at the river's level). A hairline still showed the sky along a
+  voxel chunk's edge; the rings draw a skirt there (a 0.9-cell strip inside the
+  voxel chunk where its neighbour is the rings'). In the window the rings are
+  never pressed under the focus (underFocus made a grey shelf of them), and
+  they write the pick target as the columns do, so a tap on a heightfield
+  chunk lands (and the event it makes turns the chunk to voxels).
+- **The rings' look** (all of them, the game's too): where the surface is
+  steeper than ~60° (the vertex normal and the triangle's own, which on the
+  1-cell ring is a cell's) the region's rock — lod.wgsl now writes the rock's
+  albedo and material beside the top's — in beds (render.wgsl's strata, a
+  local copy of the noise), lit by sun, sky and a little bounce. The rings'
+  green stops 70 over the sea as colFinish's plants do: at the mesa the
+  plateau was green in the rings and bare dirt in the columns.
+
+driveprofile, q=low, 412×915 dpr 2.6, drive 18 at 12304,5457, 30 s, this
+machine's iGPU shared with other agents (the clocks drift between runs: the
+same build gave a draw of 1.9 and 4.0 ms in two runs):
+
+| run | p50 | p95 | p99 | worst | GPU ms/frame | draw | gbuffer | renderprep | shadow |
+|---|---|---|---|---|---|---|---|---|---|
+| full game | 9.9 | 10.5 | 12.4 | 62 | 5.99 | 2.87 | 0.43 | 0.26 | 0.17 |
+| hybrid | 9.9 | 10.5 | 12.6 | 48 | 4.01 | 1.90 | 0.16 | 0.13 | 0.08 |
+| ceiling | 9.9 | 10.3 | 10.6 | 15 | 2.58 | 2.53 | – | – | – |
+
+Missing on a heightfield chunk (BACKLOG P13): its plants (grass, trees), the
+sim's water moving (the rings' water is flat colour), the roads' paint, the
+look's detail (the mesh's material lookup, stains, wetness).
+
+- **The sim only where the voxels are** (the next commit): Sleep.only — a
+  heightfield chunk never wakes (a storm raining on it, land coming in to
+  settle), since nothing of the sim there is drawn; a world event turns its
+  chunk to voxels first (the hybrid's choice now runs before Sleep's update,
+  the same frame), so what the player does there still wakes it. A storm
+  spawned by the first spawn: 20 sim chunks awake, none outside the voxels.
+
+- **Measured again, interleaved** (after the sim filter; driveprofile as above,
+  the GPU busier this time — the same ceiling read 2.6 before, 2.9–3.2 now):
+
+| run | p50 | p95 | p99 | worst | GPU ms/frame | draw | gbuffer | renderprep | shadow (+static) |
+|---|---|---|---|---|---|---|---|---|---|
+| hybrid | 9.8 | 10.5 | 13.2 | 68 | 7.63 | 4.05 | 0.29 | 0.24 | 0.13 + 0.07 |
+| full game | 9.9 | 10.7 | 13.8 | 71 | 9.09 | 4.56 | 0.59 | 0.36 | 0.25 + 0.15 |
+| ceiling | 10.0 | 10.2 | 10.6 | 16 | 3.19 | 3.13 | – | – | – |
+| hybrid | 9.9 | 10.7 | 16.9 | 68 | 7.78 | 4.01 | 0.28 | 0.23 | 0.13 + 0.07 |
+| full game | 9.9 | 10.8 | 19.5 | 70 | 8.96 | 4.39 | 0.58 | 0.35 | 0.24 + 0.14 |
+| ceiling | 9.9 | 10.2 | 10.6 | 19 | 2.96 | 2.88 | – | – | – |
+| hybrid, ?ringn=129 | 9.9 | 10.6 | 16.0 | 74 | 7.04 | 3.08 | 0.29 | 0.26 | 0.13 + 0.07 |
+
+  The hybrid takes 13–16% off the game's GPU (the mesh's G-buffer, shadow and
+  prep halve; 21 of 72 chunks voxels on the ride, 18 drawn, against 53 drawn
+  in the game); it is nowhere near the ceiling, because what's left is not the
+  terrain: the draw is the rings themselves (the 1-cell ring adds 193² vertices
+  to the game's four; `?ringn=129` takes a ms off), and ~3.5 ms is the rest of
+  the game the ceiling doesn't run — the sim's kernels over the whole window
+  (they skip sleeping chunks but still dispatch), particles, agents, the wind
+  field, projection. Those are the next cut (P13).
+- **How many chunks need voxels depends on the place** (the first window of
+  each, 72 chunks; 12 of them the focus's): the first spawn 1 for its land,
+  the mesa 27, a settlement's ruins 27, a crystal field by a giant 59 (20% of
+  its columns are forms), a tunnel's hills 63 (way cuttings 10 cells deep, and
+  996 columns with gaps open to the air). A single flagged column makes its
+  chunk voxels.
+## 2026-10-26 — round 85: things as compositions, diplomacy, settlement grids (contracts)
+
+The user's design (DECISIONS round 85) calls for one recipe system for units, items, vehicles, buildings and
+civilizations, with legacy carried between runs. They asked for the data model first. Why it's shaped this way:
+- **Tags and slots, not a type per combination.** A slot accepts any thing whose tags fit, so a hover knight
+  takes no new code: a hoverbike is a `mount`. Stats come from rules over the composition's tags. A part's tags
+  show as `slot:tag`, so a rule can say "a knight whose mount is a vehicle hovers". A hoverbike's power slot
+  takes a power cell or a magic stone. The magic stone adds `glows`, which gives the user's "different
+  consequences" a place to live.
+- **Derived, never stored.** Capabilities are recomputed from the parts. Swapping a mount, wearing armour down
+  or dropping a power cell changes the result without any sync.
+- **Mastery separate from possession.** A people's knowledge of a recipe is uses, repairs, makes or
+  understands. `plan` refuses a craft without `makes`. So a medieval people can ride dug-up hoverbikes but can't
+  build them, which the user asked for by name.
+- **Provenance on every thing**, and a `Place` that can be `in: 'region'` (buried, scattered, a hoard). What a
+  run leaves becomes things a later people can find (R7).
+- **Diplomacy as a record**, RimWorld style. Opinions are the faded sum of deeds plus standing agreements, so
+  dialog can quote the deeds behind an opinion (`because`, `memories`). Rights and trade are agreements with
+  places, resources, shares and flows. Units ask `rights(region, at)` before they mine.
+- **Settlements:** overlay grids of several styles, and buildings as things, so a ruin can be adapted. The city
+  game edits the same records.
+scripts/recipetest.mjs checks all of this: 12 checks, all passing.
+
+## 2026-10-26 — round 85: the hybrid merged, the phone tier's default
+
+The user tried `hybrid` on the phone: "Hybrid is awesome and definitely should be merged!" It is merged into places
+and is on by default on the low (phone) tier through phone-flags' LITE_SET, so `?lite=1` turns it on for any tier and `&hybrid=0` turns it off.
+The medium and high tiers keep full voxels until the open items are done (plants on heightfield chunks, the rings' water, roads, the seam's colour; BACKLOG P13).
+It only applies to the atlas level, and `?mesh=0` with it is an error, not a fallback.
+Measured on the merged places build: driveprofile, low tier, 18/s for 20 s, desktop iGPU. By default (hybrid on) the GPU took 7.43 ms a frame, with 15 of 72 chunks voxels; p95 was 10.6 and p99 13.1. With `&hybrid=0` it took 9.07 ms, with 55 chunks drawn; p95 was 10.7 and p99 14.9. atlasworldtest passes 6/6.

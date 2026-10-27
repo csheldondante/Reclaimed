@@ -6,8 +6,9 @@
 // give it (so any one can be turned back, e.g. &settle=1 or &tufts=1), all of them off with ?phone=0. ?lite=1 adds
 // the render's half on any tier.
 
-/** the render's half (?lite=1 on any tier) */
-export const LITE_SET: Readonly<Record<string, string>> = { tufts: '0', shadowcache: '4', prepevery: '2', bandh: '2', shadowsize: '512' };
+/** the render's half (?lite=1 on any tier); round 85 the hybrid (heightfield chunks, voxels where the ground needs
+ *  them; the atlas level only) — the user: "Hybrid is awesome and definitely should be merged!" */
+export const LITE_SET: Readonly<Record<string, string>> = { tufts: '0', shadowcache: '4', prepevery: '2', bandh: '2', shadowsize: '512', hybrid: '1' };
 /** the simulation's half (the low tier) */
 export const SIM_SET: Readonly<Record<string, string>> = { settle: '0', inplace: '1', sleepmore: '1' };
 

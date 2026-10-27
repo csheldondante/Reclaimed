@@ -203,6 +203,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
         const g = core.globals;
         g.sleep = sleep.update(performance.now() / 1000, [target[0], target[1], reach], g.events, core.weather.storms, core.sim.tick);
         g.drowse = sleep.drowse;
+        g.settle = sleep.settling.map((s) => s.rect);
       }
       return stream.busy;
     },

@@ -25,6 +25,65 @@ each was implemented.
   simulation can then take over until it finds another near steady state then freeze things."
 - "Do we use the flux to just adjust steady state for a region? Like we could keep the flow proportional and
   then zero out when they get too low."
+## 2026-10-26 — round 85 (session 5, `places`) — recipes, civilizations, legacy; diplomacy; grids
+
+- **Recipe-driven civilizations and legacy.** "Units, items, vehicles, buildings, and even civilizations are
+  compositions of reusable ingredients, defined through a shared, data-driven recipe system." A knight is a
+  person + training + armour + a mount, and the mount can be a horse or a hoverbike ("a medieval hover knight");
+  a mech can take a bow with compatible controls; a furnace, a reactor or a magic stone can satisfy a power
+  requirement "with different capabilities and consequences"; buildings (housing, hospitals, universities,
+  factories, communes) come from combinations of structures, facilities, resources and functions; adaptive
+  reuse ("a primitive civilization might convert an ancient ruined megastructure into apartments").
+- Resources and artifacts exist physically; units mine, excavate, salvage, manufacture, trade and combine them.
+  "Possessing technology and knowing how to reproduce it are distinct." Destroyed buildings, abandoned
+  equipment, fallen civilizations and past runs all feed the future economy: Explore → Extract → Combine →
+  Deploy → Leave behind → Rediscover.
+- Materials keep physical and visual properties (copper's patina, red steel, local stone and wood shape
+  equipment and architecture). Civilizations have parameterised technology, cultural preferences,
+  architectural styles and production choices; their look follows geography, resources, history and
+  technology, "rather than an arbitrary faction skin".
+- **For now the data model only**, not editors or animation: (1) recipes, (2) instances (composition, condition,
+  ownership, provenance), (3) derived capabilities as separate rules, (4) civilization profiles, (5)
+  presentation later from the same data. "Minimal, extensible, and shared across entity types. Avoid
+  hardcoding every possible combination." → src/api/contracts/recipe.ts, compose.ts.
+- **Grids.** "Overlay grids for our cities": irregular grids like Townscaper, Voronoi on height contours for
+  modern, radial sets like Bulwark — "interesting looking and varied." → settlement.ts `SettlementGrid`.
+- **Diplomacy** "should work by holding the history of factions and individual interactions like rimworld so
+  they can come up in dialog. It should also have more than peace or war it should have land and mineral
+  rights and trade agreements." → src/api/contracts/diplomacy.ts.
+- **The simulation's dispatches:** "only simulate things that need it and the whole point of the laminar flows
+  (steady state) and scalar drop is it limits how long we need to simulate and lets us cache simulation
+  results" — cutting the dispatches over asleep land approved (branch `simcull`).
+- **Hybrid:** "Hybrid is awesome and definitely should be merged!"
+
+## 2026-10-26 — round 83 (session 5, `places`) — the why: an engine for legacy games
+
+- Reclaimed began as an atmospheric sandbox (wind helping nature regrow; satisfying floods and wind that
+  reacts to the landscape). Since the atlas it has been "an engine for legacy games": roguelike runs where
+  failure and death are always possible and choices leave a lasting, visible impact.
+- Built or prototyped: a detailed terrain generator, touch controllers, streaming, physics and destruction,
+  a streaming build fast enough on mobile. Missing: camera polish, dialogs, unit and item generators, a full
+  build mode for places, a story framework for the GM, room-based key/door generation.
+- Erosion, weather, water and fracture make the world feel alive, but only some need run in play; the rest
+  can be generated in response to story events or between runs. Agents that work, build and shape terrain
+  are to be brought out. "All that matters is the illusion of a living world. We can and should take
+  shortcuts that keep things fast and make them more compelling."
+- Atlas-changing events to support: a region sinking into the sea, a volcano burying a city in ash, a forest
+  overgrowing ruins, freezing over, an ever-storm, eternal shadow, the dead rising, factions turning
+  friendly or hostile.
+- "I would rather orchestrate and plan these systems in parallel and abstract them behind an API so we can
+  iterate and improve them all across multiple sessions. Fixing the performance and quality of the fluid
+  simulation or destruction shouldn't fundamentally matter to dialogue or the atlas updates." → docs/SYSTEMS.md.
+- The order: the contracts first ("Yes"); then dialogue and basic cameras "so we have a way to communicate
+  what is going on"; a GM — for now a subagent with GM context and tools — takes the world state wiki and
+  offline writes a session story as data (locations, dialogues, objectives, world effects); dialogue and
+  settlements first, agents as workers or hostile, settlements in the data structure the city management
+  game will use; the user's ideas for items, units and diplomacy to be talked through first, a first pass of
+  their data in play before heroes or their stories.
+- The perf ceiling (branch `ceiling`, the heightfield alone) on the phone: "The performance was solid and very
+  usable." A hybrid to build: "Yes I think a hybrid approach makes sense to build" — the heightfield for most
+  of the view, voxels only near the player and where the ground needs them (overhangs, caves, forms, edits);
+  rock on steep faces (branch `hybrid`).
 
 ## 2026-10-26 — round 83 (session 5, `places`) — the puck, separate cuts, LOD
 
@@ -68,6 +127,28 @@ each was implemented.
   water to make waves from large bodies come into the shore"; "rivers should
   flow downstream and water in the ocean should be waves coming into the
   shore".
+- The world's physics, layered (the user): "solids can use columns to cheaply
+  compute collapse and fracture in the vertical direction. Then sleep like
+  any other physics system. The water and loose materials can sit in
+  intervals on top of that and then simulate flow but we treat steady state
+  flow as sleeping." A unified flow for water, loose ground and lava ("a
+  unified model of material flow would be great for waterfalls emerging from
+  underground streams or lava flows"; "a water fall that actually arcs out");
+  steady flow frozen: "show the animation of sand endlessly spilling out of a
+  basin. Think flux. As long as our section has material going in matching
+  material out it is in steady state and we only need to find that again
+  when we perturb it." The rules simple: "Water and loose materials may
+  appear along multiple intervals in a column but the update rules should be
+  fairly simple. Think noita physics which just checks for adjacent
+  emptiness and moves pixels over. We are just doing this in a compressed
+  column space and adding in velocity. The goal is plausibility and
+  spectacle not realism." Near enough is steady: "we can have a tolerance and
+  decide when we are close enough to steady state to freeze and treat it as
+  an animation only. The goal here is to have the generator make things start
+  in steady state and the simulation can then take over until it finds
+  another near steady state then freeze things." Rivers: the atlas's watersheds and their flow as a
+  function of dryness precomputed; the unperturbed basin a steady state, its
+  flow "strictly a render artifact computed at the atlas level".
 - What the sim must do (P11): water's steady state is cached, so no tick is
   needed most of the time: "run simulation on demand and cache when it has
   run for a bit and localize real simulation to player actions."

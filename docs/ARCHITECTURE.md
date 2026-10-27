@@ -394,6 +394,41 @@ far land's `farAt`; a ring discards the window's square and the finer
 ring's; the far land discards the outermost ring's square, and with rings
 draws its near side too.
 
+The hybrid renderer (round 84, `?hybrid=1` on the atlas level, branch
+`hybrid`; scenes/hybrid.ts): voxels only where they're needed, the
+heightfield everywhere else. The window's mesh chunks (32 cells across, 32
+rows down) are each either voxels — the field mesh and the band built and
+drawn there, the window's water, plants and sheets prepared there — or the
+heightfield's: never built (FieldMesh.setWanted: not looked at, not drawn,
+a built one emptied — its indices 0, its hash FRESH), so far.wgsl's
+`meshBuilt` is false and the rings (a 1-cell ring first: spacings 1, 2, 4,
+8, 16) draw its land. A chunk is voxels when (HybridChunks.update) its land
+isn't a heightfield — Streamer.relief / gapTop / colTop, made per column as
+land comes in (writeNow, editLive, the first window) and moved with the
+window: a form standing on the ground or cut into it (the top off the
+ground's own by more than 0.75), or a gap between runs open to the air (a
+neighbour's top under its roof: an overhang's lip, a cave mouth, a bridge,
+a tunnel's portal; a cave under its neighbours' tops is buried and doesn't
+count) — or it's within `?vradius=` (40) of the camera's target, or a world
+event (Globals.events) has touched it (kept while it's in the window). The
+choice reaches the renderer as Renderer.setMeshWanted (the window's mesh and
+the band's) and the GPU as Globals.hfield (a bit a mesh chunk, `ocean.yz`
+the chunks across and their side; common.wgsl `heightfieldCol`):
+renderprep and vegprep prepare nothing in a heightfield chunk — its water
+too is the rings' (the river's and the sea's level, lod.wgsl). The rings in
+the window are never pressed under the focus (underFocus) and write the pick
+target as the columns do (meshdraw.wgsl's encoding, the top's or the rock's
+material), so powers land on heightfield chunks; along a voxel chunk's edge
+with a heightfield neighbour they draw a skirt (a 0.9-cell strip, far.wgsl
+`skirt`) over the hairline between the two. The window's layers stay the
+truth for every column (physics, queries, the sim where it's awake); the
+sim wakes only in voxel chunks (Sleep.only, HybridChunks.sleepFilter). The
+rings' look (fsLod `ringLook`): where the surface is steeper than ~60° (the
+vertex normal and the triangle's own) the region's rock (lod.wgsl writes
+the rock's albedo and material beside the top's) in beds (render.wgsl's
+strata), lit by the sun, the sky and a bounce; no green from 70 over the
+sea up (as colFinish's plants).
+
 Vertex pulling from storage buffers. Column intervals (ground, water, oil, the
 loose sheet) are hex prisms, 30 vertices: the top in four triangles with one
 flat normal (the plane through its corners, cached per cell by render-fields)
@@ -1140,3 +1175,101 @@ strokes one after another, cyclones, parked storms, scripted lightning
 natural storm and one dust storm), and measures each gate from readbacks
 (surface, contam, oil, moisture, water, driftTex): share closed, share
 fertile, amount of its stuff left.
+
+## Dialog, the run and story cameras (round 83, branch `dialog`; docs/SYSTEMS.md 10, 11, 5)
+
+Coded against src/api/contracts (dialog.ts, run.ts, story.ts, world.ts); each piece knows only its inputs:
+
+- `src/dialog/dialog.ts` — `DialogBox implements Dialog`: `open(tree, at?) → path`, `isOpen`, `onChoice`;
+  beyond the contract `onNode(tree, node)` (each node said: the run applies its effects and notes
+  `talked`), `onOpen` / `onClose`, `close()`. Choices filtered by a `check(conds)` callback; indices are the
+  node's own (hidden ones counted). DOM in `#ui`: `.dlg-scrim` (swallows input while open) and `.dlg`.
+- `src/run/run.ts` — `StoryRun implements Run` over a SessionStory and a WorldState: `note(fact)`,
+  `update(dt)` (the clock), `holds(c)` (`all(conds)` for a list), `objectives()`, `flag`, `has(item)`, `attitude(character)`,
+  `entry(tree)` (its last unlocked node), `hear(dialog)`, `end(how) → RunRecord`; events `onObjective`,
+  `onOutcome(outcome, cause)`, `onEnd`. AtlasEvents (and faction attitudes, as `faction-attitude`) go to
+  `WorldState.apply` when the outcome fires; the RunRecord to `WorldState.record`.
+- `src/run/validate.ts` — `validateStory(json) → SessionStory`, or a `StoryError` listing every problem
+  (references only, no snapshot needed; the GM's storycheck is the full check).
+- `src/run/hud.ts` — `ObjectiveHud(root, run)`: the shown objectives, bottom left.
+- `src/story/camera.ts` — `StoryCamera(camera, { dither?, slice? })`: `frame`/`release`, `reveal`, `look`,
+  `follow`, `skip`, `idle`, `busy`, `update(dt)`. Writes only `camera.target` and `camera.zoom`; the
+  cutaway through Dither.see / Slice.update.
+- `src/story/play.ts` — `StoryPlay.start({ ui, camera, api, world, story, stage, cut })`: the above over the
+  world API (terrain for heights and the cast's pillars; plants, water, fx for play-scale stand-ins of
+  atlas events). `Stage` maps story locations and cast to world positions: the region generator's output
+  later, hand-written now. `holdsInput`: the level's controls wait (a tap skips a reveal).
+- `src/story/demo/` — `?story=demo`: a placeholder story (JSON) and its stage in the valley; the level
+  (`LevelScene.startStory`) makes a MemoryWorldState for it. `window.reclaimed.story` is the StoryPlay.
+## The game master (round 84, branch `gm`; docs/GM.md, docs/SYSTEMS.md system 9)
+
+The GM writes a run's `SessionStory` (src/api/contracts/story.ts) offline, from the world wiki. For now it is a
+Claude subagent run with docs/GM.md as its context. Later it will be a model called behind the same interface.
+
+- **The wiki's facts.** `src/gm/atlas-facts.ts` `atlasFacts(atlas)` reads a built Atlas without changing it (its
+  defs, landforms, regionOf, macro heights, river nodes, stamps and settlement). It gives each region's kind,
+  tier, climate, ground min/mean/max, neighbours, river and lava nodes and stamps. Sites: world point, level
+  cell, size, setting, region. Roads: their ends, the regions they pass and their crossings. Also
+  Atlas.spawn and its region. `scripts/worldwiki.mjs --pull` runs it once in a page (headless,
+  `?atlas=view`) and caches it to `data/atlas/seed<N>.json`, so nothing after needs the browser.
+- **The wiki.** `src/gm/wiki.ts` has `buildWiki(facts) → WorldWiki` and `wikiMarkdown(wiki, {around, radius})`.
+  Both are pure and deterministic, and run in Node and the browser.
+  - A `WorldSnapshot`: version 0, the atlas's `seed`, run 0 (the run to come), every region fresh except
+    for faction presence, and the `settlements` (settlement.ts's draft shape).
+  - Beside it: geography (`regions`), `sites` (each settlement's setting, atlas size, cell and roads),
+    `roads`, `continents` and `factions` (marked as placeholders).
+  - Names (regions, continents, settlements) come from a syllable table, one tongue a continent.
+  - **Factions are placeholders.** Realms are each continent's settlements clustered (about 32 a realm,
+    named for the seat). Four world factions (Ashwrights, Green Choir, Hollow Court, Salt Fleet) are present
+    where their kinds of land are. They wait for the user's diplomacy design.
+  - Output: `data/wiki/seed<N>.json` and `.md`.
+- **The validator.** `src/gm/storycheck.ts` has `checkStory(story, world) → string[]` (every problem; empty
+  means clean) and `checkWorldFrom(json)` (a wiki or a bare snapshot). It checks:
+  - shapes against story.ts, with no extra keys;
+  - every reference, item spellings, and flags set before they're needed;
+  - AtlasEvent kinds and magnitudes: a flood's `level` against the region's ground (when the wiki gives it),
+    faction-presence and faction-attitude −1..1, `location` a story location in the event's regions;
+  - `any` conditions, cast `room`s, and `from` (version, run to come, seed) against the snapshot;
+  - then a fixed point over what can happen: every node reachable, every objective shown and done, every
+    happening fired, every room reached through its locks, a way to win and a way to lose, and an AtlasEvent
+    somewhere.
+
+  Its runtime lists of kinds have compile-time checks that they cover world.ts's and story.ts's unions.
+  CLI: `scripts/storycheck.mjs`.
+- **The adapter.** `src/gm/gm.ts`: `GameMaster.brief(snapshot, player: PlayerRecord) → Promise<SessionStory>`.
+  `FileGM(ids, load)` serves the first listed story whose `from` matches the snapshot's version and run, and
+  validates it again. It throws on a story with problems, and when no story was written for this world.
+  `fetchGM(ids)` loads `data/stories/<id>.json` from the dev server. The player is run.ts's `PlayerRecord`.
+- **The format's meanings** (now in story.ts's, dialog.ts's and run.ts's comments; docs/GM.md "The format"):
+  - conditions in a list are ANDed, `any` ORs its own;
+  - a happening fires once;
+  - a talk opens at its most recently unlocked node, else at its start;
+  - a brief's first room is its way in;
+  - `time.after` is seconds of run time;
+  - a flag condition with `value: false` holds while the flag is unset.
+- Node runs the gm modules directly (type stripping). So they import only types, or runtime modules with a
+  `.ts` extension (tsconfig `allowImportingTsExtensions`), and use no TS-only runtime syntax (no parameter
+  properties, no enums).
+- Test: `scripts/gmtest.mjs`. The first story and docs/GM.md's example come out clean, 18 kinds of mistake
+  are caught, and FileGM serves and refuses as it should.
+
+## Things and diplomacy (round 85, src/api/contracts)
+
+- **recipe.ts.** Everything made is an `Instance` of a `Kind` (tags, base stats, slots). Its `parts` fill slots by
+  tag (`TagQuery`), so a hoverbike fills a knight's `mount` slot as a horse does. A `Recipe` says how things
+  combine (assemble keeps parts, craft uses them up, train adds a skill tag, adapt gives an existing thing new
+  parts and function, salvage takes it apart). `CapabilityRule`s (data) read the composition's tags — its own
+  plus each part's as `slot:tag`, and `has:slot` — and give stats, abilities, tags and unmet requirements.
+  `CivProfile.knowledge` holds a mastery per recipe: uses, repairs, makes or understands.
+- **compose.ts.** `derive(catalogue, id)` gives a thing's capabilities, parts first. Nothing stores them, and
+  condition scales the stats. `plan(catalogue, civ, recipe, at, facilities)` fills a recipe's slots from what's
+  at hand, or says why it can't: making needs `makes`.
+- **diplomacy.ts.** `Interaction`s are a party's deed to another. Each has a weight (−1..1) and a half-life in
+  runs; witnesses and kin take half. `Agreement`s are terms: war, truce, peace, alliance, trade (flows), land
+  rights, mineral rights (share), passage, tribute or vassalage, with places and resources. An `Opinion` (value,
+  stance, the interactions behind it) is derived. Breaking an agreement notes a broke-word interaction.
+  MemoryDiplomacy is the reference implementation.
+- **settlement.ts.** A settlement lays its districts out on overlay `SettlementGrid`s (irregular, contour
+  Voronoi, radial, orthogonal). Its buildings are things on grid cells, and their `use` is derived.
+  `founded.over` records adaptive reuse.
+- Test: scripts/recipetest.mjs.

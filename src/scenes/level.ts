@@ -41,6 +41,8 @@ import { AtlasMap } from '../api/atlas-map';
 import { warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
 import { Puck } from '../api/puck';
+import { StoryPlay } from '../story/play';
+import { demoStory } from '../story/demo';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
@@ -52,6 +54,7 @@ import { WorldVox } from '../game/fracture';
 import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
 import { qRotate, qYawPitchRoll } from '../grids/structures';
+import { HybridChunks } from './hybrid';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -110,6 +113,15 @@ export class LevelScene implements Scene {
   /** (?flow=1, docs/ARCHITECTURE.md "The flow model") the flow model: liquids as runs, steady state freezing */
   private flow?: FlowKit & { lab?: { breach: (spring?: number) => void } };
   private noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
+  /** ?ceiling=1 (the perf ceiling, the atlas level): each frame only the camera (the drive) and the heightfield —
+   *  far.ts's rings (?near=1: a ring a cell apart first, the default; 2: the usual four) and the far land; no sim,
+   *  no streaming, no mesh, no prep, no shadow, no HUD or audio. The window is still built at the start. */
+  private ceiling = new URLSearchParams(location.search).get('ceiling') === '1';
+  /** ?hybrid=1 (the atlas level): voxels only where they're needed — the field mesh, the band and the sim's
+   *  chunks where the land isn't a heightfield, near the focus, or edited; the LOD rings (a 1-cell ring first)
+   *  draw the rest of the window's land (scenes/hybrid.ts). ?vradius= the focus's radius (world units, 40). */
+  private hybridOn = new URLSearchParams(location.search).get('hybrid') === '1';
+  hybrid?: HybridChunks;
   private ticksAvg = 1;
   /** the last frames' times (ms) and every hitch (a frame over 50 ms) since the level began: the phone's profile (round 79) */
   private frameMs: number[] = [];
@@ -155,6 +167,10 @@ export class LevelScene implements Scene {
   cutaway?: { puck: Puck; slice: Slice; orbit: Orbit; dither: Dither };
   /** a stand-in character's feet kept seen (Dither) for ?cutaway (scripts/cutshot.mjs); none when unset */
   cutFeet?: [number, number, number];
+  /** round 83 (dialog): ?story=demo — a SessionStory played here (story/play.ts: the run, dialog, story cameras) */
+  storyPlay?: StoryPlay;
+  /** the story's own dither and slice when ?cutaway isn't on (speakers kept seen) */
+  private storyCut?: { dither: Dither; slice: Slice };
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
@@ -447,6 +463,8 @@ export class LevelScene implements Scene {
     // (the last long frames and what ran in them: '-' is the GPU's or the browser's)
     for (const l of this.longFrames.slice(-3)) out.push(`long ${l.slice(0, 90)}`);
     if (this.sleep) out.push(`awake chunks ${this.sleep.awake} of ${(this.core.dims.w / CHUNK) * (this.core.dims.h / CHUNK)}`);
+    const hs = this.hybrid?.stats;
+    if (hs) out.push(`hybrid voxel chunks ${hs.voxel} of ${hs.chunks} (land ${hs.land}, edited ${hs.edited}, near ${hs.near}); drawn ${this.core.renderer.fieldMesh.drawn}`);
     return out;
   }
 
@@ -698,8 +716,11 @@ export class LevelScene implements Scene {
       (x / camera.viewportW) * this.renderW,
       (y / camera.viewportH) * this.renderH,
     ];
+    // (round 83, dialog: a talk or a story shot has the screen — a tap cuts a reveal short, the rest waits)
+    const held = () => !!this.storyPlay?.holdsInput;
     this.controls = new Controls(host.canvas, {
       tap: (sx, sy) => {
+        if (held()) return void this.storyPlay!.cam.skip();
         // (round 83: flying, the pointer only turns the view)
         if (camera.fly) return;
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
@@ -717,6 +738,7 @@ export class LevelScene implements Scene {
         core.renderer.pick(rx, ry).then((hit) => this.powers.tap(hit, wx, wy, sx, sy));
       },
       dragStart: (sx, sy) => {
+        if (held()) return false;
         if (camera.fly) {
           this.flyDrag = [sx, sy];
           return true;
@@ -794,6 +816,7 @@ export class LevelScene implements Scene {
         if (this.editor?.tool === 'town') this.pickTown(sx, sy);
       },
       pan: (dx, dy) => {
+        if (held()) return;
         // (flying: a right drag looks round)
         if (camera.fly) {
           camera.fly.yaw -= dx * 0.004;
@@ -804,7 +827,9 @@ export class LevelScene implements Scene {
         camera.target[0] -= wx;
         camera.target[1] -= wy;
       },
-      zoomAt,
+      zoomAt: (sx, sy, f) => {
+        if (!held()) zoomAt(sx, sy, f);
+      },
     });
 
     const signal = this.abort.signal;
@@ -1071,9 +1096,32 @@ export class LevelScene implements Scene {
         // coarser ones, fewer vertices)
         const lodQ = new URLSearchParams(location.search).get('lod');
         const lod = lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
-        const far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, lod);
+        if (this.hybridOn && !this.ceiling) {
+          // (the window's heightfield chunks are the 1-cell ring's, near the camera; ?ringn= its vertices a side)
+          const ringN = Number(host.params.get('ringn') ?? 193);
+          this.far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, { spacings: [1, 2, 4, 8, 16], n: ringN });
+          const fm = core.renderer.fieldMesh;
+          if (!fm.on) throw new Error('?hybrid=1 needs the field mesh (not with ?mesh=0)');
+          const [nx, ny, side] = fm.chunkGrid;
+          const S = this.stream;
+          const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 40));
+          this.hybrid = h;
+          S.onRelief.push((x0, y0, x1, y1) => h.landBox(x0, y0, x1, y1));
+          S.onSlide.push((dx, dy, dz) => {
+            if (!dz) h.shift(dx / side, dy / side);
+          });
+          S.onWarp.push(() => h.clear());
+        }
+        if (this.ceiling) {
+          const near = Number(host.params.get('near') ?? 1);
+          // (?ringn=: vertices a side of each ring, 193 the usual; (n − 1) a multiple of 8 — lod.ts checks)
+          const ringN = Number(host.params.get('ringn') ?? 193);
+          if (near !== 1 && near !== 2) throw new Error('?near= must be 1 or 2 (cells between the finest ring’s vertices)');
+          this.far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, { spacings: near === 1 ? [1, 2, 4, 8, 16] : [2, 4, 8, 16], n: ringN }, true);
+        }
+        const far = this.far ?? new FarLand(host.gpu.device, a.atlas, core.renderer.targets, lod);
         // (round 83: the rings draw past the window's edge — no wall down it)
-        if (far.lod) core.renderer.openEdges();
+        if (far.lod && !this.ceiling) core.renderer.openEdges();
         this.far = far;
         const S = this.stream;
         core.renderer.extraDraws.push((pass, clear) => {
@@ -1174,6 +1222,32 @@ export class LevelScene implements Scene {
       weather.holdNatural(600);
       void this.runIntro();
     } else this.openValley();
+    // round 83 (dialog): ?story=demo — a story played on this level
+    const storyId = host.params.get('story');
+    if (storyId) void this.startStory(storyId);
+  }
+
+  /** ?story=<id>: the run, the dialog, the objective list and the story cameras over the world API (story/play.ts) */
+  private async startStory(id: string): Promise<void> {
+    if (id !== 'demo') throw new Error(`?story=${id}: no such story (demo)`);
+    const api = (this.worldApi ??= attachSim(this.core));
+    const t = api.terrain!;
+    const camera = this.core.camera;
+    // (the cutaway's dither and slice when ?cutaway=1 runs them, else the story's own)
+    let cut: { dither: Dither; slice: Slice };
+    if (CUTAWAY) cut = this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) };
+    else cut = this.storyCut = { dither: new Dither(t, camera), slice: new Slice(t, camera) };
+    const { story, stage, world } = demoStory();
+    this.storyPlay = await StoryPlay.start({
+      ui: this.host.ui,
+      camera,
+      api,
+      world,
+      story,
+      stage,
+      cut,
+    });
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.story = Object.assign(this.storyPlay, { world });
   }
 
   /** Grow the reach from the green as it is now (story levels; ~1 Hz). */
@@ -1270,7 +1344,9 @@ export class LevelScene implements Scene {
     const k = this.keys;
     if (this.drive) this.driveOn(dt);
     else if (camera.fly) this.flyKeys(dt);
-    else {
+    else if (this.storyPlay?.holdsInput) {
+      // (a talk or a story shot has the camera)
+    } else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
     if (k.has('d') || k.has('arrowright')) kx += 1;
     if (k.has('w') || k.has('arrowup')) ky -= 1;
@@ -1280,6 +1356,10 @@ export class LevelScene implements Scene {
       camera.target[0] += wx;
       camera.target[1] += wy;
     }
+    }
+    if (this.ceiling && this.far) {
+      this.ceilingFrame(dt, cpu0);
+      return;
     }
     camera.target[0] = Math.max(0, Math.min(dims.w, camera.target[0]));
     camera.target[1] = Math.max(0, Math.min(dims.h * ROW_H, camera.target[1]));
@@ -1348,22 +1428,41 @@ export class LevelScene implements Scene {
 
     // (a slide in progress: the sim waits for the regions coming in)
     void this.stream?.update();
+    // (hybrid) what's voxels this frame: the events edit what they touch; the focus is the camera's target
+    if (this.hybrid) {
+      for (const e of globals.events) this.hybrid.edit(e.x, e.y, e.radius);
+      const want = this.hybrid.update(camera.fly ? [camera.fly.pos[0], camera.fly.pos[1]] : [camera.target[0], camera.target[1]]);
+      if (want) {
+        core.renderer.setMeshWanted(want);
+        globals.hfield = { bits: this.hybrid.bits(), across: core.renderer.fieldMesh.chunkGrid[0], side: core.renderer.fieldMesh.chunkGrid[2] };
+        // (the sim only where the voxels are: nothing wakes a heightfield chunk — storms, land settling)
+        this.sleep?.only(this.hybrid.sleepFilter(dims.w / CHUNK, dims.h / CHUNK));
+      }
+      this.hybrid.count(core.renderer.fieldMesh.drawn);
+    }
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
     if (this.sleep) {
       globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;
+      globals.settle = this.sleep.settling.map((s) => s.rect);
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's
     // stand-in character, kept seen)
+    // (round 83, dialog: the story's run, cameras and badges; its own cut when the cutaway's not on)
+    if (this.storyPlay) {
+      this.storyPlay.update(dt);
+      if (this.storyCut && !camera.fly) this.storyCut.dither.update(dt);
+    }
     if (CUTAWAY && !camera.fly) {
       const t = (this.worldApi ??= attachSim(core)).terrain!;
       const c = (this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
       c.puck.update(dt);
       const p = c.puck.pos;
-      if (p) {
+      // (a story shot cuts the slice over what it frames: story/camera.ts)
+      if (p && !this.storyPlay?.cam.busy) {
         c.slice.update(p[0], p[1], p[2], dt);
         c.orbit.update(p[0], p[1], p[2], dt);
       }
@@ -1459,6 +1558,60 @@ export class LevelScene implements Scene {
       },
       this.host.profiler,
       sim,
+    );
+  }
+
+  /**
+   * ?ceiling=1: the frame of the perf ceiling — the camera, then one pass of the heightfield (far.ts's rings and
+   * far land; the rings make only the strips new to them as the camera moves). The window doesn't slide: the
+   * camera leaves it behind (the rings are anchored to the world), its height following the atlas's macro ground.
+   */
+  private ceilingFrame(dt: number, cpu0: number): void {
+    const { core } = this;
+    const { camera, dims } = core;
+    const S = this.stream!;
+    const far = this.far!;
+    const a = this.opts.atlas!.atlas;
+    // (the target's height: the macro ground under it, bilinear — as the window's z follows the land when it slides)
+    const n = a.p.n;
+    const tx = (((camera.target[0] + S.origin[0]) / a.worldW) * n - 0.5 + n * 4) % n;
+    const ty = (((camera.target[1] + S.origin[1] * ROW_H) / a.worldH) * n - 0.5 + n * 4) % n;
+    const x0 = Math.floor(tx);
+    const y0 = Math.floor(ty);
+    const fx = tx - x0;
+    const fy = ty - y0;
+    const H = (x: number, y: number) => a.hmac[((y + n) % n) * n + ((x + n) % n)];
+    const h = (H(x0, y0) * (1 - fx) + H(x0 + 1, y0) * fx) * (1 - fy) + (H(x0, y0 + 1) * (1 - fx) + H(x0 + 1, y0 + 1) * fx) * fy;
+    camera.target[2] += (Math.max(h, a.p.sea) - S.oz - camera.target[2]) * Math.min(1, dt * 2);
+    camera.update();
+    far.org = [S.origin[0], S.origin[1] * ROW_H, S.oz];
+    far.win = [dims.w + 0.5, dims.h * ROW_H];
+    far.zMax = dims.zMax;
+    far.mid = [camera.target[0], camera.target[1]];
+    far.focus = null;
+    const { device, context } = this.host.gpu;
+    const enc = device.createCommandEncoder({ label: 'ceiling' });
+    const clear = core.light.clear;
+    core.renderer.encodeCeiling(enc, context.getCurrentTexture().createView(), camera, clear, (pass) => far.draw(pass, clear));
+    const after = this.host.profiler.endFrame(enc);
+    device.queue.submit([enc.finish()]);
+    after?.();
+    this.perf.update(
+      {
+        fps: this.fps,
+        cpuFrameMs: performance.now() - cpu0,
+        ticksPerFrame: 0,
+        instancesOpaque: 0,
+        instancesWater: 0,
+        renderW: this.renderW,
+        renderH: this.renderH,
+        stats: core.sim.stats.latest,
+        adapter: this.host.gpu.adapterInfo,
+        quality: `${this.host.qualityName} ceiling near ${far.lod!.spacings[0]}`,
+        extra: () => this.perfLines(),
+      },
+      this.host.profiler,
+      core.sim,
     );
   }
 
@@ -2265,6 +2418,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.atlasCtl?.remove();
     this.far?.dispose();
+    this.storyPlay?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

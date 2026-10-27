@@ -34,6 +34,11 @@ worked on in parallel:
 | `atlas` | `C:/Projects/Reclaimed-atlas` | `npm run dev -- --port 5203` |
 | `places` | `C:/Projects/Reclaimed-places` | `npm run dev -- --port 5207` |
 | `perfopt` | `C:/Projects/Reclaimed-perfopt` | `npm run dev -- --port 5211` |
+| `ceiling` | `C:/Projects/Reclaimed-ceiling` | `npm run dev -- --port 5215` |
+| `hybrid` | `C:/Projects/Reclaimed-hybrid` | `npm run dev -- --port 5235` |
+| `rivers` | `C:/Projects/Reclaimed-rivers` | `npm run dev -- --port 5219` |
+| `flow` | `C:/Projects/Reclaimed-flow` | `npm run dev -- --port 5223` |
+| `dialog` | `C:/Projects/Reclaimed-dialog` | `npm run dev -- --port 5227` |
 
 | Branch | Game | Builds on | Backlog |
 |---|---|---|---|
@@ -47,6 +52,7 @@ worked on in parallel:
 | `stream` | A world without an edge (round 66): the live world a window that slides with the camera, regions out of it frozen and thawed exactly, new land generated a region at a time; later deferred or coarse ticks for what's frozen, so towns and nature grow out of sight | `builder` | Q28, Q31–Q35 |
 | `atlas` | A world map to stream from (round 67): a finite world (a torus) made on the GPU when it starts — continents, islands, a partition into regions by Voronoi cells and faults, each region a kind with its own ground, patterns from a bank (wallpaper groups, reaction–diffusion, automata, fractals), borders as cliffs, ravines, walls, terraces, beaches; caves; the streamer's columns drawn from it. `?atlas=view` the viewer, `?level=atlas` walks in | `stream` | Q33, Q36–Q43 |
 | `places` | Readable places on an overmap (rounds 76–78): the atlas's macro height designed (noise for 2D shapes, SDF blends at region borders by the kinds that meet, superstructures, layers), regions given briefs and generated with rooms, paths and stamped crossings (ramps, switchbacks, lifts, tunnels, bridges), a traversal check per hero, a steep top-down camera; the overmap as a fantasy map | `atlas` | V1–V14 |
+| `dialog` | Dialog and story cameras (round 83, docs/SYSTEMS.md systems 10, 11 and part of 5): a SessionStory played on a level — the dialog panel (phone first), the run (objectives, conditions, outcomes, AtlasEvents to the world state, the RunRecord), the objective list, the story cameras (frame a speaker, reveal a place, follow). `?story=demo` on the valley: /Reclaimed/dialog/?skipmenu=1&story=demo | `places` (1f1fea5, the contracts) | systems 10, 11 |
 | `perf` | Profiling and experiments for phones (round 61): what's a clear win merges into `grids`; the user validates the feel on a phone | `grids` (with `agents`) | G16, Q20 |
 | `physics` | The sandbox as a destruction playground and terrain for other games: physics voxels (one GPU solver: metal bends, stone cracks), heat beam, then meteors and volcanoes (docs/PHYSICS.md) | grids' engine and look | F13 |
 
@@ -164,3 +170,13 @@ it is. Round 69 (atlas) slides the window in z too (`Streamer.oz`,
 | Tag | Commit | Branch | What |
 |---|---|---|---|
 | `stable-r83-perf` | `a0d8bea` | `places` | Round 83, 2026-10-26: the user, testing it — "this is much better! I think this is sufficient for performance for now" (perfopt's deferred shading and phone set, the LOD rings filling unbuilt chunks, the mesh held during slides). The revert point if later work regresses; after it came the rings' cuts and the rock collapse (whose first versions froze for seconds). |
+
+## Experiments (round 83, from `places`; merge back what wins)
+
+| Branch | What | Try |
+|---|---|---|
+| `ceiling` | The perf ceiling: a heightfield of the atlas's ground only (`?ceiling=1`): GPU 8.4 → 2.5 ms a frame on the desktop's iGPU; the rings' vertices are what's left | /Reclaimed/ceiling/?skipmenu=1&level=atlas&drive=18&perf=lite&ceiling=1 |
+| `hybrid` | The hybrid renderer (from ceiling + places): `?hybrid=1` — voxels only in the chunks that need them (forms, gaps open to the air, near the focus, edited), the LOD rings with rock on steep faces everywhere else | /Reclaimed/hybrid/?skipmenu=1&level=atlas&hybrid=1&drive=18&perf=lite |
+| `rivers` | Rivers at the atlas's steady state (`?rivers=table`): discharge from each node's watershed, levees, held asleep, drawn flowing, pulled back when woken, scaled by wetness | /Reclaimed/rivers/?skipmenu=1&level=atlas&rivers=table |
+| `flow` | One interval flow for liquids (`?flow=1`, `level=flowlab`): runs in the columns' gaps, arcing falls, cave streams, lava setting to basalt, near-steady chunks frozen as animation, supply rescaled | /Reclaimed/flow/?skipmenu=1&flow=1&level=flowlab |
+| `hybrid` | The heightfield for most of the view, voxels only near the focus and where the land needs them (forms, gaps open to the air, edits) (`?hybrid=1`); rock in beds on steep ring faces (also in the default game's rings). GPU 9.0 → 7.7 ms riding (ceiling 3.0); the rest is the sim's whole-window dispatches and the rings' vertices. **Merged into places (round 85)**, the phone tier's default | /Reclaimed/hybrid/?skipmenu=1&level=atlas&hybrid=1&drive=18&perf=lite |

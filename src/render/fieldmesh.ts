@@ -15,6 +15,7 @@ import layersWgsl from '../shaders/layers.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
+import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import fieldMeshWgsl from '../shaders/fieldmesh.wgsl?raw';
 import type { WorldGpu } from '../sim/world-gpu';
 
@@ -27,13 +28,19 @@ const IDLE_SKIP = `const IDLE_SKIP: bool = ${new URLSearchParams(location.search
 const NORMALS_GRID = `const NORMALS_GRID: bool = ${new URLSearchParams(location.search).get('normals') === 'grid'};`;
 
 /** bytes of the layout uniform (meshregion.wgsl MeshRegion) */
-export const REGION_BYTES = 96;
+export const REGION_BYTES = 112;
+/** (perfopt, ?cavemesh=near) the window's mesh leaves out the caves and the insides of hills, but near the cut */
+const CAVE_MESH = new URLSearchParams(location.search).get('cavemesh') === 'near';
+/** cells round the cut's focus where the caves are meshed */
+const CAVE_NEAR = 48;
 /** a chunk's side, world units */
 const CHUNK = 32;
 const ROW_H = Math.sqrt(3) / 2;
 /** fieldmesh.wgsl CHUNK0, CSTRIDE (u32s) */
 const CHUNK0 = 16;
 const CSTRIDE = 13;
+/** meshstate.wgsl FRESH: a record's hash when nothing is built */
+const FRESH_HASH = 0x9e3779b9;
 /** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
 const TOP_PAD = 4;
 
@@ -178,10 +185,11 @@ export class FieldMesh {
     }
     device.queue.writeBuffer(this.state, 0, init);
     const s = this.side + 3;
-    this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8, GPUBufferUsage.STORAGE);
+    // (and after the samples, perfopt's cavemesh: a float a sample column a slot, what's left out under it)
+    this.scratch = world.buf(`${pre}meshScratch`, this.slots * s * s * this.nz * 8 + this.slots * s * s * 4, GPUBufferUsage.STORAGE);
     this.statBuf = world.buf(`${pre}meshStats`, stateWords * 4, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
 
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshStateWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
     const spec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'rw', 9: 'rw', 30: 'uniform' } as const;
     const group = (k: ComputeKernel) =>
       makeBindGroup(device, 'fieldmesh', k.layout, {
@@ -203,7 +211,7 @@ export class FieldMesh {
     this.argsGroup = group(this.argsK);
     this.hashF = makeCompute(device, 'fieldmesh-hash-fresh', parts, spec, 'hashFresh');
     this.hashFGroup = group(this.hashF);
-    for (const entry of ['sampleField', 'makeVerts', 'makeQuads']) {
+    for (const entry of ['columnTops', 'sampleField', 'makeVerts', 'makeQuads']) {
       const k = makeCompute(device, `fieldmesh-${entry}`, parts, spec, entry);
       this.kernels.push(k);
       this.groups.push(group(k));
@@ -230,6 +238,70 @@ export class FieldMesh {
    * A band's z (round 79): the window is at oz, zMax high — its samples from the world's floor (window z
    * −oz) up the world's height, the bedrock under the floor, no run going on up, quads outside [0, zMax).
    */
+  /** (perfopt, cavemesh) the window's: the caves left out of the mesh (but near the focus) */
+  private caveOn = false;
+  private caveFocus: [number, number, number] | null = null;
+
+  /**
+   * (perfopt, ?cavemesh=near) Where the caves are meshed: round the cut's focus (x, y, radius — the player under
+   * a roof), or nowhere; off (every cave meshed) while flying. A change rebuilds the chunks it touches (their mesh
+   * stays drawn until each is rebuilt).
+   */
+  setCaves(focus: [number, number] | null, fly: boolean): void {
+    if (!this.on || this.src || !CAVE_MESH) return;
+    const on = !fly;
+    const f: [number, number, number] | null = focus ? [focus[0], focus[1], CAVE_NEAR] : null;
+    const old = this.caveFocus;
+    const moved = (f === null) !== (old === null) || (f && old && Math.hypot(f[0] - old[0], f[1] - old[1]) > CAVE_NEAR / 4);
+    if (on === this.caveOn && !moved) return;
+    const all = on !== this.caveOn;
+    this.caveOn = on;
+    this.caveFocus = f;
+    const fl = new Float32Array(this.layout);
+    fl.set([f?.[0] ?? 0, f?.[1] ?? 0, f?.[2] ?? 0, on ? 1 : 0], 24);
+    this.device.queue.writeBuffer(this.region, 96, this.layout, 96, 16);
+    // (rebuilt: every chunk when it turns on or off; else those the old and new circles touch)
+    const touch = (c: [number, number, number] | null, cx: number, cy: number) => {
+      if (!c) return false;
+      const x = Math.max(cx * CHUNK, Math.min(c[0], (cx + 1) * CHUNK));
+      const y = Math.max(cy * CHUNK * ROW_H, Math.min(c[1], (cy + 1) * CHUNK * ROW_H));
+      return Math.hypot(x - c[0], y - c[1]) <= c[2] + 4;
+    };
+    for (let cy = 0; cy < this.ny; cy++)
+      for (let cx = 0; cx < this.nx; cx++) {
+        if (!all && !touch(old, cx, cy) && !touch(f, cx, cy)) continue;
+        // (word 5, the hash it was built from: anything not this one rebuilds it; not FRESH, so it stays drawn)
+        this.device.queue.writeBuffer(this.state, (CHUNK0 + (cy * this.nx + cx) * CSTRIDE + 5) * 4, new Uint32Array([1]));
+      }
+  }
+
+  /** (hybrid) per chunk: 1 meshed and drawn, 0 left to the heightfield (never built; its record emptied); null: all */
+  private wanted: Uint8Array | null = null;
+  /** (hybrid) chunks wanted (meshed) at the last setWanted */
+  wantedCount = -1;
+
+  /**
+   * (hybrid, ?hybrid=1) Which chunks are meshed: per chunk (chunkGrid's order) 1 or 0, or null for every one. A
+   * chunk not wanted is never looked at, built or drawn, and one that was built is emptied — its record's indices 0,
+   * its hash FRESH — so the LOD rings (far.wgsl meshBuilt) draw its land; wanted again, it's built as fresh land is.
+   */
+  setWanted(want: Uint8Array | null): void {
+    if (!this.on) return;
+    const n = this.nx * this.ny;
+    if (want && want.length !== n) throw new Error(`FieldMesh.setWanted: ${want.length} chunks, not ${n}`);
+    const old = this.wanted;
+    for (let c = 0; c < n; c++) {
+      const was = old ? old[c] : 1;
+      const now = want ? want[c] : 1;
+      if (!was || now) continue;
+      // (its indices 0 — drawn as nothing — and its hash FRESH: built anew when it's wanted again)
+      this.device.queue.writeBuffer(this.state, (CHUNK0 + c * CSTRIDE) * 4, new Uint32Array([0]));
+      this.device.queue.writeBuffer(this.state, (CHUNK0 + c * CSTRIDE + 5) * 4, new Uint32Array([FRESH_HASH]));
+    }
+    this.wanted = want ? want.slice() : null;
+    this.wantedCount = want ? want.reduce((s, v) => s + (v ? 1 : 0), 0) : n;
+  }
+
   setBand(oz: number, zMax: number): void {
     if (!this.on || !this.src) return;
     const f = new Float32Array(this.layout);
@@ -289,7 +361,7 @@ export class FieldMesh {
     if (!this.shiftK) {
       this.stateOld = this.world.buf('meshStateOld', this.state.size, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
       this.shiftUni = dev.createBuffer({ label: 'mesh shift', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-      const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
+      const parts = [commonWgsl, layersWgsl, materialsWgsl, gridsWgsl, meshStateWgsl, meshRegionWgsl, IDLE_SKIP, NORMALS_GRID, fieldMeshWgsl];
       this.shiftK = makeCompute(dev, 'fieldmesh-shift', parts, { 0: 'uniform', 9: 'rw', 10: 'read', 30: 'uniform', 31: 'uniform' }, 'shiftChunks');
       this.shiftGroup = makeBindGroup(dev, 'fieldmesh-shift', this.shiftK.layout, { 0: this.world.globals, 9: this.state, 10: this.stateOld, 30: this.region, 31: this.shiftUni });
     }
@@ -305,6 +377,16 @@ export class FieldMesh {
     pass.dispatchWorkgroups(Math.ceil((this.nx * this.ny) / 64));
     pass.end();
     dev.queue.submit([enc.finish()]);
+    // (hybrid: what's wanted goes round with them too — the fresh ones the heightfield's till the owner says)
+    if (this.wanted) {
+      const old = this.wanted.slice();
+      for (let cy = 0; cy < this.ny; cy++)
+        for (let cx = 0; cx < this.nx; cx++) {
+          const sx = cx + dcx;
+          const sy = cy + dcy;
+          this.wanted[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? 0 : old[sy * this.nx + sx];
+        }
+    }
     // (the CPU's chunk tops go round with them; the fresh ones aren't known yet)
     if (this.tops.length) {
       const old = this.tops.slice();
@@ -346,7 +428,9 @@ export class FieldMesh {
       enc.copyBufferToBuffer(this.state, this.argsAt, this.args, 0, 12);
     }
     this.kernels.forEach((k, i) => {
-      const name = this.pre + ['fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
+      const name = this.pre + ['fieldmesh-tops', 'fieldmesh-sample', 'fieldmesh-verts', 'fieldmesh-quads'][i];
+      // (the tops only for cavemesh)
+      if (i === 0 && !this.caveOn) return;
       const pass = enc.beginComputePass({ label: name, timestampWrites: this.profiler.timestamps(name) });
       pass.setPipeline(k.pipeline);
       pass.setBindGroup(0, this.groups[i]);
@@ -399,7 +483,9 @@ export class FieldMesh {
           hi = [Math.max(hi[0], px), Math.max(hi[1], py)];
         }
         const c = cy * this.nx + cx;
-        const within = (e: number) => behind || (hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e);
+        // (hybrid: a chunk not wanted is the heightfield's — never looked at, never drawn)
+        const want = !this.wanted || this.wanted[c] !== 0;
+        const within = (e: number) => want && (behind || (hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e));
         this.inView[c] = within(1) ? 1 : 0;
         // (over 1: come near within ten frames — the change pass looks at it even asleep, round 80; ten, so a
         // change found when every rebuild slot was taken is found again)
@@ -438,7 +524,8 @@ export class FieldMesh {
           hx = Math.max(hx, px);
           hy = Math.max(hy, py);
         }
-        this.casts[cy * this.nx + cx] = hx >= -1 && lx <= 1 && hy >= -1 && ly <= 1 ? 1 : 0;
+        const want = !this.wanted || this.wanted[cy * this.nx + cx] !== 0;
+        this.casts[cy * this.nx + cx] = want && hx >= -1 && lx <= 1 && hy >= -1 && ly <= 1 ? 1 : 0;
       }
   }
 

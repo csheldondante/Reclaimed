@@ -96,6 +96,8 @@ export interface WarmupOpts {
 export interface Sim {
   readonly core: WorldCore;
   readonly terrain?: Terrain;
+  /** the plants and the trees on them (round 63; attachSim made it, the type didn't say so: round 83, dialog) */
+  readonly plants?: Plants;
   readonly water?: Water;
   readonly fire?: Fire;
   readonly wind?: Wind;
@@ -198,7 +200,7 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
     get fresh() {
       return mirror.fresh();
     },
-    dispose: () => mirror.stop(),
+    dispose: () => mirror.destroy(),
   };
   // (what units carry comes from the ground and goes back to it)
   if (sim.agents && sim.terrain) sim.agents.useTerrain(sim.terrain);

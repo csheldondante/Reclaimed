@@ -265,7 +265,7 @@ export class WorldGpu {
     this.fire = this.buf('fire', N * 4, S);
     this.fireNext = this.buf('fireNext', N * 4, S);
     this.renderFields = this.buf('renderFields', N * 16, S);
-    this.meshRegion = this.buf('meshRegion', 96, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.meshRegion = this.buf('meshRegion', 112, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.bend = this.buf('bend', N * 16, S);
     this.wilt = this.buf('wilt', N * 16, S);
     this.petals = this.buf('petals', N * 4, S);

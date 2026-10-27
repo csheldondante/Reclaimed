@@ -3,23 +3,19 @@
 
 import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
-import { cellAt, cellPos } from '../world/lattice';
+import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { EDIT_TAGS } from '../sim/world-gpu';
-import { columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
+import { CHUNK, columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
 import { MAT, MATERIALS, MatState } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, type MaterialName } from './common';
 import { PULL_SLOTS } from '../sim/systems';
 import type { Mirror } from './mirror';
 import { blendedTop } from './smooth';
 
-/** edit.wgsl ops (op · 32 + material; + STROKE_START: each command its own press) */
-const OP_BUILD = 1;
-const OP_DIG = 2;
-const OP_POUR = 10;
-const OP_CRATER = 13;
-const OP_TAKE = 14;
-const OP_PUT = 15;
-const STROKE_START = 512;
+import { OP, STROKE_START } from '../sim/edit-ops';
+
+/** edit.wgsl ops (sim/edit-ops.ts) */
+const { BUILD: OP_BUILD, DIG: OP_DIG, POUR: OP_POUR, CRATER: OP_CRATER, TAKE: OP_TAKE, PUT: OP_PUT } = OP;
 
 export interface Layer {
   z0: number;
@@ -172,7 +168,9 @@ export class Terrain {
   ) {
     const w = core.world;
     mirror.addBuffer('surface', w.surface);
-    mirror.addBuffer('layers', w.layers);
+    // (perfopt, ?mirror=near: by pages round the camera's target between whole reads — api/mirror.ts)
+    const p = core.packed;
+    mirror.addBuffer('layers', w.layers, { chunksX: p.chunksX, chunksY: p.chunksY, chunkTable: p.chunkTable, slotBytes: SLOT_WORDS * 4, chunk: CHUNK, rowH: ROW_H, focus: () => [core.camera.target[0], core.camera.target[1]] });
     mirror.addTexture('drift', w.drift);
     mirror.addTexture('levels', w.levels);
   }

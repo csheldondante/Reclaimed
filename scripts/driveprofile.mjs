@@ -59,6 +59,7 @@ try {
     s.longFrames = [];
     s.worstMs = 0;
     s.frameMs = [];
+    if (s.hybrid) s.hybrid.totals = { frames: 0, voxel: 0, drawn: 0 };
     window.__all = [];
     window.__tick0 = window.reclaimed.core.sim.tick;
     const tick = () => {
@@ -97,12 +98,15 @@ try {
       perFrame: Object.fromEntries(['draw', 'gbuffer', 'tcache-g', 'tcache-r', 'shadow', 'shadow-static', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
       // (perfopt: every pass's mean a frame over the ride, the largest first)
       ticks: R.core.sim.tick - window.__tick0,
+      // (hybrid: the mean voxel chunks wanted and mesh chunks drawn a frame, of the grid's)
+      hybrid: R.scene.hybrid ? { chunks: R.scene.hybrid.stats.chunks, voxel: +(R.scene.hybrid.totals.voxel / Math.max(1, R.scene.hybrid.totals.frames)).toFixed(1), drawn: +(R.scene.hybrid.totals.drawn / Math.max(1, R.scene.hybrid.totals.frames)).toFixed(1) } : { drawn: R.core.renderer.fieldMesh.drawn },
       allPerFrame: Object.fromEntries([...R.core.host.profiler.totalMs].sort((a, b) => b[1] - a[1]).slice(0, 40).map(([k, v]) => [k, +(v / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(3)])),
       meshTotal: Object.fromEntries([...R.core.host.profiler.totalMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(1)])),
       meshMax: Object.fromEntries([...R.core.host.profiler.maxMs].filter(([k]) => k.includes('fieldmesh')).map(([k, v]) => [k, +v.toFixed(2)])),
     };
   });
   console.log(JSON.stringify(r));
+  console.log(`HYBRID ${JSON.stringify(r.hybrid)}`);
   console.log(`SUMMARY p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} h50 ${r.hitches50} | per frame: ${Object.entries(r.perFrame).map(([k, v]) => `${k} ${v}`).join(', ')} | meshTotal ${Object.values(r.meshTotal).reduce((a, b) => a + b, 0).toFixed(0)} ms | in renderprep units (the clocks drift): draw ${((r.perFrame.draw + r.perFrame.gbuffer + r.perFrame['tcache-g'] + r.perFrame['tcache-r']) / r.perFrame.renderprep).toFixed(2)}, shadow ${(r.perFrame.shadow / r.perFrame.renderprep).toFixed(2)}, mesh ${Object.entries(['hash', 'sample', 'verts', 'quads'].reduce((o, k) => ((o[k] = Object.entries(r.meshTotal).filter(([n]) => n.endsWith(k)).reduce((a, [, v]) => a + v, 0) / (r.perFrame.renderprep * r.frames)), o), {})).map(([k, v]) => `${k} ${v.toFixed(3)}`).join(' ')}`);
 } finally {
   await browser.close();

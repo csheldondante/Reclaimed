@@ -16,15 +16,21 @@ const OIL_DENSITY: f32 = 0.88;
 const GAIN: f32 = 0.12 * 2.0 / 3.0;
 const FRICTION: f32 = 0.985;
 
+// (perfopt: a settling pass runs over the rect of the land just come in — x, y, w, h columns: sim/systems.ts)
+@group(0) @binding(31) var<uniform> SR: vec4<u32>;
+
 @compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (SETTLE_PASS && (gid.x >= SR.z || gid.y >= SR.w)) { return; }
+  let id = select(gid.xy, gid.xy + SR.xy, SETTLE_PASS);
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   // (a sleeping chunk: round 80 — its flux frozen as it is, the surface drawn moving by it. perfopt, ?settle=0:
   // land come in asleep has none — a river would be drawn still — so while it's drowsy (just come in) a column
   // with no flux takes the pipes' steady state for its levels at once: f = GAIN (H - Hn) / (1 - FRICTION))
-  let seed = flowFrozen(id.xy, FLOW_N);
+  // (a settling pass, SETTLE_PASS: its rect, the land just come in, the pipes as awake)
+  let seed = !SETTLE_PASS && flowFrozen(id.xy, FLOW_N);
   if (seed && !(FLUX_SEED && drowsy(id.xy) && dSum(flux[i]) == 0.0)) { return; }
   let d = water[i];
   if (d <= 1e-5) { flux[i] = dZero(); return; }
