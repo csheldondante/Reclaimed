@@ -89,11 +89,13 @@ export class AgentUnits implements Units {
   stats = { units: 0, hunting: 0, syncMs: 0, syncs: 0 };
 
   constructor(readonly agents: Agents) {
-    agents.defineKind(K.guard, { name: 'guard', height: 1.1, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
-    agents.defineKind(K.character, { name: 'character', height: 1.05, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });
-    agents.defineKind(K.raider, { name: 'raider', height: 1.15, mass: 1, hp: 10, speed: 3.1, reach: 1.25, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Rust, legs: MAT.Basalt, head: MAT.Ash } });
-    agents.defineKind(K.shambler, { name: 'shambler', height: 1.05, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: 1, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Bone, legs: MAT.Ash, head: MAT.Bone } });
-    agents.defineKind(K.worker, { name: 'worker', height: 1.0, mass: 1, hp: 10, speed: 2.4, colours: { legs: MAT.Wood, head: MAT.Sand } });
+    agents.defineKind(K.guard, { name: 'guard', height: 1.45, mass: 1.2, hp: 10, speed: 2.7, colours: { torso: MAT.Steel, head: MAT.Steel } });
+    agents.defineKind(K.character, { name: 'character', height: 1.4, mass: 1, hp: 10, speed: 2.5, colours: { torso: MAT.Brick, legs: MAT.Wood } });
+    agents.defineKind(K.raider, { name: 'raider', height: 1.45, mass: 1, hp: 10, speed: 3.1, reach: 1.35, damage: 1, swingPeriod: 1.1, notice: 160, colours: { torso: MAT.Brick, legs: MAT.Basalt, head: MAT.Basalt } });
+    agents.defineKind(K.shambler, { name: 'shambler', height: 1.4, mass: 1, hp: 10, speed: 1.5, reach: 1.1, damage: 1, swingPeriod: 1.6, notice: 50, colours: { torso: MAT.Bone, legs: MAT.Ash, head: MAT.Bone } });
+    // (round 88: people a third of a storey tall, in a yellow tunic — at the phone's half resolution a 1-cell figure
+    // in canvas was lost against plaster and grass)
+    agents.defineKind(K.worker, { name: 'worker', height: 1.4, mass: 1, hp: 10, speed: 2.4, colours: { torso: MAT.Flower, legs: MAT.Wood, head: MAT.Sand } });
     agents.follow(G.stand, -1);
     agents.follow(G.strike, -1);
     agents.workPose(G.strike, true);
@@ -246,8 +248,9 @@ export class AgentUnits implements Units {
 
   /** a unit's carried load (shown over its head), or none */
   carry(u: UnitRec, what: string | null, amount = 0.35): void {
-    if (what) this.agents.carry(u.gpu, what as never, amount);
-    else this.agents.unload(u.gpu);
+    // (a new load replaces what it held: dropped from the hands, not onto the ground)
+    this.agents.unload(u.gpu);
+    if (what) this.agents.carry(u.gpu, what, amount);
   }
 
   // ---- insides ------------------------------------------------------------------------------------------

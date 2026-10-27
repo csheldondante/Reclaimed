@@ -6563,3 +6563,17 @@ Bulwark's rings).
   can't be a carried load (leaves aren't ground: it's drawn as sand); a river town's site is on its river, so its
   middle moves to the nearest dry level ground beside it; a quarry outside its own region had no rights and the
   miners stood idle — the quarry is now sought in its own region first.
+- **Seen working, and the cost** (three more runs, Rudag at the phone tier). Over a run: ~2.7 cells³ quarried,
+  3.2 of logs felled, 2.4 heaped, 1.7 brought into the house going up (its first block stood); a raid of 7 against
+  4 guards repelled each time (7 raiders and 3–4 of the town dead). The workers were in the shots but hard to
+  see: a 1-cell figure in canvas colours at the phone's half resolution is a few pixels against plaster and grass —
+  now 1.4 cells tall in a yellow tunic (guards in steel, raiders in brick red), and the close-ups at 6–9× the
+  default zoom; a probe (40 spawned at the plaza, with the hybrid and without) confirmed they draw both ways.
+  Cost at the town, 36 units: frames p50 9.7–9.9 ms, p95 11.3–11.6 ms, the same as the town with nobody out
+  (`?townfolk=0`: 9.8 / 11.5) — the frame is vsync's; the GPU's own sum swings with its clocks (5.4–11.9 ms a
+  frame, the agents' pass 0.95–3.5 ms of it, the same scene). The idle town (nobody out) seeded its fields
+  anyway, so the agents' pass ran with no one to read it: nothing is seeded now when nobody's out. A new load
+  replaces what a unit held (a raid's flight left loads in hands).
+- Shots and GIFs: C:/Projects/shots88/settlements/ — town-phone-default.png (default zoom), town-phone-zoom.png,
+  town-phone-debug.png (`?towndebug=1`: grid, lots, field, spots, people by phase), town-phone-workers.gif,
+  town-phone-quarry.gif / -site.gif / -heaps.gif (close-ups), raid-phone.gif; plan-*.png (the planner's top views).

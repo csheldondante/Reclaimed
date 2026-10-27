@@ -303,6 +303,8 @@ export class SettlementLife implements Routine {
 
   /** the jobs', homes', stores', heaps' and site's seeds (only when they change) */
   private reseed(): void {
+    // (nobody out: nothing seeded, so the agents' pass stays idle)
+    if (!this.ids.length) return;
     const spots = this.io.spots();
     const farm = spots.filter((s) => s.kind === 'farm').slice(0, 6).map((s) => s.w);
     const mines = spots.filter((s) => s.kind === 'mine');

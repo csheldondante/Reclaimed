@@ -124,7 +124,7 @@ try {
       R.camera.target[0] = x;
       R.camera.target[1] = y;
       window.__zoom = R.camera.zoom;
-      R.camera.zoom *= 2.6;
+      R.camera.zoom *= 6;
     });
     await sleep(4000);
     await page.screenshot({ path: `${out}/town-${tag}-zoom.png` });
@@ -143,7 +143,7 @@ try {
         const [x, y] = st.toWindow([sp.at[0] + seed.box.x0, sp.at[1] + seed.box.y0 * 0.8660254]);
         R.camera.target[0] = x;
         R.camera.target[1] = y;
-        R.camera.zoom = window.__zoom * 4.5;
+        R.camera.zoom = window.__zoom * 9;
         return true;
       }, kind);
       if (!ok2) continue;
@@ -166,7 +166,7 @@ try {
       const [x, y] = st.toWindow(life.rec.at);
       R.camera.target[0] = (x * 2 + camp[0]) / 3;
       R.camera.target[1] = (y * 2 + camp[1]) / 3;
-      R.camera.zoom = window.__zoom * 1.5;
+      R.camera.zoom = window.__zoom * 3.5;
       return { ok, raiders: life.raiders.length, guards: life.ids.filter((id) => R.units.get(id)?.role === 'guard').length };
     });
     ok(raid.ok, `a raid: ${raid.raiders} raiders against ${raid.guards} guards`);
