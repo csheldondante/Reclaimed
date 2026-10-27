@@ -5883,6 +5883,153 @@ places took the GM's proposals and the dialog agent's: Condition `any`, `StoryCh
   atlas placed each settlement for (setting, cell, roads) moved to `sites` beside the snapshot.
 - docs/GM.md covers the new fields, and the meanings it had fixed are now the contracts' own comments.
 
+## Round 83 — the perf ceiling: the heightfield alone (`ceiling`, an experiment)
+
+The user: "Can we see how fast things work if we did a heightmap only renderer
+streaming in chunks and just using their top material height and color? I just
+want to understand what a ceiling on perf is on the phone here." `?ceiling=1` on
+the atlas level: each frame only the drive's camera and one render pass (Renderer
+.encodeCeiling: colour + depth, no pick target) of far.ts's rings and far land
+(far.wgsl fsCeilLod / fsCeilFar: the column's colour, lambert from the sun, a
+little height tint, the fog). No sim, no streaming, no field mesh, no renderprep,
+no shadow, no band, no plants or particles, no HUD or audio updates. The rings
+are lod.wgsl's lodHeight — the atlas's own `ground()`, a top and a packed colour
+a texel, world-anchored in toroidal slots, so a move makes only the new strips —
+with a ring a cell apart first (`?near=1`, the default: spacings 1, 2, 4, 8, 16;
+`?near=2`: the usual four). LodD holds 5 rings now (LOD_UNI_BYTES 7·16). The
+window is still built at the start (the level's set-up needs it); it doesn't
+slide — the camera leaves it behind, its target's height following the macro
+ground (atlas.hmac). `?ringn=` sets the rings' vertices a side (193 usual). The
+lod strips are timed in the profiler now (`lod <spacing>`).
+
+driveprofile.mjs, q=low, 412×915 at dpr 2.6 (render 206×457), drive 18, at
+12304,5457, 30 s, this machine's Intel Xe-LPG iGPU (vsync ~100 Hz; other agents
+shared the machine but no other headless run was open during these):
+
+| run | p50 | p95 | p99 | worst | hitches >50 | GPU ms/frame |
+|---|---|---|---|---|---|---|
+| the game (no ceiling) | 9.9 | 10.9 | 20.1 | 57 | 3 | 8.4 (draw 4.0, gbuffer 0.55, renderprep 0.34, shadow 0.38, the rest mesh/sim) |
+| ceiling, near 1 (n 193) | 9.9 | 10.2 | 10.5 | 20 | 0 | 2.5–2.9 (draw 2.77, lod strips 0.04) |
+| ceiling, near 2 (n 193) | 9.9 | 10.2 | 10.6 | 22 | 0 | 2.2–2.4 (draw 2.17, strips 0.02) |
+| ceiling, near 1, n 97 | 9.9 | 10.2 | 10.6 | 35 | 0 | 1.0–1.2 (draw 1.24) |
+| ceiling, near 1, n 65 | 9.9 | 10.2 | 10.6 | 21 | 0 | 0.6–1.1 (draw 1.14) |
+
+(Uncapped, --uncapped: GPU 9.13 game, 2.51 near 1, 2.23 near 2 — the frame
+times there are bimodal by pacing and say nothing.) Every capped run sits at the
+display's interval: the frame time no longer says what it costs, the GPU does.
+
+What's left in the ceiling: the draw, and in it the vertices. Five rings of
+193² is 186k vertices and 1.1M triangles for 94k pixels — each vertex reads
+its texel and four neighbours (the normal), and in the melt band at a ring's
+edge the next ring's four (or the far land's eight); triangles far smaller than
+a pixel. Halving the vertices a side (n 97) halves the draw (2.77 → 1.24 ms);
+n 65 barely less again (the far grid, 161², and the fixed cost). The strips
+the move makes cost 0.04 ms a frame on average (one dispatch a ring that moved
+8 of its spacings; the 1-cell ring every 8 cells). The canvas present isn't in
+the GPU's timestamps; at this size it's small, and the frame is the display's.
+So the ceiling's floor is a screen-sized grid: about one vertex per few pixels,
+which the rings at n 193 overshoot at the low tier's resolution. (The game's
+own rings are in its 4.0 ms draw too: n 193 × 4.)
+
+
+## Round 84 — the hybrid renderer: voxels only where they're needed (`hybrid`, `?hybrid=1`)
+
+The ceiling (round 83) drew the atlas as a heightfield alone at ~2.5 ms of GPU a
+frame against ~8.4 for the game; on the phone "the performance was solid and
+very usable". Its weakness is the cliffs: a slope between vertices with the
+plateau's colour stretched down it, no overhangs, lips, arches or cave mouths.
+The user: "Yes I think a hybrid approach makes sense to build." So `?hybrid=1`
+on the atlas level (the full game stays the default; docs/ARCHITECTURE.md has
+the contract):
+
+- **Each mesh chunk (32 × 32 rows) is voxels or the heightfield's.** Voxels:
+  the field mesh and the band built and drawn there, the window's water, plants
+  and sheets prepared there. The heightfield's: never built — FieldMesh.
+  setWanted keeps it out of the change pass, the rebuild and the draw (one built
+  before is emptied: indices 0, hash FRESH) — so far.wgsl's `meshBuilt` is
+  false and the LOD rings draw it, a 1-cell ring first (spacings 1–16, as the
+  ceiling's near 1). renderprep and vegprep skip it through Globals.hfield (a
+  bit a mesh chunk, like the sleep mask): its water is the rings' too (the
+  sea's and the river's level, lod.wgsl) — the sim's water drawn over the rings
+  stood off them in sheets where the carved bed and the ground differ.
+- **What needs voxels** (scenes/hybrid.ts HybridChunks): the land, decided as it
+  comes in — Streamer.relief / gapTop / colTop per column (writeNow, editLive,
+  the first window; moved with a slide): a form on the ground or cut into it
+  (the top off the ground's own by over 0.75) or a gap between runs **open to
+  the air** (a neighbour's top under its roof: an overhang's lip, a cave mouth,
+  a bridge, a tunnel's portal). The first try counted every gap: 58 of 72
+  chunks at the first spawn, because 21% of the window's columns hold buried
+  caves (stone over stone, sandstone over sandstone, under the hills). Buried
+  ones nobody sees from the sky; only exposed gaps count now: 1 of 72 there, 27
+  at a mesa's rim. Then the focus (`?vradius=`, 40 world units round the
+  camera's target: ~12 chunks), and what a world event touched (kept while it's
+  in the window). Over a 30 s ride the mean is 21.7 chunks voxels of 72, 17.9
+  drawn.
+- **Seams.** The rings and the columns come from the same `ground()`: over the
+  first spawn's ring texels the window's column tops differ from the 1-cell
+  ring's by 0.0 on average, 0.10 absolute (more only at river banks, where the
+  ring stands at the river's level). A hairline still showed the sky along a
+  voxel chunk's edge; the rings draw a skirt there (a 0.9-cell strip inside the
+  voxel chunk where its neighbour is the rings'). In the window the rings are
+  never pressed under the focus (underFocus made a grey shelf of them), and
+  they write the pick target as the columns do, so a tap on a heightfield
+  chunk lands (and the event it makes turns the chunk to voxels).
+- **The rings' look** (all of them, the game's too): where the surface is
+  steeper than ~60° (the vertex normal and the triangle's own, which on the
+  1-cell ring is a cell's) the region's rock — lod.wgsl now writes the rock's
+  albedo and material beside the top's — in beds (render.wgsl's strata, a
+  local copy of the noise), lit by sun, sky and a little bounce. The rings'
+  green stops 70 over the sea as colFinish's plants do: at the mesa the
+  plateau was green in the rings and bare dirt in the columns.
+
+driveprofile, q=low, 412×915 dpr 2.6, drive 18 at 12304,5457, 30 s, this
+machine's iGPU shared with other agents (the clocks drift between runs: the
+same build gave a draw of 1.9 and 4.0 ms in two runs):
+
+| run | p50 | p95 | p99 | worst | GPU ms/frame | draw | gbuffer | renderprep | shadow |
+|---|---|---|---|---|---|---|---|---|---|
+| full game | 9.9 | 10.5 | 12.4 | 62 | 5.99 | 2.87 | 0.43 | 0.26 | 0.17 |
+| hybrid | 9.9 | 10.5 | 12.6 | 48 | 4.01 | 1.90 | 0.16 | 0.13 | 0.08 |
+| ceiling | 9.9 | 10.3 | 10.6 | 15 | 2.58 | 2.53 | – | – | – |
+
+Missing on a heightfield chunk (BACKLOG P13): its plants (grass, trees), the
+sim's water moving (the rings' water is flat colour), the roads' paint, the
+look's detail (the mesh's material lookup, stains, wetness).
+
+- **The sim only where the voxels are** (the next commit): Sleep.only — a
+  heightfield chunk never wakes (a storm raining on it, land coming in to
+  settle), since nothing of the sim there is drawn; a world event turns its
+  chunk to voxels first (the hybrid's choice now runs before Sleep's update,
+  the same frame), so what the player does there still wakes it. A storm
+  spawned by the first spawn: 20 sim chunks awake, none outside the voxels.
+
+- **Measured again, interleaved** (after the sim filter; driveprofile as above,
+  the GPU busier this time — the same ceiling read 2.6 before, 2.9–3.2 now):
+
+| run | p50 | p95 | p99 | worst | GPU ms/frame | draw | gbuffer | renderprep | shadow (+static) |
+|---|---|---|---|---|---|---|---|---|---|
+| hybrid | 9.8 | 10.5 | 13.2 | 68 | 7.63 | 4.05 | 0.29 | 0.24 | 0.13 + 0.07 |
+| full game | 9.9 | 10.7 | 13.8 | 71 | 9.09 | 4.56 | 0.59 | 0.36 | 0.25 + 0.15 |
+| ceiling | 10.0 | 10.2 | 10.6 | 16 | 3.19 | 3.13 | – | – | – |
+| hybrid | 9.9 | 10.7 | 16.9 | 68 | 7.78 | 4.01 | 0.28 | 0.23 | 0.13 + 0.07 |
+| full game | 9.9 | 10.8 | 19.5 | 70 | 8.96 | 4.39 | 0.58 | 0.35 | 0.24 + 0.14 |
+| ceiling | 9.9 | 10.2 | 10.6 | 19 | 2.96 | 2.88 | – | – | – |
+| hybrid, ?ringn=129 | 9.9 | 10.6 | 16.0 | 74 | 7.04 | 3.08 | 0.29 | 0.26 | 0.13 + 0.07 |
+
+  The hybrid takes 13–16% off the game's GPU (the mesh's G-buffer, shadow and
+  prep halve; 21 of 72 chunks voxels on the ride, 18 drawn, against 53 drawn
+  in the game); it is nowhere near the ceiling, because what's left is not the
+  terrain: the draw is the rings themselves (the 1-cell ring adds 193² vertices
+  to the game's four; `?ringn=129` takes a ms off), and ~3.5 ms is the rest of
+  the game the ceiling doesn't run — the sim's kernels over the whole window
+  (they skip sleeping chunks but still dispatch), particles, agents, the wind
+  field, projection. Those are the next cut (P13).
+- **How many chunks need voxels depends on the place** (the first window of
+  each, 72 chunks; 12 of them the focus's): the first spawn 1 for its land,
+  the mesa 27, a settlement's ruins 27, a crystal field by a giant 59 (20% of
+  its columns are forms), a tunnel's hills 63 (way cuttings 10 cells deep, and
+  996 columns with gaps open to the air). A single flagged column makes its
+  chunk voxels.
 ## 2026-10-26 — round 85: things as compositions, diplomacy, settlement grids (contracts)
 
 The user's design (DECISIONS round 85) calls for one recipe system for units, items, vehicles, buildings and

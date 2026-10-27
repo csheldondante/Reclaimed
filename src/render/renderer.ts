@@ -720,6 +720,24 @@ export class Renderer {
     });
   }
 
+  /**
+   * ?ceiling=1 (the perf ceiling: a heightfield alone): the camera written and one pass — the colour target
+   * cleared, the depth, `draw` (far.ts's rings and far land) — nothing prepared, no mesh, no shadow, no pick.
+   */
+  encodeCeiling(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, clear: [number, number, number], draw: (pass: GPURenderPassEncoder) => void): void {
+    cam.write(this.camData);
+    this.device.queue.writeBuffer(this.camBuf, 0, this.camData);
+    const pass = enc.beginRenderPass({
+      label: 'ceiling',
+      colorAttachments: [{ view: target, clearValue: { r: clear[0], g: clear[1], b: clear[2], a: 1 }, loadOp: 'clear', storeOp: 'store' }],
+      depthStencilAttachment: { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+      timestampWrites: this.profiler.timestamps('draw'),
+    });
+    draw(pass);
+    pass.end();
+    this.profiler.draws += 2;
+  }
+
   encode(enc: GPUCommandEncoder, target: GPUTextureView, cam: Camera, opts: RenderOptions): void {
     cam.write(this.camData);
     // look flags (render.wgsl Camera.eye.w)
@@ -1270,6 +1288,18 @@ export class Renderer {
     this.shore.dirty();
   }
 
+  /** (hybrid) the mesh chunks wanted (FieldMesh.setWanted): the window's and the band's, the same grid */
+  private meshWant: Uint8Array | null = null;
+  /**
+   * (hybrid, ?hybrid=1) Which of the window's mesh chunks are voxels — built and drawn by the field mesh and the
+   * band's — per chunk (fieldMesh.chunkGrid's order), or null for all; the rest are the LOD rings' (far.wgsl).
+   */
+  setMeshWanted(want: Uint8Array | null): void {
+    this.meshWant = want ? want.slice() : null;
+    this.fieldMesh.setWanted(want);
+    this.band?.mesh.setWanted(want);
+  }
+
   private edgesOpen = false;
   /** (round 83) the nearest shore to every column (render/shore.ts): made every second, and after the window moves */
   readonly shore: ShoreField;
@@ -1290,6 +1320,7 @@ export class Renderer {
     if (!this.fieldMesh.on || !this.meshGroupOf || this.band) return this.band;
     this.band = new OutsideBand(this.device, this.world, this.profiler, zSpan, Math.min(3, this.meshSlots ?? 3));
     if (this.edgesOpen) this.band.mesh.openEdges();
+    if (this.meshWant) this.band.mesh.setWanted(this.meshWant);
     this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
     return this.band;
   }

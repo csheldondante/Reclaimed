@@ -203,6 +203,19 @@ export class Streamer {
   /** per window column: the ground's own top (window z; round 75: a slide in z goes by it, not by what
    *  stands on it — a giant's point under the camera isn't where the land is) */
   readonly ground: Float32Array;
+  /**
+   * (hybrid) what the hybrid renderer asks of each window column (scenes/hybrid.ts): `relief` 1 where something
+   * stands on the ground or is cut into it (a form: the top off the ground's own by more than RELIEF_FORM);
+   * `gapTop` the highest roof over a gap between its runs (world z; -Infinity: none — a cave, an overhang, a
+   * bridge's underside, a tunnel: open to the air where a neighbour's top is under it); `colTop` its top (world
+   * z, the runs above the window too). Made as land comes in (and as an event in sight changes it), moved with
+   * the window.
+   */
+  readonly relief: Uint8Array;
+  readonly gapTop: Float32Array;
+  readonly colTop: Float32Array;
+  /** called after land is written into the window (or changed in it): the box (window cells, exclusive) whose relief is new */
+  readonly onRelief: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
   /** called when land comes into the window that the structural system should judge: the box (window cells) round it */
   readonly onArrive: ((x0: number, y0: number, x1: number, y1: number) => void)[] = [];
   /** the window was moved somewhere else entirely (warp): its new origin and oz — what the game keeps in window coordinates is void */
@@ -227,6 +240,9 @@ export class Streamer {
     if (this.oz % TIER) throw new Error(`the window's oz must be whole tiers of ${TIER}`);
     this.outside = tier?.outside ?? Array.from({ length: w * h }, () => []);
     this.ground = tier?.ground ? tier.ground.slice() : core.map.surface.slice();
+    this.relief = new Uint8Array(w * h);
+    this.gapTop = new Float32Array(w * h).fill(-Infinity);
+    this.colTop = new Float32Array(w * h);
     if (this.outside.length !== w * h) throw new Error('the window needs what lies outside every column');
     if (origin[0] % REGION || origin[1] % REGION) throw new Error(`the window's origin must be whole regions of ${REGION}`);
     this.origin[0] = origin[0];
@@ -299,6 +315,30 @@ export class Streamer {
     for (const x of this.bufs) if (x.buf.size < w * h * x.stride * x.planes) throw new Error(`${x.name}: ${x.buf.size} bytes, not ${x.stride} a column`);
     const big = Math.max(...this.bufs.map((x) => x.buf.size));
     this.scratch = wg.buf('streamScratch', big, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+    // (hybrid) the first window's relief, from the columns it was packed with
+    const p = core.packed;
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        const ci = Math.floor(y / CHUNK) * (w / CHUNK) + Math.floor(x / CHUNK);
+        const base = t[ci * 2] + ((y % CHUNK) * CHUNK + (x % CHUNK)) * this.K;
+        const col: Interval[] = [];
+        for (let s = 0; s < this.K; s++) {
+          const iv = readSlot(p.slots, base + s);
+          if (!iv) break;
+          col.push(iv);
+        }
+        this.setRelief(i, joinColumn(col, this.oz, this.outside[i]), core.map.surface[i], this.ground[i]);
+      }
+  }
+
+  /** (hybrid) column i's relief from its runs (world z, joined), its surface and its ground's own top (window z) */
+  private setRelief(i: number, col: Interval[], surface: number, ground: number): void {
+    let g = -Infinity;
+    for (let k = 1; k < col.length; k++) if (col[k].z0 - col[k - 1].z1 > RELIEF_GAP) g = col[k].z0;
+    this.gapTop[i] = g;
+    this.colTop[i] = col.length ? col[col.length - 1].z1 : 0;
+    this.relief[i] = Math.abs(surface - ground) > RELIEF_FORM ? 1 : 0;
   }
 
   /** The world cell under window cell (x, y). */
@@ -542,6 +582,7 @@ export class Streamer {
     shiftGrid(surf, W, H, 1, dx, dy);
     shiftGrid(this.outside, W, H, 1, dx, dy);
     shiftGrid(this.ground, W, H, 1, dx, dy);
+    for (const a of [this.relief, this.gapTop, this.colTop]) shiftGrid(a, W, H, 1, dx, dy);
     core.camera.shift(dx, dy * ROW_H, 0);
     // (what the game installed that lives in window coordinates: units, bodies — round 80)
     for (const f of core.onShift) f(dx, dy * ROW_H, 0);
@@ -719,6 +760,7 @@ export class Streamer {
         slots.set(packColumn(cut.inside, K), base * SLOT_WORDS);
         core.map.surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
         this.ground[i] += d.dr + (d.dl > 0.05 ? d.dl : 0);
+        this.setRelief(i, full, core.map.surface[i], this.ground[i]);
         if (d.dl > 0.05) veg[i] *= Math.max(0, 1 - d.dl * 2);
         n++;
       }
@@ -726,6 +768,7 @@ export class Streamer {
       for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, slots);
       for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, veg);
       core.clearUndo();
+      for (const f of this.onRelief) f(Math.max(0, x0), Math.max(0, y0), Math.min(W, x1), Math.min(H, y1));
     }
     return n;
   }
@@ -961,6 +1004,13 @@ export class Streamer {
     // (the ground: its own if the source said, else the surface)
     const gr = f.ground ?? f.surface;
     for (let r = 0; r < R; r++) this.ground.set(gr.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
+    // (hybrid) the relief of what came in
+    for (let r = 0; r < R; r++)
+      for (let c = 0; c < R; c++) {
+        const i = (ly + r) * W + lx + c;
+        this.setRelief(i, joinColumn(this.columnOf(f.layers, c, r), f.oz, f.outside[r * R + c]), surf[i], this.ground[i]);
+      }
+    for (const cb of this.onRelief) cb(lx, ly, lx + R, ly + R);
     if (f.judge) for (const cb of this.onArrive) cb(lx + f.judge[0], ly + f.judge[1], lx + f.judge[2], ly + f.judge[3]);
   }
 
@@ -1030,6 +1080,11 @@ export function boxOf(mask: Uint8Array, w: number, x0 = 0, y0 = 0, bw = w, bh = 
 }
 
 /** new(x, y) = old(x + dx, y + dy) on a CPU w × h array with `per` values a cell (what comes in keeps the old values) */
+/** (hybrid) the top off the ground's own by more than this (cells): something stands on it or is cut into it */
+const RELIEF_FORM = 0.75;
+/** (hybrid) a gap between runs over this (cells): open — a cave, an overhang, a bridge's underside */
+const RELIEF_GAP = 0.25;
+
 export function shiftGrid(a: { copyWithin(t: number, s: number, e: number): unknown }, w: number, h: number, per: number, dx: number, dy: number): void {
   if (dy > 0) a.copyWithin(0, dy * w * per, h * w * per);
   else if (dy < 0) a.copyWithin(-dy * w * per, 0, (h + dy) * w * per);

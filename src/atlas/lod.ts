@@ -11,15 +11,15 @@ import { MATERIALS } from '../world/materials';
 import type { Atlas } from './atlas';
 import lodW from './lod.wgsl?raw';
 
-/** far.wgsl LodD: a vec4 a ring (4), then info, then the window's mesh chunks */
-export const LOD_UNI_BYTES = 6 * 16;
-const MAX_RINGS = 4;
+/** far.wgsl LodD: a vec4 a ring (5: ?ceiling's 1-cell ring and the four), then info, then the window's mesh chunks */
+export const LOD_UNI_BYTES = 7 * 16;
+const MAX_RINGS = 5;
 /** seconds between one eighth of a ring made again and the next (the coarse world changes slowly) */
 const REFRESH_S = 0.4;
 const BANDS = 8;
 
 export class LodRings {
-  /** each ring's slots: top and colour, rings × n² (lod.wgsl lodOut) */
+  /** each ring's slots: top, colour, the ground, the rock — rings × n² (lod.wgsl lodOut) */
   readonly data: GPUBuffer;
   /** far.wgsl LodD */
   readonly uni: GPUBuffer;
@@ -50,7 +50,7 @@ export class LodRings {
     if (spacings.length > MAX_RINGS) throw new Error(`LodRings: at most ${MAX_RINGS} rings`);
     if ((n - 1) % 8 !== 0) throw new Error('LodRings: (n − 1) a multiple of 8');
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.data = device.createBuffer({ label: 'lod rings', size: spacings.length * n * n * 8, usage: S });
+    this.data = device.createBuffer({ label: 'lod rings', size: spacings.length * n * n * 16, usage: S | GPUBufferUsage.COPY_SRC });
     this.uni = device.createBuffer({ label: 'lod draw', size: LOD_UNI_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.atlasParams = device.createBuffer({ label: 'lod atlas params', size: atlas.paramBuf.size, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     atlas.writeParams({}, this.atlasParams);
@@ -109,7 +109,8 @@ export class LodRings {
       new Float32Array(ab, 16, 4).set([s, n, 0, 0]);
       new Uint32Array(ab, 32, 4).set([i * n * n, r0, r1, 0]);
       this.device.queue.writeBuffer(this.ringParams[i], 0, ab);
-      const cp = enc.beginComputePass({ label: 'lod' });
+      // (timed in the game's profiler when the level lends it: ?ceiling's strips)
+      const cp = enc.beginComputePass({ label: 'lod', timestampWrites: this.atlas.profiler?.timestamps(`lod ${s}`) });
       cp.setPipeline(k.pipeline);
       cp.setBindGroup(0, this.groups[i]);
       cp.dispatchWorkgroups(Math.ceil(n / 8), Math.ceil(n / 8));

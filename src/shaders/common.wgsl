@@ -63,7 +63,8 @@ struct Globals {
   // xy in world units (noise of positions: wo()), zw in cells (hash3)
   org: vec4<f32>,
   // x: the sea's level in window z (round 79: past the window's edge the world is sea at it, so the sea in
-  // the window doesn't drain out of it; −1e9 none)
+  // the window doesn't drain out of it; −1e9 none); (hybrid) y the mesh chunks across (0: no heightfield
+  // chunks), z a mesh chunk's side (cells; as many rows down) — the hfield mask's
   ocean: vec4<f32>,
   // (round 80, sim/sleep.ts) a bit a chunk (16 × 16 columns), set: asleep — the systems that change the
   // ground skip it; its water and lava keep their depth and flow (drawn moving). 2 048 chunks at most.
@@ -71,7 +72,20 @@ struct Globals {
   // (round 80) a bit a chunk, set: just fallen asleep (a quarter second) — the passes that write the next
   // layers carry its slots through once, so the next layers hold what its last awake tick left
   drowse: array<vec4<u32>, 16>,
+  // (hybrid, scenes/hybrid.ts) a bit a mesh chunk, set: the heightfield's — the LOD rings draw its land; the
+  // window's water, plants and sheets aren't drawn there (renderprep, vegprep)
+  hfield: array<vec4<u32>, 16>,
 };
+
+/** (hybrid) Is column q in a heightfield chunk (drawn by the LOD rings, not the window's own draws)? */
+fn heightfieldCol(q: vec2<u32>) -> bool {
+  if (G.ocean.y < 0.5) { return false; }
+  let side = G.ocean.z;
+  let wx = f32(q.x) + 0.5 + 0.5 * f32(q.y & 1u);
+  let c = u32(wx / side) + (q.y / u32(side)) * u32(G.ocean.y);
+  if (c >= 2048u) { return false; }
+  return ((G.hfield[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
+}
 
 /** Has column q's chunk just fallen asleep (round 80)? */
 fn drowsy(q: vec2<u32>) -> bool {

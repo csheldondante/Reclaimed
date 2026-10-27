@@ -173,7 +173,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   if (li == 0u) { atomicStore(&wgO, 0u); atomicStore(&wgW, 0u); atomicStore(&wgT, 0u); }
   workgroupBarrier();
 
-  let inside = id.x < G.mapW && id.y < G.mapH && (CULL_OFF || colSeen(id.xy));
+  // (hybrid: a heightfield chunk's land, its water too, is the LOD rings')
+  let inside = id.x < G.mapW && id.y < G.mapH && (CULL_OFF || colSeen(id.xy)) && !heightfieldCol(id.xy);
   var nO = 0u;
   var nW = 0u;
   var cs = vec2<u32>(0u);

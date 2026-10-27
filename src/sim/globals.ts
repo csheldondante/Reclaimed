@@ -2,7 +2,7 @@
 
 import { ROW_H } from '../world/lattice';
 
-export const GLOBALS_BYTES = 1648;
+export const GLOBALS_BYTES = 1904;
 /** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
 export const MAX_CYCLONES = 4;
 
@@ -146,6 +146,9 @@ export interface GlobalsState {
   sleep?: Uint32Array;
   /** a bit a chunk, set: just fallen asleep (round 80; 64 words) */
   drowse?: Uint32Array;
+  /** (hybrid, scenes/hybrid.ts) a bit a mesh chunk, set: the heightfield's (the LOD rings draw it; the window's
+   *  water, plants and loose sheets aren't drawn there), the chunks across and a chunk's side (cells); absent: none */
+  hfield?: { bits: Uint32Array; across: number; side: number };
   /** (perfopt) land come in, settling its water: rects of columns (x, y, w, h; CPU only — sim/sleep.ts) */
   settle?: [number, number, number, number][];
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
@@ -230,11 +233,14 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   const o = s.origin ?? [0, 0];
   // (world units for the noise of positions; cells for the hashes of cells)
   f.set([o[0], o[1] * ROW_H, o[0], o[1]], 276);
-  f.set([s.seaZ ?? -1e9, 0, 0, 0], 280);
+  f.set([s.seaZ ?? -1e9, s.hfield?.across ?? 0, s.hfield?.side ?? 0, 0], 280);
   const su = new Uint32Array(f.buffer, f.byteOffset + 284 * 4, 64);
   if (s.sleep) su.set(s.sleep);
   else su.fill(0);
   const sd = new Uint32Array(f.buffer, f.byteOffset + 348 * 4, 64);
   if (s.drowse) sd.set(s.drowse);
   else sd.fill(0);
+  const sh = new Uint32Array(f.buffer, f.byteOffset + 412 * 4, 64);
+  if (s.hfield) sh.set(s.hfield.bits);
+  else sh.fill(0);
 }

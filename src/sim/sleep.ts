@@ -66,6 +66,16 @@ export class Sleep {
   /** the sim's tick at the last update */
   private tick = 0;
 
+  /** (hybrid, scenes/hybrid.ts) per chunk, 0: nothing wakes it — its land is the heightfield's, nothing of the sim
+   *  there is drawn; null: every chunk may wake */
+  private filter: Uint8Array | null = null;
+
+  /** (hybrid) Which chunks may wake (per chunk 1 or 0; null: all). One awake now that may not sleeps when its time's up. */
+  only(filter: Uint8Array | null): void {
+    if (filter && filter.length !== this.until.length) throw new Error(`sleep.only: ${filter.length} chunks, not ${this.until.length}`);
+    this.filter = filter ? filter.slice() : null;
+  }
+
   /** wake the chunks a circle (world units, window) touches for `secs` from `now` */
   wake(x: number, y: number, r: number, secs: number, now: number): void {
     const x0 = Math.max(0, Math.floor((x - r) / CHUNK));
@@ -75,6 +85,7 @@ export class Sleep {
     for (let j = y0; j <= y1; j++)
       for (let i = x0; i <= x1; i++) {
         const k = j * this.cx + i;
+        if (this.filter && !this.filter[k]) continue;
         this.until[k] = Math.max(this.until[k], now + secs);
       }
   }
@@ -92,7 +103,7 @@ export class Sleep {
   private settleNext = false;
 
   wakeAll(secs: number, now: number): void {
-    for (let k = 0; k < this.until.length; k++) this.until[k] = Math.max(this.until[k], now + secs);
+    for (let k = 0; k < this.until.length; k++) if (!this.filter || this.filter[k]) this.until[k] = Math.max(this.until[k], now + secs);
   }
 
   /** the window slid (dx, dy columns, whole chunks): the chunks go with the land, the new ones wake to settle */
@@ -119,12 +130,16 @@ export class Sleep {
     const dcy = dy / CHUNK;
     const old = this.until.slice();
     const oldT = this.drowseTick.slice();
+    const fOld = this.filter?.slice();
     for (let j = 0; j < this.cy; j++)
       for (let i = 0; i < this.cx; i++) {
         const si = i + dcx;
         const sj = j + dcy;
         const fresh = si < 0 || sj < 0 || si >= this.cx || sj >= this.cy;
-        this.until[j * this.cx + i] = fresh ? now + (SETTLE ? SETTLE_S : 0) : old[sj * this.cx + si];
+        // (hybrid: land come in is the heightfield's till the hybrid says — it doesn't wake to settle)
+        if (this.filter && fOld) this.filter[j * this.cx + i] = fresh ? 0 : fOld[sj * this.cx + si];
+        const settle = fresh && (!this.filter || this.filter[j * this.cx + i]) ? (SETTLE ? SETTLE_S : 0) : 0;
+        this.until[j * this.cx + i] = fresh ? now + settle : old[sj * this.cx + si];
         this.drowseTick[j * this.cx + i] = fresh ? this.tick + DROWSE_TICKS : oldT[sj * this.cx + si];
       }
   }

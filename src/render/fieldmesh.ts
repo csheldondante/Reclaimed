@@ -39,6 +39,8 @@ const ROW_H = Math.sqrt(3) / 2;
 /** fieldmesh.wgsl CHUNK0, CSTRIDE (u32s) */
 const CHUNK0 = 16;
 const CSTRIDE = 13;
+/** meshstate.wgsl FRESH: a record's hash when nothing is built */
+const FRESH_HASH = 0x9e3779b9;
 /** cells over a chunk's known top its box reaches (growth since the readback, the bevels) */
 const TOP_PAD = 4;
 
@@ -273,6 +275,33 @@ export class FieldMesh {
       }
   }
 
+  /** (hybrid) per chunk: 1 meshed and drawn, 0 left to the heightfield (never built; its record emptied); null: all */
+  private wanted: Uint8Array | null = null;
+  /** (hybrid) chunks wanted (meshed) at the last setWanted */
+  wantedCount = -1;
+
+  /**
+   * (hybrid, ?hybrid=1) Which chunks are meshed: per chunk (chunkGrid's order) 1 or 0, or null for every one. A
+   * chunk not wanted is never looked at, built or drawn, and one that was built is emptied — its record's indices 0,
+   * its hash FRESH — so the LOD rings (far.wgsl meshBuilt) draw its land; wanted again, it's built as fresh land is.
+   */
+  setWanted(want: Uint8Array | null): void {
+    if (!this.on) return;
+    const n = this.nx * this.ny;
+    if (want && want.length !== n) throw new Error(`FieldMesh.setWanted: ${want.length} chunks, not ${n}`);
+    const old = this.wanted;
+    for (let c = 0; c < n; c++) {
+      const was = old ? old[c] : 1;
+      const now = want ? want[c] : 1;
+      if (!was || now) continue;
+      // (its indices 0 — drawn as nothing — and its hash FRESH: built anew when it's wanted again)
+      this.device.queue.writeBuffer(this.state, (CHUNK0 + c * CSTRIDE) * 4, new Uint32Array([0]));
+      this.device.queue.writeBuffer(this.state, (CHUNK0 + c * CSTRIDE + 5) * 4, new Uint32Array([FRESH_HASH]));
+    }
+    this.wanted = want ? want.slice() : null;
+    this.wantedCount = want ? want.reduce((s, v) => s + (v ? 1 : 0), 0) : n;
+  }
+
   setBand(oz: number, zMax: number): void {
     if (!this.on || !this.src) return;
     const f = new Float32Array(this.layout);
@@ -348,6 +377,16 @@ export class FieldMesh {
     pass.dispatchWorkgroups(Math.ceil((this.nx * this.ny) / 64));
     pass.end();
     dev.queue.submit([enc.finish()]);
+    // (hybrid: what's wanted goes round with them too — the fresh ones the heightfield's till the owner says)
+    if (this.wanted) {
+      const old = this.wanted.slice();
+      for (let cy = 0; cy < this.ny; cy++)
+        for (let cx = 0; cx < this.nx; cx++) {
+          const sx = cx + dcx;
+          const sy = cy + dcy;
+          this.wanted[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? 0 : old[sy * this.nx + sx];
+        }
+    }
     // (the CPU's chunk tops go round with them; the fresh ones aren't known yet)
     if (this.tops.length) {
       const old = this.tops.slice();
@@ -444,7 +483,9 @@ export class FieldMesh {
           hi = [Math.max(hi[0], px), Math.max(hi[1], py)];
         }
         const c = cy * this.nx + cx;
-        const within = (e: number) => behind || (hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e);
+        // (hybrid: a chunk not wanted is the heightfield's — never looked at, never drawn)
+        const want = !this.wanted || this.wanted[c] !== 0;
+        const within = (e: number) => want && (behind || (hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e));
         this.inView[c] = within(1) ? 1 : 0;
         // (over 1: come near within ten frames — the change pass looks at it even asleep, round 80; ten, so a
         // change found when every rebuild slot was taken is found again)
@@ -483,7 +524,8 @@ export class FieldMesh {
           hx = Math.max(hx, px);
           hy = Math.max(hy, py);
         }
-        this.casts[cy * this.nx + cx] = hx >= -1 && lx <= 1 && hy >= -1 && ly <= 1 ? 1 : 0;
+        const want = !this.wanted || this.wanted[cy * this.nx + cx] !== 0;
+        this.casts[cy * this.nx + cx] = want && hx >= -1 && lx <= 1 && hy >= -1 && ly <= 1 ? 1 : 0;
       }
   }
 
