@@ -19,6 +19,7 @@ import type { AtlasEvent, DialogTree, Outcome, RunRecord, SessionStory, WorldSta
 import type { Sim } from '../api/world';
 import type { Dither, Slice } from '../api/cutaway';
 import type { Camera } from '../render/camera';
+import type { UnitId, Units } from '../api/contracts/units';
 import { DialogBox } from '../dialog/dialog';
 import { StoryRun } from '../run/run';
 import { ObjectiveHud } from '../run/hud';
@@ -31,6 +32,22 @@ export interface Stage {
   locations: Record<string, { at: [number, number]; radius: number }>;
   /** each cast member: where they stand, their colour (badge, dialog), the pillar's material and height (cells) */
   cast: Record<string, { at: [number, number]; colour: string; material: string; height?: number }>;
+  /** (round 88) each location's rooms: where, and how near counts as in it (`reached { location, room }`) */
+  rooms?: Record<string, Record<string, { at: [number, number]; radius: number }>>;
+  /** (round 88) locked doorways (a brief's locks): opened when the player comes to one holding its key */
+  locks?: StageLock[];
+}
+
+export interface StageLock {
+  id: string;
+  location: string;
+  /** (round 94) the room it shuts (behind it) */
+  room?: string;
+  at: [number, number];
+  /** what opens it: an item held, a character talked to, an objective done */
+  key: { item?: string; character?: string; objective?: string };
+  material: string;
+  open: boolean;
 }
 
 export interface StoryPlayDeps {
@@ -46,10 +63,26 @@ export interface StoryPlayDeps {
   cut?: { dither?: Dither; slice?: Slice };
   /** where the player is (default: the camera's target) */
   player?: () => V3 | null;
+  /**
+   * (round 88) the units system: the cast stand as units (tap or walk up to talk; `killed` when they die), an
+   * outcome's `spawn` appears as units and its `hostile` turns cast members on the player. Without it the cast
+   * are pillars with badges, and spawns are only noted.
+   */
+  units?: Units;
+  /** a line for the player (a lock that won't open, one that does) */
+  say?: (text: string) => void;
+  /** (round 88) a cast member's badge tapped (a hero walks up to them first); default: talk at once */
+  onBadge?: (id: string) => void;
+  /** (round 88) false: no opening look at the first objective (a hero's run opens on the hero) */
+  opening?: boolean;
+  /** (round 88) the end card offers a new run */
+  again?: () => void;
 }
 
 interface Placed {
   id: string;
+  /** (round 88) its unit, when the cast are units */
+  unit?: UnitId;
   at: V3;
   height: number;
   badge: HTMLButtonElement;
@@ -63,6 +96,7 @@ export class StoryPlay {
   readonly hud: ObjectiveHud;
   private placed = new Map<string, Placed>();
   private reached = new Set<string>();
+  private lockSaid = new Map<string, number>();
   private look = 0;
   private card?: HTMLDivElement;
   private layer: HTMLDivElement;
@@ -113,8 +147,11 @@ export class StoryPlay {
       const s = d.stage.cast[c.id];
       const ground = t.heightAt(s.at[0], s.at[1]);
       if (ground === null) throw new Error(`story: character "${c.id}" stands at ${s.at} — outside the world`);
-      const height = s.height ?? 6;
-      t.build(s.at[0], s.at[1], s.material, { radius: 1.3, layers: height });
+      // (round 88: as a unit, when there are units; else a pillar of their material)
+      const big = /lich|warden|lord|king/.test(c.role);
+      const unit = d.units?.spawn(c.role, s.at, c.faction, { name: c.name, character: c.id, role: c.role, health: big ? 12 : 4, damage: big ? 2 : 1, sight: 12, speed: big ? 2.6 : 3 });
+      const height = unit !== undefined ? 2.6 : (s.height ?? 6);
+      if (unit === undefined) t.build(s.at[0], s.at[1], s.material, { radius: 1.3, layers: height });
       const badge = document.createElement('button');
       badge.className = 'story-badge';
       badge.style.setProperty('--c', s.colour);
@@ -126,15 +163,21 @@ export class StoryPlay {
       badge.addEventListener('pointerdown', (e) => e.stopPropagation());
       badge.addEventListener('click', (e) => {
         e.stopPropagation();
-        void p.talk(c.id);
+        if (d.onBadge) d.onBadge(c.id);
+        else void p.talk(c.id);
       });
       p.layer.append(badge);
-      p.placed.set(c.id, { id: c.id, at: [s.at[0], s.at[1], ground], height, badge, tree });
+      p.placed.set(c.id, { id: c.id, unit, at: [s.at[0], s.at[1], ground], height, badge, tree });
     }
+    // (round 88) a unit dies: `killed` (a cast member's badge goes)
+    d.units?.died.push((u) => {
+      if (u.character) p.placed.get(u.character)?.badge.classList.add('gone');
+      p.run.note({ kind: 'killed', character: u.character, unitKind: u.role });
+    });
     // (the opening: the camera eases to where the first shown objective is, or the first cast member's place)
     const first = p.run.objectives().find((o) => o.state === 'shown');
     const open = (first && p.run.objective(first.id).location) ?? d.story.cast[0]?.location;
-    if (open) void p.cam.look(p.where(open));
+    if (open && d.opening !== false) void p.cam.look(p.where(open));
     return p;
   }
 
@@ -149,6 +192,8 @@ export class StoryPlay {
     if (!p) throw new Error(`story: no character "${id}" on the stage`);
     if (!p.tree) throw new Error(`story: "${id}" has no dialog`);
     if (this.dialog.isOpen || this.cam.busy) return;
+    if (!this.canTalk(id)) return;
+    this.follow(p);
     const top: V3 = [p.at[0], p.at[1], p.at[2] + p.height * 0.7];
     void this.cam.frame(top);
     await this.dialog.open(p.tree);
@@ -164,7 +209,7 @@ export class StoryPlay {
     if (this.look <= 0 && !this.cam.busy && !this.run.over) {
       this.look = 0.25;
       const me = this.d.player?.() ?? (cam.target.slice() as V3);
-      if (me)
+      if (me) {
         for (const [id, l] of Object.entries(this.d.stage.locations)) {
           const inside = Math.hypot(me[0] - l.at[0], me[1] - l.at[1]) <= l.radius;
           if (inside && !this.reached.has(id)) {
@@ -172,7 +217,20 @@ export class StoryPlay {
             this.run.note({ kind: 'reached', location: id });
           } else if (!inside) this.reached.delete(id);
         }
+        // (round 88) its rooms
+        for (const [loc, rooms] of Object.entries(this.d.stage.rooms ?? {}))
+          for (const [room, r] of Object.entries(rooms)) {
+            const key = `${loc}/${room}`;
+            const inside = Math.hypot(me[0] - r.at[0], me[1] - r.at[1]) <= r.radius;
+            if (inside && !this.reached.has(key)) {
+              this.reached.add(key);
+              this.run.note({ kind: 'reached', location: loc, room });
+            } else if (!inside) this.reached.delete(key);
+          }
+        this.locks(me);
+      }
     }
+    for (const p of this.placed.values()) this.follow(p);
     // the badges over the pillars (hidden while a talk has the screen)
     const talking = this.dialog.isOpen;
     for (const p of this.placed.values()) {
@@ -185,6 +243,86 @@ export class StoryPlay {
         const h = Math.max(0, by - ty);
         p.badge.style.transform = `translate(${tx.toFixed(1)}px, ${ty.toFixed(1)}px)`;
         p.badge.style.setProperty('--h', `${h.toFixed(0)}px`);
+      }
+    }
+  }
+
+  /** (round 88) can the player talk to them now: they have a dialog, and (as a unit) are alive and not hostile */
+  canTalk(id: string): boolean {
+    const p = this.placed.get(id);
+    if (!p?.tree) return false;
+    if (p.unit === undefined) return true;
+    const u = this.d.units!.get(p.unit);
+    return !!u && u.alive && !u.hostile;
+  }
+
+  /** (round 88) a cast member's unit, if they're units */
+  unitOf(id: string): UnitId | undefined {
+    return this.placed.get(id)?.unit;
+  }
+
+  /** (round 88) the cast member a unit stands for */
+  characterOf(unit: UnitId): string | undefined {
+    for (const p of this.placed.values()) if (p.unit === unit) return p.id;
+    return undefined;
+  }
+
+  /** (round 88) the window slid (a streamed world): what the stage keeps in window coordinates moves with it */
+  shift(dx: number, dy: number, dz: number): void {
+    const st = this.d.stage;
+    const mv = (a: [number, number]) => {
+      a[0] += dx;
+      a[1] += dy;
+    };
+    for (const l of Object.values(st.locations)) mv(l.at);
+    for (const c of Object.values(st.cast)) mv(c.at);
+    for (const rs of Object.values(st.rooms ?? {})) for (const r of Object.values(rs)) mv(r.at);
+    for (const k of st.locks ?? []) mv(k.at);
+    for (const p of this.placed.values()) {
+      p.at[0] += dx;
+      p.at[1] += dy;
+      p.at[2] += dz;
+    }
+  }
+
+  /** a unit's cast member stands where their unit is */
+  private follow(p: Placed): void {
+    if (p.unit === undefined) return;
+    const u = this.d.units!.get(p.unit);
+    if (!u) return;
+    p.at = u.at;
+    p.badge.classList.toggle('foe', u.hostile);
+  }
+
+  /** (round 88) a locked doorway the player comes to: opened with its key, else they're told what it needs */
+  private locks(me: V3): void {
+    for (const k of this.d.stage.locks ?? []) {
+      if (k.open || Math.hypot(me[0] - k.at[0], me[1] - k.at[1]) > 4.5) continue;
+      const has =
+        (k.key.item !== undefined && this.run.has(k.key.item) > 0) ||
+        (k.key.character !== undefined && this.run.holds({ kind: 'talked', character: k.key.character })) ||
+        (k.key.objective !== undefined && this.run.holds({ kind: 'objective', id: k.key.objective, state: 'done' }));
+      if (has) {
+        k.open = true;
+        const t = this.d.api.terrain;
+        // (only the plug: each column under it whose top is the lock's material loses that — a dig would take the
+        // floor round it too, and leave a pit too deep to climb back out of)
+        if (t)
+          for (let dy = -3.2; dy <= 3.2; dy += 0.7)
+            for (let dx = -3.2; dx <= 3.2; dx += 0.7) {
+              const x = k.at[0] + dx;
+              const y = k.at[1] + dy;
+              if (dx * dx + dy * dy <= 10.5 && t.materialAt(x, y) === k.material) void t.take(x, y, 12);
+            }
+        this.d.api.fx?.burst('dust', k.at[0], k.at[1], (t?.heightAt(k.at[0], k.at[1]) ?? me[2]) + 1, { count: 30 });
+        this.d.say?.(`${k.key.item ? `The ${k.key.item} turns` : 'It opens'}: the ${k.id.replace(/-/g, ' ')} gives way`);
+      } else {
+        const now = performance.now();
+        if (now - (this.lockSaid.get(k.id) ?? -1e9) < 6000) continue;
+        this.lockSaid.set(k.id, now);
+        const who = (id: string) => this.d.story.cast.find((c) => c.id === id)?.name ?? id;
+        const need = k.key.item ? `the ${k.key.item}` : k.key.character ? `a word with ${who(k.key.character)}` : 'something done first';
+        this.d.say?.(`The ${k.id.replace(/-/g, ' ')} is shut. It needs ${need}.`);
       }
     }
   }
@@ -216,6 +354,31 @@ export class StoryPlay {
   /** what of an outcome can be seen now, at play scale */
   private realise(o: Outcome, cause: string): void {
     const api = this.d.api;
+    const units = this.d.units;
+    // (round 88) cast members turned on the player; units appearing
+    for (const c of o.hostile ?? []) {
+      const u = this.placed.get(c)?.unit;
+      if (u !== undefined && units) units.setHostile(u, true);
+    }
+    if (units)
+      for (const sp of o.spawn ?? []) {
+        // (round the speaker, when a talk at that place set it off; else in the place's way in)
+        const tree = this.d.story.dialogs.find((x) => cause.startsWith(`${x.id}/`));
+        const speaker = tree && this.d.story.cast.find((c) => c.id === tree.speaker && c.location === sp.location);
+        const first = this.d.story.locations.find((l) => l.id === sp.location)?.brief.rooms?.[0]?.id;
+        const room = first ? this.d.stage.rooms?.[sp.location]?.[first] : undefined;
+        const c = speaker ? this.placed.get(speaker.id)!.at : room ? room.at : this.where(sp.location);
+        const n = sp.count ?? 1;
+        for (let k = 0; k < n; k++) {
+          const a = (k / n) * Math.PI * 2 + 0.4;
+          const r = speaker ? 3 : Math.min(3, (room?.radius ?? 4) * 0.6);
+          const at: [number, number] = [c[0] + Math.cos(a) * r, c[1] + Math.sin(a) * r];
+          const z = api.terrain?.heightAt(at[0], at[1]);
+          if (z === null || z === undefined) continue;
+          units.spawn(sp.role, at, sp.faction, { role: sp.role, hostile: !!sp.hostile, health: 2, sight: 11, speed: 2.4 });
+          api.fx?.burst('dust', at[0], at[1], z + 0.5, { count: 12 });
+        }
+      }
     for (const e of o.atlas ?? []) {
       const place = placeOf(e);
       const at: V3 | null = e.area
@@ -259,6 +422,12 @@ export class StoryPlay {
     }
     el.querySelector('.ev')!.textContent = r.events.length ? `${r.events.length} change${r.events.length === 1 ? '' : 's'} to the world: ${r.events.map(describe).join('; ')}` : 'The world is as it was.';
     el.querySelector('button')!.addEventListener('click', () => el.remove());
+    if (this.d.again) {
+      const b = document.createElement('button');
+      b.textContent = 'Start a new run';
+      b.addEventListener('click', () => this.d.again!());
+      el.append(b);
+    }
     el.addEventListener('pointerdown', (e) => e.stopPropagation());
     this.d.ui.append(el);
     this.card = el;

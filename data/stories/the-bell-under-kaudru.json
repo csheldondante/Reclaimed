@@ -417,7 +417,7 @@
         },
         "n-fight": {
           "text": "Then come and learn what the wardens learned.",
-          "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-barrow", "count": 4 }] },
+          "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-barrow", "count": 4, "hostile": true }], "hostile": ["bellwarden"] },
           "choices": []
         }
       }
@@ -472,11 +472,11 @@
   "happenings": [
     {
       "when": [{ "kind": "time", "after": 300 }],
-      "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-barrow", "count": 4 }] }
+      "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-barrow", "count": 4, "hostile": true }] }
     },
     {
       "when": [{ "kind": "time", "after": 1200 }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
-      "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-mebe", "count": 6 }], "flags": { "mebe-besieged": true } }
+      "effects": { "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-mebe", "count": 6, "hostile": true }], "flags": { "mebe-besieged": true } }
     },
     {
       "when": [{ "kind": "has", "item": "sluice crank" }, { "kind": "event", "event": "flooded", "location": "loc-barrow" }, { "kind": "flag", "flag": "dead-stopped", "value": false }],
