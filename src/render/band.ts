@@ -119,6 +119,15 @@ export class OutsideBand {
     this.stats.ms = +(performance.now() - t0).toFixed(1);
   }
 
+  /** (round 87) the chunks holding these columns packed again (what's outside them changed: Streamer.takeAbove) */
+  packColumns(outside: Interval[][], oz: number, zMax: number, cols: [number, number][]): void {
+    if (!this.mesh.on) return;
+    const cx = this.world.w / CHUNK;
+    const chunks = new Set<number>();
+    for (const [x, y] of cols) chunks.add(Math.floor(y / CHUNK) * cx + Math.floor(x / CHUNK));
+    this.packChunks(outside, oz, zMax, [...chunks]);
+  }
+
   private fresh: number[] = [];
 
   /** the window's oz the band is packed at */

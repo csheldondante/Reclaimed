@@ -30,10 +30,17 @@ export interface Voxel {
 export interface Fracture {
   bodies: Voxel[][];
   crumble: Voxel[];
-  /** (round 86) the rock's pieces as their runs, column by column (fractional ends kept), one per body; the
-   *  structures' come as cells only */
-  pieces?: { x: number; y: number; ivs: { z0: number; z1: number; mat: number }[] }[][];
+  /** (round 86) the rock's pieces as their runs, column by column (fractional ends kept) — the structures' come
+   *  as cells (`bodies`) only */
+  pieces?: RunPiece[];
+  /** (round 87) the rock's runs that give (crumble to rubble), whole runs — the structures' come as cells (`crumble`) */
+  crumbleRuns?: RunPiece;
+  /** (round 87) a structure went on past the box: not judged (look again over a bigger box) */
+  beyond?: boolean;
 }
+
+/** (round 86) a piece of rock by its columns: each one's runs (window z, fractional ends kept) */
+export type RunPiece = { x: number; y: number; ivs: { z0: number; z1: number; mat: number }[] }[];
 
 /** Read-only voxel view of packed column slots (allocation-free lookups). */
 export class WorldVox {
@@ -269,7 +276,11 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
       }
     }
     nComp++;
-    if (touchesEdge) continue;
+    // (round 87: not judged here — it goes on past the box; the caller looks again over a bigger one)
+    if (touchesEdge) {
+      result.beyond = true;
+      continue;
+    }
     const vox = (i: number): Voxel => {
       const [x, y, z] = coord(i);
       return { x, y, z, mat: mat.at(i) };
@@ -488,12 +499,19 @@ export function isRock(m: number): boolean {
 
 /** How far rock hangs over air before it gives, columns for each cell of its thickness (materials.ts `span`; Infinity: never) */
 const ROCK_SPAN = 3;
-/** rock freed in fewer cells than this stays where it is (a crumb), not a body */
+/** (round 87) rock freed in less than this (cells of volume) crumbles to rubble rather than falling as a body —
+ *  it used to stay where it was, floating */
 const MIN_BODY = 8;
 /** runs in neighbouring columns overlapping by this much (cells) hold each other up */
 const OVERLAP = 0.5;
-/** a hanging piece reaching this many runs is held (a cave's roof, joined on and on): the flood stops there */
+/**
+ * A hanging piece reaching this many runs that is held somewhere (a cave's roof, joined on and on) is held: the
+ * flood stops there, its reach not judged. (Round 87: one reaching it held nowhere yet floods on, to MAX_FLOOD
+ * runs; past that it falls as far as it was followed — the rest is judged when it lands. Runs, not cells: a
+ * tower 8 columns across and 70 tall is 64 runs.)
+ */
 const MAX_PIECE = 4096;
+const MAX_FLOOD = 65536;
 
 interface Run {
   x: number;
@@ -525,7 +543,7 @@ interface Run {
  * Structures keep their own rules (analyse); rock holds them.
  */
 export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>): Fracture {
-  const result: Fracture = { bodies: [], crumble: [], pieces: [] };
+  const result: Fracture = { bodies: [], crumble: [], pieces: [], crumbleRuns: [] };
   const cache = new Map<number, Run[]>();
   const ivCache = new Map<number, { z0: number; z1: number; mat: number }[]>();
   const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < world.w && y < world.h;
@@ -588,14 +606,7 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>):
     }
     return { held, next };
   };
-  const cells = (r: Run) => {
-    const out: Voxel[] = [];
-    for (const iv of r.ivs) {
-      const [c0, c1] = cellRange(iv.z0, iv.z1);
-      for (let z = Math.max(0, c0); z < c1; z++) out.push({ x: r.x, y: r.y, z, mat: iv.mat });
-    }
-    return out;
-  };
+  const runsOf = (rs: Run[]): RunPiece => rs.map((r) => ({ x: r.x, y: r.y, ivs: r.ivs.map((iv) => ({ ...iv })) }));
   // the hanging runs by the seeds
   const start: Run[] = [];
   const seen = new Set<Run>();
@@ -622,18 +633,16 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>):
           seen.add(o);
           piece.push(o);
         }
-      if (piece.length >= MAX_PIECE) {
+      if ((piece.length >= MAX_PIECE && held.length) || piece.length >= MAX_FLOOD) {
         big = true;
         break;
       }
     }
-    if (big) continue;
+    if (big && held.length) continue;
     if (!held.length) {
-      const vox = piece.flatMap(cells);
-      if (vox.length >= MIN_BODY) {
-        result.bodies.push(vox);
-        result.pieces!.push(piece.map((r) => ({ x: r.x, y: r.y, ivs: r.ivs.map((iv) => ({ ...iv })) })));
-      }
+      const volume = piece.reduce((s, r) => s + r.z1 - r.z0, 0);
+      if (volume >= MIN_BODY) result.pieces!.push(runsOf(piece));
+      else result.crumbleRuns!.push(...runsOf(piece));
       continue;
     }
     const dist = new Map<Run, number>();
@@ -654,7 +663,7 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>):
     for (const r of piece) {
       if (!over(r)) continue;
       const d = dist.get(r)!;
-      if (d === 1 || next.get(r)!.some((o) => dist.get(o)! < d && !over(o))) result.crumble.push(...cells(r));
+      if (d === 1 || next.get(r)!.some((o) => dist.get(o)! < d && !over(o))) result.crumbleRuns!.push(...runsOf([r]));
     }
   }
   return result;

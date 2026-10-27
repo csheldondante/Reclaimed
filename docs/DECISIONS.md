@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
+
+- The user, testing `collapse` on the phone: "Waterfalls and the meteor look fantastic! However, the collapse
+  didn't work for me on mobile at all. I was able to completely destroy the base of a tower and it stayed
+  standing (it might have been taller than one cell though)".
+- And: "Why do cells matter here? Shouldn't we care only about columns?" → the rock's limits count runs and
+  columns, not cells (fracture.ts MAX_PIECE / MAX_FLOOD in runs; a piece too small to fall crumbles rather than
+  staying); a piece is never held for being big or for going on above the window.
+
 ## 2026-10-26 — round 86 (session 5, `collapse`) — rock collapse and meteors, tested on the phone
 
 - The user, verbatim: "The rock collapsing seems very broken. There is a large lag from a meteor to when the

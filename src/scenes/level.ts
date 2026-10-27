@@ -455,6 +455,8 @@ export class LevelScene implements Scene {
 
   /** (round 86) the last coarse event's window edit, read back, changed and written (ms): the latency probe reads it */
   editLiveMs = 0;
+  /** (round 87) when the beam's bore was last judged (performance.now, ms) */
+  private beamCutAt = 0;
 
   /** The free camera on (from where the fixed view looks from, the same way) or off (looking at the ground under the screen's middle). */
   toggleFly(): void {
@@ -919,6 +921,8 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // (round 87) the sandbox's tool bar: editor().select('smash') as a tap on its button would (scripts/towertest.mjs)
+      editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
       agents: this.agents,
       // physics voxels (sandbox): phys.drop('steel', 5, 1, 10, x, y, 6) — a w × d × h box
@@ -1177,6 +1181,9 @@ export class LevelScene implements Scene {
       const integ = this.integrity;
       if (a && integ) {
         this.stream.onArrive.push((x0, y0, x1, y1) => integ.markBox(x0, y0, x1, y1));
+        // (round 87: what's above the window comes down with a piece that reaches its top)
+        const S = this.stream;
+        integ.above = { take: (x, y) => S.takeAbove(x, y), put: (x, y, ivs) => S.putAbove(x, y, ivs) };
         const m = a.map.structural;
         if (m)
           for (let y = 0; y < dims.h; y += REGION)
@@ -1516,6 +1523,12 @@ export class LevelScene implements Scene {
     this.stepMeteors(dt);
     this.drawRing();
     if (this.beamAt && this.physics && !this.beamPicking) this.aimBeam(this.beamAt);
+    // (round 87: the beam bores through rock with no edit event — what it undercuts is judged while it's held)
+    const lb = this.lava?.beam;
+    if (lb && this.integrity && performance.now() - this.beamCutAt > 250) {
+      this.beamCutAt = performance.now();
+      this.integrity.cutAt(lb.at[0], lb.at[1], lb.radius + 1.5);
+    }
     if (this.integrity) {
       // cyclones batter what they pass: look there
       for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);

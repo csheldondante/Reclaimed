@@ -6282,3 +6282,26 @@ Why: the user on the phone (DECISIONS round 86): a long lag from a meteor to the
   glowing), before-cut.gif (the top pops to grey cubes), after-cut.gif (the top falls as the spire's own mesh).
 - Left as designed: while a piece falls, what the sim does in its columns is written over (sand slumping
   onto it, a lava set); the falls are short (4 cells/s, the round-20 feel).
+
+## Round 87 — the collapse on a real tower: what held it up (collapse)
+
+Why: the user on the phone (DECISIONS round 87): a tower with its base destroyed stayed standing; "Why do cells
+matter here? Shouldn't we care only about columns?" Found by reading the paths (not yet reproduced in a browser:
+the shared GPU was queued; scripts/towertest.mjs is the regression, run it next):
+
+- The heat beam bores through rock in lava.wgsl with no edit event: nothing told the integrity system. Now the
+  level judges the beam's spot as a cut every 0.25 s while it's held (Integrity.cutAt, at once).
+- A spire taller than the window (the atlas's spires reach 120 cells; the window holds 248 with the ground
+  mid-way): its top is Streamer.outside, drawn by the band, and never came down. A piece with a run at the
+  window's top now takes the runs above it (Streamer.takeAbove, the band repacked: OutsideBand.packColumns),
+  falls with them (written clipped to the window) and gives back what's still above the window where it lands
+  (putAbove).
+- Limits in runs, not cells: a hanging piece reaching MAX_PIECE (4096) runs is held only if something holds it;
+  held nowhere it floods on to MAX_FLOOD (65 536 runs) and falls as far as followed. Rock freed under 8 cells
+  of volume crumbles to rubble instead of staying where it was (floating). Rock that gives is cut out by its
+  runs (fractional ends too), not as integer cells (which left slivers hanging).
+- A structure going on past its analysis box was skipped silently (touchesEdge): now the box is looked at
+  again twice the size (to 256).
+- A bug from round 86's own last change: apply() built the pieces from the cell lists, so once the rock came
+  as runs only it would have dropped them — now rock pieces and structure cells are both spawned.
+- simcull (merged): a falling piece's chunks are woken every frame (touch), so they're live.

@@ -631,6 +631,40 @@ export class Streamer {
     this.core.windowEpoch++;
   }
 
+  /**
+   * (round 87) Column (x, y)'s runs above the window that go on from its top (touching it and each other: a
+   * spire taller than the window), taken out of what's outside it and returned in window z; the band redrawn there.
+   * The integrity system's falling piece takes them with it (the user: a tower stayed standing — its top, above
+   * the window, was the band's and never came down).
+   */
+  takeAbove(x: number, y: number): Interval[] {
+    const i = y * this.W + x;
+    const top = this.oz + this.core.dims.zMax;
+    const out = this.outside[i];
+    const keep: Interval[] = [];
+    const took: Interval[] = [];
+    let at = top;
+    for (const iv of [...out].sort((a, b) => a.z0 - b.z0)) {
+      if (Math.abs(iv.z0 - at) < 1e-3 && iv.z0 >= top - 1e-3) {
+        took.push({ z0: iv.z0 - this.oz, z1: iv.z1 - this.oz, mat: iv.mat });
+        at = iv.z1;
+      } else keep.push(iv);
+    }
+    if (!took.length) return took;
+    this.outside[i] = keep;
+    this.core.renderer.band?.packColumns(this.outside, this.oz, this.core.dims.zMax, [[x, y]]);
+    return took;
+  }
+
+  /** (round 87) Runs (window z, over the window's top) back outside column (x, y): where a piece that took them landed. */
+  putAbove(x: number, y: number, ivs: Interval[]): void {
+    if (!ivs.length) return;
+    const i = y * this.W + x;
+    const all = [...this.outside[i], ...ivs.map((iv) => ({ z0: iv.z0 + this.oz, z1: iv.z1 + this.oz, mat: iv.mat }))].sort((a, b) => a.z0 - b.z0);
+    this.outside[i] = all;
+    this.core.renderer.band?.packColumns(this.outside, this.oz, this.core.dims.zMax, [[x, y]]);
+  }
+
   /** What's outside the window, drawn (round 79: the renderer's band, when it has one). */
   refreshBand(): void {
     timed('band', () => this.core.renderer.band?.update(this.outside, this.oz, this.core.dims.zMax));

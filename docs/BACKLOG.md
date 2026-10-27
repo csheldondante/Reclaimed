@@ -23,6 +23,7 @@ user) · `deferred` (agreed for later).
 | C5 | The weight idea: a hanging piece's mass against its contact area × strength (snapping necks under load) | M | open (DECISIONS round 83) |
 | C6 | The atlas's great meteor's window edit on the GPU (it reads back and writes the whole window: the far crater lands after that, the bowl and blast at once) | M | open |
 | C7 | Pieces shatter into flying chunks on a big impact (now: the foot's rim crumbles to rubble and chips; the rest lands whole) | S | open |
+| C8 | Round 87: a fully undercut tower stayed standing on the phone — the beam's bore not judged, the part above the window never coming down, limits in cells, structures past the box skipped; fixed by reading the paths; scripts/towertest.mjs (the player's tools, 412x915, low) to run | M | wip (committed, towertest not yet run) |
 
 ## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
 

@@ -88,6 +88,10 @@ export class ColumnBodies {
     private writeCpu: (x: number, y: number, col: Interval[]) => void,
     /** write a column to the GPU only */
     private writeGpuCol: (x: number, y: number, col: Interval[]) => void,
+    /** (round 87) the window's top (window z): what of a piece lands above it goes back above the window */
+    private zTop = Infinity,
+    /** ... through this (Streamer.outside): a column's runs over zTop, window z */
+    private putAbove?: (x: number, y: number, ivs: Interval[]) => void,
   ) {}
 
   /**
@@ -195,7 +199,8 @@ export class ColumnBodies {
     const col = [...(this.base.get(k) ?? [])];
     for (const o of this.users.get(k) ?? []) {
       const c = o.colAt.get(k);
-      if (c) for (const iv of c.ivs) col.push({ z0: iv.z0 + o.dz, z1: iv.z1 + o.dz, mat: iv.mat });
+      // (what of it is over the window's top isn't the window's: drawn again once it falls into it)
+      if (c) for (const iv of c.ivs) if (iv.z0 + o.dz < this.zTop) col.push({ z0: iv.z0 + o.dz, z1: Math.min(iv.z1 + o.dz, this.zTop), mat: iv.mat });
     }
     col.sort((a, b) => a.z0 - b.z0);
     this.writeGpuCol(x, y, col);
@@ -207,7 +212,15 @@ export class ColumnBodies {
     for (const c of b.cols) {
       const k = key(c.x, c.y);
       const base = [...(this.base.get(k) ?? this.readCpu(c.x, c.y))];
-      for (const iv of c.ivs) if (iv.z1 - iv.z0 > 1e-3) base.push({ z0: iv.z0 + b.dz, z1: iv.z1 + b.dz, mat: iv.mat });
+      const over: Interval[] = [];
+      for (const iv of c.ivs) {
+        if (iv.z1 - iv.z0 <= 1e-3) continue;
+        const z0 = iv.z0 + b.dz;
+        const z1 = iv.z1 + b.dz;
+        if (z0 < this.zTop) base.push({ z0, z1: Math.min(z1, this.zTop), mat: iv.mat });
+        if (z1 > this.zTop + 1e-3) over.push({ z0: Math.max(z0, this.zTop), z1, mat: iv.mat });
+      }
+      if (over.length) this.putAbove?.(c.x, c.y, over);
       base.sort((a, b) => a.z0 - b.z0);
       const u = (this.users.get(k) ?? []).filter((o) => o !== b);
       this.base.set(k, base);

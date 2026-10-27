@@ -70,6 +70,11 @@ export class Integrity {
   private fallFrame = 0;
   /** (round 86) columns written while a readback was in flight: put back into the copy it brings (it predates them) */
   private inflight: Map<number, Interval[]> | null = null;
+  /**
+   * (round 87) What lies above the window (Streamer.outside, drawn by the band): `take` a column's runs touching
+   * the window's top out of it (window z); `put` them back (window z) where a piece that took them lands.
+   */
+  above?: { take(x: number, y: number): Interval[]; put(x: number, y: number, ivs: Interval[]): void };
   /** chunks round what was touched: hybrid voxels from now on (the level: HybridChunks.edit); x0, y0, x1, y1 world */
   onTouched?: (x0: number, y0: number, x1: number, y1: number) => void;
   /** (round 86) when the last pass was asked for and done (performance.now, ms): the latency probe reads them */
@@ -115,6 +120,8 @@ export class Integrity {
       (x, y) => readColumn(this.core.packed, this.world.slots, x, y),
       (x, y, col) => this.writeColumn(x, y, col, true, false),
       (x, y, col) => this.writeColumn(x, y, col, false, true),
+      core.dims.zMax,
+      (x, y, ivs) => this.above?.put(x, y, ivs),
     );
     // (round 83, the user: "the meteors and sandbox tools don't wake up the rocks") every edit that takes
     // ground away — a dig, a smash, a crater (a meteor's), a take — whoever queued it (the world API, the
@@ -141,6 +148,15 @@ export class Integrity {
     this.markBox(x - r, y - r, x + r, y + r);
     if (cut !== undefined) this.markCut(x, y, cut);
   }
+  /**
+   * (round 87) Ground went at (x, y) within r by something that isn't an edit event — the heat beam's bore, lava
+   * melting it: judged as a cut is, at once.
+   */
+  cutAt(x: number, y: number, r: number): void {
+    this.markDirty(x, y, r + 14, Math.max(0.5, r));
+    this.urgent = true;
+  }
+
   /** (round 83) the columns within r of (x, y) were cut: the rock by them is judged, two passes */
   markCut(x: number, y: number, r: number): void {
     const [c0x, c0y] = cellAt(x - r - 1, y - r - 1);
@@ -552,6 +568,13 @@ export class Integrity {
         // what the cut held is looked at again next pass (it now hangs free)
         this.markBox(x0, y0, x1, y1);
       }
+      // (round 87) a structure going on past the box wasn't judged: once more over a box twice the size (to 256)
+      if (r.beyond && x1 - x0 < 256) {
+        const cx = (x0 + x1) / 2;
+        const cy = (y0 + y1) / 2;
+        const h = x1 - x0;
+        this.dirty.push([cx - h, cy - h, cx + h, cy + h, 1]);
+      }
     }
     // (round 83) rock, by the columns an edit cut: the hanging runs by them, and only those
     if (this.rockSeeds.size) {
@@ -563,13 +586,26 @@ export class Integrity {
       }
       const r = analyseRock(this.world, seeds);
       // (what gave: its columns looked at again, what it held now hanging free)
-      if (this.apply(r)) for (const c of r.crumble) this.rockSeeds.set(c.y * 65536 + c.x, 2);
+      if (this.apply(r)) for (const c of r.crumbleRuns ?? []) this.rockSeeds.set(c.y * 65536 + c.x, 2);
     }
     this.stats.lastMs = performance.now() - t0;
   }
 
   /** What an analysis found, done: what crumbles crumbles, what breaks free falls. Did anything crumble? */
   private apply(r: Fracture): boolean {
+    // (round 87) the rock's runs that gave: cut out whole (fractional ends too), their volume rubble beside them
+    const gave = r.crumbleRuns ?? [];
+    if (gave.length) {
+      const cells: Voxel[] = [];
+      for (const c of gave) {
+        const col = readColumn(this.core.packed, this.world.slots, c.x, c.y);
+        this.writeColumn(c.x, c.y, subtract(col, c.ivs));
+        for (const iv of c.ivs) for (let z = Math.floor(iv.z0); z < iv.z1 - 0.25; z++) cells.push({ x: c.x, y: c.y, z, mat: iv.mat });
+      }
+      this.spillRubble(cells);
+      this.stats.crumbled += cells.length;
+      this.chips(cells.map((c) => [c.x + 0.5, c.y + 0.5, c.z + 0.5]), 4);
+    }
     if (r.crumble.length) {
       this.removeCells(r.crumble);
       this.spillRubble(r.crumble);
@@ -578,24 +614,26 @@ export class Integrity {
     }
     // (round 86) what broke free falls in the columns' own format: the rock's pieces by their runs, the
     // structures' by their cells (a column's cells one run each, touching ones of a material joined)
-    const pieces = r.bodies.map((cells, i) => r.pieces?.[i] ?? cellsToRuns(cells));
-    const spawned: FallingBody[] = [];
+    const pieces: ColPiece[][] = [...(r.pieces ?? []), ...r.bodies.map(cellsToRuns)];
+    const zTop = this.core.dims.zMax - 1e-3;
     for (const piece of pieces) {
+      // (round 87: a run reaching the window's top goes on above it — Streamer.outside, the band draws it: that
+      // comes down with it)
+      if (this.above) for (const c of piece) if (c.ivs.some((iv) => iv.z1 >= zTop)) c.ivs.push(...this.above.take(c.x, c.y));
       const b = this.falling.spawn(piece);
-      if (b) spawned.push(b);
-    }
-    r.bodies.forEach((cells, i) => {
-      // a cloud where it tore free (its lowest cells), to soften the moment
-      const z0 = Math.min(...cells.map((c) => c.z));
-      const foot = cells.filter((c) => c.z <= z0 + 1);
+      if (!b) continue;
+      // a cloud where it tore free (its foot: the columns with a run within a cell of its lowest), to soften the moment
+      let z0 = Infinity;
+      for (const c of b.cols) for (const iv of c.ivs) z0 = Math.min(z0, iv.z0);
+      const foot = b.cols.filter((c) => c.ivs.some((iv) => iv.z0 <= z0 + 1));
       const [fx, fy] = cellPos(Math.round(foot.reduce((s, c) => s + c.x, 0) / foot.length), Math.round(foot.reduce((s, c) => s + c.y, 0) / foot.length));
-      this.onDust?.(fx, fy, z0 + 0.5, Math.min(40, 10 + foot.length), Math.sqrt(foot.length) * 0.6 + 0.5, mainMat(cells));
-      this.onCollapse?.(fx, fy, z0 + 0.5, foot.length + r.crumble.length);
+      this.onDust?.(fx, fy, z0 + 0.5, Math.min(40, 10 + foot.length), Math.sqrt(foot.length) * 0.6 + 0.5, b.mat);
+      this.onCollapse?.(fx, fy, z0 + 0.5, foot.length + r.crumble.length + gave.length);
       this.stats.bodies++;
-      if (spawned[i]) this.touch(spawned[i], true);
-    });
-    if (r.bodies.length) this.timing.spawnedAt = performance.now();
-    return r.crumble.length > 0;
+      this.touch(b, true);
+    }
+    if (pieces.length) this.timing.spawnedAt = performance.now();
+    return r.crumble.length > 0 || gave.length > 0;
   }
 
   /**
