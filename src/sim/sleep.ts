@@ -15,6 +15,7 @@
 import { CHUNK } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { WorldEvent } from './globals';
+import { RIVERS } from './world-gpu';
 
 /** chunks the mask holds (common.wgsl: 64 words) */
 const MAX_CHUNKS = 2048;
@@ -34,7 +35,12 @@ const SETTLE_TICKS = 64;
 /** (perfopt, ?sleepmore=1) the surface and render-field passes skip sleeping chunks too (but drowsy ones): every
  *  chunk is drowsy for DROWSE_S after any slide, its derived textures moved */
 export const SLEEP_MORE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('sleepmore') === '1';
-export const SETTLE = typeof location === 'undefined' || new URLSearchParams(location.search).get('settle') !== '0';
+// (round 84: with ?rivers=table, off unless asked for — the atlas's land comes in at its steady state)
+export const SETTLE = (() => {
+  if (typeof location === 'undefined') return true;
+  const v = new URLSearchParams(location.search).get('settle');
+  return v === null ? RIVERS !== 'table' : v !== '0';
+})();
 /**
  * (round 83, the user: "all generators make a steady state so when we arrive nothing is simulated until the
  * player interacts with it or the session otherwise requests it to unfreeze") The player's whereabouts don't
@@ -43,6 +49,23 @@ export const SETTLE = typeof location === 'undefined' || new URLSearchParams(loc
  * ring round the player awake.
  */
 export const WAKE_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('wakenear') === '1';
+
+/**
+ * (round 84 — the user: "we can have a tolerance and decide when we are close enough to steady state to freeze and
+ * treat it as an animation only … the simulation can then take over until it finishes finding another near steady
+ * state then freeze things") ?settletol=x: a woken chunk stays awake past its time while its water still changes
+ * by more than x in a step (world-gpu waterChange), up to SETTLE_MAX_S; then it sleeps — its last flux the animation,
+ * a river's columns back to the atlas's table. 0: off (a woken chunk sleeps at its time). On by default with
+ * ?rivers=table.
+ */
+export const SETTLE_TOL = (() => {
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settletol');
+  return v !== null ? Number(v) : RIVERS === 'table' ? 0.01 : 0;
+})();
+/** the longest a chunk is kept awake for its water still settling (s) */
+const SETTLE_MAX_S = 60;
+/** how far past now an unsettled chunk is kept (s): longer than the level reads waterChange */
+const SETTLE_HOLD_S = 0.75;
 
 export class Sleep {
   /** per chunk, the time (s) it sleeps again */
@@ -59,6 +82,7 @@ export class Sleep {
   ) {
     if (cx * cy > MAX_CHUNKS) throw new Error(`sleep: ${cx} × ${cy} chunks, the mask holds ${MAX_CHUNKS}`);
     this.until = new Float32Array(cx * cy);
+    this.wokeAt = new Float32Array(cx * cy);
     this.drowseTick = new Float64Array(cx * cy);
   }
   /** per chunk, the sim's tick it's drowsy until (land come in: its derived fields made, then asleep) */
@@ -86,9 +110,34 @@ export class Sleep {
       for (let i = x0; i <= x1; i++) {
         const k = j * this.cx + i;
         if (this.filter && !this.filter[k]) continue;
+        if (this.until[k] <= now) this.wokeAt[k] = now;
         this.until[k] = Math.max(this.until[k], now + secs);
       }
   }
+
+  /** per chunk, when it last woke (s): SETTLE_MAX_S counts from it */
+  private wokeAt = new Float32Array(0);
+
+  /**
+   * (round 84, ?settletol) The water's most change in a step per chunk since the last read (world-gpu waterChange):
+   * a woken chunk whose time is nearly up and whose water still changes by more than the tolerance stays awake.
+   * Returns the chunks kept.
+   */
+  holdUnsettled(change: Float32Array, now: number, tol = SETTLE_TOL): number {
+    if (!(tol > 0)) return 0;
+    let kept = 0;
+    for (let k = 0; k < this.until.length; k++) {
+      if (this.until[k] <= now || this.until[k] > now + SETTLE_HOLD_S) continue;
+      if (change[k] > tol && now - this.wokeAt[k] < SETTLE_MAX_S) {
+        this.until[k] = now + SETTLE_HOLD_S;
+        kept++;
+      }
+    }
+    this.unsettled = kept;
+    return kept;
+  }
+  /** chunks kept awake at the last holdUnsettled */
+  unsettled = 0;
 
   /** land come in everywhere (the first window, a slide in z, a warp): woken to settle for `secs` — or, with
    *  ?settle=0, only drowsy (asleep at once, its layers carried through) */

@@ -34,6 +34,7 @@ import { settle, type Settlement } from './sites';
 import { buildWays, stampWays, type Ways } from './ways';
 import { timed } from '../gpu/cpustat';
 import { findRivers, NODE_WORDS } from './rivers';
+import { RIVERS } from '../sim/world-gpu';
 import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
 
@@ -157,7 +158,7 @@ interface Extra {
 const PARAM_BYTES = 144;
 /** forms.wgsl ColOut, and the runs a column holds (MR) */
 const COL_WORDS = 16;
-const COLG_BYTES = 76;
+const COLG_BYTES = 88;
 const MR = 24;
 const INST_BYTES = 64;
 const MAX_INST = 8192;
@@ -251,7 +252,7 @@ export class Atlas {
   settlement: Settlement = { sites: [], roads: [], ms: 0 };
   /** the roads and their crossings, graded, to be built into the columns (round 79, ways.ts) */
   ways: Ways = { points: [], lifts: [], bins: new Map(), counts: [], ms: 0 };
-  riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0 };
+  riverStats = { nodes: 0, lava: 0, waterfalls: 0, ms: 0, speed: [0, 0, 0] as [number, number, number], discharge: 0, pipeSlope: 0 };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
   /** the coarse world (round 71): what changes at the world's scale, out of sight */
@@ -284,7 +285,11 @@ export class Atlas {
 
   /** the WGSL every atlas kernel is built from, and its own */
   parts(...own: string[]): string[] {
-    return [noiseW, commonW, patternsW, composeW, ...own];
+    // (round 84: how the rivers are kept — sim/world-gpu.ts RIVERS; columns.wgsl, forms.wgsl)
+    const rivers = `const RIVER_TABLE: bool = ${RIVERS === 'table'};
+const RIVER_HOLD: bool = ${RIVERS === 'hold'};
+`;
+    return [noiseW, commonW, patternsW, composeW, rivers, ...own];
   }
 
   writeParams(e: Extra = {}, into = this.paramBuf): void {
@@ -379,12 +384,10 @@ export class Atlas {
     const hmacB = mk('hmac', N * 4);
     // every pipeline at once, off the main thread (D3D compiles are the slow part of making the atlas)
     const bm = makeModule(dev, 'atlas build', this.parts(buildW));
-    // (perfopt, ?riverhold=1: rivers hold their level — forms.wgsl RIVER_HOLD; off by default: it floods the banks)
-    const hold = new URLSearchParams(location.search).get('riverhold') === '1';
     // (perfopt, ?caves=mouths: only the caves that can open to the air — forms.wgsl LAZY_CAVES)
     const lazyCaves = new URLSearchParams(location.search).get('caves') === 'mouths';
+    // (perfopt's ?riverhold=1, round 84: ?rivers=hold — RIVER_HOLD in parts())
     const cm = makeModule(dev, 'atlas columns', this.parts(columnsW, `const LAZY_CAVES: bool = ${lazyCaves};
-const RIVER_HOLD: bool = ${hold};
 `, formsW));
     const K = (entry: string, spec: BindSpec, m = bm) => makeComputeAsync(dev, `atlas ${entry}`, m, { 0: 'uniform', ...spec }, entry);
     const [kBase, kInit, kHook, kJump, kCount, kClean, kKey, kSeedR, kSeedC, kStep, kOutR, kOutC, kMacro, colH, colF, fSeed, kSeedV, kOutV, kSeedL, kOutL] = await this.time('compile', () =>
@@ -537,7 +540,7 @@ const RIVER_HOLD: bool = ${hold};
       }
       return findRivers({ n, hmac: this.hmac, water, volcanic, regionOf: this.regionOf, sea: p.sea, worldW: this.worldW, worldH: this.worldH });
     });
-    this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, ms: rv.ms };
+    this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, ms: rv.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: rv.pipeSlope };
     this.riverNodes = rv.nodes;
     this.riverBuf.destroy();
     this.riverBuf = dev.createBuffer({ label: 'atlas rivers', size: (N + CRATER_BLOCK) * 4 + Math.max(rv.nodes.byteLength, NODE_WORDS * 4), usage: S });
@@ -1202,7 +1205,7 @@ const RIVER_HOLD: bool = ${hold};
     const outside: Interval[][] = new Array(N);
     const ground = new Float32Array(N);
     const grid = new ColumnGrid(dims);
-    const land = { water: new Float32Array(N), moisture: new Float32Array(N), vegetation: new Float32Array(N), contam: new Float32Array(N * 2), lava: new Float32Array(N * 4), lavaSpring: new Float32Array(N), waterSource: new Float32Array(N), surface: new Float32Array(N), structural: new Uint8Array(N) };
+    const land = { water: new Float32Array(N), moisture: new Float32Array(N), vegetation: new Float32Array(N), contam: new Float32Array(N * 2), lava: new Float32Array(N * 4), lavaSpring: new Float32Array(N), waterSource: new Float32Array(N), riverFlow: new Float32Array(N * 4), surface: new Float32Array(N), structural: new Uint8Array(N) };
     tiles.forEach(([tx, ty], k) => {
       const t = lands[k];
       for (let y = 0; y < T; y++)
@@ -1225,6 +1228,7 @@ const RIVER_HOLD: bool = ${hold};
           if (t.lavaSpring) land.lavaSpring[j] = t.lavaSpring[i];
           if (t.structural) land.structural[j] = t.structural[i];
           if (t.waterSource && top) land.waterSource[j] = t.waterSource[i];
+          if (t.riverFlow && top) land.riverFlow.set(t.riverFlow.subarray(i * 4, i * 4 + 4), j * 4);
         }
     });
     const map: MapData = {
@@ -1237,6 +1241,7 @@ const RIVER_HOLD: bool = ${hold};
       drift: new Float32Array(N),
       oilStored: new Float32Array(N * 2),
       waterSource: land.waterSource,
+      riverFlow: land.riverFlow,
       lava: land.lava,
       lavaSpring: land.lavaSpring,
       structural: land.structural,
@@ -1291,6 +1296,7 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): Re
   const lava = new Float32Array(N * 4);
   const lavaSpring = new Float32Array(N);
   const waterSource = new Float32Array(N);
+  const riverFlow = new Float32Array(N * 4);
   const ground = new Float32Array(N);
   const structural = new Uint8Array(N);
   const contam = new Float32Array(N * 2);
@@ -1325,6 +1331,8 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): Re
     moisture[i] = f[o + 4];
     vegetation[i] = f[o + 5];
     waterSource[i] = f[o + 12];
+    // (round 84: a river's column — its flow and depth at the reference wetness: world-gpu riverFlow)
+    if (f[o + 15] > 0) riverFlow.set([f[o + 13], f[o + 14], f[o + 3], f[o + 15]], i * 4);
     ground[i] = f[o + 11];
     const lv = f[o + 6];
     if (lv > 0) {
@@ -1332,5 +1340,5 @@ export function landFrom(c: AtlasColumns, x0: number, y0: number, K: number): Re
       lavaSpring[i] = lv;
     }
   }
-  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam, lava, lavaSpring, waterSource, structural, ground, gapsFilled };
+  return { x0, y0, w, h, cols, surface, water, moisture, vegetation, contam, lava, lavaSpring, waterSource, riverFlow, structural, ground, gapsFilled };
 }

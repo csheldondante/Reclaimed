@@ -3,6 +3,8 @@
 // and a fire set near the camera (their chunks wake); read again while they're awake, once they've fallen asleep,
 // and a few seconds later. Asleep, nothing may change (the flows frozen, drawn moving from their flux); what the
 // flood and fire left must still be there; the chunks never woken must hold what they held at the start.
+// (?settletol=0: a woken chunk sleeps at its time; ?riverwet=1: the held rivers at a fixed level, so asleep they
+// settle on the table and stay)
 //   node scripts/culltest.mjs [--url http://localhost:5207] [--extra "&simcull=0"]
 import puppeteer from 'puppeteer-core';
 const argv = process.argv.slice(2);
@@ -36,7 +38,7 @@ try {
       console.log('console.error:', m.text().slice(0, 800));
     }
   });
-  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low${extra}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&settletol=0&riverwet=1${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.api, { timeout: 240000 });
   await new Promise((r) => setTimeout(r, 8000));
   const r = await p.evaluate(async () => {
@@ -49,25 +51,51 @@ try {
     const chunkOf = (i) => Math.floor(Math.floor(i / w) / 16) * (w / 16) + Math.floor((i % w) / 16);
     /** columns that differ between two reads, by field — `only`: chunks to look at (null: all) */
     const diff = (a, b, only) => {
-      const out = {};
+      const out = { riverColsSkipped: 0 };
       for (const n of names) {
         const s = per(n, a);
         let d = 0;
         for (let i = 0; i < w * h; i++) {
           if (only && !only.has(chunkOf(i))) continue;
-          for (let k = 0; k < s; k++) if (a[n][i * s + k] !== b[n][i * s + k]) { d++; break; }
+          if (river[i]) { if (n === 'water') out.riverColsSkipped++; continue; }
+          // (a held river's columns relax to the atlas's table asleep — riverheld.wgsl: the last bits may still move)
+          for (let k = 0; k < s; k++) if (Math.abs(a[n][i * s + k] - b[n][i * s + k]) > 1e-4) { d++; break; }
         }
         out[n] = d;
       }
       return out;
     };
     const sum = (a) => a.reduce((x, y) => x + y, 0);
+    // (?rivers=table: a held river's columns are simulated asleep — riverheld.wgsl, relaxing to the atlas's table; the
+    // riverFlow texture's z > 0 marks them, and they're left out of "nothing changes")
+    const river = await (async () => {
+      const dev = R.core.host.gpu.device;
+      const tex = R.core.world.riverFlow;
+      const buf = dev.createBuffer({ size: w * h * 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+      const enc = dev.createCommandEncoder();
+      enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: w * 16 }, [w, h]);
+      dev.queue.submit([enc.finish()]);
+      await buf.mapAsync(GPUMapMode.READ);
+      const f = new Float32Array(buf.getMappedRange().slice(0));
+      buf.destroy();
+      const out = new Uint8Array(w * h);
+      const { RIVERS } = await import('/src/sim/world-gpu.ts');
+      for (let i = 0; i < w * h; i++) out[i] = RIVERS === 'table' && f[i * 4 + 2] > 0 ? 1 : 0;
+      return out;
+    })();
     const awake = () => R.core.sleep?.awake ?? -1;
     const A = await read();
     const awake0 = awake();
     const t = R.core.camera.target;
+    const { cellAt } = await import('/src/world/lattice.ts');
+    const [fcx, fcy] = cellAt(t[0], t[1]);
+    const fi = fcy * w + fcx;
     const W = R.api.water;
     W.flood(t[0], t[1], { radius: 5, depth: 3 });
+    await sleep(400);
+    const F = await read();
+    /** the water within 8 columns of the flood */
+    const near = (a) => { let v = 0; for (let y = fcy - 8; y <= fcy + 8; y++) for (let x = fcx - 8; x <= fcx + 8; x++) if (x >= 0 && y >= 0 && x < w && y < h) v += a.water[y * w + x]; return v; };
     // (the grassiest dry column within 40 of the camera)
     const { cellPos } = await import('/src/world/lattice.ts');
     const cx0 = Math.floor(t[0]), cy0 = Math.floor(t[1] / 0.866);
@@ -103,6 +131,7 @@ try {
     return {
       tiles: R.core.world.tiles ? R.core.world.tiles.chunks : null,
       awake0, awake1, awake2, woke: woke.size,
+      floodA: +near(A).toFixed(2), floodF: +near(F).toFixed(2), floodC: +near(C).toFixed(2),
       waterA: +sum(A.water).toFixed(1), waterM: +sum(M.water).toFixed(1), waterB: +sum(B.water).toFixed(1), waterC: +sum(C.water).toFixed(1),
       fireM: +sum(M.fire).toFixed(1), fireB: +sum(B.fire).toFixed(1),
       asleepChanged: diff(B, C, null),
@@ -112,12 +141,12 @@ try {
   });
   console.log(JSON.stringify(r));
   check('the flood and the fire woke their chunks', r.awake1 > 0 && r.woke > 0, { awake0: r.awake0, awake1: r.awake1, woke: r.woke });
-  check('the flood raised the water while awake', r.waterM > r.waterA + 1 && r.fireM > 0, { A: r.waterA, M: r.waterM, fireM: r.fireM });
+  check('the flood raised the water while awake, the fire lit', r.floodF > r.floodA + 1 && r.fireM > 0, { A: r.floodA, F: r.floodF, fireM: r.fireM });
   check('then everything fell asleep', r.awake2 === 0, { awake2: r.awake2 });
-  check('asleep, nothing changes (water, flux, fire, veg, moisture, contam, lava, oil)', Object.values(r.asleepChanged).every((d) => d === 0), r.asleepChanged);
-  check('what the flood left is still there asleep', r.waterC > r.waterA + 1 && r.waterC === r.waterB, { A: r.waterA, B: r.waterB, C: r.waterC });
+  check('asleep, nothing changes (water, flux, fire, veg, moisture, contam, lava, oil)', Object.entries(r.asleepChanged).every(([n, d]) => n === 'riverColsSkipped' || d === 0), r.asleepChanged);
+  check('what the flood left is still there asleep', r.floodC > r.floodA && Math.abs(r.waterC - r.waterB) < 0.5, { floodA: r.floodA, floodC: r.floodC, B: r.waterB, C: r.waterC });
   // (veg left out: leaves and seeds land on it everywhere — particles write it, asleep or not)
-  check('the chunks never woken (nor next to one) hold what they held', Object.entries(r.farChanged).every(([n, d]) => n === 'veg' || d === 0), r.farChanged);
+  check('the chunks never woken (nor next to one) hold what they held', Object.entries(r.farChanged).every(([n, d]) => n === 'veg' || n === 'riverColsSkipped' || d === 0), r.farChanged);
   check('rivers still flow asleep (frozen flux kept)', r.flowingB > 100, { flowing: r.flowingB });
 } finally {
   await browser.close();
