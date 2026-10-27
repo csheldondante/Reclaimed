@@ -1117,8 +1117,15 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
   /** columns that had more intervals than the window holds (their smallest gaps filled: landFrom) */
   gapsFilled = 0;
 
+  /**
+   * (round 88) What's built on land as it's made: called with each region's land after the ways (the
+   * settlements' buildings, fields and walls: src/settle/settlements.ts). `raw` lands skip them (the ground a
+   * settlement is planned on).
+   */
+  readonly landHooks: ((land: RegionLand, x0: number, y0: number, w: number, h: number, spread: boolean) => Promise<void>)[] = [];
+
   /** A region's land for the streamer (world/streamgen.ts RegionLand), in world z (the streamer cuts it at its window). */
-  async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity, spread = false): Promise<RegionLand> {
+  async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity, spread = false, raw = false): Promise<RegionLand> {
     if (y0 & 1) throw new Error('a region starts on an even row');
     const c = await this.columns(x0, y0, w, h, spread);
     const land = timed('land', () => landFrom(c, x0, y0, K));
@@ -1141,6 +1148,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
         }
     // the roads, their crossings and the sites' plazas (round 79, ways.ts)
     this.waysStamped += timed('ways', () => stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH));
+    if (!raw) for (const f of this.landHooks) await f(land, x0, y0, w, h, spread);
     return land;
   }
 

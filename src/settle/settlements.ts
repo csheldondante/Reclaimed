@@ -1,0 +1,439 @@
+// The settlements system (round 88; docs/SYSTEMS.md systems 3, 6 and 12): every atlas site a Settlement
+// record (the contract the city game will edit), realised as land arrives and lived in near the player.
+//  - Atlas scale: the records from the world wiki (ids, names, realms: records.ts); their stores go on by
+//    their rates while nobody's there (advance).
+//  - Arrival: when a region of a settlement's box is first made, the settlement is planned once (plan.ts, on
+//    the raw ground of its box: deterministic, ~10 ms) and its columns are stamped into that region's land
+//    (Atlas.landHooks) — buildings, walls, the plaza, fields, the camp — so the streamer freezes and thaws
+//    them like any land, and every system (water, fire, collapse, agents' surfaces) sees real matter.
+//  - Play: the settlement nearest the camera inside the window comes to life (life.ts) — its workers and
+//    guards and its camp's raiders as units (units/agent-units.ts on the GPU agents) — and goes back to its
+//    rates when it leaves.
+// API (window.reclaimed.settlements): near(at, r), settlement(id), all(), live(), raid(id), units (Units),
+// events built / died / raided. Positions in a record are world units (atlas x, y); `toWindow`/`toWorld` turn
+// them into the window's (the units' and the world API's).
+import type { Settlement } from '../api/contracts/settlement';
+import type { Instance } from '../api/contracts/recipe';
+import type { RegionId } from '../api/contracts/world';
+import type { UnitView, UnitId, V2 } from '../api/contracts/units';
+import { MemoryDiplomacy } from '../api/contracts/diplomacy-memory';
+import type { Atlas } from '../atlas/atlas';
+import type { RegionLand } from '../world/streamgen';
+import { lowerTop, type Interval } from '../world/layout';
+import { ROW_H } from '../world/lattice';
+import { atlasFacts } from '../gm/atlas-facts';
+import { buildWiki, type WorldWiki } from '../gm/wiki';
+import { recordsFrom, type SettlementSeed } from './records';
+import { planSettlement, type SettlementPlan } from './plan';
+import { SettlementLife, type LiveSite, type LiveSpot, type RaidOutcome } from './life';
+import { BUILT_V, FIELD_CELL, type SiteSpec } from './plan';
+import type { TownIO } from '../build/town';
+import { derive } from '../api/contracts/compose';
+import { catalogue } from './catalogue';
+import type { AgentUnits } from '../units/agent-units';
+import { timed } from '../gpu/cpustat';
+
+const T = 64;
+/** a game day (s): the stores' rates are a day's */
+export const DAY_S = 600;
+
+export interface SettlementEvents {
+  /** a settlement realised (its land came in the first time): buildings, ms */
+  built: ((s: Settlement, info: { buildings: number; ms: number; house?: string }) => void)[];
+  /** one of its people died (the unit, what killed it) */
+  died: ((s: Settlement, u: UnitView, by: UnitId | string | null) => void)[];
+  /** a raid on it ended */
+  raided: ((s: Settlement, outcome: RaidOutcome, losses: Record<string, number>) => void)[];
+}
+
+/** what play gives the system: the window, the units, the trees */
+export interface LiveIO {
+  units: AgentUnits;
+  /** the window's world origin (cells, rows) and size */
+  origin(): [number, number];
+  dims: { w: number; h: number };
+  /** where the camera looks (window) */
+  focus(): V2;
+  trees(at: V2, r: number): V2[];
+  /** fell the tree there: the logs it makes (0: none stood there) */
+  fell(at: V2): Promise<number>;
+  /** the ground, exactly (the world API's terrain.take / put) */
+  take(at: V2, amount: number): Promise<{ material: string; amount: number }>;
+  put(at: V2, material: string, amount: number): Promise<number>;
+  /** a town's io over the window's columns (what a house going up is stamped through) */
+  townIO: TownIO;
+  /** bumped as the window moves */
+  epoch(): number;
+  /** the ground's heights are in at a window point */
+  ready(at: V2): boolean;
+  /** how many of its people may be out at once (the tier's budget) */
+  budget: number;
+}
+
+export class Settlements {
+  readonly wiki: WorldWiki;
+  readonly seeds: SettlementSeed[];
+  private byId = new Map<string, SettlementSeed>();
+  private recs = new Map<string, Settlement>();
+  private plans = new Map<string, Promise<SettlementPlan>>();
+  private done = new Map<string, SettlementPlan>();
+  readonly things = new Map<string, Instance>();
+  readonly diplomacy = new MemoryDiplomacy();
+  readonly events: SettlementEvents = { built: [], died: [], raided: [] };
+  private cols: number;
+  private rows: number;
+  /** the ms the records took, and each plan's */
+  stats = { recordsMs: 0, planned: 0, planMs: 0, stamped: 0, rawTiles: 0 };
+  /** the live one */
+  life: SettlementLife | null = null;
+  private io: LiveIO | null = null;
+  /** the units in play (the Units contract), once playing */
+  get units(): AgentUnits | null {
+    return this.io?.units ?? null;
+  }
+  private clock = 0;
+  private lastAdvance = 0;
+
+  constructor(private atlas: Atlas) {
+    const t0 = performance.now();
+    this.wiki = buildWiki(atlasFacts(atlas));
+    this.seeds = recordsFrom(this.wiki, atlas.p.seed);
+    for (const s of this.seeds) {
+      this.byId.set(s.rec.id, s);
+      this.recs.set(s.rec.id, s.rec);
+    }
+    this.cols = atlas.p.cols;
+    this.rows = atlas.p.rows;
+    // rights: a realm holds land and mineral rights over its settlements' regions; a deal or two with a
+    // neighbour's (diplomacy.ts — what units ask before they mine)
+    const own = new Map<string, Set<RegionId>>();
+    for (const s of this.seeds) if (s.rec.faction) (own.get(s.rec.faction) ?? own.set(s.rec.faction, new Set()).get(s.rec.faction)!).add(s.rec.region);
+    for (const [f, regions] of own) {
+      const near = new Set<RegionId>(regions);
+      for (const r of regions) for (const nb of this.wiki.regions[r]?.neighbours ?? []) if (this.wiki.regions[nb]?.land && (nb * 2654435761) % 5 < 2) near.add(nb);
+      this.diplomacy.agree({ id: `${f}:land`, kind: 'land-rights', parties: [{ faction: f }, { faction: f }], where: { regions: [...regions] }, covers: ['settle', 'farm', 'fell', 'build'], since: { run: 0 }, status: 'active', cause: { by: 'world' } });
+      this.diplomacy.agree({ id: `${f}:minerals`, kind: 'mineral-rights', parties: [{ faction: f }, { faction: f }], where: { regions: [...near] }, covers: ['stone', 'ore'], share: 1, since: { run: 0 }, status: 'active', cause: { by: 'world' } });
+    }
+    this.stats.recordsMs = +(performance.now() - t0).toFixed(1);
+    atlas.landHooks.push((land, x0, y0, w, h, spread) => this.onLand(land, x0, y0, w, h, spread));
+  }
+
+  // ---- the API ---------------------------------------------------------------------------------------
+
+  settlement(id: string): Settlement | null {
+    return this.recs.get(id) ?? null;
+  }
+
+  all(): Settlement[] {
+    return [...this.recs.values()];
+  }
+
+  /** the settlements within `radius` (world units) of a world point, nearest first */
+  near(at: V2, radius = 400): Settlement[] {
+    return this.all()
+      .map((s) => [this.dist(s.at, at), s] as const)
+      .filter(([d]) => d <= radius)
+      .sort((a, b) => a[0] - b[0])
+      .map(([, s]) => s);
+  }
+
+  /** a settlement's plan, once its land has come in (grids, columns, spots: the debug view's) */
+  plan(id: string): SettlementPlan | null {
+    return this.done.get(id) ?? null;
+  }
+
+  /** the live settlement, if any */
+  live(): Settlement | null {
+    return this.life?.rec ?? null;
+  }
+
+  /** send the live settlement's camp on it (false: no camp, or a raid's on) */
+  raid(id?: string): boolean {
+    if (!this.life || (id && this.life.rec.id !== id)) return false;
+    return this.life.startRaid();
+  }
+
+  /** world (atlas units) → window, and back */
+  toWindow(at: V2): V2 {
+    if (!this.io) throw new Error('settlements: not in play');
+    const [ox, oy] = this.io.origin();
+    const W = this.cols;
+    const H = this.rows * ROW_H;
+    const wrap = (d: number, n: number) => d - Math.round(d / n) * n;
+    return [wrap(at[0] - ox, W), wrap(at[1] - oy * ROW_H, H)];
+  }
+
+  toWorld(at: V2): V2 {
+    if (!this.io) throw new Error('settlements: not in play');
+    const [ox, oy] = this.io.origin();
+    return [at[0] + ox, at[1] + oy * ROW_H];
+  }
+
+  // ---- arrival ---------------------------------------------------------------------------------------
+
+  private dist(a: V2, b: V2): number {
+    const W = this.cols;
+    const H = this.rows * ROW_H;
+    const dx = Math.abs(a[0] - b[0]) % W;
+    const dy = Math.abs(a[1] - b[1]) % H;
+    return Math.hypot(Math.min(dx, W - dx), Math.min(dy, H - dy));
+  }
+
+  private mod(v: number, n: number): number {
+    return ((v % n) + n) % n;
+  }
+
+  /** the settlements whose box meets a region's */
+  private meeting(x0: number, y0: number, w: number, h: number): SettlementSeed[] {
+    const out: SettlementSeed[] = [];
+    for (const s of this.seeds) {
+      const b = s.box;
+      const dx = this.mod(x0 - b.x0, this.cols);
+      const dy = this.mod(y0 - b.y0, this.rows);
+      const meetX = dx < b.w || this.mod(b.x0 - x0, this.cols) < w;
+      const meetY = dy < b.h || this.mod(b.y0 - y0, this.rows) < h;
+      if (meetX && meetY) out.push(s);
+    }
+    return out;
+  }
+
+  private async onLand(land: RegionLand, x0: number, y0: number, w: number, h: number, spread: boolean): Promise<void> {
+    for (const s of this.meeting(x0, y0, w, h)) {
+      const p = await this.planOf(s, spread);
+      timed('stamp', () => this.stamp(p, s, land, x0, y0, w, h));
+    }
+  }
+
+  private planOf(s: SettlementSeed, spread: boolean): Promise<SettlementPlan> {
+    let p = this.plans.get(s.rec.id);
+    if (!p) {
+      p = this.makePlan(s, spread);
+      this.plans.set(s.rec.id, p);
+    }
+    return p;
+  }
+
+  private async makePlan(s: SettlementSeed, spread: boolean): Promise<SettlementPlan> {
+    const { box } = s;
+    const N = box.w * box.h;
+    const ground = new Float32Array(N);
+    const water = new Float32Array(N);
+    const top = new Uint8Array(N);
+    const veg = new Float32Array(N);
+    const tiles: [number, number][] = [];
+    for (let ty = 0; ty < box.h; ty += T) for (let tx = 0; tx < box.w; tx += T) tiles.push([tx, ty]);
+    const lands = await Promise.all(tiles.map(([tx, ty]) => this.atlas.regionLand(box.x0 + tx, box.y0 + ty, T, T, Infinity, spread, true)));
+    this.stats.rawTiles += tiles.length;
+    tiles.forEach(([tx, ty], k) => {
+      const l = lands[k];
+      for (let y = 0; y < T; y++)
+        for (let x = 0; x < T; x++) {
+          const i = y * T + x;
+          const j = (ty + y) * box.w + tx + x;
+          const col = l.cols[i];
+          ground[j] = col.length ? col[col.length - 1].z1 : 0;
+          water[j] = l.water[i];
+          veg[j] = l.vegetation[i];
+          top[j] = col.length ? col[col.length - 1].mat : 0;
+        }
+    });
+    const plan = timed('plan', () => planSettlement({ ...s, ground, water, top, veg, sea: this.atlas.p.sea }));
+    for (const [k, t] of plan.things) this.things.set(k, t);
+    if (plan.camp) this.recs.set(plan.camp.id, plan.camp);
+    this.done.set(s.rec.id, plan);
+    this.stats.planned++;
+    this.stats.planMs += plan.ms;
+    for (const f of this.events.built) f(s.rec, { buildings: s.rec.buildings.length, ms: plan.ms });
+    return plan;
+  }
+
+  /** the plan's columns that fall in this region, into its land (world z) */
+  private stamp(p: SettlementPlan, s: SettlementSeed, land: RegionLand, x0: number, y0: number, w: number, h: number): void {
+    const b = s.box;
+    for (let y = 0; y < h; y++) {
+      const ly = this.mod(y0 + y - b.y0, this.rows);
+      if (ly >= b.h) continue;
+      for (let x = 0; x < w; x++) {
+        const lx = this.mod(x0 + x - b.x0, this.cols);
+        if (lx >= b.w) continue;
+        const cp = p.columns.get(ly * b.w + lx);
+        if (!cp) continue;
+        const i = y * w + x;
+        const col = land.cols[i];
+        // (what stands above the ground there goes; the plan's goes on it)
+        const keep: Interval[] = [];
+        for (const iv of col) {
+          if (iv.z0 >= cp.lo - 1e-3) continue;
+          keep.push(iv.z1 > cp.lo ? { ...iv, z1: cp.lo } : iv);
+        }
+        // (a well's shaft, a quarry's benches: the ground let down; an adit: a gap through it, rock over it)
+        if (cp.cut) lowerTop(keep, cp.cut);
+        if (cp.hole) {
+          const [h0, h1] = cp.hole;
+          for (let k = keep.length - 1; k >= 0; k--) {
+            const iv = keep[k];
+            if (iv.z1 <= h0 || iv.z0 >= h1) continue;
+            const parts: Interval[] = [];
+            if (iv.z0 < h0) parts.push({ ...iv, z1: h0 });
+            if (iv.z1 > h1) parts.push({ ...iv, z0: h1 });
+            keep.splice(k, 1, ...parts);
+          }
+        }
+        for (const iv of cp.ivs) keep.push({ z0: iv.z0, z1: iv.z1, mat: iv.mat });
+        land.cols[i] = keep;
+        land.surface[i] = keep.length ? keep[keep.length - 1].z1 : 0;
+        if (cp.bare) land.vegetation[i] = 0;
+        this.stats.stamped++;
+      }
+    }
+  }
+
+  // ---- play ------------------------------------------------------------------------------------------
+
+  /** start living: the level hands over the window and the units */
+  play(io: LiveIO): void {
+    this.io = io;
+    io.units.died.push((u, by) => {
+      const s = u.settlement ? this.recs.get(u.settlement) : undefined;
+      if (!s) return;
+      const p = s.people.find((x) => x.role === u.role);
+      if (p && p.count > 0) p.count--;
+      for (const f of this.events.died) f(s, u, by);
+    });
+  }
+
+  /** the spots of a plan in window coordinates */
+  private liveSpots(p: SettlementPlan, s: SettlementSeed): LiveSpot[] {
+    const ox = s.box.x0;
+    const oy = s.box.y0 * ROW_H;
+    return p.spots.map((sp) => ({ ...sp, w: this.toWindow([sp.at[0] + ox, sp.at[1] + oy]) }));
+  }
+
+  /** its houses to build, in window coordinates (the specs themselves: progress is kept on them) */
+  private liveSites(p: SettlementPlan, s: SettlementSeed): LiveSite[] {
+    const ox = s.box.x0;
+    const oy = s.box.y0 * ROW_H;
+    const w = (q: V2): V2 => this.toWindow([q[0] + ox, q[1] + oy]);
+    return p.sites.map((spec) => ({ spec, door: w(spec.door), poly: spec.poly.map((q) => w(q as V2)) }));
+  }
+
+  /**
+   * The settlement's field a step on, fed by its grain (a step eats a little of it; a hungry town doesn't
+   * grow); when nothing is being built, the lot the field is strongest on becomes the next house to build.
+   */
+  private grow(p: SettlementPlan, s: SettlementSeed): void {
+    const rec = s.rec;
+    const grain = rec.stores.grain;
+    const people = rec.people.filter((x) => !x.hostile).reduce((a, x) => a + x.count, 0);
+    if (!grain || grain.stock < people * 0.5) return;
+    grain.stock -= people * 0.05;
+    p.field.step({ rate: 0.22, spread: 0.08, colonise: 0.3 }, 1);
+    const pending = p.sites.some((x) => !x.finished);
+    if (pending || !p.free.length) return;
+    for (const f of p.free) f.v = p.field.at(f.centre[0] / FIELD_CELL, f.centre[1] / FIELD_CELL).v;
+    p.free.sort((a, b) => b.v - a.v);
+    const next = p.free[0];
+    if (next.v < BUILT_V * 0.6) return;
+    p.free.shift();
+    const id = `${rec.id}:site${p.sites.length}`;
+    p.sites.push({ id, poly: next.poly, storeys: Math.max(1, Math.min(2, s.civ.profile.builds.storeys[1])), door: next.door, wall: s.civ.look.wall, roof: s.civ.look.roof });
+    rec.needs.push({ kind: 'build', at: [next.door[0] + s.box.x0, next.door[1] + s.box.y0 * ROW_H], ref: id, priority: 2 });
+  }
+
+  /** a house finished in play: its Instance and Building on the record; the event */
+  private finished(s: SettlementSeed, site: SiteSpec): void {
+    const rec = s.rec;
+    const [x, y] = [site.door[0] + s.box.x0, site.door[1] + s.box.y0 * ROW_H];
+    const room = `${site.id}:room0`;
+    const hearth = `${site.id}:fitting0`;
+    const owner = { settlement: rec.id, faction: rec.faction ?? undefined };
+    this.things.set(site.id, { id: site.id, kind: 'house', material: s.civ.lookMat.wall, condition: 1, owner, place: { in: 'world', region: rec.region, at: [x, y, 0] }, parts: [{ slot: 'room', thing: room }, { slot: 'fitting', thing: hearth }], history: [{ what: 'made', run: 0, by: rec.faction ? { faction: rec.faction } : undefined, note: `built by its builders from the quarry's stone and the woods' logs` }] });
+    this.things.set(room, { id: room, kind: 'room', parts: [], condition: 1, owner, place: { in: 'thing', thing: site.id, slot: 'room' }, history: [] });
+    this.things.set(hearth, { id: hearth, kind: 'hearth', parts: [], condition: 1, owner, place: { in: 'thing', thing: site.id, slot: 'fitting' }, history: [] });
+    const use = derive(catalogue(this.things), site.id).tags.filter((t) => t === 'housing');
+    rec.buildings.push({ id: site.id, thing: site.id, grid: rec.grids[0].id, cells: [], storeys: site.storeys, use });
+    rec.needs = rec.needs.filter((j) => j.ref !== site.id);
+    site.finished = true;
+    for (const f of this.events.built) f(rec, { buildings: rec.buildings.length, ms: 0, house: site.id });
+  }
+
+  /** whether a settlement may mine at a window point (its own region, or mineral rights there) */
+  private mayMine(s: Settlement, at: V2): boolean {
+    const [wx, wy] = this.toWorld(at);
+    const region = this.regionAt(wx, wy);
+    if (region === s.region) return true;
+    if (!s.faction) return false;
+    return this.diplomacy.rights(region, [wx, wy]).some((a) => a.kind === 'mineral-rights' && a.status === 'active' && 'faction' in a.parties[0] && a.parties[0].faction === s.faction);
+  }
+
+  regionAt(x: number, y: number): RegionId {
+    const a = this.atlas;
+    const n = a.p.n;
+    const tx = this.mod(Math.floor((x / a.worldW) * n), n);
+    const ty = this.mod(Math.floor((y / a.worldH) * n), n);
+    return a.regionOf[ty * n + tx];
+  }
+
+  /** each frame: the stores' rates, which settlement's alive */
+  update(dt: number): void {
+    this.clock += dt;
+    // (atlas scale: every settlement not in play goes on by its rates, a few times a minute)
+    if (this.clock - this.lastAdvance > 10) {
+      const days = (this.clock - this.lastAdvance) / DAY_S;
+      this.lastAdvance = this.clock;
+      for (const s of this.recs.values()) {
+        if (s === this.life?.rec) continue;
+        for (const st of Object.values(s.stores)) st.stock = Math.max(0, st.stock + st.rate * days);
+      }
+    }
+    const io = this.io;
+    if (!io) return;
+    // the nearest planned settlement inside the window (a margin in from its edge) is the live one
+    const f = io.focus();
+    const fw = this.toWorld(f);
+    let best: SettlementSeed | null = null;
+    let bd = Infinity;
+    for (const s of this.seeds) {
+      if (!this.done.has(s.rec.id)) continue;
+      const d = this.dist(s.rec.at, fw);
+      const [wx, wy] = this.toWindow(s.rec.at);
+      const m = 40;
+      if (wx < m || wy < m || wx > io.dims.w - m || wy > io.dims.h * ROW_H - m) continue;
+      if (d < bd) {
+        bd = d;
+        best = s;
+      }
+    }
+    if (this.life && this.life.rec.id !== best?.rec.id) {
+      this.life.dispose();
+      this.life = null;
+    }
+    if (best && !this.life) {
+      const s = best;
+      const p = this.done.get(s.rec.id)!;
+      this.life = new SettlementLife(s.rec, p.camp, {
+        units: io.units,
+        spots: () => this.liveSpots(p, s),
+        trees: io.trees,
+        fell: io.fell,
+        take: io.take,
+        put: io.put,
+        townIO: io.townIO,
+        dims: io.dims,
+        epoch: io.epoch,
+        ready: io.ready,
+        sites: () => this.liveSites(p, s),
+        finished: (site) => this.finished(s, site),
+        grow: () => this.grow(p, s),
+        deliver: (good, n) => {
+          const st = (s.rec.stores[good] ??= { stock: 0, rate: 0 });
+          st.stock += n;
+        },
+        mayMine: (at) => this.mayMine(s.rec, at),
+      }, io.budget, (outcome, losses) => {
+        for (const f of this.events.raided) f(s.rec, outcome, losses);
+      });
+    }
+    this.life?.update(dt);
+  }
+}

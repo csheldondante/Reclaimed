@@ -6497,4 +6497,59 @@ scripts/towertest.mjs (below):
   it into the physics voxels (phys.wgsl), which bring it down — 15 taps, no integrity piece (the physics' own
   path; not this system's). GIF: C:/Projects/shots86/tall-tower.gif (the 70-tall tower cut through, its top
   coming down on its stub).
->>>>>>> origin/collapse
+
+
+---
+
+## 2026-10-27 — rounds 88–89 (session 5, `settlements`): settlements with agents working round them
+
+Why: the user, round 88: "I would like to see settlements with agents working around them"; round 89: quarry,
+felling, hauling and building as the first jobs, farming and houses bringing more people, "vegetation and
+settlements should work similarly … fields with intensity and maybe some material", settlements by rivers and
+resources, quarries and mines "built into the ground/hills in ways that look cool". Round 83 asked that the
+settlements use the city game's data structure; round 85 gave the grids (Townscaper's, Voronoi on contours,
+Bulwark's rings).
+
+- **Records** (src/settle/records.ts). The wiki is built live from the atlas (`buildWiki(atlasFacts(atlas))`, the
+  same code scripts/worldwiki.mjs runs), so a settlement's id (`s<n>`), name, region and realm are the ones the
+  GM's stories use. A civ profile by the realm's era and the site's setting (data/recipes/civs.json); seed 1 has
+  only medieval realms, so where the Ashwrights (industrial) work the land a town is a foundry town, and half the
+  cliff cities are the keepers of old law's — until the GM's eras say otherwise. A quarter stand over an older
+  ruin; raiders camp by some (the region's hostile power when there is one, else outlaws).
+- **Grids** (src/settle/grids.ts, R6). Every style makes lots; every lot is cut the same way (a ring of yard
+  quads, then the inset polygon centre-to-midpoints), so each district is a `CellGrid` the existing `Town` builds on
+  — walls, floors, doors, windows and roofs from the neighbours, unchanged. Yards between lots are the alleys the
+  agents walk. `Town` now takes a grid (the interface is TownGrid's own members).
+- **Arrival** (Atlas.landHooks, plan.ts). The first region of a settlement's box to be made plans it on the raw
+  ground of the whole box, once; each region of the box is stamped from the plan as it comes. So the buildings are
+  real matter in the columns from the first frame (water, fire, collapse and the agents' surfaces all see them),
+  frozen and thawed with the land, and the same whichever region arrives first (settletest: the same seed plans
+  the same columns). Planning all 140 sites on made-up ground: ~21 ms each in Node (the growth field and the
+  quarry's search are most of it).
+- **The field** (src/settle/field.ts, round 89). A settlement is a growth field over its box: intensity and a kind
+  (its style) per 3-unit cell, the ecology pass's shape (grow toward suitability, spread along what suits, colonise
+  from strong neighbours, a stronger kind takes over where it suits better). Suitability: flat dry ground, more
+  near water, rock and the woods. Grown from the middle for as long as the town has stood (by its size); civic
+  buildings at the middle, houses on the lots where it's past 0.35, taller where it's stronger; the next two lots
+  are houses still to build, the rest wait for it. In play it steps every 8 s while the grain lasts, and opens the
+  strongest free lot when nothing's being built.
+- **Quarries.** A terraced pit (benches every 2.2 cells in, a ramp down one side, a crane at the rim) or, where a
+  hill rises within 10 cells, an adit: the forecourt cut level, a tunnel 3 wide and 2.9 high under the rock that
+  stays over it (ColumnPlan.hole), timber posts at its mouth; a spoil heap of rubble beside either.
+- **Units** (src/units/agent-units.ts): the runstory branch's `Units` contract on the GPU agents. Jobs are groups
+  and fields; per-unit goals share three goal fields by where. Hostiles hunt what's in their sight (the agents'
+  targets), the GPU's swings come back as damage; guards strike on the CPU. The agents needed: 12 fields (the
+  rounds want one a leg), 48 seeds, `spawn({ hp })`, a work pose (`workPose`: the figure bent forward, a tool in
+  front — the user wanted to see them "look when working"), unseeded fields cleared once instead of rewritten
+  every sweep, and an idle pass that does nothing (no units, nothing seeded: no peel, no sweeps — the atlas level
+  paid for the peel with nobody on it).
+- **Life** (src/settle/life.ts). Each role a round, each leg a field: miners take the quarry's floor exactly and
+  heap it, woodcutters fell real trees and heap the logs, builders carry from the heaps to the site where every
+  1.2 cells³ a block stands (a `Town` over the site's lot in window coordinates through the town stamp; each
+  cell's floor fixed relative to the door's ground, so the grid can be made again when the window slides without
+  the house jumping onto its own roof). A finished house is a Building + Instance and four more people. Farmers
+  carry sheaves to the granary. A raid: the camp marches on the plaza, workers run home, the guards meet it.
+- Tests: scripts/settletest.mjs (the planner through its API, no browser: all four grid styles used, every
+  settlement with homes, a hall, a store, fields; ruins adapted with their history; nothing built in a pond; the
+  same seed the same plan; `--png` top views), scripts/settlementtest.mjs (in play: the town, its people, the cost,
+  the raid; screenshots and GIFs).

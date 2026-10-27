@@ -12,6 +12,24 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Rounds 88–89 (2026-10-27, session 5, `settlements`) — settlements with agents working round them (DECISIONS rounds 88, 89)
+
+| id | item | size | status |
+|---|---|---|---|
+| ST1 | Settlement records from the atlas's sites (the wiki's ids and names), a civ profile each by era and setting, a camp of raiders near some, the box they're planned over; stores advancing by rates out of play | M | done (this commit; src/settle/records.ts, settlements.ts) |
+| ST2 | Districts on overlay grids: radial (rings and spokes) and contour-Voronoi beside the irregular and orthogonal ones, every style cut into lots → yard and footprint quads (a CellGrid the town builds on) | M | done (this commit; src/settle/grids.ts; R6) |
+| ST3 | Realised as land arrives (Atlas.landHooks): buildings as Building + Instance (derived use), storeys, the civ's materials, the plaza's well and stalls, the wall with gates and towers, fields, a ruined tower adapted into homes, the camp's tents; deterministic from the seed and the raw ground | M | done (this commit; plan.ts) |
+| ST4 | The Units contract (runstory's) on the GPU agents: jobs as groups and shared fields, hostiles hunting what's in sight, guards striking, swing events as damage, died/hurt/noticed | M | done (this commit; src/units/agent-units.ts) |
+| ST5 | Workers near the player (round 89's first jobs): miners dig the quarry (exact takes) and heap it, woodcutters fell real trees and heap the logs, builders carry from the heaps to a house going up block by block (a finished house is a Building + Instance and brings four more people), farmers carry sheaves to the granary; guards; a raid from the camp met by the guards; a work pose (bent to a tool) | L | done (this commit; life.ts) |
+| ST6 | Quarries cut into the land (round 89): a terraced pit with a ramp and a crane, or an adit timbered into a hillside with its forecourt cut level; spoil heaps | M | done (this commit; more: mines that go deeper in play, cranes that move, carts on rails) |
+| ST7 | Settlements as a growth field (round 89): intensity + style per cell, suitability from flat dry ground, water, rock and woods; grown from the middle at arrival (its lots built where it's strong), stepping on in play as the grain allows and opening lots for the builders | M | done (this commit; field.ts — the field is per settlement's box; an atlas-wide field (siting, settlements merging and spreading), safety from camps, and sharing the field with vegetation still open) |
+| ST8 | `?towndebug=1`: the live settlement's grid, lots, spots, field, people by phase, stores and trips; the API on `reclaimed.settlements` (near, settlement, all, live, plan, raid, events built/died/raided, toWindow/toWorld) and `reclaimed.units` | S | done (this commit) |
+| ST9 | An atlas-wide settlement field: where people settle and spread (rivers, resources), towns growing into each other, new hamlets; vegetation on the same machinery (GrowthField) | L | open |
+| ST10 | Mines that go into the hill in play (the adit's face cut further: a carve at height, not the column's top), ore as a resource with mineral rights; carts | M | open |
+| ST11 | Settlements more than one at once in play, and their people seen walking the roads between them (traders, travellers) | M | open |
+| ST12 | Units that leave the window stay (now a settlement's people go when it leaves play; the story's named characters are kept by the runstory side) | S | open |
+| ST13 | Colour per unit (the contract's `colour`): the agents draw a kind's or a group's colour; a per-unit tint needs a word in the unit | S | open |
+
 ## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
 
 | id | item | size | status |
@@ -26,7 +44,6 @@ user) · `deferred` (agreed for later).
 | C8 | Round 87: a fully undercut tower stayed standing on the phone — the beam's bore not judged, the part above the window never coming down, limits in cells, structures past the box skipped; fixed by reading the paths; scripts/towertest.mjs (the player's tools, 412x915, low) to run | M | done (collapse; towertest 5/5) |
 
 
->>>>>>> origin/collapse
 ## Round 86 (2026-10-26, session 5) — the phone test (DECISIONS round 86)
 
 | id | item | size | status |
@@ -65,9 +82,9 @@ user) · `deferred` (agreed for later).
 | R1 | The recipe model's contracts: kinds and tags, slots, recipes (assemble, craft, train, adapt, salvage), instances (parts, material, condition, owner, place, history), capability rules, civilization profiles (knowledge by mastery: uses, repairs, makes, understands), a Look hook; the reference implementation (compose.ts: `derive`, `plan`); scripts/recipetest.mjs | M | done (this commit) |
 | R2 | Diplomacy's contracts: interactions between factions and people (RimWorld-like, fading, quoted by dialog), agreements (war, truce, peace, alliance, trade, land rights, mineral rights, passage, tribute, vassalage), opinions and stances derived; MemoryDiplomacy | M | done (this commit) |
 | R3 | Settlements on overlay grids (irregular, contour Voronoi, radial, orthogonal), buildings as instances with a derived use, adaptive reuse (`founded.over`), jobs that need rights | S | done (this commit; the generators for contour-Voronoi and radial grids are R6) |
-| R4 | The first content as data (data/recipes/): materials (with ageing), ~30 kinds, the core capability rules, a few civ profiles from the atlas's eras; the world state keeps things and diplomacy between runs (WorldSnapshot) | M | open |
+| R4 | The first content as data (data/recipes/): materials (with ageing), ~30 kinds, the core capability rules, a few civ profiles from the atlas's eras; the world state keeps things and diplomacy between runs (WorldSnapshot) | M | minimal done (settlements: data/recipes/core.json — 15 materials with ageing, 18 kinds, 6 recipes, 11 rules; civs.json — 6 profiles); keeping things and diplomacy in the WorldSnapshot open |
 | R5 | Units from compositions: the unit generator (system 6) makes a unit as an Instance from a role, a civ and what's at hand (`plan`), its stats and abilities from `derive` | M | open |
-| R6 | Grid generators: Voronoi on height contours and radial rings and spokes beside build/towngrid.ts, picked by CivProfile.builds.grids | M | open |
+| R6 | Grid generators: Voronoi on height contours and radial rings and spokes beside build/towngrid.ts, picked by CivProfile.builds.grids | M | done (settlements: src/settle/grids.ts, ST2) |
 | R7 | Legacy between runs: what a run leaves (bodies, gear, wrecks, buildings) becomes Instances placed `in: 'region'` (buried, scattered, hoard) and the region generator places them on arrival; materials age between runs | M | open |
 | R8 | Dialog and the GM read diplomacy: `memories(who, about)` in talks ("you spared my brother"), agreements in the wiki and stories; story Outcomes that note interactions and make or break agreements | S | open |
 

@@ -3,6 +3,32 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 89 (session 5, `settlements`) — the first jobs; settlements as a field; quarries
+
+- The user, verbatim: "We have the flow field based agents right? I'm curious to see how they navigate a settlement
+  and look when working. I think quarry and felling trees, hauling and building make sense as the first jobs (maybe
+  farming and houses to spawn more agents?) I think vegetation and settlements should work similarly actually. Both
+  are fields with intensity and maybe some material (different biomes or settlement styles) and sensitive to
+  conditions on the map grow and spread. Settlements along rivers and near resources make sense and hopefully
+  quarries and mines can be built into the ground/hills in ways that look cool."
+- → First jobs: quarrying (the ground taken exactly and heaped), felling real trees (logs heaped), hauling from the
+  heaps and building a house block by block; farming feeds growth; a finished house brings more people. A work pose
+  (bent to a tool) so working reads. A settlement is a growth field (intensity + style, suitability from the land,
+  water and resources; the ecology pass's shape, src/settle/field.ts) realised on its grids where it's strong, and
+  growing in play as it's fed. Quarries: terraced pits with a ramp and a crane, or adits timbered into hillsides,
+  with spoil heaps.
+
+## 2026-10-27 — round 88 (session 5, `settlements`) — settlements with agents working round them
+
+- The user, verbatim: "I would like to see settlements with agents working around them".
+- (Round 83: settlements first, agents that are workers or hostile, "the settlements at least use the same data
+  structure we plan to expose to the city management game"; round 85: overlay grids — "irregular grids like
+  townscaper or build voronoi on height contours for modern or use radial sets like the game bulwark".)
+- → Branch `settlements`: every atlas site a Settlement record (settlement.ts) with a civ profile, districts on the
+  four grid styles, buildings as recipe Instances realised as voxels when the land arrives; workers and guards as
+  units (the `Units` contract, runstory's, implemented on the GPU agents) walking their rounds near the player;
+  raiders' camps whose raids the guards meet.
+
 ## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
 
 - The user, testing `collapse` on the phone: "Waterfalls and the meteor look fantastic! However, the collapse
@@ -33,7 +59,6 @@ each was implemented.
   the weight idea (a hanging piece's mass against its contact area × strength).
 
 
->>>>>>> origin/collapse
 ## 2026-10-26 — round 87 (session 5, `places`) — the second phone test
 
 - "Waterfalls and the meteor look fantastic! However, the collapse didn't work for me on mobile at all. I was able to

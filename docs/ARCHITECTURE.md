@@ -1371,3 +1371,62 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   Voronoi, radial, orthogonal). Its buildings are things on grid cells, and their `use` is derived.
   `founded.over` records adaptive reuse.
 - Test: scripts/recipetest.mjs.
+
+## Settlements and units in play (round 88, branch `settlements`; docs/SYSTEMS.md 6, 7, 12)
+
+- **Records (atlas scale).** `Settlements` (src/settle/settlements.ts) makes one `Settlement` (settlement.ts) per
+  atlas site from the world wiki built live (`buildWiki(atlasFacts(atlas))`: the ids `s<n>`, names, regions and
+  realms the GM's stories use). records.ts picks each one's `CivProfile` (data/recipes/civs.json, by the realm's
+  era and the site's setting), whether it stands over an older ruin, whether raiders camp near it (the region's
+  hostile power, else `f-outlaws`), and its box: whole streamer regions round it. A settlement not in play
+  advances its `stores` by their rates (a day is `DAY_S` = 600 s). Rights: each realm holds land rights over its
+  settlements' regions and mineral rights over those and some neighbours (MemoryDiplomacy); a quarry outside its
+  own region is worked only with mineral rights there (`diplomacy.rights(region, at)`).
+- **Arrival.** `Atlas.landHooks`: after the ways, each region's land goes through the hooks (raw lands skip
+  them). The first region of a settlement's box that's made plans it (plan.ts) on the raw ground of the whole box
+  (`regionLand(…, raw = true)`, a tile a frame while streaming), once; every region of the box then gets the
+  plan's columns stamped in (what stands is real matter: intervals in world z, cut and frozen by the streamer like
+  any land). Deterministic: the same settlement plans the same whichever region comes first.
+- **The plan.** Districts on overlay grids (src/settle/grids.ts): `radial` (rings and spokes, sectors doubling
+  outward), `contour-voronoi` (Voronoi seeded on the ground's height contours), `irregular` (Townscaper's merged
+  triangles), `orthogonal` (a turned square lattice). Every style makes lots (polygons); `LotGrid` cuts each lot
+  into a ring of yard quads and its inset polygon cut centre-to-midpoints (the footprint), as a `CellGrid`
+  (build/towngrid.ts: what `Town` builds on; Townscaper's `TownGrid` is one). The core district is the profile's
+  first style; a town or city has a second round it; the fields are an orthogonal district past the wall.
+  Buildings are `Town` blocks (walls, floors, doors, windows, roofs from the neighbours) in the building's
+  materials (the profile's `look`), each a `Building` whose `thing` is an `Instance` (house, hall, granary,
+  workshop, megastructure …) with parts (rooms, hearths, a forge, bins), its `use` derived (compose.ts) by the
+  rules in data/recipes/core.json. Also: the plaza's well and stalls, a wall ring with gates and towers, furrowed
+  fields, the quarry spot, a ruined tower adapted into homes (`founded.over`, its history `adapted`), a camp of
+  tents round a fire (its own Settlement record, `size: 'camp'`, hostile people). `spots` are where agents go:
+  homes, stores, posts, farm, mine, repair, make, trade, the camp.
+- **Units.** src/units/agent-units.ts implements the `Units` contract (api/contracts/units.ts, runstory's) on the
+  GPU agents. Per unit on the CPU: the job, faction, health (GPU hp = 3 × it), its target. Groups and fields:
+  striking (0, standing, the work pose), standing (1), three shared goal fields for go / patrol / follow / flee /
+  back-to-post (agents fields 9–11, groups 2–4, keyed by where), the defenders' field on the foes (field 8, group
+  5), the hunt (targets, field 7, group 6), hostiles loafing (7); fields 0–6 and groups 8–15 are the settlements'
+  rounds (life.ts). Hostile units notice what's within their sight and join the hunt; the GPU swings, its
+  swing events become damage (an actor's `hurt`, a unit's `agents.hit`). Guards and units ordered to attack close
+  in on the foes' field and strike on the CPU. Window coordinates.
+- **Life (play).** The planned settlement nearest the camera inside the window (40 cells in from its edge) is live
+  (src/settle/life.ts, a `Routine` the units hand 'work' jobs to): its people within the tier's budget (28 on the
+  phone tier, 48 otherwise; `?townfolk=`) — guards at their posts; each role on its own round, a field a leg
+  (farm 0, fell 1, quarry 2, home 3, store 4, the heaps 5, the house going up 6): miners take the quarry's floor
+  exactly (terrain.take) and put it on the stone heap (terrain.put), woodcutters fell real trees (plants.fell) and
+  heap the logs, builders carry from the heaps to the site, where every 1.2 cells³ a block of the house stands (a
+  `Town` over the site's lot in window coordinates, stamped through the town system; its floors fixed relative to
+  the door's ground so the grid can be made again when the window moves); a finished house is a Building +
+  Instance on the record and four more people. Farmers carry sheaves to the granary. Standing at work, a group's
+  units are drawn bent to a tool (`agents.workPose`). The growth field (field.ts: the settlement's intensity and
+  style over its box, the ecology pass's shape) steps every 8 s while the grain lasts; when nothing's being built,
+  the free lot it's strongest on becomes the next site. A raid (`settlements.raid()`): the camp's raiders march on the plaza, workers run home, guards meet them;
+  it ends repelled (all raiders dead) or looted (70 s: a quarter of the stores gone). Events: built, died, raided.
+- **Agents' changes.** `NFIELDS` 12 (was 4; `fieldPlace` three vec4s), `MAX_SEEDS` 48 (was 32), `spawn(…, { hp })`,
+  `workPose(group, on)` (bit 8 of the group's material word: unitDraw bends the figure and adds a tool voxel; a
+  swing bends it too); a field left without seeds is set unreachable once (`n3.w`, the fields to clear) and then
+  skipped by the sweeps; with no unit, nothing in flight and no field seeded, the agents' pass does nothing (no
+  peel, no sweeps); the first tick that needs the surfaces peels them.
+- **The plan's ground work.** `ColumnPlan.cut` (the ground let down: benches, an apron, a well) and `.hole` (a gap
+  through a column: an adit under the rock that stays over it).
+- Debug: `?towndebug=1` (src/settle/debug.ts). Tests: scripts/settletest.mjs (the planner, no browser),
+  scripts/settlementtest.mjs (in play).

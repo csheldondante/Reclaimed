@@ -14,7 +14,29 @@ export interface TownGridOpts {
   relax?: number;
 }
 
-export class TownGrid {
+/**
+ * What the town (town.ts) builds on: quads with four neighbours each, over the hex columns. TownGrid is
+ * Townscaper's; the settlements' generators (src/settle/grids.ts: radial, contour-Voronoi, orthogonal) make
+ * others (round 88).
+ */
+export interface CellGrid {
+  readonly w: number;
+  readonly h: number;
+  readonly count: number;
+  /** per cell its neighbour across edge e (corner e to e + 1), -1 none */
+  readonly nbr: Int32Array;
+  /** per hex column (y * w + x) its cell, -1 none */
+  readonly cellOf: Int32Array;
+  /** per cell the hex columns in it */
+  readonly columns: number[][];
+  corner(c: number, k: number): [number, number];
+  contains(c: number, x: number, y: number): boolean;
+  cellAtWorld(x: number, y: number): number;
+  edgeDist(c: number, e: number, x: number, y: number): [number, number];
+  centre(c: number): [number, number];
+}
+
+export class TownGrid implements CellGrid {
   /** corner positions, x y interleaved */
   readonly verts: Float32Array;
   /** per cell its four corners (counter-clockwise) */

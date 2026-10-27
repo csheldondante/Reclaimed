@@ -18,6 +18,9 @@ import { Physics } from '../physics/physics';
 import type { LavaSystem } from '../sim/lava';
 import { installPhysics } from '../physics/install';
 import { installAgents } from '../agents/install';
+import { Settlements } from '../settle/settlements';
+import { TownDebug } from '../settle/debug';
+import { AgentUnits } from '../units/agent-units';
 import type { Agents } from '../agents/agents';
 import { attachSim, type Sim } from '../api/world';
 import { LEVEL_H, type Block, type Town } from '../build/town';
@@ -49,7 +52,7 @@ import { demoStory } from '../story/demo';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
-import { cpuLine, cpuStats, frameSteps } from '../gpu/cpustat';
+import { cpuLine, cpuStats, frameSteps, timed } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
@@ -67,7 +70,7 @@ export interface LevelOptions {
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -198,6 +201,10 @@ export class LevelScene implements Scene {
   physics?: Physics;
   /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
   agents!: Agents;
+  /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
+  settlements?: Settlements;
+  units?: AgentUnits;
+  private townDebug?: TownDebug;
   /** the world as modules (docs/WORLD_API.md), made on first use of reclaimed.world */
   private worldApi?: Sim;
   /** round 83, V21: ?cutaway (api/puck.ts, api/cutaway.ts) */
@@ -578,8 +585,19 @@ export class LevelScene implements Scene {
       const zMax = level.zMax ?? 64;
       // (the atlas is taller than the window: it slides in z — round 69)
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
+      // (round 88) the settlements' records, and their hook on the land, before the first window is made
+      const settlements = host.params.get('settle') === '0' ? undefined : new Settlements(atlas);
       const at = host.params.get('at');
-      const [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
+      // (?town=s12: start at that settlement; ?town=1 the nearest to the spawn)
+      const town = host.params.get('town');
+      let [cx, cy] = at ? (at.split(',').map(Number) as [number, number]) : atlas.spawn();
+      if (town && settlements) {
+        const sp = atlas.spawn();
+        const s = town === '1' ? settlements.near([sp[0], sp[1] * ROW_H], 1e9).find((x) => x.size === 'town' || x.size === 'city') : settlements.settlement(town);
+        if (!s) throw new Error(`?town=${town}: no such settlement`);
+        cx = Math.round(s.at[0]);
+        cy = Math.round(s.at[1] / ROW_H);
+      }
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       const W = Number(host.params.get('win') ?? 256);
@@ -588,7 +606,7 @@ export class LevelScene implements Scene {
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
       atlas.profiler = host.profiler;
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground } };
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
@@ -1213,8 +1231,59 @@ export class LevelScene implements Scene {
               if (b) integ.markBox(...b);
             }
       }
+      // (round 88) the settlements: planned and built as their land comes in (Atlas.landHooks, set before the
+      // first window); lived in near the camera — their people as units on the agents
+      const st = a?.settlements;
+      if (st) {
+        const units = new AgentUnits(this.agents);
+        this.units = units;
+        this.settlements = st;
+        core.onShift.push((dx, dy, dz) => units.shift(dx, dy, dz));
+        const S = this.stream;
+        S.onWarp.push(() => {
+          st.life?.dispose();
+          st.life = null;
+        });
+        // (the window's moves: a house being built has its grid made again in the new window)
+        let epoch = 0;
+        S.onSlide.push(() => epoch++);
+        S.onWarp.push(() => epoch++);
+        const terrainApi = () => {
+          const t = (this.worldApi ??= attachSim(core)).terrain;
+          if (!t) throw new Error('settlements: the world API has no terrain');
+          return t;
+        };
+        const plants = () => {
+          const p = (this.worldApi ??= attachSim(core)).plants;
+          if (!p) throw new Error('settlements: the world API has no plants');
+          return p;
+        };
+        st.play({
+          units,
+          origin: () => [S.origin[0], S.origin[1]],
+          dims: { w: dims.w, h: dims.h },
+          focus: () => [core.camera.target[0], core.camera.target[1]],
+          trees: (at, r) => plants().treesNear(at[0], at[1], r).map((t) => [t.x, t.y] as [number, number]),
+          fell: (at) => plants().fell(at[0], at[1]).then((t) => t?.logs ?? 0),
+          take: (at, n) => terrainApi().take(at[0], at[1], n),
+          put: (at, m, n) => terrainApi().put(at[0], at[1], m, n),
+          townIO: {
+            ground: (col) => terrainApi().heightAt(...cellPos(col % dims.w, Math.floor(col / dims.w))) ?? 0,
+            stamp: (stamps) => core.sim.town.stamp(stamps),
+            zMax: dims.zMax,
+          },
+          epoch: () => epoch,
+          ready: (at) => (this.worldApi ??= attachSim(core)).fresh && terrainApi().heightAt(at[0], at[1]) !== null,
+          budget: Number(host.params.get('townfolk') ?? ((host.quality.agentSweeps ?? 8) <= 2 ? 28 : 48)),
+        });
+        if (host.params.get('towndebug') === '1') this.townDebug = new TownDebug(host.ui, st, core.camera, (x, y) => this.heightAt(x, y));
+      }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
+      // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
+      settlements: this.settlements,
+      units: this.units,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
       flow: this.flow && {
@@ -1443,6 +1512,12 @@ export class LevelScene implements Scene {
     if (this.opts.atlas) this.stepGeysers(dt * this.speed);
     // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms)
     if (this.opts.atlas && ++this.coarseFrame % 4 === 0) this.opts.atlas.atlas.coarse.step(1);
+    // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
+    if (this.units && !this.stream?.busy) {
+      this.units.update(dt * this.speed);
+      timed('settle', () => this.settlements!.update(dt * this.speed));
+      this.townDebug?.draw();
+    }
 
     const simDt = dt * this.speed;
     if (this.hoverWorld) powers.hover(this.hoverWorld[0], this.hoverWorld[1], dt);
