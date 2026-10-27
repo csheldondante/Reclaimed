@@ -6964,3 +6964,97 @@ window (the window's size is winmem's), the slides as before. Pan GIFs: pan-befo
 Not done (BACKLOG N6): towns past the window (the window's plans are made only when their land arrives — planned
 ones could be baked into the rings the way the ways are); the window's real trees pop in as its chunks build (the
 painted crowns stand where the lattice puts them, not where vegplan's do); shadows and clouds on the rings.
+
+## Round 94 — the land past the window baked into a streamed texture, towns and all (`farbake`, BACKLOG FB1–FB6)
+
+The user (DECISIONS round 94): "The draw distance is ok but I don't understand why towns and grass aren't baked into
+a texture we can stream so that distant tiles draw correctly further out".
+
+**What each band drew before this round, and from what** (the phone: q=low, hybrid, a 320-cell window):
+1. **The window** (320 × 320 cells, ~277 world units a side round the camera): the streamer's columns — the atlas's
+   full column build (atlas.ts `columns`: the ground, its forms, caves, the ways stamped, then the landHooks: the
+   settlements' plans stamped in) — drawn by the field mesh and the hybrid's grid, with the sim's plants, real trees,
+   houses, water, shadows and clouds.
+2. **The rings** (lod.ts, 1, 2, 4, 8, 16 world units between vertices; out to ±96, ±192, ±384, ±768, ±1536 round
+   the camera): a grid each, a vertex baked once as it comes in (lod.wgsl: the atlas's ground function — `ground()`,
+   the same one the columns start from, without the forms or caves — its top, colour, the plants the columns would
+   start with, the distance to a way). Round 93 drew them the window's way **a fragment at a time** (far.wgsl
+   `ringWindowLook`: the grass, the flowers, the paving, water, up to 25 painted tree crowns a pixel, the light).
+3. **The far land** (far.ts, a 161² grid 32 units apart, ±2560, fading from ~1400): the atlas's macro heights and a
+   colour a 16-unit texel made once on the CPU — the region kind's top colour mixed 65% with one green, white where
+   it's freezing, the sea's blue — lit by a fixed sun. None of round 93's look: no ways, no grass shades, no woods,
+   no towns.
+
+**Why there were no towns past the window.** A settlement's plan (settle/plan.ts `planSettlement`) is made from
+the *raw columns* of its box — atlas.ts `columns` + the ways, the full build the streamer makes, ~13 ms of a
+desktop's GPU a 64² region (the DEVLOG's round 80 number) — and the box is 2–4 regions a side (a city's 186 cells:
+16 regions, ~200 ms of GPU). So it was made only when the first of its regions arrived (Atlas.landHooks), and what
+it builds exists only as columns stamped into that land. Nothing at the atlas scale held a town's shape: the rings and
+the far land had nothing to draw it from. Planning every settlement that way up front is ~140 × that GPU work, and
+the plan itself is 26–82 ms of CPU (measured below) — a phone's frame several times over, each.
+
+**What changed.**
+- **The bake** (atlas/bake.ts `SurfaceBake`, bake.wgsl `bakeSurface`): a clipmap — a level a ring, its texel half
+  the ring's spacing (0.5, 1, 2, 4, 8 world units on the phone; 1, 2, 4, 8 off the hybrid), and one more for the
+  far land (16 units) — each 512 × 512 RGBA8 texels round the camera in one 2d-array texture, anchored to the world
+  (texel (I, J) at (I, J) · its size, in slot (I mod 512, J mod 512); sampled with `repeat`). A level is re-centred
+  when the camera has moved 32 of its texels and only the strips new to it are baked; a band of 512 × 32 texels a
+  dispatch, two a frame at most, the finest level's first; a band of a level again every 0.5 s (the coarse world's
+  changes, the season). What's drawn of a level is only what's baked (its valid rectangle, far.wgsl `bakeAt`; the
+  next level out where it isn't). A texel is **the window's look averaged over it, from the rings' rules**: lod.wgsl's
+  per-vertex body is now `surfaceAt` (shared, unchanged), then meshShade's grass by the plants (the season's turn, the
+  tufts' shade, the flowers' average; soil and silt at least `?fdveg=`), the ways paved (their cover over up to 4 × 4
+  points of the texel), water by its depth, the woods (texels to 2 units: each crown seen from above, its shade round
+  it, over the texel's points; coarser: their share), **and the stamps** — the towns' tops (below). Alpha says what it
+  is (land with its grass's share, water, lava). The light stays a frame's: fsLod and fsFar light the baked albedo
+  with render.wgsl's light and haze (round 93's `gLight`/`gHaze`); fsLod adds only the window's speckle a cell and
+  the grass's quarter-cell grain where those are pixels across, and the rock's beds on steep faces (geometry). The
+  ring melting into the next one out blends the two levels as it blends their heights. `?fb=0`: round 93's look made
+  a fragment at a time (the bake isn't made).
+- **Towns** (settle/settlements.ts `farPlans`, plan-worker.ts, raster.ts): every settlement within `?fbr=` (2600)
+  world units of the camera is planned once, nearest first, one at a time, on **the atlas's own ground at the
+  plan's resolution** — bake.wgsl `roughGround`: `surfaceAt` at each column's middle of its box (its top, the water
+  on it, its top's material, the plants it starts with; one dispatch, 1.2 ms of GPU for a city's box) — with the ways
+  stamped on it exactly as regionLand stamps them on the raw land (ways.ts `stampWays`; `waysNear` hands the worker
+  only the bins it reads). The plan runs in a **worker** (the same planSettlement), rastered there (raster.ts
+  `rasterPlan`: its columns' tops from above, a texel a world unit — roofs in the civ's colours, walls, the plaza,
+  fields, the quarry's pit darker by its depth — a building's edge darker (its walls and eaves, so it reads from far
+  away), the ground beside it a little shaded; and a 4-unit average), and the stamp comes back to be laid in the bake
+  (`setStamps`: the ground under a new, changed or lifted stamp baked again). When a town's land arrives the window's
+  exact plan is rastered the same way and replaces the far one (and their match is logged, `farStats.match`).
+- **The far land** samples the far level (towns, grass, ways, woods, water, lit by the window's light) instead of
+  the macro colour: "further out" is drawn the same way as the rings, to the far land's fog.
+
+**How the rough ground matches the raw.** It is the columns' own starting function (compose.wgsl `ground`, the
+mesa's lip, what's loose on it, the sea's, lakes' and rivers' levels, the ways stamped) — what it lacks is the atlas's
+forms (rocks, arches, the lattice's pieces stood on the ground) and caves. Where a town stands (flat, dry ground by
+the plan's own choice) those are rare. IoU of the far plan's cover with the exact plan's, measured where a town's land
+came in after its far plan: see the table below.
+
+**Measured** (the desktop iGPU; driveprofile q=low 412×915 at 12304,5457, speed 18, 30 s, everything in play):
+
+| | `?fb=0` (round 93) | the bake |
+|---|---|---|
+| p50 / p95 / p99 / worst (ms) | 9.9 / 10.5 / 13.1 / 73 | 9.8 / 10.5 / 13.7 / 73 |
+| draw (ms a frame) | 2.59 | **2.31** |
+| GPU (ms a frame) | 4.64 | **4.36** |
+
+The rings' fragments no longer loop over 25 tree squares and the grass's hashes: −0.28 ms of draw a frame. The bake
+itself: a band (16 384 texels) 0.30 ms at 0.5 units a texel, 0.34 (1), 0.41 (2), 0.73 (4), 1.31 (8: its 4 × 4 points
+each), 1.19 (16); ~0.05 ms a frame on average through the drive (the strips as it moves, the refresh). The rough
+ground: 1.2 ms of GPU a box. Memory: the bake's levels 6.29 MB (six 512² RGBA8; ?fbn= their side), its stamps
+0.05–0.6 MB (10–21 towns in reach, ~6 KB–150 KB each); the rings' 3.54 MB as before. The far plans (20 within 2600
+of the start, 11–13 at the drive): in the worker, the ways 37 ms a box, the plan 26 ms on average (45–82 ms the
+largest: off the main thread — on it, this would be a hitch each), the raster 1 ms; on the main thread the worker's
+first message (the atlas's region map) 4.5–6.6 ms once, and the readback's copy. The first fill of every level:
+~100 bands, 2 a frame, about a second after the rings are made.
+
+Seams (scripts/fdshot.mjs, the window's edge, |dLuma| / |dChroma|; lower is less of an edge): start 22.7 / 14.8 →
+22.6 / 14.8; start turned 26.4 / 18.2 → 29.2 / 18.5; town 12176,15632 12.7 / 6.9 → 12.3 / 6.9; town turned
+19.9 / 6.2 → 19.7 / 6.3. The bake draws what round 93 drew within the measure's noise (turned at the start, a little
+lighter past the edge: the woods' shade there is averaged, not each painted crown's). **Pop-in**: the window's
+edge differs from the bake as much as it did from round 93's look, so a region entering the window changes as it did
+— no fade was added (open: FB5).
+
+Shots (C:/Projects/shots88/farbake/): before-/after-s56-d{250,500,1000}-t{0,105}.png — the city s56 (12272, 6937) seen
+from 250, 500 and 1000 world units, straight and turned 105°; fd-before-/fd-after-* the seam shots.

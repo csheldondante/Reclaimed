@@ -10,6 +10,7 @@ import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
 import meshStateW from '../shaders/meshstate.wgsl?raw';
 import { LOD_UNI_BYTES, LodRings } from './lod';
+import { BAKE_UNI_BYTES, SurfaceBake } from './bake';
 import { ROW_H } from '../world/lattice';
 
 const UNI_BYTES = 96 + 10 * 16;
@@ -49,6 +50,9 @@ export class FarLand {
   private count: number;
   /** the rings of less detail between the window and this (round 83, lod.ts); none: ?lod=0 */
   readonly lod: LodRings | null;
+  /** (round 94) the land past the window baked into a texture (bake.ts), what the rings and the far land draw;
+   *  null: ?fb=0 (the look made a fragment at a time, round 93), ?fd=0, no rings, the perf ceiling */
+  readonly bake: SurfaceBake | null;
   private lodPipe?: GPURenderPipeline;
   private lodIndex?: GPUBuffer;
   private lodCount = 0;
@@ -58,6 +62,7 @@ export class FarLand {
   private gGroup?: GPUBindGroup;
   private gBuf?: GPUBuffer;
   private gCount = 0;
+  private noBake: GPUTexture | null;
   /** where the window is (world units and its oz), its size, the grid's middle (window coordinates), the fog */
   org: [number, number, number] = [0, 0, 0];
   win: [number, number] = [256, 256];
@@ -144,9 +149,18 @@ export class FarLand {
         { binding: 46, visibility: VF, buffer: { type: 'uniform' } },
         { binding: 47, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 48, visibility: VF, buffer: { type: 'uniform' } },
+        { binding: 37, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 38, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 39, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d-array' } },
       ],
     });
     this.lod = lod ? new LodRings(device, atlas, lod.spacings, lod.n) : null;
+    const fb = new URLSearchParams(location.search).get('fb');
+    this.bake = this.lod && !ceiling && this.windowLook && fb !== '0' ? new SurfaceBake(device, atlas, this.lod, Number(new URLSearchParams(location.search).get('fbn') ?? 512)) : null;
+    if (this.bake) this.bake.grownVeg = this.grownVeg;
+    // (no bake: an empty one — its info's count 0 — and a texel of nothing)
+    const noBake = this.bake ? null : device.createTexture({ label: 'bake none', size: [1, 1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING });
+    this.noBake = noBake;
     if (this.lod && t.mesh) this.lod.meshGrid = [t.mesh.grid[2], t.mesh.grid[2] * ROW_H, t.mesh.grid[0], t.mesh.grid[1]];
     const meshState = t.mesh?.state ?? device.createBuffer({ label: 'lod no mesh', size: 16, usage: GPUBufferUsage.STORAGE });
     // (no rings: an empty LodD, its count 0)
@@ -166,6 +180,9 @@ export class FarLand {
         { binding: 46, resource: { buffer: lodUni } },
         { binding: 47, resource: { buffer: meshState } },
         { binding: 48, resource: { buffer: albedoU } },
+        { binding: 37, resource: { buffer: this.bake?.uni ?? device.createBuffer({ label: 'bake none', size: BAKE_UNI_BYTES, usage: GPUBufferUsage.UNIFORM }) } },
+        { binding: 38, resource: this.bake?.sampler ?? device.createSampler() },
+        { binding: 39, resource: this.bake?.view ?? noBake!.createView({ dimension: '2d-array' }) },
       ],
     });
     const module = device.createShaderModule({ label: 'far', code: meshStateW + '\n' + farW });
@@ -262,6 +279,10 @@ export class FarLand {
     const now = performance.now();
     if (this.lod) {
       this.lod.update(this.mid, this.org, (now - this.lodLast) / 1000);
+      if (this.bake) {
+        this.bake.season = L?.season ?? 0;
+        this.bake.update([this.mid[0] + this.org[0], this.mid[1] + this.org[1]], (now - this.lodLast) / 1000);
+      }
       if (this.lod.ready) {
         pass.setPipeline(this.lodPipe!);
         pass.setBindGroup(0, this.group);
@@ -286,6 +307,8 @@ export class FarLand {
     this.index.destroy();
     this.uni.destroy();
     this.lod?.dispose();
+    this.bake?.dispose();
+    this.noBake?.destroy();
     this.lodIndex?.destroy();
     this.gBuf?.destroy();
   }

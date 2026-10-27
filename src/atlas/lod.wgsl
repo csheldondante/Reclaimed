@@ -72,19 +72,21 @@ fn regionColour(r: Region, h: f32) -> vec3<f32> {
   return lodAlbedo[r.topMat].rgb;
 }
 
-@compute @workgroup_size(8, 8)
-fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
-  let n = i32(LP.sp.y);
-  if (i32(id.x) >= n || i32(id.y) >= n) { return; }
-  // the texel this slot holds in the window now, and whether it held it before (or its row is refreshed)
-  let I = LP.now.x + pmod(i32(id.x) - LP.now.x, n);
-  let J = LP.now.y + pmod(i32(id.y) - LP.now.y, n);
-  let had = I >= LP.now.z && I < LP.now.z + n && J >= LP.now.w && J < LP.now.w + n;
-  let row = i32(id.y);
-  if (had && !(row >= i32(LP.at.y) && row < i32(LP.at.z))) { return; }
-  let size = vec2<f32>(AP.worldW, AP.worldH);
-  var p = vec2<f32>(f32(I), f32(J)) * LP.sp.x;
-  p = p - floor(p / size) * size;
+/** (round 94) what the ground is at a world point, by the rings' rules: its top (world z: water's where it stands), the
+ *  ground under it, its colour (sRGB), the top's and the rock's materials, the plants it starts with, the way's
+ *  distance, whether it glows (lava) */
+struct Surf {
+  top: f32,
+  h: f32,
+  c: vec3<f32>,
+  mat: u32,
+  rock: u32,
+  veg: f32,
+  wd: f32,
+  glow: f32,
+}
+
+fn surfaceAt(p: vec2<f32>) -> Surf {
   let g = ground(p);
   var h = g.h;
   // (a mesa's lip over its overhang: colHeight's top)
@@ -127,6 +129,7 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   let wd = wayDist(p);
   if (wd < WAY_HALF + 0.5) { veg = 0.0; }
   var top = h;
+  var glow = 0.0;
   // water over it: the sea, a river (lava glowing)
   if (h < AP.sea) {
     top = AP.sea;
@@ -138,11 +141,32 @@ fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   } else if (g.rx < 1.0 && g.rl > h) {
     top = g.rl;
     c = select(vec3<f32>(0.2, 0.4, 0.55), vec3<f32>(1.0, 0.45, 0.1), g.rflags == 1u);
+    if (g.rflags == 1u) { glow = 1.0; }
   }
-  if (g.clava > 0.05) { c = mix(c, vec3<f32>(1.0, 0.4, 0.06), clamp(g.clava, 0.0, 1.0)); }
-  let ca = pack4x8unorm(vec4<f32>(c, f32(mat) / 255.0));
+  if (g.clava > 0.05) {
+    c = mix(c, vec3<f32>(1.0, 0.4, 0.06), clamp(g.clava, 0.0, 1.0));
+    glow = max(glow, clamp(g.clava, 0.0, 1.0));
+  }
+  return Surf(top, h, c, mat, rock, veg, wd, glow);
+}
+
+@compute @workgroup_size(8, 8)
+fn lodHeight(@builtin(global_invocation_id) id: vec3<u32>) {
+  let n = i32(LP.sp.y);
+  if (i32(id.x) >= n || i32(id.y) >= n) { return; }
+  // the texel this slot holds in the window now, and whether it held it before (or its row is refreshed)
+  let I = LP.now.x + pmod(i32(id.x) - LP.now.x, n);
+  let J = LP.now.y + pmod(i32(id.y) - LP.now.y, n);
+  let had = I >= LP.now.z && I < LP.now.z + n && J >= LP.now.w && J < LP.now.w + n;
+  let row = i32(id.y);
+  if (had && !(row >= i32(LP.at.y) && row < i32(LP.at.z))) { return; }
+  let size = vec2<f32>(AP.worldW, AP.worldH);
+  var p = vec2<f32>(f32(I), f32(J)) * LP.sp.x;
+  p = p - floor(p / size) * size;
+  let s = surfaceAt(p);
+  let ca = pack4x8unorm(vec4<f32>(s.c, f32(s.mat) / 255.0));
   // (round 93: the rock's material, the plants (0..4.2 in 1/60), the way's distance (0..WAY_REACH) — the rock's colour is
   // its material's, far.wgsl)
-  let rc = (rock & 0xffu) | (u32(round(clamp(veg, 0.0, 4.25) * 60.0)) << 8u) | (u32(round(wd / WAY_REACH * 255.0)) << 16u);
-  lodOut[LP.at.x + id.y * u32(n) + id.x] = vec4<f32>(top, bitcast<f32>(ca), h, bitcast<f32>(rc));
+  let rc = (s.rock & 0xffu) | (u32(round(clamp(s.veg, 0.0, 4.25) * 60.0)) << 8u) | (u32(round(s.wd / WAY_REACH * 255.0)) << 16u);
+  lodOut[LP.at.x + id.y * u32(n) + id.x] = vec4<f32>(s.top, bitcast<f32>(ca), s.h, bitcast<f32>(rc));
 }

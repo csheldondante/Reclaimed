@@ -177,6 +177,29 @@ fn skirt(l: vec2<f32>) -> bool {
 /** (round 93) each material's albedo (lod.ts: lod.wgsl lodAlbedo's) */
 @group(0) @binding(48) var<uniform> farAlbedo: array<vec4<f32>, 64>;
 
+/** (round 94) the baked land (bake.ts SurfaceBake): each level's valid rectangle (world units) and its texel, texels
+ *  a side, layer; then how many levels, the far land's, 1: on */
+struct BakeD {
+  lv: array<vec4<f32>, 14>,
+  info: vec4<f32>,
+}
+@group(0) @binding(37) var<uniform> BD: BakeD;
+@group(0) @binding(38) var bakeS: sampler;
+@group(0) @binding(39) var bakeT: texture_2d_array<f32>;
+
+/** the bake at world point w from level k out — the finest level from k that's baked there (a < 0: none) */
+fn bakeAt(w: vec2<f32>, k: u32) -> vec4<f32> {
+  let n = u32(BD.info.x);
+  for (var i = k; i < n; i++) {
+    let r = BD.lv[i * 2u];
+    if (all(w >= r.xy) && all(w <= r.zw)) {
+      let L = BD.lv[i * 2u + 1u];
+      return textureSampleLevel(bakeT, bakeS, w / (L.x * L.y), i32(i), 0.0);
+    }
+  }
+  return vec4<f32>(-1.0);
+}
+
 /** in the outermost ring's square (window coordinates): the rings draw it */
 fn inLod(l: vec2<f32>) -> bool {
   let o = LD.info.yz;
@@ -279,6 +302,18 @@ fn fsFar(v: FOutV) -> FOutF {
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(v.nrm, sun), 0.0);
   var c = v.col * lit;
+  // (round 94: the bake's far level where it's baked — the towns, the grass, the ways, the woods, the water, lit by the
+  // window's light as the rings are)
+  if (BD.info.z > 0.5 && FP.look.z > 0.5) {
+    let b = bakeAt(l + FP.org.xy, u32(BD.info.y));
+    if (b.a > 0.9) {
+      c = b.rgb;
+    } else if (b.a > 0.62) {
+      c = gSrgb(gHaze(gLin(b.rgb) * 2.0 * gLight(vec3<f32>(0.0, 0.0, 1.0)), v.local.z));
+    } else if (b.a >= 0.0) {
+      c = gSrgb(gHaze(gLin(b.rgb) * gLight(normalize(v.nrm)), v.local.z));
+    }
+  }
   // fading into the sky toward the grid's edge (and with distance from a free camera)
   var fog = smoothstep(0.55, 1.0, v.dist);
   if (FC.pos.w > 0.5) { fog = max(fog, smoothstep(300.0, 2600.0, length(v.local - FC.pos.xyz))); }
@@ -312,6 +347,8 @@ struct LOut {
   @location(9) road: f32,
   @location(10) tint: f32,
   @location(11) wdep: f32,
+  /** (round 94) how far it has melted into the next ring out (or the far land): the bake's next level's share */
+  @location(12) melt: f32,
 }
 
 fn lodPmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
@@ -397,6 +434,7 @@ fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOu
   o.veg = f32((sw >> 8u) & 0xffu) / 60.0 * (1.0 - last);
   o.road = mix(f32((sw >> 16u) & 0xffu) / 255.0 * 3.2, 3.2, last);
   o.wdep = slot.x - slot.z;
+  o.melt = a;
   o.tint = 1.0;
   if (FP.look.z > 0.5) { o.tint = 0.82 + 0.36 * gFbm2(gWo(local) * 0.045 + vec2<f32>(z * 0.02)); }
   let nb = lodTexel(k, ij + vec2<i32>(1, 0)).x + lodTexel(k, ij - vec2<i32>(1, 0)).x + lodTexel(k, ij + vec2<i32>(0, 1)).x + lodTexel(k, ij - vec2<i32>(0, 1)).x;
@@ -600,6 +638,34 @@ fn ringWindowLook(v: LOut, n: vec3<f32>, rockK: f32, /** world units a pixel */ 
   return gSrgb(gHaze(c, v.local.z));
 }
 
+/**
+ * (round 94) A ring's ground from the bake (bake.wgsl: the window's look averaged over a texel): its albedo with the
+ * window's speckle a cell and its grass's grain a quarter cell where those are pixels across, the rock's beds on the
+ * steep faces, lit by the window's light and hazed as it is. Water by its colour lit from above; lava as it is.
+ */
+fn bakedLook(b: vec4<f32>, v: LOut, n: vec3<f32>, rockK: f32, rockC: vec3<f32>, cellPx: f32, cell: vec2<i32>) -> vec3<f32> {
+  if (b.a > 0.9) { return b.rgb; }
+  var alb = gLin(b.rgb);
+  let avgW = smoothstep(1.5, 3.0, cellPx);
+  if (b.a > 0.62) {
+    var c = alb * 2.0 * gLight(vec3<f32>(0.0, 0.0, 1.0));
+    let fl = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), 77));
+    c = mix(c, gLin(vec3<f32>(0.72, 0.75, 0.75)) * gLight(vec3<f32>(0.0, 0.0, 1.0)) * 0.55, select(0.0, 0.5, fl > 0.92) * (1.0 - avgW));
+    return gSrgb(gHaze(c, v.local.z));
+  }
+  let sp = gRandv(vec3<i32>(cell, i32(floor(v.local.z))));
+  alb *= 1.0 + (0.12 * sp - 0.06) * (1.0 - avgW);
+  alb *= v.tint;
+  // (the grass a quarter cell lighter or darker, as the window's: where a quarter cell is pixels across)
+  let grass = clamp(b.a * 2.0, 0.0, 1.0) * (1.0 - avgW);
+  if (grass > 0.01) {
+    let n2 = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), i32(floor(v.local.z * 4.0)) + 13));
+    alb *= mix(1.0, (0.82 + 0.3 * n2) / 0.97, grass);
+  }
+  alb = mix(alb, gLin(rockC), rockK);
+  return gSrgb(gHaze(alb * gLight(n), v.local.z));
+}
+
 // ---- (hybrid) the rings' look: rock on the steep faces, in beds; the light from finer normals ----------------
 
 fn farHash(p: vec2<i32>) -> f32 {
@@ -710,7 +776,27 @@ fn fsLod(v: LOut) -> FOutF {
       let grain = 0.9 + 0.2 * farVnoise(vec2<f32>(w.x + w.y, v.local.z) * 1.7);
       vv.col = mix(v.col, v.rock * farBedTint(v.mats.y, b) * grain, rk);
     }
-    c = ringWindowLook(vv, nn, rk, cellPx, wcell, v.road, roadFw);
+    // (round 94: from the bake where it's baked — the finest level from this ring's, melting into the next out as the
+    // ring melts into it; till then, the look made here)
+    var b = vec4<f32>(-1.0);
+    if (BD.info.z > 0.5) {
+      let w = l + FP.org.xy;
+      b = bakeAt(w, v.ring);
+      if (b.a >= 0.0 && v.melt > 0.0) {
+        let b2 = bakeAt(w, v.ring + 1u);
+        if (b2.a >= 0.0) { b = mix(b, b2, v.melt); }
+      }
+    }
+    if (b.a >= 0.0) {
+      var rc = v.rock;
+      if (rk > 0.0) {
+        let w = l + FP.org.xy;
+        rc = v.rock * farBedTint(v.mats.y, farStrata(w, v.local.z)) * (0.9 + 0.2 * farVnoise(vec2<f32>(w.x + w.y, v.local.z) * 1.7));
+      }
+      c = bakedLook(b, v, nn, rk, rc, cellPx, wcell);
+    } else {
+      c = ringWindowLook(vv, nn, rk, cellPx, wcell, v.road, roadFw);
+    }
   }
   // (round 91, the user: "I easily hit the edge of the loaded ground") The window's ground is a colour a cell,
   // each a little lighter or darker; the rings' was smooth — a blur past the window's edge. Their ground gets the

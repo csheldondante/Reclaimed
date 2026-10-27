@@ -454,6 +454,24 @@ flowers, paving and water; render.wgsl's lighting and haze from the Globals the
 level hands FarLand a frame as `FarLight`; painted trees over a wood's ground)
 unless `?fd=0`. underFocus keeps the land only under the eye's line to the focus.
 
+Round 94 (`farbake`): the land past the window is drawn from a baked
+texture, `SurfaceBake` (atlas/bake.ts, bake.wgsl): a clipmap of 512² RGBA8
+levels in one 2d-array — a level a ring (a texel half its spacing) and one for
+the far land (16 units) — world-anchored, toroidally addressed, the strips new
+to a level baked as the camera moves (two 16k-texel bands a frame at most). A
+texel is lod.wgsl `surfaceAt` (the rings' per-vertex rules, shared) plus the
+window's grass, ways, water and woods averaged over it, plus the **stamps**
+laid on it (`SurfaceStamp`: a raster of tops a world unit, and its 4-unit
+average). fsLod/fsFar sample the finest valid level (far.wgsl `bakeAt`,
+bindings 37–39) and light it a frame. The settlements system makes the stamps:
+`Settlements.farPlans(FarIO)` plans each settlement within reach on the
+atlas's rough ground (`SurfaceBake.roughGround`, the level hands it over as
+FarIO.rough) in a worker (settle/plan-worker.ts), rasters it
+(settle/raster.ts) and publishes the list through `onStamps`; the level lays
+them (`bake.setStamps`). The exact plan's raster replaces a far one when its
+land arrives. FarLand never reads the settlements, nor they the bake's
+insides.
+
 Round 86 (the grid): a heightfield chunk is one of two kinds. Most are the
 **grid's** — their columns' tops all within the window's z, their land come
 in over 0.4 s ago — drawn by the renderer as a lattice through the window's

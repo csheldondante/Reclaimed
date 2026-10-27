@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 94 (2026-10-27, session 5, `farbake`) — the land past the window baked (DECISIONS round 94)
+
+| id | item | size | status |
+|---|---|---|---|
+| FB1 | "why towns and grass aren't baked into a texture we can stream": the rings' look baked once a texel into a clipmap (atlas/bake.ts, bake.wgsl: a level a ring, one for the far land; 512² RGBA8 each), the strips new to a level as the camera moves; the rings and the far land sample it, lit a frame | M | done (farbake) |
+| FB2 | Towns past the window: every settlement within 2600 planned once, nearest first, on the atlas's rough ground (bake.wgsl roughGround + the ways stamped), in a worker (settle/plan-worker.ts), its tops rastered (settle/raster.ts) and baked in; the exact plan's raster replaces it when its land arrives | M | done (farbake) |
+| FB3 | "further out": the far land drawn from the bake's far level (towns, grass, ways, woods, water, the window's light) instead of the macro colour | S | done (farbake) |
+| FB4 | The far plans cached across loads (IndexedDB, keyed by the seed and a plan version) — not done: a stale cache after plan.ts changes would draw wrong towns, and the plans take ~65 ms each in the worker | S | open |
+| FB5 | Pop-in: a region entering the window changes from the bake to the window's mesh at once (the seam as round 93's); a 0.3 s blend needs the field mesh's chunks' build time (meshstate has none) and a depth-biased ring draw over them | M | open |
+| FB6 | The bake's levels have no mips (the 16-unit level shimmers a little at a grazing view); shadows and clouds on the rings; the woods' crowns from above (round 93's raised crowns are gone with the bake) | S | open |
+
 ## Round 91 (2026-10-27, session 5, `phonecam`) — names on the map, a compass, the edge of the land (DECISIONS round 91)
 
 | id | item | size | status |

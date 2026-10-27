@@ -399,6 +399,25 @@ export function stampWays(
   return changed;
 }
 
+/**
+ * (round 94) The ways stampWays would look at for a box of world units (ax, ay)–(bx, by): its bins and their points
+ * alone, renumbered (all the lifts) — small enough to hand to a worker (settle/plan-worker.ts).
+ */
+export function waysNear(ways: Ways, ax: number, ay: number, bx: number, by: number, W: number, H: number): Ways {
+  const nbx = Math.ceil(W / BIN);
+  const nby = Math.ceil(H / BIN);
+  const points: WayPoint[] = [];
+  const bins = new Map<number, number[]>();
+  for (let j = Math.floor((ay - REACH) / BIN); j <= Math.floor((by + REACH) / BIN); j++)
+    for (let i = Math.floor((ax - REACH) / BIN); i <= Math.floor((bx + REACH) / BIN); i++) {
+      const key = binKey(((i % nbx) + nbx) % nbx, ((j % nby) + nby) % nby);
+      const b = ways.bins.get(key);
+      if (!b || bins.has(key)) continue;
+      bins.set(key, b.map((k) => points.push(ways.points[k]) - 1));
+    }
+  return { points, lifts: ways.lifts, bins, counts: ways.counts, ms: 0 };
+}
+
 /** cut or fill a column's top to T (fill of soil); paved on top when `pave` */
 function fillTo(col: Interval[], T: number, pave: boolean): void {
   const top = topOf(col);

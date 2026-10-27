@@ -1363,6 +1363,13 @@ export class LevelScene implements Scene {
         const units = new AgentUnits(this.agents);
         this.units = units;
         this.settlements = st;
+        // (round 94) the settlements past the window planned on the atlas's rough ground and baked into the land there
+        const bake = this.far?.bake;
+        if (bake) {
+          const far = this.far!;
+          st.farPlans({ rough: (x0, y0, w, h) => bake.roughGround(x0, y0, w, h), camera: () => [far.mid[0] + far.org[0], far.mid[1] + far.org[1]], radius: Number(host.params.get('fbr') ?? 2600) });
+          st.onStamps.push((list) => bake.setStamps(list));
+        }
         core.onShift.push((dx, dy, dz) => units.shift(dx, dy, dz));
         const S = this.stream;
         S.onWarp.push(() => {
@@ -1645,6 +1652,8 @@ export class LevelScene implements Scene {
     // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms)
     if (this.opts.atlas && ++this.coarseFrame % 4 === 0) this.opts.atlas.atlas.coarse.step(1);
     // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
+    // (round 94: the settlements past the window planned for the bake, whatever the streamer's doing)
+    this.settlements?.farUpdate(dt);
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);
       timed('settle', () => this.settlements!.update(dt * this.speed));

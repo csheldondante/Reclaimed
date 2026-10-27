@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 94 (session 5, `farbake`) — the land past the window baked into a texture
+
+- The user: "The draw distance is ok but I don't understand why towns and grass aren't baked into a texture we can
+  stream so that distant tiles draw correctly further out"
+- → The land past the window is baked once into a streamed texture (a clipmap: a level a ring and one for the far
+  land) from the window's rules, the settlements within reach planned off the main thread on the atlas's own ground
+  and their tops baked in; the rings and the far land draw it, lit a frame. `?fb=0` round 93's look. See DEVLOG
+  round 94 (and why the towns weren't there: their plans needed the window's raw columns).
+
 ## 2026-10-27 — round 93 (session 5, `fardetail`) — detail past the window, cheap
 
 - The user, on main's option 5 (plants, roads and grass colour on the far land, baked once as 2D maps): "I'm also

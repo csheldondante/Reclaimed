@@ -70,12 +70,12 @@ export class LodRings {
   readonly uni: GPUBuffer;
   private kernel?: ComputeKernel;
   private groups: GPUBindGroup[] = [];
-  private atlasParams: GPUBuffer;
+  readonly atlasParams: GPUBuffer;
   private ringParams: GPUBuffer[];
   /** each material's albedo (ALBEDOS vec4s; a uniform: lod.wgsl, far.wgsl) */
   readonly albedo: GPUBuffer;
   /** (round 93) the ways binned (wayBins) */
-  private ways: GPUBuffer;
+  readonly ways: GPUBuffer;
   /** the GPU bytes the rings hold (their slots, the ways, the albedos) */
   readonly bytes: number;
   /** each ring's corner as made (world texel indices), null: not yet */

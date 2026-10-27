@@ -32,6 +32,10 @@ import { derive } from '../api/contracts/compose';
 import { catalogue } from './catalogue';
 import type { AgentUnits } from '../units/agent-units';
 import { timed } from '../gpu/cpustat';
+import { waysNear } from '../atlas/ways';
+import type { SurfaceStamp } from '../atlas/bake';
+import { rasterPlan, stampMatch } from './raster';
+import type { FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
 
 const T = 64;
 /** a game day (s): the stores' rates are a day's */
@@ -70,6 +74,14 @@ export interface LiveIO {
   budget: number;
 }
 
+/** (round 94) what the bake gives the far plans: the atlas's rough ground over a box (null: not ready yet), where the
+ *  camera is (world units), the reach (world units) within which settlements are planned for it */
+export interface FarIO {
+  rough(x0: number, y0: number, w: number, h: number): Promise<{ ground: Float32Array; water: Float32Array; top: Uint8Array; veg: Float32Array } | null>;
+  camera(): V2;
+  radius: number;
+}
+
 export class Settlements {
   readonly wiki: WorldWiki;
   readonly seeds: SettlementSeed[];
@@ -84,6 +96,21 @@ export class Settlements {
   private rows: number;
   /** the ms the records took, and each plan's */
   stats = { recordsMs: 0, planned: 0, planMs: 0, stamped: 0, rawTiles: 0 };
+  /** (round 94) the far plans: how many, the ms (the rough ground's GPU and readback, wall; in the worker the ways, the
+   *  plan, the raster), the worker's first message (ms on the main thread), and each exact plan's match with its far
+   *  one (IoU of their tops' cover) */
+  farStats = { planned: 0, roughMs: 0, waysMs: 0, planMs: 0, rasterMs: 0, initMs: 0, maxPlanMs: 0, match: [] as { id: string; iou: number }[] };
+  /** (round 94) the stamps in reach, each time they change (the far land's bake lays them) */
+  readonly onStamps: ((list: SurfaceStamp[]) => void)[] = [];
+  private farIO: FarIO | null = null;
+  private farWorker: Worker | null = null;
+  private farBusy = 0;
+  private farClock = 0;
+  private farWait = new Map<string, (d: FarPlanDone) => void>();
+  /** the far plans' stamps, and the exact plans' (once their land has come in: these win) */
+  private farStamps = new Map<string, SurfaceStamp>();
+  private exactStamps = new Map<string, SurfaceStamp>();
+  private lastStamps: SurfaceStamp[] = [];
   /** the live one */
   life: SettlementLife | null = null;
   private io: LiveIO | null = null;
@@ -238,6 +265,15 @@ export class Settlements {
         }
     });
     const plan = timed('plan', () => planSettlement({ ...s, ground, water, top, veg, sea: this.atlas.p.sea, regionAt: (x, y) => this.regionAt(x + s.box.x0, y + s.box.y0 * ROW_H) }));
+    // (round 94: its tops for the land past the window — the far plan's stamp gives way to it; how alike they are)
+    const st = timed('plan', () => rasterPlan(s.rec.id, plan.columns, box, ground, top));
+    this.exactStamps.set(s.rec.id, st);
+    const far = this.farStamps.get(s.rec.id);
+    if (far) {
+      const iou = +stampMatch(far, st).toFixed(3);
+      this.farStats.match.push({ id: s.rec.id, iou });
+      console.log(`[farbake] ${s.rec.id} (${s.rec.size}) exact plan vs far plan: IoU ${iou}`);
+    }
     for (const [k, t] of plan.things) this.things.set(k, t);
     if (plan.camp) this.recs.set(plan.camp.id, plan.camp);
     this.done.set(s.rec.id, plan);
@@ -372,6 +408,88 @@ export class Settlements {
     const tx = this.mod(Math.floor((x / a.worldW) * n), n);
     const ty = this.mod(Math.floor((y / a.worldH) * n), n);
     return a.regionOf[ty * n + tx];
+  }
+
+  // ---- (round 94) the far plans ------------------------------------------------------------------------
+
+  /** Plan the settlements within reach of the camera for the land past the window (one at a time, nearest first). */
+  farPlans(io: FarIO): void {
+    this.farIO = io;
+  }
+
+  /** each frame (whatever the streamer's doing): the next far plan, the stamps in reach to the bake */
+  farUpdate(dt: number): void {
+    const io = this.farIO;
+    if (!io) return;
+    this.farClock -= dt;
+    if (this.farClock > 0) return;
+    this.farClock = 0.2;
+    const at = io.camera();
+    const near = this.seeds.map((s) => [this.dist(s.rec.at, at), s] as const).filter(([d]) => d <= io.radius * 1.15);
+    if (!this.farBusy) {
+      let best: SettlementSeed | null = null;
+      let bd = io.radius;
+      for (const [d, s] of near) {
+        const id = s.rec.id;
+        if (d < bd && !this.farStamps.has(id) && !this.exactStamps.has(id)) {
+          bd = d;
+          best = s;
+        }
+      }
+      if (best) void this.farPlan(best, io);
+    }
+    const list = near.map(([, s]) => this.exactStamps.get(s.rec.id) ?? this.farStamps.get(s.rec.id)).filter((x): x is SurfaceStamp => !!x && x.w > 0);
+    if (list.length !== this.lastStamps.length || list.some((x, i) => x !== this.lastStamps[i])) {
+      this.lastStamps = list;
+      for (const f of this.onStamps) f(list);
+    }
+  }
+
+  private worker(): Worker {
+    if (this.farWorker) return this.farWorker;
+    const w = new Worker(new URL('./plan-worker.ts', import.meta.url), { type: 'module' });
+    w.onmessage = (e: MessageEvent<FarPlanDone>) => {
+      const f = this.farWait.get(e.data.id);
+      this.farWait.delete(e.data.id);
+      f?.(e.data);
+    };
+    w.onerror = (e) => {
+      throw new Error(`settlements: the far plans' worker failed: ${e.message}`);
+    };
+    const t0 = performance.now();
+    const a = this.atlas;
+    const init: FarPlanInit = { init: { regionOf: a.regionOf, n: a.p.n, worldW: a.worldW, worldH: a.worldH } };
+    w.postMessage(init);
+    this.farStats.initMs = +(performance.now() - t0).toFixed(1);
+    this.farWorker = w;
+    return w;
+  }
+
+  private async farPlan(s: SettlementSeed, io: FarIO): Promise<void> {
+    this.farBusy++;
+    try {
+      const { box } = s;
+      const t0 = performance.now();
+      const g = await io.rough(box.x0, box.y0, box.w, box.h);
+      if (!g) return;
+      this.farStats.roughMs += performance.now() - t0;
+      const a = this.atlas;
+      const ways = waysNear(a.ways, box.x0, box.y0 * ROW_H, box.x0 + box.w + 1, (box.y0 + box.h + 1) * ROW_H, a.worldW, a.worldH);
+      const job: FarPlanJob = { id: s.rec.id, seed: s, ...g, sea: a.p.sea, ways };
+      const done = await new Promise<FarPlanDone>((res) => {
+        this.farWait.set(s.rec.id, res);
+        this.worker().postMessage(job, [g.ground.buffer, g.water.buffer, g.top.buffer, g.veg.buffer]);
+      });
+      this.farStamps.set(s.rec.id, done.stamp);
+      const F = this.farStats;
+      F.planned++;
+      F.waysMs += done.ms[0];
+      F.planMs += done.ms[1];
+      F.rasterMs += done.ms[2];
+      F.maxPlanMs = Math.max(F.maxPlanMs, done.ms[1]);
+    } finally {
+      this.farBusy--;
+    }
   }
 
   /** each frame: the stores' rates, which settlement's alive */
