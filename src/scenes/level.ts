@@ -1162,7 +1162,9 @@ export class LevelScene implements Scene {
           const plug = FLOWLAB.notch;
           for (let y = plug.y0; y < plug.y1; y += 2) {
             const [x, wy] = cellPos((plug.plug[0] + plug.plug[1]) / 2, y + 0.5);
-            for (let k = 0; k < 3; k++) this.core.globals.events.push({ kind: EventKind.Edit, x, y: wy, z: 2 * 32 + 512, radius: 2.2, strength: 4 });
+            // (round 86: three cells, the plug's height - at 4 a time it sank a shaft ~20 deep under the notch, which took
+            // the pool's first seconds to fill before anything reached the lip)
+            for (let k = 0; k < 3; k++) this.core.globals.events.push({ kind: EventKind.Edit, x, y: wy, z: 2 * 32 + 512, radius: 2.2, strength: 1 });
           }
           this.flow?.lab?.breach(spring);
         },

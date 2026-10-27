@@ -5,6 +5,8 @@
 //     its floor and out of the hillside as a waterfall.
 //   C (x 30..110, y 180..230): a ramp with a step in it; a lava vent at its top runs down it, falls off the step, cools
 //     and sets into basalt.
+//   D (x 170..210, y 30..80; round 86): the sand's fall to compare with the water's - a plateau as A's with a bank of
+//     sand on it held by a concrete wall at its lip; dig the wall (scripts/fallcompare.mjs) and the sand runs off.
 // Storage coordinates (x column, y row); the camera looks from +x+y, so each scene's fall faces it.
 
 import { ColumnGrid, type WorldDims } from '../world/layout';
@@ -25,6 +27,7 @@ export const FLOWLAB = {
   hill: { x0: 100, x1: 150, y0: 100, y1: 150, top: 34 },
   tunnel: { x0: 110, y0: 123, y1: 127, z0: 16, z1: 19 },
   ramp: { x0: 30, x1: 110, y0: 180, y1: 230, top: 30, step: 75, stepDrop: 5 },
+  sand: { x0: 170, x1: 210, y0: 30, y1: 80, top: 30, bank: { x0: 186, y0: 49, y1: 61, top: 35 }, wall: [208, 210] as [number, number] },
 };
 
 export function generateFlowlab(dims: WorldDims): MapData {
@@ -50,6 +53,9 @@ export function generateFlowlab(dims: WorldDims): MapData {
         if (top === L.notch.floor && x < L.notch.plug[0]) water[i] = L.pool.level - top;
       }
       if (inBox(x, y, L.hill)) top = L.hill.top;
+      const sd = L.sand;
+      const onSand = inBox(x, y, sd);
+      if (onSand) top = sd.top;
       if (inBox(x, y, L.ramp)) {
         const r = L.ramp;
         top = Math.round(r.top - (x - r.x0) * ((r.top - PLAIN - r.stepDrop) / (r.x1 - r.x0))) - (x >= r.step ? r.stepDrop : 0);
@@ -67,6 +73,16 @@ export function generateFlowlab(dims: WorldDims): MapData {
       }
       // the plug holding the pool back
       if (inBox(x, y, L.plateau) && y >= L.notch.y0 && y < L.notch.y1 && x >= L.notch.plug[0] && x < L.notch.plug[1]) grid.push(x, y, top, top + 3, MAT.Concrete);
+      // the sand's bank and the wall holding it
+      if (onSand && y >= sd.bank.y0 && y < sd.bank.y1 && x >= sd.bank.x0) {
+        if (x >= sd.wall[0]) grid.push(x, y, top, sd.bank.top + 1, MAT.Concrete);
+        else {
+          // (its free sides at the sand's repose, half a cell a cell: it lies still until the wall goes)
+          const edge = Math.min(y - sd.bank.y0, sd.bank.y1 - 1 - y, x - sd.bank.x0) + 1;
+          const z1 = Math.min(sd.bank.top, top + edge * 0.5);
+          if (z1 > top + 0.25) grid.push(x, y, top, z1, MAT.Sand);
+        }
+      }
     }
   const surface = new Float32Array(N);
   for (let i = 0; i < N; i++) {

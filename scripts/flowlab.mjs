@@ -91,7 +91,7 @@ try {
       const l = await f.lava.probe(34, 205);
       const un = [];
       for (let k = 0; k < f.steady.net.length; k++) if (f.sleep.isAwake(k, performance.now() / 1000)) un.push([k, +f.steady.net[k].toExponential(1), +f.steady.thr[k].toExponential(1)]);
-      return { chunks: un.slice(0, 8), awake: f.sleep.awake, steady: f.steady.last, water: { enclosed: w.enclosed, vol: +w.enclosedVol.toFixed(2), drawn: w.drawn, tunnelMouth: w.col }, lava: { drawn: l.drawn, vent: l.col && l.col[0] }, ran: f.water.ran };
+      return { chunks: un.slice(0, 24), awake: f.sleep.awake, steady: f.steady.last, water: { enclosed: w.enclosed, vol: +w.enclosedVol.toFixed(2), drawn: w.drawn, tunnelMouth: w.col }, lava: { drawn: l.drawn, vent: l.col && l.col[0] }, ran: f.water.ran };
     });
   // GPU ms a frame of each pass named like `pre`, over `frames` frames
   const cost = (frames = 120) =>
@@ -102,7 +102,7 @@ try {
       for (let f = 0; f < frames; f++) await raf();
       const n = Math.max(prof.framesResolved, 1);
       const o = {};
-      for (const [k, v] of prof.totalMs) if (k.startsWith('liquid') || k.startsWith('water') || k.startsWith('sediment')) o[k] = +(v / n).toFixed(3);
+      for (const [k, v] of prof.totalMs) if (k.startsWith('liquid') || k.startsWith('water') || k.startsWith('sediment') || k.startsWith('particles') || k === 'draw') o[k] = +(v / n).toFixed(3);
       o.gpuFrame = +(prof.gpuTotalMs / n).toFixed(2);
       o.frames = n;
       return o;

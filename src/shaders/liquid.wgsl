@@ -36,7 +36,8 @@
 // per column: stamp << 6 | the directions a run falls off this step
 @group(0) @binding(9) var<storage, read_write> emit: array<u32>;
 @group(0) @binding(10) var<storage, read> oilL: array<f32>;
-// per chunk: x net change, y throughput (both x 1e6, summed over its columns and ticks), z perturbed, w overflow
+// per chunk: x net change, y throughput (both x 1e6, summed over its columns and ticks), z perturbed (bit 1; bit 2:
+// a stream arrived where none was - woken whatever its balance), w overflow
 @group(0) @binding(11) var<storage, read_write> act: array<atomic<u32>>;
 struct PartQ { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 @group(0) @binding(12) var<storage, read_write> parts: array<PartQ>;
@@ -46,16 +47,22 @@ struct PartQ { p: vec4<f32>, v: vec4<f32>, m: vec4<u32> };
 @group(0) @binding(19) var<storage, read_write> fluxC: array<Dirs>;
 // (lava's publish: the water it boils)
 @group(0) @binding(20) var<storage, read_write> waterB: array<f32>;
-// jets, in (last step's, or this step's for depth and prep) and out:
-//   j0: volume, z it enters at, vz as it leaves, heat
-//   j1: velocity xy (cells/s), where it enters the next column (offset from its centre)
-//   j2: way out (0..5; 6 landed here; 7 off the map), z it leaves (or lands) at, -, stamp
+// jets: the stream in the air over a column (round 86: in real time - it holds the volume in flight over the
+// column and passes on what crosses in a step, so a fall takes as long as its path does), in (last step's, or
+// this step's for depth and prep) and out:
+//   j0: volume in flight over the column, z it enters at, vz as it enters, heat
+//   j1: velocity xy (cells/s), where it enters (offset from the column's centre)
+//   j2: way out (0..5; 6 landed here; 7 off the map), z it leaves (or lands) at, its time across the column, stamp
+//   j3: how long it has run here (its front: none passes on before it crosses), its time since the lip at entry,
+//       the volume that left (or landed) this step, -
 @group(0) @binding(22) var j0In: texture_2d<f32>;
 @group(0) @binding(23) var j1In: texture_2d<f32>;
 @group(0) @binding(24) var j2In: texture_2d<f32>;
+@group(0) @binding(28) var j3In: texture_2d<f32>;
 @group(0) @binding(25) var j0Out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(26) var j1Out: texture_storage_2d<rgba32float, write>;
 @group(0) @binding(27) var j2Out: texture_storage_2d<rgba32float, write>;
+@group(0) @binding(34) var j3Out: texture_storage_2d<rgba32float, write>;
 // draw lists: runs under rock and falling streams (water pipeline); the open lava (opaque pipeline, lava's form)
 @group(0) @binding(29) var<storage, read_write> inst: array<vec4<u32>>;
 @group(0) @binding(30) var<storage, read_write> indirect: array<atomic<u32>>;
@@ -275,6 +282,10 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
       if (code != C_WALL) {
         f[k] = max(0.0, prev[k] * LQ_FRIC + LQ_GAIN * fluid * (H - Hn - LQ_YIELD));
         if (fluid <= 0.0) { f[k] = 0.0; }
+        // (round 86) over a lip no more than the critical flow carries, sqrt(g) d^(3/2) a unit of edge: the pipe's
+        // momentum otherwise poured the whole depth off each tick (17x it for a 2.6 deep pool) - with the water
+        // now in the air as long as its fall takes, that much aloft at once overfilled what it fell into
+        if (code == C_FALL) { f[k] = min(f[k], sqrt(GF) * pow(d, 1.5) * EDGE * DTQ); }
       }
       codes |= code << (4u * k);
     }
@@ -291,15 +302,20 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // ---- C: jets -------------------------------------------------------------------------------------------------
-struct Jet { vol: f32, z: f32, vz: f32, heat: f32, u: vec2<f32>, p: vec2<f32> };
+// (round 86, the user: "The waterfalls move way way too fast at 1x") A stream used to move on a column every
+// step whatever its speed - a fall of 0.3 s a column ran 18x fast. Now a column holds the volume in flight over
+// it (V) and passes on V dt / tc a step once its front has crossed (tc: the path's time across the column), so
+// in a steady state V = rate x tc and the stream's front, its changes and its packets go at the path's speed.
+struct Jet { vol: f32, z: f32, vz: f32, heat: f32, u: vec2<f32>, p: vec2<f32>, lip: f32 };
 
-fn jetAdd(a: ptr<function, Jet>, v: f32, z: f32, vz: f32, h: f32, u: vec2<f32>, p: vec2<f32>) {
+fn jetAdd(a: ptr<function, Jet>, v: f32, z: f32, vz: f32, h: f32, u: vec2<f32>, p: vec2<f32>, lip: f32) {
   (*a).vol += v;
   (*a).z += v * z;
   (*a).vz += v * vz;
   (*a).heat += v * h;
   (*a).u += v * u;
   (*a).p += v * p;
+  (*a).lip += v * lip;
 }
 
 @compute @workgroup_size(8, 8)
@@ -308,28 +324,67 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let now = stepNow();
   // (asleep: the stream it had, kept as it is: drawn falling)
-  if (flowFrozen(id.xy, FLOW_N)) {
+  // (round 86: a stream arriving over a sleeping column that had none - new water, now that streams take their
+  // time - wakes its chunk, and is carried on meanwhile (j3.w 1: carried, not frozen), holding what would land
+  // in the air until the chunk wakes: a sleeping column's runs can't take it, and it mustn't be lost)
+  let frozen = flowFrozen(id.xy, FLOW_N);
+  if (frozen) {
     let j2 = textureLoad(j2In, p, 0);
     let sc = chunkScale(id.xy);
-    if (u32(j2.w) == stamp24(stepPrev()) && sc > 0.0) {
-      let j0 = textureLoad(j0In, p, 0);
-      textureStore(j0Out, p, vec4<f32>(j0.x * sc, j0.yzw));
-      textureStore(j1Out, p, textureLoad(j1In, p, 0));
-      textureStore(j2Out, p, vec4<f32>(j2.xyz, f32(stamp24(now))));
+    let had = u32(j2.w) == stamp24(stepPrev());
+    var carry = had && textureLoad(j3In, p, 0).w > 0.5;
+    if (had && !carry) {
+      if (sc > 0.0) {
+        let j0 = textureLoad(j0In, p, 0);
+        let j3 = textureLoad(j3In, p, 0);
+        textureStore(j0Out, p, vec4<f32>(j0.x * sc, j0.yzw));
+        textureStore(j1Out, p, textureLoad(j1In, p, 0));
+        textureStore(j2Out, p, vec4<f32>(j2.xyz, f32(stamp24(now))));
+        textureStore(j3Out, p, vec4<f32>(j3.xy, j3.z * sc, j3.w));
+      }
+      return;
     }
-    return;
+    if (!had) {
+      for (var k = 0u; k < NDIR; k++) {
+        let q = nbr(p, k);
+        if (!inMap(q)) { continue; }
+        let qj2 = textureLoad(j2In, q, 0);
+        if (u32(qj2.w) == stamp24(stepPrev()) && u32(qj2.x) == (k ^ 1u) && textureLoad(j3In, q, 0).z > 0.0) { carry = true; }
+        let e = emit[colIdxI(q)];
+        if ((e >> 6u) == stamp24(now) && ((e >> (k ^ 1u)) & 1u) != 0u) { carry = true; }
+      }
+    }
+    if (!carry) { return; }
+    // (2: woken, whatever its balance - steady.ts)
+    atomicOr(&act[chunkOf(id.xy) * 4u + 2u], 3u);
   }
   var a: Jet;
-  a.vol = 0.0; a.z = 0.0; a.vz = 0.0; a.heat = 0.0; a.u = vec2<f32>(0.0); a.p = vec2<f32>(0.0);
+  a.vol = 0.0; a.z = 0.0; a.vz = 0.0; a.heat = 0.0; a.u = vec2<f32>(0.0); a.p = vec2<f32>(0.0); a.lip = 0.0;
+  // what's in flight over this column already (its entry as it was)
+  let o2 = textureLoad(j2In, p, 0);
+  var age = 0.0;
+  if (u32(o2.w) == stamp24(stepPrev())) {
+    let o0 = textureLoad(j0In, p, 0);
+    let o1 = textureLoad(j1In, p, 0);
+    let o3 = textureLoad(j3In, p, 0);
+    if (o0.x > 1e-9) {
+      jetAdd(&a, o0.x, o0.y, o0.z, o0.w, o1.xy, o1.zw, o3.y);
+      age = min(o3.x, 600.0);
+    }
+  }
   for (var k = 0u; k < NDIR; k++) {
     let q = nbr(p, k);
     if (!inMap(q)) { continue; }
-    // a stream coming on from the neighbour
+    // a stream coming on from the neighbour: what crossed its column last step, entering as its path leaves it
     let j2 = textureLoad(j2In, q, 0);
     if (u32(j2.w) == stamp24(stepPrev()) && u32(j2.x) == (k ^ 1u)) {
-      let j0 = textureLoad(j0In, q, 0);
-      let j1 = textureLoad(j1In, q, 0);
-      jetAdd(&a, j0.x, j2.y, j0.z, j0.w, j1.xy, j1.zw);
+      let j3 = textureLoad(j3In, q, 0);
+      if (j3.z > 0.0) {
+        let j0 = textureLoad(j0In, q, 0);
+        let j1 = textureLoad(j1In, q, 0);
+        let tc = j2.z;
+        jetAdd(&a, j3.z, j2.y, j0.z - GF * tc, j0.w, j1.xy, j1.zw + j1.xy * tc - DIRV[k ^ 1u], j3.y + tc);
+      }
     }
     // a run falling off the neighbour's ledge toward me
     let j = colIdxI(q);
@@ -345,12 +400,32 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
       let dir = DIRV[k ^ 1u];
       // (off the lip at the critical flow's speed for its discharge a unit of edge, (g q)^(1/3): the pipe model's
       // depth at a lip is a grid artefact, its discharge isn't; a little more, for the spectacle)
-      let speed = clamp(2.0 * pow(GF * f * 60.0 / EDGE, 1.0 / 3.0), 0.6, 12.0);
-      jetAdd(&a, f, runFloor(gq, rq, s) + d * 0.5, 0.0, rq.h[s], dir * speed, -dir * 0.5);
+      // (round 86: one velocity for everything a run sends off its ledge - the mean of its falls' directions, the
+      // speed for their mean discharge a face - so a lip's water leaves as one stream, not a fan of one a face)
+      let codes = fluxCodes(j, s);
+      var fsum = 0.0;
+      var fdir = vec2<f32>(0.0);
+      var nf = 0.0;
+      for (var m = 0u; m < NDIR; m++) {
+        if (((codes >> (4u * m)) & 15u) != C_FALL) { continue; }
+        let fm = fluxDir(j, s, m);
+        fsum += fm;
+        fdir += fm * DIRV[m];
+        nf += select(0.0, 1.0, fm > 1e-7);
+      }
+      let dl = length(fdir);
+      // (only where the mean still leads into this column - within 60 degrees of the face it leaves by: falls off
+      // both sides of a ridge, or round a pit, keep their own faces, or a stream would turn back onto its lip)
+      let mdir = fdir / max(dl, 1e-7);
+      let wdir = select(dir, mdir, dl > 1e-7 && dot(mdir, dir) > 0.5);
+      let speed = clamp(2.0 * pow(GF * fsum / max(nf, 1.0) * 60.0 / EDGE, 1.0 / 3.0), 0.6, 12.0);
+      jetAdd(&a, f, runFloor(gq, rq, s) + d * 0.5, 0.0, rq.h[s], wdir * speed, -dir * 0.5, 0.0);
     }
   }
   if (a.vol <= 1e-8) { return; }
-  let jt = Jet(a.vol, a.z / a.vol, a.vz / a.vol, a.heat / a.vol, a.u / a.vol, a.p / a.vol);
+  let jt = Jet(a.vol, a.z / a.vol, a.vz / a.vol, a.heat / a.vol, a.u / a.vol, a.p / a.vol, a.lip / a.vol);
+  // (its front: how long it has been running over this column)
+  age += DTQ;
   // the level under it here
   let g = gapsAt(p);
   let r = runsAt(colIdxI(p), stepPrev());
@@ -383,11 +458,15 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
     // (a wall in the way: it runs down the face, landing here)
     else if (gapAtZ(gapsAt(q), zx) < 0) { way = 6u; zx = zL; t = tl; }
   }
-  let ex = jt.p + jt.u * t;
-  let pn = select(ex, ex - DIRV[min(way, 5u)], way < 6u);
-  textureStore(j0Out, p, vec4<f32>(jt.vol, jt.z, jt.vz - GF * t, jt.heat));
-  textureStore(j1Out, p, vec4<f32>(jt.u, pn));
+  // what crosses this step: none before the front has, then V dt / t (all of it if it crosses within a step)
+  var out = 0.0;
+  // (carried over a sleeping column: what would land held aloft till it wakes)
+  if (age >= t && !(frozen && way == 6u)) { out = jt.vol * min(DTQ / max(t, 1e-4), 1.0); }
+  let left = jt.vol - out;
+  textureStore(j0Out, p, vec4<f32>(left, jt.z, jt.vz, jt.heat));
+  textureStore(j1Out, p, vec4<f32>(jt.u, jt.p));
   textureStore(j2Out, p, vec4<f32>(f32(way), zx, t, f32(stamp24(now))));
+  textureStore(j3Out, p, vec4<f32>(age, jt.lip, out, select(0.0, 1.0, frozen)));
 }
 
 // ---- B: depth ------------------------------------------------------------------------------------------------
@@ -438,13 +517,15 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
   }
   // a stream landing here (this step's jets)
   let j2 = textureLoad(j2In, p, 0);
+  // (what landed this step: j3.z, the volume that came down)
   if (u32(j2.w) == stamp24(stepNow()) && u32(j2.x) == 6u) {
     let j0 = textureLoad(j0In, p, 0);
+    let landed = textureLoad(j3In, p, 0).z;
     var m = gapAtZ(g, j2.y + 0.01);
     if (m < 0) { m = i32(gapForRun(g, j2.y)); }
-    o.dep[u32(m)] += j0.x;
-    o.hv[u32(m)] += j0.x * j0.w;
-    o.inflow += j0.x;
+    o.dep[u32(m)] += landed;
+    o.hv[u32(m)] += landed * j0.w;
+    o.inflow += landed;
   }
   for (var s = 0u; s < LQ.step.y; s++) {
     let sp = LQ.springs[s];
@@ -581,7 +662,7 @@ fn spawnQ(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, seed: u32, state
   let k = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
   parts[k] = PartQ(vec4<f32>(pos, life), vec4<f32>(vel, 0.0), vec4<u32>(kind, seed, 0u, state));
 }
-fn chanceQ(i: u32, salt: u32) -> f32 { return f32(hash3(i, G.tick, salt) >> 8u) / 16777216.0; }
+fn chanceQ(i: u32, salt: u32) -> f32 { return f32(hash3(i, LQ.step.x, salt) >> 8u) / 16777216.0; }
 
 /** Lay `dz` of basalt on the floor at z of column (x, y): onto basalt there, else a new interval. */
 fn setBasalt(x: u32, y: u32, z: f32, dz: f32, ch: u32) {
@@ -644,15 +725,18 @@ fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
   }
 }
 
-// ---- prep: the draw lists, and spray where the streams land --------------------------------------------------
-/** A box (quarter cells, render.wgsl unpackBox) centred on world point w, `q` quarter cells across. */
-fn boxAt(cell: vec2<i32>, w: vec2<f32>, q: u32, z0: f32, z1: f32, mat: u32, flags: u32) -> vec4<u32> {
-  let off = w - cellPos(cell);
-  let fr = clamp(off / vec2<f32>(1.0, ROW_H) + 0.5, vec2<f32>(0.02), vec2<f32>(0.98));
-  let cs = vec2<f32>(cell) + fr;
-  let g = max(vec2<i32>(round(cs * 4.0 - f32(q) * 0.5)), vec2<i32>(0));
-  return vec4<u32>(u32(g.x) | (u32(g.y) << 12u) | ((q - 1u) << 24u) | ((q - 1u) << 28u), bitcast<u32>(z0), bitcast<u32>(z1), mat | ((flags | FLAG_DETAIL_Q) << 8u));
-}
+// ---- prep: the draw lists, and the spray off the streams ------------------------------------------------------
+// The water pipeline's list (inst): runs under rock as flat prisms (render.wgsl prismVertex), and each column's
+// stream as a curved sheet along its path (render.wgsl streamVertex, round 86): the header (the column, z and vz
+// it enters with, mat | flags) and two more vec4 after the list's room (cap = a third of the buffer): where it
+// enters (world xy) and its velocity xy; how far along its path it's drawn (the front), its time since the lip,
+// the volume a second through it, its heat.
+const K_DROP_Q: u32 = 24u;
+const MIST_Q: u32 = 3u;
+
+/** the spray's share of the particle ring (the high tier's 65536: all of it) */
+fn sprayBudget() -> f32 { return min(f32(arrayLength(&parts)) / 65536.0, 1.0) * simStep(); }
+fn rnd(i: u32, salt: u32) -> f32 { return f32(hash3(i, G.tick, salt) >> 8u) / 16777216.0; }
 
 @compute @workgroup_size(8, 8)
 fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
@@ -662,6 +746,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   let last = stepNow();
   let r0 = runsIn[i * NSLOT];
   let ok = (u32(r0.w) >> 3u) == last;
+  let cap = arrayLength(&inst) / 3u;
   // enclosed runs (under rock): flat prisms
   if (ok) {
     let n = u32(r0.w) & 7u;
@@ -669,6 +754,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
       let v = runsIn[i * NSLOT + s];
       if (v.y < 0.01) { continue; }
       let k = atomicAdd(&indirect[1], 1u);
+      if (k >= cap) { continue; }
       inst[k] = vec4<u32>(id.x | (id.y << 12u), bitcast<u32>(v.x), bitcast<u32>(v.x + v.y), LQ_MAT | (FLAG_RUN_Q << 8u));
     }
   }
@@ -695,33 +781,70 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
       instO[o + 1u] = vec4<u32>(bitcast<u32>(lv[4]), bitcast<u32>(lv[5]), 0u, 0u);
     }
   }
-  // the stream through this column: a narrow box from where it comes in to where it leaves (or lands)
+  // the stream over this column
   let j2 = textureLoad(j2In, p, 0);
   if (u32(j2.w) != stamp24(last)) { return; }
   let j0 = textureLoad(j0In, p, 0);
   let j1 = textureLoad(j1In, p, 0);
+  let j3 = textureLoad(j3In, p, 0);
   let way = u32(j2.x);
-  // (its way in: where it leaves, less how far it went)
-  let ex = select(j1.zw, j1.zw + DIRV[min(way, 5u)], way < 6u);
-  let vzOut = j0.z;
-  let entry = ex - j1.xy * j2.z;
-  let mid = cellPos(p) + 0.5 * (entry + ex);
-  // (thicker for more water: up to a cell across)
-  let rate = j0.x * 60.0;
-  let q = u32(clamp(round(2.0 + rate * 2.0), 1.0, 4.0));
-  let z0 = min(j2.y, j0.y - 0.05);
+  let tc = j2.z;
+  // (drawn as far as its front has come)
+  let tEnd = min(j3.x, tc);
+  // the volume a second through it (before its front has crossed: what's in flight over the time across)
+  let rate = max(j3.z, j0.x * DTQ / max(tc, DTQ)) / DTQ;
+  if (rate < 1e-4 || tEnd <= 0.0) { return; }
+  let entry = cellPos(p) + j1.zw;
   let k = atomicAdd(&indirect[1], 1u);
-  inst[k] = boxAt(p, mid, q, z0, j0.y + 0.05, LQ_MAT, FLAG_RUN_Q);
-  // spray where it lands: more for more water falling faster
-  if (way == 6u) {
-    let hit = abs(vzOut);
-    let chance = min(rate * hit * 0.02, 0.9);
-    if (chanceQ(i, 0x71u) < chance) {
-      let s = hash3(i, G.tick, 0x72u);
-      let rr = vec2<f32>(f32(s & 255u), f32((s >> 8u) & 255u)) / 255.0 - 0.5;
-      let kind = select(K_SMOKE_Q, K_SPLASH_Q, LQ_WATER);
-      let up = min(hit * 0.35, 6.0);
-      spawnQ(vec3<f32>(cellPos(p) + ex, j2.y + 0.1), vec3<f32>(rr * 3.0 + j1.xy * 0.3, up), select(3.0, 0.9, LQ_WATER), kind, s, select(2u, 0u, LQ_WATER));
+  if (k < cap) {
+    inst[k] = vec4<u32>(id.x | (id.y << 12u), bitcast<u32>(j0.y), bitcast<u32>(j0.z), LQ_MAT | ((FLAG_RUN_Q | FLAG_DETAIL_Q) << 8u));
+    inst[cap + 2u * k] = vec4<u32>(bitcast<u32>(entry.x), bitcast<u32>(entry.y), bitcast<u32>(j1.x), bitcast<u32>(j1.y));
+    inst[cap + 2u * k + 1u] = vec4<u32>(bitcast<u32>(tEnd), bitcast<u32>(j3.y), bitcast<u32>(rate), bitcast<u32>(j0.w));
+  }
+  if (!LQ_WATER) {
+    // lava landing: smoke now and then
+    if (way == 6u && j3.z > 0.0 && rnd(i, 0x71u) < min(rate * 0.05, 0.5) * simStep()) {
+      spawnQ(vec3<f32>(entry + j1.xy * tc, j2.y + 0.1), vec3<f32>(0.0, 0.0, 1.5), 3.0, K_SMOKE_Q, hash3(i, G.tick, 0x72u), 2u);
+    }
+    return;
+  }
+  // spray along the path: drops set off on the stream's own path (the particles' gravity is the flow model's), the
+  // sheet breaking up as it falls - looser the longer it has fallen
+  let us = length(j1.xy);
+  let side = select(vec2<f32>(1.0, 0.0), vec2<f32>(-j1.y, j1.x) / us, us > 1e-3);
+  let width = mix(0.35, 1.3, smoothstep(0.05, 1.5, rate));
+  let budget = sprayBudget();
+  // (none off a trickle: the spray is the falls' - round 86, flowlab's frame cost)
+  let nD = select(0.0, min(rate * 0.35, 1.5) * budget, rate > 0.2);
+  let nI = u32(nD) + select(0u, 1u, rnd(i, 0x81u) < fract(nD));
+  for (var d = 0u; d < nI; d++) {
+    let h = hash3(i, G.tick, 0x90u + d * 31u);
+    let a = f32(h & 1023u) / 1023.0;
+    let b = f32((h >> 10u) & 1023u) / 1023.0 - 0.5;
+    let c = f32((h >> 20u) & 1023u) / 1023.0 - 0.5;
+    let t = a * tEnd;
+    let loose = 0.1 + 0.4 * min(j3.y + t, 1.5);
+    let at = vec3<f32>(entry + j1.xy * t + side * b * width, j0.y + j0.z * t - 0.5 * GF * t * t);
+    let v = vec3<f32>(j1.xy + side * b * loose + j1.xy * c * 0.15, j0.z - GF * t + c * loose);
+    spawnQ(at, v, 4.0, K_DROP_Q, h, 0u);
+  }
+  // where it lands: splash thrown up and out, mist drifting off - more for more water falling harder
+  if (way == 6u && j3.z > 0.0) {
+    let hit = abs(j0.z - GF * tc);
+    let foot = vec3<f32>(entry + j1.xy * tc, j2.y + 0.05);
+    let nS = min(rate * hit * 0.03, 3.0) * budget;
+    let nSI = u32(nS) + select(0u, 1u, rnd(i, 0x73u) < fract(nS));
+    for (var s = 0u; s < nSI; s++) {
+      let h = hash3(i, G.tick, 0xa0u + s * 17u);
+      let ang = f32(h & 1023u) / 1023.0 * 6.2832;
+      let sp = 0.6 + f32((h >> 10u) & 1023u) / 1023.0 * min(hit * 0.18, 3.0);
+      let up = 1.0 + f32((h >> 20u) & 1023u) / 1023.0 * min(hit * 0.4, 7.0);
+      spawnQ(foot + vec3<f32>(cos(ang) * width * 0.4, sin(ang) * width * 0.4, 0.0), vec3<f32>(vec2<f32>(cos(ang), sin(ang)) * sp + j1.xy * 0.25, up), 0.9, K_SPLASH_Q, h, 0u);
+    }
+    if (rate > 0.2 && rnd(i, 0x75u) < min(rate * hit * 0.002, 0.15) * budget) {
+      let h = hash3(i, G.tick, 0x76u);
+      let rr = vec2<f32>(f32(h & 255u), f32((h >> 8u) & 255u)) / 255.0 - 0.5;
+      spawnQ(foot + vec3<f32>(rr * width, 0.3), vec3<f32>(rr * 1.5 + j1.xy * 0.2, 0.6), 2.6, K_SMOKE_Q, h, MIST_Q);
     }
   }
 }

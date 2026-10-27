@@ -105,7 +105,11 @@ export class Steady {
         // change past RESCALE_MAX either way: woken to find its new steady state. Shape changes wake by events.)
         out.perturbed++;
         const r = thr > 1e-6 ? net / thr : Infinity;
-        if (net < STEADY_FLOOR && thr > 1e-6) {
+        // (round 86: a stream arrived over it where none was - liquid.wgsl jets holds it aloft: woken)
+        if (u[k * 4 + 2] & 2) {
+          this.calm[k] = 0;
+          this.sleep.wakeChunk(k, 1, now);
+        } else if (net < STEADY_FLOOR && thr > 1e-6) {
           this.onRescale(k, 0);
           out.rescaled++;
         } else if (r > 1 / RESCALE_MAX && r < RESCALE_MAX) {

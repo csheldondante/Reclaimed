@@ -49,7 +49,8 @@ export interface Spring {
   rate: number;
 }
 
-const VERTS_PER_PRISM = 30;
+/** a run's prism (30) or a stream's sheet (render.wgsl streamVertex: 2 ribbons x 3 segments x 6) */
+const VERTS_PER_PRISM = 36;
 
 const f = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
 function prelude(k: LiquidKind): string {
@@ -86,13 +87,15 @@ export class LiquidSystem implements SimSystem {
   skip: () => boolean = () => false;
   /** passes dispatched at the last encode (the cost report) */
   ran = 0;
-  private uni: GPUBuffer;
+  /** (one a substep: ?simhz=30|15 runs FLOW_SUB 60 Hz steps a tick, sim/flow.ts) */
+  private unis: GPUBuffer[];
   private runs: GPUBuffer[];
   private uniData = new ArrayBuffer(16 + 16 * MAX_SPRINGS + 16 * 512);
   /** frozen chunks' flux rescaled next step (chunk -> factor; steady.ts: their supply changed) */
   readonly rescale = new Map<number, number>();
   private k: Record<string, ComputeKernel> = {};
-  private g: Record<string, GPUBindGroup[]> = {};
+  /** per substep, per parity */
+  private g: Record<string, GPUBindGroup[][]> = {};
 
   constructor(
     private device: GPUDevice,
@@ -103,7 +106,6 @@ export class LiquidSystem implements SimSystem {
     /** the frozen column's wake tolerance: |in - out| (cells^3 a tick) */
     wakeTol: number,
   ) {
-    if (FLOW_SUB !== 1) throw new Error(`?flow=1 runs at the 60 Hz tick only (?simhz=${60 / FLOW_SUB} given)`);
     this.name = `liquid-${kind.name}`;
     const N = world.cells;
     const S = GPUBufferUsage.STORAGE;
@@ -112,25 +114,26 @@ export class LiquidSystem implements SimSystem {
     this.runs = runs;
     const fl = world.buf(`${kind.name}Flux`, N * 4 * 2 * 16, S);
     const emit = world.buf(`${kind.name}Emit`, N * 4, S);
-    this.inst = world.buf(`${kind.name}RunInst`, N * 16 * 2, S);
+    // (room for N instances, then two more vec4 an instance for the streams: liquid.wgsl prep)
+    this.inst = world.buf(`${kind.name}RunInst`, N * 16 * 3, S | GPUBufferUsage.COPY_SRC);
     this.indirect = world.buf(`${kind.name}RunIndirect`, 16, S | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     this.instO = world.buf(`${kind.name}OpenInst`, kind.name === 'water' ? 48 : N * 16 * 3, S);
     this.indirectO = world.buf(`${kind.name}OpenIndirect`, 16, S | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
-    this.uni = world.buf(`${kind.name}U`, this.uniData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    this.unis = Array.from({ length: FLOW_SUB }, (_, s) => world.buf(`${kind.name}U${s}`, this.uniData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST));
     new Uint32Array(this.uniData, 0, 4)[2] = new Uint32Array(new Float32Array([wakeTol]).buffer)[0];
     const size = { width: world.w, height: world.h };
     const tex = () => device.createTexture({ label: `${kind.name}Jet`, size, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
-    const jets = [0, 1].map(() => [tex(), tex(), tex()].map((t) => t.createView()));
+    const jets = [0, 1].map(() => [tex(), tex(), tex(), tex()].map((t) => t.createView()));
 
     const parts = [commonWgsl, layersWgsl, materialsWgsl, prelude(kind) + flowConst(kind.name) + liquidWgsl];
     const base: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 21: 'tex', 33: 'uniform' };
     const specs: Record<string, BindSpec> = {
       flux: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 10: 'read' },
-      jets: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 25: 'stex', 26: 'stex', 27: 'stex' },
-      depth: { 3: 'rw', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'rw', 11: 'rw', 17: 'tex', 22: 'tex', 23: 'tex', 24: 'tex' },
+      jets: { 3: 'rw', 5: 'rw', 6: 'read', 8: 'rw', 9: 'rw', 11: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 25: 'stex', 26: 'stex', 27: 'stex', 34: 'stex' },
+      depth: { 3: 'rw', 4: 'read', 5: 'rw', 6: 'read', 7: 'rw', 8: 'rw', 11: 'rw', 17: 'tex', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex' },
       publishWater: { 4: 'read', 5: 'rw', 7: 'rw', 8: 'rw', 14: 'rw', 16: 'read', 19: 'rw' },
       publishLava: { 3: 'rw', 5: 'rw', 7: 'rw', 11: 'rw', 12: 'rw', 13: 'rw', 20: 'rw' },
-      prep: { 5: 'rw', 6: 'read', 12: 'rw', 13: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 29: 'rw', 30: 'rw', 31: 'rw', 32: 'rw' },
+      prep: { 5: 'rw', 6: 'read', 12: 'rw', 13: 'rw', 22: 'tex', 23: 'tex', 24: 'tex', 28: 'tex', 29: 'rw', 30: 'rw', 31: 'rw', 32: 'rw' },
     };
     const entries = ['flux', 'jets', 'depth', kind.name === 'water' ? 'publishWater' : 'publishLava', 'prep'];
     for (const e of entries) {
@@ -139,8 +142,8 @@ export class LiquidSystem implements SimSystem {
       if (e === 'publishWater' || e === 'prep') delete spec[1];
       const k = makeCompute(device, `${this.name}-${e}`, parts, spec, e);
       this.k[e] = k;
-      // per parity: runs/jets in and out
-      this.g[e] = [0, 1].map((par) => {
+      // per substep (its uniforms), per parity: runs/jets in and out
+      this.g[e] = this.unis.map((uni) => [0, 1].map((par) => {
         const res: Record<number, GPUBuffer | GPUTextureView> = {
           0: world.globals,
           1: world.chunks,
@@ -169,14 +172,16 @@ export class LiquidSystem implements SimSystem {
           25: jets[1 - par][0],
           26: jets[1 - par][1],
           27: jets[1 - par][2],
+          28: e === 'jets' ? jets[par][3] : jets[1 - par][3],
+          34: jets[1 - par][3],
           29: this.inst,
           30: this.indirect,
           31: this.instO,
           32: this.indirectO,
-          33: this.uni,
+          33: uni,
         };
         return makeBindGroup(device, `${this.name}-${e}-${par}`, k.layout, Object.fromEntries(Object.keys(spec).map((n) => [n, res[Number(n)]])));
-      });
+      }));
     }
   }
 
@@ -223,7 +228,37 @@ export class LiquidSystem implements SimSystem {
     return { enclosed, enclosedVol, drawn, col };
   }
 
-  private writeUniforms(): void {
+  /** substep `sub`'s uniforms: its step, the springs, and (the first substep only) the frozen chunks' rescale */
+  /**
+   * (scripts) The streams drawn this frame (liquid.wgsl prep's list): per stream its column, where it enters (x, y, z),
+   * vz, velocity xy, the front (s along its path drawn), its time since the lip, the volume a second.
+   */
+  async probeStreams(): Promise<{ col: [number, number]; e: number[]; vz: number; u: number[]; tEnd: number; lip: number; rate: number }[]> {
+    const dev = this.device;
+    const a = dev.createBuffer({ size: this.inst.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const b = dev.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder();
+    enc.copyBufferToBuffer(this.inst, 0, a, 0, this.inst.size);
+    enc.copyBufferToBuffer(this.indirect, 0, b, 0, 16);
+    dev.queue.submit([enc.finish()]);
+    await Promise.all([a.mapAsync(GPUMapMode.READ), b.mapAsync(GPUMapMode.READ)]);
+    const u = new Uint32Array(a.getMappedRange());
+    const f = new Float32Array(u.buffer);
+    const cap = u.length / 4 / 3;
+    const n = Math.min(new Uint32Array(b.getMappedRange())[1], cap);
+    const out = [];
+    for (let k = 0; k < n; k++) {
+      const w = u[k * 4 + 3];
+      if (((w >> 8) & 0xfff & (2048 | 128)) !== (2048 | 128)) continue;
+      const d = (cap + 2 * k) * 4;
+      out.push({ col: [u[k * 4] & 0xfff, (u[k * 4] >> 12) & 0xfff] as [number, number], e: [f[d], f[d + 1], f[k * 4 + 1]], vz: f[k * 4 + 2], u: [f[d + 2], f[d + 3]], tEnd: f[d + 4], lip: f[d + 5], rate: f[d + 6] });
+    }
+    a.destroy();
+    b.destroy();
+    return out;
+  }
+
+  private writeUniforms(sub: number): void {
     const u = new Uint32Array(this.uniData, 0, 4);
     u[0] = this.step;
     u[1] = this.springs.length;
@@ -231,26 +266,32 @@ export class LiquidSystem implements SimSystem {
     this.springs.forEach((s, i) => fv.set([s.x, s.y, s.z, s.rate], i * 4));
     const sc = new Float32Array(this.uniData, 16 + 16 * MAX_SPRINGS);
     sc.fill(1);
-    for (const [k, r] of this.rescale) if (k < sc.length) sc[k] = r;
-    this.device.queue.writeBuffer(this.uni, 0, this.uniData);
+    if (sub === 0) for (const [k, r] of this.rescale) if (k < sc.length) sc[k] = r;
+    this.device.queue.writeBuffer(this.unis[sub], 0, this.uniData);
   }
 
   encode(enc: GPUCommandEncoder): void {
     // (a rescale to apply: the passes run this step, whatever's frozen — their frozen paths apply it)
     const sim = !this.skip() || this.rescale.size > 0;
-    if (sim) this.step++;
-    this.writeUniforms();
-    this.rescale.clear();
-    const par = this.step & 1;
-    const run = (e: string) => dispatch(enc, this.prof, `${this.name}-${e}`, this.k[e], this.g[e][par], this.world.groups);
     this.ran = 0;
-    if (sim) {
-      for (const e of ['flux', 'jets', 'depth', this.kind.name === 'water' ? 'publishWater' : 'publishLava']) run(e);
-      this.ran = 4;
+    // (?simhz=30|15: FLOW_SUB 60 Hz steps a tick, each its own uniforms - the streams' time across a column is
+    // the 60 Hz step's, so a fall takes as long at any tick rate)
+    const subs = sim ? FLOW_SUB : 1;
+    let sub = 0;
+    for (; sub < subs; sub++) {
+      if (sim) this.step++;
+      this.writeUniforms(sub);
+      if (!sim) break;
+      const par = this.step & 1;
+      for (const e of ['flux', 'jets', 'depth', this.kind.name === 'water' ? 'publishWater' : 'publishLava'])
+        dispatch(enc, this.prof, `${this.name}-${e}`, this.k[e], this.g[e][sub][par], this.world.groups);
+      this.ran += 4;
     }
+    this.rescale.clear();
+    const last = Math.min(sub, subs - 1);
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0]));
-    this.device.queue.writeBuffer(this.indirectO, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0]));
-    run('prep');
+    this.device.queue.writeBuffer(this.indirectO, 0, new Uint32Array([30, 0, 0, 0]));
+    dispatch(enc, this.prof, `${this.name}-prep`, this.k.prep, this.g.prep[last][this.step & 1], this.world.groups);
     this.ran++;
   }
 }

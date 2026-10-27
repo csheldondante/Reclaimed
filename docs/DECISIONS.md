@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-26 — round 86 (`flow`, on the phone) — falls at their own pace, a sheet not columns
+
+- "The waterfalls move way way too fast at 1x and visually it doesn't look as good as the old approach or the
+  sand particles which look fantastic."
+- "The waterfall trajectory looks decent by the way it's just that the columns have gaps and the rendering
+  isn't great." (Keep the arc; a continuous sheet along it, no holes between cells.)
+- (On the `rivers` branch: "the rivers look good!")
+
 ## 2026-10-26 — round 84 (session 5, `flow`) — one model of material flow, steady state frozen
 
 - "I thought the water and loose materials had essentially the same simulation but with 0 angle of repose

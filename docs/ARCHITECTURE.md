@@ -947,24 +947,35 @@ test scenes: `?flow=1&level=flowlab`, src/levels/flowlab.ts).
   floor under its level) by the level difference, keeping last tick's flux (the pipe model's momentum and
   look); no gap: a wall. Where the neighbour's level is more than `drop` under the run's floor, what goes that
   way leaves as a **stream**: off the lip at the critical flow's speed for its discharge, `2 (g q)^(1/3)`, and
-  ballistic after — each tick a stream's state moves one column along its path (the time to leave the
-  hexagon, then z − g t²/2, g = 14 cells/s² as the particles), so a steady outflow draws a steady parabola.
+  ballistic after (z − g t²/2, g = 14 cells/s² as the spray's particles), so a steady outflow draws a
+  steady parabola. **In real time** (round 86): a column holds the volume in flight over it (V) and the
+  time its path takes across it (tc); nothing passes on before the stream's front has crossed, then
+  V·dt/tc a step — in a steady state V = rate × tc, and a fall's front, its changes and its water go at the
+  path's own speed (it had moved a column a step, 10–20× fast). What a run sends off its ledge leaves with
+  one velocity, its falls' mean direction (within 60° of each face, else the face's own) at the speed for
+  their mean discharge, and no more than the critical flow, √g d^(3/2) a unit of edge, goes over a lip.
+  A stream arriving over a sleeping column that had none is carried on there (jets, j3.w = 1), what would
+  land held aloft, and its chunk flagged to wake (`act` z bit 2: woken whatever its balance).
   It lands where its path meets the level under it (or a wall: it runs down the face). What flows in, lands,
   springs or rains joins the run in the gap it arrives in; a run whose gap closed moves to the gap above; a
   fourth run under rock is the deepest three kept, the rest counted (`act` w), never silent.
-- **Passes** (per tick; FLOW_SUB must be 1): `flux` (each run's flux and its target per direction: a gap
+- **Passes** (per 60 Hz step; at `?simhz=30|15` FLOW_SUB of them a tick, each its own uniforms): `flux` (each run's flux and its target per direction: a gap
   index, fall, drain, wall) → `jets` (gather the streams coming on and the runs falling off a ledge; move each
   through its column) → `depth` (gather; write the runs) → publish (water: the open runs into the water
   contract with rain, springs, evaporation, and `flux`; lava: each run cools, boils the water over it, sets
-  into basalt in the layers below its setting point — the only layer writes) → `prep` (the draw lists, the
-  spray where streams land). Records carry the step they were written at: a dry column writes nothing.
+  into basalt in the layers below its setting point — the only layer writes) → `prep` (once a tick: the draw
+  lists; the spray along each stream's path — K_DROP particles set off on the path itself, the particles'
+  gravity the flow model's — and the splash and mist where it lands, all scaled by the particle ring's size). Records carry the step they were written at: a dry column writes nothing.
   Runs and jets ping-pong by parity (bind groups, no copies).
 - **Contracts.** Water replaces the water system: its open runs ARE `water` (`waterPrev`, `flux`), so every
   reader is unchanged and the edit brush, climate and old lava still write it. Runs under rock and streams
-  are the module's own (`<kind>Runs0/1`, `<kind>Flux`, `<kind>Emit`, three jet textures each way). Drawn:
-  `Renderer.addWaterPrisms` (a new list for the water pipeline: runs under rock as flat prisms, streams as
-  narrow boxes, both flag 2048 FLAG_RUN, render.wgsl `shadeRun`), open lava through `addPrisms` in lava's
-  own instance form (the sandbox's beam and volcanoes keep sim/lava.ts).
+  are the module's own (`<kind>Runs0/1`, `<kind>Flux`, `<kind>Emit`, four jet textures each way). Drawn:
+  `Renderer.addWaterPrisms` (a new list for the water pipeline: runs under rock as flat prisms, flag 2048
+  FLAG_RUN; streams, FLAG_RUN | FLAG_DETAIL, as a sheet along the path — render.wgsl `streamVertex`: a
+  curtain across the flow and a band in the arc's plane, three segments each, from the header and two vec4
+  after the list's room; `shadeStream` scrolls with the water: its pattern is a function of (time along the
+  path − the sim's time), so the streaks fall at the fall's speed, paused when the sim is), open lava through
+  `addPrisms` in lava's own instance form (the sandbox's beam and volcanoes keep sim/lava.ts).
 - **Steady state** (`flow/steady.ts`). `depth` adds per chunk the net change of its runs and its bed (the
   loose ground moving) and its throughput (the length of each column's net flow vector: a river's discharge,
   nothing for water sloshing in a pool); read back every `?steadywin=` ticks (30). A chunk whose net change
