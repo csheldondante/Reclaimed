@@ -47,7 +47,7 @@
 // per chunk (from CHUNK0, CSTRIDE each): [0..4] its drawIndexedIndirect args
 // (index count, 1, first index, base vertex, 0), [5] the hash it was built
 // from, [6] the hash it will be, [7] vertices so far, [8] its top (f32 bits),
-// [9] 1 when it ran out of room, [12] (round 81) its lowest boundary over the bedrock's top (f32 bits: the
+// [9] 1 when it ran out of room, [13] (round 93, the pool) RELEASE, STARVED, [12] (round 81) its lowest boundary over the bedrock's top (f32 bits: the
 // top of the solid joined to the bedrock, the least of its columns' — the samples under it, less 3, are
 // solid without the field); after the chunks, one word each: 1 when it's
 // near the view (the CPU writes them; only those are rebuilt, the rest when
@@ -57,6 +57,10 @@
 const NONE: u32 = 0xffffffffu;
 /** (round 86) a near word's bit: the CPU marked the chunk urgent (fieldmesh.ts urgent) */
 const URGENT_BIT: u32 = 0x10000u;
+/** (round 93, the page pool) a record's word 13: its range's pages to be given back (unwanted, slid out fresh) */
+const RELEASE: u32 = 1u;
+/** (and) its rebuild found no pages: not marked built, so it's owed and made again (the CPU grows the pool) */
+const STARVED: u32 = 2u;
 /** How far either field reaches (cells): past it, it's just "far". */
 const FAR: f32 = 3.0;
 /** The smooth minimum's reach (the fillet where terrain meets a structure). */
@@ -154,6 +158,21 @@ fn field(p: vec3<f32>) -> f32 { return smin(terrainField(p), structField(p).x, F
 fn cbase(c: u32) -> u32 { return CHUNK0 + c * CSTRIDE; }
 /** the mesh range a chunk's vertices and indices are in (word 10: its own at first; a slide hands them on) */
 fn rangeOf(c: u32) -> u32 { return atomicLoad(&state[cbase(c) + 10u]); }
+
+/** (round 93) where range r's vertex v is in `verts` (vec4s): its page's in the pool, else the range's own room */
+fn vaddr(r: u32, v: u32) -> u32 {
+  if (meshPool()) { return atomicLoad(&state[rtBase(r) + 8u + v / VPP]) * PAGE_VEC4 + (v % VPP) * 2u; }
+  return (r * MR.k.z + v) * 2u;
+}
+/** the vertices and indices (six a quad) range r has room for: its pages' in the pool, else a chunk's room */
+fn capV(r: u32) -> u32 {
+  if (meshPool()) { return min(MR.k.z, atomicLoad(&state[rtBase(r)]) * VPP); }
+  return MR.k.z;
+}
+fn capI(r: u32) -> u32 {
+  if (meshPool()) { return min(MR.k.w, atomicLoad(&state[rtBase(r) + 1u]) * QPP * 6u); }
+  return MR.k.w;
+}
 
 // ---- change detection -------------------------------------------------------
 
@@ -291,6 +310,13 @@ fn hashChunk(c: u32, li: u32, freshOnly: bool) {
   for (var k = 0u; k < 3u; k++) { atomicStore(&state[ob + k], 0u); }
   atomicStore(&state[b + 8u], atomicLoad(&wgTop));
   atomicStore(&state[b + 12u], bot);
+  // (round 93, the page pool: what it needs is counted again; not starved till it is)
+  if (meshPool()) {
+    let rb = rtBase(rangeOf(c));
+    atomicStore(&state[rb + 2u], 0u);
+    atomicStore(&state[rb + 3u], 0u);
+    atomicAnd(&state[b + 13u], ~STARVED);
+  }
   atomicStore(&state[b], 0u);
   atomicStore(&state[b + 7u], 0u);
   atomicStore(&state[b + 9u], 0u);
@@ -484,7 +510,7 @@ fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
       has = inside != 0u && inside != 255u;
     }
   }
-  let at = claim(j, select(0u, 1u, has), li, 7u, MR.k.z);
+  let at = claim(j, select(0u, 1u, has), li, 7u, capV(j.r));
   if (at == NONE) { return; }
   // the mean of the edge crossings
   var acc = vec3<f32>(0.0);
@@ -529,12 +555,12 @@ fn makeVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
   let s = structField(p);
   var share = 0.0;
   if (s.x < FAR) { share = clamp(0.5 + (terrainField(p) - s.x) / FILLET, 0.0, 1.0); }
-  let o = (j.r * MR.k.z + at) * 2u;
+  let o = vaddr(j.r, at);
   verts[o] = vec4<u32>(bitcast<u32>(p.x), bitcast<u32>(p.y), bitcast<u32>(p.z), bitcast<u32>(s.y));
   verts[o + 1u] = vec4<u32>(bitcast<u32>(nrm.x), bitcast<u32>(nrm.y), bitcast<u32>(nrm.z), bitcast<u32>(share));
 }
 
-fn shareOf(j: Job, v: u32) -> f32 { return bitcast<f32>(verts[(j.r * MR.k.z + v) * 2u + 1u].w); }
+fn shareOf(j: Job, v: u32) -> f32 { return bitcast<f32>(verts[vaddr(j.r, v) + 1u].w); }
 
 /** The four vertices round a crossed edge, or x NONE (a cell without one, or all structure: its cubes draw it). */
 fn quadVerts(j: Job, a: vec3<u32>, b: vec3<u32>, c: vec3<u32>, d: vec3<u32>) -> vec4<u32> {
@@ -544,17 +570,15 @@ fn quadVerts(j: Job, a: vec3<u32>, b: vec3<u32>, c: vec3<u32>, d: vec3<u32>) -> 
   return q;
 }
 
-@compute @workgroup_size(4, 4, 4)
-fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
-  let j = job(id, li);
+/** (round 93) the quads a sample owns: up to three, the edges from it along +x, +y, +z */
+struct Quads { n: u32, q: array<vec4<u32>, 3> };
+
+fn quadsAt(j: Job) -> Quads {
   let l = j.l;
-  // (the chunk is built from the hash it was found with — before the idle return: the first sample's workgroup may be idle)
-  if (j.ok && all(l == vec3<u32>(1u))) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
-  if (idleBlock(wid)) { return; }
+  var r: Quads;
+  r.n = 0u;
   // up to three quads: the edges from this sample along +x, +y, +z (two
   // triangles each, joining the four cells round the edge)
-  var q: array<vec4<u32>, 3>;
-  var n = 0u;
   // the edges whose base sample is the chunk's own (local 1..N along x and y)
   // (round 79: and whose base sample is in the mesh's z range — the window's, or the band's outside it)
   let bz0 = MR.zb.x + (f32(l.z) - 1.0) * MR.o.y;
@@ -569,22 +593,55 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     // quad −Y, the Z quad +Z; out of the solid is +axis when the base sample is inside)
     if (s0 != (fieldAt(j, l + X) < 0.0)) {
       let t = quadVerts(j, l - Y - Z, l - Z, l, l - Y);
-      if (t.x != NONE) { q[n] = select(t.xwzy, t, s0); n += 1u; }
+      if (t.x != NONE) { r.q[r.n] = select(t.xwzy, t, s0); r.n += 1u; }
     }
     if (s0 != (fieldAt(j, l + Y) < 0.0)) {
       let t = quadVerts(j, l - X - Z, l - Z, l, l - X);
-      if (t.x != NONE) { q[n] = select(t, t.xwzy, s0); n += 1u; }
+      if (t.x != NONE) { r.q[r.n] = select(t, t.xwzy, s0); r.n += 1u; }
     }
     if (s0 != (fieldAt(j, l + Z) < 0.0)) {
       let t = quadVerts(j, l - X - Y, l - Y, l, l - X);
-      if (t.x != NONE) { q[n] = select(t.xwzy, t, s0); n += 1u; }
+      if (t.x != NONE) { r.q[r.n] = select(t.xwzy, t, s0); r.n += 1u; }
     }
   }
-  let at = claim(j, n * 6u, li, 0u, MR.k.w);
+  return r;
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
+  let j = job(id, li);
+  let l = j.l;
+  // (the chunk is built from the hash it was found with — before the idle return: the first sample's workgroup may be idle)
+  // (round 93: unless it found no pages — then it's owed, and made again when the pool has room)
+  if (j.ok && all(l == vec3<u32>(1u)) && (atomicLoad(&state[cbase(j.c) + 13u]) & STARVED) == 0u) { atomicStore(&state[cbase(j.c) + 5u], atomicLoad(&state[cbase(j.c) + 6u])); }
+  if (idleBlock(wid)) { return; }
+  let qs = quadsAt(j);
+  let n = qs.n;
+  let at = claim(j, n * 6u, li, 0u, capI(j.r));
   if (at == NONE) { return; }
+  if (meshPool()) {
+    // (round 93: a quad is its four vertices, 16 bits each, two quads a vec4 of its page — drawn through one
+    // shared index buffer, its corners 0 1 2, 0 2 3: meshdraw.wgsl meshVert)
+    let rb = rtBase(j.r) + 8u + MR.pr.y;
+    for (var k = 0u; k < n; k++) {
+      let t = qs.q[k];
+      let qi = at / 6u + k;
+      let e = atomicLoad(&state[rb + qi / QPP]) * PAGE_VEC4 + (qi % QPP) / 2u;
+      let w0 = t.x | (t.y << 16u);
+      let w1 = t.z | (t.w << 16u);
+      if ((qi & 1u) == 0u) {
+        verts[e].x = w0;
+        verts[e].y = w1;
+      } else {
+        verts[e].z = w0;
+        verts[e].w = w1;
+      }
+    }
+    return;
+  }
   let o = j.r * MR.k.w + at;
   for (var k = 0u; k < n; k++) {
-    let t = q[k];
+    let t = qs.q[k];
     indices[o + k * 6u] = t.x;
     indices[o + k * 6u + 1u] = t.y;
     indices[o + k * 6u + 2u] = t.z;
@@ -592,6 +649,129 @@ fn makeQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoca
     indices[o + k * 6u + 4u] = t.z;
     indices[o + k * 6u + 5u] = t.w;
   }
+}
+
+// ---- (round 93) the page pool: count, then hand out pages ------------------------------------------------------
+// A rebuild's vertices are counted (countVerts: the same test makeVerts makes), its range's old pages given back
+// and as many pages taken as it needs (allocVerts), then its vertices made; its quads likewise (countQuads,
+// allocQuads, makeQuads). The alloc passes are one workgroup, its phases split by barriers, so the free stack is
+// only pushed or only popped at a time. No pages: the chunk is STARVED — not marked built (owed, made again), its
+// land the LOD rings' meanwhile, and the starved count the CPU reads grows the pool (fieldmesh.ts).
+
+/** add this workgroup's `n` (per thread) to range word `word` of its job's range (call in uniform control flow) */
+fn countInto(j: Job, n: u32, li: u32, word: u32) {
+  atomicAdd(&wgN, n);
+  workgroupBarrier();
+  if (li == 0u && j.c != NONE) {
+    let t = atomicLoad(&wgN);
+    if (t > 0u) { atomicAdd(&state[rtBase(j.r) + word], t); }
+  }
+}
+
+/** does sample cell l hold a vertex (the surface crosses it)? makeVerts' own test */
+fn cellCrossed(j: Job, l: vec3<u32>) -> bool {
+  if (!all(l + 1u < vec3<u32>(sideN(), sideN(), MR.n.z))) { return false; }
+  var inside = 0u;
+  for (var k = 0u; k < 8u; k++) {
+    if (fieldAt(j, l + CORNER[k]) < 0.0) { inside |= 1u << k; }
+  }
+  return inside != 0u && inside != 255u;
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn countVerts(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
+  let j = job(id, li);
+  if (idleBlock(wid)) { return; }
+  countInto(j, select(0u, 1u, j.ok && cellCrossed(j, j.l)), li, 2u);
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn countQuads(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
+  let j = job(id, li);
+  if (idleBlock(wid)) { return; }
+  countInto(j, quadsAt(j).n, li, 3u);
+}
+
+/** give range r's pages back to the free stack (pushes only: safe beside other pushes) */
+fn freeRange(r: u32) {
+  let rb = rtBase(r);
+  let fb = freeBase();
+  let hv = atomicExchange(&state[rb], 0u);
+  for (var k = 0u; k < hv; k++) {
+    let at = atomicAdd(&state[fb], 1u);
+    atomicStore(&state[fb + 8u + at], atomicLoad(&state[rb + 8u + k]));
+  }
+  let hq = atomicExchange(&state[rb + 1u], 0u);
+  for (var k = 0u; k < hq; k++) {
+    let at = atomicAdd(&state[fb], 1u);
+    atomicStore(&state[fb + 8u + at], atomicLoad(&state[rb + 8u + MR.pr.y + k]));
+  }
+}
+
+/** (one thread) the pages chunk c's range needs of `kind` (0 vertices, 1 quads), popped; too few left: STARVED */
+fn takePages(c: u32, kind: u32) {
+  let rb = rtBase(rangeOf(c));
+  let fb = freeBase();
+  let per = select(VPP, QPP, kind == 1u);
+  let most = select(MR.pr.y, MR.pr.z, kind == 1u);
+  let need = min((atomicLoad(&state[rb + 2u + kind]) + per - 1u) / per, most);
+  let top = atomicLoad(&state[fb]);
+  // (the diagnostics: the most pages one take asked for, the fewest left free since the start)
+  atomicMax(&state[fb + 5u], need);
+  atomicMin(&state[fb + 4u], select(top - need, 0u, need > top));
+  if (need > top) {
+    atomicOr(&state[cbase(c) + 13u], STARVED);
+    atomicAdd(&state[fb + 3u], 1u);
+    atomicStore(&state[rb + kind], 0u);
+    return;
+  }
+  let pt = rb + 8u + select(0u, MR.pr.y, kind == 1u);
+  for (var k = 0u; k < need; k++) { atomicStore(&state[pt + k], atomicLoad(&state[fb + 8u + top - 1u - k])); }
+  atomicStore(&state[fb], top - need);
+  atomicStore(&state[rb + kind], need);
+}
+
+@compute @workgroup_size(64)
+fn allocVerts(@builtin(local_invocation_index) li: u32) {
+  let fb = freeBase();
+  let n = MR.n.x * MR.n.y;
+  // the pages the CPU added to the pool (all of them, the first time)
+  if (li == 0u) {
+    let total = atomicLoad(&state[fb + 1u]);
+    var p = atomicLoad(&state[fb + 2u]);
+    while (p < total) {
+      let at = atomicAdd(&state[fb], 1u);
+      atomicStore(&state[fb + 8u + at], p);
+      p++;
+    }
+    atomicStore(&state[fb + 2u], p);
+  }
+  storageBarrier();
+  workgroupBarrier();
+  // the ranges to give back (their chunks unwanted, or slid out and come in fresh)
+  for (var c = li; c < n; c += 64u) {
+    if ((atomicLoad(&state[cbase(c) + 13u]) & RELEASE) != 0u) {
+      atomicAnd(&state[cbase(c) + 13u], ~RELEASE);
+      freeRange(rangeOf(c));
+    }
+  }
+  storageBarrier();
+  workgroupBarrier();
+  // the rebuilt ones' old pages
+  let ns = min(atomicLoad(&state[0]), MR.k.y);
+  if (li < ns) { freeRange(rangeOf(atomicLoad(&state[1u + li]))); }
+  storageBarrier();
+  workgroupBarrier();
+  if (li == 0u) {
+    for (var s = 0u; s < ns; s++) { takePages(atomicLoad(&state[1u + s]), 0u); }
+  }
+}
+
+@compute @workgroup_size(64)
+fn allocQuads(@builtin(local_invocation_index) li: u32) {
+  if (li != 0u) { return; }
+  let ns = min(atomicLoad(&state[0]), MR.k.y);
+  for (var s = 0u; s < ns; s++) { takePages(atomicLoad(&state[1u + s]), 1u); }
 }
 
 // ---- a slide (round 73: the streamed window moved, fieldmesh.ts shift) ----------
@@ -623,6 +803,8 @@ fn shiftChunks(@builtin(global_invocation_id) id: vec3<u32>) {
     atomicStore(&state[cbase(c)], 0u);
     atomicStore(&state[cbase(c) + 5u], FRESH);
     atomicStore(&state[cbase(c) + 9u], 0u);
+    // (round 93: the range it took — the leaving chunk's — gives its pages back)
+    atomicStore(&state[cbase(c) + 13u], select(0u, RELEASE, meshPool()));
   }
   // (range c's translation: all that's built moved the same way)
   let ob = offBase() + c * 4u;

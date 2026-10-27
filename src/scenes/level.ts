@@ -61,7 +61,7 @@ import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
 import { qRotate, qYawPitchRoll } from '../grids/structures';
 import { HybridChunks } from './hybrid';
-import { atlasRange, chooseRange, nextRange } from './range';
+import { atlasRange, atlasRows, chooseRange, nextRange } from './range';
 import { Turn, TURN_STEP } from '../render/turn';
 import { Compass, NORTH_AZIMUTH } from '../ui/compass';
 import { wikiLabels } from '../gm/map-names';
@@ -724,8 +724,10 @@ export class LevelScene implements Scene {
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
       const W = atlasRange(host.params);
-      const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
-      const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
+      // (round 93, ?winh=: an experiment — rows other than the side)
+      const Hr = atlasRows(host.params, W);
+      const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - Hr / 2) / REGION) * REGION];
+      const { map, oz, outside, ground } = await atlas.window({ w: W, h: Hr, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
       atlas.profiler = host.profiler;
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
