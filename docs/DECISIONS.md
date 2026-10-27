@@ -3,9 +3,6 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
-<<<<<<< HEAD
-=======
-<<<<<<< HEAD
 ## 2026-10-26 — round 87 (session 5, `collapse`) — the collapse on a real tower
 
 - The user, testing `collapse` on the phone: "Waterfalls and the meteor look fantastic! However, the collapse
