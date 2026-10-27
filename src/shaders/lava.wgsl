@@ -87,6 +87,8 @@ const SKIN: f32 = 0.3;
 const COOL: f32 = 0.06;
 // the ground's heat leaks away (e-fold, s)
 const GROUND_COOL_S: f32 = 1.5;
+// (round 92) a column whose top stands more than this over the blast's height doesn't melt
+const BLAST_UP: f32 = 4.0;
 // water boils off it (cells/s at LAVA_HOT), each cell taking this much heat
 const BOIL: f32 = 0.8;
 const QUENCH: f32 = 2500.0;
@@ -188,11 +190,12 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   let spring = textureLoad(springL, p, 0).x;
   // (round 86) a meteor's blast: the rim's ground molten (it runs off the top as lava below), glowing past it
   let bo = length(cp - LU.blast.xy);
+  var blastH = 0.0;
   if (LU.blast2.y > 0.5 && bo >= LU.blast.z - 1.0 && bo < LU.blast.w) {
     let t = clamp((bo - LU.blast.z) / max(LU.blast.w - LU.blast.z, 0.5), 0.0, 1.0);
-    gh = max(gh, MELT + LATENT * LU.blast2.x * (1.0 - t) * (1.0 - t));
+    blastH = MELT + LATENT * LU.blast2.x * (1.0 - t) * (1.0 - t);
   }
-  if (d <= 1e-5 && gh <= 1.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0 && spring <= 0.0) {
+  if (d <= 1e-5 && gh <= 1.0 && blastH <= 0.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0 && spring <= 0.0) {
     lavaOut[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     textureStore(spillOut, p, vec4<f32>(0.0, 0.0, 0.0, f32(u32(sp.w) & 7u)));
     return;
@@ -207,6 +210,10 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   var top = 0.0;
   if (n > 0u) { top = ivZ1(layers[cs.x + n - 1u]); }
+  // (round 92, BACKLOG C19) the blast melts the ground at the rim's height (blast2.z: where it hit), not the top of
+  // whatever stands there: a pillar by the bowl, or what hangs over the bowl, kept its top melting into lava that
+  // poured into the crater and set there against what the cut had freed
+  if (blastH > 0.0 && top <= LU.blast2.z + BLAST_UP) { gh = max(gh, blastH); }
 
   // a rising cone: the bedrock grows, lifting all that lies on it (loose
   // ground then slides off the steep sides, sediment.wgsl)

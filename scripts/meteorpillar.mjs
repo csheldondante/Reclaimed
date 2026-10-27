@@ -190,7 +190,20 @@ try {
         const f = eval(near);
         const o = R.stream.origin;
         const here = sc.floating.filter(f).map((g) => ({ ...g, wx: g.x + o[0], wy: g.y + o[1], wz: g.z0 + R.stream.oz }));
-        return { here, window: sc.floating.length, falling: I.falling.list.length, seeds: I.rockSeeds.size, watches: I.watches.length, slides: R.stream.stats.slides, tiers: R.stream.stats.tiers, stats: { passes: I.stats.passes, bodies: I.stats.bodies, crumbled: I.stats.crumbled, rereads: I.stats.rereads } };
+        // (round 96) held only by basalt: what floats here once the basalt is taken for air (the meteor's lava set into it)
+        const Fr = await import('/src/game/fracture.ts');
+        const lb = await R.readBuffer('layers');
+        const u = new Uint32Array(lb.buffer, lb.byteOffset, lb.byteLength / 4).slice();
+        let basalt = 0;
+        for (let k = 0; k < u.length; k += 4)
+          if (u[k + 1] !== 0 && (u[k + 2] & 255) === 23) {
+            u[k + 2] &= ~255;
+            basalt++;
+          }
+        const nb = Fr.floatingRuns(new Fr.WorldVox(R.core.packed, u)).floating.filter(f);
+        const old = sc.floating.filter(f);
+        const bs = nb.filter((g) => !old.some((h) => h.x === g.x && h.y === g.y && Math.abs(h.z0 - g.z0) < 0.01));
+        return { here, byBasalt: bs.length, basalt, bs: bs.slice(0, 2), window: sc.floating.length, falling: I.falling.list.length, seeds: I.rockSeeds.size, watches: I.watches.length, slides: R.stream.stats.slides, tiers: R.stream.stats.tiers, stats: { passes: I.stats.passes, bodies: I.stats.bodies, crumbled: I.stats.crumbled, rereads: I.stats.rereads, why: Object.fromEntries(Object.entries(I.why).map(([k, v]) => [k, Math.round(v)])) } };
       }, nearHere);
     };
     const before = new Set((await scanHere()).here.map(keyOf));
@@ -215,7 +228,7 @@ try {
       const r = await scanHere();
       const fresh = r.here.filter((f) => !before.has(keyOf(f)));
       newest = fresh;
-      log.push(`${label}: new floating here ${fresh.length} (natural ones before ${before.size}, here now ${r.here.length}) window ${r.window} falling ${r.falling} seeds ${r.seeds} watches ${r.watches} slides ${r.slides}/${r.tiers} ${JSON.stringify(r.stats)}${fresh.length ? ' e.g. ' + JSON.stringify(fresh.slice(0, 3)) : ''}`);
+      log.push(`${label}: new floating here ${fresh.length} (natural ones before ${before.size}, here now ${r.here.length}); held by basalt only ${r.byBasalt}${r.byBasalt ? ' e.g. ' + JSON.stringify(r.bs) : ''} (basalt slots ${r.basalt}) window ${r.window} falling ${r.falling} seeds ${r.seeds} watches ${r.watches} slides ${r.slides}/${r.tiers} ${JSON.stringify(r.stats)}${fresh.length ? ' e.g. ' + JSON.stringify(fresh.slice(0, 3)) : ''}`);
       return fresh.length;
     };
     for (let m = 0; m < count; m++) {
@@ -296,7 +309,7 @@ try {
     }
     const t0 = Date.now();
     let lastFloat = -1;
-    for (const c of [5, 12, 20, 30, secs].filter((c) => c <= secs)) {
+    for (const c of [5, 12, 20, 30, 45, 60, secs].filter((c) => c <= secs)) {
       while ((Date.now() - t0) / 1000 < c) {
         await grab();
         await sleep(gif && si === gifCase ? 200 : 500);

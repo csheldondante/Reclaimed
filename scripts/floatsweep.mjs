@@ -183,7 +183,7 @@ try {
                 last = null;
                 continue;
               }
-              if (last && iv.z0 <= last.z1 + 1e-3) {
+              if (last && iv.z0 <= last.z1 + 0.02) {
                 last.z1 = Math.max(last.z1, iv.z1);
                 last.ivs.push(iv);
               } else rs.push((last = { x, y, z0: iv.z0, z1: iv.z1, ivs: [iv], ok: false }));

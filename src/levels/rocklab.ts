@@ -2,7 +2,8 @@
 // convenient for me to test with too"): a flat stone plain with the collapse's test pieces round the camera, each
 // standing as made until something cuts it — then it's judged (fracture.ts analyseRock, ROCK). Storage coordinates
 // (x column, y row); the camera looks from +x+y, so the pieces' near sides face it. Three rows of three, 22 apart:
-//   back:   a big top on a thin leg (tap the leg: the top comes down) · the same top on a wide leg (stands) ·
+//   back:   a big top on a leg a fifth of it (round 96: break a little of the leg — it buckles; round 92's crushing
+//           rule held it) · the same top on a wide leg, a third of it (stands) ·
 //           a long arm off a wall (cut its root part way: it snaps there)
 //   middle: an arch (break one foot) · a top off to one side of its leg (nick the leg's far side: it tips) ·
 //           a tall pillar to drop a meteor by
@@ -57,7 +58,7 @@ export function generateRocklab(dims: WorldDims): MapData {
   // back row (j = 0: furthest from the camera)
   {
     const [x, y] = at(0, 0);
-    for (const [a, b] of disc(x, y, 1.1)) put(a, b, G - 2, G + 34, MAT.Stone);
+    for (const [a, b] of disc(x, y, 2.6)) put(a, b, G - 2, G + 34, MAT.Stone);
     for (const [a, b] of disc(x, y, 6)) put(a, b, G + 22, G + 34, MAT.Stone);
   }
   {

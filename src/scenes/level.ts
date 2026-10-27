@@ -2501,7 +2501,7 @@ export class LevelScene implements Scene {
       parts.burst({ kind: PK.Ember, ...at, count: 5, speed: 2, spread: 1, vel: [dx * 16, dy * 16, 5] });
     }
     // the rim's ground molten, glowing past it; a molten pool in the bowl (no cone)
-    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5);
+    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5, z);
     // (round 88: the rim melting and setting over the next seconds — judged until it's done)
     this.integrity?.watch(x, y, BOWL * 1.6, 15);
     this.lava?.addVent(x, y, 2.5, 12, 3, 0);

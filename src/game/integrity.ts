@@ -95,6 +95,8 @@ export class Integrity {
    * (fracture.ts ROCK) only if it, or what holds it, has a run in one — what floats is judged wherever it is
    */
   private cutSeeds = new Map<number, number>();
+  /** (round 96) why what gave gave, summed over every rock pass (Fracture.why) — for the tests */
+  why: Record<string, number> = {};
   private t = 0;
   private busy = false;
   /** chips where something crumbles or a body hits hard */
@@ -538,7 +540,9 @@ export class Integrity {
       w.next -= dt;
       if (w.next <= 0) {
         w.next = 1;
-        this.markCut(w.x, w.y, w.r, 0);
+        // (round 96: weighed too — lava setting by what the cut freed props it up, a film of basalt against its side;
+        // judged for floating only, it was held by that and never weighed: the user's "basalt that resupports it")
+        this.markCut(w.x, w.y, w.r);
       }
     }
     if (this.watches.length) this.watches = this.watches.filter((w) => w.left > 0);
@@ -600,7 +604,7 @@ export class Integrity {
     this.stats.impacts++;
     this.onDust?.(hx, hy, hz, Math.min(40, Math.round(4 + l.speed * 4)), 0.6 + l.speed * 0.2 + Math.sqrt(b.cols.length) * 0.3, b.mat);
     const removed: { p: [number, number, number]; mat: number }[] = [];
-    if (l.speed >= IMPACT_BREAK) {
+    if (l.speed >= IMPACT_BREAK && !b.broke) {
       const small = b.cells <= IMPACT_CRUMB;
       const R = small ? Infinity : impactRadius(l.speed) * impactReach(b.mat) + 0.5;
       const inPiece = new Set(b.cols.map((c) => c.y * 65536 + c.x));
@@ -636,6 +640,16 @@ export class Integrity {
       }
     }
     this.onCollapse?.(hx, hy, hz, removed.length + b.cells * l.speed * 0.05);
+    // (round 96) its foot crumbled: it settles on down onto what's under it, gently, rather than being ground again
+    // over the gap the crumbs left — judged hanging, it fell and crumbled again each time it landed (floatsweep's
+    // 3-wide, 100-tall tower, a few cells a fall, never settling)
+    if (removed.length && b.cells > removed.length) {
+      b.broke = true;
+      b.vz = 0;
+      this.toLoose(removed, l.speed * 1.5);
+      this.touch(b, false);
+      return;
+    }
     this.falling.commit(b);
     // (thrown: chips flying from what broke, faster the harder it hit)
     if (removed.length) {
@@ -643,10 +657,9 @@ export class Integrity {
     }
     this.touch(b, false);
     // what it landed on and what of it overhangs: judged (rock), looked at (structures)
-    for (const c of b.cols) {
-      this.rockSeeds.set(c.y * 65536 + c.x, 1);
-      this.cutSeeds.set(c.y * 65536 + c.x, 1);
-    }
+    // (round 96: judged for floating only — weighed, a tall piece landed on uneven ground was judged off its "leg" each
+    // time it came to rest, slumping a cell a pass: floatsweep's 3-wide 100-tall tower never settled)
+    for (const c of b.cols) this.rockSeeds.set(c.y * 65536 + c.x, 1);
     this.urgent = true;
   }
 
@@ -764,6 +777,8 @@ export class Integrity {
       const known = fresh ? (x: number, y: number) => fresh.has(this.chunkOf(x, y)) : undefined;
       const r = analyseRock(this.world, seeds, known, { weigh: (x, y) => cut.has(y * 65536 + x) });
       this.stats.rockSeeds += seeds.length;
+      // (round 96: what the last weighing found, for the tests)
+      for (const [k, v] of Object.entries(r.why ?? {})) this.why[k] = (this.why[k] ?? 0) + v;
       // (round 88) a piece reaching columns not read this pass: they're read, it's judged again at once
       if (r.undecided?.length) {
         for (const [x, y] of r.need ?? []) this.needChunks.add(this.chunkOf(x, y));
@@ -776,11 +791,13 @@ export class Integrity {
         this.urgent = true;
       }
       // (what gave: its columns looked at again, what it held now hanging free)
-      if (this.apply(r))
-        for (const c of r.crumbleRuns ?? []) {
-          this.rockSeeds.set(c.y * 65536 + c.x, 2);
-          this.cutSeeds.set(c.y * 65536 + c.x, 2);
-        }
+      const gave = this.apply(r);
+      // (what gave, and (round 96) the columns a piece left: what's left there — a leg's stump, what was joined to
+      // the piece — is judged again, weighed: it lost what it held or what held it)
+      for (const c of [...(gave ? (r.crumbleRuns ?? []) : []), ...(r.pieces ?? []).flat()]) {
+        this.rockSeeds.set(c.y * 65536 + c.x, 2);
+        this.cutSeeds.set(c.y * 65536 + c.x, 2);
+      }
     }
     const boxes = this.dirty;
     this.dirty = [];

@@ -1270,6 +1270,15 @@ columns read back and written again) holds the integrity system (`Integrity.held
 the land. Before, a piece falling when the window slid was frozen, cut again or written at its old place mid-air
 and forgotten — the meteor-made floaters.
 
+Round 96: the piece above a cut also fails on a slender leg — `ROCK.BUCKLE × strength × I / L²` (I the leg's least
+second moment from its columns, L from where the piece would land to the cut; only a leg free over more than 2√A
+buckles) — or when its weight off the leg's middle pulls on the leg's far side past `ROCK.TENSILE × strength`
+(fracture.ts `legOf`); a piece already resting (a quarter of its hanging runs within a cell of what's under them,
+its centre over those) isn't judged off its leg. ROCK and a material's `bear` are set from the address
+(`?crush=` … `?bear=sand:0.1`) or the rock lab's panel (src/ui/rockpanel.ts), logged `[rock]`. The rim's watch
+weighs; the columns a piece left are judged again (weighed); intervals within `FILM_GAP` (0.02) touch. The meteor's
+blast melts only columns whose top is within `BLAST_UP` (4) of where it hit (lava.wgsl, `LavaU.blast2.z`).
+
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 
 `installAgents(core)` (src/agents/) adds one system after the particles and

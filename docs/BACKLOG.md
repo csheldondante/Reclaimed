@@ -12,6 +12,16 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 96 (2026-10-27, session 5, `collapse`) — the rock's knobs, thin legs, basalt (DECISIONS round 96)
+
+| id | item | size | status |
+|---|---|---|---|
+| C22 | The rock's knobs: ROCK's constants and a material's bear from the address (?bend= ?shear= ?crush= ?neck= ?tip= ?buckle= ?tensile= ?bear=sand:0.1,…), a panel in the rock lab (or ?rockpanel=1), logged `[rock]` | S | done (collapse) |
+| C23 | Thin legs: the piece above a cut on a slender leg buckles (BUCKLE × strength × I / L², only a leg free over more than 2√A) or is pulled apart by its weight off the leg's middle (TENSILE); a piece already resting on what's under it (a quarter of its runs within a cell, its centre over them) isn't judged off its leg; the columns a piece left are judged again | M | done (collapse) |
+| C24 | Basalt that "resupports" (the user): not reproduced — 60 s after meteors at built towers and natural spires (all systems, 1×), nothing was held by basalt alone (a detector: the ground truth with basalt taken for air). Done at the root anyway: C19; the rim's watch weighs (a piece held by basalt set against it is judged as a cut one is); films a hundredth over what's under them are one run with it (rockbody's films 6e-5 thick) | S | done (collapse) |
+| C25 | towertest's `spire` failing on places (the rockbody agent): the test built its tower and tapped at window cells while the camera's lead (phonecam) slid the window under it; it waits for the streamer and follows the window now | S | done (collapse) |
+| C26 | A landed piece kept re-falling (floatsweep's tower-w3-h100 never settled, 86 pieces; on places too): its foot's rim crumbled on impact and it was committed over the gap the crumbs left, judged hanging, fell and crumbled again — a tower with no core columns stuttered down a few cells at a time. Now a piece whose foot crumbled settles on down onto what's under it, once, and doesn't crumble again (Integrity.land, FallingBody.broke): settles in 4.2 s, 1 piece | S | done (collapse) |
+
 ## Round 92 (2026-10-27, session 5, `collapse`) — what holds rock up; the meteor-made floaters (DECISIONS round 92)
 
 | id | item | size | status |
@@ -21,7 +31,7 @@ user) · `deferred` (agreed for later).
 | C16 | The judge's join rule: thin strata (under a cell) touching their neighbours by less than half a cell read as floating (383 of the highlands' 401); a column's overlapping intervals (ejecta laid a hundredth into the soil) read as a run of their own | S | done (collapse) |
 | C17 | The rock lab (`level=rocklab`): test pieces by the camera — a big top on a thin leg, a wide leg, an arm, an arch, an off-centre top, a pillar, banded and concrete towers, a waist | S | done (collapse) |
 | C18 | Truly detached rock in the atlas as made, not the judge's: on a mesa (`at=6402,6596`) seven sandstone slabs 10 thick hang alone, 1.5–49 cells over the ground (162–164, 218–219 and round), in the spires a few: likely a form leaning faster than it is thick (the mesas' tilted spires, regions.ts lean to 0.35); to trace to its form and connect it to its host (the user: nothing they designed floats) | M | open |
-| C19 | A meteor's rim melts the column's top interval (lava.wgsl blast: "runs off the top of the column"), not the ground at the rim's height: an overhang's top melts where its underside is in the blast; the vent's pool sits on the top of a cut column (over the gap) | S | open |
+| C19 | A meteor's rim melts the column's top interval (lava.wgsl blast: "runs off the top of the column"), not the ground at the rim's height: an overhang's top melts where its underside is in the blast; the vent's pool sits on the top of a cut column (over the gap) | S | done (collapse, round 96: only a column whose top is within 4 of where it hit melts — lava.wgsl BLAST_UP; the vent's pool still sits on a cut column's top) |
 | C20 | The physics (cube) bodies are in window coordinates and are dropped on any slide (before: on a slide in z only) | S | open |
 | C21 | Rotation for what tips (C4): pieces fall straight now | M | open (C4) |
 ## Round 93 (2026-10-27, session 5, `winmem`) — what the window's memory goes on (DECISIONS round 93)
