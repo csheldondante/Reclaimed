@@ -350,6 +350,14 @@ columns) divides by w and keeps what's behind the eye; picking flies a ray
 into the ground (`groundAt`). A streamed window follows the camera's
 position.
 
+(Round 91) The atlas map's names come from label sources (api/map-labels.ts `MapLabel` / `LabelSource`: a name, a
+kind, a world point, a weight): the map (api/atlas-map.ts) only styles, filters by zoom and declutters them. The
+level gives it the world wiki's (gm/map-names.ts `wikiLabels`, from atlasFacts → buildWiki on the live atlas: the
+GM's names); another system adds a source, never edits the map. North is world −y, the map's up; the map is drawn
+as seen from above (world +x to the left). The compass (ui/compass.ts) reads only `Camera.azimuth`.
+`Streamer.unwritten` (a slide's regions moved over but not written yet) and `Streamer.vel` (the camera's
+velocity, cells a second) are read-only for probes and the level.
+
 (Round 90) The player turns the fixed view round the ground under the screen's middle (render/turn.ts `Turn`,
 the atlas level's ↺ ↻ and Q / E): it writes `Camera.azimuth`, as round 82's Orbit does; nothing downstream
 assumes the fixed π/4 — the draw, culling, picking, the shadow box and the far land read the camera's matrix or

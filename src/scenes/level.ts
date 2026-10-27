@@ -60,6 +60,10 @@ import { qRotate, qYawPitchRoll } from '../grids/structures';
 import { HybridChunks } from './hybrid';
 import { atlasRange, chooseRange, nextRange } from './range';
 import { Turn, TURN_STEP } from '../render/turn';
+import { Compass, NORTH_AZIMUTH } from '../ui/compass';
+import { wikiLabels } from '../gm/map-names';
+import { atlasFacts } from '../gm/atlas-facts';
+import { buildWiki } from '../gm/wiki';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -341,6 +345,8 @@ export class LevelScene implements Scene {
     });
   }
   private atlasCtl?: HTMLDivElement;
+  /** (round 91: scripts/mapnames.mjs reads its labelStats) */
+  atlasMap?: AtlasMap;
   private far?: FarLand;
 
   /**
@@ -376,7 +382,17 @@ export class LevelScene implements Scene {
       const map = new AtlasMap(
         { atlas: a.atlas, core: this.core, stream: S, warp: (x, y) => warpWindow(a.atlas, S, dims, x, y), toWorld: (x, y) => [S.origin[0] + x, S.origin[1] + y / ROW_H] },
         this.host.ui,
+        // (round 91: the world wiki's names — the GM's, made by the same code from this atlas — on the map)
+        {
+          labels: [
+            () => {
+              const f = atlasFacts(a.atlas);
+              return wikiLabels(buildWiki(f), (id) => f.regions[id].area);
+            },
+          ],
+        },
       );
+      this.atlasMap = map;
       btn('🗺', 'the atlas map: where you are; tap a place to warp there').addEventListener('click', () => map.toggle());
     }
     const fly = btn('✈', 'free camera (F)');
@@ -415,6 +431,8 @@ export class LevelScene implements Scene {
   /** (round 90) the player's turn of the view (render/turn.ts), when there is one: the atlas level's */
   private turn?: Turn;
   private turnCtl?: HTMLDivElement;
+  /** (round 91) the compass over the turn buttons: the way the view faces; a tap faces north */
+  private compass?: Compass;
 
   /**
    * (round 90, the user on the phone: "add a button or bar to rotate the camera") Bottom left, clear of the tool
@@ -479,6 +497,15 @@ export class LevelScene implements Scene {
     );
     this.host.ui.appendChild(d);
     this.turnCtl = d;
+    const compass = (this.compass = new Compass(this.host.ui));
+    compass.update(camera.azimuth);
+    compass.onTap = () => {
+      if (camera.fly) return;
+      this.turnPivot();
+      const c = CUTAWAY ? this.cutaway : undefined;
+      if (c) c.orbit.goal = camera.azimuth + Math.atan2(Math.sin(NORTH_AZIMUTH - camera.azimuth), Math.cos(NORTH_AZIMUTH - camera.azimuth));
+      else turn.face(NORTH_AZIMUTH);
+    };
   }
 
   /** (the turn goes round the ground under the screen's middle, not a point over it: what's there stays there) */
@@ -1518,8 +1545,12 @@ export class LevelScene implements Scene {
       this.ceilingFrame(dt, cpu0);
       return;
     }
-    camera.target[0] = Math.max(0, Math.min(dims.w, camera.target[0]));
-    camera.target[1] = Math.max(0, Math.min(dims.h * ROW_H, camera.target[1]));
+    // (round 91, the user: "I easily hit the edge of the loaded ground") A streamed window keeps the camera a region
+    // in from its edge: a pan faster than the slides waits for them there (the strip a slide brings in is a region
+    // wide and comes in over frames), instead of running on to the window's edge
+    const edge = this.stream ? REGION : 0;
+    camera.target[0] = Math.max(edge, Math.min(dims.w - edge, camera.target[0]));
+    camera.target[1] = Math.max(edge * ROW_H, Math.min((dims.h - edge) * ROW_H, camera.target[1]));
     if (this.reach) {
       this.reachRefresh -= dt;
       if (this.reachRefresh <= 0) {
@@ -1629,6 +1660,8 @@ export class LevelScene implements Scene {
     }
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
     if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy) this.turn.update(dt);
+    // (round 91: the compass follows the view, flying too — the flyer's look)
+    this.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
     if (CUTAWAY && !camera.fly) {
       const t = (this.worldApi ??= attachSim(core)).terrain!;
       const c = (this.cutaway ??= { puck: new Puck(t, camera), slice: new Slice(t, camera), orbit: new Orbit(t, camera), dither: new Dither(t, camera) });
@@ -2648,6 +2681,7 @@ export class LevelScene implements Scene {
     this.abort.abort();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();
+    this.compass?.remove();
     this.far?.dispose();
     this.storyPlay?.dispose();
     this.worldApi?.dispose();

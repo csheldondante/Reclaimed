@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 91 (session 5, `phonecam`) — names on the map, a compass, the edge of the land
+
+- The user, on the phone at the atlas level: "I think the map needs to show you names of place and a directional
+  compas for the way your are facing. I notice that I easily hit the edge of the loaded ground"
+- → The atlas map names places with the world wiki's own names (the GM's: continents, regions, seas and lakes,
+  settlements), fewer as it zooms out; the player's dot has a wedge the way the view faces and the view's footprint.
+  A compass on the game view (over the turn buttons) points the map's north; **a tap on it faces north** (our call:
+  the map-app habit; a turn step after it goes back onto the sixths). **North is the map's up, world −y, and the map
+  is now drawn as the world is seen from above** (our call: it was the world's mirror image — world +x to the right
+  of north — which a compass would have made plain: a town on the screen's right was on the map's left).
+  The edge: see DEVLOG round 91 (measured, then the slide made to follow the camera's motion).
+
 ## 2026-10-27 — round 90 (session 5, `phonecam`) — more of the atlas on the phone, and turning the view
 
 - The user, on the phone at the atlas level in sandbox mode: "For the atlas in sandbox mode on the phone the can we

@@ -32,6 +32,13 @@ export class Turn {
     this.goal = this.snapped(this.goal) + dir * TURN_STEP;
   }
 
+  /** (round 91, the compass's tap) ease to face azimuth `a`, the short way round */
+  face(a: number): void {
+    this.sync();
+    this.held = 0;
+    this.goal = this.az + Math.atan2(Math.sin(a - this.az), Math.cos(a - this.az));
+  }
+
   /** is it turning (or held)? */
   get busy(): boolean {
     return this.held !== 0 || Math.abs(this.goal - this.az) > 1e-3 || Math.abs(this.speed) > 1e-3;

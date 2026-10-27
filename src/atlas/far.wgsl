@@ -451,6 +451,8 @@ fn fsLod(v: LOut) -> FOutF {
   var facet = normalize(cross(dpdx(v.local), dpdy(v.local)));
   if (facet.z < 0.0) { facet = -facet; }
   let l = v.local.xy;
+  // (round 91: a cell's size on screen, for the grain below)
+  let cellPx = length(fwidth(l));
   // the window's own land is the columns' — where its mesh is built (round 83: till then, the ring's top, so
   // land just come in isn't a hole while its chunks are made); a finer ring's square is that ring's
   // (hybrid: but a skirt — a strip of a cell along a built chunk's edge where the chunk beside it is the
@@ -466,6 +468,15 @@ fn fsLod(v: LOut) -> FOutF {
   if (farCut(v.local, v.pos.xy)) { discard; }
   let look = ringLook(v, facet);
   var c = look.c;
+  // (round 91, the user: "I easily hit the edge of the loaded ground") The window's ground is a colour a cell,
+  // each a little lighter or darker; the rings' was smooth — a blur past the window's edge. Their ground gets the
+  // same grain a cell (the window's hexagons, by world cell: it stays put as the rings move and the window
+  // slides), fading out where a cell is under a pixel.
+  if (!look.rock) {
+    let cell = farCellAt(l) + vec2<i32>(i32(round(FP.org.x)), i32(round(FP.org.y / 0.8660254)));
+    let g = farHash(cell) - 0.5;
+    c *= 1.0 + 0.24 * g * (1.0 - smoothstep(0.7, 1.4, cellPx));
+  }
   // (round 86) a storm over it: the cloud's shade, the ground dark with rain, water standing in the hollows, and
   // sheets of it running down the slopes (the window's sim does this where it's awake; here it's drawn)
   if (FP.rain.x > 0.5) {

@@ -12,6 +12,18 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 91 (2026-10-27, session 5, `phonecam`) — names on the map, a compass, the edge of the land (DECISIONS round 91)
+
+| id | item | size | status |
+|---|---|---|---|
+| N1 | "the map needs to show you names of place": the atlas map labels continents, regions, seas and lakes, settlements with the world wiki's own names (gm/map-names.ts: atlasFacts → buildWiki in the page, the GM's names), fewer zoomed out, none overlapping; label sources a contract (api/map-labels.ts) other systems add to | M | done (phonecam) |
+| N2 | "a directional compas for the way your are facing": a compass on the game view over the turn buttons (ui/compass.ts), the map's north; a tap faces north; on the map the player's dot has a wedge the way the view faces and the view's footprint | S | done (phonecam) |
+| N3 | The map was the world's mirror image (world +x to the right of north): drawn now as seen from above, +x to the left | S | done (phonecam) |
+| N4 | "I easily hit the edge of the loaded ground" — measured (DEVLOG round 91): at the phone's zoom 52–66% of a portrait screen is past the 320 window at any time (the view's ground is ~158 × 700 cells, the window 320 × 320); panning outran the slides to 45 cells of the window's edge. Done: the camera kept a region in from the edge (min 64), the land asked for where the camera's heading (1 s ahead), the rings past the window given the window's grain a cell | M | done (phonecam), partly: N5–N7 |
+| N5 | The window shaped to the view: on a portrait phone the view's ground is long along the view and narrow across — a window longer than wide, turned with the view (or a split per-column buffer, R5, for a wider one under 128 MB) | L | open |
+| N6 | Past the window: plants and roads on the rings (P13's "Left"), the ground's colour the window's (the window's grass is brighter and speckled); the eye's side pressed under the focus reads as a flat floor | M | open |
+| N7 | A lakes label source (the `lakes` branch's named lakes, kind 'lake') plugged into the map: the contract is there; the wiki's own lake regions are labelled already | S | open |
+
 ## Round 90 (2026-10-27, session 5, `phonecam`) — more of the atlas on the phone, turning the view (DECISIONS round 90)
 
 | id | item | size | status |
