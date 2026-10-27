@@ -88,7 +88,7 @@ try {
         const c = Math.floor(y / (32 * ROW_H)) * nx + Math.floor(x / 32);
         const st = dev.createBuffer({ size: 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
         const enc = dev.createCommandEncoder();
-        enc.copyBufferToBuffer(fm.state, (16 + c * 13 + 4) * 4, st, 0, 16);
+        enc.copyBufferToBuffer(fm.state, (16 + c * 14 + 4) * 4, st, 0, 16);
         dev.queue.submit([enc.finish()]);
         await st.mapAsync(GPUMapMode.READ);
         const u = new Uint32Array(st.getMappedRange().slice(0));

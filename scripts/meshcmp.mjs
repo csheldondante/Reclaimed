@@ -51,7 +51,7 @@ try {
       const sum = [0, 0, 0, 0, 0, 0];
       let full = 0;
       for (let c = 0; c < chunks; c++) {
-        const b = 16 + c * 13;
+        const b = 16 + c * 14;
         const cnt = st[b + 7];
         const rg = st[b + 10];
         full += st[b + 9];

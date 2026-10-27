@@ -17,7 +17,8 @@
 //      sample's cell and its neighbours (caves, the insides of hills: under the ground, never seen from the
 //      sky), except within z of (x, y) — the cut's focus, where the player is under a roof
 //   pr (round 86) x the rebuild slots a frame for any change (k.y is that and the urgent ones: a chunk the CPU
-//      marked — an edit's, a falling piece's — takes any slot, so what the player did shows the next frame)
+//      marked — an edit's, a falling piece's — takes any slot, so what the player did shows the next frame);
+//      (round 93) y, z vertex and quad pages a range's table holds at most, w 1: the page pool (below)
 struct MeshRegion { o: vec4<f32>, n: vec4<u32>, k: vec4<u32>, r: vec4<f32>, zb: vec4<f32>, ze: vec4<f32>, cv: vec4<f32>, pr: vec4<u32> };
 @group(0) @binding(30) var<uniform> MR: MeshRegion;
 
@@ -34,6 +35,23 @@ fn fieldMat(m: u32) -> bool { return matState(m) != ST_SOLID || m == MAT_STONE |
 // with — the streamed window slid since they were made (fieldmesh.ts shift)
 // (CHUNK0, CSTRIDE: meshstate.wgsl, included before this)
 fn offBase() -> u32 { return CHUNK0 + MR.n.x * MR.n.y * (CSTRIDE + 1u); }
+
+// ---- (round 93, the page pool: MR.pr.w 1) -------------------------------------------------------------------
+// The mesh's vertices and quads live in pages of one pool buffer (fieldmesh.wgsl binding 7, the draw's binding 3)
+// handed to the chunks that are built, sized by what they hold, not a chunk's worst case for every chunk of the
+// window. A page is PAGE_VEC4 vec4s (16 KB): VPP vertices (two vec4 each) or QPP quads (two u32 each: its four
+// chunk-local vertices, 16 bits each — the triangles x y z, x z w through one shared quad index buffer). Each mesh range r (a
+// chunk's record's word 10) has a table after the rebuild's dispatch words (rtBase): [0] vertex pages held,
+// [1] quad pages held, [2] vertices needed, [3] quads needed (the count passes), [4..7] spare, then MR.pr.y
+// vertex page ids, then MR.pr.z quad page ids. After the tables (freeBase): [0] the free stack's top, [1] the
+// pool's pages (the CPU grows it), [2] pages pushed so far, [3] rebuilds starved (no pages: cumulative),
+// [4] the fewest pages left free since the start, [5] the most one take asked for, [6..7] spare, then the stack.
+const PAGE_VEC4: u32 = 1024u;
+const VPP: u32 = 512u;
+const QPP: u32 = 2048u;
+fn meshPool() -> bool { return MR.pr.w != 0u; }
+fn rtBase(r: u32) -> u32 { return offBase() + MR.n.x * MR.n.y * 4u + 4u + r * (8u + MR.pr.y + MR.pr.z); }
+fn freeBase() -> u32 { return rtBase(MR.n.x * MR.n.y); }
 
 /** Smooth value noise 0..1 (trilinear between hashed lattice values). */
 fn warpNoise(p: vec3<f32>) -> f32 {

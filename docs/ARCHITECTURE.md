@@ -572,6 +572,23 @@ from a heightfield sun-march compute pass. Cloud shadows/rain field are
 analytic functions of the storm uniforms. An `rg32uint` pick target (column +
 material, height, flags) gives exact picking via a 1-pixel async readback.
 
+(Round 93, `winmem`; `?meshpool=0` the old layout.) The mesh's vertices and quads live in a **page pool**: one
+buffer of 16 KB pages (512 vertices, or 2048 quads of four 16-bit chunk-local vertices), handed to the chunks that
+are built and given back when a chunk is rebuilt, unwanted (the hybrid's heightfield) or slides out. Each mesh range
+(a chunk's record's word 10, the slide's hand-on) has a page table in the mesh state after the rebuild's dispatch
+words (meshregion.wgsl `rtBase`), then the free stack (`freeBase`). A rebuild counts first (countVerts, countQuads:
+the same tests makeVerts and makeQuads make), then a one-workgroup pass gives back and takes pages (allocVerts,
+allocQuads: pushes and pops in separate barrier-split phases). No index buffer per chunk: every chunk's draw reads
+one shared quad index buffer (corners 0 1 2, 0 2 3), its base vertex r · 4 · vertsPer, and the vertex shader reads
+the quad's corner from its page and the vertex from its own (meshdraw.wgsl `meshVert`). A rebuild that finds no
+pages is STARVED (record word 13): not marked built, so it's owed and made again, the LOD rings drawing its land
+meanwhile; the free stack's header is read every 15 frames and the pool grows by half (a new buffer, the old pages
+copied, `FieldMesh.maintain` once a frame; `Renderer.syncMeshPool` makes the draw groups again) when a rebuild
+starved or under a fifth is free. Past one binding (min(128 MB, the adapter's)) it's an UnsupportedError. The
+instance lists (`?instgrow=0` the old) likewise start at a tenth of their worst case: writes past a list's room are
+left out (renderprep.wgsl putO/putW, vegprep.wgsl putP), its count clamped after (clampWater, clampVeg) with the raw
+count kept in indirect words 20–22, and `Renderer.syncInst` grows a list asked for more than 85% of its room.
+
 ## Snippets (concatenated after a kernel that declares their inputs)
 
 - `flow.wgsl::netFlow(p)` needs `flux`; `slope.wgsl::slopeAt/flatness` needs `surface`.
@@ -1232,6 +1249,26 @@ flood from every standing run). In `ColumnBodies` a piece that catches up
 with one falling under it rides down on it rather than landing mid-air. The
 sandbox's break tool, dig and meteor no longer wake structures into physics
 bodies: everything they undercut falls through this path.
+
+What holds rock up, and the window sliding (round 92, `collapse`; DECISIONS round 92). Intervals touch face to
+face (`touch`) when they overlap by half a cell or by half the thinner one's thickness, and a column's intervals
+that overlap count as touching. A held piece is then weighed (`analyseRock` opts.weigh: true, or a test of the
+columns an edit itself changed — `Integrity.cutSeeds`, a crater's bowl and rim rather than its 30-cell ejecta —
+so the land as made stands and what an edit weakened is judged): (1) cross-sections from the far end in (its
+distance from what holds it): every part k or more steps out weighs its mass (cells × the table's `density`)
+against its joints to the runs k − 1 out, each `strength × min(ROCK.BEND h², ROCK.SHEAR h)` (h the overlap);
+the part most over gives there and falls (one break a pass); (2) else the piece above its lowest point zc with
+the standing runs it's joined to above zc (followed `ROCK.NECK_R` columns; past that, the map's edge or a run a
+flood before found so: keyed into the land) on the standing columns under it, each bearing `ROCK.CRUSH ×` the
+least `bear` down its run (materials.ts: rock 1, soil 0.3, sand 0.15 …); heavier than that, or its centre of
+mass off their hull (`ROCK.TIP_GIVE`), those columns crush from where it would land to zc and it falls straight
+(rotation: BACKLOG C4). `Fracture.why` counts the reasons. The streamer calls `onBeforeSlide(dx, dy, dz)`
+before a slide, a slide in z or a warp touches the columns: `Integrity.settle` lands every piece falling in the
+strip that leaves (all of them for a slide in z or a warp); `Streamer.columnsHeld` (a slide in z, a warp: the
+columns read back and written again) holds the integrity system (`Integrity.held`: nothing falls or is judged);
+`onSlide` → `Integrity.slid` moves the seeds, watches, boxes and the falling pieces (`ColumnBodies.shift`) with
+the land. Before, a piece falling when the window slid was frozen, cut again or written at its old place mid-air
+and forgotten — the meteor-made floaters.
 
 ## Agents (round 52, docs/AGENTS.md; branch `agents`)
 

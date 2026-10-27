@@ -7055,3 +7055,168 @@ Measured (scripts/runtest.mjs, q=low 412×915, the phone's flags as deployed):
   passed on the next run, with the next commit's debug output added; not found yet (RS17).
 
 Shots: C:/Projects/shots88/run/09-arrow.png, 10-map-pin.png, 11-follow-arrow.gif, 12-after-warp.png.
+## Round 92 — what holds rock up; the meteor-made floaters (`collapse`)
+
+Why: the user (DECISIONS round 92) — a huge pillar top stayed up on a two-column leg after a meteor at its foot (a
+hanging piece joined to any standing run was held whatever it weighed; round 83's span rule hardly ever fired),
+with a design ("connected components of solid intervals then look at total solid support under an interval …
+supports can be vertical or horizontal"), "where it breaks", tipping "now and we can add rotation later"; and
+"one of my screenshots the column is actually floating with zero visible support … a bug in when we trigger the
+logic". Then: "No it was meteor made floaters"; "I'm guessing it just never really tested with all the systems in
+play and it's an oversight"; and a playground ("like the one used for waterfalls").
+
+**The floater (test first).** scripts/meteorpillar.mjs: the atlas at the phone tier (q=low, hybrid=1, 412×915),
+natural pillars found from the window's columns (a region of spires, `at=9894,12901`: pillars through the
+window's top, the band) or a tower the world API builds; meteors at the foot through the pointer (meteorNow when
+the pick can't reach it), several in a row, the camera far (heightfield chunks), CPU throttled 5× over CDP; the
+ground truth (floatingRuns) after each and 30 s on, by world cell (the window slides under it); `--slide x|z` slides
+the window away and back while what the meteor freed is falling. Without slides nothing floated, 40 s on, with the
+rim's lava melting and setting — the magma hypothesis played no part (its one "floater" was the judge's, below).
+With a slide, round 88's code left the tower in the air over the molten crater, 27 runs from 133 to 157 over ground
+at 114 — the user's screenshot (C:/Projects/shots88/collapse2/before-meteor-slide.gif) — and nothing judged it
+again. Every test had turned the streamer off (`stream.auto = false`). Cause: the falling pieces live in window
+cells; the GPU's columns hold them mid-air at their offset. A slide in z reads the columns back and cuts them again
+(the piece mid-air became ground) and then Integrity.clear() forgot it; a slide along x or y froze a leaving
+region with a piece in it, and the pieces kept writing their old cells after the pages moved; the seeds, the rim's
+15 s watch and the dirty boxes stayed in old window cells too. Now: Streamer.onBeforeSlide(dx, dy, dz) →
+Integrity.settle lands at once every piece in the strip that leaves (all of them for a slide in z or a warp);
+Streamer.columnsHeld (only while a slide in z or a warp reads the columns back and writes them again — a slide
+along x or y moves them in one synchronous step) holds the integrity system (nothing falls or is judged);
+onSlide → Integrity.slid moves the seeds, watches, boxes and the falling pieces (ColumnBodies.shift) with the land.
+After: 0 floating either way (after-meteor-slide.gif: the tower lands in the crater); a slide in z holds 106 ms
+(578 ms at 5× throttle), settling 1.1 ms; along x nothing waits and the piece falls on across the slide. Natural
+spires, 3 meteors each at two pillars, far camera, slides in z, 5× throttle: 0 new floating runs (2 pieces fell,
+64 cells crumbled).
+
+**The judge's join rule** (the census of the window as made: 0 floating runs at the spawn, 12 on a mesa, 204 among
+the spires, 401 in the highlands, all there from the first frame). The user doubted the generator made any, rightly
+for most: 383 of the highlands' were thin tilted strata (under a cell thick) whose runs touch their neighbours by
+0.47 < OVERLAP 0.5; and a column's overlapping intervals (the meteor's ejecta laid a hundredth into the soil) were
+read as a run of their own, hanging. Now intervals touch when they overlap by half a cell or half the thinner one's
+thickness (fracture.ts `touch`), and overlapping intervals are one run. Floating as made after: highlands 23,
+spires 83 (mostly half-cell films), mesa 12 — seven of the mesa's are truly detached sandstone slabs 10 thick,
+1.5–49 cells over the ground (BACKLOG C18: to trace to the form that made them; not dropped at generation, as the
+user asked). The "islands dropped as land is made" try was reverted.
+
+**Support** (fracture.ts ROCK, the material table's `bear` and `density`). A held piece is weighed:
+- cross-sections from the far end in (its distance from what holds it): every part k or more steps out weighs
+  cells × density against its joints to the runs k − 1 out (and what holds it), each strength × min(BEND h²,
+  SHEAR h), h the overlap; BEND 3 (a slab a cell thick reaches 3 columns out: round 83's span), SHEAR 10 (thicker,
+  10 whatever its thickness). The part most over gives there and falls (one break a pass: what's left is judged
+  again). Summed across the part: the first try (each run handing its load on alone, as the user's "flood fill in
+  from the edges") broke a slab's edge row for its own length;
+- else the piece above its lowest point zc with the standing runs it's joined to above zc (followed NECK_R 16
+  columns; past that, the map's edge, MAX_PIECE or a run an earlier flood found so: keyed into the land, held) on
+  the standing columns under it: each bears CRUSH 300 × the least bear down its run (rock 1, concrete 0.8, steel
+  0.85, soil 0.3, rubble 0.4, sand 0.15, silt 0.2, ash, litter, drift 0.1, snow, leaf litter 0.05). Heavier, or its
+  centre of mass off their hull by more than TIP_GIVE 0.25, it gives: those columns crush to rubble from where it
+  would land to zc, and it falls (straight: rotation is C4/C21). This is also the waist cut part way round (the
+  core still standing: nothing hung free, nothing was judged);
+- only a piece an edit changed is weighed: Integrity.cutSeeds, the columns the edit itself cut (a crater's bowl and
+  rim, not its 30-cell ejecta; a landing; what crumbled), so the land as made stands; what floats is judged
+  wherever it is. `Fracture.why` counts the reasons.
+
+rockcpu.mjs's new cases (before → after): a big top on a 3-column leg falls (0 → 1512 cells), the same on a 44-column
+leg stands, an arm 22 out snaps 1 column from the wall (round 88: the tip crumbled 10 out), one 6 out stands, a top
+centred 6 off its leg tips (0 → 432) and centred stands, a waist with 4 columns left falls (0 → 4208), a nick stands,
+the same nick over a sand band falls, a cave 20 across keeps its roof when its wall is holed. Round 88's judge fails
+5 of them. The window judged whole as made with everything weighed (the worst case — in play only what an edit cut
+is): spawn 0; badlands 1 piece (53 cells); a mesa 1 (249); the spires 10 broken by load and 3 tipped (~900 cells:
+leaning spires); highlands 2.
+
+**The rock lab** (`level=rocklab`, src/levels/rocklab.ts, scripts/rocklabgif.mjs): a flat plain, nine pieces 22 apart
+by the camera (zoom 4.5): a top on a thin leg, the same on a wide leg, an arm off a wall, an arch, an off-centre top,
+a pillar for meteors, a banded tower (soil, concrete), a concrete tower, a waist. GIFs: before/after-thin-leg.gif
+(two breaks at the leg: round 88 keeps the top up; now it falls).
+
+Measured (desktop iGPU, D3D11): floatsweep 31/31, 0 floating before and after (streamer on; no slide in it);
+towertest 5/5 (towers 12 apart round the camera: 16 took the last past the streamer's reach, and it slid); rockcpu
+60 worlds × 40 cuts none floating, the judge 0.03 ms typical, 4.0 ms slowest (round 88: 0.9); the sweep's slowest
+pass 13.9 ms (banded-w14, as round 88's 12–15); the whole window judged at once 150–320 ms (the highlands 1347 ms
+before the neck's flood remembered what it found keyed into the land). driveprofile (q=low 412×915, 25 s): p50 9.9
+→ 9.9 ms, p95 11.8 → 11.6, GPU 10.18 → 9.75 ms a frame (noise). Tests now run with every system as the phone has it
+(the streamer included); meteorpillar's sites and towertest's heights follow the window when it slides. Open: C18
+(the mesa's detached slabs), C19 (a meteor's rim melts the column's top interval, not the rim's height), C20 (cube
+bodies dropped on any slide), C21 rotation.
+## 2026-10-27 — round 93 (session 5, `winmem`): what the streamed window spends its memory on
+
+Why: the user asked what makes the window so expensive and what to prioritise before shaping it to the view
+(DECISIONS round 93). Measured with scripts/memprobe.mjs (new: every GPU buffer under the world and the renderer by
+its label, the mesh's chunks built, the instance lists' counts against their room), the atlas level at q=low
+412×915, win 320, `at=11956,15471`, the desktop iGPU, 40 s settled then a 12 s pan (WASD, 24–26 slides).
+
+**What was expensive.** 465 MB of GPU buffers, ~4.5 KB a column against the world's own ~0.5 KB (layers). Most of
+it room nobody used: the field mesh reserved a chunk's worst case (vertsPer = 6144 × the level's room 5 = 30,720
+vertices, 32 B each, and six indices a vertex) for **every chunk of the window** — 110 chunks — though the hybrid
+meshes only those near the view (13 settled, 12–17 panning, 35k vertices in all: 0.6% of the room); and the instance
+lists were sized for every interval of every column (opaque 1.74 M boxes; 14k–28k used with the mesh drawing the
+ground), every plant box, four blended boxes a column.
+
+**What changed.**
+1. *No per-chunk indices* (main's suggestion): quads are four chunk-local vertices (16 bits each, 8 B a quad) in the
+   pool's pages, drawn through one shared quad index buffer (corners 0 1 2, 0 2 3 repeated: 0.7 MB for the window,
+   0.3 the band) with the range's base vertex; the vertex shader reads the quad's corner, then the vertex
+   (meshdraw.wgsl meshVert). Indexed, so the corners shared by a quad's two triangles are shaded once (4 vertex
+   invocations a quad, not 6 as unindexed would be).
+2. *A page pool for the mesh* (fieldmesh.wgsl countVerts/allocVerts/countQuads/allocQuads; ARCHITECTURE): 16 KB pages
+   handed to the chunks built, given back when a chunk is rebuilt, unwanted or slides out; it starts at 3 pages a
+   chunk and grows by half when a rebuild finds no pages (STARVED: owed and made again; the rings draw its land
+   meanwhile) or under a fifth is free. Past one binding's room (min(128 MB, the adapter's)) it's an UnsupportedError
+   — our call over a silent fallback, the brief's either/or. The window's and the band's each have one.
+3. *Instance lists grown on demand*: a tenth of the worst case to start; a write past the room is left out and the
+   count clamped (so a draw never reads past its list), the raw count read back, the list grown to 1.5× (at least
+   1.25× what was asked) when a frame asks for over 85%.
+Both on in this branch; `?meshpool=0` and `?instgrow=0` are the old layout to compare.
+
+**Per buffer, win 320 (MB)** — before (= main's numbers), after settled, after the pan:
+
+| buffer | before | after | after pan | note |
+|---|---|---|---|---|
+| meshVerts → meshPool | 103.1 | 5.2 | 24.5 | pages as built; grew twice in the pan's burst of rebuilds (WM6: never shrinks) |
+| meshIndices → meshQuadIndex | 77.3 | 0.7 | 0.7 | one shared pattern |
+| band meshVerts → band meshPool | 10.3 | 5.2 | 5.2 | |
+| band meshIndices | 7.7 | 0.3 | 0.3 | |
+| instOpaque | 29.7 | 5.8 | 5.8 | 3.3 of it the tops' list (two a column: its worst case, kept) |
+| instPlant | 20.3 | 2.0 | 2.0 | |
+| instWater | 6.3 | 0.6 | 0.6 | |
+| layers + layersNext | 25 + 25 | same | same | the world itself, twice (WM4) |
+| agentDist / agentNav / agentShove | 18.8 / 6.3 / 3.1 | same | same | 12 fields × 4 levels × f32 a column (WM4) |
+| band layers | 18.8 | same | same | |
+| sedOut | 16.4 | same | same | 7 × Dirs a column (WM4) |
+| meshScratch | 11.8 | same | same | per rebuild slot × the window's height, not per chunk |
+| structInst / lavaInst | 8 / 4.7 | same | same | |
+| streamScratch | 3.1 | 3.1 | 21.9 | the largest per-column buffer's size once a slide needs it (both layouts) |
+| **total** | **465.2** | **230.1** | **268.3** | |
+| **largest binding** | **103.1** (meshVerts) | **25** (layers) | **25** | |
+
+A 448 × 320 window (`?win=448&winh=320`): 648.5 MB and a 140.6 MB meshVerts the old way (past the 128 MB many phones
+bind); 326 MB and 35 MB (layers) the largest now.
+
+**Frame times** (driveprofile, 30 s ride, q=low 412×915, win 320): before p50 9.9, p95 13.8, p99 21.3 ms, GPU 11.6
+ms a frame (draw 6.4); after p50 9.9, p95 13.6, p99 22.1, GPU 10.9 (draw 5.8). The mesh's own passes 901 → 1149 ms
+over the ride (the count and alloc passes; still ~0.04 ms a frame). 448 × 320 pooled: p50 9.8, p95 17.4, p99 26.8,
+GPU 12.2. **Look**: the same view both ways (shots88/winmem/vis-ab.png; 2.8% of pixels differ, the water's and the
+plants' motion).
+
+**The view-shaped window** (experiment `?winh=`: the window's rows other than its side, in world axes, fixed at
+load; the streamer and the sim already take w ≠ h — the grep for square assumptions found none in the systems,
+only the atlas callers passing `h: W`, now `h: Hr`). edgeprobe (new `--face deg`), pan, the phone's zoom, % of the
+screen past the window: 320² 52.8 (facing 45°, the default) / 52.9 (150°); 448 × 320 46.3 / **39.9**; 320 × 448
+(facing 150°) 51.4; 384² (150°) 43.8. So a window long along x pays only when the view looks along x (150° is 30°
+off it); at the default 45° the view's ground runs diagonally and only more columns help. Shaped to the view, it has
+to turn with it; re-shaping by slides needs every per-column buffer addressed by region rather than w × h (BACKLOG
+WM5). With the pool, 448 × 320 costs 326 MB — under the old 320².
+
+**Still per window cell** (looked at, not changed: none is cheap). agentDist is 12 distance fields × 4 surface
+levels × f32 for every column (agents/agents.ts) — agents are only round settlements, so fields over a settlement's
+box (or f16, half) would do; it's the agents' layout to change, behind their contract. sedOut is the sediment pass's
+per-column outbox (7 × six directions × 4 B), written and read within a tick, every column though only awake tiles
+run (simcull's tiles could index a compact one). layersNext doubles the layers. Together ~60 MB at 320 (BACKLOG WM4).
+
+**Checked after** (a second run): the pool's own count (free-stack header words 4, 5: the fewest pages free since
+the start, the most one rebuild asked for) — settled 232 of 330 free at the lowest, 12 pages the largest take; in the
+pan the stack ran dry (24 rebuilds starved and made again, the pool grown 330 → 495 → 743 pages), the largest take 20
+pages, 627 free after it: a burst of fresh chunks after slides, not a leak (they're given back) — so it never
+shrinking (WM6) is the cost. scripts/stalemesh.mjs (40 edits, one rebuild slot): owed 1 → 1 before, 2 → 2 now, 3
+stale found both ways. latencyprobe (cut): the column lowered 313–340 ms after the ask both ways, the chunk rebuilt
+1–10 ms after that.

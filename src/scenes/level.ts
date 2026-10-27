@@ -63,7 +63,7 @@ import { MAT } from '../world/materials';
 import { cellAt, cellPos, poiWorld, ROW_H } from '../world/lattice';
 import { qRotate, qYawPitchRoll } from '../grids/structures';
 import { HybridChunks } from './hybrid';
-import { atlasRange, chooseRange, nextRange } from './range';
+import { atlasRange, atlasRows, chooseRange, nextRange } from './range';
 import { Turn, TURN_STEP } from '../render/turn';
 import { Compass, NORTH_AZIMUTH } from '../ui/compass';
 import { wikiLabels } from '../gm/map-names';
@@ -728,8 +728,10 @@ export class LevelScene implements Scene {
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
       const W = atlasRange(host.params);
-      const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
-      const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
+      // (round 93, ?winh=: an experiment — rows other than the side)
+      const Hr = atlasRows(host.params, W);
+      const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - Hr / 2) / REGION) * REGION];
+      const { map, oz, outside, ground } = await atlas.window({ w: W, h: Hr, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
       atlas.profiler = host.profiler;
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
@@ -1270,11 +1272,17 @@ export class LevelScene implements Scene {
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, this.stream!.oz);
         if (a) core.globals.seaZ = a.atlas.p.sea - this.stream!.oz;
         if (dz) {
-          // (a slide in z: every column moved; what's falling or lying loose in window z goes)
+          // (a slide in z: every column moved; what's lying loose in window z goes)
           for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
-          this.integrity?.clear();
         }
+        // (round 92) what's waiting to be judged moves with the land (what was falling landed first: onBeforeSlide)
+        this.integrity?.slid(dx, dy, dz);
       });
+      // (round 92) before the window's columns are frozen, read back or moved: what's falling where they're frozen or
+      // cut again lands; nothing falls or is judged while they're read back and written again (a slide in z, a warp)
+      const S0 = this.stream;
+      this.stream.onBeforeSlide.push((dx, dy, dz) => this.integrity?.settle(dx, dy, dz));
+      if (this.integrity) this.integrity.held = () => S0.columnsHeld;
       // (round 80) a warp (the map's): the window somewhere else — what the level keeps in window coordinates again
       this.stream.onWarp.push((_ox, _oy, nz) => {
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, nz);
@@ -1683,7 +1691,7 @@ export class LevelScene implements Scene {
     // open framed on the valley; portrait phones get closer than the width
     // alone would allow (the map is a diamond, its middle is what matters)
     // (a story level opens close on its green)
-    if (first) this.core.camera.zoom = this.story ? 7 : Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300);
+    if (first) this.core.camera.zoom = this.story ? 7 : (this.level.zoom ?? Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300));
   }
 
   frame(now: number, dt: number): void {
