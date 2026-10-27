@@ -6626,3 +6626,69 @@ cut through: 178 columns × 10 runs), typical 0.1-5 ms. towertest 5/5 (spire 69 
 the rest stays in the air) and after-wide-banded.gif (all of it comes down). The heat-beam case didn't bore through
 headlessly (nothing cut, nothing floats); its path is towertest's and round 87's. Open: BACKLOG C13 (GPU-made
 changes elsewhere — a volcano's flows — aren't judged).
+
+## 2026-10-27 — round 88, `runstory`: a run story played as a hero (`?run=bell`)
+
+Why: the user (round 88): "I would like to try spawning as a character like in hoverbike and talking to people or
+going places or fighting things for a run story." The slice: a hero on foot on the atlas level, the GM's Bell
+story staged near the spawn, its cast as units, talks, objectives, a fight, death ending the run. Each piece sits
+behind a contract, so the hoverbike game's heroes and the settlements' GPU agents can replace the stand-ins.
+ARCHITECTURE "A run story as a hero"; docs/HEROES.md is the hoverbike session's handoff.
+
+- **The hero** (contracts/hero.ts `Hero`; hero/walker.ts). It walks the world API's ground at the drawn
+  mesh's height. Climbs are judged on the columns' own tops half a cell ahead, because the smooth mesh rounds
+  a wall's foot into a ramp a stride at a time could walk up (the first browser run walked over every wall).
+  A tap's goal is reached by A* (hero/path.ts): a 1-cell grid of column tops, a step over 2.5 impassable,
+  cells beside a wall costing more so the way keeps to the middle of a doorway. The path is then pulled
+  straight along lines a body's width clear. Without it a tap across a walled room hung on the wall: the
+  browser run stuck in the reeve's hall. Its sword hits every hostile in a 70° arc, turning to the nearest
+  first, so a tap on a phone hits without aiming.
+- **The controller** (hero/touchpad.ts). A floating stick where the thumb lands, view-relative. A tap is a
+  person (walk up and talk, or go and fight one who's hostile) or the ground (walk there). ⚔, a "Talk to …"
+  button and the health bar go where a thumb reaches; WASD / Space / E on a desktop. It sits under the rest of
+  #ui, so the level's pan, gust and tools never see its pointers. The sandbox editor is hidden during a run.
+- **The camera.** StoryCamera.follow on the hero, zoom 14 (it was 8, which made the hero a speck on the phone
+  screenshot), and Orbit.prefer behind its heading (35°, firm past 80°) while it walks. A talk frames the
+  speaker, as before.
+- **Units** (contracts/units.ts, src/units/simple.ts; 2745211) and their figures (units/figures.ts): a few
+  voxels each, written from the CPU into a buffer drawn by Renderer.addVoxels, the hurt flash through the
+  body glow bits.
+- **The stage** (story/stage-gen.ts, D10). Each location goes toward its real spot on the atlas: s139 for
+  Mebe, the region centres for the ford (2341, the spawn's own) and the barrow (2159). The distances are
+  pulled in from 0, ~700 and ~800 cells to 22–95, so the run is a few minutes on foot. The rooms are laid
+  out along the brief's connections, away from the player, all within the window. Walls get doorways (≥ 3
+  cells; the first try's 1.4 was too narrow for the path grid); locks plug the far room's door (bone for the
+  bone door). Landmarks are matched by keyword: the bell on its post, the mill wheel, stepping stones, a ring
+  of logs for the oaks, the carts, the dam, the Teeth of Kaudru as three stone spires behind the barrow. The
+  stage's 249 edits land before the run starts (it waits for the queue to drain: the world takes four a tick).
+- **StoryPlay** with units: the cast are units, and their badges follow them. `killed` is noted when a unit
+  dies; rooms note `reached { location, room }`. A lock opens when the hero comes to it with the key. Only
+  the plug's columns are taken (`take`): a `dig` there took the floor too and left a pit too deep to climb
+  out of, which stuck the walk back. Spawns appear as units round the speaker or in the place's way in.
+- **Story contract (additive):** `Outcome.spawn[].hostile`, and `Outcome.hostile` (the cast members who turn on
+  the player). The Bell story's walking dead are `hostile: true`, and the Bellwarden's `n-fight` lists
+  `hostile: ["bellwarden"]`. storycheck and validate accept and check both; storycheck: ok.
+- **The window is held still during a run** (Streamer.auto off, after the camera has settled at the spawn).
+  The first browser run's places were built while the window slid round the spawn (it sat 43 cells off the
+  window's middle), and every queued edit landed a region off. A run over the streamed world is BACKLOG RS9.
+- **The fight's numbers** (herotest, flat ground): the hero has 20 hp and swings 1 a blow every 0.5 s; the
+  walking dead have 2 hp and the Bellwarden 12 (2 a blow); a unit's wind-up is 0.45 s and a blow lands if
+  still in reach. Swinging, the Bellwarden and four dead fall in 6.7 s with the hero at 14/20. Standing
+  still, the hero falls in 15.3 s. A unit's flinch no longer cancels its wind-up: the hero's swings stunned
+  everything and it took 0 damage.
+
+Measurements:
+- scripts/runtest.mjs, the atlas level at q=low, 412×915, through taps, the dialog's buttons and the swing.
+  Passing: tap Ilsa, talk, walk to Mebe and into the reeve's hall, talk to Hesk (the bone key; o-mebe done,
+  o-barrow shown), the barrow's cairn gate and ossuary (o-barrow done, o-end shown), the bone door opened,
+  the Bellwarden ("I've come to end you": 5 hostiles), the fight won (the hero standing; lay-dead and mark
+  on 2159 in the MemoryWorldState; o-end done, o-return shown), and the lost run (the hero dies; RunRecord
+  lost; the end card). The walk back to Mebe stuck in the first run because of the dig pit; the fix (above)
+  is checked by the run in this commit's last batch (see RS5).
+- scripts/herotest.mjs (Node): 12 rooms, none overlapping, all in the window; walked room to room through
+  doorways (5/5); the fight's balance as above.
+- driveprofile at q=low 412×915, standing at the spawn, 15 s, before → with the run walking: GPU 4.37 → 4.71
+  ms/frame; frame p50 9.9 → 9.9 ms, p95 10.4 → 10.7, p99 10.7 → 14.8, worst 18 → 19, no hitch over 50 ms.
+  The p99 is the world API's mirror reads, which the run turns on (as `?story=` does) — not new to this branch.
+- Shots and GIF: C:/Projects/shots88/run/ (01-spawn, 02-talk-ilsa, 03-objective-done, 04-talk-bellwarden,
+  05-fight.gif, 06-after-fight, 07-end-card, 08-lost).

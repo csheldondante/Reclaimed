@@ -303,7 +303,15 @@ export class StoryPlay {
       if (has) {
         k.open = true;
         const t = this.d.api.terrain;
-        t?.dig(k.at[0], k.at[1], { radius: 3, layers: 6 });
+        // (only the plug: each column under it whose top is the lock's material loses that — a dig would take the
+        // floor round it too, and leave a pit too deep to climb back out of)
+        if (t)
+          for (let dy = -3.2; dy <= 3.2; dy += 0.7)
+            for (let dx = -3.2; dx <= 3.2; dx += 0.7) {
+              const x = k.at[0] + dx;
+              const y = k.at[1] + dy;
+              if (dx * dx + dy * dy <= 10.5 && t.materialAt(x, y) === k.material) void t.take(x, y, 8);
+            }
         this.d.api.fx?.burst('dust', k.at[0], k.at[1], (t?.heightAt(k.at[0], k.at[1]) ?? me[2]) + 1, { count: 30 });
         this.d.say?.(`${k.key.item ? `The ${k.key.item} turns` : 'It opens'}: the ${k.id.replace(/-/g, ' ')} gives way`);
       } else {
