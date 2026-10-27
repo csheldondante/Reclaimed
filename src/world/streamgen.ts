@@ -65,6 +65,8 @@ export interface RegionLand {
   lavaSpring?: Float32Array;
   /** water springs a tick (world-gpu's waterSource: the atlas's rivers), if any */
   waterSource?: Float32Array;
+  /** (round 84) the atlas's rivers at their steady state (world-gpu's riverFlow, four per column), if any */
+  riverFlow?: Float32Array;
   /** the ground's own top (world z), under what stands on it (the atlas's forms), if known */
   ground?: Float32Array;
   /** columns with something the structural system should judge (the atlas's forms of a weak material) */
