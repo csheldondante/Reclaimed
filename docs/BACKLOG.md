@@ -12,6 +12,23 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 88 (2026-10-27, session 5, `runstory`) — a run story as a hero (DECISIONS round 88)
+
+The user: "I would like to try spawning as a character like in hoverbike and talking to people or going places
+or fighting things for a run story." Ids RS (H is taken).
+
+| id | item | size | status |
+|---|---|---|---|
+| RS1 | A hero on the atlas level behind a `Hero` contract (contracts/hero.ts). It walks on the world API's ground, with A* round walls and through doorways. Its controller is phone first: a floating stick, a tap to go or to talk, ⚔, and a "Talk to …" button; WASD / Space / E on a desktop. The chase camera is StoryCamera.follow plus Orbit.prefer behind its heading. docs/HEROES.md is for the hoverbike session | M | done (this commit) |
+| RS2 | `Units` contract (contracts/units.ts) + SimpleUnits (CPU) + voxel figures; for the settlements agents to implement on the GPU agents | M | done (2745211; figures this commit) |
+| RS3 | The Bell story staged on the atlas (D10): stage-gen.ts realises the briefs near the spawn (rooms, doorways, locks and keys, landmarks), toward each place's real spot (its site, its region's centre), pulled in to 22–95 cells | M | done (this commit) |
+| RS4 | Fighting: hostile spawns (`spawn.hostile`) and cast turned hostile (`Outcome.hostile`), a readable swing (wind-up, flinch, knockback), the hero's health; death ends the run (lost) | S | done (this commit) |
+| RS5 | `?run=bell` + scripts/runtest.mjs (in the browser: walk, talk, choose, reach, open a lock, fight, return, won; and lost) + scripts/herotest.mjs (Node: layout, paths, the fight's balance) | S | done (this commit) |
+| RS6 | The other ways to end the Bell story in play: the sluice (with the crank at the sluice house: flood the barrow, `event flooded`), the blasting charges (in the bell chamber: `event collapsed`), the heartwood seed; each needs a "use an item here" interaction | M | open |
+| RS7 | Units walk straight (SimpleUnits): they don't path round walls, so a chase can hang on a wall; the GPU agents' fields fix it | S | open (settlements) |
+| RS8 | Talk camera on the perspective camera (D9) and the hero's own models: the hoverbike game's heroes through `makeHero` | M | open (hoverbike session) |
+| RS9 | The run's window is held still (Streamer.auto off) so the places stay in it; a run over the streamed world (places a region or more away, the stage in world cells, built as their regions arrive) | M | open |
+| RS10 | Judgement calls for the user: the real distances pulled in (the Bell's places are 500–800 cells apart on the atlas; here 22–95); the fight's numbers (hero 20 hp, a blow 1; the dead 2 hp; the Bellwarden 12 hp, 2 a blow); regen out of a fight | S | asked |
 ## Round 86 (2026-10-26, session 5, `collapse`) — rock collapse and meteors (DECISIONS round 86)
 
 | id | item | size | status |
@@ -79,10 +96,10 @@ user) · `deferred` (agreed for later).
 | D3 | Story cameras: frame a speaker, reveal a place or effect, an opening look, follow; interruptible, through the cutaway (Dither, Slice) | M | done (this commit) |
 | D4 | `?story=demo` on the valley: a placeholder story (three characters, branching talks, an objective a choice and a visit complete, an overgrow and a mark in a MemoryWorldState, a reveal shot, an end card) | S | done (this commit) |
 | D5 | Portraits: real pictures (or the unit generator's faces) in the portrait slot; a voice per character (the cast's `voice`) | M | open |
-| D6 | Characters as units: the cast placed by the region generator (the Stage handed over, not hand-written), standing and walking as agents (system 6), with their models; tap a unit to talk | M | open |
+| D6 | Characters as units: the cast placed by the region generator (the Stage handed over, not hand-written), standing and walking as agents (system 6), with their models; tap a unit to talk | M | done (runstory: the cast as units through the Units contract, tap or walk up to talk; SimpleUnits until the GPU agents implement it) |
 | D7 | The contracts: no AtlasEvent kind for a faction's attitude (SYSTEMS lists `faction-attitude`; world.ts doesn't) — the run keeps the shifts in its deeds; WorldState has no way to record a RunRecord (MemoryWorldState.runs only); Dialog has no node-arrival hook (node effects need one: DialogBox.onNode); an AtlasEvent's place in its region has no field (the demo uses `detail.location`, a story location) — to settle with the GM and places | S | done (places e63a874 and after: `faction-attitude`, `WorldState.record`, `Dialog.onNode`, `AtlasEvent.location`; adopted on `dialog`) |
-| D10 | Stage the GM's the-bell-under-kaudru.json on the atlas level near the spawn (regions 2341, 2039, 2159): needs the places' positions (the region generator's), and the story's flood fixed to the new shape (`level`, magnitude 0..1) | S | open |
-| D8 | A hero to follow: the story camera's `follow` on a hero's position (hoverbike session), and `reached` from the hero, not the camera's target | S | open |
+| D10 | Stage the GM's the-bell-under-kaudru.json on the atlas level near the spawn (regions 2341, 2039, 2159): needs the places' positions (the region generator's), and the story's flood fixed to the new shape (`level`, magnitude 0..1) | S | done (runstory: story/stage-gen.ts near the spawn, toward each place's real spot; the flood already had its level) |
+| D8 | A hero to follow: the story camera's `follow` on a hero's position (hoverbike session), and `reached` from the hero, not the camera's target | S | done (runstory: the Walker, `reached` from the hero, StoryCamera.follow and Orbit.prefer) |
 | D9 | The talk's camera on the perspective camera (fly / over the shoulder): frame and reveal only move the fixed camera's target and zoom now | S | open |
 ## Round 84 (2026-10-26, session 5, `gm`) — the game master's pipeline (SYSTEMS.md step 3)
 
@@ -99,7 +116,7 @@ session story offline as data. docs/GM.md is the GM's context and says how a ses
 | G6 | Contract changes to propose to the contracts' owner (not made): WorldSnapshot gets `seed` and settlement records (the wiki carries them beside it for now); story.ts comments for the semantics in docs/GM.md "The format" (AND lists, a happening fires once, a talk opens at its last unlocked node, the first room is the way in, time in seconds); `StoryCharacter.room`; an `any` condition (OR); `faction-presence` with a negative magnitude (a faction losing ground); `PlayerRecord` in run.ts | S | done (places e63a874, ed1ccf0, b80a908; the GM on them: this commit) |
 | G7 | A GM that calls a model at run start behind `GameMaster.brief`: the prompt from docs/GM.md, the wiki and the player record; `checkStory` on the reply; a retry with the problems until it's clean | M | open |
 | G8 | Factions from the user's diplomacy design, replacing the wiki's placeholder table (realms from settlement clusters, four world factions) | M | open (the design: round 85, diplomacy.ts) |
-| G9 | Play the first story: the dialog system (step 2) opens its trees, the run tracks objectives and happenings, the world state applies its AtlasEvents, and the region generator builds its briefs | L | waits (steps 2, 4) |
+| G9 | Play the first story: the dialog system (step 2) opens its trees, the run tracks objectives and happenings, the world state applies its AtlasEvents, and the region generator builds its briefs | L | playable (runstory `?run=bell`: the slain path end to end; the sluice, charges and seed paths are RS6) |
 | G10 | The wiki after runs: history, marks and past runs in the markdown once events are applied (MemoryWorldState → snapshot → wiki); region names kept stable if the namer changes | S | open |
 
 ## Rounds 76–78 (2026-10-25, session 5, `places`) — the game's direction: readable places, an overmap

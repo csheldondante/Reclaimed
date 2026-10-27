@@ -181,7 +181,8 @@ Units that walk, work, build, shape terrain, fight and flee.
 - **Keys:** keys are items bound to a brief's locks (system 3).
 - **Events out:** `picked(item, by)`, `used(item, on)`.
 
-### 8. Heroes and controllers ◐ — the hoverbike session
+### 8. Heroes and controllers ◐ — the hoverbike session (the contract and an on-foot hero: `runstory`)
+- **Contract (round 88):** src/api/contracts/hero.ts `Hero`, `HeroController`; src/hero/walker.ts on foot, src/hero/touchpad.ts; how a hoverbike hero plugs in: docs/HEROES.md.
 - **Has:** hero prototypes:
   - a flying lich;
   - a hoverbike knight;
