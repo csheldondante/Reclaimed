@@ -3,6 +3,16 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 106b (session 5, `places`) — no CPU readback for what's only seen
+
+- The user, on tiles popping in about a second late: "It seems like it lags significantly when I pan (no framerate
+  issues but many unloaded tiles that take a second or so to pop in) which I don't get. If the time to generate them
+  is on the ms scale how can it take so long to show? Don't we prioritize the rendering latency for those tiles?"
+- And: "Why does the CPU readback and all of that happen all we care about is visuals until your character gets
+  there. We don't even really need CPU readback once we move to agents on the GPU fully" → render-only land has no CPU
+  readback or worker round trip (branch `tilelatency`). For playable land, every CPU reader of the world moves to the
+  GPU or off the streaming path (BACKLOG AR6). Streamed visuals are judged by the latency from wanted to drawn.
+
 ## 2026-10-28 — round 105 (session 5, `tileahead`) — the tiles load the camera's way
 
 - The user, on the tiles in places (`?tiles=1`), verbatim: "Tiles look good but they seem to load in the direction
