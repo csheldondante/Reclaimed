@@ -2,7 +2,7 @@
 // water's edges) each loaded as the level's ?at=, a shot straight and one turned (a third of a turn), per variant
 // (the URL's extra). Prints each shot's hybrid counts (voxel chunks, the grid's, the rings').
 //   node scripts/zmeshshot.mjs [--url http://localhost:5285] [--size 412x915] [--wait 40000]
-//     [--spots "name:x,y;name:x,y"] [--variants "new:;old:&zwin=248&vradius=40&readyticks=24&steep=1000"]
+//     [--spots "name:x,y;name:x,y;town:town=1"] (a spot is an ?at= cell, or a query of its own) [--variants "new:;old:&zwin=248&vradius=40&readyticks=24&steep=1000"]
 //     [--out C:/Projects/shots88/zmesh]
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
@@ -43,7 +43,7 @@ try {
         console.log('pageerror', e.message);
       });
       p.on('console', (m) => m.type() === 'error' && console.log('console.error', m.text()));
-      await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&at=${s.at}${v.extra}`, { waitUntil: 'load' });
+      await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&${s.at.includes('=') ? s.at : `at=${s.at}`}${v.extra}`, { waitUntil: 'load' });
       await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
       await new Promise((r) => setTimeout(r, wait));
       const info = async () =>

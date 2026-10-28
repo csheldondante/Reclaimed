@@ -48,6 +48,13 @@ export interface HybridStats {
 const READY_TICKS = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('readyticks')) ?? 3);
 /** (round 100, ?steep=) cells a column's top may lie off a neighbour's before its chunk needs voxels */
 const STEEP = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('steep')) ?? 12);
+/**
+ * (round 100, ?formvox=1 as before) Whether a form standing on the ground or cut into it (Streamer.relief: the top off
+ * the ground's own by over 0.75 — a road's cut, a town's plinth, a mesa, a spire) makes its chunk voxels by itself.
+ * Off: a form is a heightfield like any ground unless it's steep or open underneath (an overhang, an arch, a room) —
+ * speedsweep's pans had 45–65% of the window's chunks voxels, most for a road or a plinth the grid draws as well.
+ */
+const FORM_VOX = typeof location !== 'undefined' && new URLSearchParams(location.search).get('formvox') === '1';
 
 export class HybridChunks {
   private land: Uint8Array;
@@ -177,7 +184,7 @@ export class HybridChunks {
    */
   private columnNeeds(x: number, y: number): 0 | 1 | 2 {
     const i = y * this.W + x;
-    if (this.col.relief[i]) return 1;
+    if (FORM_VOX && this.col.relief[i]) return 1;
     const g = this.col.gapTop[i];
     const t = this.col.colTop[i];
     let steep = false;
