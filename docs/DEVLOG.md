@@ -8389,6 +8389,58 @@ The smoke run (desktop, 170 s): no Download offered before the end with a v1 res
 640 cells/s (rendered fps 81 → 33, low detail p90 at most 4.9%). It found the window pages dropping their ride (the
 road cleared before it was kept): fixed.
 
+## 2026-10-28 — round 103 (`tilecache`, `?tiles=1`, default off): world-anchored rendered tiles — UNTESTED
+
+Why: the user (DECISIONS round 103): "the tiles are isometric so why not load and render them once then tile them
+so the view covers the screen but coat is cheap?"; the goal "the whole screen nearly always loaded in detail". The
+phone's bench v3: at the sandbox zoom the view's ground is ~487 cells across, the 384 window shows 75% of the screen
+in detail, and fps parks at 49 (320), 24 (448), 14 (512) — growing the window costs the sim; drawing land past it
+from pictures doesn't. Read first: the round 83 `?tcache=N` (one screen-sized layer, lit colour baked in — what
+moves in the look froze with it). This bakes the look before it's lit instead, and anchors it to the world.
+
+**Not run.** The shared browser was never free this session (main out of usage): typecheck and `vite build` pass;
+the WGSL has not been compiled by a GPU, nothing was looked at, nothing measured. First job on this branch: run it
+(scripts/tileprobe.mjs below) and fix what the GPU says.
+
+What was built (src/render/tilecache.ts, src/shaders/tiles.wgsl):
+- A tile = one streamer region (64 x 64 cells: the window's slides are whole regions, so a region is in or out),
+  keyed by (region, the view's azimuth). Baked through a camera of its own — the view's rotation, its own scale (the
+  frame's render px a unit, at most what fits the slot), placed on the region's box (a cell round it, from the
+  window's floor to its chunks' highest top) — into a G-buffer (the mesh's own G pipeline; the region's four mesh
+  chunks and the twelve round it, cut off at the box; the band's chunks; the hybrid grid's), then resolved by
+  fsTileBake into an atlas slot: rgba8 sqrt(albedo/2) + the water film, rg32uint the lit-by normal (oct) | gem |
+  drawn, and the depth along the view from the region's anchor. 12 bytes a texel.
+- meshdraw.wgsl's meshShade split in two: meshSurf (everything before the light: albedo, lnrm, film, material, gem)
+  and the lighting after it (filmSheen factored out). Same output — to be checked against a shot of places.
+- Drawn every frame (fsTile, one instanced draw): a quad per tile past the window, the texel's point rebuilt from
+  the slot (view-plane coordinates + depth from the anchor), lit then (render.wgsl lighting: sun, time of day,
+  clouds, the shadow map where it reaches; filmSheen; gemLook; haze), its frag depth the frame's (orthographic:
+  linear along the view), pick 0. Texels past the region's cell of overlap, or inside the window past a cell, are
+  dropped: the window's own land draws live, and the live things (plants, water, agents, bodies, particles) are all
+  the window's.
+- The rings and the far land skip regions a tile draws (far.wgsl tiled(): binding 49, a 64 x 64 toroid of region
+  keys the cache writes when it changes; renderer.targets.tileMask).
+- Re-baked only when needed: the window's regions whose chunks are all built (FieldMesh.built, from the stats
+  readback every 60th encode, valid while no slide since) — never baked at this azimuth or at a scale a quarter off
+  first, else the oldest, at most `?tilesper=` (1) a frame and none sooner than `?tilerebake=` (120) frames after its
+  last (plants, stains and water change the look; the mesh's own dirty chunks aren't on the CPU). A turn draws none
+  till the view's back on a baked azimuth; the window's are baked again at the new one.
+- Frozen: a region's tile stays after it leaves the window — its last image — while its columns go. LRU slots in a
+  fixed atlas (`?tilemb=` 24 → ~85 slots of `?tilepx=` 128x192). On the eye's side of the focus a tile whose top would
+  rise into the line to it isn't drawn (the rings press that land down: far.wgsl underFocus).
+- The origin: level.ts hands the window's world cell each frame (Renderer.setTileOrigin); a slide moves it at once
+  (Renderer.windowMoved → TileCache.moved), a warp leaves it unknown till the next frame.
+- render.wgsl lighting: the fire glow only where the point is in the window (a frozen tile's lookup clamped to the
+  edge column's).
+- scripts/tileprobe.mjs: the phone tier ride (q=low 412x915, every system as deployed), each second fps, the cache's
+  stats (bakes first/again, evicted, drawn, frozen, slots, MB) and the screen share in the window vs in tiles
+  (TileCache.coverage: a 24 x 24 grid of screen points), shots every 10 s, `--turn` halfway.
+  `node scripts/tileprobe.mjs --url http://localhost:5299 --win 320 --seconds 60 --out C:/Projects/shots88/tilecache/ride`
+
+Not done: regions never in the window rendered once as they arrive (needs the mesher and meshSurf to read a
+region's own columns — a pool slot — not the window's buffers: TC2); the shadows past the shadow map's box (tiles
+are lit unshadowed there, as the rings are); the window's own terrain from tiles (its look moves: water, wetness).
+
 ## 2026-10-28 — round 102 (`bench2`): bench v4 — the chain that stalled on the phone, the warp's spot, an active A/B
 
 The user (verbatim): "The benchmark doesn't continue after the first test runs. It goes through panning and the
@@ -8456,6 +8508,41 @@ let's us increase the view distance so that the whole screen is nearly always lo
   pass, timed at that pass's begin and end (sane on Mali). It records the awake and window chunks, on the main page
   (riding in the storm), by the meteor, and on each window page. That is the evidence for or against PF1: do the
   sims cost the whole window or only what's awake?
+
+## 2026-10-28 — round 104 (`tilecache`): the tiles run; render-only land past the window (TC2); woods and water in the bake
+
+Why: the user (DECISIONS round 104): "a LOD that used hybrid heightmap and other mesher only where needed and that
+has no simulation active we can generate an isometric tile for the terrain with material and normal detail only then
+compose cheaply in screen space". The goal: the phone at a steady 60, no hiccups, no pop-in.
+
+Run on the GPU for the first time (round 103's code compiled as written). Fixed on the way:
+- The tile's box: the window's zMax is 504 now (zmesh), and the hybrid's grid chunks have no mesh tops, so the box
+  ran to 504 — every frozen tile was "on the eye's side and too tall" and none drew, and the scale was a sliver. The
+  box is the hybrid's per-chunk lowest and highest column top now (Renderer.setGrid's lo, hi), the band's only where
+  it has one (FieldMesh.topKnown).
+- `?tiledebug=1` tints the tiles; scripts/tileprobe.mjs `--pan v,s` (the camera up the screen) for a frozen trail.
+- Window re-bakes: `?tilerebake=` 120 → 600 frames, the window's edge regions (the ones that leave) twice as soon.
+
+TC2 (src/render/tileland.ts): a region on screen past the window that no tile draws (nearest the middle first) is
+made by gpugen's path (Streamer.landInto: atlas regionInto into a scratch region in the pool's layout — no job, no
+pool slot, nothing kept), meshed by a field mesh of its own over that scratch (a window one region across: its own
+Globals copied from the frame's and patched — the size, chunks, origin, the grid's chunks, no sleep — a chunk table
+onto the scratch's pages, the kept fields bound at their offsets in it), baked by the same fsTileBake, and let go.
+No simulation. "Mesher only where needed": a scratch chunk with a gap open to the air (hybrid.ts's rule) is meshed,
+the rest drawn by the hybrid's grid through the columns' tops (no mesh build at all). One region at a time.
+world-gpu.ts: the Globals buffer is COPY_SRC (the scratch's copy).
+
+The hold-outs, first pass (tiles.wgsl tileBake): the woods painted in by the rings' rule (far.wgsl gTrees: a crown on
+a lattice square where the plants are a wood's, where the screen shows it, its shadow; the crown lit live by its
+ball's normal); water over the ground (the window's sheet is instances) as a flat sheet coloured by depth, with the
+glint. Towns not yet (TC8).
+
+Measured (desktop iGPU, q=low 412x915, window 320, every system as deployed):
+- Parked at 11956,15471 (no slide): the window 48.6% of the screen, render-only tiles 49% — 97.5% in detail (the
+  rings 2.5%). 23 land tiles; shots C:/Projects/shots88/tilecache/land-compare2.png (left the rings, right the tiles).
+- Riding (driveprofile, 20 s): GPU a frame 11.23 (off) → 10.76 (window tiles only) → 12.11 (tiles + land, every
+  scratch chunk meshed then); p99 20.6 → 20.6 → 27.7. Before the grid for flat chunks; to measure again.
+- Frozen trail after a 300-cell pan (window tiles only): 25% of the screen from tiles.
 
 **The second full chain** (unthrottled, localStorage filled to 48K characters from the brim; 791 s): all 9 pages
 to the end screen, exit 0. The save's fallbacks fired in order (details dropped, then every page's numbers), so the
@@ -8530,6 +8617,24 @@ loading (155 s). The result now separates those:
 Desktop smoke (zooms 14 and 5; the iGPU shared with other runs meanwhile, parked only 69 / 54 fps): strict smooth
 "none" from 10 cells/s (one 40–150 ms frame a step). No pop-in up to 480–640 cells/s at zoom 14 / window 320, and up
 to 80–120 at zoom 5 / window 512, pop-in from 120–160. Frames over budget per slide: 3–12 at zoom 14, 5–46 at zoom 5.
+
+## 2026-10-28 — round 104 (2) (`tilecache`): measured with the grid for flat chunks; arriving regions keep their tile; the pan bench at a fixed window
+
+- The render-only land's flat chunks drawn by the hybrid's grid (only a chunk with a gap open to the air meshed).
+  Riding at window 320 (driveprofile, 20 s, desktop iGPU, every system as deployed): GPU a frame 11.74 (tiles off)
+  → 11.34 (tiles and land on) — the same within the run's noise; the bakes 0.01 + 0.02 ms a frame (tiles-g,
+  tiles-bake). The first cut (every scratch chunk meshed) was 12.11.
+- Parked (tileprobe, zoom 2.61): window 256 — the window 36.8% of the screen, tiles 60.8% (97.6% in detail);
+  window 320 — 48.6% + 49% (97.5%). Atlas 27 MB (96 slots of 128x192), 44-48 tiles in use.
+- No pop-in from the rings at the window's edge: a region come into the window whose chunks the window draws none of
+  yet keeps its tile, drawn inside the window too (plane.w 1), till the window has it; FieldMesh.built goes round
+  with a slide so that's known at once.
+- The bench counts land a tile draws as in detail (TileCache.drawsAt in writtenShare), and `?panwin=N` runs every
+  pan zoom at window N. Pan smoke (zooms 14 and 5, window 320): at zoom 5 the pop-in at 10 cells/s is 2-3% of the
+  screen with tiles against 9% without, generated land smooth to 10 cells/s against none; zoom 14 the same either
+  way (the window covers it). Parked cover at zoom 5: 0.979 with tiles, 0.972 without (the window nearly covers it
+  there): the tiles matter at the sandbox zoom, which the pan bench's smoke doesn't run.
+
 ## 2026-10-28 — round 104 (`slidehitch`): a slide without a long frame
 
 The user (verbatim): "I would like to try to get a steady 60fps on the phone with no hiccups and no pop in if
@@ -8763,3 +8868,23 @@ Tests (desktop iGPU, q=low 412x915, every system on):
 - `benchrun --pan --smoke` (326 s, no errors): no speed held at any zoom. Frames of 40–60 ms come even at 10 cells/s
   at window 320, and 60–150 ms at 512: the parked frame's cost, not the slides. Main is taking places' baseline on
   the same smoke.
+
+## 2026-10-28 — round 105 (`tilecache`): ringwin merged; the render-only land's ring 0; window bakes at the edge only; the zoom 14 A/B
+
+- ringwin in (places 118acaf). The window's own bakes read the window only through meshSurf's helpers (colIdx,
+  texCol, cellFields, cellWater): ring-aware already. The render-only land's scratch is a plain window one region
+  across, its fields row-major in the region's layout, so its patched Globals set the ring (words 476-479) to 0
+  (tileland.ts patchGlobals; it throws if the Globals have no ring). Checked: `?ringbias=128,64&tiles=1` against
+  ringbias 0, parked, the same view: pixels differing by more than 30 in the tiles' bands top 0.49%, bottom 0.00%
+  (the window's band 0.6% — its water and clouds move): the bakes are the same (shots88/tilecache/ringbias-compare.png).
+- Window bakes only for the window's edge regions: a region leaves through the edge, one slide at a time, so its
+  tile is baked there; the inner ones were baked and baked again for nothing. (Less GPU and CPU while panning.)
+- The zoom 14 pan A/B, twice each (benchrun --pan --smoke, desktop iGPU, window 320; before the edge-only change):
+  zoom 14 maxSmooth generated / disk / pool — off-1 640 / 40 / 20, on-1 none / none / none, off-2 40 / 10 / none,
+  on-2 640 / 20 / 40; parked fps off 97.5, 95.3 — on 62.8, 115.2. The run-to-run spread (the machine's state:
+  parked fps 63-115 with the same build) is larger than any tiles effect; no consistent cost. Zoom 5 (window 512):
+  on-1 and on-2 smooth to 10 c/s from disk and pool, off-1 and off-2 none. Reports: shots88/tilecache/ab-*.json.
+- culltest with tiles on: the same as off — "the flood raised the water while awake, the fire lit" fails either way
+  (places), "asleep, nothing changes" now and then either way (veg 6). towertest with tiles on: all passed on the
+  second run (the first: concrete's piece in 522 ms; off passed; again on, 74 ms) — a flake, to watch.
+

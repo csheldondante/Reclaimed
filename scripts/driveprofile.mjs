@@ -101,7 +101,7 @@ try {
       gpuLong: R.core.host.profiler.gpuLong,
       drawMax: +(R.core.host.profiler.maxMs.get('draw') ?? 0).toFixed(1),
       // (perfopt: each pass's mean a frame over the ride, from the raw totals — the draw's with ?defer's G-buffer)
-      perFrame: Object.fromEntries(['draw', 'gbuffer', 'tcache-g', 'tcache-r', 'shadow', 'shadow-static', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
+      perFrame: Object.fromEntries(['draw', 'gbuffer', 'tcache-g', 'tcache-r', 'tiles-g', 'tiles-bake', 'shadow', 'shadow-static', 'renderprep'].map((k) => [k, +((R.core.host.profiler.totalMs.get(k) ?? 0) / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]).concat([['gpu', +(R.core.host.profiler.gpuTotalMs / Math.max(R.core.host.profiler.framesResolved, 1)).toFixed(2)]])),
       // (perfopt: every pass's mean a frame over the ride, the largest first)
       ticks: R.core.sim.tick - window.__tick0,
       // (hybrid: the mean voxel chunks wanted and mesh chunks drawn a frame, of the grid's)

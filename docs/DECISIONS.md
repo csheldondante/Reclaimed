@@ -24,6 +24,25 @@ The user answered the questions in "Reclaimed physics: a design to discuss"
   penetration. Big impacts lose most of their energy into particles. For deep overlap the preferred fix is to
   erode material where the bodies meet, not push them apart (the doc's "contact rules for heavy bodies").
 
+## 2026-10-28 — round 104 (session 5, the performance track) — render-only LOD regions baked into the tiles
+
+- The user, verbatim: "My understanding is that if we had a LOD that used hybrid heightmap and other mesher only
+  where needed and that has no simulation active we can generate an isometric tile for the terrain with material and
+  normal detail only then compose cheaply in screen space and that this would let us very cheaply keep graphics
+  looking fully loaded. I think there may be some hold outs like towns and vegitation both of which should be moved
+  to GPU generation and streaming."
+- The goal: a steady 60 fps on the phone, no hiccups, no pop-in. → `tilecache`: get `?tiles=1` running, then TC2
+  (regions past the window generated on the GPU, meshed, baked, dropped; no simulation), then vegetation and towns
+  in the tiles (BACKLOG TC2, TC7, TC8).
+
+## 2026-10-28 — round 103 (session 5, `tilecache`) — render the land once into world-anchored tiles
+
+- The user, verbatim: "Yeah but the tiles are isometric so why not load and render them once then tile them so the
+  view covers the screen but coat is cheap?" and "It seems to me like that should be very efficient and easy".
+- The goal, verbatim: "increase the view distance so that the whole screen is nearly always loaded in detail".
+- → Branch `tilecache` (from places 950cb67), `?tiles=1`, default off: a region's terrain baked once into an atlas
+  slot (unlit: albedo, normal, depth, film) per view turn, relit every frame and drawn as quads where it is; kept
+  after the region leaves the window (frozen), so land passed still shows in detail (BACKLOG TC1–TC6).
 ## 2026-10-28 — round 105 (session 5, `places`) — the architecture doc's decisions
 
 The design doc "Reclaimed engine architecture: fixing the foundations"
@@ -91,7 +110,6 @@ The design doc "Reclaimed engine architecture: fixing the foundations"
   the GPU; the stamps (settlements, a run's stage) as operations both paths run; the tile pacer by a GPU budget a
   frame, more when the camera moves fast; the ring round a warp's window precached; `?gpugen=0` the CPU's path,
   identical columns (BACKLOG GG1–GG11).
-
 ## 2026-10-28 — round 102 (session 5, `places`) — settlements as fields, grids and spans (design, for later)
 
 - The user: "I think that ids and what building goes where might make sense to do on the CPU. I'm not entirely convinced

@@ -683,7 +683,9 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // lightning lights the whole scene, cold blue-white, every face
   let flash = G.misc.z * vec3<f32>(2.4, 2.6, 3.3) * (0.75 + 0.25 * nrm.z);
   // firelight: flickering orange from nearby flames (render fields .z)
-  let glow = fields[colIdxI(sc)].z;
+  // (round 103, tilecache: a point past the window — a frozen tile's — has no fire field of its own; the edge
+  // column's clamped lookup isn't its)
+  let glow = select(0.0, fields[colIdxI(sc)].z, inMap(cellAt(wpos.xy + nrm.xy * 0.5)));
   let flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y));
   let firelight = vec3<f32>(1.8, 0.75, 0.25) * glow * flick;
   return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9);

@@ -158,6 +158,18 @@ fn gridChunk(l: vec2<f32>) -> bool {
   if (k >= 2048u) { return false; }
   return ((LD.grid[k >> 7u][(k >> 5u) & 3u] >> (k & 31u)) & 1u) != 0u;
 }
+/** (round 103, tilecache) the regions a tile draws this frame (render/tilecache.ts TileCache.mask): [0] on, [1] n;
+ *  then n x n words, region (rx, ry) at (rx mod n, ry mod n): (rx & 0xffff) | (ry << 16), all ones empty */
+@group(0) @binding(49) var<storage, read> tileMask: array<u32>;
+/** Does a tile draw l (window coordinates)? Then the rings and the far land don't. */
+fn tiled(l: vec2<f32>) -> bool {
+  if (tileMask[0] == 0u) { return false; }
+  let n = i32(tileMask[1]);
+  let w = l + FP.org.xy;
+  let r = vec2<i32>(floor(vec2<f32>(w.x / 64.0, w.y / (64.0 * 0.8660254))));
+  let s = ((r % n) + n) % n;
+  return tileMask[2u + u32(s.y * n + s.x)] == ((u32(r.x) & 0xffffu) | (u32(r.y) << 16u));
+}
 /** the window draws l itself: its mesh is built there, or its grid draws it */
 fn windowDraws(l: vec2<f32>) -> bool { return meshBuilt(l) || gridChunk(l); }
 /** (hybrid) Is l (window coordinates, in a built chunk) within SKIRT of an edge whose neighbour isn't built (nor
@@ -297,7 +309,7 @@ fn fsFar(v: FOutV) -> FOutF {
   // (round 83: with the rings, all of it — what stands past both near edges is past the rings, too far
   // to rise between the eye and the window)
   if (FC.pos.w < 0.5 && l.x > 2.0 && l.y > 2.0 && LD.info.x < 0.5) { discard; }
-  if (inLod(l)) { discard; }
+  if (inLod(l) || tiled(l)) { discard; }
   if (farCut(v.local, v.pos.xy)) { discard; }
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(v.nrm, sun), 0.0);
@@ -753,6 +765,7 @@ fn fsLod(v: LOut) -> FOutF {
   // (round 86: and where the window's grid draws a heightfield chunk, all of it — the grid's own lattice overlaps
   // its neighbours by a cell)
   if (all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy) && (gridChunk(l) || (meshBuilt(l) && !skirt(l)))) { discard; }
+  if (tiled(l)) { discard; }
   if (v.ring > 0u) {
     let F = LD.lv[v.ring - 1u];
     let fc = lodCorner(v.ring - 1u);
