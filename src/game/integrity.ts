@@ -329,8 +329,10 @@ export class Integrity {
 
   /** The visible top of a column: solid ground plus loose ground, or a fallen body's top. */
   topAt(x: number, y: number): number {
-    // (round 106: the projection on the window's ring)
-    const i = this.core.ring.i(x, y);
+    // (round 106: the projection on the window's ring — the window index y * W + x mapped onto it, so a column past
+    // the window's edge reads what it did in window order: the row's wrap, or nothing past the ends)
+    const w = y * this.core.dims.w + x;
+    const i = w >= 0 && w < this.core.dims.w * this.core.dims.h ? this.core.ring.of(w) : -1;
     // (the layers hold the loose ground too)
     const ground = this.world.slots.length ? this.world.colTop(x, y) : 0;
     return Math.max(ground, this.proj[i * 4]);

@@ -165,9 +165,10 @@ At 4x throttle, window 256 (mean / max, ms):
   - The pool's slots are taken in a different order, so the pool's eviction order can differ by a region.
 - Checks run: cpugridcheck (the hybrid's per-chunk choice made again from the ring's relief matches what it holds,
   after a pan out and back with 12 thawed; the level's surface cache agrees with the GPU on every column, while a
-  column a region off agrees on 0.01%), plus ringtest, worldsavetest (`?rsverify=1`: every region written from the
-  pool or the store is hashed against its freeze), floatsweep, towertest and settlementtest. Results are in the
-  DEVLOG.
+  column a region off agrees on 0.01%). ringtest: valley and the atlas, 37 of 37 fields identical at ring offset
+  128,64, through two slides by hand (it caught Integrity.topAt reading the ring off the window's edge: fixed).
+  worldsavetest (`?rsverify=1`: every region written from the pool or the store is hashed against its freeze): 0
+  bad; its one FAIL is places' own (SH11). floatsweep, towertest and settlementtest: all passed.
 
 ## Proposals (for the user and main to decide)
 

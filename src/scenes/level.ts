@@ -2938,7 +2938,8 @@ export class LevelScene implements Scene {
   private hostileAt([x, y]: [number, number]): boolean {
     const { dims, map } = this.core;
     const i = Math.floor(y) * dims.w + Math.floor(x);
-    const top = sfMat(this.surfaceCache[this.core.ring.i(Math.floor(x), Math.floor(y))]);
+    // (round 106: the cache on the ring — the window index mapped onto it, as it read in window order past the edges)
+    const top = sfMat(this.surfaceCache[i >= 0 && i < dims.w * dims.h ? this.core.ring.of(i) : -1]);
     return top === 12 || top === 18 || map.contam[i * 2] > 0.2;
   }
 

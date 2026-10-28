@@ -8962,3 +8962,20 @@ Left in window coordinates:
 - the camera, the events and the weather, by contract.
 
 Checks: scripts/ringunit.mjs 10.0 M checks, 0 wrong (Ring.i / of added); scripts/cpugridcheck.mjs (new) after a pan out and back, 12 thawed: the hybrid's per-chunk choice made again from the ring's relief matches what it holds (0 differ), the level's surface cache agrees with the GPU on every column (a column a region off: 0.01%). The browser tests (ringtest, worldsavetest with ?rsverify=1, floatsweep, towertest, settlementtest) follow in the next entry.
+
+### Round 106 (`frameprobe`), the browser checks
+
+- scripts/ringtest.mjs, valley at bias 128,64, caught one bug: Integrity.topAt read the ring's index for a column
+  past the window's edge. In window order that read the row's wrap, or nothing; on the ring it read another
+  column, so contam and wilt differed after 40 ticks with the seam's events. The same-offset control (0,0 against
+  0,0) was identical, and so was places 8c93cc1 at bias 128,64. topAt, and the level's hostileAt, now map the
+  window index onto the ring (Ring.of) only when it's inside the array, as before. After the fix:
+  - valley 37 of 37 fields identical;
+  - the atlas 37 of 37 identical at the start, after 40 ticks and after two slides by hand (64,0 and 0,64), so the
+    region-by-region freeze, the rotated chunk table and the CPU arrays on the ring change nothing the world does.
+- scripts/worldsavetest.mjs with `?rsverify=1`. Every region written from the pool or the store was hashed against
+  its freeze, all exact: rode 6 regions and back, 30 thawed, 0 bad; reloaded, 4 loaded, 0 bad; rode away and back
+  again, 30, 0 bad. The one FAIL is the warp-back's "thawed > 0" (SH11: 4 loaded, 0 bad), which places fails the
+  same way.
+- floatsweep: all passed, 0 floating. towertest: all 5 passed. settlementtest: all ok (Gevam, 33 out, a raid of 7
+  against 4, 14 dead).
