@@ -9100,13 +9100,13 @@ its first wet corner, 12 thrown away), each reading three columns' levels: verte
 - **Falls and steep flow.** The same lattice, so a held river's fall is what it was: the steep triangles between
   a high wet column and a low one, white water by fsWater's steepW. `?flow=1`'s streams are untouched.
 - **Cost model.** Vertices: about one a wet column on screen (the post-transform cache), the list's kernel a
-  thread a column. Fragments: the screen's water times fsWater — now the cost (FC8).
+  thread a column. Fragments: the screen's water times fsWater — now the cost (FC9).
 - **Shading, the same picture for less.** Each of fsWater's terms is worked out only where it shows: the sludge's
   scum, murk and bubbles where there's sludge, the foam's flecks where the water's fast enough to foam, the
   shore's froth where the swell breaks, the rain rings where it rains, the waves where the water's deep enough to
   ripple (and the wind looked up once); lighting's fire flicker only where there's firelight (every draw's).
 - A cheaper value noise for the waves (two hashes a lattice point, not three) was tried and taken out: it combed
-  the glints into fine lines round the sea stacks (shots88/watersurf/lake-crop-*.png). Left in FC8.
+  the glints into fine lines round the sea stacks (shots88/watersurf/lake-crop-*.png). Left in FC9.
 - renderprep's blended list ("instWater") held water, oil and the see-through solids: with the field mesh it now
   holds only the oil, ice and crystal, so it's named for what it is (instBlend, the blended prisms; `?skip=blend`).
   Without the field mesh (`?mesh=0`, an existing mode) the water is still its prisms there.
