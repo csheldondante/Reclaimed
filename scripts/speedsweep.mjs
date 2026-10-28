@@ -301,7 +301,7 @@ try {
         build: { first: med('first'), lastTile: med('lastTile'), mapped: med('mapped'), ways: med('ways'), hooks: med('hooks'), cut: med('cut'), total: med('total') },
         gpu: { frame: +(prof.gpuTotalMs / Math.max(prof.framesResolved, 1)).toFixed(2), colH: per('atlas-colHeight'), formSeed: per('atlas-formSeed'), colFinish: per('atlas-colFinish'), colFinishMax: +(prof.maxMs.get('atlas-colFinish') ?? 0).toFixed(2), draw: per('draw') },
         waited: (S.waited ?? 0) - d.waited0,
-        pacer: atlas?.pacer ? { perFrame: +atlas.pacer.perFrame.toFixed(1), base: +atlas.pacer.base.toFixed(1), tilesPerFrame: +((atlas.pacer.tiles - d.tiles0) / Math.max(1, atlas.pacer.frames - d.tframes0)).toFixed(2), tilesPerS: +((atlas.pacer.tiles - d.tiles0) / secs).toFixed(1) } : null,
+        pacer: atlas?.pacer ? { perFrame: +atlas.pacer.perFrame.toFixed(1), base: +atlas.pacer.base.toFixed(1), tilesPerFrame: +((atlas.pacer.tiles - d.tiles0) / Math.max(1, atlas.pacer.frames - d.tframes0)).toFixed(2), tilesPerS: +((atlas.pacer.tiles - d.tiles0) / secs).toFixed(1), how: atlas.pacer.how, tileMs: atlas.pacer.tileMs !== undefined ? +atlas.pacer.tileMs.toFixed(3) : null, gpuMs: atlas.pacer.gpuMs !== undefined ? +atlas.pacer.gpuMs.toFixed(2) : null, budgetMs: atlas.pacer.budgetMs !== undefined ? +atlas.pacer.budgetMs.toFixed(2) : null, gpuMade: S.stats.gpuMade } : null,
         cpu: R.scene.cpuWorst?.(),
         // (round 100, regionstore) the GPU pool and the store
         pool: S.pool ? { used: S.pool.used, cap: S.pool.cap, mb: +(S.pool.gpuBytes / 1048576).toFixed(1), evicted: S.stats.evicted, uploads: S.stats.uploads, thawMs: S.times?.thaw.length ? +[...S.times.thaw].sort((a, b) => a - b)[Math.floor(S.times.thaw.length / 2)].toFixed(2) : null } : null,

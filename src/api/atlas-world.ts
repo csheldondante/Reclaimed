@@ -80,6 +80,18 @@ export interface AtlasWorld {
  * holds the ground there well inside it (as the streamer keeps it: over its floor, under its top).
  */
 export function warpWindow(atlas: Atlas, stream: Streamer, dims: { w: number; h: number; zMax: number }, wcx: number, wcy: number): Promise<void> {
+  const [ox, oy, oz] = warpTarget(atlas, dims, wcx, wcy);
+  return stream.warp(ox, oy, oz);
+}
+
+/** (round 102) the land of a warp to world cell (cx, cy) asked for ahead (Streamer.precache: its window and a ring round it) */
+export function precacheWarp(atlas: Atlas, stream: Streamer, dims: { w: number; h: number; zMax: number }, wcx: number, wcy: number): number {
+  const [ox, oy] = warpTarget(atlas, dims, wcx, wcy);
+  return stream.precache(ox, oy);
+}
+
+/** the window's origin and oz for a warp to world cell (cx, cy) */
+function warpTarget(atlas: Atlas, dims: { w: number; h: number; zMax: number }, wcx: number, wcy: number): [number, number, number] {
   const { cols, rows, zTop } = atlas.p;
   const x = ((Math.round(wcx) % cols) + cols) % cols;
   const y = ((Math.round(wcy) % rows) + rows) % rows;
@@ -100,7 +112,7 @@ export function warpWindow(atlas: Atlas, stream: Streamer, dims: { w: number; h:
       oz = c;
     }
   }
-  return stream.warp(ox, oy, oz);
+  return [ox, oy, oz];
 }
 
 /** the atlas level's columns: 16 slots, two of them headroom (scenes/level.ts SANDBOX_K) */
@@ -130,6 +142,8 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
     {
       // (a tile of its columns a frame: streaming mustn't stall the frame)
       region: (x0, y0, w, h) => atlas.regionLand(x0, y0, w, h, Infinity, true),
+      // (round 102: on the GPU straight into the pool — streamer.ts generateGpu)
+      regionInto: (x0, y0, w, h, t) => atlas.regionInto(x0, y0, w, h, t, true),
       wrap: [params.cols, params.rows],
       height: params.zTop,
       snapshot: (x0, y0, w, h) => atlas.snapshot(x0, y0, w, h),

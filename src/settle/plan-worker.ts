@@ -1,7 +1,9 @@
 // (round 94) A settlement planned off the main thread for the land past the window (settlements.ts farPlans): on the
 // atlas's rough ground (atlas/bake.ts roughGround) with the ways stamped on it as the window's raw land has them,
 // planned (plan.ts, as on arrival) and rastered (raster.ts). Posts back the stamp alone.
-import { planSettlement } from './plan';
+// (Round 102, `gpugen`: and the exact plans — ExactPlanJob — on the raw ground the GPU made of the box (Atlas.rawGround):
+// planned and rastered here, the whole plan posted back; the main thread never plans.)
+import { planSettlement, type SettlementPlan } from './plan';
 import { rasterPlan } from './raster';
 import { stampWays, type Ways } from '../atlas/ways';
 import { ROW_H } from '../world/lattice';
@@ -28,15 +30,53 @@ export interface FarPlanDone {
   ms: [number, number, number];
 }
 
+/** (round 102) a settlement's exact plan: on its box's raw ground (the ways on it already) */
+export interface ExactPlanJob {
+  exact: true;
+  id: string;
+  seed: SettlementSeed;
+  ground: Float32Array;
+  water: Float32Array;
+  top: Uint8Array;
+  veg: Float32Array;
+  sea: number;
+}
+export interface ExactPlanDone {
+  id: string;
+  plan: SettlementPlan;
+  stamp: import('../atlas/bake').SurfaceStamp;
+  /** ms: the plan, the raster */
+  ms: [number, number];
+}
+
 let world: FarPlanInit['init'] | null = null;
 
-self.onmessage = (e: MessageEvent<FarPlanInit | FarPlanJob>) => {
+const mod = (v: number, n: number) => ((v % n) + n) % n;
+const regionAtIn = (W: FarPlanInit['init'], box: { x0: number; y0: number }) => (x: number, y: number) => {
+  const tx = mod(Math.floor(((x + box.x0) / W.worldW) * W.n), W.n);
+  const ty = mod(Math.floor(((y + box.y0 * ROW_H) / W.worldH) * W.n), W.n);
+  return W.regionOf[ty * W.n + tx];
+};
+
+self.onmessage = (e: MessageEvent<FarPlanInit | FarPlanJob | ExactPlanJob>) => {
   if ('init' in e.data) {
     world = e.data.init;
     return;
   }
   if (!world) throw new Error('plan-worker: no world');
   const W = world;
+  if ('exact' in e.data) {
+    const j = e.data;
+    const box = j.seed.box;
+    const t0 = performance.now();
+    const plan = planSettlement({ ...j.seed, ground: j.ground, water: j.water, top: j.top, veg: j.veg, sea: j.sea, regionAt: regionAtIn(W, box) });
+    const t1 = performance.now();
+    const stamp = rasterPlan(j.id, plan.columns, box, j.ground, j.top);
+    const t2 = performance.now();
+    const out: ExactPlanDone = { id: j.id, plan, stamp, ms: [+(t1 - t0).toFixed(1), +(t2 - t1).toFixed(1)] };
+    (self as unknown as Worker).postMessage(out, [stamp.px.buffer, stamp.px4.buffer]);
+    return;
+  }
   const j = e.data;
   const { box } = j.seed;
   const N = box.w * box.h;
@@ -52,12 +92,7 @@ self.onmessage = (e: MessageEvent<FarPlanInit | FarPlanJob>) => {
     j.top[i] = c.length ? c[c.length - 1].mat : 0;
   }
   const t1 = performance.now();
-  const mod = (v: number, n: number) => ((v % n) + n) % n;
-  const regionAt = (x: number, y: number) => {
-    const tx = mod(Math.floor(((x + box.x0) / W.worldW) * W.n), W.n);
-    const ty = mod(Math.floor(((y + box.y0 * ROW_H) / W.worldH) * W.n), W.n);
-    return W.regionOf[ty * W.n + tx];
-  };
+  const regionAt = regionAtIn(W, box);
   const plan = planSettlement({ ...j.seed, ground: j.ground, water: j.water, top: j.top, veg: j.veg, sea: j.sea, regionAt });
   const t2 = performance.now();
   const stamp = rasterPlan(j.id, plan.columns, box, j.ground, j.top);

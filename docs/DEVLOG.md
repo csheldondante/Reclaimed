@@ -8173,3 +8173,88 @@ Downloads (`reclaimed-bench-<date>-<phone>.json`) — send it with Quick Share, 
 the whole JSON into the chat (no selecting), or **Share…** for the share sheet. The last result is kept: opening
 `?bench=1` again shows the same buttons. Your saved world isn't touched (the bench plays in worlds of its own and
 clears them).
+
+## 2026-10-28 — round 102 (`gpugen`): region generation stays on the GPU (DECISIONS round 102)
+
+**Why.** The Pixel 9a's bench (data/bench/pixel9a-2026-10-28.json, bench v1): a region is ~2 ms of GPU (colHeight
+0.39, formSeed 0.66, colFinish 1.1 p50) but 149 ms wall p50 / 411 p95 — the readback of its columns 44 ms, the upload
+22 ms to done, cutRegion 9.6 ms CPU (p95 17), stampWays 1.3 (p95 16.6), and the hooks 0.2 p50 / 290 p95 (a settlement
+planned on the main thread: `plan` 34 ms mean, 65 max in the pans and the warp). The phone's CPU is ~3× the desktop's;
+its GPU had room (0.26 ms a 32² tile, 25 regions/s at 4 tiles a frame with the frames unchanged). The user: "Aren't
+all of the methods used to generate land very GPU efficient? … I sort of expected this was done GPU side."
+
+**What moved to the GPU.**
+- `atlas/finish.wgsl` (+ `finish.ts`), one invocation a column, after colFinish, reading its colOut and colRuns where
+  they are: landFrom's merge; the geysers' sinter (a 9 × 9 stencil made once on the CPU, GEYSER_STENCIL); the ways
+  (each column's nearest way point by integer distance² over the region's nine bins, the lifts, tunnel bores, bridge
+  decks and pillars, the road's grade and shoulders, the pave); the stamps (below); settleLoose; splitColumn at the
+  window's oz; fitColumn to colK (the loose-aware cost); packColumn into the slot's pages; water (waterInWindow),
+  moisture, plants, petals, lava and its spring, the river's flow, the water source — every kept field — straight
+  into a region pool slot (`Atlas.regionInto` → `Streamer.generateGpu`). The slot is cleared first; nothing is
+  uploaded. The streamer's arrival is then the pool → window copy a thawed region already had.
+- What the CPU keeps comes back small: per column its top and ground (window z), its top and the highest gap's roof
+  (world z: the hybrid's relief, joined with what's outside the window as joinColumn would), flags (structural,
+  fitted, settled, errors), and what's outside the window as a list — ~100 KB a region against the CPU path's ~1 MB of
+  columns read back and 1.7 MB uploaded. The relief bit is made from the tops and ground on the CPU (64² compares).
+- The columns' hash of a made region is dropped (`info.last`): it was only for telling a region play touched from its
+  save, and a region is saved only after play touches it — its hash is taken then, from the readback the save does.
+- The ways' CPU part left is gathering the region's candidate points and binning them (`regionWays`).
+
+**The same columns both ways.** `?gpugen=0` keeps the CPU's path (the columns read back, landFrom, the geysers,
+stampWays, the stamps, cutRegion, toBody, uploaded; plans on the main thread). Making them identical, not close:
+everything a stamp writes is in whole 1/256ths of a cell, as the runs already were (forms.wgsl zq) — the way points'
+and lifts' heights quantized at buildWays, the geysers' stencil, the plan's and the stage's numbers in the stamp ops;
+the ways' distances integer (1/256 units in the region's frame, the rows' centres a table both read, isqrt for the
+shoulder); the water and the lava in the order the CPU's Float32Arrays round them (one correctly rounded f32 add each,
+which WGSL guarantees). `ways.ts` stampWays now runs the same code path (regionWays → nearestWay → wayColumn) on the
+CPU. The changes to the land are below 1/256 of a cell (GEN_VERSION not bumped: a saved region and a fresh neighbour
+meet within that).
+- scripts/gpugentest.mjs: on the atlas level (q=low 412x915, every system on) regions made both ways at the window's
+  oz and the slot's bytes compared word by word (the pages, every kept buffer and texture), and the CPU parts.
+
+**Stamps** (`atlas/stamps.ts`, `Atlas.stampHooks`). The settlements and a run's stage pieces said what to build by
+changing a region's CPU land in a hook; now they say it as operations a column — PLAN (what stands above `lo` goes,
+the ground let down, an adit's gap, the plan's intervals, no plants), ADD (a stage piece's layers; its base the top
+before, a mark read back), VEGMAX, BARE — and the GPU (finish.wgsl stampOps) or the CPU (applyStamps) runs them.
+
+**Settlement plans off the main thread.** `Settlements.workerPlan`: the box's raw ground (the land the plan reads:
+columns, sinter, ways; not the stamps) made on the GPU a 64² tile at a time by finish.wgsl's raw mode, 16 bytes a
+column read back (`Atlas.rawGround`); planned and rastered in the far plans' worker (plan-worker.ts ExactPlanJob);
+the whole plan posted back (structured clone) and made live — its GrowthField and LotGrids given their prototypes
+back, its record's fields assigned onto the settlement's own record. The rough ground (bake.wgsl roughGround) was the
+suggestion; it's the far land's approximation (forms and cover differ), and a plan's `lo` on it leaves buildings
+floating or buried where it's off — the exact raw ground costs the same small readback and keeps the plan identical
+to the CPU path's.
+
+**The tile pacer by a GPU budget** (atlas.ts TilePacer; round 101's "If we had adaptive tile generation …"). Tiles a
+frame = a share of the frame's room (its period — the low envelope of the frame intervals — less the GPU's own time
+for the frame, less a margin of max(1.5 ms, 10%)) over the measured GPU ms a tile: a third of the room parked, up to
+80% as the camera moves at FAST_AT (80 cells/s; `urgency` is the streamer's smoothed speed), TILE_MAX (4) a frame at
+most, TILE_MAX_FAST (8, `?tilemaxfast=`) moving fast. The GPU's time: the profiler's timestamps where it has them
+and reads them (gpuFrameMs, colFinish's passMs); else — the phone: Mali's per-pass timestamps aren't trusted, and the
+profiler reads only while someone looks — `onSubmittedWorkDone` called once the frame's work and its tiles are
+submitted (a setTimeout after the pacer's rAF): the GPU's tail after the submit, in frames without tiles (the frame's
+own, EMA) and with them (each tile's share of the difference, EMA). Round 98's guard stays on top (a frame that ran
+tiles longer than the envelope by a fifth and 1.5 ms halves what may run). `?tilepace=frame` is round 98's alone.
+
+**Precache round a warp; ahead by speed.** A warp's window uses what's made or under way for it (`made`, `jobs` kept
+across a non-fresh warp — they were cleared), and the ring round the destination (`?warpring=` 1: 24 regions round a
+5 × 5 window) is asked for right after the window's own regions, so its tiles follow theirs. `Streamer.precache(ox,
+oy, ring)` (and `MapWorld.precache`) for a caller that knows a target early: the map's tap warps at once, so it's the
+warp's ring that's ahead (BACKLOG GG11: a held press could precache). Ahead of the camera's motion: `?aheads=` (3)
+seconds of it in strips, 2 at least and 4 at most (was 2 always).
+
+**Measured** (desktop iGPU, headless 412x915 q=low, every system on; "before" = this build with `?gpugen=0&
+tilepace=frame&warpring=0&aheads=0`, the CPU's path as places has it):
+- identity (scripts/gpugentest.mjs): 50 regions — 8 round the start, under the 6 nearest settlements (their plans'
+  stamps: 2242 columns), one on each kind of way (road, tunnel, bridge, switchbacks, lift: up to 2254 columns of ways
+  a region), 3 with geysers' sinter, 30 further out — 86 MB of slots compared word by word, and the CPU parts: **all
+  bit-identical**; the raw ground a settlement is planned on, 6 tiles: identical.
+- speedsweep pan 120: the camera got 113.9 cells/s (before 91.5), low-detail in the window 2.7% (3.9%), frame
+  p50/p95/p99 9.9/18.8/97.6 ms (10/47.5/191), GPU frame 5.2 ms (13.8), detail ahead p5 26 cells (2), 12.9 regions/s
+  (10.8), 355 tiles/s (69); pan 160: got 129.4 (121.9), low-detail 2.8% (5.8%), p95 22.5 (70), p99 96.7 (187), GPU
+  frame 6.1 (17.4). (The pans aren't the same ground at different speeds; the CPU-path run had more voxels in view.)
+- driveprofile ride (25 s): p50/p95/p99 9.9/13.0/44.9 (9.9/14.7/43.6), GPU 12.1 (11.7) — the desktop's ride wasn't
+  generation-bound either way.
+- made ahead and not used: the ride made 152 regions on the GPU for 70 written (the CPU path uploaded 118 for 65); the
+  pans at 120/160 made ~5× the tiles of the CPU path's (BACKLOG GG12).

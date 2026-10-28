@@ -31,7 +31,9 @@ import patternsW from './patterns.wgsl?raw';
 import { defineRegions, dryness, KIND_IDS, KINDS, REGION_WORDS, warmth, type RegionDef, type RegionStat } from './regions';
 import { landformsOf, tiersOf, type Landform } from './landforms';
 import { settle, type Settlement } from './sites';
-import { buildWays, stampWays, type Ways } from './ways';
+import { buildWays, regionWays, stampWays, type RegionWays, type Ways } from './ways';
+import { applyStamps, StampOps } from './stamps';
+import { RegionFinish, type FinishMeta, type FinishTarget, type GpuColumns, type RawGround } from './finish';
 import { timed } from '../gpu/cpustat';
 import { findRivers, LAKE_WORDS, NODE_WORDS, type AtlasLake } from './rivers';
 import { RIVERS } from '../sim/world-gpu';
@@ -172,13 +174,28 @@ const TILES_FIXED = Number(Q98.get('tiles')) || 0;
 /** (round 98, ?tilemax=) the most tiles a frame the pacer gives */
 const TILE_MAX = Number(Q98.get('tilemax') ?? 4);
 
+/** (round 102, ?tilemaxfast=) the most tiles a frame while the camera moves fast (the land it heads for is late) */
+const TILE_MAX_FAST = Number(Q98.get('tilemaxfast') ?? 8);
+/** (round 102, ?tilepace=frame: round 98's pacing by the frame's time alone, to compare) */
+const PACE_FRAME = Q98.get('tilepace') === 'frame';
+/** (round 102) cells a second of the camera's motion at which the pacer gives tiles the most of the frame's room */
+const FAST_AT = 80;
+
 /**
  * (round 98) The streamed batches' tiles a frame (atlas.ts tileGate): as many as the frame has room for, not one.
- * Paced by the frames' own time, not the GPU's timestamps (a phone may have none, and the profiler only runs while
- * someone looks): the frame's time without the tiles is the low envelope of the frame times; after a frame that ran
- * tiles, one longer than that by over a fifth (and 1.5 ms) halves the count, else it goes up by a
- * quarter — at least one a frame, so the land always comes. Each batch has one tile waiting at a time (its next
- * waits for the last's submit), so the count is over the batches asked for together (a strip's five, the next's).
+ * Each batch has one tile waiting at a time (its next waits for the last's submit), so the count is over the batches
+ * asked for together (a strip's five, the next's).
+ *
+ * (Round 102, `gpugen`; the user, round 101: "If we had adaptive tile generation …".) By a measured GPU budget a frame: the frame's period
+ * (the low envelope of its intervals) less the GPU's own time for the frame, a share of that room given to tiles at
+ * the measured GPU ms a tile — a third of it parked, up to 80% as the camera moves fast (`urgency`: its speed, cells a
+ * second), and TILE_MAX_FAST tiles then rather than TILE_MAX. The GPU's time: the profiler's timestamps where it has
+ * them and they're being read (the frame's GPU ms, colFinish's ms a tile); else — a phone: Mali's per-pass timestamps
+ * aren't to be trusted, and the profiler only reads while someone looks — onSubmittedWorkDone once the frame's work
+ * is submitted: how long the GPU takes after that, in frames without tiles (the frame's own) and with them (each tile's
+ * share of the difference). Round 98's guard stays over it: a frame that ran tiles and came out longer
+ * than the envelope by a fifth (and 1.5 ms) halves what may run, else it goes back up by a quarter. At least one a
+ * frame, so the land always comes. ?tilepace=frame: the guard alone (round 98).
  */
 export class TilePacer {
   private waiting: (() => void)[] = [];
@@ -187,13 +204,27 @@ export class TilePacer {
   private ran = 0;
   /** ms: the frames' time without tiles (their low envelope) */
   base = 16.7;
-  /** tiles a frame now */
+  /** tiles a frame now (round 102: what the budget and the guard allow) */
   perFrame = 1;
+  /** (round 102) what the frame-time guard allows (round 98's perFrame) */
+  guard = 1;
   /** (round 101, the benchmark: src/perf/bench.ts) tiles a frame held at this many while it measures; 0: paced */
   fixed = 0;
   /** (for the sweeps) tiles run, frames that ran some */
   tiles = 0;
   frames = 0;
+  /** (round 102) the device (onSubmittedWorkDone), the profiler (timestamps), the camera's speed (cells a second) */
+  device?: GPUDevice;
+  profiler?: import('../gpu/profiler').Profiler;
+  urgency: () => number = () => 0;
+  /** (round 102) GPU ms a tile (measured), the frame's GPU ms without tiles, the budget now (ms), how it's measured */
+  tileMs = 0.3;
+  gpuMs = 8;
+  budgetMs = 0;
+  how: 'timestamps' | 'workdone' | 'frame' = 'workdone';
+  /** (round 102) the GPU's tail after the frame's submit (onSubmittedWorkDone, ms), frames without tiles */
+  private doneIdle = 0;
+  private probing = false;
 
   next(): Promise<void> {
     return new Promise((r) => {
@@ -208,6 +239,31 @@ export class TilePacer {
     requestAnimationFrame((t) => this.frame(t));
   }
 
+  /** (round 102) how long after the frame's work (and its tiles) is submitted the GPU is done with it */
+  private probe(t: number, ran: number): void {
+    const dev = this.device;
+    if (!dev || this.probing) return;
+    this.probing = true;
+    setTimeout(() => {
+      // (from here — the frame's work, and its tiles, submitted — to the GPU done with it: the GPU's tail of the frame)
+      const tS = performance.now();
+      void dev.queue.onSubmittedWorkDone().then(() => {
+        this.probing = false;
+        const done = performance.now() - tS;
+        // (a long stall isn't the frame's: ignored)
+        if (done > this.base * 4 || tS - t > this.base * 2) return;
+        if (!ran) {
+          this.doneIdle = this.doneIdle ? this.doneIdle + (done - this.doneIdle) * 0.2 : done;
+          return;
+        }
+        if (this.doneIdle) {
+          const per = Math.max(0.05, Math.min(5, (done - this.doneIdle) / ran));
+          this.tileMs += (per - this.tileMs) * 0.15;
+        }
+      });
+    }, 0);
+  }
+
   private frame(t: number): void {
     this.armed = false;
     // (after an idle spell the gap isn't a frame: measured from the next)
@@ -216,8 +272,31 @@ export class TilePacer {
     // (the low envelope: down quickly, up slowly — a frame without tiles is the frame's own time)
     if (dt < this.base) this.base += (dt - this.base) * 0.3;
     else this.base += (Math.min(dt, this.base * 2) - this.base) * (this.ran ? 0.002 : 0.02);
-    if (this.ran) this.perFrame = dt > this.base * 1.2 + 1.5 ? Math.max(1, this.perFrame * 0.5) : Math.min(TILE_MAX, this.perFrame + 0.25);
-    const n = this.fixed || TILES_FIXED || Math.floor(this.perFrame);
+    const speed = this.urgency();
+    const fast = Math.max(0, Math.min(1, speed / FAST_AT));
+    const most = fast > 0.5 ? TILE_MAX_FAST : TILE_MAX;
+    if (this.ran) this.guard = dt > this.base * 1.2 + 1.5 ? Math.max(1, this.guard * 0.5) : Math.min(most, this.guard + 0.25);
+    let n: number;
+    if (PACE_FRAME) {
+      this.how = 'frame';
+      n = Math.floor(this.guard);
+    } else {
+      const P = this.profiler;
+      if (P?.enabled && P.active && P.gpuFrameMs > 0) {
+        this.how = 'timestamps';
+        this.gpuMs = P.gpuFrameMs;
+        const tm = P.passMs.get('atlas-colFinish');
+        if (tm) this.tileMs = tm;
+      } else {
+        this.how = 'workdone';
+        if (this.doneIdle) this.gpuMs = this.doneIdle;
+      }
+      const room = this.base - this.gpuMs - Math.max(1.5, this.base * 0.1);
+      this.budgetMs = Math.max(0, room) * (0.33 + 0.47 * fast);
+      n = Math.max(1, Math.min(most, Math.floor(this.guard), Math.floor(this.budgetMs / Math.max(this.tileMs, 0.05))));
+    }
+    this.perFrame = n;
+    n = this.fixed || TILES_FIXED || n;
     const go = this.waiting.splice(0, n);
     this.ran = go.length;
     if (go.length) {
@@ -225,6 +304,7 @@ export class TilePacer {
       this.frames++;
     }
     for (const r of go) r();
+    if (this.how === 'workdone') this.probe(t, go.length);
     // (a frame on, the next batch's tiles — and this frame's time, after tiles or not)
     if (this.waiting.length || this.ran) this.arm();
   }
@@ -240,6 +320,20 @@ export interface Geyser {
 /** world cells between the geysers' lattice points (a whole number of them round the world) */
 const GEYSER_SPACING = 64;
 const MAT_SINTER = 37;
+/**
+ * (round 102) The geysers' sinter round a vent (9 × 9 columns, row-major from (-4, -4)): kind (0 none, 1 the pit, 2 the
+ * mound) | dz << 2, dz in 1/256ths — made once here, laid alike by the CPU's regionLand and finish.wgsl.
+ */
+export const GEYSER_STENCIL = (() => {
+  const t = new Uint32Array(81);
+  for (let dy = -4; dy <= 4; dy++)
+    for (let dx = -4; dx <= 4; dx++) {
+      const r = Math.hypot(dx, dy * 0.866);
+      if (r > 4) continue;
+      t[(dy + 4) * 9 + dx + 4] = r < 0.9 ? 1 | (Math.round(0.6 * 256) << 2) : 2 | (Math.round(1.8 * (1 - r / 4) ** 1.5 * 256) << 2);
+    }
+  return t;
+})();
 
 /**
  * The macro height's stamps (round 78): in the river buffer after its n² words of nearest nodes
@@ -485,6 +579,9 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     );
     this.colH = colH;
     this.colF = colF;
+    // (round 102) the GPU's finishing of a region (atlas/finish.ts); the tile pacer's device (its GPU budget)
+    this.finisher = await RegionFinish.create(dev);
+    this.pacer.device = dev;
     this.formSeed = fSeed;
     const bg = (k: ComputeKernel, res: Record<number, GPUBuffer>) => makeBindGroup(dev, 'atlas', k.layout, { 0: this.paramBuf, ...res });
     const groups = Math.ceil(n / 8);
@@ -974,6 +1071,48 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
    *  (Each batch has its own parameters: batches asked for together run together.) */
   async columns(x0: number, y0: number, w: number, h: number, spread = false): Promise<AtlasColumns> {
     const dev = this.device;
+    const g = await this.columnsGpu(x0, y0, w, h, spread);
+    const { o, runs, instN } = g;
+    const st = dev.createBuffer({ label: 'atlas col read', size: o.size + runs.size + 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const fin = dev.createCommandEncoder({ label: 'atlas columns read' });
+    fin.copyBufferToBuffer(o, 0, st, 0, o.size);
+    fin.copyBufferToBuffer(runs, 0, st, o.size, runs.size);
+    fin.copyBufferToBuffer(instN, 0, st, o.size + runs.size, 16);
+    dev.queue.submit([fin.finish()]);
+    let buf: ArrayBuffer;
+    try {
+      await st.mapAsync(GPUMapMode.READ);
+      const bt = spread ? this.builds.get(`${x0},${y0}`) : undefined;
+      if (bt) bt.mapped = performance.now();
+      buf = st.getMappedRange().slice(0);
+      st.unmap();
+    } finally {
+      st.destroy();
+      g.done();
+    }
+    const forms = new Uint32Array(buf, o.size + runs.size, 1)[0];
+    if (forms > MAX_INST) throw new Error(`atlas: ${forms} forms around the batch at ${x0},${y0} (room for ${MAX_INST})`);
+    const f = new Float32Array(buf, 0, o.size / 4);
+    const u = new Uint32Array(buf, 0, o.size / 4);
+    for (let i = 0; i < w * h; i++) {
+      const fl = u[i * COL_WORDS + 10];
+      if (fl) throw new Error(`atlas: column ${x0 + (i % w)},${y0 + Math.floor(i / w)} has ${fl & 1 ? 'more forms near it than it considers' : `more than ${MR} runs`}`);
+    }
+    const runsU = new Uint32Array(buf, o.size, runs.size / 4);
+    const run = (i: number, k: number) => {
+      const r = (i * MR + k) * 2;
+      return { z0: (runsU[r] & 0x7fffffff) / 256, z1: (runsU[r + 1] & 0xffffff) / 256, mat: runsU[r + 1] >>> 24, form: runsU[r] >>> 31 === 1 };
+    };
+    return { w, h, f, u, runsU, run, forms };
+  }
+
+  /**
+   * (round 102) A batch's columns made on the GPU and left there (forms.wgsl colFinish's colOut and colRuns): the
+   * passes submitted, `done` to let the buffers go once what reads them is submitted too (columns' readback, or
+   * finish.wgsl: atlas/finish.ts). Streaming (`spread`): a tile a frame (the pacer's), as before.
+   */
+  async columnsGpu(x0: number, y0: number, w: number, h: number, spread = false): Promise<GpuColumns & { done: () => void }> {
+    const dev = this.device;
     const bt = spread ? this.traceOf(x0, y0) : undefined;
     const tileBufs: GPUBuffer[] = [];
     const pb = dev.createBuffer({ label: 'atlas col params', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -982,7 +1121,6 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     const runs = dev.createBuffer({ label: 'atlas colRuns', size: w * h * MR * 8, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC });
     const inst = dev.createBuffer({ label: 'atlas forms', size: MAX_INST * INST_BYTES, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     const instN = dev.createBuffer({ label: 'atlas forms n', size: 16, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST });
-    const st = dev.createBuffer({ label: 'atlas col read', size: o.size + runs.size + 16, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     this.writeParams({ x0, y0, w, h }, pb);
     // the giants reaching into it go first (the lattice forms are counted on from them)
     const gi = this.giantsFor(x0, y0, w, h);
@@ -1011,48 +1149,36 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     const tiles: [number, number][] = [];
     const T = spread ? TILE : Math.max(w, h);
     for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
-    for (let k = 0; k < tiles.length; k++) {
-      let tpb = pb;
-      if (spread) {
-        dev.queue.submit([fin.finish()]);
-        await this.tileGate();
-        if (bt) bt.tiles.push(performance.now());
-        fin = dev.createCommandEncoder({ label: 'atlas columns tile' });
-        tpb = dev.createBuffer({ label: 'atlas col params tile', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-        this.writeParams({ x0, y0, w, h, tile: tiles[k] }, tpb);
-        tileBufs.push(tpb);
+    try {
+      for (let k = 0; k < tiles.length; k++) {
+        let tpb = pb;
+        if (spread) {
+          dev.queue.submit([fin.finish()]);
+          await this.tileGate();
+          if (bt) bt.tiles.push(performance.now());
+          fin = dev.createCommandEncoder({ label: 'atlas columns tile' });
+          tpb = dev.createBuffer({ label: 'atlas col params tile', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+          this.writeParams({ x0, y0, w, h, tile: tiles[k] }, tpb);
+          tileBufs.push(tpb);
+        }
+        const tw = Math.min(T, w - tiles[k][0]);
+        const th = Math.min(T, h - tiles[k][1]);
+        cp = fin.beginComputePass(ts('atlas-colFinish'));
+        cp.setPipeline(this.colF.pipeline);
+        cp.setBindGroup(0, makeBindGroup(dev, 'colF', this.colF.layout, { 0: tpb, 22: this.regs, 23: this.pat, 30: g, 31: o, 32: inst, 33: instN, 34: runs }));
+        cp.dispatchWorkgroups(Math.ceil(tw / 8), Math.ceil(th / 8));
+        cp.end();
       }
-      const tw = Math.min(T, w - tiles[k][0]);
-      const th = Math.min(T, h - tiles[k][1]);
-      cp = fin.beginComputePass(ts('atlas-colFinish'));
-      cp.setPipeline(this.colF.pipeline);
-      cp.setBindGroup(0, makeBindGroup(dev, 'colF', this.colF.layout, { 0: tpb, 22: this.regs, 23: this.pat, 30: g, 31: o, 32: inst, 33: instN, 34: runs }));
-      cp.dispatchWorkgroups(Math.ceil(tw / 8), Math.ceil(th / 8));
-      cp.end();
+      dev.queue.submit([fin.finish()]);
+    } catch (e) {
+      for (const b of [g, o, runs, inst, instN, pb, ...tileBufs]) b.destroy();
+      throw e;
     }
-    fin.copyBufferToBuffer(o, 0, st, 0, o.size);
-    fin.copyBufferToBuffer(runs, 0, st, o.size, runs.size);
-    fin.copyBufferToBuffer(instN, 0, st, o.size + runs.size, 16);
-    dev.queue.submit([fin.finish()]);
-    await st.mapAsync(GPUMapMode.READ);
-    if (bt) bt.mapped = performance.now();
-    const buf = st.getMappedRange().slice(0);
-    st.unmap();
-    for (const b of [g, o, runs, inst, instN, st, pb, ...tileBufs]) b.destroy();
-    const forms = new Uint32Array(buf, o.size + runs.size, 1)[0];
-    if (forms > MAX_INST) throw new Error(`atlas: ${forms} forms around the batch at ${x0},${y0} (room for ${MAX_INST})`);
-    const f = new Float32Array(buf, 0, o.size / 4);
-    const u = new Uint32Array(buf, 0, o.size / 4);
-    for (let i = 0; i < w * h; i++) {
-      const fl = u[i * COL_WORDS + 10];
-      if (fl) throw new Error(`atlas: column ${x0 + (i % w)},${y0 + Math.floor(i / w)} has ${fl & 1 ? 'more forms near it than it considers' : `more than ${MR} runs`}`);
-    }
-    const runsU = new Uint32Array(buf, o.size, runs.size / 4);
-    const run = (i: number, k: number) => {
-      const r = (i * MR + k) * 2;
-      return { z0: (runsU[r] & 0x7fffffff) / 256, z1: (runsU[r + 1] & 0xffffff) / 256, mat: runsU[r + 1] >>> 24, form: runsU[r] >>> 31 === 1 };
+    // (what reads them is submitted after: destroyed buffers stay alive for work already submitted)
+    const done = () => {
+      for (const b of [g, o, runs, inst, instN, pb, ...tileBufs]) b.destroy();
     };
-    return { w, h, f, u, runsU, run, forms };
+    return { w, h, o, runs, instN, mr: MR, done };
   }
 
   /**
@@ -1206,11 +1332,35 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
   gapsFilled = 0;
 
   /**
-   * (round 88) What's built on land as it's made: called with each region's land after the ways (the
-   * settlements' buildings, fields and walls: src/settle/settlements.ts). `raw` lands skip them (the ground a
-   * settlement is planned on).
+   * (round 88) What's built on land as it's made: called with each region's land after the ways and the stamps.
+   * `raw` lands skip them (the ground a settlement is planned on). (Round 102: the settlements and a run's stage say
+   * what they build as stamps instead — stampHooks — so the GPU can build it; nothing here uses this now.)
    */
   readonly landHooks: ((land: RegionLand, x0: number, y0: number, w: number, h: number, spread: boolean) => Promise<void>)[] = [];
+
+  /**
+   * (round 102) What's built into a region's land as it's made — the settlements' (settle/settlements.ts), a run's
+   * stage's (story/stage-land.ts) — as stamp operations (atlas/stamps.ts), in order: the GPU's path (regionInto) and
+   * the CPU's (regionLand) build the same from them. Not for raw land.
+   */
+  readonly stampHooks: ((ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean) => Promise<void>)[] = [];
+
+  /** (round 102) the stamps for a region: every stamp hook's, in order */
+  async stampsFor(x0: number, y0: number, w: number, h: number, spread: boolean): Promise<StampOps> {
+    const ops = new StampOps(w, h);
+    for (const f of this.stampHooks) await f(ops, x0, y0, w, h, spread);
+    return ops;
+  }
+
+  /** (round 102) the geysers' vents in a region (region cells) */
+  private ventsIn(x0: number, y0: number, w: number, h: number): [number, number][] {
+    return this.geysersIn(x0, y0, w, h).map((g) => [g.x - x0, g.y - y0]);
+  }
+
+  /** (round 102) a region's ways as both paths stamp them (ways.ts regionWays) */
+  private waysOf(x0: number, y0: number, w: number, h: number): RegionWays | null {
+    return timed('ways', () => regionWays(this.ways, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH));
+  }
 
   /** A region's land for the streamer (world/streamgen.ts RegionLand), in world z (the streamer cuts it at its window). */
   async regionLand(x0: number, y0: number, w: number, h: number, K = Infinity, spread = false, raw = false): Promise<RegionLand> {
@@ -1218,29 +1368,105 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     const c = await this.columns(x0, y0, w, h, spread);
     const land = timed('land', () => landFrom(c, x0, y0, K));
     this.gapsFilled += land.gapsFilled;
-    // the geysers' sinter: a low mound round each vent, its pit at the middle
-    for (const g of this.geysersIn(x0, y0, w, h))
+    // the geysers' sinter: a low mound round each vent, its pit at the middle (round 102: GEYSER_STENCIL, as
+    // finish.wgsl lays it)
+    for (const [gx, gy] of this.ventsIn(x0, y0, w, h))
       for (let dy = -4; dy <= 4; dy++)
         for (let dx = -4; dx <= 4; dx++) {
-          const x = g.x - x0 + dx;
-          const y = g.y - y0 + dy;
+          const x = gx + dx;
+          const y = gy + dy;
           if (x < 0 || y < 0 || x >= w || y >= h) continue;
-          const r = Math.hypot(dx, dy * 0.866);
-          if (r > 4) continue;
+          const st = GEYSER_STENCIL[(dy + 4) * 9 + dx + 4];
+          if (!(st & 3)) continue;
           const col = land.cols[y * w + x];
           if (!col.length) continue;
-          if (r < 0.9) lowerTop(col, 0.6);
-          else addTop(col, 1.8 * (1 - r / 4) ** 1.5, MAT_SINTER);
+          if ((st & 3) === 1) lowerTop(col, (st >>> 2) / 256);
+          else addTop(col, (st >>> 2) / 256, MAT_SINTER);
           land.vegetation[y * w + x] = 0;
           land.surface[y * w + x] = col[col.length - 1].z1;
         }
     // the roads, their crossings and the sites' plazas (round 79, ways.ts)
-    this.waysStamped += timed('ways', () => stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH));
+    const rw = this.waysOf(x0, y0, w, h);
+    this.waysStamped += timed('ways', () => stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH, rw));
     const bt = spread && !raw ? this.builds.get(`${x0},${y0}`) : undefined;
     if (bt) bt.ways = performance.now();
-    if (!raw) for (const f of this.landHooks) await f(land, x0, y0, w, h, spread);
+    if (!raw) {
+      const o = await this.stampsFor(x0, y0, w, h, spread);
+      const marks = new Float32Array(o.marks);
+      timed('stamp', () => applyStamps(o, land, marks));
+      o.tell(marks);
+      for (const f of this.landHooks) await f(land, x0, y0, w, h, spread);
+    }
     if (bt) bt.hooks = performance.now();
     return land;
+  }
+
+  /** (round 102) the GPU's finishing (atlas/finish.ts) */
+  finisher!: RegionFinish;
+  /** (round 102) regions made on the GPU, and the raw tiles */
+  gpuMade = 0;
+  gpuRaw = 0;
+
+  /**
+   * (round 102) A region made on the GPU straight into `target` (a pool slot, in the region layout): its columns
+   * (a tile a frame when `spread`), then finish.wgsl — the geysers, the ways, the stamps, the cut, the pack. What
+   * the CPU keeps of it comes back (FinishMeta); the land itself never leaves the GPU.
+   */
+  async regionInto(x0: number, y0: number, w: number, h: number, target: FinishTarget, spread = false): Promise<FinishMeta> {
+    if (y0 & 1) throw new Error('a region starts on an even row');
+    // (the stamps asked for first: a settlement's plan runs while the columns are made)
+    const ops = this.stampsFor(x0, y0, w, h, spread);
+    const c = await this.columnsGpu(x0, y0, w, h, spread);
+    try {
+      const rw = this.waysOf(x0, y0, w, h);
+      const o = await ops;
+      const bt = spread ? this.builds.get(`${x0},${y0}`) : undefined;
+      if (bt) bt.ways = performance.now();
+      const { meta } = await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, o, target, this.profiler);
+      if (bt) bt.mapped = bt.hooks = performance.now();
+      if (meta!.forms > MAX_INST) throw new Error(`atlas: ${meta!.forms} forms around the batch at ${x0},${y0} (room for ${MAX_INST})`);
+      o.tell(meta!.marks);
+      this.gpuMade++;
+      return meta!;
+    } finally {
+      c.done();
+    }
+  }
+
+  /**
+   * (round 102) The raw ground over a box (world cells; y0 even) — what a settlement is planned on (regionLand's raw
+   * land: the columns, the geysers' sinter, the ways; its top, its material, the water on it, the plants) — made on
+   * the GPU a 64² tile at a time, 16 bytes a column read back.
+   */
+  async rawGround(x0: number, y0: number, w: number, h: number, spread = false): Promise<RawGround> {
+    const T = 64;
+    if (y0 & 1) throw new Error('a raw box starts on an even row');
+    if (w % T || h % T) throw new Error(`a raw box is whole tiles of ${T}`);
+    const N = w * h;
+    const out: RawGround = { ground: new Float32Array(N), water: new Float32Array(N), top: new Uint8Array(N), veg: new Float32Array(N) };
+    const tiles: [number, number][] = [];
+    for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
+    await Promise.all(
+      tiles.map(async ([tx, ty]) => {
+        const c = await this.columnsGpu(x0 + tx, y0 + ty, T, T, spread);
+        let raw: RawGround;
+        try {
+          const r = await this.finisher.run(c, x0 + tx, y0 + ty, this.waysOf(x0 + tx, y0 + ty, T, T), this.ventsIn(x0 + tx, y0 + ty, T, T), GEYSER_STENCIL, null, null, this.profiler);
+          raw = r.raw!;
+        } finally {
+          c.done();
+        }
+        this.gpuRaw++;
+        for (let y = 0; y < T; y++) {
+          const j = (ty + y) * w + tx;
+          out.ground.set(raw.ground.subarray(y * T, (y + 1) * T), j);
+          out.water.set(raw.water.subarray(y * T, (y + 1) * T), j);
+          out.top.set(raw.top.subarray(y * T, (y + 1) * T), j);
+          out.veg.set(raw.veg.subarray(y * T, (y + 1) * T), j);
+        }
+      }),
+    );
+    return out;
   }
 
   /**

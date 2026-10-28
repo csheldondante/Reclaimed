@@ -87,7 +87,9 @@ export function buildWays(inp: WayInput): Ways {
   const { settlement: st, ground, worldW: W, worldH: H, sea } = inp;
   const points: WayPoint[] = [];
   const lifts: Lift[] = [];
-  const add = (p: Omit<WayPoint, 'way' | 'i'>, way: number, i: number) => points.push({ ...p, way, i });
+  // (round 102: heights to 1/256 of a cell, as the columns' runs are — the CPU's stamp and the GPU's (finish.wgsl)
+  // then work in the same whole numbers)
+  const add = (p: Omit<WayPoint, 'way' | 'i'>, way: number, i: number) => points.push({ ...p, z: qz(p.z), way, i });
 
   st.roads.forEach((road, wi) => {
     // the path unwrapped (consecutive points nearest each other on the torus), smoothed, resampled
@@ -240,6 +242,8 @@ export function buildWays(inp: WayInput): Ways {
   for (const l of lifts) {
     l.x = ((l.x % W) + W) % W;
     l.y = ((l.y % H) + H) % H;
+    l.z0 = qz(l.z0);
+    l.z1 = qz(l.z1);
   }
   return { points, lifts, bins, counts, ms: +(performance.now() - t0).toFixed(1) };
 }
@@ -283,21 +287,46 @@ function carve(col: Interval[], a: number, b: number): void {
 
 const topOf = (col: Interval[]) => (col.length ? col[col.length - 1].z1 : 0);
 
+/** (round 102) heights in whole 1/256ths of a cell — the columns' runs' (forms.wgsl zq) */
+export const ZQ = 256;
+export const qz = (z: number) => Math.round(z * ZQ) / ZQ;
+
+/** (round 102) the stamp's lengths in 1/256ths (finish.wgsl's own: the same whole numbers) */
+export const WQ = {
+  reach: REACH * ZQ,
+  half: Math.round(HALF * ZQ),
+  tunnelReach: Math.round((HALF + 0.8) * ZQ),
+  bare: Math.round((HALF + 0.5) * ZQ),
+  pillar: Math.round(1.3 * ZQ),
+  lift: Math.round(3.5 * ZQ),
+  bore: BORE * ZQ,
+  deck: Math.round(DECK * ZQ),
+  pave: Math.round(0.4 * ZQ),
+  still: Math.round(0.05 * ZQ),
+} as const;
+
+/** the floor of a whole number's square root (exact: n < 2^52) */
+export const isqrt = (n: number) => Math.floor(Math.sqrt(n));
+
 /**
- * The ways into a region's columns (world cell x0, y0; w × h): each column takes its nearest way point
- * within REACH. `world(cx, cy)` is a cell's world centre. Returns the columns changed.
+ * (round 102) What a region's columns need of the ways, in the region's frame (from world(x0, y0)) in whole 1/256ths of
+ * a world unit: the points near it (x, y, z, kind | pillar << 8: a pillar every PILLAR points), binned REACH apart
+ * (nb × mb bins, row-major; each bin's points in order: binStart, binItems), the lifts in reach (x, y, z1, 0), and
+ * each row's centre (x of its first column, y). The CPU's stamp (stampWays) and the GPU's (atlas/finish.wgsl) read the
+ * same numbers in the same order, so they make the same columns. Null: no way near.
  */
-export function stampWays(
-  ways: Ways,
-  land: { cols: Interval[][]; surface: Float32Array; vegetation: Float32Array; ground?: Float32Array; water: Float32Array },
-  x0: number,
-  y0: number,
-  w: number,
-  h: number,
-  world: (cx: number, cy: number) => [number, number],
-  W: number,
-  H: number,
-): number {
+export interface RegionWays {
+  pts: Int32Array;
+  nb: number;
+  mb: number;
+  binStart: Uint32Array;
+  binItems: Uint32Array;
+  lifts: Int32Array;
+  /** per row: its first column's centre x, its centre y */
+  rows: Int32Array;
+}
+
+export function regionWays(ways: Ways, x0: number, y0: number, w: number, h: number, world: (cx: number, cy: number) => [number, number], W: number, H: number): RegionWays | null {
   // the points near the region
   const [ax, ay] = world(x0, y0);
   const [bx, by] = world(x0 + w, y0 + h);
@@ -313,90 +342,161 @@ export function stampWays(
       const b = ways.bins.get(binKey(((i % nbx) + nbx) % nbx, ((j % nby) + nby) % nby));
       if (b) cand.push(...b);
     }
-  if (!cand.length) return 0;
+  if (!cand.length) return null;
   // (round 80: the candidates binned REACH apart in the region's own frame — a column looks at the nine
   // bins round it, not every point near the region: 18 ms a region was a phone's hitch several times over)
+  const RQ = WQ.reach;
   const nb = Math.ceil((bx - ax + 2 * REACH) / REACH) + 1;
   const mb = Math.ceil((by - ay + 2 * REACH) / REACH) + 1;
   const bins: number[][] = Array.from({ length: nb * mb }, () => []);
-  const lx = new Float32Array(cand.length);
-  const ly = new Float32Array(cand.length);
-  cand.forEach((k, j) => {
+  const pts = new Int32Array(cand.length * 4);
+  let n = 0;
+  for (const k of cand) {
     const p = ways.points[k];
-    lx[j] = ax + wrapD(p.x - ax, W);
-    ly[j] = ay + wrapD(p.y - ay, H);
-    const i = Math.floor((lx[j] - ax + REACH) / REACH);
-    const m = Math.floor((ly[j] - ay + REACH) / REACH);
-    if (i >= 0 && m >= 0 && i < nb && m < mb) bins[m * nb + i].push(j);
+    const lx = Math.round(wrapD(p.x - ax, W) * ZQ);
+    const ly = Math.round(wrapD(p.y - ay, H) * ZQ);
+    const i = Math.floor((lx + RQ) / RQ);
+    const m = Math.floor((ly + RQ) / RQ);
+    if (i < 0 || m < 0 || i >= nb || m >= mb) continue;
+    pts.set([lx, ly, Math.round(p.z * ZQ), p.kind | (p.i % PILLAR === 0 ? 256 : 0)], n * 4);
+    bins[m * nb + i].push(n);
+    n++;
+  }
+  const binStart = new Uint32Array(nb * mb + 1);
+  const binItems = new Uint32Array(Math.max(n, 1));
+  let o = 0;
+  bins.forEach((b, k) => {
+    binStart[k] = o;
+    for (const j of b) binItems[o++] = j;
   });
+  binStart[nb * mb] = o;
   // (the lifts within reach of the region, in its frame)
-  const lifts = ways.lifts
-    .map((l) => ({ ...l, x: ax + wrapD(l.x - ax, W), y: ay + wrapD(l.y - ay, H) }))
-    .filter((l) => l.x > ax - 4 && l.x < bx + 4 && l.y > ay - 4 && l.y < by + 4);
+  const lf: number[] = [];
+  for (const l of ways.lifts) {
+    const x = wrapD(l.x - ax, W);
+    const y = wrapD(l.y - ay, H);
+    if (x > -4 && x < bx - ax + 4 && y > -4 && y < by - ay + 4) lf.push(Math.round(x * ZQ), Math.round(y * ZQ), Math.round(l.z1 * ZQ), 0);
+  }
+  const rows = new Int32Array(h * 2);
+  for (let y = 0; y < h; y++) {
+    const [cx, cy] = world(x0, y0 + y);
+    rows[y * 2] = Math.round((cx - ax) * ZQ);
+    rows[y * 2 + 1] = Math.round((cy - ay) * ZQ);
+  }
+  return { pts: pts.slice(0, n * 4), nb, mb, binStart, binItems, lifts: new Int32Array(lf), rows };
+}
+
+/** (round 102) column (x, y)'s nearest way point (an index into rw.pts, -1: none within REACH) and its distance² (1/256ths) */
+export function nearestWay(rw: RegionWays, x: number, y: number): [number, number] {
+  const RQ = WQ.reach;
+  const cx = rw.rows[y * 2] + x * ZQ;
+  const cy = rw.rows[y * 2 + 1];
+  let best = -1;
+  let bd = RQ * RQ;
+  const bi = Math.floor((cx + RQ) / RQ);
+  const bm = Math.floor((cy + RQ) / RQ);
+  const { pts, nb, mb, binStart, binItems } = rw;
+  for (let m = Math.max(0, bm - 1); m <= Math.min(mb - 1, bm + 1); m++)
+    for (let i = Math.max(0, bi - 1); i <= Math.min(nb - 1, bi + 1); i++) {
+      const b = m * nb + i;
+      for (let q = binStart[b]; q < binStart[b + 1]; q++) {
+        const j = binItems[q];
+        const dx = pts[j * 4] - cx;
+        const dy = pts[j * 4 + 1] - cy;
+        const d = dx * dx + dy * dy;
+        if (d < bd) {
+          bd = d;
+          best = j;
+        }
+      }
+    }
+  return [best, bd];
+}
+
+/**
+ * The ways into a region's columns (world cell x0, y0; w × h): each column takes its nearest way point
+ * within REACH. `world(cx, cy)` is a cell's world centre. Returns the columns changed. (Round 102: in whole 1/256ths,
+ * as atlas/finish.wgsl stamps them on the GPU — regionWays, nearestWay, wayColumn.)
+ */
+export function stampWays(
+  ways: Ways,
+  land: { cols: Interval[][]; surface: Float32Array; vegetation: Float32Array; ground?: Float32Array; water: Float32Array },
+  x0: number,
+  y0: number,
+  w: number,
+  h: number,
+  world: (cx: number, cy: number) => [number, number],
+  W: number,
+  H: number,
+  rw = regionWays(ways, x0, y0, w, h, world, W, H),
+): number {
+  if (!rw) return 0;
   let changed = 0;
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
-      const [cx, cy] = world(x0 + x, y0 + y);
-      let best = -1;
-      let bd = REACH;
-      const bi = Math.floor((cx - ax + REACH) / REACH);
-      const bm = Math.floor((cy - ay + REACH) / REACH);
-      for (let m = Math.max(0, bm - 1); m <= Math.min(mb - 1, bm + 1); m++)
-        for (let i = Math.max(0, bi - 1); i <= Math.min(nb - 1, bi + 1); i++)
-          for (const j of bins[m * nb + i]) {
-            const d = Math.hypot(lx[j] - cx, ly[j] - cy);
-            if (d < bd) {
-              bd = d;
-              best = cand[j];
-            }
-          }
       const i = y * w + x;
       const col = land.cols[i];
-      let did = false;
-      // a lift's tower
-      for (const l of lifts) {
-        const d = Math.hypot(l.x - cx, l.y - cy);
-        if (d > 3.5) continue;
-        const top = topOf(col);
-        if (top < l.z1) addTop(col, l.z1 - top, MAT_BUILT);
-        did = true;
-      }
-      if (best >= 0 && !did) {
-        const p = ways.points[best];
-        const top = topOf(col);
-        if (p.kind === WAY.tunnel) {
-          if (bd <= HALF + 0.8 && top > p.z + BORE + 1) {
-            carve(col, p.z, p.z + BORE);
-            did = true;
-          }
-        } else if (p.kind === WAY.bridge || (p.kind === WAY.lift && top < p.z - DECK - 1)) {
-          if (bd <= HALF && top < p.z - DECK - 0.5) {
-            // the deck (a pillar under it every PILLAR points)
-            if (p.i % PILLAR === 0 && bd <= 1.3) addTop(col, p.z - top, MAT_BUILT);
-            else col.push({ z0: p.z - DECK, z1: p.z, mat: MAT_BUILT });
-            did = true;
-          } else if (bd <= HALF && top <= p.z + 1) {
-            // (where the ground comes up to the deck: a road)
-            fillTo(col, p.z, true);
-            did = true;
-          }
-        } else {
-          // a road, a plaza, switchbacks: the grade on it, a 1:1 shoulder back to the ground
-          const off = Math.max(bd - HALF, 0);
-          const T = bd <= HALF ? p.z : p.z + Math.max(-off, Math.min(off, top - p.z));
-          if (Math.abs(T - top) > 0.05 || bd <= HALF) {
-            fillTo(col, T, bd <= HALF);
-            did = true;
-          }
-        }
-      }
-      if (!did) continue;
+      const [best, bd] = nearestWay(rw, x, y);
+      if (!wayColumn(rw, col, x, y, best, bd)) continue;
       changed++;
       land.surface[i] = topOf(col);
       if (land.ground) land.ground[i] = topOf(col);
-      if (bd <= HALF + 0.5) land.vegetation[i] = 0;
+      if (bd <= WQ.bare * WQ.bare) land.vegetation[i] = 0;
     }
   return changed;
+}
+
+/** (round 102) a column's way (its nearest point `best`, distance² `bd`) and lifts stamped into it: whether it did */
+export function wayColumn(rw: RegionWays, col: Interval[], x: number, y: number, best: number, bd: number): boolean {
+  const Q = ZQ;
+  const cx = rw.rows[y * 2] + x * Q;
+  const cy = rw.rows[y * 2 + 1];
+  let did = false;
+  // a lift's tower
+  const L = rw.lifts;
+  for (let k = 0; k < L.length; k += 4) {
+    const dx = L[k] - cx;
+    const dy = L[k + 1] - cy;
+    if (dx * dx + dy * dy > WQ.lift * WQ.lift) continue;
+    const top = topOf(col);
+    const z1 = L[k + 2] / Q;
+    if (top < z1) addTop(col, z1 - top, MAT_BUILT);
+    did = true;
+  }
+  if (best < 0 || did) return did;
+  const P = rw.pts;
+  const pz = P[best * 4 + 2] / Q;
+  const kind = P[best * 4 + 3] & 255;
+  const pillar = (P[best * 4 + 3] & 256) !== 0;
+  const top = topOf(col);
+  const in2 = (r: number) => bd <= r * r;
+  if (kind === WAY.tunnel) {
+    if (in2(WQ.tunnelReach) && top > pz + (WQ.bore + Q) / Q) {
+      carve(col, pz, pz + WQ.bore / Q);
+      did = true;
+    }
+  } else if (kind === WAY.bridge || (kind === WAY.lift && top < pz - (WQ.deck + Q) / Q)) {
+    if (in2(WQ.half) && top < pz - (WQ.deck + Q / 2) / Q) {
+      // the deck (a pillar under it every PILLAR points)
+      if (pillar && in2(WQ.pillar)) addTop(col, pz - top, MAT_BUILT);
+      else col.push({ z0: pz - WQ.deck / Q, z1: pz, mat: MAT_BUILT });
+      did = true;
+    } else if (in2(WQ.half) && top <= pz + 1) {
+      // (where the ground comes up to the deck: a road)
+      fillTo(col, pz, true);
+      did = true;
+    }
+  } else {
+    // a road, a plaza, switchbacks: the grade on it, a 1:1 shoulder back to the ground
+    const on = in2(WQ.half);
+    const off = Math.max(isqrt(bd) - WQ.half, 0) / Q;
+    const T = on ? pz : pz + Math.max(-off, Math.min(off, top - pz));
+    if (Math.abs(T - top) * Q >= WQ.still || on) {
+      fillTo(col, T, on);
+      did = true;
+    }
+  }
+  return did;
 }
 
 /**
@@ -424,7 +524,7 @@ function fillTo(col: Interval[], T: number, pave: boolean): void {
   if (T < top) lowerTop(col, top - T);
   else if (T > top) addTop(col, T - top, MAT_FILL);
   if (pave) {
-    lowerTop(col, 0.4);
-    addTop(col, 0.4, MAT_PAVE);
+    lowerTop(col, WQ.pave / ZQ);
+    addTop(col, WQ.pave / ZQ, MAT_PAVE);
   }
 }

@@ -44,6 +44,7 @@ import { generateRegion, type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
 import { SETTLE } from '../sim/sleep';
 import { MATERIALS, MatState } from '../world/materials';
+import { GPUGEN, type FinishMeta, type FinishTarget } from '../atlas/finish';
 
 /**
  * (perfopt, ?settle=0 — DECISIONS round 83: land comes in settled, "fixed in the cheap generator") A column's loose
@@ -103,8 +104,13 @@ const WRITE_MS = Number((typeof location === 'undefined' ? null : new URLSearchP
 const param = (k: string) => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get(k));
 /** (round 100, ?pool=N) regions kept on the GPU out of the window (LRU; ~1.6 MB a region at the atlas's K) */
 export const POOL_CAP = Number(param('pool') ?? 32);
-/** (round 100, ?ahead=N) strips asked for ahead along the camera's motion */
+/** (round 100, ?ahead=N) strips asked for ahead along the camera's motion (round 102: at least; more as it moves faster) */
 const AHEAD = Number(param('ahead') ?? 2);
+/** (round 102, ?aheads=) seconds of the camera's motion asked for ahead: strips enough for that at its speed, up to AHEAD_MAX */
+const AHEAD_S = Number(param('aheads') ?? 3);
+const AHEAD_MAX = 4;
+/** (round 102, ?warpring=N) regions round a warp's window asked for into the pool as it lands (and as its target is picked) */
+const WARP_RING = Number(param('warpring') ?? 1);
 /** (round 100) cells a second the camera's motion must pass to be followed ahead */
 const MOVING = 6;
 /** (round 100, ?sweepms=) the window's regions read back for the store, one every this many ms */
@@ -134,6 +140,12 @@ export interface LandSource {
    * plans, the run's stage pieces' bases) is told, as if it had made it — the land itself is the record's
    */
   restored?(x0: number, y0: number, w: number, h: number): Promise<void>;
+  /**
+   * (round 102, `gpugen`) the region made on the GPU straight into `target` (a pool slot, in the streamer's region
+   * layout, cut at its oz): what the CPU keeps of it returned (atlas/finish.ts). With it (and without ?gpugen=0) the
+   * streamer never sees the land's columns: arrival is a pool → window copy.
+   */
+  regionInto?(x0: number, y0: number, w: number, h: number, target: FinishTarget): Promise<FinishMeta>;
 }
 
 /** (round 100) what the store saves for a world: its id (the atlas's seed, the run), whether it's kept on disk */
@@ -304,6 +316,11 @@ export interface SlideStats {
   mismatched: number;
   loadFailed: number;
   uploads: number;
+  /** (round 102) regions made on the GPU straight into the pool (atlas/finish.ts); asked for ahead of a warp (precache), and
+   *  of a warp's regions, those made or under way before it */
+  gpuMade: number;
+  precached: number;
+  warpReady: number;
 }
 
 export class Streamer {
@@ -358,7 +375,7 @@ export class Streamer {
   private busyNow = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, uploads: 0 };
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, uploads: 0, gpuMade: 0, precached: 0, warpReady: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
   /**
@@ -525,7 +542,8 @@ export class Streamer {
       this.texs.filter((t) => t.keep),
       `z${core.dims.zMax}`,
     );
-    this.pool = new RegionPool((label, size) => wg.buf(label, size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST), this.layout.bytes, POOL_CAP);
+    // (round 102: STORAGE too — finish.wgsl writes a region made on the GPU straight into its slot)
+    this.pool = new RegionPool((label, size) => wg.buf(label, size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST | GPUBufferUsage.STORAGE), this.layout.bytes, POOL_CAP);
     const L = this.layout;
     const pageWords = L.pageBytes / 4;
     for (let ly = 0; ly < h; ly += R)
@@ -1049,9 +1067,11 @@ export class Streamer {
     if (py > hy + reach + R) this.prefetch(0, 2 * R);
     if (py < hy - reach - R) this.prefetch(0, -2 * R);
     // (round 100) along the camera's motion: AHEAD strips, into the pool before the slides that need them
+    // (round 102: by its speed — AHEAD_S seconds of it, AHEAD strips at least, AHEAD_MAX at most; each strip between)
     if (!STREAM_OLD && AHEAD > 0) {
-      if (Math.abs(this.vel[0]) > MOVING) this.prefetch(Math.sign(this.vel[0]) * AHEAD * R, 0);
-      if (Math.abs(this.vel[1]) > MOVING) this.prefetch(0, Math.sign(this.vel[1]) * AHEAD * R);
+      const strips = (v: number) => Math.max(AHEAD, Math.min(AHEAD_MAX, Math.ceil((Math.abs(v) * AHEAD_S) / R)));
+      if (Math.abs(this.vel[0]) > MOVING) for (let k = 2, n = strips(this.vel[0]); k <= n; k++) this.prefetch(Math.sign(this.vel[0]) * k * R, 0);
+      if (Math.abs(this.vel[1]) > MOVING) for (let k = 2, n = strips(this.vel[1]); k <= n; k++) this.prefetch(0, Math.sign(this.vel[1]) * k * R);
     }
     // in z: the ground under the camera near the window's top or bottom
     const h = this.source.height;
@@ -1191,6 +1211,32 @@ export class Streamer {
       if (this.winInfo.has(key) && this.inWindow(wx, wy)) continue;
       this.startJob(key, this.bring(key, wx, wy));
     }
+  }
+
+  /**
+   * (round 102; the user: "precaching larger areas around atlas-map travel") The land of a window at origin (ox, oy)
+   * (world cells, whole regions) and `ring` regions round it, asked for into the pool (made on the GPU, loaded or
+   * thawed) — what's there, under way or in the window now needs nothing. A warp there then copies what's ready.
+   * Nearest its middle first. Returns how many were asked for.
+   */
+  precache(ox: number, oy: number, ring = WARP_RING, skipWindow = false): number {
+    if (!this.store) return 0;
+    const { R, W, H } = this;
+    const spots: [number, number, number][] = [];
+    for (let ly = -ring * R; ly < H + ring * R; ly += R)
+      for (let lx = -ring * R; lx < W + ring * R; lx += R) spots.push([ox + lx, oy + ly, Math.hypot(lx + R / 2 - W / 2, ly + R / 2 - H / 2)]);
+    spots.sort((a, b) => a[2] - b[2]);
+    let n = 0;
+    for (const [wx, wy] of spots) {
+      if (skipWindow && wx >= ox && wy >= oy && wx < ox + W && wy < oy + H) continue;
+      const key = this.key(wx / R, wy / R);
+      if (this.jobs.has(key) || this.made.has(key)) continue;
+      if (this.winInfo.has(key) && this.inWindow(wx, wy)) continue;
+      this.startJob(key, this.bring(key, wx, wy));
+      n++;
+    }
+    this.stats.precached += n;
+    return n;
   }
 
   /** (round 100) whether world cell (wx, wy) — a region's corner — is in the window now */
@@ -1482,6 +1528,7 @@ export class Streamer {
 
   /** a region's land the first time it is seen, in the frozen form (cut at the window's oz now) */
   private async generate(x0: number, y0: number): Promise<Frozen> {
+    if (GPUGEN && this.source.regionInto) return this.generateGpu(x0, y0);
     const { R } = this;
     const zMax = this.core.dims.zMax;
     const g: GenTrace = { x0, y0, asked: performance.now(), land: 0, done: 0 };
@@ -1492,6 +1539,132 @@ export class Streamer {
     const f = timed('cut', () => this.cutRegion(land, snap));
     g.done = performance.now();
     return f;
+  }
+
+  /**
+   * (round 102, `gpugen`) A region's land made on the GPU straight into a pool slot (LandSource.regionInto: the cut,
+   * the pack and every field there; nothing read back but what the CPU keeps — its tops, ground, relief, what's
+   * outside the window). No hash of its columns as made: one is needed only to tell a region changed by play from its
+   * save, and a made region is saved only once play has touched it.
+   */
+  private async generateGpu(x0: number, y0: number): Promise<Frozen> {
+    const { R } = this;
+    const zMax = this.core.dims.zMax;
+    const g: GenTrace = { x0, y0, asked: performance.now(), land: 0, done: 0 };
+    this.gens.push(g);
+    if (this.gens.length > 400) this.gens.shift();
+    const oz = this.oz;
+    // (no slot free — every one a job's or a slide's: a slot of its own, let go once it's written)
+    const slot = this.slotFor() ?? this.pool.temp();
+    let m: FinishMeta;
+    let snap: unknown;
+    try {
+      [m, snap] = await Promise.all([this.source.regionInto!(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: this.layout, oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE }), this.source.snapshot?.(x0, y0, R, R)]);
+    } catch (e) {
+      this.pool.release(slot);
+      throw e;
+    }
+    g.land = performance.now();
+    this.stats.fitted += m.fitted;
+    this.stats.settled += m.settled;
+    const f = timed('cut', (): Frozen => {
+      const relief = new Uint8Array(R * R);
+      for (let i = 0; i < R * R; i++) relief[i] = Math.abs(m.surface[i] - m.ground[i]) > RELIEF_FORM ? 1 : 0;
+      const judge = boxOf(m.structural, R);
+      return { slot, surface: m.surface, ground: m.ground, outside: m.outside, relief: { relief, gapTop: m.gapTop, colTop: m.colTop }, judge, oz, snap, info: {}, how: 'made' };
+    });
+    this.stats.gpuMade++;
+    g.done = performance.now();
+    return f;
+  }
+
+  /**
+   * (round 102, scripts/gpugentest.mjs) A region (world corner x0, y0) made both ways at the window's oz — the CPU's
+   * (source.region, cutRegion, toBody: ?gpugen=0's) and the GPU's (regionInto) — and compared: the slot's bytes word
+   * by word, by part (the pages, each kept buffer and texture), and what the CPU keeps (tops, ground, outside, relief,
+   * the structural box). Nothing of the window changes.
+   */
+  async compareGen(x0: number, y0: number): Promise<{ words: number; nonzero: number; diff: number; parts: Record<string, number>; first: unknown[]; meta: Record<string, number>; cpuMs: number; gpuMs: number }> {
+    if (!this.source.regionInto) throw new Error('compareGen: the land source makes nothing on the GPU');
+    const { R } = this;
+    const L = this.layout;
+    const zMax = this.core.dims.zMax;
+    const dev = this.core.host.gpu.device;
+    const t0 = performance.now();
+    const land = await this.source.region(x0, y0, R, R, zMax);
+    const fc = this.cutRegion(land, undefined);
+    const cpu = new Uint32Array(this.toBody(fc).slice().buffer);
+    const rc = this.reliefOf(fc);
+    const t1 = performance.now();
+    const slot = this.pool.temp();
+    let m: FinishMeta;
+    let gpu: Uint32Array;
+    try {
+      m = await this.source.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: L, oz: this.oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE });
+      const st = dev.createBuffer({ label: 'compareGen read', size: L.bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const enc = dev.createCommandEncoder({ label: 'compareGen read' });
+      enc.copyBufferToBuffer(slot.buf, slot.off, st, 0, L.bytes);
+      dev.queue.submit([enc.finish()]);
+      await st.mapAsync(GPUMapMode.READ);
+      gpu = new Uint32Array(st.getMappedRange().slice(0));
+      st.unmap();
+      st.destroy();
+    } finally {
+      this.pool.release(slot);
+    }
+    const t2 = performance.now();
+    // the slot's parts, by word
+    const parts: [string, number, number][] = [['pages', 0, L.rc * L.rc * L.pageBytes]];
+    for (const b of L.bufs) parts.push([b.name, b.off, b.off + b.bytes]);
+    for (const t of L.texs) parts.push([`tex:${t.name}`, t.off, t.off + t.bytes]);
+    const count: Record<string, number> = {};
+    const first: unknown[] = [];
+    let diff = 0;
+    const f32 = (u: number) => new Float32Array(new Uint32Array([u]).buffer)[0];
+    for (const [name, a, b] of parts) {
+      let n = 0;
+      for (let w = a / 4; w < b / 4; w++) {
+        if (cpu[w] === gpu[w]) continue;
+        n++;
+        if (first.length < 12) {
+          const at: Record<string, unknown> = { part: name, word: w - a / 4, cpu: cpu[w], gpu: gpu[w], cpuF: f32(cpu[w]), gpuF: f32(gpu[w]) };
+          if (name === 'pages') {
+            const slotI = Math.floor((w - a / 4) / SLOT_WORDS);
+            const page = Math.floor(slotI / this.pageSlots);
+            const inPage = slotI % this.pageSlots;
+            const c = Math.floor(inPage / this.K);
+            at.col = [(page % L.rc) * CHUNK + (c % CHUNK), Math.floor(page / L.rc) * CHUNK + Math.floor(c / CHUNK)];
+            at.slot = inPage % this.K;
+          }
+          first.push(at);
+        }
+      }
+      if (n) count[name] = n;
+      diff += n;
+    }
+    // what the CPU keeps
+    const meta: Record<string, number> = {};
+    const same = (name: string, p: ArrayLike<number>, q: ArrayLike<number>) => {
+      let n = 0;
+      for (let i = 0; i < R * R; i++) if (!Object.is(p[i], q[i])) {
+        n++;
+        if (first.length < 16) first.push({ part: name, i, cpu: p[i], gpu: q[i] });
+      }
+      if (n) meta[name] = n;
+    };
+    same('surface', fc.surface, m.surface);
+    same('ground', fc.ground!, m.ground);
+    same('relief', rc.relief, Uint8Array.from(m.surface, (s, i) => (Math.abs(s - m.ground[i]) > RELIEF_FORM ? 1 : 0)));
+    same('gapTop', rc.gapTop, m.gapTop);
+    same('colTop', rc.colTop, m.colTop);
+    let no = 0;
+    for (let i = 0; i < R * R; i++) if (JSON.stringify(fc.outside[i]) !== JSON.stringify(m.outside[i])) no++;
+    if (no) meta.outside = no;
+    if (JSON.stringify(fc.judge) !== JSON.stringify(boxOf(m.structural, R))) meta.judge = 1;
+    // (that there was something to compare: the slot's words not zero)
+    let nonzero = 0;
+    for (let w = 0; w < gpu.length; w++) if (gpu[w]) nonzero++;
+    return { words: cpu.length, nonzero, diff, parts: count, first, meta, cpuMs: +(t1 - t0).toFixed(1), gpuMs: +(t2 - t1).toFixed(1) };
   }
 
   private cutRegion(land: RegionLand, snap: Frozen['snap']): Frozen {
@@ -1733,8 +1906,12 @@ export class Streamer {
         for (const k of [...this.frozen.keys()]) if (this.frozen.get(k)!.how === 'made') this.evict(k);
         this.winInfo.clear();
       }
-      this.jobs.clear();
-      this.made.clear();
+      // (round 102: what's made or under way for the land there — precache — is the warp's to use; a fresh warp's
+      // the window made again: dropped)
+      if (fresh) {
+        this.jobs.clear();
+        this.made.clear();
+      }
       this.origin[0] = ox;
       this.origin[1] = oy;
       this.oz = oz;
@@ -1743,7 +1920,7 @@ export class Streamer {
       for (const b of [...this.bufs, ...this.moduleBufs()]) if (!b.keep) enc.clearBuffer(b.buf);
       enc.clearBuffer(wg.particles);
       dev.queue.submit([enc.finish()]);
-      const lands = await Promise.all(
+      const landsP = Promise.all(
         spots.map(async ([lx, ly]) => {
           const key = this.key((ox + lx) / R, (oy + ly) / R);
           if (fresh) {
@@ -1751,12 +1928,30 @@ export class Streamer {
             if (f) this.evict(key);
             if (this.store?.has(key)?.session === SESSION) await this.store.delete(key);
           }
-          const f = await this.bring(key, ox + lx, oy + ly, fresh);
+          let f: Frozen;
+          const done = this.made.get(key);
+          const job = this.jobs.get(key);
+          if (done) {
+            this.made.delete(key);
+            if (this.frozen.get(key) === done) this.frozen.delete(key);
+            this.stats.warpReady++;
+            f = done;
+          } else if (job) {
+            this.jobs.delete(key);
+            this.taken.add(job);
+            this.stats.warpReady++;
+            f = await job;
+          } else f = await this.bring(key, ox + lx, oy + ly, fresh);
+          if (f.oz !== this.oz) f = await this.prepare(f);
           if (f.how === 'thawed') this.stats.thawed++;
           else if (f.how === 'made') this.stats.generated++;
           return { key, f };
         }),
       );
+      // (round 102) the ring round it asked for now, after the window's own (the tiles go in the order asked): moving
+      // off after landing finds it made
+      if (WARP_RING > 0) this.precache(ox, oy, WARP_RING, true);
+      const lands = await landsP;
       for (let k = 0; k < spots.length; k++) {
         const { key, f } = lands[k];
         if (this.frozen.get(key)?.slot === f.slot) this.frozen.delete(key);

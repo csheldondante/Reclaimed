@@ -108,7 +108,7 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
     toWin: (p) => toWin(p[0], p[1]),
     toWorld: (p) => [mod(S.origin[0] + p[0], worldW), mod(S.origin[1] * ROW_H + p[1], worldH)],
   };
-  // (round 99) the places in world cells, stamped into the land as it's made (Atlas.landHooks)
+  // (round 99) the places in world cells, stamped into the land as it's made (Atlas.stampHooks: atlas/stamps.ts)
   const land = new StageLand(A);
   const realise: HeroRunDeps['realise'] = async (pieces) => {
     land.add(pieces.map((p) => ({ ...p, at: frame.toWorld(p.at) })));

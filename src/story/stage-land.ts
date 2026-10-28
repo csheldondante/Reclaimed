@@ -1,7 +1,7 @@
 // ---- story/stage-land.ts --------------------------------------------------------
 // (round 99, `runstream`; the user after the GameplayGM slice: "The controls are integrated but why is the
 // streaming disabled?") A run's stage kept in world cells and stamped into the land as it arrives, as the
-// settlements are (settle/settlements.ts, Atlas.landHooks): so the window streams during a run.
+// settlements are (settle/settlements.ts, Atlas.stampHooks): so the window streams during a run.
 // - The stage generator's pieces (story/stage-gen.ts StagePiece: a disc of a material so many cells high) are kept
 //   at their world spots (x cells, y world units, on the torus). Each region's land, as the atlas makes it (the
 //   first time it comes into the window, and after a warp makes the window again), gets the pieces over it laid on
@@ -17,10 +17,11 @@
 //   land.open('lock:bone-door')                    // an opened lock's plug isn't stamped again
 //   every second or so: land.watch(at => terrain.heightAt(...), toWin, oz, inWindow)
 //   land.dispose()                                 // the hook out
+// (Round 102, `gpugen`: as stamps — atlas/stamps.ts ADD, VEGMAX, BARE, the base a mark — so the GPU lays them as the
+// CPU did: Atlas.stampHooks.)
 
 import type { Atlas } from '../atlas/atlas';
-import type { RegionLand } from '../world/streamgen';
-import { addTop } from '../world/layout';
+import type { StampOps } from '../atlas/stamps';
 import { ROW_H } from '../world/lattice';
 import { materialId } from '../api/common';
 import type { MaterialName } from '../api/common';
@@ -54,15 +55,15 @@ export class StageLand {
   private cover = new Map<number, Cover[]>();
   private cols: number;
   private rows: number;
-  private hook: (land: RegionLand, x0: number, y0: number, w: number, h: number) => Promise<void>;
+  private hook: (ops: StampOps, x0: number, y0: number, w: number, h: number) => Promise<void>;
   readonly stats = { regions: 0, stamped: 0, opened: 0, broken: 0, added: 0 };
 
   constructor(private atlas: Atlas) {
     this.cols = atlas.p.cols;
     this.rows = atlas.p.rows;
     if (this.rows % 2) throw new Error('stage land: the atlas needs an even number of rows (the lattice wraps)');
-    this.hook = async (land, x0, y0, w, h) => this.stamp(land, x0, y0, w, h);
-    atlas.landHooks.push(this.hook);
+    this.hook = async (ops, x0, y0, w, h) => this.stamp(ops, x0, y0, w, h);
+    atlas.stampHooks.push(this.hook);
   }
 
   /** Pieces at their world spots (x cells, y world units). */
@@ -112,8 +113,8 @@ export class StageLand {
   }
 
   dispose(): void {
-    const k = this.atlas.landHooks.indexOf(this.hook);
-    if (k >= 0) this.atlas.landHooks.splice(k, 1);
+    const k = this.atlas.stampHooks.indexOf(this.hook);
+    if (k >= 0) this.atlas.stampHooks.splice(k, 1);
   }
 
   // ---- inside ----
@@ -149,16 +150,17 @@ export class StageLand {
     if (best) best.mid = true;
   }
 
-  /** the pieces over a region's columns, laid on their tops (world z) */
-  private stamp(land: RegionLand, x0: number, y0: number, w: number, h: number): void {
+  /** the pieces over a region's columns, laid on their tops (world z), as stamps */
+  private stamp(ops: StampOps, x0: number, y0: number, w: number, h: number): void {
     if (!this.cover.size) return;
     let any = false;
+    // (each piece whose middle is under a column laid on: its base, the top there before, once the land is made)
+    const bases: [number, number][] = [];
     for (let y = 0; y < h; y++)
       for (let x = 0; x < w; x++) {
         const cs = this.cover.get(this.key(x0 + x, y0 + y));
         if (!cs) continue;
         const i = y * w + x;
-        const col = land.cols[i];
         let done = false;
         for (const pass of [0, 1] as const) {
           // (as the same pieces queued as edits build: the world's queue takes four a tick, and one tick's edits share
@@ -170,11 +172,12 @@ export class StageLand {
           let most = 0;
           let tick = -1;
           let inTick = 0;
+          let grow = -1;
           for (const c of cs) {
             const p = this.pieces[c.piece];
             if (p.gone || p.pass !== pass) continue;
             if (p.grow) {
-              land.vegetation[i] = Math.max(land.vegetation[i], 3.2 * c.w);
+              grow = Math.max(grow, 3.2 * c.w);
               continue;
             }
             const v = p.layers * c.w;
@@ -190,25 +193,25 @@ export class StageLand {
               mat = materialId(p.material as MaterialName);
             }
           }
+          if (grow >= 0) ops.vegMax(i, grow);
           hgt += inTick;
           if (hgt < 0.02) continue;
-          const top = col.length ? col[col.length - 1].z1 : 0;
-          for (const c of cs) {
-            const p = this.pieces[c.piece];
-            if (c.mid && p.pass === pass && !p.gone) {
-              p.base = top;
-              p.seen = false;
-            }
+          const mids = cs.filter((c) => c.mid && this.pieces[c.piece].pass === pass && !this.pieces[c.piece].gone);
+          const m = ops.add(i, hgt, mat, mids.length > 0);
+          for (const c of mids) {
+            bases.push([c.piece, m]);
+            this.pieces[c.piece].seen = false;
           }
-          addTop(col, hgt, mat);
           done = true;
         }
         if (!done) continue;
-        land.surface[i] = col[col.length - 1].z1;
-        land.vegetation[i] = 0;
+        ops.bare(i);
         this.stats.stamped++;
         any = true;
       }
+    if (bases.length) ops.onMarks.push((mk) => {
+      for (const [pc, m] of bases) this.pieces[pc].base = mk[m];
+    });
     if (any) this.stats.regions++;
   }
 }
