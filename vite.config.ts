@@ -47,6 +47,8 @@ function hitchSink(): Plugin {
 export default defineConfig({
   // relative asset paths: the build works from any folder (GitHub Pages serves it at /Reclaimed/)
   base: './',
+  // (round 102, bench v3: the build's time on the benchmark's start page — src/perf/bench.ts BUILD)
+  define: { __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')) },
   server: { port: 5173, strictPort: true },
   plugins: [hitchSink()],
 });

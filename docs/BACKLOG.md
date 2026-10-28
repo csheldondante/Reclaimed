@@ -38,6 +38,7 @@ Ids BN.
 | BN18 | A page that crashes the phone (a wide window) no longer ends the run: skipped on its next load, a lost device goes on; the start screen's partial report | S | done (bench2) |
 | BN19 | The view-shaped window (`?winh=`, round 93) in the sweep: rows other than the side, if it shows more of what the camera sees for the same cost | S | open |
 | BN20 | Run the bench once gpugen (generation on the GPU, no CPU readback) is in places, against today's numbers: does it raise `maxPan` and let the window grow | S | asked |
+| BN21 | (round 102, the user: "because the report finished once it shows the download option mid test whenever it goes to the grey loading screen so it wasn't possible for me to tell when it was done") No download while a run is in progress: "Benchmark running: page N of M — don't close" on every page from the grey load on; "Download report" only on the end screen for the run that just finished; the previous run's labelled (version, date) and only on the start page with no run going; per-step partial saves; the start page shows version and build; `benchrun.mjs --smoke` checks it | S | done (bench2) |
 
 ## Round 100 (2026-10-27, session 5, `regionstore`) — the world serializes; streaming never waits on a region (DECISIONS round 100)
 

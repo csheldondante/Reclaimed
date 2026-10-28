@@ -16,6 +16,16 @@ each was implemented.
   if the field is just a count of people or structures or something. 4. I think two so we can have overgrown buildings
   but I'm not certain." → BACKLOG ST17 (design only; come back to it).
 
+## 2026-10-28 — round 102 (session 5, `bench2`) — the benchmark after the first phone run
+
+- The user, verbatim: "we should also run once the GPU work is done and see if getting rid of the CPU readback fixes
+  things even more and let's us crank up pan speed and view distance".
+- On the phone's v2 attempt, verbatim: "No the issue is that because the report finished once it shows the download
+  option mid test whenever it goes to the grey loading screen so it wasn't possible for me to tell when it was done".
+- On the desktop baseline, verbatim: "I don't think we need a new baseline for v3 just the bug fix".
+- → bench v3 on `bench2`: pans to 320, windows to 512, the fastest pan each window sustains; no download offered
+  mid-run, the previous run labelled; no new desktop baseline (BACKLOG BN17–BN21).
+
 ## 2026-10-28 — round 101 (session 5, `bench`) — a calibration benchmark on the phone
 
 - The user, verbatim: "Can you build a calibration test that we can run on the phone to directly give you benchmark
