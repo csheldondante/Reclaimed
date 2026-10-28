@@ -23,6 +23,7 @@ import { ColumnBodies, subtract, type ColPiece, type FallingBody, type Landing }
 import { RockBodies, RB, type RockBody, type RockGround, type V3 } from './rockbodies';
 import { BUILD_FRAMES, type RockDraw, type RockMesh } from '../render/rockmesh';
 import type { Physics, PhysBody } from '../physics/physics';
+import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { ExternalRegistry, MESHINST, OWNER_ROCK, type ExternalCol, type ExternalInstance } from '../sim/external';
 
 /** (round 96) what bends: metal goes to the physics voxels (physics.ts), the rest of what falls stays rigid */
@@ -38,6 +39,8 @@ const METAL_MAX = 6000;
 const SKIN_METAL = typeof location !== 'undefined' && new URLSearchParams(location.search).get('rbskin') === '1';
 
 const PASS = 0.35; // s between analyses while anything is dirty or moving
+/** (round 100, hitchrec) the structures' boxes a pass judges until it has taken this long (ms); the rest wait for the next */
+const PASS_BUDGET = 8;
 /** (round 99, meshinst) resting rock kept as meshes at once (their slots are the rock mesh's: render/rockmesh.ts) */
 const REST_MAX = 16;
 /** (round 99) cells under a resting rock's cells, down to the ground, claimed with it (what it stands on) */
@@ -156,7 +159,7 @@ export class Integrity {
   /** dust where something breaks or a body hits (grains, spread in cells, the material it's made of) */
   onDust?: (x: number, y: number, z: number, count: number, spread: number, mat: number) => void;
   /** stats for the perf overlay / tests */
-  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0 };
+  stats = { passes: 0, bodies: 0, crumbled: 0, settled: 0, crumbledBodies: 0, impacts: 0, shatters: 0, shattered: 0, lastMs: 0, rockSeeds: 0, rereads: 0, settledFalls: 0, settleMs: 0, metal: 0, deferred: 0 };
   /** sleeping bodies projected per column: top, bottom (top < 0: none) — the
    *  GPU's bodyProj texture and the bodies' own collision share it */
   readonly proj: Float32Array;
@@ -316,6 +319,8 @@ export class Integrity {
       }
   }
   markBox(x0: number, y0: number, x1: number, y1: number): void {
+    // (round 100, hitchrec) a box inside one already waiting as long is judged with it (a cyclone marks its box a frame)
+    for (const d of this.dirty) if (d[4] >= 2 && d[0] <= x0 && d[1] <= y0 && d[2] >= x1 && d[3] >= y1) return;
     this.dirty.push([x0, y0, x1, y1, 2]);
   }
 
@@ -644,7 +649,9 @@ export class Integrity {
     const { data, count } = this.bodies.pack();
     if (this.rigid?.list.length) {
       // (round 95) the rigid rock: a step, its hits (dust, sparks, a break), what came to rest written back
+      const tRigid = performance.now(); // (round 100, hitchrec: timing)
       if (this.world.slots.length && dt > 0) this.stepRigid(dt);
+      record('rockbodies', performance.now() - tRigid); // (round 100, hitchrec: timing)
       const max = 16384;
       if (this.packF.length < max * 8) this.packF = new Float32Array(max * 8);
       const f = this.packF;
@@ -947,7 +954,15 @@ export class Integrity {
     }
     const boxes = this.dirty;
     this.dirty = [];
-    for (const [x0, y0, x1, y1, left] of boxes) {
+    for (let b = 0; b < boxes.length; b++) {
+      // (round 100, hitchrec: a pass never holds the main thread for seconds — past its budget the boxes left wait,
+      // as they were, for the next pass; a soak saw one pass of 40 s, every arriving town's box solved)
+      if (b > 0 && performance.now() - t0 > PASS_BUDGET) {
+        for (let k = b; k < boxes.length; k++) this.dirty.push(boxes[k]);
+        this.stats.deferred += boxes.length - b;
+        break;
+      }
+      const [x0, y0, x1, y1, left] = boxes[b];
       if (left > 1) this.dirty.push([x0, y0, x1, y1, left - 1]);
       const r = analyse(this.world, x0 - 2, y0 - 2, x1 + 2, y1 + 2);
       if (this.apply(r)) {
@@ -963,6 +978,7 @@ export class Integrity {
       }
     }
     this.stats.lastMs = performance.now() - t0;
+    record('judge.pass', this.stats.lastMs); // (round 100, hitchrec: timing — the pass runs in its readback's continuation)
   }
 
   /** What an analysis found, done: what crumbles crumbles, what breaks free falls. Did anything crumble? */

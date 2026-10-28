@@ -4,3 +4,4 @@ dist/
 .vite/
 .claude/settings.local.json
 *.png
+perf-reports/

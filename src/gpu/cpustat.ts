@@ -13,8 +13,21 @@ export const cpuStats = new Map<string, CpuStat>();
 /** the steps run since the frame began (the level keeps them for a long frame) */
 export const frameSteps: string[] = [];
 
+/**
+ * (round 100, hitchrec) every step of half a millisecond or more since the hitch recorder last took them (src/perf/hitch.ts):
+ * labels and ms in two arrays, reused (nothing allocated a step); `on` only while it records
+ */
+export const spans = { on: false, label: [] as string[], ms: [] as number[] };
+
+function span(label: string, ms: number): void {
+  if (!spans.on || ms < 0.5 || spans.ms.length >= 512) return;
+  spans.label.push(label);
+  spans.ms.push(ms);
+}
+
 /** a step's ms, measured by its caller */
 export function record(label: string, ms: number): void {
+  span(label, ms);
   if (ms >= 1) frameSteps.push(`${label} ${ms.toFixed(0)}`);
   const s = cpuStats.get(label) ?? { last: 0, max: 0, n: 0, sum: 0 };
   s.last = ms;
@@ -31,6 +44,7 @@ export function timed<T>(label: string, f: () => T): T {
     return f();
   } finally {
     const ms = performance.now() - t0;
+    span(label, ms);
     if (ms >= 1) frameSteps.push(`${label} ${ms.toFixed(0)}`);
     const s = cpuStats.get(label) ?? { last: 0, max: 0, n: 0, sum: 0 };
     s.last = ms;

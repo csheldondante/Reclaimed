@@ -12,7 +12,10 @@ export class Profiler {
   active = true;
   private querySet?: GPUQuerySet;
   private resolveBuf?: GPUBuffer;
-  private staging: { buf: GPUBuffer; busy: boolean }[] = [];
+  private staging: { buf: GPUBuffer; busy: boolean; names: string[] }[] = [];
+  /** (round 100, hitchrec) the timestamp writes made once a slot pair, not an object a pass a frame */
+  private writes: GPUComputePassTimestampWrites[] = [];
+  private perName = new Map<string, number>();
   private names: string[] = [];
   private next = 0;
 
@@ -30,6 +33,9 @@ export class Profiler {
   dispatches = 0;
   draws = 0;
   memory = new Map<string, number>();
+  /** (round 100, hitchrec) frames begun, and who hears each frame's GPU time once it's read back (src/perf/hitch.ts) */
+  frameNo = 0;
+  onFrame?: (frame: number, ms: number, top: string) => void;
 
   constructor(device: GPUDevice, hasTimestamps: boolean) {
     this.enabled = hasTimestamps;
@@ -43,12 +49,14 @@ export class Profiler {
       this.staging.push({
         buf: device.createBuffer({ size: MAX_QUERIES * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }),
         busy: false,
+        names: [],
       });
     }
   }
 
   beginFrame(): void {
-    this.names = [];
+    this.frameNo++;
+    this.names.length = 0;
     this.next = 0;
     this.dispatches = 0;
     this.draws = 0;
@@ -60,7 +68,7 @@ export class Profiler {
     const i = this.next;
     this.next += 2;
     this.names.push(name);
-    return { querySet: this.querySet, beginningOfPassWriteIndex: i, endOfPassWriteIndex: i + 1 };
+    return (this.writes[i / 2] ??= { querySet: this.querySet, beginningOfPassWriteIndex: i, endOfPassWriteIndex: i + 1 });
   }
 
   /** Resolve this frame's queries into a free staging buffer (skipped if all are in flight). */
@@ -69,23 +77,29 @@ export class Profiler {
     const slot = this.staging.find((s) => !s.busy);
     if (!slot) return undefined;
     const count = this.next;
-    const names = this.names.slice();
+    const names = slot.names;
+    names.length = 0;
+    for (const n of this.names) names.push(n);
+    const frameNo = this.frameNo;
     encoder.resolveQuerySet(this.querySet, 0, count, this.resolveBuf!, 0);
     encoder.copyBufferToBuffer(this.resolveBuf!, 0, slot.buf, 0, count * 8);
     slot.busy = true;
     // Caller invokes this after queue.submit.
     return () => {
       slot.buf.mapAsync(GPUMapMode.READ, 0, count * 8).then(() => {
-        const t = new BigInt64Array(slot.buf.getMappedRange(0, count * 8));
-        let first = t[0];
-        let last = t[1];
-        const perName = new Map<string, number>();
+        // (round 100, hitchrec: ns as two u32 words, not BigInts — a BigInt a read was two allocations a pass)
+        const w = new Uint32Array(slot.buf.getMappedRange(0, count * 8));
+        const ns = (k: number) => w[k * 2] + w[k * 2 + 1] * 4294967296;
+        let first = ns(0);
+        let last = ns(1);
+        const perName = this.perName;
+        perName.clear();
         for (let p = 0; p < names.length; p++) {
-          const a = t[p * 2];
-          const b = t[p * 2 + 1];
+          const a = ns(p * 2);
+          const b = ns(p * 2 + 1);
           if (a < first) first = a;
           if (b > last) last = b;
-          const ms = Number(b - a) / 1e6;
+          const ms = (b - a) / 1e6;
           perName.set(names[p], (perName.get(names[p]) ?? 0) + ms);
         }
         this.framesResolved++;
@@ -95,11 +109,21 @@ export class Profiler {
           const prev = this.passMs.get(n);
           this.passMs.set(n, prev === undefined ? ms : prev * 0.9 + ms * 0.1);
         }
-        const frame = Number(last - first) / 1e6;
+        const frame = (last - first) / 1e6;
         if (frame > 25) {
           const top = [...perName].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([n, ms]) => `${n} ${ms.toFixed(1)}`);
           this.gpuLong.push(`${frame.toFixed(0)}ms: ${top.join(', ')}`);
           if (this.gpuLong.length > 24) this.gpuLong.shift();
+        }
+        if (this.onFrame) {
+          let top = '';
+          let topMs = -1;
+          for (const [n, ms] of perName)
+            if (ms > topMs) {
+              topMs = ms;
+              top = n;
+            }
+          this.onFrame(frameNo, frame, `${top} ${topMs.toFixed(1)}`);
         }
         this.gpuTotalMs += frame;
         this.gpuFrameMs = this.gpuFrameMs * 0.9 + frame * 0.1;
