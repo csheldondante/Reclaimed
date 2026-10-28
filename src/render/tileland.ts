@@ -7,9 +7,10 @@
 // by a field mesh of its own over that scratch (a "window" one region across: its own Globals with the region's
 // size and origin, a chunk table onto the scratch's pages, the scratch's kept fields bound where the window's are),
 // baked into a tile (TileCache.bakeTile: the same G-buffer and fsTileBake), and let go: the scratch is the next
-// region's. Nothing of it simulates; nothing of it stays but the tile. One region at a time.
+// region's. Nothing of it simulates; nothing of it stays but the tile. (Round 105, tileahead: the camera's way first,
+// a few regions made at once in slots of their own, one meshed and baked at a time.)
 //
-// Not yet: the hybrid's heightfield for the flat chunks (every chunk is meshed — six for a region); the wetness
+// Not yet: the wetness
 // (renderFields is the sim's: dry here); the drift (none); the region's neighbours (its edges are open: the columns
 // past them go on as the edge's, so a cliff at a region's edge is cut — the tiles overlap a cell).
 
@@ -51,17 +52,32 @@ export interface TileLandHost {
   camBytes: number;
 }
 
-type State = { k: 'idle' } | { k: 'gen'; rx: number; ry: number } | { k: 'mesh'; rx: number; ry: number; frames: number; lo: number; hi: number; oz: number } | { k: 'bake'; rx: number; ry: number; lo: number; hi: number; oz: number };
 /** (hybrid.ts columnNeeds) a gap open to the air: a neighbour's top under a column's highest gap's roof */
 const GAP_OPEN = 0.25;
+/** (round 105, tileahead) regions made at once (each its own scratch slot): ?tilelandn= */
+const IN_FLIGHT = Math.max(1, Number(new URLSearchParams(location.search).get('tilelandn') ?? 3) | 0);
+
+/** a region being made: its scratch slot; once its land is in, what the bake needs of it */
+interface Job {
+  rx: number;
+  ry: number;
+  slot: number;
+  oz: number;
+  t0: number;
+  ready?: { su: Uint32Array; need: Uint8Array; lo: number; hi: number; meshed: number };
+}
 
 export class TileLand {
-  readonly stats = { made: 0, baked: 0, failed: 0, genMs: 0, lastMs: 0, meshed: 0, gridded: 0 };
-  /** per scratch mesh chunk: meshed (a gap open to the air in it — hybrid.ts's rule), the rest the grid's */
+  readonly stats = { made: 0, baked: 0, failed: 0, genMs: 0, lastMs: 0, meshed: 0, gridded: 0, inFlight: 0, dropped: 0 };
+  /** per scratch mesh chunk of the region being baked: meshed (a gap open to the air in it — hybrid.ts's rule), the rest the grid's */
   private need: Uint8Array;
   private flat: Uint8Array;
-  private st: State = { k: 'idle' };
-  private slot: GPUBuffer;
+  /** the scratch slots (IN_FLIGHT regions in the pool's layout, one buffer), which are a job's */
+  private slots: GPUBuffer;
+  private slotJob: (Job | null)[];
+  private jobs = new Map<string, Job>();
+  /** the region being meshed and baked (one at a time: the scratch's field mesh, chunk table, surface) */
+  private cur: { job: Job; frames: number } | null = null;
   private globals: GPUBuffer;
   private patch: GPUBuffer;
   private patchData: ArrayBuffer;
@@ -71,10 +87,9 @@ export class TileLand {
   private drift: GPUTexture;
   private mesh: FieldMesh;
   private cam: GPUBuffer;
-  private gGroup?: GPUBindGroup;
-  private rGroup?: GPUBindGroup;
+  /** per slot: its draw groups (the mesh's G-buffer pass, the resolve) */
+  private groupsOf: ({ g: GPUBindGroup; r: GPUBindGroup } | null)[];
   private poolSeen = -1;
-  private t0 = 0;
   /** regions asked for that came to nothing (no land made): not asked again */
   private failed = new Set<string>();
 
@@ -83,16 +98,16 @@ export class TileLand {
     const w = host.world;
     const L = src.layout;
     if (L.R !== R) throw new Error(`TileLand: regions of ${L.R}, not ${R}`);
+    if (L.bytes % 256) throw new Error('TileLand: a region record must be 256-byte aligned');
     const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
-    this.slot = w.buf('tileland region', L.bytes, S | GPUBufferUsage.COPY_SRC);
+    this.slots = w.buf('tileland regions', L.bytes * IN_FLIGHT, S | GPUBufferUsage.COPY_SRC);
+    this.slotJob = new Array(IN_FLIGHT).fill(null);
+    this.groupsOf = new Array(IN_FLIGHT).fill(null);
     this.globals = w.buf('tileland globals', w.globals.size, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.patchData = new ArrayBuffer(w.globals.size);
     this.patch = w.buf('tileland globals patch', w.globals.size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
-    // (a chunk table onto the scratch's pages: chunk (i, j) of the region is page j · rc + i)
-    const t = new Uint32Array(L.rc * L.rc * 2);
-    for (let p = 0; p < L.rc * L.rc; p++) t.set([p * L.K * CHUNK * CHUNK, L.K], p * 2);
-    this.table = w.buf('tileland chunks', t.byteLength, S);
-    dev.queue.writeBuffer(this.table, 0, t);
+    // (a chunk table onto the slot's pages: chunk (i, j) of the region is page j · rc + i — written per region)
+    this.table = w.buf('tileland chunks', L.rc * L.rc * 8, S);
     this.surface = w.buf('tileland surface', R * R * 4, S);
     this.fields = w.buf('tileland renderFields', R * R * 16, S);
     this.drift = dev.createTexture({ label: 'tileland drift', size: [R, R], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING });
@@ -100,7 +115,7 @@ export class TileLand {
     const fake = Object.assign(Object.create(w) as WorldGpu, { w: R, h: R, globals: this.globals });
     const frames = w.buf('tileland frames', w.strFrames.size, S);
     const vox = w.buf('tileland vox', 16, S);
-    this.mesh = new FieldMesh(dev, fake, host.profiler, true, 1, { name: 'tileland', chunks: this.table, layers: this.slot, frames, vox, zSpan: w.zMax, slots: 2, pages: 192 });
+    this.mesh = new FieldMesh(dev, fake, host.profiler, true, 1, { name: 'tileland', chunks: this.table, layers: this.slots, frames, vox, zSpan: w.zMax, slots: 2, pages: 192 });
     this.mesh.openEdges();
     const [nx, ny] = this.mesh.chunkGrid;
     this.need = new Uint8Array(nx * ny);
@@ -134,17 +149,22 @@ export class TileLand {
     enc.copyBufferToBuffer(this.patch, 284 * 4, this.globals, 284 * 4, (480 - 284) * 4);
   }
 
-  /** the scratch's draw groups (the mesh's G-buffer pass, the resolve), made again when its pool grows */
-  private groups(): void {
+  /** slot s's draw groups (its kept fields at their offsets), made again when the scratch mesh's pool grows */
+  private groups(s: number): { g: GPUBindGroup; r: GPUBindGroup } {
     const v = this.mesh.maintain();
-    if (v === this.poolSeen && this.gGroup) return;
-    this.poolSeen = v;
+    if (v !== this.poolSeen) {
+      this.poolSeen = v;
+      this.groupsOf.fill(null);
+    }
+    const have = this.groupsOf[s];
+    if (have) return have;
     const h = this.host;
     const L = this.src.layout;
+    const base = s * L.bytes;
     const kept = (name: string): GPUBufferBinding => {
       const b = L.bufs.find((x) => x.name === name);
       if (!b) throw new Error(`TileLand: the region layout keeps no ${name}`);
-      return { buffer: this.slot, offset: b.off, size: b.bytes };
+      return { buffer: this.slots, offset: base + b.off, size: b.bytes };
     };
     const res: Record<number, GPUBuffer | GPUBufferBinding | GPUTextureView | GPUSampler> = {
       ...h.meshResources(this.cam),
@@ -156,110 +176,159 @@ export class TileLand {
       6: kept('veg'),
       7: this.fields,
       8: kept('water'),
-      9: this.slot,
+      9: this.slots,
       11: this.surface,
       13: kept('wilt'),
       17: this.drift.createView(),
       30: this.mesh.region,
     };
     const ent = (r: typeof res) => Object.entries(r).map(([b, x]) => ({ binding: Number(b), resource: x instanceof GPUBuffer ? { buffer: x } : x }));
-    this.gGroup = h.device.createBindGroup({ label: 'tileland mesh', layout: h.meshLayout, entries: ent(res) });
     const [g0, g1] = this.cache.gbufViews;
-    this.rGroup = h.device.createBindGroup({ label: 'tileland resolve', layout: h.resolveLayout, entries: [...ent(res), { binding: 40, resource: g0 }, { binding: 41, resource: g1 }] });
+    const o = {
+      g: h.device.createBindGroup({ label: 'tileland mesh', layout: h.meshLayout, entries: ent(res) }),
+      r: h.device.createBindGroup({ label: 'tileland resolve', layout: h.resolveLayout, entries: [...ent(res), { binding: 40, resource: g0 }, { binding: 41, resource: g1 }] }),
+    };
+    this.groupsOf[s] = o;
+    return o;
   }
 
-  /** A frame's step: ask for the next region, mesh what came, bake what's meshed. */
-  step(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number): void {
-    const s = this.st;
-    if (s.k === 'idle') {
-      const want = this.cache.wanted(cam, (k) => this.failed.has(k));
-      if (!want) return;
-      const p = this.src.landInto(want.rx * R, want.ry * R, this.slot, 0);
-      if (!p) return;
-      this.st = { k: 'gen', rx: want.rx, ry: want.ry };
-      this.t0 = performance.now();
-      const oz = this.src.oz();
-      p.then(
-        (m) => {
-          // (its tops for the box, its surface for the look: water's level, the grid)
-          const su = new Uint32Array(R * R);
-          let lo = Infinity;
-          let hi = -Infinity;
-          for (let i = 0; i < R * R; i++) {
-            su[i] = sfPack(m.surface[i], 0);
-            lo = Math.min(lo, m.surface[i]);
-            hi = Math.max(hi, m.colTop[i] - oz, m.surface[i]);
-          }
-          this.host.device.queue.writeBuffer(this.surface, 0, su);
-          // (the hybrid's rule, the user's "mesher only where needed": a chunk with a gap open to the air is meshed,
-          // the rest drawn as the grid through its columns' tops — without the grid, all meshed)
-          const grid = !!this.host.gridPipe();
-          const [nx, , side] = this.mesh.chunkGrid;
-          this.need.fill(grid ? 0 : 1);
-          if (grid)
-            for (let y = 0; y < R; y++)
-              for (let x = 0; x < R; x++) {
-                const g = m.gapTop[y * R + x];
-                if (!(g > -1e30)) continue;
-                let open = false;
-                for (let dy = -1; dy <= 1 && !open; dy++)
-                  for (let dx = -1; dx <= 1; dx++) {
-                    const qx = x + dx;
-                    const qy = y + dy;
-                    if (!(dx || dy) || qx < 0 || qy < 0 || qx >= R || qy >= R) continue;
-                    if (m.colTop[qy * R + qx] < g - GAP_OPEN) {
-                      open = true;
-                      break;
-                    }
-                  }
-                if (!open) continue;
-                const wx = x + 0.5 + 0.5 * (y & 1);
-                this.need[Math.min(this.need.length / nx - 1, Math.floor((y + 0.5) / side)) * nx + Math.min(nx - 1, Math.floor(wx / side))] = 1;
-              }
-          for (let c = 0; c < this.need.length; c++) this.flat[c] = this.need[c] ? 0 : 1;
-          const meshed = this.need.reduce((a, v) => a + v, 0);
-          this.stats.meshed += meshed;
-          this.stats.gridded += this.need.length - meshed;
-          if (meshed) this.mesh.shift(1 << 12, 0, [0, 0, 0]);
-          this.stats.made++;
-          this.stats.genMs = performance.now() - this.t0;
-          this.st = meshed ? { k: 'mesh', rx: want.rx, ry: want.ry, frames: 0, lo: lo - 2, hi: hi + 2, oz } : { k: 'bake', rx: want.rx, ry: want.ry, lo: lo - 2, hi: hi + 2, oz };
-        },
-        (e) => {
-          console.warn('tileland: no land for', want, e);
-          this.failed.add(`${want.rx},${want.ry}`);
-          this.stats.failed++;
-          this.st = { k: 'idle' };
-        },
-      );
-      return;
+  /** what the bake needs of a region's land: its surface packed, its box, the chunks the mesher draws (the rest the grid's) */
+  private readyOf(m: FinishMeta, oz: number): NonNullable<Job['ready']> {
+    const su = new Uint32Array(R * R);
+    let lo = Infinity;
+    let hi = -Infinity;
+    for (let i = 0; i < R * R; i++) {
+      su[i] = sfPack(m.surface[i], 0);
+      lo = Math.min(lo, m.surface[i]);
+      hi = Math.max(hi, m.colTop[i] - oz, m.surface[i]);
     }
-    if (s.k === 'gen') return;
-    this.patchGlobals(enc, s.rx, s.ry);
-    if (s.k === 'mesh') {
+    // (the hybrid's rule, the user's "mesher only where needed": a chunk with a gap open to the air is meshed, the
+    // rest drawn as the grid through its columns' tops — without the grid, all meshed)
+    const grid = !!this.host.gridPipe();
+    const [nx, , side] = this.mesh.chunkGrid;
+    const need = new Uint8Array(this.need.length).fill(grid ? 0 : 1);
+    if (grid)
+      for (let y = 0; y < R; y++)
+        for (let x = 0; x < R; x++) {
+          const g = m.gapTop[y * R + x];
+          if (!(g > -1e30)) continue;
+          let open = false;
+          for (let dy = -1; dy <= 1 && !open; dy++)
+            for (let dx = -1; dx <= 1; dx++) {
+              const qx = x + dx;
+              const qy = y + dy;
+              if (!(dx || dy) || qx < 0 || qy < 0 || qx >= R || qy >= R) continue;
+              if (m.colTop[qy * R + qx] < g - GAP_OPEN) {
+                open = true;
+                break;
+              }
+            }
+          if (!open) continue;
+          const wx = x + 0.5 + 0.5 * (y & 1);
+          need[Math.min(need.length / nx - 1, Math.floor((y + 0.5) / side)) * nx + Math.min(nx - 1, Math.floor(wx / side))] = 1;
+        }
+    return { su, need, lo: lo - 2, hi: hi + 2, meshed: need.reduce((a, v) => a + v, 0) };
+  }
+
+  /** a job done or dropped: its slot free */
+  private free(j: Job): void {
+    this.jobs.delete(`${j.rx},${j.ry}`);
+    this.slotJob[j.slot] = null;
+  }
+
+  /**
+   * A frame's step: start making the next region the camera's way (one a frame, IN_FLIGHT at once), mesh and bake one
+   * whose land is in — the one the camera reaches first. True when it baked this frame (the window's bakes wait).
+   */
+  step(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number): boolean {
+    this.stats.inFlight = this.jobs.size;
+    // (a new region asked for: the first of the camera's way not being made)
+    const free = this.slotJob.indexOf(null);
+    if (free >= 0) {
+      const want = this.cache.wanted(cam, (k) => this.failed.has(k) || this.jobs.has(k), 1)[0];
+      if (want) {
+        const L = this.src.layout;
+        const p = this.src.landInto(want.rx * R, want.ry * R, this.slots, free * L.bytes);
+        if (p) {
+          const j: Job = { rx: want.rx, ry: want.ry, slot: free, oz: this.src.oz(), t0: performance.now() };
+          this.jobs.set(`${want.rx},${want.ry}`, j);
+          this.slotJob[free] = j;
+          p.then(
+            (m) => {
+              j.ready = this.readyOf(m, j.oz);
+              this.stats.made++;
+              this.stats.genMs = performance.now() - j.t0;
+            },
+            (e) => {
+              console.warn('tileland: no land for', want, e);
+              this.failed.add(`${want.rx},${want.ry}`);
+              this.stats.failed++;
+              this.free(j);
+            },
+          );
+        }
+      }
+    }
+    // (the one to bake: of those whose land is in, the camera's way first — a tile since made of it (the window's): dropped)
+    if (!this.cur) {
+      const ready = [...this.jobs.values()].filter((j) => j.ready);
+      for (const j of ready)
+        if (this.cache.hasTile(j.rx, j.ry, cam.azimuth)) {
+          this.free(j);
+          this.stats.dropped++;
+        }
+      const left = ready.filter((j) => this.jobs.has(`${j.rx},${j.ry}`));
+      if (!left.length) return false;
+      const order = this.cache.wanted(cam, () => false, 32).map((w) => `${w.rx},${w.ry}`);
+      const rank = (j: Job) => {
+        const i = order.indexOf(`${j.rx},${j.ry}`);
+        return i < 0 ? 1e6 : i;
+      };
+      left.sort((a, b) => rank(a) - rank(b));
+      const job = left[0];
+      const r = job.ready!;
+      const L = this.src.layout;
+      const t = new Uint32Array(L.rc * L.rc * 2);
+      const at = (job.slot * L.bytes) / 16;
+      for (let p = 0; p < L.rc * L.rc; p++) t.set([at + p * L.K * CHUNK * CHUNK, L.K], p * 2);
+      this.host.device.queue.writeBuffer(this.table, 0, t);
+      this.host.device.queue.writeBuffer(this.surface, 0, r.su);
+      this.need.set(r.need);
+      for (let c = 0; c < this.need.length; c++) this.flat[c] = this.need[c] ? 0 : 1;
+      this.stats.meshed += r.meshed;
+      this.stats.gridded += this.need.length - r.meshed;
+      if (r.meshed) this.mesh.shift(1 << 12, 0, [0, 0, 0]);
+      this.cur = { job, frames: r.meshed ? 0 : MESH_FRAMES };
+    }
+    const c = this.cur;
+    const job = c.job;
+    const r = job.ready!;
+    this.patchGlobals(enc, job.rx, job.ry);
+    if (c.frames < MESH_FRAMES) {
       this.mesh.pin(this.need);
       this.mesh.encode(enc, cam);
-      if (++s.frames >= MESH_FRAMES) this.st = { k: 'bake', rx: s.rx, ry: s.ry, lo: s.lo, hi: s.hi, oz: s.oz };
-      return;
+      c.frames++;
+      return false;
     }
-    // bake
-    this.groups();
     const gp = this.host.gPipe();
-    if (!gp) return;
-    const ok = this.cache.bakeTile(enc, cam, B, rp, s.rx, s.ry, s.lo, s.hi, s.oz, [0, 0, -s.oz], this.cam, (g) => {
+    if (!gp) return false;
+    const gr = this.groups(job.slot);
+    const ok = this.cache.bakeTile(enc, cam, B, rp, job.rx, job.ry, r.lo, r.hi, job.oz, [0, 0, -job.oz], this.cam, (g) => {
       g.setPipeline(gp);
-      g.setBindGroup(0, this.gGroup!);
+      g.setBindGroup(0, gr.g);
       this.mesh.drawMask(g, this.need);
-      const gr = this.host.gridPipe();
-      if (gr) {
-        g.setPipeline(gr);
-        g.setBindGroup(0, this.gGroup!);
+      const grid = this.host.gridPipe();
+      if (grid) {
+        g.setPipeline(grid);
+        g.setBindGroup(0, gr.g);
         this.host.drawGrid(g, this.flat);
       }
-    }, [this.rGroup!]);
+    }, [gr.r]);
     if (ok) this.stats.baked++;
-    this.stats.lastMs = performance.now() - this.t0;
-    this.st = { k: 'idle' };
+    this.stats.lastMs = performance.now() - job.t0;
+    this.free(job);
+    this.cur = null;
+    return true;
   }
 
   afterSubmit(): void {

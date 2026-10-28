@@ -27,6 +27,12 @@ try {
   await p.goto(u, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await new Promise((r) => setTimeout(r, 30000));
+  // (--zoom z: the camera's zoom, px a cell, set before the sampling; round 105)
+  const zoom = Number(opt('zoom', 0));
+  if (zoom) {
+    await p.evaluate((z) => (window.reclaimed.camera.zoom = z), zoom);
+    await new Promise((r) => setTimeout(r, Number(opt('settle', 15)) * 1000));
+  }
   // (--pan v,s: the camera moved up the screen at v cells/s for s seconds, from the start of the sampling)
   const pan = opt('pan', '');
   if (pan) {
@@ -58,7 +64,12 @@ try {
       await new Promise((res) => { const g = () => { f++; if (performance.now() - t < 1000) requestAnimationFrame(g); else res(); }; requestAnimationFrame(g); });
       const T = R.renderer.tiles;
       const c = T ? T.coverage(R.camera) : null;
-      return { fps: f, tiles: T ? { ...T.stats } : null, cover: c, zoom: +R.camera.zoom.toFixed(2), az: +R.camera.azimuth.toFixed(3), slides: R.renderer.fieldMesh.slides, n0 };
+      // (round 105: the share in detail on the screen's leading and trailing halves, across the camera's motion; with no
+      // tiles, the window's land alone — up the screen, the pan's way)
+      const up = R.camera.screenDeltaToWorld(0, -100);
+      const split = T?.coverageSplit ? T.coverageSplit(R.camera, up) : null;
+      const L = T?.land ? { ...T.land.stats } : null;
+      return { fps: f, tiles: T ? { ...T.stats } : null, land: L, cover: c, split, motion: T?.motion ? T.motion.map((v) => +v.toFixed(1)) : null, zoom: +R.camera.zoom.toFixed(2), az: +R.camera.azimuth.toFixed(3), slides: R.renderer.fieldMesh.slides, n0 };
     });
     console.log(JSON.stringify(s));
     if (out && k % 10 === 9) await p.screenshot({ path: `${out}-${k}.png` });

@@ -8888,3 +8888,33 @@ Tests (desktop iGPU, q=low 412x915, every system on):
   (places), "asleep, nothing changes" now and then either way (veg 6). towertest with tiles on: all passed on the
   second run (the first: concrete's piece in 522 ms; off passed; again on, 74 ms) — a flake, to watch.
 
+## 2026-10-28 — round 105 (`tileahead`): the tiles load the camera's way
+
+Why: the user (DECISIONS round 105): "Tiles look good but they seem to load in the direction opposite the camera
+panning." The trailing side fills by itself (the window's regions leave it as frozen tiles); the side ahead needs the
+render-only land (TC2), made one region at a time in screen order (nearest the middle first) — so ahead lagged.
+
+- TileCache.wanted: the regions ordered by when the screen reaches them (on it now: 0; the screen's sample points
+  moved on by the camera's motion over `?tileahead=` 1 s: later), then how far ahead along the motion (ahead before
+  behind), then how near the middle; at rest as before. The motion: the camera's target in world units (the window's
+  place added, so a slide isn't motion), smoothed over a quarter second.
+- TileLand: IN_FLIGHT (`?tilelandn=` 3) regions made at once, each in its own scratch slot (one buffer: the slots'
+  chunk table written for the one being meshed; its kept fields bound at the slot's offset); generation paced by
+  gpugen's own pacer (regionInto, spread) as the streamer's is; meshed and baked one at a time, the one the camera
+  reaches first; one whose tile the window made meanwhile dropped. A frame the land bakes, the window's trailing
+  bakes wait (TileCache.encode): they never take the land ahead's turn.
+- tileprobe: `--zoom z`, and `split` — the share of the screen in detail on its leading and trailing halves (across
+  the pan's way: up the screen), TileCache.coverageSplit.
+
+Measured (desktop iGPU, q=low 412x915, window 256, tiles=1, every system as deployed; before = places 50b07a7 with
+only coverageSplit added for the probe), the share of the half not in detail, mean over the pan (worst):
+
+| zoom | pan c/s | before: leading | before: trailing | after: leading | after: trailing | land baked before / after |
+|---|---|---|---|---|---|---|
+| 5 | 40 | 0.9% (6.9%) | 0% | 0.4% (6.6%) | 0% | 57 / 60 |
+| 3.5 | 40 | 1.2% (8.3%) | 0% | 0.3% (3.1%) | 0% | 68 / 70 |
+| 3.5 | 120 | 56.3% (79.2%) | 0% | 8.3% (34.7%) | 0% | 60 / 108 |
+
+fps 93-101 either way. At speed the old order left most of the leading half to the rings; the new one keeps up to
+most of it at 120 cells/s. The phone (slower generation) to measure; IN_FLIGHT and the frame budget to tune there.
+

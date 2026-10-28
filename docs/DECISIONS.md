@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 105 (session 5, `tileahead`) — the tiles load the camera's way
+
+- The user, on the tiles in places (`?tiles=1`), verbatim: "Tiles look good but they seem to load in the direction
+  opposite the camera panning."
+- → Branch `tileahead`: the render-only land made the camera's way first (where the screen goes, and ahead of it by
+  the motion over a second), a few regions at once; the trailing (frozen) tiles never take its turn (BACKLOG TC10).
+
 ## 2026-10-28 — round 106 (session 5, `places`) — the physics design's answers
 
 The user answered the questions in "Reclaimed physics: a design to discuss"

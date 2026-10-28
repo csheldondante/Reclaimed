@@ -27,6 +27,7 @@ Ids TC.
 | TC7 | (round 104) Vegetation in the tiles: the woods painted from the veg field by the rings' rule (crowns lit live, their shadow); grass tufts and flowers as the bake's texture | M | wip (woods and water in the bake; tufts and flowers open) |
 | TC8 | (round 104) Towns in the tiles: gpugen's GPU stamps of the worker-made plans in the render-only regions' columns (they come with landInto when the stamps are there); check they bake | M | open |
 | TC9 | (round 104) The bake's and the land's cost: spread over frames by a GPU budget (no p99 spikes on the phone), and pop-in at the window's edge (a region leaving the window keeps its tile; one arriving shows its land tile till the window has it) | M | wip (arriving tiles done; riding cost measured the same as off on the desktop — the phone to measure) |
+| TC10 | (round 105, the user: "they seem to load in the direction opposite the camera panning") The render-only land the camera's way first: ordered by when the screen reaches it and how far ahead along the motion, the screen's points v x 1 s ahead too (`?tileahead=` s); IN_FLIGHT regions at once (`?tilelandn=` 3, gpugen's pacer paces them); a frame the land bakes, the window's trailing bakes wait | M | done (tileahead) |
 
 ## Round 104 (2026-10-28, session 5, `simscale`) — the sims scale with what's active (DECISIONS round 104)
 
