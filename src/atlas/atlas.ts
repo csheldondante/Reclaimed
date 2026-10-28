@@ -164,6 +164,69 @@ const INST_BYTES = 64;
 const MAX_INST = 8192;
 /** a streamed batch's columns are made a TILE² tile a frame (round 80) */
 const TILE = 32;
+const Q98 = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
+/** (round 98, ?streamold=1 or ?tiles=old) one tile a frame over every batch, as before round 98 */
+const TILE_OLD = Q98.get('streamold') === '1' || Q98.get('tiles') === 'old';
+/** (round 98, ?tiles=N) N tiles a frame, fixed (else paced by the frame's time: TilePacer) */
+const TILES_FIXED = Number(Q98.get('tiles')) || 0;
+/** (round 98, ?tilemax=) the most tiles a frame the pacer gives */
+const TILE_MAX = Number(Q98.get('tilemax') ?? 4);
+
+/**
+ * (round 98) The streamed batches' tiles a frame (atlas.ts tileGate): as many as the frame has room for, not one.
+ * Paced by the frames' own time, not the GPU's timestamps (a phone may have none, and the profiler only runs while
+ * someone looks): the frame's time without the tiles is the low envelope of the frame times; after a frame that ran
+ * tiles, one longer than that by over a fifth (and 1.5 ms) halves the count, else it goes up by a
+ * quarter — at least one a frame, so the land always comes. Each batch has one tile waiting at a time (its next
+ * waits for the last's submit), so the count is over the batches asked for together (a strip's five, the next's).
+ */
+export class TilePacer {
+  private waiting: (() => void)[] = [];
+  private armed = false;
+  private last = 0;
+  private ran = 0;
+  /** ms: the frames' time without tiles (their low envelope) */
+  base = 16.7;
+  /** tiles a frame now */
+  perFrame = 1;
+  /** (for the sweeps) tiles run, frames that ran some */
+  tiles = 0;
+  frames = 0;
+
+  next(): Promise<void> {
+    return new Promise((r) => {
+      this.waiting.push(r);
+      this.arm();
+    });
+  }
+
+  private arm(): void {
+    if (this.armed) return;
+    this.armed = true;
+    requestAnimationFrame((t) => this.frame(t));
+  }
+
+  private frame(t: number): void {
+    this.armed = false;
+    // (after an idle spell the gap isn't a frame: measured from the next)
+    const dt = this.last && t - this.last < 100 ? t - this.last : this.base;
+    this.last = t;
+    // (the low envelope: down quickly, up slowly — a frame without tiles is the frame's own time)
+    if (dt < this.base) this.base += (dt - this.base) * 0.3;
+    else this.base += (Math.min(dt, this.base * 2) - this.base) * (this.ran ? 0.002 : 0.02);
+    if (this.ran) this.perFrame = dt > this.base * 1.2 + 1.5 ? Math.max(1, this.perFrame * 0.5) : Math.min(TILE_MAX, this.perFrame + 0.25);
+    const n = TILES_FIXED || Math.floor(this.perFrame);
+    const go = this.waiting.splice(0, n);
+    this.ran = go.length;
+    if (go.length) {
+      this.tiles += go.length;
+      this.frames++;
+    }
+    for (const r of go) r();
+    // (a frame on, the next batch's tiles — and this frame's time, after tiles or not)
+    if (this.waiting.length || this.ran) this.arm();
+  }
+}
 /** a geyser (Atlas.geysersIn) */
 export interface Geyser {
   x: number;
@@ -909,6 +972,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
    *  (Each batch has its own parameters: batches asked for together run together.) */
   async columns(x0: number, y0: number, w: number, h: number, spread = false): Promise<AtlasColumns> {
     const dev = this.device;
+    const bt = spread ? this.traceOf(x0, y0) : undefined;
     const tileBufs: GPUBuffer[] = [];
     const pb = dev.createBuffer({ label: 'atlas col params', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     const g = dev.createBuffer({ label: 'atlas colG', size: (w + 2) * (h + 2) * COLG_BYTES, usage: GPUBufferUsage.STORAGE });
@@ -950,6 +1014,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
       if (spread) {
         dev.queue.submit([fin.finish()]);
         await this.tileGate();
+        if (bt) bt.tiles.push(performance.now());
         fin = dev.createCommandEncoder({ label: 'atlas columns tile' });
         tpb = dev.createBuffer({ label: 'atlas col params tile', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
         this.writeParams({ x0, y0, w, h, tile: tiles[k] }, tpb);
@@ -968,6 +1033,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     fin.copyBufferToBuffer(instN, 0, st, o.size + runs.size, 16);
     dev.queue.submit([fin.finish()]);
     await st.mapAsync(GPUMapMode.READ);
+    if (bt) bt.mapped = performance.now();
     const buf = st.getMappedRange().slice(0);
     st.unmap();
     for (const b of [g, o, runs, inst, instN, st, pb, ...tileBufs]) b.destroy();
@@ -1168,8 +1234,23 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
         }
     // the roads, their crossings and the sites' plazas (round 79, ways.ts)
     this.waysStamped += timed('ways', () => stampWays(this.ways, land, x0, y0, w, h, (cx, cy) => [cx + 0.5 + 0.5 * (cy & 1), (cy + 0.5) * ROW_H], this.worldW, this.worldH));
+    const bt = spread && !raw ? this.builds.get(`${x0},${y0}`) : undefined;
+    if (bt) bt.ways = performance.now();
     if (!raw) for (const f of this.landHooks) await f(land, x0, y0, w, h, spread);
+    if (bt) bt.hooks = performance.now();
     return land;
+  }
+
+  /**
+   * (round 98, scripts/speedsweep.mjs) The streamed batches' builds by their corner (performance.now() ms): asked for,
+   * each tile's turn (tileGate), the columns read back, the ways stamped, the land hooks (the settlements) done.
+   */
+  readonly builds = new Map<string, { t0: number; tiles: number[]; mapped: number; ways: number; hooks: number }>();
+  private traceOf(x0: number, y0: number) {
+    const b = { t0: performance.now(), tiles: [] as number[], mapped: 0, ways: 0, hooks: 0 };
+    this.builds.set(`${x0},${y0}`, b);
+    if (this.builds.size > 400) this.builds.delete(this.builds.keys().next().value!);
+    return b;
   }
 
   /** the game's GPU profiler, when the level lends it (round 80): the column batches' passes are timed */
@@ -1178,10 +1259,13 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
   /** one streamed batch's tile a frame, over all of them (round 80) */
   private gate: Promise<void> = Promise.resolve();
   private tileGate(): Promise<void> {
+    if (!TILE_OLD) return this.pacer.next();
     const p = this.gate.then(() => new Promise<void>((r) => requestAnimationFrame(() => r())));
     this.gate = p;
     return p;
   }
+  /** (round 98) the streamed batches' tiles, as many a frame as the frame has room for */
+  readonly pacer = new TilePacer();
 
   /** columns the ways have changed so far */
   waysStamped = 0;

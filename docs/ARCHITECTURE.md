@@ -897,6 +897,11 @@ its edge:
 - The CPU's window coordinates move too: the camera, the weather
   (`Weather.shift`), the map's surface heights, the level's surface cache
   (`onSlide`); the undo ring is cleared; particles in the air are dropped.
+- **When** (round 98, `streamspeed`): the slide waits until every region it brings in is ready — made ahead (the
+  prefetch), checked for what changed while it was away (`since`), its relief made — and then moves the window and
+  writes the strip in a frame or two (`WRITE_MS`); `busy` (the sim stopped, the meshes held) only for that. The
+  atlas's streamed batches' tiles go through `TilePacer` (as many a frame as the frame's time allows, at least one).
+  `?streamold=1`: the slide at once and busy till its land is written, a tile a frame.
 - **In z** (round 69, when the LandSource has a `height` — the atlas's 480):
   the window holds world heights `oz` .. `oz + zMax` (the atlas level's
   zMax 248, the most the 8-bit z holds less a margin) and every column

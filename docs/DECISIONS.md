@@ -31,6 +31,13 @@ each was implemented.
 - Earlier (round 86), still the brief: "I strongly recommend we simulate as voxels but split the mesh and have the
   rock column fall and just weight vertices to voxels (although rock I don't expect to flex only crumble)" and "it
   should also probably make a big cloud of dust … and maybe sparks".
+## 2026-10-27 — round 98 (session 5, `streamspeed`) — streaming ahead of the camera
+
+- The user: "I think our next goal should be to see if we can get streaming to stay ahead of the camera and how fast
+  we can get the camera moving without losing fidelity"
+- → `streamspeed`: measured the streamer's pipeline end to end at the phone tier (scripts/speedsweep.mjs); a slide
+  now waits for its land and is written in a frame or two, not held `busy` while it's made; the tiles of the
+  region build paced by the frame's time; the arrived chunks' meshes made urgent (DEVLOG round 98).
 
 ## 2026-10-27 — round 94 (session 5, `runstory`) — where to go, and the hero too slow
 

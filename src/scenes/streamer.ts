@@ -73,6 +73,25 @@ const SLIDE_SKIP = new Set((typeof location === 'undefined' ? '' : new URLSearch
  * ahead of the slides. 0: the camera's own place only, as before round 91.
  */
 const LEAD = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('lead')) ?? 1);
+/**
+ * (round 98, ?streamold=1: the way before, to compare) A slide waits till the land it brings in is made — asked for
+ * then if it wasn't ahead — and then moves the window and writes it all in one go: the window isn't `busy` (the sim
+ * stopped, the meshes held) while the land is made, only for the frame it's written in.
+ */
+export const STREAM_OLD = typeof location !== 'undefined' && new URLSearchParams(location.search).get('streamold') === '1';
+/**
+ * (round 98, ?arrivemesh=0 off) The mesh chunks a slide brought land into are urgent for a few frames (fieldmesh.ts
+ * urgent: looked at every frame, the urgent slots over the tier's): those near the view (the hybrid's voxels) are
+ * built in a few frames, not one every other frame at the phone tier's one slot.
+ */
+const ARRIVE_URGENT = typeof location === 'undefined' || new URLSearchParams(location.search).get('arrivemesh') !== '0';
+/**
+ * (round 98, ?writems=) A slide's regions are written in one frame while they take under this many ms (CPU) — the
+ * rest the next frames, the window held `busy` till they're in: a region is ~4 ms on the desktop, a strip five.
+ */
+const WRITE_MS = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('writems')) ?? 6);
+/** (round 98) regions made ahead and ready kept at most (the oldest dropped: made again if wanted) */
+const MADE_KEEP = 32;
 /** cells the window slides by in z */
 export const TIER = 32;
 /** the field mesh's chunks: cells across and rows down (fieldmesh.ts CHUNK) — a slide is whole ones */
@@ -151,6 +170,28 @@ interface Frozen {
   /** each kept texture's texels, rows of the region's width (rgba32float) */
   texs: Record<string, Float32Array>;
   surface: Float32Array;
+  /** (round 98) its columns' relief (Streamer.relief, gapTop, colTop), made ahead of the slide when it was ready */
+  relief?: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array };
+}
+
+/** (round 98) a slide's timeline (performance.now() ms): its start, its synchronous part's end, each region coming in
+ *  (thawed, made ahead, or made now; when its land was ready and when written), its end */
+export interface SlideTrace {
+  dx: number;
+  dy: number;
+  t0: number;
+  sync: number;
+  regions: { how: 'thawed' | 'ahead' | 'made'; ready: number; written: number }[];
+  end: number;
+}
+
+/** (round 98) a region's build: asked for, its land made (the source's), cut into the window's form */
+export interface GenTrace {
+  x0: number;
+  y0: number;
+  asked: number;
+  land: number;
+  done: number;
 }
 
 export interface SlideStats {
@@ -356,11 +397,20 @@ export class Streamer {
 
   /** (hybrid) column i's relief from its runs (world z, joined), its surface and its ground's own top (window z) */
   private setRelief(i: number, col: Interval[], surface: number, ground: number): void {
-    let g = -Infinity;
-    for (let k = 1; k < col.length; k++) if (col[k].z0 - col[k - 1].z1 > RELIEF_GAP) g = col[k].z0;
-    this.gapTop[i] = g;
-    this.colTop[i] = col.length ? col[col.length - 1].z1 : 0;
-    this.relief[i] = Math.abs(surface - ground) > RELIEF_FORM ? 1 : 0;
+    setReliefIn(this, i, col, surface, ground);
+  }
+
+  /** (round 98) a region's relief, as writeNow would make it (the runs joined are world z: the same at any oz) */
+  private reliefOf(f: Frozen): NonNullable<Frozen['relief']> {
+    const R = this.R;
+    const out = { relief: new Uint8Array(R * R), gapTop: new Float32Array(R * R), colTop: new Float32Array(R * R) };
+    const gr = f.ground ?? f.surface;
+    for (let r = 0; r < R; r++)
+      for (let c = 0; c < R; c++) {
+        const i = r * R + c;
+        setReliefIn(out, i, joinColumn(this.columnOf(f.layers, c, r), f.oz, f.outside[i]), f.surface[i], gr[i]);
+      }
+    return out;
   }
 
   /** The world cell under window cell (x, y). */
@@ -374,6 +424,19 @@ export class Streamer {
 
   /** land asked for ahead of a slide, by region key */
   private pending = new Map<string, Promise<Frozen>>();
+  /** (round 98) frozen regions being checked for what changed while they were away, ahead of the slide */
+  private thawing = new Map<string, Promise<Frozen>>();
+  /** (round 98) land ready to write (made ahead, or thawed and checked), by region key */
+  private made = new Map<string, Frozen>();
+  /** (round 98) frames a slide was due but its land wasn't ready (the camera went on, up to the edge's clamp) */
+  waited = 0;
+
+  /**
+   * (round 98, scripts/speedsweep.mjs) The last slides' timelines and the last regions' builds (performance.now() ms):
+   * what a slide waited for, and when each region it brought in was asked for, built and written.
+   */
+  readonly trace: SlideTrace[] = [];
+  readonly gens: GenTrace[] = [];
 
   /** (round 91) the camera's velocity (cells a second, world x and rows), smoothed; where it was, and when */
   readonly vel: [number, number] = [0, 0];
@@ -439,11 +502,36 @@ export class Streamer {
     }
     // (the slide itself where the camera is: sliding early for where it's heading slid twice as often on a
     // winding road — back again at each bend — for no nearer edge: DEVLOG round 91)
-    if (x > hx + reach) return this.slide(R, 0);
-    if (x < hx - reach) return this.slide(-R, 0);
-    if (y > hy + reach) return this.slide(0, R);
-    if (y < hy - reach) return this.slide(0, -R);
+    if (x > hx + reach) return this.slideWhenReady(R, 0);
+    if (x < hx - reach) return this.slideWhenReady(-R, 0);
+    if (y > hy + reach) return this.slideWhenReady(0, R);
+    if (y < hy - reach) return this.slideWhenReady(0, -R);
     return null;
+  }
+
+  /** (round 98) the slide once its land is ready (asked for now if it wasn't); before round 98, at once */
+  private slideWhenReady(dx: number, dy: number): Promise<void> | null {
+    if (STREAM_OLD) return this.slide(dx, dy);
+    this.prefetch(dx, dy);
+    const R = this.R;
+    for (const [lx, ly] of this.enteringFor(dx, dy))
+      if (!this.made.has(this.key((this.origin[0] + dx + lx) / R, (this.origin[1] + dy + ly) / R))) {
+        this.waited++;
+        return null;
+      }
+    return this.slide(dx, dy);
+  }
+
+  /** (round 98) a region's land is ready: kept (the oldest past MADE_KEEP dropped, and forgotten as asked for) */
+  private ready(key: string, f: Frozen): void {
+    f.relief = timed('relief', () => this.reliefOf(f));
+    this.made.set(key, f);
+    while (this.made.size > MADE_KEEP) {
+      const old = this.made.keys().next().value!;
+      this.made.delete(old);
+      this.pending.delete(old);
+      this.thawing.delete(old);
+    }
   }
 
   /** Move the window by (dx, dy) columns (one of them ±REGION, the other 0). */
@@ -451,11 +539,15 @@ export class Streamer {
     if ((dx !== 0) === (dy !== 0) || Math.abs(dx + dy) !== this.R) throw new Error('a slide is one region along one axis');
     this.busy = true;
     const t0 = performance.now();
+    const tr: SlideTrace = { dx, dy, t0, sync: 0, regions: [], end: 0 };
+    this.trace.push(tr);
+    if (this.trace.length > 200) this.trace.shift();
     try {
-      await this.slideNow(dx, dy);
+      await this.slideNow(dx, dy, tr);
     } finally {
       this.busy = false;
     }
+    tr.end = performance.now();
     this.stats.slides++;
     this.stats.lastMs = +(performance.now() - t0).toFixed(1);
   }
@@ -484,9 +576,26 @@ export class Streamer {
       const wx = this.origin[0] + dx + lx;
       const wy = this.origin[1] + dy + ly;
       const key = this.key(wx / R, wy / R);
-      if (this.frozen.has(key) || this.pending.has(key)) continue;
-      const job = this.generate(wx, wy);
-      job.catch(() => this.pending.delete(key));
+      if (this.frozen.has(key)) {
+        // (round 98: what changed while it was away found ahead too — a readback)
+        if (!STREAM_OLD && !this.thawing.has(key) && !this.made.has(key)) {
+          const job = Promise.resolve(this.frozen.get(key)!).then((f) => this.since(f, wx, wy));
+          this.thawing.set(key, job);
+          job.then(
+            (f) => this.thawing.get(key) === job && this.frozen.has(key) && this.ready(key, f),
+            () => this.thawing.delete(key),
+          );
+        }
+        continue;
+      }
+      if (this.pending.has(key)) continue;
+      const job = STREAM_OLD ? this.generate(wx, wy) : this.generate(wx, wy).then((f) => this.since(f, wx, wy));
+      if (STREAM_OLD) job.catch(() => this.pending.delete(key));
+      else
+        job.then(
+          (f) => this.pending.get(key) === job && this.ready(key, f),
+          () => this.pending.delete(key),
+        );
       this.pending.set(key, job);
     }
   }
@@ -512,7 +621,7 @@ export class Streamer {
     return out;
   }
 
-  private async slideNow(dx: number, dy: number): Promise<void> {
+  private async slideNow(dx: number, dy: number, tr: SlideTrace): Promise<void> {
     for (const f of this.onBeforeSlide) f(dx, dy, 0);
     const tSync = performance.now();
     // (a readback that straddles the slide is stale: round 80)
@@ -684,13 +793,35 @@ export class Streamer {
     });
 
     record('slide', performance.now() - tSync);
+    tr.sync = performance.now();
     // ---- 5. what comes in: thawed, or generated (all of them asked for at once) ----
-    const coming = entering.map(([lx, ly]) => {
+    // (round 98: what's ready was checked for changes already)
+    const checked = new Set<number>();
+    const coming = entering.map(([lx, ly], k) => {
       const key = this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R);
+      const done = this.made.get(key);
+      if (done) {
+        this.made.delete(key);
+        checked.add(k);
+        if (this.frozen.has(key)) {
+          this.frozen.delete(key);
+          this.thawing.delete(key);
+          this.stats.thawed++;
+          tr.regions.push({ how: 'thawed', ready: 0, written: 0 });
+        } else {
+          this.pending.delete(key);
+          this.stats.generated++;
+          this.stats.prefetched++;
+          tr.regions.push({ how: 'ahead', ready: 0, written: 0 });
+        }
+        return Promise.resolve(done);
+      }
+      this.thawing.delete(key);
       const got = this.frozen.get(key);
       if (got) {
         this.frozen.delete(key);
         this.stats.thawed++;
+        tr.regions.push({ how: 'thawed', ready: 0, written: 0 });
         return got;
       }
       this.stats.generated++;
@@ -698,15 +829,27 @@ export class Streamer {
       if (ahead) {
         this.pending.delete(key);
         this.stats.prefetched++;
+        tr.regions.push({ how: 'ahead', ready: 0, written: 0 });
         return ahead;
       }
+      tr.regions.push({ how: 'made', ready: 0, written: 0 });
       return this.generate(this.origin[0] + lx, this.origin[1] + ly);
     });
     this.unwritten = entering.slice();
+    let tw = performance.now();
     for (let k = 0; k < entering.length; k++) {
       const [lx, ly] = entering[k];
-      this.write(await this.since(await coming[k], this.origin[0] + lx, this.origin[1] + ly), lx, ly);
+      if (!STREAM_OLD && k > 0 && performance.now() - tw > WRITE_MS) {
+        await new Promise((r) => requestAnimationFrame(r));
+        tw = performance.now();
+      }
+      const c = await coming[k];
+      const f = checked.has(k) ? c : await this.since(c, this.origin[0] + lx, this.origin[1] + ly);
+      tr.regions[k].ready = performance.now();
+      this.write(f, lx, ly);
+      tr.regions[k].written = performance.now();
       this.unwritten = this.unwritten.filter(([x, y]) => x !== lx || y !== ly);
+      if (!STREAM_OLD && ARRIVE_URGENT) this.core.renderer.fieldMesh.urgent(lx, ly * ROW_H, lx + R, (ly + R) * ROW_H, 8);
     }
     // (round 80: the band's pages went with the land; only what came in is packed)
     timed('band', () => this.core.renderer.band?.packFresh(this.outside, this.core.dims.zMax));
@@ -756,8 +899,14 @@ export class Streamer {
   private async generate(x0: number, y0: number): Promise<Frozen> {
     const { R } = this;
     const zMax = this.core.dims.zMax;
+    const g: GenTrace = { x0, y0, asked: performance.now(), land: 0, done: 0 };
+    this.gens.push(g);
+    if (this.gens.length > 400) this.gens.shift();
     const [land, snap] = await Promise.all([this.source.region(x0, y0, R, R, zMax), this.source.snapshot?.(x0, y0, R, R)]);
-    return timed('cut', () => this.cutRegion(land, snap));
+    g.land = performance.now();
+    const f = timed('cut', () => this.cutRegion(land, snap));
+    g.done = performance.now();
+    return f;
   }
 
   private cutRegion(land: RegionLand, snap: Frozen['snap']): Frozen {
@@ -972,6 +1121,8 @@ export class Streamer {
       this.heldNow = true;
       core.windowEpoch++;
       this.pending.clear();
+      this.thawing.clear();
+      this.made.clear();
       this.origin[0] = ox;
       this.origin[1] = oy;
       this.oz = oz;
@@ -1097,8 +1248,10 @@ export class Streamer {
   }
 
   private writeNow(f: Frozen, lx: number, ly: number): void {
-    if (f.oz !== this.oz) f = this.reslice(f);
+    // (round 98: a region cut again has its relief made again — its surface is the new cut's)
+    if (f.oz !== this.oz) f = { ...this.reslice(f), relief: undefined };
     const { core, W, H, R } = this;
+    const tl = performance.now();
     for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[(ly + r) * W + lx + c] = f.outside[r * R + c];
     const dev = core.host.gpu.device;
     const wg = core.world;
@@ -1106,48 +1259,111 @@ export class Streamer {
     const cx = W / CHUNK;
     const rc = R / CHUNK;
     const pageWords = this.pageSlots * SLOT_WORDS;
+    let lenc: GPUCommandEncoder | undefined;
     for (let j = 0; j < rc; j++)
       for (let i = 0; i < rc; i++) {
         const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
         const page = f.layers.subarray((j * rc + i) * pageWords, (j * rc + i + 1) * pageWords);
-        // (both: the passes that write layersNext copy all of it back over the layers)
+        // (both: the passes that write layersNext copy all of it back over the layers; round 98: the second a GPU copy)
         dev.queue.writeBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, page);
-        dev.queue.writeBuffer(wg.layersNext, table[ci * 2] * SLOT_WORDS * 4, page);
+        if (STREAM_OLD) dev.queue.writeBuffer(wg.layersNext, table[ci * 2] * SLOT_WORDS * 4, page);
+        else (lenc ??= dev.createCommandEncoder({ label: 'stream write layers' })).copyBufferToBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, wg.layersNext, table[ci * 2] * SLOT_WORDS * 4, page.byteLength);
       }
-    for (const b of this.bufs) {
-      if (!b.keep) continue;
-      const d = f.bufs[b.name];
-      for (let p = 0; p < b.planes; p++)
-        for (let r = 0; r < R; r++) {
-          const dst = p * W * H * b.stride + ((ly + r) * W + lx) * b.stride;
-          if (d) dev.queue.writeBuffer(b.buf, dst, d, (p * R + r) * R * b.stride, R * b.stride);
-          else dev.queue.writeBuffer(b.buf, dst, new Uint8Array(R * b.stride));
-        }
+    if (lenc) dev.queue.submit([lenc.finish()]);
+    const tb = performance.now();
+    record('write.layers', tb - tl);
+    if (STREAM_OLD)
+      for (const b of this.bufs) {
+        if (!b.keep) continue;
+        const d = f.bufs[b.name];
+        for (let p = 0; p < b.planes; p++)
+          for (let r = 0; r < R; r++) {
+            const dst = p * W * H * b.stride + ((ly + r) * W + lx) * b.stride;
+            if (d) dev.queue.writeBuffer(b.buf, dst, d, (p * R + r) * R * b.stride, R * b.stride);
+            else dev.queue.writeBuffer(b.buf, dst, new Uint8Array(R * b.stride));
+          }
+      }
+    else {
+      // (round 98) the kept buffers' region in one upload, then a copy a row on the GPU: a row's writeBuffer each
+      // (~800 a region) was most of a slide's frame
+      const kept = this.bufs.filter((b) => b.keep);
+      const size = kept.reduce((n, b) => n + R * R * b.stride * b.planes, 0);
+      if (!this.writeStage || this.writeStage.size < size) {
+        this.writeStage?.destroy();
+        this.writeStage = wg.buf('streamWrite', size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+        this.writeHost = new Uint8Array(size);
+      }
+      const host = this.writeHost!;
+      const enc = dev.createCommandEncoder({ label: 'stream write' });
+      let off = 0;
+      for (const b of kept) {
+        const d = f.bufs[b.name];
+        const n = R * R * b.stride * b.planes;
+        for (let p = 0; p < b.planes; p++)
+          for (let r = 0; r < R; r++) {
+            const dst = p * W * H * b.stride + ((ly + r) * W + lx) * b.stride;
+            if (d) enc.copyBufferToBuffer(this.writeStage, off + (p * R + r) * R * b.stride, b.buf, dst, R * b.stride);
+            else enc.clearBuffer(b.buf, dst, R * b.stride);
+          }
+        if (d) host.set(d.subarray(0, n), off);
+        off += n;
+      }
+      dev.queue.writeBuffer(this.writeStage, 0, host, 0, size);
+      dev.queue.submit([enc.finish()]);
     }
+    record('write.bufs', performance.now() - tb);
     for (const t of this.texs) {
       const tw = (R / t.div) * t.per;
       const th = R / t.div;
       let d = t.keep ? f.texs[t.name] : undefined;
       if (!d) {
-        d = new Float32Array(tw * th * 4);
-        if (t.fill) for (let k = 0; k < tw * th; k++) d.set(t.fill, k * 4);
+        // (round 98: what a texture's region starts with made once, not each time)
+        const k = `${tw}x${th}:${t.fill ?? ''}`;
+        d = this.blank.get(k);
+        if (!d) {
+          d = new Float32Array(tw * th * 4);
+          if (t.fill) for (let q = 0; q < tw * th; q++) d.set(t.fill, q * 4);
+          this.blank.set(k, d);
+        }
       }
       dev.queue.writeTexture({ texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, d, { bytesPerRow: tw * 16 }, [tw, th]);
     }
+    record('write.gpu', performance.now() - tb);
+    const tc = performance.now();
     const surf = core.map.surface;
     for (let r = 0; r < R; r++) surf.set(f.surface.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
     // (the ground: its own if the source said, else the surface)
     const gr = f.ground ?? f.surface;
     for (let r = 0; r < R; r++) this.ground.set(gr.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
-    // (hybrid) the relief of what came in
+    // (hybrid) the relief of what came in (round 98: made ahead when it was ready; the ground's offset to the surface,
+    // and the runs in world z, are the same whatever oz it's cut at)
+    const rf = f.relief;
+    if (rf)
+      for (let r = 0; r < R; r++) {
+        const at = (ly + r) * W + lx;
+        this.relief.set(rf.relief.subarray(r * R, (r + 1) * R), at);
+        this.gapTop.set(rf.gapTop.subarray(r * R, (r + 1) * R), at);
+        this.colTop.set(rf.colTop.subarray(r * R, (r + 1) * R), at);
+      }
+    else
     for (let r = 0; r < R; r++)
       for (let c = 0; c < R; c++) {
         const i = (ly + r) * W + lx + c;
         this.setRelief(i, joinColumn(this.columnOf(f.layers, c, r), f.oz, f.outside[r * R + c]), surf[i], this.ground[i]);
       }
+    record('write.cpu', performance.now() - tc);
+    const tr = performance.now();
     for (const cb of this.onRelief) cb(lx, ly, lx + R, ly + R);
+    record('write.onRelief', performance.now() - tr);
+    const ta = performance.now();
     if (f.judge) for (const cb of this.onArrive) cb(lx + f.judge[0], ly + f.judge[1], lx + f.judge[2], ly + f.judge[3]);
+    record('write.onArrive', performance.now() - ta);
   }
+  /** (round 98) what a texture's region coming in starts with, by its size and fill */
+  private blank = new Map<string, Float32Array>();
+  /** (round 98) the kept buffers' upload (writeNow) */
+  private writeStage?: GPUBuffer;
+  private writeHost?: Uint8Array;
 
   /** new(x, y) = old(x + dx, y + dy), per plane */
   /** the installed modules' per-column buffers (WorldCore.columnBufs) as the streamer's own, the scratch grown to fit */
@@ -1193,6 +1409,15 @@ export class Streamer {
 }
 
 const align256 = (n: number) => Math.ceil(n / 256) * 256;
+
+/** (hybrid) column i's relief into `to` from its runs (world z, joined), its surface and its ground's own top (window z) */
+function setReliefIn(to: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array }, i: number, col: Interval[], surface: number, ground: number): void {
+  let g = -Infinity;
+  for (let k = 1; k < col.length; k++) if (col[k].z0 - col[k - 1].z1 > RELIEF_GAP) g = col[k].z0;
+  to.gapTop[i] = g;
+  to.colTop[i] = col.length ? col[col.length - 1].z1 : 0;
+  to.relief[i] = Math.abs(surface - ground) > RELIEF_FORM ? 1 : 0;
+}
 
 /** whether a column cut at the window has its top in the window (nothing of it above) */
 const topInside = (cut: { inside: Interval[]; outside: Interval[] }, oz: number, zMax: number) => cut.inside.length > 0 && !cut.outside.some((iv) => iv.z0 >= oz + zMax - 1e-4);

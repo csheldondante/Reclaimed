@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 98 (2026-10-27, session 5, `streamspeed`) — streaming ahead of the camera (DECISIONS round 98)
+
+Ids SS.
+
+| id | item | size | status |
+|---|---|---|---|
+| SS1 | Measure the streamer end to end at the phone tier: scripts/speedsweep.mjs (pan, turn, drive at rising speeds: the speed got, the edge, the view not in detail, the land in detail ahead, slide latency and stages, frame times); `Streamer.trace` / `gens`, `Atlas.builds` | S | done (this commit) |
+| SS2 | A slide waits till its land is made (and checked for changes while away) and is then written at once — the window isn't `busy` (sim stopped, meshes held) while it's made; `?streamold=1` the old way | S | done (this commit) |
+| SS3 | The region build's tiles paced by the frame's time (atlas.ts TilePacer, `?tiles=N` fixed, `?tiles=old`, `?tilemax=`) | S | done (this commit) |
+| SS4 | The chunks a slide brought land into made urgent for the mesh (`?arrivemesh=0` off); the kept buffers written in one upload, the relief made ahead, layersNext a GPU copy; a strip's writes spread over frames past `?writems=` (6) | S | done (this commit) |
+| SS5 | `?pan=speed[,deg]` (and `?panturn=s,deg`) the camera pans itself, for the phone; `?flyspeed=` the free camera's speed | S | done (this commit) |
+| SS6 | The frame-time cost at speed: p95 20 → 40–80 ms at 80–160 cells/s headless (the sim now runs through the slides; the pacer's extra tiles; the arrivals' urgent meshing). Find which, per frame on the phone (the pacer's base and count are in `reclaimed.scene.opts.atlas.atlas.pacer`) | M | open |
+| SS7 | A slide in z (`slideZ`) reads back the whole window (25 MB) and cuts every column again on the CPU: 200–350 ms on the desktop, and the band's refresh after it 60–90 ms — the p99 tail at speed over hills. Per region over frames, or on the GPU | M | open |
+| SS8 | The hybrid's READY_S (0.4 s): a chunk just come in is the rings' for 0.4 s — at 160 cells/s that's a strip (most of the "rings" share of the view not in detail) | S | open |
+| SS9 | The atlas passes' GPU time isn't seen by the profiler: the tiles are submitted from the pacer's rAF, outside the level's frame (its timestamps reset). A region made at once took 2–4 ms with its readback on the desktop iGPU (the round-80 13 ms figure not reproduced) | S | open |
+
 ## Round 88 (2026-10-27, session 5, `runstory`) — a run story as a hero (DECISIONS round 88)
 
 The user: "I would like to try spawning as a character like in hoverbike and talking to people or going places

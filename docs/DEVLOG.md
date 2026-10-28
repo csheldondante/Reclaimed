@@ -7430,3 +7430,87 @@ Measured with the default on (the atlas at the phone tier, every system on, the 
 (q=low 412×915, 25 s): `&rockbody=0` p50 9.8 p95 12.9 GPU 4.65 ms a frame, on p50 9.9 p95 13.3 GPU 4.75 (noise).
 A regression on places 0f0abdf reported from the phone (no tipping) didn't reproduce headlessly: there the rock bodies
 are on and the off-centre top tips at 0.6–0.95 rad/s as on cb41e7f (the phone's cached page, likely).
+## 2026-10-27 — round 98 (session 5, `streamspeed`): streaming ahead of the camera
+
+Why: the user (DECISIONS round 98): "see if we can get streaming to stay ahead of the camera and how fast we can get
+the camera moving without losing fidelity". Fidelity here: the window's own detail where the camera looks — its
+voxels and its grid — not the LOD rings (past the window, ~52% of a portrait phone's view at any speed: round 91).
+
+**Measured** with scripts/speedsweep.mjs (new): one page at q=low 412×915, win 320, `at=11956,15471`, every system
+on (lava, sediment, water, rivers=table, hybrid, simcull, sleep, settlements; 1× speed), the camera driven for 10 s
+at each speed — `pan` a straight line up the screen (level.ts `?pan=`: it waits at the edge clamp like a held pan),
+`turn` the same turning 90° halfway, `drive` the ?drive road (zooming out with speed). Each frame a 9×19 grid of
+screen points on the ground is classed: past the window, a region slid over and not written, a chunk the rings draw
+(land just come in: hybrid READY_S), a chunk that should be voxels not built yet; "low" is the last three — the view
+not in detail inside the window. "Detail ahead" marches along the motion from the target to the first point not in
+detail. `Streamer.trace` / `gens` and `Atlas.builds` time each slide and each region's build.
+
+**The pipeline before** (pan 120, `&streamold=1`): a region's build — colHeight + formSeed submitted when asked,
+then its four 32² tiles **one a frame over every batch** (atlas.ts tileGate), the columns read back, the ways
+(~2 ms), the settlements' hooks (~0), the cut (~3 ms). A strip is 5 regions = 20 tiles = 20 frames: first tile
+30–60 ms after the ask, the last 180–340 ms. The slide started when the camera reached its threshold, prefetched
+or not (every region was asked ahead, none was ready), and was `busy` — the sim stopped, the meshes held — until
+its regions were made, each then checked for coarse-world changes (`since`: a GPU readback, one region after
+another — the drive's thawed strips waited 250 ms for those alone) and written (~3 ms each). Slides 160–390 ms p50,
+max 400–870; busy 50–97% of the time at 80–160 cells/s, so the meshes of what came in waited too: the view's
+unbuilt share 13–28% at 120–160. Region build itself, made at once with its readback: 2.2–4.4 ms on this GPU
+(`--bench`) — not the bottleneck; the pacing and the serial waiting were.
+
+**What changed** (all `?streamold=1` to compare):
+1. *A slide waits for its land* (Streamer.slideWhenReady): at the threshold the strip is asked for (if it wasn't)
+   and the slide happens only once every region is ready — made and checked for changes ahead (`since` in the
+   prefetch, for thawed regions too), its relief made ahead. The camera goes on meanwhile (to the edge clamp, a
+   region in). Then the window moves and the strip is written in a frame or two (past `?writems=` 6 ms the rest
+   the next frame): `busy` 0–1% at every speed, slides 19–40 ms p50.
+2. *The tiles paced by the frame* (atlas.ts TilePacer): as many tiles a frame as the frame has room for — the low
+   envelope of the frame times is the frame without them; a frame after tiles longer than that by a fifth and
+   1.5 ms halves the count, else +¼, at least one, at most `?tilemax=` 4. Frame times, not GPU timestamps (a phone
+   may have none). 1.7–3 tiles a frame measured; `?tiles=N` fixed, `?tiles=old`.
+3. *Arrivals meshed urgently* (`?arrivemesh=0` off): the chunks a slide wrote land into are urgent for 8 frames
+   (fieldmesh.ts urgent: looked at every frame, 4 more slots), so the hybrid's voxel chunks there are built in a
+   few frames, not one every other frame at low's one slot.
+4. *A cheaper write*: the kept buffers in one upload and a copy a row on the GPU (was ~800 writeBuffers a region),
+   layersNext a GPU copy of the layers' pages, the textures' blank regions made once. ~4 ms a region on the CPU
+   (layers 1–3, buffers 0.2, textures 0.7, the relief callbacks 0.1).
+
+**The curve** (cells a second asked → got; "low" % of the view in the window not in detail; detail ahead p5 / p50
+cells; frame p50 / p95 / p99 ms). Old and new back to back on one server; new2 the pacer as committed:
+
+| run | speed | got old → new | low old → new | ahead p5/p50 old → new | slide p50 old → new | busy old → new | frame old | frame new | new2 low, frame |
+|---|---|---|---|---|---|---|---|---|---|
+| pan | 40 | 38 → 37 | 3.8 → 1.7 | 104/160 → 130/176 | 311 → 24 | 20 → 0 | 9.8/14.7/35 | 9.8/19.4/58 | 1.8, 9.9/26/70 |
+| pan | 80 | 71 → 69 | 12.4 → 6.2 | 0/44 → 20/120 | 328 → 23 | 50 → 0.3 | 9.7/21/97 | 9.9/43/142 | 5.7, 9.8/44/174 |
+| pan | 120 | 107 → 98 | 34.1 → 6.2 | 0/0 → 14/132 | 307 → 19 | 69 → 0.2 | 9.9/22/98 | 9.9/45/144 | 6.8, 9.9/54/158 |
+| pan | 160 | 101 → 110 | 41.4 → 11.5 | 0/0 → 0/58 | 385 → 41 | 97 → 11 | 9.9/20/42 | 10/72/183 | 11.1, 10/83/184 |
+| turn | 40 | 38 → 38 | 4.6 → 2.2 | 0/152 → 44/168 | 322 → 19 | 22 → 0 | 9.8/13/22 | 9.9/17/42 | 2.4, 9.8/16/44 |
+| turn | 80 | 73 → 70 | 12.5 → 5.5 | 0/50 → 34/126 | 356 → 21 | 43 → 0.4 | 9.8/30/94 | 9.8/38/152 | 5.8, 9.8/44/143 |
+| turn | 120 | 102 → 100 | 25.9 → 9.7 | 0/0 → 0/60 | 315 → 20 | 80 → 0.3 | 9.9/17/59 | 9.9/45/140 | 10.4, 9.9/47/170 |
+| turn | 160 | 129 → 133 | 35.0 → 10.1 | 0/0 → 0/70 | 315 → 21 | 96 → 0.2 | 9.9/18/28 | 9.8/66/173 | 8.3, 10/70/208 |
+| drive | 40 | 29 → 40 | 5.6 → 3.1 | 10/118 → 40/154 | 229 → 26 | 28 → 0 | 8.4/16/42 | 8.3/15/31 | |
+| drive | 80 | 80 → 80 | 4.4 → 3.5 | 0/80 → 0/104 | 145 → 24 | 18 → 0 | 8.3/14/24 | 8.3/16/38 | |
+| drive | 120 | 119 → 120 | 3.9 → 3.4 | 0/52 → 0/64 | 134 → 26 | 25 → 0 | 8.3/15/31 | 8.3/18/60 | |
+| drive | 160 | 159 → 159 | 3.1 → 2.8 | 0/44 → 0/50 | 136 → 24 | 32 → 0.4 | 8.3/17/53 | 8.3/25/63 | |
+
+(The camera never came nearer the window's edge than the clamp's 64 either way; "got" under "asked" is the clamp
+holding it — the slides not keeping up. The drive zooms out with speed: past 80 most of its view is past the window,
+so its "low" stays small both ways. Runs on the shared desktop iGPU vary ~2× run to run: the GPU's frame 4–18 ms.)
+
+**What it holds, as cells a second without losing the window's detail** (low ≤ ~6% — the still view's own ~1–2%
+plus the strip just come in — and the land in detail ahead at the 5th percentile ≥ ~15 cells): before ~40 (pan,
+turn; at 80 the view was 12% low, nothing in detail ahead at times); after ~120 straight (6.2–6.8% low, 14–28
+cells ahead p5, 100–130 cells p50) and ~80 turning (5.5–5.8%, 34–40 ahead); 160 is past it (10–11% low, the
+camera held at the clamp: 100–133 got). Ahead the window holds 130–180 cells of detail at 40, ~120 at 80–120, ~60
+at 160 (p50).
+
+**The cost**: the frame's p50 is unchanged (9.8–10 ms); p95 rose from ~20 to 40–80 ms at 80–160 cells/s and p99
+from ~40–100 to 140–210. Part of it is what the old way didn't do: the sim and the meshes stopped for 50–97% of
+those frames (busy); part is the pacer's extra tiles (pan 120 with `&tiles=old`: p95 31 against 41 with the pacer,
+p99 71 against 84) and the arrivals' urgent meshing; the tail (p99, the 200–650 ms worst frames) is the slides in z
+(`slideZ` 200–350 ms, the band's refresh 60–90 ms) both ways (SS6, SS7). At 40 cells/s, walking pace for a phone,
+p95 14.7 → 19–26.
+
+**Not changed**: the region kernel (2–4 ms a region made at once here; the profiler can't see the paced tiles: SS9),
+the hybrid's READY_S wait (most of what's left "low" at 160: SS8), the slides in z (SS7).
+
+GIFs (pan 120 at 412×915, the capture slows the frames): C:/Projects/shots88/streamspeed/pan120-old.gif (27% of the
+view low, slides 357 ms, busy 91%) and pan120-new.gif (8.0%, 27 ms, 1%).

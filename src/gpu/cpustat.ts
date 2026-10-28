@@ -5,6 +5,8 @@ export interface CpuStat {
   last: number;
   max: number;
   n: number;
+  /** (round 98) the sum, for a mean */
+  sum: number;
 }
 
 export const cpuStats = new Map<string, CpuStat>();
@@ -14,10 +16,11 @@ export const frameSteps: string[] = [];
 /** a step's ms, measured by its caller */
 export function record(label: string, ms: number): void {
   if (ms >= 1) frameSteps.push(`${label} ${ms.toFixed(0)}`);
-  const s = cpuStats.get(label) ?? { last: 0, max: 0, n: 0 };
+  const s = cpuStats.get(label) ?? { last: 0, max: 0, n: 0, sum: 0 };
   s.last = ms;
   s.max = Math.max(s.max, ms);
   s.n++;
+  s.sum += ms;
   cpuStats.set(label, s);
 }
 
@@ -29,10 +32,11 @@ export function timed<T>(label: string, f: () => T): T {
   } finally {
     const ms = performance.now() - t0;
     if (ms >= 1) frameSteps.push(`${label} ${ms.toFixed(0)}`);
-    const s = cpuStats.get(label) ?? { last: 0, max: 0, n: 0 };
+    const s = cpuStats.get(label) ?? { last: 0, max: 0, n: 0, sum: 0 };
     s.last = ms;
     s.max = Math.max(s.max, ms);
     s.n++;
+    s.sum += ms;
     cpuStats.set(label, s);
   }
 }
