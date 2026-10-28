@@ -53,6 +53,8 @@ export class Simulation {
   /** (perfopt) the water: its settling passes run while land just come in is drowsy */
   readonly water!: WaterSystem;
   readonly particles: ParticleSystem;
+  /** (round 104, simscale) the projection: over the chunks its inputs touch */
+  readonly project!: ProjectSystem;
   tick = 0;
   private globalsData = new ArrayBuffer(GLOBALS_BYTES);
   /** Per-system CPU encode time (ms, smoothed). */
@@ -84,7 +86,7 @@ export class Simulation {
       this.placeOps,
       this.wind,
       // what the nature grid sees of the structure grids (bodyProj), first
-      new ProjectSystem(device, world, profiler),
+      (this.project = new ProjectSystem(device, world, profiler)),
       new StructureSystem(device, world, profiler),
       this.surface,
       (this.water = new WaterSystem(device, world, profiler)),
@@ -111,7 +113,7 @@ export class Simulation {
     this.world.tiles?.update(this.tick);
     const enc = this.device.createCommandEncoder({ label: 'prime' });
     // the wind field starts as the map's own wind, before anything reads it
-    this.wind.encode(enc);
+    this.wind.prime(enc);
     this.surface.encode(enc);
     this.shadow.encode(enc);
     this.device.queue.submit([enc.finish()]);
@@ -130,6 +132,8 @@ export class Simulation {
     const sent = globals.events.slice(0, MAX_EVENTS);
     for (const tap of this.eventTaps) tap(sent);
     this.edit.pending = sent.some((e) => e.kind === EventKind.Edit);
+    // (round 104, simscale: where the wind is painted this tick — the wind field updates only round it, sim/windrect.ts)
+    this.wind.collect(globals, sent, this.tick);
     globals.events = globals.events.slice(MAX_EVENTS);
     // (perfopt, ?windhz=: the strokes wait for the wind field's next update)
     if (globals.gusts.length > 1 && this.tick % this.wind.period === 0) {

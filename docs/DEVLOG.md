@@ -8615,3 +8615,94 @@ The merge checks on slidehitch: towertest all passed; floatsweep all passed (0 f
 a pool of 32 can't hold the old window (25) and the new one with its ring. The ride check: 27 of 27 thawed, against
 places' 15 thawed and 2 loaded. The eviction is now the least recently used of the regions more than a region and
 a half outside where the window is heading, else the farthest.
+## Round 104 — the sims scale with what's active, not the window (branch `simscale`, from places 1a9b65c)
+
+The user (DECISIONS round 104): "we can limit the sleep check to regions the player is acting on and essentially have
+the simulation scale with only the things we want active which is typically very little. I would like to try to get a
+steady 60fps on the phone". The evidence (BACKLOG PF1): the phone's v3 A/B, all sims off saving 1.4 / 25 / 52 ms a
+frame at windows 320 / 448 / 512 with 0–33 chunks awake; its v4 in one pass: agents 15.7 ms a frame, project 1.6,
+particles 1.0, water 0.5, lava 0.26, wind field 0.2 — with nothing awake.
+
+**The inventory** (scripts/simprobe.mjs, new: the atlas at q=low 412 x 915 as the phone runs it, every system on,
+1x; each system run alone bracketed by two empty timestamped passes, so the copies between its passes count; GPU ms
+a tick, median of 6; desktop iGPU; base = places 1a9b65c):
+
+| pass | dispatched over (before) | after |
+|---|---|---|
+| structure, edit, oil, sediment(+out), contamination, moisture, fire, wilt, ecology, climate | live chunks (round 85) | same |
+| surface | live chunks with sleepmore (the phone's set) | same |
+| water (rivers=table: the atlas) | the whole window every tick (held rivers) | live chunks, those next to them, the rest every 15 ticks (NEAR list) |
+| renderfields (every 2 ticks) | the whole window (its kernel skipped sleeping chunks with sleepmore) | live chunks (the same columns) |
+| lava flux / depth | live chunks | same; nothing live: no passes at all |
+| lava spill copy (rgba32f, a texture) | whole texture every tick (untimed) | live chunks (TileTexCopy) |
+| lava-prep (prisms) | whole window every tick | only when something's live (else last tick's prisms stand) |
+| particles emit / fire / petals | whole window every tick | live chunks every tick; sleeping chunks each every 8 ticks at 8x the chances |
+| project (structures, bodies → nature) | whole window every tick | chunks under structures (and those they left); everything for a tick after bodyCpu is written or a slide, and while physics holds voxels |
+| wind field | whole texture every tick | the painted wind's box only (strokes, blows, ripples, landing puffs, grown by drift and spread; none 45 s after the last); the map's own wind refreshed a sixteenth of the texture a tick, and the strips a slide brings in at once |
+| agents (surfaces/links every 8, relax x sweeps, occupancy every tick) | whole window | unchanged by default; `?agentscope=1` the scope (below) |
+| sway, particles-update, stats (every 20), structtick | whole window / per particle / per voxel | unchanged |
+
+| window, scene | sims a tick before → after (no agents) | particles | project | water | wind field | lava |
+|---|---|---|---|---|---|---|
+| 320 parked (3–14 awake) | 2.09 → 1.37 | 0.39 → 0.30 | 0.24 → 0 | 0.13 → 0.10 | 0.11 → 0.07 | 0.24 → 0.12 |
+| 320 riding | 1.39 → 0.53 | 0.61 → 0.30 | 0.31 → 0 | 0.19 → 0.09 | 0.11 → 0.05 | 0.08 → 0 |
+| 448 parked | 1.80 → 0.57 | 0.84 → 0.32 | 0.35 → 0 | 0.21 → 0.11 | 0.17 → 0.07 | 0.12 → 0 |
+| 448 riding | 1.77 → 1.06 | 0.73 → 0.39 | 0.34 → 0 | 0.27 → 0.54 (a slide's drowsy chunks in the sample) | 0.18 → 0.04 | 0.14 → 0 |
+| 512 parked | 2.06 → 0.64 | 0.82 → 0.31 | 0.54 → 0 | 0.24 → 0.15 | 0.17 → 0.06 | 0.14 → 0 |
+| 512 riding | 2.63 → 0.59 | 1.29 → 0.26 | 0.58 → 0 | 0.24 → 0.10 | 0.19 → 0.06 | 0.18 → 0 |
+
+So with little awake the sims no longer grow with the window: ~0.55–0.65 ms a tick at 448 and 512 against 1.8–2.6.
+What's left of the whole window: sway (0.06–0.17, render-only springs), particles-update (per particle), the
+renderfields' and surface's drowsy chunks after each slide (sleepmore makes every chunk drowsy for 0.25 s), and the
+held rivers' slow turns.
+
+**Behaviour where things are awake**: the culled passes are the same kernels over the same live columns. culltest
+(flood + fire near the camera, then asleep) on base and after: the same checks pass and fail (the fire-lit check
+fails on both: pre-existing), flood water 46.76 vs 46.8 and window water 8751.5 vs 8751.4 — the held rivers' slow
+turns (they relax 15 steps at once: water_depth.wgsl RIVER_SLOW_N; `?riverslow=1` every tick). Differences by design:
+painted wind under 0.05 cells/s is none (so it ends), and outside its box the field holds the map's own wind
+refreshed at 3.75 Hz (`?windbox=0` as before, `?windbands=N`); a sleeping chunk's ambient particles come 8 at a time
+every 8 ticks (`?emitslow=1` as before).
+
+**Wind and climate** (the user, round 104: "Why does wind and climate need to run everywhere and at what frequency?
+Most wind effects I've seen are gusts near the player and maybe a global Atlas level tick that can be very
+infrequent"): the wind field now updates only round what painted it (sim/windrect.ts: each stamp's box grown by how far
+its wind can drift, 30% of at most 24 cells/s dying down over 7 s, and spread, three sigma of the 6%-a-step blur;
+forgotten 45 s after, when it's under 0.05 everywhere). The map's own wind is analytic (common.wgsl mapWind) and
+refreshed under it a band a tick. Climate already ran on the live chunks only (period 4); so do moisture (1),
+contamination (1), ecology (15), wilt (1) — none dispatched where nothing is awake. Climate near the player at a low
+rate and an atlas-level step for land arriving are left open (BACKLOG SC4): a sleeping chunk's derived fields
+(surface, render fields) aren't remade, so climate there would change the layers without them.
+
+**The agents** (the phone's 15.7 ms; the user, round 104: paths for towns, flow fields only as needed): `?agentscope=1`
+(agents/scope.ts) keeps the surfaces, links, fields and occupancy only over the chunks round the units (their box read
+back from the GPU every 8 ticks), the seeds, the targets, what's held or flying, with a 48-column margin, held 10 s
+after a chunk was last needed; a chunk come into it starts over (agents.wgsl scopeIn), a neighbour outside is no way.
+And a field whose distances stop moving (the GPU flags it, read back) is frozen until its seeds move, the surfaces
+change (a top moved more than half a cell, a link, wet, a room) or the scope grows: the GPU's equivalent of the user's
+paths, made once and walked down. Desktop, 20 town units in the window: agents 3.6 / 7.3 / 6.6 ms a tick at 320 /
+448 / 512 → 1.6 / 0.5 / 1.5. Superseded the same day by the front (below).
+
+### Round 104 (2) — the agents' fields: a scope and a front, on by default (`simscale`)
+
+The first cut (above: `?agentscope=1`, fields frozen once a read-back said none moved) didn't hold in a town: the
+houses going up, the quarry and the wet margins moved some surface every peel, and any move unfroze every field over
+the whole scope. So freezing is replaced by a front built on the GPU (agents.wgsl): each chunk carries a mark — a
+distance that moved in the last sweep, a surface or a link peeled differently, a seed placed or moved, a chunk come
+into the scope — and a sweep relaxes only the marked chunks and those next to them (frontReset, frontBuild: one
+thread a chunk of the scope's box, appending to a list and its indirect dispatch's count; frontClear; then relax
+dispatched indirect over the list, marking the next sweep's). A settled field marks nothing, so the front empties;
+a change relaxes only round where it spreads. The fields stay exact (a surface moved by any amount marks its chunk),
+and the scope (units' box read back every 8 ticks, seeds, targets, held and flying, a 48-column margin, each chunk
+held 10 s after it was last needed) bounds where anything runs. `?agentscope=0`: the whole window as before.
+
+| agents' GPU a frame (in the game, desktop iGPU) | before | after |
+|---|---|---|
+| parked by a town of 20, window 320 / 448 / 512 | 3.23 / 6.32 / 10.93 | 0.28 / 0.28 / 0.87 |
+| riding, 448 / 512 | 3.32 / 10.69 | 0.45 / 0.95 |
+| settlementtest (window 320): at the town / in its raid | 1.09 / 1.14 | 0.40 / 0.19 |
+
+The same outcomes: settlementtest's town 15 trips and 4 blocks (base 17 and 4 over the same 12 s), the raid repelled
+with 14 dead on both; crewtest's totals as the base's (its pit-drop check fails on both); hordetest's phases close
+in, swing, die to the blast and burn as before. With the sims (above), the GPU frame span parked at 448 went 21.5 →
+5.6 ms and at 512 34.2 → 16.9. towertest all passed, floatsweep passed, culltest as the base.

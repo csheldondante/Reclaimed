@@ -135,7 +135,10 @@ export class Structures {
     fv.set(s.q, 4);
     uv.set([w, d, h, s.offset], 8);
     // world xy bounds, a cell of margin
-    fv.set([Math.min(...c.map((p) => p[0])) - 1, Math.min(...c.map((p) => p[1])) - 1, Math.max(...c.map((p) => p[0])) + 1, Math.max(...c.map((p) => p[1])) + 1], 12);
+    const b: [number, number, number, number] = [Math.min(...c.map((p) => p[0])) - 1, Math.min(...c.map((p) => p[1])) - 1, Math.max(...c.map((p) => p[0])) + 1, Math.max(...c.map((p) => p[1])) + 1];
+    fv.set(b, 12);
+    // (round 104, simscale: the projection runs over the chunks under the structures — grids/systems.ts)
+    this.world.strBounds.set(s.slot, b);
     this.device.queue.writeBuffer(this.world.strFrames, s.slot * FRAME_BYTES, f);
   }
 }

@@ -35,13 +35,25 @@ fn texAt(t: vec2<i32>) -> vec2<f32> {
   return textureLoad(windTex, t, 0).xy;
 }
 
+// (round 104, simscale — sim/systems.ts WindFieldSystem) what this dispatch covers: x, y its first texel; z the
+// mode — 0 the painted wind's update (where something blew lately, sim/windrect.ts), 1 the map's own wind
+// refreshed under the painted wind as it stands (the rest of the field, a band a tick); w unused
+@group(0) @binding(32) var<uniform> WR: vec4<u32>;
+/** painted wind weaker than this (cells/s) is none: what's left of a blow ends, so its texels can stop updating */
+const PAINT_MIN: f32 = 0.05;
+
 @compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let dims = vec2<u32>(textureDimensions(windTex));
+  let id = gid.xy + WR.xy;
   if (id.x >= dims.x || id.y >= dims.y) { return; }
   let t = vec2<i32>(id.xy);
   let c = (vec2<f32>(t) + 0.5) * 2.0; // world position of this texel
   var v = texAt(t);
+  if (WR.z == 1u) {
+    textureStore(windOut, t, vec4<f32>(v, mapWind(c) + v));
+    return;
+  }
   // advect: the gust drifts on in its own direction, but slowly (30 % of its
   // speed) so painted wind stays roughly where it was painted
   v = windField(c - v * dtW() * 0.3);
@@ -129,5 +141,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let m = length(v);
   if (m > MAX_W) { v *= MAX_W / m; }
+  if (m < PAINT_MIN) { v = vec2<f32>(0.0); }
   textureStore(windOut, t, vec4<f32>(v, mapWind(c) + v));
 }

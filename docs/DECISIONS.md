@@ -8,6 +8,22 @@ each was implemented.
 - The user: "Also, let's still plan to eventually add the paths for agents because I think for lots of jobs it will.look
   better and be faster and because we can generate path data on building tiles that will make agents use stairs or
   elevators and that will look cool." → BACKLOG ST15 (planned; simscale's frozen scoped fields are the interim).
+## 2026-10-28 — round 104 (session 5, `simscale`) — the simulation scales with what's active
+
+- The user, verbatim: "My understanding is also that we can limit the sleep check to regions the player is acting on
+  and essentially have the simulation scale with only the things we want active which is typically very little. I
+  would like to try to get a steady 60fps on the phone with no hiccups and no pop in if possible. … If it's a
+  fundamental limit of phone hardware then let's arrive at that though benchmarking and exploring why."
+- On wind and climate, verbatim: "Why does wind and climate need to run everywhere and at what frequency? Most wind
+  effects I've seen are gusts near the player and maybe a global Atlas level tick that can be very infrequent."
+- On the agents, verbatim: "For the agents we already discussed that we should compute paths instead of flow fields
+  for towns then just move agents along the paths between destinations. Flow fields can be generated as needed and I
+  suspect only during large combats or storms. That means storm framerate may drop to <30 fps but that's reasonable
+  for a very action and simulation heavy scene".
+- → Branch `simscale`: every pass that only matters where something's awake dispatched over the live chunks; the wind
+  field only round what painted it; the agents' fields kept round what the agents do and relaxed only where something changed — the
+  GPU equivalent of the user's paths (a field made once and walked down), not a CPU path graph; ST15 (explicit paths)
+  stays open (BACKLOG SC1–SC6).
 
 ## 2026-10-28 — round 102 (session 5, `gpugen`) — region generation stays on the GPU, by the phone's numbers
 
