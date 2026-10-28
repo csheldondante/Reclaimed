@@ -16,7 +16,7 @@ import { AudioDebug } from './ui/audio-debug';
 import { RockPanel } from './ui/rockpanel';
 import { PerfOverlay } from './ui/perf-overlay';
 import { startHitch } from './perf/start';
-import { benchLevel, benchLoadingNote, benchMode, benchSkip, benchStandalone } from './perf/bench';
+import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStandalone, benchWatchdog } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -58,7 +58,27 @@ async function main() {
 
   const canvas = document.getElementById('world') as HTMLCanvasElement;
   const ui = document.getElementById('ui')!;
-  const gpu = await initGpu(canvas);
+  // (round 101, ?bench=1: the calibration benchmark — src/perf/bench.ts. Its start and end pages run no level; its
+  // level pages are the game as deployed, measured. v4: decided before the GPU is asked for — a phone whose GPU
+  // doesn't come back for the next page left a grey page with nothing running; the note and the watchdog start first)
+  const bench = benchMode(params);
+  // (v3: a page that loaded again without finishing is skipped)
+  if (bench === 'skip') {
+    benchSkip('the page loaded again without finishing (crashed, or the tab was killed)');
+    return;
+  }
+  if (bench === 'level') {
+    benchLoadingNote(ui);
+    // (v4: no sign of life from the bench for 60 s (150 s loading, 30 s for the GPU): why noted, on to the next page)
+    benchWatchdog();
+  }
+  // (v4: the end page shows its report even when the GPU never comes up)
+  const gpu = bench === 'final' ? await benchGpu(initGpu(canvas)) : await initGpu(canvas);
+  if (!gpu) {
+    await benchStandalone('final', null);
+    return;
+  }
+  if (bench) benchGpuUp(gpu.device);
   // (round 100, hitchrec: ?hitch=1 — the hitch recorder; its GPU memory count goes on the device before anything's made)
   const hitch = startHitch(params, gpu.device, ui);
   // (round 82, ?readback=0: no GPU readbacks every frame or few — no timestamps, the mesh's chunk records, the
@@ -100,19 +120,11 @@ async function main() {
   resize();
   new ResizeObserver(resize).observe(canvas);
 
-  // (round 101, ?bench=1: the calibration benchmark — src/perf/bench.ts. Its start and end pages run no level; its
-  // level pages are the game as deployed, measured)
-  const bench = benchMode(params);
   if (bench === 'start' || bench === 'final') {
     await benchStandalone(bench, host);
     return;
   }
-  // (v3: a page that loaded again without finishing is skipped; a device lost on a level page goes on to the next)
-  if (bench === 'skip') {
-    benchSkip('the page loaded again without finishing (crashed, or the tab was killed)');
-    return;
-  }
-  if (bench === 'level') benchLoadingNote(ui);
+  // (v3: a device lost on a level page goes on to the next)
   if (bench === 'level') void gpu.device.lost.then((info) => info.reason !== 'destroyed' && benchSkip(`GPU device lost (${info.reason}): ${info.message}`));
 
   const show = (next: Scene) => {
