@@ -1080,10 +1080,21 @@ its edge:
   anything that writes a current buffer of a sleeping chunk (particles on
   veg, place ops on water) keeps what it wrote, as before. `?settleiters=`
   needs `?simcull=0` (its passes read waterNext as the water everywhere).
-  With `rivers=table` the water's passes aren't culled: a held river's
-  columns are simulated asleep (riverheld.wgsl).
-  Not culled (they run everywhere by design): particles, project, agents,
-  wind field, sway, render fields, lava-prep, stats.
+  With `rivers=table` the water runs over a NEAR list (round 104): the live
+  chunks, those next to them, the rest each on a slow turn every 15 ticks (a
+  held river off from anything live relaxes 15 steps at once). Other lists
+  (round 104): AWAY + n (the sleeping chunks on their turn: the particles'
+  emitters at n times the chances), CUSTOM (a pass's own, `setList`: the
+  projection under the structures, the agents' scope). The render fields
+  (with sleepmore) and the lava's spill copy (`TileTexCopy`) run over the
+  live list; lava-prep only when something's live.
+  The wind field (round 104, sim/windrect.ts): painted wind updated only over
+  the box of what painted it lately (strokes, blows, ripples; all of it while
+  physics holds voxels), the map's own wind refreshed a band a tick under it.
+  WorldGpu `strBounds` / `projectAll`: the CPU's contract for the projection
+  (the structures' bounds; bodyCpu written or a slide: project everything).
+  Not culled: sway, particles-update, stats, structtick, the agents (unless
+  `?agentscope=1`: agents/scope.ts).
 - **The simulation's rates** (perfopt, round 83, sim/flow.ts): `?simhz=60|30
   |15` the tick rate — the kernels' per-60 Hz-tick rates scale by
   common.wgsl `simStep()` (G.dt × 60), `perTick`, `relaxTick`; water, oil

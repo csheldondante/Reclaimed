@@ -39,7 +39,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (riverHeld(id.xy, rh)) {
     let ia = colIdx(id.x, id.y);
     waterPrev[ia] = water[ia];
-    waterOut[ia] = mix(water[ia], rh.depth, RIVER_RELAX);
+    // (round 104, simscale: off from anything live, a held river is updated every RIVER_SLOW_N ticks — sim/cull.ts
+    // NEAR — so it relaxes that many steps' worth at once)
+    var relax = RIVER_RELAX;
+    if (RIVER_SLOW_N > 1u && !nearLive(id.xy)) { relax = 1.0 - pow(1.0 - RIVER_RELAX, f32(RIVER_SLOW_N)); }
+    waterOut[ia] = mix(water[ia], rh.depth, relax);
     return;
   }
   // (a sleeping chunk, round 80: what it holds carried through — the next buffer is copied back over this one)

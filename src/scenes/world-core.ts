@@ -11,6 +11,7 @@ import { Simulation, TICK_DT } from '../sim/simulation';
 import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
 import { CHUNK, packColumns, type PackedWorld } from '../world/layout';
+import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
 import { unpackColumns } from '../world/mapfile';
 import { looseIntoGrid } from '../world/loose';
@@ -104,6 +105,10 @@ export class WorldCore {
     this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     this.sim = new Simulation(device, this.world, host.profiler);
+    // (round 104, simscale: the painted wind's boxes go with the land; dy comes in world units, the field's rows are the window's)
+    this.onShift.push((dx, dy) => this.sim.wind.shift(dx, Math.round(dy / ROW_H)));
+    // (simscale: what comes in is projected at the next tick — grids/systems.ts ProjectSystem)
+    this.onShift.push(() => (this.world.projectAll = true));
     this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize, meshRoom, host.quality.meshSlots);
     this.structures = new Structures(device, this.world);
     this.weather = new Weather(map.surface, this.dims.w, this.dims.h);

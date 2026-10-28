@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 104 (2026-10-28, session 5, `simscale`) — the sims scale with what's active (DECISIONS round 104)
+
+| id | item | size | status |
+|---|---|---|---|
+| SC1 | Every per-tick pass that matters only where something's awake over the live chunks: water with rivers=table (live, beside live, the rest every 15 ticks), renderfields, the lava's spill copy, lava-prep (only when something's live), the particles' emitters (sleeping chunks every 8 ticks at 8x the chances), project (under structures; whole only after bodyCpu, a slide, or while physics holds voxels); scripts/simprobe.mjs per pass | M | done (simscale) |
+| SC2 | (the user: "Most wind effects I've seen are gusts near the player") The wind field only round what painted it lately (sim/windrect.ts), the map's own wind refreshed a band a tick; `?windbox=0` as before | M | done (simscale) |
+| SC3 | The agents' fields only where agents are (`?agentscope=1`: the scope round units, seeds and targets; fields frozen once settled). On by default once the town's own building stops unfreezing them: relax only the chunks whose distances moved (a front, built on the GPU) | M | wip |
+| SC4 | Climate near the player at a low rate on sleeping chunks (needs their surface and render fields remade), and an atlas-level climate step for land as it arrives (the generator's snow and ice by season) | M | open |
+| SC5 | Sway (render-only springs) over the whole window every tick: on screen only, or at half rate | S | open |
+| SC6 | The phone bench v4 again on `simscale` at 320/448/512 parked, riding and panning | S | open |
+
 ## Round 102 (2026-10-28, session 5, `gpugen`) — region generation stays on the GPU (DECISIONS round 102)
 
 Ids GG.
@@ -801,7 +812,7 @@ Order decided: C4, C3, C5 → C2 → C1 (with A6/A15 sediment) → C6 → C7 →
 | ST15 | Agents on paths move between known places (a path graph, not the flow field each step): cheaper to update, the flow field only off the paths (round 91) | M | open |
 | ST16 | Every settler a person with an id and a serialized record (name, role, kin, home, history: the diplomacy's party), so the player can talk to anyone and the GM can introduce characters from them; kept between runs (round 91; with ST12, R8) | M | open |
 | ST17 | (round 102, design only, to come back to) Settlements as grids + occupancy spans: each district's grid (irregular, contour Voronoi, radial) made on the GPU from seed and ground; per grid cell a list of spans [z0, z1, kind, span id] like terrain columns (cellars, adits, buried cities, stacking, bridges, ruins), projected into the columns as External intervals and drawn as instanced modules from neighbour occupancy; spans authoritative, a coarse atlas-level count field (people or structures a cell) drives growth and takes edits back; identity derived from span id + seed unless named or touched, but agents' behaviours and paths come from the span's kind; vegetation a separate field so buildings can be overgrown (the user isn't certain). Write a design for the user first | L | open (design) |
-| PF1 | (round 102, deferred by the user: "worth looking into but defer for now since we don't have enough evidence that is the slowdown") Sims dispatched over the whole window even asleep: the phone's v3 A/B showed all sims off saving 25 ms a frame at window 448 and 52 at 512 with 0-33 chunks awake (1.4 at 320). Confirm with bench v4's in-pass timestamps; if real, dispatch every sim pass over the awake tiles only | M | deferred (needs evidence) |
+| PF1 | (round 102, deferred by the user: "worth looking into but defer for now since we don't have enough evidence that is the slowdown") Sims dispatched over the whole window even asleep: the phone's v3 A/B showed all sims off saving 25 ms a frame at window 448 and 52 at 512 with 0-33 chunks awake (1.4 at 320). Confirm with bench v4's in-pass timestamps; if real, dispatch every sim pass over the awake tiles only | M | done (simscale: SC1-SC2; the agents SC3) |
 | C5 | The weight idea: a hanging piece's mass against its contact area × strength (snapping necks under load) | M | done (collapse, round 92: C15) |
 | R4 | The first content as data (data/recipes/): materials (with ageing), ~30 kinds, the core capability rules, a few civ profiles from the atlas's eras; the world state keeps things and diplomacy between runs (WorldSnapshot) | M | minimal done (settlements: data/recipes/core.json — 15 materials with ageing, 18 kinds, 6 recipes, 11 rules; civs.json — 6 profiles); keeping things and diplomacy in the WorldSnapshot open |
 | R6 | Grid generators: Voronoi on height contours and radial rings and spokes beside build/towngrid.ts, picked by CivProfile.builds.grids | M | done (settlements: src/settle/grids.ts, ST2) |

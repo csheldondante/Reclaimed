@@ -260,6 +260,28 @@ fn slowTick(q: vec2<u32>, n: u32) -> bool {
   let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
   return ((G.tick + c * 7u) % n) == 0u;
 }
+/** (round 104, simscale — sim/cull.ts NEAR) is chunk (cx, cy) live: awake, or drowsy? Past the mask: awake. */
+fn chunkLive(cx: i32, cy: i32) -> bool {
+  if (cx < 0 || cy < 0 || u32(cx) >= G.chunksX) { return false; }
+  let c = u32(cy) * G.chunksX + u32(cx);
+  if (c >= 2048u) { return true; }
+  let w = c >> 5u;
+  let b = 1u << (c & 31u);
+  return (G.sleep[w >> 2u][w & 3u] & b) == 0u || (G.drowse[w >> 2u][w & 3u] & b) != 0u;
+}
+/** is column q's chunk live or next to a live one (the 3 x 3 round it)? — sim/cull.ts NEAR's list */
+fn nearLive(q: vec2<u32>) -> bool {
+  let cx = i32(q.x / G.chunkSize);
+  let cy = i32(q.y / G.chunkSize);
+  let rows = i32((G.mapH + G.chunkSize - 1u) / G.chunkSize);
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      if (cy + dy < 0 || cy + dy >= rows) { continue; }
+      if (chunkLive(cx + dx, cy + dy)) { return true; }
+    }
+  }
+  return false;
+}
 /** a flow's column frozen this tick: asleep, and not its slow turn */
 fn flowFrozen(q: vec2<u32>, n: u32) -> bool { return asleep(q) && !slowTick(q, n); }
 

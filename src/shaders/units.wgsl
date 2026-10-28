@@ -144,6 +144,52 @@ fn emit(kind: u32, id: u32, other: u32, amount: f32, p: vec3<f32>) {
   atomicStore(&events[o + 6u], bitcast<u32>(p.z));
 }
 
+// ---- (round 104, simscale — agents.ts scope) -------------------------------------------------------------------
+// The fields, the surfaces and the occupancy are kept only over the columns round the units and their seeds. A column
+// come into that scope starts over: every field unreachable, nobody there (what it held from before is stale).
+@compute @workgroup_size(8, 8)
+fn scopeIn(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let i = colIdx(id.x, id.y);
+  let N = ns();
+  let cols = G.mapW * G.mapH;
+  for (var f = 0u; f < 12u; f++) {
+    for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
+  }
+  for (var h = 0u; h < 2u; h++) {
+    atomicStore(&occ[h * cols + i], 0u);
+    for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(h * cols + i) * 4u + k], 0); }
+  }
+}
+
+/** occClear over the scope's columns (8 x 8 a workgroup: the tile list's shape) */
+@compute @workgroup_size(8, 8)
+fn occClearCols(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let c = colIdx(id.x, id.y);
+  let cols = G.mapW * G.mapH;
+  let wr = AP.n.w % 2u;
+  atomicStore(&occ[wr * cols + c], 0u);
+  for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(wr * cols + c) * 4u + k], 0); }
+}
+
+// the live units' box (columns: min x, min y, max x, max y), read back now and then
+@group(0) @binding(28) var<storage, read_write> ubox: array<atomic<u32>, 4>;
+@compute @workgroup_size(64)
+fn unitBox(@builtin(global_invocation_id) id: vec3<u32>) {
+  let u = id.x;
+  if (u >= AP.n.x) { return; }
+  let a = units[u * 4u];
+  if (((unitInfo(a) >> 8u) & 1u) == 0u) { return; }
+  let c = cellAt(a.xy);
+  let x = u32(clamp(c.x, 0, i32(G.mapW) - 1));
+  let y = u32(clamp(c.y, 0, i32(G.mapH) - 1));
+  atomicMin(&ubox[0], x);
+  atomicMin(&ubox[1], y);
+  atomicMax(&ubox[2], x);
+  atomicMax(&ubox[3], y);
+}
+
 @compute @workgroup_size(64)
 fn occClear(@builtin(global_invocation_id) id: vec3<u32>) {
   let cols = G.mapW * G.mapH;

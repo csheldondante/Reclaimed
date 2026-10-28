@@ -84,6 +84,17 @@ struct Hit { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32> };
 // u16 the enclosed level's (0 the same); the place table: a room's region
 @group(0) @binding(11) var<storage, read> places: array<u32>;
 @group(0) @binding(12) var<storage, read> placeTable: array<u32>;
+// (round 104, simscale — agents.ts scope) the columns the fields are kept over: x0, y0, x1, y1 (exclusive); a
+// neighbour past them is no way (the window's edge is the same)
+// [1].x: the fields relaxed this tick (bit f) — a field converged and undisturbed is kept as it is (frozen)
+@group(0) @binding(38) var<uniform> AB: array<vec4<u32>, 2>;
+fn inScope(q: vec2<i32>) -> bool { return q.x >= i32(AB[0].x) && q.y >= i32(AB[0].y) && q.x < i32(AB[0].z) && q.y < i32(AB[0].w); }
+// what changed since the CPU last read: [0] the fields whose distances moved (bit f), [1] 1 if a surface or a link did
+@group(0) @binding(37) var<storage, read_write> agentFlags: array<atomic<u32>, 4>;
+/** (round 104) how far a surface's top may move between peels before the fields are relaxed again (cells) */
+const NAV_DZ: f32 = 0.5;
+/** a surface's record changed (its height, headroom, wet, links, room — not its water, which the fields don't read)? */
+fn navMoved(a: vec4<u32>, b: vec4<u32>) -> bool { return a.x != b.x || a.y != b.y || a.z != b.z; }
 
 const NAV_K: u32 = 4u;
 const AGENT_H: f32 = 1.5;
@@ -144,12 +155,25 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
       let wet = r == i32(n) - 1 && water[i] > WADE;
       let room = select(underRoom, topRoom, out == 0u);
       let region = select(0u, placeTable[room], room != 0u);
-      nav[i * NAV_K + out] = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(select(0.0, water[i], out == 0u)));
+      let nv = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(select(0.0, water[i], out == 0u)));
+      // (the links' bits are the links pass's: compared there)
+      let ov = nav[i * NAV_K + out];
+      // (round 104: a top dug or built a little — under NAV_DZ — moves no field: its step costs barely change, and
+      // the links, which decide the ways, are compared in the links pass; a surface come or gone, its headroom, its
+      // wet or its room do)
+      let dz = abs(bitcast<f32>(ov.x) - z);
+      if (dz > NAV_DZ || (ov.y & 0x1ffu) != nv.y || ov.z != nv.z) { atomicOr(&agentFlags[1], 1u); }
+      // (its links kept: the links pass makes them again, the same where nothing moved — so no change is flagged)
+      nav[i * NAV_K + out] = vec4<u32>(nv.x, nv.y | (ov.y & ~0x1ffu), nv.z, nv.w);
       out += 1u;
     }
     r -= 1;
   }
-  for (var k = out; k < NAV_K; k++) { nav[i * NAV_K + k] = vec4<u32>(bitcast<u32>(-1.0), 0u, 0u, 0u); }
+  for (var k = out; k < NAV_K; k++) {
+    let none = vec4<u32>(bitcast<u32>(-1.0), 0u, 0u, 0u);
+    if (navMoved(nav[i * NAV_K + k], none)) { atomicOr(&agentFlags[1], 1u); }
+    nav[i * NAV_K + k] = none;
+  }
 }
 
 /** Link each surface to the six neighbours (after surfaces). */
@@ -181,7 +205,9 @@ fn links(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       bits |= best << (3u * d);
     }
-    nav[s].y = (nav[s].y & 0x1ffu) | (bits << 9u);
+    let ny = (nav[s].y & 0x1ffu) | (bits << 9u);
+    if (ny != nav[s].y) { atomicOr(&agentFlags[1], 1u); }
+    nav[s].y = ny;
   }
 }
 
@@ -236,7 +262,10 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         if (((AP.n3.w >> f) & 1u) != 0u) { dist[f * N + s] = FAR; }
         continue;
       }
+      // (round 104, simscale: converged and undisturbed — kept as it is)
+      if (((AB[1].x >> f) & 1u) == 0u) { continue; }
       if (fp != 0u && !onPlace(s, fp)) {
+        if (dist[f * N + s] != FAR) { atomicOr(&agentFlags[0], 1u << f); }
         dist[f * N + s] = FAR;
         continue;
       }
@@ -251,7 +280,9 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var dd = 0u; dd < NDIR; dd++) {
           let l = navLink(s, dd);
           if (l == 0u) { continue; }
-          let t = colIdxI(nbr(p, dd)) * NAV_K + l - 1u;
+          let qn = nbr(p, dd);
+          if (!inScope(qn)) { continue; }
+          let t = colIdxI(qn) * NAV_K + l - 1u;
           let dn = dist[f * N + t];
           if (dn >= FAR) { continue; }
           d = min(d, dn + stepCost(z, navZ(t), navWet(t)));
@@ -259,7 +290,10 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       // (a field cut off from its seeds counts up forever unless capped: past
       // any real path's length it's unreachable)
-      dist[f * N + s] = select(d, FAR, d > f32(G.mapW + G.mapH) * 6.0);
+      // (round 104: past the scope's own size — a pocket cut off within it counts up to that, then it's settled)
+      let nd = select(d, FAR, d > f32(min(G.mapW + G.mapH, (AB[0].z - AB[0].x) + (AB[0].w - AB[0].y))) * 6.0);
+      if (abs(nd - dist[f * N + s]) > 1e-3) { atomicOr(&agentFlags[0], 1u << f); }
+      dist[f * N + s] = nd;
     }
   }
 }
