@@ -1920,5 +1920,10 @@ clears them).
   `unwritten` regions and the window's edge against the parked view). benchMode counts a level page's loads
   (`tries`): a second load is `skip` (main.ts calls benchSkip); main.ts sends a lost device (not 'destroyed') to
   benchSkip too.
+- **v4 (round 102):** `version: 4`. main.ts asks `benchMode` before the GPU: a level page's note and
+  `benchWatchdog` start first, and the end page gets a GPU or, after 20 s, shows its report without one (`benchGpu`).
+  `go()` destroys the page's device before navigating. `save()` makes room (the stored previous report, then the
+  details) rather than throw. The sandbox is two pages, `main` and `pans`; the report merges them. The A/B runs riding
+  in a storm (`main.ab`) and by the meteor (`pans.abMeteor`), with the awake chunks.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.

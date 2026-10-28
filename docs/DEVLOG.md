@@ -8345,3 +8345,71 @@ The smoke run (desktop, 170 s): no Download offered before the end with a v1 res
 "Download report" for the new run; the hero walked by the stick (198 cells); window 256's fastest pan held to
 640 cells/s (rendered fps 81 → 33, low detail p90 at most 4.9%). It found the window pages dropping their ride (the
 road cleared before it was kept): fixed.
+
+## 2026-10-28 — round 102 (`bench2`): bench v4 — the chain that stalled on the phone, the warp's spot, an active A/B
+
+The user (verbatim): "The benchmark doesn't continue after the first test runs. It goes through panning and the
+meteor (although the atlas location it jumps to seems to have shifted and is less interesting and has no cliffs) but
+then it goes grey and never resumes. Previously it loaded and continued new tests after. Also, it turns off systems to
+check perf but on a pretty static scene so I'm not sure how helpful it is since I believe those systems sleep most of
+the time anyway." The v3 phone report (data/bench/pixel9a-2026-10-28-v3.json) has no main-page numbers at all and the
+error "main: stopped (the page was left or crashed)" — the user's "carry on" — while every later page ran.
+
+**The stall.** What fits all of it: the main page's end (after the meteor) is where it writes its whole result into
+the suite's state and navigates. Two ways that dies on the phone, both fixed:
+- the state didn't fit. localStorage is shared by every branch's build on csheldondante.github.io; v3's main page
+  (five pans, the max-pan probe, the warp, the meteor, each a full capture) on top of the stored previous report.
+  The per-step checkpoints failed quietly, the last save threw, and the chain stopped where it stood. v4's save
+  never stalls: when it's full it drops the stored previous report, then the per-capture details (passes, CPU steps,
+  hitches), and only then says on screen that it can't go on. The start page also records localStorage's keys and
+  size and the storage estimate (`device.localStorage`, `storageEstimate`).
+- the next page's GPU never came up. The bench's note, watchdog and handlers started only after initGpu() resolved,
+  so a requestAdapter/requestDevice still pending after the heavy page left a plain grey page. v4 decides the page
+  before asking for the GPU: the "running page N of M" note and the watchdog are up first. The GPU gets 30 s, the
+  level 150 s; after that, 60 s with no sign of life (a frame the bench waited for, or a step it began) is recorded
+  with its step, shown on screen, and the chain moves on. The old page's device is destroyed before it navigates,
+  so its memory is free when the next page asks. The end page shows its report even with no GPU (20 s).
+- and the main page is split: the pans, the max-pan probe, the warp and the meteor are a page of their own
+  (`pans`), so one crash can't lose every sandbox number. The report reads the two as one sandbox.
+
+**The warp's spot.** The atlas and `?at=` (15024,14337) haven't changed since round 101. In v3 the pans (to 320
+cells/s) and the probe (to 640) carried the window thousands of cells away first, and the warp went a third of the
+way round the world from wherever they stopped, onto flat land. In v4 the warp goes back to where the page started:
+the road among the cliffs, by the town. The meteor lands there.
+
+**The A/B on an active scene.** A parked scene sleeps (sim/sleep.ts), so a 0 ms cost often meant asleep, not free.
+The main page's A/B now runs while it rides the road at 18 cells/s with a storm spawned over the camera (arriving
+land wakes its chunks, rain wakes water and sediment): every sim one by one, particles, agents, renderprep, the mesh
+rebuilds, shadow, the far land, the grid and the voxel mesh. A second, shorter one runs by the meteor's crater (lava,
+debris). The window pages' A/B runs riding in a storm too. Each A/B records the chunks awake with the system on and
+off (`awakeOn`, `awakeOff`).
+
+**Timestamps on Mali.** In v3's phone report, `timestampModes` had all-in-one-pass sum/wall at 0.87 (sane) against
+3.0 for separate passes. So on Mali timestamps work inside one pass, not across passes. Timing each system as one
+pass would mean the engine's systems sharing a pass; that's left for later (BN24).
+
+**Headless** (scripts/benchrun.mjs --throttle 4 --fill: the CPU 4x slower, localStorage filled to within 512K
+characters of its quota, the full chain):
+- the whole chain ran, start to the end screen: 9 pages (start, main, pans, hero, win256/384/448/512, final) in
+  796 s, no bench errors, the end screen's Download for the run. Teardown left page errors: readbacks in flight
+  rejected as the old page's device was destroyed. Those are expected and now suppressed (unhandledrejection while
+  leaving).
+- under a 4x CPU the A/B is CPU-bound and noisy (±25 ms on 15–30 ms frames), so it tests the chain, not the numbers.
+  The awake chunks moved with the storm and the ride: 99–103 with every sim on, 0–63 for single systems as the storm
+  drifted off.
+- the warp back to the start covered 4706 cells.
+- The coverage per window (`screenInDetail`, `windowFor95`, `derived.coverage`) and the per-system GPU time with its
+  dispatches in one pass (`systemGpu`) came after this run. They're checked by the next run, an unthrottled full chain
+  with localStorage filled to 48K characters from the brim (to force the save's fallbacks).
+
+**The screen in detail, and each system in one pass** (the user, verbatim: "I do want to see if the GPU generation
+let's us increase the view distance so that the whole screen is nearly always loaded in detail"):
+- every capture records the share of the screen in the window's detail (`screenInDetail`: in the window, its region
+  written);
+- the view records the smallest window holding 95% of the screen at that zoom (`windowFor95`);
+- `derived.coverage` gives the frame cost at that window: measured if it's one of the five sizes, else extrapolated
+  along a line in the window's area.
+- `systemGpu` times each sim system alone, encoded once more through an encoder that hands it one shared compute
+  pass, timed at that pass's begin and end (sane on Mali). It records the awake and window chunks, on the main page
+  (riding in the storm), by the meteor, and on each window page. That is the evidence for or against PF1: do the
+  sims cost the whole window or only what's awake?
