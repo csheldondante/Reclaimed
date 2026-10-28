@@ -8328,3 +8328,15 @@ let's us increase the view distance so that the whole screen is nearly always lo
   pass, timed at that pass's begin and end (sane on Mali). It records the awake and window chunks, on the main page
   (riding in the storm), by the meteor, and on each window page. That is the evidence for or against PF1: do the
   sims cost the whole window or only what's awake?
+
+**The second full chain** (unthrottled, localStorage filled to 48K characters from the brim; 791 s): all 9 pages
+to the end screen, exit 0. The save's fallbacks fired in order (details dropped, then every page's numbers), so the
+chain never stalled, but the report lost the main and pans pages. So the pages' results now live in IndexedDB
+(`reclaimed-bench`, key `results:<run id>`; the last report under `last`), and localStorage keeps only the chain:
+pages, step, errors, a few KB. An old report in localStorage moves to IndexedDB at the next start. **Not smoke-tested
+yet** (the browser wasn't free); the localStorage fallback stays for a browser without IndexedDB.
+Numbers from the window pages that kept theirs (desktop iGPU, uncapped, riding in a storm):
+- the screen in the window's detail, parked: 64% at 384, 76% at 448, 90% at 512;
+- the fastest pan held: 160 / 125 / 80 cells/s (low detail over 5% one step above);
+- **the sims' GPU ms a tick, timed one pass per system:** 1.07 / 1.50 / 1.67 for 576 / 784 / 1024 window chunks,
+  with 0–5 chunks awake. That is the evidence for PF1: the sims cost the whole window, not what's awake.

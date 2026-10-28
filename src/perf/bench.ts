@@ -219,16 +219,101 @@ interface BenchState {
   done?: boolean;
 }
 
+// (v4) The pages' results live in IndexedDB; localStorage keeps only the chain (pages, step, errors: a few KB). The
+// origin's localStorage is shared by every branch's build — on the Pixel 9a v3's main page couldn't keep its results
+// there and the chain stopped; a headless run with it filled to the brim lost every page's numbers to the fallback.
+const IDB = 'reclaimed-bench';
+let idbP: Promise<IDBDatabase | null> | null = null;
+function idb(): Promise<IDBDatabase | null> {
+  return (idbP ??= new Promise((res) => {
+    try {
+      const r = indexedDB.open(IDB, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => res(null);
+      r.onblocked = () => res(null);
+    } catch {
+      res(null);
+    }
+  }));
+}
+async function idbPut(key: string, value: unknown): Promise<boolean> {
+  const db = await idb();
+  if (!db) return false;
+  return new Promise((res) => {
+    try {
+      const t = db.transaction('kv', 'readwrite');
+      t.objectStore('kv').put(value, key);
+      t.oncomplete = () => res(true);
+      t.onerror = () => res(false);
+      t.onabort = () => res(false);
+    } catch {
+      res(false);
+    }
+  });
+}
+async function idbGet<T>(key: string): Promise<T | undefined> {
+  const db = await idb();
+  if (!db) return undefined;
+  return new Promise((res) => {
+    try {
+      const r = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+      r.onsuccess = () => res(r.result as T | undefined);
+      r.onerror = () => res(undefined);
+    } catch {
+      res(undefined);
+    }
+  });
+}
+/** states whose results were loaded (or made) whole: only those write their results (a skeleton would blank them) */
+const whole = new WeakSet<BenchState>();
+/** the last results write, waited for before the page goes */
+let pending: Promise<unknown> = Promise.resolve();
+/** IndexedDB refused: the results go in localStorage as before (v4's compacting save) */
+let idbFailed = false;
+
 function load(): BenchState | null {
   try {
     const s = JSON.parse(localStorage.getItem(STATE) ?? 'null') as BenchState | null;
-    return s && s.version === BENCH_VERSION ? s : null;
+    if (!s || s.version !== BENCH_VERSION) return null;
+    s.results ??= {};
+    // (results kept in localStorage — IndexedDB refused — make it whole)
+    if (Object.keys(s.results).length) whole.add(s);
+    return s;
   } catch {
     return null;
   }
 }
 
+/** the state with its results (IndexedDB's over any localStorage held) */
+async function loadFull(): Promise<BenchState | null> {
+  const s = load();
+  if (!s) return null;
+  const r = await idbGet<Record<string, unknown>>(`results:${s.id}`);
+  if (r) s.results = { ...r, ...s.results };
+  whole.add(s);
+  return s;
+}
+
 function save(s: BenchState): void {
+  if (whole.has(s) && !idbFailed) {
+    const results = s.results;
+    const id = s.id;
+    // (a copy: the results go on changing while the write is under way)
+    const copy = JSON.parse(JSON.stringify(results));
+    pending = pending.then(() =>
+      idbPut(`results:${id}`, copy).then((ok) => {
+        if (!ok) idbFailed = true;
+      }),
+    );
+    const skeleton = { ...s, results: {} };
+    try {
+      localStorage.setItem(STATE, JSON.stringify(skeleton));
+      return;
+    } catch {
+      // (even the skeleton didn't fit: the fallback below)
+    }
+  }
   const body = JSON.stringify(s);
   try {
     localStorage.setItem(STATE, body);
@@ -309,7 +394,11 @@ function go(s: BenchState): void {
   q.set('bench', '1');
   q.set('benchpage', p.name);
   for (const [k, v] of Object.entries(p.params)) q.set(k, v);
-  location.href = `${location.pathname}?${q.toString()}`;
+  const to = `${location.pathname}?${q.toString()}`;
+  // (the results' write landed first — at most 5 s)
+  void Promise.race([pending, sleep(5000)]).then(() => {
+    location.href = to;
+  });
 }
 
 /** What this page is in the suite: the start screen, a level page, the end — or not the benchmark at all. */
@@ -389,8 +478,11 @@ export function benchLoadingNote(ui: HTMLElement): void {
 /** (v3) this page didn't finish: noted, and on to the next */
 export function benchSkip(why: string, keep = false): void {
   if (leaving) return;
-  const s = load();
-  if (!s) return;
+  void benchSkipNow(why, keep);
+}
+async function benchSkipNow(why: string, keep: boolean): Promise<void> {
+  const s = await loadFull();
+  if (!s || leaving) return;
   const page = s.pages[s.step]?.name ?? '?';
   s.errors.push(why.startsWith(`${page}:`) ? why : `${page}: ${why}`);
   // (what the page measured before it stopped is kept: its last checkpoint)
@@ -693,7 +785,7 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host | null
   if (mode === 'final') return finish(host, panel);
   if (!host) return;
   panel.text(`Reclaimed calibration benchmark — bench v${BENCH_VERSION}, build ${BUILD}`);
-  const cut = load();
+  const cut = await loadFull();
   // (v3, the user: "because the report finished once it shows the download option mid test whenever it goes to the
   // grey loading screen so it wasn't possible for me to tell when it was done" — a run in progress shows only that)
   if (cut && !cut.done && cut.step > 0) {
@@ -719,13 +811,15 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host | null
     return;
   }
   panel.text('About 12 minutes. The page reloads itself a few times — leave it in front, plugged in if you can, and don’t touch the screen till the report shows. Your own saved world isn’t touched.');
-  const last = (() => {
-    try {
-      return localStorage.getItem(LAST);
-    } catch {
-      return null;
-    }
-  })();
+  const last =
+    (await idbGet<string>('last')) ??
+    (() => {
+      try {
+        return localStorage.getItem(LAST);
+      } catch {
+        return null;
+      }
+    })();
   panel.button('Start benchmark', true, () => void start(host, panel));
   if (last) {
     let label = 'previous run';
@@ -763,11 +857,22 @@ function goTo(s: BenchState): void {
 async function start(host: Host, panel: Panel): Promise<void> {
   panel.el.querySelectorAll('button').forEach((b) => b.remove());
   const awake = await keepAwake();
-  const old = load();
+  const old = await loadFull();
   const id = `${stamp()}-${Math.floor(Math.random() * 1e6).toString(36)}`;
   const q = new URLSearchParams(location.search);
   for (const k of OWN) q.delete(k);
   const s: BenchState = { version: BENCH_VERSION, id, startedAt: new Date().toISOString(), step: 0, pages: [], base: q.toString(), worlds: old?.worlds ?? [], results: {}, errors: [] };
+  whole.add(s);
+  // (v4: an old run's report kept in localStorage moves out of the way — the origin's localStorage is shared)
+  try {
+    const was = localStorage.getItem(LAST);
+    if (was) {
+      await idbPut('last', was);
+      localStorage.removeItem(LAST);
+    }
+  } catch {
+    // (none)
+  }
   // (a run cut short left its worlds: gone now)
   await clearWorlds(s);
   const world = `bench-${id}`;
@@ -845,7 +950,7 @@ function reportButtons(panel: Panel, body: string, previous = false): void {
 }
 
 async function finish(host: Host | null, panel: Panel): Promise<void> {
-  const s = load()!;
+  const s = (await loadFull())!;
   await keepAwake();
   if (host) {
     panel.say('the fixed GPU workload again (the drift)…');
@@ -857,13 +962,15 @@ async function finish(host: Host | null, panel: Panel): Promise<void> {
   await clearWorlds(s);
   const report = makeReport(s);
   const body = JSON.stringify(report);
-  try {
-    localStorage.setItem(LAST, body);
-  } catch {
-    s.errors.push('localStorage refused the result (too big?): download it now');
-  }
+  if (!(await idbPut('last', body)))
+    try {
+      localStorage.setItem(LAST, body);
+    } catch {
+      s.errors.push('neither IndexedDB nor localStorage kept the result: download it now');
+    }
   s.done = true;
   save(s);
+  await pending;
   (window as unknown as { reclaimedBench: unknown }).reclaimedBench = report;
   try {
     await wakeLock?.release();
@@ -892,7 +999,7 @@ interface LevelCtx {
 
 /** A level page of the suite: waits for the level, runs its part, and goes to the next page. */
 export async function benchLevel(ctx: LevelCtx): Promise<void> {
-  const s = load()!;
+  const s = (await loadFull())!;
   const page = s.pages[s.step];
   document.getElementById('bench-loading')?.remove();
   const panel = new Panel(ctx.host.ui);
