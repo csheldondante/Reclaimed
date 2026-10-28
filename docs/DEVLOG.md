@@ -7895,6 +7895,15 @@ a region coming in was still being read back.
   the slides in z (`slideZ`, 200+ ms each, zmesh's) — and the rings' share of the view 14%: runs on the shared iGPU
   vary ~2× (round 98); 40–120 hold as before, the slide itself 4× shorter and its write stage ~1 ms (was 19–25).
   The pool at 32 slots evicts about one region per upload while riding (all of it what was left behind).
+- *On places with zmesh merged* (78673b8: the whole-height window, oz 0, no slides in z; the region's layout still
+  1.64 MB — K, not the height, sizes it; its `sig` now says z504, so a record from the sliding window isn't read):
+  worldsavetest all ok (ride 60/60, warp 50/50, reload 4/4, reload and ride 60/60 exact; restoring 4 regions 41 ms).
+  speedsweep pan, base (places 8bff120) → now: slide p50 25.4 / 24.7 / 27.6 / 39.4 → 4.8 / 4.1 / 3.7 / 4.1 ms; got
+  37.3 / 69.2 / 100.4 / 104.8 → 36.3 / 65.1 / 103.9 / 112.9 cells/s; view low in the window 1.77 / 6.3 / 7.41 /
+  9.85 → 1.55 / 2.48 / 4.15 / 3.16 %; frame p95 22.6 / 41.9 / 52.3 / 69 → 15.9 / 34.6 / 45.9 / 58.9; busy 0.4 / 8.4
+  → 0 / 0 at 120 / 160 (zmesh's part in it is the slides in z gone). The slides still wait for land at speed
+  (waited 134 / 189 frames at 120 / 160): the region build's rate (the tile pacer, ~12 regions a second) is what
+  bounds it now, not the slide.
 ## 2026-10-27 — round 100 (overnight, `zmesh`): no vertical slide; mesh by content
 
 **Why.** The user (DECISIONS round 100): "Why does moving the loaded are vertically cost anything? … Are readbacks
