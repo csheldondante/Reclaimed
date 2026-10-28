@@ -52,11 +52,85 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
   m.word = b.x;
   m.tint = meshTint(m.wpos);
   let s = meshSurf(m);
+  var alb = s.alb;
+  var ln = s.lnrm;
+  // (round 104, TC7: the woods' trees painted in — the rings' rule (far.wgsl gTrees): a crown on a lattice square
+  // where the plants are a wood's, drawn where the screen shows it, its shadow on the ground; the crown lit live by
+  // its ball's normal. The window's own trees are instances the tile doesn't hold)
+  let t = tileTrees(wo(m.wpos.xy), cellFields(m.wpos.xy).y, CAM.viewport.w);
+  alb *= 1.0 - 0.45 * t.shade * (1.0 - t.crown);
+  if (t.crown > 0.0) {
+    alb = mix(alb, t.alb, t.crown);
+    if (t.crown > 0.5) { ln = t.n; }
+  }
+  // (the water over the ground — the window draws its sheet as instances the tile doesn't hold: its colour by depth,
+  // flat, all film for the sun's glint)
+  var film = s.film * (1.0 - t.crown);
+  let wt = cellWater(m.wpos.xy);
+  if (wt.wet > 0.5 && wt.level > m.wpos.z + 0.05) {
+    let dz = wt.level - m.wpos.z;
+    alb = mix(toLinear(vec3<f32>(0.26, 0.40, 0.40)), toLinear(vec3<f32>(0.10, 0.20, 0.26)), smoothstep(0.1, 3.0, dz)) * 0.8;
+    ln = vec3<f32>(0.0, 0.0, 1.0);
+    film = 1.0;
+  }
   var o: BakeOut;
-  o.a = vec4<f32>(sqrt(clamp(s.alb * 0.5, vec3<f32>(0.0), vec3<f32>(1.0))), s.film);
+  o.a = vec4<f32>(sqrt(clamp(alb * 0.5, vec3<f32>(0.0), vec3<f32>(1.0))), film);
   let d = dot(-CAM.eye.xyz, m.wpos) - CAM.pos.z;
-  o.b = vec2<u32>(octEnc(s.lnrm) | select(0u, 1u << 30u, s.gem) | (1u << 31u), bitcast<u32>(d));
+  o.b = vec2<u32>(octEnc(ln) | select(0u, 1u << 30u, s.gem && t.crown < 0.5) | (1u << 31u), bitcast<u32>(d));
   return o;
+}
+
+fn tRand(p: vec3<i32>) -> f32 { return f32(pcg(bitcast<u32>(p.x) ^ pcg(bitcast<u32>(p.y) ^ pcg(bitcast<u32>(p.z)))) >> 8u) / 16777216.0; }
+
+struct TTree { crown: f32, shade: f32, alb: vec3<f32>, n: vec3<f32> };
+/** world units a tree's lattice step, and the share of its squares with one (far.wgsl G_TREE_STEP, G_TREE_P) */
+const T_TREE_STEP: f32 = 3.0;
+const T_TREE_P: f32 = 0.34;
+/** (far.wgsl gTrees, unlit) the trees over ground point w (world units), v the plants there, px world units a texel */
+fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
+  var t = TTree(0.0, 0.0, vec3<f32>(0.0), vec3<f32>(0.0, 0.0, 1.0));
+  let dens = smoothstep(3.3, 3.8, v);
+  if (dens <= 0.0) { return t; }
+  let eh = length(CAM.eye.xy);
+  let away = -CAM.eye.xy / max(eh, 1e-3);
+  let cotE = eh / max(CAM.eye.z, 0.05);
+  let sun = sunDir();
+  let sh = -sun.xy / max(sun.z, 0.25);
+  let b0 = vec2<i32>(floor(w / T_TREE_STEP));
+  let sx = select(1, -1, away.x < 0.0);
+  let sy = select(1, -1, away.y < 0.0);
+  for (var j = -3; j <= 1; j++) {
+    for (var i = -3; i <= 1; i++) {
+      let bq = b0 + vec2<i32>(i * sx, j * sy);
+      let r0 = tRand(vec3<i32>(bq, 4242));
+      if (r0 >= T_TREE_P * dens) { continue; }
+      let r1 = tRand(vec3<i32>(bq, 321));
+      let r2 = tRand(vec3<i32>(bq, 7));
+      let foot = (vec2<f32>(bq) + vec2<f32>(0.2 + 0.6 * r1, 0.2 + 0.6 * r2)) * T_TREE_STEP;
+      let conifer = r1 < 0.42;
+      let H = select(3.0 + 3.0 * r2, 3.5 + 4.0 * r2, conifer);
+      let Rr = select(1.3 + 0.7 * r1, 0.9 + 0.5 * r2, conifer);
+      let ds = length(w - (foot + sh * H * 0.8)) / (Rr * 1.1);
+      t.shade = max(t.shade, 1.0 - smoothstep(0.75, 1.0, ds));
+      let cc = foot + away * H * cotE;
+      let q = (w - cc) / Rr;
+      var dd = length(q);
+      if (conifer) {
+        let up = dot(q, away);
+        dd = length(q - away * up * 0.55);
+      }
+      let edge = clamp(px / Rr, 0.05, 0.5);
+      let cov = 1.0 - smoothstep(1.0 - edge, 1.0, dd);
+      if (cov > t.crown) {
+        t.crown = cov;
+        t.n = normalize(vec3<f32>(q * 0.8, sqrt(max(1.0 - min(dot(q, q), 1.0), 0.0)) + 0.25));
+        var leaf = select(vec3<f32>(0.2, 0.36, 0.13), vec3<f32>(0.13, 0.27, 0.13), conifer) * (0.85 + 0.3 * r0 / T_TREE_P);
+        if (!conifer) { leaf = seasonGrass(leaf, r2) * 0.5 + leaf * 0.5; }
+        t.alb = toLinear(leaf);
+      }
+    }
+  }
+  return t;
 }
 
 // ---- the tiles drawn ---------------------------------------------------------------------------------------
@@ -118,6 +192,8 @@ fn fsTile(in: TOut) -> TFrag {
   if (((b.x >> 30u) & 1u) != 0u) { col = gemLook(p, n); }
   col += filmSheen(p, n, vec3<f32>(0.0, 0.0, 1.0), a.a);
   col = haze(col, p);
+  // (?tiledebug=1: the tiles tinted, to tell them from the window and the rings)
+  if (TU.r.w > 0.5) { col = mix(col, vec3<f32>(0.6, 0.05, 0.4), 0.35); }
   var o: TFrag;
   o.color = vec4<f32>(toSrgb(col), 1.0);
   o.pick = vec2<u32>(0u);

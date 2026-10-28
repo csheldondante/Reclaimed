@@ -23,6 +23,7 @@ import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import tilesWgsl from '../shaders/tiles.wgsl?raw';
 import { TileCache } from './tilecache';
+import { TileLand, type TileLandSource } from './tileland';
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import { RIVERS, type WorldGpu } from '../sim/world-gpu';
@@ -256,6 +257,28 @@ export class Renderer {
   setTileOrigin(ox: number, oy: number, oz: number): void {
     this.tiles?.setOrigin(ox, oy, oz);
   }
+  /** (round 104, TC2) What makes the land past the window (the streamer's): the tiles' render-only regions. */
+  setTileLand(src: TileLandSource): void {
+    if (!this.tiles || this.tiles.land || !this.meshResolveLayout || !this.meshLayoutT) return;
+    this.tiles.land = new TileLand(
+      {
+        device: this.device,
+        world: this.world,
+        profiler: this.profiler,
+        meshLayout: this.meshLayoutT,
+        resolveLayout: this.meshResolveLayout,
+        gPipe: () => this.meshPipes?.g,
+        gridPipe: () => this.gridPipes?.g,
+        drawGrid: (pass, which) => void this.drawGrid(pass, which),
+        meshResources: (cam) => this.meshResources(cam, this.shadowView, { mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers }),
+        camBytes: CAM_BYTES,
+      },
+      src,
+      this.tiles,
+    );
+  }
+  /** (round 104) the mesh's draw layout (the render-only land's groups) */
+  private meshLayoutT?: GPUBindGroupLayout;
   private meshGroup?: GPUBindGroup;
   /** the band outside the window (round 79, enableBand): its draw group */
   band?: OutsideBand;
@@ -635,6 +658,7 @@ export class Renderer {
         { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
       );
       this.meshResolveLayout = resolveLayout;
+      this.meshLayoutT = meshLayout;
       this.meshPipesReady = (async () => {
         const g = (entryPoint: string, cullMode: GPUCullMode = 'none') =>
           device.createRenderPipelineAsync({
@@ -805,6 +829,7 @@ export class Renderer {
           gPipe: () => this.meshPipes?.g,
           gridPipe: () => this.gridPipes?.g,
           gridOn: () => (this.gridLive ? this.gridOn!.on : null),
+          chunkBox: () => this.gridOn,
           drawGrid: (pass, which) => void this.drawGrid(pass, which),
           meshGroup: (cam, src) => this.meshGroupOf!(cam, this.shadowView, src),
           meshEntries: (src, cam) => this.meshEntries(src, cam),
@@ -1813,6 +1838,7 @@ export class Renderer {
   /** Call after submit to start async readbacks requested during encode. */
   afterSubmit(): void {
     this.fieldMesh.afterSubmit();
+    this.tiles?.afterSubmit();
     this.rockMesh?.mesh.afterSubmit();
     this.band?.mesh.afterSubmit();
     if (this.pickPending) {

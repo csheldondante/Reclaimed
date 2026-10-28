@@ -8508,3 +8508,39 @@ let's us increase the view distance so that the whole screen is nearly always lo
   pass, timed at that pass's begin and end (sane on Mali). It records the awake and window chunks, on the main page
   (riding in the storm), by the meteor, and on each window page. That is the evidence for or against PF1: do the
   sims cost the whole window or only what's awake?
+
+## 2026-10-28 — round 104 (`tilecache`): the tiles run; render-only land past the window (TC2); woods and water in the bake
+
+Why: the user (DECISIONS round 104): "a LOD that used hybrid heightmap and other mesher only where needed and that
+has no simulation active we can generate an isometric tile for the terrain with material and normal detail only then
+compose cheaply in screen space". The goal: the phone at a steady 60, no hiccups, no pop-in.
+
+Run on the GPU for the first time (round 103's code compiled as written). Fixed on the way:
+- The tile's box: the window's zMax is 504 now (zmesh), and the hybrid's grid chunks have no mesh tops, so the box
+  ran to 504 — every frozen tile was "on the eye's side and too tall" and none drew, and the scale was a sliver. The
+  box is the hybrid's per-chunk lowest and highest column top now (Renderer.setGrid's lo, hi), the band's only where
+  it has one (FieldMesh.topKnown).
+- `?tiledebug=1` tints the tiles; scripts/tileprobe.mjs `--pan v,s` (the camera up the screen) for a frozen trail.
+- Window re-bakes: `?tilerebake=` 120 → 600 frames, the window's edge regions (the ones that leave) twice as soon.
+
+TC2 (src/render/tileland.ts): a region on screen past the window that no tile draws (nearest the middle first) is
+made by gpugen's path (Streamer.landInto: atlas regionInto into a scratch region in the pool's layout — no job, no
+pool slot, nothing kept), meshed by a field mesh of its own over that scratch (a window one region across: its own
+Globals copied from the frame's and patched — the size, chunks, origin, the grid's chunks, no sleep — a chunk table
+onto the scratch's pages, the kept fields bound at their offsets in it), baked by the same fsTileBake, and let go.
+No simulation. "Mesher only where needed": a scratch chunk with a gap open to the air (hybrid.ts's rule) is meshed,
+the rest drawn by the hybrid's grid through the columns' tops (no mesh build at all). One region at a time.
+world-gpu.ts: the Globals buffer is COPY_SRC (the scratch's copy).
+
+The hold-outs, first pass (tiles.wgsl tileBake): the woods painted in by the rings' rule (far.wgsl gTrees: a crown on
+a lattice square where the plants are a wood's, where the screen shows it, its shadow; the crown lit live by its
+ball's normal); water over the ground (the window's sheet is instances) as a flat sheet coloured by depth, with the
+glint. Towns not yet (TC8).
+
+Measured (desktop iGPU, q=low 412x915, window 320, every system as deployed):
+- Parked at 11956,15471 (no slide): the window 48.6% of the screen, render-only tiles 49% — 97.5% in detail (the
+  rings 2.5%). 23 land tiles; shots C:/Projects/shots88/tilecache/land-compare2.png (left the rings, right the tiles).
+- Riding (driveprofile, 20 s): GPU a frame 11.23 (off) → 10.76 (window tiles only) → 12.11 (tiles + land, every
+  scratch chunk meshed then); p99 20.6 → 20.6 → 27.7. Before the grid for flat chunks; to measure again.
+- Frozen trail after a 300-cell pan (window tiles only): 25% of the screen from tiles.
+

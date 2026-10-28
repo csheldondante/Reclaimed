@@ -18,12 +18,15 @@ Ids TC.
 
 | id | item | size | status |
 |---|---|---|---|
-| TC1 | `?tiles=1`: a region's terrain baked once (unlit G-buffer look: albedo, normal, depth, film) into an LRU atlas slot per view turn, relit and drawn as quads past the window every frame, the rings skipping those regions; kept after the region leaves the window (frozen); re-baked when its chunks are built and it's stale | L | wip (tilecache, untested: typecheck and build only — never run on a GPU) |
-| TC2 | Regions never in the window: render them once as they arrive in the rings (gpugen's region into a pool slot, meshed and resolved from the slot's own columns, the columns dropped) | L | open (needs the mesher and meshSurf to read a region record, not the window) |
+| TC1 | `?tiles=1`: a region's terrain baked once (unlit G-buffer look: albedo, normal, depth, film) into an LRU atlas slot per view turn, relit and drawn as quads past the window every frame, the rings skipping those regions; kept after the region leaves the window (frozen); re-baked when its chunks are built and it's stale | L | done (tilecache, round 104: runs on the GPU; the box from the hybrid's chunk tops) |
+| TC2 | Regions never in the window: render them once as they arrive in the rings (gpugen's region into a pool slot, meshed and resolved from the slot's own columns, the columns dropped) | L | done (tilecache, round 104: render/tileland.ts — a scratch region, its own Globals, the grid for flat chunks and the mesher where a gap is open; no sim). Left: neighbours (edges open), wetness, drift |
 | TC3 | Run and measure at the phone tier (scripts/tileprobe.mjs; bench, driveprofile): screen share in detail (window + tiles vs window) at windows 256/320/384, fps and GPU a frame, tile MB, bakes riding and panning, the seam straight and turned; shots to C:\Projects\shots88\tilecache | M | open |
 | TC4 | Shadows on frozen tiles past the shadow map's box (bake the sun's visibility, or a coarse shadow map of the tiles' heights) | M | open |
 | TC5 | The window's own terrain drawn from tiles where nothing moves (its look's moving parts — water film, wet glint — kept live) to make the window's draw cheap too | M | open |
 | TC6 | Default on: after TC3's numbers, the user's look at the seam on the phone | S | open |
+| TC7 | (round 104) Vegetation in the tiles: the woods painted from the veg field by the rings' rule (crowns lit live, their shadow); grass tufts and flowers as the bake's texture | M | wip (woods and water in the bake; tufts and flowers open) |
+| TC8 | (round 104) Towns in the tiles: gpugen's GPU stamps of the worker-made plans in the render-only regions' columns (they come with landInto when the stamps are there); check they bake | M | open |
+| TC9 | (round 104) The bake's and the land's cost: spread over frames by a GPU budget (no p99 spikes on the phone), and pop-in at the window's edge (a region leaving the window keeps its tile; one arriving shows its land tile till the window has it) | M | open |
 
 ## Round 102 (2026-10-28, session 5, `gpugen`) — region generation stays on the GPU (DECISIONS round 102)
 

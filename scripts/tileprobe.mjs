@@ -27,6 +27,26 @@ try {
   await p.goto(u, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
   await new Promise((r) => setTimeout(r, 30000));
+  // (--pan v,s: the camera moved up the screen at v cells/s for s seconds, from the start of the sampling)
+  const pan = opt('pan', '');
+  if (pan) {
+    const [v, ps] = pan.split(',').map(Number);
+    await p.evaluate((v, ps) => {
+      const c = window.reclaimed.camera;
+      const t0 = performance.now();
+      let last = t0;
+      const step = () => {
+        const now = performance.now();
+        if (now - t0 > ps * 1000) return;
+        const [dx, dy] = c.screenDeltaToWorld(0, -v * c.zoom * 0.5 * ((now - last) / 1000));
+        c.target[0] += dx;
+        c.target[1] += dy;
+        last = now;
+        requestAnimationFrame(step);
+      };
+      requestAnimationFrame(step);
+    }, v, ps);
+  }
   const t0 = Date.now();
   let k = 0;
   while (Date.now() - t0 < secs * 1000) {

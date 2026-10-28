@@ -1193,6 +1193,16 @@ export class Streamer {
     }
   }
 
+  /**
+   * (round 104, tilecache TC2) A region's land (world corner x0, y0) made on the GPU into `buf` at `off`, in the pool's
+   * layout at the window's oz — for a render-only tile (render/tileland.ts): no job, no pool slot, nothing kept, no
+   * simulation. null when the source makes nothing on the GPU.
+   */
+  landInto(x0: number, y0: number, buf: GPUBuffer, off: number): Promise<FinishMeta> | null {
+    if (!this.source.regionInto) return null;
+    return this.source.regionInto(x0, y0, this.R, this.R, { buf, off, layout: this.layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !SETTLE });
+  }
+
   /** Start making the land a slide of (dx, dy) would bring in (round 100: into the pool — what's there needs nothing). */
   prefetch(dx: number, dy: number): void {
     const R = this.R;

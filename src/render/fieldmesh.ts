@@ -798,6 +798,11 @@ export class FieldMesh {
    */
   built = new Uint8Array(0);
   /** (round 103, tilecache) chunk c's top (window z; the stats readback's, zHi till known) */
+  topKnown(c: number): number {
+    const t = this.tops[c];
+    return t !== undefined && t < this.zHi ? t : -Infinity;
+  }
+  /** (round 103, tilecache) chunk c's top as topKnown, zHi while unknown */
   topOf(c: number): number {
     return this.tops[c] ?? this.zHi;
   }

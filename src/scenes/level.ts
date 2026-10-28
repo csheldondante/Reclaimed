@@ -1453,6 +1453,8 @@ export class LevelScene implements Scene {
           far.org = [S.origin[0], S.origin[1] * ROW_H, S.oz];
           // (round 103, ?tiles=1: the tiles' anchors are the world's — render/tilecache.ts)
           core.renderer.setTileOrigin(S.origin[0], S.origin[1], S.oz);
+          // (round 104, TC2: the render-only land past the window, made the streamer's way; once)
+          core.renderer.setTileLand({ layout: S.layout, oz: () => S.oz, landInto: (x0, y0, b, o) => S.landInto(x0, y0, b, o) });
           far.win = [dims.w + 0.5, dims.h * ROW_H];
           far.zMax = dims.zMax;
           const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;

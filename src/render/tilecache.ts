@@ -23,13 +23,14 @@ import type { Camera } from './camera';
 import { CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, CAMERA_POS_OFFSET } from './camera';
 import type { FieldMesh } from './fieldmesh';
 import { ROW_H } from '../world/lattice';
+import type { TileLand } from './tileland';
 
 /** the streamer's region (cells; rows the same count) */
 const R = 64;
 /** the mask's side (regions): tiles within half of it of the camera are drawn */
 const MASK_N = 64;
 /** frames between a window region's bakes, at least (its look changes slowly: plants, stains, water) */
-const REBAKE = Number(new URLSearchParams(location.search).get('tilerebake') ?? 120);
+const REBAKE = Number(new URLSearchParams(location.search).get('tilerebake') ?? 600);
 /** bakes a frame */
 const PER_FRAME = Math.max(1, Number(new URLSearchParams(location.search).get('tilesper') ?? 1) | 0);
 /** the atlas's budget (MB) and a slot's size (texels) */
@@ -39,6 +40,20 @@ const [SW, SH] = (new URLSearchParams(location.search).get('tilepx') ?? '128x192
 const TEXEL_BYTES = 12;
 /** how far past its region a tile draws (cells; the bake takes the chunks round it in) */
 const OVERLAP = 1;
+/** ?tileland=0: no render-only land past the window (TC2) — only what the window baked */
+const NO_LAND = new URLSearchParams(location.search).get('tileland') === '0';
+/** ?tiledebug=1: the tiles drawn tinted */
+const DEBUG = new URLSearchParams(location.search).get('tiledebug') === '1';
+
+/** the view's frame (TileCache.basis) */
+export interface Basis {
+  sx: number;
+  sy: number;
+  sz: number;
+  r: number[];
+  u: number[];
+  f: number[];
+}
 
 export interface TileSrc {
   mesh: FieldMesh;
@@ -70,6 +85,8 @@ export interface TileHost {
   gridPipe: () => GPURenderPipeline | undefined;
   /** (hybrid) the grid's chunks (chunkGrid order), and drawing a set of them (pipeline and group set) */
   gridOn: () => Uint8Array | null;
+  /** (hybrid) every mesh chunk's lowest and highest column top (window z; scenes/hybrid.ts), or null */
+  chunkBox: () => { lo: Float32Array; hi: Float32Array } | null;
   drawGrid: (pass: GPURenderPassEncoder, which: Uint8Array) => void;
   meshGroup: (cam: GPUBuffer, src: TileSrc) => GPUBindGroup;
   meshEntries: (src: TileSrc, cam: GPUBuffer) => GPUBindGroupEntry[];
@@ -103,7 +120,7 @@ interface Baker {
 
 export class TileCache {
   /** counts (scripts read them): bakes (first, again), evictions, tiles drawn last frame, slots, in use, MB */
-  readonly stats = { bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0 };
+  readonly stats = { bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0 };
   private tiles = new Map<string, Tile>();
   private bySlot: (Tile | null)[];
   private atlasA: GPUTexture;
@@ -197,7 +214,7 @@ export class TileCache {
   }
 
   /** the view's right, up and along (unit) and its clip scales, from its matrix (orthographic) */
-  private basis(m: Float32Array) {
+  basis(m: Float32Array): Basis {
     const sx = Math.hypot(m[0], m[4], m[8]);
     const sy = Math.hypot(m[1], m[5], m[9]);
     const sz = Math.hypot(m[2], m[6], m[10]);
@@ -223,6 +240,11 @@ export class TileCache {
     this.frame++;
     if (!this.on(cam)) return;
     const h = this.host;
+    // (round 104, TC2: the land past the window no tile draws yet, made, meshed and baked a region at a time)
+    if (this.land && !NO_LAND) {
+      const B0 = this.basis(cam.viewProj);
+      this.land.step(enc, cam, B0, (B0.sx * renderW) / 2);
+    }
     const fm = h.win.mesh;
     const [nx, ny] = fm.chunkGrid;
     if (fm.builtSlides !== fm.slides || fm.built.length !== nx * ny) return;
@@ -252,7 +274,8 @@ export class TileCache {
         let score: number;
         if (!t) score = 1e9;
         else if (Math.abs(Math.log(t.dens / Math.min(rp, this.fitDens(t)))) > 0.22) score = 1e8;
-        else score = this.frame - t.bakedAt;
+        // (the regions at the window's edge first: they're the ones that leave)
+        else score = (this.frame - t.bakedAt) * (i === 0 || j === 0 || (i + 1) * R >= w || (j + 1) * R >= hh ? 2 : 1);
         if (score < REBAKE) continue;
         cand.push({ rx, ry, i, j, score });
       }
@@ -269,33 +292,78 @@ export class TileCache {
     return Math.min((SW - 1) / (t.tw / t.dens), (SH - 1) / (t.th / t.dens));
   }
 
-  private bake(enc: GPUCommandEncoder, cam: Camera, B: ReturnType<TileCache['basis']>, rp: number, c: { rx: number; ry: number; i: number; j: number }, bk: Baker): void {
+  /** the window region (c.i, c.j)'s bake: its box from its chunks, the window's mesh, band and grid drawn */
+  private bake(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number, c: { rx: number; ry: number; i: number; j: number }, bk: Baker): void {
     const h = this.host;
     const fm = h.win.mesh;
     const band = h.band();
     const [nx, ny] = fm.chunkGrid;
-    const oz = this.origin![2];
-    // (the box: the region and a cell round it, from under the window's floor to the highest of its chunks' tops)
+    // (the box: the region and a cell round it, from its chunks' lowest column top to their highest — the hybrid's
+    // per-chunk box, the columns' tops and a cell past each edge; without it, the window's floor to the mesh's tops)
     let top = -Infinity;
+    let zLo = Infinity;
+    const zb = h.chunkBox();
     for (let k = 0; k < 4; k++) {
       const cx = 2 * c.i + (k & 1);
       const cy = 2 * c.j + (k >> 1);
       if (cx < nx && cy < ny) {
-        top = Math.max(top, fm.topOf(cy * nx + cx));
-        if (band) top = Math.max(top, band.mesh.topOf(cy * nx + cx));
+        const ci = cy * nx + cx;
+        if (zb) {
+          top = Math.max(top, zb.hi[ci] + 2);
+          zLo = Math.min(zLo, zb.lo[ci] - 2);
+        } else {
+          top = Math.max(top, fm.topOf(ci) + 2);
+          zLo = -1;
+        }
+        if (band) top = Math.max(top, band.mesh.topKnown(ci) + 2);
       }
     }
-    top = Math.min(top, h.world.zMax + (band ? 400 : 0)) + 2;
-    const zLo = -1;
+    // the groups (made again after an invalidate)
+    bk.gWin ??= h.meshGroup(bk.cam, h.win);
+    bk.rWin ??= this.resolveGroup(h.win, bk.cam);
+    if (band) {
+      bk.gBand ??= h.meshGroup(bk.cam, band);
+      bk.rBand ??= this.resolveGroup(band, bk.cam);
+    }
+    // the chunks: the region's four and those round it (cut off at the box)
+    const which = new Uint8Array(nx * ny);
+    for (let cy = 2 * c.j - 1; cy <= 2 * c.j + 2; cy++)
+      for (let cx = 2 * c.i - 1; cx <= 2 * c.i + 2; cx++) if (cx >= 0 && cy >= 0 && cx < nx && cy < ny) which[cy * nx + cx] = 1;
+    this.bakeTile(enc, cam, B, rp, c.rx, c.ry, zLo, top, this.origin![2], this.anchorWin(c.rx, c.ry), bk.cam, (g) => {
+      g.setPipeline(h.gPipe()!);
+      g.setBindGroup(0, bk.gWin!);
+      fm.drawMask(g, which);
+      if (band) {
+        g.setBindGroup(0, bk.gBand!);
+        band.mesh.drawMask(g, which);
+      }
+      const grid = h.gridOn();
+      const gp = h.gridPipe();
+      if (grid && gp) {
+        g.setPipeline(gp);
+        g.setBindGroup(0, bk.gWin!);
+        h.drawGrid(g, which.map((v, i) => (v && grid[i] ? 1 : 0)));
+      }
+    }, band ? [bk.rWin, bk.rBand!] : [bk.rWin]);
+  }
+
+  /**
+   * A tile baked (window regions here; render-only ones from tileland.ts): region (rx, ry)'s box (zLo..top in its
+   * source's z, the source's floor at world z oz), its anchor in the source's coordinates (aw), `cam` the bake
+   * camera's buffer (written here), `drawG` its G-buffer draws (pipelines and groups set; through `cam`), `resolve`
+   * the resolve groups (the first over the whole slot, the rest over it). Its slot: its own, a free one, or the
+   * least recently used (never one this frame drew or baked). False: no slot.
+   */
+  bakeTile(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number, rx: number, ry: number, zLo: number, top: number, oz: number, aw: [number, number, number], camBuf: GPUBuffer, drawG: (g: GPURenderPassEncoder) => void, resolve: GPUBindGroup[]): boolean {
+    const h = this.host;
     let a0 = Infinity;
     let a1 = -Infinity;
     let b0 = Infinity;
     let b1 = -Infinity;
-    const aw = this.anchorWin(c.rx, c.ry);
     for (let k = 0; k < 8; k++) {
       const x = k & 1 ? R + OVERLAP : -OVERLAP;
       const y = k & 2 ? R * ROW_H + OVERLAP : -OVERLAP;
-      // (relative to the anchor: world z = window z + oz)
+      // (relative to the anchor: world z = the source's z + oz)
       const z = (k & 4 ? top : zLo) + oz;
       const a = B.r[0] * x + B.r[1] * y + B.r[2] * z;
       const b = B.u[0] * x + B.u[1] * y + B.u[2] * z;
@@ -307,20 +375,19 @@ export class TileCache {
     const dens = Math.min(rp, (SW - 1) / (a1 - a0), (SH - 1) / (b1 - b0));
     const tw = Math.min(SW, Math.ceil((a1 - a0) * dens) + 1);
     const th = Math.min(SH, Math.ceil((b1 - b0) * dens) + 1);
-    // the slot: the tile's own, a free one, or the least recently used (never one this frame drew or baked)
-    const key = this.key(c.rx, c.ry, cam.azimuth);
+    const key = this.key(rx, ry, cam.azimuth);
     let t = this.tiles.get(key);
     if (!t) {
       let slot = this.bySlot.indexOf(null);
       if (slot < 0) {
         let old: Tile | null = null;
         for (const o of this.bySlot) if (o && o.usedAt < this.frame && (!old || o.usedAt < old.usedAt)) old = o;
-        if (!old) return;
+        if (!old) return false;
         this.tiles.delete(this.key(old.rx, old.ry, old.az));
         slot = old.slot;
         this.stats.evicted++;
       }
-      t = { rx: c.rx, ry: c.ry, az: cam.azimuth, slot, tw, th, dens, a0, b1, top: top + oz, bakedAt: 0, usedAt: this.frame };
+      t = { rx, ry, az: cam.azimuth, slot, tw, th, dens, a0, b1, top: top + oz, bakedAt: 0, usedAt: this.frame };
       this.tiles.set(key, t);
       this.bySlot[slot] = t;
       this.stats.first++;
@@ -341,19 +408,10 @@ export class TileCache {
     m.set([-(ra + a0) * kx - 1, 1 - (b1 + ua) * ky, 0.5 - fa * B.sz, 1], 12);
     cd.set(m, 0);
     cd.set([sx, sy, fa, 0], CAMERA_POS_OFFSET / 4);
+    // (the bake's: world units a texel, for the painted trees' edges — tiles.wgsl tileTrees; no shadow lookups there)
+    cd[23] = 1 / dens;
     cd.fill(0, CAMERA_CUT_OFFSET / 4, (CAMERA_CUT_OFFSET + CAMERA_CUT_BYTES) / 4);
-    h.device.queue.writeBuffer(bk.cam, 0, cd);
-    // the groups (made again after an invalidate)
-    bk.gWin ??= h.meshGroup(bk.cam, h.win);
-    bk.rWin ??= this.resolveGroup(h.win, bk.cam);
-    if (band) {
-      bk.gBand ??= h.meshGroup(bk.cam, band);
-      bk.rBand ??= this.resolveGroup(band, bk.cam);
-    }
-    // the chunks: the region's four and those round it (cut off at the box)
-    const which = new Uint8Array(nx * ny);
-    for (let cy = 2 * c.j - 1; cy <= 2 * c.j + 2; cy++)
-      for (let cx = 2 * c.i - 1; cx <= 2 * c.i + 2; cx++) if (cx >= 0 && cy >= 0 && cx < nx && cy < ny) which[cy * nx + cx] = 1;
+    h.device.queue.writeBuffer(camBuf, 0, cd);
     const g = enc.beginRenderPass({
       label: 'tiles-g',
       colorAttachments: [
@@ -365,21 +423,7 @@ export class TileCache {
     });
     g.setViewport(0, 0, tw, th, 0, 1);
     g.setScissorRect(0, 0, tw, th);
-    g.setPipeline(h.gPipe()!);
-    g.setBindGroup(0, bk.gWin);
-    fm.drawMask(g, which);
-    if (band) {
-      g.setBindGroup(0, bk.gBand!);
-      band.mesh.drawMask(g, which);
-    }
-    const grid = h.gridOn();
-    const gp = h.gridPipe();
-    if (grid && gp) {
-      const gw = which.map((v, i) => (v && grid[i] ? 1 : 0));
-      g.setPipeline(gp);
-      g.setBindGroup(0, bk.gWin);
-      h.drawGrid(g, gw);
-    }
+    drawG(g);
     g.end();
     const r = enc.beginRenderPass({
       label: 'tiles-bake',
@@ -391,15 +435,59 @@ export class TileCache {
     });
     r.setViewport(sx, sy, tw, th, 0, 1);
     r.setScissorRect(sx, sy, tw, th);
-    r.setPipeline(this.pipes!.bake);
-    r.setBindGroup(0, bk.rWin);
-    r.draw(3);
-    if (band) {
-      r.setPipeline(this.pipes!.over);
-      r.setBindGroup(0, bk.rBand!);
+    resolve.forEach((grp, i) => {
+      r.setPipeline(i === 0 ? this.pipes!.bake : this.pipes!.over);
+      r.setBindGroup(0, grp);
       r.draw(3);
-    }
+    });
     r.end();
+    return true;
+  }
+
+  /** (round 104) the render-only land (tileland.ts): regions past the window made, meshed and baked */
+  land?: TileLand;
+
+  /**
+   * (round 104, TC2) The region past the window a tile should draw and none does yet, nearest the middle of the
+   * screen first (a 16 x 16 grid of screen points, the ground at the focus's height under each); null: none.
+   */
+  wanted(cam: Camera, skip: (key: string) => boolean): { rx: number; ry: number } | null {
+    if (!this.origin || cam.fly) return null;
+    const [ox, oy] = this.origin;
+    const W = this.host.world.w;
+    const H = this.host.world.h;
+    const G = 16;
+    let best: { rx: number; ry: number } | null = null;
+    let bd = Infinity;
+    const crx = Math.floor((cam.target[0] + ox) / R);
+    const cry = Math.floor((cam.target[1] / ROW_H + oy) / R);
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G; i++) {
+        const sx = (i + 0.5) / G - 0.5;
+        const sy = (j + 0.5) / G - 0.5;
+        const d = sx * sx + sy * sy;
+        if (d >= bd) continue;
+        const [dx, dy] = cam.screenDeltaToWorld(sx * cam.viewportW, sy * cam.viewportH);
+        const x = cam.target[0] + dx;
+        const y = (cam.target[1] + dy) / ROW_H;
+        if (x >= 0 && x < W && y >= 0 && y < H) continue;
+        const rx = Math.floor((x + ox) / R);
+        const ry = Math.floor((y + oy) / R);
+        if (Math.abs(rx - crx) >= MASK_N / 2 || Math.abs(ry - cry) >= MASK_N / 2) continue;
+        if (this.tiles.has(this.key(rx, ry, cam.azimuth)) || skip(`${rx},${ry}`)) continue;
+        best = { rx, ry };
+        bd = d;
+      }
+    return best;
+  }
+
+  afterSubmit(): void {
+    this.land?.afterSubmit();
+  }
+
+  /** the bake G-buffer's views (a render-only source's resolve groups bind them) */
+  get gbufViews(): [GPUTextureView, GPUTextureView] {
+    return [this.gb0.createView(), this.gb1.createView()];
   }
 
   private resolveGroup(src: TileSrc, cam: GPUBuffer): GPUBindGroup {
@@ -441,18 +529,25 @@ export class TileCache {
       const d = this.instData;
       let n = 0;
       let frozen = 0;
+      this.stats.skipEye = this.stats.skipOff = this.stats.skipFar = 0;
       for (const t of this.tiles.values()) {
         if (Math.round(t.az * 1e4) !== azk) continue;
         const inWin = t.rx >= w0 && t.rx < w0 + wn && t.ry >= h0 && t.ry < h0 + hn;
         if (inWin) continue;
         frozen++;
-        if (Math.abs(t.rx - crx) >= MASK_N / 2 || Math.abs(t.ry - cry) >= MASK_N / 2) continue;
+        if (Math.abs(t.rx - crx) >= MASK_N / 2 || Math.abs(t.ry - cry) >= MASK_N / 2) {
+          this.stats.skipFar++;
+          continue;
+        }
         const aw = this.anchorWin(t.rx, t.ry);
         // (the eye's side of the focus: none that would rise into the line from the eye to it)
         const ah = ((aw[0] + R / 2 - cam.target[0]) * ex + (aw[1] + (R * ROW_H) / 2 - cam.target[1]) * ey) / el;
         if (ah > 24) {
           const cap = tz + (ah - R * 0.75) * (cam.eye[2] / el) * 0.85;
-          if (t.top - this.origin![2] > cap) continue;
+          if (t.top - this.origin![2] > cap) {
+            this.stats.skipEye++;
+            continue;
+          }
         }
         const ra = B.r[0] * aw[0] + B.r[1] * aw[1] + B.r[2] * aw[2];
         const ua = B.u[0] * aw[0] + B.u[1] * aw[1] + B.u[2] * aw[2];
@@ -460,7 +555,10 @@ export class TileCache {
         const x1 = (ra + t.a0 + t.tw / t.dens) * B.sx + m[12];
         const y1 = (ua + t.b1) * B.sy + m[13];
         const y0 = (ua + t.b1 - t.th / t.dens) * B.sy + m[13];
-        if (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1) continue;
+        if (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1) {
+          this.stats.skipOff++;
+          continue;
+        }
         const fa = B.f[0] * aw[0] + B.f[1] * aw[1] + B.f[2] * aw[2];
         const sx = (t.slot % this.cols) * SW;
         const sy = Math.floor(t.slot / this.cols) * SH;
@@ -478,7 +576,7 @@ export class TileCache {
         h.device.queue.writeBuffer(this.inst, 0, d, 0, n * 16);
         const W = h.world.w + 0.5;
         const H = h.world.h * ROW_H;
-        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP]));
+        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, DEBUG ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP]));
       }
     }
     this.stats.drawn = this.drawCount;

@@ -275,7 +275,8 @@ export class WorldGpu {
     this.maxK = packed.maxK;
     const N = this.cells;
 
-    this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
+    // (COPY_SRC: round 104, the tile cache's render-only land copies it, its size and origin its own — render/tileland.ts)
+    this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const mats = packMaterialTable();
     this.materials = this.buf('materials', mats.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.materials, 0, mats);
