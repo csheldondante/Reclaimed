@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 103 (session 5, `tilecache`) — render the land once into world-anchored tiles
+
+- The user, verbatim: "Yeah but the tiles are isometric so why not load and render them once then tile them so the
+  view covers the screen but coat is cheap?" and "It seems to me like that should be very efficient and easy".
+- The goal, verbatim: "increase the view distance so that the whole screen is nearly always loaded in detail".
+- → Branch `tilecache` (from places 950cb67), `?tiles=1`, default off: a region's terrain baked once into an atlas
+  slot (unlit: albedo, normal, depth, film) per view turn, relit every frame and drawn as quads where it is; kept
+  after the region leaves the window (frozen), so land passed still shows in detail (BACKLOG TC1–TC6).
+
 ## 2026-10-28 — round 102 (session 5, `places`) — settlements as fields, grids and spans (design, for later)
 
 - The user: "I think that ids and what building goes where might make sense to do on the CPU. I'm not entirely convinced

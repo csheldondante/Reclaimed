@@ -1907,3 +1907,15 @@ clears them).
   benchSkip too.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.
+
+## The tile cache (round 103, branch `tilecache`, `?tiles=1`)
+
+- `render/tilecache.ts` (TileCache) is the renderer's: it borrows the mesh's G-buffer pipeline, groups and resolve
+  layout (TileHost) and owns an atlas (rgba8 + rg32uint slots), a bake G-buffer, a tile instance buffer and the mask.
+- Contract with the rings: `Renderer.targets.tileMask` (far.ts binding 49): `[0]` on, `[1]` n (64), then n x n
+  words — region (rx, ry) (world regions of 64 cells / 64 rows) at (rx mod n, ry mod n) holds
+  `(rx & 0xffff) | (ry << 16)` when a tile draws it this frame, all ones otherwise. far.wgsl `tiled()` discards there.
+- The origin: `Renderer.setTileOrigin(ox, oy, oz)` (the streamer's window cell (0, 0), rows, oz; level.ts each frame)
+  and `windowMoved` (a slide moves it at once).
+- meshdraw.wgsl `meshSurf` is the look before the light (struct Surf); `meshShade` lights it; tiles.wgsl bakes it.
+

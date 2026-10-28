@@ -8260,3 +8260,56 @@ The smoke run (desktop, 170 s): no Download offered before the end with a v1 res
 "Download report" for the new run; the hero walked by the stick (198 cells); window 256's fastest pan held to
 640 cells/s (rendered fps 81 → 33, low detail p90 at most 4.9%). It found the window pages dropping their ride (the
 road cleared before it was kept): fixed.
+
+## 2026-10-28 — round 103 (`tilecache`, `?tiles=1`, default off): world-anchored rendered tiles — UNTESTED
+
+Why: the user (DECISIONS round 103): "the tiles are isometric so why not load and render them once then tile them
+so the view covers the screen but coat is cheap?"; the goal "the whole screen nearly always loaded in detail". The
+phone's bench v3: at the sandbox zoom the view's ground is ~487 cells across, the 384 window shows 75% of the screen
+in detail, and fps parks at 49 (320), 24 (448), 14 (512) — growing the window costs the sim; drawing land past it
+from pictures doesn't. Read first: the round 83 `?tcache=N` (one screen-sized layer, lit colour baked in — what
+moves in the look froze with it). This bakes the look before it's lit instead, and anchors it to the world.
+
+**Not run.** The shared browser was never free this session (main out of usage): typecheck and `vite build` pass;
+the WGSL has not been compiled by a GPU, nothing was looked at, nothing measured. First job on this branch: run it
+(scripts/tileprobe.mjs below) and fix what the GPU says.
+
+What was built (src/render/tilecache.ts, src/shaders/tiles.wgsl):
+- A tile = one streamer region (64 x 64 cells: the window's slides are whole regions, so a region is in or out),
+  keyed by (region, the view's azimuth). Baked through a camera of its own — the view's rotation, its own scale (the
+  frame's render px a unit, at most what fits the slot), placed on the region's box (a cell round it, from the
+  window's floor to its chunks' highest top) — into a G-buffer (the mesh's own G pipeline; the region's four mesh
+  chunks and the twelve round it, cut off at the box; the band's chunks; the hybrid grid's), then resolved by
+  fsTileBake into an atlas slot: rgba8 sqrt(albedo/2) + the water film, rg32uint the lit-by normal (oct) | gem |
+  drawn, and the depth along the view from the region's anchor. 12 bytes a texel.
+- meshdraw.wgsl's meshShade split in two: meshSurf (everything before the light: albedo, lnrm, film, material, gem)
+  and the lighting after it (filmSheen factored out). Same output — to be checked against a shot of places.
+- Drawn every frame (fsTile, one instanced draw): a quad per tile past the window, the texel's point rebuilt from
+  the slot (view-plane coordinates + depth from the anchor), lit then (render.wgsl lighting: sun, time of day,
+  clouds, the shadow map where it reaches; filmSheen; gemLook; haze), its frag depth the frame's (orthographic:
+  linear along the view), pick 0. Texels past the region's cell of overlap, or inside the window past a cell, are
+  dropped: the window's own land draws live, and the live things (plants, water, agents, bodies, particles) are all
+  the window's.
+- The rings and the far land skip regions a tile draws (far.wgsl tiled(): binding 49, a 64 x 64 toroid of region
+  keys the cache writes when it changes; renderer.targets.tileMask).
+- Re-baked only when needed: the window's regions whose chunks are all built (FieldMesh.built, from the stats
+  readback every 60th encode, valid while no slide since) — never baked at this azimuth or at a scale a quarter off
+  first, else the oldest, at most `?tilesper=` (1) a frame and none sooner than `?tilerebake=` (120) frames after its
+  last (plants, stains and water change the look; the mesh's own dirty chunks aren't on the CPU). A turn draws none
+  till the view's back on a baked azimuth; the window's are baked again at the new one.
+- Frozen: a region's tile stays after it leaves the window — its last image — while its columns go. LRU slots in a
+  fixed atlas (`?tilemb=` 24 → ~85 slots of `?tilepx=` 128x192). On the eye's side of the focus a tile whose top would
+  rise into the line to it isn't drawn (the rings press that land down: far.wgsl underFocus).
+- The origin: level.ts hands the window's world cell each frame (Renderer.setTileOrigin); a slide moves it at once
+  (Renderer.windowMoved → TileCache.moved), a warp leaves it unknown till the next frame.
+- render.wgsl lighting: the fire glow only where the point is in the window (a frozen tile's lookup clamped to the
+  edge column's).
+- scripts/tileprobe.mjs: the phone tier ride (q=low 412x915, every system as deployed), each second fps, the cache's
+  stats (bakes first/again, evicted, drawn, frozen, slots, MB) and the screen share in the window vs in tiles
+  (TileCache.coverage: a 24 x 24 grid of screen points), shots every 10 s, `--turn` halfway.
+  `node scripts/tileprobe.mjs --url http://localhost:5299 --win 320 --seconds 60 --out C:/Projects/shots88/tilecache/ride`
+
+Not done: regions never in the window rendered once as they arrive (needs the mesher and meshSurf to read a
+region's own columns — a pool slot — not the window's buffers: TC2); the shadows past the shadow map's box (tiles
+are lit unshadowed there, as the rings are); the window's own terrain from tiles (its look moves: water, wetness).
+

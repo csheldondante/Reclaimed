@@ -640,6 +640,7 @@ export class FieldMesh {
     // (round 82: every 60th time, not 10th — the chunks' tops for the culling move slowly)
     if (READBACK && !this.statBusy && this.statEvery++ % 60 === 0) {
       enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
+      this.statSlides = this.slides;
       this.statBusy = true;
       this.statNeeded = true;
     }
@@ -777,6 +778,32 @@ export class FieldMesh {
     }
   }
 
+  /** (round 103, tilecache) Draw the chunks marked in `which` (chunkGrid's order). */
+  drawMask(pass: GPURenderPassEncoder, which: Uint8Array): number {
+    if (!this.on) return 0;
+    pass.setIndexBuffer(this.indices, 'uint32');
+    let n = 0;
+    for (let c = 0; c < this.nx * this.ny; c++) {
+      if (!which[c]) continue;
+      this.drawChunk(pass, c);
+      n++;
+    }
+    this.profiler.draws += n;
+    return n;
+  }
+
+  /**
+   * (round 103, tilecache) Per chunk, from the last stats readback (every 60th encode): 1 built and drawn (its hash
+   * not FRESH, indices), 0 not; valid while `slides` is still `builtSlides` (a slide since moved the chunks).
+   */
+  built = new Uint8Array(0);
+  /** (round 103, tilecache) chunk c's top (window z; the stats readback's, zHi till known) */
+  topOf(c: number): number {
+    return this.tops[c] ?? this.zHi;
+  }
+  builtSlides = -1;
+  private statSlides = -1;
+
   /** Draw the chunks in the sun's box (the shadow pass: what's out of view but up-sun casts too). */
   drawCasters(pass: GPURenderPassEncoder): void {
     if (!this.on) return;
@@ -813,8 +840,11 @@ export class FieldMesh {
       let verts = 0;
       let indices = 0;
       let full = 0;
+      if (this.built.length !== this.nx * this.ny) this.built = new Uint8Array(this.nx * this.ny);
       for (let c = 0; c < this.nx * this.ny; c++) {
         const b = CHUNK0 + c * CSTRIDE;
+        // (round 103, tilecache: built — as far.wgsl meshBuilt reads it)
+        this.built[c] = u[b + 5] !== FRESH_HASH && u[b + 5] !== 0 && u[b] > 0 ? 1 : 0;
         indices += u[b];
         verts += u[b + 7];
         full += u[b + 9];
@@ -823,6 +853,7 @@ export class FieldMesh {
         if (t > 0) this.tops[c] = t;
       }
       this.stats = { changed: u[0], verts, indices, full };
+      this.builtSlides = this.statSlides;
       buf.unmap();
       this.statBusy = false;
     }, ignoreTeardown);

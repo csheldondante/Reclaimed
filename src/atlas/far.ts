@@ -39,6 +39,8 @@ export interface FarTargets {
   pickFormat: GPUTextureFormat;
   depthFormat: GPUTextureFormat;
   camera: GPUBuffer;
+  /** (round 103) the regions the renderer's tiles draw (render/tilecache.ts mask; all zero: none) */
+  tileMask: GPUBuffer;
 }
 
 export class FarLand {
@@ -149,6 +151,8 @@ export class FarLand {
         { binding: 46, visibility: VF, buffer: { type: 'uniform' } },
         { binding: 47, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 48, visibility: VF, buffer: { type: 'uniform' } },
+        // (round 103, tilecache: the regions the renderer's tiles draw past the window — render/tilecache.ts mask)
+        { binding: 49, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 37, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
         { binding: 38, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
         { binding: 39, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d-array' } },
@@ -180,6 +184,7 @@ export class FarLand {
         { binding: 46, resource: { buffer: lodUni } },
         { binding: 47, resource: { buffer: meshState } },
         { binding: 48, resource: { buffer: albedoU } },
+        { binding: 49, resource: { buffer: t.tileMask } },
         { binding: 37, resource: { buffer: this.bake?.uni ?? device.createBuffer({ label: 'bake none', size: BAKE_UNI_BYTES, usage: GPUBufferUsage.UNIFORM }) } },
         { binding: 38, resource: this.bake?.sampler ?? device.createSampler() },
         { binding: 39, resource: this.bake?.view ?? noBake!.createView({ dimension: '2d-array' }) },

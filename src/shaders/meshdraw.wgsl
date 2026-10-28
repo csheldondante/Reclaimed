@@ -337,6 +337,45 @@ fn meshShade(in: MOut) -> FOut {
     f.pick = vec2<u32>(1u, 1u);
     return f;
   }
+  let s = meshSurf(in);
+  // (?look=lookup: the interval's material and the lighting, none of the detail)
+  if (MESH_LOOK == 1u) {
+    var f: FOut;
+    f.color = vec4<f32>(toSrgb(haze(s.alb * lighting(in.wpos, s.nrm), in.wpos)), 1.0);
+    f.pick = vec2<u32>(s.ci + 1u, pickInfo(s.mat, in.wpos.z, 0u));
+    return f;
+  }
+  var col = s.alb * lighting(in.wpos, s.lnrm);
+  // (round 83: quartz cut as a gem — the hoverbike's playtest: the giant crystals didn't look faceted)
+  if (s.gem) { col = gemLook(in.wpos, s.nrm); }
+  col += filmSheen(in.wpos, s.nrm, s.filmN, s.film);
+  col = haze(col, in.wpos);
+  var o: FOut;
+  o.color = vec4<f32>(toSrgb(col), 1.0);
+  // (the band's z runs past the byte: round 79)
+  o.pick = vec2<u32>(s.ci + 1u, pickInfo(s.mat, in.wpos.z, 0u));
+  return o;
+}
+
+/** the wet sheen of a water film (0..1): the sun's glint off it, the sky in it (filmN: its waves' tilt) */
+fn filmSheen(wpos: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32) -> vec3<f32> {
+  if (film <= 0.0) { return vec3<f32>(0.0); }
+  let sunL = sunDir();
+  let fn2 = normalize(nrm + vec3<f32>(filmN.xy, 0.0));
+  let hv = normalize(normalize(sunL + toEye(wpos)) + vec3<f32>(0.0, 0.0, 1.6));
+  let spec = pow(max(dot(fn2, hv), 0.0), 120.0) * (1.0 - cloudShade(wpos.xy)) * shadowLit(wpos, nrm);
+  return G.sunCol.rgb * (1.0 / 2.4) * spec * 0.6 * film + G.sky.rgb * 0.08 * film;
+}
+
+/**
+ * (round 103, tilecache) What the mesh's look is before it's lit: the albedo, the normal it's lit by (the detail
+ * layer's, lnrm) and the surface's own, the material (a structure's where its face shows), the water film and its
+ * waves' tilt, whether it's cut as a gem, the column (the pick's). meshShade lights it; the tile cache bakes it
+ * (fsTileBake) and lights it every frame.
+ */
+struct Surf { alb: vec3<f32>, lnrm: vec3<f32>, nrm: vec3<f32>, filmN: vec3<f32>, film: f32, mat: u32, ci: u32, gem: bool };
+
+fn meshSurf(in: MOut) -> Surf {
   let nrm = normalize(in.nrm);
   // one step into the surface: the interval this point of it belongs to
   let ip = in.wpos - nrm * 0.2;
@@ -360,13 +399,8 @@ fn meshShade(in: MOut) -> FOut {
   if (G.numStorms > 0u && asleep(vec2<u32>(cell))) { cf.z = max(cf.z, 0.9 * stormCover(in.wpos.xy)); }
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
-  // (?look=lookup: the interval's material and the lighting, none of the detail)
-  if (MESH_LOOK == 1u) {
-    var f: FOut;
-    f.color = vec4<f32>(toSrgb(haze(alb * in.tint * lighting(in.wpos, nrm), in.wpos)), 1.0);
-    f.pick = vec2<u32>(ci + 1u, pickInfo(mat, in.wpos.z, 0u));
-    return f;
-  }
+  // (?look=lookup: the interval's material and the lighting, none of the detail — meshShade)
+  if (MESH_LOOK == 1u) { return Surf(alb * in.tint, nrm, nrm, nrm, 0.0, mat, ci, false); }
   // a thin top layer shows the one beneath through it (a trace of blown dust
   // doesn't flip the ground's colour — round 17)
   if (isTop && lk.below != 0u) { alb = mix(groundAlbedo(lk.below), alb, smoothstep(0.02, 0.2, lk.thick)); }
@@ -506,25 +540,7 @@ fn meshShade(in: MOut) -> FOut {
   }
   // (water smooths the rough ground it covers)
   lnrm = normalize(mix(lnrm, nrm, film * 0.8));
-  var col = alb * lighting(in.wpos, lnrm);
-  // (round 83: quartz cut as a gem — the hoverbike's playtest: the giant crystals didn't look faceted)
-  if (mat == MAT_QUARTZ && sw < 0.5) { col = gemLook(in.wpos, nrm); }
-  if (film > 0.0) {
-    // the wet sheen: the sun's glint off the film
-    let sunL = sunDir();
-    let fn2 = normalize(nrm + vec3<f32>(filmN.xy, 0.0));
-    let hv = normalize(normalize(sunL + toEye(in.wpos)) + vec3<f32>(0.0, 0.0, 1.6));
-    let spec = pow(max(dot(fn2, hv), 0.0), 120.0) * (1.0 - cloudShade(in.wpos.xy)) * shadowLit(in.wpos, nrm);
-    col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.6 * film;
-    // and the sky in it
-    col += G.sky.rgb * 0.08 * film;
-  }
-  col = haze(col, in.wpos);
-  var o: FOut;
-  o.color = vec4<f32>(toSrgb(col), 1.0);
-  // (the band's z runs past the byte: round 79)
-  o.pick = vec2<u32>(ci + 1u, pickInfo(mat, in.wpos.z, 0u));
-  return o;
+  return Surf(alb, lnrm, nrm, filmN, film, mat, ci, mat == MAT_QUARTZ && sw < 0.5);
 }
 
 /** contamination, plant cover, wetness and withering at xy, blended barycentrically over the three nearest cells. */

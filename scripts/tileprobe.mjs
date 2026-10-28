@@ -1,0 +1,54 @@
+// tile cache probe: ride (or park) at the phone tier, sample stats/coverage/fps each second, shots
+import puppeteer from 'puppeteer-core';
+const argv = process.argv.slice(2);
+const opt = (k, d) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
+const url = opt('url', 'http://localhost:5299');
+const extra = opt('extra', '&tiles=1');
+const drive = opt('drive', '18');
+const secs = Number(opt('seconds', 40));
+const at = opt('at', '11956,15471');
+const out = opt('out', '');
+const win = opt('win', '320');
+const turn = argv.includes('--turn');
+const browser = await puppeteer.launch({
+  executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  headless: 'new',
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--window-size=412,915'],
+  defaultViewport: { width: 412, height: 915, deviceScaleFactor: 2.6 },
+  protocolTimeout: 600000,
+});
+try {
+  const p = await browser.newPage();
+  const errs = [];
+  p.on('pageerror', (e) => errs.push(e.message));
+  p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.text().slice(0, 400)); });
+  const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&perf=1${drive !== '0' ? `&drive=${drive}` : ''}&at=${at}&win=${win}${extra}`;
+  console.log(u);
+  await p.goto(u, { waitUntil: 'load' });
+  await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
+  await new Promise((r) => setTimeout(r, 30000));
+  const t0 = Date.now();
+  let k = 0;
+  while (Date.now() - t0 < secs * 1000) {
+    const s = await p.evaluate(async () => {
+      const R = window.reclaimed;
+      const n0 = R.scene.frameMs?.length ?? 0;
+      let f = 0;
+      const t = performance.now();
+      await new Promise((res) => { const g = () => { f++; if (performance.now() - t < 1000) requestAnimationFrame(g); else res(); }; requestAnimationFrame(g); });
+      const T = R.renderer.tiles;
+      const c = T ? T.coverage(R.camera) : null;
+      return { fps: f, tiles: T ? { ...T.stats } : null, cover: c, zoom: +R.camera.zoom.toFixed(2), az: +R.camera.azimuth.toFixed(3), slides: R.renderer.fieldMesh.slides, n0 };
+    });
+    console.log(JSON.stringify(s));
+    if (out && k % 10 === 9) await p.screenshot({ path: `${out}-${k}.png` });
+    if (turn && k === Math.floor(secs / 2)) await p.evaluate(() => window.reclaimed.scene.turn?.step(1));
+    k++;
+  }
+  if (out) await p.screenshot({ path: `${out}-end.png` });
+  const fatal = await p.evaluate(() => document.querySelector('.fatal')?.textContent ?? null);
+  console.log('fatal', fatal);
+  console.log('errors', JSON.stringify(errs.slice(0, 20)));
+} finally {
+  await browser.close();
+}

@@ -21,6 +21,8 @@ import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
+import tilesWgsl from '../shaders/tiles.wgsl?raw';
+import { TileCache } from './tilecache';
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import { RIVERS, type WorldGpu } from '../sim/world-gpu';
@@ -84,6 +86,9 @@ const MESH_FRONT: GPUFrontFace = new URLSearchParams(location.search).get('front
 /** (round 86) ?hybrid=1 (phone-flags' LITE_SET on the low tier): the window's heightfield chunks drawn as a grid
  *  (meshdraw.wgsl vsGrid) — its pipelines made */
 const HYBRID = new URLSearchParams(location.search).get('hybrid') === '1';
+/** (round 103) ?tiles=1: the world-anchored tile cache (render/tilecache.ts) — the land past the window drawn from
+ *  tiles baked while it was in it */
+const TILES = new URLSearchParams(location.search).get('tiles') === '1';
 /** meshdraw.wgsl GRID_N: a grid chunk's lattice, vertices a side (its 32 columns and one past each edge) */
 const GRID_N = 34;
 /** (perfopt) the look's pieces ?nodetail= can leave out (meshdraw.wgsl ND_*; shadow: render.wgsl lighting) */
@@ -238,10 +243,18 @@ export class Renderer {
   /** further opaque draws in the world pass, with the sky's colour (round 73: the atlas's far land) */
   readonly extraDraws: ((pass: GPURenderPassEncoder, clear: [number, number, number]) => void)[] = [];
   /** what an extra draw renders into, and the camera it reads (render.wgsl Camera) */
-  get targets(): { format: GPUTextureFormat; pickFormat: GPUTextureFormat; depthFormat: GPUTextureFormat; camera: GPUBuffer; mesh?: { state: GPUBuffer; grid: [number, number, number] } } {
+  get targets(): { format: GPUTextureFormat; pickFormat: GPUTextureFormat; depthFormat: GPUTextureFormat; camera: GPUBuffer; mesh?: { state: GPUBuffer; grid: [number, number, number] }; tileMask: GPUBuffer } {
     // (round 83: the field mesh's state, when it draws the ground — far.ts's rings fill the chunks not built yet)
     const mesh = this.fieldMesh.on ? { state: this.fieldMesh.stateBuffer, grid: this.fieldMesh.chunkGrid } : undefined;
-    return { format: this.colorFormat, pickFormat: PICK_FORMAT, depthFormat: DEPTH_FORMAT, camera: this.camBuf, mesh };
+    return { format: this.colorFormat, pickFormat: PICK_FORMAT, depthFormat: DEPTH_FORMAT, camera: this.camBuf, mesh, tileMask: this.tiles?.mask ?? this.tileMaskNone };
+  }
+  /** (round 103, ?tiles=1) the tile cache: the land past the window drawn from tiles (render/tilecache.ts) */
+  tiles?: TileCache;
+  /** (no tiles: the rings' mask, off — far.wgsl tiled) */
+  private tileMaskNone: GPUBuffer;
+  /** (round 103) The streamed window's cell (0, 0) in the world (cells, rows) and its oz: the tiles' anchors. */
+  setTileOrigin(ox: number, oy: number, oz: number): void {
+    this.tiles?.setOrigin(ox, oy, oz);
   }
   private meshGroup?: GPUBindGroup;
   /** the band outside the window (round 79, enableBand): its draw group */
@@ -359,6 +372,7 @@ export class Renderer {
     this.lightCamBuf = world.buf('lightCamera', CAM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     this.pickBuf = world.buf('pick', 256, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.countBuf = world.buf('counts', 96, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.tileMaskNone = device.createBuffer({ label: 'tiles mask none', size: 16, usage: GPUBufferUsage.STORAGE });
 
     const format = this.colorFormat;
     this.fieldMesh = new FieldMesh(device, world, profiler, meshByDefault, meshRoom, undefined, meshSlots);
@@ -762,6 +776,40 @@ export class Renderer {
         const shadow = shadowPipe('shadow-rock', device.createPipelineLayout({ bindGroupLayouts: [layout] }), module, 'vsRock');
         return { pipe, group, shadow };
       };
+      // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)
+      if (TILES) {
+        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl, tilesWgsl]);
+        const drawLayout = makeLayout(
+          device,
+          'tiles-draw',
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform' },
+          VF,
+          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 44: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+        );
+        const win = { mesh: this.fieldMesh, chunks: world.chunks, layers: world.layers };
+        this.tiles = new TileCache({
+          device,
+          world,
+          profiler,
+          colorFormat: format,
+          pickFormat: PICK_FORMAT,
+          depthFormat: DEPTH_FORMAT,
+          module: tileModule,
+          resolveLayout,
+          drawLayout,
+          camBytes: CAM_BYTES,
+          camBuf: this.camBuf,
+          camData: () => this.camData,
+          win,
+          band: () => (this.band ? { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers } : undefined),
+          gPipe: () => this.meshPipes?.g,
+          gridPipe: () => this.gridPipes?.g,
+          gridOn: () => (this.gridLive ? this.gridOn!.on : null),
+          drawGrid: (pass, which) => void this.drawGrid(pass, which),
+          meshGroup: (cam, src) => this.meshGroupOf!(cam, this.shadowView, src),
+          meshEntries: (src, cam) => this.meshEntries(src, cam),
+        });
+      }
       const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = this.shadowView) => this.meshGroupOf!(cam, shadow, { mesh: this.fieldMesh, chunks: world.chunks, layers: world.layers });
       this.meshGroup = meshGroupFor(this.camBuf);
       // the sun's shadow pass: the same vertex shaders, depth only, through the
@@ -995,6 +1043,7 @@ export class Renderer {
     if (this.band) this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
     if (this.shadowGroups) this.shadowGroups.mesh = this.meshGroupOf(this.lightCamBuf, this.noShadowView!, win);
     if (this.meshDef) this.meshDef.groups = [];
+    this.tiles?.invalidate();
     if (this.tc) {
       for (const t of Object.values(this.tc.tex)) t.destroy();
       this.tc = undefined;
@@ -1077,6 +1126,11 @@ export class Renderer {
     if (this.rockMesh) this.rockMesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc, shadowDue);
 
+    // (round 103, ?tiles=1: the tiles baked this frame, and those drawn past the window — their mask for the rings)
+    if (this.tiles && !SKIP.has('tiles')) {
+      this.tiles.encode(enc, cam, this.depth!.width);
+      this.tiles.prepare(cam);
+    }
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
     if (tcMode === 'refresh') this.encodeTerrainCache(enc);
     // (the deferred pipelines compile off the main thread from the start: forward until they're in)
@@ -1157,6 +1211,7 @@ export class Renderer {
         this.gridDrawn = this.drawGrid(pass, this.gridView);
       }
     }
+    if (this.tiles && !SKIP.has('tiles')) this.tiles.draw(pass);
     for (const f of SKIP.has('far') ? [] : this.extraDraws) f(pass, opts.clear);
     if (this.bodyShown > 0 && !SKIP.has('bodies')) {
       pass.setPipeline(this.bodyPipe);
@@ -1624,6 +1679,7 @@ export class Renderer {
    */
   windowMoved(dcx: number, dcy: number, t: [number, number, number]): void {
     this.fieldMesh.shift(dcx, dcy, t);
+    this.tiles?.moved(dcx, t);
     this.band?.mesh.shift(dcx, dcy, t);
     this.shore.dirty();
   }
@@ -1723,6 +1779,7 @@ export class Renderer {
     if (this.edgesOpen) this.band.mesh.openEdges();
     if (this.meshWant) this.band.mesh.setWanted(this.meshWant);
     this.bandGroup = this.meshGroupOf(this.camBuf, this.shadowView, { mesh: this.band.mesh, chunks: this.band.chunks, layers: this.band.layers });
+    this.tiles?.invalidate();
     return this.band;
   }
 
