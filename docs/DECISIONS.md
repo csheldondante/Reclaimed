@@ -3,6 +3,27 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 106 (session 5, `places`) — the physics design's answers
+
+The user answered the questions in "Reclaimed physics: a design to discuss"
+(https://claude.ai/artifact/N6Kw9MbFbDRxEVvKmjkZ8f). Summarised; the doc has their wording:
+
+- Scale: a cell feels about 1–2 m, tuned per object size. Start from true gravity at that scale (about 4.9–9.8
+  cells/s²) as the panel's baseline.
+- Budget (to confirm on the phone): about 50 solver bodies, with lots of particles and dust doing the visual work.
+- Metal and wood bend and dent (plastic constraints). Rock never deforms; it shatters.
+- A settled body stays an object (sleeping, instanced). It is baked into terrain only between runs, or when the
+  object buffer needs room.
+- Full stacking, far more stable than a game engine. Large bodies deflect rather than bounce; small overlap is
+  allowed and resolved softly as local crushing (dust, rubble, a dent).
+- Agents: push, knockdown and burial behind an API that toggles and tunes them (reaction profiles). Heroes get
+  gentler knockback, sometimes a ragdoll or canned fall, always kept in the player's control.
+- The CPU rigid body is a starting point only. Fix the ugly push-outs and sudden jumps; hide every re-mesh or
+  body-to-terrain swap behind a burst of dust.
+- Solver: the GPU constraint solver. Looking heavy and moving at a consistent speed matter more than preventing
+  penetration. Big impacts lose most of their energy into particles. For deep overlap the preferred fix is to
+  erode material where the bodies meet, not push them apart (the doc's "contact rules for heavy bodies").
+
 ## 2026-10-28 — round 105 (session 5, `places`) — the architecture doc's decisions
 
 The design doc "Reclaimed engine architecture: fixing the foundations"
