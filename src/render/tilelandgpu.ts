@@ -152,8 +152,9 @@ export class TileLandGpu {
     // (the sleep, drowse and hfield bits, and the ring — round 105, ringwin: words 476-479 — all 0)
     u.fill(0, 284, 480);
     // (round 107, pages: the page table a plain R-wide window's, the identity at offset 0 — sim/pages.ts)
-    const sp = (this.scratchPages ??= new Pages(R, R));
+    const sp = (this.scratchPages ??= new Pages(R, R, null));
     new Uint16Array(ab, GLOBALS_HEAD_BYTES, sp.table.length).set(sp.table);
+    new Uint16Array(ab, GLOBALS_HEAD_BYTES + 8192, sp.inv.length).set(sp.inv);
     this.host.device.queue.writeBuffer(sl.patch, 0, ab);
     enc.copyBufferToBuffer(this.host.world.globals, 0, sl.globals, 0, sl.globals.size);
     enc.copyBufferToBuffer(sl.patch, 0, sl.globals, 0, 8);
