@@ -1277,6 +1277,7 @@ export class LevelScene implements Scene {
               region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, Infinity, true),
               // (round 102, `gpugen`: made on the GPU straight into the pool — ?gpugen=0 the CPU's way, region above)
               regionInto: (x0, y0, w, h, t) => a.atlas.regionInto(x0, y0, w, h, t, true),
+              regionTile: (x0, y0, w, h, t, m) => a.atlas.regionTile(x0, y0, w, h, t, m),
               wrap: [a.atlas.p.cols, a.atlas.p.rows],
               height: a.atlas.p.zTop,
               // (round 71: the coarse world changes while a region is away)
@@ -1425,12 +1426,16 @@ export class LevelScene implements Scene {
       if (a) {
         // (round 83: the rings of less detail between the window and the far land — ?lod=0 none, ?lod=low three
         // coarser ones, fewer vertices)
+        // (round 105, DECISIONS AR3: with the tiles on — the default — no rings, nor their bake (farbake) or the window's
+        // look on them (fardetail): the tiles draw the land past the window, the round 73 far land where none is yet)
+        const tilesOn = !!core.renderer.tiles;
         const lodQ = new URLSearchParams(location.search).get('lod');
-        const lod = lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
+        // (?lod=keep: the rings with the tiles too — a measurement switch, the frame's cost of the rings: DEVLOG round 105)
+        const lod = (tilesOn && lodQ !== 'keep') || lodQ === '0' ? null : lodQ === 'low' ? { spacings: [4, 8, 16], n: 129 } : { spacings: [2, 4, 8, 16], n: 193 };
         if (this.hybridOn && !this.ceiling) {
           // (the window's heightfield chunks are the 1-cell ring's, near the camera; ?ringn= its vertices a side)
           const ringN = Number(host.params.get('ringn') ?? 193);
-          this.far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, { spacings: [1, 2, 4, 8, 16], n: ringN });
+          if (!tilesOn) this.far = new FarLand(host.gpu.device, a.atlas, core.renderer.targets, { spacings: [1, 2, 4, 8, 16], n: ringN });
           const fm = core.renderer.fieldMesh;
           if (!fm.on) throw new Error('?hybrid=1 needs the field mesh (not with ?mesh=0)');
           const [nx, ny, side] = fm.chunkGrid;
@@ -1456,7 +1461,8 @@ export class LevelScene implements Scene {
         }
         const far = this.far ?? new FarLand(host.gpu.device, a.atlas, core.renderer.targets, lod);
         // (round 83: the rings draw past the window's edge — no wall down it)
-        if (far.lod && !this.ceiling) core.renderer.openEdges();
+        // (round 105: and the tiles — past the window's edge is theirs, or the far land's)
+        if ((far.lod || tilesOn) && !this.ceiling) core.renderer.openEdges();
         this.far = far;
         const S = this.stream;
         core.renderer.extraDraws.push((pass, clear) => {
@@ -1464,7 +1470,7 @@ export class LevelScene implements Scene {
           // (round 103, ?tiles=1: the tiles' anchors are the world's — render/tilecache.ts)
           core.renderer.setTileOrigin(S.origin[0], S.origin[1], S.oz);
           // (round 104, TC2: the render-only land past the window, made the streamer's way; once)
-          core.renderer.setTileLand({ layout: S.layout, oz: () => S.oz, landInto: (x0, y0, b, o) => S.landInto(x0, y0, b, o) });
+          core.renderer.setTileLand({ layout: S.layout, oz: () => S.oz, landTile: (x0, y0, b, o, m) => S.landTile(x0, y0, b, o, m) });
           far.win = [dims.w + 0.5, dims.h * ROW_H];
           far.zMax = dims.zMax;
           const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;
