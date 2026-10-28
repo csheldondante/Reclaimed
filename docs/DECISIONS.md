@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 102 (session 5, `places`) — settlements as fields, grids and spans (design, for later)
+
+- The user: "I think that ids and what building goes where might make sense to do on the CPU. I'm not entirely convinced
+  though. I was imagining that the density field is essentially the height of buildings in each cell of the irregular
+  grid so I was assuming that for rendering it didn't really need to know anything about what a building is but only the
+  field value and how to produce the grid on the GPU. … In terms of layout I think there are two pieces: 1 the identity
+  of each span of structure on the grid 2. The grid layout itself. Would it make sense potentially to have each grid be
+  store intervals like the terrain but for building types?"
+- On main's questions: "1. I agree" (spans authoritative) "2. I think derived is ok but we may need to drive agent
+  behaviors then and path generation by type 3. … Can this just be a course representation? I think edits can flow back
+  if the field is just a count of people or structures or something. 4. I think two so we can have overgrown buildings
+  but I'm not certain." → BACKLOG ST17 (design only; come back to it).
+
 ## 2026-10-28 — round 101 (session 5, `bench`) — a calibration benchmark on the phone
 
 - The user, verbatim: "Can you build a calibration test that we can run on the phone to directly give you benchmark
