@@ -1646,10 +1646,15 @@ class Bench {
         const [dx, dy] = c.fly ? [0, 0] : c.screenDeltaToWorld(((i + 0.5) / G - 0.5) * c.viewportW, ((j + 0.5) / G - 0.5) * c.viewportH);
         const x = c.target[0] + dx;
         const y = (c.target[1] + dy) / ROW_H;
-        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        // (round 104, ?tiles=1: land a tile draws is in detail too — render/tilecache.ts)
+        const tiled = this.R.core.renderer.tiles?.drawsAt(x, y) ?? false;
+        if (x < 0 || x >= W || y < 0 || y >= H) {
+          if (tiled) n++;
+          continue;
+        }
         const lx = Math.floor(x / R) * R;
         const ly = Math.floor(y / R) * R;
-        if (un.some(([ux, uy]) => ux === lx && uy === ly)) continue;
+        if (un.some(([ux, uy]) => ux === lx && uy === ly) && !tiled) continue;
         n++;
       }
     return n / (G * G);

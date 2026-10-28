@@ -506,6 +506,7 @@ export class TileCache {
    */
   prepare(cam: Camera): void {
     this.drawCount = 0;
+    this.drawnSet.clear();
     const md = this.maskData;
     md.fill(0xffffffff, 2);
     md[0] = 0;
@@ -573,6 +574,7 @@ export class TileCache {
         const q = ((t.rx % MASK_N) + MASK_N) % MASK_N;
         md[2 + s * MASK_N + q] = ((t.rx & 0xffff) | (t.ry << 16)) >>> 0;
         t.usedAt = this.frame;
+        this.drawnSet.add(`${t.rx},${t.ry}`);
         n++;
       }
       this.stats.frozen = frozen;
@@ -609,6 +611,14 @@ export class TileCache {
       if (fm.built[c] || (grid && grid[c])) return false;
     }
     return true;
+  }
+
+  /** the regions drawn last frame ("rx,ry") */
+  private drawnSet = new Set<string>();
+  /** Does a tile draw window point (x cells, y rows) this frame? (the bench's detail share) */
+  drawsAt(x: number, y: number): boolean {
+    if (!this.origin) return false;
+    return this.drawnSet.has(`${Math.floor((x + this.origin[0]) / R)},${Math.floor((y + this.origin[1]) / R)}`);
   }
 
   /** what's in the mask (its regions), to write it only when it changes */
