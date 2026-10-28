@@ -109,8 +109,8 @@ export class TileLand {
   }
 
   /** the Globals the scratch's passes read: the frame's, its size, chunks and origin the region's, no sleep */
-  // (ringwin, when it lands: the window's columns addressed as a ring — colIdx/colIdxI wrap by a ring offset in the
-  // Globals; the scratch is a plain window one region across, so its copy must set that offset to 0 here too)
+  // (round 105, ringwin: the window's columns addressed as a ring — colIdx, texCol wrap by Globals.ring, words 476-479;
+  // the scratch is a plain window one region across, its fields row-major in the region's layout: its ring is 0)
   private patchGlobals(enc: GPUCommandEncoder, rx: number, ry: number): void {
     const u = new Uint32Array(this.patchData);
     const f = new Float32Array(this.patchData);
@@ -122,14 +122,16 @@ export class TileLand {
     const [nx, , side] = this.mesh.chunkGrid;
     f[281] = nx;
     f[282] = side;
-    u.fill(0, 284, Math.min(476, u.length));
+    // (the sleep, drowse and hfield bits, and the ring: 0)
+    u.fill(0, 284, Math.min(480, u.length));
     this.host.device.queue.writeBuffer(this.patch, 0, this.patchData);
     enc.copyBufferToBuffer(this.host.world.globals, 0, this.globals, 0, this.globals.size);
     enc.copyBufferToBuffer(this.patch, 0, this.globals, 0, 8);
     enc.copyBufferToBuffer(this.patch, 16, this.globals, 16, 4);
     enc.copyBufferToBuffer(this.patch, 276 * 4, this.globals, 276 * 4, 16);
     enc.copyBufferToBuffer(this.patch, 281 * 4, this.globals, 281 * 4, 8);
-    if (this.globals.size >= 476 * 4) enc.copyBufferToBuffer(this.patch, 284 * 4, this.globals, 284 * 4, (476 - 284) * 4);
+    if (this.globals.size < 480 * 4) throw new Error('TileLand: the Globals have no ring (words 476-479)');
+    enc.copyBufferToBuffer(this.patch, 284 * 4, this.globals, 284 * 4, (480 - 284) * 4);
   }
 
   /** the scratch's draw groups (the mesh's G-buffer pass, the resolve), made again when its pool grows */

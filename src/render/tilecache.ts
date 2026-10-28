@@ -268,14 +268,17 @@ export class TileCache {
           if (!fm.built[c] && !(grid && grid[c])) ready = false;
         }
         if (!ready) continue;
+        // (round 105: only the window's edge regions — a region leaves through the edge, a slide at a time, so its
+        // tile is baked there; the inner ones would be baked again before they go)
+        const edge = i === 0 || j === 0 || (i + 1) * R >= w || (j + 1) * R >= hh;
+        if (!edge) continue;
         const rx = Math.floor(ox / R) + i;
         const ry = Math.floor(oy / R) + j;
         const t = this.tiles.get(this.key(rx, ry, az));
         let score: number;
         if (!t) score = 1e9;
         else if (Math.abs(Math.log(t.dens / Math.min(rp, this.fitDens(t)))) > 0.22) score = 1e8;
-        // (the regions at the window's edge first: they're the ones that leave)
-        else score = (this.frame - t.bakedAt) * (i === 0 || j === 0 || (i + 1) * R >= w || (j + 1) * R >= hh ? 2 : 1);
+        else score = this.frame - t.bakedAt;
         if (score < REBAKE) continue;
         cand.push({ rx, ry, i, j, score });
       }

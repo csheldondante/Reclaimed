@@ -8868,3 +8868,23 @@ Tests (desktop iGPU, q=low 412x915, every system on):
 - `benchrun --pan --smoke` (326 s, no errors): no speed held at any zoom. Frames of 40–60 ms come even at 10 cells/s
   at window 320, and 60–150 ms at 512: the parked frame's cost, not the slides. Main is taking places' baseline on
   the same smoke.
+
+## 2026-10-28 — round 105 (`tilecache`): ringwin merged; the render-only land's ring 0; window bakes at the edge only; the zoom 14 A/B
+
+- ringwin in (places 118acaf). The window's own bakes read the window only through meshSurf's helpers (colIdx,
+  texCol, cellFields, cellWater): ring-aware already. The render-only land's scratch is a plain window one region
+  across, its fields row-major in the region's layout, so its patched Globals set the ring (words 476-479) to 0
+  (tileland.ts patchGlobals; it throws if the Globals have no ring). Checked: `?ringbias=128,64&tiles=1` against
+  ringbias 0, parked, the same view: pixels differing by more than 30 in the tiles' bands top 0.49%, bottom 0.00%
+  (the window's band 0.6% — its water and clouds move): the bakes are the same (shots88/tilecache/ringbias-compare.png).
+- Window bakes only for the window's edge regions: a region leaves through the edge, one slide at a time, so its
+  tile is baked there; the inner ones were baked and baked again for nothing. (Less GPU and CPU while panning.)
+- The zoom 14 pan A/B, twice each (benchrun --pan --smoke, desktop iGPU, window 320; before the edge-only change):
+  zoom 14 maxSmooth generated / disk / pool — off-1 640 / 40 / 20, on-1 none / none / none, off-2 40 / 10 / none,
+  on-2 640 / 20 / 40; parked fps off 97.5, 95.3 — on 62.8, 115.2. The run-to-run spread (the machine's state:
+  parked fps 63-115 with the same build) is larger than any tiles effect; no consistent cost. Zoom 5 (window 512):
+  on-1 and on-2 smooth to 10 c/s from disk and pool, off-1 and off-2 none. Reports: shots88/tilecache/ab-*.json.
+- culltest with tiles on: the same as off — "the flood raised the water while awake, the fire lit" fails either way
+  (places), "asleep, nothing changes" now and then either way (veg 6). towertest with tiles on: all passed on the
+  second run (the first: concrete's piece in 522 ms; off passed; again on, 74 ms) — a flake, to watch.
+
