@@ -97,14 +97,24 @@ try {
   {
     const { StageLand } = await v.ssrLoadModule('/src/story/stage-land.ts');
     const { ROW_H } = await v.ssrLoadModule('/src/world/lattice.ts');
-    const atlas = { p: { cols: 1024, rows: 1024 }, landHooks: [] };
+    const { StampOps, applyStamps } = await v.ssrLoadModule('/src/atlas/stamps.ts');
+    const atlas = { p: { cols: 1024, rows: 1024 }, stampHooks: [] };
     const land = new StageLand(atlas);
+    // (round 102: the hook says what it builds as stamps — atlas/stamps.ts — laid here on the CPU as Atlas.regionLand
+    // lays them; the GPU's finish.wgsl runs the same operations, scripts/gpugentest.mjs)
+    const stampInto = async (l) => {
+      const ops = new StampOps(64, 64);
+      for (const f of atlas.stampHooks) await f(ops, l.x0, l.y0, 64, 64, false);
+      const marks = new Float32Array(ops.marks);
+      applyStamps(ops, l, marks);
+      ops.tell(marks);
+    };
     // (the window's origin at (1000, 500): the stage straddles the world's x seam)
     const ox = 1000;
     const oy = 500;
     const wrap = (x, n) => ((x % n) + n) % n;
     land.add(pieces.map((p) => ({ ...p, at: [wrap(ox + p.at[0], 1024), wrap(oy * ROW_H + p.at[1], 1024 * ROW_H)] })));
-    ok(atlas.landHooks.length === 1, 'the stage land is an Atlas.landHooks hook');
+    ok(atlas.stampHooks.length === 1 && typeof atlas.stampHooks[0] === 'function', 'the stage land is an Atlas.stampHooks hook');
     // a region of flat land (ground at 100), as the atlas hands one over
     const region = (x0, y0) => {
       const w = 64;
@@ -117,7 +127,7 @@ try {
     for (let ry = 0; ry < 256; ry += 64)
       for (let rx = 0; rx < 256; rx += 64) {
         const l = region(ox + rx, oy + ry);
-        await atlas.landHooks[0](l, l.x0, l.y0, 64, 64, false);
+        await stampInto(l);
         raised += [...l.surface].filter((z) => z > 100.5).length;
         lands.push(l);
       }
@@ -139,7 +149,7 @@ try {
     for (let ry = 0; ry < 256; ry += 64)
       for (let rx = 0; rx < 256; rx += 64) {
         const l = region(ox + rx, oy + ry);
-        await atlas.landHooks[0](l, l.x0, l.y0, 64, 64, false);
+        await stampInto(l);
         again.push(l);
       }
     const w0 = walls[0];
@@ -155,7 +165,7 @@ try {
     land.watch(hz, toWin, 0);
     ok(seen === true && w0.gone === true && land.stats.broken === 1, `a wall seen standing then down is gone (broken ${land.stats.broken})`);
     land.dispose();
-    ok(atlas.landHooks.length === 0, 'disposed: the hook is out');
+    ok(atlas.stampHooks.length === 0, 'disposed: the hook is out');
   }
 
   // the fight: on open ground

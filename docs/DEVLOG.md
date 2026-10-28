@@ -8544,3 +8544,76 @@ Measured (desktop iGPU, q=low 412x915, window 320, every system as deployed):
   scratch chunk meshed then); p99 20.6 → 20.6 → 27.7. Before the grid for flat chunks; to measure again.
 - Frozen trail after a 300-cell pan (window tiles only): 25% of the screen from tiles.
 
+**The second full chain** (unthrottled, localStorage filled to 48K characters from the brim; 791 s): all 9 pages
+to the end screen, exit 0. The save's fallbacks fired in order (details dropped, then every page's numbers), so the
+chain never stalled, but the report lost the main and pans pages. So the pages' results now live in IndexedDB
+(`reclaimed-bench`, key `results:<run id>`; the last report under `last`), and localStorage keeps only the chain:
+pages, step, errors, a few KB. An old report in localStorage moves to IndexedDB at the next start. **Smoke-tested since**
+(round 104: localStorage full to 48K, the hero and window 256 kept); the localStorage fallback stays for a browser without IndexedDB.
+Numbers from the window pages that kept theirs (desktop iGPU, uncapped, riding in a storm):
+- the screen in the window's detail, parked: 64% at 384, 76% at 448, 90% at 512;
+- the fastest pan held: 160 / 125 / 80 cells/s (low detail over 5% one step above);
+- **the sims' GPU ms a tick, timed one pass per system:** 1.07 / 1.50 / 1.67 for 576 / 784 / 1024 window chunks,
+  with 0–5 chunks awake. That is the evidence for PF1: the sims cost the whole window, not what's awake.
+
+## 2026-10-28 — round 104 (`bench2`): the pan benchmark (`?bench=pan`)
+
+The user (verbatim): "Let's build a test of just panning in a straight line as fast as we can at zooms that always
+keep all regions on screen drawn. I want to try both generating and intelligently streaming from disc to memory to
+the GPU. I want to know on each device and at each zoom what is a max speed that is smooth, hitch free and never lags
+behind the camera."
+
+`?bench=pan` (src/perf/bench.ts: panPlan, panPage, panRamp), on the same crash-safe chain as `?bench=1` (per-step
+saves to IndexedDB, the watchdog, the device let go between pages):
+- **zooms** 14 (the hero's), 8, 5, 3.5, 2.76 (the sandbox's), 2.2. For each, the window that keeps the whole screen in
+  detail: the screen's ground at the sandbox's turn, plus a region each side for the slide (`panWindowFor`). At
+  412x915: 320 / 384 / 512 / 704 / 832 / 1024; on the Pixel 9a's 411x785: 256 / 384 / 512 / 640 / 768 / 896. Zooms
+  that need more than 768 aren't run (reported in `notRun`). A page per window, its zooms on it.
+- **a speed ramp**: 60, 90, 120, 160, 200, 260, 320, 400, 500, 640 cells/s, 1.5 s each, a straight line up the
+  screen. Each step passes when rendered fps ≥ 58, no frame over 33 ms, p99 ≤ 20 ms, and none of the screen out of
+  detail against parked (a 12x12 grid: in the window, its region written — no pop-in). Reported: the fastest that
+  passed, what failed first one step above, the hitch recorder's causes and worst three at that speed.
+- **three land sources**, each its own ramp:
+  - pool: back and forth over three regions where it is, so what comes in is in the GPU pool;
+  - generated: a parallel line never seen, made by the generator as it comes;
+  - disk: a line filled first by panning it with every window region marked touched, so each is written to the
+    store as it leaves; the ramp then pans it from its start, from disk to memory to the GPU.
+- each ramp counts where its land came from (`came`: generated / fromPool / fromDisk / slides), so a source is what it
+  says.
+
+**Desktop smoke** (`benchrun.mjs --pan --smoke`: zooms 14 and 5 only, windows 320 and 512, 168 s, no errors; the
+IndexedDB smoke with localStorage full to 48K passed too: hero and window 256 kept, the end screen's Download for the
+run):
+- **no source was smooth even at 30 cells/s, except the pool at zoom 14** (30 held, 60 failed). Every ramp's first
+  failing step had one frame of 117–207 ms, and that's a slide: a slide costs one long frame whatever the speed.
+  At the failing step:
+  - zoom 14: generated, gpu-held 117 ms; disk, gpu-busy 158 ms behind two `rs.load` (36 + 31 ms).
+  - zoom 5: generated, a 178 ms browser frame (pool.upload); disk, async:rs 207 ms (`rs.load` 77 + 69 ms); pool,
+    gpu-busy 118 ms behind `rs.load`.
+  So the bottleneck the user's test asks about is per slide, not throughput: the store's loads (decompress + decode on
+  the main thread), the uploads, a GPU readback queued behind them. The fastest smooth pan stays near zero until a
+  slide stops costing a long frame.
+- the sources are what they say: disk ramps loaded 6 and 20 regions from the store, generated ones made 5 and 8. The
+  fill wrote 342 and 244 regions in 19 and 23 s.
+- the pool ramp drew no region from the pool. It made 10 (the prefetch two strips ahead counts as made) and loaded 4
+  from disk: the ping-pong over three regions didn't bring a frozen region back in 1.5 s steps (BN28).
+
+**The pan benchmark refined (round 104, after the Pixel 9a's first pan run).** On the phone every source failed at
+the first step (30 cells/s), so the table read "none" everywhere. At zoom 14 / window 256 that was a single 33–50 ms
+frame in 1.5 s (59.9 fps); at the wider windows it was the window's own base cost, not the pan. pan768 never finished
+loading (155 s). The result now separates those:
+- each zoom's parked baseline first (rendered fps, p50, p99, max);
+- per step: the slides, the frames over 20 ms per slide, the worst frame;
+- the ramp starts at 10 cells/s: 10, 20, 40, 80, 120, 160, 240, 320, 480, 640, 3 s a step so a step spans several
+  slides;
+- it goes on past frame failures to the first pop-in, so `maxNoPopIn` (the screen kept in detail, frames as they come)
+  is reported apart from the strict `maxSmooth`. It stops when fps falls under a quarter of parked;
+- pages are capped at window 640 (slidehitch's estimate: 768 is ~650 MB of GPU memory before the pool and the meshes,
+  past what Chrome gives a Pixel 9a's GPU process);
+- a load that stalls, errors or runs out of GPU memory records its stage, the JS heap and the GPU buffers alive.
+  level.ts sets the stage: building the atlas, making the first window, making the level. A GPU error, device loss or
+  startup failure on a level page is that page's error, and the chain goes on.
+
+Desktop smoke (zooms 14 and 5; the iGPU shared with other runs meanwhile, parked only 69 / 54 fps): strict smooth
+"none" from 10 cells/s (one 40–150 ms frame a step). No pop-in up to 480–640 cells/s at zoom 14 / window 320, and up
+to 80–120 at zoom 5 / window 512, pop-in from 120–160. Frames over budget per slide: 3–12 at zoom 14, 5–46 at zoom 5.

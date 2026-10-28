@@ -22,6 +22,11 @@ each was implemented.
 - → Branch `tilecache` (from places 950cb67), `?tiles=1`, default off: a region's terrain baked once into an atlas
   slot (unlit: albedo, normal, depth, film) per view turn, relit every frame and drawn as quads where it is; kept
   after the region leaves the window (frozen), so land passed still shows in detail (BACKLOG TC1–TC6).
+## 2026-10-28 — round 104b (session 5, `places`) — agents on paths, through buildings
+
+- The user: "Also, let's still plan to eventually add the paths for agents because I think for lots of jobs it will.look
+  better and be faster and because we can generate path data on building tiles that will make agents use stairs or
+  elevators and that will look cool." → BACKLOG ST15 (planned; simscale's frozen scoped fields are the interim).
 
 ## 2026-10-28 — round 102 (session 5, `gpugen`) — region generation stays on the GPU, by the phone's numbers
 
@@ -47,6 +52,14 @@ each was implemented.
   behaviors then and path generation by type 3. … Can this just be a course representation? I think edits can flow back
   if the field is just a count of people or structures or something. 4. I think two so we can have overgrown buildings
   but I'm not certain." → BACKLOG ST17 (design only; come back to it).
+
+## 2026-10-28 — round 104 (session 5, `bench2`) — the pan benchmark
+
+- The user, verbatim: "Let's build a test of just panning in a straight line as fast as we can at zooms that always
+  keep all regions on screen drawn. I want to try both generating and intelligently streaming from disc to memory to
+  the GPU. I want to know on each device and at each zoom what is a max speed that is smooth, hitch free and never
+  lags behind the camera."
+- → `?bench=pan` on `bench2` (BACKLOG BN27).
 
 ## 2026-10-28 — round 102 (session 5, `bench2`) — the benchmark after the first phone run
 
