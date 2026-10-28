@@ -1103,6 +1103,55 @@ its edge:
   `prefetch` asks for the next slide's when the camera is 0.4 regions off
   the middle (land made ahead is kept in `pending`).
 
+### Region storage: the pool, the store, the record (round 100, branch `regionstore`)
+
+The user (DECISIONS round 100): "I want the world to serialize so we can recover the visited cells that change …
+lean towards the whole region until we know we need the other … stream and cache regions ahead of time even
+further out ahead of the camera so we never wait for them". Three tiers under the window, one layout:
+
+- **The layout** (`world/region-record.ts` regionLayout): a region's bytes are its chunk pages (rc² pages of
+  K × 16² slots, row-major), then each kept per-column buffer (per plane, R rows of R × stride), then each kept
+  texture (rows of align256(texels × 16)). Its `sig` (R, K, the window's zMax, the kept fields and strides) names
+  it. A GPU pool slot, the staging a region is read back through, and a record's body are these same bytes.
+- **GPU pool** (`scenes/region-pool.ts`; `?pool=` slots, default 32 ≈ 52 MB at the atlas's K 16): a region leaving
+  the window is copied GPU to GPU into a slot (`Streamer.freezeInto`); it comes back by copies too (`copyIn`: its
+  pages to layers and layersNext, its buffers a row at a time, its textures; what isn't kept from a blank buffer on
+  the GPU). Land made or loaded ahead is uploaded into a slot (`prepare`, `pump`: a few ms of a frame) before the
+  slide that brings it in, so a slide only copies. `Streamer.frozen` is the pool's index in LRU order; the oldest
+  not in use is evicted when a slot is wanted. The CPU parts go with a slot: what's outside the window per column,
+  the surface, the ground, the relief, the coarse world's snapshot.
+- **Change detection**: every region frozen, and each of the window's in turn (one every `SWEEP_MS` = 400 ms; the
+  whole window when the page is hidden), is copied into staging and read back off the frame; its columns are
+  hashed in world z (`columnsHash`: the same land cut at another oz hashes the same) with a signature (each
+  column's top and matter thickness). A region is *changed* once its signature differs from how it was made by more
+  than `CHANGED_DZ` (0.3 cells: the sims' drift is 0.03–0.06) anywhere — an edit, a dig, a meteor, a body at rest,
+  an agent's dig, the sims moving ground far enough; from then on it's written whole whenever its hash differs from
+  what was saved. A region never changed is not saved: evicted, it's made again by the source when it's wanted.
+  Nothing waits for a readback but a load of the same region (`checks`).
+- **The store** (`world/region-store.ts`, worker `region-store.worker.ts`): IndexedDB `reclaimed-world`, stores
+  `regions` (key `world|rx,ry` → the compressed record) and `meta` (→ session, time, raw and packed sizes, hash; read
+  whole at open: `has` answers at once). Records are byte-shuffled (each word's four bytes in four planes) and
+  deflated (CompressionStream) in the worker; reads are inflated there. `?worldsave=0`: the same tier in the
+  worker's memory, nothing on disk. A store that can't open is a console error and the memory tier.
+- **The record**: `u32 'RCLR' | u32 n | header JSON (n bytes) | sections` (16-byte aligned, offsets from the data's
+  start). Header: `format` (RECORD_FORMAT 1), `gen` (GEN_VERSION 1: bump when the land generator changes), `world`,
+  `rx, ry, x0, y0, oz`, `sig`, `session`, `savedAt`, `hash`, `sections`, `things`. Sections: `body` (the layout),
+  `outside` (per column n, then z0 z1 mat aux), `surface`, `ground`, `relief`, `gapTop`, `colTop`. A record of
+  another format, generator, world or layout is reported (console) and the region made again; one that can't be
+  read is a console error and the region made again.
+- **Things** (`Streamer.things`, `RegionThings`): what owns cells with a mesh and a transform (sim/external.ts:
+  with `?meshinst=1` the resting rock) is taken with a region frozen — `{owner, kind, m (3×4, region-local), state,
+  cols, fallback, id}` — and given back when it's written (ExternalRegistry.adopt: its cells are External in the
+  columns already). The window's sweep saves them without taking them.
+- **The world id** (level.ts worldSaveOf): `atlas:<seed>` (`:run=<id>` in a run, `:<name>` for `?world=<name>`);
+  `?world=new` (or the ✦ button, two taps) clears it. On load, the window's regions with a record are written in
+  (`Streamer.restore`) before the window slides, and the LandSource's `restored` lets the atlas's hooks (the
+  settlements' plans, a run's stage) see that land as made. A warp freezes what the window held into the pool (a
+  warp back finds it); `warp(…, fresh)` (a run's stage just laid) makes the window again, using only records of
+  an earlier session.
+- **Ahead**: while the camera moves (> 6 cells/s) along an axis, `AHEAD` (2, `?ahead=`) strips that way are asked
+  for (`bring`: the pool's, the store's, or made; checked for coarse changes; cut at the window's oz; uploaded).
+
 ## The town (round 65, branch `builder`)
 
 `build/towngrid.ts`: Townscaper's irregular grid (relaxed quads over the

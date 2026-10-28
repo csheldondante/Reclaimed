@@ -159,6 +159,18 @@ export class ExternalRegistry {
     return inst;
   }
 
+  /**
+   * (round 100) An instance back from a region's record (Streamer.things): its cells are External in the columns
+   * already (the record's) — registered, the columns untouched.
+   */
+  adopt(owner: OwnerId, cols: ExternalCol[], fallback: number): ExternalInstance {
+    const inst: ExternalInstance = { id: this.nextId++, owner, cols: cols.map((c) => ({ ...c })), fallback };
+    this.list.set(inst.id, inst);
+    for (const c of inst.cols) this.index(c.y * 65536 + c.x, inst.id);
+    this.count();
+    return inst;
+  }
+
   /** Let go of an instance: what's left of its cells becomes its fallback material, in place (or air: `toAir`). */
   release(id: number, toAir = false): void {
     const inst = this.list.get(id);

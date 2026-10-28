@@ -33,7 +33,7 @@ import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
-import { Streamer, shiftGrid, REGION, TIER, boxOf } from './streamer';
+import { Streamer, shiftGrid, REGION, TIER, boxOf, type WorldSave } from './streamer';
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
@@ -92,6 +92,17 @@ const SANDBOX_K = 16;
 /** the atlas's columns: what a sandbox chunk holds less its headroom (more and the chunk would grow: a streamed world's chunks are all one K) */
 const ATLAS_COL_K = SANDBOX_K - K_HEADROOM;
 const WARMUP_TICKS = 1800; // ~30 s of sim: rivers reach equilibrium before the player looks
+
+/**
+ * (round 100) The world the store keeps: the atlas's seed (and the run's, `?run=`); `?world=new` clears it first,
+ * `?world=<name>` another of the same seed; `?worldsave=0` keeps this session's changes in memory only.
+ */
+export function worldSaveOf(params: URLSearchParams, seed: number): WorldSave {
+  const w = params.get('world');
+  const run = params.get('run');
+  const name = w && w !== 'new' ? `:${w}` : '';
+  return { world: `atlas:${seed}${run ? `:run=${run}` : ''}${name}`, disk: params.get('worldsave') !== '0', fresh: w === 'new' };
+}
 
 export class LevelScene implements Scene {
   readonly core: WorldCore;
@@ -415,6 +426,17 @@ export class LevelScene implements Scene {
       );
       this.atlasMap = map;
       btn('🗺', 'the atlas map: where you are; tap a place to warp there').addEventListener('click', () => map.toggle());
+      // (round 100) a new world: this world's saved regions cleared (a second tap within 3 s: no dialog on a phone), the page loaded again
+      let armed = 0;
+      const nw = btn('✦', 'a new world: two taps clear what this world has saved, and it starts again as it was made');
+      nw.addEventListener('click', () => {
+        if (performance.now() - armed > 3000) {
+          armed = performance.now();
+          this.hud.say('Tap ✦ again for a new world: what this one has saved is cleared', 3);
+          return;
+        }
+        void S.newWorld().then(() => location.reload());
+      });
     }
     const fly = btn('✈', 'free camera (F)');
     const mv = (label: string, key: string, title: string) => {
@@ -1242,9 +1264,13 @@ export class LevelScene implements Scene {
               // (round 71: the coarse world changes while a region is away)
               snapshot: (x0, y0, w, h) => a.atlas.snapshot(x0, y0, w, h),
               changes: (s, x0, y0, w, h) => a.atlas.changes(s, x0, y0, w, h),
+              // (round 100: a region from the store — the hooks (settlements' plans, a run's stage) see its land made, the
+              // record's is what's written)
+              restored: async (x0, y0, w, h) => void (await a.atlas.regionLand(x0, y0, w, h, Infinity, true)),
             },
             a.origin,
             { oz: a.oz, outside: a.outside, ground: a.ground },
+            worldSaveOf(host.params, a.atlas.p.seed),
           )
         : new Streamer(core);
       // (round 79) the atlas's columns run past the window: what's above and below it drawn too
@@ -1338,6 +1364,10 @@ export class LevelScene implements Scene {
       // cut again lands; nothing falls or is judged while they're read back and written again (a slide in z, a warp)
       const S0 = this.stream;
       this.stream.onBeforeSlide.push((dx, dy, dz) => this.integrity?.settle(dx, dy, dz));
+      // (round 100) the window isn't saved while something falls in it (it would be saved mid-air)
+      this.stream.canSave.push(() => !this.integrity || this.integrity.quiet);
+      // (round 100, meshinst) the resting rock goes with its region: its mesh and transform in the region's record
+      if (this.integrity?.external) this.stream.things.push(this.integrity.regionThings());
       if (this.integrity) this.integrity.held = () => S0.columnsHeld;
       // (round 80) a warp (the map's): the window somewhere else — what the level keeps in window coordinates again
       this.stream.onWarp.push((_ox, _oy, nz) => {

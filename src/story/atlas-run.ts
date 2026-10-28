@@ -117,7 +117,8 @@ export async function startAtlasRun(d: AtlasRunDeps): Promise<HeroRun> {
     const cam = [...camera.target] as [number, number, number];
     const t0 = performance.now();
     const h0 = t.heightAt(spawn[0], spawn[1]);
-    await S.warp(S.origin[0], S.origin[1], S.oz);
+    // (round 100: fresh — made again with the stage, not thawed from the pool; a record of an earlier session kept)
+    await S.warp(S.origin[0], S.origin[1], S.oz, true);
     camera.target = cam;
     const ms = performance.now() - t0;
     console.log(`[run] the stage stamped into the land: ${pieces.length} pieces, ${land.stats.stamped} columns in ${land.stats.regions} regions; the window made again in ${ms.toFixed(0)} ms`);

@@ -7825,3 +7825,59 @@ scripts/driveprofile.mjs):
   mesh. A dig into one: cut 1, released 1 (its cells stone where they were, its mesh gone), the other still resting.
   verify + orphans ≤ 0.1 ms a pass.
 Shots: C:/Projects/shots88/meshinst/ (forest_boxes/mesh, drive_0/1, rock_*).
+
+## 2026-10-27 — round 100 (session 5, `regionstore`): the world serializes; a slide only copies
+
+Why: the user (DECISIONS round 100): "I want the world to serialize so we can recover the visited cells that change
+… lean towards the whole region … stream and cache regions ahead of time even further out ahead of the camera so we
+never wait for them". Before: a region leaving was read back to the CPU (`frozen`, unbounded, never on disk) and
+written back from the CPU when it came in (~4 ms a region, a strip's five spread over frames); a slide waited while
+a region coming in was still being read back.
+
+**What changed** (docs/ARCHITECTURE.md "Region storage"):
+1. *A GPU pool* (scenes/region-pool.ts, `?pool=`, 32 slots): a region leaving is copied GPU to GPU into a slot in
+   one layout shared with staging and the disk record (world/region-record.ts regionLayout); coming in, it's copied
+   back (pages to layers and layersNext, buffers a row at a time, textures; the textures not kept from a blank
+   buffer on the GPU, not writeTexture from the CPU). Land made or loaded ahead is uploaded into a slot before the
+   slide (`prepare` / `pump`, ≤ 3 ms of a frame). LRU; what was left behind is evicted before what's made ahead.
+2. *Change detection off the frame*: each region frozen (and the window's, one every 400 ms; all when the page is
+   hidden) is copied on to a staging buffer and read back; its columns hashed in world z with a signature (each
+   column's top and matter thickness). Changed = off how it was made by > 0.3 cells anywhere (the sims' drift
+   between two reads of a still region: 38–44 columns, ≤ 0.03 cells). A changed region is written whole whenever
+   its hash differs from what's saved; one never changed isn't saved — evicted, it's made again when wanted.
+3. *The store* (world/region-store.ts + worker): IndexedDB, a record a region (versioned header JSON, the layout's
+   body, outside, surface, ground, relief; things), byte-shuffled and deflated (CompressionStream) in the worker;
+   the index (meta store) read at open so `has` is synchronous. `?worldsave=0`: the worker's memory only.
+4. *Ahead*: while the camera moves > 6 cells/s along an axis, `?ahead=` (2) strips that way are asked for.
+5. *Reload*: world id `atlas:<seed>` (+ `:run=<id>`, `?world=<name>`); `?world=new` or ✦ (two taps) clears it.
+   The window's saved regions are written in on load before it slides (`Streamer.restore`); LandSource.restored
+   lets the atlas's hooks (settlements, a run's stage) see that land as made. A warp freezes what it leaves; a
+   run's stage warp (`fresh`) makes the window again, using only earlier sessions' records (a reload keeps the
+   opened door; this session's pre-stage land isn't kept).
+6. *Things*: `Streamer.things` — the resting rock with `?meshinst=1` (Integrity.regionThings): taken with its region
+   (mesh released, instance forgotten, its External cells left in the columns), its transform and cells in the
+   record, adopted back (ExternalRegistry.adopt) and its mesh made again when the region is written.
+
+**Measured** (desktop iGPU, atlas q=low 412×915, win 320, `at=11956,15471`, every system on, 1× speed):
+- *Exactness* (scripts/worldsavetest.mjs, `?rsverify=1`: each region written back read back at once, before the
+  sims' next tick, and hashed against the hash it was frozen or saved with): ride 6 regions away and back 60/60
+  exact (27 thawed from the pool, 31 made, 2 loaded); warp 10 away and back 50/50 (7 thawed, 11 loaded, 32 made);
+  reload 18/18 restored exactly; reload then ride away and back 60/60. The changed region (a dig, a brick tower, a
+  meteor, a rock body come to rest) read back seconds later: the same after the reload (0 columns differ) and after
+  the ride from the reload; the first ride's readback differed from the reference taken before it in 155 columns
+  (≤ 1.9 cells) — the meteor's rim still settling in the seconds between the reference and the region leaving
+  (the thaw itself was exact).
+- *Sizes*: a region's layout 1.64 MB (K 16: pages 1 MB, 12 kept buffers 0.4 MB, 3 kept textures 0.19 MB); a record
+  ~1.8 MB raw, ~145 KB compressed (18 records 32.5 MB → 2.68 MB: 12×). The pool at 32 slots 52.5 MB of GPU memory.
+- *Times* (CPU ms, p50 / p95): a slide's freeze copies 1.4 / 2.3 for five regions; a thaw (copies encoded) 0.1 /
+  0.2 a region (was ~4 from the CPU); a region's hash 0.8 / 1.2; a record's encode 0.7 / 1.3; the worker's
+  compress + put ~20 ms a record (off the thread); a load from IndexedDB 7–29 ms (off the thread); restoring 18
+  regions on load 1.3 s.
+- *speedsweep* (pan, 10 s a speed, places 8bff120 → regionstore first cut): slide p50 25.4 / 24.7 / 27.6 / 39.4 →
+  6.2 / 6.3 / 6.2 / 13.9 ms at 40 / 80 / 120 / 160 cells/s; the slide's write stage 19–25 → ~1 ms; frame p95 22.6 /
+  41.9 / 52.3 / 69 → 22 / 32.4 / 60 / 63.5. But at 160 the camera got 78.6 cells/s (was 104.8) and slides waited
+  more (waited frames 125 → 145): the pool thrashed (498 evictions in 555 uploads at 32 slots — made-ahead regions
+  evicted before their slide and made again); fixed by evicting what's behind first (re-measured below).
+- *Disk while riding*: regions counted as changed with nobody near them — the first window 18 of 25 in its first
+  minute, then ~0.35 a second riding (32 records after the four pans) — so a 10-minute ride writes ~200 records,
+  ~30 MB (RG9).

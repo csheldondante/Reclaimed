@@ -40,6 +40,8 @@ const SKIN_METAL = typeof location !== 'undefined' && new URLSearchParams(locati
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 /** (round 99, meshinst) resting rock kept as meshes at once (their slots are the rock mesh's: render/rockmesh.ts) */
 const REST_MAX = 16;
+/** (round 100) the streamer's region (scenes/streamer.ts REGION: not imported — the scene imports this) */
+const REGION_CELLS = 64;
 /** (round 99) cells under a resting rock's cells, down to the ground, claimed with it (what it stands on) */
 const REST_FILL = 3;
 
@@ -103,7 +105,7 @@ export class Integrity {
    */
   readonly external: ExternalRegistry | null = null;
   /** (round 99) the resting rock: instance → its mesh's slot and transform (oldest first) */
-  private resting = new Map<number, { slot: number; m: number[]; mat: number }>();
+  private resting = new Map<number, { slot: number; m: number[]; mat: number; cells?: { x: number; y: number; z: number; mat: number }[]; history?: number }>();
   /**
    * (round 96, the user: "a different material like metal (does it use the deformation physics the buildings
    * do?)") With rockbody on, metal that the judges free or cut is woken into the physics voxels (the GPU solver the
@@ -362,6 +364,9 @@ export class Integrity {
       for (const inst of [...this.external.instances]) {
         if (inst.owner !== OWNER_ROCK) continue;
         const out = dz || (!dx && !dy) || inst.cols.some((c) => (dx > 0 ? c.x < dx + 1 : dx < 0 ? c.x >= W + dx - 1 : dy > 0 ? c.y < dy + 1 : c.y >= H + dy - 1));
+        // (round 100: one wholly inside a region leaving — or any of the window's, a warp — goes with it, its mesh
+        // and transform in the region's record: Streamer.things, regionThings below)
+        if (out && !dz && this.carried(inst, dx, dy)) continue;
         if (out) this.unrest(inst);
       }
     }
@@ -1426,6 +1431,76 @@ export class Integrity {
     }
   }
 
+  /** (round 100) nothing falling (no piece, no rigid rock in the air): the streamer may save the window as it is */
+  get quiet(): boolean {
+    return !this.falling.list.length && !this.rigid?.list.length;
+  }
+
+  /** (round 100) whether a resting rock is wholly inside one region that a slide of (dx, dy) — (0, 0): a warp — freezes */
+  private carried(inst: ExternalInstance, dx: number, dy: number): boolean {
+    const { w: W, h: H } = this.core.dims;
+    const R = REGION_CELLS;
+    const r = this.resting.get(inst.id);
+    if (!r?.cells || !inst.cols.length) return false;
+    const rx = Math.floor(inst.cols[0].x / R);
+    const ry = Math.floor(inst.cols[0].y / R);
+    if (!inst.cols.every((c) => Math.floor(c.x / R) === rx && Math.floor(c.y / R) === ry)) return false;
+    const x0 = rx * R;
+    const y0 = ry * R;
+    if (!dx && !dy) return true;
+    return dx > 0 ? x0 < dx : dx < 0 ? x0 >= W + dx : dy > 0 ? y0 < dy : y0 >= H + dy;
+  }
+
+  /**
+   * (round 100, meshinst) The resting rock as a region's things (Streamer.things): taken with a region frozen — out
+   * of the registry and its mesh let go, its cells left External in the columns — and given back when the region is
+   * written again: registered, its mesh made from its cells, at its transform.
+   */
+  regionThings(): { name: string; take(x0: number, y0: number, x1: number, y1: number, keep?: boolean): import('../world/region-record').ThingRecord[]; give(things: import('../world/region-record').ThingRecord[], x0: number, y0: number): void } {
+    return {
+      name: 'rock',
+      take: (x0, y0, x1, y1, keep = false) => {
+        const ext = this.external;
+        if (!ext) return [];
+        const out: import('../world/region-record').ThingRecord[] = [];
+        for (const inst of [...ext.instances]) {
+          if (inst.owner !== OWNER_ROCK) continue;
+          if (!inst.cols.every((c) => c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1)) continue;
+          const r = this.resting.get(inst.id);
+          if (!r?.cells) continue;
+          const m = [...r.m];
+          m[3] -= x0;
+          m[7] -= y0 * ROW_H;
+          out.push({ owner: OWNER_ROCK, kind: 'rock', m, state: { cells: r.cells, mat: r.mat }, cols: inst.cols.map((c) => ({ x: c.x - x0, y: c.y - y0, z0: c.z0, z1: c.z1 })), fallback: inst.fallback, id: r.history ?? inst.id });
+          if (keep) continue;
+          ext.forget(inst);
+          this.rockMesh?.release(r.slot);
+          this.resting.delete(inst.id);
+        }
+        return out;
+      },
+      give: (things, x0, y0) => {
+        const ext = this.external;
+        if (!ext) return;
+        for (const t of things) {
+          if (t.owner !== OWNER_ROCK) continue;
+          const st = t.state as { cells: { x: number; y: number; z: number; mat: number }[]; mat: number };
+          const slot = this.rockMesh?.alloc(st.cells)?.id;
+          const inst = ext.adopt(OWNER_ROCK, t.cols.map((c) => ({ x: c.x + x0, y: c.y + y0, z0: c.z0, z1: c.z1 })), t.fallback);
+          if (slot === undefined) {
+            // (no room for its mesh: ground again)
+            this.unrest(inst);
+            continue;
+          }
+          const m = [...t.m];
+          m[3] += x0;
+          m[7] += y0 * ROW_H;
+          this.resting.set(inst.id, { slot, m, mat: st.mat, cells: st.cells, history: t.id });
+        }
+      },
+    };
+  }
+
   /** (round 99) the resting rock (meshinst): instances, their cells, for the tests */
   get restingCount(): number {
     return this.resting.size;
@@ -1479,7 +1554,7 @@ export class Integrity {
     if (!inst) return false;
     rigid.remove(b);
     rigid.stats.settled++;
-    this.resting.set(inst.id, { slot: b.slot!, m: rigid.matrix(b), mat: b.mat });
+    this.resting.set(inst.id, { slot: b.slot!, m: rigid.matrix(b), mat: b.mat, cells: rigid.latCells(b) });
     const cols = inst.cols.map((c) => ({ x: c.x, y: c.y, ivs: [] }));
     this.touchCols(cols, true);
     // (judged for what floats, not weighed — as a heap written back is)

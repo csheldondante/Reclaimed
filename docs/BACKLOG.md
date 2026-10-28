@@ -12,6 +12,25 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 100 (2026-10-27, session 5, `regionstore`) — the world serializes; streaming never waits on a region (DECISIONS round 100)
+
+Ids RG.
+
+| id | item | size | status |
+|---|---|---|---|
+| RG1 | GPU region pool: frozen regions stay on the GPU (scenes/region-pool.ts), copied GPU to GPU on freeze and thaw — no slide waits on a readback; LRU, `?pool=` (32 ≈ 52 MB at K 16), what was left behind evicted before what's made ahead | M | done (this commit) |
+| RG2 | Change detection: every region frozen, and the window's one every 400 ms (all when the page is hidden), read back off the frame and hashed in world z (columnsHash) with a per-column signature; changed = a top or thickness off how it was made by > 0.3 cells (the sims' drift 0.03–0.06) | S | done (this commit) |
+| RG3 | Disk tier: whole regions, a versioned record (world/region-record.ts: format, generator version, world, region, oz, layout sig, session, hash; the layout's bytes, outside, surface, ground, relief; things), byte-shuffled and deflated in a worker into IndexedDB (world/region-store.ts); `?worldsave=0` memory only; a failed read or a mismatched record reported and the region made again | M | done (this commit) |
+| RG4 | Prefetch ahead: while the camera moves, `?ahead=` (2) strips along its motion asked for and uploaded into the pool before the slide (`bring` / `prepare` / `pump`): a slide only copies | S | done (this commit) |
+| RG5 | Recover after reload: world id from the atlas seed (and the run), `?world=new` / ✦ (two taps) a new world, `?world=<name>`; the window's saved regions restored on load (Streamer.restore), LandSource.restored for the atlas's hooks | S | done (this commit) |
+| RG6 | A warp freezes what the window held (a warp back finds it); `warp(…, fresh)` for a run's stage (earlier sessions' records only) | S | done (this commit) |
+| RG7 | Things: meshes with transforms that own cells (`Streamer.things`, `RegionThings`; the resting rock with `?meshinst=1`: Integrity.regionThings, ExternalRegistry.adopt) taken with a region and given back; saved in the record | S | done (this commit) |
+| RG8 | scripts/worldsavetest.mjs: dig, build, meteor, a rock body; ride 6 regions away and back, warp 10 away and back, reload: each region written back verified exactly against the hash it was frozen or saved with (`?rsverify=1`); `--run` / `--onlyrun` the run's bone door across a reload | S | done (this commit) |
+| RG9 | Many regions count as changed with no player near them (the first window's 18 of 25 within its first minute; ~0.35 a second riding): what changes them by > 0.3 cells — the structural judge's collapses of weak forms on arrival, settlements building, sediment? A delta-only record (the user's other option) or a looser test if disk use matters | S | open |
+| RG10 | A region's things saved mid-air: the window's sweep waits while anything falls (Integrity.quiet), but a reload within a sweep of an edit loses the last ~10 s of changes in that region (the sweep's round of 25 regions); IndexedDB writes in `pagehide` aren't waited for by the browser | S | open |
+| RG11 | Records are 1.8 MB raw, ~145 KB compressed: the kept fields are floats (water, moisture, veg, contam…). Quantize them, or keep only what differs from the generator (RG9) | S | open |
+| RG12 | zmesh (full-height window, oz always 0): the record's `sig` carries the window's zMax and K, so a zmesh-era region and a pre-zmesh one aren't confused; the region's size grows with K — measure the pool's memory there | S | open |
+
 ## Round 98 (2026-10-27, session 5, `streamspeed`) — streaming ahead of the camera (DECISIONS round 98)
 
 Ids SS.
