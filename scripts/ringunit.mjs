@@ -4,7 +4,7 @@
 // column, planes) and undo each other. A JS copy of common.wgsl's colIdx / colXY / texCol2 is checked against it too.
 //   node --experimental-transform-types scripts/ringunit.mjs
 // (run with node --experimental-transform-types: the module is TypeScript)
-const { Ring, COLS_PAGE } = await import('../src/sim/ring.ts');
+const { Pages: Ring, COLS_PAGE } = await import('../src/sim/pages.ts');
 let bad = 0;
 const fail = (m) => {
   bad++;

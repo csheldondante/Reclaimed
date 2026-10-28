@@ -81,6 +81,9 @@ struct Globals {
   // nothing; xy the offset (cells), zw unused. Window coordinates stay what every caller uses: index only through
   // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY.
   ring: vec4<u32>,
+  // (round 107, `pages`: docs/PAGES.md P2.1) the page table: window chunk (cy * chunks across + cx) -> the page its
+  // data is in, two u16 entries a u32 (sim/pages.ts Pages.table). Read by colPage with ?pages=table.
+  pages: array<vec4<u32>, 512>,
 };
 
 /** (hybrid) Is column q in a heightfield chunk (drawn by the LOD rings, not the window's own draws)? */
@@ -310,12 +313,24 @@ const COLS_PAGE: u32 = 16u;
 /** chunks across and down the window */
 fn pagesX() -> u32 { return G.mapW / COLS_PAGE; }
 fn pagesY() -> u32 { return G.mapH / COLS_PAGE; }
-/** the page holding window chunk c (its place, in pages): the ring's table, c + ring mod the window's chunks */
-fn colPage(c: vec2<u32>) -> vec2<u32> {
+/** the page holding window chunk c (its place, in pages). (Round 107, pages: which way is the build's — ?pages=,
+ *  src/gpu/pages-mode.ts swaps the call below when a module is made: the ring's wrap computed, or the table looked up) */
+fn colPage(c: vec2<u32>) -> vec2<u32> { return colPageRing(c); } // PAGE_ADDR
+/** the ring's table computed: c + ring mod the window's chunks */
+fn colPageRing(c: vec2<u32>) -> vec2<u32> {
   let x = c.x + G.ring.x / COLS_PAGE;
   let y = c.y + G.ring.y / COLS_PAGE;
   return vec2<u32>(select(x, x - pagesX(), x >= pagesX()), select(y, y - pagesY(), y >= pagesY()));
 }
+/** a page table entry: px | py << 8 */
+fn pageEntryPlace(e: u32) -> vec2<u32> { return vec2<u32>(e & 0xffu, e >> 8u); }
+/** (round 107) window chunk c's entry in Globals.pages */
+fn pageEntry(c: vec2<u32>) -> u32 {
+  let i = c.y * pagesX() + c.x;
+  return (G.pages[i >> 3u][(i >> 1u) & 3u] >> ((i & 1u) * 16u)) & 0xffffu;
+}
+/** (round 107) the table looked up (Globals.pages) */
+fn colPageTable(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageEntry(c)); }
 /** window chunk c's page as an index (pages row-major): a per-chunk buffer's slot for it */
 fn pageIdx(c: vec2<u32>) -> u32 { let p = colPage(c); return p.y * pagesX() + p.x; }
 /** a page's first column's index in a per-column buffer, and a column's offset inside its page */

@@ -2,7 +2,7 @@
 // Systems run in the documented order; each has its own period.
 
 import type { Profiler } from '../gpu/profiler';
-import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_BYTES, type GlobalsState } from './globals';
+import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_BYTES, GLOBALS_HEAD_BYTES, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
@@ -57,6 +57,8 @@ export class Simulation {
   readonly project!: ProjectSystem;
   tick = 0;
   private globalsData = new ArrayBuffer(GLOBALS_BYTES);
+  /** (round 107, pages) the page table's version last written to the Globals */
+  private pagesSent = -1;
   /** Per-system CPU encode time (ms, smoothed). */
   readonly cpuMs = new Map<string, number>();
   /** (round 83) told each tick's events as they're sent to the GPU, whoever queued them (Integrity: what cut the ground) */
@@ -163,7 +165,15 @@ export class Simulation {
   uploadGlobals(g: GlobalsState): void {
     // (ringwin) the window's ring offset is the world's (WorldGpu.ring)
     g.ring = [this.world.ring.x, this.world.ring.y];
+    // (round 107, pages: the page table — 8 KB — written only when it changed: a slide, a warp)
+    const pages = this.world.ring;
+    const fresh = pages.version !== this.pagesSent;
+    g.pages = fresh ? pages.table : undefined;
     writeGlobals(g, this.globalsData);
-    this.device.queue.writeBuffer(this.world.globals, 0, this.globalsData);
+    this.device.queue.writeBuffer(this.world.globals, 0, this.globalsData, 0, fresh ? GLOBALS_BYTES : GLOBALS_HEAD_BYTES);
+    if (fresh) {
+      this.pagesSent = pages.version;
+      this.world.pagesChanged();
+    }
   }
 }

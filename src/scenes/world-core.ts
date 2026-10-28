@@ -10,7 +10,7 @@ import type { GlobalsState } from '../sim/globals';
 import { Simulation, TICK_DT } from '../sim/simulation';
 import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
-import { COLUMN_BUFS, Ring } from '../sim/ring';
+import { COLUMN_BUFS, Pages } from '../sim/pages';
 import { CHUNK, packColumns, type PackedWorld } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
@@ -239,7 +239,7 @@ export class WorldCore {
   }
 
   /** (round 105, ringwin) where each window column's per-column data lies (sim/ring.ts) */
-  get ring(): Ring {
+  get ring(): Pages {
     return this.world.ring;
   }
 
@@ -286,7 +286,7 @@ export class WorldCore {
     if (r.zero) return t;
     if (t.h === H && t.w % W === 0) return { ...t, data: r.fromRing(t.data, (t.w / W) * 4) };
     if (t.w === Math.ceil(W / 2) && t.h === Math.ceil(H / 2)) {
-      const half = new Ring(t.w, t.h);
+      const half = new Pages(t.w, t.h);
       half.x = r.x / 2;
       half.y = r.y / 2;
       return { ...t, data: half.fromRing(t.data, 4) };

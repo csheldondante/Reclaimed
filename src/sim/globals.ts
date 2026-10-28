@@ -2,7 +2,9 @@
 
 import { ROW_H } from '../world/lattice';
 
-export const GLOBALS_BYTES = 1920;
+/** (round 107, pages) the Globals before the page table (words 0-479), and the whole with it (Globals.pages: 512 vec4) */
+export const GLOBALS_HEAD_BYTES = 1920;
+export const GLOBALS_BYTES = GLOBALS_HEAD_BYTES + 8192;
 /** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
 export const MAX_CYCLONES = 4;
 
@@ -153,6 +155,8 @@ export interface GlobalsState {
   hfield?: { bits: Uint32Array; across: number; side: number };
   /** (round 105, ringwin) the window's ring offset (cells: common.wgsl Globals.ring) — absent: 0, 0 */
   ring?: [number, number];
+  /** (round 107, pages: P2.1) the page table, window chunk -> its page (sim/pages.ts Pages.table) — absent: left as it was */
+  pages?: Uint16Array;
   /** (perfopt) land come in, settling its water: rects of columns (x, y, w, h; CPU only — sim/sleep.ts) */
   settle?: [number, number, number, number][];
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
@@ -249,4 +253,6 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   else sh.fill(0);
   const sr = new Uint32Array(f.buffer, f.byteOffset + 476 * 4, 4);
   sr.set([s.ring?.[0] ?? 0, s.ring?.[1] ?? 0, 0, 0]);
+  // (round 107, pages) the page table: two u16 a u32, little-endian — a Uint16Array over the words is the packing
+  if (s.pages) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES, s.pages.length).set(s.pages);
 }

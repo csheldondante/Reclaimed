@@ -1,6 +1,8 @@
 // Explicit bind-group-layout helpers. We use explicit layouts (not 'auto') so a
 // shader can include shared WGSL snippets that declare bindings it does not use.
 
+import { PAGE_ADDR, PAGE_STORAGE_KERNELS, PAGE_TAB_BINDING, pageTab, pagesCode } from './pages-mode';
+
 /** 'tex' = sampled float texture (textureLoad), 'utex' = uint texture (textureLoad), 'stex' = write-only rgba32float storage texture
  *  ('stex8a' the same, rgba8unorm, a 2d-array),
  *  'depth' = depth texture, 'csampler' = comparison sampler (shadow lookups) */
@@ -36,6 +38,11 @@ export function makeBindGroup(
   layout: GPUBindGroupLayout,
   resources: Record<number, GPUBuffer | GPUBufferBinding | GPUTextureView | GPUSampler>,
 ): GPUBindGroup {
+  // (round 107, M1's ?pages=storage: a layout given the storage page table gets its buffer)
+  if (pageTab.layouts.has(layout) && !(PAGE_TAB_BINDING in resources)) {
+    if (!pageTab.buf) throw new Error(`${label}: ?pages=storage, but no world has made its page table`);
+    resources = { ...resources, [PAGE_TAB_BINDING]: pageTab.buf };
+  }
   return device.createBindGroup({
     label,
     layout,
@@ -47,8 +54,9 @@ export function makeBindGroup(
 }
 
 /** Compile a WGSL module and surface compilation errors loudly (with line context). */
-export function makeModule(device: GPUDevice, label: string, parts: string[]): GPUShaderModule {
-  const code = parts.join('\n');
+export function makeModule(device: GPUDevice, label: string, parts: string[], storagePages = false): GPUShaderModule {
+  // (round 107, pages: colPage the build's way — gpu/pages-mode.ts)
+  const code = pagesCode(parts.join('\n'), storagePages);
   const module = device.createShaderModule({ label, code });
   module.getCompilationInfo().then((info) => {
     const errs = info.messages.filter((m) => m.type === 'error');
@@ -75,11 +83,18 @@ export function makeCompute(
   spec: BindSpec,
   entryPoint = 'main',
 ): ComputeKernel {
+  // (round 107, M1's ?pages=storage: the timed kernels with a storage slot free read the table from binding 37)
+  const storage = PAGE_ADDR === 'storage' && PAGE_STORAGE_KERNELS.has(label) && Object.values(spec).filter((k) => k === 'read' || k === 'rw').length < 8;
+  if (storage) spec = { ...spec, [PAGE_TAB_BINDING]: 'read' };
   const layout = makeLayout(device, label, spec, GPUShaderStage.COMPUTE);
+  if (storage) {
+    pageTab.layouts.add(layout);
+    pageTab.storageKernels.add(label);
+  }
   const pipeline = device.createComputePipeline({
     label,
     layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-    compute: { module: makeModule(device, label, parts), entryPoint },
+    compute: { module: makeModule(device, label, parts, storage), entryPoint },
   });
   return { pipeline, layout };
 }

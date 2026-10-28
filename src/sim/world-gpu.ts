@@ -8,7 +8,8 @@ import { PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
-import { Ring } from './ring';
+import { Pages } from './pages';
+import { PAGE_ADDR, pageTab } from '../gpu/pages-mode';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 import { MAX_PLACES } from '../world/places';
@@ -269,7 +270,7 @@ export class WorldGpu {
    * (round 105, ringwin) the window on a ring (sim/ring.ts): where each window column's per-column data lies.
    * `?ringbias=x,y` starts it off zero (cells; whole regions of 64 in a streamed world) — the identity test's.
    */
-  readonly ring: Ring;
+  readonly ring: Pages;
 
   constructor(
     private device: GPUDevice,
@@ -285,7 +286,7 @@ export class WorldGpu {
     this.zMax = zMax;
     this.maxK = packed.maxK;
     const N = this.cells;
-    this.ring = new Ring(w, h);
+    this.ring = new Pages(w, h);
     {
       const b = (typeof location === 'undefined' ? '' : (new URLSearchParams(location.search).get('ringbias') ?? '')).split(',').map(Number);
       if (b.length === 2 && b.every((v) => Number.isInteger(v))) {
@@ -293,6 +294,12 @@ export class WorldGpu {
       }
     }
     const r = this.ring;
+    // (round 107, M1's ?pages=storage: the page table in a storage buffer too, an entry a u32 — gpu/pages-mode.ts)
+    if (PAGE_ADDR === 'storage') {
+      this.pageTab = this.buf('pageTab', Math.max(16, r.table.length * 4), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+      pageTab.buf = this.pageTab;
+      this.pagesChanged();
+    }
 
     // (COPY_SRC: round 104, the tile cache's render-only land copies it, its size and origin its own — render/tileland.ts)
     this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
@@ -444,7 +451,16 @@ export class WorldGpu {
     this.device.queue.writeTexture({ texture: this.reachTex }, this.ring.toRing(data), { bytesPerRow: this.w }, { width: this.w, height: this.h });
   }
 
+  /** (round 107, M1's ?pages=storage) the storage page table (null otherwise) */
+  pageTab: GPUBuffer | null = null;
+
+  /** (round 107) the page table changed (Simulation.uploadGlobals wrote it to the Globals): the storage copy too */
+  pagesChanged(): void {
+    if (this.pageTab) this.device.queue.writeBuffer(this.pageTab, 0, Uint32Array.from(this.ring.table));
+  }
+
   destroy(): void {
+    if (pageTab.buf === this.pageTab) pageTab.buf = null;
     for (const b of this.owned) b.destroy();
     for (const t of this.textures) t.destroy();
     this.tiles?.destroy();

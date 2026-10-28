@@ -9,6 +9,11 @@
 //   r.idx(x, y)                         // window column (x, y)'s index on the ring
 //   r.fromRing(gpuData, wordsPerCol)    // a readback in window order (a copy; the same array when the offset is 0)
 //   r.toRing(cpuData, wordsPerCol)      // window order to the ring's (for an upload of a whole per-column array)
+//
+// Round 107 (`pages`, docs/PAGES.md P2.1): the ring is a page table. `Pages.table` holds, for each window chunk, the
+// page its data is in (px | py << 8: the page's place, in pages); `page()` and common.wgsl colPage read it (with
+// ?pages=table, from Globals.pages; ?pages=ring computes the same wrap). Today's table is still the ring's, so the
+// layout is unchanged: the table is where a sparse resident set will change it.
 
 /** the per-column buffers (WorldGpu): bytes a column and planes — what a readback of one is rotated by */
 export const COLUMN_BUFS: Record<string, [stride: number, planes: number]> = {
@@ -41,26 +46,75 @@ export const COLUMN_BUFS: Record<string, [stride: number, planes: number]> = {
 
 /** columns a page side (common.wgsl COLS_PAGE, world/layout.ts CHUNK) */
 export const COLS_PAGE = 16;
+/** window chunks the page table holds at most (Globals.pages: 512 vec4 of two u16 a u32) */
+export const MAX_PAGES = 4096;
 
 /**
  * Where a window column's data lies, found as common.wgsl finds it: its chunk, the page that chunk is in (`page`: the
  * ring's table — the window's chunks rotated by the offset), its offset in the page. The offset is whole pages.
  */
-export class Ring {
-  /** the offset (cells; whole pages) */
-  x = 0;
-  y = 0;
+export class Pages {
+  private ox = 0;
+  private oy = 0;
+  /** the offset (cells; whole pages): setting it makes the table again */
+  get x(): number {
+    return this.ox;
+  }
+  set x(v: number) {
+    this.ox = v;
+    this.build();
+  }
+  get y(): number {
+    return this.oy;
+  }
+  set y(v: number) {
+    this.oy = v;
+    this.build();
+  }
+  /** chunks across and down */
+  readonly nx: number;
+  readonly ny: number;
+  /** (P2.1) window chunk (cy * nx + cx) -> the page its data is in, px | py << 8 (Globals.pages, common.wgsl colPage) */
+  readonly table: Uint16Array;
+  /** bumped whenever the table changes (Simulation uploads it then) */
+  version = 0;
 
   constructor(
     readonly W: number,
     readonly H: number,
-  ) {}
+  ) {
+    this.nx = Math.ceil(W / COLS_PAGE);
+    this.ny = Math.ceil(H / COLS_PAGE);
+    if (this.nx * this.ny > MAX_PAGES) throw new Error(`Pages: ${this.nx} x ${this.ny} chunks, the page table holds ${MAX_PAGES}`);
+    if (this.nx > 256 || this.ny > 256) throw new Error(`Pages: ${this.nx} x ${this.ny} chunks, an entry holds 256 a side`);
+    this.table = new Uint16Array(this.nx * this.ny);
+    this.build();
+  }
+
+  /** the table made again from the ring's offset: chunk c's page is c + offset, wrapped */
+  private build(): void {
+    const { nx, ny } = this;
+    const kx = this.x / COLS_PAGE;
+    const ky = this.y / COLS_PAGE;
+    for (let cy = 0; cy < ny; cy++) {
+      const py = cy + ky >= ny ? cy + ky - ny : cy + ky;
+      for (let cx = 0; cx < nx; cx++) {
+        const px = cx + kx >= nx ? cx + kx - nx : cx + kx;
+        this.table[cy * nx + cx] = px | (py << 8);
+      }
+    }
+    this.version++;
+  }
 
   /** the offset set (cells, whole pages; any integers, wrapped) */
   set(x: number, y: number): void {
     if (x % COLS_PAGE || y % COLS_PAGE) throw new Error(`the ring's offset (${x}, ${y}) must be whole pages of ${COLS_PAGE} columns`);
-    this.x = ((x % this.W) + this.W) % this.W;
-    this.y = ((y % this.H) + this.H) % this.H;
+    const nx = ((x % this.W) + this.W) % this.W;
+    const ny = ((y % this.H) + this.H) % this.H;
+    if (nx === this.ox && ny === this.oy) return;
+    this.ox = nx;
+    this.oy = ny;
+    this.build();
   }
 
   /** the window moved by (dx, dy) columns over the world: where every world cell's data lies stays */
@@ -68,13 +122,10 @@ export class Ring {
     this.set(this.x + dx, this.y + dy);
   }
 
-  /** the page (its place, in pages) holding window chunk (cx, cy): the ring's table */
+  /** the page (its place, in pages) holding window chunk (cx, cy): the table's entry */
   page(cx: number, cy: number): [number, number] {
-    const nx = this.W / COLS_PAGE;
-    const ny = this.H / COLS_PAGE;
-    const px = cx + this.x / COLS_PAGE;
-    const py = cy + this.y / COLS_PAGE;
-    return [px >= nx ? px - nx : px, py >= ny ? py - ny : py];
+    const e = this.table[cy * this.nx + cx];
+    return [e & 0xff, e >> 8];
   }
 
   /** window column (x, y)'s place (column, row) in the per-column data (x < W, y < H) */
