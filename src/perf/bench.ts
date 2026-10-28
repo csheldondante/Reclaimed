@@ -39,7 +39,7 @@ const ROW_H = Math.sqrt(3) / 2;
 /** the riding scenario's start (scripts/hitchrun.mjs: a road in a temperate place on the default seed) */
 const RIDE_AT = '15024,14337';
 /** the URL keys the suite sets itself (the rest of the start page's URL is carried to every page) */
-const OWN = ['bench', 'benchpage', 'benchsmoke', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf'];
+const OWN = ['bench', 'benchpage', 'benchsmoke', 'panzooms', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf'];
 
 // ---------- numbers ----------
 
@@ -200,6 +200,95 @@ async function timestampModes(device: GPUDevice): Promise<Record<string, unknown
   return out;
 }
 
+// ---------- the pan benchmark (round 104) ----------
+
+/**
+ * (round 104) The user (verbatim): "Let's build a test of just panning in a straight line as fast as we can at zooms
+ * that always keep all regions on screen drawn. I want to try both generating and intelligently streaming from disc to
+ * memory to the GPU. I want to know on each device and at each zoom what is a max speed that is smooth, hitch free and
+ * never lags behind the camera." From the hero's close zoom (14) to the sandbox's (2.76) and wider.
+ */
+const PAN_ZOOMS = [14, 8, 5, 3.5, 2.76, 2.2];
+/** the widest window a page asks for (more and a phone's memory goes: the zoom is reported as not run) */
+const PAN_MAX_WINDOW = 768;
+/** speeds (cells/s), each held PAN_STEP_S */
+const PAN_SPEEDS = [30, 60, 90, 120, 160, 200, 260, 320, 400, 500, 640];
+const PAN_STEP_S = 1.5;
+/** the pass criteria: rendered fps, the longest frame, the p99, the screen in detail (none lost against parked) */
+const PAN_FPS = 58;
+const PAN_MAX_FRAME = 33;
+const PAN_P99 = 20;
+
+/**
+ * The window a zoom needs: the screen's ground (the camera's view at the sandbox's turn, a quarter turn — its corners
+ * as screenDeltaToWorld gives them) inside it, and a region more each side (the window slides a region at a time,
+ * the camera off its middle by up to half of one) — whole regions, at least 256.
+ */
+export function panWindowFor(zoom: number, cssW: number, cssH: number, az = Math.PI / 4): number {
+  const elev = Math.PI / 6;
+  let mx = 0;
+  let my = 0;
+  for (const [sx, sy] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const wx = (sx * cssW) / 2 / zoom;
+    const wy = (sy * cssH) / 2 / zoom / Math.sin(elev);
+    const x = -Math.sin(az) * wx + Math.cos(az) * wy;
+    const y = Math.cos(az) * wx + Math.sin(az) * wy;
+    mx = Math.max(mx, Math.abs(x));
+    my = Math.max(my, Math.abs(y));
+  }
+  const need = Math.max(2 * mx, (2 * my) / ROW_H) + 2 * 64;
+  return Math.max(256, Math.ceil(need / 64) * 64);
+}
+
+function panPlan(cssW: number, cssH: number, smoke: boolean): { zooms: { zoom: number; window: number; run: boolean }[]; pages: { window: number; zooms: number[] }[] } {
+  const zs = (smoke ? [14, 5] : PAN_ZOOMS).map((zoom) => {
+    const w = panWindowFor(zoom, cssW, cssH);
+    return { zoom, window: w, run: w <= PAN_MAX_WINDOW };
+  });
+  const pages: { window: number; zooms: number[] }[] = [];
+  for (const z of zs) {
+    if (!z.run) continue;
+    const pg = pages.find((p) => p.window === z.window) ?? (pages.push({ window: z.window, zooms: [] }), pages[pages.length - 1]);
+    pg.zooms.push(z.zoom);
+  }
+  pages.sort((a, b) => a.window - b.window);
+  return { zooms: zs, pages };
+}
+
+function makePanReport(s: BenchState): Record<string, unknown> {
+  const res = s.results as Record<string, any>;
+  const rows: Record<string, unknown>[] = [];
+  for (const [k, v] of Object.entries(res))
+    if (/^pan\d+$/.test(k) && v?.zooms)
+      for (const z of v.zooms as any[])
+        for (const src of ['generated', 'disk', 'pool'])
+          if (z[src]) rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, causesAtFail: z[src].causesAtFail, coverParked: z.coverParked });
+  const plan = res.panPlan as { zooms: { zoom: number; window: number; run: boolean }[] } | undefined;
+  return {
+    kind: 'reclaimed-bench-pan',
+    version: BENCH_VERSION,
+    id: s.id,
+    startedAt: s.startedAt,
+    finishedAt: new Date().toISOString(),
+    build: location.origin + location.pathname,
+    summary: {
+      note: 'per zoom and land source: the fastest straight pan (cells/s) that held every criterion, and the criterion that failed first one step above',
+      criteria: `rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms, none of the screen out of detail (against parked), each step ${PAN_STEP_S} s`,
+      device: `${res.device?.adapter?.vendor ?? '?'} ${res.device?.adapter?.architecture ?? ''}, dpr ${res.device?.devicePixelRatio}, css ${res.device?.css?.w}x${res.device?.css?.h}`,
+      table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}`),
+      notRun: plan?.zooms.filter((z) => !z.run).map((z) => `zoom ${z.zoom} needs window ${z.window} (over ${PAN_MAX_WINDOW})`) ?? [],
+      errors: s.errors.length,
+    },
+    rows,
+    errors: s.errors,
+    ...s.results,
+  };
+}
+
+function panSummary(r: Record<string, any>): string {
+  return [`device: ${r.summary?.device}`, ...(r.summary?.table ?? []), ...(r.summary?.notRun ?? []), `errors: ${r.errors?.length ?? 0}`].join('\n');
+}
+
 // ---------- the suite's state ----------
 
 interface PageSpec {
@@ -208,6 +297,8 @@ interface PageSpec {
 }
 
 interface BenchState {
+  /** (round 104) which suite: the full one (?bench=1) or the pan benchmark (?bench=pan) */
+  suite?: 'full' | 'pan';
   version: number;
   id: string;
   startedAt: string;
@@ -221,16 +312,101 @@ interface BenchState {
   done?: boolean;
 }
 
+// (v4) The pages' results live in IndexedDB; localStorage keeps only the chain (pages, step, errors: a few KB). The
+// origin's localStorage is shared by every branch's build — on the Pixel 9a v3's main page couldn't keep its results
+// there and the chain stopped; a headless run with it filled to the brim lost every page's numbers to the fallback.
+const IDB = 'reclaimed-bench';
+let idbP: Promise<IDBDatabase | null> | null = null;
+function idb(): Promise<IDBDatabase | null> {
+  return (idbP ??= new Promise((res) => {
+    try {
+      const r = indexedDB.open(IDB, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => res(null);
+      r.onblocked = () => res(null);
+    } catch {
+      res(null);
+    }
+  }));
+}
+async function idbPut(key: string, value: unknown): Promise<boolean> {
+  const db = await idb();
+  if (!db) return false;
+  return new Promise((res) => {
+    try {
+      const t = db.transaction('kv', 'readwrite');
+      t.objectStore('kv').put(value, key);
+      t.oncomplete = () => res(true);
+      t.onerror = () => res(false);
+      t.onabort = () => res(false);
+    } catch {
+      res(false);
+    }
+  });
+}
+async function idbGet<T>(key: string): Promise<T | undefined> {
+  const db = await idb();
+  if (!db) return undefined;
+  return new Promise((res) => {
+    try {
+      const r = db.transaction('kv', 'readonly').objectStore('kv').get(key);
+      r.onsuccess = () => res(r.result as T | undefined);
+      r.onerror = () => res(undefined);
+    } catch {
+      res(undefined);
+    }
+  });
+}
+/** states whose results were loaded (or made) whole: only those write their results (a skeleton would blank them) */
+const whole = new WeakSet<BenchState>();
+/** the last results write, waited for before the page goes */
+let pending: Promise<unknown> = Promise.resolve();
+/** IndexedDB refused: the results go in localStorage as before (v4's compacting save) */
+let idbFailed = false;
+
 function load(): BenchState | null {
   try {
     const s = JSON.parse(localStorage.getItem(STATE) ?? 'null') as BenchState | null;
-    return s && s.version === BENCH_VERSION ? s : null;
+    if (!s || s.version !== BENCH_VERSION) return null;
+    s.results ??= {};
+    // (results kept in localStorage — IndexedDB refused — make it whole)
+    if (Object.keys(s.results).length) whole.add(s);
+    return s;
   } catch {
     return null;
   }
 }
 
+/** the state with its results (IndexedDB's over any localStorage held) */
+async function loadFull(): Promise<BenchState | null> {
+  const s = load();
+  if (!s) return null;
+  const r = await idbGet<Record<string, unknown>>(`results:${s.id}`);
+  if (r) s.results = { ...r, ...s.results };
+  whole.add(s);
+  return s;
+}
+
 function save(s: BenchState): void {
+  if (whole.has(s) && !idbFailed) {
+    const results = s.results;
+    const id = s.id;
+    // (a copy: the results go on changing while the write is under way)
+    const copy = JSON.parse(JSON.stringify(results));
+    pending = pending.then(() =>
+      idbPut(`results:${id}`, copy).then((ok) => {
+        if (!ok) idbFailed = true;
+      }),
+    );
+    const skeleton = { ...s, results: {} };
+    try {
+      localStorage.setItem(STATE, JSON.stringify(skeleton));
+      return;
+    } catch {
+      // (even the skeleton didn't fit: the fallback below)
+    }
+  }
   const body = JSON.stringify(s);
   try {
     localStorage.setItem(STATE, body);
@@ -308,15 +484,19 @@ function go(s: BenchState): void {
   }
   pageDevice = null;
   const q = new URLSearchParams(s.base);
-  q.set('bench', '1');
+  q.set('bench', s.suite === 'pan' ? 'pan' : '1');
   q.set('benchpage', p.name);
   for (const [k, v] of Object.entries(p.params)) q.set(k, v);
-  location.href = `${location.pathname}?${q.toString()}`;
+  const to = `${location.pathname}?${q.toString()}`;
+  // (the results' write landed first — at most 5 s)
+  void Promise.race([pending, sleep(5000)]).then(() => {
+    location.href = to;
+  });
 }
 
 /** What this page is in the suite: the start screen, a level page, the end — or not the benchmark at all. */
 export function benchMode(params: URLSearchParams): 'start' | 'final' | 'level' | 'skip' | null {
-  if (params.get('bench') !== '1') return null;
+  if (params.get('bench') !== '1' && params.get('bench') !== 'pan') return null;
   const page = params.get('benchpage');
   const s = load();
   if (!page || !s || s.done || s.pages[s.step]?.name !== page) return 'start';
@@ -391,8 +571,11 @@ export function benchLoadingNote(ui: HTMLElement): void {
 /** (v3) this page didn't finish: noted, and on to the next */
 export function benchSkip(why: string, keep = false): void {
   if (leaving) return;
-  const s = load();
-  if (!s) return;
+  void benchSkipNow(why, keep);
+}
+async function benchSkipNow(why: string, keep: boolean): Promise<void> {
+  const s = await loadFull();
+  if (!s || leaving) return;
   const page = s.pages[s.step]?.name ?? '?';
   s.errors.push(why.startsWith(`${page}:`) ? why : `${page}: ${why}`);
   // (what the page measured before it stopped is kept: its last checkpoint)
@@ -695,7 +878,7 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host | null
   if (mode === 'final') return finish(host, panel);
   if (!host) return;
   panel.text(`Reclaimed calibration benchmark — bench v${BENCH_VERSION}, build ${BUILD}`);
-  const cut = load();
+  const cut = await loadFull();
   // (v3, the user: "because the report finished once it shows the download option mid test whenever it goes to the
   // grey loading screen so it wasn't possible for me to tell when it was done" — a run in progress shows only that)
   if (cut && !cut.done && cut.step > 0) {
@@ -721,13 +904,15 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host | null
     return;
   }
   panel.text('About 12 minutes. The page reloads itself a few times — leave it in front, plugged in if you can, and don’t touch the screen till the report shows. Your own saved world isn’t touched.');
-  const last = (() => {
-    try {
-      return localStorage.getItem(LAST);
-    } catch {
-      return null;
-    }
-  })();
+  const last =
+    (await idbGet<string>('last')) ??
+    (() => {
+      try {
+        return localStorage.getItem(LAST);
+      } catch {
+        return null;
+      }
+    })();
   panel.button('Start benchmark', true, () => void start(host, panel));
   if (last) {
     let label = 'previous run';
@@ -765,11 +950,22 @@ function goTo(s: BenchState): void {
 async function start(host: Host, panel: Panel): Promise<void> {
   panel.el.querySelectorAll('button').forEach((b) => b.remove());
   const awake = await keepAwake();
-  const old = load();
+  const old = await loadFull();
   const id = `${stamp()}-${Math.floor(Math.random() * 1e6).toString(36)}`;
   const q = new URLSearchParams(location.search);
   for (const k of OWN) q.delete(k);
   const s: BenchState = { version: BENCH_VERSION, id, startedAt: new Date().toISOString(), step: 0, pages: [], base: q.toString(), worlds: old?.worlds ?? [], results: {}, errors: [] };
+  whole.add(s);
+  // (v4: an old run's report kept in localStorage moves out of the way — the origin's localStorage is shared)
+  try {
+    const was = localStorage.getItem(LAST);
+    if (was) {
+      await idbPut('last', was);
+      localStorage.removeItem(LAST);
+    }
+  } catch {
+    // (none)
+  }
   // (a run cut short left its worlds: gone now)
   await clearWorlds(s);
   const world = `bench-${id}`;
@@ -792,8 +988,15 @@ async function start(host: Host, panel: Panel): Promise<void> {
   // the other window sizes (the main page has the viewer's own: the stored range, else the tier's)
   const own = myWin ?? (host.qualityName === 'low' && host.params.get('phone') !== '0' ? 320 : 256);
   for (const w of WINDOWS) if (w !== own) s.pages.push({ name: `win${w}`, params: { ...common, at: RIDE_AT, drive: '18', win: String(w) } });
+  // (round 104, ?bench=pan: the pan benchmark's pages — a window per group of zooms)
+  if (host.params.get('bench') === 'pan') {
+    s.suite = 'pan';
+    const plan = panPlan(innerWidth, innerHeight, host.params.get('benchsmoke') === '1');
+    s.results.panPlan = plan;
+    s.pages = [s.pages[0], ...plan.pages.map((pg) => ({ name: `pan${pg.window}`, params: { ...common, at: RIDE_AT, win: String(pg.window), panzooms: pg.zooms.join('_') } }))];
+  }
   // (v3, ?benchsmoke=1: the start, the hero and one window page, the end — a check that the chain works, ~3 min)
-  if (host.params.get('benchsmoke') === '1') s.pages = [s.pages[0], s.pages.find((x) => x.name === 'hero')!, { name: 'win256', params: { ...common, at: RIDE_AT, drive: '18', win: '256' } }];
+  if (host.params.get('benchsmoke') === '1' && s.suite !== 'pan') s.pages = [s.pages[0], s.pages.find((x) => x.name === 'hero')!, { name: 'win256', params: { ...common, at: RIDE_AT, drive: '18', win: '256' } }];
   s.pages.push({ name: 'final', params: {} });
   const t0 = performance.now();
   panel.say('device facts…');
@@ -803,12 +1006,14 @@ async function start(host: Host, panel: Panel): Promise<void> {
   panel.say('the fixed GPU workload (thermal, first)…');
   await frame();
   s.results.thermalStart = { at: new Date().toISOString(), ...(await fixedWorkload(host.gpu.device, timer)) };
-  panel.say('timestamps three ways…');
-  await frame();
-  s.results.timestampModes = await timestampModes(host.gpu.device);
-  panel.say('readback, upload and copy rates…');
-  await frame();
-  s.results.io = await ioRates(host.gpu.device);
+  if (s.suite !== 'pan') {
+    panel.say('timestamps three ways…');
+    await frame();
+    s.results.timestampModes = await timestampModes(host.gpu.device);
+    panel.say('readback, upload and copy rates…');
+    await frame();
+    s.results.io = await ioRates(host.gpu.device);
+  }
   s.results.startMs = Math.round(performance.now() - t0);
   panel.say('loading the atlas level…');
   go(s);
@@ -847,7 +1052,7 @@ function reportButtons(panel: Panel, body: string, previous = false): void {
 }
 
 async function finish(host: Host | null, panel: Panel): Promise<void> {
-  const s = load()!;
+  const s = (await loadFull())!;
   await keepAwake();
   if (host) {
     panel.say('the fixed GPU workload again (the drift)…');
@@ -857,15 +1062,17 @@ async function finish(host: Host | null, panel: Panel): Promise<void> {
     s.results.ioEnd = await ioRates(host.gpu.device, true);
   } else s.errors.push('final: the GPU didn\'t come up in 20 s — the thermal drift and the end rates not measured');
   await clearWorlds(s);
-  const report = makeReport(s);
+  const report = s.suite === 'pan' ? makePanReport(s) : makeReport(s);
   const body = JSON.stringify(report);
-  try {
-    localStorage.setItem(LAST, body);
-  } catch {
-    s.errors.push('localStorage refused the result (too big?): download it now');
-  }
+  if (!(await idbPut('last', body)))
+    try {
+      localStorage.setItem(LAST, body);
+    } catch {
+      s.errors.push('neither IndexedDB nor localStorage kept the result: download it now');
+    }
   s.done = true;
   save(s);
+  await pending;
   (window as unknown as { reclaimedBench: unknown }).reclaimedBench = report;
   try {
     await wakeLock?.release();
@@ -873,12 +1080,12 @@ async function finish(host: Host | null, panel: Panel): Promise<void> {
     // (already let go)
   }
   panel.say(`Benchmark done — this run (bench v${BENCH_VERSION}, ${s.id}).`);
-  panel.text(summary(report));
+  panel.text(s.suite === 'pan' ? panSummary(report) : summary(report));
   reportButtons(panel, body);
   const dev = await postDev(body, 'bench');
   if (dev) panel.text(`dev server: ${dev}`, true);
   panel.button('Run again', false, () => {
-    location.href = `${location.pathname}?bench=1`;
+    location.href = `${location.pathname}?bench=${s.suite === 'pan' ? 'pan' : '1'}`;
   });
 }
 
@@ -894,7 +1101,7 @@ interface LevelCtx {
 
 /** A level page of the suite: waits for the level, runs its part, and goes to the next page. */
 export async function benchLevel(ctx: LevelCtx): Promise<void> {
-  const s = load()!;
+  const s = (await loadFull())!;
   const page = s.pages[s.step];
   document.getElementById('bench-loading')?.remove();
   const panel = new Panel(ctx.host.ui);
@@ -929,7 +1136,8 @@ export async function benchLevel(ctx: LevelCtx): Promise<void> {
     };
     if (!s.worlds.includes(B.R.stream.save.world)) s.worlds.push(B.R.stream.save.world);
     save(s);
-    if (page.name === 'main') await B.mainPage(out);
+    if (page.name.startsWith('pan') && page.name !== 'pans') await B.panPage(out, (page.params.panzooms ?? '').split('_').map(Number));
+    else if (page.name === 'main') await B.mainPage(out);
     else if (page.name === 'pans') await B.pansPage(out);
     else if (page.name === 'hero') await B.heroPage(out);
     else await B.winPage(out);
@@ -2112,6 +2320,174 @@ class Bench {
     });
     run.pad.scripted = null;
     out.walking = { ...capt, view: this.view(), movedBy: mode, walkedCells: Math.round(walked), placedSteps: placed };
+  }
+
+  // ---- the pan benchmark (round 104) ----
+
+  /**
+   * A pan page: one window, the zooms it covers. First the disk line is filled: a pan along it with every window region
+   * marked touched, so each is written to the store as it leaves (and the pool forgets the start of it by the end).
+   * Then for each zoom, three land sources, each a speed ramp (PAN_SPEEDS, PAN_STEP_S each) until a criterion fails:
+   *  pool       back and forth over three regions where it is (what comes in is in the GPU pool)
+   *  generated  along a line of its own, parallel, never seen (made by the generator as it comes)
+   *  disk       along the filled line from its start (from the store: disk to memory to the GPU)
+   */
+  async panPage(out: Record<string, unknown>, zooms: number[]): Promise<void> {
+    const sc = this.R.scene;
+    const S = this.R.stream;
+    const a = this.R.atlas;
+    const cam = this.R.camera;
+    sc.drive = null;
+    sc.pan = null;
+    this.say('settling…');
+    out.settleMs = await this.settle(4000, 20000);
+    out.window = { w: this.W, h: S.H };
+    const W = this.W;
+    // the line: up the screen from the start, in world cells (x) and world units (y)
+    const [ux, uy] = cam.screenDeltaToWorld(0, -1);
+    const l = Math.hypot(ux, uy) || 1;
+    const dir: [number, number] = [ux / l, uy / l];
+    const perp: [number, number] = [-dir[1], dir[0]];
+    const start: [number, number] = [S.origin[0] + cam.target[0], (S.origin[1] * ROW_H + cam.target[1])];
+    const toRows = (p: [number, number]): [number, number] => [p[0], p[1] / ROW_H];
+    const dims = { w: S.W, h: S.H, zMax: this.R.core.dims.zMax };
+    const goToWorld = async (p: [number, number]) => {
+      await warpWindow(a, S, dims, ...toRows(p));
+      await this.settle(1500, 15000);
+    };
+    // the disk line, filled: every region the window holds marked touched as it pans (saved as it leaves)
+    const fillLen = PAN_SPEEDS.reduce((t, v) => t + v * PAN_STEP_S, 0) + W;
+    this.say(`filling the disk line (${Math.round(fillLen)} cells)…`);
+    const f0 = performance.now();
+    const saved0 = S.stats.saved;
+    cam.zoom = Math.min(...zooms);
+    sc.pan = { speed: 300, dir, t: 0, turnAt: 0, turnBy: 0, turned: 0, asked: 0 };
+    try {
+      while (sc.pan.asked < fillLen) {
+        await frame();
+        S.touch(0, 0, S.W, S.H);
+        if (performance.now() - f0 > 60000) break;
+      }
+    } finally {
+      sc.pan = null;
+    }
+    await this.settle(1500, 20000);
+    await S.store?.flush?.();
+    out.fill = { cells: Math.round(fillLen), ms: Math.round(performance.now() - f0), regionsSaved: S.stats.saved - saved0, storeRegions: S.store?.size ?? null };
+    const rows: Record<string, unknown>[] = [];
+    out.zooms = rows;
+    let lane = 0;
+    for (const z of zooms) {
+      const row: Record<string, unknown> = { zoom: z };
+      rows.push(row);
+      for (const src of ['pool', 'generated', 'disk'] as const) {
+        this.say(`zoom ${z}, ${src}: placing…`);
+        if (src === 'generated') await goToWorld([start[0] + perp[0] * (lane + 1) * (W + 512), start[1] + perp[1] * (lane + 1) * (W + 512)]);
+        if (src === 'disk') await goToWorld(start);
+        if (src === 'pool') {
+          // (a first leg there and back: what the pings bring in is in the pool)
+          await this.settle(1000, 10000);
+        }
+        cam.zoom = z;
+        await sleep(600);
+        this.parkedCover = this.writtenShare();
+        row.coverParked = r3(this.parkedCover);
+        row[src] = await this.panRamp(z, src, dir);
+      }
+      lane++;
+    }
+  }
+
+  /** One speed ramp: each speed PAN_STEP_S s, measured; the last that passed, and why the next didn't */
+  private async panRamp(zoom: number, src: 'pool' | 'generated' | 'disk', dir: [number, number]): Promise<Record<string, unknown>> {
+    const sc = this.R.scene;
+    const cam = this.R.camera;
+    const steps: Record<string, unknown>[] = [];
+    let maxSmooth: number | null = null;
+    let failedFirst: string | null = null;
+    let failedAt: number | null = null;
+    let causesAtFail: unknown = null;
+    const anchor: [number, number] = [cam.target[0], cam.target[1]];
+    let sign = 1;
+    let st0 = { ...this.R.stream.stats };
+    sc.pan = { speed: PAN_SPEEDS[0], dir: [...dir], t: 0, turnAt: 0, turnBy: 0, turned: 0, asked: 0 };
+    try {
+      if (src === 'pool') {
+        // (the pool warmed: once there and back over the three regions)
+        sc.pan.speed = 120;
+        for (const leg of [1, -1]) {
+          sc.pan.dir = [dir[0] * leg, dir[1] * leg];
+          const t0 = performance.now();
+          while (performance.now() - t0 < 1800) await frame();
+        }
+        sc.pan.dir = [...dir];
+      }
+      // (a warm-up at the first speed, not measured: the streaming going, the window placed's own work done)
+      sc.pan.speed = PAN_SPEEDS[0];
+      {
+        const t0 = performance.now();
+        while (performance.now() - t0 < 2000) {
+          await frame();
+          if (src === 'pool') {
+            const off = (cam.target[0] - anchor[0]) * dir[0] + (cam.target[1] - anchor[1]) * dir[1];
+            if (off > 192 && sign > 0) sign = -1;
+            else if (off < 0 && sign < 0) sign = 1;
+            sc.pan.dir = [dir[0] * sign, dir[1] * sign];
+          }
+        }
+      }
+      // (where the land that came in came from, during the ramp: the source is what it says)
+      st0 = { ...this.R.stream.stats };
+      for (const v of PAN_SPEEDS) {
+        this.say(`zoom ${zoom}, ${src}: ${v} cells/s…`);
+        sc.pan.speed = v;
+        this.ctx.hitch?.rec?.reset();
+        const frames: number[] = [];
+        let low = 0;
+        const fno0 = this.prof.frameNo;
+        let fno = fno0;
+        const t0 = performance.now();
+        let last = t0;
+        while (performance.now() - t0 < PAN_STEP_S * 1000) {
+          const t = await frame();
+          if (src === 'pool') {
+            const off = (cam.target[0] - anchor[0]) * dir[0] + (cam.target[1] - anchor[1]) * dir[1];
+            if (off > 192 && sign > 0) sign = -1;
+            else if (off < 0 && sign < 0) sign = 1;
+            sc.pan.dir = [dir[0] * sign, dir[1] * sign];
+          }
+          if (this.prof.frameNo === fno) continue;
+          fno = this.prof.frameNo;
+          frames.push(t - last);
+          last = t;
+          low = Math.max(low, this.parkedCover - this.writtenShare());
+        }
+        const secs = (performance.now() - t0) / 1000;
+        const fps = (this.prof.frameNo - fno0) / secs;
+        const sorted = [...frames].sort((x, y) => x - y);
+        const p99 = sorted[Math.floor(sorted.length * 0.99)] ?? Infinity;
+        const max = sorted[sorted.length - 1] ?? Infinity;
+        const fails: string[] = [];
+        if (fps < PAN_FPS) fails.push(`fps ${fps.toFixed(0)}`);
+        if (max > PAN_MAX_FRAME) fails.push(`frame ${max.toFixed(0)} ms`);
+        if (p99 > PAN_P99) fails.push(`p99 ${p99.toFixed(0)} ms`);
+        if (low > 0.001) fails.push(`pop-in ${(low * 100).toFixed(0)}% of the screen`);
+        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), ok: !fails.length });
+        if (fails.length) {
+          failedFirst = fails.join(', ');
+          failedAt = v;
+          const rep = this.ctx.hitch?.rec?.report() as { causes?: unknown; worst?: { ms: number; cause: string; steps: { label: string; ms: number }[]; async: { label: string; ms: number }[] }[] } | undefined;
+          causesAtFail = rep ? { causes: rep.causes, worst: (rep.worst ?? []).slice(0, 3).map((h) => `${h.ms} ${h.cause} ${[...h.steps, ...h.async].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`) } : null;
+          break;
+        }
+        maxSmooth = v;
+      }
+    } finally {
+      sc.pan = null;
+    }
+    const st1 = this.R.stream.stats;
+    const came = { generated: st1.generated - st0.generated, fromPool: st1.thawed - st0.thawed, fromDisk: st1.loaded - st0.loaded, slides: st1.slides - st0.slides };
+    return { maxSmooth, failedFirst, failedAt, causesAtFail, came, steps };
   }
 
   // ---- other window sizes ----
