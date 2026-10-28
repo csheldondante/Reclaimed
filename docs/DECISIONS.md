@@ -3,6 +3,12 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 104b (session 5, `places`) — agents on paths, through buildings
+
+- The user: "Also, let's still plan to eventually add the paths for agents because I think for lots of jobs it will.look
+  better and be faster and because we can generate path data on building tiles that will make agents use stairs or
+  elevators and that will look cool." → BACKLOG ST15 (planned; simscale's frozen scoped fields are the interim).
+
 ## 2026-10-28 — round 102 (session 5, `gpugen`) — region generation stays on the GPU, by the phone's numbers
 
 - The user (round 101–102), verbatim: "Aren't all of the methods used to generate land very GPU efficient? … I sort of
