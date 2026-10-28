@@ -1,0 +1,326 @@
+// Render-only land for the tile cache with nothing read back (round 105, `tilelatency`; DECISIONS round 105 — the
+// user: "If the time to generate them is on the ms scale how can it take so long to show? Don't we prioritize the
+// rendering latency for those tiles?" and "Why does the CPU readback and all of that happen all we care about is
+// visuals until your character gets there.").
+//
+// The playable path (round 104's) made a region the streamer's way: the settlements' plan awaited, the
+// finish read back (its summary to the CPU), the CPU's loop over it, the mesher's frames, one bake a frame. Here a
+// region is made for its tile alone and stays on the GPU from the ask to the draw:
+//   1. Atlas.regionTile into a scratch slot: the columns and finish.wgsl, each tile a turn of the pacer's first lane
+//      (ahead of the streamer's), no stamps (no settlement plan — towns from GPU stamps later: BACKLOG TC8), its
+//      per-column summary copied on the GPU into the slot's summary buffer; it resolves when the last is submitted.
+//   2. The next frame, in one encoder: tilelandgpu.wgsl prep (the surface packed, the region's lowest and highest)
+//      and camera (the bake's box, scale and camera, and what the tile was baked at — the slot's TP), then the bake:
+//      every chunk drawn as the hybrid's grid through its columns' tops into the G-buffer, fsTileBake into the atlas.
+//      Several a frame (?tilebakes=, 4), none waiting on another.
+// The window's own trailing bakes wait a frame the land bakes (TileCache.encode). Not yet: the mesher's chunks (a
+// gap open to the air: arches, caves) — the grid draws their tops; the settlements; the wetness, the drift; the
+// region's neighbours (its edges open).
+
+import type { Profiler } from '../gpu/profiler';
+import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
+import type { WorldGpu } from '../sim/world-gpu';
+import { Pages } from '../sim/pages';
+import { GLOBALS_HEAD_BYTES } from '../sim/globals';
+import { CHUNK } from '../world/layout';
+import { ROW_H } from '../world/lattice';
+import type { Camera } from './camera';
+import type { Basis, TileCache } from './tilecache';
+import type { LandTimes, TileLandSource } from './tileland';
+import tileLandGpuWgsl from '../shaders/tilelandgpu.wgsl?raw';
+
+const R = 64;
+/** regions made at once (a scratch slot each): ?tilelandn= */
+const IN_FLIGHT = Math.max(1, Number(new URLSearchParams(location.search).get('tilelandn') ?? 6) | 0);
+/** bakes a frame at most: ?tilebakes= */
+const BAKES = Math.max(1, Number(new URLSearchParams(location.search).get('tilebakes') ?? 4) | 0);
+/** the bake's view of the scratch: its mesh chunks' side (cells; the grid's lattice: meshdraw.wgsl GRID_N = side + 2) */
+const MESH_SIDE = 32;
+/** the tiles' overlap past their region (tilecache.ts OVERLAP) */
+const OVERLAP = 1;
+
+export type TileLandGpuSource = TileLandSource;
+
+export interface TileLandGpuHost {
+  device: GPUDevice;
+  world: WorldGpu;
+  profiler: Profiler;
+  meshLayout: GPUBindGroupLayout;
+  resolveLayout: GPUBindGroupLayout;
+  gridPipe: () => GPURenderPipeline | undefined;
+  drawGrid: (pass: GPURenderPassEncoder, which: Uint8Array) => void;
+  meshResources: (cam: GPUBuffer) => Record<number, GPUBuffer | GPUTextureView | GPUSampler>;
+  camBytes: number;
+  /** the frame's camera data as written (the bake camera's start: the compute writes its matrix and place over it) */
+  camData: () => ArrayBuffer;
+}
+
+/** a scratch slot's own buffers: the region's land, its summary, its Globals, chunk table, surface, box, camera, job */
+interface Slot {
+  globals: GPUBuffer;
+  patch: GPUBuffer;
+  table: GPUBuffer;
+  surface: GPUBuffer;
+  summ: GPUBuffer;
+  box: GPUBuffer;
+  cam: GPUBuffer;
+  job: GPUBuffer;
+  prep?: GPUBindGroup;
+  g?: GPUBindGroup;
+  r?: GPUBindGroup;
+}
+
+interface Job {
+  rx: number;
+  ry: number;
+  slot: number;
+  oz: number;
+  /** its land submitted (generated) */
+  made: boolean;
+  times: LandTimes;
+}
+
+export class TileLandGpu {
+  readonly stats = { made: 0, baked: 0, failed: 0, inFlight: 0, dropped: 0, bakesLastFrame: 0, noSlot: 0 };
+  readonly latencies: LandTimes[] = [];
+  private land: GPUBuffer;
+  private slots: Slot[] = [];
+  private slotJob: (Job | null)[];
+  private jobs = new Map<string, Job>();
+  private fields: GPUBuffer;
+  private drift: GPUTexture;
+  private prepK: ComputeKernel;
+  private camK: ComputeKernel;
+  private failed = new Set<string>();
+  private firstWanted = new Map<string, number>();
+  private pendingDraw: LandTimes[] = [];
+  /** the grid's chunks across and down the scratch (its lattice's), all of them drawn */
+  private nx: number;
+  private all: Uint8Array;
+
+  constructor(private host: TileLandGpuHost, private src: TileLandGpuSource, private cache: TileCache) {
+    const dev = host.device;
+    const w = host.world;
+    const L = src.layout;
+    if (L.R !== R) throw new Error(`TileLandGpu: regions of ${L.R}, not ${R}`);
+    if (L.bytes % 256) throw new Error('TileLandGpu: a region record must be 256-byte aligned');
+    if (w.globals.size < 480 * 4) throw new Error('TileLandGpu: the Globals have no ring (words 476-479)');
+    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST;
+    this.land = w.buf('tileland-gpu regions', L.bytes * IN_FLIGHT, S | GPUBufferUsage.COPY_SRC);
+    this.slotJob = new Array(IN_FLIGHT).fill(null);
+    this.fields = w.buf('tileland-gpu renderFields', R * R * 16, S);
+    this.drift = dev.createTexture({ label: 'tileland-gpu drift', size: [R, R], format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING });
+    this.nx = Math.ceil((R + 0.5) / MESH_SIDE);
+    const ny = Math.ceil(R / MESH_SIDE);
+    this.all = new Uint8Array(this.nx * ny).fill(1);
+    for (let s = 0; s < IN_FLIGHT; s++) {
+      // (a chunk table onto the slot's pages: chunk (i, j) of the region is page j · rc + i)
+      const t = new Uint32Array(L.rc * L.rc * 2);
+      const at = (s * L.bytes) / 16;
+      for (let p = 0; p < L.rc * L.rc; p++) t.set([at + p * L.K * CHUNK * CHUNK, L.K], p * 2);
+      const table = w.buf(`tileland-gpu chunks ${s}`, t.byteLength, S);
+      dev.queue.writeBuffer(table, 0, t);
+      this.slots.push({
+        globals: w.buf(`tileland-gpu globals ${s}`, w.globals.size, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST),
+        patch: w.buf(`tileland-gpu globals patch ${s}`, w.globals.size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST),
+        table,
+        surface: w.buf(`tileland-gpu surface ${s}`, R * R * 4, S),
+        summ: w.buf(`tileland-gpu summary ${s}`, R * R * 16, S),
+        box: w.buf(`tileland-gpu box ${s}`, 16, S),
+        cam: dev.createBuffer({ label: `tileland-gpu bake camera ${s}`, size: host.camBytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST }),
+        job: dev.createBuffer({ label: `tileland-gpu job ${s}`, size: 7 * 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }),
+      });
+    }
+    const spec = { 0: 'uniform', 1: 'read', 2: 'rw', 3: 'rw', 4: 'rw', 5: 'rw' } as const;
+    this.prepK = makeCompute(dev, 'tileland-gpu prep', [tileLandGpuWgsl], spec, 'prep');
+    this.camK = makeCompute(dev, 'tileland-gpu camera', [tileLandGpuWgsl], spec, 'camera');
+  }
+
+  /** slot s's Globals: the frame's, its size, chunks, origin and grid the region's, no sleep, no ring */
+  private patchGlobals(enc: GPUCommandEncoder, s: number, rx: number, ry: number): void {
+    const sl = this.slots[s];
+    const ab = new ArrayBuffer(this.host.world.globals.size);
+    const u = new Uint32Array(ab);
+    const f = new Float32Array(ab);
+    u[0] = R;
+    u[1] = R;
+    u[4] = R / CHUNK;
+    f.set([rx * R, ry * R * ROW_H, rx * R, ry * R], 276);
+    // (the grid's chunks across and their side: meshdraw.wgsl gridVertex)
+    f[281] = this.nx;
+    f[282] = MESH_SIDE;
+    // (the sleep, drowse and hfield bits, and the ring — round 105, ringwin: words 476-479 — all 0)
+    u.fill(0, 284, 480);
+    // (round 107, pages: the page table a plain R-wide window's, the identity at offset 0 — sim/pages.ts)
+    const sp = (this.scratchPages ??= new Pages(R, R));
+    new Uint16Array(ab, GLOBALS_HEAD_BYTES, sp.table.length).set(sp.table);
+    this.host.device.queue.writeBuffer(sl.patch, 0, ab);
+    enc.copyBufferToBuffer(this.host.world.globals, 0, sl.globals, 0, sl.globals.size);
+    enc.copyBufferToBuffer(sl.patch, 0, sl.globals, 0, 8);
+    enc.copyBufferToBuffer(sl.patch, 16, sl.globals, 16, 4);
+    enc.copyBufferToBuffer(sl.patch, 276 * 4, sl.globals, 276 * 4, 16);
+    enc.copyBufferToBuffer(sl.patch, 281 * 4, sl.globals, 281 * 4, 8);
+    enc.copyBufferToBuffer(sl.patch, 284 * 4, sl.globals, 284 * 4, (480 - 284) * 4);
+    enc.copyBufferToBuffer(sl.patch, GLOBALS_HEAD_BYTES, sl.globals, GLOBALS_HEAD_BYTES, sl.globals.size - GLOBALS_HEAD_BYTES);
+  }
+  /** (round 107, pages) the scratch window's page table */
+  private scratchPages: Pages | null = null;
+
+  /** slot s's groups: the prep's, the bake's G-buffer pass (the grid: the mesh's layout), the resolve */
+  private groupsOf(s: number): Slot {
+    const sl = this.slots[s];
+    if (sl.g) return sl;
+    const h = this.host;
+    const L = this.src.layout;
+    const base = s * L.bytes;
+    const kept = (name: string): GPUBufferBinding => {
+      const b = L.bufs.find((x) => x.name === name);
+      if (!b) throw new Error(`TileLandGpu: the region layout keeps no ${name}`);
+      return { buffer: this.land, offset: base + b.off, size: b.bytes };
+    };
+    sl.prep = makeBindGroup(h.device, 'tileland-gpu prep', this.prepK.layout, { 0: sl.job, 1: sl.summ, 2: sl.surface, 3: sl.box, 4: sl.cam, 5: this.cache.params });
+    // (the mesh's own buffers aren't drawn — the grid draws every chunk — but its layout binds them: the window's)
+    const res: Record<number, GPUBuffer | GPUBufferBinding | GPUTextureView | GPUSampler> = {
+      ...h.meshResources(sl.cam),
+      0: sl.globals,
+      1: sl.table,
+      4: kept('contam'),
+      6: kept('veg'),
+      7: this.fields,
+      8: kept('water'),
+      9: this.land,
+      11: sl.surface,
+      13: kept('wilt'),
+      17: this.drift.createView(),
+    };
+    const ent = (r: typeof res) => Object.entries(r).map(([b, x]) => ({ binding: Number(b), resource: x instanceof GPUBuffer ? { buffer: x } : x }));
+    const [g0, g1] = this.cache.gbufViews;
+    sl.g = h.device.createBindGroup({ label: 'tileland-gpu grid', layout: h.meshLayout, entries: ent(res) });
+    sl.r = h.device.createBindGroup({ label: 'tileland-gpu resolve', layout: h.resolveLayout, entries: [...ent(res), { binding: 40, resource: g0 }, { binding: 41, resource: g1 }] });
+    return sl;
+  }
+
+  /** the window mesh's buffers changed (its pool grew): the groups that bind them made again */
+  invalidate(): void {
+    for (const sl of this.slots) sl.g = sl.r = sl.prep = undefined;
+  }
+
+  private free(j: Job): void {
+    this.jobs.delete(`${j.rx},${j.ry}`);
+    this.slotJob[j.slot] = null;
+  }
+
+  /**
+   * A frame's step: bake what was made (the camera's way first, up to BAKES), then ask for the next regions the
+   * camera's way into the free slots (one a frame: the pacer spreads their GPU work). True when it baked this frame.
+   */
+  step(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number): boolean {
+    const now = performance.now();
+    this.stats.inFlight = this.jobs.size;
+    const order = this.cache.wanted(cam, (k) => this.failed.has(k), 32);
+    // (when each region came into the look-ahead: one that left it before its turn drops out, its wait from its return)
+    const inOrder = new Set(order.map((w) => `${w.rx},${w.ry}`));
+    for (const k of this.firstWanted.keys()) if (!inOrder.has(k) && !this.jobs.has(k)) this.firstWanted.delete(k);
+    for (const k of inOrder) if (!this.firstWanted.has(k) && !this.jobs.has(k)) this.firstWanted.set(k, now);
+    this.pendingDraw = this.pendingDraw.filter((t) => {
+      const [rx, ry] = t.key.split(',').map(Number);
+      if (!this.cache.drawsRegion(rx, ry)) return now - t.baked < 10000;
+      t.drawn = now;
+      this.latencies.push(t);
+      if (this.latencies.length > 500) this.latencies.shift();
+      this.firstWanted.delete(t.key);
+      return false;
+    });
+    // (the bakes: what's made, the camera's way first)
+    const rank = new Map(order.map((w, i) => [`${w.rx},${w.ry}`, i]));
+    const made = [...this.jobs.values()].filter((j) => j.made).sort((a, b) => (rank.get(`${a.rx},${a.ry}`) ?? 1e6) - (rank.get(`${b.rx},${b.ry}`) ?? 1e6));
+    const gp = this.host.gridPipe();
+    let baked = 0;
+    for (const job of made) {
+      if (baked >= BAKES || !gp) break;
+      if (this.cache.hasTile(job.rx, job.ry, cam.azimuth)) {
+        this.free(job);
+        this.stats.dropped++;
+        continue;
+      }
+      job.times.cur = performance.now();
+      if (!this.bake(enc, cam, B, rp, job, gp)) {
+        this.stats.noSlot++;
+        break;
+      }
+      job.times.baked = performance.now();
+      this.pendingDraw.push(job.times);
+      this.free(job);
+      this.stats.baked++;
+      baked++;
+    }
+    this.stats.bakesLastFrame = baked;
+    // (the next: the first of the camera's way not being made, into every free slot — the pacer spreads their GPU work)
+    for (let free = this.slotJob.indexOf(null); free >= 0; free = this.slotJob.indexOf(null)) {
+      const want = order.find((w) => !this.jobs.has(`${w.rx},${w.ry}`));
+      if (!want) break;
+      {
+        const L = this.src.layout;
+        const sl = this.slots[free];
+        const p = this.src.landTile(want.rx * R, want.ry * R, this.land, free * L.bytes, { buf: sl.summ, off: 0 });
+        if (!p) break;
+        {
+          const key = `${want.rx},${want.ry}`;
+          const t0 = performance.now();
+          const times: LandTimes = { key, wanted: this.firstWanted.get(key) ?? t0, start: t0, cols: 0, ways: 0, mapped: 0, ready: 0, cur: 0, baked: 0, drawn: 0 };
+          const j: Job = { rx: want.rx, ry: want.ry, slot: free, oz: this.src.oz(), made: false, times };
+          this.jobs.set(key, j);
+          this.slotJob[free] = j;
+          p.then(
+            () => {
+              j.made = true;
+              times.mapped = times.ready = performance.now();
+              this.stats.made++;
+            },
+            (e) => {
+              console.warn('tileland-gpu: no land for', want, e);
+              this.failed.add(key);
+              this.stats.failed++;
+              this.free(j);
+            },
+          );
+        }
+      }
+    }
+    return baked > 0;
+  }
+
+  /** one region's bake, all on the GPU: the Globals, the prep, the camera, the grid into the G-buffer, the resolve */
+  private bake(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number, job: Job, gp: GPURenderPipeline): boolean {
+    const t = this.cache.allocTile(job.rx, job.ry, cam.azimuth);
+    if (!t) return false;
+    t.gpu = true;
+    const [sx, sy, SW, SH] = this.cache.slotPx(t);
+    const sl = this.groupsOf(job.slot);
+    const dev = this.host.device;
+    this.patchGlobals(enc, job.slot, job.rx, job.ry);
+    // (the job: the view, the scale, the scratch's oz, the atlas slot, its corner and size, the anchor, the region)
+    dev.queue.writeBuffer(sl.job, 0, new Float32Array([...B.r, 0, ...B.u, 0, ...B.f, B.sz, rp, job.oz, t.slot, 0, sx, sy, SW, SH, 0, 0, -job.oz, 0, R, OVERLAP, 0, 0]));
+    dev.queue.writeBuffer(sl.box, 0, new Int32Array([0x7fffffff, -0x7fffffff, 0, 0]));
+    // (the bake camera's start: the frame's — its eye, viewport, no cut — the compute writes its matrix and place)
+    const cd = new Float32Array(this.host.camData().slice(0));
+    cd.fill(0, 44);
+    dev.queue.writeBuffer(sl.cam, 0, cd);
+    const cp = enc.beginComputePass({ label: 'tileland-gpu' });
+    cp.setPipeline(this.prepK.pipeline);
+    cp.setBindGroup(0, sl.prep!);
+    cp.dispatchWorkgroups(R / 8, R / 8);
+    cp.setPipeline(this.camK.pipeline);
+    cp.setBindGroup(0, sl.prep!);
+    cp.dispatchWorkgroups(1);
+    cp.end();
+    this.cache.encodeBake(enc, sx, sy, SW, SH, (g) => {
+      g.setPipeline(gp);
+      g.setBindGroup(0, sl.g!);
+      this.host.drawGrid(g, this.all);
+    }, [sl.r!]);
+    return true;
+  }
+
+  afterSubmit(): void {}
+}

@@ -136,10 +136,14 @@ fn tileTrees(w: vec2<f32>, v: f32, px: f32) -> TTree {
 // ---- the tiles drawn ---------------------------------------------------------------------------------------
 @group(0) @binding(42) var tileA: texture_2d<f32>;
 @group(0) @binding(43) var tileB: texture_2d<u32>;
-/** a tile drawn this frame: its quad (clip x0 y0 x1 y1); its slot (atlas px x y w h); its anchor (window units)
- *  and the clip depth there; the view-plane coordinates of the slot's left and top edges and the texels a unit */
-struct TileI { clip: vec4<f32>, slot: vec4<f32>, anchor: vec4<f32>, plane: vec4<f32> };
+/** a tile drawn this frame: the clip x and y at its anchor and the clip a unit of the view's plane (x, y); its slot
+ *  (atlas px x y), its slot's index, 1 when it's an arriving region's; its anchor (window units) and the clip depth
+ *  there (round 105, tilelatency: what it was baked at is TP's — a render-only tile's written by the GPU) */
+struct TileI { clip: vec4<f32>, slot: vec4<f32>, anchor: vec4<f32>, pad: vec4<f32> };
 @group(0) @binding(44) var<storage, read> tilesI: array<TileI>;
+/** per atlas slot (tilecache.ts tparams): the view-plane coordinates of its left and top edges (from the anchor), the
+ *  texels a unit; the texels used (w, h), its top (world z), 1 when written */
+@group(0) @binding(46) var<storage, read> TP: array<vec4<f32>>;
 /** the view's right, up and along (toward the far side) — unit vectors; w: the clip depth a unit along; the
  *  window's size (window units), the region's size (x, y window units), how far past its edge a tile draws */
 struct TileU { r: vec4<f32>, u: vec4<f32>, f: vec4<f32>, win: vec4<f32> };
@@ -158,13 +162,22 @@ struct TOut {
 fn vsTile(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> TOut {
   let c = array<vec2<f32>, 6>(vec2<f32>(0.0, 0.0), vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 0.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0))[vi];
   let t = tilesI[ii];
+  let si = u32(t.slot.z);
+  let pa = TP[si * 2u];
+  let pb = TP[si * 2u + 1u];
   var o: TOut;
-  // (uv down the slot: its top is the clip's y1)
-  o.pos = vec4<f32>(mix(t.clip.x, t.clip.z, c.x), mix(t.clip.w, t.clip.y, c.y), 0.5, 1.0);
+  // (its quad from what it was baked at: the plane's left and top edges, its texels a unit, those used)
+  let x0 = t.clip.x + pa.x * t.clip.z;
+  let x1 = t.clip.x + (pa.x + pb.x / max(pa.z, 1e-6)) * t.clip.z;
+  let y1 = t.clip.y + pa.y * t.clip.w;
+  let y0 = t.clip.y + (pa.y - pb.y / max(pa.z, 1e-6)) * t.clip.w;
+  // (uv down the slot: its top is the clip's y1; a slot not written yet: no quad)
+  let on = pb.w > 0.5;
+  o.pos = vec4<f32>(select(2.0, mix(x0, x1, c.x), on), mix(y1, y0, c.y), 0.5, 1.0);
   o.uv = c;
-  o.slot = t.slot;
+  o.slot = vec4<f32>(t.slot.xy, pb.xy);
   o.anchor = t.anchor;
-  o.plane = t.plane;
+  o.plane = vec4<f32>(pa.xyz, t.slot.w);
   return o;
 }
 

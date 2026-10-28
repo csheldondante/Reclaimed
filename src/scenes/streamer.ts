@@ -154,6 +154,8 @@ export interface LandSource {
    * streamer never sees the land's columns: arrival is a pool → window copy.
    */
   regionInto?(x0: number, y0: number, w: number, h: number, target: FinishTarget): Promise<FinishMeta>;
+  /** (round 105, tilelatency) a render-only tile's land: regionInto's, nothing read back (Atlas.regionTile) */
+  regionTile?(x0: number, y0: number, w: number, h: number, target: FinishTarget, meta: { buf: GPUBuffer; off: number }): Promise<void>;
 }
 
 /** (round 100) what the store saves for a world: its id (the atlas's seed, the run), whether it's kept on disk */
@@ -1438,14 +1440,10 @@ export class Streamer {
     }
   }
 
-  /**
-   * (round 104, tilecache TC2) A region's land (world corner x0, y0) made on the GPU into `buf` at `off`, in the pool's
-   * layout at the window's oz — for a render-only tile (render/tileland.ts): no job, no pool slot, nothing kept, no
-   * simulation. null when the source makes nothing on the GPU.
-   */
-  landInto(x0: number, y0: number, buf: GPUBuffer, off: number): Promise<FinishMeta> | null {
-    if (!this.source.regionInto) return null;
-    return this.source.regionInto(x0, y0, this.R, this.R, { buf, off, layout: this.layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !SETTLE });
+  /** (round 105, tilelatency) A render-only tile's land into `buf` at `off`, its per-column summary into `meta` (GPU, no readback). */
+  landTile(x0: number, y0: number, buf: GPUBuffer, off: number, meta: { buf: GPUBuffer; off: number }): Promise<void> | null {
+    if (!this.source.regionTile) return null;
+    return this.source.regionTile(x0, y0, this.R, this.R, { buf, off, layout: this.layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !SETTLE }, meta);
   }
 
   /** Start making the land a slide of (dx, dy) would bring in (round 100: into the pool — what's there needs nothing). */
