@@ -8275,19 +8275,32 @@ bench on the same build: the bike held at the window's edge (1 slide in 75 s, 9 
 - finish.wgsl ran a whole region (4096 columns) in one dispatch, not paced — and the settlement plans' raw tiles the
   same, many at once: now a 32² tile a dispatch, each the tile pacer's turn when streaming. Its second per-column
   array (the window's intervals) is gone: kept in place in the column's own (a phone keeps a thread's arrays in memory).
-- The pacer: on a phone (its user agent) round 98's pacing by the frame's time again (Mali's timestamps overlap and
-  onSubmittedWorkDone isn't to be trusted for a budget); `?tilepace=budget` to try the budget there. The fast cap is
-  TILE_MAX (4) everywhere (8 raised the frames held for the GPU on the desktop); `?tilemaxfast=` opt-in.
+- The pacer: round 98's pacing by the frame's time is the default again, everywhere (`?tilepace=budget` the GPU
+  budget, opt-in): with the profiler's timestamps read (the speedsweep's ?perf=1) its passes summed past the frame on
+  the desktop too and the budget gave one tile a frame (got 73 cells/s at pan 120); on a phone Mali's timestamps
+  overlap and onSubmittedWorkDone isn't to be trusted for a budget. The fast cap is TILE_MAX (4); `?tilemaxfast=`.
+  finish.wgsl's tile a pacer turn: 32² on a phone, the whole region elsewhere (`?finishtile=`).
 - A plan that fails in the worker now fails its region loudly (it waited for ever); the marks' cap 1024 → 8192.
 - Labels for the hitch report: finish.encode, finish.parse, gen.meta, plan.receive (the plan's structured clone),
   plan.revive; the GPU passes atlas-regionFinish / atlas-rawFinish a tile.
 
-**Verified** (desktop, headless, q=low 412x915): scripts/gpugentest.mjs with the tiled finish — 24 regions and 6 raw
-tiles bit-identical; the world API on a window warped in (28 regions made on the GPU): heightAt, floorAt and
-layersAt agree with the layers read back on 600 columns. scripts/runtest.mjs --only far: rode 208 cells away and back
-(3 slides out, 5 back), the places' 572 pieces at the same height, the locks and the cast as they were — but the walk
-through the open bone door into the bell chamber got stuck at 116.5,100.9 (not yet run on places to compare: BACKLOG
-GG13). **Not run after these fixes** (the session's GPU time ran out): speedsweep, floatsweep, towertest, the bench.
+**Verified** (desktop, headless, q=low 412x915, every system on): scripts/gpugentest.mjs with the tiled finish — 24
+regions and 6 raw tiles bit-identical; the world API on a window warped in (28 regions made on the GPU): heightAt,
+floorAt and layersAt agree with the layers read back on 600 columns; floatsweep all passed (0 floating runs);
+towertest all passed. scripts/runtest.mjs --only far: rode 208 cells away and back, the places' 572 pieces, the locks
+and the cast as they were; the walk through the open bone door into the bell chamber sticks at 116.5,100.9 — the
+same on a build without gpugen (bench2's server: places + bench v4), so not this branch's (BACKLOG GG13).
+speedsweep after the fixes (pan 120 / 160): got 94.7 / 122.5 cells/s (the CPU path 91.5 / 121.9), low-detail 3.8 /
+4.3% (3.9 / 5.8), frame p95 39.6 / 53.3 ms (47.5 / 70), slides waited 71 / 244 frames (76 / 193), 2.2 tiles a frame;
+gpuMade 452 by the end for ~330 regions written (the first gpugen's ~5× is gone).
+The bench (v4, GPU path; data/bench/desktop-igpu-gpugen.json, 797 s, no errors): a region made the GPU's way is
+4.3 ms wall p50 (the CPU path's in the same run: 24.3 — its readback 7.2, cutPack 4.4, upload 4.4 to done), the main
+thread's part 0.5 ms (ways' gathering + stamps 0, encode 0.1, parse 0.3, the relief bits 0.2) against ~6; finish.wgsl
+0.053 ms of GPU a region (colHeight 0.22, formSeed 0.07, colFinish 0.22); 147 KB read back, nothing uploaded;
+232 regions/s one at a time (41). Pans 80/120/160/240/320: fps 81.7/73.1/64.9/48.2/46.3, p95 19/28/58/97/108 ms,
+low detail p95 2.1/1.4/2.1/2.8/8.3% of the screen; their hitches gpu-held (the render), none from generation's CPU;
+gpuMade 218 for 170 generated at pan 120, 259 for 190 at 160. The warp: every region written in 647 ms, frames
+normal at 1.08 s (v1's desktop baseline: 886 / 1500). The phone's rerun decides (BACKLOG GG8).
 
 ## 2026-10-28 — round 102 (`bench2`): bench v2 after the Pixel 9a's report
 

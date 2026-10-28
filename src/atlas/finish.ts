@@ -18,8 +18,6 @@ import type { StampOps } from './stamps';
 import finishW from './finish.wgsl?raw';
 
 const PARAM_BYTES = 176;
-/** (round 102) a streamed region's finishing a FINISH_TILE² tile a dispatch (each a tile of the pacer's) */
-const FINISH_TILE = 32;
 
 /**
  * (round 102) ?gpugen=0: regions made the CPU's way, as before round 102 (the columns read back, landFrom, the ways,
@@ -124,6 +122,8 @@ export class RegionFinish {
     profiler?: Profiler,
     /** (streaming) each tile's turn: the atlas's tile pacer */
     gate?: () => Promise<void>,
+    /** the tile a gate's turn (the atlas's FINISH_TILE) */
+    tile = 32,
   ): Promise<{ meta?: FinishMeta; raw?: RawGround }> {
     const dev = this.dev;
     let tE = performance.now();
@@ -205,14 +205,14 @@ export class RegionFinish {
       6: md,
       7: outN,
     });
-    const T = gate ? FINISH_TILE : Math.max(w, h);
+    const T = gate ? tile : Math.max(w, h);
     const tiles: [number, number][] = [];
     for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
     let enc = dev.createCommandEncoder({ label: 'atlas finish' });
     if (target) enc.clearBuffer(target.buf, target.off, L!.bytes);
     this.last.encodeMs = 0;
     for (let k = 0; k < tiles.length; k++) {
-      if (gate && k > 0) {
+      if (gate) {
         this.last.encodeMs += performance.now() - tE;
         dev.queue.submit([enc.finish()]);
         await gate();
