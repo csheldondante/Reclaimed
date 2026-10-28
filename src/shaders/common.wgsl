@@ -337,7 +337,7 @@ fn pageWord(t: u32, i: u32) -> u32 {
   return (w >> ((i & 1u) * 16u)) & 0xffffu;
 }
 /** (round 107) the table looked up: window chunk c's slot (Globals.pages) */
-fn colSlotTable(c: vec2<u32>) -> u32 { return pageWord(0u, c.y * pagesX() + c.x); }
+fn colSlotTable(c: vec2<u32>) -> u32 { return pageWord(0u, min(c.y * pagesX() + c.x, 4095u)); }
 /** the window chunk in slot s (the table backwards: Globals.pageInv, or the ring's wrap backwards) */
 fn slotChunk(s: u32) -> vec2<u32> {
   if (PAGE_TABLE) { let e = pageWord(1u, s); return vec2<u32>(e & 0xffu, e >> 8u); }
