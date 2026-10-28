@@ -934,7 +934,11 @@ export class LevelScene implements Scene {
         integ.markDirty(x, y, 16);
       };
       // (round 86: a piece falling in the columns — the hybrid's chunks under it voxels from then on)
-      integ.onTouched = (x0, y0, x1, y1) => this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2);
+      integ.onTouched = (x0, y0, x1, y1) => {
+        this.hybrid?.edit((x0 + x1) / 2, (y0 + y1) / 2, Math.max(x1 - x0, y1 - y0) / 2);
+        // (round 100: what fell landed there — kept with its region)
+        this.stream?.touch(x0, y0 / ROW_H, x1, y1 / ROW_H);
+      };
       // (round 86: a piece landing hard throws its chips faster, up and out)
       this.integrity.onChips = (x, y, z, count, speed) => {
         core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: speed ?? 3, spread: 0.8, vel: speed ? [0, 0, speed * 0.6] : undefined });
@@ -1364,6 +1368,16 @@ export class LevelScene implements Scene {
       // cut again lands; nothing falls or is judged while they're read back and written again (a slide in z, a warp)
       const S0 = this.stream;
       this.stream.onBeforeSlide.push((dx, dy, dz) => this.integrity?.settle(dx, dy, dz));
+      // (round 100) what play does to the land — edits (the world API's, the editor's, agents' digs, a story's door),
+      // lightning, a fire lit, a tap to grow — keeps its regions (saved), unlike the sims' own drift
+      const S1 = this.stream;
+      core.sim.eventTaps.push((sent) => {
+        for (const e of sent) {
+          if (e.kind === EventKind.Scare || e.kind === EventKind.Ripple) continue;
+          const r = (e.radius ?? 0) + 2;
+          S1.touch(e.x - r, (e.y - r) / ROW_H, e.x + r, (e.y + r) / ROW_H);
+        }
+      });
       // (round 100) the window isn't saved while something falls in it (it would be saved mid-air)
       this.stream.canSave.push(() => !this.integrity || this.integrity.quiet);
       // (round 100, meshinst) the resting rock goes with its region: its mesh and transform in the region's record

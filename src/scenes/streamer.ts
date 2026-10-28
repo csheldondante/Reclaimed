@@ -36,7 +36,7 @@
 import { record, timed } from '../gpu/cpustat';
 import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionStore } from '../world/region-store';
-import { columnsHash, sigChanged, type ColumnsSig, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
+import { columnsHash, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
 import { CHUNK, K_HEADROOM, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
@@ -229,9 +229,11 @@ interface Frozen {
 
 /** (round 100) what's known of a region's columns (world/region-record.ts columnsHash) */
 interface RegionInfo {
-  /** its columns' signature as made (null once it's known to have changed: not needed) */
-  baseSig?: ColumnsSig;
-  /** changed from how it was made by more than drift (world/region-record.ts sigChanged): saved whenever it's read back different */
+  /**
+   * changed by play — an edit (the world API's, the editor's, an agent's dig, a story's door), lightning, a meteor,
+   * a fire lit, a tap to grow, what fell from them (Streamer.touch) — not by the sims' own drift: saved whenever
+   * it's read back different from what's saved; a region never touched is made again when it's wanted
+   */
   changed?: boolean;
   /** its columns' hash as last saved, and as last read back (a freeze's, a sweep's) */
   saved?: number;
@@ -293,6 +295,8 @@ export interface SlideStats {
   /** (round 100) the pool and the store: regions evicted from the pool, read back and hashed, written to the store,
    *  loaded from it, restored into the window on load, records that couldn't be used (made again), uploads into the pool */
   evicted: number;
+  /** regions play touched (Streamer.touch) */
+  touched: number;
   checked: number;
   saved: number;
   loaded: number;
@@ -354,7 +358,7 @@ export class Streamer {
   private busyNow = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, uploads: 0 };
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, uploads: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
   /**
@@ -533,9 +537,8 @@ export class Streamer {
             pages.set(p.slots.subarray(t[ci * 2] * SLOT_WORDS, t[ci * 2] * SLOT_WORDS + pageWords), (j * L.rc + i) * pageWords);
           }
         const out = this.regionOutside(lx, ly);
-        const baseSig = new Float32Array(R * R * 2);
-        const last = columnsHash(pages, L, out, this.oz, baseSig);
-        this.winInfo.set(this.key((origin[0] + lx) / R, (origin[1] + ly) / R), { baseSig, last });
+        const last = columnsHash(pages, L, out, this.oz);
+        this.winInfo.set(this.key((origin[0] + lx) / R, (origin[1] + ly) / R), { last });
       }
     // (round 100) the store: opened, cleared for a new world, the window's saved regions restored; till then the
     // window doesn't slide (a region made before the index is read might have had a record)
@@ -740,19 +743,14 @@ export class Streamer {
         items.forEach((it, k) => {
           const body = all.subarray(k * L.bytes, (k + 1) * L.bytes);
           const t0 = performance.now();
-          const sig = it.info.changed ? undefined : new Float32Array(this.R * this.R * 2);
-          const h = columnsHash(new Uint32Array(all.buffer, k * L.bytes, (L.rc * L.rc * L.pageBytes) / 4), L, it.outside, it.oz, sig);
+          // (not touched by play: nothing to keep — the source makes it again; hashed only for ?rsverify)
+          if (!it.info.changed && !this.verify) return;
+          const h = columnsHash(new Uint32Array(all.buffer, k * L.bytes, (L.rc * L.rc * L.pageBytes) / 4), L, it.outside, it.oz);
           this.times.hash.push(performance.now() - t0);
+          record('rs.hash', performance.now() - t0);
           this.stats.checked++;
           it.info.last = h;
-          if (h === it.info.saved || !this.store || this.halted) return;
-          // (changed from how it was made by more than the sims' drift — an edit, a dig, a meteor, a body at rest —
-          // else it's made again when it's wanted: not saved)
-          if (!it.info.changed) {
-            if (it.info.baseSig && sig && !sigChanged(sig, it.info.baseSig)) return;
-            it.info.changed = true;
-            it.info.baseSig = undefined;
-          }
+          if (!it.info.changed || h === it.info.saved || !this.store || this.halted) return;
           const t1 = performance.now();
           const [rx, ry] = it.key.split(',').map(Number);
           const rec = encodeRecord(
@@ -761,6 +759,7 @@ export class Streamer {
             { oz: it.oz, outside: it.outside, surface: it.surface, ground: it.ground, relief: it.relief },
           );
           this.times.encode.push(performance.now() - t1);
+          record('rs.encode', performance.now() - t1);
           it.info.saved = h;
           this.stats.saved++;
           void this.store.put(it.key, rec, { session: SESSION, hash: h });
@@ -781,18 +780,18 @@ export class Streamer {
    * (round 100) The window's regions read back for the store: the next one (every SWEEP_MS), or all of them (the
    * page hidden). Not while a slide or a warp is under way, a region not written yet, or something falling.
    */
-  private sweep(all = false): void {
-    if (!this.store || this.busy || this.heldNow || this.sweeping) return;
-    if (this.canSave.some((f) => !f())) return;
+  private sweep(all = false): boolean {
+    if (!this.store || this.busy || this.heldNow || this.sweeping) return false;
+    if (this.canSave.some((f) => !f())) return false;
     const now = performance.now();
-    if (!all && now - this.sweepT < SWEEP_MS) return;
+    if (!all && now - this.sweepT < SWEEP_MS) return false;
     this.sweepT = now;
     const { W, H, R } = this;
     const spots: [number, number][] = [];
     for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) spots.push([lx, ly]);
     const pick = all ? spots : [spots[this.sweepAt++ % spots.length]];
     const go = pick.filter(([lx, ly]) => !this.unwritten.some(([x, y]) => x === lx && y === ly));
-    if (!go.length) return;
+    if (!go.length) return false;
     const dev = this.core.host.gpu.device;
     const L = this.layout;
     const stage = dev.createBuffer({ label: 'region save', size: L.bytes * go.length, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -808,6 +807,7 @@ export class Streamer {
     this.sweeping = true;
     this.check(stage, items);
     void Promise.all(items.map((it) => this.checks.get(it.key))).finally(() => (this.sweeping = false));
+    return true;
   }
 
   /**
@@ -834,6 +834,22 @@ export class Streamer {
     });
   }
 
+  /**
+   * (round 100) Play changed the window's land in the box (window cells x0..x1, rows y0..y1): the regions under it are
+   * kept (saved when they're read back different from what's saved), not made again.
+   */
+  touch(x0: number, y0: number, x1: number, y1: number): void {
+    const { R, W, H } = this;
+    for (let ry = Math.max(0, Math.floor(y0 / R)); ry <= Math.min(H / R - 1, Math.floor(y1 / R)); ry++)
+      for (let rx = Math.max(0, Math.floor(x0 / R)); rx <= Math.min(W / R - 1, Math.floor(x1 / R)); rx++) {
+        const key = this.key((this.origin[0] + rx * R) / R, (this.origin[1] + ry * R) / R);
+        let info = this.winInfo.get(key);
+        if (!info) this.winInfo.set(key, (info = {}));
+        if (!info.changed) this.stats.touched++;
+        info.changed = true;
+      }
+  }
+
   /** (round 100) A new world: saving stops, this world's records are cleared (the page is then loaded again). */
   async newWorld(): Promise<void> {
     this.halted = true;
@@ -843,8 +859,11 @@ export class Streamer {
 
   /** (round 100) Every region of the window read back now and, where it changed, saved; resolves when it's on disk. */
   async saveAll(): Promise<void> {
-    while (this.busy || this.sweeping) await new Promise((r) => setTimeout(r, 16));
-    this.sweep(true);
+    // (till a sweep of the whole window runs: not while a slide is under way or something falls)
+    for (let t = 0; !this.sweep(true); t++) {
+      if (t > 600) throw new Error('saveAll: the window never came still enough to save (10 s)');
+      await new Promise((r) => setTimeout(r, 16));
+    }
     await Promise.all([...this.checks.values()]);
     await this.store?.flush();
   }
@@ -872,6 +891,7 @@ export class Streamer {
     }
     this.stats.loaded++;
     this.times.load.push(performance.now() - t0);
+    record('rs.load', performance.now() - t0);
     const { meta, header } = d;
     return {
       ...this.fromBody(d.body),
@@ -1315,6 +1335,7 @@ export class Streamer {
     dev.queue.submit([enc.finish()]);
     if (fz) this.frozeInto(fz);
     this.times.freeze.push(performance.now() - tf);
+    record('rs.freeze', performance.now() - tf);
     if (this.times.freeze.length > 400) this.times.freeze.shift();
     const surf = core.map.surface;
     this.stats.frozen += leaving.length;
@@ -1520,9 +1541,8 @@ export class Streamer {
     if (land.riverFlow) texs.riverFlow = land.riverFlow;
     const ground = land.ground ? land.ground.map((v) => v - oz) : undefined;
     // (round 100) its columns as made: a region whose hash is this when it's read back hasn't changed
-    const baseSig = new Float32Array(R * R * 2);
-    const last = timed('rs.hash', () => columnsHash(layers, this.layout, outside, oz, baseSig));
-    return { layers, bufs, texs, surface, judge, oz, outside, snap, ground, info: { baseSig, last }, how: 'made' };
+    const last = timed('rs.hash', () => columnsHash(layers, this.layout, outside, oz));
+    return { layers, bufs, texs, surface, judge, oz, outside, snap, ground, info: { last }, how: 'made' };
   }
 
   /** a region coming in with what changed while it was away (LandSource.changes since its snapshot) */
@@ -1607,6 +1627,7 @@ export class Streamer {
         n++;
       }
     if (n) {
+      this.touch(x0, y0, x1, y1);
       for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, slots);
       for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, veg);
       core.clearUndo();
@@ -1887,6 +1908,7 @@ export class Streamer {
       dev.queue.submit([enc.finish()]);
       this.pool.release(slot);
       this.times.thaw.push(performance.now() - tl);
+      record('rs.thaw', performance.now() - tl);
       if (this.times.thaw.length > 400) this.times.thaw.shift();
       record('write.pool', performance.now() - tl);
     } else {

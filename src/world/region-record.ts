@@ -245,22 +245,13 @@ export function decodeRecord(bytes: Uint8Array, R: number): DecodedRecord {
   return { header, body, meta };
 }
 
-/** a column's top and its matter's thickness, R × R of them: what tells a region changed from drift (CHANGED_DZ) */
+/** a column's top and its matter's thickness, R × R of them (columnsHash's `sig`) */
 export type ColumnsSig = Float32Array;
-/** (cells) a column's top or thickness moved by more than this: changed, not the sims' drift (0.03–0.06 measured) */
-export const CHANGED_DZ = 0.3;
-
-/** whether a region's columns changed from `base` (as made) by more than drift: any column's top or thickness */
-export function sigChanged(sig: ColumnsSig, base: ColumnsSig): boolean {
-  for (let i = 0; i < sig.length; i++) if (Math.abs(sig[i] - base[i]) > CHANGED_DZ) return true;
-  return false;
-}
 
 /**
  * A region's columns in world z, hashed (FNV-1a over each column's intervals joined with what's outside the window,
  * z to 1/256 of a cell): the same land cut at another oz hashes the same; and (`sig`) each column's top and the
- * thickness of its matter (not air, not liquid). The hash says whether a region is as it was saved; the signature
- * whether it changed from how it was made by more than the sims' drift.
+ * thickness of its matter (not air, not liquid). The hash says whether a region is as it was saved.
  */
 export function columnsHash(pages: Uint32Array, layout: RegionLayout, outside: Interval[][], oz: number, sig?: ColumnsSig): number {
   const { R, K, rc } = layout;

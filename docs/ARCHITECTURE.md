@@ -1120,14 +1120,16 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   slide that brings it in, so a slide only copies. `Streamer.frozen` is the pool's index in LRU order; the oldest
   not in use is evicted when a slot is wanted. The CPU parts go with a slot: what's outside the window per column,
   the surface, the ground, the relief, the coarse world's snapshot.
-- **Change detection**: every region frozen, and each of the window's in turn (one every `SWEEP_MS` = 400 ms; the
-  whole window when the page is hidden), is copied into staging and read back off the frame; its columns are
-  hashed in world z (`columnsHash`: the same land cut at another oz hashes the same) with a signature (each
-  column's top and matter thickness). A region is *changed* once its signature differs from how it was made by more
-  than `CHANGED_DZ` (0.3 cells: the sims' drift is 0.03–0.06) anywhere — an edit, a dig, a meteor, a body at rest,
-  an agent's dig, the sims moving ground far enough; from then on it's written whole whenever its hash differs from
-  what was saved. A region never changed is not saved: evicted, it's made again by the source when it's wanted.
-  Nothing waits for a readback but a load of the same region (`checks`).
+- **Change detection**: a region is *changed* once play touches it (`Streamer.touch`, window cells): every event
+  sent to the GPU but scares and ripples (edits — the world API's, the editor's, agents' digs, a story's door —
+  lightning, chips, a fire lit, a tap to grow: `Simulation.eventTaps`), what falls and lands or comes to rest
+  (`Integrity.onTouched`), the coarse world's events in sight (`editLive`). Not the sims' own drift (sediment,
+  water, plants: a still region read twice differs in ~40 columns by ≤ 0.03 cells). Every region frozen, and each
+  of the window's in turn (one every `SWEEP_MS` = 400 ms; the whole window when the page is hidden), is copied into
+  staging and read back off the frame; a changed one's columns are hashed in world z (`columnsHash`: the same land
+  cut at another oz hashes the same) and it's written whole when the hash differs from what was saved. A region
+  never changed is not saved: evicted, it's made again by the source when it's wanted. Nothing waits for a readback
+  but a load of the same region (`checks`).
 - **The store** (`world/region-store.ts`, worker `region-store.worker.ts`): IndexedDB `reclaimed-world`, stores
   `regions` (key `world|rx,ry` → the compressed record) and `meta` (→ session, time, raw and packed sizes, hash; read
   whole at open: `has` answers at once). Records are byte-shuffled (each word's four bytes in four planes) and
