@@ -30,6 +30,21 @@ const WG_PER_CHUNK = (CHUNK / 8) * (CHUNK / 8);
 export const LIVE = 0;
 /** the binding the list sits at in a culled kernel */
 export const TILES_BINDING = 39;
+/**
+ * (round 104, simscale) A list NEAR + n: the live chunks and every chunk next to one (the 3 x 3 round each), and
+ * the rest on their slow turn every n ticks — common.wgsl nearLive, slowTick. For a pass whose sleeping columns
+ * still move slowly (the held rivers follow the climate's wetness): beside what's awake every tick as before, so
+ * what's awake reads the same neighbours; further off at 1/n the rate.
+ */
+export const NEAR = 1000;
+/**
+ * (round 104, simscale) A list AWAY + n: the chunks not live, each on its slow turn every n ticks (common.wgsl
+ * slowTick's stagger). For what still happens asleep but needn't every tick — the ambient particles' emission, at
+ * n times the chances.
+ */
+export const AWAY = 2000;
+/** (round 104, simscale) lists from CUSTOM on are their owner's (setList): the chunks a pass's own inputs touch */
+export const CUSTOM = 3000;
 
 export class AwakeTiles {
   readonly cx: number;
@@ -78,20 +93,62 @@ export class AwakeTiles {
     return this.lists.get(n)?.count ?? this.chunks;
   }
 
+  /** per chunk this tick: 1 awake or drowsy (the live list's own) */
+  private live = new Uint8Array(0);
+  /** per chunk this tick: 1 live or next to a live one (NEAR lists) */
+  private near = new Uint8Array(0);
+
   /** This tick's lists from the sleep mask (bits set: asleep; absent: all awake) and the drowsy mask. */
   update(tick: number, sleep?: Uint32Array, drowse?: Uint32Array): void {
+    if (this.live.length !== this.chunks) {
+      this.live = new Uint8Array(this.chunks);
+      this.near = new Uint8Array(this.chunks);
+    }
+    const live = this.live;
+    for (let c = 0; c < this.chunks; c++) {
+      const w = c >> 5;
+      const b = 1 << (c & 31);
+      const asleep = !!sleep && c < sleep.length * 32 && (sleep[w] & b) !== 0;
+      live[c] = !asleep || (!!drowse && (drowse[w] & b) !== 0) ? 1 : 0;
+    }
+    let dilated = false;
     for (const [n, l] of this.lists) {
+      if (n >= CUSTOM) continue;
       let k = 0;
-      for (let c = 0; c < this.chunks; c++) {
-        const w = c >> 5;
-        const b = 1 << (c & 31);
-        const asleep = !!sleep && c < sleep.length * 32 && (sleep[w] & b) !== 0;
-        const live = !asleep || (!!drowse && (drowse[w] & b) !== 0) || (n > 0 && (tick + c * 7) % n === 0);
-        if (live) l.data[k++] = c;
-      }
+      if (n >= AWAY && n < CUSTOM) {
+        const m = n - AWAY;
+        for (let c = 0; c < this.chunks; c++) if (!live[c] && m > 0 && (tick + c * 7) % m === 0) l.data[k++] = c;
+      } else if (n >= NEAR) {
+        if (!dilated) this.dilate();
+        dilated = true;
+        const m = n - NEAR;
+        for (let c = 0; c < this.chunks; c++) if (this.near[c] || (m > 0 && (tick + c * 7) % m === 0)) l.data[k++] = c;
+      } else for (let c = 0; c < this.chunks; c++) if (live[c] || (n > 0 && (tick + c * 7) % n === 0)) l.data[k++] = c;
       if (k) this.device.queue.writeBuffer(l.buf, 0, l.data, 0, Math.max(4, Math.ceil(k / 4) * 4));
       l.count = k;
     }
+  }
+
+  /** (simscale) a custom list's chunks this tick (chunk indices, each once; its owner's pass dispatched over them) */
+  setList(n: number, chunks: ArrayLike<number>): void {
+    if (n < CUSTOM) throw new Error(`simcull: list ${n} is the sleep mask's, not a custom one`);
+    this.list(n);
+    const l = this.lists.get(n)!;
+    const k = Math.min(chunks.length, this.chunks);
+    for (let i = 0; i < k; i++) l.data[i] = chunks[i];
+    if (k) this.device.queue.writeBuffer(l.buf, 0, l.data, 0, Math.max(4, Math.ceil(k / 4) * 4));
+    l.count = k;
+  }
+
+  /** near = live grown by a chunk (the 3 x 3 round each live one) */
+  private dilate(): void {
+    const { cx, cy, live, near } = this;
+    near.fill(0);
+    for (let j = 0; j < cy; j++)
+      for (let i = 0; i < cx; i++) {
+        if (!live[j * cx + i]) continue;
+        for (let b = Math.max(0, j - 1); b <= Math.min(cy - 1, j + 1); b++) for (let a = Math.max(0, i - 1); a <= Math.min(cx - 1, i + 1); a++) near[b * cx + a] = 1;
+      }
   }
 
   destroy(): void {
@@ -185,5 +242,40 @@ export class TileCopy {
       this.bound.set(key, g);
     }
     dispatchTiles(enc, prof, 'copyback', k, g, this.tiles, n);
+  }
+}
+
+const TEXCOPY_WGSL = `
+@group(0) @binding(3) var srcT: texture_2d<f32>;
+@group(0) @binding(4) var dstT: texture_storage_2d<rgba32float, write>;
+@compute @workgroup_size(8, 8)
+fn main(@builtin(global_invocation_id) id: vec3<u32>) {
+  textureStore(dstT, vec2<i32>(id.xy), textureLoad(srcT, vec2<i32>(id.xy), 0));
+}
+`;
+
+/**
+ * (round 104, simscale) A ping-pong rgba32float texture's copy back over the live chunks only (one texel a column):
+ * the lava's spill, whose pass is culled — a sleeping chunk's next texels are what it last copied, so the whole copy
+ * put back what was there.
+ */
+export class TileTexCopy {
+  private k: ComputeKernel;
+  private group: GPUBindGroup;
+  constructor(
+    device: GPUDevice,
+    globals: GPUBuffer,
+    materials: GPUBuffer,
+    private tiles: AwakeTiles,
+    src: GPUTexture,
+    dst: GPUTexture,
+    private n: number,
+  ) {
+    const c = cullKernel(tiles, [commonWgsl, materialsWgsl, TEXCOPY_WGSL].join('\n'), { 0: 'uniform', 2: 'uniform', 3: 'tex', 4: 'stex' }, 'main', n);
+    this.k = makeCompute(device, `texcopy ${src.label}`, [c.code], c.spec);
+    this.group = makeBindGroup(device, `texcopy ${src.label}`, this.k.layout, { 0: globals, 2: materials, 3: src.createView(), 4: dst.createView(), [TILES_BINDING]: c.buf });
+  }
+  copy(enc: GPUCommandEncoder, prof: Profiler): void {
+    dispatchTiles(enc, prof, 'copyback', this.k, this.group, this.tiles, this.n);
   }
 }

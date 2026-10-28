@@ -109,6 +109,8 @@ export class TileLand {
   }
 
   /** the Globals the scratch's passes read: the frame's, its size, chunks and origin the region's, no sleep */
+  // (ringwin, when it lands: the window's columns addressed as a ring — colIdx/colIdxI wrap by a ring offset in the
+  // Globals; the scratch is a plain window one region across, so its copy must set that offset to 0 here too)
   private patchGlobals(enc: GPUCommandEncoder, rx: number, ry: number): void {
     const u = new Uint32Array(this.patchData);
     const f = new Float32Array(this.patchData);

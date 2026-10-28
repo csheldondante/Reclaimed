@@ -40,14 +40,43 @@ import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
 import { RIVERS, RIVER_PULL, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, STATS_COUNT, type WorldGpu } from './world-gpu';
 
 /** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) */
-const riverHeld = `const RIVER_TABLE: bool = ${RIVERS === 'table'};
+/**
+ * (round 104, simscale) With ?rivers=table the water is dispatched over the live chunks, those next to them, and the
+ * rest on a slow turn every RIVER_SLOW_N ticks (sim/cull.ts NEAR): a held river asleep only follows the rivers'
+ * wetness (the climate's), slowly — off from anything live it relaxes RIVER_SLOW_N steps at once (water_depth.wgsl).
+ * ?riverslow=1: every tick everywhere, as before.
+ */
+const RIVER_SLOW_N = (() => {
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverslow');
+  const n = v === null ? 15 : Number(v);
+  if (!(n >= 1 && Number.isInteger(n))) throw new Error(`?riverslow=${v}: ticks between a far river's updates, 1 or more`);
+  return n;
+})();
+const RIVER_SLOW = SIM_CULL && RIVERS === 'table' && RIVER_SLOW_N > 1;
+const riverHeld = `const RIVER_SLOW_N: u32 = ${RIVER_SLOW ? RIVER_SLOW_N : 1}u;
+const RIVER_TABLE: bool = ${RIVERS === 'table'};
 const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
 const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
 const RIVER_PULL: f32 = ${RIVER_PULL};
 ` + riverHeldWgsl;
 import { SETTLE, SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
-import { LIVE, cullKernel, dispatchTiles } from './cull';
+import { LIVE, NEAR, SIM_CULL, cullKernel, dispatchTiles } from './cull';
+import { WindRects } from './windrect';
+import { EventKind, type GlobalsState, type WorldEvent } from './globals';
+
+/**
+ * (round 104, simscale) ?windbox=0: the wind field over its whole texture every update, as before. On: the painted
+ * wind updated only where something painted it lately (sim/windrect.ts), the map's own wind under it refreshed a band
+ * an update — all of it every WIND_BANDS updates (?windbands=N).
+ */
+const WIND_BOX = typeof location === 'undefined' || new URLSearchParams(location.search).get('windbox') !== '0';
+const WIND_BANDS = (() => {
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('windbands');
+  const n = v === null ? 16 : Number(v);
+  if (!(n >= 1 && Number.isInteger(n))) throw new Error(`?windbands=${v}: a whole number of bands, 1 or more`);
+  return n;
+})();
 
 /**
  * (perfopt, ?inplace=1) The passes that rewrite whole columns — the editor's brush, the structures, the layer
@@ -186,7 +215,8 @@ export class WaterSystem implements SimSystem {
     // (simcull: not with ?rivers=table — a held river's columns are simulated asleep, riverheld.wgsl: they relax to
     // the atlas's table and their flux follows, and the flux pass's cost is theirs. A list of the chunks with rivers
     // made on the GPU each tick cost more (0.04 ms a frame) than the water's passes over the rest saved.)
-    const tiles = RIVERS === 'table' ? undefined : flowN('water');
+    // (round 104, simscale: with rivers=table, the live chunks, those beside them and the rest's slow turns — NEAR)
+    const tiles = RIVERS === 'table' ? (RIVER_SLOW ? NEAR + RIVER_SLOW_N : undefined) : flowN('water');
     const fluxK = (settle: boolean) =>
       kernel(
         device,
@@ -411,10 +441,14 @@ export class RenderFieldsSystem implements SimSystem {
 ` + renderFieldsWgsl + flowWgsl + riverHeld,
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 22: 'tex', 30: 'uniform' },
       { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 22: world.riverFlowView, 30: world.meshRegion },
+      false,
+      // (round 104, simscale: with ?sleepmore=1 it skips a sleeping chunk but a drowsy one — the live list exactly —
+      // so it's dispatched over the live chunks only; the field mesh's region is always set, MR.n.w 1)
+      SLEEP_MORE ? LIVE : undefined,
     );
   }
   encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.world.groups);
+    run(enc, this.prof, this.name, this.s, this.world);
   }
 }
 
@@ -423,16 +457,89 @@ export class WindFieldSystem implements SimSystem {
   readonly name = 'windfield';
   // (perfopt, ?windhz=: every WIND_K ticks, each update the time since — sim/flow.ts)
   readonly period = WIND_K;
-  private s;
-  private groups: [number, number];
-  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = kernel(device, world, 'windfield', `const WIND_K: f32 = ${WIND_K}.0;
-` + windFieldWgsl, { 15: 'tex', 16: 'stex', 30: 'read', 31: 'read' }, { 15: world.windFieldView, 16: world.windFieldNextView, 30: world.physPuff, 31: world.windBlows });
-    this.groups = [Math.ceil(world.windField.width / 8), Math.ceil(world.windField.height / 8)];
+  private k: ComputeKernel;
+  /** (round 104, simscale) a uniform and its bind group per dispatch of a tick: the painted box, the band, strips */
+  private slots: { buf: GPUBuffer; group: GPUBindGroup }[] = [];
+  /** where the painted wind is (sim/windrect.ts); null: ?windbox=0, the whole field every update as before */
+  readonly rects: WindRects | null;
+  /** (simscale) while any says so, the whole field is painted (physics: things landing shove the air anywhere) */
+  readonly wholeWhile: (() => boolean)[] = [];
+  /** the next band of the map's own wind to refresh */
+  private band = 0;
+  /** texel rects of land just come in (a slide's strips): their map wind made at the next update */
+  private fresh: [number, number, number, number][] = [];
+  /** the last update's painted box (the perf overlay, tests) */
+  lastBox: [number, number, number, number] | null = null;
+  private tw: number;
+  private th: number;
+  constructor(private device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+    this.tw = world.windField.width;
+    this.th = world.windField.height;
+    this.k = makeCompute(device, 'windfield', [commonWgsl, materialsWgsl, `const WIND_K: f32 = ${WIND_K}.0;
+` + windFieldWgsl], { 0: 'uniform', 2: 'uniform', 15: 'tex', 16: 'stex', 30: 'read', 31: 'read', 32: 'uniform' });
+    this.rects = WIND_BOX ? new WindRects(this.tw, this.th, FLOW_SUB) : null;
   }
-  encode(enc: GPUCommandEncoder): void {
-    dispatch(enc, this.prof, this.name, this.s.k, this.s.group, this.groups);
-    enc.copyTextureToTexture({ texture: this.world.windFieldNext }, { texture: this.world.windField }, [this.world.windField.width, this.world.windField.height]);
+  private slot(i: number): { buf: GPUBuffer; group: GPUBindGroup } {
+    let s = this.slots[i];
+    if (!s) {
+      const buf = this.device.createBuffer({ label: `windfield rect ${i}`, size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const w = this.world;
+      s = { buf, group: makeBindGroup(this.device, `windfield ${i}`, this.k.layout, { 0: w.globals, 2: w.materials, 15: w.windFieldView, 16: w.windFieldNextView, 30: w.physPuff, 31: w.windBlows, 32: buf }) };
+      this.slots[i] = s;
+    }
+    return s;
+  }
+  /** this tick's painting (Simulation.step): the player's strokes and the clicks' ripples */
+  collect(g: GlobalsState, sent: readonly WorldEvent[], tick: number): void {
+    const r = this.rects;
+    if (!r) return;
+    for (const gg of g.gusts.slice(1)) {
+      if (!(gg.strength > 0) || !(gg.len ?? 0)) continue;
+      const len = gg.len ?? 0;
+      // (a segment ending at (x, y), len back along (dx, dy))
+      r.stir(gg.x - (gg.dx * len) / 2, gg.y - (gg.dy * len) / 2, gg.radius + len / 2, tick);
+    }
+    for (const e of sent) if (e.kind === EventKind.Ripple) r.stir(e.x, e.y, e.radius, tick);
+    if (this.wholeWhile.some((f) => f())) r.stirAll(tick);
+  }
+  /** the window slid (columns, rows): the painted boxes go with it, the strips come in get their map wind */
+  shift(dx: number, dy: number): void {
+    const tx = Math.round(dx / 2);
+    const ty = Math.round(dy / 2);
+    this.rects?.shift(tx, ty);
+    if (tx > 0) this.fresh.push([this.tw - tx, 0, this.tw, this.th]);
+    if (tx < 0) this.fresh.push([0, 0, -tx, this.th]);
+    if (ty > 0) this.fresh.push([0, this.th - ty, this.tw, this.th]);
+    if (ty < 0) this.fresh.push([0, 0, this.tw, -ty]);
+  }
+  private run(enc: GPUCommandEncoder, i: number, r: [number, number, number, number], mode: number): void {
+    const [x0, y0, x1, y1] = r;
+    if (x1 <= x0 || y1 <= y0) return;
+    const s = this.slot(i);
+    this.device.queue.writeBuffer(s.buf, 0, new Uint32Array([x0, y0, mode, 0]));
+    dispatch(enc, this.prof, this.name, this.k, s.group, [Math.ceil((x1 - x0) / 8), Math.ceil((y1 - y0) / 8)]);
+    enc.copyTextureToTexture({ texture: this.world.windFieldNext, origin: { x: x0, y: y0 } }, { texture: this.world.windField, origin: { x: x0, y: y0 } }, [x1 - x0, y1 - y0]);
+  }
+  encode(enc: GPUCommandEncoder, tick = 0): void {
+    if (!this.rects) {
+      this.run(enc, 0, [0, 0, this.tw, this.th], 0);
+      return;
+    }
+    let i = 0;
+    // the painted wind, where it is
+    const box = (this.lastBox = this.rects.box(tick));
+    if (box) this.run(enc, i++, box, 0);
+    // the map's own wind under it everywhere else: a band an update (all of it every WIND_BANDS updates), and the
+    // land just come in at once
+    const rows = Math.ceil(this.th / WIND_BANDS);
+    const b0 = this.band * rows;
+    this.band = (this.band + 1) % WIND_BANDS;
+    this.run(enc, i++, [0, b0, this.tw, Math.min(this.th, b0 + rows)], 1);
+    for (const f of this.fresh.splice(0)) this.run(enc, i++, [Math.max(0, f[0]), Math.max(0, f[1]), Math.min(this.tw, f[2]), Math.min(this.th, f[3])], 1);
+  }
+  /** (prime) the whole field made at once: the map's own wind everywhere, before anything reads it */
+  prime(enc: GPUCommandEncoder): void {
+    this.run(enc, 0, [0, 0, this.tw, this.th], this.rects ? 1 : 0);
   }
 }
 

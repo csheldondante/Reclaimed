@@ -65,6 +65,11 @@ export class WorldGpu {
   /** (round 85, simcull — sim/cull.ts) the chunks live this tick, by a flow's sleeping rate (Simulation.step
    *  makes them from the sleep mask), and the ping-pong fields' copy back over them; null without the flag */
   readonly tiles: AwakeTiles | null;
+  /** (round 104, simscale) CPU contract for the projection (grids/systems.ts ProjectSystem): per structure slot its
+   *  world xy bounds (grids/structures.ts), and whether every column must be projected next tick (bodyCpu written,
+   *  the window slid) */
+  readonly strBounds = new Map<number, [number, number, number, number]>();
+  projectAll = true;
   readonly tileCopy: TileCopy | null;
 
   // canonical layered world (material physics owns writes)

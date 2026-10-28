@@ -513,6 +513,8 @@ export class Integrity {
     }
     const dev = this.core.host.gpu.device;
     dev.queue.writeTexture({ texture: this.core.world.bodyCpu }, P as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
+    // (round 104, simscale: written whole, so projected whole next tick — grids/systems.ts ProjectSystem)
+    this.core.world.projectAll = true;
   }
 
   /**

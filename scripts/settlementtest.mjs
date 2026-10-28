@@ -172,6 +172,14 @@ try {
     ok(raid.ok, `a raid: ${raid.raiders} raiders against ${raid.guards} guards`);
     if (raid.ok) {
       await sleep(5000);
+      // (round 104, simscale) the agents' GPU a frame during the raid
+      await page.evaluate(() => window.reclaimed.core.host.profiler.resetTotals());
+      await sleep(6000);
+      const rp = await page.evaluate(() => {
+        const P = window.reclaimed.core.host.profiler;
+        return { gpu: +(P.gpuTotalMs / Math.max(P.framesResolved, 1)).toFixed(2), agents: +((P.totalMs.get('agents') ?? 0) / Math.max(P.framesResolved, 1)).toFixed(3) };
+      });
+      console.log(`PERF raid ${tag}: GPU ${rp.gpu} ms/frame (agents ${rp.agents})`);
       if (!argv.includes('--nogif')) await gif(page, `${out}/raid-${tag}.gif`, 45, 400);
       else await sleep(18000);
       await page.screenshot({ path: `${out}/raid-${tag}.png` });

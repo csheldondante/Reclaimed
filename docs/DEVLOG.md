@@ -8635,3 +8635,179 @@ to 80–120 at zoom 5 / window 512, pop-in from 120–160. Frames over budget pe
   way (the window covers it). Parked cover at zoom 5: 0.979 with tiles, 0.972 without (the window nearly covers it
   there): the tiles matter at the sandbox zoom, which the pan bench's smoke doesn't run.
 
+## 2026-10-28 — round 104 (`slidehitch`): a slide without a long frame
+
+The user (verbatim): "I would like to try to get a steady 60fps on the phone with no hiccups and no pop in if
+possible." The pan bench's smoke (BN29) had every slide cost one 117–207 ms frame, classed gpu-held / gpu-busy behind
+`rs.load` (30–77 ms) and `pool.upload`.
+
+**Taking a slide apart** (scripts/slideprobe.mjs, new: the atlas at q=low 412x915, every system on, 1x, a window and a
+zoom, a straight pan up the screen from one land source — `gen`, `pool` back and forth over 384 cells, `disk` a line
+filled with every region touched and saved, the window warped back and panned again; every frame's interval with the
+streamer's state, the MB written / copied / mapped and the copy commands encoded in it; each slide's frames; the hitch
+recorder's worst with steps and io). Window 512, zoom 5, 60 cells/s, 10 s, places 78898ba:
+- generated: p50 10, p99 173, max 427 ms, 19 frames over 33 ms (14 over 50); pool: p99 216, max 374, 32 over 33.
+- the worst frames: gpu-busy and gpu-held with ~1 ms of CPU in them, 79–88 MB copied and **87 MB mapped** for reading
+  in the frame. Not the store: `rs.load` timed the await of the worker (IndexedDB, inflate), not the main thread.
+- what a slide asked of the GPU's queue: the strip leaving (8 regions at 512) copied into pool slots a row at a time
+  (each kept buffer's 64 rows: ~800 commands a region), the same back for the strip coming in, the shift of every
+  per-column buffer along x a row at a time (29 buffers x 512 rows: ~15 000), the clears of what comes in a row at a
+  time (~1 100 a region) — ~28 000 commands, each its own on D3D11 — and the leaving strip read back whole (a region is
+  ~11 MB at the whole-height window's K) to hash, whether or not play had touched it (only touched regions are saved).
+
+**What moved** (BACKLOG SH1–SH5):
+- the region rectangles by a compute kernel (scenes/region-copy.ts RegionCopier: rectangles of u32 words, a dispatch
+  each, parameters in one write a pass into a ring of uniform slots, bind groups kept per buffer pair): a region's
+  buffers are 13 dispatches, not ~800 copies — freeze, thaw and the CPU write path; `?slidecopy=rows` the old way;
+- the shift along x one copy a plane (new[i] = old[i + dx]: what wraps from the next row lands only in the columns
+  coming in, which are cleared or written after); the strip coming in cleared at once (a clear a plane along y, a
+  kernel rectangle from a row of zeros along x);
+- no readback of a region play never touched (the leaving strip's stage, the sweep): it's made again when wanted;
+  `saveAll` is done when nothing changed;
+- a loaded record's body uploaded into the pool as it came (it was split into layers, bufs and texs and packed back);
+  `rs.load` now times the main thread's decode only; a readback's hash and record are a task a region, run a few ms
+  a frame (`Streamer.later`; at once while the page is hidden), the stage read in place;
+- (BN28) the pool's victim is the region farthest from the window's middle a second of the camera's motion on: it
+  evicted what was left behind before what was made ahead, so a pan back lost what it came back to.
+
+**After** (same probe, same build otherwise):
+
+| source | p99 ms | max ms | > 33 ms | > 50 ms | came in (10 s) |
+|---|---|---|---|---|---|
+| generated | 173 → 29.9 | 427 → 57.9 | 19 → 5 | 14 → 1 | 112 made |
+| pool | 216 → 30.5 | 374 → 49.4 | 32 → 9 | 17 → 0 | thawed 15 → 25, 5 from disk |
+| disk | — → 38.8 | — → 88.3 | 11 | 4 | 32 loaded (every region touched: their 87 MB readbacks remain) |
+
+Each slide's own frames are now 9–30 ms (copy commands ~800 a slide, at most ~700 in one frame, ~400 MB of GPU
+copies: the shift still goes through the scratch and back). The frames left over 33 ms are gpu-held 60–90 ms frames
+mostly away from the slides, with the GPU's own frame at 20–40 ms (structure, draw, agents): the sims' and the
+renderer's (simscale, tilecache). With CPU throttle 4x the generated pan's p99 is 138 ms (gpu-held and gc); the base
+wasn't measured throttled (GPU time). Not run yet: `?bench=pan` before and after with its speed ramp, and the phone.
+
+### Round 104, later (`slidehitch`): the phone's one slide frame
+
+The phone's pan bench on round 1 (data/bench/pixel9a-pan-slidehitch.json): at zoom 14, window 256, 60 fps panning at
+30 cells/s with exactly one slow frame a slide: generated 33 ms ("browser"), disk and pool 50 ms (gpu-busy), the CPU
+in it under 1 ms. Wider windows fail on their parked frame cost (the sims'), not the slide; window 768 never loaded.
+What the slide's frame still asked of the GPU: the shift of every per-column buffer and texture copied out to the
+scratch and back (~400 MB of copies a slide at window 512, ~100 at 256).
+
+- the shift in place: RegionCopier.shift moves a storage buffer within itself in bands of a region, a dispatch a
+  band, in the order that reads a band before it's written over (d > 0 first to last, d < 0 last to first) — each word
+  read and written once; textures copy out only what stays; the scratch buffer only for a buffer that isn't a
+  storage buffer (none of the world's: ~64 B a column of GPU memory saved);
+- the pool's uploads at most 2 MB a frame;
+- the slide's GPU timed: the profiler's `slide` pass (an empty pass's start to another's end round the slide's work).
+
+Desktop probe (scripts/slideprobe.mjs, 60 cells/s, 10 s):
+
+| run | slide GPU ms (smoothed / max) | copies a slide MB | p99 | max | > 33 ms |
+|---|---|---|---|---|---|
+| generated, window 512 zoom 5 | 13.4 / 19.9 | ~400 → ~130 | 39.1 | 95.5 | 17 |
+| generated, window 256 zoom 14 | 4.8 / 5.5 | | 10.6 | 39.5 | 1 |
+| generated, 256, CPU throttle 4x | 5.8 / 6.6 | | 30.4 | 58.6 | 9 |
+| pool, 256, CPU throttle 4x | 5.2 / 5.8 | | 29.5 | 39.2 | 3 (thawed 20, loaded 2) |
+
+The 512 run's tail is worse than round 1's (p99 30 → 39, frames over 33 ms 5 → 17) while the slide's own GPU work is
+a third. The extra frames are gpu-held 60–90 ms frames away from the slides, on a GPU other agents share, so they
+aren't put down to this change; the 256 runs are what the phone does. Throttled 4x, the slide's CPU is the cost now:
+26 ms at most, 9 on average. Of that, the freeze's CPU part is ~7, the CPU grids, camera, events, onShift and
+windowMoved ~9, the level's onSlide ~5 (integrity.slid re-projects), a region's write up to 12 (BACKLOG SH9).
+Window 768 by estimate needs ~650 MB of GPU memory before the pool and meshes (SH10).
+
+The merge checks on slidehitch: towertest all passed; floatsweep all passed (0 floating); worldsavetest one FAIL,
+"warped 10 regions away and back: thawed > 0" (4 loaded, none thawed). places' own streamer fails it the same way:
+a pool of 32 can't hold the old window (25) and the new one with its ring. The ride check: 27 of 27 thawed, against
+places' 15 thawed and 2 loaded. The eviction is now the least recently used of the regions more than a region and
+a half outside where the window is heading, else the farthest.
+## Round 104 — the sims scale with what's active, not the window (branch `simscale`, from places 1a9b65c)
+
+The user (DECISIONS round 104): "we can limit the sleep check to regions the player is acting on and essentially have
+the simulation scale with only the things we want active which is typically very little. I would like to try to get a
+steady 60fps on the phone". The evidence (BACKLOG PF1): the phone's v3 A/B, all sims off saving 1.4 / 25 / 52 ms a
+frame at windows 320 / 448 / 512 with 0–33 chunks awake; its v4 in one pass: agents 15.7 ms a frame, project 1.6,
+particles 1.0, water 0.5, lava 0.26, wind field 0.2 — with nothing awake.
+
+**The inventory** (scripts/simprobe.mjs, new: the atlas at q=low 412 x 915 as the phone runs it, every system on,
+1x; each system run alone bracketed by two empty timestamped passes, so the copies between its passes count; GPU ms
+a tick, median of 6; desktop iGPU; base = places 1a9b65c):
+
+| pass | dispatched over (before) | after |
+|---|---|---|
+| structure, edit, oil, sediment(+out), contamination, moisture, fire, wilt, ecology, climate | live chunks (round 85) | same |
+| surface | live chunks with sleepmore (the phone's set) | same |
+| water (rivers=table: the atlas) | the whole window every tick (held rivers) | live chunks, those next to them, the rest every 15 ticks (NEAR list) |
+| renderfields (every 2 ticks) | the whole window (its kernel skipped sleeping chunks with sleepmore) | live chunks (the same columns) |
+| lava flux / depth | live chunks | same; nothing live: no passes at all |
+| lava spill copy (rgba32f, a texture) | whole texture every tick (untimed) | live chunks (TileTexCopy) |
+| lava-prep (prisms) | whole window every tick | only when something's live (else last tick's prisms stand) |
+| particles emit / fire / petals | whole window every tick | live chunks every tick; sleeping chunks each every 8 ticks at 8x the chances |
+| project (structures, bodies → nature) | whole window every tick | chunks under structures (and those they left); everything for a tick after bodyCpu is written or a slide, and while physics holds voxels |
+| wind field | whole texture every tick | the painted wind's box only (strokes, blows, ripples, landing puffs, grown by drift and spread; none 45 s after the last); the map's own wind refreshed a sixteenth of the texture a tick, and the strips a slide brings in at once |
+| agents (surfaces/links every 8, relax x sweeps, occupancy every tick) | whole window | unchanged by default; `?agentscope=1` the scope (below) |
+| sway, particles-update, stats (every 20), structtick | whole window / per particle / per voxel | unchanged |
+
+| window, scene | sims a tick before → after (no agents) | particles | project | water | wind field | lava |
+|---|---|---|---|---|---|---|
+| 320 parked (3–14 awake) | 2.09 → 1.37 | 0.39 → 0.30 | 0.24 → 0 | 0.13 → 0.10 | 0.11 → 0.07 | 0.24 → 0.12 |
+| 320 riding | 1.39 → 0.53 | 0.61 → 0.30 | 0.31 → 0 | 0.19 → 0.09 | 0.11 → 0.05 | 0.08 → 0 |
+| 448 parked | 1.80 → 0.57 | 0.84 → 0.32 | 0.35 → 0 | 0.21 → 0.11 | 0.17 → 0.07 | 0.12 → 0 |
+| 448 riding | 1.77 → 1.06 | 0.73 → 0.39 | 0.34 → 0 | 0.27 → 0.54 (a slide's drowsy chunks in the sample) | 0.18 → 0.04 | 0.14 → 0 |
+| 512 parked | 2.06 → 0.64 | 0.82 → 0.31 | 0.54 → 0 | 0.24 → 0.15 | 0.17 → 0.06 | 0.14 → 0 |
+| 512 riding | 2.63 → 0.59 | 1.29 → 0.26 | 0.58 → 0 | 0.24 → 0.10 | 0.19 → 0.06 | 0.18 → 0 |
+
+So with little awake the sims no longer grow with the window: ~0.55–0.65 ms a tick at 448 and 512 against 1.8–2.6.
+What's left of the whole window: sway (0.06–0.17, render-only springs), particles-update (per particle), the
+renderfields' and surface's drowsy chunks after each slide (sleepmore makes every chunk drowsy for 0.25 s), and the
+held rivers' slow turns.
+
+**Behaviour where things are awake**: the culled passes are the same kernels over the same live columns. culltest
+(flood + fire near the camera, then asleep) on base and after: the same checks pass and fail (the fire-lit check
+fails on both: pre-existing), flood water 46.76 vs 46.8 and window water 8751.5 vs 8751.4 — the held rivers' slow
+turns (they relax 15 steps at once: water_depth.wgsl RIVER_SLOW_N; `?riverslow=1` every tick). Differences by design:
+painted wind under 0.05 cells/s is none (so it ends), and outside its box the field holds the map's own wind
+refreshed at 3.75 Hz (`?windbox=0` as before, `?windbands=N`); a sleeping chunk's ambient particles come 8 at a time
+every 8 ticks (`?emitslow=1` as before).
+
+**Wind and climate** (the user, round 104: "Why does wind and climate need to run everywhere and at what frequency?
+Most wind effects I've seen are gusts near the player and maybe a global Atlas level tick that can be very
+infrequent"): the wind field now updates only round what painted it (sim/windrect.ts: each stamp's box grown by how far
+its wind can drift, 30% of at most 24 cells/s dying down over 7 s, and spread, three sigma of the 6%-a-step blur;
+forgotten 45 s after, when it's under 0.05 everywhere). The map's own wind is analytic (common.wgsl mapWind) and
+refreshed under it a band a tick. Climate already ran on the live chunks only (period 4); so do moisture (1),
+contamination (1), ecology (15), wilt (1) — none dispatched where nothing is awake. Climate near the player at a low
+rate and an atlas-level step for land arriving are left open (BACKLOG SC4): a sleeping chunk's derived fields
+(surface, render fields) aren't remade, so climate there would change the layers without them.
+
+**The agents** (the phone's 15.7 ms; the user, round 104: paths for towns, flow fields only as needed): `?agentscope=1`
+(agents/scope.ts) keeps the surfaces, links, fields and occupancy only over the chunks round the units (their box read
+back from the GPU every 8 ticks), the seeds, the targets, what's held or flying, with a 48-column margin, held 10 s
+after a chunk was last needed; a chunk come into it starts over (agents.wgsl scopeIn), a neighbour outside is no way.
+And a field whose distances stop moving (the GPU flags it, read back) is frozen until its seeds move, the surfaces
+change (a top moved more than half a cell, a link, wet, a room) or the scope grows: the GPU's equivalent of the user's
+paths, made once and walked down. Desktop, 20 town units in the window: agents 3.6 / 7.3 / 6.6 ms a tick at 320 /
+448 / 512 → 1.6 / 0.5 / 1.5. Superseded the same day by the front (below).
+
+### Round 104 (2) — the agents' fields: a scope and a front, on by default (`simscale`)
+
+The first cut (above: `?agentscope=1`, fields frozen once a read-back said none moved) didn't hold in a town: the
+houses going up, the quarry and the wet margins moved some surface every peel, and any move unfroze every field over
+the whole scope. So freezing is replaced by a front built on the GPU (agents.wgsl): each chunk carries a mark — a
+distance that moved in the last sweep, a surface or a link peeled differently, a seed placed or moved, a chunk come
+into the scope — and a sweep relaxes only the marked chunks and those next to them (frontReset, frontBuild: one
+thread a chunk of the scope's box, appending to a list and its indirect dispatch's count; frontClear; then relax
+dispatched indirect over the list, marking the next sweep's). A settled field marks nothing, so the front empties;
+a change relaxes only round where it spreads. The fields stay exact (a surface moved by any amount marks its chunk),
+and the scope (units' box read back every 8 ticks, seeds, targets, held and flying, a 48-column margin, each chunk
+held 10 s after it was last needed) bounds where anything runs. `?agentscope=0`: the whole window as before.
+
+| agents' GPU a frame (in the game, desktop iGPU) | before | after |
+|---|---|---|
+| parked by a town of 20, window 320 / 448 / 512 | 3.23 / 6.32 / 10.93 | 0.28 / 0.28 / 0.87 |
+| riding, 448 / 512 | 3.32 / 10.69 | 0.45 / 0.95 |
+| settlementtest (window 320): at the town / in its raid | 1.09 / 1.14 | 0.40 / 0.19 |
+
+The same outcomes: settlementtest's town 15 trips and 4 blocks (base 17 and 4 over the same 12 s), the raid repelled
+with 14 dead on both; crewtest's totals as the base's (its pit-drop check fails on both); hordetest's phases close
+in, swing, die to the blast and burn as before. With the sims (above), the GPU frame span parked at 448 went 21.5 →
+5.6 ms and at 512 34.2 → 16.9. towertest all passed, floatsweep passed, culltest as the base.

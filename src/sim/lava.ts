@@ -15,7 +15,7 @@ import { dispatch, type SimSystem } from './system';
 import type { WorldGpu } from './world-gpu';
 import { TICK_DT } from './simulation';
 import { FLOW_SUB, flowConst, flowN } from './flow';
-import { TILES_BINDING, cullKernel, dispatchTiles } from './cull';
+import { TILES_BINDING, TileTexCopy, cullKernel, dispatchTiles } from './cull';
 
 export const MAX_VENTS = 4;
 
@@ -52,6 +52,10 @@ export class LavaSystem implements SimSystem {
   private spill: GPUTexture;
   private spillNext: GPUTexture;
   private k: Record<string, { k: ComputeKernel; g: GPUBindGroup; cull?: number }> = {};
+  /** (simscale) prep has made the prisms at least once */
+  private prepped = false;
+  /** (simscale) the spill's copy back over the live chunks */
+  private spillCopy?: TileTexCopy;
 
   constructor(
     private device: GPUDevice,
@@ -63,8 +67,8 @@ export class LavaSystem implements SimSystem {
     this.indirect = world.buf('lavaIndirect', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
     this.uni = world.buf('lavaU', 64 + 32 * MAX_VENTS, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const tsize = { width: world.w, height: world.h };
-    this.spill = device.createTexture({ label: 'lavaSpill', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
-    this.spillNext = device.createTexture({ label: 'lavaSpillNext', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC });
+    this.spill = device.createTexture({ label: 'lavaSpill', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.STORAGE_BINDING });
+    this.spillNext = device.createTexture({ label: 'lavaSpillNext', size: tsize, format: 'rgba32float', usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.TEXTURE_BINDING });
     const res: Record<number, GPUBuffer | GPUTextureView> = {
       0: world.globals,
       1: world.chunks,
@@ -162,6 +166,11 @@ export class LavaSystem implements SimSystem {
 
   encode(enc: GPUCommandEncoder): void {
     this.writeUniforms(TICK_DT);
+    // (round 104, simscale) Nothing live (no chunk awake, drowsy or on its slow turn): the lava is as the last tick
+    // left it — its flux and depth passes have nothing to do, and its prisms (prep's list) are the last tick's still
+    const depthCull = this.k['lava-depth'].cull;
+    if (depthCull !== undefined && this.world.tiles!.count(depthCull) === 0 && this.prepped) return;
+    this.prepped = true;
     this.device.queue.writeBuffer(this.indirect, 0, new Uint32Array([VERTS_PER_PRISM, 0, 0, 0]));
     const run = (name: string) => {
       const x = this.k[name];
@@ -172,8 +181,10 @@ export class LavaSystem implements SimSystem {
     for (let s = 0; s < FLOW_SUB; s++) {
       run('lava-flux');
       run('lava-depth');
-      enc.copyTextureToTexture({ texture: this.spillNext }, { texture: this.spill }, { width: this.world.w, height: this.world.h });
       const cull = this.k['lava-depth'].cull;
+      // (round 104, simscale: the spill copied back over the live chunks only, as the lava itself)
+      if (cull !== undefined) (this.spillCopy ??= new TileTexCopy(this.device, this.world.globals, this.world.materials, this.world.tiles!, this.spillNext, this.spill, cull)).copy(enc, this.prof);
+      else enc.copyTextureToTexture({ texture: this.spillNext }, { texture: this.spill }, { width: this.world.w, height: this.world.h });
       if (cull !== undefined) this.world.tileCopy!.copy(enc, this.prof, this.world.lavaNext, this.world.lava, 4, cull);
       else enc.copyBufferToBuffer(this.world.lavaNext, 0, this.world.lava, 0, this.world.lava.size);
     }

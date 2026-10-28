@@ -84,6 +84,24 @@ struct Hit { a: vec4<f32>, b: vec4<f32>, c: vec4<f32>, d: vec4<f32> };
 // u16 the enclosed level's (0 the same); the place table: a room's region
 @group(0) @binding(11) var<storage, read> places: array<u32>;
 @group(0) @binding(12) var<storage, read> placeTable: array<u32>;
+// (round 104, simscale — agents.ts scope) the columns the fields are kept over: x0, y0, x1, y1 (exclusive); a
+// neighbour past them is no way (the window's edge is the same)
+// ([1] unused)
+@group(0) @binding(38) var<uniform> AB: array<vec4<u32>, 2>;
+fn inScope(q: vec2<i32>) -> bool { return q.x >= i32(AB[0].x) && q.y >= i32(AB[0].y) && q.x < i32(AB[0].z) && q.y < i32(AB[0].w); }
+// (round 104, simscale — agents/scope.ts "the front") per window chunk: something in it changed for the fields — in
+// this sweep's (cur: what the next sweep relaxes round) and the next's (what this sweep's relax marks); the chunks a
+// sweep relaxes (frontList), and its dispatch's workgroups (frontArgs: x, 1, 1)
+@group(0) @binding(34) var<storage, read_write> dirtyCur: array<atomic<u32>>;
+@group(0) @binding(35) var<storage, read_write> dirtyNext: array<atomic<u32>>;
+@group(0) @binding(33) var<storage, read_write> frontArgs: array<atomic<u32>, 3>;
+@group(0) @binding(36) var<storage, read_write> frontList: array<u32>;
+fn chunkOfCol(x: u32, y: u32) -> u32 { return (y / G.chunkSize) * G.chunksX + x / G.chunkSize; }
+/** (round 104) how far a surface's top may move between peels before its chunk is relaxed again (cells): 0, any
+ *  move — the front keeps it local, so the fields stay exact */
+const NAV_DZ: f32 = 0.0;
+/** a surface's record changed (its height, headroom, wet, links, room — not its water, which the fields don't read)? */
+fn navMoved(a: vec4<u32>, b: vec4<u32>) -> bool { return a.x != b.x || a.y != b.y || a.z != b.z; }
 
 const NAV_K: u32 = 4u;
 const AGENT_H: f32 = 1.5;
@@ -144,12 +162,24 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
       let wet = r == i32(n) - 1 && water[i] > WADE;
       let room = select(underRoom, topRoom, out == 0u);
       let region = select(0u, placeTable[room], room != 0u);
-      nav[i * NAV_K + out] = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(select(0.0, water[i], out == 0u)));
+      let nv = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(select(0.0, water[i], out == 0u)));
+      // (the links' bits are the links pass's: compared there)
+      let ov = nav[i * NAV_K + out];
+      // (round 104: a surface that moved marks its chunk for the front — its height past NAV_DZ, headroom, wet,
+      // room; the links are compared in the links pass)
+      let dz = abs(bitcast<f32>(ov.x) - z);
+      if (dz > NAV_DZ || (ov.y & 0x1ffu) != nv.y || ov.z != nv.z) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
+      // (its links kept: the links pass makes them again, the same where nothing moved — so no change is flagged)
+      nav[i * NAV_K + out] = vec4<u32>(nv.x, nv.y | (ov.y & ~0x1ffu), nv.z, nv.w);
       out += 1u;
     }
     r -= 1;
   }
-  for (var k = out; k < NAV_K; k++) { nav[i * NAV_K + k] = vec4<u32>(bitcast<u32>(-1.0), 0u, 0u, 0u); }
+  for (var k = out; k < NAV_K; k++) {
+    let none = vec4<u32>(bitcast<u32>(-1.0), 0u, 0u, 0u);
+    if (navMoved(nav[i * NAV_K + k], none)) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
+    nav[i * NAV_K + k] = none;
+  }
 }
 
 /** Link each surface to the six neighbours (after surfaces). */
@@ -181,7 +211,9 @@ fn links(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       bits |= best << (3u * d);
     }
-    nav[s].y = (nav[s].y & 0x1ffu) | (bits << 9u);
+    let ny = (nav[s].y & 0x1ffu) | (bits << 9u);
+    if (ny != nav[s].y) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
+    nav[s].y = ny;
   }
 }
 
@@ -222,6 +254,7 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdx(id.x, id.y);
   let N = ns();
+  let ch = chunkOfCol(id.x, id.y);
   for (var k = 0u; k < NAV_K; k++) {
     let s = i * NAV_K + k;
     let z = navZ(s);
@@ -237,6 +270,7 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         continue;
       }
       if (fp != 0u && !onPlace(s, fp)) {
+        if (dist[f * N + s] != FAR) { atomicOr(&dirtyNext[ch], 1u); }
         dist[f * N + s] = FAR;
         continue;
       }
@@ -251,7 +285,9 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
         for (var dd = 0u; dd < NDIR; dd++) {
           let l = navLink(s, dd);
           if (l == 0u) { continue; }
-          let t = colIdxI(nbr(p, dd)) * NAV_K + l - 1u;
+          let qn = nbr(p, dd);
+          if (!inScope(qn)) { continue; }
+          let t = colIdxI(qn) * NAV_K + l - 1u;
           let dn = dist[f * N + t];
           if (dn >= FAR) { continue; }
           d = min(d, dn + stepCost(z, navZ(t), navWet(t)));
@@ -259,7 +295,64 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
       }
       // (a field cut off from its seeds counts up forever unless capped: past
       // any real path's length it's unreachable)
-      dist[f * N + s] = select(d, FAR, d > f32(G.mapW + G.mapH) * 6.0);
+      // (round 104: past the scope's own size — a pocket cut off within it counts up to that, then it's settled)
+      let nd = select(d, FAR, d > f32(min(G.mapW + G.mapH, (AB[0].z - AB[0].x) + (AB[0].w - AB[0].y))) * 6.0);
+      // (round 104: a distance that moved marks its chunk — the next sweep relaxes round it)
+      if (abs(nd - dist[f * N + s]) > 1e-3) { atomicOr(&dirtyNext[ch], 1u); }
+      dist[f * N + s] = nd;
     }
   }
+}
+
+// ---- the front (round 104, simscale — agents/scope.ts) ------------------------------------------------------------
+// A sweep relaxes only the chunks of the scope (the box AB[0], whole chunks) where something changed in the last one,
+// and those next to them: frontReset, frontBuild (one thread a chunk of the box: it, or a neighbour in the box,
+// marked → listed), frontClear (the marks read, cleared), then relax dispatched indirect over the list.
+@compute @workgroup_size(1)
+fn frontReset() {
+  atomicStore(&frontArgs[0], 0u);
+  atomicStore(&frontArgs[1], 1u);
+  atomicStore(&frontArgs[2], 1u);
+}
+
+/** the scope box's chunk t, or none (its chunk x, y; ok) */
+fn boxChunk(t: u32) -> vec3<u32> {
+  let cs = G.chunkSize;
+  let bw = (AB[0].z - AB[0].x) / cs;
+  let bh = (AB[0].w - AB[0].y) / cs;
+  if (bw == 0u || t >= bw * bh) { return vec3<u32>(0u, 0u, 0u); }
+  return vec3<u32>(AB[0].x / cs + t % bw, AB[0].y / cs + t / bw, 1u);
+}
+
+@compute @workgroup_size(64)
+fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
+  let b = boxChunk(id.x);
+  if (b.z == 0u) { return; }
+  let cs = G.chunkSize;
+  var hit = false;
+  for (var dy = -1; dy <= 1; dy++) {
+    for (var dx = -1; dx <= 1; dx++) {
+      let i = i32(b.x) + dx;
+      let j = i32(b.y) + dy;
+      if (i < i32(AB[0].x / cs) || j < i32(AB[0].y / cs) || i >= i32(AB[0].z / cs) || j >= i32(AB[0].w / cs)) { continue; }
+      if (atomicLoad(&dirtyCur[u32(j) * G.chunksX + u32(i)]) != 0u) { hit = true; }
+    }
+  }
+  if (!hit) { return; }
+  let k = atomicAdd(&frontArgs[0], 4u);
+  frontList[k / 4u] = b.y * G.chunksX + b.x;
+}
+
+@compute @workgroup_size(64)
+fn frontClear(@builtin(global_invocation_id) id: vec3<u32>) {
+  let b = boxChunk(id.x);
+  if (b.z == 0u) { return; }
+  atomicStore(&dirtyCur[b.y * G.chunksX + b.x], 0u);
+}
+
+/** mark the chunks of a tile list changed (a seed placed or moved, a field cleared: agents.ts) */
+@compute @workgroup_size(8, 8)
+fn markChunks(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u);
 }

@@ -285,6 +285,12 @@ export class Wind implements SimSystem {
       m.y = m.at[1];
     }
     this.lastListed = list.length;
+    // (round 104, simscale: the wind field updates only round what painted it lately — sim/windrect.ts; a stroke's
+    // segment ends at (x, y), len back along dir)
+    for (const b of list) {
+      const half = b.mode === 'stroke' ? b.len / 2 : 0;
+      this.core.sim.wind.rects?.stir(b.x - b.dir[0] * half, b.y - b.dir[1] * half, b.radius + half, this.core.sim.tick);
+    }
     while (list.length > MAX_BLOWS) mergeNearest(list);
     const d = this.data;
     d[0] = list.length;
