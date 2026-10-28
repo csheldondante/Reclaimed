@@ -326,7 +326,8 @@ fn colPageRing(c: vec2<u32>) -> vec2<u32> {
 fn pageEntryPlace(e: u32) -> vec2<u32> { return vec2<u32>(e & 0xffu, e >> 8u); }
 /** (round 107) window chunk c's entry in Globals.pages */
 fn pageEntry(c: vec2<u32>) -> u32 {
-  let i = c.y * pagesX() + c.x;
+  // (a chunk past the window — a neighbour's read off the edge — clamped into the table, as the buffers' reads are)
+  let i = min(c.y * pagesX() + c.x, 4095u);
   return (G.pages[i >> 3u][(i >> 1u) & 3u] >> ((i & 1u) * 16u)) & 0xffffu;
 }
 /** (round 107) the table looked up (Globals.pages) */

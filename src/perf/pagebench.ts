@@ -62,12 +62,66 @@ function load(): State | null {
   }
 }
 
-function save(s: State): void {
+// (v2, after the phone lost its device on page 4: each page's result kept in IndexedDB too, as it finishes — a
+// localStorage the browser cleared, or one that threw on a full quota, doesn't lose the pages before)
+let idbP: Promise<IDBDatabase | null> | null = null;
+function idb(): Promise<IDBDatabase | null> {
+  return (idbP ??= new Promise((res) => {
+    try {
+      const r = indexedDB.open(KEY, 1);
+      r.onupgradeneeded = () => r.result.createObjectStore('kv');
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => res(null);
+      r.onblocked = () => res(null);
+    } catch {
+      res(null);
+    }
+  }));
+}
+async function idbPut(v: State): Promise<void> {
+  const db = await idb();
+  if (!db) return;
+  await new Promise<void>((res) => {
+    try {
+      const t = db.transaction('kv', 'readwrite');
+      t.objectStore('kv').put(JSON.parse(JSON.stringify(v)), 'state');
+      t.oncomplete = () => res();
+      t.onerror = () => res();
+      t.onabort = () => res();
+    } catch {
+      res();
+    }
+  });
+}
+async function idbGet(): Promise<State | null> {
+  const db = await idb();
+  if (!db) return null;
+  return new Promise((res) => {
+    try {
+      const r = db.transaction('kv', 'readonly').objectStore('kv').get('state');
+      r.onsuccess = () => res((r.result as State | undefined) ?? null);
+      r.onerror = () => res(null);
+    } catch {
+      res(null);
+    }
+  });
+}
+/** the newest kept: localStorage's or IndexedDB's (more pages done wins) */
+async function loadAny(): Promise<State | null> {
+  const a = load();
+  const b = await idbGet();
+  if (!a) return b;
+  if (!b) return a;
+  return b.runs.length > a.runs.length || (b.runs.length === a.runs.length && b.i > a.i) ? b : a;
+}
+
+async function save(s: State): Promise<void> {
   try {
     localStorage.setItem(KEY, JSON.stringify(s));
   } catch (e) {
     console.error('pagebench: could not save', e);
   }
+  await idbPut(s);
 }
 
 function runUrl(i: number): string {
@@ -86,11 +140,30 @@ function runUrl(i: number): string {
   return `${location.pathname}?${q.toString()}`;
 }
 
-function goNext(s: State): void {
+let leaving = false;
+async function goNext(s: State, delay = 0): Promise<void> {
+  if (leaving) return;
+  leaving = true;
   s.i++;
   s.running = -1;
-  save(s);
+  await save(s);
+  if (delay) await sleep(delay);
+  // (v2, as bench v4: this page's GPU memory freed before the next page asks for a device — the phone lost its device
+  // on page 4 without it; the readbacks still in flight reject as the device goes: expected now, not page errors)
+  window.addEventListener('unhandledrejection', (e) => e.preventDefault());
+  try {
+    runDevice?.destroy();
+  } catch {
+    // (already gone)
+  }
+  runDevice = null;
   location.href = s.i < ORDER.length ? runUrl(s.i) : `${location.pathname}?pagebench=done`;
+}
+
+/** a report of what's done so far, downloaded */
+async function downloadSoFar(s: State, device: GPUDevice | null): Promise<string> {
+  const body = JSON.stringify({ ...makeReport(s, device), incomplete: s.i < ORDER.length }, null, 1);
+  return downloadJson(body, `pagebench-${await deviceTag(device?.adapterInfo?.vendor ?? '')}-${stamp()}${s.i < ORDER.length ? '-partial' : ''}.json`);
 }
 
 function panel(ui: HTMLElement): { el: HTMLDivElement; text(t: string): HTMLPreElement; button(t: string, f: () => void): HTMLButtonElement } {
@@ -125,15 +198,20 @@ export async function pageBenchStandalone(mode: 'start' | 'done', ui: HTMLElemen
     p.text(
       `Page-table lookup bench (M1, docs/PAGES.md)\n\nSix pages of the atlas at window 256 (about 1 minute each): the ring computed, the table in the Globals, the table in storage, then the same again backwards. Keep the screen on and the phone still; the last page has the results and a Download button.\n\nbuild ${BUILD}`,
     );
-    const prev = load();
-    if (prev && prev.runs.length) p.button('Show the last results', () => (location.href = `${location.pathname}?pagebench=done`));
+    const prev = await loadAny();
+    if (prev && prev.runs.length) {
+      const failed = prev.runs.filter((r) => r.error).length;
+      const say = p.text(`kept from the last run: ${prev.runs.length} of ${ORDER.length} pages${failed ? ` (${failed} failed)` : ''}`);
+      p.button('Show the last results', () => (location.href = `${location.pathname}?pagebench=done`));
+      p.button('Download what we have', () => void downloadSoFar(prev, device).then((m) => (say.textContent = m)));
+    }
     p.button('Start', () => {
       const s: State = { started: new Date().toISOString(), build: BUILD, i: -1, running: -1, runs: [] };
-      goNext(s);
+      void goNext(s);
     });
     return;
   }
-  const s = load();
+  const s = await loadAny();
   if (!s) {
     p.text('No results kept on this device: start it with ?pagebench=1');
     return;
@@ -148,44 +226,109 @@ export async function pageBenchStandalone(mode: 'start' | 'done', ui: HTMLElemen
   p.button('Run it again', () => (location.href = `${location.pathname}?pagebench=1`));
 }
 
-/** a run page: called once the level is up (main.ts) */
-export async function pageBenchRun(): Promise<void> {
-  const s = load();
-  if (!s || s.i < 0 || s.i >= ORDER.length) return;
+/** the run page's state, once boot has read it, and what it's doing (a failure's note says) */
+let runState: State | null = null;
+let runStage = 'starting';
+let sayRun: (t: string) => void = () => {};
+/** the run page's device, destroyed as the page is left */
+let runDevice: GPUDevice | null = null;
+/** (v2) a run page with no result in this long — the level never came, the GPU hung — is noted and left */
+const WATCHDOG_MS = 180000;
+
+/** a run page's failure: noted with the stage it was at, shown (6 s), and on to the next page — once */
+function runFail(why: string): void {
+  const s = runState;
+  if (!s || leaving) return;
+  const way = ORDER[s.i];
+  const round = ORDER.slice(0, s.i).filter((w) => w === way).length;
+  s.runs.push({ way, round, storageKernels: [], awakeChunks: null, emptySubmitMs: 0, kernels: {}, systems: {}, error: `${why} (at: ${runStage})` });
+  const m = document.createElement('div');
+  m.style.cssText = 'position:fixed;left:8px;right:8px;top:40%;z-index:2001;background:#600;color:#fff;padding:14px;font:15px system-ui;border-radius:8px';
+  m.textContent = `page bench ${s.i + 1}/${ORDER.length} (${way}) failed: ${why} — at ${runStage}. Kept; on to the next page in 6 s.`;
+  document.body.appendChild(m);
+  void goNext(s, 6000);
+}
+
+/**
+ * (v2) A run page, before the GPU is asked for (main.ts): its state read, a page that loaded again without finishing
+ * skipped, the note and a "Download what we have" button up, and the watchdog. False: not a run page to do.
+ */
+export async function pageBenchBoot(): Promise<boolean> {
+  const s = await loadAny();
+  if (!s || s.i < 0 || s.i >= ORDER.length) return false;
+  runState = s;
   const way = ORDER[s.i];
   const round = ORDER.slice(0, s.i).filter((w) => w === way).length;
   if (s.running === s.i) {
-    // (this page loaded again without finishing: crashed or killed — noted, on to the next)
-    s.runs.push({ way, round, storageKernels: [], awakeChunks: null, emptySubmitMs: 0, kernels: {}, systems: {}, error: 'the page loaded again without finishing' });
-    goNext(s);
-    return;
+    // (this page loaded again without finishing: the tab crashed or was killed — noted, on to the next)
+    s.runs.push({ way, round, storageKernels: [], awakeChunks: null, emptySubmitMs: 0, kernels: {}, systems: {}, error: 'the page loaded again without finishing (the tab crashed or was killed)' });
+    void goNext(s);
+    return false;
   }
   s.running = s.i;
-  save(s);
+  await save(s);
+  const bar = document.createElement('div');
+  bar.style.cssText = 'position:fixed;left:8px;top:8px;right:8px;z-index:2000;display:flex;gap:8px;align-items:center;font:13px system-ui';
   const note = document.createElement('div');
-  note.style.cssText = 'position:fixed;left:8px;top:8px;z-index:1000;background:#000a;color:#fff;padding:6px 10px;font:13px system-ui;border-radius:6px';
-  document.body.appendChild(note);
-  const say = (t: string) => (note.textContent = `page bench ${s.i + 1}/${ORDER.length} (${way}): ${t}`);
+  note.style.cssText = 'flex:1;background:#000a;color:#fff;padding:6px 10px;border-radius:6px';
+  const btn = document.createElement('button');
+  btn.textContent = 'Download what we have';
+  btn.style.cssText = 'padding:8px 10px;border-radius:6px;border:0;background:#3a7bd5;color:#fff;font:13px system-ui';
+  btn.onclick = () => void downloadSoFar(s, null).then((m) => (note.textContent = m));
+  bar.append(note, btn);
+  document.body.appendChild(bar);
+  sayRun = (t: string) => {
+    runStage = t;
+    note.textContent = `page bench ${s.i + 1}/${ORDER.length} (${way}): ${t}`;
+  };
+  sayRun('loading');
+  setTimeout(() => runFail(`no result after ${WATCHDOG_MS / 1000} s (watchdog)`), WATCHDOG_MS);
+  return true;
+}
+
+/** (v2) a run page once the GPU is up (main.ts): a lost device or a GPU error noted with its reason, and on */
+export function pageBenchDevice(device: GPUDevice): void {
+  runDevice = device;
+  void device.lost.then((info) => {
+    if (info.reason !== 'destroyed') runFail(`GPU device lost (${info.reason}): ${info.message}`);
+  });
+  device.addEventListener('uncapturederror', (ev) => {
+    const e = (ev as GPUUncapturedErrorEvent).error;
+    runFail(`GPU error (${e.constructor.name}): ${e.message}`);
+  });
+}
+
+/** (v2) a run page's startup failure (main.ts's fatal path): noted, on */
+export function pageBenchStartupError(e: unknown): void {
+  runFail(`startup failed: ${e instanceof Error ? e.message : String(e)}`);
+}
+
+/** a run page: called once the level is up (main.ts) */
+export async function pageBenchRun(): Promise<void> {
+  const s = runState;
+  if (!s) return;
+  const way = ORDER[s.i];
+  const round = ORDER.slice(0, s.i).filter((w) => w === way).length;
   let r: RunResult;
   try {
-    say('loading');
     await waitFor(() => (window as unknown as { reclaimed?: { core?: unknown } }).reclaimed?.core, 240000);
-    say('settling');
+    sayRun('settling');
     await sleep(SETTLE_MS);
     const R = (window as unknown as { reclaimed: any }).reclaimed;
     const c = R.camera.target;
     const w = R.weather ?? R.core?.weather;
     w?.spawn?.(c[0], c[1]);
-    say('a storm waking the land');
+    sayRun('a storm waking the land');
     await sleep(STORM_MS);
-    say('timing');
-    r = await measure(R, way, round);
+    sayRun('timing');
+    r = await measure(R, way, round, (t) => sayRun(`timing ${t}`));
   } catch (e) {
-    r = { way, round, storageKernels: [], awakeChunks: null, emptySubmitMs: 0, kernels: {}, systems: {}, error: e instanceof Error ? e.message : String(e) };
+    r = { way, round, storageKernels: [], awakeChunks: null, emptySubmitMs: 0, kernels: {}, systems: {}, error: `${e instanceof Error ? e.message : String(e)} (at: ${runStage})` };
   }
+  if (leaving) return;
   s.runs.push(r);
-  say('done');
-  goNext(s);
+  sayRun('done');
+  await goNext(s);
 }
 
 interface Rec {
@@ -228,7 +371,7 @@ function record(sys: { encode(e: GPUCommandEncoder, t: number): void }, tick: nu
   return out;
 }
 
-async function measure(R: any, way: string, round: number): Promise<RunResult> {
+async function measure(R: any, way: string, round: number, stage: (t: string) => void): Promise<RunResult> {
   const core = R.core;
   const dev: GPUDevice = core.host.gpu.device;
   if (!dev.features.has('timestamp-query')) throw new Error('no timestamp-query on this device');
@@ -277,6 +420,7 @@ async function measure(R: any, way: string, round: number): Promise<RunResult> {
     for (const name of SYSTEMS) {
       const sys = core.sim.systems.find((x: { name: string }) => x.name === name);
       if (!sys) continue;
+      stage(name);
       const recs = record(sys, core.sim.tick, dev);
       // (the whole system in one pass, as bench v4)
       const all = await time(name, (p) => recs.forEach((d) => replay(p, d)));
@@ -286,6 +430,7 @@ async function measure(R: any, way: string, round: number): Promise<RunResult> {
       for (const d of recs) {
         if (seen.has(d.label)) continue;
         seen.add(d.label);
+        stage(d.label);
         const t = await time(d.label, (p) => {
           for (let k = 0; k < REPS; k++) replay(p, d);
         });

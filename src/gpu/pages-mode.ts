@@ -34,7 +34,7 @@ export function pagesCode(code: string, storage: boolean): string {
       `
 // (round 107, M1: ?pages=storage) the page table in a storage buffer, an entry a u32 (px | py << 8)
 @group(0) @binding(${PAGE_TAB_BINDING}) var<storage, read> pageTab: array<u32>;
-fn colPageStore(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageTab[c.y * pagesX() + c.x]); }
+fn colPageStore(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageTab[min(c.y * pagesX() + c.x, arrayLength(&pageTab) - 1u)]); }
 `
     );
   if (PAGE_ADDR === 'table') return code.replace(MARK, 'fn colPage(c: vec2<u32>) -> vec2<u32> { return colPageTable(c); }');
