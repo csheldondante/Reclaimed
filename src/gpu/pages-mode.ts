@@ -11,8 +11,8 @@ export type PageAddr = 'ring' | 'table' | 'storage';
 /** the build's addressing (?pages=) */
 export const PAGE_ADDR: PageAddr = (() => {
   const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('pages');
-  // (the default stays the ring until TileLand's scratch gets its own identity table: render/tileland.ts)
-  if (v === null) return 'ring';
+  // (round 107: the table, P2.1 — TileLand's scratch writes its own identity table, render/tilelandgpu.ts)
+  if (v === null) return 'table';
   if (v !== 'ring' && v !== 'table' && v !== 'storage') throw new Error(`?pages=${v}: ring, table or storage`);
   return v;
 })();
