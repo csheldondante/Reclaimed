@@ -1,6 +1,6 @@
 // Round 101 (bench): the calibration benchmark (`?bench=1`). The user (DECISIONS round 101): "Can you build a
 // calibration test that we can run on the phone to directly give you benchmark numbers? … so you can compute
-// throughput and then target the actual bottlenecks." One tap, about 3–5 minutes, then a report (one versioned JSON)
+// throughput and then target the actual bottlenecks." One tap, about 8–10 minutes (v2, with the A/B), then a report (one versioned JSON)
 // to download, copy or share. It instruments and never optimises: every system runs as the deployed page runs it.
 //
 // The suite is a chain of page loads, its state in localStorage between them (docs/ARCHITECTURE.md "Benchmark"):
@@ -27,7 +27,7 @@ import { RegionStore } from '../world/region-store';
 import type { HitchBoot } from './start';
 import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './report-io';
 
-export const BENCH_VERSION = 1;
+export const BENCH_VERSION = 2;
 const STATE = 'reclaimed.bench.state';
 const LAST = 'reclaimed.bench.last';
 const ROW_H = Math.sqrt(3) / 2;
@@ -61,6 +61,119 @@ export function stat(xs: number[], unit: string): Stat | null {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const frame = () => new Promise<number>((r) => requestAnimationFrame(r));
 const MB = 1048576;
+
+/** (v2) the A/B's systems on the main page, and those that may scale with the window (the window pages) */
+const AB_ALL = ['simAll', 'water', 'lava', 'sediment', 'wind', 'plants', 'otherSims', 'renderfields', 'particlesSim', 'agents', 'renderprep', 'meshRebuild', 'shadow', 'farLand', 'grid', 'voxelMesh', 'particlesDraw', 'waterDraw', 'plantsDraw', 'band', 'shore'];
+const AB_WINDOW = ['simAll', 'water', 'sediment', 'wind', 'renderfields', 'agents', 'renderprep', 'meshRebuild', 'shadow', 'grid'];
+
+/**
+ * (v2) Are this GPU's per-pass timestamps to be trusted? Round 101's Pixel 9a (Mali, Valhall): each pass read
+ * 20–100 ms though frames came every 16.7 ms — the passes' sum many frames long, and a frame's first-to-last span
+ * (gpuFrame) longer than the frame interval. Untrusted when the passes' sum (p50) is over 1.5 frame intervals, or
+ * the span (p50) over 1.25.
+ */
+export function judgeTimestamps(passSum: number[], span: number[], frames: number[]): { reliable: boolean | null; passSumP50: number | null; spanP50: number | null; frameP50: number | null; why: string } {
+  const p = stat(passSum, 'ms')?.p50 ?? null;
+  const g = stat(span, 'ms')?.p50 ?? null;
+  const f = stat(frames, 'ms')?.p50 ?? null;
+  if (p === null || g === null || f === null) return { reliable: null, passSumP50: p, spanP50: g, frameP50: f, why: 'no timestamps read back' };
+  const bad: string[] = [];
+  if (p > 1.5 * f) bad.push(`the passes sum to ${p} ms a frame, ${(p / f).toFixed(1)} frame intervals`);
+  if (g > 1.25 * f) bad.push(`a frame's first-to-last span is ${g} ms against frames every ${f}`);
+  return { reliable: !bad.length, passSumP50: p, spanP50: g, frameP50: f, why: bad.length ? `${bad.join('; ')}: per-pass GPU numbers unreliable (cumulative or overlapping) — use the A/B` : 'ok' };
+}
+
+/**
+ * (v2) Timestamps three ways over the same work (six dispatches of a fixed kernel): each in its own compute pass
+ * of one encoder (as the engine times its passes), each in its own encoder and submit, and all six in one pass —
+ * against the wall clock of each. Shows whether a GPU's per-pass timestamps add up (Mali's didn't in the game).
+ */
+async function timestampModes(device: GPUDevice): Promise<Record<string, unknown>> {
+  if (!device.features.has('timestamp-query')) return { error: 'no timestamp-query' };
+  const N = 1 << 18;
+  const buf = device.createBuffer({ size: N * 16, usage: GPUBufferUsage.STORAGE });
+  const mod = device.createShaderModule({
+    code: `@group(0) @binding(0) var<storage, read_write> d: array<vec4f>;
+@compute @workgroup_size(64) fn main(@builtin(global_invocation_id) g: vec3u) {
+  let i = g.x;
+  if (i >= arrayLength(&d)) { return; }
+  var v = d[i] + vec4f(f32(i & 255u) * 0.001);
+  for (var k = 0u; k < 256u; k++) { v = fract(v * 1.37 + vec4f(0.11, 0.23, 0.31, 0.47)); }
+  d[i] = v;
+}`,
+  });
+  const pipe = device.createComputePipeline({ layout: 'auto', compute: { module: mod, entryPoint: 'main' } });
+  const bg = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: buf } }] });
+  const K = 6;
+  const qs = device.createQuerySet({ type: 'timestamp', count: 2 * K });
+  const res = device.createBuffer({ size: 2 * K * 8, usage: GPUBufferUsage.QUERY_RESOLVE | GPUBufferUsage.COPY_SRC });
+  const read = async (n: number): Promise<number[]> => {
+    const st = device.createBuffer({ size: n * 8, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = device.createCommandEncoder();
+    enc.resolveQuerySet(qs, 0, n, res, 0);
+    enc.copyBufferToBuffer(res, 0, st, 0, n * 8);
+    device.queue.submit([enc.finish()]);
+    await st.mapAsync(GPUMapMode.READ);
+    const w = new Uint32Array(st.getMappedRange().slice(0));
+    st.unmap();
+    st.destroy();
+    const out: number[] = [];
+    for (let k = 0; k < n; k++) out.push(w[k * 2] + w[k * 2 + 1] * 4294967296);
+    return out;
+  };
+  const pass = (enc: GPUCommandEncoder, k: number | null, dispatches = 1) => {
+    const p = enc.beginComputePass(k === null ? {} : { timestampWrites: { querySet: qs, beginningOfPassWriteIndex: 2 * k, endOfPassWriteIndex: 2 * k + 1 } });
+    p.setPipeline(pipe);
+    p.setBindGroup(0, bg);
+    for (let j = 0; j < dispatches; j++) p.dispatchWorkgroups(N / 64);
+    p.end();
+  };
+  const modes: Record<string, { perPass: number[]; sum: number[]; span: number[]; wall: number[] }> = { onePassEach: { perPass: [], sum: [], span: [], wall: [] }, ownEncoderEach: { perPass: [], sum: [], span: [], wall: [] }, allInOnePass: { perPass: [], sum: [], span: [], wall: [] } };
+  for (let rep = 0; rep < 6; rep++) {
+    for (const m of Object.keys(modes)) {
+      await device.queue.onSubmittedWorkDone();
+      const t0 = performance.now();
+      if (m === 'onePassEach') {
+        const enc = device.createCommandEncoder();
+        for (let k = 0; k < K; k++) pass(enc, k);
+        device.queue.submit([enc.finish()]);
+      } else if (m === 'ownEncoderEach') {
+        for (let k = 0; k < K; k++) {
+          const enc = device.createCommandEncoder();
+          pass(enc, k);
+          device.queue.submit([enc.finish()]);
+        }
+      } else {
+        const enc = device.createCommandEncoder();
+        pass(enc, 0, K);
+        device.queue.submit([enc.finish()]);
+      }
+      await device.queue.onSubmittedWorkDone();
+      const wall = performance.now() - t0;
+      const n = m === 'allInOnePass' ? 2 : 2 * K;
+      const t = await read(n);
+      const per: number[] = [];
+      for (let k = 0; k < n / 2; k++) per.push((t[2 * k + 1] - t[2 * k]) / 1e6);
+      // (the first warms up)
+      if (rep === 0) continue;
+      const mm = modes[m];
+      mm.perPass.push(...per);
+      mm.sum.push(per.reduce((a, v) => a + v, 0));
+      mm.span.push((Math.max(...t) - Math.min(...t)) / 1e6);
+      mm.wall.push(wall);
+    }
+  }
+  buf.destroy();
+  res.destroy();
+  qs.destroy();
+  const out: Record<string, unknown> = { what: `${K} dispatches of 2^18 threads x 256 fract-FMAs: timed per pass in one encoder, per pass each in its own encoder+submit, and as one pass` };
+  for (const [m, v] of Object.entries(modes)) {
+    const sum = stat(v.sum, 'GPU ms, the passes summed');
+    const wall = stat(v.wall, 'ms wall, submit to onSubmittedWorkDone');
+    out[m] = { perPass: stat(v.perPass, 'GPU ms a pass'), sum, span: stat(v.span, 'GPU ms first start to last end'), wall, sumOverWall: sum && wall ? r3(sum.p50 / wall.p50) : null };
+  }
+  return out;
+}
 
 // ---------- the suite's state ----------
 
@@ -398,7 +511,7 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host): Prom
   const panel = new Panel(host.ui);
   if (mode === 'final') return finish(host, panel);
   panel.text('Reclaimed calibration benchmark');
-  panel.text('About 3–5 minutes. The page reloads itself a few times — leave it in front, plugged in if you can, and don’t touch the screen till the report shows. Your own saved world isn’t touched.');
+  panel.text('About 8–10 minutes. The page reloads itself a few times — leave it in front, plugged in if you can, and don’t touch the screen till the report shows. Your own saved world isn’t touched.');
   const last = (() => {
     try {
       return localStorage.getItem(LAST);
@@ -452,6 +565,9 @@ async function start(host: Host, panel: Panel): Promise<void> {
   panel.say('the fixed GPU workload (thermal, first)…');
   await frame();
   s.results.thermalStart = { at: new Date().toISOString(), ...(await fixedWorkload(host.gpu.device, timer)) };
+  panel.say('timestamps three ways…');
+  await frame();
+  s.results.timestampModes = await timestampModes(host.gpu.device);
   panel.say('readback, upload and copy rates…');
   await frame();
   s.results.io = await ioRates(host.gpu.device);
@@ -608,6 +724,10 @@ interface Sample {
   voxel: number[];
   bodies: number[];
   mesh: number[];
+  /** (v2) per GPU frame read back: the passes' ms summed (a sane GPU's is under its frame's span) */
+  passSum: number[];
+  /** (v2) rAFs that rendered nothing (held for the GPU) */
+  held?: number;
 }
 
 class Bench {
@@ -661,6 +781,7 @@ class Bench {
     return r;
   }
   private keepMesh = false;
+  private framesHook: ((f: number[]) => void) | null = null;
 
   private async captureRaw(seconds: number, during?: (t: number) => void): Promise<Record<string, unknown>> {
     const rec = this.ctx.hitch?.rec;
@@ -668,26 +789,38 @@ class Bench {
     this.prof.resetTotals();
     cpuStats.clear();
     const st0 = { ...this.R.stream.stats };
-    const sm: Sample = { frames: [], gpu: [], passes: new Map(), awake: [], ticks: 0, grid: [], voxel: [], bodies: [], mesh: [] };
+    const sm: Sample = { frames: [], gpu: [], passes: new Map(), awake: [], ticks: 0, grid: [], voxel: [], bodies: [], mesh: [], passSum: [] };
     const prevOnFrame = this.prof.onFrame;
     const perName = (this.prof as unknown as { perName: Map<string, number> }).perName;
     this.prof.onFrame = (f, ms, top) => {
       prevOnFrame?.(f, ms, top);
       sm.gpu.push(ms);
       let mesh = 0;
+      let all = 0;
       for (const [n, v] of perName) {
         (sm.passes.get(n) ?? sm.passes.set(n, []).get(n)!).push(v);
         if (n.includes('fieldmesh')) mesh += v;
+        all += v;
       }
       sm.mesh.push(mesh);
+      sm.passSum.push(all);
     };
     const tick0 = this.R.core.sim.tick;
     const t0 = performance.now();
     let last = t0;
+    let fno = this.prof.frameNo;
+    let held = 0;
     const sleepSys = this.R.scene.sleep;
     try {
       for (;;) {
         const t = await frame();
+        // (v2: a rendered frame — the level's frame began one — not a rAF held for the GPU)
+        if (this.prof.frameNo === fno) {
+          held++;
+          if (t - t0 >= seconds * 1000) break;
+          continue;
+        }
+        fno = this.prof.frameNo;
         sm.frames.push(t - last);
         last = t;
         if (sleepSys) sm.awake.push(sleepSys.awake);
@@ -705,6 +838,8 @@ class Bench {
       this.prof.onFrame = prevOnFrame;
     }
     sm.ticks = this.R.core.sim.tick - tick0;
+    sm.held = held;
+    this.framesHook?.(sm.frames);
     // (the readbacks of the last frames' timestamps)
     await sleep(100);
     return this.summarise(sm, st0, (performance.now() - t0) / 1000, rec);
@@ -744,8 +879,12 @@ class Bench {
           far: sum(/^(lod|bake|rough)/),
         }
       : 'n/a (no timestamp-query)';
+    const ts = judgeTimestamps(sm.passSum, sm.gpu, sm.frames);
+    if (hasGpu) this.tsChecks.push(ts);
+    const topPasses: Record<string, Stat | null> = {};
+    for (const k of Object.keys(passes).slice(0, 12)) topPasses[k] = passes[k];
     const cpu: Record<string, unknown> = {};
-    for (const [k, v] of [...cpuStats].sort((a, b) => b[1].sum - a[1].sum).slice(0, 40)) cpu[k] = { n: v.n, mean: r3(v.sum / Math.max(1, v.n)), max: r3(v.max), totalMs: Math.round(v.sum), unit: 'ms CPU' };
+    for (const [k, v] of [...cpuStats].sort((a, b) => b[1].sum - a[1].sum).slice(0, 15)) cpu[k] = { n: v.n, mean: r3(v.sum / Math.max(1, v.n)), max: r3(v.max), totalMs: Math.round(v.sum), unit: 'ms CPU' };
     const st1 = this.R.stream.stats;
     const stream: Record<string, number> = {};
     for (const k of Object.keys(st1)) if (typeof st1[k] === 'number' && k !== 'lastMs') stream[k] = st1[k] - (st0[k] ?? 0);
@@ -759,16 +898,27 @@ class Bench {
     let hitch: unknown = null;
     if (rec) {
       const r = rec.report() as Record<string, unknown>;
-      hitch = { causes: r.causes, worst: r.worst, heldForGpu: r.heldForGpu, gc: r.gc, threshold: r.thresholdMs, hitches: (r.hitches as unknown[]).length };
+      const worst = (r.worst as { ms: number; cause: string; cpu: number; gpu: unknown; steps: { label: string; ms: number }[]; async: { label: string; ms: number }[] }[]).slice(0, 5);
+      hitch = {
+        causes: r.causes,
+        worst: worst.map((h) => `${h.ms} ${h.cause} cpu ${h.cpu} ${[...h.steps, ...h.async].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`),
+        heldForGpu: r.heldForGpu,
+        gc: r.gc,
+        threshold: r.thresholdMs,
+        hitches: (r.hitches as unknown[]).length,
+      };
     }
     return {
       seconds: +secs.toFixed(1),
-      frames: stat(sm.frames, 'ms frame interval'),
+      frames: stat(sm.frames, 'ms between rendered frames'),
+      heldRafs: sm.held ?? 0,
       p99: r3([...sm.frames].sort((a, b) => a - b)[Math.floor(0.99 * sm.frames.length)] ?? NaN),
       fps: +(sm.frames.length / secs).toFixed(1),
+      fpsNote: 'rendered frames a second (a rAF held for the GPU not counted)',
       gpuFrame: hasGpu ? stat(sm.gpu, 'GPU ms a frame (first pass start to last end)') : 'n/a',
+      timestamps: hasGpu ? ts : 'n/a',
       gpuGroups: groups,
-      gpuPasses: hasGpu ? passes : 'n/a',
+      gpuPasses: hasGpu ? topPasses : 'n/a',
       simTicks: sm.ticks,
       ticksPerSecond: +(sm.ticks / secs).toFixed(1),
       awake,
@@ -830,6 +980,145 @@ class Bench {
     };
   }
 
+  // ---- the A/B: systems switched off one at a time (v2: a GPU's timestamps may not be trustworthy — Mali's weren't) ----
+
+  /** what can be switched off for a few seconds: the sim systems (their encode a no-op), agents, the renderer's pieces (Renderer.skip) */
+  private toggles(): Record<string, { what: string; off: () => void; on: () => void; matched: string[] }> {
+    const sims: { name: string; encode: unknown }[] = this.R.core.sim.systems;
+    const out: Record<string, { what: string; off: () => void; on: () => void; matched: string[] }> = {};
+    const simGroup = (key: string, re: RegExp, what: string) => {
+      const hit = sims.filter((x) => re.test(x.name));
+      if (!hit.length) return;
+      const own = hit.map((x) => Object.prototype.hasOwnProperty.call(x, 'encode'));
+      const was = hit.map((x) => x.encode);
+      out[key] = {
+        what,
+        matched: hit.map((x) => x.name),
+        off: () => hit.forEach((x) => (x.encode = () => {})),
+        on: () =>
+          hit.forEach((x, i) => {
+            if (own[i]) x.encode = was[i];
+            else delete (x as { encode?: unknown }).encode;
+          }),
+      };
+    };
+    simGroup('simAll', /^(?!edit$|layerpull$|landbrush$|townstamp$|placeop$|stats$)/, 'every sim system but the edits and stamps (events still consumed)');
+    simGroup('water', /^water$/, 'the water flow');
+    simGroup('lava', /^lava$/, 'the lava flow');
+    simGroup('sediment', /^sediment$/, 'sediment and loose ground');
+    simGroup('wind', /^windfield$/, 'the wind field');
+    simGroup('plants', /^(ecology|wilt|moisture)$/, 'ecology, wilt, moisture');
+    simGroup('otherSims', /^(oil|contamination|fire|climate|sway|structure|project|structtick|surface)$/, 'oil, contamination, fire, climate, sway, structure, surface');
+    simGroup('renderfields', /^renderfields$/, 'the render fields (shadow/AO fields the draw reads)');
+    simGroup('particlesSim', /^particles$/, 'the particles\' update');
+    simGroup('physics', /^physics$/, 'the physics voxels');
+    const ag = this.R.agents;
+    if (ag) {
+      const own = Object.prototype.hasOwnProperty.call(ag, 'encode');
+      const was = ag.encode;
+      out.agents = { what: 'the agents pass', matched: ['agents'], off: () => (ag.encode = () => {}), on: () => (own ? (ag.encode = was) : delete ag.encode) };
+    }
+    const skip: Set<string> = this.R.core.renderer.constructor.skip;
+    const sk = (key: string, names: string[], what: string) => {
+      const had = names.map((n) => skip.has(n));
+      out[key] = { what, matched: names, off: () => names.forEach((n) => skip.add(n)), on: () => names.forEach((n, i) => !had[i] && skip.delete(n)) };
+    };
+    sk('renderprep', ['prep'], 'renderprep (the column lists for the draw)');
+    sk('meshRebuild', ['meshprep'], 'the field mesh looking for changes and rebuilding');
+    sk('shadow', ['shadow'], 'the sun\'s shadow map');
+    sk('farLand', ['far'], 'the LOD rings and the far land (extra draws)');
+    sk('grid', ['grid'], 'the hybrid\'s heightfield grid draw');
+    sk('voxelMesh', ['mesh'], 'the field mesh draw (the hybrid\'s voxel chunks)');
+    sk('particlesDraw', ['particles', 'rain'], 'particles and rain drawn');
+    sk('waterDraw', ['water'], 'water drawn');
+    sk('plantsDraw', ['plants', 'trees'], 'plants and trees drawn');
+    sk('band', ['band'], 'the band above and below the window');
+    sk('shore', ['shore'], 'the shore pass');
+    return out;
+  }
+
+  /** a phase of frames: the frame interval and, each frame, the wall from after its submit to onSubmittedWorkDone */
+  private async abPhase(seconds: number): Promise<{ frameMean: number; frameP50: number; fps: number; drainMean: number; drainP50: number; n: number }> {
+    const frames: number[] = [];
+    const drains: number[] = [];
+    const dev = this.dev;
+    const t0 = performance.now();
+    let last = t0;
+    let fno = this.prof.frameNo;
+    for (;;) {
+      const t = await frame();
+      if (t - t0 >= seconds * 1000) break;
+      // (a rendered frame only: a rAF held for the GPU submitted nothing)
+      if (this.prof.frameNo === fno) continue;
+      fno = this.prof.frameNo;
+      frames.push(t - last);
+      last = t;
+      // (this callback runs after main.ts's frame, which submitted: the queue's drain from here is the frame's GPU work, or more when it's behind)
+      const ts = performance.now();
+      void dev.queue.onSubmittedWorkDone().then(() => drains.push(performance.now() - ts));
+    }
+    await dev.queue.onSubmittedWorkDone();
+    const f = stat(frames, 'ms')!;
+    const d = stat(drains, 'ms');
+    return { frameMean: f.mean, frameP50: f.p50, fps: +(frames.length / ((last - t0) / 1000)).toFixed(1), drainMean: d?.mean ?? NaN, drainP50: d?.p50 ?? NaN, n: frames.length };
+  }
+
+  /** Each system off for `secs` against the frames just before with it on: the frame-time and the drain it costs. */
+  private async ab(keys: string[], secs = 2): Promise<Record<string, unknown>> {
+    const T = this.toggles();
+    const systems: Record<string, unknown> = {};
+    const t0 = performance.now();
+    for (const k of keys) {
+      const t = T[k];
+      if (!t) {
+        systems[k] = 'not in this level';
+        continue;
+      }
+      this.say(`A/B: ${k} off…`);
+      await sleep(300);
+      const on = await this.abPhase(secs);
+      let off: typeof on;
+      try {
+        t.off();
+        await sleep(300);
+        off = await this.abPhase(secs);
+      } finally {
+        t.on();
+      }
+      systems[k] = {
+        what: t.what,
+        matched: t.matched,
+        costFrameMs: r3(on.frameMean - off.frameMean),
+        costDrainMs: r3(on.drainP50 - off.drainP50),
+        fpsOn: on.fps,
+        fpsOff: off.fps,
+        on: { frameMean: on.frameMean, drainP50: r3(on.drainP50), n: on.n },
+        off: { frameMean: off.frameMean, drainP50: r3(off.drainP50), n: off.n },
+      };
+    }
+    await sleep(400);
+    return {
+      unit: 'ms a frame: costFrameMs = mean frame interval with it on - off (what it costs when the frame is GPU- or CPU-bound; ~0 when the frame waits for vsync); costDrainMs = the same of the median wall from a frame\'s submit to onSubmittedWorkDone. Only a bound frame shows a system\'s cost in its interval: at the display\'s rate (a desktop at vsync) the costs read ~0 and only the drain moves',
+      method: `${secs} s on then ${secs} s off each, 0.3 s settling; parked; works on any GPU (no timestamps)`,
+      bound: this.boundNote(),
+      seconds: +((performance.now() - t0) / 1000).toFixed(0),
+      systems,
+    };
+  }
+
+  /** is the frame bound (by the GPU or the CPU) or waiting for the display? from the parked frames: fps under 90% of the fastest frames' rate */
+  private boundNote(): string {
+    const f = (this.idleFrames ?? []).slice().sort((a, b) => a - b);
+    if (!f.length) return 'unknown';
+    const fast = f[Math.floor(f.length * 0.05)];
+    const mean = f.reduce((a, v) => a + v, 0) / f.length;
+    return mean > fast * 1.1 ? `bound: frames ${mean.toFixed(1)} ms on average against ${fast.toFixed(1)} at their fastest — the costs show in the interval` : `at the display's rate (${(1000 / mean).toFixed(0)} fps): the frame costs read ~0; the drain is the guide`;
+  }
+  private idleFrames: number[] | null = null;
+
+  /** the timestamps judged over every capture so far */
+  private tsChecks: ReturnType<typeof judgeTimestamps>[] = [];
+
   // ---- main ----
 
   async mainPage(out: Record<string, unknown>): Promise<void> {
@@ -842,8 +1131,12 @@ class Bench {
     out.window = { w: this.W, h: this.R.stream.H, region: this.R.stream.R, layoutBytes: this.R.stream.layout.bytes };
     out.view = this.view();
     this.say('parked frames…');
+    this.framesHook = (f) => (this.idleFrames = f);
     out.idle = await this.capture(8);
+    this.framesHook = null;
     this.idleP50 = (out.idle as { frames?: Stat }).frames?.p50 ?? 17;
+    this.say('A/B: each system off in turn…');
+    out.ab = await this.ab(AB_ALL);
     this.say('region generation, stage by stage…');
     // (round 102: the GPU's way when it's on — and the CPU's, to compare, in the same run)
     out.regionStages = GPUGEN ? await this.regionStagesGpu(5) : await this.regionStages(5);
@@ -859,14 +1152,15 @@ class Bench {
     this.say('the disk store…');
     out.store = await this.storeIO(4);
     // the scenarios
-    this.say('scenario: riding the road (25 s)…');
+    this.say('scenario: riding the road (20 s)…');
     await this.settle(1500, 15000);
     if (drive) {
       sc.drive = drive;
-      out.ride = { ...(await this.capture(25)), view: this.view() };
+      out.ride = { ...(await this.capture(20)), view: this.view() };
       sc.drive = null;
     } else out.ride = { error: 'no road near the start (?drive found none)' };
-    for (const v of [80, 120]) {
+    // (v2: the pan at 120 only — 80 told nothing 120 didn't, and the A/B needs the time)
+    for (const v of [120]) {
       this.say(`scenario: a fast pan at ${v} cells/s (15 s)…`);
       await this.settle(1500, 15000);
       const [ux, uy] = this.R.camera.screenDeltaToWorld(0, -1);
@@ -884,6 +1178,7 @@ class Bench {
     this.say('a meteor: the judge and the rock bodies (12 s)…');
     await this.settle(1500, 15000);
     out.meteor = await this.meteor();
+    out.timestampsJudged = this.tsChecks;
   }
 
   /** a region's corner (world cells) in fresh ground: away from the window and from anything made so far */
@@ -933,7 +1228,8 @@ class Bench {
         const gs = (nm: string) => (g.get(`atlas-${nm}`) ?? []).reduce((s, v) => s + v, 0);
         for (const nm of Object.keys(gpu)) if (g.has(`atlas-${nm}`)) gpu[nm].push(gs(nm));
         t.columnsWall.push(tB - tA);
-        if (this.timer.on) t.readbackWait.push(tB - tA - gs('colHeight') - gs('formSeed') - gs('colFinish'));
+        // (only where the timestamps can be trusted: the Pixel 9a's made it -495 ms)
+        if (this.timer.on && this.tsChecks[0]?.reliable) t.readbackWait.push(tB - tA - gs('colHeight') - gs('formSeed') - gs('colFinish'));
         let t0 = performance.now();
         const land = landFrom(c, x0, y0, Infinity);
         t.land.push(performance.now() - t0);
@@ -1318,7 +1614,8 @@ class Bench {
     out.atStart = { dialogOpen: !!run.play?.dialog?.isOpen, ended: !!run.ended, alive: run.hero?.alive ?? null };
     if (run.play?.dialog?.isOpen) run.play.dialog.close?.();
     let ang = -Math.PI / 2;
-    let prev = run.hero.position();
+    // (a copy: position() hands back the hero's own array, moved in place — v1 compared it with itself and saw no walk)
+    let prev = [...run.hero.position()];
     let walked = 0;
     let placed = 0;
     let mode = 'stick';
@@ -1328,10 +1625,11 @@ class Bench {
       const h = run.hero.position();
       const d = Math.hypot(h[0] - prev[0], h[1] - prev[1]);
       if (d < 50) walked += d;
-      prev = h;
+      prev = [h[0], h[1], h[2]];
       // (the pad's scripted stick, as runtest.mjs: up the screen, a quarter turn every 8 s)
       ang = -Math.PI / 2 + Math.floor(t / 8) * (Math.PI / 2);
       if (mode === 'stick') {
+        // (the TouchPad's scripted stick: its intent() reads it as a held stick — the same path a thumb takes)
         run.pad.scripted = { stick: [Math.cos(ang) * 56, Math.sin(ang) * 56] };
         // (the stick didn't move it in 4 s: the hero put down ahead every 0.5 s at a hover bike's pace, as runtest.mjs's ride)
         if (t > 4 && walked < 3) mode = 'placed';
@@ -1361,7 +1659,11 @@ class Bench {
     out.settleMs = await this.settle(5000);
     out.window = { w: this.W, h: this.R.stream.H };
     out.view = this.view();
-    out.parked = await this.capture(8);
+    this.framesHook = (f) => (this.idleFrames = f);
+    out.parked = await this.capture(6);
+    this.framesHook = null;
+    this.say('A/B: what scales with the window…');
+    out.ab = await this.ab(AB_WINDOW);
   }
 }
 
@@ -1371,7 +1673,8 @@ function makeReport(s: BenchState): Record<string, unknown> {
   const res = s.results as Record<string, any>;
   const main = res.main ?? {};
   const idle = main.idle ?? {};
-  const gpuIdle = typeof idle.gpuFrame === 'object' ? idle.gpuFrame.p50 : null;
+  // (v2: not from timestamps a GPU got wrong; the budget is then the frame interval's and the A/B's)
+  const gpuIdle = typeof idle.gpuFrame === 'object' && idle.timestamps?.reliable !== false ? idle.gpuFrame.p50 : null;
   const frameIdle = idle.frames?.p50 ?? null;
   const W = main.window?.w ?? 320;
   const R = main.window?.region ?? 64;
@@ -1442,9 +1745,51 @@ function makeReport(s: BenchState): Record<string, unknown> {
   derived.mesh = main.mesh ? { unit: 'GPU ms', perChunk: main.mesh.perChunk, slotsPerFrame: main.mesh.slotsPerFrame, parkedPerFrame: main.mesh.parkedMeshPerFrame?.p50 ?? null, ridingPerFrame: ride.meshFrame?.p50 ?? null } : null;
   derived.sims = { parked: idle.simPerAwakeChunk ?? null, riding: ride.simPerAwakeChunk ?? null };
   derived.judge = main.meteor ? { judgePass: main.meteor.judgePass, rockBodiesStep: main.meteor.rockBodiesStep, rockBodiesPerBody: main.meteor.rockBodiesPerBody, bodies: main.meteor.rockBodies } : null;
+  // (v2) the A/B: the costliest systems; and what scales with the window (its cost at each window size)
+  const abSys = (main.ab?.systems ?? {}) as Record<string, any>;
+  const costs = Object.entries(abSys)
+    .filter(([, v]) => v && typeof v === 'object')
+    .map(([k, v]) => [k, v.costFrameMs, v.costDrainMs] as [string, number, number])
+    .sort((a, b) => b[1] - a[1]);
+  derived.ab = { unit: 'ms a frame (frame interval with it on - off; drain)', top: costs.slice(0, 12).map(([k, f, d]) => `${k} ${f} / ${d}`) };
+  const wins: Record<string, Record<string, any>> = { [String(W)]: abSys };
+  for (const k of Object.keys(res)) if (/^win\d+$/.test(k) && res[k]?.ab?.systems) wins[k.slice(3)] = res[k].ab.systems;
+  const sizes = Object.keys(wins).map(Number).sort((a, b) => a - b);
+  const scaling: Record<string, unknown> = {};
+  for (const k of AB_WINDOW) {
+    const by = sizes.map((w) => wins[String(w)]?.[k]?.costFrameMs ?? null);
+    const fps = sizes.map((w) => wins[String(w)]?.[k]?.fpsOn ?? null);
+    if (by.every((v) => v === null)) continue;
+    const a = by[0];
+    const b = by[by.length - 1];
+    scaling[k] = { costFrameMs: Object.fromEntries(sizes.map((w, i) => [w, by[i]])), fpsOn: Object.fromEntries(sizes.map((w, i) => [w, fps[i]])), ratioLargestToSmallest: a && b && a > 0.2 ? r3(b / a) : null };
+  }
+  derived.windowScaling = { sizes, areaRatio: sizes.length > 1 ? r3((sizes[sizes.length - 1] / sizes[0]) ** 2) : null, note: 'a system that scales with the window costs about areaRatio times more at the largest; costs under ~0.3 ms are noise', systems: scaling };
+  const tsJ = main.timestampsJudged as { reliable: boolean | null; why: string }[] | undefined;
+  const tsBad = tsJ?.find((t) => t.reliable === false);
+  const tsSum = { reliable: tsJ?.length ? !tsBad : null, why: tsBad?.why ?? tsJ?.[0]?.why ?? 'n/a', modes: res.timestampModes ? Object.fromEntries(['onePassEach', 'ownEncoderEach', 'allInOnePass'].map((m) => [m, res.timestampModes[m] ? { sumP50: res.timestampModes[m].sum?.p50, wallP50: res.timestampModes[m].wall?.p50, sumOverWall: res.timestampModes[m].sumOverWall } : null])) : null };
+  const fpsOf = (c: any) => (c?.fps ?? null);
+  const head = {
+    note: 'the headline numbers; everything below is detail',
+    device: `${res.device?.adapter?.vendor ?? '?'} ${res.device?.adapter?.architecture ?? ''}, dpr ${res.device?.devicePixelRatio}, css ${res.device?.css?.w}x${res.device?.css?.h}`,
+    timestamps: tsSum,
+    window: W,
+    fps: { parked: fpsOf(idle), ride: fpsOf(main.ride), pan120: fpsOf(main.pan120), warp: fpsOf(main.warp), hero: fpsOf(res.hero?.walking), ...Object.fromEntries(Object.keys(res).filter((k) => /^win\d+$/.test(k)).map((k) => [k, fpsOf(res[k]?.parked)])) },
+    frameP95: { parked: idle.frames?.p95 ?? null, ride: main.ride?.frames?.p95 ?? null, pan120: main.pan120?.frames?.p95 ?? null, hero: res.hero?.walking?.frames?.p95 ?? null },
+    abTop: derived.ab,
+    abBound: main.ab?.bound ?? null,
+    windowScaling: Object.fromEntries(Object.entries(scaling).map(([k, v]: [string, any]) => [k, v.costFrameMs])),
+    region: { wallMs: main.regionStages?.cpu?.total?.p50 ?? null, cutPackMs: main.regionStages?.cpu?.cutPack?.p50 ?? null, columnsWallMs: main.regionStages?.cpu?.columnsWall?.p50 ?? null, mainThreadMs: main.regionStages?.cpu?.mainThread?.p50 ?? null, path: main.regionStages?.path ?? 'cpu', cpuPathWallMs: main.regionStagesCpu?.cpu?.total?.p50 ?? null },
+    tilesRegionsPerSecond: Object.fromEntries([1, 2, 4, 8].map((k) => [k, main.tiles?.[`k${k}`]?.regionsPerSecondFromTiles ?? null])),
+    warp: { landMs: main.warp?.warpMs ?? null, settledMs: main.warp?.settledMs ?? null },
+    hero: { movedBy: res.hero?.walking?.movedBy ?? null, walkedCells: res.hero?.walking?.walkedCells ?? null, zoom: res.hero?.walking?.view?.zoom ?? null, footprint: res.hero?.walking?.view?.footprintCells?.w ?? null, sandboxZoom: main.ride?.view?.zoom ?? null, sandboxFootprint: main.ride?.view?.footprintCells?.w ?? null },
+    thermalDriftPct: (derived.thermal as { driftPct?: number } | null)?.driftPct ?? null,
+    errors: s.errors.length,
+  };
   return {
     kind: 'reclaimed-bench',
     version: BENCH_VERSION,
+    summary: head,
     id: s.id,
     startedAt: s.startedAt,
     finishedAt: new Date().toISOString(),
@@ -1463,9 +1808,11 @@ function summary(r: Record<string, any>): string {
     `GPU: ${r.device?.adapter?.vendor ?? '?'} ${r.device?.adapter?.architecture ?? ''}  timestamps: ${r.device?.timestampQuery ? 'yes' : 'no'}`,
     `parked frame p50/p95/max: ${f(r.main?.idle?.frames)} ms; GPU ${f(r.main?.idle?.gpuFrame)} ms`,
     `ride: ${f(r.main?.ride?.frames)} ms  hero: ${f(r.hero?.walking?.frames)} ms`,
-    `regions/s at 1/2/4/8 tiles: ${[1, 2, 4, 8].map((k) => r.main?.tiles?.[`k${k}`]?.regionsPerSecond ?? '–').join(' / ')}`,
+    `regions/s at 1/2/4/8 tiles: ${[1, 2, 4, 8].map((k) => r.main?.tiles?.[`k${k}`]?.regionsPerSecondFromTiles ?? r.main?.tiles?.[`k${k}`]?.regionsPerSecond ?? '–').join(' / ')}`,
     `warp: land in ${r.main?.warp?.warpMs ?? '–'} ms, settled ${r.main?.warp?.settledMs ?? '–'}`,
     `view: sandbox zoom ${r.main?.ride?.view?.zoom ?? '–'} (${r.main?.ride?.view?.footprintCells?.w ?? '–'} cells across), hero zoom ${r.hero?.walking?.view?.zoom ?? '–'} (${r.hero?.walking?.view?.footprintCells?.w ?? '–'})`,
+    `timestamps: ${r.summary?.timestamps?.reliable === false ? 'UNRELIABLE (A/B used)' : r.summary?.timestamps?.reliable ? 'ok' : 'n/a'}`,
+    `A/B top: ${(d.ab?.top ?? []).slice(0, 4).join(', ')}`,
     `thermal drift: ${d.thermal?.driftPct ?? '–'}%   errors: ${r.errors?.length ?? 0}`,
   ];
   return lines.join('\n');
