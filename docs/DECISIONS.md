@@ -3,6 +3,12 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 106c (session 5, `places`) — cpucache dropped
+
+- The user: "Yeah drop CPU cache". The `cpucache` branch (one CPU terrain cache read back only where the GPU changed it, the
+  judge in 2.5 ms slices; round 102) isn't merged. Its aim is met by moving the CPU readers to the GPU instead (BACKLOG AR6).
+  The branch stays on origin for reference; its Pages build is removed.
+
 ## 2026-10-28 — round 106b (session 5, `places`) — no CPU readback for what's only seen
 
 - The user, on tiles popping in about a second late: "It seems like it lags significantly when I pan (no framerate
