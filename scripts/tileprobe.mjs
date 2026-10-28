@@ -77,6 +77,29 @@ try {
     k++;
   }
   if (out) await p.screenshot({ path: `${out}-end.png` });
+  // (round 105, tilelatency: each render-only region's way from wanted to drawn, stage by stage — p50 / p95 ms)
+  const lat = await p.evaluate(() => {
+    const L = window.reclaimed.renderer.tiles?.land?.latencies ?? [];
+    const q = (a, f) => (a.length ? +a.slice().sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(a.length * f))].toFixed(1) : null);
+    const st = {
+      queue: (t) => t.start - t.wanted,
+      columns: (t) => (t.cols ? t.cols - t.start : null),
+      stamps: (t) => (t.ways && t.cols ? t.ways - t.cols : null),
+      finish: (t) => (t.mapped && t.ways ? t.mapped - t.ways : t.mapped - t.start),
+      meta: (t) => t.ready - t.mapped,
+      bakeQueue: (t) => t.cur - t.ready,
+      meshBake: (t) => t.baked - t.cur,
+      toDrawn: (t) => t.drawn - t.baked,
+      total: (t) => t.drawn - t.wanted,
+    };
+    const o = { n: L.length };
+    for (const [k, f] of Object.entries(st)) {
+      const v = L.map(f).filter((x) => x !== null && Number.isFinite(x));
+      o[k] = [q(v, 0.5), q(v, 0.95)];
+    }
+    return o;
+  });
+  console.log('LATENCY', JSON.stringify(lat));
   const fatal = await p.evaluate(() => document.querySelector('.fatal')?.textContent ?? null);
   console.log('fatal', fatal);
   console.log('errors', JSON.stringify(errs.slice(0, 20)));

@@ -1,0 +1,320 @@
+{
+ "started": "2026-10-28T22:26:08.460Z",
+ "build": "2026-10-28 22:04",
+ "i": 6,
+ "running": -1,
+ "runs": [
+  {
+   "way": "ring",
+   "round": 0,
+   "storageKernels": [],
+   "awakeChunks": 126,
+   "emptySubmitMs": 15.3,
+   "kernels": {
+    "sediment-out": {
+     "gpuMs": 0.7275,
+     "wallMs": 0.325,
+     "groups": 504,
+     "indirect": false
+    },
+    "sediment": {
+     "gpuMs": 0.4874,
+     "wallMs": 0.8375,
+     "groups": 504,
+     "indirect": false
+    },
+    "water-flux": {
+     "gpuMs": 0.0862,
+     "wallMs": -0.7875,
+     "groups": 736,
+     "indirect": false
+    },
+    "water-depth": {
+     "gpuMs": 0.1585,
+     "wallMs": 0.075,
+     "groups": 736,
+     "indirect": false
+    },
+    "copyback": {
+     "gpuMs": 0.0869,
+     "wallMs": 0.2,
+     "groups": 736,
+     "indirect": false
+    }
+   },
+   "systems": {
+    "sediment": {
+     "gpuMs": 2.377,
+     "wallMs": 3.3,
+     "dispatches": 2
+    },
+    "water": {
+     "gpuMs": 0.277,
+     "wallMs": -3.4,
+     "dispatches": 3
+    }
+   }
+  },
+  {
+   "way": "table",
+   "round": 0,
+   "storageKernels": [],
+   "awakeChunks": 98,
+   "emptySubmitMs": 8.1,
+   "kernels": {
+    "sediment-out": {
+     "gpuMs": 1.2453,
+     "wallMs": 1.9125,
+     "groups": 392,
+     "indirect": false
+    },
+    "sediment": {
+     "gpuMs": 0.2941,
+     "wallMs": 0.2375,
+     "groups": 392,
+     "indirect": false
+    },
+    "water-flux": {
+     "gpuMs": 0.0833,
+     "wallMs": 0.6375,
+     "groups": 604,
+     "indirect": false
+    },
+    "water-depth": {
+     "gpuMs": 0.1001,
+     "wallMs": 0.2875,
+     "groups": 604,
+     "indirect": false
+    },
+    "copyback": {
+     "gpuMs": 0.0088,
+     "wallMs": 0.8375,
+     "groups": 604,
+     "indirect": false
+    }
+   },
+   "systems": {
+    "sediment": {
+     "gpuMs": 1.843,
+     "wallMs": 7.6,
+     "dispatches": 2
+    },
+    "water": {
+     "gpuMs": 0.901,
+     "wallMs": 29.2,
+     "dispatches": 3
+    }
+   }
+  },
+  {
+   "way": "storage",
+   "round": 0,
+   "storageKernels": [
+    "water-flux",
+    "sediment"
+   ],
+   "awakeChunks": 98,
+   "emptySubmitMs": 0.2,
+   "kernels": {
+    "sediment-out": {
+     "gpuMs": 0.6863,
+     "wallMs": 2.575,
+     "groups": 360,
+     "indirect": false
+    },
+    "sediment": {
+     "gpuMs": 0.3426,
+     "wallMs": 2.7,
+     "groups": 360,
+     "indirect": false
+    },
+    "water-flux": {
+     "gpuMs": 0.0805,
+     "wallMs": 2.3875,
+     "groups": 600,
+     "indirect": false
+    },
+    "water-depth": {
+     "gpuMs": 0.0889,
+     "wallMs": 1.525,
+     "groups": 600,
+     "indirect": false
+    },
+    "copyback": {
+     "gpuMs": 0.0074,
+     "wallMs": 1.125,
+     "groups": 600,
+     "indirect": false
+    }
+   },
+   "systems": {
+    "sediment": {
+     "gpuMs": 1.445,
+     "wallMs": 19.9,
+     "dispatches": 2
+    },
+    "water": {
+     "gpuMs": 0.261,
+     "wallMs": 15.2,
+     "dispatches": 3
+    }
+   }
+  },
+  {
+   "way": "storage",
+   "round": 1,
+   "storageKernels": [
+    "water-flux",
+    "sediment"
+   ],
+   "awakeChunks": 147,
+   "emptySubmitMs": 15.2,
+   "kernels": {
+    "sediment-out": {
+     "gpuMs": 0.9618,
+     "wallMs": 0.975,
+     "groups": 588,
+     "indirect": false
+    },
+    "sediment": {
+     "gpuMs": 0.3145,
+     "wallMs": -0.225,
+     "groups": 588,
+     "indirect": false
+    },
+    "water-flux": {
+     "gpuMs": 0.1744,
+     "wallMs": 0.0875,
+     "groups": 820,
+     "indirect": false
+    },
+    "water-depth": {
+     "gpuMs": 0.0961,
+     "wallMs": -0.4125,
+     "groups": 820,
+     "indirect": false
+    },
+    "copyback": {
+     "gpuMs": 0.0085,
+     "wallMs": -0.575,
+     "groups": 820,
+     "indirect": false
+    }
+   },
+   "systems": {
+    "sediment": {
+     "gpuMs": 1.49,
+     "wallMs": 3.8,
+     "dispatches": 2
+    },
+    "water": {
+     "gpuMs": 0.216,
+     "wallMs": -6.7,
+     "dispatches": 3
+    }
+   }
+  },
+  {
+   "way": "table",
+   "round": 1,
+   "storageKernels": [],
+   "awakeChunks": 98,
+   "emptySubmitMs": 22.4,
+   "kernels": {
+    "sediment-out": {
+     "gpuMs": 1.1508,
+     "wallMs": -0.25,
+     "groups": 392,
+     "indirect": false
+    },
+    "sediment": {
+     "gpuMs": 0.2314,
+     "wallMs": -1.4875,
+     "groups": 392,
+     "indirect": false
+    },
+    "water-flux": {
+     "gpuMs": 0.077,
+     "wallMs": -0.95,
+     "groups": 604,
+     "indirect": false
+    },
+    "water-depth": {
+     "gpuMs": 0.0836,
+     "wallMs": -1.5375,
+     "groups": 604,
+     "indirect": false
+    },
+    "copyback": {
+     "gpuMs": 0.0093,
+     "wallMs": -0.9125,
+     "groups": 604,
+     "indirect": false
+    }
+   },
+   "systems": {
+    "sediment": {
+     "gpuMs": 1.744,
+     "wallMs": -7.2,
+     "dispatches": 2
+    },
+    "water": {
+     "gpuMs": 0.321,
+     "wallMs": -2.4,
+     "dispatches": 3
+    }
+   }
+  },
+  {
+   "way": "ring",
+   "round": 1,
+   "storageKernels": [],
+   "awakeChunks": 136,
+   "emptySubmitMs": 10.9,
+   "kernels": {
+    "sediment-out": {
+     "gpuMs": 0.6741,
+     "wallMs": 1.3875,
+     "groups": 544,
+     "indirect": false
+    },
+    "sediment": {
+     "gpuMs": 0.4854,
+     "wallMs": 1.075,
+     "groups": 544,
+     "indirect": false
+    },
+    "water-flux": {
+     "gpuMs": 0.0891,
+     "wallMs": 0.0375,
+     "groups": 772,
+     "indirect": false
+    },
+    "water-depth": {
+     "gpuMs": 0.0854,
+     "wallMs": -0.4875,
+     "groups": 772,
+     "indirect": false
+    },
+    "copyback": {
+     "gpuMs": 0.0076,
+     "wallMs": -0.1375,
+     "groups": 772,
+     "indirect": false
+    }
+   },
+   "systems": {
+    "sediment": {
+     "gpuMs": 1.479,
+     "wallMs": 2.3,
+     "dispatches": 2
+    },
+    "water": {
+     "gpuMs": 0.301,
+     "wallMs": -2.3,
+     "dispatches": 3
+    }
+   }
+  }
+ ]
+}

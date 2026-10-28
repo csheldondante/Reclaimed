@@ -124,6 +124,9 @@ export class RegionFinish {
     gate?: () => Promise<void>,
     /** the tile a gate's turn (the atlas's FINISH_TILE) */
     tile = 32,
+    /** (round 105, tilelatency) the per-column summary (4 f32 a column: surface, ground, top, the highest gap's roof)
+     *  copied here on the GPU, nothing read back (a render-only tile's: Atlas.regionTile) */
+    gpuMeta?: { buf: GPUBuffer; off: number },
   ): Promise<{ meta?: FinishMeta; raw?: RawGround }> {
     const dev = this.dev;
     let tE = performance.now();
@@ -226,6 +229,14 @@ export class RegionFinish {
       cp.setBindGroup(0, bg);
       cp.dispatchWorkgroups(Math.ceil(Math.min(T, w - tiles[k][0]) / 8), Math.ceil(Math.min(T, h - tiles[k][1]) / 8));
       cp.end();
+    }
+    if (gpuMeta) {
+      enc.copyBufferToBuffer(md, 0, gpuMeta.buf, gpuMeta.off, N * 16);
+      dev.queue.submit([enc.finish()]);
+      this.last.encodeMs += performance.now() - tE;
+      // (submitted: the buffers go once the GPU's done with what reads them)
+      for (const b of [aux, opsB, md, outN, back, pb]) b?.destroy();
+      return {};
     }
     enc.copyBufferToBuffer(md, 0, back, 0, mdWords * 4);
     enc.copyBufferToBuffer(outN, 0, back, mdWords * 4, 16);
