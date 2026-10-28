@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 100 (session 5, `regionstore`) — the world serializes; streaming never waits on a region
+
+- The user, verbatim: "I want to try to fix the performance issues and I want the world to serialize so we can
+  recover the visited cells that change. I'm ok with delta only or storing the whole region but lean towards the
+  whole region until we know we need the other. We can stream and cache regions ahead of time even further out
+  ahead of the camera so we never wait for them and read from an atlas."
+- Earlier: "If the regions are not too expensive we can store and stream them too … the column format should keep
+  them fairly lightweight" and "We will need mesh transforms though once we add the other meshes and grids." And:
+  "If they are rare or small or async and not latency sensitive it's not an issue."
+- → Branch `regionstore` (from places 8bff120): frozen regions stay on the GPU in a pool (copied GPU to GPU, LRU);
+  every region frozen and the window's in turn are read back off the frame, and those changed are written whole to
+  IndexedDB (compressed in a worker); the window's changed regions are restored on reload; land is asked for two
+  strips ahead of the camera's motion and uploaded into the pool before the slide (BACKLOG RG1–RG10).
 ## 2026-10-27 — round 100 (overnight, `zmesh`) — no vertical slide; mesh by content
 
 - The user, verbatim: "Why does moving the loaded are vertically cost anything? … Are readbacks needed or can we do

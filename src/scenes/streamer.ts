@@ -23,10 +23,20 @@
 // or lower (layout.ts splitColumn / joinColumn); a frozen region keeps the oz
 // it was left at, and is cut again the same way if it comes back at another.
 // Frozen regions don't tick (deferred or coarse ticks are the next step).
-// The sim waits while a slide is `busy` (only when a region coming in is
-// still being read back from its last visit).
+// (Round 100, `regionstore`: docs/ARCHITECTURE.md "Region storage".) The storage tiers: a region leaving is copied
+// GPU to GPU into a slot of the region pool (region-pool.ts, LRU, `?pool=` slots) and comes back the same way, so a
+// slide never waits on a readback; its CPU parts (what's outside the window, the surface, the ground, the relief)
+// go with it. Each region frozen (and each of the window's, one every SWEEP_MS) is also read back, off the frame, and
+// its columns hashed (world/region-record.ts columnsHash): one changed since it was made or last saved is written
+// whole to the store (world/region-store.ts: IndexedDB, compressed in a worker; `?worldsave=0` the session's memory
+// only). A region evicted from the pool is then on disk if it changed, made again if it didn't. Land is asked for
+// AHEAD strips along the camera's motion and uploaded into the pool when ready, so a slide only copies. On load,
+// the window's regions with a record are restored (Streamer.restore).
 
 import { record, timed } from '../gpu/cpustat';
+import { RegionPool, type PoolSlot } from './region-pool';
+import { RegionStore } from '../world/region-store';
+import { columnsHash, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
 import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
@@ -90,8 +100,19 @@ const ARRIVE_URGENT = typeof location === 'undefined' || new URLSearchParams(loc
  * rest the next frames, the window held `busy` till they're in: a region is ~4 ms on the desktop, a strip five.
  */
 const WRITE_MS = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('writems')) ?? 6);
-/** (round 98) regions made ahead and ready kept at most (the oldest dropped: made again if wanted) */
-const MADE_KEEP = 32;
+const param = (k: string) => (typeof location === 'undefined' ? null : new URLSearchParams(location.search).get(k));
+/** (round 100, ?pool=N) regions kept on the GPU out of the window (LRU; ~1.6 MB a region at the atlas's K) */
+export const POOL_CAP = Number(param('pool') ?? 32);
+/** (round 100, ?ahead=N) strips asked for ahead along the camera's motion */
+const AHEAD = Number(param('ahead') ?? 2);
+/** (round 100) cells a second the camera's motion must pass to be followed ahead */
+const MOVING = 6;
+/** (round 100, ?sweepms=) the window's regions read back for the store, one every this many ms */
+const SWEEP_MS = Number(param('sweepms') ?? 400);
+/** (round 100) uploads of made land into the pool: this many ms of a frame at most (one at least) */
+const UPLOAD_MS = 3;
+/** (round 100) a page load's id: a record says which session wrote it */
+export const SESSION = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
 /** cells the window slides by in z */
 export const TIER = 32;
 /** the field mesh's chunks: cells across and rows down (fieldmesh.ts CHUNK) — a slide is whole ones */
@@ -108,6 +129,30 @@ export interface LandSource {
    *  changed at a world cell since then — rock taken (−) or added, loose ground and its material, water */
   snapshot?(x0: number, y0: number, w: number, h: number): Promise<unknown>;
   changes?(snap: unknown, x0: number, y0: number, w: number, h: number): Promise<((x: number, y: number) => LandChange) | null>;
+  /**
+   * (round 100) a region came in from the store, not made: what the source keeps of land it makes (the settlements'
+   * plans, the run's stage pieces' bases) is told, as if it had made it — the land itself is the record's
+   */
+  restored?(x0: number, y0: number, w: number, h: number): Promise<void>;
+}
+
+/** (round 100) what the store saves for a world: its id (the atlas's seed, the run), whether it's kept on disk */
+export interface WorldSave {
+  world: string;
+  /** false: ?worldsave=0 — the session's memory only */
+  disk: boolean;
+  /** ?world=new: this world's records cleared first */
+  fresh: boolean;
+}
+
+/** (round 100) a region's things (meshes with transforms that own cells: sim/external.ts) — taken as it's frozen, given back as it's written */
+export interface RegionThings {
+  name: string;
+  /** the things wholly inside window box x0..x1, y0..y1 (cells), out of play now, as records (cells from the box's
+   *  corner); `keep`: as records only, still in play (the window saved as it is) */
+  take(x0: number, y0: number, x1: number, y1: number, keep?: boolean): ThingRecord[];
+  /** records of a region written at window cell (x0, y0): in play again */
+  give(things: ThingRecord[], x0: number, y0: number): void;
 }
 
 /** what changed at a world cell while its region was away (LandSource.changes) */
@@ -159,19 +204,54 @@ interface Frozen {
   /** the window's oz its layers are cut at, and each column's intervals outside that (world z) */
   oz: number;
   outside: Interval[][];
-  /** the land source's snapshot when it was made or left (LandSource.snapshot) */
+  /** the land source's snapshot when it was made or left (LandSource.snapshot; round 100: a promise till it's read) */
   snap?: unknown;
   /** the ground's own top a column (window z at oz: under what stands on it), when the source says */
   ground?: Float32Array;
-  /** its chunks' pages, chunk by chunk (row-major in the region) */
-  layers: Uint32Array;
+  /** its chunks' pages, chunk by chunk (row-major in the region) — (round 100) on the CPU: made, loaded, or read back to change */
+  layers?: Uint32Array;
   /** each kept buffer's columns: per plane, REGION rows of REGION × stride bytes */
-  bufs: Record<string, Uint8Array>;
+  bufs?: Record<string, Uint8Array>;
   /** each kept texture's texels, rows of the region's width (rgba32float) */
-  texs: Record<string, Float32Array>;
+  texs?: Record<string, Float32Array>;
   surface: Float32Array;
   /** (round 98) its columns' relief (Streamer.relief, gapTop, colTop), made ahead of the slide when it was ready */
   relief?: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array };
+  /** (round 100) its land on the GPU: a slot of the region pool */
+  slot?: PoolSlot;
+  /** (round 100) its columns' hashes: as made, as last saved (shared with the window while it's in it) */
+  info: RegionInfo;
+  /** (round 100) where it came from */
+  how: 'thawed' | 'loaded' | 'made';
+  /** (round 100) its things (RegionThings), taken with it */
+  things?: ThingRecord[];
+}
+
+/** (round 100) what's known of a region's columns (world/region-record.ts columnsHash) */
+interface RegionInfo {
+  /**
+   * changed by play — an edit (the world API's, the editor's, an agent's dig, a story's door), lightning, a meteor,
+   * a fire lit, a tap to grow, what fell from them (Streamer.touch) — not by the sims' own drift: saved whenever
+   * it's read back different from what's saved; a region never touched is made again when it's wanted
+   */
+  changed?: boolean;
+  /** its columns' hash as last saved, and as last read back (a freeze's, a sweep's) */
+  saved?: number;
+  last?: number;
+}
+
+/** (round 100) a region read back for the store: its key, corner (world cells) and CPU parts as they were */
+interface SaveItem {
+  key: string;
+  x0: number;
+  y0: number;
+  oz: number;
+  outside: Interval[][];
+  surface: Float32Array;
+  ground: Float32Array;
+  relief: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array };
+  info: RegionInfo;
+  things?: ThingRecord[];
 }
 
 /** (round 98) a slide's timeline (performance.now() ms): its start, its synchronous part's end, each region coming in
@@ -181,7 +261,7 @@ export interface SlideTrace {
   dy: number;
   t0: number;
   sync: number;
-  regions: { how: 'thawed' | 'ahead' | 'made'; ready: number; written: number }[];
+  regions: { how: 'thawed' | 'ahead' | 'made' | 'loaded'; ready: number; written: number }[];
   end: number;
 }
 
@@ -212,6 +292,18 @@ export interface SlideStats {
   settled: number;
   /** the last slide: ms from start to the regions coming in written */
   lastMs: number;
+  /** (round 100) the pool and the store: regions evicted from the pool, read back and hashed, written to the store,
+   *  loaded from it, restored into the window on load, records that couldn't be used (made again), uploads into the pool */
+  evicted: number;
+  /** regions play touched (Streamer.touch) */
+  touched: number;
+  checked: number;
+  saved: number;
+  loaded: number;
+  restored: number;
+  mismatched: number;
+  loadFailed: number;
+  uploads: number;
 }
 
 export class Streamer {
@@ -220,8 +312,37 @@ export class Streamer {
   readonly R = REGION;
   /** the world cell of window column 0, row 0 */
   readonly origin: [number, number] = [0, 0];
-  /** regions out of the window, as they were left ("rx,ry" in regions) */
-  readonly frozen = new Map<string, Frozen | Promise<Frozen>>();
+  /**
+   * Regions out of the window on the GPU ("rx,ry" in regions; round 100: the pool's, LRU order — oldest first): as
+   * they were left, or made or loaded ahead of the slide that brings them in
+   */
+  readonly frozen = new Map<string, Frozen>();
+  /** (round 100) the GPU region pool, the layout of a region's bytes (slot, staging, record body) */
+  readonly pool: RegionPool;
+  readonly layout: RegionLayout;
+  /** (round 100) the store (null till it's open; the streamer doesn't slide before) */
+  store: RegionStore | null = null;
+  /** (round 100) what's saved, and how the store went (the failure, when it couldn't open) */
+  readonly save: WorldSave;
+  storeError: string | null = null;
+  /** (round 100) the window's regions: what's known of their columns, by key */
+  private winInfo = new Map<string, RegionInfo>();
+  /** (round 100) a region's readback and save under way (a region evicted before it's done is loaded after it) */
+  private checks = new Map<string, Promise<void>>();
+  /** (round 100) the coarse world's snapshot of regions evicted this session (LandSource.changes, when they come back) */
+  private snaps = new Map<string, unknown>();
+  /** (round 100) what owns things in the regions (meshes with transforms) */
+  readonly things: RegionThings[] = [];
+  /** (round 100) false while what's in the window shouldn't be saved (something falling: it would be saved mid-air) */
+  canSave: (() => boolean)[] = [];
+  /** (round 100) GPU pool uploads waiting for a frame */
+  private uploads: { f: Frozen; slot: PoolSlot; res: () => void }[] = [];
+  private uploadHost?: Uint8Array;
+  private sweepAt = 0;
+  private sweepT = 0;
+  private sweeping = false;
+  /** (round 100) timings (ms): freeze (the slide's copies), thaw (a region's write), check (hash), encode, load */
+  readonly times = { freeze: [] as number[], thaw: [] as number[], hash: [] as number[], encode: [] as number[], load: [] as number[] };
   /**
    * A slide (or a warp, a cut in z) under way. (Round 83: while it is, the meshes aren't made — a chunk made
    * from land still being written came out half made, a hole till it was made again; the rings show the land
@@ -237,7 +358,7 @@ export class Streamer {
   private busyNow = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0 };
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, uploads: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
   /**
@@ -295,7 +416,10 @@ export class Streamer {
     origin: [number, number] = [0, 0],
     /** the first window's oz and what's outside it (the atlas's window), the ground's tops (window z) */
     tier?: { oz: number; outside: Interval[][]; ground?: Float32Array },
+    /** (round 100) the world the store keeps (default: a noise world, this session's memory only) */
+    save: WorldSave = { world: 'noise', disk: false, fresh: false },
   ) {
+    this.save = save;
     const { w, h } = core.dims;
     this.oz = tier?.oz ?? 0;
     if (this.oz % TIER) throw new Error(`the window's oz must be whole tiers of ${TIER}`);
@@ -393,6 +517,437 @@ export class Streamer {
         }
         this.setRelief(i, joinColumn(col, this.oz, this.outside[i]), core.map.surface[i], this.ground[i]);
       }
+    // (round 100) the pool, in the layout every tier shares; the first window's columns hashed as made
+    this.layout = regionLayout(
+      R,
+      this.K,
+      this.bufs.filter((b) => b.keep),
+      this.texs.filter((t) => t.keep),
+      `z${core.dims.zMax}`,
+    );
+    this.pool = new RegionPool((label, size) => wg.buf(label, size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST), this.layout.bytes, POOL_CAP);
+    const L = this.layout;
+    const pageWords = L.pageBytes / 4;
+    for (let ly = 0; ly < h; ly += R)
+      for (let lx = 0; lx < w; lx += R) {
+        const pages = new Uint32Array(L.rc * L.rc * pageWords);
+        for (let j = 0; j < L.rc; j++)
+          for (let i = 0; i < L.rc; i++) {
+            const ci = (ly / CHUNK + j) * (w / CHUNK) + lx / CHUNK + i;
+            pages.set(p.slots.subarray(t[ci * 2] * SLOT_WORDS, t[ci * 2] * SLOT_WORDS + pageWords), (j * L.rc + i) * pageWords);
+          }
+        const out = this.regionOutside(lx, ly);
+        const last = columnsHash(pages, L, out, this.oz);
+        this.winInfo.set(this.key((origin[0] + lx) / R, (origin[1] + ly) / R), { last });
+      }
+    // (round 100) the store: opened, cleared for a new world, the window's saved regions restored; till then the
+    // window doesn't slide (a region made before the index is read might have had a record)
+    const fail = (e: unknown) => {
+      this.storeError = String((e as Error)?.message ?? e);
+      console.error(`[worldsave] ${this.storeError} — this session's changes are kept in memory only, not saved`);
+      return RegionStore.open(save.world, true);
+    };
+    void (save.disk ? RegionStore.open(save.world).catch(fail) : RegionStore.open(save.world, true))
+      .then(async (s) => {
+        if (save.fresh) await s.clear();
+        await this.restore(s);
+        this.store = s;
+      })
+      .catch((e) => console.error(`[worldsave] the store failed: ${(e as Error)?.message ?? e}`));
+    if (typeof document !== 'undefined')
+      document.addEventListener('visibilitychange', () => {
+        // (a phone backgrounding the page: the whole window read back for the store now)
+        if (document.visibilityState === 'hidden') this.sweep(true);
+      });
+  }
+
+  /** (round 100) the window's outside intervals of the region at local cell (lx, ly), row-major in the region */
+  private regionOutside(lx: number, ly: number): Interval[][] {
+    const o: Interval[][] = [];
+    for (let r = 0; r < this.R; r++) for (let c = 0; c < this.R; c++) o.push(this.outside[(ly + r) * this.W + lx + c]);
+    return o;
+  }
+
+  /** (round 100) a w-wide CPU grid's region at local cell (lx, ly), copied */
+  private regionOf<T extends Float32Array | Uint8Array>(a: T, lx: number, ly: number): T {
+    const { R, W } = this;
+    const s = new (a.constructor as { new (n: number): T })(R * R);
+    for (let r = 0; r < R; r++) s.set(a.subarray((ly + r) * W + lx, (ly + r) * W + lx + R), r * R);
+    return s;
+  }
+
+  /** (round 100) the CPU parts of the window's region at (lx, ly) as they are now, for the store */
+  private saveItem(lx: number, ly: number, key: string): SaveItem {
+    let info = this.winInfo.get(key);
+    if (!info) this.winInfo.set(key, (info = {}));
+    return {
+      key,
+      x0: this.origin[0] + lx,
+      y0: this.origin[1] + ly,
+      oz: this.oz,
+      outside: this.regionOutside(lx, ly),
+      surface: this.regionOf(this.core.map.surface, lx, ly),
+      ground: this.regionOf(this.ground, lx, ly),
+      relief: { relief: this.regionOf(this.relief, lx, ly), gapTop: this.regionOf(this.gapTop, lx, ly), colTop: this.regionOf(this.colTop, lx, ly) },
+      info,
+    };
+  }
+
+  /** (round 100) Copy the window's region at (lx, ly) into `dst` at `off`, in the region layout. */
+  private copyOut(enc: GPUCommandEncoder, lx: number, ly: number, dst: GPUBuffer, off: number): void {
+    const { W, R } = this;
+    const L = this.layout;
+    const wg = this.core.world;
+    const table = this.core.packed.chunkTable;
+    const cx = W / CHUNK;
+    for (let j = 0; j < L.rc; j++)
+      for (let i = 0; i < L.rc; i++) {
+        const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
+        enc.copyBufferToBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, dst, off + (j * L.rc + i) * L.pageBytes, L.pageBytes);
+      }
+    const H = this.H;
+    for (const lb of L.bufs) {
+      const b = this.bufs.find((x) => x.name === lb.name)!;
+      for (let p = 0; p < b.planes; p++)
+        for (let r = 0; r < R; r++) enc.copyBufferToBuffer(b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, dst, off + lb.off + (p * R + r) * R * b.stride, R * b.stride);
+    }
+    for (const lt of L.texs) {
+      const t = this.texs.find((x) => x.name === lt.name)!;
+      enc.copyTextureToBuffer({ texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, { buffer: dst, offset: off + lt.off, bytesPerRow: lt.rowBytes }, [lt.tw, lt.th]);
+    }
+  }
+
+  /** (round 100) Copy a region's bytes (a pool slot) into the window at (lx, ly): its pages to the layers (and layersNext). */
+  private copyIn(enc: GPUCommandEncoder, src: GPUBuffer, off: number, lx: number, ly: number): void {
+    const { W, H, R } = this;
+    const L = this.layout;
+    const wg = this.core.world;
+    const table = this.core.packed.chunkTable;
+    const cx = W / CHUNK;
+    for (let j = 0; j < L.rc; j++)
+      for (let i = 0; i < L.rc; i++) {
+        const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
+        for (const b of [wg.layers, wg.layersNext]) enc.copyBufferToBuffer(src, off + (j * L.rc + i) * L.pageBytes, b, table[ci * 2] * SLOT_WORDS * 4, L.pageBytes);
+      }
+    for (const lb of L.bufs) {
+      const b = this.bufs.find((x) => x.name === lb.name)!;
+      for (let p = 0; p < b.planes; p++)
+        for (let r = 0; r < R; r++) enc.copyBufferToBuffer(src, off + lb.off + (p * R + r) * R * b.stride, b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, R * b.stride);
+    }
+    for (const lt of L.texs) {
+      const t = this.texs.find((x) => x.name === lt.name)!;
+      enc.copyBufferToTexture({ buffer: src, offset: off + lt.off, bytesPerRow: lt.rowBytes }, { texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, [lt.tw, lt.th]);
+    }
+  }
+
+  /** (round 100) a region's bytes (the layout's) from its CPU form, in a host buffer reused (valid till the next call) */
+  private toBody(f: Frozen): Uint8Array {
+    const L = this.layout;
+    const host = (this.uploadHost ??= new Uint8Array(L.bytes));
+    host.fill(0);
+    const ly = f.layers!;
+    host.set(new Uint8Array(ly.buffer, ly.byteOffset, Math.min(ly.byteLength, L.rc * L.rc * L.pageBytes)), 0);
+    for (const lb of L.bufs) {
+      const d = f.bufs?.[lb.name];
+      if (d) host.set(d.subarray(0, lb.bytes), lb.off);
+    }
+    for (const lt of L.texs) {
+      const d = f.texs?.[lt.name];
+      if (!d) continue;
+      const row = lt.tw * 16;
+      const u = new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+      for (let r = 0; r < lt.th; r++) host.set(u.subarray(r * row, (r + 1) * row), lt.off + r * lt.rowBytes);
+    }
+    return host;
+  }
+
+  /** (round 100) a region's CPU form (layers, kept buffers, kept textures) from its bytes */
+  private fromBody(body: Uint8Array): Pick<Frozen, 'layers' | 'bufs' | 'texs'> {
+    const L = this.layout;
+    const layers = new Uint32Array(body.slice(0, L.rc * L.rc * L.pageBytes).buffer);
+    const bufs: Record<string, Uint8Array> = {};
+    for (const lb of L.bufs) bufs[lb.name] = body.slice(lb.off, lb.off + lb.bytes);
+    const texs: Record<string, Float32Array> = {};
+    for (const lt of L.texs) {
+      const d = new Float32Array(lt.tw * lt.th * 4);
+      const u = new Uint8Array(d.buffer);
+      const row = lt.tw * 16;
+      for (let r = 0; r < lt.th; r++) u.set(body.subarray(lt.off + r * lt.rowBytes, lt.off + r * lt.rowBytes + row), r * row);
+      texs[lt.name] = d;
+    }
+    return { layers, bufs, texs };
+  }
+
+  /** (round 100) A pool slot: a free one, or the least recently used region's (evicted: on disk if it changed). */
+  private slotFor(): PoolSlot | null {
+    for (;;) {
+      const s = this.pool.alloc();
+      if (s) return s;
+      // (what was left behind before what's made ahead for the slides to come; the least recently used of each;
+      // never what a job is working on)
+      let victim: string | null = null;
+      for (const k of this.frozen.keys())
+        if (!this.jobs.has(k) && !this.made.has(k)) {
+          victim = k;
+          break;
+        }
+      if (victim === null)
+        for (const k of this.frozen.keys())
+          if (!this.jobs.has(k)) {
+            victim = k;
+            break;
+          }
+      if (victim === null) return null;
+      this.evict(victim);
+    }
+  }
+
+  /** (round 100) A region out of the pool: its slot freed. If it changed it was (or is being) saved by its check. */
+  private evict(key: string): void {
+    const f = this.frozen.get(key);
+    if (!f) return;
+    this.frozen.delete(key);
+    this.made.delete(key);
+    if (f.slot) this.pool.release(f.slot);
+    if (f.snap !== undefined) this.snaps.set(key, f.snap);
+    this.stats.evicted++;
+  }
+
+  /** (round 100) A region out of the pool (or the CPU form), on the CPU — read back from its slot when it isn't. */
+  private async cpu(f: Frozen): Promise<Frozen> {
+    if (f.layers) return f;
+    if (!f.slot) throw new Error('a frozen region with neither its land on the CPU nor a slot');
+    const dev = this.core.host.gpu.device;
+    const st = dev.createBuffer({ label: 'region readback', size: this.layout.bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder({ label: 'region readback' });
+    enc.copyBufferToBuffer(f.slot.buf, f.slot.off, st, 0, this.layout.bytes);
+    dev.queue.submit([enc.finish()]);
+    await st.mapAsync(GPUMapMode.READ);
+    const body = new Uint8Array(st.getMappedRange()).slice();
+    st.unmap();
+    st.destroy();
+    return { ...f, ...this.fromBody(body) };
+  }
+
+  /**
+   * (round 100) Regions read back (`stage`, one after another in the layout) and hashed: each that changed since it
+   * was made or last saved is written to the store, whole. Nothing waits for it but a load of the same region.
+   */
+  private check(stage: GPUBuffer, items: SaveItem[]): void {
+    const p = stage.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const all = new Uint8Array(stage.getMappedRange()).slice();
+        stage.unmap();
+        stage.destroy();
+        const L = this.layout;
+        items.forEach((it, k) => {
+          const body = all.subarray(k * L.bytes, (k + 1) * L.bytes);
+          const t0 = performance.now();
+          // (not touched by play: nothing to keep — the source makes it again; hashed only for ?rsverify)
+          if (!it.info.changed && !this.verify) return;
+          const h = columnsHash(new Uint32Array(all.buffer, k * L.bytes, (L.rc * L.rc * L.pageBytes) / 4), L, it.outside, it.oz);
+          this.times.hash.push(performance.now() - t0);
+          record('rs.hash', performance.now() - t0);
+          this.stats.checked++;
+          it.info.last = h;
+          if (!it.info.changed || h === it.info.saved || !this.store || this.halted) return;
+          const t1 = performance.now();
+          const [rx, ry] = it.key.split(',').map(Number);
+          const rec = encodeRecord(
+            { world: this.save.world, rx, ry, x0: it.x0, y0: it.y0, oz: it.oz, sig: L.sig, session: SESSION, savedAt: Date.now(), hash: h, things: it.things },
+            body,
+            { oz: it.oz, outside: it.outside, surface: it.surface, ground: it.ground, relief: it.relief },
+          );
+          this.times.encode.push(performance.now() - t1);
+          record('rs.encode', performance.now() - t1);
+          it.info.saved = h;
+          this.stats.saved++;
+          void this.store.put(it.key, rec, { session: SESSION, hash: h });
+        });
+        for (const a of [this.times.hash, this.times.encode]) if (a.length > 400) a.splice(0, a.length - 400);
+      },
+      () => stage.destroy(),
+    );
+    for (const it of items) {
+      const was = this.checks.get(it.key);
+      const q = was ? Promise.all([was, p]).then(() => {}) : p;
+      this.checks.set(it.key, q);
+      void q.then(() => this.checks.get(it.key) === q && this.checks.delete(it.key));
+    }
+  }
+
+  /**
+   * (round 100) The window's regions read back for the store: the next one (every SWEEP_MS), or all of them (the
+   * page hidden). Not while a slide or a warp is under way, a region not written yet, or something falling.
+   */
+  private sweep(all = false): boolean {
+    if (!this.store || this.busy || this.heldNow || this.sweeping) return false;
+    if (this.canSave.some((f) => !f())) return false;
+    const now = performance.now();
+    if (!all && now - this.sweepT < SWEEP_MS) return false;
+    this.sweepT = now;
+    const { W, H, R } = this;
+    const spots: [number, number][] = [];
+    for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) spots.push([lx, ly]);
+    const pick = all ? spots : [spots[this.sweepAt++ % spots.length]];
+    const go = pick.filter(([lx, ly]) => !this.unwritten.some(([x, y]) => x === lx && y === ly));
+    if (!go.length) return false;
+    const dev = this.core.host.gpu.device;
+    const L = this.layout;
+    const stage = dev.createBuffer({ label: 'region save', size: L.bytes * go.length, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder({ label: 'region save' });
+    go.forEach(([lx, ly], k) => this.copyOut(enc, lx, ly, stage, k * L.bytes));
+    dev.queue.submit([enc.finish()]);
+    const items = go.map(([lx, ly]) => {
+      const it = this.saveItem(lx, ly, this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R));
+      const things = this.things.flatMap((t) => t.take(lx, ly, lx + R, ly + R, true));
+      if (things.length) it.things = things;
+      return it;
+    });
+    this.sweeping = true;
+    this.check(stage, items);
+    void Promise.all(items.map((it) => this.checks.get(it.key))).finally(() => (this.sweeping = false));
+    return true;
+  }
+
+  /**
+   * (round 100, scripts/worldsavetest.mjs) Each region written into the window from the pool or the store read back at
+   * once (before the sims' next tick) and its columns hashed against the hash it was frozen or saved with: `verified`.
+   */
+  verify = param('rsverify') === '1';
+  readonly verified: { key: string; how: string; same: boolean; at: number }[] = [];
+  private verifyNow(lx: number, ly: number, key: string, how: string, want: number): void {
+    const dev = this.core.host.gpu.device;
+    const L = this.layout;
+    const st = dev.createBuffer({ label: 'region verify', size: L.bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder({ label: 'region verify' });
+    this.copyOut(enc, lx, ly, st, 0);
+    dev.queue.submit([enc.finish()]);
+    const out = this.regionOutside(lx, ly).map((c) => c.slice());
+    const oz = this.oz;
+    void st.mapAsync(GPUMapMode.READ).then(() => {
+      const body = new Uint8Array(st.getMappedRange()).slice();
+      st.unmap();
+      st.destroy();
+      const h = columnsHash(new Uint32Array(body.buffer, 0, (L.rc * L.rc * L.pageBytes) / 4), L, out, oz);
+      this.verified.push({ key, how, same: h === want, at: performance.now() });
+    });
+  }
+
+  /**
+   * (round 100) Play changed the window's land in the box (window cells x0..x1, rows y0..y1): the regions under it are
+   * kept (saved when they're read back different from what's saved), not made again.
+   */
+  touch(x0: number, y0: number, x1: number, y1: number): void {
+    const { R, W, H } = this;
+    for (let ry = Math.max(0, Math.floor(y0 / R)); ry <= Math.min(H / R - 1, Math.floor(y1 / R)); ry++)
+      for (let rx = Math.max(0, Math.floor(x0 / R)); rx <= Math.min(W / R - 1, Math.floor(x1 / R)); rx++) {
+        const key = this.key((this.origin[0] + rx * R) / R, (this.origin[1] + ry * R) / R);
+        let info = this.winInfo.get(key);
+        if (!info) this.winInfo.set(key, (info = {}));
+        if (!info.changed) this.stats.touched++;
+        info.changed = true;
+      }
+  }
+
+  /** (round 100) A new world: saving stops, this world's records are cleared (the page is then loaded again). */
+  async newWorld(): Promise<void> {
+    this.halted = true;
+    await this.store?.clear();
+  }
+  private halted = false;
+
+  /** (round 100) Every region of the window read back now and, where it changed, saved; resolves when it's on disk. */
+  async saveAll(): Promise<void> {
+    // (till a sweep of the whole window runs: not while a slide is under way or something falls)
+    for (let t = 0; !this.sweep(true); t++) {
+      if (t > 600) throw new Error('saveAll: the window never came still enough to save (10 s)');
+      await new Promise((r) => setTimeout(r, 16));
+    }
+    await Promise.all([...this.checks.values()]);
+    await this.store?.flush();
+  }
+
+  /** (round 100) A region's record from the store as a frozen region (null: none usable — why reported). */
+  private async load(key: string): Promise<Frozen | null> {
+    const s = this.store;
+    if (!s?.has(key)) return null;
+    const t0 = performance.now();
+    let bytes: Uint8Array;
+    try {
+      bytes = await s.get(key);
+    } catch (e) {
+      this.stats.loadFailed++;
+      console.error(`[worldsave] ${(e as Error).message} — the region is made again from the generator, its changes lost`);
+      return null;
+    }
+    const d = decodeRecord(bytes, this.R);
+    const why = recordMismatch(d.header, this.layout, this.save.world);
+    if (why) {
+      this.stats.mismatched++;
+      console.warn(`[worldsave] region ${key}'s record can't be used: ${why} — the region is made again`);
+      void s.delete(key);
+      return null;
+    }
+    this.stats.loaded++;
+    this.times.load.push(performance.now() - t0);
+    record('rs.load', performance.now() - t0);
+    const { meta, header } = d;
+    return {
+      ...this.fromBody(d.body),
+      oz: meta.oz,
+      outside: meta.outside,
+      surface: meta.surface,
+      ground: meta.ground,
+      relief: meta.relief,
+      // (the coarse world's snapshot: this session's when it left the pool, else the coarse world now — another
+      // session's coarse world started again)
+      snap: this.snaps.get(key) ?? this.source.snapshot?.(header.x0, header.y0, this.R, this.R),
+      info: { saved: header.hash, last: header.hash, changed: true },
+      how: 'loaded',
+      things: header.things,
+    };
+  }
+
+  /**
+   * (round 100) On load: the window's regions that have a record written in as they were saved (the window
+   * otherwise is as the source made it). Busy meanwhile; what the game keeps in window coordinates told as by a warp.
+   */
+  private async restore(s: RegionStore): Promise<void> {
+    const { W, H, R } = this;
+    const spots: [number, number][] = [];
+    for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) if (s.has(this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R))) spots.push([lx, ly]);
+    if (!spots.length) return;
+    while (this.busy) await new Promise((r) => setTimeout(r, 16));
+    this.busy = true;
+    this.heldNow = true;
+    const t0 = performance.now();
+    try {
+      for (const f of this.onBeforeSlide) f(0, 0, 0);
+      this.core.windowEpoch++;
+      this.store = s;
+      let n = 0;
+      for (const [lx, ly] of spots) {
+        const key = this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R);
+        let f = await this.load(key);
+        if (!f) continue;
+        if (f.oz !== this.oz) f = this.reslice(f);
+        this.write(f, lx, ly);
+        void this.source.restored?.(this.origin[0] + lx, this.origin[1] + ly, R, R);
+        n++;
+      }
+      this.store = null;
+      this.core.renderer.windowMoved(1 << 12, 0, [0, 0, 0]);
+      this.refreshBand();
+      this.core.clearUndo();
+      this.core.windowEpoch++;
+      this.stats.restored += n;
+      for (const f of this.onWarp) f(this.origin[0], this.origin[1], this.oz);
+      console.log(`[worldsave] ${n} saved regions of ${this.save.world} restored into the window in ${(performance.now() - t0).toFixed(0)} ms`);
+    } finally {
+      this.busy = false;
+      this.heldNow = false;
+    }
   }
 
   /** (hybrid) column i's relief from its runs (world z, joined), its surface and its ground's own top (window z) */
@@ -408,7 +963,7 @@ export class Streamer {
     for (let r = 0; r < R; r++)
       for (let c = 0; c < R; c++) {
         const i = r * R + c;
-        setReliefIn(out, i, joinColumn(this.columnOf(f.layers, c, r), f.oz, f.outside[i]), f.surface[i], gr[i]);
+        setReliefIn(out, i, joinColumn(this.columnOf(f.layers!, c, r), f.oz, f.outside[i]), f.surface[i], gr[i]);
       }
     return out;
   }
@@ -422,11 +977,11 @@ export class Streamer {
    *  the window's land there is stale until they are (scripts/edgeprobe.mjs measures the view against it) */
   unwritten: [number, number][] = [];
 
-  /** land asked for ahead of a slide, by region key */
-  private pending = new Map<string, Promise<Frozen>>();
-  /** (round 98) frozen regions being checked for what changed while they were away, ahead of the slide */
-  private thawing = new Map<string, Promise<Frozen>>();
-  /** (round 98) land ready to write (made ahead, or thawed and checked), by region key */
+  /** (round 100) land asked for (made, loaded or thawed, checked, cut, uploaded), by region key */
+  private jobs = new Map<string, Promise<Frozen>>();
+  /** (round 100) jobs a slide or a warp took over (their land is theirs to write) */
+  private taken = new WeakSet<Promise<Frozen>>();
+  /** (round 98) land ready to write (made ahead, or thawed and checked), by region key — round 100: in the pool */
   private made = new Map<string, Frozen>();
   /** (round 98) frames a slide was due but its land wasn't ready (the camera went on, up to the edge's clamp) */
   waited = 0;
@@ -470,7 +1025,11 @@ export class Streamer {
    *  `LEAD` seconds on is — and the land of two slides when that's past the next one's reach.) */
   update(): Promise<void> | null {
     this.track();
+    // (round 100: not before the store's index is read — a region made then might have had a record)
+    if (!this.store) return null;
+    this.pump();
     if (this.busy || !this.auto) return null;
+    this.sweep();
     const [x, yw] = this.core.camera.target;
     const y = yw / ROW_H;
     const R = this.R;
@@ -489,6 +1048,11 @@ export class Streamer {
     if (px < hx - reach - R) this.prefetch(-2 * R, 0);
     if (py > hy + reach + R) this.prefetch(0, 2 * R);
     if (py < hy - reach - R) this.prefetch(0, -2 * R);
+    // (round 100) along the camera's motion: AHEAD strips, into the pool before the slides that need them
+    if (!STREAM_OLD && AHEAD > 0) {
+      if (Math.abs(this.vel[0]) > MOVING) this.prefetch(Math.sign(this.vel[0]) * AHEAD * R, 0);
+      if (Math.abs(this.vel[1]) > MOVING) this.prefetch(0, Math.sign(this.vel[1]) * AHEAD * R);
+    }
     // in z: the ground under the camera near the window's top or bottom
     const h = this.source.height;
     if (h) {
@@ -514,24 +1078,126 @@ export class Streamer {
     if (STREAM_OLD) return this.slide(dx, dy);
     this.prefetch(dx, dy);
     const R = this.R;
-    for (const [lx, ly] of this.enteringFor(dx, dy))
-      if (!this.made.has(this.key((this.origin[0] + dx + lx) / R, (this.origin[1] + dy + ly) / R))) {
+    for (const [lx, ly] of this.enteringFor(dx, dy)) {
+      const key = this.key((this.origin[0] + dx + lx) / R, (this.origin[1] + dy + ly) / R);
+      const m = this.made.get(key);
+      if (!m || m.oz !== this.oz) {
+        // (round 100: made at another oz — the window slid in z since — cut again first)
+        if (m) {
+          this.made.delete(key);
+          this.startJob(key, this.prepare(m));
+        }
         this.waited++;
         return null;
       }
+    }
     return this.slide(dx, dy);
   }
 
-  /** (round 98) a region's land is ready: kept (the oldest past MADE_KEEP dropped, and forgotten as asked for) */
+  /** (round 100) a region's land is ready: in the pool (the most recently used), ready to be copied into the window */
   private ready(key: string, f: Frozen): void {
-    f.relief = timed('relief', () => this.reliefOf(f));
-    this.made.set(key, f);
-    while (this.made.size > MADE_KEEP) {
-      const old = this.made.keys().next().value!;
-      this.made.delete(old);
-      this.pending.delete(old);
-      this.thawing.delete(old);
+    if (f.slot) {
+      this.frozen.delete(key);
+      this.frozen.set(key, f);
     }
+    this.made.set(key, f);
+  }
+
+  /** (round 100) a job for a region's land under way: ready when done (unless dropped meanwhile — a warp) */
+  private startJob(key: string, job: Promise<Frozen>): void {
+    this.jobs.set(key, job);
+    job.then(
+      (f) => {
+        if (this.taken.has(job)) return;
+        if (this.jobs.get(key) === job) {
+          this.jobs.delete(key);
+          this.ready(key, f);
+        } else if (f.slot && this.frozen.get(key) !== f && !this.slotHeld(f.slot)) this.pool.release(f.slot);
+      },
+      (e) => {
+        if (this.jobs.get(key) === job) this.jobs.delete(key);
+        console.error(`[stream] region ${key}'s land failed: ${(e as Error)?.message ?? e}`);
+      },
+    );
+  }
+
+  /** (round 100) whether a slot is a region's in the pool still */
+  private slotHeld(s: PoolSlot): boolean {
+    for (const f of this.frozen.values()) if (f.slot === s) return true;
+    return false;
+  }
+
+  /**
+   * (round 100) A region's land, wherever it is: the pool's (as left, or made ahead), the store's (as saved), or
+   * made by the source — checked for what changed while it was away, cut at the window's oz, its relief made, and
+   * in the pool (uploaded) when it wasn't.
+   */
+  private async bring(key: string, wx: number, wy: number, fresh = false): Promise<Frozen> {
+    // (a region leaving is saved, if it changed, before it's looked for in the store)
+    await this.checks.get(key);
+    let f = fresh ? undefined : this.frozen.get(key);
+    // (its slot this job's now: nothing evicts it meanwhile; ready() puts it back)
+    if (f) this.frozen.delete(key);
+    if (!f && this.store?.has(key) && !(fresh && this.store.has(key)!.session === SESSION)) f = (await this.load(key)) ?? undefined;
+    if (!f) f = await this.generate(wx, wy);
+    f = await this.since(f, wx, wy);
+    return this.prepare(f);
+  }
+
+  /** (round 100) cut at the window's oz, its relief made, uploaded into a pool slot (a CPU form is let go then) */
+  private async prepare(f: Frozen): Promise<Frozen> {
+    if (f.oz !== this.oz) f = this.reslice(await this.cpu(f));
+    if (!f.relief) {
+      const c = await this.cpu(f);
+      f = { ...c, relief: timed('relief', () => this.reliefOf(c)) };
+    }
+    if (!f.layers) return f;
+    const slot = f.slot ?? this.slotFor();
+    // (no room in the pool, every slot's region wanted: written from the CPU, as before round 100)
+    if (!slot) return f;
+    await new Promise<void>((res) => this.uploads.push({ f, slot, res }));
+    return { ...f, slot, layers: undefined, bufs: undefined, texs: undefined };
+  }
+
+  /** (round 100) uploads of land into the pool, a few ms of the frame (one at least) */
+  private pump(): void {
+    const t0 = performance.now();
+    for (let n = 0; this.uploads.length && (n === 0 || performance.now() - t0 < UPLOAD_MS); n++) {
+      const u = this.uploads.shift()!;
+      timed('pool.upload', () => this.core.host.gpu.device.queue.writeBuffer(u.slot.buf, u.slot.off, this.toBody(u.f)));
+      this.stats.uploads++;
+      u.res();
+    }
+  }
+
+  /** Start making the land a slide of (dx, dy) would bring in (round 100: into the pool — what's there needs nothing). */
+  prefetch(dx: number, dy: number): void {
+    const R = this.R;
+    for (const [lx, ly] of this.nearFirst(this.enteringFor(dx, dy), dx, dy)) {
+      const wx = this.origin[0] + dx + lx;
+      const wy = this.origin[1] + dy + ly;
+      const key = this.key(wx / R, wy / R);
+      if (this.jobs.has(key)) continue;
+      const m = this.made.get(key);
+      if (m) {
+        // (used: the last to be evicted)
+        if (m.slot && this.frozen.get(key) === m) {
+          this.frozen.delete(key);
+          this.frozen.set(key, m);
+        }
+        continue;
+      }
+      // (in the window already — a slide of two regions asks for the strip inside it too)
+      if (this.winInfo.has(key) && this.inWindow(wx, wy)) continue;
+      this.startJob(key, this.bring(key, wx, wy));
+    }
+  }
+
+  /** (round 100) whether world cell (wx, wy) — a region's corner — is in the window now */
+  private inWindow(wx: number, wy: number): boolean {
+    const lx = wx - this.origin[0];
+    const ly = wy - this.origin[1];
+    return lx >= 0 && ly >= 0 && lx < this.W && ly < this.H;
   }
 
   /** Move the window by (dx, dy) columns (one of them ±REGION, the other 0). */
@@ -569,37 +1235,6 @@ export class Streamer {
     return dx > 0 ? this.strip(W - dx, W, 0, H) : dx < 0 ? this.strip(0, -dx, 0, H) : dy > 0 ? this.strip(0, W, H - dy, H) : this.strip(0, W, 0, -dy);
   }
 
-  /** Start making the land a slide of (dx, dy) would bring in (what's frozen needs nothing). */
-  prefetch(dx: number, dy: number): void {
-    const R = this.R;
-    for (const [lx, ly] of this.nearFirst(this.enteringFor(dx, dy), dx, dy)) {
-      const wx = this.origin[0] + dx + lx;
-      const wy = this.origin[1] + dy + ly;
-      const key = this.key(wx / R, wy / R);
-      if (this.frozen.has(key)) {
-        // (round 98: what changed while it was away found ahead too — a readback)
-        if (!STREAM_OLD && !this.thawing.has(key) && !this.made.has(key)) {
-          const job = Promise.resolve(this.frozen.get(key)!).then((f) => this.since(f, wx, wy));
-          this.thawing.set(key, job);
-          job.then(
-            (f) => this.thawing.get(key) === job && this.frozen.has(key) && this.ready(key, f),
-            () => this.thawing.delete(key),
-          );
-        }
-        continue;
-      }
-      if (this.pending.has(key)) continue;
-      const job = STREAM_OLD ? this.generate(wx, wy) : this.generate(wx, wy).then((f) => this.since(f, wx, wy));
-      if (STREAM_OLD) job.catch(() => this.pending.delete(key));
-      else
-        job.then(
-          (f) => this.pending.get(key) === job && this.ready(key, f),
-          () => this.pending.delete(key),
-        );
-      this.pending.set(key, job);
-    }
-  }
-
   /**
    * (round 90, the user: "prioritize tiles close to the center of the screen but load others late") Regions
    * (local corners in the window after a slide of (dx, dy)) nearest the camera's target first: the land is made a
@@ -621,6 +1256,48 @@ export class Streamer {
     return out;
   }
 
+  /**
+   * (round 100) The window's regions at these local corners copied into pool slots (and from there into one staging
+   * buffer, read back for the store), their CPU parts and things taken as they are. frozeInto after the submit.
+   */
+  private freezeInto(enc: GPUCommandEncoder, spots: [number, number][]): { stage: GPUBuffer; items: SaveItem[]; entries: [string, Frozen][] } {
+    const { R } = this;
+    const L = this.layout;
+    const dev = this.core.host.gpu.device;
+    const stage = dev.createBuffer({ label: 'stream freeze', size: L.bytes * spots.length, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const items: SaveItem[] = [];
+    const entries: [string, Frozen][] = [];
+    spots.forEach(([lx, ly], k) => {
+      const key = this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R);
+      const it = this.saveItem(lx, ly, key);
+      const things = this.things.flatMap((t) => t.take(lx, ly, lx + R, ly + R));
+      if (things.length) it.things = things;
+      items.push(it);
+      const slot = this.slotFor();
+      if (slot) {
+        this.copyOut(enc, lx, ly, slot.buf, slot.off);
+        enc.copyBufferToBuffer(slot.buf, slot.off, stage, k * L.bytes, L.bytes);
+        const snap = this.source.snapshot?.(it.x0, it.y0, R, R);
+        entries.push([key, { oz: it.oz, outside: it.outside, surface: it.surface, ground: it.ground, relief: it.relief, snap, slot, info: it.info, how: 'thawed', things: it.things }]);
+      } else {
+        // (no room in the pool: read back only — saved if it changed, made again if it didn't)
+        this.copyOut(enc, lx, ly, stage, k * L.bytes);
+        this.stats.evicted++;
+      }
+      this.winInfo.delete(key);
+    });
+    return { stage, items, entries };
+  }
+
+  /** (round 100) after freezeInto's copies are submitted: the regions in the pool, their readback under way */
+  private frozeInto(fz: { stage: GPUBuffer; items: SaveItem[]; entries: [string, Frozen][] }): void {
+    for (const [key, f] of fz.entries) {
+      this.frozen.delete(key);
+      this.frozen.set(key, f);
+    }
+    this.check(fz.stage, fz.items);
+  }
+
   private async slideNow(dx: number, dy: number, tr: SlideTrace): Promise<void> {
     for (const f of this.onBeforeSlide) f(dx, dy, 0);
     const tSync = performance.now();
@@ -632,42 +1309,15 @@ export class Streamer {
     const table = core.packed.chunkTable;
     const cx = W / CHUNK;
     const cy = H / CHUNK;
-    const rc = R / CHUNK;
     // what leaves (old window cells) and what comes in (new window cells)
     const leaving = dx > 0 ? this.strip(0, dx, 0, H) : dx < 0 ? this.strip(W + dx, W, 0, H) : dy > 0 ? this.strip(0, W, 0, dy) : this.strip(0, W, H + dy, H);
     // (round 90: nearest the camera first — what's written first, and what's made first when it wasn't asked ahead)
     const entering = this.nearFirst(this.enteringFor(dx, dy), dx, dy);
 
-    // ---- 1. freeze what leaves: copies into one staging buffer ---------------
+    // ---- 1. freeze what leaves: copies into the pool (round 100), read back for the store off the frame ----
     const enc = dev.createCommandEncoder({ label: 'stream slide' });
-    const kept = this.bufs.filter((b) => b.keep);
-    const keptT = this.texs.filter((t) => t.keep);
-    const pageBytes = this.pageSlots * SLOT_WORDS * 4;
-    const regionBytes = rc * rc * pageBytes + kept.reduce((s, b) => s + R * R * b.stride * b.planes, 0) + keptT.reduce((s, t) => s + align256((R / t.div) * t.per * 16) * (R / t.div), 0);
-    const staging = dev.createBuffer({ label: 'stream freeze', size: regionBytes * leaving.length, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    let off = 0;
-    for (const [lx, ly] of SLIDE_SKIP.has('freeze') ? [] : leaving) {
-      for (let j = 0; j < rc; j++)
-        for (let i = 0; i < rc; i++) {
-          const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
-          enc.copyBufferToBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, staging, off, pageBytes);
-          off += pageBytes;
-        }
-      for (const b of kept)
-        for (let p = 0; p < b.planes; p++)
-          for (let r = 0; r < R; r++) {
-            enc.copyBufferToBuffer(b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, staging, off, R * b.stride);
-            off += R * b.stride;
-          }
-      for (const t of keptT) {
-        const tw = (R / t.div) * t.per;
-        const th = R / t.div;
-        const row = align256(tw * 16);
-        enc.copyTextureToBuffer({ texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, { buffer: staging, offset: off, bytesPerRow: row }, [tw, th]);
-        off += row * th;
-      }
-    }
-
+    const tf = performance.now();
+    const fz = SLIDE_SKIP.has('freeze') ? null : this.freezeInto(enc, leaving);
     record('slide.freeze', performance.now() - tSync);
     // ---- 2. everything per column moves a region over ------------------------
     // (and the per-column buffers of what the game installed: the agents' fields — round 80)
@@ -683,66 +1333,11 @@ export class Streamer {
         for (let p = 0; p < b.planes; p++) for (let r = 0; r < R; r++) enc.clearBuffer(b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, R * b.stride);
       }
     dev.queue.submit([enc.finish()]);
-    const leftKeys = leaving.map(([lx, ly]) => this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R));
-    const leftOut = leaving.map(([lx, ly]) => {
-      const o: Interval[][] = [];
-      for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) o.push(this.outside[(ly + r) * W + lx + c]);
-      return o;
-    });
-    const oz = this.oz;
-    const leftSnaps = leaving.map(([lx, ly]) => this.source.snapshot?.(this.origin[0] + lx, this.origin[1] + ly, R, R));
-    const read = staging.mapAsync(GPUMapMode.READ).then(() => {
-      const all = new Uint8Array(staging.getMappedRange()).slice();
-      staging.unmap();
-      staging.destroy();
-      const out: Frozen[] = [];
-      let o = 0;
-      for (let k = 0; k < leaving.length; k++) {
-        const f: Frozen = { layers: new Uint32Array(all.buffer, o, (rc * rc * pageBytes) / 4).slice(), bufs: {}, texs: {}, surface: new Float32Array(R * R), oz, outside: leftOut[k] };
-        o += rc * rc * pageBytes;
-        for (const b of kept) {
-          const n = R * R * b.stride * b.planes;
-          f.bufs[b.name] = all.slice(o, o + n);
-          o += n;
-        }
-        for (const t of keptT) {
-          const tw = (R / t.div) * t.per;
-          const th = R / t.div;
-          const row = align256(tw * 16);
-          const d = new Float32Array(tw * th * 4);
-          for (let r = 0; r < th; r++) d.set(new Float32Array(all.buffer, o + r * row, tw * 4), r * tw * 4);
-          f.texs[t.name] = d;
-          o += row * th;
-        }
-        out.push(f);
-      }
-      return out;
-    });
-    // the CPU's surface heights for what leaves (the weather's, the level's cache)
+    if (fz) this.frozeInto(fz);
+    this.times.freeze.push(performance.now() - tf);
+    record('rs.freeze', performance.now() - tf);
+    if (this.times.freeze.length > 400) this.times.freeze.shift();
     const surf = core.map.surface;
-    const leftSurf = leaving.map(([lx, ly]) => {
-      const s = new Float32Array(R * R);
-      for (let r = 0; r < R; r++) s.set(surf.subarray((ly + r) * W + lx, (ly + r) * W + lx + R), r * R);
-      return s;
-    });
-    const leftGround = leaving.map(([lx, ly]) => {
-      const s = new Float32Array(R * R);
-      for (let r = 0; r < R; r++) s.set(this.ground.subarray((ly + r) * W + lx, (ly + r) * W + lx + R), r * R);
-      return s;
-    });
-    leftKeys.forEach((k, i) =>
-      this.frozen.set(
-        k,
-        Promise.all([read, leftSnaps[i]]).then(([fs, snap]) => {
-          const f = fs[i];
-          f.snap = snap;
-          f.surface = leftSurf[i];
-          f.ground = leftGround[i];
-          this.frozen.set(k, f);
-          return f;
-        }),
-      ),
-    );
     this.stats.frozen += leaving.length;
 
     record('slide.move', performance.now() - tSync);
@@ -800,46 +1395,28 @@ export class Streamer {
 
     record('slide', performance.now() - tSync);
     tr.sync = performance.now();
-    // ---- 5. what comes in: thawed, or generated (all of them asked for at once) ----
-    // (round 98: what's ready was checked for changes already)
-    const checked = new Set<number>();
-    const coming = entering.map(([lx, ly], k) => {
-      const key = this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R);
+    // ---- 5. what comes in: from the pool (round 100: thawed, made or loaded ahead), or asked for now ----
+    const coming = entering.map(([lx, ly]) => {
+      const wx = this.origin[0] + lx;
+      const wy = this.origin[1] + ly;
+      const key = this.key(wx / R, wy / R);
       const done = this.made.get(key);
-      if (done) {
-        this.made.delete(key);
-        checked.add(k);
-        if (this.frozen.has(key)) {
-          this.frozen.delete(key);
-          this.thawing.delete(key);
-          this.stats.thawed++;
-          tr.regions.push({ how: 'thawed', ready: 0, written: 0 });
-        } else {
-          this.pending.delete(key);
+      const job = this.jobs.get(key);
+      this.made.delete(key);
+      this.jobs.delete(key);
+      // (the slide's now: not to be evicted before it's written)
+      if (done && this.frozen.get(key) === done) this.frozen.delete(key);
+      if (job) this.taken.add(job);
+      tr.regions.push({ how: done ? (done.how === 'made' ? 'ahead' : done.how) : job ? 'ahead' : 'made', ready: 0, written: 0 });
+      const p = done ? Promise.resolve(done) : (job ?? this.bring(key, wx, wy));
+      return p.then((f) => {
+        if (f.how === 'thawed') this.stats.thawed++;
+        else if (f.how === 'made') {
           this.stats.generated++;
-          this.stats.prefetched++;
-          tr.regions.push({ how: 'ahead', ready: 0, written: 0 });
+          if (done || job) this.stats.prefetched++;
         }
-        return Promise.resolve(done);
-      }
-      this.thawing.delete(key);
-      const got = this.frozen.get(key);
-      if (got) {
-        this.frozen.delete(key);
-        this.stats.thawed++;
-        tr.regions.push({ how: 'thawed', ready: 0, written: 0 });
-        return got;
-      }
-      this.stats.generated++;
-      const ahead = this.pending.get(key);
-      if (ahead) {
-        this.pending.delete(key);
-        this.stats.prefetched++;
-        tr.regions.push({ how: 'ahead', ready: 0, written: 0 });
-        return ahead;
-      }
-      tr.regions.push({ how: 'made', ready: 0, written: 0 });
-      return this.generate(this.origin[0] + lx, this.origin[1] + ly);
+        return { key, f };
+      });
     });
     this.unwritten = entering.slice();
     let tw = performance.now();
@@ -850,9 +1427,11 @@ export class Streamer {
         tw = performance.now();
       }
       const c = await coming[k];
-      const f = checked.has(k) ? c : await this.since(c, this.origin[0] + lx, this.origin[1] + ly);
+      let f = c.f;
+      if (f.oz !== this.oz) f = await this.prepare(f);
+      if (this.frozen.get(c.key)?.slot === f.slot) this.frozen.delete(c.key);
       tr.regions[k].ready = performance.now();
-      this.write(f, lx, ly);
+      this.write(f, lx, ly, c.key);
       tr.regions[k].written = performance.now();
       this.unwritten = this.unwritten.filter(([x, y]) => x !== lx || y !== ly);
       if (!STREAM_OLD && ARRIVE_URGENT) this.core.renderer.fieldMesh.urgent(lx, ly * ROW_H, lx + R, (ly + R) * ROW_H, 8);
@@ -961,15 +1540,20 @@ export class Streamer {
     }
     if (land.riverFlow) texs.riverFlow = land.riverFlow;
     const ground = land.ground ? land.ground.map((v) => v - oz) : undefined;
-    return { layers, bufs, texs, surface, judge, oz, outside, snap, ground };
+    // (round 100) its columns as made: a region whose hash is this when it's read back hasn't changed
+    const last = timed('rs.hash', () => columnsHash(layers, this.layout, outside, oz));
+    return { layers, bufs, texs, surface, judge, oz, outside, snap, ground, info: { last }, how: 'made' };
   }
 
   /** a region coming in with what changed while it was away (LandSource.changes since its snapshot) */
   private async since(f: Frozen, x0: number, y0: number): Promise<Frozen> {
     const { R } = this;
     if (!this.source.changes || f.snap === undefined) return f;
-    const at = await this.source.changes(f.snap, x0, y0, R, R);
+    const at = await this.source.changes(await f.snap, x0, y0, R, R);
     if (!at) return f;
+    // (round 100: changed — its land on the CPU to change, read back from its slot if it's in the pool)
+    f = await this.cpu(f);
+    if (!f.layers || !f.bufs) throw new Error('since: a region without its land on the CPU');
     const zMax = this.core.dims.zMax;
     const layers = f.layers.slice();
     const outside = f.outside.slice();
@@ -994,10 +1578,11 @@ export class Streamer {
       }
     if (!n) return f;
     this.stats.changed++;
+    f.info.last = undefined;
     const bufs = { ...f.bufs };
     if (water) bufs.water = new Uint8Array(water.buffer);
     if (veg) bufs.veg = new Uint8Array(veg.buffer);
-    return { ...f, layers, outside, surface, bufs, snap: undefined };
+    return { ...f, layers, outside, surface, bufs, snap: undefined, relief: undefined };
   }
 
   /**
@@ -1042,6 +1627,7 @@ export class Streamer {
         n++;
       }
     if (n) {
+      this.touch(x0, y0, x1, y1);
       for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, slots);
       for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, veg);
       core.clearUndo();
@@ -1078,16 +1664,19 @@ export class Streamer {
   /** a frozen region cut again at the window's oz now (it was left at another) */
   private reslice(f: Frozen): Frozen {
     const { R } = this;
+    if (!f.layers || !f.bufs) throw new Error('reslice: a region without its land on the CPU');
+    const fl = f.layers;
+    const fb = f.bufs;
     const zMax = this.core.dims.zMax;
-    const layers = new Uint32Array(f.layers.length);
+    const layers = new Uint32Array(fl.length);
     const outside: Interval[][] = [];
     const surface = new Float32Array(R * R);
-    const water = f.bufs.water ? new Float32Array(f.bufs.water.buffer, f.bufs.water.byteOffset, R * R) : undefined;
-    const lava = f.bufs.lava ? new Float32Array(f.bufs.lava.buffer, f.bufs.lava.byteOffset, R * R * 4) : undefined;
+    const water = fb.water ? new Float32Array(fb.water.buffer, fb.water.byteOffset, R * R) : undefined;
+    const lava = fb.lava ? new Float32Array(fb.lava.buffer, fb.lava.byteOffset, R * R * 4) : undefined;
     for (let y = 0; y < R; y++)
       for (let x = 0; x < R; x++) {
         const i = y * R + x;
-        const was = this.columnOf(f.layers, x, y);
+        const was = this.columnOf(fl, x, y);
         const full = joinColumn(was, f.oz, f.outside[i]);
         const wasTop = was.length > 0 && !f.outside[i].some((iv) => iv.z0 >= f.oz + zMax);
         // (round 88) its water's level (world z): over its top in the window, or over the floor where its ground was
@@ -1113,12 +1702,15 @@ export class Streamer {
    * Move the window somewhere else entirely (round 80, the user: "a way to access the atlas map so I can see
    * where I am or maybe warp"): its origin (world cells, whole regions) and oz (whole tiers). Every region
    * there is generated (or thawed) and written; what's derived per column is cleared, the meshes and the band
-   * made again. What the window held is dropped, not frozen (a warp is a jump, not a ride). The sim waits.
+   * made again. (Round 100: what the window held is frozen into the pool first, as a slide's strip is — a warp away
+   * and back finds it as it was; before, it was dropped.) `fresh` (the run's stage just laid: the window made
+   * again with it): the window's regions made again, not thawed — only a record of an earlier session is used, this
+   * session's are let go; the land made ahead (before the stage) dropped. The sim waits.
    */
-  async warp(ox: number, oy: number, oz: number): Promise<void> {
+  async warp(ox: number, oy: number, oz: number, fresh = false): Promise<void> {
     if (ox % this.R || oy % this.R) throw new Error(`a warp's origin must be whole regions of ${this.R}`);
     if (oz % TIER || oz < 0) throw new Error(`a warp's oz must be whole tiers of ${TIER}`);
-    while (this.busy) await new Promise((r) => setTimeout(r, 16));
+    while (this.busy || !this.store) await new Promise((r) => setTimeout(r, 16));
     this.busy = true;
     const t0 = performance.now();
     const { core, W, H, R } = this;
@@ -1126,35 +1718,50 @@ export class Streamer {
       for (const f of this.onBeforeSlide) f(0, 0, 0);
       this.heldNow = true;
       core.windowEpoch++;
-      this.pending.clear();
-      this.thawing.clear();
+      const dev = core.host.gpu.device;
+      const wg = core.world;
+      const spots: [number, number][] = [];
+      for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) spots.push([lx, ly]);
+      // (round 100) what the window holds into the pool (a fresh warp makes it again: dropped)
+      if (!fresh) {
+        const fe = dev.createCommandEncoder({ label: 'stream warp freeze' });
+        const fz = this.freezeInto(fe, spots);
+        dev.queue.submit([fe.finish()]);
+        this.frozeInto(fz);
+        this.stats.frozen += spots.length;
+      } else {
+        for (const k of [...this.frozen.keys()]) if (this.frozen.get(k)!.how === 'made') this.evict(k);
+        this.winInfo.clear();
+      }
+      this.jobs.clear();
       this.made.clear();
       this.origin[0] = ox;
       this.origin[1] = oy;
       this.oz = oz;
       core.globals.origin = [ox, oy];
-      const dev = core.host.gpu.device;
-      const wg = core.world;
       const enc = dev.createCommandEncoder({ label: 'stream warp' });
       for (const b of [...this.bufs, ...this.moduleBufs()]) if (!b.keep) enc.clearBuffer(b.buf);
       enc.clearBuffer(wg.particles);
       dev.queue.submit([enc.finish()]);
-      const spots: [number, number][] = [];
-      for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) spots.push([lx, ly]);
       const lands = await Promise.all(
-        spots.map(([lx, ly]) => {
+        spots.map(async ([lx, ly]) => {
           const key = this.key((ox + lx) / R, (oy + ly) / R);
-          const got = this.frozen.get(key);
-          if (got) {
-            this.frozen.delete(key);
-            this.stats.thawed++;
-            return Promise.resolve(got).then((f) => this.since(f, ox + lx, oy + ly));
+          if (fresh) {
+            const f = this.frozen.get(key);
+            if (f) this.evict(key);
+            if (this.store?.has(key)?.session === SESSION) await this.store.delete(key);
           }
-          this.stats.generated++;
-          return this.generate(ox + lx, oy + ly);
+          const f = await this.bring(key, ox + lx, oy + ly, fresh);
+          if (f.how === 'thawed') this.stats.thawed++;
+          else if (f.how === 'made') this.stats.generated++;
+          return { key, f };
         }),
       );
-      lands.forEach((f, k) => this.write(f, spots[k][0], spots[k][1]));
+      for (let k = 0; k < spots.length; k++) {
+        const { key, f } = lands[k];
+        if (this.frozen.get(key)?.slot === f.slot) this.frozen.delete(key);
+        this.write(f, spots[k][0], spots[k][1], key);
+      }
       // (everything built is made again where it is now)
       core.renderer.windowMoved(1 << 12, 0, [0, 0, 0]);
       this.refreshBand();
@@ -1249,13 +1856,33 @@ export class Streamer {
   }
 
   /** write a region into the window at local cell (lx, ly) */
-  private write(f: Frozen, lx: number, ly: number): void {
-    timed('write', () => this.writeNow(f, lx, ly));
+  private write(f: Frozen, lx: number, ly: number, key = this.key((this.origin[0] + lx) / this.R, (this.origin[1] + ly) / this.R)): void {
+    timed('write', () => this.writeNow(f, lx, ly, key));
   }
 
-  private writeNow(f: Frozen, lx: number, ly: number): void {
+  /** (round 100) a texture region's blank (its fill), on the GPU once, copied in where nothing is kept */
+  private blankBuf(tw: number, th: number, fill?: [number, number, number, number]): { buf: GPUBuffer; rowBytes: number } {
+    const k = `${tw}x${th}:${fill ?? ''}`;
+    let b = this.blankGpu.get(k);
+    if (!b) {
+      const rowBytes = align256(tw * 16);
+      const d = new Float32Array((rowBytes / 4) * th);
+      if (fill) for (let q = 0; q < d.length / 4; q++) d.set(fill, q * 4);
+      const buf = this.core.world.buf(`streamBlank:${k}`, d.byteLength, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+      this.core.host.gpu.device.queue.writeBuffer(buf, 0, d);
+      b = { buf, rowBytes };
+      this.blankGpu.set(k, b);
+    }
+    return b;
+  }
+  private blankGpu = new Map<string, { buf: GPUBuffer; rowBytes: number }>();
+
+  private writeNow(f: Frozen, lx: number, ly: number, key: string): void {
     // (round 98: a region cut again has its relief made again — its surface is the new cut's)
-    if (f.oz !== this.oz) f = { ...this.reslice(f), relief: undefined };
+    if (f.oz !== this.oz) {
+      if (!f.layers) throw new Error('a region in the pool written at another oz (prepare it first)');
+      f = { ...this.reslice(f), relief: undefined };
+    }
     const { core, W, H, R } = this;
     const tl = performance.now();
     for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[(ly + r) * W + lx + c] = f.outside[r * R + c];
@@ -1265,31 +1892,39 @@ export class Streamer {
     const cx = W / CHUNK;
     const rc = R / CHUNK;
     const pageWords = this.pageSlots * SLOT_WORDS;
-    let lenc: GPUCommandEncoder | undefined;
-    for (let j = 0; j < rc; j++)
-      for (let i = 0; i < rc; i++) {
-        const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
-        const page = f.layers.subarray((j * rc + i) * pageWords, (j * rc + i + 1) * pageWords);
-        // (both: the passes that write layersNext copy all of it back over the layers; round 98: the second a GPU copy)
-        dev.queue.writeBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, page);
-        if (STREAM_OLD) dev.queue.writeBuffer(wg.layersNext, table[ci * 2] * SLOT_WORDS * 4, page);
-        else (lenc ??= dev.createCommandEncoder({ label: 'stream write layers' })).copyBufferToBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, wg.layersNext, table[ci * 2] * SLOT_WORDS * 4, page.byteLength);
-      }
-    if (lenc) dev.queue.submit([lenc.finish()]);
     const tb = performance.now();
-    record('write.layers', tb - tl);
-    if (STREAM_OLD)
-      for (const b of this.bufs) {
-        if (!b.keep) continue;
-        const d = f.bufs[b.name];
-        for (let p = 0; p < b.planes; p++)
-          for (let r = 0; r < R; r++) {
-            const dst = p * W * H * b.stride + ((ly + r) * W + lx) * b.stride;
-            if (d) dev.queue.writeBuffer(b.buf, dst, d, (p * R + r) * R * b.stride, R * b.stride);
-            else dev.queue.writeBuffer(b.buf, dst, new Uint8Array(R * b.stride));
-          }
+    const slot = f.slot;
+    if (slot && !f.layers) {
+      // (round 100) from the pool: copies on the GPU only
+      const enc = dev.createCommandEncoder({ label: 'stream thaw' });
+      this.copyIn(enc, slot.buf, slot.off, lx, ly);
+      for (const t of this.texs) {
+        if (t.keep) continue;
+        const tw = (R / t.div) * t.per;
+        const th = R / t.div;
+        const b = this.blankBuf(tw, th, t.fill);
+        enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, [tw, th]);
       }
-    else {
+      dev.queue.submit([enc.finish()]);
+      this.pool.release(slot);
+      this.times.thaw.push(performance.now() - tl);
+      record('rs.thaw', performance.now() - tl);
+      if (this.times.thaw.length > 400) this.times.thaw.shift();
+      record('write.pool', performance.now() - tl);
+    } else {
+      if (slot) this.pool.release(slot);
+      const layers = f.layers!;
+      let lenc: GPUCommandEncoder | undefined;
+      for (let j = 0; j < rc; j++)
+        for (let i = 0; i < rc; i++) {
+          const ci = (ly / CHUNK + j) * cx + lx / CHUNK + i;
+          const page = layers.subarray((j * rc + i) * pageWords, (j * rc + i + 1) * pageWords);
+          // (both: the passes that write layersNext copy all of it back over the layers; round 98: the second a GPU copy)
+          dev.queue.writeBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, page);
+          (lenc ??= dev.createCommandEncoder({ label: 'stream write layers' })).copyBufferToBuffer(wg.layers, table[ci * 2] * SLOT_WORDS * 4, wg.layersNext, table[ci * 2] * SLOT_WORDS * 4, page.byteLength);
+        }
+      if (lenc) dev.queue.submit([lenc.finish()]);
+      record('write.layers', performance.now() - tl);
       // (round 98) the kept buffers' region in one upload, then a copy a row on the GPU: a row's writeBuffer each
       // (~800 a region) was most of a slide's frame
       const kept = this.bufs.filter((b) => b.keep);
@@ -1303,7 +1938,7 @@ export class Streamer {
       const enc = dev.createCommandEncoder({ label: 'stream write' });
       let off = 0;
       for (const b of kept) {
-        const d = f.bufs[b.name];
+        const d = f.bufs?.[b.name];
         const n = R * R * b.stride * b.planes;
         for (let p = 0; p < b.planes; p++)
           for (let r = 0; r < R; r++) {
@@ -1315,25 +1950,22 @@ export class Streamer {
         off += n;
       }
       dev.queue.writeBuffer(this.writeStage, 0, host, 0, size);
-      dev.queue.submit([enc.finish()]);
-    }
-    record('write.bufs', performance.now() - tb);
-    for (const t of this.texs) {
-      const tw = (R / t.div) * t.per;
-      const th = R / t.div;
-      let d = t.keep ? f.texs[t.name] : undefined;
-      if (!d) {
-        // (round 98: what a texture's region starts with made once, not each time)
-        const k = `${tw}x${th}:${t.fill ?? ''}`;
-        d = this.blank.get(k);
-        if (!d) {
-          d = new Float32Array(tw * th * 4);
-          if (t.fill) for (let q = 0; q < tw * th; q++) d.set(t.fill, q * 4);
-          this.blank.set(k, d);
+      record('write.bufs', performance.now() - tb);
+      for (const t of this.texs) {
+        const tw = (R / t.div) * t.per;
+        const th = R / t.div;
+        const d = t.keep ? f.texs?.[t.name] : undefined;
+        if (d) dev.queue.writeTexture({ texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, d, { bytesPerRow: tw * 16 }, [tw, th]);
+        else {
+          const b = this.blankBuf(tw, th, t.fill);
+          enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, [tw, th]);
         }
       }
-      dev.queue.writeTexture({ texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, d, { bytesPerRow: tw * 16 }, [tw, th]);
+      dev.queue.submit([enc.finish()]);
     }
+    this.winInfo.set(key, f.info);
+    if (this.verify && f.info.last !== undefined) this.verifyNow(lx, ly, key, f.how, f.info.last);
+    if (f.things?.length) for (const t of this.things) t.give(f.things, lx, ly);
     record('write.gpu', performance.now() - tb);
     const tc = performance.now();
     const surf = core.map.surface;
@@ -1355,7 +1987,7 @@ export class Streamer {
     for (let r = 0; r < R; r++)
       for (let c = 0; c < R; c++) {
         const i = (ly + r) * W + lx + c;
-        this.setRelief(i, joinColumn(this.columnOf(f.layers, c, r), f.oz, f.outside[r * R + c]), surf[i], this.ground[i]);
+        this.setRelief(i, joinColumn(this.columnOf(f.layers!, c, r), f.oz, f.outside[r * R + c]), surf[i], this.ground[i]);
       }
     record('write.cpu', performance.now() - tc);
     const tr = performance.now();
@@ -1365,8 +1997,6 @@ export class Streamer {
     if (f.judge) for (const cb of this.onArrive) cb(lx + f.judge[0], ly + f.judge[1], lx + f.judge[2], ly + f.judge[3]);
     record('write.onArrive', performance.now() - ta);
   }
-  /** (round 98) what a texture's region coming in starts with, by its size and fill */
-  private blank = new Map<string, Float32Array>();
   /** (round 98) the kept buffers' upload (writeNow) */
   private writeStage?: GPUBuffer;
   private writeHost?: Uint8Array;

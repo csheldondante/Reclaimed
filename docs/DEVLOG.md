@@ -7826,6 +7826,84 @@ scripts/driveprofile.mjs):
   verify + orphans ≤ 0.1 ms a pass.
 Shots: C:/Projects/shots88/meshinst/ (forest_boxes/mesh, drive_0/1, rock_*).
 
+## 2026-10-27 — round 100 (session 5, `regionstore`): the world serializes; a slide only copies
+
+Why: the user (DECISIONS round 100): "I want the world to serialize so we can recover the visited cells that change
+… lean towards the whole region … stream and cache regions ahead of time even further out ahead of the camera so we
+never wait for them". Before: a region leaving was read back to the CPU (`frozen`, unbounded, never on disk) and
+written back from the CPU when it came in (~4 ms a region, a strip's five spread over frames); a slide waited while
+a region coming in was still being read back.
+
+**What changed** (docs/ARCHITECTURE.md "Region storage"):
+1. *A GPU pool* (scenes/region-pool.ts, `?pool=`, 32 slots): a region leaving is copied GPU to GPU into a slot in
+   one layout shared with staging and the disk record (world/region-record.ts regionLayout); coming in, it's copied
+   back (pages to layers and layersNext, buffers a row at a time, textures; the textures not kept from a blank
+   buffer on the GPU, not writeTexture from the CPU). Land made or loaded ahead is uploaded into a slot before the
+   slide (`prepare` / `pump`, ≤ 3 ms of a frame). LRU; what was left behind is evicted before what's made ahead.
+2. *Change detection off the frame*: a region is changed once play touches it (`Streamer.touch`: every event sent
+   but scares and ripples — edits from the world API, the editor, agents, a story's door; lightning; fire; a tap
+   to grow — what falls and lands, the coarse world's events in sight). Each region frozen (and the window's, one
+   every 400 ms; all when the page is hidden) is copied on to a staging buffer and read back; a changed one's
+   columns are hashed in world z and it's written whole whenever the hash differs from what's saved; one never
+   changed isn't saved — evicted, it's made again when wanted. (The first cut counted a region changed when its
+   columns' tops or thickness moved > 0.3 cells from how they were made — the sims' drift between two reads of a
+   still region is ~40 columns by ≤ 0.03 — but that kept 18 of the first window's 25 regions in its first minute
+   with nobody near, ~0.35 a second riding: ~30 MB a 10-minute ride. Main: play's touches, not the sims' drift.)
+3. *The store* (world/region-store.ts + worker): IndexedDB, a record a region (versioned header JSON, the layout's
+   body, outside, surface, ground, relief; things), byte-shuffled and deflated (CompressionStream) in the worker;
+   the index (meta store) read at open so `has` is synchronous. `?worldsave=0`: the worker's memory only.
+4. *Ahead*: while the camera moves > 6 cells/s along an axis, `?ahead=` (2) strips that way are asked for.
+5. *Reload*: world id `atlas:<seed>` (+ `:run=<id>`, `?world=<name>`); `?world=new` or ✦ (two taps) clears it.
+   The window's saved regions are written in on load before it slides (`Streamer.restore`); LandSource.restored
+   lets the atlas's hooks (settlements, a run's stage) see that land as made. A warp freezes what it leaves; a
+   run's stage warp (`fresh`) makes the window again, using only earlier sessions' records (a reload keeps the
+   opened door; this session's pre-stage land isn't kept).
+6. *Things*: `Streamer.things` — the resting rock with `?meshinst=1` (Integrity.regionThings): taken with its region
+   (mesh released, instance forgotten, its External cells left in the columns), its transform and cells in the
+   record, adopted back (ExternalRegistry.adopt) and its mesh made again when the region is written.
+
+**Measured** (desktop iGPU, atlas q=low 412×915, win 320, `at=11956,15471`, every system on, 1× speed):
+- *Exactness* (scripts/worldsavetest.mjs, `?rsverify=1`: each region written back read back at once, before the
+  sims' next tick, and hashed against the hash it was frozen or saved with): ride 6 regions away and back 60/60
+  exact (27 thawed from the pool, 31 made, 2 loaded); warp 10 away and back 50/50 (7 thawed, 11 loaded, 32 made);
+  reload 18/18 restored exactly; reload then ride away and back 60/60. The changed region (a dig, a brick tower, a
+  meteor, a rock body come to rest) read back seconds later: the same after the reload (0 columns differ) and after
+  the ride from the reload; the first ride's readback differed from the reference taken before it in 155 columns
+  (≤ 1.9 cells) — the meteor's rim still settling in the seconds between the reference and the region leaving
+  (the thaw itself was exact).
+- *Sizes*: a region's layout 1.64 MB (K 16: pages 1 MB, 12 kept buffers 0.4 MB, 3 kept textures 0.19 MB); a record
+  ~1.8 MB raw, ~145 KB compressed (18 records 32.5 MB → 2.68 MB: 12×). The pool at 32 slots 52.5 MB of GPU memory.
+- *Times* (CPU ms, p50 / p95): a slide's freeze copies 1.4 / 2.3 for five regions; a thaw (copies encoded) 0.1 /
+  0.2 a region (was ~4 from the CPU); a region's hash 0.8 / 1.2; a record's encode 0.7 / 1.3; the worker's
+  compress + put ~20 ms a record (off the thread); a load from IndexedDB 7–29 ms (off the thread); restoring 18
+  regions on load 1.3 s.
+- *speedsweep* (pan, 10 s a speed, places 8bff120 → regionstore first cut): slide p50 25.4 / 24.7 / 27.6 / 39.4 →
+  6.2 / 6.3 / 6.2 / 13.9 ms at 40 / 80 / 120 / 160 cells/s; the slide's write stage 19–25 → ~1 ms; frame p95 22.6 /
+  41.9 / 52.3 / 69 → 22 / 32.4 / 60 / 63.5. But at 160 the camera got 78.6 cells/s (was 104.8) and slides waited
+  more (waited frames 125 → 145): the pool thrashed (498 evictions in 555 uploads at 32 slots — made-ahead regions
+  evicted before their slide and made again); fixed by evicting what's behind first (re-measured below).
+- *Disk while riding* (touches): the test's four-pan sweep (~40 s riding, nothing done) wrote 11 records with the
+  first cut's rule as play-touched (what fell on arriving land — the judge of land come in, which hitchrec has
+  since removed) and 0 in the first window; worldsavetest's edits 4 records (the edited region and those the
+  meteor reached), 674 KB. A ride where nothing is done writes nothing but what falls; a 10-minute ride ≈ the
+  regions played in × ~150 KB.
+- *After the touch rule and the merge of places 3f67103* (hitchrec): ride 60/60 exact, warp 50/50, reload 4/4
+  restored exactly, reload then ride 60/60; the changed region the same after the reload (0 columns differ).
+- *speedsweep again* (eviction fix: what's behind before what's made ahead): slide p50 6.6 / 7.1 / 6.2 / 14.4 ms;
+  frame p95 29.5 / 44.4 / 71.4 / 140 at 40 / 80 / 120 / 160; got 35.9 / 67.2 / 96.2 / 56.4 cells/s (base 37.3 /
+  69.2 / 100.4 / 104.8); waited 0 / 35 / 114 / 117 frames (base 0 / 35 / 67 / 125). At 160 this run had 15% busy —
+  the slides in z (`slideZ`, 200+ ms each, zmesh's) — and the rings' share of the view 14%: runs on the shared iGPU
+  vary ~2× (round 98); 40–120 hold as before, the slide itself 4× shorter and its write stage ~1 ms (was 19–25).
+  The pool at 32 slots evicts about one region per upload while riding (all of it what was left behind).
+- *On places with zmesh merged* (78673b8: the whole-height window, oz 0, no slides in z; the region's layout still
+  1.64 MB — K, not the height, sizes it; its `sig` now says z504, so a record from the sliding window isn't read):
+  worldsavetest all ok (ride 60/60, warp 50/50, reload 4/4, reload and ride 60/60 exact; restoring 4 regions 41 ms).
+  speedsweep pan, base (places 8bff120) → now: slide p50 25.4 / 24.7 / 27.6 / 39.4 → 4.8 / 4.1 / 3.7 / 4.1 ms; got
+  37.3 / 69.2 / 100.4 / 104.8 → 36.3 / 65.1 / 103.9 / 112.9 cells/s; view low in the window 1.77 / 6.3 / 7.41 /
+  9.85 → 1.55 / 2.48 / 4.15 / 3.16 %; frame p95 22.6 / 41.9 / 52.3 / 69 → 15.9 / 34.6 / 45.9 / 58.9; busy 0.4 / 8.4
+  → 0 / 0 at 120 / 160 (zmesh's part in it is the slides in z gone). The slides still wait for land at speed
+  (waited 134 / 189 frames at 120 / 160): the region build's rate (the tile pacer, ~12 regions a second) is what
+  bounds it now, not the slide.
 ## 2026-10-27 — round 100 (overnight, `zmesh`): no vertical slide; mesh by content
 
 **Why.** The user (DECISIONS round 100): "Why does moving the loaded are vertically cost anything? … Are readbacks

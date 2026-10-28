@@ -303,6 +303,9 @@ try {
         waited: (S.waited ?? 0) - d.waited0,
         pacer: atlas?.pacer ? { perFrame: +atlas.pacer.perFrame.toFixed(1), base: +atlas.pacer.base.toFixed(1), tilesPerFrame: +((atlas.pacer.tiles - d.tiles0) / Math.max(1, atlas.pacer.frames - d.tframes0)).toFixed(2), tilesPerS: +((atlas.pacer.tiles - d.tiles0) / secs).toFixed(1) } : null,
         cpu: R.scene.cpuWorst?.(),
+        // (round 100, regionstore) the GPU pool and the store
+        pool: S.pool ? { used: S.pool.used, cap: S.pool.cap, mb: +(S.pool.gpuBytes / 1048576).toFixed(1), evicted: S.stats.evicted, uploads: S.stats.uploads, thawMs: S.times?.thaw.length ? +[...S.times.thaw].sort((a, b) => a - b)[Math.floor(S.times.thaw.length / 2)].toFixed(2) : null } : null,
+        store: S.store ? { ...S.store.totals(), saved: S.stats.saved, checked: S.stats.checked } : null,
         // (round 100) the slides in z; the field mesh's GPU ms a second (its rebuilds: every fieldmesh pass but the
         // hash), the band's; the hybrid's voxel chunks' share of the window's mesh chunks
         zSlides: S.stats.tiers - d.tiers0,
