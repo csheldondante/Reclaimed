@@ -30,6 +30,14 @@ struct FarP {
   /** (round 86) the storms (window coordinates: x, y, radius, how strong 0..1), how many, the time (s) */
   storms: array<vec4<f32>, 4>,
   rain: vec4<f32>,
+  /** (round 93, the window's light — render.wgsl lighting, from the Globals: far.ts FarLight) the sun's way (xyz) and
+   *  1 − night; its colour; the sky's (rgb) and night; the window's G.org (world units, cells); the season, the
+   *  pollution, 1: the window's look on the rings (?fd=0: 0, the old look), 0 */
+  sun: vec4<f32>,
+  sunCol: vec4<f32>,
+  sky: vec4<f32>,
+  gorg: vec4<f32>,
+  look: vec4<f32>,
 }
 
 /**
@@ -97,7 +105,11 @@ fn underFocus(l: vec2<f32>, z: f32) -> f32 {
   // (hybrid: the window's own land the rings draw is the land itself — never pressed down)
   if (LD.mesh.z > 0.5 && all(l >= vec2<f32>(0.0)) && all(l <= FP.win.xy)) { return z; }
   let ah = dot(l - FP.focus.xy, normalize(FC.eye.xy));
-  return mix(z, min(z, FP.focus.z), smoothstep(0.0, 24.0, ah));
+  // (round 93: only what would rise into the line from the eye to the focus — the land under that line stays as it
+  // is, not a flat floor at the focus's height; ?fd=0 the old floor)
+  var cap = FP.focus.z;
+  if (FP.look.z > 0.5) { cap = FP.focus.z + max(ah, 0.0) * FC.eye.z / max(length(FC.eye.xy), 1e-3) * 0.85; }
+  return mix(z, min(z, cap), smoothstep(0.0, 24.0, ah));
 }
 
 @group(0) @binding(10) var<uniform> FC: FarCam;
@@ -162,6 +174,31 @@ fn skirt(l: vec2<f32>) -> bool {
 }
 @group(0) @binding(45) var<storage, read> lodT: array<vec4<f32>>;
 @group(0) @binding(46) var<uniform> LD: LodD;
+/** (round 93) each material's albedo (lod.ts: lod.wgsl lodAlbedo's) */
+@group(0) @binding(48) var<uniform> farAlbedo: array<vec4<f32>, 64>;
+
+/** (round 94) the baked land (bake.ts SurfaceBake): each level's valid rectangle (world units) and its texel, texels
+ *  a side, layer; then how many levels, the far land's, 1: on */
+struct BakeD {
+  lv: array<vec4<f32>, 14>,
+  info: vec4<f32>,
+}
+@group(0) @binding(37) var<uniform> BD: BakeD;
+@group(0) @binding(38) var bakeS: sampler;
+@group(0) @binding(39) var bakeT: texture_2d_array<f32>;
+
+/** the bake at world point w from level k out — the finest level from k that's baked there (a < 0: none) */
+fn bakeAt(w: vec2<f32>, k: u32) -> vec4<f32> {
+  let n = u32(BD.info.x);
+  for (var i = k; i < n; i++) {
+    let r = BD.lv[i * 2u];
+    if (all(w >= r.xy) && all(w <= r.zw)) {
+      let L = BD.lv[i * 2u + 1u];
+      return textureSampleLevel(bakeT, bakeS, w / (L.x * L.y), i32(i), 0.0);
+    }
+  }
+  return vec4<f32>(-1.0);
+}
 
 /** in the outermost ring's square (window coordinates): the rings draw it */
 fn inLod(l: vec2<f32>) -> bool {
@@ -265,6 +302,18 @@ fn fsFar(v: FOutV) -> FOutF {
   let sun = normalize(vec3<f32>(0.45, 0.35, 0.82));
   let lit = 0.45 + 0.7 * max(dot(v.nrm, sun), 0.0);
   var c = v.col * lit;
+  // (round 94: the bake's far level where it's baked — the towns, the grass, the ways, the woods, the water, lit by the
+  // window's light as the rings are)
+  if (BD.info.z > 0.5 && FP.look.z > 0.5) {
+    let b = bakeAt(l + FP.org.xy, u32(BD.info.y));
+    if (b.a > 0.9) {
+      c = b.rgb;
+    } else if (b.a > 0.62) {
+      c = gSrgb(gHaze(gLin(b.rgb) * 2.0 * gLight(vec3<f32>(0.0, 0.0, 1.0)), v.local.z));
+    } else if (b.a >= 0.0) {
+      c = gSrgb(gHaze(gLin(b.rgb) * gLight(normalize(v.nrm)), v.local.z));
+    }
+  }
   // fading into the sky toward the grid's edge (and with distance from a free camera)
   var fog = smoothstep(0.55, 1.0, v.dist);
   if (FC.pos.w > 0.5) { fog = max(fog, smoothstep(300.0, 2600.0, length(v.local - FC.pos.xyz))); }
@@ -292,6 +341,14 @@ struct LOut {
   @location(6) @interpolate(flat) mats: vec2<u32>,
   /** (round 86) how far under its neighbours the texel lies (world units: a hollow, where a storm's water stands) */
   @location(7) hollow: f32,
+  /** (round 93) the plants the window starts with here (0..4.2), the distance to a way (world units), the window's
+   *  large-scale tint (meshdraw.wgsl meshTint), how deep water stands */
+  @location(8) veg: f32,
+  @location(9) road: f32,
+  @location(10) tint: f32,
+  @location(11) wdep: f32,
+  /** (round 94) how far it has melted into the next ring out (or the far land): the bake's next level's share */
+  @location(12) melt: f32,
 }
 
 fn lodPmod(a: i32, n: i32) -> i32 { return ((a % n) + n) % n; }
@@ -367,12 +424,246 @@ fn vsLod(@builtin(vertex_index) vi: u32, @builtin(instance_index) k: u32) -> LOu
   o.dist = length(local - FP.mid.xy) / (f32(u32(FP.mid.z) - 1u) * 0.5 * FP.win.z);
   o.ring = k;
   let ca = unpack4x8unorm(bitcast<u32>(slot.y));
-  let ra = unpack4x8unorm(bitcast<u32>(slot.w));
-  o.rock = ra.rgb;
-  o.mats = vec2<u32>(u32(round(ca.a * 255.0)), u32(round(ra.a * 255.0)));
+  // (round 93: the rock's material, the plants, the way's distance — lod.wgsl)
+  let sw = bitcast<u32>(slot.w);
+  let rm = min(sw & 0xffu, 63u);
+  o.rock = farAlbedo[rm].rgb;
+  o.mats = vec2<u32>(u32(round(ca.a * 255.0)), rm);
+  // (the last ring melting into the far land: its plants and ways go with it — the far land's colour has its green)
+  let last = select(0.0, a, k + 1u >= u32(LD.info.x));
+  o.veg = f32((sw >> 8u) & 0xffu) / 60.0 * (1.0 - last);
+  o.road = mix(f32((sw >> 16u) & 0xffu) / 255.0 * 3.2, 3.2, last);
+  o.wdep = slot.x - slot.z;
+  o.melt = a;
+  o.tint = 1.0;
+  if (FP.look.z > 0.5) { o.tint = 0.82 + 0.36 * gFbm2(gWo(local) * 0.045 + vec2<f32>(z * 0.02)); }
   let nb = lodTexel(k, ij + vec2<i32>(1, 0)).x + lodTexel(k, ij - vec2<i32>(1, 0)).x + lodTexel(k, ij + vec2<i32>(0, 1)).x + lodTexel(k, ij - vec2<i32>(0, 1)).x;
   o.hollow = nb * 0.25 - slot.z;
   return o;
+}
+
+// ---- (round 93) the window's look on the rings: its noise, its light, its plants, its ways, its trees ----------
+// The user (round 93): "detail further out ... could be fairly cheap and fast and resolve much of the visual pop in on
+// its own". What the window draws (meshdraw.wgsl meshShade) from what the rings bake once (lod.wgsl: the plants the
+// columns start with, the ways' distance): nothing here is updated a frame but the light.
+
+/** common.wgsl's randoms and noise exactly (the window's G.org: its hashes and noise stay with the land) */
+fn gPcg(v: u32) -> u32 {
+  let s = v * 747796405u + 2891336453u;
+  let w = ((s >> ((s >> 28u) + 4u)) ^ s) * 277803737u;
+  return (w >> 22u) ^ w;
+}
+fn gRandv(p: vec3<i32>) -> f32 {
+  let x = bitcast<u32>(p.x) + bitcast<u32>(i32(FP.gorg.z));
+  let y = bitcast<u32>(p.y) + bitcast<u32>(i32(FP.gorg.w));
+  return f32(gPcg(x ^ gPcg(y ^ gPcg(bitcast<u32>(p.z)))) >> 8u) / 16777216.0;
+}
+fn gWo(p: vec2<f32>) -> vec2<f32> { return p + FP.gorg.xy; }
+fn gVnoise(p: vec2<f32>) -> f32 {
+  let i = vec2<i32>(floor(p));
+  let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = gRandv(vec3<i32>(i, 911));
+  let b = gRandv(vec3<i32>(i + vec2<i32>(1, 0), 911));
+  let c = gRandv(vec3<i32>(i + vec2<i32>(0, 1), 911));
+  let d = gRandv(vec3<i32>(i + vec2<i32>(1, 1), 911));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+fn gFbm2(p: vec2<f32>) -> f32 {
+  return gVnoise(p) * 0.55 + gVnoise(p * 2.03 + 17.0) * 0.3 + gVnoise(p * 4.1 + 41.0) * 0.15;
+}
+fn gLin(c: vec3<f32>) -> vec3<f32> { return pow(c, vec3<f32>(2.2)); }
+fn gSrgb(c: vec3<f32>) -> vec3<f32> { return pow(clamp(c, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(1.0 / 2.2)); }
+
+/** render.wgsl lighting without its shadows, clouds, flashes and fire (the rings' land is past them) */
+fn gLight(n: vec3<f32>) -> vec3<f32> {
+  let sun = normalize(FP.sun.xyz);
+  let day = FP.sun.w;
+  let ambient = FP.sky.rgb * (0.5 + 0.5 * n.z);
+  let fill = max(dot(n, normalize(vec3<f32>(-sun.x, -sun.y, 0.4))), 0.0) * vec3<f32>(0.42, 0.36, 0.29) * (0.15 + 0.85 * day);
+  return ambient + fill + FP.sunCol.rgb * max(dot(n, sun), 0.0);
+}
+/** render.wgsl haze (no reach: the atlas has none) */
+fn gHaze(c: vec3<f32>, z: f32) -> vec3<f32> {
+  let h = mix(vec3<f32>(0.62, 0.70, 0.78), vec3<f32>(0.62, 0.57, 0.48), FP.look.y) * mix(1.0, 0.15, FP.sky.w);
+  return mix(c, gLin(h), 0.03 + 0.1 * FP.look.y + smoothstep(24.0, 0.0, z) * 0.06);
+}
+/** common.wgsl seasonGrass (G.rules.w the season) */
+fn gSeasonGrass(g: vec3<f32>, h: f32) -> vec3<f32> {
+  let s = FP.look.x;
+  let colour = smoothstep(0.35, 0.55, s) * (1.0 - smoothstep(0.85, 0.92, s));
+  let bare = smoothstep(0.55, 0.78, s) * (1.0 - smoothstep(0.9, 1.0, s));
+  let straw = mix(vec3<f32>(0.62, 0.52, 0.22), vec3<f32>(0.7, 0.6, 0.3), h);
+  let c = mix(g, straw, colour * (0.45 + 0.4 * h));
+  return mix(c, vec3<f32>(0.46, 0.39, 0.24) * (0.9 + 0.2 * h), bare * 0.75);
+}
+
+/** ways.ts HALF; its paving (ways.ts MAT_PAVE: brick) */
+const G_WAY_HALF: f32 = 2.2;
+const G_MAT_PAVE: u32 = 11u;
+/** world units a tree's lattice step (vegplan.wgsl: a tree in 4.5% of the cells where v >= 3.6 — one in ~3 of these
+ *  3 x 3 squares) */
+const G_TREE_STEP: f32 = 3.0;
+const G_TREE_P: f32 = 0.34;
+
+struct Tree { crown: f32, shade: f32, c: vec3<f32> }
+
+/**
+ * (round 93) The trees over ground point w (world): a crown on a lattice square where the plants are a wood's
+ * (vegplan.wgsl's rule), drawn where it stands on the screen — raised by its height (a point h up is seen
+ * h / tan(elevation) further from the eye on the ground) — and its shadow on the ground the sun's way. No geometry:
+ * a few hashes a pixel, only where the plants are a wood's.
+ */
+fn gTrees(w: vec2<f32>, v: f32, px: f32) -> Tree {
+  var t = Tree(0.0, 0.0, vec3<f32>(0.0));
+  let dens = smoothstep(3.3, 3.8, v);
+  if (dens <= 0.0) { return t; }
+  let eh = length(FC.eye.xy);
+  let away = -FC.eye.xy / max(eh, 1e-3);
+  let cotE = eh / max(FC.eye.z, 0.05);
+  let sun = normalize(FP.sun.xyz);
+  let sh = -sun.xy / max(sun.z, 0.25);
+  let b0 = vec2<i32>(floor(w / G_TREE_STEP));
+  // (a crown is raised away from the eye — up to ~8 world units — so it stands over ground nearer the eye than its
+  // foot: the squares from there)
+  let sx = select(1, -1, away.x < 0.0);
+  let sy = select(1, -1, away.y < 0.0);
+  for (var j = -3; j <= 1; j++) {
+    for (var i = -3; i <= 1; i++) {
+      let bq = b0 + vec2<i32>(i * sx, j * sy);
+      let r0 = gRandv(vec3<i32>(bq, 4242));
+      if (r0 >= G_TREE_P * dens) { continue; }
+      let r1 = gRandv(vec3<i32>(bq, 321));
+      let r2 = gRandv(vec3<i32>(bq, 7));
+      let foot = (vec2<f32>(bq) + vec2<f32>(0.2 + 0.6 * r1, 0.2 + 0.6 * r2)) * G_TREE_STEP;
+      let conifer = r1 < 0.42;
+      let H = select(3.0 + 3.0 * r2, 3.5 + 4.0 * r2, conifer);
+      let R = select(1.3 + 0.7 * r1, 0.9 + 0.5 * r2, conifer);
+      // its shadow on the ground
+      let ds = length(w - (foot + sh * H * 0.8)) / (R * 1.1);
+      t.shade = max(t.shade, 1.0 - smoothstep(0.75, 1.0, ds));
+      // its crown where the screen shows it (a conifer's taller than wide)
+      let cc = foot + away * H * cotE;
+      let q = (w - cc) / R;
+      var d = length(q);
+      if (conifer) {
+        let up = dot(q, away);
+        d = length(q - away * up * 0.55);
+      }
+      let edge = clamp(px / R, 0.05, 0.5);
+      let cov = 1.0 - smoothstep(1.0 - edge, 1.0, d);
+      if (cov > t.crown) {
+        t.crown = cov;
+        // lit as a ball (its normal from where on it), a little each its own green
+        let nb = normalize(vec3<f32>(q * 0.8, sqrt(max(1.0 - min(dot(q, q), 1.0), 0.0)) + 0.25));
+        var leaf = select(vec3<f32>(0.2, 0.36, 0.13), vec3<f32>(0.13, 0.27, 0.13), conifer) * (0.85 + 0.3 * r0 / G_TREE_P);
+        if (!conifer) { leaf = gSeasonGrass(leaf, r2) * 0.5 + leaf * 0.5; }
+        t.c = gLin(leaf) * gLight(nb);
+      }
+    }
+  }
+  return t;
+}
+
+/**
+ * (round 93) A ring's ground as the window draws it (meshdraw.wgsl meshShade): its top's albedo with the window's tint
+ * and specks, the plants it starts with over it (its grass by how much, turning with the season; the tufts' shade),
+ * the ways paved, water left as it is; lit by the window's light and hazed as the window is; the trees over it.
+ * Linear light inside, sRGB out.
+ */
+fn ringWindowLook(v: LOut, n: vec3<f32>, rockK: f32, /** world units a pixel */ cellPx: f32, cell: vec2<i32>, road: f32, fw: f32) -> vec3<f32> {
+  let w = gWo(v.local.xy);
+  var alb = gLin(v.col);
+  let water = v.wdep > 0.05;
+  // (the window's speckle is a quarter cell's, drawn however small — it sparkles; here too, until a pixel is 1.5
+  // cells and more (the far rings), where its average)
+  let avgW = smoothstep(1.5, 3.0, cellPx);
+  if (!water) {
+    // the specks a cell (the window's randv of its cell, fading where a cell is under a pixel)
+    let sp = gRandv(vec3<i32>(cell, i32(floor(v.local.z))));
+    alb *= 1.0 + (0.12 * sp - 0.06) * (1.0 - avgW);
+    alb *= v.tint;
+    // plants on the tops (the window's grow from what its columns start with: on soil and silt its sim has them
+    // grassed over — at least FP.look.w there)
+    let soilish = v.mats.x == 2u || v.mats.x == 22u || v.mats.x == 26u;
+    let veg = max(v.veg, select(0.0, FP.look.w, soilish)) * (1.0 - rockK);
+    if (veg > 0.0) {
+      let cover = smoothstep(0.0, 1.2, veg);
+      var g = mix(vec3<f32>(0.33, 0.40, 0.17), vec3<f32>(0.36, 0.54, 0.19), smoothstep(1.0, 2.0, veg));
+      g = mix(g, vec3<f32>(0.17, 0.33, 0.12), smoothstep(3.0, 4.5, veg));
+      g = mix(g, gSeasonGrass(g, gFbm2(w * 0.08)), 1.0 - 0.5 * smoothstep(3.0, 4.5, veg));
+      // (the window: a quarter cell green where its random is under the cover; here that, or its share where a
+      // quarter cell is under a pixel)
+      let n1 = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), i32(floor(v.local.z * 4.0))));
+      let k = mix(select(0.0, 1.0, n1 < cover), cover, avgW);
+      // (?tufts=0's painted tufts: their shade, on average)
+      let tuft = 1.0 - 0.13 * smoothstep(1.2, 2.5, veg);
+      // (the window's grass varies a quarter cell: 0.82 + 0.3 · its random; its share where that's under a pixel)
+      let n2 = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), i32(floor(v.local.z * 4.0)) + 13));
+      let gv = mix(0.82 + 0.3 * n2, 0.97, avgW);
+      alb = mix(alb, gLin(g * gv) * tuft, k);
+      // (and its flowers: a quarter cell here and there, red, yellow, white or violet, in the grass)
+      let n3 = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), 57));
+      if (n3 < 0.04 * smoothstep(1.2, 2.5, veg) * k) {
+        let fk = u32(n3 * 100.0) % 4u;
+        var fc = vec3<f32>(0.85, 0.22, 0.2);
+        if (fk == 1u) { fc = vec3<f32>(0.92, 0.82, 0.3); }
+        if (fk == 2u) { fc = vec3<f32>(0.9, 0.9, 0.86); }
+        if (fk == 3u) { fc = vec3<f32>(0.62, 0.45, 0.85); }
+        alb = mix(alb, gLin(fc), 1.0 - avgW);
+      }
+    }
+    // the ways: paved (their shoulders the ground's)
+    let pave = 1.0 - smoothstep(G_WAY_HALF - fw, G_WAY_HALF + fw, road);
+    if (pave > 0.0) { alb = mix(alb, gLin(farAlbedo[G_MAT_PAVE].rgb) * (0.92 + 0.16 * gRandv(vec3<i32>(cell, 5))), pave); }
+  }
+  var c = alb * gLight(n);
+  if (water) {
+    // (render.wgsl fsWater: its colour by depth, over its bed by how deep; lava glows as it is)
+    if (v.col.r > 0.8 && v.col.b < 0.2) { return v.col; }
+    let deep = 1.0 - exp(-v.wdep * 0.45);
+    let wl = gLin(mix(vec3<f32>(0.30, 0.45, 0.44), vec3<f32>(0.07, 0.19, 0.25), deep)) * gLight(vec3<f32>(0.0, 0.0, 1.0));
+    let bed = gLin(farAlbedo[min(v.mats.x, 63u)].rgb) * gLight(n) * 0.8;
+    c = mix(bed, wl, mix(0.5, 0.9, deep));
+    // (the window's ripples, glints and foam lighten it ~1.4x in the shots: their average, and a fleck a quarter cell
+    // where a quarter cell is pixels across)
+    c *= 1.9;
+    let fl = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), 77));
+    c = mix(c, gLin(vec3<f32>(0.72, 0.75, 0.75)) * gLight(vec3<f32>(0.0, 0.0, 1.0)) * 0.55, select(0.0, 0.5, fl > 0.92) * (1.0 - avgW));
+  } else {
+    let t = gTrees(w, v.veg * (1.0 - rockK), cellPx);
+    c *= 1.0 - 0.45 * t.shade * (1.0 - t.crown);
+    c = mix(c, t.c, t.crown);
+  }
+  return gSrgb(gHaze(c, v.local.z));
+}
+
+/**
+ * (round 94) A ring's ground from the bake (bake.wgsl: the window's look averaged over a texel): its albedo with the
+ * window's speckle a cell and its grass's grain a quarter cell where those are pixels across, the rock's beds on the
+ * steep faces, lit by the window's light and hazed as it is. Water by its colour lit from above; lava as it is.
+ */
+fn bakedLook(b: vec4<f32>, v: LOut, n: vec3<f32>, rockK: f32, rockC: vec3<f32>, cellPx: f32, cell: vec2<i32>) -> vec3<f32> {
+  if (b.a > 0.9) { return b.rgb; }
+  var alb = gLin(b.rgb);
+  let avgW = smoothstep(1.5, 3.0, cellPx);
+  if (b.a > 0.62) {
+    var c = alb * 2.0 * gLight(vec3<f32>(0.0, 0.0, 1.0));
+    let fl = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), 77));
+    c = mix(c, gLin(vec3<f32>(0.72, 0.75, 0.75)) * gLight(vec3<f32>(0.0, 0.0, 1.0)) * 0.55, select(0.0, 0.5, fl > 0.92) * (1.0 - avgW));
+    return gSrgb(gHaze(c, v.local.z));
+  }
+  let sp = gRandv(vec3<i32>(cell, i32(floor(v.local.z))));
+  alb *= 1.0 + (0.12 * sp - 0.06) * (1.0 - avgW);
+  alb *= v.tint;
+  // (the grass a quarter cell lighter or darker, as the window's: where a quarter cell is pixels across)
+  let grass = clamp(b.a * 2.0, 0.0, 1.0) * (1.0 - avgW);
+  if (grass > 0.01) {
+    let n2 = gRandv(vec3<i32>(vec2<i32>(floor(v.local.xy * 4.0)), i32(floor(v.local.z * 4.0)) + 13));
+    alb *= mix(1.0, (0.82 + 0.3 * n2) / 0.97, grass);
+  }
+  alb = mix(alb, gLin(rockC), rockK);
+  return gSrgb(gHaze(alb * gLight(n), v.local.z));
 }
 
 // ---- (hybrid) the rings' look: rock on the steep faces, in beds; the light from finer normals ----------------
@@ -453,6 +744,8 @@ fn fsLod(v: LOut) -> FOutF {
   let l = v.local.xy;
   // (round 91: a cell's size on screen, for the grain below)
   let cellPx = length(fwidth(l));
+  // (round 93: the way's distance across the pixel, for its edge)
+  let roadFw = max(fwidth(v.road), 0.05);
   // the window's own land is the columns' — where its mesh is built (round 83: till then, the ring's top, so
   // land just come in isn't a hole while its chunks are made); a finer ring's square is that ring's
   // (hybrid: but a skirt — a strip of a cell along a built chunk's edge where the chunk beside it is the
@@ -468,11 +761,48 @@ fn fsLod(v: LOut) -> FOutF {
   if (farCut(v.local, v.pos.xy)) { discard; }
   let look = ringLook(v, facet);
   var c = look.c;
+  // (round 93) the window's own look (?fd=0: the old)
+  if (FP.look.z > 0.5) {
+    let sn = normalize(v.nrm);
+    let nn = normalize(mix(sn, facet, 0.6));
+    let up = min(sn.z, facet.z * 0.5 + sn.z * 0.5);
+    let rk = 1.0 - smoothstep(0.44, 0.56, up);
+    let wcell = farCellAt(l);
+    var vv = v;
+    // (the rock's face: its beds, as ringLook)
+    if (rk > 0.0) {
+      let w = l + FP.org.xy;
+      let b = farStrata(w, v.local.z);
+      let grain = 0.9 + 0.2 * farVnoise(vec2<f32>(w.x + w.y, v.local.z) * 1.7);
+      vv.col = mix(v.col, v.rock * farBedTint(v.mats.y, b) * grain, rk);
+    }
+    // (round 94: from the bake where it's baked — the finest level from this ring's, melting into the next out as the
+    // ring melts into it; till then, the look made here)
+    var b = vec4<f32>(-1.0);
+    if (BD.info.z > 0.5) {
+      let w = l + FP.org.xy;
+      b = bakeAt(w, v.ring);
+      if (b.a >= 0.0 && v.melt > 0.0) {
+        let b2 = bakeAt(w, v.ring + 1u);
+        if (b2.a >= 0.0) { b = mix(b, b2, v.melt); }
+      }
+    }
+    if (b.a >= 0.0) {
+      var rc = v.rock;
+      if (rk > 0.0) {
+        let w = l + FP.org.xy;
+        rc = v.rock * farBedTint(v.mats.y, farStrata(w, v.local.z)) * (0.9 + 0.2 * farVnoise(vec2<f32>(w.x + w.y, v.local.z) * 1.7));
+      }
+      c = bakedLook(b, v, nn, rk, rc, cellPx, wcell);
+    } else {
+      c = ringWindowLook(vv, nn, rk, cellPx, wcell, v.road, roadFw);
+    }
+  }
   // (round 91, the user: "I easily hit the edge of the loaded ground") The window's ground is a colour a cell,
   // each a little lighter or darker; the rings' was smooth — a blur past the window's edge. Their ground gets the
   // same grain a cell (the window's hexagons, by world cell: it stays put as the rings move and the window
   // slides), fading out where a cell is under a pixel.
-  if (!look.rock) {
+  if (!look.rock && FP.look.z < 0.5) {
     let cell = farCellAt(l) + vec2<i32>(i32(round(FP.org.x)), i32(round(FP.org.y / 0.8660254)));
     let g = farHash(cell) - 0.5;
     c *= 1.0 + 0.24 * g * (1.0 - smoothstep(0.7, 1.4, cellPx));

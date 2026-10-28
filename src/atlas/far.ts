@@ -10,12 +10,26 @@ import { GIANT_FLOATS, type Atlas } from './atlas';
 import farW from './far.wgsl?raw';
 import meshStateW from '../shaders/meshstate.wgsl?raw';
 import { LOD_UNI_BYTES, LodRings } from './lod';
+import { BAKE_UNI_BYTES, SurfaceBake } from './bake';
 import { ROW_H } from '../world/lattice';
 
-const UNI_BYTES = 96 + 5 * 16;
+const UNI_BYTES = 96 + 10 * 16;
 /** vertices a side, and world units between them */
 const G = 161;
 const SPACING = 32;
+
+/** (round 93) the window's light and look (the Globals' — render.wgsl lighting), for the rings to be lit as it is */
+export interface FarLight {
+  /** the sun's way (Globals.sun) and its colour (Globals.sunCol: rgb × intensity) */
+  sun: readonly number[];
+  sunCol: readonly number[];
+  /** the sky's ambient rgb and the night 0..1 (Globals.sky) */
+  sky: readonly number[];
+  /** the window's first cell (Globals.origin) */
+  origin: readonly number[];
+  season: number;
+  pollution: number;
+}
 
 export interface FarTargets {
   /** (round 83) the window's field mesh: its state (which chunks are built) and chunks across and down — the
@@ -36,6 +50,9 @@ export class FarLand {
   private count: number;
   /** the rings of less detail between the window and this (round 83, lod.ts); none: ?lod=0 */
   readonly lod: LodRings | null;
+  /** (round 94) the land past the window baked into a texture (bake.ts), what the rings and the far land draw;
+   *  null: ?fb=0 (the look made a fragment at a time, round 93), ?fd=0, no rings, the perf ceiling */
+  readonly bake: SurfaceBake | null;
   private lodPipe?: GPURenderPipeline;
   private lodIndex?: GPUBuffer;
   private lodCount = 0;
@@ -45,6 +62,7 @@ export class FarLand {
   private gGroup?: GPUBindGroup;
   private gBuf?: GPUBuffer;
   private gCount = 0;
+  private noBake: GPUTexture | null;
   /** where the window is (world units and its oz), its size, the grid's middle (window coordinates), the fog */
   org: [number, number, number] = [0, 0, 0];
   win: [number, number] = [256, 256];
@@ -56,6 +74,13 @@ export class FarLand {
   focus: [number, number, number] | null = null;
   /** (round 86) the storms (window coordinates; far.wgsl farStorm): drawn on the land the rings draw */
   storms: { x: number; y: number; radius: number; intensity: number }[] = [];
+  /** (round 93) the window's light (the level sets it a frame); null: the rings' own look */
+  light: FarLight | null = null;
+  /** (round 93, ?fd=0: off) the rings drawn with the window's look — its ground colour, plants, ways, trees, light */
+  windowLook = new URLSearchParams(location.search).get('fd') !== '0';
+  /** (round 93, ?fdveg=) the plants the window's sim has grown on soil and silt by now — the rings draw at least this
+   *  there (its columns start barer; the window greens over in play) */
+  grownVeg = Number(new URLSearchParams(location.search).get('fdveg') ?? 1.6);
 
   constructor(
     private device: GPUDevice,
@@ -123,14 +148,25 @@ export class FarLand {
         { binding: 45, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
         { binding: 46, visibility: VF, buffer: { type: 'uniform' } },
         { binding: 47, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 48, visibility: VF, buffer: { type: 'uniform' } },
+        { binding: 37, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        { binding: 38, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'filtering' } },
+        { binding: 39, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float', viewDimension: '2d-array' } },
       ],
     });
     this.lod = lod ? new LodRings(device, atlas, lod.spacings, lod.n) : null;
+    const fb = new URLSearchParams(location.search).get('fb');
+    this.bake = this.lod && !ceiling && this.windowLook && fb !== '0' ? new SurfaceBake(device, atlas, this.lod, Number(new URLSearchParams(location.search).get('fbn') ?? 512)) : null;
+    if (this.bake) this.bake.grownVeg = this.grownVeg;
+    // (no bake: an empty one — its info's count 0 — and a texel of nothing)
+    const noBake = this.bake ? null : device.createTexture({ label: 'bake none', size: [1, 1, 1], format: 'rgba8unorm', usage: GPUTextureUsage.TEXTURE_BINDING });
+    this.noBake = noBake;
     if (this.lod && t.mesh) this.lod.meshGrid = [t.mesh.grid[2], t.mesh.grid[2] * ROW_H, t.mesh.grid[0], t.mesh.grid[1]];
     const meshState = t.mesh?.state ?? device.createBuffer({ label: 'lod no mesh', size: 16, usage: GPUBufferUsage.STORAGE });
     // (no rings: an empty LodD, its count 0)
     const lodData = this.lod?.data ?? device.createBuffer({ label: 'lod none', size: 16, usage: GPUBufferUsage.STORAGE });
     const lodUni = this.lod?.uni ?? device.createBuffer({ label: 'lod none', size: LOD_UNI_BYTES, usage: GPUBufferUsage.UNIFORM });
+    const albedoU = this.lod?.albedo ?? device.createBuffer({ label: 'far no albedo', size: 64 * 16, usage: GPUBufferUsage.UNIFORM });
     this.group = device.createBindGroup({
       label: 'far',
       layout,
@@ -143,6 +179,10 @@ export class FarLand {
         { binding: 45, resource: { buffer: lodData } },
         { binding: 46, resource: { buffer: lodUni } },
         { binding: 47, resource: { buffer: meshState } },
+        { binding: 48, resource: { buffer: albedoU } },
+        { binding: 37, resource: { buffer: this.bake?.uni ?? device.createBuffer({ label: 'bake none', size: BAKE_UNI_BYTES, usage: GPUBufferUsage.UNIFORM }) } },
+        { binding: 38, resource: this.bake?.sampler ?? device.createSampler() },
+        { binding: 39, resource: this.bake?.view ?? noBake!.createView({ dimension: '2d-array' }) },
       ],
     });
     const module = device.createShaderModule({ label: 'far', code: meshStateW + '\n' + farW });
@@ -227,10 +267,22 @@ export class FarLand {
     const ns = Math.min(4, this.storms.length);
     for (let i = 0; i < ns; i++) f.set([this.storms[i].x, this.storms[i].y, this.storms[i].radius, Math.min(1, this.storms[i].intensity)], 24 + i * 4);
     f.set([ns, (performance.now() / 1000) % 1000, 0, 0], 40);
+    const L = this.light;
+    if (L) {
+      f.set([L.sun[0], L.sun[1], L.sun[2], 1 - L.sky[3]], 44);
+      f.set([L.sunCol[0], L.sunCol[1], L.sunCol[2], 0], 48);
+      f.set([L.sky[0], L.sky[1], L.sky[2], L.sky[3]], 52);
+      f.set([L.origin[0], L.origin[1] * ROW_H, L.origin[0], L.origin[1]], 56);
+      f.set([L.season, L.pollution, this.windowLook ? 1 : 0, this.grownVeg], 60);
+    }
     this.device.queue.writeBuffer(this.uni, 0, f);
     const now = performance.now();
     if (this.lod) {
       this.lod.update(this.mid, this.org, (now - this.lodLast) / 1000);
+      if (this.bake) {
+        this.bake.season = L?.season ?? 0;
+        this.bake.update([this.mid[0] + this.org[0], this.mid[1] + this.org[1]], (now - this.lodLast) / 1000);
+      }
       if (this.lod.ready) {
         pass.setPipeline(this.lodPipe!);
         pass.setBindGroup(0, this.group);
@@ -255,6 +307,8 @@ export class FarLand {
     this.index.destroy();
     this.uni.destroy();
     this.lod?.dispose();
+    this.bake?.dispose();
+    this.noBake?.destroy();
     this.lodIndex?.destroy();
     this.gBuf?.destroy();
   }

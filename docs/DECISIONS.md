@@ -117,6 +117,24 @@ each was implemented.
   rock column fall and just weight vertices to voxels (although rock I don't expect to flex only crumble)" and "it
   should also probably make a big cloud of dust … and maybe sparks".
 
+## 2026-10-27 — round 94 (session 5, `farbake`) — the land past the window baked into a texture
+
+- The user: "The draw distance is ok but I don't understand why towns and grass aren't baked into a texture we can
+  stream so that distant tiles draw correctly further out"
+- → The land past the window is baked once into a streamed texture (a clipmap: a level a ring and one for the far
+  land) from the window's rules, the settlements within reach planned off the main thread on the atlas's own ground
+  and their tops baked in; the rings and the far land draw it, lit a frame. `?fb=0` round 93's look. See DEVLOG
+  round 94 (and why the towns weren't there: their plans needed the window's raw columns).
+
+## 2026-10-27 — round 93 (session 5, `fardetail`) — detail past the window, cheap
+
+- The user, on main's option 5 (plants, roads and grass colour on the far land, baked once as 2D maps): "I'm also
+  curious about number 5 and it seems like that could be fairly cheap and fast and resolve much of the visual pop in
+  on its own. Maybe have another agent explore that in parallel?"
+- Earlier (round 91): "I notice that I easily hit the edge of the loaded ground"
+- → The LOD rings past the window bake, once per texel as they already do, the plants the window's columns start
+  with and the distance to the atlas's ways, and draw them the window's way (its ground colour, grass, paved ways,
+  painted trees, its light); the near side no longer pressed flat. `?fd=0` the old look. See DEVLOG round 93.
 ## 2026-10-27 — round 92 (session 5, `collapse`) — what holds rock up; the meteor-made floaters
 
 - The user, on the collapse judge (a hanging piece joined to any standing run was held whatever it weighed; a

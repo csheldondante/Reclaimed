@@ -1423,6 +1423,16 @@ user) · `deferred` (agreed for later).
 | C25 | towertest's `spire` failing on places (the rockbody agent): the test built its tower and tapped at window cells while the camera's lead (phonecam) slid the window under it; it waits for the streamer and follows the window now | S | done (collapse) |
 | C26 | A landed piece kept re-falling (floatsweep's tower-w3-h100 never settled, 86 pieces; on places too): its foot's rim crumbled on impact and it was committed over the gap the crumbs left, judged hanging, fell and crumbled again — a tower with no core columns stuttered down a few cells at a time. Now a piece whose foot crumbled settles on down onto what's under it, once, and doesn't crumble again (Integrity.land, FallingBody.broke): settles in 4.2 s, 1 piece | S | done (collapse) |
 
+## Round 94 (2026-10-27, session 5, `farbake`) — the land past the window baked (DECISIONS round 94)
+
+| id | item | size | status |
+|---|---|---|---|
+| FB1 | "why towns and grass aren't baked into a texture we can stream": the rings' look baked once a texel into a clipmap (atlas/bake.ts, bake.wgsl: a level a ring, one for the far land; 512² RGBA8 each), the strips new to a level as the camera moves; the rings and the far land sample it, lit a frame | M | done (farbake) |
+| FB2 | Towns past the window: every settlement within 2600 planned once, nearest first, on the atlas's rough ground (bake.wgsl roughGround + the ways stamped), in a worker (settle/plan-worker.ts), its tops rastered (settle/raster.ts) and baked in; the exact plan's raster replaces it when its land arrives | M | done (farbake) |
+| FB3 | "further out": the far land drawn from the bake's far level (towns, grass, ways, woods, water, the window's light) instead of the macro colour | S | done (farbake) |
+| FB4 | The far plans cached across loads (IndexedDB, keyed by the seed and a plan version) — not done: a stale cache after plan.ts changes would draw wrong towns, and the plans take ~65 ms each in the worker | S | open |
+| FB5 | Pop-in: a region entering the window changes from the bake to the window's mesh at once (the seam as round 93's); a 0.3 s blend needs the field mesh's chunks' build time (meshstate has none) and a depth-biased ring draw over them | M | open |
+| FB6 | The bake's levels have no mips (the 16-unit level shimmers a little at a grazing view); shadows and clouds on the rings; the woods' crowns from above (round 93's raised crowns are gone with the bake) | S | open |
 ## Round 92 (2026-10-27, session 5, `collapse`) — what holds rock up; the meteor-made floaters (DECISIONS round 92)
 
 | id | item | size | status |
@@ -1455,7 +1465,7 @@ user) · `deferred` (agreed for later).
 | N3 | The map was the world's mirror image (world +x to the right of north): drawn now as seen from above, +x to the left | S | done (phonecam) |
 | N4 | "I easily hit the edge of the loaded ground" — measured (DEVLOG round 91): at the phone's zoom 52–66% of a portrait screen is past the 320 window at any time (the view's ground is ~158 × 700 cells, the window 320 × 320); panning outran the slides to 45 cells of the window's edge. Done: the camera kept a region in from the edge (min 64), the land asked for where the camera's heading (1 s ahead), the rings past the window given the window's grain a cell | M | done (phonecam), partly: N5–N7 |
 | N5 | The window shaped to the view: on a portrait phone the view's ground is long along the view and narrow across — a window longer than wide, turned with the view (or a split per-column buffer, R5, for a wider one under 128 MB) | L | open (round 93, winmem: measured, WM5; the pool makes wider windows fit, WM2) |
-| N6 | Past the window: plants and roads on the rings (P13's "Left"), the ground's colour the window's (the window's grass is brighter and speckled); the eye's side pressed under the focus reads as a flat floor | M | open |
+| N6 | Past the window: plants and roads on the rings (P13's "Left"), the ground's colour the window's (the window's grass is brighter and speckled); the eye's side pressed under the focus reads as a flat floor | M | done (fardetail, round 93): the rings bake the columns' starting plants and the ways' distance, drawn the window's way (grass, flowers, brick ways, water, painted trees, its light); the near side kept only under the eye's line; `?fd=0` the old. Left: towns past the window (bake the planned settlements' columns), the window's trees popping in where the painted ones weren't, shadows on the rings |
 | N7 | The atlas's own lakes (`Atlas.lakes`, merged from `lakes` into places in round 91) on the map as labels: they need names first, and those belong in the wiki (buildWiki names regions and settlements, not the atlas's lakes) — then a label source of kind 'lake' (api/map-labels.ts); the wiki's lake regions are labelled already | S | done (phonecam, after places cdf0d95: the wiki names them now; gm/map-names.ts labels `wiki.lakes`, shown while 14 px across) |
 
 ## Round 90 (2026-10-27, session 5, `phonecam`) — more of the atlas on the phone, turning the view (DECISIONS round 90)
