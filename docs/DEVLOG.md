@@ -7825,3 +7825,71 @@ scripts/driveprofile.mjs):
   mesh. A dig into one: cut 1, released 1 (its cells stone where they were, its mesh gone), the other still resting.
   verify + orphans ≤ 0.1 ms a pass.
 Shots: C:/Projects/shots88/meshinst/ (forest_boxes/mesh, drive_0/1, rock_*).
+
+## 2026-10-27 — round 100 (`hitchrec`): the hitch recorder, the GC audit, and the judge off arriving land
+
+The user: "I want to try to fix the performance issues"; "GC is worth looking into"; leaks and long-term performance
+checked lightly ("Don't be dumb with it but don't spend effort when it isn't warranted"). The phone's frames had to
+be readable without a desktop, so the first piece is a recorder cheap enough to leave on.
+
+**The hitch recorder** (`?hitch=1`; src/perf/hitch.ts, hitch-hud.ts, gpumem.ts, start.ts). Every frame whose interval
+(one rAF's start to the next real frame's) is over `?hitchms=` (20) is logged with:
+- the CPU steps recorded in it (gpu/cpustat.ts `record`/`timed` now also fill two reused arrays while the recorder
+  runs), split into those inside the frame's callback and those between frames (readback continuations);
+- the rAFs held back for the GPU (main.ts paces at two frames in flight);
+- the GPU's time for that frame (timestamp-query, matched by the profiler's new frame number; "GPU: n/a" without —
+  Android often has none);
+- collections: browsers expose no 'gc' entry, so FinalizationRegistry canaries (a young one a frame; one a second held
+  2 s, so it's promoted and only a mark-compact takes it), and performance.memory drops;
+- long animation frames (their scripts) or long tasks;
+- the GPU's traffic in it (gpumem.ts wraps submit, writeBuffer, copyBufferToBuffer, mapAsync, createBuffer/Texture):
+  MB written, copied, mapped, made, and the slowest readback that finished — which is what named the mirror.
+The cause, one word: `gpu-held` (held rAFs explain it), `cpu:<step>` (the callback took it, and one step most of that;
+a step holding others names the one inside — render → mesh, judge → rockbodies), `async:<step>`, `gpu` (its own
+time), `gpu-busy` (a readback waited most of it), `gc` (a collection, gaps under 1 s), `task`, `browser` (none of
+these). Labels come from the steps, so new paths (zmesh's) are attributed as long as they use record/timed. Timing
+hooks added, each labelled "(round 100, hitchrec: timing)": level.ts sim, story, render, judge; renderer.ts mesh;
+integrity.ts rockbodies and judge.pass (the pass runs in its readback's continuation and was invisible before).
+The HUD (top left, tap "hitches" to fold): hitches a minute, causes, the worst ten, a timeline of the session (a
+column a second: its worst frame, coloured by cause). The GPU memory alive (buffers and textures by label, made minus
+destroyed or collected) goes in the report per minute.
+
+**Getting the phone's numbers to main.** On the phone open
+https://csheldondante.github.io/Reclaimed/hitchrec/?skipmenu=1&level=atlas&hitch=1 , play (ride, pan, climb) for a
+few minutes, then tap "send report": Android's share sheet offers the JSON file — send it to Drive, Gmail or Quick
+Share to the PC (or "copy" puts the JSON on the clipboard to paste into the chat). On a desktop dev server
+(`npm run dev`) "send report" instead POSTs to /__hitch and the file lands in perf-reports/ (vite.config.ts, dev only);
+a phone can use that too over USB with `adb reverse tcp:5287 tcp:5287` and http://localhost:5287/?…&hitch=1 (WebGPU
+needs a secure context, so plain LAN http doesn't work).
+
+**The GC audit** (scripts/hitchrun.mjs --heap: HeapProfiler.startSampling with the objects minor and major GCs
+collected included, during the driveprofile ride and speedsweep's pan at 120; the atlas at q=low 412×915, every
+system on, 1×). Allocation before → after, 15 s phases:
+- drive at 18/s: **202 → 39 MB/s**; pan at 120/s: **1160 → 117 MB/s**.
+- 90 % of it was the integrity judge: fracture.ts `analyse`'s scan read every slot of every column of its box through
+  columnSlots/readSlot/cellRange — an object, a Float32Array view and an array a slot (122 MB/s riding, 959 at 120).
+  Now read in place (the same cells, the same order: scripts/fracturesame.mjs runs the old and the new analyse on
+  600 random boxes — identical; rockcpu PASS; floatsweep all 29 cases PASS, 0 floating after). solve() returns at once
+  for a piece every cell of which stands on an unbroken stack to what holds it (no tip, nothing to snap: what the
+  rest would find; identical, 30 % faster on the CPU test).
+- Why it ran so much: level.ts gave every arriving region with structures (a stamped town: concrete ways, bridge decks
+  on pillars — one piece of thousands of cells) to the judge, twice, and over boxes doubled to 256. Main's call under
+  the user's design (DECISIONS round 100): land come in isn't judged; a pass's structure boxes are capped at 8 ms
+  (the rest wait, stats.deferred), and a box inside one already waiting isn't added (a cyclone marks one a frame).
+- The profiler (mine): no BigInts (a timestamp read as two u32 words) and the timestamp-write objects made once.
+
+**What the recorder shows on the desktop** (same setup, 20 s phases, recorder on, no heap sampler):
+- before: pan 120 got 29 frames in 20 s — freezes of 2–9.5 s; a 10 min soak had one judge pass of 39.9 s and
+  12–31 s gaps.
+- after: drive p50 10 p95 40 p99 78 worst 216 ms; pan 120 557 frames, p50 20 p95 147 worst 283; climb (a pan at
+  40/s to the highest ground within 1200 cells: 17 slides, 4 in z) p50 10 p95 39 worst 345 (slideZ 330 ms async —
+  zmesh's path replaces it). Causes: `gpu-held` most (150–230 a phase: the iGPU's frame 12–45 ms, the agents pass
+  3–21 and the draw 2–15 the largest in them), then `gpu-busy` (150–280 ms: a 34 MB 'mirror' readback — the world
+  API's CPU mirror, every 250 ms — with the small readbacks waiting 200–320 ms behind it; BACKLOG HR6), `async:write`
+  (a region's write, 30–50 ms), a few `gc` (40–270 ms).
+- Allocation left (not this branch's code): the streamer's reliefOf / joinColumn / cutRegion / place ~75 MB/s at pan
+  120, atlas landFrom 15, stampWays 5, fieldmesh cull 3–8 (BACKLOG HR7).
+
+Files: src/perf/*, src/gpu/cpustat.ts, src/gpu/profiler.ts, src/main.ts (the rAF loop's hooks), vite.config.ts (the
+sink), scripts/hitchrun.mjs, soak.mjs, fracturesame.mjs; fracture.ts, integrity.ts, level.ts, renderer.ts as above.
+Shots: C:/Projects/shots88/hitchrec/ (hud_desktop.png).
