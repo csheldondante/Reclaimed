@@ -192,7 +192,8 @@ export function attachSim(core: WorldCore, mods: SimModules = ALL, warm?: Warmup
       if (!agents || !terrain) throw new Error('world.buildCrew: needs the agents and terrain modules');
       return new BuildCrew(agents, terrain, def);
     },
-    refresh: () => mirror.refresh(),
+    // (round 100: `whole` — every column read now, not only those round the camera and what's kept fresh)
+    refresh: (whole?: boolean) => mirror.refresh(whole),
     get readAt() {
       return mirror.readAt;
     },
