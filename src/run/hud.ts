@@ -48,7 +48,9 @@ export class ObjectiveHud {
     const row = document.createElement('div');
     row.className = 'objective';
     row.innerHTML = '<span class="mark"></span><span class="text"></span>';
-    row.querySelector('.text')!.textContent = o.text;
+    // (round 97: the few words when the story gives them, the full brief on hover: less to read on a phone)
+    row.querySelector('.text')!.textContent = o.short ?? o.text;
+    if (o.short) row.title = o.text;
     this.el.append(row);
     this.rows.set(id, row);
     requestAnimationFrame(() => row.classList.add('in'));

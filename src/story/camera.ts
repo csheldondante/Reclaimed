@@ -181,7 +181,13 @@ export class StoryCamera {
       n();
       return Promise.resolve();
     }
-    const h = this.home!;
+    // (round 97: a shot whose ease home was already taken by another (a reveal over a reveal, both skipped) has no
+    // home left to go back to: the view stays where the last one put it)
+    const h = this.home;
+    if (!h) {
+      this.focus = null;
+      return Promise.resolve();
+    }
     this.focus = null;
     this.lifting = !!this.cut.slice;
     this.returning = true;

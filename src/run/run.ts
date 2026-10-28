@@ -170,6 +170,8 @@ export class StoryRun implements Run {
         return this.facts.some((f) => f.kind === 'reached' && f.location === c.location && (c.room === undefined || f.room === c.room));
       case 'event':
         return this.facts.some((f) => f.kind === 'event' && f.event === c.event && (c.location === undefined || f.location === c.location));
+      case 'saw':
+        return this.facts.some((f) => f.kind === 'saw' && (c.character === undefined || f.character === c.character) && (c.location === undefined || f.location === c.location));
       case 'killed': {
         let n = 0;
         for (const f of this.facts)
@@ -231,7 +233,8 @@ export class StoryRun implements Run {
       if (a.faction !== undefined) {
         // (a faction's attitude is the world's: an AtlasEvent in the region where it happened)
         atlas.push({ kind: 'faction-attitude', regions: [this.regionOf(cause)], magnitude: a.delta, detail: { faction: a.faction }, cause: { by: 'story' } });
-        this.deeds.push(`${a.delta > 0 ? 'won over' : 'turned against them'}: ${a.faction} (${a.delta > 0 ? '+' : ''}${a.delta})`);
+        // (round 97: the faction's name, as the player knows it)
+        this.deeds.push(`${a.delta > 0 ? 'won over' : 'turned against them'}: ${this.world.faction(a.faction)?.name ?? a.faction} (${a.delta > 0 ? '+' : ''}${a.delta})`);
       }
     }
     for (const u of o.unlock ?? []) this.unlocked.set(u.dialog, u.node);

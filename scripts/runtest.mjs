@@ -7,7 +7,12 @@
 //         killed (the happening: dead-stopped, o-end done, AtlasEvents in the world) → back to Hesk: "I destroyed
 //         the Bellwarden" → the run won, the end card with the RunRecord.
 //   lost: a fresh run, hostiles come for the hero standing still: it dies, the run is lost.
-//   node scripts/runtest.mjs [--url http://localhost:5241] [--q low] [--shots C:/Projects/shots88/run] [--only won|lost]
+//   warp: the map's warp moves the hero; (round 99, RS16) warped back, the places, the doors and the cast are there.
+//   far:  (round 99, RS9) the window streams during the run: the bone door opened, the hero rides 200 cells away
+//         (three regions and more: the places' regions frozen) and back; the places, the open door and the cast
+//         are as they were, and `reached` still notes a room.
+// Stage points are world units since round 99 (the run's `winOf` puts one in the window as it is now).
+//   node scripts/runtest.mjs [--url http://localhost:5241] [--q low] [--shots C:/Projects/shots88/run] [--only won|lost|warp|far]
 import puppeteer from 'puppeteer-core';
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
@@ -46,7 +51,7 @@ async function open() {
     pageErrors++;
     console.log('pageerror', e.message);
   });
-  p.on('console', (m) => m.type() === 'error' && !m.text().includes('404') && console.log('console', m.text()));
+  p.on('console', (m) => ((m.type() === 'error' && !m.text().includes('404')) || m.text().startsWith('[run]')) && console.log('console', m.text()));
   await p.goto(`${url}/?skipmenu=1&tutorial=0&q=${q}&level=atlas&run=bell${extra}`, { waitUntil: 'load' });
   const errs = pageErrors;
   for (let t = 0; !(await p.evaluate(() => !!window.reclaimed?.run?.play)); t += 1000) {
@@ -162,8 +167,9 @@ async function walkTo(p, to, what, tol = 1.6) {
       still = 0;
       last = null;
     }
-    const s = await p.evaluate((to) => {
+    const s = await p.evaluate((st) => {
       const r = window.reclaimed.run;
+      const to = r.winOf(st);
       const h = r.hero.position();
       const d = Math.hypot(to[0] - h[0], to[1] - h[1]);
       const z = window.reclaimed.api.terrain.heightAt(to[0], to[1]) ?? h[2];
@@ -171,6 +177,8 @@ async function walkTo(p, to, what, tol = 1.6) {
       return { d, sx, sy, h, talking: r.play.dialog.isOpen, busy: r.play.cam.busy };
     }, to);
     if (s.d <= tol) return true;
+    // (round 97: a talk opened on the way, as an event — Hesk calls the hero over once the dead are stopped)
+    if (s.talking) return true;
     if (s.busy) {
       // (a reveal shot: a tap cuts it short)
       await p.mouse.click(206, 300);
@@ -182,8 +190,9 @@ async function walkTo(p, to, what, tol = 1.6) {
     last = s.h;
     if (still > 10) {
       console.log(`     stuck at ${s.h.map((v) => v.toFixed(1))} on the way to ${what}`);
-      const dbg = await p.evaluate((to) => {
+      const dbg = await p.evaluate((st) => {
         const r = window.reclaimed.run;
+        const to = r.winOf(st);
         const t = window.reclaimed.api.terrain;
         const h = r.hero.position();
         const rows = [];
@@ -211,7 +220,7 @@ async function walkTo(p, to, what, tol = 1.6) {
     const tap = !sent;
     sent = true;
     if (tap && s.sx > 10 && s.sx < 402 && s.sy > 120 && s.sy < 700 && !(await onFigure(p, s.sx, s.sy))) await p.mouse.click(s.sx, s.sy);
-    else await p.evaluate((to) => window.reclaimed.run.walkTo(to), to);
+    else await p.evaluate((st) => window.reclaimed.run.walkTo(window.reclaimed.run.winOf(st)), to);
     await sleep(700);
   }
   console.log(`     timed out on the way to ${what} (${JSON.stringify(last)} → ${to.map((v) => v.toFixed(1))})`);
@@ -232,7 +241,7 @@ async function talkTo(p, who) {
     const on = s.sx > 20 && s.sx < 392 && s.sy > 120 && s.sy < 700;
     if (!s.busy && !on) {
       // (off the screen: walk toward them until they're in view)
-      const at = await p.evaluate((who) => window.reclaimed.run.units.byCharacter(who).at, who);
+      const at = await p.evaluate((who) => window.reclaimed.run.worldOf(window.reclaimed.run.units.byCharacter(who).at), who);
       await walkTo(p, at, who, 8);
       continue;
     }
@@ -240,7 +249,7 @@ async function talkTo(p, who) {
     else if (s.busy) await p.mouse.click(206, 300);
     await sleep(800);
   }
-  console.log(`     could not talk to ${who}: ${JSON.stringify(await p.evaluate((who) => { const r = window.reclaimed.run; const u = r.units.get(r.play.unitOf(who)); const h = r.hero.position(); const sp = u && window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2); const el = sp && document.elementFromPoint(sp[0], sp[1]); return { sp, el: el && (el.className || el.tagName), u: u && { at: u.at, alive: u.alive, hostile: u.hostile, state: u.state }, can: r.play.canTalk(who), hero: h, busy: r.play.cam.busy, open: r.play.dialog.isOpen, ended: r.play.run.over }; }, who))}`);
+  console.log(`     could not talk to ${who}: ${JSON.stringify(await p.evaluate((who) => { const r = window.reclaimed.run; const u = r.units.get(r.play.unitOf(who)); const h = r.hero.position(); const sp = u && window.reclaimed.camera.project(u.at[0], u.at[1], u.at[2] + 1.2); const el = sp && document.elementFromPoint(sp[0], sp[1]); return { sp, el: el && (el.className || el.tagName), u: u && { at: u.at, alive: u.alive, hostile: u.hostile, state: u.state }, can: r.play.canTalk(who), hero: h, busy: r.play.cam.busy, open: r.play.dialog.isOpen, ended: r.play.run.over, queued: r.play.talks, talks: window.__talks, cam: window.reclaimed.camera.target.map((v) => +v.toFixed(1)), zoom: window.reclaimed.camera.zoom, follows: !!r.play.cam.following }; }, who))}`);
   return false;
 }
 
@@ -370,6 +379,13 @@ async function won() {
   const hist = await p.evaluate(() => window.reclaimed.run.world.history().map((e) => `${e.kind}@${e.regions.join(',')}`));
   ok(hist.includes('lay-dead@2159') && hist.includes('mark@2159'), `its AtlasEvents applied to the MemoryWorldState (${hist.join(' ')})`);
   // back to Mebe
+  // (round 97: every talk opened and closed from here on, for the failure print)
+  await p.evaluate(() => {
+    const d = window.reclaimed.run.play.dialog;
+    window.__talks = [];
+    d.onOpen.push((t) => window.__talks.push(`open ${t.id} ${Math.round(performance.now())}`));
+    d.onClose.push((t, path) => window.__talks.push(`close ${t.id} ${JSON.stringify(path)} ${Math.round(performance.now())}`));
+  });
   for (const room of ['ossuary', 'cairn-gate']) await walkTo(p, await roomAt(p, 'loc-barrow', room), 'out of the barrow', 3);
   ok(await walkTo(p, await roomAt(p, 'loc-mebe', 'market-square'), 'back to Mebe', 3), 'walked back to Mebe');
   ok(await walkTo(p, await roomAt(p, 'loc-mebe', 'reeve-hall'), "the reeve's hall", 3), "…into the reeve's hall");
@@ -443,7 +459,54 @@ async function whereToGo(p) {
   ok(d1 < d0 - 20, `following the arrow for 7 s: ${d0.toFixed(0)} → ${d1.toFixed(0)} cells to the reeve`);
 }
 
-/** (round 94) the map's warp in a run: the hero goes with it, the story goes on */
+/**
+ * (round 99) The stage as it stands: each built piece's top over its base (null: its spot not in the window), the
+ * locks, the cast (world spots, alive), the stamps and the window's slides.
+ */
+const places = (p) =>
+  p.evaluate(() => {
+    const R = window.reclaimed;
+    const r = R.run;
+    const S = R.scene.stream;
+    const t = R.api.terrain;
+    const rel = r.land.pieces.map((q) => {
+      if (q.grow || q.layers <= 0 || q.base === undefined) return null;
+      const [x, y] = r.winOf(q.at);
+      const z = t.heightAt(x, y);
+      return z === null ? null : { tag: q.tag, layers: q.layers, rel: +(z + S.oz - q.base).toFixed(2), gone: !!q.gone };
+    });
+    const cast = Object.fromEntries(
+      r.play.d.story.cast.map((c) => {
+        const u = r.units.get(r.play.unitOf(c.id));
+        return [c.id, u ? { at: r.worldOf([u.at[0], u.at[1]]).map((v) => +v.toFixed(1)), alive: u.alive } : null];
+      }),
+    );
+    return { rel, locks: r.stage.locks.map((k) => ({ id: k.id, open: k.open })), cast, land: { ...r.land.stats }, slides: S.stats.slides, frozen: S.stats.frozen, thawed: S.stats.thawed, generated: S.stats.generated, origin: [...S.origin] };
+  });
+
+/** (round 99) two looks at the stage: the pieces seen both times within a cell of their height, the same people alive where they were */
+function samePlaces(a, b, what) {
+  let both = 0;
+  let same = 0;
+  let up0 = 0;
+  let up1 = 0;
+  const off = [];
+  a.rel.forEach((x, i) => {
+    const y = b.rel[i];
+    if (!x || !y) return;
+    both++;
+    if (Math.abs(x.rel - y.rel) < 1.2) same++;
+    else if (off.length < 6) off.push(`${x.tag} ${x.rel}->${y.rel}`);
+    if (x.rel >= x.layers * 0.7) up0++;
+    if (y.rel >= y.layers * 0.7) up1++;
+  });
+  ok(both > 200 && same >= both * 0.95 && up1 >= up0 * 0.95, `${what}: the places' ${both} pieces seen both times, ${same} at the same height, ${up0} -> ${up1} standing${off.length ? ` (off: ${off.join(', ')})` : ''}`);
+  ok(JSON.stringify(a.locks) === JSON.stringify(b.locks), `${what}: the locks as they were (${a.locks.map((k) => `${k.id} ${k.open ? 'open' : 'shut'}`).join(', ')})`);
+  const moved = Object.entries(a.cast).filter(([id, c]) => !c || !b.cast[id] || c.alive !== b.cast[id].alive || Math.hypot(c.at[0] - b.cast[id].at[0], c.at[1] - b.cast[id].at[1]) > 2);
+  ok(!moved.length, `${what}: the cast where they were, alive (${moved.length ? JSON.stringify(moved.map(([id]) => [id, a.cast[id], b.cast[id]])) : Object.keys(a.cast).join(', ')})`);
+}
+
+/** (round 94) the map's warp in a run: the hero goes with it, the story goes on (round 99: and back, the places there) */
 async function warp() {
   console.log('--- warp: the map moves the hero, the run goes on');
   const p = await open();
@@ -453,6 +516,8 @@ async function warp() {
     const h = R.run.hero.position();
     return { cell: R.scene.atlasMap.playerAt(), h };
   });
+  const s0 = await places(p);
+  console.log(`     the stage stamped: ${JSON.stringify(s0.land)}; ${s0.rel.filter(Boolean).length} pieces in the window`);
   await (await p.$('button[title^="the atlas map"]')).click();
   await sleep(2500);
   // a tap on the map a little way from the middle: a warp there
@@ -474,6 +539,70 @@ async function warp() {
   ok(Math.hypot(after.h[0] - after.t[0], after.h[1] - after.t[1]) < 6, 'it stands where the view is (the window\'s middle)');
   ok(!after.over && after.shown.length > 0 && !!after.hint, `the run goes on: ${after.shown} shown, "${after.hint}"`);
   await shot(p, '12-after-warp');
+  // (round 99, RS16) and back where the run began: the window made again from the atlas, the places stamped on it
+  await p.evaluate((c) => window.reclaimed.scene.atlasMap.warpTo(c[0], c[1]), before.cell);
+  for (let k = 0; k < 60; k++) {
+    await sleep(1000);
+    if (await p.evaluate(() => !window.reclaimed.scene.stream.busy && window.reclaimed.api.fresh)) break;
+  }
+  await sleep(6000);
+  const s1 = await places(p);
+  console.log(`     back: ${JSON.stringify(s1.land)}`);
+  samePlaces(s0, s1, 'warped away and back');
+  await shot(p, '13-warped-back');
+  await p.close();
+}
+
+/** (round 99, RS9) a ride far away and back with the window streaming: the places, the door opened and the cast as they were */
+async function far() {
+  console.log('--- far: the bone door opened, a ride three regions away and back, the window streaming');
+  const p = await open();
+  await sleep(15000);
+  // (the key given, as Hesk would give it; the door opened the way a player opens it: coming to it holding the key)
+  await p.evaluate(() => window.reclaimed.run.play.run.items.set('bone key', 1));
+  const oss = await roomAt(p, 'loc-barrow', 'ossuary');
+  await p.evaluate((st) => window.reclaimed.run.hero.place(window.reclaimed.run.winOf(st)), oss);
+  await sleep(1500);
+  const door = await p.evaluate(() => window.reclaimed.run.stage.locks.find((l) => l.id === 'bone-door').at);
+  await walkTo(p, door, 'the bone door', 4);
+  await sleep(3000);
+  ok(await p.evaluate(() => window.reclaimed.run.stage.locks.find((l) => l.id === 'bone-door').open), 'the bone door opened with the key');
+  await sleep(4000);
+  const s0 = await places(p);
+  const start = await p.evaluate(() => window.reclaimed.run.worldOf(window.reclaimed.run.hero.position().slice(0, 2)));
+  // the ride: the hero put down 8 cells on every 0.5 s (a hover bike's pace), the camera after it, the window sliding
+  const ride = async (from, dx, dy, n) => {
+    let at = from;
+    for (let k = 1; k <= n; k++) {
+      const want = [from[0] + dx * k, from[1] + dy * k];
+      const put = await p.evaluate((st) => {
+        const r = window.reclaimed.run;
+        const w = r.winOf(st);
+        if (window.reclaimed.scene.stream.busy || window.reclaimed.api.terrain.heightAt(w[0], w[1], { smooth: true }) === null) return false;
+        r.hero.place(w);
+        return true;
+      }, want);
+      if (put) at = want;
+      else k--;
+      await sleep(500);
+    }
+    return at;
+  };
+  const away = await gif(p, '14-ride-away', () => ride(start, 8, 0, 26));
+  const s1 = await places(p);
+  const gone = Math.hypot(away[0] - start[0], away[1] - start[1]);
+  ok(gone > 190 && s1.slides - s0.slides >= 3, `rode ${gone.toFixed(0)} cells away: the window slid ${s1.slides - s0.slides} times (${s1.frozen - s0.frozen} regions frozen), ${s1.rel.filter(Boolean).length} of the places' pieces still in it`);
+  await ride(away, -8, 0, 26);
+  for (let k = 0; k < 20 && (await p.evaluate(() => window.reclaimed.scene.stream.busy)); k++) await sleep(500);
+  await sleep(6000);
+  const s2 = await places(p);
+  console.log(`     back: slides ${s2.slides - s0.slides}, thawed ${s2.thawed - s0.thawed}, generated ${s2.generated - s0.generated}, stamps ${JSON.stringify(s2.land)}`);
+  samePlaces(s0, s2, 'rode away and back');
+  await shot(p, '15-rode-back');
+  // (and the place still plays: through the open door into the bell chamber, `reached` noted)
+  ok(await walkTo(p, await roomAt(p, 'loc-barrow', 'bell-chamber'), 'the bell chamber', 4), 'walked through the open bone door into the bell chamber');
+  await sleep(1500);
+  ok(await p.evaluate(() => window.reclaimed.run.play.reached.has('loc-barrow/bell-chamber')), 'reached the bell chamber (the room measured in world units)');
   await p.close();
 }
 
@@ -505,6 +634,7 @@ try {
   if (!only || only === 'won') await won();
   if (!only || only === 'lost') await lost();
   if (!only || only === 'warp') await warp();
+  if (!only || only === 'far') await far();
 } catch (e) {
   console.log('FAIL', e.stack ?? e);
   fails++;

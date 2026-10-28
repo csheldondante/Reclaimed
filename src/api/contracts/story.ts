@@ -67,6 +67,8 @@ export interface StoryCharacter {
 export interface Objective {
   id: string;
   text: string;
+  /** (round 97, heroapi) a few words for the objective list ("Warn Mebe's reeve"); `text` stays the full brief */
+  short?: string;
   location?: string;
   when: Condition[];
   done: Condition[];
@@ -90,7 +92,25 @@ export type Condition =
   | { kind: 'event'; event: 'collapsed' | 'flooded' | 'burned' | 'built' | 'dug'; location?: string }
   | { kind: 'objective'; id: string; state: 'done' | 'failed' }
   | { kind: 'flag'; flag: string; value?: boolean }
-  | { kind: 'time'; after: number };
+  | { kind: 'time'; after: number }
+  /**
+   * (round 97, heroapi) the hero first came within sight of a cast member (alive) or a place: noted once each by
+   * the game (StoryPlay: within SIGHT cells), so a happening can fire a bark or a dialog on a sighting
+   */
+  | { kind: 'saw'; character?: string; location?: string };
+
+/**
+ * (round 97, heroapi) A bark: a line said in the world, over its speaker (a cast member) or as the narrator's
+ * when `by` is absent. The user: dialog should be "trigger/predicate driven and tied to events like deaths and
+ * have dialogs just be such an event" — so a bark is an Outcome, fired by a happening's conditions.
+ */
+export interface Bark {
+  line: string;
+  /** the cast member saying it (story.ts StoryCharacter id); none: the narrator */
+  by?: string;
+  /** how long it shows (default 4 s) */
+  seconds?: number;
+}
 
 /** What happens: the world changes (AtlasEvents), people change their minds, things are given or appear. */
 export interface Outcome {
@@ -99,11 +119,23 @@ export interface Outcome {
   flags?: Record<string, boolean>;
   give?: { item: string; count?: number }[];
   /** units appear there (`hostile`: they fight the player — round 88) */
-  spawn?: { role: string; faction: FactionId | null; location: string; count?: number; hostile?: boolean }[];
+  spawn?: {
+    role: string;
+    faction: FactionId | null;
+    location: string;
+    count?: number;
+    hostile?: boolean;
+    /** (round 97, heroapi) they set off for this location (a `go` job) instead of standing where they appear */
+    toward?: string;
+  }[];
   /** (round 88) these cast members turn on the player (a talk gone to a fight): their units fight */
   hostile?: string[];
   /** dialog nodes it opens */
   unlock?: { dialog: string; node: string }[];
   /** the run ends (a win, a fall) */
   endRun?: 'won' | 'lost';
+  /** (round 97, heroapi) lines said in the world (a bark over a speaker, or the narrator's) */
+  say?: Bark[];
+  /** (round 97, heroapi) a talk opens: this cast member's dialog (at `node`, else where it would open) — a dialog as an event */
+  talk?: { character: string; node?: string };
 }

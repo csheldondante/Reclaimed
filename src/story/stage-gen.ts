@@ -15,6 +15,10 @@
 // - Landmarks: matched by what they say (a bell, a mill wheel, stepping stones, oaks, carts, a dam, teeth of
 //   rock) and raised in the room that fits them; the rest are left to the description.
 // - The cast stand in their rooms (the brief's first room when they name none), a little in from its middle.
+// - (round 99, `runstream`) What it builds comes back as pieces (StagePiece: a disc of a material so many cells
+//   high, as the world API's terrain.build lays one), not edits: the caller realises them — queued as edits on a
+//   still window, or kept in world cells and stamped into each region's land as it arrives (story/stage-land.ts),
+//   so a streamed window keeps its places across slides and warps.
 
 import type { SessionStory, StoryLocation } from '../api/contracts/story';
 import type { Terrain } from '../api/terrain';
@@ -26,7 +30,6 @@ export interface StageGenDeps {
   terrain: Terrain;
   /** water standing at (x, y) (cells; null outside) */
   waterAt?: (x: number, y: number) => number | null;
-  plants?: { grow(x: number, y: number, o: { radius: number; strength: number }): void };
   /** the player's start (window x, y) */
   spawn: V2;
   /** a location's real spot (window x, y: maybe far outside the window) */
@@ -59,21 +62,35 @@ function lockMaterial(lock: string): string {
   return 'stone';
 }
 
+/**
+ * (round 99) One thing the stage builds (window x, y as made; the caller keeps it where it likes): `layers` cells of
+ * `material` laid on top within `radius` (full over the inner half, soft at the rim: edit.wgsl's OP_BUILD), or
+ * (`grow`) plants grown there. `pass` 1 goes on what pass 0 laid (a bell on its post). `tag` says what it is
+ * (`lock:<id>` a lock's plug, `wall`, `landmark`): an opened lock's plug is gone for good.
+ */
+export interface StagePiece {
+  at: V2;
+  material: string;
+  radius: number;
+  layers: number;
+  pass: 0 | 1;
+  tag: string;
+  grow?: number;
+}
+
 export interface StageGen {
   stage: Stage;
-  /** the edits it made (the world API's queue takes four a tick: they land over the next second or so) */
-  edits: number;
+  /** what to build (queued as edits, the world API's queue takes four a tick: they land over the next second or so) */
+  pieces: StagePiece[];
 }
 
 /** Realise every location's brief near the spawn; the Stage for StoryPlay. */
 export function stageStory(story: SessionStory, d: StageGenDeps): StageGen {
-  const t = d.terrain;
   const [near, far] = d.reach ?? [22, 95];
   const stage: Stage = { locations: {}, cast: {}, rooms: {}, locks: [] };
-  let edits = 0;
-  const build = (x: number, y: number, m: string, radius: number, layers: number) => {
-    t.build(x, y, m, { radius, layers });
-    edits++;
+  const pieces: StagePiece[] = [];
+  const build = (x: number, y: number, m: string, radius: number, layers: number, tag = 'wall') => {
+    pieces.push({ at: [x, y], material: m, radius, layers, pass: 0, tag });
   };
   // (how far each place's real spot is: the nearest real one comes in at `near`, the furthest at `far`)
   const real = story.locations.map((l) => {
@@ -125,12 +142,12 @@ export function stageStory(story: SessionStory, d: StageGenDeps): StageGen {
       const g = Math.atan2(a[1] - b[1], a[0] - b[0]);
       const p: V2 = [b[0] + Math.cos(g) * rb, b[1] + Math.sin(g) * rb];
       const mat = lockMaterial(cn.lock);
-      build(p[0], p[1], mat, 2.8, WALL_H);
+      build(p[0], p[1], mat, 2.8, WALL_H, `lock:${cn.lock}`);
       const key = l.brief.keys?.find((k) => k.lock === cn.lock)?.key ?? {};
       stage.locks!.push({ id: cn.lock, location: l.id, room: cn.to, at: p, key, material: mat, open: false });
     }
     // the landmarks
-    for (const lm of l.brief.landmarks ?? []) edits += landmark(lm, l, rooms, rs, d);
+    for (const lm of l.brief.landmarks ?? []) landmark(lm, rooms, rs, pieces);
   });
   // the cast, in their rooms
   story.cast.forEach((c, i) => {
@@ -145,7 +162,7 @@ export function stageStory(story: SessionStory, d: StageGenDeps): StageGen {
     const off = r ? Math.min(2.6, r.radius * 0.5) : 2;
     stage.cast[c.id] = { at: [base[0] + Math.cos(a) * off, base[1] + Math.sin(a) * off], colour: COLOURS[i % COLOURS.length], material: 'plaster' };
   });
-  return { stage, edits };
+  return { stage, pieces };
 }
 
 interface Room {
@@ -245,22 +262,19 @@ function pick(d: StageGenDeps, ang: number, want: number, extent: number, rooms:
   return best;
 }
 
-/** a landmark the brief names, raised where it fits → edits */
-function landmark(text: string, l: StoryLocation, rooms: Room[], rs: Record<string, { at: V2; radius: number }>, d: StageGenDeps): number {
-  const t = d.terrain;
+/** a landmark the brief names, raised where it fits → pieces */
+function landmark(text: string, rooms: Room[], rs: Record<string, { at: V2; radius: number }>, out: StagePiece[]): void {
   const s = text.toLowerCase();
   const room = (re: RegExp) => rooms.find((r) => re.test(r.kind) || re.test(r.id)) ?? rooms[0];
   const at = (r: Room) => rs[r.id].at;
-  let n = 0;
-  const b = (x: number, y: number, m: string, radius: number, layers: number) => {
-    t.build(x, y, m, { radius, layers });
-    n++;
+  const b = (x: number, y: number, m: string, radius: number, layers: number, pass: 0 | 1 = 0) => {
+    out.push({ at: [x, y], material: m, radius, layers, pass, tag: 'landmark' });
   };
   if (s.includes('bell')) {
-    // a bronze bell on a post
+    // a bronze bell on a post (the bell laid on the post's top: pass 1)
     const [x, y] = at(room(/tomb|hall|bell/));
     b(x, y, 'log', 0.7, 5);
-    b(x, y, 'rust', 1.4, 2);
+    b(x, y, 'rust', 1.4, 2, 1);
   } else if (s.includes('mill')) {
     const [x, y] = at(room(/mill/));
     b(x, y, 'log', 1.6, 3);
@@ -273,8 +287,7 @@ function landmark(text: string, l: StoryLocation, rooms: Room[], rs: Record<stri
       const a = (k / 6) * Math.PI * 2;
       b(x + Math.cos(a) * 3, y + Math.sin(a) * 3, 'log', 0.5, 3);
     }
-    d.plants?.grow(x, y, { radius: 5, strength: 70 });
-    n++;
+    out.push({ at: [x, y], material: 'log', radius: 5, layers: 0, pass: 0, tag: 'landmark', grow: 70 });
   } else if (/cart|barricade/.test(s)) {
     const r = room(/gate/);
     const [x, y] = at(r);
@@ -297,7 +310,6 @@ function landmark(text: string, l: StoryLocation, rooms: Room[], rs: Record<stri
       b(x, y, 'stone', 2.2, 10 + (k === 0 ? 6 : 0));
     }
   }
-  return n;
 }
 
 const wrap = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));

@@ -40,6 +40,8 @@ export interface TargetDeps {
   /** the cast member's unit (StoryPlay.unitOf) */
   unitOf: (character: string) => number | undefined;
   heightAt: (x: number, y: number) => number | null;
+  /** (round 99) a stage point into the window as it is now (StoryPlay's StageFrame; default: the stage is the window's) */
+  toWin?: (p: [number, number]) => [number, number];
 }
 
 /** the current objective's target, or null (nothing shown, or nothing to point at) */
@@ -50,6 +52,7 @@ export function objectiveTarget(d: TargetDeps): Target | null {
   const o = run.objective(shown.id);
   const conds = flatten(o.done);
   const z = (x: number, y: number) => d.heightAt(x, y) ?? 0;
+  const win = (p: [number, number]): [number, number] => (d.toWin ? d.toWin(p) : [p[0], p[1]]);
   const person = (id: string): Target | null => {
     const u = d.unitOf(id);
     const v = u === undefined ? null : d.units.get(u);
@@ -61,8 +64,9 @@ export function objectiveTarget(d: TargetDeps): Target | null {
   const place = (location: string, room?: string): Target | null => {
     const l = story.locations.find((x) => x.id === location);
     const r = room ? stage.rooms?.[location]?.[room] : undefined;
-    const p = r?.at ?? stage.locations[location]?.at;
-    if (!l || !p) return null;
+    const ps = r?.at ?? stage.locations[location]?.at;
+    if (!l || !ps) return null;
+    const p = win(ps);
     const name = room ? `the ${roomName(l.brief.rooms?.find((x) => x.id === room)?.kind ?? room)}, ${l.name}` : l.name;
     return behindLock({ objective: o.id, kind: 'place', name, at: [p[0], p[1], z(p[0], p[1])] }, location, room);
   };
@@ -72,7 +76,8 @@ export function objectiveTarget(d: TargetDeps): Target | null {
     const k = room ? stage.locks?.find((x) => !x.open && x.location === location && x.room === room) : undefined;
     if (!k) return t;
     const has = (k.key.item !== undefined && run.has(k.key.item) > 0) || (k.key.character !== undefined && run.holds({ kind: 'talked', character: k.key.character })) || (k.key.objective !== undefined && run.holds({ kind: 'objective', id: k.key.objective, state: 'done' }));
-    return { objective: t.objective, kind: 'door', name: `the ${k.id.replace(/-/g, ' ')}`, at: [k.at[0], k.at[1], z(k.at[0], k.at[1])], needs: has ? undefined : (k.key.item ?? k.key.character ?? k.key.objective) };
+    const ka = win(k.at);
+    return { objective: t.objective, kind: 'door', name: `the ${k.id.replace(/-/g, ' ')}`, at: [ka[0], ka[1], z(ka[0], ka[1])], needs: has ? undefined : (k.key.item ?? k.key.character ?? k.key.objective) };
   };
   for (const c of conds) {
     if (c.kind === 'talked' || (c.kind === 'killed' && c.character)) {

@@ -41,8 +41,11 @@ try {
     },
   };
   const spots = { 'loc-ford': [128, 111], 'loc-mebe': [348, -533], 'loc-barrow': [622, -323] };
-  const { stage, edits } = stageStory(story, { terrain, spawn: [128, 111], spot: (l) => spots[l.id], size: [256, 222] });
-  ok(Object.keys(stage.locations).length === 3 && Object.keys(stage.cast).length === 5, `three places and five people staged (${edits} edits)`);
+  const { stage, pieces } = stageStory(story, { terrain, spawn: [128, 111], spot: (l) => spots[l.id], size: [256, 222] });
+  // (round 99: the generator hands back pieces; built here as the world API's edits would lay them)
+  for (const p of pieces) if (!p.grow) terrain.build(p.at[0], p.at[1], p.material, { radius: p.radius, layers: p.layers });
+  ok(Object.keys(stage.locations).length === 3 && Object.keys(stage.cast).length === 5, `three places and five people staged (${pieces.length} pieces)`);
+  ok(stage.locks.every((k) => pieces.some((p) => p.tag === `lock:${k.id}`)), "each lock's plug is a piece tagged with it");
   ok(stage.locks.map((l) => l.id).sort().join() === 'bone-door,sluice-wheel', 'the two locks are doors');
   const rooms = Object.entries(stage.rooms).flatMap(([l, rs]) => Object.entries(rs).map(([id, r]) => ({ id: `${l}/${id}`, ...r })));
   let apart = true;
@@ -90,6 +93,71 @@ try {
     }
   }
 
+  // (round 99, runstream) the stage in world cells, stamped into the land as it arrives (story/stage-land.ts)
+  {
+    const { StageLand } = await v.ssrLoadModule('/src/story/stage-land.ts');
+    const { ROW_H } = await v.ssrLoadModule('/src/world/lattice.ts');
+    const atlas = { p: { cols: 1024, rows: 1024 }, landHooks: [] };
+    const land = new StageLand(atlas);
+    // (the window's origin at (1000, 500): the stage straddles the world's x seam)
+    const ox = 1000;
+    const oy = 500;
+    const wrap = (x, n) => ((x % n) + n) % n;
+    land.add(pieces.map((p) => ({ ...p, at: [wrap(ox + p.at[0], 1024), wrap(oy * ROW_H + p.at[1], 1024 * ROW_H)] })));
+    ok(atlas.landHooks.length === 1, 'the stage land is an Atlas.landHooks hook');
+    // a region of flat land (ground at 100), as the atlas hands one over
+    const region = (x0, y0) => {
+      const w = 64;
+      const cols = Array.from({ length: w * w }, () => [{ z0: 0, z1: 100, mat: 1 }]);
+      return { x0, y0, w, h: w, cols, surface: new Float32Array(w * w).fill(100), water: new Float32Array(w * w), moisture: new Float32Array(w * w), vegetation: new Float32Array(w * w), contam: new Float32Array(w * w * 2) };
+    };
+    // (every region of the window: the seam crossed with x0 past the world's edge, as a slide's origin runs on)
+    let raised = 0;
+    const lands = [];
+    for (let ry = 0; ry < 256; ry += 64)
+      for (let rx = 0; rx < 256; rx += 64) {
+        const l = region(ox + rx, oy + ry);
+        await atlas.landHooks[0](l, l.x0, l.y0, 64, 64, false);
+        raised += [...l.surface].filter((z) => z > 100.5).length;
+        lands.push(l);
+      }
+    const walls = land.pieces.filter((p) => p.tag === 'wall');
+    ok(raised > 500 && walls.every((p) => p.base === 100), `the window's regions stamped: ${raised} columns raised, every wall's base the ground's (${land.stats.regions} regions)`);
+    // the same piece's column in the region it lies in: raised by its layers
+    const k = stage.locks.find((x) => x.id === 'bone-door');
+    const at = [k.at[0], k.at[1]];
+    const topAt = (ls, x, y) => {
+      const cy = Math.floor(y / ROW_H);
+      const cx = Math.floor(x - 0.5 * (cy & 1));
+      const l = ls.find((r) => cx >= r.x0 - ox && cx < r.x0 - ox + 64 && cy >= r.y0 - oy && cy < r.y0 - oy + 64);
+      return l.surface[(cy - (l.y0 - oy)) * 64 + (cx - (l.x0 - ox))];
+    };
+    ok(topAt(lands, ...at) > 105, `the bone door's plug stands (${topAt(lands, ...at).toFixed(1)})`);
+    // opened in play: the next stamp leaves it out; the walls stay
+    land.open('lock:bone-door');
+    const again = [];
+    for (let ry = 0; ry < 256; ry += 64)
+      for (let rx = 0; rx < 256; rx += 64) {
+        const l = region(ox + rx, oy + ry);
+        await atlas.landHooks[0](l, l.x0, l.y0, 64, 64, false);
+        again.push(l);
+      }
+    const w0 = walls[0];
+    const wAt = [wrap(w0.at[0] - ox + 1024 / 2, 1024) - 1024 / 2, w0.at[1] - oy * ROW_H];
+    ok(topAt(again, ...at) < 101 && topAt(again, ...wAt) > 104, `after the door's opened, its land stamped again: the plug gone (${topAt(again, ...at).toFixed(1)}), a wall still up (${topAt(again, ...wAt).toFixed(1)})`);
+    // a wall seen standing, then found down: gone from the next stamp
+    const toWin = (p) => [wrap(p[0] - ox + 512, 1024) - 512, p[1] - oy * ROW_H];
+    let down = false;
+    const hz = (x, y) => (down && Math.hypot(x - wAt[0], y - wAt[1]) < 0.01 ? 100 : 106);
+    land.watch(hz, toWin, 0);
+    const seen = w0.seen;
+    down = true;
+    land.watch(hz, toWin, 0);
+    ok(seen === true && w0.gone === true && land.stats.broken === 1, `a wall seen standing then down is gone (broken ${land.stats.broken})`);
+    land.dispose();
+    ok(atlas.landHooks.length === 0, 'disposed: the hook is out');
+  }
+
   // the fight: on open ground
   const flat = { heightAt: () => 100 };
   const fight = (swing) => {
@@ -115,6 +183,40 @@ try {
   ok(a.hp > 0 && !a.warden, `swinging: the Bellwarden falls in ${a.t} s, the hero at ${a.hp} hp (${a.left} foes left)`);
   const b = fight(false);
   ok(b.hp === 0, `standing still: the hero falls in ${b.t} s`);
+
+  // (round 97, heroapi) dialog as an event: sightings and deaths fire barks and talks through the run's own
+  // happenings; and a world kept between runs (MemoryWorldState.restore) carries the first run's changes
+  const { StoryRun } = await v.ssrLoadModule('/src/run/run.ts');
+  const { MemoryWorldState } = await v.ssrLoadModule('/src/api/contracts/world-state.ts');
+  const wiki = JSON.parse(fs.readFileSync('data/wiki/seed1.run.json', 'utf8'));
+  const world = new MemoryWorldState(wiki.seed, wiki.regions, wiki.factions);
+  const run = new StoryRun(story, world, { hero: 'hover bike' });
+  const said = [];
+  const talks = [];
+  const spawned = [];
+  run.onOutcome.push((o) => {
+    for (const s of o.say ?? []) said.push(`${s.by ?? 'narrator'}: ${s.line}`);
+    if (o.talk) talks.push(o.talk.character);
+    for (const sp of o.spawn ?? []) spawned.push(sp);
+  });
+  run.update(9);
+  ok(spawned.some((s) => s.toward === 'loc-mebe') && said.some((s) => /walking toward Mebe/.test(s)), `t 9 s: the dead set off toward Mebe, and it's said (${said.at(-1)})`);
+  run.note({ kind: 'saw', character: 'ilsa' });
+  ok(said.some((s) => s.startsWith('ilsa:')), `saw Ilsa: her bark (${said.at(-1)})`);
+  run.note({ kind: 'saw', location: 'loc-barrow' });
+  ok(said.some((s) => /bell tolls/.test(s)), "saw the barrow: the narrator's line");
+  const n = said.length;
+  run.note({ kind: 'saw', character: 'ilsa' });
+  ok(said.length === n, 'a happening fires once: seeing Ilsa again says nothing');
+  run.note({ kind: 'killed', character: 'bellwarden', unitKind: 'lich steward' });
+  ok(said.some((s) => s.startsWith('bellwarden:')) && run.flag('dead-stopped'), 'the Bellwarden killed: its dying line, dead-stopped set');
+  ok(talks.includes('hesk'), 'the dead stopped: a talk with Hesk opens as an event (Outcome.talk)');
+  const rec = run.end('won');
+  const snap = JSON.parse(JSON.stringify(world.snapshot()));
+  const again = MemoryWorldState.restore(snap);
+  ok(again.run === 1 && again.runs.length === 1 && again.runs[0].end === 'won', `restored: the next run is ${again.run}, the last ${again.runs[0]?.end}`);
+  ok(again.history().length === rec.events.length && again.region(2159).marks.some((m) => m.name === "The Bellwarden's Grave"), `restored: ${again.history().length} events, the grave in region 2159`);
+  ok(again.region(2159).undead === world.region(2159).undead, 'restored: the region states as they were');
 } catch (e) {
   console.log('FAIL', e.stack ?? e);
   fails++;

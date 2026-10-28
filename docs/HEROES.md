@@ -76,3 +76,19 @@ frames the speaker; then the view eases back.
   `?run=bell`. The bike must keep `position()` on the ground the world API reports. It must take blows through
   `actor.hurt` and call `died` at 0 health.
 - Changes to these contracts are additive only; tell `places` (main) before changing a signature.
+
+## Round 97 (branch `heroapi`): a game's own hero, controller, units and camera
+
+The hoverbike game plays the run through `startAtlasRun` (src/story/atlas-run.ts) with:
+
+- `makeHero` — its HoverHero (a `Hero` around each of its Units). `claims(sx, sy)`: the taps its mechanics take
+  (the lich's float, the mech's aim) are asked first and never walk or talk; `goesTo: false` for a vehicle.
+- `makeController` — its own Controls as a `RunController` (onTap for the taps it doesn't claim, onAction /
+  setAction for "Talk to …", setHealth, hidden). Or emit `HeroIntent.talk`.
+- `units` — its Units over sim.agents (the same agents its abilities hold, fling and burn), so the story counts
+  every kill; HeroRun draws no figures for them.
+- `ownCamera` — it keeps its chase camera; it drives it while `hr.cameraFree` (no story shot).
+- `again`, `remember` — the end card's new run (back to its hero select); past runs' events realised at the start.
+
+Dialog as an event: a happening's `when` (a `killed`, a `reached`, a `saw`, an `event`) can fire `say` (barks over a
+speaker, or the narrator's) and `talk` (a dialog opens once the player is by the speaker).

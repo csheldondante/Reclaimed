@@ -427,6 +427,7 @@
     {
       "id": "o-mebe",
       "text": "Take word of the cold river to Mebe and speak to its reeve.",
+      "short": "Warn Mebe's reeve",
       "location": "loc-mebe",
       "when": [],
       "done": [{ "kind": "talked", "character": "hesk" }],
@@ -435,6 +436,7 @@
     {
       "id": "o-barrow",
       "text": "Find where the dead come from: the wardens' barrow in Bethorn Downs, under the Teeth of Kaudru.",
+      "short": "Find the barrow",
       "location": "loc-barrow",
       "when": [{ "kind": "objective", "id": "o-mebe", "state": "done" }],
       "done": [{ "kind": "reached", "location": "loc-barrow", "room": "ossuary" }],
@@ -443,6 +445,7 @@
     {
       "id": "o-end",
       "text": "Stop the dead before Mebe falls: drown the barrow, bring it down, grow it over, bargain with what rules it, or destroy it.",
+      "short": "Stop the dead",
       "location": "loc-barrow",
       "when": [{ "kind": "objective", "id": "o-barrow", "state": "done" }],
       "done": [{ "kind": "flag", "flag": "dead-stopped" }],
@@ -463,6 +466,7 @@
     {
       "id": "o-return",
       "text": "Go back to Reeve Hesk in Mebe and tell him what you did.",
+      "short": "Tell Reeve Hesk",
       "location": "loc-mebe",
       "when": [{ "kind": "objective", "id": "o-end", "state": "done" }],
       "done": [{ "kind": "talked", "character": "hesk", "node": "n-after" }],
@@ -514,6 +518,34 @@
         "attitude": [{ "faction": "f-kuharm", "delta": 0.2 }, { "faction": "f-hollow-court", "delta": -0.3 }],
         "flags": { "dead-stopped": true, "path-slain": true }
       }
+    },
+    {
+      "when": [{ "kind": "time", "after": 8 }],
+      "effects": {
+        "spawn": [{ "role": "walking dead", "faction": "f-hollow-court", "location": "loc-barrow", "count": 3, "hostile": true, "toward": "loc-mebe" }],
+        "say": [{ "line": "Down the cold river road, the dead are walking toward Mebe.", "seconds": 5 }]
+      }
+    },
+    {
+      "when": [{ "kind": "saw", "character": "ilsa" }],
+      "effects": { "say": [{ "by": "ilsa", "line": "You there! Don't drink from the river. Come, listen." }] }
+    },
+    {
+      "when": [{ "kind": "saw", "location": "loc-barrow" }],
+      "effects": { "say": [{ "line": "Cold breath rolls out of the barrow's mouth. Under the hill, a bell tolls once.", "seconds": 5 }] }
+    },
+    {
+      "when": [{ "kind": "killed", "character": "bellwarden" }],
+      "effects": {
+        "say": [
+          { "by": "bellwarden", "line": "The bell... will ring... again...", "seconds": 4 },
+          { "line": "The tolling stops. Downriver, the dogs of Mebe fall quiet.", "seconds": 5 }
+        ]
+      }
+    },
+    {
+      "when": [{ "kind": "flag", "flag": "dead-stopped" }],
+      "effects": { "talk": { "character": "hesk" } }
     }
   ]
 }

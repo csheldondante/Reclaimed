@@ -3,6 +3,30 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 99 (session 5, `runstream`) — the world streams during a run
+
+- The user, after playing the GameplayGM slice, verbatim: "The controls are integrated but why is the streaming
+  disabled?"
+- → Branch `runstream`: the run no longer holds the window still (Streamer.auto stays on). The stage is kept in
+  world cells and stamped into the land as it arrives (like the settlements); warps and long rides keep the places,
+  the doors opened and the cast (BACKLOG RS9, RS16).
+
+## 2026-10-27 — round 97 (session 5, `heroapi`) — the vertical slice: pick a hero, a run, its legacy
+
+- The user, verbatim: "I like boundaries and API contracts so keep it there but please update and spin up a build
+  with the story run structure" and "So yes go with those steps".
+- Earlier: "without the outer loop of character selection it isn't really a vertical slice and the current
+  implementation isn't fun because it does a lot of telling and not showing and it doesn't use the fun mechanics I
+  worked on in the hoverbike branch (does it use the controlls abstraction of mapping gesture to intent to toleranced
+  assisted action?) … concerning that basic dialog choices don't show. I would expect it to be trigger/predicate
+  driven and tied to events like deaths and have dialogs just be such an event."
+- And: "Keep warp on for now because the character is way too slow".
+- → Branch `heroapi`: additive contract changes so the hoverbike game (GameplayGM, experiment/slice) runs the story
+  with its own heroes, controls and enemies (startAtlasRun, makeController, units, ownCamera, Hero.claims,
+  HeroIntent.talk); dialog as an event (Outcome.say / talk, Condition.saw, happenings as the triggers); the dialog's
+  missing answers fixed; the Bell story shows more (the dead on the road, barks); MemoryWorldState.restore for the
+  world between runs. Hero select, the heroes and saving are GameplayGM's.
+
 ## 2026-10-27 — round 96 (session 5, `rockbody`) — weightier rock, metal on the physics voxels, on in the atlas
 
 - The user, after playing round 95, verbatim: "Ok the rigidbody version is much better. The pieces still feel a bit
