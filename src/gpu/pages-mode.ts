@@ -35,7 +35,7 @@ export function pagesCode(code: string, storage: boolean): string {
       `
 // (round 107, M1: ?pages=storage) the page table in a storage buffer, an entry a u32 (the slot)
 @group(0) @binding(${PAGE_TAB_BINDING}) var<storage, read> pageTab: array<u32>;
-fn colSlotStore(c: vec2<u32>) -> u32 { return pageTab[c.y * pagesX() + c.x]; }
+fn colSlotStore(c: vec2<u32>) -> u32 { return pageTab[min(c.y * pagesX() + c.x, arrayLength(&pageTab) - 1u)]; }
 `
     );
   if (PAGE_ADDR === 'table') return code.replace(MARK, 'fn colSlot(c: vec2<u32>) -> u32 { return colSlotTable(c); }').replace(MARK_TABLE, 'const PAGE_TABLE: bool = true;');
