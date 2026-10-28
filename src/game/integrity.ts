@@ -180,7 +180,8 @@ export class Integrity {
     this.proj = new Float32Array(N * 4);
     this.resetProjection();
     this.bodies.proj = this.proj;
-    this.bodies.projIdx = (x, y) => core.ring.i(x, y);
+    // (round 107, pages: the projection mirrors a texture — bodyCpu, a page atlas: column (x, y) at its texel)
+    this.bodies.projIdx = (x, y) => core.ring.t(x, y);
     this.bodies.onSleep = () => {
       this.stats.settled++;
       this.keepBudget();
@@ -332,7 +333,8 @@ export class Integrity {
     // (round 106: the projection on the window's ring — the window index y * W + x mapped onto it, so a column past
     // the window's edge reads what it did in window order: the row's wrap, or nothing past the ends)
     const w = y * this.core.dims.w + x;
-    const i = w >= 0 && w < this.core.dims.w * this.core.dims.h ? this.core.ring.of(w) : -1;
+    const W = this.core.dims.w;
+    const i = w >= 0 && w < W * this.core.dims.h ? this.core.ring.t(w % W, Math.floor(w / W)) : -1;
     // (the layers hold the loose ground too)
     const ground = this.world.slots.length ? this.world.colTop(x, y) : 0;
     return Math.max(ground, this.proj[i * 4]);
@@ -514,7 +516,7 @@ export class Integrity {
             const [cx, cy] = cellPos(x, y);
             if (cx < lo[0] + 0.15 || cx > hi[0] - 0.15 || cy < lo[1] + 0.15 || cy > hi[1] - 0.15) continue;
             // (round 106: on the window's ring, as the texture: written whole, not rotated)
-            const i = ring.i(x, y) * 4;
+            const i = ring.t(x, y) * 4;
             if (P[i] < 0) {
               P[i] = hi[2];
               P[i + 1] = lo[2];

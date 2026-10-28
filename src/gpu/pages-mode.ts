@@ -1,5 +1,5 @@
 // Round 107 (`pages`, docs/PAGES.md P2.0 M1 / P2.1): how a kernel finds a window chunk's page (common.wgsl colPage).
-//   ?pages=ring     the ring's wrap computed (c + Globals.ring mod the window's chunks) — the layout before P2.1
+//   ?pages=ring     the ring's wrap computed (c + Globals.ring mod the window's chunks; P2.2: the identity's slots only)
 //   ?pages=table    the page table looked up in the Globals (Globals.pages: a uniform, no new binding)
 //   ?pages=storage  (M1 only) the table in a read-only storage buffer at binding 37, for the kernels the M1 bench
 //                   times that have a storage slot free (PAGE_STORAGE_KERNELS); every other kernel computes the ring
@@ -23,21 +23,22 @@ export const PAGE_TAB_BINDING = 37;
 /** (M1) the kernels the bench times that take the table from storage with ?pages=storage (each module's label) */
 export const PAGE_STORAGE_KERNELS = new Set(['water-flux', 'sediment', 'sediment-out', 'liquid-water-flux', 'liquid-water-jets', 'liquid-water-depth']);
 
-const MARK = 'fn colPage(c: vec2<u32>) -> vec2<u32> { return colPageRing(c); } // PAGE_ADDR';
+const MARK = 'fn colSlot(c: vec2<u32>) -> u32 { return colSlotRing(c); } // PAGE_ADDR';
+const MARK_TABLE = 'const PAGE_TABLE: bool = false; // PAGE_TABLE';
 
-/** a module's code with colPage the build's way; `storage`: this module takes the table from binding 37 */
+/** a module's code with colSlot the build's way; `storage`: this module takes the table from binding 37 */
 export function pagesCode(code: string, storage: boolean): string {
   if (!code.includes(MARK)) return code;
   if (storage)
     return (
-      code.replace(MARK, 'fn colPage(c: vec2<u32>) -> vec2<u32> { return colPageStore(c); }') +
+      code.replace(MARK, 'fn colSlot(c: vec2<u32>) -> u32 { return colSlotStore(c); }') +
       `
-// (round 107, M1: ?pages=storage) the page table in a storage buffer, an entry a u32 (px | py << 8)
+// (round 107, M1: ?pages=storage) the page table in a storage buffer, an entry a u32 (the slot)
 @group(0) @binding(${PAGE_TAB_BINDING}) var<storage, read> pageTab: array<u32>;
-fn colPageStore(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageTab[c.y * pagesX() + c.x]); }
+fn colSlotStore(c: vec2<u32>) -> u32 { return pageTab[c.y * pagesX() + c.x]; }
 `
     );
-  if (PAGE_ADDR === 'table') return code.replace(MARK, 'fn colPage(c: vec2<u32>) -> vec2<u32> { return colPageTable(c); }');
+  if (PAGE_ADDR === 'table') return code.replace(MARK, 'fn colSlot(c: vec2<u32>) -> u32 { return colSlotTable(c); }').replace(MARK_TABLE, 'const PAGE_TABLE: bool = true;');
   return code;
 }
 

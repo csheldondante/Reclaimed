@@ -449,17 +449,19 @@ fn finish(@builtin(global_invocation_id) gid: vec3<u32>) {
     let d = (topW - lo) - inTop;
     water = max(0.0, min(co.water + f(d), f(P.zMax - inTop)));
   }
-  slot[P.oWater + i] = bitcast<u32>(water);
-  slot[P.oMoisture + i] = bitcast<u32>(co.moisture);
-  slot[P.oVeg + i] = bitcast<u32>(veg);
-  slot[P.oPetals + i] = bitcast<u32>(1.0);
+  // (round 107, pages: a region's per-column buffers are page-major in its bytes — world/region-record.ts)
+  let ip = page * 256u + (y % 16u) * 16u + x % 16u;
+  slot[P.oWater + ip] = bitcast<u32>(water);
+  slot[P.oMoisture + ip] = bitcast<u32>(co.moisture);
+  slot[P.oVeg + ip] = bitcast<u32>(veg);
+  slot[P.oPetals + ip] = bitcast<u32>(1.0);
   if (topIn) {
-    slot[P.oWaterSource + i] = bitcast<u32>(co.spring);
+    slot[P.oWaterSource + ip] = bitcast<u32>(co.spring);
     if (co.lava > 0.0) {
       let lw = (f(landTop) + co.lava) - f(lo);
-      slot[P.oLava + i * 4u] = bitcast<u32>(co.lava);
-      slot[P.oLava + i * 4u + 1u] = bitcast<u32>(LAVA_HOT);
-      slot[P.oLava + i * 4u + 3u] = bitcast<u32>(lw);
+      slot[P.oLava + ip * 4u] = bitcast<u32>(co.lava);
+      slot[P.oLava + ip * 4u + 1u] = bitcast<u32>(LAVA_HOT);
+      slot[P.oLava + ip * 4u + 3u] = bitcast<u32>(lw);
     }
     if (co.rd > 0.0) {
       let t = P.oRiverFlow + y * P.tRowRF + x * 4u;

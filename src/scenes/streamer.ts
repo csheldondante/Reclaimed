@@ -44,6 +44,7 @@ import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
 import { SETTLE } from '../sim/sleep';
+import { PAGE_COLS, regionRowsToPages } from '../sim/pages';
 import { MATERIALS, MatState } from '../world/materials';
 import { GPUGEN, type FinishMeta, type FinishTarget } from '../atlas/finish';
 
@@ -476,14 +477,15 @@ export class Streamer {
     if (this.oz % TIER) throw new Error(`the window's oz must be whole tiers of ${TIER}`);
     this.outside = tier?.outside ?? Array.from({ length: w * h }, () => []);
     // (round 105, ringwin: on the window's ring, as the GPU's per-column data — a slide moves none of it)
-    if (!core.ring.zero) {
+    {
+      // (round 107, pages: the buffers' page-major order)
       const o = this.outside;
       this.outside = new Array(w * h);
-      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) this.outside[core.ring.idx(x, y)] = o[y * w + x];
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) this.outside[core.ring.i(x, y)] = o[y * w + x];
     }
     // (round 106, frameprobe: the ground on the ring too, as `outside` and core.map.surface (world-core.ts) — a slide
     // moves none of them: read a column through colIdx)
-    this.ground = tier?.ground ? core.ring.toRing(tier.ground.slice()) : core.map.surface.slice();
+    this.ground = tier?.ground ? core.ring.toStore(tier.ground.slice()) : core.map.surface.slice();
     this.relief = new Uint8Array(w * h);
     this.gapTop = new Float32Array(w * h).fill(-Infinity);
     this.colTop = new Float32Array(w * h);
@@ -598,7 +600,7 @@ export class Streamer {
             const ci = (ly / CHUNK + j) * (w / CHUNK) + lx / CHUNK + i;
             pages.set(p.slots.subarray(t[ci * 2] * SLOT_WORDS, t[ci * 2] * SLOT_WORDS + pageWords), (j * L.rc + i) * pageWords);
           }
-        const out = this.regionOutside(this.core.ring.corner(lx, ly));
+        const out = this.regionOutside(this.regionSlots(lx, ly));
         const last = columnsHash(pages, L, out, this.oz);
         this.winInfo.set(this.key((origin[0] + lx) / R, (origin[1] + ly) / R), { last });
       }
@@ -623,20 +625,82 @@ export class Streamer {
       });
   }
 
-  /** (round 100) the window's outside intervals of the region at ring place `at` (Ring.corner), row-major in the region */
-  private regionOutside(at: number): Interval[][] {
-    const { R, W } = this;
+  /** (round 107, pages) the slots of the window's region at (lx, ly), page row by page row: where it lies, whatever slides after */
+  private regionSlots(lx: number, ly: number): Uint16Array {
+    return this.core.ring.slots(lx, ly, this.R, this.R);
+  }
+
+  /** (round 107) region column (c, r)'s index in the CPU's per-column arrays, its region's slots `sl` */
+  private regionIdx(sl: Uint16Array, c: number, r: number): number {
+    return sl[(r >> 4) * (this.R / CHUNK) + (c >> 4)] * PAGE_COLS + ((r & 15) << 4) + (c & 15);
+  }
+
+  /** (round 100) the window's outside intervals of the region in slots `sl` (regionSlots), row-major in the region */
+  private regionOutside(sl: Uint16Array): Interval[][] {
+    const { R } = this;
     const o: Interval[][] = new Array(R * R);
-    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) o[r * R + c] = this.outside[at + r * W + c];
+    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) o[r * R + c] = this.outside[this.regionIdx(sl, c, r)];
     return o;
   }
 
-  /** (round 100) a w-wide CPU grid's region at ring place `o` (Ring.corner), copied (round 106: the grid on the ring — the region's rows where it lies) */
-  private regionOf<T extends Float32Array | Uint8Array>(a: T, o: number): T {
-    const { R, W } = this;
+  /** (round 100) a CPU grid's region in slots `sl`, copied row-major (round 107: its pages' rows where they lie) */
+  private regionOf<T extends Float32Array | Uint8Array>(a: T, sl: Uint16Array): T {
+    const { R } = this;
+    const rc = R / CHUNK;
     const s = new (a.constructor as { new (n: number): T })(R * R);
-    for (let r = 0; r < R; r++) s.set(a.subarray(o + r * W, o + r * W + R), r * R);
+    for (let j = 0; j < rc; j++)
+      for (let i = 0; i < rc; i++) {
+        const b = sl[j * rc + i] * PAGE_COLS;
+        for (let r = 0; r < CHUNK; r++) s.set(a.subarray(b + r * CHUNK, b + (r + 1) * CHUNK), (j * CHUNK + r) * R + i * CHUNK);
+      }
     return s;
+  }
+
+  /** (round 107) a row-major region grid written into a CPU grid where the region in slots `sl` lies */
+  private regionPut<T extends Float32Array | Uint8Array>(a: T, sl: Uint16Array, src: T): void {
+    const { R } = this;
+    const rc = R / CHUNK;
+    for (let j = 0; j < rc; j++)
+      for (let i = 0; i < rc; i++) {
+        const b = sl[j * rc + i] * PAGE_COLS;
+        for (let r = 0; r < CHUNK; r++) a.set(src.subarray((j * CHUNK + r) * R + i * CHUNK, (j * CHUNK + r) * R + i * CHUNK + CHUNK), b + r * CHUNK);
+      }
+  }
+
+  /**
+   * (round 107, pages: P2.2 — the region copier's page gather) A buffer's region between the window (page-major: the
+   * region's pages at their slots) and a region's bytes (page-major, its pages one after another: world/region-record.ts),
+   * as rectangles for the copier: one when the slots are a regular block (the identity's), else one a run of pages.
+   * `reg` the region side's buffer and offset (words); `toWin` its direction; `zero`: the window side cleared instead.
+   */
+  private regionRects(b: { buf: GPUBuffer; stride: number; planes: number }, sl: Uint16Array, toWin: boolean, reg: GPUBuffer | null, regOff: number, once = false): void {
+    const { W, H, R } = this;
+    const s = b.stride / 4;
+    const pw = (PAGE_COLS * s) | 0;
+    const rc = R / CHUNK;
+    for (const run of this.core.ring.runs(sl, rc)) {
+      const win = { buf: b.buf, off: run.slot * pw, row: run.rowSlots * pw, plane: W * H * s };
+      const rowWords = run.n * pw;
+      const rg = reg ? { buf: reg, off: regOff + run.k * pw, row: rc * pw, plane: R * R * s } : { buf: this.zeros(rowWords), off: 0, row: 0, plane: 0 };
+      const [src, dst] = toWin || !reg ? [rg, win] : [win, rg];
+      this.copier.rect({ src: src.buf, srcOff: src.off, srcRow: src.row, srcPlane: src.plane, dst: dst.buf, dstOff: dst.off, dstRow: dst.row, dstPlane: dst.plane, rowWords, rows: run.rows, planes: b.planes, once });
+    }
+  }
+
+  /** (round 107) a buffer that isn't a storage buffer: the region's pages cleared where they lie, a clear a run of pages */
+  private clearPages(enc: GPUCommandEncoder, b: { buf: GPUBuffer; stride: number; planes: number }, sl: Uint16Array): void {
+    const pb = PAGE_COLS * b.stride;
+    for (const run of this.core.ring.runs(sl, this.R / CHUNK))
+      for (let q = 0; q < b.planes; q++) for (let r = 0; r < run.rows; r++) enc.clearBuffer(b.buf, q * this.W * this.H * b.stride + (run.slot + r * run.rowSlots) * pb, run.n * pb);
+  }
+
+  /** (round 107) a texture's region where it lies in the atlas: the rectangles (one, the identity's) and their offsets in a region's texels */
+  private texRegion(lx: number, ly: number, t: { per: number; div: number }, rowBytes: number): { origin: [number, number]; off: number; size: [number, number] }[] {
+    return this.core.ring.texRects(lx, ly, this.R, this.R).map((q) => ({
+      origin: [((q.px * CHUNK) / t.div) * t.per, (q.py * CHUNK) / t.div],
+      off: ((q.wy - ly) / t.div) * rowBytes + ((q.wx - lx) / t.div) * t.per * 16,
+      size: [((q.pw * CHUNK) / t.div) * t.per, (q.ph * CHUNK) / t.div],
+    }));
   }
 
   /**
@@ -648,21 +712,22 @@ export class Streamer {
   private saveItem(lx: number, ly: number, key: string, now = false): SaveItem {
     let info = this.winInfo.get(key);
     if (!info) this.winInfo.set(key, (info = {}));
-    const at = this.core.ring.corner(lx, ly);
+    const sl = this.regionSlots(lx, ly);
+    const at = sl[0];
     const it: SaveItem = { key, x0: this.origin[0] + lx, y0: this.origin[1] + ly, oz: this.oz, outside: [], surface: NO_F32, ground: NO_F32, relief: { relief: NO_U8, gapTop: NO_F32, colTop: NO_F32 }, info };
     it.fill = () => {
       it.fill = undefined;
-      it.outside = this.regionOutside(at);
-      it.surface = this.regionOf(this.core.map.surface, at);
-      it.ground = this.regionOf(this.ground, at);
-      it.relief = { relief: this.regionOf(this.relief, at), gapTop: this.regionOf(this.gapTop, at), colTop: this.regionOf(this.colTop, at) };
+      it.outside = this.regionOutside(sl);
+      it.surface = this.regionOf(this.core.map.surface, sl);
+      it.ground = this.regionOf(this.ground, sl);
+      it.relief = { relief: this.regionOf(this.relief, sl), gapTop: this.regionOf(this.gapTop, sl), colTop: this.regionOf(this.colTop, sl) };
     };
     if (now) it.fill();
     else this.fills.push({ at, it });
     return it;
   }
 
-  /** (round 106, frameprobe) the regions frozen whose CPU parts aren't read yet, and where they lie on the ring */
+  /** (round 106, frameprobe) the regions frozen whose CPU parts aren't read yet, and where they lie (round 107: their first slot) */
   private fills: { at: number; it: SaveItem }[] = [];
 
   /** (round 106) the frozen region at ring place `at` read before something writes there */
@@ -686,8 +751,8 @@ export class Streamer {
   /** (round 100) Copy the window's region at (lx, ly) into `dst` at `off`, in the region layout. */
   private copyOut(enc: GPUCommandEncoder, lx: number, ly: number, dst: GPUBuffer, off: number, kernel = true, flush = true): void {
     const { W, R } = this;
-    // (round 105, ringwin: the region's place on the ring — whole regions, so one rectangle)
-    const [px, py] = this.core.ring.at(lx, ly);
+    // (round 107, pages: the region's pages where they lie — one rectangle for the identity's slots)
+    const sl = this.regionSlots(lx, ly);
     const L = this.layout;
     const wg = this.core.world;
     const table = this.core.packed.chunkTable;
@@ -702,25 +767,28 @@ export class Streamer {
       const b = this.bufs.find((x) => x.name === lb.name)!;
       // (round 104: a dispatch a buffer — dst must be a storage buffer: a pool slot, not a readback's stage)
       if (kernel) {
-        const s = b.stride / 4;
-        this.copier.rect({ src: b.buf, srcOff: (py * W + px) * s, srcRow: W * s, srcPlane: W * H * s, dst, dstOff: (off + lb.off) / 4, dstRow: R * s, dstPlane: R * R * s, rowWords: R * s, rows: R, planes: b.planes });
+        this.regionRects(b, sl, false, dst, (off + lb.off) / 4);
         continue;
       }
-      for (let p = 0; p < b.planes; p++)
-        for (let r = 0; r < R; r++) enc.copyBufferToBuffer(b.buf, p * W * H * b.stride + ((py + r) * W + px) * b.stride, dst, off + lb.off + (p * R + r) * R * b.stride, R * b.stride);
+      // (round 107: a page's columns are one run in both: a copy a run of pages, a plane)
+      const pb = PAGE_COLS * b.stride;
+      for (const run of this.core.ring.runs(sl, L.rc))
+        for (let p = 0; p < b.planes; p++)
+          for (let r = 0; r < run.rows; r++)
+            enc.copyBufferToBuffer(b.buf, p * W * H * b.stride + (run.slot + r * run.rowSlots) * pb, dst, off + lb.off + p * R * R * b.stride + (run.k + r * L.rc) * pb, run.n * pb);
     }
     // (round 106: a caller freezing several encodes their rectangles once, in one pass)
     if (flush) this.copier.encode(enc);
     for (const lt of L.texs) {
       const t = this.texs.find((x) => x.name === lt.name)!;
-      enc.copyTextureToBuffer({ texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, { buffer: dst, offset: off + lt.off, bytesPerRow: lt.rowBytes }, [lt.tw, lt.th]);
+      for (const q of this.texRegion(lx, ly, t, lt.rowBytes)) enc.copyTextureToBuffer({ texture: t.tex, origin: q.origin }, { buffer: dst, offset: off + lt.off + q.off, bytesPerRow: lt.rowBytes }, q.size);
     }
   }
 
   /** (round 100) Copy a region's bytes (a pool slot) into the window at (lx, ly): its pages to the layers (and layersNext). */
   private copyIn(enc: GPUCommandEncoder, src: GPUBuffer, off: number, lx: number, ly: number, once = false): void {
-    const { W, H, R } = this;
-    const [px, py] = this.core.ring.at(lx, ly);
+    const { W } = this;
+    const sl = this.regionSlots(lx, ly);
     const L = this.layout;
     const wg = this.core.world;
     const table = this.core.packed.chunkTable;
@@ -732,13 +800,12 @@ export class Streamer {
       }
     for (const lb of L.bufs) {
       const b = this.bufs.find((x) => x.name === lb.name)!;
-      const s = b.stride / 4;
-      this.copier.rect({ src, srcOff: (off + lb.off) / 4, srcRow: R * s, srcPlane: R * R * s, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes, once });
+      this.regionRects(b, sl, true, src, (off + lb.off) / 4, once);
     }
     this.copier.encode(enc);
     for (const lt of L.texs) {
       const t = this.texs.find((x) => x.name === lt.name)!;
-      enc.copyBufferToTexture({ buffer: src, offset: off + lt.off, bytesPerRow: lt.rowBytes }, { texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, [lt.tw, lt.th]);
+      for (const q of this.texRegion(lx, ly, t, lt.rowBytes)) enc.copyBufferToTexture({ buffer: src, offset: off + lt.off + q.off, bytesPerRow: lt.rowBytes }, { texture: t.tex, origin: q.origin }, q.size);
     }
   }
 
@@ -751,7 +818,8 @@ export class Streamer {
     host.set(new Uint8Array(ly.buffer, ly.byteOffset, Math.min(ly.byteLength, L.rc * L.rc * L.pageBytes)), 0);
     for (const lb of L.bufs) {
       const d = f.bufs?.[lb.name];
-      if (d) host.set(d.subarray(0, lb.bytes), lb.off);
+      // (round 107, pages: the record's buffers page-major — the CPU's forms row-major)
+      if (d) host.set(regionRowsToPages(d.subarray(0, lb.bytes), L.R, lb.stride, lb.planes, true), lb.off);
     }
     for (const lt of L.texs) {
       const d = f.texs?.[lt.name];
@@ -768,7 +836,8 @@ export class Streamer {
     const L = this.layout;
     const layers = new Uint32Array(body.slice(0, L.rc * L.rc * L.pageBytes).buffer);
     const bufs: Record<string, Uint8Array> = {};
-    for (const lb of L.bufs) bufs[lb.name] = body.slice(lb.off, lb.off + lb.bytes);
+    // (round 107, pages: page-major in the record, row-major for the CPU)
+    for (const lb of L.bufs) bufs[lb.name] = regionRowsToPages(body.subarray(lb.off, lb.off + lb.bytes), L.R, lb.stride, lb.planes, false);
     const texs: Record<string, Float32Array> = {};
     for (const lt of L.texs) {
       const d = new Float32Array(lt.tw * lt.th * 4);
@@ -990,7 +1059,7 @@ export class Streamer {
     const enc = dev.createCommandEncoder({ label: 'region verify' });
     this.copyOut(enc, lx, ly, st, 0, false);
     dev.queue.submit([enc.finish()]);
-    const out = this.regionOutside(this.core.ring.corner(lx, ly)).map((c) => c.slice());
+    const out = this.regionOutside(this.regionSlots(lx, ly)).map((c) => c.slice());
     const oz = this.oz;
     void st.mapAsync(GPUMapMode.READ).then(() => {
       const body = new Uint8Array(st.getMappedRange()).slice();
@@ -1553,7 +1622,6 @@ export class Streamer {
     if (!p) return;
     fz.pending.delete(ly * this.W + lx);
     const t0 = performance.now();
-    const { R, W, H } = this;
     const L = this.layout;
     const dev = this.core.host.gpu.device;
     const enc = dev.createCommandEncoder({ label: 'stream freeze' });
@@ -1584,13 +1652,11 @@ export class Streamer {
       this.stats.evicted++;
     }
     // (what isn't kept for the region coming in starts empty there)
-    const [px, py] = this.core.ring.at(lx, ly);
+    const sl = this.regionSlots(lx, ly);
     for (const b of [...this.bufs, ...this.moduleBufs()]) {
       if (b.keep) continue;
-      const s = b.stride / 4;
-      if (b.buf.usage & GPUBufferUsage.STORAGE)
-        this.copier.rect({ src: this.zeros(R * s), srcOff: 0, srcRow: 0, srcPlane: 0, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes });
-      else for (let q = 0; q < b.planes; q++) for (let r = 0; r < R; r++) enc.clearBuffer(b.buf, q * W * H * b.stride + ((py + r) * W + px) * b.stride, R * b.stride);
+      if (b.buf.usage & GPUBufferUsage.STORAGE) this.regionRects(b, sl, true, null, 0);
+      else this.clearPages(enc, b, sl);
     }
     this.copier.encode(enc);
     dev.queue.submit([enc.finish()]);
@@ -1642,19 +1708,14 @@ export class Streamer {
     enc.clearBuffer(wg.particles);
     // (round 106: each region's band is cleared as it's frozen — freezeAt; this, only when nothing is frozen: ?slideskip=freeze)
     if (!fz) {
-      // (a band of whole rows or columns: all of them along the other axis, from the ring's 0)
-      const [bx, by] = ring.at(dx > 0 ? W - dx : 0, dy > 0 ? H - dy : 0);
-      const sx = dx ? bx : 0;
-      const sy = dy ? by : 0;
-      const sw = dx ? Math.abs(dx) : W;
-      const sh = dy ? Math.abs(dy) : H;
-      for (const b of [...this.bufs, ...mods]) {
-        if (b.keep) continue;
-        const s = b.stride / 4;
-        if (dy) for (let p = 0; p < b.planes; p++) enc.clearBuffer(b.buf, p * W * H * b.stride + sy * W * b.stride, sh * W * b.stride);
-        else if (b.buf.usage & GPUBufferUsage.STORAGE)
-          this.copier.rect({ src: this.zeros(sw * s), srcOff: 0, srcRow: 0, srcPlane: 0, dst: b.buf, dstOff: (sy * W + sx) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: sw * s, rows: sh, planes: b.planes });
-        else for (let p = 0; p < b.planes; p++) for (let r = 0; r < sh; r++) enc.clearBuffer(b.buf, p * W * H * b.stride + ((sy + r) * W + sx) * b.stride, sw * b.stride);
+      // (the band coming in, region by region where its pages lie — round 107, pages)
+      for (const [lx, ly] of entering) {
+        const sl = this.regionSlots(lx, ly);
+        for (const b of [...this.bufs, ...mods]) {
+          if (b.keep) continue;
+          if (b.buf.usage & GPUBufferUsage.STORAGE) this.regionRects(b, sl, true, null, 0);
+          else this.clearPages(enc, b, sl);
+        }
       }
       this.copier.encode(enc);
     }
@@ -2102,7 +2163,7 @@ export class Streamer {
       this.touch(x0, y0, x1, y1);
       for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, slots);
       // (ringwin: read in window order, written back in the ring's)
-      const vegR = core.ring.toRing(veg);
+      const vegR = core.ring.toStore(veg);
       for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, vegR);
       core.clearUndo();
       for (const f of this.onRelief) f(Math.max(0, x0), Math.max(0, y0), Math.min(W, x1), Math.min(H, y1));
@@ -2335,8 +2396,8 @@ export class Streamer {
       }
     for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, out);
     // (ringwin: read in window order, written back in the ring's)
-    const waterR = core.ring.toRing(water);
-    const lavaR = core.ring.toRing(lava, 4);
+    const waterR = core.ring.toStore(water);
+    const lavaR = core.ring.toStore(lava, 4);
     for (const b of [wg.water, wg.waterNext, wg.waterPrev]) dev.queue.writeBuffer(b, 0, waterR);
     for (const b of [wg.lava, wg.lavaNext]) dev.queue.writeBuffer(b, 0, lavaR);
     // (particles in the air: dropped, as on a slide sideways)
@@ -2386,14 +2447,13 @@ export class Streamer {
       if (!f.layers) throw new Error('a region in the pool written at another oz (prepare it first)');
       f = { ...this.reslice(f), relief: undefined };
     }
-    const { core, W, H, R } = this;
+    const { core, W, R } = this;
     const tl = performance.now();
-    // (round 105, ringwin: where the region lies on the ring)
-    const [px, py] = core.ring.at(lx, ly);
+    // (round 107, pages: where the region's pages lie)
+    const sl = this.regionSlots(lx, ly);
     // (round 106: what lay there before, frozen by the slide, read first)
-    const at0 = core.ring.corner(lx, ly);
-    this.fillAt(at0);
-    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[at0 + r * W + c] = f.outside[r * R + c];
+    this.fillAt(sl[0]);
+    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[this.regionIdx(sl, c, r)] = f.outside[r * R + c];
     const dev = core.host.gpu.device;
     const wg = core.world;
     const table = core.packed.chunkTable;
@@ -2411,7 +2471,7 @@ export class Streamer {
         const tw = (R / t.div) * t.per;
         const th = R / t.div;
         const b = this.blankBuf(tw, th, t.fill);
-        enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, [tw, th]);
+        for (const q of this.texRegion(lx, ly, t, b.rowBytes)) enc.copyBufferToTexture({ buffer: b.buf, offset: q.off, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: q.origin }, q.size);
       }
       dev.queue.submit([enc.finish()]);
       this.pool.release(slot);
@@ -2448,10 +2508,9 @@ export class Streamer {
       for (const b of kept) {
         const d = f.bufs?.[b.name];
         const n = R * R * b.stride * b.planes;
-        // (round 104: a dispatch a buffer, not a copy a row)
-        const s = b.stride / 4;
-        this.copier.rect(d ? { src: this.writeStage, srcOff: off / 4, srcRow: R * s, srcPlane: R * R * s, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes } : { src: this.zeros(R * s), srcOff: 0, srcRow: 0, srcPlane: 0, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes });
-        if (d) host.set(d.subarray(0, n), off);
+        // (round 104: a dispatch a buffer, not a copy a row; round 107: staged page-major, the region's pages to their slots)
+        this.regionRects(b, sl, true, d ? this.writeStage : null, off / 4);
+        if (d) host.set(regionRowsToPages(d.subarray(0, n), R, b.stride, b.planes, true), off);
         off += n;
       }
       dev.queue.writeBuffer(this.writeStage, 0, host, 0, size);
@@ -2461,10 +2520,10 @@ export class Streamer {
         const tw = (R / t.div) * t.per;
         const th = R / t.div;
         const d = t.keep ? f.texs?.[t.name] : undefined;
-        if (d) dev.queue.writeTexture({ texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, d, { bytesPerRow: tw * 16 }, [tw, th]);
+        if (d) for (const q of this.texRegion(lx, ly, t, tw * 16)) dev.queue.writeTexture({ texture: t.tex, origin: q.origin }, d, { offset: q.off, bytesPerRow: tw * 16 }, q.size);
         else {
           const b = this.blankBuf(tw, th, t.fill);
-          enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, [tw, th]);
+          for (const q of this.texRegion(lx, ly, t, b.rowBytes)) enc.copyBufferToTexture({ buffer: b.buf, offset: q.off, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: q.origin }, q.size);
         }
       }
       dev.queue.submit([enc.finish()]);
@@ -2475,26 +2534,21 @@ export class Streamer {
     record('write.gpu', performance.now() - tb);
     const tc = performance.now();
     const surf = core.map.surface;
-    // (round 106: the CPU's per-column arrays on the ring — the region's rows where it lies)
-    const o = core.ring.corner(lx, ly);
-    for (let r = 0; r < R; r++) surf.set(f.surface.subarray(r * R, (r + 1) * R), o + r * W);
+    // (round 106: the CPU's per-column arrays where the region lies — round 107: its pages' rows at their slots)
+    this.regionPut(surf, sl, f.surface);
     // (the ground: its own if the source said, else the surface)
-    const gr = f.ground ?? f.surface;
-    for (let r = 0; r < R; r++) this.ground.set(gr.subarray(r * R, (r + 1) * R), o + r * W);
+    this.regionPut(this.ground, sl, f.ground ?? f.surface);
     // (hybrid) the relief of what came in (round 98: made ahead when it was ready; the ground's offset to the surface,
     // and the runs in world z, are the same whatever oz it's cut at)
     const rf = f.relief;
-    if (rf)
-      for (let r = 0; r < R; r++) {
-        const at = o + r * W;
-        this.relief.set(rf.relief.subarray(r * R, (r + 1) * R), at);
-        this.gapTop.set(rf.gapTop.subarray(r * R, (r + 1) * R), at);
-        this.colTop.set(rf.colTop.subarray(r * R, (r + 1) * R), at);
-      }
-    else
+    if (rf) {
+      this.regionPut(this.relief, sl, rf.relief);
+      this.regionPut(this.gapTop, sl, rf.gapTop);
+      this.regionPut(this.colTop, sl, rf.colTop);
+    } else
     for (let r = 0; r < R; r++)
       for (let c = 0; c < R; c++) {
-        const i = o + r * W + c;
+        const i = this.regionIdx(sl, c, r);
         this.setRelief(i, joinColumn(this.columnOf(f.layers!, c, r), f.oz, f.outside[r * R + c]), surf[i], this.ground[i]);
       }
     record('write.cpu', performance.now() - tc);

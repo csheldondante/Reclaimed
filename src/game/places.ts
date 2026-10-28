@@ -43,7 +43,7 @@ export class Places {
   private upload(): void {
     const m = this.map;
     // (ringwin: in the ring's order)
-    this.device.queue.writeBuffer(this.world.places, 0, this.world.ring.toRing(m.cols));
+    this.device.queue.writeBuffer(this.world.places, 0, this.world.ring.toStore(m.cols));
     this.device.queue.writeBuffer(this.world.placeTable, 0, m.table());
   }
 

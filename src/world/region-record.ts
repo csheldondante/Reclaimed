@@ -5,7 +5,7 @@
 // One layout serves every tier: the GPU pool's slot (scenes/region-pool.ts), the staging a slot is read back
 // through, and the body of the disk record are the same bytes —
 //   the region's chunk pages (rc × rc pages of K × CHUNK² slots, SLOT_WORDS words each, row-major in the region),
-//   then each kept per-column buffer (per plane, R rows of R × stride bytes),
+//   then each kept per-column buffer (per plane, its rc × rc pages row-major, each 256 columns of stride bytes — round 107),
 //   then each kept texture (R / div rows of align256(texels × 16) bytes; rgba32float).
 // A record is that body with a header and the region's CPU parts (what's outside the window per column, the
 // surface, the ground, the relief) and its things (meshes with transforms that own cells: sim/external.ts):
@@ -19,8 +19,9 @@ import { CHUNK, SLOT_WORDS, type Interval } from './layout';
 import { MATERIALS, MatState } from './materials';
 
 export const RECORD_MAGIC = 0x524c4352;
-/** the record's own format */
-export const RECORD_FORMAT = 1;
+/** the record's own format (2, round 107 `pages`: the per-column buffers page-major — a region's pages one after
+ *  another, each 16 x 16 columns row-major, as the window's buffers hold them) */
+export const RECORD_FORMAT = 2;
 /** the land generator's version: bump when what a region is made of changes (the atlas, streamgen, the hooks) */
 export const GEN_VERSION = 1;
 
