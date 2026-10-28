@@ -42,6 +42,10 @@ const TEXEL_BYTES = 12;
 const OVERLAP = 1;
 /** ?tileland=0: no render-only land past the window (TC2) — only what the window baked */
 const NO_LAND = new URLSearchParams(location.search).get('tileland') === '0';
+/** (round 105, tileahead) seconds of the camera's motion the land is made ahead of the screen, and the motion
+ *  (world units a second) under which the camera's at rest */
+const PREFETCH_S = Number(new URLSearchParams(location.search).get('tileahead') ?? 1);
+const MOVING = 2;
 /** ?tiledebug=1: the tiles drawn tinted */
 const DEBUG = new URLSearchParams(location.search).get('tiledebug') === '1';
 
@@ -238,12 +242,14 @@ export class TileCache {
    */
   encode(enc: GPUCommandEncoder, cam: Camera, renderW: number): void {
     this.frame++;
+    this.track(cam);
     if (!this.on(cam)) return;
     const h = this.host;
-    // (round 104, TC2: the land past the window no tile draws yet, made, meshed and baked a region at a time)
+    // (round 104, TC2: the land past the window no tile draws yet, made, meshed and baked — the camera's way first;
+    // round 105: a frame the land bakes, the window's trailing bakes wait: they never take the land ahead's turn)
     if (this.land && !NO_LAND) {
       const B0 = this.basis(cam.viewProj);
-      this.land.step(enc, cam, B0, (B0.sx * renderW) / 2);
+      if (this.land.step(enc, cam, B0, (B0.sx * renderW) / 2)) return;
     }
     const fm = h.win.mesh;
     const [nx, ny] = fm.chunkGrid;
@@ -451,37 +457,101 @@ export class TileCache {
   land?: TileLand;
 
   /**
-   * (round 104, TC2) The region past the window a tile should draw and none does yet, nearest the middle of the
-   * screen first (a 16 x 16 grid of screen points, the ground at the focus's height under each); null: none.
+   * (round 105, `tileahead`) The regions past the window a tile should draw and none does yet, the camera's way
+   * first (the user: "they seem to load in the direction opposite the camera panning"). Sampled at a 16 x 16 grid of
+   * screen points (the ground at the focus's height under each) and the same grid moved on by the camera's motion
+   * over PREFETCH_S (what the screen will show then). Ordered by when the screen reaches it (on it now: 0; ahead of it:
+   * its share of PREFETCH_S), then how far ahead along the motion it lies (ahead before behind), then how near the
+   * middle — at rest, nearest the middle first, as before. At most `n`.
    */
-  wanted(cam: Camera, skip: (key: string) => boolean): { rx: number; ry: number } | null {
-    if (!this.origin || cam.fly) return null;
+  wanted(cam: Camera, skip: (key: string) => boolean, n: number): { rx: number; ry: number }[] {
+    if (!this.origin || cam.fly) return [];
     const [ox, oy] = this.origin;
     const W = this.host.world.w;
     const H = this.host.world.h;
     const G = 16;
-    let best: { rx: number; ry: number } | null = null;
-    let bd = Infinity;
     const crx = Math.floor((cam.target[0] + ox) / R);
     const cry = Math.floor((cam.target[1] / ROW_H + oy) / R);
+    const [vx, vy] = this.vel;
+    const sp = Math.hypot(vx, vy);
+    // (moving: the screen's points ahead too, where the screen will be in PREFETCH_S)
+    const shifts = sp > MOVING ? [0, 1] : [0];
+    const best = new Map<string, { rx: number; ry: number; k: number }>();
+    for (const sh of shifts)
+      for (let j = 0; j < G; j++)
+        for (let i = 0; i < G; i++) {
+          const sx = (i + 0.5) / G - 0.5;
+          const sy = (j + 0.5) / G - 0.5;
+          const [dx, dy] = cam.screenDeltaToWorld(sx * cam.viewportW, sy * cam.viewportH);
+          const px = dx + vx * PREFETCH_S * sh;
+          const py = dy + vy * PREFETCH_S * sh;
+          const x = cam.target[0] + px;
+          const y = (cam.target[1] + py) / ROW_H;
+          if (x >= 0 && x < W && y >= 0 && y < H) continue;
+          const rx = Math.floor((x + ox) / R);
+          const ry = Math.floor((y + oy) / R);
+          if (Math.abs(rx - crx) >= MASK_N / 2 || Math.abs(ry - cry) >= MASK_N / 2) continue;
+          const key = `${rx},${ry}`;
+          if (this.tiles.has(this.key(rx, ry, cam.azimuth)) || skip(key)) continue;
+          // when the screen has it (s), how far ahead along the motion (cells), how far from the middle (cells)
+          const along = sp > MOVING ? (px * vx + py * vy) / sp : 0;
+          const k = sh * 1e6 - along * 100 + Math.hypot(px, py);
+          const o = best.get(key);
+          if (!o || k < o.k) best.set(key, { rx, ry, k });
+        }
+    return [...best.values()].sort((a, b) => a.k - b.k).slice(0, n);
+  }
+
+  /** a tile of region (rx, ry) at this turn? */
+  hasTile(rx: number, ry: number, az: number): boolean {
+    return this.tiles.has(this.key(rx, ry, az));
+  }
+
+  /** (round 105) the camera's motion over the ground (world units a second, smoothed), and where it was */
+  private vel: [number, number] = [0, 0];
+  private velAt: { x: number; y: number; t: number } | null = null;
+  /** the camera's motion this frame (its target in world units: the window's place added, so a slide isn't motion) */
+  private track(cam: Camera): void {
+    if (!this.origin) return;
+    const x = cam.target[0] + this.origin[0];
+    const y = cam.target[1] + this.origin[1] * ROW_H;
+    const t = performance.now() / 1000;
+    const p = this.velAt;
+    this.velAt = { x, y, t };
+    if (!p || t - p.t <= 0 || t - p.t > 0.5) return;
+    const k = Math.min(1, (t - p.t) / 0.25);
+    this.vel = [this.vel[0] + ((x - p.x) / (t - p.t) - this.vel[0]) * k, this.vel[1] + ((y - p.y) / (t - p.t) - this.vel[1]) * k];
+  }
+
+  /** (round 105) the camera's smoothed motion (world units a second: x, y) — the probe's and the land's */
+  get motion(): [number, number] {
+    return [this.vel[0], this.vel[1]];
+  }
+
+  /**
+   * (round 105) The share of the screen in detail (the window's land or a tile's) on its leading and trailing
+   * halves — split across the camera's motion (or `dir`, world x y); a 24 x 24 grid of points as coverage.
+   */
+  coverageSplit(cam: Camera, dir?: [number, number]): { lead: number; trail: number } {
+    if (!this.origin || cam.fly) return { lead: 0, trail: 0 };
+    const [ox, oy] = this.origin;
+    const W = this.host.world.w;
+    const H = this.host.world.h;
+    const d = dir ?? this.vel;
+    const dl = Math.hypot(d[0], d[1]) || 1;
+    const G = 24;
+    const n = [0, 0];
+    const got = [0, 0];
     for (let j = 0; j < G; j++)
       for (let i = 0; i < G; i++) {
-        const sx = (i + 0.5) / G - 0.5;
-        const sy = (j + 0.5) / G - 0.5;
-        const d = sx * sx + sy * sy;
-        if (d >= bd) continue;
-        const [dx, dy] = cam.screenDeltaToWorld(sx * cam.viewportW, sy * cam.viewportH);
+        const [dx, dy] = cam.screenDeltaToWorld(((i + 0.5) / G - 0.5) * cam.viewportW, ((j + 0.5) / G - 0.5) * cam.viewportH);
+        const side = (dx * d[0] + dy * d[1]) / dl >= 0 ? 0 : 1;
+        n[side]++;
         const x = cam.target[0] + dx;
         const y = (cam.target[1] + dy) / ROW_H;
-        if (x >= 0 && x < W && y >= 0 && y < H) continue;
-        const rx = Math.floor((x + ox) / R);
-        const ry = Math.floor((y + oy) / R);
-        if (Math.abs(rx - crx) >= MASK_N / 2 || Math.abs(ry - cry) >= MASK_N / 2) continue;
-        if (this.tiles.has(this.key(rx, ry, cam.azimuth)) || skip(`${rx},${ry}`)) continue;
-        best = { rx, ry };
-        bd = d;
+        if ((x >= 0 && x < W && y >= 0 && y < H) || this.drawnSet.has(`${Math.floor((x + ox) / R)},${Math.floor((y + oy) / R)}`)) got[side]++;
       }
-    return best;
+    return { lead: n[0] ? got[0] / n[0] : 0, trail: n[1] ? got[1] / n[1] : 0 };
   }
 
   afterSubmit(): void {
