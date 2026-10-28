@@ -30,6 +30,7 @@ import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import { RIVERS, type WorldGpu } from '../sim/world-gpu';
 import { ShoreField } from './shore';
+import { WaterSurface } from './watersurf';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from './camera';
 import { OutsideBand } from './band';
 import { RockMesh } from './rockmesh';
@@ -146,7 +147,12 @@ export class Renderer {
   private vegPrep: ComputeKernel;
   private vegPrepGroup: GPUBindGroup;
   private opaquePipe: GPURenderPipeline;
-  private waterPipe: GPURenderPipeline;
+  private blendPipe: GPURenderPipeline;
+  /** (?skip=waterflat) the water's geometry with a flat fragment: a measuring aid */
+  private waterFlatPipe: GPURenderPipeline;
+  /** (watersurf, FC2) with the field mesh: the water drawn as one surface (render/watersurf.ts), not prisms */
+  readonly waterSurf?: WaterSurface;
+  private waterSurfPipe?: GPURenderPipeline;
   private rainPipe: GPURenderPipeline;
   private partPipe: GPURenderPipeline;
   private partGroup: GPUBindGroup;
@@ -155,7 +161,7 @@ export class Renderer {
   private topsGroup: GPUBindGroup;
   /** First instance of the tops list in instOpaque. */
   private topsBase: number;
-  private waterGroup: GPUBindGroup;
+  private blendGroup: GPUBindGroup;
   /** rigid bodies (F7): rotated voxels, 2 × vec4<u32> each (render.wgsl vsBody) */
   private bodyBuf: GPUBuffer;
   private bodyGroup: GPUBindGroup;
@@ -291,7 +297,7 @@ export class Renderer {
   private rainGroup: GPUBindGroup;
   instOpaque: GPUBuffer;
   instPlant: GPUBuffer;
-  instWater: GPUBuffer;
+  instBlend: GPUBuffer;
   readonly indirect: GPUBuffer;
   private camBuf: GPUBuffer;
   private camData = new ArrayBuffer(CAM_BYTES);
@@ -311,7 +317,7 @@ export class Renderer {
   /** more prisms for the opaque pipeline (lava: sim/lava.ts) */
   private prismSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
   /** (?flow=1) more for the water pipeline: liquid runs under rock, falling streams (flow/liquid.ts) */
-  private waterSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
+  private blendSources: { indirect: GPUBuffer; group: GPUBindGroup }[] = [];
   private noShadowView?: GPUTextureView;
   private groupFor!: (inst: GPUBuffer | GPUBufferBinding, cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
   private shadowGroups?: { opaque: GPUBindGroup; tops: GPUBindGroup; plants: GPUBindGroup; struct: GPUBindGroup; bodies: GPUBindGroup; mesh: GPUBindGroup };
@@ -326,20 +332,20 @@ export class Renderer {
   opaqueCapacity: number;
   /** (round 93) the plant and blended lists' room (instances) */
   plantCapacity = 0;
-  waterCapacity = 0;
+  blendCapacity = 0;
   /** (round 93, instgrow) the lists' room asked for by the last count readback (0: none), and how often they grew */
-  private instGrowTo = { opaque: 0, plant: 0, water: 0 };
+  private instGrowTo = { opaque: 0, plant: 0, blend: 0 };
   instGrown = 0;
   /** the raw counts asked for (before the clamp), last read */
-  instAsked = { opaque: 0, water: 0, plants: 0 };
-  private clampW!: ComputeKernel;
+  instAsked = { opaque: 0, blend: 0, plants: 0 };
+  private clampB!: ComputeKernel;
   private clampV!: ComputeKernel;
-  private clampWGroup!: GPUBindGroup;
+  private clampBGroup!: GPUBindGroup;
   private clampVGroup!: GPUBindGroup;
   private prepEntries!: () => Record<number, GPUBuffer | GPUTextureView>;
   private vegEntries!: () => Record<number, GPUBuffer | GPUTextureView>;
   /** Last-known instance counts (async readback, for the perf overlay). */
-  instanceCounts = { opaque: 0, water: 0, tops: 0, prisms: 0, plants: 0 };
+  instanceCounts = { opaque: 0, blend: 0, tops: 0, prisms: 0, plants: 0 };
   /** frames, for the window's and the band's mesh turns (round 82) */
   private meshTurn = 0;
   /** (perfopt, shadowEvery) the light matrix and lookup bias the shadow map holds, when it was drawn, the box, the slides */
@@ -382,8 +388,8 @@ export class Renderer {
     this.plantCapacity = Math.ceil(N * VEG_INSTANCES * f);
     this.instPlant = world.buf('instPlant', this.plantCapacity * 16, GPUBufferUsage.STORAGE);
     // up to four blended boxes per column: water, oil, two see-through solids (renderprep.wgsl GLASS_MAX)
-    this.waterCapacity = Math.ceil(N * 4 * f);
-    this.instWater = world.buf('instWater', this.waterCapacity * 16, GPUBufferUsage.STORAGE);
+    this.blendCapacity = Math.ceil(N * 4 * f);
+    this.instBlend = world.buf('instBlend', this.blendCapacity * 16, GPUBufferUsage.STORAGE);
     // draw args: [0..3] opaque prisms, [4..7] water, [8..11] plants, [12..15]
     // tops alone; [16] where the tops start in instOpaque (renderprep.wgsl); (round 93) [20..22] the prisms',
     // water's and plants' counts before they were held to their lists' room; (round 99, meshinst) [24..] the
@@ -408,7 +414,11 @@ export class Renderer {
     this.shadowSampler = device.createSampler({ compare: 'less-equal', magFilter: 'linear', minFilter: 'linear' });
     profiler.trackMemory('shadow', ss * ss * 4);
     // (?skip=cull: every column, as before the view culling)
-    const cullOff = `const CULL_OFF: bool = ${SKIP.has('cull')};`;
+    // (watersurf: with the field mesh the water is a surface — render/watersurf.ts — and renderprep's blended list holds
+    // only the oil and the see-through solids; without it, as before, a prism a wet column)
+    const cullOff = `const CULL_OFF: bool = ${SKIP.has('cull')};
+const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
+    if (this.fieldMesh.on) this.waterSurf = new WaterSurface(device, world, profiler, this.camBuf);
     const prepSpec = {
       0: 'uniform',
       1: 'read',
@@ -427,8 +437,8 @@ export class Renderer {
       31: 'uniform',
     } as const;
     this.prep = makeCompute(device, 'renderprep', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], prepSpec);
-    // (round 93: and the blended list's clamp, after it — renderprep.wgsl clampWater)
-    this.clampW = makeCompute(device, 'renderprep-clamp', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], prepSpec, 'clampWater');
+    // (round 93: and the blended list's clamp, after it — renderprep.wgsl clampBlend)
+    this.clampB = makeCompute(device, 'renderprep-clamp', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, cullOff, renderprepWgsl], prepSpec, 'clampBlend');
     this.prepEntries = () => ({
       0: world.globals,
       1: world.chunks,
@@ -438,7 +448,7 @@ export class Renderer {
       5: world.water,
       6: world.oil,
       7: this.instOpaque,
-      8: this.instWater,
+      8: this.instBlend,
       9: this.indirect,
       14: world.cornerView,
       17: world.driftView,
@@ -447,7 +457,7 @@ export class Renderer {
       31: this.camBuf,
     });
     this.prepGroup = makeBindGroup(device, 'renderprep', this.prep.layout, this.prepEntries());
-    this.clampWGroup = makeBindGroup(device, 'renderprep-clamp', this.clampW.layout, this.prepEntries());
+    this.clampBGroup = makeBindGroup(device, 'renderprep-clamp', this.clampB.layout, this.prepEntries());
 
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
     const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
@@ -538,11 +548,28 @@ export class Renderer {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(true),
     });
-    this.waterPipe = device.createRenderPipeline({
-      label: 'water',
+    this.blendPipe = device.createRenderPipeline({
+      label: 'blended',
       layout: pl,
       vertex: { module: drawModule, entryPoint: 'vsWater' },
       fragment: { module: drawModule, entryPoint: 'fsWater', targets: [{ format, blend }, { format: PICK_FORMAT }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depthStencil(false),
+    });
+    if (this.waterSurf)
+      this.waterSurfPipe = device.createRenderPipeline({
+        label: 'water-surface',
+        layout: pl,
+        vertex: { module: drawModule, entryPoint: 'vsWaterSurf' },
+        fragment: { module: drawModule, entryPoint: 'fsWaterSurf', targets: [{ format, blend }, { format: PICK_FORMAT }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: depthStencil(false),
+      });
+    this.waterFlatPipe = device.createRenderPipeline({
+      label: 'water-flat',
+      layout: pl,
+      vertex: { module: drawModule, entryPoint: this.waterSurf ? 'vsWaterSurf' : 'vsWater' },
+      fragment: { module: drawModule, entryPoint: 'fsWaterFlat', targets: [{ format, blend }, { format: PICK_FORMAT }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(false),
     });
@@ -573,7 +600,7 @@ export class Renderer {
     this.opaqueGroup = groupFor(this.instOpaque);
     this.topsGroup = groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 });
     this.plantGroup = groupFor(this.instPlant);
-    this.waterGroup = groupFor(this.instWater);
+    this.blendGroup = groupFor(this.instBlend);
     this.bodyBuf = world.buf('bodyVoxels', Renderer.MAX_BODY_VOXELS * 32, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
     this.bodyGroup = groupFor(this.bodyBuf);
     this.structInst = world.buf('structInst', POOL_VOXELS * 32, GPUBufferUsage.STORAGE);
@@ -952,7 +979,7 @@ export class Renderer {
 
   /** Draw these instances (renderprep's form; flag 2048: a liquid run, render.wgsl shadeRun) with the water pipeline too. */
   addWaterPrisms(inst: GPUBuffer, indirect: GPUBuffer): void {
-    this.waterSources.push({ indirect, group: this.groupFor(inst) });
+    this.blendSources.push({ indirect, group: this.groupFor(inst) });
   }
 
   /** Textures are the renderer's own; buffers belong to the world (world.destroy()). */
@@ -1012,8 +1039,8 @@ export class Renderer {
    */
   private syncInst(): void {
     const g = this.instGrowTo;
-    if (!g.opaque && !g.plant && !g.water) return;
-    this.instGrowTo = { opaque: 0, plant: 0, water: 0 };
+    if (!g.opaque && !g.plant && !g.blend) return;
+    this.instGrowTo = { opaque: 0, plant: 0, blend: 0 };
     const N = this.world.cells;
     const old: GPUBuffer[] = [];
     if (g.opaque) {
@@ -1027,20 +1054,20 @@ export class Renderer {
       this.plantCapacity = g.plant;
       this.instPlant = this.world.buf('instPlant', g.plant * 16, GPUBufferUsage.STORAGE);
     }
-    if (g.water) {
-      old.push(this.instWater);
-      this.waterCapacity = g.water;
-      this.instWater = this.world.buf('instWater', g.water * 16, GPUBufferUsage.STORAGE);
+    if (g.blend) {
+      old.push(this.instBlend);
+      this.blendCapacity = g.blend;
+      this.instBlend = this.world.buf('instBlend', g.blend * 16, GPUBufferUsage.STORAGE);
     }
     const dev = this.device;
     this.prepGroup = makeBindGroup(dev, 'renderprep', this.prep.layout, this.prepEntries());
-    this.clampWGroup = makeBindGroup(dev, 'renderprep-clamp', this.clampW.layout, this.prepEntries());
+    this.clampBGroup = makeBindGroup(dev, 'renderprep-clamp', this.clampB.layout, this.prepEntries());
     this.vegPrepGroup = makeBindGroup(dev, 'vegprep', this.vegPrep.layout, this.vegEntries());
     this.clampVGroup = makeBindGroup(dev, 'vegprep-clamp', this.clampV.layout, this.vegEntries());
     this.opaqueGroup = this.groupFor(this.instOpaque);
     this.topsGroup = this.groupFor({ buffer: this.instOpaque, offset: this.topsBase * 16 });
     this.plantGroup = this.groupFor(this.instPlant);
-    this.waterGroup = this.groupFor(this.instWater);
+    this.blendGroup = this.groupFor(this.instBlend);
     if (this.shadowGroups && this.noShadowView) {
       const L = this.lightCamBuf;
       this.shadowGroups.opaque = this.groupFor(this.instOpaque, L, this.noShadowView);
@@ -1134,14 +1161,15 @@ export class Renderer {
         this.profiler.dispatches++;
       }
       // (round 93: the counts held to the lists' room — the raw ones kept for the CPU)
-      pass.setPipeline(this.clampW.pipeline);
-      pass.setBindGroup(0, this.clampWGroup);
+      pass.setPipeline(this.clampB.pipeline);
+      pass.setBindGroup(0, this.clampBGroup);
       pass.dispatchWorkgroups(1);
       pass.setPipeline(this.clampV.pipeline);
       pass.setBindGroup(0, this.clampVGroup);
       pass.dispatchWorkgroups(1);
       pass.end();
       this.profiler.dispatches += 2;
+      if (!SKIP.has('water')) this.waterSurf?.encode(enc);
     }
     // (round 82: with a band, the window's mesh and the band's look for changes and rebuild on alternate frames —
     // a frame never rebuilds both: on the phone the rebuilds were the biggest share of the p95 spikes)
@@ -1271,10 +1299,17 @@ export class Renderer {
       pass.drawIndirect(v.indirect, 0);
       this.profiler.draws++;
     }
-    pass.setPipeline(this.waterPipe);
-    pass.setBindGroup(0, this.waterGroup);
-    if (!SKIP.has('water')) pass.drawIndirect(this.indirect, 16);
-    for (const s of SKIP.has('water') ? [] : this.waterSources) {
+    // (watersurf) the water's surface, then the blended prisms (oil, ice and crystal; without the field mesh the water)
+    const flat = SKIP.has('waterflat');
+    if (this.waterSurf && this.waterSurfPipe && !SKIP.has('water')) {
+      pass.setPipeline(flat ? this.waterFlatPipe : this.waterSurfPipe);
+      pass.setBindGroup(0, this.blendGroup);
+      this.waterSurf.draw(pass);
+    }
+    pass.setPipeline(flat && !this.waterSurf ? this.waterFlatPipe : this.blendPipe);
+    pass.setBindGroup(0, this.blendGroup);
+    if (!SKIP.has(this.waterSurf ? 'blend' : 'water')) pass.drawIndirect(this.indirect, 16);
+    for (const s of SKIP.has('blend') || SKIP.has('water') ? [] : this.blendSources) {
       pass.setBindGroup(0, s.group);
       pass.drawIndirect(s.indirect, 0);
       this.profiler.draws++;
@@ -1858,12 +1893,12 @@ export class Renderer {
       this.countNeeded = false;
       this.countBuf.mapAsync(GPUMapMode.READ).then(() => {
         const u = new Uint32Array(this.countBuf.getMappedRange());
-        this.instanceCounts = { opaque: u[1] + u[9] + u[13], water: u[5], tops: u[13], prisms: u[1], plants: u[9] };
+        this.instanceCounts = { opaque: u[1] + u[9] + u[13], blend: u[5], tops: u[13], prisms: u[1], plants: u[9] };
         // (round 93) what was asked for before the clamp; a list asked for more than INST_GROW_AT of its room grows
-        this.instAsked = { opaque: u[20], water: u[21], plants: u[22] };
+        this.instAsked = { opaque: u[20], blend: u[21], plants: u[22] };
         if (INST_GROW) {
           const want = (asked: number, cap: number) => (asked > cap * INST_GROW_AT ? Math.max(Math.ceil(cap * 1.5), Math.ceil(asked * 1.25)) : 0);
-          this.instGrowTo = { opaque: want(u[20], this.opaqueCapacity), plant: want(u[22], this.plantCapacity), water: want(u[21], this.waterCapacity) };
+          this.instGrowTo = { opaque: want(u[20], this.opaqueCapacity), plant: want(u[22], this.plantCapacity), blend: want(u[21], this.blendCapacity) };
         }
         this.countBuf.unmap();
         // throttle: allow another readback in a little while

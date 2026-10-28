@@ -22,9 +22,14 @@ GPU per sim tick (60 Hz fixed, ≤ N ticks/frame by quality tier):
    → contamination → moisture → fire → ecology (every 15)
    → particles (emit, fireEmit, bursts, update) → renderfields (every 2)
    → stats (every 20, async readback)
-GPU per frame: renderprep (terrain + liquids; only columns on screen or whose
-   shadow is: the camera at binding 31) + vegprep (plants) → draw
-   (opaque boxes incl. sub-voxel canopies, liquids, particles, rain)
+GPU per frame: renderprep (terrain + the blended prisms — oil, ice, crystal, and
+   the water without the field mesh; only columns on screen or whose shadow is:
+   the camera at binding 31) + vegprep (plants) + (with the field mesh) watersurf
+   (render/watersurf.ts: the water's top as the lattice of the column centres,
+   the triangles with a wet corner on screen, as window-order column indices for
+   one indexed draw; render.wgsl vsWaterSurf works a column's vertex out once)
+   → draw (opaque boxes incl. sub-voxel canopies, the water surface, the blended
+   prisms, particles, rain)
 ```
 
 Globals (`common.wgsl` / `src/sim/globals.ts`, 1104 bytes) carry storms (+ shape:

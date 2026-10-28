@@ -9071,3 +9071,49 @@ queue's tail (TC13), towns in tiles (TC8), the phone.
   "asleep, nothing changes" (veg 1-6; seen with ?tiles=0 too); worldsavetest fails "warped 10 regions away and back:
   every region as it was frozen (exact)" identically with ?tiles=0 (places', SH11's family).
 
+## 2026-10-28 — Round 107 (`watersurf`): the water drawn as a surface (FC2)
+
+Why: FRAMECOST (round 106) had the water at ~4 ms of the frame over open sea at 512 / zoom 5, a prism per wet
+column. Measured first, A/B within one page (scripts/framecost.mjs `--skips "water;waterflat"`, `?skip=waterflat`
+new: the same geometry with a flat fragment), the desktop iGPU, the atlas at the phone tier (412x915 at dpr 2.6,
+q=low, every system on, 1x), places ea4808e (tiles on, no rings). Over open sea (a fixed spot, `--at 12288,14016`,
+78k wet columns on screen), the draw pass:
+
+| | places | watersurf |
+|---|---|---|
+| the water, all of it | 5.3 ms | 3.4 ms |
+| its geometry (vertices, raster, blend: `waterflat`'s cost) | 3.45 | 0.4 |
+| its shading (fsWater) | ~1.85 (hidden under the vertices) | ~3.0 |
+| at the start's coast, 256 / zoom 14 and 512 / zoom 5 | 0.1–0.4 | 0.1–0.2 |
+
+The prisms ran 30 vertices a wet column (18 for waterSheetVertex's six triangles round its centre, each kept by
+its first wet corner, 12 thrown away), each reading three columns' levels: vertex-bound over the sea. Now:
+- **What represents the surface.** The sims keep their per-column fields (water, surface, drift). At the
+  renderer's boundary render/watersurf.ts (watersurf.wgsl, on renderprep's frames) lists the triangles of the
+  lattice the column centres form that have a wet corner (not a heightfield chunk's) and are on screen, as three
+  window-order column indices each: an index buffer, one `drawIndexedIndirect`. A column owns the two triangles
+  above it, so each triangle is listed once. render.wgsl vsWaterSurf makes a column's vertex once, shared by its
+  six triangles: a wet column at its level, a dry one at the lowest level of the water beside it or its own
+  ground where that's lower (waterSheetVertex's rule a vertex, not a triangle). fsWaterSurf lights a triangle by
+  its own normal (from the derivatives of its position: flat over it, as the sheet's was) and shades it with the
+  same look (shadeWater, what fsWater was).
+- **Falls and steep flow.** The same lattice, so a held river's fall is what it was: the steep triangles between
+  a high wet column and a low one, white water by fsWater's steepW. `?flow=1`'s streams are untouched.
+- **Cost model.** Vertices: about one a wet column on screen (the post-transform cache), the list's kernel a
+  thread a column. Fragments: the screen's water times fsWater — now the cost (FC8).
+- **Shading, the same picture for less.** Each of fsWater's terms is worked out only where it shows: the sludge's
+  scum, murk and bubbles where there's sludge, the foam's flecks where the water's fast enough to foam, the
+  shore's froth where the swell breaks, the rain rings where it rains, the waves where the water's deep enough to
+  ripple (and the wind looked up once); lighting's fire flicker only where there's firelight (every draw's).
+- A cheaper value noise for the waves (two hashes a lattice point, not three) was tried and taken out: it combed
+  the glints into fine lines round the sea stacks (shots88/watersurf/lake-crop-*.png). Left in FC8.
+- renderprep's blended list ("instWater") held water, oil and the see-through solids: with the field mesh it now
+  holds only the oil, ice and crystal, so it's named for what it is (instBlend, the blended prisms; `?skip=blend`).
+  Without the field mesh (`?mesh=0`, an existing mode) the water is still its prisms there.
+
+Looks (scripts/watersurfshot.mjs, new: the same spot on both builds, shots88/watersurf/*-a.png places, *-b.png
+watersurf): the sea shore, a lake (the temperate band's biggest: a sea loch with stacks), a river with its step,
+alike. The fall spot the river nodes gave had no fall in view at the fixed view (fall-*.png); the river's step is
+the fall seen. Checks: culltest the same as places (its two FAILs, the fire not lit and veg 6 asleep, are places'
+own); floatsweep all passed (0 floating). The list's kernel (`watersurf`, renderprep's frames): 0.05 ms at 256 / zoom 14,
+0.09 at 512 / zoom 5 on the coast, 0.26 (p95 0.6) over the sea — so the sea's frame is ~1.6 ms lighter all told.

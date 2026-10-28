@@ -9,7 +9,7 @@ export interface PerfSnapshot {
   cpuFrameMs: number;
   ticksPerFrame: number;
   instancesOpaque: number;
-  instancesWater: number;
+  instancesBlend: number;
   renderW: number;
   renderH: number;
   stats?: WorldStats;
@@ -57,8 +57,8 @@ export class PerfOverlay {
     lines.push(`cpu encode/system:`);
     for (const [n, ms] of sim.cpuMs) lines.push(`  ${n.padEnd(14)} ${ms.toFixed(3)}ms`);
     lines.push(`dispatch ${prof.dispatches}  draws ${prof.draws}`);
-    const faces = (p.instancesOpaque + p.instancesWater) * 3;
-    lines.push(`instances ${p.instancesOpaque} + water ${p.instancesWater}  (≤${faces} faces)`);
+    const faces = (p.instancesOpaque + p.instancesBlend) * 3;
+    lines.push(`instances ${p.instancesOpaque} + blended ${p.instancesBlend}  (≤${faces} faces)`);
     lines.push(`gpu memory ≈ ${(prof.totalMemoryBytes() / 1048576).toFixed(1)} MB`);
     const s = p.stats;
     if (s) {
