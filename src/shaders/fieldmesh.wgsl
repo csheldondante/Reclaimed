@@ -409,6 +409,26 @@ fn idleBlock(wid: vec3<u32>) -> bool {
   return hi < bot - 3.0 - MR.o.y || lo > top + 2.0 + MR.o.y;
 }
 
+/**
+ * (round 100: the window holds the world's whole height, so twice the samples along z) A sample workgroup none of
+ * whose samples any later pass reads: the passes after it read only in workgroups idleBlock lets run, and those
+ * read samples from 8 steps under the chunk's lowest boundary (bot − 3) to 7 over its top (top + 2) — so a block
+ * wholly 10 steps past either isn't sampled at all (its scratch keeps whatever it held; nobody looks).
+ */
+fn sampleIdle(wid: vec3<u32>) -> bool {
+  if (!IDLE_SKIP) { return false; }
+  let w = workgroupUniformLoad(&wgJob);
+  if (w.x == NONE) { return true; }
+  let top = bitcast<f32>(w.y);
+  let bot = MR.zb.y + bitcast<f32>(w.w);
+  let zs = (MR.n.z + 3u) / 4u * 4u;
+  let z0 = (wid.z * 4u) % zs;
+  // (its samples' z: local z0 .. z0 + 3, sample l at MR.zb.x + (l − 1) · h)
+  let lo = MR.zb.x + (f32(z0) - 1.0) * MR.o.y;
+  let hi = MR.zb.x + (f32(z0) + 2.0) * MR.o.y;
+  return hi < bot - 3.0 - 10.0 * MR.o.y || lo > top + 2.0 + 10.0 * MR.o.y;
+}
+
 fn sampleIdx(j: Job, l: vec3<u32>) -> u32 { return j.slot * slotSamples() * 2u + l.x + sideN() * (l.y + sideN() * l.z); }
 fn fieldAt(j: Job, l: vec3<u32>) -> f32 { return bitcast<f32>(scratch[sampleIdx(j, l)]); }
 /** (perfopt) the sample one step along axis a (0 x, 1 y, 2 z) from l, held to the slot's grid (one-sided at its edge) */
@@ -458,9 +478,9 @@ fn columnTops(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invoc
 }
 
 @compute @workgroup_size(4, 4, 4)
-fn sampleField(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
+fn sampleField(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32, @builtin(workgroup_id) wid: vec3<u32>) {
   let j = job(id, li);
-  if (!j.ok) { return; }
+  if (sampleIdle(wid) || !j.ok) { return; }
   let p = samplePos(j, j.l);
   // (above everything in the chunk: air; round 81: 3 under its lowest boundary, solid — no field: the deep
   // rock under the ground was most of a rebuild's samples)

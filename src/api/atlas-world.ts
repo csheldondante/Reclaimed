@@ -22,7 +22,7 @@ import { Streamer, REGION, TIER } from '../scenes/streamer';
 import { WorldCore, type Host } from '../scenes/world-core';
 import { Sleep } from '../sim/sleep';
 import { Integrity } from '../game/integrity';
-import { CHUNK, K_HEADROOM } from '../world/layout';
+import { CHUNK, K_HEADROOM, windowZMax } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 
 export interface AtlasWorldOptions {
@@ -30,7 +30,7 @@ export interface AtlasWorldOptions {
   at?: [number, number];
   /** the window's side in cells (whole regions of 64; 256 a phone's, more for a desktop's look round) */
   win?: number;
-  /** the window's height (the layers' z: 248 at most) */
+  /** the window's height (round 100: by default the atlas's whole height, layout.ts windowZMax; 511 at most — less slides in z) */
   zMax?: number;
   /** the atlas's parameters (seed, style, sea …): over the defaults; or the page's `a.*` query */
   params?: Partial<AtlasParams> | URLSearchParams;
@@ -114,7 +114,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   atlas.profiler = host.profiler;
   const W = opts.win ?? 256;
   if (!(W >= 256 && W % REGION === 0)) throw new Error(`createAtlasWorld: win must be 256 or more, whole regions of ${REGION}`);
-  const zMax = opts.zMax ?? 248;
+  const zMax = windowZMax(params.zTop, opts.zMax);
   const [cx, cy] = opts.at ?? atlas.spawn();
   const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - W / 2) / REGION) * REGION];
   const { map, oz, outside, ground } = await atlas.window({ w: W, h: W, zMax }, origin[0], origin[1], SLOTS - K_HEADROOM, TIER);
@@ -138,7 +138,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
     origin,
     { oz, outside, ground },
   );
-  if (opts.band !== false && core.renderer.enableBand(params.zTop)) stream.refreshBand();
+  if (opts.band !== false && params.zTop > dims.zMax && core.renderer.enableBand(params.zTop)) stream.refreshBand();
   let sleep: Sleep | undefined;
   if (opts.sleep !== false) {
     sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);

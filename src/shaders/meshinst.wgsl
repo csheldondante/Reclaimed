@@ -97,6 +97,6 @@ fn fsInst(in: MIOut) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
-  o.pick = vec2<u32>(in.info.z + 1u, mat | (u32(clamp(in.wpos.z, 0.0, 255.0)) << 8u));
+  o.pick = vec2<u32>(in.info.z + 1u, pickInfo(mat, in.wpos.z, 0u));
   return o;
 }

@@ -37,7 +37,7 @@ import { record, timed } from '../gpu/cpustat';
 import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionStore } from '../world/region-store';
 import { columnsHash, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
-import { CHUNK, K_HEADROOM, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../world/layout';
+import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
@@ -475,7 +475,7 @@ export class Streamer {
       b('renderFields', 16, false),
       b('deposit', 16, false),
       b('contamDelta', 4, false, 2),
-      b('physCols', 32, false),
+      b('physCols', PHYS_COL_WORDS * 4, false),
       b('places', 4, false),
     ];
     const tx = (name: keyof typeof wg, keep: boolean, per = 1, div = 1, fill?: ColTex['fill']): ColTex => ({ name, tex: wg[name] as GPUTexture, per, div, keep, fill });

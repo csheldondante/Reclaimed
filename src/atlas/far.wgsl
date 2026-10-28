@@ -847,7 +847,7 @@ fn fsLod(v: LOut) -> FOutF {
     let mh = i32(round(FP.win.y / 0.8660254));
     if (all(cell >= vec2<i32>(0)) && cell.x < mw && cell.y < mh) {
       let m = select(v.mats.x, v.mats.y, look.rock);
-      o.pick = vec2<u32>(u32(cell.y * mw + cell.x) + 1u, m | (u32(clamp(v.local.z, 0.0, 255.0)) << 8u));
+      o.pick = vec2<u32>(u32(cell.y * mw + cell.x) + 1u, m | (u32(clamp(v.local.z, 0.0, 511.0)) << 8u));
     }
   }
   return o;

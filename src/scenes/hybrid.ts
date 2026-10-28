@@ -3,9 +3,13 @@
 // showed the heightfield alone at a third of the game's GPU; most of the land is a heightfield anyway. A chunk
 // needs voxels when:
 //   - its land isn't a heightfield of the ground (Streamer.relief: a gap between runs — a cave or its mouth, a
-//     mesa's overhang, a bridge, a tunnel — or a form standing on the ground or cut into it), decided as the land
-//     comes in (and as an event in sight changes it);
-//   - it is near the focus (the camera's target: a radius);
+//     mesa's overhang, a bridge, a tunnel — or, before round 100 (?formvox=1), a form standing on the ground or
+//     cut into it), decided as the land comes in (and as an event in sight changes it);
+//   - (round 100) a column in it is steep: a neighbour's top more than `?steep=` (12) cells off its own (a cliff,
+//     a mesa's face, a gorge's wall — the grid would stretch a triangle down it);
+//   - (before round 100; ?vradius=40) it is near the focus (the camera's target: a radius). Round 100, the user:
+//     "Why do we do remeshing everytime if it's expensive? Can we limit it to cliffs or something?" — by default
+//     a chunk is voxels for what it holds, not for where the camera is;
 //   - it has been edited (an edit or a chip — what can cut the ground into shapes a heightfield can't hold —
 //     touched it: kept while it's in the window).
 // Everything else is a heightfield chunk, of one of two kinds (round 86):
@@ -26,6 +30,8 @@ export interface HybridStats {
   chunks: number;
   voxel: number;
   land: number;
+  /** (round 100) of the land's: chunks voxels for a steep column only */
+  steep: number;
   edited: number;
   near: number;
   grid: number;
@@ -33,11 +39,28 @@ export interface HybridStats {
   simmed: number;
 }
 
-/** seconds after land comes into a chunk before the grid draws it (its surface and drift made by the sim's passes) */
-const READY_S = 0.4;
+/**
+ * Sim ticks after land comes into a chunk before the grid draws it: its surface, drift and strata are the surface
+ * pass's (every tick, every column), its look's fields renderfields' (every other tick). Round 100: ticks, not a
+ * time — before, a fixed 0.4 s (24 ticks at 60 Hz) with the rings drawing the land just come in meanwhile
+ * (streamspeed round 98: most of what was left in low detail at speed). ?readyticks= to try others.
+ */
+const READY_TICKS = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('readyticks')) ?? 3);
+/** (round 100, ?steep=) cells a column's top may lie off a neighbour's before its chunk needs voxels */
+const STEEP = Number((typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('steep')) ?? 12);
+/**
+ * (round 100, ?formvox=1 as before) Whether a form standing on the ground or cut into it (Streamer.relief: the top off
+ * the ground's own by over 0.75 — a road's cut, a town's plinth, a mesa, a spire) makes its chunk voxels by itself.
+ * Off: a form is a heightfield like any ground unless it's steep or open underneath (an overhang, an arch, a room) —
+ * speedsweep's pans had 45–65% of the window's chunks voxels with it; without it a town's view 25 → 9, a coast's
+ * 23 → 2, a mesa's 74 → 38 (DEVLOG round 100), the shots alike.
+ */
+const FORM_VOX = typeof location !== 'undefined' && new URLSearchParams(location.search).get('formvox') === '1';
 
 export class HybridChunks {
   private land: Uint8Array;
+  /** (round 100) per chunk: voxels for a steep column only (land is set too) */
+  private steepOnly: Uint8Array;
   private edited: Uint8Array;
   /** an event touched it (any kind): its sim may wake wherever it is */
   private touched: Uint8Array;
@@ -48,11 +71,11 @@ export class HybridChunks {
   readonly lo: Float32Array;
   readonly hi: Float32Array;
   private outZ: Uint8Array;
-  /** per chunk: when (s) the grid may draw it — land come in waits READY_S; Infinity: not come in */
+  /** per chunk: the sim tick from which the grid may draw it — land come in waits READY_TICKS; Infinity: not come in */
   private readyAt: Float64Array;
   private nextReady = Infinity;
   private changed = true;
-  stats: HybridStats = { chunks: 0, voxel: 0, land: 0, edited: 0, near: 0, grid: 0, ring: 0, simmed: 0 };
+  stats: HybridStats = { chunks: 0, voxel: 0, land: 0, steep: 0, edited: 0, near: 0, grid: 0, ring: 0, simmed: 0 };
   /** over the frames since reset: voxel chunks wanted and mesh chunks drawn, summed (the profile's means) */
   totals = { frames: 0, voxel: 0, drawn: 0, grid: 0 };
 
@@ -65,15 +88,18 @@ export class HybridChunks {
     private W: number,
     private H: number,
     private col: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array },
-    /** world units round the focus within which every chunk is voxels */
-    readonly radius = 40,
+    /** world units round the focus within which every chunk is voxels (round 100: 0, none — ?vradius=40 as before) */
+    readonly radius = 0,
     /** the window's oz (world z of its floor) now, and its height */
     private z: () => { oz: number; zMax: number } = () => ({ oz: 0, zMax: 1e9 }),
     /** (round 86) world units round the focus within which a heightfield chunk's sim may wake (a storm on it) */
     readonly stormReach = 110,
+    /** (round 100) the sim's tick now (READY_TICKS counts them) */
+    private tick: () => number = () => 0,
   ) {
     const n = nx * ny;
     this.land = new Uint8Array(n);
+    this.steepOnly = new Uint8Array(n);
     this.edited = new Uint8Array(n);
     this.touched = new Uint8Array(n);
     this.want = new Uint8Array(n);
@@ -100,9 +126,10 @@ export class HybridChunks {
   /**
    * The relief of columns (x0, y0)–(x1, y1) (window cells, exclusive) is new: the land flag of every chunk they
    * touch made again from all its columns (a column's relief reaches 2 cells round it: the mesh's fields do), and
-   * its tops' span; the grid draws it from `now` + READY_S (s; −Infinity: at once — the first window, made before).
+   * its tops' span; the grid draws it from sim tick `now` + READY_TICKS (−Infinity: at once — the first window, made
+   * before).
    */
-  landBox(x0: number, y0: number, x1: number, y1: number, now = performance.now() / 1000): void {
+  landBox(x0: number, y0: number, x1: number, y1: number, now = this.tick()): void {
     const touched = new Set<number>();
     this.chunksOf(x0 - 3, (y0 - 3) * ROW_H, x1 + 3, (y1 + 3) * ROW_H, (c) => touched.add(c));
     for (const c of touched) this.land[c] = 0;
@@ -117,18 +144,21 @@ export class HybridChunks {
       const ye = Math.min(this.H - 1, Math.ceil(((cy + 1) * ch + 2) / ROW_H));
       const xs = Math.max(0, Math.floor(cx * cw - 3));
       const xe = Math.min(this.W - 1, Math.ceil((cx + 1) * cw + 2));
+      // (1: for what stands on it or a gap open to the air; 2: for a steep column only — still looking for a 1)
       let hit = 0;
-      for (let y = ys; y <= ye && !hit; y++)
+      for (let y = ys; y <= ye && hit !== 1; y++)
         for (let x = xs; x <= xe; x++) {
-          if (!this.columnNeeds(x, y)) continue;
+          const need = this.columnNeeds(x, y);
+          if (!need || (need === 2 && hit)) continue;
           const wx = x + 0.5 + 0.5 * (y & 1);
           const wy = (y + 0.5) * ROW_H;
           if (wx >= cx * cw - 2 && wx <= (cx + 1) * cw + 2 && wy >= cy * ch - 2 && wy <= (cy + 1) * ch + 2) {
-            hit = 1;
-            break;
+            hit = need;
+            if (hit === 1) break;
           }
         }
-      this.land[c] = hit;
+      this.land[c] = hit ? 1 : 0;
+      this.steepOnly[c] = hit === 2 ? 1 : 0;
       // (its own columns' tops, and its lattice's cell past each edge: meshdraw.wgsl vsGrid)
       let lo = Infinity;
       let hi = -Infinity;
@@ -141,7 +171,7 @@ export class HybridChunks {
       this.lo[c] = lo;
       this.hi[c] = hi;
       this.outZ[c] = lo < 0.5 || hi > zMax - 1 ? 1 : 0;
-      this.readyAt[c] = now + READY_S;
+      this.readyAt[c] = now + READY_TICKS;
       this.nextReady = Math.min(this.nextReady, this.readyAt[c]);
     }
     this.changed = true;
@@ -150,20 +180,25 @@ export class HybridChunks {
   /**
    * Column (x, y) isn't a heightfield: something stands on it or is cut into it, or a gap in it is open to the air
    * — a neighbour's top under its roof (an overhang's lip, a cave's mouth, a bridge, a tunnel's portal). A cave
-   * whose every neighbour stands over its roof is buried: nobody sees it from the sky.
+   * whose every neighbour stands over its roof is buried: nobody sees it from the sky. Returns 1 then; (round 100) 2
+   * where it's only steep — a neighbour's top more than STEEP cells off its own (a cliff); 0 a heightfield's.
    */
-  private columnNeeds(x: number, y: number): boolean {
+  private columnNeeds(x: number, y: number): 0 | 1 | 2 {
     const i = y * this.W + x;
-    if (this.col.relief[i]) return true;
+    if (FORM_VOX && this.col.relief[i]) return 1;
     const g = this.col.gapTop[i];
-    if (g === -Infinity) return false;
+    const t = this.col.colTop[i];
+    let steep = false;
     for (let dy = -1; dy <= 1; dy++)
       for (let dx = -1; dx <= 1; dx++) {
         const nx = x + dx;
         const ny = y + dy;
-        if ((dx || dy) && nx >= 0 && ny >= 0 && nx < this.W && ny < this.H && this.col.colTop[ny * this.W + nx] < g - 0.25) return true;
+        if (!(dx || dy) || nx < 0 || ny < 0 || nx >= this.W || ny >= this.H) continue;
+        const n = this.col.colTop[ny * this.W + nx];
+        if (g !== -Infinity && n < g - 0.25) return 1;
+        if (Math.abs(n - t) > STEEP) steep = true;
       }
-    return false;
+    return steep ? 2 : 0;
   }
 
   /** the window slid by (dcx, dcy) chunks: what's kept per chunk goes with the land (the new land: none yet) */
@@ -177,7 +212,7 @@ export class HybridChunks {
           a[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? fresh : old[sy * this.nx + sx];
         }
     };
-    for (const a of [this.land, this.edited, this.touched, this.outZ]) move(a, 0);
+    for (const a of [this.land, this.steepOnly, this.edited, this.touched, this.outZ]) move(a, 0);
     move(this.lo, 0);
     move(this.hi, 0);
     move(this.readyAt, Infinity);
@@ -189,6 +224,7 @@ export class HybridChunks {
     this.edited.fill(0);
     this.touched.fill(0);
     this.land.fill(0);
+    this.steepOnly.fill(0);
     this.readyAt.fill(Infinity);
     this.changed = true;
   }
@@ -222,7 +258,7 @@ export class HybridChunks {
    * This frame's choice, the focus (window units; null: none). Returns whether it changed since the last call (then
    * `wanted` — 1: voxels — `grid`, `bits`, `gridBits` and `sleepFilter` are new).
    */
-  update(focus: [number, number] | null, now = performance.now() / 1000): boolean {
+  update(focus: [number, number] | null, now = this.tick()): boolean {
     const f = this.focusAt;
     // (the focus's circle redone when it's moved a quarter of a chunk)
     const moved = (focus === null) !== (f === null) || (focus && f && Math.hypot(focus[0] - f[0], focus[1] - f[1]) > this.side / 4);
@@ -232,7 +268,7 @@ export class HybridChunks {
     this.changed = false;
     const cw = this.side;
     const ch = this.side * ROW_H;
-    const s: HybridStats = { chunks: this.nx * this.ny, voxel: 0, land: 0, edited: 0, near: 0, grid: 0, ring: 0, simmed: 0 };
+    const s: HybridStats = { chunks: this.nx * this.ny, voxel: 0, land: 0, steep: 0, edited: 0, near: 0, grid: 0, ring: 0, simmed: 0 };
     const simmed = new Uint8Array(this.nx * this.ny);
     this.nextReady = Infinity;
     for (let cy = 0; cy < this.ny; cy++)
@@ -244,7 +280,7 @@ export class HybridChunks {
         if (p) {
           const dx = Math.max(cx * cw - p[0], 0, p[0] - (cx + 1) * cw);
           const dy = Math.max(cy * ch - p[1], 0, p[1] - (cy + 1) * ch);
-          near = Math.hypot(dx, dy) <= this.radius ? 1 : 0;
+          near = this.radius > 0 && Math.hypot(dx, dy) <= this.radius ? 1 : 0;
           reach = Math.hypot(dx, dy) <= this.stormReach ? 1 : 0;
         }
         const w = this.land[c] || this.edited[c] || near ? 1 : 0;
@@ -252,6 +288,7 @@ export class HybridChunks {
         if (!ready && this.readyAt[c] < this.nextReady) this.nextReady = this.readyAt[c];
         const g = !w && ready && !this.outZ[c] ? 1 : 0;
         s.land += this.land[c];
+        s.steep += this.steepOnly[c];
         s.edited += this.edited[c];
         s.near += near;
         s.voxel += w;

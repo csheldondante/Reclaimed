@@ -364,7 +364,7 @@ fn meshShade(in: MOut) -> FOut {
   if (MESH_LOOK == 1u) {
     var f: FOut;
     f.color = vec4<f32>(toSrgb(haze(alb * in.tint * lighting(in.wpos, nrm), in.wpos)), 1.0);
-    f.pick = vec2<u32>(ci + 1u, mat | (u32(clamp(in.wpos.z, 0.0, 255.0)) << 8u));
+    f.pick = vec2<u32>(ci + 1u, pickInfo(mat, in.wpos.z, 0u));
     return f;
   }
   // a thin top layer shows the one beneath through it (a trace of blown dust
@@ -523,7 +523,7 @@ fn meshShade(in: MOut) -> FOut {
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
   // (the band's z runs past the byte: round 79)
-  o.pick = vec2<u32>(ci + 1u, mat | (u32(clamp(in.wpos.z, 0.0, 255.0)) << 8u));
+  o.pick = vec2<u32>(ci + 1u, pickInfo(mat, in.wpos.z, 0u));
   return o;
 }
 
