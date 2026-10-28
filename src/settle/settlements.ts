@@ -290,13 +290,16 @@ export class Settlements {
       this.farWait.set(`exact:${s.rec.id}`, res as (d: FarPlanDone | ExactPlanDone) => void);
       this.worker().postMessage(job, [g.ground.buffer, g.water.buffer, g.top.buffer, g.veg.buffer]);
     });
+    if (done.error) throw new Error(`settlements: ${s.rec.id}'s plan failed in the worker: ${done.error}`);
     const t1 = performance.now();
     const plan = done.plan;
     // (made live again: its classes' methods, its record the settlement's own)
     Object.setPrototypeOf(plan.field, GrowthField.prototype);
     for (const lg of plan.grids.values()) Object.setPrototypeOf(lg, LotGrid.prototype);
-    Object.assign(s.rec, plan.rec);
-    plan.rec = s.rec;
+    timed('plan.revive', () => {
+      Object.assign(s.rec, plan.rec);
+      plan.rec = s.rec;
+    });
     this.stats.workerPlans++;
     this.stats.workerMs += done.ms[0] + done.ms[1];
     this.stats.reviveMs += performance.now() - t1;
@@ -465,10 +468,12 @@ export class Settlements {
     if (this.farWorker) return this.farWorker;
     const w = new Worker(new URL('./plan-worker.ts', import.meta.url), { type: 'module' });
     w.onmessage = (e: MessageEvent<FarPlanDone | ExactPlanDone>) => {
-      const key = 'plan' in e.data ? `exact:${e.data.id}` : e.data.id;
+      // (round 102: the plan's structured clone is taken here — its cost on the main thread)
+      const d = timed('plan.receive', () => e.data);
+      const key = 'plan' in d ? `exact:${d.id}` : d.id;
       const f = this.farWait.get(key);
       this.farWait.delete(key);
-      f?.(e.data);
+      f?.(d);
     };
     w.onerror = (e) => {
       throw new Error(`settlements: the far plans' worker failed: ${e.message}`);

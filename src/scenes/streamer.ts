@@ -106,8 +106,9 @@ const param = (k: string) => (typeof location === 'undefined' ? null : new URLSe
 export const POOL_CAP = Number(param('pool') ?? 32);
 /** (round 100, ?ahead=N) strips asked for ahead along the camera's motion (round 102: at least; more as it moves faster) */
 const AHEAD = Number(param('ahead') ?? 2);
-/** (round 102, ?aheads=) seconds of the camera's motion asked for ahead: strips enough for that at its speed, up to AHEAD_MAX */
-const AHEAD_S = Number(param('aheads') ?? 3);
+/** (round 102, ?aheads=) seconds of the camera's motion asked for ahead: strips enough for that at its speed, up to AHEAD_MAX
+ *  (0, the default: AHEAD strips — 3 s flooded the tiles with land the camera never reached and the slides waited) */
+const AHEAD_S = Number(param('aheads') ?? 0);
 const AHEAD_MAX = 4;
 /** (round 102, ?warpring=N) regions round a warp's window asked for into the pool as it lands (and as its target is picked) */
 const WARP_RING = Number(param('warpring') ?? 1);
@@ -1068,7 +1069,9 @@ export class Streamer {
     if (py < hy - reach - R) this.prefetch(0, -2 * R);
     // (round 100) along the camera's motion: AHEAD strips, into the pool before the slides that need them
     // (round 102: by its speed — AHEAD_S seconds of it, AHEAD strips at least, AHEAD_MAX at most; each strip between)
-    if (!STREAM_OLD && AHEAD > 0) {
+    // (and only while what's made ahead and under way leaves the pool room: the phone's ride made 6x the regions it
+    // used with round 102's first ahead, the pool evicting land made ahead to make more)
+    if (!STREAM_OLD && AHEAD > 0 && this.made.size + this.jobs.size < POOL_CAP / 2) {
       const strips = (v: number) => Math.max(AHEAD, Math.min(AHEAD_MAX, Math.ceil((Math.abs(v) * AHEAD_S) / R)));
       if (Math.abs(this.vel[0]) > MOVING) for (let k = 2, n = strips(this.vel[0]); k <= n; k++) this.prefetch(Math.sign(this.vel[0]) * k * R, 0);
       if (Math.abs(this.vel[1]) > MOVING) for (let k = 2, n = strips(this.vel[1]); k <= n; k++) this.prefetch(0, Math.sign(this.vel[1]) * k * R);
@@ -1567,7 +1570,7 @@ export class Streamer {
     g.land = performance.now();
     this.stats.fitted += m.fitted;
     this.stats.settled += m.settled;
-    const f = timed('cut', (): Frozen => {
+    const f = timed('gen.meta', (): Frozen => {
       const relief = new Uint8Array(R * R);
       for (let i = 0; i < R * R; i++) relief[i] = Math.abs(m.surface[i] - m.ground[i]) > RELIEF_FORM ? 1 : 0;
       const judge = boxOf(m.structural, R);

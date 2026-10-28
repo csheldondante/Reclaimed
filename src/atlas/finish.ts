@@ -9,6 +9,7 @@
 // planned on (16 bytes a column).
 import { makeBindGroup, makeComputeAsync, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
+import { record, timed } from '../gpu/cpustat';
 import type { RegionLayout } from '../world/region-record';
 import { CHUNK, type Interval } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
@@ -17,6 +18,8 @@ import type { StampOps } from './stamps';
 import finishW from './finish.wgsl?raw';
 
 const PARAM_BYTES = 176;
+/** (round 102) a streamed region's finishing a FINISH_TILE² tile a dispatch (each a tile of the pacer's) */
+const FINISH_TILE = 32;
 
 /**
  * (round 102) ?gpugen=0: regions made the CPU's way, as before round 102 (the columns read back, landFrom, the ways,
@@ -26,7 +29,7 @@ const PARAM_BYTES = 176;
 export const GPUGEN = typeof location === 'undefined' || new URLSearchParams(location.search).get('gpugen') !== '0';
 /** what's outside the window that comes back at most a region (entries), and marks */
 const OUT_CAP = 2048;
-const MARK_CAP = 1024;
+const MARK_CAP = 8192;
 
 /** where a region goes: a slot (`off` bytes into `buf`, the layout's bytes) and the window it's cut for */
 export interface FinishTarget {
@@ -119,9 +122,11 @@ export class RegionFinish {
     ops: StampOps | null,
     target: FinishTarget | null,
     profiler?: Profiler,
+    /** (streaming) each tile's turn: the atlas's tile pacer */
+    gate?: () => Promise<void>,
   ): Promise<{ meta?: FinishMeta; raw?: RawGround }> {
     const dev = this.dev;
-    const tE = performance.now();
+    let tE = performance.now();
     const { w, h } = cols;
     const N = w * h;
     const raw = !target;
@@ -188,32 +193,47 @@ export class RegionFinish {
     p[22] = ways ? 1 : 0;
     p[23] = ways ? ways.lifts.length / 4 : 0;
     p.set([at.pts, at.binStart, at.binItems, at.lifts, at.rows, ways?.nb ?? 0, ways?.mb ?? 0, geysers.length, at.geysers, at.stencil, at.mats, OUT_CAP, mSum, mFlags, mMarks, mOut, MARK_CAP], 24);
-    dev.queue.writeBuffer(pb, 0, p);
-    const enc = dev.createCommandEncoder({ label: 'atlas finish' });
+    // (round 102: a TILE² tile of the region a dispatch, each the pacer's turn when streaming (`gate`) — the whole
+    // region in one dispatch was a long GPU frame on a phone)
+    const bg = makeBindGroup(dev, 'finish', this.k.layout, {
+      0: pb,
+      1: cols.o,
+      2: cols.runs,
+      3: aux,
+      4: opsB ?? this.dummy,
+      5: target ? { buffer: target.buf, offset: target.off, size: L!.bytes } : this.dummyW,
+      6: md,
+      7: outN,
+    });
+    const T = gate ? FINISH_TILE : Math.max(w, h);
+    const tiles: [number, number][] = [];
+    for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
+    let enc = dev.createCommandEncoder({ label: 'atlas finish' });
     if (target) enc.clearBuffer(target.buf, target.off, L!.bytes);
-    const cp = enc.beginComputePass({ label: 'atlas finish', timestampWrites: profiler?.timestamps(raw ? 'atlas-rawFinish' : 'atlas-regionFinish') });
-    cp.setPipeline(this.k.pipeline);
-    cp.setBindGroup(
-      0,
-      makeBindGroup(dev, 'finish', this.k.layout, {
-        0: pb,
-        1: cols.o,
-        2: cols.runs,
-        3: aux,
-        4: opsB ?? this.dummy,
-        5: target ? { buffer: target.buf, offset: target.off, size: L!.bytes } : this.dummyW,
-        6: md,
-        7: outN,
-      }),
-    );
-    cp.dispatchWorkgroups(Math.ceil(w / 8), Math.ceil(h / 8));
-    cp.end();
+    this.last.encodeMs = 0;
+    for (let k = 0; k < tiles.length; k++) {
+      if (gate && k > 0) {
+        this.last.encodeMs += performance.now() - tE;
+        dev.queue.submit([enc.finish()]);
+        await gate();
+        tE = performance.now();
+        enc = dev.createCommandEncoder({ label: 'atlas finish tile' });
+      }
+      p.set([tiles[k][0], tiles[k][1], T], 41);
+      dev.queue.writeBuffer(pb, 0, p);
+      const cp = enc.beginComputePass({ label: 'atlas finish', timestampWrites: profiler?.timestamps(raw ? 'atlas-rawFinish' : 'atlas-regionFinish') });
+      cp.setPipeline(this.k.pipeline);
+      cp.setBindGroup(0, bg);
+      cp.dispatchWorkgroups(Math.ceil(Math.min(T, w - tiles[k][0]) / 8), Math.ceil(Math.min(T, h - tiles[k][1]) / 8));
+      cp.end();
+    }
     enc.copyBufferToBuffer(md, 0, back, 0, mdWords * 4);
     enc.copyBufferToBuffer(outN, 0, back, mdWords * 4, 16);
     enc.copyBufferToBuffer(cols.instN, 0, back, mdWords * 4 + 16, 16);
     dev.queue.submit([enc.finish()]);
     const tW = performance.now();
-    this.last.encodeMs = tW - tE;
+    this.last.encodeMs += tW - tE;
+    record('finish.encode', this.last.encodeMs);
     try {
       await back.mapAsync(GPUMapMode.READ);
       const tP = performance.now();
@@ -221,7 +241,7 @@ export class RegionFinish {
       const u = new Uint32Array(back.getMappedRange().slice(0));
       back.unmap();
       this.last.backBytes = u.byteLength;
-      const r = this.parse(u, w, h, x0, y0, raw, mdWords, mSum, mFlags, mMarks, mOut, ops);
+      const r = timed('finish.parse', () => this.parse(u, w, h, x0, y0, raw, mdWords, mSum, mFlags, mMarks, mOut, ops));
       this.last.parseMs = performance.now() - tP;
       return r;
     } finally {

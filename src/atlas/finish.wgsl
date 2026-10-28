@@ -30,7 +30,8 @@ struct FP {
   aGeysers: u32, aStencil: u32, aMats: u32, outCap: u32,
   // the md words (what comes back): the summary (vec4 a column), the flags, the marks, what's outside
   mSum: u32, mFlags: u32, mMarks: u32, mOut: u32,
-  markCap: u32, _p0: u32, _p1: u32, _p2: u32,
+  // (round 102: a tile of the region at a time — the pacer's — not all its columns in one dispatch)
+  markCap: u32, tileX: u32, tileY: u32, tileW: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: FP;
@@ -328,9 +329,9 @@ fn fb(z: i32) -> u32 { return bitcast<u32>(f32(z) / 256.0); }
 
 @compute @workgroup_size(8, 8)
 fn finish(@builtin(global_invocation_id) gid: vec3<u32>) {
-  if (gid.x >= P.w || gid.y >= P.h) { return; }
-  let x = gid.x;
-  let y = gid.y;
+  let x = gid.x + P.tileX;
+  let y = gid.y + P.tileY;
+  if (gid.x >= P.tileW || gid.y >= P.tileW || x >= P.w || y >= P.h) { return; }
   let i = y * P.w + x;
   let co = colOut[i];
   ERR = 0u;
@@ -389,8 +390,8 @@ fn finish(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (structural) { flags |= 1u; }
   if (P.settle != 0u && settleC()) { flags |= 4u; }
   let topW = topC();
-  // splitColumn at oz: inside (window z) into I, outside (world z) into O
-  var I: array<vec4<i32>, MAXI>;
+  // splitColumn at oz: outside (world z) into O
+  // (the window's part kept in C, in place: no second array — Mali keeps a thread's arrays in memory)
   var NI = 0u;
   var O: array<vec4<i32>, MAXO>;
   var NO = 0u;
@@ -402,7 +403,7 @@ fn finish(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (NO < MAXO) { O[NO] = vec4<i32>(iv.x, min(iv.y, lo), iv.z, 0); NO++; } else { ERR |= 1u << 20u; }
     }
     if (iv.y > lo && iv.x < hi) {
-      I[NI] = vec4<i32>(max(iv.x, lo) - lo, min(iv.y, hi) - lo, iv.z, 0);
+      C[NI] = vec4<i32>(max(iv.x, lo) - lo, min(iv.y, hi) - lo, iv.z, 0);
       NI++;
     }
     if (iv.y > hi) {
@@ -418,30 +419,30 @@ fn finish(@builtin(global_invocation_id) gid: vec3<u32>) {
     var best = 1u;
     var bc = 2147483647;
     for (var k = 1u; k < NI; k++) {
-      let a = I[k - 1u];
-      let b = I[k];
+      let a = C[k - 1u];
+      let b = C[k];
       var c = b.x - a.y + min(b.y - b.x, a.y - a.x);
       if ((matF(a.z) & 1u) != (matF(b.z) & 1u)) { c += 3 * Q; }
       if (c < bc) { bc = c; best = k; }
     }
-    let a = I[best - 1u];
-    let b = I[best];
+    let a = C[best - 1u];
+    let b = C[best];
     var mat = a.z;
     if (b.y - b.x > a.y - a.x) { mat = b.z; }
-    I[best - 1u] = vec4<i32>(a.x, b.y, mat, 0);
-    for (var k = best; k + 1u < NI; k++) { I[k] = I[k + 1u]; }
+    C[best - 1u] = vec4<i32>(a.x, b.y, mat, 0);
+    for (var k = best; k + 1u < NI; k++) { C[k] = C[k + 1u]; }
     NI--;
   }
   // packColumn into its page's slots
   let page = (y / 16u) * P.rc + x / 16u;
   let sb = (page * P.pageSlots + ((y % 16u) * 16u + x % 16u) * P.K) * 4u;
   for (var s = 0u; s < NI && s < P.K; s++) {
-    slot[sb + s * 4u] = fb(I[s].x);
-    slot[sb + s * 4u + 1u] = fb(I[s].y);
-    slot[sb + s * 4u + 2u] = u32(I[s].z) & 0xffu;
+    slot[sb + s * 4u] = fb(C[s].x);
+    slot[sb + s * 4u + 1u] = fb(C[s].y);
+    slot[sb + s * 4u + 2u] = u32(C[s].z) & 0xffu;
   }
   var inTop = 0;
-  if (NI > 0u) { inTop = I[NI - 1u].y; }
+  if (NI > 0u) { inTop = C[NI - 1u].y; }
   // waterInWindow: over its top in the window (or over the floor), to the water's level
   var water = 0.0;
   if (NC > 0u && !over) {
@@ -481,7 +482,7 @@ fn finish(@builtin(global_invocation_id) gid: vec3<u32>) {
     let n = select(NI, NO, ph != 1u);
     for (var k = 0u; k < n; k++) {
       var iv: vec4<i32>;
-      if (ph == 1u) { iv = I[k] + vec4<i32>(lo, lo, 0, 0); } else {
+      if (ph == 1u) { iv = C[k] + vec4<i32>(lo, lo, 0, 0); } else {
         iv = O[k];
         if ((ph == 0u) != (iv.x < lo)) { continue; }
       }

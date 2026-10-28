@@ -44,6 +44,8 @@ export interface ExactPlanJob {
 export interface ExactPlanDone {
   id: string;
   plan: SettlementPlan;
+  /** (the plan failed: why; plan null) */
+  error?: string;
   stamp: import('../atlas/bake').SurfaceStamp;
   /** ms: the plan, the raster */
   ms: [number, number];
@@ -67,14 +69,20 @@ self.onmessage = (e: MessageEvent<FarPlanInit | FarPlanJob | ExactPlanJob>) => {
   const W = world;
   if ('exact' in e.data) {
     const j = e.data;
-    const box = j.seed.box;
-    const t0 = performance.now();
-    const plan = planSettlement({ ...j.seed, ground: j.ground, water: j.water, top: j.top, veg: j.veg, sea: j.sea, regionAt: regionAtIn(W, box) });
-    const t1 = performance.now();
-    const stamp = rasterPlan(j.id, plan.columns, box, j.ground, j.top);
-    const t2 = performance.now();
-    const out: ExactPlanDone = { id: j.id, plan, stamp, ms: [+(t1 - t0).toFixed(1), +(t2 - t1).toFixed(1)] };
-    (self as unknown as Worker).postMessage(out, [stamp.px.buffer, stamp.px4.buffer]);
+    // (a plan that fails says so: the region waiting on it fails loudly, it doesn't wait for ever)
+    try {
+      const box = j.seed.box;
+      const t0 = performance.now();
+      const plan = planSettlement({ ...j.seed, ground: j.ground, water: j.water, top: j.top, veg: j.veg, sea: j.sea, regionAt: regionAtIn(W, box) });
+      const t1 = performance.now();
+      const stamp = rasterPlan(j.id, plan.columns, box, j.ground, j.top);
+      const t2 = performance.now();
+      const out: ExactPlanDone = { id: j.id, plan, stamp, ms: [+(t1 - t0).toFixed(1), +(t2 - t1).toFixed(1)] };
+      (self as unknown as Worker).postMessage(out, [stamp.px.buffer, stamp.px4.buffer]);
+    } catch (err) {
+      const out = { id: j.id, plan: null, error: `${(err as Error)?.message ?? err}` };
+      (self as unknown as Worker).postMessage(out);
+    }
     return;
   }
   const j = e.data;

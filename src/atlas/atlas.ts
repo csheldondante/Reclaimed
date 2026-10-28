@@ -174,10 +174,16 @@ const TILES_FIXED = Number(Q98.get('tiles')) || 0;
 /** (round 98, ?tilemax=) the most tiles a frame the pacer gives */
 const TILE_MAX = Number(Q98.get('tilemax') ?? 4);
 
-/** (round 102, ?tilemaxfast=) the most tiles a frame while the camera moves fast (the land it heads for is late) */
-const TILE_MAX_FAST = Number(Q98.get('tilemaxfast') ?? 8);
-/** (round 102, ?tilepace=frame: round 98's pacing by the frame's time alone, to compare) */
-const PACE_FRAME = Q98.get('tilepace') === 'frame';
+/**
+ * (round 102) A phone (its user agent): Mali's timestamps aren't to be trusted (passes overlap: bench v2) and the
+ * user's Pixel had long hitches with the budget pacer — round 98's pacing by the frame's time there unless asked.
+ */
+const MOBILE = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+/** (round 102, ?tilemaxfast=) the most tiles a frame while the camera moves fast (round 102 first had 8: the frames
+ *  held for the GPU went up on the desktop — the default is TILE_MAX) */
+const TILE_MAX_FAST = Number(Q98.get('tilemaxfast') ?? TILE_MAX);
+/** (round 102, ?tilepace=frame | budget: round 98's pacing by the frame's time alone, or the GPU budget's; a phone frame) */
+const PACE_FRAME = (Q98.get('tilepace') ?? (MOBILE ? 'frame' : 'budget')) === 'frame';
 /** (round 102) cells a second of the camera's motion at which the pacer gives tiles the most of the frame's room */
 const FAST_AT = 80;
 
@@ -1422,7 +1428,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
       const o = await ops;
       const bt = spread ? this.builds.get(`${x0},${y0}`) : undefined;
       if (bt) bt.ways = performance.now();
-      const { meta } = await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, o, target, this.profiler);
+      const { meta } = await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, o, target, this.profiler, spread ? () => this.tileGate() : undefined);
       if (bt) bt.mapped = bt.hooks = performance.now();
       if (meta!.forms > MAX_INST) throw new Error(`atlas: ${meta!.forms} forms around the batch at ${x0},${y0} (room for ${MAX_INST})`);
       o.tell(meta!.marks);
@@ -1451,7 +1457,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
         const c = await this.columnsGpu(x0 + tx, y0 + ty, T, T, spread);
         let raw: RawGround;
         try {
-          const r = await this.finisher.run(c, x0 + tx, y0 + ty, this.waysOf(x0 + tx, y0 + ty, T, T), this.ventsIn(x0 + tx, y0 + ty, T, T), GEYSER_STENCIL, null, null, this.profiler);
+          const r = await this.finisher.run(c, x0 + tx, y0 + ty, this.waysOf(x0 + tx, y0 + ty, T, T), this.ventsIn(x0 + tx, y0 + ty, T, T), GEYSER_STENCIL, null, null, this.profiler, spread ? () => this.tileGate() : undefined);
           raw = r.raw!;
         } finally {
           c.done();

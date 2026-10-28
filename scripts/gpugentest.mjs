@@ -112,6 +112,47 @@ try {
     }
     return { out, raw, stats: S.stats, plans: R.settlements?.stats };
   }, n);
+  // the world API reads land made on the GPU: a warp (every region of the window made by finish.wgsl), then the
+  // terrain module's heightAt / floorAt / layersAt against the layers read back
+  const api = await p.evaluate(async () => {
+    const R = window.reclaimed;
+    const S = R.stream;
+    const made0 = S.stats.gpuMade;
+    const [ox, oy] = S.origin;
+    await S.warp(ox + 30 * S.R, oy + 12 * S.R, S.oz);
+    const madeByWarp = S.stats.gpuMade - made0;
+    await new Promise((r) => setTimeout(r, 3000));
+    const T = R.api.terrain;
+    await T.refresh();
+    const { readColumn } = await import('/src/world/layout.ts');
+    const slots = new Uint32Array((await R.core.readBuffer('layers')).buffer);
+    const ROW_H = Math.sqrt(3) / 2;
+    let n = 0;
+    let badH = 0;
+    let badF = 0;
+    let badL = 0;
+    const first = [];
+    for (let k = 0; k < 600; k++) {
+      const cx = 8 + ((k * 97) % (S.W - 16));
+      const cy = 8 + ((k * 57) % (S.H - 16));
+      const x = cx + 0.5 + 0.5 * (cy & 1);
+      const y = (cy + 0.5) * ROW_H;
+      const col = readColumn(R.core.packed, slots, cx, cy);
+      if (!col.length) continue;
+      n++;
+      const top = col[col.length - 1].z1;
+      const h = T.heightAt(x, y);
+      const fl = T.floorAt(x, y, top);
+      const ls = T.layersAt(x, y);
+      if (h === null || h < top - 1e-3) badH++;
+      if (fl === null || Math.abs(fl - top) > 1e-3) badF++;
+      if (!ls || ls.length !== col.length || Math.abs(ls[ls.length - 1].z1 - top) > 1e-6) badL++;
+      if ((h === null || h < top - 1e-3 || fl === null || Math.abs(fl - top) > 1e-3) && first.length < 5) first.push({ cx, cy, top, h, fl });
+    }
+    return { madeByWarp, n, badH, badF, badL, first };
+  });
+  console.log(`world API on a warped (GPU-made) window: ${api.madeByWarp} regions made on the GPU; ${api.n} columns: heightAt under the top ${api.badH}, floorAt off ${api.badF}, layersAt off ${api.badL} ${JSON.stringify(api.first)}`);
+  if (!api.madeByWarp || api.badF || api.badL) failed++;
   let bad = 0;
   let words = 0;
   for (const r of res.out) {

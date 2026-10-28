@@ -8259,6 +8259,36 @@ tilepace=frame&warpring=0&aheads=0`, the CPU's path as places has it):
 - made ahead and not used: the ride made 152 regions on the GPU for 70 written (the CPU path uploaded 118 for 65); the
   pans at 120/160 made ~5× the tiles of the CPU path's (BACKLOG GG12).
 
+## 2026-10-28 — round 102 (2) (`gpugen`): the phone's long hitches on the first gpugen
+
+**Why.** The user on the Pixel 9a, verbatim: "The GPU version runs much slower on my phone subjectively. It has long
+hitches". The hitch report (142 s, ~30 fps): slides 42, generated 252, but gpuMade 1545 and evicted 1482 — six times
+the regions made for those used, the pool thrashing (50.9 MB of `regionTemp` slots live: the pool full); a 2.45 s
+gpu-busy frame with a small map pending 2.5 s at the start; 585 "browser" hitches (25 s). The slice's desktop bike
+bench on the same build: the bike held at the window's edge (1 slide in 75 s, 9 km/h against places' 27).
+
+**What it was, and the fixes.**
+- The ahead strips by speed (round 102's `?aheads=3`: up to 4 strips, on both axes of a diagonal pan) flooded the
+  tile queue with land the camera never reached; the slides waited behind it (desktop speedsweep: 388 frames waited
+  against 76). Back to AHEAD (2) strips by default (`?aheads=` opt-in), and the ahead strips are asked for only while
+  what's made ahead and under way is under half the pool.
+- finish.wgsl ran a whole region (4096 columns) in one dispatch, not paced — and the settlement plans' raw tiles the
+  same, many at once: now a 32² tile a dispatch, each the tile pacer's turn when streaming. Its second per-column
+  array (the window's intervals) is gone: kept in place in the column's own (a phone keeps a thread's arrays in memory).
+- The pacer: on a phone (its user agent) round 98's pacing by the frame's time again (Mali's timestamps overlap and
+  onSubmittedWorkDone isn't to be trusted for a budget); `?tilepace=budget` to try the budget there. The fast cap is
+  TILE_MAX (4) everywhere (8 raised the frames held for the GPU on the desktop); `?tilemaxfast=` opt-in.
+- A plan that fails in the worker now fails its region loudly (it waited for ever); the marks' cap 1024 → 8192.
+- Labels for the hitch report: finish.encode, finish.parse, gen.meta, plan.receive (the plan's structured clone),
+  plan.revive; the GPU passes atlas-regionFinish / atlas-rawFinish a tile.
+
+**Verified** (desktop, headless, q=low 412x915): scripts/gpugentest.mjs with the tiled finish — 24 regions and 6 raw
+tiles bit-identical; the world API on a window warped in (28 regions made on the GPU): heightAt, floorAt and
+layersAt agree with the layers read back on 600 columns. scripts/runtest.mjs --only far: rode 208 cells away and back
+(3 slides out, 5 back), the places' 572 pieces at the same height, the locks and the cast as they were — but the walk
+through the open bone door into the bell chamber got stuck at 116.5,100.9 (not yet run on places to compare: BACKLOG
+GG13). **Not run after these fixes** (the session's GPU time ran out): speedsweep, floatsweep, towertest, the bench.
+
 ## 2026-10-28 — round 102 (`bench2`): bench v2 after the Pixel 9a's report
 
 The user's first phone run (data/bench/pixel9a-2026-10-28.json, bench v1, Arm Valhall, window 384) showed three
