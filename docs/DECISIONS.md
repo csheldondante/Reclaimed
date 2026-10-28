@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-27 — round 100 (overnight, `zmesh`) — no vertical slide; mesh by content
+
+- The user, verbatim: "Why does moving the loaded are vertically cost anything? … Are readbacks needed or can we do
+  it on GPU? If they are rare or small or async and not latency sensitive it's not an issue. Can we do something
+  cheap like a standard mesh around the camera that we set to and texture with the heightmap? Why do we do
+  remeshing everytime if it's expensive? Can we limit it to cliffs or something? I already have it at low
+  resolution and enjoy the lowfi look". And: "I want to try to fix the performance issues".
+- → Branch `zmesh`: the window holds the atlas's whole height (zMax 504, oz 0), so it never moves vertically — no
+  readback, no CPU re-cut, no band; the hybrid's voxel chunks are chosen by what they hold (open gaps — overhangs, caves,
+  arches, rooms — edits, columns over 12 cells off a neighbour; a form alone no longer), not by the camera's distance — the rest is the grid (the "standard mesh
+  … with the heightmap", round 86), which isn't remeshed at all; land just come in is the grid's after 3 sim ticks,
+  not 0.4 s.
+
 ## 2026-10-27 — round 100 (session 5, `hitchrec`) — instrumentation for the phone; the judge and arriving land
 
 - The user, verbatim: "I want to try to fix the performance issues"; "GC is worth looking into"; "It woudl be good to

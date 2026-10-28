@@ -102,7 +102,8 @@ export const LEVELS: LevelDef[] = [
     },
     sandbox: true,
     hidden: true,
-    // (the window's height: the most the 8-bit z holds, less a margin; it slides in z over a taller world)
+    // (the window's height: round 100, made by LevelScene.create from the atlas's own (layout.ts windowZMax: all
+    // of it); this the sliding window's of round 69, kept for what reads a level's zMax)
     zMax: 248,
     stream: true,
     atlas: true,

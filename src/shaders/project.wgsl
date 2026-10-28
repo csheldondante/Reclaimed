@@ -144,9 +144,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (cpu.x >= 0.0) { addStretch(vec4<f32>(cpu.x, cpu.y, f32(MAT_STONE), 0.0)); }
   // the physics voxels over it: each run of cells with one, a stretch (as a
   // CPU body), so the air under a table or between two bodies stays air
-  let pbase = colIdx(id.x, id.y) * 8u;
+  let pbase = colIdx(id.x, id.y) * PHYS_COL_WORDS;
   var runTop = -1;
-  for (var w = 7; w >= 0; w--) {
+  for (var w = i32(PHYS_COL_WORDS) - 1; w >= 0; w--) {
     let bits = physCols[pbase + u32(w)];
     if (bits == 0u && runTop < 0) { continue; }
     for (var b = 31; b >= 0; b--) {

@@ -59,7 +59,7 @@ const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 /** (round 98) ?flyspeed=: the free camera's speed (cells a second; Shift 120) — on a phone, the speed ✈'s ⇧ flies at */
 const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ?? 35);
 import { cpuLine, cpuStats, frameSteps, record, timed } from '../gpu/cpustat';
-import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack } from '../world/layout';
+import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
 import { WorldVox } from '../game/fracture';
@@ -171,7 +171,7 @@ export class LevelScene implements Scene {
   private ceiling = new URLSearchParams(location.search).get('ceiling') === '1';
   /** ?hybrid=1 (the atlas level): voxels only where they're needed — the field mesh, the band and the sim's
    *  chunks where the land isn't a heightfield, near the focus, or edited; the LOD rings (a 1-cell ring first)
-   *  draw the rest of the window's land (scenes/hybrid.ts). ?vradius= the focus's radius (world units, 40). */
+   *  draw the rest of the window's land (scenes/hybrid.ts). ?vradius= the focus's radius (world units; round 100: 0, none — 40 before). */
   private hybridOn = new URLSearchParams(location.search).get('hybrid') === '1';
   hybrid?: HybridChunks;
   private ticksAvg = 1;
@@ -654,7 +654,7 @@ export class LevelScene implements Scene {
     for (const l of this.longFrames.slice(-3)) out.push(`long ${l.slice(0, 90)}`);
     if (this.sleep) out.push(`awake chunks ${this.sleep.awake} of ${(this.core.dims.w / CHUNK) * (this.core.dims.h / CHUNK)}`);
     const hs = this.hybrid?.stats;
-    if (hs) out.push(`hybrid voxel chunks ${hs.voxel} of ${hs.chunks} (land ${hs.land}, edited ${hs.edited}, near ${hs.near}); drawn ${this.core.renderer.fieldMesh.drawn}; grid ${hs.grid} (sim may wake ${hs.simmed}), rings ${hs.ring}`);
+    if (hs) out.push(`hybrid voxel chunks ${hs.voxel} of ${hs.chunks} (land ${hs.land}, steep ${hs.steep}, edited ${hs.edited}, near ${hs.near}); drawn ${this.core.renderer.fieldMesh.drawn}; grid ${hs.grid} (sim may wake ${hs.simmed}), rings ${hs.ring}`);
     return out;
   }
 
@@ -736,9 +736,10 @@ export class LevelScene implements Scene {
     const level = levelById(levelId);
     if (level.atlas && !opts.map) {
       // the world's atlas first (atlas/atlas.ts), then the window onto it where we start (?at=x,y cells, or its own spawn)
-      const zMax = level.zMax ?? 64;
-      // (the atlas is taller than the window: it slides in z — round 69)
+      // (round 69: the atlas was taller than the window, which slid in z; round 100: the window holds its whole
+      // height and never slides in z — ?zwin=248 the sliding window as before, to compare)
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
+      const zMax = windowZMax(atlas.p.zTop, Number(host.params.get('zwin') ?? 0));
       // (round 88) the settlements' records, and their hook on the land, before the first window is made
       const settlements = host.params.get('towns') === '0' ? undefined : new Settlements(atlas);
       const at = host.params.get('at');
@@ -1247,8 +1248,9 @@ export class LevelScene implements Scene {
             { oz: a.oz, outside: a.outside, ground: a.ground },
           )
         : new Streamer(core);
-      // (round 79) the atlas's columns run past the window: what's above and below it drawn too
-      if (a && core.renderer.enableBand(a.atlas.p.zTop)) this.stream.refreshBand();
+      // (round 79) the atlas's columns run past the window: what's above and below it drawn too (round 100: only when
+      // the window doesn't hold the world's whole height)
+      if (a && a.atlas.p.zTop > dims.zMax && core.renderer.enableBand(a.atlas.p.zTop)) this.stream.refreshBand();
       // (round 79) the sea past the window's edge: the sea in it stays
       if (a) core.globals.seaZ = a.atlas.p.sea - this.stream.oz;
       // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
@@ -1369,7 +1371,9 @@ export class LevelScene implements Scene {
           const [nx, ny, side] = fm.chunkGrid;
           const S = this.stream;
           // (round 86: ?stormreach= world units round the focus within which a heightfield chunk's sim may wake)
-          const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 40), () => ({ oz: S.oz, zMax: dims.zMax }), Number(host.params.get('stormreach') ?? 110));
+          // (round 100: ?vradius= 0 — a chunk is voxels for what it holds, not for the camera's being near; the land come
+          // in waits sim ticks, not a time, for the grid)
+          const h = new HybridChunks(nx, ny, side, dims.w, dims.h, S, Number(host.params.get('vradius') ?? 0), () => ({ oz: S.oz, zMax: dims.zMax }), Number(host.params.get('stormreach') ?? 110), () => core.sim.tick);
           this.hybrid = h;
           S.onRelief.push((x0, y0, x1, y1) => h.landBox(x0, y0, x1, y1));
           S.onSlide.push((dx, dy, dz) => {

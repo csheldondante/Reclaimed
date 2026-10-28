@@ -4,7 +4,7 @@
 // change what another system sees.
 
 import type { Profiler } from '../gpu/profiler';
-import type { PackedWorld } from '../world/layout';
+import { PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
@@ -177,8 +177,8 @@ export class WorldGpu {
   /** structure grids (grids.wgsl): frames, and the voxel pool */
   readonly strFrames: GPUBuffer;
   /** the physics voxels as each column sees them (physics.ts writes it each tick; project.wgsl
-   *  merges it into bodyProj / proj): 8 u32 per column, bit z set where a voxel's
-   *  centre lies in cell z (0..255) */
+   *  merges it into bodyProj / proj): PHYS_COL_WORDS u32 per column, bit z set where a voxel's
+   *  centre lies in cell z (0..PHYS_COL_WORDS · 32 − 1: 511; round 100 — 8 words, 255, before the window held the atlas's height) */
   readonly physCols: GPUBuffer;
   /** air the physics voxels shove as they land (physics.ts writes it each tick;
    *  windfield.wgsl pushes the wind out from it): u32 per wind texel, ×1000 */
@@ -371,7 +371,7 @@ export class WorldGpu {
     this.projView = this.proj.createView();
     this.levelsView = this.levels.createView();
     this.strFrames = this.buf('strFrames', MAX_STRUCTS * FRAME_BYTES, S);
-    this.physCols = this.buf('physCols', this.cells * 32, S | GPUBufferUsage.COPY_DST);
+    this.physCols = this.buf('physCols', this.cells * PHYS_COL_WORDS * 4, S | GPUBufferUsage.COPY_DST);
     this.strVox = this.buf('strVox', POOL_VOXELS * 4, S);
     this.strata = device.createTexture({ label: 'strata', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.strata);

@@ -26,7 +26,7 @@ export const K_HEADROOM = 2;
 export interface WorldDims {
   w: number;
   h: number;
-  zMax: number; // < 256
+  zMax: number; // ≤ Z_LIMIT (511)
 }
 
 /** u32 words per slot (vec4<u32> in WGSL). */
@@ -59,10 +59,28 @@ export function cellRange(z0: number, z1: number): [number, number] {
   return [Math.ceil(z0 - 0.5), Math.ceil(z1 - 0.5)];
 }
 
-/** The surface buffer's packing (surface.wgsl): z in 8.8 fixed point, material, slot count. */
-export const sfZ = (v: number) => (v & 0xffff) / 256;
-export const sfMat = (v: number) => (v >>> 16) & 0xff;
-export const sfPack = (z: number, mat: number, n = 0) => (Math.min(Math.round(Math.max(z, 0) * 256), 0xffff) | ((mat & 0xff) << 16) | ((n & 0xff) << 24)) >>> 0;
+/** The surface buffer's packing (surface.wgsl, common.wgsl sfPack): z in 9.8 fixed point (round 100: to 511.99,
+ *  the atlas's whole height in the window), material, slot count. */
+export const sfZ = (v: number) => (v & 0x1ffff) / 256;
+export const sfMat = (v: number) => (v >>> 17) & 0xff;
+export const sfPack = (z: number, mat: number, n = 0) => (Math.min(Math.round(Math.max(z, 0) * 256), 0x1ffff) | ((mat & 0xff) << 17) | ((n & 0x1f) << 25)) >>> 0;
+/** (round 100) the highest z a window may hold: the surface's 9.8 fixed point (and the physics voxels' PHYS_COL_WORDS · 32 cells) */
+export const Z_LIMIT = 511;
+/** u32 words a column of the physics voxels' occupancy (common.wgsl PHYS_COL_WORDS) */
+export const PHYS_COL_WORDS = 16;
+
+/**
+ * (round 100) A streamed window's height over a world `zTop` high: all of it and a margin for what's built on its
+ * highest tops, so the window never slides in z — at most what the surface's z holds (taller, the window slides in
+ * z as before round 100). `ask` (?zwin=): a height of one's own (248: the sliding window as it was).
+ */
+export function windowZMax(zTop: number, ask?: number): number {
+  if (ask) {
+    if (!(ask >= 32 && ask <= Z_LIMIT)) throw new Error(`?zwin=${ask}: 32 to ${Z_LIMIT}`);
+    return ask;
+  }
+  return Math.min(Math.floor(Z_LIMIT / 8) * 8, Math.ceil((zTop + 24) / 8) * 8);
+}
 
 export interface Interval {
   z0: number;
@@ -122,7 +140,7 @@ export interface PackedWorld {
 export function packColumns(grid: ColumnGrid, minK = MIN_K): PackedWorld {
   const { w, h, zMax } = grid.dims;
   if (w % CHUNK || h % CHUNK) throw new Error(`map size must be a multiple of ${CHUNK}`);
-  if (zMax > 255) throw new Error('zMax must fit in 8 bits');
+  if (zMax > Z_LIMIT) throw new Error(`zMax must be at most ${Z_LIMIT} (the surface's 9.8 fixed point)`);
   const chunksX = w / CHUNK;
   const chunksY = h / CHUNK;
   const chunkTable = new Uint32Array(chunksX * chunksY * 2);
