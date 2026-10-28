@@ -1163,6 +1163,21 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   an earlier session.
 - **Ahead**: while the camera moves (> 6 cells/s) along an axis, `AHEAD` (2, `?ahead=`) strips that way are asked
   for (`bring`: the pool's, the store's, or made; checked for coarse changes; cut at the window's oz; uploaded).
+- **Made on the GPU** (round 102, `gpugen`; default, `?gpugen=0` the CPU's way): `LandSource.regionInto(x0, y0, w, h,
+  target)` — the atlas's `regionInto` — makes a region straight into a slot (`Streamer.generateGpu`): its columns
+  (colHeight, formSeed, colFinish a tile a frame), then `atlas/finish.wgsl` reads colOut/colRuns where they are and
+  writes the slot's pages and kept fields in the layout above (the slot cleared first; pool pages are STORAGE too).
+  Back to the CPU (`FinishMeta`, ~100 KB): per column the top and ground (window z), the top and highest gap's roof
+  (world z), the structural flag, what's outside the window. `RegionPool.temp()` is a slot of its own when every slot
+  is taken (let go by `release`). The CPU path and the GPU's make the same bytes (scripts/gpugentest.mjs): heights in
+  1/256ths, the ways by integer distance in the region's frame (`ways.ts regionWays`, shared), the geysers' stencil.
+- **Stamps** (`atlas/stamps.ts`): what's built into land as it's made is a list of operations a column (PLAN, ADD with
+  a mark, VEGMAX, BARE), from `Atlas.stampHooks` (the settlements, a run's stage) in order; finish.wgsl and
+  `applyStamps` run them alike. A settlement's plan is made in the plan worker on its box's raw ground
+  (`Atlas.rawGround`: finish.wgsl's raw mode, 16 bytes a column back), never on the main thread.
+- **Precache**: `Streamer.precache(ox, oy, ring)` asks for a window's regions and a ring round it into the pool; a
+  warp uses what's made or under way for its window and asks for its ring (`?warpring=` 1) right after its own.
+  Ahead of fast motion: `?aheads=` seconds of it, 2–4 strips.
 
 ## The town (round 65, branch `builder`)
 
@@ -1905,6 +1920,11 @@ clears them).
   `unwritten` regions and the window's edge against the parked view). benchMode counts a level page's loads
   (`tries`): a second load is `skip` (main.ts calls benchSkip); main.ts sends a lost device (not 'destroyed') to
   benchSkip too.
+- **v4 (round 102):** `version: 4`. main.ts asks `benchMode` before the GPU: a level page's note and
+  `benchWatchdog` start first, and the end page gets a GPU or, after 20 s, shows its report without one (`benchGpu`).
+  `go()` destroys the page's device before navigating. `save()` makes room (the stored previous report, then the
+  details) rather than throw. The sandbox is two pages, `main` and `pans`; the report merges them. The A/B runs riding
+  in a storm (`main.ab`) and by the meteor (`pans.abMeteor`), with the awake chunks.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.
 

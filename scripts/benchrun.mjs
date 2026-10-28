@@ -2,7 +2,7 @@
 // "Start benchmark", then its pages one after another till the report; the report's JSON written to --out.
 // The desktop baseline: data/bench/desktop-igpu.json (node scripts/benchrun.mjs --out data/bench/desktop-igpu.json).
 //   node scripts/benchrun.mjs [--url http://localhost:5291] [--size 412x915] [--dpr 2.6] [--q low] [--out bench.json]
-//     [--extra "&x=1"] [--timeout 1200] [--uncapped]
+//     [--extra "&x=1"] [--timeout 1200] [--uncapped] [--smoke] [--throttle 4] [--fill]
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -35,12 +35,43 @@ try {
     console.log('pageerror', e.message);
   });
   p.on('console', (m) => m.type() === 'error' && console.log('console.error', m.text().slice(0, 300)));
+  // (bench v4, --throttle N: the CPU N times slower, as a phone's — kept across the chain's navigations)
+  const throttle = Number(opt('throttle', 0));
+  if (throttle > 1) {
+    const cdp = await p.createCDPSession();
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });
+    p.on('framenavigated', (f) => f === p.mainFrame() && void cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle }).catch(() => {}));
+  }
+  p.on('framenavigated', (f) => f === p.mainFrame() && console.log(`nav ${new URL(f.url()).searchParams.get('benchpage') ?? 'start'}`));
   // (bench v3, --smoke: the start, the hero and one window page, the end — and no Download offered before the end)
   await p.goto(`${url}/?bench=1&q=${q}${argv.includes('--smoke') ? '&benchsmoke=1' : ''}${extra}`, { waitUntil: 'load' });
   if (argv.includes('--smoke')) {
     // (a previous run stored, as on the user's phone: it must not be offered while the new one runs)
     await p.evaluate(() => localStorage.setItem('reclaimed.bench.last', JSON.stringify({ kind: 'reclaimed-bench', version: 1, startedAt: '2026-10-28T09:00:22Z', finishedAt: '2026-10-28T09:05:00Z' })));
     await p.reload({ waitUntil: 'load' });
+  }
+  if (argv.includes('--fill')) {
+    // (bench v4, --fill: localStorage nearly full, as the phone's shared origin may be — the state's saves must not stall the chain)
+    const n = await p.evaluate(() => {
+      const chunk = 'x'.repeat(256 * 1024);
+      let k = 0;
+      try {
+        for (; k < 400; k++) localStorage.setItem(`bench.fill.${k}`, chunk);
+      } catch {
+        // (full)
+      }
+      // (then 16K pieces to the brim, and 48K freed: room for the start page's state, not for the main page's)
+      const small = 'y'.repeat(16 * 1024);
+      let m = 0;
+      try {
+        for (; m < 2000; m++) localStorage.setItem(`bench.fills.${m}`, small);
+      } catch {
+        // (full)
+      }
+      for (let j = 0; j < 3 && m > 0; j++) localStorage.removeItem(`bench.fills.${--m}`);
+      return k * 256 + m * 16;
+    });
+    console.log(`filled localStorage with ${n}K chars (48K left)`);
   }
   await p.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => b.textContent === 'Start benchmark'), { timeout: 120000 });
   await p.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Start benchmark').click());
@@ -50,7 +81,7 @@ try {
   while (Date.now() - t0 < timeout) {
     await sleep(2000);
     try {
-      const r = await p.evaluate(() => ({ done: !!window.reclaimedBench, say: document.querySelector('#bench-say')?.textContent ?? document.querySelector('#bench-loading')?.textContent ?? '', fatal: document.querySelector('.fatal')?.textContent ?? '', dl: [...document.querySelectorAll('button')].map((b) => b.textContent).filter((t) => /Download/.test(t)) }));
+      const r = await p.evaluate(() => ({ done: !!window.reclaimedBench, say: (document.querySelector('#bench-stall')?.textContent ?? '') + (document.querySelector('#bench-say')?.textContent ?? document.querySelector('#bench-loading')?.textContent ?? ''), fatal: document.querySelector('.fatal')?.textContent ?? '', dl: [...document.querySelectorAll('button')].map((b) => b.textContent).filter((t) => /Download/.test(t)) }));
       if (!r.done && r.dl.length) {
         bad++;
         console.log(`MID-RUN DOWNLOAD OFFERED: ${r.dl.join(', ')} (${r.say})`);

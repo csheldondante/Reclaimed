@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 104 (session 5, the performance track) — render-only LOD regions baked into the tiles
+
+- The user, verbatim: "My understanding is that if we had a LOD that used hybrid heightmap and other mesher only
+  where needed and that has no simulation active we can generate an isometric tile for the terrain with material and
+  normal detail only then compose cheaply in screen space and that this would let us very cheaply keep graphics
+  looking fully loaded. I think there may be some hold outs like towns and vegitation both of which should be moved
+  to GPU generation and streaming."
+- The goal: a steady 60 fps on the phone, no hiccups, no pop-in. → `tilecache`: get `?tiles=1` running, then TC2
+  (regions past the window generated on the GPU, meshed, baked, dropped; no simulation), then vegetation and towns
+  in the tiles (BACKLOG TC2, TC7, TC8).
+
 ## 2026-10-28 — round 103 (session 5, `tilecache`) — render the land once into world-anchored tiles
 
 - The user, verbatim: "Yeah but the tiles are isometric so why not load and render them once then tile them so the
@@ -12,6 +23,18 @@ each was implemented.
   slot (unlit: albedo, normal, depth, film) per view turn, relit every frame and drawn as quads where it is; kept
   after the region leaves the window (frozen), so land passed still shows in detail (BACKLOG TC1–TC6).
 
+## 2026-10-28 — round 102 (session 5, `gpugen`) — region generation stays on the GPU, by the phone's numbers
+
+- The user (round 101–102), verbatim: "Aren't all of the methods used to generate land very GPU efficient? … I sort of
+  expected this was done GPU side". From round 101: "If we had adaptive tile generation, precached larger areas when
+  traveling via the atlas map we might be able to improve framerate in that mode rather than guessing."
+- The phone's bench (data/bench/pixel9a-2026-10-28.json) decided it: ~2 ms of GPU a region against 149 ms wall p50
+  (the readback 44, the upload 22, the CPU's cut 9.6, a settlement's plan up to 290 on the main thread).
+- → Branch `gpugen` (from places c223350): a region's columns finished on the GPU straight into a pool slot (no
+  readback of the columns, no CPU cut, no upload); settlement plans in the plan worker on the exact raw ground made on
+  the GPU; the stamps (settlements, a run's stage) as operations both paths run; the tile pacer by a GPU budget a
+  frame, more when the camera moves fast; the ring round a warp's window precached; `?gpugen=0` the CPU's path,
+  identical columns (BACKLOG GG1–GG11).
 ## 2026-10-28 — round 102 (session 5, `places`) — settlements as fields, grids and spans (design, for later)
 
 - The user: "I think that ids and what building goes where might make sense to do on the CPU. I'm not entirely convinced

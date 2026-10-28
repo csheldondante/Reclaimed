@@ -8174,6 +8174,134 @@ the whole JSON into the chat (no selecting), or **Share…** for the share sheet
 `?bench=1` again shows the same buttons. Your saved world isn't touched (the bench plays in worlds of its own and
 clears them).
 
+## 2026-10-28 — round 102 (`gpugen`): region generation stays on the GPU (DECISIONS round 102)
+
+**Why.** The Pixel 9a's bench (data/bench/pixel9a-2026-10-28.json, bench v1): a region is ~2 ms of GPU (colHeight
+0.39, formSeed 0.66, colFinish 1.1 p50) but 149 ms wall p50 / 411 p95 — the readback of its columns 44 ms, the upload
+22 ms to done, cutRegion 9.6 ms CPU (p95 17), stampWays 1.3 (p95 16.6), and the hooks 0.2 p50 / 290 p95 (a settlement
+planned on the main thread: `plan` 34 ms mean, 65 max in the pans and the warp). The phone's CPU is ~3× the desktop's;
+its GPU had room (0.26 ms a 32² tile, 25 regions/s at 4 tiles a frame with the frames unchanged). The user: "Aren't
+all of the methods used to generate land very GPU efficient? … I sort of expected this was done GPU side."
+
+**What moved to the GPU.**
+- `atlas/finish.wgsl` (+ `finish.ts`), one invocation a column, after colFinish, reading its colOut and colRuns where
+  they are: landFrom's merge; the geysers' sinter (a 9 × 9 stencil made once on the CPU, GEYSER_STENCIL); the ways
+  (each column's nearest way point by integer distance² over the region's nine bins, the lifts, tunnel bores, bridge
+  decks and pillars, the road's grade and shoulders, the pave); the stamps (below); settleLoose; splitColumn at the
+  window's oz; fitColumn to colK (the loose-aware cost); packColumn into the slot's pages; water (waterInWindow),
+  moisture, plants, petals, lava and its spring, the river's flow, the water source — every kept field — straight
+  into a region pool slot (`Atlas.regionInto` → `Streamer.generateGpu`). The slot is cleared first; nothing is
+  uploaded. The streamer's arrival is then the pool → window copy a thawed region already had.
+- What the CPU keeps comes back small: per column its top and ground (window z), its top and the highest gap's roof
+  (world z: the hybrid's relief, joined with what's outside the window as joinColumn would), flags (structural,
+  fitted, settled, errors), and what's outside the window as a list — ~100 KB a region against the CPU path's ~1 MB of
+  columns read back and 1.7 MB uploaded. The relief bit is made from the tops and ground on the CPU (64² compares).
+- The columns' hash of a made region is dropped (`info.last`): it was only for telling a region play touched from its
+  save, and a region is saved only after play touches it — its hash is taken then, from the readback the save does.
+- The ways' CPU part left is gathering the region's candidate points and binning them (`regionWays`).
+
+**The same columns both ways.** `?gpugen=0` keeps the CPU's path (the columns read back, landFrom, the geysers,
+stampWays, the stamps, cutRegion, toBody, uploaded; plans on the main thread). Making them identical, not close:
+everything a stamp writes is in whole 1/256ths of a cell, as the runs already were (forms.wgsl zq) — the way points'
+and lifts' heights quantized at buildWays, the geysers' stencil, the plan's and the stage's numbers in the stamp ops;
+the ways' distances integer (1/256 units in the region's frame, the rows' centres a table both read, isqrt for the
+shoulder); the water and the lava in the order the CPU's Float32Arrays round them (one correctly rounded f32 add each,
+which WGSL guarantees). `ways.ts` stampWays now runs the same code path (regionWays → nearestWay → wayColumn) on the
+CPU. The changes to the land are below 1/256 of a cell (GEN_VERSION not bumped: a saved region and a fresh neighbour
+meet within that).
+- scripts/gpugentest.mjs: on the atlas level (q=low 412x915, every system on) regions made both ways at the window's
+  oz and the slot's bytes compared word by word (the pages, every kept buffer and texture), and the CPU parts.
+
+**Stamps** (`atlas/stamps.ts`, `Atlas.stampHooks`). The settlements and a run's stage pieces said what to build by
+changing a region's CPU land in a hook; now they say it as operations a column — PLAN (what stands above `lo` goes,
+the ground let down, an adit's gap, the plan's intervals, no plants), ADD (a stage piece's layers; its base the top
+before, a mark read back), VEGMAX, BARE — and the GPU (finish.wgsl stampOps) or the CPU (applyStamps) runs them.
+
+**Settlement plans off the main thread.** `Settlements.workerPlan`: the box's raw ground (the land the plan reads:
+columns, sinter, ways; not the stamps) made on the GPU a 64² tile at a time by finish.wgsl's raw mode, 16 bytes a
+column read back (`Atlas.rawGround`); planned and rastered in the far plans' worker (plan-worker.ts ExactPlanJob);
+the whole plan posted back (structured clone) and made live — its GrowthField and LotGrids given their prototypes
+back, its record's fields assigned onto the settlement's own record. The rough ground (bake.wgsl roughGround) was the
+suggestion; it's the far land's approximation (forms and cover differ), and a plan's `lo` on it leaves buildings
+floating or buried where it's off — the exact raw ground costs the same small readback and keeps the plan identical
+to the CPU path's.
+
+**The tile pacer by a GPU budget** (atlas.ts TilePacer; round 101's "If we had adaptive tile generation …"). Tiles a
+frame = a share of the frame's room (its period — the low envelope of the frame intervals — less the GPU's own time
+for the frame, less a margin of max(1.5 ms, 10%)) over the measured GPU ms a tile: a third of the room parked, up to
+80% as the camera moves at FAST_AT (80 cells/s; `urgency` is the streamer's smoothed speed), TILE_MAX (4) a frame at
+most, TILE_MAX_FAST (8, `?tilemaxfast=`) moving fast. The GPU's time: the profiler's timestamps where it has them
+and reads them (gpuFrameMs, colFinish's passMs); else — the phone: Mali's per-pass timestamps aren't trusted, and the
+profiler reads only while someone looks — `onSubmittedWorkDone` called once the frame's work and its tiles are
+submitted (a setTimeout after the pacer's rAF): the GPU's tail after the submit, in frames without tiles (the frame's
+own, EMA) and with them (each tile's share of the difference, EMA). Round 98's guard stays on top (a frame that ran
+tiles longer than the envelope by a fifth and 1.5 ms halves what may run). `?tilepace=frame` is round 98's alone.
+
+**Precache round a warp; ahead by speed.** A warp's window uses what's made or under way for it (`made`, `jobs` kept
+across a non-fresh warp — they were cleared), and the ring round the destination (`?warpring=` 1: 24 regions round a
+5 × 5 window) is asked for right after the window's own regions, so its tiles follow theirs. `Streamer.precache(ox,
+oy, ring)` (and `MapWorld.precache`) for a caller that knows a target early: the map's tap warps at once, so it's the
+warp's ring that's ahead (BACKLOG GG11: a held press could precache). Ahead of the camera's motion: `?aheads=` (3)
+seconds of it in strips, 2 at least and 4 at most (was 2 always).
+
+**Measured** (desktop iGPU, headless 412x915 q=low, every system on; "before" = this build with `?gpugen=0&
+tilepace=frame&warpring=0&aheads=0`, the CPU's path as places has it):
+- identity (scripts/gpugentest.mjs): 50 regions — 8 round the start, under the 6 nearest settlements (their plans'
+  stamps: 2242 columns), one on each kind of way (road, tunnel, bridge, switchbacks, lift: up to 2254 columns of ways
+  a region), 3 with geysers' sinter, 30 further out — 86 MB of slots compared word by word, and the CPU parts: **all
+  bit-identical**; the raw ground a settlement is planned on, 6 tiles: identical.
+- speedsweep pan 120: the camera got 113.9 cells/s (before 91.5), low-detail in the window 2.7% (3.9%), frame
+  p50/p95/p99 9.9/18.8/97.6 ms (10/47.5/191), GPU frame 5.2 ms (13.8), detail ahead p5 26 cells (2), 12.9 regions/s
+  (10.8), 355 tiles/s (69); pan 160: got 129.4 (121.9), low-detail 2.8% (5.8%), p95 22.5 (70), p99 96.7 (187), GPU
+  frame 6.1 (17.4). (The pans aren't the same ground at different speeds; the CPU-path run had more voxels in view.)
+- driveprofile ride (25 s): p50/p95/p99 9.9/13.0/44.9 (9.9/14.7/43.6), GPU 12.1 (11.7) — the desktop's ride wasn't
+  generation-bound either way.
+- made ahead and not used: the ride made 152 regions on the GPU for 70 written (the CPU path uploaded 118 for 65); the
+  pans at 120/160 made ~5× the tiles of the CPU path's (BACKLOG GG12).
+
+## 2026-10-28 — round 102 (2) (`gpugen`): the phone's long hitches on the first gpugen
+
+**Why.** The user on the Pixel 9a, verbatim: "The GPU version runs much slower on my phone subjectively. It has long
+hitches". The hitch report (142 s, ~30 fps): slides 42, generated 252, but gpuMade 1545 and evicted 1482 — six times
+the regions made for those used, the pool thrashing (50.9 MB of `regionTemp` slots live: the pool full); a 2.45 s
+gpu-busy frame with a small map pending 2.5 s at the start; 585 "browser" hitches (25 s). The slice's desktop bike
+bench on the same build: the bike held at the window's edge (1 slide in 75 s, 9 km/h against places' 27).
+
+**What it was, and the fixes.**
+- The ahead strips by speed (round 102's `?aheads=3`: up to 4 strips, on both axes of a diagonal pan) flooded the
+  tile queue with land the camera never reached; the slides waited behind it (desktop speedsweep: 388 frames waited
+  against 76). Back to AHEAD (2) strips by default (`?aheads=` opt-in), and the ahead strips are asked for only while
+  what's made ahead and under way is under half the pool.
+- finish.wgsl ran a whole region (4096 columns) in one dispatch, not paced — and the settlement plans' raw tiles the
+  same, many at once: now a 32² tile a dispatch, each the tile pacer's turn when streaming. Its second per-column
+  array (the window's intervals) is gone: kept in place in the column's own (a phone keeps a thread's arrays in memory).
+- The pacer: round 98's pacing by the frame's time is the default again, everywhere (`?tilepace=budget` the GPU
+  budget, opt-in): with the profiler's timestamps read (the speedsweep's ?perf=1) its passes summed past the frame on
+  the desktop too and the budget gave one tile a frame (got 73 cells/s at pan 120); on a phone Mali's timestamps
+  overlap and onSubmittedWorkDone isn't to be trusted for a budget. The fast cap is TILE_MAX (4); `?tilemaxfast=`.
+  finish.wgsl's tile a pacer turn: 32² on a phone, the whole region elsewhere (`?finishtile=`).
+- A plan that fails in the worker now fails its region loudly (it waited for ever); the marks' cap 1024 → 8192.
+- Labels for the hitch report: finish.encode, finish.parse, gen.meta, plan.receive (the plan's structured clone),
+  plan.revive; the GPU passes atlas-regionFinish / atlas-rawFinish a tile.
+
+**Verified** (desktop, headless, q=low 412x915, every system on): scripts/gpugentest.mjs with the tiled finish — 24
+regions and 6 raw tiles bit-identical; the world API on a window warped in (28 regions made on the GPU): heightAt,
+floorAt and layersAt agree with the layers read back on 600 columns; floatsweep all passed (0 floating runs);
+towertest all passed. scripts/runtest.mjs --only far: rode 208 cells away and back, the places' 572 pieces, the locks
+and the cast as they were; the walk through the open bone door into the bell chamber sticks at 116.5,100.9 — the
+same on a build without gpugen (bench2's server: places + bench v4), so not this branch's (BACKLOG GG13).
+speedsweep after the fixes (pan 120 / 160): got 94.7 / 122.5 cells/s (the CPU path 91.5 / 121.9), low-detail 3.8 /
+4.3% (3.9 / 5.8), frame p95 39.6 / 53.3 ms (47.5 / 70), slides waited 71 / 244 frames (76 / 193), 2.2 tiles a frame;
+gpuMade 452 by the end for ~330 regions written (the first gpugen's ~5× is gone).
+The bench (v4, GPU path; data/bench/desktop-igpu-gpugen.json, 797 s, no errors): a region made the GPU's way is
+4.3 ms wall p50 (the CPU path's in the same run: 24.3 — its readback 7.2, cutPack 4.4, upload 4.4 to done), the main
+thread's part 0.5 ms (ways' gathering + stamps 0, encode 0.1, parse 0.3, the relief bits 0.2) against ~6; finish.wgsl
+0.053 ms of GPU a region (colHeight 0.22, formSeed 0.07, colFinish 0.22); 147 KB read back, nothing uploaded;
+232 regions/s one at a time (41). Pans 80/120/160/240/320: fps 81.7/73.1/64.9/48.2/46.3, p95 19/28/58/97/108 ms,
+low detail p95 2.1/1.4/2.1/2.8/8.3% of the screen; their hitches gpu-held (the render), none from generation's CPU;
+gpuMade 218 for 170 generated at pan 120, 259 for 190 at 160. The warp: every region written in 647 ms, frames
+normal at 1.08 s (v1's desktop baseline: 886 / 1500). The phone's rerun decides (BACKLOG GG8).
+
 ## 2026-10-28 — round 102 (`bench2`): bench v2 after the Pixel 9a's report
 
 The user's first phone run (data/bench/pixel9a-2026-10-28.json, bench v1, Arm Valhall, window 384) showed three
@@ -8313,3 +8441,70 @@ Not done: regions never in the window rendered once as they arrive (needs the me
 region's own columns — a pool slot — not the window's buffers: TC2); the shadows past the shadow map's box (tiles
 are lit unshadowed there, as the rings are); the window's own terrain from tiles (its look moves: water, wetness).
 
+## 2026-10-28 — round 102 (`bench2`): bench v4 — the chain that stalled on the phone, the warp's spot, an active A/B
+
+The user (verbatim): "The benchmark doesn't continue after the first test runs. It goes through panning and the
+meteor (although the atlas location it jumps to seems to have shifted and is less interesting and has no cliffs) but
+then it goes grey and never resumes. Previously it loaded and continued new tests after. Also, it turns off systems to
+check perf but on a pretty static scene so I'm not sure how helpful it is since I believe those systems sleep most of
+the time anyway." The v3 phone report (data/bench/pixel9a-2026-10-28-v3.json) has no main-page numbers at all and the
+error "main: stopped (the page was left or crashed)" — the user's "carry on" — while every later page ran.
+
+**The stall.** What fits all of it: the main page's end (after the meteor) is where it writes its whole result into
+the suite's state and navigates. Two ways that dies on the phone, both fixed:
+- the state didn't fit. localStorage is shared by every branch's build on csheldondante.github.io; v3's main page
+  (five pans, the max-pan probe, the warp, the meteor, each a full capture) on top of the stored previous report.
+  The per-step checkpoints failed quietly, the last save threw, and the chain stopped where it stood. v4's save
+  never stalls: when it's full it drops the stored previous report, then the per-capture details (passes, CPU steps,
+  hitches), and only then says on screen that it can't go on. The start page also records localStorage's keys and
+  size and the storage estimate (`device.localStorage`, `storageEstimate`).
+- the next page's GPU never came up. The bench's note, watchdog and handlers started only after initGpu() resolved,
+  so a requestAdapter/requestDevice still pending after the heavy page left a plain grey page. v4 decides the page
+  before asking for the GPU: the "running page N of M" note and the watchdog are up first. The GPU gets 30 s, the
+  level 150 s; after that, 60 s with no sign of life (a frame the bench waited for, or a step it began) is recorded
+  with its step, shown on screen, and the chain moves on. The old page's device is destroyed before it navigates,
+  so its memory is free when the next page asks. The end page shows its report even with no GPU (20 s).
+- and the main page is split: the pans, the max-pan probe, the warp and the meteor are a page of their own
+  (`pans`), so one crash can't lose every sandbox number. The report reads the two as one sandbox.
+
+**The warp's spot.** The atlas and `?at=` (15024,14337) haven't changed since round 101. In v3 the pans (to 320
+cells/s) and the probe (to 640) carried the window thousands of cells away first, and the warp went a third of the
+way round the world from wherever they stopped, onto flat land. In v4 the warp goes back to where the page started:
+the road among the cliffs, by the town. The meteor lands there.
+
+**The A/B on an active scene.** A parked scene sleeps (sim/sleep.ts), so a 0 ms cost often meant asleep, not free.
+The main page's A/B now runs while it rides the road at 18 cells/s with a storm spawned over the camera (arriving
+land wakes its chunks, rain wakes water and sediment): every sim one by one, particles, agents, renderprep, the mesh
+rebuilds, shadow, the far land, the grid and the voxel mesh. A second, shorter one runs by the meteor's crater (lava,
+debris). The window pages' A/B runs riding in a storm too. Each A/B records the chunks awake with the system on and
+off (`awakeOn`, `awakeOff`).
+
+**Timestamps on Mali.** In v3's phone report, `timestampModes` had all-in-one-pass sum/wall at 0.87 (sane) against
+3.0 for separate passes. So on Mali timestamps work inside one pass, not across passes. Timing each system as one
+pass would mean the engine's systems sharing a pass; that's left for later (BN24).
+
+**Headless** (scripts/benchrun.mjs --throttle 4 --fill: the CPU 4x slower, localStorage filled to within 512K
+characters of its quota, the full chain):
+- the whole chain ran, start to the end screen: 9 pages (start, main, pans, hero, win256/384/448/512, final) in
+  796 s, no bench errors, the end screen's Download for the run. Teardown left page errors: readbacks in flight
+  rejected as the old page's device was destroyed. Those are expected and now suppressed (unhandledrejection while
+  leaving).
+- under a 4x CPU the A/B is CPU-bound and noisy (±25 ms on 15–30 ms frames), so it tests the chain, not the numbers.
+  The awake chunks moved with the storm and the ride: 99–103 with every sim on, 0–63 for single systems as the storm
+  drifted off.
+- the warp back to the start covered 4706 cells.
+- The coverage per window (`screenInDetail`, `windowFor95`, `derived.coverage`) and the per-system GPU time with its
+  dispatches in one pass (`systemGpu`) came after this run. They're checked by the next run, an unthrottled full chain
+  with localStorage filled to 48K characters from the brim (to force the save's fallbacks).
+
+**The screen in detail, and each system in one pass** (the user, verbatim: "I do want to see if the GPU generation
+let's us increase the view distance so that the whole screen is nearly always loaded in detail"):
+- every capture records the share of the screen in the window's detail (`screenInDetail`: in the window, its region
+  written);
+- the view records the smallest window holding 95% of the screen at that zoom (`windowFor95`);
+- `derived.coverage` gives the frame cost at that window: measured if it's one of the five sizes, else extrapolated
+  along a line in the window's area.
+- `systemGpu` times each sim system alone, encoded once more through an encoder that hands it one shared compute
+  pass, timed at that pass's begin and end (sane on Mali). It records the awake and window chunks, on the main page
+  (riding in the storm), by the meteor, and on each window page. That is the evidence for or against PF1: do the
+  sims cost the whole window or only what's awake?

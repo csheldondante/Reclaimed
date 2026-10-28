@@ -4,7 +4,7 @@
 //    their rates while nobody's there (advance).
 //  - Arrival: when a region of a settlement's box is first made, the settlement is planned once (plan.ts, on
 //    the raw ground of its box: deterministic, ~10 ms) and its columns are stamped into that region's land
-//    (Atlas.landHooks) — buildings, walls, the plaza, fields, the camp — so the streamer freezes and thaws
+//    (Atlas.stampHooks: atlas/stamps.ts) — buildings, walls, the plaza, fields, the camp — so the streamer freezes and thaws
 //    them like any land, and every system (water, fire, collapse, agents' surfaces) sees real matter.
 //  - Play: the settlement nearest the camera inside the window comes to life (life.ts) — its workers and
 //    guards and its camp's raiders as units (units/agent-units.ts on the GPU agents) — and goes back to its
@@ -18,8 +18,10 @@ import type { RegionId } from '../api/contracts/world';
 import type { UnitView, UnitId, V2 } from '../api/contracts/units';
 import { MemoryDiplomacy } from '../api/contracts/diplomacy-memory';
 import type { Atlas } from '../atlas/atlas';
-import type { RegionLand } from '../world/streamgen';
-import { lowerTop, type Interval } from '../world/layout';
+import type { StampOps } from '../atlas/stamps';
+import { GPUGEN } from '../atlas/finish';
+import { GrowthField } from './field';
+import { LotGrid } from './grids';
 import { ROW_H } from '../world/lattice';
 import { atlasFacts } from '../gm/atlas-facts';
 import { buildWiki, type WorldWiki } from '../gm/wiki';
@@ -35,7 +37,7 @@ import { timed } from '../gpu/cpustat';
 import { waysNear } from '../atlas/ways';
 import type { SurfaceStamp } from '../atlas/bake';
 import { rasterPlan, stampMatch } from './raster';
-import type { FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
+import type { ExactPlanDone, ExactPlanJob, FarPlanDone, FarPlanInit, FarPlanJob } from './plan-worker';
 
 const T = 64;
 /** a game day (s): the stores' rates are a day's */
@@ -95,7 +97,7 @@ export class Settlements {
   private cols: number;
   private rows: number;
   /** the ms the records took, and each plan's */
-  stats = { recordsMs: 0, planned: 0, planMs: 0, stamped: 0, rawTiles: 0 };
+  stats = { recordsMs: 0, planned: 0, planMs: 0, stamped: 0, rawTiles: 0, rawMs: 0, workerPlans: 0, workerMs: 0, reviveMs: 0 };
   /** (round 94) the far plans: how many, the ms (the rough ground's GPU and readback, wall; in the worker the ways, the
    *  plan, the raster), the worker's first message (ms on the main thread), and each exact plan's match with its far
    *  one (IoU of their tops' cover) */
@@ -106,7 +108,7 @@ export class Settlements {
   private farWorker: Worker | null = null;
   private farBusy = 0;
   private farClock = 0;
-  private farWait = new Map<string, (d: FarPlanDone) => void>();
+  private farWait = new Map<string, (d: FarPlanDone | ExactPlanDone) => void>();
   /** the far plans' stamps, and the exact plans' (once their land has come in: these win) */
   private farStamps = new Map<string, SurfaceStamp>();
   private exactStamps = new Map<string, SurfaceStamp>();
@@ -142,7 +144,8 @@ export class Settlements {
       this.diplomacy.agree({ id: `${f}:minerals`, kind: 'mineral-rights', parties: [{ faction: f }, { faction: f }], where: { regions: [...near] }, covers: ['stone', 'ore'], share: 1, since: { run: 0 }, status: 'active', cause: { by: 'world' } });
     }
     this.stats.recordsMs = +(performance.now() - t0).toFixed(1);
-    atlas.landHooks.push((land, x0, y0, w, h, spread) => this.onLand(land, x0, y0, w, h, spread));
+    // (round 102: what's built as stamps — atlas/stamps.ts — the GPU's path and the CPU's build the same from them)
+    atlas.stampHooks.push((ops, x0, y0, w, h, spread) => this.stampLand(ops, x0, y0, w, h, spread));
   }
 
   // ---- the API ---------------------------------------------------------------------------------------
@@ -224,10 +227,10 @@ export class Settlements {
     return out;
   }
 
-  private async onLand(land: RegionLand, x0: number, y0: number, w: number, h: number, spread: boolean): Promise<void> {
+  private async stampLand(ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean): Promise<void> {
     for (const s of this.meeting(x0, y0, w, h)) {
       const p = await this.planOf(s, spread);
-      timed('stamp', () => this.stamp(p, s, land, x0, y0, w, h));
+      timed('stamp', () => this.stamp(p, s, ops, x0, y0, w, h));
     }
   }
 
@@ -241,6 +244,7 @@ export class Settlements {
   }
 
   private async makePlan(s: SettlementSeed, spread: boolean): Promise<SettlementPlan> {
+    if (GPUGEN) return this.workerPlan(s, spread);
     const { box } = s;
     const N = box.w * box.h;
     const ground = new Float32Array(N);
@@ -267,6 +271,43 @@ export class Settlements {
     const plan = timed('plan', () => planSettlement({ ...s, ground, water, top, veg, sea: this.atlas.p.sea, regionAt: (x, y) => this.regionAt(x + s.box.x0, y + s.box.y0 * ROW_H) }));
     // (round 94: its tops for the land past the window — the far plan's stamp gives way to it; how alike they are)
     const st = timed('plan', () => rasterPlan(s.rec.id, plan.columns, box, ground, top));
+    return this.planned(s, plan, st);
+  }
+
+  /**
+   * (round 102) A settlement's plan made off the main thread (the user: plans "never on the main thread"): its box's
+   * raw ground made on the GPU (Atlas.rawGround: the same ground regionLand's raw land has, 16 bytes a column back),
+   * planned and rastered in the plan worker (plan-worker.ts), the plan sent back whole and made live here again.
+   */
+  private async workerPlan(s: SettlementSeed, spread: boolean): Promise<SettlementPlan> {
+    const { box } = s;
+    const t0 = performance.now();
+    const g = await this.atlas.rawGround(box.x0, box.y0, box.w, box.h, spread);
+    this.stats.rawTiles += (box.w / T) * (box.h / T);
+    this.stats.rawMs += performance.now() - t0;
+    const job: ExactPlanJob = { exact: true, id: s.rec.id, seed: s, ...g, sea: this.atlas.p.sea };
+    const done = await new Promise<ExactPlanDone>((res) => {
+      this.farWait.set(`exact:${s.rec.id}`, res as (d: FarPlanDone | ExactPlanDone) => void);
+      this.worker().postMessage(job, [g.ground.buffer, g.water.buffer, g.top.buffer, g.veg.buffer]);
+    });
+    if (done.error) throw new Error(`settlements: ${s.rec.id}'s plan failed in the worker: ${done.error}`);
+    const t1 = performance.now();
+    const plan = done.plan;
+    // (made live again: its classes' methods, its record the settlement's own)
+    Object.setPrototypeOf(plan.field, GrowthField.prototype);
+    for (const lg of plan.grids.values()) Object.setPrototypeOf(lg, LotGrid.prototype);
+    timed('plan.revive', () => {
+      Object.assign(s.rec, plan.rec);
+      plan.rec = s.rec;
+    });
+    this.stats.workerPlans++;
+    this.stats.workerMs += done.ms[0] + done.ms[1];
+    this.stats.reviveMs += performance.now() - t1;
+    return this.planned(s, plan, done.stamp);
+  }
+
+  /** a plan made (here or in the worker): its stamp for the far land, its things, its camp, the event */
+  private planned(s: SettlementSeed, plan: SettlementPlan, st: SurfaceStamp): SettlementPlan {
     this.exactStamps.set(s.rec.id, st);
     const far = this.farStamps.get(s.rec.id);
     if (far) {
@@ -283,8 +324,8 @@ export class Settlements {
     return plan;
   }
 
-  /** the plan's columns that fall in this region, into its land (world z) */
-  private stamp(p: SettlementPlan, s: SettlementSeed, land: RegionLand, x0: number, y0: number, w: number, h: number): void {
+  /** the plan's columns that fall in this region, as stamps (world z: atlas/stamps.ts PLAN) */
+  private stamp(p: SettlementPlan, s: SettlementSeed, ops: StampOps, x0: number, y0: number, w: number, h: number): void {
     const b = s.box;
     for (let y = 0; y < h; y++) {
       const ly = this.mod(y0 + y - b.y0, this.rows);
@@ -294,31 +335,9 @@ export class Settlements {
         if (lx >= b.w) continue;
         const cp = p.columns.get(ly * b.w + lx);
         if (!cp) continue;
-        const i = y * w + x;
-        const col = land.cols[i];
-        // (what stands above the ground there goes; the plan's goes on it)
-        const keep: Interval[] = [];
-        for (const iv of col) {
-          if (iv.z0 >= cp.lo - 1e-3) continue;
-          keep.push(iv.z1 > cp.lo ? { ...iv, z1: cp.lo } : iv);
-        }
-        // (a well's shaft, a quarry's benches: the ground let down; an adit: a gap through it, rock over it)
-        if (cp.cut) lowerTop(keep, cp.cut);
-        if (cp.hole) {
-          const [h0, h1] = cp.hole;
-          for (let k = keep.length - 1; k >= 0; k--) {
-            const iv = keep[k];
-            if (iv.z1 <= h0 || iv.z0 >= h1) continue;
-            const parts: Interval[] = [];
-            if (iv.z0 < h0) parts.push({ ...iv, z1: h0 });
-            if (iv.z1 > h1) parts.push({ ...iv, z0: h1 });
-            keep.splice(k, 1, ...parts);
-          }
-        }
-        for (const iv of cp.ivs) keep.push({ z0: iv.z0, z1: iv.z1, mat: iv.mat });
-        land.cols[i] = keep;
-        land.surface[i] = keep.length ? keep[keep.length - 1].z1 : 0;
-        if (cp.bare) land.vegetation[i] = 0;
+        // (what stands above the ground there goes; the plan's goes on it — a well's shaft, a quarry's benches: the
+        // ground let down; an adit: a gap through it, rock over it)
+        ops.plan(y * w + x, cp.lo, cp.ivs, cp.bare, cp.cut ?? 0, cp.hole);
         this.stats.stamped++;
       }
     }
@@ -448,10 +467,13 @@ export class Settlements {
   private worker(): Worker {
     if (this.farWorker) return this.farWorker;
     const w = new Worker(new URL('./plan-worker.ts', import.meta.url), { type: 'module' });
-    w.onmessage = (e: MessageEvent<FarPlanDone>) => {
-      const f = this.farWait.get(e.data.id);
-      this.farWait.delete(e.data.id);
-      f?.(e.data);
+    w.onmessage = (e: MessageEvent<FarPlanDone | ExactPlanDone>) => {
+      // (round 102: the plan's structured clone is taken here — its cost on the main thread)
+      const d = timed('plan.receive', () => e.data);
+      const key = 'plan' in d ? `exact:${d.id}` : d.id;
+      const f = this.farWait.get(key);
+      this.farWait.delete(key);
+      f?.(d);
     };
     w.onerror = (e) => {
       throw new Error(`settlements: the far plans' worker failed: ${e.message}`);
@@ -477,7 +499,7 @@ export class Settlements {
       const ways = waysNear(a.ways, box.x0, box.y0 * ROW_H, box.x0 + box.w + 1, (box.y0 + box.h + 1) * ROW_H, a.worldW, a.worldH);
       const job: FarPlanJob = { id: s.rec.id, seed: s, ...g, sea: a.p.sea, ways };
       const done = await new Promise<FarPlanDone>((res) => {
-        this.farWait.set(s.rec.id, res);
+        this.farWait.set(s.rec.id, res as (d: FarPlanDone | ExactPlanDone) => void);
         this.worker().postMessage(job, [g.ground.buffer, g.water.buffer, g.top.buffer, g.veg.buffer]);
       });
       this.farStamps.set(s.rec.id, done.stamp);
