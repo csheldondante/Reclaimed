@@ -26,7 +26,7 @@ Ids TC.
 | TC6 | Default on: after TC3's numbers, the user's look at the seam on the phone | S | open |
 | TC7 | (round 104) Vegetation in the tiles: the woods painted from the veg field by the rings' rule (crowns lit live, their shadow); grass tufts and flowers as the bake's texture | M | wip (woods and water in the bake; tufts and flowers open) |
 | TC8 | (round 104) Towns in the tiles: gpugen's GPU stamps of the worker-made plans in the render-only regions' columns (they come with landInto when the stamps are there); check they bake | M | open |
-| TC9 | (round 104) The bake's and the land's cost: spread over frames by a GPU budget (no p99 spikes on the phone), and pop-in at the window's edge (a region leaving the window keeps its tile; one arriving shows its land tile till the window has it) | M | open |
+| TC9 | (round 104) The bake's and the land's cost: spread over frames by a GPU budget (no p99 spikes on the phone), and pop-in at the window's edge (a region leaving the window keeps its tile; one arriving shows its land tile till the window has it) | M | wip (arriving tiles done; riding cost measured the same as off on the desktop — the phone to measure) |
 
 ## Round 102 (2026-10-28, session 5, `gpugen`) — region generation stays on the GPU (DECISIONS round 102)
 

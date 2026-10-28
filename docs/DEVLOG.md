@@ -8617,3 +8617,21 @@ loading (155 s). The result now separates those:
 Desktop smoke (zooms 14 and 5; the iGPU shared with other runs meanwhile, parked only 69 / 54 fps): strict smooth
 "none" from 10 cells/s (one 40–150 ms frame a step). No pop-in up to 480–640 cells/s at zoom 14 / window 320, and up
 to 80–120 at zoom 5 / window 512, pop-in from 120–160. Frames over budget per slide: 3–12 at zoom 14, 5–46 at zoom 5.
+
+## 2026-10-28 — round 104 (2) (`tilecache`): measured with the grid for flat chunks; arriving regions keep their tile; the pan bench at a fixed window
+
+- The render-only land's flat chunks drawn by the hybrid's grid (only a chunk with a gap open to the air meshed).
+  Riding at window 320 (driveprofile, 20 s, desktop iGPU, every system as deployed): GPU a frame 11.74 (tiles off)
+  → 11.34 (tiles and land on) — the same within the run's noise; the bakes 0.01 + 0.02 ms a frame (tiles-g,
+  tiles-bake). The first cut (every scratch chunk meshed) was 12.11.
+- Parked (tileprobe, zoom 2.61): window 256 — the window 36.8% of the screen, tiles 60.8% (97.6% in detail);
+  window 320 — 48.6% + 49% (97.5%). Atlas 27 MB (96 slots of 128x192), 44-48 tiles in use.
+- No pop-in from the rings at the window's edge: a region come into the window whose chunks the window draws none of
+  yet keeps its tile, drawn inside the window too (plane.w 1), till the window has it; FieldMesh.built goes round
+  with a slide so that's known at once.
+- The bench counts land a tile draws as in detail (TileCache.drawsAt in writtenShare), and `?panwin=N` runs every
+  pan zoom at window N. Pan smoke (zooms 14 and 5, window 320): at zoom 5 the pop-in at 10 cells/s is 2-3% of the
+  screen with tiles against 9% without, generated land smooth to 10 cells/s against none; zoom 14 the same either
+  way (the window covers it). Parked cover at zoom 5: 0.979 with tiles, 0.972 without (the window nearly covers it
+  there): the tiles matter at the sandbox zoom, which the pan bench's smoke doesn't run.
+

@@ -244,9 +244,10 @@ export function panWindowFor(zoom: number, cssW: number, cssH: number, az = Math
   return Math.max(256, Math.ceil(need / 64) * 64);
 }
 
-function panPlan(cssW: number, cssH: number, smoke: boolean): { zooms: { zoom: number; window: number; run: boolean }[]; pages: { window: number; zooms: number[] }[] } {
+function panPlan(cssW: number, cssH: number, smoke: boolean, win = 0): { zooms: { zoom: number; window: number; run: boolean }[]; pages: { window: number; zooms: number[] }[] } {
   const zs = (smoke ? [14, 5] : PAN_ZOOMS).map((zoom) => {
-    const w = panWindowFor(zoom, cssW, cssH);
+    // (round 104, ?panwin=N: every zoom at window N — the tile cache's beyond it)
+    const w = win || panWindowFor(zoom, cssW, cssH);
     return { zoom, window: w, run: w <= PAN_MAX_WINDOW };
   });
   const pages: { window: number; zooms: number[] }[] = [];
@@ -1010,7 +1011,7 @@ async function start(host: Host, panel: Panel): Promise<void> {
   // (round 104, ?bench=pan: the pan benchmark's pages — a window per group of zooms)
   if (host.params.get('bench') === 'pan') {
     s.suite = 'pan';
-    const plan = panPlan(innerWidth, innerHeight, host.params.get('benchsmoke') === '1');
+    const plan = panPlan(innerWidth, innerHeight, host.params.get('benchsmoke') === '1', Number(host.params.get('panwin') ?? 0));
     s.results.panPlan = plan;
     s.pages = [s.pages[0], ...plan.pages.map((pg) => ({ name: `pan${pg.window}`, params: { ...common, at: RIDE_AT, win: String(pg.window), panzooms: pg.zooms.join('_') } }))];
   }
