@@ -1990,4 +1990,9 @@ clears them).
 - The origin: `Renderer.setTileOrigin(ox, oy, oz)` (the streamer's window cell (0, 0), rows, oz; level.ts each frame)
   and `windowMoved` (a slide moves it at once).
 - meshdraw.wgsl `meshSurf` is the look before the light (struct Surf); `meshShade` lights it; tiles.wgsl bakes it.
+- (round 105, tilelatency) The render-only land: Atlas.regionTile (no readback, no stamps: the summary copied on the
+  GPU) → render/tilelandgpu.ts (tilelandgpu.wgsl prep and camera, the grid's bake). Every tile's draw reads what it was
+  baked at from the tile cache's `params` buffer (tiles.wgsl TP, 2 vec4 a slot: the plane's left and top edges, texels a
+  unit; the texels used, its top, written). The pacer has a first lane (TilePacer.next(true)): the tiles' turns before
+  the streamer's. The old pacer param is `?tilesfixed=N`; `?tiles=0` turns the tile cache off (on by default).
 

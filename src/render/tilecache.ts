@@ -23,7 +23,16 @@ import type { Camera } from './camera';
 import { CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, CAMERA_POS_OFFSET } from './camera';
 import type { FieldMesh } from './fieldmesh';
 import { ROW_H } from '../world/lattice';
-import type { TileLand } from './tileland';
+import type { LandTimes } from './tileland';
+
+/** (round 105) what makes the render-only land: tileland.ts (the playable path, ?tilegpu=0) or tilelandgpu.ts */
+export interface LandMaker {
+  step(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number): boolean;
+  afterSubmit(): void;
+  invalidate?(): void;
+  readonly stats: Record<string, number>;
+  readonly latencies: LandTimes[];
+}
 
 /** the streamer's region (cells; rows the same count) */
 const R = 64;
@@ -111,6 +120,8 @@ interface Tile {
   top: number;
   bakedAt: number;
   usedAt: number;
+  /** (round 105, tilelatency) baked by the GPU's own setup (tilelandgpu.ts): what it was baked at is only TP's */
+  gpu?: boolean;
 }
 
 /** a bake slot: its camera and groups (made again when the mesh's buffers change) */
@@ -127,16 +138,18 @@ export class TileCache {
   readonly stats = { bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0 };
   private tiles = new Map<string, Tile>();
   private bySlot: (Tile | null)[];
-  private atlasA: GPUTexture;
-  private atlasB: GPUTexture;
-  private gb0: GPUTexture;
-  private gb1: GPUTexture;
-  private gbD: GPUTexture;
+  private atlasA!: GPUTexture;
+  private atlasB!: GPUTexture;
+  private gb0!: GPUTexture;
+  private gb1!: GPUTexture;
+  private gbD!: GPUTexture;
   private cols: number;
   private bakers: Baker[] = [];
   private inst: GPUBuffer;
   private instData: Float32Array;
   private uni: GPUBuffer;
+  /** (round 105, tilelatency) per slot what it was baked at (tiles.wgsl TP) */
+  private tparams: GPUBuffer;
   /** the regions drawn (far.wgsl tiled): [0] on, [1] n, n x n words */
   readonly mask: GPUBuffer;
   private maskData = new Uint32Array(2 + MASK_N * MASK_N);
@@ -160,16 +173,13 @@ export class TileCache {
     this.bySlot = new Array(slots).fill(null);
     this.stats.slots = slots;
     this.stats.mb = +((slots * slotBytes) / 2 ** 20).toFixed(1);
-    const RB = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
-    this.atlasA = dev.createTexture({ label: 'tiles A', size: [this.cols * SW, rows * SH], format: 'rgba8unorm', usage: RB });
-    this.atlasB = dev.createTexture({ label: 'tiles B', size: [this.cols * SW, rows * SH], format: 'rg32uint', usage: RB });
-    this.gb0 = dev.createTexture({ label: 'tiles gbuf0', size: [SW, SH], format: 'rgba32uint', usage: RB });
-    this.gb1 = dev.createTexture({ label: 'tiles gbuf1', size: [SW, SH], format: 'rg32uint', usage: RB });
-    this.gbD = dev.createTexture({ label: 'tiles gdepth', size: [SW, SH], format: host.depthFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT });
-    host.profiler.trackMemory('tiles', slots * slotBytes + SW * SH * (16 + 8 + 4));
+    // (round 105: the atlas and the bake's G-buffer made when a streamed window first gives the tiles a place — tiles on by
+    // default, a level without one spends nothing: alloc)
+    this.rows = rows;
     this.instData = new Float32Array(slots * 16);
     this.inst = dev.createBuffer({ label: 'tiles instances', size: this.instData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.uni = dev.createBuffer({ label: 'tiles uniform', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.tparams = dev.createBuffer({ label: 'tiles params', size: slots * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.mask = dev.createBuffer({ label: 'tiles mask', size: this.maskData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     for (let k = 0; k < PER_FRAME; k++) this.bakers.push({ cam: dev.createBuffer({ label: `tiles bake camera ${k}`, size: host.camBytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }) });
     void this.makePipes();
@@ -197,7 +207,21 @@ export class TileCache {
 
   /** The streamed window's cell (0, 0) in the world (cells, rows) and its oz (level.ts, every frame). */
   setOrigin(ox: number, oy: number, oz: number): void {
+    if (!this.atlasA) this.alloc();
     this.origin = [ox, oy, oz];
+  }
+
+  private rows: number;
+  /** (round 105) the atlas (slots of SW x SH texels: rgba8 + rg32uint) and the bake's G-buffer */
+  private alloc(): void {
+    const dev = this.host.device;
+    const RB = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
+    this.atlasA = dev.createTexture({ label: 'tiles A', size: [this.cols * SW, this.rows * SH], format: 'rgba8unorm', usage: RB });
+    this.atlasB = dev.createTexture({ label: 'tiles B', size: [this.cols * SW, this.rows * SH], format: 'rg32uint', usage: RB });
+    this.gb0 = dev.createTexture({ label: 'tiles gbuf0', size: [SW, SH], format: 'rgba32uint', usage: RB });
+    this.gb1 = dev.createTexture({ label: 'tiles gbuf1', size: [SW, SH], format: 'rg32uint', usage: RB });
+    this.gbD = dev.createTexture({ label: 'tiles gdepth', size: [SW, SH], format: this.host.depthFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT });
+    this.host.profiler.trackMemory('tiles', this.cols * this.rows * SW * SH * TEXEL_BYTES + SW * SH * (16 + 8 + 4));
   }
 
   /** (Renderer.windowMoved) The window slid by −t (window units): the origin follows now, before the frame's draw
@@ -215,6 +239,7 @@ export class TileCache {
   invalidate(): void {
     for (const b of this.bakers) b.gWin = b.gBand = b.rWin = b.rBand = undefined;
     this.drawGroup = undefined;
+    this.land?.invalidate?.();
   }
 
   /** the view's right, up and along (unit) and its clip scales, from its matrix (orthographic) */
@@ -384,27 +409,13 @@ export class TileCache {
     const dens = Math.min(rp, (SW - 1) / (a1 - a0), (SH - 1) / (b1 - b0));
     const tw = Math.min(SW, Math.ceil((a1 - a0) * dens) + 1);
     const th = Math.min(SH, Math.ceil((b1 - b0) * dens) + 1);
-    const key = this.key(rx, ry, cam.azimuth);
-    let t = this.tiles.get(key);
-    if (!t) {
-      let slot = this.bySlot.indexOf(null);
-      if (slot < 0) {
-        let old: Tile | null = null;
-        for (const o of this.bySlot) if (o && o.usedAt < this.frame && (!old || o.usedAt < old.usedAt)) old = o;
-        if (!old) return false;
-        this.tiles.delete(this.key(old.rx, old.ry, old.az));
-        slot = old.slot;
-        this.stats.evicted++;
-      }
-      t = { rx, ry, az: cam.azimuth, slot, tw, th, dens, a0, b1, top: top + oz, bakedAt: 0, usedAt: this.frame };
-      this.tiles.set(key, t);
-      this.bySlot[slot] = t;
-      this.stats.first++;
-    } else this.stats.again++;
-    Object.assign(t, { tw, th, dens, a0, b1, top: top + oz, bakedAt: this.frame, usedAt: this.frame });
-    this.stats.bakes++;
+    const t = this.allocTile(rx, ry, cam.azimuth);
+    if (!t) return false;
+    Object.assign(t, { tw, th, dens, a0, b1, top: top + oz, gpu: false });
     const sx = (t.slot % this.cols) * SW;
     const sy = Math.floor(t.slot / this.cols) * SH;
+    // (round 105: what it's baked at, for the draw — tiles.wgsl TP)
+    h.device.queue.writeBuffer(this.tparams, t.slot * 32, new Float32Array([a0, b1, dens, 0, tw, th, top + oz, 1]));
     // the bake's camera: the view's rotation, the tile's scale, the region's box on [0, tw) x [0, th)
     const kx = (2 * dens) / tw;
     const ky = (2 * dens) / th;
@@ -421,6 +432,55 @@ export class TileCache {
     cd[23] = 1 / dens;
     cd.fill(0, CAMERA_CUT_OFFSET / 4, (CAMERA_CUT_OFFSET + CAMERA_CUT_BYTES) / 4);
     h.device.queue.writeBuffer(camBuf, 0, cd);
+    this.encodeBake(enc, sx, sy, tw, th, drawG, resolve);
+    return true;
+  }
+
+  /**
+   * (round 105, tilelatency) Region (rx, ry)'s tile at this turn: its own, a free slot, or the least recently used's
+   * (never one this frame drew or baked); its bake counted. null: no slot.
+   */
+  allocTile(rx: number, ry: number, az: number): Tile | null {
+    const key = this.key(rx, ry, az);
+    let t = this.tiles.get(key);
+    if (!t) {
+      let slot = this.bySlot.indexOf(null);
+      if (slot < 0) {
+        let old: Tile | null = null;
+        for (const o of this.bySlot) if (o && o.usedAt < this.frame && (!old || o.usedAt < old.usedAt)) old = o;
+        if (!old) return null;
+        this.tiles.delete(this.key(old.rx, old.ry, old.az));
+        slot = old.slot;
+        this.stats.evicted++;
+      }
+      t = { rx, ry, az, slot, tw: 0, th: 0, dens: 1, a0: 0, b1: 0, top: 0, bakedAt: 0, usedAt: this.frame };
+      this.tiles.set(key, t);
+      this.bySlot[slot] = t;
+      this.stats.first++;
+    } else this.stats.again++;
+    t.bakedAt = this.frame;
+    t.usedAt = this.frame;
+    this.stats.bakes++;
+    return t;
+  }
+
+  /** a slot's corner in the atlas (px) and its size */
+  slotPx(t: Tile): [number, number, number, number] {
+    return [(t.slot % this.cols) * SW, Math.floor(t.slot / this.cols) * SH, SW, SH];
+  }
+
+  /** (round 105) what each slot was baked at (tiles.wgsl TP: 2 vec4 a slot) — a render-only tile's written by the GPU */
+  get params(): GPUBuffer {
+    return this.tparams;
+  }
+
+  /**
+   * A bake's passes: `drawG` into the bake G-buffer (its viewport the slot's used vw x vh from the top left; its
+   * pipelines and groups set, through the bake's camera), then `resolve` into the atlas at the slot (the first group
+   * over the whole of it, the rest over that).
+   */
+  encodeBake(enc: GPUCommandEncoder, sx: number, sy: number, vw: number, vh: number, drawG: (g: GPURenderPassEncoder) => void, resolve: GPUBindGroup[]): void {
+    const h = this.host;
     const g = enc.beginRenderPass({
       label: 'tiles-g',
       colorAttachments: [
@@ -430,8 +490,8 @@ export class TileCache {
       depthStencilAttachment: { view: this.gbD.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
       timestampWrites: h.profiler.timestamps('tiles-g'),
     });
-    g.setViewport(0, 0, tw, th, 0, 1);
-    g.setScissorRect(0, 0, tw, th);
+    g.setViewport(0, 0, vw, vh, 0, 1);
+    g.setScissorRect(0, 0, vw, vh);
     drawG(g);
     g.end();
     const r = enc.beginRenderPass({
@@ -442,19 +502,18 @@ export class TileCache {
       ],
       timestampWrites: h.profiler.timestamps('tiles-bake'),
     });
-    r.setViewport(sx, sy, tw, th, 0, 1);
-    r.setScissorRect(sx, sy, tw, th);
+    r.setViewport(sx, sy, vw, vh, 0, 1);
+    r.setScissorRect(sx, sy, vw, vh);
     resolve.forEach((grp, i) => {
       r.setPipeline(i === 0 ? this.pipes!.bake : this.pipes!.over);
       r.setBindGroup(0, grp);
       r.draw(3);
     });
     r.end();
-    return true;
   }
 
   /** (round 104) the render-only land (tileland.ts): regions past the window made, meshed and baked */
-  land?: TileLand;
+  land?: LandMaker;
 
   /**
    * (round 105, `tileahead`) The regions past the window a tile should draw and none does yet, the camera's way
@@ -620,9 +679,10 @@ export class TileCache {
           continue;
         }
         const aw = this.anchorWin(t.rx, t.ry);
-        // (the eye's side of the focus: none that would rise into the line from the eye to it)
+        // (the eye's side of the focus: none that would rise into the line from the eye to it — a GPU-baked tile's top
+        // isn't known here: not held back)
         const ah = ((aw[0] + R / 2 - cam.target[0]) * ex + (aw[1] + (R * ROW_H) / 2 - cam.target[1]) * ey) / el;
-        if (ah > 24) {
+        if (ah > 24 && !t.gpu) {
           const cap = tz + (ah - R * 0.75) * (cam.eye[2] / el) * 0.85;
           if (t.top - this.origin![2] > cap) {
             this.stats.skipEye++;
@@ -635,14 +695,14 @@ export class TileCache {
         const x1 = (ra + t.a0 + t.tw / t.dens) * B.sx + m[12];
         const y1 = (ua + t.b1) * B.sy + m[13];
         const y0 = (ua + t.b1 - t.th / t.dens) * B.sy + m[13];
-        if (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1) {
+        if (!t.gpu && (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1)) {
           this.stats.skipOff++;
           continue;
         }
         const fa = B.f[0] * aw[0] + B.f[1] * aw[1] + B.f[2] * aw[2];
         const sx = (t.slot % this.cols) * SW;
         const sy = Math.floor(t.slot / this.cols) * SH;
-        d.set([x0, y0, x1, y1, sx, sy, t.tw, t.th, aw[0], aw[1], aw[2], fa * B.sz + m[14], t.a0, t.b1, t.dens, arriving ? 1 : 0], n * 16);
+        d.set([ra * B.sx + m[12], ua * B.sy + m[13], B.sx, B.sy, sx, sy, t.slot, arriving ? 1 : 0, aw[0], aw[1], aw[2], fa * B.sz + m[14], 0, 0, 0, 0], n * 16);
         const s = ((t.ry % MASK_N) + MASK_N) % MASK_N;
         const q = ((t.rx % MASK_N) + MASK_N) % MASK_N;
         md[2 + s * MASK_N + q] = ((t.rx & 0xffff) | (t.ry << 16)) >>> 0;
@@ -721,6 +781,7 @@ export class TileCache {
         { binding: 43, resource: this.atlasB.createView() },
         { binding: 44, resource: { buffer: this.inst } },
         { binding: 45, resource: { buffer: this.uni } },
+        { binding: 46, resource: { buffer: this.tparams } },
       ],
     });
     pass.setPipeline(this.pipes.draw);

@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 105 (session 5, `tilelatency`) — the tiles' latency; everything on the GPU; tiles on by default; the rings retired
+
+- The user, on places with `?tiles=1`, verbatim: "It seems like it lags significantly when I pan (no framerate issues
+  but many unloaded tiles that take a second or so to pop in) which I don't get. If the time to generate them is on the
+  ms scale how can it take so long to show? Don't we prioritize the rendering latency for those tiles?"
+- Verbatim: "Why does the CPU readback and all of that happen all we care about is visuals until your character gets
+  there. We don't even really need CPU readback once we move to agents on the GPU fully"
+- Verbatim: "Settlements also should be GPU and vegetation we already discussed this."
+- On the tiles, verbatim: "Didn't I already sign off on the tiles? I think the seam is ok for now." (earlier: "Tiles
+  look good").
+- → Branch `tilelatency`: a render-only tile's land made and baked on the GPU with nothing read back and no worker
+  (no settlement plan: towns in tiles from GPU stamps later, TC8); the tiles on by default (`?tiles=0` off); with them
+  the LOD rings, farbake and fardetail retired (AR3), the round 73 far land kept for where no tile is yet and for the
+  free cameras (BACKLOG TC6, TC11, AR3; AR7 deletes the ring code once the phone confirms).
+
 ## 2026-10-28 — round 105 (session 5, `tileahead`) — the tiles load the camera's way
 
 - The user, on the tiles in places (`?tiles=1`), verbatim: "Tiles look good but they seem to load in the direction
