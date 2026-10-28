@@ -530,6 +530,17 @@ export class FieldMesh {
           this.wanted[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? 0 : old[sy * this.nx + sx];
         }
     }
+    // (round 104, tilecache: what's built goes round with them too — the fresh ones not)
+    if (this.built.length === this.nx * this.ny && this.builtSlides === this.slides - 1) {
+      const old = this.built.slice();
+      for (let cy = 0; cy < this.ny; cy++)
+        for (let cx = 0; cx < this.nx; cx++) {
+          const sx = cx + dcx;
+          const sy = cy + dcy;
+          this.built[cy * this.nx + cx] = sx < 0 || sy < 0 || sx >= this.nx || sy >= this.ny ? 0 : old[sy * this.nx + sx];
+        }
+      this.builtSlides = this.slides;
+    }
     // (the CPU's chunk tops go round with them; the fresh ones aren't known yet)
     if (this.tops.length) {
       const old = this.tops.slice();
@@ -848,8 +859,8 @@ export class FieldMesh {
       if (this.built.length !== this.nx * this.ny) this.built = new Uint8Array(this.nx * this.ny);
       for (let c = 0; c < this.nx * this.ny; c++) {
         const b = CHUNK0 + c * CSTRIDE;
-        // (round 103, tilecache: built — as far.wgsl meshBuilt reads it)
-        this.built[c] = u[b + 5] !== FRESH_HASH && u[b + 5] !== 0 && u[b] > 0 ? 1 : 0;
+        // (round 103, tilecache: built — as far.wgsl meshBuilt reads it; a readback from before a slide isn't)
+        if (this.statSlides === this.slides) this.built[c] = u[b + 5] !== FRESH_HASH && u[b + 5] !== 0 && u[b] > 0 ? 1 : 0;
         indices += u[b];
         verts += u[b + 7];
         full += u[b + 9];
@@ -858,7 +869,7 @@ export class FieldMesh {
         if (t > 0) this.tops[c] = t;
       }
       this.stats = { changed: u[0], verts, indices, full };
-      this.builtSlides = this.statSlides;
+      if (this.statSlides === this.slides) this.builtSlides = this.slides;
       buf.unmap();
       this.statBusy = false;
     }, ignoreTeardown);

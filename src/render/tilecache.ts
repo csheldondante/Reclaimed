@@ -533,7 +533,13 @@ export class TileCache {
       for (const t of this.tiles.values()) {
         if (Math.round(t.az * 1e4) !== azk) continue;
         const inWin = t.rx >= w0 && t.rx < w0 + wn && t.ry >= h0 && t.ry < h0 + hn;
-        if (inWin) continue;
+        // (round 104, no pop-in: a region come into the window whose chunks the window draws none of yet — not built,
+        // not the grid's — keeps its tile, drawn inside the window too, till the window has it)
+        let arriving = false;
+        if (inWin) {
+          if (!this.arriving(t.rx - w0, t.ry - h0)) continue;
+          arriving = true;
+        }
         frozen++;
         if (Math.abs(t.rx - crx) >= MASK_N / 2 || Math.abs(t.ry - cry) >= MASK_N / 2) {
           this.stats.skipFar++;
@@ -562,7 +568,7 @@ export class TileCache {
         const fa = B.f[0] * aw[0] + B.f[1] * aw[1] + B.f[2] * aw[2];
         const sx = (t.slot % this.cols) * SW;
         const sy = Math.floor(t.slot / this.cols) * SH;
-        d.set([x0, y0, x1, y1, sx, sy, t.tw, t.th, aw[0], aw[1], aw[2], fa * B.sz + m[14], t.a0, t.b1, t.dens, 0], n * 16);
+        d.set([x0, y0, x1, y1, sx, sy, t.tw, t.th, aw[0], aw[1], aw[2], fa * B.sz + m[14], t.a0, t.b1, t.dens, arriving ? 1 : 0], n * 16);
         const s = ((t.ry % MASK_N) + MASK_N) % MASK_N;
         const q = ((t.rx % MASK_N) + MASK_N) % MASK_N;
         md[2 + s * MASK_N + q] = ((t.rx & 0xffff) | (t.ry << 16)) >>> 0;
@@ -586,6 +592,23 @@ export class TileCache {
       this.maskKey = mk;
       this.host.device.queue.writeBuffer(this.mask, 0, md);
     }
+  }
+
+  /** window region (i, j): none of its four chunks drawn by the window yet (not built — FieldMesh.built, kept across
+   *  slides — nor the hybrid grid's) */
+  private arriving(i: number, j: number): boolean {
+    const fm = this.host.win.mesh;
+    const [nx, ny] = fm.chunkGrid;
+    if (fm.builtSlides !== fm.slides || fm.built.length !== nx * ny) return false;
+    const grid = this.host.gridOn();
+    for (let k = 0; k < 4; k++) {
+      const cx = 2 * i + (k & 1);
+      const cy = 2 * j + (k >> 1);
+      if (cx >= nx || cy >= ny) continue;
+      const c = cy * nx + cx;
+      if (fm.built[c] || (grid && grid[c])) return false;
+    }
+    return true;
   }
 
   /** what's in the mask (its regions), to write it only when it changes */

@@ -184,7 +184,8 @@ fn fsTile(in: TOut) -> TFrag {
   // window, past a cell — the window draws its own land live)
   let rl = p.xy - t.anchor.xy;
   if (any(rl < vec2<f32>(-TU.win.w)) || any(rl > TU.win.zz * vec2<f32>(1.0, 0.8660254) + TU.win.w)) { discard; }
-  if (all(p.xy > vec2<f32>(TU.win.w)) && all(p.xy < TU.win.xy - TU.win.w)) { discard; }
+  // (an arriving region's tile — plane.w 1 — draws inside the window till the window draws its land)
+  if (t.plane.w < 0.5 && all(p.xy > vec2<f32>(TU.win.w)) && all(p.xy < TU.win.xy - TU.win.w)) { discard; }
   let a = textureLoad(tileA, tx, 0);
   let alb = a.rgb * a.rgb * 2.0;
   let n = octDec(b.x & 0x3fffffffu);
