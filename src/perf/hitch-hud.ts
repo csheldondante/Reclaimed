@@ -4,6 +4,7 @@
 // server a POST to /__hitch (vite.config.ts writes it to perf-reports/). Redrawn twice a second; tap the title to fold.
 
 import { CAUSE_COLOURS, type HitchRecorder } from './hitch';
+import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './report-io';
 
 export class HitchHud {
   private text: HTMLPreElement;
@@ -40,6 +41,8 @@ export class HitchHud {
       bar.appendChild(b);
     };
     bar.appendChild(title);
+    // (round 101, bench: a download first — the phone's screen is small; src/perf/report-io.ts)
+    btn('download', () => void this.download());
     btn('send report', () => void this.send());
     btn('copy', () => void this.copy());
     btn('clear', () => rec.reset());
@@ -115,48 +118,28 @@ export class HitchHud {
     this.status.textContent = s;
   }
 
+  private name(): string {
+    return `hitch-${stamp()}.json`;
+  }
+
+  /** (round 101) the report as a file (Downloads on the phone) */
+  private async download(): Promise<void> {
+    const body = this.json();
+    this.say(downloadJson(body, `reclaimed-hitch-${stamp()}-${await deviceTag()}.json`));
+  }
+
   private async send(): Promise<void> {
     const body = this.json();
-    const name = `hitch-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
     // (the dev server keeps it: vite.config.ts /__hitch → perf-reports/)
-    if (import.meta.env.DEV) {
-      try {
-        const res = await fetch('/__hitch', { method: 'POST', body, headers: { 'content-type': 'application/json' } });
-        if (res.ok) {
-          this.say(`saved ${(await res.text()).trim()}`);
-          return;
-        }
-      } catch {
-        // (not served by the dev server: share or download below)
-      }
-    }
-    const file = new File([body], name, { type: 'application/json' });
-    const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
-    if (nav.canShare?.({ files: [file] })) {
-      try {
-        await navigator.share({ files: [file], title: 'Reclaimed hitch report' });
-        this.say('shared');
-        return;
-      } catch (e) {
-        if ((e as Error).name === 'AbortError') {
-          this.say('share cancelled');
-          return;
-        }
-      }
-    }
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(file);
-    a.download = name;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-    this.say(`downloaded ${(body.length / 1024).toFixed(0)} KB`);
+    const dev = await postDev(body, 'hitch');
+    if (dev) return this.say(dev);
+    const shared = await shareJson(body, this.name(), 'Reclaimed hitch report');
+    this.say(shared || downloadJson(body, this.name()));
   }
 
   private async copy(): Promise<void> {
-    const body = this.json();
     try {
-      await navigator.clipboard.writeText(body);
-      this.say(`copied ${(body.length / 1024).toFixed(0)} KB`);
+      this.say(await copyText(this.json()));
     } catch (e) {
       this.say(`copy failed: ${(e as Error).message}`);
     }

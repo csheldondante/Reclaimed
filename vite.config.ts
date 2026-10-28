@@ -33,7 +33,9 @@ function hitchSink(): Plugin {
           }
           const dir = path.resolve(__dirname, 'perf-reports');
           fs.mkdirSync(dir, { recursive: true });
-          const name = `hitch-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
+          // (round 101, bench: ?kind=bench → bench-<time>.json, the benchmark's result; else a hitch report)
+          const kind = new URL(req.url ?? '/', 'http://x').searchParams.get('kind') === 'bench' ? 'bench' : 'hitch';
+          const name = `${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
           fs.writeFileSync(path.join(dir, name), body);
           res.end(`perf-reports/${name}`);
         });

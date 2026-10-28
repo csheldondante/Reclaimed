@@ -3,6 +3,26 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 101 (session 5, `bench`) — a calibration benchmark on the phone
+
+- The user, verbatim: "Can you build a calibration test that we can run on the phone to directly give you benchmark
+  numbers? It really isn't efficient for me to tell you by feel when we could run something and give you numbers on
+  how long different things take in practice so you can compute throughput and then target the actual bottlenecks. I
+  can say the atlas mode plays better after last nights work but the hero runs still have framerate drop and they
+  show much less of the map generally speaking. If we had adaptive tile generation, precached larger areas when
+  traveling via the atlas map we might be able to improve framerate in that mode rather than guessing. That said my
+  intuition is that controllers should be parameterized and live in the engine on the GPU and just target better
+  framerate to deal with latency or dispatch the input based update before rendering."
+- Agreed the same round: generation stays fully on the GPU (GPU stamps for ways and settlements, packing on the GPU,
+  straight into the region pool), a GPU-time budget a frame for generation, hero locomotion as engine kits, and one
+  small near-hero CPU cache read only where pages changed. The benchmark is what sizes those.
+- On getting the result off the phone, verbatim: "Will this generate a file or something on screen to copy? A
+  download report button is probably better because screen space is limited and copying may be a pain." Then: "A
+  copy button is also fine I just don't want to manually select and copy".
+- → Branch `bench`: `?bench=1`, one tap, ~5 minutes; a big "Download report" button (the JSON as a file), "Copy" (the
+  whole JSON on the clipboard in one tap) and a small "Share…"; the hitch recorder's HUD has "download" too (BACKLOG
+  BN1–BN8).
+
 ## 2026-10-27 — round 100 (session 5, `regionstore`) — the world serializes; streaming never waits on a region
 
 - The user, verbatim: "I want to try to fix the performance issues and I want the world to serialize so we can
