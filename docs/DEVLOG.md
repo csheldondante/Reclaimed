@@ -7840,11 +7840,15 @@ a region coming in was still being read back.
    back (pages to layers and layersNext, buffers a row at a time, textures; the textures not kept from a blank
    buffer on the GPU, not writeTexture from the CPU). Land made or loaded ahead is uploaded into a slot before the
    slide (`prepare` / `pump`, ≤ 3 ms of a frame). LRU; what was left behind is evicted before what's made ahead.
-2. *Change detection off the frame*: each region frozen (and the window's, one every 400 ms; all when the page is
-   hidden) is copied on to a staging buffer and read back; its columns hashed in world z with a signature (each
-   column's top and matter thickness). Changed = off how it was made by > 0.3 cells anywhere (the sims' drift
-   between two reads of a still region: 38–44 columns, ≤ 0.03 cells). A changed region is written whole whenever
-   its hash differs from what's saved; one never changed isn't saved — evicted, it's made again when wanted.
+2. *Change detection off the frame*: a region is changed once play touches it (`Streamer.touch`: every event sent
+   but scares and ripples — edits from the world API, the editor, agents, a story's door; lightning; fire; a tap
+   to grow — what falls and lands, the coarse world's events in sight). Each region frozen (and the window's, one
+   every 400 ms; all when the page is hidden) is copied on to a staging buffer and read back; a changed one's
+   columns are hashed in world z and it's written whole whenever the hash differs from what's saved; one never
+   changed isn't saved — evicted, it's made again when wanted. (The first cut counted a region changed when its
+   columns' tops or thickness moved > 0.3 cells from how they were made — the sims' drift between two reads of a
+   still region is ~40 columns by ≤ 0.03 — but that kept 18 of the first window's 25 regions in its first minute
+   with nobody near, ~0.35 a second riding: ~30 MB a 10-minute ride. Main: play's touches, not the sims' drift.)
 3. *The store* (world/region-store.ts + worker): IndexedDB, a record a region (versioned header JSON, the layout's
    body, outside, surface, ground, relief; things), byte-shuffled and deflated (CompressionStream) in the worker;
    the index (meta store) read at open so `has` is synchronous. `?worldsave=0`: the worker's memory only.
@@ -7878,9 +7882,19 @@ a region coming in was still being read back.
   41.9 / 52.3 / 69 → 22 / 32.4 / 60 / 63.5. But at 160 the camera got 78.6 cells/s (was 104.8) and slides waited
   more (waited frames 125 → 145): the pool thrashed (498 evictions in 555 uploads at 32 slots — made-ahead regions
   evicted before their slide and made again); fixed by evicting what's behind first (re-measured below).
-- *Disk while riding*: regions counted as changed with nobody near them — the first window 18 of 25 in its first
-  minute, then ~0.35 a second riding (32 records after the four pans) — so a 10-minute ride writes ~200 records,
-  ~30 MB (RG9).
+- *Disk while riding* (touches): the test's four-pan sweep (~40 s riding, nothing done) wrote 11 records with the
+  first cut's rule as play-touched (what fell on arriving land — the judge of land come in, which hitchrec has
+  since removed) and 0 in the first window; worldsavetest's edits 4 records (the edited region and those the
+  meteor reached), 674 KB. A ride where nothing is done writes nothing but what falls; a 10-minute ride ≈ the
+  regions played in × ~150 KB.
+- *After the touch rule and the merge of places 3f67103* (hitchrec): ride 60/60 exact, warp 50/50, reload 4/4
+  restored exactly, reload then ride 60/60; the changed region the same after the reload (0 columns differ).
+- *speedsweep again* (eviction fix: what's behind before what's made ahead): slide p50 6.6 / 7.1 / 6.2 / 14.4 ms;
+  frame p95 29.5 / 44.4 / 71.4 / 140 at 40 / 80 / 120 / 160; got 35.9 / 67.2 / 96.2 / 56.4 cells/s (base 37.3 /
+  69.2 / 100.4 / 104.8); waited 0 / 35 / 114 / 117 frames (base 0 / 35 / 67 / 125). At 160 this run had 15% busy —
+  the slides in z (`slideZ`, 200+ ms each, zmesh's) — and the rings' share of the view 14%: runs on the shared iGPU
+  vary ~2× (round 98); 40–120 hold as before, the slide itself 4× shorter and its write stage ~1 ms (was 19–25).
+  The pool at 32 slots evicts about one region per upload while riding (all of it what was left behind).
 ## 2026-10-27 — round 100 (`hitchrec`): the hitch recorder, the GC audit, and the judge off arriving land
 
 The user: "I want to try to fix the performance issues"; "GC is worth looking into"; leaks and long-term performance

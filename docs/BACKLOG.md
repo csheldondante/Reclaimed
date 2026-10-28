@@ -30,6 +30,8 @@ Ids RG.
 | RG10 | A region's things saved mid-air: the window's sweep waits while anything falls (Integrity.quiet), but a reload within a sweep of an edit loses the last ~10 s of changes in that region (the sweep's round of 25 regions); IndexedDB writes in `pagehide` aren't waited for by the browser | S | open |
 | RG11 | Records are 1.8 MB raw, ~145 KB compressed: the kept fields are floats (water, moisture, veg, contam…). Quantize them, or keep only what differs from the generator (RG9) | S | open |
 | RG12 | zmesh (full-height window, oz always 0): the record's `sig` carries the window's zMax and K, so a zmesh-era region and a pre-zmesh one aren't confused; the region's size grows with K — measure the pool's memory there | S | open |
+| RG13 | (main, round 100) The world API mirror reads the whole window after every slide (HR10); with the pool a slide moves pages as copies the streamer knows — the mirror could re-read only the pages that came in | S | open |
+| RG14 | A run isn't saved: after a reload the run starts again and its stage (story/stage-gen.ts) is laid anew on the land as it is now — the opened door's land is restored where it was, but the stage's door is laid somewhere else, shut. Saving the run's stage (StageLand's pieces and the locks' state, world cells) with the world would keep the same door | S | open |
 
 ## Round 100 (2026-10-27, session 5, `hitchrec`) — instrumentation for the phone (DECISIONS round 100)
 

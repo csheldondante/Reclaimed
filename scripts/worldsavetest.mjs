@@ -290,17 +290,19 @@ try {
       }
       await sleep(15000);
     };
-    const plug = () =>
-      r.evaluate(async () => {
+    // (`spot`: a world spot — the door's last time; the stage is laid again on the land as it is now)
+    const plug = (spot) =>
+      r.evaluate(async (spot) => {
         const R = window.reclaimed;
         const k = R.run.stage.locks.find((l) => l.id === 'bone-door');
-        const [x, y] = R.run.winOf(k.at);
+        const [x, y] = R.run.winOf(spot ?? k.at);
         const T = R.api.terrain;
         await T.refresh();
+        if (x < 4 || y < 4 || x > R.stream.W - 4 || y > R.stream.H * 0.866 - 4) return { plug: null, out: true, at: [x, y], world: [...(spot ?? k.at)] };
         let n = 0;
         for (let dy = -3.2; dy <= 3.2; dy += 0.7) for (let dx = -3.2; dx <= 3.2; dx += 0.7) if (dx * dx + dy * dy <= 10.5 && T.materialAt(x + dx, y + dy) === k.material) n++;
-        return { plug: n, open: k.open, at: [x, y] };
-      });
+        return { plug: n, open: k.open, at: [x, y], world: [...(spot ?? k.at)] };
+      }, spot);
     await runOpen();
     const shut = await plug();
     console.log('the door before', JSON.stringify(shut));
@@ -317,8 +319,10 @@ try {
     await sleep(4000);
     await r.evaluate(() => window.reclaimed.stream.saveAll());
     await runOpen();
-    const after = await plug();
-    ok(after.plug <= opened.plug && after.plug < shut.plug, 'reloaded the run: the door still open (its plug gone)', after);
+    const after = await plug(opened.world);
+    const relaid = await plug();
+    ok(after.plug !== null && after.plug <= opened.plug && after.plug < shut.plug, 'reloaded the run: the opened door land restored (its plug gone where it was)', { after, relaid });
+    console.log(`     the run's stage laid again: its bone door now ${JSON.stringify(relaid.world)} (was ${JSON.stringify(opened.world)}), ${relaid.plug} plug cells`);
     await r.close();
   }
 } catch (e) {
