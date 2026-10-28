@@ -11,7 +11,14 @@ import { ignoreTeardown } from '../gpu/pipeline';
  * pages within NEAR_R of the focus (the camera's target) are read and written into the copy. Elsewhere a query sees
  * the world as it was up to NEAR_FULL reads ago.
  */
-const MIRROR_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mirror') === 'near';
+/**
+ * (round 100, hitchrec — main's call: near by default, `?mirror=full` the old whole reads) The whole read was 34 MB
+ * copied and mapped every 250 ms in the atlas (the layers 25 of it), the hitch recorder's top long-frame cause: the
+ * latency-sensitive readbacks (the judge's, the mesh's) waited 200–320 ms behind it. Round the camera's target (and
+ * any focus a caller keeps fresh: Paged.focus) the layers are as fresh as before; elsewhere up to NEAR_FULL reads old
+ * (2 s) — `refresh(true)` reads everything now for a caller that needs far columns as they are.
+ */
+const MIRROR_NEAR = typeof location !== 'undefined' && new URLSearchParams(location.search).get('mirror') !== 'full';
 const NEAR_R = 48;
 const NEAR_FULL = 8;
 
@@ -26,7 +33,8 @@ export interface Paged {
   chunk: number;
   /** world units a row (hex rows: √3/2) */
   rowH: number;
-  focus: () => [number, number] | null;
+  /** (round 100: the points kept fresh — the camera's target, and what callers keep: Terrain.keepFresh) */
+  focus: () => [number, number][];
 }
 
 interface Source {
@@ -127,8 +135,15 @@ export class Mirror {
     return v;
   }
 
-  /** Read everything back; resolves with data read after the call (a read in flight finishes first). */
-  async refresh(): Promise<void> {
+  /** the next read is whole (round 100: refresh(true)) */
+  private wantWhole = false;
+
+  /**
+   * Read everything back; resolves with data read after the call (a read in flight finishes first). `whole`
+   * (round 100): every page of the paged sources too — for a caller that needs far columns as they are now.
+   */
+  async refresh(whole = false): Promise<void> {
+    if (whole) this.wantWhole = true;
     while (this.inFlight) await this.inFlight;
     if (!this.size) return;
     this.inFlight = this.read();
@@ -146,18 +161,23 @@ export class Mirror {
   private pagesNear(s: Source, whole: boolean): [number, number][] | null {
     const p = s.paged;
     if (!p || whole || !this.data.has(s.name)) return null;
-    const f = p.focus();
-    if (!f) return null;
+    const fs = p.focus();
+    if (!fs.length) return null;
     const out: [number, number][] = [];
-    const cx0 = Math.max(0, Math.floor((f[0] - NEAR_R) / p.chunk));
-    const cx1 = Math.min(p.chunksX - 1, Math.floor((f[0] + NEAR_R) / p.chunk));
-    const cy0 = Math.max(0, Math.floor((f[1] - NEAR_R) / p.rowH / p.chunk));
-    const cy1 = Math.min(p.chunksY - 1, Math.floor((f[1] + NEAR_R) / p.rowH / p.chunk));
-    for (let cy = cy0; cy <= cy1; cy++)
-      for (let cx = cx0; cx <= cx1; cx++) {
-        const ci = cy * p.chunksX + cx;
-        out.push([p.chunkTable[ci * 2] * p.slotBytes, p.chunk * p.chunk * p.chunkTable[ci * 2 + 1] * p.slotBytes]);
-      }
+    const seen = new Set<number>();
+    for (const f of fs) {
+      const cx0 = Math.max(0, Math.floor((f[0] - NEAR_R) / p.chunk));
+      const cx1 = Math.min(p.chunksX - 1, Math.floor((f[0] + NEAR_R) / p.chunk));
+      const cy0 = Math.max(0, Math.floor((f[1] - NEAR_R) / p.rowH / p.chunk));
+      const cy1 = Math.min(p.chunksY - 1, Math.floor((f[1] + NEAR_R) / p.rowH / p.chunk));
+      for (let cy = cy0; cy <= cy1; cy++)
+        for (let cx = cx0; cx <= cx1; cx++) {
+          const ci = cy * p.chunksX + cx;
+          if (seen.has(ci)) continue;
+          seen.add(ci);
+          out.push([p.chunkTable[ci * 2] * p.slotBytes, p.chunk * p.chunk * p.chunkTable[ci * 2 + 1] * p.slotBytes]);
+        }
+    }
     return out;
   }
 
@@ -170,7 +190,8 @@ export class Mirror {
     }
     const tmp = this.staging;
     // (mirror=near: whole every NEAR_FULL reads and after a slide; else the paged sources' near pages)
-    const whole = this.reads++ % NEAR_FULL === 0 || !this.fresh();
+    const whole = this.reads++ % NEAR_FULL === 0 || !this.fresh() || this.wantWhole;
+    if (whole) this.wantWhole = false;
     const near = new Map<Source, [number, number][]>();
     const enc = this.device.createCommandEncoder({ label: 'mirror' });
     for (const s of this.sources) {

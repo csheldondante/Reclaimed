@@ -15,6 +15,10 @@ each was implemented.
   editing) I would wake it up … only needs to be done when the structure changes" and "you don't need to check all
   of them just the ones that we woke up". Generated land (stamped towns, ways, bridges) stands by construction; edits
   seed the judge. A judge pass caps its structure boxes at 8 ms and never blocks the main thread for seconds.
+- **Main's call:** the world API's mirror reads the layers by pages round the camera (and the points callers keep
+  fresh: the hero's) between whole reads, by default (`?mirror=full` the old). The user: readbacks are fine if they're
+  async and not latency sensitive — this one starved the latency-sensitive ones. A caller that needs far columns as
+  they are asks for a whole read (`refresh(true)`) rather than getting a stale answer.
 
 ## 2026-10-27 — round 99 (session 5, `runstream`) — the world streams during a run
 

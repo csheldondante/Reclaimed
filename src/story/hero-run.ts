@@ -110,6 +110,8 @@ export class HeroRun {
     this.units = d.units ?? new SimpleUnits(t);
     this.hero = (d.makeHero ?? ((w, at) => new Walker(w, at)))({ ground: t, units: this.units, water: d.api.water }, d.spawn);
     this.units.watch(this.hero.actor);
+    // (round 100, hitchrec: the world API's mirror reads the layers by pages round the camera; the hero's kept fresh too)
+    this.cleanup.push(t.keepFresh(() => this.hero.position()));
     this.pad = d.makeController?.(this.hero) ?? new TouchPad(d.ui, d.camera);
     this.figures = new Figures(d.device, d.renderer);
     this.waypoint = new Waypoint(d.ui);
