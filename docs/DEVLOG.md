@@ -8530,3 +8530,88 @@ loading (155 s). The result now separates those:
 Desktop smoke (zooms 14 and 5; the iGPU shared with other runs meanwhile, parked only 69 / 54 fps): strict smooth
 "none" from 10 cells/s (one 40–150 ms frame a step). No pop-in up to 480–640 cells/s at zoom 14 / window 320, and up
 to 80–120 at zoom 5 / window 512, pop-in from 120–160. Frames over budget per slide: 3–12 at zoom 14, 5–46 at zoom 5.
+## 2026-10-28 — round 104 (`slidehitch`): a slide without a long frame
+
+The user (verbatim): "I would like to try to get a steady 60fps on the phone with no hiccups and no pop in if
+possible." The pan bench's smoke (BN29) had every slide cost one 117–207 ms frame, classed gpu-held / gpu-busy behind
+`rs.load` (30–77 ms) and `pool.upload`.
+
+**Taking a slide apart** (scripts/slideprobe.mjs, new: the atlas at q=low 412x915, every system on, 1x, a window and a
+zoom, a straight pan up the screen from one land source — `gen`, `pool` back and forth over 384 cells, `disk` a line
+filled with every region touched and saved, the window warped back and panned again; every frame's interval with the
+streamer's state, the MB written / copied / mapped and the copy commands encoded in it; each slide's frames; the hitch
+recorder's worst with steps and io). Window 512, zoom 5, 60 cells/s, 10 s, places 78898ba:
+- generated: p50 10, p99 173, max 427 ms, 19 frames over 33 ms (14 over 50); pool: p99 216, max 374, 32 over 33.
+- the worst frames: gpu-busy and gpu-held with ~1 ms of CPU in them, 79–88 MB copied and **87 MB mapped** for reading
+  in the frame. Not the store: `rs.load` timed the await of the worker (IndexedDB, inflate), not the main thread.
+- what a slide asked of the GPU's queue: the strip leaving (8 regions at 512) copied into pool slots a row at a time
+  (each kept buffer's 64 rows: ~800 commands a region), the same back for the strip coming in, the shift of every
+  per-column buffer along x a row at a time (29 buffers x 512 rows: ~15 000), the clears of what comes in a row at a
+  time (~1 100 a region) — ~28 000 commands, each its own on D3D11 — and the leaving strip read back whole (a region is
+  ~11 MB at the whole-height window's K) to hash, whether or not play had touched it (only touched regions are saved).
+
+**What moved** (BACKLOG SH1–SH5):
+- the region rectangles by a compute kernel (scenes/region-copy.ts RegionCopier: rectangles of u32 words, a dispatch
+  each, parameters in one write a pass into a ring of uniform slots, bind groups kept per buffer pair): a region's
+  buffers are 13 dispatches, not ~800 copies — freeze, thaw and the CPU write path; `?slidecopy=rows` the old way;
+- the shift along x one copy a plane (new[i] = old[i + dx]: what wraps from the next row lands only in the columns
+  coming in, which are cleared or written after); the strip coming in cleared at once (a clear a plane along y, a
+  kernel rectangle from a row of zeros along x);
+- no readback of a region play never touched (the leaving strip's stage, the sweep): it's made again when wanted;
+  `saveAll` is done when nothing changed;
+- a loaded record's body uploaded into the pool as it came (it was split into layers, bufs and texs and packed back);
+  `rs.load` now times the main thread's decode only; a readback's hash and record are a task a region, run a few ms
+  a frame (`Streamer.later`; at once while the page is hidden), the stage read in place;
+- (BN28) the pool's victim is the region farthest from the window's middle a second of the camera's motion on: it
+  evicted what was left behind before what was made ahead, so a pan back lost what it came back to.
+
+**After** (same probe, same build otherwise):
+
+| source | p99 ms | max ms | > 33 ms | > 50 ms | came in (10 s) |
+|---|---|---|---|---|---|
+| generated | 173 → 29.9 | 427 → 57.9 | 19 → 5 | 14 → 1 | 112 made |
+| pool | 216 → 30.5 | 374 → 49.4 | 32 → 9 | 17 → 0 | thawed 15 → 25, 5 from disk |
+| disk | — → 38.8 | — → 88.3 | 11 | 4 | 32 loaded (every region touched: their 87 MB readbacks remain) |
+
+Each slide's own frames are now 9–30 ms (copy commands ~800 a slide, at most ~700 in one frame, ~400 MB of GPU
+copies: the shift still goes through the scratch and back). The frames left over 33 ms are gpu-held 60–90 ms frames
+mostly away from the slides, with the GPU's own frame at 20–40 ms (structure, draw, agents): the sims' and the
+renderer's (simscale, tilecache). With CPU throttle 4x the generated pan's p99 is 138 ms (gpu-held and gc); the base
+wasn't measured throttled (GPU time). Not run yet: `?bench=pan` before and after with its speed ramp, and the phone.
+
+### Round 104, later (`slidehitch`): the phone's one slide frame
+
+The phone's pan bench on round 1 (data/bench/pixel9a-pan-slidehitch.json): at zoom 14, window 256, 60 fps panning at
+30 cells/s with exactly one slow frame a slide: generated 33 ms ("browser"), disk and pool 50 ms (gpu-busy), the CPU
+in it under 1 ms. Wider windows fail on their parked frame cost (the sims'), not the slide; window 768 never loaded.
+What the slide's frame still asked of the GPU: the shift of every per-column buffer and texture copied out to the
+scratch and back (~400 MB of copies a slide at window 512, ~100 at 256).
+
+- the shift in place: RegionCopier.shift moves a storage buffer within itself in bands of a region, a dispatch a
+  band, in the order that reads a band before it's written over (d > 0 first to last, d < 0 last to first) — each word
+  read and written once; textures copy out only what stays; the scratch buffer only for a buffer that isn't a
+  storage buffer (none of the world's: ~64 B a column of GPU memory saved);
+- the pool's uploads at most 2 MB a frame;
+- the slide's GPU timed: the profiler's `slide` pass (an empty pass's start to another's end round the slide's work).
+
+Desktop probe (scripts/slideprobe.mjs, 60 cells/s, 10 s):
+
+| run | slide GPU ms (smoothed / max) | copies a slide MB | p99 | max | > 33 ms |
+|---|---|---|---|---|---|
+| generated, window 512 zoom 5 | 13.4 / 19.9 | ~400 → ~130 | 39.1 | 95.5 | 17 |
+| generated, window 256 zoom 14 | 4.8 / 5.5 | | 10.6 | 39.5 | 1 |
+| generated, 256, CPU throttle 4x | 5.8 / 6.6 | | 30.4 | 58.6 | 9 |
+| pool, 256, CPU throttle 4x | 5.2 / 5.8 | | 29.5 | 39.2 | 3 (thawed 20, loaded 2) |
+
+The 512 run's tail is worse than round 1's (p99 30 → 39, frames over 33 ms 5 → 17) while the slide's own GPU work is
+a third. The extra frames are gpu-held 60–90 ms frames away from the slides, on a GPU other agents share, so they
+aren't put down to this change; the 256 runs are what the phone does. Throttled 4x, the slide's CPU is the cost now:
+26 ms at most, 9 on average. Of that, the freeze's CPU part is ~7, the CPU grids, camera, events, onShift and
+windowMoved ~9, the level's onSlide ~5 (integrity.slid re-projects), a region's write up to 12 (BACKLOG SH9).
+Window 768 by estimate needs ~650 MB of GPU memory before the pool and meshes (SH10).
+
+The merge checks on slidehitch: towertest all passed; floatsweep all passed (0 floating); worldsavetest one FAIL,
+"warped 10 regions away and back: thawed > 0" (4 loaded, none thawed). places' own streamer fails it the same way:
+a pool of 32 can't hold the old window (25) and the new one with its ring. The ride check: 27 of 27 thawed, against
+places' 15 thawed and 2 loaded. The eviction is now the least recently used of the regions more than a region and
+a half outside where the window is heading, else the farthest.

@@ -1128,7 +1128,15 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   pages to layers and layersNext, its buffers a row at a time, its textures; what isn't kept from a blank buffer on
   the GPU). Land made or loaded ahead is uploaded into a slot (`prepare`, `pump`: a few ms of a frame) before the
   slide that brings it in, so a slide only copies. `Streamer.frozen` is the pool's index in LRU order; the oldest
-  not in use is evicted when a slot is wanted. The CPU parts go with a slot: what's outside the window per column,
+  not in use is evicted when a slot is wanted. (Round 104, `slidehitch`: a region's buffers move between the window and a
+  slot by a compute kernel, one dispatch a buffer — `scenes/region-copy.ts` RegionCopier, rectangles of words — not
+  a copy command a row; a slide's shift along x is one copy a plane; the strip coming in cleared at once; the victim
+  is the least recently used region more than a region and a half outside where the window is heading (else the
+  farthest), not simply the oldest; a region play never touched is not read
+  back at all when it leaves or in the sweep; a loaded record's body is uploaded as it came; a readback's hashing
+  and encoding are tasks run a few ms a frame, `Streamer.later`;
+  the slide's shift moves each storage buffer within itself in bands of a region (`RegionCopier.shift`), no scratch;
+  uploads into the pool at most 2 MB a frame.) The CPU parts go with a slot: what's outside the window per column,
   the surface, the ground, the relief, the coarse world's snapshot.
 - **Change detection**: a region is *changed* once play touches it (`Streamer.touch`, window cells): every event
   sent to the GPU but scares and ripples (edits — the world API's, the editor's, agents' digs, a story's door —

@@ -42,6 +42,8 @@ each was implemented.
   the GPU. I want to know on each device and at each zoom what is a max speed that is smooth, hitch free and never
   lags behind the camera."
 - → `?bench=pan` on `bench2` (BACKLOG BN27).
+- And, verbatim: "I would like to try to get a steady 60fps on the phone with no hiccups and no pop in if possible."
+  → `slidehitch`: a slide no longer costs a long frame (BACKLOG BN29, SH1–SH6).
 
 ## 2026-10-28 — round 102 (session 5, `bench2`) — the benchmark after the first phone run
 
