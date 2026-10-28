@@ -1915,5 +1915,10 @@ clears them).
   the median wall from a frame's submit to `onSubmittedWorkDone` (its own rAF callback runs after main.ts's). Only a
   bound frame shows a cost in its interval (`ab.bound` says which). The start page times one workload three ways
   (`timestampModes`). The report opens with `summary` (the headline numbers), then the details.
+- **v3 (round 102):** `version: 3`. Window pages for 256/320/384/448/512 (scenes/range.ts RANGES and two wider),
+  each with a ride and `maxPan` (the probe: `scene.pan.speed` raised step by step; low detail from the streamer's
+  `unwritten` regions and the window's edge against the parked view). benchMode counts a level page's loads
+  (`tries`): a second load is `skip` (main.ts calls benchSkip); main.ts sends a lost device (not 'destroyed') to
+  benchSkip too.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.
