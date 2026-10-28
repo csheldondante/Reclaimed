@@ -8,7 +8,9 @@
 //   rc.rect({ src, srcOff, srcRow, dst, dstOff, dstRow, rowWords, rows, planes, srcPlane, dstPlane })
 //   rc.encode(enc)        // one compute pass with every rectangle queued since the last encode, in order
 //
-// Offsets and strides are in words (4 bytes). A buffer is never both a rectangle's source and destination.
+// Offsets and strides are in words (4 bytes). (Round 104, later: `shift` moves a plane's columns or rows within one
+// buffer, in bands a dispatch each — a band is read before the dispatch before it writes over it — so a slide's
+// shift reads and writes each buffer once, not twice through a scratch buffer.)
 
 const WG = 64;
 /** a rectangle's parameters, one 256-byte slot each in a ring (uniform dynamic offsets) */
@@ -27,6 +29,21 @@ struct P {
 fn main(@builtin(global_invocation_id) g: vec3u) {
   if (g.x >= p.rowWords || g.y >= p.rows) { return; }
   dst[p.dstOff + g.z * p.dstPlane + g.y * p.dstRow + g.x] = src[p.srcOff + g.z * p.srcPlane + g.y * p.srcRow + g.x];
+}
+`;
+
+/** the same within one buffer (the source band isn't the destination band) */
+const CODE_IN = /* wgsl */ `
+struct P {
+  srcOff: u32, dstOff: u32, rowWords: u32, rows: u32,
+  srcRow: u32, dstRow: u32, srcPlane: u32, dstPlane: u32,
+};
+@group(0) @binding(0) var<uniform> p: P;
+@group(0) @binding(1) var<storage, read_write> buf: array<u32>;
+@compute @workgroup_size(${WG})
+fn main(@builtin(global_invocation_id) g: vec3u) {
+  if (g.x >= p.rowWords || g.y >= p.rows) { return; }
+  buf[p.dstOff + g.z * p.dstPlane + g.y * p.dstRow + g.x] = buf[p.srcOff + g.z * p.srcPlane + g.y * p.srcRow + g.x];
 }
 `;
 
@@ -49,6 +66,9 @@ export interface Rect {
 export class RegionCopier {
   private pipeline: GPUComputePipeline;
   private layout: GPUBindGroupLayout;
+  private pipeIn: GPUComputePipeline;
+  private layoutIn: GPUBindGroupLayout;
+  private groupsIn = new WeakMap<GPUBuffer, GPUBindGroup>();
   private params: GPUBuffer;
   private at = 0;
   private queued: Rect[] = [];
@@ -71,6 +91,18 @@ export class RegionCopier {
       layout: device.createPipelineLayout({ label: 'regionCopy', bindGroupLayouts: [this.layout] }),
       compute: { module: device.createShaderModule({ label: 'regionCopy', code: CODE }), entryPoint: 'main' },
     });
+    this.layoutIn = device.createBindGroupLayout({
+      label: 'regionShift',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform', hasDynamicOffset: true, minBindingSize: 32 } },
+        { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+      ],
+    });
+    this.pipeIn = device.createComputePipeline({
+      label: 'regionShift',
+      layout: device.createPipelineLayout({ label: 'regionShift', bindGroupLayouts: [this.layoutIn] }),
+      compute: { module: device.createShaderModule({ label: 'regionShift', code: CODE_IN }), entryPoint: 'main' },
+    });
     this.params = device.createBuffer({ label: 'regionCopy params', size: SLOT * RING, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
@@ -78,6 +110,29 @@ export class RegionCopier {
   rect(r: Rect): void {
     if (r.src === r.dst) throw new Error('regionCopy: a rectangle within one buffer');
     this.queued.push(r);
+  }
+
+  /**
+   * A plane-wise shift within `buf` (a w × h grid of `s` words a cell, `planes` planes): new(x, y) = old(x + dx, y + dy),
+   * dx or dy a whole number of bands, the other 0. What's left in the band coming in is stale (the caller clears or
+   * writes it). Bands of |dx| columns (or |dy| rows), each a dispatch, in the order that reads a band before it's
+   * written over.
+   */
+  shift(buf: GPUBuffer, w: number, h: number, s: number, planes: number, dx: number, dy: number): void {
+    const plane = w * h * s;
+    const d = dx || dy;
+    const n = Math.abs(d);
+    const bands = (dx ? w : h) / n;
+    if (!Number.isInteger(bands)) throw new Error(`regionShift: ${dx ? w : h} isn't whole bands of ${n}`);
+    for (let k = 0; k < bands - 1; k++) {
+      // (d > 0: band k from band k + 1, first to last; d < 0: band k + 1 from band k, last to first)
+      const b = d > 0 ? k : bands - 2 - k;
+      const [to, from] = d > 0 ? [b, b + 1] : [b + 1, b];
+      const r: Rect = dx
+        ? { src: buf, dst: buf, srcOff: from * n * s, dstOff: to * n * s, srcRow: w * s, dstRow: w * s, rowWords: n * s, rows: h, planes, srcPlane: plane, dstPlane: plane }
+        : { src: buf, dst: buf, srcOff: from * n * w * s, dstOff: to * n * w * s, srcRow: w * s, dstRow: w * s, rowWords: w * s, rows: n, planes, srcPlane: plane, dstPlane: plane };
+      this.queued.push(r);
+    }
   }
 
   /** Every rectangle queued, in one compute pass of `enc` (nothing when none); their parameters in one write. */
@@ -105,8 +160,10 @@ export class RegionCopier {
     this.at += n;
     this.device.queue.writeBuffer(this.params, base * SLOT, h, 0, n * W);
     const pass = enc.beginComputePass({ label: 'regionCopy' });
-    pass.setPipeline(this.pipeline);
+    let cur: GPUComputePipeline | null = null;
     this.queued.forEach((r, k) => {
+      const pipe = r.src === r.dst ? this.pipeIn : this.pipeline;
+      if (pipe !== cur) pass.setPipeline((cur = pipe));
       pass.setBindGroup(0, this.group(r), [(base + k) * SLOT]);
       pass.dispatchWorkgroups(Math.ceil(r.rowWords / WG), r.rows, r.planes ?? 1);
     });
@@ -127,6 +184,15 @@ export class RegionCopier {
           { binding: 2, resource: { buffer: r.dst } },
         ],
       });
+    if (r.src === r.dst) {
+      let g = this.groupsIn.get(r.src);
+      if (!g)
+        this.groupsIn.set(
+          r.src,
+          (g = this.device.createBindGroup({ label: 'regionShift', layout: this.layoutIn, entries: [{ binding: 0, resource: { buffer: this.params, size: 32 } }, { binding: 1, resource: { buffer: r.src } }] })),
+        );
+      return g;
+    }
     if (r.once) return make();
     let m = this.groups.get(r.src);
     if (!m) this.groups.set(r.src, (m = new Map()));

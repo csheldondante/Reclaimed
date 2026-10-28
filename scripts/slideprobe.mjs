@@ -137,6 +137,7 @@ try {
     await sleep(1000);
     const st0 = await p.evaluate(() => {
       window.reclaimedHitch.rec.reset();
+      window.reclaimed.core.host.profiler.resetTotals();
       window.__log.f = [];
       window.__log.on = true;
       return { ...window.reclaimed.stream.stats };
@@ -172,7 +173,11 @@ try {
         }
       const iv = f.map((x) => x[0]).sort((a, b) => a - b);
       const rep = window.reclaimedHitch.report();
+      const prof = window.reclaimed.core.host.profiler;
+      const cpu = Object.entries(rep.cpuSteps ?? {}).filter(([k]) => /^(slide|write|rs\.|pool|band|relief|gen\.)/.test(k)).map(([k, v]) => `${k} ${v.max}/${v.mean}`).join(', ');
       return {
+        cpu,
+        slideGpu: { max: +(prof.maxMs.get('slide') ?? -1).toFixed(1), smooth: +(prof.passMs.get('slide') ?? -1).toFixed(1) },
         came,
         frames: iv.length,
         p50: iv[Math.floor(iv.length * 0.5)],
@@ -190,6 +195,7 @@ try {
     results.push(r);
     console.log(`SPEED ${speed} ${mode} win ${win} zoom ${zoom}: frames ${r.frames} p50 ${r.p50} p99 ${r.p99} max ${r.max} >33 ${r.over33} >50 ${r.over50} came ${JSON.stringify(r.came)}`);
     console.log(`  causes ${JSON.stringify(r.causes)}`);
+    console.log(`  slide GPU ms max ${r.slideGpu.max} smoothed ${r.slideGpu.smooth} | cpu max/mean (page) ${r.cpu}`);
     for (const s of r.slides) console.log(`  slide worst ${s.worst} busy ${s.busyFrames} write ${s.writeMB} MB copy ${s.copyMB} MB cmds ${s.cmds} (max ${s.cmdMax} a frame) | ${s.frames.join(' ')}`);
     for (const w of r.worst) console.log(`  worst ${w}`);
     await p.evaluate(() => (window.reclaimed.scene.pan = null));

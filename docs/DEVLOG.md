@@ -8559,3 +8559,40 @@ copies: the shift still goes through the scratch and back). The frames left over
 mostly away from the slides, with the GPU's own frame at 20–40 ms (structure, draw, agents): the sims' and the
 renderer's (simscale, tilecache). With CPU throttle 4x the generated pan's p99 is 138 ms (gpu-held and gc); the base
 wasn't measured throttled (GPU time). Not run yet: `?bench=pan` before and after with its speed ramp, and the phone.
+
+### Round 104, later (`slidehitch`): the phone's one slide frame
+
+The phone's pan bench on round 1 (data/bench/pixel9a-pan-slidehitch.json): at zoom 14, window 256, 60 fps panning at
+30 cells/s with exactly one slow frame a slide: generated 33 ms ("browser"), disk and pool 50 ms (gpu-busy), the CPU
+in it under 1 ms. Wider windows fail on their parked frame cost (the sims'), not the slide; window 768 never loaded.
+What the slide's frame still asked of the GPU: the shift of every per-column buffer and texture copied out to the
+scratch and back (~400 MB of copies a slide at window 512, ~100 at 256).
+
+- the shift in place: RegionCopier.shift moves a storage buffer within itself in bands of a region, a dispatch a
+  band, in the order that reads a band before it's written over (d > 0 first to last, d < 0 last to first) — each word
+  read and written once; textures copy out only what stays; the scratch buffer only for a buffer that isn't a
+  storage buffer (none of the world's: ~64 B a column of GPU memory saved);
+- the pool's uploads at most 2 MB a frame;
+- the slide's GPU timed: the profiler's `slide` pass (an empty pass's start to another's end round the slide's work).
+
+Desktop probe (scripts/slideprobe.mjs, 60 cells/s, 10 s):
+
+| run | slide GPU ms (smoothed / max) | copies a slide MB | p99 | max | > 33 ms |
+|---|---|---|---|---|---|
+| generated, window 512 zoom 5 | 13.4 / 19.9 | ~400 → ~130 | 39.1 | 95.5 | 17 |
+| generated, window 256 zoom 14 | 4.8 / 5.5 | | 10.6 | 39.5 | 1 |
+| generated, 256, CPU throttle 4x | 5.8 / 6.6 | | 30.4 | 58.6 | 9 |
+| pool, 256, CPU throttle 4x | 5.2 / 5.8 | | 29.5 | 39.2 | 3 (thawed 20, loaded 2) |
+
+The 512 run's tail is worse than round 1's (p99 30 → 39, frames over 33 ms 5 → 17) while the slide's own GPU work is
+a third. The extra frames are gpu-held 60–90 ms frames away from the slides, on a GPU other agents share, so they
+aren't put down to this change; the 256 runs are what the phone does. Throttled 4x, the slide's CPU is the cost now:
+26 ms at most, 9 on average. Of that, the freeze's CPU part is ~7, the CPU grids, camera, events, onShift and
+windowMoved ~9, the level's onSlide ~5 (integrity.slid re-projects), a region's write up to 12 (BACKLOG SH9).
+Window 768 by estimate needs ~650 MB of GPU memory before the pool and meshes (SH10).
+
+The merge checks on slidehitch: towertest all passed; floatsweep all passed (0 floating); worldsavetest one FAIL,
+"warped 10 regions away and back: thawed > 0" (4 loaded, none thawed). places' own streamer fails it the same way:
+a pool of 32 can't hold the old window (25) and the new one with its ring. The ride check: 27 of 27 thawed, against
+places' 15 thawed and 2 loaded. The eviction is now the least recently used of the regions more than a region and
+a half outside where the window is heading, else the farthest.

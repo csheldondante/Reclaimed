@@ -121,6 +121,9 @@ const SWEEP_MS = Number(param('sweepms') ?? 400);
 const UPLOAD_MS = 3;
 /** (round 104) a readback's hashing and encoding for the store (Streamer.later): this many ms of a frame at most (one at least) */
 const LATER_MS = 3;
+/** (round 104, ?uploadmb=) and at most this many MB uploaded into the pool a frame (one region at least): the phone's
+ *  frame with a few regions' writeBuffers in it was gpu-busy */
+const UPLOAD_BYTES = Number(param('uploadmb') ?? 2) * 1048576;
 /**
  * (round 104, `slidehitch`; ?slidecopy=rows the way before, to compare) A region's per-column buffers moved between
  * the window and a pool slot by a compute kernel, a dispatch a buffer (region-copy.ts), not a copy command a row:
@@ -434,7 +437,8 @@ export class Streamer {
   readonly onWarp: ((ox: number, oy: number, oz: number) => void)[] = [];
   private bufs: ColBuf[];
   private texs: ColTex[];
-  private scratch: GPUBuffer;
+  /** (round 104: made when a buffer that isn't a storage buffer is shifted — the kernel shifts the rest in place) */
+  private scratch: GPUBuffer | null = null;
   /** (round 104) a region's buffers to and from a pool slot, a dispatch a buffer */
   private copier: RegionCopier;
   private scratchTex = new Map<string, GPUTexture>();
@@ -532,8 +536,6 @@ export class Streamer {
       tx('windFieldNext', false, 1, 2),
     ];
     for (const x of this.bufs) if (x.buf.size < w * h * x.stride * x.planes) throw new Error(`${x.name}: ${x.buf.size} bytes, not ${x.stride} a column`);
-    const big = Math.max(...this.bufs.map((x) => x.buf.size));
-    this.scratch = wg.buf('streamScratch', big, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     this.copier = new RegionCopier(core.host.gpu.device);
     // (hybrid) the first window's relief, from the columns it was packed with
     const p = core.packed;
@@ -730,21 +732,31 @@ export class Streamer {
     for (;;) {
       const s = this.pool.alloc();
       if (s) return s;
-      // (round 104: the farthest from where the window is heading — the window's middle a second of the camera's
-      // motion on — never what a job is working on. Round 102 evicted what was left behind before what was made
-      // ahead: a pan back and forth lost the regions it was coming back to, loaded from disk or made again — BN28)
+      // (round 104: the least recently used of those more than a region and a half outside where the window is
+      // heading — the window's middle a second of the camera's motion on — else the farthest; never what a job is
+      // working on. Round 102 evicted what was left behind before what was made ahead: a pan back and forth lost the
+      // regions it was coming back to, loaded from disk or made again — BN28)
       const R = this.R;
       const lead = (v: number) => Math.max(-2 * R, Math.min(2 * R, v));
       const cx = (this.origin[0] + this.W / 2 + lead(this.vel[0])) / R - 0.5;
       const cy = (this.origin[1] + this.H / 2 + lead(this.vel[1])) / R - 0.5;
       const wrap = this.source.wrap;
       const d1 = (d: number, n?: number) => (n ? Math.min(Math.abs(d) % n, n - (Math.abs(d) % n)) : Math.abs(d));
+      const nearX = this.W / R / 2 + 1.5;
+      const nearY = this.H / R / 2 + 1.5;
       let victim: string | null = null;
       let far = -1;
       for (const k of this.frozen.keys()) {
         if (this.jobs.has(k)) continue;
         const [rx, ry] = k.split(',').map(Number);
-        const d = Math.hypot(d1(rx - cx, wrap && wrap[0] / R), d1(ry - cy, wrap && wrap[1] / R));
+        const ax = d1(rx - cx, wrap && wrap[0] / R);
+        const ay = d1(ry - cy, wrap && wrap[1] / R);
+        // (frozen is in LRU order: the first one outside is the oldest)
+        if (ax > nearX || ay > nearY) {
+          victim = k;
+          break;
+        }
+        const d = Math.hypot(ax, ay);
         if (d > far) {
           far = d;
           victim = k;
@@ -1269,8 +1281,10 @@ export class Streamer {
   /** (round 100) uploads of land into the pool, a few ms of the frame (one at least) */
   private pump(): void {
     const t0 = performance.now();
-    for (let n = 0; this.uploads.length && (n === 0 || performance.now() - t0 < UPLOAD_MS); n++) {
+    let bytes = 0;
+    for (let n = 0; this.uploads.length && (n === 0 || (performance.now() - t0 < UPLOAD_MS && bytes + this.layout.bytes <= UPLOAD_BYTES)); n++) {
       const u = this.uploads.shift()!;
+      bytes += this.layout.bytes;
       // (round 104: a loaded region's bytes as they came — the layout's already)
       timed('pool.upload', () => this.core.host.gpu.device.queue.writeBuffer(u.slot.buf, u.slot.off, u.f.body ?? this.toBody(u.f)));
       this.stats.uploads++;
@@ -1456,6 +1470,9 @@ export class Streamer {
 
     // ---- 1. freeze what leaves: copies into the pool (round 100), read back for the store off the frame ----
     const enc = dev.createCommandEncoder({ label: 'stream slide' });
+    // (round 104) the slide's GPU work timed (the profiler's 'slide' pass: an empty pass's start to another's end)
+    const ts = core.host.profiler.timestamps('slide');
+    if (ts) enc.beginComputePass({ label: 'slide t0', timestampWrites: { querySet: ts.querySet, beginningOfPassWriteIndex: ts.beginningOfPassWriteIndex } }).end();
     const tf = performance.now();
     const fz = SLIDE_SKIP.has('freeze') ? null : this.freezeInto(enc, leaving);
     record('slide.freeze', performance.now() - tSync);
@@ -1463,6 +1480,7 @@ export class Streamer {
     // (and the per-column buffers of what the game installed: the agents' fields — round 80)
     const mods = this.moduleBufs();
     if (!SLIDE_SKIP.has('bufs')) for (const b of [...this.bufs, ...mods]) this.shiftBuf(enc, b, dx, dy);
+    this.copier.encode(enc);
     if (!SLIDE_SKIP.has('texs')) for (const t of this.texs) this.shiftTex(enc, t, dx, dy);
     // (particles in the air: dropped — Q28 follow-up: move them with a kernel)
     enc.clearBuffer(wg.particles);
@@ -1490,6 +1508,7 @@ export class Streamer {
       }
       this.copier.encode(enc);
     }
+    if (ts) enc.beginComputePass({ label: 'slide t1', timestampWrites: { querySet: ts.querySet, endOfPassWriteIndex: ts.endOfPassWriteIndex } }).end();
     dev.queue.submit([enc.finish()]);
     if (fz) this.frozeInto(fz);
     this.times.freeze.push(performance.now() - tf);
@@ -2315,7 +2334,7 @@ export class Streamer {
   /** (round 104) a row of zeros on the GPU, at least `words` long (what the kernel clears from) */
   private zeros(words: number): GPUBuffer {
     if (!this.zeroBuf || this.zeroBuf.size < words * 4) {
-      this.zeroBuf?.destroy();
+      // (an older one may be queued still: left to the world's dispose)
       this.zeroBuf = this.core.world.buf('streamZeros', Math.max(words * 4, 4096), GPUBufferUsage.STORAGE);
     }
     return this.zeroBuf;
@@ -2326,33 +2345,42 @@ export class Streamer {
   private writeHost?: Uint8Array;
 
   /** new(x, y) = old(x + dx, y + dy), per plane */
-  /** the installed modules' per-column buffers (WorldCore.columnBufs) as the streamer's own, the scratch grown to fit */
+  /** the installed modules' per-column buffers (WorldCore.columnBufs) as the streamer's own */
   private moduleBufs(): ColBuf[] {
     const out: ColBuf[] = this.core.columnBufs.map((m) => ({ name: m.name, buf: m.buf, stride: m.stride, planes: m.planes, keep: false }));
-    const big = Math.max(0, ...out.map((b) => b.buf.size));
-    if (big > this.scratch.size) this.scratch = this.core.world.buf('streamScratch', big, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
     return out;
   }
 
   private shiftBuf(enc: GPUCommandEncoder, b: ColBuf, dx: number, dy: number): void {
     const { W, H } = this;
     const s = b.stride;
-    enc.copyBufferToBuffer(b.buf, 0, this.scratch, 0, b.buf.size);
+    // (round 104, later: within the buffer by the kernel, in bands — each word read and written once, not copied out
+    // to the scratch and back; Streamer.copier.encode after the shifts)
+    if (!ROW_COPIES && b.buf.usage & GPUBufferUsage.STORAGE) {
+      this.copier.shift(b.buf, W, H, s / 4, b.planes, dx, dy);
+      return;
+    }
+    if (!this.scratch || this.scratch.size < b.buf.size) {
+      // (the smaller one may be in this slide's encoder still: left to the world's dispose)
+      this.scratch = this.core.world.buf('streamScratch', b.buf.size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+    }
+    const scratch = this.scratch;
+    enc.copyBufferToBuffer(b.buf, 0, scratch, 0, b.buf.size);
     const x0 = Math.max(0, -dx);
     const x1 = Math.min(W, W - dx);
     const y0 = Math.max(0, -dy);
     const y1 = Math.min(H, H - dy);
     const plane = W * H * s;
     for (let p = 0; p < b.planes; p++) {
-      if (dx === 0) enc.copyBufferToBuffer(this.scratch, p * plane + (y0 + dy) * W * s, b.buf, p * plane + y0 * W * s, (y1 - y0) * W * s);
+      if (dx === 0) enc.copyBufferToBuffer(scratch, p * plane + (y0 + dy) * W * s, b.buf, p * plane + y0 * W * s, (y1 - y0) * W * s);
       // (round 104) along x as one copy of the plane shifted by dx columns: what wraps from the next (or the last)
       // row lands only in the columns coming in, which are cleared or written after — a copy a row was H commands a
       // buffer, ~15 000 a slide
       else if (!ROW_COPIES) {
         const n = (W * H - Math.abs(dx)) * s;
-        if (dx > 0) enc.copyBufferToBuffer(this.scratch, p * plane + dx * s, b.buf, p * plane, n);
-        else enc.copyBufferToBuffer(this.scratch, p * plane, b.buf, p * plane - dx * s, n);
-      } else for (let y = y0; y < y1; y++) enc.copyBufferToBuffer(this.scratch, p * plane + ((y + dy) * W + x0 + dx) * s, b.buf, p * plane + (y * W + x0) * s, (x1 - x0) * s);
+        if (dx > 0) enc.copyBufferToBuffer(scratch, p * plane + dx * s, b.buf, p * plane, n);
+        else enc.copyBufferToBuffer(scratch, p * plane, b.buf, p * plane - dx * s, n);
+      } else for (let y = y0; y < y1; y++) enc.copyBufferToBuffer(scratch, p * plane + ((y + dy) * W + x0 + dx) * s, b.buf, p * plane + (y * W + x0) * s, (x1 - x0) * s);
     }
   }
 
@@ -2364,9 +2392,11 @@ export class Streamer {
       tmp = this.core.world.texture(`streamScratch:${k}`, tex);
       this.scratchTex.set(k, tmp);
     }
-    enc.copyTextureToTexture({ texture: tex }, { texture: tmp }, [tex.width, tex.height]);
     const sx = (dx / t.div) * t.per;
     const sy = dy / t.div;
+    // (round 104: only what stays — the strip leaving isn't copied out)
+    const keep = { origin: [Math.max(0, sx), Math.max(0, sy)], size: [tex.width - Math.abs(sx), tex.height - Math.abs(sy)] };
+    enc.copyTextureToTexture({ texture: tex, origin: keep.origin }, { texture: tmp, origin: keep.origin }, keep.size);
     enc.copyTextureToTexture(
       { texture: tmp, origin: [Math.max(0, sx), Math.max(0, sy)] },
       { texture: tex, origin: [Math.max(0, -sx), Math.max(0, -sy)] },
