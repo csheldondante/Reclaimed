@@ -8577,5 +8577,28 @@ after a chunk was last needed; a chunk come into it starts over (agents.wgsl sco
 And a field whose distances stop moving (the GPU flags it, read back) is frozen until its seeds move, the surfaces
 change (a top moved more than half a cell, a link, wet, a room) or the scope grows: the GPU's equivalent of the user's
 paths, made once and walked down. Desktop, 20 town units in the window: agents 3.6 / 7.3 / 6.6 ms a tick at 320 /
-448 / 512 → 1.6 / 0.5 / 1.5. It isn't on by default yet: the town's own building keeps the surfaces moving, so its
-fields freeze only between changes; the next step is to relax only the chunks whose distances moved (a front).
+448 / 512 → 1.6 / 0.5 / 1.5. Superseded the same day by the front (below).
+
+### Round 104 (2) — the agents' fields: a scope and a front, on by default (`simscale`)
+
+The first cut (above: `?agentscope=1`, fields frozen once a read-back said none moved) didn't hold in a town: the
+houses going up, the quarry and the wet margins moved some surface every peel, and any move unfroze every field over
+the whole scope. So freezing is replaced by a front built on the GPU (agents.wgsl): each chunk carries a mark — a
+distance that moved in the last sweep, a surface or a link peeled differently, a seed placed or moved, a chunk come
+into the scope — and a sweep relaxes only the marked chunks and those next to them (frontReset, frontBuild: one
+thread a chunk of the scope's box, appending to a list and its indirect dispatch's count; frontClear; then relax
+dispatched indirect over the list, marking the next sweep's). A settled field marks nothing, so the front empties;
+a change relaxes only round where it spreads. The fields stay exact (a surface moved by any amount marks its chunk),
+and the scope (units' box read back every 8 ticks, seeds, targets, held and flying, a 48-column margin, each chunk
+held 10 s after it was last needed) bounds where anything runs. `?agentscope=0`: the whole window as before.
+
+| agents' GPU a frame (in the game, desktop iGPU) | before | after |
+|---|---|---|
+| parked by a town of 20, window 320 / 448 / 512 | 3.23 / 6.32 / 10.93 | 0.28 / 0.28 / 0.87 |
+| riding, 448 / 512 | 3.32 / 10.69 | 0.45 / 0.95 |
+| settlementtest (window 320): at the town / in its raid | 1.09 / 1.14 | 0.40 / 0.19 |
+
+The same outcomes: settlementtest's town 15 trips and 4 blocks (base 17 and 4 over the same 12 s), the raid repelled
+with 14 dead on both; crewtest's totals as the base's (its pit-drop check fails on both); hordetest's phases close
+in, swing, die to the blast and burn as before. With the sims (above), the GPU frame span parked at 448 went 21.5 →
+5.6 ms and at 512 34.2 → 16.9. towertest all passed, floatsweep passed, culltest as the base.

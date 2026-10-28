@@ -24,12 +24,38 @@ import { AgentScope } from './scope';
 import { CUSTOM, TILES_BINDING, cullKernel } from '../sim/cull';
 import { ROW_H } from '../world/lattice';
 
-/** (round 104, simscale) ?agentscope=1: the fields kept only round what the agents do, and frozen once settled
- *  (agents/scope.ts) — off by default until its tuning is measured; off, the whole window every tick as before */
-const SCOPE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('agentscope') === '1';
+/** (round 104, simscale) the fields kept only round what the agents do and relaxed only where something changed
+ *  (agents/scope.ts); ?agentscope=0: the whole window every tick, as before */
+const SCOPE = typeof location === 'undefined' || new URLSearchParams(location.search).get('agentscope') !== '0';
 /** the scope's tile lists (sim/cull.ts CUSTOM): its chunks, and those new to it this tick */
 const SCOPE_LIST = CUSTOM + 10;
 const ENTER_LIST = CUSTOM + 11;
+/** chunks marked changed by the CPU this tick (a seed placed or moved) */
+const MARK_LIST = CUSTOM + 12;
+
+/**
+ * (round 104, simscale) The relax kernel dispatched indirect over the front (agents.wgsl frontList): its 8 x 8 entry
+ * renamed, a wrapper by its name finding its columns from the list, four workgroups a chunk (sim/cull.ts cullSource's
+ * shape, the list in storage).
+ */
+function frontSource(src: string, entry: string): string {
+  const re = new RegExp(`@compute\\s+@workgroup_size\\(8,\\s*8\\)\\s*fn ${entry}\\(@builtin\\(global_invocation_id\\) (\\w+): vec3<u32>\\)`);
+  const m = src.match(re);
+  if (!m) throw new Error(`agents: ${entry} isn't an 8 x 8 per-column pass`);
+  return (
+    src.replace(re, `fn ${entry}_column(${m[1]}: vec3<u32>)`) +
+    `
+@compute @workgroup_size(8, 8)
+fn ${entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
+  let c = frontList[wg.x >> 2u];
+  let s = wg.x & 3u;
+  let q = vec2<u32>((c % G.chunksX) * G.chunkSize + (s & 1u) * 8u + l.x, (c / G.chunksX) * G.chunkSize + (s >> 1u) * 8u + l.y);
+  if (q.x >= G.mapW || q.y >= G.mapH) { return; }
+  ${entry}_column(vec3<u32>(q, 0u));
+}
+`
+  );
+}
 /** ticks between reads of the units' box and of what moved */
 const READ_EVERY = 8;
 
@@ -245,9 +271,14 @@ export class Agents implements SimSystem {
   private flyDrawn = false;
   private peelGroup: GPUBindGroup;
   private fieldGroup: GPUBindGroup;
-  /** (round 104, simscale) the scope's box and the fields relaxed (agents.wgsl AB), what moved (agentFlags) */
+  /** (round 104, simscale) the scope's box (agents.wgsl AB); the front's per-chunk marks (two: a sweep's and the
+   *  next's), its list and its dispatch (agents/scope.ts) */
   private abBuf: GPUBuffer;
-  private flagsBuf: GPUBuffer;
+  private dirty: [GPUBuffer, GPUBuffer];
+  private frontArgs: GPUBuffer;
+  private frontList: GPUBuffer;
+  /** which of `dirty` is the current sweep's at the next tick's start */
+  private par = 0;
   private uboxBuf: GPUBuffer;
   private readBuf: GPUBuffer;
   private reading = false;
@@ -261,18 +292,27 @@ export class Agents implements SimSystem {
     occ: ComputeKernel;
     enter: ComputeKernel;
     box: ComputeKernel;
-    peelG: GPUBindGroup;
-    fieldG: GPUBindGroup;
+    reset: ComputeKernel;
+    build: ComputeKernel;
+    clear: ComputeKernel;
+    mark: ComputeKernel;
     occG: GPUBindGroup;
-    enterG: GPUBindGroup;
     boxG: GPUBindGroup;
+    resetG: GPUBindGroup;
+    /** per parity (which of `dirty` is the current sweep's) */
+    peelG: GPUBindGroup[];
+    linksG: GPUBindGroup[];
+    relaxG: GPUBindGroup[];
+    enterG: GPUBindGroup[];
+    buildG: GPUBindGroup[];
+    clearG: GPUBindGroup[];
+    markG: GPUBindGroup[];
   };
   /** (simscale) the fields set unreachable this tick (they lost their seeds: writeParams) */
   private clearNow = 0;
-  /** (simscale) a read in flight: the tick it was issued at, the tick before (its interval's start), the spawns' serial */
-  private readIssued: { at: number; since: number; serial: number; used: number } | null = null;
-  /** (simscale) the last tick's fields relaxed and its scope's chunks (the perf overlay, tests) */
-  lastRelaxed = 0;
+  /** (simscale) a read in flight: the spawns' serial it sees */
+  private readIssued: { serial: number } | null = null;
+  /** (simscale) its scope's chunks at the last tick (the perf overlay, tests) */
   lastScopeChunks = 0;
   private unitGroup: GPUBindGroup;
   private drawGroup: GPUBindGroup;
@@ -340,14 +380,17 @@ export class Agents implements SimSystem {
     const mk = (e: string, sp: BindSpec) => makeCompute(device, `agents-${e}`, parts, sp, e);
     // four layouts, each within 8 storage buffers: the peel (it reads the
     // layers and the places), the fields, the units' tick, their draw
-    const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read', 37: 'rw' };
-    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 37: 'rw', 38: 'uniform' };
+    const peelSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'rw', 11: 'read', 12: 'read', 34: 'rw' };
+    const fieldSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 10: 'uniform', 34: 'rw', 35: 'rw', 38: 'uniform' };
     // (round 104, simscale: agents/scope.ts)
     this.abBuf = world.buf('agentScope', 32, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
-    device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([0, 0, world.w, world.h, 0xffffffff, 0, 0, 0]));
-    this.flagsBuf = world.buf('agentFlags', 16, S);
+    device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([0, 0, world.w, world.h, 0, 0, 0, 0]));
+    const nChunks = Math.max(1, (world.w / 16) * (world.h / 16));
+    this.dirty = [world.buf('agentDirtyA', nChunks * 4, S), world.buf('agentDirtyB', nChunks * 4, S)];
+    this.frontArgs = world.buf('agentFrontArgs', 16, GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST);
+    this.frontList = world.buf('agentFrontList', nChunks * 4, S);
     this.uboxBuf = world.buf('agentUnitBox', 16, S);
-    this.readBuf = world.buf('agentScopeRead', 32, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
+    this.readBuf = world.buf('agentScopeRead', 16, GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST);
     this.scope = SCOPE && world.tiles ? new AgentScope(world.w / 16, world.h / 16) : null;
     const unitSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 5: 'rw', 6: 'rw', 7: 'rw', 8: 'rw', 10: 'uniform', 13: 'rw', 14: 'read', 15: 'tex', 16: 'rw', 19: 'tex', 25: 'read' };
     const drawSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 7: 'rw', 9: 'rw', 10: 'uniform', 22: 'rw', 23: 'read', 24: 'uniform', 26: 'read', 27: 'read' };
@@ -369,9 +412,9 @@ export class Agents implements SimSystem {
       5: this.nav,
       11: world.places,
       12: world.placeTable,
-      37: this.flagsBuf,
+      34: this.dirty[0],
     });
-    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 37: this.flagsBuf, 38: this.abBuf });
+    this.fieldGroup = makeBindGroup(device, 'agents-fields', this.k.relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: this.dirty[0], 35: this.dirty[1], 38: this.abBuf });
     if (this.scope) {
       const t = world.tiles!;
       const src = parts.join('\n');
@@ -380,26 +423,41 @@ export class Agents implements SimSystem {
         return { k: makeCompute(device, `agents-${e} scoped`, [c.code], c.spec, e), buf: c.buf };
       };
       const occSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 8: 'rw', 10: 'uniform', 16: 'rw' };
-      const enterSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 6: 'rw', 8: 'rw', 16: 'rw' };
+      const enterSpec: BindSpec = { 0: 'uniform', 2: 'uniform', 6: 'rw', 8: 'rw', 16: 'rw', 34: 'rw' };
       const surfaces = ck('surfaces', peelSpec, SCOPE_LIST);
       const links = ck('links', fieldSpec, SCOPE_LIST);
-      const relax = ck('relax', fieldSpec, SCOPE_LIST);
       const occ = ck('occClearCols', occSpec, SCOPE_LIST);
       const enter = ck('scopeIn', enterSpec, ENTER_LIST);
+      const mark = ck('markChunks', { 0: 'uniform', 2: 'uniform', 34: 'rw' }, MARK_LIST);
+      const relaxSpec: BindSpec = { ...fieldSpec, 36: 'rw' };
+      const relax = makeCompute(device, 'agents-relax front', [frontSource(src, 'relax')], relaxSpec, 'relax');
       const box = makeCompute(device, 'agents-unitBox', parts, { 0: 'uniform', 2: 'uniform', 7: 'rw', 10: 'uniform', 28: 'rw' }, 'unitBox');
+      const reset = makeCompute(device, 'agents-frontReset', parts, { 0: 'uniform', 2: 'uniform', 33: 'rw' }, 'frontReset');
+      const build = makeCompute(device, 'agents-frontBuild', parts, { 0: 'uniform', 2: 'uniform', 33: 'rw', 34: 'rw', 36: 'rw', 38: 'uniform' }, 'frontBuild');
+      const clear = makeCompute(device, 'agents-frontClear', parts, { 0: 'uniform', 2: 'uniform', 34: 'rw', 38: 'uniform' }, 'frontClear');
       const L = surfaces.buf;
+      const par = <T,>(f: (cur: GPUBuffer, next: GPUBuffer, p: number) => T): T[] => [f(this.dirty[0], this.dirty[1], 0), f(this.dirty[1], this.dirty[0], 1)];
       this.sk = {
         surfaces: surfaces.k,
         links: links.k,
-        relax: relax.k,
+        relax,
         occ: occ.k,
         enter: enter.k,
         box,
-        peelG: makeBindGroup(device, 'agents-peel scoped', surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 37: this.flagsBuf, [TILES_BINDING]: L }),
-        fieldG: makeBindGroup(device, 'agents-fields scoped', relax.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 37: this.flagsBuf, 38: this.abBuf, [TILES_BINDING]: L }),
+        reset,
+        build,
+        clear,
+        mark: mark.k,
         occG: makeBindGroup(device, 'agents-occ scoped', occ.k.layout, { ...base, 8: this.occ, 10: this.params, 16: this.shove, [TILES_BINDING]: L }),
-        enterG: makeBindGroup(device, 'agents-enter', enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, [TILES_BINDING]: enter.buf }),
         boxG: makeBindGroup(device, 'agents-unitBox', box.layout, { ...base, 7: this.units, 10: this.params, 28: this.uboxBuf }),
+        resetG: makeBindGroup(device, 'agents-frontReset', reset.layout, { ...base, 33: this.frontArgs }),
+        peelG: par((cur, _n, p) => makeBindGroup(device, `agents-peel scoped ${p}`, surfaces.k.layout, { ...base, 1: world.chunks, 3: world.layers, 4: world.water, 5: this.nav, 11: world.places, 12: world.placeTable, 34: cur, [TILES_BINDING]: L })),
+        linksG: par((cur, next, p) => makeBindGroup(device, `agents-links scoped ${p}`, links.k.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 38: this.abBuf, [TILES_BINDING]: L })),
+        relaxG: par((cur, next, p) => makeBindGroup(device, `agents-relax front ${p}`, relax.layout, { ...base, 5: this.nav, 6: this.dist, 10: this.params, 34: cur, 35: next, 36: this.frontList, 38: this.abBuf })),
+        enterG: par((cur, _n, p) => makeBindGroup(device, `agents-enter ${p}`, enter.k.layout, { ...base, 6: this.dist, 8: this.occ, 16: this.shove, 34: cur, [TILES_BINDING]: enter.buf })),
+        buildG: par((cur, _n, p) => makeBindGroup(device, `agents-frontBuild ${p}`, build.layout, { ...base, 33: this.frontArgs, 34: cur, 36: this.frontList, 38: this.abBuf })),
+        clearG: par((cur, _n, p) => makeBindGroup(device, `agents-frontClear ${p}`, clear.layout, { ...base, 34: cur, 38: this.abBuf })),
+        markG: par((cur, _n, p) => makeBindGroup(device, `agents-mark ${p}`, mark.k.layout, { ...base, 34: cur, [TILES_BINDING]: mark.buf })),
       };
     }
     this.unitGroup = makeBindGroup(device, 'agents-units', this.k.unitStep.layout, {
@@ -534,10 +592,7 @@ export class Agents implements SimSystem {
     this.translator.run(this.flyBuf, MAX_FLY, 2, 0b1, [dx, dy, dz]);
     for (const f of this.flights) f.pos = [f.pos[0] - dx, f.pos[1] - dy, f.pos[2] - dz];
     // (round 104, simscale: the scope's box with the land; the strips come in start over)
-    if (this.scope) {
-      this.scope.shift(dx, Math.round(dy / ROW_H));
-      this.scope.disturb(-1, this.ticks);
-    }
+    this.scope?.shift(dx, Math.round(dy / ROW_H));
   }
 
   /** the per-column buffers a slide moves (name, buffer, bytes a column, planes) */
@@ -591,7 +646,7 @@ export class Agents implements SimSystem {
     // (round 104, simscale: seeds that moved disturb the field — relaxed until it settles again)
     const was = this.seeds.filter((s) => s.field === f);
     const same = was.length === seeds.length && was.every((s, i) => Math.abs(s.x - seeds[i].x) < 1e-3 && Math.abs(s.y - seeds[i].y) < 1e-3 && (s.z ?? 1e4) === (seeds[i].z ?? 1e4));
-    if (!same) this.scope?.disturb(f, this.ticks);
+    if (!same && this.scope) for (const s of [...was, ...seeds]) this.scope.mark(s.x, s.y / ROW_H);
     this.seeds = [...rest, ...seeds.map((s) => ({ ...s, field: f }))];
     this.fieldsUsed = Math.max(this.fieldsUsed, f + 1);
   }
@@ -693,7 +748,7 @@ export class Agents implements SimSystem {
   confine(f: number, place: { id: number; kind: 'room' | 'region' } | null): void {
     if (f < 0 || f >= NFIELDS) throw new Error(`agents: field ${f} out of 0..${NFIELDS - 1}`);
     this.fieldPlace[f] = place ? (place.id | (place.kind === 'region' ? 0x80000000 : 0)) >>> 0 : 0;
-    this.scope?.disturb(f, this.ticks);
+    if (this.scope) this.scope.markAll = true;
   }
 
   /** A CPU copy of field `f` to sample (fieldreader.ts; refresh it every few hundred ms). */
@@ -1111,7 +1166,6 @@ export class Agents implements SimSystem {
     // neither is made; the first tick that needs them peels at once)
     if (this.count - this.free.length === 0 && this.flights.length === 0 && this.seeds.length === 0) {
       this.navStale = true;
-      if (this.scope) this.scope.idleAt = this.ticks;
       this.ticks++;
       return;
     }
@@ -1164,8 +1218,9 @@ export class Agents implements SimSystem {
 
   /**
    * (round 104, simscale — agents/scope.ts) The tick over the scope only: the chunks new to it started over, the
-   * surfaces peeled there, the fields that aren't frozen relaxed there, the occupancy cleared there; the units as
-   * ever. Every READ_EVERY ticks the units' box and what moved are read back.
+   * surfaces peeled there, each sweep relaxing only the front (the chunks where something changed in the last one,
+   * and those next to them), the occupancy cleared there; the units as ever. Every READ_EVERY ticks the units' box is
+   * read back.
    */
   private encodeScoped(enc: GPUCommandEncoder, sc: AgentScope, sk: NonNullable<Agents['sk']>): void {
     const t = this.world.tiles!;
@@ -1181,42 +1236,64 @@ export class Agents implements SimSystem {
       t.setList(ENTER_LIST, enter);
       this.navStale = true;
     }
-    let seeded = 0;
-    for (const s of this.seeds) seeded |= 1 << s.field;
-    const used = this.fieldsUsed >= 32 ? 0xffffffff : (1 << this.fieldsUsed) - 1;
-    const live = seeded & ~sc.frozen & used;
-    this.lastRelaxed = live;
+    // (a field cleared — its seeds gone — or confined: every chunk of the scope relaxed again)
+    if (this.clearNow) sc.markAll = true;
+    const marks = sc.markAll ? list : [...sc.marks].filter((c) => sc.box && list.includes(c));
+    sc.marks.clear();
+    sc.markAll = false;
+    if (marks.length) t.setList(MARK_LIST, marks);
     const b = sc.box ?? [0, 0, 0, 0];
-    this.device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([b[0], b[1], b[2], b[3], live >>> 0, 0, 0, 0]));
+    this.device.queue.writeBuffer(this.abBuf, 0, new Uint32Array([b[0], b[1], b[2], b[3], 0, 0, 0, 0]));
     const read = !this.reading && this.ticks - this.lastRead >= READ_EVERY;
     if (read) this.device.queue.writeBuffer(this.uboxBuf, 0, new Uint32Array([0xffffffff, 0xffffffff, 0, 0]));
     const pass = enc.beginComputePass({ label: 'agents', timestampWrites: this.prof.timestamps('agents') });
     const n = list.length ? t.groups(SCOPE_LIST) : 0;
+    let p = this.par;
     if (enter.length) {
-      pass.setBindGroup(0, sk.enterG);
+      pass.setBindGroup(0, sk.enterG[p]);
       pass.setPipeline(sk.enter.pipeline);
       pass.dispatchWorkgroups(t.groups(ENTER_LIST));
+      this.prof.dispatches++;
+    }
+    if (marks.length) {
+      pass.setBindGroup(0, sk.markG[p]);
+      pass.setPipeline(sk.mark.pipeline);
+      pass.dispatchWorkgroups(t.groups(MARK_LIST));
       this.prof.dispatches++;
     }
     if (n) {
       if (this.ticks % PEEL_EVERY === 0 || this.navStale) {
         this.navStale = false;
-        pass.setBindGroup(0, sk.peelG);
+        pass.setBindGroup(0, sk.peelG[p]);
         pass.setPipeline(sk.surfaces.pipeline);
         pass.dispatchWorkgroups(n);
-        pass.setBindGroup(0, sk.fieldG);
+        pass.setBindGroup(0, sk.linksG[p]);
         pass.setPipeline(sk.links.pipeline);
         pass.dispatchWorkgroups(n);
         this.prof.dispatches += 2;
       }
-      // (the fields that lost their seeds are set unreachable by the same pass, once)
-      if (this.fieldsUsed > 0 && (live || this.clearNow)) {
-        pass.setBindGroup(0, sk.fieldG);
-        pass.setPipeline(sk.relax.pipeline);
-        for (let i = 0; i < this.sweeps; i++) pass.dispatchWorkgroups(n);
-        this.prof.dispatches += this.sweeps;
+      if (this.fieldsUsed > 0) {
+        const chunks = Math.ceil(list.length / 64);
+        for (let i = 0; i < this.sweeps; i++) {
+          pass.setBindGroup(0, sk.resetG);
+          pass.setPipeline(sk.reset.pipeline);
+          pass.dispatchWorkgroups(1);
+          pass.setBindGroup(0, sk.buildG[p]);
+          pass.setPipeline(sk.build.pipeline);
+          pass.dispatchWorkgroups(chunks);
+          pass.setBindGroup(0, sk.clearG[p]);
+          pass.setPipeline(sk.clear.pipeline);
+          pass.dispatchWorkgroups(chunks);
+          pass.setBindGroup(0, sk.relaxG[p]);
+          pass.setPipeline(sk.relax.pipeline);
+          pass.dispatchWorkgroupsIndirect(this.frontArgs, 0);
+          this.prof.dispatches += 4;
+          // (what this sweep marked is the next one's to relax round)
+          p ^= 1;
+        }
       }
     }
+    this.par = p;
     if (this.count > 0 || this.flights.length > 0) {
       if (n) {
         pass.setBindGroup(0, sk.occG);
@@ -1235,10 +1312,8 @@ export class Agents implements SimSystem {
     pass.end();
     if (read) {
       enc.copyBufferToBuffer(this.uboxBuf, 0, this.readBuf, 0, 16);
-      enc.copyBufferToBuffer(this.flagsBuf, 0, this.readBuf, 16, 16);
-      enc.clearBuffer(this.flagsBuf);
       this.reading = true;
-      this.readIssued = { at: this.ticks, since: this.lastRead, serial: sc.serial, used: this.fieldsUsed };
+      this.readIssued = { serial: sc.serial };
       sc.serial++;
       this.lastRead = this.ticks;
     }
@@ -1255,7 +1330,7 @@ export class Agents implements SimSystem {
       this.readBuf.unmap();
       this.reading = false;
       const box: [number, number, number, number] | null = u[0] <= u[2] && u[1] <= u[3] ? [u[0], u[1], u[2], u[3]] : null;
-      sc.read(r.at, r.since, r.serial, box, u[4], u[5] !== 0, r.used);
+      sc.read(r.serial, box);
     }, (e) => {
       this.reading = false;
       ignoreTeardown(e);

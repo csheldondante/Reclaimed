@@ -1093,8 +1093,14 @@ its edge:
   physics holds voxels), the map's own wind refreshed a band a tick under it.
   WorldGpu `strBounds` / `projectAll`: the CPU's contract for the projection
   (the structures' bounds; bodyCpu written or a slide: project everything).
-  Not culled: sway, particles-update, stats, structtick, the agents (unless
-  `?agentscope=1`: agents/scope.ts).
+  The agents (round 104, agents/scope.ts): surfaces, links, fields and
+  occupancy only over the scope (a box of chunks round the units, read back
+  every 8 ticks, the seeds, targets, held and flying, a 48-column margin; a
+  neighbour past it is no way, a chunk come into it starts over), and each
+  relax sweep only over the front: the chunks marked changed (a distance, a
+  surface, a link, a seed, a chunk come in) and those beside them, listed on
+  the GPU and dispatched indirect. `?agentscope=0` the whole window.
+  Not culled: sway, particles-update, stats, structtick.
 - **The simulation's rates** (perfopt, round 83, sim/flow.ts): `?simhz=60|30
   |15` the tick rate — the kernels' per-60 Hz-tick rates scale by
   common.wgsl `simStep()` (G.dt × 60), `perTick`, `relaxTick`; water, oil

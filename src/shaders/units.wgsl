@@ -156,6 +156,7 @@ fn scopeIn(@builtin(global_invocation_id) id: vec3<u32>) {
   for (var f = 0u; f < 12u; f++) {
     for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
   }
+  atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u);
   for (var h = 0u; h < 2u; h++) {
     atomicStore(&occ[h * cols + i], 0u);
     for (var k = 0u; k < 4u; k++) { atomicStore(&shove[(h * cols + i) * 4u + k], 0); }

@@ -16,7 +16,7 @@ each was implemented.
   suspect only during large combats or storms. That means storm framerate may drop to <30 fps but that's reasonable
   for a very action and simulation heavy scene".
 - → Branch `simscale`: every pass that only matters where something's awake dispatched over the live chunks; the wind
-  field only round what painted it; the agents' fields kept round what the agents do and frozen once settled — the
+  field only round what painted it; the agents' fields kept round what the agents do and relaxed only where something changed — the
   GPU equivalent of the user's paths (a field made once and walked down), not a CPU path graph; ST15 (explicit paths)
   stays open (BACKLOG SC1–SC6).
 
