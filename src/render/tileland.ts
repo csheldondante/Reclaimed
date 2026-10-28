@@ -34,6 +34,22 @@ export interface TileLandSource {
   /** the window's oz (the land is cut at it) */
   oz(): number;
   landInto(x0: number, y0: number, buf: GPUBuffer, off: number): Promise<FinishMeta> | null;
+  /** (round 105, tilelatency) the atlas's trace of a streamed build (Atlas.builds: its tiles' turns, the ways, the finish) */
+  trace?(x0: number, y0: number): { t0: number; tiles: number[]; ways: number; mapped: number } | undefined;
+}
+
+/** (round 105, tilelatency) a region's way from wanted to drawn (performance.now() ms) */
+export interface LandTimes {
+  key: string;
+  wanted: number;
+  start: number;
+  cols: number;
+  ways: number;
+  mapped: number;
+  ready: number;
+  cur: number;
+  baked: number;
+  drawn: number;
 }
 
 /** what the renderer lends it */
@@ -65,6 +81,8 @@ interface Job {
   oz: number;
   t0: number;
   ready?: { su: Uint32Array; need: Uint8Array; lo: number; hi: number; meshed: number };
+  /** (round 105, tilelatency) its times */
+  times: LandTimes;
 }
 
 export class TileLand {
@@ -240,8 +258,30 @@ export class TileLand {
    * A frame's step: start making the next region the camera's way (one a frame, IN_FLIGHT at once), mesh and bake one
    * whose land is in — the one the camera reaches first. True when it baked this frame (the window's bakes wait).
    */
+  /** (round 105, tilelatency) when each region was first wanted (the wanted list's first 32, each frame) */
+  private firstWanted = new Map<string, number>();
+  /** (round 105, tilelatency) the regions baked, their times, waiting to be drawn (TileCache.drawsAt) and done */
+  private pendingDraw: LandTimes[] = [];
+  readonly latencies: LandTimes[] = [];
+
   step(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number): boolean {
     this.stats.inFlight = this.jobs.size;
+    // (round 105, tilelatency: when each region was first wanted; when what was baked was first drawn)
+    const now = performance.now();
+    for (const w of this.cache.wanted(cam, (k) => this.jobs.has(k), 32)) {
+      const k = `${w.rx},${w.ry}`;
+      if (!this.firstWanted.has(k)) this.firstWanted.set(k, now);
+    }
+    if (this.firstWanted.size > 2000) this.firstWanted.clear();
+    this.pendingDraw = this.pendingDraw.filter((t) => {
+      const [rx, ry] = t.key.split(',').map(Number);
+      if (!this.cache.drawsRegion(rx, ry)) return now - t.baked < 10000;
+      t.drawn = now;
+      this.latencies.push(t);
+      if (this.latencies.length > 500) this.latencies.shift();
+      this.firstWanted.delete(t.key);
+      return false;
+    });
     // (a new region asked for: the first of the camera's way not being made)
     const free = this.slotJob.indexOf(null);
     if (free >= 0) {
@@ -250,12 +290,23 @@ export class TileLand {
         const L = this.src.layout;
         const p = this.src.landInto(want.rx * R, want.ry * R, this.slots, free * L.bytes);
         if (p) {
-          const j: Job = { rx: want.rx, ry: want.ry, slot: free, oz: this.src.oz(), t0: performance.now() };
+          const key = `${want.rx},${want.ry}`;
+          const now = performance.now();
+          const times: LandTimes = { key, wanted: this.firstWanted.get(key) ?? now, start: now, cols: 0, ways: 0, mapped: 0, ready: 0, cur: 0, baked: 0, drawn: 0 };
+          const j: Job = { rx: want.rx, ry: want.ry, slot: free, oz: this.src.oz(), t0: now, times };
           this.jobs.set(`${want.rx},${want.ry}`, j);
           this.slotJob[free] = j;
           p.then(
             (m) => {
+              const tr = this.src.trace?.(want.rx * R, want.ry * R);
+              if (tr) {
+                times.cols = tr.tiles[tr.tiles.length - 1] ?? 0;
+                times.ways = tr.ways;
+                times.mapped = tr.mapped;
+              }
+              times.mapped ||= performance.now();
               j.ready = this.readyOf(m, j.oz);
+              times.ready = performance.now();
               this.stats.made++;
               this.stats.genMs = performance.now() - j.t0;
             },
@@ -286,6 +337,7 @@ export class TileLand {
       };
       left.sort((a, b) => rank(a) - rank(b));
       const job = left[0];
+      job.times.cur = performance.now();
       const r = job.ready!;
       const L = this.src.layout;
       const t = new Uint32Array(L.rc * L.rc * 2);
@@ -324,7 +376,11 @@ export class TileLand {
         this.host.drawGrid(g, this.flat);
       }
     }, [gr.r]);
-    if (ok) this.stats.baked++;
+    if (ok) {
+      this.stats.baked++;
+      job.times.baked = performance.now();
+      this.pendingDraw.push(job.times);
+    }
     this.stats.lastMs = performance.now() - job.t0;
     this.free(job);
     this.cur = null;

@@ -688,6 +688,10 @@ export class TileCache {
 
   /** the regions drawn last frame ("rx,ry") */
   private drawnSet = new Set<string>();
+  /** (round 105, tilelatency) Does a tile draw region (rx, ry) this frame? */
+  drawsRegion(rx: number, ry: number): boolean {
+    return this.drawnSet.has(`${rx},${ry}`);
+  }
   /** Does a tile draw window point (x cells, y rows) this frame? (the bench's detail share) */
   drawsAt(x: number, y: number): boolean {
     if (!this.origin) return false;
