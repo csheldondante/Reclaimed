@@ -2,7 +2,7 @@
 
 import { ROW_H } from '../world/lattice';
 
-export const GLOBALS_BYTES = 1904;
+export const GLOBALS_BYTES = 1920;
 /** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
 export const MAX_CYCLONES = 4;
 
@@ -151,6 +151,8 @@ export interface GlobalsState {
   /** (hybrid, scenes/hybrid.ts) a bit a mesh chunk, set: the heightfield's (the LOD rings draw it; the window's
    *  water, plants and loose sheets aren't drawn there), the chunks across and a chunk's side (cells); absent: none */
   hfield?: { bits: Uint32Array; across: number; side: number };
+  /** (round 105, ringwin) the window's ring offset (cells: common.wgsl Globals.ring) — absent: 0, 0 */
+  ring?: [number, number];
   /** (perfopt) land come in, settling its water: rects of columns (x, y, w, h; CPU only — sim/sleep.ts) */
   settle?: [number, number, number, number][];
   /** set by Simulation.step when a tick consumed the stroke segments (Powers re-anchors) */
@@ -245,4 +247,6 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   const sh = new Uint32Array(f.buffer, f.byteOffset + 412 * 4, 64);
   if (s.hfield) sh.set(s.hfield.bits);
   else sh.fill(0);
+  const sr = new Uint32Array(f.buffer, f.byteOffset + 476 * 4, 4);
+  sr.set([s.ring?.[0] ?? 0, s.ring?.[1] ?? 0, 0, 0]);
 }

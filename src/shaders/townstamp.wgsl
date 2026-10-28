@@ -27,8 +27,10 @@ fn stampCols(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= TP.x) { return; }
   let r0 = recs[id.x * 2u];
   let r1 = recs[id.x * 2u + 1u];
-  let x = r0.x % G.mapW;
-  let y = r0.x / G.mapW;
+  // (the CPU's window-order index)
+  let xy = winXY(r0.x);
+  let x = xy.x;
+  let y = xy.y;
   let lo = bitcast<f32>(r1.x);
   let hi = bitcast<f32>(r1.y);
   let cs = colSlots(x, y);

@@ -161,6 +161,8 @@ export class Simulation {
   }
 
   uploadGlobals(g: GlobalsState): void {
+    // (ringwin) the window's ring offset is the world's (WorldGpu.ring)
+    g.ring = [this.world.ring.x, this.world.ring.y];
     writeGlobals(g, this.globalsData);
     this.device.queue.writeBuffer(this.world.globals, 0, this.globalsData);
   }

@@ -76,6 +76,11 @@ struct Globals {
   // (hybrid, scenes/hybrid.ts) a bit a mesh chunk, set: the heightfield's — the LOD rings draw its land; the
   // window's water, plants and sheets aren't drawn there (renderprep, vegprep)
   hfield: array<vec4<u32>, 16>,
+  // (round 105, `ringwin`) the window on a ring: every per-column buffer and texture holds window column (x, y) at
+  // ((x + ring.x) mod W, (y + ring.y) mod H) — the world cell's place mod the window's size — so a slide moves
+  // nothing; xy the offset (cells), zw unused. Window coordinates stay what every caller uses: index only through
+  // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY.
+  ring: vec4<u32>,
 };
 
 /** (hybrid) Is column q in a heightfield chunk (drawn by the LOD rings, not the window's own draws)? */
@@ -293,8 +298,62 @@ fn dAny(a: Dirs) -> bool { return a[0] > 0.0 || a[1] > 0.0 || a[2] > 0.0 || a[3]
 /** a vector's share along each direction (its positive projections) */
 fn dSplit(v: vec2<f32>) -> Dirs { var o = dZero(); for (var k = 0u; k < NDIR; k++) { o[k] = max(dot(v, DIRV[k]), 0.0); } return o; }
 
-fn colIdx(x: u32, y: u32) -> u32 { return y * G.mapW + x; }
-fn colIdxI(p: vec2<i32>) -> u32 { return u32(p.y) * G.mapW + u32(p.x); }
+// ---- (round 105, ringwin) where a window column's data lies: chunk -> page -> offset in the page ----------------
+// Every per-column buffer and texture is found the same way, the layers' way (layers.wgsl: a chunk's page from the
+// chunk table): the column's chunk (COLS_PAGE columns a side), the page that chunk's data is in, the column's offset
+// inside the page. Today's table is the ring's — computed, not looked up: the pages are the window's chunks rotated
+// by Globals.ring (whole chunks), laid row-major across the window, a page's rows W columns apart. Sparse pages
+// (a resident set) would change colPage and the page's layout (pageBase, inPage, texPage) only, not the callers.
+// Index a column only through colIdx / colIdxI / texCol / texCol2 / texColK; back through colXY; hand the CPU winIdx.
+/** columns a page side (world/layout.ts CHUNK; the ring's offset is whole pages) */
+const COLS_PAGE: u32 = 16u;
+/** chunks across and down the window */
+fn pagesX() -> u32 { return G.mapW / COLS_PAGE; }
+fn pagesY() -> u32 { return G.mapH / COLS_PAGE; }
+/** the page holding window chunk c (its place, in pages): the ring's table, c + ring mod the window's chunks */
+fn colPage(c: vec2<u32>) -> vec2<u32> {
+  let x = c.x + G.ring.x / COLS_PAGE;
+  let y = c.y + G.ring.y / COLS_PAGE;
+  return vec2<u32>(select(x, x - pagesX(), x >= pagesX()), select(y, y - pagesY(), y >= pagesY()));
+}
+/** window chunk c's page as an index (pages row-major): a per-chunk buffer's slot for it */
+fn pageIdx(c: vec2<u32>) -> u32 { let p = colPage(c); return p.y * pagesX() + p.x; }
+/** a page's first column's index in a per-column buffer, and a column's offset inside its page */
+fn pageBase(pg: vec2<u32>) -> u32 { return pg.y * COLS_PAGE * G.mapW + pg.x * COLS_PAGE; }
+fn inPage(o: vec2<u32>) -> u32 { return o.y * G.mapW + o.x; }
+/** a page's first texel in a texel-a-column texture */
+fn texPage(pg: vec2<u32>) -> vec2<u32> { return pg * COLS_PAGE; }
+/** window column (x, y)'s index in a per-column buffer (x < W, y < H) */
+fn colIdx(x: u32, y: u32) -> u32 { return pageBase(colPage(vec2<u32>(x, y) / COLS_PAGE)) + inPage(vec2<u32>(x, y) % COLS_PAGE); }
+fn colIdxI(p: vec2<i32>) -> u32 { return colIdx(u32(p.x), u32(p.y)); }
+/** window column p's index in window order (y * W + x): what's handed to the CPU (a readback's column) — never a buffer's index */
+fn winIdx(p: vec2<i32>) -> u32 { return u32(p.y) * G.mapW + u32(p.x); }
+/** a window-order index (winIdx's, or the CPU's y * W + x) back to its window column */
+fn winXY(i: u32) -> vec2<u32> { return vec2<u32>(i % G.mapW, i / G.mapW); }
+/** a per-column buffer's index back to its window column (colIdx's inverse) */
+fn colXY(i: u32) -> vec2<u32> {
+  let q = vec2<u32>(i % G.mapW, i / G.mapW);
+  let pg = q / COLS_PAGE;
+  // (the window chunk whose page that is: the ring's table backwards)
+  let rx = G.ring.x / COLS_PAGE;
+  let ry = G.ring.y / COLS_PAGE;
+  let c = vec2<u32>(select(pg.x + pagesX() - rx, pg.x - rx, pg.x >= rx), select(pg.y + pagesY() - ry, pg.y - ry, pg.y >= ry));
+  return c * COLS_PAGE + q % COLS_PAGE;
+}
+/** window column p's texel in a texel-a-column texture */
+fn texColU(p: vec2<u32>) -> vec2<u32> { return texPage(colPage(p / COLS_PAGE)) + p % COLS_PAGE; }
+fn texCol(p: vec2<i32>) -> vec2<i32> { return vec2<i32>(texColU(vec2<u32>(p))); }
+/** a texel a 2 x 2 columns (the wind field: W / 2 across): window texel t's — a page is COLS_PAGE / 2 texels a side */
+fn texCol2(t: vec2<i32>) -> vec2<i32> {
+  let h = COLS_PAGE / 2u;
+  let u = vec2<u32>(t);
+  return vec2<i32>(colPage(u / h) * h + u % h);
+}
+/** k texels a column (the structures' projection: PROJ_K): window column p's j-th texel */
+fn texColK(p: vec2<i32>, k: u32, j: u32) -> vec2<i32> {
+  let q = texColU(vec2<u32>(p));
+  return vec2<i32>(i32(q.x * k + j), i32(q.y));
+}
 fn inMap(p: vec2<i32>) -> bool { return p.x >= 0 && p.y >= 0 && p.x < i32(G.mapW) && p.y < i32(G.mapH); }
 fn clampCell(p: vec2<i32>) -> vec2<i32> { return clamp(p, vec2<i32>(0), vec2<i32>(i32(G.mapW) - 1, i32(G.mapH) - 1)); }
 
@@ -462,10 +521,10 @@ fn windSample(p: vec2<f32>) -> vec4<f32> {
   let t = p * 0.5 - 0.5;
   let i0 = vec2<i32>(floor(t));
   let f = fract(t);
-  let a = textureLoad(windTex, clamp(i0, vec2<i32>(0), dims - 1), 0);
-  let b = textureLoad(windTex, clamp(i0 + vec2<i32>(1, 0), vec2<i32>(0), dims - 1), 0);
-  let c = textureLoad(windTex, clamp(i0 + vec2<i32>(0, 1), vec2<i32>(0), dims - 1), 0);
-  let d = textureLoad(windTex, clamp(i0 + vec2<i32>(1, 1), vec2<i32>(0), dims - 1), 0);
+  let a = textureLoad(windTex, texCol2(vec2<i32>(clamp(i0, vec2<i32>(0), dims - 1))), 0);
+  let b = textureLoad(windTex, texCol2(vec2<i32>(clamp(i0 + vec2<i32>(1, 0), vec2<i32>(0), dims - 1))), 0);
+  let c = textureLoad(windTex, texCol2(vec2<i32>(clamp(i0 + vec2<i32>(0, 1), vec2<i32>(0), dims - 1))), 0);
+  let d = textureLoad(windTex, texCol2(vec2<i32>(clamp(i0 + vec2<i32>(1, 1), vec2<i32>(0), dims - 1))), 0);
   return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -516,7 +575,7 @@ const SHEET_STEP: f32 = 3.0;
 /** Depth of drifted dust on column q (0 off the map). */
 fn driftAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
-  return textureLoad(driftTex, q, 0).x;
+  return textureLoad(driftTex, texCol(vec2<i32>(q)), 0).x;
 }
 
 // Sleeping rigid bodies projected into the terrain grid (game/integrity.ts):
@@ -527,7 +586,7 @@ fn driftAt(q: vec2<i32>) -> f32 {
 /** Top of a sleeping body over column q, or −1. */
 fn bodyTopAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return -1.0; }
-  return textureLoad(bodyProjTex, q, 0).x;
+  return textureLoad(bodyProjTex, texCol(vec2<i32>(q)), 0).x;
 }
 
 // The structure grids (and sleeping bodies) as each nature column sees them
@@ -540,7 +599,7 @@ const PROJ_K: u32 = 3u;
 /** Column q's k-th projected interval from the top (IV_NONE past the last; aux = structure + 1). */
 fn projAt(q: vec2<i32>, k: u32) -> vec4<u32> {
   if (!inMap(q)) { return IV_NONE; }
-  let t = textureLoad(projTex, vec2<i32>(q.x * i32(PROJ_K) + i32(k), q.y), 0);
+  let t = textureLoad(projTex, texColK(vec2<i32>(q.x, q.y), PROJ_K, u32(i32(k))), 0);
   if (t.y <= t.x) { return IV_NONE; }
   return ivPack(t.x, t.y, u32(t.z + 0.5), u32(t.w + 0.5));
 }
@@ -548,7 +607,7 @@ fn projAt(q: vec2<i32>, k: u32) -> vec4<u32> {
 /** Depth of the top loose layer on q (drift .y; part of driftAt). */
 fn driftTopAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
-  let t = textureLoad(driftTex, q, 0);
+  let t = textureLoad(driftTex, texCol(vec2<i32>(q)), 0);
   return clamp(t.y, 0.0, t.x);
 }
 
@@ -572,7 +631,7 @@ fn groundMatAt(q: vec2<i32>, cellMat: u32) -> u32 {
  *  a literal here: not every kernel includes materials.wgsl). */
 fn driftMatAt(q: vec2<i32>) -> u32 {
   if (!inMap(q)) { return 19u; }
-  let m = u32(textureLoad(driftTex, q, 0).z + 0.5);
+  let m = u32(textureLoad(driftTex, texCol(vec2<i32>(q)), 0).z + 0.5);
   return select(m, 19u, m == 0u);
 }
 

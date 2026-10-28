@@ -32,7 +32,7 @@ const MAX_W: f32 = 24.0;
 fn texAt(t: vec2<i32>) -> vec2<f32> {
   let dims = vec2<i32>(textureDimensions(windTex));
   if (any(t < vec2<i32>(0)) || any(t >= dims)) { return vec2<f32>(0.0); }
-  return textureLoad(windTex, t, 0).xy;
+  return textureLoad(windTex, texCol2(vec2<i32>(t)), 0).xy;
 }
 
 // (round 104, simscale — sim/systems.ts WindFieldSystem) what this dispatch covers: x, y its first texel; z the
@@ -51,7 +51,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let c = (vec2<f32>(t) + 0.5) * 2.0; // world position of this texel
   var v = texAt(t);
   if (WR.z == 1u) {
-    textureStore(windOut, t, vec4<f32>(v, mapWind(c) + v));
+    textureStore(windOut, texCol2(vec2<i32>(t)), vec4<f32>(v, mapWind(c) + v));
     return;
   }
   // advect: the gust drifts on in its own direction, but slowly (30 % of its
@@ -142,5 +142,5 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let m = length(v);
   if (m > MAX_W) { v *= MAX_W / m; }
   if (m < PAINT_MIN) { v = vec2<f32>(0.0); }
-  textureStore(windOut, t, vec4<f32>(v, mapWind(c) + v));
+  textureStore(windOut, texCol2(vec2<i32>(t)), vec4<f32>(v, mapWind(c) + v));
 }

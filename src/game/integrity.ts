@@ -512,7 +512,8 @@ export class Integrity {
       });
     }
     const dev = this.core.host.gpu.device;
-    dev.queue.writeTexture({ texture: this.core.world.bodyCpu }, P as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
+    // (ringwin: in the ring's order)
+    dev.queue.writeTexture({ texture: this.core.world.bodyCpu }, this.core.ring.toRing(P, 4) as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
     // (round 104, simscale: written whole, so projected whole next tick — grids/systems.ts ProjectSystem)
     this.core.world.projectAll = true;
   }
@@ -642,7 +643,9 @@ export class Integrity {
       let best: number = MAT.Rubble;
       let n = -1;
       for (const [m, c] of e.mats) if (c > n) [best, n] = [m, c];
-      dev.queue.writeBuffer(this.core.world.deposit, i * 16 + 4, new Float32Array([e.amount, best]));
+      // (ringwin: window column i's place on the ring)
+      const W = this.core.dims.w;
+      dev.queue.writeBuffer(this.core.world.deposit, this.core.ring.idx(i % W, Math.floor(i / W)) * 16 + 4, new Float32Array([e.amount, best]));
     }
     this.pendingLoose.clear();
   }

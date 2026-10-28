@@ -47,7 +47,7 @@ fn mixedCell(p: vec2<i32>) -> f32 {
   var hi = -1e9;
   for (var k = 0u; k <= NDIR; k++) {
     let q = clampCell(select(nbr(p, min(k, NDIR - 1u)), p, k == NDIR));
-    let t = textureLoad(driftTex, q, 0);
+    let t = textureLoad(driftTex, texCol(vec2<i32>(q)), 0);
     var m = sfMat(surface[colIdxI(q)]);
     if (t.x >= 0.07) { m = select(u32(t.z + 0.5), 19u, u32(t.z + 0.5) == 0u); }
     if (k == 0u) { m0 = m; } else if (m != m0) { return 1.0; }
@@ -225,9 +225,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     gD += h.z * off;
   }
   let k = 1.0 / (3.0 * HEX_R * HEX_R);
-  textureStore(cornerOut, vec2<i32>(p.x * CT, p.y), vec4<f32>(own[0], select(mixedCell(p), 0.0, MR.n.w != 0u)));
-  textureStore(cornerOut, vec2<i32>(p.x * CT + 1, p.y), vec4<f32>(own[1], 0.0));
-  textureStore(cornerOut, vec2<i32>(p.x * CT + 2, p.y), vec4<f32>(cen / 6.0, 0.0));
-  textureStore(cornerOut, vec2<i32>(p.x * CT + 3, p.y), vec4<f32>(gG * k, gW * k));
-  textureStore(cornerOut, vec2<i32>(p.x * CT + 4, p.y), vec4<f32>(gD * k, 0.0, 0.0));
+  textureStore(cornerOut, texColK(vec2<i32>(p.x, p.y), u32(CT), 0u), vec4<f32>(own[0], select(mixedCell(p), 0.0, MR.n.w != 0u)));
+  textureStore(cornerOut, texColK(vec2<i32>(p.x, p.y), u32(CT), u32(1)), vec4<f32>(own[1], 0.0));
+  textureStore(cornerOut, texColK(vec2<i32>(p.x, p.y), u32(CT), u32(2)), vec4<f32>(cen / 6.0, 0.0));
+  textureStore(cornerOut, texColK(vec2<i32>(p.x, p.y), u32(CT), u32(3)), vec4<f32>(gG * k, gW * k));
+  textureStore(cornerOut, texColK(vec2<i32>(p.x, p.y), u32(CT), u32(4)), vec4<f32>(gD * k, 0.0, 0.0));
 }

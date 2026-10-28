@@ -144,7 +144,8 @@ export class OutsideBand {
       const y0 = Math.floor(c / cx) * CHUNK;
       for (let ly = 0; ly < CHUNK; ly++)
         for (let lx = 0; lx < CHUNK; lx++) {
-          const src = outside[(y0 + ly) * w + x0 + lx];
+          // (round 105, ringwin: what's outside a column is kept on the window's ring)
+          const src = outside[this.world.ring.idx(x0 + lx, y0 + ly)];
           if (!src.length) continue;
           const col: Interval[] = src.map((iv) => {
             let z0 = iv.z0 - oz;

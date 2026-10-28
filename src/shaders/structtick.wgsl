@@ -100,7 +100,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var dusty = voxDusty(w);
   let t = airTempAt(wc.z);
   let snowing = rainAt(wc.xy) * snowShare(t);
-  var dust = min(textureLoad(airTex, cell, 0).x * 20.0, 1.0);
+  var dust = min(textureLoad(airTex, texCol(vec2<i32>(cell)), 0).x * 20.0, 1.0);
   for (var k = 0u; k < 2u; k++) {
     let ds = G.dusts[k];
     if (ds.w <= 0.0) { continue; }

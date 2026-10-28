@@ -113,7 +113,7 @@ fn shadowLit(wpos: vec3<f32>, nrm: vec3<f32>) -> f32 {
 
 /** Material of the loose layer just beneath the top on q (0 if none). */
 fn looseBelowAt(q: vec2<i32>) -> u32 {
-  let s = textureLoad(strataTexR, q, 0);
+  let s = textureLoad(strataTexR, texCol(vec2<i32>(q)), 0);
   var m = 0u;
   for (var k = 0; k < 3; k++) { if (s[k] > 0.0) { m = u32(floor(s[k] / 1000.0)); } }
   return m;
@@ -706,14 +706,14 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
 struct Swell { h: f32, slope: f32, amp: f32, crest: f32, dist: f32, dir: vec2<f32> };
 fn swellAt(p: vec2<f32>, cell: vec2<i32>, flow: f32, wind: f32) -> Swell {
   var o = Swell(0.0, 0.0, 0.0, 0.0, 1e3, vec2<f32>(0.0));
-  let sh = textureLoad(shoreTex, clampCell(cell), 0);
+  let sh = textureLoad(shoreTex, texCol(vec2<i32>(clampCell(cell))), 0);
   if (sh.z < 0.5) { return o; }
   let toS = sh.xy - p;
   let dist = length(toS);
   let dir = toS / max(dist, 1e-3);
   // (how open: the shore's distance six cells out to sea)
   let q = p - dir * 6.0;
-  let so = textureLoad(shoreTex, clampCell(cellAt(q)), 0);
+  let so = textureLoad(shoreTex, texCol(vec2<i32>(clampCell(cellAt(q)))), 0);
   let dOut = select(0.0, length(so.xy - q), so.z > 0.5);
   let open = smoothstep(3.0, 10.0, dOut) * (1.0 - smoothstep(0.01, 0.06, flow));
   if (open <= 0.0) { return o; }
@@ -735,7 +735,7 @@ fn swellAt(p: vec2<f32>, cell: vec2<i32>, flow: f32, wind: f32) -> Swell {
 fn reachAt(p: vec2<f32>) -> f32 {
   let t = triAt(p);
   var r = 0.0;
-  for (var k = 0; k < 3; k++) { r += t.w[k] * textureLoad(reachTex, clampCell(t.c[k]), 0).x; }
+  for (var k = 0; k < 3; k++) { r += t.w[k] * textureLoad(reachTex, texCol(vec2<i32>(clampCell(t.c[k]))), 0).x; }
   return r;
 }
 
@@ -830,7 +830,7 @@ fn canopyMarch(in: VOut) -> vec4<f32> {
 /** What a column's top is made of and how high it is (the loose sheet's material where there's a fair depth of it). */
 fn topLookAt(q: vec2<i32>) -> vec2<f32> {
   let s = surface[colIdxI(q)];
-  let t = textureLoad(driftTex, q, 0); // (one load: driftAt + driftMatAt)
+  let t = textureLoad(driftTex, texCol(vec2<i32>(q)), 0); // (one load: driftAt + driftMatAt)
   if (t.x >= 0.07) {
     let m = u32(t.z + 0.5);
     return vec2<f32>(f32(select(m, MAT_DRIFT, m == 0u)), sfZ(s) + t.x);
@@ -868,7 +868,7 @@ fn edgeLook(p: vec3<f32>, own: u32, ownV: f32) -> EdgeLook {
   // (a point lies in the triangles around its own cell: unless that cell
   // differs from a neighbour, there is nothing to vote on)
   let own0 = clampCell(cellAt(p.xy));
-  if (textureLoad(cornerTex, vec2<i32>(own0.x * CT, own0.y), 0).w < 0.5) { return EdgeLook(own, ownV); }
+  if (textureLoad(cornerTex, texColK(vec2<i32>(own0.x, own0.y), u32(CT), 0u), 0).w < 0.5) { return EdgeLook(own, ownV); }
   let t = triAt(p.xy);
   var ms: array<u32, 3>;
   var ws: array<f32, 3>;
@@ -1881,7 +1881,8 @@ fn fsBody(in: VOut) -> FOut {
   let bc = clampCell(cellAt(in.wpos.xy));
   // (a structure grid's voxel picks as the ground beneath: they can't be broken yet)
   let flag = select(0x8000u, 0u, (word >> 31u) != 0u);
-  o.pick = vec2<u32>(colIdxI(bc) + 1u, pickInfo(mat, in.wpos.z, flag));
+  // (ringwin: the pick's column in window order — the CPU reads it)
+  o.pick = vec2<u32>(winIdx(bc) + 1u, pickInfo(mat, in.wpos.z, flag));
   return o;
 }
 

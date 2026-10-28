@@ -431,7 +431,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
       x.z = p0.z;
     }
     nsum += vec3<f32>(0.0, 0.0, 1.0);
-    if (moving && wakeable(u32(g.w)) && inMap(c)) { touched = colIdxI(c) + 1u; }
+    if (moving && wakeable(u32(g.w)) && inMap(c)) { touched = winIdx(c) + 1u; }
   }
   // the columns around: a wall is one standing higher than a step up
   if (inMap(c)) {
@@ -442,7 +442,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
       if (gn.x - (x.z - rad) <= STEP_UP * sz) { continue; }
       if (gn.y < 0.5 && gn.x < x.z - rad) { continue; }
       let into = dot(x.xy - p0.xy, DIRV[k]);
-      if (moving && wakeable(u32(gn.w)) && inMap(nbr(c, k))) { touched = colIdxI(nbr(c, k)) + 1u; }
+      if (moving && wakeable(u32(gn.w)) && inMap(nbr(c, k))) { touched = winIdx(nbr(c, k)) + 1u; }
       if (into > 0.0) {
         fastest = max(fastest, dot(v.xy, DIRV[k]) * (1.0 - 0.6 * gn.z));
         x -= vec3<f32>(DIRV[k] * into, 0.0);

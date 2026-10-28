@@ -29,8 +29,9 @@ export function materialState(m: number): 'solid' | 'loose' | 'liquid' | 'plant'
 }
 
 /** The column index under world (x, y), or -1 off the map. */
-export function columnAt(w: number, h: number, x: number, y: number): number {
+export function columnAt(w: number, h: number, x: number, y: number, ring?: { idx(x: number, y: number): number }): number {
   const [cx, cy] = cellAt(x, y);
   if (cx < 0 || cy < 0 || cx >= w || cy >= h) return -1;
-  return cy * w + cx;
+  // (round 105, ringwin: a per-column buffer's index is the column's place on the window's ring)
+  return ring ? ring.idx(cx, cy) : cy * w + cx;
 }
