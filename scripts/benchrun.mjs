@@ -2,7 +2,7 @@
 // "Start benchmark", then its pages one after another till the report; the report's JSON written to --out.
 // The desktop baseline: data/bench/desktop-igpu.json (node scripts/benchrun.mjs --out data/bench/desktop-igpu.json).
 //   node scripts/benchrun.mjs [--url http://localhost:5291] [--size 412x915] [--dpr 2.6] [--q low] [--out bench.json]
-//     [--extra "&x=1"] [--timeout 1200] [--uncapped] [--smoke] [--throttle 4] [--fill]
+//     [--extra "&x=1"] [--timeout 1200] [--uncapped] [--smoke] [--throttle 4] [--fill] [--pan] (round 104: the pan benchmark, ?bench=pan)
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -44,7 +44,7 @@ try {
   }
   p.on('framenavigated', (f) => f === p.mainFrame() && console.log(`nav ${new URL(f.url()).searchParams.get('benchpage') ?? 'start'}`));
   // (bench v3, --smoke: the start, the hero and one window page, the end — and no Download offered before the end)
-  await p.goto(`${url}/?bench=1&q=${q}${argv.includes('--smoke') ? '&benchsmoke=1' : ''}${extra}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?bench=${argv.includes('--pan') ? 'pan' : '1'}&q=${q}${argv.includes('--smoke') ? '&benchsmoke=1' : ''}${extra}`, { waitUntil: 'load' });
   if (argv.includes('--smoke')) {
     // (a previous run stored, as on the user's phone: it must not be offered while the new one runs)
     await p.evaluate(() => localStorage.setItem('reclaimed.bench.last', JSON.stringify({ kind: 'reclaimed-bench', version: 1, startedAt: '2026-10-28T09:00:22Z', finishedAt: '2026-10-28T09:05:00Z' })));

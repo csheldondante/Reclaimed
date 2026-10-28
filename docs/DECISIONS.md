@@ -16,6 +16,14 @@ each was implemented.
   if the field is just a count of people or structures or something. 4. I think two so we can have overgrown buildings
   but I'm not certain." → BACKLOG ST17 (design only; come back to it).
 
+## 2026-10-28 — round 104 (session 5, `bench2`) — the pan benchmark
+
+- The user, verbatim: "Let's build a test of just panning in a straight line as fast as we can at zooms that always
+  keep all regions on screen drawn. I want to try both generating and intelligently streaming from disc to memory to
+  the GPU. I want to know on each device and at each zoom what is a max speed that is smooth, hitch free and never
+  lags behind the camera."
+- → `?bench=pan` on `bench2` (BACKLOG BN27).
+
 ## 2026-10-28 — round 102 (session 5, `bench2`) — the benchmark after the first phone run
 
 - The user, verbatim: "we should also run once the GPU work is done and see if getting rid of the CPU readback fixes

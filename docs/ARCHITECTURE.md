@@ -1910,5 +1910,8 @@ clears them).
   `go()` destroys the page's device before navigating. `save()` makes room (the stored previous report, then the
   details) rather than throw. The sandbox is two pages, `main` and `pans`; the report merges them. The A/B runs riding
   in a storm (`main.ab`) and by the meteor (`pans.abMeteor`), with the awake chunks.
+- **The pan benchmark (round 104, `?bench=pan`):** the same chain (`suite: 'pan'`), pages `pan<window>`
+  (`?panzooms=` the zooms on it). The report is `kind: 'reclaimed-bench-pan'`: `summary.table` (per zoom and source,
+  the fastest smooth speed and what failed next), then `rows` and the pages. `benchrun.mjs --pan`.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.
