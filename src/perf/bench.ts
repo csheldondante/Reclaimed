@@ -1,6 +1,6 @@
 // Round 101 (bench): the calibration benchmark (`?bench=1`). The user (DECISIONS round 101): "Can you build a
 // calibration test that we can run on the phone to directly give you benchmark numbers? … so you can compute
-// throughput and then target the actual bottlenecks." One tap, about 8–10 minutes (v2, with the A/B), then a report (one versioned JSON)
+// throughput and then target the actual bottlenecks." One tap, about 12 minutes (v3: the A/B, five window sizes, pans to 320 and the fastest pan each sustains), then a report (one versioned JSON)
 // to download, copy or share. It instruments and never optimises: every system runs as the deployed page runs it.
 //
 // The suite is a chain of page loads, its state in localStorage between them (docs/ARCHITECTURE.md "Benchmark"):
@@ -25,14 +25,19 @@ import { RegionStore } from '../world/region-store';
 import type { HitchBoot } from './start';
 import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './report-io';
 
-export const BENCH_VERSION = 2;
+/** (v3) vite.config.ts `define`: the build's time */
+declare const __BENCH_BUILD__: string;
+
+export const BENCH_VERSION = 3;
 const STATE = 'reclaimed.bench.state';
+/** (v3) the build, on the start page: vite.config.ts defines it at build time */
+const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ : 'dev';
 const LAST = 'reclaimed.bench.last';
 const ROW_H = Math.sqrt(3) / 2;
 /** the riding scenario's start (scripts/hitchrun.mjs: a road in a temperate place on the default seed) */
 const RIDE_AT = '15024,14337';
 /** the URL keys the suite sets itself (the rest of the start page's URL is carried to every page) */
-const OWN = ['bench', 'benchpage', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf'];
+const OWN = ['bench', 'benchpage', 'benchsmoke', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf'];
 
 // ---------- numbers ----------
 
@@ -62,7 +67,12 @@ const MB = 1048576;
 
 /** (v2) the A/B's systems on the main page, and those that may scale with the window (the window pages) */
 const AB_ALL = ['simAll', 'water', 'lava', 'sediment', 'wind', 'plants', 'otherSims', 'renderfields', 'particlesSim', 'agents', 'renderprep', 'meshRebuild', 'shadow', 'farLand', 'grid', 'voxelMesh', 'particlesDraw', 'waterDraw', 'plantsDraw', 'band', 'shore'];
-const AB_WINDOW = ['simAll', 'water', 'sediment', 'wind', 'renderfields', 'agents', 'renderprep', 'meshRebuild', 'shadow', 'grid'];
+const AB_WINDOW = ['simAll', 'renderprep', 'meshRebuild', 'shadow', 'grid', 'farLand'];
+/** (v3, round 102) the window sizes: the range button's three and two wider (the user: "crank up pan speed and view distance") */
+const WINDOWS = [...RANGES, 448, 512];
+/** (v3) the max-sustainable probe's pan speeds (cells/s), each held PROBE_S seconds */
+const PROBE_SPEEDS = [80, 100, 125, 160, 200, 250, 320, 400, 500, 640];
+const PROBE_S = 3;
 
 /**
  * (v2) Are this GPU's per-pass timestamps to be trusted? Round 101's Pixel 9a (Mali, Valhall): each pass read
@@ -211,7 +221,11 @@ function save(s: BenchState): void {
   }
 }
 
+/** (v3) the page is navigating to the next: a device lost now is the page going, not a crash */
+let leaving = false;
+
 function go(s: BenchState): void {
+  leaving = true;
   s.step++;
   save(s);
   const p = s.pages[s.step];
@@ -223,12 +237,39 @@ function go(s: BenchState): void {
 }
 
 /** What this page is in the suite: the start screen, a level page, the end — or not the benchmark at all. */
-export function benchMode(params: URLSearchParams): 'start' | 'final' | 'level' | null {
+export function benchMode(params: URLSearchParams): 'start' | 'final' | 'level' | 'skip' | null {
   if (params.get('bench') !== '1') return null;
   const page = params.get('benchpage');
   const s = load();
   if (!page || !s || s.done || s.pages[s.step]?.name !== page) return 'start';
-  return page === 'final' ? 'final' : 'level';
+  if (page === 'final') return 'final';
+  // (v3: a level page loaded a second time never finished the first — the tab killed, the device lost: skipped)
+  const ps = s.pages[s.step] as PageSpec & { tries?: number };
+  ps.tries = (ps.tries ?? 0) + 1;
+  save(s);
+  return ps.tries > 1 ? 'skip' : 'level';
+}
+
+/** (v3) while a level page loads (the grey screen): which page of the run this is, so it never looks finished */
+export function benchLoadingNote(ui: HTMLElement): void {
+  const s = load();
+  if (!s) return;
+  const d = document.createElement('div');
+  d.id = 'bench-loading';
+  d.style.cssText = 'position:fixed;left:8px;right:8px;top:max(8px,env(safe-area-inset-top));z-index:60;background:#000d;color:#e6f0e8;font:14px/1.4 system-ui,sans-serif;padding:10px 12px;border-radius:8px';
+  d.textContent = `Benchmark running: page ${s.step} of ${s.pages.length - 1} (${s.pages[s.step]?.name}) loading — don't close. The report comes at the end.`;
+  ui.appendChild(d);
+}
+
+/** (v3) this page didn't finish: noted, and on to the next */
+export function benchSkip(why: string): void {
+  if (leaving) return;
+  const s = load();
+  if (!s) return;
+  const page = s.pages[s.step]?.name ?? '?';
+  s.errors.push(`${page}: ${why}`);
+  s.results[page] = { page, error: why };
+  go(s);
 }
 
 // ---------- the UI (drawn between measurements only) ----------
@@ -508,8 +549,33 @@ async function deviceFacts(host: Host): Promise<Record<string, unknown>> {
 export async function benchStandalone(mode: 'start' | 'final', host: Host): Promise<void> {
   const panel = new Panel(host.ui);
   if (mode === 'final') return finish(host, panel);
-  panel.text('Reclaimed calibration benchmark');
-  panel.text('About 8–10 minutes. The page reloads itself a few times — leave it in front, plugged in if you can, and don’t touch the screen till the report shows. Your own saved world isn’t touched.');
+  panel.text(`Reclaimed calibration benchmark — bench v${BENCH_VERSION}, build ${BUILD}`);
+  const cut = load();
+  // (v3, the user: "because the report finished once it shows the download option mid test whenever it goes to the
+  // grey loading screen so it wasn't possible for me to tell when it was done" — a run in progress shows only that)
+  if (cut && !cut.done && cut.step > 0) {
+    const page = cut.pages[cut.step];
+    if (new URLSearchParams(location.search).get('benchpage')) {
+      // (mid-chain on the wrong page — a reload, a restored tab: back to the page the run is on)
+      panel.say(`Benchmark running: page ${cut.step} of ${cut.pages.length - 1} (${page?.name}) — don't close`);
+      setTimeout(() => goTo(cut), 1500);
+      return;
+    }
+    panel.say(`Benchmark running (or cut off): page ${cut.step} of ${cut.pages.length - 1}, ${page?.name}. Don't close it if it's still going.`);
+    panel.button('Carry on from the next page', true, () => {
+      cut.errors.push(`${page?.name}: stopped (the page was left or crashed)`);
+      go(cut);
+    });
+    panel.button('Start again', false, () => void start(host, panel));
+    const more = panel.text('');
+    const btn = panel.button('Stuck? Download what it has (incomplete)', false, () => {
+      btn.remove();
+      reportButtons(panel, partialReport(cut));
+    });
+    void more;
+    return;
+  }
+  panel.text('About 12 minutes. The page reloads itself a few times — leave it in front, plugged in if you can, and don’t touch the screen till the report shows. Your own saved world isn’t touched.');
   const last = (() => {
     try {
       return localStorage.getItem(LAST);
@@ -519,10 +585,36 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host): Prom
   })();
   panel.button('Start benchmark', true, () => void start(host, panel));
   if (last) {
-    panel.text('The last result is kept:');
-    reportButtons(panel, last);
+    let label = 'previous run';
+    try {
+      const r = JSON.parse(last) as { version?: number; finishedAt?: string; startedAt?: string };
+      label = `previous run (bench v${r.version ?? '?'}, ${(r.finishedAt ?? r.startedAt ?? '').slice(0, 16).replace('T', ' ')})`;
+    } catch {
+      // (unreadable: the plain label)
+    }
+    panel.text(`The ${label} is kept:`);
+    reportButtons(panel, last, true);
   }
   panel.say('');
+}
+
+/** (v3) an unfinished run's report: marked incomplete, the pages done, the page it stopped on and why */
+function partialReport(s: BenchState): string {
+  const done = s.pages.slice(1, s.step).map((p) => p.name);
+  const at = s.pages[s.step]?.name ?? null;
+  const why = s.errors.filter((e) => at && e.startsWith(`${at}:`));
+  const head = { incomplete: true, pagesDone: done, stoppedOn: at, why };
+  try {
+    return JSON.stringify({ ...head, ...makeReport(s) });
+  } catch (e) {
+    return JSON.stringify({ ...head, kind: 'reclaimed-bench', version: BENCH_VERSION, reportError: String(e), errors: s.errors, ...s.results });
+  }
+}
+
+/** (v3) the page the run is on now (no step taken) */
+function goTo(s: BenchState): void {
+  s.step--;
+  go(s);
 }
 
 async function start(host: Host, panel: Panel): Promise<void> {
@@ -553,7 +645,9 @@ async function start(host: Host, panel: Panel): Promise<void> {
   ];
   // the other window sizes (the main page has the viewer's own: the stored range, else the tier's)
   const own = myWin ?? (host.qualityName === 'low' && host.params.get('phone') !== '0' ? 320 : 256);
-  for (const w of RANGES) if (w !== own) s.pages.push({ name: `win${w}`, params: { ...common, at: RIDE_AT, win: String(w) } });
+  for (const w of WINDOWS) if (w !== own) s.pages.push({ name: `win${w}`, params: { ...common, at: RIDE_AT, drive: '18', win: String(w) } });
+  // (v3, ?benchsmoke=1: the start, the hero and one window page, the end — a check that the chain works, ~3 min)
+  if (host.params.get('benchsmoke') === '1') s.pages = [s.pages[0], s.pages[2], { name: 'win256', params: { ...common, at: RIDE_AT, drive: '18', win: '256' } }];
   s.pages.push({ name: 'final', params: {} });
   const t0 = performance.now();
   panel.say('device facts…');
@@ -586,7 +680,7 @@ async function clearWorlds(s: BenchState): Promise<void> {
   s.worlds = [];
 }
 
-function reportButtons(panel: Panel, body: string): void {
+function reportButtons(panel: Panel, body: string, previous = false): void {
   const status = panel.text('');
   const say = (m: string) => (status.textContent = m);
   let name = '';
@@ -600,7 +694,7 @@ function reportButtons(panel: Panel, body: string): void {
     }
     return (name = `reclaimed-bench-${stamp()}-${await deviceTag(gpu)}.json`);
   };
-  panel.button('Download report', true, () => void nameOf().then((n) => say(downloadJson(body, n))));
+  panel.button(previous ? 'Download previous run' : 'Download report', !previous, () => void nameOf().then((n) => say(downloadJson(body, n))));
   panel.button('Copy', false, () => void copyText(body).then(say, (e: Error) => say(`copy failed: ${e.message}`)));
   panel.button('Share…', false, () => void nameOf().then(async (n) => say((await shareJson(body, n, 'Reclaimed benchmark')) || 'this browser can’t share files: use Download')));
   panel.el.appendChild(status);
@@ -630,7 +724,7 @@ async function finish(host: Host, panel: Panel): Promise<void> {
   } catch {
     // (already let go)
   }
-  panel.say('Benchmark done.');
+  panel.say(`Benchmark done — this run (bench v${BENCH_VERSION}, ${s.id}).`);
   panel.text(summary(report));
   reportButtons(panel, body);
   const dev = await postDev(body, 'bench');
@@ -654,6 +748,7 @@ interface LevelCtx {
 export async function benchLevel(ctx: LevelCtx): Promise<void> {
   const s = load()!;
   const page = s.pages[s.step];
+  document.getElementById('bench-loading')?.remove();
   const panel = new Panel(ctx.host.ui);
   panel.el.style.opacity = '0.85';
   panel.el.style.right = 'auto';
@@ -665,14 +760,23 @@ export async function benchLevel(ctx: LevelCtx): Promise<void> {
   const t0 = performance.now();
   try {
     await keepAwake();
-    panel.say(`${s.step}/${s.pages.length - 1} ${page.name}: loading…`);
+    panel.say(`Benchmark running: page ${s.step} of ${s.pages.length - 1} (${page.name}), loading — don't close`);
     const R = await waitFor(() => {
       const r = (window as unknown as { reclaimed?: Record<string, unknown> }).reclaimed;
       return r?.stream && (r.stream as { store?: unknown }).store ? r : null;
     }, 240000);
     // (ms from the page's navigation to the level ready: the atlas built, the window made, the store open)
     out.readyAtMs = Math.round(performance.now());
-    const B = new Bench(ctx, R as unknown as Engine, panel, `${s.step}/${s.pages.length - 1} ${page.name}`);
+    const B = new Bench(ctx, R as unknown as Engine, panel, `Benchmark running: page ${s.step} of ${s.pages.length - 1} (${page.name}), don't close —`);
+    // (v3: what the page has so far saved at every step — a crash leaves it, marked incomplete)
+    B.checkpoint = (step) => {
+      s.results[page.name] = { ...out, incomplete: true, lastStep: step };
+      try {
+        save(s);
+      } catch {
+        // (storage full: the page's results come at its end)
+      }
+    };
     if (!s.worlds.includes(B.R.stream.save.world)) s.worlds.push(B.R.stream.save.world);
     save(s);
     if (page.name === 'main') await B.mainPage(out);
@@ -746,8 +850,11 @@ class Bench {
   }
 
   private say(s: string): void {
-    this.panel.say(`${this.tag}: ${s}`);
+    this.panel.say(`${this.tag} ${s}`);
+    this.checkpoint?.(s);
   }
+  /** (v3) called at every step: the page's results so far saved */
+  checkpoint?: (step: string) => void;
 
   private get W(): number {
     return this.R.stream.W;
@@ -1114,6 +1221,77 @@ class Bench {
   }
   private idleFrames: number[] | null = null;
 
+  /** (v3) the share of a 12x12 grid of screen points whose ground is in the window, in a region already written */
+  private writtenShare(): number {
+    const c = this.R.camera;
+    const S = this.R.stream;
+    const W = S.W;
+    const H = S.H;
+    const R = S.R;
+    const un: [number, number][] = S.unwritten ?? [];
+    const G = 12;
+    let n = 0;
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G; i++) {
+        const [dx, dy] = c.fly ? [0, 0] : c.screenDeltaToWorld(((i + 0.5) / G - 0.5) * c.viewportW, ((j + 0.5) / G - 0.5) * c.viewportH);
+        const x = c.target[0] + dx;
+        const y = (c.target[1] + dy) / ROW_H;
+        if (x < 0 || x >= W || y < 0 || y >= H) continue;
+        const lx = Math.floor(x / R) * R;
+        const ly = Math.floor(y / R) * R;
+        if (un.some(([ux, uy]) => ux === lx && uy === ly)) continue;
+        n++;
+      }
+    return n / (G * G);
+  }
+  private parkedCover = 0;
+
+  /** (v3) low detail now: the share of the screen detailed when parked that isn't now (outside the window, or not written yet) */
+  private lowDetail(): number {
+    return Math.max(0, this.parkedCover - this.writtenShare());
+  }
+
+  /**
+   * (v3) The fastest pan this window sustains: the speed raised step by step (PROBE_SPEEDS, PROBE_S each) until, over
+   * a step, the low detail's p90 is over 5% of the screen or the rendered fps under 30 — the last step that held.
+   */
+  private async maxPan(): Promise<Record<string, unknown>> {
+    const sc = this.R.scene;
+    await this.settle(1000, 10000);
+    this.parkedCover = this.writtenShare();
+    const [ux, uy] = this.R.camera.screenDeltaToWorld(0, -1);
+    const l = Math.hypot(ux, uy) || 1;
+    const steps: { speed: number; fps: number; lowP90: number; ok: boolean }[] = [];
+    let held: number | null = null;
+    let why = `held to ${PROBE_SPEEDS[PROBE_SPEEDS.length - 1]} cells/s`;
+    sc.pan = { speed: PROBE_SPEEDS[0], dir: [ux / l, uy / l], t: 0, turnAt: 0, turnBy: 0, turned: 0, asked: 0 };
+    try {
+      for (const v of PROBE_SPEEDS) {
+        this.say(`the fastest pan: ${v} cells/s…`);
+        sc.pan.speed = v;
+        const low: number[] = [];
+        const fno0 = this.prof.frameNo;
+        const t0 = performance.now();
+        while (performance.now() - t0 < PROBE_S * 1000) {
+          await frame();
+          low.push(this.lowDetail());
+        }
+        const fps = (this.prof.frameNo - fno0) / ((performance.now() - t0) / 1000);
+        const lowP90 = [...low].sort((a, b) => a - b)[Math.floor(low.length * 0.9)] ?? 0;
+        const ok = lowP90 <= 0.05 && fps >= 30;
+        steps.push({ speed: v, fps: +fps.toFixed(1), lowP90: r3(lowP90), ok });
+        if (!ok) {
+          why = lowP90 > 0.05 ? `low detail ${(lowP90 * 100).toFixed(0)}% of the screen at ${v}` : `${fps.toFixed(0)} fps at ${v}`;
+          break;
+        }
+        held = v;
+      }
+    } finally {
+      sc.pan = null;
+    }
+    return { unit: 'cells/s', maxSustainable: held, stoppedBy: why, rule: `the speed raised every ${PROBE_S} s; it holds while low detail (p90) <= 5% of the screen and rendered fps >= 30`, parkedDetailed: r3(this.parkedCover), window: this.W, steps };
+  }
+
   /** the timestamps judged over every capture so far */
   private tsChecks: ReturnType<typeof judgeTimestamps>[] = [];
 
@@ -1130,17 +1308,15 @@ class Bench {
     out.view = this.view();
     this.say('parked frames…');
     this.framesHook = (f) => (this.idleFrames = f);
-    out.idle = await this.capture(8);
+    out.idle = await this.capture(5);
     this.framesHook = null;
     this.idleP50 = (out.idle as { frames?: Stat }).frames?.p50 ?? 17;
     this.say('A/B: each system off in turn…');
-    out.ab = await this.ab(AB_ALL);
+    out.ab = await this.ab(AB_ALL, 1.5);
     this.say('region generation, stage by stage…');
     out.regionStages = await this.regionStages(5);
     this.say('regions/s at 1, 2, 4, 8 tiles a frame…');
     out.tiles = await this.tileSweep();
-    this.say('the mesh rebuilt…');
-    out.mesh = await this.meshRebuild();
     this.say('agents…');
     out.agents = await this.agentsSweep();
     this.say('render scales…');
@@ -1155,16 +1331,22 @@ class Bench {
       out.ride = { ...(await this.capture(20)), view: this.view() };
       sc.drive = null;
     } else out.ride = { error: 'no road near the start (?drive found none)' };
-    // (v2: the pan at 120 only — 80 told nothing 120 didn't, and the A/B needs the time)
-    for (const v of [120]) {
-      this.say(`scenario: a fast pan at ${v} cells/s (15 s)…`);
+    // (v3: pans at 80 and 120, then 160, 240 and 320 — the user: "crank up pan speed and view distance")
+    for (const v of [80, 120, 160, 240, 320]) {
+      const secs = v <= 120 ? 12 : 10;
+      this.say(`scenario: a fast pan at ${v} cells/s (${secs} s)…`);
       await this.settle(1500, 15000);
       const [ux, uy] = this.R.camera.screenDeltaToWorld(0, -1);
       const l = Math.hypot(ux, uy) || 1;
+      this.parkedCover = this.writtenShare();
       sc.pan = { speed: v, dir: [ux / l, uy / l], t: 0, turnAt: 0, turnBy: 0, turned: 0, asked: 0 };
-      out[`pan${v}`] = { ...(await this.capture(15)), view: this.view() };
+      const low: number[] = [];
+      const cap = await this.capture(secs, () => low.push(this.lowDetail()));
+      out[`pan${v}`] = { ...cap, lowDetail: stat(low, 'share of the screen that is detailed parked but not now (0..1)'), view: this.view() };
       sc.pan = null;
     }
+    this.say('the fastest pan it keeps up with…');
+    out.maxPan = await this.maxPan();
     this.say('scenario: a warp across the atlas…');
     await this.settle(1500, 15000);
     out.warp = await this.warp();
@@ -1335,41 +1517,6 @@ class Bench {
       if (performance.now() - t0 > ms) return false;
       await sleep(50);
     }
-  }
-
-  /**
-   * The mesh's rebuilds: every chunk marked moved (as a warp does: renderer.windowMoved), the frames after it timed —
-   * the field mesh's GPU ms a frame over its parked cost, a frame's rebuild slots (quality meshSlots) at a time
-   */
-  private async meshRebuild(): Promise<Record<string, unknown>> {
-    this.keepMesh = true;
-    const base = await this.capture(3);
-    const baseMesh = (base.meshFrame as Stat | null)?.p50 ?? 0;
-    this.R.core.renderer.windowMoved(1 << 12, 0, [0, 0, 0]);
-    const cap = await this.capture(6);
-    this.keepMesh = false;
-    const per = (cap.meshFrames as number[]) ?? [];
-    const thr = ((base.meshFrame as Stat | null)?.p95 ?? 0) * 1.2 + 0.05;
-    const busy = per.filter((v) => v > thr);
-    const extra = busy.reduce((a, v) => a + (v - baseMesh), 0);
-    const slots = this.ctx.host.quality.meshSlots ?? null;
-    const fm = this.R.core.renderer.fieldMesh;
-    delete cap.meshFrames;
-    delete base.meshFrames;
-    return {
-      unit: 'GPU ms',
-      chunkGrid: fm?.chunkGrid ?? null,
-      slotsPerFrame: slots,
-      parkedMeshPerFrame: base.meshFrame,
-      rebuildMeshPerFrame: cap.meshFrame,
-      rebuildingFrames: busy.length,
-      perChunk: slots && busy.length ? r3(extra / (busy.length * slots)) : null,
-      voxelChunks: (cap.hybrid as { voxelChunks?: Stat } | null)?.voxelChunks ?? null,
-      note: busy.length ? '' : 'no frame over the parked p95: the hybrid meshes only its voxel chunks (few, parked), so a forced rebuild shows nothing — the per-chunk cost needs a scene with voxel chunks (BACKLOG BN10)',
-      rule: 'frames whose field-mesh GPU ms is over the parked p95: their excess over the parked p50, over (those frames x slots a frame)',
-      frames: cap.frames,
-      gpuFrame: cap.gpuFrame,
-    };
   }
 
   private async agentsSweep(): Promise<Record<string, unknown>> {
@@ -1567,6 +1714,8 @@ class Bench {
 
   async winPage(out: Record<string, unknown>): Promise<void> {
     const sc = this.R.scene;
+    // (the ride's road, kept for later — the smoke run found v3 dropped it before keeping it)
+    const drive = sc.drive;
     sc.drive = null;
     sc.pan = null;
     this.say('settling…');
@@ -1574,10 +1723,19 @@ class Bench {
     out.window = { w: this.W, h: this.R.stream.H };
     out.view = this.view();
     this.framesHook = (f) => (this.idleFrames = f);
-    out.parked = await this.capture(6);
+    out.parked = await this.capture(4);
     this.framesHook = null;
     this.say('A/B: what scales with the window…');
-    out.ab = await this.ab(AB_WINDOW);
+    out.ab = await this.ab(AB_WINDOW, 1.5);
+    // (v3) a short ride, and the fastest pan this window keeps up with
+    this.say('a short ride (10 s)…');
+    await this.settle(1000, 10000);
+    if (drive) {
+      sc.drive = drive;
+      out.ride = { ...(await this.capture(10)), view: this.view() };
+      sc.drive = null;
+    }
+    out.maxPan = await this.maxPan();
   }
 }
 
@@ -1679,6 +1837,15 @@ function makeReport(s: BenchState): Record<string, unknown> {
     scaling[k] = { costFrameMs: Object.fromEntries(sizes.map((w, i) => [w, by[i]])), fpsOn: Object.fromEntries(sizes.map((w, i) => [w, fps[i]])), ratioLargestToSmallest: a && b && a > 0.2 ? r3(b / a) : null };
   }
   derived.windowScaling = { sizes, areaRatio: sizes.length > 1 ? r3((sizes[sizes.length - 1] / sizes[0]) ** 2) : null, note: 'a system that scales with the window costs about areaRatio times more at the largest; costs under ~0.3 ms are noise', systems: scaling };
+  // (v3) per window size: rendered fps parked and riding, the fastest pan it sustains
+  const table: Record<string, unknown> = {};
+  const pageOf = (w: number) => (w === W ? { parked: main.idle, ride: main.ride, maxPan: main.maxPan } : res[`win${w}`]);
+  for (const w of [...WINDOWS].sort((a, b) => a - b)) {
+    const pg = pageOf(w);
+    if (!pg || (w === W && !main.idle)) continue;
+    table[w] = pg.error ? { error: pg.error } : { parkedFps: pg.parked?.fps ?? null, rideFps: pg.ride?.fps ?? null, rideP95: pg.ride?.frames?.p95 ?? null, maxPan: pg.maxPan?.maxSustainable ?? null, stoppedBy: pg.maxPan?.stoppedBy ?? null };
+  }
+  derived.byWindow = { unit: 'rendered fps; maxPan cells/s', table };
   const tsJ = main.timestampsJudged as { reliable: boolean | null; why: string }[] | undefined;
   const tsBad = tsJ?.find((t) => t.reliable === false);
   const tsSum = { reliable: tsJ?.length ? !tsBad : null, why: tsBad?.why ?? tsJ?.[0]?.why ?? 'n/a', modes: res.timestampModes ? Object.fromEntries(['onePassEach', 'ownEncoderEach', 'allInOnePass'].map((m) => [m, res.timestampModes[m] ? { sumP50: res.timestampModes[m].sum?.p50, wallP50: res.timestampModes[m].wall?.p50, sumOverWall: res.timestampModes[m].sumOverWall } : null])) : null };
@@ -1690,6 +1857,8 @@ function makeReport(s: BenchState): Record<string, unknown> {
     window: W,
     fps: { parked: fpsOf(idle), ride: fpsOf(main.ride), pan120: fpsOf(main.pan120), warp: fpsOf(main.warp), hero: fpsOf(res.hero?.walking), ...Object.fromEntries(Object.keys(res).filter((k) => /^win\d+$/.test(k)).map((k) => [k, fpsOf(res[k]?.parked)])) },
     frameP95: { parked: idle.frames?.p95 ?? null, ride: main.ride?.frames?.p95 ?? null, pan120: main.pan120?.frames?.p95 ?? null, hero: res.hero?.walking?.frames?.p95 ?? null },
+    byWindow: table,
+    pans: Object.fromEntries([80, 120, 160, 240, 320].map((v) => [v, main[`pan${v}`] ? { fps: main[`pan${v}`].fps, p95: main[`pan${v}`].frames?.p95 ?? null, lowDetailP95: main[`pan${v}`].lowDetail?.p95 ?? null } : null])),
     abTop: derived.ab,
     abBound: main.ab?.bound ?? null,
     windowScaling: Object.fromEntries(Object.entries(scaling).map(([k, v]: [string, any]) => [k, v.costFrameMs])),
@@ -1727,6 +1896,7 @@ function summary(r: Record<string, any>): string {
     `view: sandbox zoom ${r.main?.ride?.view?.zoom ?? '–'} (${r.main?.ride?.view?.footprintCells?.w ?? '–'} cells across), hero zoom ${r.hero?.walking?.view?.zoom ?? '–'} (${r.hero?.walking?.view?.footprintCells?.w ?? '–'})`,
     `timestamps: ${r.summary?.timestamps?.reliable === false ? 'UNRELIABLE (A/B used)' : r.summary?.timestamps?.reliable ? 'ok' : 'n/a'}`,
     `A/B top: ${(d.ab?.top ?? []).slice(0, 4).join(', ')}`,
+    `by window (parked / ride fps, max pan): ${Object.entries(d.byWindow?.table ?? {}).map(([w, v]: [string, any]) => `${w}: ${v.parkedFps ?? '–'}/${v.rideFps ?? '–'}, ${v.maxPan ?? '–'}`).join('; ')}`,
     `thermal drift: ${d.thermal?.driftPct ?? '–'}%   errors: ${r.errors?.length ?? 0}`,
   ];
   return lines.join('\n');

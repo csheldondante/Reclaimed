@@ -16,7 +16,7 @@ import { AudioDebug } from './ui/audio-debug';
 import { RockPanel } from './ui/rockpanel';
 import { PerfOverlay } from './ui/perf-overlay';
 import { startHitch } from './perf/start';
-import { benchLevel, benchMode, benchStandalone } from './perf/bench';
+import { benchLevel, benchLoadingNote, benchMode, benchSkip, benchStandalone } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -107,6 +107,13 @@ async function main() {
     await benchStandalone(bench, host);
     return;
   }
+  // (v3: a page that loaded again without finishing is skipped; a device lost on a level page goes on to the next)
+  if (bench === 'skip') {
+    benchSkip('the page loaded again without finishing (crashed, or the tab was killed)');
+    return;
+  }
+  if (bench === 'level') benchLoadingNote(ui);
+  if (bench === 'level') void gpu.device.lost.then((info) => info.reason !== 'destroyed' && benchSkip(`GPU device lost (${info.reason}): ${info.message}`));
 
   const show = (next: Scene) => {
     scene?.dispose();
