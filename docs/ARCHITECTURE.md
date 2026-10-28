@@ -1842,3 +1842,6 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   'reclaimed-hitch-report'); the dev server's /__hitch (vite.config.ts) writes it to perf-reports/.
 - **The judge's inputs** (integrity.ts): edits, cuts, watches, lightning, cyclones and the first window's structures
   seed it; land that comes in with a slide does not (round 100). A pass judges structure boxes for at most 8 ms.
+- **The world API's mirror** (api/mirror.ts, round 100): paged sources (the layers) are read by pages round
+  `Paged.focus()` — the camera's target and `Terrain.keepFresh` points — between whole reads (every 8th, after a
+  slide, `refresh(true)`); `?mirror=full` reads everything every time.

@@ -7948,3 +7948,34 @@ system on, 1×). Allocation before → after, 15 s phases:
 Files: src/perf/*, src/gpu/cpustat.ts, src/gpu/profiler.ts, src/main.ts (the rAF loop's hooks), vite.config.ts (the
 sink), scripts/hitchrun.mjs, soak.mjs, fracturesame.mjs; fracture.ts, integrity.ts, level.ts, renderer.ts as above.
 Shots: C:/Projects/shots88/hitchrec/ (hud_desktop.png).
+
+## 2026-10-27 — round 100 (2) (`hitchrec`): the world API's mirror by pages by default; the soak
+
+The recorder's top long-hitch cause after the judge fix was `gpu-busy`: a readback that waited most of the frame, the
+small ones (the judge's, the mesh's) 200–320 ms behind a 34 MB copy and map — src/api/mirror.ts, the world API's CPU
+mirror, whole every 250 ms whenever a game attaches the API (the atlas's units do): ~136 MB/s read back. Main's call
+(DECISIONS round 100): `?mirror=near` (round 83) is the default, `?mirror=full` the old. The layers are read by pages
+within 48 cells of the camera's target, and of any point a caller keeps fresh (`Terrain.keepFresh(at)`; a hero run
+keeps its hero's), whole every 8th read and after a slide; `refresh(true)` (the world API's `sim.refresh(true)`) reads
+everything now. Only the layers are paged: heightAt / groundAt read levels, surface and drift, still whole every read;
+floorAt, layersAt and materialAt (the hoverbike's and heroes' floors, crews' materials) read the layers — near the
+camera, as before; elsewhere up to 2 s old. GameplayGM's slice: its floorAt is heightAt (always fresh); solidAt and
+floorUnder read the layers — fresh within 48 cells of the camera (its unit is followed); foes further off see the
+layers up to 2 s old, and can keepFresh their positions if that matters. worldapitest 16/16.
+
+A/B (speedsweep pan 120, 12 s, the atlas q=low 412×915): places 8bff120 got 110.8 c/s, p95 35.6, worst 513, region
+build 125.7 ms; hitchrec (mirror full, as merged) 117.5 c/s, p95 31.3, worst 84, build 104.7; mirror near 118.4,
+build 109.5. (zmesh saw slower builds after merging places 3f67103: not from here.)
+
+**The soak** (scripts/soak.mjs, 10 min, the driveprofile ride at 18/s with lightning every 30 s, a meteor every 2 min,
+storms at 1 and 5 min; desktop iGPU, every system on):
+- before (round 100's first state — arrivals judged, mirror whole): 8–3630 frames a minute; one judge pass 39.9 s,
+  gaps of 12–31 s; p50 10–232.
+- after: every minute p50 10, p95 30, p99 50–68, worst 233–342 ms, 3740–4120 frames. Hitches by cause over the 10
+  min: gpu-held 4774 (the iGPU at its limit with two frames in flight), async:write 78, gpu-busy 74 (240–340 ms: the
+  mirror's whole read after a slide — BACKLOG HR10), browser 36, gc 15 (all under 1 s), gpu 11. The judge: 296
+  passes, the longest 18.7 ms, 555 boxes deferred by its budget.
+- leaks: none. The JS heap (CDP, used) 65–82 MB through the 10 minutes; the GPU's buffers and textures alive 520.3 →
+  521.6 MB flat (50 386 buffers made, 50 146 destroyed); the largest: atlas dist 64 MB, the mirror's staging 34,
+  meshPool 26, atlas rivers 26, layers 25, layersNext 25. (performance.memory's used heap reads 390–570 MB on
+  the desktop and swings with collections; CDP's is the one to trust.)

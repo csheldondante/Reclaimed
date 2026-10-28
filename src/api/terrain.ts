@@ -168,15 +168,35 @@ export class Terrain {
   ) {
     const w = core.world;
     mirror.addBuffer('surface', w.surface);
-    // (perfopt, ?mirror=near: by pages round the camera's target between whole reads — api/mirror.ts)
+    // (perfopt, round 100 the default: by pages round the camera's target, and what's kept fresh, between whole reads — api/mirror.ts)
     const p = core.packed;
-    mirror.addBuffer('layers', w.layers, { chunksX: p.chunksX, chunksY: p.chunksY, chunkTable: p.chunkTable, slotBytes: SLOT_WORDS * 4, chunk: CHUNK, rowH: ROW_H, focus: () => [core.camera.target[0], core.camera.target[1]] });
+    const focus = () => {
+      const out: [number, number][] = [[core.camera.target[0], core.camera.target[1]]];
+      for (const f of this.fresh) {
+        const at = f();
+        if (at) out.push([at[0], at[1]]);
+      }
+      return out;
+    };
+    mirror.addBuffer('layers', w.layers, { chunksX: p.chunksX, chunksY: p.chunksY, chunkTable: p.chunkTable, slotBytes: SLOT_WORDS * 4, chunk: CHUNK, rowH: ROW_H, focus });
     mirror.addTexture('drift', w.drift);
     mirror.addTexture('levels', w.levels);
   }
 
   get readAt(): number {
     return this.mirror.readAt;
+  }
+
+  /** (round 100) points whose columns (within 48 cells) every read keeps as they are — a hero's, a vehicle's */
+  private fresh: (() => readonly number[] | null)[] = [];
+
+  /** Keep the columns round `at()` fresh in every read (the camera's target always is); returns its removal. */
+  keepFresh(at: () => readonly number[] | null): () => void {
+    this.fresh.push(at);
+    return () => {
+      const i = this.fresh.indexOf(at);
+      if (i >= 0) this.fresh.splice(i, 1);
+    };
   }
 
   refresh(): Promise<void> {
