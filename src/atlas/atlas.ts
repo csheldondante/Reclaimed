@@ -167,10 +167,11 @@ const MAX_INST = 8192;
 /** a streamed batch's columns are made a TILE² tile a frame (round 80) */
 const TILE = 32;
 const Q98 = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
-/** (round 98, ?streamold=1 or ?tiles=old) one tile a frame over every batch, as before round 98 */
-const TILE_OLD = Q98.get('streamold') === '1' || Q98.get('tiles') === 'old';
-/** (round 98, ?tiles=N) N tiles a frame, fixed (else paced by the frame's time: TilePacer) */
-const TILES_FIXED = Number(Q98.get('tiles')) || 0;
+/** (round 98, ?streamold=1) one tile a frame over every batch, as before round 98 */
+const TILE_OLD = Q98.get('streamold') === '1';
+/** (round 98, ?tilesfixed=N — round 105: it was ?tiles=N, which the tile cache's ?tiles=1 then also set, pinning the
+ *  pacer to one tile a frame) N tiles a frame, fixed (else paced by the frame's time: TilePacer) */
+const TILES_FIXED = Number(Q98.get('tilesfixed')) || 0;
 /** (round 98, ?tilemax=) the most tiles a frame the pacer gives */
 const TILE_MAX = Number(Q98.get('tilemax') ?? 4);
 
@@ -208,6 +209,8 @@ const FAST_AT = 80;
  */
 export class TilePacer {
   private waiting: (() => void)[] = [];
+  /** (round 105, tilelatency) the render-only tiles' turns: served in turn with the streamer's, never behind its queue */
+  private first: (() => void)[] = [];
   private armed = false;
   private last = 0;
   private ran = 0;
@@ -235,9 +238,9 @@ export class TilePacer {
   private doneIdle = 0;
   private probing = false;
 
-  next(): Promise<void> {
+  next(prio = false): Promise<void> {
     return new Promise((r) => {
-      this.waiting.push(r);
+      (prio ? this.first : this.waiting).push(r);
       this.arm();
     });
   }
@@ -306,7 +309,13 @@ export class TilePacer {
     }
     this.perFrame = n;
     n = this.fixed || TILES_FIXED || n;
-    const go = this.waiting.splice(0, n);
+    // (round 105: the two lanes in turn — the tiles' first, then the streamer's — so neither waits on the other: the
+    // window's own land isn't starved by the tiles ahead, the tiles not queued behind the streamer's strips)
+    const go: (() => void)[] = [];
+    while (go.length < n && (this.first.length || this.waiting.length)) {
+      if (this.first.length) go.push(this.first.shift()!);
+      if (go.length < n && this.waiting.length) go.push(this.waiting.shift()!);
+    }
     this.ran = go.length;
     if (go.length) {
       this.tiles += go.length;
@@ -315,7 +324,7 @@ export class TilePacer {
     for (const r of go) r();
     if (this.how === 'workdone') this.probe(t, go.length);
     // (a frame on, the next batch's tiles — and this frame's time, after tiles or not)
-    if (this.waiting.length || this.ran) this.arm();
+    if (this.waiting.length || this.first.length || this.ran) this.arm();
   }
 }
 /** a geyser (Atlas.geysersIn) */
@@ -1120,7 +1129,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
    * passes submitted, `done` to let the buffers go once what reads them is submitted too (columns' readback, or
    * finish.wgsl: atlas/finish.ts). Streaming (`spread`): a tile a frame (the pacer's), as before.
    */
-  async columnsGpu(x0: number, y0: number, w: number, h: number, spread = false): Promise<GpuColumns & { done: () => void }> {
+  async columnsGpu(x0: number, y0: number, w: number, h: number, spread = false, gate: () => Promise<void> = () => this.tileGate()): Promise<GpuColumns & { done: () => void }> {
     const dev = this.device;
     const bt = spread ? this.traceOf(x0, y0) : undefined;
     const tileBufs: GPUBuffer[] = [];
@@ -1163,7 +1172,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
         let tpb = pb;
         if (spread) {
           dev.queue.submit([fin.finish()]);
-          await this.tileGate();
+          await gate();
           if (bt) bt.tiles.push(performance.now());
           fin = dev.createCommandEncoder({ label: 'atlas columns tile' });
           tpb = dev.createBuffer({ label: 'atlas col params tile', size: PARAM_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -1437,6 +1446,27 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
       o.tell(meta!.marks);
       this.gpuMade++;
       return meta!;
+    } finally {
+      c.done();
+    }
+  }
+
+  /**
+   * (round 105, tilelatency; the user: "Why does the CPU readback and all of that happen all we care about is visuals
+   * until your character gets there") A region's land for a render-only tile (render/tilelandgpu.ts): the columns and
+   * finish.wgsl into `target` as regionInto does, but nothing comes back — the per-column summary (surface, ground, the
+   * top, the highest gap's roof: finish.wgsl's) copied on the GPU into `meta` at its offset instead of read back — no
+   * stamps (no settlement plan: towns come to tiles from GPU stamps later — BACKLOG TC8), each tile's turn the pacer's
+   * first lane. Resolves once the last of it is submitted: no GPU wait, no readback.
+   */
+  async regionTile(x0: number, y0: number, w: number, h: number, target: FinishTarget, meta: { buf: GPUBuffer; off: number }): Promise<void> {
+    if (y0 & 1) throw new Error('a region starts on an even row');
+    const gate = () => this.pacer.next(true);
+    const c = await this.columnsGpu(x0, y0, w, h, true, gate);
+    try {
+      const rw = this.waysOf(x0, y0, w, h);
+      await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, null, target, this.profiler, gate, FINISH_TILE, meta);
+      this.gpuMade++;
     } finally {
       c.done();
     }

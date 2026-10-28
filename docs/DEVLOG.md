@@ -9009,6 +9009,68 @@ Checks: scripts/ringunit.mjs 10.0 M checks, 0 wrong (Ring.i / of added); scripts
   same way.
 - floatsweep: all passed, 0 floating. towertest: all 5 passed. settlementtest: all ok (Gevam, 33 out, a raid of 7
   against 4, 14 dead).
+## 2026-10-28 — round 105 (`tilelatency`): the tiles' latency, all on the GPU; on by default; the rings retired
+
+Why: the user (DECISIONS round 105): "many unloaded tiles that take a second or so to pop in … If the time to generate
+them is on the ms scale how can it take so long to show?" and "Why does the CPU readback and all of that happen all we
+care about is visuals until your character gets there."
+
+Measured first (each render-only region's way, stage by stage; desktop iGPU, q=low 412x915, zoom 3.5, window 256,
+tileprobe --pan; p50 / p95 ms):
+
+| path | pan c/s | queue | columns | stamps | finish (+readback) | bake queue | mesh+bake | to drawn | total |
+|---|---|---|---|---|---|---|---|---|---|
+| playable (round 104) | 120 | 578 / 6248 | 287 / 746 | 0.1 / 0.2 | 57 / 129 | 5 / 83 | 0.1 / 88 | 10 / 354 | 1208 / 6384 |
+| playable | 40 | 0.5 / 6312 | 49 / 466 | 0.2 / 0.4 | 36 / 97 | 9 / 166 | 0.1 / 137 | 39 / 742 | 1441 / 6480 |
+| playable, ?tilesfixed fix | 120 | 0.3 / 5669 | 39 / 149 | 0.1 / 0.3 | 24 / 97 | 11 / 334 | 0.2 / 228 | 70 / 810 | 708 / 5749 |
+| GPU path, ?tilesfixed fix | 120 | 0.2 / 4674 | — | — | 48 / 79 (all of it) | 0.6 / 20 | 0.1 / 0.2 | 10 / 39 | 69 / 4734 |
+| GPU path, every free slot, 6 | 120 | 0.2 / 3857 | — | — | 49 / 79 | 0.4 / 9 | 0 / 0.2 | 10 / 10 | 59 / 3935 |
+
+- The big one: atlas.ts read `?tiles` as round 98's "N column tiles a frame, fixed" — `?tiles=1`, the tile cache's
+  switch, pinned gpugen's pacer to one tile a frame, the window's land and the tiles' alike. Renamed `?tilesfixed=N`
+  (`?tiles=old` gone: `?streamold=1`). Every bench and probe run with `?tiles=1` before this measured a throttled
+  streamer (the pan smokes of round 104 (2) and 105 with tiles on included).
+- Then the queueing and the round trips: the settlement plan awaited, the finish read back and parsed, the CPU's loop,
+  the mesher's frames, one bake a frame.
+
+The GPU path (render/tilelandgpu.ts, shaders/tilelandgpu.wgsl; the playable one in tileland.ts retired — the only path):
+- Atlas.regionTile: the columns and finish.wgsl into the scratch slot, each tile a turn of the pacer's first lane (ahead
+  of the streamer's: TilePacer.next(true)), no stamps, the per-column summary copied on the GPU (finish.run's gpuMeta),
+  nothing read back; it resolves once it's all submitted.
+- The next frame, one encoder: prep (the surface packed, the lowest and highest point: atomics), camera (the bake's box,
+  scale, its camera written over the frame's, and what the tile was baked at into the slot's TP), the hybrid's grid for
+  every chunk into the G-buffer, fsTileBake into the atlas. Up to `?tilebakes=` 4 a frame; `?tilelandn=` 6 in flight,
+  every free slot asked for at once. The grid's pipelines are made with the tiles (not only the hybrid).
+- Every tile's draw reads what it was baked at from TP (tiles.wgsl vsTile): a CPU-baked tile's written there by the
+  CPU, a render-only one's by the GPU; the instances carry the clip at the anchor and a unit's.
+- The look-ahead: a region that leaves it before its turn drops out (its wait starts again when it's back).
+
+Tiles on by default (the user signed off: "I think the seam is ok for now"); `?tiles=0` off. The atlas and its bake
+G-buffer are made when a streamed window first gives the tiles a place (a level without one spends nothing). With the
+tiles, the LOD rings, farbake and fardetail are retired (AR3): no rings, no bake, no window look on them; the window's
+edges open; the round 73 far land kept for where no tile is yet and for the free cameras (`?lod=keep`: the rings back
+with the tiles — a measurement switch).
+
+The frame (driveprofile, window 256, 20 s twice each, the far land in all; the iGPU's clock moved between runs —
+renderprep 0.25 vs 0.45 ms — so in brackets the ratio to renderprep):
+
+| | GPU ms a frame | draw ms | p99 ms |
+|---|---|---|---|
+| tiles, no rings (the default) | 4.0, 3.71 (15.4, 14.8) | 2.04, 1.81 (7.8, 7.2) | 12.6, 11.9 |
+| tiles and the rings (?lod=keep) | — | 2.45, 5.6 (9.8, 12.4) | 13.9, 27.2 |
+| ?tiles=0 (the rings, no tiles) | 10.1, 9.98 (22.0, 22.2) | 6.26, 6.16 (13.6, 13.7) | 33.1, 29.7 |
+
+Pan 120 c/s at zoom 3.5 with the default: the leading half 0.0% out of detail (worst 0.0%), the trailing 0.6%, fps
+min 98 (shots88/tilecache/norings-end.png). Not yet: the gap chunks meshed (TC12: the grid draws the karst's tops), the
+queue's tail (TC13), towns in tiles (TC8), the phone.
+- The pacer's lanes in turn (the tiles' first, then the streamer's): with the tiles' lane always first, ringtest failed
+  "at the start" (two ring biases' windows read back while one's land was still coming — the window's own land starved
+  by the tiles ahead); in turn it passes, and the latency holds (wanted to drawn p50 70 ms, finish p95 331).
+- The merge tests on the new default (tiles on, every system as deployed): towertest, floatsweep, settlementtest,
+  hordetest, ringtest all pass; culltest fails "the flood raised the water while awake" (places' known) and now and then
+  "asleep, nothing changes" (veg 1-6; seen with ?tiles=0 too); worldsavetest fails "warped 10 regions away and back:
+  every region as it was frozen (exact)" identically with ?tiles=0 (places', SH11's family).
+
 
 ## 2026-10-28 — round 107 (`pages`): phase 2 begins — the page table (P2.1) and its cost on Mali (P2.0 M1)
 

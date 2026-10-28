@@ -23,7 +23,9 @@ import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import tilesWgsl from '../shaders/tiles.wgsl?raw';
 import { TileCache } from './tilecache';
-import { TileLand, type TileLandSource } from './tileland';
+import type { TileLandSource } from './tileland';
+import { TileLandGpu } from './tilelandgpu';
+
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
 import { RIVERS, type WorldGpu } from '../sim/world-gpu';
@@ -87,9 +89,9 @@ const MESH_FRONT: GPUFrontFace = new URLSearchParams(location.search).get('front
 /** (round 86) ?hybrid=1 (phone-flags' LITE_SET on the low tier): the window's heightfield chunks drawn as a grid
  *  (meshdraw.wgsl vsGrid) — its pipelines made */
 const HYBRID = new URLSearchParams(location.search).get('hybrid') === '1';
-/** (round 103) ?tiles=1: the world-anchored tile cache (render/tilecache.ts) — the land past the window drawn from
- *  tiles baked while it was in it */
-const TILES = new URLSearchParams(location.search).get('tiles') === '1';
+/** (round 103) the world-anchored tile cache (render/tilecache.ts) — the land past the window drawn from tiles; round
+ *  105 (DECISIONS: the user signed off on the tiles): on by default, ?tiles=0 off */
+const TILES = new URLSearchParams(location.search).get('tiles') !== '0';
 /** meshdraw.wgsl GRID_N: a grid chunk's lattice, vertices a side (its 32 columns and one past each edge) */
 const GRID_N = 34;
 /** (perfopt) the look's pieces ?nodetail= can leave out (meshdraw.wgsl ND_*; shadow: render.wgsl lighting) */
@@ -260,18 +262,18 @@ export class Renderer {
   /** (round 104, TC2) What makes the land past the window (the streamer's): the tiles' render-only regions. */
   setTileLand(src: TileLandSource): void {
     if (!this.tiles || this.tiles.land || !this.meshResolveLayout || !this.meshLayoutT) return;
-    this.tiles.land = new TileLand(
+    this.tiles.land = new TileLandGpu(
       {
         device: this.device,
         world: this.world,
         profiler: this.profiler,
         meshLayout: this.meshLayoutT,
         resolveLayout: this.meshResolveLayout,
-        gPipe: () => this.meshPipes?.g,
         gridPipe: () => this.gridPipes?.g,
         drawGrid: (pass, which) => void this.drawGrid(pass, which),
         meshResources: (cam) => this.meshResources(cam, this.shadowView, { mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers }),
         camBytes: CAM_BYTES,
+        camData: () => this.camData,
       },
       src,
       this.tiles,
@@ -684,7 +686,8 @@ export class Renderer {
         ]);
         this.meshPipes = { g: gp, gBack, gCut, resolve };
         // (round 86, the hybrid: the window's heightfield chunks as a grid through its columns' tops, the mesh's look)
-        if (HYBRID) {
+        // (round 105: and with ?tiles=1 — the render-only land's flat chunks are the grid's — tilelandgpu.ts)
+        if (HYBRID || TILES) {
           const gr = (label: string, vertex: string, fragment: string | null, targets: GPUColorTargetState[], depth: GPUDepthStencilState) =>
             device.createRenderPipelineAsync({
               label,
@@ -806,9 +809,9 @@ export class Renderer {
         const drawLayout = makeLayout(
           device,
           'tiles-draw',
-          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform' },
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform', 46: 'read' },
           VF,
-          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 44: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
+          { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 44: GPUShaderStage.VERTEX, 46: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );
         const win = { mesh: this.fieldMesh, chunks: world.chunks, layers: world.layers };
         this.tiles = new TileCache({
