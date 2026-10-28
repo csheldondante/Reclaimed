@@ -216,7 +216,7 @@ fn rise(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // (loose ground on it: shaken off the new slope)
     if (kr + 1u < n && matState(ivMat(arr[n - 1u])) == ST_GRANULAR) {
-      textureStore(shakeOut, p, vec4<f32>(f32(G.tick), 1.0, 0.0, 0.0));
+      textureStore(shakeOut, texCol(vec2<i32>(p)), vec4<f32>(f32(G.tick), 1.0, 0.0, 0.0));
     }
     for (var k = 0u; k < cs.y; k++) { layers[cs.x + k] = select(IV_NONE, arr[k], k < n); }
   }

@@ -329,18 +329,18 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   // in the air until the chunk wakes: a sleeping column's runs can't take it, and it mustn't be lost)
   let frozen = flowFrozen(id.xy, FLOW_N);
   if (frozen) {
-    let j2 = textureLoad(j2In, p, 0);
+    let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
     let sc = chunkScale(id.xy);
     let had = u32(j2.w) == stamp24(stepPrev());
-    var carry = had && textureLoad(j3In, p, 0).w > 0.5;
+    var carry = had && textureLoad(j3In, texCol(vec2<i32>(p)), 0).w > 0.5;
     if (had && !carry) {
       if (sc > 0.0) {
-        let j0 = textureLoad(j0In, p, 0);
-        let j3 = textureLoad(j3In, p, 0);
-        textureStore(j0Out, p, vec4<f32>(j0.x * sc, j0.yzw));
-        textureStore(j1Out, p, textureLoad(j1In, p, 0));
-        textureStore(j2Out, p, vec4<f32>(j2.xyz, f32(stamp24(now))));
-        textureStore(j3Out, p, vec4<f32>(j3.xy, j3.z * sc, j3.w));
+        let j0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
+        let j3 = textureLoad(j3In, texCol(vec2<i32>(p)), 0);
+        textureStore(j0Out, texCol(vec2<i32>(p)), vec4<f32>(j0.x * sc, j0.yzw));
+        textureStore(j1Out, texCol(vec2<i32>(p)), textureLoad(j1In, texCol(vec2<i32>(p)), 0));
+        textureStore(j2Out, texCol(vec2<i32>(p)), vec4<f32>(j2.xyz, f32(stamp24(now))));
+        textureStore(j3Out, texCol(vec2<i32>(p)), vec4<f32>(j3.xy, j3.z * sc, j3.w));
       }
       return;
     }
@@ -348,8 +348,8 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
       for (var k = 0u; k < NDIR; k++) {
         let q = nbr(p, k);
         if (!inMap(q)) { continue; }
-        let qj2 = textureLoad(j2In, q, 0);
-        if (u32(qj2.w) == stamp24(stepPrev()) && u32(qj2.x) == (k ^ 1u) && textureLoad(j3In, q, 0).z > 0.0) { carry = true; }
+        let qj2 = textureLoad(j2In, texCol(vec2<i32>(q)), 0);
+        if (u32(qj2.w) == stamp24(stepPrev()) && u32(qj2.x) == (k ^ 1u) && textureLoad(j3In, texCol(vec2<i32>(q)), 0).z > 0.0) { carry = true; }
         let e = emit[colIdxI(q)];
         if ((e >> 6u) == stamp24(now) && ((e >> (k ^ 1u)) & 1u) != 0u) { carry = true; }
       }
@@ -361,12 +361,12 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   var a: Jet;
   a.vol = 0.0; a.z = 0.0; a.vz = 0.0; a.heat = 0.0; a.u = vec2<f32>(0.0); a.p = vec2<f32>(0.0); a.lip = 0.0;
   // what's in flight over this column already (its entry as it was)
-  let o2 = textureLoad(j2In, p, 0);
+  let o2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   var age = 0.0;
   if (u32(o2.w) == stamp24(stepPrev())) {
-    let o0 = textureLoad(j0In, p, 0);
-    let o1 = textureLoad(j1In, p, 0);
-    let o3 = textureLoad(j3In, p, 0);
+    let o0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
+    let o1 = textureLoad(j1In, texCol(vec2<i32>(p)), 0);
+    let o3 = textureLoad(j3In, texCol(vec2<i32>(p)), 0);
     if (o0.x > 1e-9) {
       jetAdd(&a, o0.x, o0.y, o0.z, o0.w, o1.xy, o1.zw, o3.y);
       age = min(o3.x, 600.0);
@@ -376,12 +376,12 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
     let q = nbr(p, k);
     if (!inMap(q)) { continue; }
     // a stream coming on from the neighbour: what crossed its column last step, entering as its path leaves it
-    let j2 = textureLoad(j2In, q, 0);
+    let j2 = textureLoad(j2In, texCol(vec2<i32>(q)), 0);
     if (u32(j2.w) == stamp24(stepPrev()) && u32(j2.x) == (k ^ 1u)) {
-      let j3 = textureLoad(j3In, q, 0);
+      let j3 = textureLoad(j3In, texCol(vec2<i32>(q)), 0);
       if (j3.z > 0.0) {
-        let j0 = textureLoad(j0In, q, 0);
-        let j1 = textureLoad(j1In, q, 0);
+        let j0 = textureLoad(j0In, texCol(vec2<i32>(q)), 0);
+        let j1 = textureLoad(j1In, texCol(vec2<i32>(q)), 0);
         let tc = j2.z;
         jetAdd(&a, j3.z, j2.y, j0.z - GF * tc, j0.w, j1.xy, j1.zw + j1.xy * tc - DIRV[k ^ 1u], j3.y + tc);
       }
@@ -463,10 +463,10 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   // (carried over a sleeping column: what would land held aloft till it wakes)
   if (age >= t && !(frozen && way == 6u)) { out = jt.vol * min(DTQ / max(t, 1e-4), 1.0); }
   let left = jt.vol - out;
-  textureStore(j0Out, p, vec4<f32>(left, jt.z, jt.vz, jt.heat));
-  textureStore(j1Out, p, vec4<f32>(jt.u, jt.p));
-  textureStore(j2Out, p, vec4<f32>(f32(way), zx, t, f32(stamp24(now))));
-  textureStore(j3Out, p, vec4<f32>(age, jt.lip, out, select(0.0, 1.0, frozen)));
+  textureStore(j0Out, texCol(vec2<i32>(p)), vec4<f32>(left, jt.z, jt.vz, jt.heat));
+  textureStore(j1Out, texCol(vec2<i32>(p)), vec4<f32>(jt.u, jt.p));
+  textureStore(j2Out, texCol(vec2<i32>(p)), vec4<f32>(f32(way), zx, t, f32(stamp24(now))));
+  textureStore(j3Out, texCol(vec2<i32>(p)), vec4<f32>(age, jt.lip, out, select(0.0, 1.0, frozen)));
 }
 
 // ---- B: depth ------------------------------------------------------------------------------------------------
@@ -516,11 +516,11 @@ fn gather(p: vec2<i32>, g: Gaps, r: Runs) -> Gather {
     }
   }
   // a stream landing here (this step's jets)
-  let j2 = textureLoad(j2In, p, 0);
+  let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   // (what landed this step: j3.z, the volume that came down)
   if (u32(j2.w) == stamp24(stepNow()) && u32(j2.x) == 6u) {
-    let j0 = textureLoad(j0In, p, 0);
-    let landed = textureLoad(j3In, p, 0).z;
+    let j0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
+    let landed = textureLoad(j3In, texCol(vec2<i32>(p)), 0).z;
     var m = gapAtZ(g, j2.y + 0.01);
     if (m < 0) { m = i32(gapForRun(g, j2.y)); }
     o.dep[u32(m)] += landed;
@@ -581,7 +581,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let j = colIdxI(q);
     wet = open[j] > EPS || ((u32(runsIn[j * NSLOT].w) >> 3u) == stepPrev() && (u32(runsIn[j * NSLOT].w) & 7u) > 0u);
   }
-  let j2 = textureLoad(j2In, p, 0);
+  let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   wet = wet || (u32(j2.w) == stamp24(now) && u32(j2.x) == 6u);
   for (var s = 0u; s < LQ.step.y; s++) { wet = wet || all(cellAt(LQ.springs[s].xy) == p); }
   let r0 = runsIn[i * NSLOT];
@@ -782,11 +782,11 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   // the stream over this column
-  let j2 = textureLoad(j2In, p, 0);
+  let j2 = textureLoad(j2In, texCol(vec2<i32>(p)), 0);
   if (u32(j2.w) != stamp24(last)) { return; }
-  let j0 = textureLoad(j0In, p, 0);
-  let j1 = textureLoad(j1In, p, 0);
-  let j3 = textureLoad(j3In, p, 0);
+  let j0 = textureLoad(j0In, texCol(vec2<i32>(p)), 0);
+  let j1 = textureLoad(j1In, texCol(vec2<i32>(p)), 0);
+  let j3 = textureLoad(j3In, texCol(vec2<i32>(p)), 0);
   let way = u32(j2.x);
   let tc = j2.z;
   // (drawn as far as its front has come)

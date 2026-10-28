@@ -386,7 +386,8 @@ fn meshSurf(in: MOut) -> Surf {
   // (?nodetail=warp: looked up where it is, not warped and jittered — the borders hexagons again)
   var cell: vec2<i32>;
   if (noDetail(ND_WARP)) { cell = clampCell(cellAt(ip.xy)); } else { cell = clampCell(cellAt(terrainWarp(ip) + jo * 0.6)); }
-  let ci = colIdxI(cell);
+  // (ringwin: the pick's column in window order — the CPU reads it)
+  let ci = winIdx(cell);
   let up = nrm.z > 0.55;
   let lk = meshLook(cell, ip.z, up);
   var mat = lk.mat;

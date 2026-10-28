@@ -207,7 +207,8 @@ const COPY_WGSL = (words: number) => `
 @group(0) @binding(4) var<storage, read_write> dst: array<u32>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-  let i = (id.y * G.mapW + id.x) * ${words}u;
+  // (ringwin: the column's place on the ring)
+  let i = colIdx(id.x, id.y) * ${words}u;
   for (var k = 0u; k < ${words}u; k++) { dst[i + k] = src[i + k]; }
 }
 `;
@@ -250,7 +251,8 @@ const TEXCOPY_WGSL = `
 @group(0) @binding(4) var dstT: texture_storage_2d<rgba32float, write>;
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>) {
-  textureStore(dstT, vec2<i32>(id.xy), textureLoad(srcT, vec2<i32>(id.xy), 0));
+  // (ringwin: the column's texel on the ring)
+  textureStore(dstT, texCol(vec2<i32>(id.xy)), textureLoad(srcT, texCol(vec2<i32>(id.xy)), 0));
 }
 `;
 

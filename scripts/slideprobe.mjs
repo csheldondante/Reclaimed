@@ -178,6 +178,9 @@ try {
       return {
         cpu,
         slideGpu: { max: +(prof.maxMs.get('slide') ?? -1).toFixed(1), smooth: +(prof.passMs.get('slide') ?? -1).toFixed(1) },
+        slideDone: [...S.slideDone].slice(-12),
+        baseDone: [...S.baseDone].sort((a, b) => a - b)[Math.floor(S.baseDone.length / 2)],
+        slideCpu: S.trace.slice(-12).map((t) => +(t.sync - t.t0).toFixed(1)),
         came,
         frames: iv.length,
         p50: iv[Math.floor(iv.length * 0.5)],
@@ -195,6 +198,7 @@ try {
     results.push(r);
     console.log(`SPEED ${speed} ${mode} win ${win} zoom ${zoom}: frames ${r.frames} p50 ${r.p50} p99 ${r.p99} max ${r.max} >33 ${r.over33} >50 ${r.over50} came ${JSON.stringify(r.came)}`);
     console.log(`  causes ${JSON.stringify(r.causes)}`);
+    console.log(`  slide done ms ${r.slideDone.join(' ')} | base done p50 ${r.baseDone} | slide CPU sync ms ${r.slideCpu.join(' ')}`);
     console.log(`  slide GPU ms max ${r.slideGpu.max} smoothed ${r.slideGpu.smooth} | cpu max/mean (page) ${r.cpu}`);
     for (const s of r.slides) console.log(`  slide worst ${s.worst} busy ${s.busyFrames} write ${s.writeMB} MB copy ${s.copyMB} MB cmds ${s.cmds} (max ${s.cmdMax} a frame) | ${s.frames.join(' ')}`);
     for (const w of r.worst) console.log(`  worst ${w}`);

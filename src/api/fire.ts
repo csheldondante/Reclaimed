@@ -34,7 +34,7 @@ export class Fire {
   }
 
   private col(x: number, y: number): number {
-    return columnAt(this.core.dims.w, this.core.dims.h, x, y);
+    return columnAt(this.core.dims.w, this.core.dims.h, x, y, this.core.ring);
   }
 
   /** How hard (x, y) is burning, 0..1 (0: not alight). */

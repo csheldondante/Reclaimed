@@ -1130,6 +1130,30 @@ its edge:
   `prefetch` asks for the next slide's when the camera is 0.4 regions off
   the middle (land made ahead is kept in `pending`).
 
+### The window on a ring: where a column's data lies (round 105, branch `ringwin`)
+
+Window coordinates are what every caller uses (the camera, events, the CPU's queries, a kernel's invocation id).
+Storage isn't in window order: every per-column buffer and texture holds window column (x, y) at the world cell's
+place mod the window's size, ((x + ring.x) mod W, (y + ring.y) mod H), Globals.ring the offset (whole regions in a
+streamed world). A slide moves the ring by the region and nothing else on the GPU: the strip leaving is frozen into
+the pool from where it lies and the strip coming in is written to the same place; what isn't kept there is cleared
+as one band. The layers already worked this way through their chunk table, and that is the model:
+
+- **The helpers** (common.wgsl, the only way to a column): a column's chunk (COLS_PAGE = 16 columns a side) → its
+  page (`colPage`: the ring's table, computed as the window's chunks rotated by the offset) → the page's first index
+  (`pageBase`) or texel (`texPage`) + the column's offset in it (`inPage`). `colIdx` / `colIdxI` for buffers,
+  `texCol` / `texColU` (a texel a column), `texCol2` (a texel a 2 x 2: the wind field), `texColK` (k texels a column:
+  the projection, the corners), `pageIdx` (a per-chunk buffer's slot: the agents' dirty marks), `colXY` back from an
+  index. What's handed to the CPU is in window order: `winIdx` / `winXY` / `pickCol` (the picks, the bodies'
+  touches). Sparse pages (a resident set) would change colPage and the page layout only, not the call sites.
+- **The CPU** (sim/ring.ts, `core.ring` = `world.ring`): Ring.page / at / idx / idxHalf mirror the helpers;
+  `pieces` cuts a window rectangle at the seam for a copy (the wind field's rects); `toRing` / `fromRing` move whole
+  arrays (an upload of a map's field, a readback). WorldCore.readBuffer and readTexture return per-column data in
+  window order (COLUMN_BUFS); the mirror's queries index through the ring (api/common.ts columnAt). The streamer's
+  `outside` is on the ring; its other grids, map.surface and the level's caches are still window order (BACKLOG RW7).
+- **The test**: `?ringbias=x,y` starts the ring off zero; scripts/ringtest.mjs steps the same ticks at two offsets
+  and compares every field in window order; scripts/ringunit.mjs checks the CPU's Ring and a copy of the helpers.
+
 ### Region storage: the pool, the store, the record (round 100, branch `regionstore`)
 
 The user (DECISIONS round 100): "I want the world to serialize so we can recover the visited cells that change …

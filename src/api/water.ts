@@ -42,7 +42,7 @@ export class Water {
   }
 
   private col(x: number, y: number): number {
-    return columnAt(this.core.dims.w, this.core.dims.h, x, y);
+    return columnAt(this.core.dims.w, this.core.dims.h, x, y, this.core.ring);
   }
 
   /** Water depth (cells) on the ground at (x, y). */

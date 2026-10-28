@@ -85,7 +85,7 @@ const MAT_ASH_L: u32 = 17u;
 /** The base of q's loose ground (exact; surface holds it rounded). */
 fn baseAt(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
-  return textureLoad(strataTex, q, 0).w;
+  return textureLoad(strataTex, texCol(vec2<i32>(q)), 0).w;
 }
 
 fn levelAt(q: vec2<i32>) -> f32 {
@@ -146,7 +146,7 @@ struct Open { j: u32, floor: f32 };
 fn openAt(q: vec2<i32>, h: f32) -> Open {
   if (!inMap(q)) { return Open(SKY, 0.0); }
   if (!hasProj(q)) { return Open(SKY, hereAt(q)); }
-  let lv = textureLoad(levelsTex, q, 0);
+  let lv = textureLoad(levelsTex, texCol(vec2<i32>(q)), 0);
   let z = h + 0.5;
   var ceil = 1e9;
   for (var j = 0u; j <= PROJ_K; j++) {
@@ -218,7 +218,7 @@ fn landAt(arr: ptr<function, array<vec4<u32>, MAX_K>>, n: u32, cap: u32, p: vec2
 /** The top interval's depth on q (what the wind, water and slumping can take). */
 fn topOf(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
-  let t = textureLoad(driftTex, q, 0);
+  let t = textureLoad(driftTex, texCol(vec2<i32>(q)), 0);
   return clamp(t.y, 0.0, t.x);
 }
 
@@ -234,7 +234,7 @@ const SHAKE_RUSH: f32 = 0.5;
 
 /** How hard q's ground is shaken now (0..1, fading). */
 fn shakeAt(q: vec2<i32>) -> f32 {
-  let sh = textureLoad(shakeTex, q, 0);
+  let sh = textureLoad(shakeTex, texCol(vec2<i32>(q)), 0);
   // (perfopt, simhz: its age in 60 Hz ticks)
   let age = (f32(G.tick) - sh.x) * simStep();
   return select(0.0, sh.y * (1.0 - age / SHAKE_TICKS), sh.y > 0.0 && age >= 0.0 && age < SHAKE_TICKS);
@@ -427,7 +427,7 @@ fn smoothOut(q: vec2<i32>) -> Dirs {
   if (!inMap(q)) { return dZero(); }
   let top = topOf(q);
   if (top < 0.001 || runLevel(q) == SHUT) { return dZero(); }
-  if (!(textureLoad(driftTex, q, 0).w > 0.0 || windActive(q))) { return dZero(); }
+  if (!(textureLoad(driftTex, texCol(vec2<i32>(q)), 0).w > 0.0 || windActive(q))) { return dZero(); }
   let here = hereAt(q);
   var o = dZero();
   for (var k = 0u; k < NDIR; k++) {
@@ -684,7 +684,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let own = sedOut[i * SED + 2u];
   // what the wind sent up into the air (the particles take it from here)
   // (y z w: the flow the particles show — amount, where it starts, way + 8 × material; way 6: falling)
-  textureStore(airOut, p, vec4<f32>(own[0], own[2], own[3], own[4]));
+  textureStore(airOut, texCol(vec2<i32>(p)), vec4<f32>(own[0], own[2], own[3], own[4]));
   let here = levelAt(p);
   // under a structure, the level my run lies in; what arrives in another
   // level (sideways at its height, or from the sky over a structure's top)
@@ -752,7 +752,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var pour = 0.0;
   var pourMat = MAT_DRIFT;
   if (delta > 0.0) {
-    let ed = u32(floor(textureLoad(editTex, p, 0).w / 4.0));
+    let ed = u32(floor(textureLoad(editTex, texCol(vec2<i32>(p)), 0).w / 4.0));
     if (ed / 32u == 10u) { pour = delta; pourMat = ed % 32u; } else { dust += delta; }
   }
   var depY = dep.y;
@@ -895,7 +895,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (matState(ivMat(v)) == ST_GRANULAR && z0 > fl + 1e-4) {
         let f = min(FALL * simStep(), z0 - fl);
         // (it streams down as grains: the particles show the fall)
-        if (z1 - z0 > 0.05) { textureStore(airOut, p, vec4<f32>(own[0], min(z1 - z0, 2.0) * 0.1, z0, 6.0 + 8.0 * f32(ivMat(v)))); }
+        if (z1 - z0 > 0.05) { textureStore(airOut, texCol(vec2<i32>(p)), vec4<f32>(own[0], min(z1 - z0, 2.0) * 0.1, z0, 6.0 + 8.0 * f32(ivMat(v)))); }
         z0 -= f;
         z1 -= f;
         arr[k] = ivPack(z0, z1, ivMat(v), ivAux(v));

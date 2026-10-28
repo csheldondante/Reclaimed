@@ -203,6 +203,6 @@ fn fsRock(in: ROut) -> FOut {
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
   let wc = clampCell(cellAt(in.wpos.xy));
-  o.pick = vec2<u32>(colIdxI(wc) + 1u, pickInfo(mat, in.wpos.z, 0u));
+  o.pick = vec2<u32>(winIdx(wc) + 1u, pickInfo(mat, in.wpos.z, 0u));
   return o;
 }

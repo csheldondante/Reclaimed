@@ -23,7 +23,7 @@ fn riverHere(q: vec2<u32>) -> RiverHere {
   var r: RiverHere;
   r.on = false;
   if (!RIVER_TABLE) { return r; }
-  let t = textureLoad(riverFlowTex, vec2<i32>(q), 0);
+  let t = textureLoad(riverFlowTex, texCol(vec2<i32>(vec2<i32>(q))), 0);
   if (t.z <= 0.0) { return r; }
   let wet = riverWet();
   r.on = true;

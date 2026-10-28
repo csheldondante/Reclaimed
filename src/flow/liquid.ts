@@ -220,7 +220,7 @@ export class LiquidSystem implements SimSystem {
     }
     let col: number[][] | undefined;
     if (x >= 0) {
-      const i = y * this.world.w + x;
+      const i = this.world.ring.idx(x, y);
       col = [0, 1, 2, 3].map((s) => [...r.slice(i * 16 + s * 4, i * 16 + s * 4 + 4)]);
     }
     a.destroy();

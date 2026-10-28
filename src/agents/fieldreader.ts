@@ -38,6 +38,8 @@ export class FieldReader {
     readonly field: number,
     private w: number,
     private h: number,
+    /** (round 105, ringwin) where each window column's fields lie */
+    private ring: { idx(x: number, y: number): number },
   ) {}
 
   async refresh(): Promise<void> {
@@ -88,7 +90,7 @@ export class FieldReader {
     const [cx, cy] = cellAt(x, y);
     const none: FieldSample = { dist: Infinity, dir: [0, 0], z: 0, room: 0, region: 0 };
     if (cx < 0 || cy < 0 || cx >= this.w || cy >= this.h) return none;
-    const s = this.surfaceAt(cy * this.w + cx, z + 0.5);
+    const s = this.surfaceAt(this.ring.idx(cx, cy), z + 0.5);
     if (s < 0) return none;
     const at = { z: this.zOf(s), room: this.nav[s * 4 + 2] & 0xffff, region: this.nav[s * 4 + 2] >>> 16 };
     const here = this.dist[s];
@@ -104,7 +106,8 @@ export class FieldReader {
       const l = (links >>> (3 * d)) & 7;
       if (!l) continue;
       const [qx, qy] = nbr(cx, cy, d);
-      const dn = this.dist[(qy * this.w + qx) * NAV_K + l - 1];
+      if (qx < 0 || qy < 0 || qx >= this.w || qy >= this.h) continue;
+      const dn = this.dist[this.ring.idx(qx, qy) * NAV_K + l - 1];
       if (dn >= FAR) continue;
       const [px, py] = cellPos(qx, qy);
       const len = Math.hypot(px - x, py - y) || 1;

@@ -124,12 +124,6 @@ const LATER_MS = 3;
 /** (round 104, ?uploadmb=) and at most this many MB uploaded into the pool a frame (one region at least): the phone's
  *  frame with a few regions' writeBuffers in it was gpu-busy */
 const UPLOAD_BYTES = Number(param('uploadmb') ?? 2) * 1048576;
-/**
- * (round 104, `slidehitch`; ?slidecopy=rows the way before, to compare) A region's per-column buffers moved between
- * the window and a pool slot by a compute kernel, a dispatch a buffer (region-copy.ts), not a copy command a row:
- * ~800 commands a region, 13 000 a strip's freeze and thaw, held the slide's frame 100–200 ms on D3D11.
- */
-const ROW_COPIES = param('slidecopy') === 'rows';
 /** (round 100) a page load's id: a record says which session wrote it */
 export const SESSION = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
 /** cells the window slides by in z */
@@ -411,7 +405,11 @@ export class Streamer {
   private heldNow = false;
   /** the world height of the window's z = 0 */
   oz = 0;
-  /** per window column: its intervals above and below the window (world z) */
+  /** (round 105, ringwin) window column i (y * W + x)'s place in `outside` (on the ring) */
+  private oi(i: number): number {
+    return this.core.ring.idx(i % this.W, Math.floor(i / this.W));
+  }
+  /** per window column: its intervals above and below the window (world z) — (round 105) on the ring: Streamer.oi */
   outside: Interval[][];
   /** what a column may hold (the chunks' K less their headroom) */
   private colK: number;
@@ -437,11 +435,8 @@ export class Streamer {
   readonly onWarp: ((ox: number, oy: number, oz: number) => void)[] = [];
   private bufs: ColBuf[];
   private texs: ColTex[];
-  /** (round 104: made when a buffer that isn't a storage buffer is shifted — the kernel shifts the rest in place) */
-  private scratch: GPUBuffer | null = null;
   /** (round 104) a region's buffers to and from a pool slot, a dispatch a buffer */
   private copier: RegionCopier;
-  private scratchTex = new Map<string, GPUTexture>();
   /** slots a chunk page holds (every chunk has the same K) */
   private pageSlots: number;
   private K: number;
@@ -460,6 +455,12 @@ export class Streamer {
     this.oz = tier?.oz ?? 0;
     if (this.oz % TIER) throw new Error(`the window's oz must be whole tiers of ${TIER}`);
     this.outside = tier?.outside ?? Array.from({ length: w * h }, () => []);
+    // (round 105, ringwin: on the window's ring, as the GPU's per-column data — a slide moves none of it)
+    if (!core.ring.zero) {
+      const o = this.outside;
+      this.outside = new Array(w * h);
+      for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) this.outside[core.ring.idx(x, y)] = o[y * w + x];
+    }
     this.ground = tier?.ground ? tier.ground.slice() : core.map.surface.slice();
     this.relief = new Uint8Array(w * h);
     this.gapTop = new Float32Array(w * h).fill(-Infinity);
@@ -471,6 +472,8 @@ export class Streamer {
     core.globals.origin = [origin[0], origin[1]];
     const R = this.R;
     if (w % R || h % R) throw new Error(`the window (${w} × ${h}) must be whole regions of ${R}`);
+    // (round 105, ringwin: a region is one rectangle where it lies only if the ring's offset is whole regions)
+    if (core.ring.x % R || core.ring.y % R) throw new Error(`the window's ring offset (${core.ring.x}, ${core.ring.y}) must be whole regions of ${R}`);
     this.W = w;
     this.H = h;
     const t = core.packed.chunkTable;
@@ -550,7 +553,7 @@ export class Streamer {
           if (!iv) break;
           col.push(iv);
         }
-        this.setRelief(i, joinColumn(col, this.oz, this.outside[i]), core.map.surface[i], this.ground[i]);
+        this.setRelief(i, joinColumn(col, this.oz, this.outside[this.oi(i)]), core.map.surface[i], this.ground[i]);
       }
     // (round 100) the pool, in the layout every tier shares; the first window's columns hashed as made
     this.layout = regionLayout(
@@ -600,7 +603,7 @@ export class Streamer {
   /** (round 100) the window's outside intervals of the region at local cell (lx, ly), row-major in the region */
   private regionOutside(lx: number, ly: number): Interval[][] {
     const o: Interval[][] = [];
-    for (let r = 0; r < this.R; r++) for (let c = 0; c < this.R; c++) o.push(this.outside[(ly + r) * this.W + lx + c]);
+    for (let r = 0; r < this.R; r++) for (let c = 0; c < this.R; c++) o.push(this.outside[this.core.ring.idx(lx + c, ly + r)]);
     return o;
   }
 
@@ -630,8 +633,10 @@ export class Streamer {
   }
 
   /** (round 100) Copy the window's region at (lx, ly) into `dst` at `off`, in the region layout. */
-  private copyOut(enc: GPUCommandEncoder, lx: number, ly: number, dst: GPUBuffer, off: number, kernel = !ROW_COPIES): void {
+  private copyOut(enc: GPUCommandEncoder, lx: number, ly: number, dst: GPUBuffer, off: number, kernel = true): void {
     const { W, R } = this;
+    // (round 105, ringwin: the region's place on the ring — whole regions, so one rectangle)
+    const [px, py] = this.core.ring.at(lx, ly);
     const L = this.layout;
     const wg = this.core.world;
     const table = this.core.packed.chunkTable;
@@ -647,22 +652,23 @@ export class Streamer {
       // (round 104: a dispatch a buffer — dst must be a storage buffer: a pool slot, not a readback's stage)
       if (kernel) {
         const s = b.stride / 4;
-        this.copier.rect({ src: b.buf, srcOff: (ly * W + lx) * s, srcRow: W * s, srcPlane: W * H * s, dst, dstOff: (off + lb.off) / 4, dstRow: R * s, dstPlane: R * R * s, rowWords: R * s, rows: R, planes: b.planes });
+        this.copier.rect({ src: b.buf, srcOff: (py * W + px) * s, srcRow: W * s, srcPlane: W * H * s, dst, dstOff: (off + lb.off) / 4, dstRow: R * s, dstPlane: R * R * s, rowWords: R * s, rows: R, planes: b.planes });
         continue;
       }
       for (let p = 0; p < b.planes; p++)
-        for (let r = 0; r < R; r++) enc.copyBufferToBuffer(b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, dst, off + lb.off + (p * R + r) * R * b.stride, R * b.stride);
+        for (let r = 0; r < R; r++) enc.copyBufferToBuffer(b.buf, p * W * H * b.stride + ((py + r) * W + px) * b.stride, dst, off + lb.off + (p * R + r) * R * b.stride, R * b.stride);
     }
     this.copier.encode(enc);
     for (const lt of L.texs) {
       const t = this.texs.find((x) => x.name === lt.name)!;
-      enc.copyTextureToBuffer({ texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, { buffer: dst, offset: off + lt.off, bytesPerRow: lt.rowBytes }, [lt.tw, lt.th]);
+      enc.copyTextureToBuffer({ texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, { buffer: dst, offset: off + lt.off, bytesPerRow: lt.rowBytes }, [lt.tw, lt.th]);
     }
   }
 
   /** (round 100) Copy a region's bytes (a pool slot) into the window at (lx, ly): its pages to the layers (and layersNext). */
   private copyIn(enc: GPUCommandEncoder, src: GPUBuffer, off: number, lx: number, ly: number, once = false): void {
     const { W, H, R } = this;
+    const [px, py] = this.core.ring.at(lx, ly);
     const L = this.layout;
     const wg = this.core.world;
     const table = this.core.packed.chunkTable;
@@ -674,18 +680,13 @@ export class Streamer {
       }
     for (const lb of L.bufs) {
       const b = this.bufs.find((x) => x.name === lb.name)!;
-      if (!ROW_COPIES) {
-        const s = b.stride / 4;
-        this.copier.rect({ src, srcOff: (off + lb.off) / 4, srcRow: R * s, srcPlane: R * R * s, dst: b.buf, dstOff: (ly * W + lx) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes, once });
-        continue;
-      }
-      for (let p = 0; p < b.planes; p++)
-        for (let r = 0; r < R; r++) enc.copyBufferToBuffer(src, off + lb.off + (p * R + r) * R * b.stride, b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, R * b.stride);
+      const s = b.stride / 4;
+      this.copier.rect({ src, srcOff: (off + lb.off) / 4, srcRow: R * s, srcPlane: R * R * s, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes, once });
     }
     this.copier.encode(enc);
     for (const lt of L.texs) {
       const t = this.texs.find((x) => x.name === lt.name)!;
-      enc.copyBufferToTexture({ buffer: src, offset: off + lt.off, bytesPerRow: lt.rowBytes }, { texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, [lt.tw, lt.th]);
+      enc.copyBufferToTexture({ buffer: src, offset: off + lt.off, bytesPerRow: lt.rowBytes }, { texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, [lt.tw, lt.th]);
     }
   }
 
@@ -1107,6 +1108,22 @@ export class Streamer {
   readonly trace: SlideTrace[] = [];
   readonly gens: GenTrace[] = [];
 
+  /**
+   * (round 104, the pan bench's per-slide rows) ms from a submit to the queue's work done (onSubmittedWorkDone: the
+   * one GPU time Mali reports sanely across passes) — after each slide's submit, and every half second without a
+   * slide (the queue's usual lag, to compare). Each holds its last 64.
+   */
+  readonly slideDone: number[] = [];
+  readonly baseDone: number[] = [];
+  private baseAt = 0;
+  private doneAfter(into: number[]): void {
+    const t0 = performance.now();
+    void this.core.host.gpu.device.queue.onSubmittedWorkDone().then(() => {
+      into.push(+(performance.now() - t0).toFixed(1));
+      if (into.length > 64) into.shift();
+    });
+  }
+
   /** (round 91) the camera's velocity (cells a second, world x and rows), smoothed; where it was, and when */
   readonly vel: [number, number] = [0, 0];
   private last: [number, number, number] | null = null;
@@ -1143,6 +1160,10 @@ export class Streamer {
     if (!this.store) return null;
     this.pump();
     this.drainLater();
+    if (!this.busy && performance.now() - this.baseAt > 500) {
+      this.baseAt = performance.now();
+      this.doneAfter(this.baseDone);
+    }
     if (this.busy || !this.auto) return null;
     this.sweep();
     const [x, yw] = this.core.camera.target;
@@ -1486,26 +1507,19 @@ export class Streamer {
     const tf = performance.now();
     const fz = SLIDE_SKIP.has('freeze') ? null : this.freezeInto(enc, leaving);
     record('slide.freeze', performance.now() - tSync);
-    // ---- 2. everything per column moves a region over ------------------------
-    // (and the per-column buffers of what the game installed: the agents' fields — round 80)
+    // ---- 2. (round 105, ringwin) nothing moves: the window's columns stay where they lie on the ring ----------
+    // (a world cell keeps its place mod the window's size: the strip coming in lies where the strip leaving lay —
+    // what that held was frozen above; what isn't kept for it starts empty there, as a band of whole regions)
+    const ring = core.ring;
+    ring.slide(dx, dy);
     const mods = this.moduleBufs();
-    if (!SLIDE_SKIP.has('bufs')) for (const b of [...this.bufs, ...mods]) this.shiftBuf(enc, b, dx, dy);
-    this.copier.encode(enc);
-    if (!SLIDE_SKIP.has('texs')) for (const t of this.texs) this.shiftTex(enc, t, dx, dy);
-    // (particles in the air: dropped — Q28 follow-up: move them with a kernel)
+    // (particles in the air: dropped — Q28 follow-up: keep them, they're in window coordinates)
     enc.clearBuffer(wg.particles);
-    // what comes in starts empty where nothing is frozen for it
-    if (ROW_COPIES) {
-      for (const [lx, ly] of entering)
-        for (const b of [...this.bufs, ...mods]) {
-          if (b.keep) continue;
-          for (let p = 0; p < b.planes; p++) for (let r = 0; r < R; r++) enc.clearBuffer(b.buf, p * W * H * b.stride + ((ly + r) * W + lx) * b.stride, R * b.stride);
-        }
-    } else {
-      // (round 104) the strip coming in at once: along y its rows are one run a plane (a clear); along x a rectangle
-      // a buffer (the kernel, from a row of zeros) — a clear a region's row was ~1 100 commands a region
-      const sx = dx > 0 ? W - dx : 0;
-      const sy = dy > 0 ? H - dy : 0;
+    {
+      // (a band of whole rows or columns: all of them along the other axis, from the ring's 0)
+      const [bx, by] = ring.at(dx > 0 ? W - dx : 0, dy > 0 ? H - dy : 0);
+      const sx = dx ? bx : 0;
+      const sy = dy ? by : 0;
       const sw = dx ? Math.abs(dx) : W;
       const sh = dy ? Math.abs(dy) : H;
       for (const b of [...this.bufs, ...mods]) {
@@ -1520,6 +1534,7 @@ export class Streamer {
     }
     if (ts) enc.beginComputePass({ label: 'slide t1', timestampWrites: { querySet: ts.querySet, endOfPassWriteIndex: ts.endOfPassWriteIndex } }).end();
     dev.queue.submit([enc.finish()]);
+    this.doneAfter(this.slideDone);
     if (fz) this.frozeInto(fz);
     this.times.freeze.push(performance.now() - tf);
     record('rs.freeze', performance.now() - tf);
@@ -1553,7 +1568,6 @@ export class Streamer {
     this.origin[1] += dy;
     core.globals.origin = [this.origin[0], this.origin[1]];
     shiftGrid(surf, W, H, 1, dx, dy);
-    shiftGrid(this.outside, W, H, 1, dx, dy);
     shiftGrid(this.ground, W, H, 1, dx, dy);
     for (const a of [this.relief, this.gapTop, this.colTop]) shiftGrid(a, W, H, 1, dx, dy);
     core.camera.shift(dx, dy * ROW_H, 0);
@@ -1637,7 +1651,7 @@ export class Streamer {
   takeAbove(x: number, y: number): Interval[] {
     const i = y * this.W + x;
     const top = this.oz + this.core.dims.zMax;
-    const out = this.outside[i];
+    const out = this.outside[this.oi(i)];
     const keep: Interval[] = [];
     const took: Interval[] = [];
     let at = top;
@@ -1648,7 +1662,7 @@ export class Streamer {
       } else keep.push(iv);
     }
     if (!took.length) return took;
-    this.outside[i] = keep;
+    this.outside[this.oi(i)] = keep;
     this.core.renderer.band?.packColumns(this.outside, this.oz, this.core.dims.zMax, [[x, y]]);
     return took;
   }
@@ -1657,8 +1671,8 @@ export class Streamer {
   putAbove(x: number, y: number, ivs: Interval[]): void {
     if (!ivs.length) return;
     const i = y * this.W + x;
-    const all = [...this.outside[i], ...ivs.map((iv) => ({ z0: iv.z0 + this.oz, z1: iv.z1 + this.oz, mat: iv.mat }))].sort((a, b) => a.z0 - b.z0);
-    this.outside[i] = all;
+    const all = [...this.outside[this.oi(i)], ...ivs.map((iv) => ({ z0: iv.z0 + this.oz, z1: iv.z1 + this.oz, mat: iv.mat }))].sort((a, b) => a.z0 - b.z0);
+    this.outside[this.oi(i)] = all;
     this.core.renderer.band?.packColumns(this.outside, this.oz, this.core.dims.zMax, [[x, y]]);
   }
 
@@ -1928,11 +1942,11 @@ export class Streamer {
           if (!iv) break;
           was.push(iv);
         }
-        const full = joinColumn(was, this.oz, this.outside[i]);
+        const full = joinColumn(was, this.oz, this.outside[this.oi(i)]);
         applyChange(full, d);
         const cut = splitColumn(full, this.oz, zMax);
         if (fitColumn(cut.inside, this.colK)) this.stats.fitted++;
-        this.outside[i] = cut.outside;
+        this.outside[this.oi(i)] = cut.outside;
         slots.set(packColumn(cut.inside, K), base * SLOT_WORDS);
         core.map.surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
         this.ground[i] += d.dr + (d.dl > 0.05 ? d.dl : 0);
@@ -1943,7 +1957,9 @@ export class Streamer {
     if (n) {
       this.touch(x0, y0, x1, y1);
       for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, slots);
-      for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, veg);
+      // (ringwin: read in window order, written back in the ring's)
+      const vegR = core.ring.toRing(veg);
+      for (const b of [wg.veg, wg.vegNext]) dev.queue.writeBuffer(b, 0, vegR);
       core.clearUndo();
       for (const f of this.onRelief) f(Math.max(0, x0), Math.max(0, y0), Math.min(W, x1), Math.min(H, y1));
     }
@@ -2158,13 +2174,13 @@ export class Streamer {
           if (!iv) break;
           was.push(iv);
         }
-        const wasTop = was.length > 0 && !this.outside[i].some((iv) => iv.z0 >= this.oz + zMax);
+        const wasTop = was.length > 0 && !this.outside[this.oi(i)].some((iv) => iv.z0 >= this.oz + zMax);
         // (round 88) its water's level (world z), as reslice's
         const level = this.oz + (was.length ? was[was.length - 1].z1 : 0) + water[i];
-        const overTop = this.outside[i].some((iv) => iv.z0 >= this.oz + zMax);
-        const cut = splitColumn(joinColumn(was, this.oz, this.outside[i]), oz, zMax);
+        const overTop = this.outside[this.oi(i)].some((iv) => iv.z0 >= this.oz + zMax);
+        const cut = splitColumn(joinColumn(was, this.oz, this.outside[this.oi(i)]), oz, zMax);
         if (fitColumn(cut.inside, this.colK)) this.stats.fitted++;
-        this.outside[i] = cut.outside;
+        this.outside[this.oi(i)] = cut.outside;
         out.set(packColumn(cut.inside, K), base * SLOT_WORDS);
         surf[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
         water[i] = overTop ? 0 : waterInWindow(cut, oz, zMax, level);
@@ -2173,8 +2189,11 @@ export class Streamer {
         } else if (lava[i * 4] > 0) lava[i * 4 + 3] -= dz;
       }
     for (const b of [wg.layers, wg.layersNext]) dev.queue.writeBuffer(b, 0, out);
-    for (const b of [wg.water, wg.waterNext, wg.waterPrev]) dev.queue.writeBuffer(b, 0, water);
-    for (const b of [wg.lava, wg.lavaNext]) dev.queue.writeBuffer(b, 0, lava);
+    // (ringwin: read in window order, written back in the ring's)
+    const waterR = core.ring.toRing(water);
+    const lavaR = core.ring.toRing(lava, 4);
+    for (const b of [wg.water, wg.waterNext, wg.waterPrev]) dev.queue.writeBuffer(b, 0, waterR);
+    for (const b of [wg.lava, wg.lavaNext]) dev.queue.writeBuffer(b, 0, lavaR);
     // (particles in the air: dropped, as on a slide sideways)
     const enc = dev.createCommandEncoder({ label: 'stream slide z' });
     enc.clearBuffer(wg.particles);
@@ -2224,7 +2243,9 @@ export class Streamer {
     }
     const { core, W, H, R } = this;
     const tl = performance.now();
-    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[(ly + r) * W + lx + c] = f.outside[r * R + c];
+    // (round 105, ringwin: where the region lies on the ring)
+    const [px, py] = core.ring.at(lx, ly);
+    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[core.ring.idx(lx + c, ly + r)] = f.outside[r * R + c];
     const dev = core.host.gpu.device;
     const wg = core.world;
     const table = core.packed.chunkTable;
@@ -2242,7 +2263,7 @@ export class Streamer {
         const tw = (R / t.div) * t.per;
         const th = R / t.div;
         const b = this.blankBuf(tw, th, t.fill);
-        enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, [tw, th]);
+        enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, [tw, th]);
       }
       dev.queue.submit([enc.finish()]);
       this.pool.release(slot);
@@ -2281,14 +2302,7 @@ export class Streamer {
         const n = R * R * b.stride * b.planes;
         // (round 104: a dispatch a buffer, not a copy a row)
         const s = b.stride / 4;
-        if (!ROW_COPIES) this.copier.rect(d ? { src: this.writeStage, srcOff: off / 4, srcRow: R * s, srcPlane: R * R * s, dst: b.buf, dstOff: (ly * W + lx) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes } : { src: this.zeros(R * s), srcOff: 0, srcRow: 0, srcPlane: 0, dst: b.buf, dstOff: (ly * W + lx) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes });
-        else
-        for (let p = 0; p < b.planes; p++)
-          for (let r = 0; r < R; r++) {
-            const dst = p * W * H * b.stride + ((ly + r) * W + lx) * b.stride;
-            if (d) enc.copyBufferToBuffer(this.writeStage, off + (p * R + r) * R * b.stride, b.buf, dst, R * b.stride);
-            else enc.clearBuffer(b.buf, dst, R * b.stride);
-          }
+        this.copier.rect(d ? { src: this.writeStage, srcOff: off / 4, srcRow: R * s, srcPlane: R * R * s, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes } : { src: this.zeros(R * s), srcOff: 0, srcRow: 0, srcPlane: 0, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes });
         if (d) host.set(d.subarray(0, n), off);
         off += n;
       }
@@ -2299,10 +2313,10 @@ export class Streamer {
         const tw = (R / t.div) * t.per;
         const th = R / t.div;
         const d = t.keep ? f.texs?.[t.name] : undefined;
-        if (d) dev.queue.writeTexture({ texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, d, { bytesPerRow: tw * 16 }, [tw, th]);
+        if (d) dev.queue.writeTexture({ texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, d, { bytesPerRow: tw * 16 }, [tw, th]);
         else {
           const b = this.blankBuf(tw, th, t.fill);
-          enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(lx / t.div) * t.per, ly / t.div] }, [tw, th]);
+          enc.copyBufferToTexture({ buffer: b.buf, bytesPerRow: b.rowBytes }, { texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, [tw, th]);
         }
       }
       dev.queue.submit([enc.finish()]);
@@ -2354,65 +2368,12 @@ export class Streamer {
   private writeStage?: GPUBuffer;
   private writeHost?: Uint8Array;
 
-  /** new(x, y) = old(x + dx, y + dy), per plane */
   /** the installed modules' per-column buffers (WorldCore.columnBufs) as the streamer's own */
   private moduleBufs(): ColBuf[] {
     const out: ColBuf[] = this.core.columnBufs.map((m) => ({ name: m.name, buf: m.buf, stride: m.stride, planes: m.planes, keep: false }));
     return out;
   }
 
-  private shiftBuf(enc: GPUCommandEncoder, b: ColBuf, dx: number, dy: number): void {
-    const { W, H } = this;
-    const s = b.stride;
-    // (round 104, later: within the buffer by the kernel, in bands — each word read and written once, not copied out
-    // to the scratch and back; Streamer.copier.encode after the shifts)
-    if (!ROW_COPIES && b.buf.usage & GPUBufferUsage.STORAGE) {
-      this.copier.shift(b.buf, W, H, s / 4, b.planes, dx, dy);
-      return;
-    }
-    if (!this.scratch || this.scratch.size < b.buf.size) {
-      // (the smaller one may be in this slide's encoder still: left to the world's dispose)
-      this.scratch = this.core.world.buf('streamScratch', b.buf.size, GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
-    }
-    const scratch = this.scratch;
-    enc.copyBufferToBuffer(b.buf, 0, scratch, 0, b.buf.size);
-    const x0 = Math.max(0, -dx);
-    const x1 = Math.min(W, W - dx);
-    const y0 = Math.max(0, -dy);
-    const y1 = Math.min(H, H - dy);
-    const plane = W * H * s;
-    for (let p = 0; p < b.planes; p++) {
-      if (dx === 0) enc.copyBufferToBuffer(scratch, p * plane + (y0 + dy) * W * s, b.buf, p * plane + y0 * W * s, (y1 - y0) * W * s);
-      // (round 104) along x as one copy of the plane shifted by dx columns: what wraps from the next (or the last)
-      // row lands only in the columns coming in, which are cleared or written after — a copy a row was H commands a
-      // buffer, ~15 000 a slide
-      else if (!ROW_COPIES) {
-        const n = (W * H - Math.abs(dx)) * s;
-        if (dx > 0) enc.copyBufferToBuffer(scratch, p * plane + dx * s, b.buf, p * plane, n);
-        else enc.copyBufferToBuffer(scratch, p * plane, b.buf, p * plane - dx * s, n);
-      } else for (let y = y0; y < y1; y++) enc.copyBufferToBuffer(scratch, p * plane + ((y + dy) * W + x0 + dx) * s, b.buf, p * plane + (y * W + x0) * s, (x1 - x0) * s);
-    }
-  }
-
-  private shiftTex(enc: GPUCommandEncoder, t: ColTex, dx: number, dy: number): void {
-    const tex = t.tex;
-    const k = `${tex.format}:${tex.width}x${tex.height}`;
-    let tmp = this.scratchTex.get(k);
-    if (!tmp) {
-      tmp = this.core.world.texture(`streamScratch:${k}`, tex);
-      this.scratchTex.set(k, tmp);
-    }
-    const sx = (dx / t.div) * t.per;
-    const sy = dy / t.div;
-    // (round 104: only what stays — the strip leaving isn't copied out)
-    const keep = { origin: [Math.max(0, sx), Math.max(0, sy)], size: [tex.width - Math.abs(sx), tex.height - Math.abs(sy)] };
-    enc.copyTextureToTexture({ texture: tex, origin: keep.origin }, { texture: tmp, origin: keep.origin }, keep.size);
-    enc.copyTextureToTexture(
-      { texture: tmp, origin: [Math.max(0, sx), Math.max(0, sy)] },
-      { texture: tex, origin: [Math.max(0, -sx), Math.max(0, -sy)] },
-      [tex.width - Math.abs(sx), tex.height - Math.abs(sy)],
-    );
-  }
 }
 
 const align256 = (n: number) => Math.ceil(n / 256) * 256;

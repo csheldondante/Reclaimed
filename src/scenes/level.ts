@@ -373,7 +373,7 @@ export class LevelScene implements Scene {
       if (going !== this.geyserOn.has(k)) {
         if (going) this.geyserOn.add(k);
         else this.geyserOn.delete(k);
-        dev.queue.writeBuffer(core.world.waterSource, i * 4, new Float32Array([going ? 0.08 : 0]));
+        dev.queue.writeBuffer(core.world.waterSource, core.ring.idx(i % core.dims.w, Math.floor(i / core.dims.w)) * 4, new Float32Array([going ? 0.08 : 0]));
       }
     });
   }

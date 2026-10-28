@@ -62,7 +62,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   var buried = false;
   for (var i = 0u; i < r; i++) { buried = buried || matState(ivMat(arr[i])) == ST_GRANULAR; }
   surface[colIdx(id.x, id.y)] = sfPack(base, under, n) | select(0u, 1u << 31u, gap) | select(0u, 1u << 30u, buried);
-  textureStore(driftOut, p, vec4<f32>(top - base, topDepth, f32(topMat), textureLoad(airTex, p, 0).x));
+  textureStore(driftOut, texCol(vec2<i32>(p)), vec4<f32>(top - base, topDepth, f32(topMat), textureLoad(airTex, texCol(vec2<i32>(p)), 0).x));
   var st = vec4<f32>(0.0, 0.0, 0.0, base);
   // the (up to) three intervals just beneath the top one, bottom first
   var k = 0u;
@@ -72,7 +72,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     st[k] = f32(ivMat(v)) * 1000.0 + min(ivZ1(v) - ivZ0(v), 999.0);
     k += 1u;
   }
-  textureStore(strataOut, p, st);
+  textureStore(strataOut, texCol(vec2<i32>(p)), st);
   // the open air's floors: level j lies under projected interval j-1 (the
   // sky for j = 0) and over projected interval j
   var lv = vec4<f32>(-1.0);
@@ -90,5 +90,5 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     if (ivEmpty(below)) { break; }
     ceil = ivZ0(below);
   }
-  textureStore(levelsOut, p, lv);
+  textureStore(levelsOut, texCol(vec2<i32>(p)), lv);
 }

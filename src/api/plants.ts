@@ -63,7 +63,7 @@ export class Plants {
     const [cx, cy] = cellAt(x, y);
     const { w, h } = this.core.dims;
     if (!v || cx < 0 || cy < 0 || cx >= w || cy >= h) return null;
-    return v[cy * w + cx];
+    return v[this.core.ring.idx(cx, cy)];
   }
 
   /** vegplan.wgsl's tree at column (cx, cy) with veg v, or null. */
@@ -116,7 +116,7 @@ export class Plants {
     const out: (Tree & { d: number })[] = [];
     for (let cy = Math.max(0, c0y - r); cy <= Math.min(h - 1, c0y + r); cy++) {
       for (let cx = Math.max(0, c0x - r); cx <= Math.min(w - 1, c0x + r); cx++) {
-        const t = this.planAt(cx, cy, v[cy * w + cx]);
+        const t = this.planAt(cx, cy, v[this.core.ring.idx(cx, cy)]);
         if (!t) continue;
         const d = Math.hypot(t.x - x, t.y - y);
         if (d <= radius) out.push({ ...t, d });

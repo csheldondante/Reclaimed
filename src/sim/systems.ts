@@ -518,7 +518,8 @@ export class WindFieldSystem implements SimSystem {
     const s = this.slot(i);
     this.device.queue.writeBuffer(s.buf, 0, new Uint32Array([x0, y0, mode, 0]));
     dispatch(enc, this.prof, this.name, this.k, s.group, [Math.ceil((x1 - x0) / 8), Math.ceil((y1 - y0) / 8)]);
-    enc.copyTextureToTexture({ texture: this.world.windFieldNext, origin: { x: x0, y: y0 } }, { texture: this.world.windField, origin: { x: x0, y: y0 } }, [x1 - x0, y1 - y0]);
+    // (round 105, ringwin: the rectangle where it lies, cut at the ring's seam)
+    for (const q of this.world.ring.pieces(x0, y0, x1, y1, true)) enc.copyTextureToTexture({ texture: this.world.windFieldNext, origin: { x: q.px, y: q.py } }, { texture: this.world.windField, origin: { x: q.px, y: q.py } }, [q.w, q.h]);
   }
   encode(enc: GPUCommandEncoder, tick = 0): void {
     if (!this.rects) {

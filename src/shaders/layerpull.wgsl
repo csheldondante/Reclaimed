@@ -138,7 +138,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
     arr[kk] = ivPack(ivZ0(v), ivZ1(v) + dd, mat, ivAux(v));
-    if (shake > 0.0 && dd > 0.0) { textureStore(shakeOut, p, vec4<f32>(f32(G.tick), shake, 0.0, 0.0)); }
+    if (shake > 0.0 && dd > 0.0) { textureStore(shakeOut, texCol(vec2<i32>(p)), vec4<f32>(f32(G.tick), shake, 0.0, 0.0)); }
     for (var k = kk + 1u; k < n; k++) {
       let w = arr[k];
       arr[k] = ivPack(ivZ0(w) + dd, ivZ1(w) + dd, ivMat(w), ivAux(w));

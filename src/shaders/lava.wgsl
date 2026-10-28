@@ -112,7 +112,7 @@ fn wayOut(p: vec2<i32>, back: vec2<f32>) -> f32 {
       v = dot(normalize(cellPos(q) - cellPos(p)), back);
     } else {
       if (!inMap(q)) { continue; }
-      v = -textureLoad(levelsL, q, 0).x;
+      v = -textureLoad(levelsL, texCol(vec2<i32>(q)), 0).x;
     }
     if (v > bv) { bv = v; best = i32(k); }
   }
@@ -164,14 +164,14 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   d = max(d, 0.0);
   var gh = L.z;
   // a bore's melt sent here last tick
-  let sp = textureLoad(spillIn, p, 0);
+  let sp = textureLoad(spillIn, texCol(vec2<i32>(p)), 0);
   var sAmt = 0.0;
   var sLvl = 0.0;
   var sHops = 0u;
   for (var k = 0u; k < NDIR; k++) {
     let q = nbr(p, k);
     if (!inMap(q)) { continue; }
-    let s = textureLoad(spillIn, q, 0);
+    let s = textureLoad(spillIn, texCol(vec2<i32>(q)), 0);
     if (s.x <= 0.0 || (u32(s.z) & 7u) != (k ^ 1u) + 1u) { continue; }
     sAmt += s.x;
     sLvl = max(sLvl, s.y);
@@ -187,7 +187,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let cn = LU.cones[v];
     if (cn.x > 0.0) { rise += cn.x * coneShape(cp - vv.xy, cn.y, cn.z, fract(vv.x * 0.37 + vv.y * 0.71) * 6.28); }
   }
-  let spring = textureLoad(springL, p, 0).x;
+  let spring = textureLoad(springL, texCol(vec2<i32>(p)), 0).x;
   // (round 86) a meteor's blast: the rim's ground molten (it runs off the top as lava below), glowing past it
   let bo = length(cp - LU.blast.xy);
   var blastH = 0.0;
@@ -197,7 +197,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (d <= 1e-5 && gh <= 1.0 && blastH <= 0.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0 && spring <= 0.0) {
     lavaOut[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
-    textureStore(spillOut, p, vec4<f32>(0.0, 0.0, 0.0, f32(u32(sp.w) & 7u)));
+    textureStore(spillOut, texCol(vec2<i32>(p)), vec4<f32>(0.0, 0.0, 0.0, f32(u32(sp.w) & 7u)));
     return;
   }
 
@@ -332,7 +332,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
         let q = nbr(p, k);
         // (off the map: it drains)
         var w = -1e9;
-        if (inMap(q)) { w = textureLoad(levelsL, q, 0).x + lava[colIdxI(q)].x; }
+        if (inMap(q)) { w = textureLoad(levelsL, texCol(vec2<i32>(q)), 0).x + lava[colIdxI(q)].x; }
         if (w <= best) { best = w; to = i32(k); }
       }
       if (to < 0 && way >= 1.0) { to = i32(way) - 1; }
@@ -360,7 +360,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
       }
     }
   }
-  textureStore(spillOut, p, spill);
+  textureStore(spillOut, texCol(vec2<i32>(p)), spill);
   // ground past melting runs off the top of the column as lava
   if (gh > MELT && n > 0u && top > FLOOR_Z) {
     let v = layers[cs.x + n - 1u];

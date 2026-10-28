@@ -446,7 +446,7 @@ fn unitStep(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   if (!alight && depth < height * 0.5) {
     var lit = onTop && (fire[i] > 0.3 || (lv.x > 0.05 && lv.y > LAVA_LIGHT) || lv.z > HOT_GROUND);
-    let sk = textureLoad(sparkTex, c, 0).x;
+    let sk = textureLoad(sparkTex, texCol(vec2<i32>(c)), 0).x;
     if (sk > 0.0 && f32(G.tick) - sk < 2.5) { lit = true; }
     // (a burning unit here or next door: a chance a second)
     var near = f32(atomicLoad(&shove[(rd + i) * 4u + 3u]));
