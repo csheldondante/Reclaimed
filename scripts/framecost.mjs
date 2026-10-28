@@ -8,7 +8,7 @@
 // wall time), the long frames (> --long ms) with their GPU span, top passes, CPU and held count, the hitch
 // recorder's causes, and the slide's CPU by part (cpuStats: fz.*, sl.*, slide.*).
 //   node scripts/framecost.mjs [--url http://localhost:5311] [--win 512] [--zoom 5] [--speeds 0,10,60]
-//     [--seconds 10] [--throttle 4] [--wait 35000] [--long 25] [--extra "&x=1"] [--json out.json]
+//     [--seconds 10] [--throttle 4] [--wait 35000] [--long 25] [--extra "&x=1"] [--json out.json] [--at x,y (the spot)]
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 const argv = process.argv.slice(2);
@@ -45,7 +45,7 @@ try {
   });
   p.on('console', (m) => m.type() === 'error' && console.log('console.error', m.text().slice(0, 300)));
   const world = `fc-${Date.now().toString(36)}`;
-  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&hitch=1&hitchhud=0&at=15024,14337&win=${win}&world=${world}${extra}`, { waitUntil: 'load' });
+  await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&hitch=1&hitchhud=0&at=${opt('at', '15024,14337')}&win=${win}&world=${world}${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimedHitch, { timeout: 240000 });
   await sleep(wait);
   if (throttle > 1) {
