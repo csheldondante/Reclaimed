@@ -33,6 +33,7 @@ import meshInstWgsl from '../shaders/meshinst.wgsl?raw';
 import { MeshInstances, MI_ARGS_WORD } from './meshinst';
 import { treeKinds } from './treemesh';
 import { MESHINST } from '../sim/external';
+import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
 const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
@@ -1069,7 +1070,9 @@ export class Renderer {
     // a frame never rebuilds both: on the phone the rebuilds were the biggest share of the p95 spikes)
     const turn = this.meshTurn++ & 1;
     // (round 86: but chunks marked urgent — an edit's, a falling piece's — are looked at every frame)
+    const tMesh = performance.now(); // (round 100, hitchrec: timing)
     if (!SKIP.has('meshprep') && !this.holdMesh && (!this.band || turn === 0 || this.fieldMesh.hasUrgent)) this.fieldMesh.encode(enc, cam);
+    record('mesh', performance.now() - tMesh); // (round 100, hitchrec: timing)
     if (this.band && !SKIP.has('band') && !this.holdMesh && turn === 1) this.band.mesh.encode(enc, cam);
     if (this.rockMesh) this.rockMesh.encode(enc, cam);
     if (this.shadowGroups && !SKIP.has('shadow') && shadowDue) this.encodeShadow(enc, shadowDue);

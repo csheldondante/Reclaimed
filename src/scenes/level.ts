@@ -58,7 +58,7 @@ import { loadRunStory, runWorld, startAtlasRun } from '../story/atlas-run';
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 /** (round 98) ?flyspeed=: the free camera's speed (cells a second; Shift 120) — on a phone, the speed ✈'s ⇧ flies at */
 const FLY_SPEED = Number(new URLSearchParams(location.search).get('flyspeed') ?? 35);
-import { cpuLine, cpuStats, frameSteps, timed } from '../gpu/cpustat';
+import { cpuLine, cpuStats, frameSteps, record, timed } from '../gpu/cpustat';
 import { type Interval, CHUNK, columnSlots, K_HEADROOM, packColumn, readColumn, SLOT_WORDS, sfMat, sfZ, sfPack, windowZMax } from '../world/layout';
 import { modelById, modelColumns, restingBase, seatColumn, type VoxelModel } from '../world/models';
 import { Integrity } from '../game/integrity';
@@ -1416,7 +1416,10 @@ export class LevelScene implements Scene {
       // built — what can't stand falls; the first window's, region by region)
       const integ = this.integrity;
       if (a && integ) {
-        this.stream.onArrive.push((x0, y0, x1, y1) => integ.markBox(x0, y0, x1, y1));
+        // (round 100, hitchrec, main's call under the user's design — rounds 83 and 92: "only needs to be done when the
+        // structure changes"): land come in isn't judged. What's generated (stamped towns, ways, bridges) stands by
+        // construction; edits seed the judge. Judging each arriving town's box (and twice its size, and again a pass
+        // later) was ~1 GB/s allocated panning at 120/s and a 40 s judge pass in a soak.)
         // (round 87: what's above the window comes down with a piece that reaches its top)
         const S = this.stream;
         integ.above = { take: (x, y) => S.takeAbove(x, y), put: (x, y, ivs) => S.putAbove(x, y, ivs) };
@@ -1846,17 +1849,21 @@ export class LevelScene implements Scene {
       globals.settle = this.sleep.settling.map((s) => s.rect);
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
+    const tSim = performance.now(); // (round 100, hitchrec: timing)
     const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
+    record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's
     // stand-in character, kept seen)
     // (round 83, dialog: the story's run, cameras and badges; its own cut when the cutaway's not on)
+    const tStory = performance.now(); // (round 100, hitchrec: timing)
     if (this.storyPlay) {
       this.storyPlay.update(dt);
       if (this.storyCut && !camera.fly) this.storyCut.dither.update(dt);
     }
     // (round 88: the hero run — hero, units, its story, the chase camera)
     if (this.heroRun && !camera.fly) this.heroRun.update(dt);
+    if (this.storyPlay || this.heroRun) record('story', performance.now() - tStory); // (round 100, hitchrec: timing)
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
     if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun) this.turn.update(dt);
     // (round 91: the compass follows the view, flying too — the flyer's look)
@@ -1878,7 +1885,9 @@ export class LevelScene implements Scene {
       // (round 83: flying, nothing's cut — the slice left from the fixed view cut the world under the flyer)
       camera.cut = { slice: null, see: [], boxes: [] };
     }
+    const tRender = performance.now(); // (round 100, hitchrec: timing)
     core.render();
+    record('render', performance.now() - tRender); // (round 100, hitchrec: timing)
 
     hud.setWind(powers.windTier());
     const goal = this.level.goal ?? 1;
@@ -1897,7 +1906,9 @@ export class LevelScene implements Scene {
     if (this.integrity) {
       // cyclones batter what they pass: look there
       for (const cy of weather.cyclones) this.integrity.markDirty(cy.x, cy.y, cy.radius * 2.5);
+      const tJudge = performance.now(); // (round 100, hitchrec: timing)
       this.integrity.update(dt * this.speed);
+      record('judge', performance.now() - tJudge); // (round 100, hitchrec: timing)
     }
     weather.dustiness = core.pollution;
     this.birdArrivals(dt, stats);

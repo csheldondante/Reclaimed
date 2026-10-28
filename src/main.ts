@@ -15,6 +15,7 @@ import type { Host, Quality, Scene } from './scenes/world-core';
 import { AudioDebug } from './ui/audio-debug';
 import { RockPanel } from './ui/rockpanel';
 import { PerfOverlay } from './ui/perf-overlay';
+import { startHitch } from './perf/start';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -57,6 +58,8 @@ async function main() {
   const canvas = document.getElementById('world') as HTMLCanvasElement;
   const ui = document.getElementById('ui')!;
   const gpu = await initGpu(canvas);
+  // (round 100, hitchrec: ?hitch=1 — the hitch recorder; its GPU memory count goes on the device before anything's made)
+  const hitch = startHitch(params, gpu.device, ui);
   // (round 82, ?readback=0: no GPU readbacks every frame or few — no timestamps, the mesh's chunk records, the
   // draw counts — to tell whether they stall a phone's frames: render/renderer.ts READBACK)
   const profiler = new Profiler(gpu.device, gpu.hasTimestamps && params.get('readback') !== '0');
@@ -69,11 +72,12 @@ async function main() {
   // (round 82: the GPU's timings and the draw counts are read back only while the overlay is open; ?perf=lite
   // opens it with neither — the frame times without the readbacks)
   const lite = params.get('perf') === 'lite';
-  profiler.active = perf.visible && !lite;
+  profiler.active = (perf.visible && !lite) || !!hitch?.gpuTiming;
+  hitch?.attach(profiler, () => scene);
   window.addEventListener('keydown', (e) => {
     if (e.key === '`') {
       perf.toggle();
-      profiler.active = perf.visible && !lite;
+      profiler.active = (perf.visible && !lite) || !!hitch?.gpuTiming;
     }
   });
 
@@ -128,12 +132,17 @@ async function main() {
   let last = performance.now();
   const frame = (now: number) => {
     if (pace && inFlight >= 2) {
+      hitch?.rec?.heldFrame();
       requestAnimationFrame(frame);
       return;
     }
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
+    // (round 100, hitchrec: the frame's interval and its callback's CPU time)
+    hitch?.rec?.frameStart(now);
+    const c0 = hitch ? performance.now() : 0;
     scene?.frame(now, dt);
+    if (hitch) hitch.frameEnd(performance.now() - c0);
     if (pace) {
       inFlight++;
       gpu.device.queue.onSubmittedWorkDone().then(() => inFlight--);
