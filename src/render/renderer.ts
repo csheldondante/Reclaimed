@@ -29,6 +29,10 @@ import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from '
 import { OutsideBand } from './band';
 import { RockMesh } from './rockmesh';
 import rockMeshWgsl from '../shaders/rockmesh.wgsl?raw';
+import meshInstWgsl from '../shaders/meshinst.wgsl?raw';
+import { MeshInstances, MI_ARGS_WORD } from './meshinst';
+import { treeKinds } from './treemesh';
+import { MESHINST } from '../sim/external';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
 const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
@@ -187,13 +191,25 @@ export class Renderer {
   private tcPipes?: { resolve: GPURenderPipeline; comp: GPURenderPipeline; compLayout: GPUBindGroupLayout };
   private meshPipes?: { g: GPURenderPipeline; gBack: GPURenderPipeline; gCut: GPURenderPipeline; resolve: GPURenderPipeline };
   private meshModule?: GPUShaderModule;
+  /**
+   * (round 99, ?meshinst=1) the instanced meshes (render/meshinst.ts): the trees, one indexed draw a species, their
+   * instances written by the vegetation pass; their pipelines and groups (the view's and the sun's)
+   */
+  meshInst?: MeshInstances;
+  private miPipe?: GPURenderPipeline;
+  private miGroup?: GPUBindGroup;
+  private miShadowPipe?: GPURenderPipeline;
+  private miShadowGroup?: GPUBindGroup;
   /** (round 95, ?rockbody=1) the rigid rock's own mesh (enableRockMesh), its pipeline and group */
   rockMesh?: RockMesh;
   private rockPipe?: GPURenderPipeline;
   private rockGroup?: GPUBindGroup;
   private rockPoolSeen = -1;
-  private makeRockDraw?: (rm: RockMesh) => { pipe: GPURenderPipeline; group: () => GPUBindGroup };
-  private rockGroupOf?: () => GPUBindGroup;
+  private makeRockDraw?: (rm: RockMesh) => { pipe: GPURenderPipeline; group: (cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup; shadow: GPURenderPipeline };
+  /** (round 99) the rock's mesh into the sun's shadow map (the resting rock has no cubes to cast it) */
+  private rockShadowPipe?: GPURenderPipeline;
+  private rockShadowGroup?: GPUBindGroup;
+  private rockGroupOf?: (cam?: GPUBuffer, shadow?: GPUTextureView) => GPUBindGroup;
   /** (round 96) the physics voxels' particle buffers the rock mesh is skinned to (setRockParticles) */
   private rockParticles?: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer };
   /** (round 95) of the body voxels, the first this many are drawn (the rest only cast shadows: the rigid rock's, its mesh drawn) */
@@ -331,10 +347,11 @@ export class Renderer {
     this.instWater = world.buf('instWater', this.waterCapacity * 16, GPUBufferUsage.STORAGE);
     // draw args: [0..3] opaque prisms, [4..7] water, [8..11] plants, [12..15]
     // tops alone; [16] where the tops start in instOpaque (renderprep.wgsl); (round 93) [20..22] the prisms',
-    // water's and plants' counts before they were held to their lists' room
+    // water's and plants' counts before they were held to their lists' room; (round 99, meshinst) [24..] the
+    // instanced meshes' indexed draws, five words a kind
     this.indirect = world.buf(
       'indirect',
-      96,
+      MI_ARGS_WORD * 4 + 4 * 20,
       GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     );
     this.camBuf = world.buf('camera', CAM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
@@ -394,6 +411,10 @@ export class Renderer {
 
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
     const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
+    // (round 99, ?meshinst=1) the trees as instanced meshes: their instances written by vegprep (binding 10)
+    if (MESHINST) this.meshInst = new MeshInstances(device, treeKinds(), (l, n, u) => world.buf(l, n, u));
+    const treeMesh = `const TREE_MESH: bool = ${!!this.meshInst};\n${this.meshInst ? this.meshInst.wgsl() : 'const MI_CAP: u32 = 0u;\nconst MI_N: u32 = 1u;\nconst MI_ARGS: u32 = 24u;\n'}`;
+    const noTrees = this.meshInst ? undefined : world.buf('meshinst none', 64, GPUBufferUsage.STORAGE);
     const vegSpec = {
       0: 'uniform',
       2: 'uniform',
@@ -404,12 +425,13 @@ export class Renderer {
       7: 'read',
       8: 'read',
       9: 'rw',
+      10: 'rw',
       14: 'tex',
       17: 'tex',
       30: 'uniform',
     } as const;
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, vegprepWgsl], vegSpec);
-    this.clampV = makeCompute(device, 'vegprep-clamp', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, vegprepWgsl], vegSpec, 'clampVeg');
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, vegprepWgsl], vegSpec);
+    this.clampV = makeCompute(device, 'vegprep-clamp', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, vegprepWgsl], vegSpec, 'clampVeg');
     this.vegEntries = () => ({
       0: world.globals,
       2: world.materials,
@@ -420,6 +442,7 @@ export class Renderer {
       7: world.wilt,
       8: world.petals,
       9: this.instPlant,
+      10: this.meshInst?.instances ?? noTrees!,
       14: world.cornerView,
       17: world.driftView,
       30: this.fieldMesh.region,
@@ -541,6 +564,25 @@ export class Renderer {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(true),
     });
+
+    // (round 99, ?meshinst=1) the instanced meshes: render.wgsl's bindings and look, their own vertex stage
+    const miVertex = (module: GPUShaderModule): GPUVertexState => ({
+      module,
+      entryPoint: 'vsInst',
+      buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }],
+    });
+    const miModule = this.meshInst ? makeModule(device, 'meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, this.meshInst.wgsl(), renderWgsl, meshInstWgsl]) : undefined;
+    if (this.meshInst && miModule) {
+      this.miPipe = device.createRenderPipeline({
+        label: 'meshinst',
+        layout: pl,
+        vertex: miVertex(miModule),
+        fragment: { module: miModule, entryPoint: 'fsInst', targets: [{ format }, { format: PICK_FORMAT }] },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: depthStencil(true),
+      });
+      this.miGroup = groupFor(this.meshInst.instances);
+    }
 
     if (this.fieldMesh.on) {
       // the field mesh: its own layout (the intervals for the look, in place of
@@ -711,11 +753,13 @@ export class Renderer {
         });
         // (round 96: the physics voxels' particles, the metal's mesh skinned to them; a stand-in without them)
         const none = device.createBuffer({ label: 'rock no particles', size: 64, usage: GPUBufferUsage.STORAGE });
-        const group = () => {
+        const group = (cam: GPUBuffer = this.camBuf, shadow: GPUTextureView = this.shadowView) => {
           const p = this.rockParticles;
-          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(this.camBuf, this.shadowView, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.px ?? none, 33: p?.pr ?? none, 34: p?.pq ?? none });
+          return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(cam, shadow, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.px ?? none, 33: p?.pr ?? none, 34: p?.pq ?? none });
         };
-        return { pipe, group };
+        // (round 99: depth only, through the sun's camera)
+        const shadow = shadowPipe('shadow-rock', device.createPipelineLayout({ bindGroupLayouts: [layout] }), module, 'vsRock');
+        return { pipe, group, shadow };
       };
       const meshGroupFor = (cam: GPUBuffer, shadow: GPUTextureView = this.shadowView) => this.meshGroupOf!(cam, shadow, { mesh: this.fieldMesh, chunks: world.chunks, layers: world.layers });
       this.meshGroup = meshGroupFor(this.camBuf);
@@ -747,6 +791,10 @@ export class Renderer {
         bodies: groupFor(this.bodyBuf, L, none),
         mesh: meshGroupFor(L, none),
       };
+      if (this.meshInst && miModule) {
+        this.miShadowPipe = device.createRenderPipeline({ label: 'shadow-meshinst', layout: pl, vertex: miVertex(miModule), primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
+        this.miShadowGroup = groupFor(this.meshInst.instances, L, none);
+      }
     }
 
     const rainLayout = makeLayout(device, 'rain', { 0: 'uniform', 10: 'uniform' }, VF);
@@ -935,6 +983,7 @@ export class Renderer {
       if (rv !== this.rockPoolSeen) {
         this.rockPoolSeen = rv;
         this.rockGroup = this.rockGroupOf();
+        this.rockShadowGroup = this.noShadowView ? this.rockGroupOf(this.lightCamBuf, this.noShadowView) : undefined;
       }
     }
     const v = this.fieldMesh.maintain() + (this.band?.mesh.maintain() ?? 0);
@@ -988,6 +1037,7 @@ export class Renderer {
         0,
         new Uint32Array([VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_PRISM, 0, 0, 0, VERTS_PER_BOX, 0, 0, 0, VERTS_PER_TOP, 0, 0, 0, this.topsBase]),
       );
+    if (prepDue && this.meshInst) this.device.queue.writeBuffer(this.indirect, MI_ARGS_WORD * 4, this.meshInst.argsReset());
 
     if (!SKIP.has('shore')) this.shore.encode(enc, performance.now());
     if (!SKIP.has('prep') && prepDue) {
@@ -1075,6 +1125,13 @@ export class Renderer {
     if (!SKIP.has('tops')) pass.drawIndirect(this.indirect, 48);
     pass.setBindGroup(0, this.plantGroup);
     if (!SKIP.has('plants')) pass.drawIndirect(this.indirect, 32);
+    // (round 99) the instanced meshes: the trees
+    if (this.meshInst && this.miPipe && !SKIP.has('trees')) {
+      pass.setPipeline(this.miPipe);
+      pass.setBindGroup(0, this.miGroup!);
+      this.profiler.draws += this.meshInst.draw(pass, this.indirect);
+      pass.setPipeline(this.opaquePipe);
+    }
     for (const s of SKIP.has('prisms') ? [] : this.prismSources) {
       pass.setBindGroup(0, s.group);
       pass.drawIndirect(s.indirect, 0);
@@ -1517,6 +1574,12 @@ export class Renderer {
     pass.setPipeline(this.shadowOpaquePipe!);
     pass.setBindGroup(0, g.plants);
     pass.drawIndirect(this.indirect, 32);
+    // (round 99) the instanced meshes
+    if (this.meshInst && this.miShadowPipe && this.miShadowGroup) {
+      pass.setPipeline(this.miShadowPipe);
+      pass.setBindGroup(0, this.miShadowGroup);
+      this.meshInst.draw(pass, this.indirect);
+    }
     pass.setPipeline(this.shadowBodyPipe!);
     if (this.world.strVoxels > 0) {
       pass.setBindGroup(0, g.struct);
@@ -1530,6 +1593,12 @@ export class Renderer {
       if (!v.shadow) continue;
       pass.setBindGroup(0, v.shadow);
       pass.drawIndirect(v.indirect, 0);
+    }
+    // (round 99) the rock's mesh (the resting rock has no cubes casting its shadow)
+    if (this.rockMesh && this.rockShadowPipe && this.rockShadowGroup && this.rockMesh.count > 0) {
+      pass.setPipeline(this.rockShadowPipe);
+      pass.setBindGroup(0, this.rockShadowGroup);
+      this.rockMesh.draw(pass);
     }
     if (this.meshSources.length) pass.setPipeline(this.shadowSkinPipe!);
     for (const v of this.meshSources) {
@@ -1661,11 +1730,13 @@ export class Renderer {
   enableRockMesh(): RockMesh | undefined {
     if (!this.fieldMesh.on || !this.makeRockDraw || this.rockMesh) return this.rockMesh;
     const rm = new RockMesh(this.device, this.world, this.profiler);
-    const { pipe, group } = this.makeRockDraw(rm);
+    const { pipe, group, shadow } = this.makeRockDraw(rm);
     this.rockMesh = rm;
     this.rockPipe = pipe;
     this.rockGroupOf = group;
     this.rockGroup = group();
+    this.rockShadowPipe = shadow;
+    this.rockShadowGroup = this.noShadowView ? group(this.lightCamBuf, this.noShadowView) : undefined;
     this.rockPoolSeen = rm.mesh.poolVersion;
     return rm;
   }
@@ -1673,7 +1744,10 @@ export class Renderer {
   /** (round 96) The physics voxels' particles, for the rock mesh's skinned draws (the metal's). */
   setRockParticles(p: { px: GPUBuffer; pr: GPUBuffer; pq: GPUBuffer }): void {
     this.rockParticles = p;
-    if (this.rockGroupOf) this.rockGroup = this.rockGroupOf();
+    if (this.rockGroupOf) {
+      this.rockGroup = this.rockGroupOf();
+      this.rockShadowGroup = this.noShadowView ? this.rockGroupOf(this.lightCamBuf, this.noShadowView) : undefined;
+    }
   }
 
   /** Call after submit to start async readbacks requested during encode. */

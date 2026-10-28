@@ -26,6 +26,20 @@ each was implemented.
   HeroIntent.talk); dialog as an event (Outcome.say / talk, Condition.saw, happenings as the triggers); the dialog's
   missing answers fixed; the Bell story shows more (the dead on the road, barks); MemoryWorldState.restore for the
   world between runs. Hero select, the heroes and saving are GameplayGM's.
+## 2026-10-27 — round 99 (session 5, `meshinst`) — meshes and instancing mixed into the columns
+
+- The user, verbatim: "One question I have is can we more seamlessly mix normal meshes or sprites (instanced maybe)
+  into the existing terrain system so that we let a skewed mesh be buried instead of turning back into an ordinary
+  layer. It does mean that the layer needs to be skipped and marked as being in an external system so that it can
+  properly support columns over it and interact. I think we want to replace the characters and the buildings and
+  trees with meshes and instancing. We want this to be faster on phone and I think that will be better. The terrain
+  itself is awesome though so let's see if we can make streaming even more performant on mobile."
+- On the rock bodies, verbatim: "The physics simuilation is an ok attempt. I think it's a slight improvement or
+  lateral over the original RB based rocks."
+- → Branch `meshinst` (from places), `?meshinst=1`, default off until measured: External intervals (an owner's
+  cells, solid to every sim, skipped by the terrain's draws), an instanced mesh renderer, trees as instanced meshes,
+  a resting rock body staying its mesh with External intervals under it (buried, holding what's put on it);
+  buildings and characters outlined (BACKLOG MI7, MI8). Streaming on mobile is `streamspeed`'s.
 
 ## 2026-10-27 — round 96 (session 5, `rockbody`) — weightier rock, metal on the physics voxels, on in the atlas
 

@@ -47,6 +47,26 @@ engine's additive changes for it.
 | HA10 | AgentUnits (the settlements' Units on the GPU agents) and the hoverbike game's Foes both drive sim.agents' kinds, groups and fields: one owner per agents system, or a registry of kinds, groups and fields both take from | M | open |
 | HA11 | A run's story is the same story again: the second run replays the Bell with the Bellwarden standing beside his own grave. The GM should write the next run from the world as the last one left it | M | open (the GM) |
 
+## Round 99 (2026-10-27, session 5, `meshinst`) — meshes and instancing mixed into the columns (DECISIONS round 99)
+
+The user: "can we more seamlessly mix normal meshes or sprites (instanced maybe) into the existing terrain system so
+that we let a skewed mesh be buried instead of turning back into an ordinary layer … I think we want to replace the
+characters and the buildings and trees with meshes and instancing. We want this to be faster on phone". `?meshinst=1`.
+
+| id | item | size | status |
+|---|---|---|---|
+| MI1 | External intervals: `MAT.External`, the registry (claim, release, verify → cut, the judge → loose, orphans), the contract in ARCHITECTURE, every interval writer audited (DEVLOG round 99) | M | done (this commit) |
+| MI2 | The instanced mesh renderer: kinds in one vertex/index buffer, one indexed indirect draw a kind (and its shadow), lit, hazed and cut away like the terrain | M | done (this commit) |
+| MI3 | Trees as instanced meshes (four species, turned, leaning): measured a wash on the desktop iGPU (forest of 704: GPU 5.50 → 5.70 ms, p95 10.9 → 10.6) — the trees were never the phone's cost | M | done (this commit; asked: keep?) |
+| MI4 | A resting rock body stays its mesh, its cells External (down to the ground under it): buried under sand it holds it; dug, it becomes ground | M | done (this commit) |
+| MI5 | A loose resting rock (its ground dug from under it) taken back as its own body — the same tilted mesh falling again — rather than ground that the judge frees as a new body (re-meshed) | S | open |
+| MI6 | Trees External (trunks: support, collision, fire): blocked on what reads a column's top — ecology caps growth by the top's material (a trunk's External top would starve its own tree), vegprep stands the tree on the top (its own trunk), sediment piles on a 1-cell pillar. Needs the surface to say "the ground under an External top" (a bit, and its height) | M | open |
+| MI7 | Buildings as instanced modules (outline): a settlement's houses claimed as External by the settlements system (support, collision, fire, damage as today) and drawn as modules on their lots (walls, roofs, doors: a few hundred vertices a house) instead of plaster/tile prisms (a 8 × 8 house of 3 intervals ≈ 190 prisms ≈ 5 700 vertices, each with its corner and neighbour reads); a cut module falls back to its voxels. Expected on the phone: renderprep's share for towns and the prisms' vertex cost — measure a town at q=low first | L | open |
+| MI8 | Characters as instanced meshes (outline): the agents' voxel models (units.wgsl, 36 vertices a voxel; a figure is 8–40 voxels: 300–1 400 vertices) as one rigid mesh a kind with parts (legs, torso, head, weapon) posed in the vertex shader from the walk phase units.wgsl already writes: ~100–200 vertices a unit, one draw a kind. Expected: a crowd of 200 from ~100 k vertices to ~30 k | M | open |
+| MI9 | Tree LOD and reach: draw the meshes on the hybrid's grid chunks too (today only voxel chunks have plants), a 2-lump far kind past a screen size | S | open |
+| MI10 | "make streaming even more performant on mobile": `streamspeed`'s (round 99) | — | elsewhere |
+| MI11 | Room: 16 resting rocks at once (REST_MAX), the rock mesh's 72 blocks and 40 draws shared with the falling ones; the oldest becomes ground | S | open |
+
 ## Round 88 (2026-10-27, session 5, `runstory`) — a run story as a hero (DECISIONS round 88)
 
 The user: "I would like to try spawning as a character like in hoverbike and talking to people or going places

@@ -32,6 +32,8 @@ const MAT_ICE: u32 = 27u;
 const MAT_CRYSTAL: u32 = 28u;
 const MAT_LOG: u32 = 29u;
 const MAT_QUARTZ: u32 = 36u;
+/** round 99: an interval an external system owns and draws (sim/external.ts): solid to the sims, skipped by the terrain's draws */
+const MAT_EXTERNAL: u32 = 39u;
 
 fn matState(m: u32) -> u32 { return u32(MATS[m].sim.x); }
 

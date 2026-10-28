@@ -119,6 +119,12 @@ export const MAT = {
   Sinter: 37,
   /** round 83: rock that never gives (fracture.ts analyseRock: no span limit) — for what must stand */
   Bedrock: 38,
+  /**
+   * round 99 (`?meshinst=1`): an interval owned by an external system (sim/external.ts) — a resting rock's mesh, a
+   * tree's trunk. Solid to every sim (support, collision, flow, loose ground piling on it, the rock judge); the
+   * terrain's draws skip it (its owner draws it). aux = the material it becomes if its owner lets go (0: stone).
+   */
+  External: 39,
 } as const;
 
 const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
@@ -210,6 +216,9 @@ export const MATERIALS: MaterialDef[] = [
   // bedrock (round 83, the user: "If things are breaking just make a material that is stronger so they don't
   // break"): dark, dense rock whose overhangs never give — for what must stand (a cave's roof, an arch)
   { ...NONE, name: 'bedrock', albedo: [0.26, 0.25, 0.25], state: MatState.Solid, porosity: 0.05, smooth: 2, span: Infinity },
+  // external (round 99, sim/external.ts): owned by another system, which draws it; to the sims, rock that never gives
+  // by itself (its owner decides when it breaks); moss takes on it as on stone
+  { ...NONE, name: 'external', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, bear: 1, growthCap: 1.2, suitability: 0.3, porosity: 0.2, span: Infinity },
 ];
 
 export const MAX_MATERIALS = 40;
