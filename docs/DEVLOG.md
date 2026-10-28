@@ -9009,3 +9009,30 @@ Checks: scripts/ringunit.mjs 10.0 M checks, 0 wrong (Ring.i / of added); scripts
   same way.
 - floatsweep: all passed, 0 floating. towertest: all 5 passed. settlementtest: all ok (Gevam, 33 out, a raid of 7
   against 4, 14 dead).
+
+## 2026-10-28 — round 107 (`pages`): phase 2 begins — the page table (P2.1) and its cost on Mali (P2.0 M1)
+
+docs/PAGES.md's first steps. The user chose "Pages"; ringwin's helpers were already page-shaped.
+
+- **P2.1, the table.** `sim/ring.ts` becomes `sim/pages.ts` (`Pages`; `core.ring` keeps its name). It holds the
+  page table: per window chunk, the place of the page its data is in (px | py << 8), made again when the ring's
+  offset changes (`version`). Globals grows by `pages: array<vec4<u32>, 512>` (two u16 a u32, 4096 entries, 8 KB:
+  GLOBALS_BYTES 1920 -> 10112), written only when the table changes (Simulation.uploadGlobals writes the first 1920
+  bytes every tick, the whole when the version moved). common.wgsl `colPage` is now chosen when a module is made
+  (src/gpu/pages-mode.ts, gpu/pipeline.ts makeModule): `?pages=ring` computes the wrap as before, `?pages=table`
+  looks the entry up in the Globals. Nothing else changed: the table is still the ring's, so the layout is the same.
+  The default stays `ring` until TileLand's scratch (render/tileland.ts copies the world's Globals whole) gets its
+  own identity table: with `table` its region-wide window would read the world's entries.
+- **P2.0 M1, the bench** (`?pagebench=1`, src/perf/pagebench.ts; scripts/pagebenchrun.mjs drives it headless). The
+  atlas at window 256, loaded six times — ring, table, storage, storage, table, ring — a storm over the camera to
+  wake the land, then the heavy neighbour-reading systems (sediment, water; the liquid when ?flow is on) encoded once
+  more through a recorder and each dispatch replayed alone, 8 a pass, 7 samples, timed inside one pass (bench v4's
+  way) plus the wall. `?pages=storage` gives the kernels it times a read-only storage table at binding 37, where
+  they have a storage slot free: `sediment-out` (8 storage buffers) and the liquid's depth pass can't take one —
+  itself a point for the uniform. The end page has the table, Download and Copy.
+- **Desktop numbers** (data/bench/pagebench-desktop-igpu.json, Intel Xe-LPG, D3D11): within the iGPU's noise —
+  water-flux 0.088 / 0.080 / 0.128 ms a dispatch (ring / table / storage), water-depth 0.122 / 0.092 / 0.093,
+  sediment 0.486 / 0.263 / 0.329, sediment-out (ring in all three) 0.70 / 1.20 / 0.82; the systems in one pass,
+  sediment 1.93 / 1.79 / 1.47, water 0.29 / 0.61 / 0.24. The swings either way are larger than any lookup could
+  cost (sediment-out runs the same code in all three and moved 70%): the desktop decides nothing; the phone's run
+  does (target: the table no more than 5% over the ring a pass).
