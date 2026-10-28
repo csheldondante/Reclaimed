@@ -12,6 +12,23 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 101 (2026-10-28, session 5, `bench`) — the calibration benchmark (DECISIONS round 101)
+
+Ids BN.
+
+| id | item | size | status |
+|---|---|---|---|
+| BN1 | `?bench=1` (src/perf/bench.ts): one tap, a chain of pages (start → the atlas at the viewer's range → `?run=bell` → the other two ranges → the end), state in localStorage; every number with its unit, samples, p50/p95/max; GPU by timestamp-query, else wall-clock labelled | M | done (this commit) |
+| BN2 | Micro-benchmarks: device facts and limits; a fixed GPU workload at the start and the end (thermal drift); readback 0.1/1/8/34 MB and a small one behind a big one; upload; GPU copy; region generation stage by stage (colHeight, formSeed, colFinish, readback wait, landFrom, stampWays, hooks, cut/pack, toBody, upload); regions/s at 1/2/4/8 tiles a frame (TilePacer.fixed) and the frames meanwhile; the mesh's rebuild per chunk; sims per awake chunk; agents at 100/500/2000; render scales; the disk store's put/get per region | M | done (this commit) |
+| BN3 | Scenarios with the hitch recorder: the driveprofile ride, pans at 80 and 120, a warp across the atlas (land written, frames settled), a meteor (the judge, rock bodies), the hero run walked (the camera's zoom and footprint, window/rings coverage) | S | done (this commit) |
+| BN4 | Derived: the camera speed each tile rate sustains, the GPU budget left at 60/30, suggested tiles a frame, the area that could be precached a second | S | done (this commit) |
+| BN5 | Getting it off the phone: "Download report" (Blob + a download link: Downloads on Android), "Copy" (clipboard, else textarea + execCommand; "copied" shown), "Share…" (the share sheet); on the dev server a POST to /__hitch?kind=bench → perf-reports/bench-*.json; the last result kept in localStorage; the hitch HUD's "download" | S | done (this commit) |
+| BN6 | Desktop baseline data/bench/desktop-igpu.json (scripts/benchrun.mjs, 412x915 q=low); scripts/benchdiff.mjs (two reports, ratios a measure) | S | done (this commit) |
+| BN7 | The phone's run: the user runs https://csheldondante.github.io/Reclaimed/bench/?bench=1 and sends the report | S | asked |
+| BN8 | Rock bodies a body: the bench's meteor lands on soil near the camera and freed no rigid rock on the desktop run (0 bodies) — aim it at rock (a cliff, a mesa) so rockBodiesPerBody has samples | S | open |
+| BN9 | The hero run's stick didn't move the hero headless (the run's start state); the bench then puts the hero down 8 cells ahead every 0.5 s (runtest.mjs's ride pace, `movedBy: placed`). On the phone check `movedBy` — the stick's walk is the real case | S | open |
+| BN10 | The mesh's cost a chunk rebuilt: in the hybrid the field mesh builds only voxel chunks (few, parked) and a forced rebuild (renderer.windowMoved) showed no frame over the parked cost — measure it where voxel chunks are (a town, an edit), or count the rebuilt chunks on the GPU | S | open |
+
 ## Round 100 (2026-10-27, session 5, `regionstore`) — the world serializes; streaming never waits on a region (DECISIONS round 100)
 
 Ids RG.

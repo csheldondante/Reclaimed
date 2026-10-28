@@ -1855,3 +1855,42 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
 - **The world API's mirror** (api/mirror.ts, round 100): paged sources (the layers) are read by pages round
   `Paged.focus()` — the camera's target and `Terrain.keepFresh` points — between whole reads (every 8th, after a
   slide, `refresh(true)`); `?mirror=full` reads everything every time.
+
+## Benchmark (round 101, branch `bench`)
+
+**How to run it on the phone.** Plug the Pixel in if you can, open
+https://csheldondante.github.io/Reclaimed/bench/?bench=1 in Chrome, tap **Start benchmark** and put the phone down
+with the screen on (it keeps itself awake). The page reloads itself four times (the atlas at your range, the hero run,
+the other two ranges) — don't switch apps; a page that went to the background is marked `hiddenDuring`. After about
+five and a half minutes it shows a few headline numbers and a big **Download report** button: the JSON lands in
+Downloads (`reclaimed-bench-<date>-<phone>.json`) — send it with Quick Share, Drive or Gmail, or tap **Copy** and paste
+the whole JSON into the chat (no selecting), or **Share…** for the share sheet. The last result is kept: opening
+`?bench=1` again shows the same buttons. Your saved world isn't touched (the bench plays in worlds of its own and
+clears them).
+
+- **`?bench=1`** (src/perf/bench.ts) is a chain of page loads; its state (`reclaimed.bench.state`, versioned) is in
+  localStorage between them, the last report in `reclaimed.bench.last`. main.ts asks `benchMode(params)`: `start`
+  and `final` run instead of any scene (`benchStandalone`: nothing else draws); `level` pages load the atlas level as
+  deployed (every system on, the phone flags as usual, `?hitch=1&hitchhud=0`) and `benchLevel` runs that page's
+  part once `window.reclaimed.stream.store` is open, then goes to the next page.
+- **Pages:** start (device facts, the fixed GPU workload, readback/upload/copy) → main (the atlas at the viewer's
+  range, `?at=` driveprofile's road, `?drive=18` held till the ride) → hero (`?run=bell`) → the other two of
+  scenes/range.ts RANGES → final (the workload again, the report). Each level page uses its own world
+  (`?world=bench-<id>`): the viewer's saved world is never read or written; the bench's worlds are cleared at the end
+  (and at the next start, if a run was cut short).
+- **It reads, it doesn't change:** the engine's objects through `window.reclaimed`; the profiler's frames through a
+  chained `onFrame` (its per-pass map read in the callback); the CPU steps from gpu/cpustat.ts; the hitch
+  recorder's report. Its own GPU timing (`GpuTimer`, its own query set) is lent to the atlas as `atlas.profiler`
+  while it makes regions, then given back. The two hooks it adds to the engine: `TilePacer.fixed` (tiles a frame
+  held at N while it measures; 0 = paced, the default) and main.ts's `setRenderScale` (the tier's scale, resized).
+  Region generation is timed stage by stage by calling what `Atlas.regionLand` and `Streamer.generate` call
+  (`columns`, `landFrom`, `stampWays`, `landHooks`, `cutRegion`, `toBody`, a writeBuffer to a scratch buffer) on
+  fresh land regions 12+ regions from the window; nothing it makes enters the pool or the window.
+- **Report:** one JSON, `kind: 'reclaimed-bench'`, `version: 1`: `device`, `thermalStart/End`, `io`, `main`
+  (`idle`, `regionStages`, `tiles`, `mesh`, `agents`, `renderScale`, `store`, `ride`, `pan80`, `pan120`, `warp`,
+  `meteor`), `hero`, `win<N>`, `derived`. A measure is `{unit, n, p50, p95, max, mean, min}`; GPU numbers are
+  timestamp-query's or the string `'n/a'`; wall-clock ones say so in their unit. src/perf/report-io.ts takes it
+  off the phone (download, copy, share; the dev server's /__hitch?kind=bench → perf-reports/bench-*.json) — the hitch
+  HUD uses the same.
+- **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
+  baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.

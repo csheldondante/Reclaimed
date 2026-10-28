@@ -16,6 +16,7 @@ import { AudioDebug } from './ui/audio-debug';
 import { RockPanel } from './ui/rockpanel';
 import { PerfOverlay } from './ui/perf-overlay';
 import { startHitch } from './perf/start';
+import { benchLevel, benchMode, benchStandalone } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -99,6 +100,14 @@ async function main() {
   resize();
   new ResizeObserver(resize).observe(canvas);
 
+  // (round 101, ?bench=1: the calibration benchmark — src/perf/bench.ts. Its start and end pages run no level; its
+  // level pages are the game as deployed, measured)
+  const bench = benchMode(params);
+  if (bench === 'start' || bench === 'final') {
+    await benchStandalone(bench, host);
+    return;
+  }
+
   const show = (next: Scene) => {
     scene?.dispose();
     scene = next;
@@ -123,6 +132,16 @@ async function main() {
   if (params.get('atlas') === 'view') show(await AtlasView.create(host));
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
+  if (bench === 'level')
+    void benchLevel({
+      host,
+      scene: () => scene,
+      hitch,
+      setRenderScale: (s) => {
+        quality.renderScale = s;
+        resize();
+      },
+    });
 
   // (round 82: at most two frames on the GPU at once — a frame waits, its time carried to the next, while the
   // GPU catches up. Nothing held the CPU back before but the timing readbacks; without them (?perf=lite, or

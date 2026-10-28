@@ -189,6 +189,8 @@ export class TilePacer {
   base = 16.7;
   /** tiles a frame now */
   perFrame = 1;
+  /** (round 101, the benchmark: src/perf/bench.ts) tiles a frame held at this many while it measures; 0: paced */
+  fixed = 0;
   /** (for the sweeps) tiles run, frames that ran some */
   tiles = 0;
   frames = 0;
@@ -215,7 +217,7 @@ export class TilePacer {
     if (dt < this.base) this.base += (dt - this.base) * 0.3;
     else this.base += (Math.min(dt, this.base * 2) - this.base) * (this.ran ? 0.002 : 0.02);
     if (this.ran) this.perFrame = dt > this.base * 1.2 + 1.5 ? Math.max(1, this.perFrame * 0.5) : Math.min(TILE_MAX, this.perFrame + 0.25);
-    const n = TILES_FIXED || Math.floor(this.perFrame);
+    const n = this.fixed || TILES_FIXED || Math.floor(this.perFrame);
     const go = this.waiting.splice(0, n);
     this.ran = go.length;
     if (go.length) {

@@ -8105,3 +8105,71 @@ storms at 1 and 5 min; desktop iGPU, every system on):
   521.6 MB flat (50 386 buffers made, 50 146 destroyed); the largest: atlas dist 64 MB, the mirror's staging 34,
   meshPool 26, atlas rivers 26, layers 25, layersNext 25. (performance.memory's used heap reads 390–570 MB on
   the desktop and swings with collections; CDP's is the one to trust.)
+
+## 2026-10-28 — round 101 (`bench`): a calibration benchmark the phone runs (DECISIONS round 101)
+
+The user: "It really isn't efficient for me to tell you by feel … give you numbers on how long different things take
+in practice so you can compute throughput and then target the actual bottlenecks." The agreed plans this round
+(generation fully on the GPU into the region pool, a GPU budget a frame for it, hero locomotion as engine kits, a
+near-hero CPU cache) all need sizing on the phone, so this branch only measures: `?bench=1` (src/perf/bench.ts), one
+tap, a chain of five page loads, ~5.5 min on the desktop. Every system runs as the deployed page runs it (the phone
+flags, lava, sediment, water, rivers, hybrid, simcull, sleep, the streamer, 1x), the hitch recorder on. Two hooks were
+added to the engine, both inert unless the bench uses them: `TilePacer.fixed` and main.ts's `setRenderScale`.
+
+What it measures (each with its unit, samples, p50/p95/max; GPU by timestamp-query, else wall-clock and labelled):
+- device facts and limits; a fixed GPU workload (2^20 threads x 192 fract-FMAs) at the start and the end — the drift;
+- readback 0.1/1/8/34 MB (submit → mapAsync), a 0.1 MB readback asked right behind a 34 MB one, upload
+  (writeBuffer → onSubmittedWorkDone), GPU copy (wall);
+- region generation stage by stage on fresh land regions (12+ regions out, the sea skipped — the first run's regions
+  2 km out to sea marched nothing): colHeight, formSeed, colFinish (GPU); the columns' readback wait, landFrom,
+  stampWays, the land hooks (settlements), cutRegion (cut + pack), toBody, the upload (CPU / wall);
+- regions/s with the pacer held at 1, 2, 4 and 8 tiles a frame (six regions at once, as a strip asks), the frames
+  meanwhile, colFinish a 32² tile;
+- the mesh rebuilt (every chunk marked moved), sims per awake chunk a tick, the agents pass at +100/500/2000 units,
+  render scales 0.35/0.75/1 (the tier's 0.5 is the parked run), the disk store's put/get of a real region's bytes;
+- scenarios: parked 8 s, the driveprofile ride 25 s, pans at 80 and 120 for 15 s, a warp a third of the way round
+  the atlas (land written, frames back to normal), a meteor beside the camera (the judge, rock bodies), the hero run
+  (`?run=bell`, walked 25 s) and the two other window sizes parked — frames p50/p95/p99/max, GPU by pass and grouped,
+  the hitch recorder's causes and worst ten, CPU steps, the streamer's counts, the camera's zoom, its ground
+  footprint and how much of it is the window, the LOD rings and the far land;
+- derived: the camera speed each tile rate sustains (regions/s x R² / W), the GPU left a frame at 60 and 30, tiles a
+  frame suggested (half of what's left / ms a tile), the area that could be made ahead a second.
+
+**Desktop baseline** (data/bench/desktop-igpu.json: Intel Xe-LPG iGPU, headless 412x915 dpr 2.6 q=low, window 320 —
+the phone tier's range; vsync ~100 Hz here, so the frame interval floors at 10 ms):
+- parked: frame 9.9/10.2 ms p50/p95, GPU 6.5/9.7 ms a frame; 60 fps leaves 10.2 ms of GPU, 30 fps 26.8.
+- **a region is CPU and readback, not GPU:** colHeight 0.24 + formSeed 0.07 + colFinish 0.24 ms of GPU a 64² region
+  (0.17 ms a 32² tile when streamed), but its columns wait 7.1 ms for their readback, cutRegion takes 5.5 ms, landFrom
+  0.5, stampWays 0.6, toBody 0.5, the upload 2 ms to done: 23.7 ms wall a region one at a time (40.7 p95). Moving the
+  cut and the pack onto the GPU straight into the pool (the agreed plan) removes the readback and ~6 ms of CPU a region.
+- regions/s by tiles a frame: 1 → 24 (from tiles; 8 measured — a town's plan batches near those spots tripled the
+  tiles), 2 → 45, 4 → 82, 8 → 100; the frames stayed at 10/10.5 ms p50/p95 at every k (a tile is 0.17 ms of GPU here).
+  That sustains a straight camera of 305/576/1051/1282 cells/s at a 320 window — the phone's numbers decide.
+- ride 10/10.2/10.6/77.5 ms (p50/p95/p99/max), GPU 4.4; pan 80 10/10.5/50/109; pan 120 10/10.6/68/90 (gpu-held 70,
+  gc 9, gpu-busy 1); the warp: every region written in 886 ms, frames normal at 1.5 s, worst 119 ms.
+- **the hero run shows a twenty-fifth of the map and costs more to draw:** zoom 14 against the sandbox's 2.76 —
+  109 cells across the ground against 551, all of it the window (the sandbox sees 51% window, 49% the LOD rings).
+  Its GPU frame is 7.5/12.0 ms p50/p95 against the ride's 4.4/6.9; the draw pass 4.37 ms against 1.86 (the same
+  render resolution, the voxels close up); worst frame 219 ms; gpu-held 91 hitches in 25 s.
+- window 256 / 320 / 384 parked: GPU 4.7 / 6.5 / 9.9 ms p50 (p95 7.3 / 9.7 / 31.7).
+- readback 0.1 MB in 3.0 ms, 1 MB 2.7, 8 MB 3.9, 34 MB 10.6 (3.2 GB/s); a 0.1 MB readback behind a 34 MB one waits
+  +14.4 ms. Upload 1/8/34 MB: 0.5/1.7/10.3 ms to done (~3.3–4.7 GB/s). GPU copy ~17 GB/s.
+- the disk store: a region's 1.7 MB body put in 12.7 ms (compressed to 64 KB in the worker), got in 4.3.
+- sims per awake 16² chunk a tick (riding): sediment 0.081 ms, wind 0.066, water 0.043, lava 0.029; the agents pass
+  ~0.9 ms a frame whatever the count (20 → 1933 units: the per-unit step is a sliver of it on this GPU); the judge
+  0.02 ms a pass. Render scale 0.35 → 1: GPU 6.1 → 6.1 ms (the iGPU isn't fill-bound at this size; the phone may be).
+- not measured yet: the mesh's cost a chunk (the hybrid meshes only its few voxel chunks parked — a forced rebuild
+  showed nothing; BACKLOG BN10) and rock bodies a body (the meteor freed no rigid rock; BN8). The stick didn't move
+  the hero headless; the bench then put it down 8 cells ahead every 0.5 s (`movedBy: placed`, BN9).
+- repeatability: two runs ten minutes apart, `scripts/benchdiff.mjs` — the per-tile GPU and the region stages within
+  ~10%.
+
+**How to run it on the phone.** Plug the Pixel in if you can, open
+https://csheldondante.github.io/Reclaimed/bench/?bench=1 in Chrome, tap **Start benchmark** and put the phone down
+with the screen on (it keeps itself awake). The page reloads itself four times (the atlas at your range, the hero run,
+the other two ranges) — don't switch apps; a page that went to the background is marked `hiddenDuring`. After about
+five and a half minutes it shows a few headline numbers and a big **Download report** button: the JSON lands in
+Downloads (`reclaimed-bench-<date>-<phone>.json`) — send it with Quick Share, Drive or Gmail, or tap **Copy** and paste
+the whole JSON into the chat (no selecting), or **Share…** for the share sheet. The last result is kept: opening
+`?bench=1` again shows the same buttons. Your saved world isn't touched (the bench plays in worlds of its own and
+clears them).
