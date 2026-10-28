@@ -267,8 +267,13 @@ fn relaxTick(k: f32) -> f32 { return 1.0 - pow(1.0 - clamp(k, 0.0, 1.0), simStep
  */
 fn slowTick(q: vec2<u32>, n: u32) -> bool {
   if (n == 0u) { return false; }
-  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
-  return ((G.tick + c * 7u) % n) == 0u;
+  return ((G.tick + chunkStagger(q / G.chunkSize)) % n) == 0u;
+}
+/** (round 107, pages: P2.3a) window chunk c's slow turn's offset, keyed by its world chunk (the window's origin, in
+ *  cells, is whole chunks): the same chunk of the world takes the same turn wherever the window is — sim/cull.ts stagger */
+fn chunkStagger(c: vec2<u32>) -> u32 {
+  let w = vec2<i32>(c) + vec2<i32>(G.org.zw) / i32(G.chunkSize);
+  return (u32(w.x) & 4095u) * 7u + (u32(w.y) & 4095u) * 29u;
 }
 /** (round 104, simscale — sim/cull.ts NEAR) is chunk (cx, cy) live: awake, or drowsy? Past the mask: awake. */
 fn chunkLive(cx: i32, cy: i32) -> bool {

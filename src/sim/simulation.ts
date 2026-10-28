@@ -112,7 +112,7 @@ export class Simulation {
   prime(globals: GlobalsState): void {
     this.uploadGlobals(globals);
     // (simcull: every chunk, the derived buffers made everywhere)
-    this.world.tiles?.update(this.tick);
+    this.world.tiles?.update(this.tick, undefined, undefined, globals.origin);
     const enc = this.device.createCommandEncoder({ label: 'prime' });
     // the wind field starts as the map's own wind, before anything reads it
     this.wind.prime(enc);
@@ -145,7 +145,7 @@ export class Simulation {
     // (perfopt: land just come in — drowsy — settles its water: WaterSystem.settling)
     this.water.settling = globals.settle ?? [];
     // (round 85, simcull — sim/cull.ts: the chunks live this tick, from the same masks the kernels read)
-    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse);
+    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse, globals.origin);
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;

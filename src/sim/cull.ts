@@ -98,12 +98,28 @@ export class AwakeTiles {
   /** per chunk this tick: 1 live or next to a live one (NEAR lists) */
   private near = new Uint8Array(0);
 
-  /** This tick's lists from the sleep mask (bits set: asleep; absent: all awake) and the drowsy mask. */
-  update(tick: number, sleep?: Uint32Array, drowse?: Uint32Array): void {
+  /** (round 107, pages: P2.3a) per window chunk, its slow turn's offset — keyed by its world chunk (common.wgsl chunkStagger) */
+  private stagger = new Uint32Array(0);
+  private staggerAt: [number, number] | null = null;
+
+  /** the stagger for the window's origin (cells, whole chunks) */
+  private staggerFor(origin: [number, number]): Uint32Array {
+    if (this.staggerAt && this.staggerAt[0] === origin[0] && this.staggerAt[1] === origin[1]) return this.stagger;
+    if (this.stagger.length !== this.chunks) this.stagger = new Uint32Array(this.chunks);
+    const ox = Math.trunc(origin[0] / CHUNK);
+    const oy = Math.trunc(origin[1] / CHUNK);
+    for (let j = 0; j < this.cy; j++) for (let i = 0; i < this.cx; i++) this.stagger[j * this.cx + i] = ((ox + i) & 4095) * 7 + ((oy + j) & 4095) * 29;
+    this.staggerAt = [origin[0], origin[1]];
+    return this.stagger;
+  }
+
+  /** This tick's lists from the sleep mask (bits set: asleep; absent: all awake) and the drowsy mask; `origin` the window's (cells: the stagger's world chunks) */
+  update(tick: number, sleep?: Uint32Array, drowse?: Uint32Array, origin: [number, number] = [0, 0]): void {
     if (this.live.length !== this.chunks) {
       this.live = new Uint8Array(this.chunks);
       this.near = new Uint8Array(this.chunks);
     }
+    const st = this.staggerFor(origin);
     const live = this.live;
     for (let c = 0; c < this.chunks; c++) {
       const w = c >> 5;
@@ -117,13 +133,13 @@ export class AwakeTiles {
       let k = 0;
       if (n >= AWAY && n < CUSTOM) {
         const m = n - AWAY;
-        for (let c = 0; c < this.chunks; c++) if (!live[c] && m > 0 && (tick + c * 7) % m === 0) l.data[k++] = c;
+        for (let c = 0; c < this.chunks; c++) if (!live[c] && m > 0 && (tick + st[c]) % m === 0) l.data[k++] = c;
       } else if (n >= NEAR) {
         if (!dilated) this.dilate();
         dilated = true;
         const m = n - NEAR;
-        for (let c = 0; c < this.chunks; c++) if (this.near[c] || (m > 0 && (tick + c * 7) % m === 0)) l.data[k++] = c;
-      } else for (let c = 0; c < this.chunks; c++) if (live[c] || (n > 0 && (tick + c * 7) % n === 0)) l.data[k++] = c;
+        for (let c = 0; c < this.chunks; c++) if (this.near[c] || (m > 0 && (tick + st[c]) % m === 0)) l.data[k++] = c;
+      } else for (let c = 0; c < this.chunks; c++) if (live[c] || (n > 0 && (tick + st[c]) % n === 0)) l.data[k++] = c;
       if (k) this.device.queue.writeBuffer(l.buf, 0, l.data, 0, Math.max(4, Math.ceil(k / 4) * 4));
       l.count = k;
     }
