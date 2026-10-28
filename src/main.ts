@@ -16,7 +16,7 @@ import { AudioDebug } from './ui/audio-debug';
 import { RockPanel } from './ui/rockpanel';
 import { PerfOverlay } from './ui/perf-overlay';
 import { startHitch } from './perf/start';
-import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStandalone, benchWatchdog } from './perf/bench';
+import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
 const QUALITY: Record<string, Quality> = {
@@ -125,7 +125,13 @@ async function main() {
     return;
   }
   // (v3: a device lost on a level page goes on to the next)
-  if (bench === 'level') void gpu.device.lost.then((info) => info.reason !== 'destroyed' && benchSkip(`GPU device lost (${info.reason}): ${info.message}`));
+  if (bench === 'level') {
+    void gpu.device.lost.then((info) => info.reason !== 'destroyed' && benchSkip(`GPU device lost (${info.reason}): ${info.message}${benchStageNote()}`));
+    // (round 104: an out-of-memory or validation error on a level page — a wide window on a phone — is the page's error
+    // with the stage it was at, and the chain goes on, not a fatal overlay left waiting for the watchdog)
+    gpu.device.addEventListener('uncapturederror', (ev) => benchSkip(`GPU error (${(ev as GPUUncapturedErrorEvent).error.constructor.name}): ${(ev as GPUUncapturedErrorEvent).error.message}${benchStageNote()}`));
+    benchOnStartupError = (e) => benchSkip(`startup failed: ${e instanceof Error ? e.message : String(e)}${benchStageNote()}`);
+  }
 
   const show = (next: Scene) => {
     scene?.dispose();
@@ -190,7 +196,11 @@ async function main() {
   requestAnimationFrame(frame);
 }
 
+/** (round 104) a bench level page's startup failure goes to the bench (the chain goes on) as well as the overlay */
+let benchOnStartupError: ((e: unknown) => void) | null = null;
+
 main().catch((e) => {
+  benchOnStartupError?.(e);
   if (e instanceof UnsupportedError) showFatal(e.message);
   else showFatal(`Startup failed: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
 });

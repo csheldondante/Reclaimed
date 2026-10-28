@@ -210,10 +210,14 @@ async function timestampModes(device: GPUDevice): Promise<Record<string, unknown
  */
 const PAN_ZOOMS = [14, 8, 5, 3.5, 2.76, 2.2];
 /** the widest window a page asks for (more and a phone's memory goes: the zoom is reported as not run) */
-const PAN_MAX_WINDOW = 768;
+// (round 104: 640 — window 768 is ~650 MB of GPU memory before the pool and the meshes, ~1.1 KB a column (slidehitch's
+// estimate): past what Chrome gives a Pixel 9a's GPU process; the phone's pan768 never finished loading)
+const PAN_MAX_WINDOW = 640;
 /** speeds (cells/s), each held PAN_STEP_S */
-const PAN_SPEEDS = [30, 60, 90, 120, 160, 200, 260, 320, 400, 500, 640];
-const PAN_STEP_S = 1.5;
+const PAN_SPEEDS = [10, 20, 40, 80, 120, 160, 240, 320, 480, 640];
+const PAN_STEP_S = 3;
+/** (round 104) a frame over this (ms) is over a 60 fps frame's budget, with room */
+const PAN_BUDGET = 20;
 /** the pass criteria: rendered fps, the longest frame, the p99, the screen in detail (none lost against parked) */
 const PAN_FPS = 58;
 const PAN_MAX_FRAME = 33;
@@ -262,7 +266,11 @@ function makePanReport(s: BenchState): Record<string, unknown> {
     if (/^pan\d+$/.test(k) && v?.zooms)
       for (const z of v.zooms as any[])
         for (const src of ['generated', 'disk', 'pool'])
-          if (z[src]) rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, causesAtFail: z[src].causesAtFail, coverParked: z.coverParked });
+          if (z[src]) {
+            const st = (z[src].steps ?? []) as any[];
+            const worstSlide = st.reduce((m, x) => Math.max(m, x.max ?? 0), 0);
+            rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, parked: z.parked ?? null, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, maxNoPopIn: z[src].maxNoPopIn, popInAt: z[src].popInAt, worstFrameMs: r3(worstSlide), overBudgetPerSlide: st.map((x) => `${x.speed}:${x.overBudgetPerSlide ?? '-'}`).join(' '), causesAtFail: z[src].causesAtFail, coverParked: z.coverParked });
+          }
   const plan = res.panPlan as { zooms: { zoom: number; window: number; run: boolean }[] } | undefined;
   return {
     kind: 'reclaimed-bench-pan',
@@ -273,9 +281,9 @@ function makePanReport(s: BenchState): Record<string, unknown> {
     build: location.origin + location.pathname,
     summary: {
       note: 'per zoom and land source: the fastest straight pan (cells/s) that held every criterion, and the criterion that failed first one step above',
-      criteria: `rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms, none of the screen out of detail (against parked), each step ${PAN_STEP_S} s`,
+      criteria: `smooth: rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms and no pop-in, each step ${PAN_STEP_S} s; no pop-in: none of the screen out of detail against parked, frames as they come; overBudgetPerSlide: frames over ${PAN_BUDGET} ms per slide at each speed`,
       device: `${res.device?.adapter?.vendor ?? '?'} ${res.device?.adapter?.architecture ?? ''}, dpr ${res.device?.devicePixelRatio}, css ${res.device?.css?.w}x${res.device?.css?.h}`,
-      table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}`),
+      table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: parked ${r.parked?.fps ?? '?'} fps p99 ${r.parked?.p99 ?? '?'}; smooth to ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}; no pop-in to ${r.maxNoPopIn ?? 'none'} c/s${r.popInAt ? ` (pop-in at ${r.popInAt})` : ''}; worst frame ${r.worstFrameMs} ms`),
       notRun: plan?.zooms.filter((z) => !z.run).map((z) => `zoom ${z.zoom} needs window ${z.window} (over ${PAN_MAX_WINDOW})`) ?? [],
       errors: s.errors.length,
     },
@@ -525,6 +533,14 @@ export async function benchGpu<T>(p: Promise<T>): Promise<T | null> {
   return Promise.race([p, new Promise<null>((r) => setTimeout(() => r(null), 20000))]);
 }
 
+/** (round 104) where a level page's load is (level.ts sets it) and the memory, for an error's note */
+export function benchStageNote(): string {
+  const mem = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+  const gpuMem = (window as unknown as { reclaimedHitch?: { mem?: { liveBytes(): number } } }).reclaimedHitch?.mem?.liveBytes?.();
+  const stage = (globalThis as { __benchStage?: string }).__benchStage ?? 'before the level';
+  return ` (at "${beatWhat === 'loading' || beatWhat === 'gpu' ? stage : beatWhat}"; JS heap ${mem ? `${(mem.usedJSHeapSize / MB).toFixed(0)} of ${(mem.jsHeapSizeLimit / MB).toFixed(0)} MB` : 'n/a'}; GPU buffers alive ${gpuMem !== undefined ? `${(gpuMem / MB).toFixed(0)} MB` : 'n/a'})`;
+}
+
 /** (v4) a stall said on screen (the watchdog's, a failed save): big, not a console line */
 function showStall(msg: string): void {
   const d = document.getElementById('bench-stall') ?? document.body.appendChild(document.createElement('div'));
@@ -551,7 +567,10 @@ export function benchWatchdog(): void {
     if (quiet < limit) return;
     const s = load();
     const page = s?.pages[s.step]?.name ?? '?';
-    const why = beatWhat === 'gpu' ? `${page}: the GPU didn't come up in ${(quiet / 1000).toFixed(0)} s (requestAdapter/requestDevice pending) — the watchdog moved on` : `${page}: no progress for ${(quiet / 1000).toFixed(0)} s at "${beatWhat}" — the watchdog moved on`;
+    const mem = (performance as unknown as { memory?: { usedJSHeapSize: number; jsHeapSizeLimit: number } }).memory;
+    const gpuMem = (window as unknown as { reclaimedHitch?: { mem?: { liveBytes(): number } } }).reclaimedHitch?.mem?.liveBytes?.();
+    const where = loading ? ` (the load at "${(globalThis as { __benchStage?: string }).__benchStage ?? 'before the level'}"; JS heap ${mem ? `${(mem.usedJSHeapSize / MB).toFixed(0)} of ${(mem.jsHeapSizeLimit / MB).toFixed(0)} MB` : 'n/a'}; GPU buffers alive ${gpuMem !== undefined ? `${(gpuMem / MB).toFixed(0)} MB` : 'n/a'}; device memory ${(navigator as Navigator & { deviceMemory?: number }).deviceMemory ?? '?'} GB)` : '';
+    const why = beatWhat === 'gpu' ? `${page}: the GPU didn't come up in ${(quiet / 1000).toFixed(0)} s (requestAdapter/requestDevice pending) — the watchdog moved on` : `${page}: no progress for ${(quiet / 1000).toFixed(0)} s at "${beatWhat}"${where} — the watchdog moved on`;
     showStall(`${why}. Next page…`);
     benchSkip(why, true);
   }, 5000);
@@ -2244,6 +2263,8 @@ class Bench {
     return { to: [Math.round(wx), Math.round(wy)], distanceCells: Math.round(Math.hypot(dx, dy * ROW_H)), warpMs: Math.round(warped), settledMs: settled >= 0 ? Math.round(settled) : 'not within 20 s', unit: 'ms from the warp asked (warpMs: every region written; settledMs: frames back to normal)', ...cap, view: this.view() };
   }
   private lastF = performance.now();
+  /** (round 104) this zoom's parked rendered fps (the pan ramp stops when a step falls under a quarter of it) */
+  private parkedFps = 60;
 
   private async meteor(): Promise<Record<string, unknown>> {
     const c = this.R.camera.target;
@@ -2392,6 +2413,13 @@ class Bench {
         await sleep(600);
         this.parkedCover = this.writtenShare();
         row.coverParked = r3(this.parkedCover);
+        // (the window's own cost at this zoom, parked: what a pan's frames are measured against)
+        if (!row.parked) {
+          const pk = await this.capture(3);
+          const fr = pk.frames as Stat | null;
+          row.parked = { fps: pk.fps, p50: fr?.p50 ?? null, p99: pk.p99, max: fr?.max ?? null, overBudget: null, unit: 'rendered fps; ms' };
+          this.parkedFps = pk.fps as number;
+        }
         row[src] = await this.panRamp(z, src, dir);
       }
       lane++;
@@ -2407,6 +2435,9 @@ class Bench {
     let failedFirst: string | null = null;
     let failedAt: number | null = null;
     let causesAtFail: unknown = null;
+    let maxNoPopIn: number | null = null;
+    let popInAt: number | null = null;
+    let strict = true;
     const anchor: [number, number] = [cam.target[0], cam.target[1]];
     let sign = 1;
     let st0 = { ...this.R.stream.stats };
@@ -2446,6 +2477,7 @@ class Bench {
         let low = 0;
         const fno0 = this.prof.frameNo;
         let fno = fno0;
+        const sl0 = this.R.stream.stats.slides;
         const t0 = performance.now();
         let last = t0;
         while (performance.now() - t0 < PAN_STEP_S * 1000) {
@@ -2471,23 +2503,33 @@ class Bench {
         if (fps < PAN_FPS) fails.push(`fps ${fps.toFixed(0)}`);
         if (max > PAN_MAX_FRAME) fails.push(`frame ${max.toFixed(0)} ms`);
         if (p99 > PAN_P99) fails.push(`p99 ${p99.toFixed(0)} ms`);
-        if (low > 0.001) fails.push(`pop-in ${(low * 100).toFixed(0)}% of the screen`);
-        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), ok: !fails.length });
-        if (fails.length) {
+        const popIn = low > 0.001;
+        if (popIn) fails.push(`pop-in ${(low * 100).toFixed(0)}% of the screen`);
+        const slides = this.R.stream.stats.slides - sl0;
+        const over = frames.filter((f) => f > PAN_BUDGET).length;
+        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, ok: !fails.length });
+        if (fails.length && strict) {
+          strict = false;
           failedFirst = fails.join(', ');
           failedAt = v;
           const rep = this.ctx.hitch?.rec?.report() as { causes?: unknown; worst?: { ms: number; cause: string; steps: { label: string; ms: number }[]; async: { label: string; ms: number }[] }[] } | undefined;
           causesAtFail = rep ? { causes: rep.causes, worst: (rep.worst ?? []).slice(0, 3).map((h) => `${h.ms} ${h.cause} ${[...h.steps, ...h.async].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`) } : null;
+        }
+        if (strict) maxSmooth = v;
+        // (the ramp goes on past frames over budget: the fastest it keeps the screen in detail, apart)
+        if (popIn) {
+          popInAt = v;
           break;
         }
-        maxSmooth = v;
+        maxNoPopIn = v;
+        if (fps < Math.max(8, this.parkedFps / 4)) break;
       }
     } finally {
       sc.pan = null;
     }
     const st1 = this.R.stream.stats;
     const came = { generated: st1.generated - st0.generated, fromPool: st1.thawed - st0.thawed, fromDisk: st1.loaded - st0.loaded, slides: st1.slides - st0.slides };
-    return { maxSmooth, failedFirst, failedAt, causesAtFail, came, steps };
+    return { maxSmooth, failedFirst, failedAt, causesAtFail, maxNoPopIn, popInAt, came, steps };
   }
 
   // ---- other window sizes ----

@@ -761,7 +761,10 @@ export class LevelScene implements Scene {
       // the world's atlas first (atlas/atlas.ts), then the window onto it where we start (?at=x,y cells, or its own spawn)
       // (round 69: the atlas was taller than the window, which slid in z; round 100: the window holds its whole
       // height and never slides in z — ?zwin=248 the sliding window as before, to compare)
+      // (round 104, the bench's watchdog: how far a page's load got — src/perf/bench.ts)
+      (globalThis as { __benchStage?: string }).__benchStage = 'building the atlas';
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
+      (globalThis as { __benchStage?: string }).__benchStage = 'making the first window';
       const zMax = windowZMax(atlas.p.zTop, Number(host.params.get('zwin') ?? 0));
       // (round 88) the settlements' records, and their hook on the land, before the first window is made
       const settlements = host.params.get('towns') === '0' ? undefined : new Settlements(atlas);
@@ -792,6 +795,7 @@ export class LevelScene implements Scene {
       atlas.pacer.profiler = host.profiler;
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
     }
+    (globalThis as { __benchStage?: string }).__benchStage = 'making the level';
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
     // ecology excluded so nothing grows during settling; ground debris (dust,
     // litter, fallen leaves) accumulates fast so the level opens with it lying about.
