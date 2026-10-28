@@ -8215,3 +8215,24 @@ Desktop baseline (data/bench/desktop-igpu.json, v2, uncapped, Intel Xe-LPG, 412x
   10 ms frame). The window scaling is within the noise on this iGPU — the phone's run is the one that will say.
 - region 17.1 ms wall (columns 4.2, cut/pack 3.3); regions/s from tiles at 1/2/4/8 a frame: 34 / 60 / 98 / 123; warp
   land written 1.1 s.
+
+## 2026-10-28 — round 102 (`bench2`): bench v3 — faster pans, wider windows, the fastest pan each sustains
+
+The user (verbatim): "we should also run once the GPU work is done and see if getting rid of the CPU readback fixes
+things even more and let's us crank up pan speed and view distance". So the bench now measures how far the pan speed
+and the view distance can go, to compare before and after gpugen (generation on the GPU, no CPU readback):
+- pans at 80, 120, 160, 240 and 320 cells/s (12 s for the first two, 10 for the rest), each with its **low detail**:
+  the share of a 12x12 grid of screen points that is detailed parked (in the window, its region written) but isn't
+  now (past the window's edge, or in a region the slide hasn't written yet);
+- window sizes 256, 320, 384, **448 and 512** (pages in that order, the viewer's own on the main page), each with a
+  4 s parked capture, the A/B of what scales with the window (all sims, renderprep, mesh rebuilds, shadow, grid, far
+  land; 1.5 s phases), a 10 s ride and the probe;
+- **the fastest pan it sustains** (`maxPan`): the speed raised every 3 s through 80 … 640 cells/s until the low
+  detail's p90 is over 5% of the screen or the rendered fps under 30 — the last speed that held, and what stopped it;
+- `derived.byWindow` (and the summary's `byWindow`): per window size, rendered fps parked and riding, the ride's
+  p95, the fastest pan.
+To keep the run near 12 minutes: the main page's parked capture 5 s, the A/B 1.5 s a phase, the mesh-rebuild step
+dropped (it showed nothing in the hybrid: BACKLOG BN10). A wider window may not fit a phone's GPU: a level page that
+loads again without finishing (the tab killed) is skipped with an error, a lost device goes on to the next page, and
+the start screen offers an unfinished run's partial report (download / copy / share) or to carry on. The
+view-shaped window (`?winh=`) isn't in the sweep (BN19).

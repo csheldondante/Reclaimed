@@ -34,6 +34,10 @@ Ids BN.
 | BN14 | The user's hero-run drops are likely in the GameplayGM slice (another game's page), which Reclaimed's page can't run — not measured here; measure it in that game | S | open |
 | BN15 | A desktop at vsync isn't bound: its A/B costs read ~0 (100 fps on and off). **Done (bench2):** scripts/benchrun.mjs `--uncapped` (no vsync: frames bound by the GPU, as the phone's are; `runner.uncapped` in the report) — the desktop baseline is uncapped | S | done (bench2) |
 | BN16 | v1 counted every rAF as a frame, the ones main.ts holds while two frames are on the GPU too (each still a vsync interval): fps and the frame p50 looked smoother than what was rendered wherever frames were held. **Done (bench2):** frames are the rendered ones (the profiler's frameNo moved), `heldRafs` reported. The Pixel 9a's v1 figures corrected by the hitch recorder's held count: window 384 parked 46.3 → ~23.5 fps rendered, ride 38.9 → ~24.9, pan 120 38.6 → ~23.9, warp 39.6 → ~23.8; 320 parked 50.6 → ~45.2; 256 56.0 → ~54.4; the hero run 55.6 → ~54.1 (barely held) | S | done (bench2) |
+| BN17 | (round 102, the user: "crank up pan speed and view distance") Pans at 160/240/320 after 80/120 with their low detail; windows 448 and 512 after 256/320/384, each with a short ride and the A/B of what scales; `maxPan` (the speed raised until low detail > 5% or < 30 fps) per window; `derived.byWindow` | M | done (bench2) |
+| BN18 | A page that crashes the phone (a wide window) no longer ends the run: skipped on its next load, a lost device goes on; the start screen's partial report | S | done (bench2) |
+| BN19 | The view-shaped window (`?winh=`, round 93) in the sweep: rows other than the side, if it shows more of what the camera sees for the same cost | S | open |
+| BN20 | Run the bench once gpugen (generation on the GPU, no CPU readback) is in places, against today's numbers: does it raise `maxPan` and let the window grow | S | asked |
 
 ## Round 100 (2026-10-27, session 5, `regionstore`) — the world serializes; streaming never waits on a region (DECISIONS round 100)
 
