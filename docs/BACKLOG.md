@@ -22,8 +22,11 @@ Ids ZM.
 | ZM2 | The hybrid's voxels by content: steep columns (`?steep=` 12) as a reason, the camera's radius none by default (`?vradius=` 0) | S | done (this commit) |
 | ZM3 | READY in sim ticks (`?readyticks=` 3), not 0.4 s | S | done (this commit) |
 | ZM4 | speedsweep: `--dir` (a climb), the slides in z, the mesh's GPU ms a second, the voxel share; scripts/climbroute.mjs, scripts/zmeshshot.mjs | S | done (this commit) |
+| ZM7 | A form alone (Streamer.relief) no longer makes its chunk voxels — only open gaps, steep columns, edits (`?formvox=1` as before); sampleField skips the z blocks no later pass reads (fieldmesh.wgsl sampleIdle) | S | done (this commit) |
+| ZM8 | The atlas's region builds measured slower after places 3f67103 (speedsweep build total ~350 ms against ~77, waited 138 at pan 120) — hitchrec to A/B (GPU sharing, or the merge) | S | open |
 | ZM5 | The field mesh's rebuild scratch is sized by zMax (25 MB at low, 60 at high: nz 508): a z window a rebuild slot (the chunk's span) would cut it to its span's; the rock mesh's too (zSpan zMax) | M | open |
 | ZM6 | The sliding-window code (slideZ, reslice, the band, `outside`) is kept for `?zwin=` and worlds over 504: remove it once nothing needs it | S | open |
+
 ## Round 100 (2026-10-27, session 5, `hitchrec`) — instrumentation for the phone (DECISIONS round 100)
 
 Ids HR.

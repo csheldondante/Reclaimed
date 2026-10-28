@@ -488,7 +488,7 @@ window: a form standing on the ground or cut into it (the top off the
 ground's own by more than 0.75), or a gap between runs open to the air (a
 neighbour's top under its roof: an overhang's lip, a cave mouth, a bridge,
 a tunnel's portal; a cave under its neighbours' tops is buried and doesn't
-count), or (round 100) a column in it is steep (a neighbour's top over `?steep=` 12 cells off its own) — or
+count; round 100: a form alone no longer, `?formvox=1` as before), or (round 100) a column in it is steep (a neighbour's top over `?steep=` 12 cells off its own) — or
 it's within `?vradius=` of the camera's target (40 before round 100; 0 since: none), or a world
 event (Globals.events) has touched it (kept while it's in the window). The
 choice reaches the renderer as Renderer.setMeshWanted (the window's mesh and
@@ -999,7 +999,8 @@ its edge:
   What's sized by zMax: the surface packing (9.8: z bits 0..16, material 17..24, slot count 25..29),
   the physics voxels' columns (`PHYS_COL_WORDS` 16 u32: a bit a cell to 511), the pick's info word (material 8
   bits, z 9, flags 15: common.wgsl `pickInfo`), the field mesh's samples along z (its rebuild scratch, slots ×
-  35² × (zMax + 4) × 8 bytes), the light's box. `?zwin=248` (or any zwin): the sliding window as before.
+  35² × (zMax + 4) × 8 bytes — its sample pass skips the z blocks no later pass reads, fieldmesh.wgsl
+  `sampleIdle`), the light's box. `?zwin=248` (or any zwin): the sliding window as before.
 - **In z** (round 69, when the LandSource has a `height` taller than the window — since round 100 only with
   `?zwin=`, or a world over 504):
   the window holds world heights `oz` .. `oz + zMax` (the atlas level's

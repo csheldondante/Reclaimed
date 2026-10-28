@@ -3,8 +3,8 @@
 // showed the heightfield alone at a third of the game's GPU; most of the land is a heightfield anyway. A chunk
 // needs voxels when:
 //   - its land isn't a heightfield of the ground (Streamer.relief: a gap between runs — a cave or its mouth, a
-//     mesa's overhang, a bridge, a tunnel — or a form standing on the ground or cut into it), decided as the land
-//     comes in (and as an event in sight changes it);
+//     mesa's overhang, a bridge, a tunnel — or, before round 100 (?formvox=1), a form standing on the ground or
+//     cut into it), decided as the land comes in (and as an event in sight changes it);
 //   - (round 100) a column in it is steep: a neighbour's top more than `?steep=` (12) cells off its own (a cliff,
 //     a mesa's face, a gorge's wall — the grid would stretch a triangle down it);
 //   - (before round 100; ?vradius=40) it is near the focus (the camera's target: a radius). Round 100, the user:
@@ -52,7 +52,8 @@ const STEEP = Number((typeof location === 'undefined' ? null : new URLSearchPara
  * (round 100, ?formvox=1 as before) Whether a form standing on the ground or cut into it (Streamer.relief: the top off
  * the ground's own by over 0.75 — a road's cut, a town's plinth, a mesa, a spire) makes its chunk voxels by itself.
  * Off: a form is a heightfield like any ground unless it's steep or open underneath (an overhang, an arch, a room) —
- * speedsweep's pans had 45–65% of the window's chunks voxels, most for a road or a plinth the grid draws as well.
+ * speedsweep's pans had 45–65% of the window's chunks voxels with it; without it a town's view 25 → 9, a coast's
+ * 23 → 2, a mesa's 74 → 38 (DEVLOG round 100), the shots alike.
  */
 const FORM_VOX = typeof location !== 'undefined' && new URLSearchParams(location.search).get('formvox') === '1';
 
