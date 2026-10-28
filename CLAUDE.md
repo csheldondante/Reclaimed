@@ -27,6 +27,13 @@ stock-take.
   (github.com/csheldondante/Reclaimed — the user shares it).
 - **Simplest implementation first, behind a clean interface.** Measure (perf
   overlay, probes) before optimising; record the measurement in the DEVLOG.
+- **One concern per structure.** The user's standing principles: encapsulation,
+  well-defined APIs, separation of concerns, and data structures as pragmatic
+  representations chosen per use (compressed, 2D or coarse where that's enough)
+  and converted at the boundaries. If one structure serves two concerns with
+  different lifetimes, shapes, rates or coordinates, split it, as the streamed
+  window was split into residency, simulation, detail rendering and coordinates
+  (round 105). Flag a conflation as a structural problem in your first report.
 - **No fallbacks / heuristics.** Missing WebGPU or a needed limit → clear
   unsupported message (`UnsupportedError`). GPU validation errors surface as a
   fatal overlay. Fix root causes; don't paper over them.
