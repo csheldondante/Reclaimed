@@ -1762,7 +1762,7 @@ export class Renderer {
         const [v, info] = new Uint32Array(this.pickBuf.getMappedRange(0, 8));
         this.pickBuf.unmap();
         this.pickBusy = false;
-        resolve(v === 0 ? null : { cell: v - 1, mat: info & 0xff, z: (info >> 8) & 0xff, flags: info >>> 16 });
+        resolve(v === 0 ? null : { cell: v - 1, mat: info & 0xff, z: (info >>> 8) & 0x1ff, flags: info >>> 17 });
       }, ignoreTeardown);
     }
     if (this.countNeeded) {

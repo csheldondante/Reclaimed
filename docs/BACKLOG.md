@@ -12,6 +12,19 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 100 (2026-10-27, overnight, `zmesh`) — no vertical slide, mesh by content (DECISIONS round 100)
+
+Ids ZM.
+
+| id | item | size | status |
+|---|---|---|---|
+| ZM1 | What needs the vertical slab: every consumer of oz / zMax listed (DEVLOG round 100); the window holds the atlas's whole height (zMax 504, layout.ts windowZMax) — surface 9.8, physCols 16 words, pick z 9 bits; no slide in z, no band; `?zwin=248` the sliding window | M | done (this commit) |
+| ZM2 | The hybrid's voxels by content: steep columns (`?steep=` 12) as a reason, the camera's radius none by default (`?vradius=` 0) | S | done (this commit) |
+| ZM3 | READY in sim ticks (`?readyticks=` 3), not 0.4 s | S | done (this commit) |
+| ZM4 | speedsweep: `--dir` (a climb), the slides in z, the mesh's GPU ms a second, the voxel share; scripts/climbroute.mjs, scripts/zmeshshot.mjs | S | done (this commit) |
+| ZM5 | The field mesh's rebuild scratch is sized by zMax (25 MB at low, 60 at high: nz 508): a z window a rebuild slot (the chunk's span) would cut it to its span's; the rock mesh's too (zSpan zMax) | M | open |
+| ZM6 | The sliding-window code (slideZ, reslice, the band, `outside`) is kept for `?zwin=` and worlds over 504: remove it once nothing needs it | S | open |
+
 ## Round 98 (2026-10-27, session 5, `streamspeed`) — streaming ahead of the camera (DECISIONS round 98)
 
 Ids SS.
@@ -24,8 +37,8 @@ Ids SS.
 | SS4 | The chunks a slide brought land into made urgent for the mesh (`?arrivemesh=0` off); the kept buffers written in one upload, the relief made ahead, layersNext a GPU copy; a strip's writes spread over frames past `?writems=` (6) | S | done (this commit) |
 | SS5 | `?pan=speed[,deg]` (and `?panturn=s,deg`) the camera pans itself, for the phone; `?flyspeed=` the free camera's speed | S | done (this commit) |
 | SS6 | The frame-time cost at speed: p95 20 → 40–80 ms at 80–160 cells/s headless (the sim now runs through the slides; the pacer's extra tiles; the arrivals' urgent meshing). Find which, per frame on the phone (the pacer's base and count are in `reclaimed.scene.opts.atlas.atlas.pacer`) | M | open |
-| SS7 | A slide in z (`slideZ`) reads back the whole window (25 MB) and cuts every column again on the CPU: 200–350 ms on the desktop, and the band's refresh after it 60–90 ms — the p99 tail at speed over hills. Per region over frames, or on the GPU | M | open |
-| SS8 | The hybrid's READY_S (0.4 s): a chunk just come in is the rings' for 0.4 s — at 160 cells/s that's a strip (most of the "rings" share of the view not in detail) | S | open |
+| SS7 | A slide in z (`slideZ`) reads back the whole window (25 MB) and cuts every column again on the CPU: 200–350 ms on the desktop, and the band's refresh after it 60–90 ms — the p99 tail at speed over hills. Per region over frames, or on the GPU | M | done (round 100, `zmesh` ZM1: no slide in z at all) |
+| SS8 | The hybrid's READY_S (0.4 s): a chunk just come in is the rings' for 0.4 s — at 160 cells/s that's a strip (most of the "rings" share of the view not in detail) | S | done (round 100, `zmesh` ZM3: 3 sim ticks) |
 | SS9 | The atlas passes' GPU time isn't seen by the profiler: the tiles are submitted from the pacer's rAF, outside the level's frame (its timestamps reset). A region made at once took 2–4 ms with its readback on the desktop iGPU (the round-80 13 ms figure not reproduced) | S | open |
 ## Round 97 (2026-10-27, session 5, `heroapi`) — the hoverbike game's heroes in a run story (DECISIONS round 97)
 

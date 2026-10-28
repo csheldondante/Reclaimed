@@ -132,9 +132,9 @@ const LAVA_HEAT: f32 = 1.5;
 /** Mark cell z of the column under w as holding a voxel. */
 fn splatCol(w: vec2<f32>, z: f32) {
   let c = cellAt(w);
-  if (!inMap(c) || z < 0.0 || z >= 256.0) { return; }
+  if (!inMap(c) || z < 0.0 || z >= f32(PHYS_COL_WORDS * 32u)) { return; }
   let zc = u32(z);
-  atomicOr(&cols[colIdxI(c) * 8u + zc / 32u], 1u << (zc % 32u));
+  atomicOr(&cols[colIdxI(c) * PHYS_COL_WORDS + zc / 32u], 1u << (zc % 32u));
 }
 
 // a landing shoves the air from this speed (cells/s), and kicks up dust

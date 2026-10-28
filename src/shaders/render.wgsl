@@ -1375,7 +1375,7 @@ fn fsBox(in: VOut) -> FOut {
 
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
-  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1571,7 +1571,7 @@ fn fsWater(in: VOut) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1642,7 +1642,7 @@ fn shadeStream(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1662,7 +1662,7 @@ fn shadeRun(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1713,7 +1713,7 @@ fn shadeGlass(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, m | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  o.pick = vec2<u32>(ci + 1u, pickInfo(m, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1734,7 +1734,7 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), clamp(0.55 + d * 3.0, 0.55, 0.96));
-  o.pick = vec2<u32>(ci + 1u, in.info.x | (u32(max(in.wpos.z, 0.0)) << 8u) | (in.info.y << 16u));
+  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1881,7 +1881,7 @@ fn fsBody(in: VOut) -> FOut {
   let bc = clampCell(cellAt(in.wpos.xy));
   // (a structure grid's voxel picks as the ground beneath: they can't be broken yet)
   let flag = select(0x8000u, 0u, (word >> 31u) != 0u);
-  o.pick = vec2<u32>(colIdxI(bc) + 1u, mat | (u32(max(in.wpos.z, 0.0)) << 8u) | (flag << 16u));
+  o.pick = vec2<u32>(colIdxI(bc) + 1u, pickInfo(mat, in.wpos.z, flag));
   return o;
 }
 

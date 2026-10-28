@@ -255,7 +255,7 @@ written the trunk and crown boxes (vegplan.wgsl: the same places, species and he
 | buffer | type | written by | read by |
 |---|---|---|---|
 | layers | vec4<u32> slots: z0, z1 (f32), mat \| aux << 8 (aux = support·16 + damage) | structure, sediment, edit | structure, sediment, surface, renderprep, edit |
-| surface | u32: base of the loose run (8.8), material under it, slot count, bits 30/31 buried loose / air gap | surface | most systems |
+| surface | u32: base of the loose run (9.8 since round 100, bits 0..16; 8.8 before), material under it (17..24), slot count (25..29), bits 30/31 buried loose / air gap | surface | most systems |
 | drift, strata (textures) | the loose run as seen from above (derived from layers) | surface | sediment, particles, water, oil, ecology, wilt, render… |
 | deposit | vec4 per column: editor ±, a crumbled body's amount + material, a cold storm's snow and a tree's leaves (climate), a place's bury (placeop) | edit, CPU (integrity), climate, placeop | sediment (folds in, zeroes) |
 | pullGiven | f32 per stroke slot (8) and column: the height a layer pull's stroke has given it | layerpull | layerpull |
@@ -488,7 +488,8 @@ window: a form standing on the ground or cut into it (the top off the
 ground's own by more than 0.75), or a gap between runs open to the air (a
 neighbour's top under its roof: an overhang's lip, a cave mouth, a bridge,
 a tunnel's portal; a cave under its neighbours' tops is buried and doesn't
-count) — or it's within `?vradius=` (40) of the camera's target, or a world
+count), or (round 100) a column in it is steep (a neighbour's top over `?steep=` 12 cells off its own) — or
+it's within `?vradius=` of the camera's target (40 before round 100; 0 since: none), or a world
 event (Globals.events) has touched it (kept while it's in the window). The
 choice reaches the renderer as Renderer.setMeshWanted (the window's mesh and
 the band's) and the GPU as Globals.hfield (a bit a mesh chunk, `ocean.yz`
@@ -537,7 +538,7 @@ insides.
 
 Round 86 (the grid): a heightfield chunk is one of two kinds. Most are the
 **grid's** — their columns' tops all within the window's z, their land come
-in over 0.4 s ago — drawn by the renderer as a lattice through the window's
+in at least `?readyticks=` (3) sim ticks ago (round 100; a fixed 0.4 s before) — drawn by the renderer as a lattice through the window's
 own column centres (the hex rows are a triangular lattice) at each column's
 top (surface + drift), 34 x 34 vertices a chunk (its 32 columns and one past
 each edge, overlapping its neighbours by a cell), with the mesh's own
@@ -992,9 +993,17 @@ its edge:
   writes the strip in a frame or two (`WRITE_MS`); `busy` (the sim stopped, the meshes held) only for that. The
   atlas's streamed batches' tiles go through `TilePacer` (as many a frame as the frame's time allows, at least one).
   `?streamold=1`: the slide at once and busy till its land is written, a tile a frame.
-- **In z** (round 69, when the LandSource has a `height` — the atlas's 480):
+- **The whole height** (round 100, `zmesh`): the window's zMax is the world's height and a margin
+  (`layout.ts windowZMax`: the atlas's zTop 480 + 24 → 504; at most `Z_LIMIT` 511, what the surface's 9.8 fixed
+  point holds), so oz stays 0, `outside` stays empty, there's no band, and the slide in z below never happens.
+  What's sized by zMax: the surface packing (9.8: z bits 0..16, material 17..24, slot count 25..29),
+  the physics voxels' columns (`PHYS_COL_WORDS` 16 u32: a bit a cell to 511), the pick's info word (material 8
+  bits, z 9, flags 15: common.wgsl `pickInfo`), the field mesh's samples along z (its rebuild scratch, slots ×
+  35² × (zMax + 4) × 8 bytes), the light's box. `?zwin=248` (or any zwin): the sliding window as before.
+- **In z** (round 69, when the LandSource has a `height` taller than the window — since round 100 only with
+  `?zwin=`, or a world over 504):
   the window holds world heights `oz` .. `oz + zMax` (the atlas level's
-  zMax 248, the most the 8-bit z holds less a margin) and every column
+  zMax was 248, the most the 8-bit z held less a margin) and every column
   keeps what's above and below on the CPU (`Streamer.outside`, world z).
   LandSources give world z; the streamer cuts each column at the window
   (`layout.ts` splitColumn) and fits it to K − headroom (fitColumn). When

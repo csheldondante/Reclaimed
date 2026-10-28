@@ -11,6 +11,9 @@
 // slides' latency and stages, and frame times (p50/p95/p99).
 //   node scripts/speedsweep.mjs [--url http://localhost:5277] [--mode pan|turn|drive] [--speeds 20,40,80,120,160]
 //     [--seconds 12] [--wait 35000] [--at 11956,15471] [--extra "&win=320"] [--size 412x915] [--gif out.gif --gifspeed 120]
+//     [--dir deg] (round 100: pan/turn along world degrees, not up the screen — a route up a mountain, to force slides in z)
+// (round 100) also reported: the slides in z (count, ms), the field mesh's GPU ms a second (its rebuilds), the band's,
+// and the hybrid's share of the window's mesh chunks that are voxels.
 import puppeteer from 'puppeteer-core';
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
@@ -32,6 +35,7 @@ const gif = opt('gif', '');
 const gifSpeed = Number(opt('gifspeed', speeds[speeds.length - 1]));
 const [vw, vh] = opt('size', '412x915').split('x').map(Number);
 const out = opt('json', '');
+const dirDeg = opt('dir', '');
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
@@ -189,20 +193,21 @@ try {
   });
   for (const speed of speeds) {
     await p.evaluate(
-      (speed, mode) => {
+      (speed, mode, dirDeg) => {
         const R = window.reclaimed;
         const sc = R.scene;
         if (mode === 'drive') sc.drive.speed = speed;
         else {
           // (up the screen; the turn: 90 degrees over a second, halfway through)
           const c = R.camera;
-          const [ux, uy] = c.screenDeltaToWorld(0, -1);
+          const [ux, uy] = dirDeg !== '' ? [Math.cos((Number(dirDeg) * Math.PI) / 180), Math.sin((Number(dirDeg) * Math.PI) / 180)] : c.screenDeltaToWorld(0, -1);
           const l = Math.hypot(ux, uy) || 1;
           sc.pan = { speed, dir: [ux / l, uy / l], t: 0, turnAt: mode === 'turn' ? 1e9 : 0, turnBy: mode === 'turn' ? 90 : 0, turned: 0, asked: 0 };
         }
       },
       speed,
       mode,
+      dirDeg,
     );
     // (a second to get going: the streamer's velocity and the lead catch up)
     await new Promise((r) => setTimeout(r, 1500));
@@ -216,6 +221,9 @@ try {
       const prof = window.reclaimed.core.host.profiler;
       prof.resetTotals();
       sc.cpuReset?.();
+      window.__sweep.data.tiers0 = window.reclaimed.stream.stats.tiers;
+      window.__sweep.data.oz0 = window.reclaimed.stream.oz;
+      if (sc.hybrid) sc.hybrid.totals = { frames: 0, voxel: 0, drawn: 0, grid: 0 };
     }, mode, seconds);
     if (gif && speed === gifSpeed) {
       const enc = GIFEncoder();
@@ -295,13 +303,24 @@ try {
         waited: (S.waited ?? 0) - d.waited0,
         pacer: atlas?.pacer ? { perFrame: +atlas.pacer.perFrame.toFixed(1), base: +atlas.pacer.base.toFixed(1), tilesPerFrame: +((atlas.pacer.tiles - d.tiles0) / Math.max(1, atlas.pacer.frames - d.tframes0)).toFixed(2), tilesPerS: +((atlas.pacer.tiles - d.tiles0) / secs).toFixed(1) } : null,
         cpu: R.scene.cpuWorst?.(),
+        // (round 100) the slides in z; the field mesh's GPU ms a second (its rebuilds: every fieldmesh pass but the
+        // hash), the band's; the hybrid's voxel chunks' share of the window's mesh chunks
+        zSlides: S.stats.tiers - d.tiers0,
+        oz: [d.oz0, S.oz],
+        slideZ: R.scene.cpuWorst?.().slideZ ?? null,
+        band: R.scene.cpuWorst?.().band ?? null,
+        meshMsPerS: +([...prof.totalMs].filter(([k]) => k.startsWith('fieldmesh') && !k.endsWith('hash')).reduce((s, [, v]) => s + v, 0) / secs).toFixed(1),
+        bandMeshMsPerS: +([...prof.totalMs].filter(([k]) => k.startsWith('band fieldmesh')).reduce((s, [, v]) => s + v, 0) / secs).toFixed(1),
+        voxelShare: R.scene.hybrid ? +((100 * R.scene.hybrid.totals.voxel) / Math.max(1, R.scene.hybrid.totals.frames) / R.scene.hybrid.stats.chunks).toFixed(1) : null,
+        steep: R.scene.hybrid?.stats.steep ?? null,
+        fitted: S.stats.fitted,
         fatal: !!document.querySelector('.fatal'),
       };
     }, speed);
     if (r.fatal) bad = true;
     results.push(r);
     console.log(JSON.stringify(r));
-    console.log(`SPEED ${mode} ${speed} → got ${r.got} c/s | edge: target min ${r.targetMinToEdge}, ahead min ${r.aheadEdgeMin} p50 ${r.aheadEdgeP50} | detail ahead min ${r.detailAheadMin} p5 ${r.detailAheadP5} p50 ${r.detailAheadP50} | view past ${r.viewPast}% low-in-window ${r.viewLowInWindow}% (unwritten ${r.viewUnwritten}, rings ${r.viewRings}, unbuilt ${r.viewUnbuilt}; max ${r.viewLowMax}%) | busy ${r.busy}% slides ${r.slides} (${r.regionsPerS} reg/s) ms ${JSON.stringify(r.slideMs)} stages ${JSON.stringify(r.slideStages)} | build ${JSON.stringify(r.build)} | waited ${r.waited} pacer ${JSON.stringify(r.pacer)} | frame p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} | gpu ${JSON.stringify(r.gpu)}`);
+    console.log(`SPEED ${mode} ${speed} → got ${r.got} c/s | edge: target min ${r.targetMinToEdge}, ahead min ${r.aheadEdgeMin} p50 ${r.aheadEdgeP50} | detail ahead min ${r.detailAheadMin} p5 ${r.detailAheadP5} p50 ${r.detailAheadP50} | view past ${r.viewPast}% low-in-window ${r.viewLowInWindow}% (unwritten ${r.viewUnwritten}, rings ${r.viewRings}, unbuilt ${r.viewUnbuilt}; max ${r.viewLowMax}%) | busy ${r.busy}% slides ${r.slides} (${r.regionsPerS} reg/s) ms ${JSON.stringify(r.slideMs)} stages ${JSON.stringify(r.slideStages)} | build ${JSON.stringify(r.build)} | waited ${r.waited} pacer ${JSON.stringify(r.pacer)} | frame p50 ${r.p50} p95 ${r.p95} p99 ${r.p99} worst ${r.worst} | gpu ${JSON.stringify(r.gpu)} | z slides ${r.zSlides} oz ${r.oz} slideZ ${JSON.stringify(r.slideZ)} band ${JSON.stringify(r.band)} | mesh ${r.meshMsPerS} ms/s band mesh ${r.bandMeshMsPerS} ms/s voxels ${r.voxelShare}% steep ${r.steep}`);
   }
   if (out) fs.writeFileSync(out, JSON.stringify({ mode, url, results }, null, 1));
 } finally {

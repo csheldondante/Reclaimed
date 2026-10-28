@@ -291,17 +291,21 @@ fn ivPack(z0: f32, z1: f32, mat: u32, aux: u32) -> vec4<u32> {
 const IV_NONE: vec4<u32> = vec4<u32>(0u);
 
 // ---- surface packing (written by the surface system) ----
-// bits 0..15 top z (8.8 fixed point), 16..23 top material, 24..28 valid slot
-// count, 30 there's loose ground buried under something else, 31 the column
-// has air between two of its intervals (an overhang)
-fn sfZ(s: u32) -> f32 { return f32(s & 0xffffu) / 256.0; }
-fn sfMat(s: u32) -> u32 { return (s >> 16u) & 0xffu; }
-fn sfCount(s: u32) -> u32 { return (s >> 24u) & 0x1fu; }
+// bits 0..16 top z (9.8 fixed point: to 511.99 — round 100, the window holds the atlas's whole height), 17..24
+// top material, 25..29 valid slot count, 30 there's loose ground buried under something else, 31 the column has
+// air between two of its intervals (an overhang). Mirrored in world/layout.ts (sfZ, sfMat, sfPack).
+fn sfZ(s: u32) -> f32 { return f32(s & 0x1ffffu) / 256.0; }
+fn sfMat(s: u32) -> u32 { return (s >> 17u) & 0xffu; }
+fn sfCount(s: u32) -> u32 { return (s >> 25u) & 0x1fu; }
 fn sfBuried(s: u32) -> bool { return ((s >> 30u) & 1u) != 0u; }
 fn sfGap(s: u32) -> bool { return (s >> 31u) != 0u; }
 fn sfPack(z: f32, mat: u32, n: u32) -> u32 {
-  return min(u32(round(max(z, 0.0) * 256.0)), 0xffffu) | ((mat & 0xffu) << 16u) | ((n & 0x1fu) << 24u);
+  return min(u32(round(max(z, 0.0) * 256.0)), 0x1ffffu) | ((mat & 0xffu) << 17u) | ((n & 0x1fu) << 25u);
 }
+/** (round 100) a pick's info word: material (8 bits), z (9: to 511), flags (15) — renderer.ts afterSubmit decodes it */
+fn pickInfo(mat: u32, z: f32, flags: u32) -> u32 { return (mat & 0xffu) | (min(u32(max(z, 0.0)), 511u) << 8u) | (flags << 17u); }
+/** (round 100) u32 words a column of the physics voxels' occupancy (world-gpu.ts physCols: a bit a cell of z) */
+const PHYS_COL_WORDS: u32 = 16u;
 
 // ---- hashing / noise ----
 fn pcg(v: u32) -> u32 {

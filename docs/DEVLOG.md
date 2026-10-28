@@ -7825,3 +7825,63 @@ scripts/driveprofile.mjs):
   mesh. A dig into one: cut 1, released 1 (its cells stone where they were, its mesh gone), the other still resting.
   verify + orphans ≤ 0.1 ms a pass.
 Shots: C:/Projects/shots88/meshinst/ (forest_boxes/mesh, drive_0/1, rock_*).
+
+## 2026-10-27 — round 100 (overnight, `zmesh`): no vertical slide; mesh by content
+
+**Why.** The user (DECISIONS round 100): "Why does moving the loaded are vertically cost anything? … Are readbacks
+needed or can we do it on GPU? … Why do we do remeshing everytime if it's expensive? Can we limit it to cliffs or
+something?". streamspeed (round 98) left a slide in z at 200–350 ms — the whole window's layers, water and lava
+read back (~25 MB), every column joined with what's outside it and cut again on the CPU, uploaded, the band
+repacked (60–90 ms) and remeshed — the p99 tail on hills (SS7), and READY_S, the 0.4 s every arriving chunk was
+the rings' (SS8).
+
+**What needed the vertical slab** (every consumer of oz / zMax, read through):
+- *Packed to 8 bits of z*: the surface buffer's top (8.8 fixed point, bits 0..15 — the reason for 248); the physics
+  voxels' column bitmasks (`physCols`, 8 words: cells 0..255; phys.wgsl splatCol, project.wgsl); the pick's info
+  word (z in bits 8..15, the flags over it); layout.ts packColumns' check.
+- *Sized by zMax*: the field mesh's samples along z (nz = zMax + 4: its rebuild scratch, slots × 35² × nz × 8 B; the
+  rock mesh's too), integrity's fracture box (W × D × zMax bytes, a box at a time), the light's box, the camera's
+  pick and ceilings (`zMax − 2` clamps in edit, landbrush, layerpull, lava, sediment, townstamp, town.ts) — no 3D
+  textures or volumes anywhere; the chunk page depth K counts intervals, not height.
+- *The window's z itself* (oz): the band, the streamer's `outside`, waterInWindow and the lava's levels cut at oz,
+  seaZ and the climate (world z = window z + oz), the hybrid's `outZ` (land past the floor or ceiling is the rings'),
+  the far rings' "the columns have it between 0 and win.w", fieldmesh's run "going on up" past zMax, frozen regions'
+  oz (reslice).
+Nothing blocks a window holding the whole height: the 8-bit packings have room (the surface's bit 29 was spare).
+
+**What changed.**
+1. *The window holds the atlas's whole height* (layout.ts `windowZMax`: zTop 480 + 24 → zMax 504; `Z_LIMIT` 511):
+   the surface packs z in 9.8 (bits 0..16, material 17..24, the slot count 25..29 — common.wgsl and layout.ts
+   sfZ / sfMat / sfPack, nothing else read the bits), the physics voxels' columns are `PHYS_COL_WORDS` 16 words
+   (cells to 511), the pick's info word is material 8 | z 9 | flags 15 (common.wgsl `pickInfo`; renderer.ts
+   decodes it). oz stays 0, every `outside` empty, so the streamer never slides in z, a frozen region is never cut
+   again, and there's no band (`enableBand` only when zTop > zMax). `?zwin=248` brings the sliding window back
+   (and a world taller than 504 slides as before).
+2. *Voxels by content* (scenes/hybrid.ts): a chunk is voxels for a form standing on the ground or cut into it, a gap
+   open to the air (as before), an edit or a chip (as before) and now a steep column — a neighbour's top over
+   `?steep=` (12) cells off its own; not for being within 40 of the camera (`?vradius=` 0 now; 40 before). The
+   grid (round 86: the window's own columns as a lattice — the user's "standard mesh around the camera … with the
+   heightmap") draws the rest and is never built, so a chunk near the camera isn't remeshed as the sediment creeps.
+3. *READY in ticks* (`?readyticks=` 3): the grid takes land come in once the surface pass (every tick) and
+   renderfields (every other) have run over it, not after a fixed 0.4 s (24 ticks).
+
+`?zwin=248&vradius=40&readyticks=24&steep=1000` is the way before, measured as "old" below on the same server.
+
+**Measured** (headless Chrome on the desktop iGPU, the phone tier: q=low, 412×915, win 320, every system on).
+
+*First look* (speedsweep `--mode pan --dir 60`: up the slope east-north-east of 11956,15471, from 120 to 226;
+80 cells/s, 12 s; steep then 4):
+
+| | z slides | slideZ ms | band mesh ms/s | mesh ms/s | low in window % | frame p95 / p99 / worst | voxel share |
+|---|---|---|---|---|---|---|---|
+| old | 1 | 223 | 11.2 | 18.1 | 8.6 (rings 7.1) | 20.6 / 40.9 / 191 | 22.0% |
+| new | 0 | — | 0 | 20.4 | 2.4 (rings 1.3) | 17.8 / 35.5 / 98 | 24.3% |
+
+*GPU memory* (memprobe, settled → after a pan): old 241.6 → 280.3 MB, new 230.3 → 268.9 MB: −11 MB — the window's
+mesh scratch 11.8 → 23.8 MB against the band's layers (18.8), pool (5.2) and scratch (0.7) gone. (Both on this
+branch: physCols is 16 words either way, +3.1 MB over places — so −8 MB against places.)
+
+*Steep's threshold*: at 4 the start's view had 19 chunks voxels for steepness alone (old: 1 for land, 12 near) —
+and the shots with those chunks as the grid's (old) and as voxels (new) can't be told apart at the default zoom
+(C:/Projects/shots88/zmesh/start-*.png, steep-*.png: the terraces of the grass slopes are 4–8 cell steps the grid
+draws as the voxels do). So 12: only a real cliff.
