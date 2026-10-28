@@ -97,7 +97,7 @@ export class Steady {
       this.net[k] = net;
       this.thr[k] = thr;
       if (u[k * 4 + 3]) out.overflow += u[k * 4 + 3] / 1e6;
-      if (!this.sleep.isAwake(k, now) && !all) {
+      if (!this.sleep.isAwakeSlot(k, now) && !all) {
         if (!u[k * 4 + 2]) continue;
         // (a frozen chunk whose supply changed — asleep, x and y are its edge's inflow and outflow: the user,
         // "keep the flow proportional and then zero out when they get too low". Its flux is rescaled by in / out,
@@ -108,7 +108,7 @@ export class Steady {
         // (round 86: a stream arrived over it where none was - liquid.wgsl jets holds it aloft: woken)
         if (u[k * 4 + 2] & 2) {
           this.calm[k] = 0;
-          this.sleep.wakeChunk(k, 1, now);
+          this.sleep.wakeSlot(k, 1, now);
         } else if (net < STEADY_FLOOR && thr > 1e-6) {
           this.onRescale(k, 0);
           out.rescaled++;
@@ -117,19 +117,19 @@ export class Steady {
           out.rescaled++;
         } else {
           this.calm[k] = 0;
-          this.sleep.wakeChunk(k, 1, now);
+          this.sleep.wakeSlot(k, 1, now);
         }
         continue;
       }
       if (net <= STEADY_FLOOR + STEADY_TOL * thr) {
         this.calm[k] = Math.min(this.calm[k] + 1, 255);
         if (this.calm[k] >= 2) out.steady++;
-        else this.sleep.wakeChunk(k, 0.2, now);
+        else this.sleep.wakeSlot(k, 0.2, now);
       } else {
         this.calm[k] = 0;
         out.unsteady++;
         // (kept awake until the next window's read, and a little: the read's latency)
-        this.sleep.wakeChunk(k, 0.6, now);
+        this.sleep.wakeSlot(k, 0.6, now);
       }
     }
     this.last = out;

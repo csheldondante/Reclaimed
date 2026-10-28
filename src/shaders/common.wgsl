@@ -67,7 +67,7 @@ struct Globals {
   // chunks), z a mesh chunk's side (cells; as many rows down) — the hfield mask's; w (round 84) the rivers'
   // wetness (sim/world-gpu.ts riverFlow)
   ocean: vec4<f32>,
-  // (round 80, sim/sleep.ts) a bit a chunk (16 × 16 columns), set: asleep — the systems that change the
+  // (round 80, sim/sleep.ts) a bit a chunk (16 × 16 columns; round 107: a bit a slot — its page's), set: asleep — the systems that change the
   // ground skip it; its water and lava keep their depth and flow (drawn moving). 2 048 chunks at most.
   sleep: array<vec4<u32>, 16>,
   // (round 80) a bit a chunk, set: just fallen asleep (a quarter second) — the passes that write the next
@@ -98,16 +98,16 @@ fn heightfieldCol(q: vec2<u32>) -> bool {
   return ((G.hfield[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
 }
 
-/** Has column q's chunk just fallen asleep (round 80)? */
+/** Has column q's chunk just fallen asleep (round 80)? (Round 107, pages P2.3b: the bits are the slots') */
 fn drowsy(q: vec2<u32>) -> bool {
-  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
+  let c = colSlot(q / COLS_PAGE);
   if (c >= 2048u) { return false; }
   return ((G.drowse[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
 }
 
 /** Is column q's chunk asleep (round 80)? Past the mask's 2 048 chunks: awake. */
 fn asleep(q: vec2<u32>) -> bool {
-  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
+  let c = colSlot(q / COLS_PAGE);
   if (c >= 2048u) { return false; }
   return ((G.sleep[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
 }
@@ -278,7 +278,7 @@ fn chunkStagger(c: vec2<u32>) -> u32 {
 /** (round 104, simscale — sim/cull.ts NEAR) is chunk (cx, cy) live: awake, or drowsy? Past the mask: awake. */
 fn chunkLive(cx: i32, cy: i32) -> bool {
   if (cx < 0 || cy < 0 || u32(cx) >= G.chunksX) { return false; }
-  let c = u32(cy) * G.chunksX + u32(cx);
+  let c = colSlot(vec2<u32>(u32(cx), u32(cy)));
   if (c >= 2048u) { return true; }
   let w = c >> 5u;
   let b = 1u << (c & 31u);

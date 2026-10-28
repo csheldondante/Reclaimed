@@ -83,7 +83,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   waterOut[i] = nd;
   let dd = abs(nd - d);
   if (dd > 1e-4) {
-    let c = (id.y / G.chunkSize) * G.chunksX + id.x / G.chunkSize;
+    // (round 107, pages P2.3b: by the chunk's slot — sim/sleep.ts holdUnsettled)
+    let c = colSlot(id.xy / COLS_PAGE);
     if (c < 2048u) { atomicMax(&waterChange[c], bitcast<u32>(dd)); }
   }
 }

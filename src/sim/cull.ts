@@ -19,6 +19,7 @@ import { CHUNK } from '../world/layout';
 import { makeBindGroup, makeCompute, type BindSpec, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
+import type { Pages } from './pages';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 
 /** on by default (round 85, measured: the same state asleep, bit for bit — scripts/culltest.mjs); ?simcull=0 off */
@@ -58,10 +59,13 @@ export class AwakeTiles {
     private device: GPUDevice,
     w: number,
     h: number,
+    /** (round 107, pages P2.3b) the window's page table: a list's entries carry their chunk's slot, the sleep bits are the slots' */
+    private pages: Pages,
   ) {
     if (w % CHUNK || h % CHUNK) throw new Error(`simcull: the window (${w} × ${h}) must be whole chunks of ${CHUNK}`);
     this.cx = w / CHUNK;
     this.cy = h / CHUNK;
+    if (this.cx > 64 || this.cy > 64) throw new Error(`simcull: ${this.cx} × ${this.cy} chunks, a list entry holds 64 a side`);
     this.chunks = this.cx * this.cy;
     this.vec4s = Math.ceil(this.chunks / 4);
     if (this.vec4s * 16 > 65536) throw new Error(`simcull: ${this.chunks} chunks, a uniform list holds ${65536 / 4}`);
@@ -72,13 +76,19 @@ export class AwakeTiles {
     let l = this.lists.get(n);
     if (!l) {
       const data = new Uint32Array(this.vec4s * 4);
-      for (let c = 0; c < this.chunks; c++) data[c] = c;
+      for (let c = 0; c < this.chunks; c++) data[c] = this.packEntry(c);
       const buf = this.device.createBuffer({ label: `tiles n${n}`, size: data.byteLength, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
       this.device.queue.writeBuffer(buf, 0, data);
       l = { buf, count: this.chunks, data };
       this.lists.set(n, l);
     }
     return l.buf;
+  }
+
+  /** (round 107, pages P2.3b) window chunk c's list entry: cx | cy << 6 | slot << 12 (the wrapper finds its columns from cx, cy) */
+  packEntry(c: number): number {
+    const j = (c / this.cx) | 0;
+    return ((c - j * this.cx) | (j << 6) | (this.pages.table[c] << 12)) >>> 0;
   }
 
   /** workgroups to dispatch for list n this tick (0: skip the pass) */
@@ -121,10 +131,13 @@ export class AwakeTiles {
     }
     const st = this.staggerFor(origin);
     const live = this.live;
+    // (round 107, pages P2.3b: the masks' bits are the slots')
+    const table = this.pages.table;
     for (let c = 0; c < this.chunks; c++) {
-      const w = c >> 5;
-      const b = 1 << (c & 31);
-      const asleep = !!sleep && c < sleep.length * 32 && (sleep[w] & b) !== 0;
+      const sl = table[c];
+      const w = sl >> 5;
+      const b = 1 << (sl & 31);
+      const asleep = !!sleep && sl < sleep.length * 32 && (sleep[w] & b) !== 0;
       live[c] = !asleep || (!!drowse && (drowse[w] & b) !== 0) ? 1 : 0;
     }
     let dilated = false;
@@ -133,13 +146,13 @@ export class AwakeTiles {
       let k = 0;
       if (n >= AWAY && n < CUSTOM) {
         const m = n - AWAY;
-        for (let c = 0; c < this.chunks; c++) if (!live[c] && m > 0 && (tick + st[c]) % m === 0) l.data[k++] = c;
+        for (let c = 0; c < this.chunks; c++) if (!live[c] && m > 0 && (tick + st[c]) % m === 0) l.data[k++] = this.packEntry(c);
       } else if (n >= NEAR) {
         if (!dilated) this.dilate();
         dilated = true;
         const m = n - NEAR;
-        for (let c = 0; c < this.chunks; c++) if (this.near[c] || (m > 0 && (tick + st[c]) % m === 0)) l.data[k++] = c;
-      } else for (let c = 0; c < this.chunks; c++) if (live[c] || (n > 0 && (tick + st[c]) % n === 0)) l.data[k++] = c;
+        for (let c = 0; c < this.chunks; c++) if (this.near[c] || (m > 0 && (tick + st[c]) % m === 0)) l.data[k++] = this.packEntry(c);
+      } else for (let c = 0; c < this.chunks; c++) if (live[c] || (n > 0 && (tick + st[c]) % n === 0)) l.data[k++] = this.packEntry(c);
       if (k) this.device.queue.writeBuffer(l.buf, 0, l.data, 0, Math.max(4, Math.ceil(k / 4) * 4));
       l.count = k;
     }
@@ -151,7 +164,7 @@ export class AwakeTiles {
     this.list(n);
     const l = this.lists.get(n)!;
     const k = Math.min(chunks.length, this.chunks);
-    for (let i = 0; i < k; i++) l.data[i] = chunks[i];
+    for (let i = 0; i < k; i++) l.data[i] = this.packEntry(chunks[i]);
     if (k) this.device.queue.writeBuffer(l.buf, 0, l.data, 0, Math.max(4, Math.ceil(k / 4) * 4));
     l.count = k;
   }
@@ -191,9 +204,10 @@ export function cullSource(src: string, entry: string, vec4s: number): string {
 @compute @workgroup_size(8, 8)
 fn ${entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
   let t = wg.x >> 2u;
-  let c = TILES[t >> 2u][t & 3u];
+  // (round 107, pages P2.3b: an entry is cx | cy << 6 | slot << 12 — sim/cull.ts packEntry)
+  let e = TILES[t >> 2u][t & 3u];
   let s = wg.x & 3u;
-  let q = vec2<u32>((c % G.chunksX) * G.chunkSize + (s & 1u) * 8u + l.x, (c / G.chunksX) * G.chunkSize + (s >> 1u) * 8u + l.y);
+  let q = vec2<u32>((e & 63u) * G.chunkSize + (s & 1u) * 8u + l.x, ((e >> 6u) & 63u) * G.chunkSize + (s >> 1u) * 8u + l.y);
   if (q.x >= G.mapW || q.y >= G.mapH) { return; }
   ${inner}(vec3<u32>(q, 0u));
 }

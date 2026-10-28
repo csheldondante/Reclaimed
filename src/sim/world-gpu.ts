@@ -440,7 +440,7 @@ export class WorldGpu {
     this.places = this.buf('places', N * 4, S);
     this.placeTable = this.buf('placeTable', MAX_PLACES * 4, S);
     this.sedOut = this.buf('sedOut', N * 7 * DIRS_BYTES, S);
-    this.tiles = SIM_CULL ? new AwakeTiles(device, w, h) : null;
+    this.tiles = SIM_CULL ? new AwakeTiles(device, w, h, this.ring) : null;
     this.tileCopy = this.tiles ? new TileCopy(device, this.globals, this.materials, this.tiles, N) : null;
   }
 
