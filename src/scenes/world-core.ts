@@ -105,6 +105,9 @@ export class WorldCore {
     looseIntoGrid(map);
     this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
+    // (round 106, frameprobe: the map's surface heights on the window's ring, as the GPU's per-column data — a slide
+    // moves none of it; read column (x, y) at ring.i(x, y). The same array when the ring starts at zero)
+    if (!this.world.ring.zero) map.surface.set(this.world.ring.toRing(map.surface));
     this.sim = new Simulation(device, this.world, host.profiler);
     // (round 104, simscale: the painted wind's boxes go with the land; dy comes in world units, the field's rows are the window's)
     this.onShift.push((dx, dy) => this.sim.wind.shift(dx, Math.round(dy / ROW_H)));
@@ -112,7 +115,7 @@ export class WorldCore {
     this.onShift.push(() => (this.world.projectAll = true));
     this.renderer = new Renderer(device, host.gpu.format, this.world, host.profiler, fieldMesh, host.quality.shadowSize, meshRoom, host.quality.meshSlots);
     this.structures = new Structures(device, this.world);
-    this.weather = new Weather(map.surface, this.dims.w, this.dims.h);
+    this.weather = new Weather(map.surface, this.dims.w, this.dims.h, (x, y) => this.world.ring.i(x, y));
     this.places = new Places(device, this.world, this.sim.placeOps, this.weather);
     this.globals = {
       mapW: this.dims.w,

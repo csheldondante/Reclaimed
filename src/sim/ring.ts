@@ -89,6 +89,31 @@ export class Ring {
     return py * this.W + px;
   }
 
+  /**
+   * (round 106, frameprobe) window column (x, y)'s index, as idx but nothing allocated: for the CPU's per-column
+   * arrays kept on the ring (map.surface, the streamer's ground and relief, the level's caches), read a column at a time.
+   * The offset is whole pages, so the wrap is the plain one (ringunit checks idx against the page form).
+   */
+  i(x: number, y: number): number {
+    let px = x + this.x;
+    let py = y + this.y;
+    if (px >= this.W) px -= this.W;
+    if (py >= this.H) py -= this.H;
+    return py * this.W + px;
+  }
+
+  /** (round 106) window index i (y * W + x) to its index on the ring */
+  of(i: number): number {
+    const W = this.W;
+    const y = (i / W) | 0;
+    return this.i(i - y * W, y);
+  }
+
+  /** (round 106) a region's place (its corner on the ring) for a window corner that's whole regions: its rows are contiguous there */
+  corner(lx: number, ly: number): number {
+    return this.i(lx, ly);
+  }
+
   /** a texel a 2 x 2 columns (tw x th of them, a page COLS_PAGE / 2 texels a side): window texel (tx, ty)'s index */
   idxHalf(tx: number, ty: number, tw: number): number {
     const h = COLS_PAGE / 2;

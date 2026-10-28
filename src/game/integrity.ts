@@ -180,6 +180,7 @@ export class Integrity {
     this.proj = new Float32Array(N * 4);
     this.resetProjection();
     this.bodies.proj = this.proj;
+    this.bodies.projIdx = (x, y) => core.ring.i(x, y);
     this.bodies.onSleep = () => {
       this.stats.settled++;
       this.keepBudget();
@@ -328,7 +329,10 @@ export class Integrity {
 
   /** The visible top of a column: solid ground plus loose ground, or a fallen body's top. */
   topAt(x: number, y: number): number {
-    const i = y * this.core.dims.w + x;
+    // (round 106: the projection on the window's ring — the window index y * W + x mapped onto it, so a column past
+    // the window's edge reads what it did in window order: the row's wrap, or nothing past the ends)
+    const w = y * this.core.dims.w + x;
+    const i = w >= 0 && w < this.core.dims.w * this.core.dims.h ? this.core.ring.of(w) : -1;
     // (the layers hold the loose ground too)
     const ground = this.world.slots.length ? this.world.colTop(x, y) : 0;
     return Math.max(ground, this.proj[i * 4]);
@@ -486,10 +490,21 @@ export class Integrity {
    * and bottom of any body voxel over it (each voxel's rotated-cube box, so a
    * little generous at skewed edges). Written to the bodyProj texture.
    */
+  /**
+   * (round 106, frameprobe) whether the last projection held a body: when it held none and none sleeps now, the
+   * texture is already all "none" (WorldGpu fills it so, a slide's strip comes in so) and nothing is written — a
+   * slide's re-projection was 4 MB filled, rotated and uploaded at window 512 for an empty grid
+   */
+  private projected = true;
+
   private project(): void {
+    const sleeping = this.bodies.list.some((b) => b.asleep);
+    if (!sleeping && !this.projected) return;
+    this.projected = sleeping;
     this.resetProjection();
     const { w: W, h: H } = this.core.dims;
     const P = this.proj;
+    const ring = this.core.ring;
     for (const b of this.bodies.list) {
       if (!b.asleep) continue;
       this.bodies.voxelBounds(b, (lo, hi) => {
@@ -498,7 +513,8 @@ export class Integrity {
           for (let x = Math.max(0, Math.floor(lo[0] - 1)); x <= Math.min(W - 1, Math.ceil(hi[0])); x++) {
             const [cx, cy] = cellPos(x, y);
             if (cx < lo[0] + 0.15 || cx > hi[0] - 0.15 || cy < lo[1] + 0.15 || cy > hi[1] - 0.15) continue;
-            const i = (y * W + x) * 4;
+            // (round 106: on the window's ring, as the texture: written whole, not rotated)
+            const i = ring.i(x, y) * 4;
             if (P[i] < 0) {
               P[i] = hi[2];
               P[i + 1] = lo[2];
@@ -512,8 +528,8 @@ export class Integrity {
       });
     }
     const dev = this.core.host.gpu.device;
-    // (ringwin: in the ring's order)
-    dev.queue.writeTexture({ texture: this.core.world.bodyCpu }, this.core.ring.toRing(P, 4) as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
+    // (ringwin: in the ring's order — round 106: kept so)
+    dev.queue.writeTexture({ texture: this.core.world.bodyCpu }, P as Float32Array<ArrayBuffer>, { bytesPerRow: W * 16 }, [W, H]);
     // (round 104, simscale: written whole, so projected whole next tick — grids/systems.ts ProjectSystem)
     this.core.world.projectAll = true;
   }

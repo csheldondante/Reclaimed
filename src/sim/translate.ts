@@ -38,21 +38,49 @@ export class Translator {
     });
   }
 
+  /** (round 106, frameprobe) a uniform and a bind group per buffer moved, kept (a slide made both anew for each) */
+  private kept = new Map<GPUBuffer, { u: GPUBuffer; group: GPUBindGroup }>();
+  private host = new ArrayBuffer(32);
+
   /** `count` elements of `stride` vec4s in `buf`, the vec4s in `mask` moved by −d */
   run(buf: GPUBuffer, count: number, stride: number, mask: number, d: [number, number, number]): void {
     if (count <= 0) return;
-    const u = this.device.createBuffer({ label: 'translate', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const ab = new ArrayBuffer(32);
-    new Float32Array(ab).set(d, 0);
-    new Uint32Array(ab).set([count, stride, mask, 0], 4);
-    this.device.queue.writeBuffer(u, 0, ab);
-    const enc = this.device.createCommandEncoder({ label: 'translate' });
-    const pass = enc.beginComputePass({ label: 'translate' });
+    let k = this.kept.get(buf);
+    if (!k) {
+      const u = this.device.createBuffer({ label: 'translate', size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      k = { u, group: this.device.createBindGroup({ layout: this.layout, entries: [{ binding: 0, resource: { buffer: u } }, { binding: 1, resource: { buffer: buf } }] }) };
+      this.kept.set(buf, k);
+    }
+    const ab = this.host;
+    new Float32Array(ab, 0, 4).set([d[0], d[1], d[2], 0]);
+    new Uint32Array(ab, 16, 4).set([count, stride, mask, 0]);
+    // (a buffer moved twice in one task: the first submitted before its uniform is written again)
+    if (Translator.batch.has(buf)) this.flush();
+    // (written before the submit that reads it: the queue keeps them in order)
+    this.device.queue.writeBuffer(k.u, 0, ab);
+    if (!Translator.enc) {
+      Translator.enc = this.device.createCommandEncoder({ label: 'translate' });
+      queueMicrotask(() => this.flush());
+    }
+    const pass = Translator.enc.beginComputePass({ label: 'translate' });
     pass.setPipeline(this.pipeline);
-    pass.setBindGroup(0, this.device.createBindGroup({ layout: this.layout, entries: [{ binding: 0, resource: { buffer: u } }, { binding: 1, resource: { buffer: buf } }] }));
+    pass.setBindGroup(0, k.group);
     pass.dispatchWorkgroups(Math.ceil(count / 64));
     pass.end();
-    this.device.queue.submit([enc.finish()]);
-    u.destroy();
+    Translator.batch.add(buf);
+  }
+
+  /**
+   * (round 106, frameprobe) a task's moves (a slide's: the agents' units and flyers, the bodies' particles) in one
+   * submit at its end (a microtask): nothing between reads those buffers — the sim waits while the window slides
+   */
+  private static enc: GPUCommandEncoder | null = null;
+  private static batch = new Set<GPUBuffer>();
+  flush(): void {
+    const T = Translator;
+    if (!T.enc) return;
+    this.device.queue.submit([T.enc.finish()]);
+    T.enc = null;
+    T.batch.clear();
   }
 }

@@ -247,6 +247,8 @@ interface Frozen {
   how: 'thawed' | 'loaded' | 'made';
   /** (round 100) its things (RegionThings), taken with it */
   things?: ThingRecord[];
+  /** (round 106, frameprobe) frozen by a slide, its CPU parts not read yet: read them now (Streamer.fills) */
+  fill?: () => void;
 }
 
 /** (round 100) what's known of a region's columns (world/region-record.ts columnsHash) */
@@ -263,6 +265,15 @@ interface RegionInfo {
 }
 
 /** (round 100) a region read back for the store: its key, corner (world cells) and CPU parts as they were */
+/** (round 106, frameprobe) a slide's freeze: planned in its frame, each region copied out just before its place is written (Streamer.freezeAt) */
+interface Freeze {
+  stage: GPUBuffer | null;
+  items: SaveItem[];
+  entries: [string, Frozen][];
+  /** by the window index (y * W + x, the window after the slide) of the region coming in where it lay */
+  pending: Map<number, { it: SaveItem; key: string; read: boolean; k: number; snap: unknown }>;
+}
+
 interface SaveItem {
   key: string;
   x0: number;
@@ -274,6 +285,8 @@ interface SaveItem {
   relief: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array };
   info: RegionInfo;
   things?: ThingRecord[];
+  /** (round 106, frameprobe) its CPU parts not read yet: read them now, where the region lay on the ring (Streamer.fills) */
+  fill?: () => void;
 }
 
 /** (round 98) a slide's timeline (performance.now() ms): its start, its synchronous part's end, each region coming in
@@ -407,7 +420,14 @@ export class Streamer {
   oz = 0;
   /** (round 105, ringwin) window column i (y * W + x)'s place in `outside` (on the ring) */
   private oi(i: number): number {
-    return this.core.ring.idx(i % this.W, Math.floor(i / this.W));
+    return this.core.ring.of(i);
+  }
+  /**
+   * (round 106, frameprobe) window column (x, y)'s index in the streamer's per-column CPU arrays — `outside`, `ground`,
+   * `relief`, `gapTop`, `colTop` and core.map.surface, all on the ring (sim/ring.ts): a slide moves none of them
+   */
+  colIdx(x: number, y: number): number {
+    return this.core.ring.i(x, y);
   }
   /** per window column: its intervals above and below the window (world z) — (round 105) on the ring: Streamer.oi */
   outside: Interval[][];
@@ -461,7 +481,9 @@ export class Streamer {
       this.outside = new Array(w * h);
       for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) this.outside[core.ring.idx(x, y)] = o[y * w + x];
     }
-    this.ground = tier?.ground ? tier.ground.slice() : core.map.surface.slice();
+    // (round 106, frameprobe: the ground on the ring too, as `outside` and core.map.surface (world-core.ts) — a slide
+    // moves none of them: read a column through colIdx)
+    this.ground = tier?.ground ? core.ring.toRing(tier.ground.slice()) : core.map.surface.slice();
     this.relief = new Uint8Array(w * h);
     this.gapTop = new Float32Array(w * h).fill(-Infinity);
     this.colTop = new Float32Array(w * h);
@@ -553,7 +575,8 @@ export class Streamer {
           if (!iv) break;
           col.push(iv);
         }
-        this.setRelief(i, joinColumn(col, this.oz, this.outside[this.oi(i)]), core.map.surface[i], this.ground[i]);
+        const si = this.oi(i);
+        this.setRelief(si, joinColumn(col, this.oz, this.outside[si]), core.map.surface[si], this.ground[si]);
       }
     // (round 100) the pool, in the layout every tier shares; the first window's columns hashed as made
     this.layout = regionLayout(
@@ -575,7 +598,7 @@ export class Streamer {
             const ci = (ly / CHUNK + j) * (w / CHUNK) + lx / CHUNK + i;
             pages.set(p.slots.subarray(t[ci * 2] * SLOT_WORDS, t[ci * 2] * SLOT_WORDS + pageWords), (j * L.rc + i) * pageWords);
           }
-        const out = this.regionOutside(lx, ly);
+        const out = this.regionOutside(this.core.ring.corner(lx, ly));
         const last = columnsHash(pages, L, out, this.oz);
         this.winInfo.set(this.key((origin[0] + lx) / R, (origin[1] + ly) / R), { last });
       }
@@ -600,40 +623,68 @@ export class Streamer {
       });
   }
 
-  /** (round 100) the window's outside intervals of the region at local cell (lx, ly), row-major in the region */
-  private regionOutside(lx: number, ly: number): Interval[][] {
-    const o: Interval[][] = [];
-    for (let r = 0; r < this.R; r++) for (let c = 0; c < this.R; c++) o.push(this.outside[this.core.ring.idx(lx + c, ly + r)]);
+  /** (round 100) the window's outside intervals of the region at ring place `at` (Ring.corner), row-major in the region */
+  private regionOutside(at: number): Interval[][] {
+    const { R, W } = this;
+    const o: Interval[][] = new Array(R * R);
+    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) o[r * R + c] = this.outside[at + r * W + c];
     return o;
   }
 
-  /** (round 100) a w-wide CPU grid's region at local cell (lx, ly), copied */
-  private regionOf<T extends Float32Array | Uint8Array>(a: T, lx: number, ly: number): T {
+  /** (round 100) a w-wide CPU grid's region at ring place `o` (Ring.corner), copied (round 106: the grid on the ring — the region's rows where it lies) */
+  private regionOf<T extends Float32Array | Uint8Array>(a: T, o: number): T {
     const { R, W } = this;
     const s = new (a.constructor as { new (n: number): T })(R * R);
-    for (let r = 0; r < R; r++) s.set(a.subarray((ly + r) * W + lx, (ly + r) * W + lx + R), r * R);
+    for (let r = 0; r < R; r++) s.set(a.subarray(o + r * W, o + r * W + R), r * R);
     return s;
   }
 
-  /** (round 100) the CPU parts of the window's region at (lx, ly) as they are now, for the store */
-  private saveItem(lx: number, ly: number, key: string): SaveItem {
+  /**
+   * (round 100) the CPU parts of the window's region at (lx, ly), for the store. (Round 106, frameprobe: read later —
+   * `fill` — from where the region lies on the ring: the CPU's per-column arrays are on the ring, so a slide leaves them
+   * where they are until the region coming in is written there, and whatever writes there fills first (Streamer.fills).
+   * The slide's own frame no longer copies a strip of them.)
+   */
+  private saveItem(lx: number, ly: number, key: string, now = false): SaveItem {
     let info = this.winInfo.get(key);
     if (!info) this.winInfo.set(key, (info = {}));
-    return {
-      key,
-      x0: this.origin[0] + lx,
-      y0: this.origin[1] + ly,
-      oz: this.oz,
-      outside: this.regionOutside(lx, ly),
-      surface: this.regionOf(this.core.map.surface, lx, ly),
-      ground: this.regionOf(this.ground, lx, ly),
-      relief: { relief: this.regionOf(this.relief, lx, ly), gapTop: this.regionOf(this.gapTop, lx, ly), colTop: this.regionOf(this.colTop, lx, ly) },
-      info,
+    const at = this.core.ring.corner(lx, ly);
+    const it: SaveItem = { key, x0: this.origin[0] + lx, y0: this.origin[1] + ly, oz: this.oz, outside: [], surface: NO_F32, ground: NO_F32, relief: { relief: NO_U8, gapTop: NO_F32, colTop: NO_F32 }, info };
+    it.fill = () => {
+      it.fill = undefined;
+      it.outside = this.regionOutside(at);
+      it.surface = this.regionOf(this.core.map.surface, at);
+      it.ground = this.regionOf(this.ground, at);
+      it.relief = { relief: this.regionOf(this.relief, at), gapTop: this.regionOf(this.gapTop, at), colTop: this.regionOf(this.colTop, at) };
     };
+    if (now) it.fill();
+    else this.fills.push({ at, it });
+    return it;
+  }
+
+  /** (round 106, frameprobe) the regions frozen whose CPU parts aren't read yet, and where they lie on the ring */
+  private fills: { at: number; it: SaveItem }[] = [];
+
+  /** (round 106) the frozen region at ring place `at` read before something writes there */
+  private fillAt(at: number): void {
+    if (!this.fills.length) return;
+    const t0 = performance.now();
+    for (const f of this.fills) if (f.at === at) f.it.fill?.();
+    this.fills = this.fills.filter((f) => f.it.fill);
+    record('fz.fill', performance.now() - t0);
+  }
+
+  /** (round 106) every frozen region's CPU parts read (before the window's columns are written other than a region at a time) */
+  private flushFills(): void {
+    if (!this.fills.length) return;
+    const t0 = performance.now();
+    for (const f of this.fills) f.it.fill?.();
+    this.fills = [];
+    record('fz.fill', performance.now() - t0);
   }
 
   /** (round 100) Copy the window's region at (lx, ly) into `dst` at `off`, in the region layout. */
-  private copyOut(enc: GPUCommandEncoder, lx: number, ly: number, dst: GPUBuffer, off: number, kernel = true): void {
+  private copyOut(enc: GPUCommandEncoder, lx: number, ly: number, dst: GPUBuffer, off: number, kernel = true, flush = true): void {
     const { W, R } = this;
     // (round 105, ringwin: the region's place on the ring — whole regions, so one rectangle)
     const [px, py] = this.core.ring.at(lx, ly);
@@ -658,7 +709,8 @@ export class Streamer {
       for (let p = 0; p < b.planes; p++)
         for (let r = 0; r < R; r++) enc.copyBufferToBuffer(b.buf, p * W * H * b.stride + ((py + r) * W + px) * b.stride, dst, off + lb.off + (p * R + r) * R * b.stride, R * b.stride);
     }
-    this.copier.encode(enc);
+    // (round 106: a caller freezing several encodes their rectangles once, in one pass)
+    if (flush) this.copier.encode(enc);
     for (const lt of L.texs) {
       const t = this.texs.find((x) => x.name === lt.name)!;
       enc.copyTextureToBuffer({ texture: t.tex, origin: [(px / t.div) * t.per, py / t.div] }, { buffer: dst, offset: off + lt.off, bytesPerRow: lt.rowBytes }, [lt.tw, lt.th]);
@@ -848,6 +900,8 @@ export class Streamer {
   private checkOne(all: Uint8Array, k: number, it: SaveItem): void {
     const L = this.layout;
     const body = all.subarray(k * L.bytes, (k + 1) * L.bytes);
+    // (round 106: its CPU parts, if not read yet — still where it lay: whatever writes there reads them first)
+    it.fill?.();
     const t0 = performance.now();
     // (not touched by play: nothing to keep — the source makes it again; hashed only for ?rsverify)
     if (!it.info.changed && !this.verify) return;
@@ -911,7 +965,8 @@ export class Streamer {
     go.forEach(([lx, ly], k) => this.copyOut(enc, lx, ly, stage, k * L.bytes, false));
     dev.queue.submit([enc.finish()]);
     const items = go.map(([lx, ly]) => {
-      const it = this.saveItem(lx, ly, this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R));
+      // (a region staying in the window: its CPU parts read now, with its readback)
+      const it = this.saveItem(lx, ly, this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R), true);
       const things = this.things.flatMap((t) => t.take(lx, ly, lx + R, ly + R, true));
       if (things.length) it.things = things;
       return it;
@@ -935,7 +990,7 @@ export class Streamer {
     const enc = dev.createCommandEncoder({ label: 'region verify' });
     this.copyOut(enc, lx, ly, st, 0, false);
     dev.queue.submit([enc.finish()]);
-    const out = this.regionOutside(lx, ly).map((c) => c.slice());
+    const out = this.regionOutside(this.core.ring.corner(lx, ly)).map((c) => c.slice());
     const oz = this.oz;
     void st.mapAsync(GPUMapMode.READ).then(() => {
       const body = new Uint8Array(st.getMappedRange()).slice();
@@ -1198,7 +1253,7 @@ export class Streamer {
     if (h) {
       const [cx, cy] = cellAt(x, yw);
       if (cx >= 0 && cy >= 0 && cx < this.W && cy < this.H) {
-        const g = this.ground[cy * this.W + cx];
+        const g = this.ground[this.colIdx(cx, cy)];
         const zMax = this.core.dims.zMax;
         if (g > zMax - 40 && this.oz + zMax < h) return this.slideZ(TIER);
         if (g < 24 && this.oz > 0) return this.slideZ(-TIER);
@@ -1276,6 +1331,7 @@ export class Streamer {
     // (a region leaving is saved, if it changed, before it's looked for in the store)
     await this.checks.get(key);
     let f = fresh ? undefined : this.frozen.get(key);
+    f?.fill?.();
     // (its slot this job's now: nothing evicts it meanwhile; ready() puts it back)
     if (f) this.frozen.delete(key);
     if (!f && this.store?.has(key) && !(fresh && this.store.has(key)!.session === SESSION)) f = (await this.load(key)) ?? undefined;
@@ -1436,11 +1492,15 @@ export class Streamer {
   }
 
   /**
-   * (round 100) The window's regions at these local corners copied into pool slots (and from there into one staging
-   * buffer, read back for the store), their CPU parts and things taken as they are. frozeInto after the submit.
+   * (round 100) The window's regions leaving, at these local corners (the window before the slide): copied into pool
+   * slots (and those play changed into one staging buffer, read back for the store), their CPU parts and things taken.
+   * (Round 106, frameprobe: planned here, in the slide's frame — the things taken, the coarse world's snapshots asked,
+   * the readback's stage made — and each region's copies made later, where it lies on the ring, just before the
+   * region coming in is written there (freezeAt): the window's data is on the ring and the chunk table keeps a place's
+   * pages, so what left stays where it lay, untouched, until then. frozeInto once all are done.)
    */
-  private freezeInto(enc: GPUCommandEncoder, spots: [number, number][]): { stage: GPUBuffer | null; items: SaveItem[]; entries: [string, Frozen][] } {
-    const { R } = this;
+  private freezePlan(spots: [number, number][], dx: number, dy: number): Freeze {
+    const { R, W, H } = this;
     const L = this.layout;
     const dev = this.core.host.gpu.device;
     // (round 104) read back only what play changed (or ?rsverify): a region never touched is made again when it's
@@ -1448,34 +1508,99 @@ export class Streamer {
     const keys = spots.map(([lx, ly]) => this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R));
     const need = keys.filter((key) => this.verify || this.winInfo.get(key)?.changed).length;
     const stage = need ? dev.createBuffer({ label: 'stream freeze', size: L.bytes * need, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST }) : null;
-    const items: SaveItem[] = [];
-    const entries: [string, Frozen][] = [];
+    const fz: Freeze = { stage, items: [], entries: [], pending: new Map() };
+    // (round 106, frameprobe: the freeze's CPU by part)
+    const tm = [0, 0, 0];
+    let tq = performance.now();
+    const lap = (k: number) => {
+      const t = performance.now();
+      tm[k] += t - tq;
+      tq = t;
+    };
     spots.forEach(([lx, ly], i) => {
       const key = keys[i];
+      tq = performance.now();
       const it = this.saveItem(lx, ly, key);
+      lap(0);
       const things = this.things.flatMap((t) => t.take(lx, ly, lx + R, ly + R));
       if (things.length) it.things = things;
+      lap(1);
       const read = !!stage && (this.verify || !!it.info.changed);
-      const k = items.length;
-      if (read) items.push(it);
-      const slot = this.slotFor();
-      if (slot) {
-        this.copyOut(enc, lx, ly, slot.buf, slot.off);
-        if (read) enc.copyBufferToBuffer(slot.buf, slot.off, stage!, k * L.bytes, L.bytes);
-        const snap = this.source.snapshot?.(it.x0, it.y0, R, R);
-        entries.push([key, { oz: it.oz, outside: it.outside, surface: it.surface, ground: it.ground, relief: it.relief, snap, slot, info: it.info, how: 'thawed', things: it.things }]);
-      } else {
-        // (no room in the pool: read back only — saved if it changed, made again if it didn't)
-        if (read) this.copyOut(enc, lx, ly, stage!, k * L.bytes, false);
-        this.stats.evicted++;
-      }
+      const k = fz.items.length;
+      if (read) fz.items.push(it);
+      // (the coarse world as the region leaves it: asked now — Coarse.snapshot copies a task's together)
+      const snap = this.source.snapshot?.(it.x0, it.y0, R, R);
+      lap(2);
+      // (the same place on the ring, in the window after the slide: the region coming in there)
+      const nx = (((lx - dx) % W) + W) % W;
+      const ny = (((ly - dy) % H) + H) % H;
+      fz.pending.set(ny * W + nx, { it, key, read, k, snap });
       this.winInfo.delete(key);
     });
-    return { stage, items, entries };
+    record('fz.saveItem', tm[0]);
+    record('fz.things', tm[1]);
+    record('fz.snapshot', tm[2]);
+    return fz;
   }
 
-  /** (round 100) after freezeInto's copies are submitted: the regions in the pool, their readback under way */
-  private frozeInto(fz: { stage: GPUBuffer | null; items: SaveItem[]; entries: [string, Frozen][] }): void {
+  /**
+   * (round 106, frameprobe) The region that left from where window region (lx, ly) — after the slide — lies on the ring
+   * copied out (into a pool slot; to the stage if play changed it) and its band cleared there, before what comes in is
+   * written: one region's copies a submit, in the frame that writes there.
+   */
+  private freezeAt(fz: Freeze, lx: number, ly: number): void {
+    const p = fz.pending.get(ly * this.W + lx);
+    if (!p) return;
+    fz.pending.delete(ly * this.W + lx);
+    const t0 = performance.now();
+    const { R, W, H } = this;
+    const L = this.layout;
+    const dev = this.core.host.gpu.device;
+    const enc = dev.createCommandEncoder({ label: 'stream freeze' });
+    const { it, key, read, k, snap } = p;
+    const slot = this.slotFor();
+    const t1 = performance.now();
+    if (slot) {
+      this.copyOut(enc, lx, ly, slot.buf, slot.off);
+      if (read) enc.copyBufferToBuffer(slot.buf, slot.off, fz.stage!, k * L.bytes, L.bytes);
+      const fe: Frozen = { oz: it.oz, outside: it.outside, surface: it.surface, ground: it.ground, relief: it.relief, snap, slot, info: it.info, how: 'thawed', things: it.things };
+      // (round 106: its CPU parts as the item's, when they're read)
+      const readCpu = it.fill;
+      if (readCpu)
+        it.fill = fe.fill = () => {
+          fe.fill = undefined;
+          readCpu();
+          fe.outside = it.outside;
+          fe.surface = it.surface;
+          fe.ground = it.ground;
+          fe.relief = it.relief;
+        };
+      fz.entries.push([key, fe]);
+    } else {
+      // (no room in the pool: read back only — saved if it changed, made again if it didn't)
+      if (read) this.copyOut(enc, lx, ly, fz.stage!, k * L.bytes, false);
+      // (round 106: kept nowhere — its CPU parts never read)
+      else it.fill = undefined;
+      this.stats.evicted++;
+    }
+    // (what isn't kept for the region coming in starts empty there)
+    const [px, py] = this.core.ring.at(lx, ly);
+    for (const b of [...this.bufs, ...this.moduleBufs()]) {
+      if (b.keep) continue;
+      const s = b.stride / 4;
+      if (b.buf.usage & GPUBufferUsage.STORAGE)
+        this.copier.rect({ src: this.zeros(R * s), srcOff: 0, srcRow: 0, srcPlane: 0, dst: b.buf, dstOff: (py * W + px) * s, dstRow: W * s, dstPlane: W * H * s, rowWords: R * s, rows: R, planes: b.planes });
+      else for (let q = 0; q < b.planes; q++) for (let r = 0; r < R; r++) enc.clearBuffer(b.buf, q * W * H * b.stride + ((py + r) * W + px) * b.stride, R * b.stride);
+    }
+    this.copier.encode(enc);
+    dev.queue.submit([enc.finish()]);
+    record('fz.slotFor', t1 - t0);
+    record('fz.copyOut', performance.now() - t1);
+  }
+
+  /** (round 100) once every region that left is copied out: the regions in the pool, their readback under way */
+  private frozeInto(fz: Freeze): void {
+    for (const [ly, lx] of [...fz.pending.keys()].map((i) => [Math.floor(i / this.W), i % this.W])) this.freezeAt(fz, lx, ly);
     for (const [key, f] of fz.entries) {
       this.frozen.delete(key);
       this.frozen.set(key, f);
@@ -1505,7 +1630,7 @@ export class Streamer {
     const ts = core.host.profiler.timestamps('slide');
     if (ts) enc.beginComputePass({ label: 'slide t0', timestampWrites: { querySet: ts.querySet, beginningOfPassWriteIndex: ts.beginningOfPassWriteIndex } }).end();
     const tf = performance.now();
-    const fz = SLIDE_SKIP.has('freeze') ? null : this.freezeInto(enc, leaving);
+    const fz = SLIDE_SKIP.has('freeze') ? null : this.freezePlan(leaving, dx, dy);
     record('slide.freeze', performance.now() - tSync);
     // ---- 2. (round 105, ringwin) nothing moves: the window's columns stay where they lie on the ring ----------
     // (a world cell keeps its place mod the window's size: the strip coming in lies where the strip leaving lay —
@@ -1515,7 +1640,8 @@ export class Streamer {
     const mods = this.moduleBufs();
     // (particles in the air: dropped — Q28 follow-up: keep them, they're in window coordinates)
     enc.clearBuffer(wg.particles);
-    {
+    // (round 106: each region's band is cleared as it's frozen — freezeAt; this, only when nothing is frozen: ?slideskip=freeze)
+    if (!fz) {
       // (a band of whole rows or columns: all of them along the other axis, from the ring's 0)
       const [bx, by] = ring.at(dx > 0 ? W - dx : 0, dy > 0 ? H - dy : 0);
       const sx = dx ? bx : 0;
@@ -1535,7 +1661,6 @@ export class Streamer {
     if (ts) enc.beginComputePass({ label: 'slide t1', timestampWrites: { querySet: ts.querySet, endOfPassWriteIndex: ts.endOfPassWriteIndex } }).end();
     dev.queue.submit([enc.finish()]);
     this.doneAfter(this.slideDone);
-    if (fz) this.frozeInto(fz);
     this.times.freeze.push(performance.now() - tf);
     record('rs.freeze', performance.now() - tf);
     if (this.times.freeze.length > 400) this.times.freeze.shift();
@@ -1544,21 +1669,16 @@ export class Streamer {
 
     record('slide.move', performance.now() - tSync);
     // ---- 3. the chunk table: pages move, the leaving chunks' pages are reused --
+    // (round 106, frameprobe: a chunk coming in takes the pages of the one that left from the same place on the ring —
+    // the table rotates with the ring — so what left lies untouched, pages and columns, until it's frozen: freezeAt)
     const old = table.slice();
     const dcx = dx / CHUNK;
     const dcy = dy / CHUNK;
-    const free: number[] = [];
     for (let j = 0; j < cy; j++)
       for (let i = 0; i < cx; i++) {
-        const ni = i - dcx;
-        const nj = j - dcy;
-        if (ni < 0 || nj < 0 || ni >= cx || nj >= cy) free.push(old[(j * cx + i) * 2]);
-      }
-    for (let j = 0; j < cy; j++)
-      for (let i = 0; i < cx; i++) {
-        const si = i + dcx;
-        const sj = j + dcy;
-        table[(j * cx + i) * 2] = si >= 0 && sj >= 0 && si < cx && sj < cy ? old[(sj * cx + si) * 2] : free.pop()!;
+        const si = (((i + dcx) % cx) + cx) % cx;
+        const sj = (((j + dcy) % cy) + cy) % cy;
+        table[(j * cx + i) * 2] = old[(sj * cx + si) * 2];
       }
     dev.queue.writeBuffer(wg.chunks, 0, table);
 
@@ -1567,9 +1687,15 @@ export class Streamer {
     this.origin[0] += dx;
     this.origin[1] += dy;
     core.globals.origin = [this.origin[0], this.origin[1]];
-    shiftGrid(surf, W, H, 1, dx, dy);
-    shiftGrid(this.ground, W, H, 1, dx, dy);
-    for (const a of [this.relief, this.gapTop, this.colTop]) shiftGrid(a, W, H, 1, dx, dy);
+    let tg = performance.now();
+    const lap = (label: string) => {
+      const t = performance.now();
+      record(label, t - tg);
+      tg = t;
+    };
+    // (round 106, frameprobe: map.surface, the ground and the relief are on the ring — nothing moves)
+    void surf;
+    lap('sl.cpuGrids');
     core.camera.shift(dx, dy * ROW_H, 0);
     // (round 99, runstream) the world's queued events (edits past a tick's four wait for the next) are in window
     // coordinates too: they land where they were aimed, not a region off
@@ -1578,9 +1704,14 @@ export class Streamer {
       ev.y -= dy * ROW_H;
     }
     // (what the game installed that lives in window coordinates: units, bodies — round 80)
-    for (const f of core.onShift) f(dx, dy * ROW_H, 0);
+    lap('sl.camEvents');
+    core.onShift.forEach((f, k) => {
+      f(dx, dy * ROW_H, 0);
+      lap(`sl.onShift${k}`);
+    });
     // (what's built moves with the land: round 73, nothing is built again but what came in fresh)
     core.renderer.windowMoved(dx / MESH_CHUNK, dy / MESH_CHUNK, [-dx, -dy * ROW_H, 0]);
+    lap('sl.windowMoved');
     record('slide.grids', performance.now() - tSync);
     core.renderer.band?.shift(dx, dy);
     record('slide.band', performance.now() - tSync);
@@ -1621,6 +1752,7 @@ export class Streamer {
     });
     this.unwritten = entering.slice();
     let tw = performance.now();
+    try {
     for (let k = 0; k < entering.length; k++) {
       const [lx, ly] = entering[k];
       if (!STREAM_OLD && k > 0 && performance.now() - tw > WRITE_MS) {
@@ -1632,11 +1764,19 @@ export class Streamer {
       if (f.oz !== this.oz) f = await this.prepare(f);
       if (this.frozen.get(c.key)?.slot === f.slot) this.frozen.delete(c.key);
       tr.regions[k].ready = performance.now();
+      // (round 106: what left from where this lies, copied out first)
+      if (fz) this.freezeAt(fz, lx, ly);
       this.write(f, lx, ly, c.key);
       tr.regions[k].written = performance.now();
       this.unwritten = this.unwritten.filter(([x, y]) => x !== lx || y !== ly);
       if (!STREAM_OLD && ARRIVE_URGENT) this.core.renderer.fieldMesh.urgent(lx, ly * ROW_H, lx + R, (ly + R) * ROW_H, 8);
     }
+    } finally {
+      // (round 106: the regions that left all frozen — any not written over yet too — and their readback asked)
+      if (fz) this.frozeInto(fz);
+    }
+    // (round 106: whatever of the strip that left isn't read yet — nothing came in where it lay)
+    this.flushFills();
     // (round 80: the band's pages went with the land; only what came in is packed)
     timed('band', () => this.core.renderer.band?.packFresh(this.outside, this.core.dims.zMax));
     this.core.windowEpoch++;
@@ -1649,6 +1789,7 @@ export class Streamer {
    * the window, was the band's and never came down).
    */
   takeAbove(x: number, y: number): Interval[] {
+    this.flushFills();
     const i = y * this.W + x;
     const top = this.oz + this.core.dims.zMax;
     const out = this.outside[this.oi(i)];
@@ -1670,6 +1811,7 @@ export class Streamer {
   /** (round 87) Runs (window z, over the window's top) back outside column (x, y): where a piece that took them landed. */
   putAbove(x: number, y: number, ivs: Interval[]): void {
     if (!ivs.length) return;
+    this.flushFills();
     const i = y * this.W + x;
     const all = [...this.outside[this.oi(i)], ...ivs.map((iv) => ({ z0: iv.z0 + this.oz, z1: iv.z1 + this.oz, mat: iv.mat }))].sort((a, b) => a.z0 - b.z0);
     this.outside[this.oi(i)] = all;
@@ -1925,6 +2067,7 @@ export class Streamer {
     const [layersBuf, vegBuf] = await Promise.all([core.readBuffer('layers'), core.readBuffer('veg')]);
     const slots = new Uint32Array(layersBuf.buffer, layersBuf.byteOffset, layersBuf.byteLength / 4);
     const veg = new Float32Array(vegBuf.buffer, vegBuf.byteOffset, W * H);
+    this.flushFills();
     const table = core.packed.chunkTable;
     const cx = W / CHUNK;
     const K = this.K;
@@ -1948,9 +2091,10 @@ export class Streamer {
         if (fitColumn(cut.inside, this.colK)) this.stats.fitted++;
         this.outside[this.oi(i)] = cut.outside;
         slots.set(packColumn(cut.inside, K), base * SLOT_WORDS);
-        core.map.surface[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
-        this.ground[i] += d.dr + (d.dl > 0.05 ? d.dl : 0);
-        this.setRelief(i, full, core.map.surface[i], this.ground[i]);
+        const si = this.oi(i);
+        core.map.surface[si] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        this.ground[si] += d.dr + (d.dl > 0.05 ? d.dl : 0);
+        this.setRelief(si, full, core.map.surface[si], this.ground[si]);
         if (d.dl > 0.05) veg[i] *= Math.max(0, 1 - d.dl * 2);
         n++;
       }
@@ -2042,6 +2186,7 @@ export class Streamer {
     if (oz % TIER || oz < 0) throw new Error(`a warp's oz must be whole tiers of ${TIER}`);
     while (this.busy || !this.store) await new Promise((r) => setTimeout(r, 16));
     this.busy = true;
+    this.flushFills();
     const t0 = performance.now();
     const { core, W, H, R } = this;
     try {
@@ -2054,10 +2199,9 @@ export class Streamer {
       for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) spots.push([lx, ly]);
       // (round 100) what the window holds into the pool (a fresh warp makes it again: dropped)
       if (!fresh) {
-        const fe = dev.createCommandEncoder({ label: 'stream warp freeze' });
-        const fz = this.freezeInto(fe, spots);
-        dev.queue.submit([fe.finish()]);
-        this.frozeInto(fz);
+        // (round 106: planned and every region copied out at once — frozeInto — and their CPU parts read)
+        this.frozeInto(this.freezePlan(spots, 0, 0));
+        this.flushFills();
         this.stats.frozen += spots.length;
       } else {
         for (const k of [...this.frozen.keys()]) if (this.frozen.get(k)!.how === 'made') this.evict(k);
@@ -2157,6 +2301,7 @@ export class Streamer {
     const slots = new Uint32Array(layersBuf.buffer, layersBuf.byteOffset, layersBuf.byteLength / 4);
     const water = new Float32Array(waterBuf.buffer, waterBuf.byteOffset, N);
     const lava = new Float32Array(lavaBuf.buffer, lavaBuf.byteOffset, N * 4);
+    this.flushFills();
     const table = core.packed.chunkTable;
     const cx = W / CHUNK;
     const K = this.K;
@@ -2182,7 +2327,7 @@ export class Streamer {
         if (fitColumn(cut.inside, this.colK)) this.stats.fitted++;
         this.outside[this.oi(i)] = cut.outside;
         out.set(packColumn(cut.inside, K), base * SLOT_WORDS);
-        surf[i] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
+        surf[this.oi(i)] = cut.inside.length ? cut.inside[cut.inside.length - 1].z1 : 0;
         water[i] = overTop ? 0 : waterInWindow(cut, oz, zMax, level);
         if (!(wasTop && topInside(cut, oz, zMax))) {
           lava.fill(0, i * 4, i * 4 + 4);
@@ -2245,7 +2390,10 @@ export class Streamer {
     const tl = performance.now();
     // (round 105, ringwin: where the region lies on the ring)
     const [px, py] = core.ring.at(lx, ly);
-    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[core.ring.idx(lx + c, ly + r)] = f.outside[r * R + c];
+    // (round 106: what lay there before, frozen by the slide, read first)
+    const at0 = core.ring.corner(lx, ly);
+    this.fillAt(at0);
+    for (let r = 0; r < R; r++) for (let c = 0; c < R; c++) this.outside[at0 + r * W + c] = f.outside[r * R + c];
     const dev = core.host.gpu.device;
     const wg = core.world;
     const table = core.packed.chunkTable;
@@ -2327,16 +2475,18 @@ export class Streamer {
     record('write.gpu', performance.now() - tb);
     const tc = performance.now();
     const surf = core.map.surface;
-    for (let r = 0; r < R; r++) surf.set(f.surface.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
+    // (round 106: the CPU's per-column arrays on the ring — the region's rows where it lies)
+    const o = core.ring.corner(lx, ly);
+    for (let r = 0; r < R; r++) surf.set(f.surface.subarray(r * R, (r + 1) * R), o + r * W);
     // (the ground: its own if the source said, else the surface)
     const gr = f.ground ?? f.surface;
-    for (let r = 0; r < R; r++) this.ground.set(gr.subarray(r * R, (r + 1) * R), (ly + r) * W + lx);
+    for (let r = 0; r < R; r++) this.ground.set(gr.subarray(r * R, (r + 1) * R), o + r * W);
     // (hybrid) the relief of what came in (round 98: made ahead when it was ready; the ground's offset to the surface,
     // and the runs in world z, are the same whatever oz it's cut at)
     const rf = f.relief;
     if (rf)
       for (let r = 0; r < R; r++) {
-        const at = (ly + r) * W + lx;
+        const at = o + r * W;
         this.relief.set(rf.relief.subarray(r * R, (r + 1) * R), at);
         this.gapTop.set(rf.gapTop.subarray(r * R, (r + 1) * R), at);
         this.colTop.set(rf.colTop.subarray(r * R, (r + 1) * R), at);
@@ -2344,7 +2494,7 @@ export class Streamer {
     else
     for (let r = 0; r < R; r++)
       for (let c = 0; c < R; c++) {
-        const i = (ly + r) * W + lx + c;
+        const i = o + r * W + c;
         this.setRelief(i, joinColumn(this.columnOf(f.layers!, c, r), f.oz, f.outside[r * R + c]), surf[i], this.ground[i]);
       }
     record('write.cpu', performance.now() - tc);
@@ -2407,15 +2557,10 @@ export function boxOf(mask: Uint8Array, w: number, x0 = 0, y0 = 0, bw = w, bh = 
   return hx < 0 ? undefined : [lx - 2, ly - 2, hx + 3, hy + 3];
 }
 
-/** new(x, y) = old(x + dx, y + dy) on a CPU w × h array with `per` values a cell (what comes in keeps the old values) */
 /** (hybrid) the top off the ground's own by more than this (cells): something stands on it or is cut into it */
 const RELIEF_FORM = 0.75;
 /** (hybrid) a gap between runs over this (cells): open — a cave, an overhang, a bridge's underside */
 const RELIEF_GAP = 0.25;
-
-export function shiftGrid(a: { copyWithin(t: number, s: number, e: number): unknown }, w: number, h: number, per: number, dx: number, dy: number): void {
-  if (dy > 0) a.copyWithin(0, dy * w * per, h * w * per);
-  else if (dy < 0) a.copyWithin(-dy * w * per, 0, (h + dy) * w * per);
-  if (dx > 0) for (let y = 0; y < h; y++) a.copyWithin(y * w * per, (y * w + dx) * per, (y + 1) * w * per);
-  else if (dx < 0) for (let y = 0; y < h; y++) a.copyWithin((y * w - dx) * per, y * w * per, (y * w + w + dx) * per);
-}
+/** (round 106) a frozen region's CPU parts before they're read (SaveItem.fill) */
+const NO_F32 = new Float32Array(0);
+const NO_U8 = new Uint8Array(0);

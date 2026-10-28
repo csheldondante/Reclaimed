@@ -1149,8 +1149,20 @@ as one band. The layers already worked this way through their chunk table, and t
 - **The CPU** (sim/ring.ts, `core.ring` = `world.ring`): Ring.page / at / idx / idxHalf mirror the helpers;
   `pieces` cuts a window rectangle at the seam for a copy (the wind field's rects); `toRing` / `fromRing` move whole
   arrays (an upload of a map's field, a readback). WorldCore.readBuffer and readTexture return per-column data in
-  window order (COLUMN_BUFS); the mirror's queries index through the ring (api/common.ts columnAt). The streamer's
-  `outside` is on the ring; its other grids, map.surface and the level's caches are still window order (BACKLOG RW7).
+  window order (COLUMN_BUFS); the mirror's queries index through the ring (api/common.ts columnAt). (Round 106,
+  `frameprobe`: the CPU's per-column arrays are on the ring too, read a column through `Ring.i(x, y)`, nothing
+  allocated — core.map.surface (rotated once when WorldCore is made), the streamer's `outside`, ground, relief,
+  gapTop and colTop (`Streamer.colIdx`), the level's surface, veg and water caches (read back with
+  `readBuffer(name, true)`: not rotated), Integrity's projection (bodyCpu written as it is). A slide shifts none of
+  them. Still window-relative: the per-chunk grids — sleep, the hybrid's, the field mesh's records — and what has a
+  position: units, bodies, particles, the camera, events, weather (docs/FRAMECOST.md FC6, FC7).)
+- **A slide's freeze** (round 106): the chunk table rotates with the ring — a chunk coming in takes the pages of the
+  one that left from the same place — so what left lies untouched, pages, columns and CPU arrays, until the region
+  coming in is written there. The slide's frame only plans it (`Streamer.freezePlan`: the things taken, the coarse
+  world's snapshots asked — Coarse.snapshot copies a task's together — the store's stage made); each region is
+  copied out into the pool and its band cleared just before its place is written (`freezeAt`), its CPU parts read
+  then (`SaveItem.fill`, `fillAt`); whatever else writes the CPU arrays reads every pending one first (`flushFills`:
+  editLive, slideZ, a warp, takeAbove / putAbove).
 - **The test**: `?ringbias=x,y` starts the ring off zero; scripts/ringtest.mjs steps the same ticks at two offsets
   and compares every field in window order; scripts/ringunit.mjs checks the CPU's Ring and a copy of the helpers.
 
@@ -1165,7 +1177,7 @@ further out ahead of the camera so we never wait for them". Three tiers under th
   texture (rows of align256(texels × 16)). Its `sig` (R, K, the window's zMax, the kept fields and strides) names
   it. A GPU pool slot, the staging a region is read back through, and a record's body are these same bytes.
 - **GPU pool** (`scenes/region-pool.ts`; `?pool=` slots, default 32 ≈ 52 MB at the atlas's K 16): a region leaving
-  the window is copied GPU to GPU into a slot (`Streamer.freezeInto`); it comes back by copies too (`copyIn`: its
+  the window is copied GPU to GPU into a slot (`Streamer.freezeInto`; round 106: `freezePlan` / `freezeAt`, region by region as its place is written); it comes back by copies too (`copyIn`: its
   pages to layers and layersNext, its buffers a row at a time, its textures; what isn't kept from a blank buffer on
   the GPU). Land made or loaded ahead is uploaded into a slot (`prepare`, `pump`: a few ms of a frame) before the
   slide that brings it in, so a slide only copies. `Streamer.frozen` is the pool's index in LRU order; the oldest
