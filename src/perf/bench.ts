@@ -27,14 +27,19 @@ import { RegionStore } from '../world/region-store';
 import type { HitchBoot } from './start';
 import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './report-io';
 
+/** (v3) vite.config.ts `define`: the build's time */
+declare const __BENCH_BUILD__: string;
+
 export const BENCH_VERSION = 3;
 const STATE = 'reclaimed.bench.state';
+/** (v3) the build, on the start page: vite.config.ts defines it at build time */
+const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ : 'dev';
 const LAST = 'reclaimed.bench.last';
 const ROW_H = Math.sqrt(3) / 2;
 /** the riding scenario's start (scripts/hitchrun.mjs: a road in a temperate place on the default seed) */
 const RIDE_AT = '15024,14337';
 /** the URL keys the suite sets itself (the rest of the start page's URL is carried to every page) */
-const OWN = ['bench', 'benchpage', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf'];
+const OWN = ['bench', 'benchpage', 'benchsmoke', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf'];
 
 // ---------- numbers ----------
 
@@ -245,6 +250,17 @@ export function benchMode(params: URLSearchParams): 'start' | 'final' | 'level' 
   ps.tries = (ps.tries ?? 0) + 1;
   save(s);
   return ps.tries > 1 ? 'skip' : 'level';
+}
+
+/** (v3) while a level page loads (the grey screen): which page of the run this is, so it never looks finished */
+export function benchLoadingNote(ui: HTMLElement): void {
+  const s = load();
+  if (!s) return;
+  const d = document.createElement('div');
+  d.id = 'bench-loading';
+  d.style.cssText = 'position:fixed;left:8px;right:8px;top:max(8px,env(safe-area-inset-top));z-index:60;background:#000d;color:#e6f0e8;font:14px/1.4 system-ui,sans-serif;padding:10px 12px;border-radius:8px';
+  d.textContent = `Benchmark running: page ${s.step} of ${s.pages.length - 1} (${s.pages[s.step]?.name}) loading — don't close. The report comes at the end.`;
+  ui.appendChild(d);
 }
 
 /** (v3) this page didn't finish: noted, and on to the next */
@@ -535,7 +551,32 @@ async function deviceFacts(host: Host): Promise<Record<string, unknown>> {
 export async function benchStandalone(mode: 'start' | 'final', host: Host): Promise<void> {
   const panel = new Panel(host.ui);
   if (mode === 'final') return finish(host, panel);
-  panel.text('Reclaimed calibration benchmark');
+  panel.text(`Reclaimed calibration benchmark — bench v${BENCH_VERSION}, build ${BUILD}`);
+  const cut = load();
+  // (v3, the user: "because the report finished once it shows the download option mid test whenever it goes to the
+  // grey loading screen so it wasn't possible for me to tell when it was done" — a run in progress shows only that)
+  if (cut && !cut.done && cut.step > 0) {
+    const page = cut.pages[cut.step];
+    if (new URLSearchParams(location.search).get('benchpage')) {
+      // (mid-chain on the wrong page — a reload, a restored tab: back to the page the run is on)
+      panel.say(`Benchmark running: page ${cut.step} of ${cut.pages.length - 1} (${page?.name}) — don't close`);
+      setTimeout(() => goTo(cut), 1500);
+      return;
+    }
+    panel.say(`Benchmark running (or cut off): page ${cut.step} of ${cut.pages.length - 1}, ${page?.name}. Don't close it if it's still going.`);
+    panel.button('Carry on from the next page', true, () => {
+      cut.errors.push(`${page?.name}: stopped (the page was left or crashed)`);
+      go(cut);
+    });
+    panel.button('Start again', false, () => void start(host, panel));
+    const more = panel.text('');
+    const btn = panel.button('Stuck? Download what it has (incomplete)', false, () => {
+      btn.remove();
+      reportButtons(panel, partialReport(cut));
+    });
+    void more;
+    return;
+  }
   panel.text('About 12 minutes. The page reloads itself a few times — leave it in front, plugged in if you can, and don’t touch the screen till the report shows. Your own saved world isn’t touched.');
   const last = (() => {
     try {
@@ -545,26 +586,37 @@ export async function benchStandalone(mode: 'start' | 'final', host: Host): Prom
     }
   })();
   panel.button('Start benchmark', true, () => void start(host, panel));
-  const cut = load();
-  if (cut && !cut.done && cut.step > 0) {
-    panel.text(`A run stopped at page ${cut.step} of ${cut.pages.length - 1} (${cut.pages[cut.step]?.name}):`);
-    panel.button('Carry on from the next page', false, () => {
-      cut.errors.push(`${cut.pages[cut.step]?.name}: stopped (the page was left or crashed)`);
-      go(cut);
-    });
-    let partial: string;
-    try {
-      partial = JSON.stringify({ ...makeReport(cut), partial: true });
-    } catch (e) {
-      partial = JSON.stringify({ kind: 'reclaimed-bench', version: BENCH_VERSION, partial: true, reportError: String(e), ...cut.results, errors: cut.errors });
-    }
-    reportButtons(panel, partial);
-  }
   if (last) {
-    panel.text('The last result is kept:');
-    reportButtons(panel, last);
+    let label = 'previous run';
+    try {
+      const r = JSON.parse(last) as { version?: number; finishedAt?: string; startedAt?: string };
+      label = `previous run (bench v${r.version ?? '?'}, ${(r.finishedAt ?? r.startedAt ?? '').slice(0, 16).replace('T', ' ')})`;
+    } catch {
+      // (unreadable: the plain label)
+    }
+    panel.text(`The ${label} is kept:`);
+    reportButtons(panel, last, true);
   }
   panel.say('');
+}
+
+/** (v3) an unfinished run's report: marked incomplete, the pages done, the page it stopped on and why */
+function partialReport(s: BenchState): string {
+  const done = s.pages.slice(1, s.step).map((p) => p.name);
+  const at = s.pages[s.step]?.name ?? null;
+  const why = s.errors.filter((e) => at && e.startsWith(`${at}:`));
+  const head = { incomplete: true, pagesDone: done, stoppedOn: at, why };
+  try {
+    return JSON.stringify({ ...head, ...makeReport(s) });
+  } catch (e) {
+    return JSON.stringify({ ...head, kind: 'reclaimed-bench', version: BENCH_VERSION, reportError: String(e), errors: s.errors, ...s.results });
+  }
+}
+
+/** (v3) the page the run is on now (no step taken) */
+function goTo(s: BenchState): void {
+  s.step--;
+  go(s);
 }
 
 async function start(host: Host, panel: Panel): Promise<void> {
@@ -596,6 +648,8 @@ async function start(host: Host, panel: Panel): Promise<void> {
   // the other window sizes (the main page has the viewer's own: the stored range, else the tier's)
   const own = myWin ?? (host.qualityName === 'low' && host.params.get('phone') !== '0' ? 320 : 256);
   for (const w of WINDOWS) if (w !== own) s.pages.push({ name: `win${w}`, params: { ...common, at: RIDE_AT, drive: '18', win: String(w) } });
+  // (v3, ?benchsmoke=1: the start, the hero and one window page, the end — a check that the chain works, ~3 min)
+  if (host.params.get('benchsmoke') === '1') s.pages = [s.pages[0], s.pages[2], { name: 'win256', params: { ...common, at: RIDE_AT, drive: '18', win: '256' } }];
   s.pages.push({ name: 'final', params: {} });
   const t0 = performance.now();
   panel.say('device facts…');
@@ -628,7 +682,7 @@ async function clearWorlds(s: BenchState): Promise<void> {
   s.worlds = [];
 }
 
-function reportButtons(panel: Panel, body: string): void {
+function reportButtons(panel: Panel, body: string, previous = false): void {
   const status = panel.text('');
   const say = (m: string) => (status.textContent = m);
   let name = '';
@@ -642,7 +696,7 @@ function reportButtons(panel: Panel, body: string): void {
     }
     return (name = `reclaimed-bench-${stamp()}-${await deviceTag(gpu)}.json`);
   };
-  panel.button('Download report', true, () => void nameOf().then((n) => say(downloadJson(body, n))));
+  panel.button(previous ? 'Download previous run' : 'Download report', !previous, () => void nameOf().then((n) => say(downloadJson(body, n))));
   panel.button('Copy', false, () => void copyText(body).then(say, (e: Error) => say(`copy failed: ${e.message}`)));
   panel.button('Share…', false, () => void nameOf().then(async (n) => say((await shareJson(body, n, 'Reclaimed benchmark')) || 'this browser can’t share files: use Download')));
   panel.el.appendChild(status);
@@ -672,7 +726,7 @@ async function finish(host: Host, panel: Panel): Promise<void> {
   } catch {
     // (already let go)
   }
-  panel.say('Benchmark done.');
+  panel.say(`Benchmark done — this run (bench v${BENCH_VERSION}, ${s.id}).`);
   panel.text(summary(report));
   reportButtons(panel, body);
   const dev = await postDev(body, 'bench');
@@ -696,6 +750,7 @@ interface LevelCtx {
 export async function benchLevel(ctx: LevelCtx): Promise<void> {
   const s = load()!;
   const page = s.pages[s.step];
+  document.getElementById('bench-loading')?.remove();
   const panel = new Panel(ctx.host.ui);
   panel.el.style.opacity = '0.85';
   panel.el.style.right = 'auto';
@@ -707,14 +762,23 @@ export async function benchLevel(ctx: LevelCtx): Promise<void> {
   const t0 = performance.now();
   try {
     await keepAwake();
-    panel.say(`${s.step}/${s.pages.length - 1} ${page.name}: loading…`);
+    panel.say(`Benchmark running: page ${s.step} of ${s.pages.length - 1} (${page.name}), loading — don't close`);
     const R = await waitFor(() => {
       const r = (window as unknown as { reclaimed?: Record<string, unknown> }).reclaimed;
       return r?.stream && (r.stream as { store?: unknown }).store ? r : null;
     }, 240000);
     // (ms from the page's navigation to the level ready: the atlas built, the window made, the store open)
     out.readyAtMs = Math.round(performance.now());
-    const B = new Bench(ctx, R as unknown as Engine, panel, `${s.step}/${s.pages.length - 1} ${page.name}`);
+    const B = new Bench(ctx, R as unknown as Engine, panel, `Benchmark running: page ${s.step} of ${s.pages.length - 1} (${page.name}), don't close —`);
+    // (v3: what the page has so far saved at every step — a crash leaves it, marked incomplete)
+    B.checkpoint = (step) => {
+      s.results[page.name] = { ...out, incomplete: true, lastStep: step };
+      try {
+        save(s);
+      } catch {
+        // (storage full: the page's results come at its end)
+      }
+    };
     if (!s.worlds.includes(B.R.stream.save.world)) s.worlds.push(B.R.stream.save.world);
     save(s);
     if (page.name === 'main') await B.mainPage(out);
@@ -788,8 +852,11 @@ class Bench {
   }
 
   private say(s: string): void {
-    this.panel.say(`${this.tag}: ${s}`);
+    this.panel.say(`${this.tag} ${s}`);
+    this.checkpoint?.(s);
   }
+  /** (v3) called at every step: the page's results so far saved */
+  checkpoint?: (step: string) => void;
 
   private get W(): number {
     return this.R.stream.W;
@@ -1734,14 +1801,14 @@ class Bench {
 
   async winPage(out: Record<string, unknown>): Promise<void> {
     const sc = this.R.scene;
+    // (the ride's road, kept for later — the smoke run found v3 dropped it before keeping it)
+    const drive = sc.drive;
     sc.drive = null;
     sc.pan = null;
     this.say('settling…');
     out.settleMs = await this.settle(5000);
     out.window = { w: this.W, h: this.R.stream.H };
     out.view = this.view();
-    const drive = sc.drive;
-    sc.drive = null;
     this.framesHook = (f) => (this.idleFrames = f);
     out.parked = await this.capture(4);
     this.framesHook = null;
@@ -1862,7 +1929,7 @@ function makeReport(s: BenchState): Record<string, unknown> {
   const pageOf = (w: number) => (w === W ? { parked: main.idle, ride: main.ride, maxPan: main.maxPan } : res[`win${w}`]);
   for (const w of [...WINDOWS].sort((a, b) => a - b)) {
     const pg = pageOf(w);
-    if (!pg) continue;
+    if (!pg || (w === W && !main.idle)) continue;
     table[w] = pg.error ? { error: pg.error } : { parkedFps: pg.parked?.fps ?? null, rideFps: pg.ride?.fps ?? null, rideP95: pg.ride?.frames?.p95 ?? null, maxPan: pg.maxPan?.maxSustainable ?? null, stoppedBy: pg.maxPan?.stoppedBy ?? null };
   }
   derived.byWindow = { unit: 'rendered fps; maxPan cells/s', table };

@@ -35,7 +35,13 @@ try {
     console.log('pageerror', e.message);
   });
   p.on('console', (m) => m.type() === 'error' && console.log('console.error', m.text().slice(0, 300)));
-  await p.goto(`${url}/?bench=1&q=${q}${extra}`, { waitUntil: 'load' });
+  // (bench v3, --smoke: the start, the hero and one window page, the end — and no Download offered before the end)
+  await p.goto(`${url}/?bench=1&q=${q}${argv.includes('--smoke') ? '&benchsmoke=1' : ''}${extra}`, { waitUntil: 'load' });
+  if (argv.includes('--smoke')) {
+    // (a previous run stored, as on the user's phone: it must not be offered while the new one runs)
+    await p.evaluate(() => localStorage.setItem('reclaimed.bench.last', JSON.stringify({ kind: 'reclaimed-bench', version: 1, startedAt: '2026-10-28T09:00:22Z', finishedAt: '2026-10-28T09:05:00Z' })));
+    await p.reload({ waitUntil: 'load' });
+  }
   await p.waitForFunction(() => [...document.querySelectorAll('button')].some((b) => b.textContent === 'Start benchmark'), { timeout: 120000 });
   await p.evaluate(() => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Start benchmark').click());
   const t0 = Date.now();
@@ -44,7 +50,11 @@ try {
   while (Date.now() - t0 < timeout) {
     await sleep(2000);
     try {
-      const r = await p.evaluate(() => ({ done: !!window.reclaimedBench, say: document.querySelector('#bench-say')?.textContent ?? '', fatal: document.querySelector('.fatal')?.textContent ?? '' }));
+      const r = await p.evaluate(() => ({ done: !!window.reclaimedBench, say: document.querySelector('#bench-say')?.textContent ?? document.querySelector('#bench-loading')?.textContent ?? '', fatal: document.querySelector('.fatal')?.textContent ?? '', dl: [...document.querySelectorAll('button')].map((b) => b.textContent).filter((t) => /Download/.test(t)) }));
+      if (!r.done && r.dl.length) {
+        bad++;
+        console.log(`MID-RUN DOWNLOAD OFFERED: ${r.dl.join(', ')} (${r.say})`);
+      }
       if (r.fatal) throw new Error(`fatal overlay: ${r.fatal}`);
       if (r.say !== lastSay) {
         console.log(`${((Date.now() - t0) / 1000).toFixed(0)}s ${r.say}`);
@@ -60,6 +70,12 @@ try {
     }
   }
   if (!report) throw new Error('the benchmark never finished');
+  const endButtons = await p.evaluate(() => [...document.querySelectorAll('button')].map((b) => b.textContent));
+  console.log(`end screen buttons: ${endButtons.join(' | ')}`);
+  if (!endButtons.includes('Download report') || endButtons.includes('Download previous run')) {
+    bad++;
+    console.log('END SCREEN: no Download report for this run');
+  }
   report.runner = { headless: true, size: `${vw}x${vh}`, dpr, uncapped: argv.includes('--uncapped') };
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(report, null, 1));

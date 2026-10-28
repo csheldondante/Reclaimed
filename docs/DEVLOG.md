@@ -8321,3 +8321,27 @@ dropped (it showed nothing in the hybrid: BACKLOG BN10). A wider window may not 
 loads again without finishing (the tab killed) is skipped with an error, a lost device goes on to the next page, and
 the start screen offers an unfinished run's partial report (download / copy / share) or to carry on. The
 view-shaped window (`?winh=`) isn't in the sweep (BN19).
+
+**The mid-run download (v3's fix).** The user, on the phone's v2 attempt (verbatim): "No the issue is that because
+the report finished once it shows the download option mid test whenever it goes to the grey loading screen so it
+wasn't possible for me to tell when it was done". Now:
+- while a run is in progress nothing offers a download. Every level page shows "Benchmark running: page N of M
+  (name) — don't close" from the moment it starts loading (the grey screen), not only once the level is up.
+- a start page opened mid-chain on the wrong page (a reload, a restored tab) says the run is going and sends it back
+  to its page.
+- a start page opened fresh while a run is unfinished offers "Carry on", "Start again" and, behind "Stuck?", the
+  incomplete report (marked `incomplete`, with `pagesDone`, `stoppedOn`, `why`).
+- "Download report" is only on the end screen, for the run that just finished ("this run (bench v3, <id>)"). The
+  stored earlier result is offered only on the start page with no run going, as "Download previous run (bench vN,
+  date)".
+- the start page shows the bench's version and build (vite.config.ts defines `__BENCH_BUILD__`).
+- each page's results are saved at every step (`incomplete: true, lastStep`), so a crash keeps what it measured; a
+  page loaded twice is skipped and a lost device goes on to the next page, each with its reason in `errors`.
+- the user (verbatim): "I don't think we need a new baseline for v3 just the bug fix" — so no v3 desktop baseline.
+  scripts/benchrun.mjs `--smoke` runs the start, the hero page, window 256 and the end (`?benchsmoke=1`) with a
+  previous v1 result stored, and fails if a Download shows before the end or the end screen lacks this run's.
+
+The smoke run (desktop, 170 s): no Download offered before the end with a v1 result stored; the end screen's
+"Download report" for the new run; the hero walked by the stick (198 cells); window 256's fastest pan held to
+640 cells/s (rendered fps 81 → 33, low detail p90 at most 4.9%). It found the window pages dropping their ride (the
+road cleared before it was kept): fixed.
