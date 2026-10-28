@@ -2,7 +2,7 @@
 // "Start benchmark", then its pages one after another till the report; the report's JSON written to --out.
 // The desktop baseline: data/bench/desktop-igpu.json (node scripts/benchrun.mjs --out data/bench/desktop-igpu.json).
 //   node scripts/benchrun.mjs [--url http://localhost:5291] [--size 412x915] [--dpr 2.6] [--q low] [--out bench.json]
-//     [--extra "&x=1"] [--timeout 1200]
+//     [--extra "&x=1"] [--timeout 1200] [--uncapped]
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -22,7 +22,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-precise-memory-info', `--window-size=${vw},${vh}`],
+  // (bench2, --uncapped: no vsync — the GPU kept busy, frames bound by it as the phone's are, so the A/B's costs show)
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-precise-memory-info', `--window-size=${vw},${vh}`].concat(argv.includes('--uncapped') ? ['--disable-gpu-vsync', '--disable-frame-rate-limit'] : []),
   defaultViewport: { width: vw, height: vh, deviceScaleFactor: dpr, hasTouch: true, isMobile: true },
   protocolTimeout: 900000,
 });
@@ -59,6 +60,7 @@ try {
     }
   }
   if (!report) throw new Error('the benchmark never finished');
+  report.runner = { headless: true, size: `${vw}x${vh}`, dpr, uncapped: argv.includes('--uncapped') };
   fs.mkdirSync(path.dirname(path.resolve(out)), { recursive: true });
   fs.writeFileSync(out, JSON.stringify(report, null, 1));
   console.log(`wrote ${out} (${(fs.statSync(out).size / 1024).toFixed(0)} KB) in ${((Date.now() - t0) / 1000).toFixed(0)} s; errors: ${JSON.stringify(report.errors)}`);
