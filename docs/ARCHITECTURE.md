@@ -1824,3 +1824,19 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   through a column: an adit under the rock that stays over it).
 - Debug: `?towndebug=1` (src/settle/debug.ts). Tests: scripts/settletest.mjs (the planner, no browser),
   scripts/settlementtest.mjs (in play).
+
+## Instrumentation (round 100, branch `hitchrec`)
+
+- **CPU steps**: gpu/cpustat.ts `record(label, ms)` / `timed(label, f)` — the perf overlay's worst steps, and while
+  the hitch recorder runs, every step ≥ 0.5 ms into two reused arrays (`spans`). A system that wants its work
+  attributed in a hitch times it under a label; the label's family (before the first '.') is the cause.
+- **GPU passes**: gpu/profiler.ts timestamps a pass when `active`; `frameNo` and `onFrame(frame, ms, top)` give each
+  frame's GPU time to whoever listens.
+- **The hitch recorder** (`?hitch=1`, src/perf/): main.ts calls `frameStart(now)` before `scene.frame` and
+  `frameEnd(cpuMs)` after, `heldFrame()` for a rAF held for the GPU. It owns no system's state: it reads the spans,
+  the profiler's frames, PerformanceObservers, FinalizationRegistry canaries and the GPU traffic counted by
+  perf/gpumem.ts (which wraps the device's create/submit/write/map calls once, at boot, only with `?hitch=1`).
+  `window.reclaimedHitch` = { rec, mem, report() } for scripts. The report is one JSON (kind
+  'reclaimed-hitch-report'); the dev server's /__hitch (vite.config.ts) writes it to perf-reports/.
+- **The judge's inputs** (integrity.ts): edits, cuts, watches, lightning, cyclones and the first window's structures
+  seed it; land that comes in with a slide does not (round 100). A pass judges structure boxes for at most 8 ms.

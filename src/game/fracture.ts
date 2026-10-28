@@ -15,7 +15,7 @@
 // Structural = solid and weaker than bedrock (strength < 1); everything else
 // that isn't air (stone, soil, sand, trash, rubble…) is terrain and anchors.
 
-import { CHUNK as CHUNK_V, SLOT_WORDS, cellRange, columnSlots, readSlot, type PackedWorld } from '../world/layout';
+import { CHUNK as CHUNK_V, SLOT_WORDS, columnSlots, readSlot, type PackedWorld } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
 import { NDIR, cellPos, nbr } from '../world/lattice';
 
@@ -192,17 +192,26 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
   // the cells: dense (every cell of the box, all heights), or (fracture=runs) the structural ones only
   const dense = fractureOpts.runs ? null : new Uint8Array(N);
   const sparse = fractureOpts.runs ? new Map<number, number>() : null;
+  // (round 100, hitchrec: the slots read in place — columnSlots, readSlot and cellRange made an object, a view and an
+  // array a slot: ~120 MB/s riding, ~1 GB/s panning fast, every arriving region scanned. The same cells.)
+  const P = world.packed;
+  const u = world.slots;
+  const fz = new Float32Array(u.buffer, u.byteOffset, u.length);
   for (let y = y0; y < y1; y++)
     for (let x = x0; x < x1; x++) {
-      const { base, k } = columnSlots(world.packed, x, y);
+      const ci = Math.floor(y / CHUNK_V) * P.chunksX + Math.floor(x / CHUNK_V);
+      const k = P.chunkTable[ci * 2 + 1];
+      const base = P.chunkTable[ci * 2] + ((y % CHUNK_V) * CHUNK_V + (x % CHUNK_V)) * k;
       for (let s = 0; s < k; s++) {
-        const iv = readSlot(world.slots, base + s);
-        if (!iv) break;
-        if (sparse && !structural[iv.mat]) continue;
-        const [c0, c1] = cellRange(iv.z0, iv.z1);
+        const w = (base + s) * SLOT_WORDS;
+        if (u[w + 1] === 0) break;
+        const m = u[w + 2] & 0xff;
+        if (sparse && !structural[m]) continue;
+        const c0 = Math.ceil(fz[w] - 0.5);
+        const c1 = Math.ceil(fz[w + 1] - 0.5);
         for (let z = Math.max(c0, 0); z < c1 && z < H; z++) {
-          if (dense) dense[idx(x, y, z)] = iv.mat;
-          else sparse!.set(idx(x, y, z), iv.mat);
+          if (dense) dense[idx(x, y, z)] = m;
+          else sparse!.set(idx(x, y, z), m);
         }
       }
     }
@@ -323,7 +332,8 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
       cy += y + 0.5;
       const below = z > 0 ? mat.at(idx(x, y, z - 1)) : 1;
       if (z === 0 || (below && !structural[below])) foot.push([x, y]);
-      for (const [dx, dy] of NB.slice(0, 4)) {
+      for (let n = 0; n < 4; n++) {
+        const [dx, dy] = NB[n];
         const nx = x + dx;
         const ny = y + dy;
         if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1) continue;
@@ -333,6 +343,25 @@ export function analyse(world: WorldVox, x0: number, y0: number, x1: number, y1:
     }
     cx /= cells.length;
     cy /= cells.length;
+    // (round 100, hitchrec) every cell on an unbroken stack of the piece down to what holds it (a road, a wall on
+    // the ground): its centre of mass is over its footprint (no tip) and every cell an anchor (nothing to snap) —
+    // what the rest would find, without its sets and maps over the piece (a town's ways are one piece of thousands)
+    {
+      const up = new Set<number>();
+      let all = true;
+      // (index order is z-major: every cell's support below comes first)
+      for (const i of cells.slice().sort((p, q) => p - q)) {
+        const z = Math.floor(i / (W * D));
+        const below = z > 0 ? i - W * D : -1;
+        const mb = below >= 0 ? mat.at(below) : 0;
+        if (z === 0 || (mb && !structural[mb]) || up.has(below)) up.add(i);
+        else {
+          all = false;
+          break;
+        }
+      }
+      if (all) return null;
+    }
     // tipping: only pieces standing on the ground (not keyed into a wall)
     if (!sideAnchored && foot.length && !insideFootprint(foot, cx, cy)) return 'tip';
     // snapping: distance (in voxels) from the anchors along the piece. A voxel

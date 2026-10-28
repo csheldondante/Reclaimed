@@ -31,6 +31,22 @@ Ids RG.
 | RG11 | Records are 1.8 MB raw, ~145 KB compressed: the kept fields are floats (water, moisture, veg, contam…). Quantize them, or keep only what differs from the generator (RG9) | S | open |
 | RG12 | zmesh (full-height window, oz always 0): the record's `sig` carries the window's zMax and K, so a zmesh-era region and a pre-zmesh one aren't confused; the region's size grows with K — measure the pool's memory there | S | open |
 
+## Round 100 (2026-10-27, session 5, `hitchrec`) — instrumentation for the phone (DECISIONS round 100)
+
+Ids HR.
+
+| id | item | size | status |
+|---|---|---|---|
+| HR1 | The hitch recorder (`?hitch=1`, `?hitchms=20`, `?hitchgpu=0`, `?hitchhud=0`; src/perf/): every frame over the threshold logged with its cause — the CPU steps in its callback and between frames (cpustat spans), frames held for the GPU, the GPU's frame time (timestamp-query, "GPU: n/a" without), collections (FinalizationRegistry canaries, performance.memory drops), long animation frames / long tasks, the GPU's traffic and slowest readback in it; a HUD (hitches a minute, the worst ten, the session's timeline) | M | done (this commit) |
+| HR2 | The report off the phone: "send report" (the share sheet with the JSON, else a download; on the dev server a POST to /__hitch → perf-reports/), "copy" (clipboard) | S | done (this commit) |
+| HR3 | GC audit (scripts/hitchrun.mjs --heap: Chrome's sampling heap profiler, collected objects included): fracture.analyse's scan allocated an object, a view and an array a slot (~120 MB/s riding, ~960 MB/s panning at 120/s) — read in place; the profiler's BigInts and per-pass objects gone; scripts/fracturesame.mjs (old vs new analyse: identical) | S | done (this commit) |
+| HR4 | Land come in isn't judged (main's call under the user's design, DECISIONS round 100): every arriving town's box was solved, twice and over boxes doubled to 256 — a 40 s judge pass in a soak, multi-second freezes panning; a pass's structure boxes capped at 8 ms (the rest wait); a box inside one waiting isn't added (a cyclone marks one a frame) | S | done (this commit) |
+| HR5 | A light soak (scripts/soak.mjs, 10 min riding with lightning, meteors and storms): frame p50/p95 a minute, JS heap and GPU memory a minute, hitches by cause | S | done (this commit) |
+| HR6 | The world API's mirror (src/api/mirror.ts) copies and maps 34 MB every 250 ms (~136 MB/s of readback): the recorder's top long-hitch cause after HR4 ('gpu-busy', 150–280 ms, the small readbacks waiting behind it). `?mirror=near` (round 83) exists, off by default — make it the default, or read less / less often | S | open |
+| HR7 | What's left allocating (heap sampler, pan 120): the streamer's reliefOf / joinColumn / cutRegion / place (~75 MB/s, readSlot-style objects per interval), atlas landFrom (15) and stampWays (5), fieldmesh cull (3–8 MB/s a frame, riding) | S | open |
+| HR8 | fracture.ts solve() keeps Sets and Maps over a piece (a town's ways and bridges are one piece of thousands): an edit by a town solves it; typed arrays by the piece's own index | S | open |
+| HR9 | The phone's numbers: the user records a ride and a pan with `?hitch=1` and sends the report | S | asked |
+
 ## Round 98 (2026-10-27, session 5, `streamspeed`) — streaming ahead of the camera (DECISIONS round 98)
 
 Ids SS.

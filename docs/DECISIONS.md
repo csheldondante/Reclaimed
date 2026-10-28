@@ -16,6 +16,18 @@ each was implemented.
   every region frozen and the window's in turn are read back off the frame, and those changed are written whole to
   IndexedDB (compressed in a worker); the window's changed regions are restored on reload; land is asked for two
   strips ahead of the camera's motion and uploaded into the pool before the slide (BACKLOG RG1–RG10).
+## 2026-10-27 — round 100 (session 5, `hitchrec`) — instrumentation for the phone; the judge and arriving land
+
+- The user, verbatim: "I want to try to fix the performance issues"; "GC is worth looking into"; "It woudl be good to
+  check longterm performance and for leaks at some point. I don't think we are anywhere near memory limits so this
+  seems premature. Don't be dumb with it but don't spend effort when it isn't warranted."
+- → Branch `hitchrec`: the hitch recorder (`?hitch=1`) with a report the phone sends, a GC audit with the heap
+  sampler, one light soak (BACKLOG HR1–HR9).
+- **Main's call, under the user's design (not asked of the user):** land that comes in with a slide is no longer
+  judged by the integrity judge. The user's words it rests on (rounds 83 and 92): "on editing a column (anything
+  editing) I would wake it up … only needs to be done when the structure changes" and "you don't need to check all
+  of them just the ones that we woke up". Generated land (stamped towns, ways, bridges) stands by construction; edits
+  seed the judge. A judge pass caps its structure boxes at 8 ms and never blocks the main thread for seconds.
 
 ## 2026-10-27 — round 99 (session 5, `runstream`) — the world streams during a run
 
