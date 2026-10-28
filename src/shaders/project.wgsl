@@ -138,7 +138,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let xy = cellPos(p);
   nL = 0u;
-  let cpu = textureLoad(bodyCpu, p, 0);
+  let cpu = textureLoad(bodyCpu, texCol(vec2<i32>(p)), 0);
   var out = cpu;
   // (a CPU body is one stretch; its material isn't known here: stone)
   if (cpu.x >= 0.0) { addStretch(vec4<f32>(cpu.x, cpu.y, f32(MAT_STONE), 0.0)); }
@@ -193,8 +193,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     var v = vec4<f32>(0.0);
     // (bottom, top: the layers' order within an interval)
     if (k < nL) { v = vec4<f32>(L[k].y, L[k].x, L[k].z, L[k].w); }
-    textureStore(projOut, vec2<i32>(p.x * i32(PROJ_K) + i32(k), p.y), v);
+    textureStore(projOut, texColK(vec2<i32>(p.x, p.y), PROJ_K, u32(i32(k))), v);
   }
-  textureStore(bodyOut, p, out);
-  textureStore(foreignOut, p, fo);
+  textureStore(bodyOut, texCol(vec2<i32>(p)), out);
+  textureStore(foreignOut, texCol(vec2<i32>(p)), fo);
 }

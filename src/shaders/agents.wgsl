@@ -96,7 +96,8 @@ fn inScope(q: vec2<i32>) -> bool { return q.x >= i32(AB[0].x) && q.y >= i32(AB[0
 @group(0) @binding(35) var<storage, read_write> dirtyNext: array<atomic<u32>>;
 @group(0) @binding(33) var<storage, read_write> frontArgs: array<atomic<u32>, 3>;
 @group(0) @binding(36) var<storage, read_write> frontList: array<u32>;
-fn chunkOfCol(x: u32, y: u32) -> u32 { return (y / G.chunkSize) * G.chunksX + x / G.chunkSize; }
+/** (ringwin) column (x, y)'s chunk's slot in the per-chunk marks: its page (common.wgsl pageIdx) */
+fn chunkOfCol(x: u32, y: u32) -> u32 { return pageIdx(vec2<u32>(x, y) / COLS_PAGE); }
 /** (round 104) how far a surface's top may move between peels before its chunk is relaxed again (cells): 0, any
  *  move — the front keeps it local, so the fields stay exact */
 const NAV_DZ: f32 = 0.0;
@@ -335,7 +336,7 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
       let i = i32(b.x) + dx;
       let j = i32(b.y) + dy;
       if (i < i32(AB[0].x / cs) || j < i32(AB[0].y / cs) || i >= i32(AB[0].z / cs) || j >= i32(AB[0].w / cs)) { continue; }
-      if (atomicLoad(&dirtyCur[u32(j) * G.chunksX + u32(i)]) != 0u) { hit = true; }
+      if (atomicLoad(&dirtyCur[pageIdx(vec2<u32>(u32(i), u32(j)))]) != 0u) { hit = true; }
     }
   }
   if (!hit) { return; }
@@ -347,7 +348,7 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
 fn frontClear(@builtin(global_invocation_id) id: vec3<u32>) {
   let b = boxChunk(id.x);
   if (b.z == 0u) { return; }
-  atomicStore(&dirtyCur[b.y * G.chunksX + b.x], 0u);
+  atomicStore(&dirtyCur[pageIdx(b.xy)], 0u);
 }
 
 /** mark the chunks of a tile list changed (a seed placed or moved, a field cleared: agents.ts) */

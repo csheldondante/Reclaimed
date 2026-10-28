@@ -50,16 +50,17 @@ fn cornerOwner(p: vec2<i32>, j: u32) -> vec3<i32> {
 fn cornerTexel(p: vec2<i32>, j: u32) -> vec2<i32> {
   let o = cornerOwner(p, j);
   if (o.x < 0) { return vec2<i32>(-1, 0); }
-  return vec2<i32>(o.x * CT + o.z, o.y);
+  // (ringwin: the owner's column on the ring)
+  return texColK(vec2<i32>(o.x, o.y), u32(CT), u32(o.z));
 }
 
 /** A top's plane: its centre height and gradient. */
 struct Plane { c: f32, g: vec2<f32> };
 /** The plane of p's top of a kind: 0 ground (soft), 1 water, 2 drift. */
 fn planeAt(p: vec2<i32>, kind: u32) -> Plane {
-  let c = textureLoad(cornerTex, vec2<i32>(p.x * CT + 2, p.y), 0);
-  if (kind == 2u) { return Plane(c.z, textureLoad(cornerTex, vec2<i32>(p.x * CT + 4, p.y), 0).xy); }
-  let g = textureLoad(cornerTex, vec2<i32>(p.x * CT + 3, p.y), 0);
+  let c = textureLoad(cornerTex, texColK(vec2<i32>(p.x, p.y), u32(CT), u32(2)), 0);
+  if (kind == 2u) { return Plane(c.z, textureLoad(cornerTex, texColK(vec2<i32>(p.x, p.y), u32(CT), u32(4)), 0).xy); }
+  let g = textureLoad(cornerTex, texColK(vec2<i32>(p.x, p.y), u32(CT), u32(3)), 0);
   if (kind == 1u) { return Plane(c.y, g.zw); }
   return Plane(c.x, g.xy);
 }
@@ -150,7 +151,7 @@ fn computeCornerZ(p: vec2<i32>, slot: u32) -> f32 {
 /** Drawn height of q's ground with its loose layer on (0 off the map). */
 fn groundTopR(q: vec2<i32>) -> f32 {
   if (!inMap(q)) { return 0.0; }
-  return sfZ(surface[colIdxI(q)]) + textureLoad(driftTex, q, 0).x;
+  return sfZ(surface[colIdxI(q)]) + textureLoad(driftTex, texCol(vec2<i32>(q)), 0).x;
 }
 
 /**
@@ -162,7 +163,7 @@ fn sheetGap(p: vec2<i32>, j: u32, n: vec2<i32>) -> bool {
   let d = driftCornerAt(p, j);
   // (the map's edge always shows its side)
   if (d < 0.0 || !inMap(n)) { return true; }
-  if (textureLoad(driftTex, n, 0).x > 0.12) { return false; }
+  if (textureLoad(driftTex, texCol(vec2<i32>(n)), 0).x > 0.12) { return false; }
   return d > cornerOr(p, j, groundTopR(n)) + 0.02;
 }
 

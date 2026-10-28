@@ -27,6 +27,14 @@ The design doc "Reclaimed engine architecture: fixing the foundations"
    sure which to keep/discard or if we need to make a new one and design it together. I have lots of opinions and
    will probably want to help you tune it interactively (well a panel for me to tune it works and a way to quickly
    report bugs)." → BACKLOG AR4 (a solver designed with the user), AR5 (a tuning panel and a quick bug report).
+## 2026-10-28 — round 105 (session 5, `ringwin`) — fix the window's addressing, don't patch the slide
+
+- The user, verbatim, on slidehitch's round-3 plan (spread the slide's copies and CPU work over frames, skip shifting
+  the temporaries): "You should flag that sort of thing earlier next time. That should be fixed not patched around".
+- → `ringwin`: the window on a ring. Every per-column buffer and texture is addressed by the world cell's place mod
+  the window's size, so a slide moves nothing. The column helpers are page-shaped (chunk → page → offset), so sparse
+  pages later change only the table (main's direction; the architecture doc "Pages vs ring buffer",
+  https://claude.ai/artifact/81VwyNZvndJQTWmKY5uUD2). slidehitch's round 3 was dropped.
 
 ## 2026-10-28 — round 104b (session 5, `places`) — agents on paths, through buildings
 

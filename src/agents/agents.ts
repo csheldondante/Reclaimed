@@ -754,7 +754,7 @@ export class Agents implements SimSystem {
   /** A CPU copy of field `f` to sample (fieldreader.ts; refresh it every few hundred ms). */
   reader(f: number): FieldReader {
     if (f < 0 || f >= NFIELDS) throw new Error(`agents: field ${f} out of 0..${NFIELDS - 1}`);
-    return new FieldReader(this, f, this.world.w, this.world.h);
+    return new FieldReader(this, f, this.world.w, this.world.h, this.world.ring);
   }
 
   /** The surfaces and one field's distances, read back together (FieldReader). */

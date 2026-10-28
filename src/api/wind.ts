@@ -261,7 +261,8 @@ export class Wind implements SimSystem {
     const tex = this.core.world.windField;
     const tx = Math.min(tex.width - 1, Math.max(0, Math.floor(x / 2)));
     const ty = Math.min(tex.height - 1, Math.max(0, Math.floor(y / 2)));
-    const o = (ty * tex.width + tx) * 4;
+    // (ringwin: a texel a 2 x 2 columns, on the ring at half its offset)
+    const o = this.core.ring.idxHalf(tx, ty, tex.width) * 4;
     return [f[o + 2], f[o + 3]];
   }
 

@@ -198,7 +198,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   let onGround = base + vec3<f32>(r1 - 0.5, fract(r1 * 7.31) - 0.5, 0.0) * 0.9;
 
   // loose ground on the move: grains stream off where it goes
-  let fl = textureLoad(airTex, p, 0);
+  let fl = textureLoad(airTex, texCol(vec2<i32>(p)), 0);
   if (fl.y > 0.0) {
     let way = u32(fl.w) % 8u;
     let fmat = u32(fl.w) / 8u;
@@ -222,7 +222,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // the sandbox pour: grains fall while there is material that will land
   // after a full fall (what lands sooner is already in the air)
-  let ed = textureLoad(editTex, p, 0);
+  let ed = textureLoad(editTex, texCol(vec2<i32>(p)), 0);
   if (ed.z > 0.0) {
     let opm = u32(floor(ed.w / 4.0));
     let left = ed.w - f32(opm) * 4.0;
@@ -245,7 +245,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     // as dust grains that each carry a share and set it down where they land
     // (round 15: what you see blowing is what piles up again). The drift pass
     // runs every other tick, so each tick takes half of it.
-    let dtx = textureLoad(driftTex, p, 0);
+    let dtx = textureLoad(driftTex, texCol(vec2<i32>(p)), 0);
     if (dtx.w > 0.0) {
       let c = min(dtx.w * 60.0, 1.0);
       if (rare(id.x, id.y, 0xd31fu) < c) {
@@ -808,7 +808,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       let tgt = u32(P.v.w) - 1u;
       var gone = false;
       if ((G.tick + seed) % 30u == 0u) {
-        gone = crownTop(vec2<i32>(i32(tgt % G.mapW), i32(tgt / G.mapW))) < 0.0; // tree burned or died
+        gone = crownTop(vec2<i32>(colXY(tgt))) < 0.0; // tree burned or died
       }
       if (length(away) > 0.0 || gone || life < 2.0) {
         state = B_FLEE;
@@ -831,7 +831,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
         P.v.w = f32(tgt);
       }
       if (tgt > 0u) {
-        let tc = vec2<i32>(i32((tgt - 1u) % G.mapW), i32((tgt - 1u) / G.mapW));
+        let tc = vec2<i32>(colXY(tgt - 1u));
         let top = crownTop(tc);
         if (top < 0.0) {
           P.v.w = 0.0;
@@ -930,7 +930,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   if (kind == K_FIREFLY && pos.z <= ground + 0.3) { pos.z = ground + 0.3; vel.z = abs(vel.z); }
   if (kind == K_EMBER && vel.z < 0.0 && pos.z <= ground) {
     // landed: out in water, otherwise a spark on whatever is here
-    if (water[ci] < 0.02) { textureStore(sparkOut, cell, vec4<f32>(f32(G.tick + 1u), 0.0, 0.0, 0.0)); }
+    if (water[ci] < 0.02) { textureStore(sparkOut, texCol(vec2<i32>(cell)), vec4<f32>(f32(G.tick + 1u), 0.0, 0.0, 0.0)); }
     parts[id.x].p.w = 0.0;
     return;
   }

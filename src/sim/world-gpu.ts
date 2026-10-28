@@ -8,6 +8,7 @@ import { PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
+import { Ring } from './ring';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 import { MAX_PLACES } from '../world/places';
@@ -264,6 +265,11 @@ export class WorldGpu {
    * the contamination system folds it into `contam` and zeroes it.
    */
   readonly contamDelta: GPUBuffer;
+  /**
+   * (round 105, ringwin) the window on a ring (sim/ring.ts): where each window column's per-column data lies.
+   * `?ringbias=x,y` starts it off zero (cells; whole regions of 64 in a streamed world) — the identity test's.
+   */
+  readonly ring: Ring;
 
   constructor(
     private device: GPUDevice,
@@ -279,6 +285,14 @@ export class WorldGpu {
     this.zMax = zMax;
     this.maxK = packed.maxK;
     const N = this.cells;
+    this.ring = new Ring(w, h);
+    {
+      const b = (typeof location === 'undefined' ? '' : (new URLSearchParams(location.search).get('ringbias') ?? '')).split(',').map(Number);
+      if (b.length === 2 && b.every((v) => Number.isInteger(v))) {
+        this.ring.set(b[0], b[1]);
+      }
+    }
+    const r = this.ring;
 
     this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     const mats = packMaterialTable();
@@ -299,29 +313,29 @@ export class WorldGpu {
     this.flux = this.buf('flux', N * DIRS_BYTES, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
     this.waterChange = this.buf('waterChange', 2048 * 4, S);
-    device.queue.writeBuffer(this.water, 0, map.water);
-    device.queue.writeBuffer(this.waterSource, 0, map.waterSource);
+    device.queue.writeBuffer(this.water, 0, r.toRing(map.water));
+    device.queue.writeBuffer(this.waterSource, 0, r.toRing(map.waterSource));
 
     this.oil = this.buf('oil', N * 4, S);
     this.oilNext = this.buf('oilNext', N * 4, S);
     this.oilFlux = this.buf('oilFlux', N * DIRS_BYTES, S);
-    device.queue.writeBuffer(this.oil, 0, map.oil);
+    device.queue.writeBuffer(this.oil, 0, r.toRing(map.oil));
     this.oilStored = this.buf('oilStored', N * 8, S);
     this.lava = this.buf('lava', N * 16, S);
     this.lavaNext = this.buf('lavaNext', N * 16, S);
     this.lavaFlux = this.buf('lavaFlux', N * 24, S);
-    if (map.lava) device.queue.writeBuffer(this.lava, 0, map.lava);
-    device.queue.writeBuffer(this.oilStored, 0, map.oilStored);
+    if (map.lava) device.queue.writeBuffer(this.lava, 0, r.toRing(map.lava, 4));
+    device.queue.writeBuffer(this.oilStored, 0, r.toRing(map.oilStored, 2));
 
     this.contam = this.buf('contam', N * 8, S);
     this.contamNext = this.buf('contamNext', N * 8, S);
-    device.queue.writeBuffer(this.contam, 0, map.contam);
+    device.queue.writeBuffer(this.contam, 0, r.toRing(map.contam, 2));
     this.moisture = this.buf('moisture', N * 4, S);
     this.moistureNext = this.buf('moistureNext', N * 4, S);
-    device.queue.writeBuffer(this.moisture, 0, map.moisture);
+    device.queue.writeBuffer(this.moisture, 0, r.toRing(map.moisture));
     this.veg = this.buf('veg', N * 4, S);
     this.vegNext = this.buf('vegNext', N * 4, S);
-    device.queue.writeBuffer(this.veg, 0, map.vegetation);
+    device.queue.writeBuffer(this.veg, 0, r.toRing(map.vegetation));
 
     this.fire = this.buf('fire', N * 4, S);
     this.fireNext = this.buf('fireNext', N * 4, S);
@@ -389,12 +403,12 @@ export class WorldGpu {
     if (map.lavaSpring) {
       const t = new Float32Array(N * 4);
       for (let k = 0; k < N; k++) t[k * 4] = map.lavaSpring[k];
-      device.queue.writeTexture({ texture: this.lavaSpring }, t, { bytesPerRow: this.w * 16 }, dsize);
+      device.queue.writeTexture({ texture: this.lavaSpring }, r.toRing(t, 4), { bytesPerRow: this.w * 16 }, dsize);
     }
     this.riverFlow = device.createTexture({ label: 'riverFlow', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.riverFlow);
     this.riverFlowView = this.riverFlow.createView();
-    if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, map.riverFlow, { bytesPerRow: this.w * 16 }, dsize);
+    if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, r.toRing(map.riverFlow, 4), { bytesPerRow: this.w * 16 }, dsize);
     this.shakeView = this.shake.createView();
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
     this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
@@ -426,7 +440,7 @@ export class WorldGpu {
   /** Free every GPU buffer this world (and anything allocated through buf()) owns. */
   /** Upload the reach (one byte per column, 255 = inside). */
   writeReach(data: Uint8Array): void {
-    this.device.queue.writeTexture({ texture: this.reachTex }, data, { bytesPerRow: this.w }, { width: this.w, height: this.h });
+    this.device.queue.writeTexture({ texture: this.reachTex }, this.ring.toRing(data), { bytesPerRow: this.w }, { width: this.w, height: this.h });
   }
 
   destroy(): void {

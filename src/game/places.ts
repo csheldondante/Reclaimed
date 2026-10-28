@@ -42,7 +42,8 @@ export class Places {
   /** the raster and table to the GPU (after load, or a change to the regions) */
   private upload(): void {
     const m = this.map;
-    this.device.queue.writeBuffer(this.world.places, 0, m.cols);
+    // (ringwin: in the ring's order)
+    this.device.queue.writeBuffer(this.world.places, 0, this.world.ring.toRing(m.cols));
     this.device.queue.writeBuffer(this.world.placeTable, 0, m.table());
   }
 

@@ -102,7 +102,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     n = k + 1u;
   }
 
-  let st = textureLoad(editTex, p, 0);
+  let st = textureLoad(editTex, texCol(vec2<i32>(p)), 0);
   var given = st.x;
   var owed = st.y;
   var pending = st.z;
@@ -309,6 +309,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
   if (pending <= 0.0 && owed < 1.0 && op != OP_POUR && op != OP_BEDROCK) { timer = 0.0; }
-  textureStore(editOut, p, vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));
+  textureStore(editOut, texCol(vec2<i32>(p)), vec4<f32>(given, owed, pending, f32(opmat) * 4.0 + min(timer, 3.9)));
   for (var k = 0u; k < cs.y; k++) { layersOut[cs.x + k] = select(IV_NONE, arr[k], k < n); }
 }

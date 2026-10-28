@@ -52,7 +52,8 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   wp = wp + vec3<f32>((lean + flutter) * sway, 0.0);
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
-  o.info = vec4<u32>(k, part, colIdxI(cell), u32(seed * 65535.0));
+  // (ringwin: the pick's column in window order — the CPU reads it)
+  o.info = vec4<u32>(k, part, winIdx(cell), u32(seed * 65535.0));
   o.h = a.z;
   return o;
 }

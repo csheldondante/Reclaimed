@@ -10,6 +10,7 @@ import type { GlobalsState } from '../sim/globals';
 import { Simulation, TICK_DT } from '../sim/simulation';
 import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
+import { COLUMN_BUFS, Ring } from '../sim/ring';
 import { CHUNK, packColumns, type PackedWorld } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
@@ -234,8 +235,22 @@ export class WorldCore {
     this.world.destroy();
   }
 
-  /** Debug / occasional gameplay readback of a whole world buffer. */
-  async readBuffer(name: keyof WorldGpu): Promise<Float32Array> {
+  /** (round 105, ringwin) where each window column's per-column data lies (sim/ring.ts) */
+  get ring(): Ring {
+    return this.world.ring;
+  }
+
+  /**
+   * Debug / occasional gameplay readback of a whole world buffer. (Round 105, ringwin: a per-column buffer comes back
+   * in window order, `y * w + x` — `ringOrder` keeps the ring's, for a caller that indexes through core.ring.)
+   */
+  async readBuffer(name: keyof WorldGpu, ringOrder = false): Promise<Float32Array> {
+    const out = await this.readRaw(name);
+    const c = COLUMN_BUFS[name as string];
+    return c && !ringOrder ? this.world.ring.fromRing(out, c[0] / 4, c[1]) : out;
+  }
+
+  private async readRaw(name: keyof WorldGpu): Promise<Float32Array> {
     const { device } = this.host.gpu;
     const src = this.world[name] as unknown as GPUBuffer;
     const tmp = device.createBuffer({ size: src.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
@@ -257,8 +272,26 @@ export class WorldCore {
     return this.readTexture(this.world.windField);
   }
 
-  /** Read back an rgba32float texture, rows unpadded (4 floats per texel). */
+  /**
+   * Read back an rgba32float texture, rows unpadded (4 floats per texel). (Round 105, ringwin: a per-column texture —
+   * a texel a column, k a column, or one a 2 x 2 — comes back in window order.)
+   */
   async readTexture(tex: GPUTexture): Promise<{ data: Float32Array; w: number; h: number }> {
+    const t = await this.readTextureRaw(tex);
+    const { w: W, h: H } = this.dims;
+    const r = this.world.ring;
+    if (r.zero) return t;
+    if (t.h === H && t.w % W === 0) return { ...t, data: r.fromRing(t.data, (t.w / W) * 4) };
+    if (t.w === Math.ceil(W / 2) && t.h === Math.ceil(H / 2)) {
+      const half = new Ring(t.w, t.h);
+      half.x = r.x / 2;
+      half.y = r.y / 2;
+      return { ...t, data: half.fromRing(t.data, 4) };
+    }
+    return t;
+  }
+
+  private async readTextureRaw(tex: GPUTexture): Promise<{ data: Float32Array; w: number; h: number }> {
     const { device } = this.host.gpu;
     const w = tex.width;
     const h = tex.height;

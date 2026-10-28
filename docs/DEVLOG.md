@@ -8706,3 +8706,60 @@ The same outcomes: settlementtest's town 15 trips and 4 blocks (base 17 and 4 ov
 with 14 dead on both; crewtest's totals as the base's (its pit-drop check fails on both); hordetest's phases close
 in, swing, die to the blast and burn as before. With the sims (above), the GPU frame span parked at 448 went 21.5 →
 5.6 ms and at 512 34.2 → 16.9. towertest all passed, floatsweep passed, culltest as the base.
+
+## 2026-10-28 — round 105 (`ringwin`): the window on a ring
+
+The user (verbatim), on slidehitch's round-3 plan to spread a slide's copies and CPU work over frames: "You should
+flag that sort of thing earlier next time. That should be fixed not patched around". The root cause of the slide's
+GPU work was that every per-column buffer and texture held the window in window order, so moving the window moved
+all of it (round 104: ~400 MB of copies a slide at window 512 before the in-place kernel, still ~130 MB after it).
+The fix is the layers' own scheme, already a page table, applied to everything: the data stays where the world cell
+is, mod the window's size, and only the offset moves. Per main's direction and the architecture doc ("Pages vs ring
+buffer", https://claude.ai/artifact/81VwyNZvndJQTWmKY5uUD2), the helpers are page-shaped: chunk → page (the ring's
+table, computed) → offset. So a resident set of sparse pages later changes the table and the page layout, not the
+~100 call sites. The wrap is the plain-wrap body behind those signatures, with no table lookup: integer shifts and two
+selects a column.
+
+What changed (docs/ARCHITECTURE.md "The window on a ring"):
+- common.wgsl: Globals.ring (1904 → 1920 bytes); colIdx / colIdxI / colXY / texCol / texColU / texCol2 / texColK /
+  pageIdx / winIdx / winXY / pickCol. 98 texture loads and stores in 23 kernels wrapped by a script (the per-column
+  textures by name), plus by hand: terrainshape's cornerTexel, particles' tree targets (colXY), townstamp's CPU index
+  (winXY), the agents' dirty marks (pageIdx), cull.ts's inline copy kernels, the picks of render / meshdraw /
+  meshinst / rockmesh and phys's touches (winIdx / pickCol: the CPU reads them in window order).
+- sim/ring.ts (the CPU's ring), WorldGpu.ring (with `?ringbias=`), the uploads of the map's fields rotated onto it;
+  WorldCore.readBuffer / readTexture in window order; the world API's mirror queries through it; the agents'
+  FieldReader, the liquid probe, integrity's deposit and bodyCpu, the geysers' waterSource, places.
+- The streamer: a slide moves the ring (Ring.slide), freezes the leaving strip and writes the arriving one where they
+  lie, clears that band; no shift kernel, no scratch; copyOut / copyIn / writeNow at the region's place; `outside` on
+  the ring; slideZ and editLive write their whole-window arrays back onto it. The wind field's rect copy cut at the
+  seam (Ring.pieces).
+- The pan bench's per-step rows: `slideDoneMs` (each slide's submit to the queue's work done: onSubmittedWorkDone,
+  Mali's sane clock), `baseDoneP50`, `slideCpuMs`.
+
+Tests (desktop iGPU, q=low 412x915, every system on):
+- scripts/ringunit.mjs: 9.8 M checks of the CPU's Ring and a JS copy of colIdx / colXY / texCol2 / pieces against
+  the plain wrap: 0 wrong.
+- scripts/ringtest.mjs, valley, offsets 0 vs 128,64, 40 ticks: 37 of 37 fields bit-identical. With a rain storm,
+  lightning, a fire, a grow, a ripple and a dig on the seam: 35 of 37; contam and wilt differ at the same offset too
+  (0 vs 0), so it's the events' particles that aren't deterministic, not the ring. The atlas can't be A/B'd: two loads
+  at the same offset already differ at the start (BACKLOG RW5).
+- towertest: first run, concrete failed. render.wgsl's instance and liquid draws handed the pick buffer the ring's
+  index; fixed with pickCol, then all 5 passed. floatsweep all passed; worldapitest, settlementtest, hordetest and
+  herotest passed. culltest has one FAIL ("the flood raised the water", A 0), and places fails it the same way.
+  worldsavetest's one FAIL is SH11's warp-back check (places too). runtest fails from the Bellwarden fight on, as
+  places does; on ringwin one earlier walk failed in each of two runs, a different step each time (flaky walks).
+- slide probe (scripts/slideprobe.mjs, 60 cells/s, 10 s), slidehitch round 2 → ringwin:
+
+| run | slide GPU ms smoothed / max | p99 | max | > 33 ms |
+|---|---|---|---|---|
+| generated, window 256 zoom 14 | 4.8 / 5.5 → 1.3 / 3.5 | 10.6 → 8.6 | 39.5 → 49.8 | 1 → 1 |
+| generated, 256, CPU throttle 4x | 5.8 / 6.6 → 1.2 / 1.5 | 30.4 → 50.1 | 58.6 → 66.6 | 9 → 25 |
+| generated, window 512 zoom 5 | 13.4 / 19.9 → 4.1 / 5.6 | 39.1 → 59.2 | 95.5 → 127.8 | 17 → 27 |
+
+  The slide's own GPU work is a third or less of what it was. The tails are worse, but they're frames away from the
+  slides on a GPU other agents share: the throttled runs' long frames are the slide's CPU part, 41 ms at most and 18
+  on average. The freeze's CPU part is up to 18, the grids / onShift / windowMoved ~9, the level's onSlide up to 13.5
+  (BACKLOG RW6, next). With the bench's timing, a slide's submit is done in 3.6–19 ms, against a 1.6 ms usual lag.
+- `benchrun --pan --smoke` (326 s, no errors): no speed held at any zoom. Frames of 40–60 ms come even at 10 cells/s
+  at window 320, and 60–150 ms at 512: the parked frame's cost, not the slides. Main is taking places' baseline on
+  the same smoke.

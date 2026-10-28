@@ -204,7 +204,7 @@ export class Terrain {
   }
 
   private col(x: number, y: number): number {
-    return columnAt(this.core.dims.w, this.core.dims.h, x, y);
+    return columnAt(this.core.dims.w, this.core.dims.h, x, y, this.core.ring);
   }
 
   private inMap(cx: number, cy: number): boolean {

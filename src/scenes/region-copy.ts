@@ -112,29 +112,6 @@ export class RegionCopier {
     this.queued.push(r);
   }
 
-  /**
-   * A plane-wise shift within `buf` (a w × h grid of `s` words a cell, `planes` planes): new(x, y) = old(x + dx, y + dy),
-   * dx or dy a whole number of bands, the other 0. What's left in the band coming in is stale (the caller clears or
-   * writes it). Bands of |dx| columns (or |dy| rows), each a dispatch, in the order that reads a band before it's
-   * written over.
-   */
-  shift(buf: GPUBuffer, w: number, h: number, s: number, planes: number, dx: number, dy: number): void {
-    const plane = w * h * s;
-    const d = dx || dy;
-    const n = Math.abs(d);
-    const bands = (dx ? w : h) / n;
-    if (!Number.isInteger(bands)) throw new Error(`regionShift: ${dx ? w : h} isn't whole bands of ${n}`);
-    for (let k = 0; k < bands - 1; k++) {
-      // (d > 0: band k from band k + 1, first to last; d < 0: band k + 1 from band k, last to first)
-      const b = d > 0 ? k : bands - 2 - k;
-      const [to, from] = d > 0 ? [b, b + 1] : [b + 1, b];
-      const r: Rect = dx
-        ? { src: buf, dst: buf, srcOff: from * n * s, dstOff: to * n * s, srcRow: w * s, dstRow: w * s, rowWords: n * s, rows: h, planes, srcPlane: plane, dstPlane: plane }
-        : { src: buf, dst: buf, srcOff: from * n * w * s, dstOff: to * n * w * s, srcRow: w * s, dstRow: w * s, rowWords: w * s, rows: n, planes, srcPlane: plane, dstPlane: plane };
-      this.queued.push(r);
-    }
-  }
-
   /** Every rectangle queued, in one compute pass of `enc` (nothing when none); their parameters in one write. */
   encode(enc: GPUCommandEncoder): void {
     const n = this.queued.length;
