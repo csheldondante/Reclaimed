@@ -37,6 +37,7 @@ import { Streamer, shiftGrid, REGION, TIER, boxOf, type WorldSave } from './stre
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
+import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
 import { SETTLE_TOL, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
@@ -46,7 +47,7 @@ import { FLOWLAB } from '../levels/flowlab';
 import { mountRockPanel } from '../ui/rockbodypanel';
 import { RB, rockbodyFor } from '../game/rockbodies';
 import { AtlasMap } from '../api/atlas-map';
-import { warpWindow } from '../api/atlas-world';
+import { precacheWarp, warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
 import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
@@ -412,7 +413,7 @@ export class LevelScene implements Scene {
       const S = this.stream;
       const dims = this.core.dims;
       const map = new AtlasMap(
-        { atlas: a.atlas, core: this.core, stream: S, warp: (x, y) => warpWindow(a.atlas, S, dims, x, y), toWorld: (x, y) => [S.origin[0] + x, S.origin[1] + y / ROW_H] },
+        { atlas: a.atlas, core: this.core, stream: S, warp: (x, y) => warpWindow(a.atlas, S, dims, x, y), precache: (x, y) => precacheWarp(a.atlas, S, dims, x, y), toWorld: (x, y) => [S.origin[0] + x, S.origin[1] + y / ROW_H] },
         this.host.ui,
         // (round 91: the world wiki's names — the GM's, made by the same code from this atlas — on the map)
         {
@@ -787,6 +788,8 @@ export class LevelScene implements Scene {
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: Hr, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
       atlas.profiler = host.profiler;
+      // (round 102: the tile pacer's GPU budget by the timestamps, when they're read)
+      atlas.pacer.profiler = host.profiler;
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
     }
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
@@ -1264,6 +1267,8 @@ export class LevelScene implements Scene {
             {
               // (round 80: a tile of its columns a frame — streaming mustn't stall the frame)
               region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, Infinity, true),
+              // (round 102, `gpugen`: made on the GPU straight into the pool — ?gpugen=0 the CPU's way, region above)
+              regionInto: (x0, y0, w, h, t) => a.atlas.regionInto(x0, y0, w, h, t, true),
               wrap: [a.atlas.p.cols, a.atlas.p.rows],
               height: a.atlas.p.zTop,
               // (round 71: the coarse world changes while a region is away)
@@ -1271,13 +1276,19 @@ export class LevelScene implements Scene {
               changes: (s, x0, y0, w, h) => a.atlas.changes(s, x0, y0, w, h),
               // (round 100: a region from the store — the hooks (settlements' plans, a run's stage) see its land made, the
               // record's is what's written)
-              restored: async (x0, y0, w, h) => void (await a.atlas.regionLand(x0, y0, w, h, Infinity, true)),
+              // (round 102: the GPU's way — the stamps asked for, the plans made, no land made)
+              restored: async (x0, y0, w, h) => void (GPUGEN ? await a.atlas.stampsFor(x0, y0, w, h, true) : await a.atlas.regionLand(x0, y0, w, h, Infinity, true)),
             },
             a.origin,
             { oz: a.oz, outside: a.outside, ground: a.ground },
             worldSaveOf(host.params, a.atlas.p.seed),
           )
         : new Streamer(core);
+      // (round 102) the tile pacer gives more of the frame's room as the camera moves fast
+      if (a) {
+        const S = this.stream;
+        a.atlas.pacer.urgency = () => Math.hypot(S.vel[0], S.vel[1]);
+      }
       // (round 79) the atlas's columns run past the window: what's above and below it drawn too (round 100: only when
       // the window doesn't hold the world's whole height)
       if (a && a.atlas.p.zTop > dims.zMax && core.renderer.enableBand(a.atlas.p.zTop)) this.stream.refreshBand();
@@ -1475,7 +1486,7 @@ export class LevelScene implements Scene {
               if (b) integ.markBox(...b);
             }
       }
-      // (round 88) the settlements: planned and built as their land comes in (Atlas.landHooks, set before the
+      // (round 88) the settlements: planned and built as their land comes in (Atlas.stampHooks, set before the
       // first window); lived in near the camera — their people as units on the agents
       const st = a?.settlements;
       if (st) {

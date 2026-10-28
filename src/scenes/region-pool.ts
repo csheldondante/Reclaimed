@@ -49,8 +49,18 @@ export class RegionPool {
     return s;
   }
 
-  /** A slot back. (What was copied out of it before is in the queue ahead of whatever is copied in next.) */
+  /** A slot back. (What was copied out of it before is in the queue ahead of whatever is copied in next.) A slot of
+   *  its own (temp) is let go. */
   release(s: PoolSlot): void {
-    this.free.push(s);
+    if (s.id < 0) s.buf.destroy();
+    else this.free.push(s);
   }
+
+  /** (round 102) a slot outside the pool (every slot wanted: a region made on the GPU still needs one), let go by release */
+  temp(): PoolSlot {
+    this.temps++;
+    return { buf: this.make('regionTemp', this.bytes), off: 0, id: -1 };
+  }
+  /** slots made outside the pool so far */
+  temps = 0;
 }

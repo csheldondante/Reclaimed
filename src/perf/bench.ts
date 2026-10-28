@@ -16,6 +16,8 @@
 
 import { landFrom } from '../atlas/atlas';
 import { stampWays } from '../atlas/ways';
+import { GPUGEN } from '../atlas/finish';
+import { SETTLE } from '../sim/sleep';
 import { warpWindow } from '../api/atlas-world';
 import { cpuStats } from '../gpu/cpustat';
 import type { Profiler } from '../gpu/profiler';
@@ -1604,7 +1606,9 @@ class Bench {
     this.idleP50 = (out.idle as { frames?: Stat }).frames?.p50 ?? 17;
     // (v4: the A/B runs on an active scene — riding in a storm, and at a meteor's lava — not parked)
     this.say('region generation, stage by stage…');
-    out.regionStages = await this.regionStages(5);
+    // (round 102: the GPU's way when it's on — and the CPU's, to compare, in the same run)
+    out.regionStages = GPUGEN ? await this.regionStagesGpu(5) : await this.regionStages(5);
+    if (GPUGEN) out.regionStagesCpu = await this.regionStages(5);
     this.say('regions/s at 1, 2, 4, 8 tiles a frame…');
     out.tiles = await this.tileSweep();
     this.say('agents…');
@@ -1654,9 +1658,12 @@ class Bench {
       const l = Math.hypot(ux, uy) || 1;
       this.parkedCover = this.writtenShare();
       sc.pan = { speed: v, dir: [ux / l, uy / l], t: 0, turnAt: 0, turnBy: 0, turned: 0, asked: 0 };
+      const pc = this.R.atlas.pacer;
+      const pz = () => ({ how: pc.how, tileMs: +pc.tileMs.toFixed(3), gpuMs: +pc.gpuMs.toFixed(2), budgetMs: +pc.budgetMs.toFixed(2), perFrame: pc.perFrame, tiles: pc.tiles });
+      const pacerBefore = pz();
       const low: number[] = [];
       const cap = await this.capture(secs, () => low.push(this.lowDetail()));
-      out[`pan${v}`] = { ...cap, lowDetail: stat(low, 'share of the screen that is detailed parked but not now (0..1)'), view: this.view() };
+      out[`pan${v}`] = { ...cap, lowDetail: stat(low, 'share of the screen that is detailed parked but not now (0..1)'), view: this.view(), pacerBefore, pacerAfter: pz() };
       sc.pan = null;
     }
     this.say('the fastest pan it keeps up with…');
@@ -1766,6 +1773,86 @@ class Bench {
     return o;
   }
 
+  /**
+   * (round 102, `gpugen`) Region generation stage by stage the GPU's way (Atlas.regionInto, as Streamer.generateGpu does
+   * it): the columns, the ways' and the stamps' CPU part, finish.wgsl straight into a slot, the small readback of what
+   * the CPU keeps — wall, the GPU passes and the main thread's ms.
+   */
+  private async regionStagesGpu(n: number): Promise<Record<string, unknown>> {
+    const a = this.R.atlas;
+    const S = this.R.stream;
+    const R = S.R;
+    const was = a.profiler;
+    a.profiler = this.timer;
+    const t: Record<string, number[]> = { total: [], columnsCall: [], finishWall: [], readbackWait: [], encode: [], parse: [], cut: [], mainThread: [] };
+    const gpu: Record<string, number[]> = { colHeight: [], formSeed: [], colFinish: [], regionFinish: [] };
+    const slot = S.pool.temp();
+    let back = 0;
+    try {
+      for (let k = 0; k < n; k++) {
+        const [x0, y0] = this.freshAt(this.freshK++);
+        await this.dev.queue.onSubmittedWorkDone();
+        const c0 = cpuStats.get('ways')?.sum ?? 0;
+        const s0 = cpuStats.get('stamp')?.sum ?? 0;
+        const tA = performance.now();
+        const m = await a.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: S.layout, oz: S.oz, zMax: this.R.core.dims.zMax, K: S.K, colK: S.colK, settle: !SETTLE }, false);
+        const tB = performance.now();
+        // (the streamer's own CPU part: the relief bits, the structural box)
+        const t0 = performance.now();
+        const rel = new Uint8Array(R * R);
+        for (let i = 0; i < R * R; i++) rel[i] = Math.abs(m.surface[i] - m.ground[i]) > 0.75 ? 1 : 0;
+        t.cut.push(performance.now() - t0);
+        const L = a.finisher.last;
+        back = L.backBytes;
+        const g = await this.timer.read();
+        const gs = (nm: string) => (g.get(`atlas-${nm}`) ?? []).reduce((s, v) => s + v, 0);
+        for (const nm of Object.keys(gpu)) if (g.has(`atlas-${nm}`)) gpu[nm].push(gs(nm));
+        t.total.push(tB - tA);
+        t.finishWall.push(L.waitMs + L.encodeMs + L.parseMs);
+        t.readbackWait.push(L.waitMs);
+        t.encode.push(L.encodeMs);
+        t.parse.push(L.parseMs);
+        const ways = (cpuStats.get('ways')?.sum ?? 0) - c0;
+        const stamps = (cpuStats.get('stamp')?.sum ?? 0) - s0;
+        t.columnsCall.push(ways + stamps);
+        t.mainThread.push(ways + stamps + L.encodeMs + L.parseMs + t.cut[t.cut.length - 1]);
+        await frame();
+      }
+    } finally {
+      a.profiler = was;
+      S.pool.release(slot);
+    }
+    const o: Record<string, unknown> = {
+      path: 'gpu (atlas/finish.wgsl straight into a pool slot)',
+      regions: n,
+      regionCells: `${R}x${R}`,
+      gpu: this.timer.on ? Object.fromEntries(Object.entries(gpu).map(([k, v]) => [k, stat(v, 'GPU ms a region')])) : 'n/a (no timestamp-query)',
+      cpu: Object.fromEntries(Object.entries(t).map(([k, v]) => [k, stat(v, k === 'total' || k === 'finishWall' || k === 'readbackWait' ? 'ms wall a region' : 'ms main thread a region')])),
+      note: 'columnsCall: the ways\' and the stamps\' CPU part (cpustat ways + stamp); mainThread: all of the main thread\'s ms a region',
+      readbackBytes: back,
+      uploadBytes: 0,
+    };
+    const tot = stat(t.total, 'ms');
+    if (tot) o.regionsPerSecondSerial = +(1000 / tot.p50).toFixed(2);
+    return o;
+  }
+
+  /** (round 102) a region made as the streamer makes it — on the GPU into a slot (let go after), or the CPU's way */
+  private async makeRegion(x0: number, y0: number, spread: boolean): Promise<void> {
+    const a = this.R.atlas;
+    const S = this.R.stream;
+    if (!GPUGEN) {
+      await a.regionLand(x0, y0, S.R, S.R, Infinity, spread);
+      return;
+    }
+    const slot = S.pool.temp();
+    try {
+      await a.regionInto(x0, y0, S.R, S.R, { buf: slot.buf, off: slot.off, layout: S.layout, oz: S.oz, zMax: this.R.core.dims.zMax, K: S.K, colK: S.colK, settle: !SETTLE }, spread);
+    } finally {
+      S.pool.release(slot);
+    }
+  }
+
   /** Regions made as the streamer makes them (tiles over frames), the pacer held at k tiles a frame */
   private async tileSweep(): Promise<Record<string, unknown>> {
     const a = this.R.atlas;
@@ -1797,7 +1884,7 @@ class Bench {
         const fr0 = pacer.frames;
         const t0 = performance.now();
         const spots = Array.from({ length: nReg }, () => this.freshAt(this.freshK++));
-        await Promise.all(spots.map(([x0, y0]) => a.regionLand(x0, y0, R, R, Infinity, true)));
+        await Promise.all(spots.map(([x0, y0]) => this.makeRegion(x0, y0, true)));
         const ms = performance.now() - t0;
         on = false;
         await lp;
@@ -2217,7 +2304,7 @@ function makeReport(s: BenchState): Record<string, unknown> {
     abTop: derived.ab,
     abBound: main.ab?.bound ?? null,
     windowScaling: Object.fromEntries(Object.entries(scaling).map(([k, v]: [string, any]) => [k, v.costFrameMs])),
-    region: { wallMs: main.regionStages?.cpu?.total?.p50 ?? null, cutPackMs: main.regionStages?.cpu?.cutPack?.p50 ?? null, columnsWallMs: main.regionStages?.cpu?.columnsWall?.p50 ?? null },
+    region: { wallMs: main.regionStages?.cpu?.total?.p50 ?? null, cutPackMs: main.regionStages?.cpu?.cutPack?.p50 ?? null, columnsWallMs: main.regionStages?.cpu?.columnsWall?.p50 ?? null, mainThreadMs: main.regionStages?.cpu?.mainThread?.p50 ?? null, path: main.regionStages?.path ?? 'cpu', cpuPathWallMs: main.regionStagesCpu?.cpu?.total?.p50 ?? null },
     tilesRegionsPerSecond: Object.fromEntries([1, 2, 4, 8].map((k) => [k, main.tiles?.[`k${k}`]?.regionsPerSecondFromTiles ?? null])),
     warp: { landMs: main.warp?.warpMs ?? null, settledMs: main.warp?.settledMs ?? null },
     hero: { movedBy: res.hero?.walking?.movedBy ?? null, walkedCells: res.hero?.walking?.walkedCells ?? null, zoom: res.hero?.walking?.view?.zoom ?? null, footprint: res.hero?.walking?.view?.footprintCells?.w ?? null, sandboxZoom: main.ride?.view?.zoom ?? null, sandboxFootprint: main.ride?.view?.footprintCells?.w ?? null },

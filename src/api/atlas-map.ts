@@ -36,7 +36,10 @@ const LABEL_ORDER: LabelKind[] = ['metropolis', 'city', 'town', 'lake', 'region'
 const SITE_KINDS = new Set<LabelKind>(['metropolis', 'city', 'town', 'village']);
 
 /** what the map needs of an atlas world (the API's, or the atlas level's own) */
-export type MapWorld = Pick<AtlasWorld, 'atlas' | 'core' | 'stream' | 'warp' | 'toWorld'>;
+export type MapWorld = Pick<AtlasWorld, 'atlas' | 'core' | 'stream' | 'warp' | 'toWorld'> & {
+  /** (round 102) the land of a warp there asked for ahead (its window and a ring round it, into the pool) */
+  precache?: (cx: number, cy: number) => number;
+};
 
 /** (round 94) a pin on the map: a world cell, its name, its colour */
 export interface MapMark {
@@ -480,13 +483,7 @@ export class AtlasMap {
       down = null;
       if (!d || d.moved || this.busy || !this.canWarp) return;
       // a tap: warp to the world cell under it
-      const a = this.aw.atlas;
-      const n = a.p.n;
-      const r = this.canvas.getBoundingClientRect();
-      const tx = this.vx - (e.clientX - r.left - r.width / 2) * this.scale;
-      const ty = this.vy + (e.clientY - r.top - r.height / 2) * this.scale;
-      const cx = (((tx / n) % 1) + 1) % 1 * a.p.cols;
-      const cy = (((ty / n) % 1) + 1) % 1 * a.p.rows;
+      const [cx, cy] = this.cellAt(e);
       void this.warpTo(cx, cy);
     });
     c.addEventListener('wheel', (e) => {
@@ -504,6 +501,16 @@ export class AtlasMap {
       },
       { capture: true },
     );
+  }
+
+  /** the world cell under a pointer */
+  private cellAt(e: PointerEvent): [number, number] {
+    const a = this.aw.atlas;
+    const n = a.p.n;
+    const r = this.canvas.getBoundingClientRect();
+    const tx = this.vx - (e.clientX - r.left - r.width / 2) * this.scale;
+    const ty = this.vy + (e.clientY - r.top - r.height / 2) * this.scale;
+    return [(((tx / n) % 1) + 1) % 1 * a.p.cols, (((ty / n) % 1) + 1) % 1 * a.p.rows];
   }
 
   private async warpTo(cx: number, cy: number): Promise<void> {

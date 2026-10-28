@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 102 (session 5, `gpugen`) — region generation stays on the GPU, by the phone's numbers
+
+- The user (round 101–102), verbatim: "Aren't all of the methods used to generate land very GPU efficient? … I sort of
+  expected this was done GPU side". From round 101: "If we had adaptive tile generation, precached larger areas when
+  traveling via the atlas map we might be able to improve framerate in that mode rather than guessing."
+- The phone's bench (data/bench/pixel9a-2026-10-28.json) decided it: ~2 ms of GPU a region against 149 ms wall p50
+  (the readback 44, the upload 22, the CPU's cut 9.6, a settlement's plan up to 290 on the main thread).
+- → Branch `gpugen` (from places c223350): a region's columns finished on the GPU straight into a pool slot (no
+  readback of the columns, no CPU cut, no upload); settlement plans in the plan worker on the exact raw ground made on
+  the GPU; the stamps (settlements, a run's stage) as operations both paths run; the tile pacer by a GPU budget a
+  frame, more when the camera moves fast; the ring round a warp's window precached; `?gpugen=0` the CPU's path,
+  identical columns (BACKLOG GG1–GG11).
+
 ## 2026-10-28 — round 102 (session 5, `places`) — settlements as fields, grids and spans (design, for later)
 
 - The user: "I think that ids and what building goes where might make sense to do on the CPU. I'm not entirely convinced
