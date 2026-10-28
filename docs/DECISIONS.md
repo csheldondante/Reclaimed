@@ -3,6 +3,31 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 105 (session 5, `places`) — the architecture doc's decisions
+
+The design doc "Reclaimed engine architecture: fixing the foundations"
+(https://claude.ai/artifact/81VwyNZvndJQTWmKY5uUD2). The user's answers:
+
+1. Pages or ring: "Pages." → every buffer through a chunk page table; the ring is its first layout (BACKLOG AR1).
+2. Merge ringwin as an interim step: "If it doesn't create more technical debt I have no problem with that."
+3. The dense window on the phone: "I think we need to decide this based on numbers. 256 is probably fine but I
+   really want to wake up things the player is interacting with or that are useful for the game to wake up via an
+   API." → a wake API for the game (BACKLOG AR2).
+4. Pause new features during phases 1–2: "I think pausing new features makes sense."
+5. The old far-land systems: "I might keep the one that is a mesh with vertex colors only accross the map it's
+   somewhat useful for switching to the over the shoulder camera and airplane mode and we may want to improve upon
+   it later if we add different perspectives but I agree that if we can get tiles to stream in visually so that
+   there is no seam for the existing modes that is the top priority." → keep the round 73 far land (atlas/far.ts);
+   retire the rings, farbake and fardetail once the tiles stream with no seam (BACKLOG AR3).
+6. Physics: "I think the physics needs tuning and I would like to work on this in more detail at some point. Some
+   things like the wind, water and soil erosion work very well. The rigibodies are better than not having them and
+   with the mesh idea will make for cool buried rocks and statues and whatnot but they also are not perfect. I like
+   the deformable logic but want it to be done via vertex weights on a mesh so that we can use non voxel models.
+   The actual physics update and constraints are not right for the scale we have and are at times choppy so I'm not
+   sure which to keep/discard or if we need to make a new one and design it together. I have lots of opinions and
+   will probably want to help you tune it interactively (well a panel for me to tune it works and a way to quickly
+   report bugs)." → BACKLOG AR4 (a solver designed with the user), AR5 (a tuning panel and a quick bug report).
+
 ## 2026-10-28 — round 104b (session 5, `places`) — agents on paths, through buildings
 
 - The user: "Also, let's still plan to eventually add the paths for agents because I think for lots of jobs it will.look
