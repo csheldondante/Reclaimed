@@ -7,7 +7,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, ambient, puzzle, mayhem, sandbox, grids, physics, agents, perf, builder, stream, atlas, places, perfopt, ceiling, rivers, flow, dialog, hybrid, simcull, collapse, seawall, runstory, settlements, lakes, phonecam, winmem, fardetail, farbake, rockbody, heroapi, streamspeed, runstream, meshinst, regionstore, zmesh, hitchrec, bench, gpugen, cpucache, bench2]
+    branches: [main, ambient, puzzle, mayhem, sandbox, grids, physics, agents, perf, builder, stream, atlas, places, perfopt, ceiling, rivers, flow, dialog, hybrid, simcull, collapse, seawall, runstory, settlements, lakes, phonecam, winmem, fardetail, farbake, rockbody, heroapi, streamspeed, runstream, meshinst, regionstore, zmesh, hitchrec, bench, gpugen, cpucache, bench2, tilecache]
   workflow_dispatch:
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
         run: |
           set -e
           mkdir -p site
-          for b in main ambient puzzle mayhem sandbox grids physics agents perf builder stream atlas places perfopt ceiling rivers flow dialog hybrid simcull collapse seawall runstory settlements lakes phonecam winmem fardetail farbake rockbody heroapi streamspeed runstream meshinst regionstore zmesh hitchrec bench gpugen cpucache bench2; do
+          for b in main ambient puzzle mayhem sandbox grids physics agents perf builder stream atlas places perfopt ceiling rivers flow dialog hybrid simcull collapse seawall runstory settlements lakes phonecam winmem fardetail farbake rockbody heroapi streamspeed runstream meshinst regionstore zmesh hitchrec bench gpugen cpucache bench2 tilecache; do
             git rev-parse -q --verify "origin/$b" >/dev/null || continue
             git worktree add -f "../wt-$b" "origin/$b"
             (cd "../wt-$b" && npm ci && npm run build)
