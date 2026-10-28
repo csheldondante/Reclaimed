@@ -8173,3 +8173,45 @@ Downloads (`reclaimed-bench-<date>-<phone>.json`) — send it with Quick Share, 
 the whole JSON into the chat (no selecting), or **Share…** for the share sheet. The last result is kept: opening
 `?bench=1` again shows the same buttons. Your saved world isn't touched (the bench plays in worlds of its own and
 clears them).
+
+## 2026-10-28 — round 102 (`bench2`): bench v2 after the Pixel 9a's report
+
+The user's first phone run (data/bench/pixel9a-2026-10-28.json, bench v1, Arm Valhall, window 384) showed three
+things the bench got wrong or couldn't say:
+- **Mali's per-pass timestamps are no use.** Each pass read 20–100 ms (particles 22, lava 21, wilt 20.7…, each
+  0.1–1 ms from the next: cumulative or overlapping), and a frame's first-to-last span was 32 ms with frames every
+  16.7. v2 judges every capture (`timestamps.reliable`: the passes' sum over 1.5 frame intervals, or the span over
+  1.25 → false), and the GPU budget isn't taken from them then. The start page times one workload three ways —
+  a pass each in one encoder, each in its own encoder and submit, all in one pass — against the wall
+  (`timestampModes`), to see whether either way gives sane numbers on Mali. On the desktop all three agree (the six
+  passes sum to 2.7–3.1 ms; the wall 4.8–5.9).
+- **v1 counted held rAFs as frames.** main.ts holds a rAF while two frames are on the GPU; each held one is still a
+  vsync interval, so wherever the GPU was behind, fps and the frame p50 read smoother than what was rendered. The
+  phone's v1 figures, corrected by the hitch recorder's held count: window 384 parked 46.3 → ~23.5 fps rendered,
+  ride 38.9 → ~24.9, pan 120 38.6 → ~23.9, warp 39.6 → ~23.8; window 320 parked 50.6 → ~45.2; 256 56.0 → ~54.4;
+  the hero run 55.6 → ~54.1 (barely held). So the window is the lever: 384 → 320 → 256 is ~24 → 45 → 54 fps parked
+  on the phone. The atlas's hero run renders ~54 fps there, so the user's hero-run drops are most likely in the
+  GameplayGM slice — another game's page, which Reclaimed's page can't run (BACKLOG BN14). v2 counts only rendered
+  frames (the profiler's frameNo moved) and reports `heldRafs`.
+- **The hero didn't walk:** v1 compared the hero's position with itself (`position()` hands back the hero's own
+  array, moved in place), saw no walk and put the hero down ahead instead. v2 copies it; the TouchPad's scripted
+  stick walks it (`movedBy: stick`, 199 cells in 25 s).
+
+**The A/B** (works on any GPU): each system off for 2 s against the 2 s just before — a sim system's encode a no-op
+on its instance, the agents' likewise, a renderer piece through `Renderer.skip` — reading the mean interval between
+rendered frames and the median drain (a frame's submit to onSubmittedWorkDone). Only a bound frame shows a cost in
+its interval (`ab.bound`); the phone is bound, a desktop at vsync isn't, so the desktop baseline is now run uncapped
+(scripts/benchrun.mjs --uncapped). The window pages repeat the A/B of what may scale with the window
+(`derived.windowScaling`). The report opens with `summary` (2 KB: the verdict on timestamps, fps everywhere, the
+A/B's top, window scaling, region, tiles, warp, hero) so a phone paste that's cut off keeps the headline; details are
+trimmed (12 passes a capture, 15 CPU steps, 5 worst hitches as a line each): 92 KB against v1's 176 KB on the phone.
+The suite is ~8.5 min now (the A/B is ~95 s on the main page and ~45 s on each window page; the pan at 80 dropped).
+
+Desktop baseline (data/bench/desktop-igpu.json, v2, uncapped, Intel Xe-LPG, 412x915 q=low, window 320):
+- rendered fps: parked 89, ride 56, pan 120 24 (p95 169 ms), warp 88, the hero run 243 (zoom 14, 120 cells
+  across against the sandbox's 551), windows 256 / 384 parked 108 / 102.
+- the A/B, ms a frame (interval on − off / drain): every sim 0.64 / 3.7, particles drawn 0.39, shadow 0.31, water
+  0.30 / 3.0, wind 0.25, particles' update 0.20, renderprep 0.20 / 2.0; the rest within the noise (~±0.2 ms on a
+  10 ms frame). The window scaling is within the noise on this iGPU — the phone's run is the one that will say.
+- region 17.1 ms wall (columns 4.2, cut/pack 3.3); regions/s from tiles at 1/2/4/8 a frame: 34 / 60 / 98 / 123; warp
+  land written 1.1 s.

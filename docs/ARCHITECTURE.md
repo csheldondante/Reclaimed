@@ -1892,5 +1892,13 @@ clears them).
   timestamp-query's or the string `'n/a'`; wall-clock ones say so in their unit. src/perf/report-io.ts takes it
   off the phone (download, copy, share; the dev server's /__hitch?kind=bench → perf-reports/bench-*.json) — the hitch
   HUD uses the same.
+- **v2 (round 102, `bench2`):** `version: 2`. Every capture judges its timestamps (`timestamps.reliable`: the
+  passes' sum a frame over 1.5 frame intervals, or a frame's first-to-last span over 1.25 → false — the Pixel 9a's
+  Mali). The **A/B** (`main.ab`, the window pages' `ab`) turns one thing off for 2 s at a time against the 2 s before:
+  a sim system's `encode` shadowed by a no-op on the instance (deleted after: the prototype's again), the agents'
+  likewise, a renderer piece by `Renderer.skip` (the live set drawbench uses). It reads the frame interval's mean and
+  the median wall from a frame's submit to `onSubmittedWorkDone` (its own rAF callback runs after main.ts's). Only a
+  bound frame shows a cost in its interval (`ab.bound` says which). The start page times one workload three ways
+  (`timestampModes`). The report opens with `summary` (the headline numbers), then the details.
 - **Scripts:** scripts/benchrun.mjs runs it headless and writes the JSON (data/bench/desktop-igpu.json is the desktop
   baseline); scripts/benchdiff.mjs prints two reports' measures side by side with their ratio.
