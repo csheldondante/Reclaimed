@@ -8888,3 +8888,77 @@ Tests (desktop iGPU, q=low 412x915, every system on):
   (places), "asleep, nothing changes" now and then either way (veg 6). towertest with tiles on: all passed on the
   second run (the first: concrete's piece in 522 ms; off passed; again on, 74 ms) — a flake, to watch.
 
+
+## 2026-10-28 — round 106 (`frameprobe`): where a frame's time goes, and a slide's CPU (docs/FRAMECOST.md)
+
+The user (verbatim): "I thought Ringwin removed the need for the slide work so do we need to address the CPU slide
+at all? Shouldn't it be lower? It would be good to understand that long render time." Then "please fix those so I
+can test", and "Does the post slide catchup ever load cells that are no longer needed?" docs/FRAMECOST.md has the
+tables; the short of it:
+
+**The long base frames** (scripts/framecost.mjs, new; desktop iGPU with the GPU to ourselves). They are the
+frame's own GPU work at the budget:
+- The span is ~9–11 ms p50 (p95 15–22) against a ~10 ms vsync, two frames in flight, so a frame over budget comes
+  out as 20, 30 or 40 ms "gpu-held".
+- The long frames have under 2 ms of CPU. No readback stall lines up with them.
+- Inside the world pass: the far rings and far land ~4 ms (AR3's tiles remove it), the water instances ~4 at 512
+  by the sea (a prism per wet column: FC2), the other instances 0.4–0.7, the mesh 0.4–1.9.
+- Agents spike to 9–14 ms on some ticks even parked (FC4).
+- Two things inflated the earlier numbers: the GPU shared with other runs (alone, zoom 14 / window 320 smooths
+  240–480 cells/s), and the bench's disk fill ending over open sea. The iGPU's clock drifts 2x between runs, so
+  per-pass numbers are A/Bs within one page (`--skips`, each set between two baselines).
+
+**The burst after a slide (FC1).** sim/sleep.ts made every chunk drowsy for 0.25 s after any slide under
+sleepmore (a phone flag), "its derived textures moved". For ~15 ticks after every slide, structure and edit copied
+every sleeping chunk's layers through, surface and renderfields ran over the whole window, and the field mesh
+hashed every chunk in view. Since ringwin nothing moves, and the strip come in has its own drowseTick, so it's
+gone. At 512, 60 cells/s:
+- structure mean 0.89 → 0.17 ms, max 15.3 → 1.6;
+- renderfields max 5.7 → 1.5; surface max 3.6 → 0.6.
+At 256: structure 0.26 → 0.07, max 2.65 → 1.4.
+What still runs after a slide is the arriving strip's own catch-up, a region past the screen: needed within a
+second, not this frame (FC5).
+
+**A slide's sync CPU (RW6, RW7).** At 4x throttle the sync CPU was 9.8 ms mean and 17.4 max. By part:
+- saveItem 2.1 / 6.1: the leaving region's CPU parts copied; `ring.idx` per cell allocated two arrays a column.
+- copyOut + slotFor 1.0 / 1.9.
+- the coarse snapshots 0.75 / 1.1: a buffer, an encoder, a submit and a map each.
+- the CPU grids' shiftGrid 0.44 / 0.9.
+- integrity.slid 3.3 / 4.4: it re-projected an empty body list, 4 MB filled, rotated by toRing and uploaded at 512.
+- onShift 0.65 / 1.3.
+- windowMoved 0.16.
+What moved:
+- **The CPU's per-column arrays on the ring.** core.map.surface (rotated once in WorldCore), the streamer's ground,
+  relief, gapTop and colTop, the level's surface, veg and water caches (read back in the ring's order), and
+  Integrity's projection. A column is read through `Ring.i(x, y)`, nothing allocated; ringunit checks it. The
+  readers changed: the level, the hybrid (`col.colIdx`), the weather (`colIdx`), atlas-world and bodies.ts. A slide
+  shifts none of them.
+- **The freeze region by region.** The chunk table now rotates with the ring: a chunk coming in takes the pages of
+  the one that left from the same place, so a place's pages, columns and CPU arrays lie untouched until its region
+  is written. The slide's frame only plans the freeze (`freezePlan`: things taken, snapshots asked, the store's
+  stage made). Each region is copied into the pool, and its band cleared, just before the region coming in is
+  written there (`freezeAt`). Its CPU parts are read then (`SaveItem.fill` / `fillAt`). Whatever else writes the
+  CPU arrays reads every pending one first (`flushFills`: editLive, slideZ, a warp, takeAbove / putAbove), as do a
+  thaw or a store check that reaches the item first.
+- **Coarse.snapshot** batches a task's requests into one buffer, one submit and one map, flushed before any step
+  or event, so each still sees the world as it was asked.
+- **Integrity** doesn't rewrite a projection that held no body and holds none. The texture is already "none".
+- **Translator** keeps a uniform and bind group per buffer, and a task's moves go in one submit.
+
+| slide sync CPU, 60 cells/s | places 8c93cc1 | frameprobe |
+|---|---|---|
+| window 256 / zoom 14, unthrottled (mean / max) | 1.85 / 2.8 | 0.29 / 0.5 |
+| window 256 / zoom 14, CPU throttle 4x | 9.8 / 17.4 | 1.7 / 2.7 |
+| window 512 / zoom 5, unthrottled | 4.2 / 5.2 | 0.39 / 0.8 |
+| window 512 / zoom 5, 4x | — | 2.25 / 4.1 |
+
+Two things differ by design, neither on screen:
+- Until its region is written, the arriving strip (a region past the screen) shows the leaving region's non-kept
+  fields. Before, they were zeroed at the slide.
+- The pool's slots are taken in a different order.
+Left in window coordinates:
+- the per-chunk grids (sleep, the hybrid's, the field mesh's records): FC7;
+- what has a position (units, bodies, particles): FC6, structural proposals;
+- the camera, the events and the weather, by contract.
+
+Checks: scripts/ringunit.mjs 10.0 M checks, 0 wrong (Ring.i / of added); scripts/cpugridcheck.mjs (new) after a pan out and back, 12 thawed: the hybrid's per-chunk choice made again from the ring's relief matches what it holds (0 differ), the level's surface cache agrees with the GPU on every column (a column a region off: 0.01%). The browser tests (ringtest, worldsavetest with ?rsverify=1, floatsweep, towertest, settlementtest) follow in the next entry.

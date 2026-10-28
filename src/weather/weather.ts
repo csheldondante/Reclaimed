@@ -127,6 +127,8 @@ export class Weather {
     private heights: Float32Array,
     private gw: number,
     private gh: number,
+    /** (round 106, frameprobe) where column (x, y) lies in `heights` (the window's ring: sim/ring.ts) */
+    private colIdx: (x: number, y: number) => number = (x, y) => y * gw + x,
   ) {
     [this.w, this.h] = worldSize(gw, gh);
   }
@@ -310,7 +312,7 @@ export class Weather {
     const [cx, cy] = cellAt(x, y);
     const ix = Math.max(0, Math.min(this.gw - 1, cx));
     const iy = Math.max(0, Math.min(this.gh - 1, cy));
-    return this.heights[iy * this.gw + ix];
+    return this.heights[this.colIdx(ix, iy)];
   }
 
   update(dt: number): void {

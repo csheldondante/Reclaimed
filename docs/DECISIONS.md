@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 106 (session 5, `frameprobe`) — the frame's cost, a slide's CPU, the catch-up after it
+
+- The user, verbatim: "I thought Ringwin removed the need for the slide work so do we need to address the CPU slide
+  at all? Shouldn't it be lower? It would be good to understand that long render time."
+- On the slide's CPU work kept in window coordinates, verbatim: "please fix those so I can test". (Via main: move
+  what's converted on every slide to world or chunk keys or the ring; slice the freeze across frames; keep the
+  behaviour; under 2 ms of sync CPU a slide at 4x throttle.)
+- On the burst after a slide, verbatim: "Does the post slide catchup ever load cells that are no longer needed?"
+
 ## 2026-10-28 — round 106 (session 5, `places`) — the physics design's answers
 
 The user answered the questions in "Reclaimed physics: a design to discuss"

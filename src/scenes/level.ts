@@ -33,7 +33,7 @@ import type { WorldStats } from '../sim/systems';
 import { Hud } from '../ui/hud';
 import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
-import { Streamer, shiftGrid, REGION, TIER, boxOf, type WorldSave } from './streamer';
+import { Streamer, REGION, TIER, boxOf, type WorldSave } from './streamer';
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
 import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
@@ -89,6 +89,8 @@ export interface LevelOptions {
 /** sandbox: column slots per chunk, so placed models and strata have room */
 // (round 79: 16, the most a column holds — layers.wgsl MAX_K: the mesas' undercuts, lips, talus, bigger caves
 // and alcoves had 344 columns merged to fit in 12 after a tier's slide)
+/** (round 106) the four neighbours two columns off (heard: frogs by green) */
+const NEAR2: readonly [number, number][] = [[2, 0], [-2, 0], [0, 2], [0, -2]];
 const SANDBOX_K = 16;
 /** the atlas's columns: what a sandbox chunk holds less its headroom (more and the chunk would grow: a streamed world's chunks are all one K) */
 const ATLAS_COL_K = SANDBOX_K - K_HEADROOM;
@@ -313,11 +315,13 @@ export class LevelScene implements Scene {
     this.core.camera.target = [dims.w * 0.55, dims.h * ROW_H * 0.5, 14];
     if (opts.atlas) {
       // (the atlas's land stands higher: look at the ground in the middle)
-      const c = (dims.h / 2) * dims.w + dims.w / 2;
+      const c = this.core.ring.i(dims.w / 2, dims.h / 2);
       this.core.camera.target = [dims.w / 2, dims.h * ROW_H * 0.5, this.core.map.surface[c]];
       // the atlas's climate before the world settles (warmed at the default, its snow melted and froze to sheets)
       this.core.globals.climate = opts.atlas.atlas.climateAt(opts.atlas.origin[0] + dims.w / 2, opts.atlas.origin[1] + dims.h / 2, opts.atlas.oz);
     }
+    // (round 106, frameprobe: on the window's ring, as map.surface — column (x, y) at core.ring.i(x, y); a slide moves
+    // nothing. So are the veg and water caches: read back in the ring's order, not rotated)
     this.surfaceCache = new Uint32Array(dims.w * dims.h);
     for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(this.core.map.surface[i], 0);
   }
@@ -355,7 +359,7 @@ export class LevelScene implements Scene {
       if (x < 0 || y < 0 || x >= W || y >= H) return;
       const i = y * W + x;
       const [px, py] = cellPos(x, y);
-      const z = core.map.surface[i];
+      const z = core.map.surface[core.ring.i(x, y)];
       const t = (this.geyserT + g.phase) % g.period;
       const going = t < g.last;
       if (going) {
@@ -607,7 +611,7 @@ export class LevelScene implements Scene {
     const [px, py] = cellPos(cx, cy);
     // (round 86: a meteor's blast at once — the flash, the shockwave, the dust, the rim melting — not after the
     // window's columns have been read back and changed; its bowl goes in with them)
-    if (e.kind === EV.meteor && cx === Math.round(ex) && cy === Math.round(ey)) this.impactFx([px, py, this.core.map.surface[cy * W + cx]], 12);
+    if (e.kind === EV.meteor && cx === Math.round(ex) && cy === Math.round(ey)) this.impactFx([px, py, this.core.map.surface[this.core.ring.i(cx, cy)]], 12);
     const t0 = performance.now();
     // (round 88) the columns it changes: what hangs by them is judged (it lowers tops — an arm, a bridge's pier)
     const changed: number[] = [];
@@ -623,7 +627,7 @@ export class LevelScene implements Scene {
     // (round 86: every column written again — what was falling is looked at again where it stopped)
     this.integrity?.clear(true);
     if (n) this.integrity?.cutCols(changed);
-    const z = this.core.map.surface[cy * W + cx];
+    const z = this.core.map.surface[this.core.ring.i(cx, cy)];
     if (e.kind === EV.meteor && n) this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: 13 * 32 + 512, radius: 12 * 2.5, strength: z });
     if (e.kind === EV.cone && n) this.lava?.addVent(px, py, 60, 12, 3, 0);
   }
@@ -822,7 +826,7 @@ export class LevelScene implements Scene {
     const [cx, cy] = cellAt(x, y);
     const ix = Math.max(0, Math.min(w - 1, cx));
     const iy = Math.max(0, Math.min(h - 1, cy));
-    return sfZ(this.surfaceCache[iy * w + ix]);
+    return sfZ(this.surfaceCache[this.core.ring.i(ix, iy)]);
   };
 
   private attach(): void {
@@ -844,7 +848,7 @@ export class LevelScene implements Scene {
       birdsFlushed: async () => new Uint32Array((await core.readBuffer('particleCounters')).buffer)[1],
       waterAt: (x, y) => {
         const [cx, cy] = cellAt(x, y);
-        return cx < 0 || cy < 0 || cx >= dims.w || cy >= dims.h ? 0 : (this.waterCache?.[cy * dims.w + cx] ?? 0);
+        return cx < 0 || cy < 0 || cx >= dims.w || cy >= dims.h ? 0 : (this.waterCache?.[core.ring.i(cx, cy)] ?? 0);
       },
     });
     // tapped metal rings by its size: count the metal voxels connected to the
@@ -870,7 +874,7 @@ export class LevelScene implements Scene {
     };
 
     // a few animals already live in the one healthy corner when the level opens
-    const hz = map.surface[map.poi.healthy[1] * dims.w + map.poi.healthy[0]];
+    const hz = map.surface[core.ring.i(map.poi.healthy[0], map.poi.healthy[1])];
     const [hx, hy] = poiWorld(map.poi.healthy);
     sim.particles.burst({ kind: PK.Rabbit, x: hx, y: hy, z: hz + 0.3, count: 4, speed: 1, spread: 4 });
     sim.particles.burst({ kind: PK.Deer, x: hx + 2, y: hy - 2, z: hz + 0.4, count: 2, speed: 1, spread: 3 });
@@ -1369,7 +1373,7 @@ export class LevelScene implements Scene {
       }
       this.stream.onSlide.push((dx, dy, dz) => {
         // what the level keeps in window coordinates
-        shiftGrid(this.surfaceCache, dims.w, dims.h, 1, dx, dy);
+        // (round 106, frameprobe: the surface cache is on the ring — nothing to move)
         this.hoverWorld = null;
         // the climate follows the latitude (the atlas's: snow it lays is snow the sim keeps), and the window's height
         if (a) core.globals.climate = a.atlas.climateAt(this.stream!.origin[0] + dims.w / 2, this.stream!.origin[1] + dims.h / 2, this.stream!.oz);
@@ -1379,12 +1383,14 @@ export class LevelScene implements Scene {
           for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
         }
         // (round 92) what's waiting to be judged moves with the land (what was falling landed first: onBeforeSlide)
+        const ti = performance.now();
         this.integrity?.slid(dx, dy, dz);
+        record('sl.lvl.integrity', performance.now() - ti);
       });
       // (round 92) before the window's columns are frozen, read back or moved: what's falling where they're frozen or
       // cut again lands; nothing falls or is judged while they're read back and written again (a slide in z, a warp)
       const S0 = this.stream;
-      this.stream.onBeforeSlide.push((dx, dy, dz) => this.integrity?.settle(dx, dy, dz));
+      this.stream.onBeforeSlide.push((dx, dy, dz) => timed('sl.before.settle', () => this.integrity?.settle(dx, dy, dz)));
       // (round 100) what play does to the land — edits (the world API's, the editor's, agents' digs, a story's door),
       // lightning, a fire lit, a tap to grow — keeps its regions (saved), unlike the sims' own drift
       const S1 = this.stream;
@@ -1408,7 +1414,7 @@ export class LevelScene implements Scene {
         for (let i = 0; i < this.surfaceCache.length; i++) this.surfaceCache[i] = sfPack(core.map.surface[i], 0);
         this.hoverWorld = null;
         this.integrity?.clear();
-        const i = Math.floor(dims.h / 2) * dims.w + Math.floor(dims.w / 2);
+        const i = core.ring.i(Math.floor(dims.w / 2), Math.floor(dims.h / 2));
         core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
         if (core.camera.fly) this.toggleFly();
       });
@@ -1834,7 +1840,7 @@ export class LevelScene implements Scene {
     this.surfaceRefresh -= dt;
     if (this.surfaceRefresh <= 0) {
       this.surfaceRefresh = 1;
-      void core.readBuffer('surface').then((f) => (this.surfaceCache = new Uint32Array(f.buffer)));
+      void core.readBuffer('surface', true).then((f) => (this.surfaceCache = new Uint32Array(f.buffer)));
     }
 
     const stats = sim.stats.latest;
@@ -1999,8 +2005,8 @@ export class LevelScene implements Scene {
     this.audioRefresh -= dt;
     if (this.audioRefresh <= 0) {
       this.audioRefresh = 1;
-      void core.readBuffer('veg').then((f) => (this.vegCache = f));
-      void core.readBuffer('water').then((f) => (this.waterCache = f));
+      void core.readBuffer('veg', true).then((f) => (this.vegCache = f));
+      void core.readBuffer('water', true).then((f) => (this.waterCache = f));
     }
     const drag = powers.dragWind();
     audio.dragWind(drag ? Math.min(1, drag.strength / 15) : 0, drag ? camera.project(drag.x, drag.y, 0)[0] / camera.viewportW : 0.5);
@@ -2132,14 +2138,17 @@ export class LevelScene implements Scene {
         const y = Math.floor(cy + (j / 4) * R);
         if (x < 0 || y < 0 || x >= dims.w || y >= dims.h) continue;
         const fall = Math.max(0, 1 - Math.hypot(i, j) / 5.2);
-        const k = y * dims.w + x;
+        // (round 106: the caches on the ring — column (x, y) at core.ring.i; the neighbours two off, in the window)
+        const ring = this.core.ring;
+        const k = ring.i(x, y);
         if (veg) life += fall * Math.min(1, Math.max(0, (veg[k] - 1.2) / 2.3));
         if (wat) water += fall * Math.min(1, wat[k] / 0.6);
         if (wat && veg && wat[k] > 0.1) {
           let green = 0;
-          for (const o of [2, -2, 2 * dims.w, -2 * dims.w]) {
-            const q = k + o;
-            if (q >= 0 && q < veg.length && veg[q] >= 1.5) green++;
+          for (const [ox, oy] of NEAR2) {
+            const qx = x + ox;
+            const qy = y + oy;
+            if (qx >= 0 && qy >= 0 && qx < dims.w && qy < dims.h && veg[ring.i(qx, qy)] >= 1.5) green++;
           }
           frogs += fall * (green / 4);
         }
@@ -2646,7 +2655,7 @@ export class LevelScene implements Scene {
         if (d >= 1) continue;
         const hz = bowl * Math.sqrt(1 - d * d);
         const lo = Math.max(z - hz * 0.7, 2);
-        v += Math.max(0, Math.min(surf[cy * W + cx], z + hz * 1.5) - lo);
+        v += Math.max(0, Math.min(surf[this.core.ring.i(cx, cy)], z + hz * 1.5) - lo);
       }
     return v;
   }
@@ -2920,7 +2929,7 @@ export class LevelScene implements Scene {
     for (let yy = Math.floor(y - r); yy <= y + r; yy++)
       for (let xx = Math.floor(x - r); xx <= x + r; xx++) {
         if (xx < 0 || yy < 0 || xx >= dims.w || yy >= dims.h || Math.hypot(xx - x, yy - y) > r) continue;
-        if (sfMat(this.surfaceCache[yy * dims.w + xx]) === mat) n++;
+        if (sfMat(this.surfaceCache[this.core.ring.i(xx, yy)]) === mat) n++;
       }
     return n;
   }
@@ -2929,7 +2938,7 @@ export class LevelScene implements Scene {
   private hostileAt([x, y]: [number, number]): boolean {
     const { dims, map } = this.core;
     const i = Math.floor(y) * dims.w + Math.floor(x);
-    const top = sfMat(this.surfaceCache[i]);
+    const top = sfMat(this.surfaceCache[this.core.ring.i(Math.floor(x), Math.floor(y))]);
     return top === 12 || top === 18 || map.contam[i * 2] > 0.2;
   }
 

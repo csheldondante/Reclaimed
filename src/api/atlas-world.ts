@@ -136,7 +136,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   core.globals.climate = climate({ origin, oz });
   core.globals.seaZ = params.sea - oz;
   // (the camera looks at the window's middle until the game moves it)
-  core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, map.surface[(dims.h / 2) * dims.w + dims.w / 2]];
+  core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, map.surface[core.ring.i(dims.w / 2, dims.h / 2)]];
   const stream = new Streamer(
     core,
     {
@@ -195,7 +195,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
     core.globals.climate = climate(stream);
     core.globals.seaZ = params.sea - nz;
     sleep?.settleAll(Sleep.SETTLE_S + 1, performance.now() / 1000);
-    const i = Math.floor(dims.h / 2) * dims.w + Math.floor(dims.w / 2);
+    const i = core.ring.i(Math.floor(dims.w / 2), Math.floor(dims.h / 2));
     core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
   });
   let lastFrame = performance.now();

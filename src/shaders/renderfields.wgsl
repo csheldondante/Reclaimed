@@ -142,7 +142,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
   // (perfopt, ?sleepmore=1: a sleeping chunk's fields can't change — its moisture, fire, lava, water and flux
   // are frozen; with the field mesh no sun march — so it's skipped, except while drowsy: just fallen asleep,
-  // just come in, or after any slide, when the fields were moved)
+  // just come in (round 106: not after any slide — since ringwin the fields don't move))
   if (SLEEP_MORE && MR.n.w != 0u && asleep(id.xy) && !drowsy(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);

@@ -87,7 +87,8 @@ export class HybridChunks {
     /** the window's columns across and down, and the streamer's relief per column (Streamer.relief, gapTop, colTop) */
     private W: number,
     private H: number,
-    private col: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array },
+    /** (round 106, frameprobe) the streamer's per-column relief, on the ring: column (x, y) at colIdx(x, y) */
+    private col: { relief: Uint8Array; gapTop: Float32Array; colTop: Float32Array; colIdx(x: number, y: number): number },
     /** world units round the focus within which every chunk is voxels (round 100: 0, none — ?vradius=40 as before) */
     readonly radius = 0,
     /** the window's oz (world z of its floor) now, and its height */
@@ -164,7 +165,7 @@ export class HybridChunks {
       let hi = -Infinity;
       for (let y = Math.max(0, cy * this.side - 1); y <= Math.min(this.H - 1, (cy + 1) * this.side); y++)
         for (let x = Math.max(0, cx * this.side - 1); x <= Math.min(this.W - 1, (cx + 1) * this.side); x++) {
-          const t = this.col.colTop[y * this.W + x] - oz;
+          const t = this.col.colTop[this.col.colIdx(x, y)] - oz;
           lo = Math.min(lo, t);
           hi = Math.max(hi, t);
         }
@@ -184,7 +185,7 @@ export class HybridChunks {
    * where it's only steep — a neighbour's top more than STEEP cells off its own (a cliff); 0 a heightfield's.
    */
   private columnNeeds(x: number, y: number): 0 | 1 | 2 {
-    const i = y * this.W + x;
+    const i = this.col.colIdx(x, y);
     if (FORM_VOX && this.col.relief[i]) return 1;
     const g = this.col.gapTop[i];
     const t = this.col.colTop[i];
@@ -194,7 +195,7 @@ export class HybridChunks {
         const nx = x + dx;
         const ny = y + dy;
         if (!(dx || dy) || nx < 0 || ny < 0 || nx >= this.W || ny >= this.H) continue;
-        const n = this.col.colTop[ny * this.W + nx];
+        const n = this.col.colTop[this.col.colIdx(nx, ny)];
         if (g !== -Infinity && n < g - 0.25) return 1;
         if (Math.abs(n - t) > STEEP) steep = true;
       }

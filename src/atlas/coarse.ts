@@ -155,6 +155,8 @@ export class Coarse {
 
   /** n steps of the coarse world (each: what flows, then what it leaves) */
   step(n = 1): void {
+    // (round 106: the snapshots asked before this step see the world before it)
+    this.flushSnaps();
     if (!this.kFlux) return;
     const g = Math.ceil(this.cn / 8);
     for (let s = 0; s < n; s++) {
@@ -181,6 +183,7 @@ export class Coarse {
   /** an event over the grid now (and in the fine window: onEvent) */
   event(e: CoarseEvent): void {
     if (!this.kEvent) throw new Error('the coarse world is not made yet');
+    this.flushSnaps();
     this.writeUni(e);
     const enc = this.device.createCommandEncoder({ label: 'coarse event' });
     const cp = enc.beginComputePass();
@@ -216,31 +219,63 @@ export class Coarse {
     return { i0, j0, ni: i1 - i0 + 1, nj: j1 - j0 + 1 };
   }
 
-  /** The cells round a region of world cells as they are now. */
-  async snapshot(x0: number, y0: number, w: number, h: number): Promise<CoarseSnap> {
+  /**
+   * The cells round a region of world cells as they are now. (Round 106, frameprobe: the snapshots asked in one task —
+   * a slide's strip, eight at window 512 — are copied together, one staging buffer, one submit and one map, at the end
+   * of the task (a microtask), or before the next step if that comes first: what each sees is the world as it was asked.)
+   */
+  snapshot(x0: number, y0: number, w: number, h: number): Promise<CoarseSnap> {
     const sp = this.span(x0, y0, w, h);
+    return new Promise<CoarseSnap>((res, rej) => {
+      this.snapQ.push({ sp, res, rej });
+      if (this.snapQ.length === 1) queueMicrotask(() => this.flushSnaps());
+    });
+  }
+
+  private snapQ: { sp: { i0: number; j0: number; ni: number; nj: number }; res: (s: CoarseSnap) => void; rej: (e: unknown) => void }[] = [];
+
+  /** the snapshots asked so far, copied in one submit */
+  private flushSnaps(): void {
+    const q = this.snapQ;
+    if (!q.length) return;
+    this.snapQ = [];
     const { cn } = this;
     const dev = this.device;
-    const rowBytes = sp.ni * CELL_FLOATS * 4;
-    const st = dev.createBuffer({ label: 'coarse snapshot', size: rowBytes * sp.nj, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
-    const enc = dev.createCommandEncoder({ label: 'coarse snapshot' });
-    for (let j = 0; j < sp.nj; j++) {
-      const jj = (((sp.j0 + j) % cn) + cn) % cn;
-      // (a row may wrap round the torus: copy it in runs)
-      let i = 0;
-      while (i < sp.ni) {
-        const ii = (((sp.i0 + i) % cn) + cn) % cn;
-        const run = Math.min(sp.ni - i, cn - ii);
-        enc.copyBufferToBuffer(this.cells, (jj * cn + ii) * CELL_FLOATS * 4, st, j * rowBytes + i * CELL_FLOATS * 4, run * CELL_FLOATS * 4);
-        i += run;
-      }
+    const offs: number[] = [];
+    let size = 0;
+    for (const { sp } of q) {
+      offs.push(size);
+      size += sp.ni * CELL_FLOATS * 4 * sp.nj;
     }
+    const st = dev.createBuffer({ label: 'coarse snapshot', size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = dev.createCommandEncoder({ label: 'coarse snapshot' });
+    q.forEach(({ sp }, k) => {
+      const rowBytes = sp.ni * CELL_FLOATS * 4;
+      for (let j = 0; j < sp.nj; j++) {
+        const jj = (((sp.j0 + j) % cn) + cn) % cn;
+        // (a row may wrap round the torus: copy it in runs)
+        let i = 0;
+        while (i < sp.ni) {
+          const ii = (((sp.i0 + i) % cn) + cn) % cn;
+          const run = Math.min(sp.ni - i, cn - ii);
+          enc.copyBufferToBuffer(this.cells, (jj * cn + ii) * CELL_FLOATS * 4, st, offs[k] + j * rowBytes + i * CELL_FLOATS * 4, run * CELL_FLOATS * 4);
+          i += run;
+        }
+      }
+    });
     dev.queue.submit([enc.finish()]);
-    await st.mapAsync(GPUMapMode.READ);
-    const cells = new Float32Array(st.getMappedRange().slice(0));
-    st.unmap();
-    st.destroy();
-    return { ...sp, cells };
+    st.mapAsync(GPUMapMode.READ).then(
+      () => {
+        const all = st.getMappedRange();
+        q.forEach(({ sp, res }, k) => res({ ...sp, cells: new Float32Array(all.slice(offs[k], offs[k] + sp.ni * CELL_FLOATS * 4 * sp.nj)) }));
+        st.unmap();
+        st.destroy();
+      },
+      (e) => {
+        st.destroy();
+        for (const { rej } of q) rej(e);
+      },
+    );
   }
 
   /** the coarse world at world point (px, py) from a snapshot (compose.wgsl coarseAt, on the CPU) */

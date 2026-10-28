@@ -87,8 +87,10 @@ export class Bodies {
   onSleep?: (body: Body) => void;
   /** the loose ground's depth per column (drift .x; CPU read-back) */
   loose?: Float32Array;
-  /** sleeping bodies projected per column: 4 floats (top, bottom, body id, −); top < 0 = none */
+  /** sleeping bodies projected per column: 4 floats (top, bottom, body id, −); top < 0 = none — (round 106) column (x, y) at projIdx(x, y) */
   proj?: Float32Array;
+  /** (round 106, frameprobe) where column (x, y) lies in `proj` (the window's ring: Integrity keeps it there) */
+  projIdx: (x: number, y: number) => number = (x, y) => y * this.world.w + x;
   /** called when a sleeping body wakes (it leaves the projection) */
   onWake?: (body: Body) => void;
   private clock = 0;
@@ -289,7 +291,8 @@ export class Bodies {
       const i = y * W + x;
       // a sleeping body here: out over its top
       const pr = this.proj;
-      if (pr && pr[i * 4] >= 0 && pr[i * 4 + 2] !== ignore && p[2] < pr[i * 4] && p[2] >= pr[i * 4 + 1]) return { n: [0, 0, 1], depth: pr[i * 4] - p[2], body: pr[i * 4 + 2] };
+      const j = pr ? this.projIdx(x, y) * 4 : 0;
+      if (pr && pr[j] >= 0 && pr[j + 2] !== ignore && p[2] < pr[j] && p[2] >= pr[j + 1]) return { n: [0, 0, 1], depth: pr[j] - p[2], body: pr[j + 2] };
       // loose ground over the column's solid top
       const l = this.loose?.[i] ?? 0;
       if (l > 0.05) {

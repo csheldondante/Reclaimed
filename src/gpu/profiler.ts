@@ -35,6 +35,13 @@ export class Profiler {
   memory = new Map<string, number>();
   /** (round 100, hitchrec) frames begun, and who hears each frame's GPU time once it's read back (src/perf/hitch.ts) */
   frameNo = 0;
+  /** (round 106, frameprobe) the last frame read back: its first pass's start and its last pass's end (GPU ns, as
+   * numbers), and its passes' ms by name (valid during onFrame) — for gaps between frames and per-frame breakdowns */
+  lastStartNs = 0;
+  lastEndNs = 0;
+  get lastPasses(): ReadonlyMap<string, number> {
+    return this.perName;
+  }
   onFrame?: (frame: number, ms: number, top: string) => void;
 
   constructor(device: GPUDevice, hasTimestamps: boolean) {
@@ -109,6 +116,8 @@ export class Profiler {
           const prev = this.passMs.get(n);
           this.passMs.set(n, prev === undefined ? ms : prev * 0.9 + ms * 0.1);
         }
+        this.lastStartNs = first;
+        this.lastEndNs = last;
         const frame = (last - first) / 1e6;
         if (frame > 25) {
           const top = [...perName].sort((x, y) => y[1] - x[1]).slice(0, 3).map(([n, ms]) => `${n} ${ms.toFixed(1)}`);

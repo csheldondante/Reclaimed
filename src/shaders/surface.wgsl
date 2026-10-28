@@ -29,8 +29,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // terrain queries too, must see them after a slide; the hoverbike session: "levels stay 0 for columns in
   // sleeping chunks")
   if (id.x >= G.mapW || id.y >= G.mapH) { return; }
-  // (perfopt, ?sleepmore=1: skipped asleep after all, but drowsy — just fallen asleep, just come in, and every
-  // chunk for a moment after any slide (sim/sleep.ts), which is what round 80's "levels stay 0" was)
+  // (perfopt, ?sleepmore=1: skipped asleep after all, but drowsy — just fallen asleep, just come in (sim/sleep.ts;
+  // round 106: no longer every chunk after any slide — since ringwin a slide moves nothing))
   if (SLEEP_MORE && asleep(id.xy) && !drowsy(id.xy)) { return; }
   let p = vec2<i32>(id.xy);
   let cs = colSlots(id.x, id.y);

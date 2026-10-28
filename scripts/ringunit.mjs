@@ -69,6 +69,8 @@ for (const [W, H] of [
         const i = r.idx(x, y);
         checks++;
         if (i !== want) fail(`idx ${W}x${H} ring ${rx},${ry} (${x},${y}): ${i} not ${want}`);
+        // (round 106, frameprobe: Ring.i / of, the CPU arrays' index, nothing allocated)
+        if (r.i(x, y) !== want || r.of(y * W + x) !== want) fail(`i/of ${W}x${H} ring ${rx},${ry} (${x},${y})`);
         if (g.colIdx(x, y) !== want) fail(`colIdx ${W}x${H} ring ${rx},${ry} (${x},${y}): ${g.colIdx(x, y)} not ${want}`);
         const [bx, by] = g.colXY(want);
         if (bx !== x || by !== y) fail(`colXY ${W}x${H} ring ${rx},${ry} ${want}: (${bx},${by}) not (${x},${y})`);

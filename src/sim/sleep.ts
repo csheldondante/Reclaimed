@@ -33,7 +33,8 @@ const SETTLE_TICKS = 64;
  *  map cell we stream") land come in — a slide's new chunks, the window cut again in z, a warp, the first window —
  *  doesn't wake to settle: it falls asleep at once (drowsy for a moment: its layers carried through) */
 /** (perfopt, ?sleepmore=1) the surface and render-field passes skip sleeping chunks too (but drowsy ones): every
- *  chunk is drowsy for DROWSE_S after any slide, its derived textures moved */
+ *  chunk was drowsy for DROWSE_S after any slide, its derived textures moved — (round 106, frameprobe) not since
+ *  ringwin: nothing moves on a slide, only the strip come in is drowsy (its drowseTick, shift) */
 export const SLEEP_MORE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('sleepmore') === '1';
 // (round 84: with ?rivers=table, off unless asked for — the atlas's land comes in at its steady state)
 export const SETTLE = (() => {
@@ -170,8 +171,6 @@ export class Sleep {
   }
 
   /** the window slid (dx, dy columns, whole chunks): the chunks go with the land, the new ones wake to settle */
-  /** (sleepmore) when the window last slid: every chunk drowsy for DROWSE_S after */
-  private slidAt = -1e9;
 
   /**
    * (perfopt) Land come in and still settling its water: rects of columns (x, y, w, h) and the tick they're done at
@@ -180,7 +179,6 @@ export class Sleep {
   settling: { rect: [number, number, number, number]; until: number }[] = [];
 
   shift(dx: number, dy: number, now: number): void {
-    this.slidAt = now;
     // (what was settling moves with the land; the strip come in settles from the next update)
     const W = this.cx * CHUNK;
     const H = this.cy * CHUNK;
@@ -231,7 +229,7 @@ export class Sleep {
       if (this.until[k] > now) awake++;
       else {
         this.mask[k >> 5] |= 1 << (k & 31);
-        if (now - this.until[k] < DROWSE_S || tick < this.drowseTick[k] || (SLEEP_MORE && now - this.slidAt < DROWSE_S)) this.drowse[k >> 5] |= 1 << (k & 31);
+        if (now - this.until[k] < DROWSE_S || tick < this.drowseTick[k]) this.drowse[k >> 5] |= 1 << (k & 31);
       }
     }
     this.awake = awake;
