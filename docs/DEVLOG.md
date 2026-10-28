@@ -8510,3 +8510,23 @@ run):
   fill wrote 342 and 244 regions in 19 and 23 s.
 - the pool ramp drew no region from the pool. It made 10 (the prefetch two strips ahead counts as made) and loaded 4
   from disk: the ping-pong over three regions didn't bring a frozen region back in 1.5 s steps (BN28).
+
+**The pan benchmark refined (round 104, after the Pixel 9a's first pan run).** On the phone every source failed at
+the first step (30 cells/s), so the table read "none" everywhere. At zoom 14 / window 256 that was a single 33–50 ms
+frame in 1.5 s (59.9 fps); at the wider windows it was the window's own base cost, not the pan. pan768 never finished
+loading (155 s). The result now separates those:
+- each zoom's parked baseline first (rendered fps, p50, p99, max);
+- per step: the slides, the frames over 20 ms per slide, the worst frame;
+- the ramp starts at 10 cells/s: 10, 20, 40, 80, 120, 160, 240, 320, 480, 640, 3 s a step so a step spans several
+  slides;
+- it goes on past frame failures to the first pop-in, so `maxNoPopIn` (the screen kept in detail, frames as they come)
+  is reported apart from the strict `maxSmooth`. It stops when fps falls under a quarter of parked;
+- pages are capped at window 640 (slidehitch's estimate: 768 is ~650 MB of GPU memory before the pool and the meshes,
+  past what Chrome gives a Pixel 9a's GPU process);
+- a load that stalls, errors or runs out of GPU memory records its stage, the JS heap and the GPU buffers alive.
+  level.ts sets the stage: building the atlas, making the first window, making the level. A GPU error, device loss or
+  startup failure on a level page is that page's error, and the chain goes on.
+
+Desktop smoke (zooms 14 and 5; the iGPU shared with other runs meanwhile, parked only 69 / 54 fps): strict smooth
+"none" from 10 cells/s (one 40–150 ms frame a step). No pop-in up to 480–640 cells/s at zoom 14 / window 320, and up
+to 80–120 at zoom 5 / window 512, pop-in from 120–160. Frames over budget per slide: 3–12 at zoom 14, 5–46 at zoom 5.
