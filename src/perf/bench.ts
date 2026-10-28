@@ -2473,6 +2473,11 @@ class Bench {
         this.say(`zoom ${zoom}, ${src}: ${v} cells/s…`);
         sc.pan.speed = v;
         this.ctx.hitch?.rec?.reset();
+        // (round 104) each slide's GPU time by onSubmittedWorkDone (Mali's sane clock), the queue's usual lag, the slide's CPU
+        const S = this.R.stream;
+        const sd0 = S.slideDone?.length ?? 0;
+        const bd0 = S.baseDone?.length ?? 0;
+        const tr0 = S.trace.length;
         const frames: number[] = [];
         let low = 0;
         const fno0 = this.prof.frameNo;
@@ -2507,7 +2512,11 @@ class Bench {
         if (popIn) fails.push(`pop-in ${(low * 100).toFixed(0)}% of the screen`);
         const slides = this.R.stream.stats.slides - sl0;
         const over = frames.filter((f) => f > PAN_BUDGET).length;
-        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, ok: !fails.length });
+        // (the arrays keep their last 64 / 200: what came in during the step)
+        const slideDone = S.slideDone ? S.slideDone.slice(Math.min(sd0, S.slideDone.length)) : null;
+        const bd = S.baseDone ? [...S.baseDone.slice(Math.min(bd0, S.baseDone.length))].sort((x: number, y: number) => x - y) : [];
+        const slideCpu = S.trace.slice(Math.min(tr0, S.trace.length)).map((t: { t0: number; sync: number }) => r3(t.sync - t.t0));
+        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, ok: !fails.length });
         if (fails.length && strict) {
           strict = false;
           failedFirst = fails.join(', ');

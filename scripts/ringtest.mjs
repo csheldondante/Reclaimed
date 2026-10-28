@@ -60,11 +60,24 @@ async function run(b) {
         const dev = core.host.gpu.device;
         await dev.queue.onSubmittedWorkDone();
         const g0 = JSON.parse(JSON.stringify(core.globals));
+        // (at the ring's seam at offset 128,64 — window column W - 128, row H - 64 — a rain storm over it, and events
+        // on it at tick 3: lightning, a fire set, a tap to grow, a dig, a ripple; the same at both offsets)
+        const sx = core.dims.w - 128;
+        const sy = (core.dims.h - 64) * (Math.sqrt(3) / 2);
         const step = (n, t0) => {
           for (let i = 0; i < n; i++) {
             const g = JSON.parse(JSON.stringify(g0));
             g.time = 100 + (t0 + i) * 0.05;
             g.events = [];
+            g.storms = [{ x: sx, y: sy, radius: 40, intensity: 1, vx: 0, vy: 0, downpour: 2, flash: 0, shape: [0, 0, 0, 1] }];
+            if (t0 + i === 3)
+              g.events = [
+                { kind: 1, x: sx - 3, y: sy + 2, radius: 5, strength: 20 },
+                { kind: 7, x: sx + 6, y: sy - 4, radius: 6, strength: 1 },
+                { kind: 4, x: sx - 8, y: sy - 6, radius: 6, strength: 1 },
+                { kind: 6, x: sx, y: sy, radius: 12, strength: 4 },
+              ];
+            if (t0 + i === 8) g.events = [{ kind: 5, x: sx + 1, y: sy + 1, radius: 4, strength: 2, z: 0 }];
             core.sim.step(g);
           }
         };
@@ -96,6 +109,7 @@ async function run(b) {
           return out;
         };
         const res = [];
+        res.push({ at: 'at the start (no tick)', ring: [core.ring.x, core.ring.y], h: await readAll() });
         step(ticks, 0);
         await dev.queue.onSubmittedWorkDone();
         res.push({ at: `after ${ticks} ticks`, ring: [core.ring.x, core.ring.y], h: await readAll() });

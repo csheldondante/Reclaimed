@@ -3,6 +3,15 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 105 (session 5, `ringwin`) — fix the window's addressing, don't patch the slide
+
+- The user, verbatim, on slidehitch's round-3 plan (spread the slide's copies and CPU work over frames, skip shifting
+  the temporaries): "You should flag that sort of thing earlier next time. That should be fixed not patched around".
+- → `ringwin`: the window on a ring. Every per-column buffer and texture is addressed by the world cell's place mod
+  the window's size, so a slide moves nothing. The column helpers are page-shaped (chunk → page → offset), so sparse
+  pages later change only the table (main's direction; the architecture doc "Pages vs ring buffer",
+  https://claude.ai/artifact/81VwyNZvndJQTWmKY5uUD2). slidehitch's round 3 was dropped.
+
 ## 2026-10-28 — round 104b (session 5, `places`) — agents on paths, through buildings
 
 - The user: "Also, let's still plan to eventually add the paths for agents because I think for lots of jobs it will.look

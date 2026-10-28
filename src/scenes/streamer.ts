@@ -1108,6 +1108,22 @@ export class Streamer {
   readonly trace: SlideTrace[] = [];
   readonly gens: GenTrace[] = [];
 
+  /**
+   * (round 104, the pan bench's per-slide rows) ms from a submit to the queue's work done (onSubmittedWorkDone: the
+   * one GPU time Mali reports sanely across passes) — after each slide's submit, and every half second without a
+   * slide (the queue's usual lag, to compare). Each holds its last 64.
+   */
+  readonly slideDone: number[] = [];
+  readonly baseDone: number[] = [];
+  private baseAt = 0;
+  private doneAfter(into: number[]): void {
+    const t0 = performance.now();
+    void this.core.host.gpu.device.queue.onSubmittedWorkDone().then(() => {
+      into.push(+(performance.now() - t0).toFixed(1));
+      if (into.length > 64) into.shift();
+    });
+  }
+
   /** (round 91) the camera's velocity (cells a second, world x and rows), smoothed; where it was, and when */
   readonly vel: [number, number] = [0, 0];
   private last: [number, number, number] | null = null;
@@ -1144,6 +1160,10 @@ export class Streamer {
     if (!this.store) return null;
     this.pump();
     this.drainLater();
+    if (!this.busy && performance.now() - this.baseAt > 500) {
+      this.baseAt = performance.now();
+      this.doneAfter(this.baseDone);
+    }
     if (this.busy || !this.auto) return null;
     this.sweep();
     const [x, yw] = this.core.camera.target;
@@ -1504,6 +1524,7 @@ export class Streamer {
     }
     if (ts) enc.beginComputePass({ label: 'slide t1', timestampWrites: { querySet: ts.querySet, endOfPassWriteIndex: ts.endOfPassWriteIndex } }).end();
     dev.queue.submit([enc.finish()]);
+    this.doneAfter(this.slideDone);
     if (fz) this.frozeInto(fz);
     this.times.freeze.push(performance.now() - tf);
     record('rs.freeze', performance.now() - tf);

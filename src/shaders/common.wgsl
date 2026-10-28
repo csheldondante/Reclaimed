@@ -328,6 +328,8 @@ fn colIdx(x: u32, y: u32) -> u32 { return pageBase(colPage(vec2<u32>(x, y) / COL
 fn colIdxI(p: vec2<i32>) -> u32 { return colIdx(u32(p.x), u32(p.y)); }
 /** window column p's index in window order (y * W + x): what's handed to the CPU (a readback's column) — never a buffer's index */
 fn winIdx(p: vec2<i32>) -> u32 { return u32(p.y) * G.mapW + u32(p.x); }
+/** a pick's column word (x + 1 of the pick: renderer.ts) from a per-column buffer's index: window order, + 1 */
+fn pickCol(i: u32) -> u32 { return winIdx(vec2<i32>(colXY(i))) + 1u; }
 /** a window-order index (winIdx's, or the CPU's y * W + x) back to its window column */
 fn winXY(i: u32) -> vec2<u32> { return vec2<u32>(i % G.mapW, i / G.mapW); }
 /** a per-column buffer's index back to its window column (colIdx's inverse) */

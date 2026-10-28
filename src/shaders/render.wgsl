@@ -1375,7 +1375,7 @@ fn fsBox(in: VOut) -> FOut {
 
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), 1.0);
-  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
+  o.pick = vec2<u32>(pickCol(ci), pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1571,7 +1571,7 @@ fn fsWater(in: VOut) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
+  o.pick = vec2<u32>(pickCol(ci), pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1642,7 +1642,7 @@ fn shadeStream(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
+  o.pick = vec2<u32>(pickCol(ci), pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1662,7 +1662,7 @@ fn shadeRun(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
+  o.pick = vec2<u32>(pickCol(ci), pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1713,7 +1713,7 @@ fn shadeGlass(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
-  o.pick = vec2<u32>(ci + 1u, pickInfo(m, in.wpos.z, in.info.y));
+  o.pick = vec2<u32>(pickCol(ci), pickInfo(m, in.wpos.z, in.info.y));
   return o;
 }
 
@@ -1734,7 +1734,7 @@ fn shadeOil(in: VOut, ci: u32) -> FOut {
   col = haze(col, in.wpos);
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), clamp(0.55 + d * 3.0, 0.55, 0.96));
-  o.pick = vec2<u32>(ci + 1u, pickInfo(in.info.x, in.wpos.z, in.info.y));
+  o.pick = vec2<u32>(pickCol(ci), pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
 
