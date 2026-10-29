@@ -43,6 +43,9 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
   const device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
 
   device.lost.then((info) => {
+    // ('destroyed' is only ever our own device.destroy(): the benchmark lets its device go before the next page —
+    // bench v4 — and the fatal overlay showed "device lost" while the phone navigated)
+    if (info.reason === 'destroyed') return;
     showFatal(`GPU device lost (${info.reason}): ${info.message}`);
   });
   device.addEventListener('uncapturederror', (ev) => {

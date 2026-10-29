@@ -11673,3 +11673,8 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   page is visible, and again on becoming visible. Every loss is logged per page (`wakeLog`), and the pan summary
   names the pages whose lock was lost or whose tab was hidden. BENCH_VERSION 5.
 - Smoke: the start page and a pan level page load headless (?bench=pan&benchsmoke=1); typecheck clean.
+- Then the user: "I get an error that reclaimed can't run here device lost". Bench v4 destroys each page's device
+  before going to the next (so its memory is free for the next page); device.ts showed every device loss as fatal,
+  that one too ("GPU device lost (destroyed)"), while the phone navigated. 'destroyed' is only ever our own
+  destroy(), so it no longer shows the overlay; a real loss (reason 'unknown') still does, and the bench still
+  skips to the next page on one.
