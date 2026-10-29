@@ -47,7 +47,7 @@ The user (round 104): "steady 60fps on the phone with no hiccups and no pop in".
 
 | id | item | size | status |
 |---|---|---|---|
-| TF1 | A tile's land was 8 pacer turns, a frame each (~130 ms on the phone): the tiles' lane in the asker's order (the first asked finishes first) and a frame's unused turns as credit for a region's next tile asked in that frame's task (TilePacer.next(true, order); `?tilechain=0`) | M | done (`tilefast`): land 2-3 frames at zoom 5 on the phone proxy (162 -> 23-60 ms p50) |
+| TF8 | (was tilefast's TF1; TF1 is round 106's test fixes) A tile's land was 8 pacer turns, a frame each (~130 ms on the phone): the tiles' lane in the asker's order (the first asked finishes first) and a frame's unused turns as credit for a region's next tile asked in that frame's task (TilePacer.next(true, order); `?tilechain=0`) | M | done (`tilefast`): land 2-3 frames at zoom 5 on the phone proxy (162 -> 23-60 ms p50) |
 | TF2 | A window region's tile was the first evicted (the window draws its land, so it was never marked used): kept while its region is in the window | S | done (`tilefast`) |
 | TF3 | The pan bench: why a point isn't in detail (`missWhy`: tile left out — eye, off, far —, turn, making, made, queued, none), the atlas's slots, the pacer's turns, `landFrames`; `?benchzooms=`; scripts/tilefast.mjs (the same, short, headless) | S | done (`tilefast`) |
 | TF4 | The disk hitch: the pool's uploads split across frames, 0.5 MB a frame on a phone (a region's record is 1.7 MB: 4 frames); the desktop can't show Mali's writeBuffer stall | S | done (`tilefast`), **the phone to confirm** (disk vs generated rows) |
