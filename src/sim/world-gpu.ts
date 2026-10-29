@@ -4,7 +4,7 @@
 // change what another system sees.
 
 import type { Profiler } from '../gpu/profiler';
-import { PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
+import { CHUNK, PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { globalsBytes } from './globals';
@@ -245,6 +245,10 @@ export class WorldGpu {
   /** r8unorm per column: how far inside the player's reach (game/reach.ts; 1 everywhere outside story levels) — the draw fogs the rest */
   readonly reachTex: GPUTexture;
   readonly reachView: GPUTextureView;
+  /** (round 108, simtiers: sim/tiers.ts writes it, tiers.wgsl reads it) the slow processes' rates, a texel a window
+   *  chunk: x rain erosion, y wind erosion, z vegetation — 0 baked, 1 live, more a bake's gain */
+  readonly tierTex: GPUTexture;
+  readonly tierView: GPUTextureView;
   /** f32 per column: 1 = flowers in bloom, < 1 = shed by the wind and regrowing (particles.wgsl petalEmit) */
   readonly petals: GPUBuffer;
   /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
@@ -381,6 +385,9 @@ export class WorldGpu {
     this.reachTex = device.createTexture({ label: 'reach', size: { width: this.w, height: this.h }, format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     this.textures.push(this.reachTex);
     this.reachView = this.reachTex.createView();
+    this.tierTex = device.createTexture({ label: 'tiers', size: { width: Math.ceil(this.w / CHUNK), height: Math.ceil(this.h / CHUNK) }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.textures.push(this.tierTex);
+    this.tierView = this.tierTex.createView();
     this.writeReach(new Uint8Array(this.w * this.h).fill(255));
     this.windFieldNextView = this.windFieldNext.createView();
     const dsize = { width: this.w, height: this.h };

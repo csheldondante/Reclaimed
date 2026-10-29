@@ -5,7 +5,10 @@
 // change the map at all; it's run between runs, or on a story event, by an explicit `bake`). What the player is
 // there to see react stays live always and isn't on this list: breakage, collapse, fracture, slumps and falls of
 // loose ground, dust and debris particles, falling and flowing water, fire, snow and ice, the agents' work, the
-// player's own powers (a grow tap, an edit, a pour).
+// player's own powers (a grow tap, an edit, a pour), contamination washed by rain and seeds cleaning poison (the
+// game's core mechanic, SM3). And round the player's interactions (a power, an edit, a stroke of wind) rain and wind
+// erosion run live until the area settles (SM2, round 78's "unfreeze for player interactions"); the game needn't
+// ask for that.
 //
 // Baked never means still: the visuals of a baked process keep running. Rain falls and the water flows; the wind
 // lifts dust off loose ground and blows it along as particles; trees still shed seeds and leaves into the breeze —
@@ -72,7 +75,7 @@ export interface SimTiers {
   tier(p: TieredProcess): Tier;
   /** set it everywhere (the default in play: all baked) */
   setTier(p: TieredProcess, t: Tier): void;
-  /** these processes live in this region until released (at most MAX_TIER_REGIONS regions with bakes) */
+  /** these processes live in this region until released (any number; a chunk is the grain — 16 columns) */
   live(ps: readonly TieredProcess[], region: TierRect): LiveHandle;
   /**
    * Run baked processes for `seconds` of simulated time over a region of the window (or all of it): what

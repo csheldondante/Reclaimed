@@ -84,11 +84,44 @@ try {
       const ds = calm ? null : R.weather.placeDust(t[0] + 10, t[1]);
       const T = R.core.tiers;
       return { at: t.map((v) => v | 0), storm: !!st, dust: !!ds, riverWet: R.globals.riverWet, tiers: ['rainErosion', 'windErosion', 'vegetation'].map((k) => `${k}:${T.tier(k)}`).join(' ') };
-    }, mode === 'calm');
+    }, ['calm', 'interact', 'fatal'].includes(mode));
     console.log(mode, JSON.stringify(info));
     // (the storm grows in for a few seconds first)
     await sleep(4000);
     await p.evaluate(`(async () => { window.__a = await ${SNAP}; return 0; })()`);
+    if (mode === 'interact') {
+      // (SM2) a player's power wakes erosion round it, and it goes back to baked once the area settles
+      const rate = () => p.evaluate(() => { const R = window.reclaimed; const t = R.camera.target; return R.core.tiers.rateAt(t[0], t[1]).join(','); });
+      const before = await rate();
+      await p.evaluate(() => { const R = window.reclaimed; const t = R.camera.target; R.globals.events.push({ kind: 6, x: t[0], y: t[1], radius: 6, strength: 5 }); });
+      await sleep(1000);
+      const during = await rate();
+      await sleep(Number(opt('settle', 30000)));
+      const after = await rate();
+      results.interact = { before, during, after };
+      console.log('interact', JSON.stringify(results.interact));
+      if (!(before === '0,0,0' && during === '1,1,0' && after === '0,0,0')) bad = true;
+      await p.close();
+      continue;
+    }
+    if (mode === 'fatal') {
+      // (the contract: a GPU validation error shows the fatal overlay) a broken shader module on purpose
+      const wasBad = bad;
+      await p.evaluate(() => window.reclaimed.core.host.gpu.device.createShaderModule({ label: 'simtiers-fatal-probe', code: 'fn broken( {' }));
+      await sleep(1500);
+      const shown = await p.evaluate(() => {
+        const el = document.querySelector('.fatal');
+        if (!el) return 'no overlay';
+        const top = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+        return el.contains(top) ? 'shown on top' : `under ${top?.tagName}#${top?.id}.${top?.className}`;
+      });
+      await p.screenshot({ path: `${out}/fatal_probe.png` });
+      results.fatal = shown;
+      console.log('fatal probe:', shown);
+      bad = wasBad || shown !== 'shown on top';
+      await p.close();
+      continue;
+    }
     if (mode === 'river') {
       const at = () => p.evaluate(`(async () => { const R = window.reclaimed; const w = await R.readBuffer('water'); let s = 0; for (const v of w) s += v; return { riverWet: +R.globals.riverWet.toFixed(3), water: +s.toFixed(0), storms: R.weather.storms.map((x) => +x.intensity.toFixed(2)) }; })()`);
       await p.screenshot({ path: `${out}/river_t0.png` });

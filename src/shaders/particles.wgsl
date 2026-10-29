@@ -985,9 +985,10 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
       // will wither) and its roots work the soil a little: a pinch of poison
       // around it is broken down (round 10: seeds that clean, so wind over
       // trees and flowers, and birds, matter)
-      // (round 108, simtiers: baked vegetation — the seed lands and is gone, nothing sprouts or is cleaned)
-      if (water[ci] < 0.05 && moisture[ci] > 0.05 && tierRate(TIER_VEG, cell) > 0.0) {
-        veg[ci] = max(veg[ci], select(veg[ci] + 0.15, 0.5, veg[ci] == 0.0));
+      if (water[ci] < 0.05 && moisture[ci] > 0.05) {
+        // (round 108, simtiers: baked vegetation — it doesn't sprout; its cleaning stays live, the game's core
+        // mechanic, SM3)
+        if (tierRate(TIER_VEG, cell) > 0.0) { veg[ci] = max(veg[ci], select(veg[ci] + 0.15, 0.5, veg[ci] == 0.0)); }
         for (var k = 0u; k <= NDIR; k++) {
           let q = select(nbr(cell, min(k, NDIR - 1u)), cell, k == NDIR);
           if (!inMap(q)) { continue; }

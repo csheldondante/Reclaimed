@@ -1623,37 +1623,48 @@ The params uniform (binding 10) carries counts, 32 seeds, each group's field
 and colour, each field's place, 8 kinds, 32 hits, 8 targets, 8 holds, 32
 launches.
 
-## The sims' tiers (round 108, branch `simtiers`; BACKLOG SM1)
+## The sims' tiers (round 108, branch `simtiers`; BACKLOG SM1-SM4)
 
 The contract: `src/api/contracts/simtiers.ts` `SimTiers` (`tier`, `setTier`, `live(processes, rect) → handle`,
 `bake(rect | 'all', processes, seconds, {gain, ticksPerFrame})`), implemented by `src/sim/tiers.ts` `Tiers`
 (`core.tiers`). Three processes have a tier, `rainErosion`, `windErosion` and `vegetation`. Live, a process changes
 the map in play. Baked, it doesn't change the map at all; it runs only in a bake, between runs or on a story event.
 Everything else is live always and has no tier: slumps, spills and falls of loose ground, piping, collapse and
-fracture, fire, snow and ice, water, lava and oil, the agents' work and the player's powers.
+fracture, fire, snow and ice, water, lava and oil, contamination washing and seeds cleaning poison (SM3, the game's
+core mechanic), the agents' work and the player's powers.
 
-- **Into the kernels:** `Tiers.apply` writes `GlobalsState.tiers` into Globals words 480-515. These are
-  `tierLive` (x: the TIER_* bits live everywhere, y: the regions in use), `tierRect[4]` (window columns
-  x0, y0, x1, y1, half-open) and `tierRectP[4]` (x: the bits, y: the rate there, 1 live or a bake's gain).
-  GLOBALS_HEAD_BYTES is 2064. A kernel asks `tierRate(TIER_*, column)` (common.wgsl) and scales its map change by
-  the answer: 0 is baked, 1 is live, more is a bake. Absent tiers mean all live. Regions are kept in world cells,
-  so they stay with the land through a slide.
+- **Into the kernels:** `Tiers.apply` rasterises the tiers into `world.tierTex`, a texel a window chunk
+  (rgba32float, chunks across × down; x rain, y wind, z vegetation; 0 baked, 1 live, more a bake's gain). It is
+  written only when it changes. The kernels that need it prepend `src/shaders/tiers.wgsl` (binding 50,
+  `tierRate(TIER_*, column)`) and scale the process's map change by the answer. It's its own binding, not the
+  Globals: the Globals' size, and any array in them indexed by a computed index, slow every kernel (docs/PAGES.md
+  §1). Regions are kept in world cells, so they stay with the land through a slide. Granularity is a chunk
+  (16 columns). There's no cap on regions.
+- **What makes a chunk's process run** (the most of):
+  - its tier everywhere;
+  - a region asked live;
+  - a running bake's region, at its gain;
+  - (SM2, round 78's "unfreeze for player interactions") the player's interactions. Every event a tick sends (a
+    power, an edit, lightning; `sim.eventTaps`) and every stroke of wind (`gusts[1..]`) makes rain and wind erosion
+    live in the chunks round it. It holds for at least INTERACT_MIN_S (4 s), then while the chunk stays awake
+    (sim/sleep.ts), at most INTERACT_MAX_S (60 s). Vegetation stays baked there; the grow tap is live anyway.
 - **Who reads it:**
   - sediment.wgsl: `windOut`, `smoothOut`, the dust storms' and cyclones' dust, the particles' dust set down,
     litter stripping (wind); `waterOut` (rain); green binding dust into soil (vegetation).
   - ecology.wgsl: growth, spread and dying back (vegetation; fire's burning stays live).
   - climate.wgsl: leaf fall and rot (vegetation; snow, melt and freeze stay live).
-  - particles.wgsl: a seed taking where it lands, withered growth stripped in a gust (vegetation; the player's
-    grow tap stays live).
+  - particles.wgsl: a seed sprouting where it lands (its cleaning stays live), withered growth stripped in a gust
+    (vegetation; the player's grow tap stays live).
   - structtick.wgsl: moss (vegetation).
 - **Visuals stay alive:** outflow computes what the wind would lift either way (`lifts`) and writes it to the air
   texture as before, so dust is still raised and blown as particles. Baked, none of it is taken off the ground and
-  none is set down where it lands. Rain, water, snow, seeds, petals and leaves all still fall and fly.
+  none is set down where it lands. Rain, water (RiverWet, a storm waking its chunks, puddles, runoff), snow, seeds,
+  petals and leaves all still fall, flow and fly.
 - **Bakes:** they run inside the fixed-step scheduler. `WorldCore.advance` calls `tiers.pump` after the frame's
   own ticks. Each frame a bake runs `ticksPerFrame` more whole-sim ticks with its region live at its gain, over
   `seconds / (TICK_DT × gain)` ticks. The rest of the sim runs alongside, so rain erosion has runoff to work
-  with. Each pump wakes the region's chunks (`core.sleep`), and a bake's first tick runs the frame after that
-  first wake. One bake runs at a time.
+  with. Each pump wakes the region's chunks (`core.sleep`), and a bake starts the frame after that first wake.
+  Bakes queue and run one at a time.
 - **Defaults:** `WorldCore` starts all live, which the older scenes, the title diorama (its wind uncovers the
   level models) and the sandbox rely on. The atlas level calls `tiers.playDefaults()` (all baked, DECISIONS
   round 108). `?tiers=live | baked | rain,wind,veg` (those live) overrides a scene's defaults.

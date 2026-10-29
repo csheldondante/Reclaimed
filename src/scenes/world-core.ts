@@ -117,6 +117,16 @@ export class WorldCore {
       dims: this.dims,
       tickDt: TICK_DT,
       wake: (x, y, r, secs) => this.sleep?.wake(x, y, r, secs, performance.now() / 1000),
+      awake: (k) => this.sleep?.isAwake(k, performance.now() / 1000) ?? false,
+      write: (data) => {
+        const t = this.world.tierTex;
+        device.queue.writeTexture({ texture: t }, data, { bytesPerRow: t.width * 16 }, { width: t.width, height: t.height });
+      },
+    });
+    // (SM2, round 78's "unfreeze for player interactions": what the player does wakes erosion round it — the
+    // world's events as each tick sends them; the wind's strokes in advance)
+    this.sim.eventTaps.push((sent) => {
+      for (const e of sent) this.tiers.interact(e.x, e.y, e.radius);
     });
     // (round 104, simscale: the painted wind's boxes go with the land; dy comes in world units, the field's rows are the window's)
     this.onShift.push((dx, dy) => this.sim.wind.shift(dx, Math.round(dy / ROW_H)));
@@ -155,13 +165,15 @@ export class WorldCore {
       cyclones: [],
     };
     this.light = this.dayNight.light(1);
+    // (the tiers' rates in before anything runs)
+    this.tiers.apply();
   }
 
   /** Settle the generated world with the real systems before anyone looks. */
   async warmup(ticks: number, filter?: (s: SimSystem) => boolean): Promise<void> {
     // (perfopt: the renderer's deferred pipelines, compiled off the main thread meanwhile — in before the first frame)
     const pipes = this.renderer.ready();
-    this.tiers.apply(this.globals);
+    this.tiers.apply();
     this.sim.prime(this.globals);
     for (let i = 0; i < ticks; i++) {
       // support needs a few ticks to propagate before collapse can be judged
@@ -201,7 +213,9 @@ export class WorldCore {
     const maxTicks = this.host.quality.maxTicksPerFrame * speed;
     this.acc += simDt;
     let ticks = 0;
-    this.tiers.apply(g);
+    // (SM2: the player's strokes of wind count as interactions — gusts[0] is the cursor's breeze, not a stroke)
+    for (const st of g.gusts.slice(1)) if (st.strength > 0) this.tiers.interact(st.x, st.y, st.radius);
+    this.tiers.apply();
     while (this.acc >= TICK_DT && ticks < maxTicks) {
       this.sim.step(g, filter);
       this.acc -= TICK_DT;
@@ -209,7 +223,7 @@ export class WorldCore {
     }
     if (ticks === maxTicks) this.acc = Math.min(this.acc, TICK_DT); // drop time instead of spiralling
     // (round 108, simtiers: a bake's ticks — the baked processes run in its region at its gain, the rest alongside)
-    ticks += this.tiers.pump(g, () => this.sim.step(g, filter));
+    ticks += this.tiers.pump(() => this.sim.step(g, filter));
     return ticks;
   }
 

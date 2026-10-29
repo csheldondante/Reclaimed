@@ -2,8 +2,8 @@
 
 import { ROW_H } from '../world/lattice';
 
-/** (round 107, pages) the Globals before the page table (words 0-515; round 108, simtiers: the tiers in 480-515), and the whole with it (Globals.pages and pageInv: 512 vec4 each) */
-export const GLOBALS_HEAD_BYTES = 2064;
+/** (round 107, pages) the Globals before the page table (words 0-479), and the whole with it (Globals.pages and pageInv: 512 vec4 each) */
+export const GLOBALS_HEAD_BYTES = 1920;
 export const GLOBALS_BYTES = GLOBALS_HEAD_BYTES + 16384;
 /** (round 107, PG4) the Globals' size with page tables of `vec4` vec4s each (sized to the window: gpu/pages-mode.ts pageTables) */
 export const globalsBytes = (vec4: number) => GLOBALS_HEAD_BYTES + 2 * vec4 * 16;
@@ -157,9 +157,6 @@ export interface GlobalsState {
   hfield?: { bits: Uint32Array; across: number; side: number };
   /** (round 105, ringwin) the window's ring offset (cells: common.wgsl Globals.ring) — absent: 0, 0 */
   ring?: [number, number];
-  /** (round 108, simtiers: sim/tiers.ts) the slow processes' tiers: the bits live everywhere (common.wgsl TIER_*) and
-   *  up to 4 regions (window columns x0, y0, x1, y1, half-open) with their bits and rate there. Absent: all live. */
-  tiers?: { live: number; regions: { rect: [number, number, number, number]; bits: number; rate: number }[] };
   /** (round 107, pages) the page table, window chunk -> its page's place px | py << 8 (sim/pages.ts Pages.entries) — absent: left as it was */
   pages?: Uint16Array;
   /** (P2.2) the table backwards: slot -> window chunk, cx | cy << 8 (Pages.inv) — with `pages` */
@@ -260,15 +257,6 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer, pageVec4 = 512):
   else sh.fill(0);
   const sr = new Uint32Array(f.buffer, f.byteOffset + 476 * 4, 4);
   sr.set([s.ring?.[0] ?? 0, s.ring?.[1] ?? 0, 0, 0]);
-  // (round 108, simtiers) words 480-515: the tiers (absent: every process live, as before them)
-  const tu = new Uint32Array(f.buffer, f.byteOffset + 480 * 4, 4);
-  const regions = s.tiers?.regions.slice(0, 4) ?? [];
-  tu.set([s.tiers ? s.tiers.live : 0xffffffff, regions.length, 0, 0]);
-  f.fill(0, 484, 516);
-  regions.forEach((r, k) => {
-    f.set(r.rect, 484 + k * 4);
-    f.set([r.bits, r.rate, 0, 0], 500 + k * 4);
-  });
   // (round 107, pages) the page table: two u16 a u32, little-endian — a Uint16Array over the words is the packing
   if (s.pages) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES, s.pages.length).set(s.pages);
   if (s.pageInv) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES + pageVec4 * 16, s.pageInv.length).set(s.pageInv);
