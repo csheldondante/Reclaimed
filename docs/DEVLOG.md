@@ -11738,3 +11738,62 @@ visuals for steady state effects maybe?" (AR8). No solver change here: every def
   colbodies.ts the same falling piece twice (one `pieces` group now); the two water models each with their own rain
   and evaporation (one `water` group now); the collapse's dust and chips styled by the level scene, not the
   integrity system.
+
+## 2026-10-29 — the rivers' wetness per watershed (round 109, session 5, `watershed`)
+
+- The user: "I want it per water shed please." The held rivers (`?rivers=table`, the atlas level's) rose and fell
+  with one wetness for the whole world (weather/riverwet.ts: the season plus every storm's intensity, Globals
+  ocean.w), so a storm anywhere raised every river. Now a river's wetness is the climate's (the season, eased, the
+  same everywhere: ocean.w) plus its own storm water: the rain on its own catchment and what its reaches upstream
+  carry, with lags, so a rise travels down the river (BACKLOG RWS1).
+- One concern per structure:
+  - atlas/rivers.ts `Catchments` (the data): the drainage tree already gives every texel the one it drains to; each
+    texel's first river node down it, sampled every 2 texels (1024² Int32 on the 2048 map, 4 MB; the full-res
+    basin is a build-time temporary), each node's own runoff (its samples', the latitude's dryness as `acc`), its
+    reference discharge `ref` (own plus everything upstream: the graph accumulated in `order`, upstream first).
+    Atlas.riverCatchments.
+  - weather/catchwet.ts `CatchmentWet` (the sim): per node two linear stores — the hillside's runoff, eased toward
+    RAIN (3) × the storms' rain (Weather.rainAt) on its own samples over LAG_S 20 s (the climate's lag), and the
+    reach, eased toward its runoff plus its upstream reaches' outflow over the time the river takes to run to the
+    next node (its distance over its reference speed, rivers.ts node word 7; 0.2 s at least). Its storm water is the
+    reach's outflow over `ref` (1.5 at most). Storms rain only over the window, so only the nodes in the window and
+    128 cells round it are kept (467 at the test spot of the 55 085), re-picked when the window's origin changes;
+    the rain is sampled every 0.25 s.
+  - weather/wetfield.ts `RiverWetField` (the window's representation): WorldGpu `riverWet`, r32float, a texel every
+    8 window cells (65 × 65 at 512), each its nearest kept node's storm water within 32 cells, 0 elsewhere; written
+    only while some of it is wet (and once more as it dries).
+  - riverheld.wgsl `riverWetAt(cellXY)` (the one GPU reader, window cells — the signature tileparity's tiles call):
+    riverWet() (the climate's, ocean.w) + the field, bilinear, 0 past the window (so a far tile's river is the
+    climate's). riverHere asks it at the column. The texture is declared in riverheld.wgsl at binding 62 (free in
+    every kernel and draw that includes it; the water and renderfields kernels have 8 storage buffers already — a
+    texture costs none): every pipeline that calls riverWetAt binds 62 = world.riverWetView.
+- The valley levels have no river graph: the field stays 0 and RiverWet keeps the storms (as before). `?riverwet=x`
+  still holds every river at x (the storm water off).
+- Kept live: a storm raining on a chunk still wakes it (sleep.ts) and the water runs there; the pull toward the table
+  (`riverpull`) follows the column's own wetness.
+- Test (scripts/watershed.mjs, new: the atlas level at q=low 412×915, every system, 1x; river A whose catchment lies
+  in the window with a storm held at its samples' middle, D down A's river 150 cells past the storm, B another river
+  tree 300 cells off; the water's depth over the wet columns within 3 cells, every 10 s; C:/Projects/shots88/watershed
+  probe.json, start.png, storm.png, D-after.png, B-after.png):
+
+  | s | storm water A / D / B | depth A | depth D | depth B |
+  |---|---|---|---|---|
+  | 0 | 0 / 0 / 0 | 1.366 | 1.499 | 1.085 |
+  | 10 | 0.025 / 0 / 0 | 1.387 | 1.499 | 1.085 |
+  | 20 | 0.129 / 0.001 / 0 | 1.492 | 1.500 | 1.085 |
+  | 30 | 0.237 / 0.016 / 0 | 1.608 | 1.517 | 1.085 |
+  | 40 | 0.312 / 0.079 / 0 | 1.646 | 1.588 | 1.085 |
+  | 60 | 0.397 / 0.239 / 0 | 1.646 | 1.769 | 1.085 |
+  | 90 | 0.455 / 0.353 / 0 | 1.646 | 1.779 | 1.085 |
+
+  A rises from its own catchment's rain, D (outside the storm, asleep: the table at its wetness) follows ~20 s later,
+  B doesn't move. Both A and D stop at the held rivers' cap (+0.28 at the line, round 84). Before, all three would
+  have risen together (1 + 0.35 × the storm's intensity).
+- Cost (desktop iGPU, q=low 412×915): CatchmentWet.update 0.044 ms a frame (mean) while it rains, the field's write
+  0.026 ms (and a 17 KB upload a frame while wet); setWindow on a slide scans the 55 k nodes (one region's slide).
+  framecost (window 512, parked and panning at 10): the water passes 0.026 / 0.018 ms (flux / depth), renderfields
+  0.029 ms; the baseline run right after on places' code had the whole GPU at twice the span (10.7 ms p50 against
+  5.7 — the shared GPU busy with another agent), so the A/B is noise-bound: no pass is above the baseline's.
+  (framecost-watershed.json, framecost-places.json)
+- Tuning left to the user: RAIN 3 (a catchment rained on all over carries 4 × its reference) and MAX_EX 1.5; the
+  rise's visible size is bounded by the held rivers' +0.28 cap, which storms on a small river reach within ~40 s.

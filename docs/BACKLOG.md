@@ -28,6 +28,7 @@ user) · `deferred` (agreed for later).
 | GE7 | Items and equipment, tied to creatures: slots on rigs, recipes (round 101's tagged ingredients), how they change move sets | M | open |
 | GE8 | Controllers and move sets: the runtime parameterized in the engine (round 101), move-set design with GameplayGM (which owns heroes and controls, round 99) | M | open |
 | RN1 | A session on better runs: find the most fun controls and play loops per hero, then courses or open terrain made for them (GameplayGM's heroes, Reclaimed's generators) | L | open |
+| RWS1 | (round 109, the user: "I want it per water shed please") The held rivers' wetness per watershed: a river rises only from rain on its own catchment, a reach downstream from its upstream catchments' (by area), with lags so a rise travels down the river — atlas/rivers.ts Catchments, weather/catchwet.ts, weather/wetfield.ts (WorldGpu riverWet), riverheld.wgsl riverWetAt | M | done on `watershed` (this commit): a storm over one catchment raises that river and, ~20 s later, its reach 150 cells down; a river 300 cells off doesn't move (scripts/watershed.mjs) |
 
 ## Round 103 (2026-10-28, session 5, `tilecache`) — world-anchored rendered tiles (DECISIONS round 103)
 

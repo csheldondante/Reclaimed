@@ -17,6 +17,9 @@ each was implemented.
   creatures), Controllers and move sets, Tailored level generators, Terrain generation" (BACKLOG GE1-GE8).
 - Runs, the user: "I also want a session to focus on better runs which means finding the most fun controls and play
   loops and then making fun courses for them or fun open terrain when possible" (BACKLOG RN1).
+- Rivers per watershed, the user: "I want it per water shed please" (the held rivers rose and fell with one wetness
+  for the whole world: a storm anywhere raised every river). A river rises only from rain on its own catchment; a
+  reach downstream carries its upstream catchments', a while later (BACKLOG RWS1, `watershed`).
 
 ## 2026-10-29 — round 108 (session 5, `places`) — tiles match the window; the sims' tiers; a playground
 
