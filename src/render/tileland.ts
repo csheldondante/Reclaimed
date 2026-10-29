@@ -11,6 +11,8 @@ export interface TileLandSource {
   border: number;
   /** the window's oz (the land is cut at it) */
   oz(): number;
+  /** (round 112, `tilefix`) region (corner x0, y0: world cells)'s heights as the CPU knows them (world z), or null */
+  zRange(x0: number, y0: number): [number, number] | null;
   /** (Streamer.tileLand) region (corner x0, y0: world cells)'s land and its border into buf at off (the border's corner
    *  the slot's), its per-column summary (the batch's, (R + 2 border)²) into meta — nothing read back; resolves once
    *  it's all submitted. (round 112, tilefast) `order`: its place in the pacer's tiles' lane, lower first */

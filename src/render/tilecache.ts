@@ -45,8 +45,13 @@ const MASK_N = 64;
 const REBAKE = Number(new URLSearchParams(location.search).get('tilerebake') ?? 600);
 /** bakes a frame */
 const PER_FRAME = Math.max(1, Number(new URLSearchParams(location.search).get('tilesper') ?? 1) | 0);
-/** the atlas's budget (MB) and a slot's size (texels) */
-const BUDGET_MB = Number(new URLSearchParams(location.search).get('tilemb') ?? 24);
+/** the atlas's budget (MB) and a slot's size (texels). (Round 112, `tilefix`: by the screen — 24 MB is the phone's
+ *  (411 x 785 css px, the pan bench's), the screen's ground at a zoom grows with its css area, so a desktop's
+ *  1600 x 900 at a wide zoom wanted 4.5 times the tiles: the atlas full of the screen's own and the rest the far land's
+ *  flat colour. Up to TILE_MB_MAX; ?tilemb= sets it.) */
+const PHONE_CSS = 411 * 785;
+const TILE_MB_MAX = 128;
+const BUDGET_MB = Number(new URLSearchParams(location.search).get('tilemb') ?? Math.min(TILE_MB_MAX, 24 * Math.max(1, (innerWidth * innerHeight) / PHONE_CSS)));
 const [SW, SH] = (new URLSearchParams(location.search).get('tilepx') ?? '128x192').split('x').map(Number);
 /** bytes a texel: rgba8 (albedo, film) + rg32uint (normal and flags, depth) — the slots' count is these planes' budget —
  *  and (round 108, TC20) rgba8 (the held river under it — how far under its level at the reference wetness, its depth
@@ -169,6 +174,8 @@ interface Tile {
   skip?: string;
   /** (round 112, tilefast, TC21) the part of its slot it's in (Part) */
   q: Part;
+  /** (round 112, tilefix) a render-only tile's extent known on the CPU (TileLandGpu.boundOf: a0, b1, tw, th — conservative) */
+  boxed?: boolean;
 }
 
 /** a bake slot: its camera and groups (made again when the mesh's buffers change) */
@@ -698,7 +705,11 @@ export class TileCache {
     const [ox, oy] = this.origin;
     const W = this.host.world.w;
     const H = this.host.world.h;
-    const G = 16;
+    // (round 112, tilefix: points enough that every region on the screen has two across — 16 a side missed whole
+    // regions between them at a wide zoom on a desktop: never asked for, the far land's flat colour there)
+    const [ex, ey] = cam.screenDeltaToWorld(cam.viewportW, 0);
+    const [fx, fy] = cam.screenDeltaToWorld(0, cam.viewportH);
+    const G = Math.min(64, Math.max(16, Math.ceil((2 * Math.max(Math.hypot(ex, ey), Math.hypot(fx, fy) / ROW_H) * MARGIN) / R)));
     const crx = Math.floor((cam.target[0] + ox) / R);
     const cry = Math.floor((cam.target[1] / ROW_H + oy) / R);
     const [vx, vy] = this.vel;
@@ -896,7 +907,9 @@ export class TileCache {
             continue;
           }
         }
-        if (!t.gpu && (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1)) {
+        // (round 112, tilefix: a render-only tile too once its box is known — drawn off the screen it was "used" every
+        // frame and never evicted: the atlas full of tiles off the screen)
+        if ((!t.gpu || t.boxed) && (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1)) {
           this.stats.skipOff++;
           t.skip = 'off';
           continue;

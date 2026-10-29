@@ -1600,6 +1600,36 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
   waysStamped = 0;
 
   /** the macro ground at a world point: the texels' heights, bilinear, wrapping */
+  /**
+   * (round 112, `tilefix`) What the CPU knows of a box's heights (world cells x0, y0 — rows —, w x h): the macro ground's
+   * lowest and highest over it (9 x 9 points a 64² region), the sea's level, and the giants reaching into it (their
+   * points) — world z. The columns' own detail lies round it (a render-only tile's bound pads it: TileCache).
+   */
+  zRange(x0: number, y0: number, w: number, h: number): [number, number] {
+    const rowH = Math.sqrt(3) / 2;
+    let lo = Infinity;
+    let hi = this.p.sea;
+    const n = Math.max(2, Math.ceil(Math.max(w, h) / 8) + 1);
+    for (let j = 0; j < n; j++)
+      for (let i = 0; i < n; i++) {
+        const z = this.macroAt(x0 + (i / (n - 1)) * w, (y0 + (j / (n - 1)) * h) * rowH);
+        lo = Math.min(lo, z);
+        hi = Math.max(hi, z);
+      }
+    const cx = x0 + w / 2;
+    const cy = (y0 + h / 2) * rowH;
+    const G = this.giants;
+    for (let k = 0; k < G.length; k += GIANT_FLOATS) {
+      const gx = G[k] + Math.round((cx - G[k]) / this.worldW) * this.worldW;
+      const gy = G[k + 1] + Math.round((cy - G[k + 1]) / this.worldH) * this.worldH;
+      const H = G[k + 3];
+      const reach = G[k + 4] * 1.16 + 2 + Math.hypot(G[k + 5] * H, G[k + 6] * H);
+      if (Math.abs(gx - cx) > w / 2 + reach || Math.abs(gy - cy) > (h / 2) * rowH + reach) continue;
+      hi = Math.max(hi, G[k + 2] + H);
+    }
+    return [lo, hi];
+  }
+
   macroAt(x: number, y: number): number {
     const n = this.p.n;
     const fx = (x / this.worldW) * n - 0.5;

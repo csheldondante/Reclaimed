@@ -144,6 +144,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
       region: (x0, y0, w, h) => atlas.regionLand(x0, y0, w, h, Infinity, true),
       // (round 102: on the GPU straight into the pool — streamer.ts generateGpu)
       regionInto: (x0, y0, w, h, t, how) => atlas.regionInto(x0, y0, w, h, t, how),
+      zRange: (x0, y0, w, h) => atlas.zRange(x0, y0, w, h),
       wrap: [params.cols, params.rows],
       height: params.zTop,
       snapshot: (x0, y0, w, h) => atlas.snapshot(x0, y0, w, h),

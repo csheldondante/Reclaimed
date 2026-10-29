@@ -171,6 +171,8 @@ export interface LandSource {
    * streamer never sees the land's columns: arrival is a pool → window copy.
    */
   regionInto?(x0: number, y0: number, w: number, h: number, target: FinishTarget, how: MakeHow): Promise<FinishMeta | null>;
+  /** (round 112, `tilefix`) what the source knows on the CPU of a box's heights, world z (Atlas.zRange) */
+  zRange?(x0: number, y0: number, w: number, h: number): [number, number];
 }
 
 /** (round 100) what the store saves for a world: its id (the atlas's seed, the run), whether it's kept on disk */
@@ -1513,6 +1515,7 @@ export class Streamer {
       layout,
       border: b,
       oz: () => this.oz,
+      zRange: (x0, y0) => this.source.zRange?.(x0, y0, R, R) ?? null,
       landTile: (x0, y0, buf, off, meta, order) => {
         if (!this.source.regionInto) return null;
         const target: FinishTarget = { buf, off, layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !settleLand(), corner: true };

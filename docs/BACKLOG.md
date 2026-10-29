@@ -12,6 +12,20 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 112 (2026-10-29, session 5, `tilefix`) — the terrain past the window drawn on every screen; the merge gate
+
+The user: "The most basic thing is that all the tiles visible on screen load visually and our framerate doesn't dip below our thresholds." / "Instead of looking at them everytime make a cheap baseline image for things that won't change and run pixel diffs to flag changes." / "Can we not simply do that on the GPU? Culling should be dirt cheap"
+
+| id | item | size | status |
+|---|---|---|---|
+| TX1 | The atlas sized for the phone's screen (24 MB, 96 slots): the budget scaled by the screen's css area (to 128 MB) | S | done (`tilefix`): desktop 1600 x 900 384 slots / 144 MB, phone 104 / 39 MB |
+| TX2 | Render-only tiles never culled (their box only on the GPU), so with round 108's rule never evicted: a conservative CPU bound per tile (Atlas.zRange + 128 / -64, calibrated on 2210 GPU boxes), no readback | S | done (`tilefix`) |
+| TX3 | The look-ahead's 16 x 16 screen grid missed whole regions at a wide zoom: two points a region (16-64 a side) | S | done (`tilefix`) |
+| TX4 | scripts/tilegate.mjs: coverage, frames and golden images (data/baselines/tilegate) on desktop and the phone proxy, zooms 14-1.3, parked and panning; `--update`; run before every merge into places | M | done (`tilefix`): 7.2 min; 27f0ffa fails 16 checks, tilefix 1 (TX5) |
+| TX5 | The window slide's long frame while panning at close zoom (40-60 ms, gpu-held) on desktop and the phone proxy — before and after the fix | M | open |
+| TX6 | The atlas's budget is fixed when it's made: a window resized bigger (or a phone turned) keeps it — remake the atlas on a resize past it | S | open |
+| TX7 | A GPU cull pass and drawIndirect for the tiles | S | won't do (round 112, main and the user's point answered: the CPU must know what's visible to evict; ~600 quads clipped by the rasteriser cost nothing) |
+
 ## Round 112 (2026-10-29, session 5, `physfix2`) — the playground's physics on the phone (DECISIONS round 112)
 
 The user, verbatim: "Bugs from physics playing: The concrete just immediately vanished when any blocks are deleted. The bridge on the arch also just vanished when I damaged one side and the other broke instantly. The tower just settled at a leaning angle. The thin stone protrusion survived a fall and collision. Is sand expected to always fall from the mountains." Then, on the sand: "I think it's just the wind blowing dust visual."; on the

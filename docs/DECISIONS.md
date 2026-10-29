@@ -3,6 +3,20 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `tilefix`) — the terrain drawn on every screen; a merge gate
+
+- After opening the atlas on the deployed places build on their PC (tiles scattered over flat far land and grey void),
+  the user, verbatim: "The most basic thing is that all the tiles visible on screen load visually and our framerate
+  doesn't dip below our thresholds." and "That was the subject of days of effort and needs to be fixed."
+- "Honestly I think that behavior has been in there since early on but this looks worse than it did in many of the
+  tests at reasonable speed on my phone. Regardless, we should fix it and get the terrain drawing reliably. Fix on
+  desktop then let me know when to test on my phone for the perf numbers you need."
+- On the merge checks: "Instead of looking at them everytime make a cheap baseline image for things that won't change
+  and run pixel diffs to flag changes." → scripts/tilegate.mjs (coverage, frames, golden images).
+- On culling: "Can we not simply do that on the GPU? Culling should be dirt cheap" → a CPU bound per tile from what the
+  CPU knows of the region's heights (no readback, DECISIONS round 106b); a GPU cull pass not built (nothing to save:
+  the rasteriser clips the few hundred quads; eviction needs the CPU to know).
+
 ## 2026-10-29 — round 112 (session 5, `physfix2`) — the playground's physics, played on the phone
 
 - The user, verbatim (after playing the playground on the phone):

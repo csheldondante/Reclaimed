@@ -2300,3 +2300,10 @@ clears them).
   left out (eye, off, far), at another turn, its land being made, made and waiting, queued, or not asked for.
 - The streamer's uploads into the pool: `UPLOAD_BYTES` a frame in all (0.5 MB on a phone, 2 elsewhere; `?uploadmb=`),
   a region's record (1.7 MB at window 256) split across frames, resolved when its last byte is written.
+
+- (round 112, `tilefix`) **The atlas's budget** is by the screen: 24 MB at the phone's 411 x 785 css px, scaled by the
+  css area, to 128 MB (`?tilemb=`), fixed when the atlas is made. **A render-only tile's CPU bound**
+  (TileLandGpu.boundOf) — the region's footprint and `TileLandSource.zRange` (the streamer's source's: Atlas.zRange,
+  the macro ground, the sea, the giants) padded +128 / -64 — is what `TileCache.prepare` culls it by (`Tile.boxed`);
+  only a tile on the screen is "used" (the eviction's protection). No readback. The look-ahead samples the screen with
+  two points across each region. The merge gate: scripts/tilegate.mjs (baselines in data/baselines/tilegate).

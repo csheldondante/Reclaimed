@@ -42,6 +42,9 @@ const BAKES = Math.max(1, Number(new URLSearchParams(location.search).get('tileb
 const MESH_SIDE = 32;
 /** (round 112, TC21) the height (world units) a render-only tile's land is taken to span when choosing its slot's size */
 const QUARTER_Z = 48;
+/** (round 112, `tilefix`) world units a render-only tile's CPU bound reaches past the heights the CPU knows (boundOf) */
+const Z_HI_PAD = 128;
+const Z_LO_PAD = 64;
 /** the tiles' overlap past their region (tilecache.ts OVERLAP) */
 const OVERLAP = 1;
 
@@ -323,6 +326,7 @@ export class TileLandGpu {
     const t = this.cache.allocTile(job.rx, job.ry, cam.azimuth, this.cache.partFor(B, rp, QUARTER_Z));
     if (!t) return false;
     t.gpu = true;
+    this.boundOf(t, B);
     const [sx, sy, SW, SH] = this.cache.slotPx(t);
     const sl = this.groupsOf(job.slot);
     const dev = this.host.device;
@@ -358,6 +362,39 @@ export class TileLandGpu {
   }
 
   afterSubmit(): void {}
+
+  /**
+   * (round 112, `tilefix`) A render-only tile's extent on the CPU, conservative, for TileCache.prepare's cull and so its
+   * eviction (the user: "Culling should be dirt cheap"; no readback — DECISIONS round 106b): the region and its overlap,
+   * from what the CPU knows of its heights (Atlas.zRange: the macro ground, the sea, the giants) less Z_LO_PAD to Z_HI_PAD
+   * more — the columns' own detail lies within that (measured: up to 119 over the macro's highest, 53 under its
+   * lowest, over 2200 tiles at three spots). Without it every render-only tile within the mask's reach was drawn and
+   * "used" every frame, so never evicted: the atlas full of tiles off the screen, the screen's own never made.
+   */
+  private boundOf(t: { rx: number; ry: number; a0: number; b1: number; tw: number; th: number; dens: number; boxed?: boolean }, B: Basis): void {
+    const zr = this.src.zRange(t.rx * R, t.ry * R);
+    t.boxed = !!zr;
+    if (!zr) return;
+    let a0 = Infinity;
+    let a1 = -Infinity;
+    let b0 = Infinity;
+    let b1 = -Infinity;
+    for (let k = 0; k < 8; k++) {
+      const x = k & 1 ? R + OVERLAP : -OVERLAP;
+      const y = k & 2 ? R * ROW_H + OVERLAP : -OVERLAP;
+      // (relative to the anchor, the region's corner at world z 0)
+      const z = k & 4 ? zr[1] + Z_HI_PAD : zr[0] - Z_LO_PAD;
+      const a = B.r[0] * x + B.r[1] * y + B.r[2] * z;
+      const b = B.u[0] * x + B.u[1] * y + B.u[2] * z;
+      a0 = Math.min(a0, a);
+      a1 = Math.max(a1, a);
+      b0 = Math.min(b0, b);
+      b1 = Math.max(b1, b);
+    }
+    // (the view-plane box only: a render-only tile's draw reads what it was baked at from TP, on the GPU)
+    Object.assign(t, { a0, b1, dens: 1, tw: a1 - a0, th: b1 - b0 });
+  }
+
 
   /** (round 112, the bench's why) region "rx,ry"'s land now */
   stateOf(key: string): 'making' | 'made' | 'queued' | null {
