@@ -83,9 +83,9 @@ struct Globals {
   ring: vec4<u32>,
   // (round 107, `pages`: docs/PAGES.md P2.1) the page table: window chunk (cy * chunks across + cx) -> the page its
   // data is in (P2.2: its slot), two u16 entries a u32 (sim/pages.ts Pages.table). Read by colSlot with ?pages=table.
-  pages: array<vec4<u32>, 512>,
+  pages: array<vec4<u32>, 512>, // PAGE_VEC4
   // (round 107, P2.2) the table backwards: slot -> the window chunk in it, cx | cy << 8 (Pages.inv; colXY)
-  pageInv: array<vec4<u32>, 512>,
+  pageInv: array<vec4<u32>, 512>, // PAGE_VEC4
 };
 
 /** (hybrid) Is column q in a heightfield chunk (drawn by the LOD rings, not the window's own draws)? */
@@ -331,7 +331,20 @@ fn pagesY() -> u32 { return G.mapH / COLS_PAGE; }
  *  made: the ring's wrap computed (the identity's places only), or the table looked up. The table holds places, not
  *  slots, so neither a buffer's index nor a texel needs a division: PG4's measure, a slot's % and / by the chunks
  *  across cost the texture-heavy passes 30-130%) */
-fn colPlace(c: vec2<u32>) -> vec2<u32> { return colPlaceRing(c); } // PAGE_ADDR
+fn colPlaceLookup(c: vec2<u32>) -> vec2<u32> { return colPlaceRing(c); } // PAGE_ADDR
+/** (round 107, PG4: the own-page fast path) the invocation's own chunk and its place, looked up once: the first chunk
+ *  it asks for (its own column's, nearly always), or the cull list's entry (sim/cull.ts cullSource: setOwnPage). A
+ *  column's every buffer and texel, and its neighbours in the same page, reuse it; a neighbour in another page goes
+ *  through the table. */
+var<private> ownC: vec2<u32> = vec2<u32>(0xffffffffu, 0xffffffffu);
+var<private> ownP: vec2<u32> = vec2<u32>(0u, 0u);
+fn setOwnPage(c: vec2<u32>, p: vec2<u32>) { ownC = c; ownP = p; }
+fn colPlace(c: vec2<u32>) -> vec2<u32> {
+  if (all(c == ownC)) { return ownP; }
+  let p = colPlaceLookup(c);
+  if (ownC.x == 0xffffffffu) { ownC = c; ownP = p; }
+  return p;
+}
 /** the ring's place computed: c + ring mod the window's chunks */
 fn colPlaceRing(c: vec2<u32>) -> vec2<u32> {
   let x = c.x + G.ring.x / COLS_PAGE;
@@ -348,7 +361,9 @@ fn pageWord(t: u32, i: u32) -> u32 {
 fn pageEntryPlace(e: u32) -> vec2<u32> { return vec2<u32>(e & 0xffu, e >> 8u); }
 /** (round 107) the table looked up: window chunk c's place (Globals.pages; a chunk off the window is clamped into the
  *  table — robustness only: ?pagecheck=1 counts such lookups, and none may happen) */
-fn colPlaceTable(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageWord(0u, min(c.y * pagesX() + c.x, 4095u))); }
+fn colPlaceTable(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageWord(0u, min(c.y * pagesX() + c.x, PAGE_ENTRIES - 1u))); }
+/** the tables' entries (gpu/pages-mode.ts sizes them to the window: pageTables) */
+const PAGE_ENTRIES: u32 = 4096u; // PAGE_ENTRIES
 /** window chunk c's slot: its place row-major (a per-column buffer's pages) */
 fn colSlot(c: vec2<u32>) -> u32 { let p = colPlace(c); return p.y * pagesX() + p.x; }
 /** the window chunk in slot s (the table backwards: Globals.pageInv, or the ring's wrap backwards) */

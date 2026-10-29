@@ -2,7 +2,7 @@
 // Systems run in the documented order; each has its own period.
 
 import type { Profiler } from '../gpu/profiler';
-import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_BYTES, GLOBALS_HEAD_BYTES, type GlobalsState } from './globals';
+import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
@@ -56,7 +56,7 @@ export class Simulation {
   /** (round 104, simscale) the projection: over the chunks its inputs touch */
   readonly project!: ProjectSystem;
   tick = 0;
-  private globalsData = new ArrayBuffer(GLOBALS_BYTES);
+  private globalsData: ArrayBuffer | null = null;
   /** (round 107, pages) the page table's version last written to the Globals */
   private pagesSent = -1;
   /** Per-system CPU encode time (ms, smoothed). */
@@ -168,10 +168,14 @@ export class Simulation {
     // (round 107, pages: the page table — 8 KB — written only when it changed: a slide, a warp)
     const pages = this.world.ring;
     const fresh = pages.version !== this.pagesSent;
-    g.pages = fresh ? pages.entries : undefined;
-    g.pageInv = fresh ? pages.inv : undefined;
-    writeGlobals(g, this.globalsData);
-    this.device.queue.writeBuffer(this.world.globals, 0, this.globalsData, 0, fresh ? GLOBALS_BYTES : GLOBALS_HEAD_BYTES);
+    // (only the table's way reads them: the ring computed keeps the Globals' tables a vec4 each — world-gpu pageVec4)
+    const table = this.world.pageVec4 * 8 >= pages.entries.length;
+    g.pages = fresh && table ? pages.entries : undefined;
+    g.pageInv = fresh && table ? pages.inv : undefined;
+    // (round 107, PG4: the Globals sized to this world's page tables)
+    const data = (this.globalsData ??= new ArrayBuffer(globalsBytes(this.world.pageVec4)));
+    writeGlobals(g, data, this.world.pageVec4);
+    this.device.queue.writeBuffer(this.world.globals, 0, data, 0, fresh ? data.byteLength : GLOBALS_HEAD_BYTES);
     if (fresh) {
       this.pagesSent = pages.version;
       this.world.pagesChanged();

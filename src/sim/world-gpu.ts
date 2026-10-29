@@ -7,9 +7,9 @@ import type { Profiler } from '../gpu/profiler';
 import { PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
-import { GLOBALS_BYTES } from './globals';
+import { globalsBytes } from './globals';
 import { Pages } from './pages';
-import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_MAX, pageMiss, pageTab } from '../gpu/pages-mode';
+import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_MAX, pageMiss, pageTab, pageTables } from '../gpu/pages-mode';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 import { MAX_PLACES } from '../world/places';
@@ -309,7 +309,11 @@ export class WorldGpu {
     }
 
     // (COPY_SRC: round 104, the tile cache's render-only land copies it, its size and origin its own — render/tileland.ts)
-    this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    // (round 107, PG4: the page tables sized to this window — every kernel made from here on uses this size)
+    // (the ring computed needs no table: the Globals keep a vec4 each, their size before pages)
+    this.pageVec4 = PAGE_ADDR === 'table' ? Math.max(1, Math.ceil((r.nx * r.ny) / 8)) : 1;
+    pageTables.vec4 = this.pageVec4;
+    this.globals = this.buf('globals', globalsBytes(this.pageVec4), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const mats = packMaterialTable();
     this.materials = this.buf('materials', mats.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.materials, 0, mats);
@@ -457,6 +461,9 @@ export class WorldGpu {
   writeReach(data: Uint8Array): void {
     this.device.queue.writeTexture({ texture: this.reachTex }, this.ring.texToStore(data, 1), { bytesPerRow: this.w }, { width: this.w, height: this.h });
   }
+
+  /** (round 107, PG4) vec4s in each of the Globals' page tables (8 entries each) */
+  pageVec4 = 512;
 
   /** (round 107, ?pagecheck=1) the off-window counter (null otherwise) */
   pageMissBuf: GPUBuffer | null = null;

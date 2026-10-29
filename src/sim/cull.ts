@@ -85,10 +85,12 @@ export class AwakeTiles {
     return l.buf;
   }
 
-  /** (round 107, pages P2.3b) window chunk c's list entry: cx | cy << 6 | slot << 12 (the wrapper finds its columns from cx, cy) */
+  /** (round 107, pages) window chunk c's list entry: cx | cy << 6 | px << 12 | py << 18, its page's place (the wrapper
+   *  finds its columns from cx, cy and its own page from px, py — no table load) */
   packEntry(c: number): number {
     const j = (c / this.cx) | 0;
-    return ((c - j * this.cx) | (j << 6) | (this.pages.table[c] << 12)) >>> 0;
+    const e = this.pages.entries[c];
+    return ((c - j * this.cx) | (j << 6) | ((e & 0xff) << 12) | ((e >> 8) << 18)) >>> 0;
   }
 
   /** workgroups to dispatch for list n this tick (0: skip the pass) */
@@ -204,10 +206,13 @@ export function cullSource(src: string, entry: string, vec4s: number): string {
 @compute @workgroup_size(8, 8)
 fn ${entry}(@builtin(workgroup_id) wg: vec3<u32>, @builtin(local_invocation_id) l: vec3<u32>) {
   let t = wg.x >> 2u;
-  // (round 107, pages P2.3b: an entry is cx | cy << 6 | slot << 12 — sim/cull.ts packEntry)
+  // (round 107, pages: an entry is cx | cy << 6 | px << 12 | py << 18 — the chunk and its page's place, sim/cull.ts
+  // packEntry: the workgroup's own page needs no table load — common.wgsl setOwnPage)
   let e = TILES[t >> 2u][t & 3u];
   let s = wg.x & 3u;
-  let q = vec2<u32>((e & 63u) * G.chunkSize + (s & 1u) * 8u + l.x, ((e >> 6u) & 63u) * G.chunkSize + (s >> 1u) * 8u + l.y);
+  let oc = vec2<u32>(e & 63u, (e >> 6u) & 63u);
+  setOwnPage(oc, vec2<u32>((e >> 12u) & 63u, (e >> 18u) & 63u));
+  let q = vec2<u32>(oc.x * G.chunkSize + (s & 1u) * 8u + l.x, oc.y * G.chunkSize + (s >> 1u) * 8u + l.y);
   if (q.x >= G.mapW || q.y >= G.mapH) { return; }
   ${inner}(vec3<u32>(q, 0u));
 }

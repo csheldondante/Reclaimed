@@ -1154,7 +1154,7 @@ as one band. The layers already worked this way through their chunk table, and t
 - **The CPU** (sim/ring.ts, `core.ring` = `world.ring`): Ring.page / at / idx / idxHalf mirror the helpers;
   `pieces` cuts a window rectangle at the seam for a copy (the wind field's rects); `toRing` / `fromRing` move whole
   arrays (an upload of a map's field, a readback). WorldCore.readBuffer and readTexture return per-column data in
-  window order (COLUMN_BUFS); the mirror's queries index through the ring (api/common.ts columnAt). (Round 106,
+  window order (COLUMN_BUFS — round 107: the flux buffers and physCols too, every per-column buffer); the mirror's queries index through the ring (api/common.ts columnAt). (Round 106,
   `frameprobe`: the CPU's per-column arrays are on the ring too, read a column through `Ring.i(x, y)`, nothing
   allocated — core.map.surface (rotated once when WorldCore is made), the streamer's `outside`, ground, relief,
   gapTop and colTop (`Streamer.colIdx`), the level's surface, veg and water caches (read back with
@@ -1177,11 +1177,14 @@ The ring above is now a page table, and storage is page-major. Window coordinate
 
 - **The table** (`sim/pages.ts` Pages, `core.ring` = `world.ring`): per window chunk its page's *slot*. The slots are
   the ring's places (py * nx + px, the wrap of chunk + offset) through `perm`, a place's slot: the identity, or with
-  `?pageperm=<seed>` shuffled (the identity test). `inv` is the table backwards (slot -> window chunk). Both go to the
-  Globals (`pages`, `pageInv`: 512 vec4 each, two u16 a u32 — GLOBALS_BYTES 1920 -> 18304), written only when
-  `version` moves (a slide). `?pages=table` (the default) looks the slot up; `?pages=ring` computes the identity's
-  (gpu/pages-mode.ts swaps common.wgsl colSlot when a module is made); `?pages=storage` is M1's only (a storage table
-  at binding 61 on the timed kernels with a slot free).
+  `?pageperm=<seed>` shuffled (the identity test). `inv` is the table backwards (slot -> window chunk). The game
+  computes the slots (`?pages=ring`, the only mode it uses: the dense window's slots are the ring's places).
+  `?pages=table` is a test path only, for `?pageperm=`: the table (entries are places, px | py << 8: Pages.entries)
+  and its inverse in the Globals (`pages`, `pageInv`, sized to the window — world-gpu pageVec4; a vec4 each when not
+  the table's way, the Globals then 1952 B), written only when `version` moves. Never the game's way: a table inside
+  Globals slowed every kernel ~45 % on the desktop's D3D11 (DEVLOG round 107, PAGES.md §1) — P2.4's sparse table
+  gets a binding of its own. gpu/pages-mode.ts swaps common.wgsl colPlaceLookup when a module is made;
+  `?pages=storage` is M1's only (a storage table at binding 61 on the timed kernels with a slot free).
 - **Buffers** are page-major: column (x, y) at slot * 256 + (y % 16) * 16 + x % 16 (common.wgsl colIdx; colXY back
   through pageInv). **Textures** are page atlases, a slot's 16 x 16 texels at (slot % nx, slot / nx) * 16 (texPage;
   texCol2's 8 x 8, texColK's k wide): with the identity at offset 0 the atlas is window order, the buffers never are.
@@ -1200,7 +1203,7 @@ The ring above is now a page table, and storage is page-major. Window coordinate
   (common.wgsl asleep / drowsy / chunkLive), the liquid's per-chunk counters (liquid.wgsl chunkOf, flow/steady.ts:
   Sleep.wakeSlot / isAwakeSlot) and waterChange. A slide moves none of it: the chunks coming in take the leavers'
   slots and only theirs are made fresh (Sleep.shift). The callers still speak window chunks and cells. The chunk
-  lists' entries are packed, cx | cy << 6 | slot << 12 (AwakeTiles.packEntry; cullSource finds the columns from cx, cy).
+  lists' entries are packed, cx | cy << 6 | px << 12 | py << 18 — the chunk and its page's place (AwakeTiles.packEntry; cullSource finds the columns from cx, cy and sets the own page, common.wgsl setOwnPage). The GPU's table holds places (Pages.entries), so neither a slot nor a texel needs a division, and a column's lookups of its own page are made once (colPlace's own-page cache).
   Not by slot: the hybrid's hfield bits (mesh chunks with their own side and hex offset, not pages), the agents'
   GPU-built front list, the field mesh's chunk records.
 - **The slow turns** (P2.3a): a sleeping chunk's turn every n ticks is staggered by its world chunk

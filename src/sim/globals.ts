@@ -5,6 +5,8 @@ import { ROW_H } from '../world/lattice';
 /** (round 107, pages) the Globals before the page table (words 0-479), and the whole with it (Globals.pages and pageInv: 512 vec4 each) */
 export const GLOBALS_HEAD_BYTES = 1920;
 export const GLOBALS_BYTES = GLOBALS_HEAD_BYTES + 16384;
+/** (round 107, PG4) the Globals' size with page tables of `vec4` vec4s each (sized to the window: gpu/pages-mode.ts pageTables) */
+export const globalsBytes = (vec4: number) => GLOBALS_HEAD_BYTES + 2 * vec4 * 16;
 /** cyclones the GPU knows about at once (common.wgsl MAX_CYCLONES) */
 export const MAX_CYCLONES = 4;
 
@@ -165,7 +167,7 @@ export interface GlobalsState {
   strokeSent?: boolean;
 }
 
-export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
+export function writeGlobals(s: GlobalsState, out: ArrayBuffer, pageVec4 = 512): void {
   const u = new Uint32Array(out);
   const f = new Float32Array(out);
   u[0] = s.mapW;
@@ -257,5 +259,5 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer): void {
   sr.set([s.ring?.[0] ?? 0, s.ring?.[1] ?? 0, 0, 0]);
   // (round 107, pages) the page table: two u16 a u32, little-endian — a Uint16Array over the words is the packing
   if (s.pages) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES, s.pages.length).set(s.pages);
-  if (s.pageInv) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES + 8192, s.pageInv.length).set(s.pageInv);
+  if (s.pageInv) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES + pageVec4 * 16, s.pageInv.length).set(s.pageInv);
 }

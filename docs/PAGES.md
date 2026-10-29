@@ -1,7 +1,7 @@
 # Phase 2: sparse chunk pages, active-chunk sims, a wake API (design, round 105)
 
-Status: a design for the user to review. Not implemented. It was written from the code and docs only; nothing in it
-has been measured on a GPU. Parent doc: "Reclaimed engine architecture: fixing the foundations"
+Status: P2.0-P2.3 implemented and measured on branch `pages` (round 107; docs/DEVLOG.md). §1's GPU layout was
+changed by what was measured (below); P2.4 onward is still the design. Parent doc: "Reclaimed engine architecture: fixing the foundations"
 (https://claude.ai/artifact/81VwyNZvndJQTWmKY5uUD2). BACKLOG AR1 (pages), AR2 (wake API). Phase 1 is `ringwin`'s
 page-shaped helpers.
 
@@ -33,12 +33,23 @@ tests meaningful.
   instead of every 64.
 - `G.mapW/mapH` becomes 1024; `G.chunksX` becomes 64.
 
-**GPU layout**
-- `Globals.pages: array<vec4<u32>, 512>` holds two u16 a u32: 4096 entries, 8 KB. Globals grows from 1920 B to
-  about 10 KB and needs no new binding.
+**GPU layout** (revised round 107, measured)
+- **The sparse table (P2.4) gets a binding of its own — a uniform or a storage buffer, never inside Globals.** The
+  first design put it in Globals (`Globals.pages`, 8 KB, no new binding). Measured on the desktop's D3D11 iGPU with
+  scripts/kernelab.mjs (every sim kernel's dispatches replayed alone, per workgroup, alternated 3-4 times against
+  places): a table in Globals, dynamically indexed, made every kernel ~45-60 % slower per workgroup — every read of
+  Globals, not only the lookups, the own-page fast path or not (48 % with the table sized to the window, 2.9 KB);
+  an 18 KB Globals cost ~55 % even with the ring computed and no table read; Globals at its old size with the ring
+  computed: -4.5 % (noise). Which binding — a uniform of its own or a read-only storage buffer (the 33 kernels
+  already at 8 storage buffers can't take one: a uniform, then, or freeing a slot) — is M1's question on the phone.
+- Entries are the page's place in the atlas, px | py << 8 (the slot is py * nx + px): neither a buffer's index nor a
+  texel needs a division (a slot's % and / by the chunks across cost the texture-heavy passes 30-130 %).
 - 0xFFFF means not resident. The CPU is authoritative and rewrites the table when residency changes, which is rare.
-- Fallback, if M1 shows dynamically indexed uniforms are slow on Mali: a read-only storage buffer at binding 38,
-  added by a `pagedKernel()` helper (as `cullKernel` adds binding 39).
+- Dense (P2.1-P2.3, today): the slots are the ring's places, computed (`?pages=ring`, the only mode the game uses);
+  `?pages=table` (the table in Globals, sized to the window) is a test path only, for `?pageperm=` (shuffled slots,
+  the identity test) — nothing in the game branches on it.
+- A column's page is found once (common.wgsl colPlace's own-page cache; a cull list's entry carries its page's place),
+  and a neighbour goes through the table only when it's in another page.
 
 **Helpers** (`common.wgsl`; only these change)
 - `slotOf(c)`: a table load. `resident(q)`: inside the window and `slotOf != NONE`.
@@ -193,7 +204,9 @@ texture read back in window order (`core.readBuffer`) and hashed by world coordi
 
 ## 6. What to measure first, and the risks
 
-- **M1, the table lookup on Mali (Pixel 9a)**: in-pass timestamps (bench v4) for `liquid`, `sediment` and
+- **M1, the table lookup on Mali (Pixel 9a)** — caveat (round 107): the bench's "table" page put the table in
+  Globals (8 KB, dynamically indexed), which the desktop showed slows every Globals read, so its numbers carry that
+  penalty and say "in Globals", not "a uniform table". A rerun is to measure a table in its own binding: in-pass timestamps (bench v4) for `liquid`, `sediment` and
   `water_flux` at 256 dense. Compare the computed ring, a table in Globals (uniform) and a table in a storage buffer.
   Target: no more than 5% more GPU time a pass. If over, two fallbacks: a fast path that skips the lookup inside the
   own page (about 77% of columns don't touch a page edge), or the 3×3 neighbour slots kept in workgroup memory.

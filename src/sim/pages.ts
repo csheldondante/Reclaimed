@@ -42,6 +42,11 @@ export const COLUMN_BUFS: Record<string, [stride: number, planes: number]> = {
   contamDelta: [4, 2],
   deposit: [16, 1],
   places: [4, 1],
+  // (round 107, PG5: these were read back in the store's order — culltest took page-major flux for window order)
+  flux: [24, 1],
+  oilFlux: [24, 1],
+  lavaFlux: [24, 1],
+  physCols: [64, 1],
 };
 
 /** columns a page side (common.wgsl COLS_PAGE, world/layout.ts CHUNK) */

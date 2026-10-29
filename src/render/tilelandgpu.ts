@@ -153,8 +153,11 @@ export class TileLandGpu {
     u.fill(0, 284, 480);
     // (round 107, pages: the page table a plain R-wide window's, the identity at offset 0 — sim/pages.ts)
     const sp = (this.scratchPages ??= new Pages(R, R, null));
-    new Uint16Array(ab, GLOBALS_HEAD_BYTES, sp.entries.length).set(sp.entries);
-    new Uint16Array(ab, GLOBALS_HEAD_BYTES + 8192, sp.inv.length).set(sp.inv);
+    // (the table's way only: the ring computed keeps the tables a vec4 each, and the scratch's ring is 0)
+    if (this.host.world.pageVec4 * 8 >= sp.entries.length) {
+      new Uint16Array(ab, GLOBALS_HEAD_BYTES, sp.entries.length).set(sp.entries);
+      new Uint16Array(ab, GLOBALS_HEAD_BYTES + this.host.world.pageVec4 * 16, sp.inv.length).set(sp.inv);
+    }
     this.host.device.queue.writeBuffer(sl.patch, 0, ab);
     enc.copyBufferToBuffer(this.host.world.globals, 0, sl.globals, 0, sl.globals.size);
     enc.copyBufferToBuffer(sl.patch, 0, sl.globals, 0, 8);

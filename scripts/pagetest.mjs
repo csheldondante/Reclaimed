@@ -93,10 +93,9 @@ async function run(qs) {
           const out = {};
           for (const n of names) {
             if (!core.world[n]) continue;
-            let f = await core.readBuffer(n);
-            // (the flux buffers and physCols aren't in COLUMN_BUFS: put in window order here by their stride)
+            const f = await core.readBuffer(n);
+            // (round 107: the flux buffers and physCols come back in window order too, COLUMN_BUFS)
             const per = { flux: 6, oilFlux: 6, lavaFlux: 6, physCols: 16 }[n];
-            if (per) f = core.ring.toWindow(f.slice(0, W * H * per), per);
             // (the layers: by the chunk table, the same at any ring)
             out[n] = hash(new Uint32Array(f.buffer, f.byteOffset, n === 'layers' ? f.length : Math.min(f.length, W * H * (per ?? (f.length / (W * H))))));
           }

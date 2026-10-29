@@ -11621,3 +11621,43 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
 - culltest, places against pages: both fail "the fire lit" (fireM 0) and differ in plants asleep (veg 7 / 0 and 8
   / 4 columns); pages also has 36 columns of flux changed in chunks never woken, places 0 — P2.3a's stagger is a
   different pattern of slow turns (PG5).
+
+### Round 107 (`pages`): PG4 met — the ring computed, the own-page fast path; PG5's readback order
+
+- **The own-page fast path.** A column's page is found once: common.wgsl colPlace keeps the invocation's own chunk
+  and its place (the first asked for, or set by the cull wrapper from its list entry — entries now carry the page's
+  place, cx | cy << 6 | px << 12 | py << 18), and a neighbour goes through the table only in another page. The draw's
+  extra went (+0.29 -> +0.07 ms panning at 512), but the sims stayed slow.
+- **Why: the table inside Globals.** scripts/kernelab.mjs (new: every sim kernel's dispatches replayed alone, timed
+  in one pass, per workgroup, alternated 3-4 times against places — the frame's noise and its sleep's out of it).
+  Weighted over the kernels, per workgroup, against places: the table in Globals (8 KB each way) +60 %; the ring
+  computed with that 18 KB Globals +55 %; the table sized to the window (Globals 2.9 KB) +48 %; the ring computed with
+  the Globals at their old size -4.5 % (data/bench/pg4-kernelab: logs5 the table and the ring with the 18 KB Globals,
+  logs6 the ring with the Globals at their old size — an experiment build, logs7 the sized table, logs8 the ring as
+  shipped; A = places). scripts/livecount.mjs (new) showed the awake chunks the same parked (~11-14 both). On this D3D11 iGPU a dynamically indexed array in the Globals slows every
+  read of the Globals, and a large Globals costs on its own. So: **the game computes the ring** (`?pages=ring`, the
+  default; the dense window's slots are the ring's places) and the Globals keep a vec4 a table (1952 B);
+  `?pages=table` stays a test path only, for `?pageperm=`; P2.4's sparse table gets a binding of its own, a uniform
+  or a storage buffer, never in Globals (PAGES.md §1 rewritten). M1's phone numbers for "table" carry the Globals
+  penalty (PAGES.md M1, BACKLOG PG2).
+- **PG5 — a contract fix.** WorldCore.readBuffer returns every per-column buffer in window order, but flux, oilFlux,
+  lavaFlux and physCols weren't in COLUMN_BUFS, so they came back in the store's order: page-major since P2.2. culltest
+  read flux that way and compared river columns' flux as other columns' (the "36 columns of flux changed in chunks
+  never woken"). They're in COLUMN_BUFS now (pagetest's own conversion of them removed). culltest also reads through
+  the contracts as they are since P2.3b and P2.2: the sleep bits by slot (core.ring.table), riverFlow through
+  readTexture (a page atlas). Its check passes (flux 0); the two failures places has too ("the fire lit", plants
+  changing asleep) are left.
+- **The gate, ABAB** (framecost, places e8187b0 against pages, 4 alternated runs a cell; data/bench/pg4-abab-ring),
+  GPU passes a frame:
+
+  | window, speed | places | pages | |
+  |---|---|---|---|
+  | 256, parked | 7.10 | 6.98 | -1.7 % (one pages run's timestamps broke: its sum -3957; left out) |
+  | 256, 60 c/s | 4.88 | 5.00 | +2.4 % |
+  | 512, parked | 9.74 | 9.69 | -0.5 % |
+  | 512, 60 c/s | 7.99 | 8.17 | +2.3 % |
+
+  Within 5 % everywhere. The sims' passes: -5.4, +3.2, -3.5, +2.7 %. renderfields is the one pass still over
+  (+20-70 %, 0.004-0.007 ms a frame: its corners' texColK and its neighbours across pages).
+- pagetest (ring at 0 against the table at 128,64 with ?pageperm=7), twice on a fresh server: 37 of 37 identical
+  both times, no off-window lookups (54 kernels checked).
