@@ -33,9 +33,9 @@ const MAT_ASH_S: u32 = 17u;
 //    player must first crack one (lightning) and the water does the rest.
 //  * Fast flow alongside a cracked solid erodes it further; intact solids
 //    hold (round 15: concrete and asphalt need lightning or a cyclone first).
-const HEAD_MIN: f32 = 2.0;
-const HEAD_RATE: f32 = 0.006;
-const FLOW_RATE: f32 = 0.06;
+// HEAD_MIN (was 2.0): G.tune.structureHeadMin (round 108, src/tune/params.ts)
+// HEAD_RATE (was 0.006): G.tune.structureHeadRate (round 108, src/tune/params.ts)
+// FLOW_RATE (was 0.06): G.tune.structureFlowRate (round 108, src/tune/params.ts)
 
 fn hydraulicDamage(p: vec2<i32>, z0: f32, z1: f32, dmg: u32, m: u32, salt: u32) -> u32 {
   var head = 0.0;
@@ -55,10 +55,10 @@ fn hydraulicDamage(p: vec2<i32>, z0: f32, z1: f32, dmg: u32, m: u32, salt: u32) 
   }
   let strength = MATS[m].sim.w;
   var chance = 0.0;
-  if (dmg > 0u && head > HEAD_MIN) { chance += (head - HEAD_MIN) * HEAD_RATE * simStep(); }
+  if (dmg > 0u && head > G.tune.structureHeadMin) { chance += (head - G.tune.structureHeadMin) * G.tune.structureHeadRate * simStep(); }
   // only what is already cracked (lightning, cyclones, heat) wears in fast
   // water: intact concrete and asphalt hold (round 15)
-  if (dmg > 0u && flow > 0.1) { chance += (flow - 0.1) * FLOW_RATE * (1.2 - strength); }
+  if (dmg > 0u && flow > 0.1) { chance += (flow - 0.1) * G.tune.structureFlowRate * (1.2 - strength); }
   let r = rand3(u32(p.x) * 16u + salt, u32(p.y), G.tick);
   return select(dmg, min(15u, dmg + 1u), r < chance);
 }

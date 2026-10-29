@@ -1376,8 +1376,44 @@ test scenes: `?flow=1&level=flowlab`, src/levels/flowlab.ts).
 ### The held rivers' falls (round 107, reverted round 108)
 
 riverfalls' sheets were reverted (the user: they didn't match the rest of the visuals; BACKLOG WF1 deferred).
-Held rivers' falls draw as their columns' water. The world's gravity stays one constant: common.wgsl `WORLD_G`
-(9.8 cells/s², world/scale.ts on the CPU), read by the flow model's streams, sheets and spray.
+Held rivers' falls draw as their columns' water. The world's gravity stays one value: (round 108) the tuning's
+`world.gravity` (9.8 cells/s², its default world/scale.ts `WORLD_G`), read as `G.tune.worldGravity` by the flow model's
+streams, sheets and spray, and by the CPU's rigid rock and falling pieces (× their own `gravity`).
+
+## The tuning registry (round 108, branch `playground`; BACKLOG AR5)
+
+Every physics and flow number that was a constant is a parameter of one registry (src/tune/registry.ts, the list
+src/tune/params.ts): id `<group>.<key>`, label, units, range, step, default (the constant it replaced: the game is
+unchanged until a slider moves), a line of help, and the system that owns it (the group). The contract:
+
+- **A system reads its own group only.** CPU systems read the live object `TUNE.<group>` (rockbodies.ts
+  `RB = TUNE.rigid`, fracture.ts `ROCK = TUNE.fracture`, bodies.ts/colbodies.ts `TUNE.pieces`, integrity.ts
+  `TUNE.impact`, the level's collapse bursts `TUNE.bursts`); `world` (gravity) is the one group everything reads.
+- **GPU kernels read `G.tune.<group><Key>`.** Parameters marked `gpu` are the fields of common.wgsl
+  `struct Tune`, in the registry's order; `Globals.tune` follows `Globals.ring` (word 480, sim/globals.ts
+  `TUNE_WORD`; `GLOBALS_HEAD_BYTES` grows by the struct: 52 floats), and `writeGlobals` packs the live values every
+  tick (`TUNING.packGpu`), so a slider takes the next tick. The registry checks the struct against itself as it's
+  made and throws, with the struct it wants, if they differ. The flow model's per-liquid numbers are
+  `LiquidKind` fields that name a Tune field or hold a fixed number (`lqGain()` … in liquid.wgsl's prelude).
+- **Presets** are the changed values only, `{ id: value }`: JSON (the panel's export and import, the bug report's
+  `tune`), localStorage `reclaimed.tune.presets`, or a copyable string (base64url of the JSON); `?tune=<string>` on
+  the address loads one, and the older names still set theirs (`?rbgrav=`, `?crush=`, `?bear=sand:0.1`). `set`
+  clamps to the range; an unknown id in a preset is reported, never dropped silently.
+- **The panel** (src/ui/tunepanel.ts) shows the registry grouped by owner (search, changed-only, reset per value,
+  group and all, presets); it replaced the rock lab's two panels. Open in the test beds (`LevelDef.lab`: the rock
+  lab, the flow lab, the playground), anywhere with `?tunepanel=1`.
+- **The bug report** (src/ui/bugreport.ts, key B or 🐞): the canvas's picture (src/ui/shot.ts: taken in the frame
+  loop right after the scene draws — a WebGPU canvas keeps its frame only that long), the tuning (changed, the
+  string, all), the camera, the time, the world's seed and the scene's state (bodies, sleep, flow, weather), and a
+  typed note — one JSON with the picture in it, plus the PNG: the phone's share sheet, else downloads; on the dev
+  server also perf-reports/bug-<time>.json (vite.config.ts).
+
+The playground (levels/playground.ts, `?level=playground`, the title screen's Playground button) has stations in
+whole chunks; `WorldCore.keepPristine()` keeps the world after the warmup and `restoreChunks(cx0, cy0, cx1, cy1)` puts
+a station's chunks back (the layers by the chunk table; water, its source, oil, lava, contamination, moisture,
+plants, fire, flux page-major, a chunk's columns contiguous), after `Integrity.forget(rect)` lets go of what moves
+or rests there. Its buttons only push the world's own events (the Break tool's smash, the dig) or use its APIs
+(waterSource, the weather) through a `StationKit` the scene gives them (ui/stations.ts knows nothing of the world).
 
 ## Levels and the sandbox
 
@@ -1593,7 +1629,7 @@ second moment from its columns, L from where the piece would land to the cut; on
 buckles) — or when its weight off the leg's middle pulls on the leg's far side past `ROCK.TENSILE × strength`
 (fracture.ts `legOf`); a piece already resting (a quarter of its hanging runs within a cell of what's under them,
 its centre over those) isn't judged off its leg. ROCK and a material's `bear` are set from the address
-(`?crush=` … `?bear=sand:0.1`) or the rock lab's panel (src/ui/rockpanel.ts), logged `[rock]`. The rim's watch
+(`?crush=` … `?bear=sand:0.1`) or the tuning panel (round 108: the registry's `fracture` group), logged `[tune]`. The rim's watch
 weighs; the columns a piece left are judged again (weighed); intervals within `FILM_GAP` (0.02) touch. The meteor's
 blast melts only columns whose top is within `BLAST_UP` (4) of where it hit (lava.wgsl, `LavaU.blast2.z`).
 

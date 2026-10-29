@@ -19,7 +19,7 @@ function hitchSink(): Plugin {
         let size = 0;
         req.on('data', (c: Buffer) => {
           size += c.length;
-          if (size > 8 * 1024 * 1024) req.destroy();
+          if (size > 16 * 1024 * 1024) req.destroy();
           else chunks.push(c);
         });
         req.on('end', () => {
@@ -33,8 +33,10 @@ function hitchSink(): Plugin {
           }
           const dir = path.resolve(__dirname, 'perf-reports');
           fs.mkdirSync(dir, { recursive: true });
-          // (round 101, bench: ?kind=bench → bench-<time>.json, the benchmark's result; else a hitch report)
-          const kind = new URL(req.url ?? '/', 'http://x').searchParams.get('kind') === 'bench' ? 'bench' : 'hitch';
+          // (round 101, bench: ?kind=bench → bench-<time>.json, the benchmark's result; round 108: ?kind=bug, a bug
+          // report from the tuning panel's 🐞 — src/ui/bugreport.ts; else a hitch report)
+          const k = new URL(req.url ?? '/', 'http://x').searchParams.get('kind');
+          const kind = k === 'bench' || k === 'bug' ? k : 'hitch';
           const name = `${kind}-${new Date().toISOString().replace(/[:.]/g, '-')}.json`;
           fs.writeFileSync(path.join(dir, name), body);
           res.end(`perf-reports/${name}`);

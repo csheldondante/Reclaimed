@@ -44,8 +44,12 @@ import { RiverWet } from '../weather/riverwet';
 import { RIVERS } from '../sim/world-gpu';
 import { installFlow, type FlowKit } from '../flow/install';
 import { FLOWLAB } from '../levels/flowlab';
-import { mountRockPanel } from '../ui/rockbodypanel';
+import { TunePanel } from '../ui/tunepanel';
+import { BugReport } from '../ui/bugreport';
+import { StationsBar } from '../ui/stations';
+import type { Station, StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
+import { TUNE, TUNING } from '../tune/params';
 import { AtlasMap } from '../api/atlas-map';
 import { precacheWarp, warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
@@ -262,6 +266,10 @@ export class LevelScene implements Scene {
   private beamPicking = false;
   /** sandbox: structural integrity and falling pieces (F7) */
   private integrity?: Integrity;
+  /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
+  private tunePanel?: TunePanel;
+  bugReport?: BugReport;
+  private stationsBar?: StationsBar;
   /** sandbox: a smash drag in progress */
   private smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -290,7 +298,7 @@ export class LevelScene implements Scene {
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
     this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
     // (?flow=1, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
-    if (host.params.get('flow') === '1' && !level.atlas) {
+    if ((host.params.get('flow') === '1' || (level.flow && host.params.get('flow') !== '0')) && !level.atlas) {
       this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, this.core.ring);
       this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
       this.core.sleep = this.sleep;
@@ -820,6 +828,8 @@ export class LevelScene implements Scene {
       s.flow.steady.judgeAll = true;
     }
     s.core.globals.debrisBoost = 1;
+    // (round 108, the playground) what a station's reset puts back: the world as it opens
+    if (level.stations) s.core.keepPristine();
     s.attach();
     return s;
   }
@@ -956,14 +966,18 @@ export class LevelScene implements Scene {
       };
       // (round 86: a piece landing hard throws its chips faster, up and out)
       this.integrity.onChips = (x, y, z, count, speed) => {
-        core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: speed ?? 3, spread: 0.8, vel: speed ? [0, 0, speed * 0.6] : undefined });
+        core.sim.particles.burst({ kind: PK.Chip, x, y, z, count, speed: speed ?? TUNE.bursts.chipSpeed, spread: 0.8, vel: speed ? [0, 0, speed * 0.6] : undefined });
         this.audio.chip(camera.project(x, y, z)[0] / camera.viewportW);
       };
       this.integrity.onCollapse = (x, y, z, amount) => this.audio.collapse(amount, camera.project(x, y, z)[0] / camera.viewportW);
       // dust grains, and a see-through cloud of the material (one puff per five grains)
+      // (round 108: their counts and speeds the tuning's `bursts`)
       this.integrity.onDust = (x, y, z, count, spread, mat) => {
-        core.sim.particles.burst({ kind: PK.Dust, x, y, z, count, speed: 1.4, spread });
-        core.sim.particles.burst({ kind: PK.Haze, x, y, z: z + 0.5, count: Math.ceil(count / 5), speed: 0.8, payload: mat, spread: spread * 0.8 });
+        const B = TUNE.bursts;
+        const n = Math.round(count * B.dustCount);
+        if (n <= 0) return;
+        core.sim.particles.burst({ kind: PK.Dust, x, y, z, count: n, speed: B.dustSpeed, spread });
+        core.sim.particles.burst({ kind: PK.Haze, x, y, z: z + 0.5, count: Math.ceil(n / 5), speed: B.hazeSpeed, payload: mat, spread: spread * 0.8 });
       };
       // (round 95, ?rockbody=1) rock hitting the ground hard throws sparks, up and out
       this.integrity.onSparks = (x, y, z, count, speed) => core.sim.particles.burst({ kind: PK.Spark, x, y, z, count, speed, spread: 0.4, vel: [0, 0, speed * 0.4] });
@@ -972,13 +986,11 @@ export class LevelScene implements Scene {
         this.integrity.physics = this.physics;
         core.renderer.setRockParticles(this.physics.buffers);
       }
-      // (round 95) the rigid rock's knobs in the rock lab
-      const rigid = this.integrity.rigid;
-      if (rigid && this.level.id === 'rocklab')
-        mountRockPanel(host.ui, () => `bodies ${rigid.list.length} drawn ${rigid.drawn} step ${rigid.stats.stepMs.toFixed(2)} ms breaks ${rigid.stats.breaks} settled ${rigid.stats.settled}`);
       core.globals.spanCollapse = false;
       weather.holdNatural(1e9);
     }
+    // (round 108, AR5) the tuning panel and the bug report: open in the test beds (level.lab), anywhere with ?tunepanel=1
+    if (this.level.lab || host.params.get('tunepanel') === '1') this.mountLab();
 
     const zoomAt = (sx: number, sy: number, factor: number) => {
       // (flying: the wheel moves along the view)
@@ -1169,6 +1181,8 @@ export class LevelScene implements Scene {
       integrity: () => this.integrity,
       // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
       rb: RB,
+      // (round 108, AR5) the tuning registry: tune.set('rigid.friction', 0.3), tune.changed(), tune.encode()
+      tune: TUNING,
       // (round 87) the sandbox's tool bar: editor().select('smash') as a tap on its button would (scripts/towertest.mjs)
       editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
@@ -2910,6 +2924,96 @@ export class LevelScene implements Scene {
     }, ignoreTeardown);
   }
 
+  /** (round 108, AR5/AR8) the tuning panel, the bug report and (the playground) the stations bar */
+  private mountLab(): void {
+    const { core, host } = this;
+    const rigid = this.integrity?.rigid;
+    const rigidLine = () => (rigid ? `rigid ${rigid.list.length} · step ${rigid.stats.stepMs.toFixed(2)} ms · breaks ${rigid.stats.breaks} · settled ${rigid.stats.settled}` : '');
+    this.tunePanel = new TunePanel(host.ui, {
+      open: this.level.lab?.open,
+      // (open at the start in a test bed on a desktop; on a phone its button, the world first)
+      shown: !!this.level.lab && !matchMedia('(pointer: coarse)').matches,
+      stats: () => {
+        const ig = this.integrity;
+        const parts = [rigidLine(), ig ? `falling ${ig.falling.list.length} · resting ${ig.restingCount}` : '', this.sleep ? `awake ${this.sleep.awake} chunks` : ''];
+        return parts.filter(Boolean).join(' · ');
+      },
+    });
+    this.bugReport = new BugReport(host.ui, {
+      level: this.level.id,
+      world: () => ({ seed: core.globals.seed, dims: core.dims, flow: !!this.flow, rockbody: !!rigid, quality: host.qualityName, params: Object.fromEntries(host.params) }),
+      camera: () => ({ target: [...core.camera.target], zoom: core.camera.zoom, azimuth: core.camera.azimuth, fly: core.camera.fly ? { pos: [...core.camera.fly.pos] } : null }),
+      time: () => ({ tick: core.globals.tick, simTime: core.globals.time, timeOfDay: core.dayNight.timeOfDay, season: core.globals.season ?? 0, speed: this.speed }),
+      state: () => {
+        const ig = this.integrity;
+        return {
+          station: this.stationsBar?.current.id ?? null,
+          integrity: ig ? { stats: { ...ig.stats }, falling: ig.falling.list.length, resting: ig.restingCount, rigid: rigid ? { bodies: rigid.list.length, stats: { ...rigid.stats }, list: rigid.list.slice(0, 20).map((b) => ({ pos: b.pos, v: b.v, w: b.w, cells: b.cells.length })) } : null } : null,
+          sleep: this.sleep ? { awake: this.sleep.awake } : null,
+          flow: this.flow ? { springs: this.flow.water.springs.length + this.flow.lava.springs.length } : null,
+          weather: { storms: core.weather.storms.length, dusts: core.weather.dusts.length, cyclones: core.weather.cyclones.length },
+          perf: { cpu: cpuLine() },
+        };
+      },
+    });
+    const stations = this.level.stations;
+    if (stations) {
+      this.stationsBar = new StationsBar(host.ui, stations, {
+        go: (s) => {
+          const [x, y, z, zoom] = s.look;
+          if (core.camera.fly) this.toggleFly();
+          core.camera.target = [x, y, z];
+          core.camera.zoom = zoom;
+        },
+        run: (s, k) => s.actions[k].run(this.stationKit()),
+        reset: (s) => this.resetStation(s),
+        resetAll: () => {
+          for (const s of stations) this.resetStation(s);
+          core.weather.dusts = [];
+        },
+      });
+    }
+  }
+
+  /** (round 108, AR8) what a station's buttons do: the world's own events and APIs */
+  private stationKit(): StationKit {
+    const { core } = this;
+    const now = () => performance.now() / 1000;
+    return {
+      smash: (x, y, z, r) => {
+        core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.SMASH * 32, radius: r, strength: z });
+        core.sim.particles.burst({ kind: PK.Chip, x, y, z, count: 6 + r * 3, speed: 4, spread: r * 0.5 });
+        this.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
+      },
+      dig: (x, y, r, layers) => {
+        core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP.DIG * 32 + 512, radius: r, strength: layers });
+        this.sleep?.wake(x, y, r + 8, Sleep.EVENT_S, now());
+      },
+      source: (cols, rate) => {
+        const v = new Float32Array([rate / 60 / cols.length]);
+        for (const [x, y] of cols) core.host.gpu.device.queue.writeBuffer(core.world.waterSource, core.ring.i(x, y) * 4, v);
+        const [wx, wy] = cellPos(cols[0][0], cols[0][1]);
+        this.sleep?.wake(wx, wy, 24, Sleep.EVENT_S, now());
+      },
+      dust: (x, y) => void core.weather.placeDust(x, y),
+      rain: (x, y) => void core.weather.spawn(x, y),
+      later: (secs, f) => void setTimeout(f, secs * 1000),
+    };
+  }
+
+  /** (round 108, AR8) a station put back as the level opened: what moves there let go, its chunks restored */
+  private resetStation(s: Station): void {
+    const { core } = this;
+    const [x0, y0, x1, y1] = s.rect;
+    this.integrity?.forget(x0, y0, x1, y1);
+    core.restoreChunks(x0 / CHUNK, y0 / CHUNK, x1 / CHUNK, y1 / CHUNK);
+    const [wx0, wy0] = cellPos(x0, y0);
+    const [wx1, wy1] = cellPos(x1, y1);
+    core.renderer.fieldMesh.urgent(wx0, wy0, wx1, wy1);
+    this.integrity?.markBox(wx0, wy0, wx1, wy1);
+    this.sleep?.wake((wx0 + wx1) / 2, (wy0 + wy1) / 2, Math.max(wx1 - wx0, wy1 - wy0) / 2 + 8, Sleep.EVENT_S, performance.now() / 1000);
+  }
+
   /** Sandbox: put the world back as it was before the last brush press. */
   private undo(): void {
     this.brushAt = undefined;
@@ -2971,6 +3075,9 @@ export class LevelScene implements Scene {
 
   dispose(): void {
     this.abort.abort();
+    this.tunePanel?.dispose();
+    this.bugReport?.dispose();
+    this.stationsBar?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();
     this.compass?.remove();

@@ -90,7 +90,7 @@ const K_SNOW: u32 = 23u;
 // (round 86, ?flow=1) spray off a falling stream of water (liquid.wgsl prep spawns it along the stream's path);
 // DROP_G: the world's gravity (common.wgsl WORLD_G), as the streams' (liquid.wgsl GF), so a drop keeps to the arc
 const K_DROP: u32 = 24u;
-const DROP_G: f32 = WORLD_G;
+// DROP_G (was WORLD_G): G.tune.worldGravity (round 108, src/tune/params.ts)
 // (the funnel follows the spine: spineAt() in common.wgsl)
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);
@@ -597,7 +597,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   if (kind == K_DROP) {
     // (round 86) spray off a falling stream (liquid.wgsl prep): on the stream's own path - the flow model's
     // gravity, no drag - so it moves with the fall at its speed; gone where it meets the ground, water or a wall
-    vel.z -= DROP_G * DT;
+    vel.z -= G.tune.worldGravity * DT;
     pos += vel * DT;
     let c2 = cellAt(pos.xy);
     if (!inMap(c2) || life <= 0.0) { parts[id.x].p.w = 0.0; return; }
@@ -698,9 +698,9 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   let ws = length(w);
   let liftRoll = f32(hash3(id.x, G.tick, seed ^ 0x11f7u)) / 4294967296.0;
   if (kind == K_DUST) {
-    drag = 1.6; grav = 1.1 + rain * 6.0; // drifts down; rain knocks it out of the air
+    drag = G.tune.dustDrag; grav = G.tune.dustFall + rain * 6.0; // drifts down; rain knocks it out of the air (round 108: tuned, 1.6 and 1.1)
     // grime is light, flaky stuff: it sails further on a good gust
-    if (state == DUST_GRIME) { grav = 0.55 + rain * 6.0; }
+    if (state == DUST_GRIME) { grav = 0.5 * G.tune.dustFall + rain * 6.0; }
     if (resting) {
       if (ws > 4.5 && liftRoll < (ws - 4.5) * 0.004 && water[ci] < 0.02) {
         resting = false;
@@ -766,7 +766,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
   } else if (kind == K_SPARK) {
     drag = 0.5; grav = select(-0.6, 1.2, state == 1u);
   } else if (kind == K_HAZE) {
-    drag = 1.4; grav = -0.15;
+    drag = G.tune.dustHazeDrag; grav = -G.tune.dustHazeRise; // (round 108: tuned, 1.4 and 0.15)
   } else if (kind == K_CLOUD) {
     drag = 0.0; grav = 0.0;
   } else if (kind == K_SMOKE && state == SMOKE_OILY) {
@@ -790,7 +790,7 @@ fn update(@builtin(global_invocation_id) id: vec3<u32>) {
     // (round 28: where they land they can light what burns)
     drag = 1.2; grav = select(-0.4, 3.0, life < 3.0);
   } else if (kind == K_CHIP || kind == K_SPLASH) {
-    drag = 0.3; grav = 14.0;
+    drag = G.tune.debrisDrag; grav = G.tune.debrisGravity; // (round 108: tuned, 0.3 and 14 — not the world's gravity)
   } else if (kind == K_FLAME) {
     drag = 1.0; grav = -3.0;
   } else if (kind == K_FIREFLY) {

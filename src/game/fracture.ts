@@ -18,6 +18,7 @@
 import { CHUNK as CHUNK_V, SLOT_WORDS, columnSlots, readSlot, type PackedWorld } from '../world/layout';
 import { MATERIALS, MatState } from '../world/materials';
 import { NDIR, cellPos, nbr } from '../world/lattice';
+import { TUNE } from '../tune/params';
 
 export interface Voxel {
   x: number;
@@ -548,38 +549,21 @@ export function isRock(m: number): boolean {
  *  - NECK_R: the piece above a cut is followed this many columns from what hangs; past it it's keyed into the land
  *    (a cliff, a ridge), held; TIP_GIVE: how far (cells) a piece's centre of mass may lie past what it stands on.
  */
-export const ROCK = { BEND: 3, SHEAR: 10, CRUSH: 300, NECK_R: 16, TIP_GIVE: 0.25, BUCKLE: 9000, TENSILE: 200 };
+export const ROCK = TUNE.fracture;
 /**
  * (round 96, the user: "it seems like small supports still support it in atlas is that a setting?") — yes: these are
- * ROCK's constants, and each can be set from the page's address: ?bend= ?shear= ?crush= ?neck= ?tip= ?buckle=
- * ?tensile=, and a material's bear as ?bear=sand:0.1,soil:0.2 (the rock lab has sliders: src/ui/rockpanel.ts).
- *  - BUCKLE: a leg (the standing columns under a piece above a cut) buckles under BUCKLE × strength × I / L² — I its
+ * the tuning registry's `fracture` group (round 108, src/tune/params.ts: the tuning panel), each settable from the
+ * page's address too: ?bend= ?shear= ?crush= ?neck= ?tip= ?buckle= ?tensile=, and the bear of soil, sand, rubble and
+ * snow as ?bear=sand:0.1,soil:0.2.
+ *  - buckle: a leg (the standing columns under a piece above a cut) buckles under buckle × strength × I / L² — I its
  *    cross-section's least second moment (cells⁴: a round leg of A columns ≈ A² / 4π), L its free height (from
  *    where the piece would land to the cut; only a leg free over more than 2√A buckles: a stubby one crushes). A top whose leg is
- *    under a quarter of its footprint falls; round 92's CRUSH alone (300 cells a column) let two columns hold 600;
- *  - TENSILE: the weight's moment about the leg's middle (mass × how far its centre of mass is off it) over the
+ *    under a quarter of its footprint falls; round 92's crush alone (300 cells a column) let two columns hold 600;
+ *  - tensile: the weight's moment about the leg's middle (mass × how far its centre of mass is off it) over the
  *    leg's section modulus (I over its reach), less the weight over its area, is the pull on its far side (cells of
- *    mass a cell of section): past TENSILE × strength it snaps — an off-centre top on a thin leg; a mesa leaning a
+ *    mass a cell of section): past tensile × strength it snaps — an off-centre top on a thin leg; a mesa leaning a
  *    little over its own base pulls on nothing.
  */
-export const BEARS: Record<string, number> = {};
-if (typeof location !== 'undefined') {
-  const q = new URLSearchParams(location.search);
-  const keys: [string, keyof typeof ROCK][] = [['bend', 'BEND'], ['shear', 'SHEAR'], ['crush', 'CRUSH'], ['neck', 'NECK_R'], ['tip', 'TIP_GIVE'], ['buckle', 'BUCKLE'], ['tensile', 'TENSILE']];
-  for (const [k, K] of keys) {
-    const v = q.get(k);
-    if (v !== null && Number.isFinite(Number(v))) ROCK[K] = Number(v);
-  }
-  for (const kv of (q.get('bear') ?? '').split(',').filter(Boolean)) {
-    const [name, v] = kv.split(':');
-    const m = MATERIALS.find((d) => d.name === name);
-    if (m && Number.isFinite(Number(v))) {
-      m.bear = Number(v);
-      BEARS[name] = Number(v);
-    }
-  }
-  console.info(`[rock] ${JSON.stringify(ROCK)}${Object.keys(BEARS).length ? ' bear ' + JSON.stringify(BEARS) : ''}`);
-}
 /** (round 87) rock freed in less than this (cells of volume) crumbles to rubble rather than falling as a body —
  *  it used to stay where it was, floating */
 const MIN_BODY = 8;
@@ -612,9 +596,14 @@ const isMatter = (m: number) => {
 const bearOf = (m: number) => {
   const d = MATERIALS[m];
   if (!d) return 0;
+  // (round 108: the loose ground's bear is the tuning's — src/tune/params.ts fracture.bear*, the table's by default)
+  const t = TUNED_BEAR[d.name];
+  if (t) return ROCK[t];
   if (d.bear !== undefined) return d.bear;
   return d.state === MatState.Solid ? Math.min(1, d.strength) : d.state === MatState.Vegetation ? d.strength : 0.2;
 };
+/** (round 108) the materials whose bear the tuning holds */
+const TUNED_BEAR: Record<string, 'bearSoil' | 'bearSand' | 'bearRubble' | 'bearSnow'> = { soil: 'bearSoil', sand: 'bearSand', rubble: 'bearRubble', snow: 'bearSnow' };
 const densityOf = (m: number) => MATERIALS[m]?.density ?? (MATERIALS[m]?.state === MatState.Vegetation ? 0.4 : 1);
 
 /**
@@ -682,7 +671,7 @@ function joined(a: Run, b: Run): boolean {
 
 /**
  * (round 92) The joint between runs a and b (neighbouring columns), each from its own height up (a0, b0): how much
- * their side-holding intervals overlap (h, cells) and what that holds (ROCK.BEND, SHEAR; Infinity: bedrock in it).
+ * their side-holding intervals overlap (h, cells) and what that holds (ROCK.bend, SHEAR; Infinity: bedrock in it).
  */
 function joint(a: Run, b: Run, a0 = -Infinity, b0 = -Infinity): { h: number; cap: number } {
   let h = 0;
@@ -704,7 +693,7 @@ function joint(a: Run, b: Run, a0 = -Infinity, b0 = -Infinity): { h: number; cap
     }
   }
   if (!touches) return { h: 0, cap: 0 };
-  return { h, cap: never ? Infinity : s * Math.min(ROCK.BEND * h * h, ROCK.SHEAR * h) };
+  return { h, cap: never ? Infinity : s * Math.min(ROCK.bend * h * h, ROCK.shear * h) };
 }
 
 /** (round 92) a run's mass from height z0 up */
@@ -1004,7 +993,7 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
           const oz0 = o.stands ? zc : o.z0;
           if (o.z1 - oz0 < OVERLAP || joint(r, o, e.z0, oz0).h <= 0) continue;
           // (on past NECK_R columns, or past MAX_PIECE runs, or to what a flood before found so: keyed into the land, held)
-          if (e.hop + 1 > ROCK.NECK_R || list.length >= MAX_PIECE || (keyedAt.get(o) ?? -Infinity) >= zc) return keyed();
+          if (e.hop + 1 > ROCK.neck || list.length >= MAX_PIECE || (keyedAt.get(o) ?? -Infinity) >= zc) return keyed();
           B.set(o, { z0: oz0, hop: e.hop + 1 });
           list.push(o);
         }
@@ -1027,12 +1016,12 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
         let b = Infinity;
         for (const iv of r.ivs) if (iv.z0 < zc) b = Math.min(b, bearOf(iv.mat));
         if (r.ivs.some((iv) => iv.z0 < zc && MATERIALS[iv.mat].span === Infinity)) b = Infinity;
-        bear += ROCK.CRUSH * b;
+        bear += ROCK.crush * b;
         foot.push([px, py]);
       }
     }
     if (!foot.length || M <= 0) return;
-    const tips = !insideHull(foot, mx / M, my / M, ROCK.TIP_GIVE);
+    const tips = !insideHull(foot, mx / M, my / M, ROCK.tipGive);
     // (round 96) the leg: buckling over its free height, and the moment of the weight off its middle
     // (what's under each of its hanging runs: within a cell of it, a contact)
     const contact: [number, number][] = [];
@@ -1047,13 +1036,13 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     for (const r of list) if (r.stands) for (const iv of r.ivs) if (iv.z1 > zc - 1 && iv.z0 < zc + 1 && sideHolds(iv.mat)) strength = Math.min(strength, MATERIALS[iv.mat].strength);
     // (resting already: a quarter of its hanging runs within a cell of what's under them, its centre of mass over those —
     // it would drop onto that, not off its leg; judged as failing, it crushed its leg a cell a pass, a slump of rubble)
-    if (contact.length >= 0.25 * piece.length && insideHull(contact, mx / M, my / M, ROCK.TIP_GIVE)) return;
+    if (contact.length >= 0.25 * piece.length && insideHull(contact, mx / M, my / M, ROCK.tipGive)) return;
     const leg = legOf(foot, zc - floor0);
     // (only a slender leg buckles — free over more than twice its width; a stubby one, or one with nothing under the
     // piece below the cut (an overhang's mesa), crushes)
-    const buckle = leg.L > 2 * Math.sqrt(foot.length) ? (ROCK.BUCKLE * strength * leg.I) / (leg.L * leg.L) : Infinity;
+    const buckle = leg.L > 2 * Math.sqrt(foot.length) ? (ROCK.buckle * strength * leg.I) / (leg.L * leg.L) : Infinity;
     const lever = Math.hypot(mx / M - leg.cx, my / M - leg.cy);
-    const snaps = (M * lever) / leg.W - M / foot.length > ROCK.TENSILE * strength;
+    const snaps = (M * lever) / leg.W - M / foot.length > ROCK.tensile * strength;
     if (M <= bear && M <= buckle && !snaps && !tips) return;
     if (tips) result.why!.tip++;
     else if (M > bear) result.why!.crush++;
