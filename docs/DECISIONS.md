@@ -3,6 +3,35 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 111 (session 5, `places`) — terrain ideas; a noise lab
+
+- The user, verbatim:
+  "In terms of procedural generation what we have is already pretty awesome. In particular the way cliffs use voronoi
+  plus noise plus sdf to make steps and spires. However, I think it would be better if we had larger mesas that blend
+  into the heightmap directionally and where the ravines between them are traversable. I would use a voronoi at the
+  atlas scale and group several cells to define the mesa region, then choose heights of different edges with some
+  zero and blend height to the full mesa height and use the ridge noise to carve winding ravines in that. They can be
+  a good set up for flash floods. I would also often have these along costs and make coastal caves enter there so we
+  can see them from the ocean using the 2d fractal simplex with two thresholds and blending the height of the caves
+  relative to the surface and bringing them to just below the water level at the coast."
+  "I think it's worth generalizing the approach though which is to use many layers and masks to blend heightmaps and
+  create stark contrast in heights alongside places the heights interpolate more smoothly at various scales. It's ok
+  to have features that can't be traversed those are just walls/obstacles and height changes are great walls. Having
+  gradual changes blend in along side them (for example a break in the sheer cliff in which we blend height to the
+  ground to make a natural ramp."
+  "I also think mountains should be a bit bigger. We should have more biased features like noise where your stretch a
+  domain and turn bumps into ridges along a grain or radially warped."
+  "One fun noise idea I had is to do JFA but store the vector to the nearest feature at each point then adjust height
+  by noise along the feature border to make ridges perpendicular to isolines."
+  "None of this is high priority yet but a noise playground would be a cool way to showcase existing biomes as well as
+  a general pattern for generating new ones. I like what we have now though so don't break it but an experimental
+  sandbox I can use to review new interesting noise combos or noise generators would be fun."
+  "This actually ties in with the rooms and key door mechanics because we want to use SDF and blocking and known
+  controllers to partition our map with natural terrain features"
+- → Not high priority; don't change the atlas's generation. Branch `noiselab`: an experimental sandbox to review noise
+  combinations and generators — layers and masks blended into heightmaps, the existing biomes as presets, the ideas
+  above as experiments (BACKLOG TG1–TG8).
+
 ## 2026-10-29 — round 110 (session 5, `places`) — what the simulation is for
 
 - The user, verbatim:

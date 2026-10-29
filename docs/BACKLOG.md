@@ -12,6 +12,19 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 111 (2026-10-29, session 5, `places`) — terrain ideas and a noise lab (DECISIONS round 111)
+
+| id | item | size | status |
+|---|---|---|---|
+| TG1 | The noise lab: an experimental sandbox (its own level, the editor shell GE1) to review noise combinations and generators: a stack of layers and masks blended into a heightmap, drawn by the game's renderer; the existing biomes as presets; never changes the atlas's generation | M | open |
+| TG2 | Mesas: atlas-scale Voronoi cells grouped into a mesa region, edges given heights (some 0), height blended directionally to the full mesa height; ridge noise carves winding traversable ravines (flash-flood set-ups) | M | open |
+| TG3 | Coastal mesas with sea caves seen from the ocean: 2D fractal simplex with two thresholds as the cave mask, the cave's height blended relative to the surface, brought to just under the water level at the coast | M | open |
+| TG4 | The general approach: many layers and masks blending heightmaps; stark contrast (sheer walls are fine, they're obstacles) beside smooth interpolation at several scales; breaks in a cliff where the height blends to the ground as a natural ramp | M | open |
+| TG5 | Bigger mountains | S | open |
+| TG6 | Biased features: domain-stretched noise turning bumps into ridges along a grain; radially warped noise | S | open |
+| TG7 | JFA nearest-feature vectors: height adjusted by noise along the feature's border, so ridges run perpendicular to the isolines | M | open |
+| TG8 | Ties to rooms and key/door: SDFs, blocking and the known controllers' reach partition the map with natural terrain features (GE3) | L | open |
+
 ## Round 109 (2026-10-29, session 5, `places`) — more devices, generators and editors, better runs (DECISIONS round 109)
 
 | id | item | size | status |
