@@ -55,7 +55,8 @@ struct LavaU {
   cones: array<vec4<f32>, 4>,
   // (round 86) a meteor's blast, one tick: the ground in a ring round its bowl (x, y the middle, z the bowl's
   // radius, w the ring's outer radius) heated past melting - blast2.x cells of it at the bowl's rim, none at the
-  // ring's edge, which only glows; blast2.y 1 on
+  // ring's edge, which only glows; blast2.y 1 on; blast2.z where it hit (round 92); blast2.w (round 112) the share
+  // of the ground the bowl took under where it hit that is magma in the bowl now (each of the tick's steps a part)
   blast: vec4<f32>,
   blast2: vec4<f32>,
 };
@@ -120,7 +121,7 @@ fn wayOut(p: vec2<i32>, back: vec2<f32>) -> f32 {
 }
 
 fn spawnL(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, seed: u32, state: u32) {
-  let k = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
+  let k = ambientSlot(atomicAdd(&counters[0], 1u), arrayLength(&parts));
   parts[k] = PartL(vec4<f32>(pos, life), vec4<f32>(vel, 0.0), vec4<u32>(kind, seed, 0u, state));
 }
 /** How a cone rises at distance r from its vent (share of its peak's rate): concave sides, a crater in the middle. */
@@ -133,6 +134,20 @@ fn coneShape(off: vec2<f32>, R: f32, cr: f32, seed: f32) -> f32 {
   if (r >= cr) { return side; }
   let rim = pow(max(1.0 - cr / R, 0.0), 1.6);
   return rim - 0.18 * (1.0 - (r / cr) * (r / cr));
+}
+/**
+ * (round 112, BACKLOG MF1) The floor an event at height z melts or pours onto: the slot of the highest interval whose
+ * top is at most BLAST_UP over z with open air over it - the column's top, or the floor of a gap (under an overhang,
+ * a cut column's roof, a cave's); -1: none (z is inside the rock).
+ */
+fn floorAt(base: u32, n: u32, z: f32) -> i32 {
+  var f = -1;
+  for (var s = 0u; s < n; s++) {
+    let v = layers[base + s];
+    if (ivZ1(v) > z + BLAST_UP) { break; }
+    if (s + 1u == n || ivZ0(layers[base + s + 1u]) > ivZ1(v) + 1e-3) { f = i32(s); }
+  }
+  return f;
 }
 fn chance(i: u32, salt: u32) -> f32 { return f32(hash3(i, G.tick, salt) >> 8u) / 16777216.0; }
 
@@ -195,7 +210,16 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
     let t = clamp((bo - LU.blast.z) / max(LU.blast.w - LU.blast.z, 0.5), 0.0, 1.0);
     blastH = MELT + LATENT * LU.blast2.x * (1.0 - t) * (1.0 - t);
   }
-  if (d <= 1e-5 && gh <= 1.0 && blastH <= 0.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0 && spring <= 0.0) {
+  // (round 112, BACKLOG MF1; the user: "I would convert all the deleted material into magma or delete some and make
+  // surrounding glowing hot material magma") the bowl's ground turned to magma where it lay: a share (blast2.w) of
+  // what the bowl took under where it hit (edit.wgsl OP_CRATER's ellipsoid, lo up to the hit) - no pool poured on
+  var bowlLava = 0.0;
+  if (LU.blast2.y > 0.5 && bo < LU.blast.z) {
+    let dc = bo / LU.blast.z;
+    let bhz = LU.blast.z * sqrt(1.0 - dc * dc);
+    bowlLava = LU.blast2.w * max(LU.blast2.z - max(LU.blast2.z - bhz * 0.7, 2.0), 0.0);
+  }
+  if (d <= 1e-5 && gh <= 1.0 && blastH <= 0.0 && bowlLava <= 0.0 && !beamOn && vent < 0 && rise <= 0.0 && sAmt <= 0.0 && spring <= 0.0) {
     lavaOut[i] = vec4<f32>(0.0, 0.0, 0.0, 0.0);
     textureStore(spillOut, texCol(vec2<i32>(p)), vec4<f32>(0.0, 0.0, 0.0, f32(u32(sp.w) & 7u)));
     return;
@@ -213,6 +237,8 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   // (round 92, BACKLOG C19) the blast melts the ground at the rim's height (blast2.z: where it hit), not the top of
   // whatever stands there: a pillar by the bowl, or what hangs over the bowl, kept its top melting into lava that
   // poured into the crater and set there against what the cut had freed
+  // (round 112: a column standing far over it - an overhang, a cut column, a cave's roof - melts the floor of the gap
+  // at the blast's height instead, below: floorAt)
   if (blastH > 0.0 && top <= LU.blast2.z + BLAST_UP) { gh = max(gh, blastH); }
 
   // a rising cone: the bedrock grows, lifting all that lies on it (loose
@@ -317,11 +343,48 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   // the bore's melt (this column's and what came in): out in the open it
   // pours here; under rock it runs on, to the lowest open neighbour, else
   // out the way the bore came; with nowhere to go it sets on the floor
+  // (round 112, BACKLOG MF1) the blast under the column's top - the rim or the bowl under an overhang, a cut
+  // column, a cave's roof: its magma is the gap's at the blast's height (floorAt), sent out along that floor as the
+  // bore's melt is (it pours where the gap opens to the sky, or sets there), never put on the roof - lava lies on a
+  // column's top: it can't stand in a gap
+  var gapMelt = 0.0;
+  var gapLvl = 0.0;
+  if (blastH > 0.0 && top > LU.blast2.z + BLAST_UP) {
+    let f = floorAt(cs.x, n, LU.blast2.z);
+    if (f >= 0) {
+      let uf = u32(f);
+      let v = layers[cs.x + uf];
+      let dz = min(min((blastH - MELT) / LATENT, ivZ1(v) - ivZ0(v)), max(ivZ1(v) - FLOOR_Z, 0.0));
+      if (dz > 0.0) {
+        let z1 = ivZ1(v) - dz;
+        gapLvl = z1;
+        if (z1 <= ivZ0(v) + 1e-3) {
+          for (var s = uf; s + 1u < n; s++) { layers[cs.x + s] = layers[cs.x + s + 1u]; }
+          n -= 1u;
+          layers[cs.x + n] = IV_NONE;
+          gapLvl = select(0.0, ivZ1(layers[cs.x + max(uf, 1u) - 1u]), uf > 0u);
+        } else {
+          layers[cs.x + uf] = ivPack(ivZ0(v), z1, ivMat(v), ivAux(v));
+        }
+        gapMelt = dz;
+      }
+    }
+  }
+  if (bowlLava > 0.0) {
+    let f = floorAt(cs.x, n, LU.blast2.z);
+    if (f >= 0 && u32(f) + 1u == n) {
+      d += bowlLava;
+      heat += bowlLava * VENT_T;
+    } else if (f >= 0) {
+      gapMelt += bowlLava;
+      gapLvl = max(gapLvl, ivZ1(layers[cs.x + u32(f)]));
+    }
+  }
   let keep = way + 8.0 * round(min(boreHeat, 1e6));
   var spill = vec4<f32>(0.0, 0.0, 0.0, keep);
-  let carry = sAmt + melt;
+  let carry = sAmt + melt + gapMelt;
   if (carry > 0.0) {
-    let lvl = max(select(0.0, sLvl, sAmt > 0.0), select(0.0, meltLvl, melt > 0.0));
+    let lvl = max(max(select(0.0, sLvl, sAmt > 0.0), select(0.0, meltLvl, melt > 0.0)), select(0.0, gapLvl, gapMelt > 0.0));
     if (top + d <= lvl + OPEN_SLACK) {
       d += carry;
       heat += carry * LAVA_HOT;

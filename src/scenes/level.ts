@@ -1810,6 +1810,7 @@ export class LevelScene implements Scene {
     // open framed on the valley; portrait phones get closer than the width
     // alone would allow (the map is a diamond, its middle is what matters)
     // (a story level opens close on its green)
+    // (round 112: particles_draw.wgsl pxFloor scales the grains' 1-px floor by this framing — keep the two alike)
     if (first) this.core.camera.zoom = this.story ? 7 : (this.level.zoom ?? Math.max(1.5, Math.min(cssW * 1.9, cssH * 1.6) / 300));
   }
 
@@ -2765,11 +2766,13 @@ export class LevelScene implements Scene {
       parts.burst({ kind: PK.Haze, ...at, count: 14, speed: 1.5, spread: 1.5, payload: dust, vel: [dx * 22, dy * 22, 1] });
       parts.burst({ kind: PK.Ember, ...at, count: 5, speed: 2, spread: 1, vel: [dx * 16, dy * 16, 5] });
     }
-    // the rim's ground molten, glowing past it; a molten pool in the bowl (no cone)
-    this.lava?.blast(x, y, BOWL, BOWL * 1.45, 2.5, z);
+    // the rim's ground molten, glowing past it; (round 112, MF1 — the user: "I wouldn't use a vent pool I would convert
+    // all the deleted material into magma or delete some and make surrounding glowing hot material magma") a share of
+    // the bowl's ground magma where it lay, in the bowl (under a roof, the gap's at z: lava.wgsl floorAt) — no pool
+    const M = TUNE.meteor;
+    this.lava?.blast(x, y, BOWL, BOWL * M.ring, M.rim, z, M.melt);
     // (round 88: the rim melting and setting over the next seconds — judged until it's done)
     this.integrity?.watch(x, y, BOWL * 1.6, 15);
-    this.lava?.addVent(x, y, 2.5, 12, 3, 0);
     const phys = this.physics;
     // (round 88: what the bowl undercut falls as the columns' pieces — the ruins there aren't woken into bodies first)
     if (phys) phys.blast([x, y, z], BOWL, 28);

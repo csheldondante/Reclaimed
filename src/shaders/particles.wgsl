@@ -116,8 +116,12 @@ const MAT_SAND: u32 = 3u;
 const MAT_TRASH_P: u32 = 12u;
 const MAT_ASH_P: u32 = 17u;
 
+/** (round 112) set by the bursts kernel: what it spawns goes in the bursts' ring (common.wgsl burstSlot) */
+var<private> inBurst: bool = false;
 fn spawnFull(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, seed: u32, flags: u32, state: u32) {
-  let i = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
+  var i = 0u;
+  if (inBurst) { i = burstSlot(atomicAdd(&counters[4], 1u), arrayLength(&parts)); }
+  else { i = ambientSlot(atomicAdd(&counters[0], 1u), arrayLength(&parts)); }
   parts[i] = Particle(vec4<f32>(pos, life), vec4<f32>(vel, payload), vec4<u32>(kind, seed, flags, state));
 }
 fn spawn(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, payload: f32, seed: u32) {
@@ -525,6 +529,7 @@ fn fireEmit(@builtin(global_invocation_id) id: vec3<u32>) {
 fn bursts(@builtin(global_invocation_id) id: vec3<u32>) {
   let n = u32(requests[0].x);
   if (id.x >= n) { return; }
+  inBurst = true;
   let a = requests[1u + id.x * 3u];
   let b = requests[2u + id.x * 3u];
   // (carried: a mover's dust trails behind it)

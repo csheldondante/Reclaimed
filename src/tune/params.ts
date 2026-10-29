@@ -206,6 +206,15 @@ const SPEC = {
       chipSpeed: { label: 'chip speed', units: 'cells/s', min: 0, max: 12, step: 0.25, def: 3, help: 'chips of a soft landing (a hard one throws them at its own speed)' },
     },
   },
+  meteor: {
+    title: 'Meteor',
+    owner: 'scenes/level.ts impactFx (CPU) -> sim/lava.ts blast -> lava.wgsl (round 112, BACKLOG MF1)',
+    params: {
+      melt: { label: 'bowl to magma', units: 'share', min: 0, max: 1, step: 0.05, def: 0.3, url: 'mmelt', help: '(round 112, the user: "convert all the deleted material into magma or delete some") the share of the ground the bowl takes under where it hits that is magma in the bowl, where it lay; the rest goes as dust and ejecta' },
+      rim: { label: 'rim melt', units: 'cells', min: 0, max: 6, step: 0.1, def: 2.5, url: 'mrim', help: 'the ground melted to magma at the rim of the bowl (none at the edge of the ring, which only glows)' },
+      ring: { label: 'glow ring', units: '× bowl', min: 1, max: 2.5, step: 0.05, def: 1.45, help: 'how far out the ground glows hot, times the radius of the bowl' },
+    },
+  },
 } satisfies Record<string, GroupSpec>;
 
 export const TUNING = new Registry(SPEC);

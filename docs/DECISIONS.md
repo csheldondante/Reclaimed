@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `meteorfix`) — the meteor's magma, and its look on the PC
+
+- The user, verbatim: "Also, the meteor looks off on the PC and magma still seems to spawn at the top of the column I
+  think."
+- Asked what they meant, the user, verbatim: "I mean if I were making it I wouldn't use a vent pool I would convert all
+  the deleted material into magma or delete some and make surrounding glowing hot material magma. On PC the magma
+  effect is just a lot less noticable and the flash, wind, and glowing melted area after add a lot to the effect."
+- → No vent pool: a share of the ground the bowl deletes is magma where it lay, in the bowl (the rest dust and
+  ejecta), the rim and the ground round it melted and glowing in place; under a roof (an overhang, a cut column, a
+  cave) the magma is the gap's at the impact's height, never put on the column's top. The share is a slider
+  (tuning panel: Meteor). The effect reads the same on the PC as on the phone (BACKLOG MF1-MF3).
+
 ## 2026-10-29 — round 112 (session 5, `tilefix2`) — the eye side; disk ahead; the hero's screen
 
 - On a tile on the eye's side of the focus (TF5): the user chose option (a), the tile drawn cut the way the window cuts

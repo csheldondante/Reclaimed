@@ -23,6 +23,15 @@ struct VOut {
   @location(3) @interpolate(flat) shapeInfo: vec2<f32>,
 };
 
+// (round 112, BACKLOG MF2; the user: "On PC the magma effect is just a lot less noticable and the flash, wind, and
+// glowing melted area after add a lot to the effect") A grain under a pixel is drawn a pixel: at the phone's framing
+// (412x915 CSS, zoom 2.6) a dust grain, an ember, a chip is about 0.4 cells; a desktop, framed by the same rule
+// (level.ts: zoom = min(w 1.9, h 1.6) / 300, 4.8 at 1600x900) drew the same grains half that across and the
+// meteor's wind of dust covered a quarter as much of its ground. The floor scales with that framing: the phone's
+// stays 1 px, a 1600x900 desktop's 1.84 px - the same share of the screen, the same look at any size.
+const FIT_PHONE: f32 = 2.609;
+fn pxFloor() -> f32 { return max(1.0, min(CAM.viewport.x * 1.9, CAM.viewport.y * 1.6) / 300.0 / FIT_PHONE); }
+
 const CORNERS = array<vec2<f32>, 6>(
   vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
   vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(-1.0, 1.0));
@@ -197,7 +206,7 @@ fn vs(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VOut 
   // world-size square in screen space: viewport.z = px per world unit (the free camera's at
   // distance 1: divided by the depth, clip w — 1 in the fixed view)
   let cw = max(center.w, 1e-4);
-  let px = max(size * CAM.viewport.z / cw, select(1.0, 0.0, soft > 0.5));
+  let px = max(size * CAM.viewport.z / cw, select(pxFloor(), 0.0, soft > 0.5));
   var shape = vec2<f32>(1.0);
   if (kind == 13u) { shape = vec2<f32>(1.7, 0.9); }
   if (kind == 14u) { shape = vec2<f32>(1.3, 1.0); }

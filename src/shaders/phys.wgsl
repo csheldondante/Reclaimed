@@ -193,7 +193,7 @@ fn qrotP(q: vec4<f32>, v: vec3<f32>) -> vec3<f32> {
 fn qinvP(q: vec4<f32>) -> vec4<f32> { return vec4<f32>(-q.xyz, q.w); }
 
 fn spawnPart(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, seed: u32, state: u32) {
-  let i = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
+  let i = ambientSlot(atomicAdd(&counters[0], 1u), arrayLength(&parts));
   parts[i] = PartP(vec4<f32>(pos, life), vec4<f32>(vel, 0.0), vec4<u32>(kind, seed, 0u, state));
 }
 

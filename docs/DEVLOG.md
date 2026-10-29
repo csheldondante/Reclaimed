@@ -12559,3 +12559,42 @@ The run is on origin/runner/tilegate-premerge, runner-results/tilegate-premerge/
   - "frames not judged" is a note, not a failure;
   - `--throttle N` (CDP);
   - each row records the tile pipeline: the pacer's perFrame, guard and base, the land's made, baked, inFlight and noSlot.
+
+## 2026-10-29 — round 112, `meteorfix`: the meteor's magma where the crater is; the same look on the PC
+
+The user: "the meteor looks off on the PC and magma still seems to spawn at the top of the column", then "I wouldn't
+use a vent pool I would convert all the deleted material into magma or delete some and make surrounding glowing hot
+material magma. On PC the magma effect is just a lot less noticable and the flash, wind, and glowing melted area after
+add a lot to the effect" (DECISIONS round 112; BACKLOG MF1-MF4).
+
+- **The magma.** The impact opened a vent (2.5 s at 12 cells³/s) at the bowl's middle; a vent pours onto the top of
+  its column (`top + d`), so under anything the bowl left standing over it — an overhang, a cut column, a cave's roof —
+  the pool lay on the roof. scripts/meteorlook.mjs `--mode cave --at 52.5,112.6,6.5` (a meteor into the face of the
+  playground's plateau, 28 cells under its top): 38 cells³ of lava on the plateau's top before. The vent is gone. The
+  blast's uniform carries the share (`blast2.w`, meteor.melt 0.3): each bowl column gets that share of the ground the
+  bowl took under where it hit (edit.wgsl OP_CRATER's ellipsoid from its floor up to the hit: `z - max(z - 0.7 hz, 2)`)
+  as magma where it lies. `floorAt(z)` finds the column's floor for an event at z: the highest interval topping out no
+  more than BLAST_UP over z with air over it. The column's top: the magma lies on it. A gap's floor (a roof over it):
+  the rim's heat melts that floor (not the roof's top, as before round 92, nor nothing, as since) and both its melt and
+  the bowl's go out along the floor as the beam's bore melt does (the spill texture: to an open neighbour as low, else it
+  sets on the floor). After: 0 cells³ on the roof; the bowl holds 1 250 cells³ of magma in the playground (446 before)
+  and the face's cave glows at its floor. The bowl's magma sits in the bowl on the atlas, the rim melted round it.
+  MF4: lava can't stand in a gap (its depth is over the column's top), so what's under a roof runs out or sets.
+- **The PC.** Filmed at 1600x900, 2046x672 and the phone proxy (412x915, dpr 2.6), the phone tier at all three. Two
+  causes, neither in the lava's shading (world-sized, the same on both):
+  (a) scripts/meteorparts.mjs counts the particles: idle the ring spawns 10-18 a second, but after a meteor 15 000 a
+  second — its six ripples lift the loose ground over a 55-cell ring (kind 1, dust). Every spawn took the next slot of
+  one 16 384 ring, so 0.3 s after the impact the ring was all ripple dust and the meteor's own cloud (up to 2 048 haze
+  puffs), its shockwave puffs and its sparks had been written over (1-30 haze alive at 0.3-6 s, on both sizes). The
+  ring is two now (common.wgsl ambientSlot / burstSlot): the emitters, lava, the falls and the voxels in the first three
+  quarters (counters[0]), the bursts in the last (counters[4]; the counters buffer 32 bytes). After: 1 554 haze puffs
+  alive at 0.3 s, 1 378 at 6 s.
+  (b) On the phone each grain is under a pixel and is drawn one pixel (the 1-px floor), about 0.4 cells at its zoom of
+  2.6; the desktop is framed by the same rule (zoom = min(w 1.9, h 1.6) / 300: 4.8 at 1600x900), so the same grains
+  were drawn half as wide in cells and the wind of dust covered about a quarter of the ground it covers on the phone.
+  The floor scales with that framing (particles_draw.wgsl pxFloor = max(1, fit / 2.609)): the phone is unchanged, a
+  1600x900 desktop's grains 1.84 px. The shots (shots88/meteorfix after2-*) show the PC's dust wall and shockwave puffs
+  as the phone shows them.
+- Numbers in the tuning registry (Meteor: melt, rim, ring). Measured with the GPU shared and three pages at once, so
+  no frame times are claimed; the burst ring adds no work (a slot index), the bowl's magma is three multiplies in a
+  pass that already ran over those columns.

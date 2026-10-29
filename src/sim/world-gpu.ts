@@ -299,7 +299,8 @@ export class WorldGpu {
   // particles (contract: particles.wgsl Particle struct, 48 bytes)
   readonly particleCap: number;
   readonly particles: GPUBuffer;
-  /** [0] = ring head (monotonic), [1] = live estimate */
+  /** [0] = the ambient ring's head (monotonic), [1] birds flushed, [2] smoke dispersed, [3] grime washed, [4] (round 112)
+   *  the bursts' ring's head — the ring's two parts: common.wgsl ambientSlot / burstSlot */
   readonly particleCounters: GPUBuffer;
   /**
    * Fixed-point (×1e5) soil-contamination exchange per column. Particles
@@ -496,7 +497,7 @@ export class WorldGpu {
 
     this.particleCap = particleCap;
     this.particles = this.buf('particles', particleCap * 48, S);
-    this.particleCounters = this.buf('particleCounters', 16, S);
+    this.particleCounters = this.buf('particleCounters', 32, S);
     // two halves: [0, N) contamination, [N, 2N) dust landing from the air
     // (particles carry what the wind lifts off the loose layer; drift.wgsl
     // folds it back in where they land — round 15)

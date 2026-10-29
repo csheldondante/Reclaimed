@@ -660,7 +660,7 @@ const LAVA_QUENCH: f32 = 2500.0;
 const MAT_BASALT_Q: u32 = 23u;
 
 fn spawnQ(pos: vec3<f32>, vel: vec3<f32>, life: f32, kind: u32, seed: u32, state: u32) {
-  let k = atomicAdd(&counters[0], 1u) % arrayLength(&parts);
+  let k = ambientSlot(atomicAdd(&counters[0], 1u), arrayLength(&parts));
   parts[k] = PartQ(vec4<f32>(pos, life), vec4<f32>(vel, 0.0), vec4<u32>(kind, seed, 0u, state));
 }
 fn chanceQ(i: u32, salt: u32) -> f32 { return f32(hash3(i, LQ.step.x, salt) >> 8u) / 16777216.0; }

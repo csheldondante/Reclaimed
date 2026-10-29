@@ -12,6 +12,20 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 112 (2026-10-29, session 5, `meteorfix`) — the meteor's magma where the crater is; its look on the PC (DECISIONS round 112)
+
+The user, verbatim: "Also, the meteor looks off on the PC and magma still seems to spawn at the top of the column I
+think." Then: "I mean if I were making it I wouldn't use a vent pool I would convert all the deleted material into
+magma or delete some and make surrounding glowing hot material magma. On PC the magma effect is just a lot less
+noticable and the flash, wind, and glowing melted area after add a lot to the effect."
+
+| id | item | size | status |
+|---|---|---|---|
+| MF1 | No vent pool (C19's leftover: the impact's vent poured 30 cells³ on the top of whatever column stood in the bowl — measured: 38 cells³ of lava on the playground plateau's top, 28 cells over a meteor into its face). Now a share (meteor.melt, 0.3) of the ground the bowl takes under where it hit is magma in the bowl where it lay, the rim melted in place (meteor.rim, meteor.ring); a column standing more than 4 over the hit (an overhang, a cut column, a cave's roof) melts the floor of its gap at the hit's height instead, and that magma (and the bowl's) runs out along the floor to the open air as the beam's bore melt does, or sets there (lava.wgsl floorAt) — never onto the top. After: 0 cells³ on the roof, the cave in the face glowing on its floor | S | done (meteorfix) |
+| MF2 | The PC look: (a) every spawn shared one 16 384-particle ring at the phone tier, and a meteor's ripples lift ~15 000 grains a second: the ring was full of them 0.3 s after the impact and the meteor's cloud, shockwave puffs and sparks were written over the tick after they were made (1-30 haze puffs alive, of ~2 000) — on every screen; now the bursts have the ring's last quarter to themselves (common.wgsl burstSlot; 1 554 alive at 0.3 s, 1 378 at 6 s). (b) A grain under a pixel is drawn a pixel; the desktop's framing (zoom 4.8 at 1600x900, 2.6 on the phone) made the same grains half as wide in cells, so the meteor's wind of dust covered about a quarter as much ground: the floor now scales with the framing (particles_draw.wgsl pxFloor: 1 px on the phone, 1.84 px at 1600x900) | S | done (meteorfix) |
+| MF3 | The meteor's numbers in the tuning panel (Meteor: bowl to magma, rim melt, glow ring) | S | done (meteorfix) |
+| MF4 | (open) The magma under a roof can't be shown standing in the gap: lava lies on a column's top (its depth over `top`); under a roof it runs out to the open air or sets on the floor (no glow while it's inside). A gap-aware lava (a bed per column) would let a cave hold a glowing pool | M | open |
+
 ## Round 112 (2026-10-29, session 5, `tilefix2`) — the hero's grey screen; the gate by frames, by adapter; TF5
 
 The user, on the eye side: option (a), "the tile drawn cut". On the disk: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this up?"

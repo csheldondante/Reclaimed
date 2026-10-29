@@ -56,6 +56,11 @@ CPU can tell whether a tapped tree really had birds. Oil smoke (smoke with
 `m.w = 1`) counts each puff the wind disperses (or carries off the map) in
 `particleCounters[2]`; the level reads it ~2 Hz and pays Nature for it. Puffs
 that die in calm air drop their soot payload as soil contamination.
+(Round 112, `meteorfix`) The particle buffer is two rings: every kernel that spawns (particles.wgsl's emitters,
+lava.wgsl, liquid.wgsl, phys.wgsl) takes `common.wgsl ambientSlot` — the first three quarters, its head in
+`particleCounters[0]` — and the bursts kernel (`Particles.burst`: a meteor's cloud and sparks, a collapse's dust)
+`burstSlot`, the last quarter, its head in `particleCounters[4]` (the buffer is 32 bytes). A firehose of ambient
+grains (a meteor's ripples lift 15 000 a second) can't write over an event's burst the tick after it's made.
 
 Vegetation sway has state: `bend` (vec4 per column: lean xy, velocity zw) is
 a damped spring updated by the sway system (stiff while the wind pushes,

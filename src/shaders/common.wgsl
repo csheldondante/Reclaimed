@@ -367,6 +367,12 @@ fn nearLive(q: vec2<u32>) -> bool {
 fn flowFrozen(q: vec2<u32>, n: u32) -> bool { return asleep(q) && !slowTick(q, n); }
 
 fn dZero() -> Dirs { return Dirs(0.0, 0.0, 0.0, 0.0, 0.0, 0.0); }
+// (round 112, BACKLOG MF2) The particles' ring (world-gpu particles; every kernel that spawns: particles.wgsl,
+// lava.wgsl, liquid.wgsl, phys.wgsl) is two rings: the ambient emitters' in its first three quarters (counters[0]),
+// the bursts' in the last quarter (counters[4]: a meteor's cloud and sparks, a collapse's dust). A meteor's ripples
+// lift 15 000 grains a second, which took the whole ring in 0.3 s and wrote over its cloud the tick after it was made.
+fn ambientSlot(n: u32, len: u32) -> u32 { return n % (len - len / 4u); }
+fn burstSlot(n: u32, len: u32) -> u32 { return len - len / 4u + n % (len / 4u); }
 fn dSum(a: Dirs) -> f32 { return a[0] + a[1] + a[2] + a[3] + a[4] + a[5]; }
 fn dScale(a: Dirs, s: f32) -> Dirs { var o = a; for (var k = 0u; k < NDIR; k++) { o[k] = a[k] * s; } return o; }
 fn dAdd(a: Dirs, b: Dirs) -> Dirs { var o = a; for (var k = 0u; k < NDIR; k++) { o[k] = a[k] + b[k]; } return o; }
