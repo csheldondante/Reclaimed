@@ -18,7 +18,10 @@
 //     [--out C:/Projects/shots88/tilegate] [--baselines data/baselines/tilegate] [--update] [--no-golden] [--no-pan]
 //     [--extra "&x=1"] [--wait 35000] [--shrink 8]
 // --update writes the baselines (a view's: --update --screens desktop --zooms 5).
-import puppeteer from 'puppeteer-core';
+// (round 112, testspeed: on the shared runner, scripts/lib/runner.mjs — the worktree's build on its own port, a kept
+// Chrome profile, the GPU leased as a timing check (its frames need the GPU alone). `--url` is a server already up, as
+// before; without it the runner serves the build. The level is waited for by its boot marks, then --wait ms as before.)
+import { run } from './lib/runner.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PNG } from 'pngjs';
@@ -28,7 +31,6 @@ const opt = (k, d) => {
   return i >= 0 ? argv[i + 1] : d;
 };
 const has = (k) => argv.includes(`--${k}`);
-const url = opt('url', 'http://localhost:5233');
 const screens = opt('screens', 'desktop,phone').split(',');
 const zooms = opt('zooms', '14,8,5,3.5,2.2,1.3').split(',').map(Number);
 const loadMs = Number(opt('load', 8000));
@@ -171,25 +173,26 @@ function compare(tag, img) {
   return { changed: +changed.toFixed(4) };
 }
 
+await run({ name: 'tilegate', kind: 'timing', urlIsServer: true }, async (R) => {
+const url = R.url;
 for (const sk of screens) {
   const sc = SCREENS[sk];
-  const browser = await puppeteer.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: 'new',
-    args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${sc.w},${sc.h}`],
-    defaultViewport: { width: sc.w, height: sc.h, deviceScaleFactor: sc.dpr, hasTouch: sc.mobile, isMobile: sc.mobile },
-    protocolTimeout: 900000,
-  });
-  try {
-    const p = await browser.newPage();
+  {
+    const p = await R.page({ size: `${sc.w}x${sc.h}`, dpr: sc.dpr });
+    await p.setViewport({ width: sc.w, height: sc.h, deviceScaleFactor: sc.dpr, hasTouch: sc.mobile, isMobile: sc.mobile });
     p.on('pageerror', (e) => fails.push(`${sk}: page error ${e.message}`));
     p.on('console', (m) => {
       if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) fails.push(`${sk}: console error ${m.text().slice(0, 200)}`);
     });
     // (a fixed spot, world, time of day and season; nothing saved or loaded)
-    const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate&at=15024,14337&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${extra}`;
-    await p.goto(u, { waitUntil: 'load' });
-    await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.scene, { timeout: 240000 });
+    const params = { level: 'atlas', worldsave: 0, world: 'tilegate', at: '15024,14337', tod: 0.42, day: 100000, season: 0.3, hitch: 1, hitchhud: 0, q: sc.q ? 'low' : '' };
+    if (!sc.q) delete params.q;
+    for (const kv of extra.split('&').filter(Boolean)) {
+      const [k, v] = kv.split('=');
+      params[k] = v ?? '';
+    }
+    // (the page's own tier on the desktop: no q= — R.level's default q=low dropped for it)
+    await R.level(params, { page: p, noDefaultQ: !sc.q });
     await sleep(waitMs);
     const home = await p.evaluate(() => [...window.reclaimed.camera.target]);
     // 1-2: parked at the spot, each zoom
@@ -236,12 +239,12 @@ for (const sk of screens) {
         rows.push({ view: tag, mode: `pan ${panV}`, ...m, ok: !f.length });
         console.log(`${tag} pan ${panV}: ${f.length ? 'FAIL ' + f.join('; ') : 'ok'} — ${JSON.stringify(m)}`);
       }
-  } finally {
-    await browser.close();
+    await p.close();
   }
 }
 const secs = Math.round((Date.now() - t00) / 1000);
 fs.writeFileSync(path.join(outDir, 'tilegate.json'), JSON.stringify({ url, secs, fails, rows }, null, 1));
 console.log(`\n${fails.length ? `GATE FAILED (${fails.length})` : 'GATE PASSED'} in ${secs} s — ${path.join(outDir, 'tilegate.json')}`);
 for (const f of fails) console.log(`  ${f}`);
-process.exit(fails.length ? 1 : 0);
+for (const f of fails) R.fail(f);
+});

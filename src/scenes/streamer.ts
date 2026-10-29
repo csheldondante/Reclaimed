@@ -49,6 +49,7 @@ import { MATERIALS, MatState } from '../world/materials';
 import { GPUGEN, type FinishMeta, type FinishTarget } from '../atlas/finish';
 import { WINDOW_MAKE, type MakeHow } from '../atlas/atlas';
 import type { TileLandSource } from '../render/tileland';
+import { bootMark } from '../perf/boot-marks';
 
 /**
  * (perfopt, ?settle=0 — DECISIONS round 83: land comes in settled, "fixed in the cheap generator") A column's loose
@@ -635,6 +636,7 @@ export class Streamer {
         if (save.fresh) await s.clear();
         await this.restore(s);
         this.store = s;
+        bootMark('store');
       })
       .catch((e) => console.error(`[worldsave] the store failed: ${(e as Error)?.message ?? e}`));
     if (typeof document !== 'undefined')

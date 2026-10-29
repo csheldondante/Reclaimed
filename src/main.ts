@@ -17,6 +17,7 @@ import { serviceShot } from './ui/shot';
 import { PerfOverlay } from './ui/perf-overlay';
 import { startHitch } from './perf/start';
 import { pageBenchBoot, pageBenchDevice, pageBenchMode, pageBenchRun, pageBenchStandalone, pageBenchStartupError } from './perf/pagebench';
+import { bootMark } from './perf/boot-marks';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
@@ -27,6 +28,7 @@ const QUALITY: Record<string, Quality> = {
 };
 
 async function main() {
+  bootMark('module');
   const params = new URLSearchParams(location.search);
   // (low by default, for phones: round 54; ?q=medium|high on a desktop)
   const qualityName = params.get('q') ?? 'low';
@@ -87,6 +89,7 @@ async function main() {
     return;
   }
   if (bench) benchGpuUp(gpu.device);
+  bootMark('gpu');
   // (round 100, hitchrec: ?hitch=1 — the hitch recorder; its GPU memory count goes on the device before anything's made)
   const hitch = startHitch(params, gpu.device, ui);
   // (round 82, ?readback=0: no GPU readbacks every frame or few — no timestamps, the mesh's chunk records, the
@@ -168,6 +171,7 @@ async function main() {
   if (params.get('atlas') === 'view') show(await AtlasView.create(host));
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
+  bootMark('level-ready');
   if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({
@@ -186,6 +190,7 @@ async function main() {
   const pace = params.get('pace') !== '0';
   let inFlight = 0;
   let last = performance.now();
+  let firstFrame = '';
   const frame = (now: number) => {
     if (pace && inFlight >= 2) {
       hitch?.rec?.heldFrame();
@@ -198,6 +203,7 @@ async function main() {
     hitch?.rec?.frameStart(now);
     const c0 = hitch ? performance.now() : 0;
     scene?.frame(now, dt);
+    if (!firstFrame) bootMark((firstFrame = 'first-frame'));
     // (round 108: the bug report's picture, while the frame is still on the canvas)
     serviceShot(canvas);
     if (hitch) hitch.frameEnd(performance.now() - c0);

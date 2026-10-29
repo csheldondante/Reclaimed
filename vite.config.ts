@@ -52,5 +52,7 @@ export default defineConfig({
   // (round 102, bench v3: the build's time on the benchmark's start page — src/perf/bench.ts BUILD)
   define: { __BENCH_BUILD__: JSON.stringify(new Date().toISOString().slice(0, 16).replace('T', ' ')) },
   server: { port: 5173, strictPort: true },
+  // (round 112, testspeed: contract.html — the contract tier's page, src/test/contract.ts: a system on a tiny world)
+  build: { rolldownOptions: { input: { main: path.resolve(__dirname, 'index.html'), contract: path.resolve(__dirname, 'contract.html') } } },
   plugins: [hitchSink()],
 });

@@ -12469,3 +12469,107 @@ Shots: C:/Projects/shots88/tilegate/fix-final/ and old-27f0ffa/ (a frame per zoo
 - The window slide's long frame at close zoom, panning: 40-60 ms, gpu-held, on both builds (TX5).
 - The atlas is sized when it's first made. A window made bigger later keeps its budget (TX6).
 - At 1.3 on a desktop the atlas holds ~1000 tiles; zoom 0.8 (the level's floor) wasn't measured.
+
+## 2026-10-29 — round 112 (`testspeed`): tests faster — where a check's minute goes, a shared runner, a contract tier, warm snapshots
+
+The user, verbatim: "Please put some effort into making tests faster as they are the biggest bottleneck to iteration
+right now." and "Part of the reason for encapsulation and code deduplication is to minimize the test surface area and
+speed up tests, improve coverage and reliability." (BACKLOG TS1-TS12.)
+
+**Where the time goes** (the atlas level, `?skipmenu=1&level=atlas&q=low`, 412×915, desktop iGPU, D3D11; the boot
+marks src/perf/boot-marks.ts — `window.__boot` — and WorldCore.warmStats; scripts/run.mjs boot, scripts/warmprobe.mjs):
+
+| stage | Vite dev `--force`, fresh profile | build, fresh profile | build, kept profile | build, kept-up Chrome (2nd page) |
+|---|---|---|---|---|
+| server up | 0.2 s | 0.5 s (vite build, 1st time) / 0 (cached) | 0 | 0 |
+| module load (HTML → main.ts runs) | 0.8 s (250 requests, 9.4 MB) | 0.1 s (6 requests, 2.1 MB) | 0.1 s | 0.05 s |
+| WebGPU device | 0.3 s | 1.0 s | 1.0 s | 0.1 s |
+| atlas build (4–6 s of it its pipelines) | 7.2 s | 6.4 s | 8.6 s | 6.6 s |
+| first window | 0.2 s | 0.2 s | 0.2 s | 0.2 s |
+| the level made | 0.1 s | 0.1 s | 0.1 s | 0.1 s |
+| warmup: its loop of 1 800 steps | 30.7 s | 30.5 s | 34.8 s | 27.0 s |
+| warmup: the GPU's tail after it | 6.4 s | 12.0 s | 14.8 s | 7.6 s |
+| level-ready (attach, the streamer) | 2.0 s | 2.1 s | 2.5 s | 2.0 s |
+| **to a level a check can use** | **47.8 s** | **52.5 s** | **62.3 s** | **43.7 s** |
+
+(Run-to-run spread on this shared iGPU is ±15 %.) So the dev server isn't the cost: Vite 8 serves the 250 modules in
+under a second. **The warmup is 75–80 % of every atlas check's start**, and the user's own boot pays it too.
+
+The warmup's loop isn't CPU: its 1 800 steps encode in 73 ms in all (windfield 17, particles 9, oil 8 …); one step
+blocks for 18–20 s mid-loop (step ~1 330) — the GPU's queue full, the wire waiting. Started from a snapshot (below)
+with no ticks at all, the first big queue write blocks the same ~28 s, and an `onSubmittedWorkDone` queued right
+after `new LevelScene` resolves only then: **~28 s of GPU-process work queued by the level's constructors, before any
+tick; the 1 800 ticks themselves are ~8 s**. That work isn't cached by a kept-up Chrome: the second page in one Chrome
+pays it again (27.8 vs 28.8 s; the playground 31.4 vs 32.1 s), though it makes exactly the same 125 shader modules
+(identical hashes) — 9.56 MB of WGSL (common.wgsl, layers, materials prepended whole to each kernel, ~76 KB a
+module), 114 sync + 24 async compute pipelines, 18 sync + 11 async render pipelines. The contract tier's tiny world
+(the same sim and renderer kernels) does get cached across pages (10 s → 0.27 s), so the atlas's is either kernels
+whose cache never hits or per-page work that scales with the world. Two experiments behind switches, for the next
+browser batch with a Chrome trace (scripts/bootrace.mjs): `?wgslstrip=1` (gpu/wgsl-strip.ts: each module cut to what
+its entry points reach — a pure transform, 2.73 MB → 0.96 MB over the 47 shader files' kernels) and `?pipeasync=1`
+(gpu/pipeline.ts: makeCompute's pipelines made async all at once, the level waiting for them before its first tick).
+
+**What changed**
+- `scripts/lib/runner.mjs` — one place for the server, the browser, the page and the GPU's schedule:
+  - the server: a production build (`vite build`, 0.5–1.4 s, cached by the content of every build input — the whole
+    worktree top but docs/, scripts/, node_modules — so a source or data change rebuilds and nothing stale is served;
+    the runner's self-check found data/ missing from the first hash) on this worktree's own port (same origin every run),
+    hashed assets `immutable`, pages `no-cache`; `--dev` for checks that import /src/… in the page; `--server URL` for
+    one already up;
+  - the browser: Chrome on a profile kept per worktree and slot (`.testcache/chrome-<n>`), the origin's storage cleared
+    before every page (a fresh world store, as a fresh profile gave); `node scripts/run.mjs daemon` keeps one Chrome up
+    and checks connect to it (the in-memory pipeline cache: the contract tier's 10 s compile → 0.27 s);
+  - the GPU's schedule: a check says its kind — `behaviour` (states, sim-time speeds, coverage, pixels) shares the GPU
+    with up to 2 others, `timing` (frame cost) takes it alone and holds new behaviour checks back while it waits;
+    leases are files in the OS temp dir, across worktrees; `node scripts/run.mjs status` lists them;
+  - the page: waits for the boot marks (`level-ready`, the store open), not a fixed sleep; `R.ticks(p, n)` /
+    `R.simSeconds` wait in sim time, so a check sees the same simulation on a shared GPU as alone; console and page
+    errors and the fatal overlay reported; behaviour checks default to 412×915 at dpr 1;
+  - warm snapshots: `R.level(params, { snapshot: true })` / `--snap` — below.
+- `scripts/run.mjs` — `status | build | serve | daemon | boot | selfcheck [--gpu]`. The self-check: every asset
+  content-hashed, the pages no-cache, a WGSL edit (a kernel's own constant and common.wgsl's ROW_H, prepended to every
+  kernel) changes the build and its asset names; on the GPU, the edited kernel's constants come back new on the same
+  kept profile and origin — in the same browser and in a relaunched one — and the old build's come back old (the
+  user: "For the kept shaders in the profile just make sure we replace ones that update"). Passes.
+- Ported: shot.mjs, tileprobe.mjs, playwater.mjs, tilegate.mjs (their flags as before; `--url` is a server for the
+  last three, a path for shot). playwater's waits are sim time now (`--settle` sim seconds after each level is up,
+  where it slept 35–40 s of wall time; `settled()` polls in ticks); `--skip cost` makes it a behaviour check.
+- **The contract tier** (`contract.html`, src/test/contract.ts, scripts/contract.mjs): a system or a few on a tiny
+  world — a playground station's chunks cut out (src/test/crop.ts), the real WorldCore, its kernels, Simulation.step —
+  its contract inputs set and its outputs read back. `breach` (the pool held by its plug keeps its water within 2 %;
+  dug through as the station's button does, it pours into the basin: 0 → 576 cells³ in 1 800 ticks), `river` (the held
+  river wet down its whole length; awake, it drifts 0.07–0.26 off its table at the ramp, foot and run — the level's is
+  asleep once settled, where playwater checks it steady), `pool` (water on bare stone kept within 1 %: 512 → 510.3),
+  `stamp` (the self-check's kernel). Bitwise the same numbers run to run. 2.2 s for the four on a kept-up Chrome
+  (35–43 s cold, nearly all of it the kernels' compile), against a 45 s atlas boot before a check can start.
+- **Warm snapshots** (src/sim/snapshot.ts): every buffer and texture of the WorldGpu (the contract — every system's
+  state) and the sim's tick, captured in queue order at the warmup's end and put back by `WorldCore.warmFrom` (the
+  warmup's other work — the deferred pipelines, the tiers' rates, the primed derived buffers — done the same way).
+  Left out by design: uniform buffers (the Globals, re-uploaded) and what can't be copied back (a tick's outputs for
+  the CPU, editResult). `?warmsnap=<key>`: the runner's store (`/__snap/<key>`, `.testcache/snap/`), keyed by the
+  build's hash and the level's URL; `?warmcache=1`: the player's, IndexedDB (src/sim/warm-cache.ts), keyed by the
+  main chunk's content-hashed URL and the settings — the same capture and restore. 132 MB for the atlas window.
+  **Proof** (scripts/warmprobe.mjs --snap): the snapshot start's world equals the fresh warmup's, every world buffer
+  hashed (FNV-1a) at the boot mark 'warmup', particles too (restored); the sim goes on from it (1 799 → 1 919 ticks,
+  no errors). Two fresh warmups also agree on every buffer but `particles` (alone or three at once).
+  It saves the ticks' ~8 s of GPU (the warmup stage 38.4 → 31.8 s); the ~28 s above remains until its cause is fixed.
+- Boot marks (src/perf/boot-marks.ts) and WorldCore.warmStats: read-only; a test's hook (`window.__bootHook`) sees
+  the world at 'warmup' (the runner's stateHook hashes it there).
+
+**Before / after, per script** (wall time, the same checks, one at a time on the iGPU):
+
+| check | before (Vite dev `--force` + old script) | after (runner) |
+|---|---|---|
+| shot.mjs, an atlas picture | 62 s (`--wait 60000`, the wait a guess that must overshoot) | 52 s (waits for the level, then 2 s) |
+| tileprobe.mjs `--seconds 10` | 92 s | 91 s (its 30 s settle and sampling kept) |
+| playwater.mjs `--skip atlas` | 348 s | 321 s (sim-time waits; same results) |
+| contract tier (breach, river, pool) | — (an atlas boot, 45 s, before a check can start) | 2.2 s warm Chrome, 35–43 s cold |
+| atlas boot with the warm snapshot | 48–52 s | 42 s (the ticks' 8 s; the 28 s stall stays) |
+
+**Concurrency** (scripts/warmprobe.mjs, three at once in three Chromes): all three finished in 85 s against ~48 s
+each alone (1.7× the throughput), and their warmed worlds hash the same as the solo run's, every buffer but
+particles. Sharing the GPU doesn't change what a behaviour check sees — provided it waits in sim time (R.ticks), not
+wall time: with the GPU shared a wall-time wait sees fewer ticks.
+
+**Open** (BACKLOG TS7–TS12): the ~28 s of GPU-process work at every boot (the user's too) — the trace and the two A/Bs;
+the warm cache on the phone (its memory); render pipelines async too; the duplications that widen the test surface.

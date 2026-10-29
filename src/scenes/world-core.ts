@@ -21,6 +21,8 @@ import { DayNight, type Daylight } from '../weather/daynight';
 import { Weather } from '../weather/weather';
 import { Structures } from '../grids/structures';
 import { Places } from '../game/places';
+import { bootMark } from '../perf/boot-marks';
+import { restoreWorld, type WorldSnapshot } from '../sim/snapshot';
 
 /** the colour of rock cut open by the cutaway's slice (meshdraw.wgsl fsMesh's section) */
 const SECTION_DARK: [number, number, number] = [0.12, 0.11, 0.1];
@@ -90,6 +92,8 @@ export class WorldCore {
   /** bumped at a streamed window's slide's start and end: a readback that straddles one is stale (round 80) */
   windowEpoch = 0;
   light!: Daylight;
+  /** (round 112, testspeed) the last warmup's times: its loop of steps, the systems' encoding in it, its worst step, the GPU's tail after it */
+  warmStats?: { ticks: number; loopMs: number; encodeMs: number; worstStepMs: number; worstAt: number; firstSteps: number[]; tailMs: number; encode: [string, number][] };
 
   constructor(
     readonly host: Host,
@@ -177,13 +181,48 @@ export class WorldCore {
     const pipes = this.renderer.ready();
     this.tiers.apply();
     this.sim.prime(this.globals);
+    // (round 112, testspeed: where the warmup's time goes — its steps' CPU, the systems' encoding in them, the GPU's tail)
+    this.sim.encodeTotals.clear();
+    const t0 = performance.now();
+    let worst = 0;
+    let worstAt = -1;
+    const firstSteps: number[] = [];
     for (let i = 0; i < ticks; i++) {
+      const s0 = performance.now();
       // support needs a few ticks to propagate before collapse can be judged
       this.globals.collapseEnabled = i > 120;
       this.sim.step(this.globals, filter);
+      const dt = performance.now() - s0;
+      if (dt > worst) (worst = dt), (worstAt = i);
+      if (i < 3) firstSteps.push(+dt.toFixed(1));
     }
+    const t1 = performance.now();
     this.globals.collapseEnabled = true;
+    bootMark('warmup-cpu');
     await Promise.all([this.host.gpu.device.queue.onSubmittedWorkDone(), pipes]);
+    const encode = [...this.sim.encodeTotals].sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, +v.toFixed(0)] as [string, number]);
+    this.warmStats = { ticks, loopMs: +(t1 - t0).toFixed(0), encodeMs: +encode.reduce((a, [, v]) => a + v, 0).toFixed(0), worstStepMs: +worst.toFixed(1), worstAt, firstSteps, tailMs: +(performance.now() - t1).toFixed(0), encode };
+    bootMark('warmup', this);
+  }
+
+  /**
+   * (round 112, testspeed) The world a warmup left, put back instead of running it (sim/snapshot.ts): what the
+   * warmup does besides its ticks is done the same way — the deferred pipelines, the tiers' rates, the derived
+   * buffers primed — then every buffer and texture and the tick are the snapshot's.
+   */
+  async warmFrom(snap: WorldSnapshot): Promise<void> {
+    const pipes = this.renderer.ready();
+    this.tiers.apply();
+    this.sim.prime(this.globals);
+    bootMark('snap-primed');
+    restoreWorld(this, snap);
+    // (the Globals as the warmup's last tick left them: its tick, collapse judged)
+    this.globals.tick = snap.tick - 1;
+    this.globals.collapseEnabled = true;
+    this.sim.uploadGlobals(this.globals);
+    bootMark('warmup-cpu');
+    await Promise.all([this.host.gpu.device.queue.onSubmittedWorkDone(), pipes]);
+    bootMark('warmup', this);
   }
 
   /** Advance light, weather and the fixed-step simulation. Returns ticks run. */

@@ -50,6 +50,9 @@ stock-take.
   - `?perf=1` perf overlay (or press `` ` ``), `?q=low|medium|high` quality tier (default low)
   - `?speed=N` fast-forward simulation, `?day=<s>` day length, `?tod=0..1` time of day
 - `npm run typecheck` / `npm run build`
+- **Headless checks run on the shared runner** (`scripts/lib/runner.mjs`, round 112 — see "Running checks fast"):
+  `node scripts/shot.mjs --url "/?skipmenu=1&level=atlas" --out a.png`, `node scripts/contract.mjs`,
+  `node scripts/run.mjs status|build|serve|daemon|boot|selfcheck`.
 - `node scripts/shot.mjs` — headless Chrome on the real GPU (D3D11): screenshot,
   console capture, scripted input, GIF capture. Exits non-zero on page errors or
   the fatal overlay.
@@ -60,6 +63,26 @@ stock-take.
   renderer, map, packed, globals, nature, powers, scene, readBuffer, probe}`.
   E.g. `reclaimed.probe('contam', x, y, r, 2, 0)`, `reclaimed.weather.spawn(x, y)`,
   `reclaimed.globals.events.push({kind: 1, x, y, radius: 5, strength: 20})`.
+
+## Running checks fast (round 112)
+
+- Write a check on the runner: `import { run } from './lib/runner.mjs'; await run({ name, kind }, async (R) => {…})`.
+  It serves this worktree's production build (built in ~1 s, cached by content — never stale) on the worktree's own
+  port, keeps a Chrome profile per slot (shader cache) and clears the origin's storage before each page, waits for
+  the level by its boot marks (`R.level(params)`), and fails on page errors and the fatal overlay. No dev server,
+  no fixed 30 s sleeps. `--dev` only when the page imports `/src/...`.
+- Say the check's **kind**: `behaviour` (states, sim-time speeds, coverage, pixel diffs) may share the GPU with up to
+  two others; `timing` (frame cost, fps, GPU ms) takes it alone. The runner leases the GPU across worktrees;
+  `node scripts/run.mjs status` shows who has it. Main can run behaviour checks 2-3 at once: measured, a shared GPU
+  doesn't change their results (warmed worlds hash-identical) — as long as they **wait in sim time** (`R.ticks(p, n)`,
+  `R.simSeconds`), never wall time.
+- Most behaviour is a system's: test it in the **contract tier** first (`contract.html`, src/test/contract.ts — a
+  playground station's chunks, one system or a few, its contract buffers read back; seconds). The full atlas is the
+  integration tier: fewer checks, every system in play, run in parallel.
+- `--snap` (or `R.level(params, { snapshot: true })`) starts from the warmed world saved for this build and URL
+  (src/sim/snapshot.ts; the first run warms and saves); `node scripts/run.mjs daemon` keeps one Chrome up so pipeline
+  compiles are shared between checks. Behaviour checks default to 412x915 at dpr 1; pass `size`/`dpr` when it matters.
+- The boot timeline of any level: `node scripts/run.mjs boot --level atlas` (window.__boot: atlas, window, warmup …).
 
 ## Layout
 

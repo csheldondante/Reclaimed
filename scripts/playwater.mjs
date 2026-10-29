@@ -8,7 +8,11 @@
 //   cost    the frame at the river station, still and with rain over it
 //   node scripts/playwater.mjs [--url http://localhost:5291] [--out C:/Projects/shots88/playwater] [--skip atlas]
 //     [--base] (the places build: no river table — the flow model's playground; only the cost and the pictures)
-import puppeteer from 'puppeteer-core';
+//   (round 112, testspeed: on the shared runner, scripts/lib/runner.mjs — the worktree's build, a kept Chrome profile.
+//   A timing check while `cost` runs (the GPU alone); `--skip cost` makes it a behaviour check that may share the GPU.
+//   Its waits are sim time (R.ticks), not wall time: on a shared GPU the sim runs slower and a wall-time wait saw less
+//   of it. `--settle s` (sim seconds, default 15) after each level is up, where it waited 35-40 s of wall time.)
+import { run } from './lib/runner.mjs';
 import gifenc from 'gifenc';
 import { PNG } from 'pngjs';
 import fs from 'node:fs';
@@ -20,7 +24,6 @@ const opt = (k, d) => {
   const i = argv.indexOf(`--${k}`);
   return i >= 0 ? argv[i + 1] : d;
 };
-const url = opt('url', 'http://localhost:5291');
 const out = opt('out', 'C:/Projects/shots88/playwater');
 const [W, H] = opt('size', '412x915').split('x').map(Number);
 const dpr = Number(opt('dpr', '2.6'));
@@ -30,28 +33,18 @@ const base = argv.includes('--base');
 const tag = base ? 'base-' : '';
 const measureS = Number(opt('measure', '20'));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const settleS = Number(opt('settle', '15'));
 fs.mkdirSync(out, { recursive: true });
 
-const browser = await puppeteer.launch({
-  executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${W},${H}`],
-  defaultViewport: { width: W, height: H, deviceScaleFactor: dpr },
-  protocolTimeout: 10 * 60 * 1000,
-});
 let failed = false;
-const fail = (m) => {
+let fail = (m) => {
   failed = true;
   console.log(`FAIL ${m}`);
 };
-const page = async () => {
-  const p = await browser.newPage();
-  p.on('console', (m) => {
-    if (m.type() === 'error' || m.type() === 'warning') console.log(`[console.${m.type()}] ${m.text().slice(0, 600)}`);
-  });
-  p.on('pageerror', (e) => fail(`pageerror ${e.message}`));
-  return p;
-};
+let R;
+const page = () => R.page({ size: `${W}x${H}`, dpr });
+/** sim seconds on page p (60 ticks a second) */
+const simS = (p, secs) => R.ticks(p, Math.round(secs * 60));
 const gif = async (p, name, frames, every) => {
   const enc = GIFEncoder();
   for (let i = 0; i < frames; i++) {
@@ -106,7 +99,10 @@ const cost = async (p, secs) => {
   });
 };
 
-try {
+await run({ name: 'playwater', kind: skip.includes('cost') ? 'behaviour' : 'timing', size: `${W}x${H}`, dpr, urlIsServer: true }, async (r) => {
+  R = r;
+  fail = R.fail;
+  const url = R.url;
   // ---- atlas: a fall as the game has it
   if (!skip.includes('atlas')) {
     const v = await page();
@@ -133,9 +129,8 @@ try {
     console.log(`[atlas] fall ${JSON.stringify(fall)}`);
     if (fall) {
       const p = await page();
-      await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&tod=0.35&q=${q}&at=${fall.at.join(',')}`, { waitUntil: 'load' });
-      await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
-      await sleep(40000);
+      await R.level({ level: 'atlas', tod: 0.35, q, at: fall.at.join(',') }, { page: p });
+      await simS(p, settleS);
       await fatalCheck(p);
       const st = await p.evaluate((fall) => {
         const R = window.reclaimed;
@@ -158,10 +153,9 @@ try {
   // ---- the playground
   const p = await page();
   const t0 = Date.now();
-  await p.goto(`${url}/?skipmenu=1&level=playground&tutorial=0&q=${q}&perf=1`, { waitUntil: 'load' });
-  await p.waitForFunction(() => window.reclaimed?.scene?.stationsBar, { timeout: 240000 });
+  await R.level({ level: 'playground', q, perf: 1 }, { page: p });
   console.log(`[playground] up in ${((Date.now() - t0) / 1000).toFixed(1)} s`);
-  await sleep(35000);
+  await simS(p, settleS);
   await fatalCheck(p);
   await p.evaluate(() => window.reclaimed.scene.tunePanel?.toggle(false));
   const stations = await p.evaluate(() => window.reclaimed.scene.level.stations.map((s) => ({ id: s.id, actions: s.actions.map((a) => a.label) })));
@@ -194,17 +188,19 @@ try {
   if (!base && mode !== 'table') fail('the playground is not on the held rivers');
   // (settled: asleep)
   const settled = async (maxS) => {
-    const t = Date.now();
+    const t = await p.evaluate(() => window.reclaimed.core.globals.tick);
     let s;
+    let now = t;
     do {
-      await sleep(2000);
+      await simS(p, 2);
       s = await water();
-    } while (s.awake > 0 && Date.now() - t < maxS * 1000);
-    return { ...s, secs: +((Date.now() - t) / 1000).toFixed(0) };
+      now = await p.evaluate(() => window.reclaimed.core.globals.tick);
+    } while (s.awake > 0 && now - t < maxS * 60);
+    return { ...s, secs: +((now - t) / 60).toFixed(0) };
   };
   await pick('river');
   const s0 = await settled(60);
-  await sleep(10000);
+  await simS(p, 10);
   const s1 = await water();
   console.log(`[river] settled ${JSON.stringify(s0)}; 10 s later ${JSON.stringify(s1)}`);
   if (!base) {
@@ -227,16 +223,20 @@ try {
   await p.screenshot({ path: path.join(out, `${tag}river-fall.png`) });
   await gif(p, `${tag}river-fall.gif`, 16, 250);
   // (?perf=1: the overlay open, the GPU's timings read)
-  const still = await cost(p, measureS);
-  console.log(`[cost] river still: ${JSON.stringify(still)}`);
+  if (!skip.includes('cost')) {
+    const still = await cost(p, measureS);
+    console.log(`[cost] river still: ${JSON.stringify(still)}`);
+  }
   await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'visible'));
 
   // rain over it: wakes, rises, freezes again
   await click('rain');
-  await sleep(3000);
+  await simS(p, 3);
   await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'hidden'));
-  const rainCost = await cost(p, measureS);
-  console.log(`[cost] river in the rain: ${JSON.stringify(rainCost)}`);
+  if (!skip.includes('cost')) {
+    const rainCost = await cost(p, measureS);
+    console.log(`[cost] river in the rain: ${JSON.stringify(rainCost)}`);
+  } else await simS(p, measureS);
   await gif(p, `${tag}river-rain.gif`, 20, 300);
   const sr = await water();
   console.log(`[river] in the rain ${JSON.stringify(sr)}`);
@@ -252,7 +252,7 @@ try {
   if (stations.find((s) => s.id === 'river').actions.includes('surge')) {
     await pick('river');
     await click('surge');
-    await sleep(1500);
+    await simS(p, 1.5);
     await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'hidden'));
     await gif(p, `${tag}river-surge.gif`, 24, 400);
     const ss = await water();
@@ -267,7 +267,7 @@ try {
   await click('↺ reset');
   const s4a = await settled(90);
   // (asleep, a held river relaxes to its table — riverheld.wgsl, water_depth.wgsl G.tune.pipesRiverRelax — a while)
-  await sleep(15000);
+  await simS(p, 15);
   const s4 = await water();
   console.log(`[river] reset, settled ${JSON.stringify(s4a)}; 15 s later ${JSON.stringify(s4)}`);
   if (!base) for (const k of Object.keys(cols)) if (Math.abs(s4.w[k] - s1.w[k]) > 0.08) fail(`the reset didn't put the river's ${k} back (${s1.w[k]} -> ${s4.w[k]})`);
@@ -276,19 +276,19 @@ try {
   {
     await pick('breach');
     await click('↺ reset');
-    await sleep(3000);
+    await simS(p, 3);
     const probe = () => p.evaluate(() => window.reclaimed.probe('water', 32, 144, 2));
     const wet0 = await probe();
     await click('breach');
-    await sleep(1000);
+    await simS(p, 1);
     await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'hidden'));
     await gif(p, `${tag}breach.gif`, 30, 400);
     await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'visible'));
-    await sleep(3000);
+    await simS(p, 3);
     const wet1 = await probe();
     const basin = await p.evaluate(() => window.reclaimed.probe('water', 74, 144, 10));
     await click('↺ reset');
-    await sleep(2000);
+    await simS(p, 2);
     const wet2 = await probe();
     const plug = await p.evaluate(async () => {
       const R = window.reclaimed;
@@ -309,10 +309,5 @@ try {
     await p.screenshot({ path: path.join(out, `${tag}breach-reset.png`) });
   }
   await p.close();
-} catch (e) {
-  fail(e.stack ?? String(e));
-} finally {
-  await browser.close();
-}
-console.log(failed ? 'PLAYWATER: FAILED' : 'PLAYWATER: OK');
-process.exit(failed ? 1 : 0);
+  console.log(R.failed ? 'PLAYWATER: FAILED' : 'PLAYWATER: OK');
+});

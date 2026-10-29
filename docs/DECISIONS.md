@@ -3,6 +3,21 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `testspeed`) — tests faster
+
+- The user, verbatim: "Please put some effort into making tests faster as they are the biggest bottleneck to iteration
+  right now." → the shared runner (scripts/lib/runner.mjs), check kinds and GPU leases, the contract tier, warm
+  snapshots (BACKLOG TS1-TS12).
+- "Part of the reason for encapsulation and code deduplication is to minimize the test surface area and speed up
+  tests, improve coverage and reliability." → the contract tier (a system on a tiny world through its contract
+  buffers) and the duplications that widen the test surface listed to merge (TS13-TS18).
+- "For the kept shaders in the profile just make sure we replace ones that update" → content-hashed builds, no-cache
+  pages, and a self-check that an edited kernel (and an edited common.wgsl) never runs stale on a kept profile.
+- "Yeah let's do the snapshots and shader saved to profile so that we can run and test faster. That should speed up my
+  loading it too right?" → partly: the warm snapshot skips the warmup's ticks (~8 s on the desktop; the player's
+  `?warmcache=1`, opt-in until tried on the phone), but ~28 s of every boot is GPU-process work before the first tick
+  that a kept profile doesn't save — the next thing to fix (TS8), for the user's boot as much as the tests'.
+
 ## 2026-10-29 — round 112 (session 5, `tilefix`) — the terrain drawn on every screen; a merge gate
 
 - After opening the atlas on the deployed places build on their PC (tiles scattered over flat far land and grey void),
