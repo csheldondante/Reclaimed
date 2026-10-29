@@ -42,6 +42,7 @@ import type { MapData } from '../world/mapgen';
 import { SETTLE_TOL, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
 import { RIVERS } from '../sim/world-gpu';
+import { RiverFalls } from '../render/riverfalls';
 import { installFlow, type FlowKit } from '../flow/install';
 import { FLOWLAB } from '../levels/flowlab';
 import { mountRockPanel } from '../ui/rockbodypanel';
@@ -178,6 +179,9 @@ export class LevelScene implements Scene {
   private sleep?: Sleep;
   /** (?flow=1, docs/ARCHITECTURE.md "The flow model") the flow model: liquids as runs, steady state freezing */
   private flow?: FlowKit & { lab?: { breach: (spring?: number) => void } };
+  /** (riverfalls, BACKLOG WF1) the held rivers' falls as arcing sheets (render/riverfalls.ts): the atlas level with
+   *  ?rivers=table (the default there), ?falls=0 off */
+  private falls?: RiverFalls;
   private noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
   /** ?ceiling=1 (the perf ceiling, the atlas level): each frame only the camera (the drive) and the heightfield —
    *  far.ts's rings (?near=1: a ring a cell apart first, the default; 2: the usual four) and the far land; no sim,
@@ -296,6 +300,13 @@ export class LevelScene implements Scene {
       this.core.sleep = this.sleep;
       const kit = installFlow(this.core, this.sleep);
       this.flow = { ...kit, lab: level.flowSetup?.(kit) };
+    }
+    // (riverfalls, BACKLOG WF1: the held rivers' lips thrown off as the flow model's sheets, render-only)
+    if (level.atlas && RIVERS === 'table' && host.params.get('falls') !== '0') {
+      const { core } = this;
+      this.falls = new RiverFalls(host.gpu.device, core.world, host.profiler, core.renderer.targets.camera, core.camera);
+      core.sim.systems.push(this.falls);
+      core.renderer.addWaterPrisms(this.falls.inst, this.falls.indirect);
     }
     // (grids, the rendering branch, opens in free play; ?mode=story for the story's rules)
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
@@ -1567,6 +1578,8 @@ export class LevelScene implements Scene {
       settlements: this.settlements,
       units: this.units,
       townDebug: this.townDebug,
+      // (riverfalls) falls.probe(): the held rivers' falls listed at the last tick
+      falls: this.falls,
       // (?flow=1) the flow model: flow.water / flow.lava (LiquidSystem: addSpring), flow.steady (last read),
       // flow.breach() (the lab's plug dug out), flow.sleep (awake chunks)
       flow: this.flow && {
