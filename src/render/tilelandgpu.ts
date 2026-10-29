@@ -40,6 +40,8 @@ const IN_FLIGHT = Math.max(1, Number(new URLSearchParams(location.search).get('t
 const BAKES = Math.max(1, Number(new URLSearchParams(location.search).get('tilebakes') ?? 4) | 0);
 /** the bake's view of the scratch: its mesh chunks' side (cells; the grid's lattice: meshdraw.wgsl GRID_N = side + 2) */
 const MESH_SIDE = 32;
+/** (round 112, TC21) the height (world units) a render-only tile's land is taken to span when choosing its slot's size */
+const QUARTER_Z = 48;
 /** the tiles' overlap past their region (tilecache.ts OVERLAP) */
 const OVERLAP = 1;
 
@@ -81,11 +83,13 @@ interface Job {
   oz: number;
   /** its land submitted (generated) */
   made: boolean;
+  /** (round 112, TC21) a drawn tile made again at the view's smaller size (TileCache.wanted): not a wait for the screen */
+  remake?: boolean;
   times: LandTimes;
 }
 
 export class TileLandGpu {
-  readonly stats = { made: 0, baked: 0, failed: 0, inFlight: 0, dropped: 0, bakesLastFrame: 0, noSlot: 0 };
+  readonly stats = { made: 0, baked: 0, failed: 0, inFlight: 0, dropped: 0, bakesLastFrame: 0, noSlot: 0, remade: 0 };
   readonly latencies: LandTimes[] = [];
   private land: GPUBuffer;
   /** (round 108, TC18) where a slot's land is prepared as the window's is, and drawn from */
@@ -99,6 +103,8 @@ export class TileLandGpu {
   private prepK: ComputeKernel;
   private camK: ComputeKernel;
   private failed = new Set<string>();
+  /** (round 112) regions asked for so far: each one's place in the pacer's tiles' lane */
+  private asked = 0;
   private firstWanted = new Map<string, number>();
   private pendingDraw: LandTimes[] = [];
   /** the grid's chunks across and down the scratch (its lattice's), all of them drawn */
@@ -249,7 +255,7 @@ export class TileLandGpu {
     let baked = 0;
     for (const job of made) {
       if (baked >= BAKES || !gp) break;
-      if (this.cache.hasTile(job.rx, job.ry, cam.azimuth)) {
+      if (!job.remake && this.cache.hasTile(job.rx, job.ry, cam.azimuth)) {
         this.free(job);
         this.stats.dropped++;
         continue;
@@ -265,7 +271,8 @@ export class TileLandGpu {
         break;
       }
       job.times.baked = performance.now();
-      this.pendingDraw.push(job.times);
+      if (!job.remake) this.pendingDraw.push(job.times);
+      else this.stats.remade++;
       this.free(job);
       this.stats.baked++;
       baked++;
@@ -278,19 +285,22 @@ export class TileLandGpu {
       {
         const L = this.src.layout;
         const sl = this.slots[free];
-        const p = this.src.landTile(want.rx * R, want.ry * R, this.land, free * L.bytes, { buf: sl.summ, off: 0 });
+        // (round 112, tilefast: in the order asked — the camera's way — so the first asked finishes first)
+        const p = this.src.landTile(want.rx * R, want.ry * R, this.land, free * L.bytes, { buf: sl.summ, off: 0 }, this.asked++);
         if (!p) break;
         {
           const key = `${want.rx},${want.ry}`;
           const t0 = performance.now();
           const times: LandTimes = { key, wanted: this.firstWanted.get(key) ?? t0, start: t0, cols: 0, ways: 0, mapped: 0, ready: 0, cur: 0, baked: 0, drawn: 0 };
-          const j: Job = { rx: want.rx, ry: want.ry, slot: free, oz: this.src.oz(), made: false, times };
+          const f0 = this.cache.frameNo;
+          const j: Job = { rx: want.rx, ry: want.ry, slot: free, oz: this.src.oz(), made: false, times, remake: want.remake };
           this.jobs.set(key, j);
           this.slotJob[free] = j;
           p.then(
             () => {
               j.made = true;
               times.mapped = times.ready = performance.now();
+              times.frames = this.cache.frameNo - f0;
               this.stats.made++;
             },
             (e) => {
@@ -308,7 +318,9 @@ export class TileLandGpu {
 
   /** one region's bake, all on the GPU: the Globals, the prep, the camera, the grid into the G-buffer, the resolve */
   private bake(enc: GPUCommandEncoder, cam: Camera, B: Basis, rp: number, job: Job, gp: GPURenderPipeline): boolean {
-    const t = this.cache.allocTile(job.rx, job.ry, cam.azimuth);
+    // (round 112, TC21: a quarter slot when the region at the view's scale fits one with QUARTER_Z of height — its box
+    // is only known on the GPU, which fits the tile to the slot it's given: a taller one a little under the view's scale)
+    const t = this.cache.allocTile(job.rx, job.ry, cam.azimuth, this.cache.partFor(B, rp, QUARTER_Z));
     if (!t) return false;
     t.gpu = true;
     const [sx, sy, SW, SH] = this.cache.slotPx(t);
@@ -323,7 +335,7 @@ export class TileLandGpu {
     // (the job: the view, the scale, the scratch's oz, the atlas slot, its corner and size, the anchor (the region's
     // corner in the scratch: past the border), the region, the overlap, the border, the batch's side)
     const b = this.border;
-    dev.queue.writeBuffer(sl.job, 0, new Float32Array([...B.r, 0, ...B.u, 0, ...B.f, B.sz, rp, job.oz, t.slot, 0, sx, sy, SW, SH, b, b * ROW_H, -job.oz, 0, R, OVERLAP, b, R + 2 * b]));
+    dev.queue.writeBuffer(sl.job, 0, new Float32Array([...B.r, 0, ...B.u, 0, ...B.f, B.sz, rp, job.oz, this.cache.tpIndex(t), 0, sx, sy, SW, SH, b, b * ROW_H, -job.oz, 0, R, OVERLAP, b, R + 2 * b]));
     dev.queue.writeBuffer(sl.box, 0, new Int32Array([0x7fffffff, -0x7fffffff, 0, 0]));
     // (the bake camera's start: the frame's — its eye, viewport, no cut — the compute writes its matrix and place)
     const cd = new Float32Array(this.host.camData().slice(0));
@@ -346,4 +358,11 @@ export class TileLandGpu {
   }
 
   afterSubmit(): void {}
+
+  /** (round 112, the bench's why) region "rx,ry"'s land now */
+  stateOf(key: string): 'making' | 'made' | 'queued' | null {
+    const j = this.jobs.get(key);
+    if (j) return j.made ? 'made' : 'making';
+    return this.firstWanted.has(key) ? 'queued' : null;
+  }
 }

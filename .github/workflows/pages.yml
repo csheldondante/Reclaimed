@@ -7,7 +7,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, ambient, puzzle, mayhem, sandbox, grids, physics, agents, perf, builder, stream, atlas, places, perfopt, ceiling, rivers, flow, dialog, hybrid, simcull, collapse, seawall, runstory, settlements, lakes, phonecam, winmem, fardetail, farbake, rockbody, heroapi, streamspeed, runstream, meshinst, regionstore, zmesh, hitchrec, bench, gpugen, bench2, tilecache, simscale, slidehitch, ringwin, tileahead, frameprobe, tilelatency, pages, watersurf, agentspike, tilephone, riverfalls, playground, watershed, simtiers, tileparity, physfix, playwater, noiselab]
+    branches: [main, ambient, puzzle, mayhem, sandbox, grids, physics, agents, perf, builder, stream, atlas, places, perfopt, ceiling, rivers, flow, dialog, hybrid, simcull, collapse, seawall, runstory, settlements, lakes, phonecam, winmem, fardetail, farbake, rockbody, heroapi, streamspeed, runstream, meshinst, regionstore, zmesh, hitchrec, bench, gpugen, bench2, tilecache, simscale, slidehitch, ringwin, tileahead, frameprobe, tilelatency, pages, watersurf, agentspike, tilephone, riverfalls, playground, watershed, simtiers, tileparity, physfix, playwater, noiselab, tilefast]
   workflow_dispatch:
 
 permissions:
@@ -33,7 +33,7 @@ jobs:
         run: |
           set -e
           mkdir -p site
-          for b in main ambient puzzle mayhem sandbox grids physics agents perf builder stream atlas places perfopt ceiling rivers flow dialog hybrid simcull collapse seawall runstory settlements lakes phonecam winmem fardetail farbake rockbody heroapi streamspeed runstream meshinst regionstore zmesh hitchrec bench gpugen bench2 tilecache simscale slidehitch ringwin tileahead frameprobe tilelatency pages watersurf agentspike tilephone riverfalls playground watershed simtiers tileparity physfix playwater noiselab; do
+          for b in main ambient puzzle mayhem sandbox grids physics agents perf builder stream atlas places perfopt ceiling rivers flow dialog hybrid simcull collapse seawall runstory settlements lakes phonecam winmem fardetail farbake rockbody heroapi streamspeed runstream meshinst regionstore zmesh hitchrec bench gpugen bench2 tilecache simscale slidehitch ringwin tileahead frameprobe tilelatency pages watersurf agentspike tilephone riverfalls playground watershed simtiers tileparity physfix playwater noiselab tilefast; do
             git rev-parse -q --verify "origin/$b" >/dev/null || continue
             git worktree add -f "../wt-$b" "origin/$b"
             (cd "../wt-$b" && npm ci && npm run build)

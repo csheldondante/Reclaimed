@@ -208,7 +208,8 @@ async function timestampModes(device: GPUDevice): Promise<Record<string, unknown
  * memory to the GPU. I want to know on each device and at each zoom what is a max speed that is smooth, hitch free and
  * never lags behind the camera." From the hero's close zoom (14) to the sandbox's (2.76) and wider.
  */
-const PAN_ZOOMS = [14, 8, 5, 3.5, 2.76, 2.2];
+/** (round 112, ?benchzooms=5_2.2: only these — a headless run's shorter ramp) */
+const PAN_ZOOMS = typeof location !== 'undefined' && new URLSearchParams(location.search).get('benchzooms') ? new URLSearchParams(location.search).get('benchzooms')!.split('_').map(Number) : [14, 8, 5, 3.5, 2.76, 2.2];
 /** the widest window a page asks for (more and a phone's memory goes: the zoom is reported as not run) */
 // (round 104: 640 — window 768 is ~650 MB of GPU memory before the pool and the meshes, ~1.1 KB a column (slidehitch's
 // estimate): past what Chrome gives a Pixel 9a's GPU process; the phone's pan768 never finished loading)
@@ -279,6 +280,7 @@ function tileStepOf(T: any, baked0: number, t0: number, secs: number, lead: numb
     n: L.length,
     queue: st((t) => t.start - t.wanted),
     land: st((t) => t.mapped - t.start),
+    landFrames: st((t) => (t as { frames?: number }).frames ?? NaN),
     toBake: st((t) => t.baked - t.mapped),
     toDrawn: st((t) => t.drawn - t.baked),
     total: st((t) => t.drawn - t.wanted),
@@ -1736,7 +1738,7 @@ class Bench {
    * in the window but its region not written yet (and no tile there), or past it with no tile — those split by the pan's
    * way `dir` (world x y): ahead, to the side, behind.
    */
-  private missingWhere(dir: [number, number]): { win: number; ahead: number; side: number; behind: number } {
+  private missingWhere(dir: [number, number], why?: Record<string, number>): { win: number; ahead: number; side: number; behind: number } {
     const c = this.R.camera;
     const S = this.R.stream;
     const un: [number, number][] = S.unwritten ?? [];
@@ -1754,6 +1756,11 @@ class Bench {
           continue;
         }
         const along = (dx * dir[0] + dy * dir[1]) / (dl * (Math.hypot(dx, dy) || 1));
+        // (round 112, tilefast: why it's not drawn — TileCache.whyMissing — counted a point each)
+        if (why) {
+          const k = this.R.core.renderer.tiles?.whyMissing(x, y, c.azimuth) ?? 'none';
+          why[k] = (why[k] ?? 0) + 1 / (G * G);
+        }
         if (along > 0.5) o.ahead++;
         else if (along < -0.5) o.behind++;
         else o.side++;
@@ -2596,6 +2603,14 @@ class Bench {
         const baked0 = (TL?.land?.stats.baked as number | undefined) ?? 0;
         const lead: number[] = [];
         const miss = { win: 0, ahead: 0, side: 0, behind: 0 };
+        // (round 112, tilefast: the worst frame's why, a share of the screen each; the atlas's slots; the pacer's turns)
+        const why: Record<string, number> = {};
+        const ts0 = TL ? { ...TL.stats, noSlot: (TL.land?.stats.noSlot as number | undefined) ?? 0 } : null;
+        const pz = this.R.atlas?.pacer;
+        const pc0 = pz ? { tiles: pz.tiles, frames: pz.frames, chained: pz.chained } : null;
+        let perFrameSum = 0;
+        let usedMax = 0;
+        let drawnMax = 0;
         while (performance.now() - t0 < PAN_STEP_S * 1000) {
           const t = await frame();
           if (src === 'pool') {
@@ -2611,8 +2626,15 @@ class Bench {
           low = Math.max(low, this.parkedCover - this.writtenShare());
           if (TL) lead.push(1 - TL.coverageSplit(cam).lead);
           // (round 106: where what's not in detail is, the worst frame's of each kind)
-          const mw = this.missingWhere(sc.pan.dir);
+          const fw: Record<string, number> = {};
+          const mw = this.missingWhere(sc.pan.dir, fw);
           for (const k of ['win', 'ahead', 'side', 'behind'] as const) miss[k] = Math.max(miss[k], mw[k]);
+          for (const k in fw) why[k] = Math.max(why[k] ?? 0, fw[k]);
+          if (pz) perFrameSum += pz.perFrame;
+          if (TL) {
+            usedMax = Math.max(usedMax, TL.stats.used);
+            drawnMax = Math.max(drawnMax, TL.stats.drawn);
+          }
         }
         const secs = (performance.now() - t0) / 1000;
         const fps = (this.prof.frameNo - fno0) / secs;
@@ -2631,7 +2653,11 @@ class Bench {
         const slideDone = S.slideDone ? S.slideDone.slice(Math.min(sd0, S.slideDone.length)) : null;
         const bd = S.baseDone ? [...S.baseDone.slice(Math.min(bd0, S.baseDone.length))].sort((x: number, y: number) => x - y) : [];
         const slideCpu = S.trace.slice(Math.min(tr0, S.trace.length)).map((t: { t0: number; sync: number }) => r3(t.sync - t.t0));
-        const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) } } : null;
+        const whyR: Record<string, number> = {};
+        for (const k in why) whyR[k] = r3(why[k]);
+        const slots = TL && ts0 ? { slots: TL.stats.slots, mb: TL.stats.mb, usedMax, drawnMax, evicted: TL.stats.evicted - ts0.evicted, noSlot: ((TL.land?.stats.noSlot as number | undefined) ?? 0) - ts0.noSlot } : null;
+        const pacer = pz && pc0 ? { perFrameMean: frames.length ? r3(perFrameSum / frames.length) : null, turnsPerFrame: r3((pz.tiles - pc0.tiles) / Math.max(1, frames.length)), chained: pz.chained - pc0.chained } : null;
+        const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) }, missWhy: whyR, slots, pacer } : null;
         steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, ok: !fails.length });
         if (fails.length && strict) {
           strict = false;
