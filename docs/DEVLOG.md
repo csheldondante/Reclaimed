@@ -12559,3 +12559,39 @@ The run is on origin/runner/tilegate-premerge, runner-results/tilegate-premerge/
   - "frames not judged" is a note, not a failure;
   - `--throttle N` (CDP);
   - each row records the tile pipeline: the pacer's perFrame, guard and base, the land's made, baked, inFlight and noSlot.
+
+## Round 112 (2026-10-29, session 5, `panfinger`) — a one-finger pan tool; two fingers pan or pinch
+
+The user, on the phone: "Can we also make a pan tool I can use with one finger? Two finger drag us just not a good control" (and earlier, IN1: "it's hard to pan without zooming on the phone").
+
+**Why:** two fingers did both at once (controls.ts zoomed by the spread's ratio on every move and panned by half of
+each finger's move), so a two-finger pan always zoomed a little, and on a phone a pan is most of what the player does.
+
+**What:**
+- `src/input/gestures.ts`: the classifier, with no DOM (pointer streams in, intents out); `controls.ts` now only feeds
+  it the canvas's pointer events and runs a frame loop while a flick coasts. The mapping is unchanged for the mouse
+  and keys (LMB the tool's gesture, RMB pan, MMB and the wheel zoom); one change for every pan: its first move carries
+  the motion since the press, so the 6 px tap slop isn't lost and the ground stays exactly under the finger.
+- `TwoFinger`: a two-finger gesture is undecided until the spread changes 20 px and more than the centre has moved (a
+  pinch: the change so far applied at once, then zoom by the spread's ratio about the centre, panning with the centre
+  too) or the centre moves 10 px and more than the spread changed (a pan: never a zoom). It stays that until a finger
+  lifts. Undecided, it pans (harmless) but doesn't zoom.
+- The pan tool (editor `pan`, ✥, first in the grid): a primary drag pans (`ControlHandlers.panTool`), a tap does nothing,
+  a double tap (two taps within 320 ms and 40 px, `doubleTap`) goes back to the tool before it. Selected first when the
+  main pointer is coarse (a phone, a tablet) or `?pantool=1`.
+- A flick: a touch pan let go while moving (the speed over its last 100 ms, at least 0.25 px/ms, not held still 60 ms
+  before lifting, not after a pinch) coasts on, slowing by e every 325 ms; any press or the wheel stops it.
+- `Camera.panScreen(dx, dy)`: the level's pan, so the test drives the same code.
+- The hero's pad (`hero/touchpad.ts`): its pinch through `TwoFinger` (zoom only once it is a pinch). One finger stays
+  the stick; the camera follows the hero, so a pan there would be pulled straight back: not added (DECISIONS).
+
+**Verified:**
+- `node scripts/gestureunit.mjs` (29 checks, the real Camera at 412x915): the pan tool's wandering one-finger drag keeps
+  the ground point under the finger to 1e-9 and moves the view by exactly the finger's motion in world space; no slop
+  lost; a ~1 px/ms flick coasts ~325 px the same way and stops, a press stops it, a still finger doesn't coast; double
+  taps; a two-finger pan with ±6 px spread jitter (and one with ±15 px early wobble) never zooms and keeps the ground
+  under the centre; a clear pinch zooms by exactly the spread's ratio, anchored at its centre, and stays a pinch; the
+  other tools' gestures, taps and the touch fallback pan unchanged; the mouse's right drag, wheel.
+- `node scripts/pantouch.mjs` (headless Chrome on the GPU, 412x915 touch, CDP Input.dispatchTouchEvent, the playground
+  level (the sandbox's toolbox, boots faster than the atlas), every system as deployed): 6 of 6: the pan tool selected first; a one-finger drag held then lifted moved the view (-46.6690, -38.1838) cells for a finger motion of (-46.6690, -38.1838); a flick dragged 50 cells and coasted 47 more; a two-finger pan with ±4 px jitter kept zoom 10 → 10 and panned; a pinch ×2.67 zoomed 10 → 24 (the clamp); a double tap went back to the hands. Each check starts at the map's middle (the level clamps the camera to its map: an early run panned into the edge). Shots: C:/Projects/shots88/panfinger/before.png, after-pan.png, after-pinch.png.
+- No GPU work changed; nothing to measure on the frame.

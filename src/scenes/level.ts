@@ -1034,6 +1034,8 @@ export class LevelScene implements Scene {
         if (held()) return void this.storyPlay!.cam.skip();
         // (round 83: flying, the pointer only turns the view)
         if (camera.fly) return;
+        // (round 112: the pan tool only pans; a double tap goes back to the tool before it)
+        if (this.editor?.tool === 'pan') return;
         if (this.editor?.tool === 'smash') return void this.smashAt(sx, sy, true);
         if (this.editor?.tool === 'place') return void this.placeAtPick(sx, sy);
         if (this.editor?.tool === 'town') return void this.townAtPick(sx, sy);
@@ -1048,6 +1050,10 @@ export class LevelScene implements Scene {
         const [rx, ry] = toRender(sx, sy);
         core.renderer.pick(rx, ry).then((hit) => this.powers.tap(hit, wx, wy, sx, sy));
       },
+      doubleTap: () => {
+        if (!held() && !camera.fly && this.editor?.tool === 'pan') this.editor.back();
+      },
+      panTool: () => !held() && !camera.fly && this.editor?.tool === 'pan',
       dragStart: (sx, sy) => {
         if (held()) return false;
         if (camera.fly) {
@@ -1134,9 +1140,7 @@ export class LevelScene implements Scene {
           camera.fly.pitch = Math.max(-1.5, Math.min(1.5, camera.fly.pitch - dy * 0.004));
           return;
         }
-        const [wx, wy] = camera.screenDeltaToWorld(dx, dy);
-        camera.target[0] -= wx;
-        camera.target[1] -= wy;
+        camera.panScreen(dx, dy);
       },
       zoomAt: (sx, sy, f) => {
         if (!held()) zoomAt(sx, sy, f);

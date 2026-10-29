@@ -3,6 +3,19 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `panfinger`) — a one-finger pan tool; two fingers pan or pinch, not both
+
+- The user, verbatim: "Can we also make a pan tool I can use with one finger? Two finger drag us just not a good control" And earlier (BACKLOG IN1): "it's hard to pan without zooming on the phone".
+- Built (BACKLOG IN1, IN2): a pan tool (✥) in the sandbox toolbox, first in the grid and selected first on a touch
+  screen (`(pointer: coarse)`, or `?pantool=1`): a one-finger drag pans 1:1 under the finger, a flick coasts, a
+  double tap goes back to the tool before (the ✋ hands by default); picking any tool switches away. The ✋ stays the
+  hands (tap to grow, drag for wind). Two fingers: a pan or a pinch, decided once per gesture (a pinch once the
+  spread has changed 20 px and more than the centre moved; a pan once the centre moved 10 px and more than the
+  spread changed); a pinch also follows its centre, a pan never zooms. Keyboard and mouse unchanged.
+- The hero (judgement call, for the user to confirm): one finger stays the hero's stick and the camera follows the
+  hero, so no one-finger pan and no free look there (it would be pulled back at once); its two-finger pinch uses the
+  same dead zone, so a two-finger drag no longer zooms by accident.
+
 ## 2026-10-29 — round 112 (session 5, `tilefix2`) — the eye side; disk ahead; the hero's screen
 
 - On a tile on the eye's side of the focus (TF5): the user chose option (a), the tile drawn cut the way the window cuts

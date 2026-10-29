@@ -174,6 +174,16 @@ export class Camera {
   }
 
   /**
+   * The ground follows a screen drag of (dx, dy) CSS px: a point at the target's height stays exactly under the
+   * finger (the view is orthographic, so every height moves the same on screen).
+   */
+  panScreen(dx: number, dy: number): void {
+    const [wx, wy] = this.screenDeltaToWorld(dx, dy);
+    this.target[0] -= wx;
+    this.target[1] -= wy;
+  }
+
+  /**
    * CSS pixel → world point on the terrain, given a height lookup. Raising a
    * point by dz moves it up the screen by dz·cos(elev)·zoom, so we solve for the
    * ground under the cursor by fixed-point iteration on z.

@@ -4,7 +4,9 @@
 //   relative to the view (up the screen is away from the camera) — a short push walks, a long one runs.
 // - A tap is `onTap(sx, sy)`: the game says what it means (talk to the person there, attack what's there,
 //   walk to that spot).
-// - Two fingers pinch the zoom; the wheel zooms.
+// - Two fingers pinch the zoom, once the spread has clearly changed more than the fingers moved together
+//   (round 112, input/gestures.ts TwoFinger: a two-finger drag never zooms; it doesn't pan either, the camera
+//   follows the hero); the wheel zooms.
 // - The ⚔ button swings (held: swings again as soon as it can); a context button (`setAction`) shows what
 //   tapping it does (Talk to Ilsa) — E on a keyboard.
 // - Keys: WASD or the arrows walk, Space or J swings, E the context action.
@@ -13,6 +15,7 @@
 
 import type { HeroController, HeroIntent } from '../api/contracts/hero';
 import type { Camera } from '../render/camera';
+import { TwoFinger } from '../input/gestures';
 import './touchpad.css';
 
 const STICK = 56;
@@ -36,7 +39,7 @@ export class TouchPad implements HeroController {
   private bar: HTMLDivElement;
   private fill: HTMLDivElement;
   private stick: { id: number; x0: number; y0: number; x: number; y: number; t0: number; moved: boolean } | null = null;
-  private pinch: { a: number; b: number; d: number } | null = null;
+  private pinch: { a: number; b: number; g: TwoFinger } | null = null;
   private touches = new Map<number, [number, number]>();
   private keys = new Set<string>();
   private attackHeld = false;
@@ -103,7 +106,7 @@ export class TouchPad implements HeroController {
         if (this.touches.size === 2) {
           // (a second finger: a pinch, the stick let go)
           const [a, b] = [...this.touches.keys()];
-          this.pinch = { a, b, d: this.spread(a, b) };
+          this.pinch = { a, b, g: new TwoFinger(this.touches.get(a)!, this.touches.get(b)!) };
           this.release();
           return;
         }
@@ -119,9 +122,8 @@ export class TouchPad implements HeroController {
         const p = this.pinch;
         if (p) {
           if (!this.touches.has(p.a) || !this.touches.has(p.b)) return;
-          const d = this.spread(p.a, p.b);
-          this.zoom(d / p.d);
-          p.d = d;
+          const m = p.g.move(this.touches.get(p.a)!, this.touches.get(p.b)!);
+          if (m.zoom !== 1) this.zoom(m.zoom);
           return;
         }
         const st = this.stick;
@@ -249,12 +251,6 @@ export class TouchPad implements HeroController {
     this.stick = null;
     this.ring.style.display = 'none';
     this.knob.style.transform = '';
-  }
-
-  private spread(a: number, b: number): number {
-    const p = this.touches.get(a)!;
-    const q = this.touches.get(b)!;
-    return Math.max(1, Math.hypot(p[0] - q[0], p[1] - q[1]));
   }
 
   private zoom(f: number): void {

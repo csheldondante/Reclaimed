@@ -32,6 +32,7 @@ export interface EditorMaps {
 }
 
 export type EditTool =
+  | 'pan' // (round 112) a one-finger drag moves the view, 1:1 under the finger
   | 'wind' // the normal hands: taps grow, drags paint wind
   | 'pour'
   | 'build'
@@ -99,6 +100,7 @@ const HARD: [string, number][] = [
 ];
 
 const TOOLS: [EditTool, string, string][] = [
+  ['pan', '✥', 'Pan: drag with one finger to move the view (a flick coasts); double-tap for the tool before'],
   ['wind', '✋', 'Hands: tap to grow, drag to make wind'],
   ['pour', '⛆', 'Pour: drop loose material from above (a layer per press)'],
   ['build', '▲', 'Build: lay hard material (a layer per press)'],
@@ -124,8 +126,16 @@ const TOOLS: [EditTool, string, string][] = [
   ['cyclone', '🌀', 'Place a cyclone'],
 ];
 
+/** a touch screen is the main pointer (a phone, a tablet), or ?pantool=1 */
+function touchFirst(): boolean {
+  if (new URLSearchParams(location.search).get('pantool') === '1') return true;
+  return typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+}
+
 export class Editor {
   tool: EditTool = 'wind';
+  /** the tool before the pan tool (a double tap goes back to it) */
+  private before: EditTool = 'wind';
   /** the material for the current tool (pour: loose, build: hard) */
   material: number = MAT.Soil;
   radius = 6;
@@ -189,6 +199,7 @@ export class Editor {
     const matSel = el.querySelector<HTMLSelectElement>('[data-m]')!;
     const show = (sel: string, on: boolean) => (el.querySelector<HTMLElement>(sel)!.style.display = on ? '' : 'none');
     const sel = (t: EditTool) => {
+      if (t === 'pan' && this.tool !== 'pan') this.before = this.tool;
       this.tool = t;
       for (const b of el.querySelectorAll<HTMLButtonElement>('[data-t]')) b.classList.toggle('on', b.dataset.t === t);
       const list = t === 'pour' ? LOOSE : t === 'build' ? HARD : undefined;
@@ -228,7 +239,8 @@ export class Editor {
     };
     for (const b of el.querySelectorAll<HTMLButtonElement>('[data-mod]')) b.addEventListener('click', () => pickModel(b.dataset.mod!));
     pickModel(this.model);
-    sel('wind');
+    // (round 112: on a touch screen the view is panned most of the time: the pan tool first)
+    sel(touchFirst() ? 'pan' : 'wind');
     el.querySelector<HTMLInputElement>('[data-r]')!.addEventListener('input', (e) => (this.radius = Number((e.target as HTMLInputElement).value)));
     el.querySelector<HTMLInputElement>('[data-l]')!.addEventListener('input', (e) => (this.layers = Number((e.target as HTMLInputElement).value)));
     el.querySelector<HTMLInputElement>('[data-s]')!.addEventListener('input', (e) => (this.strength = Number((e.target as HTMLInputElement).value) / 100));
@@ -290,6 +302,11 @@ export class Editor {
       }
     });
     act('new', () => maps.fresh());
+  }
+
+  /** Back to the tool used before the pan tool (a double tap with it). */
+  back(): void {
+    this.select(this.before === 'pan' ? 'wind' : this.before);
   }
 
   /** Turn the model to place a quarter turn. */
