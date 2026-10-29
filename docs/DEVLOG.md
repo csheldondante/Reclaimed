@@ -12535,3 +12535,27 @@ pool hit. Nothing is added yet: the phone's disk rows have to stream from disk f
 - A grey sliver at a region's edge in one panning frame (desktop z3.5).
 - TX5: on the 3080 the phone view's z14 slide frame was 138 ms (gpu-busy).
 - The 3080's first run lost the device right after `vite --force` started (a compile burst?): noted, not reproduced.
+
+### Round 112, `tilefix2` (2): the 3080's premerge gate run (29 failures), read
+
+The run is on origin/runner/tilegate-premerge, runner-results/tilegate-premerge/.
+
+- **"window-undrawn" on every pan** (z14 59-63%, z8 29-36%) was a false positive. The pan shots are drawn whole. The
+  check reads the CPU's mirror of the built chunks, which is read back every 60th frame, and the hybrid's grid, and the
+  two move at different moments around a slide. It isn't the clear() change: a slide goes through hybrid.shift, not
+  clear. Main asked to keep judging pans. While the gate runs, the mirror is read back every frame (`FieldMesh.statPeriod`
+  1; 60 in play), and a chunk counts once it has been read undrawn for 5 frames running, keyed by its place in the
+  world. A readback is a frame or two behind, so a flash of an undrawn chunk longer than that is still caught.
+- **The slow wide fills** (desktop z1.3 43% out after 540 frames, "none" 212) were mostly the gate's own 60 Hz cap. After
+  a late tick it caught up, so the next frame was ~7 ms. That pulled the tile pacer's low envelope (`base`) to 8-11 ms.
+  Every 17 ms frame then counted as long, and the guard sat at one turn.
+  - *Shown on the laptop with `--throttle 3`:* base 7.8-11.7 ms, guard 1.
+  - *Fix:* each tick a whole period after the last, less a ms, with no catching up; base then read 15-18 ms.
+  - *What's left is real:* at 3x CPU throttle the page is CPU-bound at 38-45 fps, so the guard rightly holds one turn,
+    and a 1.3 screenful can't fill in 180 frames there.
+- I tried a guard averaged over four frames while filling. Under 3x throttle it made no difference, so it's removed.
+- **The gate:**
+  - one frame threshold, the criterion itself (58 fps), for every view (w384 was judged at 55.5 while others weren't);
+  - "frames not judged" is a note, not a failure;
+  - `--throttle N` (CDP);
+  - each row records the tile pipeline: the pacer's perFrame, guard and base, the land's made, baked, inFlight and noSlot.
