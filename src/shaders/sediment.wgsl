@@ -629,9 +629,9 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   // (round 108, simtiers: the wind's and the water's work on the loose ground at their tiers' rates here — 0 baked;
   // the slumps, spills, falls and piping are collapse, live always)
   let wr = tierRate(TIER_WIND, p);
-  // what the wind would lift: shown as dust either way (baked, the particles blow it and set none of it down)
-  let lifts = windOut(p, max(wr, 1.0));
-  let o = dScale(lifts, select(0.0, 1.0, wr > 0.0));
+  // what the wind lifts (round 112: baked, nothing — particles.wgsl shows dust there by the wind and the ground)
+  var o = dZero();
+  if (wr > 0.0) { o = windOut(p, max(wr, 1.0)); }
   let ow = waterOut(p, tierRate(TIER_RAIN, p));
   let so = slumpOut(p);
   let sm = smoothOut(p, wr);
@@ -646,7 +646,9 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   sedOut[i * SED + 1u] = sm;
   let sp = spillOut(p);
   var own = dZero();
-  own[0] = dSum(lifts) * air;
+  // (round 112: what the wind takes off — baked, none: the particles show the wind's dust over it themselves, modestly,
+  // rather than this tick's lift over ground that never changes, at full strength, for ever)
+  own[0] = dSum(o) * air;
   own[1] = out;
   // the flow the particles show (round 50): what slides or spills off this
   // column this pass, its main way, how far it drops there, its material

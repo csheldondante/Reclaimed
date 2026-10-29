@@ -26,6 +26,8 @@ import type { Physics, PhysBody } from '../physics/physics';
 import { TUNE } from '../tune/params';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { ExternalRegistry, OWNER_ROCK, type ExternalCol, type ExternalInstance } from '../sim/external';
+import { fieldMeshed } from '../world/materials';
+import { restingVoxels } from './rockbodies';
 
 /** (round 96) what bends: metal goes to the physics voxels (physics.ts), the rest of what falls stays rigid */
 const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust]);
@@ -107,7 +109,7 @@ export class Integrity {
    */
   readonly external: ExternalRegistry | null = null;
   /** (round 99) the resting rock: instance → its mesh's slot and transform (oldest first) */
-  private resting = new Map<number, { slot: number; m: number[]; mat: number; cells?: { x: number; y: number; z: number; mat: number }[]; history?: number }>();
+  private resting = new Map<number, { slot?: number; m: number[]; mat: number; cells?: { x: number; y: number; z: number; mat: number }[]; history?: number; vox?: Float32Array }>();
   /**
    * (round 96, the user: "a different material like metal (does it use the deformation physics the buildings
    * do?)") With rockbody on, metal that the judges free or cut is woken into the physics voxels (the GPU solver the
@@ -466,7 +468,7 @@ export class Integrity {
         const r = this.resting.get(inst.id);
         this.external.forget(inst);
         if (r) {
-          this.rockMesh?.release(r.slot);
+          if (r.slot !== undefined) this.rockMesh?.release(r.slot);
           this.resting.delete(inst.id);
         }
       }
@@ -493,7 +495,7 @@ export class Integrity {
     if (this.rigid) {
       for (const b of this.rigid.list) if (b.slot !== undefined) this.rockMesh?.release(b.slot);
       // (round 99: the resting rock's columns are the undo's or the warp's now — orphans there go back to ground)
-      for (const r of this.resting.values()) this.rockMesh?.release(r.slot);
+      for (const r of this.resting.values()) if (r.slot !== undefined) this.rockMesh?.release(r.slot);
       this.resting.clear();
       this.external?.clear();
       for (const g of [...this.ghosts, ...this.afterglow]) this.rockMesh?.release(g.slot);
@@ -714,20 +716,29 @@ export class Integrity {
     }
     this.flushLoose();
     const { data, count } = this.bodies.pack();
-    if (this.rigid?.list.length) {
+    if (this.rigid?.list.length || this.restingVox) {
       // (round 95) the rigid rock: a step, its hits (dust, sparks, a break), what came to rest written back
       const tRigid = performance.now(); // (round 100, hitchrec: timing)
-      if (this.world.slots.length && dt > 0) this.stepRigid(dt);
+      if (this.rigid?.list.length && this.world.slots.length && dt > 0) this.stepRigid(dt);
       record('rockbodies', performance.now() - tRigid); // (round 100, hitchrec: timing)
       const max = 16384;
       if (this.packF.length < max * 8) this.packF = new Float32Array(max * 8);
       const f = this.packF;
       const u = new Uint32Array(f.buffer);
       f.set(new Float32Array(data.buffer, data.byteOffset, Math.min(count, max) * 8));
-      // (the cubes of those without a mesh drawn; the rest only cast the shadow)
-      const cubes = (b: RockBody) => !!RB.cubes || b.slot === undefined;
-      const shown = this.rigid.packInto(f, u, Math.min(count, max), max, cubes);
-      const n = this.rigid.packInto(f, u, shown, max, (b) => !cubes(b));
+      // (the cells drawn as voxels: of those without a mesh, all; (round 112) of the rest, what's built — the rock's mesh
+      // is the field mesh's, which draws no concrete, brick or metal: a concrete piece was a body with an empty mesh,
+      // the user's "The concrete just immediately vanished". The rest of the cells only cast the shadow)
+      const drawn = (b: RockBody, k: { mat: number }) => !!RB.cubes || b.slot === undefined || !fieldMeshed(k.mat);
+      let shown = this.rigid!.packInto(f, u, Math.min(count, max), max, drawn);
+      // (round 112) and the resting ones' (their cells drawn so where they lie)
+      for (const r of this.resting.values())
+        if (r.vox?.length) {
+          const k = Math.min(r.vox.length / 8, max - shown);
+          f.set(r.vox.subarray(0, k * 8), shown * 8);
+          shown += k;
+        }
+      const n = this.rigid!.packInto(f, u, shown, max, (b, k) => !drawn(b, k));
       this.core.renderer.setBodies(u, n, shown);
     } else this.core.renderer.setBodies(data, count);
     this.rockDraws();
@@ -1202,7 +1213,7 @@ export class Integrity {
     }
     for (const a of this.afterglow) draws.push({ slot: a.slot, m: a.m });
     // (round 99) the resting rock, where it lies
-    for (const r of this.resting.values()) draws.push({ slot: r.slot, m: r.m });
+    for (const r of this.resting.values()) if (r.slot !== undefined) draws.push({ slot: r.slot, m: r.m });
     // (round 96) the metal: its mesh skinned to its particles
     for (const mb of this.metal) draws.push({ slot: mb.slot, m: [], skin: { offset: mb.body.offset, lo: mb.lo, dims: mb.dims, mat: mb.mat } });
     for (const g of this.ghosts) {
@@ -1378,7 +1389,8 @@ export class Integrity {
    */
   private settleRigid(b: RockBody): void {
     const rigid = this.rigid!;
-    if (this.external && b.slot !== undefined && this.restRigid(b)) return;
+    // (round 112: with or without a mesh — one without is drawn as its cells, as it was while it moved)
+    if (this.external && this.restRigid(b)) return;
     // (round 110: written back — no mesh for it, or nowhere to claim — is a bake: behind a burst of dust, DECISIONS
     // round 106's "hide every re-mesh or body-to-terrain swap behind a burst of dust")
     {
@@ -1460,9 +1472,12 @@ export class Integrity {
   }
 
   /** (round 99) A mesh slot for a piece; with no room, the oldest resting rock becomes ground to make some. */
-  private allocRock(cells: { x: number; y: number; z: number; mat: number }[]): number | undefined {
+  private allocRock(all: { x: number; y: number; z: number; mat: number }[]): number | undefined {
     const rm = this.rockMesh;
     if (!rm) return undefined;
+    // (round 112) its mesh is the field mesh's: only what that draws (what's built is drawn as voxels)
+    const cells = all.filter((c) => fieldMeshed(c.mat));
+    if (!cells.length) return undefined;
     for (;;) {
       const got = rm.alloc(cells);
       if (got) return got.id;
@@ -1520,7 +1535,7 @@ export class Integrity {
           out.push({ owner: OWNER_ROCK, kind: 'rock', m, state: { cells: r.cells, mat: r.mat }, cols: inst.cols.map((c) => ({ x: c.x - x0, y: c.y - y0, z0: c.z0, z1: c.z1 })), fallback: inst.fallback, id: r.history ?? inst.id });
           if (keep) continue;
           ext.forget(inst);
-          this.rockMesh?.release(r.slot);
+          if (r.slot !== undefined) this.rockMesh?.release(r.slot);
           this.resting.delete(inst.id);
         }
         return out;
@@ -1531,9 +1546,11 @@ export class Integrity {
         for (const t of things) {
           if (t.owner !== OWNER_ROCK) continue;
           const st = t.state as { cells: { x: number; y: number; z: number; mat: number }[]; mat: number };
-          const slot = this.rockMesh?.alloc(st.cells)?.id;
+          // (round 112: a mesh for what the field mesh draws of it; all built, none)
+          const meshed = st.cells.filter((c) => fieldMeshed(c.mat));
+          const slot = meshed.length ? this.rockMesh?.alloc(meshed)?.id : undefined;
           const inst = ext.adopt(OWNER_ROCK, t.cols.map((c) => ({ x: c.x + x0, y: c.y + y0, z0: c.z0, z1: c.z1 })), t.fallback);
-          if (slot === undefined) {
+          if (slot === undefined && meshed.length) {
             // (no room for its mesh: ground again)
             this.unrest(inst, 'room');
             continue;
@@ -1541,7 +1558,7 @@ export class Integrity {
           const m = [...t.m];
           m[3] += x0;
           m[7] += y0 * ROW_H;
-          this.resting.set(inst.id, { slot, m, mat: st.mat, cells: st.cells, history: t.id });
+          this.resting.set(inst.id, { slot, m, mat: st.mat, cells: st.cells, history: t.id, vox: this.voxOf(st.cells, m, slot) });
         }
       },
     };
@@ -1550,6 +1567,19 @@ export class Integrity {
   /** (round 99) the resting rock (meshinst): instances, their cells, for the tests */
   get restingCount(): number {
     return this.resting.size;
+  }
+
+  /** (round 112) voxels the resting bodies have drawn as voxels (what's built in them; all of one with no mesh) */
+  private get restingVox(): number {
+    let n = 0;
+    for (const r of this.resting.values()) n += (r.vox?.length ?? 0) / 8;
+    return n;
+  }
+
+  /** (round 112) a resting body's voxels: what its mesh doesn't draw (all of it without one) */
+  private voxOf(cells: { x: number; y: number; z: number; mat: number }[], m: number[], slot: number | undefined): Float32Array | undefined {
+    const v = restingVoxels(cells, m, (mat) => slot === undefined || !fieldMeshed(mat));
+    return v.length ? v : undefined;
   }
 
   /**
@@ -1600,7 +1630,9 @@ export class Integrity {
     if (!inst) return false;
     rigid.remove(b);
     rigid.stats.settled++;
-    this.resting.set(inst.id, { slot: b.slot!, m: rigid.matrix(b), mat: b.mat, cells: rigid.latCells(b) });
+    const m = rigid.matrix(b);
+    const cells = rigid.latCells(b);
+    this.resting.set(inst.id, { slot: b.slot, m, mat: b.mat, cells, vox: this.voxOf(cells, m, b.slot) });
     const cols = inst.cols.map((c) => ({ x: c.x, y: c.y, ivs: [] }));
     this.touchCols(cols, true);
     // (judged for what floats, not weighed — as a heap written back is)
@@ -1676,7 +1708,7 @@ export class Integrity {
     const b = keep.length >= 8 ? rigid.revive(keep, r.m) : null;
     if (!b) {
       // (what's left of it too small to be a body: rubble, behind dust)
-      this.afterglow.push({ slot: r.slot, m: r.m, frames: 2 });
+      if (r.slot !== undefined) this.afterglow.push({ slot: r.slot, m: r.m, frames: 2 });
       if (keep.length) {
         const m = r.m;
         const pts = keep.map((c) => {
@@ -1692,7 +1724,7 @@ export class Integrity {
     if (!lost) b.slot = r.slot;
     else {
       // (its mesh made again without what it lost: the swap behind a burst of dust)
-      this.afterglow.push({ slot: r.slot, m: r.m, frames: 2 });
+      if (r.slot !== undefined) this.afterglow.push({ slot: r.slot, m: r.m, frames: 2 });
       b.slot = this.allocRock(rigid.latCells(b));
       const [x0, y0, x1, y1] = rigid.box(b);
       this.bakeDust((x0 + x1) / 2, (y0 + y1) / 2, b.pos[2], Math.max(x1 - x0, y1 - y0) / 2, lost, b.mat);
@@ -1761,7 +1793,7 @@ export class Integrity {
     const r = this.resting.get(inst.id);
     this.resting.delete(inst.id);
     if (r) {
-      this.afterglow.push({ slot: r.slot, m: r.m, frames: 6 });
+      if (r.slot !== undefined) this.afterglow.push({ slot: r.slot, m: r.m, frames: 6 });
       if (this.rigid) {
         this.rigid.stats.baked++;
         this.rigid.bakedWhy[why] = (this.rigid.bakedWhy[why] ?? 0) + 1;

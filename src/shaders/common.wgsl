@@ -64,12 +64,12 @@ struct Tune {
   dustFall: f32,
   dustHazeDrag: f32,
   dustHazeRise: f32,
+  dustShown: f32,
   debrisDrag: f32,
   debrisGravity: f32,
   sprayDrops: f32,
   spraySplash: f32,
   sprayMist: f32,
-  pad49: f32,
   pad50: f32,
   pad51: f32,
 };
