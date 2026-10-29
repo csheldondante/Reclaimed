@@ -7,3 +7,4 @@ dist/
 perf-reports/
 # (round 112, tilefix) the merge gate's golden images (scripts/tilegate.mjs)
 !data/baselines/**/*.png
+.testcache/

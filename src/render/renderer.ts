@@ -3,7 +3,7 @@
 // Renders directly from the canonical representation; no meshing/LOD yet
 // (design doc §14: one straightforward path until profiling says otherwise).
 
-import { ignoreTeardown, makeBindGroup, makeCompute, makeLayout, makeModule, type ComputeKernel } from '../gpu/pipeline';
+import { ignoreTeardown, makeBindGroup, makeCompute, makeLayout, makeModule, renderPipe, type ComputeKernel } from '../gpu/pipeline';
 import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import layersWgsl from '../shaders/layers.wgsl?raw';
@@ -149,15 +149,15 @@ export class Renderer {
   private prepGroup: GPUBindGroup;
   private vegPrep: ComputeKernel;
   private vegPrepGroup: GPUBindGroup;
-  private opaquePipe: GPURenderPipeline;
-  private blendPipe: GPURenderPipeline;
+  private opaquePipe!: GPURenderPipeline;
+  private blendPipe!: GPURenderPipeline;
   /** (?skip=waterflat) the water's geometry with a flat fragment: a measuring aid */
-  private waterFlatPipe: GPURenderPipeline;
+  private waterFlatPipe!: GPURenderPipeline;
   /** (watersurf, FC2) with the field mesh: the water drawn as one surface (render/watersurf.ts), not prisms */
   readonly waterSurf?: WaterSurface;
   private waterSurfPipe?: GPURenderPipeline;
-  private rainPipe: GPURenderPipeline;
-  private partPipe: GPURenderPipeline;
+  private rainPipe!: GPURenderPipeline;
+  private partPipe!: GPURenderPipeline;
   private partGroup: GPUBindGroup;
   private opaqueGroup: GPUBindGroup;
   private plantGroup: GPUBindGroup;
@@ -168,9 +168,9 @@ export class Renderer {
   /** rigid bodies (F7): rotated voxels, 2 × vec4<u32> each (render.wgsl vsBody) */
   private bodyBuf: GPUBuffer;
   private bodyGroup: GPUBindGroup;
-  private bodyPipe: GPURenderPipeline;
+  private bodyPipe!: GPURenderPipeline;
   /** meshes over physics bodies (render.wgsl vsSkin) */
-  private skinPipe: GPURenderPipeline;
+  private skinPipe!: GPURenderPipeline;
   private shadowSkinPipe?: GPURenderPipeline;
   private meshSources: { indirect: GPUBuffer; group: GPUBindGroup; shadow?: GPUBindGroup }[] = [];
   /** the structure grids' exposed voxels, as rotated cubes (structprep.wgsl → the body pipeline) */
@@ -549,39 +549,39 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
       alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
     };
-    this.opaquePipe = device.createRenderPipeline({
+    renderPipe(device, {
       label: 'opaque',
       layout: pl,
       vertex: { module: drawModule, entryPoint: 'vsBox' },
       fragment: { module: drawModule, entryPoint: 'fsBox', targets: [{ format }, { format: PICK_FORMAT }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(true),
-    });
-    this.blendPipe = device.createRenderPipeline({
+    }, (p) => (this.opaquePipe = p));
+    renderPipe(device, {
       label: 'blended',
       layout: pl,
       vertex: { module: drawModule, entryPoint: 'vsWater' },
       fragment: { module: drawModule, entryPoint: 'fsWater', targets: [{ format, blend }, { format: PICK_FORMAT }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(false),
-    });
+    }, (p) => (this.blendPipe = p));
     if (this.waterSurf)
-      this.waterSurfPipe = device.createRenderPipeline({
+      renderPipe(device, {
         label: 'water-surface',
         layout: pl,
         vertex: { module: drawModule, entryPoint: 'vsWaterSurf' },
         fragment: { module: drawModule, entryPoint: 'fsWaterSurf', targets: [{ format, blend }, { format: PICK_FORMAT }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: depthStencil(false),
-      });
-    this.waterFlatPipe = device.createRenderPipeline({
+      }, (p) => (this.waterSurfPipe = p));
+    renderPipe(device, {
       label: 'water-flat',
       layout: pl,
       vertex: { module: drawModule, entryPoint: this.waterSurf ? 'vsWaterSurf' : 'vsWater' },
       fragment: { module: drawModule, entryPoint: 'fsWaterFlat', targets: [{ format, blend }, { format: PICK_FORMAT }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(false),
-    });
+    }, (p) => (this.waterFlatPipe = p));
 
     const groupFor = (inst: GPUBuffer | GPUBufferBinding, cam: GPUBuffer = this.camBuf, shadow: GPUTextureView = this.shadowView) =>
       makeBindGroup(device, 'draw', drawLayout, {
@@ -623,23 +623,23 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       5: this.structInst,
       6: this.structIndirect,
     });
-    this.bodyPipe = device.createRenderPipeline({
+    renderPipe(device, {
       label: 'bodies',
       layout: pl,
       vertex: { module: drawModule, entryPoint: 'vsBody' },
       fragment: { module: drawModule, entryPoint: 'fsBody', targets: [{ format }, { format: PICK_FORMAT }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(true),
-    });
+    }, (p) => (this.bodyPipe = p));
 
-    this.skinPipe = device.createRenderPipeline({
+    renderPipe(device, {
       label: 'skins',
       layout: pl,
       vertex: { module: drawModule, entryPoint: 'vsSkin' },
       fragment: { module: drawModule, entryPoint: 'fsBody', targets: [{ format }, { format: PICK_FORMAT }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depthStencil(true),
-    });
+    }, (p) => (this.skinPipe = p));
 
     // (round 99, ?meshinst=1) the instanced meshes: render.wgsl's bindings and look, their own vertex stage
     const miVertex = (module: GPUShaderModule): GPUVertexState => ({
@@ -649,14 +649,14 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     });
     const miModule = this.meshInst ? makeModule(device, 'meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, this.meshInst.wgsl(), renderWgsl, meshInstWgsl]) : undefined;
     if (this.meshInst && miModule) {
-      this.miPipe = device.createRenderPipeline({
+      renderPipe(device, {
         label: 'meshinst',
         layout: pl,
         vertex: miVertex(miModule),
         fragment: { module: miModule, entryPoint: 'fsInst', targets: [{ format }, { format: PICK_FORMAT }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: depthStencil(true),
-      });
+      }, (p) => (this.miPipe = p));
       this.miGroup = groupFor(this.meshInst.instances);
     }
 
@@ -678,14 +678,14 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
       if (look === undefined) throw new Error('?look= must be full, lookup or flat');
       const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
-      this.meshPipe = device.createRenderPipeline({
+      renderPipe(device, {
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
         vertex: { module: meshModule, entryPoint: 'vsMesh' },
         fragment: { module: meshModule, entryPoint: 'fsMesh', targets: [{ format }, { format: PICK_FORMAT }] },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: depthStencil(true),
-      });
+      }, (p) => (this.meshPipe = p));
       const meshPl = device.createPipelineLayout({ bindGroupLayouts: [meshLayout] });
       // (perfopt, ?defer=1: the G-buffer's pass and the resolve's layout — the mesh's plus the G-buffer)
       const resolveSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex' } as const;
@@ -835,7 +835,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           return makeBindGroup(device, 'rock-mesh', layout, { ...this.meshResources(cam, shadow, { mesh: rm.mesh, chunks: rm.chunks, layers: rm.layers }), 31: rm.uni, 32: p?.px ?? none, 33: p?.pr ?? none, 34: p?.pq ?? none });
         };
         // (round 99: depth only, through the sun's camera)
-        const shadow = shadowPipe('shadow-rock', device.createPipelineLayout({ bindGroupLayouts: [layout] }), module, 'vsRock');
+        // (made when a rock mesh is: synchronously, as its own pipe above)
+        const shadow = device.createRenderPipeline({ label: 'shadow-rock', layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }), vertex: { module, entryPoint: 'vsRock' }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
         return { pipe, group, shadow };
       };
       // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)
@@ -878,19 +879,19 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       // the sun's shadow pass: the same vertex shaders, depth only, through the
       // sun's camera (the prisms and plants draw the sides facing it)
       const shadowDepth: GPUDepthStencilState = { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 };
-      const shadowPipe = (label: string, layout: GPUPipelineLayout, module: GPUShaderModule, entryPoint: string) =>
-        device.createRenderPipeline({ label, layout, vertex: { module, entryPoint }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
-      this.shadowOpaquePipe = shadowPipe('shadow-opaque', pl, drawModule, 'vsBox');
-      this.shadowBodyPipe = shadowPipe('shadow-bodies', pl, drawModule, 'vsBody');
-      this.shadowSkinPipe = shadowPipe('shadow-skins', pl, drawModule, 'vsSkin');
-      this.shadowMeshPipe = shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMeshG');
-      this.shadowMeshCullPipe = device.createRenderPipeline({
+      const shadowPipe = (label: string, layout: GPUPipelineLayout, module: GPUShaderModule, entryPoint: string, set: (p: GPURenderPipeline) => void) =>
+        renderPipe(device, { label, layout, vertex: { module, entryPoint }, primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth }, set);
+      shadowPipe('shadow-opaque', pl, drawModule, 'vsBox', (p) => (this.shadowOpaquePipe = p));
+      shadowPipe('shadow-bodies', pl, drawModule, 'vsBody', (p) => (this.shadowBodyPipe = p));
+      shadowPipe('shadow-skins', pl, drawModule, 'vsSkin', (p) => (this.shadowSkinPipe = p));
+      shadowPipe('shadow-mesh', device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }), meshModule, 'vsMeshG', (p) => (this.shadowMeshPipe = p));
+      renderPipe(device, {
         label: 'shadow-mesh-cull',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
         vertex: { module: meshModule, entryPoint: 'vsMeshG' },
         primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: MESH_FRONT },
         depthStencil: shadowDepth,
-      });
+      }, (p) => (this.shadowMeshCullPipe = p));
       // (the pass draws into the map, so its groups bind a stand-in texel there)
       const none = device.createTexture({ label: 'shadow-none', size: [1, 1], format: SHADOW_FORMAT, usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
       this.noShadowView = none;
@@ -904,14 +905,14 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         mesh: meshGroupFor(L, none),
       };
       if (this.meshInst && miModule) {
-        this.miShadowPipe = device.createRenderPipeline({ label: 'shadow-meshinst', layout: pl, vertex: miVertex(miModule), primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth });
+        renderPipe(device, { label: 'shadow-meshinst', layout: pl, vertex: miVertex(miModule), primitive: { topology: 'triangle-list', cullMode: 'none' }, depthStencil: shadowDepth }, (p) => (this.miShadowPipe = p));
         this.miShadowGroup = groupFor(this.meshInst.instances, L, none);
       }
     }
 
     const rainLayout = makeLayout(device, 'rain', { 0: 'uniform', 10: 'uniform' }, VF);
     const rainModule = makeModule(device, 'rain', [commonWgsl, rainWgsl]);
-    this.rainPipe = device.createRenderPipeline({
+    renderPipe(device, {
       label: 'rain',
       layout: device.createPipelineLayout({ bindGroupLayouts: [rainLayout] }),
       vertex: { module: rainModule, entryPoint: 'vsRain' },
@@ -922,19 +923,19 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       },
       primitive: { topology: 'triangle-list' },
       depthStencil: depthStencil(false),
-    });
+    }, (p) => (this.rainPipe = p));
     this.rainGroup = makeBindGroup(device, 'rain', rainLayout, { 0: world.globals, 10: this.camBuf });
 
     const partLayout = makeLayout(device, 'particles-draw', { 0: 'uniform', 2: 'uniform', 3: 'read', 10: 'uniform' }, VF);
     const partModule = makeModule(device, 'particles-draw', [commonWgsl, materialsWgsl, particlesDrawWgsl]);
-    this.partPipe = device.createRenderPipeline({
+    renderPipe(device, {
       label: 'particles',
       layout: device.createPipelineLayout({ bindGroupLayouts: [partLayout] }),
       vertex: { module: partModule, entryPoint: 'vs' },
       fragment: { module: partModule, entryPoint: 'fs', targets: [{ format, blend }, { format: PICK_FORMAT, writeMask: 0 }] },
       primitive: { topology: 'triangle-list' },
       depthStencil: depthStencil(false),
-    });
+    }, (p) => (this.partPipe = p));
     this.partGroup = makeBindGroup(device, 'particles-draw', partLayout, { 0: world.globals, 2: world.materials, 3: world.particles, 10: this.camBuf });
   }
 

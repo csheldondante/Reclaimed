@@ -59,6 +59,32 @@ export function makeBindGroup(
   });
 }
 
+/**
+ * (round 112, testspeed) The boot's pipelines, made all at once off the GPU process's main thread: inside a batch
+ * (beginPipelineBatch … await endPipelineBatch — LevelScene.create round the level's making) makeCompute and
+ * renderPipe ask for createComputePipelineAsync / createRenderPipelineAsync and fill the kernel in when it's ready;
+ * endPipelineBatch resolves when every one is. Dawn compiles async pipelines on its worker threads in parallel, sync
+ * ones one after another on the GPU process's main thread with the page waiting (the atlas boot's 114 compute + 15
+ * render pipelines, DXC on D3D12: ~30 s there; 17 s for all of them async). Outside a batch — the menu, mid-game,
+ * lazily — they're made synchronously as before. A kernel used before its batch ends throws (setPipeline(undefined)).
+ */
+const pendingPipes: Promise<unknown>[] = [];
+let batchOpen = false;
+/** from now on the pipelines asked for are made async, together */
+export function beginPipelineBatch(): void {
+  batchOpen = true;
+}
+/** the batch over: resolves when every pipeline asked for in it is ready; what's made from then on is made synchronously */
+export async function endPipelineBatch(): Promise<void> {
+  batchOpen = false;
+  while (pendingPipes.length) await Promise.all(pendingPipes.splice(0));
+}
+/** A render pipeline handed to `set`: now, or in a batch when it's ready (before endPipelineBatch resolves). */
+export function renderPipe(device: GPUDevice, desc: GPURenderPipelineDescriptor, set: (p: GPURenderPipeline) => void): void {
+  if (batchOpen) pendingPipes.push(device.createRenderPipelineAsync(desc).then(set));
+  else set(device.createRenderPipeline(desc));
+}
+
 /** Compile a WGSL module and surface compilation errors loudly (with line context). */
 export function makeModule(device: GPUDevice, label: string, parts: string[], storagePages = false, check?: number): GPUShaderModule {
   // (round 107, pages: colPage the build's way — gpu/pages-mode.ts)
@@ -106,11 +132,18 @@ export function makeCompute(
     pageTab.layouts.add(layout);
     pageTab.storageKernels.add(label);
   }
-  const pipeline = device.createComputePipeline({
+  const desc: GPUComputePipelineDescriptor = {
     label,
     layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
     compute: { module: makeModule(device, label, parts, storage, check), entryPoint },
-  });
+  };
+  if (batchOpen) {
+    // (no pipeline till it's ready: setPipeline(undefined) throws — a kernel used before its batch ends is loud)
+    const k = { pipeline: undefined as unknown as GPUComputePipeline, layout };
+    pendingPipes.push(device.createComputePipelineAsync(desc).then((p) => (k.pipeline = p)));
+    return k;
+  }
+  const pipeline = device.createComputePipeline(desc);
   return { pipeline, layout };
 }
 

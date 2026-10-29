@@ -80,6 +80,10 @@ import { Turn, TURN_STEP } from '../render/turn';
 import { Compass, NORTH_AZIMUTH } from '../ui/compass';
 import { wikiLabels } from '../gm/map-names';
 import { atlasFacts } from '../gm/atlas-facts';
+import { bootMark } from '../perf/boot-marks';
+import { beginPipelineBatch, endPipelineBatch } from '../gpu/pipeline';
+import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
+import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
 
 export interface LevelOptions {
@@ -794,6 +798,7 @@ export class LevelScene implements Scene {
       // (round 104, the bench's watchdog: how far a page's load got — src/perf/bench.ts)
       (globalThis as { __benchStage?: string }).__benchStage = 'building the atlas';
       const atlas = await Atlas.build(host.gpu.device, atlasParamsFrom(host.params));
+      bootMark('atlas');
       (globalThis as { __benchStage?: string }).__benchStage = 'making the first window';
       const zMax = windowZMax(atlas.p.zTop, Number(host.params.get('zwin') ?? 0));
       // (round 88) the settlements' records, and their hook on the land, before the first window is made
@@ -820,13 +825,20 @@ export class LevelScene implements Scene {
       const origin: [number, number] = [Math.round((cx - W / 2) / REGION) * REGION, Math.round((cy - Hr / 2) / REGION) * REGION];
       const { map, oz, outside, ground } = await atlas.window({ w: W, h: Hr, zMax }, origin[0], origin[1], ATLAS_COL_K, TIER);
       // (round 80: its column batches timed in the perf overlay)
+      bootMark('window');
+      // (round 112: when the GPU has done all that's queued so far — the window's making, the pipelines asked for)
+      void host.gpu.device.queue.onSubmittedWorkDone().then(() => bootMark('window-gpu'));
       atlas.profiler = host.profiler;
       // (round 102: the tile pacer's GPU budget by the timestamps, when they're read)
       atlas.pacer.profiler = host.profiler;
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
     }
     (globalThis as { __benchStage?: string }).__benchStage = 'making the level';
+    // (round 112, testspeed: the pipelines its making asks for, compiled together off the GPU's main thread)
+    beginPipelineBatch();
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
+    bootMark('level');
+    void host.gpu.device.queue.onSubmittedWorkDone().then(() => bootMark('level-gpu'));
     // ecology excluded so nothing grows during settling; ground debris (dust,
     // litter, fallen leaves) accumulates fast so the level opens with it lying about.
     // A saved map was settled when it was saved: a short prime only.
@@ -836,7 +848,22 @@ export class LevelScene implements Scene {
     // where nothing is asleep yet and its rivers would run unheld)
     // (round 110: a fixed map's authored river table too — its rivers come in at their table)
     const still = riverMode() === 'table';
-    await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
+    // (round 112: the level's pipelines, asked for together while it was made, ready before its first tick — gpu/pipeline.ts)
+    await endPipelineBatch();
+    bootMark('pipelines');
+    // (round 112, testspeed: ?warmsnap=<key> — the warmed world from the test runner's cache when it has it, else the
+    // warmup and the result saved under the key; sim/snapshot.ts. The runner makes the key from the build and the URL.
+    // The player's own (?warmcache=0 off), kept in the browser by build and settings — sim/warm-cache.ts; the same snapshot)
+    const snapKey = host.params.get('warmsnap');
+    const warmK = !snapKey && host.params.get('warmcache') !== '0' ? warmKey(host.params) : null;
+    const snap = snapKey ? await loadSnapshot(snapKey) : warmK ? await loadWarm(warmK) : null;
+    if (snapKey || warmK) bootMark(snap ? 'snap-loaded' : 'snap-missing');
+    if (snap) await s.core.warmFrom(snap);
+    else {
+      await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
+      if (snapKey) void saveSnapshot(snapKey, captureWorld(s.core));
+      else if (warmK) void saveWarm(warmK, captureWorld(s.core));
+    }
     // (?flow=1) everything awake a moment after the warmup: the steady state then lets what's near steady
     // sleep (the generator's steady land frozen at once) and keeps what still flows unsteadily awake
     if (s.flow) {
