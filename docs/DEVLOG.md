@@ -9098,3 +9098,76 @@ docs/PAGES.md's first steps. The user chose "Pages"; ringwin's helpers were alre
   sediment 1.93 / 1.79 / 1.47, water 0.29 / 0.61 / 0.24. The swings either way are larger than any lookup could
   cost (sediment-out runs the same code in all three and moved 70%): the desktop decides nothing; the phone's run
   does (target: the table no more than 5% over the ring a pass).
+
+### Round 107 (`pages`), P2.1's browser check, the bench made robust (v2)
+
+- scripts/pagetest.mjs (ringtest made general: each load its own query), the atlas at 320: `?pages=ring` at offset 0
+  against `?pages=table` at 128,64 — 37 of 37 fields identical at the start, after 40 ticks and after two slides by
+  hand. The table became the default; TileLandGpu's scratch (render/tilelandgpu.ts, merged from places with
+  tilelatency) writes its own identity table into its copy of the Globals (it copies the world's whole).
+- The phone ran three of the six pages and lost its device. pagebench v2: each page's result in IndexedDB as well
+  as localStorage; "Download what we have" on every run page and on the start page; a 180 s watchdog; a lost device
+  or a GPU error shown with device.lost's reason and the stage it was at, kept, and on to the next page; and the
+  page's device destroyed before the next page is loaded — bench v4's fix for a phone whose next page never got a
+  device, which this bench lacked. The table's reads are clamped into the table (robustness only: see below).
+
+## 2026-10-28 — round 107 (`pages`): P2.2, page-major storage and texture page atlases
+
+docs/PAGES.md §5 P2.2, still dense: the window's chunks are the slots.
+
+- **Buffers page-major.** common.wgsl colIdx is slot * 256 + (y % 16) * 16 + x % 16, the slot the table's
+  (`colSlot`); colXY goes back through `Globals.pageInv` (the table backwards, 8 KB more: GLOBALS_BYTES 18304).
+  Every kernel already found its columns through the helpers (ringwin), so no kernel changed.
+- **Textures are page atlases**, a slot's 16 x 16 texels at (slot % nx, slot / nx) * 16, nx the window's chunks
+  across: the atlas is the window's size, so no texture changed size; with the identity at offset 0 it is window
+  order (the buffers never are).
+- **The slots** are the ring's places through `Pages.perm`: the identity, or `?pageperm=<seed>` shuffled — the
+  identity test of "no result may depend on a slot number". `?pages=ring` computes the identity's slots (a
+  shuffled table needs `?pages=table`, said at load).
+- **The CPU**: Pages.i (buffers and their CPU mirrors), Pages.t (a texture's mirror: Integrity's projection),
+  toWindow / toStore, texToWindow / texToStore; readBuffer / readTexture in window order as before. The uploads of a
+  whole map's field go through toStore (buffers) or texToStore (lavaSpring, riverFlow, reach).
+- **Regions**: a record's per-column buffers are page-major too (RECORD_FORMAT 2; finish.wgsl writes them so), so a
+  region <-> window copy is runs of pages — one rectangle a buffer for the identity's slots, as before, a run of
+  pages each for a shuffled table (Streamer.regionRects, the copier's gather); textures one rectangle or a page
+  each (texRects). The CPU's region forms stay row-major (regionRowsToPages at the record's boundary). The CPU
+  arrays' region parts are read and written by the region's slots, so a frozen region's are found where they lay.
+  TileLandGpu's scratch reads a record through colIdx at the identity: its surface is written page-major
+  (tilelandgpu.wgsl prep) and its Globals get the identity's table and inverse.
+- **Tests**: scripts/pageunit.mjs (Node; replaces ringunit) — Pages against a JS copy of the helpers both ways,
+  window sizes 96..512, six offsets, identity and two shuffles: 10.2 M checks, 0 wrong. pagetest, the atlas at
+  320, `?pages=table` at 0 against `?pages=table&ringbias=128,64&pageperm=7`: 37 of 37 identical at the start,
+  after 40 ticks and two slides. gpugentest (on P2.3): 22 regions and 6 raw tiles identical, GPU against CPU
+  (page-major records both). worldsavetest with ?rsverify=1: every thaw and load exact; the one FAIL is the known
+  warp-back one (SH11), as on places.
+- **Found**: `?pages=ring` in the page-major layout isn't deterministic even against itself (ring at 0 against
+  ring at 0: surface, moisture, veg, renderFields, wilt, layers, strata and levels differ from the load on). A
+  computed slot for a chunk off the window is huge and its index lands out of bounds, where the table's clamp lands
+  in the window: some kernel looks a chunk up off the window, unguarded. `?pagecheck=1` (debug) counts each
+  kernel's lookups of a chunk off the window (an atomic a kernel at binding 60, on every kernel with a storage slot
+  free); pagetest reads it back and asserts none.
+
+## 2026-10-28 — round 107 (`pages`): P2.3a, the slow turns keyed by world chunk (a deliberate baseline change)
+
+A sleeping chunk's slow turn every n ticks was staggered by its index in the window ((tick + c * 7) % n, common.wgsl
+slowTick and sim/cull.ts): the same land took another turn after a slide, and the turn followed the window, not the
+world. Now by its world chunk: (wx & 4095) * 7 + (wy & 4095) * 29 from the window's origin (Globals.org, whole
+chunks), common.wgsl chunkStagger and AwakeTiles' stagger alike. Results change (which tick a sleeping chunk
+updates on), so this is its own commit: the new baseline for P2.3b's identity test.
+
+## 2026-10-28 — round 107 (`pages`): P2.3b, the per-chunk state keyed by slot
+
+- Sleep keeps until / drowse / wokeAt / filter per slot; the Globals' sleep and drowse bits are the slots'
+  (common.wgsl asleep, drowsy, chunkLive look the chunk's slot up); the liquid's per-chunk counters (liquid.wgsl
+  chunkOf: act, the rescale) and waterChange are by slot, and flow/steady.ts wakes by slot (Sleep.wakeSlot,
+  isAwakeSlot). The callers still speak window chunks and cells (wake, only, isAwake).
+- A slide moves none of it: Sleep.shift makes fresh only the slots of the chunks coming in (they're the leavers').
+- The chunk lists' entries are packed, cx | cy << 6 | slot << 12 (AwakeTiles.packEntry; cullSource's wrapper finds
+  the columns from cx, cy; a window 64 chunks a side at most).
+- Not by slot, and why: the hybrid's hfield bits are mesh chunks (their own side, hex-offset), not pages; the
+  agents' GPU-built front list is consumed by its own kernel; the field mesh's chunk records are the renderer's.
+- Test: pagetest `?pages=table` at 0 against `&ringbias=128,64&pageperm=7`: 37 of 37 identical at the start, after
+  40 ticks and two slides.
+- framecost (one pass each, win 512, zoom 5, the iGPU's drift ~2x between runs): GPU passes a frame, parked 10.07 ms
+  (P2.1 `?pages=ring`, the old layout) against 10.71 (P2.3, the table, page-major); panning at 60 cells/s 9.61 against
+  10.3. Within the drift; ABAB runs to come.
