@@ -11,3 +11,4 @@ export * from './diplomacy';
 export * from './diplomacy-memory';
 export * from './units';
 export * from './hero';
+export * from './simtiers';

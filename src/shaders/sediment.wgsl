@@ -301,8 +301,8 @@ fn enclosed(q: vec2<i32>, w: vec2<f32>) -> bool {
   return true;
 }
 
-/** What the wind sends from q's top layer to each neighbour this pass. */
-fn windOut(q: vec2<i32>) -> Dirs {
+/** What the wind sends from q's top layer to each neighbour this pass, at `gain` times its rate (simtiers: a bake's). */
+fn windOut(q: vec2<i32>, gain: f32) -> Dirs {
   if (!inMap(q)) { return dZero(); }
   let j = colIdxI(q);
   let top = topOf(q);
@@ -332,13 +332,13 @@ fn windOut(q: vec2<i32>) -> Dirs {
   if (sum < 1e-4) { return dZero(); }
   // (at most a quarter of the top per pass: larger steps made neighbouring
   // columns over-correct each other into a checkerboard — round 17)
-  let total = min(top * 0.25, carry * (ws - lift) * dtD());
+  let total = min(top * 0.25, carry * (ws - lift) * dtD() * gain);
   return dScale(wt, total / sum);
 }
 
-/** What moving water carries from q's top layer downstream this pass. */
-fn waterOut(q: vec2<i32>) -> Dirs {
-  if (!inMap(q)) { return dZero(); }
+/** What moving water carries from q's top layer downstream this pass, at `gain` times its rate (0: baked, none). */
+fn waterOut(q: vec2<i32>, gain: f32) -> Dirs {
+  if (!inMap(q) || gain <= 0.0) { return dZero(); }
   let j = colIdxI(q);
   let top = topOf(q);
   if (top < 0.001 || water[j] < 0.02 || underBody(q)) { return dZero(); }
@@ -348,7 +348,7 @@ fn waterOut(q: vec2<i32>) -> Dirs {
   let thr = MATS[m].loose.w;
   if (sp < thr) { return dZero(); }
   let mob = MATS[m].loose.z * (1.0 - 0.8 * held(q));
-  let total = min(top * 0.2, (sp - thr) * 1.5 * mob * dtD() * 30.0);
+  let total = min(top * 0.2, (sp - thr) * 1.5 * mob * dtD() * 30.0 * gain);
   let wt = dSplit(v);
   let sum = dSum(wt);
   if (sum < 1e-6) { return dZero(); }
@@ -423,9 +423,9 @@ fn slumpOut(q: vec2<i32>) -> Dirs {
   return o;
 }
 
-/** The easing where the wind works: what q's top gives each lower neighbour (it blends in there). */
-fn smoothOut(q: vec2<i32>) -> Dirs {
-  if (!inMap(q)) { return dZero(); }
+/** The easing where the wind works: what q's top gives each lower neighbour (it blends in there); `gain` as windOut's (0: none). */
+fn smoothOut(q: vec2<i32>, gain: f32) -> Dirs {
+  if (!inMap(q) || gain <= 0.0) { return dZero(); }
   let top = topOf(q);
   if (top < 0.001 || runLevel(q) == SHUT) { return dZero(); }
   if (!(textureLoad(driftTex, texCol(vec2<i32>(q)), 0).w > 0.0 || windActive(q))) { return dZero(); }
@@ -434,7 +434,7 @@ fn smoothOut(q: vec2<i32>) -> Dirs {
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
     if (!inMap(n)) { continue; }
-    o[k] = max(here - seenAt(n, here), 0.0) * min(WIND_SMOOTH * simStep(), 0.15) * (1.0 - held(q));
+    o[k] = max(here - seenAt(n, here), 0.0) * min(WIND_SMOOTH * simStep() * gain, 0.15) * (1.0 - held(q));
   }
   let s = dSum(o);
   if (s > top * 0.6) { o = dScale(o, top * 0.6 / s); }
@@ -626,10 +626,15 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   let p = vec2<i32>(id.xy);
   let i = colIdxI(p);
   let mat = driftMatAt(p);
-  let o = windOut(p);
-  let ow = waterOut(p);
+  // (round 108, simtiers: the wind's and the water's work on the loose ground at their tiers' rates here — 0 baked;
+  // the slumps, spills, falls and piping are collapse, live always)
+  let wr = tierRate(TIER_WIND, p);
+  // what the wind would lift: shown as dust either way (baked, the particles blow it and set none of it down)
+  let lifts = windOut(p, max(wr, 1.0));
+  let o = dScale(lifts, select(0.0, 1.0, wr > 0.0));
+  let ow = waterOut(p, tierRate(TIER_RAIN, p));
   let so = slumpOut(p);
-  let sm = smoothOut(p);
+  let sm = smoothOut(p, wr);
   let po = pipeOut(p);
   let lost = dSum(o);
   // (what the wind lifts partly goes up into the air: the particles carry it
@@ -641,7 +646,7 @@ fn outflow(@builtin(global_invocation_id) id: vec3<u32>) {
   sedOut[i * SED + 1u] = sm;
   let sp = spillOut(p);
   var own = dZero();
-  own[0] = lost * air;
+  own[0] = dSum(lifts) * air;
   own[1] = out;
   // the flow the particles show (round 50): what slides or spills off this
   // column this pass, its main way, how far it drops there, its material
@@ -727,6 +732,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       if (a > otherMax) { otherMax = a; otherMat = mn; }
     }
   }
+  // (round 108, simtiers: the wind's deposits at its tier's rate here; baked, none — the dust still blows)
+  let wr = tierRate(TIER_WIND, p);
   // dust storms drop dust where the wind is broken (sheltered spots, hollows)
   for (var k = 0u; k < 2u; k++) {
     let ds = G.dusts[k];
@@ -734,16 +741,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let rr = length(cellPos(p) - ds.xy) / ds.z;
     if (rr > 1.2) { continue; }
     let w = windAt(vec3<f32>(cellPos(p), here + 0.5));
-    dust += ds.w / 8.0 * smoothstep(1.2, 0.4, rr) * 0.06 * dtD() * (0.15 + 0.85 * shelter(p, w));
+    dust += ds.w / 8.0 * smoothstep(1.2, 0.4, rr) * 0.06 * dtD() * wr * (0.15 + 0.85 * shelter(p, w));
   }
   // a dying cyclone drops the dust it carried in a pile around its eye
   for (var c = 0u; c < MAX_CYCLONES; c++) {
     if (G.cyclones[c].b.z <= 0.0) { continue; }
     let rr = length(cellPos(p) - G.cyclones[c].a.xy) / G.cyclones[c].a.z;
-    dust += smoothstep(1.6, 0.0, rr) * 0.6 * dtD();
+    dust += smoothstep(1.6, 0.0, rr) * 0.6 * dtD() * wr;
   }
-  // dust that came down from the air here (carried by particles)
-  dust += f32(atomicExchange(&exchange[G.mapW * G.mapH + i], 0)) / 100000.0;
+  // dust that came down from the air here (carried by particles; taken either way — baked, it isn't laid down)
+  let fromAir = f32(atomicExchange(&exchange[G.mapW * G.mapH + i], 0)) / 100000.0;
+  if (wr > 0.0) { dust += fromAir; }
   // the editor: a pour of loose material (its material from the brush state),
   // dust brushed on, or something taken away (dig, clean); a crumbled body
   let dep = deposit[i];
@@ -780,10 +788,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // every other tick, so it takes both ticks' rolls); ash isn't stripped: the
   // wind lifts it like any loose ground, as dust grains
   let topNow = topOf(p);
-  let litter = m0 == MAT_LITTER && topNow > 0.0;
+  let litter = m0 == MAT_LITTER && topNow > 0.0 && wr > 0.0;
   let strip = select(0u, 1u, litter && litterStrip(p, G.tick)) + select(0u, 1u, litter && litterStrip(p, G.tick - 1u));
   // green binds dust and ash it grows through: they become soil
-  let bind = topNow > 0.0 && topNow < 1.0 && rooted(i) > 0.8 && (m0 == MAT_DRIFT || m0 == MAT_ASH_L);
+  let bind = topNow > 0.0 && topNow < 1.0 && rooted(i) > 0.8 && (m0 == MAT_DRIFT || m0 == MAT_ASH_L) && tierRate(TIER_VEG, p) > 0.0;
 
   // most columns are still: nothing leaves, nothing arrives, nothing hangs
   // over air — leave their intervals alone

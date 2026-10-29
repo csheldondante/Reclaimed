@@ -3,6 +3,65 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 111 (session 5, `places`) — terrain ideas; a noise lab
+
+- The user, verbatim:
+  "In terms of procedural generation what we have is already pretty awesome. In particular the way cliffs use voronoi
+  plus noise plus sdf to make steps and spires. However, I think it would be better if we had larger mesas that blend
+  into the heightmap directionally and where the ravines between them are traversable. I would use a voronoi at the
+  atlas scale and group several cells to define the mesa region, then choose heights of different edges with some
+  zero and blend height to the full mesa height and use the ridge noise to carve winding ravines in that. They can be
+  a good set up for flash floods. I would also often have these along costs and make coastal caves enter there so we
+  can see them from the ocean using the 2d fractal simplex with two thresholds and blending the height of the caves
+  relative to the surface and bringing them to just below the water level at the coast."
+  "I think it's worth generalizing the approach though which is to use many layers and masks to blend heightmaps and
+  create stark contrast in heights alongside places the heights interpolate more smoothly at various scales. It's ok
+  to have features that can't be traversed those are just walls/obstacles and height changes are great walls. Having
+  gradual changes blend in along side them (for example a break in the sheer cliff in which we blend height to the
+  ground to make a natural ramp."
+  "I also think mountains should be a bit bigger. We should have more biased features like noise where your stretch a
+  domain and turn bumps into ridges along a grain or radially warped."
+  "One fun noise idea I had is to do JFA but store the vector to the nearest feature at each point then adjust height
+  by noise along the feature border to make ridges perpendicular to isolines."
+  "None of this is high priority yet but a noise playground would be a cool way to showcase existing biomes as well as
+  a general pattern for generating new ones. I like what we have now though so don't break it but an experimental
+  sandbox I can use to review new interesting noise combos or noise generators would be fun."
+  "This actually ties in with the rooms and key door mechanics because we want to use SDF and blocking and known
+  controllers to partition our map with natural terrain features"
+- → Not high priority; don't change the atlas's generation. Branch `noiselab`: an experimental sandbox to review noise
+  combinations and generators — layers and masks blended into heightmaps, the existing biomes as presets, the ideas
+  above as experiments (BACKLOG TG1–TG8).
+
+## 2026-10-29 — round 110 (session 5, `places`) — what the simulation is for
+
+- The user, verbatim:
+  "The destruction and erosion and flooding and wind and particles are all there to make the world react on screen
+  to the player and make it feel more alive. For that matter the agents doing work are similar. These are visible to
+  the player and they make interaction fun so they are important to get right and they have the highest latency
+  concerns."
+  "The weather, growth, erosion etc. are useful layers for generating cool locations and for mutating the map between
+  runs or in response to major gameplay events. They typically should operate at the alas level unless a player
+  interacts directly (summoning plants or winds or a storm). The API should expose this so we can do things like show
+  the player the town they planned get built but agents and overgrown with green. Generally though we want systems
+  sleeping otherwise."
+  "The greatest strength of what we have built so far is how interactive it feels and how varied and cool the
+  terrain is compared with other games (and I have many ideas to improve it further)"
+- → docs/SYSTEMS.md "What the simulation is for": two jobs. Reactive (play scale): destruction, collapse,
+  flooding, wind and particles, agents working, near the player, latency first. Generative (atlas scale): weather,
+  growth and erosion making locations and mutating the map between runs or on major events; live only where the
+  player invokes them (summoned plants, winds, a storm); a showcase API plays a generative change on screen (a planned
+  town built by agents, then overgrown). Everything else sleeps. The strengths to protect: interactivity and varied,
+  striking terrain.
+
+- Physics, the user: "For physics maybe a tunable parameter for how much objects can interpenetrate maybe as a
+  function of mass?" (branch `physfix`: the allowed overlap a function of mass, in the tuning registry).
+- Towns, the user: "I think that towns should visibly grow but slowly. Imagine a town has it's growth field and
+  planned tiles to build. The unit haul to the tiles and maybe work to build them bit by bit. Essentially we store
+  progress and so although you could watch the agents build you can also leave and come back and more tiles will have
+  been completed without any real agent simulation while you are gone" (BACKLOG ST18): each planned tile stores its
+  build progress; watched, agents haul and build it bit by bit; unwatched, progress advances by rate × time elapsed
+  with no agent simulation, and the land shows the result on arrival.
+
 ## 2026-10-29 — round 109 (session 5, `places`) — more devices; generators and editors; better runs
 
 - Devices, the user: "I also want to get my desktop set up tomorrow so you can orchestrate testing on multiple devices
@@ -17,6 +76,9 @@ each was implemented.
   creatures), Controllers and move sets, Tailored level generators, Terrain generation" (BACKLOG GE1-GE8).
 - Runs, the user: "I also want a session to focus on better runs which means finding the most fun controls and play
   loops and then making fun courses for them or fun open terrain when possible" (BACKLOG RN1).
+- Rivers per watershed, the user: "I want it per water shed please" (the held rivers rose and fell with one wetness
+  for the whole world: a storm anywhere raised every river). A river rises only from rain on its own catchment; a
+  reach downstream carries its upstream catchments', a while later (BACKLOG RWS1, `watershed`).
 
 ## 2026-10-29 — round 108 (session 5, `places`) — tiles match the window; the sims' tiers; a playground
 

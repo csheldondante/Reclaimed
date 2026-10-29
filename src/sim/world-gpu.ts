@@ -4,7 +4,7 @@
 // change what another system sees.
 
 import type { Profiler } from '../gpu/profiler';
-import { PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
+import { CHUNK, PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { globalsBytes } from './globals';
@@ -44,7 +44,10 @@ export const RIVER_PULL = (() => {
   const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverpull');
   return v === null ? (RIVERS === 'table' ? 0.02 : 0) : Number(v);
 })();
-/** ?riverwet=x: the rivers' wetness held at x (the climate's otherwise: common.wgsl riverWet) */
+/** (round 109) cells between the riverWet field's texels (WorldGpu riverWet) */
+export const RIVER_WET_CELLS = 8;
+/** ?riverwet=x: the rivers' wetness held at x, everywhere (the climate's and each watershed's storms' otherwise:
+ *  riverheld.wgsl riverWetAt) */
 export const RIVER_WET = (() => {
   const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverwet');
   return v === null ? -1 : Number(v);
@@ -214,7 +217,7 @@ export class WorldGpu {
    *   x, y  the flow at the reference wetness (cells a 60 Hz step, downstream along the river)
    *   z     the column's depth at the reference wetness (> 0: a river's column)
    *   w     the river's depth at its line, there
-   * At wetness `wet` (common.wgsl riverWet: the season, the storms) the river carries wet × its discharge: its level
+   * At wetness `wet` (riverheld.wgsl riverWetAt: the season, the storms on its watershed) the river carries wet × its discharge: its level
    * stands RIVER_DEPTH_EXP higher (w · (wet^RIVER_DEPTH_EXP − 1)) and it runs wet^RIVER_SPEED_EXP as fast (riverAt
    * in water_depth.wgsl, renderfields.wgsl). A river's column that nothing has woken is held there (no simulation:
    * its depth that, its flux the pipes' steady flux for it) and drawn flowing by this flow; woken, the water's pipes
@@ -222,6 +225,15 @@ export class WorldGpu {
    */
   readonly riverFlow: GPUTexture;
   readonly riverFlowView: GPUTextureView;
+  /**
+   * (round 109, watershed) The rivers' storm water at the window's coarse texels (r32float, texel (i, j) the window's
+   * cell (i, j) · RIVER_WET_CELLS; 0 past the rivers): what a river carries from the storms on its own catchment and
+   * its reaches upstream, over its reference discharge (weather/catchwet.ts; written by weather/wetfield.ts). A river's
+   * wetness is the climate's (Globals ocean.w: the season) plus this — read only through riverheld.wgsl riverWetAt.
+   * All 0 where there's no river graph (the valley levels: their wetness the climate's, storms and all).
+   */
+  readonly riverWet: GPUTexture;
+  readonly riverWetView: GPUTextureView;
   /** ground shaken (layerpull.wgsl writes, sediment reads): x the tick it was shaken, y how hard (0..1): loose ground there slips at a lower angle for a while */
   readonly shake: GPUTexture;
   readonly shakeView: GPUTextureView;
@@ -245,6 +257,10 @@ export class WorldGpu {
   /** r8unorm per column: how far inside the player's reach (game/reach.ts; 1 everywhere outside story levels) — the draw fogs the rest */
   readonly reachTex: GPUTexture;
   readonly reachView: GPUTextureView;
+  /** (round 108, simtiers: sim/tiers.ts writes it, tiers.wgsl reads it) the slow processes' rates, a texel a window
+   *  chunk: x rain erosion, y wind erosion, z vegetation — 0 baked, 1 live, more a bake's gain */
+  readonly tierTex: GPUTexture;
+  readonly tierView: GPUTextureView;
   /** f32 per column: 1 = flowers in bloom, < 1 = shed by the wind and regrowing (particles.wgsl petalEmit) */
   readonly petals: GPUBuffer;
   /** vec2 per column: ground hostility to plants, plant brownness (wilt.wgsl) */
@@ -381,6 +397,9 @@ export class WorldGpu {
     this.reachTex = device.createTexture({ label: 'reach', size: { width: this.w, height: this.h }, format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     this.textures.push(this.reachTex);
     this.reachView = this.reachTex.createView();
+    this.tierTex = device.createTexture({ label: 'tiers', size: { width: Math.ceil(this.w / CHUNK), height: Math.ceil(this.h / CHUNK) }, format: 'rgba32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    this.textures.push(this.tierTex);
+    this.tierView = this.tierTex.createView();
     this.writeReach(new Uint8Array(this.w * this.h).fill(255));
     this.windFieldNextView = this.windFieldNext.createView();
     const dsize = { width: this.w, height: this.h };
@@ -427,6 +446,14 @@ export class WorldGpu {
     this.riverFlow = device.createTexture({ label: 'riverFlow', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.riverFlow);
     this.riverFlowView = this.riverFlow.createView();
+    this.riverWet = device.createTexture({
+      label: 'riverWet',
+      size: { width: Math.floor((this.w - 1) / RIVER_WET_CELLS) + 2, height: Math.floor((this.h - 1) / RIVER_WET_CELLS) + 2 },
+      format: 'r32float',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    this.textures.push(this.riverWet);
+    this.riverWetView = this.riverWet.createView();
     if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, r.texToStore(map.riverFlow, 4), { bytesPerRow: this.w * 16 }, dsize);
     this.shakeView = this.shake.createView();
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });

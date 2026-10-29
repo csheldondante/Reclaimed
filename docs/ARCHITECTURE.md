@@ -276,10 +276,11 @@ written the trunk and crown boxes (vegplan.wgsl: the same places, species and he
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
-| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
+| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (riverheld.wgsl riverWetAt, round 109) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
+| riverWet (texture) | r32f at the window's coarse texels (round 109, `watershed`; texel (i, j) the window's cell (i, j) × RIVER_WET_CELLS 8): each river's storm water over its reference discharge — the rain on its own catchment and what its reaches upstream carry, with their lags (weather/catchwet.ts over the atlas's river graph, atlas/rivers.ts Catchments); 0 past the rivers, and everywhere off the atlas. A river's wetness = the climate's (Globals ocean.w: the season, eased; ?riverwet=x holds both) + this, read only through riverheld.wgsl `riverWetAt(cellXY)` (window cells, bilinear; 0 past the window). riverheld.wgsl declares it at @group(0) @binding(62): every pipeline that includes riverheld and calls riverWetAt must bind 62 = world.riverWetView | weather/wetfield.ts (the level, on the atlas level: written while it changes) | water (flux, depth), renderfields (and the tiles, once they call riverWetAt) |
 | (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
 | (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
-| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
+| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (riverheld.wgsl riverWetAt, round 109) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
 | oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
 | oilStored | vec2 (amount, roof z) sealed in closed tanks | oil (releases on breach, burns inside) | fire (fuel) |
 | contam | vec2 (soil, dissolved) | contamination | ecology, particles, draw, stats |
@@ -1664,6 +1665,52 @@ occupancy half cleared; every unit stepped; every unit's voxels written.
 The params uniform (binding 10) carries counts, 32 seeds, each group's field
 and colour, each field's place, 8 kinds, 32 hits, 8 targets, 8 holds, 32
 launches.
+
+## The sims' tiers (round 108, branch `simtiers`; BACKLOG SM1-SM4)
+
+The contract: `src/api/contracts/simtiers.ts` `SimTiers` (`tier`, `setTier`, `live(processes, rect) → handle`,
+`bake(rect | 'all', processes, seconds, {gain, ticksPerFrame})`), implemented by `src/sim/tiers.ts` `Tiers`
+(`core.tiers`). Three processes have a tier, `rainErosion`, `windErosion` and `vegetation`. Live, a process changes
+the map in play. Baked, it doesn't change the map at all; it runs only in a bake, between runs or on a story event.
+Everything else is live always and has no tier: slumps, spills and falls of loose ground, piping, collapse and
+fracture, fire, snow and ice, water, lava and oil, contamination washing and seeds cleaning poison (SM3, the game's
+core mechanic), the agents' work and the player's powers.
+
+- **Into the kernels:** `Tiers.apply` rasterises the tiers into `world.tierTex`, a texel a window chunk
+  (rgba32float, chunks across × down; x rain, y wind, z vegetation; 0 baked, 1 live, more a bake's gain). It is
+  written only when it changes. The kernels that need it prepend `src/shaders/tiers.wgsl` (binding 50,
+  `tierRate(TIER_*, column)`) and scale the process's map change by the answer. It's its own binding, not the
+  Globals: the Globals' size, and any array in them indexed by a computed index, slow every kernel (docs/PAGES.md
+  §1). Regions are kept in world cells, so they stay with the land through a slide. Granularity is a chunk
+  (16 columns). There's no cap on regions.
+- **What makes a chunk's process run** (the most of):
+  - its tier everywhere;
+  - a region asked live;
+  - a running bake's region, at its gain;
+  - (SM2, round 78's "unfreeze for player interactions") the player's interactions. Every event a tick sends (a
+    power, an edit, lightning; `sim.eventTaps`) and every stroke of wind (`gusts[1..]`) makes rain and wind erosion
+    live in the chunks round it. It holds for at least INTERACT_MIN_S (4 s), then while the chunk stays awake
+    (sim/sleep.ts), at most INTERACT_MAX_S (60 s). Vegetation stays baked there; the grow tap is live anyway.
+- **Who reads it:**
+  - sediment.wgsl: `windOut`, `smoothOut`, the dust storms' and cyclones' dust, the particles' dust set down,
+    litter stripping (wind); `waterOut` (rain); green binding dust into soil (vegetation).
+  - ecology.wgsl: growth, spread and dying back (vegetation; fire's burning stays live).
+  - climate.wgsl: leaf fall and rot (vegetation; snow, melt and freeze stay live).
+  - particles.wgsl: a seed sprouting where it lands (its cleaning stays live), withered growth stripped in a gust
+    (vegetation; the player's grow tap stays live).
+  - structtick.wgsl: moss (vegetation).
+- **Visuals stay alive:** outflow computes what the wind would lift either way (`lifts`) and writes it to the air
+  texture as before, so dust is still raised and blown as particles. Baked, none of it is taken off the ground and
+  none is set down where it lands. Rain, water (RiverWet, a storm waking its chunks, puddles, runoff), snow, seeds,
+  petals and leaves all still fall, flow and fly.
+- **Bakes:** they run inside the fixed-step scheduler. `WorldCore.advance` calls `tiers.pump` after the frame's
+  own ticks. Each frame a bake runs `ticksPerFrame` more whole-sim ticks with its region live at its gain, over
+  `seconds / (TICK_DT × gain)` ticks. The rest of the sim runs alongside, so rain erosion has runoff to work
+  with. Each pump wakes the region's chunks (`core.sleep`), and a bake starts the frame after that first wake.
+  Bakes queue and run one at a time.
+- **Defaults:** `WorldCore` starts all live, which the older scenes, the title diorama (its wind uncovers the
+  level models) and the sandbox rely on. The atlas level calls `tiers.playDefaults()` (all baked, DECISIONS
+  round 108). `?tiers=live | baked | rain,wind,veg` (those live) overrides a scene's defaults.
 
 ## Climate (round 50)
 
