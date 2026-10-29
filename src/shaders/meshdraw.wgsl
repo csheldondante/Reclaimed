@@ -212,6 +212,15 @@ fn meshLook(q: vec2<i32>, z: f32, up: bool) -> Look {
   return Look(ivMat(v), below, ivZ1(v) - ivZ0(v), runTop);
 }
 
+/**
+ * (round 108, TC18/TC20) Set by the tiles' bake (tiles.wgsl tileBake) before it asks for a surface's look — the look
+ * as a tile holds it: the weather left out (snow lying on top taken for what's under it, no wetness, no snow on a
+ * structure's faces: the tiles draw it live from the weather's cover, weather/cover.ts, so a tile is never stale
+ * with it), and what the window draws as instances the tile doesn't hold painted in (the tufts' look, as ?tufts=0
+ * paints it). False everywhere else.
+ */
+var<private> TILE_BAKE: bool = false;
+
 /** A material's ground colour (blown dust: a greyer silt). */
 fn groundAlbedo(m: u32) -> vec3<f32> {
   if (m == MAT_DRIFT) { return toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
@@ -391,13 +400,15 @@ fn meshSurf(in: MOut) -> Surf {
   let up = nrm.z > 0.55;
   let lk = meshLook(cell, ip.z, up);
   var mat = lk.mat;
+  if (TILE_BAKE && mat == MAT_SNOW && lk.below != 0u) { mat = lk.below; }
   // the cells' own fields blended over the three nearest (no hexagons in
   // the plants or stains): contamination, plants, wetness, withering
   var cf: vec4<f32>;
   if (noDetail(ND_FIELDS)) { cf = cellFields1(in.wpos.xy); } else { cf = cellFields(in.wpos.xy); }
   // (hybrid, round 86: a storm over land whose sim is asleep — a heightfield chunk past the storms' reach,
   // scenes/hybrid.ts — is wet under it all the same, as if it had rained there)
-  if (G.numStorms > 0u && asleep(vec2<u32>(cell))) { cf.z = max(cf.z, 0.9 * stormCover(in.wpos.xy)); }
+  if (G.numStorms > 0u && asleep(vec2<u32>(cell)) && !TILE_BAKE) { cf.z = max(cf.z, 0.9 * stormCover(in.wpos.xy)); }
+  if (TILE_BAKE) { cf.z = 0.0; }
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
   // (?look=lookup: the interval's material and the lighting, none of the detail — meshShade)
@@ -462,7 +473,7 @@ fn meshSurf(in: MOut) -> Surf {
       alb = wither(toLinear(g * (0.82 + 0.3 * n2)), cf.w, n2);
       // (perfopt, ?tufts=0: no tuft boxes — their look painted here instead: on soil-like ground, a quarter cell
       // in shade here and there, as many as vegplan.wgsl would stand there)
-      if (!TUFTS_DRAWN && isTop && MATS[lk.mat].eco.x >= 2.0) {
+      if ((!TUFTS_DRAWN || TILE_BAKE) && isTop && MATS[lk.mat].eco.x >= 2.0) {
         let tr = randv(vec3<i32>(vec2<i32>(floor(in.wpos.xy * 4.0)), 911));
         // (a tuft's shaded side, or its lit top)
         let d = smoothstep(1.2, 2.5, v);
@@ -488,7 +499,7 @@ fn meshSurf(in: MOut) -> Surf {
       sa = sc * (0.9 + 0.2 * s);
     }
     // snow or dust on its up faces (round 52; the raw voxel word: bits 24..29)
-    sa = coverLook(sa, nrm, in.wpos, ceil(in.wpos.z - 0.05), f32((w >> 24u) & 31u) / 31.0, ((w >> 29u) & 1u) != 0u, s);
+    sa = coverLook(sa, nrm, in.wpos, ceil(in.wpos.z - 0.05), select(f32((w >> 24u) & 31u) / 31.0, 0.0, TILE_BAKE), ((w >> 29u) & 1u) != 0u, s);
     alb = mix(alb, sa, sw);
     if (sw > 0.5) { mat = voxMatR(w); }
   }

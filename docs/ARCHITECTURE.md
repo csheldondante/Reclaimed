@@ -2145,3 +2145,43 @@ clears them).
   unit; the texels used, its top, written). The pacer has a first lane (TilePacer.next(true)): the tiles' turns before
   the streamer's. The old pacer param is `?tilesfixed=N`; `?tiles=0` turns the tile cache off (on by default).
 
+- (round 108, `tileparity`: TC18-TC20) A render-only tile is the window's land minus the simulation:
+  - **One generation path.** `Atlas.regionInto(x0, y0, w, h, target, how: MakeHow)` makes the window's regions and the
+    tiles' alike; `how` is the asker's: `pace` (none / the streamer's lane / the tiles' first lane), `stamps` ('plan':
+    every stamp hook's, plans made and awaited — the window's; 'made': only the plans already made, none started,
+    nothing read back — a tile's) and `summary` (a GPU buffer for the per-column summary: nothing read back, returns
+    null). `Atlas.regionTile` is gone. A stamp hook takes `plan` (false: use only what's planned).
+    `Atlas.stampsChanged` says where a plan landed (settlements.ts `planned`); level.ts lets the render-only tiles over
+    its box go (`TileCache.forgetMade`): they're made again with the town.
+  - **A border.** `Streamer.tileLand()` (render/tileland.ts TileLandSource) makes a tile's land as its region and
+    `TILE_BORDER` (2) cells of its neighbours' round it, into the corner of a slot of a wider layout (the region's next
+    whole pages: 80²; `FinishTarget.corner`), its Globals' origin the border's corner. The grid's lattice and normals
+    at the region's edge read its neighbours' real columns, as the window's do.
+  - **The window's render preparation on it.** render/tileworld.ts `TileWorld` (one a TileLandGpu) implements
+    sim/systems.ts `PrepWorld` (what SurfaceSystem and RenderFieldsSystem read and write): its layers are the scratch
+    slot's pages, its kept fields copied in per bake (as the streamer's copyIn brings a pool slot into the window),
+    the two systems run on it (their passes timed `tile-surface`, `tile-renderfields`: Profiler.named). The bake draws
+    through what they made (the surface words, drift, moisture, flow). No other system steps it.
+  - **The weather, live.** weather/cover.ts `WeatherCoverSystem` (a sim system, period 15, after the climate) owns one
+    contract: `WorldGpu.coverState` (its state) and `coverView` (rgba16float, what readers draw: snow cells, wet 0..1,
+    ice share, the texel's lap round the ring; -1 nothing known) — a ring of COVER_N² (512²) texels round the window,
+    COVER_CELL (8) world cells each (shaders/coverfield.wgsl, its shape for every reader). Inputs: the window's land,
+    measured every update (cover.wgsl `measure`: the drift's snow, the moisture, the ice, the water); the land past it
+    stepped (`step`: the storms' snow and rain, melt, freeze, drying back to its own moisture); a render-only tile's
+    land seeding the texels it holds nothing of yet (`seed`, called by TileLandGpu with its TileWorld, the region's
+    cells only). Readers: tiles.wgsl (the bake, the draw). Nothing else writes it.
+  - The bake leaves the weather out (meshdraw.wgsl `TILE_BAKE`: the snow lying on top taken for what's under it, no
+    wetness, no snow on structures; and the tufts painted, as `?tufts=0` paints them — the tile holds no instances).
+  - The atlas's planes: A rgba8 (albedo, film); B rg32uint (normal 14+14 bits, porosity bits 28-29 — what the cover's
+    wetness darkens it by —, gem bit 30, drawn bit 31; the depth along the view); **the live plane** rgba8 — what the
+    draw brings up to now, each channel's owner: x, y the held river's (riverheld.wgsl's table: how far under its
+    level the point is at the reference wetness, and the river's depth at its line; flooded at draw to the level at
+    `riverWetAt(cell)` — riverheld.wgsl, the watershed's to change), z the texel's own snow as baked (the window's
+    look's), w the cover's snow there as baked (weather/cover.ts) — drawn, the own snow melts as the cover's has since
+    and what's fallen since lies over it. The tiles' bake layout is the mesh's resolve layout + 22 (riverFlow) + 47
+    (the cover); the draw layout + 47, 48 (the live plane).
+  - A paced batch's tile is a little over the pacer's size when the batch is a little over whole tiles (atlas.ts
+    paceTile): a tile's bordered 68² batch takes the turns a 64² one does.
+  - The atlas never evicts a tile the last frame drew (the look-ahead's margin evicted the screen's own tiles at wide
+    zooms: thousands of bakes a minute); a land job made for a region no longer wanted lets its slot go when the atlas
+    is full.

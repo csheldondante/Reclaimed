@@ -11909,3 +11909,91 @@ From main's review of the first pass.
 
   interact and fatal as above, exit 0. A framecost run in the same turn read 12 ms (busy 0.74, -899 held: the GPU
   was shared), so it isn't comparable and isn't used. The first pass's framecost and driveprofile numbers stand.
+## 2026-10-29 — round 108 (`tileparity`): a tile is the window's land minus the simulation (TC18-TC20, TC8)
+
+Why: the user (DECISIONS round 108): "the distant tiles have seems and sometimes miss certain effects like snow ... My
+expectation is that the tiles are essentially the visual only version of full tiles so I wouldn't expect them to me
+different."
+
+What a render-only tile was, against the window's land (found reading both paths; the conflations):
+- Its land came from a second path (Atlas.regionTile): no settlement stamps, no neighbours (its edges open: the grid's
+  lattice and normals at the region's edge read nothing past it), and none of the window's render preparation — its
+  surface words were the top's height alone (no material, no loose run), its drift texture, moisture and flow zero. So
+  loose ground (sand, snow) was drawn as solid tops, wet ground was never darkened, the rivers had no flow.
+- The weather was baked: a window region's tile kept the snow and wetness it had when baked; a made one had none.
+- A held river's level (the rivers' wetness) was baked too.
+- The atlas thrashed at wide zooms: at zoom ~1.3 on the phone tier the screen draws ~94 tiles of 96 slots, and the
+  look-ahead's margin evicted tiles the screen had drawn the frame before; they were wanted again and evicted the
+  margin's: 2,623 bakes and 1,330 regions made in the first ~45 s parked (scripts/tileparity.mjs, zoom 1.3), ~60 bakes a second; between, the far land's
+  flat colour showed in the tiles' places (the dark checkerboard in the sea and the flat squares on land in the
+  before shots — likely much of what reads as "seams" at a wide zoom).
+
+What changed:
+- TC18, one generation path: `Atlas.regionInto(..., how: MakeHow)` for the window and the tiles alike — `how` says the
+  pacing (the tiles' lane first), the stamps ('plan' for the window; 'made' for a tile: the plans already made, none
+  started, no ground read back, no worker — DECISIONS 106b) and where the per-column summary goes (a GPU buffer: nothing
+  read back). regionTile is gone. TC8: the settlements' stamps come with a tile's land once planned; when a plan lands
+  (Atlas.stampsChanged) the render-only tiles over its box are made again (TileCache.forgetMade).
+- The window's render preparation on a tile's land (render/tileworld.ts): SurfaceSystem and RenderFieldsSystem — the
+  window's own classes, through a narrowed `PrepWorld` — run on a small world whose layers are the scratch slot's pages,
+  its kept fields copied in per bake (as the streamer's copyIn). The bake draws through the surface words, drift,
+  moisture and flow they make. No simulation steps it.
+- TC19, a border: a tile's land is its region and 2 cells of its neighbours' round it (68² made, in the corner of an
+  80² slot: FinishTarget.corner), so its edge cells' lattice and normals are its neighbours' real columns, as the
+  window's are.
+- TC20, the weather live: weather/cover.ts (WeatherCoverSystem, its own contract WorldGpu.coverState / coverView): snow,
+  wetness and ice at the atlas's scale (512² texels of 8 cells round the window). The window's texels are measured
+  from its land every update (the climate sim's snow in the drift, its moisture, its ice and water); past it the
+  storms' snow and rain, the melt, the freeze and the drying back step it; a render-only tile's land seeds what it holds
+  nothing of. The bake leaves the weather out (meshdraw.wgsl TILE_BAKE); the draw puts it back from the cover: wet
+  ground darkened by its porosity (baked in 2 bits beside the normal), ice on the water. Snow keeps the cell's detail:
+  the live plane holds a texel's own snow as baked and the cover's there then, and the draw melts the own snow as the
+  cover's has melted since and lays what has fallen since over it (a town's roads the window keeps clear stay clear —
+  the first try, the cover alone, blanketed them: shots88/tileparity/v2-straight.png).
+- The held rivers live (main's addition to TC20): the bake keeps a held river's texel as its bed and the live plane its
+  depth under the river's level at the reference wetness and the river's depth at its line; the draw floods it to the
+  level at the wetness now (riverheld.wgsl's rule: the line's depth × wet^0.6, the level shifted across the channel, at
+  most 0.28 over, a dry bed under 0.03), the wetness read only through riverheld.wgsl `riverWetAt(cell)` (per watershed:
+  branch `watershed`). 8 bits a channel: under the level -1..3 cells (1/64 cell steps), the line's depth 0..4.
+- The live plane (tiles live, rgba8): x, y the held river's; z the texel's own snow; w the cover's snow as baked. The
+  atlas 27.0 → 36.0 MB at the same 96 slots (+4 B a texel on 12; the slots still counted on A and B's 12 — main:
+  "Keep the 96 slots"). An rg8 plane (the river alone, +2 B: 31.5 MB) came first; the snow's pair made it rgba8.
+- The atlas never evicts a tile the last frame drew; a land job made for a region no longer wanted lets its slot go
+  when the atlas is full. In the first ~45 s parked: 2,623 bakes and 1,330 regions made → 245 and 198 (the rest of the screen past 96 tiles shows the far land: TC21).
+- The tufts are painted in the bake (as ?tufts=0 paints them): the tile holds no tuft instances. The snow's look in the
+  draw is meshSurf's (MAT_SNOW's colour, the per-voxel variation, the mesh's tint).
+- The paced tile's side: a batch a little over whole tiles (68² against the pacer's 32 and the finish's 64) took 9 + 4
+  turns instead of 4 + 1 (finish p50 154 ms); now a tile a little bigger in as many turns (atlas.ts paceTile): 49 ms.
+
+Measured (desktop iGPU, phone tier q=low 412x915, every system on, 1x; the iGPU's clock drifted between the runs —
+renderprep 0.36 → 0.24 ms — so the frame's passes are also given in renderprep units):
+
+| | before (places d26891c) | after |
+|---|---|---|
+| framecost parked (win 256, zoom 3.5): GPU passes a frame | 8.72 ms; draw 2.50 (6.9 rp) | 5.04 ms; draw 1.40 (5.9 rp) |
+| framecost 40 c/s: GPU passes a frame | 5.70 ms; draw 2.99 (7.8 rp) | 3.29 ms; draw 1.67 (6.8 rp) |
+| driveprofile 20 s: GPU a frame, p99, worst | 9.16 ms, 19.8, 584 | 4.48 ms, 17.9, 89 |
+| a render-only bake's G-buffer + resolve (tiles-g, tiles-bake) | ~0.33 ms | ~0.24 ms |
+| its render preparation (tile-surface + tile-renderfields + tile-cover + tile-box) | — | ~0.30 ms (0.05 + 0.15 + 0.10 + ~0) |
+| the cover a sim update (every 15 ticks: cover, cover-step) | — | 0.10 + 0.15 ms (max 0.17 + 0.31) |
+| tileprobe --drive 0 --zoom 3.5 --pan 120,30: wanted to drawn p50 / p95 | (round 105: 59-70 / 3,935) | 78.5 / 3,740; finish 49 / 137 |
+| tileprobe drive 18 (zooms to 2.76: the atlas full): the leading half in detail | 93.4 % | 98.6 % |
+| ... its bakes over the run | 11,322 (11,217 evicted) | 438 |
+| ... wanted to drawn p50 / p95 (of the regions drawn) | 88.6 / 1,354 | 609.7 / 5,714 (a slot waited for: bake queue p95 3.1 s) |
+
+The phone: a render-only tile costs ~0.3 ms more of GPU when it's made (its render preparation), at most 4 a frame; the
+cover ~0.25 ms every 15 ticks; the draw reads two more textures (the cover, the live plane) — the frame's GPU fell
+in these runs (fewer bakes), so no regression on the desktop proxy; the phone's own run is the user's (BACKLOG TC21's
+budget at wide zooms is where the phone's screen fills up).
+
+Shots (shots88/tileparity/): before-straight / -turned / -snow (places), final-straight / -turned / -edge /
+-edge-turned / -snow / -snow-turned (and -dbg: the tiles tinted, TileCache.debug at run time), after-rivers-dry-vs-flood
+(?riverwet=0.2 against 2: the held rivers' level in the tiles, live), v2-straight (the cover alone blanketing a town's
+roads, before the own-snow channel). scripts/tileparity.mjs makes them.
+
+Open: the window's fresh snow reads greyer than the tiles' snow next to it (the window's under its storm's cloud, or
+the window's thin snow mixing with the ground under it — not looked into); the flat far land past 96 tiles at wide
+zooms (TC21); a played region's tile made fresh at a new turn (TC22); a render-only tile's finish unchecked (TC23);
+the tiles' water against the window's sheet (TC24); the cover past the window has the window's climate and storms
+that fade at its edge (TC25); the mesher's chunks in the bake (TC12).
+

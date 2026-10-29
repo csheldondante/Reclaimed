@@ -22,7 +22,6 @@ struct RiverHere {
 
 /** the climate's wetness, the same for every river: the season (Globals ocean.w; 0 unset: 1) */
 fn riverWet() -> f32 { return select(max(G.ocean.w, 0.05), 1.0, G.ocean.w <= 0.0); }
-
 /** (round 109 — the user: "I want it per water shed please") A river's wetness at a place (window cells; its discharge
  *  over the reference's): the climate's plus the storm water its own watershed's rain sends down it (the riverWet
  *  field, bilinear; 0 past the window). Every reader with a position asks this. */

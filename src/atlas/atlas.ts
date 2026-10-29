@@ -166,6 +166,8 @@ const INST_BYTES = 64;
 const MAX_INST = 8192;
 /** a streamed batch's columns are made a TILE² tile a frame (round 80) */
 const TILE = 32;
+/** the side of a paced batch's tile: `tile` or a little over, so a batch a little over whole tiles takes no more turns */
+const paceTile = (n: number, tile: number) => Math.ceil(n / Math.max(1, Math.round(n / tile)));
 const Q98 = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
 /** (round 98, ?streamold=1) one tile a frame over every batch, as before round 98 */
 const TILE_OLD = Q98.get('streamold') === '1';
@@ -187,6 +189,20 @@ const TILE_MAX_FAST = Number(Q98.get('tilemaxfast') ?? TILE_MAX);
  *  profiler's timestamps the budget gave one tile a frame on the desktop, its passes summing past the frame), or the GPU budget's) */
 const PACE_FRAME = (Q98.get('tilepace') ?? 'frame') === 'frame';
 /** (round 102 (2)) finish.wgsl's tile a pacer turn: a quarter region on a phone, the whole region elsewhere */
+/**
+ * (round 108, TC18) How a region is made (Atlas.regionInto) — the one path's options, said by whoever asks:
+ *  - pace: 'none' all at once; 'stream' a tile a turn of the pacer's streamer lane; 'tile' the tiles' lane (first);
+ *  - stamps: 'plan' every hook's, plans made and awaited (the window's); 'made' only what's planned already — no plan
+ *    started, nothing read back, no worker (a render-only tile's: DECISIONS round 106b);
+ *  - summary: where the per-column summary goes on the GPU (nothing read back); without it FinishMeta comes back.
+ */
+export interface MakeHow {
+  pace: 'none' | 'stream' | 'tile';
+  stamps: 'plan' | 'made';
+  summary?: { buf: GPUBuffer; off: number };
+}
+/** the window's regions' (the streamer's) */
+export const WINDOW_MAKE: MakeHow = { pace: 'stream', stamps: 'plan' };
 export const FINISH_TILE = Number(Q98.get('finishtile') ?? (MOBILE ? 32 : 64));
 /** (round 102) cells a second of the camera's motion at which the pacer gives tiles the most of the frame's room */
 const FAST_AT = 80;
@@ -1168,7 +1184,9 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     // (~13 ms of a desktop's GPU a 64² region: a phone's frame several times over)
     let fin = enc;
     const tiles: [number, number][] = [];
-    const T = spread ? TILE : Math.max(w, h);
+    // (round 108: a batch a little over whole tiles — a render-only tile's, its border round it — in as many turns as
+    // the whole tiles would take, each a little bigger, not a row of slivers more)
+    const T = spread ? paceTile(Math.max(w, h), TILE) : Math.max(w, h);
     for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
     try {
       for (let k = 0; k < tiles.length; k++) {
@@ -1364,12 +1382,14 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
    * stage's (story/stage-land.ts) — as stamp operations (atlas/stamps.ts), in order: the GPU's path (regionInto) and
    * the CPU's (regionLand) build the same from them. Not for raw land.
    */
-  readonly stampHooks: ((ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean) => Promise<void>)[] = [];
+  readonly stampHooks: ((ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean, plan: boolean) => Promise<void>)[] = [];
 
-  /** (round 102) the stamps for a region: every stamp hook's, in order */
-  async stampsFor(x0: number, y0: number, w: number, h: number, spread: boolean): Promise<StampOps> {
+  /** (round 102) the stamps for a region: every stamp hook's, in order. (Round 108, TC8: `plan` false — a render-only
+   *  tile's — only what's planned already: no plan started, no ground read back, no worker; a plan that lands later
+   *  says where through stampsChanged) */
+  async stampsFor(x0: number, y0: number, w: number, h: number, spread: boolean, plan = true): Promise<StampOps> {
     const ops = new StampOps(w, h);
-    for (const f of this.stampHooks) await f(ops, x0, y0, w, h, spread);
+    for (const f of this.stampHooks) await f(ops, x0, y0, w, h, spread, plan);
     return ops;
   }
 
@@ -1430,50 +1450,40 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
 
   /**
    * (round 102) A region made on the GPU straight into `target` (a pool slot, in the region layout): its columns
-   * (a tile a frame when `spread`), then finish.wgsl — the geysers, the ways, the stamps, the cut, the pack. What
-   * the CPU keeps of it comes back (FinishMeta); the land itself never leaves the GPU.
+   * (a tile a frame when paced), then finish.wgsl — the geysers, the ways, the stamps, the cut, the pack. The land
+   * itself never leaves the GPU. (Round 108, TC18: the one way land is made — the window's regions and a render-only
+   * tile's alike; what differs is `how`, said by whoever asks: its pacing, which stamps, what comes back.)
+   * Returns what the CPU keeps of it (FinishMeta), or null when `how.summary` takes the per-column summary on the GPU
+   * instead (nothing read back: it resolves once the last of it is submitted).
    */
-  async regionInto(x0: number, y0: number, w: number, h: number, target: FinishTarget, spread = false): Promise<FinishMeta> {
+  async regionInto(x0: number, y0: number, w: number, h: number, target: FinishTarget, how: MakeHow = WINDOW_MAKE): Promise<FinishMeta | null> {
     if (y0 & 1) throw new Error('a region starts on an even row');
+    const spread = how.pace !== 'none';
+    // (the pacer's lanes: the tiles' first — a render-only tile is the latency the screen waits on — or the streamer's)
+    const gate = how.pace === 'tile' ? () => this.pacer.next(true) : spread ? () => this.tileGate() : undefined;
     // (the stamps asked for first: a settlement's plan runs while the columns are made)
-    const ops = this.stampsFor(x0, y0, w, h, spread);
-    const c = await this.columnsGpu(x0, y0, w, h, spread);
+    const ops = this.stampsFor(x0, y0, w, h, spread, how.stamps === 'plan');
+    const c = await this.columnsGpu(x0, y0, w, h, spread, gate);
     try {
       const rw = this.waysOf(x0, y0, w, h);
       const o = await ops;
-      const bt = spread ? this.builds.get(`${x0},${y0}`) : undefined;
+      const bt = how.pace === 'stream' ? this.builds.get(`${x0},${y0}`) : undefined;
       if (bt) bt.ways = performance.now();
-      const { meta } = await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, o, target, this.profiler, spread ? () => this.tileGate() : undefined, FINISH_TILE);
+      const { meta } = await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, o, target, this.profiler, gate, paceTile(Math.max(w, h), FINISH_TILE), how.summary);
+      this.gpuMade++;
+      if (how.summary) return null;
       if (bt) bt.mapped = bt.hooks = performance.now();
       if (meta!.forms > MAX_INST) throw new Error(`atlas: ${meta!.forms} forms around the batch at ${x0},${y0} (room for ${MAX_INST})`);
       o.tell(meta!.marks);
-      this.gpuMade++;
       return meta!;
     } finally {
       c.done();
     }
   }
 
-  /**
-   * (round 105, tilelatency; the user: "Why does the CPU readback and all of that happen all we care about is visuals
-   * until your character gets there") A region's land for a render-only tile (render/tilelandgpu.ts): the columns and
-   * finish.wgsl into `target` as regionInto does, but nothing comes back — the per-column summary (surface, ground, the
-   * top, the highest gap's roof: finish.wgsl's) copied on the GPU into `meta` at its offset instead of read back — no
-   * stamps (no settlement plan: towns come to tiles from GPU stamps later — BACKLOG TC8), each tile's turn the pacer's
-   * first lane. Resolves once the last of it is submitted: no GPU wait, no readback.
-   */
-  async regionTile(x0: number, y0: number, w: number, h: number, target: FinishTarget, meta: { buf: GPUBuffer; off: number }): Promise<void> {
-    if (y0 & 1) throw new Error('a region starts on an even row');
-    const gate = () => this.pacer.next(true);
-    const c = await this.columnsGpu(x0, y0, w, h, true, gate);
-    try {
-      const rw = this.waysOf(x0, y0, w, h);
-      await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, null, target, this.profiler, gate, FINISH_TILE, meta);
-      this.gpuMade++;
-    } finally {
-      c.done();
-    }
-  }
+  /** (round 108, TC8) a plan made since (a settlement's): the land over this box (world cells) made before it without
+   *  its stamps is stale — a render-only tile there is made again (render/tilelandgpu.ts) */
+  readonly stampsChanged: ((x0: number, y0: number, w: number, h: number) => void)[] = [];
 
   /**
    * (round 102) The raw ground over a box (world cells; y0 even) — what a settlement is planned on (regionLand's raw

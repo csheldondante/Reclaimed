@@ -2,8 +2,9 @@
 // The user: "Why does the CPU readback and all of that happen all we care about is visuals until your character gets
 // there." A region made for a tile (Atlas.regionTile) leaves its per-column summary on the GPU (finish.wgsl's: the
 // surface, the ground, the top, the highest gap's roof — 4 f32 a column); from it, here, with nothing read back:
-//   prep: each column's surface packed (common.wgsl sfPack) for the scratch's draws, and the region's lowest and
-//         highest point (atomics, 1/256ths);
+//   prep: the region's lowest and highest point (atomics, 1/256ths) — over the region and the overlap, not all the
+//         border (round 108: the surface words are the window's SurfaceSystem's now, run on the tile's land —
+//         render/tileworld.ts);
 //   camera: the bake's box from those — the region and a cell round it, its lowest to its highest — its scale (the
 //         frame's px a unit at most, what fits the slot), the bake camera's matrix (render.wgsl Camera: written over
 //         the frame's, which the CPU put there), and what the tile was baked at (TP, the slot's: tiles.wgsl vsTile).
@@ -18,28 +19,28 @@ struct Job {
   misc: vec4<f32>,
   /** the slot's corner in the atlas (px), its size (px) */
   slot: vec4<f32>,
-  /** the region's anchor in the scratch's coordinates (its corner, world z 0), its size (cells), the overlap (cells) */
+  /** the region's anchor in the scratch's coordinates (its corner, world z 0); its size (cells), the overlap (cells),
+   *  the border made round it (cells: the scratch's batch starts there) and the batch's side (the summary's) */
   anchor: vec4<f32>,
   size: vec4<f32>,
 };
 @group(0) @binding(0) var<uniform> J: Job;
 @group(0) @binding(1) var<storage, read> summ: array<vec4<f32>>;
-@group(0) @binding(2) var<storage, read_write> surfaceOut: array<u32>;
 @group(0) @binding(3) var<storage, read_write> box: array<atomic<i32>, 2>;
 @group(0) @binding(4) var<storage, read_write> cam: array<f32>;
 @group(0) @binding(5) var<storage, read_write> TP: array<vec4<f32>>;
 
-const R: u32 = 64u;
-
-fn pack(z: f32) -> u32 { return min(u32(round(max(z, 0.0) * 256.0)), 0x1ffffu); }
-
 @compute @workgroup_size(8, 8)
 fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
-  if (id.x >= R || id.y >= R) { return; }
-  let i = id.y * R + id.x;
+  let n = u32(J.size.w);
+  if (id.x >= n || id.y >= n) { return; }
+  // (the region and the overlap the tile draws past it; the rest of the border is only there for its edges' sake)
+  let b = i32(J.size.z);
+  let ov = i32(ceil(J.size.y));
+  let r = vec2<i32>(id.xy) - vec2<i32>(b);
+  if (any(r < vec2<i32>(-ov)) || any(r >= vec2<i32>(i32(J.size.x) + ov))) { return; }
+  let i = id.y * n + id.x;
   let m = summ[i];
-  // (round 107, pages: the scratch's surface is a per-column buffer, page-major — common.wgsl colIdx at ring 0)
-  surfaceOut[((id.y / 16u) * (R / 16u) + id.x / 16u) * 256u + (id.y % 16u) * 16u + id.x % 16u] = pack(m.x);
   // (its lowest: the surface; its highest: the top (world z, so less oz) or the surface)
   atomicMin(&box[0], i32(floor(m.x * 256.0)));
   atomicMax(&box[1], i32(ceil(max(m.z - J.misc.y, m.x) * 256.0)));
