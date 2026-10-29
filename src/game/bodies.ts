@@ -11,6 +11,7 @@
 
 import type { Voxel, WorldVox } from './fracture';
 import { MATERIALS, MatState } from '../world/materials';
+import { TUNE } from '../tune/params';
 
 type V3 = [number, number, number];
 type Q = [number, number, number, number]; // x, y, z, w
@@ -20,11 +21,9 @@ type Q = [number, number, number, number]; // x, y, z, w
 // speed (round 21: ~1.5× the old topple); landing takes most of the speed
 // away each substep, so a piece settles a little into what it lands on, and
 // overlap past a small slop is pushed out gently.
-const G = 10; // cells/s²
-const AIR_DRAG = 0.35; // 1/s
-const MAX_V = 4; // cells/s
-const LANDING = 0.6; // share of the falling speed a contact takes away per substep
-const SLOP = 0.15; // cells of overlap a landing piece sinks before it stops
+// (round 108) gravity (the world's × pieces.gravity; was 10 cells/s²), air drag, top speed, the landing's share of the
+// falling speed a contact takes a substep, and the overlap a landing piece sinks before it stops: the tuning's `pieces`
+const P = TUNE.pieces;
 const SUBSTEPS = 2;
 /** below this falling speed (cells/s) for SLEEP_T a body settles */
 const SLEEP_V = 0.15;
@@ -367,7 +366,7 @@ export class Bodies {
   }
 
   private step(b: Body, h: number): void {
-    b.vz = Math.max(-MAX_V, (b.vz - G * h) * Math.exp(-AIR_DRAG * h));
+    b.vz = Math.max(-P.maxV, (b.vz - TUNE.world.gravity * P.gravity * h) * Math.exp(-P.airDrag * h));
     // what it rests on: the deepest overlap among its points
     let deep = -1;
     for (const pl of b.points) {
@@ -388,9 +387,9 @@ export class Bodies {
       }
     }
     if (deep >= 0) {
-      b.vz *= 1 - LANDING;
+      b.vz *= 1 - P.landing;
       // never pushed back up (round 22): sunk past the slop, it just stops
-      if (deep > SLOP) b.vz = 0;
+      if (deep > P.slop) b.vz = 0;
     }
     b.pos[2] += b.vz * h;
   }

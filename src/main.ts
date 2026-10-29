@@ -13,7 +13,7 @@ import { MenuScene } from './scenes/menu';
 import type { MapData } from './world/mapgen';
 import type { Host, Quality, Scene } from './scenes/world-core';
 import { AudioDebug } from './ui/audio-debug';
-import { RockPanel } from './ui/rockpanel';
+import { serviceShot } from './ui/shot';
 import { PerfOverlay } from './ui/perf-overlay';
 import { startHitch } from './perf/start';
 import { pageBenchBoot, pageBenchDevice, pageBenchMode, pageBenchRun, pageBenchStandalone, pageBenchStartupError } from './perf/pagebench';
@@ -95,8 +95,6 @@ async function main() {
   const host: Host = { gpu, profiler, quality, qualityName, params, canvas, ui };
   const audio = new Ambience();
   if (params.get('audio') === '1') new AudioDebug(ui, audio);
-  // (round 96) the rock's knobs: in the rock lab, or ?rockpanel=1
-  if (params.get('level') === 'rocklab' || params.get('rockpanel') === '1') new RockPanel(ui);
   const perf = new PerfOverlay(ui, params.get('perf') === '1' || params.get('perf') === 'lite');
   // (round 82: the GPU's timings and the draw counts are read back only while the overlay is open; ?perf=lite
   // opens it with neither — the frame times without the readbacks)
@@ -200,6 +198,8 @@ async function main() {
     hitch?.rec?.frameStart(now);
     const c0 = hitch ? performance.now() : 0;
     scene?.frame(now, dt);
+    // (round 108: the bug report's picture, while the frame is still on the canvas)
+    serviceShot(canvas);
     if (hitch) hitch.frameEnd(performance.now() - c0);
     if (pace) {
       inFlight++;

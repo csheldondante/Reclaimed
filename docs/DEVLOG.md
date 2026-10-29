@@ -11686,3 +11686,55 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   scripts/riverfalls.mjs), their wiring in level.ts and the tiles' white water on a steep wet face are removed.
   WORLD_G (9.8, DECISIONS round 106/108) stays, shared by the flow model's streams, sheets and spray. BACKLOG WF1
   deferred; round 108's answers in DECISIONS, rows TC18-TC20, SM1, AR8.
+
+## 2026-10-29 — the tuning panel, the bug report, the physics and water playground (round 108, session 5, `playground`)
+
+The user (DECISIONS rounds 106, 108) finds today's physics floaty and choppy and wants to tune it interactively before
+the GPU constraint solver (AR4) is written; "Make a physics and water playground for testing collapse and flow and
+visuals for steady state effects maybe?" (AR8). No solver change here: every default is the old constant.
+
+- **One registry** (src/tune/registry.ts, params.ts; ARCHITECTURE "The tuning registry"): 90 parameters in 15
+  groups, each with its range, units, help and owner — world gravity; rigid rock (the old RB knobs plus air drag,
+  contact slop, rest thresholds); the columns' falling pieces; impacts; the collapse judge (ROCK, the loose ground's
+  bear); the physics voxels; structures under water; water (rain, evaporation — both models); the water pipes; the
+  flow model (water and lava); lava; sediment (a repose multiplier, slump, face spill, fall, roots, wash, piping,
+  shake); dust and haze; chips and splash; spray off falls; the collapse bursts. CPU systems read their own group's
+  live object (RB, ROCK are now those objects); GPU kernels read `G.tune.<field>` from a `struct Tune` appended to the
+  Globals (52 floats, 208 bytes) and packed every tick, so a slider takes the next tick. The struct is checked
+  against the registry when it's made (a mismatch throws with the struct it wants). Why the Globals and not a
+  uniform of its own: every kernel already binds them (no binding to add to 40-odd layouts), and the fields are
+  read by name (static offsets — round 107 found dynamically indexed Globals arrays cost D3D11 ~45 %).
+- **Measured** (the atlas ride, driveprofile at 412x915 q=low, the same start, before = places d26891c): p50 9.9 →
+  9.8 ms, p95 10.9 → 10.8, GPU 4.27 → 4.20 ms a frame: no cost from the bigger Globals. At defaults the flow lab's
+  sand bank behind its dug wall falls the same on both builds (shots in shots88/playground/probe).
+- **The panel** (src/ui/tunepanel.ts) replaces the rock lab's two (ui/rockbodypanel.ts, ui/rockpanel.ts, removed):
+  groups fold, search, changed-only, reset a value / a group / all, presets saved in the browser, exported and
+  imported as JSON, copied as a link with `?tune=<string>`. Thumb-tall sliders, number boxes, the panel's own touches
+  and keys kept from the world. Open in the test beds (rock lab, flow lab, playground; closed behind its button on a
+  phone), anywhere with `?tunepanel=1`.
+- **The bug report** (src/ui/bugreport.ts): B or 🐞 takes the canvas's picture in the frame loop right after the
+  draw (a WebGPU canvas holds it only that long: src/ui/shot.ts), the tuning, camera, time, seed and the scene's
+  state at the press, asks for a note, and saves one JSON (picture inside) plus the PNG — the phone's share sheet,
+  else downloads; the dev server also keeps perf-reports/bug-<time>.json.
+- **The playground** (levels/playground.ts, `?skipmenu=1&level=playground`, the title screen's Playground button):
+  six stations in whole chunks — rock (the rock lab's pieces: rigid rock), build (the sandbox's garden and a brick
+  house), soil (a sand bank held by a wall at a shelf's lip, a soil mound), breach (a pool held by a concrete plug at
+  a ledge: an arcing fall into a basin), river (a spring, a winding channel, a fall over a ledge, out off the map:
+  the steady state frozen once it holds, spray off the fall), dust (drift and ash, a sandstone top on a thin leg).
+  Each has its buttons and a reset (WorldCore.keepPristine after the warmup, restoreChunks: the layers by the chunk
+  table and the per-column state page-major; Integrity.forget lets go of what moves there). The flow model is on by
+  default there (`&flow=0` the pipes); rigid rock on.
+- **Headless** (scripts/playground.mjs, the phone proxy, every system in play, 1x): every station's buttons do what
+  they say (rigid rock freed and settled, the house and bases broken, the sand off the shelf, the breach's arc, the
+  river's fall and its spray, the top toppled into the dust); the breach's pool 2.60 → 1.71 breached → 2.59 reset,
+  its plug back; world.gravity 4.5 and spray 0 read back from the GPU's Globals; the rigid rock's fastest fall 19.0
+  cells/s at 1x gravity, 32.3 at 3x (top speed lifted); the report downloaded (JSON with note, shot, 90 values,
+  camera, time, state; PNG). The level's cost at 412x915 q=low: GPU 5.0 ms a frame with rain over the river (112
+  chunks awake), 7.5 ms with the panel and the perf overlay open; frame p50 9.9, p95 10.4 ms. Shots and GIFs:
+  C:\Projects\shots88\playground\.
+- **Conflations found** (not fixed here, BACKLOG AR9-AR12): five gravities (the world's 9.8 for falls and spray, the
+  CPU bodies' 10 — now the world's × 1 —, the physics voxels' 20, chips and splash 14, poured grains their own); the
+  columns' falling pieces capped at 4 cells/s (a likely part of "floaty"), the rigid rock at 14; bodies.ts and
+  colbodies.ts the same falling piece twice (one `pieces` group now); the two water models each with their own rain
+  and evaporation (one `water` group now); the collapse's dust and chips styled by the level scene, not the
+  integrity system.

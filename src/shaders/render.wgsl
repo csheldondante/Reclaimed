@@ -444,11 +444,11 @@ fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
 // flags) and two vec4 after the list's room (a third of the buffer): where it enters (world xy), its velocity xy;
 // the front (how far along its path it's drawn, s), its time since the lip, the volume a second, heat.
 // STREAM_G: the world's gravity (common.wgsl WORLD_G), as liquid.wgsl GF.
-const STREAM_G: f32 = WORLD_G;
+// STREAM_G (was WORLD_G): G.tune.worldGravity (round 108, src/tune/params.ts)
 const STREAM_Q = array<vec2<f32>, 6>(vec2<f32>(0.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0));
 
 /** a stream's point and tangent t seconds along its path from where it enters */
-fn streamAt(e: vec3<f32>, u: vec2<f32>, vz: f32, t: f32) -> vec3<f32> { return vec3<f32>(e.xy + u * t, e.z + vz * t - 0.5 * STREAM_G * t * t); }
+fn streamAt(e: vec3<f32>, u: vec2<f32>, vz: f32, t: f32) -> vec3<f32> { return vec3<f32>(e.xy + u * t, e.z + vz * t - 0.5 * G.tune.worldGravity * t * t); }
 fn streamSide(u: vec2<f32>) -> vec2<f32> {
   let us = length(u);
   return select(vec2<f32>(1.0, 0.0), vec2<f32>(-u.y, u.x) / us, us > 1e-3);
@@ -484,7 +484,7 @@ fn streamVertex(ii: u32, vi: u32, out: ptr<function, VOut>) -> bool {
   let ext = min(0.45 / max(length(vec3<f32>(u, vz)), 1.0), max(d1.x, 0.02));
   let t = -ext + (d1.x + 2.0 * ext) * (f32((vi % 18u) / 6u) + c.x) / 3.0;
   let side = vec3<f32>(streamSide(u), 0.0);
-  let tg = normalize(vec3<f32>(u, vz - STREAM_G * t) + vec3<f32>(0.0, 0.0, -1e-4));
+  let tg = normalize(vec3<f32>(u, vz - G.tune.worldGravity * t) + vec3<f32>(0.0, 0.0, -1e-4));
   let nArc = normalize(cross(tg, side));
   let wd = streamWidth(d1.z, d1.y + t);
   var across = side * wd.x * 0.5;
@@ -1675,7 +1675,7 @@ fn shadeStream(in: VOut, ci: u32) -> FOut {
   let tl = in.zr.x + t;
   let axis = streamAt(e, u, vz, t);
   let side = vec3<f32>(streamSide(u), 0.0);
-  let tg = normalize(vec3<f32>(u, vz - STREAM_G * t) + vec3<f32>(0.0, 0.0, -1e-4));
+  let tg = normalize(vec3<f32>(u, vz - G.tune.worldGravity * t) + vec3<f32>(0.0, 0.0, -1e-4));
   let band = in.bsize.z > 0.5;
   let nArc = normalize(cross(tg, side));
   let acr = select(side, nArc, band);

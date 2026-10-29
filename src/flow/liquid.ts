@@ -19,25 +19,31 @@ export interface LiquidKind {
   name: 'water' | 'lava';
   /** material id drawn (render.wgsl) */
   mat: number;
-  /** the pipe's gain (how fast a level difference moves it sideways) and the flux kept from last tick */
-  gain: number;
-  friction: number;
-  /** it won't move down a step smaller than this (cells) */
-  yieldZ: number;
-  /** thinner than this it barely flows, as (depth / thick)^2 (0: off) */
-  thick: number;
+  /**
+   * (round 108, AR5) its flow numbers: a field of the Globals' Tune struct (the tuning registry, src/tune/params.ts
+   * group `flow` — live from the panel), or a fixed number. gain: how fast a level difference moves it sideways;
+   * friction: the flux kept from last tick; yieldZ: it won't move down a step smaller than this (cells); thick:
+   * thinner than this it barely flows, as (depth / thick)^2 (0: off)
+   */
+  gain: Tuned;
+  friction: Tuned;
+  yieldZ: Tuned;
+  thick: Tuned;
   /** heat: fresh (springs), where it stops flowing and sets, where it runs freely (0: no heat) */
   hot: number;
   set: number;
   runny: number;
   /** a drop past this under the run's floor is a fall (a stream) */
-  drop: number;
+  drop: Tuned;
   /** cooling: e-folds a second for a cell of depth (thinner cools faster; 0: none) */
-  cool: number;
+  cool: Tuned;
 }
 
-export const WATER: LiquidKind = { name: 'water', mat: 8, gain: 0.08, friction: 0.985, yieldZ: 0, thick: 0, hot: 0, set: 0, runny: 1, drop: 1.25, cool: 0 };
-export const LAVA: LiquidKind = { name: 'lava', mat: 24, gain: 0.02, friction: 0.9, yieldZ: 0.12, thick: 0.4, hot: 1250, set: 750, runny: 1150, drop: 1.25, cool: 0.02 };
+/** a Tune struct field (common.wgsl, `G.tune.<field>`) or a fixed number */
+export type Tuned = { tune: string } | number;
+
+export const WATER: LiquidKind = { name: 'water', mat: 8, gain: { tune: 'flowWaterGain' }, friction: { tune: 'flowWaterFriction' }, yieldZ: 0, thick: 0, hot: 0, set: 0, runny: 1, drop: { tune: 'flowWaterDrop' }, cool: 0 };
+export const LAVA: LiquidKind = { name: 'lava', mat: 24, gain: { tune: 'flowLavaGain' }, friction: { tune: 'flowLavaFriction' }, yieldZ: { tune: 'flowLavaYield' }, thick: { tune: 'flowLavaThick' }, hot: 1250, set: 750, runny: 1150, drop: { tune: 'flowLavaDrop' }, cool: { tune: 'flowLavaCool' } };
 
 export const MAX_SPRINGS = 8;
 export interface Spring {
@@ -53,19 +59,20 @@ export interface Spring {
 const VERTS_PER_PRISM = 36;
 
 const f = (v: number) => (Number.isInteger(v) ? v.toFixed(1) : String(v));
+const t = (v: Tuned) => (typeof v === 'number' ? f(v) : `G.tune.${v.tune}`);
 function prelude(k: LiquidKind): string {
   return [
     `const LQ_MAT: u32 = ${k.mat}u;`,
     `const LQ_WATER: bool = ${k.name === 'water'};`,
-    `const LQ_GAIN: f32 = ${f(k.gain)};`,
-    `const LQ_FRIC: f32 = ${f(k.friction)};`,
-    `const LQ_YIELD: f32 = ${f(k.yieldZ)};`,
-    `const LQ_THICK: f32 = ${f(k.thick)};`,
+    `fn lqGain() -> f32 { return ${t(k.gain)}; }`,
+    `fn lqFric() -> f32 { return ${t(k.friction)}; }`,
+    `fn lqYield() -> f32 { return ${t(k.yieldZ)}; }`,
+    `fn lqThick() -> f32 { return ${t(k.thick)}; }`,
     `const LQ_HOT: f32 = ${f(k.hot)};`,
     `const LQ_SET: f32 = ${f(k.set)};`,
     `const LQ_RUNNY: f32 = ${f(k.runny)};`,
-    `const LQ_DROP: f32 = ${f(k.drop)};`,
-    `const LQ_COOL: f32 = ${f(k.cool)};`,
+    `fn lqDrop() -> f32 { return ${t(k.drop)}; }`,
+    `fn lqCool() -> f32 { return ${t(k.cool)}; }`,
     '',
   ].join('\n');
 }

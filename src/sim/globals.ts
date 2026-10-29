@@ -1,9 +1,12 @@
 // CPU mirror of `struct Globals` in src/shaders/common.wgsl.
 
 import { ROW_H } from '../world/lattice';
+import { TUNING } from '../tune/params';
 
-/** (round 107, pages) the Globals before the page table (words 0-479), and the whole with it (Globals.pages and pageInv: 512 vec4 each) */
-export const GLOBALS_HEAD_BYTES = 1920;
+/** (round 108, AR5) the word the tuning registry's GPU parameters start at (common.wgsl Globals.tune, struct Tune) */
+export const TUNE_WORD = 480;
+/** (round 107, pages) the Globals before the page table (words 0-479, then the tuning's struct), and the whole with it (Globals.pages and pageInv: 512 vec4 each) */
+export const GLOBALS_HEAD_BYTES = (TUNE_WORD + TUNING.gpuFloats) * 4;
 export const GLOBALS_BYTES = GLOBALS_HEAD_BYTES + 16384;
 /** (round 107, PG4) the Globals' size with page tables of `vec4` vec4s each (sized to the window: gpu/pages-mode.ts pageTables) */
 export const globalsBytes = (vec4: number) => GLOBALS_HEAD_BYTES + 2 * vec4 * 16;
@@ -257,6 +260,8 @@ export function writeGlobals(s: GlobalsState, out: ArrayBuffer, pageVec4 = 512):
   else sh.fill(0);
   const sr = new Uint32Array(f.buffer, f.byteOffset + 476 * 4, 4);
   sr.set([s.ring?.[0] ?? 0, s.ring?.[1] ?? 0, 0, 0]);
+  // (round 108, AR5) the tuning panel's live values: every tick, so a slider takes at once
+  TUNING.packGpu(f, TUNE_WORD);
   // (round 107, pages) the page table: two u16 a u32, little-endian — a Uint16Array over the words is the packing
   if (s.pages) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES, s.pages.length).set(s.pages);
   if (s.pageInv) new Uint16Array(f.buffer, f.byteOffset + GLOBALS_HEAD_BYTES + pageVec4 * 16, s.pageInv.length).set(s.pageInv);

@@ -397,6 +397,57 @@ export class WorldCore {
     return true;
   }
 
+  // ---- (round 108, the playground) a station put back as the level opened ----------------------------------
+  private pristine?: { layers: GPUBuffer; bufs: { src: GPUBuffer; copy: GPUBuffer; stride: number }[] };
+  /** the per-column state a station's reset puts back (sim/pages.ts COLUMN_BUFS order: bytes a column) */
+  private static readonly RESTORED = ['water', 'waterNext', 'waterPrev', 'waterSource', 'oil', 'oilNext', 'oilStored', 'lava', 'lavaNext', 'contam', 'contamNext', 'moisture', 'moistureNext', 'veg', 'vegNext', 'fire', 'fireNext', 'flux'] as const;
+
+  /** Keep the world as it is now (after the warmup) for restoreChunks. A fixed window only (no ring offset). */
+  keepPristine(): void {
+    const { device } = this.host.gpu;
+    const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST;
+    const w = this.world;
+    const enc = device.createCommandEncoder({ label: 'pristine' });
+    const keep = (b: GPUBuffer) => {
+      const copy = w.buf(`pristine:${b.label}`, b.size, S);
+      enc.copyBufferToBuffer(b, 0, copy, 0, b.size);
+      return copy;
+    };
+    this.pristine = {
+      layers: keep(w.layers),
+      bufs: WorldCore.RESTORED.map((n) => ({ src: w[n] as GPUBuffer, copy: keep(w[n] as GPUBuffer), stride: COLUMN_BUFS[n][0] })),
+    };
+    device.queue.submit([enc.finish()]);
+  }
+
+  /**
+   * Put the chunks [cx0, cx1) × [cy0, cy1) (CHUNK columns each) back as keepPristine had them: their columns (the
+   * layers, by the chunk table) and their per-column state (water, its source, oil, lava, contamination, moisture,
+   * plants, fire, flux; a chunk's columns are contiguous, page-major), what's being poured into them dropped. What
+   * else moves there (bodies, the sleep, the mesh) is the caller's.
+   */
+  restoreChunks(cx0: number, cy0: number, cx1: number, cy1: number): void {
+    const pr = this.pristine;
+    if (!pr) throw new Error('restoreChunks: no pristine copy (keepPristine after the warmup)');
+    const { device } = this.host.gpu;
+    const p = this.packed;
+    const enc = device.createCommandEncoder({ label: 'restore chunks' });
+    const COLS = CHUNK * CHUNK;
+    for (let cy = cy0; cy < cy1; cy++)
+      for (let cx = cx0; cx < cx1; cx++) {
+        if (cx < 0 || cy < 0 || cx >= p.chunksX || cy >= p.chunksY) throw new Error(`restoreChunks: chunk ${cx},${cy} off the window`);
+        const ci = cy * p.chunksX + cx;
+        const off = p.chunkTable[ci * 2] * 16;
+        enc.copyBufferToBuffer(pr.layers, off, this.world.layers, off, p.chunkTable[ci * 2 + 1] * COLS * 16);
+        // (its first column's place: the chunk's columns follow it — sim/pages.ts i())
+        const first = this.world.ring.i(cx * CHUNK, cy * CHUNK);
+        if (this.world.ring.i(cx * CHUNK + CHUNK - 1, cy * CHUNK + CHUNK - 1) !== first + COLS - 1) throw new Error('restoreChunks: a chunk’s columns are not contiguous');
+        for (const b of pr.bufs) enc.copyBufferToBuffer(b.copy, first * b.stride, b.src, first * b.stride, COLS * b.stride);
+        enc.clearBuffer(this.world.deposit, first * COLUMN_BUFS.deposit[0], COLS * COLUMN_BUFS.deposit[0]);
+      }
+    device.queue.submit([enc.finish()]);
+  }
+
   /** Debug: mean of a per-column field over a square region. */
   async probe(name: keyof WorldGpu, x: number, y: number, r = 6, stride = 1, comp = 0): Promise<number> {
     const f = await this.readBuffer(name);

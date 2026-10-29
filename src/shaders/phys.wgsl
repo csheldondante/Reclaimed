@@ -47,12 +47,12 @@ const FRAG_CAP: u32 = 8192u;
 const FRAG_MIN_CODE: u32 = 4u;
 const HASH_N: u32 = 262144u;
 const HASH_NONE: u32 = 0xffffffffu;
-const G_ACC: f32 = 20.0; // cells/s²
-const VMAX: f32 = 60.0;
-const AIR_DRAG: f32 = 0.05; // 1/s
-const STEP_UP: f32 = 0.45; // a ledge this high is climbed, not a wall
-const CRUMBLE_DEPTH: f32 = 0.6; // into solid ground this far, a voxel crumbles
-const CRUMBLE_OVERLAP: f32 = 0.5; // two voxels this far into each other: the weaker crumbles
+// G_ACC (was 20.0): G.tune.voxelsGravity (round 108, src/tune/params.ts) // cells/s²
+// VMAX (was 60.0): G.tune.voxelsVmax (round 108, src/tune/params.ts)
+// AIR_DRAG (was 0.05): G.tune.voxelsAirDrag (round 108, src/tune/params.ts) // 1/s
+// STEP_UP (was 0.45): G.tune.voxelsStepUp (round 108, src/tune/params.ts) // a ledge this high is climbed, not a wall
+// CRUMBLE_DEPTH (was 0.6): G.tune.voxelsCrumbleDepth (round 108, src/tune/params.ts) // into solid ground this far, a voxel crumbles
+// CRUMBLE_OVERLAP (was 0.5): G.tune.voxelsCrumbleOverlap (round 108, src/tune/params.ts) // two voxels this far into each other: the weaker crumbles
 const RAD: f32 = 0.5;
 const AMBIENT_T: f32 = 0.0;
 
@@ -244,7 +244,7 @@ fn predict(@builtin(global_invocation_id) id: vec3<u32>) {
   let vt = pv[i];
   var v = vt.xyz;
   if (x.w > 0.0) {
-    v.z -= G_ACC * PU.a.x;
+    v.z -= G.tune.voxelsGravity * PU.a.x;
     v += gameAccel(i, x.xyz, v) * PU.a.x;
   }
   pv[i] = vec4<f32>(v, vt.w);
@@ -425,7 +425,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
   let depth = g.x - (x.z - rad);
   if (depth > 0.0) {
     // (deep in the ground it goes straight to dust: its pieces would be buried)
-    if (g.y > 0.5 && g.z < 0.5 && depth > CRUMBLE_DEPTH * sz) { dust = true; }
+    if (g.y > 0.5 && g.z < 0.5 && depth > G.tune.voxelsCrumbleDepth * sz) { dust = true; }
     if (x.z < p0.z) {
       fastest = max(fastest, -v.z * (1.0 - 0.6 * g.z));
       x.z = p0.z;
@@ -439,7 +439,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var k = 0u; k < NDIR; k++) {
       if (dot(x.xy - cp, DIRV[k]) <= 0.0) { continue; }
       let gn = groundAt(nbr(c, k), x.z + rad);
-      if (gn.x - (x.z - rad) <= STEP_UP * sz) { continue; }
+      if (gn.x - (x.z - rad) <= G.tune.voxelsStepUp * sz) { continue; }
       if (gn.y < 0.5 && gn.x < x.z - rad) { continue; }
       let into = dot(x.xy - p0.xy, DIRV[k]);
       if (moving && wakeable(u32(gn.w)) && inMap(nbr(c, k))) { touched = winIdx(nbr(c, k)) + 1u; }
@@ -499,7 +499,7 @@ fn collide(@builtin(global_invocation_id) id: vec3<u32>) {
           // (by chance, the harder the more likely: below)
           if (!near && closing > crumbleV && (toughI < toughJ || (toughI == toughJ && i > ju))) { fastest = max(fastest, closing); }
           // deeper than the weaker can bear: it crumbles
-          if (!near && over > CRUMBLE_OVERLAP * min(sz, sizeOf(infoJ)) && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
+          if (!near && over > G.tune.voxelsCrumbleOverlap * min(sz, sizeOf(infoJ)) && (toughI < toughJ || (toughI == toughJ && i > ju))) { dying = true; }
           // stop them closing further (each its share); never part them
           let wi = x0.w;
           let wj = max(xj.w, 0.0);
@@ -602,9 +602,9 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     if (nb > 0.0) { v += dv / nb * damp; }
   }
-  v *= 1.0 - AIR_DRAG * h;
+  v *= 1.0 - G.tune.voxelsAirDrag * h;
   let sp = length(v);
-  if (sp > VMAX) { v *= VMAX / sp; }
+  if (sp > G.tune.voxelsVmax) { v *= G.tune.voxelsVmax / sp; }
   pv[i] = vec4<f32>(v, prev.w);
   if (x.z < -20.0) {
     px[2u * i] = vec4<f32>(x.xyz, PV_DEAD);
@@ -621,7 +621,7 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
     t.y += h;
     t.x = select(0.0, t.x + h, sp < 1.0);
     pr[i] = t;
-    if (t.x > FRAG_REST || t.y > FRAG_LIFE) { px[2u * i] = vec4<f32>(x.xyz, PV_DUST); }
+    if (t.x > G.tune.voxelsFragRest || t.y > G.tune.voxelsFragLife) { px[2u * i] = vec4<f32>(x.xyz, PV_DUST); }
     return;
   }
   // bonds past their break strain snap (both sides judge the same numbers)
@@ -647,8 +647,8 @@ fn finalize(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // a fragment this long at rest, or this old (s), goes to dust
-const FRAG_REST: f32 = 0.6;
-const FRAG_LIFE: f32 = 6.0;
+// FRAG_REST (was 0.6): G.tune.voxelsFragRest (round 108, src/tune/params.ts)
+// FRAG_LIFE (was 6.0): G.tune.voxelsFragLife (round 108, src/tune/params.ts)
 
 // ---- 6. plastic flow and heat --------------------------------------------------------
 @compute @workgroup_size(64)
@@ -956,7 +956,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
 @group(0) @binding(32) var<storage, read_write> skinArgs: array<atomic<u32>>;
 const SKIN_NONE: u32 = 0xffffffffu;
 const SKIN_V: u32 = 7u;
-const TEAR: f32 = 1.6;
+// TEAR (was 1.6): G.tune.voxelsTear (round 108, src/tune/params.ts)
 
 struct SkinV { p: vec3<f32>, rest: vec3<f32>, heat: f32, ok: bool, mat: u32 };
 
@@ -997,7 +997,7 @@ fn skin(@builtin(global_invocation_id) id: vec3<u32>) {
   let la = length(a.rest - b.rest);
   let lb = length(b.rest - c.rest);
   let lc = length(c.rest - a.rest);
-  if (length(a.p - b.p) > la * TEAR + 0.05 || length(b.p - c.p) > lb * TEAR + 0.05 || length(c.p - a.p) > lc * TEAR + 0.05) { return; }
+  if (length(a.p - b.p) > la * G.tune.voxelsTear + 0.05 || length(b.p - c.p) > lb * G.tune.voxelsTear + 0.05 || length(c.p - a.p) > lc * G.tune.voxelsTear + 0.05) { return; }
   let n = normalize(cross(b.p - a.p, c.p - a.p) + vec3<f32>(0.0, 0.0, 1e-9));
   let m = a.mat & 0xffu;
   let melt = pmC(m).y;

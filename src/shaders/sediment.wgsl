@@ -59,26 +59,26 @@ fn rooted(j: u32) -> f32 { return smoothstep(1.2, 2.0, vegD[j]); }
 const DT_D: f32 = 2.0 / 60.0; // the system runs every other tick
 /** (perfopt, simhz) the world time an update stands for */
 fn dtD() -> f32 { return DT_D * simStep(); }
-const CARRY: f32 = 0.25;      // cells of depth lifted per second per cell/s over the threshold
+// CARRY (was 0.25): G.tune.sedimentCarry (round 108, src/tune/params.ts)      // cells of depth lifted per second per cell/s over the threshold
 // (per neighbour: the hex grid has six, each 2/3 the square grid's four —
 // the same continuum rate, water_flux.wgsl)
-const SLUMP: f32 = 0.08 * 2.0 / 3.0;
-const HOLD_STEEP: f32 = 1.0;
+// SLUMP (was 0.08 * 2.0 / 3.0): G.tune.sedimentSlump (round 108, src/tune/params.ts)
+// HOLD_STEEP (was 1.0): G.tune.sedimentHoldSteep (round 108, src/tune/params.ts)
 // where the wind is moving loose ground, level differences between
 // neighbours ease out a little each pass, so the transport can't see-saw
 // into a checkerboard (round 17); still ground keeps its shape
 const WIND_SMOOTH: f32 = 0.15 * 2.0 / 3.0;
 const NEVER: f32 = 1e8;
 // granular intervals with air under them fall this far per pass
-const FALL: f32 = 2.0;
+// FALL (was 2.0): G.tune.sedimentFall (round 108, src/tune/params.ts)
 // piping: loose ground holding back a large water-level difference is
 // pushed toward the low side (cells per pass per cell of head over PIPE_HEAD)
-const PIPE_HEAD: f32 = 2.5;
-const PIPE_RATE: f32 = 0.04;
+// PIPE_HEAD (was 2.5): G.tune.sedimentPipeHead (round 108, src/tune/params.ts)
+// PIPE_RATE (was 0.04): G.tune.sedimentPipeRate (round 108, src/tune/params.ts)
 const SED: u32 = 7u;
 // a buried granular interval with air beside it spills out of the face
 // (share of its height over the repose, per pass), like a slump
-const FACE: f32 = 0.08;
+// FACE (was 0.08): G.tune.sedimentFace (round 108, src/tune/params.ts)
 const MAT_SOIL_L: u32 = 2u;
 const MAT_ASH_L: u32 = 17u;
 
@@ -229,7 +229,7 @@ fn topOf(q: vec2<i32>) -> f32 {
 // overshoot: six neighbours each taking that share of the excess) and roots
 // let go (round 55: shed it like a rising volcano's cone does)
 const SHAKE_TICKS: f32 = 240.0;
-const SHAKE_SLIP: f32 = 0.8;
+// SHAKE_SLIP (was 0.8): G.tune.sedimentShakeSlip (round 108, src/tune/params.ts)
 const SHAKE_RUSH: f32 = 0.5;
 
 /** How hard q's ground is shaken now (0..1, fading). */
@@ -243,7 +243,8 @@ fn shakeAt(q: vec2<i32>) -> f32 {
 /** The steepest slope q's top material holds (cells per cell), lower when wet, and while the ground there is shaken. */
 fn reposeAt(q: vec2<i32>, m: u32) -> f32 {
   let rep = mix(MATS[m].sim.y, MATS[m].sim.z, smoothstep(0.35, 0.8, moisture[colIdxI(q)]));
-  return rep * (1.0 - SHAKE_SLIP * shakeAt(q));
+  // (round 108: × the tuning's repose, 1 by default)
+  return rep * G.tune.sedimentRepose * (1.0 - G.tune.sedimentShakeSlip * shakeAt(q));
 }
 
 /**
@@ -315,7 +316,7 @@ fn windOut(q: vec2<i32>) -> Dirs {
   let fine = G.misc.w > 0.5;
   let lift = MATS[m].loose.x * select(1.0, 0.45, fine);
   if (lift >= NEVER) { return dZero(); }
-  let carry = CARRY * select(1.0, 4.8, fine);
+  let carry = G.tune.sedimentCarry * select(1.0, 4.8, fine);
   let here = hereAt(q);
   let w = windAt(vec3<f32>(cellPos(q), here + 0.5));
   if (hasProj(q) && enclosed(q, w)) { return dZero(); }
@@ -372,10 +373,10 @@ fn pipeOut(q: vec2<i32>) -> Dirs {
     if (lvl < lo) { lo = lvl; loDir = k; }
   }
   // only when the water actually presses against this column's loose top
-  if (!(hi > h - 4.0 && hi - lo > PIPE_HEAD && lo < h)) { return dZero(); }
+  if (!(hi > h - 4.0 && hi - lo > G.tune.sedimentPipeHead && lo < h)) { return dZero(); }
   let m = driftMatAt(q);
   var o = dZero();
-  o[loDir] = min(top * 0.25, (hi - lo - PIPE_HEAD) * PIPE_RATE * simStep() * (1.0 - MATS[m].sim.w * 0.5));
+  o[loDir] = min(top * 0.25, (hi - lo - G.tune.sedimentPipeHead) * G.tune.sedimentPipeRate * simStep() * (1.0 - MATS[m].sim.w * 0.5));
   return o;
 }
 
@@ -404,7 +405,7 @@ fn slumpOut(q: vec2<i32>) -> Dirs {
   let sk = shakeAt(q);
   let hd = held(q) * (1.0 - sk);
   // (a sixth of the excess to each neighbour at most: more over-corrects into a checkerboard)
-  let rate = min(SLUMP * (1.0 + SHAKE_RUSH * sk) * simStep(), 0.15);
+  let rate = min(G.tune.sedimentSlump * (1.0 + SHAKE_RUSH * sk) * simStep(), 0.15);
   var o = dZero();
   for (var k = 0u; k < NDIR; k++) {
     let n = nbr(q, k);
@@ -414,7 +415,7 @@ fn slumpOut(q: vec2<i32>) -> Dirs {
     // the arrivals alternate (mud, dust from the air), so the top interval
     // stays thin and held() never lets go — planted columns grew into
     // spikes 8+ cells over their neighbours (round 30)
-    let hk = hd * (1.0 - smoothstep(rep, rep + HOLD_STEEP, diff));
+    let hk = hd * (1.0 - smoothstep(rep, rep + G.tune.sedimentHoldSteep, diff));
     o[k] = max(diff - rep, 0.0) * rate * (1.0 - hk);
   }
   let s = dSum(o);
@@ -603,7 +604,7 @@ fn spillOut(p: vec2<i32>) -> Spill {
       // it needs a slot there, unless it joins the floor
       let joins = ivMat(fl) == m;
       if (qn >= qs.y && !joins) { continue; }
-      var amt = min((drop - rep) * FACE * simStep(), (b - a) * 0.25);
+      var amt = min((drop - rep) * G.tune.sedimentFace * simStep(), (b - a) * 0.25);
       if (g1 < 1e8) { amt = min(amt, (g1 - g0) * 0.5); }
       if (amt > sp.amt[k]) {
         sp.amt[k] = amt;
@@ -893,7 +894,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
         }
       }
       if (matState(ivMat(v)) == ST_GRANULAR && z0 > fl + 1e-4) {
-        let f = min(FALL * simStep(), z0 - fl);
+        let f = min(G.tune.sedimentFall * simStep(), z0 - fl);
         // (it streams down as grains: the particles show the fall)
         if (z1 - z0 > 0.05) { textureStore(airOut, texCol(vec2<i32>(p)), vec4<f32>(own[0], min(z1 - z0, 2.0) * 0.1, z0, 6.0 + 8.0 * f32(ivMat(v)))); }
         z0 -= f;

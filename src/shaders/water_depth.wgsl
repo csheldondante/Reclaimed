@@ -12,15 +12,15 @@
 // instead (climate.wgsl lays it)
 @group(0) @binding(8) var<storage, read> surface: array<u32>;
 
-const RAIN_RATE: f32 = 0.0012;
-const EVAP: f32 = 0.00003;
+// RAIN_RATE (was 0.0012): G.tune.waterRain (round 108, src/tune/params.ts)
+// EVAP (was 0.00003): G.tune.waterEvap (round 108, src/tune/params.ts)
 const EVAP_DEEP: f32 = 0.000002;
 /** (?rivers=hold / ?riverhold=1, the perf agent's) the most a held source tops its column up by a step (a breach
  *  upstream of it still shows) */
 const HOLD_RATE: f32 = 0.5;
 /** (round 84, ?rivers=table) how fast a held river's column comes to the table's depth (a step's share): the river
  *  rises and falls with the wetness, and comes back to its level when a breach falls asleep, smoothly */
-const RIVER_RELAX: f32 = 0.02;
+// RIVER_RELAX (was 0.02): G.tune.pipesRiverRelax (round 108, src/tune/params.ts)
 
 // (perfopt: a settling pass runs over the rect of the land just come in — x, y, w, h columns: sim/systems.ts)
 @group(0) @binding(31) var<uniform> SR: vec4<u32>;
@@ -41,8 +41,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     waterPrev[ia] = water[ia];
     // (round 104, simscale: off from anything live, a held river is updated every RIVER_SLOW_N ticks — sim/cull.ts
     // NEAR — so it relaxes that many steps' worth at once)
-    var relax = RIVER_RELAX;
-    if (RIVER_SLOW_N > 1u && !nearLive(id.xy)) { relax = 1.0 - pow(1.0 - RIVER_RELAX, f32(RIVER_SLOW_N)); }
+    var relax = G.tune.pipesRiverRelax;
+    if (RIVER_SLOW_N > 1u && !nearLive(id.xy)) { relax = 1.0 - pow(1.0 - G.tune.pipesRiverRelax, f32(RIVER_SLOW_N)); }
     waterOut[ia] = mix(water[ia], rh.depth, relax);
     return;
   }
@@ -66,11 +66,11 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   // a source: positive, a spring (water a step); negative (?rivers=hold: forms.wgsl RIVER_HOLD), the depth it's
   // topped up to — the river held at its level by what comes down from upstream
   let src = waterSource[i];
-  nd += rainAt(cellPos(p)) * RAIN_RATE * (1.0 - snowShare(airTempAt(f32(sfZ(surface[i]))))) + max(src, 0.0);
+  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(f32(sfZ(surface[i]))))) + max(src, 0.0);
   if (src < 0.0) { nd = max(nd, min(-src, nd + HOLD_RATE)); }
   // thin films (wet ground, puddles) evaporate; deep water barely does — otherwise
   // a large lake evaporates the whole river inflow
-  nd = max(0.0, nd - select(EVAP_DEEP, EVAP, nd < 0.08));
+  nd = max(0.0, nd - select(EVAP_DEEP, G.tune.waterEvap, nd < 0.08));
   // a column with nothing in it (round 69: the window slides in z, and the ground here is
   // below its floor): what runs in falls on out of the window — but not under the sea (round 88): there the
   // column under the floor is the sea's, full, and the water stands on the floor at the sea's level (it drained
