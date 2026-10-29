@@ -561,6 +561,43 @@ fn waterSheetVertex(b: Box, vi: u32, out: ptr<function, VOut>) -> bool {
   return true;
 }
 
+/**
+ * (watersurf, FC2) The water's top as one surface: watersurf.wgsl lists the lattice's triangles that have a wet
+ * corner, as three window-order column indices, and this is the vertex of column vi (a column's vertex is shared
+ * by its six triangles, worked out once). A wet column stands at its water's level; a dry one (a shore's or a
+ * bank's corner) at the lowest level of the water beside it, or its own ground where that's lower: the sheet runs
+ * flat into a bank and the opaque ground's depth cuts the shore there; down a step it slopes to the ground below
+ * and thins out (waterSheetVertex's rule a vertex, not a triangle: by the lowest water, so a bank between a pool
+ * and the river below it never stands up out of the ground). The normal is the triangle's own (fsWaterSurf).
+ */
+@vertex
+fn vsWaterSurf(@builtin(vertex_index) vi: u32) -> VOut {
+  let p = vec2<i32>(winXY(vi));
+  let me = waterLevelAt(p);
+  var z = me.x;
+  if (me.y == 0.0) {
+    var low = 1e9;
+    for (var k = 0u; k < NDIR; k++) {
+      let l = waterLevelAt(nbr(p, k));
+      if (l.y > 0.0) { low = min(low, l.x); }
+    }
+    z = min(low, me.x);
+  }
+  let v = vec3<f32>(cellPos(p), z);
+  var o: VOut;
+  o.pos = CAM.viewProj * vec4<f32>(v, 1.0);
+  o.wpos = v;
+  o.nrm = vec3<f32>(0.0, 0.0, 1.0);
+  o.info = vec2<u32>(MAT_WATER, 0u);
+  o.zr = vec2<f32>(me.x, z);
+  o.tint = 1.0;
+  o.bmin = vec3<f32>(v.xy - 0.5, me.x);
+  o.bsize = vec3<f32>(1.0, 1.0, 0.0);
+  o.boff = vec3<f32>(0.0);
+  o.sides = 0u;
+  return o;
+}
+
 struct FOut {
   @location(0) color: vec4<f32>,
   // pick: x = column+1 (0 = nothing), y = material | z<<8 | flags<<16
@@ -686,7 +723,9 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // (round 103, tilecache: a point past the window — a frozen tile's — has no fire field of its own; the edge
   // column's clamped lookup isn't its)
   let glow = select(0.0, fields[colIdxI(sc)].z, inMap(cellAt(wpos.xy + nrm.xy * 0.5)));
-  let flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y));
+  // (watersurf: the flicker's noise only where there's firelight to flicker — the same light)
+  var flick = 0.0;
+  if (glow > 0.0) { flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y)); }
   let firelight = vec3<f32>(1.8, 0.75, 0.25) * glow * flick;
   return ambient + fill + flash + firelight + sunCol * ndl * lit * (1.0 - cloud * 0.9);
 }
@@ -1418,8 +1457,9 @@ fn flowStreaks(p: vec2<f32>, v: vec2<f32>, d: f32) -> f32 {
  * phases broken by noise, plus the catspaws of gusts (noise advected
  * downwind). Calm air or shallow water lies flatter (rough).
  */
-fn windWaves(p: vec2<f32>, z: f32, rough: f32) -> vec3<f32> {
-  let wv = windAt(vec3<f32>(p, z + 0.5));
+fn windWaves(p: vec2<f32>, z: f32, rough: f32) -> vec3<f32> { return windWavesIn(p, windAt(vec3<f32>(p, z + 0.5)), rough); }
+/** windWaves in the wind wv already looked up */
+fn windWavesIn(p: vec2<f32>, wv: vec2<f32>, rough: f32) -> vec3<f32> {
   let lw = length(wv);
   let pw = vec2<f32>(G.windX, G.windY) + vec2<f32>(1e-4, 0.0);
   let wd = select(normalize(pw), wv / max(lw, 1e-4), lw > 0.05);
@@ -1448,7 +1488,20 @@ fn windWaves(p: vec2<f32>, z: f32, rough: f32) -> vec3<f32> {
 }
 
 @fragment
-fn fsWater(in: VOut) -> FOut {
+fn fsWater(in: VOut) -> FOut { return shadeWater(in); }
+
+/** (watersurf) the surface's water: lit by its triangle's own normal (flat over it, as the sheet's was) */
+@fragment
+fn fsWaterSurf(in: VOut) -> FOut {
+  var v = in;
+  var n = normalize(cross(dpdx(in.wpos), dpdy(in.wpos)));
+  if (n.z < 0.0) { n = -n; }
+  v.nrm = n;
+  return shadeWater(v);
+}
+
+/** the water's look (the prisms', the sheets', the surface's): called in uniform control flow (it takes derivatives) */
+fn shadeWater(in: VOut) -> FOut {
   let cell = fragCell(in.wpos, in.nrm);
   let ci = colIdxI(cell);
   // smooth depth: rounded shorelines (round 12)
@@ -1476,9 +1529,13 @@ fn fsWater(in: VOut) -> FOut {
   // sludge: thick, opaque, sickly olive-brown with a scummy mottle (an
   // obvious thing to wash away); fades back to water as it is diluted
   let sludge = smoothstep(0.9, 2.2, conc);
-  let scum = smoothstep(0.55, 0.75, vnoise(wo(in.wpos.xy) * 1.3 + vec2<f32>(G.time * 0.03, 0.0)));
-  let murk = vnoise(wo(in.wpos.xy) * 0.4 + 9.0);
-  c = mix(c, mix(mix(vec3<f32>(0.13, 0.11, 0.06), vec3<f32>(0.2, 0.16, 0.08), murk), vec3<f32>(0.44, 0.42, 0.1), scum * 0.8), sludge);
+  // (watersurf: each term below is worked out only where it shows — the same picture, less of the cost: the
+  // water's shading is most of its draw, a pixel at a time over the screen's water)
+  if (sludge > 0.0) {
+    let scum = smoothstep(0.55, 0.75, vnoise(wo(in.wpos.xy) * 1.3 + vec2<f32>(G.time * 0.03, 0.0)));
+    let murk = vnoise(wo(in.wpos.xy) * 0.4 + 9.0);
+    c = mix(c, mix(mix(vec3<f32>(0.13, 0.11, 0.06), vec3<f32>(0.2, 0.16, 0.08), murk), vec3<f32>(0.44, 0.42, 0.1), scum * 0.8), sludge);
+  }
   var col = toLinear(c) * lighting(in.wpos, in.nrm);
   var alpha = mix(mix(0.5, 0.9, deep), 0.97, sludge) * smoothstep(WATER_MIN_R, 0.08, d);
 
@@ -1492,7 +1549,8 @@ fn fsWater(in: VOut) -> FOut {
     // (shallow puddles lie still: the ripples fade out below ~0.7 deep)
     let rough = (0.5 + clamp(lw / 5.0, 0.0, 2.0)) * smoothstep(0.1, 0.7, d);
     // (the waves' crests lie across the wind: round 41)
-    var nn = windWaves(in.wpos.xy, in.wpos.z, rough);
+    var nn = vec3<f32>(0.0, 0.0, 1.0);
+    if (rough > 0.0) { nn = windWavesIn(in.wpos.xy, wv, rough); }
     // (round 83) the swell off the shore: its slope across the crests tilts the surface
     let sw = swellAt(in.wpos.xy, cell, flow, clamp(lw / 4.0, 0.0, 1.0));
     nn = normalize(nn + vec3<f32>(sw.dir * sw.amp * 0.3 * sw.slope, 0.0));
@@ -1506,19 +1564,24 @@ fn fsWater(in: VOut) -> FOut {
     col *= mix(shade, 1.0, sludge * 0.7);
     col += G.sunCol.rgb * (1.0 / 2.4) * spec * 0.7;
     // slow bubbles rising through the sludge
+    if (sludge > 0.0) {
     let bub = vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.5)), i32(floor(t * 0.8 + randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.5)), 3)) * 7.0)));
     let bf = fract(wo(in.wpos.xy) * 2.5) - 0.5;
     col += vec3<f32>(0.05, 0.05, 0.01) * sludge * step(0.93, randv(bub)) * step(length(bf), 0.32) * (1.0 - 0.8 * G.sky.w);
+    }
     // foam where flowing fast
     // (on the field mesh smooth, in streaks down the flow; on the prisms in cells)
     let meshOn = (u32(CAM.eye.w) & 2u) != 0u;
-    let sub = vec3<i32>(floor(vec3<f32>(wo(in.wpos.xy) * 4.0, t * 6.0)));
-    var fleck = step(0.72, randv(sub));
-    // (round 84: the flow's heading is known without the field mesh too — renderfields.wgsl packFlow)
-    if (meshOn || flow > 1e-4) { fleck = smoothstep(0.62, 0.85, flowStreaks(wo(in.wpos.xy) * 1.7, fv, d)); }
     // (round 84, ?rivers=table: by the water's speed, not its net flow — a deep river held at the atlas's table
     // carries a lot without being fast; it foams where it runs fast, at its rapids)
-    let foam = smoothstep(0.03, 0.25, select(flow, flow / max(d, 0.15) * 0.4, RIVER_FOAM_SPEED)) * fleck;
+    var foam = smoothstep(0.03, 0.25, select(flow, flow / max(d, 0.15) * 0.4, RIVER_FOAM_SPEED));
+    if (foam > 0.0) {
+      let sub = vec3<i32>(floor(vec3<f32>(wo(in.wpos.xy) * 4.0, t * 6.0)));
+      var fleck = step(0.72, randv(sub));
+      // (round 84: the flow's heading is known without the field mesh too — renderfields.wgsl packFlow)
+      if (meshOn || flow > 1e-4) { fleck = smoothstep(0.62, 0.85, flowStreaks(wo(in.wpos.xy) * 1.7, fv, d)); }
+      foam *= fleck;
+    }
     col = mix(col, vec3<f32>(0.85, 0.85, 0.8), foam * 0.6);
     alpha = max(alpha, foam * 0.7);
     // a fall (round 69: the atlas's rivers over cliffs): water steep down a face is white water,
@@ -1537,15 +1600,18 @@ fn fsWater(in: VOut) -> FOut {
     }
     // the shore (round 83: the shore field): the swell's crests catch the light, and break into foam in the
     // last few cells — more in the wind
-    let froth = smoothstep(0.3, 0.65, vnoise(wo(in.wpos.xy) * 2.2 + vec2<f32>(t * 0.35, -t * 0.2)));
     col *= 1.0 + 0.12 * sw.amp * sw.h;
     let brk = sw.amp * smoothstep(7.0, 1.0, sw.dist) * smoothstep(0.55, 0.95, sw.crest) * smoothstep(0.012, 0.03, d);
-    let sf = brk * (1.0 - sludge * 0.7) * (0.55 + 0.45 * froth);
-    col = mix(col, vec3<f32>(0.82, 0.84, 0.82) * (1.0 - 0.75 * G.sky.w), sf * 0.75);
-    alpha = max(alpha, sf * 0.85);
-    // rain rings
+    if (brk > 0.0) {
+      let froth = smoothstep(0.3, 0.65, vnoise(wo(in.wpos.xy) * 2.2 + vec2<f32>(t * 0.35, -t * 0.2)));
+      let sf = brk * (1.0 - sludge * 0.7) * (0.55 + 0.45 * froth);
+      col = mix(col, vec3<f32>(0.82, 0.84, 0.82) * (1.0 - 0.75 * G.sky.w), sf * 0.75);
+      alpha = max(alpha, sf * 0.85);
+    }
+    // rain rings (none where no rain falls: a drop shows where a random under the rain's share falls)
     let rain = rainAt(in.wpos.xy);
-    if (meshOn) {
+    if (rain <= 0.0) {
+    } else if (meshOn) {
       // (on the field mesh: rings spreading from each drop, a third of a
       // cell apart, each cell's drops at its own times)
       let rc = vec2<i32>(floor(wo(in.wpos.xy) * 3.0));
@@ -1574,6 +1640,16 @@ fn fsWater(in: VOut) -> FOut {
   var o: FOut;
   o.color = vec4<f32>(toSrgb(col), alpha);
   o.pick = vec2<u32>(pickCol(ci), pickInfo(in.info.x, in.wpos.z, in.info.y));
+  return o;
+}
+
+// (watersurf, ?skip=waterflat) the water's shading left out, its geometry kept: what the water's draw costs without
+// fsWater's look (vertices, raster, blend) — a measuring aid
+@fragment
+fn fsWaterFlat(in: VOut) -> FOut {
+  var o: FOut;
+  o.color = vec4<f32>(0.1, 0.3, 0.4, 0.7);
+  o.pick = vec2<u32>(0u, 0u);
   return o;
 }
 

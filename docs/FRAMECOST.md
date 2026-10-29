@@ -174,7 +174,7 @@ At 4x throttle, window 256 (mean / max, ms):
 
 | id | proposal | kind | expected |
 |---|---|---|---|
-| FC2 | water as a surface, not a prism per wet column | structural | up to ~4 ms a frame over sea at 512, ~1.7 at 320 / zoom 14 |
+| FC2 | water as a surface, not a prism per wet column | structural | up to ~4 ms a frame over sea at 512, ~1.7 at 320 / zoom 14. **Done (`watersurf`, round 107):** over open sea the water's draw 5.3 → 3.4 ms (+0.26 for its list); its shading is now the cost (FC9) |
 | AR3 | tiles replace the far rings (already planned) | structural | ~4 ms a frame at both zooms |
 | FC3 | renderprep over the chunks in view only | optimisation | 0.3–0.6 ms a frame, p95 1–1.7 |
 | FC4 | the agents' spike ticks (9–14 ms parked) | investigate | the p95 / max frames |

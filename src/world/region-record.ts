@@ -255,6 +255,17 @@ export type ColumnsSig = Float32Array;
  * thickness of its matter (not air, not liquid). The hash says whether a region is as it was saved.
  */
 export function columnsHash(pages: Uint32Array, layout: RegionLayout, outside: Interval[][], oz: number, sig?: ColumnsSig): number {
+  const g = columnsHashSteps(pages, layout, outside, oz, sig, Infinity);
+  let r = g.next();
+  while (!r.done) r = g.next();
+  return r.value;
+}
+
+/**
+ * (round 106, tilephone) columnsHash a few rows at a time: it yields after every `rows` rows (the caller's time slice —
+ * the phone's frames had 1.1-2.7 ms of it whole: rs.hash), its value the hash when done. The same hash as columnsHash.
+ */
+export function* columnsHashSteps(pages: Uint32Array, layout: RegionLayout, outside: Interval[][], oz: number, sig: ColumnsSig | undefined, rows: number): Generator<void, number, void> {
   const { R, K, rc } = layout;
   const pageSlots = K * CHUNK * CHUNK;
   const f = new Float32Array(pages.buffer, pages.byteOffset, pages.length);
@@ -272,7 +283,8 @@ export function columnsHash(pages: Uint32Array, layout: RegionLayout, outside: I
     const st = MATERIALS[m]?.state;
     return st !== undefined && st !== MatState.Empty && st !== MatState.Liquid;
   };
-  for (let y = 0; y < R; y++)
+  for (let y = 0; y < R; y++) {
+    if (y > 0 && y % rows === 0) yield;
     for (let x = 0; x < R; x++) {
       const page = Math.floor(y / CHUNK) * rc + Math.floor(x / CHUNK);
       const base = (page * pageSlots + ((y % CHUNK) * CHUNK + (x % CHUNK)) * K) * SLOT_WORDS;
@@ -325,5 +337,6 @@ export function columnsHash(pages: Uint32Array, layout: RegionLayout, outside: I
         sig[(y * R + x) * 2 + 1] = solid;
       }
     }
+  }
   return h >>> 0;
 }
