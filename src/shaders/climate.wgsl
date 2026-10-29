@@ -76,12 +76,13 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (snow < LEAF_DROP) { fall = select(0.0, LEAF_DROP, rand3(id.x, id.y, G.tick ^ 0x5a0du) < snow / LEAF_DROP); }
   if (snow > 1e-5 && dep.y <= 0.0) {
     if (fall > 0.0) { deposit[i] = vec4<f32>(dep.x, fall, f32(MAT_SNOW), dep.w); }
-  } else if (vegC[i] >= 3.6 && t > 0.0 && wd < 0.02 && dep.y <= 0.0 && !(ivMat(top) == MAT_LEAFLIT && ivZ1(top) - ivZ0(top) >= LEAF_MAX)) {
+  } else if (tierRate(TIER_VEG, p) > 0.0 && vegC[i] >= 3.6 && t > 0.0 && wd < 0.02 && dep.y <= 0.0 && !(ivMat(top) == MAT_LEAFLIT && ivZ1(top) - ivZ0(top) >= LEAF_MAX)) {
     // (a tree's crown over it: veg ≥ 3.6 is woodland, vegplan.wgsl)
     // (round 51: most of them in the fall) — in drops of LEAF_DROP now and
     // then: a sliver thinner than a thousandth of a cell is a spent top to
     // the sediment pass, which threw every drop away
-    let rate = LEAF_RATE * dtC() * (0.2 + 6.0 * seasonShed());
+    // (round 108, simtiers: leaf fall is the vegetation's — baked, none; a bake's gain speeds it)
+    let rate = LEAF_RATE * dtC() * tierRate(TIER_VEG, p) * (0.2 + 6.0 * seasonShed());
     if (rand3(id.x, id.y, G.tick ^ 0x1eafu) < rate / LEAF_DROP) {
       deposit[i] = vec4<f32>(dep.x, LEAF_DROP, f32(MAT_LEAFLIT), dep.w);
     }
@@ -114,11 +115,11 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // (no slot for the ice: the water stays water)
       wd += f;
     }
-  } else if (m == MAT_LEAFLIT && moistC[i] > 0.35 && t > 0.0 && n >= 2u) {
+  } else if (m == MAT_LEAFLIT && moistC[i] > 0.35 && t > 0.0 && n >= 2u && tierRate(TIER_VEG, p) > 0.0) {
     // leaves rot into the soil under them
     let below = arr[n - 2u];
     if (ivMat(below) == MAT_SOIL_C && abs(ivZ1(below) - ivZ0(top)) < 1e-3) {
-      let r = min(d, ROT * dtC());
+      let r = min(d, ROT * dtC() * tierRate(TIER_VEG, p));
       let s1 = ivZ1(below) + r * 0.5;
       arr[n - 2u] = ivPack(ivZ0(below), s1, MAT_SOIL_C, ivAux(below));
       arr[n - 1u] = ivPack(s1, max(ivZ1(top) - r * 0.5, s1), m, ivAux(top));

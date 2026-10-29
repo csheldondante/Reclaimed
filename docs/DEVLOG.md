@@ -11687,6 +11687,70 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   WORLD_G (9.8, DECISIONS round 106/108) stays, shared by the flow model's streams, sheets and spray. BACKLOG WF1
   deferred; round 108's answers in DECISIONS, rows TC18-TC20, SM1, AR8.
 
+## 2026-10-29 — the sims' tiers: erosion and growth baked, the visuals live (round 108, session 5, `simtiers`)
+
+- **Why.** The user (DECISIONS round 108): "Yes unless explicitly requested in the API. Like water we want to see
+  falling and and blowing dust even if the underlying map isn't changing." Earlier: "We don't actually have to erode
+  from rain or wind in realtime if we can cache the visuals and update between runs. Likewise the vegitation
+  probably doesn't need to grow in realtime except for specific mechanics or runs." The rule is round 83's "work
+  happens at the slowest scale that still looks right". BACKLOG SM1.
+- **The map of kernels.** These change the map from rain, wind or growth inside awake chunks:
+  - sediment.wgsl: `windOut` (wind carrying loose ground), `smoothOut` (the wind's easing), the dust storms' and
+    the dying cyclones' dust, the particles' dust set down (`exchange`), litter torn off (wind); `waterOut`
+    (water washing loose ground: rain); green binding dust into soil (vegetation).
+  - ecology.wgsl: growth, colonising and dying back (vegetation).
+  - climate.wgsl: leaf fall and rot into soil (vegetation).
+  - particles.wgsl: a landing seed sprouting, withered growth stripped by a gust (vegetation).
+  - structtick.wgsl: moss on structures (vegetation).
+
+  These are left live: sediment's slumps, spills, falls and piping (collapse, breaches); climate's snow, melt and
+  freeze (weather, per round 108's tiles too); structure/structtick's hydraulic damage and cover; water, oil,
+  lava, fire, wilt (a field the grow tap needs), moisture, contamination (SM3), the wind field and sway.
+- **Conflations found and split.**
+  - sediment's outflow used one number, what the wind lifts, both for what leaves the ground and for the air
+    texture the dust particles are spawned from. Baking wind erosion by zeroing it would have stilled the dust.
+    Now `lifts` (what the wind would lift) feeds the air texture always. Only `o` (that, at the tier's rate)
+    leaves the ground, and the dust the grains carry is set down only where wind is live.
+  - ecology mixed growth (baked) with fire burning plants (live). The tier gates only growth.
+  - particles.wgsl's emitters and landings are visuals that also write the plants (seeds, gusts). Their visual
+    stays and their write is gated; the player's grow tap is a power, so it stays live.
+  - climate mixed weather (snow, ice) with vegetation (leaves). Only the leaves are gated.
+- **The contract** (ARCHITECTURE "The sims' tiers"): api/contracts/simtiers.ts `SimTiers` (`tier`, `setTier`,
+  `live`, `bake`), and sim/tiers.ts `Tiers` as `core.tiers`.
+  - It writes Globals words 480-515, so GLOBALS_HEAD_BYTES goes from 1920 to 2064. Kernels ask
+    `tierRate(TIER_*, column)` (common.wgsl): 0 is baked, 1 is live, and a bake's gain is more than 1.
+  - A bake runs inside the scheduler: WorldCore.advance calls `tiers.pump`, which runs 30 more whole-sim ticks a
+    frame. The region is live at gain 8 and kept awake, over seconds / (TICK_DT × 8) ticks.
+  - WorldCore starts all live (the older levels, the title diorama whose wind uncovers the level models, the
+    sandbox). The atlas level calls `playDefaults()`. `?tiers=live|baked|rain,wind,veg` overrides it.
+- **Verified headless** (scripts/simtierstest.mjs, shots88/simtiers/simtiers.json). Setup: the atlas at
+  15024,14337, q=low, 412x915, every system on, 1x, a rain storm and a dust storm over the camera. Measured over
+  20 s: the window's layer words changed, plant columns changed, and water moved (Σ|Δw|).
+
+  | run | layer words | plant columns | water |
+  |---|---|---|---|
+  | baked, calm (no storm) | 107 | 0 | 193 |
+  | baked, storm | 3059 | 0 | 10961 |
+  | `?tiers=live`, storm | 30188 | 46739 | 8695 |
+  | then `tiers.bake('all', all three, 120)` | 72608 | 103622 | (900 ticks, 5.1 s wall) |
+
+  Baked, what still changes under a storm is the live collapse: wet ground slumps and gives at a lower repose,
+  plus the piping, the snow and the agents' work. That is 10x less than live, and no plant changed. The storm
+  stays alive (storm_baked.gif: rain, the water running, blowing dust). Over 60 s of storm in baked mode the held
+  rivers rose (riverWet 1.02 → 1.29) and the window's water by 25 % (38043 → 47491). Runoff shows on the sand
+  (river_t0.png / river_t60.png). Storm water stays live, as main asked: RiverWet, a storm waking its chunks,
+  puddles and runoff.
+  - Found on the way: a WGSL error (`select` on an array) left sediment's pipelines invalid. (I first reported
+    that it didn't reach the fatal overlay; it did. The test's "FATAL overlay" line was cut off by a `tail`. See
+    the follow-up below.) simtierstest now also fails on GPU errors in the console.
+- **GPU per frame, the phone proxy** (the desktop iGPU, shared with other agents, so noisy). Before is places
+  d26891c; after is this branch, baked by default.
+  - framecost, win 512, zoom 5, a storm on, span p50 / p95: parked 7.10 / 9.75 → 6.59 / 9.00 ms; panning at
+    10 c/s 6.56 / 9.21 → 6.07 / 8.55 ms. sediment-out + sediment went from 0.31 to 0.27 ms a frame.
+  - driveprofile, 20 s, a storm: GPU 8.70 → 4.61 ms a frame. The clocks drifted (draw 2.08 → 1.14), so in
+    renderprep units the GPU is 23.5 → 19.2 (-18 %). A `?tiers=live` run alongside gave 23.5, the same as before.
+  - The sediment kernel still runs every pass: it has to, for the slumps and the visual lift. The saving is the
+    columns that no longer change, so they return early.
 ## 2026-10-29 — the tuning panel, the bug report, the physics and water playground (round 108, session 5, `playground`)
 
 The user (DECISIONS rounds 106, 108) finds today's physics floaty and choppy and wants to tune it interactively before
@@ -11797,3 +11861,51 @@ visuals for steady state effects maybe?" (AR8). No solver change here: every def
   (framecost-watershed.json, framecost-places.json)
 - Tuning left to the user: RAIN 3 (a catchment rained on all over carries 4 × its reference) and MAX_EX 1.5; the
   rise's visible size is bounded by the held rivers' +0.28 cap, which storms on a small river reach within ~40 s.
+## 2026-10-29 — simtiers follow-ups: the tiers off the Globals, the player's interactions, cleaning live (round 108, session 5, `simtiers`)
+
+From main's review of the first pass.
+
+- **The tiers moved off the Globals.** The first pass put them in Globals words 480-515, which grew the Globals
+  from 1920 to 2064 B, and tierRate looped over four region rects in them. That is the pattern docs/PAGES.md §1
+  measured on this iGPU: the Globals' size, and any array in them indexed by a computed index, slow every kernel
+  (18 KB: +55 %; a 2.9 KB dynamically indexed table: +48 %). Playground's `Tune` also took word 480. Now the tiers
+  are their own texture, `world.tierTex`:
+  - one texel a window chunk (rgba32float: rain, wind, vegetation rates);
+  - rasterised on the CPU by `Tiers.apply` and written only when it changes;
+  - read by `tiers.wgsl` (binding 50, prepended only to the five kernels that ask);
+  - one `textureLoad` a call, nothing indexed.
+
+  The Globals are back to places' layout byte for byte. Side effects: regions have no cap (main's SM4 point: the
+  4-region throw inside the frame loop is gone), and a region's grain is a chunk (16 columns).
+- **The gate**, scripts/kernelab.mjs. Each sim dispatch is replayed alone, win 256, on the combined build (places
+  650b5be with playground). Five ABAB pairs (A places, B simtiers), with the source swapped under one Vite;
+  shots88/simtiers/kernelab/:
+  - total 1.392 → 0.915 ms (-34 %);
+  - every kernel is faster or within noise (worst: structure +1.2 %);
+  - the kernels the tiers touch, relative to the rest in the same run, are -38 % (A 0.92-1.17, B 0.57-0.77): sediment-out -61 %, sediment -34 %, ecology -73 %, climate -31 %, particles-update -29 %.
+
+  Baked columns don't move, so sediment returns early. The untouched kernels are faster on B too (water and lava
+  -20 to -35 %). I didn't run that down: it may be less of the window awake when nothing erodes, or the clocks.
+  The runs swing up to 2x from one to the next (a shared GPU), which is why there are five pairs.
+- **SM2, the player's interactions.** This follows round 78 (the user: "unfreeze for player interactions"), on
+  main's call; the user can override. Every event a tick sends (`sim.eventTaps`: a power, an edit, lightning) and
+  every stroke of wind (`gusts[1..]`) makes rain and wind erosion live in the chunks round it (radius + 4 cells).
+  It lasts at least 4 s, then while the chunk stays awake (sim/sleep.ts), at most 60 s. Vegetation stays baked
+  there; the grow tap is live anyway. simtierstest `interact`: the rates at the camera before a ripple, 1 s after
+  it and 30 s after it read `0,0,0` → `1,1,0` → `0,0,0`.
+- **SM3, cleaning stays live** (main: "cleaning is a core mechanic of the game, not background erosion").
+  Contamination washing had no tier already. But the first pass had gated a landing seed's whole effect, its
+  cleaning of the poison round it too. Now only its sprouting is gated.
+- **The "non-fatal WGSL error" wasn't one.** simtierstest `fatal` makes a broken shader module on purpose. The
+  fatal overlay comes up on top (`elementFromPoint` at the centre is inside `.fatal`; shots88/simtiers/fatal_probe.png):
+  gpu/device.ts's `uncapturederror` → `showFatal` holds. My first report misread the log.
+- **simtierstest on the combined build**, 20 s of storm:
+
+  | run | layer words | plant columns | water |
+  |---|---|---|---|
+  | baked | 3489 | 0 | 10763 |
+  | live | 38450 | 56037 | 12238 |
+  | bake 120 s | 72266 | 103652 | (900 ticks, 5.0 s) |
+
+  interact and fatal as above, exit 0. A framecost run in the same turn read 12 ms (busy 0.74, -899 held: the GPU
+  was shared), so it isn't comparable and isn't used. The first pass's framecost and driveprofile numbers stand.

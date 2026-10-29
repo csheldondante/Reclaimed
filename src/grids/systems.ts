@@ -9,6 +9,7 @@ import materialsWgsl from '../shaders/materials.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import projectWgsl from '../shaders/project.wgsl?raw';
 import structTickWgsl from '../shaders/structtick.wgsl?raw';
+import tiersWgsl from '../shaders/tiers.wgsl?raw';
 import { dispatch, type SimSystem } from '../sim/system';
 import { CUSTOM, TILES_BINDING, cullKernel, dispatchTiles } from '../sim/cull';
 import { CHUNK } from '../world/layout';
@@ -95,7 +96,8 @@ export class StructTickSystem implements SimSystem {
   readonly period = 4;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    this.s = gridKernel(device, world, 'structtick', structTickWgsl, { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 15: 'tex', 17: 'tex', 19: 'tex' }, {
+    // (round 108, simtiers: tiers.wgsl, binding 50 - moss is the vegetation's)
+    this.s = gridKernel(device, world, 'structtick', tiersWgsl + structTickWgsl, { 3: 'read', 4: 'rw', 5: 'read', 6: 'read', 7: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 50: 'tex' }, {
       3: world.strFrames,
       4: world.strVox,
       5: world.surface,
@@ -104,6 +106,7 @@ export class StructTickSystem implements SimSystem {
       17: world.driftView,
       15: world.windFieldView,
       19: world.airView,
+      50: world.tierView,
     });
   }
   encode(enc: GPUCommandEncoder): void {

@@ -33,7 +33,8 @@ try {
   page.on('console', (m) => console.log(`[console.${m.type()}] ${m.text()}`));
   page.on('pageerror', (e) => {
     failed = true;
-    console.log(`[pageerror] ${e.message}`);
+    console.log(`[pageerror] ${e.message}
+${e.stack ?? ""}`);
   });
   await page.goto(url, { waitUntil: 'load' });
   await new Promise((r) => setTimeout(r, Number(args.wait ?? 4000)));

@@ -28,6 +28,7 @@ import wiltWgsl from '../shaders/wilt.wgsl?raw';
 import windFieldWgsl from '../shaders/windfield.wgsl?raw';
 import sedimentWgsl from '../shaders/sediment.wgsl?raw';
 import climateWgsl from '../shaders/climate.wgsl?raw';
+import tiersWgsl from '../shaders/tiers.wgsl?raw';
 import editWgsl from '../shaders/edit.wgsl?raw';
 import placeOpWgsl from '../shaders/placeop.wgsl?raw';
 import layerPullWgsl from '../shaders/layerpull.wgsl?raw';
@@ -415,9 +416,9 @@ export class EcologySystem implements SimSystem {
       device,
       world,
       'ecology',
-      fieldPass(ecologyWgsl, ECO_P.k) + slopeWgsl,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read', 17: 'tex' },
-      { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire, 17: world.driftView },
+      tiersWgsl + fieldPass(ecologyWgsl, ECO_P.k) + slopeWgsl,
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'rw', 10: 'read', 17: 'tex', 50: 'tex' },
+      { 3: world.surface, 4: world.wilt, 5: world.moisture, 6: world.water, 7: world.veg, 8: world.vegNext, 10: world.fire, 17: world.driftView, 50: world.tierView },
       false,
       LIVE,
     );
@@ -591,9 +592,10 @@ export class SedimentSystem implements SimSystem {
   private out;
   private s;
   constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
-    const parts = [commonWgsl, layersWgsl, materialsWgsl, flowConst('sediment') + sedimentWgsl + flowWgsl];
-    const tex = { 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView, 30: world.shakeView };
-    const outSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' };
+    // (round 108, simtiers: tiers.wgsl, the slow processes' rates — binding 50)
+    const parts = [commonWgsl, layersWgsl, materialsWgsl, tiersWgsl + flowConst('sediment') + sedimentWgsl + flowWgsl];
+    const tex = { 50: world.tierView, 15: world.windFieldView, 17: world.driftView, 19: world.strataView, 21: world.bodyProjView, 28: world.projView, 29: world.levelsView, 30: world.shakeView };
+    const outSpec: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'rw', 4: 'read', 6: 'read', 7: 'read', 9: 'read', 10: 'rw', 11: 'read', 15: 'tex', 17: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex', 50: 'tex' };
     const outRes: Record<number, GPUBuffer | GPUTextureView> = { 0: world.globals, 1: world.chunks, 2: world.materials, 3: world.layers, 4: world.water, 6: world.flux, 7: world.veg, 9: world.moisture, 10: world.sedOut, 11: world.surface, ...tex };
     const n = flowN('sediment');
     const c = world.tiles ? cullKernel(world.tiles, parts.join('\n'), outSpec, 'outflow', n) : null;
@@ -604,8 +606,8 @@ export class SedimentSystem implements SimSystem {
       device,
       world,
       'sediment',
-      flowConst('sediment') + sedimentWgsl + flowWgsl,
-      { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex' },
+      tiersWgsl + flowConst('sediment') + sedimentWgsl + flowWgsl,
+      { 3: 'rw', 5: 'rw', 7: 'read', 8: 'rw', 10: 'rw', 15: 'tex', 16: 'stex', 17: 'tex', 18: 'tex', 19: 'tex', 21: 'tex', 28: 'tex', 29: 'tex', 30: 'tex', 50: 'tex' },
       { 3: world.layers, 5: world.deposit, 7: world.veg, 8: world.contamDelta, 10: world.sedOut, 16: world.airView, 18: world.editStateView, ...tex },
       true,
       flowN('sediment'),
@@ -631,9 +633,9 @@ export class ClimateSystem implements SimSystem {
       device,
       world,
       'climate',
-      fieldPass(climateWgsl, CLIMATE_P.k),
-      { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read' },
-      { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.veg, 7: world.moisture, 8: world.fire, 9: world.lava },
+      tiersWgsl + fieldPass(climateWgsl, CLIMATE_P.k),
+      { 3: 'rw', 4: 'rw', 5: 'rw', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 50: 'tex' },
+      { 3: world.layers, 4: world.water, 5: world.deposit, 6: world.veg, 7: world.moisture, 8: world.fire, 9: world.lava, 50: world.tierView },
       true,
       LIVE,
     );
