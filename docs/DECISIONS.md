@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-28 — round 107 (session 5, `riverfalls`) — the held rivers' falls
+
+- The user, on waterfalls in the atlas, verbatim: "Yes or just fake it based on flow speed over gaps and make it a
+  parabolic arc. Either way" → branch `riverfalls` (BACKLOG WF1): the held rivers' lips thrown off as the flow model's
+  sheet along a parabola (launch by the held flow's speed and heading, the world's gravity), render-only, with spray,
+  splash and mist; gravity at the world's scale one shared constant (common.wgsl WORLD_G = 9.8 cells/s², from round
+  106's "true gravity at that scale").
+
 ## 2026-10-28 — round 106c (session 5, `places`) — cpucache dropped
 
 - The user: "Yeah drop CPU cache". The `cpucache` branch (one CPU terrain cache read back only where the GPU changed it, the

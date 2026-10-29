@@ -88,9 +88,9 @@ const RUN_GRAINS: f32 = 30.0;
 // snow blown off the ground (round 50): a white fleck on the wind, a look
 const K_SNOW: u32 = 23u;
 // (round 86, ?flow=1) spray off a falling stream of water (liquid.wgsl prep spawns it along the stream's path);
-// DROP_G: the flow model's gravity (liquid.wgsl GF), so a drop keeps to the stream's arc
+// DROP_G: the world's gravity (common.wgsl WORLD_G), as the streams' (liquid.wgsl GF), so a drop keeps to the arc
 const K_DROP: u32 = 24u;
-const DROP_G: f32 = 14.0;
+const DROP_G: f32 = WORLD_G;
 // (the funnel follows the spine: spineAt() in common.wgsl)
 // smoke state (Particle.m.w): 1 = oil smoke — a lingering dark cloud. Wind
 // disperses it (counted in counters[2]; the level turns that into Nature);

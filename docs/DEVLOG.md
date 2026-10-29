@@ -11314,3 +11314,68 @@ is wanted at once and a tile a frame is the bound (TC14: coarse tiles first).
 - The pan bench's tiles also say where the screen isn't in detail, the worst frame's (missMax): in the window (a region
   not written yet, no tile), or past it ahead, to the side, behind the pan's way — for TC15.
 
+
+## 2026-10-28 — Round 107 (`riverfalls`): the held rivers' falls as arcing sheets (BACKLOG WF1)
+
+The user, on waterfalls in the atlas: "Yes or just fake it based on flow speed over gaps and make it a parabolic
+arc. Either way". A held river (`?rivers=table`, riverheld.wgsl) isn't simulated, so nothing in it falls: its fall was
+its water surface down the face, turned white where steep (render.wgsl steepW). The flow model (`?flow=1`, round 86–87:
+"Waterfalls and the meteor look fantastic!") draws a fall as a curtain + band along a parabola with spray, splash and
+mist. Now the held rivers' falls are drawn the same way, render-only, with no simulation:
+
+- **render/riverfalls.ts, riverfalls.wgsl** — a SimSystem (period 1: the spray is a tick's worth, as the flow model's)
+  that reads only the contract (surface, water, the drift, riverFlow) and writes its own stream list and the particle
+  ring. A *lip* is a river column (riverFlow z > 0, wet) whose downstream neighbour (the direction nearest the held
+  heading) has its top — its water, or its ground — 1.5 cells or more under the column's water, and whose upstream
+  neighbour isn't itself over a drop (the fall's top only). Each lip throws its water off its downstream edge, level,
+  along the held heading at the held speed (riverFlow xy × 60, at the rivers' wetness), never slower than the critical
+  speed over a free overfall, sqrt(g d), and at most 6 cells/s (FALL_UMAX: the table's speeds are 3.6–48 cells/s, a
+  channel's quickened down rapids — every lip at both spots measured hit the cap). Width: render.wgsl streamWidth from
+  the volume a second the column throws (depth × speed across a cell), so a lip's columns' curtains join into one
+  sheet as wide as the river. The end: the arc marched along its path half a cell at a time, bisected where it meets
+  a column's top (not the lip's own); past the window's edge or 3 s it ends; one meeting a column within 0.3 s ran
+  into the bank beside the lip and isn't drawn. Listed in the flow model's stream format (liquid.wgsl prep's: header
+  + two vec4), so `renderer.addWaterPrisms` draws them with render.wgsl streamVertex / shadeStream unchanged.
+- **Gravity at the world's scale, shared**: common.wgsl `WORLD_G` = 9.8 cells/s² (CPU copy world/scale.ts) — the
+  user's round 106 answer, "a cell feels about 1–2 m … start from true gravity at that scale (about 4.9–9.8
+  cells/s²)", at a metre a cell. Gravity was a number per file (14 in the flow model, 10 the bodies, 20 the units and
+  the physics voxels); the falls and the flow model's streams draw with the same sheet code, so the flow model's
+  GF, the sheet's STREAM_G and the spray's DROP_G now read WORLD_G (14 → 9.8: `?flow=1`'s falls are slower and arc
+  a bit further — the user's call to check). The bodies' 10, the units' 20 and phys.wgsl's 20 are left for the
+  physics tuning panel (AR5), the baseline the user set.
+- **Spray, splash, mist**: liquid.wgsl prep's, per lip, by its discharge, only for the falls on screen. A wide river's
+  lip is a hundred columns and more (133 at the cascade), so the spray is shared: as much as 24 columns' full share
+  (FALL_SPRAY_COLS) spread over the columns listed last tick (riverfalls.wgsl listedPrev: the count copied in the
+  encoder before the list is cleared) — the particle ring is everyone's.
+- **Near the view only**: the kernel runs over the window's columns the fixed view can see (its viewProj is affine:
+  the screen's corners solved at the target's height ± 80, with a 12-cell margin; the free camera: the whole window),
+  and only falls on screen are listed.
+- **Tiles**: the window's tiles are baked from the window's own water but hold no instances, so a fall's sheet is
+  never in a tile (the window draws its own; past the window there's no sheet). At a lip a tile showed the water flat,
+  dark blue down the face, lit as if level. Now tiles.wgsl paints steep wet faces white water, baked still (steepW
+  without its scroll), lit by the face's normal. Nothing breaks (the wide shots: cascade-after-wide.png).
+
+Found with scripts/riverfalls.mjs (new): `--find` lists the atlas's falls from its river nodes (a node whose level
+drops 6 or more to the next: 811 of 54 142 nodes), by discharge; `--at x,y` loads there, lists the falls on screen
+(zoomed out), picks the biggest lip's fall and its neighbours, and takes the iso view, two free-camera views from
+beside it and a GIF, then the same with `?falls=0` (before). Shots in C:/Projects/shots88/riverfalls/:
+- `cascade-*` (at=6828,14314, temperate cliffs over a sea loch): 133 lips listed, 17 at the fall picked, ~1.3 s falls
+  over ~8 cells; before: the steep water surface; after: arcing sheets into the pool, spray and splash at the foot.
+- `crystal-*` (at=964,13602, a crystal-snow region): 31 lips, a 2.5 s fall of ~30 cells off a cliff into a lake.
+Each `-before`/`-after`: `-iso.png`, `-fly1.png`, `-fly2.png`, `-wide.png` (zoomed out, tiles), `.gif`.
+The brown flecks over the cascade are in the before shots too (another system's particles; not these).
+
+Cost (scripts/framecost.mjs at the cascade, the phone tier q=low, 412×915, win 512, zoom 5, desktop iGPU, every
+system on, 1x; falls on / `?falls=0`):
+
+| | GPU span p50 | passes sum mean | draw mean | riverfalls pass |
+|---|---|---|---|---|
+| parked, falls off | 9.19 | 8.80 | 3.39 | — |
+| parked, falls on (first cut: no bank filter, whole window, no spray share) | 11.19 | 10.50 | 4.15 | 0.27 |
+| parked, falls on (as committed) | 10.06 | 10.08 | 3.90 | 0.25 (0.14 at zoom 14) |
+| panning 10 cells/s, off / on | 9.19 / 9.51 | 8.66 / 8.98 | 3.05 / 3.09 | 0.19 |
+
+So with a big cascade filling the screen, about +0.9 ms of GPU span parked (+0.5 ms of it the sheets' blended
+fragments, ~0.1 ms the pass's fixed cost); +0.3 ms while panning; nothing off a river. The kernel at a lip-less view
+is the pass's floor (~0.1 ms on this iGPU). Left: the phone's numbers; fewer, wider sheets (one a run of lip columns,
+not one a column) if the phone's draw shows it.
