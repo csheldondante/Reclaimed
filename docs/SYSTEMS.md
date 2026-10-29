@@ -24,6 +24,46 @@ world API's rules (docs/WORLD_API.md) apply to every system here:
 - events out;
 - private insides.
 
+## What the simulation is for (round 110)
+
+The user, verbatim (DECISIONS round 110):
+  "The destruction and erosion and flooding and wind and particles are all there to make the world react on screen
+  to the player and make it feel more alive. For that matter the agents doing work are similar. These are visible to
+  the player and they make interaction fun so they are important to get right and they have the highest latency
+  concerns."
+  "The weather, growth, erosion etc. are useful layers for generating cool locations and for mutating the map between
+  runs or in response to major gameplay events. They typically should operate at the alas level unless a player
+  interacts directly (summoning plants or winds or a storm). The API should expose this so we can do things like show
+  the player the town they planned get built but agents and overgrown with green. Generally though we want systems
+  sleeping otherwise."
+  "The greatest strength of what we have built so far is how interactive it feels and how varied and cool the
+  terrain is compared with other games (and I have many ideas to improve it further)"
+
+**The strengths to protect:** how interactive the world feels, and how varied and striking the terrain is. Work is
+weighed by what it does for those two.
+
+**Two jobs, two budgets.**
+
+| | Reactive | Generative |
+|---|---|---|
+| What | destruction, collapse, flooding, wind gusts, particles (dust, spray, debris), agents working | weather and climate, growth and overgrowth, rain and wind erosion, settlement growth |
+| Why | the world visibly reacts to the player; interaction is fun | cool locations; the map changes between runs or on major events (legacy) |
+| Scale | play, near the player | atlas (between runs, story events); arrival realises the result |
+| Priority | latency first: wake at once, finish within frames, the frame budget's first claim | throughput; behind a loading beat or offline |
+| Live when | the player or an event touches it; then settles and freezes as an animation | only where the player invokes it directly (summoned plants, winds, a storm) or the game asks through the API |
+
+**Everything else sleeps.** Steady states are frozen and drawn as animation (held rivers, frozen flow); visuals
+(rain falling, dust blowing, water moving) stay alive over a map that isn't changing.
+
+**The showcase.** The API can play a generative change on screen, sped up, as an event: the town the player
+planned, built by agents and then overgrown. The same bake that runs between runs, shown over a short sequence,
+reactive visuals (dust, building, growth) included.
+
+**Today** (contracts): `SimTiers` (src/api/contracts/simtiers.ts) holds rain erosion, wind erosion and growth baked
+in play, `live(processes, rect)` for a player's direct invocation, `bake(rect|'all', …)` over the window only.
+Missing: the atlas-scale bake per region (SM4), the showcase (a bake shown over time), latency priority for the
+reactive systems' wake (the frame budget's first claim).
+
 ## Three time scales
 
 Every change to the world happens at one of these. A system says which it works at.

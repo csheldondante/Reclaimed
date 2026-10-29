@@ -3,6 +3,27 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 110 (session 5, `places`) — what the simulation is for
+
+- The user, verbatim:
+  "The destruction and erosion and flooding and wind and particles are all there to make the world react on screen
+  to the player and make it feel more alive. For that matter the agents doing work are similar. These are visible to
+  the player and they make interaction fun so they are important to get right and they have the highest latency
+  concerns."
+  "The weather, growth, erosion etc. are useful layers for generating cool locations and for mutating the map between
+  runs or in response to major gameplay events. They typically should operate at the alas level unless a player
+  interacts directly (summoning plants or winds or a storm). The API should expose this so we can do things like show
+  the player the town they planned get built but agents and overgrown with green. Generally though we want systems
+  sleeping otherwise."
+  "The greatest strength of what we have built so far is how interactive it feels and how varied and cool the
+  terrain is compared with other games (and I have many ideas to improve it further)"
+- → docs/SYSTEMS.md "What the simulation is for": two jobs. Reactive (play scale): destruction, collapse,
+  flooding, wind and particles, agents working, near the player, latency first. Generative (atlas scale): weather,
+  growth and erosion making locations and mutating the map between runs or on major events; live only where the
+  player invokes them (summoned plants, winds, a storm); a showcase API plays a generative change on screen (a planned
+  town built by agents, then overgrown). Everything else sleeps. The strengths to protect: interactivity and varied,
+  striking terrain.
+
 ## 2026-10-29 — round 109 (session 5, `places`) — more devices; generators and editors; better runs
 
 - Devices, the user: "I also want to get my desktop set up tomorrow so you can orchestrate testing on multiple devices
