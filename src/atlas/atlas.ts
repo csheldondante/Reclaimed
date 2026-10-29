@@ -183,8 +183,6 @@ const CHAIN = Q98.get('tilechain') !== '0';
  *  waiting (TilePacer.frame) */
 const TILE_MAX_FILL = Number(Q98.get('tilemaxfill') ?? 16);
 const FILL_AT = 3;
-/** (round 112, tilefix2; ?tilefillavg=0 for the A/B) filling, the guard judges the frames' time averaged over four */
-const FILL_AVG = Q98.get('tilefillavg') !== '0';
 
 /**
  * (round 102) A phone (its user agent): Mali's timestamps aren't to be trusted (passes overlap: bench v2) and the
@@ -245,8 +243,6 @@ export class TilePacer {
    *  a 68² bordered region's 8 turns on a phone were 8 frames, ~130 ms, whatever the GPU cost of each */
   private credit = 0;
   private creditClear = false;
-  /** (round 112, tilefix2) the frames' time, smoothed (filling: TilePacer.frame) */
-  private dtAvg = 16.7;
   /** (round 112) turns run on a frame's credit (the sweeps') */
   chained = 0;
   private armed = false;
@@ -344,12 +340,7 @@ export class TilePacer {
     // frame, and its screen wants a quarter of the tiles)
     const fill = !MOBILE && this.first.length >= FILL_AT;
     const most = fill ? TILE_MAX_FILL : fast > 0.5 ? TILE_MAX_FAST : TILE_MAX;
-    // (round 112, tilefix2: filling, the frames' time over four — a busy machine's frames jitter a tick either way
-    // whatever the tiles do, and halving on each one held a 3080's guard at 1-2 turns, a wide screenful a quarter made
-    // after nine seconds; the phone's rule is as it was)
-    this.dtAvg += (dt - this.dtAvg) * 0.25;
-    const long = fill && FILL_AVG ? this.dtAvg > this.base * 1.2 + 1.5 : dt > this.base * 1.2 + 1.5;
-    if (this.ran) this.guard = long ? Math.max(1, this.guard * 0.5) : Math.min(most, this.guard + (fill ? 1 : 0.25));
+    if (this.ran) this.guard = dt > this.base * 1.2 + 1.5 ? Math.max(1, this.guard * 0.5) : Math.min(most, this.guard + (fill ? 1 : 0.25));
     let n: number;
     if (PACE_FRAME) {
       this.how = 'frame';

@@ -26,7 +26,7 @@ The user, on the eye side: option (a), "the tile drawn cut". On the disk: "Is th
 | TY6 | The pan bench's disk rows were generated land (6 of ~250 from disk on the phone): the fill runs till the camera's gone the line; `came` reports storeMiss, mismatched, loadFailed, the store's size | S | done (`tilefix2`), the phone to rerun |
 | TY7 | Disk to RAM ahead: what's prefetched ahead (Streamer.prefetch -> bring: the store's worker read, the main thread's decode, the pool's upload) measured against pool hits once the disk rows stream from disk; decode off the main thread if it's the cost | M | open |
 | TY8 | A grey sliver at a region's edge in a panning frame (desktop z3.5, gate shot) | S | open |
-| TY9 | The 3080's premerge gate: pans' window-undrawn false (the mirror's lag: a 90-frame run filter now), the gate's 60 Hz cap catching up after a late tick (the pacer's low envelope to 8 ms, its guard at one turn: fixed), one frame threshold (58), notes not failures, `--throttle`, the pipeline in each row; the guard averaged while filling (`?tilefillavg=0`) | S | done (`tilefix2`), the 3080 to re-run |
+| TY9 | The 3080's premerge gate: pans' window-undrawn false (the mirror 60 frames behind: read every frame while the gate runs, a 5-frame run filter), the gate's 60 Hz cap catching up after a late tick (the pacer's low envelope to 8 ms, its guard at one turn: fixed), one frame threshold (58), notes not failures, `--throttle`, the pipeline in each row | S | done (`tilefix2`), the 3080 to re-run |
 
 ## Round 112 (2026-10-29, session 5, `tilefix`) — the terrain past the window drawn on every screen; the merge gate
 

@@ -87,7 +87,8 @@ async function measure(p, secs, parked = true) {
     const S = R.stream;
     const ROW_H = Math.sqrt(3) / 2;
     const G = 24;
-    const UNDRAWN_FRAMES = 90;
+    const UNDRAWN_FRAMES = 5;
+    if (TL?.host?.win?.mesh) TL.host.win.mesh.statPeriod = 1;
     const runs = (window.__gateRuns ??= new Map());
     const fm = TL?.host?.win?.mesh;
     const [nx, ny] = fm?.chunkGrid ?? [0, 0];
@@ -120,9 +121,10 @@ async function measure(p, secs, parked = true) {
             if (un.some(([ux, uy]) => ux === Math.floor(x / S.R) * S.R && uy === Math.floor(y / S.R) * S.R) && !TL?.drawsAt(x, y)) k = 'window';
             // (round 112, tilefix2: the window's own land not drawn there — its chunk neither meshed nor the grid's —
             // and no tile: the user's phone in a run, the screen grey round the hero)
-            // (what's built is the CPU's mirror, read back every 60th frame: a chunk counts once it's read undrawn for
-            // UNDRAWN_FRAMES frames running, by its place in the world — the mirror lags a slide by up to that, and the
-            // 3080's pans read 30-60% "undrawn" over a screen that was drawn when every frame counted)
+            // (what's built is the CPU's mirror, read back every frame while the gate runs (FieldMesh.statPeriod 1, set
+            // below — 60 in play): a chunk counts once it's read undrawn UNDRAWN_FRAMES frames running, by its place in the
+            // world — a readback is a frame or two behind; the 3080's pans read 30-60% "undrawn" over a drawn screen with the
+            // mirror 60 frames behind)
             else if (fm && fm.built.length === nx * ny && fm.builtSlides === fm.slides && !TL?.drawsAt(x, y)) {
               const ci = Math.min(nx - 1, Math.floor((x / S.W) * nx));
               const cj = Math.min(ny - 1, Math.floor((y / S.H) * ny));
