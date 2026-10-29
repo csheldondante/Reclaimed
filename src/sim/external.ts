@@ -15,15 +15,19 @@
 //  - When the ground is read back (the integrity system's CPU copy, after an edit or a meteor), `verify` checks each
 //    instance there still holds every cell it claimed. One that lost any — dug, cut, melted, moved — is `cut`: its
 //    owner is told and lets go (`release`: what's left of it becomes ordinary ground, its fallback material, in
-//    place; the judge then looks at it like any other ground). An instance the judge finds hanging free is `loose`:
-//    its owner is told likewise. External intervals no instance claims (a slide's thaw, an undo) are orphans: they
+//    place; the judge then looks at it like any other ground — or `release(id, true)`: to air, the owner taking its
+//    cells back, as the resting rock does waking as a body, round 110). An instance the judge finds hanging free is
+//    `loose`: its owner is told likewise (its intervals taken out of what the judge frees, round 110). External intervals no instance claims (a slide's thaw, an undo) are orphans: they
 //    become their fallback material (`orphans`).
 //  - Owners say when the window slides: what leaves it is released first (the streamer freezes ordinary ground).
 
 import { MAT, MATERIALS } from '../world/materials';
 import type { Interval } from '../world/layout';
 
-/** (round 99) the experiment's switch: `?meshinst=1` (default off until measured) */
+/**
+ * (round 99) the experiment's switch: `?meshinst=1` (default off until measured) — now the trees' only (round 110: the
+ * resting rock's registry is on wherever the rigid rock is, game/integrity.ts)
+ */
 export const MESHINST = typeof location !== 'undefined' && new URLSearchParams(location.search).get('meshinst') === '1';
 
 /** Who owns an instance (a small id; ExternalRegistry.owner). */

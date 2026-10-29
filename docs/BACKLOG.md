@@ -12,6 +12,24 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 110 (2026-10-29, session 5, `physfix`) — the rigid rock's four faults in the playground (DECISIONS round 110)
+
+The user, after playing the playground, verbatim: "Destroying the base of an arch on either side causes the bridge
+connecting the sides to just instantly disappear. When you destroy material around a rock it pushes up out of the
+earth before becoming a rigidbody. I think we want meshes to intersect. We don't want collision to kick in until they
+are visibly intersecting for large objects. When things come to rest they turn to dust instead of staying as meshes
+as we discussed." Then: "For physics maybe a tunable parameter for how much objects can interpenetrate maybe as a
+function of mass?" Within the CPU rigid rock (round 106's design; the GPU solver, AR4, later).
+
+| id | item | size | status |
+|---|---|---|---|
+| PX1 | "Destroying the base of an arch on either side causes the bridge connecting the sides to just instantly disappear": the span falls as a body and stays one. Root: the half that gave fell onto its stub and came to rest in a few seconds, and a rested body was written back into the columns cell by cell, each cell dropped down its own column (Integrity.settleRigid, "a heap settles column by column") — the span over air collapsed to a heap on the ground in one frame. Now it stays its mesh (PX4), and a joint that gives under load hinges at its lower edge (fracture.ts hingeOf: the span topples about the other base) | S | done (this commit) |
+| PX2 | "When you destroy material around a rock it pushes up out of the earth before becoming a rigidbody": a body freed in place is not lifted. Roots: its collision points were a cube's corners, which lie in the next hex columns over (a cell is 0.5 to its faces, the cube's corners 0.65 out), so a body freed beside ground began inside it and was pushed up out of it at half the overlap a substep; and a speculative contact 0.5 above the ground. Now the hex prism's 12 corners; the overlap it's freed with allowed (RockBody.allow, only shrinking); a push-out never faster than rigid.pushV and never past the slop + erodeDepth (deeper, the ground there crumbles: rigid.erodeDepth, erodeMax); a break's pieces thrown sideways only, never faster up than the body was | M | done (this commit) |
+| PX3 | "We don't want collision to kick in until they are visibly intersecting for large objects" and "a tunable parameter for how much objects can interpenetrate maybe as a function of mass?": the overlap a contact allows is rigid.slop + min(rigid.slopCap, rigid.slopK · mass^rigid.slopP) (defaults 0.03 + min(0.8, 0.065 · m^0.35): a 30-cell piece 0.23, a 260-cell span 0.48, a 1 500-cell pillar 0.83). A pair (a body on a resting rock) meets at the lighter one's; the ground counts as heaviest. The probe measures two rings of columns deep (to 2 cells), past the largest allowance | S | done (this commit) |
+| PX4 | "When things come to rest they turn to dust instead of staying as meshes as we discussed": a body at rest stays its mesh, asleep (the resting rock: External cells under it, round 99's MI4), with the rigid rock everywhere — not only `?meshinst=1`. One cut or hanging free wakes as a body where it lies, its own mesh (MI5); cut, it loses the cells dug out of it (meshed again behind dust). Baked into the ground only when out of room (rigid.restMax, 16; the rock mesh's slots), leaving the window, or asked (Integrity.bakeResting: between runs) — each behind a burst of dust | M | done (this commit) |
+| PX5 | Between runs: call Integrity.bakeResting when a run ends (no run-end hook in the level scene yet; the resting rock is saved with its region meanwhile: RG7) | S | open |
+| PX6 | A body against another body (two awake ones) is still not simulated: each meets only the ground and the resting rock. The GPU solver (AR4) | M | open (AR4) |
+
 ## Round 109 (2026-10-29, session 5, `places`) — more devices, generators and editors, better runs (DECISIONS round 109)
 
 | id | item | size | status |
@@ -240,7 +258,7 @@ characters and the buildings and trees with meshes and instancing. We want this 
 | MI2 | The instanced mesh renderer: kinds in one vertex/index buffer, one indexed indirect draw a kind (and its shadow), lit, hazed and cut away like the terrain | M | done (this commit) |
 | MI3 | Trees as instanced meshes (four species, turned, leaning): measured a wash on the desktop iGPU (forest of 704: GPU 5.50 → 5.70 ms, p95 10.9 → 10.6) — the trees were never the phone's cost | M | done (this commit; asked: keep?) |
 | MI4 | A resting rock body stays its mesh, its cells External (down to the ground under it): buried under sand it holds it; dug, it becomes ground | M | done (this commit) |
-| MI5 | A loose resting rock (its ground dug from under it) taken back as its own body — the same tilted mesh falling again — rather than ground that the judge frees as a new body (re-meshed) | S | open |
+| MI5 | A loose resting rock (its ground dug from under it) taken back as its own body — the same tilted mesh falling again — rather than ground that the judge frees as a new body (re-meshed) | S | done (physfix, round 110: PX4) |
 | MI6 | Trees External (trunks: support, collision, fire): blocked on what reads a column's top — ecology caps growth by the top's material (a trunk's External top would starve its own tree), vegprep stands the tree on the top (its own trunk), sediment piles on a 1-cell pillar. Needs the surface to say "the ground under an External top" (a bit, and its height) | M | open |
 | MI7 | Buildings as instanced modules (outline): a settlement's houses claimed as External by the settlements system (support, collision, fire, damage as today) and drawn as modules on their lots (walls, roofs, doors: a few hundred vertices a house) instead of plaster/tile prisms (a 8 × 8 house of 3 intervals ≈ 190 prisms ≈ 5 700 vertices, each with its corner and neighbour reads); a cut module falls back to its voxels. Expected on the phone: renderprep's share for towns and the prisms' vertex cost — measure a town at q=low first | L | open |
 | MI8 | Characters as instanced meshes (outline): the agents' voxel models (units.wgsl, 36 vertices a voxel; a figure is 8–40 voxels: 300–1 400 vertices) as one rigid mesh a kind with parts (legs, torso, head, weapon) posed in the vertex shader from the walk phase units.wgsl already writes: ~100–200 vertices a unit, one draw a kind. Expected: a crowd of 200 from ~100 k vertices to ~30 k | M | open |

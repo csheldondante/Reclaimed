@@ -16,16 +16,16 @@ import { analyse, analyseRock, floatingRuns, WorldVox, type Fracture, type Voxel
 import { Bodies, type Body } from './bodies';
 import type { WorldCore } from '../scenes/world-core';
 import { ignoreTeardown } from '../gpu/pipeline';
-import { cellAt, cellPos, nbr, DIRV, ROW_H } from '../world/lattice';
+import { cellAt, cellPos, nbr, ROW_H } from '../world/lattice';
 import { EventKind } from '../sim/globals';
 import { CUTS, OP, editOpOf } from '../sim/edit-ops';
 import { ColumnBodies, subtract, type ColPiece, type FallingBody, type Landing } from './colbodies';
-import { RockBodies, RB, type RockBody, type RockGround, type V3 } from './rockbodies';
+import { RockBodies, RB, columnsGround, type RockBody, type RockGround, type V3 } from './rockbodies';
 import { BUILD_FRAMES, type RockDraw, type RockMesh } from '../render/rockmesh';
 import type { Physics, PhysBody } from '../physics/physics';
 import { TUNE } from '../tune/params';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
-import { ExternalRegistry, MESHINST, OWNER_ROCK, type ExternalCol, type ExternalInstance } from '../sim/external';
+import { ExternalRegistry, OWNER_ROCK, type ExternalCol, type ExternalInstance } from '../sim/external';
 
 /** (round 96) what bends: metal goes to the physics voxels (physics.ts), the rest of what falls stays rigid */
 const METAL: ReadonlySet<number> = new Set<number>([MAT.Steel, MAT.Rust]);
@@ -42,8 +42,7 @@ const SKIN_METAL = typeof location !== 'undefined' && new URLSearchParams(locati
 const PASS = 0.35; // s between analyses while anything is dirty or moving
 /** (round 100, hitchrec) the structures' boxes a pass judges until it has taken this long (ms); the rest wait for the next */
 const PASS_BUDGET = 8;
-/** (round 99, meshinst) resting rock kept as meshes at once (their slots are the rock mesh's: render/rockmesh.ts) */
-const REST_MAX = 16;
+/** (round 99, meshinst; round 110: the tuning's rigid.restMax) resting rock kept as meshes at once (their slots are the rock mesh's: render/rockmesh.ts) */
 /** (round 100) the streamer's region (scenes/streamer.ts REGION: not imported — the scene imports this) */
 const REGION_CELLS = 64;
 /** (round 99) cells under a resting rock's cells, down to the ground, claimed with it (what it stands on) */
@@ -192,12 +191,16 @@ export class Integrity {
     if (rockbody) {
       (this as { rigid: RockBodies | null }).rigid = new RockBodies(this.rockGround());
       this.rockMesh = core.renderer.enableRockMesh();
-      if (MESHINST && this.rockMesh) {
+      // (round 110: with the rigid rock always, not only `?meshinst=1` — the user: "When things come to rest they turn
+      // to dust instead of staying as meshes as we discussed"; DECISIONS round 106: "A settled body stays an object
+      // (sleeping, instanced). It is baked into terrain only between runs, or when the object buffer needs room")
+      if (this.rockMesh) {
         const ext = new ExternalRegistry({
           read: (x, y) => readColumn(this.core.packed, this.world.slots, x, y),
           write: (x, y, col) => this.writeColumn(x, y, col),
         });
-        ext.owner(OWNER_ROCK, { name: 'rock', onLost: (inst) => this.unrest(inst) });
+        // (round 110, BACKLOG MI5) one cut or found hanging free wakes, its own mesh as it lay: not ground again
+        ext.owner(OWNER_ROCK, { name: 'rock', onLost: (inst, why) => this.wakeResting(inst, why) });
         (this as { external: ExternalRegistry | null }).external = ext;
       }
     }
@@ -1110,50 +1113,8 @@ export class Integrity {
    * air beside it at that height (the hex's six); the window's floor holds.
    */
   private rockGround(): RockGround {
-    const W = this.core.dims.w;
-    const H = this.core.dims.h;
-    const isGround = (m: number) => {
-      const s = MATERIALS[m]?.state;
-      return s === MatState.Solid || s === MatState.Granular;
-    };
-    const world = () => this.world;
-    return {
-      probe: (wx, wy, wz) => {
-        if (wz < 0) return { d: -wz, n: [0, 0, 1] };
-        const wv = world();
-        if (!wv.slots.length) return null;
-        const [cx, cy] = cellAt(wx, wy);
-        if (cx < 0 || cy < 0 || cx >= W || cy >= H) return null;
-        const zq = Math.max(0, wz - 0.5);
-        if (!isGround(wv.matAt(cx, cy, zq))) return null;
-        let t = wv.runTop(cx, cy, zq);
-        for (let i = 0; i < 8 && isGround(wv.matAt(cx, cy, t - 0.49)); i++) t = wv.runTop(cx, cy, t - 0.49);
-        const up = t - wz;
-        if (up < 0.6) return { d: up, n: [0, 0, 1] };
-        const [px, py] = cellPos(cx, cy);
-        let best = Infinity;
-        let n: V3 = [0, 0, 1];
-        for (let k = 0; k < 6; k++) {
-          const [nx, ny] = nbr(cx, cy, k);
-          if (nx >= 0 && ny >= 0 && nx < W && ny < H && isGround(wv.matAt(nx, ny, zq))) continue;
-          const d = 0.5 - ((wx - px) * DIRV[k][0] + (wy - py) * DIRV[k][1]);
-          if (d < best) [best, n] = [d, [DIRV[k][0], DIRV[k][1], 0]];
-        }
-        if (best === Infinity) return { d: Math.min(up, 1), n: [0, 0, 1] };
-        return { d: Math.max(0.01, best), n };
-      },
-      topIn: (x0, y0, x1, y1) => {
-        const wv = world();
-        if (!wv.slots.length) return 0;
-        let top = 0;
-        const ya = Math.max(0, Math.floor(y0 / ROW_H - 1));
-        const yb = Math.min(H - 1, Math.ceil(y1 / ROW_H));
-        const xa = Math.max(0, Math.floor(x0 - 1));
-        const xb = Math.min(W - 1, Math.ceil(x1));
-        for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) top = Math.max(top, wv.colTop(x, y));
-        return top;
-      },
-    };
+    // (round 110: the rules are rockbodies.ts columnsGround's — shared with the CPU harness, scripts/physfix-cpu.ts)
+    return columnsGround(() => (this.world.slots.length ? this.world : null), this.core.dims.w, this.core.dims.h, (x, y, z) => this.restingMass(x, y, z));
   }
 
   /** (round 95) A rock piece (its runs) out of the columns as a rigid body; `tip`: it turns over that edge. */
@@ -1193,7 +1154,8 @@ export class Integrity {
   /** (round 95) the rigid rock a step: hits raise dust (sparks when hard), break it; what came to rest is ground again */
   private stepRigid(dt: number): void {
     const rigid = this.rigid!;
-    const { hits, rest } = rigid.update(dt);
+    const { hits, rest, erode } = rigid.update(dt);
+    if (erode.length) this.erodeUnder(erode);
     for (const h of hits) {
       const b = h.body;
       if (!rigid.list.includes(b)) continue;
@@ -1417,10 +1379,17 @@ export class Integrity {
   private settleRigid(b: RockBody): void {
     const rigid = this.rigid!;
     if (this.external && b.slot !== undefined && this.restRigid(b)) return;
+    // (round 110: written back — no mesh for it, or nowhere to claim — is a bake: behind a burst of dust, DECISIONS
+    // round 106's "hide every re-mesh or body-to-terrain swap behind a burst of dust")
+    {
+      const [x0, y0, x1, y1] = rigid.box(b);
+      this.bakeDust((x0 + x1) / 2, (y0 + y1) / 2, b.pos[2], Math.max(x1 - x0, y1 - y0) / 2, b.cells.length, b.mat);
+    }
     // (its mesh stays a few frames where it came to rest, while the ground's own is made there)
     if (b.slot !== undefined) this.afterglow.push({ slot: b.slot, m: rigid.matrix(b), frames: 6 });
     rigid.remove(b);
     rigid.stats.settled++;
+    rigid.stats.baked++;
     const { w: W, h: H, zMax } = this.core.dims;
     const by = new Map<number, { z: number; mat: number }[]>();
     for (const c of rigid.worldCells(b)) {
@@ -1619,7 +1588,7 @@ export class Integrity {
       if (hi - lo > 0.05) want.push({ x, y, z0: lo, z1: hi });
     }
     // (room: the resting rock is held to REST_MAX — the oldest becomes ground)
-    while (this.resting.size >= REST_MAX) {
+    while (this.resting.size >= Math.max(1, RB.restMax)) {
       const id = this.resting.keys().next().value!;
       const inst = ext.get(id);
       if (inst) this.unrest(inst);
@@ -1640,11 +1609,174 @@ export class Integrity {
     return true;
   }
 
-  /** (round 99) A resting rock lets go (cut, hanging free, out of room or leaving): its cells ground again, its mesh gone. */
+  /**
+   * (round 110) Every resting rock baked into the ground (the explicit request: between runs) — each behind its dust.
+   */
+  bakeResting(): number {
+    const ext = this.external;
+    if (!ext) return 0;
+    let n = 0;
+    for (const inst of [...ext.instances]) {
+      if (inst.owner !== OWNER_ROCK) continue;
+      this.unrest(inst);
+      n++;
+    }
+    return n;
+  }
+
+  /** (round 110) the mass (cells) of the resting rock owning column (x, y) at height z; undefined: none (the ground) */
+  private restingMass(x: number, y: number, z: number): number | undefined {
+    const inst = this.external?.at(x, y, z, z + 0.5).find((o) => o.owner === OWNER_ROCK);
+    return inst ? this.resting.get(inst.id)?.cells?.length : undefined;
+  }
+
+  /** (round 110) the burst a bake (or a re-mesh) hides behind: dust over the body's size, a puff of chips */
+  private bakeDust(x: number, y: number, z: number, r: number, cells: number, mat: number): void {
+    this.onDust?.(x, y, z, Math.min(60, 12 + Math.round(Math.sqrt(cells) * 3)), Math.max(1, r * 0.8), mat);
+  }
+
+  /**
+   * (round 110, BACKLOG MI5) A resting rock whose instance was lost wakes as a body where it lies — its own mesh, at
+   * its transform, still — rather than becoming ground the judge then frees as a new body (meshed again: the user's
+   * "they turn to dust"). Cut (dug, smashed): the cells it lost are gone from it, its mesh made again behind dust;
+   * hanging free: as it was. Its cells in the columns go to air (the body has them).
+   */
+  private wakeResting(inst: ExternalInstance, why: 'cut' | 'loose'): void {
+    const rigid = this.rigid;
+    const ext = this.external!;
+    const r = this.resting.get(inst.id);
+    if (!rigid || !r?.cells) return this.unrest(inst);
+    let keep = r.cells;
+    if (why === 'cut') {
+      // (each cell where it lies now: still claimed, and still External in the copy — or dug out of it)
+      const m = r.m;
+      keep = r.cells.filter((c) => {
+        const [px, py] = cellPos(c.x, c.y);
+        const pz = c.z + 0.5;
+        const wx = m[0] * px + m[1] * py + m[2] * pz + m[3];
+        const wy = m[4] * px + m[5] * py + m[6] * pz + m[7];
+        const wz = m[8] * px + m[9] * py + m[10] * pz + m[11];
+        const [cx, cy] = cellAt(wx, wy);
+        if (!ext.at(cx, cy, wz - 0.5, wz + 0.5).includes(inst)) return true;
+        return readColumn(this.core.packed, this.world.slots, cx, cy).some((iv) => iv.mat === MAT.External && iv.z1 > wz - 0.25 && iv.z0 < wz + 0.25);
+      });
+    }
+    this.resting.delete(inst.id);
+    ext.release(inst.id, true);
+    const cols = inst.cols.map((c) => ({ x: c.x, y: c.y, ivs: [] }));
+    this.touchCols(cols, true);
+    for (const c of inst.cols) {
+      this.rockSeeds.set(c.y * 65536 + c.x, 2);
+      this.cutSeeds.set(c.y * 65536 + c.x, 2);
+    }
+    this.urgent = true;
+    const lost = r.cells.length - keep.length;
+    const b = keep.length >= 8 ? rigid.revive(keep, r.m) : null;
+    if (!b) {
+      // (what's left of it too small to be a body: rubble, behind dust)
+      this.afterglow.push({ slot: r.slot, m: r.m, frames: 2 });
+      if (keep.length) {
+        const m = r.m;
+        const pts = keep.map((c) => {
+          const [px, py] = cellPos(c.x, c.y);
+          const pz = c.z + 0.5;
+          return { p: [m[0] * px + m[1] * py + m[2] * pz + m[3], m[4] * px + m[5] * py + m[6] * pz + m[7], m[8] * px + m[9] * py + m[10] * pz + m[11]] as V3, mat: c.mat };
+        });
+        this.toLoose(this.toIndex(pts), 2);
+        this.bakeDust(pts[0].p[0], pts[0].p[1], pts[0].p[2], 2, keep.length, r.mat);
+      }
+      return;
+    }
+    if (!lost) b.slot = r.slot;
+    else {
+      // (its mesh made again without what it lost: the swap behind a burst of dust)
+      this.afterglow.push({ slot: r.slot, m: r.m, frames: 2 });
+      b.slot = this.allocRock(rigid.latCells(b));
+      const [x0, y0, x1, y1] = rigid.box(b);
+      this.bakeDust((x0 + x1) / 2, (y0 + y1) / 2, b.pos[2], Math.max(x1 - x0, y1 - y0) / 2, lost, b.mat);
+    }
+    this.stats.bodies++;
+    // (the phone's cap: the oldest other comes to rest first)
+    while (rigid.list.length > Math.max(1, RB.maxBodies)) {
+      const old = rigid.list.find((o) => o !== b);
+      if (!old) break;
+      rigid.stats.capped++;
+      this.fastForward(old);
+    }
+  }
+
+  /**
+   * (round 110) Ground a body cut deep into (RockBodies: past its slop by RB.erodeDepth) crumbles where they meet —
+   * rubble and dust — rather than the body being pushed out (DECISIONS round 106). Solid ground only (loose ground
+   * it just sinks into), not bedrock, not what other systems own (External: a resting rock).
+   */
+  private erodeUnder(pts: { body: RockBody; at: V3 }[]): void {
+    const { w: W, h: H } = this.core.dims;
+    const removed: { p: [number, number, number]; mat: number }[] = [];
+    const cols: { x: number; y: number; ivs: [] }[] = [];
+    const done = new Set<number>();
+    let mat = 0;
+    for (const { body, at } of pts) {
+      const [cx, cy] = cellAt(at[0], at[1]);
+      if (cx < 0 || cy < 0 || cx >= W || cy >= H) continue;
+      const z = Math.floor(at[2]);
+      const key = (z * 8192 + cy) * 8192 + cx;
+      if (z < 1 || done.has(key)) continue;
+      done.add(key);
+      const col = readColumn(this.core.packed, this.world.slots, cx, cy);
+      const cut: { z0: number; z1: number }[] = [];
+      for (const iv of col) {
+        const d = MATERIALS[iv.mat];
+        if (!d || d.state !== MatState.Solid || d.span === Infinity) continue;
+        const lo = Math.max(iv.z0, z);
+        const hi = Math.min(iv.z1, z + 1);
+        if (hi - lo < 0.05) continue;
+        cut.push({ z0: lo, z1: hi });
+        removed.push({ p: [cx + 0.5, cy + 0.5, (lo + hi) / 2], mat: iv.mat });
+        mat = iv.mat;
+      }
+      if (!cut.length) continue;
+      this.writeColumn(cx, cy, subtract(col, cut));
+      cols.push({ x: cx, y: cy, ivs: [] });
+      this.rockSeeds.set(cy * 65536 + cx, 2);
+      this.cutSeeds.set(cy * 65536 + cx, 2);
+      void body;
+    }
+    if (!removed.length) return;
+    this.rigid!.stats.eroded += removed.length;
+    this.touchCols(cols, true);
+    this.toLoose(removed, 1.5);
+    const p = pts[0].at;
+    this.onDust?.(p[0], p[1], p[2], Math.min(30, 6 + removed.length * 3), 0.8 + removed.length * 0.2, mat);
+    this.urgent = true;
+  }
+
+  /**
+   * (round 99) A resting rock baked into the ground (round 110: only out of room, leaving the window, or asked —
+   * `bakeResting`; one cut or hanging free wakes instead): its cells ground again, its mesh gone, behind a burst of dust.
+   */
   private unrest(inst: ExternalInstance): void {
     const r = this.resting.get(inst.id);
     this.resting.delete(inst.id);
-    if (r) this.afterglow.push({ slot: r.slot, m: r.m, frames: 6 });
+    if (r) {
+      this.afterglow.push({ slot: r.slot, m: r.m, frames: 6 });
+      if (this.rigid) this.rigid.stats.baked++;
+      let x0 = Infinity;
+      let y0 = Infinity;
+      let x1 = -Infinity;
+      let y1 = -Infinity;
+      let z = 0;
+      for (const c of inst.cols) {
+        x0 = Math.min(x0, c.x);
+        y0 = Math.min(y0, c.y);
+        x1 = Math.max(x1, c.x);
+        y1 = Math.max(y1, c.y);
+        z = Math.max(z, c.z1);
+      }
+      const [wx0, wy0] = cellPos(x0, y0);
+      const [wx1, wy1] = cellPos(x1, y1);
+      this.bakeDust((wx0 + wx1) / 2, (wy0 + wy1) / 2, z - 1, Math.max(wx1 - wx0, wy1 - wy0) / 2, r.cells?.length ?? 8, r.mat);
+    }
     this.external?.release(inst.id);
     const cols = inst.cols.map((c) => ({ x: c.x, y: c.y, ivs: [] }));
     this.touchCols(cols, true);
@@ -1659,17 +1791,33 @@ export class Integrity {
   private takeExternal(r: Fracture): void {
     const ext = this.external!;
     const hit: ExternalCol[] = [];
+    // (round 110: taken out of what falls or crumbles — the owner wakes its thing, which takes them back as itself;
+    // round 99 made them their fallback material in the piece, and the rock was freed again as a new body, meshed
+    // again. One no instance owns stays in, as its fallback)
     const scan = (rp: { x: number; y: number; ivs: Interval[] }[] | undefined) => {
-      for (const c of rp ?? [])
+      for (const c of rp ?? []) {
+        const keep: Interval[] = [];
         for (const iv of c.ivs) {
-          if (iv.mat !== MAT.External) continue;
-          hit.push({ x: c.x, y: c.y, z0: iv.z0, z1: iv.z1 });
-          iv.mat = ext.at(c.x, c.y, iv.z0, iv.z1)[0]?.fallback || iv.aux || MAT.Stone;
+          if (iv.mat !== MAT.External) {
+            keep.push(iv);
+            continue;
+          }
+          const owned = ext.at(c.x, c.y, iv.z0, iv.z1);
+          if (owned.length) {
+            hit.push({ x: c.x, y: c.y, z0: iv.z0, z1: iv.z1 });
+            continue;
+          }
+          iv.mat = iv.aux || MAT.Stone;
           iv.aux = 0;
+          keep.push(iv);
         }
+        c.ivs = keep;
+      }
     };
     for (const p of r.pieces ?? []) scan(p);
     scan(r.crumbleRuns);
+    if (r.pieces) r.pieces = r.pieces.map((p) => p.filter((c) => c.ivs.length));
+    if (r.crumbleRuns) r.crumbleRuns = r.crumbleRuns.filter((c) => c.ivs.length);
     if (hit.length) ext.loose(hit);
   }
 
