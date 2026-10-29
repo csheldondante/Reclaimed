@@ -43,6 +43,7 @@ import { MeshInstances, MI_ARGS_WORD } from './meshinst';
 import { treeKinds } from './treemesh';
 import { MESHINST } from '../sim/external';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
+import { BGCHECK, BgCheck } from './bgcheck';
 
 /** the draw shaders' camera (render.wgsl Camera): the view's, then the sun's shadow matrix */
 const CAM_BYTES = CAMERA_BYTES + 64 + 16 + CAMERA_CUT_BYTES;
@@ -334,6 +335,8 @@ export class Renderer {
   private flatTops = new URLSearchParams(location.search).get('smooth') === '0';
   private depth?: GPUTexture;
   private pickTex?: GPUTexture;
+  /** (round 112, ?bgcheck=1 only: the share of the screen showing the background or the far land — bgcheck.ts) */
+  readonly bgCheck?: BgCheck;
   private pickBuf: GPUBuffer;
   private pickBusy = false;
   private pickRequest?: { x: number; y: number; resolve: (hit: PickHit | null) => void };
@@ -1002,11 +1005,13 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
   resize(w: number, h: number): void {
     this.depth?.destroy();
     this.pickTex?.destroy();
-    this.depth = this.device.createTexture({ size: [w, h], format: DEPTH_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT });
+    // (round 112, ?bgcheck=1: the depth and the pick sampled after the world pass — bgcheck.ts)
+    const sampled = BGCHECK ? GPUTextureUsage.TEXTURE_BINDING : 0;
+    this.depth = this.device.createTexture({ size: [w, h], format: DEPTH_FORMAT, usage: GPUTextureUsage.RENDER_ATTACHMENT | sampled });
     this.pickTex = this.device.createTexture({
       size: [w, h],
       format: PICK_FORMAT,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC | sampled,
     });
     this.profiler.trackMemory('depth', w * h * 4);
     this.profiler.trackMemory('pickTex', w * h * 8);
@@ -1207,11 +1212,12 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       label: 'world',
       colorAttachments: [
         { view: target, clearValue: { r: opts.clear[0], g: opts.clear[1], b: opts.clear[2], a: 1 }, loadOp: 'clear', storeOp: 'store' },
-        { view: this.pickTex!.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: keepPick ? 'store' : 'discard' },
+        { view: this.pickTex!.createView(), clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: keepPick || BGCHECK ? 'store' : 'discard' },
       ],
+      // (round 112, ?bgcheck=1: both kept for bgcheck.ts)
       depthStencilAttachment: def
-        ? { view: this.depth!.createView(), depthLoadOp: 'load', depthStoreOp: 'discard' }
-        : { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+        ? { view: this.depth!.createView(), depthLoadOp: 'load', depthStoreOp: BGCHECK ? 'store' : 'discard' }
+        : { view: this.depth!.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: BGCHECK ? 'store' : 'discard' },
       timestampWrites: this.profiler.timestamps('draw'),
     });
     if (tcMode) {
@@ -1335,6 +1341,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     }
     pass.end();
     this.profiler.draws += 3;
+    if (BGCHECK) (this as { bgCheck?: BgCheck }).bgCheck ??= new BgCheck(this.device);
+    this.bgCheck?.encode(enc, this.depth!, this.pickTex!, this.profiler.timestamps('bgcheck'));
 
     if (this.pickRequest && !this.pickBusy) {
       const { x, y, resolve } = this.pickRequest;
@@ -1888,6 +1896,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.tiles?.afterSubmit();
     this.rockMesh?.mesh.afterSubmit();
     this.band?.mesh.afterSubmit();
+    this.bgCheck?.afterSubmit();
     if (this.pickPending) {
       const resolve = this.pickPending;
       this.pickPending = undefined;

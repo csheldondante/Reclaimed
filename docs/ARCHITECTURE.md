@@ -512,7 +512,7 @@ the window are never pressed under the focus (underFocus) and write the pick
 target as the columns do (meshdraw.wgsl's encoding, the top's or the rock's
 material), so powers land on heightfield chunks; along a voxel chunk's edge
 with a heightfield neighbour they draw a skirt (a 0.9-cell strip, far.wgsl
-`skirt`) over the hairline between the two. The window's layers stay the
+`skirt`) over the hairline between the two. (round 112, bgcheck: the far land proper — fsFar — writes pick (0, 0xfa000000): x 0 is "nothing" to Renderer.pick, the tag is render/bgcheck.ts's FAR_PICK_TAG, the far land told apart from a tile, which writes (0, 0). With ?bgcheck=1 the world pass stores its depth and pick and BgCheck samples them after it; without, both are discarded as before.) The window's layers stay the
 truth for every column (physics, queries, the sim where it's awake); the
 sim wakes only in voxel chunks (Sleep.only, HybridChunks.sleepFilter). The
 rings' look (fsLod `ringLook`): where the surface is steeper than ~60° (the

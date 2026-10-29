@@ -26,6 +26,7 @@ import { RANGES } from '../scenes/range';
 import { RegionStore } from '../world/region-store';
 import type { HitchBoot } from './start';
 import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './report-io';
+import { bgShares, type BgShares } from '../render/bgcheck';
 
 /** (v3) vite.config.ts `define`: the build's time */
 declare const __BENCH_BUILD__: string;
@@ -39,7 +40,7 @@ const ROW_H = Math.sqrt(3) / 2;
 /** the riding scenario's start (scripts/hitchrun.mjs: a road in a temperate place on the default seed) */
 const RIDE_AT = '15024,14337';
 /** the URL keys the suite sets itself (the rest of the start page's URL is carried to every page) */
-const OWN = ['bench', 'benchpage', 'benchsmoke', 'panzooms', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf'];
+const OWN = ['bench', 'benchpage', 'benchsmoke', 'panzooms', 'run', 'win', 'drive', 'at', 'hitch', 'hitchhud', 'world', 'skipmenu', 'level', 'tutorial', 'perf', 'bgcheck'];
 
 // ---------- numbers ----------
 
@@ -223,6 +224,16 @@ const PAN_BUDGET = 20;
 const PAN_FPS = 58;
 const PAN_MAX_FRAME = 33;
 const PAN_P99 = 20;
+/**
+ * (round 112, bgcheck) The user: "Can we do a pan test for the phone that fails if any bg color shows?" / "Or flags it
+ * anyway". Each step's background share (render/bgcheck.ts: the clear colour, nothing drawn) is flagged when any sample
+ * shows it; ?bgfail=1 also fails the step's smooth criterion with it (default: flagged only).
+ * Flagged over PAN_BG_FLAG of the worst frame's samples (?bgflag=, default 0.001 — scripts/tilegate.mjs's threshold;
+ * ?bgflag=0 any at all): measured, every parked view of the atlas shows the background through 1-pixel pinholes on
+ * ~0.01-0.03% of the screen (2-3 of the 8192 samples, every frame), so "any" would flag every step.
+ */
+const PAN_BG_FAILS = typeof location !== 'undefined' && new URLSearchParams(location.search).get('bgfail') === '1';
+const PAN_BG_FLAG = typeof location !== 'undefined' ? Number(new URLSearchParams(location.search).get('bgflag') ?? 0.001) : 0.001;
 
 /**
  * The window a zoom needs: the screen's ground (the camera's view at the sandbox's turn, a quarter turn — its corners
@@ -298,7 +309,7 @@ function makePanReport(s: BenchState): Record<string, unknown> {
           if (z[src]) {
             const st = (z[src].steps ?? []) as any[];
             const worstSlide = st.reduce((m, x) => Math.max(m, x.max ?? 0), 0);
-            rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, parked: z.parked ?? null, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, maxNoPopIn: z[src].maxNoPopIn, popInAt: z[src].popInAt, worstFrameMs: r3(worstSlide), overBudgetPerSlide: st.map((x) => `${x.speed}:${x.overBudgetPerSlide ?? '-'}`).join(' '), tilesPerSecond: st.map((x) => `${x.speed}:${x.tiles?.perSecond ?? '-'}`).join(' '), tileLatency: st.map((x) => `${x.speed}:${x.tiles?.total?.[0] ?? '-'}/${x.tiles?.total?.[1] ?? '-'}`).join(' '), leadOut: st.map((x) => `${x.speed}:${x.tiles?.leadOut?.[0] ?? '-'}`).join(' '), causesAtFail: z[src].causesAtFail, coverParked: z.coverParked });
+            rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, parked: z.parked ?? null, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, maxNoPopIn: z[src].maxNoPopIn, popInAt: z[src].popInAt, worstFrameMs: r3(worstSlide), overBudgetPerSlide: st.map((x) => `${x.speed}:${x.overBudgetPerSlide ?? '-'}`).join(' '), tilesPerSecond: st.map((x) => `${x.speed}:${x.tiles?.perSecond ?? '-'}`).join(' '), tileLatency: st.map((x) => `${x.speed}:${x.tiles?.total?.[0] ?? '-'}/${x.tiles?.total?.[1] ?? '-'}`).join(' '), leadOut: st.map((x) => `${x.speed}:${x.tiles?.leadOut?.[0] ?? '-'}`).join(' '), causesAtFail: z[src].causesAtFail, coverParked: z.coverParked, bgAt: z[src].bgAt ?? null, bg: st.map((x) => `${x.speed}:${x.bg ? `${r3(x.bg.bgMax * 100)}%/${x.bg.bgFrames}f` : '-'}`).join(' '), far: st.map((x) => `${x.speed}:${x.bg ? `${r3(x.bg.farMax * 100)}%` : '-'}`).join(' ') });
           }
   const plan = res.panPlan as { zooms: { zoom: number; window: number; run: boolean }[] } | undefined;
   return {
@@ -310,9 +321,11 @@ function makePanReport(s: BenchState): Record<string, unknown> {
     build: location.origin + location.pathname,
     summary: {
       note: 'per zoom and land source: the fastest straight pan (cells/s) that held every criterion, and the criterion that failed first one step above',
-      criteria: `smooth: rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms and no pop-in, each step ${PAN_STEP_S} s; no pop-in: none of the screen out of detail against parked, frames as they come; overBudgetPerSlide: frames over ${PAN_BUDGET} ms per slide at each speed`,
+      criteria: `smooth: rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms and no pop-in${PAN_BG_FAILS ? ' and no background' : ''}, each step ${PAN_STEP_S} s; no pop-in: none of the screen out of detail against parked, frames as they come; overBudgetPerSlide: frames over ${PAN_BUDGET} ms per slide at each speed; bg: the share of the screen showing the background colour (nothing drawn), the step's worst frame / frames with any — flagged when the worst frame's over ${PAN_BG_FLAG * 100}%${PAN_BG_FAILS ? ', and fails smooth (?bgfail=1)' : ' (flag only; ?bgfail=1 fails smooth too)'}; far: the worst frame's share showing the flat far land`,
       device: `${res.device?.adapter?.vendor ?? '?'} ${res.device?.adapter?.architecture ?? ''}, dpr ${res.device?.devicePixelRatio}, css ${res.device?.css?.w}x${res.device?.css?.h}`,
-      table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: parked ${r.parked?.fps ?? '?'} fps p99 ${r.parked?.p99 ?? '?'}; smooth to ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}; no pop-in to ${r.maxNoPopIn ?? 'none'} c/s${r.popInAt ? ` (pop-in at ${r.popInAt})` : ''}; worst frame ${r.worstFrameMs} ms; tiles/s ${r.tilesPerSecond}; tile ms p50/p95 ${r.tileLatency}; leading half out ${r.leadOut}`),
+      table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: parked ${r.parked?.fps ?? '?'} fps p99 ${r.parked?.p99 ?? '?'}; smooth to ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}; no pop-in to ${r.maxNoPopIn ?? 'none'} c/s${r.popInAt ? ` (pop-in at ${r.popInAt})` : ''}; worst frame ${r.worstFrameMs} ms; tiles/s ${r.tilesPerSecond}; tile ms p50/p95 ${r.tileLatency}; leading half out ${r.leadOut}; bg ${r.bg}${r.bgAt?.length ? ` (BACKGROUND at ${r.bgAt.join(', ')} c/s)` : ''}; far ${r.far}`),
+      // (round 112, bgcheck: the rows whose steps showed the background — the panel's red note)
+      bgFlagged: rows.filter((r: any) => r.bgAt?.length).map((r: any) => `zoom ${r.zoom} ${r.source}: background at ${r.bgAt.join(', ')} c/s`),
       notRun: plan?.zooms.filter((z) => !z.run).map((z) => `zoom ${z.zoom} needs window ${z.window} (over ${PAN_MAX_WINDOW})`) ?? [],
       errors: s.errors.length,
     },
@@ -326,7 +339,8 @@ function panSummary(r: Record<string, any>): string {
   // (v5) a page whose screen lock was let go or whose tab was hidden: its numbers may hold the screen going off
   const slept = Object.values(r).filter((p: any) => p && typeof p === 'object' && (p.hiddenDuring || (p.wakeLog ?? []).some((l: string) => !l.includes('no wake lock')))).map((p: any) => p.page);
   const warn = slept.length ? [`screen lock lost or tab hidden on: ${slept.join(', ')} (see wakeLog)`] : [];
-  return [`device: ${r.summary?.device}`, ...warn, ...(r.summary?.table ?? []), ...(r.summary?.notRun ?? []), `errors: ${r.errors?.length ?? 0}`].join('\n');
+  const bg = r.summary?.bgFlagged?.length ? [`BACKGROUND SHOWED: ${r.summary.bgFlagged.join('; ')}`] : [];
+  return [`device: ${r.summary?.device}`, ...warn, ...bg, ...(r.summary?.table ?? []), ...(r.summary?.notRun ?? []), `errors: ${r.errors?.length ?? 0}`].join('\n');
 }
 
 // ---------- the suite's state ----------
@@ -1087,7 +1101,7 @@ async function start(host: Host, panel: Panel): Promise<void> {
     s.suite = 'pan';
     const plan = panPlan(innerWidth, innerHeight, host.params.get('benchsmoke') === '1', Number(host.params.get('panwin') ?? 0));
     s.results.panPlan = plan;
-    s.pages = [s.pages[0], ...plan.pages.map((pg) => ({ name: `pan${pg.window}`, params: { ...common, at: RIDE_AT, win: String(pg.window), panzooms: pg.zooms.join('_') } }))];
+    s.pages = [s.pages[0], ...plan.pages.map((pg) => ({ name: `pan${pg.window}`, params: { ...common, at: RIDE_AT, win: String(pg.window), panzooms: pg.zooms.join('_'), bgcheck: '1' } }))];
   }
   // (v3, ?benchsmoke=1: the start, the hero and one window page, the end — a check that the chain works, ~3 min)
   if (host.params.get('benchsmoke') === '1' && s.suite !== 'pan') s.pages = [s.pages[0], s.pages.find((x) => x.name === 'hero')!, { name: 'win256', params: { ...common, at: RIDE_AT, drive: '18', win: '256' } }];
@@ -1170,6 +1184,13 @@ async function finish(host: Host | null, panel: Panel): Promise<void> {
   (window as unknown as { reclaimedBench: unknown }).reclaimedBench = report;
   await letSleep();
   panel.say(`Benchmark done — this run (bench v${BENCH_VERSION}, ${s.id}).`);
+  // (round 112, bgcheck: the steps that showed the background, in red above the table)
+  const bgFlagged = (report as { summary?: { bgFlagged?: string[] } }).summary?.bgFlagged ?? [];
+  if (s.suite === 'pan' && bgFlagged.length) {
+    const d = panel.text(`Background showed while panning: ${bgFlagged.join('; ')}`);
+    d.style.color = '#ff6b6b';
+    d.style.fontWeight = '600';
+  }
   panel.text(s.suite === 'pan' ? panSummary(report) : summary(report));
   reportButtons(panel, body);
   const dev = await postDev(body, 'bench');
@@ -2554,6 +2575,9 @@ class Bench {
     let causesAtFail: unknown = null;
     let maxNoPopIn: number | null = null;
     let popInAt: number | null = null;
+    // (round 112, bgcheck: the speeds whose step showed the background)
+    const bgAt: number[] = [];
+    const BG = this.R.core.renderer.bgCheck;
     let strict = true;
     const anchor: [number, number] = [cam.target[0], cam.target[1]];
     let sign = 1;
@@ -2615,6 +2639,7 @@ class Bench {
         let perFrameSum = 0;
         let usedMax = 0;
         let drawnMax = 0;
+        BG?.take();
         while (performance.now() - t0 < PAN_STEP_S * 1000) {
           const t = await frame();
           if (src === 'pool') {
@@ -2642,6 +2667,14 @@ class Bench {
         }
         const secs = (performance.now() - t0) / 1000;
         const fps = (this.prof.frameNo - fno0) / secs;
+        // (round 112, bgcheck: the step's frames read back — a readback started after the step — then its shares)
+        let bg: BgShares | null = null;
+        if (BG) {
+          await Promise.race([BG.sync(), sleep(2000)]);
+          bg = bgShares(BG.take());
+        }
+        const bgShown = !!bg && bg.bgMax > PAN_BG_FLAG;
+        if (bgShown) bgAt.push(v);
         const sorted = [...frames].sort((x, y) => x - y);
         const p99 = sorted[Math.floor(sorted.length * 0.99)] ?? Infinity;
         const max = sorted[sorted.length - 1] ?? Infinity;
@@ -2651,6 +2684,7 @@ class Bench {
         if (p99 > PAN_P99) fails.push(`p99 ${p99.toFixed(0)} ms`);
         const popIn = low > 0.001;
         if (popIn) fails.push(`pop-in ${(low * 100).toFixed(0)}% of the screen`);
+        if (bgShown && PAN_BG_FAILS) fails.push(`background ${(bg!.bgMax * 100).toFixed(2)}% of the screen`);
         const slides = this.R.stream.stats.slides - sl0;
         const over = frames.filter((f) => f > PAN_BUDGET).length;
         // (the arrays keep their last 64 / 200: what came in during the step)
@@ -2662,7 +2696,7 @@ class Bench {
         const slots = TL && ts0 ? { slots: TL.stats.slots, mb: TL.stats.mb, usedMax, drawnMax, evicted: TL.stats.evicted - ts0.evicted, noSlot: ((TL.land?.stats.noSlot as number | undefined) ?? 0) - ts0.noSlot } : null;
         const pacer = pz && pc0 ? { perFrameMean: frames.length ? r3(perFrameSum / frames.length) : null, turnsPerFrame: r3((pz.tiles - pc0.tiles) / Math.max(1, frames.length)), chained: pz.chained - pc0.chained } : null;
         const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) }, missWhy: whyR, slots, pacer } : null;
-        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, ok: !fails.length });
+        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, bg, ok: !fails.length });
         if (fails.length && strict) {
           strict = false;
           failedFirst = fails.join(', ');
@@ -2684,7 +2718,7 @@ class Bench {
     }
     const st1 = this.R.stream.stats;
     const came = { generated: st1.generated - st0.generated, fromPool: st1.thawed - st0.thawed, fromDisk: st1.loaded - st0.loaded, slides: st1.slides - st0.slides, storeMiss: st1.storeMiss - st0.storeMiss, mismatched: st1.mismatched - st0.mismatched, loadFailed: st1.loadFailed - st0.loadFailed, storeSize: this.R.stream.store?.size ?? null };
-    return { maxSmooth, failedFirst, failedAt, causesAtFail, maxNoPopIn, popInAt, came, steps };
+    return { maxSmooth, failedFirst, failedAt, causesAtFail, maxNoPopIn, popInAt, bgAt, came, steps };
   }
 
   // ---- other window sizes ----

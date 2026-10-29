@@ -12731,3 +12731,42 @@ hybrid judges a chunk out of the window's z from it.
   grid, the rest voxel chunks still meshing), the hero on grass (C:/Projects/shots88/tilegate/hero-new-load.png). So a
   world saved by today's builds restores; the relief theory isn't confirmed. Left to rule out on the user's phone: a
   stale cached bundle, a much older world, their run's own saved progress (their quest arrow said 3030 m, ours 120 m).
+
+## 2026-10-29 — round 112 (bgcheck): the background colour caught on the GPU, in the pan bench and the tile gate
+
+The user: "Can we do a pan test for the phone that fails if any bg color shows?" then "Or flags it anyway".
+
+**What it measures.** `?bgcheck=1` (render/bgcheck.ts). The world pass keeps its depth and pick targets (stored, not
+discarded; TEXTURE_BINDING added) and after it one compute pass samples them on a coarse grid, 64 x 128 on a portrait
+screen (128 x 64 landscape), 8192 samples: depth still the clear 1.0 → **background** (the clear colour: no geometry,
+tile or far land wrote there); else pick (0, 0xfa000000) → **far land** (far.wgsl fsFar now writes that tag; x 0 is
+"nothing" to Renderer.pick so picking is unchanged; tiles write (0, 0), so the far land is told apart from a tile
+cheaply — the rings' fsLod and the quartz giants aren't tagged). Workgroup atomics, one global add a workgroup, a
+1-thread pass folds the frame into running totals (frames, frames with any, summed, worst frame — for both); a
+readback (mapAsync) 4 times a second zeroes them. No swapchain read. Without the flag nothing is made and the world
+pass's store ops are as before (play pays nothing). Checked: the pinholes it found are exactly the clear colour
+(screenshot pixels 101,110,119 = light.clear 0.397,0.432,0.466).
+
+**Cost** (scripts/lib/runner timing check, phone proxy 412x915 dpr 2.6 q=low, atlas parked at zoom 5, desktop iGPU,
+A B A B, 150-180 GPU frames each): the bgcheck pass 0.024 ms p50 / 0.028 mean. The world pass with the stores on
+2.69 / 2.36 ms p50 against 2.11 / 2.81 off — inside the run-to-run noise. On a tiled phone GPU the two stores (12
+bytes a pixel) may cost more; the bench's numbers on the phone are taken with it on, so they include it.
+
+**The pan bench** (?bench=pan, the pan pages get bgcheck=1): each step records `bg` (bgMean, bgMax, bgFrames,
+farMean, farMax, farFrames); a step is flagged when its worst frame is over 0.1% of the samples (`?bgflag=`; 0 = any),
+listed as `BACKGROUND at …` in the table, `summary.bgFlagged`, and a red note on the end screen; `?bgfail=1` also fails
+the smooth criterion with it (default flag only, as asked). The threshold isn't "any" because parked views show 1-pixel
+pinholes of the clear colour on ~0.02% of the screen every frame (2 of 8192 samples at zoom 5): "any" flags every step.
+**The gate** (scripts/tilegate.mjs): every view runs with ?bgcheck=1; a view fails when a frame shows the background on
+over `--bgmax` (0.001) of the samples, frame rate judged or not; `bg` in each row.
+
+**Verification (headless, the phone proxy).** Background on purpose — the gate's phone z2.2 parked with `&skip=tiles`:
+21.8% bg, 32.6% far, failed; z0.8 with `&zoomfloor=0`: 28.6% bg, 24.6% far, failed. The bench at zoom 5 with
+`skip=tiles&bgfail=1`: every source flagged from 10-20 c/s, "background 32.81% … at 10" in failedFirst. Clean: parked
+zoom 2.78 reads 0 bg / 0 far; zoom 5 parked 0.024% (the pinholes); the bench's 10 c/s steps 0 (pool, generated).
+**What it found on places c885679 as it is:** panning the phone screen shows the background — gate pan 20 c/s: z5 10.0%
+worst frame (73 of 129 frames), z2.78 4.15% (80 of 146) where the CPU "out of detail" check read 0; the bench at zoom 5
+(window 512): background from 20 c/s in every source (generated 4.6% at 20, 10.5% at 120, 33% at 480; disk 30-38% at
+320-480), though its "no pop-in" read clean to 320. So places now **fails the gate** on its phone pans (BACKLOG BG4);
+shots C:/Projects/shots88/bgcheck/where-z5-pan.png (the grey-blue region = the clear colour, samples marked red),
+bench-clean.json, gate-clean/.

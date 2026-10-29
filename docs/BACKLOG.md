@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 112 (2026-10-29, session 5, `bgcheck`) — the background colour caught on the GPU in the pan bench and the tile gate
+
+The user: "Can we do a pan test for the phone that fails if any bg color shows?" then "Or flags it anyway".
+
+| id | item | size | status |
+|---|---|---|---|
+| BG1 | ?bgcheck=1 (render/bgcheck.ts): the world pass keeps its depth and pick; a compute pass a frame samples them on a 64 x 128 grid (128 x 64 landscape) — depth still 1.0 = background (the clear colour, nothing drawn), pick (0, 0xfa000000) = the flat far land (far.wgsl fsFar) — counts folded on the GPU (frames, frames with any, sum, worst frame), read back 4 times a second. 0.024 ms GPU a frame on the desktop iGPU; off, nothing changes | S | done (`bgcheck`) |
+| BG2 | The pan bench (?bench=pan) per step: bg worst / mean / frames with any, far land worst; a step flagged over 0.1% of the samples (`?bgflag=`, 0 for any), a red note on the end screen and `BACKGROUND at …` in the table; `?bgfail=1` fails the smooth criterion with it too (default flag only) | S | done (`bgcheck`), the phone to run |
+| BG3 | scripts/tilegate.mjs runs every view with ?bgcheck=1 and fails a view whose worst frame shows the background on over 0.1% (`--bgmax`); bg and far shares in each row | S | done (`bgcheck`) |
+| BG4 | Found by BG1, not fixed: (a) 1-pixel pinholes of the clear colour in parked views (~0.02% of the screen, every frame, at zoom 5 on the atlas); (b) while panning the phone screen, background on 4-10% of a frame at 20 c/s (zoom 5, 2.78) and 20-38% at 320-480 c/s — the CPU "out of detail" check read 0 for some of these (z2.78 pan 20). places now fails the gate on its phone pans | M | open (main: gate policy; then a fix branch) |
+
 ## Round 112 (2026-10-29, session 5, `tilefix3`) — the zoom held to the device's tiles; lava in the tiles; the saved world's grey hero
 
 The user: "Can you just limit the zoom to max supported tile size for the device then if any are missing we know it's a bug for sure?"

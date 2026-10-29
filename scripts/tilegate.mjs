@@ -25,6 +25,10 @@
 // (round 112, testspeed: on the shared runner, scripts/lib/runner.mjs — the worktree's build on its own port, a kept
 // Chrome profile, the GPU leased as a timing check (its frames need the GPU alone); --chromeargs go to that Chrome.
 // `--url` is a server already up, as before; without it the runner serves the build.)
+// (round 112, bgcheck: the page runs with ?bgcheck=1 — render/bgcheck.ts samples the frame's depth and pick on a 64 x 128
+// grid on the GPU — and a view fails when a frame shows the background colour (nothing drawn) on more than --bgmax of
+// the samples (0.001: 0.1%); the share of the flat far land is reported. The user: "Can we do a pan test for the phone
+// that fails if any bg color shows?" / "Or flags it anyway".)
 import { run } from './lib/runner.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -54,6 +58,7 @@ const panS = Number(opt('panning', 3));
 const panMiss = Number(opt('panmiss', 0.02));
 const tol = Number(opt('tol', 40));
 const areaMax = Number(opt('area', 0.01));
+const bgMax = Number(opt('bgmax', 0.001));
 const outDir = opt('out', 'C:/Projects/shots88/tilegate');
 // (round 112, tilefix2: baselines by GPU — vendors render 1.5-12% of a frame differently: a dir an adapter,
 // <baselines>/<vendor>-<architecture>, written the first time an adapter runs)
@@ -99,6 +104,9 @@ async function measure(p, secs, parked = true) {
       return 'untiled';
     };
     window.reclaimedHitch?.rec?.reset?.();
+    // (round 112, bgcheck: the background's share over these frames — a short look (the fill's) doesn't ask)
+    const BG = secs >= 0.5 ? R.renderer.bgCheck : null;
+    BG?.take();
     const frames = [];
     let worst = 0;
     let worstWhy = {};
@@ -151,6 +159,14 @@ async function measure(p, secs, parked = true) {
         worstWhy = why;
       }
     }
+    let bg = null;
+    if (BG) {
+      await Promise.race([BG.sync(), new Promise((r) => setTimeout(r, 2000))]);
+      const t = BG.take();
+      const n = Math.max(1, t.frames) * t.samples;
+      const r5 = (v) => Math.round(v * 1e5) / 1e5;
+      bg = { frames: t.frames, samples: t.samples, max: r5(t.bg.max / Math.max(1, t.samples)), mean: r5(t.bg.sum / n), framesAny: t.bg.framesAny, farMax: r5(t.far.max / Math.max(1, t.samples)), farMean: r5(t.far.sum / n), farFrames: t.far.framesAny };
+    }
     const fs = frames.slice(1).sort((a, b) => a - b);
     const q = (f) => (fs.length ? fs[Math.min(fs.length - 1, Math.floor(fs.length * f))] : Infinity);
     const st = TL?.stats ?? {};
@@ -162,7 +178,7 @@ async function measure(p, secs, parked = true) {
     const rep = window.reclaimedHitch?.report?.();
     const hitches = rep?.worst ? rep.worst.slice(0, 2).map((h) => `${h.ms} ${h.cause} ${[...(h.steps ?? []), ...(h.async ?? [])].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`) : [];
     // (round 112, tilefix3: the zoom as it stands — under the device's floor it's held at it — and the floor)
-    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
+    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, bg, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
   }, secs, parked);
 }
 
@@ -178,10 +194,14 @@ function judge(tag, m, missMax) {
   const f = [];
   if (!frameChecks) {
     if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
+  // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
+  if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
     if (f.length) fails.push(`${tag}: ${f.join('; ')}`);
     return f;
   }
   if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
+  // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
+  if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
   if (m.fps < CRIT.fps) f.push(`fps ${m.fps}`);
   if (m.max > CRIT.max) f.push(`frame ${m.max} ms${m.hitches?.length ? ` (${m.hitches.join('; ')})` : ''}`);
   if (m.p99 > CRIT.p99) f.push(`p99 ${m.p99} ms`);
@@ -290,7 +310,7 @@ for (const sk0 of screens) {
       if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) fails.push(`${sk}: console error ${m.text().slice(0, 200)}`);
     });
     // (a fixed spot, world, time of day and season; nothing saved or loaded)
-    const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${extra}`;
+    const u = `${url}/?bgcheck=1&skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${extra}`;
     await p.goto(u, { waitUntil: 'load' });
     // (the level made — its boot marks, src/perf/boot-marks.ts — then --wait ms as before)
     await p.waitForFunction(() => (window.__boot?.at['level-ready'] && window.reclaimed?.stream && window.reclaimed?.scene) || document.querySelector('.fatal'), { timeout: 240000, polling: 250 });
