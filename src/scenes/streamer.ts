@@ -43,7 +43,7 @@ import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
 import { generateRegion, type RegionLand } from '../world/streamgen';
 import type { WorldCore } from './world-core';
-import { SETTLE } from '../sim/sleep';
+import { settleLand } from '../sim/sleep';
 import { PAGE_COLS, regionRowsToPages } from '../sim/pages';
 import { MATERIALS, MatState } from '../world/materials';
 import { GPUGEN, type FinishMeta, type FinishTarget } from '../atlas/finish';
@@ -530,7 +530,7 @@ export class Streamer {
       b('waterNext', 4, false),
       b('waterPrev', 4, false),
       // (perfopt, ?settle=0: frozen with its region, so land that comes back in asleep is drawn flowing as it was)
-      b('flux', 24, !SETTLE),
+      b('flux', 24, !settleLand()),
       b('oilNext', 4, false),
       b('oilFlux', 24, false),
       b('lavaNext', 16, false),
@@ -1478,7 +1478,7 @@ export class Streamer {
   /** (round 105, tilelatency) A render-only tile's land into `buf` at `off`, its per-column summary into `meta` (GPU, no readback). */
   landTile(x0: number, y0: number, buf: GPUBuffer, off: number, meta: { buf: GPUBuffer; off: number }): Promise<void> | null {
     if (!this.source.regionTile) return null;
-    return this.source.regionTile(x0, y0, this.R, this.R, { buf, off, layout: this.layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !SETTLE }, meta);
+    return this.source.regionTile(x0, y0, this.R, this.R, { buf, off, layout: this.layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !settleLand() }, meta);
   }
 
   /** Start making the land a slide of (dx, dy) would bring in (round 100: into the pool — what's there needs nothing). */
@@ -1950,7 +1950,7 @@ export class Streamer {
     let m: FinishMeta;
     let snap: unknown;
     try {
-      [m, snap] = await Promise.all([this.source.regionInto!(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: this.layout, oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE }), this.source.snapshot?.(x0, y0, R, R)]);
+      [m, snap] = await Promise.all([this.source.regionInto!(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: this.layout, oz, zMax, K: this.K, colK: this.colK, settle: !settleLand() }), this.source.snapshot?.(x0, y0, R, R)]);
     } catch (e) {
       this.pool.release(slot);
       throw e;
@@ -1991,7 +1991,7 @@ export class Streamer {
     let m: FinishMeta;
     let gpu: Uint32Array;
     try {
-      m = await this.source.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: L, oz: this.oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE });
+      m = await this.source.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: L, oz: this.oz, zMax, K: this.K, colK: this.colK, settle: !settleLand() });
       const st = dev.createBuffer({ label: 'compareGen read', size: L.bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
       const enc = dev.createCommandEncoder({ label: 'compareGen read' });
       enc.copyBufferToBuffer(slot.buf, slot.off, st, 0, L.bytes);
@@ -2070,7 +2070,7 @@ export class Streamer {
       for (let x = 0; x < R; x++) {
         const i = y * R + x;
         // (perfopt, settle=0: nothing loose comes in floating — it won't wake to fall)
-        if (!SETTLE && settleLoose(land.cols[i])) this.stats.settled++;
+        if (!settleLand() && settleLoose(land.cols[i])) this.stats.settled++;
         const cut = splitColumn(land.cols[i], oz, zMax);
         outside.push(cut.outside);
         this.place(layers, x, y, cut.inside);

@@ -16,7 +16,7 @@ import { CHUNK } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { WorldEvent } from './globals';
 import type { Pages } from './pages';
-import { RIVERS } from './world-gpu';
+import { riverMode } from './world-gpu';
 
 /** chunks the mask holds (common.wgsl: 64 words) */
 const MAX_CHUNKS = 2048;
@@ -38,11 +38,11 @@ const SETTLE_TICKS = 64;
  *  ringwin: nothing moves on a slide, only the strip come in is drowsy (its drowseTick, shift) */
 export const SLEEP_MORE = typeof location !== 'undefined' && new URLSearchParams(location.search).get('sleepmore') === '1';
 // (round 84: with ?rivers=table, off unless asked for — the atlas's land comes in at its steady state)
-export const SETTLE = (() => {
-  if (typeof location === 'undefined') return true;
-  const v = new URLSearchParams(location.search).get('settle');
-  return v === null ? RIVERS !== 'table' : v !== '0';
-})();
+// (round 110: the world's river mode — sim/world-gpu.ts useRivers — so read when asked)
+const SETTLE_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settle');
+export function settleLand(): boolean {
+  return SETTLE_ASKED === null ? riverMode() !== 'table' : SETTLE_ASKED !== '0';
+}
 /**
  * (round 83, the user: "all generators make a steady state so when we arrive nothing is simulated until the
  * player interacts with it or the session otherwise requests it to unfreeze") The player's whereabouts don't
@@ -60,10 +60,10 @@ export const WAKE_NEAR = typeof location !== 'undefined' && new URLSearchParams(
  * a river's columns back to the atlas's table. 0: off (a woken chunk sleeps at its time). On by default with
  * ?rivers=table.
  */
-export const SETTLE_TOL = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settletol');
-  return v !== null ? Number(v) : RIVERS === 'table' ? 0.01 : 0;
-})();
+const SETTLE_TOL_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('settletol');
+export function settleTol(): number {
+  return SETTLE_TOL_ASKED !== null ? Number(SETTLE_TOL_ASKED) : riverMode() === 'table' ? 0.01 : 0;
+}
 /** the longest a chunk is kept awake for its water still settling (s) */
 const SETTLE_MAX_S = 60;
 /** how far past now an unsettled chunk is kept (s): longer than the level reads waterChange */
@@ -165,7 +165,7 @@ export class Sleep {
    * a woken chunk whose time is nearly up and whose water still changes by more than the tolerance stays awake.
    * Returns the chunks kept.
    */
-  holdUnsettled(change: Float32Array, now: number, tol = SETTLE_TOL): number {
+  holdUnsettled(change: Float32Array, now: number, tol = settleTol()): number {
     if (!(tol > 0)) return 0;
     let kept = 0;
     for (let k = 0; k < this.until.length; k++) {
@@ -184,7 +184,7 @@ export class Sleep {
   /** land come in everywhere (the first window, a slide in z, a warp): woken to settle for `secs` — or, with
    *  ?settle=0, only drowsy (asleep at once, its layers carried through) */
   settleAll(secs: number, now: number): void {
-    this.wakeAll(SETTLE ? secs : 0, now);
+    this.wakeAll(settleLand() ? secs : 0, now);
     this.drowseTick.fill(this.tick + DROWSE_TICKS);
     this.settling = [{ rect: [0, 0, this.cx * CHUNK, this.cy * CHUNK], until: -1 }];
     // (perfopt: counted from the sim's tick at the next update — the first window's comes before any, at tick 0,
@@ -227,7 +227,7 @@ export class Sleep {
           const k = this.slotOf(j * this.cx + i);
           // (hybrid: land come in is the heightfield's till the hybrid says — it doesn't wake to settle)
           if (this.filter) this.filter[k] = 0;
-          const settle = !this.filter ? (SETTLE ? SETTLE_S : 0) : 0;
+          const settle = !this.filter ? (settleLand() ? SETTLE_S : 0) : 0;
           this.until[k] = now + settle;
           this.wokeAt[k] = 0;
           this.drowseTick[k] = this.tick + DROWSE_TICKS;
@@ -244,7 +244,7 @@ export class Sleep {
         const fresh = si < 0 || sj < 0 || si >= this.cx || sj >= this.cy;
         // (hybrid: land come in is the heightfield's till the hybrid says — it doesn't wake to settle)
         if (this.filter && fOld) this.filter[j * this.cx + i] = fresh ? 0 : fOld[sj * this.cx + si];
-        const settle = fresh && (!this.filter || this.filter[j * this.cx + i]) ? (SETTLE ? SETTLE_S : 0) : 0;
+        const settle = fresh && (!this.filter || this.filter[j * this.cx + i]) ? (settleLand() ? SETTLE_S : 0) : 0;
         this.until[j * this.cx + i] = fresh ? now + settle : old[sj * this.cx + si];
         this.drowseTick[j * this.cx + i] = fresh ? this.tick + DROWSE_TICKS : oldT[sj * this.cx + si];
       }

@@ -28,7 +28,7 @@ import { TileLandGpu } from './tilelandgpu';
 
 import { FieldMesh, READBACK } from './fieldmesh';
 import { POOL_VOXELS } from '../grids/structures';
-import { RIVERS, type WorldGpu } from '../sim/world-gpu';
+import { riverMode, type WorldGpu } from '../sim/world-gpu';
 import { ShoreField } from './shore';
 import { WaterSurface } from './watersurf';
 import { CAMERA_BYTES, CAMERA_CUT_BYTES, CAMERA_CUT_OFFSET, type Camera } from './camera';
@@ -528,7 +528,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       VF,
     );
     // (round 84, ?rivers=table: foam by the water's speed — render.wgsl fsWater)
-    const riverFoam = `const RIVER_FOAM_SPEED: bool = ${RIVERS === 'table'};\n`;
+    const riverFoam = `const RIVER_FOAM_SPEED: bool = ${riverMode() === 'table'};\n`;
     const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [drawLayout] });
     const depthStencil = (write: boolean): GPUDepthStencilState => ({

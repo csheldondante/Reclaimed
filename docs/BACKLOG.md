@@ -12,6 +12,16 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 110 (2026-10-29, session 5, `playwater`) — one water path (DECISIONS round 110)
+
+| id | item | size | status |
+|---|---|---|---|
+| PW1 | (the user: "The waterfalls don't use the same system as the main game can you explain why?") The playground runs exactly the game's water: the pipes, its river held at its steady state as the atlas's (riverFlow, riverheld.wgsl), sleep and settle-then-freeze; the breach on the same water. The flow model (`?flow=1`) only in its own lab | M | done (`playwater`): levels/playground.ts, LevelScene (sleep for a fixed map on `table`, its rivers not run in the warmup), `?flow=1` throws off the flow lab |
+| PW2 | Fixed maps declare rivers: an authored river table (path, width, discharge) → the atlas's nodes, rated, carved and filled by the same rules into the same riverFlow contract — not a second river system | M | done (`playwater`): world/rivertable.ts (riverNodes, holdRivers; riverChannelDepth / riverSpeed shared with atlas/rivers.ts; RIVER_FALL / RIVER_SHEET / RIVER_LEVEE once, in the atlas's kernels by atlas.ts parts()) |
+| PW3 | The river mode is the level's (LevelDef.rivers: the atlas, the playground), not the URL's `level=atlas` — the atlas opened from the title screen ran its rivers unheld | S | done (`playwater`): sim/world-gpu.ts useRivers / riverMode; riverPull, settleLand, settleTol read it when a world is made |
+| PW4 | An authored river's watershed: today it follows the climate (the season, the storms over the map); with `watershed` merged its field reads 0 there. A station-sized catchment (rain on the station raises its river, lagged) if wanted | S | open (proposal) |
+| PW5 | The atlas's riverAt / carve / bed / fill rules exist twice — WGSL over the atlas's fields, a CPU mirror over a fixed map's columns (comments tie them). One source would be an authored map run through the atlas's own column kernels (or the rules as shared WGSL run on a fixed map's GPU columns) | M | open (structural, proposal) |
+
 ## Round 109 (2026-10-29, session 5, `places`) — more devices, generators and editors, better runs (DECISIONS round 109)
 
 | id | item | size | status |

@@ -24,26 +24,41 @@ const S = GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY
 /**
  * (round 84) How the atlas's rivers are kept: ?rivers=sim (as before: springs along each river's middle, the pipes
  * from the land as it came in), hold (the perf agent's: each river column topped up to its depth), table (the
- * atlas's steady state, riverFlow: held and drawn flowing with no simulation until something wakes it).
+ * atlas's steady state, riverFlow: held and drawn flowing with no simulation until something wakes it). Round 110:
+ * table is also an authored level's river table's (world/rivertable.ts: the same riverFlow from a declared path).
  */
-export const RIVERS: 'sim' | 'hold' | 'table' = (() => {
+export type RiverMode = 'sim' | 'hold' | 'table';
+/** the page's ?rivers= (perfopt's ?riverhold=1 is rivers=hold), if given: it overrides every level's own */
+const RIVERS_ASKED: RiverMode | null = (() => {
   const q = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
-  // (perfopt's ?riverhold=1 is rivers=hold; round 86: table by default on the atlas level — the user: "the rivers
-  // look good!" — the valley levels keep sim, their rivers aren't the atlas's)
-  const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : q.get('level') === 'atlas' ? 'table' : 'sim');
-  if (v !== 'sim' && v !== 'hold' && v !== 'table') throw new Error(`?rivers=${v}: sim, hold or table`);
+  const v = q.get('rivers') ?? (q.get('riverhold') === '1' ? 'hold' : null);
+  if (v !== null && v !== 'sim' && v !== 'hold' && v !== 'table') throw new Error(`?rivers=${v}: sim, hold or table`);
   return v;
 })();
+// (round 86: table by default on the atlas level — the user: "the rivers look good!" — the valley levels keep sim,
+// their rivers aren't the atlas's. Round 110: the level's own, LevelDef.rivers — the atlas's, an authored river
+// table's — set by useRivers before its world is made. It was the URL's ?level=atlas: the atlas opened from the title
+// screen ran its rivers unheld, and no other level could hold one.)
+// (until a level sets it — api/atlas-world.ts's games don't: the URL's level=atlas as before)
+let rivers: RiverMode = RIVERS_ASKED ?? (typeof location !== 'undefined' && new URLSearchParams(location.search).get('level') === 'atlas' ? 'table' : 'sim');
+/** how this world's rivers are kept (above). Read when a world's kernels are made: one mode a world. */
+export function riverMode(): RiverMode {
+  return rivers;
+}
+/** (round 110) the river mode of the world about to be made (and an atlas's kernels): the level's, ?rivers= over it */
+export function useRivers(level: RiverMode = 'sim'): void {
+  rivers = RIVERS_ASKED ?? level;
+}
 /** the riverFlow rating (above): depth and speed with the discharge */
 export const RIVER_DEPTH_EXP = 0.6;
 export const RIVER_SPEED_EXP = 0.4;
 /** (?rivers=table) ?riverpull=x: a woken river's column is pulled toward the table by x a step (0: the pipes alone;
  *  0.02 by default — the pipes alone empty a reach above a fall down it, and the river upstream past the window
  *  feeds what's woken only by its level's slope, a trickle) */
-export const RIVER_PULL = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverpull');
-  return v === null ? (RIVERS === 'table' ? 0.02 : 0) : Number(v);
-})();
+const RIVER_PULL_ASKED = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverpull');
+export function riverPull(): number {
+  return RIVER_PULL_ASKED === null ? (rivers === 'table' ? 0.02 : 0) : Number(RIVER_PULL_ASKED);
+}
 /** ?riverwet=x: the rivers' wetness held at x (the climate's otherwise: common.wgsl riverWet) */
 export const RIVER_WET = (() => {
   const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('riverwet');

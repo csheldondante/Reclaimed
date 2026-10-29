@@ -36,7 +36,8 @@ import { applyStamps, StampOps } from './stamps';
 import { RegionFinish, type FinishMeta, type FinishTarget, type GpuColumns, type RawGround } from './finish';
 import { timed } from '../gpu/cpustat';
 import { findRivers, LAKE_WORDS, NODE_WORDS, type AtlasLake } from './rivers';
-import { RIVERS } from '../sim/world-gpu';
+import { riverMode } from '../sim/world-gpu';
+import { RIVER_FALL, RIVER_LEVEE, RIVER_SHEET } from '../world/rivertable';
 import { Coarse, type CoarseSnap } from './coarse';
 import type { LandChange } from '../scenes/streamer';
 
@@ -467,8 +468,12 @@ export class Atlas {
   /** the WGSL every atlas kernel is built from, and its own */
   parts(...own: string[]): string[] {
     // (round 84: how the rivers are kept — sim/world-gpu.ts RIVERS; columns.wgsl, forms.wgsl)
-    const rivers = `const RIVER_TABLE: bool = ${RIVERS === 'table'};
-const RIVER_HOLD: bool = ${RIVERS === 'hold'};
+    // (round 110: the fall, the sheet and the levee shared with an authored river table — world/rivertable.ts)
+    const rivers = `const RIVER_TABLE: bool = ${riverMode() === 'table'};
+const RIVER_HOLD: bool = ${riverMode() === 'hold'};
+const RIVER_FALL: f32 = ${RIVER_FALL.toFixed(2)};
+const RIVER_SHEET: f32 = ${RIVER_SHEET.toFixed(2)};
+const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
 `;
     return [noiseW, commonW, patternsW, composeW, rivers, ...own];
   }

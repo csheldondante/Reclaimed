@@ -3,6 +3,14 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 110 (session 5, `playwater`) — one water path
+
+- Waterfalls, the user: "The waterfalls don't use the same system as the main game can you explain why?" → one water
+  path: the playground runs exactly what the game runs (the pipes, its river held at an authored river table that
+  makes the same riverFlow as the atlas's rivers, sleep and settle-then-freeze); `?flow=1` stays the flow lab's
+  opt-in only (BACKLOG PW1-PW5). An authored river's wetness follows the climate (the season, the storms), no
+  catchment of its own for now (PW4).
+
 ## 2026-10-29 — round 109 (session 5, `places`) — more devices; generators and editors; better runs
 
 - Devices, the user: "I also want to get my desktop set up tomorrow so you can orchestrate testing on multiple devices

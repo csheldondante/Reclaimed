@@ -270,10 +270,10 @@ written the trunk and crown boxes (vegplan.wgsl: the same places, species and he
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
 | water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
-| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
+| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom; round 110: a fixed map's authored river table, world/rivertable.ts holdRivers → MapData.riverFlow), kept with its region by the streamer | water (flux, depth), renderfields |
 | (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
 | (?flow=1) runs, flux, emit, jets per liquid; flowAct | the runs in the columns' gaps, their flux and streams (ARCHITECTURE "The flow model"); per chunk net change, throughput, perturbed, overflow | flow/liquid.ts (water also writes water, waterPrev, flux) | itself, render (addWaterPrisms), flow/steady.ts |
-| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom), kept with its region by the streamer | water (flux, depth), renderfields |
+| riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (Globals ocean.y) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom; round 110: a fixed map's authored river table, world/rivertable.ts holdRivers → MapData.riverFlow), kept with its region by the streamer | water (flux, depth), renderfields |
 | oil / oilFlux | f32 depth / vec4 | oil | water (weight), ecology, fire, renderprep, stats |
 | oilStored | vec2 (amount, roof z) sealed in closed tanks | oil (releases on breach, burns inside) | fire (fuel) |
 | contam | vec2 (soil, dissolved) | contamination | ecology, particles, draw, stats |
@@ -1306,8 +1306,8 @@ The plan (`plans`, a mask a cell like `mask`) is what a building crew
 The user: "a unified model of material flow would be great for waterfalls emerging from underground streams or
 lava flows … a water fall that actually arcs out"; "think noita physics which just checks for adjacent emptiness
 and moves pixels over. We are just doing this in a compressed column space and adding in velocity"; steady flow
-frozen and drawn as an animation, woken only when perturbed. Behind `?flow=1` (any level but the atlas's; the
-test scenes: `?flow=1&level=flowlab`, src/levels/flowlab.ts).
+frozen and drawn as an animation, woken only when perturbed. Behind `?flow=1`, (round 110) in its own lab only
+(`?flow=1&level=flowlab`, src/levels/flowlab.ts; elsewhere it throws): every other level runs the game's water.
 
 - **Gaps and runs.** A column's empty space is its gaps: the air between two solid or granular intervals of
   the layers, and the open air on top (floor: the column's top, or a sleeping body on it). A liquid lies in a
@@ -1414,6 +1414,35 @@ a station's chunks back (the layers by the chunk table; water, its source, oil, 
 plants, fire, flux page-major, a chunk's columns contiguous), after `Integrity.forget(rect)` lets go of what moves
 or rests there. Its buttons only push the world's own events (the Break tool's smash, the dig) or use its APIs
 (waterSource, the weather) through a `StationKit` the scene gives them (ui/stations.ts knows nothing of the world).
+(Round 110) Its water is the game's: the pipes, its river held at an authored river table (below), sleep and
+settle-then-freeze — no flow model.
+
+### Authored river tables (round 110, branch `playwater`)
+
+The user: "The waterfalls don't use the same system as the main game can you explain why?" A held river
+(`rivers=table`) is the `riverFlow` contract texture plus the water its columns start with; the atlas makes both
+from its river graph. A fixed map declares its rivers instead, and gets the same data by the same rules:
+
+- **The declaration** (world/rivertable.ts `AuthoredRiver`): a path upstream first (world units, the water's level
+  at each point, falling only; a fall is two close points across the ledge, the line square to it; the last point
+  past the map's edge where the river leaves), a half-width, a discharge (cells³ a tick at the reference wetness).
+- **Nodes, rated as the atlas's**: `riverNodes` → the atlas's node (compose.wgsl RiverNode: where, level, width,
+  next, depth, speed); `riverChannelDepth` and `riverSpeed` are the one rating, atlas/rivers.ts calls them too.
+- **Carved and filled, as the atlas's** (`holdRivers(rivers, {w, h, cols, water, moisture})`, a CPU mirror of
+  compose.wgsl riverAt and its cut, columns.wgsl's levee, forms.wgsl's bed, water and riverFlow — each step names
+  its WGSL side): the channel's parabola and valley sides cut into the map's columns, the banks raised to a levee,
+  a sand and silt bed, the water to 0.3 under the level, a sheet RIVER_SHEET deep at twice the speed where the bed
+  steps down RIVER_FALL or more, riverFlow = (flow × fall, depth, the line's depth). RIVER_FALL, RIVER_SHEET and
+  RIVER_LEVEE are defined there once and put in the atlas's kernels by atlas.ts parts(). Ground more than
+  RIVER_UNDER under the channel's bed throws (a column of water would stand over it).
+- **The mode is the level's**: `LevelDef.rivers` (`'table'`: the atlas, the playground), set by `useRivers` in
+  LevelScene.create before the atlas and the world are made; `riverMode()`, `riverPull()`, `settleLand()`,
+  `settleTol()` read it as kernels and sleep are made (`?rivers=` overrides; it was the URL's `level=atlas`).
+  A fixed map on `table` gets the atlas's sleep and wake (LevelScene.attach) and its water isn't run in the
+  warmup (its rivers come in at their table).
+- **Wetness**: an authored river follows the climate's (weather/riverwet.ts: the season, and the storms over the
+  map) — no watershed of its own: with the per-watershed field (round 109, `watershed`, binding 62) it reads 0
+  there, so riverWetAt is the climate's.
 
 ## Levels and the sandbox
 

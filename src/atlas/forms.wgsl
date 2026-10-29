@@ -45,9 +45,8 @@ const MAT_SNOW: u32 = 25u;
 const MAT_BASALT_F: u32 = 23u;
 /** a river's springs: water a tick at the middle of its channel (what comes down from upstream) */
 const RIVER_SPRING: f32 = 0.0008;
-/** (round 84, ?rivers=table) a step down from a river's column this high or more is a fall: its water a sheet this deep */
-const RIVER_FALL: f32 = 1.5;
-const RIVER_SHEET: f32 = 0.2;
+// (round 84, ?rivers=table) RIVER_FALL: a step down from a river's column this high or more is a fall, its water a
+// sheet RIVER_SHEET deep — (round 110) from world/rivertable.ts, the atlas's prefix (atlas.ts parts())
 
 /** world units around a batch whose lattice forms are placed (regions.ts FORM_REACH: no form reaches further) */
 const MARGIN: f32 = 48.0;

@@ -80,8 +80,8 @@ fn colHeight(@builtin(global_invocation_id) id: vec3<u32>) {
   colG[id.y * mw + id.x] = ColG(h, g.w, g.coast, g.pv, g.a, g.b, g.s, g.hlo, g.rl, g.rx, g.rflags, g.lmat, loose, g.cw, g.clava, g.cap, cav.x, cav.y, g.smat, g.rvel.x, g.rvel.y, g.rd, g.lk, select(0.0, 1.0, g.lkw));
 }
 
-/** (round 84) the deepest hollow beside a river its bank is raised over (columns more below it are left: a lake's) */
-const RIVER_LEVEE: f32 = 12.0;
+// (round 84) RIVER_LEVEE: the deepest hollow beside a river its bank is raised over (columns more below it are left: a
+// lake's) — (round 110) from world/rivertable.ts, the atlas's prefix (atlas.ts parts())
 
 /** a cave noise's height scale: its scale at caveScale 40, grown with it (round 79: bigger caves both ways) */
 fn caveZ(z40: f32) -> f32 { return z40 * AP.caveScale / 40.0; }
