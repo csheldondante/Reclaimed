@@ -153,6 +153,16 @@ try {
       return far;
     };
     window.__tick = () => window.reclaimed.core.globals.tick;
+    /** the ground's tops over a rect (common.wgsl sfZ: z × 256 in the low 17 bits) */
+    window.__ground = async (rect) => {
+      const R = window.reclaimed;
+      const { w } = R.core.dims;
+      const s = new Uint32Array((await R.readBuffer('surface')).buffer);
+      const o = [];
+      for (let y = rect[1]; y < rect[3]; y++) for (let x = rect[0]; x < rect[2]; x++) o.push((s[y * w + x] & 0x1ffff) / 256);
+      return o;
+    };
+    window.__moved = (a, b) => +a.reduce((t, v, i) => t + Math.abs(v - b[i]), 0).toFixed(2);
   });
   // the drawn scroll (cells/s), mirrored from render.wgsl flowStreaks and renderfields.wgsl (the held river's fv)
   await p.evaluate(() => {
@@ -220,6 +230,7 @@ try {
       { cols, rate, look },
     );
     const [cx, cy] = cols[0];
+    const g0 = await p.evaluate((r) => window.__ground(r), rect);
     const fr = [];
     const t0 = Date.now();
     for (let k = 0; k < 6; k++) {
@@ -228,7 +239,8 @@ try {
     }
     const s = await p.evaluate((r) => window.__speeds(r, 0.005), rect);
     const dFront = fr[fr.length - 1][1] - fr[0][1];
-    row(name, { ...s, front: fr, 'front cells/s': +(dFront / (fr[fr.length - 1][0] - fr[0][0])).toFixed(2) });
+    const moved = await p.evaluate(async ({ rect, g0 }) => window.__moved(g0, await window.__ground(rect)), { rect, g0 });
+    row(name, { ...s, front: fr, 'front cells/s': +(dFront / (fr[fr.length - 1][0] - fr[0][0])).toFixed(2), 'ground moved (cells³)': moved });
     await p.evaluate((cols) => window.reclaimed.scene.stationKit().source(cols, 0), cols);
   };
   await sheet('sheet ramp 10%', [[128, 100], [128, 101], [129, 100]], [118, 96, 196, 118], 1, [140, 104 * 0.8660254, 18]);
@@ -240,6 +252,8 @@ try {
   await pick('breach');
   await click('↺ reset');
   await sleep(4000);
+  const BG = [40, 116, 92, 172];
+  const bg0 = await p.evaluate((r) => window.__ground(r), BG);
   await click('breach');
   const tb = Date.now();
   await hideUi(true);
@@ -255,7 +269,7 @@ try {
     if (k === 3) samples.push(['notch', await p.evaluate((r) => window.__speeds(r, 0.05), NOTCH)], ['ledge', await p.evaluate((r) => window.__speeds(r, 0.02), LEDGE)]);
   }
   for (const [n, s] of samples) row(`breach ${n} (4 s)`, s);
-  row('breach basin', { 'basin wet at s': basinAt, front: +(await p.evaluate((r) => window.__front(r, 57, 144, 0.02), BASIN)).toFixed(1), ...(await p.evaluate((r) => window.__speeds(r, 0.02), BASIN)) });
+  row('breach basin', { 'ground moved in 10 s (cells³)': await p.evaluate(async ({ r, g0 }) => window.__moved(g0, await window.__ground(r)), { r: BG, g0: bg0 }), 'basin wet at s': basinAt, front: +(await p.evaluate((r) => window.__front(r, 57, 144, 0.02), BASIN)).toFixed(1), ...(await p.evaluate((r) => window.__speeds(r, 0.02), BASIN)) });
   await p.evaluate(() => {
     const R = window.reclaimed;
     R.camera.target = [56, 144 * 0.8660254, 22];
@@ -267,7 +281,30 @@ try {
   await click('breach').catch(() => {});
   await sleep(500);
   await gif(p, 'breach.gif', 30, 400);
+  await hideUi(false);
+  // the pool after a reset: its chunks go back to sleep (the water's sloshing settles)
+  await click('↺ reset').catch(() => {});
+  const aw = [];
+  for (let k = 0; k < 12; k++) {
+    await sleep(5000);
+    aw.push(await p.evaluate(() => window.reclaimed.scene.sleep?.awake ?? -1));
+  }
+  row('pool after reset: awake chunks every 5 s', { awake: aw });
   await p.close();
+  // the atlas: the sea's edge and its rivers fall asleep
+  if (!skip.includes('atlas')) {
+    const a = await browser.newPage();
+    a.on('pageerror', (e) => fail(`pageerror ${e.message}`));
+    await a.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low`, { waitUntil: 'load' });
+    await a.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
+    const aw2 = [];
+    for (let k = 0; k < 9; k++) {
+      await sleep(10000);
+      aw2.push(await a.evaluate(() => window.reclaimed.scene.sleep?.awake ?? -1));
+    }
+    row('atlas: awake chunks every 10 s', { awake: aw2 });
+    await a.close();
+  }
 } catch (e) {
   fail(e.stack ?? String(e));
 } finally {

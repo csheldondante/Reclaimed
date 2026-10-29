@@ -12,6 +12,24 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 112 (2026-10-29, session 5, `waterscale`) — the water in physical units (DECISIONS round 112)
+
+The user, verbatim: "The water seems to fast for the scale. Is the 9.8m/s relative to real clock time or game clock
+time? I think it needs to be real clock time." and "Yes also keep flow animations normalized to the new numbers so we
+still see flow that would previously be considered slow"
+
+| id | item | size | status |
+|---|---|---|---|
+| WS1 | Measure the water's speed in cells/s at 1x, real time (a held river, the playground's river woken, the breach, a sheet over a slope; the drawn scroll) | S | done (waterscale): scripts/waterspeed.mjs; DEVLOG round 112 has the tables |
+| WS2 | The pipes in physical units: the push g·dt²·depth from the world's gravity, Manning's friction (roughness n), wave damping, a top speed (tuning registry pipes group); stable at the 60 Hz step | M | done (waterscale): common.wgsl pipeCoef / pipeStep / pipeSteady, water_flux.wgsl |
+| WS3 | Everything on the pipes' steady flux consistent: the held rivers' seed (pipeSteady), the river tables' rating (rivertable.ts riverSpeed, atlas/rivers.ts: Manning for the section and the level's fall), oil on the same law | M | done (waterscale) |
+| WS4 | The drawn flow normalised: the water's speed mapped onto the animation's range (reference speed, curve, least scroll; tuning registry flowLook) | S | done (waterscale): renderfields.wgsl flowLook |
+| WS5 | Erosion, scour and the stains' washing by the water's speed: wash speeds per material (tuning registry wash), the wash rate, the scour speed | M | done (waterscale): sediment.wgsl waterOut, structure.wgsl, contamination.wgsl |
+| WS6 | The flows' animations on the sim's clock (common.wgsl simTime): streaks, foam, ripples, swell, swash, lava's crust; ambient motion stays on G.time | S | done (waterscale) |
+| WS7 | The flow model (?flow=1, liquid.wgsl, the flow lab only) is still in its old per-tick units (flowWaterGain / flowWaterFriction): put it on the same law if it's ever used past the flow lab | M | open |
+| WS8 | The river tables are rated as they're made (at load): a live roughness change moves the pipes at once but re-rates only tables made after it | S | open (by design for now) |
+| WS9 | Lava keeps its own law (a laminar, Bingham drag: linear friction, a yield): its numbers already give ~1–3 cells/s on a volcano's flank — measure it on a vent if it looks wrong | S | open |
+
 ## Round 111 (2026-10-29, session 5, `places`) — terrain ideas and a noise lab (DECISIONS round 111)
 
 | id | item | size | status |

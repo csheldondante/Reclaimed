@@ -3,6 +3,29 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `waterscale`) — the water in physical units
+
+- The user, verbatim:
+  "The water seems to fast for the scale. Is the 9.8m/s relative to real clock time or game clock time? I think it
+  needs to be real clock time."
+- → Main's answer: sim seconds are real seconds at 1x (world-core.ts advances the fixed 60 Hz step by the wall clock;
+  the speed buttons multiply it), so WORLD_G, 9.8 cells/s² with a cell a metre, is per real second. The game's water
+  (the pipes, water_flux.wgsl) never used it: its speed came from two per-tick constants (gain 0.08, flux kept 0.985)
+  that ran a river at tens of metres a second. The pipes are now in physical units (branch `waterscale`): pushed by
+  the world's gravity, held back by Manning's friction (a roughness n in the tuning registry), a little wave damping
+  and a top speed; held rivers, the river tables and oil follow the same law.
+- The user, verbatim (on the drawn flow): "Yes also keep flow animations normalized to the new numbers so we still
+  see flow that would previously be considered slow"
+- → The drawn flow (streaks, foam, scroll) is not drawn at the literal speed: the water's speed is mapped onto the
+  animation's range (a reference speed, a curve, a least scroll for any water moving), the mapping's numbers in the
+  tuning registry (flowLook). Slow water still visibly flows; fast still looks faster.
+- Main's decisions (relayed): erosion, scour and the stains' washing go by critical speeds in cells/s (per material,
+  in the tuning registry), the rates re-set so floods, breaches and powers still erode visibly; the flows' animations
+  run on the sim's clock (they speed up with the speed setting, stop when paused), ambient motion stays on the wall
+  clock; the flow model (?flow=1, the flow lab only) stays in its own units (noted in BACKLOG); tables made at load
+  are fine — a live roughness change re-rates tables made after it only; deep water must still settle and sleep
+  (raise the damping if it doesn't).
+
 ## 2026-10-29 — round 111 (session 5, `places`) — terrain ideas; a noise lab
 
 - The user, verbatim:

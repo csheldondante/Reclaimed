@@ -274,7 +274,7 @@ written the trunk and crown boxes (vegplan.wgsl: the same places, species and he
 | places | u32 per column: low u16 the room of the open air on top, high u16 the room of the enclosed level under it (0 the same); 0 no place (docs/PLACES.md) | CPU (`core.places.load`) | placeop |
 | placeTable | u32 per place id (MAX_PLACES 4096): a room's region, a region itself | CPU (`core.places.load`) | placeop |
 | sedOut | 7 vec4 per column: outflows, easing, totals, spills | sediment (outflow) | sediment (main) |
-| water / waterPrev / flux | f32 depth / f32 / vec4 volume per tick | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
+| water / waterPrev / flux | f32 depth / f32 / Dirs (six f32) volume per 60 Hz step in column depths (a cell's area 1; round 112: f = (2/3)·dt·depth·u, u the speed in cells — metres — a second: "The water's units" below) | water | oil, contamination, moisture, ecology, fire, structure, material, renderfields, stats, draw |
 | waterSource | f32 per tick | map | water |
 | riverFlow (texture) | rgba32f per column (round 84, `?rivers=table`): xy the atlas river's flow at the reference wetness (cells a 60 Hz step, downstream), z the column's depth then (> 0: a river's), w the river's depth at its line; at wetness `wet` (riverheld.wgsl riverWetAt, round 109) its level stands w·(wet^0.6 − 1) higher and it runs wet^0.4 as fast. A river's column asleep or at the window's edge is held there (riverheld.wgsl): no simulation, its flux the pipes' steady flux for its levels, drawn flowing by xy | the land's maker (atlas colFinish → landFrom; round 110: a fixed map's authored river table, world/rivertable.ts holdRivers → MapData.riverFlow), kept with its region by the streamer | water (flux, depth), renderfields |
 | riverWet (texture) | r32f at the window's coarse texels (round 109, `watershed`; texel (i, j) the window's cell (i, j) × RIVER_WET_CELLS 8): each river's storm water over its reference discharge — the rain on its own catchment and what its reaches upstream carry, with their lags (weather/catchwet.ts over the atlas's river graph, atlas/rivers.ts Catchments); 0 past the rivers, and everywhere off the atlas. A river's wetness = the climate's (Globals ocean.w: the season, eased; ?riverwet=x holds both) + this, read only through riverheld.wgsl `riverWetAt(cellXY)` (window cells, bilinear; 0 past the window). riverheld.wgsl declares it at @group(0) @binding(62): every pipeline that includes riverheld and calls riverWetAt must bind 62 = world.riverWetView | weather/wetfield.ts (the level, on the atlas level: written while it changes) | water (flux, depth), renderfields (and the tiles, once they call riverWetAt) |
@@ -1386,6 +1386,30 @@ riverfalls' sheets were reverted (the user: they didn't match the rest of the vi
 Held rivers' falls draw as their columns' water. The world's gravity stays one value: (round 108) the tuning's
 `world.gravity` (9.8 cells/s², its default world/scale.ts `WORLD_G`), read as `G.tune.worldGravity` by the flow model's
 streams, sheets and spray, and by the CPU's rigid rock and falling pieces (× their own `gravity`).
+
+## The water's units (round 112, branch `waterscale`; BACKLOG WS1–WS6)
+
+- Time: a sim second is a real second at 1x (world-core.ts: the wall clock's accumulator, fixed 60 Hz ticks, the
+  speed buttons multiply it). A cell is a metre; the world's gravity G.tune.worldGravity (9.8 cells/s²).
+- The pipes (common.wgsl `pipeCoef` / `pipeStep` / `pipeSteady`, water_flux.wgsl; oil_flux.wgsl with its own
+  roughness): a pipe's flux f is the volume leaving a column toward a neighbour in a 60 Hz step (`PIPE_DT`), in the
+  column's depths; a hex face over a cell's area is 2/3 (`PIPE_FACE`), so f = (2/3)·dt·h·u with h the depth it leaves
+  and u its speed. Per unit width the discharge obeys dq/dt = g·h·ΔH − g·n²·q|q|/h^(7/3) − damping·q: the push
+  explicit (h at most `PIPE_WAVE_DEPTH`, the 60 Hz step's stability), the friction implicit (a closed-form
+  quadratic), capped at the top speed. Steady: u = h^(2/3)·√S / n (Manning). Tuning: pipes.roughness, damping,
+  vmax, oilRoughness. A held or drowsy column's seed is `pipeSteady` for its levels.
+- The rivers' tables (world/rivertable.ts `pipeSpeed`, `riverSpeed`; atlas/rivers.ts): a node's speed is the
+  pipes' steady speed for its section's mean depth and its level's fall (at least `RIVER_MIN_SLOPE`), in cells a
+  60 Hz step in riverFlow — rated with the tuning as the table is made.
+- Speed from flux: `flowSpeed(netFlow, depth)` = |netFlow| / ((2/3)·dt·depth), cells/s. The wash (sediment.wgsl:
+  a material's wash speed, TUNE.wash in the material table's loose.w; depth × the speed over it × sediment.washRate),
+  the scour (structure.scourSpeed; structure.flowRate a chance a tick per cell/s over it), the trash heaps and the
+  stains' washing compare it with speeds.
+- Drawn (renderfields.wgsl `flowLook`): not the literal speed — scroll = refScroll·(u/refSpeed)^curve, at least
+  minScroll above `still` (tuning flowLook), packed as fv = direction·(scroll/3)·depth for render.wgsl
+  flowStreaks (which scrolls min(6·|fv|/depth, 5)/2 cells a second) and the foam. The flows' animations run on
+  `simTime()` (G.tick·G.dt), ambient motion on G.time (the wall clock).
+- The flow model (?flow=1, liquid.wgsl) is still in per-tick units (BACKLOG WS7).
 
 ## The tuning registry (round 108, branch `playground`; BACKLOG AR5)
 
