@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `bgcheck`) — background colour in the pan test
+
+- The user, verbatim: "Can we do a pan test for the phone that fails if any bg color shows?" then "Or flags it anyway" → render/bgcheck.ts behind ?bgcheck=1; the pan bench flags a step (fails
+  smooth only with ?bgfail=1: the default is flag only), the tile gate fails a view over 0.1% of the samples (BACKLOG
+  BG1-BG4). Judgement call (bgcheck): the bench flags over 0.1% too, not at any — parked views show the background
+  through 1-pixel pinholes on ~0.02% of the screen every frame, so "any" flags every step; ?bgflag=0 restores "any".
+
 ## 2026-10-29 — round 112 (session 5, `testspeed`) — tests faster
 
 - The user, verbatim: "Please put some effort into making tests faster as they are the biggest bottleneck to iteration

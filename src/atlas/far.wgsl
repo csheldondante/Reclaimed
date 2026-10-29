@@ -332,7 +332,8 @@ fn fsFar(v: FOutV) -> FOutF {
   c = mix(c, FP.fog.rgb, fog);
   var o: FOutF;
   o.color = vec4<f32>(c, 1.0);
-  o.pick = vec2<u32>(0u, 0u);
+  // (round 112, bgcheck.ts FAR_PICK_TAG: no column picked — Renderer.pick reads x 0 as nothing — but the far land's)
+  o.pick = vec2<u32>(0u, 0xfa000000u);
   return o;
 }
 
