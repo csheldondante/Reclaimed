@@ -177,6 +177,8 @@ const TILE_OLD = Q98.get('streamold') === '1';
 const TILES_FIXED = Number(Q98.get('tilesfixed')) || 0;
 /** (round 98, ?tilemax=) the most tiles a frame the pacer gives */
 const TILE_MAX = Number(Q98.get('tilemax') ?? 4);
+/** (round 112, tilefast; ?tilechain=0 for the A/B) a frame's unused turns go to a tile's chain asking again in its task */
+const CHAIN = Q98.get('tilechain') !== '0';
 
 /**
  * (round 102) A phone (its user agent): Mali's timestamps aren't to be trusted (passes overlap: bench v2) and the
@@ -201,6 +203,8 @@ export interface MakeHow {
   pace: 'none' | 'stream' | 'tile';
   stamps: 'plan' | 'made';
   summary?: { buf: GPUBuffer; off: number };
+  /** (round 112, tilefast) pace 'tile': its place in the tiles' lane (lower first — the asker's urgency) */
+  order?: number;
 }
 /** the window's regions' (the streamer's) */
 export const WINDOW_MAKE: MakeHow = { pace: 'stream', stamps: 'plan' };
@@ -226,8 +230,17 @@ const FAST_AT = 80;
  */
 export class TilePacer {
   private waiting: (() => void)[] = [];
-  /** (round 105, tilelatency) the render-only tiles' turns: served in turn with the streamer's, never behind its queue */
-  private first: (() => void)[] = [];
+  /** (round 105, tilelatency) the render-only tiles' turns: served in turn with the streamer's, never behind its queue.
+   *  (round 112, tilefast) Kept in the asker's order (lowest first; equal: as asked), so the most urgent region's land
+   *  goes on to its end rather than six regions' a turn each, all finishing late together. */
+  private first: { r: () => void; order: number }[] = [];
+  /** (round 112, tilefast) turns this frame has left once its queues ran dry: a tile's next turn asked for in this
+   *  frame's task (its chain's next tile, a microtask after the last's submit) runs at once instead of a frame later —
+   *  a 68² bordered region's 8 turns on a phone were 8 frames, ~130 ms, whatever the GPU cost of each */
+  private credit = 0;
+  private creditClear = false;
+  /** (round 112) turns run on a frame's credit (the sweeps') */
+  chained = 0;
   private armed = false;
   private last = 0;
   private ran = 0;
@@ -255,9 +268,22 @@ export class TilePacer {
   private doneIdle = 0;
   private probing = false;
 
-  next(prio = false): Promise<void> {
+  /** A turn: the streamer's lane, or (`prio`) the tiles' lane in `order` (lower first). */
+  next(prio = false, order = 0): Promise<void> {
+    if (prio && this.credit > 0) {
+      this.credit--;
+      this.ran++;
+      this.tiles++;
+      this.chained++;
+      return Promise.resolve();
+    }
     return new Promise((r) => {
-      (prio ? this.first : this.waiting).push(r);
+      if (prio) {
+        // (after the last of its order or lower: a later region's turns wait behind an earlier one's)
+        let i = this.first.length;
+        while (i > 0 && this.first[i - 1].order > order) i--;
+        this.first.splice(i, 0, { r, order });
+      } else this.waiting.push(r);
       this.arm();
     });
   }
@@ -328,15 +354,33 @@ export class TilePacer {
     n = this.fixed || TILES_FIXED || n;
     // (round 105: the two lanes in turn — the tiles' first, then the streamer's — so neither waits on the other: the
     // window's own land isn't starved by the tiles ahead, the tiles not queued behind the streamer's strips)
+    // (round 112, tilefast: the tiles' lane's share — half the turns while the streamer has some waiting, else all — is
+    // kept whole for it: what its queue doesn't take now, its chain does as it asks again in this task, the urgent
+    // region's next tiles in this frame; the streamer's the rest, and what neither takes is the chain's too)
+    const share = !CHAIN || this.fixed || TILES_FIXED || !this.first.length ? 0 : this.waiting.length ? Math.ceil(n / 2) : n;
     const go: (() => void)[] = [];
-    while (go.length < n && (this.first.length || this.waiting.length)) {
-      if (this.first.length) go.push(this.first.shift()!);
-      if (go.length < n && this.waiting.length) go.push(this.waiting.shift()!);
-    }
+    let tileGo = 0;
+    if (share) {
+      for (; tileGo < share && this.first.length; tileGo++) go.push(this.first.shift()!.r);
+      while (go.length < n - share + tileGo && this.waiting.length) go.push(this.waiting.shift()!);
+    } else
+      while (go.length < n && (this.first.length || this.waiting.length)) {
+        if (this.first.length) go.push(this.first.shift()!.r);
+        if (go.length < n && this.waiting.length) go.push(this.waiting.shift()!);
+      }
     this.ran = go.length;
     if (go.length) {
       this.tiles += go.length;
       this.frames++;
+    }
+    // (what's left of the frame's turns, for a tile's chain asking again in this task — gone after it)
+    this.credit = CHAIN && !this.fixed && !TILES_FIXED ? n - go.length : 0;
+    if (this.credit && !this.creditClear) {
+      this.creditClear = true;
+      setTimeout(() => {
+        this.credit = 0;
+        this.creditClear = false;
+      }, 0);
     }
     for (const r of go) r();
     if (this.how === 'workdone') this.probe(t, go.length);
@@ -1465,7 +1509,7 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
     if (y0 & 1) throw new Error('a region starts on an even row');
     const spread = how.pace !== 'none';
     // (the pacer's lanes: the tiles' first — a render-only tile is the latency the screen waits on — or the streamer's)
-    const gate = how.pace === 'tile' ? () => this.pacer.next(true) : spread ? () => this.tileGate() : undefined;
+    const gate = how.pace === 'tile' ? () => this.pacer.next(true, how.order ?? 0) : spread ? () => this.tileGate() : undefined;
     // (the stamps asked for first: a settlement's plan runs while the columns are made)
     const ops = this.stampsFor(x0, y0, w, h, spread, how.stamps === 'plan');
     const c = await this.columnsGpu(x0, y0, w, h, spread, gate);
