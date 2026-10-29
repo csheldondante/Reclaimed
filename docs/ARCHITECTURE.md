@@ -2134,6 +2134,8 @@ clears them).
     look's), w the cover's snow there as baked (weather/cover.ts) — drawn, the own snow melts as the cover's has since
     and what's fallen since lies over it. The tiles' bake layout is the mesh's resolve layout + 22 (riverFlow) + 47
     (the cover); the draw layout + 47, 48 (the live plane).
+  - A paced batch's tile is a little over the pacer's size when the batch is a little over whole tiles (atlas.ts
+    paceTile): a tile's bordered 68² batch takes the turns a 64² one does.
   - The atlas never evicts a tile the last frame drew (the look-ahead's margin evicted the screen's own tiles at wide
     zooms: thousands of bakes a minute); a land job made for a region no longer wanted lets its slot go when the atlas
     is full.

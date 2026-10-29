@@ -166,6 +166,8 @@ const INST_BYTES = 64;
 const MAX_INST = 8192;
 /** a streamed batch's columns are made a TILE² tile a frame (round 80) */
 const TILE = 32;
+/** the side of a paced batch's tile: `tile` or a little over, so a batch a little over whole tiles takes no more turns */
+const paceTile = (n: number, tile: number) => Math.ceil(n / Math.max(1, Math.round(n / tile)));
 const Q98 = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
 /** (round 98, ?streamold=1) one tile a frame over every batch, as before round 98 */
 const TILE_OLD = Q98.get('streamold') === '1';
@@ -1182,7 +1184,9 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
     // (~13 ms of a desktop's GPU a 64² region: a phone's frame several times over)
     let fin = enc;
     const tiles: [number, number][] = [];
-    const T = spread ? TILE : Math.max(w, h);
+    // (round 108: a batch a little over whole tiles — a render-only tile's, its border round it — in as many turns as
+    // the whole tiles would take, each a little bigger, not a row of slivers more)
+    const T = spread ? paceTile(Math.max(w, h), TILE) : Math.max(w, h);
     for (let ty = 0; ty < h; ty += T) for (let tx = 0; tx < w; tx += T) tiles.push([tx, ty]);
     try {
       for (let k = 0; k < tiles.length; k++) {
@@ -1465,7 +1469,7 @@ const RIVER_HOLD: bool = ${RIVERS === 'hold'};
       const o = await ops;
       const bt = how.pace === 'stream' ? this.builds.get(`${x0},${y0}`) : undefined;
       if (bt) bt.ways = performance.now();
-      const { meta } = await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, o, target, this.profiler, gate, FINISH_TILE, how.summary);
+      const { meta } = await this.finisher.run(c, x0, y0, rw, this.ventsIn(x0, y0, w, h), GEYSER_STENCIL, o, target, this.profiler, gate, paceTile(Math.max(w, h), FINISH_TILE), how.summary);
       this.gpuMade++;
       if (how.summary) return null;
       if (bt) bt.mapped = bt.hooks = performance.now();

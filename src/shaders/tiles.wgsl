@@ -295,7 +295,10 @@ fn fsTile(in: TOut) -> TFrag {
   let snow = pc.z * SNOW_OWN * kept + max(cv.x - sref, 0.0);
   if (snow > 0.0 && n.z > 0.55 && a.a < 0.5) {
     let ks = smoothstep(0.02, 0.2, snow) * select(1.0, 0.0, snow < 0.03 + 0.12 * r);
-    alb = mix(alb, groundAlbedo(MAT_SNOW) * (0.94 + 0.12 * r), ks);
+    // (as meshdraw.wgsl meshSurf has snow's look: its colour, the per-voxel and sub-voxel variation, the mesh's tint)
+    let vc = vec3<i32>(cellAt(p.xy), i32(floor(p.z - 0.2)));
+    let sa = groundAlbedo(MAT_SNOW) * (1.0 + 0.12 * randv(vc) + 0.08 * r - 0.1) * meshTint(p);
+    alb = mix(alb, sa, ks);
   }
   var film = a.a;
   // (a held river's bed flooded to the rivers' level now: under it at the reference by the plane's, shifted as the line's
