@@ -81,7 +81,7 @@ import { Compass, NORTH_AZIMUTH } from '../ui/compass';
 import { wikiLabels } from '../gm/map-names';
 import { atlasFacts } from '../gm/atlas-facts';
 import { bootMark } from '../perf/boot-marks';
-import { endPipelineBatch, pipelinesReady } from '../gpu/pipeline';
+import { beginPipelineBatch, endPipelineBatch } from '../gpu/pipeline';
 import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
@@ -834,6 +834,8 @@ export class LevelScene implements Scene {
       opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
     }
     (globalThis as { __benchStage?: string }).__benchStage = 'making the level';
+    // (round 112, testspeed: the pipelines its making asks for, compiled together off the GPU's main thread)
+    beginPipelineBatch();
     const s = new LevelScene(host, audio, perf, level, onExit, opts);
     bootMark('level');
     void host.gpu.device.queue.onSubmittedWorkDone().then(() => bootMark('level-gpu'));
@@ -846,14 +848,14 @@ export class LevelScene implements Scene {
     // where nothing is asleep yet and its rivers would run unheld)
     // (round 110: a fixed map's authored river table too — its rivers come in at their table)
     const still = riverMode() === 'table';
-    // (round 112, ?pipeasync=1: the kernels compiled at once, async — ready before the first tick)
-    await pipelinesReady();
+    // (round 112: the level's pipelines, asked for together while it was made, ready before its first tick — gpu/pipeline.ts)
+    await endPipelineBatch();
     bootMark('pipelines');
     // (round 112, testspeed: ?warmsnap=<key> — the warmed world from the test runner's cache when it has it, else the
     // warmup and the result saved under the key; sim/snapshot.ts. The runner makes the key from the build and the URL.
-    // ?warmcache=1: the player's own, kept in the browser by build and settings — sim/warm-cache.ts; the same snapshot)
+    // The player's own (?warmcache=0 off), kept in the browser by build and settings — sim/warm-cache.ts; the same snapshot)
     const snapKey = host.params.get('warmsnap');
-    const warmK = !snapKey && host.params.get('warmcache') === '1' ? warmKey(host.params) : null;
+    const warmK = !snapKey && host.params.get('warmcache') !== '0' ? warmKey(host.params) : null;
     const snap = snapKey ? await loadSnapshot(snapKey) : warmK ? await loadWarm(warmK) : null;
     if (snapKey || warmK) bootMark(snap ? 'snap-loaded' : 'snap-missing');
     if (snap) await s.core.warmFrom(snap);
@@ -872,9 +874,6 @@ export class LevelScene implements Scene {
     // (round 108, the playground) what a station's reset puts back: the world as it opens
     if (level.stations) s.core.keepPristine();
     s.attach();
-    // (?pipeasync=1: what attach made too, before the first frame; the batch then over)
-    await pipelinesReady();
-    endPipelineBatch();
     return s;
   }
 

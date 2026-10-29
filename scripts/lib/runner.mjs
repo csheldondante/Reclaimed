@@ -386,7 +386,9 @@ export async function run(spec, body) {
      */
     async level(params = {}, popts = {}) {
       const p = popts.page ?? (await R.page(popts));
-      const all = { skipmenu: '1', tutorial: '0', ...(popts.noDefaultQ ? {} : { q: 'low' }), ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) };
+      // (warmcache=0: the player's warm cache — sim/warm-cache.ts — neither read nor written: every page's storage is
+      // cleared, so it would only ever save 130 MB in the background of a check; --warmcache keeps it, to test it)
+      const all = { skipmenu: '1', tutorial: '0', ...(flag('warmcache') ? {} : { warmcache: '0' }), ...(popts.noDefaultQ ? {} : { q: 'low' }), ...Object.fromEntries(Object.entries(params).map(([k, v]) => [k, String(v)])) };
       // (popts.snapshot, or --snap: start from the warmed world saved for this build and URL — the warmup run and saved
       // the first time; sim/snapshot.ts. Needs the runner's build server: the dev server has no /__snap)
       if (popts.snapshot ?? flag('snap')) {

@@ -2,12 +2,12 @@
 // place on the same build starts from the world the first one's warmup left, skipping the warmup's ticks. The same
 // snapshot as the test runner's (sim/snapshot.ts: one format, one capture, one restore), another store.
 //
-// Keyed by the build (the main chunk's own URL: content-hashed by the production build — a new build, a new key, so
-// nothing stale runs) and the page's settings (every URL parameter but the ones that don't make the world). The dev
-// server's modules aren't hashed: no key there, no cache. Only the newest KEEP snapshots are kept.
+// Keyed by the build (__BUILD_HASH__, vite.config.ts: a hash of every file in src/ and data/ — any change to what the
+// game is made of, a new key, so nothing stale runs) and the page's settings (every URL parameter but the ones that
+// don't make the world). The dev server's modules change under it: no cache there. Only the newest KEEP are kept.
 //
-// Opt-in for now, `?warmcache=1`: a snapshot is ~130 MB (the atlas window at q=low), read back and held in memory
-// once while it's written or restored — to be tried on the phone before it's the default (BACKLOG TS7).
+// On by default (`?warmcache=0` off): a snapshot is ~130 MB (the atlas window at q=low), read back and held in memory
+// once while it's written or restored. Measured (desktop, round 112): the second visit 30 s to the level, the first 39.
 
 import { decodeSnapshot, encodeSnapshot, type WorldSnapshot } from './snapshot';
 
@@ -19,12 +19,11 @@ const NOT_WORLD = new Set(['perf', 'hitch', 'hitchhud', 'warmcache', 'warmsnap',
 
 /** this page's key, or null where there's no build to key by (the dev server) */
 export function warmKey(params: URLSearchParams): string | null {
-  const build = import.meta.url;
-  // (a production chunk: assets/main-<hash>.js — Vite's content hash in the name)
-  if (!/-[A-Za-z0-9_-]{8}\.js$/.test(build)) return null;
+  if (import.meta.env.DEV) return null;
   const q = [...params].filter(([k]) => !NOT_WORLD.has(k)).map(([k, v]) => `${k}=${v}`).sort().join('&');
-  return `${build.slice(build.lastIndexOf('/') + 1)}?${q}`;
+  return `${__BUILD_HASH__}?${q}`;
 }
+declare const __BUILD_HASH__: string;
 
 function open(): Promise<IDBDatabase> {
   return new Promise((res, rej) => {

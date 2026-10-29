@@ -1,7 +1,6 @@
 // Explicit bind-group-layout helpers. We use explicit layouts (not 'auto') so a
 // shader can include shared WGSL snippets that declare bindings it does not use.
 
-import { stripWgsl } from './wgsl-strip';
 import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_BINDING, PAGE_MISS_MAX, PAGE_STORAGE_KERNELS, PAGE_TAB_BINDING, pageMiss, pageTab, pagesCode, usesPages } from './pages-mode';
 
 /** 'tex' = sampled float texture (textureLoad), 'utex' = uint texture (textureLoad), 'stex' = write-only rgba32float storage texture
@@ -60,34 +59,36 @@ export function makeBindGroup(
   });
 }
 
-const QS = typeof location === 'undefined' ? new URLSearchParams() : new URLSearchParams(location.search);
-/** (round 112, testspeed) ?wgslstrip=1: each module cut to what its entry points reach (an A/B of the boot's compile) */
-export const WGSL_STRIP = QS.get('wgslstrip') === '1';
 /**
- * (round 112, testspeed) ?pipeasync=1: makeCompute's pipelines made with createComputePipelineAsync, all at once —
- * the kernel's `pipeline` is set when it's ready; `pipelinesReady()` resolves when every one asked for is, and the
- * level waits for it before its first tick (an A/B of the boot's compile: Dawn compiles async pipelines on its
- * worker threads, sync ones one after another)
+ * (round 112, testspeed) The boot's pipelines, made all at once off the GPU process's main thread: inside a batch
+ * (beginPipelineBatch … await endPipelineBatch — LevelScene.create round the level's making) makeCompute and
+ * renderPipe ask for createComputePipelineAsync / createRenderPipelineAsync and fill the kernel in when it's ready;
+ * endPipelineBatch resolves when every one is. Dawn compiles async pipelines on its worker threads in parallel, sync
+ * ones one after another on the GPU process's main thread with the page waiting (the atlas boot's 114 compute + 15
+ * render pipelines, DXC on D3D12: ~30 s there; 17 s for all of them async). Outside a batch — the menu, mid-game,
+ * lazily — they're made synchronously as before. A kernel used before its batch ends throws (setPipeline(undefined)).
  */
-export const PIPE_ASYNC = QS.get('pipeasync') === '1';
 const pendingPipes: Promise<unknown>[] = [];
-/** (the boot's batch: made async till the level is ready — what's made after, mid-game, is made as before) */
-let asyncNow = PIPE_ASYNC;
-/** the boot's batch is over: kernels made from now on are made synchronously */
-export function endPipelineBatch(): void {
-  asyncNow = false;
+let batchOpen = false;
+/** from now on the pipelines asked for are made async, together */
+export function beginPipelineBatch(): void {
+  batchOpen = true;
 }
-/** resolves when every pipeline made so far (?pipeasync=1) is ready; at once otherwise */
-export async function pipelinesReady(): Promise<void> {
+/** the batch over: resolves when every pipeline asked for in it is ready; what's made from then on is made synchronously */
+export async function endPipelineBatch(): Promise<void> {
+  batchOpen = false;
   while (pendingPipes.length) await Promise.all(pendingPipes.splice(0));
+}
+/** A render pipeline handed to `set`: now, or in a batch when it's ready (before endPipelineBatch resolves). */
+export function renderPipe(device: GPUDevice, desc: GPURenderPipelineDescriptor, set: (p: GPURenderPipeline) => void): void {
+  if (batchOpen) pendingPipes.push(device.createRenderPipelineAsync(desc).then(set));
+  else set(device.createRenderPipeline(desc));
 }
 
 /** Compile a WGSL module and surface compilation errors loudly (with line context). */
 export function makeModule(device: GPUDevice, label: string, parts: string[], storagePages = false, check?: number): GPUShaderModule {
   // (round 107, pages: colPage the build's way — gpu/pages-mode.ts)
-  const full = pagesCode(parts.join('\n'), storagePages, check);
-  // (round 112, testspeed: ?wgslstrip=1 — only what the entry points reach, gpu/wgsl-strip.ts; an A/B of the compile)
-  const code = WGSL_STRIP ? stripWgsl(full) : full;
+  const code = pagesCode(parts.join('\n'), storagePages, check);
   const module = device.createShaderModule({ label, code });
   module.getCompilationInfo().then((info) => {
     const errs = info.messages.filter((m) => m.type === 'error');
@@ -136,8 +137,8 @@ export function makeCompute(
     layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
     compute: { module: makeModule(device, label, parts, storage, check), entryPoint },
   };
-  if (asyncNow) {
-    // (no pipeline till it's ready: setPipeline(undefined) throws — a kernel used before pipelinesReady() is loud)
+  if (batchOpen) {
+    // (no pipeline till it's ready: setPipeline(undefined) throws — a kernel used before its batch ends is loud)
     const k = { pipeline: undefined as unknown as GPUComputePipeline, layout };
     pendingPipes.push(device.createComputePipelineAsync(desc).then((p) => (k.pipeline = p)));
     return k;

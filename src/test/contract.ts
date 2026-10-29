@@ -24,7 +24,7 @@ import type { MapData } from '../world/mapgen';
 import { generatePlayground, STATIONS, type StationKit } from '../levels/playground';
 import { cropMap } from './crop';
 import { MAT } from '../world/materials';
-import { makeCompute } from '../gpu/pipeline';
+import { beginPipelineBatch, endPipelineBatch, makeCompute } from '../gpu/pipeline';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import probeWgsl from './probe.wgsl?raw';
 
@@ -257,7 +257,10 @@ async function runTest(name: string, opts: ContractOpts = {}): Promise<ContractR
     },
     world: async (map, own, rivers = 'sim') => {
       useRivers(rivers);
+      // (its pipelines compiled together, off the GPU's main thread, as the level's: gpu/pipeline.ts)
+      beginPipelineBatch();
       const core = new WorldCore(host, map, host.quality.particles, CHUNK, false);
+      await endPipelineBatch();
       const all = opts.systems === 'all';
       const names = new Set(all ? core.sim.systems.map((s) => s.name) : (opts.systems ?? own));
       for (const n of names) if (!core.sim.systems.some((s) => s.name === n)) throw new Error(`no system "${n}" (${core.sim.systems.map((s) => s.name).join(', ')})`);
