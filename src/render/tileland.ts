@@ -6,11 +6,14 @@ import type { RegionLayout } from '../world/region-record';
 
 /** what makes a region's land for a tile (level.ts: the streamer's) */
 export interface TileLandSource {
+  /** (round 108, TC19) a tile's scratch: the region and `border` cells round it, in the corner of this layout's slot */
   layout: RegionLayout;
+  border: number;
   /** the window's oz (the land is cut at it) */
   oz(): number;
-  /** (Streamer.landTile) the region's land into buf at off, its per-column summary into meta — nothing read back;
-   *  resolves once it's all submitted */
+  /** (Streamer.tileLand) region (corner x0, y0: world cells)'s land and its border into buf at off (the border's corner
+   *  the slot's), its per-column summary (the batch's, (R + 2 border)²) into meta — nothing read back; resolves once
+   *  it's all submitted */
   landTile(x0: number, y0: number, buf: GPUBuffer, off: number, meta: { buf: GPUBuffer; off: number }): Promise<void> | null;
 }
 

@@ -185,7 +185,8 @@ try {
         for (let yy = y - 4; yy <= y + 4; yy++) best = Math.max(best, f[R.core.ring.i(x, yy)]);
         o[k] = +best.toFixed(3);
       }
-      return { w: o, awake: R.scene.sleep?.awake ?? -1, wet: +(R.globals.riverWet ?? 1).toFixed(3) };
+      const ex = R.scene.catchWet?.ex;
+      return { w: o, awake: R.scene.sleep?.awake ?? -1, wet: +(R.globals.riverWet ?? 1).toFixed(3), shed: ex ? +Math.max(0, ...ex).toFixed(3) : null };
     }, cols);
   const mode = await p.evaluate(() => window.reclaimed.scene.level.rivers ?? 'sim');
   console.log(`[playground] river mode ${mode}; flow model ${await p.evaluate(() => !!window.reclaimed.scene.flow)}`);
@@ -241,6 +242,7 @@ try {
   const sr = await water();
   console.log(`[river] in the rain ${JSON.stringify(sr)}`);
   if (!base && !(sr.awake > 0)) fail('rain over the river woke nothing');
+  if (!base && !(sr.shed > 0.05)) fail(`rain on the river's catchment raised nothing (${sr.shed})`);
   await p.evaluate(() => (window.reclaimed.weather.storms.length = 0));
   const s2 = await settled(120);
   console.log(`[river] after the rain, settled ${JSON.stringify(s2)}`);

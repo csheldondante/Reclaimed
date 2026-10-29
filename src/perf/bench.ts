@@ -2128,7 +2128,7 @@ class Bench {
         const c0 = cpuStats.get('ways')?.sum ?? 0;
         const s0 = cpuStats.get('stamp')?.sum ?? 0;
         const tA = performance.now();
-        const m = await a.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: S.layout, oz: S.oz, zMax: this.R.core.dims.zMax, K: S.K, colK: S.colK, settle: !settleLand() }, false);
+        const m = await a.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: S.layout, oz: S.oz, zMax: this.R.core.dims.zMax, K: S.K, colK: S.colK, settle: !settleLand() }, { pace: 'none', stamps: 'plan' });
         const tB = performance.now();
         // (the streamer's own CPU part: the relief bits, the structural box)
         const t0 = performance.now();
@@ -2180,7 +2180,7 @@ class Bench {
     }
     const slot = S.pool.temp();
     try {
-      await a.regionInto(x0, y0, S.R, S.R, { buf: slot.buf, off: slot.off, layout: S.layout, oz: S.oz, zMax: this.R.core.dims.zMax, K: S.K, colK: S.colK, settle: !settleLand() }, spread);
+      await a.regionInto(x0, y0, S.R, S.R, { buf: slot.buf, off: slot.off, layout: S.layout, oz: S.oz, zMax: this.R.core.dims.zMax, K: S.K, colK: S.colK, settle: !settleLand() }, { pace: spread ? 'stream' : 'none', stamps: 'plan' });
     } finally {
       S.pool.release(slot);
     }

@@ -69,6 +69,15 @@ export class Profiler {
     this.draws = 0;
   }
 
+  /** (round 108) this profiler with its passes named `prefix` + their name (a render-only tile's render prep: the
+   *  window's systems on a tile's land — render/tileworld.ts — timed apart from the window's own) */
+  named(prefix: string): Profiler {
+    const p = Object.create(this) as Profiler;
+    p.timestamps = (name: string) => this.timestamps(prefix + name);
+    Object.defineProperty(p, 'dispatches', { get: () => this.dispatches, set: (v: number) => (this.dispatches = v) });
+    return p;
+  }
+
   /** Timestamp writes for a pass, or undefined when unsupported / out of slots. */
   timestamps(name: string): GPUComputePassTimestampWrites | undefined {
     if (!this.querySet || !this.active || this.next + 2 > MAX_QUERIES) return undefined;

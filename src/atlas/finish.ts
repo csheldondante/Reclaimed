@@ -41,6 +41,9 @@ export interface FinishTarget {
   colK: number;
   /** loose ground dropped onto its support (streamer.ts settleLoose: ?settle=0, the atlas's default) */
   settle: boolean;
+  /** (round 108, TC19) the batch fills the slot's corner, not all of it: a render-only tile made with a border of its
+   *  neighbours' cells, into a slot of a layout wider than the batch (the rest of it left empty) */
+  corner?: boolean;
 }
 
 /** a region's columns on the GPU (Atlas.columnsGpu) */
@@ -125,7 +128,7 @@ export class RegionFinish {
     /** the tile a gate's turn (the atlas's FINISH_TILE) */
     tile = 32,
     /** (round 105, tilelatency) the per-column summary (4 f32 a column: surface, ground, top, the highest gap's roof)
-     *  copied here on the GPU, nothing read back (a render-only tile's: Atlas.regionTile) */
+     *  copied here on the GPU, nothing read back (a render-only tile's: Atlas.regionInto with how.summary) */
     gpuMeta?: { buf: GPUBuffer; off: number },
   ): Promise<{ meta?: FinishMeta; raw?: RawGround }> {
     const dev = this.dev;
@@ -183,7 +186,8 @@ export class RegionFinish {
     };
     p.set([w, h, raw ? 1 : 0, target?.settle ? 1 : 0]);
     if (target) {
-      if (L!.R !== w || L!.R !== h) throw new Error(`finish: a ${w} × ${h} batch into a ${L!.R}² region's slot`);
+      const fits = target.corner ? w <= L!.R && h <= L!.R : L!.R === w && L!.R === h;
+      if (!fits) throw new Error(`finish: a ${w} × ${h} batch into a ${L!.R}² region's slot${target.corner ? ' (its corner)' : ''}`);
       pi.set([Math.round(target.oz * 256), Math.round(target.zMax * 256)], 4);
       p.set([target.K, target.colK, L!.pageBytes / 16 / target.K === CHUNK * CHUNK ? CHUNK * CHUNK * target.K : 0, L!.rc], 6);
       if (!p[8]) throw new Error('finish: the layout\'s pages aren\'t K × CHUNK² slots');

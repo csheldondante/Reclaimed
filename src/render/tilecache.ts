@@ -45,8 +45,11 @@ const PER_FRAME = Math.max(1, Number(new URLSearchParams(location.search).get('t
 /** the atlas's budget (MB) and a slot's size (texels) */
 const BUDGET_MB = Number(new URLSearchParams(location.search).get('tilemb') ?? 24);
 const [SW, SH] = (new URLSearchParams(location.search).get('tilepx') ?? '128x192').split('x').map(Number);
-/** bytes a texel: rgba8 (albedo, film) + rg32uint (normal and flags, depth) */
+/** bytes a texel: rgba8 (albedo, film) + rg32uint (normal and flags, depth) — the slots' count is these planes' budget —
+ *  and (round 108, TC20) rgba8 (the held river under it — how far under its level at the reference wetness, its depth
+ *  at its line — and its own snow, and the weather's cover's there, as baked: tiles.wgsl BakeOut.c) */
 const TEXEL_BYTES = 12;
+const LIVE_BYTES = 4;
 /** how far past its region a tile draws (cells; the bake takes the chunks round it in) */
 const OVERLAP = 1;
 /** ?tileland=0: no render-only land past the window (TC2) — only what the window baked */
@@ -139,11 +142,16 @@ interface Baker {
 
 export class TileCache {
   /** counts (scripts read them): bakes (first, again), evictions, tiles drawn last frame, slots, in use, MB */
-  readonly stats = { bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0 };
+  /** ?tiledebug=1 (or set at run time — scripts/tileparity.mjs): the tiles drawn tinted */
+  debug = DEBUG;
+  readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0 };
   private tiles = new Map<string, Tile>();
   private bySlot: (Tile | null)[];
   private atlasA!: GPUTexture;
   private atlasB!: GPUTexture;
+  /** (round 108, TC20) the live plane: what the draw brings up to now — the held river's pair (the rivers' wetness), the
+   *  texel's own snow and the cover's as baked (the weather's cover) — tiles.wgsl BakeOut.c, fsTile */
+  private atlasLive!: GPUTexture;
   private gb0!: GPUTexture;
   private gb1!: GPUTexture;
   private gbD!: GPUTexture;
@@ -176,7 +184,7 @@ export class TileCache {
     const slots = this.cols * rows;
     this.bySlot = new Array(slots).fill(null);
     this.stats.slots = slots;
-    this.stats.mb = +((slots * slotBytes) / 2 ** 20).toFixed(1);
+    this.stats.mb = +((slots * SW * SH * (TEXEL_BYTES + LIVE_BYTES)) / 2 ** 20).toFixed(1);
     // (round 105: the atlas and the bake's G-buffer made when a streamed window first gives the tiles a place — tiles on by
     // default, a level without one spends nothing: alloc)
     this.rows = rows;
@@ -193,7 +201,7 @@ export class TileCache {
     const h = this.host;
     const dev = h.device;
     const rl = dev.createPipelineLayout({ bindGroupLayouts: [h.resolveLayout] });
-    const bakeT: GPUColorTargetState[] = [{ format: 'rgba8unorm' }, { format: 'rg32uint' }];
+    const bakeT: GPUColorTargetState[] = [{ format: 'rgba8unorm' }, { format: 'rg32uint' }, { format: 'rgba8unorm' }];
     const [bake, over, draw] = await Promise.all([
       dev.createRenderPipelineAsync({ label: 'tiles-bake', layout: rl, vertex: { module: h.module, entryPoint: 'vsFull' }, fragment: { module: h.module, entryPoint: 'fsTileBake', targets: bakeT }, primitive: { topology: 'triangle-list' } }),
       dev.createRenderPipelineAsync({ label: 'tiles-bake-over', layout: rl, vertex: { module: h.module, entryPoint: 'vsFull' }, fragment: { module: h.module, entryPoint: 'fsTileBakeOver', targets: bakeT }, primitive: { topology: 'triangle-list' } }),
@@ -222,10 +230,11 @@ export class TileCache {
     const RB = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
     this.atlasA = dev.createTexture({ label: 'tiles A', size: [this.cols * SW, this.rows * SH], format: 'rgba8unorm', usage: RB });
     this.atlasB = dev.createTexture({ label: 'tiles B', size: [this.cols * SW, this.rows * SH], format: 'rg32uint', usage: RB });
+    this.atlasLive = dev.createTexture({ label: 'tiles live', size: [this.cols * SW, this.rows * SH], format: 'rgba8unorm', usage: RB });
     this.gb0 = dev.createTexture({ label: 'tiles gbuf0', size: [SW, SH], format: 'rgba32uint', usage: RB });
     this.gb1 = dev.createTexture({ label: 'tiles gbuf1', size: [SW, SH], format: 'rg32uint', usage: RB });
     this.gbD = dev.createTexture({ label: 'tiles gdepth', size: [SW, SH], format: this.host.depthFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT });
-    this.host.profiler.trackMemory('tiles', this.cols * this.rows * SW * SH * TEXEL_BYTES + SW * SH * (16 + 8 + 4));
+    this.host.profiler.trackMemory('tiles', this.cols * this.rows * SW * SH * (TEXEL_BYTES + LIVE_BYTES) + SW * SH * (16 + 8 + 4));
   }
 
   /** (Renderer.windowMoved) The window slid by −t (window units): the origin follows now, before the frame's draw
@@ -455,7 +464,10 @@ export class TileCache {
       let slot = this.bySlot.indexOf(null);
       if (slot < 0) {
         let old: Tile | null = null;
-        for (const o of this.bySlot) if (o && o.usedAt < this.frame && (!old || o.usedAt < old.usedAt)) old = o;
+        // (round 108: never a tile the last frame drew — at a zoom where the screen wants about as many tiles as the
+        // atlas holds, the look-ahead's margin evicted tiles on the screen, they were made again and evicted the
+        // margin's: thousands of bakes a minute, and the far land's flat colour in the tiles' places between)
+        for (const o of this.bySlot) if (o && o.usedAt < this.frame - 1 && (!old || o.usedAt < old.usedAt)) old = o;
         if (!old) return null;
         this.tiles.delete(this.key(old.rx, old.ry, old.az));
         slot = old.slot;
@@ -507,6 +519,7 @@ export class TileCache {
       colorAttachments: [
         { view: this.atlasA.createView(), loadOp: 'load', storeOp: 'store' },
         { view: this.atlasB.createView(), loadOp: 'load', storeOp: 'store' },
+        { view: this.atlasLive.createView(), loadOp: 'load', storeOp: 'store' },
       ],
       timestampWrites: h.profiler.timestamps('tiles-bake'),
     });
@@ -640,7 +653,7 @@ export class TileCache {
     return h.device.createBindGroup({
       label: 'tiles-resolve',
       layout: h.resolveLayout,
-      entries: [...h.meshEntries(src, cam), { binding: 40, resource: this.gb0.createView() }, { binding: 41, resource: this.gb1.createView() }],
+      entries: [...h.meshEntries(src, cam), { binding: 40, resource: this.gb0.createView() }, { binding: 41, resource: this.gb1.createView() }, { binding: 22, resource: h.world.riverFlowView }, { binding: 47, resource: h.world.coverView }, { binding: 62, resource: h.world.riverWetView }],
     });
   }
 
@@ -730,7 +743,7 @@ export class TileCache {
         h.device.queue.writeBuffer(this.inst, 0, d, 0, n * 16);
         const W = h.world.w + 0.5;
         const H = h.world.h * ROW_H;
-        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, DEBUG ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP]));
+        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, this.debug ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP]));
       }
     }
     this.stats.drawn = this.drawCount;
@@ -757,6 +770,25 @@ export class TileCache {
       if (fm.built[c] || (grid && grid[c])) return false;
     }
     return true;
+  }
+
+  /**
+   * (round 108, TC8) The render-only tiles (made on the GPU) of the regions meeting a box of the world (cells; on its
+   * torus, W x H) let go, to be made again: what's stamped there (a settlement's plan) has landed since their land
+   * was made. The window's own bakes are its land as it stands: they stay.
+   */
+  forgetMade(x0: number, y0: number, w: number, h: number, W: number, H: number): void {
+    const mod = (v: number, n: number) => ((v % n) + n) % n;
+    let n = 0;
+    for (const [k, t] of this.tiles) {
+      if (!t.gpu) continue;
+      const meets = (a: number, size: number, b: number, len: number, wrap: number) => mod(a - b, wrap) < len || mod(b - a, wrap) < size;
+      if (!meets(t.rx * R, R, x0, w, W) || !meets(t.ry * R, R, y0, h, H)) continue;
+      this.tiles.delete(k);
+      this.bySlot[t.slot] = null;
+      n++;
+    }
+    this.stats.remade += n;
   }
 
   /** the regions drawn last frame ("rx,ry") */
@@ -795,6 +827,11 @@ export class TileCache {
         { binding: 44, resource: { buffer: this.inst } },
         { binding: 45, resource: { buffer: this.uni } },
         { binding: 46, resource: { buffer: this.tparams } },
+        // (round 108, TC20: the weather's cover, read as the tiles are drawn)
+        { binding: 47, resource: h.world.coverView },
+        { binding: 48, resource: this.atlasLive.createView() },
+        // (round 109, watershed: the rivers' wetness by place — riverheld.wgsl riverWetAt)
+        { binding: 62, resource: h.world.riverWetView },
       ],
     });
     pass.setPipeline(this.pipes.draw);

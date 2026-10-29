@@ -1314,8 +1314,7 @@ export class LevelScene implements Scene {
               // (round 80: a tile of its columns a frame — streaming mustn't stall the frame)
               region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, Infinity, true),
               // (round 102, `gpugen`: made on the GPU straight into the pool — ?gpugen=0 the CPU's way, region above)
-              regionInto: (x0, y0, w, h, t) => a.atlas.regionInto(x0, y0, w, h, t, true),
-              regionTile: (x0, y0, w, h, t, m) => a.atlas.regionTile(x0, y0, w, h, t, m),
+              regionInto: (x0, y0, w, h, t, how) => a.atlas.regionInto(x0, y0, w, h, t, how),
               wrap: [a.atlas.p.cols, a.atlas.p.rows],
               height: a.atlas.p.zTop,
               // (round 71: the coarse world changes while a region is away)
@@ -1335,6 +1334,8 @@ export class LevelScene implements Scene {
       if (a) {
         const S = this.stream;
         a.atlas.pacer.urgency = () => Math.hypot(S.vel[0], S.vel[1]);
+        // (round 108, TC8: a plan landed — a settlement's — the tiles made over its box without it are made again)
+        a.atlas.stampsChanged.push((x0, y0, w, h) => core.renderer.tiles?.forgetMade(x0, y0, w, h, a.atlas.p.cols, a.atlas.p.rows));
       }
       // (round 79) the atlas's columns run past the window: what's above and below it drawn too (round 100: only when
       // the window doesn't hold the world's whole height)
@@ -1508,7 +1509,7 @@ export class LevelScene implements Scene {
           // (round 103, ?tiles=1: the tiles' anchors are the world's — render/tilecache.ts)
           core.renderer.setTileOrigin(S.origin[0], S.origin[1], S.oz);
           // (round 104, TC2: the render-only land past the window, made the streamer's way; once)
-          core.renderer.setTileLand({ layout: S.layout, oz: () => S.oz, landTile: (x0, y0, b, o, m) => S.landTile(x0, y0, b, o, m) });
+          core.renderer.setTileLand(S.tileLand());
           far.win = [dims.w + 0.5, dims.h * ROW_H];
           far.zMax = dims.zMax;
           const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;

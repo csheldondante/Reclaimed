@@ -145,7 +145,7 @@ export class Settlements {
     }
     this.stats.recordsMs = +(performance.now() - t0).toFixed(1);
     // (round 102: what's built as stamps — atlas/stamps.ts — the GPU's path and the CPU's build the same from them)
-    atlas.stampHooks.push((ops, x0, y0, w, h, spread) => this.stampLand(ops, x0, y0, w, h, spread));
+    atlas.stampHooks.push((ops, x0, y0, w, h, spread, plan) => this.stampLand(ops, x0, y0, w, h, spread, plan));
   }
 
   // ---- the API ---------------------------------------------------------------------------------------
@@ -227,9 +227,11 @@ export class Settlements {
     return out;
   }
 
-  private async stampLand(ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean): Promise<void> {
+  /** (round 108, TC8: `plan` false — a render-only tile's land — only the plans already made: none started here) */
+  private async stampLand(ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean, plan = true): Promise<void> {
     for (const s of this.meeting(x0, y0, w, h)) {
-      const p = await this.planOf(s, spread);
+      const p = plan ? await this.planOf(s, spread) : this.done.get(s.rec.id);
+      if (!p) continue;
       timed('stamp', () => this.stamp(p, s, ops, x0, y0, w, h));
     }
   }
@@ -321,6 +323,8 @@ export class Settlements {
     this.stats.planned++;
     this.stats.planMs += plan.ms;
     for (const f of this.events.built) f(s.rec, { buildings: s.rec.buildings.length, ms: plan.ms });
+    // (round 108, TC8: land made over its box before without it — a render-only tile's — is made again)
+    for (const f of this.atlas.stampsChanged) f(s.box.x0, s.box.y0, s.box.w, s.box.h);
     return plan;
   }
 
