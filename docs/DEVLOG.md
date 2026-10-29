@@ -9009,3 +9009,90 @@ Checks: scripts/ringunit.mjs 10.0 M checks, 0 wrong (Ring.i / of added); scripts
   same way.
 - floatsweep: all passed, 0 floating. towertest: all 5 passed. settlementtest: all ok (Gevam, 33 out, a raid of 7
   against 4, 14 dead).
+
+## 2026-10-28 — round 107 (`agentspike`): the agents' GPU spikes (FRAMECOST FC4)
+
+Measured with `?agentprof=1` and scripts/agentspike.mjs, both new:
+- `?agentprof=1` times the agents' tick as one pass a stage (agents-in, -peel, -relax, -units). It also logs every
+  tick: the scope, the chunks that came in, the marks, the chunks peeled, and each sweep's front (read back from
+  the indirect dispatch's count).
+- scripts/agentspike.mjs runs parked or riding and joins the worst frames to their ticks.
+Every run: the atlas at q=low (2 sweeps a tick), every system on, 1x, the desktop iGPU.
+
+What it showed on places as it was:
+- **The front never emptied.** Parked at either window, a sweep relaxed 90–100% of the scope (100–110 chunks) on
+  nearly every tick, and the relax was ~85% of the agents' time. Round 104's "settled fields cost nothing" never
+  happened in the atlas. Reading the distances back 20 ticks apart gave four causes:
+  1. Sediment moved surfaces by hundredths of a cell every peel, and any move marked its chunk (NAV_DZ = 0). Any
+     distance that moved by 1e-3 marked too, so each hundredth ran down the whole field.
+  2. The goal fields (agent-units F.goal0..11) are taken and let go all the time. A field left without seeds set
+     `markAll` (every chunk of the scope) every ~15–20 ticks.
+  3. A seed that went or moved far, or the scope's box drawing in (a chunk let go after its 600 ticks), left the
+     values round where it was too low. Relaxed from their neighbours, they count up a step a sweep over the
+     whole basin, for hundreds of sweeps.
+  4. At the shores the water sits round WADE (0.6), so the wet flag flipped (+3 on a step's cost). Sediment also
+     wobbled heights across the steps, and links flipped at STEP. Each flip sent a wave down every field.
+- **Riding: any chunk that came into the scope re-peeled the whole scope** (`navStale`). The scope's first fill
+  (672 chunks) was an 11 ms peel in a 19 ms agents frame.
+- Not causes: the 8-tick readback of the units' box, the scope re-entering (one entry in 40 s parked), and the
+  indirect dispatch's size (it is just the front's size).
+
+The fix makes each part's work follow what changed:
+- **navCost**: the height and wet a surface's cost is reckoned by, kept apart from the exact floor in nav that
+  the units ride.
+  - It is agents.wgsl binding 37, an agents-owned per-column buffer listed in columnBuffers and indexed like nav.
+  - Its height follows the floor only once the floor is more than NAV_DZ (0.25 cells) away. Wet turns on past
+    WADE and off under WADE_OFF (0.45).
+  - The links (their step up or down) and the relax read it.
+  - A peel marks a chunk only when its navCost or its room changed. Headroom counts through the links, which the
+    links pass compares.
+  - One concern per structure: the nav record had been both the floor and the field's input.
+- **A distance is written, and marks its chunk, only when it moves more than DIST_EPS (0.05).** That is a
+  twentieth of the cheapest step. Becoming or ceasing to be unreachable always counts.
+- **Fields start over instead of counting up.** Three cases restart a field:
+  - it is left without seeds;
+  - its seed went, or moved more than RESEED_NEAR (8 cells);
+  - the scope's box draws in (then every field restarts).
+
+  `clearFields` sets that field unreachable over the scope, with no marks, and it refills from its seeds outwards
+  (their chunks marked). A seed that is only added or nudged lowers values, or moves them a little, so it is
+  relaxed in place. `markAll` is now only for `confine`.
+- **The peel is spread.** It runs over an eighth of the scope's chunks each tick in turn, plus the chunks that came
+  in, at once. Before, it ran over the whole scope every eighth tick and on any tick a chunk came in. The links run
+  over those chunks and the chunks next to them. The whole scope is peeled only after the agents sat idle.
+- **FRONT_CAP**: a sweep relaxes at most 32 chunks, and the rest are carried to the next sweep.
+  - A carried chunk is marked as itself only (bit 1), so it doesn't spread to its neighbours.
+  - The box is walked from a starting place that turns with the tick, so the same chunks aren't always last.
+
+| agents' GPU a frame, ms (mean / p95 / max) | places ab286d9 | agentspike |
+|---|---|---|
+| parked, window 512 / zoom 5 | 1.41 / 4.14 / 6.31 | 1.06 / 3.07 / 9.45 |
+| parked, window 320 / zoom 14 | 1.43 / 4.04 / 20.1 | 1.06 / 2.31 / 6.11 |
+| riding (drive 18, window 512) | 0.89 / 4.16 / 22.15 | 0.47 / 1.96 / 9.38 |
+
+Method: `agentspike.mjs --prof 0`, 25 s parked and 40 s riding, each build on its own page. The iGPU's clock
+drifts between runs. This is the agents' tick at the phone tier.
+
+With the probe, at window 320:
+- The front went from 79–100 chunks a sweep to 30 (the cap).
+- The relax went from 1.05 ms mean to 0.32–0.74.
+
+What is left: the cap bounds the front a sweep, but after the first half minute parked the chunks asking to be in
+it stay at ~80 of 90–100. That is real change:
+- the water at the shores and at the window's edge moves the costs;
+- a distance field carries any change down its whole basin;
+- every field in use is relaxed in every front chunk.
+
+Proposed (BACKLOG FC8): a front per field, so a field that didn't move costs nothing where another did. Further
+on: the paths the user asked for in round 104 (ST15), for the town's fixed legs.
+
+Behaviour, each test run against places ab286d9 on its own page:
+- settlementtest, two runs each. Trips / blocks were 13 / 2 and 18 / 4 here, 19 / 5 and 17 / 3 on places; the
+  run-to-run spread is as wide as that gap. The raid of 7 against 4 was repelled, 14 dead on both.
+- hordetest: the same phases on both. 74 spawned. They closed in (54 chasing / 20 swinging here, 51 / 23 on
+  places). The blast killed 65 (places 67). Then the fire and the cone, and the burn.
+- agentfieldtest:
+  - the reader agrees on 19 of 24 on both;
+  - confined: 400 of 400 stayed in the home room (places 398);
+  - released: 3 left in the home room (places 0), mean distance to the goal 43.2 (places 42.2).
+- crewtest: 5 of 5 here. Places failed its pit-drop check on this run (4 of 5), as it does.
