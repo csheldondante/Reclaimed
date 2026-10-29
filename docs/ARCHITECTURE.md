@@ -1455,6 +1455,51 @@ from its river graph. A fixed map declares its rivers instead, and gets the same
   the climate's (the season) plus the storm water its own catchment's rain sends down it, lagged at its speed. A
   river without a catchment follows the season alone.
 
+## The noise lab (round 111, branch `noiselab`; BACKLOG TG1)
+
+An experimental sandbox for terrain recipes (`?skipmenu=1&level=noiselab`, the title screen's "Noise lab"). It
+never touches the atlas's generation: src/atlas is unchanged, and the lab includes atlas/noise.wgsl as it is
+(pnoise, pworley, the hashes) so a lab layer samples the same noise the atlas does.
+
+- **A recipe is a tuning preset.** src/noiselab/params.ts makes a second `Registry` (src/tune/registry.ts): a `lab`
+  group (seed, base height, sea level, materials, strata, cliff slope, shore, snow line, caves' roof and minimum,
+  the view's scale, whether the world follows a slider live) and eight layer slots `L1`..`L8`, each the same 35
+  numbers (`LAYER_KEYS`). Choices (generator, shape, op, target, mask, materials) are numbers with
+  `ParamSpec.choices` names. So the editor shell is the tuning panel's (src/ui/tunepanel.ts, now given a registry,
+  a store key, a link parameter, built-in presets, a top element and a visibility rule): sliders, built-ins
+  (src/noiselab/presets.ts), presets saved in localStorage `reclaimed.noiselab.presets`, export and import as JSON,
+  copy as `?lab=<string>`; `?labpreset=<name>` opens a built-in.
+- **The layer contract.** A column's state is eight floats: H (height), M1..M4 (masks), CF and CH (the cave's
+  floor and height). H starts at the base; the layers run in order. Each makes a value v from its generator at the
+  column's world point (scaled about the map's centre by `view`; first quantized to the nearest Voronoi site
+  `cellQ` apart if set; then the domain transform: warp, grain = rotate and stretch, radial = polar coordinates
+  with the turn's lattice period `spokes`), shapes it (threshold, band = two thresholds, abs, stairs, tiers = the
+  atlas's mesa walls, power, clamp), takes `amp · shape + offset` and applies it to its target with its op (add,
+  subtract, multiply, max, min, set = lerp by the mask, smooth max/min = the SDF blend with width k), weighted by
+  its mask slot (clamped 0..1, optionally inverted). Generators: constant, fbm, ridge, billow, voronoi (f1, f2,
+  edge, cell value), mesas (grouped cells: height with per-edge walls or ramps, or the signed distance into the
+  group), sdf (circle, box, ring, segment), ramp, spires, height so far, mask, and three field generators that need
+  the whole map so far: slope, jfa distance and jfa ridges.
+- **The runner** (src/noiselab/lab.ts + lab.wgsl) owns its buffers. A run splits the stack at each field layer:
+  `labEval` over the layers before it, the field (`labSlope`; or `labSeed` on the source's contour, `labJfa`
+  log2 + 1 passes, `labJfaDone`: the nearest feature point and the signed distance), then on; `labFinish` writes
+  one record a column: height, cave floor and roof, top and rock material, cliff. One run at a time; the latest
+  asked-for values win.
+- **Into the world.** src/noiselab/columns.ts turns the record into the game's columns (world/layout.ts intervals
+  packed by the window's chunk table: rock, the cave as a gap — the atlas's caves are gaps too, columns.wgsl
+  caveVoids — strata, the cover) and the sea's water as depth. The level hands the lab a `LabWorld` (its size, the
+  chunk table, `write`): `WorldCore.replaceWindow(slots, water, surface)` writes the layers, clears the per-column
+  state `restoreChunks` restores, sets the water, replaces the CPU surface; the scene forgets what moved
+  (Integrity), sets `globals.seaZ` (the sea past the edges stays), remakes the field mesh over the map. The lab
+  knows nothing else of the world.
+- **The preview** is the record drawn from above in the panel (materials, light from the north-west, the sea,
+  caves tinted), every run; the world follows on a slider's release, a list's or a number's change, or every run
+  with `world follows: live`.
+
+**A proposal, not a change:** the layer stack could become the region generator's format later — a region's
+`regionHeight` and its edge profiles as a recipe evaluated by compose.wgsl. What that would take is in the DEVLOG's
+round-111 entry; nothing in the atlas reads a recipe today.
+
 ## Levels and the sandbox
 
 `game/levels.ts` is the level registry: id, name, blurb, title-screen model,

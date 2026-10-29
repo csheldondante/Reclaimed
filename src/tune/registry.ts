@@ -27,6 +27,8 @@ export interface ParamSpec {
   gpu?: boolean;
   /** an older address parameter that sets it (?rbgrav=, ?crush=, …) */
   url?: string;
+  /** (round 111, the noise lab) a choice: the value is an index into these names (the panel shows a list, not a slider) */
+  choices?: string[];
 }
 
 export interface GroupSpec {
@@ -51,6 +53,10 @@ export interface ParamDef extends ParamSpec {
 export type Preset = Record<string, number>;
 
 const camelField = (group: string, key: string) => group + key[0].toUpperCase() + key.slice(1);
+
+/** any registry (the panel takes one: the physics tuning's, or a lab's) */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type AnyRegistry = Registry<any>;
 
 export class Registry<S extends Record<string, GroupSpec>> {
   readonly defs: ParamDef[] = [];

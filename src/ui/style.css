@@ -354,3 +354,8 @@ canvas#world {
 .stations button { font: 12px var(--font); min-height: 34px; padding: 5px 9px; border-radius: 8px; border: 1px solid rgba(236, 230, 216, 0.25); background: rgba(28, 26, 22, 0.8); color: var(--ink); }
 .stations button.reset { border-color: rgba(220, 160, 90, 0.6); }
 .stations .label { width: 100%; text-align: right; font-size: 11px; color: var(--ink-dim); text-shadow: 0 1px 3px #000; }
+/* (round 111, TG1) the noise lab's panel (noiselab/control.ts): the tuning panel's, its preview on top */
+.tune-panel .tune-choice { flex: 0 1 60%; min-width: 0; }
+.tune-panel.lab { width: min(380px, calc(100vw - 16px)); }
+.lab-top { margin: 2px 0 6px; }
+.lab-preview { display: block; width: 100%; aspect-ratio: 256 / 222; image-rendering: pixelated; border-radius: 6px; background: #111; }

@@ -12,6 +12,7 @@ import { generateTrials } from '../levels/trials';
 import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
 import { generateRocklab } from '../levels/rocklab';
 import { generatePlayground, STATIONS, type Station } from '../levels/playground';
+import { generateNoiselab } from '../levels/noiselab';
 import type { FlowKit } from '../flow/install';
 import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
@@ -56,6 +57,8 @@ export interface LevelDef {
   lab?: { open: string[] };
   /** (round 108, AR8) stations, each reset on its own (the playground: levels/playground.ts) */
   stations?: Station[];
+  /** (round 111, TG1) the noise lab: its land made and remade by a layer recipe on the GPU (noiselab/control.ts) */
+  noiseLab?: boolean;
 }
 
 export const LEVELS: LevelDef[] = [
@@ -155,6 +158,17 @@ export const LEVELS: LevelDef[] = [
     rivers: 'table',
     lab: { open: ['world', 'rigid'] },
     stations: STATIONS,
+  },
+  {
+    id: 'noiselab',
+    name: 'The Noise Lab',
+    blurb: 'Layers and masks of noise blended into land, live: the atlas biomes as recipes, and new ones to try.',
+    model: 'sign',
+    generate: (dims) => generateNoiselab(dims),
+    sandbox: true,
+    hidden: true,
+    zMax: 128,
+    noiseLab: true,
   },
   {
     id: 'sandbox',

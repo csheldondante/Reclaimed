@@ -16,13 +16,13 @@ user) · `deferred` (agreed for later).
 
 | id | item | size | status |
 |---|---|---|---|
-| TG1 | The noise lab: an experimental sandbox (its own level, the editor shell GE1) to review noise combinations and generators: a stack of layers and masks blended into a heightmap, drawn by the game's renderer; the existing biomes as presets; never changes the atlas's generation | M | open |
-| TG2 | Mesas: atlas-scale Voronoi cells grouped into a mesa region, edges given heights (some 0), height blended directionally to the full mesa height; ridge noise carves winding traversable ravines (flash-flood set-ups) | M | open |
-| TG3 | Coastal mesas with sea caves seen from the ocean: 2D fractal simplex with two thresholds as the cave mask, the cave's height blended relative to the surface, brought to just under the water level at the coast | M | open |
-| TG4 | The general approach: many layers and masks blending heightmaps; stark contrast (sheer walls are fine, they're obstacles) beside smooth interpolation at several scales; breaks in a cliff where the height blends to the ground as a natural ramp | M | open |
-| TG5 | Bigger mountains | S | open |
-| TG6 | Biased features: domain-stretched noise turning bumps into ridges along a grain; radially warped noise | S | open |
-| TG7 | JFA nearest-feature vectors: height adjusted by noise along the feature's border, so ridges run perpendicular to the isolines | M | open |
+| TG1 | The noise lab: an experimental sandbox (its own level, the editor shell GE1) to review noise combinations and generators: a stack of layers and masks blended into a heightmap, drawn by the game's renderer; the existing biomes as presets; never changes the atlas's generation | M | done (noiselab): ?level=noiselab, the title screen's Noise lab; src/noiselab (params, lab.wgsl, columns, control, presets), the tuning panel as its editor; scripts/noiselab.mjs |
+| TG2 | Mesas: atlas-scale Voronoi cells grouped into a mesa region, edges given heights (some 0), height blended directionally to the full mesa height; ridge noise carves winding traversable ravines (flash-flood set-ups) | M | experiment (noiselab): recipe "TG2: mesas, ramps, ravines" (generator mesas: grouped cells, each outer edge a wall or a ramp) |
+| TG3 | Coastal mesas with sea caves seen from the ocean: 2D fractal simplex with two thresholds as the cave mask, the cave's height blended relative to the surface, brought to just under the water level at the coast | M | experiment (noiselab): recipe "TG3: coastal mesas, sea caves" (two-threshold fbm caves, the floor blended by the JFA coast distance to under the sea); the sea does not enter them (open) |
+| TG4 | The general approach: many layers and masks blending heightmaps; stark contrast (sheer walls are fine, they're obstacles) beside smooth interpolation at several scales; breaks in a cliff where the height blends to the ground as a natural ramp | M | experiment (noiselab): the layer stack itself; recipe "TG4: cliff with a ramp break" |
+| TG5 | Bigger mountains | S | experiment (noiselab): recipe "TG5: bigger mountains" (to 79 cells; the atlas unchanged) |
+| TG6 | Biased features: domain-stretched noise turning bumps into ridges along a grain; radially warped noise | S | experiment (noiselab): grain and radial domains on every noise generator; recipe "TG6: grain and radial" |
+| TG7 | JFA nearest-feature vectors: height adjusted by noise along the feature's border, so ridges run perpendicular to the isolines | M | experiment (noiselab): generators jfa distance and jfa ridges; recipe "TG7: JFA ridges off a plateau" |
 | TG8 | Ties to rooms and key/door: SDFs, blocking and the known controllers' reach partition the map with natural terrain features (GE3) | L | open |
 
 ## Round 110 (2026-10-29, session 5, `physfix`) — the rigid rock's four faults in the playground (DECISIONS round 110)

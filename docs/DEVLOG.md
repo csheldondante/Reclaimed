@@ -12130,3 +12130,91 @@ scripts/playwater-dump.mjs: the GPU's water beside the table, column by column):
 
 GIFs and shots: C:\Projects\shots88\playwater\ (atlas-fall, river-station, river-fall, river-rain, river-surge, breach,
 breach-reset; base-* the places build's flow-model playground for comparison).
+
+## 2026-10-29 — round 111: the noise lab (branch `noiselab`, BACKLOG TG1–TG7)
+
+The user (DECISIONS round 111): "a noise playground would be a cool way to showcase existing biomes as well as a
+general pattern for generating new ones. I like what we have now though so don't break it". So this is a level
+beside the game's generators, not a change to them: `?skipmenu=1&level=noiselab`, or "Noise lab" on the title
+screen (next to Playground). docs/ARCHITECTURE.md "The noise lab" has the contract.
+
+**The atlas is untouched.** `git diff origin/places -- src/atlas` is empty. The lab includes atlas/noise.wgsl
+as it is (pnoise, pworley, the hashes), so a lab layer samples the atlas's own noise. Its octave loops repeat
+pfbm's and pridged's sums and seeds, but take a period for each axis, which the radial transform needs. Since
+nothing in the atlas was refactored, there was no output to hash before and after.
+
+**A recipe is a tuning preset.** The stack is a second `Registry` (src/noiselab/params.ts): eight layer slots
+of 35 numbers each, plus the lab's own group. The tuning panel is the editor (GE1's shell), so the lab got its
+sliders, presets, JSON export and import, `?lab=` links and resets for free. The panel now takes a registry, a
+store key, a link parameter, built-ins, a top element (the preview) and a visibility rule: a layer shows only
+the numbers its generator, shape, op and mask use. A choice (generator, op, …) is a list (`ParamSpec.choices`).
+The physics panel is unchanged at its defaults.
+- The other option was a free-form JSON layer list with its own editor. That would mean a second editor shell
+  and a second preset format. Fixed slots keep one format: a recipe is the values that differ from the
+  defaults, so a copied link stays short.
+
+**Live, with the game's look.** Every change runs the stack on the GPU (lab.wgsl). The preview, drawn from
+above in the panel, follows every run. The world is rewritten when a slider is let go, when a list or number
+changes, or 0.6 s after a drag stops. `world follows: live` rewrites it on every run instead. The record
+becomes the game's own columns (noiselab/columns.ts): rock, a cave as a gap in the column (the atlas's caves
+are gaps too, atlas/columns.wgsl caveVoids), strata, and the cover. The sea is water depth, with `globals.seaZ`
+holding it at the edges. They go in through `WorldCore.replaceWindow`, the same buffers `restoreChunks` puts
+back, then `fieldMesh.urgent` over the whole map. So the renderer draws it as it draws any level: cliffs, the
+sea, materials, shadows. The level is a sandbox, so rain, the dig and the break tools work on what it makes
+(TG2's ravines are for flash floods).
+
+**Presets.** "atlas: range", "atlas: mesa cliffs" and "atlas: hills, terraces, caves" use the regions'
+numbers (regions.ts) and compose.wgsl's methods. These are rebuilds, not the atlas's output. The mesa cliffs
+use mesaEdge's tiers (up to six walls, each wall's share and ledge set by noise along the edge) on the signed
+distance into grouped Voronoi cells, quantized to cells 10 apart (the shelves). They add butte spires off the
+foot and fbm-band ravines cut to the plain. The experiments: TG2 mesas from grouped cells with a third of
+their outer edges as ramps and ridge-noise ravines cut to the floor; TG3 a coast with mesas and caves where an
+fbm lies between two thresholds, their floor 14 under the surface inland, blended by the JFA distance to the
+coastline to half a cell under the sea at the coast; TG4 a sheer plateau with two breaks (a smooth ramp, a
+stepped one) where a disc mask lerps in a soft-edged copy; TG5 a massif to 79 cells (the lab's window is 128
+high); TG6 a 30° grain (fbm stretched 6×) beside radial ridge noise (24 spokes); TG7 spurs of ridge noise
+sampled at the nearest point of a plateau's edge, stretched 10× along the distance, so they run straight out
+across the isolines. Shots: C:\Projects\shots88\noiselab\ (each recipe, world and panel; tg3-…-caves.png the
+cave mouths at the waterline; phone-*.png at 412 × 915).
+
+**Measured** (scripts/noiselab.mjs, desktop iGPU, 1280 × 800, q=medium; 256 × 256 columns):
+
+| recipe | GPU run (submit → read) | passes | columns (CPU) | world write | most runs a column |
+|---|---|---|---|---|---|
+| blank | 4.4 ms | 2 | 10.2 ms | 1.5 ms | 2 |
+| atlas: range | 5.0 | 2 | 7.7 | 1.4 | 2 |
+| atlas: mesa cliffs | 8.1 | 2 | 12.4 | 1.7 | 14 |
+| atlas: hills, terraces, caves | 7.1 | 2 | 8.8 | 1.3 | 3 |
+| TG2 | 4.6 | 2 | 11.6 | 1.4 | 14 |
+| TG3 (one JFA) | 6.1 | 15 | 15.5 | 1.5 | 14 |
+| TG4 | 2.5 | 2 | 16.8 | 1.5 | 10 |
+| TG5 | 5.4 | 2 | 7.0 | 1.6 | 2 |
+| TG6 | 4.3 | 2 | 8.3 | 1.4 | 2 |
+| TG7 (two JFAs) | 5.8 | 28 | 13.1 | 1.5 | 2 |
+
+A regenerate costs about 10–25 ms of CPU and GPU, plus the mesh remade over the next frames. The frames in the
+2 s after a write: mean 9.7–9.9 ms, worst 10.5–10.8 ms. No hitch showed, because the mesh rebuilds within
+`urgent`'s frames. The first version of the column packing took 59 ms (a closure and arrays for every column).
+Flat reused arrays cut it to 7–17 ms. At q=low on the phone proxy (412 × 915, dpr 2.6) mesa cliffs measured GPU
+9.9, columns 14.0, write 1.7 ms. The slider test: the preview changed while the slider moved, the world was
+written 0 times during the move and once on release. No GPU validation errors and no page errors in any run.
+
+**Bringing a recipe into the atlas later (a proposal, not done):**
+- Periodic noise on the torus. Lab layers use a period of 65536 (no wrap on the map). In the atlas, each
+  lattice needs `perOf(scale)` round the world, which fbmL already takes.
+- A region kind gets a recipe in place of `regionHeight`'s fixed sum: a layer buffer bound in compose.wgsl,
+  evaluated per column with `p` in world units.
+- Field layers (slope, JFA) can't run per streamed tile. They need the macro grid's JFA (the atlas already
+  floods borders and coasts there: distR), or analytic distances.
+- Caves map onto `caveVoids`, materials onto forms.wgsl colFinish.
+- Each existing biome rebuilt as a recipe is checked bit-identical against today's output before it replaces
+  the code (hash a region's columns before and after).
+- Each tile's cost stays within the streamer's budget.
+
+**Open problems.**
+- The sea doesn't enter a cave whose floor is under its level. Water is depth over a column's top, so a sea
+  cave's floor is dry ground under the waterline.
+- At the farthest zoom, part of the map wasn't drawn in one headless shot. I didn't investigate it; the
+  preview always shows the whole recipe.
+- Field generators are capped by the eight slots: each JFA layer is one slot and 11 passes.
+- The preview's heights aren't to scale with the world's (it shades by slope).
