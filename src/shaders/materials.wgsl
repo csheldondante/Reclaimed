@@ -5,7 +5,7 @@ struct Material {
   sim: vec4<f32>,    // state, reposeDry, reposeWet, strength
   eco: vec4<f32>,    // growthCap, suitability, specular, porosity
   look: vec4<f32>,   // smooth (cells; 0 = hard steps), see-through (ice, crystal), unused ×2
-  loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash flow
+  loose: vec4<f32>,  // wind lift (cells/s; ≥ 1e8 never), airborne share, water mobility, wash speed (cells/s: round 112, the tuning registry's wash group)
 };
 @group(0) @binding(2) var<uniform> MATS: array<Material, 40>; // MAX_MATERIALS (materials.ts)
 

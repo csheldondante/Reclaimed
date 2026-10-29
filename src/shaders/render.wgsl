@@ -761,7 +761,7 @@ fn swellAt(p: vec2<f32>, cell: vec2<i32>, flow: f32, wind: f32) -> Swell {
   // (along the shore a slow wobble: the crests not ruled lines)
   let along = dot(p, vec2<f32>(-dir.y, dir.x));
   let wob = vnoise(vec2<f32>(along * 0.06, dist * 0.04) + 3.0) * 2.4;
-  let ph = dist * 0.7 - G.time * (1.5 + 0.3 * wind) + wob;
+  let ph = dist * 0.7 - simTime() * (1.5 + 0.3 * wind) + wob;
   let shoal = smoothstep(16.0, 2.0, dist);
   o.amp = open * (0.3 + 0.7 * shoal) * (0.7 + 0.3 * wind);
   o.h = sin(ph);
@@ -1377,7 +1377,7 @@ fn fsBox(in: VOut) -> FOut {
   // a dark crust with glowing cracks as it cools, orange to yellow-white hot
   if (mat == MAT_LAVA_M) {
     let t = f32(damage & 15u) / 15.0;
-    let flow = G.time * 0.15;
+    let flow = simTime() * 0.15;
     let cr = fbm2(wo(in.wpos.xy) * 1.3 + vec2<f32>(flow, -flow * 0.7));
     let crack = smoothstep(0.42, 0.5, abs(cr - 0.5) * 2.0 + (1.0 - t) * 0.6);
     let hot = mix(vec3<f32>(0.9, 0.12, 0.02), vec3<f32>(1.0, 0.75, 0.3), smoothstep(0.6, 1.0, t)) * (1.1 + 1.6 * t);
@@ -1388,7 +1388,7 @@ fn fsBox(in: VOut) -> FOut {
     let steepL = 1.0 - smoothstep(0.25, 0.7, in.nrm.z);
     if (steepL > 0.0) {
       let lane = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 1.5)), 11));
-      let streak = smoothstep(0.2, 0.9, fract(in.wpos.z * 0.15 + G.time * 0.9 + lane));
+      let streak = smoothstep(0.2, 0.9, fract(in.wpos.z * 0.15 + simTime() * 0.9 + lane));
       col = mix(col, hot * (0.9 + 0.5 * streak), steepL * 0.85);
     }
   }
@@ -1443,7 +1443,7 @@ fn flowStreaks(p: vec2<f32>, v: vec2<f32>, d: f32) -> f32 {
   let pace = min(sp / max(d, 0.06) * 6.0, 5.0);
   var s = 0.0;
   for (var k = 0; k < 2; k++) {
-    let ph = fract(G.time * 0.5 + f32(k) * 0.5);
+    let ph = fract(simTime() * 0.5 + f32(k) * 0.5);
     let q = p - dir * pace * ph;
     let u = vec2<f32>(dot(q, dir), dot(q, vec2<f32>(-dir.y, dir.x)));
     s += (1.0 - abs(2.0 * ph - 1.0)) * vnoise(u * vec2<f32>(0.6, 1.9) + f32(k) * 17.0);
@@ -1464,7 +1464,7 @@ fn windWavesIn(p: vec2<f32>, wv: vec2<f32>, rough: f32) -> vec3<f32> {
   let pw = vec2<f32>(G.windX, G.windY) + vec2<f32>(1e-4, 0.0);
   let wd = select(normalize(pw), wv / max(lw, 1e-4), lw > 0.05);
   let wp = vec2<f32>(-wd.y, wd.x);
-  let t = G.time;
+  let t = simTime();
   // (in the wind's frame: a along it, c across)
   let a = dot(p, wd);
   let c = dot(p, wp);
@@ -1532,7 +1532,7 @@ fn shadeWater(in: VOut) -> FOut {
   // (watersurf: each term below is worked out only where it shows — the same picture, less of the cost: the
   // water's shading is most of its draw, a pixel at a time over the screen's water)
   if (sludge > 0.0) {
-    let scum = smoothstep(0.55, 0.75, vnoise(wo(in.wpos.xy) * 1.3 + vec2<f32>(G.time * 0.03, 0.0)));
+    let scum = smoothstep(0.55, 0.75, vnoise(wo(in.wpos.xy) * 1.3 + vec2<f32>(simTime() * 0.03, 0.0)));
     let murk = vnoise(wo(in.wpos.xy) * 0.4 + 9.0);
     c = mix(c, mix(mix(vec3<f32>(0.13, 0.11, 0.06), vec3<f32>(0.2, 0.16, 0.08), murk), vec3<f32>(0.44, 0.42, 0.1), scum * 0.8), sludge);
   }
@@ -1541,7 +1541,8 @@ fn shadeWater(in: VOut) -> FOut {
 
   if (in.nrm.z > 0.5) {
     // ripples + sun glint
-    let t = G.time;
+    // (round 112: on the sim's clock — common.wgsl simTime)
+    let t = simTime();
     // ripples ride the wind: the pattern is advected downwind and roughens
     // with the local wind, so gusts and drags send catspaws across the water
     let wv = windAt(vec3<f32>(in.wpos.xy, in.wpos.z + 0.5));

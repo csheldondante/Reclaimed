@@ -344,11 +344,14 @@ fn waterOut(q: vec2<i32>, gain: f32) -> Dirs {
   if (top < 0.001 || water[j] < 0.02 || underBody(q)) { return dZero(); }
   let m = driftMatAt(q);
   let v = netFlow(q);
-  let sp = length(v);
+  // (round 112, waterscale: by the water's speed against the material's wash speed, cells/s — the tuning registry's
+  // wash group in the material table; carried as the depth times the speed over it: was the net flux over a flux)
+  let d = water[j];
+  let sp = flowSpeed(v, d);
   let thr = MATS[m].loose.w;
   if (sp < thr) { return dZero(); }
   let mob = MATS[m].loose.z * (1.0 - 0.8 * held(q));
-  let total = min(top * 0.2, (sp - thr) * 1.5 * mob * dtD() * 30.0 * gain);
+  let total = min(top * 0.2, d * (sp - thr) * G.tune.sedimentWashRate * mob * dtD() * gain);
   let wt = dSplit(v);
   let sum = dSum(wt);
   if (sum < 1e-6) { return dZero(); }

@@ -55,14 +55,18 @@ export interface MaterialDef {
    * Loose ground (granular only; round 22 moved these from drift.wgsl's
    * looseOf/washOf into the table): wind (cells/s, sheltered) needed to move
    * it (≥ 1e8: never), share of what the wind lifts that goes airborne as
-   * dust grains, how readily moving water carries it, and the net water flow
-   * (volume/tick) below which it doesn't.
+   * dust grains, how readily moving water carries it, and (round 112) which of
+   * the tuning registry's wash speeds it has: the water's speed (cells/s) below
+   * which it isn't carried (src/tune/params.ts wash; packMaterialTable).
    */
   windLift: number;
   airborne: number;
   washMobility: number;
-  washFlow: number;
+  wash: WashKey | null;
 }
+
+/** (round 112, waterscale) a loose material's critical speed in the tuning registry (TUNE.wash.<key>, cells/s) */
+export type WashKey = 'soil' | 'sand' | 'rubble' | 'ash' | 'litter' | 'drift' | 'silt' | 'snow' | 'leaves';
 
 const NEVER = 1e9;
 
@@ -140,15 +144,15 @@ const NONE: Omit<MaterialDef, 'name' | 'albedo' | 'state'> = {
   windLift: NEVER,
   airborne: 0,
   washMobility: 0,
-  washFlow: NEVER,
+  wash: null,
 };
 
 export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'air', albedo: [0, 0, 0], state: MatState.Empty },
   { ...NONE, name: 'stone', albedo: [0.4, 0.39, 0.37], state: MatState.Solid, growthCap: 1.2, suitability: 0.3, porosity: 0.25, smooth: 2 },
-  { ...NONE, name: 'soil', albedo: [0.45, 0.36, 0.27], state: MatState.Granular, bear: 0.3, reposeDry: 1.4, reposeWet: 1, strength: 0.2, growthCap: 5, suitability: 1, porosity: 0.6, smooth: 2, washMobility: 0.6, washFlow: 0.12 },
-  { ...NONE, name: 'sand', albedo: [0.72, 0.65, 0.5], state: MatState.Granular, bear: 0.15, reposeDry: 1, reposeWet: 1, strength: 0.1, growthCap: 2.5, suitability: 0.4, porosity: 0.5, smooth: 2, windLift: 14, airborne: 0.15, washMobility: 1, washFlow: 0.08 },
-  { ...NONE, name: 'rubble', albedo: [0.44, 0.41, 0.38], state: MatState.Granular, bear: 0.4, reposeDry: 1.7, reposeWet: 1.5, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3, smooth: 1, washMobility: 0.25, washFlow: 0.3 },
+  { ...NONE, name: 'soil', albedo: [0.45, 0.36, 0.27], state: MatState.Granular, bear: 0.3, reposeDry: 1.4, reposeWet: 1, strength: 0.2, growthCap: 5, suitability: 1, porosity: 0.6, smooth: 2, washMobility: 0.6, wash: 'soil' },
+  { ...NONE, name: 'sand', albedo: [0.72, 0.65, 0.5], state: MatState.Granular, bear: 0.15, reposeDry: 1, reposeWet: 1, strength: 0.1, growthCap: 2.5, suitability: 0.4, porosity: 0.5, smooth: 2, windLift: 14, airborne: 0.15, washMobility: 1, wash: 'sand' },
+  { ...NONE, name: 'rubble', albedo: [0.44, 0.41, 0.38], state: MatState.Granular, bear: 0.4, reposeDry: 1.7, reposeWet: 1.5, strength: 0.3, growthCap: 3, suitability: 0.5, porosity: 0.3, smooth: 1, washMobility: 0.25, wash: 'rubble' },
   { ...NONE, name: 'concrete', albedo: [0.66, 0.65, 0.62], state: MatState.Solid, strength: 0.8, growthCap: 1.5, suitability: 0.25, porosity: 0.35 },
   { ...NONE, name: 'asphalt', albedo: [0.24, 0.24, 0.25], state: MatState.Solid, strength: 0.6, growthCap: 2, suitability: 0.3, specular: 0.1, porosity: 0.3 },
   { ...NONE, name: 'rust', albedo: [0.5, 0.29, 0.17], state: MatState.Solid, strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.2, porosity: 0.2 },
@@ -168,27 +172,27 @@ export const MATERIALS: MaterialDef[] = [
   { ...NONE, name: 'bone', albedo: [0.84, 0.8, 0.7], state: MatState.Solid, strength: 1, growthCap: 1.4, suitability: 0.35, porosity: 0.3 },
   // reddish-grey dust and ash (the menu's mound; what burned waste leaves):
   // loose, blown about by wind and carried by water, fertile once clean
-  { ...NONE, name: 'ash', albedo: [0.55, 0.42, 0.38], state: MatState.Granular, bear: 0.1, reposeDry: 0.9, reposeWet: 0.8, strength: 0.1, growthCap: 3, suitability: 0.6, porosity: 0.45, smooth: 2, windLift: 10, airborne: 0.5, washMobility: 1, washFlow: 0.03 },
+  { ...NONE, name: 'ash', albedo: [0.55, 0.42, 0.38], state: MatState.Granular, bear: 0.1, reposeDry: 0.9, reposeWet: 0.8, strength: 0.1, growthCap: 3, suitability: 0.6, porosity: 0.45, smooth: 2, windLift: 10, airborne: 0.5, washMobility: 1, wash: 'ash' },
   // scattered litter lying on the land: loose; strong wind strips it a cell at a
   // time (litterStrip in common.wgsl), water carries it; nothing grows on it
-  { ...NONE, name: 'litter', albedo: [0.55, 0.52, 0.47], state: MatState.Granular, bear: 0.1, reposeDry: 1, reposeWet: 1, strength: 0.05, growthCap: 1, suitability: 0.15, porosity: 0.2, smooth: 1.5, washMobility: 1, washFlow: 0.03 },
+  { ...NONE, name: 'litter', albedo: [0.55, 0.52, 0.47], state: MatState.Granular, bear: 0.1, reposeDry: 1, reposeWet: 1, strength: 0.05, growthCap: 1, suitability: 0.15, porosity: 0.2, smooth: 1.5, washMobility: 1, wash: 'litter' },
   // drifted dust: fine, blown about by a gust (it lies in the layers like any loose ground)
-  { ...NONE, name: 'drift', albedo: [0.6, 0.5, 0.39], state: MatState.Granular, bear: 0.1, reposeDry: 0.8, reposeWet: 0.6, porosity: 0.4, windLift: 9, airborne: 0.4, washMobility: 1, washFlow: 0.03 },
+  { ...NONE, name: 'drift', albedo: [0.6, 0.5, 0.39], state: MatState.Granular, bear: 0.1, reposeDry: 0.8, reposeWet: 0.6, porosity: 0.4, windLift: 9, airborne: 0.4, washMobility: 1, wash: 'drift' },
   // faded painted metal: car bodies, ship hulls, pylons (models.ts; round 13 F5)
   { ...NONE, name: 'steel', albedo: [0.44, 0.48, 0.5], state: MatState.Solid, strength: 0.85, growthCap: 1, suitability: 0.2, specular: 0.25, porosity: 0.15 },
   // tent fabric: weathered off-white canvas, weak
   { ...NONE, name: 'canvas', albedo: [0.78, 0.75, 0.66], state: MatState.Solid, strength: 0.3, growthCap: 1, suitability: 0.2, porosity: 0.5 },
   // packed dust: a deep dust layer compacted into ground (round 15, H3)
-  { ...NONE, name: 'silt', albedo: [0.56, 0.47, 0.37], state: MatState.Granular, bear: 0.2, reposeDry: 1.4, reposeWet: 1, strength: 0.15, growthCap: 3.5, suitability: 0.7, porosity: 0.5, smooth: 2, washMobility: 0.6, washFlow: 0.12 },
+  { ...NONE, name: 'silt', albedo: [0.56, 0.47, 0.37], state: MatState.Granular, bear: 0.2, reposeDry: 1.4, reposeWet: 1, strength: 0.15, growthCap: 3.5, suitability: 0.7, porosity: 0.5, smooth: 2, washMobility: 0.6, wash: 'silt' },
   // set lava: dark, glassy-rough stone (round 47)
   { ...NONE, name: 'basalt', albedo: [0.2, 0.19, 0.19], state: MatState.Solid, growthCap: 1.2, suitability: 0.35, specular: 0.12, porosity: 0.2 },
   // molten rock (a field, like oil; its glow is drawn by temperature)
   { ...NONE, name: 'lava', albedo: [0.9, 0.35, 0.08], state: MatState.Liquid, emissive: 1 },
   // snow (round 50): bright, holds a fair slope dry, slumps wet; a breeze
   // moves it (drifts in the lee), water carries it; melts to water when warm
-  { ...NONE, name: 'snow', albedo: [0.84, 0.86, 0.9], state: MatState.Granular, bear: 0.05, reposeDry: 1.3, reposeWet: 0.7, strength: 0.05, growthCap: 0, porosity: 0, specular: 0.3, smooth: 2, windLift: 6, airborne: 0, washMobility: 1, washFlow: 0.05 },
+  { ...NONE, name: 'snow', albedo: [0.84, 0.86, 0.9], state: MatState.Granular, bear: 0.05, reposeDry: 1.3, reposeWet: 0.7, strength: 0.05, growthCap: 0, porosity: 0, specular: 0.3, smooth: 2, windLift: 6, airborne: 0, washMobility: 1, wash: 'snow' },
   // fallen leaves (round 50): light, loose; blow about in a breeze, rot into soil
-  { ...NONE, name: 'leaf litter', albedo: [0.55, 0.36, 0.16], state: MatState.Granular, bear: 0.05, reposeDry: 1.5, reposeWet: 1.2, strength: 0.05, growthCap: 4, suitability: 0.9, porosity: 0.5, smooth: 1.5, windLift: 5, airborne: 0, washMobility: 1, washFlow: 0.03 },
+  { ...NONE, name: 'leaf litter', albedo: [0.55, 0.36, 0.16], state: MatState.Granular, bear: 0.05, reposeDry: 1.5, reposeWet: 1.2, strength: 0.05, growthCap: 4, suitability: 0.9, porosity: 0.5, smooth: 1.5, windLift: 5, airborne: 0, washMobility: 1, wash: 'leaves' },
   // ice (round 50): see-through pale blue, glossy; melts back to water
   { ...NONE, name: 'ice', albedo: [0.72, 0.86, 0.95], state: MatState.Solid, strength: 0.4, specular: 0.9, glass: 1 },
   // crystal (round 50): faceted, see-through, a faint glow of its own
@@ -225,7 +229,9 @@ export const MAX_MATERIALS = 40;
 /** Floats per material in the GPU uniform: 5 x vec4<f32>. Must match materials.wgsl. */
 export const MATERIAL_STRIDE_FLOATS = 20;
 
-export function packMaterialTable(): Float32Array {
+/** (round 112) the table for the GPU; washSpeed: a wash key's critical speed (cells/s — WorldGpu passes the tuning
+ *  registry's) */
+export function packMaterialTable(washSpeed: (k: WashKey) => number): Float32Array {
   if (MATERIALS.length > MAX_MATERIALS) throw new Error('material table overflow');
   const out = new Float32Array(MAX_MATERIALS * MATERIAL_STRIDE_FLOATS);
   MATERIALS.forEach((m, i) => {
@@ -234,7 +240,7 @@ export function packMaterialTable(): Float32Array {
     out.set([m.state, m.reposeDry, m.reposeWet, m.strength], o + 4);
     out.set([m.growthCap, m.suitability, m.specular, m.porosity], o + 8);
     out.set([m.smooth, m.glass ?? 0, 0, 0], o + 12);
-    out.set([m.windLift, m.airborne, m.washMobility, m.washFlow], o + 16);
+    out.set([m.windLift, m.airborne, m.washMobility, m.wash ? washSpeed(m.wash) : NEVER], o + 16);
   });
   return out;
 }

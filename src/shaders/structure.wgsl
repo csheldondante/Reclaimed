@@ -51,19 +51,24 @@ fn hydraulicDamage(p: vec2<i32>, z0: f32, z1: f32, dmg: u32, m: u32, salt: u32) 
     // water must actually touch this interval's face
     if (H <= z0 || g >= z1) { continue; }
     head = max(head, H - max(z0, g));
-    flow = max(flow, length(netFlow(q)));
+    // (round 112: the water's speed, cells/s)
+    flow = max(flow, flowSpeed(netFlow(q), d));
   }
   let strength = MATS[m].sim.w;
   var chance = 0.0;
   if (dmg > 0u && head > G.tune.structureHeadMin) { chance += (head - G.tune.structureHeadMin) * G.tune.structureHeadRate * simStep(); }
   // only what is already cracked (lightning, cyclones, heat) wears in fast
   // water: intact concrete and asphalt hold (round 15)
-  if (dmg > 0u && flow > 0.1) { chance += (flow - 0.1) * G.tune.structureFlowRate * (1.2 - strength); }
+  if (dmg > 0u && flow > G.tune.structureScourSpeed) { chance += (flow - G.tune.structureScourSpeed) * G.tune.structureFlowRate * (1.2 - strength); }
   let r = rand3(u32(p.x) * 16u + salt, u32(p.y), G.tick);
   return select(dmg, min(15u, dmg + 1u), r < chance);
 }
 
 const MAT_RUBBLE: u32 = 4u;
+/** (round 112) water this fast (cells/s) or more over a packed heap tears its top cell to litter, a chance a tick of
+ *  TRASH_WASH_RATE per cell/s over it */
+const TRASH_WASH_SPEED: f32 = 0.5;
+const TRASH_WASH_RATE: f32 = 0.03;
 const STAT_COLLAPSED: u32 = 14u;
 const GROUND: u32 = 15u;
 
@@ -156,8 +161,9 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
       // litter, which the water then carries off (round 15: wash away the
       // trash heaps)
       if (m == MAT_TRASH_S && i + 1u == n) {
-        let flow = length(netFlow(p));
-        if (flow > 0.02 && rand3(id.x, id.y, G.tick ^ 0x3a5u) < perTick((flow - 0.02) * 0.5)) {
+        // (round 112: by the water's speed, cells/s — was the net flux over 0.02, × 0.5)
+        let flow = flowSpeed(netFlow(p), water[colIdxI(p)]);
+        if (water[colIdxI(p)] > 0.02 && flow > TRASH_WASH_SPEED && rand3(id.x, id.y, G.tick ^ 0x3a5u) < perTick((flow - TRASH_WASH_SPEED) * TRASH_WASH_RATE)) {
           // (the top interval: split off its top cell as litter, then stop)
           if (z1 - 1.0 <= z0 || i + 1u >= cs.y) {
             layersOut[cs.x + i] = ivPack(z0, z1, MAT_LITTER, 0u);

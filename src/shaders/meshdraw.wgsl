@@ -517,7 +517,7 @@ fn meshSurf(in: MOut) -> Surf {
     let lw = clamp(length(wv) / 4.0, 0.0, 1.5);
     // the swash: how far up the waves run now (higher in the wind), ragged along the shore
     let along = vnoise(wo(in.wpos.xy) * 0.7 + 3.0);
-    let run = (0.06 + 0.12 * lw) * (0.55 + 0.45 * sin(G.time * 1.3 + along * 9.0));
+    let run = (0.06 + 0.12 * lw) * (0.55 + 0.45 * sin(simTime() * 1.3 + along * 9.0));
     let damp = smoothstep(run + 0.35, run, above) * (1.0 - film);
     alb *= 1.0 - 0.45 * max(film, damp * 0.75) * (0.4 + 0.6 * MATS[mat].eco.w);
     // (a glaze of the water's own colour, more of it the deeper)
@@ -527,7 +527,7 @@ fn meshSurf(in: MOut) -> Surf {
     let st = flowStreaks(in.wpos.xy, wt.flow, wt.d) * smoothstep(0.003, 0.04, fl);
     alb += toLinear(vec3<f32>(0.42, 0.48, 0.48)) * film * smoothstep(0.5, 0.9, st) * 0.3;
     let froth = film * smoothstep(0.04, 0.2, fl) * smoothstep(0.62, 0.85, flowStreaks(wo(in.wpos.xy) * 1.7, wt.flow, wt.d));
-    let lip = smoothstep(0.05, 0.0, abs(above - run)) * (1.0 - film) * smoothstep(0.3, 0.65, vnoise(wo(in.wpos.xy) * 2.2 + vec2<f32>(G.time * 0.35, 0.0)));
+    let lip = smoothstep(0.05, 0.0, abs(above - run)) * (1.0 - film) * smoothstep(0.3, 0.65, vnoise(wo(in.wpos.xy) * 2.2 + vec2<f32>(simTime() * 0.35, 0.0)));
     alb = mix(alb, toLinear(vec3<f32>(0.82, 0.84, 0.82)), max(froth * 0.6, lip * 0.55 * (0.4 + 0.6 * lw)));
     filmN = windWaves(in.wpos.xy, in.wpos.z, 0.25 + 0.5 * lw);
   }

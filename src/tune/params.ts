@@ -104,7 +104,8 @@ const SPEC = {
     params: {
       headMin: { label: 'head min', units: 'cells', min: 0, max: 10, step: 0.1, def: 2, gpu: true, help: 'water head under this does no damage' },
       headRate: { label: 'head rate', units: '/cell/tick', min: 0, max: 0.05, step: 0.001, def: 0.006, gpu: true },
-      flowRate: { label: 'scour rate', units: '/(cell/s)', min: 0, max: 0.5, step: 0.005, def: 0.06, gpu: true, help: 'fast water alongside a cracked solid wears it' },
+      flowRate: { label: 'scour rate', units: '/(cell/s)/tick', min: 0, max: 0.05, step: 0.0005, def: 0.006, gpu: true, help: 'fast water alongside a cracked solid wears it: a chance a tick per cell/s over the scour speed (round 112: was 0.06 per unit of the old net flux)' },
+      scourSpeed: { label: 'scour speed', units: 'cells/s', min: 0, max: 5, step: 0.05, def: 1, gpu: true, help: '(round 112) water slower than this beside a cracked solid does not wear it (the scour rate is per cell/s over it)' },
     },
   },
   water: {
@@ -181,6 +182,25 @@ const SPEC = {
       pipeHead: { label: 'piping head', units: 'cells', min: 0.5, max: 10, step: 0.1, def: 2.5, gpu: true, help: 'a water-level difference past this pushes loose ground to the low side' },
       pipeRate: { label: 'piping rate', units: 'cells/pass/cell', min: 0, max: 0.3, step: 0.005, def: 0.04, gpu: true },
       shakeSlip: { label: 'shake slip', units: 'share', min: 0, max: 1, step: 0.05, def: 0.8, gpu: true, help: 'at its hardest a shake lowers the repose by this share' },
+      washRate: { label: 'wash rate', units: 'cells/pass per m²/s', min: 0, max: 10, step: 0.05, def: 2, gpu: true, help: '(round 112) loose ground water carries: depth × (speed − the material wash speed) × this (× its mobility)' },
+    },
+  },
+  wash: {
+    title: 'Wash speeds (loose ground in water)',
+    owner: 'world/materials.ts packMaterialTable → sediment.wgsl waterOut (the material table: WorldGpu rewrites it when one moves)',
+    // (round 112, waterscale) the water's speed below which a loose material isn't carried (cells/s, a cell a metre:
+    // roughly the critical speeds of the real thing — fine dust and ash first, gravel and rubble last). Was a net flux
+    // a tick in the old pipes' units.
+    params: {
+      soil: { label: 'soil', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.6 },
+      sand: { label: 'sand', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.4 },
+      rubble: { label: 'rubble', units: 'cells/s', min: 0, max: 6, step: 0.05, def: 1.2 },
+      ash: { label: 'ash', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.25 },
+      litter: { label: 'litter', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.3 },
+      drift: { label: 'drift', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.25 },
+      silt: { label: 'silt', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.5 },
+      snow: { label: 'snow', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.35 },
+      leaves: { label: 'leaf litter', units: 'cells/s', min: 0, max: 4, step: 0.05, def: 0.2 },
     },
   },
   dust: {

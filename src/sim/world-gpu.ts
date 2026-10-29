@@ -7,6 +7,7 @@ import type { Profiler } from '../gpu/profiler';
 import { CHUNK, PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
+import { TUNE, TUNING } from '../tune/params';
 import { globalsBytes } from './globals';
 import { Pages } from './pages';
 import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_MAX, pageMiss, pageTab, pageTables } from '../gpu/pages-mode';
@@ -355,9 +356,13 @@ export class WorldGpu {
     this.pageVec4 = PAGE_ADDR === 'table' ? Math.max(1, Math.ceil((r.nx * r.ny) / 8)) : 1;
     pageTables.vec4 = this.pageVec4;
     this.globals = this.buf('globals', globalsBytes(this.pageVec4), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
-    const mats = packMaterialTable();
+    // (round 112: the wash speeds are the tuning registry's — a slider moved rewrites the table)
+    const mats = packMaterialTable((k) => TUNE.wash[k]);
     this.materials = this.buf('materials', mats.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.materials, 0, mats);
+    this.offTune = TUNING.onChange((id) => {
+      if (id === null || id.startsWith('wash.')) device.queue.writeBuffer(this.materials, 0, packMaterialTable((k) => TUNE.wash[k]));
+    });
     this.chunks = this.buf('chunks', packed.chunkTable.byteLength, S);
     device.queue.writeBuffer(this.chunks, 0, packed.chunkTable);
 
@@ -549,7 +554,11 @@ export class WorldGpu {
     if (this.pageTab) this.device.queue.writeBuffer(this.pageTab, 0, Uint32Array.from(this.ring.entries));
   }
 
+  /** (round 112) stops rewriting the material table when the tuning moves */
+  private offTune: () => void;
+
   destroy(): void {
+    this.offTune();
     if (pageTab.buf === this.pageTab) pageTab.buf = null;
     for (const b of this.owned) b.destroy();
     for (const t of this.textures) t.destroy();

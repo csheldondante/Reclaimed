@@ -16,6 +16,7 @@
 
 const DISSOLVE: f32 = 0.0016;
 const DISSOLVE_FLOW: f32 = 0.004;
+const DISSOLVE_SPEED: f32 = 1.0;
 const WATER_DECAY: f32 = 0.0002;
 const REMEDIATE: f32 = 0.00004;
 // absolute amount per tick at rain 1: one storm (~1 min) removes ~0.4, enough
@@ -53,7 +54,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let d = water[i];
   if (d > 0.003) {
     // any water standing or flowing over a stain washes it (not just rain)
-    let rate = DISSOLVE * min(d * 5.0, 1.0) + DISSOLVE_FLOW * min(length(netFlow(p)) * 10.0, 1.0);
+    // (round 112: flowing at DISSOLVE_SPEED cells/s or faster washes it fastest — was the net flux × 10)
+    let rate = DISSOLVE * min(d * 5.0, 1.0) + DISSOLVE_FLOW * min(flowSpeed(netFlow(p), d) / DISSOLVE_SPEED, 1.0);
     let a = min(cs, (relaxTick(rate) * cs + rate * 0.02 * S));
     cs -= a;
     cw += a;

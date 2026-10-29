@@ -33,6 +33,7 @@ struct Tune {
   structureHeadMin: f32,
   structureHeadRate: f32,
   structureFlowRate: f32,
+  structureScourSpeed: f32,
   waterRain: f32,
   waterEvap: f32,
   pipesRoughness: f32,
@@ -67,6 +68,7 @@ struct Tune {
   sedimentPipeHead: f32,
   sedimentPipeRate: f32,
   sedimentShakeSlip: f32,
+  sedimentWashRate: f32,
   dustDrag: f32,
   dustFall: f32,
   dustHazeDrag: f32,
@@ -76,6 +78,8 @@ struct Tune {
   sprayDrops: f32,
   spraySplash: f32,
   sprayMist: f32,
+  pad58: f32,
+  pad59: f32,
 };
 
 struct Globals {
@@ -326,6 +330,10 @@ alias Dirs = array<f32, 6>;
  * relaxation relaxTick(k).
  */
 fn simStep() -> f32 { return G.dt * 60.0; }
+/** (round 112, waterscale) the simulation's clock (s): ticks run × their step — the flows' animations (streaks, foam,
+ *  the water's waves and swash, lava's crust) run on it, so they speed up with the speed setting and stop when paused;
+ *  ambient motion (flicker, sway, clouds) stays on G.time, the wall clock */
+fn simTime() -> f32 { return f32(G.tick) * G.dt; }
 /** a chance p a 60 Hz tick, over this tick */
 fn perTick(p: f32) -> f32 { return 1.0 - pow(1.0 - clamp(p, 0.0, 1.0), simStep()); }
 /** a fraction k a 60 Hz tick (a relaxation toward, a decay by), over this tick */
@@ -358,6 +366,9 @@ fn pipeCoef(h: f32, g: f32, n: f32, damping: f32, vmax: f32) -> vec4<f32> {
   let k = PIPE_FACE * PIPE_DT * hh;
   return vec4<f32>(PIPE_FACE * g * PIPE_DT * PIPE_DT * min(hh, PIPE_WAVE_DEPTH), PIPE_DT * g * n * n / (k * pow(hh, 4.0 / 3.0)), k * vmax, PIPE_DT * damping);
 }
+/** (round 112) the water's speed (cells a second) for a net flow v (flow.wgsl netFlow) over water d deep: what the
+ *  wash, the scour and the stains' washing compare with their speeds */
+fn flowSpeed(v: vec2<f32>, d: f32) -> f32 { return length(v) / (PIPE_FACE * PIPE_DT * max(d, 0.02)); }
 /** the water's pipes' law (G.tune) for water h deep */
 fn waterPipe(h: f32) -> vec4<f32> { return pipeCoef(h, G.tune.worldGravity, G.tune.pipesRoughness, G.tune.pipesDamping, G.tune.pipesVmax); }
 /** a pipe's flux after a step: f now, dH the head across it (cells) */
