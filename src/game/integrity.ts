@@ -23,6 +23,7 @@ import { ColumnBodies, subtract, type ColPiece, type FallingBody, type Landing }
 import { RockBodies, RB, type RockBody, type RockGround, type V3 } from './rockbodies';
 import { BUILD_FRAMES, type RockDraw, type RockMesh } from '../render/rockmesh';
 import type { Physics, PhysBody } from '../physics/physics';
+import { TUNE } from '../tune/params';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { ExternalRegistry, MESHINST, OWNER_ROCK, type ExternalCol, type ExternalInstance } from '../sim/external';
 
@@ -77,9 +78,8 @@ const READ_NEAR = typeof location === 'undefined' || new URLSearchParams(locatio
 // with the speed around that point (to loose ground, with dust and chips);
 // pieces of up to IMPACT_CRUMB voxels crumble too. Metal breaks far less than
 // stone. Softer hits only puff dust.
-const IMPACT_BREAK = 1.2; // cells/s
-const SHATTER = 700;
-const IMPACT_CRUMB = 16; // voxels
+// (round 108: the tuning's `impact` — breakSpeed (was IMPACT_BREAK, cells/s), shatter (SHATTER), crumb (IMPACT_CRUMB, voxels))
+const IMP = TUNE.impact;
 const impactRadius = (speed: number) => Math.min(2.5, 0.5 + 0.3 * speed);
 const impactReach = (m: number) => (m === MAT.Steel || m === MAT.Rust ? 0.4 : m === MAT.Wood ? 0.7 : 1);
 
@@ -443,6 +443,42 @@ export class Integrity {
   }
 
   /**
+   * (round 108, the playground's station reset) What moves or rests over the columns [x0, x1) × [y0, y1) (storage
+   * cells) is let go before the caller writes them again: the rigid rock over them dropped, the resting rock on them
+   * forgotten, the pieces falling through them landed at once (written into the columns the caller then writes over),
+   * the loose bodies over them gone. Elsewhere nothing changes.
+   */
+  forget(x0: number, y0: number, x1: number, y1: number): void {
+    const [wx0, wy0] = cellPos(x0, y0);
+    const [wx1, wy1] = cellPos(x1, y1);
+    const over = (x: number, y: number) => x >= wx0 - 1 && x < wx1 + 1 && y >= wy0 - 1 && y < wy1 + 1;
+    if (this.rigid) {
+      const go = new Set(this.rigid.list.filter((b) => over(b.pos[0], b.pos[1])));
+      for (const b of go) if (b.slot !== undefined) this.rockMesh?.release(b.slot);
+      this.rigid.list = this.rigid.list.filter((b) => !go.has(b));
+    }
+    if (this.external) {
+      for (const inst of [...this.external.instances]) {
+        if (inst.owner !== OWNER_ROCK || !inst.cols.some((c) => c.x >= x0 && c.x < x1 && c.y >= y0 && c.y < y1)) continue;
+        const r = this.resting.get(inst.id);
+        this.external.forget(inst);
+        if (r) {
+          this.rockMesh?.release(r.slot);
+          this.resting.delete(inst.id);
+        }
+      }
+    }
+    const through = (b: FallingBody) => b.box[0] < x1 && b.box[2] >= x0 && b.box[1] < y1 && b.box[3] >= y0;
+    for (let k = 0; k < 2000; k++) {
+      const go = this.falling.list.filter(through);
+      if (!go.length) break;
+      for (const l of this.falling.update(0.05, false, go)) this.land(l);
+    }
+    this.bodies.list = this.bodies.list.filter((b) => !over(b.pos[0], b.pos[1]));
+    this.dirty = this.dirty.filter(([a, b, c, d]) => !(a >= wx0 && c <= wx1 && b >= wy0 && d <= wy1));
+  }
+
+  /**
    * Forget every falling piece (undo restores the world beneath them; a slide moved the columns). `reseed` (round
    * 86: the window's columns were all written again where it stands — a great meteor's): where they were is
    * looked at again — what was mid-air in the copy that went back is judged and falls on — and the copy read whole.
@@ -584,14 +620,14 @@ export class Integrity {
     this.stats.impacts++;
     const mat = mainMat(b.local);
     this.onDust?.(at[0], at[1], at[2], Math.min(40, Math.round(4 + speed * 4)), 0.6 + speed * 0.2, mat);
-    if (speed < IMPACT_BREAK) {
+    if (speed < IMP.breakSpeed) {
       this.onCollapse?.(at[0], at[1], at[2], b.local.length * speed * 0.05);
       return;
     }
     const weak = b.local.reduce((s, v) => s + impactReach(v.mat), 0) / b.local.length;
-    const k = Math.min(8, Math.floor((weak * speed * speed * b.local.length) / SHATTER));
-    const shards = this.bodies.shatter(b, at, k, IMPACT_CRUMB);
-    const { removed, crumbs } = this.bodies.breakAt(at, impactRadius(speed), IMPACT_CRUMB, impactReach);
+    const k = Math.min(8, Math.floor((weak * speed * speed * b.local.length) / IMP.shatter));
+    const shards = this.bodies.shatter(b, at, k, IMP.crumb);
+    const { removed, crumbs } = this.bodies.breakAt(at, impactRadius(speed), IMP.crumb, impactReach);
     crumbs.push(...shards);
     if (k >= 2) this.stats.shatters++;
     this.onCollapse?.(at[0], at[1], at[2], removed.length + crumbs.length + b.local.length * speed * 0.05);
@@ -754,7 +790,7 @@ export class Integrity {
   }
 
   /**
-   * (round 86) A piece came down: hit hard (IMPACT_BREAK), the rim of its foot crumbles round where it struck
+   * (round 86) A piece came down: hit hard (IMP.breakSpeed), the rim of its foot crumbles round where it struck
    * first — rubble, chips thrown, dust — a small one all of it; the rest is ground again where it lies, and its
    * columns are judged (what overhangs where it landed hangs).
    */
@@ -770,8 +806,8 @@ export class Integrity {
     this.stats.impacts++;
     this.onDust?.(hx, hy, hz, Math.min(40, Math.round(4 + l.speed * 4)), 0.6 + l.speed * 0.2 + Math.sqrt(b.cols.length) * 0.3, b.mat);
     const removed: { p: [number, number, number]; mat: number }[] = [];
-    if (l.speed >= IMPACT_BREAK && !b.broke) {
-      const small = b.cells <= IMPACT_CRUMB;
+    if (l.speed >= IMP.breakSpeed && !b.broke) {
+      const small = b.cells <= IMP.crumb;
       const R = small ? Infinity : impactRadius(l.speed) * impactReach(b.mat) + 0.5;
       const inPiece = new Set(b.cols.map((c) => c.y * 65536 + c.x));
       for (const c of b.cols) {

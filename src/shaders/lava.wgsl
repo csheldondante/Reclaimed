@@ -84,7 +84,7 @@ const SET_RATE: f32 = 0.6;
 // loose ground thinner than this on top slid onto setting lava: it sets under it
 const SKIN: f32 = 0.3;
 // cooling: e-folds per second for a cell of depth (thinner cools faster)
-const COOL: f32 = 0.06;
+// COOL (was 0.06): G.tune.lavaCool (round 108, src/tune/params.ts)
 // the ground's heat leaks away (e-fold, s)
 const GROUND_COOL_S: f32 = 1.5;
 // (round 92) a column whose top stands more than this over the blast's height doesn't melt
@@ -412,7 +412,7 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
   var T = min(select(0.0, heat / d, d > 1e-5), LAVA_MAX);
   if (d > 1e-5) {
     // it cools, thin lava fastest
-    T *= exp(-DT_L * COOL / max(d, 0.15));
+    T *= exp(-DT_L * G.tune.lavaCool / max(d, 0.15));
     // water over it boils off, quenching it
     let w = water[i];
     if (w > 1e-4 && T > 100.0) {

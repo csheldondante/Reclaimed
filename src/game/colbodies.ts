@@ -12,6 +12,7 @@
 // piece falls through is the pieces' while they fall: what the sim does there meanwhile is written over.
 
 import { MATERIALS, MatState } from '../world/materials';
+import { TUNE } from '../tune/params';
 import type { Interval } from '../world/layout';
 
 /** one column of a piece: its runs (world z, where it broke free) */
@@ -49,9 +50,9 @@ export interface Landing {
 }
 
 // the feel (bodies.ts, rounds 20–21: low gravity with air drag and a top speed — "fall more slowly… feel bigger")
-const G = 10; // cells/s²
-const AIR_DRAG = 0.35; // 1/s
-const MAX_V = 4; // cells/s
+// (round 108) gravity (the world's × pieces.gravity; was 10 cells/s²), air drag and top speed: the tuning's `pieces`
+// (shared with bodies.ts — the same falling piece, two implementations)
+const P = TUNE.pieces;
 /** pieces land regardless after this long (s) */
 const MAX_AGE = 24;
 
@@ -173,7 +174,7 @@ export class ColumnBodies {
     const touched = new Set<number>();
     for (const b of only ?? this.list) {
       b.age += dt;
-      const v = Math.max(-MAX_V, (b.vz - G * dt) * Math.exp(-AIR_DRAG * dt));
+      const v = Math.max(-P.maxV, (b.vz - TUNE.world.gravity * P.gravity * dt) * Math.exp(-P.airDrag * dt));
       // the gap under it: the least over its runs
       let gap = Infinity;
       let at: [number, number, number] = [0, 0, 0];

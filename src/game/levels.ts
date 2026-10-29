@@ -11,6 +11,7 @@ import { generateStreamWindow } from '../world/streamgen';
 import { generateTrials } from '../levels/trials';
 import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
 import { generateRocklab } from '../levels/rocklab';
+import { generatePlayground, STATIONS, type Station } from '../levels/playground';
 import type { FlowKit } from '../flow/install';
 import type { GateSpec } from '../world/kit';
 
@@ -47,6 +48,12 @@ export interface LevelDef {
   meshRoom?: number;
   /** (?flow=1) its springs and scripts, once the flow model is in (docs/ARCHITECTURE.md "The flow model") */
   flowSetup?: (kit: FlowKit) => { breach: (spring?: number) => void };
+  /** (round 108) the flow model on without ?flow=1 (?flow=0 turns it off) */
+  flow?: boolean;
+  /** (round 108, AR5) a test bed: the tuning panel and the bug report open (elsewhere: ?tunepanel=1), these groups unfolded */
+  lab?: { open: string[] };
+  /** (round 108, AR8) stations, each reset on its own (the playground: levels/playground.ts) */
+  stations?: Station[];
 }
 
 export const LEVELS: LevelDef[] = [
@@ -118,6 +125,7 @@ export const LEVELS: LevelDef[] = [
     sandbox: true,
     hidden: true,
     flowSetup: setupFlowlab,
+    lab: { open: ['flow', 'spray'] },
   },
   {
     id: 'rocklab',
@@ -129,6 +137,19 @@ export const LEVELS: LevelDef[] = [
     hidden: true,
     zMax: 96,
     zoom: 4.5,
+    lab: { open: ['rigid', 'fracture'] },
+  },
+  {
+    id: 'playground',
+    name: 'The Playground',
+    blurb: 'Rock, buildings, soil, a breach, a river and dust to test collapse and flow, with every physics number live.',
+    model: 'sign',
+    generate: (dims) => generatePlayground(dims),
+    sandbox: true,
+    zMax: 96,
+    flow: true,
+    lab: { open: ['world', 'rigid'] },
+    stations: STATIONS,
   },
   {
     id: 'sandbox',

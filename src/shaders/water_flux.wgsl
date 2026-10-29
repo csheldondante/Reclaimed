@@ -13,8 +13,8 @@ const OIL_DENSITY: f32 = 0.88;
 
 // per pipe: the hex Laplacian weights each of the six neighbours 2/3 as much
 // as the square grid's four (the same continuum spreading rate)
-const GAIN: f32 = 0.12 * 2.0 / 3.0;
-const FRICTION: f32 = 0.985;
+// GAIN (was 0.12 * 2.0 / 3.0): G.tune.pipesGain (round 108, src/tune/params.ts)
+// FRICTION (was 0.985): G.tune.pipesFriction (round 108, src/tune/params.ts)
 
 // (round 84, ?rivers=table: riverheld.wgsl) the atlas's rivers at their steady state
 @group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
@@ -50,7 +50,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       let j = colIdxI(q);
       Hn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q)) + water[j] + oil[j] * OIL_DENSITY;
     }
-    f[k] = select(max(0.0, f[k] * FRICTION + GAIN * (H - Hn)), max(0.0, GAIN / (1.0 - FRICTION) * (H - Hn)), seed);
+    f[k] = select(max(0.0, f[k] * G.tune.pipesFriction + G.tune.pipesGain * (H - Hn)), max(0.0, G.tune.pipesGain / (1.0 - G.tune.pipesFriction) * (H - Hn)), seed);
   }
   let total = dSum(f);
   if (total > d) { f = dScale(f, d / total); }

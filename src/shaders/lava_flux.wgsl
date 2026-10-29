@@ -11,10 +11,10 @@
 @group(0) @binding(4) var<storage, read> lava: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read_write> lavaFlux: array<Dirs>;
 
-const LAVA_GAIN: f32 = 0.012;
-const LAVA_FRICTION: f32 = 0.9;
+// LAVA_GAIN (was 0.012): G.tune.lavaGain (round 108, src/tune/params.ts)
+// LAVA_FRICTION (was 0.9): G.tune.lavaFriction (round 108, src/tune/params.ts)
 // it won't move for less of a step than this (cells)
-const LAVA_YIELD: f32 = 0.12;
+// LAVA_YIELD (was 0.12): G.tune.lavaYield (round 108, src/tune/params.ts)
 const LAVA_SET: f32 = 750.0;
 const LAVA_RUNNY: f32 = 1150.0;
 // thin lava barely moves (round 48: a film raced down a volcano's sides
@@ -43,7 +43,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     // (off the map: drains like a cliff)
     var Hn = H - 4.0;
     if (inMap(q)) { Hn = bedAt(q) + lava[colIdxI(q)].x; }
-    f[k] = max(0.0, f[k] * LAVA_FRICTION + LAVA_GAIN * fluid * (H - Hn - LAVA_YIELD));
+    f[k] = max(0.0, f[k] * G.tune.lavaFriction + G.tune.lavaGain * fluid * (H - Hn - G.tune.lavaYield));
     if (fluid <= 0.0) { f[k] = 0.0; }
   }
   let total = dSum(f);
