@@ -26,9 +26,36 @@ export const PAGE_STORAGE_KERNELS = new Set(['water-flux', 'sediment', 'sediment
 const MARK = 'fn colSlot(c: vec2<u32>) -> u32 { return colSlotRing(c); } // PAGE_ADDR';
 const MARK_TABLE = 'const PAGE_TABLE: bool = false; // PAGE_TABLE';
 
-/** a module's code with colSlot the build's way; `storage`: this module takes the table from binding 37 */
-export function pagesCode(code: string, storage: boolean): string {
+/** does this module's code find columns (common.wgsl colSlot)? */
+export function usesPages(code: string): boolean {
+  return code.includes(MARK);
+}
+
+/**
+ * (round 107, ?pagecheck=1: a debug build) Every kernel that can take one more storage buffer counts its lookups of a
+ * chunk off the window (a neighbour's read or write past the edge that isn't guarded) in pageMiss at binding 60, an
+ * entry a kernel; scripts/pagetest.mjs reads them back (WorldGpu.readPageMiss) and asserts 0. The table's clamp
+ * (colSlotTable) is robustness, not the fix: a caller off the window is a bug.
+ */
+export const PAGE_CHECK = typeof location !== 'undefined' && new URLSearchParams(location.search).get('pagecheck') === '1';
+export const PAGE_MISS_BINDING = 60;
+export const PAGE_MISS_MAX = 1024;
+export const pageMiss: { buf: GPUBuffer | null; labels: string[]; unchecked: Set<string>; layouts: WeakSet<GPUBindGroupLayout> } = { buf: null, labels: [], unchecked: new Set(), layouts: new WeakSet() };
+
+/** a module's code with colSlot the build's way; `storage`: this module takes the table from binding 37; `check`: its pageMiss entry */
+export function pagesCode(code: string, storage: boolean, check?: number): string {
   if (!code.includes(MARK)) return code;
+  if (check !== undefined) {
+    const inner = PAGE_ADDR === 'table' ? 'colSlotTable' : 'colSlotRing';
+    const c = code.replace(MARK, `fn colSlot(c: vec2<u32>) -> u32 { if (c.x >= pagesX() || c.y >= pagesY()) { atomicAdd(&pageMiss[${check}u], 1u); } return ${inner}(c); }`);
+    return (
+      (PAGE_ADDR === 'table' ? c.replace(MARK_TABLE, 'const PAGE_TABLE: bool = true;') : c) +
+      `
+// (round 107, ?pagecheck=1) this kernel's lookups of a chunk off the window
+@group(0) @binding(${PAGE_MISS_BINDING}) var<storage, read_write> pageMiss: array<atomic<u32>>;
+`
+    );
+  }
   if (storage)
     return (
       code.replace(MARK, 'fn colSlot(c: vec2<u32>) -> u32 { return colSlotStore(c); }') +

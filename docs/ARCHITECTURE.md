@@ -1166,6 +1166,44 @@ as one band. The layers already worked this way through their chunk table, and t
 - **The test**: `?ringbias=x,y` starts the ring off zero; scripts/ringtest.mjs steps the same ticks at two offsets
   and compares every field in window order; scripts/ringunit.mjs checks the CPU's Ring and a copy of the helpers.
 
+### Pages: the window's chunks through a page table (round 107, branch `pages`; docs/PAGES.md P2.1-P2.3)
+
+The ring above is now a page table, and storage is page-major. Window coordinates stay what every caller uses.
+
+- **The table** (`sim/pages.ts` Pages, `core.ring` = `world.ring`): per window chunk its page's *slot*. The slots are
+  the ring's places (py * nx + px, the wrap of chunk + offset) through `perm`, a place's slot: the identity, or with
+  `?pageperm=<seed>` shuffled (the identity test). `inv` is the table backwards (slot -> window chunk). Both go to the
+  Globals (`pages`, `pageInv`: 512 vec4 each, two u16 a u32 — GLOBALS_BYTES 1920 -> 18304), written only when
+  `version` moves (a slide). `?pages=table` (the default) looks the slot up; `?pages=ring` computes the identity's
+  (gpu/pages-mode.ts swaps common.wgsl colSlot when a module is made); `?pages=storage` is M1's only (a storage table
+  at binding 37 on the timed kernels with a slot free).
+- **Buffers** are page-major: column (x, y) at slot * 256 + (y % 16) * 16 + x % 16 (common.wgsl colIdx; colXY back
+  through pageInv). **Textures** are page atlases, a slot's 16 x 16 texels at (slot % nx, slot / nx) * 16 (texPage;
+  texCol2's 8 x 8, texColK's k wide): with the identity at offset 0 the atlas is window order, the buffers never are.
+- **The CPU**: Pages.i(x, y) (a buffer's index, and the CPU's mirrors of buffers: map.surface, the streamer's
+  outside / ground / relief, the level's caches), Pages.t(x, y) (a texture's texel index: Integrity's projection,
+  bodyCpu), idxHalf, toWindow / toStore (buffers) and texToWindow / texToStore (textures, `half` for a texel a 2 x 2)
+  for whole arrays; WorldCore.readBuffer / readTexture return window order. `slots` / `runs` / `texRects` / `pieces`
+  cut a rectangle into what to copy: one rectangle for the identity's slots, a run of pages each otherwise.
+- **Regions** (world/region-record.ts, RECORD_FORMAT 2): a record's per-column buffers are page-major too (its pages
+  row-major, each 256 columns), so a region <-> window copy is page runs (Streamer.regionRects: the region copier's
+  gather) and TileLandGpu's scratch reads a record through colIdx at the identity (its Globals get an identity table).
+  The CPU's region forms stay row-major (regionRowsToPages at toBody / fromBody); finish.wgsl writes page-major.
+  The CPU arrays' region parts are read and written by the region's slots (Streamer.regionSlots), so a frozen
+  region's parts are found where they lay whatever slid after.
+- **Per-chunk state by slot** (P2.3b): Sleep's until / drowse / filter, the Globals' sleep and drowse bits
+  (common.wgsl asleep / drowsy / chunkLive), the liquid's per-chunk counters (liquid.wgsl chunkOf, flow/steady.ts:
+  Sleep.wakeSlot / isAwakeSlot) and waterChange. A slide moves none of it: the chunks coming in take the leavers'
+  slots and only theirs are made fresh (Sleep.shift). The callers still speak window chunks and cells. The chunk
+  lists' entries are packed, cx | cy << 6 | slot << 12 (AwakeTiles.packEntry; cullSource finds the columns from cx, cy).
+  Not by slot: the hybrid's hfield bits (mesh chunks with their own side and hex offset, not pages), the agents'
+  GPU-built front list, the field mesh's chunk records.
+- **The slow turns** (P2.3a): a sleeping chunk's turn every n ticks is staggered by its world chunk
+  (common.wgsl chunkStagger, AwakeTiles' stagger from the window's origin), not its place in the window.
+- **The tests**: scripts/pageunit.mjs (Node: Pages against a JS copy of the helpers, both ways, every permutation),
+  scripts/pagetest.mjs (two loads, the same ticks and slides by hand, every field hashed in window order: ring
+  against table, identity against ?pageperm=).
+
 ### Region storage: the pool, the store, the record (round 100, branch `regionstore`)
 
 The user (DECISIONS round 100): "I want the world to serialize so we can recover the visited cells that change …

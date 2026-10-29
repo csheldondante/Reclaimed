@@ -47,7 +47,7 @@ async function run(qs) {
       }
     });
     const lv = level === 'atlas' ? '&level=atlas&at=15024,14337&world=ringtest&worldsave=0' : '';
-    await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&skip=sim&${qs}${lv}${extra}`, { waitUntil: 'load' });
+    await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&skip=sim&pagecheck=1&${qs}${lv}${extra}`, { waitUntil: 'load' });
     await p.waitForFunction(() => window.reclaimed?.core, { timeout: 240000 });
     await sleep(wait);
     return await p.evaluate(
@@ -122,7 +122,9 @@ async function run(qs) {
           await dev.queue.onSubmittedWorkDone();
           res.push({ at: `slide ${dx},${dy} then ${ticks} ticks`, ring: [core.ring.x, core.ring.y], h: await readAll() });
         }
-        return { dims: core.dims, res };
+        // (round 107, ?pagecheck=1: every kernel's lookups of a chunk off the window — must be none)
+        const miss = await core.world.readPageMiss();
+        return { dims: core.dims, res, miss };
       },
       ticks,
       slides,
@@ -142,5 +144,14 @@ for (let k = 0; k < a.res.length; k++) {
   const ok = bad.length === 0;
   if (!ok) failed = true;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${ra.at}: ring ${ra.ring} vs ${rb.ring}; ${Object.keys(ra.h).length} fields${ok ? ' identical' : `, differ: ${bad.join(' ')}`}`);
+}
+for (const [n, r] of [
+  ['a', a],
+  ['b', b],
+]) {
+  const m = r.miss;
+  const off = Object.keys(m.miss).length;
+  if (off) failed = true;
+  console.log(`${off ? 'FAIL' : 'ok  '} ${n}: chunks looked up off the window: ${off ? JSON.stringify(m.miss) : 'none'} (${m.checked} kernels checked; not checked, 8 storage buffers: ${m.unchecked.join(' ') || 'none'})`);
 }
 if (failed) process.exit(1);

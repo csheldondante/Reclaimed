@@ -9,7 +9,7 @@ import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
 import { GLOBALS_BYTES } from './globals';
 import { Pages } from './pages';
-import { PAGE_ADDR, pageTab } from '../gpu/pages-mode';
+import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_MAX, pageMiss, pageTab } from '../gpu/pages-mode';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 import { MAX_PLACES } from '../world/places';
@@ -296,6 +296,11 @@ export class WorldGpu {
       }
     }
     const r = this.ring;
+    // (round 107, ?pagecheck=1: the kernels' counts of chunks looked up off the window)
+    if (PAGE_CHECK) {
+      this.pageMissBuf = this.buf('pageMiss', PAGE_MISS_MAX * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+      pageMiss.buf = this.pageMissBuf;
+    }
     // (round 107, M1's ?pages=storage: the page table in a storage buffer too, an entry a u32 — gpu/pages-mode.ts)
     if (PAGE_ADDR === 'storage') {
       this.pageTab = this.buf('pageTab', Math.max(16, r.table.length * 4), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
@@ -451,6 +456,26 @@ export class WorldGpu {
   /** Upload the reach (one byte per column, 255 = inside). */
   writeReach(data: Uint8Array): void {
     this.device.queue.writeTexture({ texture: this.reachTex }, this.ring.texToStore(data, 1), { bytesPerRow: this.w }, { width: this.w, height: this.h });
+  }
+
+  /** (round 107, ?pagecheck=1) the off-window counter (null otherwise) */
+  pageMissBuf: GPUBuffer | null = null;
+
+  /** (round 107, ?pagecheck=1, scripts/pagetest.mjs) each kernel's lookups of a chunk off the window so far (the nonzero), and the kernels not checked */
+  async readPageMiss(): Promise<{ miss: Record<string, number>; checked: number; unchecked: string[] }> {
+    if (!this.pageMissBuf) throw new Error('readPageMiss: not a ?pagecheck=1 page');
+    const st = this.device.createBuffer({ size: this.pageMissBuf.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.pageMissBuf, 0, st, 0, st.size);
+    this.device.queue.submit([enc.finish()]);
+    await st.mapAsync(GPUMapMode.READ);
+    const u = new Uint32Array(st.getMappedRange().slice(0));
+    st.destroy();
+    const miss: Record<string, number> = {};
+    pageMiss.labels.forEach((l, k) => {
+      if (u[k]) miss[l] = (miss[l] ?? 0) + u[k];
+    });
+    return { miss, checked: new Set(pageMiss.labels).size, unchecked: [...pageMiss.unchecked] };
   }
 
   /** (round 107, M1's ?pages=storage) the storage page table (null otherwise) */
