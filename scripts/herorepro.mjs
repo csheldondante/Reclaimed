@@ -75,7 +75,7 @@ try {
   }
   await p.screenshot({ path: out });
   if (phase === 'save') {
-    await p.evaluate(() => window.reclaimed.stream.saveAll());
+    await p.evaluate(async () => { const S = window.reclaimed.stream; S.touch(0, 0, S.W, S.H); await S.saveAll(); return S.store?.size; }).then((n) => console.log('store', n));
     console.log('saved');
   }
   for (const l of log.slice(0, 30)) console.log(l);

@@ -12595,3 +12595,15 @@ so a tile showed the rock under the lava, and the magma "popped in" as a region 
 investigation with scripts/herorepro.mjs: a saved world kept in a Chrome profile between launches, an older build's
 saved by one, loaded by another. The lead is the relief (colTop), which is restored from the record, not rebuilt; the
 hybrid judges a chunk out of the window's z from it.
+
+**Measured (tilefix3, the laptop's iGPU, the gate at window 320 and 384).**
+- The floor: desktop 1600 x 900 holds at zoom 2.57; the phone proxy (a Pixel's UA, the phone's paths) at 2.78, at
+  window 384 too.
+- Inside it, every zoom from 14 down to the floor was 0% out of detail, parked and panning, and filled within 180
+  frames. One exception: desktop z14 while panning, 2.3% "window-undrawn" in one frame at a slide (TX5's slide, or the
+  filter's 5 frames short of it).
+- The saved world: a run=bell world saved by places 4ce9840 (window 384, a Pixel's UA, 36 regions touched and saved)
+  and loaded by tilefix3 on the same origin restored all 36 regions. The window drew 92% of its chunks (8 meshed, 147
+  grid, the rest voxel chunks still meshing), the hero on grass (C:/Projects/shots88/tilegate/hero-new-load.png). So a
+  world saved by today's builds restores; the relief theory isn't confirmed. Left to rule out on the user's phone: a
+  stale cached bundle, a much older world, their run's own saved progress (their quest arrow said 3030 m, ours 120 m).
