@@ -11661,3 +11661,15 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   (+20-70 %, 0.004-0.007 ms a frame: its corners' texColK and its neighbours across pages).
 - pagetest (ring at 0 against the table at 128,64 with ?pageperm=7), twice on a fresh server: 37 of 37 identical
   both times, no off-window lookups (54 kernels checked).
+
+## 2026-10-29 — bench v5: the screen kept awake through every page's load (session 5, `places`)
+
+- The user, after the pan bench on the pages build (data/bench/pixel9a-pan-pages.json): "my phone screen turned off
+  mid run" and "It's probably just during the reload which takes a while". A level page asked for the screen wake
+  lock only once the level was up (benchLevel runs after startLevel, ~30 s on the phone), so every page's load ran
+  without one; and a lock the system let go was never asked for again. That run's zoom 3.5 parked step (p99 200 ms,
+  a 650 ms frame) is most likely the screen going off.
+- Now the lock is asked for from the page's first moment (benchLoadingNote), again whenever it's let go while the
+  page is visible, and again on becoming visible. Every loss is logged per page (`wakeLog`), and the pan summary
+  names the pages whose lock was lost or whose tab was hidden. BENCH_VERSION 5.
+- Smoke: the start page and a pan level page load headless (?bench=pan&benchsmoke=1); typecheck clean.

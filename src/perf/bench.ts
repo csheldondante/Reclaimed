@@ -30,7 +30,7 @@ import { copyText, deviceTag, downloadJson, postDev, shareJson, stamp } from './
 /** (v3) vite.config.ts `define`: the build's time */
 declare const __BENCH_BUILD__: string;
 
-export const BENCH_VERSION = 4;
+export const BENCH_VERSION = 5;
 const STATE = 'reclaimed.bench.state';
 /** (v3) the build, on the start page: vite.config.ts defines it at build time */
 const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ : 'dev';
@@ -321,7 +321,10 @@ function makePanReport(s: BenchState): Record<string, unknown> {
 }
 
 function panSummary(r: Record<string, any>): string {
-  return [`device: ${r.summary?.device}`, ...(r.summary?.table ?? []), ...(r.summary?.notRun ?? []), `errors: ${r.errors?.length ?? 0}`].join('\n');
+  // (v5) a page whose screen lock was let go or whose tab was hidden: its numbers may hold the screen going off
+  const slept = Object.values(r).filter((p: any) => p && typeof p === 'object' && (p.hiddenDuring || (p.wakeLog ?? []).some((l: string) => !l.includes('no wake lock')))).map((p: any) => p.page);
+  const warn = slept.length ? [`screen lock lost or tab hidden on: ${slept.join(', ')} (see wakeLog)`] : [];
+  return [`device: ${r.summary?.device}`, ...warn, ...(r.summary?.table ?? []), ...(r.summary?.notRun ?? []), `errors: ${r.errors?.length ?? 0}`].join('\n');
 }
 
 // ---------- the suite's state ----------
@@ -605,6 +608,9 @@ export function benchWatchdog(): void {
 
 /** (v3) while a level page loads (the grey screen): which page of the run this is, so it never looks finished */
 export function benchLoadingNote(ui: HTMLElement): void {
+  // (v5, the user: "It's probably just during the reload which takes a while" — the lock was asked for only once the
+  // level was up, ~30 s into a page on the phone: now from the page's first moment)
+  void keepAwake();
   const s = load();
   if (!s) return;
   const d = document.createElement('div');
@@ -632,16 +638,56 @@ async function benchSkipNow(why: string, keep: boolean): Promise<void> {
 
 // ---------- the UI (drawn between measurements only) ----------
 
-let wakeLock: { release(): Promise<void> } | null = null;
-async function keepAwake(): Promise<boolean> {
-  try {
-    const wl = (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
-    if (!wl) return false;
-    wakeLock = await wl.request('screen');
-    return true;
-  } catch {
+// (v5, the user: "my phone screen turned off mid run" — the system may let a screen lock go while the page is
+// visible (battery saver, a screen timeout policy) and always does when it's hidden; the lock was asked for once a
+// page and never again. Now it's asked for again whenever it's let go and the page is visible, and every loss is
+// logged (wakeLog: ms since the page's start), so a run whose screen went off says so.)
+type WakeSentinel = { release(): Promise<void>; addEventListener(t: 'release', f: () => void): void };
+let wakeLock: WakeSentinel | null = null;
+let wakeWanted = false;
+let wakeHooked = false;
+const wakeLog: string[] = [];
+async function requestWake(): Promise<boolean> {
+  const wl = (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<WakeSentinel> } }).wakeLock;
+  if (!wl) {
+    wakeLog.push(`${Math.round(performance.now())}: no wake lock API`);
     return false;
   }
+  try {
+    const lock = await wl.request('screen');
+    wakeLock = lock;
+    lock.addEventListener('release', () => {
+      if (wakeLock === lock) wakeLock = null;
+      if (!wakeWanted) return;
+      wakeLog.push(`${Math.round(performance.now())}: let go (${document.visibilityState})`);
+      if (document.visibilityState === 'visible') void requestWake();
+    });
+    return true;
+  } catch (e) {
+    wakeLog.push(`${Math.round(performance.now())}: refused (${(e as Error).name}: ${(e as Error).message})`);
+    return false;
+  }
+}
+async function keepAwake(): Promise<boolean> {
+  wakeWanted = true;
+  if (!wakeHooked) {
+    wakeHooked = true;
+    document.addEventListener('visibilitychange', () => {
+      if (!wakeWanted) return;
+      wakeLog.push(`${Math.round(performance.now())}: ${document.visibilityState}`);
+      if (document.visibilityState === 'visible' && !wakeLock) void requestWake();
+    });
+  }
+  return wakeLock ? true : requestWake();
+}
+async function letSleep(): Promise<void> {
+  wakeWanted = false;
+  try {
+    await wakeLock?.release();
+  } catch {
+    // (already let go)
+  }
+  wakeLock = null;
 }
 
 class Panel {
@@ -1120,11 +1166,7 @@ async function finish(host: Host | null, panel: Panel): Promise<void> {
   save(s);
   await pending;
   (window as unknown as { reclaimedBench: unknown }).reclaimedBench = report;
-  try {
-    await wakeLock?.release();
-  } catch {
-    // (already let go)
-  }
+  await letSleep();
   panel.say(`Benchmark done — this run (bench v${BENCH_VERSION}, ${s.id}).`);
   panel.text(s.suite === 'pan' ? panSummary(report) : summary(report));
   reportButtons(panel, body);
@@ -1173,7 +1215,7 @@ export async function benchLevel(ctx: LevelCtx): Promise<void> {
     const B = new Bench(ctx, R as unknown as Engine, panel, `Benchmark running: page ${s.step} of ${s.pages.length - 1} (${page.name}), don't close —`);
     // (v3: what the page has so far saved at every step — a crash leaves it, marked incomplete)
     B.checkpoint = (step) => {
-      s.results[page.name] = { ...out, incomplete: true, lastStep: step };
+      s.results[page.name] = { ...out, wakeLog: [...wakeLog], incomplete: true, lastStep: step };
       try {
         save(s);
       } catch {
@@ -1194,6 +1236,7 @@ export async function benchLevel(ctx: LevelCtx): Promise<void> {
   }
   out.pageMs = Math.round(performance.now() - t0);
   out.hiddenDuring = hidden;
+  out.wakeLog = [...wakeLog];
   s.results[page.name] = out;
   panel.say(`${page.name} done — next…`);
   go(s);
