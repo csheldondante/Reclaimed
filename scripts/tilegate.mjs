@@ -159,7 +159,8 @@ async function measure(p, secs, parked = true) {
     // (the hitch recorder's word for the long frames: ?hitch=1)
     const rep = window.reclaimedHitch?.report?.();
     const hitches = rep?.worst ? rep.worst.slice(0, 2).map((h) => `${h.ms} ${h.cause} ${[...(h.steps ?? []), ...(h.async ?? [])].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`) : [];
-    return { hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
+    // (round 112, tilefix3: the zoom as it stands — under the device's floor it's held at it — and the floor)
+    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
   }, secs, parked);
 }
 

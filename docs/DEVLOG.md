@@ -12559,3 +12559,39 @@ The run is on origin/runner/tilegate-premerge, runner-results/tilegate-premerge/
   - "frames not judged" is a note, not a failure;
   - `--throttle N` (CDP);
   - each row records the tile pipeline: the pacer's perFrame, guard and base, the land's made, baked, inFlight and noSlot.
+
+## Round 112 (2026-10-29, session 5, `tilefix3`) — the zoom held to what the device's tiles can fill; lava in the tiles
+
+The user, verbatim: "Hero is still not loading tiles for the on the phone. The atlas has pop in of details like magma
+that pop in and some tiles just never load. Can you just limit the zoom to max supported tile size for the device then
+if any are missing we know it's a bug for sure?" And, after `&world=new`: "Same issue with the new world tag. The tiles
+load in very slowly over multiple seconds and still don't fill the whole screen so I think the zoom is too far for the
+phone."
+
+**The zoom floor.**
+- `Camera.zoom` is an accessor that never goes under `Camera.zoomFloor`, whoever sets it: every mode's input, the
+  director, scripts.
+- The renderer's TileCache sets the floor every 30 frames (`TileCache.zoomFloor`). It's the widest zoom at which the
+  screen's regions fit, counted with the look-ahead's margin (MARGIN² of the screen's ground, plus a region's ring):
+  - each in the part of a slot it takes at that zoom (whole, half or quarter), within 80% of the atlas's slots;
+  - and no more of them than the land makes in 300 frames at the path's rate: 0.3 tiles a frame on a phone (the gate's
+    phone-path fill, ~81 tiles in 270 frames at z1.3), 2 elsewhere. `?tilerate=` and `?floorframes=` set them;
+    `?zoomfloor=0` turns the floor off.
+- A level without a streamed window (the playground, the noise lab) has no tiles and so no floor.
+- Inside the floor every view should be all detail: a miss there is a bug. The gate's rows report `zoom` and
+  `zoomFloor`.
+
+**Lava in the tiles.** The window draws lava as its own sheet of instances. A tile's bake draws only the mesh and grid,
+so a tile showed the rock under the lava, and the magma "popped in" as a region came into the window.
+- `renderfields.wgsl` now writes a column under molten rock deeper than 0.15 as z = 2 + its heat. The bake
+  (`tiles.wgsl` `tileBake`) paints it with the window's look (render.wgsl): hot orange to yellow-white by heat, and a
+  crust with glowing seams as it cools. It lies flat, with no porosity.
+- The only other reader of z, the firelight (render.wgsl `lighting`), decodes it with `glowOf`.
+- The tile's own world runs RenderFieldsSystem on its land, so render-only tiles carry it too.
+- *Open:* a tile's lava isn't lit by its own light at night (no emissive bit left in the atlas), and a frozen tile keeps
+  its lava as baked.
+
+**The hero's grey screen with a saved world** (the user: `&world=new` draws it, their saved world doesn't). Under
+investigation with scripts/herorepro.mjs: a saved world kept in a Chrome profile between launches, an older build's
+saved by one, loaded by another. The lead is the relief (colTop), which is restored from the record, not rebuilt; the
+hybrid judges a chunk out of the window's z from it.

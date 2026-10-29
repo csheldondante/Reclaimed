@@ -103,6 +103,15 @@ function sizeOf(w: number, h: number): Size {
   if (fh > SH >> 1 || fw > SW) return 0;
   return fw <= SW >> 1 ? 2 : 1;
 }
+/** (round 112, `tilefix3`) the zoom floor (TileCache.zoomFloor): the share of the atlas's slots a screenful may take, the
+ *  frames a screenful's land may take to make from nothing, the land's rate a frame (tiles: measured by the gate —
+ *  scripts/tilegate.mjs fillFrames — a phone's path ~0.3 (the gate's phone-path fill: z1.3, ~81 tiles in 270 frames), a desktop's ~2; ?tilerate= sets it); ?zoomfloor=0 none */
+const FLOOR_ROOM = 0.8;
+const FLOOR_FRAMES = Number(new URLSearchParams(location.search).get('floorframes') ?? 300);
+const PHONE_UA = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+const FILL_RATE_PHONE = Number(new URLSearchParams(location.search).get('tilerate') ?? 0.3);
+const FILL_RATE = Number(new URLSearchParams(location.search).get('tilerate') ?? 2);
+export const ZOOM_FLOOR = new URLSearchParams(location.search).get('zoomfloor') !== '0';
 /** ?tiledebug=1: the tiles drawn tinted */
 const DEBUG = new URLSearchParams(location.search).get('tiledebug') === '1';
 
@@ -191,7 +200,7 @@ export class TileCache {
   /** counts (scripts read them): bakes (first, again), evictions, tiles drawn last frame, slots, in use, MB */
   /** ?tiledebug=1 (or set at run time — scripts/tileparity.mjs): the tiles drawn tinted */
   debug = DEBUG;
-  readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0 };
+  readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0, zoomFloor: 0 };
   private tiles = new Map<string, Tile>();
   /** (round 112, TC21) the atlas's quarters (slot · 4 + q): a whole slot's tile in its four, a quarter's in its own */
   private cells: (Tile | null)[];
@@ -329,6 +338,12 @@ export class TileCache {
   encode(enc: GPUCommandEncoder, cam: Camera, renderW: number): void {
     this.frame++;
     this.track(cam);
+    // (round 112, tilefix3: the device's zoom floor, now and then — the camera holds to it)
+    if (ZOOM_FLOOR && this.frame % 30 === 1) {
+      const f = this.zoomFloor(cam, renderW);
+      if (f > 0) cam.zoomFloor = f;
+      this.stats.zoomFloor = +f.toFixed(2);
+    }
     if (!this.on(cam)) return;
     const h = this.host;
     // (round 104, TC2: the land past the window no tile draws yet, made, meshed and baked — the camera's way first;
@@ -381,6 +396,39 @@ export class TileCache {
     cand.sort((a, b) => b.score - a.score);
     const go = landBaked ? cand.filter((c) => c.score >= 1e9) : cand;
     for (let k = 0; k < Math.min(PER_FRAME, go.length); k++) this.bake(enc, cam, B, rp, go[k], this.bakers[k]);
+  }
+
+  /**
+   * (round 112, `tilefix3`) The widest zoom (screen px a cell) at which this device's tiles hold the screen: the regions
+   * a zoom shows with the look-ahead's margin (the screen's ground, MARGIN² of it, a region's ring round it), each in the
+   * part of a slot it takes there (sizeOf at that zoom's scale), within FLOOR_ROOM of the atlas's slots — and no more of
+   * them than the land makes in FLOOR_FRAMES frames at its rate a frame (FILL_RATE: a phone's, a desktop's). Past the
+   * window only; 0 before the window's placed. Every view inside it should be all detail: a miss there is a bug.
+   */
+  zoomFloor(cam: Camera, renderW: number): number {
+    if (!this.origin || cam.fly) return 0;
+    const z0 = cam.zoom;
+    const B = this.basis(cam.viewProj);
+    const rp0 = (B.sx * renderW) / 2;
+    const [ax, ay] = cam.screenDeltaToWorld(cam.viewportW, 0);
+    const [bx, by] = cam.screenDeltaToWorld(0, cam.viewportH);
+    // (the screen's ground at z0, world units², and a region's)
+    const area0 = Math.abs(ax * by - ay * bx);
+    const region = R * R * ROW_H;
+    const slots = this.cells.length >> 2;
+    const rate = PHONE_UA ? FILL_RATE_PHONE : FILL_RATE;
+    // (from close out, the first zoom that doesn't fit; the floor the one before it)
+    let floor = 24;
+    for (let z = 24; z >= 0.5; z /= 1.04) {
+      const k = z0 / z;
+      const side = Math.sqrt(area0 * k * k) * MARGIN;
+      const n = (side / Math.sqrt(region) + 2) ** 2;
+      const sz = this.partFor(B, rp0 / k, 48);
+      const frac = sz === 0 ? 1 : sz === 1 ? 0.5 : 0.25;
+      if (n * frac > slots * FLOOR_ROOM || n > rate * FLOOR_FRAMES) break;
+      floor = z;
+    }
+    return floor;
   }
 
   /** (round 112) the renderer's frames so far (a frame's encode each) */
