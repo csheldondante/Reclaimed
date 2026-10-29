@@ -1370,6 +1370,18 @@ test scenes: `?flow=1&level=flowlab`, src/levels/flowlab.ts).
   once when at rest) would carry *moving* sand — a pour off a ledge as an arc — the way lava already sets; the
   next step, if wanted (BACKLOG FL4).
 
+### The held rivers' falls (round 107, branch `riverfalls`, BACKLOG WF1)
+
+A held river isn't simulated, so its falls are drawn, not run: render/riverfalls.ts (a SimSystem, period 1) reads
+the contract only — surface, water, the drift, `riverFlow` — finds the lips (a river column whose downstream top lies
+1.5 cells or more under its water, the fall's top only), and lists each as the flow model's stream (liquid.wgsl prep's
+format: header + two vec4) in its own buffer, drawn by the water pipeline (`renderer.addWaterPrisms`) with render.wgsl
+streamVertex / shadeStream. The launch: the held heading and speed (≥ sqrt(g d), ≤ 6 cells/s), level; the arc clipped
+where it meets a column's top. Spray, splash and mist go to the particle ring, shared over the lips listed. Only the
+columns the fixed view sees are dispatched (the free camera: the window). Gravity: common.wgsl `WORLD_G` (9.8 cells/s²,
+DECISIONS round 106; world/scale.ts on the CPU), shared with the flow model's streams, sheets and spray. Tiles hold no
+sheet (they paint a fall's face white water). The atlas level with `?rivers=table`; `?falls=0` off.
+
 ## Levels and the sandbox
 
 `game/levels.ts` is the level registry: id, name, blurb, title-screen model,
@@ -1594,7 +1606,9 @@ blast melts only columns whose top is within `BLAST_UP` (4) of where it hit (lav
 a voxel source on the renderer. Its buffers are its own (not world
 contracts): `agentNav` (per column NAV_K = 4 surfaces, vec4<u32>: height,
 headroom | wet | six 3-bit links, room, region — the peel reads `places` and
-`placeTable` in its own bind group), `agentDist` (NFIELDS = 4 fields × surfaces,
+`placeTable` in its own bind group), `agentNavCost` (round 107: per surface, the
+height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
+units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
 f32), `agentUnits` (four vec4 a unit: units.wgsl), `agentOcc` (units per
 column, two halves by tick parity), `agentEvents` (a count and 8-u32
 records: swing, hurt, death, alight; the CPU copies and clears it in

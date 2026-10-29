@@ -193,6 +193,12 @@ fn numEvents() -> u32 { return u32(G.misc.x); }
 // come in opposite pairs, so k ^ 1 is the way back: E, W, NE, SW, NW, SE.
 const NDIR: u32 = 6u;
 const ROW_H: f32 = 0.8660254;
+/** (riverfalls, round 107) gravity at the world's scale, cells/s²: the user (DECISIONS round 106) "a cell feels about
+ *  1–2 m … start from true gravity at that scale (about 4.9–9.8 cells/s²)" — 9.8, a cell a metre. What falls through
+ *  the air by the world's own gravity reads it here: the flow model's streams (liquid.wgsl GF), their sheets
+ *  (render.wgsl STREAM_G), the spray off them (particles.wgsl DROP_G), the held rivers' falls (riverfalls.wgsl).
+ *  The CPU's copy: world/scale.ts WORLD_G. */
+const WORLD_G: f32 = 9.8;
 /** unit vector of each direction in the world plane */
 const DIRV = array<vec2<f32>, 6>(
   vec2<f32>(1.0, 0.0), vec2<f32>(-1.0, 0.0),

@@ -443,8 +443,8 @@ fn vsWater(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> 
 // (?flow=1, round 86) a stream's sheet: liquid.wgsl prep's header (the column, z and vz it enters with, mat |
 // flags) and two vec4 after the list's room (a third of the buffer): where it enters (world xy), its velocity xy;
 // the front (how far along its path it's drawn, s), its time since the lip, the volume a second, heat.
-// STREAM_G: liquid.wgsl GF (keep the two the same).
-const STREAM_G: f32 = 14.0;
+// STREAM_G: the world's gravity (common.wgsl WORLD_G), as liquid.wgsl GF.
+const STREAM_G: f32 = WORLD_G;
 const STREAM_Q = array<vec2<f32>, 6>(vec2<f32>(0.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, -1.0), vec2<f32>(1.0, 1.0), vec2<f32>(0.0, 1.0));
 
 /** a stream's point and tangent t seconds along its path from where it enters */

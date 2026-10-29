@@ -181,3 +181,25 @@ At 4x throttle, window 256 (mean / max, ms):
 | FC5 | the arriving strip's catch-up in slices, nearest the screen first, or not until it nears the screen | optimisation | the phone's 6–17 frames over budget a slide at 384 / 512 |
 | FC6 | units, bodies and particles in world coordinates | structural | no translation a slide; projection of the arriving strip only |
 | FC7 | per-chunk state (sleep, hybrid, field mesh records) on the ring's chunk places | structural | windowMoved and the per-chunk shifts gone (~0.3 ms at 4x) |
+
+## C. FC4: the agents' spikes (round 107, branch `agentspike`)
+
+Round 104's front never emptied in the atlas:
+- a sweep relaxed 90–100% of the scope on nearly every tick;
+- any chunk that came into the scope re-peeled all of it (riding: an 11 ms peel in a 19 ms agents frame).
+
+The causes and the fix are in the DEVLOG (round 107). In short:
+- the fields reckon costs by their own heights and wet, with hysteresis (navCost);
+- a distance is written only when it moves more than 0.05;
+- fields start over instead of counting up;
+- the peel covers an eighth of the scope a tick;
+- a sweep relaxes at most 32 chunks.
+
+| agents' GPU a frame, ms (mean / p95 / max) | places ab286d9 | agentspike |
+|---|---|---|
+| parked, window 512 / zoom 5 | 1.41 / 4.14 / 6.31 | 1.06 / 3.07 / 9.45 |
+| parked, window 320 / zoom 14 | 1.43 / 4.04 / 20.1 | 1.06 / 2.31 / 6.11 |
+| riding (drive 18, window 512) | 0.89 / 4.16 / 22.15 | 0.47 / 1.96 / 9.38 |
+
+What is left: real change (the shores, the window's edge) keeps ~80% of the scope asking to be relaxed, and the cap
+bounds what a tick carries. FC10 (a front per field) is the next step.

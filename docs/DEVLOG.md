@@ -11315,6 +11315,158 @@ is wanted at once and a tile a frame is the bound (TC14: coarse tiles first).
   not written yet, no tile), or past it ahead, to the side, behind the pan's way — for TC15.
 
 
+## 2026-10-28 — Round 107 (`riverfalls`): the held rivers' falls as arcing sheets (BACKLOG WF1)
+
+The user, on waterfalls in the atlas: "Yes or just fake it based on flow speed over gaps and make it a parabolic
+arc. Either way". A held river (`?rivers=table`, riverheld.wgsl) isn't simulated, so nothing in it falls: its fall was
+its water surface down the face, turned white where steep (render.wgsl steepW). The flow model (`?flow=1`, round 86–87:
+"Waterfalls and the meteor look fantastic!") draws a fall as a curtain + band along a parabola with spray, splash and
+mist. Now the held rivers' falls are drawn the same way, render-only, with no simulation:
+
+- **render/riverfalls.ts, riverfalls.wgsl** — a SimSystem (period 1: the spray is a tick's worth, as the flow model's)
+  that reads only the contract (surface, water, the drift, riverFlow) and writes its own stream list and the particle
+  ring. A *lip* is a river column (riverFlow z > 0, wet) whose downstream neighbour (the direction nearest the held
+  heading) has its top — its water, or its ground — 1.5 cells or more under the column's water, and whose upstream
+  neighbour isn't itself over a drop (the fall's top only). Each lip throws its water off its downstream edge, level,
+  along the held heading at the held speed (riverFlow xy × 60, at the rivers' wetness), never slower than the critical
+  speed over a free overfall, sqrt(g d), and at most 6 cells/s (FALL_UMAX: the table's speeds are 3.6–48 cells/s, a
+  channel's quickened down rapids — every lip at both spots measured hit the cap). Width: render.wgsl streamWidth from
+  the volume a second the column throws (depth × speed across a cell), so a lip's columns' curtains join into one
+  sheet as wide as the river. The end: the arc marched along its path half a cell at a time, bisected where it meets
+  a column's top (not the lip's own); past the window's edge or 3 s it ends; one meeting a column within 0.3 s ran
+  into the bank beside the lip and isn't drawn. Listed in the flow model's stream format (liquid.wgsl prep's: header
+  + two vec4), so `renderer.addWaterPrisms` draws them with render.wgsl streamVertex / shadeStream unchanged.
+- **Gravity at the world's scale, shared**: common.wgsl `WORLD_G` = 9.8 cells/s² (CPU copy world/scale.ts) — the
+  user's round 106 answer, "a cell feels about 1–2 m … start from true gravity at that scale (about 4.9–9.8
+  cells/s²)", at a metre a cell. Gravity was a number per file (14 in the flow model, 10 the bodies, 20 the units and
+  the physics voxels); the falls and the flow model's streams draw with the same sheet code, so the flow model's
+  GF, the sheet's STREAM_G and the spray's DROP_G now read WORLD_G (14 → 9.8: `?flow=1`'s falls are slower and arc
+  a bit further — the user's call to check). The bodies' 10, the units' 20 and phys.wgsl's 20 are left for the
+  physics tuning panel (AR5), the baseline the user set.
+- **Spray, splash, mist**: liquid.wgsl prep's, per lip, by its discharge, only for the falls on screen. A wide river's
+  lip is a hundred columns and more (133 at the cascade), so the spray is shared: as much as 24 columns' full share
+  (FALL_SPRAY_COLS) spread over the columns listed last tick (riverfalls.wgsl listedPrev: the count copied in the
+  encoder before the list is cleared) — the particle ring is everyone's.
+- **Near the view only**: the kernel runs over the window's columns the fixed view can see (its viewProj is affine:
+  the screen's corners solved at the target's height ± 80, with a 12-cell margin; the free camera: the whole window),
+  and only falls on screen are listed.
+- **Tiles**: the window's tiles are baked from the window's own water but hold no instances, so a fall's sheet is
+  never in a tile (the window draws its own; past the window there's no sheet). At a lip a tile showed the water flat,
+  dark blue down the face, lit as if level. Now tiles.wgsl paints steep wet faces white water, baked still (steepW
+  without its scroll), lit by the face's normal. Nothing breaks (the wide shots: cascade-after-wide.png).
+
+Found with scripts/riverfalls.mjs (new): `--find` lists the atlas's falls from its river nodes (a node whose level
+drops 6 or more to the next: 811 of 54 142 nodes), by discharge; `--at x,y` loads there, lists the falls on screen
+(zoomed out), picks the biggest lip's fall and its neighbours, and takes the iso view, two free-camera views from
+beside it and a GIF, then the same with `?falls=0` (before). Shots in C:/Projects/shots88/riverfalls/:
+- `cascade-*` (at=6828,14314, temperate cliffs over a sea loch): 133 lips listed, 17 at the fall picked, ~1.3 s falls
+  over ~8 cells; before: the steep water surface; after: arcing sheets into the pool, spray and splash at the foot.
+- `crystal-*` (at=964,13602, a crystal-snow region): 31 lips, a 2.5 s fall of ~30 cells off a cliff into a lake.
+Each `-before`/`-after`: `-iso.png`, `-fly1.png`, `-fly2.png`, `-wide.png` (zoomed out, tiles), `.gif`.
+The brown flecks over the cascade are in the before shots too (another system's particles; not these).
+
+Cost (scripts/framecost.mjs at the cascade, the phone tier q=low, 412×915, win 512, zoom 5, desktop iGPU, every
+system on, 1x; falls on / `?falls=0`):
+
+| | GPU span p50 | passes sum mean | draw mean | riverfalls pass |
+|---|---|---|---|---|
+| parked, falls off | 9.19 | 8.80 | 3.39 | — |
+| parked, falls on (first cut: no bank filter, whole window, no spray share) | 11.19 | 10.50 | 4.15 | 0.27 |
+| parked, falls on (as committed) | 10.06 | 10.08 | 3.90 | 0.25 (0.14 at zoom 14) |
+| panning 10 cells/s, off / on | 9.19 / 9.51 | 8.66 / 8.98 | 3.05 / 3.09 | 0.19 |
+
+So with a big cascade filling the screen, about +0.9 ms of GPU span parked (+0.5 ms of it the sheets' blended
+fragments, ~0.1 ms the pass's fixed cost); +0.3 ms while panning; nothing off a river. The kernel at a lip-less view
+is the pass's floor (~0.1 ms on this iGPU). Left: the phone's numbers; fewer, wider sheets (one a run of lip columns,
+not one a column) if the phone's draw shows it.
+
+## 2026-10-28 — round 107 (`agentspike`): the agents' GPU spikes (FRAMECOST FC4)
+
+Measured with `?agentprof=1` and scripts/agentspike.mjs, both new:
+- `?agentprof=1` times the agents' tick as one pass a stage (agents-in, -peel, -relax, -units). It also logs every
+  tick: the scope, the chunks that came in, the marks, the chunks peeled, and each sweep's front (read back from
+  the indirect dispatch's count).
+- scripts/agentspike.mjs runs parked or riding and joins the worst frames to their ticks.
+Every run: the atlas at q=low (2 sweeps a tick), every system on, 1x, the desktop iGPU.
+
+What it showed on places as it was:
+- **The front never emptied.** Parked at either window, a sweep relaxed 90–100% of the scope (100–110 chunks) on
+  nearly every tick, and the relax was ~85% of the agents' time. Round 104's "settled fields cost nothing" never
+  happened in the atlas. Reading the distances back 20 ticks apart gave four causes:
+  1. Sediment moved surfaces by hundredths of a cell every peel, and any move marked its chunk (NAV_DZ = 0). Any
+     distance that moved by 1e-3 marked too, so each hundredth ran down the whole field.
+  2. The goal fields (agent-units F.goal0..11) are taken and let go all the time. A field left without seeds set
+     `markAll` (every chunk of the scope) every ~15–20 ticks.
+  3. A seed that went or moved far, or the scope's box drawing in (a chunk let go after its 600 ticks), left the
+     values round where it was too low. Relaxed from their neighbours, they count up a step a sweep over the
+     whole basin, for hundreds of sweeps.
+  4. At the shores the water sits round WADE (0.6), so the wet flag flipped (+3 on a step's cost). Sediment also
+     wobbled heights across the steps, and links flipped at STEP. Each flip sent a wave down every field.
+- **Riding: any chunk that came into the scope re-peeled the whole scope** (`navStale`). The scope's first fill
+  (672 chunks) was an 11 ms peel in a 19 ms agents frame.
+- Not causes: the 8-tick readback of the units' box, the scope re-entering (one entry in 40 s parked), and the
+  indirect dispatch's size (it is just the front's size).
+
+The fix makes each part's work follow what changed:
+- **navCost**: the height and wet a surface's cost is reckoned by, kept apart from the exact floor in nav that
+  the units ride.
+  - It is agents.wgsl binding 37, an agents-owned per-column buffer listed in columnBuffers and indexed like nav.
+  - Its height follows the floor only once the floor is more than NAV_DZ (0.25 cells) away. Wet turns on past
+    WADE and off under WADE_OFF (0.45).
+  - The links (their step up or down) and the relax read it.
+  - A peel marks a chunk only when its navCost or its room changed. Headroom counts through the links, which the
+    links pass compares.
+  - One concern per structure: the nav record had been both the floor and the field's input.
+- **A distance is written, and marks its chunk, only when it moves more than DIST_EPS (0.05).** That is a
+  twentieth of the cheapest step. Becoming or ceasing to be unreachable always counts.
+- **Fields start over instead of counting up.** Three cases restart a field:
+  - it is left without seeds;
+  - its seed went, or moved more than RESEED_NEAR (8 cells);
+  - the scope's box draws in (then every field restarts).
+
+  `clearFields` sets that field unreachable over the scope, with no marks, and it refills from its seeds outwards
+  (their chunks marked). A seed that is only added or nudged lowers values, or moves them a little, so it is
+  relaxed in place. `markAll` is now only for `confine`.
+- **The peel is spread.** It runs over an eighth of the scope's chunks each tick in turn, plus the chunks that came
+  in, at once. Before, it ran over the whole scope every eighth tick and on any tick a chunk came in. The links run
+  over those chunks and the chunks next to them. The whole scope is peeled only after the agents sat idle.
+- **FRONT_CAP**: a sweep relaxes at most 32 chunks, and the rest are carried to the next sweep.
+  - A carried chunk is marked as itself only (bit 1), so it doesn't spread to its neighbours.
+  - The box is walked from a starting place that turns with the tick, so the same chunks aren't always last.
+
+| agents' GPU a frame, ms (mean / p95 / max) | places ab286d9 | agentspike |
+|---|---|---|
+| parked, window 512 / zoom 5 | 1.41 / 4.14 / 6.31 | 1.06 / 3.07 / 9.45 |
+| parked, window 320 / zoom 14 | 1.43 / 4.04 / 20.1 | 1.06 / 2.31 / 6.11 |
+| riding (drive 18, window 512) | 0.89 / 4.16 / 22.15 | 0.47 / 1.96 / 9.38 |
+
+Method: `agentspike.mjs --prof 0`, 25 s parked and 40 s riding, each build on its own page. The iGPU's clock
+drifts between runs. This is the agents' tick at the phone tier.
+
+With the probe, at window 320:
+- The front went from 79–100 chunks a sweep to 30 (the cap).
+- The relax went from 1.05 ms mean to 0.32–0.74.
+
+What is left: the cap bounds the front a sweep, but after the first half minute parked the chunks asking to be in
+it stay at ~80 of 90–100. That is real change:
+- the water at the shores and at the window's edge moves the costs;
+- a distance field carries any change down its whole basin;
+- every field in use is relaxed in every front chunk.
+
+Proposed (BACKLOG FC10): a front per field, so a field that didn't move costs nothing where another did. Further
+on: the paths the user asked for in round 104 (ST15), for the town's fixed legs.
+
+Behaviour, each test run against places ab286d9 on its own page:
+- settlementtest, two runs each. Trips / blocks were 13 / 2 and 18 / 4 here, 19 / 5 and 17 / 3 on places; the
+  run-to-run spread is as wide as that gap. The raid of 7 against 4 was repelled, 14 dead on both.
+- hordetest: the same phases on both. 74 spawned. They closed in (54 chasing / 20 swinging here, 51 / 23 on
+  places). The blast killed 65 (places 67). Then the fire and the cone, and the burn.
+- agentfieldtest:
+  - the reader agrees on 19 of 24 on both;
+  - confined: 400 of 400 stayed in the home room (places 398);
+  - released: 3 left in the home room (places 0), mean distance to the goal 43.2 (places 42.2).
+- crewtest: 5 of 5 here. Places failed its pit-drop check on this run (4 of 5), as it does.
+
 ## 2026-10-28 — round 107 (`pages`): phase 2 begins — the page table (P2.1) and its cost on Mali (P2.0 M1)
 
 docs/PAGES.md's first steps. The user chose "Pages"; ringwin's helpers were already page-shaped.

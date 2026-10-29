@@ -73,6 +73,16 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
     ln = vec3<f32>(0.0, 0.0, 1.0);
     film = 1.0;
   }
+  // (riverfalls, BACKLOG WF1) a held river's fall in a tile: the window draws its sheet (render/riverfalls.ts) as
+  // instances the tile doesn't hold, so here water down a steep face is white water, baked still (render.wgsl steepW,
+  // without its scroll), lit as the face it runs down
+  let steepW = (1.0 - smoothstep(0.25, 0.7, m.nrm.z)) * step(0.5, wt.wet) * smoothstep(0.02, 0.15, wt.d) * step(m.wpos.z - 0.3, wt.level);
+  if (steepW > 0.0) {
+    let streak = smoothstep(0.35, 0.8, vnoise(vec2<f32>(dot(wo(m.wpos.xy), vec2<f32>(1.3, 0.9)) * 1.5, m.wpos.z * 0.6)));
+    alb = mix(alb, toLinear(vec3<f32>(0.86, 0.88, 0.88)), steepW * (0.55 + 0.4 * streak));
+    ln = m.nrm;
+    film = max(film, 0.6 * steepW);
+  }
   var o: BakeOut;
   o.a = vec4<f32>(sqrt(clamp(alb * 0.5, vec3<f32>(0.0), vec3<f32>(1.0))), film);
   let d = dot(-CAM.eye.xyz, m.wpos) - CAM.pos.z;

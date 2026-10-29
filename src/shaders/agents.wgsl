@@ -94,13 +94,34 @@ fn inScope(q: vec2<i32>) -> bool { return q.x >= i32(AB[0].x) && q.y >= i32(AB[0
 // sweep relaxes (frontList), and its dispatch's workgroups (frontArgs: x, 1, 1)
 @group(0) @binding(34) var<storage, read_write> dirtyCur: array<atomic<u32>>;
 @group(0) @binding(35) var<storage, read_write> dirtyNext: array<atomic<u32>>;
-@group(0) @binding(33) var<storage, read_write> frontArgs: array<atomic<u32>, 3>;
+// (round 107: w the chunks that asked to be in it this sweep, FRONT_CAP taken)
+@group(0) @binding(33) var<storage, read_write> frontArgs: array<atomic<u32>, 4>;
+/** (round 107, agentspike) chunks a sweep relaxes at most: a change that reaches over more (a shore drying across a
+ *  town, a field starting over) is relaxed over several sweeps, the rest carried — no tick carries more than this */
+const FRONT_CAP: u32 = 32u;
 @group(0) @binding(36) var<storage, read_write> frontList: array<u32>;
 /** (ringwin) column (x, y)'s chunk's slot in the per-chunk marks: its page (common.wgsl pageIdx) */
 fn chunkOfCol(x: u32, y: u32) -> u32 { return pageIdx(vec2<u32>(x, y) / COLS_PAGE); }
-/** (round 104) how far a surface's top may move between peels before its chunk is relaxed again (cells): 0, any
- *  move — the front keeps it local, so the fields stay exact */
-const NAV_DZ: f32 = 0.0;
+/** (round 107, agentspike) how far a surface's floor moves from the height its cost is reckoned at before that height
+ *  follows it (cells; navCost). Round 104 marked any move at all; the sediment moves surfaces by hundredths every peel,
+ *  so the front never emptied (FRAMECOST FC4) */
+const NAV_DZ: f32 = 0.25;
+/** (round 107) the water under which a wet surface counts dry again (it turns wet past WADE): a shore's ripple round
+ *  WADE doesn't flip it */
+const WADE_OFF: f32 = 0.45;
+// (round 107, agentspike) per surface (as nav: column i, slot k): the height and the wet the fields reckon its cost by
+// (the links and the relax), apart from the exact floor in nav that the units ride. 0 none, else
+// (round(z * 8) + 1) << 1 | wet. It follows the floor with hysteresis (NAV_DZ, WADE / WADE_OFF), so sediment's
+// hundredths and a ripple at a shore don't send a wave down every field; a change to it marks the chunk for the front
+@group(0) @binding(37) var<storage, read_write> navCost: array<u32>;
+/** (a surface not peeled since its slot was cleared — a strip come in — counts by its floor until it is) */
+fn costZ(s: u32) -> f32 { return select(navZ(s), f32((navCost[s] >> 1u) - 1u) / 8.0, navCost[s] != 0u); }
+fn costWet(s: u32) -> bool { return (navCost[s] & 1u) != 0u; }
+/** (round 107) how far a distance moves before it is written and marks its chunk: below it the field keeps what it
+ *  has (a twentieth of the cheapest step, so a unit's way down it is the same), and a sub-step ripple — a surface
+ *  moved by hundredths — doesn't run down the whole field */
+const DIST_EPS: f32 = 0.05;
+
 /** a surface's record changed (its height, headroom, wet, links, room — not its water, which the fields don't read)? */
 fn navMoved(a: vec4<u32>, b: vec4<u32>) -> bool { return a.x != b.x || a.y != b.y || a.z != b.z; }
 
@@ -166,10 +187,21 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
       let nv = vec4<u32>(bitcast<u32>(z), u32(min(head, 31.0) * 8.0) | (select(0u, 1u, wet) << 8u), (room & 0xffffu) | (region << 16u), bitcast<u32>(select(0.0, water[i], out == 0u)));
       // (the links' bits are the links pass's: compared there)
       let ov = nav[i * NAV_K + out];
-      // (round 104: a surface that moved marks its chunk for the front — its height past NAV_DZ, headroom, wet,
-      // room; the links are compared in the links pass)
-      let dz = abs(bitcast<f32>(ov.x) - z);
-      if (dz > NAV_DZ || (ov.y & 0x1ffu) != nv.y || ov.z != nv.z) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
+      // (round 107: the cost's height and wet follow the floor with hysteresis — navCost)
+      let oc = navCost[i * NAV_K + out];
+      var cz = z;
+      var cw = wet;
+      if (oc != 0u) {
+        let ocz = f32((oc >> 1u) - 1u) / 8.0;
+        if (abs(z - ocz) <= NAV_DZ) { cz = ocz; }
+        cw = r == i32(n) - 1 && water[i] > select(WADE, WADE_OFF, (oc & 1u) != 0u);
+      }
+      let nc = ((u32(round(max(cz, 0.0) * 8.0)) + 1u) << 1u) | select(0u, 1u, cw);
+      navCost[i * NAV_K + out] = nc;
+      // (round 104: a surface that changed for the fields marks its chunk for the front. Round 107: its cost — a
+      // surface come, its height or wet as navCost has them — or its room; the headroom counts through the links,
+      // compared in the links pass)
+      if (nc != oc || ov.z != nv.z) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
       // (its links kept: the links pass makes them again, the same where nothing moved — so no change is flagged)
       nav[i * NAV_K + out] = vec4<u32>(nv.x, nv.y | (ov.y & ~0x1ffu), nv.z, nv.w);
       out += 1u;
@@ -180,6 +212,7 @@ fn surfaces(@builtin(global_invocation_id) id: vec3<u32>) {
     let none = vec4<u32>(bitcast<u32>(-1.0), 0u, 0u, 0u);
     if (navMoved(nav[i * NAV_K + k], none)) { atomicOr(&dirtyCur[chunkOfCol(id.x, id.y)], 1u); }
     nav[i * NAV_K + k] = none;
+    navCost[i * NAV_K + k] = 0u;
   }
 }
 
@@ -194,6 +227,8 @@ fn links(@builtin(global_invocation_id) id: vec3<u32>) {
     let z = navZ(s);
     if (z < 0.0) { break; }
     let ceilA = z + navHead(s);
+    // (round 107: the step up or down by the cost's heights — navCost — so a floor's hundredths don't flip a link)
+    let cz = costZ(s);
     var bits = 0u;
     for (var d = 0u; d < NDIR; d++) {
       let q = nbr(p, d);
@@ -204,7 +239,7 @@ fn links(@builtin(global_invocation_id) id: vec3<u32>) {
       for (var j = 0u; j < NAV_K; j++) {
         let zq = navZ(j0 + j);
         if (zq < 0.0) { break; }
-        let dz = zq - z;
+        let dz = costZ(j0 + j) - cz;
         if (dz > STEP || dz < -DROP) { continue; }
         // headroom over the step: the lower ceiling above the higher floor
         if (min(ceilA, zq + navHead(j0 + j)) - max(z, zq) < AGENT_H) { continue; }
@@ -258,7 +293,9 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
   let ch = chunkOfCol(id.x, id.y);
   for (var k = 0u; k < NAV_K; k++) {
     let s = i * NAV_K + k;
-    let z = navZ(s);
+    if (navZ(s) < 0.0) { break; }
+    // (round 107: the cost's heights and wet, navCost)
+    let z = costZ(s);
     // (the surfaces are packed from 0: past the last, none. Nothing links to
     // an empty slot, so what's left in its fields is never read; a slot that
     // fills again is recomputed from its neighbours the next sweep)
@@ -291,16 +328,20 @@ fn relax(@builtin(global_invocation_id) id: vec3<u32>) {
           let t = colIdxI(qn) * NAV_K + l - 1u;
           let dn = dist[f * N + t];
           if (dn >= FAR) { continue; }
-          d = min(d, dn + stepCost(z, navZ(t), navWet(t)));
+          d = min(d, dn + stepCost(z, costZ(t), costWet(t)));
         }
       }
       // (a field cut off from its seeds counts up forever unless capped: past
       // any real path's length it's unreachable)
       // (round 104: past the scope's own size — a pocket cut off within it counts up to that, then it's settled)
       let nd = select(d, FAR, d > f32(min(G.mapW + G.mapH, (AB[0].z - AB[0].x) + (AB[0].w - AB[0].y))) * 6.0);
-      // (round 104: a distance that moved marks its chunk — the next sweep relaxes round it)
-      if (abs(nd - dist[f * N + s]) > 1e-3) { atomicOr(&dirtyNext[ch], 1u); }
-      dist[f * N + s] = nd;
+      // (round 104: a distance that moved marks its chunk — the next sweep relaxes round it; round 107: past DIST_EPS,
+      // else it keeps what it has)
+      let od = dist[f * N + s];
+      if (abs(nd - od) > DIST_EPS || (nd >= FAR) != (od >= FAR)) {
+        atomicOr(&dirtyNext[ch], 1u);
+        dist[f * N + s] = nd;
+      }
     }
   }
 }
@@ -314,6 +355,7 @@ fn frontReset() {
   atomicStore(&frontArgs[0], 0u);
   atomicStore(&frontArgs[1], 1u);
   atomicStore(&frontArgs[2], 1u);
+  atomicStore(&frontArgs[3], 0u);
 }
 
 /** the scope box's chunk t, or none (its chunk x, y; ok) */
@@ -327,7 +369,11 @@ fn boxChunk(t: u32) -> vec3<u32> {
 
 @compute @workgroup_size(64)
 fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
-  let b = boxChunk(id.x);
+  // (round 107: the box walked from a place that turns with the tick, so the chunks past FRONT_CAP aren't always the same)
+  let cs0 = G.chunkSize;
+  let total = ((AB[0].z - AB[0].x) / cs0) * ((AB[0].w - AB[0].y) / cs0);
+  if (id.x >= total) { return; }
+  let b = boxChunk((id.x + AP.n.w * 37u) % total);
   if (b.z == 0u) { return; }
   let cs = G.chunkSize;
   var hit = false;
@@ -336,12 +382,20 @@ fn frontBuild(@builtin(global_invocation_id) id: vec3<u32>) {
       let i = i32(b.x) + dx;
       let j = i32(b.y) + dy;
       if (i < i32(AB[0].x / cs) || j < i32(AB[0].y / cs) || i >= i32(AB[0].z / cs) || j >= i32(AB[0].w / cs)) { continue; }
-      if (atomicLoad(&dirtyCur[pageIdx(vec2<u32>(u32(i), u32(j)))]) != 0u) { hit = true; }
+      // (a change — bit 0 — reaches the chunks round it; a chunk carried past FRONT_CAP — bit 1 — only itself)
+      let m = atomicLoad(&dirtyCur[pageIdx(vec2<u32>(u32(i), u32(j)))]);
+      if ((m & select(1u, 3u, dx == 0 && dy == 0)) != 0u) { hit = true; }
     }
   }
   if (!hit) { return; }
-  let k = atomicAdd(&frontArgs[0], 4u);
-  frontList[k / 4u] = b.y * G.chunksX + b.x;
+  // (round 107: past FRONT_CAP, the chunk is carried to the next sweep — marked bit 1: relaxed then, itself only)
+  let k = atomicAdd(&frontArgs[3], 1u);
+  if (k >= FRONT_CAP) {
+    atomicOr(&dirtyNext[pageIdx(b.xy)], 2u);
+    return;
+  }
+  atomicAdd(&frontArgs[0], 4u);
+  frontList[k] = b.y * G.chunksX + b.x;
 }
 
 @compute @workgroup_size(64)
@@ -349,6 +403,20 @@ fn frontClear(@builtin(global_invocation_id) id: vec3<u32>) {
   let b = boxChunk(id.x);
   if (b.z == 0u) { return; }
   atomicStore(&dirtyCur[pageIdx(b.xy)], 0u);
+}
+
+/** (round 107) the fields left without seeds this tick, or starting over (a seed gone or moved far: agents.ts seed),
+ *  AP.n3.w, set unreachable over a tile list (the scope): no marks — nothing follows a field with no seeds, and its
+ *  seeds mark where it refills from */
+@compute @workgroup_size(8, 8)
+fn clearFields(@builtin(global_invocation_id) id: vec3<u32>) {
+  if (id.x >= G.mapW || id.y >= G.mapH) { return; }
+  let i = colIdx(id.x, id.y);
+  let N = ns();
+  for (var f = 0u; f < 12u; f++) {
+    if (((AP.n3.w >> f) & 1u) == 0u) { continue; }
+    for (var k = 0u; k < NAV_K; k++) { dist[f * N + i * NAV_K + k] = FAR; }
+  }
 }
 
 /** mark the chunks of a tile list changed (a seed placed or moved, a field cleared: agents.ts) */
