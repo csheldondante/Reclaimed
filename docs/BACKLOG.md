@@ -18,6 +18,7 @@ The user: "The most basic thing is that all the tiles visible on screen load vis
 
 | id | item | size | status |
 |---|---|---|---|
+| IN1 | (round 112, the user, on the atlas sandbox on the phone: "it's hard to pan without zooming on the phone") Two-finger pan also zooms (input: two fingers pan and pinch together): separate them with a pinch dead zone (zoom only when the spread changes past a threshold relative to the pan), and/or one-finger pan with the hand tool | S | open |
 | TX1 | The atlas sized for the phone's screen (24 MB, 96 slots): the budget scaled by the screen's css area (to 128 MB) | S | done (`tilefix`): desktop 1600 x 900 384 slots / 144 MB, phone 104 / 39 MB |
 | TX2 | Render-only tiles never culled (their box only on the GPU), so with round 108's rule never evicted: a conservative CPU bound per tile (Atlas.zRange + 128 / -64, calibrated on 2210 GPU boxes), no readback | S | done (`tilefix`) |
 | TX3 | The look-ahead's 16 x 16 screen grid missed whole regions at a wide zoom: two points a region (16-64 a side) | S | done (`tilefix`) |
