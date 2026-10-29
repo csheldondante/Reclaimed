@@ -22,12 +22,16 @@ const throttle = Number(opt('throttle', 0));
 const extra = opt('extra', '');
 const win = opt('win', '256');
 const at = opt('at', '15024,14337');
+// (--size WxH --dpr d: the viewport — a desktop's 1600x900 at 1; --base "": the page's own settings instead of the bench's)
+const [vw, vh] = opt('size', '412x915').split('x').map(Number);
+const dpr = Number(opt('dpr', 2.6));
+const base = opt('base', 'q=low&hitch=1&hitchhud=0&tufts=0&shadowcache=4&prepevery=2&bandh=2&shadowsize=512&hybrid=1&settle=0&inplace=1&sleepmore=1');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const browser = await puppeteer.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
   headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-precise-memory-info', '--window-size=412,915'],
-  defaultViewport: { width: 412, height: 915, deviceScaleFactor: 2.6, hasTouch: true, isMobile: true },
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--enable-precise-memory-info', `--window-size=${vw},${vh}`],
+  defaultViewport: { width: vw, height: vh, deviceScaleFactor: dpr, hasTouch: vw < 800, isMobile: vw < 800 },
   protocolTimeout: 900000,
 });
 const out = { url: '', runs: [] };
@@ -44,7 +48,7 @@ try {
   });
   p.on('console', (m) => m.type() === 'error' && console.log('console.error', m.text().slice(0, 300)));
   // (the pan bench page's own settings — src/perf/bench.ts, the phone's flags — less the bench)
-  const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&hitch=1&hitchhud=0&tufts=0&shadowcache=4&prepevery=2&bandh=2&shadowsize=512&hybrid=1&settle=0&inplace=1&sleepmore=1&at=${at}&win=${win}${extra}`;
+  const u = `${url}/?skipmenu=1&level=atlas&tutorial=0${base ? `&${base}` : ''}${at ? `&at=${at}` : ''}${win ? `&win=${win}` : ''}${extra}`;
   out.url = u;
   console.log(u);
   await p.goto(u, { waitUntil: 'load' });
@@ -144,6 +148,7 @@ try {
           why: w,
           whyBehind: wb,
           tiles: { n: L.length, queue: st((t) => t.start - t.wanted), land: st((t) => t.mapped - t.start), landFrames: st((t) => t.frames ?? NaN), toBake: st((t) => t.baked - t.mapped), toDrawn: st((t) => t.drawn - t.baked), total: st((t) => t.drawn - t.wanted) },
+          cache: { ...TL.stats, land: land ? { ...land.stats } : null, origin: TL.origin, pipes: !!TL.pipes, gPipe: !!TL.host?.gPipe?.(), gridPipe: !!TL.host?.gridPipe?.() },
           slots: { slots: TL.stats.slots, mb: TL.stats.mb, usedMax, drawnMax, evicted: TL.stats.evicted - ev0, noSlot: (land?.stats.noSlot ?? 0) - ns0 },
           pacer: pz ? { perFrameMean: +(per / frames.length).toFixed(2), turnsPerFrame: +((pz.tiles - pc0.tiles) / frames.length).toFixed(2), chained: (pz.chained ?? 0) - pc0.chained } : null,
         };
