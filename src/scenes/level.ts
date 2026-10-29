@@ -39,11 +39,11 @@ import { EV, eventAt } from '../atlas/coarse';
 import { FarLand } from '../atlas/far';
 import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
-import { SETTLE_TOL, Sleep } from '../sim/sleep';
+import { settleTol, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
 import { CatchmentWet } from '../weather/catchwet';
 import { RiverWetField } from '../weather/wetfield';
-import { RIVERS } from '../sim/world-gpu';
+import { riverMode, useRivers } from '../sim/world-gpu';
 import { installFlow, type FlowKit } from '../flow/install';
 import { FLOWLAB } from '../levels/flowlab';
 import { TunePanel } from '../ui/tunepanel';
@@ -305,7 +305,9 @@ export class LevelScene implements Scene {
     if (!level.generate) throw new Error(`level "${level.id}" is not built yet`);
     this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
     // (?flow=1, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
-    if ((host.params.get('flow') === '1' || (level.flow && host.params.get('flow') !== '0')) && !level.atlas) {
+    // (round 110: an opt-in for the flow model's own lab only — every other level runs the game's water)
+    if (host.params.get('flow') === '1') {
+      if (!level.flowSetup) throw new Error(`?flow=1: the flow model runs in its own lab only (level=flowlab), not "${level.id}"`);
       this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, this.core.ring);
       this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
       this.core.sleep = this.sleep;
@@ -779,6 +781,9 @@ export class LevelScene implements Scene {
   /** Builds the level and settles it (rivers, slopes) before returning. */
   static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void, opts: LevelOptions = {}): Promise<LevelScene> {
     const level = levelById(levelId);
+    // (round 110) how its rivers are kept, before its atlas and its world are made: the atlas's and an authored river
+    // table's held (sim/world-gpu.ts useRivers; world/rivertable.ts)
+    useRivers(level.rivers);
     if (level.atlas && !opts.map) {
       // the world's atlas first (atlas/atlas.ts), then the window onto it where we start (?at=x,y cells, or its own spawn)
       // (round 69: the atlas was taller than the window, which slid in z; round 100: the window holds its whole
@@ -826,7 +831,8 @@ export class LevelScene implements Scene {
     s.core.globals.debrisBoost = opts.map || level.stream ? 1 : 10;
     // (round 84, ?rivers=table: a streamed world's water comes in at the atlas's steady state — not run in the warmup,
     // where nothing is asleep yet and its rivers would run unheld)
-    const still = level.stream && RIVERS === 'table';
+    // (round 110: a fixed map's authored river table too — its rivers come in at their table)
+    const still = riverMode() === 'table';
     await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology' && !(still && sys.name === 'water'));
     // (?flow=1) everything awake a moment after the warmup: the steady state then lets what's near steady
     // sleep (the generator's steady land frozen at once) and keeps what still flows unsteadily awake
@@ -1291,6 +1297,14 @@ export class LevelScene implements Scene {
       },
       scene: this,
     };
+    // (round 110) a fixed map with held rivers (an authored river table, world/rivertable.ts): sleep and wake as the
+    // atlas level's (below) — what's still sleeps, its river held at its table; what's done there wakes and settles
+    // (?settletol), then freezes again
+    if (!this.level.stream && !this.flow && riverMode() === 'table' && host.params.get('sleep') !== '0') {
+      this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, core.ring);
+      this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
+      core.sleep = this.sleep;
+    }
     if (this.level.stream) {
       const a = this.opts.atlas;
       this.stream = a
@@ -1941,13 +1955,18 @@ export class LevelScene implements Scene {
     }
     // (round 84) the rivers' wetness: the season and the storms (weather/riverwet.ts); (round 109) on the atlas level
     // the storms per watershed — the climate's the season alone, each river's storm water its own catchment's
+    // (round 110: and a fixed map's authored river table's — world/rivertable.ts riverGraph, its window the map)
     const atl = this.opts.atlas?.atlas;
     if (atl?.riverCatchments && this.stream && !this.catchWet) {
       this.catchWet = new CatchmentWet({ nodes: atl.riverNodes, catchments: atl.riverCatchments, n: atl.p.n, worldW: atl.worldW, worldH: atl.worldH });
       this.wetField = new RiverWetField(this.host.gpu.device, core.world.riverWet);
     }
-    if (this.catchWet && this.wetField && this.stream) {
-      const S = this.stream;
+    if (core.map.riverGraph && !this.stream && !this.catchWet && riverMode() === 'table') {
+      this.catchWet = new CatchmentWet(core.map.riverGraph);
+      this.wetField = new RiverWetField(this.host.gpu.device, core.world.riverWet);
+    }
+    if (this.catchWet && this.wetField) {
+      const S = this.stream ?? { origin: [0, 0] };
       const key = `${S.origin[0]},${S.origin[1]}`;
       if (key !== this.catchAt) {
         this.catchAt = key;
@@ -1959,7 +1978,7 @@ export class LevelScene implements Scene {
       globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, []);
     } else globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
-    if (this.sleep && SETTLE_TOL > 0) this.readSettling();
+    if (this.sleep && settleTol() > 0) this.readSettling();
     if (this.sleep) {
       globals.sleep = this.sleep.update(performance.now() / 1000, [camera.target[0], camera.target[1], 40], globals.events, weather.storms, core.sim.tick);
       globals.drowse = this.sleep.drowse;

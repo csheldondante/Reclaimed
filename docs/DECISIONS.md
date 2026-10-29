@@ -32,7 +32,7 @@ each was implemented.
   combinations and generators — layers and masks blended into heightmaps, the existing biomes as presets, the ideas
   above as experiments (BACKLOG TG1–TG8).
 
-## 2026-10-29 — round 110 (session 5, `places`) — what the simulation is for
+## 2026-10-29 — round 110 (session 5, `places`, `playwater`) — what the simulation is for; one water path
 
 - The user, verbatim:
   "The destruction and erosion and flooding and wind and particles are all there to make the world react on screen
@@ -61,6 +61,12 @@ each was implemented.
   been completed without any real agent simulation while you are gone" (BACKLOG ST18): each planned tile stores its
   build progress; watched, agents haul and build it bit by bit; unwatched, progress advances by rate × time elapsed
   with no agent simulation, and the land shows the result on arrival.
+
+- Waterfalls, the user: "The waterfalls don't use the same system as the main game can you explain why?" → one water
+  path: the playground runs exactly what the game runs (the pipes, its river held at an authored river table that
+  makes the same riverFlow as the atlas's rivers, sleep and settle-then-freeze); `?flow=1` stays the flow lab's
+  opt-in only (BACKLOG PW1-PW5). An authored river's wetness goes through riverWetAt as the atlas's: the season,
+  plus the rain on its own declared catchment (the playground's: its station) (PW4).
 
 ## 2026-10-29 — round 109 (session 5, `places`) — more devices; generators and editors; better runs
 

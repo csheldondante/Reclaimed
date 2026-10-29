@@ -13,6 +13,7 @@
 // carves a channel along the segments between nodes.
 
 import { warmth } from './regions';
+import { riverChannelDepth, riverSpeed } from '../world/rivertable';
 
 /** texels drained through for a river, and the most a lava river runs */
 const RIVER_MIN = 160;
@@ -365,7 +366,8 @@ export function findRivers(opt: {
     f[o + 3] = w;
     nodes[o + 4] = next;
     nodes[o + 5] = flags[k];
-    f[o + 6] = lv ? 1.4 : Math.min(3.5, Math.max(1.2, w * 0.3));
+    // (round 110: the rating shared with an authored river table — world/rivertable.ts)
+    f[o + 6] = lv ? 1.4 : riverChannelDepth(w);
     const fall = next !== k ? Math.max(0, lev[i] - (water[d] ? sea : lev[d])) : 0;
     // (round 90) a river into a lake, and the one out of it
     if (!lv && d >= 0) {
@@ -379,11 +381,9 @@ export function findRivers(opt: {
     // filled to 0.3 under the level), the square root taken so a brook still moves; quicker where the level falls
     if (!lv) {
       const Q = RIVER_RUNOFF * acc[i];
-      const dn = f[o + 6];
-      const A = 2 * w * Math.max(0.3, (2 / 3) * dn - 0.3);
       const dist = next !== k ? Math.hypot(((i % n) - (d % n)) * cell, (Math.floor(i / n) - Math.floor(d / n)) * cell) || cell : cell;
       const slope = Math.max(0, Math.min(fall, 12)) / dist;
-      const v = Math.min(0.8, Math.min(0.45, Math.max(0.06, 0.5 * Math.sqrt(Q / A))) * (1 + Math.min(slope * 6, 1.5)));
+      const v = riverSpeed(Q, w, f[o + 6], fall, dist);
       f[o + 7] = v;
       speeds.push(v);
       qs.push(Q);

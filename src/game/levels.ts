@@ -13,6 +13,7 @@ import { generateFlowlab, setupFlowlab } from '../levels/flowlab';
 import { generateRocklab } from '../levels/rocklab';
 import { generatePlayground, STATIONS, type Station } from '../levels/playground';
 import type { FlowKit } from '../flow/install';
+import type { RiverMode } from '../sim/world-gpu';
 import type { GateSpec } from '../world/kit';
 
 /** What the title-screen model for a level looks like (menumap.ts builds it). */
@@ -46,10 +47,11 @@ export interface LevelDef {
   atlas?: boolean;
   /** the field mesh's room a chunk, times its default (rough land) */
   meshRoom?: number;
-  /** (?flow=1) its springs and scripts, once the flow model is in (docs/ARCHITECTURE.md "The flow model") */
+  /** (?flow=1: the flow lab only) its springs and scripts, once the flow model is in (docs/ARCHITECTURE.md "The flow model") */
   flowSetup?: (kit: FlowKit) => { breach: (spring?: number) => void };
-  /** (round 108) the flow model on without ?flow=1 (?flow=0 turns it off) */
-  flow?: boolean;
+  /** (round 110) how its rivers are kept (sim/world-gpu.ts RiverMode; default sim): `table` — held at their steady
+   *  state, the atlas's (its river graph) or an authored river table's (world/rivertable.ts) */
+  rivers?: RiverMode;
   /** (round 108, AR5) a test bed: the tuning panel and the bug report open (elsewhere: ?tunepanel=1), these groups unfolded */
   lab?: { open: string[] };
   /** (round 108, AR8) stations, each reset on its own (the playground: levels/playground.ts) */
@@ -114,6 +116,7 @@ export const LEVELS: LevelDef[] = [
     zMax: 248,
     stream: true,
     atlas: true,
+    rivers: 'table',
     meshRoom: 5,
   },
   {
@@ -147,7 +150,9 @@ export const LEVELS: LevelDef[] = [
     generate: (dims) => generatePlayground(dims),
     sandbox: true,
     zMax: 96,
-    flow: true,
+    // (round 110 — the user: "The waterfalls don't use the same system as the main game can you explain why?" — the
+    // game's water: the pipes, its river held at an authored table like the atlas's, sleep and settle-then-freeze)
+    rivers: 'table',
     lab: { open: ['world', 'rigid'] },
     stations: STATIONS,
   },

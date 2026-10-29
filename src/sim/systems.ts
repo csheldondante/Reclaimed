@@ -38,7 +38,7 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { TILES_BINDING as TILES } from './cull';
 import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
-import { RIVERS, RIVER_PULL, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, STATS_COUNT, type WorldGpu } from './world-gpu';
+import { riverMode, riverPull, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, STATS_COUNT, type WorldGpu } from './world-gpu';
 
 /** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) */
 /**
@@ -53,16 +53,17 @@ const RIVER_SLOW_N = (() => {
   if (!(n >= 1 && Number.isInteger(n))) throw new Error(`?riverslow=${v}: ticks between a far river's updates, 1 or more`);
   return n;
 })();
-const RIVER_SLOW = SIM_CULL && RIVERS === 'table' && RIVER_SLOW_N > 1;
+// (round 110: the world's river mode, read as its kernels are made — sim/world-gpu.ts useRivers)
+const riverSlow = () => SIM_CULL && riverMode() === 'table' && RIVER_SLOW_N > 1;
 /** (round 108: exported — the tiles' draw floods a held river's bed to its level: render/renderer.ts) */
-export const riverHeld = `const RIVER_SLOW_N: u32 = ${RIVER_SLOW ? RIVER_SLOW_N : 1}u;
-const RIVER_TABLE: bool = ${RIVERS === 'table'};
+export const riverHeld = () => `const RIVER_SLOW_N: u32 = ${riverSlow() ? RIVER_SLOW_N : 1}u;
+const RIVER_TABLE: bool = ${riverMode() === 'table'};
 const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
 const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
-const RIVER_PULL: f32 = ${RIVER_PULL};
+const RIVER_PULL: f32 = ${riverPull()};
 const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
 ` + riverHeldWgsl;
-import { SETTLE, SLEEP_MORE } from './sleep';
+import { settleLand, SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
 import { LIVE, NEAR, SIM_CULL, cullKernel, dispatchTiles } from './cull';
 import { WindRects } from './windrect';
@@ -228,13 +229,13 @@ export class WaterSystem implements SimSystem {
     // the atlas's table and their flux follows, and the flux pass's cost is theirs. A list of the chunks with rivers
     // made on the GPU each tick cost more (0.04 ms a frame) than the water's passes over the rest saved.)
     // (round 104, simscale: with rivers=table, the live chunks, those beside them and the rest's slow turns — NEAR)
-    const tiles = RIVERS === 'table' ? (RIVER_SLOW ? NEAR + RIVER_SLOW_N : undefined) : flowN('water');
+    const tiles = riverMode() === 'table' ? (riverSlow() ? NEAR + RIVER_SLOW_N : undefined) : flowN('water');
     const fluxK = (settle: boolean) =>
       kernel(
         device,
         world,
         settle ? 'water-settle-flux' : 'water-flux',
-        `const FLUX_SEED: bool = ${!SETTLE};\nconst SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterFluxWgsl + riverHeld,
+        `const FLUX_SEED: bool = ${!settleLand()};\nconst SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterFluxWgsl + riverHeld(),
         { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 22: 'tex', 62: 'tex', 31: 'uniform' },
         { 3: world.surface, 4: settle ? world.waterNext : world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect },
         false,
@@ -245,7 +246,7 @@ export class WaterSystem implements SimSystem {
         device,
         world,
         settle ? 'water-settle-depth' : 'water-depth',
-        `const SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterDepthWgsl + riverHeld,
+        `const SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterDepthWgsl + riverHeld(),
         { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex', 62: 'tex', 31: 'uniform' },
         // (a settling pass's second half: from the next buffer back into the water — the passes ping-pong)
         { 3: settle ? world.waterNext : world.water, 4: world.flux, 5: world.waterSource, 6: settle ? world.water : world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect },
@@ -450,7 +451,7 @@ export class RenderFieldsSystem implements SimSystem {
       world,
       'renderfields',
       terrainShapeWgsl + meshStateWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
-` + renderFieldsWgsl + flowWgsl + riverHeld,
+` + renderFieldsWgsl + flowWgsl + riverHeld(),
       { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 22: 'tex', 62: 'tex', 30: 'uniform' },
       { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 22: world.riverFlowView, 62: world.riverWetView, 30: world.meshRegion },
       false,

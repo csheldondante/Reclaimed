@@ -10,8 +10,9 @@
 //              its repose to undercut: loose ground, slumps and falls
 //   4 breach   (x 16..96,  y 112..176): a pool on a plateau held by a concrete plug at its lip (the flow lab's A),
 //              breached: it pours off the ledge as an arc into a basin
-//   5 river    (x 112..256, y 96..176): a spring at the top of a ramp, a winding channel, a fall over a ledge and out
-//              off the map's edge: the flow's steady state, frozen (sleeping) once it holds, with its spray
+//   5 river    (x 112..256, y 96..176): a river down a ramp, winding, over a ledge (a fall) and out off the map's edge
+//              — (round 110) the game's water: declared in a river table (world/rivertable.ts), carved and held at
+//              its steady state as the atlas's rivers are (riverFlow, riverheld.wgsl), asleep until something wakes it
 //   6 dust     (x 16..112, y 192..240): a field of drift and ash with a sandstone top on a thin leg in it: dust storms
 //              and a collapse's dust
 // Storage coordinates (x column, y row); the camera looks from +x+y, so each station's open side faces it.
@@ -20,6 +21,7 @@ import { CHUNK, ColumnGrid, type Interval, type WorldDims } from '../world/layou
 import { MAT } from '../world/materials';
 import type { MapData } from '../world/mapgen';
 import { cellAt, cellPos, ROW_H } from '../world/lattice';
+import { holdRivers, type AuthoredRiver } from '../world/rivertable';
 
 const G = 10;
 
@@ -57,15 +59,48 @@ export interface Station {
 const BUILD = { x: 116, y: 30 };
 const SOIL = { shelf: { x0: 196, x1: 234, y0: 20, y1: 48, top: G + 12 }, bank: { x0: 210, y0: 26, y1: 42, top: G + 17 }, wall: [232, 234] as [number, number], mound: { x: 212, y: 64, r: 10, slope: 1.1 } };
 const BREACH = { plateau: { x0: 16, x1: 56, y0: 116, y1: 172, top: G + 24 }, pool: { c: [32, 144] as [number, number], r: 9, floor: G + 21, level: G + 23.6 }, notch: { y0: 141, y1: 147, floor: G + 22 }, plug: [52, 54] as [number, number], basin: { x0: 56, x1: 92, y0: 116, y1: 172, floor: G - 4 } };
-const RIVER = { x0: 112, x1: 256, y0: 100, y1: 172, ledge: 196, top: G + 20, lip: G + 12, low: G + 3, foot: G, mid: 136, amp: 7, wave: 13, half: 2.5, depth: 2 };
+const RIVER = { x0: 112, x1: 256, y0: 100, y1: 172, ledge: 196, top: G + 20, lip: G + 12, low: G + 3, foot: G, mid: 136, amp: 7, wave: 13, width: 4, discharge: 0.3 };
 const DUST = { x0: 16, x1: 112, y0: 192, y1: 240 };
 
 /** the river's channel's middle row at column x */
 const riverMid = (x: number) => RIVER.mid + RIVER.amp * Math.sin((x - RIVER.x0) / RIVER.wave);
 /** the ramp's top at column x */
-const riverTop = (x: number) =>
-  x < RIVER.ledge ? RIVER.top - ((x - RIVER.x0) * (RIVER.top - RIVER.lip)) / (RIVER.ledge - RIVER.x0) : RIVER.low - ((x - RIVER.ledge) * (RIVER.low - RIVER.foot - 1)) / (RIVER.x1 - RIVER.ledge);
-const SPRING_COLS: [number, number][] = [-1, 0, 1].map((d) => [RIVER.x0 + 3, Math.round(riverMid(RIVER.x0 + 3)) + d]);
+const rampTop = (x: number) => RIVER.top - ((x - RIVER.x0) * (RIVER.top - RIVER.lip)) / (RIVER.ledge - RIVER.x0);
+const lowTop = (x: number) => RIVER.low - ((x - RIVER.ledge) * (RIVER.low - RIVER.foot - 1)) / (RIVER.x1 - RIVER.ledge);
+/** (round 110) the ledge's face: a steep chute CHUTE columns across (9 cells down over 4: every column of it a fall,
+ *  RIVER_FALL a step, as the atlas's falls run down their cliff's slope) */
+const CHUTE = 4;
+const riverTop = (x: number) => {
+  const a = RIVER.ledge - CHUTE / 2;
+  const b = RIVER.ledge + CHUTE / 2;
+  return x < a ? rampTop(x) : x >= b ? lowTop(x) : rampTop(a) + ((x - a) * (lowTop(b) - rampTop(a))) / CHUTE;
+};
+/** (round 110) the river as a river table declares it (world/rivertable.ts): its line down the ramp's middle, its water
+ *  on the ground there (a river's level, the atlas's: the land before its channel is cut), a step at the ledge — the
+ *  fall — and on past the map's edge, where it's held as a river leaving the atlas's window */
+const RIVER_TABLE: AuthoredRiver[] = (() => {
+  const R = RIVER;
+  const path: AuthoredRiver['path'] = [];
+  // (world units: a row's half-cell shift averaged — the line runs between rows)
+  const at = (x: number, level = riverTop(x), row = riverMid(x)) => path.push({ x: x + 0.75, y: (row + 0.5) * ROW_H, level });
+  // (the fall: the line square to the ledge across it, down the chute — its points at the chute's top and foot)
+  const ym = riverMid(R.ledge);
+  const a = R.ledge - CHUTE / 2;
+  const b = R.ledge + CHUTE / 2;
+  for (let x = R.x0 + 4; x < a - 8; x += 6) at(x);
+  at(a - 4, riverTop(a - 4), ym);
+  at(a, riverTop(a), ym);
+  at(b, riverTop(b), ym);
+  at(b + 4, riverTop(b + 4), ym);
+  for (let x = b + 12; x < R.x1; x += 8) at(x);
+  at(R.x1 + 6, R.foot + 0.5);
+  // (its watershed: the station — rain on it raises the river, lagged down it)
+  const [cx0, cy0] = [R.x0, 96 * ROW_H];
+  const [cx1, cy1] = [R.x1, 176 * ROW_H];
+  return [{ path, width: R.width, discharge: R.discharge, catchment: [cx0, cy0, cx1, cy1] }];
+})();
+/** where the river starts: what a surge pours in */
+const SPRING_COLS: [number, number][] = [-1, 0, 1].map((d) => [RIVER.x0 + 5, Math.round(riverMid(RIVER.x0 + 5)) + d]);
 const POOL_COLS: [number, number][] = [-1, 0, 1].map((d) => [BREACH.pool.c[0], BREACH.pool.c[1] + d]);
 
 const wp = (x: number, y: number): [number, number] => cellPos(x, y);
@@ -161,14 +196,14 @@ export const STATIONS: Station[] = [
     name: 'river',
     rect: [112, 96, 256, 176],
     look: [190, 118, 12, 3],
-    hint: 'a spring, a winding channel, a fall over a ledge: the steady state, frozen once it holds (spray off the fall)',
-    springs: [{ cols: SPRING_COLS, rate: 1.5 }],
+    hint: 'a river held at its steady state, as the atlas\'s: a winding channel, a fall over a ledge (spray off it)',
     actions: [
       {
         label: 'surge',
         run: (k) => {
           k.source(SPRING_COLS, 6);
-          k.later(8, () => k.source(SPRING_COLS, 1.5));
+          // (round 110: the river is held at its table — no spring of its own to go back to)
+          k.later(8, () => k.source(SPRING_COLS, 0));
         },
       },
       { label: 'rain', run: (k) => k.rain(...wp(170, 136)) },
@@ -315,16 +350,10 @@ export function generatePlayground(dims: WorldDims): MapData {
       }
     for (let y = B.basin.y0; y < B.basin.y1; y++) for (let x = B.basin.x0; x < B.basin.x1; x++) ground(x, y, B.basin.floor);
   }
-  // 5. river: a ramp with a winding channel, a ledge, a lower run out to the map's edge
+  // 5. river: a ramp, a ledge, a lower run out to the map's edge (its channel the river table's: below)
   {
     const R = RIVER;
-    for (let y = R.y0; y < R.y1; y++)
-      for (let x = R.x0; x < Math.min(R.x1, w); x++) {
-        const t = riverTop(x);
-        const inCh = Math.abs(y - riverMid(x)) <= R.half;
-        ground(x, y, Math.round((inCh ? t - R.depth : t) * 4) / 4);
-      }
-    for (const [x, y] of SPRING_COLS) waterSource[y * w + x] = 1.5 / 60 / SPRING_COLS.length;
+    for (let y = R.y0; y < R.y1; y++) for (let x = R.x0; x < Math.min(R.x1, w); x++) ground(x, y, Math.round(riverTop(x) * 4) / 4);
   }
   // 6. dust: drift and ash over the plain, a sandstone top on a thin leg
   {
@@ -339,6 +368,9 @@ export function generatePlayground(dims: WorldDims): MapData {
     for (const [a, b] of disc(lx + 1, ly, 5)) put(a, b, G + 14, G + 18, MAT.Sandstone);
   }
 
+  // (round 110) the rivers: carved, filled and held as the atlas's (world/rivertable.ts → WorldGpu riverFlow)
+  const moisture = new Float32Array(N).fill(0.3);
+  const held = holdRivers(RIVER_TABLE, { w, h, cols, water, moisture });
   const grid = new ColumnGrid(dims);
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
@@ -362,7 +394,9 @@ export function generatePlayground(dims: WorldDims): MapData {
     grid,
     water,
     contam: z(N * 2),
-    moisture: z(N).fill(0.3),
+    moisture,
+    riverFlow: held.riverFlow,
+    riverGraph: held.graph,
     vegetation: z(N),
     waterSource,
     oil: z(N),
