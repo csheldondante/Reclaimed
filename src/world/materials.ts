@@ -229,6 +229,15 @@ export const MAX_MATERIALS = 40;
 /** Floats per material in the GPU uniform: 5 x vec4<f32>. Must match materials.wgsl. */
 export const MATERIAL_STRIDE_FLOATS = 20;
 
+/**
+ * (round 112) What the field mesh draws (meshregion.wgsl fieldMat -- keep the two the same): everything that isn't a
+ * solid, and the solids that are the land (stone, trash, basalt, sandstone, flesh, coral, obsidian, quartz, bedrock).
+ * The other solids -- what's built: concrete, brick, metal, wood, plaster ... -- are drawn as prisms (renderprep.wgsl).
+ */
+export function fieldMeshed(m: number): boolean {
+  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone || (m >= MAT.Flesh && m <= MAT.Quartz) || m === MAT.Bedrock;
+}
+
 /** (round 112) the table for the GPU; washSpeed: a wash key's critical speed (cells/s — WorldGpu passes the tuning
  *  registry's) */
 export function packMaterialTable(washSpeed: (k: WashKey) => number): Float32Array {

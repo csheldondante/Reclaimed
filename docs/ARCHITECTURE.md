@@ -1721,7 +1721,13 @@ it came from (the copy's intervals, the spawn frame's strata, specks, facets, pl
 draws the parent's slot split by the fragments' Voronoi seeds (a ghost, `BUILD_FRAMES`) while theirs are built;
 a settled body's mesh stays 6 frames. The cubes are only drawn for a body with no slot (too big: over 3 × 3 mesh
 chunks, or no room) or with `RB.cubes`; they always cast the shadow (`Renderer.setBodies(data, count, shown)`: the
-main pass draws the first `shown`).
+main pass draws the first `shown`). (Round 112) The rock mesh is the field mesh's mesher, which draws only what the
+terrain's field mesh does (`meshregion.wgsl fieldMat`, mirrored by `world/materials.ts fieldMeshed`): a body's slot is
+made of those cells only (`Integrity.allocRock`), and its other cells — what's built: concrete, brick, metal, wood —
+are drawn as its voxels (`RockBodies.packInto(…, which(body, cell))`), as are all of a body with no slot. A resting
+body keeps them: its entry holds its voxels at its rest transform (`rockbodies.ts restingVoxels`), packed after the
+moving ones; a body with no slot rests too (it is no longer written back). Each body also carries its necks
+(`RockBody.necks`, found at spawn) and whether it stands (`RockBody.balanced`).
 Round 96: on by default in the atlas and the rock lab (`rockbodyFor(level.id)`; `?rockbody=0|1`). Metal (steel,
 rust) isn't the judges' with it on: `Integrity.takeMetal` strips it from what they found and `wakeMetal` takes
 everything of it connected (26 round, METAL_MAX cells) out of both copies into one physics body

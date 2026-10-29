@@ -26,6 +26,21 @@ each was implemented.
   are fine — a live roughness change re-rates tables made after it only; deep water must still settle and sleep
   (raise the damping if it doesn't).
 
+## 2026-10-29 — round 112 (session 5, `physfix2`) — the playground's physics, played on the phone
+
+- The user, verbatim (after playing the playground on the phone):
+  "Bugs from physics playing: The concrete just immediately vanished when any blocks are deleted. The bridge on the
+  arch also just vanished when I damaged one side and the other broke instantly. The tower just settled at a leaning
+  angle. The thin stone protrusion survived a fall and collision. Is sand expected to always fall from the mountains."
+- On the sand, the user: "I think it's just the wind blowing dust visual." → where the wind lifts nothing (the ground
+  asleep, or its work baked: round 108's tiers) the dust is shown by the wind's strength over the loose material there,
+  modestly, and none where the wind can't lift it — not the lift of one tick shown at full strength for ever.
+- On the thin protrusion, the user: "Maybe we can find thin points with a quick JFA based medial axis to find thin areas
+  where mass on either side is large?" → a body's necks: a distance transform of its cells, the medial axis from it, a
+  neck where the axis is thin and a ball of that thickness splits it into two sides of real mass; an impact's stress
+  at a neck is (mass beyond it) × speed / (its cross-section), against the rock's strength, and rock snaps there.
+- → BACKLOG PF1-PF6 (branch `physfix2`, from `places`).
+
 ## 2026-10-29 — round 111 (session 5, `places`) — terrain ideas; a noise lab
 
 - The user, verbatim:

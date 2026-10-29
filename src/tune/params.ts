@@ -42,6 +42,10 @@ const SPEC = {
       restV: { label: 'rest speed', units: 'cells/s', min: 0.05, max: 2, step: 0.05, def: 0.3, help: 'under this (and rest spin) for rest time with something under it: settled' },
       restW: { label: 'rest spin', units: 'rad/s', min: 0.05, max: 1, step: 0.05, def: 0.15 },
       restT: { label: 'rest time', units: 's', min: 0.1, max: 3, step: 0.1, def: 0.6 },
+      balanceGive: { label: 'balance give', units: 'cells', min: 0, max: 1, step: 0.05, def: 0.1, help: '(round 112) how far past the hull of what it touches its centre of mass may lie and it still stands; past it, it topples: the ground does not damp its spin and it is not at rest' },
+      neckStrength: { label: 'neck strength', units: 'cells/s', min: 1, max: 300, step: 1, def: 70, help: '(round 112) a thin section snaps when (the mass beyond it) x (the impact speed) / (its cross-section) passes this x strength' },
+      neckDepth: { label: 'neck depth', units: 'cells', min: 1, max: 8, step: 1, def: 3, help: '(round 112) the thickest a neck is looked for: its half-thickness in lattice steps from the surface' },
+      neckMin: { label: 'neck side', units: 'cells', min: 4, max: 200, step: 1, def: 12, help: '(round 112) the least a side of a neck must weigh to snap off on its own' },
       maxBodies: { label: 'max bodies', units: 'bodies', min: 1, max: 60, step: 1, def: 10, url: 'rbmax', help: 'at once (the phone); past it the oldest settles into the columns' },
       cubes: { label: 'show cubes', units: '0/1', min: 0, max: 1, step: 1, def: 0, url: 'rbcubes', help: 'debug: the cubes the bodies are simulated with drawn too' },
     },
@@ -211,6 +215,7 @@ const SPEC = {
       fall: { label: 'dust fall', units: 'cells/s²', min: 0, max: 10, step: 0.1, def: 1.1, gpu: true, help: 'how fast it drifts down (rain adds to it)' },
       hazeDrag: { label: 'haze drag', units: '1/s', min: 0, max: 6, step: 0.1, def: 1.4, gpu: true },
       hazeRise: { label: 'haze rise', units: 'cells/s²', min: -2, max: 2, step: 0.05, def: 0.15, gpu: true, help: 'a cloud of a collapse\'s material lifts this much' },
+      shown: { label: 'blown dust shown', units: 'grains/s', min: 0, max: 2, step: 0.01, def: 0.12, gpu: true, help: '(round 112) where the wind lifts nothing (the ground asleep, or its work baked): dust shown off loose ground a column a second, at full wind, times its airborne share; none under its lift' },
     },
   },
   debris: {

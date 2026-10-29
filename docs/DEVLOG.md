@@ -12218,6 +12218,96 @@ written 0 times during the move and once on release. No GPU validation errors an
   preview always shows the whole recipe.
 - Field generators are capped by the eight slots: each JFA layer is one slot and 11 passes.
 - The preview's heights aren't to scale with the world's (it shades by slope).
+## 2026-10-29 — round 112 (`physfix2`): the playground's physics, played on the phone
+
+The user (DECISIONS round 112, BACKLOG PF1-PF6): the concrete "immediately vanished when any blocks are deleted", "The
+bridge on the arch also just vanished when I damaged one side and the other broke instantly", "The tower just settled at
+a leaning angle", "The thin stone protrusion survived a fall and collision", "Is sand expected to always fall from the
+mountains". Reproduced on places' code (36ff5fe) headless, the phone proxy (412x915 dpr 2.6 q=low, every system in
+play, 1x: scripts/physfix2.mjs, `before-*` vs `after-*` in C:\Projects\shots88\physfix2\), and on the CPU
+(scripts/physfix2-cpu.mjs: both judges, the rigid bodies and the columns' pieces on the playground's map, as
+Integrity.pass and apply run them). Causes and fixes:
+
+- **The concrete, and the bridge (PF1, PF2): an empty mesh.** physfix's guess was the columns' pieces (colbodies.ts);
+  it isn't: with the rigid rock on, the rock judge runs first and takes what hangs free whatever it's made of, so the
+  build station's concrete and brick become rigid bodies (the CPU harness: "break bases" frees a 195-cell concrete
+  tower, a 250-cell brick chimney, the board, the deck as rigid bodies; the structures' judge never fires). A rigid
+  body is drawn by the rock mesh, which is the field mesh's mesher — and the field mesh draws no built material
+  (meshregion.wgsl fieldMat: what's built is drawn as prisms). The body got a slot (so no cubes either) holding nothing:
+  invisible while it fell, and at rest its External cells were drawn by no one. On places, "break bases" left the
+  station's census at concrete 608 → 136, brick 760 → 399, with 760 cells resting and nothing on screen
+  (before-concrete-end.png: the tower, chimney, board and bridge gone); one pillar smashed took the deck and the other
+  pillar (before-bridge-end.png). Now the rock mesh is made of the cells the field mesh draws (Integrity.allocRock); a
+  body's other cells are drawn as its voxels (RockBodies.packInto by cell; the body-voxel draw, cubes), moving and at
+  rest (each resting entry keeps its voxels at its rest transform: rockbodies.ts restingVoxels); a body with no mesh
+  at all rests too, as its voxels, instead of being written back column by column as a heap. After: the same buttons
+  leave the pieces lying where they fell (after-concrete-end.png, after-bridge.gif). One rule for "what the field mesh
+  draws" on the CPU: world/materials.ts fieldMeshed (api/terrain.ts had its own copy, missing flesh, coral, obsidian,
+  quartz and bedrock).
+- **The rock station's arch (PF2) did not vanish on places** — physfix's fix holds. Smashing a foot frees the leg with
+  half the span: the span snaps at its middle under the hanging leg (the judge's load break — right: a 12-cell rock
+  cantilever 3 cells thick doesn't carry a 230-cell leg), and the leg drops the hole's height (4.5 cells) and stands on
+  its own (the "two stubs" of the user's screenshot are this). But it struck the ground at 9.2 cells/s, over its
+  break speed (8.7), and stayed whole: a tipping piece had a second's grace from breaking (round 96: so a lean didn't
+  shatter on its own stub). Now the grace ends once the body has been off the ground 0.15 s (RockBody.airborne): it
+  covers the contact it was freed in, not what it falls onto. The CPU: the leg breaks on landing into 193 + 63 cells,
+  the hook shatters (17 cells/s).
+- **The leaning tower (PF3): damping, not overlap.** The pillar (1 519 cells) cut on one side tips about its foot's
+  edge; the contacts' ground damping (rigid.contactDamp, 1.5/s) took its spin out each substep while it pivoted, so the
+  topple crawled — 2° to 30° in 10 s, its spin 0.02-0.04 rad/s and its speed 0.6 cells/s — and a slower one (under
+  rest speed 0.3 and rest spin 0.15 for 0.6 s) was at rest, leaning. The mass-scaled overlap doesn't prop it: sunk in,
+  its support is the footprint it sank with. Now RockBody.balanced: its centre of mass over the convex hull of its
+  contact points (seen from above, within rigid.balanceGive 0.1); unbalanced, the ground doesn't damp it and it isn't
+  at rest. Page: before 6° at 3.6 s, 30° at 11.9 s, 57° at 20 s; after 10° at 3.6 s, 30° at 5.7 s (it then leans a
+  moment on the neighbouring top's cap — a real support — and goes on over, 56° at 11.9 s, and breaks). CPU: 30° in
+  4.0 s instead of 10.5 s.
+- **The thin protrusion (PF4): necks.** A break was judged against the whole body (RB.breakSpeed × √strength ×
+  (cells/200)^−sizeK) and split it round random seeds, so a thin part never snapped on its own. The user: "find thin
+  points with a quick JFA based medial axis to find thin areas where mass on either side is large". RockBodies
+  findNecks, once a body is made: the distance transform of its cells (breadth-first from the skin on the lattice —
+  exactly what a JFA gives; on the CPU because the bodies are, the GPU solver (AR4) is where a JFA belongs), its
+  medial axis (a cell shallower-bounded on both sides along one of the lattice's four axes: up-down and the hex's
+  three; even thicknesses through a neighbour as deep), and every thin axis cell (half-thickness ≤ rigid.neckDepth 3)
+  tried, the thinnest first: a ball of its thickness taken out, does the rest fall in two sides of rigid.neckMin (12)
+  cells or more? A hit then snaps the worst neck when (the mass beyond it from the point hit) × speed / (its
+  cross-section, π r²) passes rigid.neckStrength (70) × strength: the side struck stops and the side beyond's momentum
+  goes through the neck. It snaps in two (no rubble), each side going on as the body moved. Under the whole-body
+  break speed only — over it, the old shatter. The CPU: a 6³ block with a rod 10 long (77 cells, a neck r 1.5) dropped
+  3 cells lands at 8.2 cells/s, under the block's 8.5: the rod snaps off (dropped 1 cell, 5.5 cells/s, it holds); the
+  station's concrete tower snaps at necks on landing at 6.9 and 5.6. fracture.ts NECK_R ("neck reach", the registry's
+  `fracture.neck`) is not a thinness test — it's how far the judge follows a piece above a cut before calling it keyed
+  into the land; the standing rock's thin sections are the judge's joints (BEND h², SHEAR h) and its buckle test. Two
+  tests of thinness now (the judge's on the standing columns, the bodies' necks) on two representations; one is not
+  built on the other (flagged).
+  Cost: the search at a body's spawn is bounded by NECK_WORK (15 000 cell visits): measured warm on the desktop 0.16
+  ms for 148 cells, 0.5 ms for 296, 1.6-1.8 ms for the 1 519-cell pillar; the page's worst over a run 1.5-2.3 ms (a
+  spawn frame). The neck test at a hit is a loop over a body's few necks.
+- **The sand (PF5): a frozen animation.** The peaks a Range stroke raises are stone with a skin of the plain's soil,
+  which the wind can't lift (the air texture's lift summed 0 over the window). What fell were the sliding grains: the
+  particles stream grains off each column the sediment says is sliding (sediment.wgsl airOut, "the flow the particles
+  show"). A chunk falls asleep 8 s after its event; asleep, the sediment returns before writing airOut, so the last
+  tick's slide stays in it. Measured on places: the stroke's chunks asleep (0/4 awake), the ground moved 0.00 cells in
+  90 s, and 1 340 columns still showed sliding (before-sand-80s.gif: grains streaming off the peaks). Now nothing streams
+  off a sleeping column (particles.wgsl: `asleep`), and the wind's dust follows the user's read: where nothing is lifted
+  (the column asleep, or the wind's work baked — simtiers) the emitter shows dust by the wind's strength over the loose
+  material there (its lift threshold, its airborne share, smoothstep over the lift), at dust.shown (0.12 a column a
+  second at most), carrying nothing; none on ground the wind can't lift. Before, baked, the sediment worked out the
+  lift every tick and the particles showed it at full strength over ground that never changed (simtiers' "litter
+  throwing scrap endlessly"); the sediment no longer works out a lift it won't take (baked, windOut isn't called).
+  Open (PF6): a slope asleep mid-slump stays as it froze until something wakes it — sleep holds a chunk awake only while
+  its water changes; its loose ground moving should hold it too.
+- Every new number is in the tuning registry: rigid.balanceGive, neckStrength, neckDepth, neckMin; dust.shown (GPU,
+  in struct Tune, a pad taken).
+
+**Measured** (the phone proxy, desktop iGPU, vsync 120 Hz; cost runs back to back on the two builds, the same script):
+idle p50 8.3 / p95 8.8 ms on both; while the rock station's two buttons fall p50 8.3 / p95 9.0 both; the rigid step's
+worst frame 1.4 ms before, 1.3 after; after the fall 8.3 / 8.7 both. (A first after-run read 9.9 ms p50 idle — 101 fps
+with the GPU shared; the repeat matched places.) The GPU timer reads 0 here.
+
+**Open:** PF6. The arch's leg (PF2) breaking on landing, the grace change, was verified on the CPU harness only (it
+came after the browser runs). Body against body (PX6) still isn't simulated: the tower leaning on its neighbour's cap
+leans on ground, not on a body. The neck test is shear through the neck, not bending (a long rod's root sees its
+lever too).
 
 ---
 
