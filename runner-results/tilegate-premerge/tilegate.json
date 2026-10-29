@@ -1,0 +1,1164 @@
+{
+ "url": "http://localhost:5233",
+ "secs": 818,
+ "hz": 60,
+ "loadFrames": 180,
+ "chromeArgs": [
+  "--disable-gpu-vsync",
+  "--disable-frame-rate-limit"
+ ],
+ "baselines": "data\\baselines\\tilegate\\nvidia-ampere",
+ "fails": [
+  "desktop: the page ran at 54.7 frames/s under the 60 Hz cap: frames not judged (rerun with --chromeargs)",
+  "desktop-z2.2: the screen in detail after 480 frames (budget 180)",
+  "desktop-z1.3 parked: out of detail 43.1% (none 212, queued 26, making 10)",
+  "desktop-z1.3: the screen in detail after over 540 frames (budget 180)",
+  "desktop-z14 panning 20 c/s: out of detail 59.0% (window-undrawn 340)",
+  "desktop-z8 panning 20 c/s: out of detail 28.8% (window-undrawn 166)",
+  "desktop-z5 panning 20 c/s: out of detail 3.5% (window-undrawn 20)",
+  "desktop-z3.5 panning 20 c/s: out of detail 4.7% (window-undrawn 27)",
+  "desktop-z1.3 panning 20 c/s: out of detail 26.7% (queued 24, making 14, none 116)",
+  "phone: the page ran at 54.7 frames/s under the 60 Hz cap: frames not judged (rerun with --chromeargs)",
+  "phone-z1.3 parked: out of detail 2.1% (making 2, queued 10)",
+  "phone-z1.3: the screen in detail after over 540 frames (budget 180)",
+  "phone-z14 panning 20 c/s: out of detail 63.2% (window-undrawn 364)",
+  "phone-z8 panning 20 c/s: out of detail 36.1% (window-undrawn 208)",
+  "phone-z5 panning 20 c/s: out of detail 4.2% (window-undrawn 24)",
+  "phone-z3.5 panning 20 c/s: out of detail 10.9% (window-undrawn 63)",
+  "phone-z1.3 panning 20 c/s: out of detail 4.3% (queued 6, making 19)",
+  "wide: the page ran at 54.7 frames/s under the 60 Hz cap: frames not judged (rerun with --chromeargs)",
+  "wide-z1.3 parked: out of detail 42.4% (none 208, making 8, queued 28)",
+  "wide-z1.3: the screen in detail after over 540 frames (budget 180)",
+  "wide-z14 panning 20 c/s: out of detail 63.4% (window-undrawn 365)",
+  "wide-z8 panning 20 c/s: out of detail 33.3% (window-undrawn 192)",
+  "wide-z5 panning 20 c/s: out of detail 3.6% (window-undrawn 21)",
+  "wide-z3.5 panning 20 c/s: out of detail 5.0% (window-undrawn 29)",
+  "wide-z1.3 panning 20 c/s: out of detail 38.0% (queued 20, making 8, none 191)",
+  "run-phone: the page ran at 54.3 frames/s under the 60 Hz cap: frames not judged (rerun with --chromeargs)",
+  "w384-phone-z14 parked: fps 54.5; p99 24.1 ms",
+  "w384-phone-z8 parked: fps 54.5; p99 24.6 ms",
+  "w384-phone-z5 parked: fps 54.5; p99 21.6 ms"
+ ],
+ "rows": [
+  {
+   "view": "desktop-z14",
+   "mode": "parked",
+   "hitches": [
+    "22.6 gc sim 0.6, render 0.6",
+    "21.2 gc "
+   ],
+   "fps": 55,
+   "p99": 21.2,
+   "max": 22.6,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 69,
+    "drawn": 8,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "desktop-z8",
+   "mode": "parked",
+   "hitches": [
+    "24.5 gc ",
+    "20.8 browser rs.hash 0.5, rs.hash 0.5"
+   ],
+   "fps": 55,
+   "p99": 20.8,
+   "max": 24.5,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 69,
+    "drawn": 20,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "desktop-z5",
+   "mode": "parked",
+   "hitches": [
+    "22.8 gc ",
+    "21.9 gc render 0.6"
+   ],
+   "fps": 54.5,
+   "p99": 21.9,
+   "max": 22.8,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 69,
+    "drawn": 37,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "desktop-z3.5",
+   "mode": "parked",
+   "hitches": [
+    "23.9 gc ",
+    "20.1 gc "
+   ],
+   "fps": 55,
+   "p99": 20.1,
+   "max": 23.9,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 127,
+    "drawn": 89,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "desktop-z2.2",
+   "mode": "parked",
+   "hitches": [
+    "23.8 browser render 0.6",
+    "23.6 gc render 0.8"
+   ],
+   "fps": 53,
+   "p99": 23.6,
+   "max": 23.8,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 197,
+    "drawn": 169,
+    "mb": 144
+   },
+   "fillFrames": 480,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "desktop-z1.3",
+   "mode": "parked",
+   "hitches": [
+    "22.6 gc render 1.9",
+    "22.4 gc render 1.7"
+   ],
+   "fps": 49.5,
+   "p99": 22.6,
+   "max": 22.6,
+   "miss": 0.431,
+   "why": {
+    "none": 212,
+    "queued": 26,
+    "making": 10
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 273,
+    "drawn": 257,
+    "mb": 144
+   },
+   "fillFrames": null,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z14",
+   "mode": "pan 20",
+   "hitches": [
+    "61 gpu-held render 0.8, write 1.2",
+    "24.9 gc "
+   ],
+   "fps": 54,
+   "p99": 24.5,
+   "max": 24.9,
+   "miss": 0.59,
+   "why": {
+    "window-undrawn": 340
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 294,
+    "drawn": 14,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z8",
+   "mode": "pan 20",
+   "hitches": [
+    "25.4 async:judge slide 0.5, judge.pass 9.1",
+    "25 gpu-busy sim 0.7"
+   ],
+   "fps": 54,
+   "p99": 25,
+   "max": 25.4,
+   "miss": 0.288,
+   "why": {
+    "window-undrawn": 166
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 297,
+    "drawn": 26,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z5",
+   "mode": "pan 20",
+   "hitches": [
+    "24.5 gc ",
+    "22.2 gc render 0.5, write 0.9"
+   ],
+   "fps": 55,
+   "p99": 22.2,
+   "max": 24.5,
+   "miss": 0.035,
+   "why": {
+    "window-undrawn": 20
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 298,
+    "drawn": 69,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z3.5",
+   "mode": "pan 20",
+   "hitches": [
+    "24.1 gc ",
+    "23.8 gc "
+   ],
+   "fps": 52.7,
+   "p99": 23.8,
+   "max": 24.1,
+   "miss": 0.047,
+   "why": {
+    "window-undrawn": 27
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 310,
+    "drawn": 116,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z2.2",
+   "mode": "pan 20",
+   "hitches": [
+    "22.8 gc render 1.2, write 0.9",
+    "22.8 gc render 0.9, write 1"
+   ],
+   "fps": 52.7,
+   "p99": 22.8,
+   "max": 22.8,
+   "miss": 0.01,
+   "why": {
+    "making": 4,
+    "window-undrawn": 2
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 365,
+    "drawn": 253,
+    "mb": 144
+   },
+   "ok": true
+  },
+  {
+   "view": "desktop-z1.3",
+   "mode": "pan 20",
+   "hitches": [
+    "24.6 gc render 1.9, write 0.9",
+    "23.8 gc render 2.1"
+   ],
+   "fps": 48,
+   "p99": 23.8,
+   "max": 24.6,
+   "miss": 0.267,
+   "why": {
+    "queued": 24,
+    "making": 14,
+    "none": 116
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 413,
+    "drawn": 388,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "phone-z14",
+   "mode": "parked",
+   "hitches": [
+    "21 browser rs.hash 0.5",
+    "20.8 gc "
+   ],
+   "fps": 55,
+   "p99": 20.8,
+   "max": 21,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 67,
+    "drawn": 5,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "phone-z8",
+   "mode": "parked",
+   "hitches": [
+    "22 browser ",
+    "20.7 gc render 0.6"
+   ],
+   "fps": 55,
+   "p99": 20.7,
+   "max": 22,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 67,
+    "drawn": 14,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "phone-z5",
+   "mode": "parked",
+   "hitches": [
+    "22.8 gc render 0.5",
+    "21 gc "
+   ],
+   "fps": 55,
+   "p99": 21,
+   "max": 22.8,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 67,
+    "drawn": 22,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "phone-z3.5",
+   "mode": "parked",
+   "hitches": [
+    "23.9 gpu-busy ",
+    "20.8 gc "
+   ],
+   "fps": 54.5,
+   "p99": 20.8,
+   "max": 23.9,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 67,
+    "drawn": 33,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "phone-z2.2",
+   "mode": "parked",
+   "hitches": [
+    "22.3 gc render 1.3",
+    "20.8 async:judge render 0.7, judge.pass 17.6"
+   ],
+   "fps": 53.5,
+   "p99": 20.8,
+   "max": 22.3,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 87,
+    "drawn": 59,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "phone-z1.3",
+   "mode": "parked",
+   "hitches": [
+    "23.7 gc render 1.1",
+    "22.1 async:judge render 1.3, judge 0.5"
+   ],
+   "fps": 52,
+   "p99": 22.1,
+   "max": 23.7,
+   "miss": 0.021,
+   "why": {
+    "making": 2,
+    "queued": 10
+   },
+   "tiles": {
+    "slots": 104,
+    "used": 143,
+    "drawn": 127,
+    "mb": 39
+   },
+   "fillFrames": null,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": false
+  },
+  {
+   "view": "phone-z14",
+   "mode": "pan 20",
+   "hitches": [
+    "44.6 gpu-held render 0.7, write 1.1",
+    "25.5 gc "
+   ],
+   "fps": 53.7,
+   "p99": 24.3,
+   "max": 25.5,
+   "miss": 0.632,
+   "why": {
+    "window-undrawn": 364
+   },
+   "tiles": {
+    "slots": 104,
+    "used": 155,
+    "drawn": 5,
+    "mb": 39
+   },
+   "ok": false
+  },
+  {
+   "view": "phone-z8",
+   "mode": "pan 20",
+   "hitches": [
+    "27.9 gc ",
+    "25.7 gpu-busy "
+   ],
+   "fps": 54.7,
+   "p99": 25.7,
+   "max": 27.9,
+   "miss": 0.361,
+   "why": {
+    "window-undrawn": 208
+   },
+   "tiles": {
+    "slots": 104,
+    "used": 158,
+    "drawn": 14,
+    "mb": 39
+   },
+   "ok": false
+  },
+  {
+   "view": "phone-z5",
+   "mode": "pan 20",
+   "hitches": [
+    "24.3 gc ",
+    "24.2 gc sim 0.7"
+   ],
+   "fps": 55,
+   "p99": 24.2,
+   "max": 24.3,
+   "miss": 0.042,
+   "why": {
+    "window-undrawn": 24
+   },
+   "tiles": {
+    "slots": 104,
+    "used": 159,
+    "drawn": 24,
+    "mb": 39
+   },
+   "ok": false
+  },
+  {
+   "view": "phone-z3.5",
+   "mode": "pan 20",
+   "hitches": [
+    "23.2 gc ",
+    "23.1 gc render 1.1, sim 0.5"
+   ],
+   "fps": 54.3,
+   "p99": 23.1,
+   "max": 23.2,
+   "miss": 0.109,
+   "why": {
+    "window-undrawn": 63
+   },
+   "tiles": {
+    "slots": 104,
+    "used": 149,
+    "drawn": 44,
+    "mb": 39
+   },
+   "ok": false
+  },
+  {
+   "view": "phone-z2.2",
+   "mode": "pan 20",
+   "hitches": [
+    "23.9 gc render 0.6, write 0.9",
+    "21.3 gc render 0.6"
+   ],
+   "fps": 53,
+   "p99": 21.3,
+   "max": 23.9,
+   "miss": 0.012,
+   "why": {
+    "window-undrawn": 7
+   },
+   "tiles": {
+    "slots": 104,
+    "used": 167,
+    "drawn": 78,
+    "mb": 39
+   },
+   "ok": true
+  },
+  {
+   "view": "phone-z1.3",
+   "mode": "pan 20",
+   "hitches": [
+    "21 gc render 1.4",
+    "20.7 gc render 1.3"
+   ],
+   "fps": 51.7,
+   "p99": 20.7,
+   "max": 21,
+   "miss": 0.043,
+   "why": {
+    "queued": 6,
+    "making": 19
+   },
+   "tiles": {
+    "slots": 104,
+    "used": 196,
+    "drawn": 161,
+    "mb": 39
+   },
+   "ok": false
+  },
+  {
+   "view": "wide-z14",
+   "mode": "parked",
+   "hitches": [
+    "23.2 gc ",
+    "22.4 browser rs.hash 0.5, rs.encode 0.5"
+   ],
+   "fps": 54.5,
+   "p99": 22.4,
+   "max": 23.2,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 117,
+    "drawn": 11,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "wide-z8",
+   "mode": "parked",
+   "hitches": [
+    "21.1 gc rs.hash 0.5",
+    "20.9 browser sim 0.5"
+   ],
+   "fps": 55,
+   "p99": 20.9,
+   "max": 21.1,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 117,
+    "drawn": 24,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "wide-z5",
+   "mode": "parked",
+   "hitches": [
+    "20.9 gc sim 1, render 0.6"
+   ],
+   "fps": 54.5,
+   "p99": 20,
+   "max": 20.9,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 117,
+    "drawn": 51,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "wide-z3.5",
+   "mode": "parked",
+   "hitches": [
+    "20.1 gc ",
+    "20.1 gc "
+   ],
+   "fps": 55,
+   "p99": 20.1,
+   "max": 20.1,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 123,
+    "drawn": 83,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "wide-z2.2",
+   "mode": "parked",
+   "hitches": [
+    "25.4 gc render 0.9",
+    "23.7 gc render 0.6"
+   ],
+   "fps": 53,
+   "p99": 23.7,
+   "max": 25.4,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 195,
+    "drawn": 179,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "wide-z1.3",
+   "mode": "parked",
+   "hitches": [
+    "21.3 gc render 2.2",
+    "21.3 gc render 1.5"
+   ],
+   "fps": 50,
+   "p99": 21.3,
+   "max": 21.3,
+   "miss": 0.424,
+   "why": {
+    "none": 208,
+    "making": 8,
+    "queued": 28
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 271,
+    "drawn": 255,
+    "mb": 144
+   },
+   "fillFrames": null,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": false
+  },
+  {
+   "view": "wide-z14",
+   "mode": "pan 20",
+   "hitches": [
+    "42.5 gpu-held render 0.9, write 1.1",
+    "24.3 gc render 0.8"
+   ],
+   "fps": 54,
+   "p99": 24.1,
+   "max": 24.3,
+   "miss": 0.634,
+   "why": {
+    "window-undrawn": 365
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 295,
+    "drawn": 14,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "wide-z8",
+   "mode": "pan 20",
+   "hitches": [
+    "25.8 gpu-held ",
+    "25.3 async:judge rs.hash 0.5, rs.hash 0.5"
+   ],
+   "fps": 54.7,
+   "p99": 24.9,
+   "max": 25.3,
+   "miss": 0.333,
+   "why": {
+    "window-undrawn": 192
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 298,
+    "drawn": 28,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "wide-z5",
+   "mode": "pan 20",
+   "hitches": [
+    "26.7 gc slide 1, slide.weather 0.6",
+    "24.4 gc "
+   ],
+   "fps": 54.7,
+   "p99": 24.4,
+   "max": 26.7,
+   "miss": 0.036,
+   "why": {
+    "window-undrawn": 21
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 299,
+    "drawn": 65,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "wide-z3.5",
+   "mode": "pan 20",
+   "hitches": [
+    "25.1 gc ",
+    "23.3 gc "
+   ],
+   "fps": 53,
+   "p99": 23.3,
+   "max": 25.1,
+   "miss": 0.05,
+   "why": {
+    "window-undrawn": 29
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 306,
+    "drawn": 118,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "wide-z2.2",
+   "mode": "pan 20",
+   "hitches": [
+    "23 gc render 1, write 0.9",
+    "21 gc render 0.9"
+   ],
+   "fps": 52.3,
+   "p99": 21,
+   "max": 23,
+   "miss": 0.012,
+   "why": {
+    "making": 5,
+    "window-undrawn": 2
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 347,
+    "drawn": 248,
+    "mb": 144
+   },
+   "ok": true
+  },
+  {
+   "view": "wide-z1.3",
+   "mode": "pan 20",
+   "hitches": [
+    "25.3 gc render 3.2, sim 0.5",
+    "22.5 gc render 2.4"
+   ],
+   "fps": 48.7,
+   "p99": 22.5,
+   "max": 25.3,
+   "miss": 0.38,
+   "why": {
+    "queued": 20,
+    "making": 8,
+    "none": 191
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 390,
+    "drawn": 348,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "run-desktop-z14",
+   "mode": "parked",
+   "hitches": [],
+   "fps": 60.5,
+   "p99": 16.9,
+   "max": 17.1,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 68,
+    "drawn": 9,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-desktop-z8",
+   "mode": "parked",
+   "hitches": [],
+   "fps": 60.5,
+   "p99": 16.9,
+   "max": 16.9,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 68,
+    "drawn": 22,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-desktop-z5",
+   "mode": "parked",
+   "hitches": [],
+   "fps": 60.5,
+   "p99": 16.9,
+   "max": 16.9,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 68,
+    "drawn": 38,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-phone-z14",
+   "mode": "parked",
+   "hitches": [
+    "21 browser ",
+    "20.7 gc "
+   ],
+   "fps": 54,
+   "p99": 20.7,
+   "max": 21,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 54,
+    "drawn": 7,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-phone-z8",
+   "mode": "parked",
+   "hitches": [
+    "20.4 gc ",
+    "20.2 gc "
+   ],
+   "fps": 54,
+   "p99": 20.2,
+   "max": 20.4,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 54,
+    "drawn": 12,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-phone-z5",
+   "mode": "parked",
+   "hitches": [
+    "20.5 browser "
+   ],
+   "fps": 60.5,
+   "p99": 17.4,
+   "max": 20.5,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 54,
+    "drawn": 20,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-wide-z14",
+   "mode": "parked",
+   "hitches": [
+    "21.3 browser "
+   ],
+   "fps": 60.5,
+   "p99": 19.1,
+   "max": 21.3,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 112,
+    "drawn": 13,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-wide-z8",
+   "mode": "parked",
+   "hitches": [
+    "21.7 browser "
+   ],
+   "fps": 60.5,
+   "p99": 20,
+   "max": 21.7,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 112,
+    "drawn": 28,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "run-wide-z5",
+   "mode": "parked",
+   "hitches": [
+    "22.2 gc "
+   ],
+   "fps": 60.5,
+   "p99": 19.2,
+   "max": 22.2,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 112,
+    "drawn": 52,
+    "mb": 144
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": true
+  },
+  {
+   "view": "w384-phone-z14",
+   "mode": "parked",
+   "hitches": [
+    "28.9 gc ",
+    "24.1 browser "
+   ],
+   "fps": 54.5,
+   "p99": 24.1,
+   "max": 28.9,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 73,
+    "drawn": 1,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": false
+  },
+  {
+   "view": "w384-phone-z8",
+   "mode": "parked",
+   "hitches": [
+    "29.6 gpu-busy ",
+    "28.3 gpu-held "
+   ],
+   "fps": 54.5,
+   "p99": 24.6,
+   "max": 29.6,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 73,
+    "drawn": 11,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": false
+  },
+  {
+   "view": "w384-phone-z5",
+   "mode": "parked",
+   "hitches": [
+    "24.5 gpu-held ",
+    "23.3 gpu-busy "
+   ],
+   "fps": 54.5,
+   "p99": 21.6,
+   "max": 23.3,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 104,
+    "used": 73,
+    "drawn": 18,
+    "mb": 39
+   },
+   "fillFrames": 180,
+   "golden": {
+    "baseline": "written"
+   },
+   "ok": false
+  }
+ ]
+}
