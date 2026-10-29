@@ -37,7 +37,7 @@ import { record, timed } from '../gpu/cpustat';
 import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionCopier } from './region-copy';
 import { RegionStore } from '../world/region-store';
-import { columnsHash, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
+import { columnsHash, columnsHashSteps, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
 import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
@@ -121,6 +121,8 @@ const SWEEP_MS = Number(param('sweepms') ?? 400);
 const UPLOAD_MS = 3;
 /** (round 104) a readback's hashing and encoding for the store (Streamer.later): this many ms of a frame at most (one at least) */
 const LATER_MS = 3;
+/** (round 106, tilephone) a region's hash's time a turn of Streamer.later (ms): a few rows at a time */
+const HASH_SLICE_MS = 0.4;
 /** (round 104, ?uploadmb=) and at most this many MB uploaded into the pool a frame (one region at least): the phone's
  *  frame with a few regions' writeBuffers in it was gpu-busy */
 const UPLOAD_BYTES = Number(param('uploadmb') ?? 2) * 1048576;
@@ -881,9 +883,10 @@ export class Streamer {
           items.forEach((it, k) =>
             this.later(() => {
               try {
-                this.checkOne(all, k, it);
-              } finally {
+                this.checkOne(all, k, it, end);
+              } catch (e) {
                 end();
+                throw e;
               }
             }),
           );
@@ -898,18 +901,50 @@ export class Streamer {
     }
   }
 
-  /** (round 104) one region of a readback hashed and, if play changed it since it was saved, written to the store */
-  private checkOne(all: Uint8Array, k: number, it: SaveItem): void {
+  /**
+   * (round 104) one region of a readback hashed and, if play changed it since it was saved, written to the store;
+   * `done` once it's through (the readback is let go then). (Round 106, tilephone: hashed a few rows a turn of
+   * Streamer.later — HASH_SLICE_MS each — not whole inside one frame: the phone's rs.hash, 1.1-2.7 ms.)
+   */
+  private checkOne(all: Uint8Array, k: number, it: SaveItem, done: () => void): void {
     const L = this.layout;
     const body = all.subarray(k * L.bytes, (k + 1) * L.bytes);
     // (round 106: its CPU parts, if not read yet — still where it lay: whatever writes there reads them first)
     it.fill?.();
-    const t0 = performance.now();
     // (not touched by play: nothing to keep — the source makes it again; hashed only for ?rsverify)
-    if (!it.info.changed && !this.verify) return;
-    const h = columnsHash(new Uint32Array(all.buffer, k * L.bytes, (L.rc * L.rc * L.pageBytes) / 4), L, it.outside, it.oz);
-    this.times.hash.push(performance.now() - t0);
-    record('rs.hash', performance.now() - t0);
+    if (!it.info.changed && !this.verify) {
+      done();
+      return;
+    }
+    const g = columnsHashSteps(new Uint32Array(all.buffer, k * L.bytes, (L.rc * L.rc * L.pageBytes) / 4), L, it.outside, it.oz, undefined, 4);
+    let spent = 0;
+    const step = () => {
+      let ok = false;
+      try {
+        const t0 = performance.now();
+        let r = g.next();
+        while (!r.done && performance.now() - t0 < HASH_SLICE_MS) r = g.next();
+        spent += performance.now() - t0;
+        record('rs.hash', performance.now() - t0);
+        if (!r.done) {
+          ok = true;
+          this.later(step);
+          return;
+        }
+        this.hashed(body, it, r.value, spent);
+        ok = true;
+        done();
+      } finally {
+        if (!ok) done();
+      }
+    };
+    step();
+  }
+
+  /** (round 106) a region's hash in: kept, and written to the store if play changed it since it was saved */
+  private hashed(body: Uint8Array, it: SaveItem, h: number, spent: number): void {
+    const L = this.layout;
+    this.times.hash.push(spent);
     this.stats.checked++;
     it.info.last = h;
     if (!it.info.changed || h === it.info.saved || !this.store || this.halted) return;

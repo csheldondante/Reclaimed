@@ -31,6 +31,10 @@ Ids TC.
 | TC11 | (round 105, the user: "Don't we prioritize the rendering latency for those tiles?", "Why does the CPU readback and all of that happen") A render-only tile's land all on the GPU: Atlas.regionTile (the columns and finish, the summary copied on the GPU, no readback, no stamps, the pacer's first lane), tilelandgpu.wgsl's prep and camera, the grid's bake in one frame, several a frame; the old ?tiles=N pacer param renamed ?tilesfixed=N (it pinned the pacer to a tile a frame under ?tiles=1) | M | done (tilelatency: wanted to drawn p50 59-78 ms at 120 c/s, zoom 3.5) |
 | TC12 | (round 105) The render-only tiles' chunks with a gap open to the air (arches, caves, karst overhangs) are the grid's tops: mesh them on the GPU too (the mesher's need decided on the GPU, a refinement bake) | M | open |
 | TC13 | (round 105) The look-ahead's tail: regions wanted for seconds before their turn (p95 "queue" 3.9-5.5 s at 120 c/s — the screenful at load, those far back in the order); split the measure at load / panning, and size IN_FLIGHT and the pacer's first lane on the phone | S | open |
+| TC14 | (round 106) Coarse tiles first where the screen needs many at once (after a warp, a wide zoom): a cheap level (the region's columns every few cells, or the atlas's coarse ground) baked first, the full one after — a tile a frame of the pacer on the phone can't fill a screenful | M | open |
+| TC15 | (round 106) The pan bench's pop-in at 20 c/s from generated land at zoom 5 with the leading half 0% out and tiles at ~90 ms: where on the screen it is (the sides, the window's own arriving strip) — the bench's measure is the worst frame's | S | open |
+| TC16 | (round 106) The pan bench reports the tiles: tiles/s, in flight, each stage's p50 / p95, the leading half out, a step | S | done (tilephone) |
+| TC17 | (round 106) rs.hash (the region store's CPU column hash) in the phone's worst frames: sliced, a few rows a turn of Streamer.later (0.4 ms) | S | done (tilephone; the phone to confirm) |
 
 ## Round 104 (2026-10-28, session 5, `simscale`) — the sims scale with what's active (DECISIONS round 104)
 

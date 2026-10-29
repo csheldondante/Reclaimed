@@ -260,6 +260,32 @@ function panPlan(cssW: number, cssH: number, smoke: boolean, win = 0): { zooms: 
   return { zooms: zs, pages };
 }
 
+/**
+ * (round 106, tilephone) The tiles' render-only land over a pan step: tiles baked a second, in flight now, each stage's
+ * p50 / p95 ms (render/tilelandgpu.ts LandTimes: wanted to started — the queue; started to submitted — the land's GPU
+ * work, paced; to baked; baked to drawn; all), of the regions drawn during the step, and the leading half's share out of
+ * detail (mean, worst).
+ */
+function tileStepOf(T: any, baked0: number, t0: number, secs: number, lead: number[]): Record<string, unknown> {
+  const L = (T.land.latencies as { wanted: number; start: number; mapped: number; cur: number; baked: number; drawn: number }[]).filter((t) => t.drawn >= t0);
+  const q = (a: number[], f: number) => (a.length ? r3(a.slice().sort((x, y) => x - y)[Math.min(a.length - 1, Math.floor(a.length * f))]) : null);
+  const st = (f: (t: (typeof L)[number]) => number) => {
+    const a = L.map(f).filter((x) => Number.isFinite(x));
+    return [q(a, 0.5), q(a, 0.95)];
+  };
+  return {
+    perSecond: r3(((T.land.stats.baked as number) - baked0) / secs),
+    inFlight: T.land.stats.inFlight,
+    n: L.length,
+    queue: st((t) => t.start - t.wanted),
+    land: st((t) => t.mapped - t.start),
+    toBake: st((t) => t.baked - t.mapped),
+    toDrawn: st((t) => t.drawn - t.baked),
+    total: st((t) => t.drawn - t.wanted),
+    leadOut: lead.length ? [r3(lead.reduce((a, v) => a + v, 0) / lead.length), r3(Math.max(...lead))] : null,
+  };
+}
+
 function makePanReport(s: BenchState): Record<string, unknown> {
   const res = s.results as Record<string, any>;
   const rows: Record<string, unknown>[] = [];
@@ -270,7 +296,7 @@ function makePanReport(s: BenchState): Record<string, unknown> {
           if (z[src]) {
             const st = (z[src].steps ?? []) as any[];
             const worstSlide = st.reduce((m, x) => Math.max(m, x.max ?? 0), 0);
-            rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, parked: z.parked ?? null, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, maxNoPopIn: z[src].maxNoPopIn, popInAt: z[src].popInAt, worstFrameMs: r3(worstSlide), overBudgetPerSlide: st.map((x) => `${x.speed}:${x.overBudgetPerSlide ?? '-'}`).join(' '), causesAtFail: z[src].causesAtFail, coverParked: z.coverParked });
+            rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, parked: z.parked ?? null, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, maxNoPopIn: z[src].maxNoPopIn, popInAt: z[src].popInAt, worstFrameMs: r3(worstSlide), overBudgetPerSlide: st.map((x) => `${x.speed}:${x.overBudgetPerSlide ?? '-'}`).join(' '), tilesPerSecond: st.map((x) => `${x.speed}:${x.tiles?.perSecond ?? '-'}`).join(' '), tileLatency: st.map((x) => `${x.speed}:${x.tiles?.total?.[0] ?? '-'}/${x.tiles?.total?.[1] ?? '-'}`).join(' '), leadOut: st.map((x) => `${x.speed}:${x.tiles?.leadOut?.[0] ?? '-'}`).join(' '), causesAtFail: z[src].causesAtFail, coverParked: z.coverParked });
           }
   const plan = res.panPlan as { zooms: { zoom: number; window: number; run: boolean }[] } | undefined;
   return {
@@ -284,7 +310,7 @@ function makePanReport(s: BenchState): Record<string, unknown> {
       note: 'per zoom and land source: the fastest straight pan (cells/s) that held every criterion, and the criterion that failed first one step above',
       criteria: `smooth: rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms and no pop-in, each step ${PAN_STEP_S} s; no pop-in: none of the screen out of detail against parked, frames as they come; overBudgetPerSlide: frames over ${PAN_BUDGET} ms per slide at each speed`,
       device: `${res.device?.adapter?.vendor ?? '?'} ${res.device?.adapter?.architecture ?? ''}, dpr ${res.device?.devicePixelRatio}, css ${res.device?.css?.w}x${res.device?.css?.h}`,
-      table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: parked ${r.parked?.fps ?? '?'} fps p99 ${r.parked?.p99 ?? '?'}; smooth to ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}; no pop-in to ${r.maxNoPopIn ?? 'none'} c/s${r.popInAt ? ` (pop-in at ${r.popInAt})` : ''}; worst frame ${r.worstFrameMs} ms`),
+      table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: parked ${r.parked?.fps ?? '?'} fps p99 ${r.parked?.p99 ?? '?'}; smooth to ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}; no pop-in to ${r.maxNoPopIn ?? 'none'} c/s${r.popInAt ? ` (pop-in at ${r.popInAt})` : ''}; worst frame ${r.worstFrameMs} ms; tiles/s ${r.tilesPerSecond}; tile ms p50/p95 ${r.tileLatency}; leading half out ${r.leadOut}`),
       notRun: plan?.zooms.filter((z) => !z.run).map((z) => `zoom ${z.zoom} needs window ${z.window} (over ${PAN_MAX_WINDOW})`) ?? [],
       errors: s.errors.length,
     },
@@ -1662,6 +1688,37 @@ class Bench {
   }
   private parkedCover = 0;
 
+  /**
+   * (round 106, tilephone: where the pop-in is) The screen's 12 x 12 points not in detail now, as shares of the screen:
+   * in the window but its region not written yet (and no tile there), or past it with no tile — those split by the pan's
+   * way `dir` (world x y): ahead, to the side, behind.
+   */
+  private missingWhere(dir: [number, number]): { win: number; ahead: number; side: number; behind: number } {
+    const c = this.R.camera;
+    const S = this.R.stream;
+    const un: [number, number][] = S.unwritten ?? [];
+    const G = 12;
+    const dl = Math.hypot(dir[0], dir[1]) || 1;
+    const o = { win: 0, ahead: 0, side: 0, behind: 0 };
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G; i++) {
+        const [dx, dy] = c.fly ? [0, 0] : c.screenDeltaToWorld(((i + 0.5) / G - 0.5) * c.viewportW, ((j + 0.5) / G - 0.5) * c.viewportH);
+        const x = c.target[0] + dx;
+        const y = (c.target[1] + dy) / ROW_H;
+        if (this.R.core.renderer.tiles?.drawsAt(x, y)) continue;
+        if (x >= 0 && x < S.W && y >= 0 && y < S.H) {
+          if (un.some(([ux, uy]) => ux === Math.floor(x / S.R) * S.R && uy === Math.floor(y / S.R) * S.R)) o.win++;
+          continue;
+        }
+        const along = (dx * dir[0] + dy * dir[1]) / (dl * (Math.hypot(dx, dy) || 1));
+        if (along > 0.5) o.ahead++;
+        else if (along < -0.5) o.behind++;
+        else o.side++;
+      }
+    const n = G * G;
+    return { win: o.win / n, ahead: o.ahead / n, side: o.side / n, behind: o.behind / n };
+  }
+
   /** (v3) low detail now: the share of the screen detailed when parked that isn't now (outside the window, or not written yet) */
   private lowDetail(): number {
     return Math.max(0, this.parkedCover - this.writtenShare());
@@ -2491,6 +2548,11 @@ class Bench {
         const sl0 = this.R.stream.stats.slides;
         const t0 = performance.now();
         let last = t0;
+        // (round 106, tilephone: the tiles' render-only land during the step — what's baked, its stages, the leading half)
+        const TL = this.R.core.renderer.tiles;
+        const baked0 = (TL?.land?.stats.baked as number | undefined) ?? 0;
+        const lead: number[] = [];
+        const miss = { win: 0, ahead: 0, side: 0, behind: 0 };
         while (performance.now() - t0 < PAN_STEP_S * 1000) {
           const t = await frame();
           if (src === 'pool') {
@@ -2504,6 +2566,10 @@ class Bench {
           frames.push(t - last);
           last = t;
           low = Math.max(low, this.parkedCover - this.writtenShare());
+          if (TL) lead.push(1 - TL.coverageSplit(cam).lead);
+          // (round 106: where what's not in detail is, the worst frame's of each kind)
+          const mw = this.missingWhere(sc.pan.dir);
+          for (const k of ['win', 'ahead', 'side', 'behind'] as const) miss[k] = Math.max(miss[k], mw[k]);
         }
         const secs = (performance.now() - t0) / 1000;
         const fps = (this.prof.frameNo - fno0) / secs;
@@ -2522,7 +2588,8 @@ class Bench {
         const slideDone = S.slideDone ? S.slideDone.slice(Math.min(sd0, S.slideDone.length)) : null;
         const bd = S.baseDone ? [...S.baseDone.slice(Math.min(bd0, S.baseDone.length))].sort((x: number, y: number) => x - y) : [];
         const slideCpu = S.trace.slice(Math.min(tr0, S.trace.length)).map((t: { t0: number; sync: number }) => r3(t.sync - t.t0));
-        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, ok: !fails.length });
+        const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) } } : null;
+        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, ok: !fails.length });
         if (fails.length && strict) {
           strict = false;
           failedFirst = fails.join(', ');
