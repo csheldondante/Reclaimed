@@ -9071,3 +9071,41 @@ queue's tail (TC13), towns in tiles (TC8), the phone.
   "asleep, nothing changes" (veg 1-6; seen with ?tiles=0 too); worldsavetest fails "warped 10 regions away and back:
   every region as it was frozen (exact)" identically with ?tiles=0 (places', SH11's family).
 
+## 2026-10-29 — round 106 (`tilephone`): why the phone's tiles fell behind; the look-ahead's reach; rs.hash sliced
+
+Why: the phone's pan run at window 256 (data/bench/pixel9a-pan-panwin256.json): parked 55-58 fps at every zoom, but
+pop-in of 7-19% of the screen at 20 cells/s at zooms 5 to 2.2 and 3-8% at 10 from the pool, where the desktop's leading
+half was 0% out at 120; and "rs.hash" (the region store's CPU column hash, 1.1-2.7 ms) inside the worst frames.
+
+- The pan bench reports the tiles now: each step's `tiles` (tiles baked a second, in flight, each stage's p50 / p95 —
+  queue, land, to baked, to drawn, all — of the regions drawn in the step, the leading half's share out of detail), and
+  the summary's rows tiles/s, tile ms and the leading half out a speed (perf/bench.ts tileStepOf).
+- The look-ahead: at a slow pan a second of motion is a third of a region, so the next row of regions was asked for
+  only as it came on screen. Now it reaches at least AHEAD_CELLS (96: a region and a half) ahead, and the screen with a
+  35% margin round it is asked for after what's on it (the next to come on whichever way the camera goes).
+- The pool's pop-in was behind the camera: a frame the land baked, the window's bakes all waited — the regions at the
+  window's trailing edge left it untiled when the pan went back and forth, and the land was made again for them (12
+  tiles a second at 10 cells/s). A window region never baked still bakes those frames now (only its re-bakes wait).
+- rs.hash: the store's check hashes a region a few rows a turn of Streamer.later (world/region-record.ts
+  columnsHashSteps, HASH_SLICE_MS 0.4), not whole in one task; the same hash (columnsHash runs the steps through). Only
+  a region play changed (or ?rsverify) is hashed at all — the pans here edit nothing, so it isn't in these numbers.
+
+Measured on the desktop as a phone proxy: the CPU 4x slower (tileprobe/benchrun --throttle 4: Chrome's emulation) and
+the pacer held to a tile a frame with the phone's finish tile (`?tilemax=1&finishtile=32`); window 256.
+
+tileprobe --pan (the leading half out of detail, mean (worst); render-only tiles baked a second; wanted to drawn p50):
+
+| zoom | pan c/s | before (places 1d33c31) | after |
+|---|---|---|---|
+| 3.5 | 20 | 0% (0%), 0.9/s, 4473 ms | 0% (0%), 0.8/s, 4815 ms |
+| 3.5 | 40 | 0% (0%), 2.4/s, 202 ms | 0% (0%), 2.7/s, 4721 ms |
+| 2.2 | 20 | 0% (0%), 1.5/s, 1403 ms | 0% (0%), 10.2/s, 563 ms |
+| 2.2 | 40 | 3.1% (12.5%), 7.2/s, 446 ms | 0% (0%), 12.0/s, 98 ms |
+
+(the p50 at 3.5 is the screenful at load, still queued: TC13.) The pan bench smoke, the same proxy, zoom 5 window 256:
+pool — before: pop-in at 10 c/s, 13 tiles a second made again; after: no pop-in to 10, 0 tiles a second there, the
+leading half 0.9% out at 20; generated — pop-in at 20 c/s by the bench's measure (parked's cover against now, the
+worst frame), the leading half 0% out and tiles 89 ms from wanted to drawn: the pop-in is elsewhere (TC15); disk —
+pop-in 3% at 10 c/s, the leading half 18.6% out, 11 tiles a second at 501 / 1363 ms: after the warp the whole screen
+is wanted at once and a tile a frame is the bound (TC14: coarse tiles first).
+

@@ -55,6 +55,10 @@ const NO_LAND = new URLSearchParams(location.search).get('tileland') === '0';
  *  (world units a second) under which the camera's at rest */
 const PREFETCH_S = Number(new URLSearchParams(location.search).get('tileahead') ?? 1);
 const MOVING = 2;
+/** (round 106, tilephone) the look-ahead's least reach (world units: a region and a half), and the margin round the
+ *  screen asked for next (the screen's size times this) */
+const AHEAD_CELLS = 96;
+const MARGIN = 1.35;
 /** ?tiledebug=1: the tiles drawn tinted */
 const DEBUG = new URLSearchParams(location.search).get('tiledebug') === '1';
 
@@ -272,9 +276,12 @@ export class TileCache {
     const h = this.host;
     // (round 104, TC2: the land past the window no tile draws yet, made, meshed and baked — the camera's way first;
     // round 105: a frame the land bakes, the window's trailing bakes wait: they never take the land ahead's turn)
+    // (round 106, tilephone: but a window region never baked still is — it may leave before its turn comes back: the
+    // pan bench's pop-in behind, the land then made again for it; a window bake is cheap, no land to make)
+    let landBaked = false;
     if (this.land && !NO_LAND) {
       const B0 = this.basis(cam.viewProj);
-      if (this.land.step(enc, cam, B0, (B0.sx * renderW) / 2)) return;
+      landBaked = this.land.step(enc, cam, B0, (B0.sx * renderW) / 2);
     }
     const fm = h.win.mesh;
     const [nx, ny] = fm.chunkGrid;
@@ -314,7 +321,8 @@ export class TileCache {
         cand.push({ rx, ry, i, j, score });
       }
     cand.sort((a, b) => b.score - a.score);
-    for (let k = 0; k < Math.min(PER_FRAME, cand.length); k++) this.bake(enc, cam, B, rp, cand[k], this.bakers[k]);
+    const go = landBaked ? cand.filter((c) => c.score >= 1e9) : cand;
+    for (let k = 0; k < Math.min(PER_FRAME, go.length); k++) this.bake(enc, cam, B, rp, go[k], this.bakers[k]);
   }
 
   private key(rx: number, ry: number, az: number): string {
@@ -533,17 +541,22 @@ export class TileCache {
     const cry = Math.floor((cam.target[1] / ROW_H + oy) / R);
     const [vx, vy] = this.vel;
     const sp = Math.hypot(vx, vy);
-    // (moving: the screen's points ahead too, where the screen will be in PREFETCH_S)
-    const shifts = sp > MOVING ? [0, 1] : [0];
+    // (moving: the screen's points ahead too, where the screen will be in PREFETCH_S — and round 106, tilephone: at
+    // least AHEAD_CELLS on, a row of regions past the screen's edge: at a slow pan a second is a fraction of a region,
+    // so the next row was asked for only as it came on; then the screen and a margin round it, the next to come on
+    // whichever way the camera goes)
+    const shifts = sp > MOVING ? [0, 1, 2] : [0, 2];
+    const ahead = sp > MOVING ? Math.max(PREFETCH_S, AHEAD_CELLS / sp) : 0;
     const best = new Map<string, { rx: number; ry: number; k: number }>();
     for (const sh of shifts)
       for (let j = 0; j < G; j++)
         for (let i = 0; i < G; i++) {
-          const sx = (i + 0.5) / G - 0.5;
-          const sy = (j + 0.5) / G - 0.5;
+          const grow = sh === 2 ? MARGIN : 1;
+          const sx = ((i + 0.5) / G - 0.5) * grow;
+          const sy = ((j + 0.5) / G - 0.5) * grow;
           const [dx, dy] = cam.screenDeltaToWorld(sx * cam.viewportW, sy * cam.viewportH);
-          const px = dx + vx * PREFETCH_S * sh;
-          const py = dy + vy * PREFETCH_S * sh;
+          const px = dx + (sh === 1 ? vx * ahead : 0);
+          const py = dy + (sh === 1 ? vy * ahead : 0);
           const x = cam.target[0] + px;
           const y = (cam.target[1] + py) / ROW_H;
           if (x >= 0 && x < W && y >= 0 && y < H) continue;

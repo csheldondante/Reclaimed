@@ -19,6 +19,12 @@ const browser = await puppeteer.launch({
 });
 try {
   const p = await browser.newPage();
+  // (round 106, --throttle N: the CPU N times slower — Chrome's emulation: a phone's main thread)
+  const thr = Number(opt('throttle', 0));
+  if (thr > 1) {
+    const cdp = await p.createCDPSession();
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: thr });
+  }
   const errs = [];
   p.on('pageerror', (e) => errs.push(e.message));
   p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.text().slice(0, 400)); });
