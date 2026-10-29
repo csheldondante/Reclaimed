@@ -3,6 +3,54 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 110 (session 5, `places`) — what the simulation is for
+
+- The user, verbatim:
+  "The destruction and erosion and flooding and wind and particles are all there to make the world react on screen
+  to the player and make it feel more alive. For that matter the agents doing work are similar. These are visible to
+  the player and they make interaction fun so they are important to get right and they have the highest latency
+  concerns."
+  "The weather, growth, erosion etc. are useful layers for generating cool locations and for mutating the map between
+  runs or in response to major gameplay events. They typically should operate at the alas level unless a player
+  interacts directly (summoning plants or winds or a storm). The API should expose this so we can do things like show
+  the player the town they planned get built but agents and overgrown with green. Generally though we want systems
+  sleeping otherwise."
+  "The greatest strength of what we have built so far is how interactive it feels and how varied and cool the
+  terrain is compared with other games (and I have many ideas to improve it further)"
+- → docs/SYSTEMS.md "What the simulation is for": two jobs. Reactive (play scale): destruction, collapse,
+  flooding, wind and particles, agents working, near the player, latency first. Generative (atlas scale): weather,
+  growth and erosion making locations and mutating the map between runs or on major events; live only where the
+  player invokes them (summoned plants, winds, a storm); a showcase API plays a generative change on screen (a planned
+  town built by agents, then overgrown). Everything else sleeps. The strengths to protect: interactivity and varied,
+  striking terrain.
+
+- Physics, the user: "For physics maybe a tunable parameter for how much objects can interpenetrate maybe as a
+  function of mass?" (branch `physfix`: the allowed overlap a function of mass, in the tuning registry).
+- Towns, the user: "I think that towns should visibly grow but slowly. Imagine a town has it's growth field and
+  planned tiles to build. The unit haul to the tiles and maybe work to build them bit by bit. Essentially we store
+  progress and so although you could watch the agents build you can also leave and come back and more tiles will have
+  been completed without any real agent simulation while you are gone" (BACKLOG ST18): each planned tile stores its
+  build progress; watched, agents haul and build it bit by bit; unwatched, progress advances by rate × time elapsed
+  with no agent simulation, and the land shows the result on arrival.
+
+## 2026-10-29 — round 109 (session 5, `places`) — more devices; generators and editors; better runs
+
+- Devices, the user: "I also want to get my desktop set up tomorrow so you can orchestrate testing on multiple devices
+  to speed up development. I have two other computers but only one monitor. One has a 12GB 3080 which I think can be
+  used for some local model work and asset generation pipelines." (BACKLOG DV1, DV2)
+- Asset DB, the user: "I want the 3080 to have a DB service we can query. I think use an embedding plus filters and
+  tags by asset type to make keyword search for assets. I would like to also have formatters for any custom data types
+  we want available for streaming (or maybe expose that to the other systems and they can generate and link data to
+  ids?)" (BACKLOG DV3)
+- Generators and editors, the user: "I also really want to create playground and start working on generators and
+  editors for: Buildings and architectural styles, Animated creatures, Vehicles, Items and equipment (related to
+  creatures), Controllers and move sets, Tailored level generators, Terrain generation" (BACKLOG GE1-GE8).
+- Runs, the user: "I also want a session to focus on better runs which means finding the most fun controls and play
+  loops and then making fun courses for them or fun open terrain when possible" (BACKLOG RN1).
+- Rivers per watershed, the user: "I want it per water shed please" (the held rivers rose and fell with one wetness
+  for the whole world: a storm anywhere raised every river). A river rises only from rain on its own catchment; a
+  reach downstream carries its upstream catchments', a while later (BACKLOG RWS1, `watershed`).
+
 ## 2026-10-29 — round 108 (session 5, `places`) — tiles match the window; the sims' tiers; a playground
 
 - Tiles, the user: "I notice the distant tiles have seems and sometimes miss certain effects like snow ... My

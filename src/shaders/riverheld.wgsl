@@ -3,7 +3,11 @@
 // simulated — its depth is the atlas's table at the rivers' wetness, its flux the pipes' steady flux for that, and
 // it's drawn flowing by the table's flow. The including shader declares
 //   @group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
-// and is prefixed with RIVER_TABLE, RIVER_DEPTH_EXP, RIVER_SPEED_EXP (sim/systems.ts riverHeld).
+// and is prefixed with RIVER_TABLE, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS (sim/systems.ts riverHeld). A
+// shader that calls riverWetAt binds the riverWet field (sim/world-gpu.ts riverWet) at RIVER_WET_BINDING (62).
+
+/** (round 109, watershed) the rivers' storm water at the window's coarse texels (sim/world-gpu.ts riverWet) */
+@group(0) @binding(62) var riverWetTex: texture_2d<f32>;
 
 /** a held river's column shallower than this is a dry bed */
 const RIVER_DRY: f32 = 0.03;
@@ -16,11 +20,26 @@ struct RiverHere {
   vel: vec2<f32>,
 }
 
-/** the rivers' wetness: their discharge over the reference's (Globals ocean.w; 0 unset: 1) */
+/** the climate's wetness, the same for every river: the season (Globals ocean.w; 0 unset: 1) */
 fn riverWet() -> f32 { return select(max(G.ocean.w, 0.05), 1.0, G.ocean.w <= 0.0); }
-/** (round 108) the rivers' wetness at a place (window cells): what draws a river's level reads it through this (the
- *  tiles: tiles.wgsl fsTile) — the whole world's for now; per watershed later (branch `watershed`: only this body) */
-fn riverWetAt(cellXY: vec2<f32>) -> f32 { return riverWet(); }
+/** (round 109 — the user: "I want it per water shed please") A river's wetness at a place (window cells; its discharge
+ *  over the reference's): the climate's plus the storm water its own watershed's rain sends down it (the riverWet
+ *  field, bilinear; 0 past the window). Every reader with a position asks this. */
+fn riverWetAt(cellXY: vec2<f32>) -> f32 {
+  let d = vec2<i32>(textureDimensions(riverWetTex));
+  let t = (cellXY - 0.5) / RIVER_WET_CELLS;
+  let i = vec2<i32>(floor(t));
+  let f = t - floor(t);
+  var e = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let o = vec2<i32>(k & 1, k >> 1);
+    let c = i + o;
+    if (any(c < vec2<i32>(0)) || any(c >= d)) { continue; }
+    let w = select(1.0 - f.x, f.x, o.x == 1) * select(1.0 - f.y, f.y, o.y == 1);
+    e += w * textureLoad(riverWetTex, c, 0).x;
+  }
+  return riverWet() + e;
+}
 
 fn riverHere(q: vec2<u32>) -> RiverHere {
   var r: RiverHere;
@@ -28,7 +47,7 @@ fn riverHere(q: vec2<u32>) -> RiverHere {
   if (!RIVER_TABLE) { return r; }
   let t = textureLoad(riverFlowTex, texCol(vec2<i32>(vec2<i32>(q))), 0);
   if (t.z <= 0.0) { return r; }
-  let wet = riverWet();
+  let wet = riverWetAt(vec2<f32>(q) + 0.5);
   r.on = true;
   // (its level up or down with the discharge; no higher than the banks' tops, 0.3 over the reference's)
   // (the user: "keep the flow proportional and then zero out when they get too low": the frozen pattern scaled by

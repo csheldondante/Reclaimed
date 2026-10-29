@@ -653,7 +653,7 @@ export class TileCache {
     return h.device.createBindGroup({
       label: 'tiles-resolve',
       layout: h.resolveLayout,
-      entries: [...h.meshEntries(src, cam), { binding: 40, resource: this.gb0.createView() }, { binding: 41, resource: this.gb1.createView() }, { binding: 22, resource: h.world.riverFlowView }, { binding: 47, resource: h.world.coverView }],
+      entries: [...h.meshEntries(src, cam), { binding: 40, resource: this.gb0.createView() }, { binding: 41, resource: this.gb1.createView() }, { binding: 22, resource: h.world.riverFlowView }, { binding: 47, resource: h.world.coverView }, { binding: 62, resource: h.world.riverWetView }],
     });
   }
 
@@ -830,6 +830,8 @@ export class TileCache {
         // (round 108, TC20: the weather's cover, read as the tiles are drawn)
         { binding: 47, resource: h.world.coverView },
         { binding: 48, resource: this.atlasLive.createView() },
+        // (round 109, watershed: the rivers' wetness by place — riverheld.wgsl riverWetAt)
+        { binding: 62, resource: h.world.riverWetView },
       ],
     });
     pass.setPipeline(this.pipes.draw);

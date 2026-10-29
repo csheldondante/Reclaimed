@@ -207,7 +207,7 @@ export class TileLandGpu {
     const ent = (r: typeof res) => Object.entries(r).map(([b, x]) => ({ binding: Number(b), resource: x instanceof GPUBuffer ? { buffer: x } : x }));
     const [g0, g1] = this.cache.gbufViews;
     sl.g = h.device.createBindGroup({ label: 'tileland-gpu grid', layout: h.meshLayout, entries: ent(res) });
-    sl.r = h.device.createBindGroup({ label: 'tileland-gpu resolve', layout: h.resolveLayout, entries: [...ent(res), { binding: 40, resource: g0 }, { binding: 41, resource: g1 }, { binding: 22, resource: tw.riverFlowView }, { binding: 47, resource: this.host.world.coverView }] });
+    sl.r = h.device.createBindGroup({ label: 'tileland-gpu resolve', layout: h.resolveLayout, entries: [...ent(res), { binding: 40, resource: g0 }, { binding: 41, resource: g1 }, { binding: 22, resource: tw.riverFlowView }, { binding: 47, resource: this.host.world.coverView }, { binding: 62, resource: tw.riverWetView }] });
     return sl;
   }
 

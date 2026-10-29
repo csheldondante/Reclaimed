@@ -694,7 +694,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       this.meshResolveLayout = resolveLayout;
       // (round 108, TC20: the tiles' bake resolves with the held rivers' table too — their depths go in the river plane)
       // (and the weather's cover: what it was where the tile's own snow lies, as baked)
-      if (TILES) this.tileBakeLayout = makeLayout(device, 'tiles-bake', { ...resolveSpec, 22: 'tex', 47: 'tex' }, VF, resolveStages);
+      if (TILES) this.tileBakeLayout = makeLayout(device, 'tiles-bake', { ...resolveSpec, 22: 'tex', 47: 'tex', 62: 'tex' }, VF, resolveStages);
       this.meshLayoutT = meshLayout;
       this.meshPipesReady = (async () => {
         const g = (entryPoint: string, cullMode: GPUCullMode = 'none') =>
@@ -844,7 +844,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
         const drawLayout = makeLayout(
           device,
           'tiles-draw',
-          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform', 46: 'read', 47: 'tex', 48: 'tex' },
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform', 46: 'read', 47: 'tex', 48: 'tex', 62: 'tex' },
           VF,
           { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 44: GPUShaderStage.VERTEX, 46: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );

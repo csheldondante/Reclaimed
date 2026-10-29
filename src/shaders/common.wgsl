@@ -16,6 +16,64 @@ struct CycloneU {
 };
 const MAX_CYCLONES: u32 = 4u;
 
+// (round 108, BACKLOG AR5) The tuning registry's GPU parameters (src/tune/params.ts, in its order; the registry
+// checks this struct as it's made and prints the one it wants when they differ): what were constants in the
+// kernels, live from the tuning panel. A kernel reads G.tune.<group><Key>; each default is the old constant.
+struct Tune {
+  worldGravity: f32,
+  voxelsGravity: f32,
+  voxelsVmax: f32,
+  voxelsAirDrag: f32,
+  voxelsStepUp: f32,
+  voxelsCrumbleDepth: f32,
+  voxelsCrumbleOverlap: f32,
+  voxelsFragRest: f32,
+  voxelsFragLife: f32,
+  voxelsTear: f32,
+  structureHeadMin: f32,
+  structureHeadRate: f32,
+  structureFlowRate: f32,
+  waterRain: f32,
+  waterEvap: f32,
+  pipesGain: f32,
+  pipesFriction: f32,
+  pipesRiverRelax: f32,
+  flowWaterGain: f32,
+  flowWaterFriction: f32,
+  flowWaterDrop: f32,
+  flowLavaGain: f32,
+  flowLavaFriction: f32,
+  flowLavaYield: f32,
+  flowLavaThick: f32,
+  flowLavaCool: f32,
+  flowLavaDrop: f32,
+  lavaGain: f32,
+  lavaFriction: f32,
+  lavaYield: f32,
+  lavaCool: f32,
+  sedimentRepose: f32,
+  sedimentSlump: f32,
+  sedimentFace: f32,
+  sedimentFall: f32,
+  sedimentHoldSteep: f32,
+  sedimentCarry: f32,
+  sedimentPipeHead: f32,
+  sedimentPipeRate: f32,
+  sedimentShakeSlip: f32,
+  dustDrag: f32,
+  dustFall: f32,
+  dustHazeDrag: f32,
+  dustHazeRise: f32,
+  debrisDrag: f32,
+  debrisGravity: f32,
+  sprayDrops: f32,
+  spraySplash: f32,
+  sprayMist: f32,
+  pad49: f32,
+  pad50: f32,
+  pad51: f32,
+};
+
 struct Globals {
   mapW: u32, mapH: u32, tick: u32, chunkSize: u32,
   chunksX: u32, zMax: u32, numStorms: u32, seed: u32,
@@ -81,6 +139,8 @@ struct Globals {
   // nothing; xy the offset (cells), zw unused. Window coordinates stay what every caller uses: index only through
   // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY.
   ring: vec4<u32>,
+  // (round 108, AR5) the tuning registry's GPU parameters (struct Tune above; sim/globals.ts writes them at TUNE_WORD)
+  tune: Tune,
   // (round 107, `pages`: docs/PAGES.md P2.1) the page table: window chunk (cy * chunks across + cx) -> the page its
   // data is in (P2.2: its slot), two u16 entries a u32 (sim/pages.ts Pages.table). Read by colSlot with ?pages=table.
   pages: array<vec4<u32>, 512>, // PAGE_VEC4
@@ -197,8 +257,8 @@ const ROW_H: f32 = 0.8660254;
  *  1–2 m … start from true gravity at that scale (about 4.9–9.8 cells/s²)" — 9.8, a cell a metre. What falls through
  *  the air by the world's own gravity reads it here: the flow model's streams (liquid.wgsl GF), their sheets
  *  (render.wgsl STREAM_G), the spray off them (particles.wgsl DROP_G).
- *  The CPU's copy: world/scale.ts WORLD_G. */
-const WORLD_G: f32 = 9.8;
+ *  (Round 108, AR5: no longer a constant — G.tune.worldGravity, the tuning registry's world.gravity, its default
+ *  world/scale.ts WORLD_G; the CPU's bodies read the same value, TUNE.world.gravity.) */
 /** unit vector of each direction in the world plane */
 const DIRV = array<vec2<f32>, 6>(
   vec2<f32>(1.0, 0.0), vec2<f32>(-1.0, 0.0),

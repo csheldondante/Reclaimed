@@ -86,7 +86,7 @@ const C_FALL: u32 = 6u;
 const C_DRAIN: u32 = 7u;
 const C_WALL: u32 = 8u;
 const EPS: f32 = 1e-5;
-const GF: f32 = WORLD_G;
+// GF (was WORLD_G): G.tune.worldGravity (round 108, src/tune/params.ts)
 const EDGE: f32 = 0.57735;
 const DTQ: f32 = 1.0 / 60.0;
 const FLAG_RUN_Q: u32 = 2048u;
@@ -193,10 +193,10 @@ fn fluxDir(i: u32, s: u32, k: u32) -> f32 {
   return bitcast<f32>(v[k % 4u]);
 }
 
-/** How freely the run flows (0..1): lava by its heat, and thin runs barely (LQ_THICK). */
+/** How freely the run flows (0..1): lava by its heat, and thin runs barely (lqThick()). */
 fn fluidity(d: f32, h: f32) -> f32 {
   var f = 1.0;
-  if (LQ_THICK > 0.0) { let t = min(d / LQ_THICK, 1.0); f = t * t; }
+  if (lqThick() > 0.0) { let t = min(d / lqThick(), 1.0); f = t * t; }
   if (LQ_SET > 0.0) { f *= smoothstep(LQ_SET, LQ_RUNNY, h); }
   return f;
 }
@@ -277,16 +277,16 @@ fn flux(@builtin(global_invocation_id) id: vec3<u32>) {
           Hn = gq.f[m] + depthInGap(gq, rq, m) + select(0.0, oilL[j] * 0.88, LQ_WATER && m == gq.n - 1u);
           code = m;
           // far under the run's floor: off the ledge (the head over the lip is its depth)
-          if (Hn < fz - LQ_DROP) { code = C_FALL; Hn = fz; }
+          if (Hn < fz - lqDrop()) { code = C_FALL; Hn = fz; }
         }
       }
       if (code != C_WALL) {
-        f[k] = max(0.0, prev[k] * LQ_FRIC + LQ_GAIN * fluid * (H - Hn - LQ_YIELD));
+        f[k] = max(0.0, prev[k] * lqFric() + lqGain() * fluid * (H - Hn - lqYield()));
         if (fluid <= 0.0) { f[k] = 0.0; }
         // (round 86) over a lip no more than the critical flow carries, sqrt(g) d^(3/2) a unit of edge: the pipe's
         // momentum otherwise poured the whole depth off each tick (17x it for a 2.6 deep pool) - with the water
         // now in the air as long as its fall takes, that much aloft at once overfilled what it fell into
-        if (code == C_FALL) { f[k] = min(f[k], sqrt(GF) * pow(d, 1.5) * EDGE * DTQ); }
+        if (code == C_FALL) { f[k] = min(f[k], sqrt(G.tune.worldGravity) * pow(d, 1.5) * EDGE * DTQ); }
       }
       codes |= code << (4u * k);
     }
@@ -384,7 +384,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
         let j0 = textureLoad(j0In, texCol(vec2<i32>(q)), 0);
         let j1 = textureLoad(j1In, texCol(vec2<i32>(q)), 0);
         let tc = j2.z;
-        jetAdd(&a, j3.z, j2.y, j0.z - GF * tc, j0.w, j1.xy, j1.zw + j1.xy * tc - DIRV[k ^ 1u], j3.y + tc);
+        jetAdd(&a, j3.z, j2.y, j0.z - G.tune.worldGravity * tc, j0.w, j1.xy, j1.zw + j1.xy * tc - DIRV[k ^ 1u], j3.y + tc);
       }
     }
     // a run falling off the neighbour's ledge toward me
@@ -419,7 +419,7 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
       // both sides of a ridge, or round a pit, keep their own faces, or a stream would turn back onto its lip)
       let mdir = fdir / max(dl, 1e-7);
       let wdir = select(dir, mdir, dl > 1e-7 && dot(mdir, dir) > 0.5);
-      let speed = clamp(2.0 * pow(GF * fsum / max(nf, 1.0) * 60.0 / EDGE, 1.0 / 3.0), 0.6, 12.0);
+      let speed = clamp(2.0 * pow(G.tune.worldGravity * fsum / max(nf, 1.0) * 60.0 / EDGE, 1.0 / 3.0), 0.6, 12.0);
       jetAdd(&a, f, runFloor(gq, rq, s) + d * 0.5, 0.0, rq.h[s], wdir * speed, -dir * 0.5, 0.0);
     }
   }
@@ -446,13 +446,13 @@ fn jets(@builtin(global_invocation_id) id: vec3<u32>) {
   // when it reaches the level under it
   let dz = jt.z - zL;
   var tl = 0.0;
-  if (dz > 0.0) { tl = (jt.vz + sqrt(jt.vz * jt.vz + 2.0 * GF * dz)) / GF; }
+  if (dz > 0.0) { tl = (jt.vz + sqrt(jt.vz * jt.vz + 2.0 * G.tune.worldGravity * dz)) / G.tune.worldGravity; }
   var way = 6u;
   var zx = zL;
   var t = tl;
   if (tl > T) {
     t = T;
-    zx = jt.z + jt.vz * T - 0.5 * GF * T * T;
+    zx = jt.z + jt.vz * T - 0.5 * G.tune.worldGravity * T * T;
     way = kx;
     let q = nbr(p, kx);
     if (!inMap(q)) { way = 7u; }
@@ -622,8 +622,8 @@ fn depth(@builtin(global_invocation_id) id: vec3<u32>) {
 }
 
 // ---- D: publish ----------------------------------------------------------------------------------------------
-const RAIN_RATE_Q: f32 = 0.0012;
-const EVAP_Q: f32 = 0.00003;
+// RAIN_RATE_Q (was 0.0012): G.tune.waterRain (round 108, src/tune/params.ts)
+// EVAP_Q (was 0.00003): G.tune.waterEvap (round 108, src/tune/params.ts)
 const EVAP_DEEP_Q: f32 = 0.000002;
 
 /** Water: the open runs into the water contract (as water_depth.wgsl: rain, springs, evaporation), the flux too. */
@@ -641,8 +641,8 @@ fn publishWater(@builtin(global_invocation_id) id: vec3<u32>) {
   }
   let r0 = runsOut[i * NSLOT];
   var nd = select(d, r0.y, (u32(r0.w) >> 3u) == stepNow());
-  nd += rainAt(cellPos(p)) * RAIN_RATE_Q * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + waterSourceL[i];
-  nd = max(0.0, nd - select(EVAP_DEEP_Q, EVAP_Q, nd < 0.08));
+  nd += rainAt(cellPos(p)) * G.tune.waterRain * (1.0 - snowShare(airTempAt(sfZ(surface[i])))) + waterSourceL[i];
+  nd = max(0.0, nd - select(EVAP_DEEP_Q, G.tune.waterEvap, nd < 0.08));
   if (sfCount(surface[i]) == 0u) { nd = 0.0; }
   waterPrevL[i] = d;
   open[i] = nd;
@@ -703,7 +703,7 @@ fn publishLava(@builtin(global_invocation_id) id: vec3<u32>) {
     var v = runsOut[i * NSLOT + s];
     var d = v.y;
     if (d <= EPS) { if (s == 0u) { open[i] = 0.0; } continue; }
-    var T = v.z * exp(-DTQ * LQ_COOL / max(d, 0.15));
+    var T = v.z * exp(-DTQ * lqCool() / max(d, 0.15));
     if (s == 0u) {
       let w = waterB[i];
       if (w > 1e-4 && T > 100.0) {
@@ -816,7 +816,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   let width = mix(0.35, 1.3, smoothstep(0.05, 1.5, rate));
   let budget = sprayBudget();
   // (none off a trickle: the spray is the falls' - round 86, flowlab's frame cost)
-  let nD = select(0.0, min(rate * 0.35, 1.5) * budget, rate > 0.2);
+  let nD = select(0.0, min(rate * 0.35, 1.5) * budget * G.tune.sprayDrops, rate > 0.2);
   let nI = u32(nD) + select(0u, 1u, rnd(i, 0x81u) < fract(nD));
   for (var d = 0u; d < nI; d++) {
     let h = hash3(i, G.tick, 0x90u + d * 31u);
@@ -825,15 +825,15 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
     let c = f32((h >> 20u) & 1023u) / 1023.0 - 0.5;
     let t = a * tEnd;
     let loose = 0.1 + 0.4 * min(j3.y + t, 1.5);
-    let at = vec3<f32>(entry + j1.xy * t + side * b * width, j0.y + j0.z * t - 0.5 * GF * t * t);
-    let v = vec3<f32>(j1.xy + side * b * loose + j1.xy * c * 0.15, j0.z - GF * t + c * loose);
+    let at = vec3<f32>(entry + j1.xy * t + side * b * width, j0.y + j0.z * t - 0.5 * G.tune.worldGravity * t * t);
+    let v = vec3<f32>(j1.xy + side * b * loose + j1.xy * c * 0.15, j0.z - G.tune.worldGravity * t + c * loose);
     spawnQ(at, v, 4.0, K_DROP_Q, h, 0u);
   }
   // where it lands: splash thrown up and out, mist drifting off - more for more water falling harder
   if (way == 6u && j3.z > 0.0) {
-    let hit = abs(j0.z - GF * tc);
+    let hit = abs(j0.z - G.tune.worldGravity * tc);
     let foot = vec3<f32>(entry + j1.xy * tc, j2.y + 0.05);
-    let nS = min(rate * hit * 0.03, 3.0) * budget;
+    let nS = min(rate * hit * 0.03, 3.0) * budget * G.tune.spraySplash;
     let nSI = u32(nS) + select(0u, 1u, rnd(i, 0x73u) < fract(nS));
     for (var s = 0u; s < nSI; s++) {
       let h = hash3(i, G.tick, 0xa0u + s * 17u);
@@ -842,7 +842,7 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
       let up = 1.0 + f32((h >> 20u) & 1023u) / 1023.0 * min(hit * 0.4, 7.0);
       spawnQ(foot + vec3<f32>(cos(ang) * width * 0.4, sin(ang) * width * 0.4, 0.0), vec3<f32>(vec2<f32>(cos(ang), sin(ang)) * sp + j1.xy * 0.25, up), 0.9, K_SPLASH_Q, h, 0u);
     }
-    if (rate > 0.2 && rnd(i, 0x75u) < min(rate * hit * 0.002, 0.15) * budget) {
+    if (rate > 0.2 && rnd(i, 0x75u) < min(rate * hit * 0.002, 0.15) * budget * G.tune.sprayMist) {
       let h = hash3(i, G.tick, 0x76u);
       let rr = vec2<f32>(f32(h & 255u), f32((h >> 8u) & 255u)) / 255.0 - 0.5;
       spawnQ(foot + vec3<f32>(rr * width, 0.3), vec3<f32>(rr * 1.5 + j1.xy * 0.2, 0.6), 2.6, K_SMOKE_Q, h, MIST_Q);

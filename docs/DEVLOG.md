@@ -11687,6 +11687,116 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   WORLD_G (9.8, DECISIONS round 106/108) stays, shared by the flow model's streams, sheets and spray. BACKLOG WF1
   deferred; round 108's answers in DECISIONS, rows TC18-TC20, SM1, AR8.
 
+## 2026-10-29 — the tuning panel, the bug report, the physics and water playground (round 108, session 5, `playground`)
+
+The user (DECISIONS rounds 106, 108) finds today's physics floaty and choppy and wants to tune it interactively before
+the GPU constraint solver (AR4) is written; "Make a physics and water playground for testing collapse and flow and
+visuals for steady state effects maybe?" (AR8). No solver change here: every default is the old constant.
+
+- **One registry** (src/tune/registry.ts, params.ts; ARCHITECTURE "The tuning registry"): 90 parameters in 15
+  groups, each with its range, units, help and owner — world gravity; rigid rock (the old RB knobs plus air drag,
+  contact slop, rest thresholds); the columns' falling pieces; impacts; the collapse judge (ROCK, the loose ground's
+  bear); the physics voxels; structures under water; water (rain, evaporation — both models); the water pipes; the
+  flow model (water and lava); lava; sediment (a repose multiplier, slump, face spill, fall, roots, wash, piping,
+  shake); dust and haze; chips and splash; spray off falls; the collapse bursts. CPU systems read their own group's
+  live object (RB, ROCK are now those objects); GPU kernels read `G.tune.<field>` from a `struct Tune` appended to the
+  Globals (52 floats, 208 bytes) and packed every tick, so a slider takes the next tick. The struct is checked
+  against the registry when it's made (a mismatch throws with the struct it wants). Why the Globals and not a
+  uniform of its own: every kernel already binds them (no binding to add to 40-odd layouts), and the fields are
+  read by name (static offsets — round 107 found dynamically indexed Globals arrays cost D3D11 ~45 %).
+- **Measured** (the atlas ride, driveprofile at 412x915 q=low, the same start, before = places d26891c): p50 9.9 →
+  9.8 ms, p95 10.9 → 10.8, GPU 4.27 → 4.20 ms a frame: no cost from the bigger Globals. At defaults the flow lab's
+  sand bank behind its dug wall falls the same on both builds (shots in shots88/playground/probe).
+- **The panel** (src/ui/tunepanel.ts) replaces the rock lab's two (ui/rockbodypanel.ts, ui/rockpanel.ts, removed):
+  groups fold, search, changed-only, reset a value / a group / all, presets saved in the browser, exported and
+  imported as JSON, copied as a link with `?tune=<string>`. Thumb-tall sliders, number boxes, the panel's own touches
+  and keys kept from the world. Open in the test beds (rock lab, flow lab, playground; closed behind its button on a
+  phone), anywhere with `?tunepanel=1`.
+- **The bug report** (src/ui/bugreport.ts): B or 🐞 takes the canvas's picture in the frame loop right after the
+  draw (a WebGPU canvas holds it only that long: src/ui/shot.ts), the tuning, camera, time, seed and the scene's
+  state at the press, asks for a note, and saves one JSON (picture inside) plus the PNG — the phone's share sheet,
+  else downloads; the dev server also keeps perf-reports/bug-<time>.json.
+- **The playground** (levels/playground.ts, `?skipmenu=1&level=playground`, the title screen's Playground button):
+  six stations in whole chunks — rock (the rock lab's pieces: rigid rock), build (the sandbox's garden and a brick
+  house), soil (a sand bank held by a wall at a shelf's lip, a soil mound), breach (a pool held by a concrete plug at
+  a ledge: an arcing fall into a basin), river (a spring, a winding channel, a fall over a ledge, out off the map:
+  the steady state frozen once it holds, spray off the fall), dust (drift and ash, a sandstone top on a thin leg).
+  Each has its buttons and a reset (WorldCore.keepPristine after the warmup, restoreChunks: the layers by the chunk
+  table and the per-column state page-major; Integrity.forget lets go of what moves there). The flow model is on by
+  default there (`&flow=0` the pipes); rigid rock on.
+- **Headless** (scripts/playground.mjs, the phone proxy, every system in play, 1x): every station's buttons do what
+  they say (rigid rock freed and settled, the house and bases broken, the sand off the shelf, the breach's arc, the
+  river's fall and its spray, the top toppled into the dust); the breach's pool 2.60 → 1.71 breached → 2.59 reset,
+  its plug back; world.gravity 4.5 and spray 0 read back from the GPU's Globals; the rigid rock's fastest fall 19.0
+  cells/s at 1x gravity, 32.3 at 3x (top speed lifted); the report downloaded (JSON with note, shot, 90 values,
+  camera, time, state; PNG). The level's cost at 412x915 q=low: GPU 5.0 ms a frame with rain over the river (112
+  chunks awake), 7.5 ms with the panel and the perf overlay open; frame p50 9.9, p95 10.4 ms. Shots and GIFs:
+  C:\Projects\shots88\playground\.
+- **Conflations found** (not fixed here, BACKLOG AR9-AR12): five gravities (the world's 9.8 for falls and spray, the
+  CPU bodies' 10 — now the world's × 1 —, the physics voxels' 20, chips and splash 14, poured grains their own); the
+  columns' falling pieces capped at 4 cells/s (a likely part of "floaty"), the rigid rock at 14; bodies.ts and
+  colbodies.ts the same falling piece twice (one `pieces` group now); the two water models each with their own rain
+  and evaporation (one `water` group now); the collapse's dust and chips styled by the level scene, not the
+  integrity system.
+
+## 2026-10-29 — the rivers' wetness per watershed (round 109, session 5, `watershed`)
+
+- The user: "I want it per water shed please." The held rivers (`?rivers=table`, the atlas level's) rose and fell
+  with one wetness for the whole world (weather/riverwet.ts: the season plus every storm's intensity, Globals
+  ocean.w), so a storm anywhere raised every river. Now a river's wetness is the climate's (the season, eased, the
+  same everywhere: ocean.w) plus its own storm water: the rain on its own catchment and what its reaches upstream
+  carry, with lags, so a rise travels down the river (BACKLOG RWS1).
+- One concern per structure:
+  - atlas/rivers.ts `Catchments` (the data): the drainage tree already gives every texel the one it drains to; each
+    texel's first river node down it, sampled every 2 texels (1024² Int32 on the 2048 map, 4 MB; the full-res
+    basin is a build-time temporary), each node's own runoff (its samples', the latitude's dryness as `acc`), its
+    reference discharge `ref` (own plus everything upstream: the graph accumulated in `order`, upstream first).
+    Atlas.riverCatchments.
+  - weather/catchwet.ts `CatchmentWet` (the sim): per node two linear stores — the hillside's runoff, eased toward
+    RAIN (3) × the storms' rain (Weather.rainAt) on its own samples over LAG_S 20 s (the climate's lag), and the
+    reach, eased toward its runoff plus its upstream reaches' outflow over the time the river takes to run to the
+    next node (its distance over its reference speed, rivers.ts node word 7; 0.2 s at least). Its storm water is the
+    reach's outflow over `ref` (1.5 at most). Storms rain only over the window, so only the nodes in the window and
+    128 cells round it are kept (467 at the test spot of the 55 085), re-picked when the window's origin changes;
+    the rain is sampled every 0.25 s.
+  - weather/wetfield.ts `RiverWetField` (the window's representation): WorldGpu `riverWet`, r32float, a texel every
+    8 window cells (65 × 65 at 512), each its nearest kept node's storm water within 32 cells, 0 elsewhere; written
+    only while some of it is wet (and once more as it dries).
+  - riverheld.wgsl `riverWetAt(cellXY)` (the one GPU reader, window cells — the signature tileparity's tiles call):
+    riverWet() (the climate's, ocean.w) + the field, bilinear, 0 past the window (so a far tile's river is the
+    climate's). riverHere asks it at the column. The texture is declared in riverheld.wgsl at binding 62 (free in
+    every kernel and draw that includes it; the water and renderfields kernels have 8 storage buffers already — a
+    texture costs none): every pipeline that calls riverWetAt binds 62 = world.riverWetView.
+- The valley levels have no river graph: the field stays 0 and RiverWet keeps the storms (as before). `?riverwet=x`
+  still holds every river at x (the storm water off).
+- Kept live: a storm raining on a chunk still wakes it (sleep.ts) and the water runs there; the pull toward the table
+  (`riverpull`) follows the column's own wetness.
+- Test (scripts/watershed.mjs, new: the atlas level at q=low 412×915, every system, 1x; river A whose catchment lies
+  in the window with a storm held at its samples' middle, D down A's river 150 cells past the storm, B another river
+  tree 300 cells off; the water's depth over the wet columns within 3 cells, every 10 s; C:/Projects/shots88/watershed
+  probe.json, start.png, storm.png, D-after.png, B-after.png):
+
+  | s | storm water A / D / B | depth A | depth D | depth B |
+  |---|---|---|---|---|
+  | 0 | 0 / 0 / 0 | 1.366 | 1.499 | 1.085 |
+  | 10 | 0.025 / 0 / 0 | 1.387 | 1.499 | 1.085 |
+  | 20 | 0.129 / 0.001 / 0 | 1.492 | 1.500 | 1.085 |
+  | 30 | 0.237 / 0.016 / 0 | 1.608 | 1.517 | 1.085 |
+  | 40 | 0.312 / 0.079 / 0 | 1.646 | 1.588 | 1.085 |
+  | 60 | 0.397 / 0.239 / 0 | 1.646 | 1.769 | 1.085 |
+  | 90 | 0.455 / 0.353 / 0 | 1.646 | 1.779 | 1.085 |
+
+  A rises from its own catchment's rain, D (outside the storm, asleep: the table at its wetness) follows ~20 s later,
+  B doesn't move. Both A and D stop at the held rivers' cap (+0.28 at the line, round 84). Before, all three would
+  have risen together (1 + 0.35 × the storm's intensity).
+- Cost (desktop iGPU, q=low 412×915): CatchmentWet.update 0.044 ms a frame (mean) while it rains, the field's write
+  0.026 ms (and a 17 KB upload a frame while wet); setWindow on a slide scans the 55 k nodes (one region's slide).
+  framecost (window 512, parked and panning at 10): the water passes 0.026 / 0.018 ms (flux / depth), renderfields
+  0.029 ms; the baseline run right after on places' code had the whole GPU at twice the span (10.7 ms p50 against
+  5.7 — the shared GPU busy with another agent), so the A/B is noise-bound: no pass is above the baseline's.
+  (framecost-watershed.json, framecost-places.json)
+- Tuning left to the user: RAIN 3 (a catchment rained on all over carries 4 × its reference) and MAX_EX 1.5; the
+  rise's visible size is bounded by the held rivers' +0.28 cap, which storms on a small river reach within ~40 s.
 ## 2026-10-29 — round 108 (`tileparity`): a tile is the window's land minus the simulation (TC18-TC20, TC8)
 
 Why: the user (DECISIONS round 108): "the distant tiles have seems and sometimes miss certain effects like snow ... My

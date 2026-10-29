@@ -43,6 +43,9 @@ export class TileWorld implements PrepWorld {
   readonly levelsView: GPUTextureView;
   readonly cornerView: GPUTextureView;
   readonly riverFlowView: GPUTextureView;
+  /** (round 109, watershed) the rivers' storm water (riverheld.wgsl riverWetAt): none on land past the window — its
+   *  rivers at the climate's wetness, as the field has it there */
+  readonly riverWetView: GPUTextureView;
   private riverFlow: GPUTexture;
   private surfaceSys: SurfaceSystem;
   private fieldsSys: RenderFieldsSystem;
@@ -86,6 +89,7 @@ export class TileWorld implements PrepWorld {
     this.cornerView = tex('corners', S * 5).createView();
     this.riverFlow = tex('riverFlow', S);
     this.riverFlowView = this.riverFlow.createView();
+    this.riverWetView = dev.createTexture({ label: 'tileworld riverWet', size: [2, 2], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING }).createView();
     profiler.trackMemory('tileworld', N * (4 + 16 + 4 + 4 + 24 + 4 + 4 + 16 + 8 + 16) + N * 16 * (6 + PROJ_K + 5));
     const tp = profiler.named('tile-');
     this.surfaceSys = new SurfaceSystem(dev, this, tp);
