@@ -11394,6 +11394,13 @@ docs/PAGES.md §5 P2.2, still dense: the window's chunks are the slots.
   still differed at the load while ring at 0 against the table at 0, and the table at 0 against the shuffled
   table, were identical: not transitive, so that commit's load varied between page loads (PG1). The table's clamp
   stays as robustness only.
+- The 33 kernels the counter can't reach (8 storage buffers: edit, renderfields, stats, the particles' three,
+  structure, oil-depth, fire, sediment-out, climate, wilt, the field mesh's, renderprep, vegprep, the agents'
+  occClear and unitStep, phys's five, lava-depth) were reviewed by hand: every column lookup of theirs whose
+  argument isn't the invocation's own column is behind inMap or clampCell (renderfields' corners and mixedCell,
+  particles' crownTop / runGround / landing cell, sediment's held / reposeAt / windActive callers, the units' and
+  agents' nav links behind inScope or a clamped cell). The load varying between page loads is BACKLOG RW5 (the
+  atlas isn't deterministic at load), not chased here.
 
 ## 2026-10-28 — round 107 (`pages`): P2.3a, the slow turns keyed by world chunk (a deliberate baseline change)
 
