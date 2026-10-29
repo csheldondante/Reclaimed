@@ -93,7 +93,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // canvas and the rest barely
   let takes = select(0.3, 1.0, mat == 1u || (mat >= 5u && mat <= 7u) || mat == 11u || mat == 16u);
   if (open > 0.0 && seeded && sand < 0.5) {
-    moss += MOSS_RATE * open * clamp(damp, 0.0, 1.0) * takes * (0.5 + 0.5 * max(nearMoss, moss));
+    // (round 108, simtiers: moss is the vegetation's growth — baked, none in play; a bake's gain speeds it)
+    moss += MOSS_RATE * tierRate(TIER_VEG, cell) * open * clamp(damp, 0.0, 1.0) * takes * (0.5 + 0.5 * max(nearMoss, moss));
   }
   // cover on the faces that look up
   var lv = voxCoverLv(w);

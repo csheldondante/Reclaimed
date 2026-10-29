@@ -85,7 +85,10 @@ const RIVER_TABLE: AuthoredRiver[] = (() => {
   at(R.ledge + 4, riverTop(R.ledge + 4), ym);
   for (let x = R.ledge + 12; x < R.x1; x += 8) at(x);
   at(R.x1 + 6, R.foot + 0.5);
-  return [{ path, width: R.width, discharge: R.discharge }];
+  // (its watershed: the station — rain on it raises the river, lagged down it)
+  const [cx0, cy0] = [R.x0, 96 * ROW_H];
+  const [cx1, cy1] = [R.x1, 176 * ROW_H];
+  return [{ path, width: R.width, discharge: R.discharge, catchment: [cx0, cy0, cx1, cy1] }];
 })();
 /** where the river starts: what a surge pours in */
 const SPRING_COLS: [number, number][] = [-1, 0, 1].map((d) => [RIVER.x0 + 5, Math.round(riverMid(RIVER.x0 + 5)) + d]);
@@ -384,6 +387,7 @@ export function generatePlayground(dims: WorldDims): MapData {
     contam: z(N * 2),
     moisture,
     riverFlow: held.riverFlow,
+    riverGraph: held.graph,
     vegetation: z(N),
     waterSource,
     oil: z(N),

@@ -41,13 +41,18 @@ try {
   const p = await browser.newPage();
   p.on('pageerror', (e) => {
     bad = true;
-    console.log('pageerror', e.message);
+    console.log('pageerror', e.message, e.stack);
   });
   p.on('console', (m) => m.type() === 'error' && console.log('console.error', m.text().slice(0, 300)));
   const world = `fc-${Date.now().toString(36)}`;
   await p.goto(`${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&hitch=1&hitchhud=0&at=${opt('at', '15024,14337')}&win=${win}&world=${world}${extra}`, { waitUntil: 'load' });
   await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimedHitch, { timeout: 240000 });
   await sleep(wait);
+  // (round 108, simtiers: --eval js run once settled, before the runs — e.g. a storm over the camera)
+  if (opt('eval', '')) {
+    console.log('eval', await p.evaluate(opt('eval', '')));
+    await sleep(3000);
+  }
   if (throttle > 1) {
     const cdp = await p.createCDPSession();
     await cdp.send('Emulation.setCPUThrottlingRate', { rate: throttle });

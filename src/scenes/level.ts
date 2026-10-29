@@ -41,6 +41,8 @@ import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
 import { settleTol, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
+import { CatchmentWet } from '../weather/catchwet';
+import { RiverWetField } from '../weather/wetfield';
 import { riverMode, useRivers } from '../sim/world-gpu';
 import { installFlow, type FlowKit } from '../flow/install';
 import { FLOWLAB } from '../levels/flowlab';
@@ -142,6 +144,11 @@ export class LevelScene implements Scene {
   private reclaimed = 0;
   /** (round 84) the rivers' wetness (weather/riverwet.ts) */
   private riverWet = new RiverWet();
+  /** (round 109) the atlas level's: each watershed's storm water (weather/catchwet.ts), its field over the window
+   *  (weather/wetfield.ts), and the window's origin they were fitted to */
+  private catchWet?: CatchmentWet;
+  private wetField?: RiverWetField;
+  private catchAt = '';
   /** (round 84, ?settletol) when the water's change per chunk was last read, and whether a read is in flight */
   private settleReadAt = 0;
   private settleReading = false;
@@ -311,6 +318,9 @@ export class LevelScene implements Scene {
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
     this.core.globals.story = this.story;
     // (round 79) the sea past a streamed window's edge, from the start (the warmup drained it otherwise)
+    // (round 108, simtiers — DECISIONS round 108: in the legacy game's play rain and wind erosion and vegetation
+    // growth are baked, run between runs or on a story event: core.tiers.bake; the game asks for them live: tiers.live)
+    if (opts.atlas) this.core.tiers.playDefaults();
     if (opts.atlas) this.core.globals.seaZ = opts.atlas.atlas.p.sea - opts.atlas.oz;
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
@@ -1942,8 +1952,30 @@ export class LevelScene implements Scene {
       }
       this.hybrid.count(core.renderer.fieldMesh.drawn);
     }
-    // (round 84) the rivers' wetness: the season and the storms (weather/riverwet.ts)
-    globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
+    // (round 84) the rivers' wetness: the season and the storms (weather/riverwet.ts); (round 109) on the atlas level
+    // the storms per watershed — the climate's the season alone, each river's storm water its own catchment's
+    // (round 110: and a fixed map's authored river table's — world/rivertable.ts riverGraph, its window the map)
+    const atl = this.opts.atlas?.atlas;
+    if (atl?.riverCatchments && this.stream && !this.catchWet) {
+      this.catchWet = new CatchmentWet({ nodes: atl.riverNodes, catchments: atl.riverCatchments, n: atl.p.n, worldW: atl.worldW, worldH: atl.worldH });
+      this.wetField = new RiverWetField(this.host.gpu.device, core.world.riverWet);
+    }
+    if (core.map.riverGraph && !this.stream && !this.catchWet && riverMode() === 'table') {
+      this.catchWet = new CatchmentWet(core.map.riverGraph);
+      this.wetField = new RiverWetField(this.host.gpu.device, core.world.riverWet);
+    }
+    if (this.catchWet && this.wetField) {
+      const S = this.stream ?? { origin: [0, 0] };
+      const key = `${S.origin[0]},${S.origin[1]}`;
+      if (key !== this.catchAt) {
+        this.catchAt = key;
+        this.catchWet.setWindow(S.origin[0], S.origin[1], dims.w, dims.h);
+        this.wetField.map(this.catchWet);
+      }
+      this.catchWet.update(dt * this.speed, weather);
+      this.wetField.write(this.catchWet.ex);
+      globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, []);
+    } else globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
     if (this.sleep && settleTol() > 0) this.readSettling();
     if (this.sleep) {

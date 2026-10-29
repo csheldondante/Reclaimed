@@ -6,6 +6,7 @@ import type { Profiler } from '../gpu/profiler';
 import commonWgsl from '../shaders/common.wgsl?raw';
 import materialsWgsl from '../shaders/materials.wgsl?raw';
 import particlesWgsl from '../shaders/particles.wgsl?raw';
+import tiersWgsl from '../shaders/tiers.wgsl?raw';
 import vegplanWgsl from '../shaders/vegplan.wgsl?raw';
 import { dispatch, type SimSystem } from './system';
 import { AWAY, LIVE, TILES_BINDING, cullKernel, dispatchTiles } from './cull';
@@ -108,7 +109,8 @@ export class ParticleSystem implements SimSystem {
     private world: WorldGpu,
     private prof: Profiler,
   ) {
-    const parts = [commonWgsl, materialsWgsl, vegplanWgsl, particlesWgsl];
+    // (round 108, simtiers: tiers.wgsl - binding 50, read by the seeds' and gusts' writes to the plants)
+    const parts = [commonWgsl, materialsWgsl, tiersWgsl, vegplanWgsl, particlesWgsl];
     const spec = {
       0: 'uniform',
       2: 'uniform',
@@ -127,6 +129,7 @@ export class ParticleSystem implements SimSystem {
       19: 'tex',
       21: 'tex',
       22: 'stex',
+      50: 'tex',
     } as const;
     this.emitK = makeCompute(device, 'particles-emit', parts, spec, 'emit');
     // (round 104, simscale: the emitters over the live chunks every tick, the sleeping ones on a slow turn — below)
@@ -134,7 +137,7 @@ export class ParticleSystem implements SimSystem {
     this.burstK = makeCompute(device, 'particles-burst', parts, spec, 'bursts');
     this.updateK = makeCompute(device, 'particles-update', parts, spec, 'update');
     const fireSpec: Record<number, BindKind> = { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 12: 'read', 13: 'read', 15: 'tex' };
-    const petalSpec: Record<number, BindKind> = { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 9: 'rw', 14: 'read', 15: 'tex', 16: 'rw', 17: 'tex' };
+    const petalSpec: Record<number, BindKind> = { 0: 'uniform', 2: 'uniform', 3: 'rw', 4: 'rw', 5: 'read', 9: 'rw', 14: 'read', 15: 'tex', 16: 'rw', 17: 'tex', 50: 'tex' };
     this.fireK = makeCompute(device, 'particles-fire', parts, fireSpec, 'fireEmit');
     this.petalK = makeCompute(device, 'particles-petals', parts, petalSpec, 'petalEmit');
     const petalBufs = {
@@ -148,6 +151,7 @@ export class ParticleSystem implements SimSystem {
       15: world.windFieldView,
       16: world.petals,
       17: world.driftView,
+      50: world.tierView,
     };
     this.groupPetal = makeBindGroup(device, 'particles-petals', this.petalK.layout, petalBufs);
     this.reqBuf = world.buf('particleRequests', this.reqData.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
@@ -169,6 +173,7 @@ export class ParticleSystem implements SimSystem {
       19: world.airView,
       21: world.bodyProjView,
       22: world.sparkView,
+      50: world.tierView,
     };
     this.group = makeBindGroup(device, 'particles', this.emitK.layout, bufs);
     this.groupBurst = makeBindGroup(device, 'particles', this.burstK.layout, bufs);
@@ -200,7 +205,7 @@ export class ParticleSystem implements SimSystem {
   private split: Record<'emit' | 'fire' | 'petals', { k: ComputeKernel; g: GPUBindGroup; n: number }[]> | null = null;
   private splitOf(name: 'emit' | 'fire' | 'petals', entry: string, spec: Record<number, BindKind>, bufs: Record<number, GPUBuffer | GPUTextureView>): void {
     const t = this.world.tiles!;
-    const src = [commonWgsl, materialsWgsl, vegplanWgsl, particlesWgsl].join('\n');
+    const src = [commonWgsl, materialsWgsl, tiersWgsl, vegplanWgsl, particlesWgsl].join('\n');
     for (const [n, code] of [
       [LIVE, src],
       [AWAY + EMIT_SLOW, slowEmit(src)],

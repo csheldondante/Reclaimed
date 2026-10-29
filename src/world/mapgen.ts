@@ -7,6 +7,7 @@
 
 import { ColumnGrid, type WorldDims } from './layout';
 import { MAT } from './materials';
+import type { RiverGraph } from '../weather/catchwet';
 import { fbm, hash2, rng, smoothstep } from './noise';
 
 export interface MapData {
@@ -37,6 +38,8 @@ export interface MapData {
   lavaSpring?: Float32Array;
   /** (round 84) The atlas's rivers at their steady state, four per column (world-gpu riverFlow), if any. */
   riverFlow?: Float32Array;
+  /** (round 110) an authored river table's watersheds (world/rivertable.ts riverGraph; the atlas's are its own) */
+  riverGraph?: RiverGraph;
   /** Columns the structural system should judge when the level starts (the atlas's weak forms), if any. */
   structural?: Uint8Array;
   /** Initial surface height for CPU-side queries (storm steering, camera). */

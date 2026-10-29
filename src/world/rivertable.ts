@@ -17,6 +17,8 @@
 import { MAT } from './materials';
 import { cellPos, nbr, NDIR } from './lattice';
 import type { Interval } from './layout';
+import { NODE_WORDS, type Catchments } from '../atlas/rivers';
+import type { RiverGraph } from '../weather/catchwet';
 
 /** a step down from a river's column this high or more is a fall: its water a sheet RIVER_SHEET deep, quick (forms.wgsl) */
 export const RIVER_FALL = 1.5;
@@ -66,6 +68,74 @@ export interface AuthoredRiver {
   width: number;
   /** cells³ a 60 Hz tick at the reference wetness (the atlas's: RIVER_RUNOFF a texel drained; its smallest ~0.3) */
   discharge: number;
+  /** (round 109/110, its watershed) the land that drains into it: a world rectangle [x0, y0, x1, y1] — rain there
+   *  raises it (weather/catchwet.ts, riverheld.wgsl riverWetAt), each part the nearest point of its line's, so a
+   *  rise runs down it at its pace. Without one it follows the climate alone (the season). */
+  catchment?: [number, number, number, number];
+}
+
+/** a fixed map's catchment samples' spacing (world units); the graph's world is this big (no torus within reach) */
+const CATCH_TEXEL = 8;
+const CATCH_WORLD = 4096;
+
+/**
+ * (round 110) The authored rivers' graph as the watersheds read the atlas's (weather/catchwet.ts RiverGraph): the
+ * nodes packed as atlas/rivers.ts's table, and per node its catchment — the samples of its river's rectangle nearest
+ * it — with its own runoff and its discharge at the reference wetness (its own and everything upstream: the samples'
+ * runoff, 1 each). Rivers don't join: each is its own graph, upstream first.
+ */
+export function riverGraph(rivers: AuthoredRiver[], nodes: RiverNode[]): RiverGraph {
+  const N = nodes.length;
+  const packed = new Uint32Array(Math.max(N, 1) * NODE_WORDS);
+  const f = new Float32Array(packed.buffer);
+  nodes.forEach((d, k) => {
+    const o = k * NODE_WORDS;
+    f[o] = d.x;
+    f[o + 1] = d.y;
+    f[o + 2] = d.level;
+    f[o + 3] = d.width;
+    packed[o + 4] = d.next;
+    packed[o + 5] = 0;
+    f[o + 6] = d.depth;
+    f[o + 7] = d.speed;
+  });
+  const side = CATCH_WORLD / CATCH_TEXEL;
+  const of = new Int32Array(side * side).fill(-1);
+  const own = new Float32Array(N);
+  let first = 0;
+  for (const r of rivers) {
+    const n = r.path.length;
+    if (r.catchment) {
+      const [x0, y0, x1, y1] = r.catchment;
+      for (let b = Math.max(0, Math.floor(y0 / CATCH_TEXEL)); b < Math.min(side, Math.ceil(y1 / CATCH_TEXEL)); b++)
+        for (let a = Math.max(0, Math.floor(x0 / CATCH_TEXEL)); a < Math.min(side, Math.ceil(x1 / CATCH_TEXEL)); a++) {
+          const sx = (a + 0.5) * CATCH_TEXEL;
+          const sy = (b + 0.5) * CATCH_TEXEL;
+          let best = -1;
+          let bd = Infinity;
+          for (let k = first; k < first + n; k++) {
+            const d = (nodes[k].x - sx) ** 2 + (nodes[k].y - sy) ** 2;
+            if (d < bd) {
+              bd = d;
+              best = k;
+            }
+          }
+          of[b * side + a] = best;
+          own[best] += 1;
+        }
+    }
+    first += n;
+  }
+  // (upstream first: each node's discharge its own and what runs into it)
+  const ref = new Float32Array(N);
+  const order = Int32Array.from({ length: N }, (_, k) => k);
+  for (const k of order) {
+    ref[k] += own[k];
+    const nx = nodes[k].next;
+    if (nx !== k) ref[nx] += ref[k];
+  }
+  const catchments: Catchments = { step: 1, side, of, rowW: new Float32Array(side).fill(1), own, ref, order };
+  return { nodes: packed, catchments, n: side, worldW: CATCH_WORLD, worldH: CATCH_WORLD };
 }
 
 /** an authored river's nodes, rated as the atlas's (atlas/rivers.ts findRivers' table) */
@@ -149,6 +219,8 @@ export interface HeldRivers {
   /** the rivers' columns, held, and the falls among them (counts) */
   columns: number;
   falls: number;
+  /** their watersheds (riverGraph) */
+  graph: RiverGraph;
 }
 
 /**
@@ -225,5 +297,5 @@ export function holdRivers(rivers: AuthoredRiver[], m: { w: number; h: number; c
         columns++;
       }
     }
-  return { riverFlow, columns, falls };
+  return { riverFlow, columns, falls, graph: riverGraph(rivers, nodes) };
 }
