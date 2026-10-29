@@ -36,7 +36,7 @@ import { TouchPad } from './touchpad';
 import { Walker } from './walker';
 import { walkerPose } from './walker-pose';
 import { findBasin, pour, type Basin, type FillWith } from './fill';
-import { COURSES, type Course } from './gauntlet';
+import { COURSES, perColumn, type Course, type CoursePiece } from './gauntlet';
 import './sandbox.css';
 
 /** the factions the sandbox's units stand for */
@@ -63,6 +63,8 @@ const FILLS: { id: FillWith; name: string }[] = [
 
 /** a basin's cells at most before "not enclosed" */
 const FILL_LIMIT = 4000;
+/** under a cell's spacing: an edit touches its own column only */
+const ONE_COLUMN = 0.6;
 /** seconds of the boundary log a feedback note carries */
 const FEEDBACK_S = 60;
 
@@ -406,10 +408,12 @@ export class HeroSandbox {
   }
 
   /** Fill the vessel at (x, y) (window) with `what`: the basin found, then poured (hero/fill.ts). */
-  fill(at: V2, what: FillWith): HeroSandbox['lastFill'] {
+  async fill(at: V2, what: FillWith): Promise<HeroSandbox['lastFill']> {
     const t = this.d.api.terrain!;
     const w = this.d.api.water;
     if (!w) throw new Error('hero sandbox: the fill needs the world API water module');
+    // (the ground and the water as they are now, not up to a mirror's read ago)
+    await this.d.api.refresh();
     const b = findBasin((cx, cy) => t.heightAt(...cellPos(cx, cy)), cellAt(at[0], at[1]), { limit: FILL_LIMIT });
     if ('error' in b) {
       this.lastFill = { error: b.error, with: what };
@@ -433,12 +437,7 @@ export class HeroSandbox {
     const heading = Math.atan2(-Math.sin(cam.azimuth), -Math.cos(cam.azimuth));
     const c = gen.make([g[0], g[1]], heading, this.seed++);
     const t = this.d.api.terrain!;
-    const w = this.d.api.water;
-    for (const p of c.pieces) {
-      if (p.kind === 'build') t.build(p.at[0], p.at[1], p.material, { radius: p.radius, layers: p.layers });
-      else if (p.kind === 'dig') t.dig(p.at[0], p.at[1], { radius: p.radius, layers: p.layers });
-      else w?.flood(p.at[0], p.at[1], { radius: p.radius, depth: p.depth });
-    }
+    this.lay(c.pieces);
     this.d.wake(c.start[0], c.start[1], 140);
     // (the units once the ground under them is in: the edits land four a tick)
     const queued = () => this.d.core.globals.events.length;
@@ -452,6 +451,17 @@ export class HeroSandbox {
     } else await this.enter(c.start);
     this.d.say(`${c.name}: ${c.pieces.length} pieces, ${c.foes.length} foes — to the crystal`, 4);
     return c;
+  }
+
+  /** Lay course pieces through the world API: the builds a column at a time (hero/gauntlet.ts perColumn), digs and floods as they are. */
+  lay(pieces: CoursePiece[]): void {
+    const t = this.d.api.terrain!;
+    const w = this.d.api.water;
+    for (const p of pieces) {
+      if (p.kind === 'dig') t.dig(p.at[0], p.at[1], { radius: p.radius, layers: p.layers });
+      else if (p.kind === 'flood') w?.flood(p.at[0], p.at[1], { radius: p.radius, depth: p.depth });
+    }
+    for (const c of perColumn(pieces)) t.build(c.at[0], c.at[1], c.material as Parameters<typeof t.build>[2], { radius: ONE_COLUMN, layers: c.layers });
   }
 
   clearUnits(): void {
@@ -579,8 +589,8 @@ export class HeroSandbox {
     const at: V2 = [g[0], g[1]];
     if (tool.kind === 'spawn') this.spawn(tool.unit, at);
     else if (tool.kind === 'fill') {
-      this.fill(at, tool.what);
       this.arm(null);
+      void this.fill(at, tool.what);
     } else {
       const c = cellAt(at[0], at[1]);
       this.d.core.map.poi.heroStart = c;

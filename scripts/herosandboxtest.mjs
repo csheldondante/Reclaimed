@@ -87,105 +87,181 @@ try {
   });
   ok(in1.active && in1.role === 'wanderer', `dropped in as the ${in1.role} at ${in1.at?.map((v) => v.toFixed(1))}`);
   ok(/intent move/.test(in1.info) && /camera zoom/.test(in1.info) && /Swing/.test(in1.info), 'the inspector shows the intent, the camera and the abilities');
-  const p0 = in1.at;
-  await gif('walk.gif', 25, 100, async (i) => {
-    await ev((i) => (window.reclaimed.heroSandbox.pad.scripted = { stick: i < 12 ? [0, -50] : [50, 0], attack: false }), i);
+  // (the walk: the path's length, frame by frame — a wall or the river may stop a straight line)
+  let walked = 0;
+  let last = in1.at;
+  await gif('walk.gif', 28, 100, async (i) => {
+    const dir = [[0, -50], [50, 0], [0, 50], [-50, 0]][Math.floor(i / 7)];
+    const at = await ev((dir) => {
+      const hs = window.reclaimed.heroSandbox;
+      hs.pad.scripted = { stick: dir, attack: false };
+      return hs.hero.position();
+    }, dir);
+    walked += Math.hypot(at[0] - last[0], at[1] - last[1]);
+    last = at;
   });
   const walk = await ev(() => {
     const hs = window.reclaimed.heroSandbox;
     hs.pad.scripted = null;
-    return { at: hs.hero.position(), info: document.querySelector('.hero-sb-info').textContent, intents: hs.log.intents.length };
+    return { intents: hs.log.intents.length, moving: hs.log.intents.filter((s) => Math.hypot(s.move[0], s.move[1]) > 0.5).length };
   });
-  ok(Math.hypot(walk.at[0] - p0[0], walk.at[1] - p0[1]) > 5, `it walked ${Math.hypot(walk.at[0] - p0[0], walk.at[1] - p0[1]).toFixed(1)} cells (the scripted stick)`);
-  ok(walk.intents > 30, `the intent trace kept ${walk.intents} intents`);
+  ok(walked > 8, `it walked ${walked.toFixed(1)} cells along its path (the scripted stick, four ways)`);
+  ok(walk.intents > 30 && walk.moving > 20, `the intent trace kept ${walk.intents} intents, ${walk.moving} pushing the stick`);
 
-  // 2. units that chase it and hit it; it swings back
+  // 2. units that chase it and hit it; it swings back (the distances sampled before the swinging starts)
   const spawn = await ev(() => {
     const hs = window.reclaimed.heroSandbox;
     const p = hs.hero.position();
-    const ids = [hs.spawn('raider', [p[0] + 9, p[1]]), hs.spawn('raider', [p[0] - 9, p[1] + 3]), hs.spawn('brute', [p[0], p[1] + 10]), hs.spawn('ally', [p[0] + 2, p[1] - 2])];
-    const d = (id) => {
-      const u = hs.units.get(id);
-      return Math.hypot(u.at[0] - p[0], u.at[1] - p[1]);
-    };
-    return { ids, d0: ids.slice(0, 3).map(d) };
+    const ids = [hs.spawn('raider', [p[0] + 8, p[1]]), hs.spawn('raider', [p[0] - 8, p[1] + 2]), hs.spawn('brute', [p[0], p[1] + 7]), hs.spawn('ally', [p[0] + 2, p[1] - 2])];
+    return { ids };
   });
+  const dist = () =>
+    ev((ids) => {
+      const hs = window.reclaimed.heroSandbox;
+      const p = hs.hero.position();
+      return ids.map((id) => {
+        const u = hs.units.get(id);
+        return u && u.alive ? +Math.hypot(u.at[0] - p[0], u.at[1] - p[1]).toFixed(1) : null;
+      });
+    }, spawn.ids);
+  const d0 = await dist();
+  let dMin = d0.map((d) => d ?? 99);
   await gif('fight.gif', 40, 100, async (i) => {
+    if (i < 20) {
+      const d = await dist();
+      dMin = dMin.map((m, k) => (d[k] === null ? m : Math.min(m, d[k])));
+    }
     if (i === 20) await ev(() => (window.reclaimed.heroSandbox.pad.scripted = { attack: true }));
   });
   const fight = await ev((ids) => {
     const hs = window.reclaimed.heroSandbox;
-    const p = hs.hero.position();
     hs.pad.scripted = null;
     const us = ids.map((id) => hs.units.get(id));
     return {
-      d1: us.slice(0, 3).map((u) => (u ? Math.hypot(u.at[0] - p[0], u.at[1] - p[1]) : -1)),
-      states: us.map((u) => u && `${u.kind}:${u.state}:${u.health}`),
+      states: us.map((u, k) => (u ? `${u.kind}:${u.state}:${u.health}` : `#${ids[k]}: gone (killed)`)),
       health: hs.hero.health,
       calls: hs.log.calls.map((c) => `${c.dir} ${c.call}`),
       log: document.querySelector('.hero-sb-log').textContent,
     };
   }, spawn.ids);
-  ok(fight.d1.slice(0, 2).every((d, i) => d >= 0 && d < spawn.d0[i] - 3), `the raiders chased it (${spawn.d0.map((v) => v.toFixed(1))} → ${fight.d1.map((v) => v.toFixed(1))}; ${fight.states.join(', ')})`);
+  ok([0, 1, 2].every((k) => dMin[k] < d0[k] - 3), `the raiders and the brute chased it (closest ${d0.join(', ')} → ${dMin.join(', ')}; then ${fight.states.join(', ')})`);
   ok(fight.calls.some((c) => c === 'units→hero actor.hurt') && fight.calls.some((c) => c === 'hero→host hurt'), `their blows crossed the boundary (actor.hurt, hurt): health ${fight.health}`);
   ok(fight.calls.some((c) => c === 'hero→host units.hit'), "the hero's swings crossed it (units.hit)");
   ok(/actor\.hurt|units\.hit/.test(fight.log), 'the boundary log panel shows them');
 
-  // 3. out to the editor and back in
+  // 3. out to the editor
   await ev(() => window.reclaimed.heroSandbox.exit());
   await sleep(500);
   const out = await ev(() => ({ active: window.reclaimed.heroSandbox.active, pad: !!document.querySelector('.hero-pad') }));
   ok(!out.active && !out.pad, 'back out to the editor: no hero, no stick');
   await ev(() => window.reclaimed.heroSandbox.clearUnits());
 
-  // 4. fill a vessel with water, and one with sand: walls built through the world API round the screen's middle
-  const ring = async (dx) =>
-    ev(async (dx) => {
-      const r = window.reclaimed;
-      const t = r.heroSandbox.d.api.terrain;
-      const cam = r.camera;
-      const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, (x, y) => t.heightAt(x, y) ?? 0);
-      const c = [g[0] + dx, g[1]];
-      for (let a = 0; a < Math.PI * 2; a += Math.PI / 14) t.build(c[0] + Math.cos(a) * 6, c[1] + Math.sin(a) * 6, 'concrete', { radius: 1.6, layers: 6 });
-      while (r.globals.events.length) await new Promise((res) => setTimeout(res, 100));
-      await new Promise((res) => setTimeout(res, 1500));
-      await t.refresh();
-      return c;
-    }, dx);
-  const cw = await ring(-9);
-  const cs = await ring(9);
-  await shot('vessels.png');
-  const wf = await ev((c) => {
-    const f = window.reclaimed.heroSandbox.fill(c, 'water');
-    return f.error ? { error: f.error } : { cells: f.basin.cells.length, level: f.basin.level, fillTo: f.basin.fillTo, vol: f.volume, n: f.commands, floor: Math.min(...f.basin.cells.map((x) => x[2])) };
-  }, cw);
-  ok(!wf.error && wf.cells > 40, `the water vessel found: ${wf.error ?? `${wf.cells} cells, rim ${wf.level?.toFixed(1)}, to ${wf.fillTo?.toFixed(1)}, ${wf.vol?.toFixed(0)} cells³ in ${wf.n} pours`}`);
-  const sf = await ev((c) => {
-    const f = window.reclaimed.heroSandbox.fill(c, 'sand');
-    return f.error ? { error: f.error } : { cells: f.basin.cells.length, fillTo: f.basin.fillTo, floor: Math.min(...f.basin.cells.map((x) => x[2])) };
-  }, cs);
-  ok(!sf.error && sf.cells > 40, `the sand vessel found: ${sf.error ?? `${sf.cells} cells, to ${sf.fillTo?.toFixed(1)}`}`);
-  await gif('fill.gif', 40, 150);
-  await sleep(4000);
-  const filled = await ev(
-    async (cw, cs) => {
-      const r = window.reclaimed;
-      const api = r.heroSandbox.d.api;
-      await api.terrain.refresh();
-      return { depth: api.water.depthAt(cw[0], cw[1]), level: api.water.levelAt(cw[0], cw[1]), sand: api.terrain.heightAt(cs[0], cs[1]), mat: api.terrain.materialAt(cs[0], cs[1]) };
-    },
-    cw,
-    cs,
-  );
-  ok(!wf.error && filled.depth > 1.5 && Math.abs(filled.level - wf.fillTo) < 1.5, `water stands in it: ${filled.depth?.toFixed(2)} deep, at ${filled.level?.toFixed(2)} (filled to ${wf.fillTo?.toFixed(2)})`);
-  ok(!sf.error && filled.sand > sf.floor + 2 && filled.mat === 'sand', `sand fills the other: its top ${filled.sand?.toFixed(2)} over a floor of ${sf.floor?.toFixed(2)}, ${filled.mat}`);
-  await shot('filled.png');
-  const notEnclosed = await ev(() => {
+  // 4. two vessels on dry, flat ground near the screen's middle: rings of concrete a column at a time (hs.lay), read
+  // back until every wall column stands; then one filled with water, one with sand; the probes at each basin's bottom
+  const site = await ev(async () => {
+    const r = window.reclaimed;
+    const api = r.heroSandbox.d.api;
+    await api.refresh();
+    const t = api.terrain;
+    const w = api.water;
+    const cam = r.camera;
+    const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, (x, y) => t.heightAt(x, y) ?? 0);
+    // (flat: within 1.5 of the centre's height over a radius of 9; dry: no water there)
+    const flat = (cx, cy) => {
+      const h0 = t.heightAt(cx, cy);
+      if (h0 === null) return false;
+      for (let a = 0; a < 12; a++)
+        for (const rr of [3, 6, 9]) {
+          const x = cx + Math.cos((a * Math.PI) / 6) * rr;
+          const y = cy + Math.sin((a * Math.PI) / 6) * rr;
+          const h = t.heightAt(x, y);
+          if (h === null || Math.abs(h - h0) > 1.5 || (w.depthAt(x, y) ?? 1) > 0.05) return false;
+        }
+      return true;
+    };
+    for (let ring = 0; ring <= 60; ring += 4)
+      for (let a = 0; a < 16; a++) {
+        const x = g[0] + Math.cos((a * Math.PI) / 8) * ring;
+        const y = g[1] + Math.sin((a * Math.PI) / 8) * ring;
+        if (flat(x, y) && flat(x + 22, y)) return { a: [x, y], b: [x + 22, y], floor: t.heightAt(x, y) };
+        if (ring === 0) break;
+      }
+    return null;
+  });
+  ok(!!site, `two dry, flat spots for the vessels: ${site ? `${site.a.map((v) => v.toFixed(1))} and ${site.b.map((v) => v.toFixed(1))}, floor ${site.floor.toFixed(1)}` : 'none found near the middle'}`);
+  if (site) {
+    await ev((site) => {
+      const hs = window.reclaimed.heroSandbox;
+      const ring = (c) => {
+        const out = [];
+        for (let a = 0; a < 48; a++) out.push({ kind: 'build', at: [c[0] + Math.cos((a * Math.PI) / 24) * 5.8, c[1] + Math.sin((a * Math.PI) / 24) * 5.8], material: 'concrete', radius: 1.1, layers: 6 });
+        return out;
+      };
+      hs.lay([...ring(site.a), ...ring(site.b)]);
+      window.reclaimed.camera.target = [(site.a[0] + site.b[0]) / 2, site.a[1], site.floor];
+    }, site);
+    // (the walls a cell a tick, four builds a tick: read back until every wall column is up)
+    let up = null;
+    for (let k = 0; k < 60; k++) {
+      await sleep(500);
+      up = await ev(async (site) => {
+        const api = window.reclaimed.heroSandbox.d.api;
+        await api.refresh();
+        const t = api.terrain;
+        let n = 0;
+        let hi = 0;
+        let lo = 1e9;
+        for (const c of [site.a, site.b])
+          for (let a = 0; a < 24; a++) {
+            const h = t.heightAt(c[0] + Math.cos((a * Math.PI) / 12) * 5.8, c[1] + Math.sin((a * Math.PI) / 12) * 5.8) ?? 0;
+            hi = Math.max(hi, h);
+            lo = Math.min(lo, h);
+            if (h >= site.floor + 4.5) n++;
+          }
+        return { n, hi: +hi.toFixed(1), lo: +lo.toFixed(1), queued: window.reclaimed.globals.events.length, inside: +(t.heightAt(site.a[0], site.a[1]) ?? -1).toFixed(1) };
+      }, site);
+      if (up.n === 48 && up.queued === 0) break;
+    }
+    ok(up.n === 48, `the vessels' walls stand: ${up.n}/48 wall columns up, ${up.lo}..${up.hi} (floor ${site.floor.toFixed(1)}, inside ${up.inside})`);
+    await sleep(1000);
+    await shot('vessels.png');
+    const fill = (c, what) =>
+      ev(
+        async (c, what) => {
+          const f = await window.reclaimed.heroSandbox.fill(c, what);
+          return f.error ? { error: f.error } : { cells: f.basin.cells.length, level: f.basin.level, fillTo: f.basin.fillTo, vol: f.volume, n: f.commands, floor: Math.min(...f.basin.cells.map((x) => x[2])), bottom: f.basin.bottom, spill: f.basin.spill };
+        },
+        c,
+        what,
+      );
+    const wf = await fill(site.a, 'water');
+    ok(!wf.error && wf.cells > 40 && wf.level > site.floor + 4, `the water vessel: ${wf.error ?? `${wf.cells} cells, rim ${wf.level.toFixed(1)}, to ${wf.fillTo.toFixed(1)}, ${wf.vol.toFixed(0)} cells³ in ${wf.n} pours`}`);
+    const sf = await fill(site.b, 'sand');
+    ok(!sf.error && sf.cells > 40 && sf.level > site.floor + 4, `the sand vessel: ${sf.error ?? `${sf.cells} cells, rim ${sf.level.toFixed(1)}, to ${sf.fillTo.toFixed(1)}, ${sf.n} pours`}`);
+    await gif('fill.gif', 40, 150);
+    // (the pours land four a tick: waited for, then the water a while to settle and the sand to slump)
+    for (let k = 0; k < 40 && (await ev(() => window.reclaimed.globals.events.length)) > 0; k++) await sleep(250);
+    await sleep(3000);
+    const probe = await ev(
+      async (wb, sb) => {
+        const api = window.reclaimed.heroSandbox.d.api;
+        await api.refresh();
+        return { depth: wb && api.water.depthAt(wb[0], wb[1]), level: wb && api.water.levelAt(wb[0], wb[1]), sand: sb && api.terrain.heightAt(sb[0], sb[1]), mat: sb && api.terrain.materialAt(sb[0], sb[1]) };
+      },
+      wf.bottom ?? null,
+      sf.bottom ?? null,
+    );
+    if (!wf.error) ok(probe.depth > 2 && Math.abs(probe.level - wf.fillTo) < 1.5, `water stands in it: ${probe.depth?.toFixed(2)} deep at its bottom, its top at ${probe.level?.toFixed(2)} (filled to ${wf.fillTo.toFixed(2)})`);
+    // (loose sand lies in the drift layer over the column's top layer: the height says it's there, materialAt the layer under it)
+    if (!sf.error) ok(probe.sand > sf.floor + 2, `sand fills the other: its top ${probe.sand?.toFixed(2)} over its floor ${sf.floor.toFixed(2)} (filled to ${sf.fillTo.toFixed(2)}; the layer under it ${probe.mat})`);
+    await shot('filled.png');
+  }
+  const notEnclosed = await ev(async () => {
     const r = window.reclaimed;
     const cam = r.camera;
     const t = r.heroSandbox.d.api.terrain;
     const g = cam.groundAt(cam.viewportW * 0.5, cam.viewportH * 0.15, (x, y) => t.heightAt(x, y) ?? 0);
-    return window.reclaimed.heroSandbox.fill([g[0], g[1]], 'water').error ?? null;
+    return (await window.reclaimed.heroSandbox.fill([g[0], g[1]], 'water')).error ?? null;
   });
   console.log(`     an open spot: ${notEnclosed ?? '(it was a basin)'}`);
 

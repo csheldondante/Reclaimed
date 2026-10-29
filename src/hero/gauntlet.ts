@@ -8,6 +8,7 @@
 // poi.heroStart (set with the sandbox's 📍 tool, saved with the map).
 
 import type { V2 } from '../api/contracts/units';
+import { cellAt, cellPos } from '../world/lattice';
 
 /** One edit of the world API (api/terrain.ts build / dig; api/water.ts flood), at a world point. */
 export type CoursePiece =
@@ -110,3 +111,26 @@ export const obstacleCourse: CourseGenerator = {
 };
 
 export const COURSES: CourseGenerator[] = [obstacleCourse];
+
+/**
+ * The build pieces as one build a column (window cell centres, radius under a cell's spacing), each column the most
+ * layers of the pieces over it. (The world API's build is a press of its own each call: discs that overlap add up —
+ * a wall of overlapping discs comes out two or three times its height. A column at a time, it's the height asked.)
+ */
+export function perColumn(pieces: CoursePiece[]): { at: V2; material: string; layers: number }[] {
+  const cols = new Map<string, { at: V2; material: string; layers: number }>();
+  for (const p of pieces) {
+    if (p.kind !== 'build') continue;
+    const [c0x, c0y] = cellAt(p.at[0] - p.radius, p.at[1] - p.radius);
+    const [c1x, c1y] = cellAt(p.at[0] + p.radius, p.at[1] + p.radius);
+    for (let cy = c0y - 1; cy <= c1y + 1; cy++)
+      for (let cx = c0x - 1; cx <= c1x + 1; cx++) {
+        const at = cellPos(cx, cy);
+        if (Math.hypot(at[0] - p.at[0], at[1] - p.at[1]) > p.radius) continue;
+        const k = `${cx},${cy}`;
+        const had = cols.get(k);
+        if (!had || had.layers < p.layers) cols.set(k, { at, material: p.material, layers: p.layers });
+      }
+  }
+  return [...cols.values()];
+}

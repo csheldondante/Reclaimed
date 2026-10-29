@@ -22,6 +22,8 @@ export interface Basin {
   volume: number;
   /** the cell it spills over (the rim's lowest) */
   spill: [number, number];
+  /** its bottom: the deepest cell (world x, y) */
+  bottom: [number, number];
 }
 
 export interface BasinOpts {
@@ -115,7 +117,7 @@ export function findBasin(top: (cx: number, cy: number) => number | null, seed: 
     const cells = popped.filter((c) => c[2] < fillTo - 0.02);
     if (!cells.length) return { error: 'nothing to fill there: the rim is no higher than the floor' };
     const volume = cells.reduce((s, c) => s + (fillTo - c[2]), 0);
-    return { level, fillTo, cells, volume, spill: at };
+    return { level, fillTo, cells, volume, spill: at, bottom: cellPos(popped[0][0], popped[0][1]) };
   };
   // (round off a plain: a pit dug in flat ground has the plain round it for a rim — spreading flat at the level over
   // PLAIN cells, the level is its brim)
