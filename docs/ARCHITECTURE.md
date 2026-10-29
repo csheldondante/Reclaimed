@@ -192,7 +192,7 @@ now; slot-major is a one-line change in `colSlots`) is measured before it is
 changed. Bodies (rigid pieces) are left as they are; a destruction model
 where pieces turn to particles on impact is P3.
 
-### External intervals and instanced meshes (round 99, branch `meshinst`, `?meshinst=1`)
+### External intervals and instanced meshes (round 99, branch `meshinst`; the trees `?meshinst=1`, the resting rock with the rigid rock everywhere since round 110)
 
 The user (DECISIONS round 99): "let a skewed mesh be buried instead of turning back into an ordinary layer … the
 layer needs to be skipped and marked as being in an external system so that it can properly support columns over it
@@ -219,8 +219,14 @@ may move, join or cut intervals (sediment joins touching ones of a material and 
   `verify` checks every instance there still holds each cell it claimed; one that lost any (dug, smashed to rubble,
   melted, moved by a pull or lava's lift) is cut — `onLost(inst, 'cut')`.
 - *Loose*: the rock judge (fracture.ts analyseRock) judges External runs like any rock; a piece or a run that gives
-  containing them has those intervals turned to their fallback material in the analysis (`Integrity.takeExternal`)
-  and their instances told — `onLost(inst, 'loose')` — before it falls as ordinary rock.
+  containing them has those intervals taken out of the analysis (`Integrity.takeExternal`, round 110; round 99 made
+  them their fallback material and they fell as ordinary rock) and their instances told — `onLost(inst, 'loose')`.
+  External intervals no instance owns stay in, as their fallback.
+- (round 110) The resting rock's answer to either: it wakes as a rigid body where it lies — its cells and transform
+  (`RockBodies.revive`), its own mesh — and releases its instance to air (`release(id, true)`); cut, the cells no
+  longer External where they lay are gone from it (its mesh made again, behind dust). It is baked into ground
+  (`release(id)`, the fallback in place) only out of room (`rigid.restMax`, the rock mesh's slots), leaving the
+  window, or asked (`Integrity.bakeResting`), each behind a burst of dust.
 - *Orphans*: after a whole read (a slide, an undo, a warp), External intervals no instance claims become their
   fallback material (`orphans`, a scan of the copy's words).
 - The owner must release or take back the instance in `onLost`; the registry releases it otherwise.

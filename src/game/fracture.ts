@@ -947,6 +947,13 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
             done.add(o);
             part.push(o);
           }
+      // (round 110) it hinges where it broke (with opts.rotate): the user, "Destroying the base of an arch on either side
+      // causes the bridge connecting the sides to just instantly disappear" — the span is to fall as bodies, toppling
+      // about the other base, not drop straight. A joint that gives under load opens on its upper side (the pull) and
+      // turns about its lower edge: the pivot the joints' middle at the lowest height they still share, the axis
+      // horizontal across the way from what held it to the part's centre of mass, turned so that carries it down
+      const hinge = opts.rotate ? hingeOf(part, k, near, dist) : null;
+      if (hinge && part.reduce((s, r) => s + r.z1 - r.z0, 0) >= MIN_BODY) result.tips!.push({ piece: result.pieces!.length, ...hinge });
       free(part);
       result.why!.load++;
       continue;
@@ -955,6 +962,42 @@ export function analyseRock(world: WorldVox, seeds: Iterable<[number, number]>, 
     neck(piece, seed);
   }
   return result;
+
+  /** (round 110) where a part that gave under load (its runs `k` or more out) turns: the joints to the runs k − 1 out */
+  function hingeOf(part: Run[], k: number, near: Map<Run, { next: Run[]; stand: Run[] }>, dist: Map<Run, number>): { pivot: [number, number, number]; axis: [number, number, number] } | null {
+    let jx = 0;
+    let jy = 0;
+    let jz = -Infinity;
+    let n = 0;
+    let M = 0;
+    let mx = 0;
+    let my = 0;
+    for (const r of part) {
+      const [px, py] = cellPos(r.x, r.y);
+      const m = massOf(r);
+      M += m;
+      mx += m * px;
+      my += m * py;
+      const b = near.get(r);
+      if (!b || dist.get(r) !== k) continue;
+      const held = k === 1 ? b.stand : b.next.filter((o) => dist.get(o) === k - 1);
+      for (const o of held) {
+        const [ox, oy] = cellPos(o.x, o.y);
+        jx += (px + ox) / 2;
+        jy += (py + oy) / 2;
+        jz = Math.max(jz, Math.max(r.z0, o.z0));
+        n++;
+      }
+    }
+    if (!n || M <= 0) return null;
+    jx /= n;
+    jy /= n;
+    const dx = mx / M - jx;
+    const dy = my / M - jy;
+    const l = Math.hypot(dx, dy);
+    if (l < 0.5) return null;
+    return { pivot: [jx, jy, jz], axis: [-dy / l, dx / l, 0] };
+  }
 
   /**
    * (round 92) The piece above its lowest point: on what it stands on, or it falls (the user's "total solid

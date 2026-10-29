@@ -14,8 +14,8 @@
 // strength: rock crumbles, it doesn't flex); at rest (or after MAX_AGE) Integrity writes its cells back into the
 // columns where it lies. Body against body is not simulated: they collide with what is ground.
 
-import { MATERIALS, MatState } from '../world/materials';
-import { cellPos, nbr } from '../world/lattice';
+import { MAT, MATERIALS, MatState } from '../world/materials';
+import { cellAt, cellPos, nbr, DIRV, ROW_H } from '../world/lattice';
 import { TUNE } from '../tune/params';
 
 export type V3 = [number, number, number];
@@ -97,13 +97,107 @@ export interface RockBody {
    * back where it stood
    */
   tipping: number;
+  /**
+   * (round 110) overlap with the ground it's allowed (cells): what it overlapped when it became a body — freed in place
+   * from the ground round it, its cells whole cubes where the cut was fractional — never pushed out (the user: "When you
+   * destroy material around a rock it pushes up out of the earth before becoming a rigidbody"). It only shrinks: to its
+   * deepest overlap now, each step, as it moves clear
+   */
+  allow: number;
+  /** (round 110) ground cells (world points) it's cut deep into this frame: crumbled where they meet it, not pushed out of */
+  erode: V3[];
 }
 
-/** What the bodies know of the world: a point (world) in the ground — how deep, and the way out — or null. */
+/**
+ * What the bodies know of the world: a point (world) in the ground — how deep, and the way out — or null; (round 110)
+ * `mass`: what it's in is a thing of that mass (a resting rock), not the ground (absent: the ground, heaviest of all).
+ */
 export interface RockGround {
-  probe(x: number, y: number, z: number): { d: number; n: V3 } | null;
+  probe(x: number, y: number, z: number): { d: number; n: V3; mass?: number } | null;
   /** the highest ground in this world box (x0, y0, x1, y1), for the broad phase */
   topIn(x0: number, y0: number, x1: number, y1: number): number;
+}
+
+/** What `columnsGround` reads of the columns (fracture.ts WorldVox) */
+export interface ColumnView {
+  matAt(x: number, y: number, z: number): number;
+  runTop(x: number, y: number, z: number): number;
+  colTop(x: number, y: number): number;
+}
+
+/** (round 110) how deep the probe measures (cells): past the largest overlap a body may be allowed (slop + cap, allow) */
+export const PROBE_DEPTH = 2;
+/** (round 110) the most overlap a body is allowed to keep from where it was freed (cells): under PROBE_DEPTH */
+const ALLOW_MAX = 1.2;
+
+/**
+ * (round 95; round 110 moved here from integrity.ts, shared with scripts/physfix-cpu.ts) The rigid rock's ground from
+ * columns (W × H, window storage): a point in solid or loose ground is pushed out up when it's within 0.6 of its run's
+ * top, else sideways through the nearest face with air beside it at that height — (round 110) looked for two rings
+ * of columns out, so a point is measured up to PROBE_DEPTH deep: round 95 looked at the six only and called anything
+ * past them 1 deep, and a body allowed as much overlap as that (a big rock's slop, what it was freed with) fell
+ * through the ground — else straight up, at most PROBE_DEPTH. The window's floor holds. `massAt`: a thing of that
+ * mass owns the point (External), not the ground.
+ */
+export function columnsGround(view: () => ColumnView | null, W: number, H: number, massAt?: (x: number, y: number, z: number) => number | undefined): RockGround {
+  const isGround = (m: number) => {
+    const s = MATERIALS[m]?.state;
+    return s === MatState.Solid || s === MatState.Granular;
+  };
+  const inMap = (x: number, y: number) => x >= 0 && y >= 0 && x < W && y < H;
+  return {
+    probe: (wx, wy, wz) => {
+      if (wz < 0) return { d: -wz, n: [0, 0, 1] };
+      const wv = view();
+      if (!wv) return null;
+      const [cx, cy] = cellAt(wx, wy);
+      if (!inMap(cx, cy)) return null;
+      const zq = Math.max(0, wz - 0.5);
+      const mat = wv.matAt(cx, cy, zq);
+      if (!isGround(mat)) return null;
+      const mass = mat === MAT.External && massAt ? massAt(cx, cy, zq) : undefined;
+      let t = wv.runTop(cx, cy, zq);
+      for (let i = 0; i < 8 && isGround(wv.matAt(cx, cy, t - 0.49)); i++) t = wv.runTop(cx, cy, t - 0.49);
+      const up = t - wz;
+      if (up < 0.6) return { d: up, n: [0, 0, 1], mass };
+      const [px, py] = cellPos(cx, cy);
+      let best = Infinity;
+      let n: V3 = [0, 0, 1];
+      for (let k = 0; k < 6; k++) {
+        const [nx, ny] = nbr(cx, cy, k);
+        if (inMap(nx, ny) && isGround(wv.matAt(nx, ny, zq))) continue;
+        const d = 0.5 - ((wx - px) * DIRV[k][0] + (wy - py) * DIRV[k][1]);
+        if (d < best) [best, n] = [d, [DIRV[k][0], DIRV[k][1], 0]];
+      }
+      if (best === Infinity) {
+        // (the next ring: air in a column two out — how far to its near side, the way toward it)
+        for (let k = 0; k < 6; k++) {
+          const [ax, ay] = nbr(cx, cy, k);
+          for (const j of [k, (k + 1) % 6]) {
+            const [nx, ny] = nbr(ax, ay, j);
+            if (inMap(nx, ny) && isGround(wv.matAt(nx, ny, zq))) continue;
+            const [qx, qy] = inMap(nx, ny) ? cellPos(nx, ny) : [px + 2 * (ax - cx), py + 2 * (ay - cy) * ROW_H];
+            const dl = Math.hypot(qx - wx, qy - wy);
+            const d = dl - 0.5;
+            if (d < best && dl > 1e-6) [best, n] = [d, [(qx - wx) / dl, (qy - wy) / dl, 0]];
+          }
+        }
+      }
+      if (best >= up || best === Infinity) return { d: Math.min(up, PROBE_DEPTH), n: [0, 0, 1], mass };
+      return { d: Math.max(0.01, best), n, mass };
+    },
+    topIn: (x0, y0, x1, y1) => {
+      const wv = view();
+      if (!wv) return 0;
+      let top = 0;
+      const ya = Math.max(0, Math.floor(y0 / ROW_H - 1));
+      const yb = Math.min(H - 1, Math.ceil(y1 / ROW_H));
+      const xa = Math.max(0, Math.floor(x0 - 1));
+      const xb = Math.min(W - 1, Math.ceil(x1));
+      for (let y = ya; y <= yb; y++) for (let x = xa; x <= xb; x++) top = Math.max(top, wv.colTop(x, y));
+      return top;
+    },
+  };
 }
 
 export interface RockHit {
@@ -138,6 +232,44 @@ function inv3(m: M3): M3 {
 /** world inverse inertia × v: R · I⁻¹ · Rᵀ v */
 const iw = (b: RockBody, R: M3, v: V3): V3 => mv(R, mv(b.invI, mtv(R, v)));
 
+/** (round 110) a hex prism cell's 12 corners about its centre (pointy-topped: lattice.ts DIRV — corners at 30° + 60°k, 1/√3 out) */
+const HEX_CORNERS: V3[] = [];
+for (const z of [-0.5, 0.5]) for (let k = 0; k < 6; k++) HEX_CORNERS.push([Math.cos(Math.PI / 6 + (k * Math.PI) / 3) / Math.sqrt(3), Math.sin(Math.PI / 6 + (k * Math.PI) / 3) / Math.sqrt(3), z]);
+
+/**
+ * (round 110) The overlap a body of this mass (cells of rock) may make before a contact pushes back: RB.slop, and
+ * RB.slopK · mass^RB.slopP up to RB.slopCap (the user: "For physics maybe a tunable parameter for how much objects can
+ * interpenetrate maybe as a function of mass?"). A pair meets at the lighter one's: overlap reads as intersecting on
+ * the smaller thing — a pebble sunk into a boulder by the boulder's allowance would vanish into it, a boulder on a
+ * pebble crushes into it no deeper than the pebble's. The ground is the heaviest of all, so against it a body's own.
+ */
+export function slopFor(mass: number): number {
+  if (!(mass > 0)) return RB.slop;
+  return RB.slop + Math.min(RB.slopCap, RB.slopK * Math.pow(mass, RB.slopP));
+}
+
+/** (round 110) a rotation matrix (row-major) as a unit quaternion (x, y, z, w) */
+function quatOf(m: M3): Q {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  const t = a + e + i;
+  let q: Q;
+  if (t > 0) {
+    const s = Math.sqrt(t + 1) * 2;
+    q = [(h - f) / s, (c - g) / s, (d - b) / s, s / 4];
+  } else if (a > e && a > i) {
+    const s = Math.sqrt(1 + a - e - i) * 2;
+    q = [s / 4, (b + d) / s, (c + g) / s, (h - f) / s];
+  } else if (e > i) {
+    const s = Math.sqrt(1 + e - a - i) * 2;
+    q = [(b + d) / s, s / 4, (f + h) / s, (c - g) / s];
+  } else {
+    const s = Math.sqrt(1 + i - a - e) * 2;
+    q = [(c + g) / s, (f + h) / s, s / 4, (d - b) / s];
+  }
+  const l = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
+  return [q[0] / l, q[1] / l, q[2] / l, q[3] / l];
+}
+
 const densityOf = (m: number) => MATERIALS[m]?.density ?? (MATERIALS[m]?.state === MatState.Vegetation ? 0.4 : 1);
 const latKey = (x: number, y: number, z: number) => (z * 8192 + y) * 8192 + x;
 
@@ -157,7 +289,9 @@ export class RockBodies {
   private nextId = 1;
   /** while the ground's copy isn't of the window as it is (a slide, until it's read again): nothing moves */
   frozen = false;
-  stats = { spawned: 0, breaks: 0, settled: 0, capped: 0, maxPts: 0, stepMs: 0, contacts: 0 };
+  /** (round 110) why bodies were baked into the ground (room, leaving, asked, no mesh, …): counts */
+  bakedWhy: Record<string, number> = {};
+  stats = { spawned: 0, breaks: 0, settled: 0, capped: 0, maxPts: 0, stepMs: 0, contacts: 0, woken: 0, baked: 0, eroded: 0, allowMax: 0 };
 
   constructor(private ground: RockGround) {}
 
@@ -174,6 +308,7 @@ export class RockBodies {
     const b = this.build(world, [0, 0, 0, 1], [0, 0, 0], 0, [0, 0, 0]);
     if (!b) return null;
     this.stats.spawned++;
+    this.allowOverlap(b);
     if (tip) {
       // (round 96: its centre starting at no more than 2 cells/s — a tall piece's lean over a low pivot began at 10,
       // and it shattered on its own stub; nor broken by that first contact)
@@ -184,6 +319,43 @@ export class RockBodies {
       b.grace = 1;
     }
     return b;
+  }
+
+  /**
+   * (round 110) A sleeping body woken where it lies (a resting rock whose ground went, or that was cut): its cells
+   * (lattice cells of its spawn frame) at its transform (spawn frame → world, RockBodies.matrix's rows), still. Its
+   * mesh is the one it had (the caller gives it its slot): nothing is meshed again.
+   */
+  revive(cells: { x: number; y: number; z: number; mat: number }[], m: number[]): RockBody | null {
+    if (!cells.length) return null;
+    const world = cells.map((c) => {
+      const [wx, wy] = cellPos(c.x, c.y);
+      return { p: [wx, wy, c.z + 0.5] as V3, mat: c.mat, lat: [c.x, c.y, c.z] as [number, number, number] };
+    });
+    const q = quatOf([m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]]);
+    const b = this.build(world, q, [m[3], m[7], m[11]], 0, [0, 0, 0]);
+    if (!b) return null;
+    this.stats.woken++;
+    this.allowOverlap(b);
+    return b;
+  }
+
+  /** (round 110) what it overlaps the ground by as it is now: allowed (RockBody.allow) */
+  private allowOverlap(b: RockBody): void {
+    const R = rotM(b.q);
+    let d = 0;
+    for (const p of b.pts) {
+      const r = mv(R, p);
+      const c = this.ground.probe(b.pos[0] + r[0], b.pos[1] + r[1], b.pos[2] + r[2]);
+      if (c) d = Math.max(d, c.d);
+    }
+    b.allow = Math.min(ALLOW_MAX, d);
+    this.stats.allowMax = Math.max(this.stats.allowMax, b.allow);
+  }
+
+  /** (round 110) the overlap a contact of this body is allowed before it pushes back (slopFor its mass) */
+  slopOf(b: RockBody): number {
+    return slopFor(b.mass);
   }
 
   /** a body from cells given in a frame (rotation q, origin o: world = o + R p) */
@@ -247,6 +419,8 @@ export class RockBodies {
       contact: false,
       origin: add(origin, c),
       tipping: 0,
+      allow: 0,
+      erode: [],
     };
     this.shape(b);
     this.list.push(b);
@@ -268,8 +442,10 @@ export class RockBodies {
       }
       if (!open) continue;
       b.surf.push(k);
-      for (let c = 0; c < 8; c++) {
-        const o: V3 = [(c & 1) - 0.5, ((c >> 1) & 1) - 0.5, (c >> 2) - 0.5];
+      // (round 110) the corners of its hex prism, not of a cube: a cube's corners (±0.5, ±0.5) lie in the next columns
+      // over (a hex cell is 0.5 to its side faces, 0.577 to its corners) — a body freed from the ground round it began
+      // with its corners in that ground and was pushed up out of it (the user's "pushes up out of the earth")
+      for (const o of HEX_CORNERS) {
         const p = add(k.p, mul(o, 0.92));
         const key = p.map((v) => Math.round(v * 2)).join(',');
         if (seen.has(key)) continue;
@@ -281,15 +457,17 @@ export class RockBodies {
   }
 
   /** A step of every body (dt s): the hits hard enough to break or to raise dust, and the bodies come to rest. */
-  update(dt: number, only?: RockBody[]): { hits: RockHit[]; rest: RockBody[] } {
+  update(dt: number, only?: RockBody[]): { hits: RockHit[]; rest: RockBody[]; erode: { body: RockBody; at: V3 }[] } {
     const hits: RockHit[] = [];
     const rest: RockBody[] = [];
-    if (this.frozen || !this.list.length || dt <= 0) return { hits, rest };
+    const erode: { body: RockBody; at: V3 }[] = [];
+    if (this.frozen || !this.list.length || dt <= 0) return { hits, rest, erode };
     const t0 = performance.now();
     const n = Math.min(6, Math.max(1, Math.ceil(dt / SUB_DT)));
     const h = dt / n;
     for (const b of only ?? this.list) {
       b.hit = 0;
+      b.erode = [];
       // (the broad phase once a frame: the highest ground it could reach this frame)
       const r0 = b.radius + len(b.v) * dt + 0.5;
       const top = this.ground.topIn(b.pos[0] - r0, b.pos[1] - r0, b.pos[0] + r0, b.pos[1] + r0);
@@ -304,9 +482,10 @@ export class RockBodies {
         hits.push({ body: b, speed: b.hit, at: b.hitAt });
       }
       if (b.still > RB.restT || b.age > MAX_AGE) rest.push(b);
+      for (const at of b.erode) erode.push({ body: b, at });
     }
     this.stats.stepMs = performance.now() - t0;
-    return { hits, rest };
+    return { hits, rest, erode };
   }
 
   private substep(b: RockBody, h: number, top: number): void {
@@ -320,17 +499,26 @@ export class RockBodies {
     const R = rotM(b.q);
     // the contacts: its corners in the ground (only those low enough to reach it)
     const r0 = b.radius;
-    const contacts: { r: V3; n: V3; d: number }[] = [];
+    const contacts: { r: V3; n: V3; d: number; slop: number; mass?: number }[] = [];
     if (b.pos[2] - r0 <= top + 0.5)
       for (const p of b.pts) {
         const r = mv(R, p);
         const wz = b.pos[2] + r[2];
         if (wz > top + 0.05 && wz > 0) continue;
         const c = this.ground.probe(b.pos[0] + r[0], b.pos[1] + r[1], wz);
-        if (c) contacts.push({ r, n: c.n, d: c.d });
+        if (c) contacts.push({ r, n: c.n, d: c.d, slop: 0, mass: c.mass });
       }
     b.contact = contacts.length > 0;
     this.stats.contacts = Math.max(this.stats.contacts, contacts.length);
+    // (round 110) soft contacts: a point is met only past the slop — by its mass (slopFor: a big rock cuts visibly into
+    // the ground first, the user's "We don't want collision to kick in until they are visibly intersecting for large
+    // objects"; against a resting rock the lighter one's) or the overlap it was freed with (b.allow), whichever is more
+    let deepest = 0;
+    for (const c of contacts) deepest = Math.max(deepest, c.d);
+    b.allow = Math.min(b.allow, deepest);
+    const own = this.slopOf(b);
+    for (const c of contacts) c.slop = Math.max(b.allow, c.mass === undefined ? own : Math.min(own, slopFor(c.mass)));
+    for (let i = contacts.length - 1; i >= 0; i--) if (contacts[i].d <= contacts[i].slop) contacts.splice(i, 1);
     if (contacts.length) {
       // impulses, two sweeps (the bounce only on the first), friction against each contact's normal impulse
       const invM = 1 / b.mass;
@@ -363,15 +551,26 @@ export class RockBodies {
           }
         }
       }
-      // pushed out of the ground (the deepest first, each only as far as the others haven't already)
+      // (round 110) settled out of the ground, not pushed: the deepest first, each only as far as the others haven't
+      // already, at no more than RB.pushV (a position change: it gains no speed); a point cut deeper than RB.erodeDepth
+      // past the slop isn't pushed out of the ground at all — the ground there crumbles (DECISIONS round 106: "For deep
+      // overlap the preferred fix is to erode material where the bodies meet, not push them apart")
       contacts.sort((a, c) => c.d - a.d);
       let corr: V3 = [0, 0, 0];
       for (let i = 0; i < Math.min(8, contacts.length); i++) {
-        const { n, d } = contacts[i];
-        const need = d - RB.slop - dot(corr, n);
+        const { n, d, r, slop, mass } = contacts[i];
+        // (a resting rock isn't eroded: it's met at the lighter's overlap and pushed off as the ground is)
+        if (mass === undefined && d - slop > RB.erodeDepth && b.erode.length < RB.erodeMax) {
+          b.erode.push(add(b.pos, r));
+          continue;
+        }
+        const need = Math.min(d, slop + RB.erodeDepth) - slop - dot(corr, n);
         if (need > 0) corr = add(corr, mul(n, need));
       }
-      b.pos = add(b.pos, mul(corr, 0.5));
+      const cl = len(corr);
+      const most = RB.pushV * h;
+      if (cl > most) corr = mul(corr, most / cl);
+      b.pos = add(b.pos, corr);
     }
     // integrate
     b.pos = add(b.pos, mul(b.v, h));
@@ -468,13 +667,18 @@ export class RockBodies {
         const nbBody = this.build(comp, b.q, b.pos, b.gen + 1, b.origin);
         if (!nbBody) continue;
         if (!seedOut[gi].piece || seedOut[gi].piece!.cells.length < nbBody.cells.length) seedOut[gi].piece = nbBody;
-        // it goes on as the body moved at its centre, thrown apart from the point hit
+        // it goes on as the body moved at its centre, thrown apart from the point hit — sideways only, and (round 110)
+        // never faster up than the body was going: a break thrown up from the ground it hit jumped pieces 3 cells
+        // ("separation never adds speed", DECISIONS round 106)
         const rc = sub(nbBody.pos, b.pos);
-        const away = sub(nbBody.pos, at);
+        const away: V3 = [nbBody.pos[0] - at[0], nbBody.pos[1] - at[1], 0];
         const al = len(away) || 1;
         nbBody.v = add(add(b.v, cross(b.w, rc)), mul(away, (RB.scatter * speed) / al));
+        nbBody.v[2] = Math.min(nbBody.v[2], Math.max(0, b.v[2]));
         nbBody.w = [...b.w] as V3;
         nbBody.age = b.age;
+        // (round 110: born where the body was, cut into the ground as it was — that overlap allowed, not pushed out)
+        this.allowOverlap(nbBody);
         pieces.push(nbBody);
       }
     }
