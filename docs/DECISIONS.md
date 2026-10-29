@@ -3,6 +3,28 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `herosandbox`) — a hero sandbox; the heroes through a versioned contract
+
+- The user, verbatim: "we need a hero sandbox where I can just drop into the map as different heros and play generated
+  gauntlets or maps I edit. Maybe like the airplane mode? A way to spawn enemies would be good though or to instantly
+  fill up a vessel with a sand or liquid" (BACKLOG HS1).
+- Then: "You have to bring in the other heros via what contract" → the Hero contract only (contracts/hero.ts), versioned
+  (`HERO_CONTRACT` "major.minor", 1.1): a hero registry by role (hero/registry.ts), and another game's heroes loaded at
+  runtime as an ES module that exports `heroContract` and `mount(host)` — its Reclaimed imports resolved by the page's
+  import map to the host's own modules (`reclaimed/<path>`), so nothing is copied; a mismatch is refused, saying both
+  versions, never a fallback.
+- Then: "I need to test the actual interfaces and tweak them" → the inspector (the HeroIntent each frame, cooldowns,
+  health, the camera's numbers, speed, heading, position), the boundary log (every call across the contract), and the
+  hero's numbers as live sliders (`Hero.tunables`, additive in 1.1, through the tuning registry).
+- Then: "Or at least provide feedback" → 💬 contract feedback: the bug report's note and picture with the hero's role,
+  the contract version, the last 60 s of the boundary log, the intent trace and the tunables' values, saved as JSON —
+  downloaded, and on the dev server into feedback/hero/<date>-<role>.json, which main commits and forwards to the
+  GameplayGM session (docs/HEROES.md "Contract feedback").
+- GameplayGM's answer (gampeplaygm-40, via main): their heroes need a richer seam (input passthrough, their own camera,
+  real cooldowns, hits through Units, more of the world than HeroWorld) → designed as `mount(host)` with an explicit
+  HeroHost: named capabilities first, the raw handles that remain listed as debt (docs/HEROES.md "What the contract
+  lacks for GameplayGM's heroes").
+
 ## 2026-10-29 — round 112 (session 5, `tilefix`) — the terrain drawn on every screen; a merge gate
 
 - After opening the atlas on the deployed places build on their PC (tiles scattered over flat far land and grey void),

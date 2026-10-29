@@ -214,11 +214,11 @@ try {
   ok(ext.calls.some((c) => /host\.log\(roller made against contract 1\.1\)/.test(c)), 'its host.log line crossed the boundary');
   ok(ext.speed === 12 && ext.ids.includes('hero.dash') && ext.panel, `its tunables in the hero tuning panel: ${ext.ids.join(', ')} (speed set to ${ext.speed})`);
   await ev(() => window.reclaimed.heroSandbox.exit());
-  const old = await ev(async () => {
+  const old = await ev(async (u) => {
     const hs = window.reclaimed.heroSandbox;
-    await hs.loadModule('http://localhost:5208/hero-old.mjs');
+    await hs.loadModule(u);
     return hs.error;
-  });
+  }, heroes.replace(/hero\.mjs$/, 'hero-old.mjs'));
   ok(/0\.9/.test(old ?? '') && /1\.1/.test(old ?? ''), `a module of an older contract is refused, saying why: ${old}`);
 
   // 6. contract feedback: the note saved (the dev server keeps it in feedback/hero/)
