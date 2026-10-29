@@ -1,0 +1,288 @@
+{
+ "url": "http://localhost:5233",
+ "secs": 211,
+ "fails": [
+  "desktop-z14 parked: fps 29.5; frame 35.3 ms (35.3 browser render 0.6, sim 0.5; 35 browser ); p99 35.3 ms",
+  "desktop-z14: 8.03% of the image changed (baseline data\\baselines\\tilegate\\desktop-z14.png)",
+  "desktop-z8 parked: fps 29.5; frame 35.1 ms (35.1 browser sim 0.5; 35.1 browser sim 0.5); p99 35.1 ms",
+  "desktop-z8: 5.37% of the image changed (baseline data\\baselines\\tilegate\\desktop-z8.png)",
+  "desktop-z5 parked: fps 29.5; frame 35.2 ms (35.2 browser ; 35.2 browser ); p99 35.2 ms",
+  "desktop-z5: 2.50% of the image changed (baseline data\\baselines\\tilegate\\desktop-z5.png)",
+  "desktop-z3.5 parked: fps 29.5; frame 35.5 ms (35.5 gc render 0.5; 35.1 gc render 0.6, sim 0.5); p99 35.5 ms",
+  "desktop-z3.5: 1.49% of the image changed (baseline data\\baselines\\tilegate\\desktop-z3.5.png)",
+  "desktop-z2.2 parked: fps 29.5; frame 35.6 ms (35.6 gc render 0.7; 35.3 browser render 0.9); p99 35.6 ms",
+  "desktop-z2.2: 1.69% of the image changed (baseline data\\baselines\\tilegate\\desktop-z2.2.png)",
+  "desktop-z1.3 parked: out of detail 25.7% (none 104, queued 40, making 4); fps 29.5; frame 35.2 ms (35.2 gc render 1.7; 35.2 async:judge render 1.7, judge 0.5); p99 35.2 ms",
+  "desktop-z1.3: 12.11% of the image changed (baseline data\\baselines\\tilegate\\desktop-z1.3.png)",
+  "desktop-z14 panning 20 c/s: fps 29; frame 35.5 ms (35.5 async:judge judge 1.1, judge.pass 23.4; 35.4 gc ); p99 35.5 ms",
+  "desktop-z8 panning 20 c/s: fps 29; frame 35.2 ms (35.2 gc ; 35.2 gc ); p99 35.2 ms",
+  "desktop-z5 panning 20 c/s: fps 29; frame 35.3 ms (35.3 gc render 0.5; 35.1 gc ); p99 35.3 ms",
+  "desktop-z3.5 panning 20 c/s: fps 29.3; frame 35.3 ms (35.3 async:judge render 0.6, judge.pass 14.4; 35.2 gc render 0.7); p99 35.3 ms",
+  "desktop-z2.2 panning 20 c/s: fps 29.3; frame 35.2 ms (35.2 gc render 1; 35.1 gc render 1.2); p99 35.2 ms",
+  "desktop-z1.3 panning 20 c/s: fps 29.3; frame 35.3 ms (35.3 gc render 2.2; 35.1 gc render 2.4); p99 35.3 ms"
+ ],
+ "rows": [
+  {
+   "view": "desktop-z14",
+   "mode": "parked",
+   "hitches": [
+    "35.3 browser render 0.6, sim 0.5",
+    "35 browser "
+   ],
+   "fps": 29.5,
+   "p99": 35.3,
+   "max": 35.3,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 69,
+    "drawn": 8,
+    "mb": 144
+   },
+   "golden": {
+    "changed": 0.0803
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z8",
+   "mode": "parked",
+   "hitches": [
+    "35.1 browser sim 0.5",
+    "35.1 browser sim 0.5"
+   ],
+   "fps": 29.5,
+   "p99": 35.1,
+   "max": 35.1,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 69,
+    "drawn": 20,
+    "mb": 144
+   },
+   "golden": {
+    "changed": 0.0537
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z5",
+   "mode": "parked",
+   "hitches": [
+    "35.2 browser ",
+    "35.2 browser "
+   ],
+   "fps": 29.5,
+   "p99": 35.2,
+   "max": 35.2,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 69,
+    "drawn": 37,
+    "mb": 144
+   },
+   "golden": {
+    "changed": 0.025
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z3.5",
+   "mode": "parked",
+   "hitches": [
+    "35.5 gc render 0.5",
+    "35.1 gc render 0.6, sim 0.5"
+   ],
+   "fps": 29.5,
+   "p99": 35.5,
+   "max": 35.5,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 127,
+    "drawn": 89,
+    "mb": 144
+   },
+   "golden": {
+    "changed": 0.0149
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z2.2",
+   "mode": "parked",
+   "hitches": [
+    "35.6 gc render 0.7",
+    "35.3 browser render 0.9"
+   ],
+   "fps": 29.5,
+   "p99": 35.6,
+   "max": 35.6,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 241,
+    "drawn": 195,
+    "mb": 144
+   },
+   "golden": {
+    "changed": 0.0169
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z1.3",
+   "mode": "parked",
+   "hitches": [
+    "35.2 gc render 1.7",
+    "35.2 async:judge render 1.7, judge 0.5"
+   ],
+   "fps": 29.5,
+   "p99": 35.2,
+   "max": 35.2,
+   "miss": 0.257,
+   "why": {
+    "none": 104,
+    "queued": 40,
+    "making": 4
+   },
+   "tiles": {
+    "slots": 384,
+    "used": 385,
+    "drawn": 369,
+    "mb": 144
+   },
+   "golden": {
+    "changed": 0.1211
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z14",
+   "mode": "pan 20",
+   "hitches": [
+    "35.5 async:judge judge 1.1, judge.pass 23.4",
+    "35.4 gc "
+   ],
+   "fps": 29,
+   "p99": 35.5,
+   "max": 35.5,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 418,
+    "drawn": 13,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z8",
+   "mode": "pan 20",
+   "hitches": [
+    "35.2 gc ",
+    "35.2 gc "
+   ],
+   "fps": 29,
+   "p99": 35.2,
+   "max": 35.2,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 421,
+    "drawn": 26,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z5",
+   "mode": "pan 20",
+   "hitches": [
+    "35.3 gc render 0.5",
+    "35.1 gc "
+   ],
+   "fps": 29,
+   "p99": 35.3,
+   "max": 35.3,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 422,
+    "drawn": 69,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z3.5",
+   "mode": "pan 20",
+   "hitches": [
+    "35.3 async:judge render 0.6, judge.pass 14.4",
+    "35.2 gc render 0.7"
+   ],
+   "fps": 29.3,
+   "p99": 35.3,
+   "max": 35.3,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 422,
+    "drawn": 125,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z2.2",
+   "mode": "pan 20",
+   "hitches": [
+    "35.2 gc render 1",
+    "35.1 gc render 1.2"
+   ],
+   "fps": 29.3,
+   "p99": 35.2,
+   "max": 35.2,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 494,
+    "drawn": 271,
+    "mb": 144
+   },
+   "ok": false
+  },
+  {
+   "view": "desktop-z1.3",
+   "mode": "pan 20",
+   "hitches": [
+    "35.3 gc render 2.2",
+    "35.1 gc render 2.4"
+   ],
+   "fps": 29.3,
+   "p99": 35.3,
+   "max": 35.3,
+   "miss": 0,
+   "why": {},
+   "tiles": {
+    "slots": 384,
+    "used": 630,
+    "drawn": 595,
+    "mb": 144
+   },
+   "ok": false
+  }
+ ]
+}
