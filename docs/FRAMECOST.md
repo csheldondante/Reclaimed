@@ -202,4 +202,4 @@ The causes and the fix are in the DEVLOG (round 107). In short:
 | riding (drive 18, window 512) | 0.89 / 4.16 / 22.15 | 0.47 / 1.96 / 9.38 |
 
 What is left: real change (the shores, the window's edge) keeps ~80% of the scope asking to be relaxed, and the cap
-bounds what a tick carries. FC8 (a front per field) is the next step.
+bounds what a tick carries. FC10 (a front per field) is the next step.

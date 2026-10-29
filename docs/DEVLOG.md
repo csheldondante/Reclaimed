@@ -11453,7 +11453,7 @@ it stay at ~80 of 90–100. That is real change:
 - a distance field carries any change down its whole basin;
 - every field in use is relaxed in every front chunk.
 
-Proposed (BACKLOG FC8): a front per field, so a field that didn't move costs nothing where another did. Further
+Proposed (BACKLOG FC10): a front per field, so a field that didn't move costs nothing where another did. Further
 on: the paths the user asked for in round 104 (ST15), for the town's fixed legs.
 
 Behaviour, each test run against places ab286d9 on its own page:
