@@ -198,8 +198,12 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
   let onGround = base + vec3<f32>(r1 - 0.5, fract(r1 * 7.31) - 0.5, 0.0) * 0.9;
 
   // loose ground on the move: grains stream off where it goes
+  // (round 112: not where it sleeps — its ground isn't changing, and the air the sediment wrote there is from the tick it
+  // fell asleep: a slope still slumping then streamed grains forever, the user's "Is sand expected to always fall from
+  // the mountains")
+  let sleeping = asleep(id.xy);
   let fl = textureLoad(airTex, texCol(vec2<i32>(p)), 0);
-  if (fl.y > 0.0) {
+  if (fl.y > 0.0 && !sleeping) {
     let way = u32(fl.w) % 8u;
     let fmat = u32(fl.w) / 8u;
     let rate = min(fl.y * RUN_GRAINS * 0.5, 3.0) * min(f32(arrayLength(&parts)) / 65536.0, 1.0) * simStep();
@@ -246,11 +250,25 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
     // (round 15: what you see blowing is what piles up again). The drift pass
     // runs every other tick, so each tick takes half of it.
     let dtx = textureLoad(driftTex, texCol(vec2<i32>(p)), 0);
-    if (dtx.w > 0.0) {
+    if (dtx.w > 0.0 && !sleeping) {
       let c = min(dtx.w * 60.0, 1.0);
       if (rare(id.x, id.y, 0xd31fu) < c) {
         let load = min(u32(dtx.w * 0.5 / c * DUST_UNIT), 65535u) << 16u;
         spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.8, 1.2 + r2), 4.0 + r1 * 3.0, K_DUST, 0.0, h ^ 0xd3u, 0u, dustTag(driftMatAt(p)) | load);
+      }
+    } else if (driftAt(p) > 0.02) {
+      // (round 112) nothing lifted here — the ground asleep, or the wind's work baked (simtiers): the dust shown by the
+      // wind's strength over what lies loose here (its lift, its airborne share), modest, carrying nothing; none under
+      // the lift or on ground the wind can't lift. Before, the lift the sediment worked out went on being shown at full
+      // strength over ground that never changed (the sim's tiers baked) or at the rate of the tick it fell asleep
+      let lm = driftMatAt(p);
+      let lift = MATS[lm].loose.x;
+      let airShare = MATS[lm].loose.y;
+      if (lift < 1e8 && airShare > 0.0 && ws > lift) {
+        let c = G.tune.dustShown * airShare * smoothstep(0.0, max(lift, 1.0), ws - lift);
+        if (rare(id.x, id.y, 0xd320u) < c) {
+          spawnFull(base + vec3<f32>(r1 - 0.5, r2 - 0.5, 0.3), vec3<f32>(wind * 0.8, 1.2 + r2), 4.0 + r1 * 3.0, K_DUST, 0.0, h ^ 0xd5u, 0u, dustTag(lm));
+        }
       }
     }
 

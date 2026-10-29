@@ -44,6 +44,8 @@ const SUB_DT = 1 / 120;
 export const MAX_AGE = 20;
 /** pieces of a break smaller than this (cells) crumble to rubble */
 const MIN_CHUNK = 8;
+/** (round 112) the cell visits a body's neck search may make (its tries' floods): ~1 ms on the desktop for the biggest */
+const NECK_WORK = 15000;
 /** breaks deep: a piece of a piece of a piece doesn't break again */
 const MAX_GEN = 2;
 /** s after spawning or breaking before a hit can break it */
@@ -106,6 +108,35 @@ export interface RockBody {
   allow: number;
   /** (round 110) ground cells (world points) it's cut deep into this frame: crumbled where they meet it, not pushed out of */
   erode: V3[];
+  /**
+   * (round 112) its centre of mass is over what it touches (the convex hull of its contact points, seen from above,
+   * within RB.balanceGive): it can stand. Not balanced, gravity turns it about that support — the ground doesn't damp
+   * its spin and it doesn't count as at rest (the user: "The tower just settled at a leaning angle")
+   */
+  balanced: boolean;
+  /** (round 112) s it has been off the ground since it was freed (past 0.15 s its grace ends: RockBody.grace) */
+  airborne: number;
+  /** (round 112) its thin sections (necks), found once from its shape (findNecks) */
+  necks: Neck[];
+  /** (round 112) the slowest hit that breaks it at a neck (cells/s): the least over its necks, either side beyond */
+  neckV: number;
+}
+
+/**
+ * (round 112) A thin section of a body: where its medial axis is thin (the distance transform small there) with enough
+ * mass on both sides that cutting a ball of that thickness splits it in two. An impact's impulse to stop the part beyond
+ * it passes through it: stress = (mass beyond) x speed / area, against the rock's strength (RB.neckStrength).
+ */
+export interface Neck {
+  /** its centre (body frame) and half-thickness (cells) */
+  at: V3;
+  r: number;
+  /** its cross-section (cells^2) */
+  area: number;
+  /** the two sides: indices into the body's cells (the ball's cells given to the side that reaches them first) */
+  sides: [number[], number[]];
+  /** each side's mass */
+  mass: [number, number];
 }
 
 /**
@@ -248,6 +279,72 @@ export function slopFor(mass: number): number {
   return RB.slop + Math.min(RB.slopCap, RB.slopK * Math.pow(mass, RB.slopP));
 }
 
+/**
+ * (round 112) Is (c's x, y) over the convex hull of these points (world x, y), or within `give` of it? Fewer than three
+ * apart: within `give` of the segment (or the point) they make.
+ */
+export function overSupport(c: V3, pts: [number, number][], give: number): boolean {
+  if (!pts.length) return false;
+  const q = pts.slice().sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const x = (o: [number, number], a: [number, number], b: [number, number]) => (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0]);
+  const lo: [number, number][] = [];
+  for (const p of q) {
+    while (lo.length >= 2 && x(lo[lo.length - 2], lo[lo.length - 1], p) <= 1e-9) lo.pop();
+    lo.push(p);
+  }
+  const up: [number, number][] = [];
+  for (let i = q.length - 1; i >= 0; i--) {
+    const p = q[i];
+    while (up.length >= 2 && x(up[up.length - 2], up[up.length - 1], p) <= 1e-9) up.pop();
+    up.push(p);
+  }
+  const hull = lo.slice(0, -1).concat(up.slice(0, -1));
+  const segDist = (a: [number, number], b: [number, number]) => {
+    const dx = b[0] - a[0];
+    const dy = b[1] - a[1];
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 1e-12 ? Math.max(0, Math.min(1, ((c[0] - a[0]) * dx + (c[1] - a[1]) * dy) / l2)) : 0;
+    return Math.hypot(c[0] - a[0] - t * dx, c[1] - a[1] - t * dy);
+  };
+  if (hull.length < 3) return segDist(q[0], q[q.length - 1]) <= give;
+  let inside = true;
+  let near = Infinity;
+  for (let i = 0; i < hull.length; i++) {
+    const a = hull[i];
+    const b = hull[(i + 1) % hull.length];
+    if (x(a, b, [c[0], c[1]]) < 0) inside = false;
+    near = Math.min(near, segDist(a, b));
+  }
+  return inside || near <= give;
+}
+
+/**
+ * (round 112) A resting body's cells drawn as voxels (the body-voxel draw's 8 words each: centre, material, rotation):
+ * its surface cells (lattice cells of its spawn frame) that `drawn` says, at its transform `m` (RockBodies.matrix's rows)
+ * -- what of it the rock mesh doesn't draw (what's built: world/materials.ts fieldMeshed), or all of it with no mesh.
+ */
+export function restingVoxels(cells: { x: number; y: number; z: number; mat: number }[], m: number[], drawn: (mat: number) => boolean): Float32Array {
+  const has = new Set(cells.map((c) => latKey(c.x, c.y, c.z)));
+  const q = quatOf([m[0], m[1], m[2], m[4], m[5], m[6], m[8], m[9], m[10]]);
+  const out: number[] = [];
+  const u = new Uint32Array(1);
+  const f = new Float32Array(u.buffer);
+  for (const c of cells) {
+    if (!drawn(c.mat)) continue;
+    let open = !has.has(latKey(c.x, c.y, c.z + 1)) || !has.has(latKey(c.x, c.y, c.z - 1));
+    for (let d = 0; d < 6 && !open; d++) {
+      const [nx, ny] = nbr(c.x, c.y, d);
+      if (!has.has(latKey(nx, ny, c.z))) open = true;
+    }
+    if (!open) continue;
+    const [px, py] = cellPos(c.x, c.y);
+    const pz = c.z + 0.5;
+    u[0] = c.mat;
+    out.push(m[0] * px + m[1] * py + m[2] * pz + m[3], m[4] * px + m[5] * py + m[6] * pz + m[7], m[8] * px + m[9] * py + m[10] * pz + m[11], f[0], q[0], q[1], q[2], q[3]);
+  }
+  return new Float32Array(out);
+}
+
 /** (round 110) a rotation matrix (row-major) as a unit quaternion (x, y, z, w) */
 function quatOf(m: M3): Q {
   const [a, b, c, d, e, f, g, h, i] = m;
@@ -291,7 +388,7 @@ export class RockBodies {
   frozen = false;
   /** (round 110) why bodies were baked into the ground (room, leaving, asked, no mesh, …): counts */
   bakedWhy: Record<string, number> = {};
-  stats = { spawned: 0, breaks: 0, settled: 0, capped: 0, maxPts: 0, stepMs: 0, contacts: 0, woken: 0, baked: 0, eroded: 0, allowMax: 0 };
+  stats = { spawned: 0, breaks: 0, settled: 0, capped: 0, maxPts: 0, stepMs: 0, contacts: 0, woken: 0, baked: 0, eroded: 0, allowMax: 0, necks: 0, neckBreaks: 0, neckMs: 0 };
 
   constructor(private ground: RockGround) {}
 
@@ -421,8 +518,13 @@ export class RockBodies {
       tipping: 0,
       allow: 0,
       erode: [],
+      balanced: true,
+      airborne: 0,
+      necks: [],
+      neckV: Infinity,
     };
     this.shape(b);
+    if (gen < MAX_GEN) this.findNecks(b);
     this.list.push(b);
     return b;
   }
@@ -456,6 +558,259 @@ export class RockBodies {
     this.stats.maxPts = Math.max(this.stats.maxPts, b.pts.length);
   }
 
+  /**
+   * (round 112; the user: "Maybe we can find thin points with a quick JFA based medial axis to find thin areas where mass
+   * on either side is large?") Its necks. The distance transform of its cells (lattice steps from the outside: a
+   * breadth-first sweep, exact on the lattice -- what a JFA gives on the GPU, where the bodies go with AR4), its medial
+   * axis (the cells no neighbour is deeper than, no deeper than RB.neckDepth), and on it the thin places: an axis cell no
+   * thicker than the axis cells two steps round it. Each is tried, the thinnest first, one a place: a ball of its
+   * thickness taken out, does the rest fall in two, each side at least RB.neckMin cells?
+   */
+  private findNecks(b: RockBody): void {
+    const t0 = performance.now();
+    const n = b.cells.length;
+    b.necks = [];
+    b.neckV = Infinity;
+    const least = Math.max(MIN_CHUNK, RB.neckMin);
+    if (n < 2 * least) return;
+    // (its cells in a box of the lattice, a cell of margin round: the neighbours by index, no hashing)
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let z0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    let z1 = -Infinity;
+    for (const k of b.cells) {
+      x0 = Math.min(x0, k.lat[0]);
+      y0 = Math.min(y0, k.lat[1]);
+      z0 = Math.min(z0, k.lat[2]);
+      x1 = Math.max(x1, k.lat[0]);
+      y1 = Math.max(y1, k.lat[1]);
+      z1 = Math.max(z1, k.lat[2]);
+    }
+    const DX = x1 - x0 + 3;
+    const DY = y1 - y0 + 3;
+    const box = new Int32Array(DX * DY * (z1 - z0 + 3)).fill(-1);
+    const at = (x: number, y: number, z: number) => ((z - z0 + 1) * DY + (y - y0 + 1)) * DX + (x - x0 + 1);
+    b.cells.forEach((k, i) => (box[at(k.lat[0], k.lat[1], k.lat[2])] = i));
+    const nbrs = new Int32Array(n * 8).fill(-1);
+    for (let i = 0; i < n; i++) {
+      const [x, y, z] = b.cells[i].lat;
+      nbrs[i * 8] = box[at(x, y, z + 1)];
+      nbrs[i * 8 + 1] = box[at(x, y, z - 1)];
+      for (let d = 0; d < 6; d++) {
+        const [nx, ny] = nbr(x, y, d);
+        nbrs[i * 8 + 2 + d] = box[at(nx, ny, z)];
+      }
+    }
+    // the distance transform: 1 on the skin, a step deeper each ring in
+    const depth = new Int32Array(n);
+    let front: number[] = [];
+    for (let i = 0; i < n; i++)
+      for (let k = 0; k < 8; k++)
+        if (nbrs[i * 8 + k] < 0) {
+          depth[i] = 1;
+          front.push(i);
+          break;
+        }
+    for (let d = 2; front.length; d++) {
+      const next: number[] = [];
+      for (const i of front)
+        for (let k = 0; k < 8; k++) {
+          const j = nbrs[i * 8 + k];
+          if (j >= 0 && !depth[j]) {
+            depth[j] = d;
+            next.push(j);
+          }
+        }
+      front = next;
+    }
+    // the medial axis (thin enough to look at): a cell midway between two sides of the surface along a line through it --
+    // shallower on both sides along one of its four axes (up-down, the hex's three), or (an even thickness) shallower on
+    // one side and, past a neighbour as deep as it, shallower again. Not a corner: the surface is near it two ways, not
+    // across it. Then its thin places.
+    const dAt = (j: number) => (j < 0 ? 0 : depth[j]);
+    const axis: number[] = [];
+    for (let i = 0; i < n; i++) {
+      const d = depth[i];
+      if (d > RB.neckDepth) continue;
+      let ridge = false;
+      for (let k = 0; k < 8 && !ridge; k += 2) {
+        const a = nbrs[i * 8 + k];
+        const c = nbrs[i * 8 + k + 1];
+        if (dAt(a) < d && dAt(c) < d) ridge = true;
+        else if (dAt(a) < d && c >= 0 && depth[c] === d && dAt(nbrs[c * 8 + k + 1]) < d) ridge = true;
+        else if (dAt(c) < d && a >= 0 && depth[a] === d && dAt(nbrs[a * 8 + k]) < d) ridge = true;
+      }
+      if (ridge) axis.push(i);
+    }
+    // (each tried, the thinnest first, while the tries' floods cost no more than NECK_WORK cell visits; one neck a place:
+    // none within 2 x its thickness + 2 of one found)
+    axis.sort((p, q) => depth[p] - depth[q]);
+    const dens = b.cells.map((k) => densityOf(k.mat));
+    let work = 0;
+    const tried: { p: V3; d: number }[] = [];
+    const px = new Float32Array(n);
+    const py = new Float32Array(n);
+    const pz = new Float32Array(n);
+    b.cells.forEach((k, j) => ([px[j], py[j], pz[j]] = k.p));
+    const stack = new Int32Array(n + 8);
+    const ballMark = new Int32Array(n);
+    const compMark = new Int32Array(n);
+    const comp = new Int32Array(n);
+    let tries = 0;
+    const countBall = (id: number) => {
+      let m = 0;
+      for (let j = 0; j < n; j++) if (ballMark[j] === id) m++;
+      return m;
+    };
+    for (const i of axis) {
+      if (work > NECK_WORK) break;
+      const c = b.cells[i].p;
+      const r = depth[i] - 0.5;
+      if (b.necks.some((o) => len(sub(o.at, c)) < 2 * Math.max(r, o.r) + 2)) continue;
+      // (a ball next to one tried as thick cuts the same: not again)
+      if (tried.some((o) => o.d === depth[i] && len(sub(o.p, c)) < 1.6)) continue;
+      tried.push({ p: c, d: depth[i] });
+      work += n;
+      // the ball out (found from its centre through the cells: it's connected), what's left in pieces? (no allocation a
+      // try: the marks are this try's number)
+      const tryId = ++tries;
+      const R2 = (r + 0.75) ** 2;
+      let sp = 0;
+      stack[sp++] = i;
+      ballMark[i] = tryId;
+      while (sp) {
+        const a = stack[--sp];
+        for (let k = 0; k < 8; k++) {
+          const q = nbrs[a * 8 + k];
+          if (q < 0 || ballMark[q] === tryId) continue;
+          const dx = px[q] - c[0];
+          const dy = py[q] - c[1];
+          const dz = pz[q] - c[2];
+          if (dx * dx + dy * dy + dz * dz > R2) continue;
+          ballMark[q] = tryId;
+          stack[sp++] = q;
+        }
+      }
+      const sizes: number[] = [];
+      for (let j = 0; j < n; j++) {
+        if (ballMark[j] === tryId || compMark[j] === tryId) continue;
+        const id = sizes.length;
+        let m = 0;
+        stack[sp++] = j;
+        compMark[j] = tryId;
+        comp[j] = id;
+        while (sp) {
+          const a = stack[--sp];
+          m++;
+          for (let k = 0; k < 8; k++) {
+            const q = nbrs[a * 8 + k];
+            if (q >= 0 && ballMark[q] !== tryId && compMark[q] !== tryId) {
+              compMark[q] = tryId;
+              comp[q] = id;
+              stack[sp++] = q;
+            }
+          }
+        }
+        sizes.push(m);
+        // (one piece holding everything but the ball: no neck here)
+        if (sizes.length === 1 && m + countBall(tryId) >= n) break;
+      }
+      if (sizes.length < 2) continue;
+      // the two biggest sides; the ball (and any crumbs) to whichever side reaches it first
+      const order = sizes.map((m, k) => [m, k]).sort((a, q) => q[0] - a[0]);
+      if (order[1][0] < least) continue;
+      const side = new Int8Array(n).fill(-1);
+      let grow: number[] = [];
+      for (let j = 0; j < n; j++)
+        if (compMark[j] === tryId && (comp[j] === order[0][1] || comp[j] === order[1][1])) {
+          side[j] = comp[j] === order[0][1] ? 0 : 1;
+          grow.push(j);
+        }
+      while (grow.length) {
+        const next: number[] = [];
+        for (const a of grow)
+          for (let k = 0; k < 8; k++) {
+            const q = nbrs[a * 8 + k];
+            if (q >= 0 && side[q] < 0) {
+              side[q] = side[a];
+              next.push(q);
+            }
+          }
+        grow = next;
+      }
+      const sides: [number[], number[]] = [[], []];
+      const mass: [number, number] = [0, 0];
+      for (let j = 0; j < n; j++) {
+        const s0 = side[j] < 0 ? 0 : side[j];
+        sides[s0].push(j);
+        mass[s0] += dens[j];
+      }
+      const area = Math.max(1, Math.PI * r * r);
+      b.necks.push({ at: [...c] as V3, r, area, sides, mass });
+      b.neckV = Math.min(b.neckV, (RB.neckStrength * b.strength * area) / Math.max(mass[0], mass[1]));
+    }
+    this.stats.neckMs = Math.max(this.stats.neckMs, performance.now() - t0);
+    this.stats.necks += b.necks.length;
+  }
+
+  /**
+   * (round 112) A hit beyond a neck: the impulse to stop what lies past the neck from the point hit passes through it --
+   * (mass beyond) x speed / area against RB.neckStrength x strength. The worst neck over that breaks: the body in two at
+   * it, each side going on as the body moved there (nothing crumbles: it snaps). Null: every neck holds.
+   */
+  private neckBreak(b: RockBody, speed: number, at: V3): { pieces: RockBody[]; seeds: { s: V3; piece: RockBody | null }[]; hit: V3 } | null {
+    if (!b.necks.length || speed < b.neckV) return null;
+    const R = rotM(b.q);
+    const hit = mtv(R, sub(at, b.pos));
+    // (the cell nearest the point hit: the side that took the hit)
+    let near = 0;
+    let nd = Infinity;
+    b.cells.forEach((k, i) => {
+      const d = len(sub(k.p, hit));
+      if (d < nd) [near, nd] = [i, d];
+    });
+    // (the side struck stops; what stops the side beyond is its momentum, through the neck)
+    let worst: Neck | null = null;
+    let ratio = 1;
+    for (const nk of b.necks) {
+      const struck = nk.sides[0].includes(near) ? 0 : 1;
+      const r = (nk.mass[1 - struck] * speed) / nk.area / (RB.neckStrength * b.strength);
+      if (r > ratio) [worst, ratio] = [nk, r];
+    }
+    if (!worst) return null;
+    const w0 = worst;
+    this.list = this.list.filter((o) => o !== b);
+    this.stats.breaks++;
+    this.stats.neckBreaks++;
+    const pieces: RockBody[] = [];
+    const seeds: { s: V3; piece: RockBody | null }[] = [];
+    for (const side of w0.sides) {
+      const cells = side.map((i) => b.cells[i]);
+      const nb = this.build(cells, b.q, b.pos, b.gen + 1, b.origin);
+      if (!nb) continue;
+      nb.v = add(b.v, cross(b.w, sub(nb.pos, b.pos)));
+      nb.w = [...b.w] as V3;
+      nb.age = b.age;
+      this.allowOverlap(nb);
+      pieces.push(nb);
+      // (its mesh drawn split between the two till theirs are built: seeds by the neck, at the side's middle, at its far end)
+      const byNeck = (k: RockCell) => len(sub(k.p, w0.at));
+      let nearNeck = cells[0];
+      let far = cells[0];
+      let mid: V3 = [0, 0, 0];
+      for (const k of cells) {
+        if (byNeck(k) < byNeck(nearNeck)) nearNeck = k;
+        if (byNeck(k) > byNeck(far)) far = k;
+        mid = add(mid, k.p);
+      }
+      mid = mul(mid, 1 / cells.length);
+      for (const p of [nearNeck.p, mid, far.p]) seeds.push({ s: add(p, b.origin), piece: nb });
+    }
+    return { pieces, seeds, hit: add(hit, b.origin) };
+  }
+
   /** A step of every body (dt s): the hits hard enough to break or to raise dust, and the bodies come to rest. */
   update(dt: number, only?: RockBody[]): { hits: RockHit[]; rest: RockBody[]; erode: { body: RockBody; at: V3 }[] } {
     const hits: RockHit[] = [];
@@ -474,10 +829,15 @@ export class RockBodies {
       for (let s = 0; s < n; s++) this.substep(b, h, top);
       b.age += dt;
       b.grace -= dt;
+      // (round 112) the grace is for the contact it was freed in (its stub, the ground it was cut from): once it has left
+      // the ground it ends, and what it comes down on can break it — a leg cut at its foot dropped 4.5 cells, struck at
+      // 9.2 cells/s, over its break speed, and stood whole (the user's "The thin stone protrusion survived a fall")
+      if (!b.contact) b.airborne += dt;
+      if (b.airborne > 0.15) b.grace = Math.min(b.grace, 0);
       // (a lean ends when it has come down hard, or in time)
       if (b.tipping > 0) b.tipping = b.hit > 3 && b.age > 0.3 ? 0 : b.tipping - dt;
       b.dustT += dt;
-      if (b.hit > 1.5 && (b.dustT > 0.25 || b.hit > this.breakSpeedOf(b))) {
+      if (b.hit > 1.5 && (b.dustT > 0.25 || b.hit > this.breakSpeedOf(b) || b.hit > b.neckV)) {
         b.dustT = 0;
         hits.push({ body: b, speed: b.hit, at: b.hitAt });
       }
@@ -509,6 +869,9 @@ export class RockBodies {
         if (c) contacts.push({ r, n: c.n, d: c.d, slop: 0, mass: c.mass });
       }
     b.contact = contacts.length > 0;
+    // (round 112) standing or toppling: its centre of mass over the hull of what it touches (every point in the ground,
+    // the slop's too — sunk in, the support is still the footprint it sank with)
+    b.balanced = !b.contact || overSupport(b.pos, contacts.map((c) => [b.pos[0] + c.r[0], b.pos[1] + c.r[1]] as [number, number]), RB.balanceGive);
     this.stats.contacts = Math.max(this.stats.contacts, contacts.length);
     // (round 110) soft contacts: a point is met only past the slop — by its mass (slopFor: a big rock cuts visibly into
     // the ground first, the user's "We don't want collision to kick in until they are visibly intersecting for large
@@ -580,13 +943,15 @@ export class RockBodies {
     const q: Q = [x + hh * (wx * w + wy * z - wz * y), y + hh * (wy * w + wz * x - wx * z), z + hh * (wz * w + wx * y - wy * x), w - hh * (wx * x + wy * y + wz * z)];
     const ql = Math.hypot(q[0], q[1], q[2], q[3]);
     b.q = [q[0] / ql, q[1] / ql, q[2] / ql, q[3] / ql];
-    // (round 96) touching: the spin and the slide damped (a landed piece stays down)
-    if (b.contact && RB.contactDamp > 0 && b.tipping <= 0) {
+    // (round 96) touching: the spin and the slide damped (a landed piece stays down) — (round 112) only standing: one
+    // whose centre of mass is past its support is falling over it, and damping that held a tall pillar's topple to a
+    // crawl it then came to rest in, leaning
+    if (b.contact && b.balanced && RB.contactDamp > 0 && b.tipping <= 0) {
       const k = Math.exp(-RB.contactDamp * h);
       b.w = mul(b.w, k);
       b.v = [b.v[0] * k, b.v[1] * k, b.v[2]];
     }
-    if (b.contact && b.tipping <= 0 && len(b.v) < RB.restV && len(b.w) < RB.restW) b.still += h;
+    if (b.contact && b.balanced && b.tipping <= 0 && len(b.v) < RB.restV && len(b.w) < RB.restW) b.still += h;
     else b.still = 0;
   }
 
@@ -606,7 +971,12 @@ export class RockBodies {
     at: V3,
   ): { rubble: { p: V3; mat: number }[]; pieces: RockBody[]; seeds: { s: V3; piece: RockBody | null }[]; hit: V3; rad: number } | null {
     const thr = this.breakSpeedOf(b);
-    if (speed < thr || b.grace > 0 || b.gen >= MAX_GEN) return null;
+    if (b.grace > 0 || b.gen >= MAX_GEN) return null;
+    // (round 112) under what shatters it, a thin section may still snap
+    if (speed < thr) {
+      const nk = this.neckBreak(b, speed, at);
+      return nk ? { rubble: [], pieces: nk.pieces, seeds: nk.seeds, hit: nk.hit, rad: 0 } : null;
+    }
     const R = rotM(b.q);
     const hit = mtv(R, sub(at, b.pos));
     const toWorld = (p: V3) => add(b.pos, mv(R, p));
@@ -702,6 +1072,12 @@ export class RockBodies {
     return RB.breakSpeed * Math.sqrt(b.strength) * Math.pow(Math.max(1, b.cells.length) / 200, -RB.sizeK);
   }
 
+  /** (round 112) its surface cells' centres in the world as it lies now, with its rotation (the body-voxel draw's) */
+  surfWorld(b: RockBody): { p: V3; mat: number; q: Q }[] {
+    const R = rotM(b.q);
+    return b.surf.map((k) => ({ p: add(b.pos, mv(R, k.p)), mat: k.mat, q: [...b.q] as Q }));
+  }
+
   /** its cells' centres in the world as it lies now */
   worldCells(b: RockBody): { p: V3; mat: number }[] {
     const R = rotM(b.q);
@@ -729,13 +1105,17 @@ export class RockBodies {
     return n;
   }
 
-  /** Their surface cells for the body-voxel draw (Bodies.pack's form: centre xyz, material, quaternion), from `o` (in 8-word voxels); `which`: those bodies only */
-  packInto(f: Float32Array, u: Uint32Array, o: number, max: number, which: (b: RockBody) => boolean = () => true): number {
+  /**
+   * Their surface cells for the body-voxel draw (Bodies.pack's form: centre xyz, material, quaternion), from `o` (in
+   * 8-word voxels); `which`: those cells only (round 112: by cell — a body's mesh has only what the field mesh draws,
+   * its built cells are drawn here)
+   */
+  packInto(f: Float32Array, u: Uint32Array, o: number, max: number, which: (b: RockBody, k: RockCell) => boolean = () => true): number {
     let n = o;
     for (const b of this.list) {
-      if (!which(b)) continue;
       const R = rotM(b.q);
       for (const k of b.surf) {
+        if (!which(b, k)) continue;
         if (n >= max) return n;
         const p = mv(R, k.p);
         const i = n * 8;

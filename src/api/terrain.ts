@@ -6,7 +6,7 @@ import { EventKind } from '../sim/globals';
 import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { EDIT_TAGS } from '../sim/world-gpu';
 import { CHUNK, columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
-import { MAT, MATERIALS, MatState } from '../world/materials';
+import { fieldMeshed } from '../world/materials';
 import { columnAt, materialId, materialName, materialState, type MaterialName } from './common';
 import { PULL_SLOTS } from '../sim/systems';
 import type { Mirror } from './mirror';
@@ -144,10 +144,8 @@ export class RaiseStroke {
   }
 }
 
-/** meshregion.wgsl fieldMat: in the field mesh (else drawn as a prism: what's built) */
-function fieldMat(m: number): boolean {
-  return MATERIALS[m]?.state !== MatState.Solid || m === MAT.Stone || m === MAT.Trash || m === MAT.Basalt || m === MAT.Sandstone;
-}
+/** meshregion.wgsl fieldMat: in the field mesh (else drawn as a prism: what's built) — (round 112) world/materials.ts's */
+const fieldMat = fieldMeshed;
 
 /**
  * Queries answer from the mirror (refreshed every `mirror.every` ms, 250 by
