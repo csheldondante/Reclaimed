@@ -200,7 +200,8 @@ struct TileI { clip: vec4<f32>, slot: vec4<f32>, anchor: vec4<f32>, pad: vec4<f3
 @group(0) @binding(46) var<storage, read> TP: array<vec4<f32>>;
 /** the view's right, up and along (toward the far side) — unit vectors; w: the clip depth a unit along; the
  *  window's size (window units), the region's size (x, y window units), how far past its edge a tile draws */
-struct TileU { r: vec4<f32>, u: vec4<f32>, f: vec4<f32>, win: vec4<f32> };
+/** (round 112, TF5) focus: the camera's target (window units), w 1 — the eye side's cut (fsTile) — 0 none */
+struct TileU { r: vec4<f32>, u: vec4<f32>, f: vec4<f32>, win: vec4<f32>, focus: vec4<f32> };
 @group(0) @binding(45) var<uniform> TU: TileU;
 /** (round 108, TC20) the weather's cover (weather/cover.ts): snow (cells), wet, ice (its share of the texel), which lap
  *  round the ring it is (-1: nothing known) */
@@ -278,6 +279,15 @@ fn fsTile(in: TOut) -> TFrag {
   if (any(rl < vec2<f32>(-TU.win.w)) || any(rl > TU.win.zz * vec2<f32>(1.0, 0.8660254) + TU.win.w)) { discard; }
   // (an arriving region's tile — plane.w 1 — draws inside the window till the window draws its land)
   if (t.plane.w < 0.5 && all(p.xy > vec2<f32>(TU.win.w)) && all(p.xy < TU.win.xy - TU.win.w)) { discard; }
+  // (round 112, `tilefix2`, TF5 — the user's option (a): on the eye's side of the focus, what rises into the line from
+  // the eye to it is cut, as the rings press theirs down (far.wgsl underFocus: over 24 world units on, 0.85 of the
+  // line's height); what's behind shows through, the focus with it)
+  if (TU.focus.w > 0.5 && CAM.pos.w < 0.5) {
+    let el = max(length(CAM.eye.xy), 1e-3);
+    let ah = dot(p.xy - TU.focus.xy, CAM.eye.xy / el);
+    let cap = TU.focus.z + max(ah, 0.0) * CAM.eye.z / el * 0.85;
+    if (ah > 12.0 && p.z > cap) { discard; }
+  }
   let a = textureLoad(tileA, tx, 0);
   var alb = a.rgb * a.rgb * 2.0;
   var n = tileNrmDec(b.x);

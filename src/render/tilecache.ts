@@ -238,7 +238,7 @@ export class TileCache {
     this.rows = rows;
     this.instData = new Float32Array(slots * 4 * 16);
     this.inst = dev.createBuffer({ label: 'tiles instances', size: this.instData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.uni = dev.createBuffer({ label: 'tiles uniform', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.uni = dev.createBuffer({ label: 'tiles uniform', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.tparams = dev.createBuffer({ label: 'tiles params', size: slots * 4 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.mask = dev.createBuffer({ label: 'tiles mask', size: this.maskData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     for (let k = 0; k < PER_FRAME; k++) this.bakers.push({ cam: dev.createBuffer({ label: `tiles bake camera ${k}`, size: host.camBytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }) });
@@ -855,14 +855,6 @@ export class TileCache {
       const crx = Math.floor((cam.target[0] + ox) / R);
       const cry = Math.floor((cam.target[1] / ROW_H + oy) / R);
       const azk = Math.round(cam.azimuth * 1e4);
-      const ex = cam.eye[0];
-      const ey = cam.eye[1];
-      const el = Math.hypot(ex, ey) || 1;
-      const tz = cam.target[2];
-      // (the focus on the screen, clip)
-      const tg = cam.target;
-      const fx = (B.r[0] * tg[0] + B.r[1] * tg[1] + B.r[2] * tg[2]) * B.sx + m[12];
-      const fy = (B.u[0] * tg[0] + B.u[1] * tg[1] + B.u[2] * tg[2]) * B.sy + m[13];
       const d = this.instData;
       let n = 0;
       let frozen = 0;
@@ -896,17 +888,9 @@ export class TileCache {
         const x1 = (ra + t.a0 + t.tw / t.dens) * B.sx + m[12];
         const y1 = (ua + t.b1) * B.sy + m[13];
         const y0 = (ua + t.b1 - t.th / t.dens) * B.sy + m[13];
-        // (round 112, tilefast: and only one whose image covers the focus on the screen — one that can't hide it was
-        // left out too, the strip at the screen's foot as the window slid on: the pan bench's pop-in behind at zoom 5)
-        const ah = ((aw[0] + R / 2 - cam.target[0]) * ex + (aw[1] + (R * ROW_H) / 2 - cam.target[1]) * ey) / el;
-        if (ah > 24 && !t.gpu && x0 <= fx && fx <= x1 && y0 <= fy && fy <= y1) {
-          const cap = tz + (ah - R * 0.75) * (cam.eye[2] / el) * 0.85;
-          if (t.top - this.origin![2] > cap) {
-            this.stats.skipEye++;
-            t.skip = 'eye';
-            continue;
-          }
-        }
+        // (round 112, `tilefix2`, TF5 — the user's option (a): no tile is left out on the eye's side any more — the draw
+        // cuts what of it would rise into the line from the eye to the focus, the rings' rule (tiles.wgsl fsTile, far.wgsl
+        // underFocus); the whole tile left out was the far land's flat colour there, the pan bench's pop-in "eye")
         // (round 112, tilefix: a render-only tile too once its box is known — drawn off the screen it was "used" every
         // frame and never evicted: the atlas full of tiles off the screen)
         if ((!t.gpu || t.boxed) && (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1)) {
@@ -931,7 +915,9 @@ export class TileCache {
         h.device.queue.writeBuffer(this.inst, 0, d, 0, n * 16);
         const W = h.world.w + 0.5;
         const H = h.world.h * ROW_H;
-        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, this.debug ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP]));
+        // (round 112, TF5: the focus — the camera's target, window units — for the eye side's cut; w 0: none, flying)
+        const fo = cam.fly ? [0, 0, 0, 0] : [cam.target[0], cam.target[1], cam.target[2], 1];
+        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, this.debug ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP, ...fo]));
       }
     }
     this.stats.drawn = this.drawCount;

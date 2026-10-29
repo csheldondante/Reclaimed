@@ -3,6 +3,13 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `tilefix2`) — the eye side; disk ahead; the hero's screen
+
+- On a tile on the eye's side of the focus (TF5): the user chose option (a), the tile drawn cut the way the window cuts
+  tall terrain near the camera, detailed, not hiding the focus — not left out.
+- The user: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this up?" (BACKLOG TY7.)
+- The hero's run on the phone grey round the hero, and a grey corner in the sandbox: fixed (BACKLOG TY1).
+
 ## 2026-10-29 — round 112 (session 5, `tilefix`) — the terrain drawn on every screen; a merge gate
 
 - After opening the atlas on the deployed places build on their PC (tiles scattered over flat far land and grey void),

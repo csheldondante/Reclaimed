@@ -2307,3 +2307,11 @@ clears them).
   the macro ground, the sea, the giants) padded +128 / -64 — is what `TileCache.prepare` culls it by (`Tile.boxed`);
   only a tile on the screen is "used" (the eviction's protection). No readback. The look-ahead samples the screen with
   two points across each region. The merge gate: scripts/tilegate.mjs (baselines in data/baselines/tilegate).
+
+- (round 112, `tilefix2`) **HybridChunks.clear()** (the streamer's onWarp) resets only the place's history (edited,
+  touched): the land's flags and readiness are landBox's, set by the warp's own writes before onWarp. **TilePacer**: off
+  a phone, with FILL_AT (3) or more of the tiles' lane waiting, the guard may climb to TILE_MAX_FILL (16) — a turn more a
+  frame on time, halved on a long one; TileLandGpu 12 in flight, 8 bakes a frame off a phone. **The eye side**:
+  tiles.wgsl fsTile discards what rises into the line from the eye to the focus (TileU.focus: the camera's target, w 1;
+  the rings' underFocus rule) — no tile is left out for it. The gate: scripts/tilegate.mjs (frames held to 60 Hz, load in
+  frames, baselines by adapter).
