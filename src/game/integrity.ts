@@ -381,7 +381,7 @@ export class Integrity {
         // (round 100: one wholly inside a region leaving — or any of the window's, a warp — goes with it, its mesh
         // and transform in the region's record: Streamer.things, regionThings below)
         if (out && !dz && this.carried(inst, dx, dy)) continue;
-        if (out) this.unrest(inst);
+        if (out) this.unrest(inst, 'leaving');
       }
     }
     for (let k = 0; k < 2000; k++) {
@@ -1390,6 +1390,8 @@ export class Integrity {
     rigid.remove(b);
     rigid.stats.settled++;
     rigid.stats.baked++;
+    const why = b.slot === undefined ? 'no mesh' : this.external ? 'unclaimed' : 'no registry';
+    rigid.bakedWhy[why] = (rigid.bakedWhy[why] ?? 0) + 1;
     const { w: W, h: H, zMax } = this.core.dims;
     const by = new Map<number, { z: number; mat: number }[]>();
     for (const c of rigid.worldCells(b)) {
@@ -1471,7 +1473,7 @@ export class Integrity {
         this.resting.delete(oldest.value);
         continue;
       }
-      this.unrest(inst);
+      this.unrest(inst, 'room');
     }
   }
 
@@ -1533,7 +1535,7 @@ export class Integrity {
           const inst = ext.adopt(OWNER_ROCK, t.cols.map((c) => ({ x: c.x + x0, y: c.y + y0, z0: c.z0, z1: c.z1 })), t.fallback);
           if (slot === undefined) {
             // (no room for its mesh: ground again)
-            this.unrest(inst);
+            this.unrest(inst, 'room');
             continue;
           }
           const m = [...t.m];
@@ -1591,7 +1593,7 @@ export class Integrity {
     while (this.resting.size >= Math.max(1, RB.restMax)) {
       const id = this.resting.keys().next().value!;
       const inst = ext.get(id);
-      if (inst) this.unrest(inst);
+      if (inst) this.unrest(inst, 'room');
       else this.resting.delete(id);
     }
     const inst = ext.claim(OWNER_ROCK, want, b.mat);
@@ -1618,7 +1620,7 @@ export class Integrity {
     let n = 0;
     for (const inst of [...ext.instances]) {
       if (inst.owner !== OWNER_ROCK) continue;
-      this.unrest(inst);
+      this.unrest(inst, 'asked');
       n++;
     }
     return n;
@@ -1645,7 +1647,7 @@ export class Integrity {
     const rigid = this.rigid;
     const ext = this.external!;
     const r = this.resting.get(inst.id);
-    if (!rigid || !r?.cells) return this.unrest(inst);
+    if (!rigid || !r?.cells) return this.unrest(inst, 'lost');
     let keep = r.cells;
     if (why === 'cut') {
       // (each cell where it lies now: still claimed, and still External in the copy — or dug out of it)
@@ -1755,12 +1757,15 @@ export class Integrity {
    * (round 99) A resting rock baked into the ground (round 110: only out of room, leaving the window, or asked —
    * `bakeResting`; one cut or hanging free wakes instead): its cells ground again, its mesh gone, behind a burst of dust.
    */
-  private unrest(inst: ExternalInstance): void {
+  private unrest(inst: ExternalInstance, why: 'room' | 'leaving' | 'asked' | 'lost'): void {
     const r = this.resting.get(inst.id);
     this.resting.delete(inst.id);
     if (r) {
       this.afterglow.push({ slot: r.slot, m: r.m, frames: 6 });
-      if (this.rigid) this.rigid.stats.baked++;
+      if (this.rigid) {
+        this.rigid.stats.baked++;
+        this.rigid.bakedWhy[why] = (this.rigid.bakedWhy[why] ?? 0) + 1;
+      }
       let x0 = Infinity;
       let y0 = Infinity;
       let x1 = -Infinity;

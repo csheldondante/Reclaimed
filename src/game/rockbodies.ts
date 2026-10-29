@@ -289,6 +289,8 @@ export class RockBodies {
   private nextId = 1;
   /** while the ground's copy isn't of the window as it is (a slide, until it's read again): nothing moves */
   frozen = false;
+  /** (round 110) why bodies were baked into the ground (room, leaving, asked, no mesh, …): counts */
+  bakedWhy: Record<string, number> = {};
   stats = { spawned: 0, breaks: 0, settled: 0, capped: 0, maxPts: 0, stepMs: 0, contacts: 0, woken: 0, baked: 0, eroded: 0, allowMax: 0 };
 
   constructor(private ground: RockGround) {}
