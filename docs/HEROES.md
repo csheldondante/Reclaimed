@@ -180,6 +180,7 @@ export function mount(host) {                 // host: HeroHost (contracts/hero.
 | `Hero.ownCamera?: boolean` | the hero drives the camera; the host neither follows nor zooms | the hoverbike's chase camera (`HeroRunDeps.ownCamera` was the run's flag; this is the hero's) |
 | `Hero.dispose?()` | what it draws and holds let go when the sandbox takes it out | a hero that draws itself (Figures, meshes) |
 | `HeroAbility.duration?: number` | its full cooldown (s) | the inspector's bar; cooldowns should be real (`cooldown()` 0 always hides them) |
+| `Hero.mobility?: Mobility` | how it gets over the ground (contracts/traversal.ts) | traversal fields for it: the autopilot, the course check (GE3) |
 | `HeroWorld.solidAt?`, `floorUnder?` | a point in the ground; the floor under feet reaching z | caves, overhangs, rays (GameplayGM's World has them) |
 | `HeroEntry`, `HeroHost`, `HeroMount`, `HeroModule`, `HERO_CONTRACT` | the registry and runtime modules | this section |
 
@@ -247,6 +248,40 @@ The hoverbike game (GameplayGM `experiment/slice`: slice/hero.ts HoverHero, slic
    import map; anything they import that isn't listed in `src/hero/shared-modules.json` is to be added there
    (additive).
 
+### Traversal fields and the autopilot (round 112)
+
+The user: "Don't we have pathfinding? Can't we build a traversal field for the hero agent and use that instead of
+input? Or steer along that?"
+
+- **The contract** is `src/api/contracts/traversal.ts`: `Traversal.field(goal, mobility, { radius })` returns a
+  `TraversalField` with `cost(at)`, `reachable(at)`, `dir(at)` (a unit vector down the field), `route(at)` and `ms`.
+  `Mobility` is the body's own way over the ground. It is not the agents' fixed numbers. It holds `step` (the
+  highest climb a stride takes), `drop`, `deep` (the water it won't wade into), `jump` (with `jumpCost`),
+  `climbCost`, `wadeCost` and `hugCost` (the extra cost of a cell at a wall's foot: a body has width).
+- **A hero states its mobility** as `Hero.mobility` (1.1). The Walker's comes from its tunables: `step`, a drop of
+  the same, and `deep`. Tuning the hero changes the field.
+- **Implementation.** `src/hero/traversal.ts` `CpuTraversal` runs a Dijkstra from the goal over the window's hex
+  cells, using the world API's heights and water. Within 40 cells it takes about 1 ms in Node; within 96 cells,
+  20-26 ms. The GPU agents' distance and flow fields (agents.wgsl `navCost`) are the next implementation behind the
+  same contract (HS10): many surfaces a column, caves and bridges.
+- **The pilot.** `src/hero/pilot.ts` `Pilot` is a HeroController that steers along a field: `move` is `dir(position)`
+  until the hero is there. It follows a moving goal by making the field again every second. With `fight` set, it
+  swings at hostiles within reach. A hero that makes no progress for 3 s is marked `stuck` (its own rules refused a
+  stride the field allowed). It drives any hero through the contract: `position()`, `mobility` and `intent()`.
+- **In the sandbox**, 🧭 is "autopilot to here": a tap sends the hero there, and pushing the stick takes control
+  back. Scripts call `hs.pilotTo(point | () => point)` and `hs.pilotToUnit(id)`. The inspector shows the pilot's
+  state, its cost and the field's time.
+- **Courses.** `hero/gauntlet.ts` `crossable(traversal, course, mobility)` checks the hero's field from the course's
+  goal at its start. The sandbox runs it for each course it lays and logs whether the hero can cross. **This is the
+  basis for checking that a generated gauntlet is traversable by a given hero (GE3):** a generator keeps only the
+  courses each of its heroes can cross.
+- **The headless test** drives the hero with the pilot rather than a scripted stick. It walks to a point, goes at a
+  raider and fights it, and crosses the course to its crystal.
+- **Contract gap (GameplayGM).** Their heroes ignore `move` and `goTo` and read their own `input`, so a pilot can't
+  drive them yet. A pilot for them needs the input passthrough the other way round: their controller (or their
+  hero) has to take a steering direction. That means a documented field in their Input, or a `HeroIntent.move`
+  their hero honours when no gesture is in progress. They also need `Hero.mobility`. Both are on their checklist.
+
 ### What GameplayGM must provide (checklist)
 
 - [ ] A build of their heroes as one ES module, using Vite library mode, format `es`, with `reclaimed/*` external.
@@ -264,6 +299,8 @@ The hoverbike game (GameplayGM `experiment/slice`: slice/hero.ts HoverHero, slic
 - [ ] `ownCamera: true` if they keep their chase camera; otherwise Hero.camera is used.
 - [ ] Hits on the host's units go through `world.units.hit` (and `Units.query` to find them).
 - [ ] `dispose()` lets go of what the hero draws and holds.
+- [ ] Each hero states its `mobility` (`step`, `drop`, `deep`, `jump`) for traversal fields.
+- [ ] Each hero can be steered by a pilot: it honours `HeroIntent.move` when no gesture of its own is in progress, or its Input takes a steering direction. Without this, the 🧭 autopilot, the headless tests and the course checks can't drive it.
 - [ ] They serve the module from their dev server with CORS, then try
       `https://csheldondante.github.io/Reclaimed/herosandbox/?skipmenu=1&level=playground&heroes=<their url>&hero=<role>`
       (or the dev server's equivalent).

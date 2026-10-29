@@ -20,6 +20,11 @@ each was implemented.
   the contract version, the last 60 s of the boundary log, the intent trace and the tunables' values, saved as JSON —
   downloaded, and on the dev server into feedback/hero/<date>-<role>.json, which main commits and forwards to the
   GameplayGM session (docs/HEROES.md "Contract feedback").
+- Then: "Don't we have pathfinding? Can't we build a traversal field for the hero agent and use that instead of
+  input? Or steer along that?" → a traversal-field contract (contracts/traversal.ts: a field to a goal reckoned by the
+  hero's own Mobility — step, drop, wade, jump), a CPU implementation first (the agents' GPU fields next, HS10), and a
+  pilot controller that steers along it: the sandbox's 🧭 autopilot, the headless test's driver, and the basis of
+  checking a generated gauntlet is crossable by a given hero (GE3).
 - GameplayGM's answer (gampeplaygm-40, via main): their heroes need a richer seam (input passthrough, their own camera,
   real cooldowns, hits through Units, more of the world than HeroWorld) → designed as `mount(host)` with an explicit
   HeroHost: named capabilities first, the raw handles that remain listed as debt (docs/HEROES.md "What the contract

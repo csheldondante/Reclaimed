@@ -36,7 +36,10 @@ import { TouchPad } from './touchpad';
 import { Walker } from './walker';
 import { walkerPose } from './walker-pose';
 import { findBasin, pour, type Basin, type FillWith } from './fill';
-import { COURSES, perColumn, type Course, type CoursePiece } from './gauntlet';
+import { COURSES, crossable, perColumn, type Course, type CoursePiece } from './gauntlet';
+import { CpuTraversal } from './traversal';
+import { Pilot, type PilotOpts } from './pilot';
+import type { Traversal } from '../api/contracts/traversal';
 import './sandbox.css';
 
 /** the factions the sandbox's units stand for */
@@ -86,7 +89,7 @@ export interface HeroSandboxDeps {
   params: URLSearchParams;
 }
 
-type Tool = { kind: 'spawn'; unit: string } | { kind: 'fill'; what: FillWith } | { kind: 'start' };
+type Tool = { kind: 'spawn'; unit: string } | { kind: 'fill'; what: FillWith } | { kind: 'start' } | { kind: 'pilot' };
 
 export class HeroSandbox {
   readonly log = new BoundaryLog();
@@ -100,9 +103,15 @@ export class HeroSandbox {
   lastFill: { basin?: Basin; error?: string; commands?: number; volume?: number; with?: FillWith } | null = null;
   /** the last course laid */
   course: Course | null = null;
+  /** whether the hero could cross it when it was laid (its traversal field, start to goal) */
+  crossing: ReturnType<typeof crossable> | null = null;
   /** an error the panel shows (a module that didn't load) */
   error: string | null = null;
   private pad: RunController | null = null;
+  /** (round 112) traversal fields over the world API (contracts/traversal.ts): the autopilot's */
+  readonly traversal: Traversal;
+  /** the autopilot (hero/pilot.ts): 🧭 to a tapped point, scripts' pilotTo; the stick takes over */
+  pilot: Pilot | null = null;
   private tuning: HeroTuning | null = null;
   private tunePanel: TunePanel | null = null;
   private orbit: Orbit;
@@ -129,6 +138,7 @@ export class HeroSandbox {
     const t = d.api.terrain;
     if (!t) throw new Error('hero sandbox: needs the world API terrain module');
     this.units = new SimpleUnits(t);
+    this.traversal = new CpuTraversal(t, d.api.water);
     this.orbit = new Orbit(t, d.core.camera);
     this.figures = new Figures(d.device, d.core.renderer);
     this.el = document.createElement('div');
@@ -176,6 +186,7 @@ export class HeroSandbox {
       tbtn('🪣', 'fill: tap inside an enclosed vessel to fill it to its rim with what is chosen beside', () => ({ kind: 'fill', what: fillSel.value as FillWith })),
       fillSel,
       tbtn('📍', "the map's hero start: tap where the hero starts (saved with the map)", () => ({ kind: 'start' })),
+      tbtn('🧭', 'autopilot to here: tap where the hero goes, steering along a traversal field for its own step, drop and wade (the stick takes over)', () => ({ kind: 'pilot' })),
     );
     const course = document.createElement('button');
     course.textContent = '🏁';
@@ -307,6 +318,7 @@ export class HeroSandbox {
       pad.onTap = (sx, sy) => this.tap(sx, sy);
       pad.onAction = () => this.log.add('host→hero', 'onAction');
       this.freshOff = t.keepFresh(() => this.hero?.position() ?? null);
+      this.pilot = new Pilot(hero, this.traversal, units);
       this.tuning = heroTuning(hero);
       this.tunePanel = new TunePanel(this.d.ui, { registry: this.tuning.registry, store: `reclaimed.hero.presets.${hero.role}`, urlParam: 'herotune', label: '🎚 hero', cls: 'hero', open: ['camera', 'hero'] });
       this.tuning.registry.onChange((id) => {
@@ -330,6 +342,8 @@ export class HeroSandbox {
     const hero = this.hero;
     if (!hero) return;
     this.log.add('host→hero', 'dispose (controller)');
+    this.pilot?.dispose();
+    this.pilot = null;
     this.pad?.dispose();
     this.pad = null;
     this.tunePanel?.dispose();
@@ -360,6 +374,20 @@ export class HeroSandbox {
       // (a tap on the ground: walk there, unless the stick has it)
       const g = this.pendingGoTo;
       if (g && Math.hypot(it.move[0], it.move[1]) < 0.05) it.goTo = g;
+      // (the autopilot steers while the stick is left alone; pushed, the player has it)
+      const pl = this.pilot;
+      if (pl?.active) {
+        if (Math.hypot(it.move[0], it.move[1]) > 0.05) {
+          pl.to(null);
+          this.log.add('host→hero', 'pilot off (the stick)');
+        } else {
+          const pi = pl.intent();
+          it.move = pi.move;
+          it.attack = !!(it.attack || pi.attack);
+          it.sprint = !!(it.sprint || pi.sprint);
+          if (!pl.active) this.log.add('host→hero', `pilot ${pl.state}`);
+        }
+      }
       this.lastIntent = it;
       this.log.intent(it);
       hero.update(dt, it);
@@ -395,6 +423,27 @@ export class HeroSandbox {
   warped(): void {
     this.exit();
     this.clearUnits();
+  }
+
+  /**
+   * Autopilot: steer the hero along a traversal field to `goal` (a point, or a function: a unit to follow), with
+   * `fight` it swings at hostiles on the way. Resolves the pilot (its state: going, there, no way, stuck).
+   */
+  pilotTo(goal: V2 | (() => V2 | null) | null, o: PilotOpts = {}): Pilot {
+    const pl = this.pilot;
+    if (!pl || !this.hero) throw new Error('hero sandbox: the autopilot needs a hero (drop in first)');
+    if (!this.hero.mobility) this.d.say(`${this.hero.role} has no mobility (Hero.mobility): no field can be made for it`, 4);
+    pl.to(goal, o);
+    this.log.add('host→hero', 'pilot.to', typeof goal === 'function' ? 'a moving goal' : goal);
+    return pl;
+  }
+
+  /** follow a unit (its id) with the autopilot, fighting on the way */
+  pilotToUnit(id: number, o: PilotOpts = { fight: 2.6, arrive: 1.8 }): Pilot {
+    return this.pilotTo(() => {
+      const u = (this.heroUnits ?? this.units).get(id);
+      return u?.alive ? [u.at[0], u.at[1]] : null;
+    }, o);
   }
 
   /** Spawn a unit of `kind` at (x, y) through the Units contract (the hero's units). */
@@ -436,20 +485,26 @@ export class HeroSandbox {
     // (up the screen: away from the eye)
     const heading = Math.atan2(-Math.sin(cam.azimuth), -Math.cos(cam.azimuth));
     const c = gen.make([g[0], g[1]], heading, this.seed++);
-    const t = this.d.api.terrain!;
     this.lay(c.pieces);
     this.d.wake(c.start[0], c.start[1], 140);
     // (the units once the ground under them is in: the edits land four a tick)
     const queued = () => this.d.core.globals.events.length;
     for (let k = 0; queued() > 0 && k < 300; k++) await new Promise((res) => setTimeout(res, 50));
-    await t.refresh();
+    // (the walls rise a cell a tick)
+    await new Promise((res) => setTimeout(res, 600));
+    await this.d.api.refresh();
     for (const f of c.foes) this.spawn(f.kind, f.at);
     this.course = c;
+    // (crossable by this hero? its own traversal field, start to goal)
+    const role = this.hero?.role ?? this.role;
+    const m = this.hero?.mobility;
+    this.crossing = m ? crossable(this.traversal, c, m) : null;
+    this.log.add('host→hero', 'course', c.name, this.crossing ? (this.crossing.ok ? `crossable by ${role}: cost ${this.crossing.cost!.toFixed(0)} over ${this.crossing.straight.toFixed(0)} straight` : `NOT crossable by ${role}`) : 'no mobility to check');
     if (this.hero) {
       this.log.add('host→hero', 'place', c.start);
       this.hero.place(c.start);
     } else await this.enter(c.start);
-    this.d.say(`${c.name}: ${c.pieces.length} pieces, ${c.foes.length} foes — to the crystal`, 4);
+    this.d.say(`${c.name}: ${c.pieces.length} pieces, ${c.foes.length} foes — to the crystal${this.crossing ? (this.crossing.ok ? '' : ' (not crossable by this hero!)') : ''} · 🧭 the crystal to watch it crossed`, 4);
     return c;
   }
 
@@ -566,7 +621,7 @@ export class HeroSandbox {
     o.className = 'hero-sb-overlay';
     const tip = document.createElement('div');
     tip.className = 'hero-sb-tip';
-    tip.textContent = tool.kind === 'spawn' ? `tap to spawn a ${tool.unit} — tap 👹 again to stop` : tool.kind === 'fill' ? `tap inside a vessel to fill it with ${tool.what}` : "tap where the hero starts on this map";
+    tip.textContent = tool.kind === 'spawn' ? `tap to spawn a ${tool.unit} — tap 👹 again to stop` : tool.kind === 'fill' ? `tap inside a vessel to fill it with ${tool.what}` : tool.kind === 'pilot' ? 'tap where the hero goes (autopilot)' : 'tap where the hero starts on this map';
     o.appendChild(tip);
     let down: [number, number, number] | null = null;
     o.addEventListener('pointerdown', (e) => {
@@ -588,6 +643,11 @@ export class HeroSandbox {
     const g = this.d.core.camera.groundAt(sx, sy, this.d.heightAt);
     const at: V2 = [g[0], g[1]];
     if (tool.kind === 'spawn') this.spawn(tool.unit, at);
+    else if (tool.kind === 'pilot') {
+      this.arm(null);
+      if (this.hero) this.pilotTo(at, { fight: 2.6 });
+      else this.d.say('Drop in first (🧍): the autopilot drives the hero', 3);
+    }
     else if (tool.kind === 'fill') {
       this.arm(null);
       void this.fill(at, tool.what);
@@ -644,6 +704,8 @@ export class HeroSandbox {
       }
       const flagsR = `claims ${hero.claims ? 'yes' : 'no'} · goesTo ${hero.goesTo === false ? 'no' : 'yes'} · tunables ${Object.keys(hero.tunables ?? {}).length}`;
       lines.push(flagsR);
+      const pl = this.pilot;
+      if (pl && pl.state !== 'idle') lines.push(`pilot ${pl.state}${pl.field ? ` → [${f(pl.field.goal[0])}, ${f(pl.field.goal[1])}] cost ${pl.field.cost([hero.position()[0], hero.position()[1]])?.toFixed(0) ?? '–'} · field ${f(pl.fieldMs, 0)} ms ×${pl.fields}` : ''}`);
     }
     const all = this.units.all().filter((u: UnitView) => u.alive);
     const reads = Object.entries(this.log.reads).map(([k, v]) => `${k} ${v}`).join(', ');

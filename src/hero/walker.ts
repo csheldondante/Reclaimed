@@ -9,6 +9,7 @@
 //   point every REGEN_EVERY s. At 0 it's dead: `died` (the run ends: lost).
 
 import type { Hero, HeroAbility, HeroCamera, HeroIntent, HeroTunable, HeroWorld } from '../api/contracts/hero';
+import type { Mobility } from '../api/contracts/traversal';
 import type { Actor, UnitView, V2, V3 } from '../api/contracts/units';
 import { canStep, findPath } from './path';
 
@@ -128,6 +129,11 @@ export class Walker implements Hero {
       regenAfter: num('regenAfter', 'heal after', 's', 0, 30, 0.5, 'out of a fight this long, it heals'),
       regenEvery: num('regenEvery', 'heal every', 's', 0.2, 10, 0.1, 'a point of health'),
     };
+  }
+
+  /** (round 112) its way over the ground for a traversal field: a stride's climb and drop (path.ts canStep: no more than a step either way), the water it won't wade */
+  get mobility(): Mobility {
+    return { step: this.tune.step, drop: this.tune.step, deep: this.tune.deep };
   }
 
   get alive(): boolean {

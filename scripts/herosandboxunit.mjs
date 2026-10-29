@@ -85,6 +85,38 @@ try {
   ok(w.tune.speed === 8, 'reset puts it back');
   w.update(1 / 60, { move: [1, 0] });
   ok(w.position()[0] > 10.1, `it walks at its speed (${w.position()[0].toFixed(3)})`);
+  // traversal fields: a wall across the way with a gap; a pool too deep to wade; a jump
+  {
+    const { CpuTraversal } = await v.ssrLoadModule('/src/hero/traversal.ts');
+    const { Pilot } = await v.ssrLoadModule('/src/hero/pilot.ts');
+    // ground 10; a wall at x 60..62 (height 20) from y 0 to 200 except a gap at y 100..106
+    const wallH = (x, y) => (x >= 60 && x <= 62 && !(y >= 100 && y <= 106) ? 20 : 10);
+    const ground = { heightAt: (x, y) => (x < 0 || y < 0 || x > 200 || y > 200 ? null : wallH(x, y)) };
+    const tr = new CpuTraversal(ground);
+    const f = tr.field([80, 40], { step: 2.5, drop: 2.5 }, { radius: 96 });
+    const c = f.cost([40, 40]);
+    ok(c !== null && c > 2 * Math.hypot(40, 0) && c < 200, `round the wall through the gap: cost ${c?.toFixed(1)} (straight 40) in ${f.ms.toFixed(1)} ms`);
+    const r = f.route([40, 40]);
+    ok(r.some((p) => p[0] > 59 && p[0] < 63 && p[1] >= 99 && p[1] <= 107), 'its route goes through the gap');
+    const j = tr.field([80, 40], { step: 2.5, drop: 12, jump: 10 }, { radius: 96 }).cost([40, 40]);
+    ok(j !== null && j < c, `a body that jumps 10 goes over (cost ${j?.toFixed(1)})`);
+    const water = { depthAt: (x, y) => (Math.hypot(x - 120, y - 120) < 15 ? 3 : 0) };
+    const tw = new CpuTraversal({ heightAt: (x, y) => (x < 0 || y < 0 || x > 200 || y > 200 ? null : 10) }, water);
+    const fw = tw.field([120, 120], { step: 2.5, deep: 1.2 }, { radius: 60 });
+    ok(!fw.reachable([120, 160]), 'a goal in water deeper than it wades is out of its reach from the shore');
+    const fw2 = tw.field([120, 150], { step: 2.5, deep: 1.2 }, { radius: 80 });
+    const rr = fw2.route([120, 90]);
+    ok(rr && rr.every((p) => Math.hypot(p[0] - 120, p[1] - 120) >= 14), `round a pool deeper than it wades (${rr?.length} cells)`);
+    // the pilot drives the Walker round the wall to the goal
+    const units = { query: () => [], watch() {}, hit() {} };
+    const w = new Walker({ ground, units }, [40, 40]);
+    const pl = new Pilot(w, tr, units);
+    pl.to([80, 40]);
+    let k = 0;
+    for (; k < 60 * 40 && pl.state === 'going'; k++) w.update(1 / 60, pl.intent());
+    const p = w.position();
+    ok(pl.state === 'there' && Math.hypot(p[0] - 80, p[1] - 40) <= 1.2, `the pilot walked the Walker round the wall to the goal: ${pl.state} at ${p[0].toFixed(1)}, ${p[1].toFixed(1)} in ${(k / 60).toFixed(1)} s, ${pl.fields} field(s)`);
+  }
 } finally {
   await v.close();
 }

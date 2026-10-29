@@ -1964,6 +1964,11 @@ against a contract and knows only its inputs:
   a lower cell is reached — the spill — or the window's edge or the limit: not enclosed; a pit in a plain takes the
   plain as its rim) and `pour` (one world-API command a column, each its deficit: `water.flood`, `water.oil` (new,
   OP_OIL), `terrain.deposit`).
+- `src/api/contracts/traversal.ts` — `Traversal.field(goal, Mobility) → TraversalField` (cost, reachable, dir, route):
+  the cost to a goal for a body's own step, drop, wade and jump (`Hero.mobility`). `src/hero/traversal.ts`
+  `CpuTraversal`: a Dijkstra over the window's cells from the world API's heights and water (the agents' GPU fields
+  next, HS10). `src/hero/pilot.ts` `Pilot`: a HeroController steering along a field (🧭, the headless test);
+  `hero/gauntlet.ts crossable` reads a course's field at its start (GE3's per-hero check).
 - `src/hero/gauntlet.ts` — `CourseGenerator.make(at, heading, seed) → Course { start, goal, pieces, foes }`; the
   sandbox lays the pieces through the world API and spawns the foes through Units. `obstacleCourse` is the stub.
 - `src/ui/bugreport.ts` — `BugContext.as`: the same note and picture as another kind (the contract feedback), its own

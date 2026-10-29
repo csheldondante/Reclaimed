@@ -7,6 +7,7 @@
 // An edited map is the other way in: the sandbox editor's save / load (ui/editor.ts), its start the map's
 // poi.heroStart (set with the sandbox's 📍 tool, saved with the map).
 
+import type { Mobility, Traversal } from '../api/contracts/traversal';
 import type { V2 } from '../api/contracts/units';
 import { cellAt, cellPos } from '../world/lattice';
 
@@ -111,6 +112,18 @@ export const obstacleCourse: CourseGenerator = {
 };
 
 export const COURSES: CourseGenerator[] = [obstacleCourse];
+
+/**
+ * Can a body that moves as `m` get from the course's start to its goal, as the world stands now (laid)? The traversal
+ * field from the goal, read at the start: the basis of checking that a generated gauntlet is crossable by a given hero
+ * (GE3 — a generator keeps the courses each of its heroes can cross).
+ */
+export function crossable(traversal: Traversal, c: Course, m: Mobility): { ok: boolean; cost: number | null; straight: number; ms: number } {
+  const straight = Math.hypot(c.goal[0] - c.start[0], c.goal[1] - c.start[1]);
+  const f = traversal.field(c.goal, m, { radius: Math.ceil(straight + 24) });
+  const cost = f.cost(c.start);
+  return { ok: cost !== null, cost, straight, ms: f.ms };
+}
 
 /**
  * The build pieces as one build a column (window cell centres, radius under a cell's spacing), each column the most

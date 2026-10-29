@@ -24,6 +24,8 @@ class Roller {
     this.died = [];
     this.health = this.maxHealth = 12;
     this.goesTo = true;
+    // (how it gets over the ground: a traversal field for it — the sandbox's autopilot drives it too)
+    this.mobility = { step: 2, drop: 6, deep: 0.8 };
     this.t = { speed: 6, dash: 22, dashTime: 0.25, cooldown: 1.2, damage: 2 };
     this.cool = 0;
     this.dashT = 0;

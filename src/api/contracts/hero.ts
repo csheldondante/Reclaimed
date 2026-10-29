@@ -14,6 +14,7 @@
 //   each frame: hero.update(dt, pad.intent())
 //   camera: hero.camera (zoom, the preferred azimuth behind its heading, Orbit.prefer's dead zone)
 
+import type { Mobility } from './traversal';
 import type { Actor, Units, V2, V3 } from './units';
 
 /**
@@ -21,7 +22,7 @@ import type { Actor, Units, V2, V3 } from './units';
  * another build") declares the version it was built against as `heroContract`; it loads when the majors match
  * and its minor is no newer than this. Additive changes bump the minor; a changed signature bumps the major.
  * - 1.0: round 97 (heroapi): Hero, HeroIntent (talk), RunController, claims, goesTo.
- * - 1.1: round 112: HeroIntent.input, Hero.tunables, Hero.ownCamera, Hero.dispose, HeroAbility.duration, HeroWorld.solidAt /
+ * - 1.1: round 112: HeroIntent.input, Hero.tunables, Hero.ownCamera, Hero.dispose, Hero.mobility (contracts/traversal.ts), HeroAbility.duration, HeroWorld.solidAt /
  *   floorUnder, HeroModule / HeroHost / HeroEntry (the hero sandbox's registry).
  */
 export const HERO_CONTRACT = '1.1';
@@ -133,6 +134,12 @@ export interface Hero {
   readonly tunables?: Record<string, HeroTunable>;
   /** (1.1) it drives the camera itself (the hoverbike's chase camera): the host neither follows nor zooms; `camera` is advisory */
   readonly ownCamera?: boolean;
+  /**
+   * (1.1) how it gets over the ground (contracts/traversal.ts Mobility: its step, drop, the water it won't wade, a
+   * jump): a traversal field for it is reckoned by these — the sandbox's autopilot, a course's check that it can be
+   * crossed (GE3). Absent: no field can be made for it (the autopilot says so).
+   */
+  readonly mobility?: Mobility;
   /** (1.1) it's done with (the sandbox's way back out, a run's end): what it draws and holds let go. Absent: nothing to let go. */
   dispose?(): void;
 }

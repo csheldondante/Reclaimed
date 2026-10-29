@@ -69,6 +69,30 @@ try {
     console.log(`     saved ${path.join(dir, name)}`);
   };
   const ev = (f, ...a) => page.evaluate(f, ...a);
+  // (the autopilot run to its end — there, no way, stuck — or `frames`, a GIF of it)
+  const pilotRun = async (name, start, arg, frames = 60, every = 150) => {
+    await ev(start, arg);
+    const t0 = Date.now();
+    const enc = GIFEncoder();
+    let st = null;
+    for (let i = 0; i < frames; i++) {
+      st = await ev(() => {
+        const hs = window.reclaimed.heroSandbox;
+        const p = hs.hero.position();
+        const g = hs.pilot.field?.goal;
+        return { state: hs.pilot.state, fields: hs.pilot.fields, dist: g ? Math.hypot(g[0] - p[0], g[1] - p[1]) : -1 };
+      });
+      const png = PNG.sync.read(Buffer.from(await page.screenshot({ type: 'png' })));
+      const pal = quantize(png.data, 256);
+      enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: every });
+      if (st.state !== 'going') break;
+      await sleep(every);
+    }
+    enc.finish();
+    fs.writeFileSync(path.join(dir, name), enc.bytes());
+    console.log(`     saved ${path.join(dir, name)}`);
+    return { ...st, s: (Date.now() - t0) / 1000 };
+  };
   console.log(url);
   await page.goto(url, { waitUntil: 'load' });
   // (the first load after a server start is slow: judged after 35 s)
@@ -87,26 +111,27 @@ try {
   });
   ok(in1.active && in1.role === 'wanderer', `dropped in as the ${in1.role} at ${in1.at?.map((v) => v.toFixed(1))}`);
   ok(/intent move/.test(in1.info) && /camera zoom/.test(in1.info) && /Swing/.test(in1.info), 'the inspector shows the intent, the camera and the abilities');
-  // (the walk: the path's length, frame by frame — a wall or the river may stop a straight line)
-  let walked = 0;
-  let last = in1.at;
-  await gif('walk.gif', 28, 100, async (i) => {
-    const dir = [[0, -50], [50, 0], [0, 50], [-50, 0]][Math.floor(i / 7)];
-    const at = await ev((dir) => {
-      const hs = window.reclaimed.heroSandbox;
-      hs.pad.scripted = { stick: dir, attack: false };
-      return hs.hero.position();
-    }, dir);
-    walked += Math.hypot(at[0] - last[0], at[1] - last[1]);
-    last = at;
+  // (the walk: the autopilot to a point 16 cells off that the hero's own traversal field reaches — round 112, the user:
+  // "Don't we have pathfinding? Can't we build a traversal field for the hero agent and use that instead of input?")
+  const goal = await ev(() => {
+    const hs = window.reclaimed.heroSandbox;
+    const p = hs.hero.position();
+    for (let a = 0; a < 16; a++) {
+      const g = [p[0] + Math.cos((a * Math.PI) / 8) * 16, p[1] + Math.sin((a * Math.PI) / 8) * 16];
+      const f = hs.traversal.field(g, hs.hero.mobility, { radius: 40 });
+      if (f.reachable([p[0], p[1]])) return { g, cost: f.cost([p[0], p[1]]), ms: f.ms };
+    }
+    return null;
   });
+  ok(!!goal, `a point 16 cells off the hero's field reaches: ${goal ? `cost ${goal.cost.toFixed(1)}, the field in ${goal.ms.toFixed(1)} ms` : 'none'}`);
+  const walkTo = await pilotRun('walk.gif', (g) => void window.reclaimed.heroSandbox.pilotTo(g), goal?.g, 50);
   const walk = await ev(() => {
     const hs = window.reclaimed.heroSandbox;
-    hs.pad.scripted = null;
-    return { intents: hs.log.intents.length, moving: hs.log.intents.filter((s) => Math.hypot(s.move[0], s.move[1]) > 0.5).length };
+    return { intents: hs.log.intents.length, moving: hs.log.intents.filter((s) => Math.hypot(s.move[0], s.move[1]) > 0.5).length, info: document.querySelector('.hero-sb-info').textContent };
   });
-  ok(walked > 8, `it walked ${walked.toFixed(1)} cells along its path (the scripted stick, four ways)`);
-  ok(walk.intents > 30 && walk.moving > 20, `the intent trace kept ${walk.intents} intents, ${walk.moving} pushing the stick`);
+  ok(walkTo.state === 'there' && walkTo.dist < 1.5, `the autopilot walked it there: ${walkTo.state}, ${walkTo.dist.toFixed(1)} from the goal after ${walkTo.s.toFixed(1)} s (${walkTo.fields} fields)`);
+  ok(walk.intents > 30 && walk.moving > 20, `the intent trace kept ${walk.intents} intents, ${walk.moving} moving`);
+  ok(/pilot/.test(walk.info), 'the inspector shows the pilot');
 
   // 2. units that chase it and hit it; it swings back (the distances sampled before the swinging starts)
   const spawn = await ev(() => {
@@ -131,11 +156,11 @@ try {
       const d = await dist();
       dMin = dMin.map((m, k) => (d[k] === null ? m : Math.min(m, d[k])));
     }
-    if (i === 20) await ev(() => (window.reclaimed.heroSandbox.pad.scripted = { attack: true }));
+    if (i === 20) await ev((id) => void window.reclaimed.heroSandbox.pilotToUnit(id), spawn.ids[0]);
   });
   const fight = await ev((ids) => {
     const hs = window.reclaimed.heroSandbox;
-    hs.pad.scripted = null;
+    hs.pilotTo(null);
     const us = ids.map((id) => hs.units.get(id));
     return {
       states: us.map((u, k) => (u ? `${u.kind}:${u.state}:${u.health}` : `#${ids[k]}: gone (killed)`)),
@@ -275,12 +300,10 @@ try {
   });
   await sleep(1500);
   const r0 = await ev(() => window.reclaimed.heroSandbox.hero.position());
-  await gif('external-hero.gif', 25, 100, async (i) => {
-    await ev((i) => (window.reclaimed.heroSandbox.pad.scripted = { stick: [i < 12 ? 50 : -50, 0], attack: i === 6 }), i);
-  });
+  const rolled = await pilotRun('external-hero.gif', (r0) => void window.reclaimed.heroSandbox.pilotTo([r0[0] + 10, r0[1]]), r0, 40, 100);
+  console.log(`     the roller under the autopilot: ${rolled.state}, ${rolled.dist.toFixed(1)} from its goal`);
   const ext = await ev(() => {
     const hs = window.reclaimed.heroSandbox;
-    hs.pad.scripted = null;
     const reg = hs.tuning.registry;
     reg.set('hero.speed', 12);
     return { role: hs.hero.role, at: hs.hero.position(), info: document.querySelector('.hero-sb-info').textContent, calls: hs.log.calls.map((c) => `${c.dir} ${c.call}(${c.args})`), speed: hs.hero.t.speed, ids: reg.defs.map((d) => d.id), panel: !!document.querySelector('.tune-panel.hero') };
@@ -321,10 +344,14 @@ try {
     return { name: c.name, pieces: c.pieces.length, foes: c.foes.length, start: c.start, at: window.reclaimed.heroSandbox.hero.position() };
   });
   ok(course.pieces > 10 && course.foes >= 3 && Math.hypot(course.at[0] - course.start[0], course.at[1] - course.start[1]) < 1, `${course.name}: ${course.pieces} pieces, ${course.foes} foes, the hero at its start`);
-  await sleep(2000);
-  await gif('course.gif', 40, 100, async (i) => {
-    await ev((i) => (window.reclaimed.heroSandbox.pad.scripted = { stick: [0, -50], attack: i % 4 === 0 }), i);
-  });
+  const crossing = await ev(() => window.reclaimed.heroSandbox.crossing);
+  ok(crossing?.ok, `the course is crossable by the wanderer (its traversal field, start to goal): ${JSON.stringify(crossing)}`);
+  await sleep(1000);
+  const crossed = await pilotRun('course.gif', () => {
+    const hs = window.reclaimed.heroSandbox;
+    hs.pilotTo(hs.course.goal, { fight: 2.6, sprint: true });
+  }, null, 160, 200);
+  ok(crossed.state === 'there', `the autopilot crossed the course, fighting its foes: ${crossed.state}, ${crossed.dist.toFixed(1)} from the crystal after ${crossed.s.toFixed(0)} s (${crossed.fields} fields)`);
   await shot('course.png');
   const fatal2 = await page.$eval('.fatal', (e) => e.textContent).catch(() => null);
   ok(!fatal2, `no fatal overlay at the end${fatal2 ? `: ${fatal2}` : ''}`);
