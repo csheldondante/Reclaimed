@@ -14,6 +14,17 @@ each was implemented.
   ejecta), the rim and the ground round it melted and glowing in place; under a roof (an overhang, a cut column, a
   cave) the magma is the gap's at the impact's height, never put on the column's top. The share is a slider
   (tuning panel: Meteor). The effect reads the same on the PC as on the phone (BACKLOG MF1-MF3).
+- The user, verbatim: "Also can we make much bigger meteor strikes? Increase the depth of the bedrock considerably."
+  Then: "I want to know what an atlas sized strike looks like". → The sandbox meteor's size a slider (Meteor: bowl
+  radius, 4-80 cells, its effects scaled with it); an atlas-sized strike an event of the atlas (a crater in the coarse
+  world, the regions made with it), its impact shown in the window, a button "strike here (atlas size)" that flies
+  the camera out (BACKLOG MF5, MF6).
+- On the bedrock, the user, verbatim: "Bedrock cost of depth should be nothing it's just a number in the column".
+  On a world-wide datum (the proposal: the world raised by the depth): "Gah why? It should be per region". On the sea:
+  "We should not have a sea level just a flood height into a basin". → The design (not built): a vertical datum per
+  page or region, heights stored relative to it, converted where a kernel reads across pages; the bedrock's depth the
+  bottom interval's number; no global sea level — each basin (an ocean's, a lake's) filled to its own flood height
+  (docs/ARCHITECTURE.md "Planned: the vertical datum and the basins"; BACKLOG MF7, MF8).
 
 ## 2026-10-29 — round 112 (session 5, `tilefix2`) — the eye side; disk ahead; the hero's screen
 

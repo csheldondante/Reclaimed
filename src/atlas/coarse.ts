@@ -15,7 +15,16 @@ import coarseW from './coarse.wgsl?raw';
 const CELL_FLOATS = 8;
 const UNI_BYTES = 208;
 const MAX_VENTS = 8;
-export const EV = { meteor: 1, ash: 2, cone: 3 } as const;
+export const EV = { meteor: 1, ash: 2, cone: 3, strike: 4 } as const;
+
+/**
+ * (round 112, the user: "I want to know what an atlas sized strike looks like") How deep an atlas strike of radius R
+ * digs: the great meteor's 0.18 R up to its 240, then as R^0.45 (a big crater is shallow for its width — a flat floor,
+ * a central peak), so a thousand-cell strike is 81 deep, not 180 (the world's floor is z 1: BACKLOG MF7).
+ */
+export function strikeDepth(R: number): number {
+  return R <= 240 ? R * 0.18 : 43.2 * (R / 240) ** 0.45;
+}
 
 export interface CoarseEvent {
   kind: number;
@@ -201,6 +210,16 @@ export class Coarse {
     this.event({ kind: EV.meteor, x, y, r, a: d ?? r * 0.18 });
   }
 
+  /**
+   * (round 112) An atlas-sized strike at world (x, y), radius R (hundreds to thousands of cells): a flat-floored bowl
+   * with a central peak, a raised rim, a rubble blanket thinning out to 4 R and ash past it to 8 R, a magma sea on the
+   * bowl's floor (the coarse lava: it cools and sets to basalt at the coarse world's pace). It goes into the coarse
+   * grid, so the regions there are made with it as they come (compose.wgsl coarseAt) — part of the world.
+   */
+  strike(x: number, y: number, R: number): void {
+    this.event({ kind: EV.strike, x, y, r: R, a: strikeDepth(R) });
+  }
+
   /** An eruption at world (x, y): a cone rising, ash carried downwind, lava pouring out for a while. */
   erupt(x: number, y: number, o: { cone?: number; ash?: number; ashR?: number; lava?: number; steps?: number; wind?: [number, number] } = {}): void {
     this.event({ kind: EV.cone, x, y, r: 260, a: o.cone ?? 40 });
@@ -320,6 +339,11 @@ export class Coarse {
  * What an event leaves at world point (px, py) — coarse.wgsl cEvent's shapes, for the fine window
  * (keep the two the same): rock taken (−) or added, loose ground added and its material.
  */
+const smoothstep = (a: number, b: number, v: number) => {
+  const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
 export function eventAt(e: CoarseEvent, px: number, py: number, worldW: number, worldH: number): { dr: number; dl: number; lmat: number } {
   let dx = px - e.x;
   let dy = py - e.y;
@@ -333,6 +357,20 @@ export function eventAt(e: CoarseEvent, px: number, py: number, worldW: number, 
     if (r < R) dr -= D * (1 - (r / R) ** 2);
     const dl = r > 0.85 * R && r < 3 * R ? D * 0.12 * (R / Math.max(r, R)) ** 3 : 0;
     return { dr, dl, lmat: 4 };
+  }
+  if (e.kind === EV.strike) {
+    // (coarse.wgsl cEvent kind 4: keep the two the same)
+    const q = r / R;
+    let dr = -D * (1 - smoothstep(0.5, 1, q)) + D * 0.2 * Math.exp(-(((q - 1) / 0.15) ** 2));
+    if (R >= 400) dr += D * 0.5 * Math.exp(-((q / 0.1) ** 2));
+    let dl = 0;
+    let lmat = 4;
+    if (q > 0.9 && q < 4) dl = D * 0.1 * (1 / Math.max(q, 1)) ** 3;
+    if (q >= 2.5 && q < 8) {
+      dl = Math.max(dl, 1.2 * (2.5 / q) ** 2);
+      lmat = 17;
+    }
+    return { dr, dl, lmat };
   }
   if (e.kind === EV.ash) {
     const [wx, wy] = e.wind ?? [1, 0];

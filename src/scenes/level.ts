@@ -35,7 +35,12 @@ import type { PerfOverlay } from '../ui/perf-overlay';
 import { WorldCore, type Host, type Scene } from './world-core';
 import { Streamer, REGION, TIER, boxOf, type WorldSave } from './streamer';
 import { Atlas, atlasParamsFrom } from '../atlas/atlas';
-import { EV, eventAt } from '../atlas/coarse';
+import { EV, eventAt, type CoarseEvent } from '../atlas/coarse';
+
+/** (round 112) how far a coarse event changes the land round its middle (world units): coarse.ts eventAt's shapes */
+function eventReach(e: CoarseEvent): number {
+  return e.kind === EV.strike ? e.r * 8 : e.kind === EV.meteor ? e.r * 3 : e.kind === EV.ash ? e.r * 3.5 : e.r;
+}
 import { FarLand } from '../atlas/far';
 import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
@@ -493,6 +498,9 @@ export class LevelScene implements Scene {
       f(x, y);
     };
     btn('☄', 'a great meteor at the middle of the screen (M at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy))));
+    // (round 112, the user: "I want to know what an atlas sized strike looks like") an atlas-sized strike at the
+    // middle of the screen (Meteor: atlas strike radius), then the camera flies out to see it
+    btn('💥', 'strike here (atlas size): a crater in the atlas, then the camera flies out').addEventListener('click', () => atMiddle((x, y) => this.atlasStrike(x, y)));
     btn('🌋', 'an eruption at the middle of the screen (V at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy))));
     this.host.ui.appendChild(d);
     this.atlasCtl = d;
@@ -615,7 +623,7 @@ export class LevelScene implements Scene {
     if (!a || !S) return;
     const { w: W, h: H } = this.core.dims;
     const { worldW, worldH } = a.atlas;
-    const reach = e.kind === EV.meteor ? e.r * 3 : e.kind === EV.ash ? e.r * 3.5 : e.r;
+    const reach = eventReach(e);
     // the event's middle in window cells (the short way round the torus)
     let ex = e.x - (S.origin[0] + 0.5);
     let ey = e.y / ROW_H - (S.origin[1] + 0.5);
@@ -634,7 +642,12 @@ export class LevelScene implements Scene {
     const [px, py] = cellPos(cx, cy);
     // (round 86: a meteor's blast at once — the flash, the shockwave, the dust, the rim melting — not after the
     // window's columns have been read back and changed; its bowl goes in with them)
-    if (e.kind === EV.meteor && cx === Math.round(ex) && cy === Math.round(ey)) this.impactFx([px, py, this.core.map.surface[this.core.ring.i(cx, cy)]], 12);
+    // (round 112: an atlas-sized strike's showcase in the window — its flash, shockwave, dust wall and ejecta, scaled to a
+    // bowl of up to 80 cells, the most the window's blast holds: the crater itself is the atlas's)
+    const strike = e.kind === EV.strike;
+    if ((e.kind === EV.meteor || strike) && cx === Math.round(ex) && cy === Math.round(ey))
+      // (a strike's magma as deep as the coarse world's sea in its bowl: coarse.wgsl's D 0.08, the window's bowl 0.7 its radius deep)
+      this.impactFx([px, py, this.core.map.surface[this.core.ring.i(cx, cy)]], strike ? Math.min(80, e.r * 0.08) : 12, strike ? (e.a * 0.08) / (0.7 * Math.min(80, e.r * 0.08)) : undefined);
     const t0 = performance.now();
     // (round 88) the columns it changes: what hangs by them is judged (it lowers tops — an arm, a bridge's pier)
     const changed: number[] = [];
@@ -653,6 +666,20 @@ export class LevelScene implements Scene {
     const z = this.core.map.surface[this.core.ring.i(cx, cy)];
     if (e.kind === EV.meteor && n) this.core.globals.events.push({ kind: EventKind.Edit, x: px, y: py, z: 13 * 32 + 512, radius: 12 * 2.5, strength: z });
     if (e.kind === EV.cone && n) this.lava?.addVent(px, py, 60, 12, 3, 0);
+  }
+
+  /**
+   * (round 112) An atlas-sized strike at window cell (x, y): the coarse world's crater (coarse.ts strike — the regions
+   * made with it as they come, the tiles over it made again), its showcase in the window (worldEventHere), and the
+   * camera flown out over 6 s, after the flash, to where the crater's rim shows.
+   */
+  atlasStrike(x: number, y: number, R = TUNE.meteor.atlasR): void {
+    this.worldAt(x, y, (wx, wy, c) => c.strike(wx, wy, R));
+    const cam = this.core.camera;
+    if (cam.fly) return;
+    const [tx, ty] = cellPos(x, y);
+    const zoom = Math.max(0.4, Math.min(cam.viewportW, cam.viewportH * 2) / (R * 3));
+    setTimeout(() => void this.director.fly(tx, ty, zoom, 6), 1500);
   }
 
   /** (round 86) the last coarse event's window edit, read back, changed and written (ms): the latency probe reads it */
@@ -1531,6 +1558,13 @@ export class LevelScene implements Scene {
       }
       // (one after another: each reads the window back and writes it)
       if (a) a.atlas.coarse.onEvent.push((e) => (this.worldEvents = this.worldEvents.then(() => this.worldEventHere(e))));
+      // (round 112) the render-only tiles over what a coarse event reaches made again with it (they were made from the
+      // atlas before it: a great meteor's crater stood un-cratered in the tiles past the window)
+      if (a)
+        a.atlas.coarse.onEvent.push((e) => {
+          const r = eventReach(e);
+          core.renderer.tiles?.forgetMade(e.x - r, (e.y - r) / ROW_H, 2 * r, (2 * r) / ROW_H, a.atlas.p.cols, a.atlas.p.rows);
+        });
       // (round 69: the atlas's forms of a weak material are judged when they come in, like anything
       // built — what can't stand falls; the first window's, region by region)
       const integ = this.integrity;
@@ -1639,6 +1673,8 @@ export class LevelScene implements Scene {
       // (round 80: `coarse`, not `world` — that's the GPU world, as everything else reads it: worldapitest broke)
       coarse: {
         meteor: (x: number, y: number, r?: number) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy, r)),
+        // (round 112) an atlas-sized strike at window cell (x, y), radius r (the strike button's, camera and all)
+        strike: (x: number, y: number, r?: number) => this.atlasStrike(x, y, r),
         erupt: (x: number, y: number) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy)),
         // (round 75) the geysers in the window and the time they keep
         geysers: () => ({ list: this.geysers, t: this.geyserT, on: [...this.geyserOn] }),
@@ -2709,7 +2745,8 @@ export class LevelScene implements Scene {
    * atlas's great meteor makes its own crater).
    */
   private impact([x, y, z]: [number, number, number], crater = true): void {
-    const BOWL = 12;
+    // (round 112, the user: "Also can we make much bigger meteor strikes?") the bowl's radius: the tuning panel's Meteor
+    const BOWL = TUNE.meteor.size;
     if (crater) this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: 13 * 32 + 512, radius: BOWL * 2.5, strength: z });
     this.impactFx([x, y, z], BOWL);
   }
@@ -2739,43 +2776,50 @@ export class LevelScene implements Scene {
    * what the bowl took away (capped by the tier's particles); chips and smoke; the ground round the rim melted to
    * lava and glowing past it (lava.ts blast: it cools to basalt); a molten pool in the bowl.
    */
-  private impactFx([x, y, z]: [number, number, number], BOWL: number): void {
+  private impactFx([x, y, z]: [number, number, number], BOWL: number, melt = TUNE.meteor.melt): void {
     const { core } = this;
     const g = core.globals;
-    for (let k = 0; k < 6; k++) g.events.push({ kind: EventKind.Ripple, x, y, radius: 55, strength: 16 });
+    // (round 112: everything by the bowl's size against the 12-cell meteor it was tuned at — reach linearly, speeds
+    // as its square root, counts as its area within the bursts' ring: common.wgsl burstSlot, a quarter of the tier's)
+    const s = BOWL / 12;
+    const v = Math.sqrt(s);
+    for (let k = 0; k < 6; k++) g.events.push({ kind: EventKind.Ripple, x, y, radius: Math.min(55 * s, 400), strength: 16 * v });
     g.flash = 1;
     const parts = core.sim.particles;
     const dust = MAT.Drift;
-    // the cloud: a grain of haze for every two cells taken, within an eighth of the tier's particles
+    // the cloud: a grain of haze for every two cells taken that isn't magma, within half the bursts' ring
     const vol = this.bowlVolume(x, y, z, BOWL);
-    const budget = core.world.particleCap / 8;
-    const cloud = Math.min(budget, Math.max(600, vol * 0.5));
-    parts.burst({ kind: PK.Haze, x, y, z: z + 1, count: Math.round(cloud * 0.4), speed: 16, spread: BOWL, payload: dust });
-    parts.burst({ kind: PK.Haze, x, y, z: z + 4, count: Math.round(cloud * 0.35), speed: 9, spread: BOWL * 0.6, payload: MAT.Ash });
-    parts.burst({ kind: PK.Haze, x, y, z: z + 10, count: Math.round(cloud * 0.25), speed: 4, spread: BOWL * 0.4, payload: MAT.Ash });
-    parts.burst({ kind: PK.Dust, x, y, z: z + 1, count: 300, speed: 14, spread: BOWL * 0.7 });
-    parts.burst({ kind: PK.Chip, x, y, z: z + 1, count: 160, speed: 22, spread: BOWL * 0.5 });
-    parts.burst({ kind: PK.Ember, x, y, z: z + 1, count: 90, speed: 18, spread: BOWL * 0.4 });
-    parts.burst({ kind: PK.Smoke, x, y, z: z + 2, count: 150, speed: 5, spread: BOWL * 0.5 });
-    // the shockwave: dust low along the ground and embers, out every way from the rim
-    const RING = 16;
+    const ring = core.world.particleCap / 4;
+    const cloud = Math.min(ring / 2, Math.max(600, vol * 0.5 * (1 - melt)));
+    // (the rest: 1 000 at the 12-cell meteor, more as its area, in what the cloud leaves of 90% of the ring)
+    const k2 = Math.max(0.5, Math.min(s * s, (ring * 0.9 - cloud) / 1000));
+    const n = (c: number) => Math.round(c * k2);
+    parts.burst({ kind: PK.Haze, x, y, z: z + 1, count: Math.round(cloud * 0.4), speed: 16 * v, spread: BOWL, payload: dust });
+    parts.burst({ kind: PK.Haze, x, y, z: z + 4 * v, count: Math.round(cloud * 0.35), speed: 9 * v, spread: BOWL * 0.6, payload: MAT.Ash });
+    parts.burst({ kind: PK.Haze, x, y, z: z + 10 * v, count: Math.round(cloud * 0.25), speed: 4 * v, spread: BOWL * 0.4, payload: MAT.Ash });
+    parts.burst({ kind: PK.Dust, x, y, z: z + 1, count: n(300), speed: 14 * v, spread: BOWL * 0.7 });
+    parts.burst({ kind: PK.Chip, x, y, z: z + 1, count: n(160), speed: 22 * v, spread: BOWL * 0.5 });
+    parts.burst({ kind: PK.Ember, x, y, z: z + 1, count: n(90), speed: 18 * v, spread: BOWL * 0.4 });
+    parts.burst({ kind: PK.Smoke, x, y, z: z + 2, count: n(150), speed: 5 * v, spread: BOWL * 0.5 });
+    // the shockwave: dust low along the ground and embers, out every way from the rim (more of them round a bigger rim)
+    const RING = Math.round(16 * Math.min(s, 4));
     for (let k = 0; k < RING; k++) {
       const a = (k / RING) * Math.PI * 2;
       const [dx, dy] = [Math.cos(a), Math.sin(a)];
       const at = { x: x + dx * BOWL * 0.9, y: y + dy * BOWL * 0.9, z: z + 0.8 };
-      parts.burst({ kind: PK.Haze, ...at, count: 14, speed: 1.5, spread: 1.5, payload: dust, vel: [dx * 22, dy * 22, 1] });
-      parts.burst({ kind: PK.Ember, ...at, count: 5, speed: 2, spread: 1, vel: [dx * 16, dy * 16, 5] });
+      parts.burst({ kind: PK.Haze, ...at, count: Math.round(14 * Math.min(k2, 2)), speed: 1.5, spread: 1.5 * v, payload: dust, vel: [dx * 22 * v, dy * 22 * v, 1] });
+      parts.burst({ kind: PK.Ember, ...at, count: 5, speed: 2, spread: v, vel: [dx * 16 * v, dy * 16 * v, 5] });
     }
     // the rim's ground molten, glowing past it; (round 112, MF1 — the user: "I wouldn't use a vent pool I would convert
     // all the deleted material into magma or delete some and make surrounding glowing hot material magma") a share of
     // the bowl's ground magma where it lay, in the bowl (under a roof, the gap's at z: lava.wgsl floorAt) — no pool
     const M = TUNE.meteor;
-    this.lava?.blast(x, y, BOWL, BOWL * M.ring, M.rim, z, M.melt);
+    this.lava?.blast(x, y, BOWL, BOWL * M.ring, M.rim, z, melt);
     // (round 88: the rim melting and setting over the next seconds — judged until it's done)
     this.integrity?.watch(x, y, BOWL * 1.6, 15);
     const phys = this.physics;
     // (round 88: what the bowl undercut falls as the columns' pieces — the ruins there aren't woken into bodies first)
-    if (phys) phys.blast([x, y, z], BOWL, 28);
+    if (phys) phys.blast([x, y, z], BOWL, 28 * v);
   }
 
   /** Open a volcano vent where the pointer is (sim/lava.ts). */

@@ -248,6 +248,33 @@ fn cEvent(@builtin(global_invocation_id) id: vec3<u32>) {
       c.s.z = 0.0;
       c.l.x = 0.0;
     }
+  } else if (CQ.kind == 4u) {
+    // (round 112) an atlas-sized strike (coarse.ts strike / eventAt: keep the two the same): a flat-floored bowl, a
+    // raised rim, a central peak for the largest, a rubble blanket out to 4 R and ash past it to 8 R; the bowl's
+    // floor a magma sea that cools and sets as any coarse lava does
+    let q = r / R;
+    c.s.x += -D * (1.0 - smoothstep(0.5, 1.0, q)) + D * 0.2 * exp(-pow((q - 1.0) / 0.15, 2.0));
+    if (R >= 400.0) { c.s.x += D * 0.5 * exp(-pow(q / 0.1, 2.0)); }
+    if (q < 1.0) {
+      c.s.y = 0.0;
+      c.s.z = 0.0;
+      c.l.x = 0.0;
+    }
+    var dl = 0.0;
+    var lm = MAT_RUBBLE_C;
+    if (q > 0.9 && q < 4.0) { dl = D * 0.1 * pow(1.0 / max(q, 1.0), 3.0); }
+    if (q >= 2.5 && q < 8.0) {
+      dl = max(dl, 1.2 * pow(2.5 / q, 2.0));
+      lm = MAT_ASH_C;
+    }
+    if (dl > 0.0) {
+      c.s.y += dl;
+      c.l.z = f32(lm);
+    }
+    if (q < 0.45) {
+      c.l.x = D * 0.08 * (1.0 - smoothstep(0.3, 0.45, q));
+      c.l.y = LAVA_HOT_C;
+    }
   } else if (CQ.kind == 2u) {
     // ash: thickest near, carried downwind (a plume, a gaussian along the wind and across it)
     let wl = length(vec2<f32>(CQ.wx, CQ.wy));

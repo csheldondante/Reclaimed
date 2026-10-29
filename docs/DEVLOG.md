@@ -12598,3 +12598,31 @@ add a lot to the effect" (DECISIONS round 112; BACKLOG MF1-MF4).
 - Numbers in the tuning registry (Meteor: melt, rim, ring). Measured with the GPU shared and three pages at once, so
   no frame times are claimed; the burst ring adds no work (a slot index), the bowl's magma is three multiplies in a
   pass that already ran over those columns.
+
+## 2026-10-29 — round 112, `meteorfix` (2): bigger meteors, an atlas-sized strike; the datum designed
+
+The user: "Also can we make much bigger meteor strikes? Increase the depth of the bedrock considerably.", "I want to
+know what an atlas sized strike looks like", "Bedrock cost of depth should be nothing it's just a number in the
+column", "It should be per region", "We should not have a sea level just a flood height into a basin" (DECISIONS
+round 112; BACKLOG MF5-MF9).
+- **The sandbox meteor's size** (Meteor: bowl radius, 12 by default): impactFx scales everything by s = bowl / 12 —
+  reach as s, speeds as sqrt(s), counts as s squared within the bursts' ring (90% of it, the cloud first). Shots at
+  40 (shots88/meteorfix size40-*): a 80-wide bowl of magma, the shockwave ring of puffs, the dust wall, on both sizes.
+  MF9 open: dark chunk-sized diamonds and slivers round a big one.
+- **An atlas-sized strike** is the atlas's event, not a blast in the window (SYSTEMS.md "What the simulation is for").
+  The coarse grid is the compose's hook for events (compose.wgsl coarseAt adds its cells to every region it makes),
+  so the strike is a coarse event of its own (kind 4) with its shapes in coarse.wgsl and eventAt: flat floor, wall,
+  rim, central peak, rubble to 4 R, ash to 8 R, the coarse lava as a magma sea in the bowl. Depth grows as R^0.45 past
+  240 (a big crater is shallow for its width), so a 1 000-cell strike is 81 deep, not 180, and stays off the world's
+  floor on most land. The tiles over a coarse event's reach are made again (the existing great meteor had left its
+  crater out of the tiles past the window). scripts/meteorstrike.mjs, R 1 000 at the camera's focus (four pages
+  sharing the GPU, so the frame rates are high-side): the window's edit 244 ms, 53 tiles made again, 31 frames in the
+  first second, then 44-66 (phone proxy 30, then 61-91); worst frame 302 ms (257 on the phone proxy). Shots: the dust
+  wall and shockwave over the window; flown out, the bowl, rim and ash blanket in the tiles, and the window as the
+  central peak in the middle. The bowl under the old sea level is drawn flooded in the tiles while the window stays
+  dry (MF8: one global sea plane).
+- **The datum** is designed, not built (docs/ARCHITECTURE.md "Planned: the vertical datum and the basins"). Depth
+  costs something today only because the window holds the world's whole height in a fixed 0..511 range (the surface
+  word's fixed point, the physics voxels' 512 bits, the field mesh's nz) and the generator's heights are absolute.
+  The plan: a base z a page, its heights relative to it, one accessor converting cross-page reads, the bedrock's
+  depth the bottom interval's number, and basins with flood heights in place of the sea level.

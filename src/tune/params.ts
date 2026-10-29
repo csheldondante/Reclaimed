@@ -210,6 +210,8 @@ const SPEC = {
     title: 'Meteor',
     owner: 'scenes/level.ts impactFx (CPU) -> sim/lava.ts blast -> lava.wgsl (round 112, BACKLOG MF1)',
     params: {
+      size: { label: 'bowl radius', units: 'cells', min: 4, max: 80, step: 1, def: 12, url: 'msize', help: '(round 112, the user: "Also can we make much bigger meteor strikes?") the bowl of the sandbox meteor; its ejecta, wind, dust, sparks and melt scale with it (an atlas-sized strike is an event of the atlas, not this)' },
+      atlasR: { label: 'atlas strike radius', units: 'cells', min: 200, max: 3000, step: 50, def: 1000, url: 'matlas', help: '(round 112, the user: "I want to know what an atlas sized strike looks like") the atlas level\'s strike button: a crater in the atlas itself (coarse.ts strike), the regions made with it' },
       melt: { label: 'bowl to magma', units: 'share', min: 0, max: 1, step: 0.05, def: 0.3, url: 'mmelt', help: '(round 112, the user: "convert all the deleted material into magma or delete some") the share of the ground the bowl takes under where it hits that is magma in the bowl, where it lay; the rest goes as dust and ejecta' },
       rim: { label: 'rim melt', units: 'cells', min: 0, max: 6, step: 0.1, def: 2.5, url: 'mrim', help: 'the ground melted to magma at the rim of the bowl (none at the edge of the ring, which only glows)' },
       ring: { label: 'glow ring', units: '× bowl', min: 1, max: 2.5, step: 0.05, def: 1.45, help: 'how far out the ground glows hot, times the radius of the bowl' },

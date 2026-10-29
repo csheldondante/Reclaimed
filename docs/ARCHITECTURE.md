@@ -2320,3 +2320,56 @@ clears them).
   tiles.wgsl fsTile discards what rises into the line from the eye to the focus (TileU.focus: the camera's target, w 1;
   the rings' underFocus rule) — no tile is left out for it. The gate: scripts/tilegate.mjs (frames held to 60 Hz, load in
   frames, baselines by adapter).
+
+## Planned: the vertical datum and the basins (round 112, `meteorfix`; BACKLOG MF7, MF8 — not built)
+
+The user: "Bedrock cost of depth should be nothing it's just a number in the column", "It should be per region",
+"We should not have a sea level just a flood height into a basin".
+
+**What makes depth cost something today.** The world's floor is z 0 by convention. The atlas lays the ground as one
+run from 0 to the top (forms.wgsl `gp[0] = (0, top)`). Its heights are absolute (sea 90, zTop 480, compose's
+`h >= 1` clamp, cave and lift constants), so there are only 90 cells under the sea. The window holds the whole
+world's height (`windowZMax(zTop)` = zTop + 24, so oz is always 0), and its range is fixed at 0..511 by three things:
+the surface word's 9.8 fixed point (`sfPack`, 17 bits), the physics voxels' 512 bits a column (PHYS_COL_WORDS), and
+the field mesh's `nz = (zMax + 2) / h` (its scratch and rebuild dispatch grow with that height). The band mesh spans
+0..zTop. The column's slots don't care: one bottom interval is any depth. The atlas's own z (1/256 fixed, z1 in 24
+bits) reaches 65 535.
+
+**The datum.** Each page (sim/pages.ts: a window chunk's 16x16 columns, which already has a slot record) carries one
+number, its base z (`pageBase`, in the page table beside its slot). Its heights are held relative to that base:
+- the layers' z0/z1 (f32: the representation doesn't change; their meaning becomes base-relative);
+- the surface word's 9.8 fixed point;
+- the physics voxels' 512-bit column;
+- the lava's and water's surface heights (lava.w, the water's level).
+A page's base is chosen so its relief (its ground's lowest and highest tops, what's built on them, a margin) fits
+the fixed range. The bottom interval runs from the page's floor, any number below its base: it costs nothing. The
+generator writes the base with the page (finish.wgsl, the region's record: the region's lowest top minus a margin,
+on a tier so neighbours mostly share it) and its columns relative to it.
+
+**Reads across a boundary.** Every kernel that reads a neighbour's height (flux passes, slope, sediment's slumps,
+the mesh's corners, shore, projection) gets it through one accessor that adds `pageBase(neighbour) - pageBase(own)`.
+Within a page (most reads: the own-page fast path PG4 already looks up) the difference is 0. Common.wgsl's `colIdx`
+neighbourhood is the single place that knows. The CPU mirrors convert in `Pages` (`toWindow` gains the base). The
+renderer's draw shaders add the page's base to the world z they place a vertex at. The physics bodies live in world
+z and convert at their column reads. The tiles and the far land read regions, so they take the region's base from
+its record, as they now take its zRange. The tiles' bake already follows per-region heights.
+
+**The basins.** There is no `sea`. A water body is a basin with a flood height: the atlas's oceans are basins filled
+to theirs, lakes to theirs (the lakes' table, atlas.ts `lakeTab`, already holds a level each; rivers hold a level per
+node). What reads the sea level today, and what each reads instead:
+- `DEFAULT_ATLAS.sea` and compose's sea-relative constants: the basin of the column, from the atlas's water-body ids
+  (the lakes' per-texel ids, extended to the oceans);
+- `Globals.seaZ` (common.wgsl, the window's held sea): the window's basins' heights, a small table by id;
+- the shore and the tiles' water plane: the basin's height for its id, not one plane;
+- the noise lab's sea: its preview basin.
+A crater dug below a basin's flood height is a new hollow, not the sea: it fills only if water reaches it (the
+flood sim, or the coarse world's water), which fixes MF8's flooded-in-the-tiles-but-dry-in-the-window crater.
+
+**Order and cost.**
+1. The page base in the page table and the accessor, with every base 0, so nothing changes (the identity test, as
+   `?pageperm`).
+2. The generator writes real bases, and the window's z range becomes a page's relief.
+3. The basins replace `sea` (atlas, Globals, shore, tiles).
+4. The bedrock is made deep: the bottom interval's z0 a number.
+The cost is one u32 a page and an add per cross-page read (the own-page path pays none). No slots, no memory per
+depth. The field mesh's nz then follows the relief, not the world's height, which is cheaper than today.
