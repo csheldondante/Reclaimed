@@ -10,7 +10,20 @@
 //  labSeed     a JFA layer's seeds: the columns on its source's contour
 //  labJfa      one jump-flood pass (step, ping-pong by flip)
 //  labJfaDone  the field: nearest feature point, signed distance to it
-//  labFinish   the columns' record: height, cave, materials
+//  labFinish   the columns' record: height, gaps, materials
+//
+// (round 112, TG10) Carves: a layer targeting `carve` makes a gap in the
+// column, worked out per column from 2D values alone (the user: "2d noise plus
+// height with SDF"; no 3D evaluation, no voxel march). Its value is the
+// column's distance d in from the passage's edge (a JFA distance off a band of
+// fractal noise: winding passages); a gap about a base height (below the
+// surface, absolute or over the sea; brought to the sea where the mouths mask
+// says, plus noise): roof = base + min(k d^2, vault) + noise, floor = base -
+// depth + a smaller noise (walkable) — a rounded vault in section.
+// Gaps union into a column's list (GAPS); labFinish settles them against the
+// final height: a roof thinner than the cave roof opens to the sky (the column
+// cut down to the floor: a mouth, an overhang's underside, a skylight) or
+// isn't cut, as the layer says.
 
 struct LabP {
   w: u32,
@@ -39,8 +52,9 @@ struct LabP {
   beachMat: u32,
   paintMat: u32,
   snowMat: u32,
-  pad0: u32,
-  pad1: u32,
+  /** the thumbnails: every tStride-th column, tW across */
+  tStride: u32,
+  tW: u32,
 }
 
 @group(0) @binding(0) var<uniform> P: LabP;
@@ -51,8 +65,19 @@ struct LabP {
 @group(0) @binding(3) var<storage, read_write> fields: array<vec4<f32>>;
 @group(0) @binding(4) var<storage, read_write> jA: array<vec4<f32>>;
 @group(0) @binding(5) var<storage, read_write> jB: array<vec4<f32>>;
-/** the columns: (height, cave floor, cave roof, materials: top + rock·64 + cliff·4096) */
+/** the columns, two vec4 a column: (height, gap 0 floor, gap 0 roof, materials: top + rock·64 + cliff·4096 +
+ *  joined·8192 + cut·16384), (gap 1 floor, roof, gap 2 floor, roof); a gap 0, 0 is none */
 @group(0) @binding(6) var<storage, read_write> outC: array<vec4<f32>>;
+/** (round 112) a column's gaps while the stack runs: GAPS (floor, roof), two vec4 a column; an opening gap's floor
+ *  is stored negated (floors are >= 1); 0, 0 none */
+@group(0) @binding(7) var<storage, read_write> gapsW: array<vec4<f32>>;
+/** (round 112) each layer's output (its value after shape and amp, and its mask's weight) at every tStride-th
+ *  column: the stack's thumbnails */
+@group(0) @binding(8) var<storage, read_write> thumbs: array<vec2<f32>>;
+
+const GAPS: u32 = 4u;
+const TARGET_CARVE: u32 = 7u;
+const SHAPE_ISO: u32 = 8u;
 
 const LAB_ROW_H: f32 = 0.8660254;
 /** a lattice's period when it shouldn't wrap on the map */
@@ -301,7 +326,7 @@ fn srcOf(S: array<f32, 8>, k: u32) -> f32 { return S[min(k, 4u)]; }
 /** one layer's value at column c (world p, sampled pv) */
 fn layerValue(l: u32, c: vec2<i32>, pv0: vec2<f32>, S: array<f32, 8>) -> f32 {
   let g = lpu(l, LK_GEN);
-  let s = P.seed * 7919u + lpu(l, LK_SEED) * 131u + l * 17u;
+  let s = P.seed * 7919u + lpu(l, LK_SEED) * 131u;
   var pv = pv0;
   // cells (quantize): sampled at the nearest voronoi site — flat blocks
   let cq = lp(l, LK_CELLQ);
@@ -400,33 +425,154 @@ fn applyOp(op: u32, t: f32, o: f32, m: f32, k: f32) -> f32 {
 
 fn inMap(id: vec3<u32>) -> bool { return id.x < P.w && id.y < P.h; }
 
+struct Gaps {
+  g: array<vec2<f32>, 4>,
+  joined: bool,
+}
+
+fn loadGaps(i: u32) -> Gaps {
+  let a = gapsW[i * 2u];
+  let b = gapsW[i * 2u + 1u];
+  var o: Gaps;
+  o.g = array<vec2<f32>, 4>(a.xy, a.zw, b.xy, b.zw);
+  o.joined = false;
+  return o;
+}
+
+fn storeGaps(i: u32, G: Gaps) {
+  gapsW[i * 2u] = vec4<f32>(G.g[0], G.g[1]);
+  gapsW[i * 2u + 1u] = vec4<f32>(G.g[2], G.g[3]);
+}
+
+/** a gap [lo, hi] into the list (open: it may open to the sky): merged with any it touches; a fifth apart from the
+ *  rest joins the nearest (the air between them too) and the column says so */
+fn addGap(G0: Gaps, lo0: f32, hi0: f32, open0: bool) -> Gaps {
+  var G = G0;
+  var lo = lo0;
+  var hi = hi0;
+  var open = open0;
+  // (merge with every gap it touches, until none does)
+  for (var it = 0u; it < GAPS; it++) {
+    var hit = false;
+    for (var k = 0u; k < GAPS; k++) {
+      let e = G.g[k];
+      if (e.y <= 0.0) { continue; }
+      let el = abs(e.x);
+      if (el <= hi && lo <= e.y) {
+        lo = min(lo, el);
+        hi = max(hi, e.y);
+        open = open || e.x < 0.0;
+        G.g[k] = vec2<f32>(0.0);
+        hit = true;
+      }
+    }
+    if (!hit) { break; }
+  }
+  for (var k = 0u; k < GAPS; k++) {
+    if (G.g[k].y <= 0.0) {
+      G.g[k] = vec2<f32>(select(lo, -lo, open), hi);
+      return G;
+    }
+  }
+  // (full: join the nearest)
+  var best = 0u;
+  var bd = 1e9;
+  for (var k = 0u; k < GAPS; k++) {
+    let e = G.g[k];
+    let d = max(abs(e.x) - hi, lo - e.y);
+    if (d < bd) {
+      bd = d;
+      best = k;
+    }
+  }
+  let e = G.g[best];
+  let o2 = open || e.x < 0.0;
+  let l2 = min(lo, abs(e.x));
+  G.g[best] = vec2<f32>(select(l2, -l2, o2), max(hi, e.y));
+  G.joined = true;
+  return G;
+}
+
+/** a carve layer's gap at a column: (floor, roof), or roof < floor for none. d: the distance in from the passage's
+ *  edge (cells), m: the layer's mask (the vault scaled by it) */
+fn carveGap(l: u32, d: f32, m: f32, S: array<f32, 8>, pv: vec2<f32>, s: u32) -> vec2<f32> {
+  if (d <= 0.0 || m <= 0.0) { return vec2<f32>(0.0, -1.0); }
+  var base = lp(l, LK_ZOFF);
+  switch (lpu(l, LK_ZREF)) {
+    case 0u: { base += S[0]; }
+    case 2u: { base += P.sea; }
+    default: {}
+  }
+  let ck = lpu(l, LK_COAST);
+  if (ck > 0u) { base = mix(base, P.sea + lp(l, LK_SEAZ), clamp(S[min(ck, 4u)], 0.0, 1.0)); }
+  let nq = pv / max(lp(l, LK_NSCALE), 1.0);
+  base += lp(l, LK_WOB) * fbmL(nq * 0.5, vec2<i32>(BIG), 2u, s + 401u);
+  let roof = base + min(lp(l, LK_KQ) * d * d, lp(l, LK_UP)) * m + lp(l, LK_ROOFN) * fbmL(nq, vec2<i32>(BIG), 3u, s + 403u);
+  let fl = base - lp(l, LK_DOWN) + lp(l, LK_FLOORN) * fbmL(nq, vec2<i32>(BIG), 2u, s + 409u);
+  return vec2<f32>(fl, roof);
+}
+
+fn thumbAt(c: vec2<i32>) -> i32 {
+  let ts = i32(max(P.tStride, 1u));
+  if (c.x % ts != 0 || c.y % ts != 0) { return -1; }
+  return (c.y / ts) * i32(P.tW) + c.x / ts;
+}
+fn thumbsPerLayer() -> u32 { return P.tW * ((P.h + max(P.tStride, 1u) - 1u) / max(P.tStride, 1u)); }
+
 @compute @workgroup_size(8, 8)
 fn labEval(@builtin(global_invocation_id) id: vec3<u32>) {
   if (!inMap(id)) { return; }
   let c = vec2<i32>(id.xy);
   let i = colIdx(c);
   var S: array<f32, 8>;
+  var G: Gaps;
   if (P.l0 == 0u) {
     S = array<f32, 8>(P.base, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0);
   } else {
     S = loadSt(i);
+    G = loadGaps(i);
   }
   let pv = viewW(cellW(c));
+  let ti = thumbAt(c);
   for (var l = P.l0; l < P.l1; l++) {
     if (lp(l, LK_ON) < 0.5) { continue; }
     let v = layerValue(l, c, pv, S);
-    let o = lp(l, LK_AMP) * shapeOf(l, v, pv) + lp(l, LK_OFFSET);
+    var sv = 0.0;
+    if (lpu(l, LK_SHAPE) == SHAPE_ISO) {
+      // (round 112) the distance to the value's isoline at lo: |v - lo| over its slope (finite differences), cells
+      let e = 0.5;
+      let gx = layerValue(l, c, pv + vec2<f32>(e, 0.0), S) - v;
+      let gy = layerValue(l, c, pv + vec2<f32>(0.0, e), S) - v;
+      sv = abs(v - lp(l, LK_LO)) * e / max(length(vec2<f32>(gx, gy)), 1e-5) / P.view;
+    } else {
+      sv = shapeOf(l, v, pv);
+    }
+    let o = lp(l, LK_AMP) * sv + lp(l, LK_OFFSET);
     let mk = lpu(l, LK_MASK);
     var m = 1.0;
     if (mk > 0u) {
       m = clamp(S[min(mk, 4u)], 0.0, 1.0);
       if (lp(l, LK_MASKINV) > 0.5) { m = 1.0 - m; }
     }
-    let t = min(lpu(l, LK_TARGET), 6u);
-    S[t] = applyOp(lpu(l, LK_OP), S[t], o, m, lp(l, LK_K));
+    let t = min(lpu(l, LK_TARGET), TARGET_CARVE);
+    var shown = o;
+    if (t == TARGET_CARVE) {
+      let s = P.seed * 7919u + lpu(l, LK_SEED) * 131u;
+      let gp = carveGap(l, o, m, S, pv, s);
+      // (its thumbnail: the distance in, where it cuts — the stack measures the passages' widths off it)
+      shown = select(0.0, o, gp.y - gp.x >= 0.5);
+      if (gp.y - gp.x >= 0.5) {
+        G = addGap(G, max(gp.x, 1.0), gp.y, lpu(l, LK_OPEN) == 0u);
+        if (G.joined) { S[7] = 1.0; }
+      }
+    } else {
+      S[t] = applyOp(lpu(l, LK_OP), S[t], o, m, lp(l, LK_K));
+    }
+    if (ti >= 0) { thumbs[l * thumbsPerLayer() + u32(ti)] = vec2<f32>(shown, m); }
   }
   st[i * 2u] = vec4<f32>(S[0], S[1], S[2], S[3]);
   st[i * 2u + 1u] = vec4<f32>(S[4], S[5], S[6], S[7]);
+  storeGaps(i, G);
 }
 
 fn nbrC(c: vec2<i32>, k: u32) -> vec2<i32> {
@@ -530,12 +676,64 @@ fn labFinish(@builtin(global_invocation_id) id: vec3<u32>) {
     top = P.snowMat;
   }
   if (P.paint == 1u && S[4] > 0.5) { top = P.paintMat; }
-  // the cave: its floor and height from the stack, cut only with rock kept over it
-  var lo = max(S[5], 1.0);
-  var hi = S[5] + S[6];
-  if (S[6] < P.caveMin || hi > h - P.caveRoof || hi - lo < P.caveMin) {
-    lo = 0.0;
-    hi = 0.0;
+  // the gaps: the carves', and the cave the stack's floor and height make (never opening)
+  var G = loadGaps(i);
+  var joined = S[7] > 0.5;
+  if (S[6] >= P.caveMin) {
+    G = addGap(G, max(S[5], 1.0), S[5] + S[6], false);
+    joined = joined || G.joined;
   }
-  outC[i] = vec4<f32>(h, lo, hi, f32(top + P.rockMat * 64u + cliff * 4096u));
+  // (lowest first)
+  for (var a = 0u; a < GAPS; a++) {
+    for (var b = 0u; b + 1u < GAPS - a; b++) {
+      let x = G.g[b];
+      let y = G.g[b + 1u];
+      let kx = select(1e9, abs(x.x), x.y > 0.0);
+      let ky = select(1e9, abs(y.x), y.y > 0.0);
+      if (ky < kx) {
+        G.g[b] = y;
+        G.g[b + 1u] = x;
+      }
+    }
+  }
+  // from the top down: a gap in the air goes; one under too thin a roof opens the column down to its floor or isn't
+  // cut; one too low isn't cut. The bottom two cells stay (the edit tools' floor).
+  var hh = h;
+  var cut = 0u;
+  var keep: array<vec2<f32>, 4>;
+  for (var k = 0u; k < GAPS; k++) {
+    let j = GAPS - 1u - k;
+    let e = G.g[j];
+    keep[j] = vec2<f32>(0.0);
+    if (e.y <= 0.0) { continue; }
+    let lo = max(abs(e.x), 2.0);
+    let hi = e.y;
+    if (hi - lo < P.caveMin || lo >= hh) { continue; }
+    if (hi > hh - P.caveRoof) {
+      if (e.x < 0.0) {
+        hh = lo;
+        cut = 1u;
+      }
+      continue;
+    }
+    keep[j] = vec2<f32>(lo, hi);
+  }
+  // (three go out: a fourth joins the third)
+  var o: array<vec2<f32>, 3>;
+  var n = 0u;
+  for (var k = 0u; k < GAPS; k++) {
+    let e = keep[k];
+    if (e.y <= 0.0 || e.y > hh - P.caveRoof) { continue; }
+    if (n < 3u) {
+      o[n] = e;
+      n++;
+    } else {
+      o[2] = vec2<f32>(o[2].x, e.y);
+      joined = true;
+    }
+  }
+  if (cut == 1u) { top = P.rockMat; }
+  let mats = f32(top + P.rockMat * 64u + cliff * 4096u + select(0u, 8192u, joined) + cut * 16384u);
+  outC[i * 2u] = vec4<f32>(hh, o[0].x, o[0].y, mats);
+  outC[i * 2u + 1u] = vec4<f32>(o[1], o[2]);
 }

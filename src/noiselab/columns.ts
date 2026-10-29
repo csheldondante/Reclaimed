@@ -6,7 +6,7 @@
 
 import { CHUNK, SLOT_WORDS, writeSlot } from '../world/layout';
 import { MATERIALS } from '../world/materials';
-import type { LabResult } from './lab';
+import { COL_FLOATS, type LabResult } from './lab';
 import { labValues, matOf } from './params';
 
 /** what the world's window is packed by (world/layout.ts PackedWorld's) */
@@ -26,6 +26,10 @@ export interface LabColumns {
   surface: Float32Array;
   /** intervals in the fullest column */
   maxRuns: number;
+  /** (round 112) columns with a gap, columns a carve opened down to a floor, columns whose extra gaps joined */
+  gapCols: number;
+  cutCols: number;
+  joinedCols: number;
 }
 
 /** the columns of a record (row-major in, packed by the world's chunk table out) */
@@ -40,6 +44,11 @@ export function labColumns(r: LabResult, lay: ChunkLayout): LabColumns {
   const bandMat = matOf(L.bandMat);
   const sea = L.sea;
   let maxRuns = 0;
+  let gapCols = 0;
+  let cutCols = 0;
+  let joinedCols = 0;
+  const G0 = new Int32Array(3);
+  const G1 = new Int32Array(3);
   // (a column's runs: flat, reused — a closure and arrays a column cost 60 ms over the map)
   const R0 = new Float64Array(64);
   const R1 = new Float64Array(64);
@@ -69,30 +78,44 @@ export function labColumns(r: LabResult, lay: ChunkLayout): LabColumns {
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
-      const top = Math.max(1, Math.round(cols[i * 4]));
-      let lo = Math.round(cols[i * 4 + 1]);
-      let hi = Math.round(cols[i * 4 + 2]);
-      const m = cols[i * 4 + 3];
+      const o = i * COL_FLOATS;
+      const top = Math.max(1, Math.round(cols[o]));
+      const m = cols[o + 3];
+      const flags = Math.floor(m / 4096);
       const topMat = m % 64;
       const rockMat = Math.floor(m / 64) % 64;
-      const cliff = m >= 4096;
-      // (rock to the top on a cliff: its face its own material a cell deep; elsewhere the cover `soil` deep)
-      const cover = cliff ? 1 : Math.min(soil, top - 1);
+      const cliff = (flags & 1) === 1;
+      const cut = (flags & 4) === 4;
+      if (flags & 2) joinedCols++;
+      if (cut) cutCols++;
+      // (rock to the top on a cliff or where a carve opened the column: its face its own material a cell deep;
+      // elsewhere the cover `soil` deep)
+      const cover = cut ? 0 : cliff ? 1 : Math.min(soil, top - 1);
       const rockTop = top - cover;
-      if (!(hi - lo >= 1 && lo >= 1 && hi < rockTop)) lo = hi = 0;
+      // the gaps (lowest first), each kept only with rock under and over it once rounded to cells
+      let ng = 0;
+      for (const [a, b] of [[o + 1, o + 2], [o + 4, o + 5], [o + 6, o + 7]]) {
+        const lo = Math.max(ng ? G1[ng - 1] + 1 : 1, Math.round(cols[a]));
+        const hi = Math.round(cols[b]);
+        if (cols[b] <= 0 || hi - lo < 1 || hi >= rockTop) continue;
+        G0[ng] = lo;
+        G1[ng++] = hi;
+      }
+      if (ng) gapCols++;
       const ci = (y >> 4) * lay.chunksX + (x >> 4);
       const k = lay.chunkTable[ci * 2 + 1];
       const base = lay.chunkTable[ci * 2] + ((y % CHUNK) * CHUNK + (x % CHUNK)) * k;
       // (room: what the editor builds on top keeps two slots)
-      const room = k - 2 - (lo ? 1 : 0) - (cover ? 1 : 0);
+      const room = k - 2 - ng - (cover ? 1 : 0);
       nr = 0;
-      if (lo) {
-        rock(0, lo, rockMat, room);
-        // (the open: the next run starts above it, never merged across it)
+      // the rock between the gaps (an open: the next run starts above it, never merged across it)
+      let z = 0;
+      for (let g = 0; g <= ng; g++) {
         const at = nr;
-        rock(hi, rockTop, rockMat, room);
-        if (at < nr && R0[at] !== hi) throw new Error('noise lab: a cave merged shut');
-      } else rock(0, rockTop, rockMat, room);
+        rock(z, g < ng ? G0[g] : rockTop, rockMat, room);
+        if (g && at < nr && R0[at] !== z) throw new Error('noise lab: a gap merged shut');
+        if (g < ng) z = G1[g];
+      }
       if (cover) push(rockTop, top, topMat);
       if (nr > k) throw new Error(`noise lab: column ${x},${y} has ${nr} runs (> ${k} slots)`);
       for (let j = 0; j < nr; j++) writeSlot(slots, base + j, R0[j], R1[j], RM[j]);
@@ -100,8 +123,14 @@ export function labColumns(r: LabResult, lay: ChunkLayout): LabColumns {
       surface[i] = top;
       if (sea > 0 && top < sea) water[i] = sea - top;
     }
-  return { slots, water, surface, maxRuns };
+  return { slots, water, surface, maxRuns, gapCols, cutCols, joinedCols };
 }
+
+/** a column has a gap (or a carve opened it) */
+const hasGap = (r: LabResult, i: number) => {
+  const o = i * COL_FLOATS;
+  return r.cols[o + 2] > 0 || r.cols[o + 5] > 0 || r.cols[o + 7] > 0 || r.cols[o + 3] >= 16384;
+};
 
 const albedo = (mat: number) => MATERIALS[mat]?.albedo ?? [1, 0, 1];
 
@@ -111,17 +140,17 @@ export function drawPreview(r: LabResult, ctx: CanvasRenderingContext2D): void {
   const L = labValues().lab;
   const img = ctx.createImageData(w, h);
   const d = img.data;
-  const H = (x: number, y: number) => cols[(Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))) * 4];
+  const H = (x: number, y: number) => cols[(Math.min(h - 1, Math.max(0, y)) * w + Math.min(w - 1, Math.max(0, x))) * COL_FLOATS];
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       const z = H(x, y);
-      const m = cols[i * 4 + 3];
+      const m = cols[i * COL_FLOATS + 3];
       const a = albedo(m % 64);
       const sl = (H(x - 1, y) - H(x + 1, y)) * 0.5 + (H(x, y - 1) - H(x, y + 1)) * 0.5;
       let lit = Math.max(0.35, Math.min(1.4, 0.85 + 0.12 * sl)) * (0.75 + 0.35 * Math.min(1, z / 100));
       let c = [a[0] * lit, a[1] * lit, a[2] * lit];
-      if (cols[i * 4 + 2] > cols[i * 4 + 1]) c = [c[0] * 0.6 + 0.4 * 0.9, c[1] * 0.6 + 0.1, c[2] * 0.6 + 0.4 * 0.8];
+      if (hasGap(r, i)) c = [c[0] * 0.6 + 0.4 * 0.9, c[1] * 0.6 + 0.1, c[2] * 0.6 + 0.4 * 0.8];
       if (L.sea > 0 && z < L.sea) {
         const t = Math.min(1, 0.45 + (L.sea - z) * 0.05);
         lit = 1;
@@ -143,10 +172,10 @@ export function recordStats(r: LabResult): { min: number; max: number; caves: nu
   let caves = 0;
   let sea = 0;
   for (let i = 0; i < r.w * r.h; i++) {
-    const z = r.cols[i * 4];
+    const z = r.cols[i * COL_FLOATS];
     min = Math.min(min, z);
     max = Math.max(max, z);
-    if (r.cols[i * 4 + 2] > r.cols[i * 4 + 1]) caves++;
+    if (hasGap(r, i)) caves++;
     if (L.sea > 0 && z < L.sea) sea++;
   }
   return { min, max, caves, sea };

@@ -3,6 +3,30 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 112 (session 5, `noiselab2`) — the noise lab's layers as a list; 2.5D caves and overhangs
+
+- (`noiselab2`) The user, verbatim, after trying the noise lab (their screenshot: a sea cliff with rounded overhangs
+  and arches made with the sandbox's sphere delete tool):
+  "I find the noise lab a little unintuitive in terms of how I navigate the layers and how they combine. The sea
+  caves didn't look great but just for fun I used the sphere delete tool and it was pretty trivial to make some
+  decent looking overhangs that would be good entrances for caves. I think it's a matter of scale and then the 2d
+  noise plus height with SDF right?"
+  Then, on a first plan of 3D SDF carving (spheres and capsules evaluated through the column):
+  "no 3d is sloow it requires voxel march"
+  And the cave recipe to use:
+  "Take a simplex fractal noise in 2d and set a threshold so that they are windy and the width you want (gap between
+  the threshold) you can use JFA to find the narrow points if you want to measure in tuning. Then make the caves
+  interpolate from the bottom of the cliff height at the beach to any intermediary value plus noise inside the cliff
+  layers. For the cave shape just use JFA and take distance form the edge squared or something with noise and make
+  noise lower on the floor so it is walkable."
+- → The layer stack becomes a list (a row a layer: thumbnail, generator → target, the masks it gates and is gated
+  by, enable, solo, the result up to here; drag or arrows to reorder; add, duplicate, remove), the selected row's
+  parameters alone below (BACKLOG TG9). Caves and overhangs stay 2.5D: a carve layer gives each column a gap worked
+  out from 2D values alone, no 3D evaluation and no voxel march (TG10): the passages a band of fractal noise between
+  two thresholds, the JFA distance d in from their edge, the roof the base + k·d² + noise, the floor the base with a
+  smaller noise, the base from the cliff's foot at the beach (the sea) to a value inland plus noise. TG3 rebuilt on
+  it; a new "TG11: overhang cliff". The atlas's generation is unchanged.
+
 ## 2026-10-29 — round 111 (session 5, `places`) — terrain ideas; a noise lab
 
 - The user, verbatim:

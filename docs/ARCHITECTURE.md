@@ -1463,7 +1463,7 @@ never touches the atlas's generation: src/atlas is unchanged, and the lab includ
 
 - **A recipe is a tuning preset.** src/noiselab/params.ts makes a second `Registry` (src/tune/registry.ts): a `lab`
   group (seed, base height, sea level, materials, strata, cliff slope, shore, snow line, caves' roof and minimum,
-  the view's scale, whether the world follows a slider live) and eight layer slots `L1`..`L8`, each the same 35
+  the view's scale, whether the world follows a slider live) and eight layer slots `L1`..`L8`, each the same 48
   numbers (`LAYER_KEYS`). Choices (generator, shape, op, target, mask, materials) are numbers with
   `ParamSpec.choices` names. So the editor shell is the tuning panel's (src/ui/tunepanel.ts, now given a registry,
   a store key, a link parameter, built-in presets, a top element and a visibility rule): sliders, built-ins
@@ -1493,8 +1493,38 @@ never touches the atlas's generation: src/atlas is unchanged, and the lab includ
   (Integrity), sets `globals.seaZ` (the sea past the edges stays), remakes the field mesh over the map. The lab
   knows nothing else of the world.
 - **The preview** is the record drawn from above in the panel (materials, light from the north-west, the sea,
-  caves tinted), every run; the world follows on a slider's release, a list's or a number's change, or every run
-  with `world follows: live`.
+  gaps tinted), every run; the world follows on a slider's release, a list's or a number's change, or every run
+  with `world follows: live`. It folds away (closed at the start on a phone).
+- **The layer stack** (round 112, src/noiselab/stack.ts; BACKLOG TG9) is the panel's `top` element under the
+  preview: a row a layer that's on, in run order — its thumbnail (the layer's output, amp · shape + offset, and its
+  mask's weight, written by labEval at every 4th column into a `thumbs` buffer and read back with the record), what
+  it is (generator → target, op), its links (the mask it's gated by and the row that last wrote it; the rows a mask
+  layer gates; a mask read before anything writes it, in orange), enable (`mute`, a layer key: packLayers and the
+  plan skip it), solo and "up to here". Solo and up to here are views, not recipe: `LayerStack.effective(values)`
+  turns layers off in a copy the control runs (solo keeps the layer and, transitively, the earlier layers writing
+  what it reads — its masks, its source, the height for height-reading generators — but not its own target's
+  writers; up to here turns off the layers after it), so the world and the preview show them and presets don't.
+  Selecting a row is the panel's visibility rule: the `lab` group and the selected layer's group only (TunePanel
+  `refresh()` re-asks it, `openGroup()` opens it). Add (under the selected), duplicate, remove and reorder (drag the
+  handle with pointer events, or the arrows) rewrite the recipe as the stacked layers in their new order in slots
+  1..n and apply it in one `Registry.apply` (each value written against its new slot's default, so a moved layer
+  keeps its seed; the noise hash no longer mixes in the slot index). The physics tuning panel is unchanged.
+- **Carves: 2.5D gaps** (round 112, TG10; the user: "no 3d is sloow it requires voxel march"). A layer with target
+  `carve` makes a gap in a column from 2D values alone. Its value d (amp · shape + offset; typically the JFA
+  distance in from the edge of a band mask, the passages) is the column's distance in from the passage's edge;
+  where d > 0: base = its reference (below the surface so far, absolute, over the sea) + offset, mixed to the sea +
+  `mouth over sea` by a mouths mask (the coast), + a noise; roof = base + min(curve · d², vault) · mask + a noise;
+  floor = base − depth + a smaller noise. A new shape, `isoline distance`, turns any noise's contour into a distance
+  in cells (|v − lo| over its finite-difference slope) for passages without a JFA. The gaps union per column into
+  a list of four (`gapsW`, carried between segments; touching gaps merge; a fifth joins the nearest and the column
+  says so); labFinish adds the stack's old cave (CF, CH), sorts, and settles them against the final height from
+  the top down: a gap whose roof is thinner than `cave roof` opens the column down to its floor (a cave mouth, an
+  overhang's underside — the layer's `thin roof` choice) or isn't cut; the three lowest that remain go out. The
+  record is two vec4 a column (height, gap 0, materials + joined·8192 + cut·16384; gaps 1, 2); columns.ts lays rock
+  between the gaps (a gap is open space between intervals, as the sandbox's break tool and the atlas's caveVoids
+  leave it), no cover on a column a carve opened. The row of a carve layer measures its passages off its thumbnail
+  (ridges of the JFA distance are the mid lines; twice the distance there is the width): narrowest, 10 %, median,
+  widest.
 
 **A proposal, not a change:** the layer stack could become the region generator's format later — a region's
 `regionHeight` and its edge profiles as a recipe evaluated by compose.wgsl. What that would take is in the DEVLOG's

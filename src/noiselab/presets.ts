@@ -4,7 +4,7 @@
 // preset: the values that differ from the defaults (params.ts), so each reads as the layers it turns on.
 
 import type { Preset } from '../tune/registry';
-import { GEN, MATS, OP, SHAPE, TARGET, XFORM, type LayerKey } from './params';
+import { GEN, MATS, OP, SHAPE, TARGET, XFORM, ZREF, type LayerKey } from './params';
 
 const M = (name: string) => MATS.findIndex((m) => m[0] === name);
 type LayerSet = Partial<Record<LayerKey, number>>;
@@ -73,18 +73,35 @@ export const PRESETS: Record<string, Preset> = {
 
   // TG3 (the user: "have these along coasts and make coastal caves enter there so we can see them from the ocean
   // using the 2d fractal simplex with two thresholds and blending the height of the caves relative to the surface
-  // and bringing them to just below the water level at the coast"): land to the west, mesas on it; caves where a
-  // fractal noise lies between two thresholds, their floor 14 under the surface inland and blended, by the JFA
-  // distance to the coastline, to half a cell under the sea at the coast — so their mouths open in the sea cliffs
-  'TG3: coastal mesas, sea caves': recipe({ base: 2, sea: 14, topMat: M('sand'), rockMat: M('sandstone'), cliffMat: M('sandstone'), bandMat: M('stone'), bandH: 3, caveRoof: 3, caveMin: 2 }, [
-    { gen: GEN.sdf, mode: 1, cx: 40, cy: 111, size: 110, size2: 300, warp: 0.5, scale: 40, shape: SHAPE.threshold, lo: 0, soft: 3, amp: 1, op: OP.set, target: TARGET.m1 },
-    { gen: GEN.mesas, mode: 0, scale: 60, size: 160, share: 0.55, share2: 0.25, blend: 30, jitter: 0.85, amp: 34, mask: 1 },
-    { gen: GEN.constant, amp: 14, mask: 1 },
-    { gen: GEN.fbm, scale: 36, oct: 3, shape: SHAPE.band, lo: 0.08, hi: 0.3, soft: 0.03, amp: 6, op: OP.set, target: TARGET.ch },
-    { gen: GEN.height, amp: 1, offset: -14, op: OP.set, target: TARGET.cf },
-    { gen: GEN.jfa, src: 1, level: 0.5, shape: SHAPE.threshold, lo: 30, soft: 30, amp: 1, op: OP.set, target: TARGET.m2 },
-    { gen: GEN.constant, amp: 13.5, op: OP.set, target: TARGET.cf, mask: 2, maskInv: 1 },
+  // and bringing them to just below the water level at the coast"), rebuilt in round 112 (TG10) on the user's recipe:
+  // "Take a simplex fractal noise in 2d and set a threshold so that they are windy and the width you want (gap
+  // between the threshold) you can use JFA to find the narrow points if you want to measure in tuning. Then make the
+  // caves interpolate from the bottom of the cliff height at the beach to any intermediary value plus noise inside the
+  // cliff layers. For the cave shape just use JFA and take distance form the edge squared or something with noise and
+  // make noise lower on the floor so it is walkable." Land to the west, a sheer sea cliff; M2 the coast (1 at the
+  // shoreline, 0 thirty cells in, by the JFA distance off the sea's contour); M3 the passages, a band of fractal noise
+  // between two thresholds; the carve: the JFA distance in from the passages' edge d, the roof d² over a base that runs
+  // from just under the sea at the cliff's foot to 11 under the plateau, the floor with a quarter of the roof's noise
+  'TG3: coastal mesas, sea caves': recipe({ base: 2, sea: 14, topMat: M('sand'), rockMat: M('sandstone'), cliffMat: M('sandstone'), bandMat: M('stone'), bandH: 3, cliffSlope: 1.6, caveRoof: 2, caveMin: 2 }, [
+    { gen: GEN.sdf, mode: 1, cx: 40, cy: 111, size: 120, size2: 300, warp: 0.45, scale: 46, shape: SHAPE.threshold, lo: 0, soft: 1.5, amp: 1, op: OP.set, target: TARGET.m1 },
+    { gen: GEN.constant, amp: 30, mask: 1 },
+    { gen: GEN.mesas, mode: 0, scale: 60, size: 160, share: 0.45, share2: 0.3, blend: 26, jitter: 0.85, amp: 18, mask: 1 },
     { gen: GEN.fbm, scale: 16, oct: 2, amp: 1, mask: 1 },
+    { gen: GEN.jfa, src: 0, level: 14, shape: SHAPE.threshold, lo: 15, soft: 15, amp: -1, offset: 1, op: OP.set, target: TARGET.m2 },
+    { gen: GEN.fbm, scale: 44, oct: 3, shape: SHAPE.band, lo: -0.07, hi: 0.07, soft: 0.015, amp: 1, op: OP.set, target: TARGET.m3, seed: 23 },
+    { gen: GEN.jfa, src: 3, level: 0.5, amp: 1, target: TARGET.carve, kq: 0.45, up: 7, down: 0.5, roofN: 1.2, floorN: 0.3, nScale: 10, zRef: ZREF.surface, zOff: -11, coast: 2, seaZ: -0.5, wob: 1.5, open: 0 },
+  ]),
+
+  // TG11 (round 112; the user: "it was pretty trivial to make some decent looking overhangs that would be good
+  // entrances for caves"): a sheer plateau undercut at its foot all round — the carve's value 9 − d, d the JFA distance
+  // in from the wall's mid-height contour, so the gap is tallest at the face and closes 9 cells in — and a patchy second
+  // undercut half way up (gated by a slow noise), so the wall overhangs in two tiers
+  'TG11: overhang cliff': recipe({ base: 6, sea: 4, cliffSlope: 1.4, rockMat: M('stone'), cliffMat: M('stone'), bandMat: M('sandstone'), bandH: 4, caveRoof: 2, caveMin: 2 }, [
+    { gen: GEN.sdf, mode: 1, ...C, size: 72, size2: 58, angle: 15, warp: 0.35, scale: 50, shape: SHAPE.threshold, lo: 0, soft: 1, amp: 34 },
+    { gen: GEN.fbm, scale: 30, oct: 3, amp: 2 },
+    { gen: GEN.fbm, scale: 70, oct: 2, shape: SHAPE.threshold, lo: 0.05, soft: 0.08, amp: 1, op: OP.set, target: TARGET.m1 },
+    { gen: GEN.jfa, src: 0, level: 23, amp: -1, offset: 9, target: TARGET.carve, kq: 0.12, up: 10, down: 0, roofN: 1.5, floorN: 0.2, nScale: 9, zRef: ZREF.abs, zOff: 6.5, wob: 1, open: 1 },
+    { gen: GEN.jfa, src: 0, level: 23, amp: -1, offset: 6, target: TARGET.carve, kq: 0.16, up: 6, down: 0, roofN: 1, floorN: 0.2, nScale: 8, zRef: ZREF.abs, zOff: 24, wob: 2, open: 1, mask: 1 },
   ]),
 
   // TG4 (the user: "a break in the sheer cliff in which we blend height to the ground to make a natural ramp"):
