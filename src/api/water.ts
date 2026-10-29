@@ -5,7 +5,7 @@ import type { WorldCore } from '../scenes/world-core';
 import { EventKind } from '../sim/globals';
 // (the flux is a 60 Hz tick's volume whatever the tick rate: perfopt, simhz)
 const FLUX_HZ = 60;
-import { DIRV } from '../world/lattice';
+import { DIRV, cellAt } from '../world/lattice';
 import { sfZ } from '../world/layout';
 import { columnAt } from './common';
 import type { Mirror } from './mirror';
@@ -68,9 +68,16 @@ export class Water {
     const i = this.col(x, y);
     if (!w || !s || !d || i < 0) return null;
     const { w: mw, h: mh } = this.core.dims;
-    const at = (j: number) => sfZ(s[j]) + d[j * 4] + w[j];
-    if (opts?.smooth) return blendedTop(x, y, (cx, cy) => (cx < 0 || cy < 0 || cx >= mw || cy >= mh ? null : at(cy * mw + cx)), false);
-    return at(i);
+    const ring = this.core.ring;
+    // (round 112: the buffers — water, surface — at the column's index, the drift texture at its texel; the smooth
+    // read had taken cy * w + cx for all three, the window's order, which neither is since round 107)
+    const at = (cx: number, cy: number) => {
+      const j = ring.i(cx, cy);
+      return sfZ(s[j]) + d[ring.t(cx, cy) * 4] + w[j];
+    };
+    if (opts?.smooth) return blendedTop(x, y, (cx, cy) => (cx < 0 || cy < 0 || cx >= mw || cy >= mh ? null : at(cx, cy)), false);
+    const [cx, cy] = cellAt(x, y);
+    return at(cx, cy);
   }
 
   /**
