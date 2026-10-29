@@ -279,8 +279,9 @@ function profileSlot() {
 }
 
 /** Chrome: the daemon's when one is up (and not `fresh`), else launched on a kept profile (`fresh`: a new empty one) */
-export async function browser({ fresh = false, daemon = !fresh } = {}) {
-  if (daemon && fs.existsSync(DAEMON)) {
+export async function browser({ fresh = false, daemon = !fresh, extraArgs = [] } = {}) {
+  // (more Chrome switches — a gate's --disable-gpu-vsync — need a Chrome launched with them: not the daemon's)
+  if (daemon && !extraArgs.length && fs.existsSync(DAEMON)) {
     try {
       const d = JSON.parse(fs.readFileSync(DAEMON, 'utf8'));
       const b = await puppeteer.connect({ browserWSEndpoint: d.ws, defaultViewport: null, protocolTimeout: 10 * 60 * 1000 });
@@ -290,7 +291,7 @@ export async function browser({ fresh = false, daemon = !fresh } = {}) {
     }
   }
   const slot = fresh ? { dir: fs.mkdtempSync(path.join(os.tmpdir(), 'reclaimed-chrome-')), free: () => {} } : profileSlot();
-  const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', userDataDir: slot.dir, args: CHROME_ARGS, defaultViewport: null, protocolTimeout: 10 * 60 * 1000 });
+  const b = await puppeteer.launch({ executablePath: CHROME, headless: 'new', userDataDir: slot.dir, args: [...CHROME_ARGS, ...extraArgs], defaultViewport: null, protocolTimeout: 10 * 60 * 1000 });
   return {
     b,
     how: fresh ? 'fresh profile' : `profile ${path.basename(slot.dir)}`,
@@ -337,7 +338,9 @@ export async function run(spec, body) {
   const srv = given ? { url: given.replace(/\/$/, ''), close: async () => {}, external: true } : dev ? await serveDev({ force: flag('force') }) : await serveBuild();
   T('server');
   log(`${name}: ${kind}; ${srv.external ? 'given server' : srv.dev ? 'vite dev' : `build ${srv.build.hash}${srv.build.cached ? ' (cached)' : ` (built in ${(srv.build.ms / 1000).toFixed(1)} s)`}${srv.reused ? ', server shared' : ''}`} ${srv.url}; ${W}x${H} dpr ${dpr}`);
-  const br = await browser({ fresh: flag('fresh-profile'), daemon: !flag('no-daemon') });
+  // (spec.chromeArgs, or --chromeargs "a,b" / "--a --b": more Chrome switches)
+  const extraArgs = spec.chromeArgs ?? (opt('chromeargs', '') || '').split(/[ ,]+/).filter(Boolean).map((a) => (a.startsWith('--') ? a : `--${a}`));
+  const br = await browser({ fresh: flag('fresh-profile'), daemon: !flag('no-daemon'), extraArgs });
   T('browser');
   log(`chrome: ${br.how}`);
   const pages = [];

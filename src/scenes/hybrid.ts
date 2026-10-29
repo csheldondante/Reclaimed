@@ -220,13 +220,16 @@ export class HybridChunks {
     this.changed = true;
   }
 
-  /** the window was moved somewhere else: nothing edited there yet (the land comes in through landBox) */
+  /**
+   * The window was moved somewhere else: nothing edited there yet. (Round 112, `tilefix2`: only what's the place's own
+   * history — edited, touched. The land's flags and readiness are landBox's, and a warp writes its regions — each
+   * calling landBox — before it tells its onWarp: clearing them here after wiped what the writes had just set, every
+   * chunk neither the grid's nor voxels, never ready — the window drawing nothing at all after a warp: the user's run
+   * on the phone, grey round the hero, and after a save's regions were restored on load.)
+   */
   clear(): void {
     this.edited.fill(0);
     this.touched.fill(0);
-    this.land.fill(0);
-    this.steepOnly.fill(0);
-    this.readyAt.fill(Infinity);
     this.changed = true;
   }
 

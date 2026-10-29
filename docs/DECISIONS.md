@@ -14,9 +14,18 @@ each was implemented.
 - "For the kept shaders in the profile just make sure we replace ones that update" → content-hashed builds, no-cache
   pages, and a self-check that an edited kernel (and an edited common.wgsl) never runs stale on a kept profile.
 - "Yeah let's do the snapshots and shader saved to profile so that we can run and test faster. That should speed up my
-  loading it too right?" → partly: the warm snapshot skips the warmup's ticks (~8 s on the desktop; the player's
-  `?warmcache=1`, opt-in until tried on the phone), but ~28 s of every boot is GPU-process work before the first tick
-  that a kept profile doesn't save — the next thing to fix (TS8), for the user's boot as much as the tests'.
+  loading it too right?" → yes: the boot's pipelines compiled together off the GPU process's main thread (they compiled
+  one by one, ~30 s of DXC) and the warmed world kept in the browser: the desktop's atlas boot 48–52 s → 28.5 s the
+  first visit, 19.0 s the second. (Chrome's own shader cache never hit across boots: DXC ran every time.)
+- Main (coordinating, round 112): async pipelines the default (no switch kept) once the warmed world's hash and a
+  golden image matched the sync build — both did; `?wgslstrip` dropped; the players' warm cache on by default behind
+  the build-hash key.
+## 2026-10-29 — round 112 (session 5, `tilefix2`) — the eye side; disk ahead; the hero's screen
+
+- On a tile on the eye's side of the focus (TF5): the user chose option (a), the tile drawn cut the way the window cuts
+  tall terrain near the camera, detailed, not hiding the focus — not left out.
+- The user: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this up?" (BACKLOG TY7.)
+- The hero's run on the phone grey round the hero, and a grey corner in the sandbox: fixed (BACKLOG TY1).
 
 ## 2026-10-29 — round 112 (session 5, `tilefix`) — the terrain drawn on every screen; a merge gate
 

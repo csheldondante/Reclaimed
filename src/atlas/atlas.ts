@@ -179,6 +179,10 @@ const TILES_FIXED = Number(Q98.get('tilesfixed')) || 0;
 const TILE_MAX = Number(Q98.get('tilemax') ?? 4);
 /** (round 112, tilefast; ?tilechain=0 for the A/B) a frame's unused turns go to a tile's chain asking again in its task */
 const CHAIN = Q98.get('tilechain') !== '0';
+/** (round 112, `tilefix2`; ?tilemaxfill=) off a phone, the most turns a frame while the tiles' lane has FILL_AT or more
+ *  waiting (TilePacer.frame) */
+const TILE_MAX_FILL = Number(Q98.get('tilemaxfill') ?? 16);
+const FILL_AT = 3;
 
 /**
  * (round 102) A phone (its user agent): Mali's timestamps aren't to be trusted (passes overlap: bench v2) and the
@@ -329,8 +333,14 @@ export class TilePacer {
     else this.base += (Math.min(dt, this.base * 2) - this.base) * (this.ran ? 0.002 : 0.02);
     const speed = this.urgency();
     const fast = Math.max(0, Math.min(1, speed / FAST_AT));
-    const most = fast > 0.5 ? TILE_MAX_FAST : TILE_MAX;
-    if (this.ran) this.guard = dt > this.base * 1.2 + 1.5 ? Math.max(1, this.guard * 0.5) : Math.min(most, this.guard + 0.25);
+    // (round 112, `tilefix2`: off a phone, the tiles' lane backed up — a wide zoom's screenful wanted — the guard may
+    // climb to TILE_MAX_FILL, a turn a frame more each frame that came out on time: the turns a frame the GPU has room
+    // for, found by the frame's time as ever (halved by a long one). A 3080 at 30 fps filled a 1600 x 900 screen at zoom
+    // 1.3 a quarter short in 8 s at four turns a frame. A phone keeps TILE_MAX: its vsync makes an overshoot a dropped
+    // frame, and its screen wants a quarter of the tiles)
+    const fill = !MOBILE && this.first.length >= FILL_AT;
+    const most = fill ? TILE_MAX_FILL : fast > 0.5 ? TILE_MAX_FAST : TILE_MAX;
+    if (this.ran) this.guard = dt > this.base * 1.2 + 1.5 ? Math.max(1, this.guard * 0.5) : Math.min(most, this.guard + (fill ? 1 : 0.25));
     let n: number;
     if (PACE_FRAME) {
       this.how = 'frame';

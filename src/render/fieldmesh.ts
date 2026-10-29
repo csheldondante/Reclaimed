@@ -141,6 +141,9 @@ export class FieldMesh {
   private statBusy = false;
   private statNeeded = false;
   private statEvery = 0;
+  /** (round 112, tilefix2) frames between the chunk-stat readbacks (the built mirror, the tops): 60; a test reading what's
+   *  drawn sets it lower (scripts/tilegate.mjs: 1) */
+  statPeriod = 60;
 
   constructor(
     private device: GPUDevice,
@@ -649,7 +652,7 @@ export class FieldMesh {
       this.freeNeeded = true;
     }
     // (round 82: every 60th time, not 10th — the chunks' tops for the culling move slowly)
-    if (READBACK && !this.statBusy && this.statEvery++ % 60 === 0) {
+    if (READBACK && !this.statBusy && this.statEvery++ % this.statPeriod === 0) {
       enc.copyBufferToBuffer(this.state, 0, this.statBuf!, 0, this.statBuf!.size);
       this.statSlides = this.slides;
       this.statBusy = true;

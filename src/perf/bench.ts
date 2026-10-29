@@ -2497,17 +2497,21 @@ class Bench {
     cam.zoom = Math.min(...zooms);
     sc.pan = { speed: 300, dir, t: 0, turnAt: 0, turnBy: 0, turned: 0, asked: 0 };
     try {
-      while (sc.pan.asked < fillLen) {
+      // (round 112, tilefix2: till the camera has gone the line's length, not till it was asked to — on the phone the
+      // pan waited at the window's edge for its slides, the line saved a third as long as the disk ramp then went, and
+      // its rows came 6 of ~250 from disk, the rest made: the disk rows measured generated land)
+      const along = () => (S.origin[0] + cam.target[0] - start[0]) * dir[0] + (S.origin[1] * ROW_H + cam.target[1] - start[1]) * dir[1];
+      while (along() < fillLen) {
         await frame();
         S.touch(0, 0, S.W, S.H);
-        if (performance.now() - f0 > 60000) break;
+        if (performance.now() - f0 > 180000) break;
       }
     } finally {
       sc.pan = null;
     }
     await this.settle(1500, 20000);
     await S.store?.flush?.();
-    out.fill = { cells: Math.round(fillLen), ms: Math.round(performance.now() - f0), regionsSaved: S.stats.saved - saved0, storeRegions: S.store?.size ?? null };
+    out.fill = { travelled: Math.round((S.origin[0] + cam.target[0] - start[0]) * dir[0] + (S.origin[1] * ROW_H + cam.target[1] - start[1]) * dir[1]), cells: Math.round(fillLen), ms: Math.round(performance.now() - f0), regionsSaved: S.stats.saved - saved0, storeRegions: S.store?.size ?? null };
     const rows: Record<string, unknown>[] = [];
     out.zooms = rows;
     let lane = 0;
@@ -2679,7 +2683,7 @@ class Bench {
       sc.pan = null;
     }
     const st1 = this.R.stream.stats;
-    const came = { generated: st1.generated - st0.generated, fromPool: st1.thawed - st0.thawed, fromDisk: st1.loaded - st0.loaded, slides: st1.slides - st0.slides };
+    const came = { generated: st1.generated - st0.generated, fromPool: st1.thawed - st0.thawed, fromDisk: st1.loaded - st0.loaded, slides: st1.slides - st0.slides, storeMiss: st1.storeMiss - st0.storeMiss, mismatched: st1.mismatched - st0.mismatched, loadFailed: st1.loadFailed - st0.loadFailed, storeSize: this.R.stream.store?.size ?? null };
     return { maxSmooth, failedFirst, failedAt, causesAtFail, maxNoPopIn, popInAt, came, steps };
   }
 

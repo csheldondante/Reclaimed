@@ -5,6 +5,7 @@
 //        [--eval "js"] [--then ms --out2 file2.png] [--size 960x540] [--dpr 1]
 //        [--clicks "x,y;wait:ms;x,y"] [--drag x0,y0,x1,y1] [--gif g.gif --frames N --every ms]
 //        [--kind behaviour|timing] [--dev] [--server http://localhost:5173]
+//        [--chromeargs disable-gpu-vsync,disable-frame-rate-limit]  (more Chrome switches, without their dashes)
 //
 // (round 112, testspeed) On the shared runner (scripts/lib/runner.mjs): this worktree's production build, served on its
 // own port, a kept Chrome profile (the shader cache), the GPU leased as a behaviour check. `--url` is a path and query

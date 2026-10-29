@@ -12504,10 +12504,29 @@ pays it again (27.8 vs 28.8 s; the playground 31.4 vs 32.1 s), though it makes e
 (identical hashes) — 9.56 MB of WGSL (common.wgsl, layers, materials prepended whole to each kernel, ~76 KB a
 module), 114 sync + 24 async compute pipelines, 18 sync + 11 async render pipelines. The contract tier's tiny world
 (the same sim and renderer kernels) does get cached across pages (10 s → 0.27 s), so the atlas's is either kernels
-whose cache never hits or per-page work that scales with the world. Two experiments behind switches, for the next
-browser batch with a Chrome trace (scripts/bootrace.mjs): `?wgslstrip=1` (gpu/wgsl-strip.ts: each module cut to what
-its entry points reach — a pure transform, 2.73 MB → 0.96 MB over the 47 shader files' kernels) and `?pipeasync=1`
-(gpu/pipeline.ts: makeCompute's pipelines made async all at once, the level waiting for them before its first tick).
+whose cache never hits or per-page work that scales with the world.
+
+**The trace settles it** (scripts/bootrace.mjs, a Chrome trace of one atlas boot with the GPU categories): Dawn runs
+on D3D12 and compiles every pipeline with DXC, and the sync pipelines compile one after another on the GPU process's
+main thread — CompileShaderDXC 17.5 s for the compute pipelines, 13.1 s in the 15 sync render pipelines — while the
+page waits 32 s in `CommandBufferProxyImpl::WaitForToken`; DXC runs again every boot (no cache hit, page or launch).
+Two experiments, A/B on the same build:
+- `?wgslstrip=1`, each module cut to what its entry points reach (a pure transform, 2.73 MB → 0.96 MB of WGSL over
+  the 47 shader files' kernels): DXC 17.5 → 16.4 s, the boot 50.8 → 47.8 s — Tint already drops what isn't reached
+  before DXC sees it. Dropped (not kept as code).
+- `?pipeasync=1`, the compute pipelines asked for async, all at once, the level waiting for them before its first
+  tick: Dawn's worker pool compiles them in parallel — the boot 50.8 → 36.7 s; then the 15 render pipelines too
+  (`renderPipe`): **48–52 → 28.5 s**, the pipelines stage 6.9 s. The warmed world is hash-identical to the sync
+  build's (every buffer but particles: the same md5 over 42 buffers), and tilegate's desktop z5 golden image against
+  the places baselines passes (0.76 % changed, under its 1 %; 103 fps). Now the default, no switch:
+  gpu/pipeline.ts `beginPipelineBatch` … `await endPipelineBatch()` round the level's making in LevelScene.create
+  (and round a contract world); outside a batch (the menu, lazily, mid-game) pipelines are made synchronously as
+  before, and a kernel used before its batch ends throws.
+
+**The user's boot** (the deployed build; the atlas level on this desktop, cold Chrome): 48–52 s before → **28.5 s**
+the first visit (async pipelines) → **19.0 s** the second (the warm cache: the warmup's 1 800 ticks skipped — on by
+default, `?warmcache=0` off, keyed by `__BUILD_HASH__`, a content hash of src/ and data/ made by vite.config.ts, so a
+new build never starts from an old world). The phone's share of each is still to measure (BACKLOG TS7).
 
 **What changed**
 - `scripts/lib/runner.mjs` — one place for the server, the browser, the page and the GPU's schedule:
@@ -12564,12 +12583,103 @@ its entry points reach — a pure transform, 2.73 MB → 0.96 MB over the 47 sha
 | tileprobe.mjs `--seconds 10` | 92 s | 91 s (its 30 s settle and sampling kept) |
 | playwater.mjs `--skip atlas` | 348 s | 321 s (sim-time waits; same results) |
 | contract tier (breach, river, pool) | — (an atlas boot, 45 s, before a check can start) | 2.2 s warm Chrome, 35–43 s cold |
-| atlas boot with the warm snapshot | 48–52 s | 42 s (the ticks' 8 s; the 28 s stall stays) |
+| atlas boot (async pipelines, round 112's default) | 48–52 s | 28.5 s cold |
+| atlas boot from the warm snapshot / the player's warm cache | 48–52 s | 19.0 s |
 
 **Concurrency** (scripts/warmprobe.mjs, three at once in three Chromes): all three finished in 85 s against ~48 s
 each alone (1.7× the throughput), and their warmed worlds hash the same as the solo run's, every buffer but
 particles. Sharing the GPU doesn't change what a behaviour check sees — provided it waits in sim time (R.ticks), not
 wall time: with the GPU shared a wall-time wait sees fewer ticks.
 
-**Open** (BACKLOG TS7–TS12): the ~28 s of GPU-process work at every boot (the user's too) — the trace and the two A/Bs;
-the warm cache on the phone (its memory); render pipelines async too; the duplications that widen the test surface.
+**Open** (BACKLOG TS6, TS7, TS10–TS18): the warm cache on the phone (its 130 MB in memory once); the game's boot
+design note (fewer warmup ticks, the first window arriving settled as streamed regions do); porting the other
+scripts; the contract tier's next checks; the duplications that widen the test surface.
+## Round 112 (2026-10-29, session 5, `tilefix2`) — the hero's grey screen, a gate that doesn't depend on the machine, the eye side cut
+
+**The hero's grey screen** (the user's Pixel 9a, `?run=bell`: grey round the hero, the window's own land not drawn; and a
+grey corner in the sandbox).
+- *Cause, older than the tiles:* `HybridChunks.clear()`, called on the streamer's `onWarp`, wiped every chunk's land
+  flags and readiness (`land = 0`, `readyAt = Infinity`). But a warp writes all its regions first, and each write calls
+  `landBox`, which sets exactly those. So after any warp every chunk was neither the grid's nor voxels, and never ready,
+  and the window drew nothing. The rings don't draw deep inside the window, so the screen was grey.
+- *Where it happens:* the run's "window made again" after its stage stamp is a warp, and so is a save's `restore()` on
+  load. The default page saves (worldsave on); the gate ran with worldsave=0, so it never saw this.
+- *Measured* (phone proxy, run=bell): before, 0 of 110 chunks drawn for over 35 s; after, 12 meshed and 98 grid. Places
+  2fe8588, before tilefix, has the same bug.
+- *Fix:* `clear()` resets only the place's history (edited, touched). Shots: C:/Projects/shots88/tilegate/run-pre.png,
+  run-fixed.png.
+
+**The gate doesn't depend on the machine** (the 3080 runner: headless Chrome there was held to 29 Hz with the monitor
+off, and fills that pass at 120 Hz in 8 s failed).
+- Chrome runs without vsync (`--chromeargs` overrides), and the page's `requestAnimationFrame` is held to 60 Hz ticks
+  by the script. Every rAF sees the same rate: the game's and the tile pacer's.
+- The load is counted in frames: `--loadframes` 180 (3 s at 60). After the load budget each view reports `fillFrames`,
+  the frames until the screen was all in detail (checked every 30, up to 3 x the budget). Over the budget fails.
+- The page's rate under the cap is measured first. Under 55 fps the frame criteria aren't judged, and the gate says so.
+  This laptop's iGPU really draws 1600 x 900 and the phone proxy at ~52 fps once Chrome presents every frame; the
+  earlier headless "120 fps" were vsync'd headless frames that weren't really presented.
+- Baselines are kept per adapter (`data/baselines/tilegate/<vendor>-<architecture>/`), written on an adapter's first
+  run. Vendors differ by 1.5-12% of a frame.
+- The phone screen runs with a Pixel's user agent, so the page takes its phone paths (finish tiles, pacing, uploads).
+- New views: `run` (`?run=bell`, zooms 14/8/5, desktop and phone) and `w384` (the atlas at window 384, the user's phone
+  setting).
+- A new reason, `window-undrawn`: a window chunk neither meshed nor the grid's, and no tile. It's counted only while the
+  CPU's built-chunk mirror is the current slide's.
+
+**Tiles a frame off the phone.** When the tiles' lane has 3 or more turns waiting, the pacer's guard may climb to
+`TILE_MAX_FILL` (16), one more turn per on-time frame and halved by a long one. Off a phone: 12 regions in flight and 8
+bakes a frame (a phone keeps 4 turns, 6 in flight, 4 bakes).
+
+| fillFrames (budget 180) | before (`&tilemaxfill=4&tilelandn=6&tilebakes=4`) | after |
+|---|---|---|
+| desktop 1600 x 900, z2.2 | 420 | 240 |
+| desktop, z1.3 | over 540 (24% still out) | 180 |
+| phone proxy (phone paths, unchanged), z1.3 | over 540 (1% out) | 270 |
+
+**TF5, the eye side** (the user's option (a)). A tile on the eye's side is no longer left out whole. `fsTile` discards
+what of it rises into the line from the eye to the focus: the rings' rule (far.wgsl `underFocus`, 0.85 of the line's
+height, from 12 world units on). What's behind it shows through, the focus with it. The focus is in TileU.focus.
+
+**The pan bench's disk rows were mostly generated land.** On the phone each disk ramp brought 6-7 regions from disk and
+made the rest (z14: 242 made, 6 loaded). The fill pan stopped once it had been asked to go the line's length, but it
+had waited at the window's edge for its slides, so it saved a line a third as long as the ramp then went. The fill now
+runs until the camera has gone the length (up to 180 s), and `came` reports `storeMiss`, `mismatched`, `loadFailed` and
+the store's size. Desktop, z14 disk ramp: 187 loaded, 430 made, store 568. So TF4 (the disk hitch) can't be judged from
+the phone runs so far.
+
+**Disk to RAM ahead** (the user: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this
+up?"). What exists: the streamer prefetches regions ahead of the motion (`Streamer.prefetch`, up to AHEAD_MAX strips at
+the camera's speed). That `bring`s each one: the store's get, read off the thread in its worker, then the record decoded
+on the main thread (`decodeRecord`, slices), then uploaded into a pool slot. So land made ahead from disk arrives as a
+pool hit. Nothing is added yet: the phone's disk rows have to stream from disk first (above) to show what's slow.
+
+**Open.**
+- The phone path's fill at z1.3 takes 270 frames, over the 180 budget. More turns a frame on the phone when the lane is
+  backed up is the lever; the phone bench should decide it.
+- A grey sliver at a region's edge in one panning frame (desktop z3.5).
+- TX5: on the 3080 the phone view's z14 slide frame was 138 ms (gpu-busy).
+- The 3080's first run lost the device right after `vite --force` started (a compile burst?): noted, not reproduced.
+
+### Round 112, `tilefix2` (2): the 3080's premerge gate run (29 failures), read
+
+The run is on origin/runner/tilegate-premerge, runner-results/tilegate-premerge/.
+
+- **"window-undrawn" on every pan** (z14 59-63%, z8 29-36%) was a false positive. The pan shots are drawn whole. The
+  check reads the CPU's mirror of the built chunks, which is read back every 60th frame, and the hybrid's grid, and the
+  two move at different moments around a slide. It isn't the clear() change: a slide goes through hybrid.shift, not
+  clear. Main asked to keep judging pans. While the gate runs, the mirror is read back every frame (`FieldMesh.statPeriod`
+  1; 60 in play), and a chunk counts once it has been read undrawn for 5 frames running, keyed by its place in the
+  world. A readback is a frame or two behind, so a flash of an undrawn chunk longer than that is still caught.
+- **The slow wide fills** (desktop z1.3 43% out after 540 frames, "none" 212) were mostly the gate's own 60 Hz cap. After
+  a late tick it caught up, so the next frame was ~7 ms. That pulled the tile pacer's low envelope (`base`) to 8-11 ms.
+  Every 17 ms frame then counted as long, and the guard sat at one turn.
+  - *Shown on the laptop with `--throttle 3`:* base 7.8-11.7 ms, guard 1.
+  - *Fix:* each tick a whole period after the last, less a ms, with no catching up; base then read 15-18 ms.
+  - *What's left is real:* at 3x CPU throttle the page is CPU-bound at 38-45 fps, so the guard rightly holds one turn,
+    and a 1.3 screenful can't fill in 180 frames there.
+- I tried a guard averaged over four frames while filling. Under 3x throttle it made no difference, so it's removed.
+- **The gate:**
+  - one frame threshold, the criterion itself (58 fps), for every view (w384 was judged at 55.5 while others weren't);
+  - "frames not judged" is a note, not a failure;
+  - `--throttle N` (CDP);
+  - each row records the tile pipeline: the pacer's perFrame, guard and base, the land's made, baked, inFlight and noSlot.

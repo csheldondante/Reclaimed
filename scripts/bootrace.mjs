@@ -1,7 +1,7 @@
 // Round 112 (testspeed): a Chrome trace of one level boot — where the GPU process spends the boot (Dawn, the D3D
 // compiler, the command buffers). Records from navigation to 'level-ready' with the GPU's trace categories, then
 // sums the complete events by name per process (GPU process first) and prints the biggest. A/B with --extra:
-//   node scripts/bootrace.mjs [--level atlas] [--extra "&wgslstrip=1"] [--top 25] [--out trace.json] [--snap]
+//   node scripts/bootrace.mjs [--level atlas] [--extra "&k=v"] [--top 25] [--out trace.json] [--snap]
 import fs from 'node:fs';
 import { run, stages } from './lib/runner.mjs';
 

@@ -82,7 +82,9 @@ stock-take.
 - `--snap` (or `R.level(params, { snapshot: true })`) starts from the warmed world saved for this build and URL
   (src/sim/snapshot.ts; the first run warms and saves); `node scripts/run.mjs daemon` keeps one Chrome up so pipeline
   compiles are shared between checks. Behaviour checks default to 412x915 at dpr 1; pass `size`/`dpr` when it matters.
-- The boot timeline of any level: `node scripts/run.mjs boot --level atlas` (window.__boot: atlas, window, warmup …).
+- The boot timeline of any level: `node scripts/run.mjs boot --level atlas` (window.__boot: atlas, window, pipelines,
+  warmup …); a Chrome trace of it: `node scripts/bootrace.mjs`. Pipelines a level makes at boot go in its batch
+  (gpu/pipeline.ts `beginPipelineBatch` / `endPipelineBatch`, `renderPipe`): compiled together, not one by one.
 
 ## Layout
 

@@ -6,7 +6,7 @@
 //   node scripts/warmprobe.mjs [--level atlas] [--at x,y] [--reps 2] [--extra "&k=v"]
 //   --snap: the warm snapshot's proof — run 0 warms and saves (the cache emptied for its key first), the runs after
 //   start from it; each must hash as run 0 did, every buffer, and its sim must go on (ticks run, no errors)
-//   --ab "&wgslstrip=1": run 1 with these settings too — a pure transform must leave the same warmed world (every
+//   --ab "&k=v": run 1 with these settings too — a pure transform must leave the same warmed world (every
 //   buffer but the particles, which differ between any two warmups)
 import fs from 'node:fs';
 import path from 'node:path';
