@@ -25,6 +25,10 @@ each was implemented.
   hero's own Mobility — step, drop, wade, jump), a CPU implementation first (the agents' GPU fields next, HS10), and a
   pilot controller that steers along it: the sandbox's 🧭 autopilot, the headless test's driver, and the basis of
   checking a generated gauntlet is crossable by a given hero (GE3).
+- On the phone in hero mode (places, run=bell): "I can't walk more than a tiny bit. It seems like the controls are just
+  not implemented correctly and it walks me a few steps them stops almost like it walks to the displacement of the
+  stick and not targets that velocity" → the stick is a held velocity (it was); the hero stopped at walls that weren't
+  there — the world API read the levels texture at the buffers' index (fixed, b86d159; HS12 the accessor per kind).
 - GameplayGM's answer (gampeplaygm-40, via main): their heroes need a richer seam (input passthrough, their own camera,
   real cooldowns, hits through Units, more of the world than HeroWorld) → designed as `mount(host)` with an explicit
   HeroHost: named capabilities first, the raw handles that remain listed as debt (docs/HEROES.md "What the contract

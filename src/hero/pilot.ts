@@ -13,7 +13,7 @@ import type { Traversal, TraversalField } from '../api/contracts/traversal';
 import type { Units, V2 } from '../api/contracts/units';
 
 export interface PilotOpts {
-  /** cells from the goal it counts as there (default 1) */
+  /** cells from the goal it counts as there (default 1.5) */
   arrive?: number;
   /** swing at hostile units within this many cells (default: none) */
   fight?: number;
@@ -37,6 +37,8 @@ export class Pilot implements RunController {
   private madeAt = 0;
   private lastProgress = 0;
   private best = Infinity;
+  /** when the field last had no way from where the hero stands (0: it has one) */
+  private noWaySince = 0;
 
   constructor(
     private hero: Hero,
@@ -50,8 +52,17 @@ export class Pilot implements RunController {
     this.o = o;
     this.field = null;
     this.best = Infinity;
+    this.noWaySince = 0;
     this.lastProgress = performance.now();
     this.state = goal ? 'going' : 'idle';
+  }
+
+  /** The window slid (a streamed world): a goal point moves with it, the field is made again (a moving goal moves itself). */
+  shift(dx: number, dy: number): void {
+    if (Array.isArray(this.goal)) this.goal = [this.goal[0] + dx, this.goal[1] + dy];
+    this.field = null;
+    this.best = Infinity;
+    this.lastProgress = performance.now();
   }
 
   get active(): boolean {
@@ -84,14 +95,19 @@ export class Pilot implements RunController {
       this.madeAt = now;
     }
     const f = this.field!;
-    if (Math.hypot(g[0] - at[0], g[1] - at[1]) <= (this.o.arrive ?? 1)) {
+    if (Math.hypot(g[0] - at[0], g[1] - at[1]) <= (this.o.arrive ?? 1.5)) {
       this.state = typeof this.goal === 'function' ? 'going' : 'there';
     } else {
       const dir = f.dir(at);
       if (!dir) {
-        this.state = 'no way';
+        // (no way from here on this field: made again a few times first — a field made just after a window's slide
+        // reads ground the mirror hasn't caught up with — then it's no way)
+        if (!this.noWaySince) this.noWaySince = now;
+        if (now - this.noWaySince > 2000) this.state = 'no way';
+        else if (now - this.madeAt > 400) this.field = null;
         return it;
       }
+      this.noWaySince = 0;
       it.move = dir;
       // (stuck: no nearer the goal for 3 s — a stride the field allows but the hero's own rules refuse)
       const c = f.cost(at) ?? Infinity;
@@ -102,6 +118,8 @@ export class Pilot implements RunController {
     }
     const reach = this.o.fight;
     if (reach && this.units) it.attack = this.units.query(at, reach, { hostile: true }).some((u) => u.alive && u.faction !== this.hero.actor.faction);
+    // (a fight holds it where it stands: no progress then is no sign of being stuck)
+    if (it.attack) this.lastProgress = now;
     return it;
   }
 

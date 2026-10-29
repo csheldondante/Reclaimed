@@ -31,6 +31,8 @@ export interface BasinOpts {
   limit?: number;
   /** cells under the rim it's filled to (default 0.25) */
   margin?: number;
+  /** the least drop past a rim that counts as spilling over it (default 0.6 cells: a floor's ripples are no rim) */
+  spill?: number;
 }
 
 /** a binary heap of cells by height */
@@ -91,6 +93,8 @@ export function findBasin(top: (cx: number, cy: number) => number | null, seed: 
   const limit = o.limit ?? 3000;
   const margin = o.margin ?? 0.25;
   const EPS = 0.05;
+  /** cells: the least drop past a rim that is a spill */
+  const SPILL = o.spill ?? 0.6;
   let [sx, sy] = seed;
   let sz = top(sx, sy);
   if (sz === null) return { error: 'that point is outside the loaded world' };
@@ -130,8 +134,10 @@ export function findBasin(top: (cx: number, cy: number) => number | null, seed: 
       if (plain()) return basin([cx, cy]);
       return { error: 'it runs off the edge of the loaded world: not enclosed' };
     }
-    // over the rim: it spills at `level`
-    if (z < level - EPS) return basin([cx, cy]);
+    // over the rim: it spills at `level` — a drop of at least SPILL beyond it (round 112: the ripples of loose ground on
+    // a vessel's floor, a tenth of a cell, are no rim: the desktop run found "nothing to fill" in a walled ring, the
+    // flood having stopped at the first ripple)
+    if (z < level - SPILL) return basin([cx, cy]);
     if (z > level + EPS) rose = popped.length;
     level = Math.max(level, z);
     popped.push([cx, cy, z]);

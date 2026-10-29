@@ -40,6 +40,15 @@ try {
     }
   }
   {
+    // a vessel whose floor ripples (loose ground, a tenth or three of a cell): the ripples are no rim
+    const rip = (cx, cy) => {
+      const h = wall(false)(cx, cy);
+      return h === 10 ? 10 + 0.3 * (((cx * 7 + cy * 13) % 5) / 4) : h;
+    };
+    const b = findBasin(rip, [64, 64], { limit: 3000 });
+    ok(!('error' in b) && Math.abs(b.level - 16) < 1e-6 && b.cells.length > 80, `a rippled floor fills to the rim: ${'error' in b ? b.error : `${b.level}, ${b.cells.length} cells`}`);
+  }
+  {
     const b = findBasin(wall(true), [64, 64], { limit: 3000 });
     ok(!('error' in b) && Math.abs(b.level - 13) < 1e-6, `a notched vessel spills at its notch (13): ${'error' in b ? b.error : b.level}`);
   }
@@ -85,6 +94,14 @@ try {
   ok(w.tune.speed === 8, 'reset puts it back');
   w.update(1 / 60, { move: [1, 0] });
   ok(w.position()[0] > 10.1, `it walks at its speed (${w.position()[0].toFixed(3)})`);
+  {
+    // (round 112, the user: "it walks me a few steps them stops almost like it walks to the displacement of the stick
+    // and not targets that velocity") the stick held 5 s: a velocity held, speed × 5 cells along it
+    const w2 = new Walker({ ground: { heightAt: (x, y) => (x < -500 || x > 500 ? null : 5) }, units }, [0, 0]);
+    for (let k = 0; k < 300; k++) w2.update(1 / 60, { move: [0, -0.9] });
+    const d = Math.hypot(...w2.position().slice(0, 2));
+    ok(Math.abs(d - 8 * 0.9 * 5) < 2, `the stick held 5 s at 0.9: ${d.toFixed(1)} cells (speed 8 × 0.9 × 5 = 36)`);
+  }
   // traversal fields: a wall across the way with a gap; a pool too deep to wade; a jump
   {
     const { CpuTraversal } = await v.ssrLoadModule('/src/hero/traversal.ts');
@@ -115,7 +132,20 @@ try {
     let k = 0;
     for (; k < 60 * 40 && pl.state === 'going'; k++) w.update(1 / 60, pl.intent());
     const p = w.position();
-    ok(pl.state === 'there' && Math.hypot(p[0] - 80, p[1] - 40) <= 1.2, `the pilot walked the Walker round the wall to the goal: ${pl.state} at ${p[0].toFixed(1)}, ${p[1].toFixed(1)} in ${(k / 60).toFixed(1)} s, ${pl.fields} field(s)`);
+    ok(pl.state === 'there' && Math.hypot(p[0] - 80, p[1] - 40) <= 1.6, `the pilot walked the Walker round the wall to the goal: ${pl.state} at ${p[0].toFixed(1)}, ${p[1].toFixed(1)} in ${(k / 60).toFixed(1)} s, ${pl.fields} field(s)`);
+  }
+  // a ring laid a column at a time (hero/gauntlet.ts perColumn): every point of the ring's circle is in a column of it
+  {
+    const { perColumn } = await v.ssrLoadModule('/src/hero/gauntlet.ts');
+    const { cellAt } = await v.ssrLoadModule('/src/world/lattice.ts');
+    const c = [120.3, 80.7];
+    const ring = [];
+    for (let a = 0; a < 48; a++) ring.push({ kind: 'build', at: [c[0] + Math.cos((a * Math.PI) / 24) * 5.8, c[1] + Math.sin((a * Math.PI) / 24) * 5.8], material: 'concrete', radius: 1.1, layers: 6 });
+    const cols = perColumn(ring);
+    const set = new Set(cols.map((q) => cellAt(q.at[0], q.at[1]).join()));
+    let hit = 0;
+    for (let a = 0; a < 24; a++) if (set.has(cellAt(c[0] + Math.cos((a * Math.PI) / 12) * 5.8, c[1] + Math.sin((a * Math.PI) / 12) * 5.8).join())) hit++;
+    ok(hit === 24 && cols.length === set.size && cols.every((q) => q.layers === 6), `a ring as ${cols.length} columns, one build each, covering its circle (${hit}/24)`);
   }
 } finally {
   await v.close();

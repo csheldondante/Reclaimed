@@ -1971,6 +1971,9 @@ against a contract and knows only its inputs:
   `hero/gauntlet.ts crossable` reads a course's field at its start (GE3's per-hero check).
 - `src/hero/gauntlet.ts` — `CourseGenerator.make(at, heading, seed) → Course { start, goal, pieces, foes }`; the
   sandbox lays the pieces through the world API and spawns the foes through Units. `obstacleCourse` is the stub.
+- The world API's mirror (round 112 fix): a per-column **buffer** is read at `ring.i` (page-major), a texel-a-column
+  **texture** (levels, drift) at `ring.t` (`api/common.ts texelAt`); the two differ for every window more than a page
+  across. One accessor per kind is HS12.
 - `src/ui/bugreport.ts` — `BugContext.as`: the same note and picture as another kind (the contract feedback), its own
   button, file name, dev sink (`/__hitch?kind=herofeedback&name=` → feedback/hero/<name>.json) and extra payload.
 

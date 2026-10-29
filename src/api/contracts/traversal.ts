@@ -22,6 +22,11 @@ export interface Mobility {
   drop?: number;
   /** water deeper than this it won't go into (default: any) */
   deep?: number;
+  /**
+   * a climb is measured from the lowest ground within a cell of where it stands (path.ts canStep: the soft rim a build
+   * leaves at a wall's foot is no stair onto the wall) — the Walker's rule (default false: from where it stands)
+   */
+  fromLow?: boolean;
   /** a jump: a step up to this height more, at `jumpCost` (default none) */
   jump?: number;
   /** what a jump costs, in cells of walking (default 4) */

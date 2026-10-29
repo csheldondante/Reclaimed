@@ -257,7 +257,9 @@ input? Or steer along that?"
   `TraversalField` with `cost(at)`, `reachable(at)`, `dir(at)` (a unit vector down the field), `route(at)` and `ms`.
   `Mobility` is the body's own way over the ground. It is not the agents' fixed numbers. It holds `step` (the
   highest climb a stride takes), `drop`, `deep` (the water it won't wade into), `jump` (with `jumpCost`),
-  `climbCost`, `wadeCost` and `hugCost` (the extra cost of a cell at a wall's foot: a body has width).
+  `climbCost`, `wadeCost`, `hugCost` (the extra cost of a cell at a wall's foot: a body has width) and `fromLow`.
+  With `fromLow`, a climb is measured from the lowest ground within a cell of where the body stands. That is the
+  Walker's own rule (path.ts canStep): the field and the body use one rule.
 - **A hero states its mobility** as `Hero.mobility` (1.1). The Walker's comes from its tunables: `step`, a drop of
   the same, and `deep`. Tuning the hero changes the field.
 - **Implementation.** `src/hero/traversal.ts` `CpuTraversal` runs a Dijkstra from the goal over the window's hex
@@ -266,8 +268,9 @@ input? Or steer along that?"
   same contract (HS10): many surfaces a column, caves and bridges.
 - **The pilot.** `src/hero/pilot.ts` `Pilot` is a HeroController that steers along a field: `move` is `dir(position)`
   until the hero is there. It follows a moving goal by making the field again every second. With `fight` set, it
-  swings at hostiles within reach. A hero that makes no progress for 3 s is marked `stuck` (its own rules refused a
-  stride the field allowed). It drives any hero through the contract: `position()`, `mobility` and `intent()`.
+  swings at hostiles within reach. A hero that makes no progress for 3 s while not fighting is marked `stuck` (its own
+  rules refused a stride the field allowed). It follows the window's slides: its goal moves with them, and its field
+  is made again. It drives any hero through the contract: `position()`, `mobility` and `intent()`.
 - **In the sandbox**, 🧭 is "autopilot to here": a tap sends the hero there, and pushing the stick takes control
   back. Scripts call `hs.pilotTo(point | () => point)` and `hs.pilotToUnit(id)`. The inspector shows the pilot's
   state, its cost and the field's time.

@@ -290,7 +290,7 @@ export class HeroSandbox {
       const t = api.terrain!;
       this.d.land();
       const start = core.map.poi.heroStart;
-      const p: V2 = at ?? (start ? cellPos(start[0], start[1]) : ((g) => [g[0], g[1]] as V2)(cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, this.d.heightAt)));
+      let p: V2 = at ?? (start ? cellPos(start[0], start[1]) : ((g) => [g[0], g[1]] as V2)(cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, this.d.heightAt)));
       // (the ground read back first: the hero is put down on what the world API reports)
       for (let k = 0; ; k++) {
         await t.refresh();
@@ -298,6 +298,9 @@ export class HeroSandbox {
         if (k > 40) throw new Error(`hero sandbox: the ground at (${p.map((v) => v.toFixed(1))}) never read back`);
         await new Promise((res) => setTimeout(res, 100));
       }
+      // (round 112: not dropped into a river — the desktop run put the Walker in the playground's, where it can only
+      // wade toward shallower water: the nearest dry ground within 24 cells, unless a place was asked for)
+      if (!at) p = this.dryNear(p);
       const e = heroEntry(this.role);
       this.entry = e;
       const units = e.units ?? this.units;
@@ -364,6 +367,20 @@ export class HeroSandbox {
     this.draw();
   }
 
+  /** the nearest point to `p` with no more than ankle-deep water (0.3), within 24 cells; `p` itself when none */
+  private dryNear(p: V2): V2 {
+    const w = this.d.api.water;
+    const t = this.d.api.terrain!;
+    const dry = (x: number, y: number) => t.heightAt(x, y) !== null && (w?.depthAt(x, y) ?? 0) <= 0.3;
+    if (dry(p[0], p[1])) return p;
+    for (let r = 1; r <= 24; r++)
+      for (let a = 0; a < 24; a++) {
+        const q: V2 = [p[0] + Math.cos((a * Math.PI) / 12) * r, p[1] + Math.sin((a * Math.PI) / 12) * r];
+        if (dry(q[0], q[1])) return q;
+      }
+    return p;
+  }
+
   /** each frame */
   update(dt: number): void {
     this.t += dt;
@@ -417,6 +434,14 @@ export class HeroSandbox {
       this.hero.shift(-dx, -dy, -dz);
     }
     this.units.shift(-dx, -dy, -dz);
+    // (round 112: the autopilot's goal and the course are in window coordinates too — the atlas run's pilot had gone
+    // on to where its goal had been before a slide of 64 cells)
+    this.pilot?.shift(-dx, -dy);
+    const c = this.course;
+    if (c) {
+      c.start = [c.start[0] - dx, c.start[1] - dy];
+      c.goal = [c.goal[0] - dx, c.goal[1] - dy];
+    }
   }
 
   /** The window jumped (the atlas map's warp): out to the editor, the units gone. */
@@ -482,9 +507,34 @@ export class HeroSandbox {
     const cam = this.d.core.camera;
     const h = this.hero?.position();
     const g = h ?? cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, this.d.heightAt);
-    // (up the screen: away from the eye)
-    const heading = Math.atan2(-Math.sin(cam.azimuth), -Math.cos(cam.azimuth));
-    const c = gen.make([g[0], g[1]], heading, this.seed++);
+    const t = this.d.api.terrain!;
+    await this.d.api.refresh();
+    // (a heading the course fits the loaded world along, and the land along it is crossable by this hero before
+    // anything is laid: up the screen first — away from the eye — then round the compass)
+    const up = Math.atan2(-Math.sin(cam.azimuth), -Math.cos(cam.azimuth));
+    const m = this.hero?.mobility;
+    let c: Course | null = null;
+    let why = '';
+    // (the whole course first, then shorter ones: 8, 5, 3 stations, each at 12 headings)
+    for (let k = 0; k < 36 && !c; k++) {
+      const heading = up + ((k % 12) % 2 ? 1 : -1) * Math.ceil((k % 12) / 2) * (Math.PI / 6);
+      const cand = gen.make([g[0], g[1]], heading, this.seed, { stations: [8, 5, 3][Math.floor(k / 12)] });
+      const inside = [...cand.pieces.map((p) => p.at), ...cand.foes.map((f) => f.at), cand.goal].every((p) => t.heightAt(p[0], p[1]) !== null);
+      if (!inside) {
+        why = 'it runs out of the loaded world';
+        continue;
+      }
+      if (m && !crossable(this.traversal, cand, m).ok) {
+        why = `the land along it isn't crossable by ${this.hero!.role}`;
+        continue;
+      }
+      c = cand;
+    }
+    this.seed++;
+    if (!c) {
+      this.d.say(`No course fits here (${why}): try open, flatter ground`, 4);
+      throw new Error(`hero sandbox: no course fits at (${g[0].toFixed(0)}, ${g[1].toFixed(0)}): ${why}`);
+    }
     this.lay(c.pieces);
     this.d.wake(c.start[0], c.start[1], 140);
     // (the units once the ground under them is in: the edits land four a tick)
@@ -497,7 +547,6 @@ export class HeroSandbox {
     this.course = c;
     // (crossable by this hero? its own traversal field, start to goal)
     const role = this.hero?.role ?? this.role;
-    const m = this.hero?.mobility;
     this.crossing = m ? crossable(this.traversal, c, m) : null;
     this.log.add('host→hero', 'course', c.name, this.crossing ? (this.crossing.ok ? `crossable by ${role}: cost ${this.crossing.cost!.toFixed(0)} over ${this.crossing.straight.toFixed(0)} straight` : `NOT crossable by ${role}`) : 'no mobility to check');
     if (this.hero) {
@@ -642,7 +691,14 @@ export class HeroSandbox {
     if (!tool) return;
     const g = this.d.core.camera.groundAt(sx, sy, this.d.heightAt);
     const at: V2 = [g[0], g[1]];
-    if (tool.kind === 'spawn') this.spawn(tool.unit, at);
+    if (tool.kind === 'spawn') {
+      // (a tap off the loaded world: said, not thrown out of the event handler)
+      try {
+        this.spawn(tool.unit, at);
+      } catch (e) {
+        this.d.say((e as Error).message, 3);
+      }
+    }
     else if (tool.kind === 'pilot') {
       this.arm(null);
       if (this.hero) this.pilotTo(at, { fight: 2.6 });

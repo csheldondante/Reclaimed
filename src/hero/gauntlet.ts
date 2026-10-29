@@ -35,7 +35,7 @@ export interface CourseGenerator {
   id: string;
   name: string;
   /** a course from `at` along `heading` (radians, 0: +x), the same for the same seed */
-  make(at: V2, heading: number, seed: number): Course;
+  make(at: V2, heading: number, seed: number, opts?: { stations?: number }): Course;
 }
 
 /** a small seeded random (mulberry32) */
@@ -54,7 +54,7 @@ function rng(seed: number): () => number {
 export const obstacleCourse: CourseGenerator = {
   id: 'obstacles',
   name: 'Obstacle course',
-  make(at, heading, seed) {
+  make(at, heading, seed, opts = {}) {
     const r = rng(seed);
     const fx = Math.cos(heading);
     const fy = Math.sin(heading);
@@ -89,9 +89,9 @@ export const obstacleCourse: CourseGenerator = {
       (a) => {
         for (let k = 0; k < 2 + Math.floor(r() * 2); k++) foes.push({ kind: 'raider', at: P(a, (k - 1) * 2.5) });
       },
-      // a ramp up and a drop
+      // a mound: up a cell a stride and down again (no drop deeper than a stride: a walker can't jump down 4)
       (a) => {
-        for (let k = 0; k < 4; k++) pieces.push({ kind: 'build', at: P(a - 3 + k * 1.5, 0), material: 'stone', radius: 3, layers: 1 + k });
+        for (let k = 0; k < 7; k++) pieces.push({ kind: 'build', at: P(a - 4.5 + k * 1.5, 0), material: 'stone', radius: 3, layers: 4 - Math.abs(k - 3) });
       },
       // a brute and a runner
       (a) => {
@@ -104,8 +104,10 @@ export const obstacleCourse: CourseGenerator = {
       const j = Math.floor(r() * (i + 1));
       [stations[i], stations[j]] = [stations[j], stations[i]];
     }
-    stations.forEach((f, i) => f(14 + i * 12));
-    const end = 14 + stations.length * 12;
+    // (fewer stations: a shorter course, where the land round the start leaves less room)
+    const used = stations.slice(0, Math.max(1, Math.min(stations.length, opts.stations ?? stations.length)));
+    used.forEach((f, i) => f(14 + i * 12));
+    const end = 14 + used.length * 12;
     pieces.push({ kind: 'build', at: P(end, 0), material: 'crystal', radius: 1.2, layers: 8 });
     return { name: `${this.name} #${seed}`, start: P(0), goal: P(end - 2), pieces, foes };
   },

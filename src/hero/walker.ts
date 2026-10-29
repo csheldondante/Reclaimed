@@ -133,7 +133,7 @@ export class Walker implements Hero {
 
   /** (round 112) its way over the ground for a traversal field: a stride's climb and drop (path.ts canStep: no more than a step either way), the water it won't wade */
   get mobility(): Mobility {
-    return { step: this.tune.step, drop: this.tune.step, deep: this.tune.deep };
+    return { step: this.tune.step, drop: this.tune.step, deep: this.tune.deep, fromLow: true };
   }
 
   get alive(): boolean {
@@ -286,10 +286,11 @@ export class Walker implements Hero {
     const l = Math.hypot(dx, dy) || 1;
     const z = g.heightAt(this.pos[0] + dx, this.pos[1] + dy, { smooth: true });
     if (z === null || !canStep(g, this.pos[0], this.pos[1], this.pos[0] + dx + (dx / l) * 0.5, this.pos[1] + dy + (dy / l) * 0.5, this.tune.step)) return false;
-    // (not into water over DEEP — but always out of it, toward shallower: a hero that ends up in a river wades out)
+    // (not into water over DEEP — but once in it, along it or toward shallower, never deeper: a hero that ends up in a
+    // river wades out; round 112: "toward shallower" only held it fast where the river is one depth across)
     const wet = (x: number, y: number) => this.world.water?.depthAt(x, y) ?? 0;
     const wa = wet(this.pos[0] + dx + (dx / l) * 0.5, this.pos[1] + dy + (dy / l) * 0.5);
-    if (wa > this.tune.deep && wa >= wet(this.pos[0], this.pos[1])) return false;
+    if (wa > this.tune.deep && wa > wet(this.pos[0], this.pos[1]) + 0.1) return false;
     this.pos[0] += dx;
     this.pos[1] += dy;
     return true;

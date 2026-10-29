@@ -177,6 +177,25 @@ export class CpuTraversal implements Traversal {
     const climbCost = m.climbCost ?? 0.5;
     const wadeCost = m.wadeCost ?? 1;
     const hug = m.hugCost ?? 3;
+    const fromLow = !!m.fromLow;
+    /** (fromLow) the lowest ground within a cell of each cell, no more than a drop below it */
+    const lowAt = new Float32Array(n).fill(NaN);
+    const low = (i: number): number => {
+      if (!Number.isNaN(lowAt[i])) return lowAt[i];
+      const cx = (i % w) + x0;
+      const cy = Math.floor(i / w) + y0;
+      let lo = top[i];
+      for (let d = 0; d < NDIR; d++) {
+        const [nx, ny] = nbr(cx, cy, d);
+        const lx = nx - x0;
+        const ly = ny - y0;
+        if (lx < 0 || ly < 0 || lx >= w || ly >= h) continue;
+        const j = ly * w + lx;
+        if (read(j) && top[j] < lo && top[i] - top[j] <= Math.min(step, drop)) lo = top[j];
+      }
+      lowAt[i] = lo;
+      return lo;
+    };
     /** 1: a cell beside a face it can't climb (a wall's foot): kept off, a body has width; 0 not; 2 not yet looked at */
     const walled = new Uint8Array(n).fill(2);
     const besideWall = (i: number): boolean => {
@@ -230,13 +249,14 @@ export class CpuTraversal implements Traversal {
         if (done[a] || !read(a)) continue;
         // the move a → b (toward the goal): up at most step (or a jump), down at most drop, not into deep water
         const up = top[b] - top[a];
+        const climb = fromLow ? top[b] - low(a) : up;
         let e = 1;
-        if (up > step) {
-          if (up > step + jump) continue;
+        if (climb > step) {
+          if (climb > step + jump) continue;
           e += jumpCost;
         }
         if (-up > drop) continue;
-        if (wet[b] > deep && wet[b] >= wet[a]) continue;
+        if (wet[b] > deep && wet[b] > wet[a] + 0.1) continue;
         e += climbCost * Math.max(0, up) + wadeCost * wet[b] + (hug && besideWall(a) ? hug : 0);
         const nc = c + e;
         if (nc < costs[a]) {
