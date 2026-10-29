@@ -7,7 +7,7 @@ import { ROW_H, cellAt, cellPos } from '../world/lattice';
 import { EDIT_TAGS } from '../sim/world-gpu';
 import { CHUNK, columnSlots, readColumn, sfZ, SLOT_WORDS } from '../world/layout';
 import { fieldMeshed } from '../world/materials';
-import { columnAt, materialId, materialName, materialState, type MaterialName } from './common';
+import { columnAt, materialId, materialName, materialState, texelAt, type MaterialName } from './common';
 import { PULL_SLOTS } from '../sim/systems';
 import type { Mirror } from './mirror';
 import { blendedTop } from './smooth';
@@ -205,6 +205,11 @@ export class Terrain {
     return columnAt(this.core.dims.w, this.core.dims.h, x, y, this.core.ring);
   }
 
+  /** (round 112) the texel of a texel-a-column texture (levels, drift) under (x, y): not the buffers' index */
+  private tex(x: number, y: number): number {
+    return texelAt(this.core.dims.w, this.core.dims.h, x, y, this.core.ring);
+  }
+
   private inMap(cx: number, cy: number): boolean {
     return cx >= 0 && cy >= 0 && cx < this.core.dims.w && cy < this.core.dims.h;
   }
@@ -237,22 +242,24 @@ export class Terrain {
   }
 
   /** The ground the field mesh draws at (x, y), with what it leaves sharp on top (`sharp`: a column's own top over its field ground). */
-  private smoothAt(x: number, y: number, sharp: (i: number) => number): number | null {
+  private smoothAt(x: number, y: number, sharp: (i: number, ti: number) => number): number | null {
     const z = blendedTop(x, y, (cx, cy) => this.fieldTop(cx, cy));
     const i = this.col(x, y);
     if (z === null || i < 0) return z;
     const [cx, cy] = cellAt(x, y);
-    const own = sharp(i);
+    const own = sharp(i, this.tex(x, y));
     return own > (this.fieldTop(cx, cy) ?? 0) + 0.05 ? Math.max(z, own) : z;
   }
 
   /** The height of the open sky's floor at (x, y): the ground, loose ground on it, or a structure's top. */
   heightAt(x: number, y: number, opts?: SampleOpts): number | null {
     const lv = this.mirror.f32('levels');
-    const i = this.col(x, y);
-    if (!lv || i < 0) return null;
-    if (opts?.smooth) return this.smoothAt(x, y, (j) => lv[j * 4]);
-    return lv[i * 4];
+    // (round 112: a texture, read at its texel — it had been read at the buffer's index, another column's: the hero
+    // walked a few cells and stopped at walls that weren't there, the user's "it walks me a few steps them stops")
+    const ti = this.tex(x, y);
+    if (!lv || ti < 0) return null;
+    if (opts?.smooth) return this.smoothAt(x, y, (_j, tj) => lv[tj * 4]);
+    return lv[ti * 4];
   }
 
   /** The nature grid's own ground at (x, y) (its top and the loose ground on it), ignoring structures. */
@@ -260,9 +267,11 @@ export class Terrain {
     const s = this.mirror.u32('surface');
     const d = this.mirror.f32('drift');
     const i = this.col(x, y);
+    const ti = this.tex(x, y);
     if (!s || !d || i < 0) return null;
-    if (opts?.smooth) return this.smoothAt(x, y, (j) => sfZ(s[j]) + d[j * 4]);
-    return sfZ(s[i]) + d[i * 4];
+    // (the surface a buffer, at the column's index; the drift a texture, at its texel)
+    if (opts?.smooth) return this.smoothAt(x, y, (j, tj) => sfZ(s[j]) + d[tj * 4]);
+    return sfZ(s[i]) + d[ti * 4];
   }
 
   /**
@@ -275,11 +284,11 @@ export class Terrain {
     const f = this.mirror.f32('levels');
     const lf = this.mirror.f32('layers');
     const lu = this.mirror.u32('layers');
-    const i = this.col(x, y);
-    if (!f || !lf || !lu || i < 0) return null;
+    const ti = this.tex(x, y);
+    if (!f || !lf || !lu || ti < 0) return null;
     let best: number | null = null;
     for (let k = 0; k < 4; k++) {
-      const v = f[i * 4 + k];
+      const v = f[ti * 4 + k];
       if (v < 0) continue;
       if (v <= z + 0.5 && (best === null || v > best)) best = v;
     }

@@ -35,3 +35,14 @@ export function columnAt(w: number, h: number, x: number, y: number, ring?: { id
   // (round 105, ringwin: a per-column buffer's index is the column's place on the window's ring)
   return ring ? ring.idx(cx, cy) : cy * w + cx;
 }
+
+/**
+ * (round 112, herosandbox) The texel under world (x, y) in a texel-a-column texture's mirrored image (W wide), or -1
+ * off the map. Not the per-column buffer's index: since round 107 (pages) a buffer is page-major and a texture holds
+ * each page at its place, so the two differ for every window more than a page across (sim/pages.ts `t` / `i`).
+ */
+export function texelAt(w: number, h: number, x: number, y: number, ring: { t(x: number, y: number): number }): number {
+  const [cx, cy] = cellAt(x, y);
+  if (cx < 0 || cy < 0 || cx >= w || cy >= h) return -1;
+  return ring.t(cx, cy);
+}
