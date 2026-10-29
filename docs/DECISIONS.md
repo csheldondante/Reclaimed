@@ -24,6 +24,15 @@ each was implemented.
   town built by agents, then overgrown). Everything else sleeps. The strengths to protect: interactivity and varied,
   striking terrain.
 
+- Physics, the user: "For physics maybe a tunable parameter for how much objects can interpenetrate maybe as a
+  function of mass?" (branch `physfix`: the allowed overlap a function of mass, in the tuning registry).
+- Towns, the user: "I think that towns should visibly grow but slowly. Imagine a town has it's growth field and
+  planned tiles to build. The unit haul to the tiles and maybe work to build them bit by bit. Essentially we store
+  progress and so although you could watch the agents build you can also leave and come back and more tiles will have
+  been completed without any real agent simulation while you are gone" (BACKLOG ST18): each planned tile stores its
+  build progress; watched, agents haul and build it bit by bit; unwatched, progress advances by rate × time elapsed
+  with no agent simulation, and the land shows the result on arrival.
+
 ## 2026-10-29 — round 109 (session 5, `places`) — more devices; generators and editors; better runs
 
 - Devices, the user: "I also want to get my desktop set up tomorrow so you can orchestrate testing on multiple devices

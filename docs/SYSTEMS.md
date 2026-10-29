@@ -59,6 +59,11 @@ weighed by what it does for those two.
 planned, built by agents and then overgrown. The same bake that runs between runs, shown over a short sequence,
 reactive visuals (dust, building, growth) included.
 
+**Towns grow slowly, as stored progress** (the user, round 110: "towns should visibly grow but slowly"). A town's
+growth field picks planned tiles; each tile keeps its build progress. Watched, agents haul to it and build it bit
+by bit (reactive). Unwatched, the progress advances by rate × elapsed time with no agent simulated, and arrival
+realises what was completed meanwhile (BACKLOG ST18).
+
 **Today** (contracts): `SimTiers` (src/api/contracts/simtiers.ts) holds rain erosion, wind erosion and growth baked
 in play, `live(processes, rect)` for a player's direct invocation, `bake(rect|'all', …)` over the window only.
 Missing: the atlas-scale bake per region (SM4), the showcase (a bake shown over time), latency priority for the
