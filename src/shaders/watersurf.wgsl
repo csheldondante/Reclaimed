@@ -63,7 +63,9 @@ fn build(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation
   let e = p + vec2<i32>(1, 0);
   let ur = vec2<i32>(p.x + o, p.y + 1);
   let ul = vec2<i32>(p.x + o - 1, p.y + 1);
-  if (id.x < G.mapW && id.y + 1u < G.mapH) {
+  // (round 107, pages: ur — the row above, shifted right on odd rows — is past the window's right edge for an odd
+  // row's last column; both triangles use it, so neither is made there. ?pagecheck=1 found it looked up off the window)
+  if (id.x < G.mapW && id.y + 1u < G.mapH && inMap(ur)) {
     let bp = bedDepth(p);
     let bur = bedDepth(ur);
     // (a heightfield chunk's water is the LOD rings' — hybrid; renderprep's rule for the boxes was the same)
