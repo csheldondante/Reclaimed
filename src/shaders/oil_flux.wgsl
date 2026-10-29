@@ -9,8 +9,8 @@
 @group(0) @binding(6) var<storage, read_write> oilFlux: array<Dirs>;
 @group(0) @binding(7) var<storage, read> flux: array<Dirs>;
 
-const OIL_GAIN: f32 = 0.06 * 2.0 / 3.0; // per pipe (water_flux.wgsl)
-const OIL_FRICTION: f32 = 0.95;
+// (round 112, waterscale) oil's own pipes in physical units: the water's law (common.wgsl pipeCoef), its own roughness
+// (G.tune.pipesOilRoughness) — was f = f * 0.95 + 0.04 dH a tick, a slick spreading at tens of cells a second
 const CURRENT_DRAG: f32 = 0.6;
 
 @compute @workgroup_size(8, 8)
@@ -26,6 +26,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let d = max(water[i], 1e-4);
   let wf = flux[i];
   var f = oilFlux[i];
+  let c = pipeCoef(o, G.tune.worldGravity, G.tune.pipesOilRoughness, G.tune.pipesDamping, G.tune.pipesVmax);
   for (var k = 0u; k < NDIR; k++) {
     let q = nbr(p, k);
     var Hn = g;
@@ -37,7 +38,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     // current: share of the water column moving this way this tick
     let current = max(0.0, wf[k] - back) / d;
-    f[k] = max(0.0, f[k] * OIL_FRICTION + OIL_GAIN * (H - Hn) + CURRENT_DRAG * current * o);
+    f[k] = pipeStep(f[k], H - Hn, c) + CURRENT_DRAG * current * o;
   }
   let total = dSum(f);
   if (total > o) { f = dScale(f, o / total); }

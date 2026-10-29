@@ -35,9 +35,16 @@ struct Tune {
   structureFlowRate: f32,
   waterRain: f32,
   waterEvap: f32,
-  pipesGain: f32,
-  pipesFriction: f32,
+  pipesRoughness: f32,
+  pipesDamping: f32,
+  pipesVmax: f32,
   pipesRiverRelax: f32,
+  pipesOilRoughness: f32,
+  flowLookRefSpeed: f32,
+  flowLookRefScroll: f32,
+  flowLookCurve: f32,
+  flowLookMinScroll: f32,
+  flowLookStill: f32,
   flowWaterGain: f32,
   flowWaterFriction: f32,
   flowWaterDrop: f32,
@@ -69,9 +76,6 @@ struct Tune {
   sprayDrops: f32,
   spraySplash: f32,
   sprayMist: f32,
-  pad49: f32,
-  pad50: f32,
-  pad51: f32,
 };
 
 struct Globals {
@@ -326,6 +330,49 @@ fn simStep() -> f32 { return G.dt * 60.0; }
 fn perTick(p: f32) -> f32 { return 1.0 - pow(1.0 - clamp(p, 0.0, 1.0), simStep()); }
 /** a fraction k a 60 Hz tick (a relaxation toward, a decay by), over this tick */
 fn relaxTick(k: f32) -> f32 { return 1.0 - pow(1.0 - clamp(k, 0.0, 1.0), simStep()); }
+
+// ---- (round 112, waterscale) the pipes in physical units ---------------------------------------------------------
+// The user: "The water seems to fast for the scale. Is the 9.8m/s relative to real clock time or game clock time?" A
+// sim second is a real second at 1x (world-core.ts: the wall clock's accumulator); a cell is a metre. A pipe holds f:
+// the volume leaving a column toward a neighbour in a 60 Hz step, in the column's depths (a cell's area 1). A hex
+// face is 1/sqrt(3) wide over a cell sqrt(3)/2 in area, so f = PIPE_FACE * dt * h * u: h the depth it leaves
+// (upwind), u its speed (cells a second). Per unit width the discharge q = h u obeys the shallow-water momentum
+// equation with Manning's friction and a little linear drag:
+//   dq/dt = g h dH/l - g n^2 q|q| / h^(7/3) - damping q
+// the push explicit, the friction implicit (stable at any depth and speed: the quadratic solved), every 60 Hz step
+// (sim/flow.ts FLOW_SUB). Steady, a sheet or river runs at u = h^(2/3) sqrt(S) / n — Manning's law. The tuning
+// registry has n (pipesRoughness), the drag (pipesDamping) and a top speed (pipesVmax); water_flux.wgsl runs it, and
+// a held river's seed takes its steady state (pipeSteady) — the atlas's and an authored river's table rate their
+// speed by the same law (world/rivertable.ts riverSpeed).
+/** the pipes' step (s): a 60 Hz step whatever the tick rate */
+const PIPE_DT: f32 = 1.0 / 60.0;
+/** a face's width over a cell's area (the hex lattice, centres 1 apart) */
+const PIPE_FACE: f32 = 2.0 / 3.0;
+/** the depth the push takes at most: gravity waves sqrt(g h) must stay well under a cell a step for the explicit push
+ *  (the 60 Hz step's stability, ~180 deep at 9.8; this leaves a margin) — deeper water spreads as this deep */
+const PIPE_WAVE_DEPTH: f32 = 60.0;
+/** a pipe law's per-column numbers for water h deep: x the push a cell of head gives in a step, y the friction's
+ *  quadratic coefficient, z the flux at the top speed, w the linear drag a step */
+fn pipeCoef(h: f32, g: f32, n: f32, damping: f32, vmax: f32) -> vec4<f32> {
+  let hh = max(h, 1e-3);
+  let k = PIPE_FACE * PIPE_DT * hh;
+  return vec4<f32>(PIPE_FACE * g * PIPE_DT * PIPE_DT * min(hh, PIPE_WAVE_DEPTH), PIPE_DT * g * n * n / (k * pow(hh, 4.0 / 3.0)), k * vmax, PIPE_DT * damping);
+}
+/** the water's pipes' law (G.tune) for water h deep */
+fn waterPipe(h: f32) -> vec4<f32> { return pipeCoef(h, G.tune.worldGravity, G.tune.pipesRoughness, G.tune.pipesDamping, G.tune.pipesVmax); }
+/** a pipe's flux after a step: f now, dH the head across it (cells) */
+fn pipeStep(f: f32, dH: f32, c: vec4<f32>) -> f32 {
+  let A = f + c.x * dH;
+  if (A <= 0.0) { return 0.0; }
+  let b = 1.0 + c.w;
+  return min(2.0 * A / (b + sqrt(b * b + 4.0 * c.y * A)), c.z);
+}
+/** a pipe's steady flux for head dH: the push matched by the friction (y f^2 + w f = x dH) */
+fn pipeSteady(dH: f32, c: vec4<f32>) -> f32 {
+  let C = c.x * dH;
+  if (C <= 0.0) { return 0.0; }
+  return min(2.0 * C / (c.w + sqrt(c.w * c.w + 4.0 * c.y * C)), c.z);
+}
 
 /**
  * (perfopt, ?flowhz= — sim/flow.ts) Is this tick a sleeping chunk's turn to update a flow that runs every n ticks

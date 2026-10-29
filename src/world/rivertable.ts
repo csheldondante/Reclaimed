@@ -19,6 +19,7 @@ import { cellPos, nbr, NDIR } from './lattice';
 import type { Interval } from './layout';
 import { NODE_WORDS, type Catchments } from '../atlas/rivers';
 import type { RiverGraph } from '../weather/catchwet';
+import { TUNE } from '../tune/params';
 
 /** a step down from a river's column this high or more is a fall: its water a sheet RIVER_SHEET deep, quick (forms.wgsl) */
 export const RIVER_FALL = 1.5;
@@ -33,15 +34,44 @@ export function riverChannelDepth(width: number): number {
   return Math.min(3.5, Math.max(1.2, width * 0.3));
 }
 
+/** a river's level falling slower than this is rated as this (a lake's reach, a flat): it still runs */
+export const RIVER_MIN_SLOPE = 0.001;
+/** the pipes' 60 Hz step (s: common.wgsl PIPE_DT) */
+export const PIPE_DT = 1 / 60;
+
 /**
- * (round 84, atlas/rivers.ts) A node's speed at the reference wetness (cells a 60 Hz tick): the discharge Q (cells³ a
- * tick) over the wetted section (the carve's parabola filled to 0.3 under the level), the square root taken so a brook
- * still moves; quicker where the level falls (`fall` over `dist` to the next node, world units).
+ * (round 112, waterscale) The pipes' steady speed (cells a second, a cell a metre, real time at 1x) for water `depth`
+ * deep whose level falls `slope` a cell: Manning's law, u = depth^(2/3) sqrt(slope) / n, no faster than the top
+ * speed — the CPU side of common.wgsl pipeCoef / pipeSteady (the tuning registry's pipes group, read as the table is
+ * made: a slider moved later moves the pipes, not tables already made). The linear drag (pipes.damping) is left out:
+ * it's for deep water's sloshing, a few per cent in a river.
  */
-export function riverSpeed(Q: number, width: number, depth: number, fall: number, dist: number): number {
-  const A = 2 * width * Math.max(0.3, (2 / 3) * depth - 0.3);
-  const slope = Math.max(0, Math.min(fall, 12)) / dist;
-  return Math.min(0.8, Math.min(0.45, Math.max(0.06, 0.5 * Math.sqrt(Q / A))) * (1 + Math.min(slope * 6, 1.5)));
+export function pipeSpeed(depth: number, slope: number): number {
+  const P = TUNE.pipes;
+  return Math.min(P.vmax, (Math.pow(Math.max(depth, 0), 2 / 3) * Math.sqrt(Math.max(slope, 0))) / P.roughness);
+}
+
+/**
+ * (round 84, atlas/rivers.ts; round 112: in physical units) A node's speed at the reference wetness (cells a 60 Hz
+ * step): the pipes' steady speed (pipeSpeed) for the wetted section's mean depth (the carve's parabola filled to 0.3
+ * under the level) and the level's fall (`fall` over `dist` to the next node, world units; at least RIVER_MIN_SLOPE)
+ * — what the pipes run it at where it's woken, so a held river is drawn moving as it would run. (Was the discharge
+ * over the section, square-rooted, 0.06–0.8 cells a step: 4–48 cells a second.)
+ */
+export function riverSpeed(width: number, depth: number, fall: number, dist: number): number {
+  const mean = Math.max(0.3, (2 / 3) * depth - 0.3);
+  const slope = Math.max(RIVER_MIN_SLOPE, Math.max(0, Math.min(fall, 12)) / dist);
+  return pipeSpeed(mean, slope) * PIPE_DT;
+}
+
+/**
+ * (round 112) The level's fall a cell the pipes need to carry discharge Q (cells³ a 60 Hz step) through a channel
+ * `width` (half-width) wide at its section's mean depth: Manning's law backwards (atlas/rivers.ts pipeSlope: against
+ * the level's own fall).
+ */
+export function pipeSlopeFor(Q: number, width: number, depth: number): number {
+  const mean = Math.max(0.3, (2 / 3) * depth - 0.3);
+  return Math.pow(((Q / PIPE_DT) * TUNE.pipes.roughness) / (2 * width * Math.pow(mean, 5 / 3)), 2);
 }
 
 /** a river's node (compose.wgsl RiverNode; atlas/rivers.ts NODE_WORDS): world units, the water's level (world z) */
@@ -150,7 +180,7 @@ export function riverNodes(r: AuthoredRiver, first = 0): RiverNode[] {
     if (d.level > p.level + 1e-6) throw new Error(`rivertable: the level rises from point ${k} to ${k + 1} (${p.level} → ${d.level}): a river only falls`);
     const fall = last ? 0 : p.level - d.level;
     const dist = last ? 1 : Math.hypot(d.x - p.x, d.y - p.y) || 1;
-    return { x: p.x, y: p.y, level: p.level, width: r.width, next: first + (last ? k : k + 1), depth, speed: riverSpeed(r.discharge, r.width, depth, fall, dist) };
+    return { x: p.x, y: p.y, level: p.level, width: r.width, next: first + (last ? k : k + 1), depth, speed: riverSpeed(r.width, depth, fall, dist) };
   });
 }
 

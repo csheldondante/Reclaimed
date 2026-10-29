@@ -133,6 +133,21 @@ fn taperCorner(ring: array<vec2<i32>, 6>, sum0: f32, n0: f32, kind: u32) -> f32 
   return sum / n;
 }
 // hex corner values (terrainshape.wgsl; 2w × h, two owned corners per cell):
+/**
+ * (round 112, waterscale — the user: "Yes also keep flow animations normalized to the new numbers so we still see flow
+ * that would previously be considered slow") The water's speed u (cells a second, real time at 1x) as the draw
+ * shaders take it: not literal — mapped onto the animation's range. The streaks (render.wgsl flowStreaks) scroll at
+ * min(S · 6, 5) / 2 cells a second for S = |fv| / depth, and foam where S is high; here S is chosen so the scroll is
+ * refScroll · (u / refSpeed)^curve, at least minScroll for water moving faster than still (the tuning registry's
+ * flowLook group) — slow water still visibly flows, fast still faster. Returns fv for depth d.
+ */
+fn flowLook(u: vec2<f32>, d: f32) -> vec2<f32> {
+  let s = length(u);
+  if (s <= G.tune.flowLookStill) { return vec2<f32>(0.0); }
+  let scroll = max(G.tune.flowLookRefScroll * pow(s / G.tune.flowLookRefSpeed, G.tune.flowLookCurve), G.tune.flowLookMinScroll);
+  return u / s * (scroll / 3.0) * max(d, 0.06);
+}
+
 // x ground height or -1, y water level or -1, z drift level or -1, w (slot 0
 // only) 1 where the cell's look differs from a neighbour's
 @group(0) @binding(16) var cornerOut: texture_storage_2d<rgba32float, write>;
@@ -185,14 +200,18 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
 
   // (with the field mesh no march reads x: the flow's direction goes in x
   // and w, for the water's streaks — render.wgsl flowOf)
+  // (round 112: the water's speed in cells a second — the pipes' net flow is PIPE_FACE · dt · depth · u, flow.wgsl
+  // netFlow — then drawn by flowLook)
+  let wd = waterDepth[i];
+  var u = netFlow(p) / (PIPE_FACE * PIPE_DT * max(wd, 0.005));
   // (round 84, ?rivers=table: a river nothing has woken is drawn flowing by the atlas's table, not by its flux —
-  // riverheld.wgsl: the flow there times its depth, as the pipes' net flow would be)
-  var fv = netFlow(p);
+  // riverheld.wgsl: its speed, cells a 60 Hz step)
   let rh = riverHere(id.xy);
   // (woken — a breach near it — the river still runs as the table has it, as deep as it still is, and the pipes' own
   // flow on top: the water running off into the breach)
-  if (riverHeld(id.xy, rh)) { fv = rh.vel * waterDepth[i]; }
-  else if (rh.on) { fv += rh.vel * min(waterDepth[i], rh.depth); }
+  if (riverHeld(id.xy, rh)) { u = rh.vel / PIPE_DT; }
+  else if (rh.on) { u += rh.vel / PIPE_DT * min(wd, rh.depth) / max(wd, 0.005); }
+  let fv = select(vec2<f32>(0.0), flowLook(u, wd), wd > 0.005);
   if (MR.n.w != 0u) { fields[i] = vec4<f32>(fv.x, moisture[i], glow, fv.y); }
   else { fields[i] = vec4<f32>(sz, moisture[i], glow, packFlow(fv)); }
   // the six corners (my two, and the four my neighbours own — the same

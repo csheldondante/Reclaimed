@@ -13,7 +13,7 @@
 // carves a channel along the segments between nodes.
 
 import { warmth } from './regions';
-import { riverChannelDepth, riverSpeed } from '../world/rivertable';
+import { pipeSlopeFor, riverChannelDepth, riverSpeed } from '../world/rivertable';
 
 /** texels drained through for a river, and the most a lava river runs */
 const RIVER_MIN = 160;
@@ -26,14 +26,13 @@ export const RIVER_LAVA = 1;
  * flow of those as a function of dryness … the unperturbed river basin as a steady state with no actual simulation
  * and flow as strictly a render artifact computed at the atlas level") A node's discharge at the reference wetness:
  * RIVER_RUNOFF cells³ a tick for each texel its watershed drains (acc: texels upstream, fewer where the latitude is
- * dry). The water's pipes (water_flux.wgsl) carry a flow set by the level's fall, not by the depth — the steady
- * surface slope for a discharge Q through a channel W columns wide is Q / (PIPE_Q · W), PIPE_Q = GAIN / (1 −
- * FRICTION) / 2 — so the depth is the channel's (the carve's) and the speed is Q over the wetted section, quickened
- * where the level falls fast (rapids). The rating for other wetness (Q × wet) is the riverFlow contract's
+ * dry). The depth is the channel's (the carve's); (round 112) the speed is the pipes' own for that depth and the
+ * level's fall — Manning's law in physical units (world/rivertable.ts riverSpeed, common.wgsl pipeCoef), so a held
+ * river is drawn as the pipes would run it; pipeSlope compares the fall the pipes need for Q (pipeSlopeFor) with the
+ * level's own. The rating for other wetness (Q × wet) is the riverFlow contract's
  * (sim/world-gpu.ts RIVER_DEPTH_EXP, RIVER_SPEED_EXP).
  */
 export const RIVER_RUNOFF = 0.002;
-const PIPE_Q = 0.08 / 0.015 / 2;
 
 /**
  * (round 90, BACKLOG W2 — the user: "For the rivers why does the river height lie above the dip? Is it because the
@@ -377,17 +376,17 @@ export function findRivers(opt: {
       if (li >= 0 && ld !== li && nodeAt[d]) lakes[li].outflow = nodeAt[d] - 1;
     }
     if (fall > 12) waterfalls++;
-    // (round 84) the speed at the reference wetness: the discharge over the wetted section (the carve's parabola,
-    // filled to 0.3 under the level), the square root taken so a brook still moves; quicker where the level falls
+    // (round 84; round 112) the speed at the reference wetness: the pipes' steady speed for the wetted section (the
+    // carve's parabola, filled to 0.3 under the level) and the level's fall (world/rivertable.ts riverSpeed)
     if (!lv) {
       const Q = RIVER_RUNOFF * acc[i];
       const dist = next !== k ? Math.hypot(((i % n) - (d % n)) * cell, (Math.floor(i / n) - Math.floor(d / n)) * cell) || cell : cell;
       const slope = Math.max(0, Math.min(fall, 12)) / dist;
-      const v = riverSpeed(Q, w, f[o + 6], fall, dist);
+      const v = riverSpeed(w, f[o + 6], fall, dist);
       f[o + 7] = v;
       speeds.push(v);
       qs.push(Q);
-      if (slope > 0) ratio.push(Q / (PIPE_Q * 2 * w) / slope);
+      if (slope > 0) ratio.push(pipeSlopeFor(Q, w, f[o + 6]) / slope);
     }
   }
   // (round 109) the catchments: each texel's first node down the tree (the flood's order: a texel after the one it

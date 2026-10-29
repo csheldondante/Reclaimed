@@ -11,10 +11,9 @@
 @group(0) @binding(6) var<storage, read> oil: array<f32>;
 const OIL_DENSITY: f32 = 0.88;
 
-// per pipe: the hex Laplacian weights each of the six neighbours 2/3 as much
-// as the square grid's four (the same continuum spreading rate)
-// GAIN (was 0.12 * 2.0 / 3.0): G.tune.pipesGain (round 108, src/tune/params.ts)
-// FRICTION (was 0.985): G.tune.pipesFriction (round 108, src/tune/params.ts)
+// (round 112, waterscale) the pipes' law in physical units: common.wgsl pipeCoef — pushed by the world's gravity,
+// held back by Manning's friction (G.tune.pipesRoughness), a little drag (pipesDamping), a top speed (pipesVmax).
+// Was: f = f * 0.985 + 0.08 * dH a tick, its steady flux 5.3 dH a tick — ~30 cells/s down a 10 % slope a cell deep.
 
 // (round 84, ?rivers=table: riverheld.wgsl) the atlas's rivers at their steady state
 @group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
@@ -30,7 +29,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = colIdxI(p);
   // (a sleeping chunk: round 80 — its flux frozen as it is, the surface drawn moving by it. perfopt, ?settle=0:
   // land come in asleep has none — a river would be drawn still — so while it's drowsy (just come in) a column
-  // with no flux takes the pipes' steady state for its levels at once: f = GAIN (H - Hn) / (1 - FRICTION))
+  // with no flux takes the pipes' steady state for its levels at once: pipeSteady, round 112)
   // (round 84, ?rivers=table: a river's column nothing has woken is held at the atlas's steady state — its flux the
   // pipes' steady flux for its levels, so what's awake beside it is fed as the river would feed it)
   // (a settling pass, SETTLE_PASS: its rect, the land just come in, the pipes as awake)
@@ -43,6 +42,8 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let g = max(f32(sfZ(surface[i])) + driftAt(p), bodyTopAt(p));
   let H = g + d + oil[i] * OIL_DENSITY;
   var f = flux[i];
+  // (round 112: the law's numbers for this column's depth — the depth the water leaves, upwind)
+  let c = waterPipe(d);
   for (var k = 0u; k < NDIR; k++) {
     let q = nbr(p, k);
     var Hn = max(g, G.ocean.x);
@@ -50,7 +51,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
       let j = colIdxI(q);
       Hn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q)) + water[j] + oil[j] * OIL_DENSITY;
     }
-    f[k] = select(max(0.0, f[k] * G.tune.pipesFriction + G.tune.pipesGain * (H - Hn)), max(0.0, G.tune.pipesGain / (1.0 - G.tune.pipesFriction) * (H - Hn)), seed);
+    f[k] = select(pipeStep(f[k], H - Hn, c), pipeSteady(H - Hn, c), seed);
   }
   let total = dSum(f);
   if (total > d) { f = dScale(f, d / total); }

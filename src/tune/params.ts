@@ -119,9 +119,28 @@ const SPEC = {
     title: 'Water pipes (the game\'s water)',
     owner: 'water_flux.wgsl / water_depth.wgsl (GPU: the atlas\'s and the fixed levels\' water)',
     params: {
-      gain: { label: 'gain', units: '/tick', min: 0.005, max: 0.16, step: 0.005, def: 0.08, gpu: true, help: 'how fast a level difference moves it sideways (> 0.16 is unstable)' },
-      friction: { label: 'flux kept', units: 'share', min: 0.5, max: 0.999, step: 0.001, def: 0.985, gpu: true, help: 'share of last tick\'s flux kept (momentum)' },
+      // (round 112, waterscale — the user: "The water seems to fast for the scale": the pipes in physical units, pushed
+      // by the world's gravity, held back by Manning's friction — common.wgsl pipeCoef. The old per-tick gain 0.08 and
+      // flux kept 0.985 are gone: the push is g·dt²·depth, the friction comes from these)
+      roughness: { label: 'roughness n', units: 's/m^⅓', min: 0.01, max: 0.15, step: 0.005, def: 0.04, gpu: true, url: 'pipen', help: 'Manning\'s n: a steady sheet or river runs at depth^⅔ · √slope / n (0.03 a clean channel, 0.04 a stony stream, 0.07 a boulder torrent)' },
+      damping: { label: 'wave damping', units: '1/s', min: 0, max: 3, step: 0.05, def: 0.3, gpu: true, help: 'a linear drag on top of the friction: deep water (where Manning barely bites) stops sloshing and can settle and sleep' },
+      vmax: { label: 'top speed', units: 'cells/s', min: 1, max: 30, step: 0.5, def: 8, gpu: true, help: 'the fastest water runs (over a ledge the head is the whole drop): a cell a metre' },
       riverRelax: { label: 'river relax', units: 'share/step', min: 0.001, max: 0.5, step: 0.001, def: 0.02, gpu: true, help: 'how fast a held river comes to its table\'s depth' },
+      oilRoughness: { label: 'oil roughness n', units: 's/m^⅓', min: 0.01, max: 0.3, step: 0.005, def: 0.08, gpu: true, help: '(round 112) oil\'s own pipes (oil_flux.wgsl), the same law: thicker, slower than water — and carried by the water\'s current' },
+    },
+  },
+  flowLook: {
+    title: 'Water drawn flowing',
+    owner: 'renderfields.wgsl flowLook (GPU: the streaks, foam and scroll drawn on the pipes\' water and the held rivers)',
+    // (round 112 — the user: "Yes also keep flow animations normalized to the new numbers so we still see flow that
+    // would previously be considered slow": the water's speed in cells a second mapped onto the animation's range, not
+    // drawn at its literal speed)
+    params: {
+      refSpeed: { label: 'reference speed', units: 'cells/s', min: 0.1, max: 8, step: 0.05, def: 1.5, gpu: true, help: 'a typical river\'s speed: drawn scrolling at the reference scroll' },
+      refScroll: { label: 'reference scroll', units: 'cells/s drawn', min: 0.1, max: 2.5, step: 0.05, def: 1, gpu: true },
+      curve: { label: 'curve', units: 'exp', min: 0.1, max: 1.5, step: 0.05, def: 0.5, gpu: true, help: 'scroll ∝ speed^this: under 1 spreads the slow speeds out, so slow water still reads as flowing and fast as faster' },
+      minScroll: { label: 'least scroll', units: 'cells/s drawn', min: 0, max: 1, step: 0.02, def: 0.25, gpu: true, help: 'any water moving faster than still is drawn scrolling at least this' },
+      still: { label: 'still under', units: 'cells/s', min: 0, max: 0.5, step: 0.005, def: 0.02, gpu: true, help: 'slower than this it\'s drawn still' },
     },
   },
   flow: {
