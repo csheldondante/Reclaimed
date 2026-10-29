@@ -1,7 +1,7 @@
 // Round 107 (`pages`, docs/PAGES.md P2.0 M1 / P2.1): how a kernel finds a window chunk's page (common.wgsl colPage).
 //   ?pages=ring     the ring's wrap computed (c + Globals.ring mod the window's chunks; P2.2: the identity's slots only)
 //   ?pages=table    the page table looked up in the Globals (Globals.pages: a uniform, no new binding)
-//   ?pages=storage  (M1 only) the table in a read-only storage buffer at binding 37, for the kernels the M1 bench
+//   ?pages=storage  (M1 only) the table in a read-only storage buffer at binding 61, for the kernels the M1 bench
 //                   times that have a storage slot free (PAGE_STORAGE_KERNELS); every other kernel computes the ring
 // All three give the same columns (scripts/pagetest.mjs); they differ only in what the lookup costs (M1:
 // src/perf/pagebench.ts). The swap is made on a module's code when it is made (gpu/pipeline.ts makeModule).
@@ -18,7 +18,7 @@ export const PAGE_ADDR: PageAddr = (() => {
 })();
 
 /** the storage table's binding (M1's ?pages=storage) */
-export const PAGE_TAB_BINDING = 37;
+export const PAGE_TAB_BINDING = 61;
 
 /** (M1) the kernels the bench times that take the table from storage with ?pages=storage (each module's label) */
 export const PAGE_STORAGE_KERNELS = new Set(['water-flux', 'sediment', 'sediment-out', 'liquid-water-flux', 'liquid-water-jets', 'liquid-water-depth']);
@@ -42,7 +42,7 @@ export const PAGE_MISS_BINDING = 60;
 export const PAGE_MISS_MAX = 1024;
 export const pageMiss: { buf: GPUBuffer | null; labels: string[]; unchecked: Set<string>; layouts: WeakSet<GPUBindGroupLayout> } = { buf: null, labels: [], unchecked: new Set(), layouts: new WeakSet() };
 
-/** a module's code with colSlot the build's way; `storage`: this module takes the table from binding 37; `check`: its pageMiss entry */
+/** a module's code with colSlot the build's way; `storage`: this module takes the table from binding 61; `check`: its pageMiss entry */
 export function pagesCode(code: string, storage: boolean, check?: number): string {
   if (!code.includes(MARK)) return code;
   if (check !== undefined) {

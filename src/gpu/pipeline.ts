@@ -88,7 +88,7 @@ export function makeCompute(
   spec: BindSpec,
   entryPoint = 'main',
 ): ComputeKernel {
-  // (round 107, M1's ?pages=storage: the timed kernels with a storage slot free read the table from binding 37)
+  // (round 107, M1's ?pages=storage: the timed kernels with a storage slot free read the table from binding 61 — round 107: not 37, agents.wgsl navCost)
   const storage = PAGE_ADDR === 'storage' && PAGE_STORAGE_KERNELS.has(label) && Object.values(spec).filter((k) => k === 'read' || k === 'rw').length < 8;
   if (storage) spec = { ...spec, [PAGE_TAB_BINDING]: 'read' };
   // (round 107, ?pagecheck=1: the off-window counter on every kernel with a storage slot free)

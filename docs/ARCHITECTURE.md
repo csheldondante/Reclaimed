@@ -1181,7 +1181,7 @@ The ring above is now a page table, and storage is page-major. Window coordinate
   Globals (`pages`, `pageInv`: 512 vec4 each, two u16 a u32 — GLOBALS_BYTES 1920 -> 18304), written only when
   `version` moves (a slide). `?pages=table` (the default) looks the slot up; `?pages=ring` computes the identity's
   (gpu/pages-mode.ts swaps common.wgsl colSlot when a module is made); `?pages=storage` is M1's only (a storage table
-  at binding 37 on the timed kernels with a slot free).
+  at binding 61 on the timed kernels with a slot free).
 - **Buffers** are page-major: column (x, y) at slot * 256 + (y % 16) * 16 + x % 16 (common.wgsl colIdx; colXY back
   through pageInv). **Textures** are page atlases, a slot's 16 x 16 texels at (slot % nx, slot / nx) * 16 (texPage;
   texCol2's 8 x 8, texColK's k wide): with the identity at offset 0 the atlas is window order, the buffers never are.
