@@ -27,6 +27,8 @@ The user, on the eye side: option (a), "the tile drawn cut". On the disk: "Is th
 | TY7 | Disk to RAM ahead: what's prefetched ahead (Streamer.prefetch -> bring: the store's worker read, the main thread's decode, the pool's upload) measured against pool hits once the disk rows stream from disk; decode off the main thread if it's the cost | M | open |
 | TY8 | A grey sliver at a region's edge in a panning frame (desktop z3.5, gate shot) | S | open |
 | TY9 | The 3080's premerge gate: pans' window-undrawn false (the mirror 60 frames behind: read every frame while the gate runs, a 5-frame run filter), the gate's 60 Hz cap catching up after a late tick (the pacer's low envelope to 8 ms, its guard at one turn: fixed), one frame threshold (58), notes not failures, `--throttle`, the pipeline in each row | S | done (`tilefix2`), the 3080 to re-run |
+| TY10 | (3080 gate, d614e17) The gate's 60 Hz hold isn't applied on the run views: run-desktop and run-wide measured 68 fps while the line says "under the 60 Hz cap" | S | open |
+| TY11 | (3080 gate) Golden diffs of 1.0-1.95% on desktop z2.2 and w384-phone z14/z8/z5 on NVIDIA (the rest 0-0.6%): find what differs run to run there, or set the tolerance per adapter from measured noise, rather than raise it blindly | S | open |
 
 ## Round 112 (2026-10-29, session 5, `tilefix`) — the terrain past the window drawn on every screen; the merge gate
 
