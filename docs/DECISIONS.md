@@ -8,6 +8,10 @@ each was implemented.
 - Devices, the user: "I also want to get my desktop set up tomorrow so you can orchestrate testing on multiple devices
   to speed up development. I have two other computers but only one monitor. One has a 12GB 3080 which I think can be
   used for some local model work and asset generation pipelines." (BACKLOG DV1, DV2)
+- Asset DB, the user: "I want the 3080 to have a DB service we can query. I think use an embedding plus filters and
+  tags by asset type to make keyword search for assets. I would like to also have formatters for any custom data types
+  we want available for streaming (or maybe expose that to the other systems and they can generate and link data to
+  ids?)" (BACKLOG DV3)
 - Generators and editors, the user: "I also really want to create playground and start working on generators and
   editors for: Buildings and architectural styles, Animated creatures, Vehicles, Items and equipment (related to
   creatures), Controllers and move sets, Tailored level generators, Terrain generation" (BACKLOG GE1-GE8).
