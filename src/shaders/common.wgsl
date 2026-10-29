@@ -378,6 +378,13 @@ fn pipeStep(f: f32, dH: f32, c: vec4<f32>) -> f32 {
   let b = 1.0 + c.w;
   return min(2.0 * A / (b + sqrt(b * b + 4.0 * c.y * A)), c.z);
 }
+/**
+ * (round 112) A pipe over a lip: Manning is a uniform-flow law, but where the water falls away to a neighbour lower
+ * than its bed (the neighbour's level under the critical depth over the bed, 2/3 of the depth) the flow goes critical
+ * at the brink — a free overfall, a weir: q = sqrt(g) (2h/3)^1.5 a unit width, whatever the friction upstream. The
+ * flux at least this (water_flux.wgsl), no more than the top speed's.
+ */
+fn pipeCritical(h: f32, g: f32, c: vec4<f32>) -> f32 { return min(PIPE_FACE * PIPE_DT * sqrt(g) * pow(max(h, 0.0) * (2.0 / 3.0), 1.5), c.z); }
 /** a pipe's steady flux for head dH: the push matched by the friction (y f^2 + w f = x dH) */
 fn pipeSteady(dH: f32, c: vec4<f32>) -> f32 {
   let C = c.x * dH;

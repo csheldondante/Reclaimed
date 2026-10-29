@@ -284,8 +284,26 @@ try {
     await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'hidden'));
     await gif(p, `${tag}breach.gif`, 30, 400);
     await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'visible'));
-    await sleep(3000);
+    // (round 112: the water runs at its real speed now — the wait from the flow expected, not the old pipes' rush. The
+    // notch (6 rows, 0.866 apart) is a weir under the pool's head over its floor, 1.6: q = sqrt(g) (2h/3)^1.5 a unit
+    // width; the pool (radius 9) falls 0.3 in 0.3 A / Q; its water runs the ~20 cells from the lip to the basin's
+    // probe at ~2 cells/s. Twice the sum, from the click.)
+    const weirQ = 6 * 0.866 * Math.sqrt(9.8) * Math.pow((2 / 3) * 1.6, 1.5);
+    const drainS = (0.3 * Math.PI * 81) / weirQ;
+    const waitS = 2 * (drainS + 20 / 2);
+    console.log(`[breach] expected: weir ${weirQ.toFixed(1)} cells³/s, the pool down 0.3 in ${drainS.toFixed(1)} s; waiting ${waitS.toFixed(0)} s`);
+    await sleep(Math.max(0, waitS * 1000 - 13000));
     const wet1 = await probe();
+    // (round 112) the dig leaves none of the plug standing: its columns (x 52, 53, rows 141..146) down to the notch's
+    // floor (G + 22) or lower
+    const stray = await p.evaluate(async () => {
+      const R = window.reclaimed;
+      const s = new Uint32Array((await R.readBuffer('surface')).buffer);
+      const o = [];
+      for (let y = 141; y < 147; y++) for (const x of [52, 53]) if ((s[y * R.core.dims.w + x] & 0x1ffff) / 256 > 32.01) o.push([x, y, (s[y * R.core.dims.w + x] & 0x1ffff) / 256]);
+      return o;
+    });
+    if (stray.length) fail(`the breach left the plug standing in ${JSON.stringify(stray)}`);
     const basin = await p.evaluate(() => window.reclaimed.probe('water', 74, 144, 10));
     await click('↺ reset');
     await sleep(2000);

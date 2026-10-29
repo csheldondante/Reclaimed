@@ -163,6 +163,19 @@ try {
       return o;
     };
     window.__moved = (a, b) => +a.reduce((t, v, i) => t + Math.abs(v - b[i]), 0).toFixed(2);
+    /** (round 112) what the water did to the ground: cells³ cut down and laid up (a change over 0.01) */
+    window.__erosion = (a, b) => {
+      let cut = 0;
+      let laid = 0;
+      let cols = 0;
+      a.forEach((v, i) => {
+        const dz = b[i] - v;
+        if (Math.abs(dz) > 0.01) cols++;
+        if (dz < 0) cut -= dz;
+        else laid += dz;
+      });
+      return { cut: +cut.toFixed(2), laid: +laid.toFixed(2), cols };
+    };
   });
   // the drawn scroll (cells/s), mirrored from render.wgsl flowStreaks and renderfields.wgsl (the held river's fv)
   await p.evaluate(() => {
@@ -252,7 +265,9 @@ try {
   await pick('breach');
   await click('↺ reset');
   await sleep(4000);
-  const BG = [40, 116, 92, 172];
+  // (round 112: the ground under the ledge only — the basin and the run below the lip, x 57 on: none of the dug
+  // cells, the plug and the notch, x 52..55)
+  const BG = [57, 116, 92, 172];
   const bg0 = await p.evaluate((r) => window.__ground(r), BG);
   await click('breach');
   const tb = Date.now();
@@ -269,7 +284,8 @@ try {
     if (k === 3) samples.push(['notch', await p.evaluate((r) => window.__speeds(r, 0.05), NOTCH)], ['ledge', await p.evaluate((r) => window.__speeds(r, 0.02), LEDGE)]);
   }
   for (const [n, s] of samples) row(`breach ${n} (4 s)`, s);
-  row('breach basin', { 'ground moved in 10 s (cells³)': await p.evaluate(async ({ r, g0 }) => window.__moved(g0, await window.__ground(r)), { r: BG, g0: bg0 }), 'basin wet at s': basinAt, front: +(await p.evaluate((r) => window.__front(r, 57, 144, 0.02), BASIN)).toFixed(1), ...(await p.evaluate((r) => window.__speeds(r, 0.02), BASIN)) });
+  await sleep(10000);
+  row('breach basin', { 'erosion below the ledge in 20 s (cells³)': await p.evaluate(async ({ r, g0 }) => window.__erosion(g0, await window.__ground(r)), { r: BG, g0: bg0 }), 'basin wet at s': basinAt, front: +(await p.evaluate((r) => window.__front(r, 57, 144, 0.02), BASIN)).toFixed(1), ...(await p.evaluate((r) => window.__speeds(r, 0.02), BASIN)) });
   await p.evaluate(() => {
     const R = window.reclaimed;
     R.camera.target = [56, 144 * 0.8660254, 22];

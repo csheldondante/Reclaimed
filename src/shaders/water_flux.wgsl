@@ -47,11 +47,16 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
   for (var k = 0u; k < NDIR; k++) {
     let q = nbr(p, k);
     var Hn = max(g, G.ocean.x);
+    var gn = Hn;
     if (inMap(q)) {
       let j = colIdxI(q);
-      Hn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q)) + water[j] + oil[j] * OIL_DENSITY;
+      gn = max(f32(sfZ(surface[j])) + driftAt(q), bodyTopAt(q));
+      Hn = gn + water[j] + oil[j] * OIL_DENSITY;
     }
     f[k] = select(pipeStep(f[k], H - Hn, c), pipeSteady(H - Hn, c), seed);
+    // (round 112: over a lip — the neighbour's bed under ours and its level under the critical depth over our bed —
+    // the flow goes critical at the brink: a weir's flux at least, not held back by the friction; pipeCritical)
+    if (gn < g && Hn < g + d * (2.0 / 3.0)) { f[k] = max(f[k], pipeCritical(d, G.tune.worldGravity, c)); }
   }
   let total = dSum(f);
   if (total > d) { f = dScale(f, d / total); }

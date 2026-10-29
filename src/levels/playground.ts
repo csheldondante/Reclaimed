@@ -184,7 +184,9 @@ export const STATIONS: Station[] = [
         label: 'breach',
         run: (k) => {
           const b = BREACH;
-          for (let y = b.notch.y0; y < b.notch.y1; y += 2) for (let n = 0; n < 3; n++) k.dig(...wp(b.plug[0] + 1, y + 0.5), 2.2, 1);
+          // (round 112: every row of the notch, not every other — the dig's disc tapers, and a row between two left a
+          // cell of the plug standing, a third of the notch shut)
+          for (let y = b.notch.y0; y < b.notch.y1; y++) for (let n = 0; n < 3; n++) k.dig(...wp(b.plug[0] + 1, y + 0.5), 2.2, 1);
           // (and a spring in the pool keeps it pouring, as the flow lab's breach)
           k.source(POOL_COLS, 1.5);
         },
