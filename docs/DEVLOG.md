@@ -9108,4 +9108,11 @@ leading half 0.9% out at 20; generated — pop-in at 20 c/s by the bench's measu
 worst frame), the leading half 0% out and tiles 89 ms from wanted to drawn: the pop-in is elsewhere (TC15); disk —
 pop-in 3% at 10 c/s, the leading half 18.6% out, 11 tiles a second at 501 / 1363 ms: after the warp the whole screen
 is wanted at once and a tile a frame is the bound (TC14: coarse tiles first).
+- The sliced hash checked (scripts/hashtest.mjs): the window's 25 regions read back as ?rsverify reads them, hashed
+  three ways — round 100's whole columnsHash (copied into the test as it was), today's columnsHash, and the steps 4 rows
+  at a time (16 slices) — the same, all 25. worldsavetest with ?rsverify=1: the store holds and restores its regions
+  exact (reloaded, rode away and back, the changed region as it was); its one failure, "warped 10 regions away and back:
+  every region as it was frozen (exact)", is places' (the same with ?tiles=0).
+- The pan bench's tiles also say where the screen isn't in detail, the worst frame's (missMax): in the window (a region
+  not written yet, no tile), or past it ahead, to the side, behind the pan's way — for TC15.
 

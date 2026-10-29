@@ -1688,6 +1688,37 @@ class Bench {
   }
   private parkedCover = 0;
 
+  /**
+   * (round 106, tilephone: where the pop-in is) The screen's 12 x 12 points not in detail now, as shares of the screen:
+   * in the window but its region not written yet (and no tile there), or past it with no tile — those split by the pan's
+   * way `dir` (world x y): ahead, to the side, behind.
+   */
+  private missingWhere(dir: [number, number]): { win: number; ahead: number; side: number; behind: number } {
+    const c = this.R.camera;
+    const S = this.R.stream;
+    const un: [number, number][] = S.unwritten ?? [];
+    const G = 12;
+    const dl = Math.hypot(dir[0], dir[1]) || 1;
+    const o = { win: 0, ahead: 0, side: 0, behind: 0 };
+    for (let j = 0; j < G; j++)
+      for (let i = 0; i < G; i++) {
+        const [dx, dy] = c.fly ? [0, 0] : c.screenDeltaToWorld(((i + 0.5) / G - 0.5) * c.viewportW, ((j + 0.5) / G - 0.5) * c.viewportH);
+        const x = c.target[0] + dx;
+        const y = (c.target[1] + dy) / ROW_H;
+        if (this.R.core.renderer.tiles?.drawsAt(x, y)) continue;
+        if (x >= 0 && x < S.W && y >= 0 && y < S.H) {
+          if (un.some(([ux, uy]) => ux === Math.floor(x / S.R) * S.R && uy === Math.floor(y / S.R) * S.R)) o.win++;
+          continue;
+        }
+        const along = (dx * dir[0] + dy * dir[1]) / (dl * (Math.hypot(dx, dy) || 1));
+        if (along > 0.5) o.ahead++;
+        else if (along < -0.5) o.behind++;
+        else o.side++;
+      }
+    const n = G * G;
+    return { win: o.win / n, ahead: o.ahead / n, side: o.side / n, behind: o.behind / n };
+  }
+
   /** (v3) low detail now: the share of the screen detailed when parked that isn't now (outside the window, or not written yet) */
   private lowDetail(): number {
     return Math.max(0, this.parkedCover - this.writtenShare());
@@ -2521,6 +2552,7 @@ class Bench {
         const TL = this.R.core.renderer.tiles;
         const baked0 = (TL?.land?.stats.baked as number | undefined) ?? 0;
         const lead: number[] = [];
+        const miss = { win: 0, ahead: 0, side: 0, behind: 0 };
         while (performance.now() - t0 < PAN_STEP_S * 1000) {
           const t = await frame();
           if (src === 'pool') {
@@ -2535,6 +2567,9 @@ class Bench {
           last = t;
           low = Math.max(low, this.parkedCover - this.writtenShare());
           if (TL) lead.push(1 - TL.coverageSplit(cam).lead);
+          // (round 106: where what's not in detail is, the worst frame's of each kind)
+          const mw = this.missingWhere(sc.pan.dir);
+          for (const k of ['win', 'ahead', 'side', 'behind'] as const) miss[k] = Math.max(miss[k], mw[k]);
         }
         const secs = (performance.now() - t0) / 1000;
         const fps = (this.prof.frameNo - fno0) / secs;
@@ -2553,7 +2588,7 @@ class Bench {
         const slideDone = S.slideDone ? S.slideDone.slice(Math.min(sd0, S.slideDone.length)) : null;
         const bd = S.baseDone ? [...S.baseDone.slice(Math.min(bd0, S.baseDone.length))].sort((x: number, y: number) => x - y) : [];
         const slideCpu = S.trace.slice(Math.min(tr0, S.trace.length)).map((t: { t0: number; sync: number }) => r3(t.sync - t.t0));
-        const tiles = TL?.land ? tileStepOf(TL, baked0, t0, secs, lead) : null;
+        const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) } } : null;
         steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, ok: !fails.length });
         if (fails.length && strict) {
           strict = false;
