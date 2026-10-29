@@ -24,11 +24,13 @@ still see flow that would previously be considered slow"
 | WS2 | The pipes in physical units: the push g·dt²·depth from the world's gravity, Manning's friction (roughness n), wave damping, a top speed (tuning registry pipes group); stable at the 60 Hz step | M | done (waterscale): common.wgsl pipeCoef / pipeStep / pipeSteady, water_flux.wgsl |
 | WS3 | Everything on the pipes' steady flux consistent: the held rivers' seed (pipeSteady), the river tables' rating (rivertable.ts riverSpeed, atlas/rivers.ts: Manning for the section and the level's fall), oil on the same law | M | done (waterscale) |
 | WS4 | The drawn flow normalised: the water's speed mapped onto the animation's range (reference speed, curve, least scroll; tuning registry flowLook) | S | done (waterscale): renderfields.wgsl flowLook |
-| WS5 | Erosion, scour and the stains' washing by the water's speed: wash speeds per material (tuning registry wash), the wash rate, the scour speed | M | done (waterscale): sediment.wgsl waterOut, structure.wgsl, contamination.wgsl |
+| WS5 | Erosion, scour and the stains' washing by the water's speed: wash speeds per material (tuning registry wash), the wash rate, the scour speed | M | done (waterscale): sediment.wgsl waterOut, structure.wgsl, contamination.wgsl; the breach's flood cuts 136 cells³ below the ledge in 20 s (9 before) |
 | WS6 | The flows' animations on the sim's clock (common.wgsl simTime): streaks, foam, ripples, swell, swash, lava's crust; ambient motion stays on G.time | S | done (waterscale) |
 | WS7 | The flow model (?flow=1, liquid.wgsl, the flow lab only) is still in its old per-tick units (flowWaterGain / flowWaterFriction): put it on the same law if it's ever used past the flow lab | M | open |
 | WS8 | The river tables are rated as they're made (at load): a live roughness change moves the pipes at once but re-rates only tables made after it | S | open (by design for now) |
 | WS9 | Lava keeps its own law (a laminar, Bingham drag: linear friction, a yield): its numbers already give ~1–3 cells/s on a volcano's flank — measure it on a vent if it looks wrong | S | open |
+| WS10 | The breach drains at ~3.5 cells³/s against a weir's 18 for its notch (the lip critical — pipeCritical — and no plug cell left): find the throttle upstream of the lip (the notch's depths and fluxes row by row); the playwater basin check waits on it | S | open |
+| WS11 | After a reset one of the breach pool's chunks stays awake to the 60 s settle cap (wave damping 0.03/s) | S | open (accepted for now) |
 
 ## Round 112 (2026-10-29, session 5, `physfix2`) — the playground's physics on the phone (DECISIONS round 112)
 

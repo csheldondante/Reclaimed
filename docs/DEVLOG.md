@@ -12383,6 +12383,31 @@ it hasn't got there. Its thresholds were set for the old speeds; they need a lon
 0.016 ms a frame (one pow and a sqrt more a column); the playground's river station 2.98 ms GPU still, 6.18 in the
 rain. No validation errors.
 
-**Open.** The breach drains at ~5 m³/s — a quarter of a weir's for that notch: the dig leaves a cell of the plug in
-some rows and a flat notch's water runs by friction, not at the brink's critical speed. The flow model (?flow=1) is
-still in per-tick units (WS7). Tables are rated as they're made (WS8).
+**The breach, second pass** (main: "the outflow over a lip must reach the weir rate"). Manning is a uniform-flow law;
+at a brink the flow goes critical. `pipeCritical`: toward a neighbour whose bed is under the column's and whose level
+is under the critical depth (2/3 of the depth) over its bed, a pipe carries at least the weir's q = √g·(2h/3)^1.5 a
+unit width (no more than the top speed). And the breach's dig went every other row of the notch with a tapering
+disc: row 144 kept a cell of the plug (ground 33 over the notch floor 32), a third of the notch shut; it digs every
+row now, and playwater checks no plug cell is left. After both: notch 3.6 / 5.9 cells/s at 4 s (was 2.4 / 4.4),
+the pool 2.60 → 2.20 in 29 s.
+
+**Erosion, measured** (waterspeed.mjs, the ground below the ledge only — x 57 on, none of the dug cells — its top
+the loose run's base + its depth; the first probe read the surface buffer alone, which is the loose run's *base*, so
+it saw only the dig): in 20 s the breach's flood cut 9 and laid 34 cells³ over 233 columns before, cut 136 and laid
+51 over 273 columns after. The sheet down the bare 10 % ramp moved 7.6 cells³ before, 52 after. washRate 2 and the
+wash speeds stay as set: the breach carves visibly (GIFs after-breach.gif, before-breach.gif).
+
+**playwater** after the second pass: the breach waits 2 × (the weir's time for the pool to fall 0.3 + the run of ~20
+cells to the basin's probe at ~2 cells/s) = 29 s from the click (weir 17.9 cells³/s, 0.3 in 4.3 s). The drain check
+passes (2.60 → 2.20), no plug is left, the reset refills it; "nothing reached the basin" still fails — its probe
+(10 cells round x 74) averages 0.001: the water spread ~15 cells out from the foot of the ledge and pooled there.
+
+**Open.**
+- The pool drains at ~3.5 cells³/s against the weir's 18 for that notch, with the lip critical and no plug left —
+  the throttle is upstream of the lip and not found yet (BACKLOG WS10; needs a browser look at the notch's depths
+  and fluxes row by row).
+- After a reset one of the pool's chunks stays awake to the 60 s settle cap (the rest sleep in 5 s): its water still
+  sloshes at the 0.01 tolerance with the damping at 0.03/s. Accepted for now (WS11).
+- Timings: the driveprofile frame cost above (GPU 4.55 ms) was taken before the browser was shared; the runs after
+  the second pass overlapped another page and other agents' shots on the GPU, so their ms are not used.
+- The flow model (?flow=1) is still in per-tick units (WS7). Tables are rated as they're made (WS8).

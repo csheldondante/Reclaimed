@@ -153,13 +153,15 @@ try {
       return far;
     };
     window.__tick = () => window.reclaimed.core.globals.tick;
-    /** the ground's tops over a rect (common.wgsl sfZ: z × 256 in the low 17 bits) */
+    /** the ground's tops over a rect (common.wgsl sfZ: the loose run's base, z × 256 in the low 17 bits, + its depth) */
     window.__ground = async (rect) => {
       const R = window.reclaimed;
       const { w } = R.core.dims;
       const s = new Uint32Array((await R.readBuffer('surface')).buffer);
+      // (the surface is the loose run's base: its top is that + the run's depth, the drift texture's x)
+      const dr = (await R.core.readTexture(R.world.drift)).data;
       const o = [];
-      for (let y = rect[1]; y < rect[3]; y++) for (let x = rect[0]; x < rect[2]; x++) o.push((s[y * w + x] & 0x1ffff) / 256);
+      for (let y = rect[1]; y < rect[3]; y++) for (let x = rect[0]; x < rect[2]; x++) o.push((s[y * w + x] & 0x1ffff) / 256 + dr[(y * w + x) * 4]);
       return o;
     };
     window.__moved = (a, b) => +a.reduce((t, v, i) => t + Math.abs(v - b[i]), 0).toFixed(2);
