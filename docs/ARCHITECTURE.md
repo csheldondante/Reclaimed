@@ -1568,7 +1568,9 @@ blast melts only columns whose top is within `BLAST_UP` (4) of where it hit (lav
 a voxel source on the renderer. Its buffers are its own (not world
 contracts): `agentNav` (per column NAV_K = 4 surfaces, vec4<u32>: height,
 headroom | wet | six 3-bit links, room, region — the peel reads `places` and
-`placeTable` in its own bind group), `agentDist` (NFIELDS = 4 fields × surfaces,
+`placeTable` in its own bind group), `agentNavCost` (round 107: per surface, the
+height and wet the links and the relax reckon its cost by, following nav's floor with hysteresis — the
+units ride nav, the fields read this), `agentDist` (NFIELDS = 4 fields × surfaces,
 f32), `agentUnits` (four vec4 a unit: units.wgsl), `agentOcc` (units per
 column, two halves by tick parity), `agentEvents` (a count and 8-u32
 records: swing, hurt, death, alight; the CPU copies and clears it in

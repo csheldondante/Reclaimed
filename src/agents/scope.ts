@@ -43,7 +43,7 @@ export class AgentScope {
   readonly marks = new Set<number>();
   markAll = false;
   constructor(
-    private cx: number,
+    readonly cx: number,
     private cy: number,
   ) {}
 
