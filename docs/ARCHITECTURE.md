@@ -1373,17 +1373,11 @@ test scenes: `?flow=1&level=flowlab`, src/levels/flowlab.ts).
   once when at rest) would carry *moving* sand — a pour off a ledge as an arc — the way lava already sets; the
   next step, if wanted (BACKLOG FL4).
 
-### The held rivers' falls (round 107, branch `riverfalls`, BACKLOG WF1)
+### The held rivers' falls (round 107, reverted round 108)
 
-A held river isn't simulated, so its falls are drawn, not run: render/riverfalls.ts (a SimSystem, period 1) reads
-the contract only — surface, water, the drift, `riverFlow` — finds the lips (a river column whose downstream top lies
-1.5 cells or more under its water, the fall's top only), and lists each as the flow model's stream (liquid.wgsl prep's
-format: header + two vec4) in its own buffer, drawn by the water pipeline (`renderer.addWaterPrisms`) with render.wgsl
-streamVertex / shadeStream. The launch: the held heading and speed (≥ sqrt(g d), ≤ 6 cells/s), level; the arc clipped
-where it meets a column's top. Spray, splash and mist go to the particle ring, shared over the lips listed. Only the
-columns the fixed view sees are dispatched (the free camera: the window). Gravity: common.wgsl `WORLD_G` (9.8 cells/s²,
-DECISIONS round 106; world/scale.ts on the CPU), shared with the flow model's streams, sheets and spray. Tiles hold no
-sheet (they paint a fall's face white water). The atlas level with `?rivers=table`; `?falls=0` off.
+riverfalls' sheets were reverted (the user: they didn't match the rest of the visuals; BACKLOG WF1 deferred).
+Held rivers' falls draw as their columns' water. The world's gravity stays one constant: common.wgsl `WORLD_G`
+(9.8 cells/s², world/scale.ts on the CPU), read by the flow model's streams, sheets and spray.
 
 ## Levels and the sandbox
 

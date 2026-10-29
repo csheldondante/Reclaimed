@@ -3,6 +3,24 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 108 (session 5, `places`) — tiles match the window; the sims' tiers; a playground
+
+- Tiles, the user: "I notice the distant tiles have seems and sometimes miss certain effects like snow ... My
+  expectation is that the tiles are essentially the visual only version of full tiles so I wouldn't expect them to me
+  different." → tile parity before tile latency ("1. Yes"): a tile's land from the same GPU generation as the window's
+  (the settlements' stamps too), made with a border of its neighbours (no seams), the weather (snow cover, wetness)
+  applied live when a tile is drawn, not baked (BACKLOG TC18-TC20). Tiles stay baked impostors drawn as quads.
+- The sims' tiers, the user: "Yes unless explicitly requested in the API. Like water we want to see falling and and
+  blowing dust even if the underlying map isn't changing." → rain and wind erosion and vegetation growth are baked
+  between runs (or on story events), not run in play, unless the API asks for them; breakage, collapse, dust and
+  debris, falling water and the agents' work stay live (BACKLOG SM1).
+- Waterfalls: "I think you should revert the new waterfall look actually it doesn't match the rest of the visuals.
+  Let's come back to this one later." → riverfalls' sheets reverted (WF1 deferred). WORLD_G = 9.8 stays.
+- Gravity: 9.8 cells/s² (a cell a metre) confirmed ("Yes start with that").
+- The physics tuning panel: start it ("yes", BACKLOG AR5). And: "Make a physics and water playground for testing
+  collapse and flow and visuals for steady state effects maybe?" (BACKLOG AR8).
+- The merged worktrees and the cpucache branch: delete ("yes").
+
 ## 2026-10-28 — round 107 (session 5, `riverfalls`) — the held rivers' falls
 
 - The user, on waterfalls in the atlas, verbatim: "Yes or just fake it based on flow speed over gaps and make it a

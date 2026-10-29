@@ -11678,3 +11678,11 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   that one too ("GPU device lost (destroyed)"), while the phone navigated. 'destroyed' is only ever our own
   destroy(), so it no longer shows the overlay; a real loss (reason 'unknown') still does, and the bench still
   skips to the next page on one.
+
+## 2026-10-29 — riverfalls reverted (round 108, session 5, `places`)
+
+- The user: "I think you should revert the new waterfall look actually it doesn't match the rest of the visuals.
+  Let's come back to this one later." The held rivers' sheets (render/riverfalls.ts, riverfalls.wgsl,
+  scripts/riverfalls.mjs), their wiring in level.ts and the tiles' white water on a steep wet face are removed.
+  WORLD_G (9.8, DECISIONS round 106/108) stays, shared by the flow model's streams, sheets and spray. BACKLOG WF1
+  deferred; round 108's answers in DECISIONS, rows TC18-TC20, SM1, AR8.
