@@ -3,6 +3,17 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-29 — round 109 (session 5, `places`) — more devices; generators and editors; better runs
+
+- Devices, the user: "I also want to get my desktop set up tomorrow so you can orchestrate testing on multiple devices
+  to speed up development. I have two other computers but only one monitor. One has a 12GB 3080 which I think can be
+  used for some local model work and asset generation pipelines." (BACKLOG DV1, DV2)
+- Generators and editors, the user: "I also really want to create playground and start working on generators and
+  editors for: Buildings and architectural styles, Animated creatures, Vehicles, Items and equipment (related to
+  creatures), Controllers and move sets, Tailored level generators, Terrain generation" (BACKLOG GE1-GE8).
+- Runs, the user: "I also want a session to focus on better runs which means finding the most fun controls and play
+  loops and then making fun courses for them or fun open terrain when possible" (BACKLOG RN1).
+
 ## 2026-10-29 — round 108 (session 5, `places`) — tiles match the window; the sims' tiers; a playground
 
 - Tiles, the user: "I notice the distant tiles have seems and sometimes miss certain effects like snow ... My

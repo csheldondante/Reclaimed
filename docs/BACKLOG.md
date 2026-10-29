@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 109 (2026-10-29, session 5, `places`) — more devices, generators and editors, better runs (DECISIONS round 109)
+
+| id | item | size | status |
+|---|---|---|---|
+| DV1 | More test devices: the user's two other computers as test runners (Chrome + WebGPU, the repo, Node), driven from this session (Claude Code with Remote Control, or a small runner that pulls a branch, runs shot/framecost/bench and pushes results); different GPU vendors widen the coverage | M | open |
+| DV2 | The 12 GB RTX 3080 machine: local models for the asset pipelines (textures, sprites, concept art, maybe mesh generation), served on the LAN behind one API | M | open |
+| GE1 | One editor shell for every generator: the playground's parameter registry, presets, the bug report, a live preview, seeds; each generator a contract (its data, its GPU stamp or instancing) with its editor a playground level | M | open |
+| GE2 | Terrain generation editor: the atlas (macro shapes, regions, borders) and the region generator, live with seeds (round 78's two scales) | M | open |
+| GE3 | Tailored level generators: per hero (lich destruction, hoverbike chases/races/tricks, knight fighting and delving, round 99), traversal checked for that hero's moves | L | open |
+| GE4 | Buildings and architectural styles: grids, occupancy spans, modules by neighbour occupancy (settlement spans design, ST17), styles by era and culture | L | open |
+| GE5 | Vehicles: parameterized bodies, wheels/hover/flight, mounting points, damage | M | open |
+| GE6 | Animated creatures: rigs skinned by vertex weights (as the physics design's meshes), procedural gaits, the 3080's pipelines for looks | L | open |
+| GE7 | Items and equipment, tied to creatures: slots on rigs, recipes (round 101's tagged ingredients), how they change move sets | M | open |
+| GE8 | Controllers and move sets: the runtime parameterized in the engine (round 101), move-set design with GameplayGM (which owns heroes and controls, round 99) | M | open |
+| RN1 | A session on better runs: find the most fun controls and play loops per hero, then courses or open terrain made for them (GameplayGM's heroes, Reclaimed's generators) | L | open |
+
 ## Round 103 (2026-10-28, session 5, `tilecache`) — world-anchored rendered tiles (DECISIONS round 103)
 
 Ids TC.
