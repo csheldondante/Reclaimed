@@ -1,0 +1,10 @@
+﻿== hero-B-1600x900 commit 2fe8588 2026-10-29T14:45:48.9699617-04:00
+[console.debug] [vite] connecting...
+[console.debug] [vite] connected.
+[console.warn] The powerPreference option is currently ignored when calling requestAdapter() on Windows. See https://crbug.com/369219127
+[console.error] Failed to load resource: the server responded with a status of 404 (Not Found)
+[console.warn] run "the-bell-under-kaudru": loc-mebe's settlement s139 is in region 1013 now, not 2039 (the atlas changed since the story was written): placed by the region's centre
+[console.log] [run] the stage stamped into the land: 626 pieces, 874 columns in 4 regions; the window made again in 18962 ms
+[eval] "{\"win\":102400,\"cam\":[null,null,14],\"fatal\":false}"
+saved C:\Users\Chris\Projects\shots-runner\hero-grey\hero-B-1600x900.png
+exit 0
