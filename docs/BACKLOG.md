@@ -12,6 +12,17 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 112 (2026-10-29, session 5, `tilefix3`) — the zoom held to the device's tiles; lava in the tiles; the saved world's grey hero
+
+The user: "Can you just limit the zoom to max supported tile size for the device then if any are missing we know it's a bug for sure?"
+
+| id | item | size | status |
+|---|---|---|---|
+| TZ2 | The camera's zoom floor (Camera.zoomFloor, held by Camera.zoom): the widest zoom the device's tiles fill — the atlas's slots (parts by zoom, 80% of them) and the land's rate (phone 0.3, else 2 tiles a frame, 300 frames) — every mode with a streamed window | M | done (`tilefix3`), the phone to confirm |
+| TZ3 | Lava in a tile: the render fields carry a lava column (z = 2 + heat), the bake paints the window's look; firelight decodes it (glowOf) | S | done (`tilefix3`); its glow at night open |
+| TZ4 | The hero grey with the user's saved world (world=new draws): the restore path — scripts/herorepro.mjs (a saved world between launches); the relief restored from the record, not rebuilt, the lead | M | wip |
+| TZ5 | One owner for the per-column state lists (pages.ts COLUMN_BUFS, WorldCore.RESTORED, the streamer's kept bufs): what's state, what's derived (rebuilt, never saved unless versioned) | M | open |
+
 ## Round 112 (2026-10-29, session 5, `tilefix2`) — the hero's grey screen; the gate by frames, by adapter; TF5
 
 The user, on the eye side: option (a), "the tile drawn cut". On the disk: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this up?"

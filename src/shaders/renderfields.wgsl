@@ -29,6 +29,8 @@ fn packFlow(v: vec2<f32>) -> f32 {
   return floor(a * 1024.0) % 1024.0 + min(l / FLOW_PACK, 0.999);
 }
 
+/** (round 112, tilefix3) the molten rock deep enough to draw as lava in a tile (renderfields z) */
+const LAVA_TILE_DEPTH = 0.15;
 /** How brightly column i's lava (or beam-hot ground) glows, 0..1. */
 fn lavaGlow(i: u32) -> f32 {
   let L = lava[i];
@@ -193,8 +195,12 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   // flow on top: the water running off into the breach)
   if (riverHeld(id.xy, rh)) { fv = rh.vel * waterDepth[i]; }
   else if (rh.on) { fv += rh.vel * min(waterDepth[i], rh.depth); }
-  if (MR.n.w != 0u) { fields[i] = vec4<f32>(fv.x, moisture[i], glow, fv.y); }
-  else { fields[i] = vec4<f32>(sz, moisture[i], glow, packFlow(fv)); }
+  // (round 112, `tilefix3`: a column under molten rock carries it in z — 2 + its heat 0..1 — for what draws the
+  // land without the lava's own sheet, a tile's bake (tiles.wgsl tileBake); the glow it lights with is glowOf(z))
+  let L = lava[i];
+  let gz = select(glow, 2.0 + smoothstep(500.0, 1300.0, L.y), L.x > LAVA_TILE_DEPTH);
+  if (MR.n.w != 0u) { fields[i] = vec4<f32>(fv.x, moisture[i], gz, fv.y); }
+  else { fields[i] = vec4<f32>(sz, moisture[i], gz, packFlow(fv)); }
   // the six corners (my two, and the four my neighbours own — the same
   // functions on the same inputs, so the same values they store), and the
   // planes of my tops through them (terrainshape.wgsl); a corner that isn't

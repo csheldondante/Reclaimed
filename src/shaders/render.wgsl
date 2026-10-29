@@ -722,7 +722,7 @@ fn lighting(wpos: vec3<f32>, nrm: vec3<f32>) -> vec3<f32> {
   // firelight: flickering orange from nearby flames (render fields .z)
   // (round 103, tilecache: a point past the window — a frozen tile's — has no fire field of its own; the edge
   // column's clamped lookup isn't its)
-  let glow = select(0.0, fields[colIdxI(sc)].z, inMap(cellAt(wpos.xy + nrm.xy * 0.5)));
+  let glow = select(0.0, glowOf(fields[colIdxI(sc)].z), inMap(cellAt(wpos.xy + nrm.xy * 0.5)));
   // (watersurf: the flicker's noise only where there's firelight to flicker — the same light)
   var flick = 0.0;
   if (glow > 0.0) { flick = 0.75 + 0.25 * vnoise(vec2<f32>(G.time * 9.0, wpos.x + wpos.y)); }
@@ -1419,6 +1419,9 @@ fn fsBox(in: VOut) -> FOut {
   o.pick = vec2<u32>(pickCol(ci), pickInfo(in.info.x, in.wpos.z, in.info.y));
   return o;
 }
+
+/** (round 112, tilefix3) the render fields' z as the glow (0..1): a lava column's holds 2 + its heat (renderfields.wgsl) */
+fn glowOf(z: f32) -> f32 { return select(z, z - 2.0, z >= 2.0); }
 
 /** The water's flow at column j: with the field mesh renderfields stores
  *  it in x, w; without, packed in w (round 84: its heading and size — renderfields.wgsl packFlow). */

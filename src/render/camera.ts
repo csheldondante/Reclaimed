@@ -41,8 +41,28 @@ const ELEVATION = (30 * Math.PI) / 180; // classic 2:1 pixel-art dimetric
 export class Camera {
   /** World-space point at the centre of the screen. */
   target: [number, number, number] = [128, 128, 10];
-  /** Screen pixels per world unit (cell). */
-  zoom = 4;
+  /** Screen pixels per world unit (cell). (Round 112, `tilefix3`: never under `zoomFloor` — whoever sets it.) */
+  get zoom(): number {
+    return this.zoomV;
+  }
+  set zoom(z: number) {
+    this.zoomV = Math.max(this.zoomFloor, z);
+  }
+  private zoomV = 4;
+  /**
+   * (round 112, `tilefix3`; the user: "Can you just limit the zoom to max supported tile size for the device then if any
+   * are missing we know it's a bug for sure?") The widest zoom this device's tiles can fill the screen at (TileCache
+   * .zoomFloor: the atlas's room and its fill rate) — 0: none (no tiles: a level without a streamed window). Set by the
+   * renderer each frame; a zoom under it is raised to it.
+   */
+  get zoomFloor(): number {
+    return this.floorV;
+  }
+  set zoomFloor(z: number) {
+    this.floorV = z;
+    if (this.zoomV < z) this.zoomV = z;
+  }
+  private floorV = 0;
   viewportW = 1;
   viewportH = 1;
   readonly viewProj: Mat4 = new Float32Array(16);

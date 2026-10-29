@@ -100,6 +100,20 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
   // flat, all film for the sun's glint)
   var film = s.film * (1.0 - t.crown);
   let wt = cellWater(m.wpos.xy);
+  // (round 112, `tilefix3`: the lava — the window draws its sheet as instances the tile doesn't hold, so a tile showed the
+  // rock under it and the magma "popped in" as its region came into the window: its look as render.wgsl has it, still —
+  // hot orange to yellow-white by its heat, a crust with glowing seams as it cools — flat over the ground)
+  let lz = fields[colIdxI(clampCell(cellAt(m.wpos.xy)))].z;
+  let lavaHere = lz >= 2.0 && t.crown < 0.5;
+  if (lavaHere) {
+    let heat = lz - 2.0;
+    let cr = fbm2(wo(m.wpos.xy) * 1.3);
+    let crack = smoothstep(0.42, 0.5, abs(cr - 0.5) * 2.0 + (1.0 - heat) * 0.6);
+    let hot = mix(vec3<f32>(0.9, 0.12, 0.02), vec3<f32>(1.0, 0.75, 0.3), smoothstep(0.6, 1.0, heat)) * (1.1 + 1.6 * heat);
+    alb = mix(hot, toLinear(vec3<f32>(0.12, 0.1, 0.09)), crack * smoothstep(0.95, 0.45, heat));
+    ln = vec3<f32>(0.0, 0.0, 1.0);
+    film = 0.0;
+  }
   var o: BakeOut;
   o.c = vec4<f32>(0.0);
   // (its own snow — the cell's top, as the window's look has it before the bake left it out — and the cover's there)
@@ -118,7 +132,7 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
     o.c.x = clamp((under + RIVER_UNDER_LO) / (RIVER_UNDER_LO + RIVER_UNDER_HI), 0.0, 1.0);
     o.c.y = max(clamp(rf.w / RIVER_LINE, 0.0, 1.0), 1.0 / 255.0);
     film = 0.0;
-  } else if (wt.wet > 0.5 && wt.level > m.wpos.z + 0.05) {
+  } else if (!lavaHere && wt.wet > 0.5 && wt.level > m.wpos.z + 0.05) {
     alb = tileWater(wt.level - m.wpos.z);
     ln = vec3<f32>(0.0, 0.0, 1.0);
     film = 1.0;
@@ -126,7 +140,7 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
   o.a = vec4<f32>(sqrt(clamp(alb * 0.5, vec3<f32>(0.0), vec3<f32>(1.0))), film);
   let d = dot(-CAM.eye.xyz, m.wpos) - CAM.pos.z;
   // (what the wetness darkens it by: meshdraw.wgsl's MATS[mat].eco.w, 0..0.6 in quarters of it — none under water)
-  let por = select(u32(round(clamp(MATS[s.mat].eco.w / POR_MAX, 0.0, 1.0) * 3.0)), 0u, film > 0.5 || t.crown > 0.5 || river);
+  let por = select(u32(round(clamp(MATS[s.mat].eco.w / POR_MAX, 0.0, 1.0) * 3.0)), 0u, film > 0.5 || t.crown > 0.5 || river || lavaHere);
   o.b = vec2<u32>(tileNrmEnc(ln) | (por << 28u) | select(0u, 1u << 30u, s.gem && t.crown < 0.5) | (1u << 31u), bitcast<u32>(d));
   return o;
 }
