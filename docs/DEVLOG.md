@@ -9140,12 +9140,17 @@ docs/PAGES.md §5 P2.2, still dense: the window's chunks are the slots.
   after 40 ticks and two slides. gpugentest (on P2.3): 22 regions and 6 raw tiles identical, GPU against CPU
   (page-major records both). worldsavetest with ?rsverify=1: every thaw and load exact; the one FAIL is the known
   warp-back one (SH11), as on places.
-- **Found**: `?pages=ring` in the page-major layout isn't deterministic even against itself (ring at 0 against
-  ring at 0: surface, moisture, veg, renderFields, wilt, layers, strata and levels differ from the load on). A
-  computed slot for a chunk off the window is huge and its index lands out of bounds, where the table's clamp lands
-  in the window: some kernel looks a chunk up off the window, unguarded. `?pagecheck=1` (debug) counts each
-  kernel's lookups of a chunk off the window (an atomic a kernel at binding 60, on every kernel with a storage slot
-  free); pagetest reads it back and asserts none.
+- **Checked: nothing looks a chunk up off the window.** A first run showed `?pages=ring` at 0 against itself
+  differing from the load on; the table's clamp would land an off-window lookup in the window where the computed
+  slot lands out of bounds, so `?pagecheck=1` (debug) was added: each kernel with a storage slot free counts its
+  lookups of a chunk off the window (an atomic a kernel at binding 60); pagetest reads them back and fails on any.
+  53 kernels checked, 0 counts in every load (the 33 already at 8 storage buffers can't take it; pagetest lists
+  them). After restarting that dev server (it had served across two merges) ring against ring was identical. On
+  the full stack (P2.3): ring at 0 against itself identical; ring at 0 against the table at 128,64 with
+  `?pageperm=7`, 37 of 37 identical through 40 ticks and two slides. On P2.2's own commit one run of that pair
+  still differed at the load while ring at 0 against the table at 0, and the table at 0 against the shuffled
+  table, were identical: not transitive, so that commit's load varied between page loads (PG1). The table's clamp
+  stays as robustness only.
 
 ## 2026-10-28 — round 107 (`pages`): P2.3a, the slow turns keyed by world chunk (a deliberate baseline change)
 
