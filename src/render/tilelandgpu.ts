@@ -35,9 +35,12 @@ import tileLandGpuWgsl from '../shaders/tilelandgpu.wgsl?raw';
 
 const R = 64;
 /** regions made at once (a scratch slot each): ?tilelandn= */
-const IN_FLIGHT = Math.max(1, Number(new URLSearchParams(location.search).get('tilelandn') ?? 6) | 0);
+/** (round 112, `tilefix2`) a phone (its user agent) keeps 6 in flight and 4 bakes a frame; elsewhere twice that, so a
+ *  desktop's wide screenful (600+ tiles at zoom 1.3) fills in a few seconds of frames (a scratch slot is 2.7 MB) */
+const PHONE = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
+const IN_FLIGHT = Math.max(1, Number(new URLSearchParams(location.search).get('tilelandn') ?? (PHONE ? 6 : 12)) | 0);
 /** bakes a frame at most: ?tilebakes= */
-const BAKES = Math.max(1, Number(new URLSearchParams(location.search).get('tilebakes') ?? 4) | 0);
+const BAKES = Math.max(1, Number(new URLSearchParams(location.search).get('tilebakes') ?? (PHONE ? 4 : 8)) | 0);
 /** the bake's view of the scratch: its mesh chunks' side (cells; the grid's lattice: meshdraw.wgsl GRID_N = side + 2) */
 const MESH_SIDE = 32;
 /** (round 112, TC21) the height (world units) a render-only tile's land is taken to span when choosing its slot's size */

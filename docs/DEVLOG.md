@@ -12469,3 +12469,69 @@ Shots: C:/Projects/shots88/tilegate/fix-final/ and old-27f0ffa/ (a frame per zoo
 - The window slide's long frame at close zoom, panning: 40-60 ms, gpu-held, on both builds (TX5).
 - The atlas is sized when it's first made. A window made bigger later keeps its budget (TX6).
 - At 1.3 on a desktop the atlas holds ~1000 tiles; zoom 0.8 (the level's floor) wasn't measured.
+
+## Round 112 (2026-10-29, session 5, `tilefix2`) — the hero's grey screen, a gate that doesn't depend on the machine, the eye side cut
+
+**The hero's grey screen** (the user's Pixel 9a, `?run=bell`: grey round the hero, the window's own land not drawn; and a
+grey corner in the sandbox).
+- *Cause, older than the tiles:* `HybridChunks.clear()`, called on the streamer's `onWarp`, wiped every chunk's land
+  flags and readiness (`land = 0`, `readyAt = Infinity`). But a warp writes all its regions first, and each write calls
+  `landBox`, which sets exactly those. So after any warp every chunk was neither the grid's nor voxels, and never ready,
+  and the window drew nothing. The rings don't draw deep inside the window, so the screen was grey.
+- *Where it happens:* the run's "window made again" after its stage stamp is a warp, and so is a save's `restore()` on
+  load. The default page saves (worldsave on); the gate ran with worldsave=0, so it never saw this.
+- *Measured* (phone proxy, run=bell): before, 0 of 110 chunks drawn for over 35 s; after, 12 meshed and 98 grid. Places
+  2fe8588, before tilefix, has the same bug.
+- *Fix:* `clear()` resets only the place's history (edited, touched). Shots: C:/Projects/shots88/tilegate/run-pre.png,
+  run-fixed.png.
+
+**The gate doesn't depend on the machine** (the 3080 runner: headless Chrome there was held to 29 Hz with the monitor
+off, and fills that pass at 120 Hz in 8 s failed).
+- Chrome runs without vsync (`--chromeargs` overrides), and the page's `requestAnimationFrame` is held to 60 Hz ticks
+  by the script. Every rAF sees the same rate: the game's and the tile pacer's.
+- The load is counted in frames: `--loadframes` 180 (3 s at 60). After the load budget each view reports `fillFrames`,
+  the frames until the screen was all in detail (checked every 30, up to 3 x the budget). Over the budget fails.
+- The page's rate under the cap is measured first. Under 55 fps the frame criteria aren't judged, and the gate says so.
+  This laptop's iGPU really draws 1600 x 900 and the phone proxy at ~52 fps once Chrome presents every frame; the
+  earlier headless "120 fps" were vsync'd headless frames that weren't really presented.
+- Baselines are kept per adapter (`data/baselines/tilegate/<vendor>-<architecture>/`), written on an adapter's first
+  run. Vendors differ by 1.5-12% of a frame.
+- The phone screen runs with a Pixel's user agent, so the page takes its phone paths (finish tiles, pacing, uploads).
+- New views: `run` (`?run=bell`, zooms 14/8/5, desktop and phone) and `w384` (the atlas at window 384, the user's phone
+  setting).
+- A new reason, `window-undrawn`: a window chunk neither meshed nor the grid's, and no tile. It's counted only while the
+  CPU's built-chunk mirror is the current slide's.
+
+**Tiles a frame off the phone.** When the tiles' lane has 3 or more turns waiting, the pacer's guard may climb to
+`TILE_MAX_FILL` (16), one more turn per on-time frame and halved by a long one. Off a phone: 12 regions in flight and 8
+bakes a frame (a phone keeps 4 turns, 6 in flight, 4 bakes).
+
+| fillFrames (budget 180) | before (`&tilemaxfill=4&tilelandn=6&tilebakes=4`) | after |
+|---|---|---|
+| desktop 1600 x 900, z2.2 | 420 | 240 |
+| desktop, z1.3 | over 540 (24% still out) | 180 |
+| phone proxy (phone paths, unchanged), z1.3 | over 540 (1% out) | 270 |
+
+**TF5, the eye side** (the user's option (a)). A tile on the eye's side is no longer left out whole. `fsTile` discards
+what of it rises into the line from the eye to the focus: the rings' rule (far.wgsl `underFocus`, 0.85 of the line's
+height, from 12 world units on). What's behind it shows through, the focus with it. The focus is in TileU.focus.
+
+**The pan bench's disk rows were mostly generated land.** On the phone each disk ramp brought 6-7 regions from disk and
+made the rest (z14: 242 made, 6 loaded). The fill pan stopped once it had been asked to go the line's length, but it
+had waited at the window's edge for its slides, so it saved a line a third as long as the ramp then went. The fill now
+runs until the camera has gone the length (up to 180 s), and `came` reports `storeMiss`, `mismatched`, `loadFailed` and
+the store's size. Desktop, z14 disk ramp: 187 loaded, 430 made, store 568. So TF4 (the disk hitch) can't be judged from
+the phone runs so far.
+
+**Disk to RAM ahead** (the user: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this
+up?"). What exists: the streamer prefetches regions ahead of the motion (`Streamer.prefetch`, up to AHEAD_MAX strips at
+the camera's speed). That `bring`s each one: the store's get, read off the thread in its worker, then the record decoded
+on the main thread (`decodeRecord`, slices), then uploaded into a pool slot. So land made ahead from disk arrives as a
+pool hit. Nothing is added yet: the phone's disk rows have to stream from disk first (above) to show what's slow.
+
+**Open.**
+- The phone path's fill at z1.3 takes 270 frames, over the 180 budget. More turns a frame on the phone when the lane is
+  backed up is the lever; the phone bench should decide it.
+- A grey sliver at a region's edge in one panning frame (desktop z3.5).
+- TX5: on the 3080 the phone view's z14 slide frame was 138 ms (gpu-busy).
+- The 3080's first run lost the device right after `vite --force` started (a compile burst?): noted, not reproduced.

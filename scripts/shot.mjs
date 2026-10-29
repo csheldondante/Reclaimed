@@ -20,11 +20,13 @@ const args = Object.fromEntries(
 const url = args.url ?? 'http://localhost:5173/?perf=1';
 const [w, h] = (args.size ?? '1600x900').split('x').map(Number);
 const chrome = args.chrome ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe';
+// (round 112, --chromeargs disable-gpu-vsync,disable-frame-rate-limit: more Chrome switches, without their dashes)
+const extraArgs = (args.chromeargs ?? '').split(',').filter(Boolean).map((a) => `--${a}`);
 
 const browser = await puppeteer.launch({
   executablePath: chrome,
   headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${w},${h}`],
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${w},${h}`, ...extraArgs],
   defaultViewport: { width: w, height: h, deviceScaleFactor: 1 },
 });
 let failed = false;

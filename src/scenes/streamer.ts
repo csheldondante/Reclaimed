@@ -358,6 +358,8 @@ export interface SlideStats {
   restored: number;
   mismatched: number;
   loadFailed: number;
+  /** (round 112) regions made by the source with a store there that had no record of them */
+  storeMiss: number;
   uploads: number;
   /** (round 102) regions made on the GPU straight into the pool (atlas/finish.ts); asked for ahead of a warp (precache), and
    *  of a warp's regions, those made or under way before it */
@@ -418,7 +420,7 @@ export class Streamer {
   private busyNow = false;
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
-  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, uploads: 0, gpuMade: 0, precached: 0, warpReady: 0 };
+  readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, storeMiss: 0, uploads: 0, gpuMade: 0, precached: 0, warpReady: 0 };
   /** called after each slide with the shift in columns (the window moved by dx, dy: content moved by −dx, −dy), and in z */
   readonly onSlide: ((dx: number, dy: number, dz: number) => void)[] = [];
   /**
@@ -1456,6 +1458,8 @@ export class Streamer {
     // (its slot this job's now: nothing evicts it meanwhile; ready() puts it back)
     if (f) this.frozen.delete(key);
     if (!f && this.store?.has(key) && !(fresh && this.store.has(key)!.session === SESSION)) f = (await this.load(key)) ?? undefined;
+    // (round 112, tilefix2: the pan bench's disk rows came mostly generated — 6 of 248 from disk — so why: no record)
+    if (!f && this.store && !this.store.has(key)) this.stats.storeMiss++;
     if (!f) f = await this.generate(wx, wy);
     f = await this.since(f, wx, wy);
     return this.prepare(f);

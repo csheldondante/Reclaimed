@@ -12,6 +12,21 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 112 (2026-10-29, session 5, `tilefix2`) — the hero's grey screen; the gate by frames, by adapter; TF5
+
+The user, on the eye side: option (a), "the tile drawn cut". On the disk: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this up?"
+
+| id | item | size | status |
+|---|---|---|---|
+| TY1 | The window drew nothing after a warp (the run's stage, a save restored): HybridChunks.clear() on onWarp wiped what the warp's writes had set through landBox | S | done (`tilefix2`): run=bell 0 -> 110 of 110 chunks drawn |
+| TY2 | The gate by frames, not seconds: Chrome without vsync, rAF held to 60 Hz in the page, `--loadframes` 180, `fillFrames` reported, the frame checks skipped (and said) under 55 fps | S | done (`tilefix2`) |
+| TY3 | The gate's golden images by adapter (`<vendor>-<architecture>/`), the phone screen with a Pixel's UA, run=bell and win=384 views, `window-undrawn` | S | done (`tilefix2`) |
+| TY4 | Tiles a frame off the phone while the tiles' lane is backed up: the guard to 16 turns, 12 in flight, 8 bakes | S | done (`tilefix2`): desktop z1.3 fill >540 -> 180 frames |
+| TY5 | The phone path's fill at a wide zoom (z1.3: 270 frames against 180): more turns a frame on the phone when the lane's backed up — the phone bench to decide | S | open |
+| TY6 | The pan bench's disk rows were generated land (6 of ~250 from disk on the phone): the fill runs till the camera's gone the line; `came` reports storeMiss, mismatched, loadFailed, the store's size | S | done (`tilefix2`), the phone to rerun |
+| TY7 | Disk to RAM ahead: what's prefetched ahead (Streamer.prefetch -> bring: the store's worker read, the main thread's decode, the pool's upload) measured against pool hits once the disk rows stream from disk; decode off the main thread if it's the cost | M | open |
+| TY8 | A grey sliver at a region's edge in a panning frame (desktop z3.5, gate shot) | S | open |
+
 ## Round 112 (2026-10-29, session 5, `tilefix`) — the terrain past the window drawn on every screen; the merge gate
 
 The user: "The most basic thing is that all the tiles visible on screen load visually and our framerate doesn't dip below our thresholds." / "Instead of looking at them everytime make a cheap baseline image for things that won't change and run pixel diffs to flag changes." / "Can we not simply do that on the GPU? Culling should be dirt cheap"
@@ -53,7 +68,7 @@ The user (round 104): "steady 60fps on the phone with no hiccups and no pop in".
 | TF2 | A window region's tile was the first evicted (the window draws its land, so it was never marked used): kept while its region is in the window | S | done (`tilefast`) |
 | TF3 | The pan bench: why a point isn't in detail (`missWhy`: tile left out — eye, off, far —, turn, making, made, queued, none), the atlas's slots, the pacer's turns, `landFrames`; `?benchzooms=`; scripts/tilefast.mjs (the same, short, headless) | S | done (`tilefast`) |
 | TF4 | The disk hitch: the pool's uploads split across frames, 0.5 MB a frame on a phone (a region's record is 1.7 MB: 4 frames); the desktop can't show Mali's writeBuffer stall | S | done (`tilefast`), **the phone to confirm** (disk vs generated rows) |
-| TF5 | The pop-in at zoom 5 "behind": a tall window-baked tile just past the window on the eye's side is left out (it would rise into the line to the focus) and the rings draw it flat. Options: draw it with the window's cut (fsTile: the cut test on the texel's position from its depth), or press it down as the rings do | M | open |
+| TF5 | The pop-in at zoom 5 "behind": a tall window-baked tile just past the window on the eye's side is left out (it would rise into the line to the focus) and the rings draw it flat. Options: draw it with the window's cut (fsTile: the cut test on the texel's position from its depth), or press it down as the rings do | M | done (`tilefix2`, the user's option (a)): fsTile cuts what rises into the line from the eye to the focus (the rings' rule); no tile left out |
 | TF6 | After a zoom-out the screen's tiles are the closer zoom's whole slots, all drawn, so nothing can be evicted (noSlot for seconds): they're made again at the view's size, a region at a time on the land's lane. Faster: a GPU downsample of a drawn tile into a smaller part (no land made again) | M | open (remakes done; the downsample open) |
 | TF7 | The land's latency where the streamer's lane is busy (zoom 14, 80 c/s: ~7 frames — the tiles get half the turns) and with 6 regions in flight at a wide zoom (24 frames at 2.2, 80 c/s): the pacer's share by urgency (the screen's wait) rather than half | S | open |
 

@@ -4,7 +4,7 @@
 //
 // For each screen (desktop 1600x900 at dpr 1, as the user's PC runs it — the page's own tier; the phone proxy 412x915,
 // dpr 2.6, q=low) the atlas at a fixed spot, world and time of day, and for each zoom:
-//   1. parked: after --load ms at the zoom, --parked s of frames — the screen's 24 x 24 points out of detail (in the
+//   1. parked: after --loadframes frames at the zoom (180: 3 s at 60 Hz), --parked s of frames — the screen's 24 x 24 points out of detail (in the
 //      window: its region not written yet; past it: no tile drawn — why, TileCache.whyMissing where the build has it)
 //      and the frames against the pan bench's criteria (fps >= 58, no frame over 33.4 ms, p99 <= 20 ms);
 //   2. a golden image: the simulation paused (scene.speed 0), the frame at an eighth of its size (--shrink) against
@@ -14,10 +14,14 @@
 //      same coverage (allowed --panmiss of the screen out of detail in a frame: the arriving edge's moment) and frames.
 // Shots and diffs to --out. Exits 1 on any failure (coverage, frames, a flagged image, a page error).
 //   node scripts/tilegate.mjs [--url http://localhost:5233] [--screens desktop,phone] [--zooms 14,8,5,3.5,2.2,1.3]
-//     [--load 8000] [--parked 2] [--pan 20] [--panning 3] [--panmiss 0.02] [--tol 40] [--area 0.01]
+//     [--loadframes 180] [--hz 60] [--chromeargs "--disable-gpu-vsync --disable-frame-rate-limit"] [--parked 2] [--pan 20] [--panning 3] [--panmiss 0.02] [--tol 40] [--area 0.01]
 //     [--out C:/Projects/shots88/tilegate] [--baselines data/baselines/tilegate] [--update] [--no-golden] [--no-pan]
 //     [--extra "&x=1"] [--wait 35000] [--shrink 8]
-// --update writes the baselines (a view's: --update --screens desktop --zooms 5).
+// --update writes the baselines (a view's: --update --screens desktop --zooms 5); they're kept by adapter
+// (<baselines>/<vendor>-<architecture>/), written the first time one runs.
+// (round 112, tilefix2) The page's frames are held to --hz (60) by the script — Chrome without vsync, the page's rAF
+// batched to 60 Hz ticks — so a machine's display (a 3080 with its monitor off gave 29 Hz) doesn't change the result;
+// the load is counted in those frames. The phone screen runs with a Pixel's user agent (the page's phone paths).
 import puppeteer from 'puppeteer-core';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -30,8 +34,18 @@ const opt = (k, d) => {
 const has = (k) => argv.includes(`--${k}`);
 const url = opt('url', 'http://localhost:5233');
 const screens = opt('screens', 'desktop,phone').split(',');
-const zooms = opt('zooms', '14,8,5,3.5,2.2,1.3').split(',').map(Number);
-const loadMs = Number(opt('load', 8000));
+// (round 112, tilefix2: the hero's run too — ?run=bell, the camera on the hero, its own zooms; no pans: the hero's camera)
+// (and w384: the atlas at window 384 — the user's own phone setting, the screenshot of 2026-10-29)
+const modes = opt('modes', 'atlas,run,w384').split(',');
+const runZooms = opt('runzooms', '14,8,5').split(',').map(Number);
+const zoomsAtlas = opt('zooms', '14,8,5,3.5,2.2,1.3').split(',').map(Number);
+// (round 112, tilefix2: the load in frames, not seconds — the tiles come a few a frame, so a machine at 30 Hz had half
+// the tiles a laptop at 120 had in the same 8 s; 180 is three seconds of the phone's 60)
+const loadFrames = Number(opt('loadframes', 180));
+// (the page's frames held to --hz, whatever the machine's display gives: Chrome run without vsync, rAF callbacks
+// batched to --hz ticks in the page — every rAF, the game's and the tile pacer's, sees the same 60 Hz)
+const hz = Number(opt('hz', 60));
+const chromeArgs = (opt('chromeargs', '--disable-gpu-vsync --disable-frame-rate-limit') || '').split(' ').filter(Boolean);
 const parkedS = Number(opt('parked', 2));
 const panV = Number(opt('pan', 20));
 const panS = Number(opt('panning', 3));
@@ -39,7 +53,10 @@ const panMiss = Number(opt('panmiss', 0.02));
 const tol = Number(opt('tol', 40));
 const areaMax = Number(opt('area', 0.01));
 const outDir = opt('out', 'C:/Projects/shots88/tilegate');
-const baseDir = opt('baselines', 'data/baselines/tilegate');
+// (round 112, tilefix2: baselines by GPU — vendors render 1.5-12% of a frame differently: a dir an adapter,
+// <baselines>/<vendor>-<architecture>, written the first time an adapter runs)
+const baseRoot = opt('baselines', 'data/baselines/tilegate');
+let baseDir = baseRoot;
 const update = has('update');
 const golden = !has('no-golden');
 const doPan = !has('no-pan');
@@ -48,13 +65,13 @@ const waitMs = Number(opt('wait', 35000));
 const CRIT = { fps: 58, max: 33.4, p99: 20 };
 const SCREENS = {
   desktop: { w: 1600, h: 900, dpr: 1, mobile: false, q: '' },
-  phone: { w: 412, h: 915, dpr: 2.6, mobile: true, q: '&q=low' },
+  // (a Pixel's user agent: the page takes the phone's own paths — its finish tiles, pacing, uploads)
+  phone: { w: 412, h: 915, dpr: 2.6, mobile: true, q: '&q=low', ua: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36' },
   // (the user's PC's window in their report, 2026-10-29: TilesLoadingWeirdly.png)
   wide: { w: 2046, h: 672, dpr: 1, mobile: false, q: '' },
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 fs.mkdirSync(outDir, { recursive: true });
-fs.mkdirSync(baseDir, { recursive: true });
 const t00 = Date.now();
 const fails = [];
 const rows = [];
@@ -68,6 +85,9 @@ async function measure(p, secs) {
     const S = R.stream;
     const ROW_H = Math.sqrt(3) / 2;
     const G = 24;
+    const fm = TL?.host?.win?.mesh;
+    const [nx, ny] = fm?.chunkGrid ?? [0, 0];
+    const grid = TL?.host?.gridOn?.();
     const whyOf = (x, y) => {
       if (TL?.whyMissing) return TL.whyMissing(x, y, cam.azimuth);
       return 'untiled';
@@ -93,6 +113,13 @@ async function measure(p, secs) {
           let k = null;
           if (x >= 0 && x < S.W && y >= 0 && y < S.H) {
             if (un.some(([ux, uy]) => ux === Math.floor(x / S.R) * S.R && uy === Math.floor(y / S.R) * S.R) && !TL?.drawsAt(x, y)) k = 'window';
+            // (round 112, tilefix2: the window's own land not drawn there — its chunk neither meshed nor the grid's —
+            // and no tile: the user's phone in a run, the screen grey round the hero)
+            // (what's built is the CPU's mirror, read back now and then: only while it's this slide's)
+            else if (fm && fm.built.length === nx * ny && fm.builtSlides === fm.slides && !TL?.drawsAt(x, y)) {
+              const c = Math.min(ny - 1, Math.floor((y / S.H) * ny)) * nx + Math.min(nx - 1, Math.floor((x / S.W) * nx));
+              if (!fm.built[c] && !(grid && grid[c])) k = 'window-undrawn';
+            }
           } else if (!TL?.drawsAt(x, y)) k = whyOf(x, y);
           if (k) {
             n++;
@@ -114,8 +141,21 @@ async function measure(p, secs) {
   }, secs);
 }
 
+let frameChecks = true;
+/** in the page: n frames (rAF, under the cap) */
+const frames = (p, n) => p.evaluate((n) => new Promise((res) => {
+  let k = 0;
+  const f = () => (++k >= n ? res() : requestAnimationFrame(f));
+  requestAnimationFrame(f);
+}), n);
+
 function judge(tag, m, missMax) {
   const f = [];
+  if (!frameChecks) {
+    if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
+    if (f.length) fails.push(`${tag}: ${f.join('; ')}`);
+    return f;
+  }
   if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
   if (m.fps < CRIT.fps) f.push(`fps ${m.fps}`);
   if (m.max > CRIT.max) f.push(`frame ${m.max} ms${m.hitches?.length ? ` (${m.hitches.join('; ')})` : ''}`);
@@ -171,26 +211,84 @@ function compare(tag, img) {
   return { changed: +changed.toFixed(4) };
 }
 
-for (const sk of screens) {
-  const sc = SCREENS[sk];
+for (const mode of modes)
+for (const sk0 of screens) {
+  const sk = mode === 'atlas' ? sk0 : `${mode}-${sk0}`;
+  const sc = SCREENS[sk0];
+  const zooms = mode === 'atlas' ? zoomsAtlas : runZooms;
+  if (mode === 'w384' && sk0 !== 'phone') continue;
   const browser = await puppeteer.launch({
     executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
     headless: 'new',
-    args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${sc.w},${sc.h}`],
+    args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${sc.w},${sc.h}`, ...chromeArgs],
     defaultViewport: { width: sc.w, height: sc.h, deviceScaleFactor: sc.dpr, hasTouch: sc.mobile, isMobile: sc.mobile },
     protocolTimeout: 900000,
   });
   try {
     const p = await browser.newPage();
+    if (sc.ua) await p.setUserAgent(sc.ua);
+    // (the frame cap: rAF callbacks held to whole ticks of 1000 / hz ms)
+    await p.evaluateOnNewDocument((hz) => {
+      const raf = window.requestAnimationFrame.bind(window);
+      const period = 1000 / hz;
+      let next = 0;
+      let queue = [];
+      let armed = false;
+      const tick = (t) => {
+        if (t + 1 < next) {
+          raf(tick);
+          return;
+        }
+        next = Math.max(next + period, t + period * 0.5);
+        armed = false;
+        const q = queue;
+        queue = [];
+        for (const e of q) e.f(t);
+      };
+      let ids = 0;
+      window.requestAnimationFrame = (f) => {
+        queue.push({ id: ++ids, f });
+        if (!armed) {
+          armed = true;
+          raf(tick);
+        }
+        return ids;
+      };
+      window.cancelAnimationFrame = (id) => {
+        queue = queue.filter((e) => e.id !== id);
+      };
+      window.__gateHz = hz;
+    }, hz);
     p.on('pageerror', (e) => fails.push(`${sk}: page error ${e.message}`));
     p.on('console', (m) => {
       if (m.type() === 'error' && !/Failed to load resource/.test(m.text())) fails.push(`${sk}: console error ${m.text().slice(0, 200)}`);
     });
     // (a fixed spot, world, time of day and season; nothing saved or loaded)
-    const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate&at=15024,14337&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${extra}`;
+    const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${extra}`;
     await p.goto(u, { waitUntil: 'load' });
     await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.scene, { timeout: 240000 });
     await sleep(waitMs);
+    // (the adapter: its baselines)
+    const adapter = await p.evaluate(async () => {
+      const a = await navigator.gpu.requestAdapter();
+      const i = a?.info ?? {};
+      return `${i.vendor || 'unknown'}-${i.architecture || 'unknown'}`.replace(/[^a-z0-9-]/gi, '_').toLowerCase();
+    });
+    baseDir = path.join(baseRoot, adapter);
+    fs.mkdirSync(baseDir, { recursive: true });
+    // (the page's frame rate under the cap, a second of it: under 55 the frame criteria can't be judged here)
+    const rate = await p.evaluate(async () => {
+      let n = 0;
+      const t0 = performance.now();
+      await new Promise((res) => {
+        const f = () => (++n, performance.now() - t0 < 1000 ? requestAnimationFrame(f) : res());
+        requestAnimationFrame(f);
+      });
+      return n / ((performance.now() - t0) / 1000);
+    });
+    frameChecks = rate >= 55;
+    console.log(`${sk}: adapter ${adapter}, ${rate.toFixed(1)} frames/s under the ${hz} Hz cap${frameChecks ? '' : ' — FRAME CHECKS SKIPPED (the machine gives fewer)'}`);
+    if (!frameChecks) fails.push(`${sk}: the page ran at ${rate.toFixed(1)} frames/s under the ${hz} Hz cap: frames not judged (rerun with --chromeargs)`);
     const home = await p.evaluate(() => [...window.reclaimed.camera.target]);
     // 1-2: parked at the spot, each zoom
     for (const z of zooms) {
@@ -198,12 +296,28 @@ for (const sk of screens) {
       await p.evaluate((z, home) => {
         const c = window.reclaimed.camera;
         c.zoom = z;
+        if (!home) return;
         c.target[0] = home[0];
         c.target[1] = home[1];
-      }, z, home);
-      await sleep(loadMs);
+      }, z, mode === 'atlas' ? home : null);
+      // (round 112, tilefix2: how many frames till the screen is all in detail — checked every 30, up to 3 x the budget;
+      // over --loadframes fails below, as the coverage)
+      let fill = 0;
+      for (; fill < loadFrames * 3; fill += 30) {
+        await frames(p, 30);
+        if (fill + 30 >= loadFrames && (await measure(p, 0.001)).miss === 0) {
+          fill += 30;
+          break;
+        }
+      }
+      if (fill < loadFrames) await frames(p, loadFrames - fill);
       const m = await measure(p, parkedS);
+      m.fillFrames = fill >= loadFrames * 3 ? null : Math.max(fill, loadFrames);
       const f = judge(`${tag} parked`, m, 0);
+      if (m.fillFrames === null || m.fillFrames > loadFrames) {
+        const msg = `${tag}: the screen in detail after ${m.fillFrames ?? `over ${loadFrames * 3}`} frames (budget ${loadFrames})`;
+        if (!fails.includes(msg)) fails.push(msg);
+      }
       const shot = await p.screenshot({ path: path.join(outDir, `${tag}.png`) });
       let g = null;
       if (golden) {
@@ -217,11 +331,11 @@ for (const sk of screens) {
       console.log(`${tag} parked: ${f.length ? 'FAIL ' + f.join('; ') : 'ok'} — ${JSON.stringify({ ...m, golden: g })}`);
     }
     // 3: panning, each zoom
-    if (doPan)
+    if (doPan && mode === 'atlas')
       for (const z of zooms) {
         const tag = `${sk}-z${z}`;
         await p.evaluate((z) => (window.reclaimed.camera.zoom = z), z);
-        await sleep(loadMs);
+        await frames(p, loadFrames);
         await p.evaluate((v) => {
           const R = window.reclaimed;
           const c = R.camera;
@@ -241,7 +355,7 @@ for (const sk of screens) {
   }
 }
 const secs = Math.round((Date.now() - t00) / 1000);
-fs.writeFileSync(path.join(outDir, 'tilegate.json'), JSON.stringify({ url, secs, fails, rows }, null, 1));
+fs.writeFileSync(path.join(outDir, 'tilegate.json'), JSON.stringify({ url, secs, hz, loadFrames, chromeArgs, baselines: baseDir, fails, rows }, null, 1));
 console.log(`\n${fails.length ? `GATE FAILED (${fails.length})` : 'GATE PASSED'} in ${secs} s — ${path.join(outDir, 'tilegate.json')}`);
 for (const f of fails) console.log(`  ${f}`);
 process.exit(fails.length ? 1 : 0);
