@@ -26,10 +26,10 @@ import type { Camera } from '../render/camera';
 import type { Renderer } from '../render/renderer';
 import { SimpleUnits } from '../units/simple';
 import { Figures, unitPose, type FigurePose } from '../units/figures';
+import { walkerPose } from '../hero/walker-pose';
 import { Walker, STEP as WALK_STEP } from '../hero/walker';
 import { findPath } from '../hero/path';
 import { TouchPad } from '../hero/touchpad';
-import { MAT } from '../world/materials';
 import { StoryPlay, type Stage, type StageFrame, type StageLasting } from './play';
 import { stageStory, type StagePiece } from './stage-gen';
 import type { StageLand } from './stage-land';
@@ -439,24 +439,5 @@ function onFrame(s: Stage, f: StageFrame): Stage {
     cast: map(s.cast),
     rooms: s.rooms ? Object.fromEntries(Object.entries(s.rooms).map(([k, v]) => [k, map(v)])) : undefined,
     locks: s.locks?.map((k) => ({ ...k, at: w(k.at) })),
-  };
-}
-
-function walkerPose(h: Walker): FigurePose {
-  const sw = h.swingT > 0 ? h.swingT * 2 - 1 : null;
-  return {
-    at: h.position(),
-    heading: h.heading(),
-    height: 2.4,
-    torso: MAT.Steel,
-    head: MAT.Canvas,
-    legs: MAT.Asphalt,
-    weapon: MAT.Steel,
-    phase: h.phase,
-    moving: h.pace > 0.3,
-    swing: sw,
-    lean: sw === null ? 0 : 0.5,
-    flash: h.flash > 0 ? Math.min(1, h.flash * 3) : 0,
-    dead: !h.alive,
   };
 }

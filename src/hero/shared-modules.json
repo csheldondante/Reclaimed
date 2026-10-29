@@ -1,0 +1,27 @@
+{
+  "about": "(round 112, herosandbox) The Reclaimed modules a hero module from another build may import at runtime, as reclaimed/<path> (the page's import map: vite.config.ts heroShared, docs/HEROES.md). They resolve to the host's own modules, so classes and constants are the host's by identity. Adding one is additive; removing or renaming one is a hero contract major change.",
+  "modules": [
+    "api/contracts/index",
+    "api/contracts/hero",
+    "api/contracts/units",
+    "api/contracts/world",
+    "world/materials",
+    "world/lattice",
+    "units/figures",
+    "units/simple",
+    "hero/touchpad",
+    "hero/path",
+    "render/camera",
+    "api/world",
+    "api/terrain",
+    "api/water",
+    "api/fx",
+    "api/wind",
+    "api/cutaway",
+    "scenes/world-core",
+    "physics/physics",
+    "physics/wake",
+    "agents/agents",
+    "sim/lava"
+  ]
+}

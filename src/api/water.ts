@@ -19,6 +19,9 @@ const OP_DRAIN = OP.DRAIN;
 /** edit.wgsl: water added per tick of an OP_WATER event, per unit strength (at the centre) */
 const WATER_PER_STRENGTH = 0.02;
 const DRAIN_PER_STRENGTH = 0.03;
+const OP_OIL = OP.OIL;
+/** edit.wgsl: oil added per unit strength (at the centre) */
+const OIL_PER_STRENGTH = 0.015;
 
 /** Queries answer from the mirror (every `mirror.every` ms, 250 by default); null before the first read. */
 export class Water {
@@ -97,6 +100,15 @@ export class Water {
   flood(x: number, y: number, opts: { radius?: number; depth?: number } = {}): void {
     const depth = opts.depth ?? 1;
     this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP_WATER * 32, radius: opts.radius ?? 4, strength: depth / WATER_PER_STRENGTH });
+  }
+
+  /**
+   * (round 112, the hero sandbox's fill) Add about `depth` cells of oil over `radius` round (x, y), as `flood` adds
+   * water (most at the centre, fading to the rim): it floats on the water and runs off with it.
+   */
+  oil(x: number, y: number, opts: { radius?: number; depth?: number } = {}): void {
+    const depth = opts.depth ?? 1;
+    this.core.globals.events.push({ kind: EventKind.Edit, x, y, z: OP_OIL * 32, radius: opts.radius ?? 4, strength: depth / OIL_PER_STRENGTH });
   }
 
   /** Take up to `depth` cells of water (and oil) off within `radius`. */

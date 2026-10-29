@@ -16,6 +16,16 @@
 
 import type { Actor, Units, V2, V3 } from './units';
 
+/**
+ * (round 112, herosandbox) The contract's version, "major.minor": a hero module (docs/HEROES.md "Heroes from
+ * another build") declares the version it was built against as `heroContract`; it loads when the majors match
+ * and its minor is no newer than this. Additive changes bump the minor; a changed signature bumps the major.
+ * - 1.0: round 97 (heroapi): Hero, HeroIntent (talk), RunController, claims, goesTo.
+ * - 1.1: round 112: HeroIntent.input, Hero.tunables, Hero.ownCamera, Hero.dispose, HeroAbility.duration, HeroWorld.solidAt /
+ *   floorUnder, HeroModule / HeroHost / HeroEntry (the hero sandbox's registry).
+ */
+export const HERO_CONTRACT = '1.1';
+
 /** What the player wants this frame (a controller's output). */
 export interface HeroIntent {
   /** where to go: a world-space direction (x, y), length 0..1 (a stick's tilt) */
@@ -30,6 +40,12 @@ export interface HeroIntent {
   use?: string[];
   /** (round 97, heroapi) talk to whoever's near enough (the context button, E): talk as an intent the controller emits */
   talk?: boolean;
+  /**
+   * (1.1) A controller's own input for its own hero, passed through untouched (the hoverbike game's per-frame
+   * Input: stick, gestures, drags, world taps). Opaque to the host: the sandbox's inspector shows that it's there
+   * (and its keys), never reads it.
+   */
+  input?: unknown;
 }
 
 /** Something a hero can do (a swing, a hookshot, a dash, a spell). */
@@ -38,6 +54,25 @@ export interface HeroAbility {
   name: string;
   /** seconds until it can be used again (0: ready) */
   cooldown(): number;
+  /** (1.1) its full cooldown, seconds (the inspector's bar; absent: unknown) */
+  duration?: number;
+}
+
+/**
+ * (1.1) A number of the hero's the player may tune live (the hero sandbox's tuning panel): a speed, a reach, a
+ * cooldown. `get` reads it now; `set` takes a value already clamped to [min, max]. The sandbox turns these into a
+ * tuning registry (src/tune/registry.ts) at the boundary: presets, export and the feedback note's values.
+ */
+export interface HeroTunable {
+  label: string;
+  /** cells/s, s, ×, … */
+  units?: string;
+  min: number;
+  max: number;
+  step: number;
+  get(): number;
+  set(v: number): void;
+  help?: string;
 }
 
 /** What the chase camera should do for this hero. */
@@ -56,6 +91,10 @@ export interface HeroWorld {
   units: Units;
   /** water standing at (x, y) (cells): a hero on foot doesn't wade in over DEEP */
   water?: { depthAt(x: number, y: number): number | null };
+  /** (1.1) is (x, y, z) inside the ground (a wall's face, a cave's roof): what rays and shells stop at */
+  solidAt?(x: number, y: number, z: number): boolean;
+  /** (1.1) the floor under feet that reach up to z: in a cave, under an overhang (null: none) */
+  floorUnder?(x: number, y: number, z: number): number | null;
 }
 
 export interface Hero {
@@ -90,6 +129,12 @@ export interface Hero {
   claims?(sx: number, sy: number): boolean;
   /** (round 97, heroapi) false: it doesn't walk itself to `intent.goTo` (a vehicle): a tap on someone far tells the player to go closer */
   readonly goesTo?: boolean;
+  /** (1.1) its numbers to tune live, by key (a speed, a reach): the hero sandbox's tuning panel. Absent: none. */
+  readonly tunables?: Record<string, HeroTunable>;
+  /** (1.1) it drives the camera itself (the hoverbike's chase camera): the host neither follows nor zooms; `camera` is advisory */
+  readonly ownCamera?: boolean;
+  /** (1.1) it's done with (the sandbox's way back out, a run's end): what it draws and holds let go. Absent: nothing to let go. */
+  dispose?(): void;
 }
 
 /** Turns the player's input into a HeroIntent each frame (touch: a stick and buttons; desktop: keys). */
@@ -112,4 +157,74 @@ export interface RunController extends HeroController {
   setHealth?(health: number, max: number): void;
   /** hidden while a talk or the end card has the screen */
   hidden?: boolean;
+}
+
+// ---- (1.1, round 112) heroes from another build: the hero sandbox's registry (docs/HEROES.md) ----------------
+
+/** A hero a game offers: made by role, with its own controller (and units) when it has them. */
+export interface HeroEntry {
+  /** its role (Hero.role): the registry's key */
+  role: string;
+  /** shown in the sandbox's hero list */
+  name: string;
+  /** an emoji for its button */
+  icon?: string;
+  makeHero(world: HeroWorld, at: V2): Hero;
+  /** its own controller (absent: the host's TouchPad: a stick, ⚔, run, a context button) */
+  makeController?(hero: Hero): RunController;
+  /** its own units (absent: the host's, which the sandbox's spawn tool fills) */
+  units?: Units;
+}
+
+/**
+ * What a hero module gets from the host (1.1): named capabilities first, through Reclaimed's APIs; `raw` are the
+ * handles a hero still needs that have no API yet (debt: each to be replaced by an API — docs/HEROES.md "What the
+ * contract lacks").
+ */
+export interface HeroHost {
+  /** the host's HERO_CONTRACT */
+  readonly contract: string;
+  /** the ground, the units, the water (what makeHero is given too) */
+  readonly world: HeroWorld;
+  /** the UI layer (a controller's buttons go here) */
+  readonly ui: HTMLElement;
+  /** a world point on the screen (CSS px) */
+  project(x: number, y: number, z: number): [number, number];
+  /** the ground seen under a screen point (CSS px): world x, y, z */
+  groundAt(sx: number, sy: number): [number, number, number];
+  /** the window's height in cells (rays, tap picking) */
+  readonly zMax: number;
+  /** wake the world round (x, y) for a while (a streamed world sleeps away from the camera) */
+  wake(x: number, y: number, radius: number): void;
+  /** a line into the sandbox's boundary log (and the feedback file) */
+  log(line: string): void;
+  /** debt: handles without an API yet (typed loosely on purpose: see docs/HEROES.md) */
+  readonly raw: {
+    /** the world API (src/api/world.ts Sim: terrain, water, fire, wind, fx, plants, agents) */
+    sim: unknown;
+    /** the world (src/scenes/world-core.ts WorldCore) */
+    core: unknown;
+    /** the camera (src/render/camera.ts Camera) */
+    camera: unknown;
+    /** the renderer (src/render/renderer.ts Renderer): a hero draws itself (addVoxels, addMesh) */
+    renderer: unknown;
+    device: GPUDevice;
+  };
+}
+
+/** What `mount` hands back: the heroes the module offers. */
+export interface HeroMount {
+  heroes: HeroEntry[];
+  dispose?(): void;
+}
+
+/**
+ * A hero module, loaded at runtime (`?heroes=<url>`, or the sandbox's list): an ES module that exports these two.
+ * Its imports of Reclaimed resolve through the page's import map (`reclaimed/<path>`, docs/HEROES.md) to the
+ * host's own modules, so classes and constants are the host's by identity and nothing is copied.
+ */
+export interface HeroModule {
+  /** the HERO_CONTRACT it was built against */
+  heroContract: string;
+  mount(host: HeroHost): HeroMount | Promise<HeroMount>;
 }
