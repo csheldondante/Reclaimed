@@ -11578,3 +11578,11 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
 - framecost (one pass each, win 512, zoom 5, the iGPU's drift ~2x between runs): GPU passes a frame, parked 10.07 ms
   (P2.1 `?pages=ring`, the old layout) against 10.71 (P2.3, the table, page-major); panning at 60 cells/s 9.61 against
   10.3. Within the drift; ABAB runs to come.
+
+### Round 107 (`pages`): watersurf's off-window read
+
+- watersurf.wgsl `build` read column `ur` (the row above, shifted right on odd rows) unguarded: on an odd row's last
+  column it lies past the window's right edge. In the row-major layout that index read another column (the next
+  row's first), so the edge's triangles took a wrong height; with pages it looks up a chunk off the window. Found by
+  `?pagecheck=1` (watersurf: ~220 000 off-window lookups in a pagetest load). Both triangles there use `ur`, so neither
+  is made: the window's last half column of odd rows has no water surface, as it has no column to meet.
