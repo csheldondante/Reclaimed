@@ -7,8 +7,9 @@ import type { Profiler } from '../gpu/profiler';
 import { PHYS_COL_WORDS, type PackedWorld } from '../world/layout';
 import type { MapData } from '../world/mapgen';
 import { packMaterialTable } from '../world/materials';
-import { GLOBALS_BYTES } from './globals';
-import { Ring } from './ring';
+import { globalsBytes } from './globals';
+import { Pages } from './pages';
+import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_MAX, pageMiss, pageTab, pageTables } from '../gpu/pages-mode';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
 import { MAX_PLACES } from '../world/places';
@@ -269,7 +270,7 @@ export class WorldGpu {
    * (round 105, ringwin) the window on a ring (sim/ring.ts): where each window column's per-column data lies.
    * `?ringbias=x,y` starts it off zero (cells; whole regions of 64 in a streamed world) — the identity test's.
    */
-  readonly ring: Ring;
+  readonly ring: Pages;
 
   constructor(
     private device: GPUDevice,
@@ -285,7 +286,9 @@ export class WorldGpu {
     this.zMax = zMax;
     this.maxK = packed.maxK;
     const N = this.cells;
-    this.ring = new Ring(w, h);
+    this.ring = new Pages(w, h);
+    // (round 107, P2.2: a shuffled page table needs the table looked up — the ring computed is the identity's)
+    if (!this.ring.identity && PAGE_ADDR !== 'table') throw new Error(`?pageperm= needs ?pages=table (not ${PAGE_ADDR}): the ring's wrap computed only gives the identity's slots`);
     {
       const b = (typeof location === 'undefined' ? '' : (new URLSearchParams(location.search).get('ringbias') ?? '')).split(',').map(Number);
       if (b.length === 2 && b.every((v) => Number.isInteger(v))) {
@@ -293,9 +296,24 @@ export class WorldGpu {
       }
     }
     const r = this.ring;
+    // (round 107, ?pagecheck=1: the kernels' counts of chunks looked up off the window)
+    if (PAGE_CHECK) {
+      this.pageMissBuf = this.buf('pageMiss', PAGE_MISS_MAX * 4, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST);
+      pageMiss.buf = this.pageMissBuf;
+    }
+    // (round 107, M1's ?pages=storage: the page table in a storage buffer too, an entry a u32 — gpu/pages-mode.ts)
+    if (PAGE_ADDR === 'storage') {
+      this.pageTab = this.buf('pageTab', Math.max(16, r.table.length * 4), GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+      pageTab.buf = this.pageTab;
+      this.pagesChanged();
+    }
 
     // (COPY_SRC: round 104, the tile cache's render-only land copies it, its size and origin its own — render/tileland.ts)
-    this.globals = this.buf('globals', GLOBALS_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
+    // (round 107, PG4: the page tables sized to this window — every kernel made from here on uses this size)
+    // (the ring computed needs no table: the Globals keep a vec4 each, their size before pages)
+    this.pageVec4 = PAGE_ADDR === 'table' ? Math.max(1, Math.ceil((r.nx * r.ny) / 8)) : 1;
+    pageTables.vec4 = this.pageVec4;
+    this.globals = this.buf('globals', globalsBytes(this.pageVec4), GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC);
     const mats = packMaterialTable();
     this.materials = this.buf('materials', mats.byteLength, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
     device.queue.writeBuffer(this.materials, 0, mats);
@@ -314,29 +332,29 @@ export class WorldGpu {
     this.flux = this.buf('flux', N * DIRS_BYTES, S);
     this.waterSource = this.buf('waterSource', N * 4, S);
     this.waterChange = this.buf('waterChange', 2048 * 4, S);
-    device.queue.writeBuffer(this.water, 0, r.toRing(map.water));
-    device.queue.writeBuffer(this.waterSource, 0, r.toRing(map.waterSource));
+    device.queue.writeBuffer(this.water, 0, r.toStore(map.water));
+    device.queue.writeBuffer(this.waterSource, 0, r.toStore(map.waterSource));
 
     this.oil = this.buf('oil', N * 4, S);
     this.oilNext = this.buf('oilNext', N * 4, S);
     this.oilFlux = this.buf('oilFlux', N * DIRS_BYTES, S);
-    device.queue.writeBuffer(this.oil, 0, r.toRing(map.oil));
+    device.queue.writeBuffer(this.oil, 0, r.toStore(map.oil));
     this.oilStored = this.buf('oilStored', N * 8, S);
     this.lava = this.buf('lava', N * 16, S);
     this.lavaNext = this.buf('lavaNext', N * 16, S);
     this.lavaFlux = this.buf('lavaFlux', N * 24, S);
-    if (map.lava) device.queue.writeBuffer(this.lava, 0, r.toRing(map.lava, 4));
-    device.queue.writeBuffer(this.oilStored, 0, r.toRing(map.oilStored, 2));
+    if (map.lava) device.queue.writeBuffer(this.lava, 0, r.toStore(map.lava, 4));
+    device.queue.writeBuffer(this.oilStored, 0, r.toStore(map.oilStored, 2));
 
     this.contam = this.buf('contam', N * 8, S);
     this.contamNext = this.buf('contamNext', N * 8, S);
-    device.queue.writeBuffer(this.contam, 0, r.toRing(map.contam, 2));
+    device.queue.writeBuffer(this.contam, 0, r.toStore(map.contam, 2));
     this.moisture = this.buf('moisture', N * 4, S);
     this.moistureNext = this.buf('moistureNext', N * 4, S);
-    device.queue.writeBuffer(this.moisture, 0, r.toRing(map.moisture));
+    device.queue.writeBuffer(this.moisture, 0, r.toStore(map.moisture));
     this.veg = this.buf('veg', N * 4, S);
     this.vegNext = this.buf('vegNext', N * 4, S);
-    device.queue.writeBuffer(this.veg, 0, r.toRing(map.vegetation));
+    device.queue.writeBuffer(this.veg, 0, r.toStore(map.vegetation));
 
     this.fire = this.buf('fire', N * 4, S);
     this.fireNext = this.buf('fireNext', N * 4, S);
@@ -404,12 +422,12 @@ export class WorldGpu {
     if (map.lavaSpring) {
       const t = new Float32Array(N * 4);
       for (let k = 0; k < N; k++) t[k * 4] = map.lavaSpring[k];
-      device.queue.writeTexture({ texture: this.lavaSpring }, r.toRing(t, 4), { bytesPerRow: this.w * 16 }, dsize);
+      device.queue.writeTexture({ texture: this.lavaSpring }, r.texToStore(t, 4), { bytesPerRow: this.w * 16 }, dsize);
     }
     this.riverFlow = device.createTexture({ label: 'riverFlow', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.riverFlow);
     this.riverFlowView = this.riverFlow.createView();
-    if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, r.toRing(map.riverFlow, 4), { bytesPerRow: this.w * 16 }, dsize);
+    if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, r.texToStore(map.riverFlow, 4), { bytesPerRow: this.w * 16 }, dsize);
     this.shakeView = this.shake.createView();
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });
     this.editStateNext = device.createTexture({ label: 'editStateNext', size: dsize, format: 'rgba32float', usage: tusage });
@@ -431,7 +449,7 @@ export class WorldGpu {
     this.places = this.buf('places', N * 4, S);
     this.placeTable = this.buf('placeTable', MAX_PLACES * 4, S);
     this.sedOut = this.buf('sedOut', N * 7 * DIRS_BYTES, S);
-    this.tiles = SIM_CULL ? new AwakeTiles(device, w, h) : null;
+    this.tiles = SIM_CULL ? new AwakeTiles(device, w, h, this.ring) : null;
     this.tileCopy = this.tiles ? new TileCopy(device, this.globals, this.materials, this.tiles, N) : null;
   }
 
@@ -441,10 +459,42 @@ export class WorldGpu {
   /** Free every GPU buffer this world (and anything allocated through buf()) owns. */
   /** Upload the reach (one byte per column, 255 = inside). */
   writeReach(data: Uint8Array): void {
-    this.device.queue.writeTexture({ texture: this.reachTex }, this.ring.toRing(data), { bytesPerRow: this.w }, { width: this.w, height: this.h });
+    this.device.queue.writeTexture({ texture: this.reachTex }, this.ring.texToStore(data, 1), { bytesPerRow: this.w }, { width: this.w, height: this.h });
+  }
+
+  /** (round 107, PG4) vec4s in each of the Globals' page tables (8 entries each) */
+  pageVec4 = 512;
+
+  /** (round 107, ?pagecheck=1) the off-window counter (null otherwise) */
+  pageMissBuf: GPUBuffer | null = null;
+
+  /** (round 107, ?pagecheck=1, scripts/pagetest.mjs) each kernel's lookups of a chunk off the window so far (the nonzero), and the kernels not checked */
+  async readPageMiss(): Promise<{ miss: Record<string, number>; checked: number; unchecked: string[] }> {
+    if (!this.pageMissBuf) throw new Error('readPageMiss: not a ?pagecheck=1 page');
+    const st = this.device.createBuffer({ size: this.pageMissBuf.size, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+    const enc = this.device.createCommandEncoder();
+    enc.copyBufferToBuffer(this.pageMissBuf, 0, st, 0, st.size);
+    this.device.queue.submit([enc.finish()]);
+    await st.mapAsync(GPUMapMode.READ);
+    const u = new Uint32Array(st.getMappedRange().slice(0));
+    st.destroy();
+    const miss: Record<string, number> = {};
+    pageMiss.labels.forEach((l, k) => {
+      if (u[k]) miss[l] = (miss[l] ?? 0) + u[k];
+    });
+    return { miss, checked: new Set(pageMiss.labels).size, unchecked: [...pageMiss.unchecked] };
+  }
+
+  /** (round 107, M1's ?pages=storage) the storage page table (null otherwise) */
+  pageTab: GPUBuffer | null = null;
+
+  /** (round 107) the page table changed (Simulation.uploadGlobals wrote it to the Globals): the storage copy too */
+  pagesChanged(): void {
+    if (this.pageTab) this.device.queue.writeBuffer(this.pageTab, 0, Uint32Array.from(this.ring.entries));
   }
 
   destroy(): void {
+    if (pageTab.buf === this.pageTab) pageTab.buf = null;
     for (const b of this.owned) b.destroy();
     for (const t of this.textures) t.destroy();
     this.tiles?.destroy();

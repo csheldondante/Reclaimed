@@ -11586,3 +11586,78 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   row's first), so the edge's triangles took a wrong height; with pages it looks up a chunk off the window. Found by
   `?pagecheck=1` (watersurf: ~220 000 off-window lookups in a pagetest load). Both triangles there use `ur`, so neither
   is made: the window's last half column of odd rows has no water surface, as it has no column to meet.
+
+### Round 107 (`pages`): PG4, the ABAB — and the table holds places, not slots
+
+- **places merged** (e8187b0: riverfalls, agentspike). agentspike's navCost is indexed colIdx * NAV_K, its region
+  clears go through columnBufs (page runs); riverfalls finds columns through colIdxI. M1's storage table moved from
+  binding 37 to 61 (agents.wgsl navCost took 37).
+- **The first ABAB** (framecost, places e8187b0 against pages, 4 + 4 alternated runs a cell, window 256 zoom 14,
+  parked and 60 cells/s): pages lost everywhere — the GPU's passes +9.3 % parked, +12.5 % panning, the sims' passes
+  +24-29 %, every pages run slower than every places run. The texture-heavy passes took most: surface +128 %,
+  renderfields +90 %, sway +45 %. The table held slots, and a texel's page needed slot % and / the chunks across.
+- **Fix: the GPU's table holds each page's place in the atlas** (px | py << 8: Pages.entries; Pages.table keeps
+  the slots for the CPU). A buffer's slot is py * nx + px, a texel place * 16: no division anywhere (common.wgsl
+  colPlace; colSlot from it). pageunit 10.2 M checks, 0 wrong; pagetest (merged, ring at 0 against the table at
+  128,64 with ?pageperm=7): 37 of 37 identical, no off-window lookups (54 kernels checked).
+- **The second ABAB** (data/bench/pg4-abab: the framecost JSONs), GPU passes a frame, places -> pages (the mean of
+  4 each; every run listed in the files):
+
+  | window, speed | all passes | the sims' passes | span p50 |
+  |---|---|---|---|
+  | 256, parked | 6.95 -> 7.17 (+3.2 %) | 1.41 -> 1.50 (+6.4 %) | +4.0 % |
+  | 256, 60 c/s | 4.86 -> 5.24 (+7.8 %) | 0.30 -> 0.33 (+11 %) | +6.9 % |
+  | 512, parked | 9.74 -> 9.75 (+0.2 %) | 2.38 -> 2.34 (-1.5 %) | -1.9 % |
+  | 512, 60 c/s | 8.27 -> 9.31 (+12.5 %) | 0.72 -> 0.94 (+30 %) | +7.8 % |
+
+  Against the 5 % rule: parked passes (+0.2, +3.2 %); panning fails (+7.8, +12.5 %). Where it goes, panning at 512:
+  `draw` +0.29 ms (3.73 -> 4.01: its vertex and fragment work finds columns through the table now), sway +0.056,
+  surface +0.046, particles-emit +0.028, riverfalls +0.027, renderprep +0.021, renderfields +0.015, structure +0.011.
+  Parked, draw is +0.23 ms too, offset by the field mesh (less this run, the scene's content). water-flux and
+  water-depth got cheaper (-10 to -23 %: page-major neighbours share cache lines in a page). The per-column cost is
+  the table's uniform loads where a column is found several times (surface: 7 lookups a column — asleep, drowsy,
+  its buffer, four texels; sway, renderfields alike), so the fix is PAGES.md's own-page fast path: the chunk's
+  place found once (the cull wrapper's list entry carries it; elsewhere computed once a column) — BACKLOG PG4.
+- culltest, places against pages: both fail "the fire lit" (fireM 0) and differ in plants asleep (veg 7 / 0 and 8
+  / 4 columns); pages also has 36 columns of flux changed in chunks never woken, places 0 — P2.3a's stagger is a
+  different pattern of slow turns (PG5).
+
+### Round 107 (`pages`): PG4 met — the ring computed, the own-page fast path; PG5's readback order
+
+- **The own-page fast path.** A column's page is found once: common.wgsl colPlace keeps the invocation's own chunk
+  and its place (the first asked for, or set by the cull wrapper from its list entry — entries now carry the page's
+  place, cx | cy << 6 | px << 12 | py << 18), and a neighbour goes through the table only in another page. The draw's
+  extra went (+0.29 -> +0.07 ms panning at 512), but the sims stayed slow.
+- **Why: the table inside Globals.** scripts/kernelab.mjs (new: every sim kernel's dispatches replayed alone, timed
+  in one pass, per workgroup, alternated 3-4 times against places — the frame's noise and its sleep's out of it).
+  Weighted over the kernels, per workgroup, against places: the table in Globals (8 KB each way) +60 %; the ring
+  computed with that 18 KB Globals +55 %; the table sized to the window (Globals 2.9 KB) +48 %; the ring computed with
+  the Globals at their old size -4.5 % (data/bench/pg4-kernelab: logs5 the table and the ring with the 18 KB Globals,
+  logs6 the ring with the Globals at their old size — an experiment build, logs7 the sized table, logs8 the ring as
+  shipped; A = places). scripts/livecount.mjs (new) showed the awake chunks the same parked (~11-14 both). On this D3D11 iGPU a dynamically indexed array in the Globals slows every
+  read of the Globals, and a large Globals costs on its own. So: **the game computes the ring** (`?pages=ring`, the
+  default; the dense window's slots are the ring's places) and the Globals keep a vec4 a table (1952 B);
+  `?pages=table` stays a test path only, for `?pageperm=`; P2.4's sparse table gets a binding of its own, a uniform
+  or a storage buffer, never in Globals (PAGES.md §1 rewritten). M1's phone numbers for "table" carry the Globals
+  penalty (PAGES.md M1, BACKLOG PG2).
+- **PG5 — a contract fix.** WorldCore.readBuffer returns every per-column buffer in window order, but flux, oilFlux,
+  lavaFlux and physCols weren't in COLUMN_BUFS, so they came back in the store's order: page-major since P2.2. culltest
+  read flux that way and compared river columns' flux as other columns' (the "36 columns of flux changed in chunks
+  never woken"). They're in COLUMN_BUFS now (pagetest's own conversion of them removed). culltest also reads through
+  the contracts as they are since P2.3b and P2.2: the sleep bits by slot (core.ring.table), riverFlow through
+  readTexture (a page atlas). Its check passes (flux 0); the two failures places has too ("the fire lit", plants
+  changing asleep) are left.
+- **The gate, ABAB** (framecost, places e8187b0 against pages, 4 alternated runs a cell; data/bench/pg4-abab-ring),
+  GPU passes a frame:
+
+  | window, speed | places | pages | |
+  |---|---|---|---|
+  | 256, parked | 7.10 | 6.98 | -1.7 % (one pages run's timestamps broke: its sum -3957; left out) |
+  | 256, 60 c/s | 4.88 | 5.00 | +2.4 % |
+  | 512, parked | 9.74 | 9.69 | -0.5 % |
+  | 512, 60 c/s | 7.99 | 8.17 | +2.3 % |
+
+  Within 5 % everywhere. The sims' passes: -5.4, +3.2, -3.5, +2.7 %. renderfields is the one pass still over
+  (+20-70 %, 0.004-0.007 ms a frame: its corners' texColK and its neighbours across pages).
+- pagetest (ring at 0 against the table at 128,64 with ?pageperm=7), twice on a fresh server: 37 of 37 identical
+  both times, no off-window lookups (54 kernels checked).

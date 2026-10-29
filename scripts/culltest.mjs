@@ -69,15 +69,8 @@ try {
     // (?rivers=table: a held river's columns are simulated asleep — riverheld.wgsl, relaxing to the atlas's table; the
     // riverFlow texture's z > 0 marks them, and they're left out of "nothing changes")
     const river = await (async () => {
-      const dev = R.core.host.gpu.device;
-      const tex = R.core.world.riverFlow;
-      const buf = dev.createBuffer({ size: w * h * 16, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-      const enc = dev.createCommandEncoder();
-      enc.copyTextureToBuffer({ texture: tex }, { buffer: buf, bytesPerRow: w * 16 }, [w, h]);
-      dev.queue.submit([enc.finish()]);
-      await buf.mapAsync(GPUMapMode.READ);
-      const f = new Float32Array(buf.getMappedRange().slice(0));
-      buf.destroy();
+      // (round 107, pages: a texture is a page atlas — read back in window order through readTexture)
+      const f = (await R.core.readTexture(R.core.world.riverFlow)).data;
       const out = new Uint8Array(w * h);
       const { RIVERS } = await import('/src/sim/world-gpu.ts');
       for (let i = 0; i < w * h; i++) out[i] = RIVERS === 'table' && f[i * 4 + 2] > 0 ? 1 : 0;
@@ -111,8 +104,10 @@ try {
     const awake1 = awake();
     // (the chunks woken: their bits clear in the mask now)
     const woke = new Set();
+    // (round 107, pages P2.3b: the mask's bits are the slots' — window chunk c's bit is its slot's, core.ring.table)
     const mask = R.core.globals.sleep;
-    for (let c = 0; c < (w / 16) * (h / 16); c++) if (mask && !((mask[c >> 5] >>> (c & 31)) & 1)) woke.add(c);
+    const slotOf = R.core.ring.table;
+    for (let c = 0; c < (w / 16) * (h / 16); c++) if (mask && !((mask[slotOf[c] >> 5] >>> (slotOf[c] & 31)) & 1)) woke.add(c);
     const M = await read();
     // (8 s an event's, and the drowse)
     await sleep(11000);
@@ -129,6 +124,7 @@ try {
       return true;
     }));
     return {
+      ring: [R.core.ring.x, R.core.ring.y],
       tiles: R.core.world.tiles ? R.core.world.tiles.chunks : null,
       awake0, awake1, awake2, woke: woke.size,
       floodA: +near(A).toFixed(2), floodF: +near(F).toFixed(2), floodC: +near(C).toFixed(2),
@@ -136,6 +132,21 @@ try {
       fireM: +sum(M.fire).toFixed(1), fireB: +sum(B.fire).toFixed(1),
       asleepChanged: diff(B, C, null),
       farChanged: diff(A, C, far),
+      // (round 107, PG5: which far columns' flux moved — where, by how much, rivers next to them)
+      farFlux: (() => {
+        const out = [];
+        for (let i = 0; i < w * h && out.length < 40; i++) {
+          if (!far.has(chunkOf(i)) || river[i]) continue;
+          let d = 0, a = 0, c = 0;
+          for (let k = 0; k < 6; k++) { d = Math.max(d, Math.abs(A.flux[i * 6 + k] - C.flux[i * 6 + k])); a += A.flux[i * 6 + k]; c += C.flux[i * 6 + k]; }
+          if (d <= 1e-4) continue;
+          const x = i % w, y = Math.floor(i / w);
+          let rn = 0;
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) { const q = (y + dy) * w + x + dx; if (q >= 0 && q < w * h && river[q]) rn++; }
+          out.push({ x, y, chunk: [Math.floor(x / 16), Math.floor(y / 16)], fluxA: +a.toFixed(4), fluxC: +c.toFixed(4), water: [+A.water[i].toFixed(4), +C.water[i].toFixed(4)], riverNb: rn });
+        }
+        return out;
+      })(),
       flowingB: (() => { let n = 0; for (let i = 0; i < w * h; i++) { let s = 0; for (let k = 0; k < 6; k++) s += Math.abs(B.flux[i * 6 + k]); if (s > 1e-3) n++; } return n; })(),
     };
   });
@@ -147,6 +158,7 @@ try {
   check('what the flood left is still there asleep', r.floodC > r.floodA && Math.abs(r.waterC - r.waterB) < 0.5, { floodA: r.floodA, floodC: r.floodC, B: r.waterB, C: r.waterC });
   // (veg left out: leaves and seeds land on it everywhere — particles write it, asleep or not)
   check('the chunks never woken (nor next to one) hold what they held', Object.entries(r.farChanged).every(([n, d]) => n === 'veg' || n === 'riverColsSkipped' || d === 0), r.farChanged);
+  if (r.farFlux.length) console.log('far flux moved:', JSON.stringify(r.farFlux));
   check('rivers still flow asleep (frozen flux kept)', r.flowingB > 100, { flowing: r.flowingB });
 } finally {
   await browser.close();

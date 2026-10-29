@@ -97,7 +97,8 @@ const K_SMOKE_Q: u32 = 8u;
 fn stepNow() -> u32 { return LQ.step.x & 0x3ffffu; }
 fn stepPrev() -> u32 { return (LQ.step.x - 1u) & 0x3ffffu; }
 fn stamp24(s: u32) -> u32 { return s & 0xffffffu; }
-fn chunkOf(q: vec2<u32>) -> u32 { return (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize; }
+/** (round 107, pages P2.3b) the per-chunk state (act, the rescale) is keyed by the chunk's slot */
+fn chunkOf(q: vec2<u32>) -> u32 { return colSlot(q / COLS_PAGE); }
 /** a frozen chunk's rescale this step (1: none) */
 fn chunkScale(q: vec2<u32>) -> f32 {
   let c = chunkOf(q);

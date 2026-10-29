@@ -155,7 +155,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
   if (opts.band !== false && params.zTop > dims.zMax && core.renderer.enableBand(params.zTop)) stream.refreshBand();
   let sleep: Sleep | undefined;
   if (opts.sleep !== false) {
-    sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);
+    sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, core.ring);
     sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
     core.sleep = sleep;
   }

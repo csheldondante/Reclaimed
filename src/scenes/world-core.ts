@@ -10,7 +10,7 @@ import type { GlobalsState } from '../sim/globals';
 import { Simulation, TICK_DT } from '../sim/simulation';
 import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
-import { COLUMN_BUFS, Ring } from '../sim/ring';
+import { COLUMN_BUFS, Pages } from '../sim/pages';
 import { CHUNK, packColumns, type PackedWorld } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { MapData } from '../world/mapgen';
@@ -106,8 +106,8 @@ export class WorldCore {
     this.packed = packColumns(map.grid, minK);
     this.world = new WorldGpu(device, host.profiler, this.packed, map, particleCap);
     // (round 106, frameprobe: the map's surface heights on the window's ring, as the GPU's per-column data — a slide
-    // moves none of it; read column (x, y) at ring.i(x, y). The same array when the ring starts at zero)
-    if (!this.world.ring.zero) map.surface.set(this.world.ring.toRing(map.surface));
+    // moves none of it; read column (x, y) at ring.i(x, y). Round 107, pages: in the buffers' page-major order)
+    map.surface.set(this.world.ring.toStore(map.surface));
     this.sim = new Simulation(device, this.world, host.profiler);
     // (round 104, simscale: the painted wind's boxes go with the land; dy comes in world units, the field's rows are the window's)
     this.onShift.push((dx, dy) => this.sim.wind.shift(dx, Math.round(dy / ROW_H)));
@@ -239,7 +239,7 @@ export class WorldCore {
   }
 
   /** (round 105, ringwin) where each window column's per-column data lies (sim/ring.ts) */
-  get ring(): Ring {
+  get ring(): Pages {
     return this.world.ring;
   }
 
@@ -250,7 +250,7 @@ export class WorldCore {
   async readBuffer(name: keyof WorldGpu, ringOrder = false): Promise<Float32Array> {
     const out = await this.readRaw(name);
     const c = COLUMN_BUFS[name as string];
-    return c && !ringOrder ? this.world.ring.fromRing(out, c[0] / 4, c[1]) : out;
+    return c && !ringOrder ? this.world.ring.toWindow(out, c[0] / 4, c[1]) : out;
   }
 
   private async readRaw(name: keyof WorldGpu): Promise<Float32Array> {
@@ -283,14 +283,9 @@ export class WorldCore {
     const t = await this.readTextureRaw(tex);
     const { w: W, h: H } = this.dims;
     const r = this.world.ring;
-    if (r.zero) return t;
-    if (t.h === H && t.w % W === 0) return { ...t, data: r.fromRing(t.data, (t.w / W) * 4) };
-    if (t.w === Math.ceil(W / 2) && t.h === Math.ceil(H / 2)) {
-      const half = new Ring(t.w, t.h);
-      half.x = r.x / 2;
-      half.y = r.y / 2;
-      return { ...t, data: half.fromRing(t.data, 4) };
-    }
+    // (round 107, pages: a texture is a page atlas — a slot's texels at its place, nx pages across)
+    if (t.h === H && t.w % W === 0) return { ...t, data: r.texToWindow(t.data, (t.w / W) * 4) };
+    if (t.w === W / 2 && t.h === H / 2) return { ...t, data: r.texToWindow(t.data, 4, true) };
     return t;
   }
 

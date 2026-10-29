@@ -1,6 +1,8 @@
 // Explicit bind-group-layout helpers. We use explicit layouts (not 'auto') so a
 // shader can include shared WGSL snippets that declare bindings it does not use.
 
+import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_BINDING, PAGE_MISS_MAX, PAGE_STORAGE_KERNELS, PAGE_TAB_BINDING, pageMiss, pageTab, pagesCode, usesPages } from './pages-mode';
+
 /** 'tex' = sampled float texture (textureLoad), 'utex' = uint texture (textureLoad), 'stex' = write-only rgba32float storage texture
  *  ('stex8a' the same, rgba8unorm, a 2d-array),
  *  'depth' = depth texture, 'csampler' = comparison sampler (shadow lookups) */
@@ -36,6 +38,16 @@ export function makeBindGroup(
   layout: GPUBindGroupLayout,
   resources: Record<number, GPUBuffer | GPUBufferBinding | GPUTextureView | GPUSampler>,
 ): GPUBindGroup {
+  // (round 107, M1's ?pages=storage: a layout given the storage page table gets its buffer)
+  if (pageTab.layouts.has(layout) && !(PAGE_TAB_BINDING in resources)) {
+    if (!pageTab.buf) throw new Error(`${label}: ?pages=storage, but no world has made its page table`);
+    resources = { ...resources, [PAGE_TAB_BINDING]: pageTab.buf };
+  }
+  // (round 107, ?pagecheck=1: a layout given the off-window counter gets its buffer)
+  if (pageMiss.layouts.has(layout) && !(PAGE_MISS_BINDING in resources)) {
+    if (!pageMiss.buf) throw new Error(`${label}: ?pagecheck=1, but no world has made its counter`);
+    resources = { ...resources, [PAGE_MISS_BINDING]: pageMiss.buf };
+  }
   return device.createBindGroup({
     label,
     layout,
@@ -47,8 +59,9 @@ export function makeBindGroup(
 }
 
 /** Compile a WGSL module and surface compilation errors loudly (with line context). */
-export function makeModule(device: GPUDevice, label: string, parts: string[]): GPUShaderModule {
-  const code = parts.join('\n');
+export function makeModule(device: GPUDevice, label: string, parts: string[], storagePages = false, check?: number): GPUShaderModule {
+  // (round 107, pages: colPage the build's way — gpu/pages-mode.ts)
+  const code = pagesCode(parts.join('\n'), storagePages, check);
   const module = device.createShaderModule({ label, code });
   module.getCompilationInfo().then((info) => {
     const errs = info.messages.filter((m) => m.type === 'error');
@@ -75,11 +88,27 @@ export function makeCompute(
   spec: BindSpec,
   entryPoint = 'main',
 ): ComputeKernel {
+  // (round 107, M1's ?pages=storage: the timed kernels with a storage slot free read the table from binding 61 — round 107: not 37, agents.wgsl navCost)
+  const storage = PAGE_ADDR === 'storage' && PAGE_STORAGE_KERNELS.has(label) && Object.values(spec).filter((k) => k === 'read' || k === 'rw').length < 8;
+  if (storage) spec = { ...spec, [PAGE_TAB_BINDING]: 'read' };
+  // (round 107, ?pagecheck=1: the off-window counter on every kernel with a storage slot free)
+  let check: number | undefined;
+  if (PAGE_CHECK && !storage && usesPages(parts.join('\n'))) {
+    if (Object.values(spec).filter((k) => k === 'read' || k === 'rw').length < 8 && pageMiss.labels.length < PAGE_MISS_MAX) {
+      check = pageMiss.labels.push(label) - 1;
+      spec = { ...spec, [PAGE_MISS_BINDING]: 'rw' };
+    } else pageMiss.unchecked.add(label);
+  }
   const layout = makeLayout(device, label, spec, GPUShaderStage.COMPUTE);
+  if (check !== undefined) pageMiss.layouts.add(layout);
+  if (storage) {
+    pageTab.layouts.add(layout);
+    pageTab.storageKernels.add(label);
+  }
   const pipeline = device.createComputePipeline({
     label,
     layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
-    compute: { module: makeModule(device, label, parts), entryPoint },
+    compute: { module: makeModule(device, label, parts, storage, check), entryPoint },
   });
   return { pipeline, layout };
 }

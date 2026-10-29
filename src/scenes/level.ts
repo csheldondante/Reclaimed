@@ -295,7 +295,7 @@ export class LevelScene implements Scene {
     this.core = new WorldCore(host, opts.map ?? opts.atlas?.map ?? level.generate(dims), host.quality.particles, level.sandbox ? SANDBOX_K : undefined, true, level.meshRoom);
     // (?flow=1, docs/ARCHITECTURE.md "The flow model") liquids as runs in the columns, and what's near steady sleeps: before the warmup
     if (host.params.get('flow') === '1' && !level.atlas) {
-      this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);
+      this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, this.core.ring);
       this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
       this.core.sleep = this.sleep;
       const kit = installFlow(this.core, this.sleep);
@@ -1316,7 +1316,7 @@ export class LevelScene implements Scene {
       if (a) core.globals.seaZ = a.atlas.p.sea - this.stream.oz;
       // (round 80) sleep and wake: what's still sleeps, what the player and the world's events touch wakes
       if (a && host.params.get('sleep') !== '0') {
-        this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK);
+        this.sleep = new Sleep(dims.w / CHUNK, dims.h / CHUNK, this.core.ring);
         this.sleep.settleAll(Sleep.SETTLE_S, performance.now() / 1000);
         core.sleep = this.sleep;
         const sl = this.sleep;

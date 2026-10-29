@@ -686,7 +686,7 @@ class Panel {
 // ---------- GPU timing ----------
 
 /** The suite's own timestamp queries (a Profiler-shaped `timestamps(name)` for the code it lends itself to). */
-class GpuTimer {
+export class GpuTimer {
   readonly on: boolean;
   private qs?: GPUQuerySet;
   private names: string[] = [];

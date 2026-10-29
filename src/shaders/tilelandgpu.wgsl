@@ -38,7 +38,8 @@ fn prep(@builtin(global_invocation_id) id: vec3<u32>) {
   if (id.x >= R || id.y >= R) { return; }
   let i = id.y * R + id.x;
   let m = summ[i];
-  surfaceOut[i] = pack(m.x);
+  // (round 107, pages: the scratch's surface is a per-column buffer, page-major — common.wgsl colIdx at ring 0)
+  surfaceOut[((id.y / 16u) * (R / 16u) + id.x / 16u) * 256u + (id.y % 16u) * 16u + id.x % 16u] = pack(m.x);
   // (its lowest: the surface; its highest: the top (world z, so less oz) or the surface)
   atomicMin(&box[0], i32(floor(m.x * 256.0)));
   atomicMax(&box[1], i32(ceil(max(m.z - J.misc.y, m.x) * 256.0)));

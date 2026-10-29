@@ -67,7 +67,7 @@ struct Globals {
   // chunks), z a mesh chunk's side (cells; as many rows down) — the hfield mask's; w (round 84) the rivers'
   // wetness (sim/world-gpu.ts riverFlow)
   ocean: vec4<f32>,
-  // (round 80, sim/sleep.ts) a bit a chunk (16 × 16 columns), set: asleep — the systems that change the
+  // (round 80, sim/sleep.ts) a bit a chunk (16 × 16 columns; round 107: a bit a slot — its page's), set: asleep — the systems that change the
   // ground skip it; its water and lava keep their depth and flow (drawn moving). 2 048 chunks at most.
   sleep: array<vec4<u32>, 16>,
   // (round 80) a bit a chunk, set: just fallen asleep (a quarter second) — the passes that write the next
@@ -81,6 +81,11 @@ struct Globals {
   // nothing; xy the offset (cells), zw unused. Window coordinates stay what every caller uses: index only through
   // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY.
   ring: vec4<u32>,
+  // (round 107, `pages`: docs/PAGES.md P2.1) the page table: window chunk (cy * chunks across + cx) -> the page its
+  // data is in (P2.2: its slot), two u16 entries a u32 (sim/pages.ts Pages.table). Read by colSlot with ?pages=table.
+  pages: array<vec4<u32>, 512>, // PAGE_VEC4
+  // (round 107, P2.2) the table backwards: slot -> the window chunk in it, cx | cy << 8 (Pages.inv; colXY)
+  pageInv: array<vec4<u32>, 512>, // PAGE_VEC4
 };
 
 /** (hybrid) Is column q in a heightfield chunk (drawn by the LOD rings, not the window's own draws)? */
@@ -93,16 +98,16 @@ fn heightfieldCol(q: vec2<u32>) -> bool {
   return ((G.hfield[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
 }
 
-/** Has column q's chunk just fallen asleep (round 80)? */
+/** Has column q's chunk just fallen asleep (round 80)? (Round 107, pages P2.3b: the bits are the slots') */
 fn drowsy(q: vec2<u32>) -> bool {
-  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
+  let c = colSlot(q / COLS_PAGE);
   if (c >= 2048u) { return false; }
   return ((G.drowse[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
 }
 
 /** Is column q's chunk asleep (round 80)? Past the mask's 2 048 chunks: awake. */
 fn asleep(q: vec2<u32>) -> bool {
-  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
+  let c = colSlot(q / COLS_PAGE);
   if (c >= 2048u) { return false; }
   return ((G.sleep[c >> 7u][(c >> 5u) & 3u] >> (c & 31u)) & 1u) != 0u;
 }
@@ -268,13 +273,18 @@ fn relaxTick(k: f32) -> f32 { return 1.0 - pow(1.0 - clamp(k, 0.0, 1.0), simStep
  */
 fn slowTick(q: vec2<u32>, n: u32) -> bool {
   if (n == 0u) { return false; }
-  let c = (q.y / G.chunkSize) * G.chunksX + q.x / G.chunkSize;
-  return ((G.tick + c * 7u) % n) == 0u;
+  return ((G.tick + chunkStagger(q / G.chunkSize)) % n) == 0u;
+}
+/** (round 107, pages: P2.3a) window chunk c's slow turn's offset, keyed by its world chunk (the window's origin, in
+ *  cells, is whole chunks): the same chunk of the world takes the same turn wherever the window is — sim/cull.ts stagger */
+fn chunkStagger(c: vec2<u32>) -> u32 {
+  let w = vec2<i32>(c) + vec2<i32>(G.org.zw) / i32(G.chunkSize);
+  return (u32(w.x) & 4095u) * 7u + (u32(w.y) & 4095u) * 29u;
 }
 /** (round 104, simscale — sim/cull.ts NEAR) is chunk (cx, cy) live: awake, or drowsy? Past the mask: awake. */
 fn chunkLive(cx: i32, cy: i32) -> bool {
   if (cx < 0 || cy < 0 || u32(cx) >= G.chunksX) { return false; }
-  let c = u32(cy) * G.chunksX + u32(cx);
+  let c = colSlot(vec2<u32>(u32(cx), u32(cy)));
   if (c >= 2048u) { return true; }
   let w = c >> 5u;
   let b = 1u << (c & 31u);
@@ -304,33 +314,74 @@ fn dAny(a: Dirs) -> bool { return a[0] > 0.0 || a[1] > 0.0 || a[2] > 0.0 || a[3]
 /** a vector's share along each direction (its positive projections) */
 fn dSplit(v: vec2<f32>) -> Dirs { var o = dZero(); for (var k = 0u; k < NDIR; k++) { o[k] = max(dot(v, DIRV[k]), 0.0); } return o; }
 
-// ---- (round 105, ringwin) where a window column's data lies: chunk -> page -> offset in the page ----------------
+// ---- (round 105, ringwin; round 107, pages) where a window column's data lies: chunk -> slot -> offset in the page --
 // Every per-column buffer and texture is found the same way, the layers' way (layers.wgsl: a chunk's page from the
-// chunk table): the column's chunk (COLS_PAGE columns a side), the page that chunk's data is in, the column's offset
-// inside the page. Today's table is the ring's — computed, not looked up: the pages are the window's chunks rotated
-// by Globals.ring (whole chunks), laid row-major across the window, a page's rows W columns apart. Sparse pages
-// (a resident set) would change colPage and the page's layout (pageBase, inPage, texPage) only, not the callers.
+// chunk table): the column's chunk (COLS_PAGE columns a side), the slot of the page that chunk's data is in
+// (`colSlot`, from its place in the page table, Globals.pages — docs/PAGES.md), the column's offset inside the page. A per-column
+// buffer is page-major: a slot's 256 columns one after another, row-major (`colIdx`). A texture is a page atlas: a
+// slot's 16 x 16 texels at (slot % chunks across, slot / chunks across) * 16 (`texPage`), the atlas the window's size.
 // Index a column only through colIdx / colIdxI / texCol / texCol2 / texColK; back through colXY; hand the CPU winIdx.
 /** columns a page side (world/layout.ts CHUNK; the ring's offset is whole pages) */
 const COLS_PAGE: u32 = 16u;
 /** chunks across and down the window */
 fn pagesX() -> u32 { return G.mapW / COLS_PAGE; }
 fn pagesY() -> u32 { return G.mapH / COLS_PAGE; }
-/** the page holding window chunk c (its place, in pages): the ring's table, c + ring mod the window's chunks */
-fn colPage(c: vec2<u32>) -> vec2<u32> {
+/** window chunk c's page's place in the atlas (pages): its texels at place * 16, its slot place.y * pagesX + place.x.
+ *  (Round 107, pages: which way is the build's — ?pages=, src/gpu/pages-mode.ts swaps the call below when a module is
+ *  made: the ring's wrap computed (the identity's places only), or the table looked up. The table holds places, not
+ *  slots, so neither a buffer's index nor a texel needs a division: PG4's measure, a slot's % and / by the chunks
+ *  across cost the texture-heavy passes 30-130%) */
+fn colPlaceLookup(c: vec2<u32>) -> vec2<u32> { return colPlaceRing(c); } // PAGE_ADDR
+/** (round 107, PG4: the own-page fast path) the invocation's own chunk and its place, looked up once: the first chunk
+ *  it asks for (its own column's, nearly always), or the cull list's entry (sim/cull.ts cullSource: setOwnPage). A
+ *  column's every buffer and texel, and its neighbours in the same page, reuse it; a neighbour in another page goes
+ *  through the table. */
+var<private> ownC: vec2<u32> = vec2<u32>(0xffffffffu, 0xffffffffu);
+var<private> ownP: vec2<u32> = vec2<u32>(0u, 0u);
+fn setOwnPage(c: vec2<u32>, p: vec2<u32>) { ownC = c; ownP = p; }
+fn colPlace(c: vec2<u32>) -> vec2<u32> {
+  if (all(c == ownC)) { return ownP; }
+  let p = colPlaceLookup(c);
+  if (ownC.x == 0xffffffffu) { ownC = c; ownP = p; }
+  return p;
+}
+/** the ring's place computed: c + ring mod the window's chunks */
+fn colPlaceRing(c: vec2<u32>) -> vec2<u32> {
   let x = c.x + G.ring.x / COLS_PAGE;
   let y = c.y + G.ring.y / COLS_PAGE;
   return vec2<u32>(select(x, x - pagesX(), x >= pagesX()), select(y, y - pagesY(), y >= pagesY()));
 }
-/** window chunk c's page as an index (pages row-major): a per-chunk buffer's slot for it */
-fn pageIdx(c: vec2<u32>) -> u32 { let p = colPage(c); return p.y * pagesX() + p.x; }
-/** a page's first column's index in a per-column buffer, and a column's offset inside its page */
-fn pageBase(pg: vec2<u32>) -> u32 { return pg.y * COLS_PAGE * G.mapW + pg.x * COLS_PAGE; }
-fn inPage(o: vec2<u32>) -> u32 { return o.y * G.mapW + o.x; }
-/** a page's first texel in a texel-a-column texture */
-fn texPage(pg: vec2<u32>) -> vec2<u32> { return pg * COLS_PAGE; }
-/** window column (x, y)'s index in a per-column buffer (x < W, y < H) */
-fn colIdx(x: u32, y: u32) -> u32 { return pageBase(colPage(vec2<u32>(x, y) / COLS_PAGE)) + inPage(vec2<u32>(x, y) % COLS_PAGE); }
+/** a u16 entry of a table of 512 vec4 (two a u32) */
+fn pageWord(t: u32, i: u32) -> u32 {
+  var w: u32;
+  if (t == 0u) { w = G.pages[i >> 3u][(i >> 1u) & 3u]; } else { w = G.pageInv[i >> 3u][(i >> 1u) & 3u]; }
+  return (w >> ((i & 1u) * 16u)) & 0xffffu;
+}
+/** an entry's place, px | py << 8 */
+fn pageEntryPlace(e: u32) -> vec2<u32> { return vec2<u32>(e & 0xffu, e >> 8u); }
+/** (round 107) the table looked up: window chunk c's place (Globals.pages; a chunk off the window is clamped into the
+ *  table — robustness only: ?pagecheck=1 counts such lookups, and none may happen) */
+fn colPlaceTable(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageWord(0u, min(c.y * pagesX() + c.x, PAGE_ENTRIES - 1u))); }
+/** the tables' entries (gpu/pages-mode.ts sizes them to the window: pageTables) */
+const PAGE_ENTRIES: u32 = 4096u; // PAGE_ENTRIES
+/** window chunk c's slot: its place row-major (a per-column buffer's pages) */
+fn colSlot(c: vec2<u32>) -> u32 { let p = colPlace(c); return p.y * pagesX() + p.x; }
+/** the window chunk in slot s (the table backwards: Globals.pageInv, or the ring's wrap backwards) */
+fn slotChunk(s: u32) -> vec2<u32> {
+  if (PAGE_TABLE) { return pageEntryPlace(pageWord(1u, s)); }
+  let pg = vec2<u32>(s % pagesX(), s / pagesX());
+  let rx = G.ring.x / COLS_PAGE;
+  let ry = G.ring.y / COLS_PAGE;
+  return vec2<u32>(select(pg.x + pagesX() - rx, pg.x - rx, pg.x >= rx), select(pg.y + pagesY() - ry, pg.y - ry, pg.y >= ry));
+}
+/** is colPlace the table's (pages-mode.ts sets it with the call above) */
+const PAGE_TABLE: bool = false; // PAGE_TABLE
+/** window chunk c's slot as an index: a per-chunk buffer's slot for it (the agents' dirty marks) */
+fn pageIdx(c: vec2<u32>) -> u32 { return colSlot(c); }
+/** a slot's first texel in a texel-a-column texture (the atlas, chunks-across pages wide; a division: texColU and texCol2 use the place) */
+fn texPage(s: u32) -> vec2<u32> { return vec2<u32>(s % pagesX(), s / pagesX()) * COLS_PAGE; }
+/** window column (x, y)'s index in a per-column buffer (x < W, y < H): page-major */
+fn colIdx(x: u32, y: u32) -> u32 { return colSlot(vec2<u32>(x, y) / COLS_PAGE) * (COLS_PAGE * COLS_PAGE) + (y % COLS_PAGE) * COLS_PAGE + x % COLS_PAGE; }
 fn colIdxI(p: vec2<i32>) -> u32 { return colIdx(u32(p.x), u32(p.y)); }
 /** window column p's index in window order (y * W + x): what's handed to the CPU (a readback's column) — never a buffer's index */
 fn winIdx(p: vec2<i32>) -> u32 { return u32(p.y) * G.mapW + u32(p.x); }
@@ -340,22 +391,17 @@ fn pickCol(i: u32) -> u32 { return winIdx(vec2<i32>(colXY(i))) + 1u; }
 fn winXY(i: u32) -> vec2<u32> { return vec2<u32>(i % G.mapW, i / G.mapW); }
 /** a per-column buffer's index back to its window column (colIdx's inverse) */
 fn colXY(i: u32) -> vec2<u32> {
-  let q = vec2<u32>(i % G.mapW, i / G.mapW);
-  let pg = q / COLS_PAGE;
-  // (the window chunk whose page that is: the ring's table backwards)
-  let rx = G.ring.x / COLS_PAGE;
-  let ry = G.ring.y / COLS_PAGE;
-  let c = vec2<u32>(select(pg.x + pagesX() - rx, pg.x - rx, pg.x >= rx), select(pg.y + pagesY() - ry, pg.y - ry, pg.y >= ry));
-  return c * COLS_PAGE + q % COLS_PAGE;
+  let l = i % (COLS_PAGE * COLS_PAGE);
+  return slotChunk(i / (COLS_PAGE * COLS_PAGE)) * COLS_PAGE + vec2<u32>(l % COLS_PAGE, l / COLS_PAGE);
 }
 /** window column p's texel in a texel-a-column texture */
-fn texColU(p: vec2<u32>) -> vec2<u32> { return texPage(colPage(p / COLS_PAGE)) + p % COLS_PAGE; }
+fn texColU(p: vec2<u32>) -> vec2<u32> { return colPlace(p / COLS_PAGE) * COLS_PAGE + p % COLS_PAGE; }
 fn texCol(p: vec2<i32>) -> vec2<i32> { return vec2<i32>(texColU(vec2<u32>(p))); }
 /** a texel a 2 x 2 columns (the wind field: W / 2 across): window texel t's — a page is COLS_PAGE / 2 texels a side */
 fn texCol2(t: vec2<i32>) -> vec2<i32> {
   let h = COLS_PAGE / 2u;
   let u = vec2<u32>(t);
-  return vec2<i32>(colPage(u / h) * h + u % h);
+  return vec2<i32>(colPlace(u / h) * h + u % h);
 }
 /** k texels a column (the structures' projection: PROJ_K): window column p's j-th texel */
 fn texColK(p: vec2<i32>, k: u32, j: u32) -> vec2<i32> {

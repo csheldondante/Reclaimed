@@ -20,6 +20,8 @@
 import type { Profiler } from '../gpu/profiler';
 import { makeBindGroup, makeCompute, type ComputeKernel } from '../gpu/pipeline';
 import type { WorldGpu } from '../sim/world-gpu';
+import { Pages } from '../sim/pages';
+import { GLOBALS_HEAD_BYTES } from '../sim/globals';
 import { CHUNK } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { Camera } from './camera';
@@ -149,6 +151,13 @@ export class TileLandGpu {
     f[282] = MESH_SIDE;
     // (the sleep, drowse and hfield bits, and the ring — round 105, ringwin: words 476-479 — all 0)
     u.fill(0, 284, 480);
+    // (round 107, pages: the page table a plain R-wide window's, the identity at offset 0 — sim/pages.ts)
+    const sp = (this.scratchPages ??= new Pages(R, R, null));
+    // (the table's way only: the ring computed keeps the tables a vec4 each, and the scratch's ring is 0)
+    if (this.host.world.pageVec4 * 8 >= sp.entries.length) {
+      new Uint16Array(ab, GLOBALS_HEAD_BYTES, sp.entries.length).set(sp.entries);
+      new Uint16Array(ab, GLOBALS_HEAD_BYTES + this.host.world.pageVec4 * 16, sp.inv.length).set(sp.inv);
+    }
     this.host.device.queue.writeBuffer(sl.patch, 0, ab);
     enc.copyBufferToBuffer(this.host.world.globals, 0, sl.globals, 0, sl.globals.size);
     enc.copyBufferToBuffer(sl.patch, 0, sl.globals, 0, 8);
@@ -156,7 +165,10 @@ export class TileLandGpu {
     enc.copyBufferToBuffer(sl.patch, 276 * 4, sl.globals, 276 * 4, 16);
     enc.copyBufferToBuffer(sl.patch, 281 * 4, sl.globals, 281 * 4, 8);
     enc.copyBufferToBuffer(sl.patch, 284 * 4, sl.globals, 284 * 4, (480 - 284) * 4);
+    enc.copyBufferToBuffer(sl.patch, GLOBALS_HEAD_BYTES, sl.globals, GLOBALS_HEAD_BYTES, sl.globals.size - GLOBALS_HEAD_BYTES);
   }
+  /** (round 107, pages) the scratch window's page table */
+  private scratchPages: Pages | null = null;
 
   /** slot s's groups: the prep's, the bake's G-buffer pass (the grid: the mesh's layout), the resolve */
   private groupsOf(s: number): Slot {

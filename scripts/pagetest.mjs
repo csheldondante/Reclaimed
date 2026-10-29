@@ -1,13 +1,11 @@
-// Round 105 (`ringwin`): the ring-offset identity test. The window's per-column data lies on a ring (sim/ring.ts,
-// common.wgsl colIdx / texCol*): window column (x, y) at ((x + ring.x) mod W, (y + ring.y) mod H). Where it lies
-// must change nothing the world does. Two page loads of the same world, one at ring offset 0 and one at --bias
-// (`?ringbias=`), the sim held (`?skip=sim`: only the load's own warm-up ticks run), the streamer's own slides off;
-// then in each, the same ticks stepped by hand with the same globals, a slide or two by hand between them (the strip
-// leaving frozen, the one coming in written where it lies), and every per-column buffer and texture read back in
-// window order and hashed. Every field must hash the same at both offsets: a kernel indexing a column without the
-// ring's helpers shows here as the field it wrote.
-//   node scripts/ringtest.mjs [--url http://localhost:5305] [--level atlas|valley] [--bias 128,64] [--ticks 40]
-//     [--slides "64,0;0,64"] [--wait 30000] [--extra "&x=1"]
+// Round 107 (`pages`, docs/PAGES.md §5): the page table's identity test, ringtest.mjs made general. Two page loads
+// of the same world, each with its own query (--a, --b: e.g. the ring computed at offset 0 against the table looked up
+// at ?ringbias=128,64, or ?pageperm=<seed> — a shuffled free list — against identity); the sim held (`?skip=sim`: the
+// load's warm-up ticks only), then in each the same ticks stepped by hand with the same globals and every system, a
+// slide or two by hand between them, and every per-column buffer and texture read back in window order and hashed.
+// Every field must hash the same: where a column's data lies must change nothing the world does.
+//   node scripts/pagetest.mjs [--url http://localhost:5305] [--level atlas|valley] [--a "pages=ring&ringbias=0,0"]
+//     [--b "pages=table&ringbias=128,64"] [--ticks 40] [--slides "64,0;0,64"] [--wait 30000] [--extra "&x=1"]
 import puppeteer from 'puppeteer-core';
 const argv = process.argv.slice(2);
 const opt = (k, d) => {
@@ -16,7 +14,8 @@ const opt = (k, d) => {
 };
 const url = opt('url', 'http://localhost:5305');
 const level = opt('level', 'atlas');
-const bias = opt('bias', '128,64');
+const qa = opt('a', 'pages=ring&ringbias=0,0');
+const qb = opt('b', 'pages=table&ringbias=128,64');
 const ticks = Number(opt('ticks', 40));
 const slides = opt('slides', level === 'atlas' ? '64,0;0,64' : '')
   .split(';')
@@ -27,7 +26,7 @@ const extra = opt('extra', '');
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failed = false;
 
-async function run(b) {
+async function run(qs) {
   const browser = await puppeteer.launch({
     executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
     headless: 'new',
@@ -48,7 +47,7 @@ async function run(b) {
       }
     });
     const lv = level === 'atlas' ? '&level=atlas&at=15024,14337&world=ringtest&worldsave=0' : '';
-    await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&skip=sim&ringbias=${b}${lv}${extra}`, { waitUntil: 'load' });
+    await p.goto(`${url}/?skipmenu=1&tutorial=0&q=low&skip=sim&pagecheck=1&${qs}${lv}${extra}`, { waitUntil: 'load' });
     await p.waitForFunction(() => window.reclaimed?.core, { timeout: 240000 });
     await sleep(wait);
     return await p.evaluate(
@@ -94,10 +93,9 @@ async function run(b) {
           const out = {};
           for (const n of names) {
             if (!core.world[n]) continue;
-            let f = await core.readBuffer(n);
-            // (the flux buffers and physCols aren't in the ring's table: rotated here by their stride)
+            const f = await core.readBuffer(n);
+            // (round 107: the flux buffers and physCols come back in window order too, COLUMN_BUFS)
             const per = { flux: 6, oilFlux: 6, lavaFlux: 6, physCols: 16 }[n];
-            if (per && !core.ring.zero) f = core.ring.fromRing(f.slice(0, W * H * per), per);
             // (the layers: by the chunk table, the same at any ring)
             out[n] = hash(new Uint32Array(f.buffer, f.byteOffset, n === 'layers' ? f.length : Math.min(f.length, W * H * (per ?? (f.length / (W * H))))));
           }
@@ -123,7 +121,9 @@ async function run(b) {
           await dev.queue.onSubmittedWorkDone();
           res.push({ at: `slide ${dx},${dy} then ${ticks} ticks`, ring: [core.ring.x, core.ring.y], h: await readAll() });
         }
-        return { dims: core.dims, res };
+        // (round 107, ?pagecheck=1: every kernel's lookups of a chunk off the window — must be none)
+        const miss = await core.world.readPageMiss();
+        return { dims: core.dims, res, miss };
       },
       ticks,
       slides,
@@ -133,9 +133,9 @@ async function run(b) {
   }
 }
 
-const a = await run('0,0');
-const b = await run(bias);
-console.log(`window ${a.dims.w}x${a.dims.h}, level ${level}, bias ${bias}`);
+const a = await run(qa);
+const b = await run(qb);
+console.log(`window ${a.dims.w}x${a.dims.h}, level ${level}: ${qa}  vs  ${qb}`);
 for (let k = 0; k < a.res.length; k++) {
   const ra = a.res[k];
   const rb = b.res[k];
@@ -143,5 +143,14 @@ for (let k = 0; k < a.res.length; k++) {
   const ok = bad.length === 0;
   if (!ok) failed = true;
   console.log(`${ok ? 'ok  ' : 'FAIL'} ${ra.at}: ring ${ra.ring} vs ${rb.ring}; ${Object.keys(ra.h).length} fields${ok ? ' identical' : `, differ: ${bad.join(' ')}`}`);
+}
+for (const [n, r] of [
+  ['a', a],
+  ['b', b],
+]) {
+  const m = r.miss;
+  const off = Object.keys(m.miss).length;
+  if (off) failed = true;
+  console.log(`${off ? 'FAIL' : 'ok  '} ${n}: chunks looked up off the window: ${off ? JSON.stringify(m.miss) : 'none'} (${m.checked} kernels checked; not checked, 8 storage buffers: ${m.unchecked.join(' ') || 'none'})`);
 }
 if (failed) process.exit(1);

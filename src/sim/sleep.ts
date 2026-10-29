@@ -15,6 +15,7 @@
 import { CHUNK } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { WorldEvent } from './globals';
+import type { Pages } from './pages';
 import { RIVERS } from './world-gpu';
 
 /** chunks the mask holds (common.wgsl: 64 words) */
@@ -68,8 +69,15 @@ const SETTLE_MAX_S = 60;
 /** how far past now an unsettled chunk is kept (s): longer than the level reads waterChange */
 const SETTLE_HOLD_S = 0.75;
 
+/**
+ * (Round 107, pages P2.3b) Every per-chunk state here is keyed by the chunk's slot (its page's: sim/pages.ts), not its
+ * place in the window: a slide moves none of it — the chunks coming in take the slots of those that left, and only
+ * theirs are made fresh. The callers still speak window chunks and cells (wake, only, shift); the bits (mask, drowse:
+ * Globals.sleep / drowse, common.wgsl asleep) are the slots'. `wakeSlot` / `isAwakeSlot` for what's keyed by slot
+ * itself (flow/steady.ts, whose counters liquid.wgsl keys by slot).
+ */
 export class Sleep {
-  /** per chunk, the time (s) it sleeps again */
+  /** per slot, the time (s) it sleeps again */
   private until: Float32Array;
   readonly mask = new Uint32Array(MAX_CHUNKS / 32);
   /** chunks fallen asleep within DROWSE_S: their layers carried through once (common.wgsl drowsy) */
@@ -80,8 +88,11 @@ export class Sleep {
   constructor(
     private cx: number,
     private cy: number,
+    /** the window's page table (window chunk -> slot); absent: the identity */
+    private pages?: Pages,
   ) {
     if (cx * cy > MAX_CHUNKS) throw new Error(`sleep: ${cx} × ${cy} chunks, the mask holds ${MAX_CHUNKS}`);
+    if (pages && pages.nx * pages.ny !== cx * cy) throw new Error(`sleep: ${cx} × ${cy} chunks, the page table ${pages.nx} × ${pages.ny}`);
     this.until = new Float32Array(cx * cy);
     this.wokeAt = new Float32Array(cx * cy);
     this.drowseTick = new Float64Array(cx * cy);
@@ -94,25 +105,41 @@ export class Sleep {
   /** (?flow=1, flow/steady.ts) how long an event keeps its chunks awake (s): the steady state then decides */
   eventSecs = EVENT_S;
 
-  /** wake chunk k (chunk index) for `secs` from `now` (flow/steady.ts: kept awake while unsteady) */
-  wakeChunk(k: number, secs: number, now: number): void {
-    if (this.filter && !this.filter[k]) return;
-    this.until[k] = Math.max(this.until[k], now + secs);
+  /** window chunk (cy * cx + cx)'s slot */
+  private slotOf(c: number): number {
+    return this.pages ? this.pages.table[c] : c;
   }
 
-  /** is chunk k awake at `now`? */
+  /** wake the chunk in slot s for `secs` from `now` (flow/steady.ts: kept awake while unsteady) */
+  wakeSlot(s: number, secs: number, now: number): void {
+    if (this.filter && !this.filter[s]) return;
+    this.until[s] = Math.max(this.until[s], now + secs);
+  }
+
+  /** is the chunk in slot s awake at `now`? */
+  isAwakeSlot(s: number, now: number): boolean {
+    return this.until[s] > now;
+  }
+
+  /** is window chunk k (cy * cx + cx) awake at `now`? */
   isAwake(k: number, now: number): boolean {
-    return this.until[k] > now;
+    return this.until[this.slotOf(k)] > now;
   }
 
-  /** (hybrid, scenes/hybrid.ts) per chunk, 0: nothing wakes it — its land is the heightfield's, nothing of the sim
+  /** (hybrid, scenes/hybrid.ts) per slot, 0: nothing wakes it — its land is the heightfield's, nothing of the sim
    *  there is drawn; null: every chunk may wake */
   private filter: Uint8Array | null = null;
 
   /** (hybrid) Which chunks may wake (per chunk 1 or 0; null: all). One awake now that may not sleeps when its time's up. */
   only(filter: Uint8Array | null): void {
     if (filter && filter.length !== this.until.length) throw new Error(`sleep.only: ${filter.length} chunks, not ${this.until.length}`);
-    this.filter = filter ? filter.slice() : null;
+    // (per window chunk in; kept per slot)
+    if (!filter) this.filter = null;
+    else {
+      const f = new Uint8Array(filter.length);
+      for (let c = 0; c < filter.length; c++) f[this.slotOf(c)] = filter[c];
+      this.filter = f;
+    }
   }
 
   /** wake the chunks a circle (world units, window) touches for `secs` from `now` */
@@ -123,18 +150,18 @@ export class Sleep {
     const y1 = Math.min(this.cy - 1, Math.floor((y + r) / ROW_H / CHUNK));
     for (let j = y0; j <= y1; j++)
       for (let i = x0; i <= x1; i++) {
-        const k = j * this.cx + i;
+        const k = this.slotOf(j * this.cx + i);
         if (this.filter && !this.filter[k]) continue;
         if (this.until[k] <= now) this.wokeAt[k] = now;
         this.until[k] = Math.max(this.until[k], now + secs);
       }
   }
 
-  /** per chunk, when it last woke (s): SETTLE_MAX_S counts from it */
+  /** per slot, when it last woke (s): SETTLE_MAX_S counts from it */
   private wokeAt = new Float32Array(0);
 
   /**
-   * (round 84, ?settletol) The water's most change in a step per chunk since the last read (world-gpu waterChange):
+   * (round 84, ?settletol) The water's most change in a step per slot since the last read (world-gpu waterChange):
    * a woken chunk whose time is nearly up and whose water still changes by more than the tolerance stays awake.
    * Returns the chunks kept.
    */
@@ -189,6 +216,24 @@ export class Sleep {
     if (dy) this.settling.push({ rect: dy > 0 ? [0, H - dy, W, dy] : [0, 0, W, -dy], until: -1 });
     const dcx = dx / CHUNK;
     const dcy = dy / CHUNK;
+    if (this.pages) {
+      // (round 107, pages P2.3b: keyed by slot, nothing moves — the window's table has slid (onShift comes after the
+      // ring's slide); the chunks come in, in the slots of those that left, start fresh)
+      for (let j = 0; j < this.cy; j++)
+        for (let i = 0; i < this.cx; i++) {
+          const si = i + dcx;
+          const sj = j + dcy;
+          if (!(si < 0 || sj < 0 || si >= this.cx || sj >= this.cy)) continue;
+          const k = this.slotOf(j * this.cx + i);
+          // (hybrid: land come in is the heightfield's till the hybrid says — it doesn't wake to settle)
+          if (this.filter) this.filter[k] = 0;
+          const settle = !this.filter ? (SETTLE ? SETTLE_S : 0) : 0;
+          this.until[k] = now + settle;
+          this.wokeAt[k] = 0;
+          this.drowseTick[k] = this.tick + DROWSE_TICKS;
+        }
+      return;
+    }
     const old = this.until.slice();
     const oldT = this.drowseTick.slice();
     const fOld = this.filter?.slice();

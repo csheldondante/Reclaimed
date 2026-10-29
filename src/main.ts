@@ -16,6 +16,7 @@ import { AudioDebug } from './ui/audio-debug';
 import { RockPanel } from './ui/rockpanel';
 import { PerfOverlay } from './ui/perf-overlay';
 import { startHitch } from './perf/start';
+import { pageBenchBoot, pageBenchDevice, pageBenchMode, pageBenchRun, pageBenchStandalone, pageBenchStartupError } from './perf/pagebench';
 import { benchGpu, benchGpuUp, benchLevel, benchLoadingNote, benchMode, benchSkip, benchStageNote, benchStandalone, benchWatchdog } from './perf/bench';
 
 // A few broad quality tiers (design doc §10), chosen explicitly — no auto-detection heuristics.
@@ -62,10 +63,17 @@ async function main() {
   // level pages are the game as deployed, measured. v4: decided before the GPU is asked for — a phone whose GPU
   // doesn't come back for the next page left a grey page with nothing running; the note and the watchdog start first)
   const bench = benchMode(params);
+  // (round 107, pages: ?pagebench=1 — M1, the page-table lookup's cost: src/perf/pagebench.ts)
+  const pageBench = pageBenchMode(params);
   // (v3: a page that loaded again without finishing is skipped)
   if (bench === 'skip') {
     benchSkip('the page loaded again without finishing (crashed, or the tab was killed)');
     return;
+  }
+  // (round 107, pagebench v2: a run page's note, its "Download what we have" and its watchdog before the GPU is asked for)
+  if (pageBench === 'run') {
+    if (!(await pageBenchBoot())) return;
+    benchOnStartupError = pageBenchStartupError;
   }
   if (bench === 'level') {
     benchLoadingNote(ui);
@@ -124,6 +132,11 @@ async function main() {
     await benchStandalone(bench, host);
     return;
   }
+  if (pageBench === 'start' || pageBench === 'done') {
+    await pageBenchStandalone(pageBench, ui, gpu.device);
+    return;
+  }
+  if (pageBench === 'run') pageBenchDevice(gpu.device);
   // (v3: a device lost on a level page goes on to the next)
   if (bench === 'level') {
     void gpu.device.lost.then((info) => info.reason !== 'destroyed' && benchSkip(`GPU device lost (${info.reason}): ${info.message}${benchStageNote()}`));
@@ -157,6 +170,7 @@ async function main() {
   if (params.get('atlas') === 'view') show(await AtlasView.create(host));
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
+  if (pageBench === 'run') void pageBenchRun();
   if (bench === 'level')
     void benchLevel({
       host,

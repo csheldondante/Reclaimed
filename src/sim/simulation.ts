@@ -2,7 +2,7 @@
 // Systems run in the documented order; each has its own period.
 
 import type { Profiler } from '../gpu/profiler';
-import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_BYTES, type GlobalsState } from './globals';
+import { EventKind, MAX_EVENTS, writeGlobals, GLOBALS_HEAD_BYTES, globalsBytes, type GlobalsState } from './globals';
 import type { SimSystem } from './system';
 import {
   ContaminationSystem,
@@ -56,7 +56,9 @@ export class Simulation {
   /** (round 104, simscale) the projection: over the chunks its inputs touch */
   readonly project!: ProjectSystem;
   tick = 0;
-  private globalsData = new ArrayBuffer(GLOBALS_BYTES);
+  private globalsData: ArrayBuffer | null = null;
+  /** (round 107, pages) the page table's version last written to the Globals */
+  private pagesSent = -1;
   /** Per-system CPU encode time (ms, smoothed). */
   readonly cpuMs = new Map<string, number>();
   /** (round 83) told each tick's events as they're sent to the GPU, whoever queued them (Integrity: what cut the ground) */
@@ -110,7 +112,7 @@ export class Simulation {
   prime(globals: GlobalsState): void {
     this.uploadGlobals(globals);
     // (simcull: every chunk, the derived buffers made everywhere)
-    this.world.tiles?.update(this.tick);
+    this.world.tiles?.update(this.tick, undefined, undefined, globals.origin);
     const enc = this.device.createCommandEncoder({ label: 'prime' });
     // the wind field starts as the map's own wind, before anything reads it
     this.wind.prime(enc);
@@ -143,7 +145,7 @@ export class Simulation {
     // (perfopt: land just come in — drowsy — settles its water: WaterSystem.settling)
     this.water.settling = globals.settle ?? [];
     // (round 85, simcull — sim/cull.ts: the chunks live this tick, from the same masks the kernels read)
-    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse);
+    this.world.tiles?.update(this.tick, globals.sleep, globals.drowse, globals.origin);
     const enc = this.device.createCommandEncoder({ label: `tick ${this.tick}` });
     for (const sys of this.systems) {
       if (this.tick % sys.period !== 0) continue;
@@ -163,7 +165,20 @@ export class Simulation {
   uploadGlobals(g: GlobalsState): void {
     // (ringwin) the window's ring offset is the world's (WorldGpu.ring)
     g.ring = [this.world.ring.x, this.world.ring.y];
-    writeGlobals(g, this.globalsData);
-    this.device.queue.writeBuffer(this.world.globals, 0, this.globalsData);
+    // (round 107, pages: the page table — 8 KB — written only when it changed: a slide, a warp)
+    const pages = this.world.ring;
+    const fresh = pages.version !== this.pagesSent;
+    // (only the table's way reads them: the ring computed keeps the Globals' tables a vec4 each — world-gpu pageVec4)
+    const table = this.world.pageVec4 * 8 >= pages.entries.length;
+    g.pages = fresh && table ? pages.entries : undefined;
+    g.pageInv = fresh && table ? pages.inv : undefined;
+    // (round 107, PG4: the Globals sized to this world's page tables)
+    const data = (this.globalsData ??= new ArrayBuffer(globalsBytes(this.world.pageVec4)));
+    writeGlobals(g, data, this.world.pageVec4);
+    this.device.queue.writeBuffer(this.world.globals, 0, data, 0, fresh ? data.byteLength : GLOBALS_HEAD_BYTES);
+    if (fresh) {
+      this.pagesSent = pages.version;
+      this.world.pagesChanged();
+    }
   }
 }
