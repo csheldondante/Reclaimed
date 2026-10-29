@@ -11,10 +11,12 @@ export interface TileLandSource {
   border: number;
   /** the window's oz (the land is cut at it) */
   oz(): number;
+  /** (round 112, `tilefix`) region (corner x0, y0: world cells)'s heights as the CPU knows them (world z), or null */
+  zRange(x0: number, y0: number): [number, number] | null;
   /** (Streamer.tileLand) region (corner x0, y0: world cells)'s land and its border into buf at off (the border's corner
    *  the slot's), its per-column summary (the batch's, (R + 2 border)²) into meta — nothing read back; resolves once
-   *  it's all submitted */
-  landTile(x0: number, y0: number, buf: GPUBuffer, off: number, meta: { buf: GPUBuffer; off: number }): Promise<void> | null;
+   *  it's all submitted. (round 112, tilefast) `order`: its place in the pacer's tiles' lane, lower first */
+  landTile(x0: number, y0: number, buf: GPUBuffer, off: number, meta: { buf: GPUBuffer; off: number }, order: number): Promise<void> | null;
 }
 
 /** (round 105, tilelatency) a region's way from wanted to drawn (performance.now() ms; 0: not that stage's) */
@@ -29,4 +31,6 @@ export interface LandTimes {
   cur: number;
   baked: number;
   drawn: number;
+  /** (round 112, tilefast) the renderer's frames from its start to its land made (TileCache.frameNo) */
+  frames?: number;
 }

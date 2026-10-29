@@ -12308,3 +12308,164 @@ with the GPU shared; the repeat matched places.) The GPU timer reads 0 here.
 came after the browser runs). Body against body (PX6) still isn't simulated: the tower leaning on its neighbour's cap
 leans on ground, not on a body. The neck test is shear through the neck, not bending (a long rod's root sees its
 lever too).
+
+## Round 112 (2026-10-29, session 5, `tilefast`) — a tile's land in a few frames, the atlas's slots at wide zoom
+
+The user's goal (round 104): "steady 60fps on the phone with no hiccups and no pop in". The Pixel 9a pan bench on
+`places` with tileparity (data/bench/pixel9a-pan-tileparity.json) had three problems: a tile's land took ~130 ms and
+wanted-to-drawn ~150 ms at every speed and zoom; at zoom 5 and wider every run failed at 20 cells/s on pop-in (8-19%
+of the screen); and land from disk had 33-50 ms frames.
+
+**Causes.**
+- *The ~150 ms.* The bench's per-step breakdown puts nearly all of it in `land`. A render-only tile's bordered 68²
+  batch is paced on the tiles' lane: 4 column tiles (paceTile(68, 32) = 34², 2 x 2), then 4 finish tiles on a phone
+  (`FINISH_TILE` 32 there, 64 on a desktop: 1). That's 8 turns. Each turn awaited a fresh `requestAnimationFrame` of
+  the pacer, because a region's next tile is asked for a microtask after its last submit, after the frame's turns were
+  handed out. So it took 8 frames, about 133 ms, whatever the GPU cost. The phone's timestamps put the whole region at
+  ~4 ms (colHeight 0.5, formSeed 0.7, colFinish 1.1, regionFinish 1.5: pixel9a-2026-10-28-v4). The desktop's 1 finish
+  turn is why tileparity measured 49 ms there. Also, with 6 regions in flight, the lane was FIFO, a turn each in
+  rotation, so all 6 finished late together.
+- *The pop-in at wide zoom.* The bench's `missMax` showed it all "behind" the pan. A new measure (`TileCache.whyMissing`,
+  the bench's `missWhy`) splits it:
+  - Zoom 3.5 and wider: **the atlas was full.** All 96 slots were used and all 96 drawn, so tiles waited as
+    `queued` / `making` / `made` (noSlot 446 in a 5 s step at zoom 2.2). TC21's limit arrives at 2.2 on the phone
+    proxy, not only at 1.3. A wide zoom's tile needs 98 x 57 texels of a 128 x 192 slot.
+  - Window regions' tiles were the first evicted. The window draws its own land, so their tiles were never marked
+    used, and the look-ahead's tiles took their slots. The tile was then missing the frame the region left the window.
+  - At zoom 5, a different cause: the **eye-side skip**. A tall window-baked tile just past the window's trailing edge,
+    on the eye's side (top 215 against a cap of 138), is left out so it doesn't rise into the line to the focus. The
+    rings draw it flat. That's the 12.5% "behind" at zoom 5. It's a design rule, not a fault: open as TF5.
+- *The disk hitch.* Disk is the one source that uploads: one region's 1.7 MB record in a single writeBuffer a frame
+  (`UPLOAD_BYTES` 2 MB). The phone's long frames on the disk path were gpu-held and gpu-busy at 10 cells/s, where
+  generated land had none. The phone's own io bench shows writeBuffer completions up to 39 ms (upload 8 MB p95). The
+  desktop proxy can't reproduce Mali's stall: there every source shows the same 42-66 ms throttled frames.
+
+**What changed.**
+- **The pacer (atlas.ts TilePacer).** The tiles' lane is ordered by `MakeHow.order` (TileLandGpu counts the regions it
+  asks for, the camera's way), so the first asked finishes first. The lane's share of a frame's turns is half while
+  the streamer waits, else all. What its queue doesn't take, plus what the streamer leaves, is the frame's **credit**:
+  a tiles'-lane request made in that frame's task (a region's next tile) runs at once, until a `setTimeout(0)` ends the
+  task. The guard's turn count still bounds the frame. `?tilechain=0` turns the credit off.
+- **The atlas's parts (TC21).** A slot holds one whole tile (128 x 192), two halves (128 x 96) or four quarters
+  (64 x 96). A tile takes the least part that holds it at the view's own scale (`?tilefit=` 1: no resolution lost), so
+  96 slots hold up to 384 tiles in the same 36 MB. Render-only tiles choose their part from the region's flat extent
+  plus 48 units of height, and the GPU camera fits them to it. When the atlas had no place lately, drawn render-only
+  tiles bigger than the view needs (a close zoom's whole slots, still on screen after zooming out) are made again at
+  the view's size, into where they were.
+- A window region's tile is marked used while the region is in the window.
+- The eye-side skip applies only to a tile whose image covers the focus on the screen (a tighter test; it doesn't
+  change the zoom-5 case above).
+- The streamer's pool uploads are split across frames: `UPLOAD_BYTES` a frame in all, 0.5 MB on a phone, so a 1.7 MB
+  record takes 4 frames. **The phone has to confirm this one.**
+- The pan bench: `missWhy`, `slots` (used, drawn, evicted, noSlot), `pacer` (perFrame, turns a frame, chained),
+  `landFrames` (the renderer's frames from a tile's start to its land made); `?benchzooms=14_2.2` runs only some
+  zooms. New script: scripts/tilefast.mjs, the same measures in a short headless pan per zoom and speed.
+
+**Measurements.** The desktop proxy for the phone: q=low, 412 x 915, dpr 2.6, window 256, the bench page's phone
+flags, `Emulation.setCPUThrottlingRate` 4, `&finishtile=32` (the phone's 8 turns). Before: places 36ff5fe; after: this
+branch. Runs vary ±30% under throttling. Files: C:/Projects/shots88/tilefast/probe-before.json, probe-after*.json,
+probe-final.json, bench-after-desktop-throttle4.json.
+
+| case | before | after |
+|---|---|---|
+| zoom 5, 20 c/s: land p50 / p95 | (no tiles needed) | 23 / 56 ms, **2 / 3 frames** |
+| zoom 5, 80 c/s: land p50 / p95 | 162 / 225 ms | 60 / 137 ms (4 / 9 frames) |
+| zoom 5, 80 c/s: wanted to drawn p50 / p95 | 194 / 250 ms | 75 / 165 ms |
+| zoom 2.2, 20 c/s: screen out of detail behind | 9.7% | 0% |
+| zoom 2.2, 80 c/s: out of detail (worst frame) | 12.5% behind, 1.4% ahead | 0-0.7% |
+| zoom 2.2: tiles the atlas held (36 MB) | 96 (full; noSlot 446 in 5 s) | 122-153 |
+| zoom 1.3, 80 c/s: out of detail ahead / behind | 31% / 31% | 12.5% / 2% |
+| zoom 1.3: tiles held | 96 | 195-228 |
+
+The GIFs, zoom 2.2 panning at 60 c/s: C:/Projects/shots88/tilefast/before-z2.2-pan60.gif has grey (flat far-land) holes where
+tiles couldn't get a slot; after-z2.2-pan60.gif has none (stills: before/after-z2.2-panning.png).
+
+**Open.**
+- At zoom 14 and 80 c/s the land still takes ~7 frames. The streamer's lane is busy there, so the tiles get half the
+  turns and little credit. At 2.2 and 80 c/s it's 24 frames: 6 regions in flight queue behind each other, and they
+  wait for places while remakes free them.
+- After a zoom-out, noSlot persists for seconds (the screen's old whole tiles are drawn and can't be evicted). The
+  remakes free them a region at a time on the land lane.
+- The eye-side skip at zoom 5 (TF5).
+- The disk hitch on the phone (TF4).
+
+## Round 112 (2026-10-29, session 5, `tilefix`) — the terrain past the window drawn on every screen, and a gate for it
+
+The user opened the atlas on the deployed `places` build on their PC and the tiles were broken
+(C:/Users/cshel/Pictures/Screenshots/TilesLoadingWeirdly.png): the window's land floated over grey void, a few
+scattered tiles were drawn, and most of the screen showed the flat far land. The user: "The most basic thing is that
+all the tiles visible on screen load visually and our framerate doesn't dip below our thresholds." And: "Honestly I
+think that behavior has been in there since early on ... Regardless, we should fix it and get the terrain drawing
+reliably."
+
+**The causes.** Three faults combined. They're old (rounds 103-108), not one of the day's merges. The new gate fails
+places 27f0ffa at every wide zoom; main's headless shots of 9e7779b (before tileparity) and c06d52f show the same.
+1. **The atlas was sized for the phone's screen.** It was a fixed 24 MB, 96 slots. A desktop's 1600 x 900 at zoom 2
+   shows ~220 regions; with the look-ahead's margin it wants 300-1000 tiles. The atlas filled with the first 96, and
+   everything else stayed the far land's flat colour. On the phone it was enough down to about zoom 2.2.
+2. **Off-screen render-only tiles were never culled, so they were never evicted.** Since round 105 a render-only
+   tile's box is known only on the GPU (TP), so `TileCache.prepare` drew every one within the mask's reach (32
+   regions, 2048 cells) and marked each one used. Since round 108 (tileparity) a tile drawn last frame is never
+   evicted, which stopped the thrash at wide zooms. Together: once full, the atlas could never let a tile go. That's
+   the user's scattered tiles: they stay wherever they were first made. Before round 108 the atlas thrashed instead.
+3. **The look-ahead sampled the screen on a 16 x 16 grid.** At a wide zoom on a desktop that's fewer than one point a
+   region, so whole regions were never asked for (the gate's `none`).
+
+The grey void under the window's eye side is the far land pressed down there (far.wgsl underFocus: nothing rises
+into the line to the focus). It's meant to have tiles over it, so it's covered once they draw.
+
+**What changed.**
+- The atlas's budget is the phone's 24 MB scaled by the screen's css area (411 x 785 is 1), up to 128 MB
+  (`?tilemb=` still sets it). Desktop 1600 x 900: 384 slots, 144 MB including the live plane. The user's 2046 x 672:
+  the same. Phone proxy 412 x 915: 104 slots, 39 MB. With `tilefast`'s halves and quarters, 384 slots hold up to
+  1536 tiles. The gate saw up to ~1000 in use at zoom 1.3, 600-700 drawn.
+- **A CPU bound for each render-only tile, with no readback** (TileLandGpu.boundOf). The bound is the region's
+  footprint plus its height range from what the CPU knows at bake time (Atlas.zRange: the macro ground over a 9 x 9
+  grid, the sea's level, any giants reaching in), padded by 128 above and 64 below. `prepare` culls the tile on this
+  bound, so only tiles on the screen count as used and the rest can be evicted.
+  - *The pad's calibration:* against the GPU's exact boxes (the prep kernel's, read back once for this and then
+    removed), 2210 tiles at three spots. The true top was at most 119 over the macro's highest, and the true bottom at
+    most 53 under its lowest.
+  - *Why no GPU cull pass:* the user asked "Can we not simply do that on the GPU? Culling should be dirt cheap", and
+    the CPU has to know what's visible to evict anyway. After the CPU cull the draw is at most ~600 quads (1200
+    triangles), and the rasteriser clips the rest. A cull pass plus drawIndirect would save nothing measurable and add a
+    storage buffer to a vertex stage near its limit of 8. (main agreed; skipped.)
+  - The 8-byte box readback tried first is gone (DECISIONS round 106b: no readback for what's only seen).
+- The look-ahead's grid is dense enough for two points across every region on the screen (16 to 64 a side).
+- `tilefast` merged in: the pacer's credit, the halves and quarters, window tiles kept, the bench's why.
+
+**The gate: scripts/tilegate.mjs** (main runs it before every merge into places).
+- Screens: desktop 1600 x 900 at dpr 1, at the page's own tier (as the user's PC runs it); the phone proxy
+  412 x 915 at dpr 2.6, q=low; and `wide`, 2046 x 672 (the user's report), on request.
+- The atlas at a fixed spot, world, time of day and season, nothing saved. For each zoom (14, 8, 5, 3.5, 2.2, 1.3):
+  - Parked, after 8 s: the screen's 24 x 24 points out of detail must be 0. In the window that means a region not yet
+    written; past it, no tile drawn, with the reason. The frames must meet the bench's criteria: fps >= 58, no frame
+    over 33.4 ms, p99 <= 20 ms.
+  - A golden image: the simulation paused, the frame at an eighth of its size, compared with
+    data/baselines/tilegate/<screen>-z<zoom>.png. A pixel counts as changed when a channel moves by more than 40; the
+    view is flagged when over 1% changed, and a diff image is written.
+  - Then a pan up the screen at 20 cells/s for 3 s at each zoom: at most 2% out of detail in a frame, and the same
+    frame criteria.
+- `--update` rewrites baselines; exits 1 on any failure. It takes 7.2 min for both screens, 5 min without the pans.
+- The baselines were made on this fix (no older commit draws wide zooms whole), at half size, then shrunk to an eighth
+  offline (908 KB for the 12).
+- Noise between two runs of the same build: at most 0.15% of the image changed (measured at half size).
+
+**Results.**
+
+| | places 27f0ffa | tilefix |
+|---|---|---|
+| desktop, parked, out of detail: z14 / 8 / 5 / 3.5 / 2.2 / 1.3 | 0 / 0 / 0 / 0 / **28%** / **75%** | 0 at every zoom |
+| desktop, panning 20 c/s, out of detail: z5 / 3.5 / 2.2 / 1.3 | **9% / 20% / 52% / 76%** | 0 at every zoom |
+| phone proxy, parked: z1.3 | **16%** | 0 |
+| phone proxy, panning: z5 / 3.5 / 2.2 / 1.3 | **4% / 5% / 10% / 30%** | 0 at every zoom |
+| golden images flagged | desktop z2.2 (19% changed), z1.3 (46%), phone z1.3 (9%) | none |
+| frames over 33 ms | the window slide while panning at zoom 14 (41-58 ms, gpu-held) | the same, phone zoom 14 (41.6 ms) |
+| the user's view (2046 x 672): out of detail, parked and panning, z8 to 1.3 | (not run) | 0-0.5% |
+
+Shots: C:/Projects/shots88/tilegate/fix-final/ and old-27f0ffa/ (a frame per zoom, panned frames, diffs).
+
+**Open.**
+- The window slide's long frame at close zoom, panning: 40-60 ms, gpu-held, on both builds (TX5).
+- The atlas is sized when it's first made. A window made bigger later keeps its budget (TX6).
+- At 1.3 on a desktop the atlas holds ~1000 tiles; zoom 0.8 (the level's floor) wasn't measured.

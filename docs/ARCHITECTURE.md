@@ -2275,3 +2275,35 @@ clears them).
   - The atlas never evicts a tile the last frame drew (the look-ahead's margin evicted the screen's own tiles at wide
     zooms: thousands of bakes a minute); a land job made for a region no longer wanted lets its slot go when the atlas
     is full.
+
+- (round 112, `tilefast`: TC21, TC15) **The pacer's tiles' lane.** `TilePacer.next(true, order)`: the tiles' lane is
+  kept in the asker's order (`MakeHow.order`: TileLandGpu's count of regions asked for — the camera's way), so the first
+  asked finishes first. Its share of a frame's turns (half while the streamer waits, else all) is kept for it: what its
+  queue doesn't take, and what the streamer leaves, is the frame's **credit** — a tiles' lane request made in that
+  frame's task (a region's next tile, asked a microtask after the last's submit) runs at once, until a `setTimeout(0)`
+  ends the task. So a region's land goes in as many frames as the guard's turns need (a phone's 8 turns: 2-3 frames),
+  not a frame a turn. `?tilechain=0` turns the credit off (the A/B). The streamer's lane is as it was.
+- **The atlas's parts.** A slot (SW x SH, 128 x 192) holds one whole tile, two halves (128 x 96: top, bottom) or four
+  quarters (64 x 96): `Tile.q` the part (tilecache.ts `Part`), `TileCache.cells` the slot's quarters' tiles. A tile takes
+  the least part its box fits at the view's scale (`sizeOf`; render-only tiles: `TileCache.partFor` with 48 of height —
+  the GPU fits the tile to the part it's given). `slotPx(t)` is the part's corner and size; TP is indexed by
+  `tpIndex(t)` (slot · 4 + its first quarter: the params buffer and the instance buffer are 4 x the slots). Placement
+  (`placeFor`): a free place (a part's in a slot already split first), else the place whose tiles were all used longest
+  ago — never one the last frame drew. A region's tile of another size: a smaller one replaces it where it was (always
+  fits), a bigger one is placed first (the old kept when there's no room). When the atlas had no place lately, the
+  look-ahead (`TileCache.wanted`) also asks for drawn render-only tiles bigger than the view needs (a closer zoom's
+  whole slots), made again at the view's size (`remake`: their bake isn't a latency).
+- A window region's tile is never the least recently used while the region is in the window (prepare marks it used):
+  it's the tile the screen needs the frame the region leaves.
+- An eye-side tile is left out (the focus's line) only when its image covers the focus on the screen.
+- The bench's why (`TileCache.whyMissing`, the pan bench's `missWhy`): a point past the window no tile draws — its tile
+  left out (eye, off, far), at another turn, its land being made, made and waiting, queued, or not asked for.
+- The streamer's uploads into the pool: `UPLOAD_BYTES` a frame in all (0.5 MB on a phone, 2 elsewhere; `?uploadmb=`),
+  a region's record (1.7 MB at window 256) split across frames, resolved when its last byte is written.
+
+- (round 112, `tilefix`) **The atlas's budget** is by the screen: 24 MB at the phone's 411 x 785 css px, scaled by the
+  css area, to 128 MB (`?tilemb=`), fixed when the atlas is made. **A render-only tile's CPU bound**
+  (TileLandGpu.boundOf) — the region's footprint and `TileLandSource.zRange` (the streamer's source's: Atlas.zRange,
+  the macro ground, the sea, the giants) padded +128 / -64 — is what `TileCache.prepare` culls it by (`Tile.boxed`);
+  only a tile on the screen is "used" (the eviction's protection). No readback. The look-ahead samples the screen with
+  two points across each region. The merge gate: scripts/tilegate.mjs (baselines in data/baselines/tilegate).

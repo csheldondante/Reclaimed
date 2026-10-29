@@ -126,9 +126,14 @@ const UPLOAD_MS = 3;
 const LATER_MS = 3;
 /** (round 106, tilephone) a region's hash's time a turn of Streamer.later (ms): a few rows at a time */
 const HASH_SLICE_MS = 0.4;
+/** (round 112, tilefast) a phone (its user agent): a region's record (1.7 MB at window 256) over four frames — a frame
+ *  with a whole one's writeBuffer was the pan bench's disk hitch there (gpu-held, gpu-busy at 10 cells/s) */
+const PHONE_UA = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
 /** (round 104, ?uploadmb=) and at most this many MB uploaded into the pool a frame (one region at least): the phone's
  *  frame with a few regions' writeBuffers in it was gpu-busy */
-const UPLOAD_BYTES = Number(param('uploadmb') ?? 2) * 1048576;
+const UPLOAD_BYTES = Number(param('uploadmb') ?? (PHONE_UA ? 0.5 : 2)) * 1048576;
+/** (round 112) the least of a region's bytes written in one go (a multiple of 4) */
+const UPLOAD_SLICE = 65536;
 /** (round 100) a page load's id: a record says which session wrote it */
 export const SESSION = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
 /** cells the window slides by in z */
@@ -166,6 +171,8 @@ export interface LandSource {
    * streamer never sees the land's columns: arrival is a pool → window copy.
    */
   regionInto?(x0: number, y0: number, w: number, h: number, target: FinishTarget, how: MakeHow): Promise<FinishMeta | null>;
+  /** (round 112, `tilefix`) what the source knows on the CPU of a box's heights, world z (Atlas.zRange) */
+  zRange?(x0: number, y0: number, w: number, h: number): [number, number];
 }
 
 /** (round 100) what the store saves for a world: its id (the atlas's seed, the run), whether it's kept on disk */
@@ -389,7 +396,7 @@ export class Streamer {
   /** (round 100) false while what's in the window shouldn't be saved (something falling: it would be saved mid-air) */
   canSave: (() => boolean)[] = [];
   /** (round 100) GPU pool uploads waiting for a frame */
-  private uploads: { f: Frozen; slot: PoolSlot; res: () => void }[] = [];
+  private uploads: { f: Frozen; slot: PoolSlot; res: () => void; body?: Uint8Array; at?: number }[] = [];
   private uploadHost?: Uint8Array;
   private sweepAt = 0;
   private sweepT = 0;
@@ -1473,11 +1480,19 @@ export class Streamer {
   private pump(): void {
     const t0 = performance.now();
     let bytes = 0;
-    for (let n = 0; this.uploads.length && (n === 0 || (performance.now() - t0 < UPLOAD_MS && bytes + this.layout.bytes <= UPLOAD_BYTES)); n++) {
-      const u = this.uploads.shift()!;
-      bytes += this.layout.bytes;
+    // (round 112, tilefast: UPLOAD_BYTES a frame in all, a region's bytes split across frames when it's over that — the
+    // phone's frames with a whole region's writeBuffer in them were held for the GPU: the pan bench's disk hitch)
+    while (this.uploads.length && bytes < UPLOAD_BYTES && (bytes === 0 || performance.now() - t0 < UPLOAD_MS)) {
+      const u = this.uploads[0];
       // (round 104: a loaded region's bytes as they came — the layout's already)
-      timed('pool.upload', () => this.core.host.gpu.device.queue.writeBuffer(u.slot.buf, u.slot.off, u.f.body ?? this.toBody(u.f)));
+      const body = (u.body ??= u.f.body ?? this.toBody(u.f));
+      const at = u.at ?? 0;
+      const n = Math.min(body.byteLength - at, Math.max(UPLOAD_SLICE, UPLOAD_BYTES - bytes - ((UPLOAD_BYTES - bytes) % 4)));
+      timed('pool.upload', () => this.core.host.gpu.device.queue.writeBuffer(u.slot.buf, u.slot.off + at, body, at, n));
+      bytes += n;
+      u.at = at + n;
+      if (u.at < body.byteLength) break;
+      this.uploads.shift();
       this.stats.uploads++;
       u.res();
     }
@@ -1500,10 +1515,11 @@ export class Streamer {
       layout,
       border: b,
       oz: () => this.oz,
-      landTile: (x0, y0, buf, off, meta) => {
+      zRange: (x0, y0) => this.source.zRange?.(x0, y0, R, R) ?? null,
+      landTile: (x0, y0, buf, off, meta, order) => {
         if (!this.source.regionInto) return null;
         const target: FinishTarget = { buf, off, layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !settleLand(), corner: true };
-        return this.source.regionInto(x0 - b, y0 - b, R + 2 * b, R + 2 * b, target, { pace: 'tile', stamps: 'made', summary: meta }).then(() => undefined);
+        return this.source.regionInto(x0 - b, y0 - b, R + 2 * b, R + 2 * b, target, { pace: 'tile', stamps: 'made', summary: meta, order }).then(() => undefined);
       },
     };
     return this.tileSrc;

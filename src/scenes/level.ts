@@ -1319,6 +1319,7 @@ export class LevelScene implements Scene {
               region: (x0, y0, w, h) => a.atlas.regionLand(x0, y0, w, h, Infinity, true),
               // (round 102, `gpugen`: made on the GPU straight into the pool — ?gpugen=0 the CPU's way, region above)
               regionInto: (x0, y0, w, h, t, how) => a.atlas.regionInto(x0, y0, w, h, t, how),
+              zRange: (x0, y0, w, h) => a.atlas.zRange(x0, y0, w, h),
               wrap: [a.atlas.p.cols, a.atlas.p.rows],
               height: a.atlas.p.zTop,
               // (round 71: the coarse world changes while a region is away)

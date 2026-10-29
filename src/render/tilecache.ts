@@ -32,6 +32,9 @@ export interface LandMaker {
   invalidate?(): void;
   readonly stats: Record<string, number>;
   readonly latencies: LandTimes[];
+  /** (round 112, tilefast: the bench's why) region "rx,ry"'s land: being made, made and waiting for its bake, wanted
+   *  and not started, or none of these */
+  stateOf?(key: string): 'making' | 'made' | 'queued' | null;
 }
 
 /** the streamer's region (cells; rows the same count) */
@@ -42,8 +45,13 @@ const MASK_N = 64;
 const REBAKE = Number(new URLSearchParams(location.search).get('tilerebake') ?? 600);
 /** bakes a frame */
 const PER_FRAME = Math.max(1, Number(new URLSearchParams(location.search).get('tilesper') ?? 1) | 0);
-/** the atlas's budget (MB) and a slot's size (texels) */
-const BUDGET_MB = Number(new URLSearchParams(location.search).get('tilemb') ?? 24);
+/** the atlas's budget (MB) and a slot's size (texels). (Round 112, `tilefix`: by the screen — 24 MB is the phone's
+ *  (411 x 785 css px, the pan bench's), the screen's ground at a zoom grows with its css area, so a desktop's
+ *  1600 x 900 at a wide zoom wanted 4.5 times the tiles: the atlas full of the screen's own and the rest the far land's
+ *  flat colour. Up to TILE_MB_MAX; ?tilemb= sets it.) */
+const PHONE_CSS = 411 * 785;
+const TILE_MB_MAX = 128;
+const BUDGET_MB = Number(new URLSearchParams(location.search).get('tilemb') ?? Math.min(TILE_MB_MAX, 24 * Math.max(1, (innerWidth * innerHeight) / PHONE_CSS)));
 const [SW, SH] = (new URLSearchParams(location.search).get('tilepx') ?? '128x192').split('x').map(Number);
 /** bytes a texel: rgba8 (albedo, film) + rg32uint (normal and flags, depth) — the slots' count is these planes' budget —
  *  and (round 108, TC20) rgba8 (the held river under it — how far under its level at the reference wetness, its depth
@@ -62,6 +70,39 @@ const MOVING = 2;
  *  screen asked for next (the screen's size times this) */
 const AHEAD_CELLS = 96;
 const MARGIN = 1.35;
+/** (round 112, TC21; ?tilefit=) a tile's part of a slot is the least that holds it at this share of the view's scale
+ *  (texels a unit): 1, the screen's own */
+/** (round 112) the height a render-only tile's land is taken to span (tilelandgpu.ts QUARTER_Z) */
+const REMAKE_Z = 48;
+const PART_FIT = Number(new URLSearchParams(location.search).get('tilefit') ?? 1);
+/**
+ * (round 112, tilefast, TC21) The part of a slot a tile takes: -1 the whole (SW x SH), 0-3 a quarter (x, y halves),
+ * 4 the top half, 5 the bottom (SW x SH/2). Indexed by part + 1: the slot's quarters it covers (bits), its corner and
+ * size (px), its first quarter (where TP keeps what it was baked at).
+ */
+export type Part = -1 | 0 | 1 | 2 | 3 | 4 | 5;
+const PART_MASK = [15, 1, 2, 4, 8, 3, 12];
+const PART_FIRST = [0, 0, 1, 2, 3, 0, 2];
+const PART_PX: [number, number, number, number][] = [
+  [0, 0, SW, SH],
+  [0, 0, SW >> 1, SH >> 1],
+  [SW >> 1, 0, SW >> 1, SH >> 1],
+  [0, SH >> 1, SW >> 1, SH >> 1],
+  [SW >> 1, SH >> 1, SW >> 1, SH >> 1],
+  [0, 0, SW, SH >> 1],
+  [0, SH >> 1, SW, SH >> 1],
+];
+/** (round 112) a tile's size: 0 a whole slot, 1 a half, 2 a quarter — the parts of each, and each part's */
+export type Size = 0 | 1 | 2;
+const SIZE_PARTS: Part[][] = [[-1], [4, 5], [0, 1, 2, 3]];
+const PART_SIZE: Size[] = [0, 2, 2, 2, 2, 1, 1];
+/** the least size whose texels hold a box of this many texels (w x h) */
+function sizeOf(w: number, h: number): Size {
+  const fw = Math.ceil(w) + 1;
+  const fh = Math.ceil(h) + 1;
+  if (fh > SH >> 1 || fw > SW) return 0;
+  return fw <= SW >> 1 ? 2 : 1;
+}
 /** ?tiledebug=1: the tiles drawn tinted */
 const DEBUG = new URLSearchParams(location.search).get('tiledebug') === '1';
 
@@ -129,6 +170,12 @@ interface Tile {
   usedAt: number;
   /** (round 105, tilelatency) baked by the GPU's own setup (tilelandgpu.ts): what it was baked at is only TP's */
   gpu?: boolean;
+  /** (round 112, the bench's why) why prepare last left it out ('eye', 'off', 'far'), or '' */
+  skip?: string;
+  /** (round 112, tilefast, TC21) the part of its slot it's in (Part) */
+  q: Part;
+  /** (round 112, tilefix) a render-only tile's extent known on the CPU (TileLandGpu.boundOf: a0, b1, tw, th — conservative) */
+  boxed?: boolean;
 }
 
 /** a bake slot: its camera and groups (made again when the mesh's buffers change) */
@@ -146,7 +193,8 @@ export class TileCache {
   debug = DEBUG;
   readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0 };
   private tiles = new Map<string, Tile>();
-  private bySlot: (Tile | null)[];
+  /** (round 112, TC21) the atlas's quarters (slot · 4 + q): a whole slot's tile in its four, a quarter's in its own */
+  private cells: (Tile | null)[];
   private atlasA!: GPUTexture;
   private atlasB!: GPUTexture;
   /** (round 108, TC20) the live plane: what the draw brings up to now — the held river's pair (the rivers' wetness), the
@@ -182,16 +230,16 @@ export class TileCache {
     this.cols = Math.min(this.cols, Math.ceil(Math.sqrt(want * (SH / SW))));
     const rows = Math.min(Math.floor(lim / SH), Math.ceil(want / this.cols));
     const slots = this.cols * rows;
-    this.bySlot = new Array(slots).fill(null);
+    this.cells = new Array(slots * 4).fill(null);
     this.stats.slots = slots;
     this.stats.mb = +((slots * SW * SH * (TEXEL_BYTES + LIVE_BYTES)) / 2 ** 20).toFixed(1);
     // (round 105: the atlas and the bake's G-buffer made when a streamed window first gives the tiles a place — tiles on by
     // default, a level without one spends nothing: alloc)
     this.rows = rows;
-    this.instData = new Float32Array(slots * 16);
+    this.instData = new Float32Array(slots * 4 * 16);
     this.inst = dev.createBuffer({ label: 'tiles instances', size: this.instData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.uni = dev.createBuffer({ label: 'tiles uniform', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    this.tparams = dev.createBuffer({ label: 'tiles params', size: slots * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.tparams = dev.createBuffer({ label: 'tiles params', size: slots * 4 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.mask = dev.createBuffer({ label: 'tiles mask', size: this.maskData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     for (let k = 0; k < PER_FRAME; k++) this.bakers.push({ cam: dev.createBuffer({ label: `tiles bake camera ${k}`, size: host.camBytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }) });
     void this.makePipes();
@@ -290,7 +338,8 @@ export class TileCache {
     let landBaked = false;
     if (this.land && !NO_LAND) {
       const B0 = this.basis(cam.viewProj);
-      landBaked = this.land.step(enc, cam, B0, (B0.sx * renderW) / 2);
+      this.rpNow = (B0.sx * renderW) / 2;
+      landBaked = this.land.step(enc, cam, B0, this.rpNow);
     }
     const fm = h.win.mesh;
     const [nx, ny] = fm.chunkGrid;
@@ -334,13 +383,44 @@ export class TileCache {
     for (let k = 0; k < Math.min(PER_FRAME, go.length); k++) this.bake(enc, cam, B, rp, go[k], this.bakers[k]);
   }
 
+  /** (round 112) the renderer's frames so far (a frame's encode each) */
+  get frameNo(): number {
+    return this.frame;
+  }
+
   private key(rx: number, ry: number, az: number): string {
     return `${rx},${ry},${Math.round(az * 1e4)}`;
   }
 
-  /** the texels a unit a tile of this extent fits its slot at */
-  private fitDens(t: { a0: number; b1: number; tw: number; th: number; dens: number }): number {
-    return Math.min((SW - 1) / (t.tw / t.dens), (SH - 1) / (t.th / t.dens));
+  /** the texels a unit a tile of this extent fits its slot at (round 112: its own slot's size, a quarter's or a whole's) */
+  private fitDens(t: Tile): number {
+    const [, , cw, ch] = this.slotPx(t);
+    return Math.min((cw - 1) / (t.tw / t.dens), (ch - 1) / (t.th / t.dens));
+  }
+
+  /**
+   * (round 112, tilefast, TC21) The part of a slot a region's tile takes at the view's scale (`rp`, texels a unit): a
+   * quarter (64 x 96 texels), a half (128 x 96: a wide zoom's tiles are wider than tall) or the whole (128 x 192), the
+   * least its box — the region and its overlap, `zSpan` world units of height — fits at that scale. At a wide zoom the
+   * screen wants more tiles than the atlas has whole slots, each wanting a fraction of one's texels.
+   */
+  partFor(B: Basis, rp: number, zSpan: number): Size {
+    let a0 = Infinity;
+    let a1 = -Infinity;
+    let b0 = Infinity;
+    let b1 = -Infinity;
+    for (let k = 0; k < 8; k++) {
+      const x = k & 1 ? R + OVERLAP : -OVERLAP;
+      const y = k & 2 ? R * ROW_H + OVERLAP : -OVERLAP;
+      const z = k & 4 ? zSpan : 0;
+      const a = B.r[0] * x + B.r[1] * y + B.r[2] * z;
+      const b = B.u[0] * x + B.u[1] * y + B.u[2] * z;
+      a0 = Math.min(a0, a);
+      a1 = Math.max(a1, a);
+      b0 = Math.min(b0, b);
+      b1 = Math.max(b1, b);
+    }
+    return sizeOf((a1 - a0) * rp * PART_FIT, (b1 - b0) * rp * PART_FIT);
   }
 
   /** the window region (c.i, c.j)'s bake: its box from its chunks, the window's mesh, band and grid drawn */
@@ -423,16 +503,16 @@ export class TileCache {
       b0 = Math.min(b0, b);
       b1 = Math.max(b1, b);
     }
-    const dens = Math.min(rp, (SW - 1) / (a1 - a0), (SH - 1) / (b1 - b0));
-    const tw = Math.min(SW, Math.ceil((a1 - a0) * dens) + 1);
-    const th = Math.min(SH, Math.ceil((b1 - b0) * dens) + 1);
-    const t = this.allocTile(rx, ry, cam.azimuth);
+    // (round 112, TC21: the least part of a slot the tile at the view's scale fits)
+    const t = this.allocTile(rx, ry, cam.azimuth, sizeOf((a1 - a0) * rp * PART_FIT, (b1 - b0) * rp * PART_FIT));
     if (!t) return false;
+    const [sx, sy, cw, ch] = this.slotPx(t);
+    const dens = Math.min(rp, (cw - 1) / (a1 - a0), (ch - 1) / (b1 - b0));
+    const tw = Math.min(cw, Math.ceil((a1 - a0) * dens) + 1);
+    const th = Math.min(ch, Math.ceil((b1 - b0) * dens) + 1);
     Object.assign(t, { tw, th, dens, a0, b1, top: top + oz, gpu: false });
-    const sx = (t.slot % this.cols) * SW;
-    const sy = Math.floor(t.slot / this.cols) * SH;
     // (round 105: what it's baked at, for the draw — tiles.wgsl TP)
-    h.device.queue.writeBuffer(this.tparams, t.slot * 32, new Float32Array([a0, b1, dens, 0, tw, th, top + oz, 1]));
+    h.device.queue.writeBuffer(this.tparams, this.tpIndex(t) * 32, new Float32Array([a0, b1, dens, 0, tw, th, top + oz, 1]));
     // the bake's camera: the view's rotation, the tile's scale, the region's box on [0, tw) x [0, th)
     const kx = (2 * dens) / tw;
     const ky = (2 * dens) / th;
@@ -455,27 +535,32 @@ export class TileCache {
 
   /**
    * (round 105, tilelatency) Region (rx, ry)'s tile at this turn: its own, a free slot, or the least recently used's
-   * (never one this frame drew or baked); its bake counted. null: no slot.
+   * (never one this frame drew or baked); its bake counted. null: no slot. (Round 112, TC21: in `part` of a slot — its
+   * own of another part let go and placed again.)
    */
-  allocTile(rx: number, ry: number, az: number): Tile | null {
+  allocTile(rx: number, ry: number, az: number, size: Size = 0): Tile | null {
     const key = this.key(rx, ry, az);
     let t = this.tiles.get(key);
+    // (its own of another size: a smaller one goes where it was — freed first, so it always fits; a bigger one is
+    // placed first, the old kept drawn when there's no room)
+    const old = t && PART_SIZE[t.q + 1] !== size ? t : undefined;
+    if (old) {
+      if (size > PART_SIZE[old.q + 1]) this.freeTile(old);
+      t = undefined;
+    }
     if (!t) {
-      let slot = this.bySlot.indexOf(null);
-      if (slot < 0) {
-        let old: Tile | null = null;
-        // (round 108: never a tile the last frame drew — at a zoom where the screen wants about as many tiles as the
-        // atlas holds, the look-ahead's margin evicted tiles on the screen, they were made again and evicted the
-        // margin's: thousands of bakes a minute, and the far land's flat colour in the tiles' places between)
-        for (const o of this.bySlot) if (o && o.usedAt < this.frame - 1 && (!old || o.usedAt < old.usedAt)) old = o;
-        if (!old) return null;
-        this.tiles.delete(this.key(old.rx, old.ry, old.az));
-        slot = old.slot;
-        this.stats.evicted++;
+      const at = this.placeFor(size);
+      if (at < 0) {
+        this.starvedAt = this.frame;
+        return null;
       }
-      t = { rx, ry, az, slot, tw: 0, th: 0, dens: 1, a0: 0, b1: 0, top: 0, bakedAt: 0, usedAt: this.frame };
+      if (old && this.tiles.get(key) === old) this.freeTile(old);
+      const slot = at >> 3;
+      const part = ((at & 7) - 1) as Part;
+      t = { rx, ry, az, slot, q: part, tw: 0, th: 0, dens: 1, a0: 0, b1: 0, top: 0, bakedAt: 0, usedAt: this.frame };
       this.tiles.set(key, t);
-      this.bySlot[slot] = t;
+      const m = PART_MASK[part + 1];
+      for (let k = 0; k < 4; k++) if (m & (1 << k)) this.cells[slot * 4 + k] = t;
       this.stats.first++;
     } else this.stats.again++;
     t.bakedAt = this.frame;
@@ -484,9 +569,80 @@ export class TileCache {
     return t;
   }
 
-  /** a slot's corner in the atlas (px) and its size */
+  /** (round 112, TC21) the frame the atlas last had no place for a tile, and the view's scale (texels a unit) now */
+  private starvedAt = -1e9;
+  private rpNow = 1;
+
+  /** (round 112) a tile let go: its quarters free */
+  private freeTile(t: Tile): void {
+    this.tiles.delete(this.key(t.rx, t.ry, t.az));
+    const m = PART_MASK[t.q + 1];
+    for (let k = 0; k < 4; k++) if (m & (1 << k) && this.cells[t.slot * 4 + k] === t) this.cells[t.slot * 4 + k] = null;
+  }
+
+  /**
+   * (round 112, TC21) A place for a tile of `size` (a slot and its part there: slot · 8 + part + 1), its quarters free: a
+   * free one — a half's or a quarter's in a slot already split first (whole slots kept for whole tiles) — else the place
+   * whose tiles were all used longest ago, let go
+   * (round 108: never a tile the last frame drew — at a zoom where the screen wants about as many tiles as the atlas
+   * holds, the look-ahead's margin evicted tiles on the screen, they were made again and evicted the margin's).
+   * -1: none.
+   */
+  private placeFor(size: Size): number {
+    const n = this.cells.length >> 2;
+    let free = -1;
+    let best = -1;
+    let bestAt = Infinity;
+    for (let s = 0; s < n; s++)
+      for (const part of SIZE_PARTS[size]) {
+        const m = PART_MASK[part + 1];
+        const at = s * 8 + part + 1;
+        let busy = false;
+        let used = false;
+        let last = -Infinity;
+        for (let k = 0; k < 4; k++) {
+          const o = this.cells[s * 4 + k];
+          if (!o) continue;
+          used = true;
+          if (!(m & (1 << k))) continue;
+          if (o.usedAt >= this.frame - 1) busy = true;
+          last = Math.max(last, o.usedAt);
+        }
+        if (busy) continue;
+        if (last === -Infinity) {
+          if (size === 0 || used) return at;
+          if (free < 0) free = at;
+        } else if (last < bestAt) {
+          bestAt = last;
+          best = at;
+        }
+    }
+    if (free >= 0) return free;
+    if (best < 0) return -1;
+    const bs = best >> 3;
+    const bm = PART_MASK[best & 7];
+    for (let k = 0; k < 4; k++) {
+      const o = this.cells[bs * 4 + k];
+      if (o && bm & (1 << k)) {
+        this.freeTile(o);
+        this.stats.evicted++;
+      }
+    }
+    return best;
+  }
+
+  /** a slot's corner in the atlas (px) and its size (round 112, TC21: its part's) */
   slotPx(t: Tile): [number, number, number, number] {
-    return [(t.slot % this.cols) * SW, Math.floor(t.slot / this.cols) * SH, SW, SH];
+    const x = (t.slot % this.cols) * SW;
+    const y = Math.floor(t.slot / this.cols) * SH;
+    const [px, py, w, h] = PART_PX[t.q + 1];
+    return [x + px, y + py, w, h];
+  }
+
+  /** (round 112, TC21) where what a tile was baked at is (tiles.wgsl TP: 2 vec4 each) — a quarter's place each, a part's
+   *  its first quarter's */
+  tpIndex(t: Tile): number {
+    return t.slot * 4 + PART_FIRST[t.q + 1];
   }
 
   /** (round 105) what each slot was baked at (tiles.wgsl TP: 2 vec4 a slot) — a render-only tile's written by the GPU */
@@ -544,12 +700,16 @@ export class TileCache {
    * its share of PREFETCH_S), then how far ahead along the motion it lies (ahead before behind), then how near the
    * middle — at rest, nearest the middle first, as before. At most `n`.
    */
-  wanted(cam: Camera, skip: (key: string) => boolean, n: number): { rx: number; ry: number }[] {
+  wanted(cam: Camera, skip: (key: string) => boolean, n: number): { rx: number; ry: number; remake?: boolean }[] {
     if (!this.origin || cam.fly) return [];
     const [ox, oy] = this.origin;
     const W = this.host.world.w;
     const H = this.host.world.h;
-    const G = 16;
+    // (round 112, tilefix: points enough that every region on the screen has two across — 16 a side missed whole
+    // regions between them at a wide zoom on a desktop: never asked for, the far land's flat colour there)
+    const [ex, ey] = cam.screenDeltaToWorld(cam.viewportW, 0);
+    const [fx, fy] = cam.screenDeltaToWorld(0, cam.viewportH);
+    const G = Math.min(64, Math.max(16, Math.ceil((2 * Math.max(Math.hypot(ex, ey), Math.hypot(fx, fy) / ROW_H) * MARGIN) / R)));
     const crx = Math.floor((cam.target[0] + ox) / R);
     const cry = Math.floor((cam.target[1] / ROW_H + oy) / R);
     const [vx, vy] = this.vel;
@@ -584,7 +744,21 @@ export class TileCache {
           const o = best.get(key);
           if (!o || k < o.k) best.set(key, { rx, ry, k });
         }
-    return [...best.values()].sort((a, b) => a.k - b.k).slice(0, n);
+    const out: { rx: number; ry: number; remake?: boolean }[] = [...best.values()].sort((a, b) => a.k - b.k).slice(0, n);
+    // (round 112, TC21: the atlas full — every slot's tile drawn — and some drawn bigger than the view now needs, the
+    // whole slots a closer zoom baked, nearest first: each made again at the view's size, into where it was — its
+    // slot's rest free for the tiles wanted)
+    if (this.frame - this.starvedAt < 60 && out.length < n) {
+      const now = this.partFor(this.basis(cam.viewProj), this.rpNow, REMAKE_Z);
+      const big: { rx: number; ry: number; d: number }[] = [];
+      for (const t of this.tiles.values()) {
+        if (!t.gpu || PART_SIZE[t.q + 1] >= now || Math.round(t.az * 1e4) !== Math.round(cam.azimuth * 1e4) || !this.drawnSet.has(`${t.rx},${t.ry}`) || skip(`${t.rx},${t.ry}`)) continue;
+        big.push({ rx: t.rx, ry: t.ry, d: Math.hypot(t.rx - crx, t.ry - cry) });
+      }
+      big.sort((a, b) => a.d - b.d);
+      for (const b of big.slice(0, n - out.length)) out.push({ rx: b.rx, ry: b.ry, remake: true });
+    }
+    return out;
   }
 
   /** a tile of region (rx, ry) at this turn? */
@@ -685,6 +859,10 @@ export class TileCache {
       const ey = cam.eye[1];
       const el = Math.hypot(ex, ey) || 1;
       const tz = cam.target[2];
+      // (the focus on the screen, clip)
+      const tg = cam.target;
+      const fx = (B.r[0] * tg[0] + B.r[1] * tg[1] + B.r[2] * tg[2]) * B.sx + m[12];
+      const fy = (B.u[0] * tg[0] + B.u[1] * tg[1] + B.u[2] * tg[2]) * B.sy + m[13];
       const d = this.instData;
       let n = 0;
       let frozen = 0;
@@ -696,39 +874,49 @@ export class TileCache {
         // not the grid's — keeps its tile, drawn inside the window too, till the window has it)
         let arriving = false;
         if (inWin) {
+          // (round 112, tilefast: a window region's tile is kept — not the least recently used because the window draws its
+          // land itself — so it's there the frame its region leaves; it was evicted for the look-ahead's, the pan's pop-in behind)
+          t.usedAt = this.frame;
           if (!this.arriving(t.rx - w0, t.ry - h0)) continue;
           arriving = true;
         }
         frozen++;
+        t.skip = '';
         if (Math.abs(t.rx - crx) >= MASK_N / 2 || Math.abs(t.ry - cry) >= MASK_N / 2) {
           this.stats.skipFar++;
+          t.skip = 'far';
           continue;
         }
         const aw = this.anchorWin(t.rx, t.ry);
         // (the eye's side of the focus: none that would rise into the line from the eye to it — a GPU-baked tile's top
         // isn't known here: not held back)
-        const ah = ((aw[0] + R / 2 - cam.target[0]) * ex + (aw[1] + (R * ROW_H) / 2 - cam.target[1]) * ey) / el;
-        if (ah > 24 && !t.gpu) {
-          const cap = tz + (ah - R * 0.75) * (cam.eye[2] / el) * 0.85;
-          if (t.top - this.origin![2] > cap) {
-            this.stats.skipEye++;
-            continue;
-          }
-        }
         const ra = B.r[0] * aw[0] + B.r[1] * aw[1] + B.r[2] * aw[2];
         const ua = B.u[0] * aw[0] + B.u[1] * aw[1] + B.u[2] * aw[2];
         const x0 = (ra + t.a0) * B.sx + m[12];
         const x1 = (ra + t.a0 + t.tw / t.dens) * B.sx + m[12];
         const y1 = (ua + t.b1) * B.sy + m[13];
         const y0 = (ua + t.b1 - t.th / t.dens) * B.sy + m[13];
-        if (!t.gpu && (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1)) {
+        // (round 112, tilefast: and only one whose image covers the focus on the screen — one that can't hide it was
+        // left out too, the strip at the screen's foot as the window slid on: the pan bench's pop-in behind at zoom 5)
+        const ah = ((aw[0] + R / 2 - cam.target[0]) * ex + (aw[1] + (R * ROW_H) / 2 - cam.target[1]) * ey) / el;
+        if (ah > 24 && !t.gpu && x0 <= fx && fx <= x1 && y0 <= fy && fy <= y1) {
+          const cap = tz + (ah - R * 0.75) * (cam.eye[2] / el) * 0.85;
+          if (t.top - this.origin![2] > cap) {
+            this.stats.skipEye++;
+            t.skip = 'eye';
+            continue;
+          }
+        }
+        // (round 112, tilefix: a render-only tile too once its box is known — drawn off the screen it was "used" every
+        // frame and never evicted: the atlas full of tiles off the screen)
+        if ((!t.gpu || t.boxed) && (x1 < -1 || x0 > 1 || y1 < -1 || y0 > 1)) {
           this.stats.skipOff++;
+          t.skip = 'off';
           continue;
         }
         const fa = B.f[0] * aw[0] + B.f[1] * aw[1] + B.f[2] * aw[2];
-        const sx = (t.slot % this.cols) * SW;
-        const sy = Math.floor(t.slot / this.cols) * SH;
-        d.set([ra * B.sx + m[12], ua * B.sy + m[13], B.sx, B.sy, sx, sy, t.slot, arriving ? 1 : 0, aw[0], aw[1], aw[2], fa * B.sz + m[14], 0, 0, 0, 0], n * 16);
+        const [sx, sy] = this.slotPx(t);
+        d.set([ra * B.sx + m[12], ua * B.sy + m[13], B.sx, B.sy, sx, sy, this.tpIndex(t), arriving ? 1 : 0, aw[0], aw[1], aw[2], fa * B.sz + m[14], 0, 0, 0, 0], n * 16);
         const s = ((t.ry % MASK_N) + MASK_N) % MASK_N;
         const q = ((t.rx % MASK_N) + MASK_N) % MASK_N;
         md[2 + s * MASK_N + q] = ((t.rx & 0xffff) | (t.ry << 16)) >>> 0;
@@ -780,12 +968,11 @@ export class TileCache {
   forgetMade(x0: number, y0: number, w: number, h: number, W: number, H: number): void {
     const mod = (v: number, n: number) => ((v % n) + n) % n;
     let n = 0;
-    for (const [k, t] of this.tiles) {
+    for (const t of [...this.tiles.values()]) {
       if (!t.gpu) continue;
       const meets = (a: number, size: number, b: number, len: number, wrap: number) => mod(a - b, wrap) < len || mod(b - a, wrap) < size;
       if (!meets(t.rx * R, R, x0, w, W) || !meets(t.ry * R, R, y0, h, H)) continue;
-      this.tiles.delete(k);
-      this.bySlot[t.slot] = null;
+      this.freeTile(t);
       n++;
     }
     this.stats.remade += n;
@@ -801,6 +988,21 @@ export class TileCache {
   drawsAt(x: number, y: number): boolean {
     if (!this.origin) return false;
     return this.drawnSet.has(`${Math.floor((x + this.origin[0]) / R)},${Math.floor((y + this.origin[1]) / R)}`);
+  }
+
+  /**
+   * (round 112, tilefast: the pan bench's why) Window point (x cells, y rows) past the window, not drawn by a tile: why —
+   * its tile there but left out (eye, off, far, or its turn: 'turn' — baked at another), its land being made, made and
+   * waiting for a bake, wanted and not started, or not asked for ('none').
+   */
+  whyMissing(x: number, y: number, az: number): string {
+    if (!this.origin) return 'none';
+    const rx = Math.floor((x + this.origin[0]) / R);
+    const ry = Math.floor((y + this.origin[1]) / R);
+    const t = this.tiles.get(this.key(rx, ry, az));
+    if (t) return t.skip || 'tile';
+    for (const o of this.tiles.values()) if (o.rx === rx && o.ry === ry) return 'turn';
+    return this.land?.stateOf?.(`${rx},${ry}`) ?? 'none';
   }
 
   /** what's in the mask (its regions), to write it only when it changes */
