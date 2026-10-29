@@ -1,0 +1,38 @@
+http://localhost:5211/?skipmenu=1&level=atlas&heroes=http%3A%2F%2Flocalhost%3A5208%2Fhero.mjs
+[console.error] Failed to load resource: the server responded with a status of 404 (Not Found)
+ok   no fatal overlay
+ok   the hero sandbox is mounted
+ok   the page carries the shared-modules import map
+ok   dropped in as the wanderer at 125.2,108.1,119.7
+ok   the inspector shows the intent, the camera and the abilities
+ok   a point 16 cells off the hero's field reaches: cost 27.5, the field in 3.9 ms
+     saved shots\herosandbox-atlas\walk.gif
+FAIL the autopilot walked it there: stuck, 2.0 from the goal after 5.3 s (1 fields)
+ok   the intent trace kept 225 intents, 140 moving
+ok   the inspector shows the pilot
+     saved shots\herosandbox-atlas\fight.gif
+ok   the raiders and the brute chased it (closest 8, 8.2, 7, 2.8 → 0.9, 1.5, 1.8, 2.1; then #1: gone (killed), raider:idle:2, brute:idle:10, ally:idle:6)
+ok   their blows crossed the boundary (actor.hurt, hurt): health 4
+ok   the hero's swings crossed it (units.hit)
+ok   the boundary log panel shows them
+ok   back out to the editor: no hero, no stick
+FAIL two dry, flat spots for the vessels: none found near the middle
+     an open spot: (it was a basin)
+ok   the test module's hero registered from http://localhost:5208/hero.mjs: wanderer, roller
+     saved shots\herosandbox-atlas\external-hero.gif
+     the roller under the autopilot: there, 0.8 from its goal
+ok   the roller rolled 9.7 cells
+ok   the inspector shows it as a module hero, with its Dash
+ok   its host.log line crossed the boundary
+ok   its tunables in the hero tuning panel: camera.zoom, camera.behind, camera.firm, camera.follow, hero.speed, hero.dash, hero.dashTime, hero.cooldown, hero.damage (speed set to 12)
+[console.error] [hero] Error: hero module http://localhost:5208/hero-old.mjs: it was built against hero contract 0.9, this host is 1.1 (a different major: signatures changed)
+ok   a module of an older contract is refused, saying why: hero module http://localhost:5208/hero-old.mjs: it was built against hero contract 0.9, this host is 1.1 (a different major: signatures changed)
+ok   a feedback note: {"kind":"reclaimed-hero-feedback","note":"headlesstest:theswingshouldsayhowfaritreaches","role":"wanderer","contract":"1.1","calls":53,"intents":273,"tunables":14,"shot":"data:image/png;base64,"}
+ok   Obstacle course #1: 28 pieces, 4 foes, the hero at its start
+FAIL the course is crossable by the wanderer (its traversal field, start to goal): {"ok":false,"cost":null,"straight":108.00000000000001,"ms":22.100000381469727}
+     saved shots\herosandbox-atlas\course.gif
+FAIL the autopilot crossed the course, fighting its foes: no way, 108.0 from the crystal after 1 s (1 fields)
+     saved shots\herosandbox-atlas\course.png
+ok   no fatal overlay at the end
+ok   no page errors
+4 FAILED

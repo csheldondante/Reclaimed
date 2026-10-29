@@ -1,0 +1,53 @@
+http://localhost:5211/?skipmenu=1&level=playground&heroes=http%3A%2F%2Flocalhost%3A5208%2Fhero.mjs
+[console.error] Failed to load resource: the server responded with a status of 404 (Not Found)
+ok   no fatal overlay
+ok   the hero sandbox is mounted
+ok   the page carries the shared-modules import map
+ok   dropped in as the wanderer at 153.0,123.1,26.3
+ok   the inspector shows the intent, the camera and the abilities
+ok   a point 16 cells off the hero's field reaches: cost 16.4, the field in 2.9 ms
+     saved shots\herosandbox\walk.gif
+ok   the autopilot walked it there: there, 0.9 from the goal after 2.6 s (1 fields)
+ok   the intent trace kept 148 intents, 55 moving
+ok   the inspector shows the pilot
+     saved shots\herosandbox\fight.gif
+FAIL the raiders and the brute chased it (closest 8, 8.2, 7, 2.8 → 1.5, 0.9, 6.9, 2.8; then #1: gone (killed), #2: gone (killed), brute:chase:10, ally:idle:6)
+ok   their blows crossed the boundary (actor.hurt, hurt): health 15
+ok   the hero's swings crossed it (units.hit)
+ok   the boundary log panel shows them
+ok   back out to the editor: no hero, no stick
+ok   two dry, flat spots for the vessels: 186.8,78.2 and 208.8,78.2, floor 10.0
+FAIL the vessels' walls stand: 4/48 wall columns up, 10..16 (floor 10.0, inside 10)
+     saved shots\herosandbox\vessels.png
+FAIL the water vessel: nothing to fill there: the rim is no higher than the floor
+FAIL the sand vessel: nothing to fill there: the rim is no higher than the floor
+     saved shots\herosandbox\fill.gif
+     saved shots\herosandbox\filled.png
+     an open spot: nothing to fill there: the rim is no higher than the floor
+ok   the test module's hero registered from http://localhost:5208/hero.mjs: wanderer, roller
+     saved shots\herosandbox\external-hero.gif
+     the roller under the autopilot: there, 0.3 from its goal
+ok   the roller rolled 9.7 cells
+ok   the inspector shows it as a module hero, with its Dash
+ok   its host.log line crossed the boundary
+ok   its tunables in the hero tuning panel: camera.zoom, camera.behind, camera.firm, camera.follow, hero.speed, hero.dash, hero.dashTime, hero.cooldown, hero.damage (speed set to 12)
+[console.error] [hero] Error: hero module http://localhost:5208/hero-old.mjs: it was built against hero contract 0.9, this host is 1.1 (a different major: signatures changed)
+ok   a module of an older contract is refused, saying why: hero module http://localhost:5208/hero-old.mjs: it was built against hero contract 0.9, this host is 1.1 (a different major: signatures changed)
+ok   a feedback note: {"kind":"reclaimed-hero-feedback","note":"headlesstest:theswingshouldsayhowfaritreaches","role":"wanderer","contract":"1.1","calls":11,"intents":228,"tunables":14,"shot":"data:image/png;base64,"}
+node:internal/modules/run_main:122
+    triggerUncaughtException(
+    ^
+
+Error: units.spawn: brute at 259.90958293915327,55.64555693126189 is outside the world
+SimpleUnits.spawn (http://localhost:5211/src/units/simple.ts:35:25)
+    at #evaluate (file:///C:/Users/Chris/Projects/Reclaimed-runner/node_modules/puppeteer-core/lib/puppeteer/cdp/ExecutionContext.js:402:19)
+    at async ExecutionContext.evaluate (file:///C:/Users/Chris/Projects/Reclaimed-runner/node_modules/puppeteer-core/lib/puppeteer/cdp/ExecutionContext.js:288:16)
+    at async IsolatedWorld.evaluate (file:///C:/Users/Chris/Projects/Reclaimed-runner/node_modules/puppeteer-core/lib/puppeteer/cdp/IsolatedWorld.js:104:16)
+    at async CdpFrame.evaluate (file:///C:/Users/Chris/Projects/Reclaimed-runner/node_modules/puppeteer-core/lib/puppeteer/api/Frame.js:364:20)
+    at async CdpPage.evaluate (file:///C:/Users/Chris/Projects/Reclaimed-runner/node_modules/puppeteer-core/lib/puppeteer/api/Page.js:832:20)
+    at async file:///C:/Users/Chris/Projects/Reclaimed-runner/scripts/herosandboxtest.mjs:342:18
+    at gauntlet (http://localhost:5211/src/hero/sandbox.ts:573:31)
+    at spawn (http://localhost:5211/src/hero/sandbox.ts:515:19)
+    at spawn (http://localhost:5211/src/units/simple.ts:34:24)
+
+Node.js v22.14.0
