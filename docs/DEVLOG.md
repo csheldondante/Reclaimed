@@ -11740,8 +11740,9 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   rivers rose (riverWet 1.02 → 1.29) and the window's water by 25 % (38043 → 47491). Runoff shows on the sand
   (river_t0.png / river_t60.png). Storm water stays live, as main asked: RiverWet, a storm waking its chunks,
   puddles and runoff.
-  - Found on the way: a WGSL error (`select` on an array) left sediment's pipelines invalid. It showed only as
-    console errors, not the fatal overlay; simtierstest now fails on them.
+  - Found on the way: a WGSL error (`select` on an array) left sediment's pipelines invalid. (I first reported
+    that it didn't reach the fatal overlay; it did. The test's "FATAL overlay" line was cut off by a `tail`. See
+    the follow-up below.) simtierstest now also fails on GPU errors in the console.
 - **GPU per frame, the phone proxy** (the desktop iGPU, shared with other agents, so noisy). Before is places
   d26891c; after is this branch, baked by default.
   - framecost, win 512, zoom 5, a storm on, span p50 / p95: parked 7.10 / 9.75 → 6.59 / 9.00 ms; panning at
@@ -11801,3 +11802,52 @@ visuals for steady state effects maybe?" (AR8). No solver change here: every def
   colbodies.ts the same falling piece twice (one `pieces` group now); the two water models each with their own rain
   and evaporation (one `water` group now); the collapse's dust and chips styled by the level scene, not the
   integrity system.
+
+## 2026-10-29 — simtiers follow-ups: the tiers off the Globals, the player's interactions, cleaning live (round 108, session 5, `simtiers`)
+
+From main's review of the first pass.
+
+- **The tiers moved off the Globals.** The first pass put them in Globals words 480-515, which grew the Globals
+  from 1920 to 2064 B, and tierRate looped over four region rects in them. That is the pattern docs/PAGES.md §1
+  measured on this iGPU: the Globals' size, and any array in them indexed by a computed index, slow every kernel
+  (18 KB: +55 %; a 2.9 KB dynamically indexed table: +48 %). Playground's `Tune` also took word 480. Now the tiers
+  are their own texture, `world.tierTex`:
+  - one texel a window chunk (rgba32float: rain, wind, vegetation rates);
+  - rasterised on the CPU by `Tiers.apply` and written only when it changes;
+  - read by `tiers.wgsl` (binding 50, prepended only to the five kernels that ask);
+  - one `textureLoad` a call, nothing indexed.
+
+  The Globals are back to places' layout byte for byte. Side effects: regions have no cap (main's SM4 point: the
+  4-region throw inside the frame loop is gone), and a region's grain is a chunk (16 columns).
+- **The gate**, scripts/kernelab.mjs. Each sim dispatch is replayed alone, win 256, on the combined build (places
+  650b5be with playground). Five ABAB pairs (A places, B simtiers), with the source swapped under one Vite;
+  shots88/simtiers/kernelab/:
+  - total 1.392 → 0.915 ms (-34 %);
+  - every kernel is faster or within noise (worst: structure +1.2 %);
+  - the kernels the tiers touch, relative to the rest in the same run, are -38 % (A 0.92-1.17, B 0.57-0.77): sediment-out -61 %, sediment -34 %, ecology -73 %, climate -31 %, particles-update -29 %.
+
+  Baked columns don't move, so sediment returns early. The untouched kernels are faster on B too (water and lava
+  -20 to -35 %). I didn't run that down: it may be less of the window awake when nothing erodes, or the clocks.
+  The runs swing up to 2x from one to the next (a shared GPU), which is why there are five pairs.
+- **SM2, the player's interactions.** This follows round 78 (the user: "unfreeze for player interactions"), on
+  main's call; the user can override. Every event a tick sends (`sim.eventTaps`: a power, an edit, lightning) and
+  every stroke of wind (`gusts[1..]`) makes rain and wind erosion live in the chunks round it (radius + 4 cells).
+  It lasts at least 4 s, then while the chunk stays awake (sim/sleep.ts), at most 60 s. Vegetation stays baked
+  there; the grow tap is live anyway. simtierstest `interact`: the rates at the camera before a ripple, 1 s after
+  it and 30 s after it read `0,0,0` → `1,1,0` → `0,0,0`.
+- **SM3, cleaning stays live** (main: "cleaning is a core mechanic of the game, not background erosion").
+  Contamination washing had no tier already. But the first pass had gated a landing seed's whole effect, its
+  cleaning of the poison round it too. Now only its sprouting is gated.
+- **The "non-fatal WGSL error" wasn't one.** simtierstest `fatal` makes a broken shader module on purpose. The
+  fatal overlay comes up on top (`elementFromPoint` at the centre is inside `.fatal`; shots88/simtiers/fatal_probe.png):
+  gpu/device.ts's `uncapturederror` → `showFatal` holds. My first report misread the log.
+- **simtierstest on the combined build**, 20 s of storm:
+
+  | run | layer words | plant columns | water |
+  |---|---|---|---|
+  | baked | 3489 | 0 | 10763 |
+  | live | 38450 | 56037 | 12238 |
+  | bake 120 s | 72266 | 103652 | (900 ticks, 5.0 s) |
+
+  interact and fatal as above, exit 0. A framecost run in the same turn read 12 ms (busy 0.74, -899 held: the GPU
+  was shared), so it isn't comparable and isn't used. The first pass's framecost and driveprofile numbers stand.
