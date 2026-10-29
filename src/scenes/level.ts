@@ -41,6 +41,8 @@ import { GPUGEN } from '../atlas/finish';
 import type { MapData } from '../world/mapgen';
 import { SETTLE_TOL, Sleep } from '../sim/sleep';
 import { RiverWet } from '../weather/riverwet';
+import { CatchmentWet } from '../weather/catchwet';
+import { RiverWetField } from '../weather/wetfield';
 import { RIVERS } from '../sim/world-gpu';
 import { installFlow, type FlowKit } from '../flow/install';
 import { FLOWLAB } from '../levels/flowlab';
@@ -142,6 +144,11 @@ export class LevelScene implements Scene {
   private reclaimed = 0;
   /** (round 84) the rivers' wetness (weather/riverwet.ts) */
   private riverWet = new RiverWet();
+  /** (round 109) the atlas level's: each watershed's storm water (weather/catchwet.ts), its field over the window
+   *  (weather/wetfield.ts), and the window's origin they were fitted to */
+  private catchWet?: CatchmentWet;
+  private wetField?: RiverWetField;
+  private catchAt = '';
   /** (round 84, ?settletol) when the water's change per chunk was last read, and whether a read is in flight */
   private settleReadAt = 0;
   private settleReading = false;
@@ -1928,8 +1935,25 @@ export class LevelScene implements Scene {
       }
       this.hybrid.count(core.renderer.fieldMesh.drawn);
     }
-    // (round 84) the rivers' wetness: the season and the storms (weather/riverwet.ts)
-    globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
+    // (round 84) the rivers' wetness: the season and the storms (weather/riverwet.ts); (round 109) on the atlas level
+    // the storms per watershed — the climate's the season alone, each river's storm water its own catchment's
+    const atl = this.opts.atlas?.atlas;
+    if (atl?.riverCatchments && this.stream && !this.catchWet) {
+      this.catchWet = new CatchmentWet({ nodes: atl.riverNodes, catchments: atl.riverCatchments, n: atl.p.n, worldW: atl.worldW, worldH: atl.worldH });
+      this.wetField = new RiverWetField(this.host.gpu.device, core.world.riverWet);
+    }
+    if (this.catchWet && this.wetField && this.stream) {
+      const S = this.stream;
+      const key = `${S.origin[0]},${S.origin[1]}`;
+      if (key !== this.catchAt) {
+        this.catchAt = key;
+        this.catchWet.setWindow(S.origin[0], S.origin[1], dims.w, dims.h);
+        this.wetField.map(this.catchWet);
+      }
+      this.catchWet.update(dt * this.speed, weather);
+      this.wetField.write(this.catchWet.ex);
+      globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, []);
+    } else globals.riverWet = this.riverWet.update(dt * this.speed, globals.season ?? 0, weather.storms);
     // (round 80) what's awake this frame: round the player (the camera's target), the events, the storms
     if (this.sleep && SETTLE_TOL > 0) this.readSettling();
     if (this.sleep) {

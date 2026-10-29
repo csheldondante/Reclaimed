@@ -37,7 +37,7 @@ import { writeSlot } from '../world/layout';
 import { dispatch, type SimSystem } from './system';
 import { TILES_BINDING as TILES } from './cull';
 import riverHeldWgsl from '../shaders/riverheld.wgsl?raw';
-import { RIVERS, RIVER_PULL, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, STATS_COUNT, type WorldGpu } from './world-gpu';
+import { RIVERS, RIVER_PULL, RIVER_DEPTH_EXP, RIVER_SPEED_EXP, RIVER_WET_CELLS, STATS_COUNT, type WorldGpu } from './world-gpu';
 
 /** (round 84) riverheld.wgsl with its constants: the atlas's rivers held at their steady state (world-gpu riverFlow) */
 /**
@@ -58,6 +58,7 @@ const RIVER_TABLE: bool = ${RIVERS === 'table'};
 const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
 const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
 const RIVER_PULL: f32 = ${RIVER_PULL};
+const RIVER_WET_CELLS: f32 = ${RIVER_WET_CELLS};
 ` + riverHeldWgsl;
 import { SETTLE, SLEEP_MORE } from './sleep';
 import { FLOW_SUB, WIND_K, fieldPass, fieldPeriod, flowConst, flowN } from './flow';
@@ -223,8 +224,8 @@ export class WaterSystem implements SimSystem {
         world,
         settle ? 'water-settle-flux' : 'water-flux',
         `const FLUX_SEED: bool = ${!SETTLE};\nconst SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterFluxWgsl + riverHeld,
-        { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 22: 'tex', 31: 'uniform' },
-        { 3: world.surface, 4: settle ? world.waterNext : world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 31: this.rect },
+        { 3: 'read', 4: 'read', 5: 'rw', 6: 'read', 17: 'tex', 21: 'tex', 22: 'tex', 62: 'tex', 31: 'uniform' },
+        { 3: world.surface, 4: settle ? world.waterNext : world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect },
         false,
         settle ? undefined : tiles,
       );
@@ -234,9 +235,9 @@ export class WaterSystem implements SimSystem {
         world,
         settle ? 'water-settle-depth' : 'water-depth',
         `const SETTLE_PASS: bool = ${settle};\n` + flowConst('water') + waterDepthWgsl + riverHeld,
-        { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex', 31: 'uniform' },
+        { 3: 'read', 4: 'read', 5: 'read', 6: 'rw', 7: 'rw', 8: 'read', 9: 'rw', 22: 'tex', 62: 'tex', 31: 'uniform' },
         // (a settling pass's second half: from the next buffer back into the water — the passes ping-pong)
-        { 3: settle ? world.waterNext : world.water, 4: world.flux, 5: world.waterSource, 6: settle ? world.water : world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 31: this.rect },
+        { 3: settle ? world.waterNext : world.water, 4: world.flux, 5: world.waterSource, 6: settle ? world.water : world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect },
         false,
         settle ? undefined : tiles,
       );
@@ -253,9 +254,9 @@ export class WaterSystem implements SimSystem {
       const d = this.settleDepth.k;
       this.settleA = {
         flux: f,
-        fg: makeBindGroup(device, 'water-settle-flux-a', f.layout, { 0: world.globals, 2: world.materials, 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 31: this.rect }),
+        fg: makeBindGroup(device, 'water-settle-flux-a', f.layout, { 0: world.globals, 2: world.materials, 3: world.surface, 4: world.water, 5: world.flux, 6: world.oil, 17: world.driftView, 21: world.bodyProjView, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect }),
         depth: d,
-        dg: makeBindGroup(device, 'water-settle-depth-a', d.layout, { 0: world.globals, 2: world.materials, 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 31: this.rect }),
+        dg: makeBindGroup(device, 'water-settle-depth-a', d.layout, { 0: world.globals, 2: world.materials, 3: world.water, 4: world.flux, 5: world.waterSource, 6: world.waterNext, 7: world.waterPrev, 8: world.surface, 9: world.waterChange, 22: world.riverFlowView, 62: world.riverWetView, 31: this.rect }),
       };
     }
   }
@@ -439,8 +440,8 @@ export class RenderFieldsSystem implements SimSystem {
       'renderfields',
       terrainShapeWgsl + meshStateWgsl + meshRegionWgsl + `const SLEEP_MORE: bool = ${SLEEP_MORE};
 ` + renderFieldsWgsl + flowWgsl + riverHeld,
-      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 22: 'tex', 30: 'uniform' },
-      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 22: world.riverFlowView, 30: world.meshRegion },
+      { 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'rw', 8: 'read', 9: 'read', 10: 'read', 16: 'stex', 17: 'tex', 22: 'tex', 62: 'tex', 30: 'uniform' },
+      { 3: world.surface, 4: world.moisture, 5: world.fire, 6: world.flux, 7: world.renderFields, 8: world.water, 9: world.veg, 10: world.lava, 16: world.cornerView, 17: world.driftView, 22: world.riverFlowView, 62: world.riverWetView, 30: world.meshRegion },
       false,
       // (round 104, simscale: with ?sleepmore=1 it skips a sleeping chunk but a drowsy one — the live list exactly —
       // so it's dispatched over the live chunks only; the field mesh's region is always set, MR.n.w 1)

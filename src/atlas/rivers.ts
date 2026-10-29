@@ -72,9 +72,35 @@ export interface AtlasLake {
   regions: number[];
 }
 
+/**
+ * (round 109, watershed — the user: "I want it per water shed please") Which river each piece of land drains into:
+ * the land sampled every CATCH_STEP texels, each sample the node its water reaches first going down the drainage
+ * tree (−1: it reaches the sea or a lake's floor with no river on the way). A node's own catchment is the samples
+ * that are its; what reaches it from upstream is its upstream nodes' (`order`, `next`). weather/catchwet.ts rains on
+ * the samples under the storms.
+ */
+export interface Catchments {
+  /** texels between samples, the samples a side (n / step) */
+  step: number;
+  side: number;
+  /** per sample (row-major, side × side): its node, −1 none */
+  of: Int32Array;
+  /** per sample row: a sample's runoff (texels it stands for × the latitude's wetness, as `acc`) */
+  rowW: Float32Array;
+  /** per node: its own catchment's runoff (the sum of its samples'), and the whole of what drains through it (the
+   *  sum of its own and every node's upstream of it) — its discharge at the reference wetness, in samples' runoff */
+  own: Float32Array;
+  ref: Float32Array;
+  /** the nodes, every node before the one it runs into (upstream first) */
+  order: Int32Array;
+}
+const CATCH_STEP = 2;
+
 export interface Rivers {
-  /** NODE_WORDS a node: x, y (world), level, width, next (index), flags, depth, 0 */
+  /** NODE_WORDS a node: x, y (world), level, width, next (index), flags, depth, speed (cells a tick; water) */
   nodes: Uint32Array;
+  /** (round 109) what drains into each node */
+  catchments: Catchments;
   /** (round 90) the lakes, and per texel which (LAKE_IN) */
   lakes: AtlasLake[];
   lakeAt: Uint16Array;
@@ -364,11 +390,54 @@ export function findRivers(opt: {
       if (slope > 0) ratio.push(Q / (PIPE_Q * 2 * w) / slope);
     }
   }
+  // (round 109) the catchments: each texel's first node down the tree (the flood's order: a texel after the one it
+  // drains to), sampled every CATCH_STEP texels; the nodes upstream first (the flood's order backwards, then the rest:
+  // the mouths, in the water)
+  const catchments = (() => {
+    const basin = new Int32Array(N).fill(-1);
+    for (let i = 0; i < N; i++) if (water[i] && nodeAt[i]) basin[i] = nodeAt[i] - 1;
+    for (let k = 0; k < no; k++) {
+      const j = order[k];
+      basin[j] = nodeAt[j] ? nodeAt[j] - 1 : down[j] >= 0 ? basin[down[j]] : -1;
+    }
+    const step = CATCH_STEP;
+    const side = Math.floor(n / step);
+    const of = new Int32Array(side * side);
+    const rowW = new Float32Array(side);
+    const own = new Float32Array(Math.max(count, 1));
+    for (let sy = 0; sy < side; sy++) {
+      rowW[sy] = step * step * (1 - 0.85 * dryness((sy * step + 0.5) / n));
+      for (let sx = 0; sx < side; sx++) {
+        const i = sy * step * n + sx * step;
+        const b = water[i] ? -1 : basin[i];
+        of[sy * side + sx] = b;
+        if (b >= 0) own[b] += rowW[sy];
+      }
+    }
+    const ord = new Int32Array(count);
+    const placed = new Uint8Array(count);
+    let m = 0;
+    for (let k = no - 1; k >= 0; k--) {
+      const j = order[k];
+      if (nodeAt[j] && !placed[nodeAt[j] - 1]) {
+        placed[nodeAt[j] - 1] = 1;
+        ord[m++] = nodeAt[j] - 1;
+      }
+    }
+    for (let k = 0; k < count; k++) if (!placed[k]) ord[m++] = k;
+    const ref = new Float32Array(own);
+    for (const k of ord) {
+      const nx = nodes[k * NODE_WORDS + 4];
+      if (nx !== k) ref[nx] += ref[k];
+    }
+    return { step, side, of, rowW, own, ref, order: ord };
+  })();
   const med = (a: number[]) => (a.length ? a.sort((x, y) => x - y)[a.length >> 1] : 0);
   const sp = speeds.slice().sort((x, y) => x - y);
   const r3 = (x: number) => +x.toFixed(3);
   return {
     nodes,
+    catchments,
     lakes,
     lakeAt,
     count,

@@ -3,6 +3,8 @@
 // reference — the land as it was made. Wetter in spring (the thaw), drier at the end of summer, and up while storms
 // rain on the land; it follows slowly (a watershed is slow), so the rivers rise and fall smoothly.
 //   ?riverwet=x holds it at x.
+// (round 109) On the atlas level this is the climate's share alone (the season): the storms go per watershed —
+// weather/catchwet.ts, the riverWet field — and riverheld.wgsl riverWetAt adds the two.
 
 import { RIVER_WET } from '../sim/world-gpu';
 
