@@ -1660,8 +1660,7 @@ const WATER_MIN_R: f32 = 0.012;
 // streams (FLAG_DETAIL), drawn blended
 const FLAG_RUN: u32 = 2048u;
 
-/** the simulation's time (s): what the flows' looks scroll by - paused, they stand; at any tick rate, as the sim */
-fn simTime() -> f32 { return f32(G.tick) * G.dt; }
+// (the simulation's time, simTime(): common.wgsl since round 112 — the flows' looks scroll by it)
 
 /**
  * (round 86) A stream's sheet: its pattern rides the water - a point of it is (time along the path - the sim's

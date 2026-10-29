@@ -243,11 +243,11 @@ try {
     row(name, { ...s, front: fr, 'front cells/s': +(dFront / (fr[fr.length - 1][0] - fr[0][0])).toFixed(2), 'ground moved (cells³)': moved });
     await p.evaluate((cols) => window.reclaimed.scene.stationKit().source(cols, 0), cols);
   };
-  await sheet('sheet ramp 10%', [[128, 100], [128, 101], [129, 100]], [118, 96, 196, 118], 1, [140, 104 * 0.8660254, 18]);
+  await sheet('sheet ramp 10%', [[128, 100], [128, 101], [129, 100]], [118, 96, 196, 118], 6, [140, 104 * 0.8660254, 18]);
   await hideUi(true);
   await gif(p, 'sheet-ramp.gif', 16, 300);
   await hideUi(false);
-  await sheet('sheet mound (steep)', [[212, 64], [212, 65], [213, 64]], [196, 50, 230, 80], 1, [212, 64 * 0.8660254, 16]);
+  await sheet('sheet mound (steep)', [[212, 64], [212, 65], [213, 64]], [196, 50, 230, 80], 6, [212, 64 * 0.8660254, 16]);
   // the breach
   await pick('breach');
   await click('↺ reset');

@@ -12218,3 +12218,81 @@ written 0 times during the move and once on release. No GPU validation errors an
   preview always shows the whole recipe.
 - Field generators are capped by the eight slots: each JFA layer is one slot and 11 passes.
 - The preview's heights aren't to scale with the world's (it shades by slope).
+
+---
+
+## 2026-10-29 — round 112 (`waterscale`) — the water in physical units
+
+The user: "The water seems to fast for the scale. Is the 9.8m/s relative to real clock time or game clock time? I
+think it needs to be real clock time." A sim second is a real second at 1x (world-core.ts advances the fixed 60 Hz
+step by the wall clock; measured 59.9 ticks a real second), and WORLD_G is 9.8 cells/s² with a cell a metre — but
+the game's water never used it. The pipes moved by two per-tick constants, `f = 0.985 f + 0.08 ΔH`: steady flux
+5.3 ΔH a tick, about 480 ΔH / depth cells/s a pipe. The push 0.08 is the physical one (g·dt²·(2/3)·h) only for
+water ~44 deep, and the friction didn't depend on depth, so thin and shallow water was pushed hundreds of times too
+hard.
+
+**The law** (common.wgsl `pipeCoef` / `pipeStep` / `pipeSteady`, BACKLOG WS2). A pipe's flux stays the contract's
+unit (volume a 60 Hz step in column depths): f = (2/3)·dt·h·u, 2/3 the hex face's width over the cell's area, h the
+depth it leaves. Per unit width dq/dt = g·h·ΔH − g·n²·q|q|/h^(7/3) − c·q: the push explicit (h at most 60, well
+inside the 60 Hz step's gravity-wave limit of ~180), Manning's friction implicit (the quadratic solved in closed
+form, so thin films and fast falls are stable at any speed), a top speed. Steady: u = h^(2/3)·√S/n. Tuning: n 0.04
+(a stony stream), damping c 0.03/s, top speed 8 cells/s, oil's n 0.08. The first default for c, 0.3/s, outweighed
+Manning for every real flow (terminal g·S/c: 3.3 m/s on a 10 % slope) and held the breach to a trickle and the woken
+river at half its table speed; 0.03/s still lets the pool's chunks sleep (one chunk held to its 60 s cap, the rest
+asleep in 5 s).
+
+**Consistency** (WS3). A held or drowsy column's seed is `pipeSteady` for its levels. The river tables rate a node by
+the same law (world/rivertable.ts `pipeSpeed` / `riverSpeed`: the section's mean depth and the level's fall, at
+least 0.001), so a held river is drawn as the pipes would run it; atlas/rivers.ts uses it and its pipeSlope
+diagnostic is Manning backwards (`pipeSlopeFor`; median ratio 1.68 → 0.52). Oil runs the same law with its own n;
+before, its current drag compounded through the 0.95 friction to ~12× the water's speed, now ~0.6×. Lava keeps its
+laminar Bingham drag (WS9). The settle-then-freeze tolerance (0.01 a step) is a rate of depth change, unchanged.
+
+**Drawn** (WS4; the user: "Yes also keep flow animations normalized to the new numbers so we still see flow that
+would previously be considered slow"). renderfields.wgsl `flowLook`: the column's speed in cells/s (the pipes' net
+flow over (2/3)·dt·depth, or a held river's table speed) mapped to a scroll refScroll·(u/refSpeed)^curve (1 cell/s
+drawn at 1.5 cells/s, curve 0.5), at least 0.25 cells/s for anything faster than 0.02, packed as the fv the streaks
+and foam already read. It also ends a quirk: a held river was drawn 1.5× faster than the pipes' water at the same
+speed. The flows' animations (streaks, foam, ripples, swell, swash, sludge, lava's crust) run on `simTime()`
+(G.tick·G.dt: faster with the speed setting, still when paused); flicker, sway and clouds stay on G.time (WS6).
+
+**Erosion** (WS5): the wash, scour, trash heaps and stains compared |netFlow| in the old units, which the same water
+now gives 6× (a river a cell deep) to 80× (a 5 cm sheet) less of. They compare speeds now (`flowSpeed`): a wash speed
+per material in the tuning registry (soil 0.6, sand 0.4, rubble 1.2, ash/drift 0.25, litter 0.3, silt 0.5, snow
+0.35, leaves 0.2 cells/s; WorldGpu rewrites the material table when one moves), carried as depth × (speed − wash
+speed) × sediment.washRate 2 (set so a 1-deep river erodes about as before); scour over structure.scourSpeed 1 cells/s
+at 0.006 a tick per cell/s; trash over 0.5 cells/s; stains fastest at 1 cells/s.
+
+**Measured** (scripts/waterspeed.mjs, headless, the phone proxy q=low 412×915, every system in play, 1x; u the
+speed in cells/s, median / 90th percentile; drawn the streaks' scroll):
+
+| where | before u | before drawn | after u | after drawn |
+|---|---|---|---|---|
+| atlas river table (min / median / max) | 5.4 / 6.6 / 48 | | 0.72 / 1.26 / 7.98 | |
+| playground river ramp, held (pipes' seed; table) | 47 / 54 (table 12.7) | 0.64 | 5.8 / 6.8 (table 4.75) | 1.78 |
+| its fall, held | 45 / 66 (table 18) | 0.91 | 8.6 / 14 (table 7.0) | 2.16 |
+| its run out, held | 23 / 48 (table 9.8) | 0.49 | 3.1 / 3.7 (table 2.8) | 1.37 |
+| ramp woken by a surge | 46 / 53 | 1.54 | 5.1 / 6.6 | 1.84 |
+| a sheet on the bare 10 % ramp (6 cells³/s spring) | 47 / 52, 1 cm deep, spread 7 cells then stopped | 0.37 | 1.2 / 2.8, 21 cm deep, front 1.0 cells/s | 0.88 |
+| a sheet on the steep soil mound | 48 / 51, 1 cm, 6.6 cells | 0.20 | 1.2 / 3.5, 8 cm, front 0.9 cells/s | 0.88 |
+| breach notch at 4 s | 20 / 30 | 0.67 | 2.4 / 4.4 | 1.27 |
+| over the ledge at 4 s | 8.6 / 15 | 0.29 | 2.1 / 4.1 | 1.18 |
+| the basin's first water (average over 10 cells) | 2 s | | not within 10 s (front 14 cells out at 10 s) | |
+
+The before drawn scroll didn't follow the speed: a held river 0.5–0.9 cells/s at 10–18 cells/s, a woken one 1.5
+— its table's speed was read as flux over depth, the pipes' 1.5× more. After: rivers 1.4–2.2, sheets ~0.9, slow water at least
+0.25. GIFs: C:/Projects/shots88/waterscale/{before,after}-{river-held,river-surge,sheet-ramp,breach}.gif.
+
+**playwater.mjs** (every system, 1x): the held river at its table depth asleep (head 0.90, ramp 0.89, lip 0.20,
+foot 0.90, run 0.89, edge 0.90 — unchanged), rain wakes it and it freezes again in 48 s, a surge freezes in 50 s,
+the reset puts it back. The breach checks fail on timing: the pool drains 2.60 → 2.30 in the 16 s the script waits
+(the check wants 0.3) and the basin isn't wet over its 10-cell probe by then — the water now runs at 2–4 cells/s, so
+it hasn't got there. Its thresholds were set for the old speeds; they need a longer wait, not faster water.
+
+**Frame cost** (driveprofile, the atlas drive, q=low 412×915): GPU 4.55 ms a frame, water-flux 0.029 and water-depth
+0.016 ms a frame (one pow and a sqrt more a column); the playground's river station 2.98 ms GPU still, 6.18 in the
+rain. No validation errors.
+
+**Open.** The breach drains at ~5 m³/s — a quarter of a weir's for that notch: the dig leaves a cell of the plug in
+some rows and a flat notch's water runs by friction, not at the brink's critical speed. The flow model (?flow=1) is
+still in per-tick units (WS7). Tables are rated as they're made (WS8).

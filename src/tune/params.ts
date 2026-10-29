@@ -124,7 +124,7 @@ const SPEC = {
       // by the world's gravity, held back by Manning's friction — common.wgsl pipeCoef. The old per-tick gain 0.08 and
       // flux kept 0.985 are gone: the push is g·dt²·depth, the friction comes from these)
       roughness: { label: 'roughness n', units: 's/m^⅓', min: 0.01, max: 0.15, step: 0.005, def: 0.04, gpu: true, url: 'pipen', help: 'Manning\'s n: a steady sheet or river runs at depth^⅔ · √slope / n (0.03 a clean channel, 0.04 a stony stream, 0.07 a boulder torrent)' },
-      damping: { label: 'wave damping', units: '1/s', min: 0, max: 3, step: 0.05, def: 0.3, gpu: true, help: 'a linear drag on top of the friction: deep water (where Manning barely bites) stops sloshing and can settle and sleep' },
+      damping: { label: 'wave damping', units: '1/s', min: 0, max: 1, step: 0.005, def: 0.03, gpu: true, help: 'a linear drag on top of the friction: deep water (where Manning barely bites) stops sloshing and can settle and sleep' },
       vmax: { label: 'top speed', units: 'cells/s', min: 1, max: 30, step: 0.5, def: 8, gpu: true, help: 'the fastest water runs (over a ledge the head is the whole drop): a cell a metre' },
       riverRelax: { label: 'river relax', units: 'share/step', min: 0.001, max: 0.5, step: 0.001, def: 0.02, gpu: true, help: 'how fast a held river comes to its table\'s depth' },
       oilRoughness: { label: 'oil roughness n', units: 's/m^⅓', min: 0.01, max: 0.3, step: 0.005, def: 0.08, gpu: true, help: '(round 112) oil\'s own pipes (oil_flux.wgsl), the same law: thicker, slower than water — and carried by the water\'s current' },
