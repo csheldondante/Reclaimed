@@ -49,6 +49,7 @@ import { FLOWLAB } from '../levels/flowlab';
 import { TunePanel } from '../ui/tunepanel';
 import { BugReport } from '../ui/bugreport';
 import { StationsBar } from '../ui/stations';
+import { NoiseLabControl } from '../noiselab/control';
 import type { Station, StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
 import { TUNE, TUNING } from '../tune/params';
@@ -277,6 +278,8 @@ export class LevelScene implements Scene {
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
   private stationsBar?: StationsBar;
+  /** (round 111, TG1) the noise lab's recipe, its panel and its runs (level.noiseLab) */
+  noiseLab?: NoiseLabControl;
   /** sandbox: a smash drag in progress */
   private smashing = false;
   /** (round 83) flying: a drag turns the view — where the pointer was */
@@ -998,6 +1001,7 @@ export class LevelScene implements Scene {
     }
     // (round 108, AR5) the tuning panel and the bug report: open in the test beds (level.lab), anywhere with ?tunepanel=1
     if (this.level.lab || host.params.get('tunepanel') === '1') this.mountLab();
+    if (this.level.noiseLab) this.mountNoiseLab();
 
     const zoomAt = (sx: number, sy: number, factor: number) => {
       // (flying: the wheel moves along the view)
@@ -2999,6 +3003,39 @@ export class LevelScene implements Scene {
     }
   }
 
+  /**
+   * (round 111, TG1) the noise lab: its land rewritten from each recipe it runs — the whole window's columns, water
+   * and surface (WorldCore.replaceWindow), the sea held at its level past the edges, what moved forgotten, the
+   * mesh remade
+   */
+  private mountNoiseLab(): void {
+    const { core, host } = this;
+    const { w, h, zMax } = core.dims;
+    const p = core.packed;
+    this.noiseLab = new NoiseLabControl(
+      host.gpu.device,
+      host.ui,
+      {
+        w,
+        h,
+        zMax,
+        layout: { chunksX: p.chunksX, chunkTable: p.chunkTable, slots: p.slots.length / SLOT_WORDS },
+        write: (cols, sea) => {
+          const t0 = performance.now();
+          core.globals.seaZ = sea > 0 ? sea : undefined;
+          this.integrity?.forget(0, 0, w, h);
+          core.replaceWindow(cols.slots, cols.water, cols.surface);
+          const [wx1, wy1] = cellPos(w, h);
+          core.renderer.fieldMesh.urgent(0, 0, wx1, wy1);
+          this.sleep?.wake(wx1 / 2, wy1 / 2, Math.max(wx1, wy1), Sleep.EVENT_S, performance.now() / 1000);
+          return performance.now() - t0;
+        },
+      },
+      host.params,
+    );
+    (globalThis as { noiselab?: NoiseLabControl }).noiselab = this.noiseLab;
+  }
+
   /** (round 108, AR8) what a station's buttons do: the world's own events and APIs */
   private stationKit(): StationKit {
     const { core } = this;
@@ -3102,6 +3139,7 @@ export class LevelScene implements Scene {
     this.tunePanel?.dispose();
     this.bugReport?.dispose();
     this.stationsBar?.dispose();
+    this.noiseLab?.dispose();
     this.atlasCtl?.remove();
     this.turnCtl?.remove();
     this.compass?.remove();

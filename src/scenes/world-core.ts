@@ -475,6 +475,28 @@ export class WorldCore {
     device.queue.submit([enc.finish()]);
   }
 
+  /**
+   * (round 111, the noise lab) New land for the whole window, as a generator made it: `slots` the layers packed by
+   * this window's chunk table (its length the layers'), `water` its depth and `surface` its top a column (row-major,
+   * window order). The per-column state restoreChunks puts back is cleared (water set), what's being poured dropped,
+   * the CPU's surface heights replaced. What else moves there (bodies, the mesh) is the caller's. A fixed window only.
+   */
+  replaceWindow(slots: Uint32Array, water: Float32Array, surface: Float32Array): void {
+    const { device } = this.host.gpu;
+    const w = this.world;
+    if (slots.byteLength !== w.layers.size) throw new Error(`replaceWindow: ${slots.byteLength} bytes of layers for a ${w.layers.size}-byte buffer`);
+    const N = this.dims.w * this.dims.h;
+    if (water.length !== N || surface.length !== N) throw new Error('replaceWindow: water and surface are a float a column');
+    device.queue.writeBuffer(w.layers, 0, slots);
+    const enc = device.createCommandEncoder({ label: 'replace window' });
+    for (const n of WorldCore.RESTORED) enc.clearBuffer(w[n] as GPUBuffer);
+    enc.clearBuffer(w.deposit);
+    device.queue.submit([enc.finish()]);
+    const ring = w.ring.toStore(water);
+    for (const n of ['water', 'waterNext', 'waterPrev'] as const) device.queue.writeBuffer(w[n], 0, ring);
+    this.map.surface.set(w.ring.toStore(surface));
+  }
+
   /** Debug: mean of a per-column field over a square region. */
   async probe(name: keyof WorldGpu, x: number, y: number, r = 6, stride = 1, comp = 0): Promise<number> {
     const f = await this.readBuffer(name);
