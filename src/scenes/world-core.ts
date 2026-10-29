@@ -10,6 +10,7 @@ import type { GlobalsState } from '../sim/globals';
 import { Simulation, TICK_DT } from '../sim/simulation';
 import type { SimSystem } from '../sim/system';
 import { WorldGpu } from '../sim/world-gpu';
+import { Tiers } from '../sim/tiers';
 import { COLUMN_BUFS, Pages } from '../sim/pages';
 import { CHUNK, packColumns, type PackedWorld } from '../world/layout';
 import { ROW_H } from '../world/lattice';
@@ -78,6 +79,8 @@ export class WorldCore {
   pollution = 1;
   /** sleep and wake (round 80, sim/sleep.ts), when the scene has it: what writes the columns wakes them */
   sleep?: import('../sim/sleep').Sleep;
+  /** (round 108, simtiers) which slow processes change the map — live or baked — and the bakes (api/contracts/simtiers.ts) */
+  readonly tiers: Tiers;
   /** (round 83) what judges what's changed — structures and rock (game/integrity.ts); the world API's edits mark it */
   integrity?: { markDirty(x: number, y: number, r: number, cut?: number): void };
   /** per-column buffers of the modules a game installed (agents' fields): a streamed window's slide moves them (round 80) */
@@ -109,6 +112,12 @@ export class WorldCore {
     // moves none of it; read column (x, y) at ring.i(x, y). Round 107, pages: in the buffers' page-major order)
     map.surface.set(this.world.ring.toStore(map.surface));
     this.sim = new Simulation(device, this.world, host.profiler);
+    this.tiers = new Tiers({
+      origin: () => this.globals.origin ?? [0, 0],
+      dims: this.dims,
+      tickDt: TICK_DT,
+      wake: (x, y, r, secs) => this.sleep?.wake(x, y, r, secs, performance.now() / 1000),
+    });
     // (round 104, simscale: the painted wind's boxes go with the land; dy comes in world units, the field's rows are the window's)
     this.onShift.push((dx, dy) => this.sim.wind.shift(dx, Math.round(dy / ROW_H)));
     // (simscale: what comes in is projected at the next tick — grids/systems.ts ProjectSystem)
@@ -152,6 +161,7 @@ export class WorldCore {
   async warmup(ticks: number, filter?: (s: SimSystem) => boolean): Promise<void> {
     // (perfopt: the renderer's deferred pipelines, compiled off the main thread meanwhile — in before the first frame)
     const pipes = this.renderer.ready();
+    this.tiers.apply(this.globals);
     this.sim.prime(this.globals);
     for (let i = 0; i < ticks; i++) {
       // support needs a few ticks to propagate before collapse can be judged
@@ -191,12 +201,15 @@ export class WorldCore {
     const maxTicks = this.host.quality.maxTicksPerFrame * speed;
     this.acc += simDt;
     let ticks = 0;
+    this.tiers.apply(g);
     while (this.acc >= TICK_DT && ticks < maxTicks) {
       this.sim.step(g, filter);
       this.acc -= TICK_DT;
       ticks++;
     }
     if (ticks === maxTicks) this.acc = Math.min(this.acc, TICK_DT); // drop time instead of spiralling
+    // (round 108, simtiers: a bake's ticks — the baked processes run in its region at its gain, the rest alongside)
+    ticks += this.tiers.pump(g, () => this.sim.step(g, filter));
     return ticks;
   }
 

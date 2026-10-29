@@ -81,12 +81,35 @@ struct Globals {
   // nothing; xy the offset (cells), zw unused. Window coordinates stay what every caller uses: index only through
   // colIdx / colIdxI / texCol / texCol2 / texColK, and back through colXY.
   ring: vec4<u32>,
+  // (round 108, `simtiers`: sim/tiers.ts, api/contracts/simtiers.ts) the slow processes' tiers: x the processes
+  // (TIER_* bits) live everywhere, y the regions in use; per region its rect (window columns x0, y0, x1, y1,
+  // half-open) and x its processes (bits, as f32), y their rate there (1 live; a bake's gain)
+  tierLive: vec4<u32>,
+  tierRect: array<vec4<f32>, 4>,
+  tierRectP: array<vec4<f32>, 4>,
   // (round 107, `pages`: docs/PAGES.md P2.1) the page table: window chunk (cy * chunks across + cx) -> the page its
   // data is in (P2.2: its slot), two u16 entries a u32 (sim/pages.ts Pages.table). Read by colSlot with ?pages=table.
   pages: array<vec4<u32>, 512>, // PAGE_VEC4
   // (round 107, P2.2) the table backwards: slot -> the window chunk in it, cx | cy << 8 (Pages.inv; colXY)
   pageInv: array<vec4<u32>, 512>, // PAGE_VEC4
 };
+
+// ---- the sims' tiers (round 108, simtiers: sim/tiers.ts) ----------------------------------------------------
+// A slow process that changes the map runs at the rate tierRate gives at a column: 0 baked (the map doesn't change;
+// its visuals go on), 1 live, more inside a bake (its gain). The kernels scale the process's map change by it.
+const TIER_RAIN: u32 = 1u;
+const TIER_WIND: u32 = 2u;
+const TIER_VEG: u32 = 4u;
+fn tierRate(proc: u32, p: vec2<i32>) -> f32 {
+  var r = select(0.0, 1.0, (G.tierLive.x & proc) != 0u);
+  let n = min(G.tierLive.y, 4u);
+  let c = vec2<f32>(p);
+  for (var k = 0u; k < n; k++) {
+    let b = G.tierRect[k];
+    if ((u32(G.tierRectP[k].x) & proc) != 0u && all(c >= b.xy) && all(c < b.zw)) { r = max(r, G.tierRectP[k].y); }
+  }
+  return r;
+}
 
 /** (hybrid) Is column q in a heightfield chunk (drawn by the LOD rings, not the window's own draws)? */
 fn heightfieldCol(q: vec2<u32>) -> bool {

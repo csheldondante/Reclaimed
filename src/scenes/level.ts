@@ -301,6 +301,9 @@ export class LevelScene implements Scene {
     this.story = !!level.story && !opts.free && host.params.get('mode') === 'story';
     this.core.globals.story = this.story;
     // (round 79) the sea past a streamed window's edge, from the start (the warmup drained it otherwise)
+    // (round 108, simtiers — DECISIONS round 108: in the legacy game's play rain and wind erosion and vegetation
+    // growth are baked, run between runs or on a story event: core.tiers.bake; the game asks for them live: tiers.live)
+    if (opts.atlas) this.core.tiers.playDefaults();
     if (opts.atlas) this.core.globals.seaZ = opts.atlas.atlas.p.sea - opts.atlas.oz;
     this.speed = Math.max(1, Number(host.params.get('speed') ?? 1));
     const dq = host.params.get('difficulty');
