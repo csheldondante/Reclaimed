@@ -22,7 +22,10 @@
 // (round 112, tilefix2) The page's frames are held to --hz (60) by the script — Chrome without vsync, the page's rAF
 // batched to 60 Hz ticks — so a machine's display (a 3080 with its monitor off gave 29 Hz) doesn't change the result;
 // the load is counted in those frames. The phone screen runs with a Pixel's user agent (the page's phone paths).
-import puppeteer from 'puppeteer-core';
+// (round 112, testspeed: on the shared runner, scripts/lib/runner.mjs — the worktree's build on its own port, a kept
+// Chrome profile, the GPU leased as a timing check (its frames need the GPU alone); --chromeargs go to that Chrome.
+// `--url` is a server already up, as before; without it the runner serves the build.)
+import { run } from './lib/runner.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { PNG } from 'pngjs';
@@ -32,7 +35,6 @@ const opt = (k, d) => {
   return i >= 0 ? argv[i + 1] : d;
 };
 const has = (k) => argv.includes(`--${k}`);
-const url = opt('url', 'http://localhost:5233');
 const screens = opt('screens', 'desktop,phone').split(',');
 // (round 112, tilefix2: the hero's run too — ?run=bell, the camera on the hero, its own zooms; no pans: the hero's camera)
 // (and w384: the atlas at window 384 — the user's own phone setting, the screenshot of 2026-10-29)
@@ -233,21 +235,17 @@ function compare(tag, img) {
   return { changed: +changed.toFixed(4) };
 }
 
+await run({ name: 'tilegate', kind: 'timing', urlIsServer: true, chromeArgs }, async (R) => {
+const url = R.url;
 for (const mode of modes)
 for (const sk0 of screens) {
   const sk = mode === 'atlas' ? sk0 : `${mode}-${sk0}`;
   const sc = SCREENS[sk0];
   const zooms = mode === 'atlas' ? zoomsAtlas : runZooms;
   if (mode === 'w384' && sk0 !== 'phone') continue;
-  const browser = await puppeteer.launch({
-    executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-    headless: 'new',
-    args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${sc.w},${sc.h}`, ...chromeArgs],
-    defaultViewport: { width: sc.w, height: sc.h, deviceScaleFactor: sc.dpr, hasTouch: sc.mobile, isMobile: sc.mobile },
-    protocolTimeout: 900000,
-  });
-  try {
-    const p = await browser.newPage();
+  {
+    const p = await R.page({ size: `${sc.w}x${sc.h}`, dpr: sc.dpr });
+    await p.setViewport({ width: sc.w, height: sc.h, deviceScaleFactor: sc.dpr, hasTouch: sc.mobile, isMobile: sc.mobile });
     // (--throttle N: the CPU N times slower — a busy machine's, the phone's main thread)
     if (Number(opt('throttle', 0)) > 1) await (await p.createCDPSession()).send('Emulation.setCPUThrottlingRate', { rate: Number(opt('throttle', 0)) });
     if (sc.ua) await p.setUserAgent(sc.ua);
@@ -293,7 +291,8 @@ for (const sk0 of screens) {
     // (a fixed spot, world, time of day and season; nothing saved or loaded)
     const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&worldsave=0&world=tilegate${mode === 'run' ? '&run=bell' : '&at=15024,14337'}${mode === 'w384' ? '&win=384' : ''}&tod=0.42&day=100000&season=0.3&hitch=1&hitchhud=0${sc.q}${extra}`;
     await p.goto(u, { waitUntil: 'load' });
-    await p.waitForFunction(() => window.reclaimed?.stream && window.reclaimed?.scene, { timeout: 240000 });
+    // (the level made — its boot marks, src/perf/boot-marks.ts — then --wait ms as before)
+    await p.waitForFunction(() => (window.__boot?.at['level-ready'] && window.reclaimed?.stream && window.reclaimed?.scene) || document.querySelector('.fatal'), { timeout: 240000, polling: 250 });
     await sleep(waitMs);
     // (the adapter: its baselines)
     const adapter = await p.evaluate(async () => {
@@ -378,8 +377,7 @@ for (const sk0 of screens) {
         rows.push({ view: tag, mode: `pan ${panV}`, ...m, ok: !f.length });
         console.log(`${tag} pan ${panV}: ${f.length ? 'FAIL ' + f.join('; ') : 'ok'} — ${JSON.stringify(m)}`);
       }
-  } finally {
-    await browser.close();
+    await p.close();
   }
 }
 const secs = Math.round((Date.now() - t00) / 1000);
@@ -387,4 +385,5 @@ fs.writeFileSync(path.join(outDir, 'tilegate.json'), JSON.stringify({ url, secs,
 console.log(`\n${fails.length ? `GATE FAILED (${fails.length})` : 'GATE PASSED'} in ${secs} s — ${path.join(outDir, 'tilegate.json')}`);
 for (const f of fails) console.log(`  ${f}`);
 for (const n of notes) console.log(`  note: ${n}`);
-process.exit(fails.length ? 1 : 0);
+for (const f of fails) R.fail(f);
+});

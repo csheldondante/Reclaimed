@@ -1,8 +1,7 @@
 // tile cache probe: ride (or park) at the phone tier, sample stats/coverage/fps each second, shots
-import puppeteer from 'puppeteer-core';
+import { run } from './lib/runner.mjs';
 const argv = process.argv.slice(2);
 const opt = (k, d) => { const i = argv.indexOf(`--${k}`); return i >= 0 ? argv[i + 1] : d; };
-const url = opt('url', 'http://localhost:5299');
 const extra = opt('extra', '&tiles=1');
 const drive = opt('drive', '18');
 const secs = Number(opt('seconds', 40));
@@ -10,29 +9,22 @@ const at = opt('at', '11956,15471');
 const out = opt('out', '');
 const win = opt('win', '320');
 const turn = argv.includes('--turn');
-const browser = await puppeteer.launch({
-  executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
-  headless: 'new',
-  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', '--window-size=412,915'],
-  defaultViewport: { width: 412, height: 915, deviceScaleFactor: 2.6 },
-  protocolTimeout: 600000,
-});
-try {
-  const p = await browser.newPage();
+// (round 112, testspeed: on the shared runner, scripts/lib/runner.mjs — the worktree's build, a kept Chrome profile; a
+// timing check (its fps; the GPU alone) unless --kind behaviour (coverage and latency only). The level is waited for by
+// its boot marks, then --warm s (default 30, as before) before the sampling.)
+await run({ name: 'tileprobe', kind: 'timing', size: '412x915', dpr: 2.6, urlIsServer: true }, async (R) => {
+  const p = await R.page();
   // (round 106, --throttle N: the CPU N times slower — Chrome's emulation: a phone's main thread)
   const thr = Number(opt('throttle', 0));
-  if (thr > 1) {
-    const cdp = await p.createCDPSession();
-    await cdp.send('Emulation.setCPUThrottlingRate', { rate: thr });
-  }
+  if (thr > 1) await p.cdp.send('Emulation.setCPUThrottlingRate', { rate: thr });
   const errs = [];
-  p.on('pageerror', (e) => errs.push(e.message));
-  p.on('console', (m) => { if (m.type() === 'error' || m.type() === 'warning') errs.push(m.text().slice(0, 400)); });
-  const u = `${url}/?skipmenu=1&level=atlas&tutorial=0&q=low&perf=1${drive !== '0' ? `&drive=${drive}` : ''}&at=${at}&win=${win}${extra}`;
-  console.log(u);
-  await p.goto(u, { waitUntil: 'load' });
-  await p.waitForFunction(() => window.reclaimed?.stream, { timeout: 240000 });
-  await new Promise((r) => setTimeout(r, 30000));
+  p.on('console', (m) => { if (m.type() === 'warning') errs.push(m.text().slice(0, 400)); });
+  const params = { level: 'atlas', perf: 1, at, win };
+  if (drive !== '0') params.drive = drive;
+  for (const kv of extra.split('&').filter(Boolean)) { const [k, v] = kv.split('='); params[k] = v ?? ''; }
+  await R.level(params, { page: p });
+  await new Promise((r) => setTimeout(r, Number(opt('warm', 30)) * 1000));
+
   // (--zoom z: the camera's zoom, px a cell, set before the sampling; round 105)
   const zoom = Number(opt('zoom', 0));
   if (zoom) {
@@ -109,6 +101,4 @@ try {
   const fatal = await p.evaluate(() => document.querySelector('.fatal')?.textContent ?? null);
   console.log('fatal', fatal);
   console.log('errors', JSON.stringify(errs.slice(0, 20)));
-} finally {
-  await browser.close();
-}
+});

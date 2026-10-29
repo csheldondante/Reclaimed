@@ -64,6 +64,8 @@ export class Simulation {
   private pagesSent = -1;
   /** Per-system CPU encode time (ms, smoothed). */
   readonly cpuMs = new Map<string, number>();
+  /** (round 112, testspeed) each system's encode CPU ms summed since `encodeTotals.clear()` (the warmup's: WorldCore.warmStats) */
+  readonly encodeTotals = new Map<string, number>();
   /** (round 83) told each tick's events as they're sent to the GPU, whoever queued them (Integrity: what cut the ground) */
   readonly eventTaps: ((sent: readonly GlobalsState['events'][number][]) => void)[] = [];
 
@@ -159,6 +161,7 @@ export class Simulation {
       sys.encode(enc, this.tick);
       const dt = performance.now() - t0;
       this.cpuMs.set(sys.name, (this.cpuMs.get(sys.name) ?? dt) * 0.95 + dt * 0.05);
+      this.encodeTotals.set(sys.name, (this.encodeTotals.get(sys.name) ?? 0) + dt);
     }
     this.device.queue.submit([enc.finish()]);
     this.stats.afterSubmit();
