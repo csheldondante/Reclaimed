@@ -18,6 +18,9 @@ struct RiverHere {
 
 /** the rivers' wetness: their discharge over the reference's (Globals ocean.w; 0 unset: 1) */
 fn riverWet() -> f32 { return select(max(G.ocean.w, 0.05), 1.0, G.ocean.w <= 0.0); }
+/** (round 108) the rivers' wetness at a place (window cells): what draws a river's level reads it through this (the
+ *  tiles: tiles.wgsl fsTile) — the whole world's for now; per watershed later (branch `watershed`: only this body) */
+fn riverWetAt(cellXY: vec2<f32>) -> f32 { return riverWet(); }
 
 fn riverHere(q: vec2<u32>) -> RiverHere {
   var r: RiverHere;

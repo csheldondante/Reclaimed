@@ -28,6 +28,7 @@ import {
 } from './systems';
 import type { WorldGpu } from './world-gpu';
 import { ParticleSystem } from './particles';
+import { WeatherCoverSystem } from '../weather/cover';
 import { ProjectSystem, StructTickSystem } from '../grids/systems';
 
 // (perfopt: the tick rate, ?simhz= — sim/flow.ts)
@@ -50,6 +51,8 @@ export class Simulation {
   /** the town's columns (round 65): build/town.ts */
   readonly town: TownStampSystem;
   readonly shadow: RenderFieldsSystem;
+  /** (round 108, TC20) the weather's cover past the window: its owner (the tiles draw it, a render-only tile seeds it) */
+  readonly cover!: WeatherCoverSystem;
   /** (perfopt) the water: its settling passes run while land just come in is drowsy */
   readonly water!: WaterSystem;
   readonly particles: ParticleSystem;
@@ -98,6 +101,8 @@ export class Simulation {
       new FireSystem(device, world, profiler),
       new SedimentSystem(device, world, profiler),
       new ClimateSystem(device, world, profiler),
+      // (round 108, TC20: after the climate and the surface — it measures what they leave)
+      (this.cover = new WeatherCoverSystem(device, world, profiler)),
       new WiltSystem(device, world, profiler),
       new EcologySystem(device, world, profiler),
       this.particles,

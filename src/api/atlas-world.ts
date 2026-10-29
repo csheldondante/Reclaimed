@@ -143,7 +143,7 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
       // (a tile of its columns a frame: streaming mustn't stall the frame)
       region: (x0, y0, w, h) => atlas.regionLand(x0, y0, w, h, Infinity, true),
       // (round 102: on the GPU straight into the pool — streamer.ts generateGpu)
-      regionInto: (x0, y0, w, h, t) => atlas.regionInto(x0, y0, w, h, t, true),
+      regionInto: (x0, y0, w, h, t, how) => atlas.regionInto(x0, y0, w, h, t, how),
       wrap: [params.cols, params.rows],
       height: params.zTop,
       snapshot: (x0, y0, w, h) => atlas.snapshot(x0, y0, w, h),

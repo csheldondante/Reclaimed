@@ -6,7 +6,7 @@ import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_BINDING, PAGE_MISS_MAX, PAGE_STORAGE_K
 /** 'tex' = sampled float texture (textureLoad), 'utex' = uint texture (textureLoad), 'stex' = write-only rgba32float storage texture
  *  ('stex8a' the same, rgba8unorm, a 2d-array),
  *  'depth' = depth texture, 'csampler' = comparison sampler (shadow lookups) */
-export type BindKind = 'uniform' | 'read' | 'rw' | 'tex' | 'utex' | 'stex' | 'stex8a' | 'depth' | 'csampler';
+export type BindKind = 'uniform' | 'read' | 'rw' | 'tex' | 'utex' | 'stex' | 'stex16' | 'stex8a' | 'depth' | 'csampler';
 export type BindSpec = Record<number, BindKind>;
 
 function layoutEntries(spec: BindSpec, visibility: GPUShaderStageFlags): GPUBindGroupLayoutEntry[] {
@@ -14,6 +14,7 @@ function layoutEntries(spec: BindSpec, visibility: GPUShaderStageFlags): GPUBind
     if (kind === 'tex') return { binding: Number(b), visibility, texture: { sampleType: 'unfilterable-float' } };
     if (kind === 'utex') return { binding: Number(b), visibility, texture: { sampleType: 'uint' } };
     if (kind === 'stex') return { binding: Number(b), visibility, storageTexture: { access: 'write-only', format: 'rgba32float' } };
+    if (kind === 'stex16') return { binding: Number(b), visibility, storageTexture: { access: 'write-only', format: 'rgba16float' } };
     // (round 94: a write-only rgba8unorm 2d-array — atlas/bake.ts's levels)
     if (kind === 'stex8a') return { binding: Number(b), visibility, storageTexture: { access: 'write-only', format: 'rgba8unorm', viewDimension: '2d-array' } };
     if (kind === 'depth') return { binding: Number(b), visibility, texture: { sampleType: 'depth' } };

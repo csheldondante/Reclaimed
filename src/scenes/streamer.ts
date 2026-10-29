@@ -47,6 +47,8 @@ import { SETTLE } from '../sim/sleep';
 import { PAGE_COLS, regionRowsToPages } from '../sim/pages';
 import { MATERIALS, MatState } from '../world/materials';
 import { GPUGEN, type FinishMeta, type FinishTarget } from '../atlas/finish';
+import { WINDOW_MAKE, type MakeHow } from '../atlas/atlas';
+import type { TileLandSource } from '../render/tileland';
 
 /**
  * (perfopt, ?settle=0 — DECISIONS round 83: land comes in settled, "fixed in the cheap generator") A column's loose
@@ -131,6 +133,14 @@ const UPLOAD_BYTES = Number(param('uploadmb') ?? 2) * 1048576;
 export const SESSION = `${Date.now().toString(36)}-${Math.floor(Math.random() * 1e9).toString(36)}`;
 /** cells the window slides by in z */
 export const TIER = 32;
+/** (round 108, TC19) cells of its neighbours' made round a render-only tile's region (even: a region's rows start even):
+ *  the grid's lattice and the normals at its edge read a cell past it */
+export const TILE_BORDER = 2;
+/** what the CPU keeps of a region made for the window (Atlas.regionInto returns it unless asked for a GPU summary) */
+const metaOf = (m: FinishMeta | null): FinishMeta => {
+  if (!m) throw new Error('streamer: a window region made with nothing read back');
+  return m;
+};
 /** the field mesh's chunks: cells across and rows down (fieldmesh.ts CHUNK) — a slide is whole ones */
 const MESH_CHUNK = 32;
 
@@ -155,9 +165,7 @@ export interface LandSource {
    * layout, cut at its oz): what the CPU keeps of it returned (atlas/finish.ts). With it (and without ?gpugen=0) the
    * streamer never sees the land's columns: arrival is a pool → window copy.
    */
-  regionInto?(x0: number, y0: number, w: number, h: number, target: FinishTarget): Promise<FinishMeta>;
-  /** (round 105, tilelatency) a render-only tile's land: regionInto's, nothing read back (Atlas.regionTile) */
-  regionTile?(x0: number, y0: number, w: number, h: number, target: FinishTarget, meta: { buf: GPUBuffer; off: number }): Promise<void>;
+  regionInto?(x0: number, y0: number, w: number, h: number, target: FinishTarget, how: MakeHow): Promise<FinishMeta | null>;
 }
 
 /** (round 100) what the store saves for a world: its id (the atlas's seed, the run), whether it's kept on disk */
@@ -1475,11 +1483,32 @@ export class Streamer {
     }
   }
 
-  /** (round 105, tilelatency) A render-only tile's land into `buf` at `off`, its per-column summary into `meta` (GPU, no readback). */
-  landTile(x0: number, y0: number, buf: GPUBuffer, off: number, meta: { buf: GPUBuffer; off: number }): Promise<void> | null {
-    if (!this.source.regionTile) return null;
-    return this.source.regionTile(x0, y0, this.R, this.R, { buf, off, layout: this.layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !SETTLE }, meta);
+  /**
+   * (round 105, tilelatency; round 108, TC18/TC19) The render-only tiles' land: the window's own generation
+   * (LandSource.regionInto — the same columns, finish, ways and stamps), only without the simulation and with nothing
+   * read back: the plans already made stamped, none started; the per-column summary left on the GPU. Each tile's land
+   * is its region and TILE_BORDER cells round it (its neighbours'), in the corner of a slot of a wider layout (the
+   * region's next whole pages): its edges are drawn as its neighbours' and the window's are (no seams).
+   */
+  tileLand(): TileLandSource {
+    if (this.tileSrc) return this.tileSrc;
+    const R = this.R;
+    const b = TILE_BORDER;
+    const side = Math.ceil((R + 2 * b) / CHUNK) * CHUNK;
+    const layout = regionLayout(side, this.K, this.bufs.filter((x) => x.keep), this.texs.filter((x) => x.keep), `z${this.core.dims.zMax}`);
+    this.tileSrc = {
+      layout,
+      border: b,
+      oz: () => this.oz,
+      landTile: (x0, y0, buf, off, meta) => {
+        if (!this.source.regionInto) return null;
+        const target: FinishTarget = { buf, off, layout, oz: this.oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !SETTLE, corner: true };
+        return this.source.regionInto(x0 - b, y0 - b, R + 2 * b, R + 2 * b, target, { pace: 'tile', stamps: 'made', summary: meta }).then(() => undefined);
+      },
+    };
+    return this.tileSrc;
   }
+  private tileSrc: TileLandSource | null = null;
 
   /** Start making the land a slide of (dx, dy) would bring in (round 100: into the pool — what's there needs nothing). */
   prefetch(dx: number, dy: number): void {
@@ -1950,7 +1979,7 @@ export class Streamer {
     let m: FinishMeta;
     let snap: unknown;
     try {
-      [m, snap] = await Promise.all([this.source.regionInto!(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: this.layout, oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE }), this.source.snapshot?.(x0, y0, R, R)]);
+      [m, snap] = await Promise.all([this.source.regionInto!(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: this.layout, oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE }, WINDOW_MAKE).then(metaOf), this.source.snapshot?.(x0, y0, R, R)]);
     } catch (e) {
       this.pool.release(slot);
       throw e;
@@ -1991,7 +2020,7 @@ export class Streamer {
     let m: FinishMeta;
     let gpu: Uint32Array;
     try {
-      m = await this.source.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: L, oz: this.oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE });
+      m = metaOf(await this.source.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: L, oz: this.oz, zMax, K: this.K, colK: this.colK, settle: !SETTLE }, { pace: 'none', stamps: 'plan' }));
       const st = dev.createBuffer({ label: 'compareGen read', size: L.bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
       const enc = dev.createCommandEncoder({ label: 'compareGen read' });
       enc.copyBufferToBuffer(slot.buf, slot.off, st, 0, L.bytes);

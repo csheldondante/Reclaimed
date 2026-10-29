@@ -11686,3 +11686,55 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   scripts/riverfalls.mjs), their wiring in level.ts and the tiles' white water on a steep wet face are removed.
   WORLD_G (9.8, DECISIONS round 106/108) stays, shared by the flow model's streams, sheets and spray. BACKLOG WF1
   deferred; round 108's answers in DECISIONS, rows TC18-TC20, SM1, AR8.
+
+## 2026-10-29 — round 108 (`tileparity`): a tile is the window's land minus the simulation (TC18-TC20, TC8)
+
+Why: the user (DECISIONS round 108): "the distant tiles have seems and sometimes miss certain effects like snow ... My
+expectation is that the tiles are essentially the visual only version of full tiles so I wouldn't expect them to me
+different."
+
+What a render-only tile was, against the window's land (found reading both paths; the conflations):
+- Its land came from a second path (Atlas.regionTile): no settlement stamps, no neighbours (its edges open: the grid's
+  lattice and normals at the region's edge read nothing past it), and none of the window's render preparation — its
+  surface words were the top's height alone (no material, no loose run), its drift texture, moisture and flow zero. So
+  loose ground (sand, snow) was drawn as solid tops, wet ground was never darkened, the rivers had no flow.
+- The weather was baked: a window region's tile kept the snow and wetness it had when baked; a made one had none.
+- A held river's level (the rivers' wetness) was baked too.
+- The atlas thrashed at wide zooms: at zoom ~1.3 on the phone tier the screen draws ~94 tiles of 96 slots, and the
+  look-ahead's margin evicted tiles the screen had drawn the frame before; they were wanted again and evicted the
+  margin's: 2,623 bakes and 1,330 regions made in the first ~45 s parked (scripts/tileparity.mjs, zoom 1.3), ~60 bakes a second; between, the far land's
+  flat colour showed in the tiles' places (the dark checkerboard in the sea and the flat squares on land in the
+  before shots — likely much of what reads as "seams" at a wide zoom).
+
+What changed:
+- TC18, one generation path: `Atlas.regionInto(..., how: MakeHow)` for the window and the tiles alike — `how` says the
+  pacing (the tiles' lane first), the stamps ('plan' for the window; 'made' for a tile: the plans already made, none
+  started, no ground read back, no worker — DECISIONS 106b) and where the per-column summary goes (a GPU buffer: nothing
+  read back). regionTile is gone. TC8: the settlements' stamps come with a tile's land once planned; when a plan lands
+  (Atlas.stampsChanged) the render-only tiles over its box are made again (TileCache.forgetMade).
+- The window's render preparation on a tile's land (render/tileworld.ts): SurfaceSystem and RenderFieldsSystem — the
+  window's own classes, through a narrowed `PrepWorld` — run on a small world whose layers are the scratch slot's pages,
+  its kept fields copied in per bake (as the streamer's copyIn). The bake draws through the surface words, drift,
+  moisture and flow they make. No simulation steps it.
+- TC19, a border: a tile's land is its region and 2 cells of its neighbours' round it (68² made, in the corner of an
+  80² slot: FinishTarget.corner), so its edge cells' lattice and normals are its neighbours' real columns, as the
+  window's are.
+- TC20, the weather live: weather/cover.ts (WeatherCoverSystem, its own contract WorldGpu.coverState / coverView): snow,
+  wetness and ice at the atlas's scale (512² texels of 8 cells round the window). The window's texels are measured
+  from its land every update (the climate sim's snow in the drift, its moisture, its ice and water); past it the
+  storms' snow and rain, the melt, the freeze and the drying back step it; a render-only tile's land seeds what it holds
+  nothing of. The bake leaves the weather out (meshdraw.wgsl TILE_BAKE); the draw puts it back from the cover: wet
+  ground darkened by its porosity (baked in 2 bits beside the normal), ice on the water. Snow keeps the cell's detail:
+  the live plane holds a texel's own snow as baked and the cover's there then, and the draw melts the own snow as the
+  cover's has melted since and lays what has fallen since over it (a town's roads the window keeps clear stay clear —
+  the first try, the cover alone, blanketed them: shots88/tileparity/v2-straight.png).
+- The held rivers live (main's addition to TC20): the bake keeps a held river's texel as its bed and the live plane its
+  depth under the river's level at the reference wetness and the river's depth at its line; the draw floods it to the
+  level at the wetness now (riverheld.wgsl's rule: the line's depth × wet^0.6, the level shifted across the channel, at
+  most 0.28 over, a dry bed under 0.03), the wetness read only through riverheld.wgsl `riverWetAt(cell)` (per watershed:
+  branch `watershed`). 8 bits a channel: under the level -1..3 cells (1/64 cell steps), the line's depth 0..4.
+- The live plane (tiles live, rgba8): x, y the held river's; z the texel's own snow; w the cover's snow as baked. The
+  atlas 27.0 → 31.5 MB at the same 96 slots (+4 B a texel; the slots are still counted on A and B's 12).
+- The atlas never evicts a tile the last frame drew; a land job made for a region no longer wanted lets its slot go
+  when the atlas is full. In the first ~45 s parked: 2,623 bakes and 1,330 regions made → 245 and 198 (the rest of the screen past 96 tiles shows the far land: TC21).
+- The tufts are painted in the bake (as ?tufts=0 paints them): the tile holds no tuft instances.

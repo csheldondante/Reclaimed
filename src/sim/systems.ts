@@ -53,7 +53,8 @@ const RIVER_SLOW_N = (() => {
   return n;
 })();
 const RIVER_SLOW = SIM_CULL && RIVERS === 'table' && RIVER_SLOW_N > 1;
-const riverHeld = `const RIVER_SLOW_N: u32 = ${RIVER_SLOW ? RIVER_SLOW_N : 1}u;
+/** (round 108: exported — the tiles' draw floods a held river's bed to its level: render/renderer.ts) */
+export const riverHeld = `const RIVER_SLOW_N: u32 = ${RIVER_SLOW ? RIVER_SLOW_N : 1}u;
 const RIVER_TABLE: bool = ${RIVERS === 'table'};
 const RIVER_DEPTH_EXP: f32 = ${RIVER_DEPTH_EXP};
 const RIVER_SPEED_EXP: f32 = ${RIVER_SPEED_EXP};
@@ -95,10 +96,19 @@ const EDIT_LINGER = 300;
 const BASE: BindSpec = { 0: 'uniform', 1: 'read', 2: 'uniform' };
 const WITH_ALL = [commonWgsl, layersWgsl, materialsWgsl];
 
+/** what a kernel() system binds of its world and how it's dispatched */
+type KernelWorld = Pick<WorldGpu, 'globals' | 'materials' | 'chunks' | 'tiles' | 'groups'>;
+/**
+ * (round 108, TC18) What the render preparation (SurfaceSystem, RenderFieldsSystem) reads and writes: the window's
+ * world, or a render-only tile's (render/tileworld.ts) — the same systems on its land, without the simulation.
+ */
+export type PrepWorld = KernelWorld &
+  Pick<WorldGpu, 'layers' | 'surface' | 'driftView' | 'airView' | 'strataView' | 'projView' | 'levelsView' | 'moisture' | 'fire' | 'flux' | 'renderFields' | 'water' | 'veg' | 'lava' | 'cornerView' | 'riverFlowView' | 'meshRegion'>;
+
 /** Builds a single-kernel system whose bindings 0..2 are the shared globals/chunks/materials. */
 function kernel(
   device: GPUDevice,
-  world: WorldGpu,
+  world: KernelWorld,
   label: string,
   src: string,
   spec: BindSpec,
@@ -128,7 +138,7 @@ function kernel(
 }
 
 /** a kernel() pass, over the live chunks when it's culled (sim/cull.ts), else the whole window */
-function run(enc: GPUCommandEncoder, prof: Profiler, name: string, s: { k: ComputeKernel; group: GPUBindGroup; cull?: number }, world: WorldGpu): void {
+function run(enc: GPUCommandEncoder, prof: Profiler, name: string, s: { k: ComputeKernel; group: GPUBindGroup; cull?: number }, world: KernelWorld): void {
   if (s.cull !== undefined) dispatchTiles(enc, prof, name, s.k, s.group, world.tiles!, s.cull);
   else dispatch(enc, prof, name, s.k, s.group, world.groups);
 }
@@ -143,7 +153,7 @@ export class SurfaceSystem implements SimSystem {
   readonly name = 'surface';
   readonly period = 1;
   private s;
-  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+  constructor(device: GPUDevice, private world: PrepWorld, private prof: Profiler) {
     this.s = kernel(
       device,
       world,
@@ -432,7 +442,7 @@ export class RenderFieldsSystem implements SimSystem {
   readonly name = 'renderfields';
   readonly period = 2;
   private s;
-  constructor(device: GPUDevice, private world: WorldGpu, private prof: Profiler) {
+  constructor(device: GPUDevice, private world: PrepWorld, private prof: Profiler) {
     this.s = kernel(
       device,
       world,

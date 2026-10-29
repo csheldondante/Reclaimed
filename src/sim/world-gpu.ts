@@ -12,6 +12,7 @@ import { Pages } from './pages';
 import { PAGE_ADDR, PAGE_CHECK, PAGE_MISS_MAX, pageMiss, pageTab, pageTables } from '../gpu/pages-mode';
 import { DIRS_BYTES } from '../world/lattice';
 import { FRAME_BYTES, MAX_STRUCTS, POOL_VOXELS, PROJ_K } from '../grids/structures';
+import { COVER_N } from '../weather/cover';
 import { MAX_PLACES } from '../world/places';
 import { AwakeTiles, SIM_CULL, TileCopy } from './cull';
 
@@ -222,6 +223,15 @@ export class WorldGpu {
    */
   readonly riverFlow: GPUTexture;
   readonly riverFlowView: GPUTextureView;
+  /**
+   * (round 108, TC20) The weather's cover past the window (weather/cover.ts owns it; shaders/coverfield.wgsl its
+   * shape): a ring of COVER_N² texels round the window, COVER_CELL world cells each. coverState (vec4<u32> a texel:
+   * snow, wet | its own moisture, the ground's height, which world texel) is the owner's; coverView (rgba16float:
+   * snow (cells), wet (0..1), its lap round the ring x, y — -1: nothing known) is what the tiles draw it from.
+   */
+  readonly coverState: GPUBuffer;
+  readonly coverTex: GPUTexture;
+  readonly coverView: GPUTextureView;
   /** ground shaken (layerpull.wgsl writes, sediment reads): x the tick it was shaken, y how hard (0..1): loose ground there slips at a lower angle for a while */
   readonly shake: GPUTexture;
   readonly shakeView: GPUTextureView;
@@ -427,6 +437,10 @@ export class WorldGpu {
     this.riverFlow = device.createTexture({ label: 'riverFlow', size: dsize, format: 'rgba32float', usage: tusage });
     this.textures.push(this.riverFlow);
     this.riverFlowView = this.riverFlow.createView();
+    this.coverState = this.buf('coverState', COVER_N * COVER_N * 16, GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST);
+    this.coverTex = device.createTexture({ label: 'cover', size: [COVER_N, COVER_N], format: 'rgba16float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING });
+    this.textures.push(this.coverTex);
+    this.coverView = this.coverTex.createView();
     if (map.riverFlow) device.queue.writeTexture({ texture: this.riverFlow }, r.texToStore(map.riverFlow, 4), { bytesPerRow: this.w * 16 }, dsize);
     this.shakeView = this.shake.createView();
     this.editState = device.createTexture({ label: 'editState', size: dsize, format: 'rgba32float', usage: tusage });

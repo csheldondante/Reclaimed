@@ -22,6 +22,9 @@ import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import tilesWgsl from '../shaders/tiles.wgsl?raw';
+import coverFieldWgsl from '../shaders/coverfield.wgsl?raw';
+import { riverHeld } from '../sim/systems';
+import type { CoverSource } from '../weather/cover';
 import { TileCache } from './tilecache';
 import type { TileLandSource } from './tileland';
 import { TileLandGpu } from './tilelandgpu';
@@ -267,24 +270,30 @@ export class Renderer {
   }
   /** (round 104, TC2) What makes the land past the window (the streamer's): the tiles' render-only regions. */
   setTileLand(src: TileLandSource): void {
-    if (!this.tiles || this.tiles.land || !this.meshResolveLayout || !this.meshLayoutT) return;
+    if (!this.tiles || this.tiles.land || !this.tileBakeLayout || !this.meshLayoutT) return;
     this.tiles.land = new TileLandGpu(
       {
         device: this.device,
         world: this.world,
         profiler: this.profiler,
         meshLayout: this.meshLayoutT,
-        resolveLayout: this.meshResolveLayout,
+        resolveLayout: this.tileBakeLayout!,
         gridPipe: () => this.gridPipes?.g,
         drawGrid: (pass, which) => void this.drawGrid(pass, which),
         meshResources: (cam) => this.meshResources(cam, this.shadowView, { mesh: this.fieldMesh, chunks: this.world.chunks, layers: this.world.layers }),
         camBytes: CAM_BYTES,
         camData: () => this.camData,
+        seedCover: (enc, w, side, lo, hi) => this.coverSeed?.(enc, w, side, lo, hi),
       },
       src,
       this.tiles,
     );
   }
+  /** (round 108, TC20) the weather's cover seeded from a render-only tile's land as it's made (world-core.ts: the
+   *  simulation's WeatherCoverSystem.seed) */
+  coverSeed?: (enc: GPUCommandEncoder, src: CoverSource, side: number, lo: number, hi: number) => void;
+  /** (round 108) the tiles' bake's resolve layout: the mesh's and the held rivers' table (22) */
+  private tileBakeLayout?: GPUBindGroupLayout;
   /** (round 104) the mesh's draw layout (the render-only land's groups) */
   private meshLayoutT?: GPUBindGroupLayout;
   private meshGroup?: GPUBindGroup;
@@ -679,14 +688,13 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       });
       const meshPl = device.createPipelineLayout({ bindGroupLayouts: [meshLayout] });
       // (perfopt, ?defer=1: the G-buffer's pass and the resolve's layout — the mesh's plus the G-buffer)
-      const resolveLayout = makeLayout(
-        device,
-        'mesh-resolve',
-        { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex' },
-        VF,
-        { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
-      );
+      const resolveSpec = { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex' } as const;
+      const resolveStages = { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) };
+      const resolveLayout = makeLayout(device, 'mesh-resolve', resolveSpec, VF, resolveStages);
       this.meshResolveLayout = resolveLayout;
+      // (round 108, TC20: the tiles' bake resolves with the held rivers' table too — their depths go in the river plane)
+      // (and the weather's cover: what it was where the tile's own snow lies, as baked)
+      if (TILES) this.tileBakeLayout = makeLayout(device, 'tiles-bake', { ...resolveSpec, 22: 'tex', 47: 'tex' }, VF, resolveStages);
       this.meshLayoutT = meshLayout;
       this.meshPipesReady = (async () => {
         const g = (entryPoint: string, cullMode: GPUCullMode = 'none') =>
@@ -832,11 +840,11 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       };
       // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)
       if (TILES) {
-        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl, tilesWgsl]);
+        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl, coverFieldWgsl, riverHeld, tilesWgsl]);
         const drawLayout = makeLayout(
           device,
           'tiles-draw',
-          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform', 46: 'read' },
+          { 0: 'uniform', 1: 'read', 2: 'uniform', 3: 'read', 4: 'read', 5: 'read', 6: 'read', 7: 'read', 8: 'read', 9: 'read', 10: 'uniform', 11: 'read', 13: 'read', 15: 'tex', 17: 'tex', 23: 'tex', 25: 'depth', 26: 'csampler', 30: 'uniform', 40: 'utex', 41: 'utex', 42: 'tex', 43: 'utex', 44: 'read', 45: 'uniform', 46: 'read', 47: 'tex', 48: 'tex' },
           VF,
           { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 44: GPUShaderStage.VERTEX, 46: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );
@@ -849,7 +857,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           pickFormat: PICK_FORMAT,
           depthFormat: DEPTH_FORMAT,
           module: tileModule,
-          resolveLayout,
+          resolveLayout: this.tileBakeLayout!,
           drawLayout,
           camBytes: CAM_BYTES,
           camBuf: this.camBuf,

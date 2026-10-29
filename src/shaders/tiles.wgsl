@@ -9,30 +9,61 @@
 //
 // The bake's camera: CAM.pos.xy is the slot's corner in the atlas (pixels; pos.w 0: the fixed view, so toEye
 // doesn't read it), CAM.pos.z the anchor's distance along the view (window units).
+// (Round 108, TC20: the weather isn't baked — meshdraw.wgsl TILE_BAKE: the snow lying on top taken for what's under
+// it, no wetness — it's drawn live from the weather's cover (weather/cover.ts, coverfield.wgsl) as the tile is drawn;
+// the bake keeps what the wetness darkens by, the top's porosity, beside the normal.)
 
-struct BakeOut { @location(0) a: vec4<f32>, @location(1) b: vec2<u32> };
+struct BakeOut { @location(0) a: vec4<f32>, @location(1) b: vec2<u32>, @location(2) c: vec4<f32> };
 
-fn octEnc(n: vec3<f32>) -> u32 {
+// ---- (round 108, TC20) the held rivers, drawn at their wetness now --------------------------------------------
+// A held river's level follows the rivers' wetness (Globals ocean.w: weather/riverwet.ts — the storms, the season,
+// eased over ~20 s; riverheld.wgsl riverHere): at its line its depth × wet^RIVER_DEPTH_EXP, the level shifted with it
+// across the channel (at most 0.28 over the reference's), a dry bed under RIVER_DRY (riverheld.wgsl's, in this module:
+// its riverWetAt — the wetness at a place). A tile keeps a held river's
+// texel as its bed and, in its live plane (rgba8: BakeOut.c xy), how far under the river's level at the reference wetness
+// the point is and the river's depth at its line there; the draw floods it to the level now.
+// The snow the same way (BakeOut.c zw): a texel's own snow as baked (the cell's — a road the window keeps clear stays
+// clear) and the cover's there then; drawn, the own snow melts as the cover's has since, and what's fallen since lies
+// over all of it.
+@group(0) @binding(22) var riverFlowTex: texture_2d<f32>;
+/** the river plane's ranges: under the level (cells, -RIVER_UNDER_LO .. RIVER_UNDER_HI), the line's depth (0 .. RIVER_LINE) */
+const RIVER_UNDER_LO: f32 = 1.0;
+const RIVER_UNDER_HI: f32 = 3.0;
+const RIVER_LINE: f32 = 4.0;
+/** the snow's ranges in the live plane: a texel's own (cells), the cover's as baked (cells) */
+const SNOW_OWN: f32 = 1.0;
+const SNOW_REF: f32 = 2.0;
+/** the water's colour over the ground by its depth there (the window draws its sheet as instances the tile doesn't hold) */
+fn tileWater(dz: f32) -> vec3<f32> {
+  return mix(toLinear(vec3<f32>(0.26, 0.40, 0.40)), toLinear(vec3<f32>(0.10, 0.20, 0.26)), smoothstep(0.1, 3.0, dz)) * 0.8;
+}
+
+/** the G-buffer's normal (meshdraw.wgsl: octahedral, 15 bits a side) */
+fn octDec(w: u32) -> vec3<f32> { return octDecB(vec2<f32>(f32(w & 32767u), f32((w >> 15u) & 32767u)) / 32767.0); }
+/** (round 108) the atlas's: 14 bits a side — bits 28-29 the top's porosity, 30 gem, 31 drawn */
+fn tileNrmEnc(n: vec3<f32>) -> u32 {
   var o = n.xy / (abs(n.x) + abs(n.y) + abs(n.z));
   if (n.z < 0.0) { o = (1.0 - abs(o.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), o >= vec2<f32>(0.0)); }
-  let q = vec2<u32>(round(clamp(o * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 32767.0));
-  return q.x | (q.y << 15u);
+  let q = vec2<u32>(round(clamp(o * 0.5 + 0.5, vec2<f32>(0.0), vec2<f32>(1.0)) * 16383.0));
+  return q.x | (q.y << 14u);
 }
-fn octDec(w: u32) -> vec3<f32> {
-  let o = vec2<f32>(f32(w & 32767u), f32((w >> 15u) & 32767u)) / 32767.0 * 2.0 - 1.0;
+fn tileNrmDec(w: u32) -> vec3<f32> { return octDecB(vec2<f32>(f32(w & 16383u), f32((w >> 14u) & 16383u)) / 16383.0); }
+fn octDecB(u: vec2<f32>) -> vec3<f32> {
+  let o = u * 2.0 - 1.0;
   var n = vec3<f32>(o, 1.0 - abs(o.x) - abs(o.y));
   if (n.z < 0.0) { n = vec3<f32>((1.0 - abs(n.yx)) * select(vec2<f32>(-1.0), vec2<f32>(1.0), n.xy >= vec2<f32>(0.0)), n.z); }
   return normalize(n);
 }
 
-/** a: sqrt(albedo / 2), the film; b: the normal (oct, 15 bits a side) | gem (bit 30) | drawn (bit 31), the depth
+/** a: sqrt(albedo / 2), the film; b: the normal (oct, 14 bits a side) | porosity (bits 28-29) | gem (bit 30) |
+ *  drawn (bit 31), the depth
  *  along the view from the anchor (f32 bits). The window's source first, over the whole slot (nothing there, or
  *  the band's: cleared — the slot held another tile), then the band's over it (fsTileBakeOver). */
 @fragment
 fn fsTileBake(@builtin(position) pos: vec4<f32>) -> BakeOut {
   let px = vec2<i32>(pos.xy - CAM.pos.xy);
   let a = textureLoad(gbuf0, px, 0);
-  if ((a.w >> 31u) == 0u || ((a.w >> 30u) & 1u) != u32(MR.zb.w)) { return BakeOut(vec4<f32>(0.0), vec2<u32>(0u)); }
+  if ((a.w >> 31u) == 0u || ((a.w >> 30u) & 1u) != u32(MR.zb.w)) { return BakeOut(vec4<f32>(0.0), vec2<u32>(0u), vec4<f32>(0.0)); }
   return tileBake(px, a);
 }
 @fragment
@@ -51,6 +82,8 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
   m.share = unpack2x16unorm(b.y).x;
   m.word = b.x;
   m.tint = meshTint(m.wpos);
+  // (round 108, TC20: the weather left out — drawn live from the cover)
+  TILE_BAKE = true;
   let s = meshSurf(m);
   var alb = s.alb;
   var ln = s.lnrm;
@@ -67,18 +100,39 @@ fn tileBake(px: vec2<i32>, a: vec4<u32>) -> BakeOut {
   // flat, all film for the sun's glint)
   var film = s.film * (1.0 - t.crown);
   let wt = cellWater(m.wpos.xy);
-  if (wt.wet > 0.5 && wt.level > m.wpos.z + 0.05) {
-    let dz = wt.level - m.wpos.z;
-    alb = mix(toLinear(vec3<f32>(0.26, 0.40, 0.40)), toLinear(vec3<f32>(0.10, 0.20, 0.26)), smoothstep(0.1, 3.0, dz)) * 0.8;
+  var o: BakeOut;
+  o.c = vec4<f32>(0.0);
+  // (its own snow — the cell's top, as the window's look has it before the bake left it out — and the cover's there)
+  if (m.nrm.z > 0.55 && t.crown < 0.5) {
+    let lk = meshLook(clampCell(cellAt(m.wpos.xy)), m.wpos.z - 0.2, true);
+    let own = select(0.0, lk.thick, lk.mat == MAT_SNOW);
+    o.c.z = clamp(own / SNOW_OWN, 0.0, 1.0);
+    o.c.w = clamp(coverAt(m.wpos.xy).x / SNOW_REF, 0.0, 1.0);
+  }
+  // (round 108, TC20: a held river's column — riverheld.wgsl's table — kept as its bed: the draw floods it to the
+  // rivers' level now; how far under the level its point is, at the reference wetness, the plane's)
+  let rf = textureLoad(riverFlowTex, texCol(clampCell(cellAt(m.wpos.xy))), 0);
+  let river = rf.z > 0.0 && t.crown < 0.5;
+  if (river) {
+    let under = select(-RIVER_UNDER_LO, wt.level - m.wpos.z, wt.wet > 0.5);
+    o.c.x = clamp((under + RIVER_UNDER_LO) / (RIVER_UNDER_LO + RIVER_UNDER_HI), 0.0, 1.0);
+    o.c.y = max(clamp(rf.w / RIVER_LINE, 0.0, 1.0), 1.0 / 255.0);
+    film = 0.0;
+  } else if (wt.wet > 0.5 && wt.level > m.wpos.z + 0.05) {
+    alb = tileWater(wt.level - m.wpos.z);
     ln = vec3<f32>(0.0, 0.0, 1.0);
     film = 1.0;
   }
-  var o: BakeOut;
   o.a = vec4<f32>(sqrt(clamp(alb * 0.5, vec3<f32>(0.0), vec3<f32>(1.0))), film);
   let d = dot(-CAM.eye.xyz, m.wpos) - CAM.pos.z;
-  o.b = vec2<u32>(octEnc(ln) | select(0u, 1u << 30u, s.gem && t.crown < 0.5) | (1u << 31u), bitcast<u32>(d));
+  // (what the wetness darkens it by: meshdraw.wgsl's MATS[mat].eco.w, 0..0.6 in quarters of it — none under water)
+  let por = select(u32(round(clamp(MATS[s.mat].eco.w / POR_MAX, 0.0, 1.0) * 3.0)), 0u, film > 0.5 || t.crown > 0.5 || river);
+  o.b = vec2<u32>(tileNrmEnc(ln) | (por << 28u) | select(0u, 1u << 30u, s.gem && t.crown < 0.5) | (1u << 31u), bitcast<u32>(d));
   return o;
 }
+
+/** the most a material's wetness darkens it (materials.ts porosity) */
+const POR_MAX: f32 = 0.6;
 
 fn tRand(p: vec3<i32>) -> f32 { return f32(pcg(bitcast<u32>(p.x) ^ pcg(bitcast<u32>(p.y) ^ pcg(bitcast<u32>(p.z)))) >> 8u) / 16777216.0; }
 
@@ -148,6 +202,31 @@ struct TileI { clip: vec4<f32>, slot: vec4<f32>, anchor: vec4<f32>, pad: vec4<f3
  *  window's size (window units), the region's size (x, y window units), how far past its edge a tile draws */
 struct TileU { r: vec4<f32>, u: vec4<f32>, f: vec4<f32>, win: vec4<f32> };
 @group(0) @binding(45) var<uniform> TU: TileU;
+/** (round 108, TC20) the weather's cover (weather/cover.ts): snow (cells), wet, ice (its share of the texel), which lap
+ *  round the ring it is (-1: nothing known) */
+@group(0) @binding(47) var coverTex: texture_2d<f32>;
+/** (round 108, TC20) the tiles' live plane (BakeOut.c: xy the held river's, zw the snow's — what the draw brings up to now) */
+@group(0) @binding(48) var tileLive: texture_2d<f32>;
+
+/** the cover at window point p (bilinear over the texels the field holds there): snow lying (cells), wetness, ice */
+fn coverAt(p: vec2<f32>) -> vec3<f32> {
+  let cell = vec2<f32>(p.x, p.y / ROW_H) + G.org.zw;
+  let f = cell / COVER_CELL - 0.5;
+  let t0 = vec2<i32>(floor(f));
+  let fr = f - floor(f);
+  var sum = vec3<f32>(0.0);
+  var wsum = 0.0;
+  for (var k = 0; k < 4; k++) {
+    let o = vec2<i32>(k & 1, k >> 1);
+    let t = t0 + o;
+    let v = textureLoad(coverTex, coverRing(t), 0);
+    if (v.w != coverLapCode(t)) { continue; }
+    let w = mix(1.0 - fr.x, fr.x, f32(o.x)) * mix(1.0 - fr.y, fr.y, f32(o.y));
+    sum += v.xyz * w;
+    wsum += w;
+  }
+  return select(vec3<f32>(0.0), sum / wsum, wsum > 1e-4);
+}
 
 struct TOut {
   @builtin(position) pos: vec4<f32>,
@@ -200,11 +279,47 @@ fn fsTile(in: TOut) -> TFrag {
   // (an arriving region's tile — plane.w 1 — draws inside the window till the window draws its land)
   if (t.plane.w < 0.5 && all(p.xy > vec2<f32>(TU.win.w)) && all(p.xy < TU.win.xy - TU.win.w)) { discard; }
   let a = textureLoad(tileA, tx, 0);
-  let alb = a.rgb * a.rgb * 2.0;
-  let n = octDec(b.x & 0x3fffffffu);
+  var alb = a.rgb * a.rgb * 2.0;
+  var n = tileNrmDec(b.x);
+  // (round 108, TC20: the weather, live — as the window's own look has it: wet ground darkens by its porosity
+  // (meshdraw.wgsl), the snow lying on what faces up (its look: MAT_SNOW's, a thin layer showing what's under it,
+  // ragged at its edge))
+  let cv = coverAt(p.xy);
+  let por = f32((b.x >> 28u) & 3u) / 3.0 * POR_MAX;
+  alb *= 1.0 - por * 0.5 * smoothstep(0.15, 0.9, cv.y);
+  let r = randv(vec3<i32>(vec3<f32>(floor(p.xy * 4.0), 7.0)));
+  let pc = textureLoad(tileLive, tx, 0);
+  // (the snow: the texel's own as baked, melted as the cover's has since; what's fallen since over it all)
+  let sref = pc.w * SNOW_REF;
+  let kept = select(1.0, clamp(cv.x / sref, 0.0, 1.0), sref > 0.01);
+  let snow = pc.z * SNOW_OWN * kept + max(cv.x - sref, 0.0);
+  if (snow > 0.0 && n.z > 0.55 && a.a < 0.5) {
+    let ks = smoothstep(0.02, 0.2, snow) * select(1.0, 0.0, snow < 0.03 + 0.12 * r);
+    alb = mix(alb, groundAlbedo(MAT_SNOW) * (0.94 + 0.12 * r), ks);
+  }
+  var film = a.a;
+  // (a held river's bed flooded to the rivers' level now: under it at the reference by the plane's, shifted as the line's
+  // depth is with the wetness)
+  let rv = pc.xy;
+  if (rv.y > 0.0) {
+    let wet = riverWetAt(vec2<f32>(p.x, p.y / ROW_H));
+    let line = rv.y * RIVER_LINE;
+    let shift = min(line * (pow(wet, RIVER_DEPTH_EXP) - 1.0), 0.28);
+    let dz = rv.x * (RIVER_UNDER_LO + RIVER_UNDER_HI) - RIVER_UNDER_LO + shift;
+    if (dz > 0.05 && line + shift >= RIVER_DRY) {
+      alb = tileWater(dz);
+      n = vec3<f32>(0.0, 0.0, 1.0);
+      film = 1.0;
+    }
+  }
+  // (the water iced over: as the window's ice sheet — its share of the texel, ragged at its edge)
+  if (cv.z > 0.0 && film > 0.5 && cv.z > 0.25 + 0.5 * r) {
+    alb = groundAlbedo(MAT_ICE) * (0.9 + 0.15 * r);
+    film = 0.3;
+  }
   var col = alb * lighting(p, n);
   if (((b.x >> 30u) & 1u) != 0u) { col = gemLook(p, n); }
-  col += filmSheen(p, n, vec3<f32>(0.0, 0.0, 1.0), a.a);
+  col += filmSheen(p, n, vec3<f32>(0.0, 0.0, 1.0), film);
   col = haze(col, p);
   // (?tiledebug=1: the tiles tinted, to tell them from the window and the rings)
   if (TU.r.w > 0.5) { col = mix(col, vec3<f32>(0.6, 0.05, 0.4), 0.35); }
