@@ -11909,3 +11909,76 @@ From main's review of the first pass.
 
   interact and fatal as above, exit 0. A framecost run in the same turn read 12 ms (busy 0.74, -899 held: the GPU
   was shared), so it isn't comparable and isn't used. The first pass's framecost and driveprofile numbers stand.
+
+## 2026-10-29 — round 110 (`physfix`): the rigid rock's four faults in the playground
+
+The user, after playing the playground (BACKLOG PX1-PX6, the quotes there): the arch's span "just instantly
+disappear[s]" when a base goes; a rock freed by digging "pushes up out of the earth before becoming a rigidbody";
+"we want meshes to intersect … until they are visibly intersecting for large objects"; "When things come to rest they
+turn to dust instead of staying as meshes as we discussed". Then: "a tunable parameter for how much objects can
+interpenetrate maybe as a function of mass?" Fixed within the CPU rigid rock (round 106's design; the GPU solver,
+AR4, later), at the roots:
+
+- **The arch, and "turn to dust" (PX1, PX4): one root.** The half of the arch that gave was freed as a body (the judge
+  is fine: a load break at the span's middle, 258 cells) — it fell 4 cells onto its stub and came to rest in seconds.
+  A body at rest was then written back into the columns, each cell dropped down its own column onto what's under it
+  there (Integrity.settleRigid, round 95's "a heap settles column by column"): a span over air became, in one frame,
+  a low heap on the ground, remeshed as terrain — the user's "instantly disappear" and "turn to dust". The resting
+  rock as a mesh (round 99, MI4: its cells claimed as External intervals, its mesh drawn where it lies) existed only
+  behind `?meshinst=1`. Now it is on wherever the rigid rock is (the trees stay behind the flag). A resting rock that
+  loses its ground (judged hanging free) or is cut wakes as a body where it lies, with its own mesh
+  (RockBodies.revive from its cells and transform; MI5) instead of becoming ground that the judge frees as a new
+  body, remeshed. Cut (dug, smashed), it loses the cells no longer External where they lay (remeshed behind dust).
+  The judge's analysis no longer turns External runs into stone inside what falls (Integrity.takeExternal: they are
+  taken out and their owner wakes). Baking into ground happens only when out of room (rigid.restMax, 16, and the rock
+  mesh's 72 blocks), when leaving the window, or when asked (Integrity.bakeResting, for between runs: PX5 wires it),
+  each behind a burst of dust. Why each bake happened is counted (RockBodies.bakedWhy).
+- **The span topples (PX1).** A joint that gives under load (analyseRock's cross-section break) now hinges at its
+  lower edge (fracture.ts hingeOf: the joints' middle, at the lowest height they share; the axis horizontal, across
+  the line from what held it to the part's centre of mass, turned so it carries the part down). The arch's free half
+  turns about the other base and comes down onto its stub, rather than dropping straight.
+- **The push-up (PX2): three roots.** (1) The collision points were a cube's corners about each cell, (±0.46, ±0.46),
+  0.65 from its centre. A hex cell is 0.5 to its faces, so those corners lie in the next columns over. A body freed in
+  place beside ground began with corners inside that ground, and the probe pushed them up (within 0.6 of the run's
+  top) at half the overlap each substep. Now the points are the hex prism's 12 corners, inset. (2) A speculative
+  contact: a point within 0.5 above the ground already took impulses. Now a contact is met only past its slop. (3)
+  The push-out itself was a jump of half the overlap each substep. Now the overlap a body is freed with is allowed
+  (RockBody.allow: its deepest overlap at spawn, wake or break, only ever shrinking to what it overlaps now, at most
+  1.2). A push-out is never faster than rigid.pushV (0.6 cells/s) and never deeper than the slop plus
+  rigid.erodeDepth (0.4). A point deeper than that crumbles the solid ground where it meets the body, up to
+  rigid.erodeMax (4) cells a frame, as rubble and dust (round 106: "erode material where the bodies meet, not push
+  them apart"). A break's pieces are thrown sideways only, never faster up than the body was going (a break thrown
+  up off the ground had jumped pieces 3.5 cells).
+- **Overlap by mass (PX3).** A contact allows rigid.slop + min(rigid.slopCap, rigid.slopK · mass^rigid.slopP)
+  (0.03 + min(0.8, 0.065 · m^0.35)): 0.23 cells for a 30-cell piece, 0.48 for the 260-cell span, 0.83 for a
+  1 500-cell pillar. A pair (a body on a resting rock) meets at the lighter one's allowance: overlap reads as
+  intersecting on the smaller thing. A pebble sunk into a boulder by the boulder's allowance would vanish into it,
+  while a boulder on a pebble crushes it no deeper than the pebble's allowance. The ground counts as the heaviest
+  thing, so against it a body uses its own. The probe (moved to rockbodies.ts columnsGround, shared with the CPU
+  harness) now looks two rings of columns out for air and measures up to 2 cells deep. Round 95 called anything past
+  the six neighbours 1 deep, so a body allowed that much overlap (a big rock's slop, or what it was freed with) fell
+  through the floor; the CPU harness showed pieces resting at z 1.5 on a plain at 10.
+- Every new number is in the tuning registry's rigid group: slopK, slopP, slopCap, pushV, erodeDepth, erodeMax,
+  restMax.
+
+**Measured** (scripts/physfix.mjs, headless, the phone proxy 412x915 dpr 2.6 q=low, every system in play, 1x; the
+same script on the code before, `before-*` vs `after-*` in C:\Projects\shots88\physfix\):
+- The arch, one base smashed: before, the 258-cell half fell 4.0 cells, rested, and was written back (resting 0 at
+  the end: the heap). After, it hinged, fell 4.5, and rested as its mesh (resting 1, crumbled 0).
+- A rock freed by digging round it and smashing its leg (the top on the thin leg), its fall and breaks (14 bodies):
+  before, 5 bodies rose 0.4-5.5 cells above where they were freed. After, every body rose at most 0.18.
+- The rest test (the station's two buttons, 30 s; 20 bodies): before, 6 rose 0.6-8.5 cells (one 143-cell piece
+  8.5). After, a 20-cell piece rose 0.41 and a 37-cell one 0.28 (settling out at pushV once they came down), the rest at most 0.04.
+  Everything was asleep by 12 s: 14 resting as meshes and staying, 0 baked, 2 woken.
+- Over the whole session (four resets, about 40 bodies) 15 bakes: 14 for room (the rock mesh's slots and restMax) and
+  1 body that got no mesh. 9 cells eroded.
+- The frame on the phone proxy (desktop iGPU, vsync; the GPU timer reads 0 here): idle p50 9.8 / p95 10.3 ms before
+  and after. While falling, p50 9.8 / p95 10.4 both; the rigid step's worst frame 0.4 → 0.9-1.1 ms (12 hex corners a
+  surface cell, not 8; 1.2 ms the most seen for a 1 300-cell body and ten pieces). Mean 0.11 → 0.28 ms over the frames
+  with bodies. With 8-14 resting rocks after: p50 9.8 / p95 10.3-10.4 (the resting rock costs nothing to step).
+- scripts/physfix-cpu.mjs runs the judge and the bodies on the CPU alone (Vite's SSR loader, no browser) on the
+  playground's map: arch, nick, dig, pillar, pillar2, revive (a woken body's transform: error 0).
+
+**Open:** body against body (two awake ones) is still not simulated (PX6, AR4). The resting rock in distant tiles and
+its round trip through the streamer (round 100, now on in the atlas too) aren't checked here. A dig into a resting rock
+wakes it without the dug cells, but a later dig into the awake body does nothing (it isn't ground).
