@@ -11997,3 +11997,63 @@ zooms (TC21); a played region's tile made fresh at a new turn (TC22); a render-o
 the tiles' water against the window's sheet (TC24); the cover past the window has the window's climate and storms
 that fade at its edge (TC25); the mesher's chunks in the bake (TC12).
 
+## 2026-10-29 — one water path: the playground on the game's water, authored river tables (round 110, session 5, `playwater`)
+
+The user: "The waterfalls don't use the same system as the main game can you explain why?" Why: the playground (round
+108) ran the flow model (`?flow=1`, src/flow/) by default, because the game's waterfalls are held rivers (`rivers=table`:
+the riverFlow contract, riverheld.wgsl, settle-then-freeze) and riverFlow came only from the atlas's river graph — a
+fixed map had no way to declare a river. So the playground's fall was a second water system. Now there's one water
+path (BACKLOG PW1-PW6, DECISIONS round 110):
+
+- **Authored river tables** (world/rivertable.ts; ARCHITECTURE "Authored river tables"). A level declares a river (a
+  path upstream first with the water's level at each point, a half-width, a discharge; optionally its catchment) and
+  gets the atlas's data from it by the atlas's rules: `riverNodes` makes the atlas's nodes (compose.wgsl RiverNode),
+  rated by `riverChannelDepth` / `riverSpeed` — now the one rating, atlas/rivers.ts calls them; `holdRivers` is the
+  CPU mirror of compose.wgsl riverAt and its cut, columns.wgsl's levee and forms.wgsl's bed, water and riverFlow
+  (sheets RIVER_SHEET deep at twice the speed where the bed steps down RIVER_FALL), writing MapData.riverFlow and the
+  water it starts with. RIVER_FALL / RIVER_SHEET / RIVER_LEVEE are defined there once and put in the atlas's kernels by
+  atlas.ts parts() (they were WGSL literals). Ground more than half a cell under a channel's bed throws (a river would
+  stand over it as a column of water: the first try's ledge did exactly that — 8.8 cells of held water at its foot,
+  with the line slanting across the ledge, hence "the line square to a fall" in the declaration's contract).
+- **Per watershed, as the atlas's** (round 109's riverWetAt, binding 62): a declared catchment (the playground's: its
+  station's rectangle) becomes a weather/catchwet.ts RiverGraph (`riverGraph`: the nodes packed as rivers.ts's table,
+  samples 8 units apart each draining to its nearest node, reference discharges summed downstream), carried as
+  MapData.riverGraph; LevelScene feeds it to the same CatchmentWet and RiverWetField as the atlas's (its window the
+  map). Rain on the station raised the river's storm water to 1.5 (the cap) and the river rose; a river without a
+  catchment follows the season alone.
+- **The river mode is the level's** (sim/world-gpu.ts): `LevelDef.rivers` (`table` on the atlas and the playground),
+  set by `useRivers` in LevelScene.create before the atlas and the world are made; `riverMode()`, `riverPull()`,
+  `settleLand()`, `settleTol()` replace the module constants RIVERS, RIVER_PULL, SETTLE, SETTLE_TOL (read when a world's
+  kernels are made; `riverHeld()` in systems.ts, used by the tiles' draw too). It was `?level=atlas` in the URL — so the
+  atlas opened from the title screen ran its rivers unheld (`sim`), and no other level could hold one. (The world API's
+  atlas games keep the URL's rule as before.)
+- **The playground** (levels/playground.ts): no flow model; its river station is a ramp, a ledge with a 4-column chute
+  (9 cells down: each column a fall, as the atlas's falls run down their cliff's slope) and a run out off the map's
+  edge, the river declared as a table (half-width 4, discharge 0.3 — the atlas's smallest river) and carved by it. A
+  fixed map on `table` gets the atlas level's sleep and wake (what's still sleeps; events wake; ?settletol keeps a
+  woken chunk awake while its water changes, then it freezes back to the table) and its water isn't run in the warmup.
+  Surge: a spring at the head for 8 s, then none (no spring of its own to go back to). `?flow=1` now runs only in the
+  flow lab (elsewhere it throws).
+
+**Headless** (scripts/playwater.mjs; the phone proxy 412x915 dpr 2.6 q=low, 1x, every system in play; debugging aid
+scripts/playwater-dump.mjs: the GPU's water beside the table, column by column):
+- The atlas's fall (a 10-cell drop, found from the river graph): its view at the same zoom, awake chunks 0, mode table.
+- The river station: asleep 2 s after opening (0 chunks awake), its water the table's exactly (dump: GPU water =
+  riverFlow z at every column across the head, the ramp, the chute, the foot, the edge) and steady over 10 s (head 0.90,
+  ramp 0.89, chute 0.20 — sheets —, foot 0.90, run 0.89, edge 0.90).
+- Rain over it: 72-88 chunks awake, its catchment's storm water to 1.5, the river up (foot 2.77, run 1.1-2.0); storms
+  cleared → asleep again in 34 s, relaxing back to the table. Surge: 20 chunks awake → asleep in 50 s, back to the
+  table (chute 0.21). Reset: back to the table (all six within 0.01 after 15 s asleep).
+- The breach on the game's water: the pool 2.60 → 1.17 breached, the basin under the ledge wet (0.23), reset → 2.60,
+  the plug back.
+- Frame cost at the river station (perf overlay open; the iGPU's clocks drift run to run): still GPU 2.7-4.5 ms a
+  frame (0 chunks awake), in the rain 6.2-11.0 ms (88 awake; the draw is half of it); frame p50 9.8-9.9, p95 10.3-10.5.
+  The places build's playground (the flow model) at the same view: still 5.9 ms (2 chunks never slept, the flow model's
+  passes 0.3 ms), rain 7.35 ms; p50 9.9, p95 10.3-10.4. The atlas ride (driveprofile, 30 s): p50 9.8 / p95 10.9 ms,
+  GPU 4.36 (places: 9.9 / 11.4, 8.75 — in renderprep units draw 6.68 vs 8.40: the clocks, not the change).
+- Found on the places build (not this branch's: the flow model is gone from the playground here): after its river's
+  surge the pipes' water buffer under the flow model ran away (1 000+ cells, then NaN/Infinity across the station and
+  the breach's pool) — flagged for the flow lab (BACKLOG PW6).
+
+GIFs and shots: C:\Projects\shots88\playwater\ (atlas-fall, river-station, river-fall, river-rain, river-surge, breach,
+breach-reset; base-* the places build's flow-model playground for comparison).

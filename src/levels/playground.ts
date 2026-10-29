@@ -65,8 +65,16 @@ const DUST = { x0: 16, x1: 112, y0: 192, y1: 240 };
 /** the river's channel's middle row at column x */
 const riverMid = (x: number) => RIVER.mid + RIVER.amp * Math.sin((x - RIVER.x0) / RIVER.wave);
 /** the ramp's top at column x */
-const riverTop = (x: number) =>
-  x < RIVER.ledge ? RIVER.top - ((x - RIVER.x0) * (RIVER.top - RIVER.lip)) / (RIVER.ledge - RIVER.x0) : RIVER.low - ((x - RIVER.ledge) * (RIVER.low - RIVER.foot - 1)) / (RIVER.x1 - RIVER.ledge);
+const rampTop = (x: number) => RIVER.top - ((x - RIVER.x0) * (RIVER.top - RIVER.lip)) / (RIVER.ledge - RIVER.x0);
+const lowTop = (x: number) => RIVER.low - ((x - RIVER.ledge) * (RIVER.low - RIVER.foot - 1)) / (RIVER.x1 - RIVER.ledge);
+/** (round 110) the ledge's face: a steep chute CHUTE columns across (9 cells down over 4: every column of it a fall,
+ *  RIVER_FALL a step, as the atlas's falls run down their cliff's slope) */
+const CHUTE = 4;
+const riverTop = (x: number) => {
+  const a = RIVER.ledge - CHUTE / 2;
+  const b = RIVER.ledge + CHUTE / 2;
+  return x < a ? rampTop(x) : x >= b ? lowTop(x) : rampTop(a) + ((x - a) * (lowTop(b) - rampTop(a))) / CHUTE;
+};
 /** (round 110) the river as a river table declares it (world/rivertable.ts): its line down the ramp's middle, its water
  *  on the ground there (a river's level, the atlas's: the land before its channel is cut), a step at the ledge — the
  *  fall — and on past the map's edge, where it's held as a river leaving the atlas's window */
@@ -75,15 +83,16 @@ const RIVER_TABLE: AuthoredRiver[] = (() => {
   const path: AuthoredRiver['path'] = [];
   // (world units: a row's half-cell shift averaged — the line runs between rows)
   const at = (x: number, level = riverTop(x), row = riverMid(x)) => path.push({ x: x + 0.75, y: (row + 0.5) * ROW_H, level });
-  // (the fall: the line square to the ledge across it — the ledge runs along y at the ground's step between columns
-  // ledge − 1 and ledge, whose centres lie at world x ledge − 0.5 .. ledge + 0.5 and ledge + 0.5 .. ledge + 1)
+  // (the fall: the line square to the ledge across it, down the chute — its points at the chute's top and foot)
   const ym = riverMid(R.ledge);
-  for (let x = R.x0 + 4; x < R.ledge - 8; x += 6) at(x);
-  at(R.ledge - 4, riverTop(R.ledge - 4), ym);
-  path.push({ x: R.ledge, y: (ym + 0.5) * ROW_H, level: riverTop(R.ledge - 1) });
-  path.push({ x: R.ledge + 0.5, y: (ym + 0.5) * ROW_H, level: riverTop(R.ledge) });
-  at(R.ledge + 4, riverTop(R.ledge + 4), ym);
-  for (let x = R.ledge + 12; x < R.x1; x += 8) at(x);
+  const a = R.ledge - CHUTE / 2;
+  const b = R.ledge + CHUTE / 2;
+  for (let x = R.x0 + 4; x < a - 8; x += 6) at(x);
+  at(a - 4, riverTop(a - 4), ym);
+  at(a, riverTop(a), ym);
+  at(b, riverTop(b), ym);
+  at(b + 4, riverTop(b + 4), ym);
+  for (let x = b + 12; x < R.x1; x += 8) at(x);
   at(R.x1 + 6, R.foot + 0.5);
   // (its watershed: the station — rain on it raises the river, lagged down it)
   const [cx0, cy0] = [R.x0, 96 * ROW_H];

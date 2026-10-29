@@ -173,7 +173,7 @@ try {
       b.click();
     }, label);
   // the river's columns (storage): its head, the ramp, the lip, the foot, the run out, the edge
-  const cols = { head: [118, 139], ramp: [160, 132], lip: [195, 137], foot: [197, 137], run: [230, 138], edge: [255, 129] };
+  const cols = { head: [118, 139], ramp: [160, 132], lip: [195, 137], foot: [200, 137], run: [230, 138], edge: [255, 129] };
   const water = () =>
     p.evaluate(async (cols) => {
       const R = window.reclaimed;
@@ -182,7 +182,8 @@ try {
       for (const [k, [x, y]] of Object.entries(cols)) {
         let best = 0;
         // (the deepest over the channel's rows there: its middle)
-        for (let yy = y - 4; yy <= y + 4; yy++) best = Math.max(best, f[R.core.ring.i(x, yy)]);
+        // (readBuffer gives window order: y · w + x)
+        for (let yy = y - 4; yy <= y + 4; yy++) best = Math.max(best, f[yy * R.core.dims.w + x]);
         o[k] = +best.toFixed(3);
       }
       const ex = R.scene.catchWet?.ex;
@@ -219,14 +220,13 @@ try {
   // the fall close up
   await p.evaluate(() => {
     const R = window.reclaimed;
-    R.camera.target = [197, 137.5 * 0.8660254, 16];
-    R.camera.zoom = 5;
+    R.camera.target = [196, 137.5 * 0.8660254, 16];
+    R.camera.zoom = 7;
   });
   await sleep(2500);
   await p.screenshot({ path: path.join(out, `${tag}river-fall.png`) });
   await gif(p, `${tag}river-fall.gif`, 16, 250);
-  await p.keyboard.press('`');
-  await sleep(1000);
+  // (?perf=1: the overlay open, the GPU's timings read)
   const still = await cost(p, measureS);
   console.log(`[cost] river still: ${JSON.stringify(still)}`);
   await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'visible'));
@@ -237,7 +237,6 @@ try {
   await p.evaluate(() => document.getElementById('ui') && (document.getElementById('ui').style.visibility = 'hidden'));
   const rainCost = await cost(p, measureS);
   console.log(`[cost] river in the rain: ${JSON.stringify(rainCost)}`);
-  await p.keyboard.press('`');
   await gif(p, `${tag}river-rain.gif`, 20, 300);
   const sr = await water();
   console.log(`[river] in the rain ${JSON.stringify(sr)}`);
@@ -266,8 +265,11 @@ try {
   // its reset: back as it opened
   await pick('river');
   await click('↺ reset');
-  const s4 = await settled(60);
-  console.log(`[river] reset, settled ${JSON.stringify(s4)}`);
+  const s4a = await settled(90);
+  // (asleep, a held river relaxes to its table — riverheld.wgsl, water_depth.wgsl G.tune.pipesRiverRelax — a while)
+  await sleep(15000);
+  const s4 = await water();
+  console.log(`[river] reset, settled ${JSON.stringify(s4a)}; 15 s later ${JSON.stringify(s4)}`);
   if (!base) for (const k of Object.keys(cols)) if (Math.abs(s4.w[k] - s1.w[k]) > 0.08) fail(`the reset didn't put the river's ${k} back (${s1.w[k]} -> ${s4.w[k]})`);
 
   // ---- breach: drained, refilled by the reset, its plug back
