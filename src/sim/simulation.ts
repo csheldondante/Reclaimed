@@ -168,7 +168,7 @@ export class Simulation {
     // (round 107, pages: the page table — 8 KB — written only when it changed: a slide, a warp)
     const pages = this.world.ring;
     const fresh = pages.version !== this.pagesSent;
-    g.pages = fresh ? pages.table : undefined;
+    g.pages = fresh ? pages.entries : undefined;
     g.pageInv = fresh ? pages.inv : undefined;
     writeGlobals(g, this.globalsData);
     this.device.queue.writeBuffer(this.world.globals, 0, this.globalsData, 0, fresh ? GLOBALS_BYTES : GLOBALS_HEAD_BYTES);

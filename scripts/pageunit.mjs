@@ -22,12 +22,15 @@ const wgsl = (pg, table) => {
   const nx = W / P;
   const ny = H / P;
   const u32 = new Uint32Array(1024);
-  new Uint16Array(u32.buffer).set(pg.table);
+  new Uint16Array(u32.buffer).set(pg.entries);
   const inv32 = new Uint32Array(1024);
   new Uint16Array(inv32.buffer).set(pg.inv);
   const word = (t, i) => ((t === 0 ? u32 : inv32)[(i >> 3) * 4 + ((i >> 1) & 3)] >>> ((i & 1) * 16)) & 0xffff;
   const colSlot = (cx, cy) => {
-    if (table) return word(0, cy * nx + cx);
+    if (table) {
+      const e = word(0, cy * nx + cx);
+      return (e >> 8) * nx + (e & 0xff);
+    }
     const x = cx + pg.x / P;
     const y = cy + pg.y / P;
     return (y >= ny ? y - ny : y) * nx + (x >= nx ? x - nx : x);

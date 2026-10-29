@@ -155,7 +155,7 @@ export interface GlobalsState {
   hfield?: { bits: Uint32Array; across: number; side: number };
   /** (round 105, ringwin) the window's ring offset (cells: common.wgsl Globals.ring) — absent: 0, 0 */
   ring?: [number, number];
-  /** (round 107, pages: P2.1) the page table, window chunk -> its page (sim/pages.ts Pages.table) — absent: left as it was */
+  /** (round 107, pages) the page table, window chunk -> its page's place px | py << 8 (sim/pages.ts Pages.entries) — absent: left as it was */
   pages?: Uint16Array;
   /** (P2.2) the table backwards: slot -> window chunk, cx | cy << 8 (Pages.inv) — with `pages` */
   pageInv?: Uint16Array;

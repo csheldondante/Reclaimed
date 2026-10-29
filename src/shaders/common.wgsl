@@ -317,7 +317,7 @@ fn dSplit(v: vec2<f32>) -> Dirs { var o = dZero(); for (var k = 0u; k < NDIR; k+
 // ---- (round 105, ringwin; round 107, pages) where a window column's data lies: chunk -> slot -> offset in the page --
 // Every per-column buffer and texture is found the same way, the layers' way (layers.wgsl: a chunk's page from the
 // chunk table): the column's chunk (COLS_PAGE columns a side), the slot of the page that chunk's data is in
-// (`colSlot`: the page table, Globals.pages — docs/PAGES.md), the column's offset inside the page. A per-column
+// (`colSlot`, from its place in the page table, Globals.pages — docs/PAGES.md), the column's offset inside the page. A per-column
 // buffer is page-major: a slot's 256 columns one after another, row-major (`colIdx`). A texture is a page atlas: a
 // slot's 16 x 16 texels at (slot % chunks across, slot / chunks across) * 16 (`texPage`), the atlas the window's size.
 // Index a column only through colIdx / colIdxI / texCol / texCol2 / texColK; back through colXY; hand the CPU winIdx.
@@ -326,15 +326,17 @@ const COLS_PAGE: u32 = 16u;
 /** chunks across and down the window */
 fn pagesX() -> u32 { return G.mapW / COLS_PAGE; }
 fn pagesY() -> u32 { return G.mapH / COLS_PAGE; }
-/** window chunk c's page's slot. (Round 107, pages: which way is the build's — ?pages=, src/gpu/pages-mode.ts swaps
- *  the call below when a module is made: the ring's wrap computed (its places are the slots: identity only), or the
- *  table looked up) */
-fn colSlot(c: vec2<u32>) -> u32 { return colSlotRing(c); } // PAGE_ADDR
-/** the ring's place computed: c + ring mod the window's chunks, row-major (the identity's slot) */
-fn colSlotRing(c: vec2<u32>) -> u32 {
+/** window chunk c's page's place in the atlas (pages): its texels at place * 16, its slot place.y * pagesX + place.x.
+ *  (Round 107, pages: which way is the build's — ?pages=, src/gpu/pages-mode.ts swaps the call below when a module is
+ *  made: the ring's wrap computed (the identity's places only), or the table looked up. The table holds places, not
+ *  slots, so neither a buffer's index nor a texel needs a division: PG4's measure, a slot's % and / by the chunks
+ *  across cost the texture-heavy passes 30-130%) */
+fn colPlace(c: vec2<u32>) -> vec2<u32> { return colPlaceRing(c); } // PAGE_ADDR
+/** the ring's place computed: c + ring mod the window's chunks */
+fn colPlaceRing(c: vec2<u32>) -> vec2<u32> {
   let x = c.x + G.ring.x / COLS_PAGE;
   let y = c.y + G.ring.y / COLS_PAGE;
-  return select(y, y - pagesY(), y >= pagesY()) * pagesX() + select(x, x - pagesX(), x >= pagesX());
+  return vec2<u32>(select(x, x - pagesX(), x >= pagesX()), select(y, y - pagesY(), y >= pagesY()));
 }
 /** a u16 entry of a table of 512 vec4 (two a u32) */
 fn pageWord(t: u32, i: u32) -> u32 {
@@ -342,21 +344,26 @@ fn pageWord(t: u32, i: u32) -> u32 {
   if (t == 0u) { w = G.pages[i >> 3u][(i >> 1u) & 3u]; } else { w = G.pageInv[i >> 3u][(i >> 1u) & 3u]; }
   return (w >> ((i & 1u) * 16u)) & 0xffffu;
 }
-/** (round 107) the table looked up: window chunk c's slot (Globals.pages) */
-fn colSlotTable(c: vec2<u32>) -> u32 { return pageWord(0u, min(c.y * pagesX() + c.x, 4095u)); }
+/** an entry's place, px | py << 8 */
+fn pageEntryPlace(e: u32) -> vec2<u32> { return vec2<u32>(e & 0xffu, e >> 8u); }
+/** (round 107) the table looked up: window chunk c's place (Globals.pages; a chunk off the window is clamped into the
+ *  table — robustness only: ?pagecheck=1 counts such lookups, and none may happen) */
+fn colPlaceTable(c: vec2<u32>) -> vec2<u32> { return pageEntryPlace(pageWord(0u, min(c.y * pagesX() + c.x, 4095u))); }
+/** window chunk c's slot: its place row-major (a per-column buffer's pages) */
+fn colSlot(c: vec2<u32>) -> u32 { let p = colPlace(c); return p.y * pagesX() + p.x; }
 /** the window chunk in slot s (the table backwards: Globals.pageInv, or the ring's wrap backwards) */
 fn slotChunk(s: u32) -> vec2<u32> {
-  if (PAGE_TABLE) { let e = pageWord(1u, s); return vec2<u32>(e & 0xffu, e >> 8u); }
+  if (PAGE_TABLE) { return pageEntryPlace(pageWord(1u, s)); }
   let pg = vec2<u32>(s % pagesX(), s / pagesX());
   let rx = G.ring.x / COLS_PAGE;
   let ry = G.ring.y / COLS_PAGE;
   return vec2<u32>(select(pg.x + pagesX() - rx, pg.x - rx, pg.x >= rx), select(pg.y + pagesY() - ry, pg.y - ry, pg.y >= ry));
 }
-/** is colSlot the table's (pages-mode.ts sets it with the call above) */
+/** is colPlace the table's (pages-mode.ts sets it with the call above) */
 const PAGE_TABLE: bool = false; // PAGE_TABLE
 /** window chunk c's slot as an index: a per-chunk buffer's slot for it (the agents' dirty marks) */
 fn pageIdx(c: vec2<u32>) -> u32 { return colSlot(c); }
-/** a slot's first texel in a texel-a-column texture (the atlas, chunks-across pages wide) */
+/** a slot's first texel in a texel-a-column texture (the atlas, chunks-across pages wide; a division: texColU and texCol2 use the place) */
 fn texPage(s: u32) -> vec2<u32> { return vec2<u32>(s % pagesX(), s / pagesX()) * COLS_PAGE; }
 /** window column (x, y)'s index in a per-column buffer (x < W, y < H): page-major */
 fn colIdx(x: u32, y: u32) -> u32 { return colSlot(vec2<u32>(x, y) / COLS_PAGE) * (COLS_PAGE * COLS_PAGE) + (y % COLS_PAGE) * COLS_PAGE + x % COLS_PAGE; }
@@ -373,13 +380,13 @@ fn colXY(i: u32) -> vec2<u32> {
   return slotChunk(i / (COLS_PAGE * COLS_PAGE)) * COLS_PAGE + vec2<u32>(l % COLS_PAGE, l / COLS_PAGE);
 }
 /** window column p's texel in a texel-a-column texture */
-fn texColU(p: vec2<u32>) -> vec2<u32> { return texPage(colSlot(p / COLS_PAGE)) + p % COLS_PAGE; }
+fn texColU(p: vec2<u32>) -> vec2<u32> { return colPlace(p / COLS_PAGE) * COLS_PAGE + p % COLS_PAGE; }
 fn texCol(p: vec2<i32>) -> vec2<i32> { return vec2<i32>(texColU(vec2<u32>(p))); }
 /** a texel a 2 x 2 columns (the wind field: W / 2 across): window texel t's — a page is COLS_PAGE / 2 texels a side */
 fn texCol2(t: vec2<i32>) -> vec2<i32> {
   let h = COLS_PAGE / 2u;
   let u = vec2<u32>(t);
-  return vec2<i32>(texPage(colSlot(u / h)) / 2u + u % h);
+  return vec2<i32>(colPlace(u / h) * h + u % h);
 }
 /** k texels a column (the structures' projection: PROJ_K): window column p's j-th texel */
 fn texColK(p: vec2<i32>, k: u32, j: u32) -> vec2<i32> {

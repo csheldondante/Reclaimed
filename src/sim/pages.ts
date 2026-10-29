@@ -89,8 +89,11 @@ export class Pages {
   readonly ny: number;
   /** a ring place (py * nx + px) -> its slot: identity, or shuffled (?pageperm=) */
   readonly perm: Uint16Array;
-  /** window chunk (cy * nx + cx) -> its page's slot (Globals.pages, common.wgsl colSlot) */
+  /** window chunk (cy * nx + cx) -> its page's slot (common.wgsl colSlot) */
   readonly table: Uint16Array;
+  /** window chunk -> its slot's place in the atlas, px | py << 8 (the slot py * nx + px): what the GPU's table holds
+   *  (Globals.pages, common.wgsl colPlace) — a buffer's index and a texel both without a division */
+  readonly entries: Uint16Array;
   /** slot -> the window chunk in it, cx | cy << 8 (Globals.pageInv, common.wgsl colXY) */
   readonly inv: Uint16Array;
   /** bumped whenever the table changes (Simulation uploads it then) */
@@ -126,6 +129,7 @@ export class Pages {
     }
     this.identity = this.perm.every((v, k) => v === k);
     this.table = new Uint16Array(n);
+    this.entries = new Uint16Array(n);
     this.inv = new Uint16Array(n);
     this.build();
   }
@@ -141,6 +145,8 @@ export class Pages {
         const px = cx + kx >= nx ? cx + kx - nx : cx + kx;
         const s = this.perm[py * nx + px];
         this.table[cy * nx + cx] = s;
+        const sy = (s / nx) | 0;
+        this.entries[cy * nx + cx] = (s - sy * nx) | (sy << 8);
         this.inv[s] = cx | (cy << 8);
       }
     }

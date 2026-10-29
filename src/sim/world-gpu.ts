@@ -483,7 +483,7 @@ export class WorldGpu {
 
   /** (round 107) the page table changed (Simulation.uploadGlobals wrote it to the Globals): the storage copy too */
   pagesChanged(): void {
-    if (this.pageTab) this.device.queue.writeBuffer(this.pageTab, 0, Uint32Array.from(this.ring.table));
+    if (this.pageTab) this.device.queue.writeBuffer(this.pageTab, 0, Uint32Array.from(this.ring.entries));
   }
 
   destroy(): void {

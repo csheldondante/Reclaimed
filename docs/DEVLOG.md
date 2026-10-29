@@ -11586,3 +11586,38 @@ updates on), so this is its own commit: the new baseline for P2.3b's identity te
   row's first), so the edge's triangles took a wrong height; with pages it looks up a chunk off the window. Found by
   `?pagecheck=1` (watersurf: ~220 000 off-window lookups in a pagetest load). Both triangles there use `ur`, so neither
   is made: the window's last half column of odd rows has no water surface, as it has no column to meet.
+
+### Round 107 (`pages`): PG4, the ABAB — and the table holds places, not slots
+
+- **places merged** (e8187b0: riverfalls, agentspike). agentspike's navCost is indexed colIdx * NAV_K, its region
+  clears go through columnBufs (page runs); riverfalls finds columns through colIdxI. M1's storage table moved from
+  binding 37 to 61 (agents.wgsl navCost took 37).
+- **The first ABAB** (framecost, places e8187b0 against pages, 4 + 4 alternated runs a cell, window 256 zoom 14,
+  parked and 60 cells/s): pages lost everywhere — the GPU's passes +9.3 % parked, +12.5 % panning, the sims' passes
+  +24-29 %, every pages run slower than every places run. The texture-heavy passes took most: surface +128 %,
+  renderfields +90 %, sway +45 %. The table held slots, and a texel's page needed slot % and / the chunks across.
+- **Fix: the GPU's table holds each page's place in the atlas** (px | py << 8: Pages.entries; Pages.table keeps
+  the slots for the CPU). A buffer's slot is py * nx + px, a texel place * 16: no division anywhere (common.wgsl
+  colPlace; colSlot from it). pageunit 10.2 M checks, 0 wrong; pagetest (merged, ring at 0 against the table at
+  128,64 with ?pageperm=7): 37 of 37 identical, no off-window lookups (54 kernels checked).
+- **The second ABAB** (data/bench/pg4-abab: the framecost JSONs), GPU passes a frame, places -> pages (the mean of
+  4 each; every run listed in the files):
+
+  | window, speed | all passes | the sims' passes | span p50 |
+  |---|---|---|---|
+  | 256, parked | 6.95 -> 7.17 (+3.2 %) | 1.41 -> 1.50 (+6.4 %) | +4.0 % |
+  | 256, 60 c/s | 4.86 -> 5.24 (+7.8 %) | 0.30 -> 0.33 (+11 %) | +6.9 % |
+  | 512, parked | 9.74 -> 9.75 (+0.2 %) | 2.38 -> 2.34 (-1.5 %) | -1.9 % |
+  | 512, 60 c/s | 8.27 -> 9.31 (+12.5 %) | 0.72 -> 0.94 (+30 %) | +7.8 % |
+
+  Against the 5 % rule: parked passes (+0.2, +3.2 %); panning fails (+7.8, +12.5 %). Where it goes, panning at 512:
+  `draw` +0.29 ms (3.73 -> 4.01: its vertex and fragment work finds columns through the table now), sway +0.056,
+  surface +0.046, particles-emit +0.028, riverfalls +0.027, renderprep +0.021, renderfields +0.015, structure +0.011.
+  Parked, draw is +0.23 ms too, offset by the field mesh (less this run, the scene's content). water-flux and
+  water-depth got cheaper (-10 to -23 %: page-major neighbours share cache lines in a page). The per-column cost is
+  the table's uniform loads where a column is found several times (surface: 7 lookups a column — asleep, drowsy,
+  its buffer, four texels; sway, renderfields alike), so the fix is PAGES.md's own-page fast path: the chunk's
+  place found once (the cull wrapper's list entry carries it; elsewhere computed once a column) — BACKLOG PG4.
+- culltest, places against pages: both fail "the fire lit" (fireM 0) and differ in plants asleep (veg 7 / 0 and 8
+  / 4 columns); pages also has 36 columns of flux changed in chunks never woken, places 0 — P2.3a's stagger is a
+  different pattern of slow turns (PG5).

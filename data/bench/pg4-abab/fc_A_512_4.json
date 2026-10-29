@@ -1,0 +1,1056 @@
+[
+ {
+  "wall": 10012,
+  "frames": 1013,
+  "fps": 101.2,
+  "iv": {
+   "p50": 10,
+   "p95": 10.1,
+   "p99": 10.5,
+   "max": 28.9,
+   "over20": 2,
+   "over25": 1,
+   "over33": 0,
+   "over50": 0
+  },
+  "cpu": {
+   "p50": 0.8,
+   "p95": 1.3,
+   "max": 5
+  },
+  "held": -751,
+  "gpu": {
+   "frames": 623,
+   "spanP50": 10.29,
+   "spanP95": 17.9,
+   "spanMax": 34.5,
+   "sumMean": 9.97,
+   "gapP50": 2.5,
+   "gapP95": 18.73,
+   "busy": 0.686
+  },
+  "passes": [
+   {
+    "k": "draw",
+    "mean": 2.616,
+    "p95": 4.34,
+    "max": 11.45,
+    "ran": 522
+   },
+   {
+    "k": "agents",
+    "mean": 1.14,
+    "p95": 2.64,
+    "max": 5.04,
+    "ran": 495
+   },
+   {
+    "k": "fieldmesh-hash",
+    "mean": 0.771,
+    "p95": 1.19,
+    "max": 1.54,
+    "ran": 522
+   },
+   {
+    "k": "gbuffer",
+    "mean": 0.613,
+    "p95": 0.96,
+    "max": 1.89,
+    "ran": 522
+   },
+   {
+    "k": "renderprep",
+    "mean": 0.496,
+    "p95": 1.51,
+    "max": 2.87,
+    "ran": 256
+   },
+   {
+    "k": "fieldmesh-verts",
+    "mean": 0.427,
+    "p95": 0.92,
+    "max": 2.15,
+    "ran": 522
+   },
+   {
+    "k": "fieldmesh-quads",
+    "mean": 0.345,
+    "p95": 0.95,
+    "max": 1.85,
+    "ran": 522
+   },
+   {
+    "k": "shadow",
+    "mean": 0.339,
+    "p95": 0.55,
+    "max": 1.94,
+    "ran": 522
+   },
+   {
+    "k": "structure",
+    "mean": 0.291,
+    "p95": 0.72,
+    "max": 1.27,
+    "ran": 495
+   },
+   {
+    "k": "sediment-out",
+    "mean": 0.268,
+    "p95": 0.71,
+    "max": 1.26,
+    "ran": 298
+   },
+   {
+    "k": "fieldmesh-sample",
+    "mean": 0.248,
+    "p95": 0.69,
+    "max": 1.43,
+    "ran": 522
+   },
+   {
+    "k": "particles-emit",
+    "mean": 0.207,
+    "p95": 0.49,
+    "max": 1.18,
+    "ran": 495
+   },
+   {
+    "k": "shadow-static",
+    "mean": 0.186,
+    "p95": 1.12,
+    "max": 1.99,
+    "ran": 129
+   },
+   {
+    "k": "fieldmesh-count",
+    "mean": 0.163,
+    "p95": 0.58,
+    "max": 1.12,
+    "ran": 522
+   },
+   {
+    "k": "fieldmesh-qcount",
+    "mean": 0.162,
+    "p95": 0.57,
+    "max": 1.09,
+    "ran": 522
+   },
+   {
+    "k": "sway",
+    "mean": 0.138,
+    "p95": 0.26,
+    "max": 0.65,
+    "ran": 495
+   },
+   {
+    "k": "riverfalls",
+    "mean": 0.12,
+    "p95": 0.18,
+    "max": 0.45,
+    "ran": 495
+   },
+   {
+    "k": "lava-prep",
+    "mean": 0.119,
+    "p95": 0.26,
+    "max": 0.47,
+    "ran": 495
+   },
+   {
+    "k": "particles-petals",
+    "mean": 0.1,
+    "p95": 0.22,
+    "max": 0.44,
+    "ran": 495
+   },
+   {
+    "k": "watersurf",
+    "mean": 0.096,
+    "p95": 0.3,
+    "max": 0.57,
+    "ran": 256
+   },
+   {
+    "k": "sediment",
+    "mean": 0.089,
+    "p95": 0.22,
+    "max": 0.98,
+    "ran": 298
+   },
+   {
+    "k": "copyback",
+    "mean": 0.087,
+    "p95": 0.2,
+    "max": 0.36,
+    "ran": 495
+   },
+   {
+    "k": "particles-update",
+    "mean": 0.084,
+    "p95": 0.2,
+    "max": 0.32,
+    "ran": 495
+   },
+   {
+    "k": "edit",
+    "mean": 0.078,
+    "p95": 0.3,
+    "max": 0.69,
+    "ran": 266
+   },
+   {
+    "k": "water-flux",
+    "mean": 0.077,
+    "p95": 0.17,
+    "max": 0.4,
+    "ran": 495
+   },
+   {
+    "k": "lava-depth",
+    "mean": 0.075,
+    "p95": 0.18,
+    "max": 0.41,
+    "ran": 495
+   },
+   {
+    "k": "surface",
+    "mean": 0.07,
+    "p95": 0.17,
+    "max": 0.33,
+    "ran": 495
+   },
+   {
+    "k": "renderfields",
+    "mean": 0.063,
+    "p95": 0.18,
+    "max": 0.47,
+    "ran": 249
+   },
+   {
+    "k": "water-depth",
+    "mean": 0.057,
+    "p95": 0.13,
+    "max": 0.31,
+    "ran": 495
+   },
+   {
+    "k": "windfield",
+    "mean": 0.056,
+    "p95": 0.12,
+    "max": 0.18,
+    "ran": 495
+   },
+   {
+    "k": "contamination",
+    "mean": 0.045,
+    "p95": 0.1,
+    "max": 0.18,
+    "ran": 495
+   },
+   {
+    "k": "lava-flux",
+    "mean": 0.04,
+    "p95": 0.1,
+    "max": 0.18,
+    "ran": 495
+   },
+   {
+    "k": "climate",
+    "mean": 0.039,
+    "p95": 0.21,
+    "max": 0.54,
+    "ran": 149
+   },
+   {
+    "k": "fire",
+    "mean": 0.038,
+    "p95": 0.09,
+    "max": 0.17,
+    "ran": 495
+   },
+   {
+    "k": "oil-depth",
+    "mean": 0.036,
+    "p95": 0.08,
+    "max": 0.14,
+    "ran": 495
+   },
+   {
+    "k": "moisture",
+    "mean": 0.036,
+    "p95": 0.08,
+    "max": 0.17,
+    "ran": 495
+   },
+   {
+    "k": "wilt",
+    "mean": 0.036,
+    "p95": 0.09,
+    "max": 0.16,
+    "ran": 495
+   },
+   {
+    "k": "particles-fire",
+    "mean": 0.03,
+    "p95": 0.07,
+    "max": 0.11,
+    "ran": 495
+   },
+   {
+    "k": "oil-flux",
+    "mean": 0.029,
+    "p95": 0.07,
+    "max": 0.13,
+    "ran": 495
+   },
+   {
+    "k": "fieldmesh-alloc",
+    "mean": 0.022,
+    "p95": 0.04,
+    "max": 0.05,
+    "ran": 522
+   },
+   {
+    "k": "stats",
+    "mean": 0.019,
+    "p95": 0,
+    "max": 0.56,
+    "ran": 27
+   },
+   {
+    "k": "fieldmesh-qalloc",
+    "mean": 0.007,
+    "p95": 0.01,
+    "max": 0.02,
+    "ran": 522
+   },
+   {
+    "k": "tiles-bake",
+    "mean": 0.006,
+    "p95": 0,
+    "max": 0.29,
+    "ran": 22
+   },
+   {
+    "k": "tiles-g",
+    "mean": 0.004,
+    "p95": 0,
+    "max": 0.37,
+    "ran": 22
+   },
+   {
+    "k": "ecology",
+    "mean": 0.003,
+    "p95": 0.04,
+    "max": 0.06,
+    "ran": 40
+   },
+   {
+    "k": "particles-burst",
+    "mean": 0,
+    "p95": 0,
+    "max": 0.05,
+    "ran": 5
+   }
+  ],
+  "longs": [
+   "28.9 ms: cpu 5.0 held 1 busy 0 maps 5 pend 6 | gpu span 15.1 sum 13.8 gap 2.0 | agents 2.6, structure 1.3, sediment-out 1.3, particles-emit 1.2"
+  ],
+  "causes": {
+   "gpu-held": {
+    "n": 106,
+    "ms": 2964
+   },
+   "browser": {
+    "n": 1,
+    "ms": 39
+   }
+  },
+  "slideCpu": {},
+  "cpuTop": [
+   "render 0.31x645 (max 1.6)",
+   "sim 0.23x645 (max 1.1)",
+   "judge.pass 10.93x12 (max 20.3)",
+   "units 0.04x545 (max 0.2)",
+   "settle 0.03x645 (max 0.2)",
+   "mesh 0.02x645 (max 0.6)",
+   "judge 0.02x645 (max 0.2)",
+   "rs.hash 0.45x16 (max 0.6)",
+   "rs.encode 0.88x4 (max 1.6)"
+  ],
+  "inst": {
+   "opaque": 15898,
+   "blend": 230,
+   "tops": 27,
+   "prisms": 631,
+   "plants": 15240
+  },
+  "tSec": 102,
+  "post": [],
+  "slides": 0,
+  "slideSync": [],
+  "came": {
+   "generated": 0,
+   "thawed": 0,
+   "loaded": 0
+  },
+  "speed": 0,
+  "win": 512,
+  "zoom": 5,
+  "throttle": 0
+ },
+ {
+  "wall": 10018,
+  "frames": 985,
+  "fps": 98.3,
+  "iv": {
+   "p50": 10,
+   "p95": 10.4,
+   "p99": 20,
+   "max": 39.9,
+   "over20": 9,
+   "over25": 6,
+   "over33": 1,
+   "over50": 0
+  },
+  "cpu": {
+   "p50": 0.7,
+   "p95": 1.2,
+   "max": 5
+  },
+  "held": -173,
+  "gpu": {
+   "frames": 711,
+   "spanP50": 8.83,
+   "spanP95": 14.13,
+   "spanMax": 40.7,
+   "sumMean": 8.25,
+   "gapP50": 2.83,
+   "gapP95": 16.86,
+   "busy": 0.663
+  },
+  "passes": [
+   {
+    "k": "draw",
+    "mean": 3.979,
+    "p95": 6.06,
+    "max": 29.6,
+    "ran": 669
+   },
+   {
+    "k": "fieldmesh-hash",
+    "mean": 0.786,
+    "p95": 1.17,
+    "max": 1.82,
+    "ran": 666
+   },
+   {
+    "k": "renderprep",
+    "mean": 0.701,
+    "p95": 1.86,
+    "max": 5.79,
+    "ran": 347
+   },
+   {
+    "k": "gbuffer",
+    "mean": 0.699,
+    "p95": 1.19,
+    "max": 2.64,
+    "ran": 669
+   },
+   {
+    "k": "watersurf",
+    "mean": 0.181,
+    "p95": 0.51,
+    "max": 1.39,
+    "ran": 341
+   },
+   {
+    "k": "shadow-static",
+    "mean": 0.179,
+    "p95": 0.9,
+    "max": 1.88,
+    "ran": 180
+   },
+   {
+    "k": "particles-emit",
+    "mean": 0.172,
+    "p95": 0.46,
+    "max": 1.73,
+    "ran": 503
+   },
+   {
+    "k": "sway",
+    "mean": 0.147,
+    "p95": 0.36,
+    "max": 0.96,
+    "ran": 503
+   },
+   {
+    "k": "shadow",
+    "mean": 0.145,
+    "p95": 0.34,
+    "max": 0.63,
+    "ran": 669
+   },
+   {
+    "k": "structure",
+    "mean": 0.138,
+    "p95": 0.79,
+    "max": 1.96,
+    "ran": 168
+   },
+   {
+    "k": "riverfalls",
+    "mean": 0.122,
+    "p95": 0.31,
+    "max": 0.92,
+    "ran": 503
+   },
+   {
+    "k": "water-flux",
+    "mean": 0.095,
+    "p95": 0.25,
+    "max": 0.56,
+    "ran": 503
+   },
+   {
+    "k": "particles-petals",
+    "mean": 0.087,
+    "p95": 0.2,
+    "max": 0.53,
+    "ran": 503
+   },
+   {
+    "k": "particles-update",
+    "mean": 0.066,
+    "p95": 0.15,
+    "max": 0.26,
+    "ran": 503
+   },
+   {
+    "k": "renderfields",
+    "mean": 0.061,
+    "p95": 0.47,
+    "max": 1.36,
+    "ran": 104
+   },
+   {
+    "k": "surface",
+    "mean": 0.06,
+    "p95": 0.39,
+    "max": 0.76,
+    "ran": 168
+   },
+   {
+    "k": "fieldmesh-quads",
+    "mean": 0.057,
+    "p95": 0.01,
+    "max": 7.52,
+    "ran": 655
+   },
+   {
+    "k": "windfield",
+    "mean": 0.056,
+    "p95": 0.12,
+    "max": 0.83,
+    "ran": 503
+   },
+   {
+    "k": "fieldmesh-verts",
+    "mean": 0.051,
+    "p95": 0.01,
+    "max": 8.05,
+    "ran": 655
+   },
+   {
+    "k": "copyback",
+    "mean": 0.049,
+    "p95": 0.23,
+    "max": 0.71,
+    "ran": 503
+   },
+   {
+    "k": "water-depth",
+    "mean": 0.046,
+    "p95": 0.12,
+    "max": 0.3,
+    "ran": 503
+   },
+   {
+    "k": "tiles-bake",
+    "mean": 0.037,
+    "p95": 0.22,
+    "max": 0.58,
+    "ran": 127
+   },
+   {
+    "k": "lava-prep",
+    "mean": 0.036,
+    "p95": 0.23,
+    "max": 0.49,
+    "ran": 168
+   },
+   {
+    "k": "fieldmesh-sample",
+    "mean": 0.034,
+    "p95": 0.02,
+    "max": 3.63,
+    "ran": 655
+   },
+   {
+    "k": "atlas-colHeight",
+    "mean": 0.027,
+    "p95": 0.33,
+    "max": 1.12,
+    "ran": 40
+   },
+   {
+    "k": "particles-fire",
+    "mean": 0.025,
+    "p95": 0.06,
+    "max": 0.12,
+    "ran": 503
+   },
+   {
+    "k": "tiles-g",
+    "mean": 0.022,
+    "p95": 0.13,
+    "max": 1.03,
+    "ran": 127
+   },
+   {
+    "k": "fieldmesh-qcount",
+    "mean": 0.021,
+    "p95": 0.01,
+    "max": 2.01,
+    "ran": 655
+   },
+   {
+    "k": "fieldmesh-alloc",
+    "mean": 0.02,
+    "p95": 0.02,
+    "max": 0.12,
+    "ran": 655
+   },
+   {
+    "k": "stats",
+    "mean": 0.02,
+    "p95": 0,
+    "max": 0.86,
+    "ran": 29
+   },
+   {
+    "k": "fieldmesh-count",
+    "mean": 0.019,
+    "p95": 0.01,
+    "max": 1.61,
+    "ran": 655
+   },
+   {
+    "k": "project",
+    "mean": 0.015,
+    "p95": 0,
+    "max": 1.31,
+    "ran": 14
+   },
+   {
+    "k": "lava-depth",
+    "mean": 0.014,
+    "p95": 0.08,
+    "max": 0.22,
+    "ran": 168
+   },
+   {
+    "k": "moisture",
+    "mean": 0.01,
+    "p95": 0.05,
+    "max": 0.14,
+    "ran": 168
+   },
+   {
+    "k": "fire",
+    "mean": 0.01,
+    "p95": 0.06,
+    "max": 0.15,
+    "ran": 168
+   },
+   {
+    "k": "contamination",
+    "mean": 0.009,
+    "p95": 0.05,
+    "max": 0.13,
+    "ran": 168
+   },
+   {
+    "k": "atlas-formSeed",
+    "mean": 0.009,
+    "p95": 0.11,
+    "max": 0.29,
+    "ran": 40
+   },
+   {
+    "k": "fieldmesh-qalloc",
+    "mean": 0.008,
+    "p95": 0.01,
+    "max": 0.03,
+    "ran": 655
+   },
+   {
+    "k": "oil-depth",
+    "mean": 0.007,
+    "p95": 0.04,
+    "max": 0.1,
+    "ran": 168
+   },
+   {
+    "k": "sediment",
+    "mean": 0.007,
+    "p95": 0.04,
+    "max": 0.12,
+    "ran": 104
+   },
+   {
+    "k": "lava-flux",
+    "mean": 0.006,
+    "p95": 0.03,
+    "max": 0.08,
+    "ran": 168
+   },
+   {
+    "k": "oil-flux",
+    "mean": 0.005,
+    "p95": 0.02,
+    "max": 0.07,
+    "ran": 168
+   },
+   {
+    "k": "sediment-out",
+    "mean": 0.005,
+    "p95": 0.02,
+    "max": 0.19,
+    "ran": 104
+   },
+   {
+    "k": "wilt",
+    "mean": 0.005,
+    "p95": 0.03,
+    "max": 0.07,
+    "ran": 168
+   },
+   {
+    "k": "climate",
+    "mean": 0.002,
+    "p95": 0.02,
+    "max": 0.05,
+    "ran": 50
+   },
+   {
+    "k": "ecology",
+    "mean": 0.001,
+    "p95": 0,
+    "max": 0.05,
+    "ran": 14
+   },
+   {
+    "k": "slide",
+    "mean": 0.001,
+    "p95": 0,
+    "max": 0.1,
+    "ran": 14
+   }
+  ],
+  "longs": [
+   "29.4 ms: cpu 1.0 held 1 busy 0 maps 4 pend 4 | gpu span 5.3 sum 5.0 gap 27.7 | stats 0.9, particles-emit 0.7, windfield 0.6, sway 0.4",
+   "39.9 ms: cpu 0.8 held 0 busy 0 maps 0 pend 4 | gpu span 15.1 sum 13.9 gap 15.9 | draw 4.2, renderprep 1.4, fieldmesh-hash 1.1, fieldmesh-verts 0.7",
+   "29.9 ms: cpu 1.0 held 0 busy 0 maps 2 pend 3 | gpu span 13.2 sum 12.2 gap 2.0 | structure 1.7, particles-emit 1.7, renderfields 1.3, sway 1.0",
+   "28.4 ms: cpu 1.0 held 0 busy 0 maps 0 pend 4 | gpu span 5.9 sum 5.4 gap 46.3 | structure 1.1, particles-emit 0.6, renderfields 0.5, surface 0.5",
+   "27.9 ms: cpu 0.5 held 0 busy 0 maps 0 pend 3 | gpu span 8.9 sum 8.1 gap 8.3 | draw 3.8, renderprep 1.4, fieldmesh-hash 1.2, gbuffer 0.8",
+   "28.1 ms: cpu 0.9 held 1 busy 0 maps 2 pend 2 | gpu span 4.5 sum 4.1 gap 22.8 | structure 0.8, particles-emit 0.4, surface 0.4, renderfields 0.3"
+  ],
+  "causes": {
+   "gpu-held": {
+    "n": 80,
+    "ms": 2538
+   },
+   "gpu-busy": {
+    "n": 2,
+    "ms": 68
+   },
+   "gc": {
+    "n": 1,
+    "ms": 39
+   }
+  },
+  "slideCpu": {
+   "sl.before.settle": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "fz.saveItem": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.03
+   },
+   "fz.things": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "fz.snapshot": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.02
+   },
+   "slide.freeze": {
+    "max": 0.2,
+    "n": 15,
+    "mean": 0.07
+   },
+   "rs.freeze": {
+    "max": 0.2,
+    "n": 15,
+    "mean": 0.09
+   },
+   "slide.move": {
+    "max": 0.2,
+    "n": 15,
+    "mean": 0.09
+   },
+   "slide.table": {
+    "max": 0.3,
+    "n": 15,
+    "mean": 0.19
+   },
+   "sl.cpuGrids": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "sl.camEvents": {
+    "max": 0,
+    "n": 15,
+    "mean": 0
+   },
+   "sl.onShift0": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "sl.onShift1": {
+    "max": 0,
+    "n": 15,
+    "mean": 0
+   },
+   "sl.onShift2": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.04
+   },
+   "sl.onShift3": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "sl.onShift4": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "sl.windowMoved": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.02
+   },
+   "slide.grids": {
+    "max": 0.4,
+    "n": 15,
+    "mean": 0.28
+   },
+   "slide.band": {
+    "max": 0.4,
+    "n": 15,
+    "mean": 0.28
+   },
+   "slide.weather": {
+    "max": 0.4,
+    "n": 15,
+    "mean": 0.28
+   },
+   "slide.undo": {
+    "max": 0.4,
+    "n": 15,
+    "mean": 0.28
+   },
+   "slide.cb0": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.02
+   },
+   "sl.lvl.integrity": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "slide.cb1": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "slide.cb2": {
+    "max": 0.2,
+    "n": 15,
+    "mean": 0.1
+   },
+   "slide.cb3": {
+    "max": 0.1,
+    "n": 15,
+    "mean": 0.01
+   },
+   "slide": {
+    "max": 0.5,
+    "n": 15,
+    "mean": 0.41
+   },
+   "fz.slotFor": {
+    "max": 0.1,
+    "n": 120,
+    "mean": 0
+   },
+   "fz.copyOut": {
+    "max": 0.2,
+    "n": 120,
+    "mean": 0.05
+   },
+   "fz.fill": {
+    "max": 0.1,
+    "n": 120,
+    "mean": 0.04
+   }
+  },
+  "cpuTop": [
+   "render 0.34x730 (max 1.4)",
+   "sim 0.16x730 (max 1.1)",
+   "write 0.55x120 (max 0.8)",
+   "write.onRelief 0.45x120 (max 0.7)",
+   "finish.encode 0.17x135 (max 0.7)",
+   "finish.parse 0.15x126 (max 0.5)",
+   "mesh 0.02x730 (max 0.2)",
+   "rs.thaw 0.09x120 (max 0.2)",
+   "write.pool 0.09x120 (max 0.2)",
+   "settle 0.01x730 (max 0.1)",
+   "judge 0.01x730 (max 0.1)",
+   "slide 0.41x15 (max 0.5)",
+   "fz.copyOut 0.05x120 (max 0.2)",
+   "units 0.01x596 (max 0.1)"
+  ],
+  "inst": {
+   "opaque": 231,
+   "blend": 0,
+   "tops": 0,
+   "prisms": 0,
+   "plants": 231
+  },
+  "tSec": 114,
+  "post": [
+   {
+    "extra": -17.8,
+    "over20": 1,
+    "top": "draw 45.9, renderprep 15.5, fieldmesh-hash 10.6, structure 7.4, gbuffer 5.1, particles-emit 4.3"
+   },
+   {
+    "extra": 88.9,
+    "over20": 2,
+    "top": "draw 62.1, fieldmesh-hash 18.1, renderprep 17.7, structure 15.3, fieldmesh-quads 11.1, particles-emit 9.9"
+   },
+   {
+    "extra": 44.3,
+    "over20": 1,
+    "top": "draw 61.7, renderprep 18.3, fieldmesh-hash 16.8, structure 10.5, gbuffer 8.5, particles-emit 6.0"
+   },
+   {
+    "extra": 91.3,
+    "over20": 1,
+    "top": "draw 44.0, fieldmesh-quads 32.4, fieldmesh-verts 26.6, structure 16.4, fieldmesh-sample 13.6, fieldmesh-hash 10.8"
+   },
+   {
+    "extra": -4.9,
+    "over20": 1,
+    "top": "draw 49.5, fieldmesh-hash 15.9, renderprep 13.0, gbuffer 10.6, fieldmesh-verts 8.2, fieldmesh-quads 6.8"
+   },
+   {
+    "extra": -9,
+    "over20": 1,
+    "top": "draw 60.8, gbuffer 14.7, fieldmesh-hash 14.6, structure 7.7, renderprep 7.3, particles-emit 4.2"
+   },
+   {
+    "extra": -8.7,
+    "over20": 0,
+    "top": "draw 34.0, structure 12.8, renderprep 12.1, fieldmesh-hash 11.9, gbuffer 9.1, particles-emit 7.1"
+   },
+   {
+    "extra": 59.3,
+    "over20": 0,
+    "top": "draw 99.3, structure 12.6, renderprep 12.1, gbuffer 11.5, fieldmesh-hash 11.1, renderfields 6.3"
+   },
+   {
+    "extra": 13.6,
+    "over20": 0,
+    "top": "draw 65.7, fieldmesh-hash 17.5, gbuffer 14.7, renderprep 10.6, structure 8.6, particles-emit 4.7"
+   },
+   {
+    "extra": 56.8,
+    "over20": 0,
+    "top": "draw 74.5, fieldmesh-hash 16.1, gbuffer 14.9, structure 14.6, renderprep 9.8, particles-emit 7.4"
+   },
+   {
+    "extra": 88.6,
+    "over20": 0,
+    "top": "draw 62.7, renderprep 28.2, structure 19.0, fieldmesh-hash 18.3, gbuffer 15.0, renderfields 11.5"
+   },
+   {
+    "extra": 80.4,
+    "over20": 0,
+    "top": "draw 70.1, gbuffer 16.3, fieldmesh-hash 15.7, structure 15.4, renderprep 13.0, renderfields 8.7"
+   },
+   {
+    "extra": -3.5,
+    "over20": 0,
+    "top": "draw 63.5, fieldmesh-hash 14.6, renderprep 11.6, gbuffer 10.3, structure 7.5, surface 3.4"
+   },
+   {
+    "extra": 29.7,
+    "over20": 0,
+    "top": "draw 25.0, fieldmesh-quads 4.0, gbuffer 3.1, renderprep 2.8, fieldmesh-hash 2.4, fieldmesh-verts 2.2"
+   }
+  ],
+  "slides": 15,
+  "slideSync": [
+   0.6,
+   0.5,
+   0.5,
+   0.5,
+   0.4,
+   0.3,
+   0.4,
+   0.5,
+   0.4,
+   0.4,
+   0.2,
+   0.4,
+   0.4,
+   0.5,
+   0.3
+  ],
+  "came": {
+   "generated": 120,
+   "thawed": 0,
+   "loaded": 0
+  },
+  "speed": 60,
+  "win": 512,
+  "zoom": 5,
+  "throttle": 0
+ }
+]
