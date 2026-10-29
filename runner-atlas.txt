@@ -1,0 +1,39 @@
+http://localhost:5211/?skipmenu=1&level=atlas&heroes=http%3A%2F%2Flocalhost%3A5208%2Fhero.mjs
+[console.error] Failed to load resource: the server responded with a status of 404 (Not Found)
+ok   no fatal overlay
+ok   the hero sandbox is mounted
+ok   the page carries the shared-modules import map
+ok   dropped in as the wanderer at 125.2,108.1,119.7
+ok   the inspector shows the intent, the camera and the abilities
+     saved shots\herosandbox-atlas\walk.gif
+ok   it walked 43.9 cells (the scripted stick)
+ok   the intent trace kept 290 intents
+     saved shots\herosandbox-atlas\fight.gif
+FAIL the raiders chased it (9.0,9.5,10.0 → 8.3,-1.0,10.2; raider:chase:3, , brute:idle:10, ally:idle:6)
+ok   their blows crossed the boundary (actor.hurt, hurt): health 17
+ok   the hero's swings crossed it (units.hit)
+ok   the boundary log panel shows them
+ok   back out to the editor: no hero, no stick
+     saved shots\herosandbox-atlas\vessels.png
+FAIL the water vessel found: 5 cells, rim 116.2, to 116.0, 3 cells³ in 5 pours
+FAIL the sand vessel found: 5 cells, to 115.9
+     saved shots\herosandbox-atlas\fill.gif
+FAIL water stands in it: 0.00 deep, at 119.43 (filled to 115.96)
+FAIL sand fills the other: its top 119.49 over a floor of 115.19, soil
+     saved shots\herosandbox-atlas\filled.png
+     an open spot: (it was a basin)
+ok   the test module's hero registered from http://localhost:5208/hero.mjs: wanderer, roller
+     saved shots\herosandbox-atlas\external-hero.gif
+ok   the roller rolled 4.0 cells
+ok   the inspector shows it as a module hero, with its Dash
+ok   its host.log line crossed the boundary
+ok   its tunables in the hero tuning panel: camera.zoom, camera.behind, camera.firm, camera.follow, hero.speed, hero.dash, hero.dashTime, hero.cooldown, hero.damage (speed set to 12)
+[console.error] [hero] Error: hero module http://localhost:5208/hero-old.mjs: it was built against hero contract 0.9, this host is 1.1 (a different major: signatures changed)
+ok   a module of an older contract is refused, saying why: hero module http://localhost:5208/hero-old.mjs: it was built against hero contract 0.9, this host is 1.1 (a different major: signatures changed)
+ok   a feedback note: {"kind":"reclaimed-hero-feedback","note":"headlesstest:theswingshouldsayhowfaritreaches","role":"wanderer","contract":"1.1","calls":24,"intents":287,"tunables":14,"shot":"data:image/png;base64,"}
+ok   Obstacle course #1: 28 pieces, 4 foes, the hero at its start
+     saved shots\herosandbox-atlas\course.gif
+     saved shots\herosandbox-atlas\course.png
+ok   no fatal overlay at the end
+ok   no page errors
+5 FAILED

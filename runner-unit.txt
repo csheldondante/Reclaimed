@@ -1,0 +1,19 @@
+ok   a walled vessel spills at its rim (16): 16
+ok   its inside only: 121 cells (π·6² / ROW_H ≈ 130)
+ok   volume 695.8 = cells × depth 5.75
+ok   poured one column a command at its depth (121)
+ok   sand: deposits, layers its depth
+ok   a notched vessel spills at its notch (13): 13
+ok   a slope is not a vessel: it runs off the edge of the loaded world: not enclosed
+ok   a plain is not a vessel: nothing to fill there: the rim is no higher than the floor
+ok   a pit in a plain fills to the plain (10, 69 cells)
+ok   a tap on the inner wall fills the vessel
+ok   a module of 1.0 or 1.1 loads on 1.1
+ok   2.0, 1.2 and none are refused, saying why ("it was built against hero contract 2.0, this host is 1.1 (a different major: signatures changed)")
+ok   the Walker is registered built-in
+ok   a second game's hero can't take a role silently: hero registry: the role "wanderer" from http://elsewhere/heroes.js is taken by built-in
+ok   the Walker's numbers and its camera as a registry (speed 8, zoom 14, behind 35°)
+ok   a slider moved sets the hero's value (speed 12, behind 50° in radians)
+ok   reset puts it back
+ok   it walks at its speed (10.133)
+all ok
