@@ -12,7 +12,12 @@
 
 import type { Host, Scene } from '../scenes/world-core';
 import { AtlasView } from '../scenes/atlas-view';
-import { CAPS_PRESETS, type BarrierKind, type BuriedProp, type ExcavationSite, type FloodFluid, type PassCaps } from '../api/contracts/terrain';
+import type { BarrierKind, BuriedProp, ExcavationSite, FloodFluid } from '../api/contracts/terrain';
+import { WALKER_PROFILE, type ControllerProfile } from '../api/contracts/play';
+import { library } from '../play/library';
+
+/** (runplay, round 119) the bodies the viewer offers: play's profiles (the walker, the hoverbike, the lich) */
+const BODIES: Record<'walker' | 'bike' | 'lich', ControllerProfile> = { walker: WALKER_PROFILE, bike: library.get('hoverbike')!.profile(), lich: library.get('lich')!.profile() };
 import { clearFor, partition, RegionGraph, type TerrainSamples } from './partition';
 import { TerrainSystem } from './terrain';
 import { cellAt } from '../world/lattice';
@@ -41,7 +46,8 @@ export class TerrainView implements Scene {
   private info: HTMLDivElement;
   private graph: RegionGraph | null = null;
   private img: HTMLCanvasElement | null = null;
-  private caps: PassCaps = CAPS_PRESETS.walker;
+  private caps: ControllerProfile = WALKER_PROFILE;
+  private capsName = 'walker';
   private picked = -1;
   private reach = new Set<number>();
   private arm: FloodFluid | null = null;
@@ -107,7 +113,7 @@ export class TerrainView implements Scene {
       });
     }
     d.querySelector<HTMLButtonElement>('[data-graph]')!.onclick = () => void this.makeGraph();
-    d.querySelectorAll<HTMLButtonElement>('[data-caps]').forEach((b) => (b.onclick = () => this.setCaps(CAPS_PRESETS[b.dataset.caps as 'walker'])));
+    d.querySelectorAll<HTMLButtonElement>('[data-caps]').forEach((b) => (b.onclick = () => this.setCaps(BODIES[b.dataset.caps as 'walker'], b.dataset.caps!)));
     d.querySelectorAll<HTMLButtonElement>('[data-exits]').forEach((b) => (b.onclick = () => this.exits(Number(b.dataset.exits))));
     d.querySelectorAll<HTMLButtonElement>('[data-flood]').forEach((b) => (b.onclick = () => this.armFlood(b.dataset.flood as FloodFluid)));
     d.querySelectorAll<HTMLInputElement>('[data-show]').forEach((c) => (c.onchange = () => ((this.show[c.dataset.show as keyof TerrainView['show']] = c.checked), this.paintImage())));
@@ -119,7 +125,8 @@ export class TerrainView implements Scene {
     this.info.textContent = t;
   }
 
-  private setCaps(c: PassCaps): void {
+  private setCaps(c: ControllerProfile, name: string): void {
+    this.capsName = name;
     this.caps = c;
     this.pickRoom(this.picked);
     this.paintImage();
@@ -184,7 +191,7 @@ export class TerrainView implements Scene {
       const c = g.cost(b.id, this.caps, r);
       return `  → ${b.a === r ? b.b : b.a}: ${b.kind}${b.causes.length > 1 ? ` (${b.causes.slice(1, 3).join(', ')})` : ''}, ${c === Infinity ? 'no way' : `cost ${c.toFixed(0)}`}; rise ${b.measure.rise}, climb ${b.measure.minClimb}, deep ${b.measure.minDeep}`;
     });
-    this.say(`room ${r} (${R.screens} screens, floor ${R.floor.map((v) => v.toFixed(0)).join('/')}, open ${R.openness.toFixed(0)})\n${this.caps.id}: ${ex.length} exits, reaches ${this.reach.size} rooms\n${lines.join('\n')}`);
+    this.say(`room ${r} (${R.screens} screens, floor ${R.floor.map((v) => v.toFixed(0)).join('/')}, open ${R.openness.toFixed(0)})\n${this.capsName}: ${ex.length} exits, reaches ${this.reach.size} rooms\n${lines.join('\n')}`);
   }
 
   private exits(n: number): void {
@@ -207,7 +214,7 @@ export class TerrainView implements Scene {
       const t0 = performance.now();
       const S = await this.terrain.sample(vc[0] - span / 2, vc[1] - span / 2, Math.round(span / step), Math.round(span / step), step);
       const t1 = performance.now();
-      this.graph = new RegionGraph(partition(S, { caps: CAPS_PRESETS.walker }));
+      this.graph = new RegionGraph(partition(S, { caps: WALKER_PROFILE }));
       const t2 = performance.now();
       this.samples = S;
       this.picked = -1;

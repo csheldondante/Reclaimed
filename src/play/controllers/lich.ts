@@ -79,7 +79,7 @@ export function lichProfile(params: Params = LICH_DEFAULTS): ControllerProfile {
     speed: { cruise: p.max, top: p.max },
     turnRadius: 0,
     // (it floats up any face at its climb rate, while pushed at it)
-    climb: { slope: Infinity, step: Infinity, rate: p.climb },
+    climb: { slope: Infinity, step: Infinity, rate: p.climb, drop: Infinity },
     jump: { height: 0, gap: 0, ramp: false },
     fly: { ceiling: p.floatHigh },
     water: { wade: 0, over: true },

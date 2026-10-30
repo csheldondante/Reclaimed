@@ -1,0 +1,97 @@
+{
+ "when": "2026-10-30T15:55:15.879Z",
+ "seed": 1,
+ "size": "412x915",
+ "dpr": 2.6,
+ "viewerUpMs": 10881,
+ "adapter": "intel xe-lpg",
+ "plans": {
+  "bike": {
+   "medianMs": 97.5,
+   "worstMs": 124.6,
+   "stages": 8,
+   "legs": 12,
+   "minutes": {
+    "min": 31.4,
+    "max": 35.6
+   }
+  },
+  "lich": {
+   "medianMs": 97.7,
+   "worstMs": 127.6,
+   "stages": 6,
+   "legs": 8,
+   "minutes": {
+    "min": 32,
+    "max": 35.3
+   }
+  },
+  "knight": {
+   "medianMs": 122.6,
+   "worstMs": 201.3,
+   "stages": 8,
+   "legs": 12,
+   "minutes": {
+    "min": 43.2,
+    "max": 48.5
+   }
+  },
+  "wanderer": {
+   "medianMs": 114.7,
+   "worstMs": 137.7,
+   "stages": 6,
+   "legs": 8,
+   "minutes": {
+    "min": 28.8,
+    "max": 36.3
+   }
+  },
+  "gorilla": {
+   "medianMs": 106,
+   "worstMs": 128.2,
+   "stages": 6,
+   "legs": 7,
+   "minutes": {
+    "min": 35.2,
+    "max": 39.6
+   }
+  },
+  "tank": {
+   "medianMs": 98.1,
+   "worstMs": 106.9,
+   "stages": 6,
+   "legs": 8,
+   "minutes": {
+    "min": 36.4,
+    "max": 38.6
+   }
+  },
+  "mech": {
+   "medianMs": 100.4,
+   "worstMs": 110.2,
+   "stages": 8,
+   "legs": 12,
+   "minutes": {
+    "min": 42.1,
+    "max": 47.8
+   }
+  }
+ },
+ "playToEnd": {
+  "ms": 691.9,
+  "events": 10,
+  "end": "won"
+ },
+ "travel": {
+  "slow": [
+   [
+    0,
+    15325.9
+   ]
+  ],
+  "frames": 599,
+  "medianMs": 10,
+  "p95Ms": 10.3,
+  "worstMs": 15325.9
+ }
+}

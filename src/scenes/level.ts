@@ -55,7 +55,7 @@ import type { Station, StationKit } from '../levels/playground';
 import { RB, rockbodyFor } from '../game/rockbodies';
 import { TUNE, TUNING } from '../tune/params';
 import { AtlasMap } from '../api/atlas-map';
-import { precacheWarp, warpWindow } from '../api/atlas-world';
+import { precacheWarp, warpReady, warpWindow } from '../api/atlas-world';
 import { Dither, Orbit, Slice } from '../api/cutaway';
 import { Puck } from '../api/puck';
 import { StoryPlay } from '../story/play';
@@ -490,6 +490,15 @@ export class LevelScene implements Scene {
   private atlasCtl?: HTMLDivElement;
   /** (round 91: scripts/mapnames.mjs reads its labelStats) */
   atlasMap?: AtlasMap;
+  /** (round 117, runplan) ?runplan=<hero>: a planned run travelled on the atlas map */
+  private plannedRun?: import('../runplan/level-run').LevelRun;
+  private terrainSys?: TerrainSystem;
+  /** (runplay, round 119) the one terrain system over this level's atlas (its edits are stamped into the land as it's made: one list, one hook) */
+  private terrainSystem(): TerrainSystem {
+    const a = this.opts.atlas?.atlas;
+    if (!a) throw new Error('terrain: the atlas level only');
+    return (this.terrainSys ??= new TerrainSystem(a));
+  }
   private far?: FarLand;
 
   /**
@@ -1742,7 +1751,7 @@ export class LevelScene implements Scene {
       stream: this.stream,
       atlas: this.opts.atlas?.atlas,
       // (round 117, terrain track) the region graph, its requests and the flood tool (api/contracts/terrain.ts)
-      terrain: this.opts.atlas?.atlas ? new TerrainSystem(this.opts.atlas.atlas) : undefined,
+      terrain: this.opts.atlas?.atlas ? this.terrainSystem() : undefined,
       // (round 117, terrain: the hybrid's chunks, for probes — which are voxels, which the grid's)
       hybrid: () => this.hybrid,
       // (round 93) the land past the window: far.lod.bytes, far.windowLook, far.grownVeg
@@ -1809,6 +1818,9 @@ export class LevelScene implements Scene {
     // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
     const runId = host.params.get('run');
     if (runId) void this.startRun(runId);
+    // round 117 (runplan): ?runplan=<hero> — a planned run travelled on the atlas map (src/runplan/level-run.ts)
+    const planHero = host.params.get('runplan');
+    if (planHero) void this.startPlannedRun(planHero);
     // round 117 (play): ?play=<hero> — the play sandbox (the game layer, loaded only when asked for: the engine doesn't import it)
     const playId = host.params.get('play');
     if (playId) void this.startPlay(playId);
@@ -1846,6 +1858,29 @@ export class LevelScene implements Scene {
       this.play?.warped([c[0], c[1]]);
     });
     (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.play = this.play;
+  }
+
+  /** ?runplan=<hero>: a run planned from the spawn on this atlas; its legs travelled on the atlas map while the land loads */
+  private async startPlannedRun(hero: string): Promise<void> {
+    const a = this.opts.atlas;
+    if (!a || !this.stream || !this.atlasMap) throw new Error('?runplan= plays on the atlas level (?level=atlas)');
+    const S = this.stream;
+    const dims = this.core.dims;
+    const { LevelRun } = await import('../runplan/level-run');
+    // (as ?run=: the sandbox tools are hidden during a run)
+    this.editor?.setVisible(false);
+    this.plannedRun = new LevelRun({
+      atlas: a.atlas,
+      terrain: this.terrainSystem(),
+      map: this.atlasMap,
+      ui: this.host.ui,
+      hero,
+      precache: (x, y) => precacheWarp(a.atlas, S, dims, x, y),
+      ready: (x, y) => warpReady(a.atlas, S, dims, x, y),
+      warp: (x, y) => warpWindow(a.atlas, S, dims, x, y),
+      say: (s, sec) => this.hud.say(s, sec ?? 4),
+    });
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.runplan = this.plannedRun;
   }
 
   /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts; round 97: through story/atlas-run.ts, as any game starts one) */
@@ -2180,6 +2215,7 @@ export class LevelScene implements Scene {
     if (this.heroRun && !camera.fly) this.heroRun.update(dt);
     // (round 117: the play sandbox — its hero, controls and the chase camera)
     if (this.play && !camera.fly) this.play.update(dt);
+    this.plannedRun?.update(dt);
     if (this.storyPlay || this.heroRun) record('story', performance.now() - tStory); // (round 100, hitchrec: timing)
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
     if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun && !this.play) this.turn.update(dt);
@@ -3344,6 +3380,7 @@ export class LevelScene implements Scene {
     this.storyPlay?.dispose();
     this.heroRun?.dispose();
     this.play?.dispose();
+    this.plannedRun?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

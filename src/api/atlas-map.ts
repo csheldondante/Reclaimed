@@ -75,6 +75,9 @@ export class AtlasMap {
   facing?: () => number | null;
   /** (round 94) pins on the map: where to go (a story's objective), each with its name */
   marks?: () => MapMark[];
+  /** (round 117, runplan) drawn over the map, under the player's dot: a planned run's legs and stages. `px` a world
+   *  cell → css px (the nearest copy on the torus), `scale` texels a css px */
+  overlay?: (ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number], scale: number) => void;
 
   constructor(
     private aw: MapWorld,
@@ -145,95 +148,9 @@ export class AtlasMap {
     window.clearInterval(this.timer);
   }
 
-  /** the map image: the atlas's ground texels coloured and shaded, the roads and sites over them */
+  /** the map image (paintAtlasImage) */
   private paint(): HTMLCanvasElement {
-    const a = this.aw.atlas;
-    const n = a.p.n;
-    const h = a.hmac;
-    const sea = a.p.sea;
-    const c = document.createElement('canvas');
-    c.width = n;
-    c.height = n;
-    const ctx = c.getContext('2d')!;
-    const im = ctx.createImageData(n, n);
-    const d = im.data;
-    const at = (x: number, y: number) => h[(((y % n) + n) % n) * n + (((x % n) + n) % n)];
-    for (let y = 0; y < n; y++) {
-      // (0 at the poles, 1 at the equator: the torus's v)
-      const warm = 0.5 - 0.5 * Math.cos((2 * Math.PI * (y + 0.5)) / n);
-      for (let x = 0; x < n; x++) {
-        const z = h[y * n + x];
-        const k = (y * n + x) * 4;
-        let r: number;
-        let g: number;
-        let b: number;
-        // (round 90: a lake, inside its extent where its level is over the ground)
-        const lk = a.lakeAt.length ? a.lakeAt[y * n + x] : 0;
-        const lv = lk & LAKE_IN ? a.lakes[(lk & 0x7fff) - 1].level : -Infinity;
-        if (z < sea) {
-          const t = Math.min(1, (sea - z) / 70);
-          r = 40 - 22 * t;
-          g = 92 - 50 * t;
-          b = 128 - 40 * t;
-        } else if (lv > z) {
-          const t = Math.min(1, (lv - z) / 20);
-          r = 56 - 26 * t;
-          g = 112 - 44 * t;
-          b = 150 - 30 * t;
-        } else {
-          const e = z - sea;
-          // lowland green → upland tan → rock grey; snow where it's cold
-          const t = Math.min(1, e / 260);
-          r = 96 + 90 * t;
-          g = 128 + 30 * t - 40 * t * t;
-          b = 70 + 70 * t;
-          const cold = warm * 34 - 8 - e * 0.05;
-          if (cold < 0) {
-            const s = Math.min(1, -cold / 6);
-            r += (236 - r) * s;
-            g += (240 - g) * s;
-            b += (244 - b) * s;
-          }
-          // the sun from the north-west — the screen's upper left: north is −y, west +x (drawn as seen from
-          // above: world +x to the left) — brighter on the slopes facing it
-          const sh = Math.max(0.55, Math.min(1.35, 1 + ((at(x + 1, y - 1) - at(x - 1, y + 1)) * 0.012)));
-          r *= sh;
-          g *= sh;
-          b *= sh;
-        }
-        d[k] = r;
-        d[k + 1] = g;
-        d[k + 2] = b;
-        d[k + 3] = 255;
-      }
-    }
-    ctx.putImageData(im, 0, 0);
-    // the roads and the sites
-    const sx = n / a.worldW;
-    const sy = n / a.worldH;
-    ctx.strokeStyle = 'rgba(150,60,40,0.85)';
-    ctx.lineWidth = 1.2;
-    for (const road of a.settlement.roads) {
-      ctx.beginPath();
-      for (let k = 0; k < road.path.length; k += 2) {
-        const px = road.path[k] * sx;
-        const py = road.path[k + 1] * sy;
-        // (a step over the torus's seam: a new line)
-        if (k > 0 && (Math.abs(px - road.path[k - 2] * sx) > n / 2 || Math.abs(py - road.path[k - 1] * sy) > n / 2)) ctx.moveTo(px, py);
-        else if (k === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
-      }
-      ctx.stroke();
-    }
-    ctx.fillStyle = '#f3e2b0';
-    ctx.strokeStyle = '#3a2a18';
-    for (const s of a.settlement.sites) {
-      ctx.beginPath();
-      ctx.arc(s.x * sx, s.y * sy, 1.5 + s.size, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-    }
-    return c;
+    return paintAtlasImage(this.aw.atlas);
   }
 
   /** the player's world cell: the camera's target */
@@ -242,6 +159,19 @@ export class AtlasMap {
     if (p) return p;
     const t = this.aw.core.camera.target;
     return this.aw.toWorld(t[0], t[1]);
+  }
+
+  /** (round 117, runplan) draw now (the run's travel animates every frame, not on the map's half-second timer) */
+  redraw(): void {
+    this.draw();
+  }
+
+  /** (round 117, runplan) the view's middle on world cell (cx, cy); its zoom (texels a css px) when given */
+  centreOn(cx: number, cy: number, scale?: number): void {
+    const a = this.aw.atlas;
+    if (scale !== undefined) this.scale = Math.min(8, Math.max(0.05, scale));
+    this.vx = (cx / a.p.cols) * a.p.n;
+    this.vy = (cy / a.p.rows) * a.p.n;
   }
 
   private centre(): void {
@@ -310,6 +240,7 @@ export class AtlasMap {
     ctx.lineWidth = 1.2;
     ctx.strokeRect(wx - ww, wy, ww, (dims.h / a.p.rows) * n * k);
     this.drawLabels(ctx, W, H);
+    this.overlay?.(ctx, cellPx, this.scale);
     // the player: the view's footprint on the ground (the screen's corners at the target's height), a wedge
     // the way the camera faces, the dot
     const cam = this.aw.core.camera;
@@ -527,3 +458,96 @@ export class AtlasMap {
   }
 }
 
+/**
+ * The map image: the atlas's ground texels coloured and shaded, the roads and sites over them (n × n texels, north up,
+ * not yet mirrored — AtlasMap draws it with x flipped). (Round 117, runplan: exported from AtlasMap's private painter so
+ * the run-plan viewer draws the same map; nothing else changed.)
+ */
+export function paintAtlasImage(a: MapWorld['atlas']): HTMLCanvasElement {
+  const n = a.p.n;
+  const h = a.hmac;
+  const sea = a.p.sea;
+  const c = document.createElement('canvas');
+  c.width = n;
+  c.height = n;
+  const ctx = c.getContext('2d')!;
+  const im = ctx.createImageData(n, n);
+  const d = im.data;
+  const at = (x: number, y: number) => h[(((y % n) + n) % n) * n + (((x % n) + n) % n)];
+  for (let y = 0; y < n; y++) {
+    // (0 at the poles, 1 at the equator: the torus's v)
+    const warm = 0.5 - 0.5 * Math.cos((2 * Math.PI * (y + 0.5)) / n);
+    for (let x = 0; x < n; x++) {
+      const z = h[y * n + x];
+      const k = (y * n + x) * 4;
+      let r: number;
+      let g: number;
+      let b: number;
+      // (round 90: a lake, inside its extent where its level is over the ground)
+      const lk = a.lakeAt.length ? a.lakeAt[y * n + x] : 0;
+      const lv = lk & LAKE_IN ? a.lakes[(lk & 0x7fff) - 1].level : -Infinity;
+      if (z < sea) {
+        const t = Math.min(1, (sea - z) / 70);
+        r = 40 - 22 * t;
+        g = 92 - 50 * t;
+        b = 128 - 40 * t;
+      } else if (lv > z) {
+        const t = Math.min(1, (lv - z) / 20);
+        r = 56 - 26 * t;
+        g = 112 - 44 * t;
+        b = 150 - 30 * t;
+      } else {
+        const e = z - sea;
+        // lowland green → upland tan → rock grey; snow where it's cold
+        const t = Math.min(1, e / 260);
+        r = 96 + 90 * t;
+        g = 128 + 30 * t - 40 * t * t;
+        b = 70 + 70 * t;
+        const cold = warm * 34 - 8 - e * 0.05;
+        if (cold < 0) {
+          const s = Math.min(1, -cold / 6);
+          r += (236 - r) * s;
+          g += (240 - g) * s;
+          b += (244 - b) * s;
+        }
+        // the sun from the north-west — the screen's upper left: north is −y, west +x (drawn as seen from
+        // above: world +x to the left) — brighter on the slopes facing it
+        const sh = Math.max(0.55, Math.min(1.35, 1 + ((at(x + 1, y - 1) - at(x - 1, y + 1)) * 0.012)));
+        r *= sh;
+        g *= sh;
+        b *= sh;
+      }
+      d[k] = r;
+      d[k + 1] = g;
+      d[k + 2] = b;
+      d[k + 3] = 255;
+    }
+  }
+  ctx.putImageData(im, 0, 0);
+  // the roads and the sites
+  const sx = n / a.worldW;
+  const sy = n / a.worldH;
+  ctx.strokeStyle = 'rgba(150,60,40,0.85)';
+  ctx.lineWidth = 1.2;
+  for (const road of a.settlement.roads) {
+    ctx.beginPath();
+    for (let k = 0; k < road.path.length; k += 2) {
+      const px = road.path[k] * sx;
+      const py = road.path[k + 1] * sy;
+      // (a step over the torus's seam: a new line)
+      if (k > 0 && (Math.abs(px - road.path[k - 2] * sx) > n / 2 || Math.abs(py - road.path[k - 1] * sy) > n / 2)) ctx.moveTo(px, py);
+      else if (k === 0) ctx.moveTo(px, py);
+      else ctx.lineTo(px, py);
+    }
+    ctx.stroke();
+  }
+  ctx.fillStyle = '#f3e2b0';
+  ctx.strokeStyle = '#3a2a18';
+  for (const s of a.settlement.sites) {
+    ctx.beginPath();
+    ctx.arc(s.x * sx, s.y * sy, 1.5 + s.size, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+  return c;
+}

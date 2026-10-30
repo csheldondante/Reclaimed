@@ -13,11 +13,15 @@
 //  - ROOMS split a feature at its narrow points: a watershed of the distance to the feature's edges (seeds deep inside,
 //    spaced a room apart; rooms grown widest-first meet where the land is narrowest — the doors). Small rooms merge.
 //  - BORDERS hold measures (the least climb, the shallowest water, the narrowest gap … found by bottleneck searches
-//    across the barrier), not a verdict: what a controller can cross is reckoned from its PassCaps when asked (a
-//    Dijkstra across the two rooms' ground, cached per caps.id), so a new controller needs no new generation.
+//    across the barrier), not a verdict: what a controller can cross is reckoned from its profile when asked (a
+//    Dijkstra across the two rooms' ground, cached per profileKey), so a new controller needs no new generation.
+//  - (runplay, round 119) The body is play's ControllerProfile and every step's cost is play's crossCost of the ground
+//    between two samples (stepCost: the rise split into what its slope takes and a sheer step, a drop, water, lava,
+//    vegetation) × the run — one controller description, so terrain's costs, runplan's and play's agree. What a body
+//    stands in at all (`clearFor`, a room's ground) is ground it crosses at no worse than CLEAR_COST × open ground.
 
-import type { BarrierKind, BorderMeasure, PassCaps, TerrainBorder, TerrainGraph, TerrainPass, TerrainRegion, V2 } from '../api/contracts';
-import { CAPS_PRESETS } from '../api/contracts/terrain';
+import type { BarrierKind, BorderMeasure, TerrainBorder, TerrainGraph, TerrainPass, TerrainRegion, V2 } from '../api/contracts';
+import { crossCost, profileKey, WALKER_PROFILE, type ControllerProfile, type Crossing } from '../api/contracts/play';
 
 /** The land on a grid (world units; row-major w × h). */
 export interface TerrainSamples {
@@ -39,8 +43,8 @@ export interface TerrainSamples {
 }
 
 export interface PartitionOpts {
-  /** the controller rooms are made for */
-  caps?: PassCaps;
+  /** the controller rooms are made for (default the walker) */
+  caps?: ControllerProfile;
   /** a screen's area (world units²): rooms 1-3 of them */
   screen?: number;
   /** a feature smaller than this many screens is no room (a ledge, a boulder's top): part of the barrier round it */
@@ -110,42 +114,68 @@ class Heap {
 /** water standing on a sample (cells), 0 none */
 export const depthAt = (S: TerrainSamples, i: number) => (Number.isNaN(S.water[i]) ? 0 : Math.max(0, S.water[i] - S.ground[i]));
 
-/** a cell a body can stand in at all (not over its depth, not lava, not vegetation it can't push through uncut) */
-export function clearFor(S: TerrainSamples, i: number, c: PassCaps): boolean {
-  if (c.fly) return true;
-  if (depthAt(S, i) > c.deep) return false;
-  if (S.lava[i] && !c.lava) return false;
-  return S.veg[i] <= c.veg;
+/** ground a body crosses at no worse than this × its open-ground pace is ground it stands in (a room's); worse is a barrier */
+export const CLEAR_COST = 1.75;
+/** a sheer face taller than this between neighbours is a cliff (cells: 3 × the walker's step), lower a steep flank — physical, not per body */
+const CLIFF_STEP = 3 * WALKER_PROFILE.climb.step;
+
+/** (one scratch crossing: stepCost runs in every search's inner loop) */
+const X: Crossing = {};
+
+/** a cell a body can stand in at all (its water, lava and vegetation cost it no more than CLEAR_COST: play's crossCost) */
+export function clearFor(S: TerrainSamples, i: number, c: ControllerProfile): boolean {
+  X.slope = X.step = X.gap = X.drop = 0;
+  X.ramp = false;
+  X.water = depthAt(S, i);
+  X.lava = !!S.lava[i];
+  X.vegetation = S.veg[i];
+  return crossCost(c, X) <= CLEAR_COST;
 }
 
 /**
- * What stepping from sample i to its neighbour j costs a body (cells of walking-equivalent; Infinity: it can't).
- * The ground's rise over the step's run: up to `step` sheer plus `slope` a cell; down: `drop` plus the slope.
+ * What stepping from sample i to its neighbour j costs a body (cells of walking-equivalent; Infinity: it can't): the
+ * run × play's crossCost of the step — the rise its slope takes, the rest a sheer step; a fall past its slope a drop;
+ * the water, lava and vegetation at j.
  */
-export function stepCost(S: TerrainSamples, i: number, j: number, c: PassCaps): number {
+export function stepCost(S: TerrainSamples, i: number, j: number, c: ControllerProfile): number {
   const run = S.step;
-  // (a body over water it can't touch bottom in rides its surface: a hovering bike, a swimmer climbs out from it)
-  const z = (k: number) => (c.deep === Infinity && depthAt(S, k) > 0 ? S.water[k] : S.ground[k]);
+  // (a body that rides over water rides its surface: a hovering bike, a floating lich)
+  const over = c.water.over || c.fly.ceiling > 0;
+  const z = (k: number) => (over && depthAt(S, k) > 0 ? S.water[k] : S.ground[k]);
   const dh = z(j) - z(i);
-  const fly = c.fly ?? 0;
-  if (dh > c.step + c.slope * run + fly) return Infinity;
-  if (-dh > c.drop + c.slope * run + (fly ? Infinity : 0)) return Infinity;
-  let cost = run + 0.5 * Math.max(dh, 0);
-  if (fly) return cost;
-  const d = depthAt(S, j);
-  if (d > c.deep) return Infinity;
-  cost += d * run * 0.5;
-  if (S.lava[j] && !c.lava) return Infinity;
-  if (S.veg[j] > c.veg) {
-    if (!c.vegCost) return Infinity;
-    cost += c.vegCost * run;
-  }
-  return cost;
+  const walk = c.climb.slope * run;
+  X.gap = 0;
+  X.ramp = false;
+  X.slope = dh > 0 ? Math.min(dh, walk) / run : 0;
+  X.step = dh > walk ? dh - walk : 0;
+  X.drop = -dh > walk ? -dh - walk : 0;
+  X.water = over ? 0 : depthAt(S, j);
+  X.lava = !!S.lava[j];
+  X.vegetation = S.veg[j];
+  return run * crossCost(c, X);
+}
+
+/** (runplay) the build body's thresholds for naming why a sample is no room's (causeAt), read off its profile */
+interface Body {
+  deep: number;
+  veg: number;
+  drop: number;
+  step: number;
+  slope: number;
+}
+function bodyOf(p: ControllerProfile): Body {
+  // (the densest vegetation it still stands in: clearFor's threshold)
+  let veg = 0;
+  for (let v = 0.05; v <= 1.0001; v += 0.05) if (crossCost(p, { vegetation: v }) <= CLEAR_COST) veg = v;
+  let deep = p.water.over || p.fly.ceiling > 0 ? Infinity : 0;
+  if (deep === 0) for (let d = 0.1; d <= 4; d += 0.1) if (crossCost(p, { water: d }) <= CLEAR_COST) deep = d;
+  return { deep, veg, drop: p.climb.drop, step: p.climb.step, slope: p.climb.slope };
 }
 
 interface Built {
   S: TerrainSamples;
-  caps: PassCaps;
+  caps: ControllerProfile;
+  body: Body;
   screen: number;
   /** per sample: its room (−1: none — a barrier's inside), and the room whose zone it is in (every sample) */
   room: Int32Array;
@@ -171,7 +201,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     console.log(`partition ${k}: ${(t - tp).toFixed(1)} ms`);
     tp = t;
   };
-  const caps = opts.caps ?? CAPS_PRESETS.walker;
+  const caps = opts.caps ?? WALKER_PROFILE;
   const screen = opts.screen ?? SCREEN_AREA;
   const minFeature = opts.minFeature ?? 0.08;
   const { w, h } = S;
@@ -516,7 +546,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
   const borders: TerrainBorder[] = [];
   const passes: TerrainPass[] = [];
   const pairs: Int32Array[] = [];
-  const built: Built = { S, caps, screen, room, zone, dist, regions, borders, passes, pairs, zoneRooms: nRooms };
+  const built: Built = { S, caps, body: bodyOf(caps), screen, room, zone, dist, regions, borders, passes, pairs, zoneRooms: nRooms };
   for (const B of bmap.values()) {
     const id = borders.length;
     const ra = nFeat + B.a;
@@ -553,7 +583,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
 /** the cause at a barrier sample, against the two rooms' floors */
 function causeAt(B: Built, i: number, fa: number, fb: number): BarrierKind {
   const S = B.S;
-  const c = B.caps;
+  const c = B.body;
   if (S.lava[i]) return 'lava';
   const d = depthAt(S, i);
   if (d > c.deep) return S.wet[i] === 1 ? 'river' : S.wet[i] === 3 ? 'sea' : 'lake';
@@ -581,7 +611,7 @@ function causesOf(B: Built, T: TerrainBorder, P: Int32Array): BarrierKind[] {
     for (const i of [P[k], P[k + 1]]) {
       const c = B.room[i] >= 0 ? null : causeAt(B, i, fa, fb);
       // (two rooms' own samples facing each other across a sheer step: a cliff between them)
-      const kind = c ?? (Math.abs(B.S.ground[P[k]] - B.S.ground[P[k + 1]]) > 3 * B.caps.step ? 'cliff' : 'steep');
+      const kind = c ?? (Math.abs(B.S.ground[P[k]] - B.S.ground[P[k + 1]]) > CLIFF_STEP ? 'cliff' : 'steep');
       n.set(kind, (n.get(kind) ?? 0) + 1);
     }
   }
@@ -755,7 +785,7 @@ function measureOf(B: Built, ra: number, rb: number, P: Int32Array): BorderMeasu
   const lavaFree = search(B, Z, (_i, j) => (S.lava[j] ? Infinity : 0), true).cost;
   // spans: the fewest wet / non-room samples a crossing must go over
   const wetSpan = search(B, Z, (_i, j) => (depthAt(S, j) > 0 ? S.step : 0), false).cost;
-  const gap = search(B, Z, (_i, j) => (B.room[j] < 0 && S.ground[j] < Math.min(fa, fb) - B.caps.drop ? S.step : 0), false).cost;
+  const gap = search(B, Z, (_i, j) => (B.room[j] < 0 && S.ground[j] < Math.min(fa, fb) - Math.min(B.body.drop, WALKER_PROFILE.climb.drop) ? S.step : 0), false).cost;
   release(Z);
   const r2 = (x: number) => (Number.isFinite(x) ? +x.toFixed(2) : x);
   return { rise: r2(fb - fa), minClimb: r2(climb), minDrop: r2(drop), minDeep: r2(deep), minWaterSpan: r2(wetSpan), lava: lavaFree === Infinity, minVeg: r2(veg), minGap: r2(gap) };
@@ -771,9 +801,9 @@ export class RegionGraph implements TerrainGraph {
   private routes = new Map<string, number[]>();
   private nFeat: number;
   /** passes made by edits, by border: a predicate on caps and the cost of the crossing it makes */
-  private made = new Map<number, { pass: number; ok: (c: PassCaps) => boolean; cost: number }[]>();
+  private made = new Map<number, { pass: number; ok: (c: ControllerProfile) => boolean; cost: number }[]>();
   /** borders closed by edits: a predicate on caps (true: still passable for it) */
-  private closed = new Map<number, ((c: PassCaps) => boolean)[]>();
+  private closed = new Map<number, ((c: ControllerProfile) => boolean)[]>();
   constructor(readonly built: Built) {
     const S = built.S;
     this.rect = [S.x0, S.y0, S.x0 + S.w * S.step, S.y0 + S.h * S.step];
@@ -816,17 +846,17 @@ export class RegionGraph implements TerrainGraph {
     return this.built.passes[id];
   }
   /** the samples of the route a body takes across a border (after cost(); empty: none) */
-  route(border: number, caps: PassCaps, from?: number): number[] {
+  route(border: number, caps: ControllerProfile, from?: number): number[] {
     this.cost(border, caps, from);
     const B = this.border(border);
-    return this.routes.get(`${border}:${caps.id}:${from ?? B.a}`) ?? [];
+    return this.routes.get(`${border}:${profileKey(caps)}:${from ?? B.a}`) ?? [];
   }
-  cost(border: number, caps: PassCaps, from?: number): number {
+  cost(border: number, caps: ControllerProfile, from?: number): number {
     const B = this.border(border);
     const a = from ?? B.a;
     if (a !== B.a && a !== B.b) throw new Error(`terrain graph: room ${a} isn't on border ${border}`);
     const b = a === B.a ? B.b : B.a;
-    const key = `${border}:${caps.id}:${a}`;
+    const key = `${border}:${profileKey(caps)}:${a}`;
     let c = this.costs.get(key);
     if (c === undefined) {
       const S = this.built.S;
@@ -837,7 +867,8 @@ export class RegionGraph implements TerrainGraph {
       c = r.cost;
       // a gap jumped (level or down, at speed): the narrowest gap's span and a run-up
       const rise = (this.region(b).floor[1] - this.region(a).floor[1]);
-      if (c === Infinity && caps.gap && B.measure.minGap > 0 && B.measure.minGap <= caps.gap && rise <= caps.step + caps.slope * S.step) c = 4 * B.measure.minGap;
+      // (off the lip at speed: a ravine's edge is its ramp)
+      if (c === Infinity && B.measure.minGap > 0 && crossCost(caps, { gap: B.measure.minGap, ramp: true }) < Infinity && rise <= caps.climb.step + caps.climb.slope * S.step) c = 4 * B.measure.minGap;
       this.costs.set(key, c);
       this.routes.set(key, r.path);
     }
@@ -846,7 +877,7 @@ export class RegionGraph implements TerrainGraph {
     for (const s of B.soft) c += s.strength * SOFT_COST;
     return c;
   }
-  exits(room: number, caps: PassCaps): { border: number; to: number; cost: number }[] {
+  exits(room: number, caps: ControllerProfile): { border: number; to: number; cost: number }[] {
     const out: { border: number; to: number; cost: number }[] = [];
     for (const B of this.borders(room)) {
       const c = this.cost(B.id, caps, room);
@@ -854,7 +885,7 @@ export class RegionGraph implements TerrainGraph {
     }
     return out.sort((x, y) => x.cost - y.cost);
   }
-  reach(room: number, caps: PassCaps): number[] {
+  reach(room: number, caps: ControllerProfile): number[] {
     const seen = new Set([room]);
     const q = [room];
     while (q.length) {
@@ -867,7 +898,7 @@ export class RegionGraph implements TerrainGraph {
     this.border(border).soft.push({ kind, strength: Math.max(0, Math.min(1, strength)) });
   }
   /** (TerrainSystem.request) a pass made by an edit */
-  addMade(border: number, pass: Omit<TerrainPass, 'id' | 'border'>, ok: (c: PassCaps) => boolean, cost: number): TerrainPass {
+  addMade(border: number, pass: Omit<TerrainPass, 'id' | 'border'>, ok: (c: ControllerProfile) => boolean, cost: number): TerrainPass {
     const P: TerrainPass = { ...pass, id: this.built.passes.length, border };
     this.built.passes.push(P);
     this.border(border).passes.push(P.id);
@@ -876,7 +907,7 @@ export class RegionGraph implements TerrainGraph {
     return P;
   }
   /** (TerrainSystem.request) a border closed to bodies `ok` says false for */
-  addClosed(border: number, ok: (c: PassCaps) => boolean): void {
+  addClosed(border: number, ok: (c: ControllerProfile) => boolean): void {
     if (!this.closed.has(border)) this.closed.set(border, []);
     this.closed.get(border)!.push(ok);
   }

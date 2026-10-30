@@ -175,6 +175,8 @@ async function main() {
   if (params.get('atlas') === 'view') show(await AtlasView.create(host));
   // (round 117, terrain track) ?terrain=view: the terrain viewer — the atlas view with the region graph, its requests and the flood tool
   else if (params.get('terrain') === 'view') show(await (await import('./terrain/viewer')).TerrainView.create(host));
+  // (round 117, runplan) ?runplan=view: the run-plan viewer (src/runplan/viewer.ts)
+  else if (params.get('runplan') === 'view') show(await (await import('./runplan/viewer')).RunPlanView.create(host));
   else if (params.get('skipmenu') === '1') await startLevel(params.get('level') ?? 'valley');
   else await startMenu();
   bootMark('level-ready');

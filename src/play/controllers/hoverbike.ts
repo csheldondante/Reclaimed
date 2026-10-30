@@ -91,7 +91,7 @@ export function bikeProfile(params: Params = BIKE_DEFAULTS): ControllerProfile {
     // (thrust is all the sideways pull it has: v²/a at cruise; the slide cuts it, but that's a trick, not a turn)
     // (the hook swings it round an anchor: a turn as tight as the rope it throws, ~0.4 of its reach)
     turnRadius: p.hookRange > 0 ? Math.min((p.max * p.max) / Math.max(p.accel, 1), Math.max(2, p.hookRange * 0.4)) : (p.max * p.max) / Math.max(p.accel, 1),
-    climb: { slope: p.climb, step: p.wall, rate: 0 },
+    climb: { slope: p.climb, step: p.wall, rate: 0, drop: Infinity }, // (drop: core/bike.ts lands any drop; no fall damage)
     jump: { height: (vz * vz) / (2 * p.gravity), gap: top * air, ramp: true },
     fly: { ceiling: 0 },
     // (it rides the top — the water's surface too)

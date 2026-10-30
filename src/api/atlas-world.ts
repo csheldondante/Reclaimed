@@ -90,6 +90,12 @@ export function precacheWarp(atlas: Atlas, stream: Streamer, dims: { w: number; 
   return stream.precache(ox, oy);
 }
 
+/** (round 117, runplan) is the land of a warp to world cell (cx, cy) ready (Streamer.precached): the run's travel waits on it */
+export function warpReady(atlas: Atlas, stream: Streamer, dims: { w: number; h: number; zMax: number }, wcx: number, wcy: number): boolean {
+  const [ox, oy] = warpTarget(atlas, dims, wcx, wcy);
+  return stream.precached(ox, oy);
+}
+
 /** the window's origin and oz for a warp to world cell (cx, cy) */
 function warpTarget(atlas: Atlas, dims: { w: number; h: number; zMax: number }, wcx: number, wcy: number): [number, number, number] {
   const { cols, rows, zTop } = atlas.p;

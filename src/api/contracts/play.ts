@@ -44,9 +44,10 @@ export interface ControllerProfile {
   /**
    * the steepest slope it moves up (rise over run; Infinity: any), the tallest step it takes without a jump (cells:
    * a kerb, a rock; Infinity: it goes up any cliff — a lich floats up the face) and how fast it goes up a step or a
-   * face (cells/s; 0: at its stride, no time)
+   * face (cells/s; 0: at its stride, no time); `drop`: the deepest drop it takes safely down a cliff (cells; Infinity:
+   * any — a hover lands every drop, a lich floats down). (runplay, round 119: terrain's PassCaps had it; one profile now)
    */
-  climb: { slope: number; step: number; rate: number };
+  climb: { slope: number; step: number; rate: number; drop: number };
   /**
    * a jump: how high it clears (cells) and how far (cells, at top speed); `ramp`: only off a ramp or a crest (a
    * hoverbike's launch), not from flat ground. Zero: no jump.
@@ -121,6 +122,9 @@ export interface Crossing {
   water?: number;
   /** dense vegetation 0..1 */
   vegetation?: number;
+  /** (runplay, round 119: terrain's) a sheer drop down (cells), and lava on the way (only what flies goes over it) */
+  drop?: number;
+  lava?: boolean;
 }
 
 /**
@@ -136,6 +140,8 @@ export function crossCost(p: ControllerProfile, c: Crossing): number {
     if (p.jump.height >= step && (!p.jump.ramp || c.ramp)) cost += 0.2;
     else return Infinity;
   } else if (step > 0 && p.climb.rate > 0) cost += (step * p.speed.cruise) / p.climb.rate; // (time to go up it, in cells of open ground)
+  if ((c.drop ?? 0) > p.climb.drop && !flies) return Infinity;
+  if (c.lava && !flies) return Infinity;
   const slope = c.slope ?? 0;
   if (slope > p.climb.slope && !flies) return Infinity;
   if (!flies) cost *= 1 + Math.max(0, slope) / Math.max(p.climb.slope, 0.1);
@@ -186,4 +192,31 @@ export function fun(p: ControllerProfile): FunFeature[] {
   if (p.fly.ceiling > 2 || p.climb.slope === Infinity) out.push({ kind: 'climb', height: Math.max(p.fly.ceiling * 2, 6), weight: 0.4 });
   if (e.delve > 0.2) out.push({ kind: 'delve', weight: e.delve });
   return out.sort((a, b) => b.weight - a.weight);
+}
+
+/**
+ * (runplay, round 119) The on-foot body: Reclaimed's Walker (src/hero/walker.ts: 8 cells/s, a sprint ×1.7, steps up
+ * a kerb or a rock, wades to the knee, cuts through brush with its sword). What terrain makes rooms for by default
+ * (a room is open ground a walker crosses), and the knight's stand-in until play ports the knight (BACKLOG PL5). It
+ * replaces terrain's `CAPS_PRESETS.walker` and runplan's `HEROES.knight`/`wanderer` stand-ins: one description.
+ */
+export const WALKER_PROFILE: ControllerProfile = {
+  speed: { cruise: 8, top: 13.6 },
+  turnRadius: 0,
+  climb: { slope: 1.0, step: 1.5, rate: 0, drop: 6 },
+  jump: { height: 0, gap: 0, ramp: false },
+  fly: { ceiling: 0 },
+  water: { wade: 1.2, over: false },
+  vegetation: { through: 0.4, cuts: true },
+  bridge: 0,
+  destruction: 0.15,
+  encounters: { race: 0, chase: 0.3, fight: 0.8, spectacle: 0.1, delve: 1, tricks: 0 },
+};
+
+/**
+ * A profile's identity as a string (equal profiles, equal keys): a cache key for what's reckoned per body (terrain's
+ * border costs). Infinity spelt out (JSON would make it null).
+ */
+export function profileKey(p: ControllerProfile): string {
+  return JSON.stringify(p, (_k, v) => (v === Infinity ? 'inf' : v));
 }

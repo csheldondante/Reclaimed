@@ -11,8 +11,8 @@
 import type { Atlas } from '../atlas/atlas';
 import type { StampOps } from '../atlas/stamps';
 import { ROW_H } from '../world/lattice';
-import type { AtlasRegionGraph, BuriedProp, ExcavationSite, FloodRequest, FloodResult, PassCaps, Terrain, TerrainEdit, TerrainGraph, TerrainNeed, TerrainRequest, TerrainResult, V2 } from '../api/contracts';
-import { CAPS_PRESETS } from '../api/contracts/terrain';
+import type { AtlasRegionGraph, BuriedProp, ExcavationSite, FloodRequest, FloodResult, Terrain, TerrainEdit, TerrainGraph, TerrainNeed, TerrainRequest, TerrainResult, V2 } from '../api/contracts';
+import { crossCost, WALKER_PROFILE, type ControllerProfile } from '../api/contracts/play';
 import { depthAt, partition, RegionGraph, SCREEN_AREA } from './partition';
 import { LandSampler } from './sample';
 import { FloodField } from './flood';
@@ -28,6 +28,8 @@ const RAMP_SHARE = 0.75;
 const FORD_MAX = 48;
 /** a wall's height (cells) and the margin either side of a door it closes (world units) */
 const WALL_H = 9;
+/** (runplay) the body `across` routes with: floats over anything, so its route is the shortest line across a border */
+const PROBE: ControllerProfile = { ...WALKER_PROFILE, climb: { slope: Infinity, step: Infinity, rate: 0, drop: Infinity }, fly: { ceiling: 1e6 }, water: { wade: 0, over: true } };
 
 const wrapD = (d: number, W: number) => d - Math.round(d / W) * W;
 
@@ -51,7 +53,7 @@ export class TerrainSystem implements Terrain {
     atlas.stampHooks.push(async (ops, x0, y0, w, h) => this.stamp(ops, x0, y0, w, h));
   }
 
-  async graph(rect: { x0: number; y0: number; x1: number; y1: number }, opts: { caps?: PassCaps; step?: number; screen?: number } = {}): Promise<TerrainGraph> {
+  async graph(rect: { x0: number; y0: number; x1: number; y1: number }, opts: { caps?: ControllerProfile; step?: number; screen?: number } = {}): Promise<TerrainGraph> {
     const step = opts.step ?? 4;
     const w = Math.max(1, Math.round((rect.x1 - rect.x0) / step));
     const h = Math.max(1, Math.round((rect.y1 - rect.y0) / step));
@@ -126,7 +128,7 @@ export class TerrainSystem implements Terrain {
   }
 
   /** what opening a border would cost (world units of edit or build), Infinity: nothing this system knows opens it */
-  private fixCost(g: RegionGraph, border: number, caps: PassCaps, from: number): number {
+  private fixCost(g: RegionGraph, border: number, caps: ControllerProfile, from: number): number {
     const B = g.border(border);
     const m = B.measure;
     switch (B.kind) {
@@ -137,7 +139,7 @@ export class TerrainSystem implements Terrain {
       case 'cliff':
       case 'steep':
       case 'ridge':
-        return Math.abs(m.rise) / (RAMP_SHARE * Math.max(caps.slope, 0.1));
+        return Math.abs(m.rise) / (RAMP_SHARE * Math.max(Math.min(caps.climb.slope, 2), 0.1));
       case 'ravine':
       case 'lava':
         return 4 * Math.max(m.minGap, 8);
@@ -149,9 +151,8 @@ export class TerrainSystem implements Terrain {
   }
 
   /** the shortest line across a border, ignoring what's in the way: its samples */
-  private across(g: RegionGraph, border: number, from: number, keep: Partial<PassCaps>): number[] {
-    const probe: PassCaps = { id: `probe:${JSON.stringify(keep)}`, step: Infinity, slope: Infinity, drop: Infinity, deep: Infinity, lava: true, veg: 1, speed: 1, ...keep };
-    return g.route(border, probe, from);
+  private across(g: RegionGraph, border: number, from: number): number[] {
+    return g.route(border, PROBE, from);
   }
 
   private edit(e: Omit<TerrainEdit, 'id'>, edits: TerrainEdit[]): TerrainEdit {
@@ -161,10 +162,10 @@ export class TerrainSystem implements Terrain {
     return E;
   }
 
-  private open(g: RegionGraph, border: number, caps: PassCaps, from: number, edits: TerrainEdit[], needs: TerrainNeed[]): boolean {
+  private open(g: RegionGraph, border: number, caps: ControllerProfile, from: number, edits: TerrainEdit[], needs: TerrainNeed[]): boolean {
     const B = g.border(border);
     const S = g.built.S;
-    const path = this.across(g, border, from, {});
+    const path = this.across(g, border, from);
     if (path.length < 2) return false;
     const at = (i: number) => g.at(i);
     const inRoom = (i: number) => g.built.room[i] >= 0;
@@ -192,7 +193,7 @@ export class TerrainSystem implements Terrain {
         const level = Math.min(...wet.map((i) => S.water[i]));
         const z = level - 0.4;
         const E = this.edit({ kind: 'ford', a: at(wet[0]), b: at(wet[wet.length - 1]), za: z, zb: z, half: width / 2, border }, edits);
-        g.addMade(border, { at: mid, width, kind: 'ford', edit: E.id }, (c) => !!c.fly || c.deep >= 0.4, path.length * g.step * 1.5);
+        g.addMade(border, { at: mid, width, kind: 'ford', edit: E.id }, (c) => crossCost(c, { water: 0.4 }) < Infinity, path.length * g.step * 1.5);
         return true;
       }
       case 'cliff':
@@ -204,7 +205,8 @@ export class TerrainSystem implements Terrain {
         if (S.ground[lo] > S.ground[hi]) [lo, hi] = [hi, lo];
         const zl = S.ground[lo];
         const zh = S.ground[hi];
-        const slope = RAMP_SHARE * Math.max(caps.slope, 0.1);
+        // (a flyer's slope is unbounded: its ramp is made for a walker's legs, the steepest anyone else needs)
+        const slope = RAMP_SHARE * Math.max(Math.min(caps.climb.slope, WALKER_PROFILE.climb.slope), 0.1);
         const need = (zh - zl) / slope;
         const pl = at(lo);
         const ph = at(hi);
@@ -215,7 +217,7 @@ export class TerrainSystem implements Terrain {
         dy /= d;
         const start: V2 = d >= need ? pl : [ph[0] - dx * need, ph[1] - dy * need];
         const E = this.edit({ kind: 'ramp', a: start, b: ph, za: zl, zb: zh, half: width / 2, border }, edits);
-        g.addMade(border, { at: mid, width, kind: 'ramp', edit: E.id }, (c) => !!c.fly || c.slope >= slope * 0.99, Math.max(d, need) * 1.5);
+        g.addMade(border, { at: mid, width, kind: 'ramp', edit: E.id }, (c) => crossCost(c, { slope }) < Infinity, Math.max(d, need) * 1.5);
         return true;
       }
       case 'ravine':
@@ -263,17 +265,18 @@ export class TerrainSystem implements Terrain {
     const width = Math.hypot(b[0] - a[0], b[1] - a[1]);
     if (barrier === 'vegetation') {
       needs.push({ kind: 'vegetation', border, at: mid, a, b, width });
-      g.addClosed(border, (c) => c.veg >= 0.95 || !!c.vegCost || !!c.fly);
+      // (closed to what dense vegetation stops: play's crossCost of a full thicket)
+      g.addClosed(border, (c) => crossCost(c, { vegetation: 1 }) < Infinity);
       return;
     }
     if (barrier === 'ravine') {
       this.edit({ kind: 'cut', a, b, za: zs - 30, zb: zs - 30, half: 2 * g.step, border }, edits);
-      g.addClosed(border, (c) => (c.fly ?? 0) >= 30 || (c.gap ?? 0) >= 4 * g.step);
+      g.addClosed(border, (c) => crossCost(c, { gap: 4 * g.step, ramp: true, drop: 30, step: 30 }) < Infinity);
       return;
     }
     if (barrier === 'rubble') needs.push({ kind: 'rubble', border, at: mid, a, b, width });
     this.edit({ kind: 'wall', a, b, za: zs, zb: zs, half: g.step, height: WALL_H, border }, edits);
-    g.addClosed(border, (c) => c.step + (c.fly ?? 0) >= WALL_H + 1);
+    g.addClosed(border, (c) => crossCost(c, { step: WALL_H + 1 }) < Infinity);
   }
 
   /** the edits into a region's columns as it's made (atlas stampHooks: world cells x0.. × y0..) */
@@ -318,4 +321,4 @@ export class TerrainSystem implements Terrain {
   }
 }
 
-export { CAPS_PRESETS };
+

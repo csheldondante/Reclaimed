@@ -13986,3 +13986,112 @@ gorges and the sea rule, against places' 28.5 (≈ +10 %, wall time including th
 The region graph over 2048² world units at 4: the GPU sample 24.8 ms, the partition 252 ms. A 1024-reach flood on the GPU
 254 ms (fill and mark passes in batches of 32 with a readback each), equal to the CPU's texel for texel. The rivers' CPU
 pass 582 ms, the macro ground with rivers 58 ms. The phone proxy's driveprofile after TR24: p50 9.8 ms, p95 11.6.
+
+## 2026-10-30 — Run planning, consequences and travel (round 117, branch `runplan`; docs/RUNPLAN.md)
+
+**What.** A run manager that plans a branching run on the region graph fitted to the hero, the stand-in GM's
+consequences for the next run (characters, factions, terrain and cities, regional statuses, failure by death, capture
+or the clock), RegionState converted for each generator, travel on the atlas map with en-route events and precache, and
+a viewer (`?runplan=view&seed=1&hero=bike`). The user (round 117): "15-50 minutes with branching. Decisions should
+impact the world for the next run"; "the run manager should be able to get. The graph and request obstacles or
+otherwise request a certain number of exits"; "A fast bike need races and chases. A combat soldier needs fun fights. A
+force of nature needs spectacle and power fantasy."
+
+**Why CPU.** The planner is a few Dijkstras over 7772 regions once a run, deterministic from the seed, unit-tested in
+Node; the GPU only sees its outputs. Measured (scripts/perf/runplan.mjs, the viewer on the desktop iGPU at the phone
+proxy's size): a plan ~45-100 ms in the page (much of it `world.snapshot()` cloning every region's state; 15-45 ms in
+Node), the travel animation at the display's rate (median 10 ms, p95 10.3 ms). The viewer's panel first called
+`world.snapshot()` on every redraw (~30 ms each, a played run ~0.65 s); it now reads what it shows.
+
+**Why layers of two, a finale.** Every choice is a real fork (two places, two kinds of play when the hero likes more
+than one), every path reaches the finale so the run can't strand the player, and the length is bounded (stage minutes
+are budgets, scaled when a path would leave 15-50). Two stages of a layer at least 1100 world units apart: the first
+look at seed 1 had both choices in neighbouring chasms with their labels on top of each other (500).
+
+**Why one flood-fill request for sea, sand and flood.** The user: "a GPU flood fill based on height … We can flood with
+water, sand, magma etc." — `realise` turns sunk (a new shallow sea), buried (a ruin under sand or ash) and flooded into
+the same `FloodRequest` (seed, level, material) for terrain's tool.
+
+**Why stand-ins.** Terrain's graph and play's controller contract weren't published when this started; `factsGraph`
+(barriers guessed from region kinds and ground, the atlas's roads as crossings) and `HEROES` (read off GameplayGM's
+controllers and the user's words) sit behind `RegionGraph` and `HeroCapabilities`, so swapping them changes no test.
+
+**Tests.** test/unit/runplan.test.ts (21), runplan-play.test.ts (3), ~2 s in the unit tier (testkit's vitest 4 setup).
+**Looked at.** C:/Projects/shots88/runplan/ (bike-1-plan.png, bike-3-event.png, bike-travel.gif, bike-5-end.png,
+bike-phone.png).
+
+## 2026-10-30 — A planned run travelled in the level (round 117, `runplan`; RP5, RC2, RC3)
+
+**What.** `?level=atlas&runplan=bike`: the run planned from the spawn on the live atlas; a card for the stage (its
+outcomes picked for now — the stage's play is the play track's); a leg chosen opens the atlas map with the plan drawn
+on it, the map zoomed to the leg and following the marker, en-route events held on the card until answered; the
+destination's land asked for the moment the leg starts (`precacheWarp`: 49 regions, ~1 ms to ask), and the arrival
+waits until `Streamer.precached` says every region of the destination's window is made — then the warp.
+**Why a readiness check on the streamer.** The user's "animate travel on that map while we load in the background"
+needs to know when the background is done; `precache` only asked. `precached(ox, oy)` reads the streamer's own job and
+pool maps (no new state). **Measured** (scripts/runplanlevel.mjs, desktop iGPU, every system in play, 1x): an 8-12 s
+leg animation, the land ready before it ended every time (waited 0.0 s); the warp after it lands on made land
+(level-bike-4-arrived.png).
+**Looked at.** C:/Projects/shots88/runplan/level-bike-1-start.png, -2-legs.png, -3-event.png (the map on the leg, the
+ambush card), -travel.gif, -4-arrived.png. The first try left the map at the whole continent's zoom and the card over
+the map's buttons: now zoomed to the leg, the card at the bottom while travelling. A lava field was drowned into a sea
+by the lich's first pick: lava and sand country now bury first.
+
+
+## 2026-10-30 — Play's controller profiles as the run manager's capabilities (round 117, `runplan`; RP6)
+
+play (6c3947f) published `ControllerProfile` with `crossCost(profile, crossing)` and `fun(profile)`. The adapter
+(src/runplan/play-adapter.ts `capsFromProfile`) turns each barrier into the ground it is in play's terms (a cliff a
+12-cell step, a ravine a 10-cell gap — with a ramp when it's the hero's planned fun crossing — a river 3 deep, the sea
+30) and asks play's own crossCost, so terrain, flora and runplan agree on what a hero can pass. Why an adapter: the
+planner thinks in borders between regions, play in crossings of ground; this is where they meet. It reads the profile
+structurally (play isn't on places yet); at the merge `ProfileLike` becomes `ControllerProfile`. The planner now asks
+for a fun obstacle the bare barrier would stop (a bike's ravine) because the request carries its passage (the ramp).
+Merged places (testkit): the tests moved to test/unit/runplan*.test.ts, the seed-1 fixture to test/support/seed1.ts.
+
+
+## 2026-10-30 — The tracks consolidated: play, terrain and runplan on one branch with one controller description (round 119, `runplay`)
+
+The user (round 119): "I need to actually play a generated run and try it out. Was there a link?" A run was planned
+and travelled (runplan) but its stages were picked from a card: the heroes (play) and the region graph (terrain) lived
+on other branches. `runplay` merges origin/play, origin/terrain and origin/runplan (in that order) and reconciles
+what each had stood in for the others (main's notes, consolidate.md):
+
+- **One controller description: play's.** `ControllerProfile` + `crossCost` + `fun` (contracts/play.ts) is the only
+  account of what a hero can cross. Terrain's `PassCaps`/`CAPS_PRESETS` and runplan's `HEROES` table are gone.
+  - Two fields play didn't have and terrain needed move into play's contract: `climb.drop` (the deepest drop taken
+    safely: the walker 6, the bike and the lich any — core/bike.ts has no fall damage) and `Crossing.drop` / `Crossing.lava`
+    (only what flies goes over lava). `WALKER_PROFILE` is Reclaimed's on-foot walker (hero/walker.ts numbers): the body
+    terrain makes rooms for by default and the knight's stand-in until play ports it (PL5). `profileKey` is a profile's
+    cache key (terrain caches border costs per body).
+  - Terrain's graph asks play's `crossCost` of every step between samples (partition.ts stepCost: the rise its slope
+    takes, the rest a sheer step, a drop past its slope, the water, lava and vegetation at the next sample) × the run.
+    Why: the terrain's costs, runplan's and play's can't disagree when they're one function. A sample is a room's ground
+    when crossing it costs at most `CLEAR_COST` (1.75) × open ground. Barrier naming (cliff/steep, ravine depth) is
+    physical now (3 × the walker's step; the walker's drop), not the build body's. Edits' predicates (a ford, a ramp, a
+    wall, a cut, a thicket) are crossCost calls too.
+  - What changed in behaviour, from play's numbers: a bike is slowed by a thicket, not stopped (play's profile says
+    `vegetation.through 0.5`: the user's "a soft barrier like slowing you down"); play's bike climbs steeper than a
+    walker's ramp, so it rides one. The terrain tests say so now.
+  - Runplan's `HeroCapabilities` stays as the planner's per-barrier view, derived only (play-adapter.ts
+    `capsFromProfile`, crossCost on each barrier's typical ground) — an adapter because the atlas graph names a border's
+    barrier without measuring it, while play reasons in cells of gap, step and water.
+- **The region graph is terrain's.** Runplan's guessed `factsGraph` → `runGraph(Terrain.atlasGraph(), …)`: terrain's
+  nodes and barriers, joined with the wiki's names and settlements and the atlas facts' stamps and road crossings
+  (src/runplan/graph.ts). Terrain's edges are unordered; the join turns each to face out of the region asked. Edge
+  `length` is terrain's (shared border); the planner's travel uses `span` (centre to centre), as its old length was.
+  Seed 1's atlas graph is a fixture (data/atlas/seed1-graph.json) written by test/gpu/atlasgraph.test.ts on Dawn from
+  the level's own atlas and checked against the atlas facts (same regions, kinds, centres): the planner's Node tests
+  plan on terrain's real graph without a GPU.
+- **Barrier kinds are terrain's** (cliff, steep, ridge, ravine, river, lake, sea, lava, vegetation, tar; hostile, storm,
+  distance). Runplan's mountain/water/thicket/ice/dunes/hostiles are gone with the guesses that made them.
+- **Requests.** Runplan's `TerrainRequest` is renamed `RunTerrainAsk` (the planner's terms: atlas regions); terrain's
+  `TerrainRequest` acts on a stage's rooms and borders, which exist only once the stage's rectangle is sampled, so the
+  asks are turned into terrain's requests when a leg sets out (src/runplan/requests.ts, before the destination's land is
+  made: the edits are stamped into it).
+- **Floods are terrain's.** `RegionRealisation.terrain.fills` are terrain's `FloodRequest` (at, level, fluid) plus the
+  region and why (`RegionFill`).
+- Shared tweaks reconciled from the merge: level.ts keeps both ?play= and ?runplan=; main.ts both ?terrain=view and
+  ?runplan=view; the level makes one TerrainSystem (its edits stamp the land once).
+
+npm test: 28 files, 207 tests pass (unit 196 in ~2.4 s; the gpu tier with the new atlas-graph fixture ~52 s).

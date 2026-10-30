@@ -1617,6 +1617,26 @@ export class Streamer {
     return n;
   }
 
+  /**
+   * (round 117, runplan) Is the land of a window at origin (ox, oy) ready for a warp — every region of it made (in the
+   * pool) or in the window now, none still under way? The run's travel on the atlas map waits on this before it
+   * arrives (src/runplan/travel.ts Journey), so the travel covers the loading. Without a store nothing is precached:
+   * the warp makes the land itself, so it's "ready" (the warp's own wait is the only one).
+   */
+  precached(ox: number, oy: number): boolean {
+    if (!this.store) return true;
+    const { R, W, H } = this;
+    for (let ly = 0; ly < H; ly += R)
+      for (let lx = 0; lx < W; lx += R) {
+        const wx = ox + lx;
+        const wy = oy + ly;
+        const key = this.key(wx / R, wy / R);
+        if (this.jobs.has(key)) return false;
+        if (!this.made.has(key) && !(this.winInfo.has(key) && this.inWindow(wx, wy))) return false;
+      }
+    return true;
+  }
+
   /** (round 100) whether world cell (wx, wy) — a region's corner — is in the window now */
   private inWindow(wx: number, wy: number): boolean {
     const lx = wx - this.origin[0];

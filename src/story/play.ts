@@ -614,7 +614,7 @@ export class StoryPlay {
   private endCard(r: RunRecord): void {
     const el = document.createElement('div');
     el.className = 'story-end';
-    const title = { won: 'The run is won', lost: 'The run is lost', fled: 'You fled', abandoned: 'Abandoned' }[r.end];
+    const title = { won: 'The run is won', lost: 'The run is lost', fled: 'You fled', abandoned: 'Abandoned', captured: 'Captured', late: 'Too late' }[r.end];
     el.innerHTML = `<h2></h2><p class="sub">What the world will remember</p><ul></ul><p class="ev"></p><button>Go on</button>`;
     el.querySelector('h2')!.textContent = title;
     const ul = el.querySelector('ul')!;

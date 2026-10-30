@@ -67,6 +67,10 @@ export type AtlasEventKind =
   | 'rebuild'
   | 'faction-presence'
   | 'faction-attitude'
+  /** (round 117, runplan) a faction's feeling toward another (detail.faction, detail.toward; −1..1, applied once) */
+  | 'faction-relation'
+  /** (round 117, runplan) a faction's strength in the world (detail.faction; −1..1, applied once): the user's "factions and their relationships and power" */
+  | 'faction-power'
   | 'mark';
 
 export interface AtlasEvent {
@@ -125,6 +129,8 @@ export interface Faction {
   era: 'ancient' | 'medieval' | 'industrial' | 'modern' | 'post-apocalyptic' | 'sci-fi' | 'magical';
   attitude: number;
   relations: Partial<Record<FactionId, number>>;
+  /** (round 117, runplan) its strength, 0..1 (absent: 0.5): what 'faction-power' moves; the GM reads it for who can take over */
+  power?: number;
   /** its civilization's profile (recipe.ts CivProfile: knowledge, tastes, how it builds) */
   civ?: string;
 }
@@ -143,6 +149,8 @@ export interface WorldSnapshot {
   history: AtlasEvent[];
   /** what past runs did and how they ended (run.ts RunRecord) */
   runs: import('./run').RunRecord[];
+  /** (round 117, runplan) the characters the world remembers: heroes and the people they met (run.ts CharacterRecord); absent in older saves */
+  characters?: import('./run').CharacterRecord[];
 }
 
 /** The world between runs: the one place AtlasEvents are applied. */

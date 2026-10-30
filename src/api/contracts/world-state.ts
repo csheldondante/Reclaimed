@@ -3,7 +3,7 @@
 // atlas's own (the coarse world for shaped events, saving) replaces its insides, not its API.
 
 import { freshRegion, type AtlasEvent, type Faction, type FactionId, type RegionId, type RegionState, type WorldSnapshot, type WorldState } from './world';
-import type { RunRecord } from './run';
+import type { CharacterChange, CharacterRecord, RunRecord } from './run';
 
 const clamp01 = (v: number) => Math.max(0, Math.min(1, v));
 
@@ -14,6 +14,8 @@ export class MemoryWorldState implements WorldState {
   readonly runs: RunRecord[] = [];
   /** the world's settlements (the region generator and the city game keep them) */
   readonly settlements: import('./settlement').Settlement[] = [];
+  /** (round 117, runplan) the characters the world remembers (heroes and the people they met), by id */
+  private chars = new Map<string, CharacterRecord>();
   version = 0;
   run = 0;
   onChange: ((region: RegionId, before: RegionState, after: RegionState) => void)[] = [];
@@ -42,6 +44,7 @@ export class MemoryWorldState implements WorldState {
     w.events.push(...structuredClone(s.history));
     w.runs.push(...structuredClone(s.runs));
     w.settlements.push(...structuredClone(s.settlements));
+    for (const c of structuredClone(s.characters ?? [])) w.chars.set(c.id, c);
     w.version = s.version;
     w.run = s.run;
     return w;
@@ -103,12 +106,57 @@ export class MemoryWorldState implements WorldState {
       }
       for (const cb of this.onChange) cb(id, before, r);
     }
+    if (e.kind === 'faction-relation' || e.kind === 'faction-power') {
+      const f = this.factions.get(e.detail?.faction as FactionId);
+      if (!f) throw new Error(`AtlasEvent ${e.id}: ${e.kind} needs detail.faction, a known faction`);
+      const m = Math.max(-1, Math.min(1, e.magnitude));
+      if (e.kind === 'faction-power') f.power = clamp01((f.power ?? 0.5) + m);
+      else {
+        const t = e.detail?.toward as FactionId | undefined;
+        if (!t || !this.factions.has(t)) throw new Error(`AtlasEvent ${e.id}: faction-relation needs detail.toward, a known faction`);
+        f.relations[t] = Math.max(-1, Math.min(1, (f.relations[t] ?? 0) + m));
+      }
+    }
     if (e.kind === 'faction-attitude') {
       const f = this.factions.get(e.detail?.faction as FactionId);
       if (!f) throw new Error(`AtlasEvent ${e.id}: faction-attitude needs detail.faction, a known faction`);
       f.attitude = Math.max(-1, Math.min(1, f.attitude + e.magnitude));
     }
     this.events.push(e);
+    this.version++;
+  }
+
+  /** (round 117, runplan) a character the world remembers */
+  character(id: string): CharacterRecord | undefined {
+    return this.chars.get(id);
+  }
+
+  characters(): CharacterRecord[] {
+    return [...this.chars.values()];
+  }
+
+  /** (round 117, runplan) what a run did to a character; an unknown id (other than a 'meet') is the caller's bug */
+  applyCharacter(c: CharacterChange, run = this.run): void {
+    if (c.kind === 'meet') {
+      const had = this.chars.get(c.character.id);
+      if (had) {
+        had.alive = c.character.alive;
+        had.region = c.character.region;
+      } else this.chars.set(c.character.id, { relationships: {}, gear: [], statuses: [], ...structuredClone(c.character), history: [] });
+      this.version++;
+      return;
+    }
+    const r = this.chars.get(c.id);
+    if (!r) throw new Error(`character change ${c.kind}: no character ${c.id}`);
+    switch (c.kind) {
+      case 'history': r.history.push({ run, text: c.text }); break;
+      case 'relationship': r.relationships[c.toward] = Math.max(-1, Math.min(1, (r.relationships[c.toward] ?? 0) + c.delta)); break;
+      case 'motivation': r.motivation = c.motivation; break;
+      case 'gear': r.gear = [...r.gear.filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !r.gear.includes(g))]; break;
+      case 'status': r.statuses = [...r.statuses.filter((g) => !c.remove?.includes(g)), ...(c.add ?? []).filter((g) => !r.statuses.includes(g))]; break;
+      case 'move': r.region = c.region; break;
+      case 'die': r.alive = false; r.history.push({ run, text: c.text }); break;
+    }
     this.version++;
   }
 
@@ -133,6 +181,7 @@ export class MemoryWorldState implements WorldState {
       settlements: structuredClone(this.settlements),
       history: this.history(),
       runs: [...this.runs],
+      characters: structuredClone(this.characters()),
     };
   }
 }

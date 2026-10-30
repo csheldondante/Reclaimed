@@ -2446,6 +2446,32 @@ clears them).
 - **Land written is drawable at once** (SF7): the streamer's onRelief → level → WorldCore.prepareArrived (SurfaceSystem
   and RenderFieldsSystem with `all`: every column, no sleep skip) and HybridChunks.landBox(…, −Infinity): ready now.
 
+## Planned runs (round 117, branch `runplan`; docs/RUNPLAN.md)
+
+- **Contract** (`src/api/contracts/run.ts`, second half): `RunPlanner.plan({ graph, world, hero, seed, from, minutes })
+  → RunPlan` — stages (region, encounter, brief, minutes, the section to keep resident, outcomes, legs out), legs
+  (route of regions, path in world units, crossings, en-route events, minutes, animation seconds), failure rules, terrain
+  requests, the deadline. Inputs (runplay, round 119): `RegionGraph` is terrain's `AtlasRegionGraph` joined with the
+  wiki's names, the atlas facts' stamps and road crossings (src/runplan/graph.ts `runGraph`); `HeroCapabilities` is
+  derived only, from play's `ControllerProfile` through play's `crossCost` (play-adapter.ts `capsFromProfile`; the role →
+  controller table is heroes.ts `ROLES`). Barrier kinds are terrain's `BarrierKind`. Outputs other systems read:
+  `RunTerrainAsk` (turned into terrain's `TerrainRequest` on the stage's land when a leg sets out: runplan/requests.ts
+  `askTerrain`), `RegionRealisation` (`RegionFill`: terrain's `FloodRequest` + region and why; structures, inhabitants,
+  flora, sky), `RunStage.section` (the streamer's pinned set, RC1).
+- **World state** (`world.ts`, `world-state.ts`): characters (`CharacterRecord`, `applyCharacter`, in the snapshot),
+  `Faction.power`, events `faction-power` / `faction-relation`. Outcomes are `Outcome` + `CharacterChange[]`, applied
+  by `finishRun` (src/runplan/consequences.ts) through `WorldState.apply` and `applyCharacter` only.
+- **Travel** (`src/runplan/travel.ts`): `Journey(leg, dest, Precacher)` — pure; asks for the destination's land when it
+  starts, arrives when the animation is done and the land is ready. The level gives it the streamer's precache
+  (`precacheWarp`); the viewer a stand-in loader.
+- **Shared change**: `api/atlas-map.ts` exports `paintAtlasImage(atlas)` (AtlasMap's painter, unchanged) so the viewer
+  draws the game's own map.
+- **In the level** (`src/runplan/level-run.ts`, `?level=atlas&runplan=<hero>`): `LevelRun` plans from the spawn on the
+  live atlas (atlasFacts + buildWiki), shows a stage card, travels legs on the AtlasMap through `AtlasMap.overlay`
+  (draws the plan), `redraw()` and `centreOn(cx, cy, scale)` (round 117 additions), with `precacheWarp` and
+  `warpReady` (atlas-world.ts; `Streamer.precached(ox, oy)`: every region of that window made or in the window, none
+  under way), then `warpWindow` on arrival.
+
 ## Tests in Node (round 117, `testkit`; docs/TESTING.md)
 
 - `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a
@@ -2468,8 +2494,11 @@ want to be able to flood a basin and bury things".
 
 - **Contract:** src/api/contracts/terrain.ts — `Terrain` (graph, request, edits, flood), `TerrainGraph` (regions at two
   levels: features 0, rooms 1; borders with a BarrierKind, causes, BorderMeasure and passes; cost/exits/reach per
-  `PassCaps`; soften), `TerrainRequest` (exits, obstacle, open) → `TerrainResult` (edits, needs), `FloodRequest` →
-  `FloodResult`. World units of the atlas. `PassCaps` stands in for the play track's controller contract; `CAPS_PRESETS`.
+  body; soften), `TerrainRequest` (exits, obstacle, open) → `TerrainResult` (edits, needs), `FloodRequest` →
+  `FloodResult`. World units of the atlas. A body is play's `ControllerProfile` (runplay, round 119: `PassCaps` and
+  `CAPS_PRESETS` are gone; `WALKER_PROFILE` is the default body rooms are made for): each step between samples costs
+  the run × play's `crossCost` (partition.ts stepCost), a room's ground is what costs ≤ `CLEAR_COST` (1.75); border
+  costs are cached per `profileKey`.
 - **Implementation:** src/terrain/terrain.ts `TerrainSystem` (window.reclaimed.terrain in the atlas level and the viewer).
   sample.ts + sample.wgsl: the land on a grid from the atlas's ground() (its own uniform buffers; bindings 20-26 read,
   40-41). partition.ts: the CPU graph (pure; unit-tested). flood.ts + flood.wgsl: the GPU fill and mark, and the CPU

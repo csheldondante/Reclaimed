@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { partition, RegionGraph, type TerrainSamples } from './partition';
 import { TerrainSystem } from './terrain';
-import { CAPS_PRESETS } from '../api/contracts/terrain';
+import { WALKER_PROFILE } from '../api/contracts/play';
+import { library } from '../play/library';
 import { StampOps } from '../atlas/stamps';
 import type { Atlas } from '../atlas/atlas';
 
@@ -12,7 +13,10 @@ function land(w: number, h: number, f: (x: number, y: number) => number, extra?:
   return S;
 }
 const fakeAtlas = () => ({ stampHooks: [] as ((ops: StampOps, x0: number, y0: number, w: number, h: number) => Promise<void>)[], worldW: 16384, worldH: 16384 }) as unknown as Atlas & { stampHooks: ((ops: StampOps, x0: number, y0: number, w: number, h: number) => Promise<void>)[] };
-const { walker, bike, lich } = CAPS_PRESETS;
+// (runplay: play's profiles — the walker, the hoverbike and the lich at their defaults)
+const walker = WALKER_PROFILE;
+const bike = library.get('hoverbike')!.profile();
+const lich = library.get('lich')!.profile();
 
 describe('terrain requests', () => {
   it('opens a cliff with a ramp the walker can climb, stamped into the land', async () => {
@@ -29,8 +33,9 @@ describe('terrain requests', () => {
     // long enough for the walker: 30 up at 0.75 a cell → 40 world units at least
     expect(Math.hypot(e.b[0] - e.a[0], e.b[1] - e.a[1])).toBeGreaterThanOrEqual(39);
     expect(g.exits(lo.id, walker).length).toBe(1);
-    // and the bike (slope 0.6) can't use a walker's ramp
-    expect(g.exits(lo.id, bike).length).toBe(0);
+    // (runplay: play's bike climbs steeper than the ramp — 0.75 of the walker's slope — so it rides it too)
+    expect(bike.climb.slope).toBeGreaterThan(0.75);
+    expect(g.exits(lo.id, bike).length).toBe(1);
     // stamped: a region over the ramp's middle gets plan ops
     const mx = (e.a[0] + e.b[0]) / 2;
     const my = (e.a[1] + e.b[1]) / 2;

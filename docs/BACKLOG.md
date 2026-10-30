@@ -12,6 +12,32 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 119 (2026-10-30, branch `runplay`) — a generated run played end to end (DECISIONS round 119)
+
+The user (round 119): "I need to actually play a generated run and try it out. Was there a link?" play, terrain and
+runplan merged; a run's stages played with play's heroes, not picked. DEVLOG round 119 (`runplay`).
+
+| id | item | size | status |
+|---|---|---|---|
+| RPL1 | Consolidate the tracks: one controller description (play's ControllerProfile + crossCost: terrain's PassCaps/CAPS_PRESETS and runplan's HEROES gone; `climb.drop`, `Crossing.drop/lava`, `WALKER_PROFILE`, `profileKey` added to play's contract), terrain's atlas graph as the run's region graph (`runGraph`; seed-1 fixture from Dawn), terrain's barrier kinds, the plan's asks as terrain's requests at leg start (`askTerrain`), terrain's FloodRequest in RegionRealisation | M | done (runplay) |
+
+## Round 117 (2026-10-30, branch `runplan`) — run planning, GM consequences, travel (docs/RUNPLAN.md)
+
+The user (round 117): runs of "15-50 minutes with branching. Decisions should impact the world for the next run"; "the
+run manager should be able to get. The graph and request obstacles or otherwise request a certain number of exits";
+"A fast bike need races and chases. A combat soldier needs fun fights. A force of nature needs spectacle and power
+fantasy."
+
+| id | item | size | status |
+|---|---|---|---|
+| RP1 | The run manager: a branching run (start, 1-4 layers of two, a finale) planned on the region graph for the hero's capabilities, 15-50 min, every path to the finale; terrain requests (obstacles fun for the hero, exits per stage); `?runplan=view` viewer | L | done (runplan) |
+| RP2 | Consequences between runs: per-encounter outcomes (AtlasEvents + CharacterChanges), the GM's failure rules (death: the lich takes the map where the dead hold sway; capture: held at the captor's seat, rescue / escape next run; late: the threat wins), `finishRun`; characters (history, relationships, motivation, gear, statuses) and faction power/relations in the world state | M | done (runplan) |
+| RP3 | RegionState realised per generator at the boundary (`realise` → RegionRealisation: sunk/buried/flooded as height flood-fill requests, ruin/overgrowth/drowned/marks, undead/presence/welcome, flora, sky) — for terrain, structures, inhabitants, flora to read when their contracts land | M | done (contract + conversion; generators don't read it yet) |
+| RP4 | Travel on the atlas map: Journey (precache at once, events held until answered, arrive when animated and resident), en-route events (vista, poi, ambush, weather, traveller) | M | done in the viewer (stand-in loader); the level: RP5 |
+| RP5 | The same travel in the level: AtlasMap draws the run's legs, Journey with the streamer's precache, warp on arrival (`?level=atlas&runplan=bike`; a stage's play picked from its outcomes until the play track's heroes run stages) | M | done (runplan) |
+| RP8 | "fade between pretty views along the road": at a vista, the 3D view of the spot (precached with the leg) faded in over the map for a few seconds — the map-side zoom-in is in the viewer only | M | open |
+| RP6 | Swap the stand-ins: terrain's region graph for `factsGraph`, play's controller contract for `HEROES` | S | done (runplay, round 119): `runGraph(Terrain.atlasGraph())`, `heroCaps` from play's `library` profiles (RPL1) |
+| RP7 | Pinned sections (RC1): `RunStage.section` says what to keep resident; the tile atlas needs a pinned set | M | open |
 ## Round 117 (2026-10-30, `play`) — the game layer: heroes, controllers, controls, gear, vehicles (DECISIONS round 117)
 
 The user: "I think just make a new layer you own so I can work from one session" / "We want the controls to vary per character and we want them to play differently" / "parameterize it so we can reason about it during generation". src/play/, contract src/api/contracts/play.ts.
