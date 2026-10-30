@@ -13005,3 +13005,25 @@ that: scripts/pixelshot.mjs (sim paused, the shaders' clock held, each view once
 against the old one differs 8-16% — inside that. The gate's golden images (gate-s51.json, every view) changed by the
 same fractions as the run before it (e.g. phone z8 0.32% / 0.36%, desktop z5 0.48% / 0.48%, run-desktop-z8 7.10% /
 7.13%); all views pass, frames alike.
+
+## 2026-10-30 — round 113 (`tilesfirst`): step 5 parked after 5.1; what the stand-in shows at wide zooms (SF11)
+
+**Step 5 parked** (main's call on the measurements, for the user to decide): a render-only tile is now drawable
+~50-70 ms after it's wanted (generation 28-50 ms, the bake 10-21 ms, p50 / p90 on the phone proxy panning at 160 c/s;
+its "wanted to drawn" of ~2 s is the look-ahead's lead time, not latency), and land written into the window is drawn
+0-40 ms after (SF7). A height grid made from the generation's first pass would come about a frame before the tile, so
+its latency win is ~a frame; its remaining value is memory (a compact per-region record instead of a tile's slot) and
+views from any angle without a re-bake. 5.1 (the look's sources behind names, declaration-identical) stays: it's
+what 5.2-5.5 build on.
+
+**SF11, measured before changing anything.** The stand-in seen at desktop z5 on fast pans (gate-sf9: 8-13%) isn't the
+tiles' reach: holediag (desktop, z5, 40-160 c/s, 6 s from the gate's spot) classifies every stand-in sample, and none is
+a region with no tile (`+none`) — the look-ahead had asked for and made them all. Two other causes:
+(a) the open sea at the end of the gate's route: deep water whose bed is under the window's floor — a render-only
+tile's land is cut at the window's oz, so its tile holds nothing there and the window's chunks are neither the grid's
+nor voxels (SF8); the stand-in's sea shows (gate-sf9/desktop-z5-pan.png);
+(b) inland, a strip at the screen's sides on the window's edge rows (z5far-cls.png, z5band.png: 3-6% of a frame at
+40-80 c/s, 2% at 160) — classified as window chunks the CPU counts as drawn by the grid, the region's tile held back
+for it, but the pixels show the stand-in: the geometric check reads 0 there (it trusts the same "drawn"). Open: SF12.
+So the reach by throughput isn't changed (a reach shrunk to one tile's latency made z5 worse: SF9's entry); SF11 stays
+open for when a `+none` shows up.
