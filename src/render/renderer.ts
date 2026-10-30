@@ -96,6 +96,7 @@ export interface RenderOptions {
 }
 
 /** (perfopt) the winding of the mesh's faces out of the solid on screen (fieldmesh.wgsl makeQuads; ?front=cw to try the other) */
+const STRUCT_CULL: GPUCullMode = (new URLSearchParams(location.search).get('scull') ?? 'back') as GPUCullMode;
 const MESH_FRONT: GPUFrontFace = new URLSearchParams(location.search).get('front') === 'cw' ? 'cw' : 'ccw';
 /** (round 86) ?hybrid=1 (phone-flags' LITE_SET on the low tier): the window's heightfield chunks drawn as a grid
  *  (meshdraw.wgsl vsGrid) — its pipelines made */
@@ -1960,7 +1961,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       vertex,
       fragment: { module, entryPoint: 'fsStruct', targets: [{ format: this.colorFormat }, { format: PICK_FORMAT }] },
       // (the modules are wound outward and every frame counter-clockwise: back faces culled, half the fragments)
-      primitive: { topology: 'triangle-list', cullMode: 'back' },
+      primitive: { topology: 'triangle-list', cullMode: STRUCT_CULL },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' },
     }, (p) => (st.pipe = p));
     if (this.noShadowView)

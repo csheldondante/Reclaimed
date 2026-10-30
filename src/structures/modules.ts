@@ -575,22 +575,23 @@ function barnSet(lod: boolean): Module[] {
 
 /** a field's strip: tilled soil, the crop in rows along it (frame: the strip; its top a height over the ground) */
 function crop(): Module {
+  // the strip's soil and its crop over it in rows only a few centimetres proud: from above, a field's colour finely lined
+  // along the strip (rows standing tall read as fins or boards from the game's steep camera)
   const k = new Kit();
-  // (in four along its length: a draped crop's vertices each find the ground — structmesh.wgsl hostGround — so it bends
-  // with a slope between its ends)
   const segs = 4;
   for (let g = 0; g < segs; g++) {
     const u0 = g / segs;
     const u1 = (g + 1) / segs;
-    k.box(u0, u1, 0, 1, 0, 0.3, Part.Soil, 16 | (g > 0 ? 1 : 0) | (g < segs - 1 ? 2 : 0));
-    const rows = 5;
+    k.box(u0, u1, 0, 1, 0, 0.7, Part.Soil, 16 | 32 | (g > 0 ? 1 : 0) | (g < segs - 1 ? 2 : 0));
+    const rows = 9;
     for (let i = 0; i < rows; i++) {
-      const v0 = (i + 0.15) / rows;
-      const v1 = (i + 0.85) / rows;
-      const vm = (v0 + v1) / 2;
-      // a ridge of the crop: a low prism along the strip
-      k.quad([u0, v0, 0.3], [u1, v0, 0.3], [u1, vm, 1], [u0, vm, 1], Part.Crop);
-      k.quad([u0, vm, 1], [u1, vm, 1], [u1, v1, 0.3], [u0, v1, 0.3], Part.Crop);
+      const v0 = i / rows;
+      const v1 = (i + 1) / rows;
+      const e = 0.12 / rows;
+      // (a row: its top flat, its edges bevelled down to the soil line between rows)
+      k.quad([u0, v0, 0.7], [u1, v0, 0.7], [u1, v0 + e, 1], [u0, v0 + e, 1], Part.Crop);
+      k.quad([u0, v0 + e, 1], [u1, v0 + e, 1], [u1, v1 - e, 1], [u0, v1 - e, 1], Part.Crop);
+      k.quad([u0, v1 - e, 1], [u1, v1 - e, 1], [u1, v1, 0.7], [u0, v1, 0.7], Part.Crop);
     }
   }
   return k.done('crop');

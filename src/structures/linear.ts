@@ -162,7 +162,16 @@ export function routes(spec: CitySpec, ground: GroundFn, water: GroundFn | undef
       ring.push({ x: cx + Math.cos(a) * rr, y: cy + Math.sin(a) * rr });
     }
     const gate = (p: { x: number; y: number }) => gates.some((q) => Math.hypot(q[0] - p.x, q[1] - p.y) < 7);
-    const keep = ring.map((p) => !gate(p) && !wet(p.x, p.y));
+    // (no wall in a river: a point is left out if it, or the wall either side of it, has any water under it — sampled every
+    // metre, even shallow — so the runs end in towers either side of the water: a water gate, not a wall across it)
+    const damp = (x: number, y: number) => (water ? water(x, y) > 0.05 : false);
+    const segWet = ring.map((p, i) => {
+      const q = ring[(i + 1) % n];
+      const L = Math.hypot(q.x - p.x, q.y - p.y);
+      for (let d = 0; d <= L; d += 1) if (damp(p.x + ((q.x - p.x) * d) / L, p.y + ((q.y - p.y) * d) / L)) return true;
+      return false;
+    });
+    const keep = ring.map((p, i) => !gate(p) && !wet(p.x, p.y) && !segWet[i] && !segWet[(i - 1 + n) % n]);
     // (runs of kept points round the loop: each a wall, open at the gates)
     const start = keep.indexOf(false);
     if (start < 0) {

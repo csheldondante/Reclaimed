@@ -10,6 +10,8 @@
 // an affine piece, rows 0-2 a 3 × 4 transform).
 
 // (SP_PAL, SP_PARTS, SP_VARIANTS: from src/structures/gpu.ts wgsl(), the TS tables' sizes)
+// (a draped piece's corners may move this far from the plan's ground; past it, it's hidden)
+const DRAPE_MAX: f32 = 1.5;
 
 struct SpVert {
   wpos: vec3<f32>,
@@ -46,8 +48,19 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   let rel = (u32(tp.w) & 1u) != 0u;
   // (flags & 4: draped — what lies on the ground (paving, a crop, a fence) follows the ground as the host has it now,
   // not as the plan saw it: a road graded, a bank eroded since)
+  // (per piece, not per vertex: the live ground at its four corners, bilinear between them — a piece stays one plane, never
+  // torn into fins where the ground steps; where any corner's ground has moved far from the plan's — a cut, a terrace,
+  // sand slid since — the whole piece goes under the ground, out of sight, rather than hang as a curtain)
   var zf2 = zf;
-  if ((u32(tp.w) & 4u) != 0u) { zf2 = hostGround(xy, zf); }
+  if ((u32(tp.w) & 4u) != 0u) {
+    let g0 = hostGround(c01.xy, foot.x);
+    let g1 = hostGround(c01.zw, foot.y);
+    let g2 = hostGround(c23.xy, foot.z);
+    let g3 = hostGround(c23.zw, foot.w);
+    let off = max(max(abs(g0 - foot.x), abs(g1 - foot.y)), max(abs(g2 - foot.z), abs(g3 - foot.w)));
+    zf2 = (1.0 - u) * (1.0 - v) * g0 + u * (1.0 - v) * g1 + u * v * g2 + (1.0 - u) * v * g3;
+    if (off > DRAPE_MAX) { zf2 = min(zf, zf2) - 3.0; }
+  }
   var z = mix(zf2, tp.x, a.z);
   if (rel) { z = zf2 + tp.x * a.z; }
   var o: SpVert;
@@ -154,7 +167,8 @@ fn spAlbedo(sv: SpVert, n: vec3<f32>) -> vec3<f32> {
     }
     case 18u: {
       // a crop: stalks' noise, the rows' tops lighter
-      c *= 0.8 + 0.25 * spN2(p.xy * 6.0) + 0.1 * n.z;
+      // (no shading by the row's facing beyond the light's: the rows' sides read as fins when lit apart from their tops)
+      c *= 0.9 + 0.15 * spN2(p.xy * 6.0);
     }
     default: {}
   }

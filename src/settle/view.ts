@@ -64,6 +64,8 @@ export class SettlementsView {
   private lastOrigin = '';
   /** (debugging) draw only the pieces whose module name starts with this */
   only = '';
+  /** (debugging) the last pieces set, in the window's frame */
+  last: { module: Uint16Array; data: Float32Array } | null = null;
   readonly stats = { settlements: 0, drawn: 0, pieces: 0, claimed: 0, columns: 0, lost: 0, piecesMs: 0 };
 
   constructor(private io: ViewIO, private st: Settlements) {
@@ -282,6 +284,7 @@ export class SettlementsView {
       }
       k += p.count;
     }
+    this.last = { module, data };
     if (this.only) {
       const lib = library();
       const keep: number[] = [];

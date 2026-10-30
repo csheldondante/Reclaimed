@@ -72,7 +72,7 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Thatch]: ['#b39a62', '#a68c55', '#c2a86e', '#8f7a4a'],
       [Part.Plank]: ['#6e5a44', '#7a6046', '#5f5246', '#82684c'],
       [Part.Soil]: ['#5a4632', '#6b5038', '#4f3d2c'],
-      [Part.Crop]: ['#7e9a3c', '#c9b25a', '#a9a04a', '#d8bf6a', '#6f8e36'],
+      [Part.Crop]: ['#7e9a3c', '#b8a554', '#a9a04a', '#c4ae62', '#6f8e36'],
     }),
   },
   bastion: {
@@ -106,7 +106,7 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Thatch]: ['#b39a62', '#a68c55', '#c2a86e', '#8f7a4a'],
       [Part.Plank]: ['#6e5a44', '#7a6046', '#5f5246', '#82684c'],
       [Part.Soil]: ['#5a4632', '#6b5038', '#4f3d2c'],
-      [Part.Crop]: ['#7e9a3c', '#c9b25a', '#a9a04a', '#d8bf6a', '#6f8e36'],
+      [Part.Crop]: ['#7e9a3c', '#b8a554', '#a9a04a', '#c4ae62', '#6f8e36'],
     }),
   },
   terrace: {
@@ -140,7 +140,7 @@ export const STYLES: Record<StructureStyleId, Style> = {
       [Part.Thatch]: ['#b39a62', '#a68c55', '#c2a86e', '#8f7a4a'],
       [Part.Plank]: ['#6e5a44', '#7a6046', '#5f5246', '#82684c'],
       [Part.Soil]: ['#5a4632', '#6b5038', '#4f3d2c'],
-      [Part.Crop]: ['#7e9a3c', '#c9b25a', '#a9a04a', '#d8bf6a', '#6f8e36'],
+      [Part.Crop]: ['#7e9a3c', '#b8a554', '#a9a04a', '#c4ae62', '#6f8e36'],
     }),
   },
 };

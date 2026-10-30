@@ -223,7 +223,7 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       // (the ground's own); fences or hedges round each plot, on the sides with another plot or none beside
       out.owner = -1000;
       const plotLook = styleIx * 65536 + (hashf(t.block[q], seed, 43) * 4096) | 0;
-      if (u === 'field') out.add(lib.id('crop'), p, footOf(q, 0.12), 0.42, plotLook, hashf(q, 44), REL | DRAPE);
+      if (u === 'field') out.add(lib.id('crop'), p, footOf(q, 0.12), 0.25, plotLook, hashf(q, 44), REL | DRAPE);
       else if (u === 'orchard') {
         const c: V2 = [(p[0][0] + p[1][0] + p[2][0] + p[3][0]) / 4, (p[0][1] + p[1][1] + p[2][1] + p[3][1]) / 4];
         const s = 2.2;

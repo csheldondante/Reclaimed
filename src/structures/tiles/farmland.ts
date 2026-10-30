@@ -168,7 +168,11 @@ export function farmland(o: FarmOpts): { mesh: TileMesh; fences: PlotFence[] } {
         const t0 = k4 / segs;
         const t1 = (k4 + 1) / segs;
         const qd = [lerp(strip[0], strip[1], t0), lerp(strip[0], strip[1], t1), lerp(strip[3], strip[2], t1), lerp(strip[3], strip[2], t0)];
-        B.quad(...(qd.map((p) => B.vert(p[0], p[1])) as [number, number, number, number]), wedge ? 'pasture' : 'field', block);
+        // (a crop only on gentle ground: a strip piece whose corners differ by more than 1.5 m is left to grass — on a
+        // steep or cut slope its rows read as fins standing up, not a field)
+        const gs = qd.map((p) => o.ground(p[0], p[1]));
+        const steep = Math.max(...gs) - Math.min(...gs) > 1.5;
+        B.quad(...(qd.map((p) => B.vert(p[0], p[1])) as [number, number, number, number]), wedge || steep ? 'pasture' : 'field', block);
       }
     }
   });

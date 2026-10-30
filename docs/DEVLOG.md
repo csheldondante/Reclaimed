@@ -13876,3 +13876,17 @@ strip); hamlets weren't in this world's atlas to look at; quarry towns (the terr
 
 Shots: C:\Projects\shots88\structures\towns-city-0/1.png, towns-town-0/1.png, towns-village-0/1.png,
 phone-towns-city-0/1.png (phone proxy), dens-0/1.png (viewer: houses → huts → farmland).
+
+## 2026-10-30 — round 119 (`structures`): main's review of the towns — spikes, fins, a wall in the river
+
+- **Grey spikes through the city** were draped paving: each vertex took the live ground under it, and next to a
+  building that's an External column whose top is the roof — a paving vertex there jumped up to the roof. Draping is now
+  per piece: the live ground at the piece's four corners (blended over the three nearest columns, External ones left
+  out), bilinear between them, so a piece stays one plane; where a corner's ground has moved more than 1.5 m from the
+  plan's (a cut, a terrace, sand slid since) the whole piece goes under the ground instead of hanging as a curtain.
+- **Crop fins**: from the game's steep camera the crop's 0.3 m-tall rows read as boards standing up (rows running up the
+  screen, their sides lit apart from their tops). The crop is now soil with rows only a few centimetres proud, bevelled,
+  a 0.25 m piece; strips on ground falling more than 1.5 m across a piece are pasture.
+- **The wall in the river**: a wall-ring point is left out when it or the wall either side of it has any water under it
+  (sampled every metre, even shallow), so the runs end in towers either side of a river — a water gate.
+Shots: towns-city-1.png, towns-village-1.png, phone-towns-city-1.png, phone-towns-village-1.png.
