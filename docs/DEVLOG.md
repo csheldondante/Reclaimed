@@ -12987,3 +12987,21 @@ not one tile's latency. Kept as it was; the planner's tile reach by throughput i
 desktop z14 0, z8 0-0.10, z5 0.05-0.61 (was 0.65-2.0). The far share (the stand-in seen) at desktop z5 40-160 c/s, 8-13%,
 is the open sea at the end of that route (shot gate-sf9/desktop-z5-pan.png: deep water the window and the tiles draw
 nothing of, the stand-in's sea). Parked all pass; frames as before (50-52 fps under the cap).
+
+## 2026-10-30 — round 113 (`tilesfirst`, step 5.1): the mesh's look's sources behind names (no visible change)
+
+Step 5 (the height grid as its own layer; the user: "Keep the per cell look for now I enjoy it" — it must look as the
+window's grid does: per-cell material colour and the per-cell terms, from a per-region record) starts by putting what
+the look reads of the land behind names, so a region's record can give the same names and the look stays the same
+code. src/shaders/meshsource.wgsl (included before meshdraw.wgsl in the mesh, rock and tile modules): the layers'
+binding and gridTop, meshLook (Look), cellFields, cellFields1, cellWater — moved verbatim — and four one-line wrappers
+meshSurf now calls: srcStrata (strata), srcAsleep (asleep), srcDriftMat (driftMatAt), srcPickCol (winIdx).
+
+**Pixel identity.** WGSL's module scope is order-free, so the program is the same when the two files' top-level
+declarations together are the old meshdraw.wgsl's with the wrappers taken back to their calls: scripts/srcsplit.mjs
+checks that against a git revision — SAME, 53 declarations. At run time a pixel comparison can't tell more than
+that: scripts/pixelshot.mjs (sim paused, the shaders' clock held, each view once its land and tiles are in) differs
+8-19% of pixels between two runs of the *same* build (the world's state when it pauses differs); the split's build
+against the old one differs 8-16% — inside that. The gate's golden images (gate-s51.json, every view) changed by the
+same fractions as the run before it (e.g. phone z8 0.32% / 0.36%, desktop z5 0.48% / 0.48%, run-desktop-z8 7.10% /
+7.13%); all views pass, frames alike.

@@ -20,6 +20,8 @@ import structPrepWgsl from '../shaders/structprep.wgsl?raw';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
+// (round 113, step 5.1: what the mesh's look reads of the land — the window's; a region's height grid gives its own)
+import meshSourceWgsl from '../shaders/meshsource.wgsl?raw';
 import tcacheWgsl from '../shaders/tcache.wgsl?raw';
 import tilesWgsl from '../shaders/tiles.wgsl?raw';
 import coverFieldWgsl from '../shaders/coverfield.wgsl?raw';
@@ -680,7 +682,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       // (the interval's material and the lighting only), flat (grey by the normal: the geometry alone))
       const look = { full: 0, lookup: 1, flat: 2 }[new URLSearchParams(location.search).get('look') ?? 'full'];
       if (look === undefined) throw new Error('?look= must be full, lookup or flat');
-      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl]);
+      const meshModule = makeModule(device, 'mesh-draw', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl]);
       renderPipe(device, {
         label: 'mesh',
         layout: device.createPipelineLayout({ bindGroupLayouts: [meshLayout] }),
@@ -822,7 +824,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
           VF,
           { 3: GPUShaderStage.VERTEX, 5: GPUShaderStage.VERTEX, 11: VF, 32: GPUShaderStage.VERTEX, 33: GPUShaderStage.VERTEX, 34: GPUShaderStage.VERTEX, ...Object.fromEntries([1, 4, 6, 7, 8, 9, 13].map((b) => [b, GPUShaderStage.FRAGMENT])) },
         );
-        const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl, rockMeshWgsl]);
+        const module = makeModule(device, 'rock-mesh', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, rockMeshWgsl]);
         const pipe = device.createRenderPipeline({
           label: 'rock-mesh',
           layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
@@ -844,7 +846,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       };
       // (round 103, ?tiles=1: the tile cache — the mesh's module with tiles.wgsl, the resolve's layout and its own)
       if (TILES) {
-        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl]);
+        const tileModule = makeModule(device, 'tiles', [commonWgsl, layersWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, meshStateWgsl, meshRegionWgsl, `const MESH_LOOK: u32 = ${look}u;`, `const TUFTS_DRAWN: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`, meshSourceWgsl, meshDrawWgsl, coverFieldWgsl, riverHeld(), tilesWgsl]);
         const drawLayout = makeLayout(
           device,
           'tiles-draw',
