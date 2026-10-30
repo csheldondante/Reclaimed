@@ -1,0 +1,212 @@
+/* The play sandbox and its controls (play/sandbox/sandbox.ts, play/input/controls.ts): phone first — thumb-sized
+   buttons bottom right, the stick where the left thumb lands, the tools top right, the tune panel a drawer. */
+.play-pad {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  pointer-events: auto;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.play-stick {
+  display: none;
+  position: absolute;
+  width: 120px;
+  height: 120px;
+  margin: -60px 0 0 -60px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.4);
+  background: rgba(20, 20, 20, 0.2);
+  pointer-events: none;
+}
+.play-knob {
+  position: absolute;
+  left: 36px;
+  top: 36px;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+.play-btn {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right));
+  width: 76px;
+  height: 76px;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(24, 22, 20, 0.55);
+  color: #f4efe2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  pointer-events: auto;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+.play-btn span {
+  font-size: 30px;
+  line-height: 1;
+}
+.play-btn small {
+  font: 600 10px system-ui, sans-serif;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+}
+.play-btn.on,
+.play-btn.lit {
+  background: rgba(214, 120, 40, 0.75);
+}
+.play-btn-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  pointer-events: none;
+  background: conic-gradient(rgba(255, 210, 120, 0.9) calc(var(--g, 1) * 360deg), transparent 0);
+  -webkit-mask: radial-gradient(circle, transparent 36px, #000 37px);
+  mask: radial-gradient(circle, transparent 36px, #000 37px);
+}
+.play-bar {
+  position: absolute;
+  top: max(8px, env(safe-area-inset-top));
+  left: 8px;
+  right: 8px;
+  display: flex;
+  justify-content: space-between;
+  pointer-events: none;
+  z-index: 5;
+}
+.play-who,
+.play-tools {
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+.play-chip {
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 12px;
+  background: rgba(24, 22, 20, 0.55);
+  color: #f4efe2;
+  font-size: 22px;
+  touch-action: manipulation;
+}
+.play-chip.on {
+  background: rgba(214, 120, 40, 0.8);
+}
+.play-info {
+  position: absolute;
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+  left: 8px;
+  pointer-events: none;
+  color: #f4efe2;
+  font: 600 13px system-ui, sans-serif;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);
+  z-index: 5;
+}
+.play-hp {
+  width: 140px;
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #d44 calc(var(--hp, 1) * 100%), rgba(0, 0, 0, 0.4) 0);
+  margin-bottom: 4px;
+}
+.play-toast {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  max-width: min(88vw, 520px);
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: rgba(20, 18, 16, 0.72);
+  color: #f4efe2;
+  font: 500 14px/1.35 system-ui, sans-serif;
+  text-align: center;
+  pointer-events: none;
+  transition: opacity 1.2s;
+  z-index: 6;
+}
+.play-toast.fade {
+  opacity: 0;
+}
+.play-panel {
+  position: absolute;
+  top: calc(max(8px, env(safe-area-inset-top)) + 52px);
+  right: 8px;
+  bottom: 120px;
+  width: min(78vw, 360px);
+  overflow-y: auto;
+  padding: 8px 10px;
+  border-radius: 12px;
+  background: rgba(20, 18, 16, 0.82);
+  color: #f4efe2;
+  font: 500 13px system-ui, sans-serif;
+  pointer-events: auto;
+  touch-action: pan-y;
+  z-index: 7;
+}
+.play-panel-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.play-panel-head b {
+  flex: 1;
+}
+.play-small {
+  border: 0;
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.14);
+  color: inherit;
+  font: inherit;
+}
+.play-profile {
+  margin: 6px 0;
+  padding: 6px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.07);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.play-group {
+  margin: 10px 0 2px;
+  font-weight: 700;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  opacity: 0.7;
+}
+.play-row {
+  display: grid;
+  grid-template-columns: 104px 1fr 40px;
+  gap: 6px;
+  align-items: center;
+  min-height: 34px;
+}
+.play-row input {
+  width: 100%;
+  touch-action: pan-x;
+}
+.play-row.changed .play-name {
+  color: #ffc070;
+}
+.play-val {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+/* (the level's own controls — the free camera, the turn, the compass, the score bar — would sit under the thumbs:
+   hidden while the sandbox has the screen; level.ts startPlay sets .play-on on the UI layer) */
+.play-on .atlas-ctl,
+.play-on .turn-ctl,
+.play-on .compass,
+.play-on .hud,
+.play-on .tune-btn,
+.play-on .editor {
+  display: none !important;
+}

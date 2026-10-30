@@ -15,7 +15,7 @@
 //    sight, closes in on the foes' field and strikes (CPU: in reach, every STRIKE s, a hit with a knock).
 //  - Health is the contract's (default 3); the GPU's hp is HPK times it. Deaths come back as death events.
 // Window coordinates (x cells, y world units, z the ground) as the world API's.
-import type { Actor, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
+import type { Actor, AreaHit, SpawnOpts, UnitId, UnitJob, UnitView, Units, V2, V3 } from '../api/contracts/units';
 import type { FactionId } from '../api/contracts/world';
 import type { Agents, AgentEvent, AgentState, Target } from '../agents/agents';
 import { MAT } from '../world/materials';
@@ -165,7 +165,7 @@ export class AgentUnits implements Units {
       if (u.v.job.kind === 'work' && job.kind !== 'work') this.routine?.drop(u);
       u.v.job = job;
       u.target = job.kind === 'attack' ? job.target : null;
-      this.release(u);
+      this.releaseGoal(u);
       this.assign(u);
     }
   }
@@ -190,11 +190,49 @@ export class AgentUnits implements Units {
     this.hitBy.set(hid, by);
   }
 
+  /** (round 117, play) the agents hold this many at once (agents.ts MAX_HOLDS) */
+  readonly maxHeld = 8;
+
+  /** (round 117, play) a blow over an area with a shove and a throw: Agents.hit, its id remembered for `by` */
+  strike(h: AreaHit, by: UnitId | string | null): void {
+    const hid = this.agents.hit({
+      x: h.at[0],
+      y: h.at[1],
+      z: h.z,
+      radius: h.radius,
+      damage: h.damage * HPK,
+      push: h.push,
+      dir: h.dir,
+      lift: h.lift,
+      // (the agents' cone is its full angle in degrees; ours radians either side)
+      cone: h.cone === undefined ? undefined : (h.cone * 2 * 180) / Math.PI,
+      axis: h.axis ?? (h.cone !== undefined && !h.dir ? [1, 0] : undefined),
+      stun: h.stun,
+      fire: h.fire,
+    });
+    this.hitBy.set(hid, by);
+  }
+
+  /** (round 117, play) held at `at` (its feet) by its agent */
+  hold(id: UnitId, at: V3): boolean {
+    const u = this.recs.get(id);
+    if (!u || !u.v.alive) return false;
+    return this.agents.hold(u.gpu, at[0], at[1], at[2]);
+  }
+
+  /** (round 117, play) let go at `vel` (or thrown, if it wasn't held) */
+  release(id: UnitId, vel?: V3): void {
+    const u = this.recs.get(id);
+    if (!u) return;
+    if (vel) this.agents.launch(u.gpu, vel);
+    else this.agents.release(u.gpu);
+  }
+
   remove(id: UnitId): void {
     const u = this.recs.get(id);
     if (!u) return;
     if (u.v.job.kind === 'work') this.routine?.drop(u);
-    this.release(u);
+    this.releaseGoal(u);
     if (u.v.alive) this.agents.remove([u.gpu]);
     this.byGpu.delete(u.gpu);
     this.recs.delete(id);
@@ -332,7 +370,7 @@ export class AgentUnits implements Units {
     if (u.goal) {
       const i = this.goals.findIndex((g) => g?.key === u.goal);
       if (i >= 0 && u.goal === key) return i;
-      this.release(u);
+      this.releaseGoal(u);
     }
     let i = this.goals.findIndex((g) => g?.key === key);
     if (i < 0) {
@@ -345,7 +383,7 @@ export class AgentUnits implements Units {
     return i;
   }
 
-  private release(u: UnitRec): void {
+  private releaseGoal(u: UnitRec): void {
     if (!u.goal) return;
     const key = u.goal;
     u.goal = null;
@@ -368,7 +406,7 @@ export class AgentUnits implements Units {
     if (u.v.job.kind === 'work' && this.routine?.takes(u)) return;
     const goal = this.goalOf(u);
     if (!goal) {
-      this.release(u);
+      this.releaseGoal(u);
       this.regroup(u, u.v.hostile ? G.wander : G.stand);
       u.v.state = 'idle';
       return;
@@ -433,7 +471,7 @@ export class AgentUnits implements Units {
         u.v.health = 0;
         this.byGpu.delete(e.id);
         if (u.v.job.kind === 'work') this.routine?.drop(u);
-        this.release(u);
+        this.releaseGoal(u);
         const by = typeof e.by === 'number' ? (this.hitBy.get(e.by) ?? null) : null;
         for (const f of this.died) f(this.view(u), by);
       }
@@ -484,7 +522,7 @@ export class AgentUnits implements Units {
         }
       }
       if (h.target !== null) {
-        this.release(h);
+        this.releaseGoal(h);
         this.regroup(h, G.hunt);
         hunting++;
       } else if (h.group === G.hunt) this.assign(h);
@@ -556,7 +594,7 @@ export class AgentUnits implements Units {
         }
       } else {
         foes.push([p[0], p[1]]);
-        this.release(u);
+        this.releaseGoal(u);
         this.regroup(u, G.foes);
         u.v.state = 'chase';
       }

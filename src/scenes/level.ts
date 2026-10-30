@@ -342,6 +342,8 @@ export class LevelScene implements Scene {
   private storyCut?: { dither: Dither; slice: Slice };
   /** round 88 (runstory): ?run=bell on the atlas level — a run story played as a hero (story/hero-run.ts) */
   heroRun?: HeroRun;
+  /** round 117 (play): ?play=hoverbike|lich on the atlas level — the play layer's sandbox (src/play: heroes, controllers, controls) */
+  play?: import('../play/sandbox/sandbox').PlaySandbox;
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
@@ -1802,6 +1804,43 @@ export class LevelScene implements Scene {
     // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
     const runId = host.params.get('run');
     if (runId) void this.startRun(runId);
+    // round 117 (play): ?play=<hero> — the play sandbox (the game layer, loaded only when asked for: the engine doesn't import it)
+    const playId = host.params.get('play');
+    if (playId) void this.startPlay(playId);
+  }
+
+  /** ?play=<hero>: the play layer's sandbox on the atlas level (src/play/sandbox/sandbox.ts) */
+  private async startPlay(id: string): Promise<void> {
+    const a = this.opts.atlas;
+    if (!a || !this.stream) throw new Error('?play= plays on the atlas level (?level=atlas)');
+    if (!this.units) throw new Error('?play=: needs the atlas level units (the settlements are off: ?towns=0)');
+    const hero = id === '1' ? 'hoverbike' : id;
+    if (hero !== 'hoverbike' && hero !== 'lich') throw new Error(`?play=${id}: no such hero (hoverbike, lich)`);
+    const { PlaySandbox } = await import('../play/sandbox/sandbox');
+    const api = (this.worldApi ??= attachSim(this.core));
+    this.editor?.setVisible(false);
+    // (the level's own camera buttons, turn and score bar hidden while the sandbox has the screen: sandbox.css)
+    this.host.ui.classList.add('play-on');
+    const S = this.stream;
+    const dims = this.core.dims;
+    this.play = await PlaySandbox.start({
+      ui: this.host.ui,
+      api,
+      units: this.units,
+      camera: this.core.camera,
+      renderer: this.core.renderer,
+      device: this.host.gpu.device,
+      bounds: [dims.w, dims.h * ROW_H],
+      hero,
+      tune: this.host.params.get('tune') === '1',
+    });
+    // (the window slid: the hero moves with what's kept in window coordinates; the map's warp drops it where the camera is)
+    this.core.onShift.push((dx, dy, dz) => this.play?.shift(-dx, -dy, -dz));
+    S.onWarp.push(() => {
+      const c = this.core.camera.target;
+      this.play?.warped([c[0], c[1]]);
+    });
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.play = this.play;
   }
 
   /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts; round 97: through story/atlas-run.ts, as any game starts one) */
@@ -1948,7 +1987,7 @@ export class LevelScene implements Scene {
     if (this.drive) this.driveOn(dt);
     else if (this.pan && !camera.fly) this.panOn(dt);
     else if (camera.fly) this.flyKeys(dt);
-    else if (this.storyPlay?.holdsInput || this.heroRun) {
+    else if (this.storyPlay?.holdsInput || this.heroRun || this.play) {
       // (a talk or a story shot has the camera; a hero run has the keys)
     } else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
@@ -2134,9 +2173,11 @@ export class LevelScene implements Scene {
     }
     // (round 88: the hero run — hero, units, its story, the chase camera)
     if (this.heroRun && !camera.fly) this.heroRun.update(dt);
+    // (round 117: the play sandbox — its hero, controls and the chase camera)
+    if (this.play && !camera.fly) this.play.update(dt);
     if (this.storyPlay || this.heroRun) record('story', performance.now() - tStory); // (round 100, hitchrec: timing)
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
-    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun) this.turn.update(dt);
+    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun && !this.play) this.turn.update(dt);
     // (round 91: the compass follows the view, flying too — the flyer's look)
     this.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
     if (CUTAWAY && !camera.fly) {
@@ -3297,6 +3338,7 @@ export class LevelScene implements Scene {
     this.far?.dispose();
     this.storyPlay?.dispose();
     this.heroRun?.dispose();
+    this.play?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

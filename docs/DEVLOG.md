@@ -13609,3 +13609,138 @@ Dawn in Node). The smoke needs the runner's own build server (warm snapshots), a
 rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
+## 2026-10-30 — round 117 (`play`): the game layer moved in — heroes, controllers, controls, a sandbox (PL1-PL4)
+
+**Why a layer of its own.** The user (round 117 part 3): "I think just make a new layer you own so I can work from
+one session. I want the separation of concerns but I also want to be able to iterate on player controls which is
+probably the most important thing for fun." / "Let's make it another system so it is encapsulated but move it in so
+we can work on it and iterate here." So `src/play/` is the game layer: the engine never imports it (the level loads
+it with a dynamic `import()` only for `?play=`), it reaches the world only through contracts (the world API, the
+Units contract, the camera), and other tracks read it only through `src/api/contracts/play.ts`.
+
+**What moved from GameplayGM** (runtimes/hoverbike @ experiment/slice 515fcd9, read only): the pure pieces verbatim
+with their tests — core/bike.ts (the glide drive: cushion, crest launch, boost, crash, Akira slide), core/levitate.ts,
+core/intercept.ts (the pass planner), core/fling.ts, core/aim.ts, core/gestures.ts (Stroke: tap, flick, circle, drag),
+core/intent.ts (gesture → intent → planned, assisted action; "a miss the player earned stays a miss") — 39 of their
+tests pass unchanged in Node (vitest). Then the two heroes re-homed on Reclaimed's contracts: heroes/bike.ts (the
+hover rider: ram, side slash through the pass planner, couched lance, its wake/downwash/dust through the wind and fx
+APIs) and heroes/lich.ts (levitation, tap to glide, float, face-to-face soul drain, telekinetic carry and smack, the
+planned fling, pull, force push, the storm). Left in GameplayGM for now: the knight, gorilla, tank and mech; the
+lich's spellbook and its physics-body/rock throws (no world API for bodies yet); hero select and saving.
+
+**The capability profile (why derived, not written).** The user: "parameterize it so we can reason about it during
+generation and make not only obstacles but fun ones." Each controller is data (ParamSpec list + defaults,
+controllers/*.ts) plus a small module (heroes/*.ts), and `profile(params)` derives what generators need — speed,
+turn radius, climb, jump height/gap (and whether it needs a ramp), fly ceiling, water, vegetation, bridge,
+destruction, encounter weights — from the same numbers the controller runs on. Tune the bike's launch cap and its
+ramps' clearable gap grows; the generators can't drift from the controller. `crossCost(profile, crossing)` (1 open
+ground, Infinity can't) and `fun(profile)` (ramps, straights, slaloms, packs, breakables, climbs, delves, with sizes)
+are pure functions in the contract so terrain, flora and runplan agree on one answer.
+
+**A new ability: the slam** (the lich's wrecking ball). A tap on the lich (or 💥): the world API's crater under it, a
+ring that shoves and throws (Units.strike with lift and stun), the air slammed out. The GameplayGM lich broke nothing
+of the ground itself; "a floating wrecking ball power fantasy" asked for it. Its health is 30 (12 for the slice's):
+the raiders wore it down in seconds in the first browser run, not a power fantasy.
+
+**A drive fix: `carry`.** Ported as-is, the bike rode a kicker with vz pinned at 0 (the ground clamp zeroed it every
+step on a climb faster than the cushion lifts), so it went over a ramp's lip with no upward speed — "launching off
+ramps" only happened where the ground fell away. Now, held down on a climb, it keeps `carry` of the ground's rise
+speed (the slope over a cell either side, times its speed, at most launchMax): a 0.6 kicker throws it ~13 cells/s up
+and it clears a 10-cell gap to a landing at the same height (heroes.test.ts). `carry: 0` is the slice's drive again —
+a slider in the tune panel, so the user can compare.
+
+**Why the controllers run on the CPU (the D-r101 ruling said the GPU).** One hero, a few hundred flops a frame, and it
+must answer the thumb in the same frame; a GPU kernel adds a readback (1-2 frames) for no throughput win. Measured:
+the whole play layer (input, hero, its voxels written) costs 0.12 ms of main thread a frame on the phone proxy
+(scripts/perf/play.mjs). Kept GPU-ready: Params are flat number records and the drives are pure functions of (state,
+stick, dt, height), so many riders (race rivals, AI bikes) can move to a kernel when there are many (PL9).
+
+**Units contract tweak (for main to consolidate).** Optional `strike(AreaHit, by)`, `hold(id, at)`, `release(id, vel)`,
+`maxHeld` on Units — a hero's blows shove and throw, telekinesis holds — implemented in AgentUnits by forwarding to
+Agents.hit/hold/launch (its private goal `release` renamed `releaseGoal`). The play world requires them (a clear error
+otherwise, no silent fallback).
+
+**The sandbox** (`?skipmenu=1&level=atlas&play=hoverbike|lich`, `&tune=1` opens the panel): the atlas level as
+deployed, every system on. Hero chips top left (switch in place), ⚙ tune (a slider per parameter, grouped, live; the
+profile it gives shown above; reset; copy as JSON; kept per hero in localStorage), 👹 raiders spawned ahead, ⟲ back up.
+Controls phone first: a floating stick where the left thumb lands (the bottom-left zone), everything else the hero's
+gestures, thumb-sized buttons bottom right with gauges (the boost tank, the slam's cooldown). The camera follows at a
+fixed angle, leads along the way and pulls back with speed (D-r80). The level's own camera buttons, turn and score bar
+are hidden while it runs (they sat under the thumbs: the first browser run's screenshot).
+
+**Measured** (Intel Xe-LPG iGPU, phone proxy 412x915 dpr 2.6 q=low, data/perf/play-intel-xe-lpg.json): riding flat
+out 20 s with raiders spawned every 5 s — 94 fps, p50 9.8 ms, p95 15 ms, 6 frames over 50 ms (the window's slides);
+the lich in a storm with slams every 2 s — 99 fps, p50 9.9, p95 11.9, 2 over 50 ms. The play layer 0.12 ms a frame of
+CPU, worst 1.3 ms. The behaviour check (scripts/playtest.mjs): the bike rode 86 cells in ~4 s, top 32 cells/s
+(boost), the raiders ahead died to the ram; the lich floated a tapped raider and slammed two craters. GIFs in
+C:/Projects/shots88/play/. Unit tests: 60 in src/play (vitest), the heroes at their contract on synthetic terrain.
+
+## 2026-10-30 — round 117 (`play`): the fight readable at play zoom; real touches; testkit
+
+**Why.** Main looked at the first GIFs: the fight didn't read (raiders in one frame, no swing seen), and the level's
+own buttons still sat under BOOST and SLAM (those shots predated the `.play-on` hiding; the new ones show it works).
+- The blade leaves a trail: glowing voxels (the body glow bits) along each of its last sweeps, 0.22 s, thinning as
+  they age — the arc of the cut is seen at the zoom the bike is played at. A cut throws the one struck (`slashLift`
+  5 cells/s, a slider) and stuns it a moment, sprays sparks along the cut and dust off it, and the HUD says HIT!.
+- A camera jolt (`PlayHero.shake`, decaying in a quarter second): a cut, a hard landing, a crash, the lich's slam.
+- The bike's base zoom 34 (26), pulling back 0.4 at full speed (0.45): the bike was ~30 px at 79 km/h on the phone.
+- scripts/playtest.mjs's fight is staged so it shows one: a file of raiders 2.5 cells left of the bike's way, a swipe
+  whenever one is coming up on that side (11 swipes, 13 frames of HIT!, the file of 6 cut down, the slash planned with
+  4% help). C:/Projects/shots88/play/bike-fight.gif.
+
+**Real touches (scripts/playtouch.mjs).** CDP multi-finger touches on a phone-shaped page: the left thumb's stick held
+while the right thumb swipes beside the bike (read as a slash), a tap on ⚙ opens the tune panel, a tap on 💀 switches,
+a tap on the ground glides the lich 19 cells. It found a real phone bug: the UI layer's `#ui > * { pointer-events:
+auto }` gave the hint toast pointer events, and over the middle of the screen it ate the lich's taps for 6 s after a
+switch — the toast, bar and info now take none (inline). (Harness note: Chrome reads a touchEnd's points as the ones
+lifted; an empty list lifts every finger.)
+
+**testkit merged** (places 8bd557b): the play tests run in places' vitest 4 unit project beside their code (61 tests,
+src/play); `npm test` 138 + 1 expected fail.
+
+## 2026-10-30 — round 117 (`play`): the bike's grappling hook (PL7)
+
+The user: "Maybe a grappling hook to reel in enemies or do sharp turns." A tap (the bike's right thumb had no tap) —
+on a foe within `hookRange` (16 cells; as it's seen, within 48 px of the finger): it's yanked in, thrown on a lob that
+lands where the bike will be in `hookYank` s, so the ram or the next slash meets it; on the ground within reach: an
+anchor, and the bike swings round it on a rope its length — whatever pulls outward taken off, the stick's push turned
+along the swing (the rope, not the thumb, turns it; no slide while it swings) — until `hookTime` s or `hookTurn`
+radians round; a tap while swinging lets go. The rope is drawn hand to anchor (or to the foe). Profile: a hook makes
+the bike's turn radius ~0.4 of its reach (6.4 cells, from 16 carved), chase 1, fight 0.7 — so runplan can ask for
+hairpins and posts to swing round. In the browser (scripts/playtest.mjs): the way turned 2.35 rad (135 deg) in one
+swing at 79 km/h; C:/Projects/shots88/play/bike-hook.gif. A bug the browser found that Node didn't: the window's slides
+mid-swing left the anchor behind (the bike was shifted, the anchor wasn't) — BikeHero.shift moves the anchor and the
+blade's trail; a test for it (heroes.test.ts, 65 tests now).
+
+## 2026-10-30 — round 118 (`play`): the user's first ride — a faster bike on hills, the hook cut and pulled, riding alongside, the drain lifts (PL11-PL14)
+
+The user, after playing the sandbox on the phone (DECISIONS round 118): "I want to bike to be faster and to try on hills
+... can you swipe to cut it and release early? It would be cool to pull enemies in or drag them that way too or to pull
+up along other vehicles ... I do want the life drain to float them up in front of the lich".
+
+- **Faster** (controllers/hoverbike.ts BIKE_FASTER; the core's tested BIKE untouched): cruise 22 → 32 cells/s, thrust
+  30 → 46 cells/s², boost top 32 → 46 (thrust 45 → 70), downhill top 34 → 50. In the browser: top 45.9 cells/s boosted
+  (was 31.9). The sliders' ranges widened (cruise to 90, thrust to 160, boost top to 120). The camera pulls back 0.5 (0.4)
+  at full speed and leads 0.5 s (0.35) so what's coming is on screen in time.
+- **A ramp fix the faster bike found**: `carry` measured the slope by a central difference a cell either side, which at
+  a kicker's lip looked past it, saw the drop and threw nothing at the very step it should; it reads the cell just
+  climbed now (the test that caught it: the steep kicker at 32 cells/s).
+- **Hills** (play/sandbox/hills.ts findHills, pure, tested): the hilliest rideable spot within reach — candidates every
+  8 cells, each judged by the slopes round it steep enough to launch off but under the bike's climb, and its relief up to
+  12 cells, walls counted against. From heights alone, since the terrain track's contract isn't on places yet. The bike
+  starts there; ⛰ goes to another (30+ cells away). In the browser: 8 cells of rise and fall round the start.
+- **The hook rebuilt as its own piece** (heroes/hook.ts, so other riders can carry it): a swipe while hooked cuts the
+  rope — a swing ends with its momentum, a dragged foe flies off as it was going; a tapped foe is held on the line and
+  dragged behind at the rope's length, scraped when fast and swung into others (the blow just ahead of it, sparing
+  itself), and a swipe back toward the bike reels it in (the old yank); a tapped vehicle reels the bike up alongside
+  it, its speed matched, till cut. After a swing the thumb's stick is read turned by what the swing turned, till it's
+  let go — holding the stick the old way had hauled the bike straight back into an Akira slide.
+- **A rival rider** (play/sandbox/rival.ts, 🏁): the same drive under an autopilot lapping a 40-cell circle that passes
+  the hero, at 0.6 of the cruise — steering by the velocity it wants (along the circle, back toward it when off), because
+  steering at a point ahead drifted it out of its lap with the drive's momentum. It's a vehicle in play
+  (`PlayWorld.vehicles`, new and optional), not a unit: hooks see it, enemies don't. The seed of race rivals (PL7).
+- **The drain** (lich.ts SOUL): the victim eases up from where it was (0.8 s, smoothstep) to 1.6 cells before the lich,
+  its feet at the lich's face — hung plainly up in the air (its middle at the face, the first try, read as standing beside it) — bobbing; the lich turns to it.
+- Tests: 75 in src/play (hook drag/reel/cut, alongside, swing cut keeps momentum, no slide after a swing, hills, rival,
+  drain). Browser (scripts/playtest.mjs, scripts/playtouch.mjs): GIFs bike-hills, bike-drag, bike-alongside, lich-drain
+  in C:/Projects/shots88/play/.
