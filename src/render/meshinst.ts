@@ -78,11 +78,17 @@ export class MeshInstances {
     return this.kinds.map((_, k) => u[k * 5 + 1]);
   }
 
-  /** Draw every kind (the pipeline, the group and the vertex/index buffers set by the caller). */
-  draw(pass: GPURenderPassEncoder, indirect: GPUBuffer): number {
+  /** Draw every kind (the pipeline, the group and the vertex/index buffers set by the caller); `only` (round 117,
+   *  flora: the shadow pass) a flag a kind, those left out not drawn. */
+  draw(pass: GPURenderPassEncoder, indirect: GPUBuffer, only?: boolean[]): number {
     pass.setVertexBuffer(0, this.verts);
     pass.setIndexBuffer(this.index, 'uint32');
-    for (let k = 0; k < this.kinds.length; k++) pass.drawIndexedIndirect(indirect, (MI_ARGS_WORD + k * 5) * 4);
-    return this.kinds.length;
+    let n = 0;
+    for (let k = 0; k < this.kinds.length; k++) {
+      if (only && !only[k]) continue;
+      pass.drawIndexedIndirect(indirect, (MI_ARGS_WORD + k * 5) * 4);
+      n++;
+    }
+    return n;
   }
 }

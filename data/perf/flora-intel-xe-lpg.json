@@ -1,0 +1,69 @@
+{
+  "at": "13728,4768",
+  "when": "2026-10-30T17:16:45.344Z",
+  "adapter": "intel / xe-lpg",
+  "rows": [
+    {
+      "flora": "1",
+      "zoom": 14,
+      "wood": 256,
+      "fps": 101.4,
+      "p50": 9.9,
+      "p95": 11,
+      "gpu": 13.34,
+      "draw": 5.58,
+      "gbuffer": 0.15,
+      "shadow": 0.61,
+      "renderprep": 0.78,
+      "plants": {
+        "instances": 3772,
+        "tris": 514566
+      }
+    },
+    {
+      "flora": "1",
+      "zoom": 5,
+      "wood": 256,
+      "fps": 203.6,
+      "p50": 0.1,
+      "p95": 10.8,
+      "gpu": 12.21,
+      "draw": 5.26,
+      "gbuffer": 0.25,
+      "shadow": 0.59,
+      "renderprep": 0.77,
+      "plants": {
+        "instances": 1977,
+        "tris": 412570
+      }
+    },
+    {
+      "flora": "0",
+      "zoom": 14,
+      "wood": 256,
+      "fps": 101.9,
+      "p50": 9.9,
+      "p95": 11,
+      "gpu": 12.52,
+      "draw": 3.94,
+      "gbuffer": 0.19,
+      "shadow": 0.68,
+      "renderprep": 0.72,
+      "plants": null
+    },
+    {
+      "flora": "0",
+      "zoom": 5,
+      "wood": 256,
+      "fps": 203.6,
+      "p50": 0.1,
+      "p95": 10.8,
+      "gpu": 12.75,
+      "draw": 4.97,
+      "gbuffer": 0.31,
+      "shadow": 0.51,
+      "renderprep": 0.75,
+      "plants": null
+    }
+  ]
+}

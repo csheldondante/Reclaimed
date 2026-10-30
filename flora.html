@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Reclaimed — flora viewer</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #b8ccdb; font: 13px system-ui, sans-serif; color: #eef2ea; overflow: hidden; }
+      #view { position: fixed; inset: 0; width: 100%; height: 100%; touch-action: none; }
+      #panel { position: fixed; left: 8px; top: 8px; max-width: min(320px, calc(100% - 16px)); background: rgba(24, 32, 24, 0.78); border-radius: 10px; padding: 8px 10px; }
+      #panel .row { display: flex; align-items: center; gap: 6px; margin: 4px 0; }
+      #panel label { width: 62px; opacity: 0.85; }
+      #panel select, #panel input[type='number'] { flex: 1; min-width: 0; font: inherit; background: #2b3a2b; color: inherit; border: 1px solid #4b5d47; border-radius: 6px; padding: 3px; }
+      #panel input[type='range'] { flex: 1; min-width: 0; }
+      #panel button { font: inherit; background: #4d6b3c; color: inherit; border: 0; border-radius: 6px; padding: 4px 8px; }
+      #stats { opacity: 0.8; font-size: 11px; margin-top: 4px; }
+      #panel a { color: #cfe8a9; }
+      .fatal { position: fixed; inset: 20% 10%; background: #400; color: #fff; padding: 16px; white-space: pre-wrap; border-radius: 8px; }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+    <div id="panel">
+      <div class="row"><label>show</label><select id="mode"><option value="scene">a scene</option><option value="plant">one plant</option></select></div>
+      <div class="row" id="row-biome"><label>biome</label><select id="biome"></select></div>
+      <div class="row" id="row-species"><label>species</label><select id="species"></select></div>
+      <div class="row"><label>seed</label><input id="seed" type="number" min="0" step="1" /><button id="reseed">new</button><button id="grow">grow</button></div>
+      <div class="row"><label>wind</label><input id="wind" type="range" min="0" max="1.5" step="0.01" /></div>
+      <div class="row"><label>season</label><input id="season" type="range" min="0" max="1" step="0.01" /></div>
+      <div class="row" id="row-growth"><label>growth</label><input id="growth" type="range" min="0.05" max="1" step="0.01" /></div>
+      <div class="row" id="row-density"><label>density</label><input id="density" type="range" min="0.2" max="2" step="0.05" /></div>
+      <div id="stats"></div>
+      <div class="row"><a id="atlas" href="./">see the plants in the atlas →</a></div>
+    </div>
+    <script type="module" src="/src/flora/viewer.ts"></script>
+  </body>
+</html>

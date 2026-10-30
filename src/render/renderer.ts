@@ -41,9 +41,14 @@ import { OutsideBand } from './band';
 import { RockMesh } from './rockmesh';
 import rockMeshWgsl from '../shaders/rockmesh.wgsl?raw';
 import meshInstWgsl from '../shaders/meshinst.wgsl?raw';
+import floraLookWgsl from '../shaders/floralook.wgsl?raw';
+import floraPutWgsl from '../shaders/floraput.wgsl?raw';
+import floraFieldWgsl from '../shaders/florafield.wgsl?raw';
 import { MeshInstances, MI_ARGS_WORD } from './meshinst';
 import { treeKinds } from './treemesh';
 import { MESHINST } from '../sim/external';
+import { FLORA } from '../flora/flags';
+import { FloraLibrary } from '../flora/library';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { BGCHECK, BgCheck } from './bgcheck';
 
@@ -152,6 +157,9 @@ export class Renderer {
   private prepGroup: GPUBindGroup;
   private vegPrep: ComputeKernel;
   private vegPrepGroup: GPUBindGroup;
+  /** (round 117, flora) plants placed by other fields (florafield.wgsl: reeds by water), after vegprep */
+  private floraField?: ComputeKernel;
+  private floraFieldGroup?: GPUBindGroup;
   private opaquePipe!: GPURenderPipeline;
   private blendPipe!: GPURenderPipeline;
   /** (?skip=waterflat) the water's geometry with a flat fragment: a measuring aid */
@@ -217,6 +225,9 @@ export class Renderer {
    * instances written by the vegetation pass; their pipelines and groups (the view's and the sun's)
    */
   meshInst?: MeshInstances;
+  /** (round 117, flora) the generated plant library drawn through meshInst (null with ?flora=0) */
+  flora?: FloraLibrary;
+  private floraWgsl = '';
   private miPipe?: GPURenderPipeline;
   private miGroup?: GPUBindGroup;
   private miShadowPipe?: GPURenderPipeline;
@@ -408,9 +419,11 @@ export class Renderer {
     // tops alone; [16] where the tops start in instOpaque (renderprep.wgsl); (round 93) [20..22] the prisms',
     // water's and plants' counts before they were held to their lists' room; (round 99, meshinst) [24..] the
     // instanced meshes' indexed draws, five words a kind
+    // (round 117, flora: the library's kinds — dozens, not four — each its five words)
+    const miKinds = FLORA ? (this.flora ??= new FloraLibrary()).kinds.length : 4;
     this.indirect = world.buf(
       'indirect',
-      MI_ARGS_WORD * 4 + 4 * 20,
+      MI_ARGS_WORD * 4 + 4 * 5 * miKinds,
       GPUBufferUsage.STORAGE | GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
     );
     this.camBuf = world.buf('camera', CAM_BYTES, GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST);
@@ -476,8 +489,14 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     // (perfopt, ?tufts=0: the grass tufts left out — most of the plant boxes, each under a pixel at low)
     const tufts = `const TUFTS: bool = ${new URLSearchParams(location.search).get('tufts') !== '0'};`;
     // (round 99, ?meshinst=1) the trees as instanced meshes: their instances written by vegprep (binding 10)
-    if (MESHINST) this.meshInst = new MeshInstances(device, treeKinds(), (l, n, u) => world.buf(l, n, u));
-    const treeMesh = `const TREE_MESH: bool = ${!!this.meshInst};\n${this.meshInst ? this.meshInst.wgsl() : 'const MI_CAP: u32 = 0u;\nconst MI_N: u32 = 1u;\nconst MI_ARGS: u32 = 24u;\n'}`;
+    // (round 117, flora: on unless ?flora=0) the flora library's generated species are the plants' meshes
+    // (src/flora/library.ts): its kinds in the same renderer, its constants (each species' kinds, colours) for the kernels
+    if (FLORA) {
+      this.flora ??= new FloraLibrary();
+      this.meshInst = new MeshInstances(device, this.flora.kinds, (l, n, u) => world.buf(l, n, u));
+    } else if (MESHINST) this.meshInst = new MeshInstances(device, treeKinds(), (l, n, u) => world.buf(l, n, u));
+    this.floraWgsl = `const FLORA: bool = ${!!this.flora};\n${this.flora ? this.flora.wgsl() : FloraLibrary.stubWgsl()}`;
+    const treeMesh = `const TREE_MESH: bool = ${!!this.meshInst};\n${this.meshInst ? this.meshInst.wgsl() : 'const MI_CAP: u32 = 0u;\nconst MI_N: u32 = 1u;\nconst MI_ARGS: u32 = 24u;\n'}${this.floraWgsl}`;
     const noTrees = this.meshInst ? undefined : world.buf('meshinst none', 64, GPUBufferUsage.STORAGE);
     const vegSpec = {
       0: 'uniform',
@@ -493,9 +512,11 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       14: 'tex',
       17: 'tex',
       30: 'uniform',
+      // (round 117, flora: the view, to leave out plants off screen — renderprep's PrepCam)
+      31: 'uniform',
     } as const;
-    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, vegprepWgsl], vegSpec);
-    this.clampV = makeCompute(device, 'vegprep-clamp', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, vegprepWgsl], vegSpec, 'clampVeg');
+    this.vegPrep = makeCompute(device, 'vegprep', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, floraPutWgsl, vegprepWgsl], vegSpec);
+    this.clampV = makeCompute(device, 'vegprep-clamp', [commonWgsl, materialsWgsl, vegplanWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, tufts, treeMesh, floraPutWgsl, vegprepWgsl], vegSpec, 'clampVeg');
     this.vegEntries = () => ({
       0: world.globals,
       2: world.materials,
@@ -510,9 +531,28 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       14: world.cornerView,
       17: world.driftView,
       30: this.fieldMesh.region,
+      31: this.camBuf,
     });
     this.vegPrepGroup = makeBindGroup(device, 'vegprep', this.vegPrep.layout, this.vegEntries());
     this.clampVGroup = makeBindGroup(device, 'vegprep-clamp', this.clampV.layout, this.vegEntries());
+    if (this.flora && this.meshInst) {
+      const ffSpec = { 0: 'uniform', 2: 'uniform', 3: 'read', 4: 'read', 6: 'rw', 10: 'rw', 11: 'read', 12: 'read', 14: 'tex', 17: 'tex', 30: 'uniform', 31: 'uniform' } as const;
+      this.floraField = makeCompute(device, 'florafield', [commonWgsl, materialsWgsl, terrainShapeWgsl, meshStateWgsl, meshRegionWgsl, treeMesh, floraPutWgsl, floraFieldWgsl], ffSpec);
+      this.floraFieldGroup = makeBindGroup(device, 'florafield', this.floraField.layout, {
+        0: world.globals,
+        2: world.materials,
+        3: world.surface,
+        4: world.veg,
+        6: this.indirect,
+        10: this.meshInst.instances,
+        11: world.moisture,
+        12: world.water,
+        14: world.cornerView,
+        17: world.driftView,
+        30: this.fieldMesh.region,
+        31: this.camBuf,
+      });
+    }
 
     const VF = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
     const drawLayout = makeLayout(
@@ -652,7 +692,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       entryPoint: 'vsInst',
       buffers: [{ arrayStride: 16, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x4' }] }],
     });
-    const miModule = this.meshInst ? makeModule(device, 'meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, this.meshInst.wgsl(), renderWgsl, meshInstWgsl]) : undefined;
+    const miModule = this.meshInst ? makeModule(device, 'meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, this.meshInst.wgsl(), this.floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl]) : undefined;
     if (this.meshInst && miModule) {
       renderPipe(device, {
         label: 'meshinst',
@@ -1171,6 +1211,11 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       pass.setPipeline(this.vegPrep.pipeline);
       pass.setBindGroup(0, this.vegPrepGroup);
       pass.dispatchWorkgroups(gx, gy);
+      if (this.floraField && this.floraFieldGroup) {
+        pass.setPipeline(this.floraField.pipeline);
+        pass.setBindGroup(0, this.floraFieldGroup);
+        pass.dispatchWorkgroups(gx, gy);
+      }
       if (this.world.strVoxels > 0) {
         pass.setPipeline(this.structPrep.pipeline);
         pass.setBindGroup(0, this.structPrepGroup);
@@ -1720,7 +1765,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     if (this.meshInst && this.miShadowPipe && this.miShadowGroup) {
       pass.setPipeline(this.miShadowPipe);
       pass.setBindGroup(0, this.miShadowGroup);
-      this.meshInst.draw(pass, this.indirect);
+      // (round 117, flora: only the kinds that cast a shadow worth its triangles — trees and thickets, not the grass)
+      this.meshInst.draw(pass, this.indirect, this.flora?.shadowKinds);
     }
     pass.setPipeline(this.shadowBodyPipe!);
     if (this.world.strVoxels > 0) {

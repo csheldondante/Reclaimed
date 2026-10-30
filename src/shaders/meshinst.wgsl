@@ -41,6 +41,10 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
     l = vec3<f32>(a.xy * p.w * (1.0 - bare), p.y + a.z * p.z * (1.0 - bare * 0.5));
     sway = 1.0;
   }
+  // (round 117, flora) a generated plant's vertex (src/flora/mesh.ts): parts 3+ taken as they are, w = part + sway
+  let fpart = u32(floor(a.w));
+  let fl = fpart >= 3u;
+  if (fl) { sway = fract(a.w); }
   var wp = vec3<f32>(dot(r0.xyz, l) + r0.w, dot(r1.xyz, l) + r1.w, dot(r2.xyz, l) + r2.w);
   // the wind: the column's lean (sway.wgsl's spring) and a slow flutter, the crown shifting with the trunk's top
   let cell = clampCell(cellAt(vec2<f32>(r0.w, r1.w)));
@@ -49,12 +53,18 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
   let dir = lean / max(length(lean), 1e-4);
   let seed = fract(sin(dot(vec2<f32>(r0.w, r1.w), vec2<f32>(12.9898, 78.233))) * 43758.5453);
   let flutter = dir * sin(G.time * 2.2 + seed * 30.0) * 0.05 * (0.3 + amp);
-  wp = wp + vec3<f32>((lean + flutter) * sway, 0.0);
+  if (!fl) {
+    wp = wp + vec3<f32>((lean + flutter) * sway, 0.0);
+  } else {
+    // (flora: floralook.wgsl, shared with the viewer page)
+    wp = wp + floraSway(k, fpart, a.xyz, sway, vec2<f32>(r0.w, r1.w), lean, seed, G.time);
+  }
   o.pos = CAM.viewProj * vec4<f32>(wp, 1.0);
   o.wpos = wp;
   // (ringwin: the pick's column in window order — the CPU reads it)
-  o.info = vec4<u32>(k, part, winIdx(cell), u32(seed * 65535.0));
-  o.h = a.z;
+  o.info = vec4<u32>(k, select(part, fpart, fl), winIdx(cell), u32(seed * 65535.0));
+  // (flora: the sway weight stands in for the height share up the plant — it rises with it)
+  o.h = select(a.z, sway, fl);
   return o;
 }
 
@@ -69,7 +79,13 @@ fn fsInst(in: MIOut) -> FOut {
   let rnd = f32(in.info.w) / 65535.0;
   var alb: vec3<f32>;
   var mat = MAT_WOOD;
-  if (part == 0u) {
+  if (part >= 3u) {
+    // (round 117, flora) the generated species' look (floralook.wgsl, shared with the viewer page)
+    let fl = floraLook(k, part, in.wpos, n, in.h, rnd, in.info.w);
+    if (fl.w < 0.0) { discard; }
+    mat = u32(fl.w);
+    alb = toLinear(fl.rgb);
+  } else if (part == 0u) {
     alb = toLinear(MATS[MAT_WOOD].albedo.rgb) * (0.85 + 0.2 * rnd);
     if (k == 2u) {
       // birch bark: pale with dark marks

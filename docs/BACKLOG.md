@@ -12,6 +12,34 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, session 5, `flora`) — plants: L-system trees, CA roots, species by fields, soft barriers (DECISIONS round 117)
+
+The user: "For plants, L systems are great for branches and then cellular autonoma for roots. I am ok with stylized or low
+fidelity but I just want it to be readable and pretty and look integrated with the world. Plants growing on fields and
+being instances that way into other geometry is key." ARCHITECTURE "Flora".
+
+| id | item | size | status |
+|---|---|---|---|
+| FL1 | The flora contract (src/api/contracts/flora.ts): species, library, placement (fit, plantsIn), passability (density, passage by controller caps), refresh; on the world API as `sim.flora`, `reclaimed.flora()` in the level | M | done (flora) |
+| FL2 | Species from parameters (src/flora/species.ts): L-systems + a 3D turtle with tropism for trunks and branches (silver birch weeping, broadleaf, conifer whorls, old giant, thicket shrub, fern, ivy), a root CA (pipe-model surface roots), tall grass, reeds, wildflowers, moss; seasonal colours, stiffness, niche, barrier; deterministic from a seed (unit tests: src/flora/*.test.ts) | L | done (flora) |
+| FL3 | The game draws the library: every tree a species variant (5 birch, 4 broadleaf, 4 conifer, 3 giant) through meshinst (one indirect draw a kind), floralook.wgsl shared with the viewer; `?flora=0` the old boxes | M | done (flora) |
+| FL4 | The small plants as meshes: tall grass rippling in a downwind wave across the meadows, wildflowers, ferns on the woodland floor, thicket shrubs in shrubland (few under the canopy) | M | done (flora) |
+| FL5 | Birch woods: a stand-in biome field (vegplan.wgsl birchWood, world-cell value noise) — swap for a real biome field when terrain/climate gives one; birches towering (11-17 cells) | S | done (flora); real biome field open |
+| FL6 | Birches let leaves go all year (more in a wind, many in the fall): particles.wgsl K_LEAF | S | done (flora) |
+| FL7 | The viewer page (flora.html): biome scenes (birch wood with leaves falling, meadow, riverbank reeds, ruin with ivy and moss, cave ferns) or one plant growing; seed, wind, season, growth, density; turn and zoom | M | done (flora) |
+| FL8 | The perf test (scripts/perf/flora.mjs → data/perf/flora-<adapter>.json): a dense wood in the atlas at zoom 14 and 5, phone tier, flora on/off | S | done (flora) |
+| FL9 | api/plants.ts's CPU port of vegPlan ignored the window's origin (G.org): in a streamed window its trees (fell, treeAt, logs) were another window's. Fixed with the port made a pure, tested function (planTree) | S | done (flora) |
+| FL10 | Reeds on riverbanks and plants by moisture/light in the game: vegprep has all 8 storage buffers; a flora kernel of its own (surface, veg, moisture, water, instances, indirect) would place by every field and free vegprep of the trees | M | open |
+| FL11 | Plants instanced onto other geometry in the game: ivy on structures and ruins, moss on rock (needs the structures track's surfaces / External hosts; the viewer's ruin shows the mapping) | M | open |
+| FL12 | Shade plants in caves under light beams (needs the terrain track's cave light) | S | open |
+| FL13 | Far tiles' trees by species (tiles.wgsl tileTrees, atlas bake treesAt: round crowns, no species) — birch woods pale from afar | S | open |
+| FL14 | Large trees as bodies: trunks External (MI6), a felled tree falls as a body, burns as fuel (fire reads veg today) | L | open |
+| FL15 | Leaf litter under woods in play (MAT_LEAFLIT is laid only by the baked climate): "lead covered forest floor" | S | open |
+| FL16 | Roots into the world: the CA's cells as the ground's grip (banks' angle of repose) and visible in cuts and cave ceilings | M | open |
+| FL17 | Passability on the GPU: a per-column plant-fill field for agents and paths (the CPU model is per region today) | M | open |
+| FL18 | Grass and twigs by zoom: at zoom 5 a blade is under a pixel — a level of detail if the perf test shows the cost | S | open |
+| FL19 | The phone's low tier (render scale 0.5) blurs blades and twigs: worth a sharper plant pass or wider blades there | S | open |
+
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 
 The user: "TDD make some unit tests so you can stop hogging my browser so much. Do complete integration tests after unit

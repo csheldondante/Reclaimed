@@ -1715,6 +1715,8 @@ export class LevelScene implements Scene {
       }
     }
     (window as unknown as { reclaimed: unknown }).reclaimed = Object.assign(api, {
+      // (round 117, flora) the flora contract (api/contracts/flora.ts), for scripted checks: reclaimed.flora().passability…
+      flora: () => (this.worldApi ??= attachSim(this.core)).flora,
       // (round 88, the atlas level) settlements.near([x, y]) / settlement('s12') / live() / raid() / plan(id), its
       // events (built, died, raided); units: the Units contract (api/contracts/units.ts) on the agents
       settlements: this.settlements,

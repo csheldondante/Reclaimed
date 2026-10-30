@@ -189,6 +189,18 @@ fn planting(o0: u32, c: vec2<u32>, top: f32, tier: f32, grow: f32, wither: f32) 
  * trunk and crown the heights the boxes had (the crown from the trunk's top, the old giant's half a cell lower).
  */
 fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
+  if (FLORA) {
+    // (round 117, flora) the species' library variants (src/flora/library.ts): picked by the column's hash, drawn at
+    // their own size (the L-system's), scaled a little by the plan's age so young woods stand lower
+    var r = FL_OAK;
+    if (pl.species == 1u) { r = FL_PINE; }
+    if (pl.species == 2u) { r = FL_BIRCH; }
+    if (pl.species == 3u) { r = FL_GIANT; }
+    // (the plan's age: young woods (succession just past 3.6) stand at 0.8 of the variant's height, old ones full)
+    let age = 0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0);
+    floraInstance(r, c, top, age, 0.05);
+    return;
+  }
   let k = min(pl.species, MI_N - 1u);
   let j = atomicAdd(&indirect[MI_ARGS + k * 5u + 1u], 1u);
   if (j >= MI_CAP) { return; }
@@ -210,6 +222,45 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
   instTree[o + 3u] = vec4<f32>(pl.trunk + 0.5, base, pl.crown + select(0.0, 0.5, k == 3u), half);
 }
 
+fn floraInstance(r: vec2<u32>, c: vec2<u32>, top: f32, scale: f32, lean: f32) {
+  // (round 117, perf: a tree off screen, its shadow too, isn't drawn — up to 20 cells tall, 6 across)
+  if (!floraSeen(cellPos(vec2<i32>(c)), top, 20.0, 6.0)) { return; }
+  floraPut(r, c, cellPos(vec2<i32>(c)), top, scale, lean, 0u);
+}
+
+/**
+ * (round 117, flora) The small plants on column c as library meshes: tall grass in the meadows (most columns of
+ * grassland, a clump each, jittered in the cell), wildflowers, ferns on the woodland floor (the shade plant: under the
+ * canopy), a thicket shrub. Returns true when it drew the column's small plants (the tufts' boxes are then left out).
+ */
+fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
+  if (pl.tufts == 0u && !pl.shrub && !pl.flower && v < 3.6) { return false; }
+  let jit = (vec2<f32>(rand3(c.x, c.y, 541u), rand3(c.x, c.y, 542u)) - 0.5) * 0.7;
+  let at = cellPos(vec2<i32>(c)) + jit;
+  // (round 117, perf: only what shows — the plant's box or its shadow on screen; and the grass, flowers and ferns
+  // only where a cell is wide enough on screen to see a blade: thinned from 8 px a cell, gone under 4.5 — the
+  // ground's plant cover paints the meadow there)
+  if (!floraSeen(at, top, 2.5, 1.6)) { return true; }
+  let px = PC.viewport.z;
+  let fine = rand3(c.x, c.y, 546u) < smoothstep(4.5, 8.0, px);
+  // (shrubland — succession 2.6 to 3.6 — is the thicket, a soft barrier; under the woods' canopy only a few: the
+  // forest floor stays open, ferns and leaf litter)
+  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(FL_SHRUB, c, at, top, 1.0, 0.05, 1u); }
+  if (v >= 3.6 && !pl.tree) {
+    // the woodland floor: ferns in the shade, here and there
+    if (fine && rand3(c.x, c.y, 543u) < 0.16) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }
+    return true;
+  }
+  if (pl.tufts > 0u && v >= 1.4 && fine) {
+    // tall grass: the meadows (taller the lusher), thinning toward the woods' shade
+    let lush = smoothstep(1.4, 2.6, v) * (1.0 - smoothstep(3.3, 3.8, v));
+    if (rand3(c.x, c.y, 544u) < 0.25 + 0.7 * lush) { floraPut(FL_TALLGRASS, c, at, top, 0.7 + 0.45 * lush, 0.08, 3u); }
+    if (pl.flower) { floraPut(FL_FLOWER, c, at + vec2<f32>(0.3, -0.2), top, 1.0, 0.1, 4u); }
+    return true;
+  }
+  return pl.flower;
+}
+
 // vegPlan(): vegplan.wgsl (prepended)
 @compute @workgroup_size(8, 8)
 fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_index) li: u32) {
@@ -221,6 +272,8 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   var pl = VegPlan(false, false, 0.0, 0.0, 0u, false, 0u);
   var top = 0.0;
   var tap = vec4<f32>(0.0);
+  var floraKeep = false;
+  var plF = pl;
   if (inside) {
     let i = colIdx(id.x, id.y);
     let s = surface[i];
@@ -232,10 +285,14 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     if (lay > 0.0 && !buriedAt(vec2<i32>(id.xy))) { top = f32(sfZ(s)) + lay; }
     let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));
     pl = vegPlan(id.x, id.y, veg[i], gm);
+    plF = pl;
     // (perfopt, ?tufts=0: no grass tufts — quarter-cell boxes, a third of a pixel at low; the mesh's plant cover draws the grass)
     if (!TUFTS) { pl.tufts = 0u; }
     tap = wilt[i];
-    n = select(0u, 1u, pl.shrub) + select(0u, 2u, pl.tree && !TREE_MESH) + pl.tufts + select(0u, 1u, pl.flower);
+    // (round 117, flora: the meadows' and woodland floor's small plants are library meshes — floraSmall — and take no
+    // room in the box lists)
+    if (FLORA && G.misc.w < 0.5 && (plF.tufts > 0u || pl.shrub || pl.flower || veg[i] >= 3.6)) { pl.tufts = 0u; floraKeep = true; }
+    n = select(0u, 1u, pl.shrub && !floraKeep) + select(0u, 2u, pl.tree && !TREE_MESH) + pl.tufts + select(0u, 1u, pl.flower && !floraKeep);
     if (G.misc.w > 0.5) { n = fineCount(veg[i], gm, id.xy); }
     n += plantingCount(floor(tap.z)) + plantingCount(floor(tap.w));
   }
@@ -258,7 +315,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   }
   workgroupBarrier();
   // (round 99: a tree drawn as a mesh takes no room in the lists, but is still written)
-  if (!inside || (n + nS + nT == 0u && !(TREE_MESH && pl.tree))) { return; }
+  if (!inside || (n + nS + nT == 0u && !(TREE_MESH && pl.tree) && !floraKeep)) { return; }
   var o = baseO + off;
   let qx = id.x * 4u;
   let qy = id.y * 4u;
@@ -275,7 +332,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
   if (G.misc.w > 0.5) {
     o = fineEmit(o, id.xy, top, veg[colIdx(id.x, id.y)], groundMatAt(vec2<i32>(id.xy), sfMat(surface[colIdx(id.x, id.y)])));
   }
-  if (pl.shrub && G.misc.w < 0.5) {
+  if (floraKeep) {
+    _ = floraSmall(id.xy, top, veg[colIdx(id.x, id.y)], plF);
+  }
+  if (pl.shrub && G.misc.w < 0.5 && !floraKeep) {
     putP(o, mkInst(id.x, id.y, 1u, 1u, top, top + 1.0, MAT_LEAVES, FLAG_VEG));
     o += 1u;
   }
@@ -316,7 +376,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>, @builtin(local_invocation_
     let ph = fract(tap.w);
     o = planting(o, id.xy, top, floor(tap.w), 0.25 + 0.75 * smoothstep(0.0, 0.2, ph), smoothstep(0.6, 1.0, ph));
   }
-  if (pl.flower && G.misc.w < 0.5) {
+  if (pl.flower && G.misc.w < 0.5 && !floraKeep) {
     let hx = hash3(id.x, id.y, 77u);
     putP(o, mkInst(qx + (hx & 3u), qy + ((hx >> 2u) & 3u), 1u, 1u, top, top + 0.45, flowerMat(id.xy), FLAG_VEG | FLAG_DETAIL));
   }
