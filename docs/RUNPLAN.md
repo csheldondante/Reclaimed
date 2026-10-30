@@ -51,6 +51,18 @@ and what its outcomes do to the world for the next run. Code: `src/runplan/`; co
 | travel | `travel.ts` | `enRoute` (vista, poi, ambush, weather, traveller; ≤ 1 a 1200 world units, ≤ 3 a leg) and `Journey` (asks the destination's land at once through a `Precacher`, moves along the leg, holds at each event until answered, arrives only when the animation is done *and* the land is ready) | the travel is the loading screen. Pure (no DOM/GPU) so the viewer, the game and a Node test drive the same code. |
 | viewer | `viewer.ts` | seed + hero in; the plan drawn on the atlas map (same painter as the game's map); play a stage, choose a leg, watch the travel with its events, end the run (or fail it), see the consequences (events, regions as each generator will realise them, characters, factions); next run from the world as left | DECISIONS round 117 part 4: a viewer page per generator. |
 
+## In the level, and play's profiles
+
+- `?level=atlas&runplan=bike` (src/runplan/level-run.ts): the run planned from the spawn on the live atlas; a stage
+  card (outcomes picked until the play track's heroes play stages); a leg opens the atlas map with the plan drawn on
+  it (`AtlasMap.overlay`), zoomed to the leg and following the marker; events held on the card; the destination
+  precached at the leg's start (`precacheWarp`, 49 regions) and the arrival held until `Streamer.precached` — then the
+  warp. Measured on the desktop iGPU: the land was ready before every 8-12 s animation ended.
+- play's `ControllerProfile` → `HeroCapabilities` (src/runplan/play-adapter.ts): each barrier as ground in play's
+  terms, costed by play's own `crossCost`, so terrain, flora and runplan agree on what a hero passes.
+- Scripts: scripts/runplanshot.mjs (the viewer: plan, a stage, a leg's travel GIF, a run's end, the phone),
+  scripts/runplanlevel.mjs (the level at the phone proxy), scripts/perf/runplan.mjs (timing).
+
 ## Contract additions (contracts/run.ts unless noted)
 
 `BarrierKind`, `EncounterKind`, `HeroCapabilities` (stand-in), `RegionNode` / `RegionEdge` / `RegionGraph` (stand-in),
