@@ -328,24 +328,28 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
     for (const g of this.groupList) {
       if (!g || g.count <= 0) continue;
       const spec = this.specs[g.species];
-      (spec.abilities ?? []).forEach((ab, k) => {
+      if (!spec.abilities?.length) continue;
+      // the nearest prey group (abilities are for the hunt: a dragon at rest neither beats its wings nor breathes)
+      const [x, y, z] = g.centre;
+      const prey = spec.behaviour.kind === 'stalker' ? spec.behaviour.prey : [];
+      let best: Group | null = null;
+      let bd = Infinity;
+      for (const o of this.groupList) {
+        if (!o || o === g || o.count <= 0 || !prey.includes(this.specs[o.species].id)) continue;
+        const d = Math.hypot(o.centre[0] - x, o.centre[1] - y);
+        if (d < bd) (bd = d), (best = o);
+      }
+      spec.abilities.forEach((ab, k) => {
         g.cool[k] -= dt;
         if (g.cool[k] > 0) return;
-        const [x, y, z] = g.centre;
         if (ab.kind === 'wingGust') {
+          // wing beats while it closes on prey (twice the breath's range): dust up, agents knocked over
+          const reach = Math.max(...spec.abilities!.map((a) => (a.kind === 'fireBreath' ? a.range * 2 : 0)), 24);
+          if (!best || bd > reach) return;
           host.blow(x, y, ab.radius, ab.strength, 0.35);
           g.cool[k] = ab.every;
         } else if (ab.kind === 'fireBreath') {
-          // at the nearest prey group within range
-          const prey = spec.behaviour.kind === 'stalker' ? spec.behaviour.prey : [];
-          let best: Group | null = null;
-          let bd = ab.range;
-          for (const o of this.groupList) {
-            if (!o || o === g || !prey.includes(this.specs[o.species].id)) continue;
-            const d = Math.hypot(o.centre[0] - x, o.centre[1] - y);
-            if (d < bd) (bd = d), (best = o);
-          }
-          if (!best) return;
+          if (!best || bd > ab.range) return;
           const [tx, ty, tz] = best.centre;
           host.ignite(tx, ty, ab.radius ?? 2.5, 1);
           host.heat([tx, ty, tz], (ab.radius ?? 2.5) * 0.6, 9000, 0.8);

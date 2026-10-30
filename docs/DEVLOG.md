@@ -13609,3 +13609,37 @@ Dawn in Node). The smoke needs the runner's own build server (warm snapshots), a
 rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
+
+---
+
+## 2026-10-30 — round 117, `inhabitants`: creatures with bodies, herds and predators that stalk
+
+The user (round 117): "rain world style procedural animation with secondary features like capes or fur. I want
+hunanoid an non. It doesn't have to be high fidelity it does have to be readable and look cool." and "Fill the
+wilderness with boids of various animals. Herds, predators that stalk." The design and every choice's why:
+docs/INHABITANTS.md. What changed and the reasons the measurements gave:
+
+- **A contract first** (src/api/contracts/inhabitants.ts): other tracks give species, paths and ability hooks as data
+  and read presence (density, threat) — hostile creatures as the "transient soft barriers" of r117 for the run planner.
+- **Bodies as points with roles; low-poly spindles on the GPU through Renderer.addMesh.** Voxels at a deer's size are
+  2-3 blocks and lose the gait; spindles keep limbs readable at 48 vertices a bone. addMesh gives lighting and shadows
+  for a 2-line render.wgsl tweak (a vertex's word as a colour).
+- **GPU, one thread a creature** (bins, behave, animate, mesh): per frame and growing with the count. Measured on the
+  Intel Xe-LPG, the atlas with every system, phone proxy: 0.57 / 1.07 / 2.73 ms for 100 / 1 000 / 5 000 creatures at
+  the far LOD; the mesh is most of it (one thread writes a creature's vertices; IN6).
+- **First frames drew nothing on the bestiary and the atlas**: the creatures stood on `sfZ(surface)`, the solid top,
+  and the warmup's dust skin (the loose layer, ~1 cell) covered them. The ground is `max(sfZ + driftAt, bodyTopAt)`,
+  as the particles' (flagged: every kernel copies it; IN11).
+- **The atlas's slide** moved them the wrong way: WorldCore.onShift's (dx, dy, dz) is how far the window moved, so
+  what's in it moves by minus that (the agents' Translator). A Dawn test pins it.
+- **Readability on the phone** (main's review of the first shots: "the stalk itself isn't readable"): drawn bigger than
+  life when the view is wide (24 px a cell of body, up to 4x, about the feet; behaviour keeps true sizes), a dark
+  footprint under each for contrast, charcoal wolves; the stalk crouches (the body sinks 28%, the knees fold), the
+  wolves burst when the herd bolts, the one they reach is knocked down, a bolted herd settles where it ran.
+- **The herd ran at the wolf** at first: the threat vector summed the direction *to* the predator. A Dawn test of a whole
+  hunt (stalk, burst, one caught, the rest > 10 cells off) caught it and holds it.
+- **Abilities only on the hunt**: a dragon at rest beat its wings every 1.2 s (dust and knocked agents for nothing); now
+  wing beats when prey is within twice the breath's range, breath within its range.
+- Tests: 23 unit (rigs, presence, paths, the species table), 10 on Dawn (feet, IK lengths, slopes, the herd's bolt, the
+  gale, paths, the mesh's counts at both LODs, the slide, presence, the hunt, the dragon). Shots:
+  C:/Projects/shots88/inhabitants (atlas-herd, atlas-hunt.gif + strip, atlas-dragon, viewer-phone).

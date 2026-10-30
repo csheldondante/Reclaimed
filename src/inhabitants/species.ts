@@ -124,7 +124,7 @@ export const SPECIES = {
     palette: { body: '#7a1e1e', belly: '#e0a050', accent: '#2a1010', eye: '#ffe040' },
     behaviour: { kind: 'stalker', prey: ['deer', 'goat'] },
     abilities: [
-      { kind: 'fireBreath', range: 10, every: 6, radius: 2.5 },
+      { kind: 'fireBreath', range: 16, every: 5, radius: 2.5 },
       { kind: 'wingGust', strength: 26, radius: 9, every: 1.2 },
     ],
     walk: 1.6,

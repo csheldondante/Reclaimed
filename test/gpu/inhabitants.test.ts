@@ -300,3 +300,23 @@ test('a hunt: the wolves stalk in low, sprint, and the herd scatters away from t
   expect(g.takeErrors()).toEqual([]);
   w.destroy();
 });
+
+test('a dragon uses its abilities through the level hooks: wing beats blow, breath ignites and heats its prey', async () => {
+  const { w, life, step } = await world();
+  const calls: string[] = [];
+  life.setAbilityHost({
+    ignite: (x, y) => calls.push(`ignite ${x.toFixed(0)},${y.toFixed(0)}`),
+    heat: () => calls.push('heat'),
+    blow: () => calls.push('blow'),
+  });
+  const deer = life.define(SPECIES.deer);
+  const dragon = life.define(SPECIES.dragon);
+  life.spawnGroup(deer, [26, 28], 4, { spread: 2 });
+  life.spawnGroup(dragon, [34, 28], 1, { spread: 0 });
+  await step(240);
+  expect(calls.some((c) => c === 'blow')).toBe(true);
+  expect(calls.some((c) => c.startsWith('ignite'))).toBe(true);
+  expect(calls.includes('heat')).toBe(true);
+  expect(g.takeErrors()).toEqual([]);
+  w.destroy();
+});

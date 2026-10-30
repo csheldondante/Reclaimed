@@ -1,5 +1,5 @@
 {
-  "when": "2026-10-30T17:12:40.714Z",
+  "when": "2026-10-30T17:28:13.625Z",
   "size": "412x915",
   "dpr": 2.6,
   "zoom": 6,
@@ -14,53 +14,61 @@
     152.5
   ],
   "none": {
-    "frames": 342,
-    "gpuFrameMs": 12.236,
+    "lod": 1,
+    "drawScale": 4,
+    "frames": 352,
+    "gpuFrameMs": 11.874,
     "lifeMs": 0,
     "passes": {}
   },
   "rows": [
     {
       "creatures": 100,
-      "frames": 333,
-      "gpuFrameMs": 12.954,
-      "lifeMs": 0.705,
+      "lod": 1,
+      "drawScale": 4,
+      "frames": 345,
+      "gpuFrameMs": 12.42,
+      "lifeMs": 0.573,
       "passes": {
-        "life bins": 0.021,
-        "life behave": 0.15,
-        "life animate": 0.236,
-        "life mesh": 0.293,
+        "life bins": 0.02,
+        "life behave": 0.14,
+        "life animate": 0.224,
+        "life mesh": 0.183,
         "life meshArgs": 0.006
       },
-      "overNoneMs": 0.718
+      "overNoneMs": 0.546
     },
     {
       "creatures": 1000,
-      "frames": 309,
-      "gpuFrameMs": 14.33,
-      "lifeMs": 1.775,
+      "lod": 1,
+      "drawScale": 4,
+      "frames": 351,
+      "gpuFrameMs": 12.459,
+      "lifeMs": 1.067,
       "passes": {
-        "life bins": 0.033,
-        "life behave": 0.369,
-        "life animate": 0.247,
-        "life mesh": 1.12,
-        "life meshArgs": 0.007
+        "life bins": 0.031,
+        "life behave": 0.326,
+        "life animate": 0.218,
+        "life mesh": 0.487,
+        "life meshArgs": 0.006
       },
-      "overNoneMs": 2.094
+      "overNoneMs": 0.585
     },
     {
       "creatures": 5000,
-      "frames": 321,
-      "gpuFrameMs": 14.191,
-      "lifeMs": 3.648,
+      "lod": 1,
+      "drawScale": 4,
+      "frames": 380,
+      "gpuFrameMs": 11.856,
+      "lifeMs": 2.731,
       "passes": {
-        "life bins": 0.048,
-        "life behave": 0.709,
-        "life animate": 0.297,
-        "life mesh": 2.59,
-        "life meshArgs": 0.005
+        "life bins": 0.039,
+        "life behave": 0.548,
+        "life animate": 0.24,
+        "life mesh": 1.899,
+        "life meshArgs": 0.004
       },
-      "overNoneMs": 1.955
+      "overNoneMs": -0.018
     }
   ]
 }
