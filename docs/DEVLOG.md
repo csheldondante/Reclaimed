@@ -12987,3 +12987,43 @@ not one tile's latency. Kept as it was; the planner's tile reach by throughput i
 desktop z14 0, z8 0-0.10, z5 0.05-0.61 (was 0.65-2.0). The far share (the stand-in seen) at desktop z5 40-160 c/s, 8-13%,
 is the open sea at the end of that route (shot gate-sf9/desktop-z5-pan.png: deep water the window and the tiles draw
 nothing of, the stand-in's sea). Parked all pass; frames as before (50-52 fps under the cap).
+
+## 2026-10-30 — round 113 (`tilesfirst`, step 5.1): the mesh's look's sources behind names (no visible change)
+
+Step 5 (the height grid as its own layer; the user: "Keep the per cell look for now I enjoy it" — it must look as the
+window's grid does: per-cell material colour and the per-cell terms, from a per-region record) starts by putting what
+the look reads of the land behind names, so a region's record can give the same names and the look stays the same
+code. src/shaders/meshsource.wgsl (included before meshdraw.wgsl in the mesh, rock and tile modules): the layers'
+binding and gridTop, meshLook (Look), cellFields, cellFields1, cellWater — moved verbatim — and four one-line wrappers
+meshSurf now calls: srcStrata (strata), srcAsleep (asleep), srcDriftMat (driftMatAt), srcPickCol (winIdx).
+
+**Pixel identity.** WGSL's module scope is order-free, so the program is the same when the two files' top-level
+declarations together are the old meshdraw.wgsl's with the wrappers taken back to their calls: scripts/srcsplit.mjs
+checks that against a git revision — SAME, 53 declarations. At run time a pixel comparison can't tell more than
+that: scripts/pixelshot.mjs (sim paused, the shaders' clock held, each view once its land and tiles are in) differs
+8-19% of pixels between two runs of the *same* build (the world's state when it pauses differs); the split's build
+against the old one differs 8-16% — inside that. The gate's golden images (gate-s51.json, every view) changed by the
+same fractions as the run before it (e.g. phone z8 0.32% / 0.36%, desktop z5 0.48% / 0.48%, run-desktop-z8 7.10% /
+7.13%); all views pass, frames alike.
+
+## 2026-10-30 — round 113 (`tilesfirst`): step 5 parked after 5.1; what the stand-in shows at wide zooms (SF11)
+
+**Step 5 parked** (main's call on the measurements, for the user to decide): a render-only tile is now drawable
+~50-70 ms after it's wanted (generation 28-50 ms, the bake 10-21 ms, p50 / p90 on the phone proxy panning at 160 c/s;
+its "wanted to drawn" of ~2 s is the look-ahead's lead time, not latency), and land written into the window is drawn
+0-40 ms after (SF7). A height grid made from the generation's first pass would come about a frame before the tile, so
+its latency win is ~a frame; its remaining value is memory (a compact per-region record instead of a tile's slot) and
+views from any angle without a re-bake. 5.1 (the look's sources behind names, declaration-identical) stays: it's
+what 5.2-5.5 build on.
+
+**SF11, measured before changing anything.** The stand-in seen at desktop z5 on fast pans (gate-sf9: 8-13%) isn't the
+tiles' reach: holediag (desktop, z5, 40-160 c/s, 6 s from the gate's spot) classifies every stand-in sample, and none is
+a region with no tile (`+none`) — the look-ahead had asked for and made them all. Two other causes:
+(a) the open sea at the end of the gate's route: deep water whose bed is under the window's floor — a render-only
+tile's land is cut at the window's oz, so its tile holds nothing there and the window's chunks are neither the grid's
+nor voxels (SF8); the stand-in's sea shows (gate-sf9/desktop-z5-pan.png);
+(b) inland, a strip at the screen's sides on the window's edge rows (z5far-cls.png, z5band.png: 3-6% of a frame at
+40-80 c/s, 2% at 160) — classified as window chunks the CPU counts as drawn by the grid, the region's tile held back
+for it, but the pixels show the stand-in: the geometric check reads 0 there (it trusts the same "drawn"). Open: SF12.
+So the reach by throughput isn't changed (a reach shrunk to one tile's latency made z5 worse: SF9's entry); SF11 stays
+open for when a `+none` shows up.

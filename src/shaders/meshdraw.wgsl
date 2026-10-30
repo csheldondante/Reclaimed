@@ -9,7 +9,6 @@
 // A detail layer gives the hard and broken materials a rough surface in
 // the shading: rock in facets (rockFacet), rubble, trash, litter and ruins in
 // chips, each tilted its own way; sand, soil, ash and silt stay smooth.
-@group(0) @binding(9) var<storage, read> meshLayers: array<vec4<u32>>;
 // the mesh's state (round 73): each range's translation (meshregion.wgsl offBase), the vertex stage's
 @group(0) @binding(5) var<storage, read> meshState: array<u32>;
 
@@ -102,11 +101,6 @@ fn vsMeshG(@builtin(vertex_index) vi: u32) -> MOut {
 // The mesh chunks across and their side are Globals.ocean.yz (hybrid).
 const GRID_N: u32 = 34u;
 
-/** column q's top (window z): its surface and what's loose on it (as cellWater's level) */
-fn gridTop(q: vec2<i32>) -> f32 {
-  let c = clampCell(q);
-  return sfZ(surface[colIdxI(c)]) + driftAt(c);
-}
 
 /** column q's centre (window coordinates) */
 fn gridAt(q: vec2<i32>) -> vec2<f32> { return vec2<f32>(f32(q.x) + 0.5 + 0.5 * f32(q.y & 1), (f32(q.y) + 0.5) * 0.8660254); }
@@ -173,44 +167,6 @@ fn fsMeshZCut(in: MOut) -> FOut {
   return f;
 }
 
-/** What a fragment of column q's surface is made of: x its material, y the
- *  material under it (0 none), z how thick its layer is, w the top of its
- *  solid run (both as bits). */
-struct Look { mat: u32, below: u32, thick: f32, top: f32 };
-
-/**
- * The interval holding height z in column q (else the nearest). A top-facing
- * fragment within a cell of its solid run's top takes the run's top layer
- * however thin it is (the smoothed surface runs a little above or below the
- * tops), and the layer under that one, which shows through a thin top layer
- * as on the prisms' sheets.
- */
-fn meshLook(q: vec2<i32>, z: f32, up: bool) -> Look {
-  let cs = colSlots(u32(q.x), u32(q.y));
-  var best = 1e9;
-  var at = 0u;
-  var n = 0u;
-  for (var i = 0u; i < cs.y; i++) {
-    let v = meshLayers[cs.x + i];
-    if (ivEmpty(v)) { break; }
-    n = i + 1u;
-    let d = max(ivZ0(v) - z, z - ivZ1(v));
-    if (d < best) {
-      best = d;
-      at = i;
-    }
-  }
-  if (n == 0u) { return Look(MAT_STONE, 0u, 1.0, 0.0); }
-  // up its run to the top (touching intervals)
-  var t = at;
-  while (t + 1u < n && abs(ivZ0(meshLayers[cs.x + t + 1u]) - ivZ1(meshLayers[cs.x + t])) < 1e-3) { t += 1u; }
-  let runTop = ivZ1(meshLayers[cs.x + t]);
-  if (up && z > runTop - 1.0) { at = t; }
-  let v = meshLayers[cs.x + at];
-  var below = 0u;
-  if (at > 0u && abs(ivZ0(v) - ivZ1(meshLayers[cs.x + at - 1u])) < 1e-3) { below = ivMat(meshLayers[cs.x + at - 1u]); }
-  return Look(ivMat(v), below, ivZ1(v) - ivZ0(v), runTop);
-}
 
 /**
  * (round 108, TC18/TC20) Set by the tiles' bake (tiles.wgsl tileBake) before it asks for a surface's look — the look
@@ -321,11 +277,6 @@ const ND_WARP: u32 = 64u;
 const ND_FIELDS: u32 = 128u;
 const ND_SPECKS: u32 = 256u;
 
-/** (perfopt, ?nodetail=fields) the cell's own fields, not blended over three */
-fn cellFields1(xy: vec2<f32>) -> vec4<f32> {
-  let j = colIdxI(clampCell(cellAt(xy)));
-  return vec4<f32>(contam[j].x, veg[j], fields[j].y, wilt[j].y);
-}
 
 /** The look of the mesh's surface at a point (the forward pass's and the deferred resolve's). */
 fn meshShade(in: MOut) -> FOut {
@@ -396,7 +347,7 @@ fn meshSurf(in: MOut) -> Surf {
   var cell: vec2<i32>;
   if (noDetail(ND_WARP)) { cell = clampCell(cellAt(ip.xy)); } else { cell = clampCell(cellAt(terrainWarp(ip) + jo * 0.6)); }
   // (ringwin: the pick's column in window order — the CPU reads it)
-  let ci = winIdx(cell);
+  let ci = srcPickCol(cell);
   let up = nrm.z > 0.55;
   let lk = meshLook(cell, ip.z, up);
   var mat = lk.mat;
@@ -407,7 +358,7 @@ fn meshSurf(in: MOut) -> Surf {
   if (noDetail(ND_FIELDS)) { cf = cellFields1(in.wpos.xy); } else { cf = cellFields(in.wpos.xy); }
   // (hybrid, round 86: a storm over land whose sim is asleep — a heightfield chunk past the storms' reach,
   // scenes/hybrid.ts — is wet under it all the same, as if it had rained there)
-  if (G.numStorms > 0u && asleep(vec2<u32>(cell)) && !TILE_BAKE) { cf.z = max(cf.z, 0.9 * stormCover(in.wpos.xy)); }
+  if (G.numStorms > 0u && srcAsleep(cell) && !TILE_BAKE) { cf.z = max(cf.z, 0.9 * stormCover(in.wpos.xy)); }
   if (TILE_BAKE) { cf.z = 0.0; }
   let isTop = up && in.wpos.z > lk.top - 0.8;
   var alb = groundAlbedo(mat);
@@ -427,13 +378,13 @@ fn meshSurf(in: MOut) -> Surf {
   alb *= in.tint;
   if (mat >= 1u && mat <= 4u && !noDetail(ND_STRATA)) {
     // (round 79: strata — render.wgsl)
-    let band = strata(in.wpos);
+    let band = srcStrata(in.wpos);
     if (mat == 1u) { alb *= mix(vec3<f32>(0.8, 0.83, 0.9), vec3<f32>(1.16, 1.03, 0.88), band); }
     if (mat == 2u) { alb *= mix(vec3<f32>(0.9, 0.95, 0.92), vec3<f32>(1.12, 0.98, 0.86), band); }
     let pb = randv(sub + vec3<i32>(5, 77, 13));
     if (pb > 0.93) { alb *= 1.25; } else if (pb < 0.05) { alb *= 0.72; }
   }
-  if ((mat == 23u || mat == 30u) && !noDetail(ND_STRATA)) { alb *= strataTint(mat, strata(in.wpos)); }
+  if ((mat == 23u || mat == 30u) && !noDetail(ND_STRATA)) { alb *= strataTint(mat, srcStrata(in.wpos)); }
   if (mat == MAT_LEAFLIT) {
     // fallen leaves (round 51), as fsBox
     var tc = autumnLeaf(select(0u, 2u, n2 > 0.82), fract(n2 * 3.7));
@@ -494,8 +445,8 @@ fn meshSurf(in: MOut) -> Surf {
       sa = toLinear(mix(vec3<f32>(0.2, 0.33, 0.12), vec3<f32>(0.36, 0.5, 0.2), randv(vec3<i32>(floor(in.wpos * 2.0)) + vec3<i32>(3, 1, 7))));
     }
     if (sand > 0.7 + 0.3 * s) {
-      var sc = toLinear(MATS[driftMatAt(cell)].albedo.rgb);
-      if (driftMatAt(cell) == MAT_DRIFT) { sc = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
+      var sc = toLinear(MATS[srcDriftMat(cell)].albedo.rgb);
+      if (srcDriftMat(cell) == MAT_DRIFT) { sc = toLinear(vec3<f32>(0.52, 0.46, 0.39)); }
       sa = sc * (0.9 + 0.2 * s);
     }
     // snow or dust on its up faces (round 52; the raw voxel word: bits 24..29)
@@ -555,37 +506,6 @@ fn meshSurf(in: MOut) -> Surf {
   return Surf(alb, lnrm, nrm, filmN, film, mat, ci, mat == MAT_QUARTZ && sw < 0.5);
 }
 
-/** contamination, plant cover, wetness and withering at xy, blended barycentrically over the three nearest cells. */
-fn cellFields(xy: vec2<f32>) -> vec4<f32> {
-  let t = triAt(xy);
-  var o = vec4<f32>(0.0);
-  for (var k = 0; k < 3; k++) {
-    let j = colIdxI(clampCell(t.c[k]));
-    o += t.w[k] * vec4<f32>(contam[j].x, veg[j], fields[j].y, wilt[j].y);
-  }
-  return o;
-}
-
-/** The water round xy over the three nearest cells: its depth (blended),
- *  its level over the wet ones and their share, and its flow (blended). */
-struct CellWater { d: f32, level: f32, wet: f32, flow: vec2<f32> };
-fn cellWater(xy: vec2<f32>) -> CellWater {
-  let t = triAt(xy);
-  var o = CellWater(0.0, 0.0, 0.0, vec2<f32>(0.0));
-  for (var k = 0; k < 3; k++) {
-    let q = clampCell(t.c[k]);
-    let j = colIdxI(q);
-    let dk = water[j];
-    o.d += t.w[k] * dk;
-    if (inMap(t.c[k]) && dk > WATER_MIN_R) {
-      o.level += t.w[k] * (f32(sfZ(surface[j])) + driftAt(q) + dk);
-      o.wet += t.w[k];
-      o.flow += t.w[k] * flowOf(j);
-    }
-  }
-  if (o.wet > 0.0) { o.level /= o.wet; }
-  return o;
-}
 
 fn voxMatR(w: u32) -> u32 { return w & 0xffu; }
 
