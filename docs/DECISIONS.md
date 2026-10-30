@@ -3,6 +3,24 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 113 (session 5, `places`) — streaming: stand-ins first, detail as fast as it comes
+
+- The user, verbatim: "This will take a while I would prefer you fix the design. As mentioned we should be able to get
+  much higher throughout. The generation is the rate limiting factor and that you said is fast. So please take a step
+  back and design what this should be. Fast cheap standings to cover the minimal area needed replaced as fast as we can
+  with the fuller data" -> the design doc https://claude.ai/artifact/UnqDENhSKGH1abe7pxWiNh: a layer stack (0 stand-in,
+  1 tile, 2 height grid, 3 full window), one planner (the visible footprint, speed-scaled look-ahead per layer, budgeted
+  steps, holes first), a region draws the highest layer that is ready and swaps only when the next is complete.
+- Earlier, verbatim: "Why don't we load the fast tiles first and then something is always there and swap only when the
+  slow one is ready? It's really dumb not to grow with speed. The fix is both." and "Why can't we just compute the
+  orthographic visible area and see if any tiles that are not loaded cover it?"
+- The user approved it ("I approve the design and answered the questions inline. Please carry this out while I sleep"),
+  answers verbatim: the stand-in "this is fine but hopefully we rarely hit it"; the window "I think we want simulation
+  only where what is visible and a small buffer"; the speed to keep clean "I would say 2x bike speed so we have room for
+  faster note the camera will pull back some when the bike goes faster"; 4 MB more for height grids "yes that's fine".
+- Order: migration steps 1-5 on branch `tilesfirst`, each gated and merged one at a time; step 6 (the window as
+  simulation only) planned, scheduled after.
+
 ## 2026-10-29 — round 112 (session 5, `bgcheck`) — background colour in the pan test
 
 - The user, verbatim: "Can we do a pan test for the phone that fails if any bg color shows?" then "Or flags it anyway" → render/bgcheck.ts behind ?bgcheck=1; the pan bench flags a step (fails
