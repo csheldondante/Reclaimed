@@ -2325,6 +2325,26 @@ clears them).
   fits), a bigger one is placed first (the old kept when there's no room). When the atlas had no place lately, the
   look-ahead (`TileCache.wanted`) also asks for drawn render-only tiles bigger than the view needs (a closer zoom's
   whole slots), made again at the view's size (`remake`: their bake isn't a latency).
+- (round 115, `tilecal`) **The tiles' calibration** (`render/tilecalib.ts`, `TileCache.cal`): the one place that owns
+  the numbers the tile cache sizes itself by, measured on the device rather than a tier's constant.
+  - *In:* `landFrame(baked, bottleneck)` from TileLandGpu.step each frame (bottleneck: a region wanted with no scratch
+    slot free, or the bakes at their cap; not the atlas full; the camera at rest), and `holes` (level.ts: the planner's
+    — only frames the pacer gives the tiles its turns for holes measure).
+  - *Out:* `rate` (tiles a second, a running estimate from the tier's prior, a second of bottlenecked frames at a
+    time), `fillTiles` (what the rate makes in the fill budget, 5 s), `atlasMB(cssW, cssH)` (the atlas's starting size:
+    24 MB by the css area, at most 128 — a start, not a limit), `oom(bytes)` / `mayAsk(bytes)` (the hardware's ceiling a
+    growth found) and `floorSearch` (pure: the floor's rate and room tests, unit-tested in tilecalib.test.ts); `stats`
+    for the gate and the bench. Overrides: `?tilerate=` (tiles a frame at 60 Hz), `?floorframes=` (the budget,
+    frames at 60 Hz), `?tilemb=` (the atlas, no growth).
+  - *Used by TileCache:* `zoomFloor` — the widest zoom whose screen's own regions (area and perimeter) are at most
+    `fillTiles` and whose screen with the margin fits 80% of the atlas; `stats.floorBound` which held it. When the
+    atlas held it and the rate's own floor would take 10% more slots, `grow` adds atlas rows (the atlas is made as wide
+    as its budget allows, so every slot keeps its place): the three planes and the slots' params copied into taller
+    ones, the instances' buffer and every group binding them remade, the old destroyed a frame on. Only up. No budget:
+    the atlas is as wide as the device's widest texture (device.ts asks for the adapter's maxTextureDimension2D), grows
+    to its height at most, and its allocations are made in an 'out-of-memory' error scope — out of memory, the new ones
+    are destroyed, the atlas stays, and those bytes are the ceiling (`cal.stats.ceilingBytes`) never asked for again.
+
 - A window region's tile is never the least recently used while the region is in the window (prepare marks it used):
   it's the tile the screen needs the frame the region leaves.
 - An eye-side tile is left out (the focus's line) only when its image covers the focus on the screen.
@@ -2393,3 +2413,15 @@ clears them).
   TilePacer.holes, WorldCore.simCap. `?planner=0`, `?planoff=slide,tile,mesh,sim,pacer`.
 - **Land written is drawable at once** (SF7): the streamer's onRelief → level → WorldCore.prepareArrived (SurfaceSystem
   and RenderFieldsSystem with `all`: every column, no sleep skip) and HybridChunks.landBox(…, −Infinity): ready now.
+
+## Tests in Node (round 117, `testkit`; docs/TESTING.md)
+
+- `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a
+  browser.
+- The gpu tier runs the game's own code on Dawn in Node (npm `webgpu`). gpu/device.ts `requestGpu(gpu)` is the
+  adapter and device as the game asks for them, with no canvas. `initGpu(canvas)` is that plus the canvas and the fatal
+  overlay. gpu/pipeline.ts makeCompute and makeBindGroup are unchanged.
+- WorldCore is made with a Host whose canvas, context and ui are absent: its constructor doesn't draw.
+- A module that reads `location`, `innerWidth` and the like at load works in the unit tier only if it guards them
+  (`typeof location === 'undefined'`). The gpu tier's setup defines them, a page with no query at 412 x 915, for the
+  modules a WorldCore pulls in.

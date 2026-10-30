@@ -89,6 +89,11 @@ const SCREENS = {
   phone: { w: 412, h: 915, dpr: 2.6, mobile: true, q: '&q=low', ua: 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Mobile Safari/537.36' },
   // (the user's PC's window in their report, 2026-10-29: TilesLoadingWeirdly.png)
   wide: { w: 2046, h: 672, dpr: 1, mobile: false, q: '' },
+  // (round 115, tilecal: ultrawide monitors at dpr 1 — the user's "desktop version on my wide monitor does not load all
+  // the tiles", its size unknown: the common ultrawides and a super-ultrawide)
+  uw2560: { w: 2560, h: 1080, dpr: 1, mobile: false, q: '' },
+  uw3440: { w: 3440, h: 1440, dpr: 1, mobile: false, q: '' },
+  uw5120: { w: 5120, h: 1440, dpr: 1, mobile: false, q: '' },
 };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 fs.mkdirSync(outDir, { recursive: true });
@@ -204,7 +209,7 @@ async function measure(p, secs, parked = true) {
     const rep = window.reclaimedHitch?.report?.();
     const hitches = rep?.worst ? rep.worst.slice(0, 2).map((h) => `${h.ms} ${h.cause} ${[...(h.steps ?? []), ...(h.async ?? [])].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`) : [];
     // (round 112, tilefix3: the zoom as it stands — under the device's floor it's held at it — and the floor)
-    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, bg, planner: R.scene?.planner ? { ...R.scene.planner.stats, reach: R.scene.planner.plan.reach } : null, geo: geo.frames ? { max: +geo.max.toFixed(4), mean: +(geo.sum / geo.frames).toFixed(5), framesAny: geo.framesAny, frames: geo.frames, worst: geo.worst } : null, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
+    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, bg, planner: R.scene?.planner ? { ...R.scene.planner.stats, reach: R.scene.planner.plan.reach } : null, geo: geo.frames ? { max: +geo.max.toFixed(4), mean: +(geo.sum / geo.frames).toFixed(5), framesAny: geo.framesAny, frames: geo.frames, worst: geo.worst } : null, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb, floorBound: st.floorBound, floorTiles: st.floorTiles, grown: st.grown }, cal: TL?.cal ? { ...TL.cal.stats, rate: +TL.cal.stats.rate.toFixed(1), measuredS: +TL.cal.stats.measuredS.toFixed(1) } : null, pipe };
   }, secs, parked);
 }
 
