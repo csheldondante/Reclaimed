@@ -55,6 +55,25 @@ describe('terrain diagnostics', () => {
       rows += l + '\n';
     }
     console.log(`${x},${y}: sea ${a.p.sea}, ${gaps} probed cells with an open run (#)\n${rows}`);
+    // mouths: an open run whose neighbour's ground lies under its roof (the run opens out of a face); which way it faces
+    // (the fixed view sees faces toward +x+y: the eye's azimuth is 45°)
+    const mouths: { at: string; h: number; face: string; toView: boolean }[] = [];
+    const D = [[1, 0, '+x'], [-1, 0, '-x'], [0, 1, '+y'], [0, -1, '-y']] as const;
+    for (let j = 1; j < W - 1; j++)
+      for (let i = 1; i < W - 1; i++) {
+        const o = (j * W + i) * 4;
+        if (!(v[o + 2] > v[o + 1] + 2.5)) continue;
+        for (const [dx, dy, f] of D) {
+          const q = ((j + dy) * W + i + dx) * 4;
+          const open = v[q + 2] > v[q + 1] + 2.5;
+          if (!open && v[q] < v[o + 2] - 1) {
+            mouths.push({ at: `${x - R + i},${y - R + j}`, h: +(v[o + 2] - Math.max(v[o + 1], v[q])).toFixed(1), face: f, toView: dx + dy > 0 });
+            break;
+          }
+        }
+      }
+    const tv = mouths.filter((m) => m.toView);
+    console.log(`mouths: ${mouths.length} face cells, ${tv.length} toward the view; tallest toward it: ${tv.sort((p, q) => q.h - p.h).slice(0, 8).map((m) => `${m.at} h${m.h} ${m.face}`).join('  ')}`);
     // (TERRAIN_DIAG_COL="x,y": the made columns' runs round that world point, and ground()'s open run there)
     const cAt = process.env.TERRAIN_DIAG_COL;
     if (cAt) {

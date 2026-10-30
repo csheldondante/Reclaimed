@@ -724,19 +724,6 @@ fn ground(p: vec2<f32>) -> Ground {
     switch kind {
       case EDGE_CLIFF, EDGE_SEACLIFF: {
         w = smoothstep(-1.2, 1.2, s + jit);
-        // (round 117, terrain/cave.wgsl) caves at the foot: a sea cliff's a cell over the sea (TG3), an inland one's at
-        // the low ground; the high side is A's where w → 1
-        let xs = s + jit;
-        let hHi = max(hA, hB);
-        let hLo2 = min(hA, hB);
-        let x = select(-xs, xs, hA >= hB);
-        let foot = select(max(hLo2 + 0.3, AP.sea + 1.0), AP.sea + 1.0, kind == EDGE_SEACLIFF);
-        let cc = cliffCave(u, x, foot, hHi - foot, hHi);
-        if (cc.roof > cc.floor) {
-          caveF = cc.floor;
-          caveR = cc.roof;
-        }
-        talus = max(talus, cc.pile);
       }
       case EDGE_RAVINE: {
         w = smoothstep(-ew * 0.5, ew * 0.5, s);
@@ -797,6 +784,24 @@ fn ground(p: vec2<f32>) -> Ground {
       default: {
         w = smoothstep(-ew, ew, s);
       }
+    }
+    // (round 117, terrain/cave.wgsl) caves at a cliff's foot and along every coast where the land stands over the sea
+    // (the coasts' kinds are mostly beaches and smooth slopes, not sea cliffs: a cave into a steep coastal slope is a
+    // sea cave too): the foot a cell over the sea on a coast (TG3), the low ground's inland; the high side the land's
+    let coastB = isLand(A) != isLand(B);
+    if (kind != EDGE_MESA && (coastB || kind == EDGE_CLIFF)) {
+      let xs = s + jit;
+      let hiA2 = select(hA >= hB, isLand(A), coastB);
+      let hHi = select(hB, hA, hiA2);
+      let hLo2 = select(hA, hB, hiA2);
+      let x = select(-xs, xs, hiA2);
+      let foot = select(max(hLo2 + 0.3, AP.sea + 1.0), AP.sea + 1.0, coastB);
+      let cc = cliffCave(u, x, foot, hHi - foot, hHi);
+      if (cc.roof > cc.floor) {
+        caveF = cc.floor;
+        caveR = cc.roof;
+      }
+      talus = max(talus, cc.pile);
     }
     g.h = mix(hB, hA, w) + extra;
     g.w = w;

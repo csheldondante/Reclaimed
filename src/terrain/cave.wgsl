@@ -25,7 +25,7 @@
 const CAVE_PER: f32 = 110.0;
 const CAVE_W: f32 = 0.2;
 /** the distance in from a passage's edge at its middle (cells): the vault's d there */
-const CAVE_MID: f32 = 7.0;
+const CAVE_MID: f32 = 9.0;
 const CAVE_RISE: f32 = 70.0;
 
 struct Cave {
@@ -46,18 +46,18 @@ fn cliffCave(u: vec2<f32>, x: f32, foot: f32, drop: f32, top: f32) -> Cave {
   var o = Cave(0.0, 0.0, 0.0, false);
   if (drop < 14.0 || x < -8.0 || x > 140.0) { return o; }
   // (which stretches of cliff have caves: most)
-  let on = smoothstep(-0.25, 0.0, pfbm(u, perOf(260.0), 2u, AP.seed + 703u));
+  let on = smoothstep(-0.55, -0.3, pfbm(u, perOf(260.0), 2u, AP.seed + 703u));
   if (on <= 0.0) { return o; }
   let n = pfbm(u, perOf(CAVE_PER), 3u, AP.seed + 701u);
   var a = abs(n);
-  // grottos: round chambers (Worley sites ~45 cells apart, 6-10 across) — those near the foot are cut by the face, a
+  // grottos: round chambers (Worley sites ~28 cells apart, 7-12 in radius) — those near the foot are cut by the face, a
   // mouth at the cliff's base wherever one falls, so the base has caves often and not only where a passage happens to
   // reach it (the user: "caves that open (often at their base)")
   if (x < 30.0) {
-    let pg = perOf(45.0);
+    let pg = perOf(28.0);
     let wg = pworley(u * f32(pg), vec2<i32>(pg), 0.8, AP.seed + 710u);
-    let rg = 6.0 + 4.0 * hf(pcg(wg.id ^ (AP.seed * 0x7f4a7c15u)));
-    a = min(a, CAVE_W * wg.f1 * 45.0 / rg);
+    let rg = 7.0 + 5.0 * hf(pcg(wg.id ^ (AP.seed * 0x7f4a7c15u)));
+    a = min(a, CAVE_W * wg.f1 * 28.0 / rg);
   }
   // the mouth's pile: outside the foot, where a passage comes out
   if (x < 0.5) {
@@ -77,7 +77,8 @@ fn cliffCave(u: vec2<f32>, x: f32, foot: f32, drop: f32, top: f32) -> Cave {
   let rn = pfbm(u, perOf(10.0), 3u, AP.seed + 706u);
   // (narrower and lower toward its far end: a passage peters out)
   let end = 1.0 - smoothstep(reach * 0.7, reach, x);
-  let vault = 12.0 * (0.5 + 0.5 * end);
+  // (the vault taller at the mouth — up to 22, under 0.6 of the cliff — so a mouth reads from the fixed view above; TG3's 12 inside)
+  let vault = min(mix(22.0, 12.0, smoothstep(0.0, 25.0, x)), drop * 0.6) * (0.5 + 0.5 * end);
   o.roof = base + min(0.35 * d * d, vault) + 1.2 * rn;
   o.floor = base - 0.5 + 0.3 * rn;
   if (o.roof - o.floor < 2.5) {

@@ -95,6 +95,26 @@ await run({ name: 'terrain-shots', kind: 'behaviour', size: '1200x800' }, async 
       if (ui) ui.style.visibility = 'hidden';
     });
     await p.screenshot({ path: `${out}-${k}.png` });
+    // (--fly "x,y,z,lookX,lookY,lookZ": world units; the free camera there, looking at the second point — a cave's mouth)
+    const fly = R.opt('fly', null);
+    if (fly) {
+      const st = await p.evaluate(async (f) => {
+        const [x, y, z, lx, ly, lz] = f.split(',').map(Number);
+        const Rc = window.reclaimed;
+        Rc.toggleFly();
+        const S = Rc.stream;
+        const ox = S.origin[0];
+        const oy = S.origin[1] * 0.8660254;
+        const oz = S.oz ?? 0;
+        Rc.camera.fly.pos = [x - ox, y - oy, z - oz];
+        Rc.camera.fly.yaw = Math.atan2(ly - y, lx - x);
+        Rc.camera.fly.pitch = Math.atan2(lz - z, Math.hypot(lx - x, ly - y));
+        await new Promise((r) => setTimeout(r, 3000));
+        return { origin: [ox, oy], oz };
+      }, fly);
+      R.log(`fly ${JSON.stringify(st)}`);
+      await p.screenshot({ path: `${out}-${k}-fly.png` });
+    }
     R.log(`${out}-${k}.png`);
   }
 });

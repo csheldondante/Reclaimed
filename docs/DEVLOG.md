@@ -13787,3 +13787,15 @@ world), terrain-diag.test.ts (TERRAIN_DIAG="x,y": the default atlas probed round
   flooded (the flood tool). A first step of TR7; the sea's level is still AP.sea.
 - The gpu tier: each file in a fresh worker (TK12, docs/TESTING.md). In this worktree one shared worker died as soon as a
   second file made a WorldCore — with only places' own gpu files — and never in a fresh worktree at the same commit.
+
+**TR21: the caves' mouths, found and made to read.** A Dawn probe (test/gpu/terrain-diag.test.ts: TERRAIN_DIAG="x,y" now
+also lists the mouths — an open run with a neighbour's ground under its roof — and which way they face; the fixed view
+sees faces toward +x+y) showed the coast's caves were there all along, at sea level, 6-13 high in cliffs 40-60 high:
+too low to read from above. Seen from the sea with the free camera (scripts/terrain/shots.mjs --fly) one is a proper sea
+cave, the waves at its foot (C:/Projects/shots88/terrain/mouth1-m-fly.png). Changes: caves along every coast where the
+land stands over the sea, not only the "sea cliff" kind (most coasts are beaches and steep slopes — a cave into a steep
+coastal slope is a sea cave too); most cliff stretches have them (the mask's threshold lowered); grottos twice as dense
+(sites ~28 cells apart, 7-12 in radius); the vault taller at the mouth (up to 22, under 0.6 of the cliff; TG3's 12 inside),
+CAVE_MID 9. From the fixed view on the phone proxy the mouths now show along the sea cliff
+(C:/Projects/shots88/terrain/mouth2-m.png), but as pale patches: the inside is lit like open ground — the draw doesn't
+darken under a roof (TR21 stays open for the renderer: shade inside a run's gap).
