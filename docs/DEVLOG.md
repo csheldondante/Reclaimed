@@ -13231,3 +13231,11 @@ generated land in the tiles until the window holds it.
 The shots were taken while the GPU was shared with another agent's run: visual and correctness only, no timings.
 Shots are in C:\Projects\shots88\worldstore\ (1-old-build-saved, 2-places-saved-world, 3-places-world-new,
 4-fix-old-save-dropped, 5-fix2-other-gen-dropped).
+
+## 2026-10-30 — round 114 (main): the test runner served an empty build without saying so
+
+Merging covercheck and worldstore, the tile gate's first page never booted (no boot marks in 240 s). Both branches passed
+alone. The cause was the runner, not the merge: in the agent's sandboxed Bash shell every directory rename inside
+.testcache fails EPERM, and `build()` took a failed rename for another run having built the same sources, deleted its
+build and served the missing directory. It now throws when the rename fails and no other build is there. Runner-based
+scripts were run from PowerShell, where the rename works.
