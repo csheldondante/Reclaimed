@@ -31,6 +31,7 @@ export class FloraWorld implements Flora {
 
   constructor(private src: FloraSource, lib = new FloraLibrary(GAME_LIBRARY)) {
     for (const k of lib.kinds) {
+      if (k.lod) continue;
       const s = this.shape.get(k.species) ?? { radius: 0, height: 0 };
       const n = lib.range(k.species).count;
       s.radius += k.mesh.radius / n;

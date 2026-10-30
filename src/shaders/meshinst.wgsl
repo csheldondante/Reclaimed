@@ -23,13 +23,15 @@ fn miRow(i: u32, r: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[i * 
 @vertex
 fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> MIOut {
   var o: MIOut;
-  let k = miKind(vi);
+  // (round 119: the kind from the vertex's w — render/meshinst.ts adds 16 × kind — not a search of MI_KINDS)
+  let k = u32(floor(a.w / 16.0));
+  let aw = a.w - f32(k) * 16.0;
   let i = k * MI_CAP + ii;
   let r0 = miRow(i, 0u);
   let r1 = miRow(i, 1u);
   let r2 = miRow(i, 2u);
   let p = miRow(i, 3u);
-  let part = u32(a.w + 0.5);
+  let part = u32(aw + 0.5);
   var l = a.xyz;
   var sway = 0.0;
   if (part == 0u) {
@@ -42,9 +44,9 @@ fn vsInst(@location(0) a: vec4<f32>, @builtin(vertex_index) vi: u32, @builtin(in
     sway = 1.0;
   }
   // (round 117, flora) a generated plant's vertex (src/flora/mesh.ts): parts 3+ taken as they are, w = part + sway
-  let fpart = u32(floor(a.w));
+  let fpart = u32(floor(aw));
   let fl = fpart >= 3u;
-  if (fl) { sway = fract(a.w); }
+  if (fl) { sway = fract(aw); }
   var wp = vec3<f32>(dot(r0.xyz, l) + r0.w, dot(r1.xyz, l) + r1.w, dot(r2.xyz, l) + r2.w);
   // the wind: the column's lean (sway.wgsl's spring) and a slow flutter, the crown shifting with the trunk's top
   let cell = clampCell(cellAt(vec2<f32>(r0.w, r1.w)));

@@ -496,7 +496,8 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     // (src/flora/library.ts): its kinds in the same renderer, its constants (each species' kinds, colours) for the kernels
     if (FLORA) {
       this.flora ??= new FloraLibrary(GAME_LIBRARY, 12 * this.floraRpx);
-      this.meshInst = new MeshInstances(device, this.flora.kinds, (l, n, u) => world.buf(l, n, u));
+      // (round 119: 4096 a kind — ~45 kinds; the view cull keeps a kind's on-screen count far under it)
+      this.meshInst = new MeshInstances(device, this.flora.kinds, (l, n, u) => world.buf(l, n, u), 4096);
     } else if (MESHINST) this.meshInst = new MeshInstances(device, treeKinds(), (l, n, u) => world.buf(l, n, u));
     this.floraWgsl = `const FLORA: bool = ${!!this.flora};\nconst FLORA_RPX: f32 = ${this.floraRpx.toFixed(3)};\n${this.flora ? this.flora.wgsl() : FloraLibrary.stubWgsl()}`;
     const treeMesh = `const TREE_MESH: bool = ${!!this.meshInst};\n${this.meshInst ? this.meshInst.wgsl() : 'const MI_CAP: u32 = 0u;\nconst MI_N: u32 = 1u;\nconst MI_ARGS: u32 = 24u;\n'}${this.floraWgsl}`;

@@ -13747,3 +13747,54 @@ Shots of the same spot (?at=13728,4768):
 - desktop: m8d-flora1-z14.png.
 
 The remaining speckle on the phone is the ground's own per-cell look at half scale, not the plants'.
+
+## 2026-10-30 — round 119 (`flora`): the birches' cost on the phone
+
+The user, verbatim (DECISIONS round 119): "I had some bad performance with the birches on mobile." Main: fix that
+first; target the birch wood within ~1 ms of the old boxes on the phone proxy, measured with the GPU otherwise idle, and
+a bench link the real phone can run.
+
+**What cost.** These are counts at the showcase (?at=13728,4768), zoom 14, on the phone tier, after round 117's cull and
+before this work:
+- birches were their full ~1.6-2.5 k-triangle meshes at 90 render pixels tall;
+- the thicket shrubs had no LOD: 600 of them were 128 k triangles at zoom 5;
+- every vertex of every plant looped over all ~45 kinds to find its kind (meshinst.wgsl miKind), on the phone's
+  vertex stage;
+- the birches let leaves go all year at 0.12.
+
+**Changed.**
+- Levels of detail by height on screen in render pixels:
+  - a tree is full from 150 px;
+  - coarse from 55 px: made for 2.2 px a cell, so the trunk and main limbs stay (a birch's white trunk is what makes it
+    read; the first coarse level, made for 1.5 px, lost it and the birches read as green blobs on the phone), twigs and
+    roots gone, leaves merged, ~120-550 triangles;
+  - far below that: ~20-30 triangles, a trunk and the crown's masses, from the same skeleton;
+  - a thicket under 25 px is its far lump.
+  - The library lays out the levels per variant (FL_<ID>_L1/L2), so a tree keeps its variant across levels.
+- The kind rides in the vertex's w (+16 × kind, baked by render/meshinst.ts), so finding it is one step, not a search.
+- Three variants a tree species (two for the giant): with three levels that is still ~40 kinds, a draw each. A flora
+  kind holds at most 4096 instances, not 8192: 11 MB, not 23. The view cull keeps on-screen counts far under that.
+- The birches' all-year leaf fall is halved (0.06).
+- florafield skips off-screen columns before its 5 × 5 bank search. A bank also needs six dry columns of the 25: a lone
+  dry line through held river water isn't one.
+
+**Measured.** scripts/perf/flora.mjs, Intel Xe-LPG iGPU, phone tier, the GPU held alone by the runner's timing lease.
+Flora and boxes were alternated twice (`--variants 1,0,1,0`), because single runs swung ±1-3 ms. GPU ms a frame:
+
+| | zoom 14 GPU | draw | shadow | renderprep | plant triangles | zoom 5 GPU | draw |
+|---|---|---|---|---|---|---|---|
+| boxes (`?flora=0`) | 12.45, 12.04 | 4.01, 3.90 | 0.69, 0.67 | 0.72, 0.70 | — | 11.50, 11.48 | 4.57, 4.57 |
+| flora (this) | 12.16, 11.18 | 4.14, 3.87 | 0.46, 0.43 | 0.82, 0.76 | 135 k | 11.12, 11.65 | 4.26, 4.44 |
+| flora (round 117, culled) | 13.34 | 5.58 | 0.61 | 0.78 | 515 k | 12.21 | 5.26 |
+
+The flora is now within noise of the boxes: draw ±0.2, the shadow 0.2 cheaper, renderprep ~0.1 dearer.
+
+**The phone's own check.** `?florabench=1` (src/flora/bench.ts), one link, about two minutes, works headless:
+- it parks at the woodiest block near the start;
+- it measures frame times (and the GPU's where the adapter times it) at zoom 14 and 8 with the flora;
+- it reloads with `?flora=0` and measures the same;
+- it shows both, tap to copy.
+
+/?skipmenu=1&level=atlas&tutorial=0&at=13728,4768&florabench=1
+
+Shots: C:\Projects\shots88\flora\m11-compare.png (phone before, after, and the lake at zoom 8).

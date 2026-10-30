@@ -344,7 +344,7 @@ fn emit(@builtin(global_invocation_id) id: vec3<u32>) {
       // drawn in its autumn colours)
       // (round 117, flora: the birches let a few go all year — "leaves falling and blowing in the wind" — more in a
       // wind, many more in the fall)
-      let shed = select(seasonShed(), max(seasonShed(), 0.12), pl.species == 2u);
+      let shed = select(seasonShed(), max(seasonShed(), 0.06), pl.species == 2u);
       if (pl.species != 1u && shed > 0.0 && rare(id.x, id.y, 0x1ea5u) < shed * (0.08 + max(ws - 2.0, 0.0) * 0.03)) {
         let top = g + pl.trunk + pl.crown;
         let at = vec3<f32>(base.xy + vec2<f32>(r1 - 0.5, fract(r2 * 3.1) - 0.5) * (1.2 + pl.crown * 0.6), top - r2 * pl.crown);

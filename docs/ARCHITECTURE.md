@@ -2487,3 +2487,11 @@ like slowing you down or requiring you to cut through) is a good thing".
 - Wind, season, growth and density sliders; drag to turn, wheel or pinch to zoom.
 - The ruin scene shows plants instanced onto other geometry: ivy on walls (the vine's plane mapped onto the face), moss
   on stones.
+
+**Levels of detail** (round 119, the phone).
+- A tree kind exists at three levels (full, coarse, far) and a thicket at two, for the same variants: FL_<ID>, _L1,
+  _L2. vegprep picks one by the plant’s height on screen in render pixels: full from 150, coarse from 55; a thicket’s
+  far lump under 25.
+- The library is made for the tier’s render pixels a CSS pixel (FLORA_RPX; the renderer’s floraRpx).
+- A vertex’s w carries its kind (+16 × kind, baked by render/meshinst.ts), so the draw finds the kind in one step.
+- Phone bench: ?florabench=1 (src/flora/bench.ts).

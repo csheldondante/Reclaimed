@@ -140,3 +140,25 @@ describe('the phone tier (px: render pixels a cell)', () => {
     expect(generate('birch', 1, { px: 40 }).tris).toBe(full.tris);
   });
 });
+
+describe('levels of detail (round 119, the phone)', () => {
+  it('each tree has a coarse and a far level, far fewer triangles, the same height', () => {
+    for (const id of ['birch', 'oak', 'pine', 'giant'] as const) {
+      const [a, b, c] = [0, 1, 2].map((lod) => generate(id, 4, { px: 6, lod: lod as 0 | 1 | 2 }));
+      expect(b.tris, id).toBeLessThan(a.tris);
+      expect(c.tris, id).toBeLessThanOrEqual(40);
+      expect(b.height).toBeCloseTo(a.height, 5);
+      expect(c.height).toBeCloseTo(a.height, 5);
+    }
+  });
+  it('the library lays out three levels a tree, the same variants in each', async () => {
+    const { FloraLibrary } = await import('./library');
+    const lib = new FloraLibrary(undefined, 6);
+    const lr = lib.lods.get('birch')!;
+    expect(lr.length).toBe(3);
+    expect(lr[0].count).toBe(lr[2].count);
+    expect(lib.kinds[lr[2].first].lod).toBe(2);
+    expect(lib.wgsl()).toMatch(/FL_BIRCH_L2/);
+    expect(lib.kinds.length).toBeLessThanOrEqual(48);
+  });
+});

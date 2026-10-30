@@ -192,10 +192,15 @@ fn treeInstance(c: vec2<u32>, top: f32, pl: VegPlan) {
   if (FLORA) {
     // (round 117, flora) the species' library variants (src/flora/library.ts): picked by the column's hash, drawn at
     // their own size (the L-system's), scaled a little by the plan's age so young woods stand lower
-    var r = FL_OAK;
-    if (pl.species == 1u) { r = FL_PINE; }
-    if (pl.species == 2u) { r = FL_BIRCH; }
-    if (pl.species == 3u) { r = FL_GIANT; }
+    // (round 119, the phone: the level of detail by the tree's height on screen in render pixels — full from 150, the
+    // coarse tree (no twigs, merged leaves, ~120-550 triangles) from 55, below that the far tree (~20-30 triangles).
+    // On the phone's low tier at zoom 14 a birch is ~90 px: the coarse one)
+    let hpx = (pl.trunk + pl.crown) * PC.viewport.z * FLORA_RPX;
+    let lod = select(select(2u, 1u, hpx >= 55.0), 0u, hpx >= 150.0);
+    var r = array<vec2<u32>, 3>(FL_OAK, FL_OAK_L1, FL_OAK_L2)[lod];
+    if (pl.species == 1u) { r = array<vec2<u32>, 3>(FL_PINE, FL_PINE_L1, FL_PINE_L2)[lod]; }
+    if (pl.species == 2u) { r = array<vec2<u32>, 3>(FL_BIRCH, FL_BIRCH_L1, FL_BIRCH_L2)[lod]; }
+    if (pl.species == 3u) { r = array<vec2<u32>, 3>(FL_GIANT, FL_GIANT_L1, FL_GIANT_L2)[lod]; }
     // (the plan's age: young woods (succession just past 3.6) stand at 0.8 of the variant's height, old ones full)
     let age = 0.8 + 0.2 * clamp((veg[colIdx(c.x, c.y)] - 3.6) / 1.2, 0.0, 1.0);
     floraInstance(r, c, top, age, 0.05);
@@ -248,7 +253,8 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   let fine = rand3(c.x, c.y, 546u) < smoothstep(5.0, 11.0, px);
   // (shrubland — succession 2.6 to 3.6 — is the thicket, a soft barrier; under the woods' canopy only a few: the
   // forest floor stays open, ferns and leaf litter)
-  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(FL_SHRUB, c, at, top, 0.8, 0.05, 1u); }
+  // (round 119: a thicket under ~25 render px tall is drawn as its far lump, ~16 triangles)
+  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(select(FL_SHRUB_L1, FL_SHRUB, px * 1.6 >= 25.0), c, at, top, 0.8, 0.05, 1u); }
   if (v >= 3.6 && !pl.tree) {
     // the woodland floor: ferns in the shade, here and there
     if (fine && rand3(c.x, c.y, 543u) < 0.16) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }

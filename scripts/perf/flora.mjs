@@ -77,7 +77,11 @@ await run({ name: 'perf-flora', kind: 'timing', size: '412x915', dpr: 2.6, echo:
         let plants = null;
         if (mi) {
           const c = await mi.counts(R.renderer.device, R.renderer.indirect);
-          plants = { instances: c.reduce((a, b) => a + b, 0), tris: Math.round(mi.kinds.reduce((a, k, i) => a + (k.index.length / 3) * c[i], 0)) };
+          const by = {};
+          mi.kinds.forEach((k, i) => {
+            if (c[i]) by[k.name] = [c[i], Math.round((k.index.length / 3) * c[i])];
+          });
+          plants = { instances: c.reduce((a, b) => a + b, 0), tris: Math.round(mi.kinds.reduce((a, k, i) => a + (k.index.length / 3) * c[i], 0)), by };
         }
         return {
           fps: +(d.length / ((t[t.length - 1] - t[0]) / 1000)).toFixed(1),
@@ -88,6 +92,7 @@ await run({ name: 'perf-flora', kind: 'timing', size: '412x915', dpr: 2.6, echo:
           gbuffer: per('gbuffer'),
           shadow: per('shadow'),
           renderprep: per('renderprep'),
+          passes: Object.fromEntries([...P.totalMs].sort((a, b) => b[1] - a[1]).slice(0, 14).map(([k, v]) => [k, +(v / Math.max(P.framesResolved, 1)).toFixed(2)])),
           plants,
         };
       });

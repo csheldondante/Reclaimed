@@ -39,6 +39,8 @@ being instances that way into other geometry is key." ARCHITECTURE "Flora".
 | FL17 | Passability on the GPU: a per-column plant-fill field for agents and paths (the CPU model is per region today) | M | open |
 | FL18 | Grass and twigs by zoom: at zoom 5 a blade is under a pixel — a level of detail if the perf test shows the cost | S | open |
 | FL19 | The phone's low tier (render scale 0.5) broke twigs into dashes and grass into static: plants made for the tier's render pixels (min wood and leaf widths, fewer wider blades), grass thinned by render px, litter in flakes | S | done (flora) |
+| FL20 | The birches’ cost on the phone (round 119): levels of detail by on-screen size (full, coarse, far; thickets full and far), the kind in the vertex, three variants a tree species, 4096 a kind, half the year-round leaf fall — within noise of the boxes on the phone proxy | M | done (flora) |
+| FL21 | The phone bench for the birch wood: ?florabench=1 (flora then boxes, parked, frame times, tap to copy) — the user to run it on the Pixel | S | asked |
 
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 

@@ -32,17 +32,20 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (d > REED_WADE) { return; }
   let m = moisture[i];
   if (m < 0.35) { return; }
+  // (round 119: off screen, before the bank's 5 × 5 look round)
+  if (!floraSeen(cellPos(vec2<i32>(id.xy)), f32(sfZ(surface[i])), 3.5, 1.2)) { return; }
   // a bank: open water and dry land both within two cells
+  // (and land enough: six dry columns of the 25 — a lone dry line through a river's held water isn't a bank)
   var near = 0.0;
-  var dry = 9.0;
+  var dry = 0u;
   for (var dy = -2; dy <= 2; dy++) {
     for (var dx = -2; dx <= 2; dx++) {
       let wd = waterAt(i32(id.x) + dx, i32(id.y) + dy);
       near = max(near, wd);
-      dry = min(dry, wd);
+      dry += select(0u, 1u, wd <= 0.02);
     }
   }
-  if (near < REED_WATER || dry > 0.02) { return; }
+  if (near < REED_WATER || dry < 6u) { return; }
   // on ground plants can live on (soil-like, not bare rock or ash): the material's ecology cap
   let s = surface[i];
   let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));

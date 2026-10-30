@@ -31,7 +31,7 @@ function scaleTo(m: FloraMesh, h: number): FloraMesh {
  * least ~3 px, grass has fewer, wider blades — so the phone's half-scale render reads as a forest, not noise. Absent:
  * full detail (the viewer, the desktop).
  */
-export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number } = {}): FloraMesh {
+export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number; lod?: 0 | 1 | 2 } = {}): FloraMesh {
   const sp0 = SPECIES[id];
   const g = Math.min(1, Math.max(0.05, opts.growth ?? 1));
   const sp = g < 1 && sp0.lsystem ? { ...sp0, lsystem: { ...sp0.lsystem, iterations: Math.max(1, Math.round(sp0.lsystem.iterations * (0.35 + 0.65 * g))) } } : sp0;
@@ -39,7 +39,17 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
   const h = (sp.height[0] + (sp.height[1] - sp.height[0]) * r()) * (0.25 + 0.75 * g);
   switch (sp.form) {
     case 'tree':
+      // (round 119, the phone: levels of detail by size on screen — 1 the same tree coarse, its twigs and roots gone, its
+      // leaves merged; 2 a few triangles: a trunk and the crown's masses, from the same skeleton so the shape holds)
+      if (opts.lod === 2) return scaleTo(farTree(sp, seed), h);
+      // (made for ~2.2 px a cell: the trunk and main limbs kept — a birch's white trunk is what makes it read — twigs
+      // and roots gone, leaves merged)
+      if (opts.lod === 1) return scaleTo(woody(sp, seed, h, 2.2, false), h);
+      return scaleTo(woody(sp, seed, h, opts.px), h);
     case 'shrub':
+      // (round 119: a thicket far off is a lump — a few triangles, from the same skeleton)
+      if (opts.lod === 2) return scaleTo(farTree(sp, seed), h);
+      return scaleTo(woody(sp, seed, h, opts.px), h);
     case 'fern':
       return scaleTo(woody(sp, seed, h, opts.px), h);
     case 'vine':
@@ -58,7 +68,7 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number; p
   }
 }
 
-function woody(sp: SpeciesDef, seed: number, h: number, px?: number): FloraMesh {
+function woody(sp: SpeciesDef, seed: number, h: number, px?: number, withRoots = true): FloraMesh {
   if (!sp.lsystem || !sp.turtle || !sp.leaf) throw new Error(`species ${sp.id}: a woody plant needs an L-system, a turtle and leaves`);
   const str = expand(sp.lsystem, hashSeed(seed, 1));
   const sk = interpret(str, sp.turtle, hashSeed(seed, 2));
@@ -67,8 +77,38 @@ function woody(sp: SpeciesDef, seed: number, h: number, px?: number): FloraMesh 
   const minRadius = px ? 0.85 / px / k : 0;
   const minLeaf = px ? 1.5 / px / k : 0;
   // the root automaton's surface roots, in the skeleton's units (the plant is scaled after)
-  const roots = sp.roots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8) : [];
+  const roots = sp.roots && withRoots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8) : [];
   return buildPlant(sk, sp.leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? 0.035 : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf });
+}
+
+/**
+ * A far tree (round 119): ~20-30 triangles from the same skeleton — the trunk as one tapered prism to where the crown
+ * starts, and the crown as a mass or two (an ellipsoid round each half of its leaves, a cone for a conifer). What a
+ * tree under ~60 render pixels tall can show anyway.
+ */
+function farTree(sp: SpeciesDef, seed: number): FloraMesh {
+  const sk = interpret(expand(sp.lsystem!, hashSeed(seed, 1)), sp.turtle!, hashSeed(seed, 2));
+  const H = Math.max(sk.height, 0.5);
+  const mb = new MeshBuilder((p) => Math.pow(Math.max(0, p[2]) / H, 1.6) * 0.8);
+  const leaves = sk.leaves.filter((l) => l.depth >= sp.leaf!.minDepth);
+  const lowLeaf = leaves.reduce((m, l) => Math.min(m, l.p[2]), H);
+  const r0 = sp.turtle!.radius * 1.2;
+  mb.tube({ a: [0, 0, 0], b: [0, 0, Math.max(lowLeaf, H * 0.35)], r0, r1: r0 * 0.6, depth: 0 }, 4, PART.wood);
+  const r01 = rng(hashSeed(seed, 9));
+  if (sp.leaf!.style === 'needles') {
+    let spread = 0;
+    for (const l of leaves) spread = Math.max(spread, Math.hypot(l.p[0], l.p[1]));
+    mb.cone([0, 0, lowLeaf * 0.9], [0, 0, 1], H - lowLeaf * 0.9, spread * 0.85, 6, PART.leaf, 0.1);
+  } else {
+    const mid = (lowLeaf + H) / 2;
+    for (const half of [leaves.filter((l) => l.p[2] < mid), leaves.filter((l) => l.p[2] >= mid)]) {
+      if (!half.length) continue;
+      const c = [0, 1, 2].map((i) => half.reduce((a, l) => a + l.p[i], 0) / half.length) as V3;
+      const e = [0, 1, 2].map((i) => Math.sqrt(half.reduce((a, l) => a + (l.p[i] - c[i]) ** 2, 0) / half.length) * 1.6 + sp.leaf!.size) as V3;
+      mb.blob(c, e, PART.leaf, r01, 0.12);
+    }
+  }
+  return mb.done();
 }
 
 /** A vine on a wall: the L-system grows in the wall's plane (y, z); leaves stand off it (+x, the wall's normal). */
