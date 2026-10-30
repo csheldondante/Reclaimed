@@ -80,6 +80,7 @@ export class TerrainView implements Scene {
       `<div style="margin-top:4px">controller: ${(['walker', 'bike', 'lich'] as const).map((k) => btn(`data-caps="${k}"`, k)).join('')}</div>` +
       `<div style="margin-top:4px">picked room: ${btn('data-exits="1"', '1 exit')}${btn('data-exits="2"', '2 exits')}${btn('data-exits="3"', '3 exits')}</div>` +
       `<div style="margin-top:4px">flood (then tap a basin): ${(['water', 'sand', 'magma'] as const).map((k) => btn(`data-flood="${k}"`, k)).join('')}</div>` +
+      `<label style="display:block">depth over the tap (0: the basin's spill height) <input data-depth type="number" min="0" max="200" value="0" style="width:56px"></label>` +
       `<div style="margin-top:6px">${tog('rooms', 'rooms')}${tog('borders', 'borders')}${tog('passes', 'passes')}${tog('edits', 'edits')}${tog('mask', "can't stand")}${tog('veg', 'vegetation')}</div>` +
       `<div class="tv-info" style="margin-top:8px;white-space:pre-wrap"></div>` +
       `<div style="margin-top:6px">${legend}</div>` +
@@ -132,7 +133,18 @@ export class TerrainView implements Scene {
     if (this.busy) return null;
     this.busy = true;
     try {
-      const r = await this.terrain.flood({ at: [x, y], fluid });
+      // (a depth over the tapped ground: a level of its own — a new shallow sea, a valley buried; 0: the basin's spill)
+      const depth = Number(this.panel.querySelector<HTMLInputElement>('[data-depth]')?.value ?? 0);
+      const a = this.view.atlas;
+      const n = a.p.n;
+      const W = a.worldW;
+      const H = a.worldH;
+      const t = Math.floor((((y % H) + H) % H / H) * n) * n + Math.floor((((x % W) + W) % W / W) * n);
+      const r = await this.terrain.flood({ at: [x, y], fluid, level: depth > 0 ? a.hmac[t] + depth : undefined });
+      if (!r.area) {
+        this.say(`no basin there: water poured at ${x.toFixed(0)}, ${y.toFixed(0)} runs away (its ground ${a.hmac[t].toFixed(1)} is its own spill height) — tap a hollow, or give a depth`);
+        return r;
+      }
       this.say(`flooded with ${fluid}: level ${r.level}, ${(r.area / 1e6).toFixed(3)} M world units², ${r.depth} deep, spill at ${r.spill?.map((v) => v.toFixed(0)).join(', ') ?? 'none'} (${r.ms} ms)`);
       return r;
     } finally {

@@ -13609,3 +13609,102 @@ Dawn in Node). The smoke needs the runner's own build server (warm snapshots), a
 rename in .testcache fails EPERM, so caa0827's guard made every runner script fail there. Now the build is copied into the
 cache instead, index.html last (a build counts as present once its index.html is). `npm run smoke` then passed: the atlas
 ready in 65 s with three other agents' checks on the GPU, sim ticking, no fatal.
+
+## 2026-10-30 — round 117 (`terrain`): rivers off the texel grid with banks; the region graph; the basin flood; the terrain viewer
+
+The user, verbatim (DECISIONS round 117): "Generally speaking we want our terrain to be striking to look at and
+interesting to explore." "Rivers look bad right now. They have serious isotropy issues and they have no banks. Use SDF.
+Have them carve into the ground. Make their banks look eroded. Add reeds. Have rocks and rapids. Have waterfalls. So many
+waterfalls." "Waterfalls and flow are what look pretty good." "We want to partition our map … we should know by
+character controller what they can and can't pass easily. I would make regions recursive with open fully connected
+spaces 1-3 screens big and that are part of larger terrain features." "Terrain makes the barriers initially but the run
+manager should be able to get. The graph and request obstacles or otherwise request a certain number of exits." "A GPU
+algorithm we use for generative tools. I want to be able to flood a basin and bury things".
+
+**Rivers (terrain/rivershape.ts on the CPU, terrain/river.wgsl on the GPU).** Why they looked bad: the river graph is a
+drainage tree over the macro texels (8 cells, 8 neighbours), so every reach ran at 0, 45 or 90 degrees, and the water
+stood at the filled ground's level, flush with the plain it crossed — no bank could show. The fixes, each for one of
+those causes:
+- The course: the nodes relaxed along their main stems (6 Laplacian passes, at most 7 cells each so a node stays near its
+  texel — the GPU finds a river by the nodes nearest a point's texels), and the GPU's lookup warped by a slow noise (7
+  world units, period 150: its gradient well under 1, so the line never folds) — bends at every angle. riverAt now tests
+  the two segments from each nearby node, so the joints are continuous once nodes leave their texels.
+- The level: incised under the filled ground by 0.8 + 0.35 × the half-width (1.2-4.5 cells), ramped in over 4 nodes from
+  the river's end and never under the still water it runs into (a channel below the lake beside it would drain it
+  backwards); steep reaches (0.6 cells a node or more) made a staircase of 3.5-cell steps — still pools and falls. The
+  level still only falls downstream (unit-tested: every consumer, the held rivers and the pipes, relies on it). A step
+  of 2.9-8.5 cells drops at its segment's middle within about a cell, so the bed steps and forms.wgsl pours a sheet over
+  it (a step over RIVER_FALL): a waterfall, not a chute. The cliffs' big falls keep their interpolation (the ones that
+  looked good).
+- The cross-section (riverCut): the channel's parabola; a bank whose steepness varies along the river (cut banks steep,
+  slumps gentle), broken into slumped blocks by Voronoi cells ~6 across — the cliffs' treatment the user praised
+  ("voronoi plus noise plus sdf to make steps") — benches (a floodplain the river left, a little over the water) on some
+  stretches; gravel bars just over the water on one side; boulders in rapids, round plunge pools and a few on every
+  bank (bare rock: forms.wgsl now lets a cap stand in a channel where it is over the water); a deeper pool under each
+  fall.
+Pictures (the same spots before/after, the atlas level at 1x, q=high): C:/Projects/shots88/terrain/base-*.png and
+r1-*.png. The fall spot (a plateau's river, 6108,14009): before a 45-degree zigzag flush with the sand; after a
+winding channel between brown banks with bars and rocks. The wide lowland river (12916,4435): banks now line it; its
+45-degree kinks are softer but still there (TR3).
+Cost (scripts/perf/terrain.mjs, the desktop iGPU, the least of 3 for each of 24 64² regions on river nodes, wall
+including the readback): Atlas.columns median 28.3 ms vs places 28.5 ms — a wash. The rivers' CPU pass 627 vs 599 ms
+(+28 ms shaping), "ground with rivers" (the macro pass) 149 vs 64 ms, once per atlas. The phone's frame isn't touched
+by this (the columns are made as land streams; their GPU passes on the phone are TR9's driveprofile).
+Not done: reeds (flora's contract, TR6), rivers into holes and out of caves (TR4), the wide rivers' kinks (TR3). The
+authored rivers' CPU mirror (world/rivertable.ts, the playground's) keeps the plain profile (B-TS13: the rule is
+duplicated already; the new cross-section uses the atlas's noise).
+
+**The region graph (api/contracts/terrain.ts; terrain/sample.ts → terrain/partition.ts).** Why this shape:
+- Features are what the walker reaches without crossing anything it can't (union-find over passable sample edges), so by
+  construction every barrier lies between features. Rooms split a feature: seeds deepest first a room apart, grown
+  together by a weighted geodesic distance whose step costs more near the feature's edge (1 + 6 / (1 + distance)) — on
+  open land a Voronoi of the seeds (bounded rooms), where it narrows the crossing is dear so two rooms meet in the
+  narrows (the door). (A plain watershed on the distance gave one 16-screen room on a plain: it has one maximum.) Then
+  rooms under a screen merge into their best neighbour, and neighbours across a long shared edge (no narrows) merge
+  while they stay within 3 screens. A slot (no clear disc 2 samples across: a ravine's floor, a ledge) is no room.
+- Borders keep measures, not verdicts: the least climb, drop, depth, vegetation, the narrowest water and gap, each by a
+  bottleneck (or least-count) search across a band round the border. What a controller crosses is reckoned when asked:
+  a Dijkstra over the two rooms' band by its PassCaps (step, slope, drop, deep, lava, veg, gap, fly), cached per caps.id
+  — the user's "parameterize it so we can reason about it during generation". A body over water it can't touch bottom
+  in rides the surface (a hovering bike). Soft barriers (hostiles, storms, distance) are laid on a border and add to its
+  cost.
+- Controllers: PassCaps is a stand-in until the `play` track's controller contract (herosandbox's Mobility is a subset);
+  CAPS_PRESETS walker, bike, lich.
+- The samples are taken on the GPU from the atlas's own ground() (the heights, rivers, lakes and coarse world the
+  columns are made of: the graph and what's drawn agree), read back once; the graph's search work is on the CPU (graph
+  search, a few hundred thousand samples, at planning time). 512² samples (2048 world units at 4): sample 32 ms,
+  partition 374 ms in the page (Node: 350-500 ms; the borders' searches were 275 ms of it before they were banded, 21
+  after).
+- Vegetation density in the samples is forms.wgsl's woods formula, a stand-in until flora supplies the plants' density.
+Tests: src/terrain/partition.test.ts (plain, dumbbell narrows, cliff, one-way drop, river, ford, vegetation, ravine and
+the bike's jump, soft barriers, a 512² noisy valley), src/terrain/terrain.test.ts.
+
+**Requests (terrain/terrain.ts).** `exits` opens the cheapest barriers out of a room for a controller — a ramp up a cliff
+long enough for its slope (stamped: the column made exactly that high, solid 40 cells under it), a ford (the bed raised
+to 0.4 under the water, rubble), a bridge, vegetation cleared (needs: structures, flora) — or closes the easiest doors
+with a wall 9 high (the walker and bike stop, the lich floats over). `obstacle` and `open` act on one border. Edits are
+stamp hooks (atlas stampHooks: the same operations the GPU and CPU paths make), so land made after a request has it;
+land already in the window isn't remade (a run plans first; TR17).
+
+**The flood (terrain/flood.wgsl, flood.ts).** The depression-filled surface by Planchon-Darboux passes on the GPU (W =
+max(h, min(W, neighbours' W)); the window's edge and the standing sea are the outlets), the seed's W its basin's spill
+height; then the basin marked by a dilation from the seed under that level (or a level given). The standing sea walls
+the mark (a flood stops at its shore). Applied as a row of the lakes' table (Atlas.addBasin; FLOOD_SPARE 64 rows
+reserved, the row's second word the fluid): the river graph's lakes are already basins filled with water at their spill
+height, so a flood is the same thing with any level and fluid, and the land is made from it as from a lake
+(compose.wgsl lakeAt) — no new binding in kernels at the 8-storage-buffer limit (formSeed uses all 8). Sand and ash
+bury: loose ground to the level; magma: lava to it. The GPU result equals the CPU reference texel for texel
+(test/gpu/terrain-flood.test.ts on Dawn, and in the page). Not yet: the global sea replaced everywhere it's read (forms'
+sea water, the renderer's sea plane, the shore, the tiles: DZ1's design, TR7); a sand flood buries the ground, not what
+settlements stamp on it later (TR8).
+
+**The viewer: `?terrain=view`.** The atlas viewer (seed and sliders, layers 1-9, pan and zoom, double-click walks in)
+with the region graph over it (rooms, borders by kind, doors and passes, edits, masks), a controller picker, a room's
+exits and reach, the exit requests, and the flood (water, sand, magma; a depth over the tap, 0 the spill height).
+Smoke: scripts/terrain/viewer.mjs (graph, a ford made, GPU flood = CPU). Pictures: C:/Projects/shots88/terrain/viewer-*.png.
+
+Shared-system tweaks for consolidation: atlas.ts (river.wgsl in parts(); FLOOD_SPARE rows and addBasin;
+riverStats.shaped), compose.wgsl (River/riverAt moved to terrain/river.wgsl; the carve calls riverCut; LakeHere.fluid and
+the buried/molten basins), forms.wgsl (a cap may stand in a channel over the water), rivers.ts (the course and levels
+shaped before the table), atlas-view.ts (viewport(), worldAt public, onPick), main.ts (?terrain=view), level.ts
+(reclaimed.terrain).

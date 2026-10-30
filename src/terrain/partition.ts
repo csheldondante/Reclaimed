@@ -157,9 +157,20 @@ interface Built {
   passes: TerrainPass[];
   /** per border: its crossing pairs (sample i in a's zone, j in b's), flattened */
   pairs: Int32Array[];
+  /** rooms (the regions after the features) */
+  zoneRooms: number;
 }
 
 export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
+  // (TERRAIN_PROF=1 in Node: each phase's ms)
+  const PROF = !!(globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.TERRAIN_PROF;
+  let tp = performance.now();
+  const prof = (k: string) => {
+    if (!PROF) return;
+    const t = performance.now();
+    console.log(`partition ${k}: ${(t - tp).toFixed(1)} ms`);
+    tp = t;
+  };
   const caps = opts.caps ?? CAPS_PRESETS.walker;
   const screen = opts.screen ?? SCREEN_AREA;
   const minFeature = opts.minFeature ?? 0.08;
@@ -185,6 +196,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     if (k === 2) return i + w < N && passS[i] === 1;
     return i - w >= 0 && passS[i - w] === 1;
   };
+  prof('edges');
   // features: union-find over the passable edges
   const par = new Int32Array(N);
   for (let i = 0; i < N; i++) par[i] = i;
@@ -212,6 +224,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     if (f === undefined) featOf.set(r, (f = featOf.size));
     comp[i] = f;
   }
+  prof('features');
   // distance from each feature sample to its feature's edge (a sample with an edge it can't take: BFS, 4 neighbours)
   const dist = new Float32Array(N).fill(-1);
   let q: number[] = [];
@@ -256,12 +269,18 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
       else featOf.set(r, keep[f]);
     }
   }
+  prof('dist');
   // rooms: seeds deepest first, a room's spacing apart in its feature; a watershed grown widest first
   // (seeds closer than a room's size — rooms then merge up to three screens: a long shared edge is no narrows)
   const spacing = Math.sqrt(1.2 * screen) / S.step;
-  const order: number[] = [];
-  for (let i = 0; i < N; i++) if (comp[i] >= 0) order.push(i);
-  order.sort((a, b) => dist[b] - dist[a] || a - b);
+  // (deepest first: a counting sort on the whole-sample distances, index order within one)
+  let maxD = 0;
+  for (let i = 0; i < N; i++) if (comp[i] >= 0 && dist[i] > maxD) maxD = dist[i];
+  const byD = new Int32Array(Math.floor(maxD) + 2);
+  for (let i = 0; i < N; i++) if (comp[i] >= 0) byD[Math.floor(maxD) - Math.floor(dist[i]) + 1]++;
+  for (let d = 1; d < byD.length; d++) byD[d] += byD[d - 1];
+  const order = new Int32Array(byD[byD.length - 1]);
+  for (let i = 0; i < N; i++) if (comp[i] >= 0) order[byD[Math.floor(maxD) - Math.floor(dist[i])]++] = i;
   const bin = Math.max(1, Math.floor(spacing));
   const bins = new Map<number, number[]>();
   const room = new Int32Array(N).fill(-1);
@@ -295,6 +314,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     if (!bins.has(key)) bins.set(key, []);
     bins.get(key)!.push(i);
   }
+  prof('seeds');
   // grown together from every seed by a weighted geodesic distance — a step costs more the nearer the feature's edge
   // (1 + NARROW / (1 + dist)): on open land the rooms are a Voronoi of the seeds (bounded in size); where the land
   // narrows the crossing is dear, so two rooms meet in the narrows (the door), not in the halls
@@ -321,6 +341,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
       }
     }
   }
+  prof('grow');
   // merge: a room under a screen into the neighbour (of its feature) it shares the most edge with; then neighbours
   // across a long shared edge (no narrows between them) while the two together stay within three screens
   let nRooms = seeds.length;
@@ -397,6 +418,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     for (let i = 0; i < N; i++) if (room[i] >= 0) room[i] = dense.get(res(room[i]))!;
     nRooms = dense.size;
   }
+  prof('merge');
   // zones: every sample to its nearest room (BFS over all samples): a barrier's samples split between its two sides
   const zone = Int32Array.from(room);
   q = [];
@@ -415,6 +437,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     }
     q = nq;
   }
+  prof('zones');
   // regions: features then rooms
   const regions: TerrainRegion[] = [];
   const nFeat = featOf.size;
@@ -427,31 +450,47 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     regions.push(R);
     if (roomFeat[r] >= 0) regions[roomFeat[r]].children.push(R.id);
   }
-  const zs: number[][] = regions.map(() => []);
-  const best = new Float32Array(regions.length).fill(-1);
+  // (per sample its feature and its room; heights gathered per region in one typed array, a region's run sorted)
+  const nReg = regions.length;
+  const cnt = new Int32Array(nReg + 1);
+  const best = new Float32Array(nReg).fill(-1);
+  const touch = (id: number, i: number, x: number, y: number) => {
+    const R = regions[id];
+    cnt[id + 1]++;
+    if (x < R.bounds[0]) R.bounds[0] = x;
+    if (y < R.bounds[1]) R.bounds[1] = y;
+    if (x + S.step > R.bounds[2]) R.bounds[2] = x + S.step;
+    if (y + S.step > R.bounds[3]) R.bounds[3] = y + S.step;
+    if (dist[i] > best[id]) {
+      best[id] = dist[i];
+      R.centre = [x, y];
+      R.openness = dist[i] * S.step;
+    }
+  };
   for (let i = 0; i < N; i++) {
+    if (comp[i] < 0) continue;
     const x = S.x0 + (i % w) * S.step;
     const y = S.y0 + Math.floor(i / w) * S.step;
-    for (const id of room[i] >= 0 ? [comp[i], nFeat + room[i]] : comp[i] >= 0 ? [comp[i]] : []) {
-      const R = regions[id];
-      R.area += cellA;
-      R.bounds[0] = Math.min(R.bounds[0], x);
-      R.bounds[1] = Math.min(R.bounds[1], y);
-      R.bounds[2] = Math.max(R.bounds[2], x + S.step);
-      R.bounds[3] = Math.max(R.bounds[3], y + S.step);
-      zs[id].push(S.ground[i]);
-      if (dist[i] > best[id]) {
-        best[id] = dist[i];
-        R.centre = [x, y];
-        R.openness = dist[i] * S.step;
-      }
-    }
+    touch(comp[i], i, x, y);
+    if (room[i] >= 0) touch(nFeat + room[i], i, x, y);
+  }
+  for (let r = 0; r < nReg; r++) cnt[r + 1] += cnt[r];
+  const zs = new Float32Array(cnt[nReg]);
+  const fill = cnt.slice(0, nReg);
+  for (let i = 0; i < N; i++) {
+    if (comp[i] < 0) continue;
+    zs[fill[comp[i]]++] = S.ground[i];
+    if (room[i] >= 0) zs[fill[nFeat + room[i]]++] = S.ground[i];
   }
   for (const R of regions) {
+    const n0 = cnt[R.id];
+    const n1 = cnt[R.id + 1];
+    R.area = (n1 - n0) * cellA;
     R.screens = +(R.area / screen).toFixed(2);
-    const z = zs[R.id].sort((a, b) => a - b);
+    const z = zs.subarray(n0, n1).sort();
     R.floor = z.length ? [z[0], z[z.length >> 1], z[z.length - 1]] : [0, 0, 0];
   }
+  prof('regions');
   // borders: zone boundaries; open where two rooms' own samples meet by a passable edge, else a barrier
   const bmap = new Map<number, { a: number; b: number; open: number; pairs: number[]; edges: number }>();
   for (let i = 0; i < N; i++) {
@@ -477,7 +516,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
   const borders: TerrainBorder[] = [];
   const passes: TerrainPass[] = [];
   const pairs: Int32Array[] = [];
-  const built: Built = { S, caps, screen, room, zone, dist, regions, borders, passes, pairs };
+  const built: Built = { S, caps, screen, room, zone, dist, regions, borders, passes, pairs, zoneRooms: nRooms };
   for (const B of bmap.values()) {
     const id = borders.length;
     const ra = nFeat + B.a;
@@ -507,6 +546,7 @@ export function partition(S: TerrainSamples, opts: PartitionOpts = {}): Built {
     }
     borders.push(T);
   }
+  prof('borders');
   return built;
 }
 
@@ -574,27 +614,104 @@ function zoneCells(B: Built, ra: number, rb: number): { cells: number[]; src: nu
   return { cells, src, dst };
 }
 
+/** the two zones' samples made ready for searches across them (slot: each sample's index in `cells`, −1 none) */
+interface Zones {
+  cells: number[];
+  src: number[];
+  dst: number[];
+  slot: Int32Array;
+}
+const slots = new WeakMap<Built, Int32Array>();
+const seenOf = new WeakMap<Built, Uint8Array>();
+/**
+ * The samples of the two zones within a band round their border: rings out from its crossing pairs until both rooms'
+ * own samples are reached, then `extra` rings more (a crossing's search needs the barrier and a little of each side,
+ * not the whole of two rooms — the partition's borders' measures were most of its time)
+ */
+function bandCells(B: Built, za: number, zb: number, P: Int32Array, extra: number): { cells: number[]; src: number[]; dst: number[] } {
+  const S = B.S;
+  const w = S.w;
+  const N = B.zone.length;
+  let seen = seenOf.get(B);
+  if (!seen) seenOf.set(B, (seen = new Uint8Array(N)));
+  const cells: number[] = [];
+  let front: number[] = [];
+  for (let k = 0; k < P.length; k++) {
+    const i = P[k];
+    if (seen[i]) continue;
+    seen[i] = 1;
+    cells.push(i);
+    front.push(i);
+  }
+  let gotA = false;
+  let gotB = false;
+  let more = -1;
+  for (let ring = 0; front.length && ring < 400; ring++) {
+    for (const i of front) {
+      if (B.room[i] === za) gotA = true;
+      else if (B.room[i] === zb) gotB = true;
+    }
+    if (more < 0 && gotA && gotB) more = extra;
+    if (more === 0) break;
+    if (more > 0) more--;
+    const next: number[] = [];
+    for (const i of front) {
+      const xi = i % w;
+      for (let d = 0; d < 4; d++) {
+        const x = xi + N4X[d];
+        const j = i + N4X[d] + N4Y[d] * w;
+        if (x < 0 || x >= w || j < 0 || j >= N || seen[j]) continue;
+        const z = B.zone[j];
+        if (z !== za && z !== zb) continue;
+        seen[j] = 1;
+        cells.push(j);
+        next.push(j);
+      }
+    }
+    front = next;
+  }
+  for (const c of cells) seen[c] = 0;
+  const src: number[] = [];
+  const dst: number[] = [];
+  for (const i of cells) {
+    if (B.room[i] === za) src.push(i);
+    else if (B.room[i] === zb) dst.push(i);
+  }
+  return { cells, src, dst };
+}
+
+function zonesFor(B: Built, ra: number, rb: number, P?: Int32Array, extra = 4): Zones {
+  const nFeat = B.regions.length - B.zoneRooms;
+  const { cells, src, dst } = P && P.length ? bandCells(B, ra - nFeat, rb - nFeat, P, extra) : zoneCells(B, ra, rb);
+  let slot = slots.get(B);
+  if (!slot) slots.set(B, (slot = new Int32Array(B.zone.length).fill(-1)));
+  for (let k = 0; k < cells.length; k++) slot[cells[k]] = k;
+  return { cells, src, dst, slot };
+}
+function release(Z: Zones): void {
+  for (const c of Z.cells) Z.slot[c] = -1;
+}
+
 /**
  * The cheapest way from a's room samples to b's over the two zones for a body (Dijkstra; cost per stepCost), or with
- * `edge` a bottleneck search (the path minimising the worst of edge(i, j) along it). Returns the cost and the path.
+ * `bottleneck` the path minimising the worst of edge(i, j) along it. Returns the cost and the path.
  */
-function search(B: Built, ra: number, rb: number, edge: (i: number, j: number) => number, bottleneck: boolean): { cost: number; path: number[] } {
+function search(B: Built, Z: Zones, edge: (i: number, j: number) => number, bottleneck: boolean): { cost: number; path: number[] } {
   const S = B.S;
-  const { cells, src, dst } = zoneCells(B, ra, rb);
+  const { cells, src, dst, slot } = Z;
   if (!src.length || !dst.length) return { cost: Infinity, path: [] };
-  const inSet = new Map<number, number>();
-  cells.forEach((c, k) => inSet.set(c, k));
   const isDst = new Uint8Array(cells.length);
-  for (const d of dst) isDst[inSet.get(d)!] = 1;
+  for (const d of dst) isDst[slot[d]] = 1;
   const best = new Float64Array(cells.length).fill(Infinity);
   const from = new Int32Array(cells.length).fill(-1);
   const H = new Heap(cells.length);
-  for (const s of src) {
-    const k = inSet.get(s)!;
+  for (const s0 of src) {
+    const k = slot[s0];
     best[k] = 0;
     H.push(0, k);
   }
   const w = S.w;
+  const N = S.ground.length;
   while (H.n) {
     const k = H.pop();
     const c = H.top;
@@ -605,12 +722,13 @@ function search(B: Built, ra: number, rb: number, edge: (i: number, j: number) =
       return { cost: c, path: path.reverse() };
     }
     const i = cells[k];
+    const xi = i % w;
     for (let d = 0; d < 4; d++) {
-      const x = (i % w) + N4X[d];
+      const x = xi + N4X[d];
       const j = i + N4X[d] + N4Y[d] * w;
-      if (x < 0 || x >= w || j < 0 || j >= S.ground.length) continue;
-      const kj = inSet.get(j);
-      if (kj === undefined) continue;
+      if (x < 0 || x >= w || j < 0 || j >= N) continue;
+      const kj = slot[j];
+      if (kj < 0) continue;
       const e = edge(i, j);
       if (e === Infinity) continue;
       const nc = bottleneck ? Math.max(c, e) : c + e;
@@ -629,14 +747,16 @@ function measureOf(B: Built, ra: number, rb: number, P: Int32Array): BorderMeasu
   const fa = B.regions[ra].floor[1];
   const fb = B.regions[rb].floor[1];
   if (!P.length) return { rise: fb - fa, minClimb: 0, minDrop: 0, minDeep: 0, minWaterSpan: 0, lava: false, minVeg: 0, minGap: 0 };
-  const climb = search(B, ra, rb, (i, j) => Math.max(0, S.ground[j] - S.ground[i]), true).cost;
-  const drop = search(B, ra, rb, (i, j) => Math.max(0, S.ground[i] - S.ground[j]), true).cost;
-  const deep = search(B, ra, rb, (_i, j) => depthAt(S, j), true).cost;
-  const veg = search(B, ra, rb, (_i, j) => S.veg[j], true).cost;
-  const lavaFree = search(B, ra, rb, (_i, j) => (S.lava[j] ? Infinity : 0), true).cost;
+  const Z = zonesFor(B, ra, rb, P);
+  const climb = search(B, Z, (i, j) => Math.max(0, S.ground[j] - S.ground[i]), true).cost;
+  const drop = search(B, Z, (i, j) => Math.max(0, S.ground[i] - S.ground[j]), true).cost;
+  const deep = search(B, Z, (_i, j) => depthAt(S, j), true).cost;
+  const veg = search(B, Z, (_i, j) => S.veg[j], true).cost;
+  const lavaFree = search(B, Z, (_i, j) => (S.lava[j] ? Infinity : 0), true).cost;
   // spans: the fewest wet / non-room samples a crossing must go over
-  const wetSpan = search(B, ra, rb, (_i, j) => (depthAt(S, j) > 0 ? S.step : 0), false).cost;
-  const gap = search(B, ra, rb, (_i, j) => (B.room[j] < 0 && S.ground[j] < Math.min(fa, fb) - B.caps.drop ? S.step : 0), false).cost;
+  const wetSpan = search(B, Z, (_i, j) => (depthAt(S, j) > 0 ? S.step : 0), false).cost;
+  const gap = search(B, Z, (_i, j) => (B.room[j] < 0 && S.ground[j] < Math.min(fa, fb) - B.caps.drop ? S.step : 0), false).cost;
+  release(Z);
   const r2 = (x: number) => (Number.isFinite(x) ? +x.toFixed(2) : x);
   return { rise: r2(fb - fa), minClimb: r2(climb), minDrop: r2(drop), minDeep: r2(deep), minWaterSpan: r2(wetSpan), lava: lavaFree === Infinity, minVeg: r2(veg), minGap: r2(gap) };
 }
@@ -710,7 +830,10 @@ export class RegionGraph implements TerrainGraph {
     let c = this.costs.get(key);
     if (c === undefined) {
       const S = this.built.S;
-      const r = search(this.built, a, b, (i, j) => stepCost(S, i, j, caps), false);
+      // (a body's route: a wider band — it may go round)
+      const Z = zonesFor(this.built, a, b, this.built.pairs[border], 12);
+      const r = search(this.built, Z, (i, j) => stepCost(S, i, j, caps), false);
+      release(Z);
       c = r.cost;
       // a gap jumped (level or down, at speed): the narrowest gap's span and a run-up
       const rise = (this.region(b).floor[1] - this.region(a).floor[1]);

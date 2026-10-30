@@ -12,6 +12,31 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, session 5, `terrain`) — the terrain track: rivers, the region graph, the basin flood (DECISIONS round 117)
+
+The user: "striking to look at and interesting to explore" … "Let's make this world hauntingly beautiful." DEVLOG round
+117 (`terrain`); docs/ARCHITECTURE.md "Terrain: the region graph, the rivers' shape, the basin flood".
+
+| id | item | size | status |
+|---|---|---|---|
+| TR1 | Rivers off the texel grid: nodes relaxed along their stems, the lookup warped, two segments a node (terrain/rivershape.ts, terrain/river.wgsl) | M | done (terrain) |
+| TR2 | Rivers with banks: the level incised under the plain, eroded banks (Voronoi slumps, benches), gravel bars, boulders in rapids and round pools, cascades of falls, plunge pools | M | done (terrain) |
+| TR3 | The widest rivers (half-width 10-12) still show the grid's 45-degree kinks: more relaxation (nodes moving farther than a texel if the lookup searched more texels) or a spline through the nodes | S | open |
+| TR4 | Rivers that sink into holes and come out of caves (an underground reach: a node flag, the cave's floor as its bed) | M | open |
+| TR5 | The region graph (api/contracts/terrain.ts): features and rooms 1-3 screens, borders with barrier kinds and measures, costs per controller (PassCaps), soft barriers; the GPU sample, the CPU partition (terrain/partition.ts) | L | done (terrain) |
+| TR6 | Reeds along the banks and the benches from flora's contract; the samples' vegetation density from flora (the stand-in is forms.wgsl's woods) | S | open (needs flora) |
+| TR7 | The global sea replaced where it's read (forms' sea water, Globals.seaZ, the shore, the tiles' water plane, the caves' floors relative to AP.sea): the oceans as basins in the lakes' table (DZ1's design, MF8) | L | open |
+| TR8 | A sand or ash flood buries what's stamped later (settlements, ruins): the finish pass's fill after the stamps | M | open |
+| TR9 | Phone proxy: driveprofile on the river-heavy atlas at q=low 412x915 before/after TR1-TR2 (the columns' GPU passes) | S | open |
+| TR10 | Requests: exits, obstacles and openings (ramps, fords, walls as stamps; bridges and vegetation as needs for structures and flora) (terrain/terrain.ts) | M | done (terrain) |
+| TR11 | The basin flood: Planchon-Darboux fill and the basin's mark on the GPU, into the lakes' table with a fluid (water, sand, magma, ash) (terrain/flood.ts) | M | done (terrain) |
+| TR12 | The terrain viewer (?terrain=view): the region graph, controllers, exits, the flood over the atlas view | M | done (terrain) |
+| TR13 | Cliffs with caves opening at their base (ground-level openings wide enough to walk), sand and rocks piled at the mouths; sea caves with crashing waves (the user's 2.5D recipe, on noiselab2-r) | L | open |
+| TR14 | Gorges walkable at the bottom and along the top; deep quarries; room for cities in the earth (with structures) | L | open |
+| TR15 | Caves: underground rivers and lakes, vast chambers, crumbling ceilings with light beams (shade plants via flora) | L | open |
+| TR16 | Buried props: skew stones, statues, fallen structures as External intervals and instanced meshes; a placement pass for excavation sites (structures' assets; testkit's un-burying tests) | L | open |
+| TR17 | A request's edits remake land already in the window (today only land made after it has them) | S | open |
+
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 
 The user: "TDD make some unit tests so you can stop hogging my browser so much. Do complete integration tests after unit

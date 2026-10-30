@@ -108,3 +108,18 @@ describe('partition', () => {
     expect(g.cost(B.id, walker)).toBeCloseTo(c0 + 200, 3);
   });
 });
+
+describe('partition at scale', () => {
+  it('a 512² noisy valley with a river and plateaus partitions in well under a second', () => {
+    const n2 = (x: number, y: number) => Math.sin(x * 0.05) * Math.cos(y * 0.043) + 0.5 * Math.sin(x * 0.13 + y * 0.07);
+    const S = land(512, 512, (x, y) => 100 + 6 * n2(x, y) + (n2(x * 0.2, y * 0.2) > 0.4 ? 40 : 0) - (Math.abs(x - 256 - 30 * Math.sin(y * 0.02)) < 5 ? 6 : 0), (S2, i, x, y) => {
+      if (Math.abs(x - 256 - 30 * Math.sin(y * 0.02)) < 5) { S2.water[i] = S2.ground[i] + 3; S2.wet[i] = 1; }
+    });
+    const t0 = performance.now();
+    const g = graph(S);
+    const ms = performance.now() - t0;
+    if ((globalThis as { process?: { env?: Record<string, string | undefined> } }).process?.env?.TERRAIN_LOG) console.log(`partition 512²: ${ms.toFixed(0)} ms, ${g.rooms().length} rooms, ${g.borders().length} borders`);
+    expect(g.rooms().length).toBeGreaterThan(10);
+    expect(ms).toBeLessThan(1500);
+  });
+});

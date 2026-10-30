@@ -2425,3 +2425,29 @@ clears them).
 - A module that reads `location`, `innerWidth` and the like at load works in the unit tier only if it guards them
   (`typeof location === 'undefined'`). The gpu tier's setup defines them, a page with no query at 412 x 915, for the
   modules a WorldCore pulls in.
+
+## Terrain: the region graph, the rivers' shape, the basin flood (round 117, `terrain`; BACKLOG TR1-TR17)
+
+The user: "We want to partition our map … natural barriers … we should know by character controller what they can and
+can't pass easily. I would make regions recursive with open fully connected spaces 1-3 screens big and that are part of
+larger terrain features." / "Terrain makes the barriers initially but the run manager should be able to get. The graph
+and request obstacles or otherwise request a certain number of exits." / "A GPU algorithm we use for generative tools. I
+want to be able to flood a basin and bury things".
+
+- **Contract:** src/api/contracts/terrain.ts — `Terrain` (graph, request, edits, flood), `TerrainGraph` (regions at two
+  levels: features 0, rooms 1; borders with a BarrierKind, causes, BorderMeasure and passes; cost/exits/reach per
+  `PassCaps`; soften), `TerrainRequest` (exits, obstacle, open) → `TerrainResult` (edits, needs), `FloodRequest` →
+  `FloodResult`. World units of the atlas. `PassCaps` stands in for the play track's controller contract; `CAPS_PRESETS`.
+- **Implementation:** src/terrain/terrain.ts `TerrainSystem` (window.reclaimed.terrain in the atlas level and the viewer).
+  sample.ts + sample.wgsl: the land on a grid from the atlas's ground() (its own uniform buffers; bindings 20-26 read,
+  40-41). partition.ts: the CPU graph (pure; unit-tested). flood.ts + flood.wgsl: the GPU fill and mark, and the CPU
+  reference they must equal.
+- **Edits** are atlas stampHooks (atlas/stamps.ts PLAN ops): land made after a request has them. **Needs** (bridges,
+  vegetation, rubble) are for other tracks; the run manager passes them on through their contracts.
+- **Basins:** a flood is a row of the lakes' table in riverBuf (Atlas.addBasin; FLOOD_SPARE rows; word 1 the fluid: 0
+  water, 1 sand, 2 magma, 3 ash) and its texels in the per-texel lake ids. compose.wgsl lakeAt returns the fluid; ground()
+  buries (loose ground to the level) or melts (lava to it). The viewer shows it at once (it reads riverBuf per pixel);
+  land already made isn't remade.
+- **Rivers:** rivers.ts builds the nodes; terrain/rivershape.ts shapes their course (relaxed) and levels (incised,
+  staircased, still falling downstream) before the table; terrain/river.wgsl (in Atlas.parts()) holds River, riverAt
+  (the warped lookup, two segments a node) and riverCut (the cross-section) that compose.wgsl ground() calls.

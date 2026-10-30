@@ -507,7 +507,7 @@ export class Atlas {
   settlement: Settlement = { sites: [], roads: [], ms: 0 };
   /** the roads and their crossings, graded, to be built into the columns (round 79, ways.ts) */
   ways: Ways = { points: [], lifts: [], bins: new Map(), counts: [], ms: 0 };
-  riverStats = { nodes: 0, lava: 0, waterfalls: 0, lakes: 0, ms: 0, speed: [0, 0, 0] as [number, number, number], discharge: 0, pipeSlope: 0 };
+  riverStats = { nodes: 0, lava: 0, waterfalls: 0, lakes: 0, ms: 0, speed: [0, 0, 0] as [number, number, number], discharge: 0, pipeSlope: 0, shaped: { cascaded: 0, falls: 0, incision: 0 } };
   /** the nodes (rivers.ts NODE_WORDS each), for tools */
   riverNodes: Uint32Array = new Uint32Array(0);
   /** (round 117, terrain track) where the lakes' table and ids sit in riverBuf (words), rows used and room for more */
@@ -816,7 +816,7 @@ const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
       }
       return findRivers({ n, hmac: this.hmac, water, volcanic, regionOf: this.regionOf, sea: p.sea, worldW: this.worldW, worldH: this.worldH });
     });
-    this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, lakes: rv.lakes.length, ms: rv.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: rv.pipeSlope };
+    this.riverStats = { nodes: rv.count, lava: rv.lava, waterfalls: rv.waterfalls, lakes: rv.lakes.length, ms: rv.ms, speed: rv.speed, discharge: rv.discharge, pipeSlope: rv.pipeSlope, shaped: rv.shaped };
     this.riverNodes = rv.nodes;
     this.riverCatchments = rv.catchments;
     this.lakes = rv.lakes;

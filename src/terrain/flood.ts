@@ -116,7 +116,7 @@ export function markCpu(G: FloodGrid, seed: number, level: number): FloodMask {
   const mask = new Uint8Array(m * m);
   let count = 0;
   let floor = Infinity;
-  if (h[seed] < level) {
+  if (h[seed] < level && !G.outlet?.[seed]) {
     const q = [seed];
     mask[seed] = 1;
     while (q.length) {
@@ -130,7 +130,8 @@ export function markCpu(G: FloodGrid, seed: number, level: number): FloodMask {
         const ny = y + DY[k];
         if (nx < 0 || ny < 0 || nx >= m || ny >= m) continue;
         const j = ny * m + nx;
-        if (mask[j] || h[j] >= level) continue;
+        // (the standing sea is no part of a basin: its level is its own — a flood stops at its shore)
+        if (mask[j] || h[j] >= level || G.outlet?.[j]) continue;
         mask[j] = 1;
         q.push(j);
       }
@@ -269,6 +270,12 @@ export class FloodGpu {
       // the mark: from the seed under the level (strictly: at the spill height the spill point itself stays dry, or the
       // water would run out through it into the next basin)
       params(L);
+      // (the standing sea walls the mark: a flood stops at its shore — markCpu's rule)
+      if (G.outlet) {
+        const hm = Float32Array.from(G.h);
+        for (let i = 0; i < N; i++) if (G.outlet[i]) hm[i] = 1e30;
+        dev.queue.writeBuffer(hB, 0, hm);
+      }
       {
         const enc = dev.createCommandEncoder();
         const cp = enc.beginComputePass();
