@@ -25,6 +25,7 @@ import type { FieldMesh } from './fieldmesh';
 import { ROW_H } from '../world/lattice';
 import type { LandTimes } from './tileland';
 import { coverage, type Coverage } from './coverage';
+import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 
 /** (round 105) what makes the render-only land: tileland.ts (the playable path, ?tilegpu=0) or tilelandgpu.ts */
 export interface LandMaker {
@@ -68,6 +69,7 @@ const NO_LAND = new URLSearchParams(location.search).get('tileland') === '0';
 /** (round 105, tileahead) seconds of the camera's motion the land is made ahead of the screen, and the motion
  *  (world units a second) under which the camera's at rest */
 const PREFETCH_S = Number(new URLSearchParams(location.search).get('tileahead') ?? 1);
+const PREFETCH_FIXED = new URLSearchParams(location.search).has('tileahead');
 const MOVING = 2;
 /** (round 106, tilephone) the look-ahead's least reach (world units: a region and a half), and the margin round the
  *  screen asked for next (the screen's size times this) */
@@ -115,6 +117,36 @@ const PHONE_UA = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile
 const FILL_RATE_PHONE = Number(new URLSearchParams(location.search).get('tilerate') ?? 0.3);
 const FILL_RATE = Number(new URLSearchParams(location.search).get('tilerate') ?? 2);
 export const ZOOM_FLOOR = new URLSearchParams(location.search).get('zoomfloor') !== '0';
+/** (round 113, tilesfirst) tiles.wgsl TileU: r, u, f, win, focus, mesh (6 vec4s), cand (32: the grid's chunks in view, the
+ *  voxel mesh's in view — a bit a chunk, 2048 each), drawn (16: tilemask's) */
+const UNI_HEAD = 6 * 16;
+const UNI_BYTES = UNI_HEAD + 32 * 16 + 16 * 16;
+/** (round 113) the window's mesh chunks the cover's bits hold at most */
+const MAX_CHUNKS = 2048;
+/** (round 113, tilesfirst) the window draws a chunk this frame: the grid's bit, or the voxel mesh's in view and its own
+ *  state built and not empty (fieldmesh.wgsl's record: meshstate.wgsl MS_BUILT, MS_INDICES) — a word an invocation */
+const MASK_WGSL = /* wgsl */ `
+@group(0) @binding(0) var<storage, read> st: array<u32>;
+@group(0) @binding(1) var<storage, read_write> tu: array<u32>;
+@group(0) @binding(2) var<uniform> n: vec4<u32>;
+@compute @workgroup_size(64)
+fn mask(@builtin(global_invocation_id) g: vec3<u32>) {
+  let w = g.x;
+  if (w >= ${MAX_CHUNKS / 32}u) { return; }
+  let head = ${UNI_HEAD / 4}u;
+  let grid = tu[head + w];
+  let mesh = tu[head + ${MAX_CHUNKS / 32}u + w];
+  var out = grid;
+  for (var b = 0u; b < 32u; b++) {
+    let k = w * 32u + b;
+    if (k >= n.x || (mesh & (1u << b)) == 0u) { continue; }
+    let base = CHUNK0 + k * CSTRIDE;
+    let h = st[base + MS_BUILT];
+    if (h != FRESH && h != 0u && st[base + MS_INDICES] > 0u) { out |= 1u << b; }
+  }
+  tu[head + ${(2 * MAX_CHUNKS) / 32}u + w] = out;
+}
+`;
 /** ?tiledebug=1: the tiles drawn tinted */
 const DEBUG = new URLSearchParams(location.search).get('tiledebug') === '1';
 
@@ -206,7 +238,7 @@ export class TileCache {
   /** counts (scripts read them): bakes (first, again), evictions, tiles drawn last frame, slots, in use, MB */
   /** ?tiledebug=1 (or set at run time — scripts/tileparity.mjs): the tiles drawn tinted */
   debug = DEBUG;
-  readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0, zoomFloor: 0 };
+  readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0, zoomFloor: 0, cover: 0 };
   private tiles = new Map<string, Tile>();
   /** (round 112, TC21) the atlas's quarters (slot · 4 + q): a whole slot's tile in its four, a quarter's in its own */
   private cells: (Tile | null)[];
@@ -253,7 +285,8 @@ export class TileCache {
     this.rows = rows;
     this.instData = new Float32Array(slots * 4 * 16);
     this.inst = dev.createBuffer({ label: 'tiles instances', size: this.instData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.uni = dev.createBuffer({ label: 'tiles uniform', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // (round 113: tiles.wgsl TileU — 6 vec4s, the candidates' 32, the drawn set's 16, written on the GPU by encodeMask)
+    this.uni = dev.createBuffer({ label: 'tiles uniform', size: UNI_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.tparams = dev.createBuffer({ label: 'tiles params', size: slots * 4 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     this.mask = dev.createBuffer({ label: 'tiles mask', size: this.maskData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     for (let k = 0; k < PER_FRAME; k++) this.bakers.push({ cam: dev.createBuffer({ label: `tiles bake camera ${k}`, size: host.camBytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }) });
@@ -315,6 +348,7 @@ export class TileCache {
   invalidate(): void {
     for (const b of this.bakers) b.gWin = b.gBand = b.rWin = b.rBand = undefined;
     this.drawGroup = undefined;
+    this.maskGroup = undefined;
     this.land?.invalidate?.();
   }
 
@@ -773,7 +807,12 @@ export class TileCache {
     // so the next row was asked for only as it came on; then the screen and a margin round it, the next to come on
     // whichever way the camera goes)
     const shifts = sp > MOVING ? [0, 1, 2] : [0, 2];
-    const ahead = sp > MOVING ? Math.max(PREFETCH_S, AHEAD_CELLS / sp) : 0;
+    // (round 113, tilesfirst — grow with speed: as far ahead as the camera goes in the tiles' measured latency, wanted
+    // to drawn, and a region and a half more; ?tileahead= fixes the seconds as before)
+    const ahead = sp > MOVING ? (PREFETCH_FIXED ? Math.max(PREFETCH_S, AHEAD_CELLS / sp) : this.tileLatency() + AHEAD_CELLS / sp) : 0;
+    // (round 113, tilesfirst — tiles first: inside the window too, where its own drawing isn't there for sure)
+    const wd = this.host.windowDrawn();
+    const [mnx, mny, mside] = this.host.win.mesh.chunkGrid;
     const best = new Map<string, { rx: number; ry: number; k: number }>();
     for (const sh of shifts)
       for (let j = 0; j < G; j++)
@@ -786,7 +825,10 @@ export class TileCache {
           const py = dy + (sh === 1 ? vy * ahead : 0);
           const x = cam.target[0] + px;
           const y = (cam.target[1] + py) / ROW_H;
-          if (x >= 0 && x < W && y >= 0 && y < H) continue;
+          if (x >= 0 && x < W && y >= 0 && y < H) {
+            const v = wd[Math.min(mny - 1, Math.floor(y / mside)) * mnx + Math.min(mnx - 1, Math.floor(x / mside))];
+            if (v === 1 || v === 2) continue;
+          }
           const rx = Math.floor((x + ox) / R);
           const ry = Math.floor((y + oy) / R);
           if (Math.abs(rx - crx) >= MASK_N / 2 || Math.abs(ry - cry) >= MASK_N / 2) continue;
@@ -813,6 +855,19 @@ export class TileCache {
       for (const b of big.slice(0, n - out.length)) out.push({ rx: b.rx, ry: b.ry, remake: true });
     }
     return out;
+  }
+
+  /**
+   * (round 113, tilesfirst) The tiles' latency (s): wanted to drawn, the 90th percentile of the last regions' made
+   * (TileLandGpu.latencies), 0.5 s till there are some. What the look-ahead's reach grows by at speed.
+   */
+  tileLatency(): number {
+    const L = this.land?.latencies ?? [];
+    const d: number[] = [];
+    for (let i = Math.max(0, L.length - 32); i < L.length; i++) if (L[i].drawn > 0 && L[i].wanted > 0) d.push((L[i].drawn - L[i].wanted) / 1000);
+    if (d.length < 4) return 0.5;
+    d.sort((a, b) => a - b);
+    return Math.min(3, d[Math.floor(d.length * 0.9)]);
   }
 
   /** a tile of region (rx, ry) at this turn? */
@@ -913,18 +968,36 @@ export class TileCache {
       let n = 0;
       let frozen = 0;
       this.stats.skipEye = this.stats.skipOff = this.stats.skipFar = 0;
+      // (round 113, tilesfirst: how the window draws each chunk this frame — its regions whose chunks it all draws for
+      // sure need no tile; the rest draw theirs where the window doesn't, tiles.wgsl windowDrawsAt)
+      const wd = h.windowDrawn();
+      const [mnx, mny, mside] = h.win.mesh.chunkGrid;
+      const perR = R / mside;
+      const winAll = (i: number, j: number) => {
+        for (let q = 0; q < perR * perR; q++) {
+          const cx = i * perR + (q % perR);
+          const cy = j * perR + Math.floor(q / perR);
+          if (cx >= mnx || cy >= mny) continue;
+          const v = wd[cy * mnx + cx];
+          if (v !== 1 && v !== 2) return false;
+        }
+        return true;
+      };
+      this.stats.cover = 0;
       for (const t of this.tiles.values()) {
         if (Math.round(t.az * 1e4) !== azk) continue;
         const inWin = t.rx >= w0 && t.rx < w0 + wn && t.ry >= h0 && t.ry < h0 + hn;
-        // (round 104, no pop-in: a region come into the window whose chunks the window draws none of yet — not built,
-        // not the grid's — keeps its tile, drawn inside the window too, till the window has it)
+        // (round 104, TC9; round 113, tilesfirst — tiles first, always: a window region's tile draws while any of its
+        // chunks isn't drawn for sure by the window, and the draw leaves out, chunk by chunk, what the window draws this
+        // frame (the GPU's word: encodeMask). The swap to the window is the frame its drawing is ready; no gap frame)
         let arriving = false;
         if (inWin) {
           // (round 112, tilefast: a window region's tile is kept — not the least recently used because the window draws its
           // land itself — so it's there the frame its region leaves; it was evicted for the look-ahead's, the pan's pop-in behind)
           t.usedAt = this.frame;
-          if (!this.arriving(t.rx - w0, t.ry - h0)) continue;
+          if (winAll(t.rx - w0, t.ry - h0)) continue;
           arriving = true;
+          this.stats.cover++;
         }
         frozen++;
         t.skip = '';
@@ -971,7 +1044,16 @@ export class TileCache {
         const H = h.world.h * ROW_H;
         // (round 112, TF5: the focus — the camera's target, window units — for the eye side's cut; w 0: none, flying)
         const fo = cam.fly ? [0, 0, 0, 0] : [cam.target[0], cam.target[1], cam.target[2], 1];
-        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, this.debug ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP, ...fo]));
+        h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, this.debug ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP, ...fo, mside, mside * ROW_H, mnx, mny]));
+        // (the candidates: the grid's chunks in its view, the voxel mesh's in view — encodeMask makes the drawn set)
+        const cand = this.candData;
+        cand.fill(0);
+        for (let c = 0; c < Math.min(wd.length, MAX_CHUNKS); c++) {
+          if (wd[c] === 1) cand[c >> 5] |= 1 << (c & 31);
+          else if (wd[c] >= 2) cand[MAX_CHUNKS / 32 + (c >> 5)] |= 1 << (c & 31);
+        }
+        h.device.queue.writeBuffer(this.uni, UNI_HEAD, cand);
+        this.maskDue = true;
       }
     }
     this.stats.drawn = this.drawCount;
@@ -983,21 +1065,43 @@ export class TileCache {
     }
   }
 
-  /** window region (i, j): none of its four chunks drawn by the window yet (not built — FieldMesh.built, kept across
-   *  slides — nor the hybrid grid's) */
-  private arriving(i: number, j: number): boolean {
-    const fm = this.host.win.mesh;
-    const [nx, ny] = fm.chunkGrid;
-    if (fm.builtSlides !== fm.slides || fm.built.length !== nx * ny) return false;
-    const grid = this.host.gridOn();
-    for (let k = 0; k < 4; k++) {
-      const cx = 2 * i + (k & 1);
-      const cy = 2 * j + (k >> 1);
-      if (cx >= nx || cy >= ny) continue;
-      const c = cy * nx + cx;
-      if (fm.built[c] || (grid && grid[c])) return false;
+  /** (round 113) the cover's candidate bits as written (tiles.wgsl TileU.cand) */
+  private candData = new Uint32Array((2 * MAX_CHUNKS) / 32);
+  private maskDue = false;
+  private maskPipe?: GPUComputePipeline;
+  private maskGroup?: GPUBindGroup;
+  private maskUni?: GPUBuffer;
+  /**
+   * (round 113, tilesfirst) After prepare, before the world pass: the chunks the window draws this frame (TileU.drawn)
+   * from the candidates and the mesh's own state on the GPU — so a tile gives way to the window the frame its mesh is
+   * built, not when the CPU's mirror of it (a readback, frames behind) says so.
+   */
+  encodeMask(enc: GPUCommandEncoder): void {
+    if (!this.maskDue) return;
+    this.maskDue = false;
+    const h = this.host;
+    const dev = h.device;
+    if (!this.maskPipe) {
+      const module = dev.createShaderModule({ label: 'tiles mask', code: meshStateWgsl + MASK_WGSL });
+      this.maskPipe = dev.createComputePipeline({ label: 'tiles mask', layout: 'auto', compute: { module, entryPoint: 'mask' } });
+      this.maskUni = dev.createBuffer({ label: 'tiles mask n', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     }
-    return true;
+    const [nx, ny] = h.win.mesh.chunkGrid;
+    dev.queue.writeBuffer(this.maskUni!, 0, new Uint32Array([Math.min(MAX_CHUNKS, nx * ny), 0, 0, 0]));
+    this.maskGroup ??= dev.createBindGroup({
+      label: 'tiles mask',
+      layout: this.maskPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: h.win.mesh.stateBuffer } },
+        { binding: 1, resource: { buffer: this.uni } },
+        { binding: 2, resource: { buffer: this.maskUni! } },
+      ],
+    });
+    const pass = enc.beginComputePass({ label: 'tiles mask' });
+    pass.setPipeline(this.maskPipe);
+    pass.setBindGroup(0, this.maskGroup);
+    pass.dispatchWorkgroups(1);
+    pass.end();
   }
 
   /**

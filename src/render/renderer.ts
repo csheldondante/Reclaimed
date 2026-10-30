@@ -1201,6 +1201,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     if (this.tiles && !SKIP.has('tiles')) {
       this.tiles.encode(enc, cam, this.depth!.width);
       this.tiles.prepare(cam);
+      this.tiles.encodeMask(enc);
     }
     // (perfopt, ?defer=1: the mesh's G-buffer pass, its depth the world pass's)
     if (tcMode === 'refresh') this.encodeTerrainCache(enc);
