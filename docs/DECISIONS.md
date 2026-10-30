@@ -41,6 +41,32 @@ Part 2, the user answering run planning (1) and movement and controls (2), verba
 > 1. TBD but I was thinking 15-50 minutes with branching. Decisions should impact the world for the next run.  They should impact characters and their history, relationships and motivations. Potentially impact their gear or persistent statuses. They should impact factions and their relationships and power. They should impact the terrain and the cities and as mentioned change statuses at the regional or global level. Make it eternal night or flood a region and make a new shallow sea or bury a ruin under sand etc. the GM can determine some of what happens in different failure conditions like death or capture or just failure to meet a timeline. Maybe the lich takes over the map and the world is filled with undead. That's the fun of this game.
 > 2. We want the controls to vary per character and we want them to play differently. This was already in the existing GM work. The lich is a floating wrecking ball power fantasy, the hoverbike we want races and tricks and mounted fights, the knight delving and quests etc.
 
+Part 3, the user answering what the read-through of earlier decisions found (unmerged branches, conflicts, the open questions 1-7), verbatim:
+
+> Why limit to 512 and 128MB both should use as much as we need that the hardware supports.
+>
+> I never got a working link to sea caves or at least not a usable version
+>
+> Likewise with the hero sandbox it was not useable. Maybe with the improvements merged in?
+>
+> Test them before merging or have me test on my phone. You can test multiple at once for performance but last I looked they didn't work well.
+>
+> TDD make some unit tests so you can stop hogging my browser so much. Do complete integration tests after unit tests work and do quick smoke tests to find failures early.
+>
+> The rivers look better than the did but still not as good as the rest of the terrain. They have no banks and they look best only near the cliffs I helped make good. Waterfalls and flow are what look pretty good.
+> I think just make a new layer you own so I can work from one session. I want the separation of concerns but I also want to be able to iterate on player controls which is probably the most important thing for fun.
+> The Ambient game is not the engine and I think plants making a barrier (even a soft barrier like slowing you down or requiring you to cut through) is a good thing.
+> I would love more variety in terrain. Traversvlable gorges (both at the bottom and above). Deep cut quarries and cities built into the earth.
+> Yes replace global with flood fill regions as described.
+>
+> 1. Let's make it another system so it is encapsulated but move it in so we can work on it and iterate here.
+> 2. We don't need hard barriers always but we should know by character controller what they can and can't pass easily. I would make regions recursive with open fully connected spaces 1-3 screens big and that are part of larger terrain features.
+> 3. Both. Terrain makes the barriers initially but the run manager should be able to get. The graph and request obstacles or otherwise request a certain number of exits.
+> 4. For the bike if is going fast, launching off ramps, swinging weapons at nearby enemies in front of the bike and I would like to add more later.  Maybe a grappling hook to reel in enemies or do sharp turns. I think it's not useful to enumerate these just check for yourself what the controllers do and know we plan to make an expanding library of controllers to interact with the world. So parameterize it so we can reason about it during generation and make not only obstacles but fun ones. A fast bike need races and chases. A combat soldier needs fun fights. A force of nature needs spectacle and power fantasy.
+> 5. This is what we are building asset generators for. I'm ok with voxel or low poly or toon or Sabel. I want to have a desktop pipeline for arbitrary meshes but I don't think you actually need that to make generators for the things we discussed.
+> 6. A GPU algorithm we use for generative tools. I want to be able to flood a basin and bury things and flood fill based on heightmap makes that easy.
+> 7. As fast as we can make it and we will iterate on design as we go.
+
 ## 2026-10-30 — round 116 (session 5, `places`) — high-value work in parallel: generators, editors, sound, runs
 
 - The user, verbatim: "I would like to target high value work. What is awesome, what will be most impactful to players and what will show the most rapid progress. In my opinion we should target improvements to the terrain generation, run planning, and character movement and controls and we should add sound effects and work on procedural generators and editors for flora,  agents, gear, buildings and vehicles. I want beautiful structures, sprawling fantastic cities and lively animated agents inhabiting our world. "
