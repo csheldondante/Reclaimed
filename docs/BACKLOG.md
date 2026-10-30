@@ -59,6 +59,13 @@ tests work and do quick smoke tests to find failures early." docs/TESTING.md.
 | TK10 | More unit tests for what the brief listed and this round didn't reach: the planners (scenes/planner.ts), calibration math (perf/), run and story logic (run/, story/), layout and packing (world/layout.ts, sim/pages.ts) | M | open |
 | TK11 | The runner's teardown once took ~200 s after a passing check (smoke, rocklab alone, on a busy GPU): page / browser / server close; time each | S | open |
 
+## Round 118 (2026-10-30, session 5, `places`) — found while reviewing the tracks
+
+| id | item | size | status |
+|---|---|---|---|
+| VF1 | Thin bright-white vertical slivers down cliff faces and broken white outlines on dark rock tops (phone proxy, the plateau fall at the gate spot: shots88/terrain/phone-base-fall.png and phone-r2-fall.png, x≈150 and ≈510 of 900) — pre-existing, the cliff-face seam family | S | open |
+| VF2 | A big cliff waterfall drawn as a flat grey column (same shots, bottom right) — pre-existing; the user: "Waterfalls and flow are what look pretty good", so this one should look like the others | S | open |
+
 ## Round 115 (2026-10-30, session 5, `places`) — caching by section, travel on the atlas, the camera's view (DECISIONS round 115)
 
 Streaming is good enough for now (places 3c850b9); these are for when gameplay and the finished generator are built.
