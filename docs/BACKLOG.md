@@ -12,6 +12,22 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 114 (2026-10-30, `framepace`) — the phone's parked frame drops (56-57 fps, p99 33 ms with ~1-2 ms of CPU)
+
+The user: the hero run "framerate feels bad"; the goal a steady 60 on the Pixel 9a. "Keep the per cell look for now I
+enjoy it" / "Prioritize rendering over simulation too".
+
+| id | item | size | status |
+|---|---|---|---|
+| FP1 | The frame pacing probe: per frame rAF interval, rAF lag, CPU, rAF to last submit, submit to GPU done, frames in flight, GPU span and per pass, the gap between frames' GPU work, sim ticks and slow-period systems, the coarse world's parts and the streamer's work | M | done (`framepace`): perf/framepace.ts, scripts/paceprobe.mjs |
+| FP2 | The pan bench reports it parked (bench v6): timed, untimed, frames in flight 1 and 3, the sim off — at every zoom, the A/B at the first; `summary.pace` | S | done (`framepace`) — the phone's run names the cause |
+| FP3 | The coarse world's step (every 4th frame, untimed: flux + depth + an 8 MB copy, +4.5 ms of a 7 ms frame on the desktop iGPU) in three parts on three frames | S | done (`framepace`): Coarse.stepPart; desktop GPU frame p95 10.4 → 9.4 ms, p99 12.3 → 10.8 |
+| FP4 | The phone's v6 run (data: 2-8 slow frames of ~245 parked, GPU span p50 6.2-6.6 / p95 10-11 ms; slow frames ran 1.5-2 sim ticks against 0.8; simOff and inFlight3 0 slow; 20% of frames ran 0 ticks): a frame-locked tick — one tick a rendered frame when the display runs at the tick rate, the drift paid back a tick at a time | M | done (`framepace`): sim/tickclock.ts, ?tick=accum to compare; bench v7 `tickAccum` phase — the phone's next run compares |
+| FP6 | The phone's v7 run: ~20% of frames ran no tick (the sim held while the streamer was busy: `advance` not called) and the time the clock owed was paid back as 2-tick frames — the slow ones. The user puts rendering first: a planner's cut, a frame the sim was held and a missed vsync's extra interval are pauses, dropped and counted (`missedS`, `cutS`, `pausedS`); only the display's drift is paid back | S | done (`framepace`): TickClock v2, Streamer.busyWhy, LevelScene.simHeld |
+| FP7 | Bench v8: the pacing phases after the view settles (no holes, no tiles in flight, nothing arriving, the streamer idle, 1 s; the wait and a timeout recorded), every phase twice in A..Z..A order; each phase's rAF lag and what preceded late callbacks (other rAF callbacks, timed steps between frames) | S | done (`framepace`) |
+| FP8 | The user's test: "If they are not next together then as soon as I can ride the bike and test I think we can call the work complete" — the slow frames' clustering (times, gaps, longest run of consecutive slow frames, pairs within 100 ms, a verdict) per parked phase and per pan step: `summary.slowTogether` | S | done (`framepace`) — the phone's v8 run answers |
+| FP9 | The phone's v8 run froze from zoom 14's disk step at 120 c/s: that step rendered 1 frame (a slide begun, never done), every capture after 0 frames, zoom 8's settle timed out on a tile 'in flight' (a count only a frame updates), the warp to the disk line waited 62 s for the streamer and the watchdog moved on; nothing said why. The loop now stops only loudly: a frame that throws, or every rAF held 20 s with the GPU's work never done, is the fatal overlay and a bench page's error (with frames in flight, readbacks pending, the streamer's state); the settle's timeout lists the tiles in flight (key, age, made) and the frames rendered meanwhile | S | done: the cause was the hitch recorder (perf/hitch.ts), not the game — a frame whose rAF time was before a reset judged into minute -1, minutes[-1] undefined, the frame threw; v9 caught it ("a frame failed ... account ... frameStart"). Such frames now belong to the old recording |
+| FP5 | The far land's stand-in draws under the whole view, inside the window too (SF2): ~0.9 ms of the desktop's 3.6 ms draw parked — draw it only where the window doesn't (the tiles' mask) if the phone's run shows the draw is the frame | S | open |
 ## Round 114 (2026-10-30, session 5, `worldstore`) — a saved world from another generator; a run's places made fresh (DECISIONS round 114)
 
 | id | item | size | status |

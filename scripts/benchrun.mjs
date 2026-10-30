@@ -30,6 +30,36 @@ const browser = await puppeteer.launch({
 let bad = 0;
 try {
   const p = await browser.newPage();
+  // (round 114, framepace, --hz N: rAF held to whole ticks of 1000/N ms on every page of the chain — scripts/tilegate.mjs's)
+  const hz = Number(opt('hz', 0));
+  if (hz > 0)
+    await p.evaluateOnNewDocument((hz) => {
+      const raf = window.requestAnimationFrame.bind(window);
+      const period = 1000 / hz;
+      let next = 0;
+      let queue = [];
+      let armed = false;
+      const tick = (t) => {
+        if (t + 1 < next) return void raf(tick);
+        next = t + period - 1;
+        armed = false;
+        const q = queue;
+        queue = [];
+        for (const e of q) e.f(t);
+      };
+      let ids = 0;
+      window.requestAnimationFrame = (f) => {
+        queue.push({ id: ++ids, f });
+        if (!armed) {
+          armed = true;
+          raf(tick);
+        }
+        return ids;
+      };
+      window.cancelAnimationFrame = (id) => {
+        queue = queue.filter((e) => e.id !== id);
+      };
+    }, hz);
   p.on('pageerror', (e) => {
     bad++;
     console.log('pageerror', e.message);

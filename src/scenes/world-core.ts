@@ -2,6 +2,7 @@
 // GPU state, simulation, renderer, weather, day/night, camera and Globals.
 // The level and the menu each own one (the menu's is a tiny diorama).
 
+import { TickClock, tickModeFrom } from '../sim/tickclock';
 import type { Gpu } from '../gpu/device';
 import type { Profiler } from '../gpu/profiler';
 import { RenderFieldsSystem, SurfaceSystem } from '../sim/systems';
@@ -76,7 +77,8 @@ export class WorldCore {
   readonly globals: GlobalsState;
   readonly packed: PackedWorld;
   readonly dims: { w: number; h: number; zMax: number };
-  private acc = 0;
+  /** (round 114, framepace) the sim's ticks a frame (sim/tickclock.ts; ?tick=accum the accumulator always) */
+  readonly clock: TickClock;
   private t0 = performance.now();
   private strikeAge = 99;
   pollution = 1;
@@ -117,6 +119,8 @@ export class WorldCore {
     // moves none of it; read column (x, y) at ring.i(x, y). Round 107, pages: in the buffers' page-major order)
     map.surface.set(this.world.ring.toStore(map.surface));
     this.sim = new Simulation(device, this.world, host.profiler);
+    this.clock = new TickClock(tickModeFrom(host.params));
+    if (host.params.has('ticktol')) this.clock.tol = Number(host.params.get('ticktol'));
     this.tiers = new Tiers({
       origin: () => this.globals.origin ?? [0, 0],
       dims: this.dims,
@@ -255,18 +259,17 @@ export class WorldCore {
     // (round 113, the planner's — scenes/planner.ts: rendering before simulation — while the view has undrawn land the
     // sim's ticks a frame are cut; its time catches up later, capped as ever)
     const maxTicks = Math.min(this.host.quality.maxTicksPerFrame * speed, this.simCap ?? Infinity);
-    this.acc += simDt;
+    // (round 114, framepace: the ticks this frame runs — one a frame when the display runs at the tick rate, the
+    // accumulator otherwise; sim/tickclock.ts)
+    const n = this.clock.take(simDt, speed, maxTicks, this.simCap !== null && maxTicks === this.simCap ? 0.5 : TICK_DT);
     let ticks = 0;
     // (SM2: the player's strokes of wind count as interactions — gusts[0] is the cursor's breeze, not a stroke)
     for (const st of g.gusts.slice(1)) if (st.strength > 0) this.tiers.interact(st.x, st.y, st.radius);
     this.tiers.apply();
-    while (this.acc >= TICK_DT && ticks < maxTicks) {
+    while (ticks < n) {
       this.sim.step(g, filter);
-      this.acc -= TICK_DT;
       ticks++;
     }
-    // drop time instead of spiralling (round 113: cut by the planner, up to half a second kept — caught up after)
-    if (ticks === maxTicks) this.acc = Math.min(this.acc, this.simCap !== null && maxTicks === this.simCap ? 0.5 : TICK_DT);
     // (round 108, simtiers: a bake's ticks — the baked processes run in its region at its gain, the rest alongside)
     ticks += this.tiers.pump(() => this.sim.step(g, filter));
     return ticks;

@@ -422,6 +422,8 @@ export class Streamer {
     this.core.renderer.holdMesh = v;
   }
   private busyNow = false;
+  /** (round 114, framepace) what made it busy last: restore, slide, warp, slideZ (the sim's held frames, counted by why) */
+  busyWhy = '';
   /** slide on its own as the camera nears the edge (tests turn it off to slide by hand) */
   auto = true;
   readonly stats: SlideStats = { slides: 0, frozen: 0, generated: 0, thawed: 0, prefetched: 0, lastMs: 0, tiers: 0, resliced: 0, fitted: 0, changed: 0, settled: 0, evicted: 0, touched: 0, checked: 0, saved: 0, loaded: 0, restored: 0, mismatched: 0, loadFailed: 0, storeMiss: 0, uploads: 0, gpuMade: 0, precached: 0, warpReady: 0 };
@@ -1220,6 +1222,7 @@ export class Streamer {
     for (let ly = 0; ly < H; ly += R) for (let lx = 0; lx < W; lx += R) if (s.has(this.key((this.origin[0] + lx) / R, (this.origin[1] + ly) / R))) spots.push([lx, ly]);
     if (!spots.length) return;
     while (this.busy) await new Promise((r) => setTimeout(r, 16));
+    this.busyWhy = 'restore';
     this.busy = true;
     this.heldNow = true;
     const t0 = performance.now();
@@ -1624,6 +1627,7 @@ export class Streamer {
   /** Move the window by (dx, dy) columns (one of them ±REGION, the other 0). */
   async slide(dx: number, dy: number): Promise<void> {
     if ((dx !== 0) === (dy !== 0) || Math.abs(dx + dy) !== this.R) throw new Error('a slide is one region along one axis');
+    this.busyWhy = 'slide';
     this.busy = true;
     const t0 = performance.now();
     const tr: SlideTrace = { dx, dy, t0, sync: 0, regions: [], end: 0 };
@@ -2396,6 +2400,7 @@ export class Streamer {
     if (ox % this.R || oy % this.R) throw new Error(`a warp's origin must be whole regions of ${this.R}`);
     if (oz % TIER || oz < 0) throw new Error(`a warp's oz must be whole tiers of ${TIER}`);
     while (this.busy || !this.store) await new Promise((r) => setTimeout(r, 16));
+    this.busyWhy = 'warp';
     this.busy = true;
     this.flushFills();
     const t0 = performance.now();
@@ -2485,6 +2490,7 @@ export class Streamer {
   async slideZ(dz: number): Promise<void> {
     if (Math.abs(dz) !== TIER) throw new Error(`a slide in z is one tier (${TIER})`);
     if (this.oz + dz < 0) throw new Error('the window is at the bottom of the world');
+    this.busyWhy = 'slideZ';
     this.busy = true;
     const t0 = performance.now();
     try {

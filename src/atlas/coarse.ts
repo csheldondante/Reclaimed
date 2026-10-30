@@ -68,6 +68,9 @@ export class Coarse {
   steps = 0;
   /** an event was made (the level makes it in the fine window too) */
   readonly onEvent: ((e: CoarseEvent) => void)[] = [];
+  /** (round 114, framepace) the timestamps of its step's passes — the atlas's profiler when the level lends it (it ran
+   *  untimed every 4th frame: a frame's GPU breakdown left it out) */
+  timer: () => { timestamps(name: string): GPUComputePassTimestampWrites | undefined } | undefined = () => undefined;
 
   constructor(
     private device: GPUDevice,
@@ -158,32 +161,78 @@ export class Coarse {
     // (round 106: the snapshots asked before this step see the world before it)
     this.flushSnaps();
     if (!this.kFlux) return;
-    const g = Math.ceil(this.cn / 8);
+    this.finishPart();
     for (let s = 0; s < n; s++) {
-      this.writeUni();
       const enc = this.device.createCommandEncoder({ label: 'coarse step' });
-      let cp = enc.beginComputePass();
-      cp.setPipeline(this.kFlux.pipeline);
+      for (let k = 0; k < 3; k++) this.encodePart(enc, k);
+      this.device.queue.submit([enc.finish()]);
+      this.stepped();
+    }
+  }
+
+  /**
+   * (round 114, framepace) A step spread over frames: its flux, its depth, the copy back — one a call, the step
+   * done on the third. The level's frames carry a third each instead of every 4th frame the whole (on the desktop
+   * iGPU the whole was +4.5 ms of a 7 ms frame's GPU, the frame's largest spike). The same step as `step(1)`: the
+   * cells everything reads (the generation, the snapshots) are the step's before till the copy, and an event or a
+   * whole step asked meanwhile finishes it first.
+   */
+  stepPart(): void {
+    this.flushSnaps();
+    if (!this.kFlux) return;
+    const enc = this.device.createCommandEncoder({ label: 'coarse step part' });
+    this.encodePart(enc, this.part);
+    this.device.queue.submit([enc.finish()]);
+    if (++this.part === 3) this.stepped();
+  }
+  /** the next part of the step under way (0: none begun) */
+  private part = 0;
+
+  private finishPart(): void {
+    if (this.part === 0) return;
+    const enc = this.device.createCommandEncoder({ label: 'coarse step rest' });
+    while (this.part < 3) this.encodePart(enc, this.part++);
+    this.device.queue.submit([enc.finish()]);
+    this.stepped();
+  }
+
+  /** the parts of steps encoded so far (the frame pacing probe's: did one run this frame) */
+  partsRun = 0;
+
+  private encodePart(enc: GPUCommandEncoder, k: number): void {
+    this.partsRun++;
+    const g = Math.ceil(this.cn / 8);
+    const t = this.timer();
+    if (k === 0) {
+      this.writeUni();
+      const cp = enc.beginComputePass({ timestampWrites: t?.timestamps('coarse-flux') });
+      cp.setPipeline(this.kFlux!.pipeline);
       cp.setBindGroup(0, this.gFlux!);
       cp.dispatchWorkgroups(g, g);
       cp.end();
-      cp = enc.beginComputePass();
+    } else if (k === 1) {
+      const cp = enc.beginComputePass({ timestampWrites: t?.timestamps('coarse-depth') });
       cp.setPipeline(this.kDepth!.pipeline);
       cp.setBindGroup(0, this.gDepth!);
       cp.dispatchWorkgroups(g, g);
       cp.end();
+    } else {
       // (the cells everything reads stay one buffer: what was made is copied back)
       enc.copyBufferToBuffer(this.next, 0, this.cells, 0, this.cells.size);
-      this.device.queue.submit([enc.finish()]);
-      this.steps++;
-      for (let k = this.vents.length - 1; k >= 0; k--) if (--this.vents[k].steps <= 0) this.vents.splice(k, 1);
     }
+  }
+
+  private stepped(): void {
+    this.part = 0;
+    this.steps++;
+    for (let k = this.vents.length - 1; k >= 0; k--) if (--this.vents[k].steps <= 0) this.vents.splice(k, 1);
   }
 
   /** an event over the grid now (and in the fine window: onEvent) */
   event(e: CoarseEvent): void {
     if (!this.kEvent) throw new Error('the coarse world is not made yet');
     this.flushSnaps();
+    this.finishPart();
     this.writeUni(e);
     const enc = this.device.createCommandEncoder({ label: 'coarse event' });
     const cp = enc.beginComputePass();

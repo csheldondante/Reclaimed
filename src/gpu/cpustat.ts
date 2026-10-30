@@ -19,7 +19,11 @@ export const frameSteps: string[] = [];
  */
 export const spans = { on: false, label: [] as string[], ms: [] as number[] };
 
+/** (round 114, framepace) who hears every step as it ends (label, ms): the frame pacing probe's work between frames */
+export const stepTaps: ((label: string, ms: number) => void)[] = [];
+
 function span(label: string, ms: number): void {
+  for (const t of stepTaps) t(label, ms);
   if (!spans.on || ms < 0.5 || spans.ms.length >= 512) return;
   spans.label.push(label);
   spans.ms.push(ms);

@@ -13028,6 +13028,97 @@ for it, but the pixels show the stand-in: the geometric check reads 0 there (it 
 So the reach by throughput isn't changed (a reach shrunk to one tile's latency made z5 worse: SF9's entry); SF11 stays
 open for when a `+none` shows up.
 
+## 2026-10-30 — round 114 (`framepace`): the phone's parked frame drops measured; the coarse world's step spread
+
+Why: the Pixel 9a parked at window 256 renders 56-57 fps, p99 33 ms, the long frames 33-50 ms with ~1-2 ms of CPU in
+them, which the hitch recorder can only call "browser" or "gpu-busy". The user: the hero run "framerate feels bad";
+the goal a steady 60. It was the same on the stable build, so not the streaming redesign.
+
+What the phone's reports already say (data/bench, bench v4 2026-10-28, win256 parked): GPU frame span (timestamp
+first pass begin to last end) p50 12.2, p95 18.4, max 22.5 ms; the span grows with the window (320: 15.9, 384: 30.9,
+448: 40.2, 512: 53.9 p50) while the canvas is tiny — the phone's low tier renders at 205x393 (dpr capped at 1, render
+scale 0.5; canvas bgra8unorm, opaque). So the frame is GPU work that scales with what's drawn and simulated, not with
+pixels, and at 256 its tail crosses 16.7 ms. The phone has timestamp-query; Mali's timestamps are sane within a pass,
+not summed across passes (round 102), so the span is the number to trust, the per-pass ones only roughly.
+
+**The probe** (src/perf/framepace.ts, `?hitch=1` — every bench page — or `?framepace=1`): per rendered frame the rAF
+interval, the lag from the rAF timestamp to its callback, the callback's CPU, rAF to the frame's last submit, last
+submit to onSubmittedWorkDone, the frames still on the GPU when it began (main.ts holds a rAF at 2), the rAFs held, the
+GPU span, the gap between this frame's GPU begin and the last one's end (≈0: the GPU never idles), its passes, the sim
+ticks it ran and the slow-period systems due, and which counters moved (the coarse world's step parts, the streamer's
+work). `report()` sets the slow frames (over 1.25 vsync) against the rest and against the frame before each.
+Profiler got `listen()` (a listener list) so the probe hears the GPU without taking the hitch recorder's `onFrame`.
+
+**The pan bench (v6)** runs it parked at each zoom before the ramps, 4 s a phase: `timed` (timestamps read back),
+`untimed` (as the game plays), and at the first zoom `inFlight1`, `inFlight3` (main.ts's pacing limit) and `simOff`
+(every sim system's encode a no-op). `summary.pace` has a line per zoom; `pan256.zooms[].pace` the whole. The phone's
+next run (https://csheldondante.github.io/Reclaimed/framepace/?bench=pan&panwin=256&benchzooms=14_8_5) says which:
+the GPU span over 16.7 ms on the slow frames (and which passes), done latency holding rAFs (held > 0, inFlight 2), the
+sim's ticks (`slowFramesByTicks`), or none of ours (lag or interval long with the GPU idle: the browser).
+
+**Desktop proxy** (scripts/paceprobe.mjs, headless iGPU at the phone's shape, q=low, window 256, zoom 14, parked; the
+headless display runs ~100 Hz, so its 9.6 ms frame against ~7-9 ms of GPU is about the phone's 16.7 against 12):
+- GPU span p50 6.7 ms; `draw` 3.6 of it — geometry, not pixels at 206x457: skipping the field mesh saves 1.4 ms,
+  the grid 1.0, the far land (the stand-in under the whole view, SF2) 0.9, plants 0.5; then renderprep 0.3-0.6,
+  fieldmesh-hash 0.3, gbuffer 0.24, shadow 0.23. The sim off changes nothing measurable (ticks 0-1 a frame at 100 Hz).
+- submit to done p50 9.5 ms against a 6.7 ms span: half the frames begin with the last one still on the GPU (inFlight
+  1); `inFlight1` halves the rate (60 → ~51 uncapped, 101 → 61 at vsync): the pacing limit of 2 is needed, 3 changes
+  nothing parked.
+- **the coarse world's step** (atlas/coarse.ts: flux, depth over 512x512 cells and an 8 MB copy back; every 4th frame,
+  untimed till now) is the largest spike: those frames' span 11.5 ms against 6.7 (flux 0.9, depth 2.2, the copy the
+  rest). In the bench's pan page 96% of the slow frames ran it against ~75% of the others.
+
+**The change**: Coarse.stepPart — the step's three parts (flux, depth, copy) on three frames of four, the same step at
+the same rate (the cells everyone reads are the step's before till the copy; an event or a whole `step()` finishes a
+step under way first). ?coarseparts=0 the whole step every 4th frame, to compare. Both steps' passes timed now
+(`coarse-flux`, `coarse-depth`). Desktop, uncapped: GPU span p95 11.2 → 9.9, p99 12.3 → 10.8 ms (p50 6.7 → 7.3: the
+work moved, not removed); at vsync, two runs each: p95 10.4 / 10.4 → 9.35 / 9.36, submit-to-done p95 12.1 / 11.3 →
+10.9 / 10.9. The headless desktop drops almost no frames either way (0-2 in 625), so the phone's run is the judge.
+The per-cell look is untouched.
+
+Not changed, for the phone's numbers to decide (BACKLOG FP4, FP5): the draw's geometry (the far stand-in drawn inside
+the window too), 2-tick sim frames ("Prioritize rendering over simulation too": a frame-locked tick when the rate
+is the display's), the pacing limit.
+
+## 2026-10-30 — round 114 (`framepace`, FP4): the frame-locked tick
+
+Why: the Pixel 9a's bench v6 run on `framepace` (scratchpad pixel9a-pan-framepace.json; the user: "Subjectively this
+one looked really good with very little pop in and pretty smooth"). Parked, GPU span p50 6.2-6.6 ms, p95 10-11 (of
+16.7); slow frames 2-8 of ~245, and they ran 1.5-2 sim ticks on average against 0.8 for the rest. With the sim off,
+or three frames in flight, none of 249 was slow; with one in flight 20. 20% of frames ran no tick at all (zoom 14
+timed: 45 frames 0 ticks, 200 one, 2 two). So the drops left are the sim's 2-tick frames: the fixed-step accumulator
+against a 60 Hz display at the 60 Hz tick rate drifts in phase, and the rAF's jitter puts it either side of a tick
+boundary — 0, 1 or 2 ticks a frame. (The slow frames also began late: rAF lag 5-7 ms, the last submit 10 ms in.)
+
+The change: sim/tickclock.ts, behind `WorldCore.clock.take(simDt, speed, maxTicks, keep)`:
+- 'locked' (the default): when the display's median rAF interval over the last 31 frames is within 12% of the tick
+  (and speed 1), a frame runs exactly one tick — rendering first.
+- Drift: what's owed (or run ahead) stays in `acc` as the accumulator's did. Past two ticks owed it runs one extra tick,
+  past one ahead it skips one, never two corrections within 20 frames (4 once it's past 100 ms owed — a planner's cut,
+  a stall). Past 0.5 s owed it's dropped, as the accumulator dropped time rather than spiral. Sim time stays true over
+  the long run (below: within 30 ms over 2 minutes).
+- Any other display rate (90/120 Hz: 0/1 a frame; 30 Hz: 2), speed, or `?tick=accum`: the accumulator as before.
+- Counters `clock.stats` (frames, locked frames, ticks, extra, skipped, dropped); the bench's parked pace records them
+  each phase (`tickClock`), and bench v7 adds a `tickAccum` phase (the accumulator) at the first zoom beside untimed
+  (locked), inFlight1/3 and simOff — the phone's next run compares directly.
+
+scripts/tickclock-sim.ts (made-up displays, 120 s each; ticks a frame 0 / 1 / 2, sim time less real):
+| display | accumulator | locked |
+|---|---|---|
+| 60 Hz, 1 ms jitter | 117 / 6974 / 113, -9 ms | 4 / 7199 / 1, +7 ms |
+| 60 Hz, 3 ms jitter | 336 / 6550 / 325, -9 ms | 19 / 7184 / 8, -9 ms |
+| 59.94 Hz | 118 / 6958 / 121, -12 ms | 1 / 7192 / 4, -12 ms |
+| 60.5 Hz | 135 / 7060 / 70, -16 ms | 65 / 7199 / 1, +1 ms |
+| 60 Hz, a vsync missed every 40 frames | 114 / 6630 / 285 (each miss followed by a 2-tick frame) | 1 / 6857 / 171 (paid back 20+ frames later), -29 ms |
+| 60 Hz, the planner cuts 30 frames | -476 ms (dropped once the cut lifted) | +7 ms (paid back) |
+| 120 / 90 / 30 Hz | 0/1, 0/1, 2 | the same (not locked) |
+
+Desktop: the headless (and headful) Chrome here presents at ~100 Hz, and its rAF can't be held to 60 Hz on a whole
+vsync grid (scripts/paceprobe.mjs --hz with --uncapped gives ~19 ms frames), so the clock never locks there — rightly:
+it measured a 10 ms (and 19 ms) display and ran the accumulator, the ticks a frame identical to `tickAccum` (0: 340,
+1: 490 of 830 at 100 Hz; 1: 358, 2: 66 at 52 Hz). The locked path is checked by scripts/tickclock-sim.ts above; the
+phone's v7 run (`untimed` locked against `tickAccum`, `tickClock` per phase: lockedFrames, extra, skipped) is the
+measure. Bench v7 ran end to end headless (pan page, zoom 14, no errors).
 ## 2026-10-30 — round 114 (`covercheck`): why the geometric check missed the stand-in — the tiles' eye-side cut (SF13)
 
 **The disagreement.** On the user's Pixel 9a pan bench (places) the geometric coverage check read no pop-in up to
@@ -13239,3 +13330,86 @@ alone. The cause was the runner, not the merge: in the agent's sandboxed Bash sh
 .testcache fails EPERM, and `build()` took a failed rename for another run having built the same sources, deleted its
 build and served the missing directory. It now throws when the rename fails and no other build is there. Runner-based
 scripts were run from PowerShell, where the rename works.
+
+## 2026-10-30 — round 114 (`framepace`, FP6-FP8): cuts are pauses; bench v8 settles, interleaves and clusters
+
+Why: the phone's bench v7 (scratchpad pixel9a-pan-tickclock.json). The locked clock engaged (display 16.7 ms, every
+clock frame locked, nothing dropped), but the clock saw ~195 of ~245 rendered frames: the level doesn't call
+`advance` while the streamer is busy (`stream.busy`), so those frames ran no tick (48 of 246 at zoom 14 untimed, all
+of its 0-tick frames). The clock's `extra` ticks (2-6 a phase) were the 2-tick frames, and the slow frames were mostly
+those (`slowFramesByTicks` {2: 2-5}): the time owed came from missed vsyncs (a 33 ms interval is one tick owed) and
+planner cuts, paid back. And the phase order confounded v6/v7: inFlight3, tickAccum and simOff ran last and were
+perfect (60.02 fps, 0 slow, rAF lag p95 1.3-1.5 ms) while timed/untimed, first, ran with rAF lag p95 9-15 ms — the
+view still filling after the zoom change. Neither inFlight3 nor simOff can be credited from those runs.
+
+The user's test (verbatim): "If they are not next together then as soon as I can ride the bike and test I think we can
+call the work complete".
+
+Changes:
+- TickClock v2 (sim/tickclock.ts): the user puts rendering before simulation, so time the rendering took isn't a debt.
+  Locked, a missed vsync's interval past 1.5 ticks is dropped (`missedS`), a tick the planner cut (`maxTicks` 0) is
+  dropped as if run (`cutS`), and a frame the sim is held (`pause()`, the level calls it when the streamer is busy) is
+  dropped (`pausedS`, `pausedFrames`). Only the display's drift is paid back (the band, 20 frames apart). The
+  accumulator (`?tick=accum`) is unchanged. scripts/tickclock-sim.ts: a vsync missed every 40 frames — 2-tick frames
+  171 (v1) → 1, the sim 2.9 s behind real time over 2 min (2.5% of frames missed: the pauses); the planner's 30-frame
+  cut → 483 ms dropped, no 2-tick frames after it (v1: 29).
+- Streamer.busyWhy (restore, slide, warp, slideZ) and LevelScene.simHeld: the held frames counted by why.
+- Bench v8 (BENCH_VERSION 8), the parked pace:
+  - settles first: the planner without holes, no tiles in flight, nothing arriving, the streamer idle, for 1 s
+    (`settle`: ms, timedOut and the state at the timeout; 20 s at most);
+  - every phase twice, the second round reversed (timed, untimed, inFlight1, inFlight3, tickAccum, simOff, then
+    simOff@2 … timed@2; the other zooms timed, untimed, untimed@2, timed@2), so order can't bias a comparison;
+  - each phase: `tickClock` (with missed / cut / paused), `simHeld` by why, rAF lag, `pre` (other rAF callbacks run
+    before the frame's in its vsync, timed — framepace.ts wraps requestAnimationFrame) and `between` (timed steps,
+    gpu/cpustat, run between frames), and `lagBy`: for the frames whose callback began over 4 ms late, the largest
+    earlier rAF callback and step between frames, counted, and the lag neither explains (`untracedMean`);
+  - `clusters` per phase and per pan step (`steps[].slowClusters`): each slow frame's time since the phase began and
+    its interval, the gaps, the longest run of consecutive slow frames, how many within 100 ms of the last, the
+    smallest gap in ms and frames, and a verdict ("TOGETHER" or "apart"); `summary.slowTogether` lists them all.
+
+Headless check (bench v8, pan page, zoom 14, desktop iGPU at ~100 Hz, so the clock doesn't lock there): ran end to
+end, no bench errors; settled in 1.0 s; 12 parked phases in A..Z..A order; `summary.slowTogether` lists every parked
+phase and pan step. At 100 Hz the desktop's 9.6 ms frame is near its GPU's 8.8 ms, so 5% of frames slip one vsync and
+pairs within 100 ms are common there (not the phone's case: 2-8 of ~245); the late callbacks it saw (2 of 401
+untimed) had no rAF callback or timed step before them (`untracedMean` 4.8 ms).
+
+## 2026-10-30 — round 114 (`framepace`, FP9): the phone's v8 freeze; the frame loop stops only loudly
+
+Why: the phone's bench v8 (scratchpad pixel9a-pan-v8.json). Zoom 14 was clean (settled in 14 s; untimed 0/249 slow;
+the second round's phases 0 slow but inFlight1; the bike-speed pans mostly "apart": pool 80 c/s 4 slow, min gap
+217 ms; disk 80 one back-to-back pair; 120 and 240 pairs 50-66 ms apart). Then it froze: zoom 14's disk step at
+120 c/s rendered one frame (fps 0.3; one slide begun, `slideDoneMs` empty), every capture after it 0 frames, zoom 8's
+settle timed out with "tilesInFlight 1" — the tiles' count is only updated by a frame, so a symptom — and the warp to
+the disk line waited 62 s for the streamer (busy, its slide never done) till the watchdog moved on; zoom 5 never ran.
+Nothing in the report said why: the bench didn't hear a frame's exception, and a GPU that never finishes holds every
+rAF (main.ts's pacing, two frames in flight) without a word.
+
+What it is, from the numbers: either the frame callback threw (the loop isn't re-armed) or the GPU's queue stopped
+(onSubmittedWorkDone never resolved, the slide's readback never mapped, every rAF held). v7 ran the same steps to
+640 c/s; v8's only change on the frame's path in a slide is the tick clock's `pause()` and the held count — a
+counter and an array push. Not reproduced on the desktop: bench zooms 14_8 at 100 Hz, and locked (`--hz 50` on
+scripts/benchrun.mjs, `?ticktol=0.25` so a 20 ms display locks) — every step of both zooms rendered (zoom 8 disk
+640 c/s 66 fps; locked, 49-51 fps), settles 1.0 s, no errors.
+
+Changes:
+- main.ts: the frame's whole body under one guard — a throw is the fatal overlay ("a frame failed" with its stack) and,
+  on a bench page, the page's error (benchSkip: the chain goes on); every rAF held 20 s with no GPU work done is fatal
+  too, with the frames in flight, the last work done, the readbacks pending (and the slowest) and the streamer's busy
+  reason. 20 s, not 5: the desktop's first load held every frame 6 s with 7 readbacks pending (the slowest 5.1 s) and
+  went on — slow, not stuck; the phone held for over 60 s. scripts/loopfail.mjs checks both (throw, stall): the
+  overlay shows each.
+- TileLandGpu.inFlightJobs() (key, ms since started, made), in the bench's settle timeout with the frames rendered
+  while it waited (0: the loop, not a tile).
+- `?ticktol=` (TickClock.tol, default 0.12): a test's display that isn't 60 Hz locks; benchrun.mjs `--hz`.
+- BENCH_VERSION 9.
+
+## 2026-10-30 — round 114 (`framepace`): the phone's frozen frame loop was the hitch recorder (FP9)
+
+Bench v9's frame guard caught it on the Pixel 9a at zoom 14's pool step at 20 c/s: "a frame failed: TypeError: Cannot
+read properties of undefined (reading 'frames') at account at frameStart". The bench resets the hitch recorder
+(`?hitch=1`, bench pages only) between steps, setting t0 from performance.now(). A frame's rAF time runs behind that
+by its callback's lag (p50 ~8 ms, max ~20 ms on the phone), so a frame that began before the reset had t < 0, its
+minute row -1 was undefined, and the callback threw. Without v9's guard the throw ended the rAF chain: v8's silent
+freeze. It needs a reset inside a frame's lag window, so it struck some runs and not others. A frame timed before
+t0 now belongs to the old recording. Normal play doesn't run the recorder; the game's own frame loop was never the
+cause. The settled parked phases of the same run: untimed 2/247 and 0/249 slow, all apart (min gap 2.2 s).

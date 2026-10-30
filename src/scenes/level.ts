@@ -66,6 +66,8 @@ import { loadRunStory, runWorld, startAtlasRun } from '../story/atlas-run';
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 /** (round 113) ?planner=0: no planner — each layer's own fixed look-ahead, the sim's ticks never cut */
 const PLANNER_OFF = new URLSearchParams(location.search).get('planner') === '0';
+/** (round 114, framepace) ?coarseparts=0: the coarse world's whole step on every 4th frame (as before), not a part a frame */
+const COARSE_PARTS = new URLSearchParams(location.search).get('coarseparts') !== '0';
 /** (round 113, SF10) ?camclamp=1: the camera held a region in from the streamed window's edge (round 91), as before */
 const CAM_CLAMP = new URLSearchParams(location.search).get('camclamp') === '1';
 const PLAN_OFF = new Set((new URLSearchParams(location.search).get('planoff') ?? '').split(',').filter(Boolean));
@@ -219,6 +221,8 @@ export class LevelScene implements Scene {
   private sleep?: Sleep;
   /** (?flow=1, docs/ARCHITECTURE.md "The flow model") the flow model: liquids as runs, steady state freezing */
   private flow?: FlowKit & { lab?: { breach: (spring?: number) => void } };
+  /** (round 114, framepace) frames the sim was held, by why (stream-slide, stream-warp, …, skip) */
+  readonly simHeld: Record<string, number> = {};
   private noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
   /** ?ceiling=1 (the perf ceiling, the atlas level): each frame only the camera (the drive) and the heightfield —
    *  far.ts's rings (?near=1: a ring a cell apart first, the default; 2: the usual four) and the far land; no sim,
@@ -1980,8 +1984,15 @@ export class LevelScene implements Scene {
     this.director.update(dt);
     // geysers (round 75)
     if (this.opts.atlas) this.stepGeysers(dt * this.speed);
-    // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms)
-    if (this.opts.atlas && ++this.coarseFrame % 4 === 0) this.opts.atlas.atlas.coarse.step(1);
+    // the coarse world goes on (round 71): a step every 4th frame (a step a frame cost ~1.5 ms). (Round 114, framepace:
+    // its three parts on three frames of the four — the whole step on one frame was its GPU's largest spike; Coarse.
+    // stepPart. ?coarseparts=0 the whole step every 4th frame, to compare)
+    if (this.opts.atlas) {
+      const c = this.opts.atlas.atlas.coarse;
+      const k = ++this.coarseFrame % 4;
+      if (!COARSE_PARTS) k === 0 && c.step(1);
+      else if (k < 3) c.stepPart();
+    }
     // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
     // (round 94: the settlements past the window planned for the bake, whatever the streamer's doing)
     this.settlements?.farUpdate(dt);
@@ -2101,7 +2112,13 @@ export class LevelScene implements Scene {
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const tSim = performance.now(); // (round 100, hitchrec: timing)
-    const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
+    // (round 114, framepace: a frame the sim is held — the streamer busy — is a pause to the tick clock, counted by why)
+    const held = this.stream?.busy ? `stream-${this.stream.busyWhy}` : this.noSim ? 'skip' : '';
+    if (held) {
+      core.clock.pause(simDt, this.speed);
+      this.simHeld[held] = (this.simHeld[held] ?? 0) + 1;
+    }
+    const ticks = held ? 0 : core.advance(now, simDt, this.speed);
     record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's

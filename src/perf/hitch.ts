@@ -189,7 +189,10 @@ export class HitchRecorder {
   frameStart(now: number): void {
     // (spans since the previous callback ended were between frames)
     const n = spans.ms.length;
-    if (this.lastStart >= 0) {
+    // (a frame whose rAF time is before t0 began before a reset — rAF times run behind performance.now() by the
+    // callback's lag, up to 20 ms on the phone — and belongs to the old recording: judged into this one its minute
+    // was -1, minutes[-1] undefined, and the frame threw (round 114: the phone bench's frozen loop, FP9))
+    if (this.lastStart >= 0 && now >= this.t0) {
       const interval = now - this.lastStart;
       this.account(now, interval);
       if (interval > this.threshold) this.hitch(interval, n);
