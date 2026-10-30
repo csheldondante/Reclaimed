@@ -300,15 +300,16 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
     this.pendingShift = [p[0] + dx, p[1] + dy, p[2] + dz];
     for (const g of this.groupList) {
       if (!g) continue;
-      g.home = [g.home[0] + dx, g.home[1] + dy];
-      g.centre = [g.centre[0] + dx, g.centre[1] + dy, g.centre[2] + dz];
+      // (WorldCore.onShift's sense: the window moved by (dx, dy, dz), so what's in it moves by minus that)
+      g.home = [g.home[0] - dx, g.home[1] - dy];
+      g.centre = [g.centre[0] - dx, g.centre[1] - dy, g.centre[2] - dz];
       if (g.order.kind === 'roam') g.order = { ...g.order, around: g.home };
       if (g.order.kind === 'go') g.order = { ...g.order, to: g.home };
       if (g.order.kind === 'pace') g.order = { ...g.order, around: g.home };
       this.writeOrder(g);
     }
     if (this.pathData)
-      this.setPaths({ ...this.pathData, nodes: this.pathData.nodes.map((n) => ({ at: [n.at[0] + dx, n.at[1] + dy, n.at[2] === null ? null : n.at[2] + dz] })) });
+      this.setPaths({ ...this.pathData, nodes: this.pathData.nodes.map((n) => ({ at: [n.at[0] - dx, n.at[1] - dy, n.at[2] === null ? null : n.at[2] - dz] })) });
   }
 
   update(dt: number): void {
@@ -405,9 +406,9 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
   }
 
   /** (tests, debugging) the draw args, creature `slot`'s state and its first points, the first vertices — read back now */
-  async probe(slot = 0, nVerts = 4): Promise<{ args: number[]; agent: number[]; pose: number[]; verts: number[] }> {
+  async probe(slot = 0, nVerts = 4, nPoints = 8): Promise<{ args: number[]; agent: number[]; pose: number[]; verts: number[] }> {
     const d = this.device;
-    const sizes = [32, AS * 16, 8 * 32, nVerts * 32];
+    const sizes = [32, AS * 16, nPoints * 32, Math.max(1, nVerts) * 32];
     const rb = d.createBuffer({ size: sizes.reduce((a, b) => a + b, 0), usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
     const enc = d.createCommandEncoder();
     let o = 0;

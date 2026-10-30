@@ -388,7 +388,8 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
       }
       if (state == S_WALK) { desired = vec3<f32>(nrm2(home - pos.xy + vec2<f32>(rnd(seed, u32(P.time * 0.2)) - 0.5, 0.3) * roamR) * walkV, 0.0); speedCap = walkV; }
     } else if (state == S_STALK) {
-      speedCap = walkV * 0.75;
+      // (low and steady: slower than a trot, faster than grazing — a stalk you can watch close in)
+      speedCap = max(walkV * 0.8, runV * 0.22);
       if (tgtD < 1e8) {
         let d = tgt - pos.xy;
         desired = vec3<f32>(d / max(length(d), 0.01) * speedCap + pack, 0.0);
@@ -864,12 +865,13 @@ fn meshArgs() {
   atomicStore(&drawArgs[1], 1u);
 }
 
-/** the window slid: every creature and every point of its body with it */
+/** the window slid: every creature and every point of its body with it (by -shift) */
 @compute @workgroup_size(64)
 fn shiftIt(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= P.n) { return; }
-  let d = P.shift.xyz;
+  // (WorldCore.onShift's sense, as the agents' Translator: the window moved by d, so what's in it moves by -d)
+  let d = -P.shift.xyz;
   agents[i * AS] = agents[i * AS] + vec4<f32>(d, 0.0);
   // (a3.xy is a spot it walks to — townsfolk keep their path's direction there instead)
   let a0 = agents[i * AS];

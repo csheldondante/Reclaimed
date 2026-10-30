@@ -1834,7 +1834,7 @@ export class LevelScene implements Scene {
         this.editor?.setVisible(false);
         mountViewer(host.ui, life, core, this.heightAt);
       }
-      else wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: this.heightAt });
+      else if (mode !== 'empty') wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: this.heightAt });
     }
     lifeFocus(life, core);
     life.update(dt);

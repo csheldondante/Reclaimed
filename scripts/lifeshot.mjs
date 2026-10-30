@@ -38,6 +38,7 @@ await run({ name: 'lifeshot', kind: 'behaviour' }, async (R) => {
         if (g && g.count > 0) {
           r.camera.target[0] = g.centre[0];
           r.camera.target[1] = g.centre[1];
+          r.camera.target[2] = g.centre[2];
         }
         return { count: life.count, groups: life.groups().map((g) => ({ s: g.species, n: g.count, c: g.centre.map((v) => +v.toFixed(1)) })) };
       },

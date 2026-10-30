@@ -213,7 +213,7 @@ export interface Inhabitants {
   presence(rect: { x0: number; y0: number; x1: number; y1: number }, cell: number): Presence;
   /** creatures alive */
   readonly count: number;
-  /** the window slid (streamed worlds): positions shift with it */
+  /** the window slid by (dx, dy, dz) (streamed worlds; WorldCore.onShift's sense): what's in it moves by minus that */
   shift(dx: number, dy: number, dz: number): void;
   /** each frame (orders, reads, abilities) */
   update(dt: number): void;

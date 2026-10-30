@@ -2,6 +2,7 @@
 //   ?life=1        a wilderness round the camera: a herd of deer, goats, a wolf pack that stalks them, crows, a wanderer
 //   ?life=dragon   the same and a dragon (fire breath that melts stone, wing beats that raise dust)
 //   ?life=town     townsfolk on the stand-in paths (paths.ts) as well
+//   ?life=empty    installed, nothing spawned (scripts/perf/inhabitants.mjs spawns its own)
 //   ?life=viewer   the viewer's panel (viewer.ts): pick a body plan, tweak it, watch it walk, run, idle, fly
 // Counts: ?lifeherd=N deer a herd (default 12).
 
