@@ -37,7 +37,7 @@ import { record, timed } from '../gpu/cpustat';
 import { RegionPool, type PoolSlot } from './region-pool';
 import { RegionCopier } from './region-copy';
 import { RegionStore } from '../world/region-store';
-import { columnsHash, columnsHashSteps, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
+import { GEN_VERSION, columnsHash, columnsHashSteps, decodeRecord, encodeRecord, recordMismatch, regionLayout, type RegionLayout, type ThingRecord } from '../world/region-record';
 import { CHUNK, K_HEADROOM, PHYS_COL_WORDS, SLOT_WORDS, addTop, fitColumn, joinColumn, lowerTop, packColumn, readSlot, splitColumn, waterInWindow, type Interval } from '../world/layout';
 import { ROW_H, cellAt } from '../world/lattice';
 import { PROJ_K } from '../grids/structures';
@@ -183,6 +183,9 @@ export interface WorldSave {
   disk: boolean;
   /** ?world=new: this world's records cleared first */
   fresh: boolean;
+  /** (round 114) a run's world: the prefix of this seed's earlier runs' worlds, whose records are dropped (a run
+   *  can't be resumed: level.ts worldSaveOf) */
+  endedRuns?: string;
 }
 
 /** (round 100) a region's things (meshes with transforms that own cells: sim/external.ts) — taken as it's frozen, given back as it's written */
@@ -628,12 +631,15 @@ export class Streamer {
       }
     // (round 100) the store: opened, cleared for a new world, the window's saved regions restored; till then the
     // window doesn't slide (a region made before the index is read might have had a record)
+    // (round 114: records of another land generator — GEN_VERSION, a hash of its sources — and earlier runs' dropped as
+    // it opens: reported once, never loaded, the store doesn't grow with them)
+    const keep = { gen: GEN_VERSION, endedRuns: save.endedRuns };
     const fail = (e: unknown) => {
       this.storeError = String((e as Error)?.message ?? e);
       console.error(`[worldsave] ${this.storeError} — this session's changes are kept in memory only, not saved`);
-      return RegionStore.open(save.world, true);
+      return RegionStore.open(save.world, true, keep);
     };
-    void (save.disk ? RegionStore.open(save.world).catch(fail) : RegionStore.open(save.world, true))
+    void (save.disk ? RegionStore.open(save.world, false, keep).catch(fail) : RegionStore.open(save.world, true, keep))
       .then(async (s) => {
         if (save.fresh) await s.clear();
         await this.restore(s);
@@ -2045,6 +2051,39 @@ export class Streamer {
     this.stats.gpuMade++;
     g.done = performance.now();
     return f;
+  }
+
+  /**
+   * (round 114, scripts/gendeterm.mjs) A region (world corner x0, y0) made as the window makes one (regionInto,
+   * WINDOW_MAKE) into a spare slot at the window's oz and hashed: its columns in world z (columnsHash: what a record
+   * is checked by) and every byte of the slot. Nothing of the window changes. Made twice — in another order, after a
+   * warp, on another page load — the same hashes say the generator is a function of the seed alone.
+   */
+  async genHash(x0: number, y0: number): Promise<{ cols: number; bytes: number; ms: number }> {
+    if (!this.source.regionInto) throw new Error('genHash: the land source makes nothing on the GPU');
+    const { R } = this;
+    const L = this.layout;
+    const dev = this.core.host.gpu.device;
+    const t0 = performance.now();
+    const slot = this.pool.temp();
+    try {
+      const oz = this.oz;
+      const m = metaOf(await this.source.regionInto(x0, y0, R, R, { buf: slot.buf, off: slot.off, layout: L, oz, zMax: this.core.dims.zMax, K: this.K, colK: this.colK, settle: !settleLand() }, WINDOW_MAKE));
+      const st = dev.createBuffer({ label: 'genHash read', size: L.bytes, usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST });
+      const enc = dev.createCommandEncoder({ label: 'genHash read' });
+      enc.copyBufferToBuffer(slot.buf, slot.off, st, 0, L.bytes);
+      dev.queue.submit([enc.finish()]);
+      await st.mapAsync(GPUMapMode.READ);
+      const all = new Uint32Array(st.getMappedRange().slice(0));
+      st.unmap();
+      st.destroy();
+      let h = 0x811c9dc5;
+      for (let i = 0; i < all.length; i++) h = Math.imul(h ^ all[i], 0x01000193) >>> 0;
+      const cols = columnsHash(all.subarray(0, (L.rc * L.rc * L.pageBytes) / 4), L, m.outside, oz);
+      return { cols, bytes: h, ms: performance.now() - t0 };
+    } finally {
+      this.pool.release(slot);
+    }
   }
 
   /**

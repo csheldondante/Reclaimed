@@ -11,9 +11,11 @@
 // surface, the ground, the relief) and its things (meshes with transforms that own cells: sim/external.ts):
 //   u32 magic 'RCLR' | u32 header length | header JSON (utf-8) | sections, each 16-byte aligned, at the offsets
 //   the header lists.
-// The format version is RECORD_FORMAT; GEN_VERSION is the land generator's (bump it when the atlas's or
-// streamgen's land changes: a record made by another is reported and the region made again). `sig` is the layout's
-// own signature (K, the kept fields and their strides): a record of another layout is made again too.
+// The format version is RECORD_FORMAT; GEN_VERSION is the land generator's: (round 114, `worldstore`) a hash of the
+// generator's sources made at build time (scripts/lib/gen-sources.mjs, vite.config.ts __GEN_HASH__) — a record made
+// by any other generator is dropped and its region made again from the seed (round 100's hand-bumped number stayed 1
+// through many generator changes, and old regions loaded beside new land). `sig` is the layout's own signature (K,
+// the kept fields and their strides): a record of another layout is made again too.
 
 import { CHUNK, SLOT_WORDS, type Interval } from './layout';
 import { MATERIALS, MatState } from './materials';
@@ -22,8 +24,10 @@ export const RECORD_MAGIC = 0x524c4352;
 /** the record's own format (2, round 107 `pages`: the per-column buffers page-major — a region's pages one after
  *  another, each 16 x 16 columns row-major, as the window's buffers hold them) */
 export const RECORD_FORMAT = 2;
-/** the land generator's version: bump when what a region is made of changes (the atlas, streamgen, the hooks) */
-export const GEN_VERSION = 1;
+/** the land generator's version: a hash of every source file that decides what a region is made of (the atlas,
+ *  streamgen, the stamp hooks — scripts/lib/gen-sources.mjs), made at build time. Never bumped by hand. */
+export const GEN_VERSION: string = __GEN_HASH__;
+declare const __GEN_HASH__: string;
 
 export interface LayoutBuf {
   name: string;
@@ -111,7 +115,8 @@ export interface ThingRecord {
 
 export interface RecordHeader {
   format: number;
-  gen: number;
+  /** GEN_VERSION of the build that made it (round 100–113's records: the number 1) */
+  gen: string | number;
   world: string;
   /** the region (regions on the world's torus) and its corner (world cells) */
   rx: number;

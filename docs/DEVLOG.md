@@ -13129,3 +13129,105 @@ frames, z8 5.3%, z5 9.8%: the window's leading chunks, `c10,*`) — z5 real (the
 reading undrawn what the pixels show drawn (SF14). The golden images at desktop z2.2/z1.3 and phone z2.2/z1.3 differ
 35-56% from their baselines, which were written before round 112's zoom floor (2.57 / 2.78) and show a wider view:
 not this change; w384's goldens moved 1.2-1.7% (the rings' pressing now round the ground's focus, or none).
+## 2026-10-30 — round 114 (`worldstore`): a saved world from another generator; the generator's version a hash of its sources; a run's places made fresh
+
+The user (DECISIONS round 114): "Without the flag my world seems to me glitched … I think the intention was to have
+places regenerated from the atlas data the first time you visit each run (as long as it can be deterministic from
+seed)". (The flag: `?world=new`.)
+
+**The cause, reproduced.** `GEN_VERSION` (world/region-record.ts) was a hand-bumped number. `git log -S GEN_VERSION`
+shows only round 100 adding it as 1 and gpugen touching it. It never moved through rivers, the vertical datum, lava,
+caves and the rest. So a region saved by an older build loaded next to land made by the new generator. The test
+(scripts/worldstale.mjs) uses one browser profile and one origin (IndexedDB is per origin), with each build served on
+port 5291 in turn. First d26891c (10-29, record format 2 like places) touched and saved all 25 regions of the
+window. Then places 3604bc2 opened the same profile: "25 saved regions of atlas:1 restored", mismatched 0. Its shot
+(shots88/worldstore/2-places-saved-world.png) differs from `?world=new` (3-places-world-new.png): the lake at the top
+is gone, the rivers are reshaped, and the snow field has straight region-edged seams.
+
+**The fix: the generator's version is derived, never bumped.** scripts/lib/gen-sources.mjs walks the value imports
+from four entries: atlas/atlas.ts, world/streamgen.ts, settle/settlements.ts and story/stage-land.ts (the generator,
+the noise land and the two stamp hooks). It includes their `?raw` WGSL and JSON data. Type-only imports are erased
+by the compiler, so it skips them. It doesn't descend into gpu, sim, tune, weather, grids, gm, units, render, ui or
+scenes: the generator calls into those (riverMode from sim/world-gpu, the pipeline helpers), but their code doesn't
+decide what land is made. The result is 41 files (`node scripts/lib/gen-sources.mjs` lists them). The version is the
+first 16 hex digits of a SHA-1 over each file's path and LF-normalised text, so a Windows checkout and the Pages
+build agree. vite.config.ts defines it as `__GEN_HASH__`, and `GEN_VERSION` is that string (71eeb082ad1625e3 here).
+A comment added to atlas/sites.ts gives 26adacb1217bbab5. A render or UI edit doesn't change it. The hash is
+deliberately wide: a stale region beside fresh land is a visible bug, while a dropped save is only lost changes.
+
+**Stale saves handled once, as the store opens.** The store's meta rows now carry `gen`. A new worker op, `prune`,
+reads the meta rows of every world in one transaction and drops three kinds of record:
+- this world's records of another generator;
+- every record with no `gen` (rounds 100-113, any world: no build from now on can use them);
+- when a run opens, this seed's earlier runs' records.
+
+It logs one console line. Other worlds' records stay: every branch's Pages build shares the origin, so they share
+the database, and another branch may still use them. A world opened under a different generator keeps only that
+generator's records. The header check in `Streamer.load` stays as a backstop.
+- With the old d26891c save under the fix's build: "[worldsave] dropped 25 saved regions made by another land
+  generator (this build's is 71eeb082ad1625e3): made again from the seed — atlas:1: 25". The store is left empty and
+  the window matches `?world=new` (4-fix-old-save-dropped.png against 3).
+- Saved with the fix's build and opened again by the same build: 25 restored, 0 mismatched.
+- Opened by the build with the edited generator: dropped 25, "this build's is 26adacb1217bbab5".
+
+**The world id carries the options.** `atlas:<seed>~<fnv>` hashes the atlas's other parameters (`?a.*`), the river
+mode and whether land comes in settled. Before, a world made with other options loaded this one's records.
+
+**Runs.** `?run=` was a story id, so `atlas:1:run=bell` persisted across reloads. Yet a reload restarts the run: the
+story's objectives are fresh, `runWorld` restores no snapshot, and the world's run number is always 0. So a new run
+saw the last one's land. Now a run is its own world, `:run=<story>@<instance>`, with a new instance each page load
+(`?runinst=` names one, for tests or a future resume). Its places are made from the seed the first time they're
+visited and keep their changes for the run. Earlier runs' records on this seed are dropped as it opens.
+worldsavetest `--run` (`--onlyrun`, dev server, all ok):
+- `&runinst=wst` reload: the opened door's land comes back (plug 0).
+- A load without it is a new run: the door is shut (plug 47, as before it was opened), and "dropped 1 regions of
+  earlier runs".
+
+Without `?run=`, nothing changes: the plain atlas world persists across reloads until `?world=new`. The user is to
+say whether it should be fresh each load (BACKLOG WV4).
+
+**Deterministic from the seed: yes, for the four regions tried.** scripts/gendeterm.mjs uses `Streamer.genHash`, which
+makes a region with regionInto and WINDOW_MAKE into a spare pool slot and hashes its columns (world z) and every byte.
+It ran on the dev server at q=low 412x915 with every system on. The regions were E (the window's corner), A (the
+middle), G (by the spawn's settlement) and F (20 regions east), visited four ways:
+1. in order;
+2. reversed;
+3. after a warp 40 regions away;
+4. on a second page spawned at F, reversed.
+
+Every region gave 1 column hash and 1 byte hash in all four. No order or history dependence was found, settlements'
+stamps included.
+
+**Disk to RAM to GPU (TY7, WV5).** This is a note and a design, not built here. A saved region reaches the GPU in
+three steps:
+1. The store's worker runs one op at a time: an IndexedDB get, inflate, unshuffle.
+2. The main thread runs `decodeRecord`, copying out each section.
+3. `pump` uploads the record's raw body into a pool slot at UPLOAD_BYTES a frame: 0.5 MB on a phone, 2 MB on the
+   desktop.
+
+The sizes, measured:
+- A body is 1.64 MB (1.8 MB with its CPU parts), 145 KB compressed: 25 regions were 45.2 MB raw, 3.6 MB packed.
+- Only 7.8% of a generated region's slot words are non-zero (region A: 33,412 of 430,080). The rest is empty slots
+  and planes.
+
+So on a phone each disk region takes about 4 frames of the upload budget. That caps arrival near 60 × 0.5 / 1.8 ≈ 16
+regions a second, which is the ~15 a second the Pixel 9a bench showed. Generated land doesn't pay this cost:
+finish.wgsl writes it straight into its slot. The worker's time per get looked small next to that (single-digit ms
+on the desktop, but measured while the GPU was shared, so not a timing).
+
+The proposal, for the streaming planner (covercheck / tilesfirst's files):
+- (a) A RAM tier in the worker. The store's index already says which regions near the camera are saved, without a
+  read, so their compressed records can be read into the worker's memory well past the pool's reach (~145 KB each,
+  so 100 regions ≈ 15 MB).
+- (b) Decode in the worker, and hand the main thread transferred typed arrays.
+- (c) A sparse upload: only the non-zero words with a run table, expanded into the slot by a compute pass. At 7.8%
+  non-zero that is ~10x fewer bytes a region, in the same per-frame budget.
+- (d) In the planner's reach, ask for disk regions before generated ones, since they arrive slower.
+- (e) Size the pool against window + ahead + the disk prefetch.
+
+Also noted (WV6): tiles are made from the generator, never from a record, so a region that play changed shows its
+generated land in the tiles until the window holds it.
+
+The shots were taken while the GPU was shared with another agent's run: visual and correctness only, no timings.
+Shots are in C:\Projects\shots88\worldstore\ (1-old-build-saved, 2-places-saved-world, 3-places-world-new,
+4-fix-old-save-dropped, 5-fix2-other-gen-dropped).

@@ -12,6 +12,18 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 114 (2026-10-30, session 5, `worldstore`) — a saved world from another generator; a run's places made fresh (DECISIONS round 114)
+
+| id | item | size | status |
+|---|---|---|---|
+| WV1 | The saved world glitched without `?world=new`: GEN_VERSION was a hand-bumped 1 that never moved, so regions saved by older generators loaded beside new land (reproduced: a d26891c save opened on places, 25 of 25 loaded, 0 mismatched). GEN_VERSION is now a hash of the generator's sources at build time (scripts/lib/gen-sources.mjs, vite `__GEN_HASH__`) | S | done (this commit) |
+| WV2 | Stale saves handled cleanly: as a store opens, this world's records of another generator and every record without one (rounds 100-113) are dropped in one transaction and said once in the console; the store's meta rows carry `gen` | S | done (this commit) |
+| WV3 | The world id carries what else decides the land (`?a.*` atlas parameters, the river mode, settled land): `atlas:<seed>~<hash>`; a world with other options no longer loads this one's records | S | done (this commit) |
+| WV4 | A run is its own world, one per run (`:run=<story>@<instance>`, `?runinst=` to name one): its places are made from the seed the first time they're visited and keep their changes for the run; earlier runs' records dropped. Without `?run=` the world still persists across reloads (unchanged) — the user to say whether a plain atlas session should be a run too | S | done (this commit); question open |
+| WV5 | Disk -> RAM -> GPU ahead (TY7): the measured note and the design in the DEVLOG (round 114, worldstore: a disk region ~4 frames of the phone's 0.5 MB upload budget, ~16 a second at most; 7.8% of a region's words non-zero, so a sparse upload is the lever) — not built here, it's the streaming planner's (covercheck / tilesfirst files) | M | open |
+| WV6 | Tiles (render-only land, TileLandSource) are made from the generator, never from a saved record: a region play changed shows its generated land in the tiles until the window holds it | S | open |
+| WV7 | The generator's hash is read when the dev server starts: an edit to a generator file in a running `npm run dev` keeps the old version till restart (a virtual module that re-hashes on change, if it bites) | S | open |
+
 ## Round 113 (2026-10-30, `tilesfirst`) — stand-ins first, detail as fast as it comes (the streaming design, steps 1-6)
 
 The user: "Why don't we load the fast tiles first and then something is always there and swap only when the slow one is
@@ -71,7 +83,7 @@ The user, on the eye side: option (a), "the tile drawn cut". On the disk: "Is th
 | TY4 | Tiles a frame off the phone while the tiles' lane is backed up: the guard to 16 turns, 12 in flight, 8 bakes | S | done (`tilefix2`): desktop z1.3 fill >540 -> 180 frames |
 | TY5 | The phone path's fill at a wide zoom (z1.3: 270 frames against 180): more turns a frame on the phone when the lane's backed up — the phone bench to decide | S | open |
 | TY6 | The pan bench's disk rows were generated land (6 of ~250 from disk on the phone): the fill runs till the camera's gone the line; `came` reports storeMiss, mismatched, loadFailed, the store's size | S | done (`tilefix2`), the phone to rerun |
-| TY7 | Disk to RAM ahead: what's prefetched ahead (Streamer.prefetch -> bring: the store's worker read, the main thread's decode, the pool's upload) measured against pool hits once the disk rows stream from disk; decode off the main thread if it's the cost | M | open |
+| TY7 | Disk to RAM ahead: what's prefetched ahead (Streamer.prefetch -> bring: the store's worker read, the main thread's decode, the pool's upload) measured against pool hits once the disk rows stream from disk; decode off the main thread if it's the cost. Round 114 (`worldstore`): measured note and design in the DEVLOG, BACKLOG WV5 | M | open |
 | TY8 | A grey sliver at a region's edge in a panning frame (desktop z3.5, gate shot) | S | open |
 | TY9 | The 3080's premerge gate: pans' window-undrawn false (the mirror 60 frames behind: read every frame while the gate runs, a 5-frame run filter), the gate's 60 Hz cap catching up after a late tick (the pacer's low envelope to 8 ms, its guard at one turn: fixed), one frame threshold (58), notes not failures, `--throttle`, the pipeline in each row | S | done (`tilefix2`), the 3080 to re-run |
 | TY10 | (3080 gate, d614e17) The gate's 60 Hz hold isn't applied on the run views: run-desktop and run-wide measured 68 fps while the line says "under the 60 Hz cap" | S | open |

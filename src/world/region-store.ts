@@ -4,7 +4,8 @@
 // (region-store.worker.ts). Nothing here is waited on by a frame: every call is async; the index (which regions
 // have a record, and the session that wrote each) is read once at open, so `has` answers at once.
 //
-//   const store = await RegionStore.open('atlas:1')      // ?worldsave=0: RegionStore.memory(...) — the session's only
+//   const store = await RegionStore.open('atlas:1~…', false, { gen })   // mem true (?worldsave=0): the session's only;
+//                                                         // records of another `gen` (and `endedRuns`' worlds) dropped
 //   store.has('12,7') → meta | undefined
 //   await store.put('12,7', bytes, { session, hash })     // compressed off the thread; bytes are transferred
 //   await store.get('12,7') → bytes                        // decompressed off the thread
@@ -13,6 +14,14 @@
 import type { StoreAsk, StoreMeta, StoreReply } from './region-store.worker';
 
 export type { StoreMeta };
+
+/** (round 114) what a store keeps as it opens: its records' land generator (GEN_VERSION); a record of another — or
+ *  none, round 100–113's — is dropped. `endedRuns`: worlds with this prefix (this seed's earlier runs, but this one)
+ *  are dropped too. */
+export interface StoreKeep {
+  gen: string;
+  endedRuns?: string;
+}
 
 type Ask = StoreAsk extends infer A ? (A extends { id: number } ? Omit<A, 'id' | 'world' | 'mem'> : never) : never;
 
@@ -29,6 +38,8 @@ export class RegionStore {
     readonly world: string,
     /** ?worldsave=0: kept in the worker's memory for this session (evicted from the pool, never written) */
     readonly mem: boolean,
+    /** (round 114) the land generator its records are made by (each record's meta says so) */
+    readonly gen: string,
   ) {
     this.worker = new Worker(new URL('./region-store.worker.ts', import.meta.url), { type: 'module' });
     this.worker.onmessage = (e: MessageEvent<StoreReply>) => {
@@ -39,9 +50,23 @@ export class RegionStore {
     this.worker.onerror = (e) => console.error(`[worldsave] the store's worker failed: ${e.message}`);
   }
 
-  /** The store of a world (its index read). Fails — a clear error — when IndexedDB can't be opened. */
-  static async open(world: string, mem = false): Promise<RegionStore> {
-    const s = new RegionStore(world, mem);
+  /**
+   * The store of a world (its index read). Fails — a clear error — when IndexedDB can't be opened. (Round 114:)
+   * first the records it can't use are dropped — made by another land generator (`keep.gen`), or of an ended run —
+   * and that's said once in the console.
+   */
+  static async open(world: string, mem = false, keep: StoreKeep = { gen: '' }): Promise<RegionStore> {
+    const s = new RegionStore(world, mem, keep.gen);
+    const pr = await s.ask({ op: 'prune', gen: keep.gen, endedRuns: keep.endedRuns });
+    if (!pr.ok) throw new Error(`world save: the store can't be opened (${pr.error})`);
+    const d = pr.dropped ?? {};
+    const gens = Object.values(d).reduce((a, x) => a + x.gen, 0);
+    const runs = Object.values(d).reduce((a, x) => a + x.run, 0);
+    if (gens || runs)
+      console.log(
+        `[worldsave] dropped ${gens ? `${gens} saved regions made by another land generator (this build's is ${keep.gen}): made again from the seed` : ''}${gens && runs ? '; ' : ''}${runs ? `${runs} regions of earlier runs` : ''} — ${Object.entries(d).map(([w, x]) => `${w}: ${x.gen + x.run}`).join(', ')}`,
+      );
+    s.stats.deleted += gens + runs;
     const r = await s.ask({ op: 'index' });
     if (!r.ok) throw new Error(`world save: the store can't be opened (${r.error})`);
     for (const m of r.metas ?? []) s.index.set(m.key, m);
@@ -80,7 +105,7 @@ export class RegionStore {
   put(key: string, bytes: Uint8Array, meta: { session: string; hash: number }): Promise<void> {
     const raw = bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength ? (bytes.buffer as ArrayBuffer) : (bytes.slice().buffer as ArrayBuffer);
     const n = raw.byteLength;
-    const m = { key, world: this.world, session: meta.session, savedAt: Date.now(), hash: meta.hash };
+    const m = { key, world: this.world, session: meta.session, savedAt: Date.now(), hash: meta.hash, gen: this.gen };
     // (the index says it's there at once: a load before the write lands waits for it)
     this.index.set(key, { ...m, raw: n, packed: this.index.get(key)?.packed ?? 0 });
     const was = this.putting.get(key) ?? Promise.resolve();
