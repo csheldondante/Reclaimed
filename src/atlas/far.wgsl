@@ -354,8 +354,9 @@ const STAND_Z: f32 = 0.99999976;
 
 @vertex
 fn vsStandIn(@builtin(vertex_index) vi: u32) -> FOutV {
-  let G = u32(FP.mid.z);
-  let s = FP.win.z;
+  // (half the far land's vertices a side, twice as far apart: far.ts standIndex — a quarter of its vertex work)
+  let G = (u32(FP.mid.z) - 1u) / 2u + 1u;
+  let s = FP.win.z * 2.0;
   let gi = vec2<f32>(f32(vi % G), f32(vi / G)) - f32(G - 1u) * 0.5;
   let local = (floor((FP.mid.xy + FP.org.xy) / s) + gi) * s - FP.org.xy;
   let p = local + FP.org.xy;

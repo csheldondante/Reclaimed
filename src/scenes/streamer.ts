@@ -1304,6 +1304,21 @@ export class Streamer {
     });
   }
 
+  /** (round 113, tilesfirst) the last regions' land, asked to made (ms) */
+  private landMs: number[] = [];
+  /** (round 113) the land's latency, asked to made: the 90th percentile of the last 24 (s), or null */
+  landLatency(): number | null {
+    if (this.landMs.length < 3) return null;
+    const a = [...this.landMs].sort((x, y) => x - y);
+    return a[Math.floor(a.length * 0.9)] / 1000;
+  }
+  /**
+   * (round 113, tilesfirst — the planner's, scenes/planner.ts) How far ahead along the camera's motion the streamer
+   * works (cells; 0 at rest): `land` the strips asked for ahead, `slide` how far on the slide judges where the camera
+   * is (the window's latency at its speed: the strip comes in that much before the camera's there). Null: as before.
+   */
+  reach: { land: number; slide: number; dir: [number, number] } | null = null;
+
   /** (round 91) the camera's velocity (cells a second, world x and rows), smoothed; where it was, and when */
   readonly vel: [number, number] = [0, 0];
   private last: [number, number, number] | null = null;
@@ -1369,9 +1384,12 @@ export class Streamer {
     // (and only while what's made ahead and under way leaves the pool room: the phone's ride made 6x the regions it
     // used with round 102's first ahead, the pool evicting land made ahead to make more)
     if (!STREAM_OLD && AHEAD > 0 && this.made.size + this.jobs.size < POOL_CAP / 2) {
-      const strips = (v: number) => Math.max(AHEAD, Math.min(AHEAD_MAX, Math.ceil((Math.abs(v) * AHEAD_S) / R)));
-      if (Math.abs(this.vel[0]) > MOVING) for (let k = 2, n = strips(this.vel[0]); k <= n; k++) this.prefetch(Math.sign(this.vel[0]) * k * R, 0);
-      if (Math.abs(this.vel[1]) > MOVING) for (let k = 2, n = strips(this.vel[1]); k <= n; k++) this.prefetch(0, Math.sign(this.vel[1]) * k * R);
+      // (round 113: the planner's reach — speed × the land's and the window's measured latency, and a margin — in strips
+      // along each axis of the motion; before, AHEAD_S seconds or AHEAD strips)
+      const rc = this.reach;
+      const strips = (v: number, d: number) => Math.max(AHEAD, Math.min(AHEAD_MAX, rc ? Math.ceil((rc.land * Math.abs(d)) / R) : Math.ceil((Math.abs(v) * AHEAD_S) / R)));
+      if (Math.abs(this.vel[0]) > MOVING) for (let k = 2, n = strips(this.vel[0], rc?.dir[0] ?? 0); k <= n; k++) this.prefetch(Math.sign(this.vel[0]) * k * R, 0);
+      if (Math.abs(this.vel[1]) > MOVING) for (let k = 2, n = strips(this.vel[1], rc?.dir[1] ?? 0); k <= n; k++) this.prefetch(0, Math.sign(this.vel[1]) * k * R);
     }
     // in z: the ground under the camera near the window's top or bottom
     const h = this.source.height;
@@ -1386,10 +1404,15 @@ export class Streamer {
     }
     // (the slide itself where the camera is: sliding early for where it's heading slid twice as often on a
     // winding road — back again at each bend — for no nearer edge: DEVLOG round 91)
-    if (x > hx + reach) return this.slideWhenReady(R, 0);
-    if (x < hx - reach) return this.slideWhenReady(-R, 0);
-    if (y > hy + reach) return this.slideWhenReady(0, R);
-    if (y < hy - reach) return this.slideWhenReady(0, -R);
+    // (round 113, tilesfirst: and where it will be in the window's latency at its speed — the planner's slide reach, along
+    // the motion only, at most a region: the strip is in the window and drawn by the time the screen's there)
+    const sl = this.reach ? Math.min(R, this.reach.slide) : 0;
+    const sx = x + (this.reach ? this.reach.dir[0] * sl : 0);
+    const sy = y + (this.reach ? this.reach.dir[1] * sl : 0);
+    if (sx > hx + reach && x > hx) return this.slideWhenReady(R, 0);
+    if (sx < hx - reach && x < hx) return this.slideWhenReady(-R, 0);
+    if (sy > hy + reach && y > hy) return this.slideWhenReady(0, R);
+    if (sy < hy - reach && y < hy) return this.slideWhenReady(0, -R);
     return null;
   }
 
@@ -1426,8 +1449,12 @@ export class Streamer {
   /** (round 100) a job for a region's land under way: ready when done (unless dropped meanwhile — a warp) */
   private startJob(key: string, job: Promise<Frozen>): void {
     this.jobs.set(key, job);
+    const t0 = performance.now();
     job.then(
       (f) => {
+        // (round 113: asked to made, for the planner's land reach)
+        this.landMs.push(performance.now() - t0);
+        if (this.landMs.length > 24) this.landMs.shift();
         if (this.taken.has(job)) return;
         if (this.jobs.get(key) === job) {
           this.jobs.delete(key);

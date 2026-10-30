@@ -129,6 +129,9 @@ export class FieldMesh {
   /** per chunk: near the view (rebuilt when changed; written to the state), in it (drawn) */
   private near = new Uint32Array(0);
   private inView = new Uint8Array(0);
+  /** (round 113, the planner's — scenes/planner.ts) where the view will be (window units, x y) when what's rebuilt now is
+   *  ready: the chunks there are near (rebuilt) too. [0, 0]: only the view's own margin */
+  lead: [number, number] = [0, 0];
   /** (round 113) per chunk 1: drawn this frame if built (the last cull's; hybrid: only the wanted) */
   get inViewMask(): Uint8Array {
     return this.inView;
@@ -681,6 +684,10 @@ export class FieldMesh {
       this.tops = new Float32Array(chunks).fill(this.zHi);
     }
     const r: [number, number, number, number] = [Infinity, Infinity, -Infinity, -Infinity];
+    // (the lead's offset in clip space: the camera moved on by it)
+    const leadOn = this.lead[0] !== 0 || this.lead[1] !== 0;
+    const lx = m[0] * this.lead[0] + m[4] * this.lead[1];
+    const ly = m[1] * this.lead[0] + m[5] * this.lead[1];
     for (let cy = 0; cy < this.ny; cy++)
       for (let cx = 0; cx < this.nx; cx++) {
         let lo = [Infinity, Infinity];
@@ -705,10 +712,13 @@ export class FieldMesh {
         const want = !this.wanted || this.wanted[c] !== 0;
         const within = (e: number) => want && (behind || (hi[0] >= -e && lo[0] <= e && hi[1] >= -e && lo[1] <= e));
         this.inView[c] = within(1) ? 1 : 0;
+        // (round 113, the planner's lead: where the view will be in the mesh's latency at the camera's speed — the
+        // chunks there are near too, rebuilt before the screen's on them)
+        const ahead = (e: number) => want && (hi[0] - lx >= -e && lo[0] - lx <= e && hi[1] - ly >= -e && lo[1] - ly <= e);
         // (over 1: come near within ten frames — the change pass looks at it even asleep, round 80; ten, so a
         // change found when every rebuild slot was taken is found again)
         const was = this.near[c];
-        this.near[c] = within(1.5) ? (was === 0 ? 11 : Math.max(1, was - 1)) : 0;
+        this.near[c] = within(1.5) || (leadOn && ahead(1.25)) ? (was === 0 ? 11 : Math.max(1, was - 1)) : 0;
         if (this.near[c]) {
           r[0] = Math.min(r[0], cx * CHUNK);
           r[1] = Math.min(r[1], cy * CHUNK * ROW_H);

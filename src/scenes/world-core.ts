@@ -4,6 +4,7 @@
 
 import type { Gpu } from '../gpu/device';
 import type { Profiler } from '../gpu/profiler';
+import { RenderFieldsSystem, SurfaceSystem } from '../sim/systems';
 import { Camera } from '../render/camera';
 import { Renderer } from '../render/renderer';
 import type { GlobalsState } from '../sim/globals';
@@ -251,7 +252,9 @@ export class WorldCore {
     g.sunCol = [this.light.col[0], this.light.col[1], this.light.col[2], this.light.timeOfDay];
     g.sky = [this.light.sky[0], this.light.sky[1], this.light.sky[2], this.light.night];
 
-    const maxTicks = this.host.quality.maxTicksPerFrame * speed;
+    // (round 113, the planner's — scenes/planner.ts: rendering before simulation — while the view has undrawn land the
+    // sim's ticks a frame are cut; its time catches up later, capped as ever)
+    const maxTicks = Math.min(this.host.quality.maxTicksPerFrame * speed, this.simCap ?? Infinity);
     this.acc += simDt;
     let ticks = 0;
     // (SM2: the player's strokes of wind count as interactions — gusts[0] is the cursor's breeze, not a stroke)
@@ -262,10 +265,30 @@ export class WorldCore {
       this.acc -= TICK_DT;
       ticks++;
     }
-    if (ticks === maxTicks) this.acc = Math.min(this.acc, TICK_DT); // drop time instead of spiralling
+    // drop time instead of spiralling (round 113: cut by the planner, up to half a second kept — caught up after)
+    if (ticks === maxTicks) this.acc = Math.min(this.acc, this.simCap !== null && maxTicks === this.simCap ? 0.5 : TICK_DT);
     // (round 108, simtiers: a bake's ticks — the baked processes run in its region at its gain, the rest alongside)
     ticks += this.tiers.pump(() => this.sim.step(g, filter));
     return ticks;
+  }
+
+  /** (round 113) the sim's ticks a frame at most (the planner's), or null: the tier's */
+  simCap: number | null = null;
+  private arrivePrep?: { surface: SurfaceSystem; fields: RenderFieldsSystem };
+  /**
+   * (round 113, tilesfirst: the design's "rendering before simulation") The window's render preparation — the surface
+   * words and textures (SurfaceSystem), the render fields (RenderFieldsSystem) — over every column now, asleep or not:
+   * for land just written into the window (the streamer's onRelief), so its drawing is ready this frame instead of
+   * after the sim's next ticks (which a slide holds, and the planner may cut). Derived fields only: running them again
+   * changes nothing the sim keeps.
+   */
+  prepareArrived(): void {
+    const { device } = this.host.gpu;
+    this.arrivePrep ??= { surface: new SurfaceSystem(device, this.world, this.host.profiler, true), fields: new RenderFieldsSystem(device, this.world, this.host.profiler, true) };
+    const enc = device.createCommandEncoder({ label: 'arrived prep' });
+    this.arrivePrep.surface.encode(enc);
+    this.arrivePrep.fields.encode(enc);
+    device.queue.submit([enc.finish()]);
   }
 
   render(): void {

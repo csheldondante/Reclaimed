@@ -194,7 +194,7 @@ async function measure(p, secs, parked = true) {
     const rep = window.reclaimedHitch?.report?.();
     const hitches = rep?.worst ? rep.worst.slice(0, 2).map((h) => `${h.ms} ${h.cause} ${[...(h.steps ?? []), ...(h.async ?? [])].slice(0, 2).map((x) => `${x.label} ${x.ms}`).join(', ')}`) : [];
     // (round 112, tilefix3: the zoom as it stands — under the device's floor it's held at it — and the floor)
-    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, bg, geo: geo.frames ? { max: +geo.max.toFixed(4), mean: +(geo.sum / geo.frames).toFixed(5), framesAny: geo.framesAny, frames: geo.frames, worst: geo.worst } : null, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
+    return { zoom: +cam.zoom.toFixed(2), zoomFloor: +(cam.zoomFloor ?? 0).toFixed(2), hitches, fps: +(frames.length / secs).toFixed(1), p99: +q(0.99).toFixed(1), max: +q(1).toFixed(1), miss: +worst.toFixed(3), why: worstWhy, bg, planner: R.scene?.planner ? { ...R.scene.planner.stats, reach: R.scene.planner.plan.reach } : null, geo: geo.frames ? { max: +geo.max.toFixed(4), mean: +(geo.sum / geo.frames).toFixed(5), framesAny: geo.framesAny, frames: geo.frames, worst: geo.worst } : null, tiles: { slots: st.slots, used: st.used, drawn: st.drawn, mb: st.mb }, pipe };
   }, secs, parked);
 }
 
@@ -209,7 +209,9 @@ const frames = (p, n) => p.evaluate((n) => new Promise((res) => {
 function judge(tag, m, missMax) {
   const f = [];
   if (!frameChecks) {
-    if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
+    // (round 113, tilesfirst: a pan is judged by the geometric check where the build has it — the old "out of detail"
+  // counted the window's land once written and put its points at the focus's height; it's reported, not judged)
+  if (m.miss > missMax && !(m.geo && tag.includes('panning'))) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
   // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
   // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)
@@ -217,7 +219,9 @@ function judge(tag, m, missMax) {
     if (f.length) fails.push(`${tag}: ${f.join('; ')}`);
     return f;
   }
-  if (m.miss > missMax) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
+  // (round 113, tilesfirst: a pan is judged by the geometric check where the build has it — the old "out of detail"
+  // counted the window's land once written and put its points at the focus's height; it's reported, not judged)
+  if (m.miss > missMax && !(m.geo && tag.includes('panning'))) f.push(`out of detail ${(m.miss * 100).toFixed(1)}% (${Object.entries(m.why).map(([k, v]) => `${k} ${v}`).join(', ')})`);
   // (round 112, bgcheck: the background colour on more than --bgmax of a frame's samples; frame rate or not)
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
   // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)

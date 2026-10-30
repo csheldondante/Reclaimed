@@ -12903,3 +12903,49 @@ on places' tree (z2.2/z1.3 baselines older than the zoom floor) plus phone z3.5 
 Frames alike (45-51 fps under the 60 Hz cap on this iGPU as before). The gate's old "out of detail" still flags phone
 z5 pans 2-3.6% ("off": its points at the focus's height, a tile's CPU box off the screen) where the geometric check and
 the pixels read 0.
+
+## 2026-10-30 — round 113 (`tilesfirst`, step 4): the planner — reach by speed × measured latency, holes first, rendering before simulation
+
+The user: "It's really dumb not to grow with speed" and "Prioritize rendering over simulation too".
+- **scenes/planner.ts `StreamPlanner`**, once a frame from level.ts (`planFrame`, before the streamer's update): reads
+  the camera's motion, the geometric coverage (the footprint), and three measured latencies — land (Streamer.landLatency:
+  asked to made, p90 of the last 24), window (slid in to every chunk drawn by the window, measured by the planner, p90),
+  tiles (TileCache.tileLatency) — and gives each consumer its reach in cells along the motion: speed × latency + 96
+  (a region and a half). Consumers, each through one field: Streamer.reach (`land`: the strips asked ahead,
+  AHEAD..AHEAD_MAX; `slide`: the slide judges where the camera will be in the window's latency, at most a region, along
+  the motion only), FieldMesh.lead (the chunks where the view will be are near: rebuilt first), TileCache.reach (the
+  tiles' look-ahead), TilePacer.holes and WorldCore.simCap.
+- **Holes first, rendering before simulation.** While the footprint has undrawn land (now or within 30 frames): the tile
+  pacer gives its lane every turn it asks for and the frame's whole room (else 0.33-0.8 of it by speed); the sim's ticks
+  a frame are cut to 1, its time kept up to half a second and caught up after (WorldCore.advance).
+- **SF7, step 1's slowest link.** Land written into the window is prepared for drawing at once: WorldCore.prepareArrived
+  runs the surface and render-field passes over every column (SurfaceSystem / RenderFieldsSystem `all`: no sleep skip —
+  the new strip's drowse bits may not be in the Globals yet) and the hybrid's landBox marks it ready now (no
+  READY_TICKS): written → the grid draws it 85-230 ms → 0-40 ms (chaintime, phone proxy, CPU 1/4: chain-after.json;
+  0-2 sim ticks). `?arriveprep=0` as before.
+- `?planner=0` no planner; `?planoff=slide,tile,mesh,sim,pacer` one consumer left as before (the A/B).
+- **The coverage check's cost.** The first step-4 gate ran 3 fps under step 3 in every view, parked too: the coverage
+  check, now run by the planner every frame as well as by the gate, cost 1.3 ms of CPU — Atlas.zRange (10 µs a call)
+  for every region of a 6-region reach. Now only the regions under the screen's corners' footprint at the land's lowest
+  and highest are looked at, and TileLandGpu caches each region's heights: 0.03 ms. The gate's pages ran 50-52.5 fps
+  under the 60 Hz cap (step 3: 47-50), p99 21-30 ms. The stand-in's grid has half the far land's vertices a side.
+
+**Measured.** Repeated A/B (holediag, phone proxy, z14 and z8 at 80 and 160 c/s from the gate's spot, three runs each,
+worst-frame geometric / pixel-hole %): planner on — z14/160 0.0 / 1.4-1.5, z8/80 0.3-0.5 / 0-0.5, z8/160 0-0.1 /
+0.3-0.4; `planner=0` — z14/160 1.0-2.4 / 4.1-5.7, z8/80 0 / 0.6-1.0, z8/160 0-0.1 / 1.1-2.0; `planoff=slide` z14/160
+0-0.7 / 0.1-3.7; `planoff=pacer` the same as on. **Gate** (shots88/tilesfirst/gate-step4c.json; one run each on its long
+route through the zooms — single 160 c/s runs vary a lot between gate runs: phone z14 160 was 0.0% in gate-step4b and
+23% in 4c): background 0 everywhere; the gate speed (80 c/s at z14) clean on both screens; desktop z14 160 0.92 → 0;
+desktop z8 160 12.1 → 9.9; z5 160 5.9 → 1.3; but desktop z5 20-80 0.8-1.6% in every frame (a few regions past the window
+never tiled on that route: SF9) and phone z8 80 14%, z5 160 14%, z14 160 23% in some frames of that run. Frames: GPU ms
+against places 5281b21 (scripts/abframes.mjs, phone proxy, parked and panning at z14 and z5): within 0.3-1.0 ms
+(places 6.9-9.5 ms, tilesfirst 7.6-10.8).
+
+**Step 6's plan** (the user: "I think we want simulation only where what is visible and a small buffer"): drawing no
+longer waits on the window (layers 0-2 cover everything), so the window becomes the simulated set only: (a)
+region-granular arrival — a region written and prepared on its own (no strip-wide `busy` holding the sim); (b) the
+window's pages allocated for the footprint plus a region's buffer through the page table (docs/PAGES.md P2), freed
+behind, instead of a fixed square that slides; (c) the systems dispatched over the allocated pages (the LIVE lists
+already are per chunk); (d) the CPU's window-coordinate arrays (hybrid, the mesh's chunk grid, the streamer's
+per-column) addressed by page; (e) the camera's clamp gone (SF10, done separately). Gate: tilegate and the sim's
+contract tests (water across page edges).

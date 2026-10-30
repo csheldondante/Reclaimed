@@ -406,9 +406,17 @@ export class TileLandGpu {
     return this.firstWanted.has(key) ? 'queued' : null;
   }
 
+  private zCache = new Map<number, [number, number] | null>();
   /** (round 113, the coverage check) region (rx, ry)'s heights as the CPU knows them, window z, or null */
   zRange(rx: number, ry: number): [number, number] | null {
-    const z = this.src.zRange(rx * R, ry * R);
+    // (cached a region: the source's heights are the macro ground's — 10 µs a call, the coverage check's every frame)
+    const k = rx * 65536 + ry;
+    let z = this.zCache.get(k);
+    if (z === undefined) {
+      z = this.src.zRange(rx * R, ry * R);
+      if (this.zCache.size > 4096) this.zCache.clear();
+      this.zCache.set(k, z);
+    }
     if (!z) return null;
     const oz = this.src.oz();
     return [z[0] - oz, z[1] - oz];
