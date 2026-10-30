@@ -64,7 +64,7 @@ export class LichHero extends PlayHero {
     ],
     hint: 'Tap the ground: glide · tap a foe: float it, tap again: drain its soul · drag a foe to swing it, let go to fling · flick away: force push · tap the lich (or 💥): slam · drag up from the lich: rise · draw a circle: storm',
   };
-  readonly camera: HeroCamera = { zoom: 26, behind: Math.PI / 4 };
+  readonly camera: HeroCamera = { zoom: 30, behind: Math.PI / 4 };
   hover: number;
   private liftFrom: number | null = null;
   private goal: Pt | null = null;
@@ -408,6 +408,7 @@ export class LichHero extends PlayHero {
     const p = this.p;
     const b = this.b;
     this.slamT = p.slamEvery;
+    this.shake = 1;
     const g = this.world.floor(b.x, b.y);
     if (p.slamCrater > 0) this.world.crater(b.x, b.y, p.slamCrater);
     hits.push({ at: [b.x, b.y], radius: p.slamReach, damage: p.slamDamage, push: p.slamPush, lift: p.slamLift, stun: 1 });

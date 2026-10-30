@@ -41,7 +41,7 @@ export interface SandboxDeps {
 }
 
 /** how far the camera pulls back at full speed (a share of the hero's zoom), how far it leads (s of travel), how quickly it follows (1/s) */
-const CAM = { back: 0.45, lead: 0.35, follow: 6, zoomEase: 2 };
+const CAM = { back: 0.4, lead: 0.35, follow: 6, zoomEase: 2, shake: 0.35 };
 /** raiders spawned at a time, how far ahead (cells) */
 const SPAWN = { count: 4, ahead: 18, spread: 4 };
 const STORE = 'reclaimed.play.params.';
@@ -216,6 +216,12 @@ export class PlaySandbox {
     const k = 1 - Math.exp(-CAM.follow * dt);
     const want: [number, number, number] = [p[0] + lead[0], p[1] + lead[1], p[2]];
     for (let i = 0; i < 3; i++) cam.target[i] += (want[i] - cam.target[i]) * k;
+    // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)
+    if (h.shake > 0) {
+      const j = h.shake * h.shake * CAM.shake;
+      cam.target[0] += (Math.random() - 0.5) * 2 * j;
+      cam.target[1] += (Math.random() - 0.5) * 2 * j;
+    }
     const z = h.camera.zoom * (1 - CAM.back * h.fast());
     this.zoom += (z - this.zoom) * (1 - Math.exp(-CAM.zoomEase * dt));
     cam.zoom = this.zoom;

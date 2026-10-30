@@ -35,7 +35,8 @@ export class VoxelDraw {
   /** Each frame: these parts. */
   draw(parts: Part[]): void {
     let n = 0;
-    for (const { voxels, at, q, flash } of parts) {
+    for (const { voxels, at, q, flash, size } of parts) {
+      const code = size ? Math.max(1, Math.min(63, Math.round(size * 16))) : SIZE_CODE;
       const glow = flash && flash > 0 ? PHYS_BIT | (Math.round(Math.min(1, flash) * 255) << 16) : 0;
       for (const v of voxels) {
         if (n >= this.max) break;
@@ -44,7 +45,7 @@ export class VoxelDraw {
         this.f[o] = c[0];
         this.f[o + 1] = c[1];
         this.f[o + 2] = c[2];
-        this.u[o + 3] = v.mat | (SIZE_CODE << 24) | glow;
+        this.u[o + 3] = v.mat | (code << 24) | glow;
         this.f[o + 4] = q[0];
         this.f[o + 5] = q[1];
         this.f[o + 6] = q[2];

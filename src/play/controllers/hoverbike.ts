@@ -17,6 +17,8 @@ export const BIKE_WEAPONS = {
   /** the slash: its blow, its shove, how often (s) */
   slashDamage: 3,
   slashPush: 7,
+  /** and the throw up it gives (cells/s): the one cut flies, readable at play zoom */
+  slashLift: 5,
   slashEvery: 0.35,
   /** the planner's help: 0 strict, 1 moderate, 2 forgiving (core/intercept.ts ASSIST) */
   assist: 1,
@@ -54,6 +56,7 @@ export const BIKE_PARAMS: ParamSpec[] = [
   P('ramDamage', 'ram damage', 0, 2, 0.05, 'weapons'),
   P('slashDamage', 'slash damage', 0, 10, 0.5, 'weapons'),
   P('slashPush', 'slash shove', 0, 30, 1, 'weapons'),
+  P('slashLift', 'slash throw', 0, 20, 0.5, 'weapons', 'cells/s up: the one cut flies'),
   P('slashEvery', 'slash every (s)', 0.1, 1.5, 0.05, 'weapons'),
   P('assist', 'aim help', 0, 2, 1, 'weapons', '0 strict · 1 moderate · 2 forgiving'),
 ];

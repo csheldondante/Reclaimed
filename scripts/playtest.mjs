@@ -57,30 +57,56 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   R.check('the bike rides (moved > 25 cells)', moved > 25, { moved: +moved.toFixed(1), top: +top.toFixed(1), status: s1.status });
   R.check('it gets up to speed (> 15 cells/s)', top > 15, { top });
   await p.screenshot({ path: path.join(dir, 'bike-ride.png') });
-  // raiders ahead, and swipes beside the bike as it passes
+  // a fight: raiders in a file 2.5 cells left of its way ahead; a swipe on the left whenever one's coming up on that side
   await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, -1], buttons: [false] }));
-  await p.evaluate(() => window.reclaimed.play.spawn());
-  await sleep(500);
-  const swipe = () =>
+  await sleep(1500);
+  await p.evaluate(() => {
+    const s = window.reclaimed.play;
+    const h = s.hero;
+    const [x, y] = h.position();
+    const a = h.heading();
+    const [fx, fy] = [Math.cos(a), Math.sin(a)];
+    window.__file = [];
+    for (let i = 0; i < 6; i++) {
+      const d = 30 + i * 14;
+      const at = [x + fx * d - fy * 2.5, y + fy * d + fx * 2.5];
+      window.__file.push(window.reclaimed.units.spawn('raider', at, 'f-raiders', { hostile: true, health: 4, sight: 6, speed: 2, role: 'raider' }));
+    }
+  });
+  await sleep(300);
+  const swipeIfComing = () =>
     p.evaluate(() => {
       const s = window.reclaimed.play;
       const h = s.hero;
       const cam = window.reclaimed.core.camera;
       const [x, y, z] = h.position();
       const a = h.heading();
-      // (its left: a swipe starting 2 cells to the left, flicked forward)
-      const from = cam.project(x - Math.sin(a) * 2, y + Math.cos(a) * 2, z);
-      const to = cam.project(x - Math.sin(a) * 2 + Math.cos(a) * 3, y + Math.cos(a) * 2 + Math.sin(a) * 3, z);
+      const [fx, fy] = [Math.cos(a), Math.sin(a)];
+      const sp = h.speed();
+      const coming = window.reclaimed.units.query([x, y], 20, { hostile: true }).some((u) => {
+        const dx = u.at[0] - x;
+        const dy = u.at[1] - y;
+        const along = dx * fx + dy * fy;
+        const side = -dx * fy + dy * fx;
+        return side > 0 && side < 6 && along > 0 && along < sp * 0.5;
+      });
+      if (!coming) return false;
+      const from = cam.project(x - fy * 2, y + fx * 2, z);
+      const to = cam.project(x - fy * 2 + fx * 3, y + fx * 2 + fy * 3, z);
       const d = Math.hypot(to[0] - from[0], to[1] - from[1]) || 1;
       s.controls.inject({ kind: 'flick', from, to, dir: [(to[0] - from[0]) / d, (to[1] - from[1]) / d], speed: 1500 });
+      return true;
     });
-  const health = () => p.evaluate(() => window.reclaimed.units.query(window.reclaimed.play.hero.position().slice(0, 2), 80, { hostile: true, dead: true }).reduce((a, u) => a + u.health, 0));
+  const health = () => p.evaluate(() => window.__file.reduce((a, id) => a + (window.reclaimed.units.get(id)?.health ?? 0), 0));
   const h0 = await health();
-  await gif('bike-fight.gif', 30, 80, async (i) => {
-    if (i % 4 === 0) await swipe();
+  let swipes = 0;
+  let hits = 0;
+  await gif('bike-fight.gif', 45, 50, async () => {
+    if (await swipeIfComing()) swipes++;
+    if ((await state()).status === 'HIT!') hits++;
   });
   const h1 = await health();
-  R.check('the raiders are hurt (by the ram or the slash)', h1 < h0, { before: h0, after: h1 });
+  R.check('the file of raiders is cut down (slash and ram)', h1 < h0, { before: h0, after: h1, swipes, hitFrames: hits });
   const told = await p.evaluate(() => window.reclaimed.play.hero.told);
   R.log(`last slash: ${told}`);
   await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [false] }));

@@ -16,6 +16,8 @@ export interface Part {
   at: V3;
   q: Q;
   flash?: number;
+  /** its voxels' edge (cells; default VOXEL): a trail's are bigger */
+  size?: number;
 }
 
 /** Voxel edge (cells): eighth cells, the renderer's size code 2 (n/16 of a cell). */

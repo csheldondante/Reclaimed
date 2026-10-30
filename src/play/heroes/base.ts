@@ -45,6 +45,8 @@ export abstract class PlayHero implements Hero {
   hurtT = 99;
   /** seconds in play */
   t = 0;
+  /** a jolt for the camera, 0..1 (a hit landed, a hard landing, a slam), decaying: the sandbox shakes the view by it */
+  shake = 0;
   readonly params: Params;
   private fell = false;
   private seen = new Map<UnitId, { at: V3; vel: V3; t: number }>();
@@ -101,6 +103,7 @@ export abstract class PlayHero implements Hero {
     const hits: Hit[] = [];
     this.t += dt;
     this.hurtT += dt;
+    this.shake = Math.max(0, this.shake - dt * 4);
     this.step(this.alive && intent.input ? intent.input : NO_INPUT, dt, hits);
     for (const h of hits) this.world.units.strike(h);
   }
@@ -110,6 +113,7 @@ export abstract class PlayHero implements Hero {
     if (!this.alive) return;
     this.hp = Math.max(0, this.hp - damage);
     this.hurtT = 0;
+    this.shake = Math.max(this.shake, 0.4);
     this.knock(from, damage);
     for (const cb of this.hurt) cb(damage, 'unit');
     if (!this.alive && !this.fell) {

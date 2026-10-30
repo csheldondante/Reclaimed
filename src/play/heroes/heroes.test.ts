@@ -85,6 +85,20 @@ describe('hoverbike hero', () => {
     expect(landed(1)[2]).toBeGreaterThan(6.8);
   });
 
+  it('a slash leaves a glowing trail along the sweep of the blade, gone soon after', () => {
+    const w = testWorld(flat);
+    const bike = new BikeHero(w, [20, 50]);
+    run(60, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    const [x] = bike.position();
+    bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [flick([x, 52], [1, 0])] }) });
+    run(8, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    const trail = bike.parts().find((p) => p.size !== undefined);
+    expect(trail).toBeTruthy();
+    expect(trail!.voxels.length).toBeGreaterThan(8);
+    run(60, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    expect(bike.parts().find((p) => p.size !== undefined)).toBeUndefined();
+  });
+
   it('rams what it runs into at speed', () => {
     const w = testWorld(flat);
     const bike = new BikeHero(w, [20, 50]);

@@ -13674,3 +13674,26 @@ the lich in a storm with slams every 2 s — 99 fps, p50 9.9, p95 11.9, 2 over 5
 CPU, worst 1.3 ms. The behaviour check (scripts/playtest.mjs): the bike rode 86 cells in ~4 s, top 32 cells/s
 (boost), the raiders ahead died to the ram; the lich floated a tapped raider and slammed two craters. GIFs in
 C:/Projects/shots88/play/. Unit tests: 60 in src/play (vitest), the heroes at their contract on synthetic terrain.
+
+## 2026-10-30 — round 117 (`play`): the fight readable at play zoom; real touches; testkit
+
+**Why.** Main looked at the first GIFs: the fight didn't read (raiders in one frame, no swing seen), and the level's
+own buttons still sat under BOOST and SLAM (those shots predated the `.play-on` hiding; the new ones show it works).
+- The blade leaves a trail: glowing voxels (the body glow bits) along each of its last sweeps, 0.22 s, thinning as
+  they age — the arc of the cut is seen at the zoom the bike is played at. A cut throws the one struck (`slashLift`
+  5 cells/s, a slider) and stuns it a moment, sprays sparks along the cut and dust off it, and the HUD says HIT!.
+- A camera jolt (`PlayHero.shake`, decaying in a quarter second): a cut, a hard landing, a crash, the lich's slam.
+- The bike's base zoom 34 (26), pulling back 0.4 at full speed (0.45): the bike was ~30 px at 79 km/h on the phone.
+- scripts/playtest.mjs's fight is staged so it shows one: a file of raiders 2.5 cells left of the bike's way, a swipe
+  whenever one is coming up on that side (11 swipes, 13 frames of HIT!, the file of 6 cut down, the slash planned with
+  4% help). C:/Projects/shots88/play/bike-fight.gif.
+
+**Real touches (scripts/playtouch.mjs).** CDP multi-finger touches on a phone-shaped page: the left thumb's stick held
+while the right thumb swipes beside the bike (read as a slash), a tap on ⚙ opens the tune panel, a tap on 💀 switches,
+a tap on the ground glides the lich 19 cells. It found a real phone bug: the UI layer's `#ui > * { pointer-events:
+auto }` gave the hint toast pointer events, and over the middle of the screen it ate the lich's taps for 6 s after a
+switch — the toast, bar and info now take none (inline). (Harness note: Chrome reads a touchEnd's points as the ones
+lifted; an empty list lifts every finger.)
+
+**testkit merged** (places 8bd557b): the play tests run in places' vitest 4 unit project beside their code (61 tests,
+src/play); `npm test` 138 + 1 expected fail.

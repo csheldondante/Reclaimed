@@ -23,6 +23,7 @@ import { BIKE_DEFAULTS, type BikeParams } from '../controllers/hoverbike';
 import { attitude, BLADE_LENGTH, buildBike, buildBlade, buildLance, LANCE_LENGTH, qAxis, qMul, type Part } from '../draw/shapes';
 import type { ButtonLook, Pad, PlayInput } from '../input/types';
 import type { PlayWorld } from '../world';
+import { MAT } from '../../world/materials';
 import { PlayHero, type Hit } from './base';
 
 /** The swing's length (s), the share it cuts in, the hand's height (cells), the blade's width; read-back lead (s). */
@@ -36,6 +37,9 @@ const BIKE_VOXELS = buildBike();
 const BLADE = buildBlade();
 const LANCE_VOXELS = buildLance();
 
+/** The blade's trail: how long a sample lingers (s), the voxels along each sample, their edge (cells) — the swing read at play zoom. */
+export const TRAIL = { life: 0.22, per: 4, size: 0.22 };
+
 /** One intent log for the page (the sandbox's debug line reads the last). */
 export const intents = new IntentLog();
 
@@ -46,13 +50,17 @@ export class BikeHero extends PlayHero {
     buttons: [{ icon: '🚀', name: 'boost', held: true }],
     hint: 'Left thumb: ride · hold BOOST (Space) · swipe on a side of the bike: slash · hold a drag: lance · haul back at speed: slide',
   };
-  readonly camera: HeroCamera = { zoom: 30, behind: Math.PI / 6, firm: Math.PI / 4 };
+  readonly camera: HeroCamera = { zoom: 34, behind: Math.PI / 6, firm: Math.PI / 4 };
   private swing: { side: 1 | -1; yaw: number; pitch: number; reach: number; t: number; plan: PassPlan | null; cut: Set<number>; rec: IntentRecord } | null = null;
   private swingT = 0;
   private lanceA: number | null = null;
+  /** the blade's sweep, sampled each step it's out (base, tip, when) */
+  private trail: { base: V3; tip: V3; t: number }[] = [];
   /** the last slash, for the debug line */
   told = '';
   private pulseT = 0;
+  /** seconds since the blade last cut something (the HUD's HIT) */
+  hitT = 99;
   private dustT = 0;
   /** best airtime this ride (s), for the HUD's trick line */
   bestAir = 0;
@@ -105,6 +113,7 @@ export class BikeHero extends PlayHero {
   protected step(input: PlayInput, dt: number, hits: Hit[]): void {
     const b = this.b;
     const p = this.p;
+    this.hitT += dt;
     stepBike(b, input.dir, dt, this.world.top, this.world.bounds, this.tuning(), !!input.buttons[0]);
     if (b.air > this.bestAir) this.bestAir = b.air;
     this.air(dt);
@@ -133,11 +142,13 @@ export class BikeHero extends PlayHero {
     }
     if (b.landed > 3) {
       const hard = Math.min(1, b.landed / 15);
+      this.shake = Math.max(this.shake, hard * 0.6);
       w.blast(b.x, b.y, 5 + 3 * hard, 3 * (1.5 + 4 * hard));
       w.burst('dust', b.x, b.y, ground + 0.2, { count: Math.ceil(8 + 16 * hard), speed: 3 + 4 * hard, spread: 0.8 });
     }
     if (b.crash > 0) {
       const hard = Math.min(1, b.crash / 25);
+      this.shake = 1;
       w.blast(b.x, b.y, 7, 3 * (3 + 5 * hard));
       w.burst('chips', b.x, b.y, ground + 0.5, { count: Math.ceil(10 + 20 * hard), speed: 4 + 6 * hard, spread: 0.6 });
     }
@@ -215,7 +226,8 @@ export class BikeHero extends PlayHero {
       }
     }
     const u = s.t / SLASH.time;
-    const [, tip] = this.bladeAt(hand, s, u);
+    const [base, tip] = this.bladeAt(hand, s, u);
+    if (u <= 1) this.trail.push({ base, tip, t: this.t });
     if (u >= SLASH.active[0] && u <= SLASH.active[1]) {
       const sp = speedOf(b);
       const out: Pt = [Math.cos(s.yaw), Math.sin(s.yaw)];
@@ -225,8 +237,12 @@ export class BikeHero extends PlayHero {
         const mid: V3 = [e.at[0] + e.vel[0] * SLASH.lead, e.at[1] + e.vel[1] * SLASH.lead, e.at[2] + e.height * 0.5];
         if (segmentDistance(mid, hand, tip) > e.height * 0.65 + SLASH.width) continue;
         s.cut.add(e.id);
-        hits.push({ at: [e.at[0], e.at[1]], z: mid[2], radius: 0.6, damage: this.p.slashDamage + sp * SLASH.perSpeed, push: this.p.slashPush + sp * SLASH.perSpeed, dir: way, lift: 2 });
-        this.world.burst('sparks', mid[0], mid[1], mid[2], { count: 8, speed: 3, spread: 0.5 });
+        hits.push({ at: [e.at[0], e.at[1]], z: mid[2], radius: 0.6, damage: this.p.slashDamage + sp * SLASH.perSpeed, push: this.p.slashPush + sp * SLASH.perSpeed, dir: way, lift: this.p.slashLift, stun: 0.6 });
+        // (the hit, readable at play zoom: a spray of sparks along the cut, a puff of dust off the one struck)
+        this.world.burst('sparks', mid[0], mid[1], mid[2], { count: 24, speed: 6, spread: 0.7, vel: [way[0] * 6, way[1] * 6, 2] });
+        this.world.burst('dust', e.at[0], e.at[1], e.at[2] + 0.3, { count: 10, speed: 3, spread: 0.6 });
+        this.hitT = 0;
+        this.shake = Math.max(this.shake, 0.5);
       }
     }
     if (u >= 1) {
@@ -282,6 +298,21 @@ export class BikeHero extends PlayHero {
       const c = Math.cos(s.pitch);
       out.push({ voxels: BLADE, at: [hand[0] + Math.cos(a) * c * off, hand[1] + Math.sin(a) * c * off, hand[2] - Math.sin(s.pitch) * off], q: qMul(qAxis([0, 0, 1], a), qAxis([0, 1, 0], s.pitch)) });
     }
+    // the trail: glowing voxels along each of the blade's recent sweeps, thinning as they age
+    this.trail = this.trail.filter((r) => this.t - r.t < TRAIL.life);
+    if (this.trail.length) {
+      const vox: { at: V3; mat: number }[] = [];
+      for (const r of this.trail) {
+        const k = 1 - (this.t - r.t) / TRAIL.life;
+        const n = Math.max(1, Math.round(TRAIL.per * k));
+        for (let i = 0; i < n; i++) {
+          const f = 1 - i / TRAIL.per;
+          vox.push({ at: [r.base[0] + (r.tip[0] - r.base[0]) * f - b.x, r.base[1] + (r.tip[1] - r.base[1]) * f - b.y, r.base[2] + (r.tip[2] - r.base[2]) * f - b.z], mat: MAT.Bone });
+        }
+      }
+      // (in world offsets from the bike, unturned: modelToWorld turns by q — the identity here — and flips its y)
+      out.push({ voxels: vox.map((v) => ({ at: [v.at[0], -v.at[1], v.at[2]], mat: v.mat })), at: [b.x, b.y, b.z], q: [0, 0, 0, 1], flash: 1, size: TRAIL.size });
+    }
     if (this.lanceA !== null) out.push({ voxels: LANCE_VOXELS, at: hand, q: qMul(qAxis([0, 0, 1], this.lanceA), qAxis([0, 1, 0], 0.08)) });
     return out;
   }
@@ -294,6 +325,7 @@ export class BikeHero extends PlayHero {
     const b = this.b;
     if (b.crashed > 0) return 'CRASH!';
     if (b.slide > 0) return 'SLIDE';
+    if (this.hitT < 0.6) return 'HIT!';
     return `${Math.round(speedOf(b) * 3.6)} km/h${b.air > 0.25 ? ` · AIR ${b.air.toFixed(1)} s` : ''}${this.lanceA !== null ? ' · LANCE' : ''}`;
   }
 }
