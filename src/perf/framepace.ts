@@ -12,6 +12,7 @@
 // captures (src/perf/bench.ts, the pan page's `pace`). The probe only watches; `maxInFlight` is main.ts's pacing
 // limit (two frames on the GPU at once, round 82) set from here so the bench can A/B it.
 
+import { stepTaps } from '../gpu/cpustat';
 import type { Profiler } from '../gpu/profiler';
 
 interface PaceFrame {
@@ -44,6 +45,12 @@ interface PaceFrame {
   maps: number;
   frameNo: number;
   passes?: [string, number][];
+  /** (v8) other rAF callbacks run in this vsync before the frame's (ms, and the largest's name) */
+  pre: number;
+  preTop: string;
+  /** (v8) timed steps (gpu/cpustat) run between the last frame's end and this one's begin: their ms and the largest */
+  between: number;
+  betweenTop: string;
 }
 
 const RING = 4096;
@@ -59,6 +66,59 @@ const mean = (xs: number[]) => {
   const a = xs.filter((v) => Number.isFinite(v));
   return a.length ? r2(a.reduce((s, v) => s + v, 0) / a.length) : null;
 };
+
+/** (v8) the slow frames' times, the gaps between them, runs of consecutive slow frames, pairs within 100 ms */
+export function clusters(fs: { t: number; interval: number }[], slowAt: number, from: number): Record<string, unknown> {
+  const idx: number[] = [];
+  fs.forEach((f, i) => f.interval > slowAt && idx.push(i));
+  const at = idx.map((i) => [r2(fs[i].t - from), r2(fs[i].interval)]);
+  const gaps = idx.slice(1).map((i, k) => fs[i].t - fs[idx[k]].t);
+  const gapFrames = idx.slice(1).map((i, k) => i - idx[k]);
+  let run = idx.length ? 1 : 0;
+  let longest = run;
+  let runs2 = 0;
+  for (let k = 1; k < idx.length; k++) {
+    if (idx[k] === idx[k - 1] + 1) {
+      run++;
+      if (run === 2) runs2++;
+    } else run = 1;
+    longest = Math.max(longest, run);
+  }
+  const sortedGaps = [...gaps].sort((a, b) => a - b);
+  return {
+    slow: idx.length,
+    frames: fs.length,
+    longestRun: longest,
+    runsOf2Plus: runs2,
+    within100ms: gaps.filter((g) => g <= 100).length,
+    minGapMs: sortedGaps.length ? r2(sortedGaps[0]) : null,
+    medianGapMs: sortedGaps.length ? r2(sortedGaps[sortedGaps.length >> 1]) : null,
+    minGapFrames: gapFrames.length ? Math.min(...gapFrames) : null,
+    at,
+    verdict: idx.length === 0 ? 'no slow frames' : longest > 1 || gaps.some((g) => g <= 100) ? 'TOGETHER: slow frames back to back or within 100 ms' : 'apart: no two slow frames within 100 ms',
+  };
+}
+
+function lagBy(fs: PaceFrame[]): Record<string, unknown> {
+  const late = fs.filter((f) => f.lag > 4);
+  const count = (key: (f: PaceFrame) => string) => {
+    const m = new Map<string, number>();
+    for (const f of late) {
+      const k = key(f) || '-';
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return Object.fromEntries([...m].sort((a, b) => b[1] - a[1]).slice(0, 6));
+  };
+  return {
+    frames: late.length,
+    unit: 'frames whose callback began over 4 ms after its rAF: the largest earlier rAF callback (name) and the largest timed step between frames (label), counted',
+    preMean: mean(late.map((f) => f.pre)),
+    betweenMean: mean(late.map((f) => f.between)),
+    untracedMean: mean(late.map((f) => f.lag - f.pre)),
+    pre: count((f) => f.preTop.replace(/ [\d.]+$/, '')),
+    between: count((f) => f.betweenTop.replace(/ [\d.]+$/, '')),
+  };
+}
 
 export interface PaceSources {
   /** the sim's tick counter, and the systems with a period over 1 (name, period) */
@@ -86,6 +146,9 @@ export class FramePace {
   private byFrameNo = new Map<number, PaceFrame>();
   private prevGpuEnd = 0;
   private prevGpuFrame = -1;
+  private rafRuns: { ts: number; ms: number; name: string }[] = [];
+  private betweenSteps: [string, number][] = [];
+  private inFrame = false;
   sources: PaceSources = {};
 
   constructor(
@@ -102,6 +165,22 @@ export class FramePace {
     };
     // (a listener of its own: the hitch recorder's and the bench's onFrame slot stays theirs)
     profiler.listen((f, ms) => this.gpuFrame(f, ms));
+    // (v8: what delays a frame's callback — other rAF callbacks in the same vsync, timed; the steps run between frames)
+    const raf = window.requestAnimationFrame.bind(window);
+    window.requestAnimationFrame = (cb: FrameRequestCallback) =>
+      raf((ts) => {
+        const t0 = performance.now();
+        try {
+          cb(ts);
+        } finally {
+          this.rafRuns.push({ ts, ms: performance.now() - t0, name: cb.name || 'anon' });
+          if (this.rafRuns.length > 64) this.rafRuns.shift();
+        }
+      });
+    stepTaps.push((label, ms) => {
+      if (this.inFrame || this.betweenSteps.length >= 64) return;
+      this.betweenSteps.push([label, ms]);
+    });
   }
 
   /** a rAF held for the GPU (main.ts) */
@@ -112,6 +191,30 @@ export class FramePace {
   /** a rendered frame begins: its rAF timestamp, the frames still on the GPU */
   begin(now: number, inFlight: number): void {
     this.cbStart = performance.now();
+    this.inFrame = true;
+    let pre = 0;
+    let preTop = '';
+    let preMax = 0;
+    for (const r of this.rafRuns)
+      if (r.ts === now) {
+        pre += r.ms;
+        if (r.ms > preMax) {
+          preMax = r.ms;
+          preTop = `${r.name} ${r.ms.toFixed(1)}`;
+        }
+      }
+    this.rafRuns.length = 0;
+    let between = 0;
+    let bTop = '';
+    let bMax = 0;
+    for (const [l, ms] of this.betweenSteps) {
+      between += ms;
+      if (ms > bMax) {
+        bMax = ms;
+        bTop = `${l} ${ms.toFixed(1)}`;
+      }
+    }
+    this.betweenSteps.length = 0;
     this.submits = 0;
     this.lastSubmit = NaN;
     this.tick0 = this.sources.simTick?.() ?? 0;
@@ -135,6 +238,10 @@ export class FramePace {
       writeKB: 0,
       maps: 0,
       frameNo: -1,
+      pre,
+      preTop,
+      between,
+      betweenTop: bTop,
     };
     this.prevT = now;
     this.heldRun = 0;
@@ -145,6 +252,7 @@ export class FramePace {
     const f = this.cur;
     if (!f) return undefined;
     this.cur = null;
+    this.inFrame = false;
     const tEnd = performance.now();
     f.cpu = tEnd - this.cbStart;
     f.submits = this.submits;
@@ -217,6 +325,8 @@ export class FramePace {
       gpu: mean(xs.map((f) => f.gpu)),
       gap: mean(xs.map((f) => f.gap)),
       inFlight: mean(xs.map((f) => f.inFlight)),
+      pre: mean(xs.map((f) => f.pre)),
+      between: mean(xs.map((f) => f.between)),
       held: mean(xs.map((f) => f.held)),
       ticks: mean(xs.map((f) => f.ticks)),
       submits: mean(xs.map((f) => f.submits)),
@@ -250,7 +360,7 @@ export class FramePace {
     for (const f of slow) slowByTicks[`${f.ticks}`] = (slowByTicks[`${f.ticks}`] ?? 0) + 1;
     const worst = [...fs].sort((a, b) => b.interval - a.interval).slice(0, 8).map((f) => {
       const top = (f.passes ?? []).sort((a, b) => b[1] - a[1]).slice(0, 3).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(', ');
-      return `${f.interval.toFixed(1)} ms: lag ${f.lag.toFixed(1)} cpu ${f.cpu.toFixed(1)} toSubmit ${f.toSubmit.toFixed(1)} done ${f.done.toFixed(1)} inFlight ${f.inFlight} held ${f.held} gpu ${Number.isFinite(f.gpu) ? f.gpu.toFixed(1) : '-'} gap ${Number.isFinite(f.gap) ? f.gap.toFixed(1) : '-'} ticks ${f.ticks}${f.slow ? ` (${f.slow})` : ''}${f.ran ? ` ran ${f.ran}` : ''} wrote ${f.writeKB.toFixed(0)} KB maps ${f.maps}${top ? `; ${top}` : ''}`;
+      return `${f.interval.toFixed(1)} ms: lag ${f.lag.toFixed(1)} cpu ${f.cpu.toFixed(1)} toSubmit ${f.toSubmit.toFixed(1)} done ${f.done.toFixed(1)} inFlight ${f.inFlight} held ${f.held} gpu ${Number.isFinite(f.gpu) ? f.gpu.toFixed(1) : '-'} gap ${Number.isFinite(f.gap) ? f.gap.toFixed(1) : '-'} ticks ${f.ticks}${f.slow ? ` (${f.slow})` : ''}${f.ran ? ` ran ${f.ran}` : ''} pre ${f.pre.toFixed(1)}${f.preTop ? ` (${f.preTop})` : ''} between ${f.between.toFixed(1)}${f.betweenTop ? ` (${f.betweenTop})` : ''} wrote ${f.writeKB.toFixed(0)} KB maps ${f.maps}${top ? `; ${top}` : ''}`;
     });
     return {
       label,
@@ -265,6 +375,11 @@ export class FramePace {
       vsyncsPerFrame: buckets,
       interval: st(fs.map((f) => f.interval)),
       lag: st(fs.map((f) => f.lag)),
+      pre: st(fs.map((f) => f.pre)),
+      between: st(fs.map((f) => f.between)),
+      // (v8: the most often largest rAF callback before ours, and step between frames, over the frames lagging > 4 ms)
+      lagBy: lagBy(fs),
+      clusters: clusters(fs, slowAt, from),
       cpu: st(fs.map((f) => f.cpu)),
       toSubmit: st(fs.map((f) => f.toSubmit)),
       done: st(fs.map((f) => f.done)),

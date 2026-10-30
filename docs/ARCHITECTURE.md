@@ -2176,6 +2176,8 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   maxTicks, keep)` for the frame's ticks. 'locked' (default): the display's median rAF interval within 12% of the tick
   → one tick a frame, the drift kept in `acc` and paid back a tick at a time (past two owed or one ahead, never on
   consecutive frames), past 0.5 s owed dropped; else, and with `?tick=accum`, the fixed-step accumulator.
+  (v2) Locked, time the rendering took is a pause: a missed vsync's extra interval, a planner-cut tick and a
+  frame the level holds the sim (`clock.pause()`, the streamer busy — `Streamer.busyWhy`) are dropped and counted.)
 - **The frame pacing probe** (round 114, `framepace`; perf/framepace.ts, `?hitch=1` or `?framepace=1`): main.ts calls
   `begin(now, inFlight)` / `end()` round `scene.frame`, `held()` for a held rAF, and resolves the frame's
   onSubmittedWorkDone into it; it wraps `queue.submit` once (the frame's last submit) and hears the GPU through

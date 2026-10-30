@@ -32,7 +32,7 @@ import { BGCHECK, bgShares, type BgShares } from '../render/bgcheck';
 /** (v3) vite.config.ts `define`: the build's time */
 declare const __BENCH_BUILD__: string;
 
-export const BENCH_VERSION = 7;
+export const BENCH_VERSION = 8;
 const STATE = 'reclaimed.bench.state';
 /** (v3) the build, on the start page: vite.config.ts defines it at build time */
 const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ : 'dev';
@@ -300,17 +300,39 @@ function tileStepOf(T: any, baked0: number, t0: number, secs: number, lead: numb
   };
 }
 
-/** (v6) the pacing probe's phases in a line: fps, slow frames, GPU span, submit to done, frames in flight */
+/** (v6) the pacing probe's phases in a line: fps, slow frames and how close together, rAF lag, the tick clock (v8) */
 function paceHeadline(out: Record<string, any>): string {
   const one = (k: string) => {
     const r = out[k];
     if (!r || !r.frames) return null;
-    const slow = r.slow?.n ?? 0;
-    const inf = Object.entries(r.inFlightAtStart ?? {}).map(([a, n]) => `${a}:${n}`).join(' ');
-    const tc = r.tickClock ? ` [${r.tickClock.mode}: locked ${r.tickClock.lockedFrames}/${r.tickClock.frames}, extra ${r.tickClock.extra}, skipped ${r.tickClock.skipped}, display ${r.tickClock.displayMs} ms]` : '';
-    return `${k}${tc} ${r.fps} fps, slow ${slow}/${r.frames}, interval p99 ${r.interval?.p99}, done p50/p95 ${r.done?.p50}/${r.done?.p95}, gpu p50/p95 ${r.gpu?.p50 ?? '-'}/${r.gpu?.p95 ?? '-'}, gap p50 ${r.gap?.p50 ?? '-'}, inFlight ${inf}, held ${r.heldRafs}, slow frames' done ${r.slow?.done ?? '-'} gpu ${r.slow?.gpu ?? '-'} ticks ${r.slow?.ticks ?? '-'} vs ok ${r.ok?.done ?? '-'} / ${r.ok?.gpu ?? '-'} / ${r.ok?.ticks ?? '-'}`;
+    const c = r.clusters ?? {};
+    const tc = r.tickClock ? ` [${r.tickClock.mode}: locked ${r.tickClock.lockedFrames}/${r.tickClock.frames}, extra ${r.tickClock.extra}, skipped ${r.tickClock.skipped}, missed ${r.tickClock.missedS ?? '-'} s, cut ${r.tickClock.cutS ?? '-'} s, paused ${r.tickClock.pausedFrames ?? '-'}f]` : '';
+    const held = r.simHeld && Object.keys(r.simHeld).length ? ` held ${Object.entries(r.simHeld).map(([a, n]) => `${a}:${n}`).join(' ')}` : '';
+    return `${k}${tc} ${r.fps} fps, slow ${c.slow ?? r.slow?.n ?? 0}/${r.frames} (${c.verdict ?? '?'}; longest run ${c.longestRun ?? '-'}, within 100 ms ${c.within100ms ?? '-'}, min gap ${c.minGapMs ?? '-'} ms / ${c.minGapFrames ?? '-'} frames, at ${JSON.stringify(c.at ?? [])}), lag p50/p95 ${r.lag?.p50}/${r.lag?.p95}, ticks ${JSON.stringify(r.ticksPerFrame)}${held}, gpu p50/p95 ${r.gpu?.p50 ?? '-'}/${r.gpu?.p95 ?? '-'}`;
   };
-  return ['timed', 'untimed', 'tickAccum', 'inFlight1', 'inFlight3', 'simOff'].map(one).filter(Boolean).join(' | ');
+  const keys = (out.order as string[] | undefined) ?? ['timed', 'untimed', 'tickAccum', 'inFlight1', 'inFlight3', 'simOff'];
+  return `settled ${out.settle?.ms ?? '?'} ms${out.settle?.timedOut ? ' (TIMED OUT)' : ''} | ` + keys.map(one).filter(Boolean).join(' | ');
+}
+
+/** (v8) the slow frames of every pacing phase and pan step: how close together (the user's question) */
+function slowTogether(res: Record<string, any>): string[] {
+  const lines: string[] = [];
+  for (const [k, v] of Object.entries(res))
+    if (/^pan\d+$/.test(k) && v?.zooms)
+      for (const z of v.zooms as any[]) {
+        const p = z.pace;
+        if (p)
+          for (const key of (p.order as string[] | undefined) ?? []) {
+            const c = p[key]?.clusters;
+            if (c) lines.push(`zoom ${z.zoom} parked ${key}: ${c.slow}/${c.frames} slow — ${c.verdict}; longest run ${c.longestRun}, within 100 ms ${c.within100ms}, min gap ${c.minGapMs ?? '-'} ms`);
+          }
+        for (const src of ['pool', 'generated', 'disk'])
+          for (const st of (z[src]?.steps ?? []) as any[]) {
+            const c = st.slowClusters;
+            if (c) lines.push(`zoom ${z.zoom} ${src} ${st.speed} c/s: ${c.slow}/${c.frames} slow — ${c.verdict}; longest run ${c.longestRun}, within 100 ms ${c.within100ms}, min gap ${c.minGapMs ?? '-'} ms`);
+          }
+      }
+  return lines;
 }
 
 function makePanReport(s: BenchState): Record<string, unknown> {
@@ -338,6 +360,8 @@ function makePanReport(s: BenchState): Record<string, unknown> {
       criteria: `smooth: rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms and no pop-in${PAN_BG_FAILS ? ' and no background' : ''}, each step ${PAN_STEP_S} s; no pop-in: none of the screen out of detail against parked, frames as they come; overBudgetPerSlide: frames over ${PAN_BUDGET} ms per slide at each speed; bg: the share of the screen showing the background colour (nothing drawn), the step's worst frame / frames with any — flagged when the worst frame's over ${PAN_BG_FLAG * 100}%${PAN_BG_FAILS ? ', and fails smooth (?bgfail=1)' : ' (flag only; ?bgfail=1 fails smooth too)'}; far: the worst frame's share showing the flat far land`,
       device: `${res.device?.adapter?.vendor ?? '?'} ${res.device?.adapter?.architecture ?? ''}, dpr ${res.device?.devicePixelRatio}, css ${res.device?.css?.w}x${res.device?.css?.h}`,
       // (v6) the frame pacing parked at each zoom (rows.pace in pan256.zooms[].pace in full)
+      // (v8) the slow frames' clustering per parked phase and pan step: back to back or within 100 ms, or apart
+      slowTogether: slowTogether(res),
       pace: [...new Map(rows.filter((r: any) => r.pace).map((r: any) => [r.zoom, `zoom ${r.zoom}: ${r.pace}`])).values()],
       table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: parked ${r.parked?.fps ?? '?'} fps p99 ${r.parked?.p99 ?? '?'}; smooth to ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}; no pop-in to ${r.maxNoPopIn ?? 'none'} c/s${r.popInAt ? ` (pop-in at ${r.popInAt})` : ''}; worst frame ${r.worstFrameMs} ms; tiles/s ${r.tilesPerSecond}; tile ms p50/p95 ${r.tileLatency}; leading half out ${r.leadOut}; bg ${r.bg}${r.bgAt?.length ? ` (BACKGROUND at ${r.bgAt.join(', ')} c/s)` : ''}; far ${r.far}`),
       // (round 112, bgcheck: the rows whose steps showed the background — the panel's red note)
@@ -1364,48 +1388,56 @@ class Bench {
     const prof = this.prof as { active: boolean };
     const wasActive = prof.active;
     const out: Record<string, unknown> = {};
+    // (v8, round 114: settled first — v7's first phases ran while the zoom change was still filling, the last ones
+    // after: the planner without holes, no tiles in flight, nothing arriving, the streamer idle, for a second; the
+    // wait and whether it timed out recorded)
+    out.settle = await this.paceSettle(20000);
+    const clock = this.R.core.clock as { mode: string; stats: Record<string, number>; displayDt(): number } | undefined;
+    const sc = this.R.scene as { simHeld?: Record<string, number> };
     const phase = async (key: string, setup: () => () => void) => {
       this.say(`frame pacing: ${key}…`);
       const undo = setup();
       try {
         await sleep(400);
-        const clock = this.R.core.clock as { mode: string; stats: Record<string, number>; displayDt(): number } | undefined;
         const c0 = clock ? { ...clock.stats } : null;
+        const h0 = { ...(sc.simHeld ?? {}) };
         const m = pacer.mark();
         await sleep(seconds * 1000);
         await this.dev.queue.onSubmittedWorkDone();
         await sleep(150);
         const r = pacer.report(m, key);
-        // (v7, round 114: the sim's tick clock over the phase — sim/tickclock.ts: frames locked to one tick, the
-        // extra / skipped ticks that paid its drift back, time dropped)
+        // (v7: the sim's tick clock over the phase — sim/tickclock.ts; v8: the time it dropped as pauses — missed
+        // vsyncs, the planner's cuts, the frames the streamer held the sim — and the held frames by why)
         if (clock && c0) r.tickClock = { mode: clock.mode, displayMs: r3(clock.displayDt() * 1000), ...Object.fromEntries(Object.entries(clock.stats).map(([k, v]) => [k, r3(v - c0[k])])) };
+        r.simHeld = Object.fromEntries(Object.entries(sc.simHeld ?? {}).map(([k, v]) => [k, v - (h0[k] ?? 0)]).filter(([, v]) => (v as number) > 0));
         out[key] = r;
       } finally {
         undo();
       }
     };
-    await phase('timed', () => {
-      prof.active = true;
-      return () => (prof.active = wasActive);
-    });
-    await phase('untimed', () => {
-      prof.active = false;
-      return () => (prof.active = wasActive);
-    });
+    const kinds: Record<string, () => () => void> = {
+      timed: () => {
+        prof.active = true;
+        return () => (prof.active = wasActive);
+      },
+      untimed: () => {
+        prof.active = false;
+        return () => (prof.active = wasActive);
+      },
+    };
     if (ab) {
       for (const n of [1, 3])
-        await phase(`inFlight${n}`, () => {
+        kinds[`inFlight${n}`] = () => {
           prof.active = false;
           pacer.maxInFlight = n;
           return () => {
             pacer.maxInFlight = 2;
             prof.active = wasActive;
           };
-        });
-      // (v7, round 114: the accumulator as before the tick clock, against the default 'locked')
-      const clock = this.R.core.clock as { mode: string } | undefined;
+        };
+      // (v7: the accumulator as before the tick clock, against the default 'locked')
       if (clock)
-        await phase('tickAccum', () => {
+        kinds.tickAccum = () => {
           prof.active = false;
           const was = clock.mode;
           clock.mode = 'accum';
@@ -1413,20 +1445,43 @@ class Bench {
             clock.mode = was;
             prof.active = wasActive;
           };
-        });
+        };
       const sim = this.toggles().simAll;
       if (sim)
-        await phase('simOff', () => {
+        kinds.simOff = () => {
           prof.active = false;
           sim.off();
           return () => {
             sim.on();
             prof.active = wasActive;
           };
-        });
+        };
     }
+    // (v8: every phase twice, the second round in the reverse order — A B C … C B A — so no phase is always first or
+    // last; the keys `untimed` and `untimed@2`)
+    const order = Object.keys(kinds);
+    out.order = [...order, ...[...order].reverse().map((k) => `${k}@2`)];
+    for (const k of order) await phase(k, kinds[k]);
+    for (const k of [...order].reverse()) await phase(`${k}@2`, kinds[k]);
     out.headline = paceHeadline(out);
     return out;
+  }
+
+  /** (v8) the view quiet before the pacing phases: no holes, no tiles in flight, nothing arriving, the streamer idle, 1 s running */
+  private async paceSettle(maxMs: number): Promise<Record<string, unknown>> {
+    const t0 = performance.now();
+    const R = this.R;
+    const state = () => ({ busy: !!R.stream.busy, holes: R.scene.planner?.plan?.holes ?? null, tilesInFlight: R.core.renderer?.tiles?.land?.stats?.inFlight ?? null, unwritten: R.stream.unwritten?.length ?? null });
+    let since = -1;
+    for (;;) {
+      const t = await frame();
+      const q = state();
+      if (!q.busy && !q.holes && !q.tilesInFlight && !q.unwritten) {
+        if (since < 0) since = t;
+        if (t - since >= 1000) return { ms: Math.round(performance.now() - t0), timedOut: false };
+      } else since = -1;
+      if (performance.now() - t0 > maxMs) return { ms: Math.round(performance.now() - t0), timedOut: true, ...q };
+    }
   }
 
   private say(s: string): void {
@@ -2732,6 +2787,8 @@ class Bench {
         let fno = fno0;
         const sl0 = this.R.stream.stats.slides;
         const t0 = performance.now();
+        // (v8: the step's slow frames, how close together — framepace.ts clusters)
+        const pm = this.ctx.pacer?.mark();
         let last = t0;
         // (round 106, tilephone: the tiles' render-only land during the step — what's baked, its stages, the leading half)
         const TL = this.R.core.renderer.tiles;
@@ -2824,7 +2881,7 @@ class Bench {
         const pacer = pz && pc0 ? { perFrameMean: frames.length ? r3(perFrameSum / frames.length) : null, turnsPerFrame: r3((pz.tiles - pc0.tiles) / Math.max(1, frames.length)), chained: pz.chained - pc0.chained } : null;
         const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) }, missWhy: whyR, slots, pacer } : null;
         const geoR = { max: r3(geo.max), mean: geo.frames ? +(geo.sum / geo.frames).toFixed(5) : null, frames: geo.frames, framesAny: geo.framesAny, chunksMax: geo.chunksMax, regionsMax: geo.regionsMax };
-        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), geo: geoR, tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, bg, ok: !fails.length });
+        steps.push({ speed: v, fps: +fps.toFixed(1), p99: r3(p99), max: r3(max), lowDetailMax: r3(low), geo: geoR, tiles, slides, framesOverBudget: over, overBudgetPerSlide: slides ? r3(over / slides) : null, slideDoneMs: slideDone, baseDoneP50: bd.length ? bd[Math.floor(bd.length / 2)] : null, slideCpuMs: slideCpu, bg, slowClusters: pm !== undefined ? (this.ctx.pacer!.report(pm).clusters ?? null) : null, ok: !fails.length });
         if (fails.length && strict) {
           strict = false;
           failedFirst = fails.join(', ');

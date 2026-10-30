@@ -113,7 +113,7 @@ try {
     return out;
   }, seconds);
   const brief = (r) =>
-    `${r.label}: ${r.fps} fps, vsync ${r.vsyncMs}, slow ${r.slow?.n}/${r.frames} ${JSON.stringify(r.vsyncsPerFrame)}, interval p99 ${r.interval?.p99}, lag p50 ${r.lag?.p50}, cpu p50/p95 ${r.cpu?.p50}/${r.cpu?.p95}, toSubmit p50 ${r.toSubmit?.p50}, done p50/p95 ${r.done?.p50}/${r.done?.p95}, gpu p50/p95 ${r.gpu?.p50 ?? '-'}/${r.gpu?.p95 ?? '-'}, gap p50 ${r.gap?.p50 ?? '-'}, inFlight ${JSON.stringify(r.inFlightAtStart)}, held ${r.heldRafs}, ticks ${JSON.stringify(r.ticksPerFrame)}, clock ${JSON.stringify(r.tickClock)}, slow by ticks ${JSON.stringify(r.slowFramesByTicks)}`;
+    `${r.label}: ${r.fps} fps, vsync ${r.vsyncMs}, slow ${r.slow?.n}/${r.frames} ${JSON.stringify(r.vsyncsPerFrame)}, interval p99 ${r.interval?.p99}, lag p50 ${r.lag?.p50}, cpu p50/p95 ${r.cpu?.p50}/${r.cpu?.p95}, toSubmit p50 ${r.toSubmit?.p50}, done p50/p95 ${r.done?.p50}/${r.done?.p95}, gpu p50/p95 ${r.gpu?.p50 ?? '-'}/${r.gpu?.p95 ?? '-'}, gap p50 ${r.gap?.p50 ?? '-'}, inFlight ${JSON.stringify(r.inFlightAtStart)}, held ${r.heldRafs}, ticks ${JSON.stringify(r.ticksPerFrame)}, clock ${JSON.stringify(r.tickClock)}, slow by ticks ${JSON.stringify(r.slowFramesByTicks)}, lagBy ${JSON.stringify(r.lagBy)}, clusters ${r.clusters?.verdict} run ${r.clusters?.longestRun} w100 ${r.clusters?.within100ms}`;
   for (const r of Object.values(res)) console.log(brief(r));
   console.log('canvas', JSON.stringify(res.timed.canvas));
   console.log('passes ok', JSON.stringify(res.timed.passesOk));

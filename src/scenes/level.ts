@@ -221,6 +221,8 @@ export class LevelScene implements Scene {
   private sleep?: Sleep;
   /** (?flow=1, docs/ARCHITECTURE.md "The flow model") the flow model: liquids as runs, steady state freezing */
   private flow?: FlowKit & { lab?: { breach: (spring?: number) => void } };
+  /** (round 114, framepace) frames the sim was held, by why (stream-slide, stream-warp, …, skip) */
+  readonly simHeld: Record<string, number> = {};
   private noSim = (new URLSearchParams(location.search).get('skip') ?? '').split(',').includes('sim');
   /** ?ceiling=1 (the perf ceiling, the atlas level): each frame only the camera (the drive) and the heightfield —
    *  far.ts's rings (?near=1: a ring a cell apart first, the default; 2: the usual four) and the far land; no sim,
@@ -2110,7 +2112,13 @@ export class LevelScene implements Scene {
     }
     // (?skip=sim, round 80: the frame without the sim — on a phone, how much of it the sim is)
     const tSim = performance.now(); // (round 100, hitchrec: timing)
-    const ticks = this.stream?.busy || this.noSim ? 0 : core.advance(now, simDt, this.speed);
+    // (round 114, framepace: a frame the sim is held — the streamer busy — is a pause to the tick clock, counted by why)
+    const held = this.stream?.busy ? `stream-${this.stream.busyWhy}` : this.noSim ? 'skip' : '';
+    if (held) {
+      core.clock.pause(simDt, this.speed);
+      this.simHeld[held] = (this.simHeld[held] ?? 0) + 1;
+    }
+    const ticks = held ? 0 : core.advance(now, simDt, this.speed);
     record('sim', performance.now() - tSim); // (round 100, hitchrec: timing)
     this.ticksAvg = this.ticksAvg * 0.95 + ticks * 0.05;
     // (round 83, V21: ?cutaway=1 — the camera's puck, the slice and the orbit round it; `cutFeet` a script's

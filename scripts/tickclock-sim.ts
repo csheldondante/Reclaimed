@@ -26,7 +26,7 @@ function run(name: string, mode: TickMode, hz: number, jitterMs: number, missEve
     ticks += n;
   }
   const simS = ticks / 60;
-  console.log(`${name.padEnd(34)} ${mode.padEnd(6)} frames ${f} ticks/frame ${JSON.stringify(hist)} sim-real ${((simS - real) * 1000).toFixed(0)} ms (owed ${(c.acc * 1000).toFixed(0)}) dropped ${(c.stats.droppedS * 1000).toFixed(0)} ms extra ${c.stats.extra} skipped ${c.stats.skipped}`);
+  console.log(`${name.padEnd(34)} ${mode.padEnd(6)} frames ${f} ticks/frame ${JSON.stringify(hist)} 2-after-2 ${consec2} sim-real ${((simS - real) * 1000).toFixed(0)} ms (owed ${(c.acc * 1000).toFixed(0)}) dropped ${(c.stats.droppedS * 1000).toFixed(0)} missed ${(c.stats.missedS * 1000).toFixed(0)} cut ${(c.stats.cutS * 1000).toFixed(0)} ms extra ${c.stats.extra} skipped ${c.stats.skipped}`);
 }
 for (const mode of ['accum', 'locked'] as TickMode[]) {
   run('60 Hz, jitter 1 ms', mode, 60, 1, 0);

@@ -13330,3 +13330,45 @@ alone. The cause was the runner, not the merge: in the agent's sandboxed Bash sh
 .testcache fails EPERM, and `build()` took a failed rename for another run having built the same sources, deleted its
 build and served the missing directory. It now throws when the rename fails and no other build is there. Runner-based
 scripts were run from PowerShell, where the rename works.
+
+## 2026-10-30 — round 114 (`framepace`, FP6-FP8): cuts are pauses; bench v8 settles, interleaves and clusters
+
+Why: the phone's bench v7 (scratchpad pixel9a-pan-tickclock.json). The locked clock engaged (display 16.7 ms, every
+clock frame locked, nothing dropped), but the clock saw ~195 of ~245 rendered frames: the level doesn't call
+`advance` while the streamer is busy (`stream.busy`), so those frames ran no tick (48 of 246 at zoom 14 untimed, all
+of its 0-tick frames). The clock's `extra` ticks (2-6 a phase) were the 2-tick frames, and the slow frames were mostly
+those (`slowFramesByTicks` {2: 2-5}): the time owed came from missed vsyncs (a 33 ms interval is one tick owed) and
+planner cuts, paid back. And the phase order confounded v6/v7: inFlight3, tickAccum and simOff ran last and were
+perfect (60.02 fps, 0 slow, rAF lag p95 1.3-1.5 ms) while timed/untimed, first, ran with rAF lag p95 9-15 ms — the
+view still filling after the zoom change. Neither inFlight3 nor simOff can be credited from those runs.
+
+The user's test (verbatim): "If they are not next together then as soon as I can ride the bike and test I think we can
+call the work complete".
+
+Changes:
+- TickClock v2 (sim/tickclock.ts): the user puts rendering before simulation, so time the rendering took isn't a debt.
+  Locked, a missed vsync's interval past 1.5 ticks is dropped (`missedS`), a tick the planner cut (`maxTicks` 0) is
+  dropped as if run (`cutS`), and a frame the sim is held (`pause()`, the level calls it when the streamer is busy) is
+  dropped (`pausedS`, `pausedFrames`). Only the display's drift is paid back (the band, 20 frames apart). The
+  accumulator (`?tick=accum`) is unchanged. scripts/tickclock-sim.ts: a vsync missed every 40 frames — 2-tick frames
+  171 (v1) → 1, the sim 2.9 s behind real time over 2 min (2.5% of frames missed: the pauses); the planner's 30-frame
+  cut → 483 ms dropped, no 2-tick frames after it (v1: 29).
+- Streamer.busyWhy (restore, slide, warp, slideZ) and LevelScene.simHeld: the held frames counted by why.
+- Bench v8 (BENCH_VERSION 8), the parked pace:
+  - settles first: the planner without holes, no tiles in flight, nothing arriving, the streamer idle, for 1 s
+    (`settle`: ms, timedOut and the state at the timeout; 20 s at most);
+  - every phase twice, the second round reversed (timed, untimed, inFlight1, inFlight3, tickAccum, simOff, then
+    simOff@2 … timed@2; the other zooms timed, untimed, untimed@2, timed@2), so order can't bias a comparison;
+  - each phase: `tickClock` (with missed / cut / paused), `simHeld` by why, rAF lag, `pre` (other rAF callbacks run
+    before the frame's in its vsync, timed — framepace.ts wraps requestAnimationFrame) and `between` (timed steps,
+    gpu/cpustat, run between frames), and `lagBy`: for the frames whose callback began over 4 ms late, the largest
+    earlier rAF callback and step between frames, counted, and the lag neither explains (`untracedMean`);
+  - `clusters` per phase and per pan step (`steps[].slowClusters`): each slow frame's time since the phase began and
+    its interval, the gaps, the longest run of consecutive slow frames, how many within 100 ms of the last, the
+    smallest gap in ms and frames, and a verdict ("TOGETHER" or "apart"); `summary.slowTogether` lists them all.
+
+Headless check (bench v8, pan page, zoom 14, desktop iGPU at ~100 Hz, so the clock doesn't lock there): ran end to
+end, no bench errors; settled in 1.0 s; 12 parked phases in A..Z..A order; `summary.slowTogether` lists every parked
+phase and pan step. At 100 Hz the desktop's 9.6 ms frame is near its GPU's 8.8 ms, so 5% of frames slip one vsync and
+pairs within 100 ms are common there (not the phone's case: 2-8 of ~245); the late callbacks it saw (2 of 401
+untimed) had no rAF callback or timed step before them (`untracedMean` 4.8 ms).
