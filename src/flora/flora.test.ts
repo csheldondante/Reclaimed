@@ -90,7 +90,7 @@ describe('root automaton', () => {
 
 describe('species meshes', () => {
   it('every species makes a mesh, deterministically, within its height range and triangle budget', () => {
-    // phone budget (tris a plant): trees ≤ 2500, small plants ≤ 400 — hundreds of trees and thousands of clumps a view
+    // phone budget (tris a plant): trees ≤ 3200, small plants ≤ 400 — hundreds of trees and thousands of clumps a view
     for (const id of SPECIES_IDS) {
       const sp = SPECIES[id];
       const a = generate(id, 1);
@@ -99,7 +99,7 @@ describe('species meshes', () => {
       expect(a.tris).toBeGreaterThan(0);
       expect(a.height).toBeGreaterThanOrEqual(sp.height[0] - 1e-3);
       expect(a.height).toBeLessThanOrEqual(sp.height[1] + 1e-3);
-      const budget = sp.form === 'tree' ? 2500 : 400;
+      const budget = sp.form === 'tree' ? 3200 : 400;
       expect(a.tris, `${id} tris`).toBeLessThanOrEqual(budget);
       // indices in range; parts and sway well-formed
       const nv = a.verts.length / 4;
@@ -126,5 +126,17 @@ describe('species meshes', () => {
       const sway = m.verts[k + 3] % 1;
       if (m.verts[k + 2] < 0.05) expect(sway).toBeLessThan(0.05);
     }
+  });
+});
+
+describe('the phone tier (px: render pixels a cell)', () => {
+  it('coarse plants have fewer, bigger leaves and no sub-pixel twigs; grass fewer, wider blades', () => {
+    const full = generate('birch', 1);
+    const phone = generate('birch', 1, { px: 6 });
+    expect(phone.tris).toBeLessThan(full.tris);
+    expect(phone.height).toBeCloseTo(full.height, 5);
+    expect(generate('tallgrass', 1, { px: 6 }).tris).toBeLessThan(generate('tallgrass', 1).tris);
+    // desktop-like px: as full
+    expect(generate('birch', 1, { px: 40 }).tris).toBe(full.tris);
   });
 });

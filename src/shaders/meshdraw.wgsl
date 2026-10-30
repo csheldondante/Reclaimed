@@ -427,10 +427,13 @@ fn meshSurf(in: MOut) -> Surf {
       // fall's bright. A look only (the material stays): the baked climate's MAT_LEAFLIT is the real thing, rarely laid
       if (isTop) {
         let litter = smoothstep(3.7, 4.5, v) * smoothstep(0.3, 0.62, fbm2(wo(in.wpos.xy) * 0.3));
-        if (n2 < litter) {
-          var lc = autumnLeaf(select(0u, 2u, n1 > 0.5), fract(n1 * 3.7 + n2 * 1.3));
+        // (in half-cell flakes, not per pixel: at the phone's half render scale a finer speckle reads as noise)
+        let fl = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.0)), 4417));
+        let fc = randv(vec3<i32>(vec2<i32>(floor(wo(in.wpos.xy) * 2.0)), 4418));
+        if (fl < litter) {
+          var lc = autumnLeaf(select(0u, 2u, fc > 0.5), fract(fc * 3.7));
           lc = mix(lc, vec3<f32>(0.42, 0.31, 0.18), 0.5 - 0.35 * seasonShed());
-          alb = toLinear(lc) * (0.72 + 0.32 * n1);
+          alb = toLinear(lc) * (0.8 + 0.25 * n1);
         }
       }
       // (perfopt, ?tufts=0: no tuft boxes — their look painted here instead: on soil-like ground, a quarter cell

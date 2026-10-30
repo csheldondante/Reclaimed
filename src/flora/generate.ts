@@ -25,7 +25,13 @@ function scaleTo(m: FloraMesh, h: number): FloraMesh {
  * Plant `id` from `seed`. `growth` 0..1 (default 1, mature): a young plant — the L-system rewritten fewer times (so a
  * sapling really is the tree's earlier stage, its first branches the same) and smaller; the viewer's grow slider.
  */
-export function generate(id: SpeciesId, seed: number, opts: { growth?: number } = {}): FloraMesh {
+/**
+ * `px` (round 117, the phone): render pixels a cell at the view the plant is made for (the library's: zoom 12 × the
+ * tier's render pixels a CSS pixel). Below ~16, wood is kept at least ~1.7 px wide, leaves merge into clusters at
+ * least ~3 px, grass has fewer, wider blades — so the phone's half-scale render reads as a forest, not noise. Absent:
+ * full detail (the viewer, the desktop).
+ */
+export function generate(id: SpeciesId, seed: number, opts: { growth?: number; px?: number } = {}): FloraMesh {
   const sp0 = SPECIES[id];
   const g = Math.min(1, Math.max(0.05, opts.growth ?? 1));
   const sp = g < 1 && sp0.lsystem ? { ...sp0, lsystem: { ...sp0.lsystem, iterations: Math.max(1, Math.round(sp0.lsystem.iterations * (0.35 + 0.65 * g))) } } : sp0;
@@ -35,11 +41,14 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number } 
     case 'tree':
     case 'shrub':
     case 'fern':
-      return scaleTo(woody(sp, seed), h);
+      return scaleTo(woody(sp, seed, h, opts.px), h);
     case 'vine':
       return scaleTo(vine(sp, seed), h);
-    case 'grass':
-      return grassClump(h, seed, 9, 0.5);
+    case 'grass': {
+      // (a blade at least ~1.7 px wide; fewer of them when they are wide)
+      const w = opts.px ? Math.max(0.16, 1.7 / opts.px) : 0.16;
+      return grassClump(h, seed, w > 0.22 ? 6 : 9, 0.5, w);
+    }
     case 'reed':
       return reeds(h, seed);
     case 'flower':
@@ -49,13 +58,17 @@ export function generate(id: SpeciesId, seed: number, opts: { growth?: number } 
   }
 }
 
-function woody(sp: SpeciesDef, seed: number): FloraMesh {
+function woody(sp: SpeciesDef, seed: number, h: number, px?: number): FloraMesh {
   if (!sp.lsystem || !sp.turtle || !sp.leaf) throw new Error(`species ${sp.id}: a woody plant needs an L-system, a turtle and leaves`);
   const str = expand(sp.lsystem, hashSeed(seed, 1));
   const sk = interpret(str, sp.turtle, hashSeed(seed, 2));
+  // (the scale it will be drawn at: the minimum widths in world cells, then in the skeleton's units)
+  const k = h / Math.max(sk.height, 1e-3);
+  const minRadius = px ? 0.85 / px / k : 0;
+  const minLeaf = px ? 1.5 / px / k : 0;
   // the root automaton's surface roots, in the skeleton's units (the plant is scaled after)
   const roots = sp.roots ? rootSegments(growRoots(sp.roots, hashSeed(seed, 3)), sp.roots.res * 1.5, sp.turtle.radius * 0.8) : [];
-  return buildPlant(sk, sp.leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? 0.035 : 0 });
+  return buildPlant(sk, sp.leaf, hashSeed(seed, 4), { roots, sides: sp.form === 'tree' ? 6 : 4, minTwig: sp.form === 'tree' ? 0.035 : 0, minRadius: sp.form === 'tree' ? minRadius : 0, minLeaf });
 }
 
 /** A vine on a wall: the L-system grows in the wall's plane (y, z); leaves stand off it (+x, the wall's normal). */
@@ -77,7 +90,7 @@ function vine(sp: SpeciesDef, seed: number): FloraMesh {
 }
 
 /** Tall grass: blades from a small patch, each leaning out and curving over, the tallest in the middle. */
-export function grassClump(h: number, seed: number, blades: number, patch: number): FloraMesh {
+export function grassClump(h: number, seed: number, blades: number, patch: number, width = 0.16): FloraMesh {
   const r = rng(hashSeed(seed, 11));
   // the wind takes the blades' tips: sway rises with the square of the height share, nearly all of it at the tip
   const mb = new MeshBuilder((p) => Math.pow(Math.max(0, p[2]) / h, 1.5) * 0.98);
@@ -91,7 +104,7 @@ export function grassClump(h: number, seed: number, blades: number, patch: numbe
     const bend: V3 = [Math.cos(a) * 0.16, Math.sin(a) * 0.16, -0.05];
     // (blades a fifth of a cell wide: wide enough to read as blades on the phone's low tier, where a thinner one is
     // under a pixel; two bends each)
-    mb.blade(p, dir, len, 0.16 + 0.07 * r(), 2, bend, PART.blade);
+    mb.blade(p, dir, len, width + 0.07 * r(), 2, bend, PART.blade);
     // a few seed heads (the accent colour) on the tallest
     if (k % 4 === 0) mb.cone([p[0] + dir[0] * len * 0.85, p[1] + dir[1] * len * 0.85, len * 0.84], dir, 0.22, 0.04, 3, PART.accent);
   }

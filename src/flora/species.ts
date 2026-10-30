@@ -135,7 +135,7 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
       tropismStrength: [0, 0.1, 0.42],
       minRadius: 0.012,
     },
-    leaf: { style: 'drop', size: 0.46, per: 2, minDepth: 1 },
+    leaf: { style: 'drop', size: 0.55, per: 3, minDepth: 1 },
     roots: { half: 8, depth: 4, res: 0.3, generations: 12, growth: 0.5, down: 0.15, maxCells: 160, trunkRadius: 0.3 },
     colours: {
       bark: C(0.86, 0.85, 0.8),
@@ -332,8 +332,9 @@ export const SPECIES: Record<SpeciesId, SpeciesDef> = {
     leaf: { style: 'cluster', size: 0.42, per: 1, minDepth: 0 },
     colours: {
       bark: C(0.3, 0.22, 0.15),
-      leafDark: C(0.12, 0.27, 0.1),
-      leafLight: C(0.28, 0.46, 0.16),
+      // (lighter than the trees': a thicket under the sun reads as bushes, not a dark carpet)
+      leafDark: C(0.17, 0.33, 0.12),
+      leafLight: C(0.38, 0.56, 0.2),
       autumn: C(0.72, 0.3, 0.12),
       deciduous: true,
     },

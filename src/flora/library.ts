@@ -52,12 +52,13 @@ export class FloraLibrary {
    *  their shadows are under a pixel and they are most of the triangles) */
   readonly shadowKinds: boolean[] = [];
 
-  constructor(readonly spec: LibrarySpec = GAME_LIBRARY) {
+  /** `px`: render pixels a cell the plants are made for (generate's; absent: full detail) */
+  constructor(readonly spec: LibrarySpec = GAME_LIBRARY, readonly px?: number) {
     const t = performance.now();
     for (const { id, variants } of spec.species) {
       this.ranges.set(id, { first: this.kinds.length, count: variants });
       for (let v = 0; v < variants; v++) {
-        const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length));
+        const mesh = generate(id, hashSeed(spec.seed, v, id.charCodeAt(0), id.length), { px });
         this.kinds.push({ name: `${id}-${v}`, species: id, variant: v, mesh, verts: mesh.verts, index: mesh.index });
         this.shadowKinds.push(SPECIES[id].form === 'tree' || SPECIES[id].form === 'shrub');
       }

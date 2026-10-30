@@ -238,14 +238,17 @@ fn floraSmall(c: vec2<u32>, top: f32, v: f32, pl: VegPlan) -> bool {
   let jit = (vec2<f32>(rand3(c.x, c.y, 541u), rand3(c.x, c.y, 542u)) - 0.5) * 0.7;
   let at = cellPos(vec2<i32>(c)) + jit;
   // (round 117, perf: only what shows — the plant's box or its shadow on screen; and the grass, flowers and ferns
-  // only where a cell is wide enough on screen to see a blade: thinned from 8 px a cell, gone under 4.5 — the
+  // only where a cell is wide enough on screen to see a blade: thinned under 11 render px a cell, gone under 5 — the
   // ground's plant cover paints the meadow there)
   if (!floraSeen(at, top, 2.5, 1.6)) { return true; }
-  let px = PC.viewport.z;
-  let fine = rand3(c.x, c.y, 546u) < smoothstep(4.5, 8.0, px);
+  // (render pixels a cell: the zoom × the tier's render pixels a CSS pixel — the phone's low tier renders half)
+  let px = PC.viewport.z * FLORA_RPX;
+  // (round 117, the phone: at 7 render px a cell — zoom 14 on the low tier — a full meadow of clumps read as static;
+  // sparse there, full from 11)
+  let fine = rand3(c.x, c.y, 546u) < smoothstep(5.0, 11.0, px);
   // (shrubland — succession 2.6 to 3.6 — is the thicket, a soft barrier; under the woods' canopy only a few: the
   // forest floor stays open, ferns and leaf litter)
-  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(FL_SHRUB, c, at, top, 1.0, 0.05, 1u); }
+  if (pl.shrub && (v < 3.6 || rand3(c.x, c.y, 545u) < 0.2)) { floraPut(FL_SHRUB, c, at, top, 0.8, 0.05, 1u); }
   if (v >= 3.6 && !pl.tree) {
     // the woodland floor: ferns in the shade, here and there
     if (fine && rand3(c.x, c.y, 543u) < 0.16) { floraPut(FL_FERN, c, at, top, 1.0, 0.05, 2u); }

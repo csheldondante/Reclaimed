@@ -48,7 +48,7 @@ import { MeshInstances, MI_ARGS_WORD } from './meshinst';
 import { treeKinds } from './treemesh';
 import { MESHINST } from '../sim/external';
 import { FLORA } from '../flora/flags';
-import { FloraLibrary } from '../flora/library';
+import { FloraLibrary, GAME_LIBRARY } from '../flora/library';
 import { record } from '../gpu/cpustat'; // (round 100, hitchrec: timing)
 import { BGCHECK, BgCheck } from './bgcheck';
 
@@ -397,6 +397,9 @@ export class Renderer {
     meshRoom = 1,
     /** field mesh chunks rebuilt a frame (quality `meshSlots`; round 81) */
     private meshSlots?: number,
+    /** (round 117, flora) render pixels a CSS pixel (the tier's dpr cap × render scale): the plants' detail is made
+     *  for it (src/flora/generate.ts px) and their grass thins by it */
+    private floraRpx = 1,
   ) {
     const N = world.cells;
     // (round 83) the nearest shore to every column: the water's swell (render.wgsl shoreTex)
@@ -420,7 +423,7 @@ export class Renderer {
     // water's and plants' counts before they were held to their lists' room; (round 99, meshinst) [24..] the
     // instanced meshes' indexed draws, five words a kind
     // (round 117, flora: the library's kinds — dozens, not four — each its five words)
-    const miKinds = FLORA ? (this.flora ??= new FloraLibrary()).kinds.length : 4;
+    const miKinds = FLORA ? (this.flora ??= new FloraLibrary(GAME_LIBRARY, 12 * this.floraRpx)).kinds.length : 4;
     this.indirect = world.buf(
       'indirect',
       MI_ARGS_WORD * 4 + 4 * 5 * miKinds,
@@ -492,10 +495,10 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     // (round 117, flora: on unless ?flora=0) the flora library's generated species are the plants' meshes
     // (src/flora/library.ts): its kinds in the same renderer, its constants (each species' kinds, colours) for the kernels
     if (FLORA) {
-      this.flora ??= new FloraLibrary();
+      this.flora ??= new FloraLibrary(GAME_LIBRARY, 12 * this.floraRpx);
       this.meshInst = new MeshInstances(device, this.flora.kinds, (l, n, u) => world.buf(l, n, u));
     } else if (MESHINST) this.meshInst = new MeshInstances(device, treeKinds(), (l, n, u) => world.buf(l, n, u));
-    this.floraWgsl = `const FLORA: bool = ${!!this.flora};\n${this.flora ? this.flora.wgsl() : FloraLibrary.stubWgsl()}`;
+    this.floraWgsl = `const FLORA: bool = ${!!this.flora};\nconst FLORA_RPX: f32 = ${this.floraRpx.toFixed(3)};\n${this.flora ? this.flora.wgsl() : FloraLibrary.stubWgsl()}`;
     const treeMesh = `const TREE_MESH: bool = ${!!this.meshInst};\n${this.meshInst ? this.meshInst.wgsl() : 'const MI_CAP: u32 = 0u;\nconst MI_N: u32 = 1u;\nconst MI_ARGS: u32 = 24u;\n'}${this.floraWgsl}`;
     const noTrees = this.meshInst ? undefined : world.buf('meshinst none', 64, GPUBufferUsage.STORAGE);
     const vegSpec = {

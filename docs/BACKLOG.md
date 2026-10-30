@@ -38,7 +38,7 @@ being instances that way into other geometry is key." ARCHITECTURE "Flora".
 | FL16 | Roots into the world: the CA's cells as the ground's grip (banks' angle of repose) and visible in cuts and cave ceilings | M | open |
 | FL17 | Passability on the GPU: a per-column plant-fill field for agents and paths (the CPU model is per region today) | M | open |
 | FL18 | Grass and twigs by zoom: at zoom 5 a blade is under a pixel — a level of detail if the perf test shows the cost | S | open |
-| FL19 | The phone's low tier (render scale 0.5) blurs blades and twigs: worth a sharper plant pass or wider blades there | S | open |
+| FL19 | The phone's low tier (render scale 0.5) broke twigs into dashes and grass into static: plants made for the tier's render pixels (min wood and leaf widths, fewer wider blades), grass thinned by render px, litter in flakes | S | done (flora) |
 
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 

@@ -51,7 +51,7 @@ async function errors(label: string, parts: string[]): Promise<string[]> {
 describe('flora shaders compile (Dawn)', () => {
   const lib = new FloraLibrary();
   for (const flora of [true, false]) {
-    const floraWgsl = `const FLORA: bool = ${flora};\n${flora ? lib.wgsl() : FloraLibrary.stubWgsl()}`;
+    const floraWgsl = `const FLORA: bool = ${flora};const FLORA_RPX: f32 = 0.5;\n${flora ? lib.wgsl() : FloraLibrary.stubWgsl()}`;
     const mi = flora ? miWgsl(lib.kinds) : 'const MI_CAP: u32 = 0u;\nconst MI_N: u32 = 1u;\nconst MI_ARGS: u32 = 24u;\n';
     it(`vegprep (flora ${flora})`, async () => {
       const treeMesh = `const TREE_MESH: bool = ${flora};\n${mi}${floraWgsl}`;
@@ -66,7 +66,7 @@ ${mi}${floraWgsl}`;
   }
   it('meshinst (flora)', async () => {
     const riverFoam = 'const RIVER_FOAM_SPEED: bool = false;\n';
-    const floraWgsl = `const FLORA: bool = true;\n${lib.wgsl()}`;
+    const floraWgsl = `const FLORA: bool = true;const FLORA_RPX: f32 = 0.5;\n${lib.wgsl()}`;
     expect(await errors('meshinst', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, miWgsl(lib.kinds), floraWgsl, renderWgsl, floraLookWgsl, meshInstWgsl])).toEqual([]);
   });
   it('the viewer page (ruin scene: hosts, ivy, moss)', async () => {

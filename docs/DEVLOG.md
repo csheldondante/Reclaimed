@@ -13720,3 +13720,30 @@ plants are generated in 7-100 ms a scene, 0.3-12 ms a plant. Triangles a plant:
 - vegPlan's CPU port still exists twice (api/plants.ts planTree and flora/placement.ts standsAt for the small plants).
   They are tested against the GPU for trees only.
 - MI3's question (meshes as the default for trees) is answered on this branch by doing it. Needs the user's yes.
+
+### Round 117 (`flora`), follow-up: readable on the phone tier
+
+Main, looking at the shots: the desktop birch wood (q=high) "is lovely". On the phone tier, though, the trunks and
+branches "break into dotted white dashes and the canopy is speckle; it reads as noise, not a forest". The cause is that
+the low tier renders at half scale (maxDpr 1 × renderScale 0.5): at zoom 14 a cell is 7 render pixels. A birch twig
+0.05 cells across is then a third of a pixel, and a grass blade 1.4 px.
+
+**Fixes.** The plants are now made for the pixels they'll get.
+- The renderer passes render px a CSS px (the tier's dpr cap × render scale) to the library, which builds its plants for
+  zoom 12 at that density (`generate(id, seed, {px})`):
+  - wood is at least ~1.7 px wide, and twigs under half of that are left out;
+  - leaf clusters are at least ~3 px and merged (fewer, bigger), so the crown's volume is about kept;
+  - grass gets fewer, wider blades (≥ 1.7 px).
+  - At desktop densities (px ≥ ~30) nothing changes (unit test).
+- Grass, flowers and ferns thin by render px a cell, not CSS px: sparse under 11, gone under 5. At the phone's zoom 14 a
+  full meadow of clumps read as static; the ground's plant cover paints it instead.
+- The leaf litter is drawn in half-cell flakes, not per-pixel speckle.
+- The thicket shrubs are lighter and 0.8 the size; the birch crowns are fuller (three leaf diamonds a site).
+- Reeds stand only on a bank: open water and dry land both within two cells, in water at most 0.3 deep, never under
+  the sea's level. The first cut stood them all over a shallow lake.
+
+Shots of the same spot (?at=13728,4768):
+- phone before and after: C:\Projects\shots88\flora\m7p-compare.png, m9-compare.png;
+- desktop: m8d-flora1-z14.png.
+
+The remaining speckle on the phone is the ground's own per-cell look at half scale, not the plants'.

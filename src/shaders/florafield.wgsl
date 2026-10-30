@@ -15,8 +15,8 @@
 
 /** open water deeper than this is a river's or a lake's (not a puddle's after rain) */
 const REED_WATER: f32 = 0.35;
-/** reeds stand in water up to this deep */
-const REED_WADE: f32 = 0.7;
+/** reeds stand in water up to this deep (the margin; a shallow lake's middle is open water) */
+const REED_WADE: f32 = 0.3;
 
 fn waterAt(x: i32, y: i32) -> f32 {
   if (x < 0 || y < 0 || x >= i32(G.mapW) || y >= i32(G.mapH)) { return 0.0; }
@@ -32,14 +32,17 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   if (d > REED_WADE) { return; }
   let m = moisture[i];
   if (m < 0.35) { return; }
-  // open water within two cells (the bank), the nearest's depth
+  // a bank: open water and dry land both within two cells
   var near = 0.0;
+  var dry = 9.0;
   for (var dy = -2; dy <= 2; dy++) {
     for (var dx = -2; dx <= 2; dx++) {
-      near = max(near, waterAt(i32(id.x) + dx, i32(id.y) + dy));
+      let wd = waterAt(i32(id.x) + dx, i32(id.y) + dy);
+      near = max(near, wd);
+      dry = min(dry, wd);
     }
   }
-  if (near < REED_WATER) { return; }
+  if (near < REED_WATER || dry > 0.02) { return; }
   // on ground plants can live on (soil-like, not bare rock or ash): the material's ecology cap
   let s = surface[i];
   let gm = groundMatAt(vec2<i32>(id.xy), sfMat(s));
@@ -47,8 +50,10 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
   let chance = 0.25 + 0.5 * smoothstep(0.35, 0.9, m);
   if (rand3(id.x, id.y, 561u) >= chance) { return; }
   let top = groundCentreZ(vec2<i32>(id.xy), f32(sfZ(s)));
+  // (not under the sea: its level past the window's edge, Globals.ocean.x)
+  if (top < G.ocean.x - 0.1) { return; }
   let at = cellPos(vec2<i32>(id.xy)) + (vec2<f32>(rand3(id.x, id.y, 562u), rand3(id.x, id.y, 563u)) - 0.5) * 0.6;
   if (!floraSeen(at, top, 3.5, 1.2)) { return; }
-  if (rand3(id.x, id.y, 564u) >= smoothstep(4.0, 7.0, PC.viewport.z)) { return; }
+  if (rand3(id.x, id.y, 564u) >= smoothstep(3.5, 6.0, PC.viewport.z * FLORA_RPX)) { return; }
   floraPut(FL_REED, id.xy, at, top, 0.85 + 0.3 * smoothstep(0.4, 1.0, m), 0.06, 7u);
 }

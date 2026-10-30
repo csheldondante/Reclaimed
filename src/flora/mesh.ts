@@ -162,7 +162,12 @@ export interface LeafLook {
 }
 
 /** Wood: segments as tubes, fewer sides on thinner branches; then leaves at the sites. */
-export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { sides?: number; roots?: Segment[]; minTwig?: number } = {}): FloraMesh {
+/**
+ * `minRadius` (skeleton units; round 117, the phone): wood drawn at least this thick, twigs under half of it left out —
+ * a branch narrower than a pixel or two breaks into dotted dashes at a low render scale. `minLeaf`: leaf clusters at
+ * least this big, fewer of them (merged), so a crown reads as masses, not specks.
+ */
+export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { sides?: number; roots?: Segment[]; minTwig?: number; minRadius?: number; minLeaf?: number } = {}): FloraMesh {
   const H = Math.max(sk.height, 0.5);
   const r01 = rng(seed ^ 0x1eaf);
   // sway: nothing at the foot, rising up the plant (squared: a trunk bends near its top), and a little more out on
@@ -172,14 +177,20 @@ export function buildPlant(sk: Skeleton, leaf: LeafLook, seed: number, opts: { s
   for (const g of sk.segments) {
     // (twigs thinner than a few hundredths of a cell are left out: under a pixel at play zoom, and most of a tree's
     // triangles — the leaves they carry still show where they are)
-    if (g.r0 < (opts.minTwig ?? 0.035)) continue;
+    const minR = opts.minRadius ?? 0;
+    if (g.r0 < Math.max(opts.minTwig ?? 0.035, minR * 0.5)) continue;
     const n = g.r0 > 0.25 ? sides : g.r0 > 0.08 ? Math.max(3, sides - 2) : 3;
-    mb.tube(g, n, PART.wood, Math.min(0.15, g.depth * 0.05));
+    mb.tube({ ...g, r0: Math.max(g.r0, minR), r1: Math.max(g.r1, minR * 0.85) }, n, PART.wood, Math.min(0.15, g.depth * 0.05));
   }
   for (const g of opts.roots ?? []) mb.tube(g, g.r0 > 0.12 ? 4 : 3, PART.root);
+  // (coarse leaves: bigger clusters, fewer of them — the crown's volume about kept: a site in `keep` carries one)
+  const grow = opts.minLeaf && opts.minLeaf > leaf.size ? opts.minLeaf / leaf.size : 1;
+  const look = grow > 1 ? { ...leaf, size: leaf.size * grow, per: Math.max(1, Math.round(leaf.per / grow)) } : leaf;
+  const keep = grow > 1 ? Math.min(1, 1.6 / (grow * grow)) : 1;
   for (const l of sk.leaves) {
     if (l.depth < leaf.minDepth) continue;
-    addLeaves(mb, l, leaf, r01);
+    if (keep < 1 && r01() > keep) continue;
+    addLeaves(mb, l, look, r01);
   }
   return mb.done();
 }
