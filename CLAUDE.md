@@ -85,6 +85,9 @@ stock-take.
   16-bit draws bottom out at 1/65536.
 - WGSL gotchas hit so far: derivatives (`fwidth`) must run before any `discard`
   or early return; `patch` and `target` are reserved words; module-scope `let` is invalid.
+- Never read WebGPU globals (`GPUBufferUsage`, `GPUTextureUsage`, `GPUShaderStage`,
+  `GPUMapMode`) at module scope: modules load before `initGpu` checks for WebGPU,
+  so a browser without it throws a ReferenceError instead of showing the message.
 
 ## Gotchas for agents editing here
 
