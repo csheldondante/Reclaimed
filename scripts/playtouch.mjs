@@ -37,9 +37,11 @@ await run({ name: 'playtouch', kind: 'behaviour', size: '412x915', dpr: 1 }, asy
   // the left thumb down in the bottom-left zone and pushed up the screen, held 3 s
   await down(0, 90, 780);
   for (let i = 1; i <= 6; i++) await move(0, 90, 780 - i * 12);
+  let fastest = 0;
   for (let k = 0; k < 15; k++) {
     await sleep(100);
     await move(0, 90 + (k % 2), 708);
+    fastest = Math.max(fastest, await p.evaluate(() => window.reclaimed.play.hero.speed()));
   }
   // the right thumb: a quick swipe starting left of the bike, forward (up the screen)
   const from = await p.evaluate(() => {
@@ -61,7 +63,9 @@ await run({ name: 'playtouch', kind: 'behaviour', size: '412x915', dpr: 1 }, asy
   const a1 = await pos();
   await up(0);
   const moved = Math.hypot(a1[0] - a0[0], a1[1] - a0[1]);
-  R.check('a held touch stick rides the bike (> 20 cells in 3 s)', moved > 20, { moved: +moved.toFixed(1) });
+  // (round 118: it starts on hills now, so how far it gets in 3 s depends on the slope it's pointed up; the speed it
+  // reaches is the thumb's doing)
+  R.check('a held touch stick rides the bike (over 15 cells/s within 1.5 s, or 20 cells in 3 s)', fastest > 15 || moved > 20, { moved: +moved.toFixed(1), fastest: +fastest.toFixed(1) });
   const told = await p.evaluate(() => window.reclaimed.play.hero.told);
   R.log(`trace ${JSON.stringify(await p.evaluate(() => window.reclaimed.play.controls.trace))}`);
   R.check('a touch swipe beside the bike is read as a slash', /slash/.test(told), { told });

@@ -64,13 +64,18 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   // ride: the stick up the screen, boost held
   await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, -1], buttons: [true] }));
   let top = 0;
+  // (the path it rides, frame to frame: on hills it doesn't go straight; a jump over 20 cells is the window sliding)
+  let moved = 0;
+  let last = s0.at;
   await gif('bike-hills.gif', 30, 70, async () => {
     const s = await state();
     top = Math.max(top, s.speed);
+    const d = Math.hypot(s.at[0] - last[0], s.at[1] - last[1]);
+    if (d < 20) moved += d;
+    last = s.at;
   });
   const s1 = await state();
-  const moved = Math.hypot(s1.at[0] - s0.at[0], s1.at[1] - s0.at[1]);
-  R.check('the bike rides (moved > 25 cells)', moved > 25, { moved: +moved.toFixed(1), top: +top.toFixed(1), status: s1.status });
+  R.check('the bike rides (a path over 25 cells)', moved > 25, { moved: +moved.toFixed(1), top: +top.toFixed(1), status: s1.status });
   R.check('it gets up to speed (> 15 cells/s)', top > 15, { top });
   await p.screenshot({ path: path.join(dir, 'bike-ride.png') });
   // a fight: raiders in a file 2.5 cells left of its way ahead; a swipe on the left whenever one's coming up on that side
@@ -198,8 +203,10 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   R.check('a tapped foe is dragged on the line', lineFrames > 5, { lineFrames });
   // (round 118) a rival rider: tapped, the bike is reeled up alongside it
   await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [false] }));
-  await p.evaluate(() => window.reclaimed.play.rival());
   await sleep(2500);
+  // (tapped soon after it's called: it laps a 40-cell circle through the bike's spot, gone round out of reach in seconds)
+  await p.evaluate(() => window.reclaimed.play.rival());
+  await sleep(600);
   await p.evaluate(() => {
     const s = window.reclaimed.play;
     const r = s.rivals[s.rivals.length - 1].vehicle();
@@ -260,8 +267,17 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   await sleep(1500);
   let faced = 0;
   let rose = -Infinity;
-  await gif('lich-drain.gif', 30, 60, async (i) => {
-    if (i === 1 || i === 2) await tapUnit(victim);
+  // (the double tap: two taps 150 ms apart, then the status; once more if it didn't take — logged)
+  for (let k = 0; k < 2; k++) {
+    await tapUnit(victim);
+    await sleep(150);
+    await tapUnit(victim);
+    await sleep(250);
+    const st = await p.evaluate((id) => ({ st: window.reclaimed.play.hero.status(), held: window.reclaimed.play.hero.held(), u: window.reclaimed.units.get(id)?.at, me: window.reclaimed.play.hero.position() }), victim);
+    R.log(`double tap ${k}: ${JSON.stringify(st)}`);
+    if (/FACE TO FACE/.test(st.st)) break;
+  }
+  await gif('lich-drain.gif', 30, 60, async () => {
     const r = await p.evaluate((id) => {
       const s = window.reclaimed.play;
       const u = window.reclaimed.units.get(id);
