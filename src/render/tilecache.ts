@@ -1214,6 +1214,8 @@ export class TileCache {
       origin: [this.origin[0], this.origin[1]],
       R,
       tile: (rx, ry) => this.drawnSet.has(`${rx},${ry}`),
+      // (a tile of it at this turn left out by prepare as off the screen: its extent as baked says so)
+      offScreen: (rx, ry) => this.tiles.get(this.key(rx, ry, cam.azimuth))?.skip === 'off',
       zRange: (rx, ry) => this.land?.zRange?.(rx, ry) ?? null,
     });
   }

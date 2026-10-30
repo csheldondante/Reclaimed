@@ -109,6 +109,16 @@ await run({ name: 'holediag', kind: 'behaviour', size: '412x915', dpr: 2.6 }, as
                   drawn: new Set(TL.drawnSet),
                   tiles: new Set([...TL.tiles.values()].filter((t) => Math.round(t.az * 1e4) === Math.round(cam.azimuth * 1e4)).map((t) => `${t.rx},${t.ry}`)),
                   geo: TL.coverCheck ? TL.coverCheck(cam) : null,
+                  geoWhy: (() => {
+                    const g = TL.coverCheck ? TL.coverCheck(cam) : null;
+                    if (!g || g.share < 0.02) return null;
+                    return g.undrawn.slice(0, 8).map((u) => {
+                      if (u[0] !== 'r') return u;
+                      const [rx, ry] = u.slice(1).split(',').map(Number);
+                      const t = [...TL.tiles.values()].find((t) => t.rx === rx && t.ry === ry);
+                      return `${u}:${t ? `tile skip=${t.skip} boxed=${t.boxed} az=${Math.round(t.az * 1e4) === Math.round(cam.azimuth * 1e4)} q=${t.q}` : TL.land.stateOf(`${rx},${ry}`) || 'none'}`;
+                    });
+                  })(),
                   busy: S.busy,
                   slides: S.stats.slides,
                   frame: TL.frameNo,
@@ -117,6 +127,7 @@ await run({ name: 'holediag', kind: 'behaviour', size: '412x915', dpr: 2.6 }, as
               return orig.call(this, enc, depth, pick, ts);
             };
             const agree = { n: 0, pxSum: 0, geoSum: 0, pxMax: 0, geoMax: 0, missed: 0, extra: 0, both: 0, pairs: [] };
+            const geoEx = [];
             const agg = {};
             const worst = {};
             let frames = 0;
@@ -224,6 +235,7 @@ await run({ name: 'holediag', kind: 'behaviour', size: '412x915', dpr: 2.6 }, as
                   const go = RR.renderer.gridOn;
                   probe = { chunk: [ci, cj], hits: top[1], surfLoHi: [+zlo.toFixed(1), +zhi.toFixed(1)], zero, gridLoHi: go ? [+go.lo[cc].toFixed(1), +go.hi[cc].toFixed(1)] : null, camZ: +s.tz.toFixed(1), framesSince: TL.frameNo - s.frame };
                 }
+                if (s.geoWhy && geoEx.length < 4) geoEx.push({ px: +(nb / sampleN).toFixed(4), geo: +s.geo.share.toFixed(4), why: s.geoWhy, origin: s.origin.slice(0, 2), tgt: s.tgt });
                 if (examples.length < 6 && nb > sampleN * 0.02) examples.push({ probe, frame: s.frame, share: +(nb / sampleN).toFixed(3), cnt, busy: s.busy, slides: s.slides, tgt: s.tgt.map((q) => +q.toFixed(1)), un: s.un, drawn: [...s.drawn].length });
               }
               for (const k in cnt) {
@@ -276,6 +288,7 @@ await run({ name: 'holediag', kind: 'behaviour', size: '412x915', dpr: 2.6 }, as
                 return sxx > 0 && syy > 0 ? +(sxy / Math.sqrt(sxx * syy)).toFixed(3) : null;
               })() },
               examples,
+              geoEx,
             };
           },
           zoom,

@@ -12949,3 +12949,41 @@ behind, instead of a fixed square that slides; (c) the systems dispatched over t
 already are per chunk); (d) the CPU's window-coordinate arrays (hybrid, the mesh's chunk grid, the streamer's
 per-column) addressed by page; (e) the camera's clamp gone (SF10, done separately). Gate: tilegate and the sim's
 contract tests (water across page edges).
+
+## 2026-10-30 — round 113 (`tilesfirst`, SF10): the camera is never held back by what's loaded
+
+The user on places (steps 1-3): "This version seems to stop me from scrolling when I get near the edge of what is loaded
+which is not desirable either." That was round 91's clamp (level.ts: a streamed window kept the camera a region in
+from its edge, so a pan faster than the slides waited for them). With the stand-in and the tiles drawing everything
+the camera sees, a streamed level has no clamp: the atlas wraps, the window slides after the camera and catches up
+behind it (a slide a region at a time, each when its land is made). A fixed map keeps its bounds; `?camclamp=1` the
+round-91 clamp, to compare.
+
+**Check:** scripts/panstall.mjs (phone proxy, window 256, 10 s up the screen; every 250 ms span's distance against what
+was asked, under 80% a stall). With `camclamp=1`: z14 at 160 c/s stalled in 38 spans (worst at half speed; 1559 of
+1590 cells); without: no stall at z14 or z5, 80 or 160 c/s (z14 160: 1584 of 1584 cells, 58 slides behind it;
+background 0, the geometric check 0 at z14; z5 at 80-160 c/s for 10 s 6.6-7.0% — long pans at wide zooms, SF9).
+**Gate** (gate-sf10.json): background 0; phone z14 clean to 160 (step 4's run: 23% at 160), phone z8 0-0.05%, phone z5
+0-0.6%; desktop z14 0-0.05%, z8 0-0.6% (160: 9.9 → 0.1), desktop z5 0.65-2% (SF9, as step 4's 0.8-1.6%); parked all
+pass; frames as step 4 (49-52 fps under the cap).
+
+## 2026-10-30 — round 113 (`tilesfirst`, SF9): the coverage check's phantom regions at wide zooms
+
+Step 4's gate had desktop z5 pans "undrawn" 0.8-2% in every frame, and holediag's phone z5 runs read 5% where the pixel
+check read 0.3-0.7%. holediag now lists the geometric check's undrawn pieces with their tiles' state: every one was a
+region past the window whose tile exists and that TileCache.prepare left out as off the screen (`skip = 'off'`: the
+tile's own extent, as baked, misses the screen) — the check's box for it, from the macro heights (Atlas.zRange), is
+taller than the land and met the screen. The check now takes the tile's word (`CoverView.offScreen`): a region whose
+tile at this turn is off the screen isn't seen. holediag phone z14/z8/z5 at 20/80/160, twice: geometric 0-0.05%
+everywhere (was z5 5.1-5.7%). This also matters to the planner: a phantom hole kept `holes` on and the sim's ticks cut at
+wide zooms.
+
+Tried and reverted: the tiles' latency as wanted → baked (50-70 ms: generation 28-50, bake 10-21) instead of wanted →
+drawn (~2 s at 160 c/s, mostly the lead time before the screen gets there): the reach shrank to ~a region and a half
+and z5 pans showed the stand-in on 3-11% (holediag) — at wide zooms the look-ahead has to cover the tiles' throughput,
+not one tile's latency. Kept as it was; the planner's tile reach by throughput is open (SF11).
+
+**Gate** (gate-sf9.json): background 0; geometric — phone 0-0.05% bar z14 160 0.24% (one region, 41 of 150 frames);
+desktop z14 0, z8 0-0.10, z5 0.05-0.61 (was 0.65-2.0). The far share (the stand-in seen) at desktop z5 40-160 c/s, 8-13%,
+is the open sea at the end of that route (shot gate-sf9/desktop-z5-pan.png: deep water the window and the tiles draw
+nothing of, the stand-in's sea). Parked all pass; frames as before (50-52 fps under the cap).
