@@ -13372,3 +13372,33 @@ end, no bench errors; settled in 1.0 s; 12 parked phases in A..Z..A order; `summ
 phase and pan step. At 100 Hz the desktop's 9.6 ms frame is near its GPU's 8.8 ms, so 5% of frames slip one vsync and
 pairs within 100 ms are common there (not the phone's case: 2-8 of ~245); the late callbacks it saw (2 of 401
 untimed) had no rAF callback or timed step before them (`untracedMean` 4.8 ms).
+
+## 2026-10-30 — round 114 (`framepace`, FP9): the phone's v8 freeze; the frame loop stops only loudly
+
+Why: the phone's bench v8 (scratchpad pixel9a-pan-v8.json). Zoom 14 was clean (settled in 14 s; untimed 0/249 slow;
+the second round's phases 0 slow but inFlight1; the bike-speed pans mostly "apart": pool 80 c/s 4 slow, min gap
+217 ms; disk 80 one back-to-back pair; 120 and 240 pairs 50-66 ms apart). Then it froze: zoom 14's disk step at
+120 c/s rendered one frame (fps 0.3; one slide begun, `slideDoneMs` empty), every capture after it 0 frames, zoom 8's
+settle timed out with "tilesInFlight 1" — the tiles' count is only updated by a frame, so a symptom — and the warp to
+the disk line waited 62 s for the streamer (busy, its slide never done) till the watchdog moved on; zoom 5 never ran.
+Nothing in the report said why: the bench didn't hear a frame's exception, and a GPU that never finishes holds every
+rAF (main.ts's pacing, two frames in flight) without a word.
+
+What it is, from the numbers: either the frame callback threw (the loop isn't re-armed) or the GPU's queue stopped
+(onSubmittedWorkDone never resolved, the slide's readback never mapped, every rAF held). v7 ran the same steps to
+640 c/s; v8's only change on the frame's path in a slide is the tick clock's `pause()` and the held count — a
+counter and an array push. Not reproduced on the desktop: bench zooms 14_8 at 100 Hz, and locked (`--hz 50` on
+scripts/benchrun.mjs, `?ticktol=0.25` so a 20 ms display locks) — every step of both zooms rendered (zoom 8 disk
+640 c/s 66 fps; locked, 49-51 fps), settles 1.0 s, no errors.
+
+Changes:
+- main.ts: the frame's whole body under one guard — a throw is the fatal overlay ("a frame failed" with its stack) and,
+  on a bench page, the page's error (benchSkip: the chain goes on); every rAF held 20 s with no GPU work done is fatal
+  too, with the frames in flight, the last work done, the readbacks pending (and the slowest) and the streamer's busy
+  reason. 20 s, not 5: the desktop's first load held every frame 6 s with 7 readbacks pending (the slowest 5.1 s) and
+  went on — slow, not stuck; the phone held for over 60 s. scripts/loopfail.mjs checks both (throw, stall): the
+  overlay shows each.
+- TileLandGpu.inFlightJobs() (key, ms since started, made), in the bench's settle timeout with the frames rendered
+  while it waited (0: the loop, not a tile).
+- `?ticktol=` (TickClock.tol, default 0.12): a test's display that isn't 60 Hz locks; benchrun.mjs `--hz`.
+- BENCH_VERSION 9.

@@ -34,6 +34,10 @@ export class TickClock {
   private dts: number[] = [];
   private sinceFix = 0;
 
+  /** how near the tick the display's interval must be to lock (a share of TICK_DT; ?ticktol= — a 20 ms headless grid
+   *  locks at 0.25, for tests on a machine whose display isn't 60 Hz) */
+  tol = TOL;
+
   constructor(mode: TickMode = 'locked') {
     this.mode = mode;
   }
@@ -66,7 +70,7 @@ export class TickClock {
     }
     this.stats.frames++;
     const d = this.displayDt();
-    this.locked = this.mode === 'locked' && speed === 1 && Math.abs(d - TICK_DT) <= TOL * TICK_DT;
+    this.locked = this.mode === 'locked' && speed === 1 && Math.abs(d - TICK_DT) <= this.tol * TICK_DT;
     let n = 0;
     if (this.locked) {
       this.stats.lockedFrames++;

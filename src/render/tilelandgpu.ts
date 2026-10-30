@@ -228,6 +228,12 @@ export class TileLandGpu {
     for (const sl of this.slots) sl.g = sl.r = sl.prep = undefined;
   }
 
+  /** (round 114, framepace) the regions in flight now: key, ms since started, made (its land submitted) or not */
+  inFlightJobs(): { key: string; ageMs: number; made: boolean }[] {
+    const now = performance.now();
+    return [...this.jobs.values()].map((j) => ({ key: `${j.rx},${j.ry}`, ageMs: Math.round(now - j.times.start), made: j.made }));
+  }
+
   private free(j: Job): void {
     this.jobs.delete(`${j.rx},${j.ry}`);
     this.slotJob[j.slot] = null;

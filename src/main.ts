@@ -196,32 +196,58 @@ async function main() {
   let inFlight = 0;
   let last = performance.now();
   let firstFrame = '';
+  // (round 114, framepace) the loop stops only loudly. The phone's v8 bench rendered nothing from mid-step on with no
+  // error said: either a frame threw (the loop isn't re-armed) or the GPU never finished two frames (every rAF held).
+  // A frame that throws is the fatal overlay (and a bench page's error); rAFs held for STALL_MS with the GPU's work
+  // never done is too, with what was in flight.
+  // (20 s: a first load's generation held every frame for 6 s on the desktop iGPU with its work done in the end — a
+  // GPU that's slow, not stuck; the phone's held for over 60 s)
+  const STALL_MS = 20000;
+  let heldSince = 0;
+  let lastDone = performance.now();
+  let stalled = false;
+  const fail = (msg: string) => {
+    if (bench === 'level') benchSkip(`${msg}${benchStageNote()}`);
+    showFatal(msg);
+  };
   const frame = (now: number) => {
     if (pace && inFlight >= (pacer?.maxInFlight ?? 2)) {
       hitch?.rec?.heldFrame();
       pacer?.held();
+      heldSince ||= now;
+      if (!stalled && now - heldSince > STALL_MS) {
+        stalled = true;
+        fail(`the GPU never finished: ${inFlight} frames in flight, every frame held for ${((now - heldSince) / 1000).toFixed(1)} s, the last work done ${((performance.now() - lastDone) / 1000).toFixed(1)} s ago${hitch ? `, readbacks pending ${hitch.mem.io.pendingMaps} (slowest done: ${hitch.mem.slowMap.label} ${hitch.mem.slowMap.ms.toFixed(0)} ms)` : ''}${(scene as unknown as { stream?: { busy?: boolean; busyWhy?: string } } | null)?.stream?.busy ? `, the streamer busy (${(scene as unknown as { stream: { busyWhy?: string } }).stream.busyWhy})` : ''}`);
+      }
       requestAnimationFrame(frame);
       return;
     }
-    const dt = Math.min(0.1, (now - last) / 1000);
-    last = now;
-    // (round 100, hitchrec: the frame's interval and its callback's CPU time)
-    hitch?.rec?.frameStart(now);
-    const c0 = hitch ? performance.now() : 0;
-    pacer?.begin(now, inFlight);
-    scene?.frame(now, dt);
-    if (!firstFrame) bootMark((firstFrame = 'first-frame'));
-    // (round 108: the bug report's picture, while the frame is still on the canvas)
-    serviceShot(canvas);
-    if (hitch) hitch.frameEnd(performance.now() - c0);
-    const paceDone = pacer?.end();
-    if (pace) {
-      inFlight++;
-      gpu.device.queue.onSubmittedWorkDone().then(() => {
-        inFlight--;
-        paceDone?.();
-      });
-    } else if (paceDone) void gpu.device.queue.onSubmittedWorkDone().then(paceDone);
+    heldSince = 0;
+    try {
+      const dt = Math.min(0.1, (now - last) / 1000);
+      last = now;
+      // (round 100, hitchrec: the frame's interval and its callback's CPU time)
+      hitch?.rec?.frameStart(now);
+      const c0 = hitch ? performance.now() : 0;
+      pacer?.begin(now, inFlight);
+      scene?.frame(now, dt);
+      if (!firstFrame) bootMark((firstFrame = 'first-frame'));
+      // (round 108: the bug report's picture, while the frame is still on the canvas)
+      serviceShot(canvas);
+      if (hitch) hitch.frameEnd(performance.now() - c0);
+      const paceDone = pacer?.end();
+      if (pace) {
+        inFlight++;
+        gpu.device.queue.onSubmittedWorkDone().then(() => {
+          inFlight--;
+          lastDone = performance.now();
+          paceDone?.();
+        });
+      } else if (paceDone) void gpu.device.queue.onSubmittedWorkDone().then(paceDone);
+    } catch (e) {
+      fail(`a frame failed: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
+      throw e;
+    }
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);

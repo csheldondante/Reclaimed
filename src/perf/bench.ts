@@ -32,7 +32,7 @@ import { BGCHECK, bgShares, type BgShares } from '../render/bgcheck';
 /** (v3) vite.config.ts `define`: the build's time */
 declare const __BENCH_BUILD__: string;
 
-export const BENCH_VERSION = 8;
+export const BENCH_VERSION = 9;
 const STATE = 'reclaimed.bench.state';
 /** (v3) the build, on the start page: vite.config.ts defines it at build time */
 const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ : 'dev';
@@ -1471,6 +1471,7 @@ class Bench {
   private async paceSettle(maxMs: number): Promise<Record<string, unknown>> {
     const t0 = performance.now();
     const R = this.R;
+    const fno0 = this.prof.frameNo;
     const state = () => ({ busy: !!R.stream.busy, holes: R.scene.planner?.plan?.holes ?? null, tilesInFlight: R.core.renderer?.tiles?.land?.stats?.inFlight ?? null, unwritten: R.stream.unwritten?.length ?? null });
     let since = -1;
     for (;;) {
@@ -1480,7 +1481,8 @@ class Bench {
         if (since < 0) since = t;
         if (t - since >= 1000) return { ms: Math.round(performance.now() - t0), timedOut: false };
       } else since = -1;
-      if (performance.now() - t0 > maxMs) return { ms: Math.round(performance.now() - t0), timedOut: true, ...q };
+      // (v9: what was still in flight — each region's key and age — and whether frames were still being rendered)
+      if (performance.now() - t0 > maxMs) return { ms: Math.round(performance.now() - t0), timedOut: true, ...q, tiles: R.core.renderer?.tiles?.land?.inFlightJobs?.() ?? null, framesRendered: this.prof.frameNo - fno0 };
     }
   }
 

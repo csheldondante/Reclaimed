@@ -120,6 +120,7 @@ export class WorldCore {
     map.surface.set(this.world.ring.toStore(map.surface));
     this.sim = new Simulation(device, this.world, host.profiler);
     this.clock = new TickClock(tickModeFrom(host.params));
+    if (host.params.has('ticktol')) this.clock.tol = Number(host.params.get('ticktol'));
     this.tiers = new Tiers({
       origin: () => this.globals.origin ?? [0, 0],
       dims: this.dims,
