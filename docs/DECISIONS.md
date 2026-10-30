@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 115 (session 5, `tilecal`) — the tiles calibrated to the hardware
+
+- The user, verbatim: "the desktop version on my wide monitor does not load all the tiles (and I assume it is
+  considerably more powerful than the phone) which seems like it is an issue with the implementation because I don't
+  think the PC streaming should be that slow if it is just a heightmap. That said I'm decently happy with it and I
+  don't want to waste any more time on this as our main project. Worth spawning one subagent to investigate on the PC
+  and see if it is an issue with settings and if so make the runtime calibrate to the hardware."
+- → Branch `tilecal` (one investigation, not a perf project): the zoom floor and the atlas were set by constants that
+  don't see the device or the screen (a fill rate of 2 tiles a frame, an atlas capped at 128 MB); now the land's fill
+  rate is measured, the floor is what that rate fills in 5 s, and the atlas grows to what the floor needs within a
+  memory budget (512 MB off a phone, 128 MB on one — asked: BACKLOG CAL3). DEVLOG round 115.
+
 ## 2026-10-30 — round 114 (session 5, `worldstore`) — a saved world from another generator; a run's places made fresh
 
 - The user, verbatim: "Without the flag my world seems to me glitched (which is fine for now). I think the intention

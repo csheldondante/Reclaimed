@@ -26,6 +26,7 @@ import { ROW_H } from '../world/lattice';
 import type { LandTimes } from './tileland';
 import { coverage, type Coverage } from './coverage';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
+import { TileCalibration } from './tilecalib';
 
 /** (round 105) what makes the render-only land: tileland.ts (the playable path, ?tilegpu=0) or tilelandgpu.ts */
 export interface LandMaker {
@@ -49,13 +50,9 @@ const MASK_N = 64;
 const REBAKE = Number(new URLSearchParams(location.search).get('tilerebake') ?? 600);
 /** bakes a frame */
 const PER_FRAME = Math.max(1, Number(new URLSearchParams(location.search).get('tilesper') ?? 1) | 0);
-/** the atlas's budget (MB) and a slot's size (texels). (Round 112, `tilefix`: by the screen — 24 MB is the phone's
- *  (411 x 785 css px, the pan bench's), the screen's ground at a zoom grows with its css area, so a desktop's
- *  1600 x 900 at a wide zoom wanted 4.5 times the tiles: the atlas full of the screen's own and the rest the far land's
- *  flat colour. Up to TILE_MB_MAX; ?tilemb= sets it.) */
-const PHONE_CSS = 411 * 785;
-const TILE_MB_MAX = 128;
-const BUDGET_MB = Number(new URLSearchParams(location.search).get('tilemb') ?? Math.min(TILE_MB_MAX, 24 * Math.max(1, (innerWidth * innerHeight) / PHONE_CSS)));
+/** the atlas's budget (MB) — round 112, `tilefix`: by the screen, the phone's 24 MB at 411 x 785 css px scaled by area, up
+ *  to 128 MB; ?tilemb= sets it (round 115: TileCalibration.atlasMB owns it) — and a slot's size (texels) */
+const BUDGET_MB = TileCalibration.atlasMB(innerWidth, innerHeight);
 const [SW, SH] = (new URLSearchParams(location.search).get('tilepx') ?? '128x192').split('x').map(Number);
 /** bytes a texel: rgba8 (albedo, film) + rg32uint (normal and flags, depth) — the slots' count is these planes' budget —
  *  and (round 108, TC20) rgba8 (the held river under it — how far under its level at the reference wetness, its depth
@@ -70,7 +67,7 @@ const NO_LAND = new URLSearchParams(location.search).get('tileland') === '0';
  *  (world units a second) under which the camera's at rest */
 const PREFETCH_S = Number(new URLSearchParams(location.search).get('tileahead') ?? 1);
 const PREFETCH_FIXED = new URLSearchParams(location.search).has('tileahead');
-const MOVING = 2;
+export const MOVING = 2;
 /** (round 106, tilephone) the look-ahead's least reach (world units: a region and a half), and the margin round the
  *  screen asked for next (the screen's size times this) */
 const AHEAD_CELLS = 96;
@@ -108,14 +105,12 @@ function sizeOf(w: number, h: number): Size {
   if (fh > SH >> 1 || fw > SW) return 0;
   return fw <= SW >> 1 ? 2 : 1;
 }
-/** (round 112, `tilefix3`) the zoom floor (TileCache.zoomFloor): the share of the atlas's slots a screenful may take, the
- *  frames a screenful's land may take to make from nothing, the land's rate a frame (tiles: measured by the gate —
- *  scripts/tilegate.mjs fillFrames — a phone's path ~0.3 (the gate's phone-path fill: z1.3, ~81 tiles in 270 frames), a desktop's ~2; ?tilerate= sets it); ?zoomfloor=0 none */
+/** (round 112, `tilefix3`) the zoom floor (TileCache.zoomFloor): the share of the atlas's slots a screenful may take; the
+ *  tiles a screenful's land may hold are the calibration's (round 115, TileCalibration.fillTiles: the measured rate over
+ *  the fill budget); ?zoomfloor=0 none */
 const FLOOR_ROOM = 0.8;
-const FLOOR_FRAMES = Number(new URLSearchParams(location.search).get('floorframes') ?? 300);
-const PHONE_UA = typeof navigator !== 'undefined' && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent);
-const FILL_RATE_PHONE = Number(new URLSearchParams(location.search).get('tilerate') ?? 0.3);
-const FILL_RATE = Number(new URLSearchParams(location.search).get('tilerate') ?? 2);
+/** (round 115) the atlas grows when the rate's floor would take this share of its slots or more (TileCache.grow) */
+const GROW_AT = 1.1;
 export const ZOOM_FLOOR = new URLSearchParams(location.search).get('zoomfloor') !== '0';
 /** (round 113, tilesfirst) tiles.wgsl TileU: r, u, f, win, focus, mesh (6 vec4s), cand (32: the grid's chunks in view, the
  *  voxel mesh's in view — a bit a chunk, 2048 each), drawn (16: tilemask's) */
@@ -238,7 +233,7 @@ export class TileCache {
   /** counts (scripts read them): bakes (first, again), evictions, tiles drawn last frame, slots, in use, MB */
   /** ?tiledebug=1 (or set at run time — scripts/tileparity.mjs): the tiles drawn tinted */
   debug = DEBUG;
-  readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0, zoomFloor: 0, cover: 0 };
+  readonly stats = { remade: 0, bakes: 0, first: 0, again: 0, evicted: 0, drawn: 0, slots: 0, used: 0, mb: 0, frozen: 0, skipEye: 0, skipOff: 0, skipFar: 0, zoomFloor: 0, cover: 0, floorBound: 'none' as 'room' | 'rate' | 'none', floorTiles: 0, slotsMost: 0, grown: 0 };
   private tiles = new Map<string, Tile>();
   /** (round 112, TC21) the atlas's quarters (slot · 4 + q): a whole slot's tile in its four, a quarter's in its own */
   private cells: (Tile | null)[];
@@ -272,14 +267,18 @@ export class TileCache {
     const dev = host.device;
     const slotBytes = SW * SH * TEXEL_BYTES;
     const lim = dev.limits.maxTextureDimension2D;
-    this.cols = Math.max(1, Math.floor(lim / SW));
+    // (round 115, `tilecal`: the atlas is as wide as the most it may grow to — the calibration's memory budget — so a
+    // growth adds rows and every slot keeps its place: TileCache.grow)
+    const most = Math.max(4, Math.floor((TileCalibration.atlasMostMB(BUDGET_MB) * 2 ** 20) / slotBytes));
+    this.cols = Math.max(1, Math.min(Math.floor(lim / SW), Math.ceil(Math.sqrt(most * (SH / SW)))));
+    this.rowsMost = Math.max(1, Math.min(Math.floor(lim / SH), Math.ceil(most / this.cols)));
     const want = Math.max(4, Math.floor((BUDGET_MB * 2 ** 20) / slotBytes));
-    this.cols = Math.min(this.cols, Math.ceil(Math.sqrt(want * (SH / SW))));
-    const rows = Math.min(Math.floor(lim / SH), Math.ceil(want / this.cols));
+    const rows = Math.min(this.rowsMost, Math.ceil(want / this.cols));
     const slots = this.cols * rows;
     this.cells = new Array(slots * 4).fill(null);
     this.stats.slots = slots;
     this.stats.mb = +((slots * SW * SH * (TEXEL_BYTES + LIVE_BYTES)) / 2 ** 20).toFixed(1);
+    this.stats.slotsMost = this.cols * this.rowsMost;
     // (round 105: the atlas and the bake's G-buffer made when a streamed window first gives the tiles a place — tiles on by
     // default, a level without one spends nothing: alloc)
     this.rows = rows;
@@ -287,7 +286,7 @@ export class TileCache {
     this.inst = dev.createBuffer({ label: 'tiles instances', size: this.instData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     // (round 113: tiles.wgsl TileU — 6 vec4s, the candidates' 32, the drawn set's 16, written on the GPU by encodeMask)
     this.uni = dev.createBuffer({ label: 'tiles uniform', size: UNI_BYTES, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
-    this.tparams = dev.createBuffer({ label: 'tiles params', size: slots * 4 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    this.tparams = dev.createBuffer({ label: 'tiles params', size: slots * 4 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
     this.mask = dev.createBuffer({ label: 'tiles mask', size: this.maskData.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
     for (let k = 0; k < PER_FRAME; k++) this.bakers.push({ cam: dev.createBuffer({ label: `tiles bake camera ${k}`, size: host.camBytes, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }) });
     void this.makePipes();
@@ -320,13 +319,27 @@ export class TileCache {
   }
 
   private rows: number;
+  /** (round 115) the rows the atlas may grow to (the calibration's memory budget, the texture's limit) */
+  private rowsMost: number;
+  /** (round 115) textures a growth replaced: destroyed a frame on, once nothing recorded can still use them */
+  private retired: (GPUTexture | GPUBuffer)[] = [];
+  /** (round 115) the atlas's three planes at `rows` (copyable: a growth copies the old into the new) */
+  private atlasTextures(rows: number): [GPUTexture, GPUTexture, GPUTexture] {
+    const dev = this.host.device;
+    const RB = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST;
+    const size = [this.cols * SW, rows * SH];
+    return [
+      dev.createTexture({ label: 'tiles A', size, format: 'rgba8unorm', usage: RB }),
+      dev.createTexture({ label: 'tiles B', size, format: 'rg32uint', usage: RB }),
+      dev.createTexture({ label: 'tiles live', size, format: 'rgba8unorm', usage: RB }),
+    ];
+  }
+
   /** (round 105) the atlas (slots of SW x SH texels: rgba8 + rg32uint) and the bake's G-buffer */
   private alloc(): void {
     const dev = this.host.device;
     const RB = GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING;
-    this.atlasA = dev.createTexture({ label: 'tiles A', size: [this.cols * SW, this.rows * SH], format: 'rgba8unorm', usage: RB });
-    this.atlasB = dev.createTexture({ label: 'tiles B', size: [this.cols * SW, this.rows * SH], format: 'rg32uint', usage: RB });
-    this.atlasLive = dev.createTexture({ label: 'tiles live', size: [this.cols * SW, this.rows * SH], format: 'rgba8unorm', usage: RB });
+    [this.atlasA, this.atlasB, this.atlasLive] = this.atlasTextures(this.rows);
     this.gb0 = dev.createTexture({ label: 'tiles gbuf0', size: [SW, SH], format: 'rgba32uint', usage: RB });
     this.gb1 = dev.createTexture({ label: 'tiles gbuf1', size: [SW, SH], format: 'rg32uint', usage: RB });
     this.gbD = dev.createTexture({ label: 'tiles gdepth', size: [SW, SH], format: this.host.depthFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT });
@@ -379,10 +392,15 @@ export class TileCache {
     this.frame++;
     this.track(cam);
     // (round 112, tilefix3: the device's zoom floor, now and then — the camera holds to it)
+    for (const r of this.retired.splice(0)) r.destroy();
     if (ZOOM_FLOOR && this.frame % 30 === 1) {
       const f = this.zoomFloor(cam, renderW);
       if (f > 0) cam.zoomFloor = f;
       this.stats.zoomFloor = +f.toFixed(2);
+      // (round 115, `tilecal`: the atlas the floor's bound, and the measured rate's floor would take a tenth more slots
+      // than it has or more — a growth is a copy of the atlas, not done for a few — it grows to them, within its budget)
+      const slots = this.cells.length >> 2;
+      if (this.stats.floorBound === 'room' && this.cal.stats.source !== 'prior' && this.slotsAtRate > slots * GROW_AT) this.grow(this.slotsAtRate);
     }
     if (!this.on(cam)) return;
     const h = this.host;
@@ -441,9 +459,11 @@ export class TileCache {
   /**
    * (round 112, `tilefix3`) The widest zoom (screen px a cell) at which this device's tiles hold the screen: the regions
    * a zoom shows with the look-ahead's margin (the screen's ground, MARGIN² of it, a region's ring round it), each in the
-   * part of a slot it takes there (sizeOf at that zoom's scale), within FLOOR_ROOM of the atlas's slots — and no more of
-   * them than the land makes in FLOOR_FRAMES frames at its rate a frame (FILL_RATE: a phone's, a desktop's). Past the
-   * window only; 0 before the window's placed. Every view inside it should be all detail: a miss there is a bug.
+   * part of a slot it takes there (sizeOf at that zoom's scale), within FLOOR_ROOM of the atlas's slots — and the
+   * screen's own regions (round 115: without the margin — the look-ahead asks for them first) no more than the land
+   * makes from nothing in the fill budget at this device's measured rate (`cal`, TileCalibration). Past the window only; 0 before the window's placed. Every view inside it should be all detail: a
+   * miss there is a bug. (Round 115: the regions a screen's ground touches by its area and its perimeter — a square's
+   * (side + 2)² as before, a wide screen's longer edges counted: a 32:9 screen's ring is 1.2 times a square's.)
    */
   zoomFloor(cam: Camera, renderW: number): number {
     if (!this.origin || cam.fly) return 0;
@@ -452,24 +472,91 @@ export class TileCache {
     const rp0 = (B.sx * renderW) / 2;
     const [ax, ay] = cam.screenDeltaToWorld(cam.viewportW, 0);
     const [bx, by] = cam.screenDeltaToWorld(0, cam.viewportH);
-    // (the screen's ground at z0, world units², and a region's)
+    // (the screen's ground at z0: its area (world units²) and perimeter, and a region's side)
     const area0 = Math.abs(ax * by - ay * bx);
-    const region = R * R * ROW_H;
+    const perim0 = 2 * (Math.hypot(ax, ay) + Math.hypot(bx, by));
+    const side = Math.sqrt(R * R * ROW_H);
     const slots = this.cells.length >> 2;
-    const rate = PHONE_UA ? FILL_RATE_PHONE : FILL_RATE;
+    const most = this.cal.fillTiles;
     // (from close out, the first zoom that doesn't fit; the floor the one before it)
     let floor = 24;
+    let bound: 'room' | 'rate' | 'none' = 'none';
+    let tiles = 0;
+    // (the regions a ground of scale k touches; the screen's own must fill in the budget — the look-ahead asks for them
+    // first (wanted: on the screen before its margin) — and the screen with the margin must fit the atlas)
+    const regions = (k: number) => (area0 * k * k) / (side * side) + (perim0 * k) / side + 4;
+    // (round 115: on past the atlas's room to the rate's own floor — the slots that one would take are what the atlas
+    // grows to: TileCache.encode, grow)
+    let roomFull = false;
+    let slotsAtRate = 0;
     for (let z = 24; z >= 0.5; z /= 1.04) {
       const k = z0 / z;
-      const side = Math.sqrt(area0 * k * k) * MARGIN;
-      const n = (side / Math.sqrt(region) + 2) ** 2;
+      const n = regions(k);
       const sz = this.partFor(B, rp0 / k, 48);
       const frac = sz === 0 ? 1 : sz === 1 ? 0.5 : 0.25;
-      if (n * frac > slots * FLOOR_ROOM || n > rate * FLOOR_FRAMES) break;
+      const need = regions(k * MARGIN) * frac;
+      if (n > most) {
+        if (!roomFull) bound = 'rate';
+        break;
+      }
+      slotsAtRate = Math.ceil(need / FLOOR_ROOM);
+      if (roomFull) continue;
+      if (need > slots * FLOOR_ROOM) {
+        roomFull = true;
+        bound = 'room';
+        continue;
+      }
       floor = z;
+      tiles = n;
     }
+    this.stats.floorBound = bound;
+    this.stats.floorTiles = Math.round(tiles);
+    this.slotsAtRate = slotsAtRate;
     return floor;
   }
+
+  /** (round 115) the slots the rate's own floor would take (zoomFloor): what the atlas grows to, within its budget */
+  private slotsAtRate = 0;
+
+  /**
+   * (round 115, `tilecal`) The atlas grown to hold `slots` (whole rows of it, at most rowsMost): its three planes made
+   * again taller with the old copied in, every slot where it was; the slots' params copied; the instances' buffer and the
+   * groups that bind them made again. The tiles stay. Only ever up. What it replaced is destroyed a frame on.
+   */
+  private grow(slots: number): void {
+    const rows = Math.min(this.rowsMost, Math.ceil(slots / this.cols));
+    if (rows <= this.rows) return;
+    const dev = this.host.device;
+    const n0 = this.cells.length >> 2;
+    const n = this.cols * rows;
+    const enc = dev.createCommandEncoder({ label: 'tiles atlas grow' });
+    if (this.atlasA) {
+      const next = this.atlasTextures(rows);
+      const old = [this.atlasA, this.atlasB, this.atlasLive];
+      for (let i = 0; i < 3; i++) enc.copyTextureToTexture({ texture: old[i] }, { texture: next[i] }, [this.cols * SW, this.rows * SH, 1]);
+      this.retired.push(...old);
+      [this.atlasA, this.atlasB, this.atlasLive] = next;
+    }
+    const tp = dev.createBuffer({ label: 'tiles params', size: n * 4 * 32, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC });
+    enc.copyBufferToBuffer(this.tparams, 0, tp, 0, this.tparams.size);
+    dev.queue.submit([enc.finish()]);
+    this.retired.push(this.tparams, this.inst);
+    this.tparams = tp;
+    const inst = new Float32Array(n * 4 * 16);
+    inst.set(this.instData);
+    this.instData = inst;
+    this.inst = dev.createBuffer({ label: 'tiles instances', size: inst.byteLength, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST });
+    for (let i = n0 * 4; i < n * 4; i++) this.cells.push(null);
+    this.rows = rows;
+    this.stats.slots = n;
+    this.stats.mb = +((n * SW * SH * (TEXEL_BYTES + LIVE_BYTES)) / 2 ** 20).toFixed(1);
+    this.stats.grown++;
+    if (this.atlasA) this.host.profiler.trackMemory('tiles', this.cols * this.rows * SW * SH * (TEXEL_BYTES + LIVE_BYTES) + SW * SH * (16 + 8 + 4));
+    this.invalidate();
+  }
+
+  /** (round 115, `tilecal`) the tiles' calibration to this device and screen: the land's rate, the floor's budget */
+  readonly cal = new TileCalibration();
 
   /** (round 112) the renderer's frames so far (a frame's encode each) */
   get frameNo(): number {

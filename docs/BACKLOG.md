@@ -12,6 +12,20 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 115 (2026-10-30, `tilecal`) — the tiles calibrated to the device and the screen (DECISIONS round 115)
+
+The user: the desktop on their wide monitor "does not load all the tiles"; investigate on the PC whether it's settings,
+and if so make the runtime calibrate to the hardware.
+
+| id | item | size | status |
+|---|---|---|---|
+| CAL1 | Reproduce on wide screens (2560 x 1080, 3440 x 1440, 5120 x 1440, dpr 1) and name the cause: the zoom floor from a fixed fill rate (2 tiles a frame; measured here 1.1-1.2) and an atlas capped at 128 MB (459 slots for every screen past ~2000 x 1000) — parked views load whole inside the floor on this iGPU; the floor rose 2.57 → 5.2 with the screen | S | done (`tilecal`): tile gate `--screens uw2560,uw3440,uw5120`, scripts/fillprobe.mjs |
+| CAL2 | The runtime calibrates: the land's fill rate measured (tiles/s while it's the bottleneck, at rest, holes first), the floor by the screen's own regions (area and perimeter) in 5 s at that rate, the atlas grown in place (rows added, slots kept) when it's the floor's bound, within a memory budget; stats in TileCache.stats / cal.stats, the gate's rows and the pan bench | M | done (`tilecal`): floors 1600 x 900 2.57 → 1.95, 5120 x 1440 5.2 → 4.27 (60 Hz gate), phone 2.78 → 2.78; parked 0 out of detail everywhere |
+| CAL3 | The atlas's memory budget: up to 512 MB off a phone, 128 MB on one (WebGPU exposes no device memory) — the user's call | S | asked |
+| CAL4 | The phone at the calibrated floor: a phone that fills faster than the prior gets a wider floor (the proxy at 90 fps 2.78 → 1.67) and an atlas up to 128 MB — the phone bench should check its frames there | S | open |
+| CAL5 | The user's PC: `reclaimed.renderer.tiles.cal.stats` and `.stats` on the wide monitor (the rate the 3080 measures, the floor, its bound, the atlas) — and a screenshot if tiles still don't load parked inside the floor | S | asked |
+| CAL6 | A dark rectangle over the land at the right of the 5120 x 1440 view (before and after: shots88/tilecal/before/uw5120-z1.3.png) | S | open |
+
 ## Round 114 (2026-10-30, `framepace`) — the phone's parked frame drops (56-57 fps, p99 33 ms with ~1-2 ms of CPU)
 
 The user: the hero run "framerate feels bad"; the goal a steady 60 on the Pixel 9a. "Keep the per cell look for now I

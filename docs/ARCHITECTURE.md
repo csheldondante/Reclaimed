@@ -2325,6 +2325,22 @@ clears them).
   fits), a bigger one is placed first (the old kept when there's no room). When the atlas had no place lately, the
   look-ahead (`TileCache.wanted`) also asks for drawn render-only tiles bigger than the view needs (a closer zoom's
   whole slots), made again at the view's size (`remake`: their bake isn't a latency).
+- (round 115, `tilecal`) **The tiles' calibration** (`render/tilecalib.ts`, `TileCache.cal`): the one place that owns
+  the numbers the tile cache sizes itself by, measured on the device rather than a tier's constant.
+  - *In:* `landFrame(baked, bottleneck)` from TileLandGpu.step each frame (bottleneck: a region wanted with no scratch
+    slot free, or the bakes at their cap; not the atlas full; the camera at rest), and `holes` (level.ts: the planner's
+    — only frames the pacer gives the tiles its turns for holes measure).
+  - *Out:* `rate` (tiles a second, a running estimate from the tier's prior, a second of bottlenecked frames at a
+    time), `fillTiles` (what the rate makes in the fill budget, 5 s), `atlasMB(cssW, cssH)` (the atlas as made: 24 MB
+    by the css area, at most 128) and `atlasMostMB(made)` (what it may grow to: 512 MB off a phone, 128 on one);
+    `stats` for the gate and the bench. Overrides: `?tilerate=` (tiles a frame at 60 Hz), `?floorframes=` (the budget,
+    frames at 60 Hz), `?tilemb=` (the atlas, no growth).
+  - *Used by TileCache:* `zoomFloor` — the widest zoom whose screen's own regions (area and perimeter) are at most
+    `fillTiles` and whose screen with the margin fits 80% of the atlas; `stats.floorBound` which held it. When the
+    atlas held it and the rate's own floor would take 10% more slots, `grow` adds atlas rows (the atlas is made as wide
+    as its budget allows, so every slot keeps its place): the three planes and the slots' params copied into taller
+    ones, the instances' buffer and every group binding them remade, the old destroyed a frame on. Only up.
+
 - A window region's tile is never the least recently used while the region is in the window (prepare marks it used):
   it's the tile the screen needs the frame the region leaves.
 - An eye-side tile is left out (the focus's line) only when its image covers the focus on the screen.
