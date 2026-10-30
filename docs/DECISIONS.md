@@ -167,6 +167,36 @@ Part 3, the user answering what the read-through of earlier decisions found (unm
   tall terrain near the camera, detailed, not hiding the focus — not left out.
 - The user: "Is there any way we can cache from disk to the GPU or RAM proactively to speed this up?" (BACKLOG TY7.)
 - The hero's run on the phone grey round the hero, and a grey corner in the sandbox: fixed (BACKLOG TY1).
+## 2026-10-29 — round 112 (session 5, `herosandbox`) — a hero sandbox; the heroes through a versioned contract
+
+- The user, verbatim: "we need a hero sandbox where I can just drop into the map as different heros and play generated
+  gauntlets or maps I edit. Maybe like the airplane mode? A way to spawn enemies would be good though or to instantly
+  fill up a vessel with a sand or liquid" (BACKLOG HS1).
+- Then: "You have to bring in the other heros via what contract" → the Hero contract only (contracts/hero.ts), versioned
+  (`HERO_CONTRACT` "major.minor", 1.1): a hero registry by role (hero/registry.ts), and another game's heroes loaded at
+  runtime as an ES module that exports `heroContract` and `mount(host)` — its Reclaimed imports resolved by the page's
+  import map to the host's own modules (`reclaimed/<path>`), so nothing is copied; a mismatch is refused, saying both
+  versions, never a fallback.
+- Then: "I need to test the actual interfaces and tweak them" → the inspector (the HeroIntent each frame, cooldowns,
+  health, the camera's numbers, speed, heading, position), the boundary log (every call across the contract), and the
+  hero's numbers as live sliders (`Hero.tunables`, additive in 1.1, through the tuning registry).
+- Then: "Or at least provide feedback" → 💬 contract feedback: the bug report's note and picture with the hero's role,
+  the contract version, the last 60 s of the boundary log, the intent trace and the tunables' values, saved as JSON —
+  downloaded, and on the dev server into feedback/hero/<date>-<role>.json, which main commits and forwards to the
+  GameplayGM session (docs/HEROES.md "Contract feedback").
+- Then: "Don't we have pathfinding? Can't we build a traversal field for the hero agent and use that instead of
+  input? Or steer along that?" → a traversal-field contract (contracts/traversal.ts: a field to a goal reckoned by the
+  hero's own Mobility — step, drop, wade, jump), a CPU implementation first (the agents' GPU fields next, HS10), and a
+  pilot controller that steers along it: the sandbox's 🧭 autopilot, the headless test's driver, and the basis of
+  checking a generated gauntlet is crossable by a given hero (GE3).
+- On the phone in hero mode (places, run=bell): "I can't walk more than a tiny bit. It seems like the controls are just
+  not implemented correctly and it walks me a few steps them stops almost like it walks to the displacement of the
+  stick and not targets that velocity" → the stick is a held velocity (it was); the hero stopped at walls that weren't
+  there — the world API read the levels texture at the buffers' index (fixed, b86d159; HS12 the accessor per kind).
+- GameplayGM's answer (gampeplaygm-40, via main): their heroes need a richer seam (input passthrough, their own camera,
+  real cooldowns, hits through Units, more of the world than HeroWorld) → designed as `mount(host)` with an explicit
+  HeroHost: named capabilities first, the raw handles that remain listed as debt (docs/HEROES.md "What the contract
+  lacks for GameplayGM's heroes").
 
 ## 2026-10-29 — round 112 (session 5, `tilefix`) — the terrain drawn on every screen; a merge gate
 

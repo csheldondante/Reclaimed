@@ -1,0 +1,410 @@
+// (round 112, herosandbox) The hero sandbox headless, on the real GPU, every system in play at 1x: drop in and out,
+// units spawned that chase and hit the hero, a vessel filled with water and one with sand, the inspector updating,
+// an external hero module loaded from another origin (scripts/heroserve.mjs: scripts/test-hero/hero.mjs, and one of
+// an older contract refused), a contract feedback note saved, a generated course laid. GIFs to --dir.
+//   node scripts/heroserve.mjs 5208 &   (the hero module's origin)
+//   node scripts/herosandboxtest.mjs --port 5211 [--level playground] [--dir C:/Projects/shots88/herosandbox] [--size 412x915]
+import puppeteer from 'puppeteer-core';
+import gifenc from 'gifenc';
+import { PNG } from 'pngjs';
+import fs from 'node:fs';
+import path from 'node:path';
+
+const { GIFEncoder, quantize, applyPalette } = gifenc;
+const args = Object.fromEntries(
+  process.argv
+    .slice(2)
+    .map((a, i, all) => (a.startsWith('--') ? [a.slice(2), all[i + 1]] : null))
+    .filter(Boolean),
+);
+const port = args.port ?? '5211';
+const level = args.level ?? 'playground';
+const dir = args.dir ?? 'C:/Projects/shots88/herosandbox';
+const [w, h] = (args.size ?? '1280x800').split('x').map(Number);
+const heroes = args.heroes ?? 'http://localhost:5208/hero.mjs';
+fs.mkdirSync(dir, { recursive: true });
+const url = `http://localhost:${port}/?skipmenu=1&level=${level}&heroes=${encodeURIComponent(heroes)}`;
+
+let fails = 0;
+const ok = (cond, what) => {
+  console.log(`${cond ? 'ok  ' : 'FAIL'} ${what}`);
+  if (!cond) fails++;
+  return cond;
+};
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+const browser = await puppeteer.launch({
+  executablePath: args.chrome ?? 'C:/Program Files/Google/Chrome/Application/chrome.exe',
+  headless: 'new',
+  args: ['--enable-unsafe-webgpu', '--enable-gpu', '--use-angle=d3d11', '--ignore-gpu-blocklist', `--window-size=${w},${h}`],
+  defaultViewport: { width: w, height: h, deviceScaleFactor: 1 },
+});
+let pageErr = false;
+try {
+  const page = await browser.newPage();
+  page.on('console', (m) => {
+    const t = m.text();
+    if (m.type() === 'error' || m.type() === 'warning' || /\[hero\]/.test(t)) console.log(`[console.${m.type()}] ${t}`);
+  });
+  page.on('pageerror', (e) => {
+    pageErr = true;
+    console.log(`[pageerror] ${e.message}\n${e.stack ?? ''}`);
+  });
+  const gif = async (name, frames = 30, every = 100, each) => {
+    const enc = GIFEncoder();
+    for (let i = 0; i < frames; i++) {
+      if (each) await each(i);
+      const png = PNG.sync.read(Buffer.from(await page.screenshot({ type: 'png' })));
+      const pal = quantize(png.data, 256);
+      enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: every });
+      await sleep(every);
+    }
+    enc.finish();
+    const f = path.join(dir, name);
+    fs.writeFileSync(f, enc.bytes());
+    console.log(`     saved ${f}`);
+  };
+  const shot = async (name) => {
+    await page.screenshot({ path: path.join(dir, name) });
+    console.log(`     saved ${path.join(dir, name)}`);
+  };
+  const ev = (f, ...a) => page.evaluate(f, ...a);
+  // (the autopilot run to its end — there, no way, stuck — or `frames`, a GIF of it)
+  const pilotRun = async (name, start, arg, frames = 60, every = 150) => {
+    await ev(start, arg);
+    const t0 = Date.now();
+    const enc = GIFEncoder();
+    let st = null;
+    for (let i = 0; i < frames; i++) {
+      st = await ev(() => {
+        const hs = window.reclaimed.heroSandbox;
+        const p = hs.hero.position();
+        const g = hs.pilot.field?.goal;
+        return { state: hs.pilot.state, fields: hs.pilot.fields, dist: g ? Math.hypot(g[0] - p[0], g[1] - p[1]) : -1 };
+      });
+      const png = PNG.sync.read(Buffer.from(await page.screenshot({ type: 'png' })));
+      const pal = quantize(png.data, 256);
+      enc.writeFrame(applyPalette(png.data, pal), png.width, png.height, { palette: pal, delay: every });
+      if (st.state !== 'going') break;
+      await sleep(every);
+    }
+    enc.finish();
+    fs.writeFileSync(path.join(dir, name), enc.bytes());
+    console.log(`     saved ${path.join(dir, name)}`);
+    return { ...st, s: (Date.now() - t0) / 1000 };
+  };
+  console.log(url);
+  await page.goto(url, { waitUntil: 'load' });
+  // (the first load after a server start is slow, and slower with other runs on the GPU: the level waited for — up to
+  // 150 s — then 30 s more for its ground and water, before anything is judged)
+  for (let k = 0; k < 150 && !(await ev(() => !!window.reclaimed?.heroSandbox).catch(() => false)); k++) await sleep(1000);
+  await sleep(30000);
+  const fatal = await page.$eval('.fatal', (e) => e.textContent).catch(() => null);
+  ok(!fatal, `no fatal overlay${fatal ? `: ${fatal}` : ''}`);
+  ok(await ev(() => !!window.reclaimed?.heroSandbox), 'the hero sandbox is mounted');
+  ok(await ev(() => document.querySelector('script[type=importmap]')?.textContent.includes('reclaimed/units/figures')), 'the page carries the shared-modules import map');
+
+  // 1. drop in (the 🧍 button), walk, the inspector
+  await ev(() => document.querySelector('.hero-sb-bar button').click());
+  await sleep(2500);
+  const in1 = await ev(() => {
+    const hs = window.reclaimed.heroSandbox;
+    return { active: hs.active, role: hs.hero?.role, at: hs.hero?.position(), info: document.querySelector('.hero-sb-info').textContent, editor: document.querySelector('.editor')?.style.display ?? null };
+  });
+  ok(in1.active && in1.role === 'wanderer', `dropped in as the ${in1.role} at ${in1.at?.map((v) => v.toFixed(1))}`);
+  ok(/intent move/.test(in1.info) && /camera zoom/.test(in1.info) && /Swing/.test(in1.info), 'the inspector shows the intent, the camera and the abilities');
+  // (the walk: the autopilot to a point 16 cells off that the hero's own traversal field reaches — round 112, the user:
+  // "Don't we have pathfinding? Can't we build a traversal field for the hero agent and use that instead of input?")
+  const goal = await ev(() => {
+    const hs = window.reclaimed.heroSandbox;
+    const p = hs.hero.position();
+    for (let a = 0; a < 16; a++) {
+      const g = [p[0] + Math.cos((a * Math.PI) / 8) * 16, p[1] + Math.sin((a * Math.PI) / 8) * 16];
+      const f = hs.traversal.field(g, hs.hero.mobility, { radius: 40 });
+      if (f.reachable([p[0], p[1]])) return { g, cost: f.cost([p[0], p[1]]), ms: f.ms };
+    }
+    return null;
+  });
+  ok(!!goal, `a point 16 cells off the hero's field reaches: ${goal ? `cost ${goal.cost.toFixed(1)}, the field in ${goal.ms.toFixed(1)} ms` : 'none'}`);
+  const walkTo = await pilotRun('walk.gif', (g) => void window.reclaimed.heroSandbox.pilotTo(g), goal?.g, 50);
+  const walk = await ev(() => {
+    const hs = window.reclaimed.heroSandbox;
+    return { intents: hs.log.intents.length, moving: hs.log.intents.filter((s) => Math.hypot(s.move[0], s.move[1]) > 0.5).length, info: document.querySelector('.hero-sb-info').textContent };
+  });
+  ok(walkTo.state === 'there' && walkTo.dist < 2, `the autopilot walked it there: ${walkTo.state}, ${walkTo.dist.toFixed(1)} from the goal after ${walkTo.s.toFixed(1)} s (${walkTo.fields} fields)`);
+  ok(walk.intents > 30 && walk.moving > 20, `the intent trace kept ${walk.intents} intents, ${walk.moving} moving`);
+  ok(/pilot/.test(walk.info), 'the inspector shows the pilot');
+
+  // (the user, round 112: "it walks me a few steps them stops almost like it walks to the displacement of the stick
+  // and not targets that velocity": the TouchPad's stick held 5 s, full tilt, the way the hero can go furthest — the
+  // velocity held, about speed x 5 cells along it)
+  const held = await ev(async () => {
+    const hs = window.reclaimed.heroSandbox;
+    const w = hs.hero;
+    const p0 = [...w.position()];
+    hs.pad.scripted = { stick: [0, -56] };
+    let path = 0;
+    let last = p0;
+    for (let k = 0; k < 20; k++) {
+      await new Promise((r) => setTimeout(r, 250));
+      const p = w.position();
+      path += Math.hypot(p[0] - last[0], p[1] - last[1]);
+      last = [...p];
+    }
+    hs.pad.scripted = null;
+    return { path, speed: w.tune.speed };
+  });
+  ok(held.path > held.speed * 5 * 0.8, `the stick held 5 s: ${held.path.toFixed(1)} cells walked (speed ${held.speed} x 5 = ${held.speed * 5})`);
+
+  // 2. units that chase it and hit it; it swings back (the distances sampled before the swinging starts)
+  const spawn = await ev(() => {
+    const hs = window.reclaimed.heroSandbox;
+    const p = hs.hero.position();
+    const ids = [hs.spawn('raider', [p[0] + 8, p[1]]), hs.spawn('raider', [p[0] - 8, p[1] + 2]), hs.spawn('brute', [p[0], p[1] + 7]), hs.spawn('ally', [p[0] + 2, p[1] - 2])];
+    return { ids };
+  });
+  const dist = () =>
+    ev((ids) => {
+      const hs = window.reclaimed.heroSandbox;
+      const p = hs.hero.position();
+      return ids.map((id) => {
+        const u = hs.units.get(id);
+        return u && u.alive ? +Math.hypot(u.at[0] - p[0], u.at[1] - p[1]).toFixed(1) : null;
+      });
+    }, spawn.ids);
+  const d0 = await dist();
+  let dMin = d0.map((d) => d ?? 99);
+  await gif('fight.gif', 40, 100, async (i) => {
+    if (i < 20) {
+      const d = await dist();
+      dMin = dMin.map((m, k) => (d[k] === null ? m : Math.min(m, d[k])));
+    }
+    if (i === 20) await ev((id) => void window.reclaimed.heroSandbox.pilotToUnit(id), spawn.ids[0]);
+  });
+  const fight = await ev((ids) => {
+    const hs = window.reclaimed.heroSandbox;
+    hs.pilotTo(null);
+    const us = ids.map((id) => hs.units.get(id));
+    return {
+      states: us.map((u, k) => (u ? `${u.kind}:${u.state}:${u.health}` : `#${ids[k]}: gone (killed)`)),
+      health: hs.hero.health,
+      calls: hs.log.calls.map((c) => `${c.dir} ${c.call}`),
+      log: document.querySelector('.hero-sb-log').textContent,
+    };
+  }, spawn.ids);
+  // (the raiders must close in; the brute is slow and may be held up by the ground: shown, not judged)
+  ok([0, 1].every((k) => dMin[k] < d0[k] - 3), `the raiders chased it (closest ${d0.join(', ')} → ${dMin.join(', ')}; the brute ${d0[2]} → ${dMin[2]}; then ${fight.states.join(', ')})`);
+  ok(fight.calls.some((c) => c === 'units→hero actor.hurt') && fight.calls.some((c) => c === 'hero→host hurt'), `their blows crossed the boundary (actor.hurt, hurt): health ${fight.health}`);
+  ok(fight.calls.some((c) => c === 'hero→host units.hit'), "the hero's swings crossed it (units.hit)");
+  ok(/actor\.hurt|units\.hit/.test(fight.log), 'the boundary log panel shows them');
+
+  // 3. out to the editor
+  await ev(() => window.reclaimed.heroSandbox.exit());
+  await sleep(500);
+  const out = await ev(() => ({ active: window.reclaimed.heroSandbox.active, pad: !!document.querySelector('.hero-pad') }));
+  ok(!out.active && !out.pad, 'back out to the editor: no hero, no stick');
+  await ev(() => window.reclaimed.heroSandbox.clearUnits());
+
+  // 4. two vessels on dry, flat ground near the screen's middle: rings of concrete a column at a time (hs.lay), read
+  // back until every wall column stands; then one filled with water, one with sand; the probes at each basin's bottom
+  const site = await ev(async () => {
+    const r = window.reclaimed;
+    const api = r.heroSandbox.d.api;
+    await api.refresh();
+    const t = api.terrain;
+    const w = api.water;
+    const cam = r.camera;
+    const g = cam.groundAt(cam.viewportW / 2, cam.viewportH / 2, (x, y) => t.heightAt(x, y) ?? 0);
+    // (flat: within 2.5 of the centre's height over a radius of 9 — the walls are 6; dry: no water there)
+    const flat = (cx, cy) => {
+      const h0 = t.heightAt(cx, cy);
+      if (h0 === null) return false;
+      for (let a = 0; a < 12; a++)
+        for (const rr of [3, 6, 9]) {
+          const x = cx + Math.cos((a * Math.PI) / 6) * rr;
+          const y = cy + Math.sin((a * Math.PI) / 6) * rr;
+          const h = t.heightAt(x, y);
+          if (h === null || Math.abs(h - h0) > 2.5 || (w.depthAt(x, y) ?? 1) > 0.05) return false;
+        }
+      return true;
+    };
+    for (let ring = 0; ring <= 100; ring += 4)
+      for (let a = 0; a < 16; a++) {
+        const x = g[0] + Math.cos((a * Math.PI) / 8) * ring;
+        const y = g[1] + Math.sin((a * Math.PI) / 8) * ring;
+        if (flat(x, y) && flat(x + 22, y)) return { a: [x, y], b: [x + 22, y], floor: t.heightAt(x, y) };
+        if (ring === 0) break;
+      }
+    return null;
+  });
+  ok(!!site, `two dry, flat spots for the vessels: ${site ? `${site.a.map((v) => v.toFixed(1))} and ${site.b.map((v) => v.toFixed(1))}, floor ${site.floor.toFixed(1)}` : 'none found near the middle'}`);
+  if (site) {
+    site.wallBefore = await ev((site) => {
+      const hs = window.reclaimed.heroSandbox;
+      const ring = (c) => {
+        const out = [];
+        for (let a = 0; a < 48; a++) out.push({ kind: 'build', at: [c[0] + Math.cos((a * Math.PI) / 24) * 5.8, c[1] + Math.sin((a * Math.PI) / 24) * 5.8], material: 'concrete', radius: 1.1, layers: 6 });
+        return out;
+      };
+      const t = hs.d.api.terrain;
+      site.wallBefore = [];
+      for (const c of [site.a, site.b]) for (let a = 0; a < 24; a++) site.wallBefore.push(t.heightAt(c[0] + Math.cos((a * Math.PI) / 12) * 5.8, c[1] + Math.sin((a * Math.PI) / 12) * 5.8) ?? 0);
+      hs.lay([...ring(site.a), ...ring(site.b)]);
+      window.reclaimed.camera.target = [(site.a[0] + site.b[0]) / 2, site.a[1], site.floor];
+      return site.wallBefore;
+    }, site);
+    // (the walls a cell a tick, four builds a tick: read back until every wall column is up)
+    let up = null;
+    for (let k = 0; k < 60; k++) {
+      await sleep(500);
+      up = await ev(async (site) => {
+        const api = window.reclaimed.heroSandbox.d.api;
+        await api.refresh();
+        const t = api.terrain;
+        let n = 0;
+        let hi = 0;
+        let lo = 1e9;
+        let k = 0;
+        for (const c of [site.a, site.b])
+          for (let a = 0; a < 24; a++, k++) {
+            const h = t.heightAt(c[0] + Math.cos((a * Math.PI) / 12) * 5.8, c[1] + Math.sin((a * Math.PI) / 12) * 5.8) ?? 0;
+            hi = Math.max(hi, h);
+            lo = Math.min(lo, h);
+            // (each wall column against its own ground before: the site is flat only to within 2.5)
+            if (h >= site.wallBefore[k] + 4.5) n++;
+          }
+        return { n, hi: +hi.toFixed(1), lo: +lo.toFixed(1), queued: window.reclaimed.globals.events.length, inside: +(t.heightAt(site.a[0], site.a[1]) ?? -1).toFixed(1) };
+      }, site);
+      if (up.n === 48 && up.queued === 0) break;
+    }
+    ok(up.n === 48, `the vessels' walls stand: ${up.n}/48 wall columns up, ${up.lo}..${up.hi} (floor ${site.floor.toFixed(1)}, inside ${up.inside})`);
+    await sleep(1000);
+    await shot('vessels.png');
+    const fill = (c, what) =>
+      ev(
+        async (c, what) => {
+          const f = await window.reclaimed.heroSandbox.fill(c, what);
+          return f.error ? { error: f.error } : { cells: f.basin.cells.length, level: f.basin.level, fillTo: f.basin.fillTo, vol: f.volume, n: f.commands, floor: Math.min(...f.basin.cells.map((x) => x[2])), bottom: f.basin.bottom, spill: f.basin.spill };
+        },
+        c,
+        what,
+      );
+    const wf = await fill(site.a, 'water');
+    ok(!wf.error && wf.cells > 40 && wf.level > wf.floor + 4, `the water vessel: ${wf.error ?? `${wf.cells} cells, rim ${wf.level.toFixed(1)}, to ${wf.fillTo.toFixed(1)}, ${wf.vol.toFixed(0)} cells³ in ${wf.n} pours`}`);
+    const sf = await fill(site.b, 'sand');
+    ok(!sf.error && sf.cells > 40 && sf.level > sf.floor + 4, `the sand vessel: ${sf.error ?? `${sf.cells} cells, rim ${sf.level.toFixed(1)}, to ${sf.fillTo.toFixed(1)}, ${sf.n} pours`}`);
+    await gif('fill.gif', 40, 150);
+    // (the pours land four a tick: waited for, then the water a while to settle and the sand to slump)
+    for (let k = 0; k < 40 && (await ev(() => window.reclaimed.globals.events.length)) > 0; k++) await sleep(250);
+    await sleep(3000);
+    const probe = await ev(
+      async (wb, sb) => {
+        const api = window.reclaimed.heroSandbox.d.api;
+        await api.refresh();
+        return { depth: wb && api.water.depthAt(wb[0], wb[1]), level: wb && api.water.levelAt(wb[0], wb[1]), sand: sb && api.terrain.heightAt(sb[0], sb[1]), mat: sb && api.terrain.materialAt(sb[0], sb[1]) };
+      },
+      wf.bottom ?? null,
+      sf.bottom ?? null,
+    );
+    if (!wf.error) ok(probe.depth > 2 && Math.abs(probe.level - wf.fillTo) < 1.5, `water stands in it: ${probe.depth?.toFixed(2)} deep at its bottom, its top at ${probe.level?.toFixed(2)} (filled to ${wf.fillTo.toFixed(2)})`);
+    // (loose sand lies in the drift layer over the column's top layer: the height says it's there, materialAt the layer under it)
+    if (!sf.error) ok(probe.sand > sf.floor + 2, `sand fills the other: its top ${probe.sand?.toFixed(2)} over its floor ${sf.floor.toFixed(2)} (filled to ${sf.fillTo.toFixed(2)}; the layer under it ${probe.mat})`);
+    await shot('filled.png');
+  }
+  const notEnclosed = await ev(async () => {
+    const r = window.reclaimed;
+    const cam = r.camera;
+    const t = r.heroSandbox.d.api.terrain;
+    const g = cam.groundAt(cam.viewportW * 0.5, cam.viewportH * 0.15, (x, y) => t.heightAt(x, y) ?? 0);
+    return (await window.reclaimed.heroSandbox.fill([g[0], g[1]], 'water')).error ?? null;
+  });
+  console.log(`     an open spot: ${notEnclosed ?? '(it was a basin)'}`);
+
+  // 5. the external hero: loaded from another origin through the import map, dropped in, walked, tuned
+  const roles = await ev(async () => (await import('/src/hero/registry.ts')).heroRoles());
+  ok(roles.includes('roller'), `the test module's hero registered from ${heroes}: ${roles.join(', ')}`);
+  await ev(async () => {
+    const hs = window.reclaimed.heroSandbox;
+    await hs.choose('roller');
+  });
+  await ev(async (at) => window.reclaimed.heroSandbox.enter([at[0], at[1]]), in1.at);
+  await sleep(1500);
+  const r0 = await ev(() => window.reclaimed.heroSandbox.hero.position());
+  // (a goal its own field reaches: its step is less than the Walker's)
+  const rgoal = await ev(() => {
+    const hs = window.reclaimed.heroSandbox;
+    const p = hs.hero.position();
+    for (let a = 0; a < 16; a++) {
+      const g = [p[0] + Math.cos((a * Math.PI) / 8) * 10, p[1] + Math.sin((a * Math.PI) / 8) * 10];
+      if (hs.traversal.field(g, hs.hero.mobility, { radius: 30 }).reachable([p[0], p[1]])) return g;
+    }
+    return null;
+  });
+  const rolled = await pilotRun('external-hero.gif', (g) => void window.reclaimed.heroSandbox.pilotTo(g), rgoal, 40, 100);
+  console.log(`     the roller under the autopilot: ${rolled.state}, ${rolled.dist.toFixed(1)} from its goal`);
+  const ext = await ev(() => {
+    const hs = window.reclaimed.heroSandbox;
+    const reg = hs.tuning.registry;
+    reg.set('hero.speed', 12);
+    return { role: hs.hero.role, at: hs.hero.position(), info: document.querySelector('.hero-sb-info').textContent, calls: hs.log.calls.map((c) => `${c.dir} ${c.call}(${c.args})`), speed: hs.hero.t.speed, ids: reg.defs.map((d) => d.id), panel: !!document.querySelector('.tune-panel.hero') };
+  });
+  ok(ext.role === 'roller' && Math.hypot(ext.at[0] - r0[0], ext.at[1] - r0[1]) > 3, `the roller rolled ${Math.hypot(ext.at[0] - r0[0], ext.at[1] - r0[1]).toFixed(1)} cells`);
+  ok(/roller \(module\)/.test(ext.info) && /Dash/.test(ext.info), 'the inspector shows it as a module hero, with its Dash');
+  ok(ext.calls.some((c) => /host\.log\(roller made against contract 1\.1\)/.test(c)), 'its host.log line crossed the boundary');
+  ok(ext.speed === 12 && ext.ids.includes('hero.dash') && ext.panel, `its tunables in the hero tuning panel: ${ext.ids.join(', ')} (speed set to ${ext.speed})`);
+  await ev(() => window.reclaimed.heroSandbox.exit());
+  const old = await ev(async (u) => {
+    const hs = window.reclaimed.heroSandbox;
+    await hs.loadModule(u);
+    return hs.error;
+  }, heroes.replace(/hero\.mjs$/, 'hero-old.mjs'));
+  ok(/0\.9/.test(old ?? '') && /1\.1/.test(old ?? ''), `a module of an older contract is refused, saying why: ${old}`);
+
+  // 6. contract feedback: the note saved (the dev server keeps it in feedback/hero/)
+  await ev(async () => {
+    const hs = window.reclaimed.heroSandbox;
+    await hs.choose('wanderer');
+  });
+  await ev(async (at) => window.reclaimed.heroSandbox.enter([at[0], at[1]]), in1.at);
+  await sleep(1000);
+  await ev(() => document.querySelector('.bug-btn-as').click());
+  await sleep(1500);
+  await page.type('.bug-dialog textarea', 'headless test: the swing should say how far it reaches');
+  await ev(() => document.querySelector('.bug-dialog .go').click());
+  await sleep(1500);
+  const fb = await ev(() => {
+    const l = window.reclaimed.heroSandbox.feedback.last;
+    return l && { kind: l.kind, note: l.note, role: l.hero?.role, contract: l.hero?.contract, calls: l.boundary?.calls?.length, intents: l.intents?.length, tunables: Object.keys(l.tunables?.all ?? {}).length, shot: (l.shot ?? '').slice(0, 22) };
+  });
+  ok(fb && fb.kind === 'reclaimed-hero-feedback' && fb.role === 'wanderer' && fb.contract === '1.1' && fb.calls > 0 && fb.intents > 0 && fb.tunables > 4 && fb.shot.startsWith('data:image/png'), `a feedback note: ${JSON.stringify(fb)}`);
+
+  // 7. a generated course, the hero at its start
+  const course = await ev(async () => {
+    try {
+      const c = await window.reclaimed.heroSandbox.gauntlet();
+      return { name: c.name, pieces: c.pieces.length, foes: c.foes.length, start: c.start, at: window.reclaimed.heroSandbox.hero.position() };
+    } catch (e) {
+      return { error: String(e), name: '', pieces: 0, foes: 0, start: [0, 0], at: [1e9, 0] };
+    }
+  });
+  if (course.error) console.log(`     ${course.error}`);
+  ok(course.pieces > 10 && course.foes >= 3 && Math.hypot(course.at[0] - course.start[0], course.at[1] - course.start[1]) < 1, `${course.name}: ${course.pieces} pieces, ${course.foes} foes, the hero at its start`);
+  if (!course.error) {
+    const crossing = await ev(() => window.reclaimed.heroSandbox.crossing);
+    ok(crossing?.ok, `the course is crossable by the wanderer (its traversal field, start to goal): ${JSON.stringify(crossing)}`);
+    await sleep(1000);
+    const crossed = await pilotRun('course.gif', () => {
+      const hs = window.reclaimed.heroSandbox;
+      hs.pilotTo(hs.course.goal, { fight: 2.6, sprint: true });
+    }, null, 160, 200);
+    ok(crossed.state === 'there', `the autopilot crossed the course, fighting its foes: ${crossed.state}, ${crossed.dist.toFixed(1)} from the crystal after ${crossed.s.toFixed(0)} s (${crossed.fields} fields)`);
+  }
+  await shot('course.png');
+  const fatal2 = await page.$eval('.fatal', (e) => e.textContent).catch(() => null);
+  ok(!fatal2, `no fatal overlay at the end${fatal2 ? `: ${fatal2}` : ''}`);
+} finally {
+  await browser.close();
+}
+ok(!pageErr, 'no page errors');
+console.log(fails ? `${fails} FAILED` : 'all ok');
+process.exit(fails ? 1 : 0);

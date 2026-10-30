@@ -16,9 +16,35 @@ export interface BugContext {
   time(): Record<string, unknown>;
   /** the systems' state that bears on physics bugs (bodies, sleep, flow…) */
   state(): Record<string, unknown>;
+  /**
+   * (round 112, the hero sandbox's contract feedback) the same note and picture for another purpose: its own
+   * kind, title, button, file name, the dev server's folder, and what else it carries. Absent: the bug report.
+   */
+  as?: {
+    /** the JSON's `kind` (default 'reclaimed-bug') */
+    kind: string;
+    /** the dialog's title and the textarea's prompt */
+    title: string;
+    prompt: string;
+    /** the button's label and tooltip */
+    label: string;
+    tip: string;
+    /** the key that opens it (null: none) */
+    key: string | null;
+    /** the files' name, without the extension */
+    name(): string;
+    /** the dev server's sink (vite.config.ts /__hitch?kind=) */
+    sink: string;
+    /** the line under the picture */
+    meta(): string;
+    /** more to keep, captured with the rest when it opens */
+    extra(): Record<string, unknown>;
+    /** where the button goes (default: the parent) */
+    buttonParent?: HTMLElement;
+  };
 }
 
-const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+export const stamp = () => new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
 
 const asDataUrl = (b: Blob) =>
   new Promise<string>((res, rej) => {
@@ -40,16 +66,19 @@ export class BugReport {
     private ctx: BugContext,
   ) {
     this.button = document.createElement('button');
-    this.button.className = 'bug-btn';
-    this.button.textContent = '🐞 report';
-    this.button.title = 'report a physics bug: a picture, the parameters and the state, with a note (key B)';
+    const as = ctx.as;
+    this.button.className = as ? 'bug-btn-as' : 'bug-btn';
+    this.button.textContent = as?.label ?? '🐞 report';
+    this.button.title = as?.tip ?? 'report a physics bug: a picture, the parameters and the state, with a note (key B)';
     this.button.addEventListener('click', () => void this.open());
     for (const ev of ['pointerdown', 'touchstart', 'wheel']) this.button.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
-    parent.appendChild(this.button);
+    (as?.buttonParent ?? parent).appendChild(this.button);
+    const key = as ? as.key : 'b';
+    if (key)
     window.addEventListener(
       'keydown',
       (e) => {
-        if (e.key.toLowerCase() !== 'b' || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+        if (e.key.toLowerCase() !== key || e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
         if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) return;
         void this.open();
       },
@@ -67,16 +96,16 @@ export class BugReport {
     d.className = 'bug-dialog';
     for (const ev of ['pointerdown', 'pointermove', 'touchstart', 'touchmove', 'wheel', 'keydown', 'keyup']) d.addEventListener(ev, (e) => e.stopPropagation(), { passive: true });
     const h = document.createElement('div');
-    h.textContent = 'Report a bug';
+    h.textContent = this.ctx.as?.title ?? 'Report a bug';
     h.style.fontWeight = '600';
     const img = document.createElement('img');
     img.src = URL.createObjectURL(shot);
     const note = document.createElement('textarea');
-    note.placeholder = 'What looks wrong? (what you did, what you expected)';
+    note.placeholder = this.ctx.as?.prompt ?? 'What looks wrong? (what you did, what you expected)';
     const meta = document.createElement('div');
     meta.className = 'meta';
     const ch = Object.keys(TUNING.changed()).length;
-    meta.textContent = `${this.ctx.level} · ${ch} parameter${ch === 1 ? '' : 's'} changed · camera, time, seed and state kept`;
+    meta.textContent = this.ctx.as ? this.ctx.as.meta() : `${this.ctx.level} · ${ch} parameter${ch === 1 ? '' : 's'} changed · camera, time, seed and state kept`;
     const row = document.createElement('div');
     row.className = 'row';
     const cancel = document.createElement('button');
@@ -110,7 +139,7 @@ export class BugReport {
       }
     };
     return {
-      kind: 'reclaimed-bug',
+      kind: this.ctx.as?.kind ?? 'reclaimed-bug',
       version: 1,
       at: new Date().toISOString(),
       page: location.href,
@@ -121,16 +150,18 @@ export class BugReport {
       time: safe(this.ctx.time),
       tune: { changed: TUNING.changed(), string: TUNING.encode(), all: TUNING.all() },
       state: safe(this.ctx.state),
+      ...(this.ctx.as ? safe(this.ctx.as.extra) : {}),
     };
   }
 
   private async save(taken: Record<string, unknown>, shot: Blob, note: string): Promise<void> {
     const report = { ...taken, note, shot: await asDataUrl(shot) };
     this.last = report;
-    const name = `bug-${this.ctx.level}-${stamp()}`;
+    const name = this.ctx.as ? this.ctx.as.name() : `bug-${this.ctx.level}-${stamp()}`;
     const json = new Blob([JSON.stringify(report, null, 1)], { type: 'application/json' });
     // (the dev server keeps it: perf-reports/bug-<time>.json — vite.config.ts; the Pages build has no endpoint)
-    if (import.meta.env.DEV) void fetch('/__hitch?kind=bug', { method: 'POST', body: json }).catch(() => undefined);
+    // (round 112: the hero sandbox's feedback to its own folder — feedback/hero/<name>.json)
+    if (import.meta.env.DEV) void fetch(`/__hitch?kind=${this.ctx.as?.sink ?? 'bug'}&name=${encodeURIComponent(name)}`, { method: 'POST', body: json }).catch(() => undefined);
     await offerFiles([
       { name: `${name}.json`, data: json },
       { name: `${name}.png`, data: shot },

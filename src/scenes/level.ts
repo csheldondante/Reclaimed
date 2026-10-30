@@ -61,6 +61,8 @@ import { StoryPlay } from '../story/play';
 import { demoStory } from '../story/demo';
 import type { HeroRun } from '../story/hero-run';
 import { loadRunStory, runWorld, startAtlasRun } from '../story/atlas-run';
+import { HeroSandbox } from '../hero/sandbox';
+import { heroRoles } from '../hero/registry';
 
 /** round 83, V21: ?cutaway=1 — the camera on a puck (api/puck.ts), sliced under a roof and orbiting round a cliff */
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
@@ -339,6 +341,8 @@ export class LevelScene implements Scene {
   private storyCut?: { dither: Dither; slice: Slice };
   /** round 88 (runstory): ?run=bell on the atlas level — a run story played as a hero (story/hero-run.ts) */
   heroRun?: HeroRun;
+  /** (round 112, herosandbox) the hero sandbox: drop in as a hero (🧍, H) in any sandbox level (hero/sandbox.ts) */
+  heroSandbox?: HeroSandbox;
   /** the landform brush's stroke (range, mesa; round 64) */
   private raising?: import('../api/terrain').RaiseStroke;
   /** molten rock: the beam melts the ground into it, vents pour it (sim/lava.ts) */
@@ -636,7 +640,7 @@ export class LevelScene implements Scene {
       (e) => {
         if (e.repeat || e.ctrlKey || e.metaKey || e.target instanceof HTMLInputElement) return;
         // (flying, Q / E are down and up; with the place tool, E turns the model)
-        if (camera.fly || this.editor?.tool === 'place') return;
+        if (camera.fly || this.editor?.tool === 'place' || this.heroSandbox?.active) return;
         const k = e.key.toLowerCase();
         if (k === 'q') this.turnStep(-1);
         if (k === 'e') this.turnStep(1);
@@ -740,6 +744,8 @@ export class LevelScene implements Scene {
   /** The free camera on (from where the fixed view looks from, the same way) or off (looking at the ground under the screen's middle). */
   toggleFly(): void {
     const { camera } = this.core;
+    // (round 112: the free camera from the hero: out to the editor first)
+    if (!camera.fly) this.heroSandbox?.exit();
     if (camera.fly) {
       const g = camera.groundAt(camera.viewportW / 2, camera.viewportH / 2, this.heightAt);
       // (round 90: the view turned the way the flyer looked, when the view turns — the atlas level's)
@@ -1248,6 +1254,8 @@ export class LevelScene implements Scene {
       'keydown',
       (e) => {
         this.keys.add(e.key.toLowerCase());
+        // (round 112: in as a hero, the keys are its controller's — WASD, Space, Shift, E)
+        if (this.heroSandbox?.active) return;
         if (e.key.toLowerCase() === 'z' && (e.ctrlKey || e.metaKey) && this.editor) {
           e.preventDefault();
           this.undo();
@@ -1751,6 +1759,8 @@ export class LevelScene implements Scene {
       },
     });
     core.places.groundAt = this.heightAt;
+    // (round 112, herosandbox) the hero sandbox in every sandbox level (not under a run story, which has its own hero)
+    if (this.level.sandbox && !host.params.get('run')) this.mountHeroSandbox();
     // ?plan=voronoi|bands|tree (seed: ?planseed=): places from a generated plan (the places test hook)
     const plan = host.params.get('plan');
     // (a generated map's own plan: its places — landforms.ts)
@@ -1799,6 +1809,41 @@ export class LevelScene implements Scene {
     // round 88 (runstory): ?run=bell — a run story as a hero on the atlas level
     const runId = host.params.get('run');
     if (runId) void this.startRun(runId);
+  }
+
+  /** (round 112, herosandbox) the hero sandbox (hero/sandbox.ts): drop in as a hero, spawn units, fill vessels, courses */
+  private mountHeroSandbox(): void {
+    const { core, host } = this;
+    const api = (this.worldApi ??= attachSim(core));
+    const hs = (this.heroSandbox = new HeroSandbox({
+      ui: host.ui,
+      core,
+      api,
+      device: host.gpu.device,
+      level: this.level.id,
+      heightAt: this.heightAt,
+      say: (t, sec) => this.hud.say(t, sec ?? 3),
+      editor: (on) => this.editor?.setVisible(on),
+      land: () => {
+        if (core.camera.fly) this.toggleFly();
+      },
+      wake: (x, y, r) => this.sleep?.wake(x, y, r, Sleep.EVENT_S, performance.now() / 1000),
+      params: host.params,
+    }));
+    // (a streamed window: a slide moves the hero and the units back by it; a warp takes the hero out)
+    core.onShift.push((dx, dy, dz) => hs.slid(dx, dy, dz));
+    this.stream?.onWarp.push(() => hs.warped());
+    (window as unknown as { reclaimed: Record<string, unknown> }).reclaimed.heroSandbox = hs;
+    // ?hero=<role>: in as it from the start (a script, a link to a hero's test)
+    const role = host.params.get('hero');
+    if (role)
+      void (async () => {
+        // (an external hero's module first, when ?heroes= names one)
+        for (let k = 0; k < 100 && role !== 'wanderer' && !heroRoles().includes(role); k++) await new Promise((r) => setTimeout(r, 100));
+        await hs.choose(role);
+        await new Promise((r) => setTimeout(r, 1500));
+        await hs.enter();
+      })();
   }
 
   /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts; round 97: through story/atlas-run.ts, as any game starts one) */
@@ -1945,7 +1990,7 @@ export class LevelScene implements Scene {
     if (this.drive) this.driveOn(dt);
     else if (this.pan && !camera.fly) this.panOn(dt);
     else if (camera.fly) this.flyKeys(dt);
-    else if (this.storyPlay?.holdsInput || this.heroRun) {
+    else if (this.storyPlay?.holdsInput || this.heroRun || this.heroSandbox?.active) {
       // (a talk or a story shot has the camera; a hero run has the keys)
     } else {
     if (k.has('a') || k.has('arrowleft')) kx -= 1;
@@ -2131,9 +2176,11 @@ export class LevelScene implements Scene {
     }
     // (round 88: the hero run — hero, units, its story, the chase camera)
     if (this.heroRun && !camera.fly) this.heroRun.update(dt);
+    // (round 112: the hero sandbox — its hero, units and chase camera; its units live while the editor's out too)
+    if (this.heroSandbox && !camera.fly) timed('herosandbox', () => this.heroSandbox!.update(dt));
     if (this.storyPlay || this.heroRun) record('story', performance.now() - tStory); // (round 100, hitchrec: timing)
     // (round 90: the player's turn of the view — not flying, not while a story shot or the cutaway has the camera)
-    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun) this.turn.update(dt);
+    if (this.turn && !camera.fly && !CUTAWAY && !this.storyPlay?.cam.busy && !this.heroRun && !this.heroSandbox?.active) this.turn.update(dt);
     // (round 91: the compass follows the view, flying too — the flyer's look)
     this.compass?.update(camera.fly ? camera.fly.yaw + Math.PI : camera.azimuth);
     if (CUTAWAY && !camera.fly) {
@@ -3294,6 +3341,7 @@ export class LevelScene implements Scene {
     this.far?.dispose();
     this.storyPlay?.dispose();
     this.heroRun?.dispose();
+    this.heroSandbox?.dispose();
     this.worldApi?.dispose();
     this.controls.dispose();
     this.editor?.dispose();

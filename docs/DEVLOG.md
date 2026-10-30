@@ -13425,3 +13425,131 @@ The merged tilegate: background 0 everywhere; parked and 20 c/s views as before 
 baselines). The 160 c/s fast views varied, so desktop z8/z5 were A/B'd, pre-merge (covercheck build) against merged,
 twice each, alternating: far land worst pre 0.04%-4.7%, merged 0.1%-4.7%; geometric worst the same 11.8% in all four
 (SF14). Run-to-run noise, not a regression. The z8 20 c/s 0.16% from the full gate didn't recur (0 in all four).
+## Round 112 (2026-10-29, session 5, `herosandbox`) — a hero sandbox; heroes through a versioned contract, from another build
+
+The user: "we need a hero sandbox where I can just drop into the map as different heros and play generated gauntlets
+or maps I edit. Maybe like the airplane mode? A way to spawn enemies would be good though or to instantly fill up a
+vessel with a sand or liquid" / "You have to bring in the other heros via what contract" / "I need to test the actual
+interfaces and tweak them" / "Or at least provide feedback" (BACKLOG HS1; DECISIONS round 112).
+
+**What.** Every sandbox level gets a hero sandbox (src/hero/sandbox.ts), and how to use it is in docs/HEROES.md.
+
+- **The toggle.** 🧍 or H drops you in as the chosen hero and takes you back out. It reuses the ✈ pattern: the
+  editor hides, and the free camera is landed first.
+- **The registry.** Heroes register by role in one place (hero/registry.ts). The Walker is built in. Other heroes come
+  from a module loaded at runtime that exports `heroContract` and `mount(host)`.
+- **The inspector.** It shows the intent, the cooldowns, health, the camera, speed, heading and position. Below that
+  is the boundary log (hero/trace.ts).
+- **Hero tunables.** The hero's camera and `Hero.tunables` become sliders through the tuning registry
+  (hero/tunables.ts).
+- **💬 contract feedback.** It reuses the bug report.
+- **Tools.**
+  - 👹 spawns raiders, brutes, runners, allies or villagers through Units.
+  - 🪣 fills an enclosed vessel to its rim with water, oil, sand, soil, snow or rubble (hero/fill.ts).
+  - 🏁 lays a generated course behind a CourseGenerator (hero/gauntlet.ts; the stub until GE3).
+  - 📍 sets an edited map's hero start, which the editor's save keeps.
+
+**Why each choice.**
+
+- **The contract is versioned, and a mismatch is an error.** GameplayGM imports Reclaimed by source path into a
+  submodule. A runtime module built against another contract would otherwise fail somewhere deep inside. Now it is
+  refused at load with both versions in the message. The version is "major.minor": additive changes bump the minor,
+  so a 1.0 module still loads on 1.1.
+- **The shared-modules import map, not passing everything.** Their heroes use Reclaimed's classes and constants by
+  identity: MAT, Figures, the physics bodies. A bundle that copied them would carry a second, different instance. The
+  page's import map points `reclaimed/<path>` at the host's own modules: `/src/<path>.ts` on the dev server, and in
+  the build each listed module as an entry chunk the app itself imports.
+- **HeroHost names what a hero may use.** GameplayGM's answer (forwarded by main) asked for raw handles: WorldCore,
+  the sim, device, camera, ui and agents. HeroHost gives named capabilities first (world, ui, project, groundAt, zMax,
+  wake, log). The raw handles left over sit in `raw` and are listed as debt (HS3).
+- **The fill is one command a column.** The edit pass's water op adds `strength × 0.02` at the centre, falling off as
+  1 − d². A radius under a cell's spacing therefore touches only its own column at full strength, so each column gets
+  exactly its deficit and the volume is exact. The cost is speed: four pours a tick (HS7).
+- **The basin search is a priority flood.** It starts at the bottom of the tapped cell's basin. The level rises as the
+  walls are climbed. The first cell lower than the level is the spill point. The window's edge, or the cell limit,
+  means not enclosed. A pit in a plain takes the plain as its rim: once 48 cells spread flat at the level, that level
+  is the brim.
+- **Tools take the next taps through an overlay, ahead of any controller.** GameplayGM's heroes claim every tap. An
+  overlay keeps 👹 and 🪣 working with any hero.
+- **Small contract changes, all additive (1.1).**
+  - `HeroIntent.input`: their rich per-frame Input passes through.
+  - `Hero.tunables`, `ownCamera`, `dispose`.
+  - `HeroAbility.duration`: real cooldowns get a bar.
+  - `HeroWorld.solidAt` / `floorUnder`.
+  - The Walker's constants became its `tune` (defaults unchanged) and its tunables. Its swing now skips its own
+    faction's units, the sandbox's allies.
+
+- **The autopilot** (round 112, the user: "Don't we have pathfinding? Can't we build a traversal field for the hero
+  agent and use that instead of input? Or steer along that?"). A traversal-field contract (contracts/traversal.ts) is
+  reckoned by the hero's own Mobility (step, drop, deep, jump, fromLow), not the agents' fixed numbers. CpuTraversal
+  is the first implementation (and the reference: the GPU agents' fields are next, HS10). A Pilot controller steers
+  along it, and the course check (`crossable`) uses it. The headless test drives the hero with it.
+  - **fromLow.** The first desktop run had the pilot stuck two cells from its goal on the atlas. The field measured a
+    climb from where the hero stands. The Walker's own rule (path.ts canStep) measures it from the lowest ground within
+    a cell, so the field allowed strides the Walker refused. Mobility.fromLow is that rule, and the Walker sets it: one
+    rule for the field and the body.
+- **Fixes from the desktop runs.**
+  - The course's "ramp" ended in a drop of 4, deeper than the Walker goes down: uncrossable by construction. It is now
+    a mound.
+  - The course is laid only along a heading that fits in the loaded world and that the hero's field crosses.
+    Otherwise there is a clear error.
+  - Overlapping world-API builds stack (each call is a new press), so walls came out 2-3x high. Builds are now laid a
+    column at a time (perColumn).
+
+**Measured.**
+
+- Node (scripts/herosandboxunit.mjs, 18 checks, all ok):
+  - a walled vessel spills at its rim, 121 cells, volume = cells × depth;
+  - a notched vessel spills at the notch;
+  - a slope and a plain are not vessels; a pit in a plain fills to the plain;
+  - 1.0 and 1.1 load; 2.0, 1.2 and none are refused, saying why;
+  - a role clash throws;
+  - the Walker's tunables round-trip (a slider sets its speed and its camera angle in radians).
+- The build, with the import map compared with without it:
+
+  | | JS files | assets | main chunk (gzip) |
+  |---|---|---|---|
+  | with the import map | 46 | 2.276 MB | 365 KB |
+  | without it | 5 | 2.266 MB | 717 KB |
+
+  That is +0.5% bytes, in more files (modulepreloaded). The import map is in dist/index.html, and each entry keeps its
+  exports (e.g. `export{a as Figures,r as unitPose}`).
+- **The world API read textures at the buffers' index (fixed in its own commit, b86d159).** The user reported: "I
+  can't walk more than a tiny bit. It seems like the controls are just not implemented correctly and it walks me a
+  few steps them stops almost like it walks to the displacement of the stick and not targets that velocity".
+  - The stick and the Walker were right: in Node, the stick held at 0.9 for 5 s walks 36.0 cells (8 x 0.9 x 5).
+  - The cause: Terrain.heightAt read the mirrored `levels` texture at ring.idx, the per-column buffer's page-major
+    index. Since round 107 a texel-a-column texture holds each page at its place (ring.t), so the two indices differ
+    on any window more than a page across.
+  - Probe over 400 random columns on the playground: the old index matched the GPU layers' top only partly; the
+    texel index matched 400/400.
+  - The hero stopped at walls that weren't there. The same bug hit heightAt(smooth), groundAt (drift), floorAt and
+    Water.levelAt. It is also why walls laid through the API weren't seen (heightAt saw 2 of 79 built columns, 89/89
+    after the fix) and why the vessel finder failed.
+  - Audit: no other CPU reader picks a texture's index by hand. Wind uses idxHalf; the buffer readers use ring.idx;
+    core.readTexture converts to window order. The structural fix, one accessor per kind (Mirror.index), is HS12.
+- Headless on the laptop's GPU (scripts/herosandboxtest.mjs; every system on, 1x). The playground, the atlas and the
+  playground at 412 x 915 all pass:
+
+  | check | result |
+  |---|---|
+  | stick held 5 s | 40.4 cells (speed 8 x 5 = 40; before the fix: 5.8, then stuck) |
+  | the run=bell probe | pace 8 throughout, 37.6 cells in 4.75 s |
+  | autopilot to a point 16 cells off | there in 2.0-2.3 s; its field 12 ms |
+  | raiders and a brute | chase from 7-8 cells to 1-1.6 |
+  | the boundary log | actor.hurt, hurt and units.hit cross it |
+  | vessel walls | 48/48 up |
+  | water fill | 79-82 columns, 308-438 cells³, 4.0-4.7 deep at the bottom, its top within 0.5 of the fill level |
+  | sand fill | to its rim (15.93 over a floor of 11.58) |
+  | external roller module | loaded from another origin, piloted to its goal; the 0.9 module refused, naming both versions |
+  | feedback note | saved (feedback/hero/) |
+  | generated course | 31 pieces and 4 foes; crossable by the wanderer (cost 124-127 over 108 straight, field 23-50 ms); the autopilot crosses it, fighting, in 18-19 s |
+- Phone proxy (driveprofile, q=low 412 x 915, 30 s): the sandbox's CPU is 0.01 ms a frame on average, 0.2 ms worst;
+  GPU 8.87 ms a frame. Other agents' runs shared the GPU, so the GPU number is not a clean comparison.
+- GIFs and shots: C:/Projects/shots88/herosandbox/{playground,atlas,phone}/ (walk, fight, fill, external-hero,
+  course .gif; vessels, filled, course .png) and probe/.
+
+**Open.** HS2 (GameplayGM's module), HS3 (the raw handles as APIs), HS4 (their hits through Units), HS5 (GE3 courses),
+HS6 (lava has no world API to fill with), HS7 (a big fill takes seconds), HS8 (the sandbox's SimpleUnits beside the
+atlas's AgentUnits), HS10 (the GPU traversal field), HS11 (a pilot for GameplayGM's heroes), HS12 (one mirror accessor
+per kind).

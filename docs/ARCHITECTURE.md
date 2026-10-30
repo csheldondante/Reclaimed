@@ -1957,6 +1957,45 @@ against a contract and knows only its inputs:
   `HeroIntent.sprint` is the run toggle.
 - Story contract (additive): `Outcome.spawn[].hostile`, `Outcome.hostile` (cast ids); storycheck and
   validate accept and check them.
+## The hero sandbox, the hero registry and hero modules (round 112, branch `herosandbox`; docs/HEROES.md)
+
+- `src/hero/sandbox.ts` `HeroSandbox` — mounted by LevelScene in every sandbox level (not under `?run=`). It owns
+  the drop-in toggle (🧍 / H; the free camera is landed first), the chase camera (a spring on `position()`, Orbit.prefer
+  behind the heading; nothing when `Hero.ownCamera`), its units (SimpleUnits drawn as Figures, unless the hero's entry
+  brings its own), the tools (spawn, fill, course, start: an overlay that takes the next taps ahead of any controller),
+  the inspector, the hero tuning panel and the feedback note. LevelScene hands it the world API, the editor's
+  visibility, the sleep's wake and the window's slides (`core.onShift` → `slid`) and warps (→ out to the editor).
+- `src/hero/registry.ts` — heroes by role (`registerHero`, one way in; a role taken by another source is an error);
+  `loadHeroModule(url, host)` imports an ES module, checks `heroContract` against `HERO_CONTRACT` (majors equal, minor
+  no newer), calls `mount(host)` and registers its heroes.
+- `src/api/contracts/hero.ts` — contract 1.1 (additive over round 97's): `HeroIntent.input`, `Hero.tunables`,
+  `ownCamera`, `dispose`, `HeroAbility.duration`, `HeroWorld.solidAt` / `floorUnder`; `HeroEntry`, `HeroHost`
+  (named capabilities, then `raw` handles listed as debt), `HeroMount`, `HeroModule`.
+- The shared modules: vite.config.ts `heroShared` writes an import map, `reclaimed/<path>` → the host's module for
+  each path in `src/hero/shared-modules.json` (dev: `/src/<path>.ts`; build: each an entry chunk the app imports too,
+  `preserveEntrySignatures: 'exports-only'`), so a hero module's imports are the host's instances. Removing a listed
+  module is a contract major change.
+- `src/hero/trace.ts` `BoundaryLog` — the calls across the contract (host→hero, hero→host, units→hero), the hero's
+  Units wrapped in a logging Proxy (reads counted), its Actor wrapped; the HeroIntent of the last 10 s.
+- `src/hero/tunables.ts` — a hero's camera and `tunables` converted to a tuning `Registry` at the boundary (degrees
+  shown, radians kept); a slider sets the hero's own value through `set`.
+- `src/hero/fill.ts` — `findBasin` (a priority flood from the tapped cell's bottom: the level rises over the walls until
+  a lower cell is reached — the spill — or the window's edge or the limit: not enclosed; a pit in a plain takes the
+  plain as its rim) and `pour` (one world-API command a column, each its deficit: `water.flood`, `water.oil` (new,
+  OP_OIL), `terrain.deposit`).
+- `src/api/contracts/traversal.ts` — `Traversal.field(goal, Mobility) → TraversalField` (cost, reachable, dir, route):
+  the cost to a goal for a body's own step, drop, wade and jump (`Hero.mobility`). `src/hero/traversal.ts`
+  `CpuTraversal`: a Dijkstra over the window's cells from the world API's heights and water (the agents' GPU fields
+  next, HS10). `src/hero/pilot.ts` `Pilot`: a HeroController steering along a field (🧭, the headless test);
+  `hero/gauntlet.ts crossable` reads a course's field at its start (GE3's per-hero check).
+- `src/hero/gauntlet.ts` — `CourseGenerator.make(at, heading, seed) → Course { start, goal, pieces, foes }`; the
+  sandbox lays the pieces through the world API and spawns the foes through Units. `obstacleCourse` is the stub.
+- The world API's mirror (round 112 fix): a per-column **buffer** is read at `ring.i` (page-major), a texel-a-column
+  **texture** (levels, drift) at `ring.t` (`api/common.ts texelAt`); the two differ for every window more than a page
+  across. One accessor per kind is HS12.
+- `src/ui/bugreport.ts` — `BugContext.as`: the same note and picture as another kind (the contract feedback), its own
+  button, file name, dev sink (`/__hitch?kind=herofeedback&name=` → feedback/hero/<name>.json) and extra payload.
+
 ## A run over the streamed world (round 99, branch `runstream`; BACKLOG RS9, RS16)
 
 The window streams during a run: nothing of the story is kept in window coordinates across a slide or a warp.

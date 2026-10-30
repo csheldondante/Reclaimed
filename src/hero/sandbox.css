@@ -1,0 +1,32 @@
+/* (round 112, herosandbox) the hero sandbox's bar, tools and inspector (hero/sandbox.ts): top left, clear of the
+   editor (top right), the TouchPad's buttons (bottom right) and the turn buttons (bottom left). Folded on a phone. */
+.hero-sb {
+  position: fixed; z-index: 30; left: max(8px, env(safe-area-inset-left)); top: max(8px, env(safe-area-inset-top));
+  width: min(360px, calc(100vw - 16px)); max-height: calc(100vh - 220px); overflow: auto;
+  font: 12px var(--font, system-ui, sans-serif); color: var(--ink, #ece6d8);
+  background: rgba(28, 26, 22, 0.78); border: 1px solid rgba(236, 230, 216, 0.2); border-radius: 10px; padding: 6px;
+}
+.hero-sb button, .hero-sb select, .hero-sb input {
+  min-height: 36px; min-width: 36px; font: 14px var(--font, system-ui, sans-serif); border-radius: 8px;
+  border: 1px solid rgba(236, 230, 216, 0.25); background: rgba(20, 22, 24, 0.85); color: inherit; padding: 2px 6px;
+}
+.hero-sb select { max-width: 150px; font-size: 12px; }
+.hero-sb select option { background: #26231e; }
+.hero-sb button.on { background: rgba(60, 90, 140, 0.9); border-color: #9ac; }
+.hero-sb-bar, .hero-sb-tools, .hero-sb-mods { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; margin-bottom: 4px; }
+.hero-sb-mods input { flex: 1; min-width: 120px; font-size: 11px; }
+.hero-sb-info, .hero-sb-log { margin: 4px 0; font: 11px/1.35 ui-monospace, monospace; white-space: pre-wrap; word-break: break-word; }
+.hero-sb-log { color: #b9c7a0; max-height: 9.5em; overflow: hidden; border-top: 1px solid rgba(236, 230, 216, 0.12); padding-top: 3px; }
+.hero-sb.folded { width: auto; }
+.hero-sb.folded .hero-sb-tools, .hero-sb.folded .hero-sb-info, .hero-sb.folded .hero-sb-log, .hero-sb.folded .hero-sb-mods { display: none; }
+.hero-sb-fb { display: flex; }
+.hero-sb .bug-btn-as { font-size: 12px; }
+/* a tool armed: its taps over everything but the panels */
+.hero-sb-overlay { position: fixed; inset: 0; z-index: 25; cursor: crosshair; touch-action: none; }
+.hero-sb-tip {
+  position: absolute; left: 50%; bottom: max(90px, env(safe-area-inset-bottom)); transform: translateX(-50%);
+  background: rgba(28, 26, 22, 0.85); color: #ece6d8; padding: 6px 10px; border-radius: 8px; font: 13px system-ui, sans-serif; pointer-events: none;
+}
+/* the hero's tuning panel: its button beside the inspector, the panel under it */
+.tune-btn.hero { left: auto; right: max(8px, env(safe-area-inset-right)); bottom: auto; top: calc(max(8px, env(safe-area-inset-top)) + 4px); }
+.tune-panel.hero { left: auto; right: max(8px, env(safe-area-inset-right)); top: calc(max(8px, env(safe-area-inset-top)) + 48px); }
