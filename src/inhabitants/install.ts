@@ -25,6 +25,8 @@ export function installInhabitants(core: WorldCore, opts: InhabitantsOpts = {}):
 
 const READABLE_ZOOM = 24;
 const MAX_DRAW_SCALE = 4;
+const FAR_ZOOM = 14;
+const LOD_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifelod') ? Number(new URLSearchParams(location.search).get('lifelod')) : null;
 const SCALE_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifescale') ? Number(new URLSearchParams(location.search).get('lifescale')) : null;
 
 /** each frame: the mesh built round what the camera sees */
@@ -36,6 +38,8 @@ export function lifeFocus(life: InhabitantsGpu, core: WorldCore): void {
   // (readability: life size from READABLE_ZOOM in, up to MAX_DRAW_SCALE bigger as the view widens — a creature keeps
   // ~READABLE_ZOOM px a cell of body; ?lifescale= overrides, 1 life size always)
   life.drawScale = SCALE_PARAM ?? (cam.fly ? 1 : Math.min(MAX_DRAW_SCALE, Math.max(1, READABLE_ZOOM / Math.max(cam.zoom, 0.01))));
+  // (far LOD under FAR_ZOOM px a cell: a limb's taper still reads, its joints' facets don't; ?lifelod=0|1 forces it)
+  life.lod = LOD_PARAM ?? (!cam.fly && cam.zoom < FAR_ZOOM ? 1 : 0);
 }
 
 /** A wilderness scene round `at` (world units): what ?life=1 shows. Returns the groups by name. */

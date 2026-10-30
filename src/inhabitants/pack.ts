@@ -33,7 +33,9 @@ export function packSpecies(table: Float32Array, sp: number, spec: SpeciesSpec, 
   table.set([rig.stride, rig.stepTime, rig.lift, rig.flies ? Math.max(6, rig.height * 6) : 0], h + 8);
   table.set([rig.points.length, rig.segments.length, rig.vertsPerAgent, rig.flies ? 1 : 0], h + 12);
   table.set([rig.radius, rig.length, PLAN_CODE[spec.plan], spec.plan === 'winged' ? 1.6 : 5], h + 16);
-  table.set([0, 0, 0, 0], h + 20);
+  // (bones and triangles: the mesh's vertex count at the far LOD, inhabitants.wgsl meshIt)
+  const bones = rig.segments.filter((s) => s.kind === 'bone').length;
+  table.set([bones, rig.segments.length - bones, 0, 0], h + 20);
   const P = (MAX_SPECIES * HDR + sp * MAX_POINTS * 2) * 4;
   table.fill(0, P, P + MAX_POINTS * 8);
   rig.points.forEach((pt, i) => {

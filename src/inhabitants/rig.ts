@@ -44,6 +44,8 @@ export const MAX_POINTS = 32;
 export const MAX_SEGS = 48;
 /** a bone: a spindle of two square rings and two tips, 16 triangles */
 export const BONE_VERTS = 48;
+/** a bone at the far LOD (system.ts lod 1): a ring and two tips, 8 triangles */
+export const BONE_VERTS_FAR = 24;
 export const TRI_VERTS = 3;
 /** a dark footprint on the ground under each creature (two triangles): contrast on grass, and a bird's place in the air */
 export const SHADOW_VERTS = 6;

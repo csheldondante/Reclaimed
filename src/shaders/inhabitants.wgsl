@@ -816,7 +816,9 @@ fn meshIt(@builtin(global_invocation_id) gid: vec3<u32>) {
   let sp = u32(a0.w);
   let h3 = hdr(sp, 3u);
   let ns = u32(h3.y);
-  let nv = u32(h3.z);
+  // (the far LOD: a bone is a ring and two tips — half the vertices, the taper kept)
+  let h5 = hdr(sp, 5u);
+  let nv = select(u32(h3.z), 6u + u32(h5.x) * 24u + u32(h5.y) * 3u, P.lod == 1u);
   let o0 = atomicAdd(&drawArgs[4], nv);
   if (o0 + nv > P.maxVerts) {
     // no room: the part of its range that's drawn is emptied (degenerate triangles), not last frame's left there
@@ -884,6 +886,15 @@ fn meshIt(@builtin(global_invocation_id) gid: vec3<u32>) {
       let off = u * cos(ang) + v * sin(ang);
       ringA[c] = pa + off * ra;
       ringB[c] = pb + off * rb;
+    }
+    if (P.lod == 1u) {
+      for (var c = 0u; c < 4u; c++) {
+        let c1 = (c + 1u) % 4u;
+        emitTri(o, ta, ringA[c1], ringA[c], centre, col);
+        emitTri(o + 3u, ringA[c], ringA[c1], tb, centre, col);
+        o += 6u;
+      }
+      continue;
     }
     for (var c = 0u; c < 4u; c++) {
       let c1 = (c + 1u) % 4u;

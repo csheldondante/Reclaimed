@@ -193,6 +193,12 @@ test('the mesh holds every creature in view: vertices a creature × count, all f
   expect(pr.args[0]).toBe(4 * life.rig(deer).vertsPerAgent + 5 * life.rig(crow).vertsPerAgent);
   expect(pr.args[1]).toBe(1);
   expect(pr.verts.every(Number.isFinite)).toBe(true);
+  // the far LOD: a bone's 24 vertices, not 48
+  life.lod = 1;
+  await step(1);
+  const far = (r: ReturnType<InhabitantsGpu['rig']>) => 6 + r.segments.filter((x) => x.kind === 'bone').length * 24 + r.segments.filter((x) => x.kind === 'tri').length * 3;
+  expect((await life.probe(0, 0)).args[0]).toBe(4 * far(life.rig(deer)) + 5 * far(life.rig(crow)));
+  life.lod = 0;
   // out of the focus: none
   life.focus = [500, 500];
   life.focusR = 10;

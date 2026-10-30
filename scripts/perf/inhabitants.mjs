@@ -23,7 +23,7 @@ await run({ name: 'perf-inhabitants', kind: 'timing' }, async (R) => {
       const life = {};
       let lifeMs = 0;
       for (const [k, v] of prof.totalMs) if (k.startsWith('life')) (life[k] = +(v / f).toFixed(3)), (lifeMs += v / f);
-      return { frames: prof.framesResolved, gpuFrameMs: +(prof.gpuTotalMs / f).toFixed(3), lifeMs: +lifeMs.toFixed(3), passes: life };
+      return { lod: window.reclaimed.inhabitants.lod, drawScale: window.reclaimed.inhabitants.drawScale, frames: prof.framesResolved, gpuFrameMs: +(prof.gpuTotalMs / f).toFixed(3), lifeMs: +lifeMs.toFixed(3), passes: life };
     }, seconds);
   const setup = await p.evaluate((zoom) => {
     const r = window.reclaimed;

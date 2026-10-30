@@ -79,6 +79,8 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
    * mesh; behaviour, presence and hits keep the true size.
    */
   drawScale = 1;
+  /** the mesh's detail: 0 full (bones two rings and two tips), 1 far (a ring and two tips: half the vertices) — install.ts sets it from the zoom */
+  lod = 0;
   /** (the GPU work toggles: the perf test turns them off one at a time) */
   meshOn = true;
 
@@ -466,7 +468,7 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
     f[5] = this.focus[0];
     f[6] = this.focus[1];
     f[7] = this.focusR;
-    u[8] = 0;
+    u[8] = this.lod;
     u[9] = this.paths.nodes;
     u[10] = this.paths.edges;
     u[11] = this.maxVerts;

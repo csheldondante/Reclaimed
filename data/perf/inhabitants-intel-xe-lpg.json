@@ -1,0 +1,66 @@
+{
+  "when": "2026-10-30T17:12:40.714Z",
+  "size": "412x915",
+  "dpr": 2.6,
+  "zoom": 6,
+  "adapter": "intel / xe-lpg",
+  "target": [
+    128,
+    110.85125168440814,
+    119.83984375
+  ],
+  "view": [
+    68.66666666666667,
+    152.5
+  ],
+  "none": {
+    "frames": 342,
+    "gpuFrameMs": 12.236,
+    "lifeMs": 0,
+    "passes": {}
+  },
+  "rows": [
+    {
+      "creatures": 100,
+      "frames": 333,
+      "gpuFrameMs": 12.954,
+      "lifeMs": 0.705,
+      "passes": {
+        "life bins": 0.021,
+        "life behave": 0.15,
+        "life animate": 0.236,
+        "life mesh": 0.293,
+        "life meshArgs": 0.006
+      },
+      "overNoneMs": 0.718
+    },
+    {
+      "creatures": 1000,
+      "frames": 309,
+      "gpuFrameMs": 14.33,
+      "lifeMs": 1.775,
+      "passes": {
+        "life bins": 0.033,
+        "life behave": 0.369,
+        "life animate": 0.247,
+        "life mesh": 1.12,
+        "life meshArgs": 0.007
+      },
+      "overNoneMs": 2.094
+    },
+    {
+      "creatures": 5000,
+      "frames": 321,
+      "gpuFrameMs": 14.191,
+      "lifeMs": 3.648,
+      "passes": {
+        "life bins": 0.048,
+        "life behave": 0.709,
+        "life animate": 0.297,
+        "life mesh": 2.59,
+        "life meshArgs": 0.005
+      },
+      "overNoneMs": 1.955
+    }
+  ]
+}
