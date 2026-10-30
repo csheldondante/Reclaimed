@@ -13541,3 +13541,63 @@ the hardware supports."
 - One browser smoke (fillprobe, shared GPU — growth's correctness only, no timings): 1600 x 900 grew to 512 slots /
   192 MB (floor 1.32), 5120 x 1440 to 1024 / 384 MB, the phone proxy to 256 / 96 MB; no out-of-memory, no errors.
   The atlas now starts as whole rows of the widest texture (64 slots a row at 8192), so its first size rounds up a row.
+
+## 2026-10-30 — round 117 (`testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test
+
+**Why.** The user (DECISIONS round 117): "TDD make some unit tests so you can stop hogging my browser so much. Do complete
+integration tests after unit tests work and do quick smoke tests to find failures early." Until now every test needed the
+shared browser and GPU: ~180 headless scripts and the 4-test contract tier (contract.html). docs/TESTING.md has the
+pyramid, how to write a test at each tier, and when to use the browser.
+
+**Tier 1, unit (vitest 4 in Node).** I picked vitest over node:test because it reads vite.config.ts. That gives the same
+`?raw` WGSL imports and defines (`__GEN_HASH__`) as the build, TypeScript with no build step, and projects with an order.
+tilecal's vitest@3 config on places (round 115, src/**/*.test.ts) folded into the unit project, and its 11 tests pass
+under vitest 4. 79 tests in ~2 s wall. Tested so far: the tick clock (locked one tick a frame under ±2 ms timestamp
+jitter; drift paid a tick at a time, never two fixes within 20 frames; a missed vsync, a cut tick and a paused frame
+not owed; the accumulator at 120 Hz and speed 2), the world state (every event kind, clamps, listeners, history,
+snapshot/restore), the region record (layout alignment, encode/decode round trip, mismatch reasons, columnsHash the
+same at any window height, stepped equals whole), the generator hash (GEN_VERSION is this checkout's genHash; a fake
+checkout shows boundary, type-only and CRLF edits don't count), the External registry, and buried things un-buried.
+
+**Tier 2, gpu (real Dawn in Node).** The npm `webgpu` package (Dawn's node bindings, D3D12 here) gives navigator.gpu
+and the WebGPU globals in Node. gpu/device.ts is split so tests ask for the device the game's way: `requestGpu(gpu)` is
+the adapter, limits and features with no canvas, and `initGpu` adds the canvas and the fatal overlay's handlers.
+test/gpu/world.ts `tinyWorld` makes the real WorldCore (its WorldGpu buffers, every kernel, the Simulation) from a map
+and steps it the way the contract tier does. The modules WorldCore pulls in read `location` and the viewport at load,
+so the setup defines a page with no query and the phone proxy's 412 x 915. Measured: the first tiny WorldCore takes
+10.6 s (its ~100 async pipelines on DXC: the renderer's and the sims', particles/blended/rain/water-flat the slowest at
+~9 s each, compiled in parallel), and 600 water ticks take 0.5 s. A second WorldCore on the same device takes 84 ms,
+because Dawn keeps what it compiled. So the gpu files run in one worker, not isolated, on one device: 3 files and
+5 tests in ~15 s. Backends: D3D11 (FXC) took over 4 minutes for the same pipelines, and Vulkan has no vulkan-1.dll
+here, so D3D12 it is (`DAWN_FLAGS` passes Dawn options). Two full `npm test` runs at once both passed in 19 s wall, so
+agents can run them in parallel.
+
+**Tier 3, smoke.** scripts/smoke.mjs runs on the shared runner (lease, build server, kept Chrome). It boots the built
+atlas from its warm snapshot (sim/snapshot.ts), checks there's no fatal and no console or page error, and that the sim
+runs a second of ticks. 42 s wall uncontended (ready in 25.7 s: pipelines 12.6 s from Chrome's cache). `--levels` adds
+more, at ~25-50 s each on a shared GPU: two levels didn't fit 60 s with three other checks on it (playground's
+requestDevice took 29.8 s), so the default is the atlas alone. First found: the fourth level booted in one tab lost its
+device (TK7), so it now opens a page per level.
+
+**Findings.**
+- Buried statues (the user: "Unburying something should not make it suddenly launch into the air. It should maybe
+  topple or slide and tumble and maybe stay up depending on support"). The tests were written before they were run.
+  test/support/rockworld.ts runs the production External registry, rock judge (analyseRock), WorldVox and
+  RockBodies/columnsGround on packed CPU columns, and mirrors only Integrity's glue. No launch in any case: the
+  centre's rise is 0 and the fastest upward speed is 0.23 cells/s (the drop's bounce).
+  - Dug round to its foot: it stays (not woken).
+  - Undercut past its centre of mass: it wakes, tilts 26°, moves 2.9 east and drops 1.4 into the hole.
+  - Freed entirely: it drops 9 to 4.65 (onto the floor, its slop).
+  - Leaning 35° on its foot: it topples to 82° and rests.
+  - Lying under the ground with a cave dug beneath: held by the stone beside it, it stays.
+  - In soil: it stays.
+  - At 25° the tilted foot spans enough rows that the centre of mass sits 0.14 past it, inside the judge's 0.25 tip
+    give, so it stands. With the NW/SW cells left, the hex cells' own width reaches the centre, so it stands too.
+- TK4: a thing with air under it and only ground on top hangs from that ground. The judge reads the column's External
+  cells and the stone on them as one run, keyed into the land through the roof (`test.fails` until fixed).
+- TK9: MemoryWorldState.snapshot() shared the live factions and settlements, so a saved snapshot changed when a faction's
+  attitude moved later. Now copies (structuredClone; a few factions, not hot).
+- Conflations that widen the test surface: Integrity's glue inside its 2000-line GPU-owning class (TK5), and WorldCore
+  always making a Renderer (TK6).
+
+vite.config.ts: `__dirname` → `import.meta.dirname`, which vitest's config loader asks for. Same value.

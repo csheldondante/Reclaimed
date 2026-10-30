@@ -2413,3 +2413,15 @@ clears them).
   TilePacer.holes, WorldCore.simCap. `?planner=0`, `?planoff=slide,tile,mesh,sim,pacer`.
 - **Land written is drawable at once** (SF7): the streamer's onRelief → level → WorldCore.prepareArrived (SurfaceSystem
   and RenderFieldsSystem with `all`: every column, no sleep skip) and HybridChunks.landBox(…, −Infinity): ready now.
+
+## Tests in Node (round 117, `testkit`; docs/TESTING.md)
+
+- `npm test` runs two vitest projects, unit (test/unit/**, src/**/*.test.ts) then gpu (test/gpu/**). Neither uses a
+  browser.
+- The gpu tier runs the game's own code on Dawn in Node (npm `webgpu`). gpu/device.ts `requestGpu(gpu)` is the
+  adapter and device as the game asks for them, with no canvas. `initGpu(canvas)` is that plus the canvas and the fatal
+  overlay. gpu/pipeline.ts makeCompute and makeBindGroup are unchanged.
+- WorldCore is made with a Host whose canvas, context and ui are absent: its constructor doesn't draw.
+- A module that reads `location`, `innerWidth` and the like at load works in the unit tier only if it guards them
+  (`typeof location === 'undefined'`). The gpu tier's setup defines them, a page with no query at 412 x 915, for the
+  modules a WorldCore pulls in.

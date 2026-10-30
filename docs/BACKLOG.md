@@ -12,6 +12,25 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
+
+The user: "TDD make some unit tests so you can stop hogging my browser so much. Do complete integration tests after unit
+tests work and do quick smoke tests to find failures early." docs/TESTING.md.
+
+| id | item | size | status |
+|---|---|---|---|
+| TK1 | The unit tier: vitest in Node (`npm test`, `npm run test:unit`), test/unit/** and src/**/*.test.ts; the tick clock, the world state, the region record and generator hash, the External registry, buried things un-buried | M | done (testkit) |
+| TK2 | The gpu tier: real WGSL on real Dawn in Node (npm `webgpu`, D3D12) through gpu/pipeline.ts and gpu/device.ts requestGpu; a real WorldCore on a 32 x 32 world (test/gpu/world.ts tinyWorld); one device for the tier, its compiles shared | M | done (testkit) |
+| TK3 | Buried things un-buried (test/unit/buried.test.ts, the user's "should not … launch … topple or slide … stay up depending on support"): a statue in stone dug round stays; undercut past its centre of mass it topples into the hole; freed it drops; leaning 35° on its foot it topples (82°) and rests; in soil it stays. None launched: rise 0, fastest up 0.23 cells/s | S | done (testkit) |
+| TK4 | FINDING: a buried thing with air under it and only ground on top of it stays up, hanging from that ground: the rock judge (fracture.ts analyseRock) reads a column's matter as one run (the External cells and the stone on them), and that run is keyed into the land through the roof round it. Ground over a thing isn't support: a thing should be its own run, judged on what's under and beside it (test.fails in buried.test.ts) | M | open |
+| TK5 | Integrity's glue (takeExternal, wakeResting incl. the 'cut' case, restRigid, the judge's passes) into a pure module the class calls, so the unit tier runs the real one, not test/support/rockworld.ts's mirror | M | open |
+| TK6 | A WorldCore without a Renderer (sim only) for tests and headless worlds: half the gpu tier's one ~10 s compile, and no viewport globals in Node (render/tilecache.ts reads innerWidth at load) | S | open |
+| TK7 | The fourth level booted in one tab (smoke: atlas, valley, playground, then rocklab, three other checks on the GPU) lost its device: "A valid external Instance reference no longer exists". Rocklab alone boots; the smoke now opens a page a level. Find whether it's Chrome's GPU process under contention or a leak across boots | S | open |
+| TK8 | The contract tier's remaining tests (src/test/contract.ts breach, river) to test/gpu; then contract.html is only for what needs a page | S | open |
+| TK9 | MemoryWorldState.snapshot() handed out the live factions and settlements: a save between runs changed when a faction's attitude moved after it (world-state.test.ts); copies now | S | done (testkit) |
+| TK10 | More unit tests for what the brief listed and this round didn't reach: the planners (scenes/planner.ts), calibration math (perf/), run and story logic (run/, story/), layout and packing (world/layout.ts, sim/pages.ts) | M | open |
+| TK11 | The runner's teardown once took ~200 s after a passing check (smoke, rocklab alone, on a busy GPU): page / browser / server close; time each | S | open |
+
 ## Round 115 (2026-10-30, session 5, `places`) — caching by section, travel on the atlas, the camera's view (DECISIONS round 115)
 
 Streaming is good enough for now (places 3c850b9); these are for when gameplay and the finished generator are built.
