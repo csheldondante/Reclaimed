@@ -13654,3 +13654,41 @@ by stairs at a gate; every piece a real module with finite frames, per style; on
 assets' cells under a skew; no wall through its roof.
 
 Shared-system tweaks (for main to consolidate): vite.config.ts builds and hashes structures.html.
+
+## 2026-10-30 — round 117 (`structures`): the city on real terrain (STR9)
+
+`?skipmenu=1&level=atlas&city=irregular` (or contour-voronoi, radial, orthogonal; `&cstyle=`, `&cseed=`, `&cr=`): the
+town or city nearest the start is handed to the structures track — its own buildings aren't stamped
+(`Settlements.handedOff`) — and src/structures/host.ts `CityHost` plans a city there on the window's ground (the
+atlas's window ground and water as made: nothing built or paved under more than 0.3 m of water), draws its pieces with
+the game's renderer and claims each building's columns as one External instance (`OWNER_STRUCT`).
+
+**Why the game's renderer draws them (not an overlay).** The pieces must be lit, shadowed, hazed and cut away exactly as
+the land round them, and picked like it: `Renderer.enableStructures` makes a pipeline from render.wgsl + structmesh.wgsl
++ structgame.wgsl (the trees' way, meshinst.wgsl), the pieces' buffer at the draw group's binding 3, drawn in the world
+pass and the sun's shadow pass. One shared module file (structmesh.wgsl) for the viewer and the game: the look is the
+same in both.
+
+**Why External columns, and why they stop a metre under the roof.** The sims treat External as rock that never gives:
+rain runs off, sand piles, fire and water go round, the terrain's draws leave room. The first run showed grass tufts
+and moss poking through the roofs: what grows on an External top grew on the solid's top, which reached mid-roof. The
+solid now stops a metre under the walls' tops, inside the top storey.
+
+**What the sims do to it.** A building whose cells are cut (dug, smashed, melted) or found hanging free is let go to
+rubble where it stood, its pieces taken away behind dust (round 106: hide every swap behind a burst of dust). Before a
+slide, buildings whose columns would leave the window let go of them (to air); after it, the plan moves with the land
+and they claim again once all back. Collapse into bodies is later (with the physics track).
+
+**Shared tweaks (for main to consolidate):** renderer.ts `enableStructures` + two draws (world, shadow) and `drawPl`;
+integrity.ts `ensureCopy()` (the CPU copy of the layers read once if none yet: claims at the level's start needed it —
+"Invalid typed array length" before); external.ts `OWNER_STRUCT = 2`; settlements.ts `handedOff`; level.ts the
+`?city=` site, the host, its slide hooks, `reclaimed.city()`.
+
+**Measured** (scripts/perf/structcity.mjs, data/perf/structcity-intel-xe-lpg.json; phone proxy 412×915 dpr 2.6 q=low,
+every system on, parked over a 281-building irregular city, 5191 pieces, ~500k triangles): the world pass ("draw")
+2.66 → 3.53 ms at the start's zoom, 2.77 → 3.81 ms at ×3 zoom — about 1 ms of GPU. Back faces culled (the modules are
+wound outward, every frame counter-clockwise; checked in the viewer with `?cull=0` to compare): before culling the ×3
+zoom cost 2.3 ms. The frame's total GPU time moved ±1 ms between runs on the shared desktop (other agents), so the pass
+times are the measure.
+
+Shots: C:\Projects\shots88\structures\city-irregular-0/1/2.png.

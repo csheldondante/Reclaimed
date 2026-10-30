@@ -18,7 +18,7 @@ export const STOREY_H = 3;
 /** a rampart's height over the ground (m) */
 export const WALL_H = 7;
 
-export function planCity(spec: CitySpec, ground: GroundFn): CityPlan {
+export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): CityPlan {
   const t0 = performance.now();
   const tiles = tileSystem({ spec, ground });
   const t1 = performance.now();
@@ -43,6 +43,18 @@ export function planCity(spec: CitySpec, ground: GroundFn): CityPlan {
     }
     return [lo, hi];
   };
+
+  // ---- under water: nothing built or paved (a lake shore, a river through the town: bridges are STR11's)
+  if (water)
+    for (let q = 0; q < nq; q++) {
+      const [x, y] = quadCentre(tiles, q);
+      let wet = water(x, y) > 0.3;
+      for (let k = 0; k < 4 && !wet; k++) {
+        const v = tiles.quads[q * 4 + k];
+        wet = water(tiles.verts[v * 2], tiles.verts[v * 2 + 1]) > 0.3;
+      }
+      if (wet) tiles.use[q] = 'outside';
+    }
 
   // ---- which lots are built (the rest are yards: gardens, courtyards, room to grow)
   const built = new Uint8Array(nq);

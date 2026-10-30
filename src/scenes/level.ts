@@ -95,6 +95,7 @@ import { captureWorld, loadSnapshot, saveSnapshot } from '../sim/snapshot';
 import { loadWarm, saveWarm, warmKey } from '../sim/warm-cache';
 import { buildWiki } from '../gm/wiki';
 import { StreamPlanner } from './planner';
+import { CityHost, citySpecFrom, type CitySite } from '../structures/host';
 
 export interface LevelOptions {
   /** play this map instead of generating the level's (a loaded sandbox map) */
@@ -104,7 +105,7 @@ export interface LevelOptions {
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
   /** (create's, for an atlas level: the atlas, the window it made, and where that window is) */
-  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements };
+  atlas?: { atlas: Atlas; map: MapData; origin: [number, number]; oz: number; outside: Interval[][]; ground: Float32Array; settlements?: Settlements; city?: CitySite };
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -354,6 +355,8 @@ export class LevelScene implements Scene {
   private beamPicking = false;
   /** sandbox: structural integrity and falling pieces (F7) */
   private integrity?: Integrity;
+  /** (round 117, structures: ?city=) the structures track's city on the window's ground */
+  private cityHost?: CityHost;
   /** (round 108, AR5/AR8) the tuning panel, the bug report, the playground's stations */
   private tunePanel?: TunePanel;
   bugReport?: BugReport;
@@ -892,6 +895,18 @@ export class LevelScene implements Scene {
         cx = Math.round(s.at[0]);
         cy = Math.round(s.at[1] / ROW_H);
       }
+      // (round 117, structures: ?city=<tile system> — a city from src/structures stands in for the town or city nearest
+      // the start (or stands at ?at=); that settlement's own buildings aren't stamped: src/structures/host.ts)
+      let cityAt: CitySite | undefined;
+      if (host.params.get('city')) {
+        const near = !at ? settlements?.near([cx, cy * ROW_H], 1e9).find((x) => x.size === 'town' || x.size === 'city') : undefined;
+        if (near) {
+          cx = Math.round(near.at[0]);
+          cy = Math.round(near.at[1] / ROW_H);
+          settlements!.handedOff.add(near.id);
+          cityAt = { at: [near.at[0], near.at[1]], radius: Math.min(72, Math.max(40, near.radius)), id: near.id };
+        } else cityAt = { at: [cx, cy * ROW_H], radius: 48 };
+      }
       // (?win=: a wider window, whole regions — round 79, the user: "stream in a few more blocks out to see
       // more of the terrain at a time … nice for debugging even if too slow for mobile")
       // (round 90: or the viewer's range setting, the phone tier's default wider — scenes/range.ts)
@@ -907,7 +922,9 @@ export class LevelScene implements Scene {
       atlas.profiler = host.profiler;
       // (round 102: the tile pacer's GPU budget by the timestamps, when they're read)
       atlas.pacer.profiler = host.profiler;
-      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements } };
+      // (the city's centre in the window's frame: world units less the window's corner)
+      const city = cityAt && { ...cityAt, at: [cityAt.at[0] - origin[0], cityAt.at[1] - origin[1] * ROW_H] as [number, number] };
+      opts = { ...opts, atlas: { atlas, map, origin, oz, outside, ground, settlements, city } };
     }
     (globalThis as { __benchStage?: string }).__benchStage = 'making the level';
     // (round 112, testspeed: the pipelines its making asks for, compiled together off the GPU's main thread)
@@ -1299,6 +1316,8 @@ export class LevelScene implements Scene {
       readBuffer: (n: Parameters<WorldCore['readBuffer']>[0]) => core.readBuffer(n),
       probe: (...a: Parameters<WorldCore['probe']>) => core.probe(...a),
       integrity: () => this.integrity,
+      // (round 117, structures) the city (?city=): its plan, stats
+      city: () => this.cityHost,
       // (round 95) the rigid rock's knobs (?rockbody=1): rb.breakSpeed = 12
       rb: RB,
       // (round 108, AR5) the tuning registry: tune.set('rigid.friction', 0.3), tune.changed(), tune.encode()
@@ -1566,6 +1585,30 @@ export class LevelScene implements Scene {
         core.camera.target = [dims.w / 2, (dims.h / 2) * ROW_H, core.map.surface[i]];
         if (core.camera.fly) this.toggleFly();
       });
+      // (round 117, structures) the city: planned on the window's ground, drawn by the renderer, its columns External;
+      // it lets go of what leaves the window before a slide and moves with the land after (its hooks after
+      // Integrity's: the registry has moved when it claims again)
+      if (a?.city) {
+        const ch = new CityHost(
+          {
+            device: host.gpu.device,
+            renderer: core.renderer,
+            external: () => this.integrity?.external ?? null,
+            ready: () => this.integrity?.ensureCopy() ?? Promise.resolve(),
+            dims,
+            ground: a.ground,
+            water: a.map.water,
+            dust: (x, y, z, n) => {
+              const [wx, wy] = cellPos(x, y);
+              core.sim.particles.burst({ kind: PK.Dust, x: wx, y: wy, z, count: n, speed: 2, spread: 1.2 });
+            },
+          },
+          citySpecFrom(host.params, a.city),
+        );
+        this.cityHost = ch;
+        this.stream.onBeforeSlide.push((dx, dy) => ch.beforeSlide(dx, dy));
+        this.stream.onSlide.push((dx, dy) => ch.slid(dx, dy));
+      }
       // (round 71) an event of the coarse world in sight is made in the window's columns too
       // the atlas level's buttons (round 72: a phone has no F, WASD, M or V)
       if (a) this.atlasControls();

@@ -223,7 +223,8 @@ export interface BuriableAsset {
 
 /** The system's API (src/structures/index.ts implements it). Pure functions of their inputs: no GPU, no world state. */
 export interface Structures {
-  plan(spec: CitySpec, ground: GroundFn): CityPlan;
+  /** `water`: the depth of standing water at a point (none built or paved where it's over 0.3 m) */
+  plan(spec: CitySpec, ground: GroundFn, water?: GroundFn): CityPlan;
   pieces(plan: CityPlan): StructurePieces;
   /** the columns its buildings fill, on the hex lattice (world cells) */
   columns(plan: CityPlan): ColumnSpan[];

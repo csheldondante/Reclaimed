@@ -82,7 +82,9 @@ export class ViewerRenderer {
       layout: pl,
       vertex: { module, entryPoint: 'vsPiece', buffers: [StructureGpu.vertexLayout()] },
       fragment: { module, entryPoint: 'fsPiece', targets: [{ format }] },
-      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      // (the modules are wound outward, counter-clockwise, and every frame is counter-clockwise: back faces culled —
+      // ?cull=0 draws them, to look for a module wound the wrong way)
+      primitive: { topology: 'triangle-list', cullMode: new URLSearchParams(location.search).get('cull') === '0' ? 'none' : 'back' },
       depthStencil: depthState,
       multisample: ms,
     });

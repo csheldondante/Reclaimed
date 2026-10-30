@@ -21,6 +21,7 @@ struct View {
 @group(0) @binding(3) var shadowSamp: sampler_comparison;
 
 fn hostNight() -> f32 { return V.sun.w; }
+fn spFetch(i: u32) -> vec4<f32> { return spData[i]; }
 
 fn shadowAt(wpos: vec3<f32>, n: vec3<f32>) -> f32 {
   let p = V.lightProj * vec4<f32>(wpos + n * 0.06, 1.0);

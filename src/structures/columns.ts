@@ -28,7 +28,9 @@ export function columnsOf(plan: CityPlan): ColumnSpan[] {
     hi[s.quad] = Math.max(hi[s.quad], s.z1);
     bld[s.quad] = s.building;
   }
-  for (const b of plan.buildings) for (const q of b.quads) hi[q] += plan.roofRise[b.id] * (b.mega === 'tower' ? 1.2 : 0.4);
+  // (the solid stops a metre under the walls' tops, inside the top storey: what grows or lands on an External top —
+  // moss, tufts, snow — stays hidden in the house instead of poking through its roof)
+  for (const b of plan.buildings) for (const q of b.quads) hi[q] -= 1;
   const out: ColumnSpan[] = [];
   const seen = new Set<string>();
   for (let q = 0; q < t.use.length; q++) {

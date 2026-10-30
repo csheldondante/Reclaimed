@@ -87,6 +87,11 @@ export interface FarIO {
 export class Settlements {
   readonly wiki: WorldWiki;
   readonly seeds: SettlementSeed[];
+  /**
+   * (round 117, structures — a tweak for main to consolidate) settlements whose buildings another system draws (the
+   * structures track's city, src/structures/host.ts): their land isn't stamped with this system's buildings
+   */
+  readonly handedOff = new Set<string>();
   private byId = new Map<string, SettlementSeed>();
   private recs = new Map<string, Settlement>();
   private plans = new Map<string, Promise<SettlementPlan>>();
@@ -230,6 +235,7 @@ export class Settlements {
   /** (round 108, TC8: `plan` false — a render-only tile's land — only the plans already made: none started here) */
   private async stampLand(ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean, plan = true): Promise<void> {
     for (const s of this.meeting(x0, y0, w, h)) {
+      if (this.handedOff.has(s.rec.id)) continue;
       const p = plan ? await this.planOf(s, spread) : this.done.get(s.rec.id);
       if (!p) continue;
       timed('stamp', () => this.stamp(p, s, ops, x0, y0, w, h));

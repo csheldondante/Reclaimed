@@ -2231,12 +2231,19 @@ stage warps (x, y bilinear over the corners, z from the foot's bilinear height t
 foot) and picks the palette variant per building; the fragment makes the patterns in world space (coursed stone, roof
 tile courses and moss, cobbles, limewash, timber grain) and the glow (a share of windows and the lamps at night).
 Hosts declare `spData` and `hostNight()` and their own entry points: the viewer (viewer/viewer.wgsl: sun, sky, bounce,
-a 2048² shadow map, fog, filmic curve); the game's renderer next (STR9).
+a 2048² shadow map, fog, filmic curve) and the game's (shaders/structgame.wgsl: render.wgsl's `lighting`, `haze`,
+`cutAway`, the pick; `Renderer.enableStructures`, the pieces at the draw group's binding 3, back faces culled).
 
 **Viewer:** structures.html (src/structures/viewer/): tile system, style, seed, size, storeys, density, ground (flat,
 hill, slope), time of day; building (one building isolated: `isolate` re-works its façades and roofs alone), district,
 city; drag to turn, wheel or pinch to zoom, right-drag or two fingers to pan; tile and nav overlays; every setting in the
 URL. scripts/structshot.mjs shoots it; scripts/perf/structures.mjs measures it.
+
+**In the game** (src/structures/host.ts `CityHost`, `?city=<system>` on the atlas level): the nearest town or city to the
+start is handed off (`Settlements.handedOff`: not stamped); the plan is made in the window's frame on its ground and
+water as made; each building's columns are one External instance (`OWNER_STRUCT`) from its foot to a metre under its
+walls' tops (what grows on the top stays inside); cut or loose → let go to rubble, its pieces gone behind dust; before
+a slide, buildings leaving let go (to air), after it the plan moves and they claim again. `reclaimed.city()`.
 
 ## Instrumentation (round 100, branch `hitchrec`)
 

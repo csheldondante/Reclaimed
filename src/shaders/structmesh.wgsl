@@ -1,6 +1,6 @@
 // ---- structures: warped module instances (src/structures/gpu.ts; contracts/structures.ts StructurePieces) --------
 // Shared by every host that draws a city (the structures viewer, the game's renderer). The host declares:
-//   `spData: array<vec4<f32>>` — the palette (SP_PAL vec4s: styles × parts × variants) then 4 vec4s a piece:
+//   `fn spFetch(i: u32) -> vec4<f32>` — its data buffer's vec4 i: the palette (SP_PAL vec4s: styles × parts × variants) then 4 vec4s a piece:
 //      (x0 y0 x1 y1) (x2 y2 x3 y3) (foot z0 z1 z2 z3) (top, look, seed, flags)
 //   `fn hostNight() -> f32` — 0 by day, 1 at night (the windows and lamps glow)
 // and its own entry points, which call spVertex / spAlbedo / spEmit. A module vertex is (u, v, w, part) in the unit
@@ -21,7 +21,7 @@ struct SpVert {
   base: vec3<f32>,
 };
 
-fn spRow(i: u32, r: u32) -> vec4<f32> { return spData[SP_PAL + i * 4u + r]; }
+fn spRow(i: u32, r: u32) -> vec4<f32> { return spFetch(SP_PAL + i * 4u + r); }
 
 fn spHash(x: u32) -> u32 {
   var h = x;
@@ -54,9 +54,9 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   // the palette: the style's slot, its variant picked per building (look's low bits, hashed per part)
   let style = o.look >> 16u;
   let pick = spHash((o.look & 0xffffu) * 31u + o.part * 7919u);
-  let nVar = u32(spData[(style * SP_PARTS + o.part) * SP_VARIANTS].w);
+  let nVar = u32(spFetch((style * SP_PARTS + o.part) * SP_VARIANTS).w);
   let vi = pick % max(nVar, 1u);
-  o.base = spData[(style * SP_PARTS + o.part) * SP_VARIANTS + vi].rgb;
+  o.base = spFetch((style * SP_PARTS + o.part) * SP_VARIANTS + vi).rgb;
   return o;
 }
 

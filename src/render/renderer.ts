@@ -17,6 +17,10 @@ import rainWgsl from '../shaders/rain.wgsl?raw';
 import particlesDrawWgsl from '../shaders/particles_draw.wgsl?raw';
 import gridsWgsl from '../shaders/grids.wgsl?raw';
 import structPrepWgsl from '../shaders/structprep.wgsl?raw';
+// (round 117, structures: the city's pieces — src/structures/gpu.ts, shaders/structmesh.wgsl + structgame.wgsl)
+import structMeshWgsl from '../shaders/structmesh.wgsl?raw';
+import structGameWgsl from '../shaders/structgame.wgsl?raw';
+import { StructureGpu } from '../structures/gpu';
 import meshRegionWgsl from '../shaders/meshregion.wgsl?raw';
 import meshStateWgsl from '../shaders/meshstate.wgsl?raw';
 import meshDrawWgsl from '../shaders/meshdraw.wgsl?raw';
@@ -221,6 +225,10 @@ export class Renderer {
   private miGroup?: GPUBindGroup;
   private miShadowPipe?: GPURenderPipeline;
   private miShadowGroup?: GPUBindGroup;
+  /** (round 117, structures) the city's pieces (enableStructures): drawn as the trees are, in the world and shadow passes */
+  private structs?: { sg: StructureGpu; pipe?: GPURenderPipeline; shadow?: GPURenderPipeline; group?: GPUBindGroup; shadowGroup?: GPUBindGroup; version: number };
+  /** the draw pipelines' layout (render.wgsl's), for draws enabled after construction */
+  private drawPl!: GPUPipelineLayout;
   /** (round 95, ?rockbody=1) the rigid rock's own mesh (enableRockMesh), its pipeline and group */
   rockMesh?: RockMesh;
   private rockPipe?: GPURenderPipeline;
@@ -545,6 +553,7 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     const riverFoam = `const RIVER_FOAM_SPEED: bool = ${riverMode() === 'table'};\n`;
     const drawModule = makeModule(device, 'render', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl]);
     const pl = device.createPipelineLayout({ bindGroupLayouts: [drawLayout] });
+    this.drawPl = pl;
     const depthStencil = (write: boolean): GPUDepthStencilState => ({
       format: DEPTH_FORMAT,
       depthWriteEnabled: write,
@@ -1264,6 +1273,14 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       this.profiler.draws += this.meshInst.draw(pass, this.indirect);
       pass.setPipeline(this.opaquePipe);
     }
+    // (round 117) the city's pieces
+    if (this.structs?.pipe && this.structs.sg.ranges.length && !SKIP.has('structures')) {
+      this.structGroups();
+      pass.setPipeline(this.structs.pipe);
+      pass.setBindGroup(0, this.structs.group!);
+      this.profiler.draws += this.structs.sg.draw(pass);
+      pass.setPipeline(this.opaquePipe);
+    }
     for (const s of SKIP.has('prisms') ? [] : this.prismSources) {
       pass.setBindGroup(0, s.group);
       pass.drawIndirect(s.indirect, 0);
@@ -1722,6 +1739,12 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
       pass.setBindGroup(0, this.miShadowGroup);
       this.meshInst.draw(pass, this.indirect);
     }
+    if (this.structs?.shadow && this.structs.sg.ranges.length) {
+      this.structGroups();
+      pass.setPipeline(this.structs.shadow);
+      pass.setBindGroup(0, this.structs.shadowGroup!);
+      this.structs.sg.draw(pass);
+    }
     pass.setPipeline(this.shadowBodyPipe!);
     if (this.world.strVoxels > 0) {
       pass.setBindGroup(0, g.struct);
@@ -1909,6 +1932,47 @@ const WATER_BOXES: bool = ${!this.fieldMesh.on};`;
     this.rockShadowGroup = this.noShadowView ? group(this.lightCamBuf, this.noShadowView) : undefined;
     this.rockPoolSeen = rm.mesh.poolVersion;
     return rm;
+  }
+
+  /**
+   * (round 117, structures) Draw these pieces (src/structures/gpu.ts) with the game's light, as the trees are: render.wgsl's
+   * layout with the pieces' buffer at binding 3, in the world pass and the sun's shadow pass. Window coordinates: the
+   * owner moves them when the window slides.
+   */
+  enableStructures(sg: StructureGpu): void {
+    if (this.structs) throw new Error('renderer: structures enabled twice');
+    const device = this.device;
+    const riverFoam = `const RIVER_FOAM_SPEED: bool = ${riverMode() === 'table'};\n`;
+    const module = makeModule(device, 'structures', [commonWgsl, materialsWgsl, terrainShapeWgsl, riverFoam, renderWgsl, sg.wgsl(), structMeshWgsl, structGameWgsl]);
+    const st: NonNullable<Renderer['structs']> = { sg, version: -1 };
+    this.structs = st;
+    const vertex: GPUVertexState = { module, entryPoint: 'vsStruct', buffers: [StructureGpu.vertexLayout()] };
+    renderPipe(device, {
+      label: 'structures',
+      layout: this.drawPl,
+      vertex,
+      fragment: { module, entryPoint: 'fsStruct', targets: [{ format: this.colorFormat }, { format: PICK_FORMAT }] },
+      // (the modules are wound outward and every frame counter-clockwise: back faces culled, half the fragments)
+      primitive: { topology: 'triangle-list', cullMode: 'back' },
+      depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'less' },
+    }, (p) => (st.pipe = p));
+    if (this.noShadowView)
+      renderPipe(device, {
+        label: 'shadow-structures',
+        layout: this.drawPl,
+        vertex,
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: { format: SHADOW_FORMAT, depthWriteEnabled: true, depthCompare: 'less', depthBias: 2, depthBiasSlopeScale: 2 },
+      }, (p) => (st.shadow = p));
+  }
+
+  /** the pieces' groups, made again when their buffer was */
+  private structGroups(): void {
+    const st = this.structs!;
+    if (st.version === st.sg.version) return;
+    st.group = this.groupFor(st.sg.data);
+    if (this.noShadowView) st.shadowGroup = this.groupFor(st.sg.data, this.lightCamBuf, this.noShadowView);
+    st.version = st.sg.version;
   }
 
   /** (round 96) The physics voxels' particles, for the rock mesh's skinned draws (the metal's). */

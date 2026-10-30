@@ -1,0 +1,95 @@
+{
+ "when": "2026-10-30T16:51:17.310Z",
+ "city": "irregular",
+ "size": "412x915@2.6",
+ "runs": [
+  {
+   "skip": "none",
+   "zoom": 1,
+   "gpu": 11.51,
+   "frames": 560,
+   "top": {
+    "draw": 3.53,
+    "shadow": 1.01,
+    "renderprep": 0.6,
+    "renderfields": 0.46,
+    "coarse-depth": 0.35,
+    "surface": 0.34,
+    "gbuffer": 0.26,
+    "fieldmesh-hash": 0.24
+   },
+   "adapter": "intel / xe-lpg",
+   "city": {
+    "pieces": 5191,
+    "tris": 583664,
+    "draws": 223
+   }
+  },
+  {
+   "skip": "none",
+   "zoom": 3,
+   "gpu": 11.49,
+   "frames": 568,
+   "top": {
+    "draw": 3.81,
+    "shadow": 1.07,
+    "renderprep": 0.46,
+    "renderfields": 0.44,
+    "coarse-depth": 0.33,
+    "surface": 0.33,
+    "fieldmesh-hash": 0.21,
+    "gbuffer": 0.18
+   },
+   "adapter": "intel / xe-lpg",
+   "city": {
+    "pieces": 5191,
+    "tris": 583664,
+    "draws": 223
+   }
+  },
+  {
+   "skip": "structures",
+   "zoom": 1,
+   "gpu": 12.53,
+   "frames": 517,
+   "top": {
+    "draw": 2.66,
+    "shadow": 1.2,
+    "renderprep": 0.7,
+    "renderfields": 0.61,
+    "coarse-depth": 0.44,
+    "surface": 0.41,
+    "gbuffer": 0.32,
+    "fieldmesh-hash": 0.27
+   },
+   "adapter": "intel / xe-lpg",
+   "city": {
+    "pieces": 5191,
+    "tris": 583664,
+    "draws": 223
+   }
+  },
+  {
+   "skip": "structures",
+   "zoom": 3,
+   "gpu": 12.19,
+   "frames": 532,
+   "top": {
+    "draw": 2.77,
+    "shadow": 1.3,
+    "renderfields": 0.58,
+    "renderprep": 0.54,
+    "coarse-depth": 0.42,
+    "surface": 0.39,
+    "fieldmesh-hash": 0.24,
+    "gbuffer": 0.22
+   },
+   "adapter": "intel / xe-lpg",
+   "city": {
+    "pieces": 5191,
+    "tris": 583664,
+    "draws": 223
+   }
+  }
+ ]
+}

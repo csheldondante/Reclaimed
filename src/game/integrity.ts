@@ -794,6 +794,19 @@ export class Integrity {
     }, ignoreTeardown);
   }
 
+  /**
+   * (round 117, structures — a tweak for main to consolidate) The CPU copy of the layers, read once if there's none yet:
+   * an owner claiming External cells at the level's start (a city, src/structures/host.ts) reads and writes it.
+   */
+  async ensureCopy(): Promise<void> {
+    if (this.world.slots.length) return;
+    const e = this.core.windowEpoch;
+    const f = await this.core.readBuffer('layers');
+    if (this.world.slots.length || this.core.windowEpoch !== e) return;
+    this.world.slots = new Uint32Array(f.buffer);
+    this.readEpoch = e;
+  }
+
   /** (round 86) a piece's columns changed: the chunks over them meshed the next frame (and voxels, in the hybrid), their sim awake */
   private touch(b: FallingBody, first: boolean): void {
     const [x0, y0] = cellPos(b.box[0], b.box[1]);

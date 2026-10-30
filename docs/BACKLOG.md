@@ -30,7 +30,7 @@ viewer structures.html.
 | STR6 | Styles as data: hearth (timber and limewash under tile), bastion (stone and slate, two towers), terrace (flat-fronted, low-pitched) | S | done (structures) |
 | STR7 | Baked nav: streets, plazas, yards, storeys (stairs), doors, balconies, a lift up each tower, the rampart walk with stairs at the gates; navPath | M | done (structures) |
 | STR8 | The viewer (structures.html): system, style, seed, size, storeys, density, ground, time of day (lit windows at dusk); building / district / city; turn, zoom, pan; tile and nav overlays; every setting in the URL | M | done (structures) |
-| STR9 | The city on real terrain: the game's renderer draws the pieces (shared structmesh.wgsl), the columns claimed as External intervals, at an atlas site | L | wip |
+| STR9 | The city on real terrain: the game's renderer draws the pieces (shared structmesh.wgsl), the columns claimed as External intervals, at an atlas site (`?city=<system>`: the town nearest the start handed off) | L | done (structures) |
 | STR10 | LOD for the game: far walls as plain slabs (windows painted), roofs only beyond a distance; measure the phone first (a 56 m town is ~555k triangles at full detail) | M | open |
 | STR11 | Linear features: roads, rails, walls and bridges extruded along splines (LinearFeature in the contract; atlas/ways.ts's graded roads and bridges the input) | L | open |
 | STR12 | Mega tiles beyond one tile: domes and halls over a 2 × 2 patch, the keep at a radial city's heart, gatehouse towers on the wall | M | open |
@@ -38,7 +38,9 @@ viewer structures.html.
 | STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) placed by the terrain track as External owners, drawn by meshinst | M | wip |
 | STR15 | Migrate settle/ (the settlements' plans, stamps and life) onto this contract: the plan from CityPlan, buildings as pieces + External, agents on the baked nav | L | open |
 | STR16 | Growth as stored progress (round 110): a plan's tiles in build order, progress per tile, pieces shown up to it | M | open |
-| STR17 | The perf test: scripts/perf/structures.mjs (plan ms and draw cost per city size) | S | wip |
+| STR17 | The perf tests: scripts/perf/structures.mjs (the viewer: build ms, pieces, triangles, GPU per system and size), scripts/perf/structcity.mjs (the game's frame with the city drawn and skipped) | S | done (structures) |
+| STR18 | Pieces in the render-only tiles past the window (a city half out of the window shows only its window half's columns in the tiles) | M | open |
+| STR19 | Destruction as bodies: a cut building breaks into pieces that fall (the physics track's solver), not rubble in place | L | open |
 
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 
