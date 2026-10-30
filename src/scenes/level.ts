@@ -569,8 +569,11 @@ export class LevelScene implements Scene {
       const [x, y] = cellAt(g[0], g[1]);
       f(x, y);
     };
-    btn('☄', 'a great meteor at the middle of the screen (M at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy))));
-    btn('🌋', 'an eruption at the middle of the screen (V at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy))));
+    // (the coarse world's: the atlas level's only)
+    if (a) {
+      btn('☄', 'a great meteor at the middle of the screen (M at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.meteor(wx, wy))));
+      btn('🌋', 'an eruption at the middle of the screen (V at the pointer)').addEventListener('click', () => atMiddle((x, y) => this.worldAt(x, y, (wx, wy, c) => c.erupt(wx, wy))));
+    }
     this.host.ui.appendChild(d);
     this.atlasCtl = d;
     this.turnControls();
@@ -1107,7 +1110,11 @@ export class LevelScene implements Scene {
     }
     // (round 108, AR5) the tuning panel and the bug report: open in the test beds (level.lab), anywhere with ?tunepanel=1
     if (this.level.lab || host.params.get('tunepanel') === '1') this.mountLab();
-    if (this.level.noiseLab) this.mountNoiseLab();
+    if (this.level.noiseLab) {
+      this.mountNoiseLab();
+      // (round 117, revive: the free camera on a phone too — TG3's sea caves are to be seen from the sea)
+      this.atlasControls();
+    }
 
     const zoomAt = (sx: number, sy: number, factor: number) => {
       // (flying: the wheel moves along the view)
@@ -1895,8 +1902,9 @@ export class LevelScene implements Scene {
       setTimeout(() => this.hud.say(`Life clings on by the pond. Tap the green to loose its seeds; drag to make wind and carry them to ground that is ready (${lens}: blue). ${look}`, 10), 800);
       return;
     }
+    // (round 117, revive: the noise lab says its own — mountNoiseLab — not the playground's garden and basin)
     if (this.level.sandbox) {
-      setTimeout(() => this.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left), or on a wall of the sand basin.', 10), 800);
+      if (!this.level.noiseLab) setTimeout(() => this.hud.say('Sandbox: pick a tool on the right. Try 💥 Break on the towers and overhangs in the physics garden (bottom left), or on a wall of the sand basin.', 10), 800);
       return;
     }
     // dust storms roll across the dead valley as the level opens
@@ -3174,7 +3182,9 @@ export class LevelScene implements Scene {
           this.integrity?.forget(0, 0, w, h);
           core.replaceWindow(cols.slots, cols.water, cols.surface);
           const [wx1, wy1] = cellPos(w, h);
-          core.renderer.fieldMesh.urgent(0, 0, wx1, wy1);
+          // (round 117, revive: urgent long enough for every chunk's turn — the whole window changed, and 3 frames of
+          // the urgent slots left most chunks to the one ordinary slot a frame at q=low: the land took ~15 s to show)
+          core.renderer.fieldMesh.urgent(0, 0, wx1, wy1, 40);
           this.sleep?.wake(wx1 / 2, wy1 / 2, Math.max(wx1, wy1), Sleep.EVENT_S, performance.now() / 1000);
           return performance.now() - t0;
         },
@@ -3182,6 +3192,10 @@ export class LevelScene implements Scene {
       host.params,
     );
     (globalThis as { noiselab?: NoiseLabControl }).noiselab = this.noiseLab;
+    // (round 117, revive: the lab's shader takes ~15 s to compile on a desktop's D3D11 the first time — the land stays
+    // flat until then, which read as broken; say so, and say when it's there)
+    this.hud.say('Noise lab: compiling its shaders - the land of the recipe appears when they are ready', 120);
+    void this.noiseLab.gpu.ready.then(() => this.hud.say('Noise lab ready: "noise" opens the recipe; ✈ flies the camera', 6));
   }
 
   /** (round 108, AR8) what a station's buttons do: the world's own events and APIs */

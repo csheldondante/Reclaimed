@@ -10,6 +10,7 @@ import { NoiseLabGpu, type LabResult } from './lab';
 import { LAB_TUNING, TARGET, labValues, labVisible } from './params';
 import { PRESETS } from './presets';
 import { LayerStack } from './stack';
+import { bootMark } from '../perf/boot-marks';
 
 /** what the lab needs of the level */
 export interface LabWorld {
@@ -155,8 +156,12 @@ export class NoiseLabControl {
     clearTimeout(this.idleTimer);
     // (a drag that stops without a release — a phone's — still reaches the world)
     if (!this.worldDue) this.idleTimer = window.setTimeout(() => this.worldNow(), 600);
+    // (round 117, revive: the world's write belongs to the run asked for it, not to whichever run lands first — a
+    // change made while a run was in flight had its write taken by the older run, so the world kept the old recipe
+    // while the preview showed the new one)
+    const due = this.worldDue;
     this.settled = this.gpu.run(this.stack.effective(labValues())).then(
-      (r) => this.got(r),
+      (r) => this.got(r, due),
       (e) => {
         if (!this.dead) throw e;
       },
@@ -168,11 +173,18 @@ export class NoiseLabControl {
     if (this.last) this.request(true);
   }
 
-  private got(r: LabResult): void {
+  /** the record last written into the world */
+  private written?: LabResult;
+
+  private got(r: LabResult, due: boolean): void {
     if (this.dead) return;
+    // (runs asked for together share one record: drawn once, written once)
+    const write = (due || this.worldDue) && r !== this.written;
+    if (r === this.last && !write) return;
     this.last = r;
     const s = this.stats;
     s.runs++;
+    if (s.runs === 1) bootMark('lab-first-run');
     s.passes = r.passes;
     s.gpuMs = r.ms;
     const ctx = this.canvas.getContext('2d');
@@ -187,8 +199,9 @@ export class NoiseLabControl {
       }
     }
     Object.assign(s, recordStats(r));
-    if (this.worldDue) {
+    if (write) {
       this.worldDue = false;
+      this.written = r;
       const t0 = performance.now();
       const cols = labColumns(r, this.world.layout);
       s.packMs = performance.now() - t0;
@@ -198,6 +211,7 @@ export class NoiseLabControl {
       s.joinedCols = cols.joinedCols;
       s.writeMs = this.world.write(cols, labValues().lab.sea);
       s.writes++;
+      if (s.writes === 1) bootMark('lab-first-write');
     }
     this.line.textContent = `heights ${s.min.toFixed(0)}–${s.max.toFixed(0)} · gaps ${s.caves} cols${s.joinedCols ? ` (${s.joinedCols} joined)` : ''} · run ${s.gpuMs.toFixed(1)} ms (${s.passes} passes) · columns ${s.packMs.toFixed(1)} ms · world ${s.writeMs.toFixed(1)} ms`;
   }

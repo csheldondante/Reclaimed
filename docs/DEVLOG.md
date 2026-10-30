@@ -13425,3 +13425,39 @@ The merged tilegate: background 0 everywhere; parked and 20 c/s views as before 
 baselines). The 160 c/s fast views varied, so desktop z8/z5 were A/B'd, pre-merge (covercheck build) against merged,
 twice each, alternating: far land worst pre 0.04%-4.7%, merged 0.1%-4.7%; geometric worst the same 11.8% in all four
 (SF14). Run-to-run noise, not a regression. The z8 20 c/s 0.16% from the full gate didn't recur (0 in all four).
+
+## 2026-10-30 — round 117 (`noiselab2-r`, revive): the sea caves made usable
+
+The user: "I never got a working link to sea caves or at least not a usable version" / "Test them before merging or
+have me test on my phone". noiselab2 (8b9b488, never pushed, "unverified in a browser") merged onto places adff3ee and
+played on the phone proxy (412x915 dpr 2.6, q=low, touch) and the desktop (1600x900). What was wrong, measured:
+
+- **The world kept an older recipe than the preview.** The lab ran a recipe on every change and rewrote the world from
+  "the next run to land" with one shared flag: a change made while a run was in flight had its write taken by the
+  older run, and its own run then found the flag cleared — the preview showed the new recipe, the world the old one
+  until the next change. Probed: after load + a parameter change, the world's columns had the stock recipe's gaps
+  (gapCols 2327) while the lab's last record had 4781; layersAt at a mouth column showed solid rock where the record
+  had a gap 15-27. Every earlier look at a tuned cave was of a stale world. Now each run carries whether a write was
+  asked of it (control.ts `got(r, due)`), runs asked together share one record and one write. After: written gap
+  columns match the record (4639 of 4781 caves; the rest are columns a carve cut open).
+- **The caves were too small to see.** TG3 at round 112's numbers: passages ~4 cells wide (a band of ±0.07 at scale
+  44), vaults 7, the floor half a cell under the sea — the mouths were 2-5 cells high under a 32-cell cliff, a dark
+  speck at the waterline, and the face columns in front sealed them (open: 0). Now a band of ±0.15 at scale 80, vaults
+  12 (roof curve 0.35), the floor a cell over the water (the sea doesn't fill a gap: TG3's open item), a too-thin roof at
+  the face opens (a mouth). Measured off the record: 5 mouths along the coast, 12-13 cells high, 13-22 rows wide;
+  desktop and phone shots from the sea show them (C:/Projects/shots88/revive/nl5-a-m0.png, p-nl-cave0.png).
+- **The land took ~15 s to appear after a change** at q=low: the write marked the mesh urgent for 3 frames (4 urgent
+  slots), the rest of the window's ~64 chunks waited for low's one ordinary slot a frame. Urgent for 40 frames now.
+- **The first land took ~13 s after the level was ready** (boot marks: level-ready 17.5 s, lab-pipelines 30.2 s,
+  lab-first-write 30.2 s): labEval's pipeline takes 14.5-17 s to compile on D3D11 (FXC; the other five kernels
+  58-308 ms). Making its constant loops dynamic saved ~3.5 s of 17 — not enough to matter, not kept. The HUD now says
+  the lab is compiling and when it's ready. (The playground's sandbox hint — the physics garden, the sand basin — no longer covers it:
+  the lab has neither.) The phone's Vulkan compile is unmeasured (BACKLOG TG13).
+- **No free camera on a phone in the lab**: the ✈ / ⇧⇩▲▼ buttons were the atlas level's only. The lab has them now
+  (the meteor and eruption stay the atlas's: they need the coarse world). Played: ✈ then a drag and ⇧ flies along the
+  coast on touch.
+
+The layer list (TG9) on the phone works as built: the panel opens from "noise", a row's tap shows its parameters, a
+slider dragged changes the preview at once (gaps 4781 → 4317) and the world on release (writes 2 → 3).
+scripts/noiselabunit.mjs (Node, no browser): a record's gaps become open intervals in the world's columns (labColumns).
+scripts/play.mjs: a scripted play session on the runner (touch taps, drags, holds, by selector; shots, GIFs).

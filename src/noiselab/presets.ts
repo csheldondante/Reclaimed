@@ -88,8 +88,11 @@ export const PRESETS: Record<string, Preset> = {
     { gen: GEN.mesas, mode: 0, scale: 60, size: 160, share: 0.45, share2: 0.3, blend: 26, jitter: 0.85, amp: 18, mask: 1 },
     { gen: GEN.fbm, scale: 16, oct: 2, amp: 1, mask: 1 },
     { gen: GEN.jfa, src: 0, level: 14, shape: SHAPE.threshold, lo: 15, soft: 15, amp: -1, offset: 1, op: OP.set, target: TARGET.m2 },
-    { gen: GEN.fbm, scale: 44, oct: 3, shape: SHAPE.band, lo: -0.07, hi: 0.07, soft: 0.015, amp: 1, op: OP.set, target: TARGET.m3, seed: 23 },
-    { gen: GEN.jfa, src: 3, level: 0.5, amp: 1, target: TARGET.carve, kq: 0.45, up: 7, down: 0.5, roofN: 1.2, floorN: 0.3, nScale: 10, zRef: ZREF.surface, zOff: -11, coast: 2, seaZ: -0.5, wob: 1.5, open: 0 },
+    // (round 117, revive: at round 112's scale — passages ~4 cells wide, vaults 7, the floor under the sea — the mouths
+    // were 2-5 cells high under a 32-cell cliff, too small to see from the sea; now ~12 wide, vaults 12 over a floor a
+    // cell over the water, and a roof too thin at the face opens (a mouth). Measured: 5 mouths 12-13 high on the coast)
+    { gen: GEN.fbm, scale: 80, oct: 3, shape: SHAPE.band, lo: -0.15, hi: 0.15, soft: 0.015, amp: 1, op: OP.set, target: TARGET.m3, seed: 23 },
+    { gen: GEN.jfa, src: 3, level: 0.5, amp: 1, target: TARGET.carve, kq: 0.35, up: 12, down: 0.5, roofN: 1.2, floorN: 0.3, nScale: 10, zRef: ZREF.surface, zOff: -11, coast: 2, seaZ: 1, wob: 1.5, open: 1 },
   ]),
 
   // TG11 (round 112; the user: "it was pretty trivial to make some decent looking overhangs that would be good

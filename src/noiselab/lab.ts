@@ -11,6 +11,7 @@ import labW from './lab.wgsl?raw';
 import { makeLayout, makeModule } from '../gpu/pipeline';
 import { FIELD_GENS, GEN, LAYERS, LAYER_FLOATS, labValues, layerWgsl, matOf, packLayers, type LabValues } from './params';
 import { MAT } from '../world/materials';
+import { bootMark } from '../perf/boot-marks';
 
 /** a column's record: height, its gaps (floor, roof; 0, 0: none), materials (top + rock·64 + cliff·4096, joined·8192
  *  when a column had more gaps than it keeps and some joined, cut·16384 when a carve opened it down to a floor) */
@@ -106,6 +107,7 @@ export class NoiseLabGpu {
     const pl = device.createPipelineLayout({ bindGroupLayouts: [layout] });
     this.ready = Promise.all(KERNELS.map((k) => device.createComputePipelineAsync({ label: `lab ${k}`, layout: pl, compute: { module, entryPoint: k } }))).then((ps) => {
       this.pipes = Object.fromEntries(KERNELS.map((k, i) => [k, ps[i]])) as Record<Kernel, GPUComputePipeline>;
+      bootMark('lab-pipelines');
     });
   }
 

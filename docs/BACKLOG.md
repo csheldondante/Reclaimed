@@ -12,6 +12,18 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 117 (2026-10-30, `noiselab2-r`, revive) — the sea caves usable (DECISIONS round 117 part 3)
+
+The user: "I never got a working link to sea caves or at least not a usable version".
+
+| id | item | size | status |
+|---|---|---|---|
+| TG12 | The world kept an older recipe than the preview: a change made while a run was in flight lost its world write to the older run | S | done (`noiselab2-r`): control.ts, each run carries its write |
+| TG13 | The lab's first land waits for labEval's pipeline: 14.5-17 s to compile on desktop D3D11 (FXC); the phone's Vulkan time unmeasured. Splitting labEval (a pipeline a generator) or a smaller kernel if the phone shows it too | M | open — the HUD says it's compiling meanwhile |
+| TG14 | A whole-window write's mesh took ~15 s at q=low (urgent for 3 frames only) | S | done (`noiselab2-r`): urgent 40 frames |
+| TG15 | The free camera (✈ ⇧⇩▲▼) in the noise lab on a phone, to see the sea caves from the sea | S | done (`noiselab2-r`) |
+| TG16 | A sea cave's floor under the sea stays dry (water is a depth over a column's top, not in its gaps): TG3's floor is a cell over the water instead. Water in caves needs the water sim per gap | M | open |
+
 ## Round 112 (2026-10-29, session 5, `noiselab2`) — the noise lab's layers; 2.5D caves and overhangs (DECISIONS round 112)
 
 | id | item | size | status |
@@ -209,7 +221,7 @@ The user (round 104): "steady 60fps on the phone with no hiccups and no pop in".
 |---|---|---|---|
 | TG1 | The noise lab: an experimental sandbox (its own level, the editor shell GE1) to review noise combinations and generators: a stack of layers and masks blended into a heightmap, drawn by the game's renderer; the existing biomes as presets; never changes the atlas's generation | M | done (noiselab): ?level=noiselab, the title screen's Noise lab; src/noiselab (params, lab.wgsl, columns, control, presets), the tuning panel as its editor; scripts/noiselab.mjs |
 | TG2 | Mesas: atlas-scale Voronoi cells grouped into a mesa region, edges given heights (some 0), height blended directionally to the full mesa height; ridge noise carves winding traversable ravines (flash-flood set-ups) | M | experiment (noiselab): recipe "TG2: mesas, ramps, ravines" (generator mesas: grouped cells, each outer edge a wall or a ramp) |
-| TG3 | Coastal mesas with sea caves seen from the ocean: 2D fractal simplex with two thresholds as the cave mask, the cave's height blended relative to the surface, brought to just under the water level at the coast | M | experiment (noiselab): recipe "TG3: coastal mesas, sea caves" (two-threshold fbm caves, the floor blended by the JFA coast distance to under the sea); round 112: rebuilt on 2.5D carves (TG10); the sea does not enter them (open) |
+| TG3 | Coastal mesas with sea caves seen from the ocean: 2D fractal simplex with two thresholds as the cave mask, the cave's height blended relative to the surface, brought to just under the water level at the coast | M | experiment (noiselab): recipe "TG3: coastal mesas, sea caves" (two-threshold fbm caves, the floor blended by the JFA coast distance to under the sea); round 112: rebuilt on 2.5D carves (TG10); round 117 (`noiselab2-r`): at a visible scale, 5 mouths 12-13 high along the coast; the sea does not enter them (TG16) |
 | TG4 | The general approach: many layers and masks blending heightmaps; stark contrast (sheer walls are fine, they're obstacles) beside smooth interpolation at several scales; breaks in a cliff where the height blends to the ground as a natural ramp | M | experiment (noiselab): the layer stack itself; recipe "TG4: cliff with a ramp break" |
 | TG5 | Bigger mountains | S | experiment (noiselab): recipe "TG5: bigger mountains" (to 79 cells; the atlas unchanged) |
 | TG6 | Biased features: domain-stretched noise turning bumps into ridges along a grain; radially warped noise | S | experiment (noiselab): grain and radial domains on every noise generator; recipe "TG6: grain and radial" |
