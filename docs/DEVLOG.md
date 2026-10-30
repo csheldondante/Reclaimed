@@ -13723,3 +13723,49 @@ background when the TerrainSystem is made. Phone proxy (412x915 dpr 2.6, q=low):
 phone-base-fall.png, phone-r1-fall.png, phone-r2-fall.png. driveprofile (q=low, phone proxy, 30 s, desktop iGPU):
 places p50 9.8 ms, p95 16.9, GPU 11.55 ms/frame; terrain p50 9.8, p95 19.2, GPU 10.61 — within the run-to-run spread
 (the base from Pages, this from a local preview).
+
+## 2026-10-30 — round 117 (`terrain`): caves at cliffs' feet (the user's recipe), gorges in the plateaus, buried props placed
+
+**Caves at the foot of cliffs (terrain/cave.wgsl).** The user: "Cliffs would be even better with rocks around the base
+and caves that open (often at their base)" / "Caves should have ground level openings and be wide enough to traverse".
+The method is the user's own recipe, verbatim in the file's head ("Take a simplex fractal noise in 2d and set a
+threshold so that they are windy … make noise lower on the floor so it is walkable"), with TG3's numbers from
+noiselab2-r (revive made it work at a visible scale: passages ~12 wide, roof = base + min(0.35 d², 12) + noise, floor =
+base − 0.5 + a quarter of the noise, the base a cell over the sea at a sea cliff). noiselab2-r isn't merged: the lab is
+its own scene; the recipe is folded into the atlas's cliffs. Per cell, no JFA: the passages are a band of a 2D fbm, the
+distance in from a passage's edge its margin × CAVE_MID (the fbm's gradient made d from the margin over the period give
+4-cell vaults, measured on Dawn: test/gpu/terrain-diag.test.ts prints the open runs and the made columns round a point).
+The base runs from the foot (over the talus heaped against a mesa's wall: a mouth behind the heap was buried; a cell
+over the sea where the foot is under it — the sea doesn't enter a gap yet, TG16) up to a share of the cliff's height
+inside it, over 70 cells: a passage climbs through the cliff, a way up an impassable wall ("An impassible mountain can
+have a cave through it"). Grottos (round chambers ~45 cells apart, 6-10 across) near the foot are cut by the face, so the
+base has mouths often, not only where a passage happens to reach it. Where a roof comes within 2 cells of the ground
+the ground opens to the floor (a collapse letting light down). Applied in ground(): plateau edges (EDGE_MESA, beside the
+lips and undercuts) and EDGE_CLIFF/EDGE_SEACLIFF, as the overhang's open run (columns.wgsl takes it as a cavern).
+Pictures: C:/Projects/shots88/terrain/cave*-cliff1.png (a mouth at a plateau's foot), cave*-sea0.png. Honest state:
+the open runs are in the made columns (the Dawn probe: 92-99 under a 145 top, round 16234,4213), but the mouths seen in the
+fixed view are few; whether the sea-cliff mouths face away from the camera or the draw hides thin gaps at a face is
+TR21.
+
+**Gorges (terrain/gorge.wgsl).** The user: "Traversvlable gorges (both at the bottom and above)". The zero lines of a slow
+noise wind across a plateau's top; across one, its distance (|n| / threshold) is an SDF: a flat floor over its middle
+half (the corridor at the bottom), walls in three tiers whose edges each Voronoi cell moves (the cliffs' blocks), rims at
+the plateau's height (walkable above); 14-44 deep, shallowing to nothing at its heads, never deeper than the low ground
+beyond the plateau. None under a river or a lake: the first pictures had a river's held water hanging in curtains
+where a gorge cut under its level (C:/Projects/shots88/terrain/gorge1-gorge1.png; fixed, gorge2-gorge1.png). The green plane
+and black walls in those pictures are in places' build at the same spot (gorge-base-gorge1.png): not this track's. The
+gorges change the macro ground the rivers and lakes are found on: two lakes on a plateau at 6040,4860 drained through a
+gorge (TR22).
+
+**Buried props (terrain/props.ts; contract BuriedProp, ExcavationSite; Terrain.buried(rect)).** The user: "buried statues
+and fallen structures and stones. These being skew add visual interest and they make great props for telekenisis or
+excavation sites." Decided per world tile (128 units, a hash of the seed and the tile): the same things whatever
+rectangle asks. Excavation sites (5% of tiles on dry ground not too steep: 3-7 statues, fallen columns, slabs, ruins
+round a middle, skew, 30-80 % sunk) and lone stones (more where the ground is steep: a cliff's foot, a bank). Terrain says
+where, how deep and how tilted; structures supplies what a statue looks like (its asset by kind); an External owner
+draws them and holds their cells (TR16: not built — no owner yet; testkit's tests cover the un-burying). The viewer
+draws them (stones grey, statues gold, sites ringed). Tests: src/terrain/props.test.ts.
+
+Tests on Dawn (no browser): test/gpu/terrain-atlas.test.ts (a 512² atlas built with the terrain's WGSL: the graph from
+the GPU's samples, the flood = CPU, columns over a river), terrain-caves.test.ts (open runs at cliffs over a whole small
+world), terrain-diag.test.ts (TERRAIN_DIAG="x,y": the default atlas probed round a point). npm test: all pass.

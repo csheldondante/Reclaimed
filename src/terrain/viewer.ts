@@ -12,7 +12,7 @@
 
 import type { Host, Scene } from '../scenes/world-core';
 import { AtlasView } from '../scenes/atlas-view';
-import { CAPS_PRESETS, type BarrierKind, type FloodFluid, type PassCaps } from '../api/contracts/terrain';
+import { CAPS_PRESETS, type BarrierKind, type BuriedProp, type ExcavationSite, type FloodFluid, type PassCaps } from '../api/contracts/terrain';
 import { clearFor, partition, RegionGraph, type TerrainSamples } from './partition';
 import { TerrainSystem } from './terrain';
 import { cellAt } from '../world/lattice';
@@ -45,7 +45,8 @@ export class TerrainView implements Scene {
   private picked = -1;
   private reach = new Set<number>();
   private arm: FloodFluid | null = null;
-  private show = { rooms: true, borders: true, passes: true, mask: false, veg: false, edits: true };
+  private show = { rooms: true, borders: true, passes: true, mask: false, veg: false, edits: true, props: true };
+  private props: { props: BuriedProp[]; sites: ExcavationSite[] } | null = null;
   private busy = false;
   private needs: { kind: string; at: [number, number] }[] = [];
 
@@ -81,7 +82,7 @@ export class TerrainView implements Scene {
       `<div style="margin-top:4px">picked room: ${btn('data-exits="1"', '1 exit')}${btn('data-exits="2"', '2 exits')}${btn('data-exits="3"', '3 exits')}</div>` +
       `<div style="margin-top:4px">flood (then tap a basin): ${(['water', 'sand', 'magma'] as const).map((k) => btn(`data-flood="${k}"`, k)).join('')}</div>` +
       `<label style="display:block">depth over the tap (0: the basin's spill height) <input data-depth type="number" min="0" max="200" value="0" style="width:56px"></label>` +
-      `<div style="margin-top:6px">${tog('rooms', 'rooms')}${tog('borders', 'borders')}${tog('passes', 'passes')}${tog('edits', 'edits')}${tog('mask', "can't stand")}${tog('veg', 'vegetation')}</div>` +
+      `<div style="margin-top:6px">${tog('rooms', 'rooms')}${tog('borders', 'borders')}${tog('passes', 'passes')}${tog('edits', 'edits')}${tog('mask', "can't stand")}${tog('veg', 'vegetation')}${tog('props', 'buried')}</div>` +
       `<div class="tv-info" style="margin-top:8px;white-space:pre-wrap"></div>` +
       `<div style="margin-top:6px">${legend}</div>` +
       `<div style="margin-top:6px;color:#aaa">Zoom in (a graph covers ≤ 2048 world units), Graph here, tap a room. Double-click walks in.</div>`;
@@ -194,7 +195,8 @@ export class TerrainView implements Scene {
       const g = this.graph;
       const kinds = new Map<string, number>();
       for (const b of g.borders()) kinds.set(b.kind, (kinds.get(b.kind) ?? 0) + 1);
-      this.say(`${g.features().length} features, ${g.rooms().length} rooms, ${g.borders().length} borders (${[...kinds].map(([k, v]) => `${v} ${k}`).join(', ')})\nsampled ${S.w}×${S.h} at ${step} in ${(t1 - t0).toFixed(0)} ms, partitioned in ${(t2 - t1).toFixed(0)} ms`);
+      this.props = await this.terrain.buried({ x0: S.x0, y0: S.y0, x1: S.x0 + S.w * S.step, y1: S.y0 + S.h * S.step });
+      this.say(`${this.props.props.length} buried props, ${this.props.sites.length} excavation sites; ${g.features().length} features, ${g.rooms().length} rooms, ${g.borders().length} borders (${[...kinds].map(([k, v]) => `${v} ${k}`).join(', ')})\nsampled ${S.w}×${S.h} at ${step} in ${(t1 - t0).toFixed(0)} ms, partitioned in ${(t2 - t1).toFixed(0)} ms`);
       this.paintImage();
       return g;
     } finally {
@@ -315,6 +317,21 @@ export class TerrainView implements Scene {
           c.fill();
           c.stroke();
         }
+    }
+    if (this.show.props && this.props) {
+      // (buried things: stones grey, statues gold, columns and slabs pale, ruins brown; excavation sites ringed)
+      const COL: Record<string, string> = { stone: '#9a9a9a', statue: '#f2c14e', column: '#e8e2d4', slab: '#cfc6b0', ruin: '#9b6b43' };
+      for (const s of this.props.sites) {
+        c.strokeStyle = '#f2c14e';
+        c.lineWidth = 1.5;
+        c.beginPath();
+        c.arc(sx(s.at[0]), sy(s.at[1]), Math.max(4, s.radius * k), 0, Math.PI * 2);
+        c.stroke();
+      }
+      for (const p of this.props.props) {
+        c.fillStyle = COL[p.kind];
+        c.fillRect(sx(p.at[0]) - 2, sy(p.at[1]) - 2, 4, 4);
+      }
     }
     if (this.show.edits) {
       for (const e of this.terrain.edits()) {

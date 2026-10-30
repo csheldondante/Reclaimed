@@ -32,7 +32,40 @@ await run({ name: 'terrain-shots', kind: 'behaviour', size: '1200x800' }, async 
       if (temperate && f[o + 2] > a.p.sea + 6 && (!wide || f[o + 3] > wide.w)) wide = { at, w: +f[o + 3].toFixed(1) };
       if (temperate && f[o + 3] > 5 && f[o + 3] < 7 && f[o + 2] > a.p.sea + 20 && drop < 1 && !mid) mid = { at, w: +f[o + 3].toFixed(1) };
     }
-    return { fall, wide, mid };
+    // cliffs facing the view (the high side up the screen, the low side below it, dry land): the plateaus' feet, where
+    // caves open (round 117, terrain/cave.wgsl)
+    const tn = a.p.n;
+    const h = a.hmac;
+    const cliffs = [];
+    for (let ty = 8; ty < tn - 8 && cliffs.length < 4; ty += 3)
+      for (let tx = 8; tx < tn - 8 && cliffs.length < 4; tx += 3) {
+        const t = ty * tn + tx;
+        const lo = h[t + 3 * tn];
+        if (h[t] - lo > 35 && lo > a.p.sea + 8 && h[t + 6 * tn] - lo < 4 && warmAt(((ty + 0.5) / tn) * a.worldH) > 0.45 && cliffs.every((c) => Math.hypot(c[0] - tx, c[1] - ty) > 200)) cliffs.push([tx, ty]);
+      }
+    const cl = (i) => cliffs[i] && { at: [Math.floor(((cliffs[i][0] + 0.5) / tn) * a.worldW), Math.floor((((cliffs[i][1] + 4) / tn) * a.worldH) / 0.866)] };
+    // gorges (round 117, terrain/gorge.wgsl): a plateau's texel well under the plateau a few texels either side
+    const gorges = [];
+    const plat = (t) => {
+      const lf = a.landformOf[a.regionOf[t]];
+      return lf >= 0 && a.landforms[lf]?.tier === 2;
+    };
+    for (let ty = 8; ty < tn - 8 && gorges.length < 3; ty += 2)
+      for (let tx = 8; tx < tn - 8 && gorges.length < 3; tx += 2) {
+        const t = ty * tn + tx;
+        if (!plat(t) || !plat(t - 5) || !plat(t + 5)) continue;
+        if (h[t - 5] - h[t] > 25 && h[t + 5] - h[t] > 25 && warmAt(((ty + 0.5) / tn) * a.worldH) > 0.4 && gorges.every((c) => Math.hypot(c[0] - tx, c[1] - ty) > 300)) gorges.push([tx, ty]);
+      }
+    const gg = (i) => gorges[i] && { at: [Math.floor(((gorges[i][0] + 0.5) / tn) * a.worldW), Math.floor((((gorges[i][1] + 0.5) / tn) * a.worldH) / 0.866)] };
+    // sea cliffs facing the view: land 30+ over the sea, the sea a few texels below it on the screen
+    const seas = [];
+    for (let ty = 8; ty < tn - 8 && seas.length < 3; ty += 3)
+      for (let tx = 8; tx < tn - 8 && seas.length < 3; tx += 3) {
+        const t = ty * tn + tx;
+        if (h[t] - a.p.sea > 30 && h[t + 3 * tn] < a.p.sea - 2 && h[t + 6 * tn] < a.p.sea - 2 && warmAt(((ty + 0.5) / tn) * a.worldH) > 0.45 && seas.every((c) => Math.hypot(c[0] - tx, c[1] - ty) > 200)) seas.push([tx, ty]);
+      }
+    const sc = (i) => seas[i] && { at: [Math.floor(((seas[i][0] + 0.5) / tn) * a.worldW), Math.floor((((seas[i][1] + 4) / tn) * a.worldH) / 0.866)] };
+    return { fall, wide, mid, cliff0: cl(0), cliff1: cl(1), cliff2: cl(2), cliff3: cl(3), gorge0: gg(0), gorge1: gg(1), gorge2: gg(2), sea0: sc(0), sea1: sc(1), sea2: sc(2) };
   });
   R.log(JSON.stringify(spots));
   await p0?.close();

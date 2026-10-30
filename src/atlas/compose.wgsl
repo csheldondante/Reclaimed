@@ -479,6 +479,8 @@ struct Mesa {
   /** the top's height just inside its wall (a fraction of the drop: the rim lowered, the joint cell's
    *  fall): a lip is as high as what it juts from */
   lipW: f32,
+  /** (round 117) the talus's height against the bottom wall's foot (cells): a cave's mouth opens over it */
+  talFoot: f32,
 }
 
 /**
@@ -596,7 +598,8 @@ fn mesaEdge(u: vec2<f32>, sh: f32, drop: f32, g: vec2<f32>) -> Mesa {
   // collects and slopes at the base"): an apron sloping off each wall's foot (an SDF of the wall, its height
   // a fifth of the wall's, varying along it), lumpy; thinner in the ravines
   let tn = 0.55 + 0.45 * (0.5 + 0.5 * pfbm(u, perOf(40.0), 2u, AP.seed + 621u));
-  if (o.x < 0.0) { o.tal = max(o.tal, min(sh4[0] * drop * 0.2, 26.0) * tn - 0.8 * (-o.x)); }
+  o.talFoot = min(sh4[0] * drop * 0.2, 26.0) * tn;
+  if (o.x < 0.0) { o.tal = max(o.tal, o.talFoot - 0.8 * (-o.x)); }
   for (var k = 1u; k < MESA_TIERS; k++) {
     if (o.x > xw[k - 1u] + 1.2 && o.x < xw[k] - 1.2) { o.tal = max(o.tal, min(sh4[k] * drop * 0.2, 20.0) * tn - 0.8 * (xw[k] - o.x)); }
   }
@@ -713,12 +716,27 @@ fn ground(p: vec2<f32>) -> Ground {
     let hB = hs[1];
     var w = 0.0;
     var extra = 0.0;
+    var caveF = 0.0;
+    var caveR = 0.0;
     // (jitter along a border, odd under swapping the pair)
     let sgn = select(-1.0, 1.0, m.a < m.b);
     let jit = sgn * 2.5 * pfbm(u, perOf(14.0), 2u, AP.seed + 31u);
     switch kind {
       case EDGE_CLIFF, EDGE_SEACLIFF: {
         w = smoothstep(-1.2, 1.2, s + jit);
+        // (round 117, terrain/cave.wgsl) caves at the foot: a sea cliff's a cell over the sea (TG3), an inland one's at
+        // the low ground; the high side is A's where w → 1
+        let xs = s + jit;
+        let hHi = max(hA, hB);
+        let hLo2 = min(hA, hB);
+        let x = select(-xs, xs, hA >= hB);
+        let foot = select(max(hLo2 + 0.3, AP.sea + 1.0), AP.sea + 1.0, kind == EDGE_SEACLIFF);
+        let cc = cliffCave(u, x, foot, hHi - foot, hHi);
+        if (cc.roof > cc.floor) {
+          caveF = cc.floor;
+          caveR = cc.roof;
+        }
+        talus = max(talus, cc.pile);
       }
       case EDGE_RAVINE: {
         w = smoothstep(-ew * 0.5, ew * 0.5, s);
@@ -747,6 +765,18 @@ fn ground(p: vec2<f32>) -> Ground {
         w = select(1.0 - me.w, me.w, hiA);
         extra = (1.0 - me.w) * me.rise;
         talus = me.tal;
+        // (round 117, terrain/cave.wgsl) a cave opening at the cliff's foot, its mouth's pile of talus
+        if (me.rav < 0.05 && me.ramp < 0.05) {
+          // (a cliff into water: the foot a cell over the sea, TG3 — a cave's gap under the water would stand dry, TG16)
+          // (and over the talus heaped against the wall: a mouth behind the heap would be buried)
+          let cfoot = max(hLo + 0.3 + me.talFoot * 0.85, AP.sea + 1.0);
+          let cc = cliffCave(u, me.x, cfoot, hHi - cfoot, hHi);
+          if (cc.roof > cc.floor) {
+            caveF = cc.floor;
+            caveR = cc.roof;
+          }
+          talus = max(talus, cc.pile);
+        }
         // overhangs: the top wall's lip out over the ledge or the ground, the foot's wall undercut
         // (where it's tall, not in a ravine; each comes and goes along it)
         if (drop > 30.0 && me.rav < 0.05 && me.ramp < 0.05) {
@@ -770,6 +800,17 @@ fn ground(p: vec2<f32>) -> Ground {
     }
     g.h = mix(hB, hA, w) + extra;
     g.w = w;
+    // (a cliff's cave: open from its floor to its roof, rock kept over it)
+    // (a cliff's cave: open from its floor to its roof; where the roof comes within 2 of the ground, open to the sky —
+    // a collapse letting the light down; only into the high side: never raises the ground)
+    if (caveR > caveF && caveF < g.h - 1.0) {
+      if (caveR > g.h - 2.0) {
+        g.h = caveF;
+        g.hlo = min(g.hlo, g.h);
+      } else {
+        g.ov = vec3<f32>(0.0, caveF, caveR);
+      }
+    }
     // (a lip's open runs from the ground under it)
     if (g.ov.y < 0.0) { g.ov.y = g.h; }
     if (g.ov.z - g.ov.y < 3.0) { g.ov = vec3<f32>(0.0); }
@@ -844,6 +885,17 @@ fn ground(p: vec2<f32>) -> Ground {
     g.rflags = rv.flags;
     g.rvel = rv.vel;
     g.rd = rv.depth;
+  }
+  // (round 117, terrain/gorge.wgsl) gorges wound across a plateau's top, walkable at the bottom and along the rims —
+  // none under a river or a lake (their water's level is the plateau's: cut under it, it would hang in the air)
+  if (isLand(A) && A.tier == TIER_PLATEAU && g.w > 0.98 && g.rx > 5.0 && g.lk == 0.0) {
+    let gz = gorgeAt(u, g.h, AP.sea + 10.0, g.dl);
+    if (gz.cut < g.h) {
+      g.h = gz.cut;
+      g.hlo = min(g.hlo, g.h);
+      g.ov = vec3<f32>(0.0);
+      talus = max(talus, gz.talus);
+    }
   }
   // (no overhang where a river runs or the coarse world has changed the ground)
   if (g.rx < 3.0 || abs(co.dr) > 0.3) { g.ov = vec3<f32>(0.0); }

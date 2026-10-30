@@ -11,11 +11,12 @@
 import type { Atlas } from '../atlas/atlas';
 import type { StampOps } from '../atlas/stamps';
 import { ROW_H } from '../world/lattice';
-import type { FloodRequest, FloodResult, PassCaps, Terrain, TerrainEdit, TerrainGraph, TerrainNeed, TerrainRequest, TerrainResult, V2 } from '../api/contracts';
+import type { BuriedProp, ExcavationSite, FloodRequest, FloodResult, PassCaps, Terrain, TerrainEdit, TerrainGraph, TerrainNeed, TerrainRequest, TerrainResult, V2 } from '../api/contracts';
 import { CAPS_PRESETS } from '../api/contracts/terrain';
 import { depthAt, partition, RegionGraph, SCREEN_AREA } from './partition';
 import { LandSampler } from './sample';
 import { FloodField } from './flood';
+import { placeBuried, PROP_TILE } from './props';
 
 /** a rock fill's material and a ford's (world/materials.ts MAT: Stone, Rubble) */
 const MAT_STONE = 1;
@@ -60,6 +61,17 @@ export class TerrainSystem implements Terrain {
   /** the samples themselves (the viewer draws them) */
   sample(x0: number, y0: number, w: number, h: number, step: number) {
     return this.sampler.sample(x0, y0, w, h, step);
+  }
+
+  /** what lies buried in a rectangle (props.ts: decided per world tile, so any rectangle agrees) */
+  async buried(rect: { x0: number; y0: number; x1: number; y1: number }): Promise<{ props: BuriedProp[]; sites: ExcavationSite[] }> {
+    const x0 = Math.floor(rect.x0 / PROP_TILE) * PROP_TILE;
+    const y0 = Math.floor(rect.y0 / PROP_TILE) * PROP_TILE;
+    const x1 = Math.ceil(rect.x1 / PROP_TILE) * PROP_TILE;
+    const y1 = Math.ceil(rect.y1 / PROP_TILE) * PROP_TILE;
+    const step = 4;
+    const S = await this.sampler.sample(x0, y0, Math.round((x1 - x0) / step) + 1, Math.round((y1 - y0) / step) + 1, step);
+    return placeBuried(S, this.atlas.p.seed, rect);
   }
 
   edits(): TerrainEdit[] {

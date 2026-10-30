@@ -252,8 +252,43 @@ export interface FloodResult {
   ms: number;
 }
 
+/**
+ * Something buried in the land, skew (the user, round 117: "buried statues and fallen structures and stones. These
+ * being skew add visual interest and they make great props for telekenisis or excavation sites"). Terrain places them
+ * (where, how deep, how tilted); structures supplies what a statue or a ruin looks like (`asset`: its contract's id,
+ * by `kind`); the owner that draws them as instanced meshes holds their cells as External intervals (sim/external.ts).
+ */
+export interface BuriedProp {
+  id: number;
+  kind: 'stone' | 'statue' | 'column' | 'slab' | 'ruin';
+  /** world units, and the ground's z there */
+  at: V2;
+  z: number;
+  /** its size (cells: its longest extent) */
+  size: number;
+  /** turned about z (radians), then tipped `tilt` radians about a horizontal axis at `tiltAxis` radians */
+  yaw: number;
+  tilt: number;
+  tiltAxis: number;
+  /** how much of it is under the ground (0..1 of its height) */
+  buried: number;
+  /** the excavation site it belongs to (−1: on its own) */
+  site: number;
+}
+
+/** A place where things lie buried together (a dig the hero or agents may work). */
+export interface ExcavationSite {
+  id: number;
+  at: V2;
+  /** world units */
+  radius: number;
+  props: number[];
+}
+
 /** The terrain system's API (src/terrain/terrain.ts `TerrainSystem` implements it over the atlas). */
 export interface Terrain {
+  /** what lies buried in a rectangle (deterministic from the seed): props and the excavation sites they cluster in */
+  buried(rect: { x0: number; y0: number; x1: number; y1: number }): Promise<{ props: BuriedProp[]; sites: ExcavationSite[] }>;
   /** the region graph over a rectangle (world units); caps: the controller rooms are made for (default the walker) */
   graph(rect: { x0: number; y0: number; x1: number; y1: number }, opts?: { caps?: PassCaps; step?: number; screen?: number }): Promise<TerrainGraph>;
   request(graph: TerrainGraph, req: TerrainRequest): TerrainResult;
