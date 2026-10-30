@@ -2079,6 +2079,38 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
 - Test: `scripts/gmtest.mjs`. The first story and docs/GM.md's example come out clean, 18 kinds of mistake
   are caught, and FileGM serves and refuses as it should.
 
+## The play layer (round 117, branch `play`; src/play, contract src/api/contracts/play.ts)
+
+The game layer: heroes, their controllers, controls, gear and vehicles. Its own system, moved in from GameplayGM so
+the user can iterate on controls in one session ("I want the separation of concerns but I also want to be able to
+iterate on player controls"). Boundaries:
+
+- **The engine never imports it.** The level loads `src/play/sandbox/sandbox.ts` with a dynamic `import()` for
+  `?play=` only (scenes/level.ts `startPlay`), and drives it each frame like a hero run (`update(dt)` before the
+  camera; the window's slides through `shift`; the map's warp through `warped`).
+- **It reaches the world only through contracts**: play/world.ts `makePlayWorld` builds a narrow `PlayWorld` (the
+  top a hover rides, the floor, water depth, blows on units, wind wake/gust/blow/blast, fx bursts, craters, the
+  camera's projection) from the world API (terrain, water, wind, fx), the Units contract and the camera. The heroes see
+  nothing else, so they run in Node tests on play/testing.ts's synthetic world.
+- **Other tracks read it only through `contracts/play.ts`**: `ControllerProfile` (speed, turn radius, climb, jump,
+  fly, water, vegetation, bridge, destruction, encounter weights), `ControllerInfo` (params, defaults,
+  `profile(params)`), `Playbook` (the library: `src/play/library.ts` `library`), and the pure `crossCost(profile,
+  crossing)` and `fun(profile)`.
+
+Inside (each its own concern):
+
+| part | what | why this shape |
+|---|---|---|
+| core/ | the drives (bike.ts glide, levitate.ts), planners (intercept.ts pass, fling.ts), aim.ts, gestures.ts (Stroke), intent.ts (Layer B's types and log) | pure functions of state + input + a height function: Node-testable, GPU-portable (flat Params) |
+| controllers/ | each controller's data: ParamSpec list, defaults, `profile(params)` | the generators' terms derived from the numbers the controller runs on |
+| heroes/ | base.ts (the engine's Hero contract, health, blows as AreaHits, targets with velocity), bike.ts, lich.ts, make.ts | a controller's behaviour: its drive + abilities, Layer A input → Layer B intent → Layer C action |
+| input/ | types.ts (PlayInput: stick, buttons, drag, acts in the world), controls.ts (DOM: floating stick, gestures, buttons), read.ts (screen → ground) | the thumbs separated from what they mean |
+| draw/ | shapes.ts (voxel models, quaternions; pure), voxels.ts (Renderer.addVoxels instance buffer) | a hero is a Part list: a mesh can replace voxels later without the heroes changing |
+| sandbox/ | the viewer: hero switch, live tune panel, spawn, respawn, the chase camera, the HUD | where the user tunes fun |
+
+Shared-system tweak: the Units contract's optional `strike` / `hold` / `release` / `maxHeld` (AgentUnits implements
+them over Agents.hit/hold/launch); the play world requires them.
+
 ## Things and diplomacy (round 85, src/api/contracts)
 
 - **recipe.ts.** Everything made is an `Instance` of a `Kind` (tags, base stats, slots). Its `parts` fill slots by

@@ -13425,3 +13425,69 @@ The merged tilegate: background 0 everywhere; parked and 20 c/s views as before 
 baselines). The 160 c/s fast views varied, so desktop z8/z5 were A/B'd, pre-merge (covercheck build) against merged,
 twice each, alternating: far land worst pre 0.04%-4.7%, merged 0.1%-4.7%; geometric worst the same 11.8% in all four
 (SF14). Run-to-run noise, not a regression. The z8 20 c/s 0.16% from the full gate didn't recur (0 in all four).
+
+## 2026-10-30 — round 117 (`play`): the game layer moved in — heroes, controllers, controls, a sandbox (PL1-PL4)
+
+**Why a layer of its own.** The user (round 117 part 3): "I think just make a new layer you own so I can work from
+one session. I want the separation of concerns but I also want to be able to iterate on player controls which is
+probably the most important thing for fun." / "Let's make it another system so it is encapsulated but move it in so
+we can work on it and iterate here." So `src/play/` is the game layer: the engine never imports it (the level loads
+it with a dynamic `import()` only for `?play=`), it reaches the world only through contracts (the world API, the
+Units contract, the camera), and other tracks read it only through `src/api/contracts/play.ts`.
+
+**What moved from GameplayGM** (runtimes/hoverbike @ experiment/slice 515fcd9, read only): the pure pieces verbatim
+with their tests — core/bike.ts (the glide drive: cushion, crest launch, boost, crash, Akira slide), core/levitate.ts,
+core/intercept.ts (the pass planner), core/fling.ts, core/aim.ts, core/gestures.ts (Stroke: tap, flick, circle, drag),
+core/intent.ts (gesture → intent → planned, assisted action; "a miss the player earned stays a miss") — 39 of their
+tests pass unchanged in Node (vitest). Then the two heroes re-homed on Reclaimed's contracts: heroes/bike.ts (the
+hover rider: ram, side slash through the pass planner, couched lance, its wake/downwash/dust through the wind and fx
+APIs) and heroes/lich.ts (levitation, tap to glide, float, face-to-face soul drain, telekinetic carry and smack, the
+planned fling, pull, force push, the storm). Left in GameplayGM for now: the knight, gorilla, tank and mech; the
+lich's spellbook and its physics-body/rock throws (no world API for bodies yet); hero select and saving.
+
+**The capability profile (why derived, not written).** The user: "parameterize it so we can reason about it during
+generation and make not only obstacles but fun ones." Each controller is data (ParamSpec list + defaults,
+controllers/*.ts) plus a small module (heroes/*.ts), and `profile(params)` derives what generators need — speed,
+turn radius, climb, jump height/gap (and whether it needs a ramp), fly ceiling, water, vegetation, bridge,
+destruction, encounter weights — from the same numbers the controller runs on. Tune the bike's launch cap and its
+ramps' clearable gap grows; the generators can't drift from the controller. `crossCost(profile, crossing)` (1 open
+ground, Infinity can't) and `fun(profile)` (ramps, straights, slaloms, packs, breakables, climbs, delves, with sizes)
+are pure functions in the contract so terrain, flora and runplan agree on one answer.
+
+**A new ability: the slam** (the lich's wrecking ball). A tap on the lich (or 💥): the world API's crater under it, a
+ring that shoves and throws (Units.strike with lift and stun), the air slammed out. The GameplayGM lich broke nothing
+of the ground itself; "a floating wrecking ball power fantasy" asked for it. Its health is 30 (12 for the slice's):
+the raiders wore it down in seconds in the first browser run, not a power fantasy.
+
+**A drive fix: `carry`.** Ported as-is, the bike rode a kicker with vz pinned at 0 (the ground clamp zeroed it every
+step on a climb faster than the cushion lifts), so it went over a ramp's lip with no upward speed — "launching off
+ramps" only happened where the ground fell away. Now, held down on a climb, it keeps `carry` of the ground's rise
+speed (the slope over a cell either side, times its speed, at most launchMax): a 0.6 kicker throws it ~13 cells/s up
+and it clears a 10-cell gap to a landing at the same height (heroes.test.ts). `carry: 0` is the slice's drive again —
+a slider in the tune panel, so the user can compare.
+
+**Why the controllers run on the CPU (the D-r101 ruling said the GPU).** One hero, a few hundred flops a frame, and it
+must answer the thumb in the same frame; a GPU kernel adds a readback (1-2 frames) for no throughput win. Measured:
+the whole play layer (input, hero, its voxels written) costs 0.12 ms of main thread a frame on the phone proxy
+(scripts/perf/play.mjs). Kept GPU-ready: Params are flat number records and the drives are pure functions of (state,
+stick, dt, height), so many riders (race rivals, AI bikes) can move to a kernel when there are many (PL9).
+
+**Units contract tweak (for main to consolidate).** Optional `strike(AreaHit, by)`, `hold(id, at)`, `release(id, vel)`,
+`maxHeld` on Units — a hero's blows shove and throw, telekinesis holds — implemented in AgentUnits by forwarding to
+Agents.hit/hold/launch (its private goal `release` renamed `releaseGoal`). The play world requires them (a clear error
+otherwise, no silent fallback).
+
+**The sandbox** (`?skipmenu=1&level=atlas&play=hoverbike|lich`, `&tune=1` opens the panel): the atlas level as
+deployed, every system on. Hero chips top left (switch in place), ⚙ tune (a slider per parameter, grouped, live; the
+profile it gives shown above; reset; copy as JSON; kept per hero in localStorage), 👹 raiders spawned ahead, ⟲ back up.
+Controls phone first: a floating stick where the left thumb lands (the bottom-left zone), everything else the hero's
+gestures, thumb-sized buttons bottom right with gauges (the boost tank, the slam's cooldown). The camera follows at a
+fixed angle, leads along the way and pulls back with speed (D-r80). The level's own camera buttons, turn and score bar
+are hidden while it runs (they sat under the thumbs: the first browser run's screenshot).
+
+**Measured** (Intel Xe-LPG iGPU, phone proxy 412x915 dpr 2.6 q=low, data/perf/play-intel-xe-lpg.json): riding flat
+out 20 s with raiders spawned every 5 s — 94 fps, p50 9.8 ms, p95 15 ms, 6 frames over 50 ms (the window's slides);
+the lich in a storm with slams every 2 s — 99 fps, p50 9.9, p95 11.9, 2 over 50 ms. The play layer 0.12 ms a frame of
+CPU, worst 1.3 ms. The behaviour check (scripts/playtest.mjs): the bike rode 86 cells in ~4 s, top 32 cells/s
+(boost), the raiders ahead died to the ram; the lich floated a tapped raider and slammed two craters. GIFs in
+C:/Projects/shots88/play/. Unit tests: 60 in src/play (vitest), the heroes at their contract on synthetic terrain.
