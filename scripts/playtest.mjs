@@ -109,6 +109,34 @@ await run({ name: 'playtest', kind: 'behaviour', size: '412x915', dpr: 1 }, asyn
   R.check('the file of raiders is cut down (slash and ram)', h1 < h0, { before: h0, after: h1, swipes, hitFrames: hits });
   const told = await p.evaluate(() => window.reclaimed.play.hero.told);
   R.log(`last slash: ${told}`);
+  // the hook: a tap on the ground ahead and to the left while riding swings the bike round it
+  await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, -1], buttons: [false] }));
+  await sleep(1500);
+  const way = () => p.evaluate(() => {
+    const b = window.reclaimed.play.hero.b;
+    return Math.atan2(b.vy, b.vx);
+  });
+  R.log(`before the hook: ${JSON.stringify(await state())}`);
+  const w0 = await way();
+  let swung = 0;
+  let maxTurn = 0;
+  await gif('bike-hook.gif', 30, 50, async (i) => {
+    if (i === 2)
+      await p.evaluate(() => {
+        const s = window.reclaimed.play;
+        const h = s.hero;
+        const [x, y, z] = h.position();
+        const a = h.heading();
+        const [fx, fy] = [Math.cos(a), Math.sin(a)];
+        const sc = window.reclaimed.core.camera.project(x + fx * 4 - fy * 6, y + fy * 4 + fx * 6, z);
+        s.controls.inject({ kind: 'tap', at: sc });
+      });
+    if ((await state()).status === 'SWING') swung++;
+    const w = await way();
+    maxTurn = Math.max(maxTurn, Math.abs(Math.atan2(Math.sin(w - w0), Math.cos(w - w0))));
+    if (R.flag('debug-hook')) R.log(JSON.stringify(await p.evaluate(() => { const h = window.reclaimed.play.hero; return { hook: h.hook, at: h.position().map((v) => +v.toFixed(1)), v: [+h.b.vx.toFixed(1), +h.b.vy.toFixed(1)], st: h.status() }; })));
+  });
+  R.check('a tap on the ground swings the bike round it (its way turns > 90 deg)', swung > 0 && maxTurn > 1.57, { swungFrames: swung, maxTurn: +maxTurn.toFixed(2) });
   await p.evaluate(() => (window.reclaimed.play.controls.script = { stick: [0, 0], buttons: [false] }));
   // the lich
   await p.evaluate(() => window.reclaimed.play.choose('lich'));

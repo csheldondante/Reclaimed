@@ -24,7 +24,7 @@ The user: "I think just make a new layer you own so I can work from one session"
 | PL4 | scripts/perf/play.mjs (timing, phone proxy) and scripts/playtest.mjs (behaviour, GIFs) | S | done (play) |
 | PL5 | Port the knight (delving: sword flicks, lunge, spin, bow, hook vault), then the gorilla, tank, mech, as play heroes with profiles | L | open |
 | PL6 | The lich's spellbook (zap, fireball, raise dead) and throws of physics bodies and torn-out rocks — needs a world API for bodies (GameplayGM's bodies.ts/rocks.ts reach into the engine) | M | open |
-| PL7 | Bike: tricks scored (airtime, spins, slides), a race (checkpoints, a rival), the grappling hook (reel enemies in, swing sharp turns) — the user's "I would like to add more later" | L | open |
+| PL7 | Bike: the grappling hook (a tap: a foe yanked in, or the ground swung round — done, play); tricks scored (airtime, spins, slides), a race (checkpoints, a rival) still open — the user's "I would like to add more later" | L | wip (hook done) |
 | PL8 | Vegetation in the controllers: slowed in a thicket, cut through, once flora's contract has a density query; the profile already says what each is meant to do | M | open |
 | PL9 | Many riders on the GPU (race rivals, AI bikes): the drives are pure (state, stick, dt, height) over flat Params — a kernel when there are many (D-r101) | M | deferred |
 | PL10 | Merge with herosandbox-r (registry, contract 1.1, traversal fields, autopilot): play heroes as registry entries; the Pilot steering along a traversal field by the play profile | M | open |

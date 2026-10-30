@@ -13697,3 +13697,17 @@ lifted; an empty list lifts every finger.)
 
 **testkit merged** (places 8bd557b): the play tests run in places' vitest 4 unit project beside their code (61 tests,
 src/play); `npm test` 138 + 1 expected fail.
+
+## 2026-10-30 — round 117 (`play`): the bike's grappling hook (PL7)
+
+The user: "Maybe a grappling hook to reel in enemies or do sharp turns." A tap (the bike's right thumb had no tap) —
+on a foe within `hookRange` (16 cells; as it's seen, within 48 px of the finger): it's yanked in, thrown on a lob that
+lands where the bike will be in `hookYank` s, so the ram or the next slash meets it; on the ground within reach: an
+anchor, and the bike swings round it on a rope its length — whatever pulls outward taken off, the stick's push turned
+along the swing (the rope, not the thumb, turns it; no slide while it swings) — until `hookTime` s or `hookTurn`
+radians round; a tap while swinging lets go. The rope is drawn hand to anchor (or to the foe). Profile: a hook makes
+the bike's turn radius ~0.4 of its reach (6.4 cells, from 16 carved), chase 1, fight 0.7 — so runplan can ask for
+hairpins and posts to swing round. In the browser (scripts/playtest.mjs): the way turned 2.35 rad (135 deg) in one
+swing at 79 km/h; C:/Projects/shots88/play/bike-hook.gif. A bug the browser found that Node didn't: the window's slides
+mid-swing left the anchor behind (the bike was shifted, the anchor wasn't) — BikeHero.shift moves the anchor and the
+blade's trail; a test for it (heroes.test.ts, 65 tests now).

@@ -20,6 +20,12 @@ export const BIKE_WEAPONS = {
   /** and the throw up it gives (cells/s): the one cut flies, readable at play zoom */
   slashLift: 5,
   slashEvery: 0.35,
+  /** the grappling hook (a tap): its reach (cells; 0: no hook), how long a swing holds (s) and how far round (radians),
+   *  and how long a yanked enemy takes to fly in (s) — the user: "Maybe a grappling hook to reel in enemies or do sharp turns" */
+  hookRange: 16,
+  hookTime: 1.6,
+  hookTurn: 3.2,
+  hookYank: 0.45,
   /** the planner's help: 0 strict, 1 moderate, 2 forgiving (core/intercept.ts ASSIST) */
   assist: 1,
 };
@@ -58,6 +64,10 @@ export const BIKE_PARAMS: ParamSpec[] = [
   P('slashPush', 'slash shove', 0, 30, 1, 'weapons'),
   P('slashLift', 'slash throw', 0, 20, 0.5, 'weapons', 'cells/s up: the one cut flies'),
   P('slashEvery', 'slash every (s)', 0.1, 1.5, 0.05, 'weapons'),
+  P('hookRange', 'hook reach', 0, 40, 1, 'hook', 'cells; 0: no hook'),
+  P('hookTime', 'swing time', 0.2, 4, 0.1, 'hook'),
+  P('hookTurn', 'swing angle', 0.5, 6.3, 0.1, 'hook', 'radians round the anchor before it lets go'),
+  P('hookYank', 'yank flight', 0.15, 1.5, 0.05, 'hook', 's an enemy takes to fly in'),
   P('assist', 'aim help', 0, 2, 1, 'weapons', '0 strict · 1 moderate · 2 forgiving'),
 ];
 
@@ -72,7 +82,8 @@ export function bikeProfile(params: Params = BIKE_DEFAULTS): ControllerProfile {
   return {
     speed: { cruise: p.max, top },
     // (thrust is all the sideways pull it has: v²/a at cruise; the slide cuts it, but that's a trick, not a turn)
-    turnRadius: (p.max * p.max) / Math.max(p.accel, 1),
+    // (the hook swings it round an anchor: a turn as tight as the rope it throws, ~0.4 of its reach)
+    turnRadius: p.hookRange > 0 ? Math.min((p.max * p.max) / Math.max(p.accel, 1), Math.max(2, p.hookRange * 0.4)) : (p.max * p.max) / Math.max(p.accel, 1),
     climb: { slope: p.climb, step: p.wall, rate: 0 },
     jump: { height: (vz * vz) / (2 * p.gravity), gap: top * air, ramp: true },
     fly: { ceiling: 0 },
@@ -83,7 +94,7 @@ export function bikeProfile(params: Params = BIKE_DEFAULTS): ControllerProfile {
     vegetation: { through: 0.5, cuts: false },
     bridge: 0,
     destruction: 0.3,
-    encounters: { race: 1, chase: 0.9, fight: 0.6, spectacle: 0.3, delve: 0, tricks: 0.9 },
+    encounters: { race: 1, chase: p.hookRange > 0 ? 1 : 0.9, fight: p.hookRange > 0 ? 0.7 : 0.6, spectacle: 0.3, delve: 0, tricks: 0.9 },
   };
 }
 
@@ -92,7 +103,7 @@ export const hoverbike: ControllerInfo = {
   name: 'Hover rider',
   icon: '🏍️',
   line: 'Fast and loose: launch off crests, slash what you pass, slide to a stop.',
-  controls: 'Left thumb: ride · BOOST · swipe on a side of the bike: slash that side · hold a drag: lance · haul the stick back at speed: slide',
+  controls: 'Left thumb: ride · BOOST · swipe on a side of the bike: slash that side · tap a foe: hook it in · tap the ground: swing round it · hold a drag: lance · haul the stick back at speed: slide',
   params: BIKE_PARAMS,
   defaults: BIKE_DEFAULTS,
   profile: bikeProfile,

@@ -4,6 +4,7 @@ import { BIKE_DEFAULTS } from '../controllers/hoverbike';
 import { LICH_DEFAULTS } from '../controllers/lich';
 import { drag, flick, input, tap, testWorld } from '../testing';
 import { BikeHero } from './bike';
+import { library } from '../library';
 import { LichHero } from './lich';
 
 const DT = 1 / 60;
@@ -97,6 +98,56 @@ describe('hoverbike hero', () => {
     expect(trail!.voxels.length).toBeGreaterThan(8);
     run(60, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
     expect(bike.parts().find((p) => p.size !== undefined)).toBeUndefined();
+  });
+
+  it('the hook: a tap on an enemy yanks it in toward the bike', () => {
+    const w = testWorld(flat);
+    const bike = new BikeHero(w, [20, 50]);
+    const id = w.add([28, 56]);
+    bike.update(DT, { move: [0, 0], input: input({ acts: [tap([28, 56], 2)] }) });
+    run(3, () => bike.update(DT, { move: [0, 0], input: input() }));
+    const u = w.list.find((v) => v.id === id)!;
+    // (thrown at the bike: its velocity points back at it, and up)
+    expect(u.vel[0]).toBeLessThan(0);
+    expect(u.vel[1]).toBeLessThan(0);
+    expect(u.vel[2]).toBeGreaterThan(0);
+  });
+
+  it('the hook: a tap on the ground ahead and to one side swings the bike round it, a turn far tighter than it carves', () => {
+    const turned = (hook: boolean) => {
+      const w = testWorld(flat);
+      const bike = new BikeHero(w, [20, 50]);
+      run(90, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+      const [x, y] = bike.position();
+      const h0 = bike.heading();
+      if (hook) bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [tap([x + 4, y + 6], 2)] }) });
+      // (the stick held straight on: the hook alone does the turning)
+      run(45, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+      const d = bike.heading() - h0;
+      return Math.abs(Math.atan2(Math.sin(d), Math.cos(d)));
+    };
+    expect(turned(false)).toBeLessThan(0.2);
+    expect(turned(true)).toBeGreaterThan(1.2);
+  });
+
+  it('a window slide mid-swing moves the anchor with the bike: the swing carries on the same', () => {
+    const w = testWorld(flat);
+    const bike = new BikeHero(w, [20, 50]);
+    run(90, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    const [x, y] = bike.position();
+    bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0], acts: [tap([x + 4, y + 6], 2)] }) });
+    run(10, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    bike.shift(-30, -20, 0);
+    run(30, () => bike.update(DT, { move: [1, 0], input: input({ dir: [1, 0] }) }));
+    expect(bike.status()).toBe('SWING');
+    const [x1, y1] = bike.position();
+    // (still on its rope round the moved anchor, ~7 cells off)
+    expect(Math.hypot(x1 - (x + 4 - 30), y1 - (y + 6 - 20))).toBeLessThan(8);
+  });
+
+  it('a hook gives the bike a tighter turn in its profile; no hook, none', () => {
+    expect(library.get('hoverbike')!.profile().turnRadius).toBeLessThan(10);
+    expect(library.get('hoverbike')!.profile({ ...BIKE_DEFAULTS, hookRange: 0 }).turnRadius).toBeGreaterThan(10);
   });
 
   it('rams what it runs into at speed', () => {
