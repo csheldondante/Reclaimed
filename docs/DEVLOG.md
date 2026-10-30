@@ -13027,3 +13027,55 @@ nor voxels (SF8); the stand-in's sea shows (gate-sf9/desktop-z5-pan.png);
 for it, but the pixels show the stand-in: the geometric check reads 0 there (it trusts the same "drawn"). Open: SF12.
 So the reach by throughput isn't changed (a reach shrunk to one tile's latency made z5 worse: SF9's entry); SF11 stays
 open for when a `+none` shows up.
+
+## 2026-10-30 — round 114 (`framepace`): the phone's parked frame drops measured; the coarse world's step spread
+
+Why: the Pixel 9a parked at window 256 renders 56-57 fps, p99 33 ms, the long frames 33-50 ms with ~1-2 ms of CPU in
+them, which the hitch recorder can only call "browser" or "gpu-busy". The user: the hero run "framerate feels bad";
+the goal a steady 60. It was the same on the stable build, so not the streaming redesign.
+
+What the phone's reports already say (data/bench, bench v4 2026-10-28, win256 parked): GPU frame span (timestamp
+first pass begin to last end) p50 12.2, p95 18.4, max 22.5 ms; the span grows with the window (320: 15.9, 384: 30.9,
+448: 40.2, 512: 53.9 p50) while the canvas is tiny — the phone's low tier renders at 205x393 (dpr capped at 1, render
+scale 0.5; canvas bgra8unorm, opaque). So the frame is GPU work that scales with what's drawn and simulated, not with
+pixels, and at 256 its tail crosses 16.7 ms. The phone has timestamp-query; Mali's timestamps are sane within a pass,
+not summed across passes (round 102), so the span is the number to trust, the per-pass ones only roughly.
+
+**The probe** (src/perf/framepace.ts, `?hitch=1` — every bench page — or `?framepace=1`): per rendered frame the rAF
+interval, the lag from the rAF timestamp to its callback, the callback's CPU, rAF to the frame's last submit, last
+submit to onSubmittedWorkDone, the frames still on the GPU when it began (main.ts holds a rAF at 2), the rAFs held, the
+GPU span, the gap between this frame's GPU begin and the last one's end (≈0: the GPU never idles), its passes, the sim
+ticks it ran and the slow-period systems due, and which counters moved (the coarse world's step parts, the streamer's
+work). `report()` sets the slow frames (over 1.25 vsync) against the rest and against the frame before each.
+Profiler got `listen()` (a listener list) so the probe hears the GPU without taking the hitch recorder's `onFrame`.
+
+**The pan bench (v6)** runs it parked at each zoom before the ramps, 4 s a phase: `timed` (timestamps read back),
+`untimed` (as the game plays), and at the first zoom `inFlight1`, `inFlight3` (main.ts's pacing limit) and `simOff`
+(every sim system's encode a no-op). `summary.pace` has a line per zoom; `pan256.zooms[].pace` the whole. The phone's
+next run (https://csheldondante.github.io/Reclaimed/framepace/?bench=pan&panwin=256&benchzooms=14_8_5) says which:
+the GPU span over 16.7 ms on the slow frames (and which passes), done latency holding rAFs (held > 0, inFlight 2), the
+sim's ticks (`slowFramesByTicks`), or none of ours (lag or interval long with the GPU idle: the browser).
+
+**Desktop proxy** (scripts/paceprobe.mjs, headless iGPU at the phone's shape, q=low, window 256, zoom 14, parked; the
+headless display runs ~100 Hz, so its 9.6 ms frame against ~7-9 ms of GPU is about the phone's 16.7 against 12):
+- GPU span p50 6.7 ms; `draw` 3.6 of it — geometry, not pixels at 206x457: skipping the field mesh saves 1.4 ms,
+  the grid 1.0, the far land (the stand-in under the whole view, SF2) 0.9, plants 0.5; then renderprep 0.3-0.6,
+  fieldmesh-hash 0.3, gbuffer 0.24, shadow 0.23. The sim off changes nothing measurable (ticks 0-1 a frame at 100 Hz).
+- submit to done p50 9.5 ms against a 6.7 ms span: half the frames begin with the last one still on the GPU (inFlight
+  1); `inFlight1` halves the rate (60 → ~51 uncapped, 101 → 61 at vsync): the pacing limit of 2 is needed, 3 changes
+  nothing parked.
+- **the coarse world's step** (atlas/coarse.ts: flux, depth over 512x512 cells and an 8 MB copy back; every 4th frame,
+  untimed till now) is the largest spike: those frames' span 11.5 ms against 6.7 (flux 0.9, depth 2.2, the copy the
+  rest). In the bench's pan page 96% of the slow frames ran it against ~75% of the others.
+
+**The change**: Coarse.stepPart — the step's three parts (flux, depth, copy) on three frames of four, the same step at
+the same rate (the cells everyone reads are the step's before till the copy; an event or a whole `step()` finishes a
+step under way first). ?coarseparts=0 the whole step every 4th frame, to compare. Both steps' passes timed now
+(`coarse-flux`, `coarse-depth`). Desktop, uncapped: GPU span p95 11.2 → 9.9, p99 12.3 → 10.8 ms (p50 6.7 → 7.3: the
+work moved, not removed); at vsync, two runs each: p95 10.4 / 10.4 → 9.35 / 9.36, submit-to-done p95 12.1 / 11.3 →
+10.9 / 10.9. The headless desktop drops almost no frames either way (0-2 in 625), so the phone's run is the judge.
+The per-cell look is untouched.
+
+Not changed, for the phone's numbers to decide (BACKLOG FP4, FP5): the draw's geometry (the far stand-in drawn inside
+the window too), 2-tick sim frames ("Prioritize rendering over simulation too": a frame-locked tick when the rate
+is the display's), the pacing limit.

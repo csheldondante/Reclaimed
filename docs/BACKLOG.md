@@ -12,6 +12,19 @@ Order agreed (round 10): A1–A5, A8, A12, A13 → A10, A14, A11 → A9 → A7 �
 Status: `won't do` (user declined) · `open` · `next` (agreed, queued) · `wip` · `asked` (waiting on the
 user) · `deferred` (agreed for later).
 
+## Round 114 (2026-10-30, `framepace`) — the phone's parked frame drops (56-57 fps, p99 33 ms with ~1-2 ms of CPU)
+
+The user: the hero run "framerate feels bad"; the goal a steady 60 on the Pixel 9a. "Keep the per cell look for now I
+enjoy it" / "Prioritize rendering over simulation too".
+
+| id | item | size | status |
+|---|---|---|---|
+| FP1 | The frame pacing probe: per frame rAF interval, rAF lag, CPU, rAF to last submit, submit to GPU done, frames in flight, GPU span and per pass, the gap between frames' GPU work, sim ticks and slow-period systems, the coarse world's parts and the streamer's work | M | done (`framepace`): perf/framepace.ts, scripts/paceprobe.mjs |
+| FP2 | The pan bench reports it parked (bench v6): timed, untimed, frames in flight 1 and 3, the sim off — at every zoom, the A/B at the first; `summary.pace` | S | done (`framepace`) — the phone's run names the cause |
+| FP3 | The coarse world's step (every 4th frame, untimed: flux + depth + an 8 MB copy, +4.5 ms of a 7 ms frame on the desktop iGPU) in three parts on three frames | S | done (`framepace`): Coarse.stepPart; desktop GPU frame p95 10.4 → 9.4 ms, p99 12.3 → 10.8 |
+| FP4 | From the phone's v6 run: the fix the numbers name — GPU near 16.7 ms parked (the draw's geometry: mesh, grid, far stand-in ~1 ms each on the desktop at a 206x457 canvas), sim ticks (2-tick frames), the onSubmittedWorkDone latency holding rAFs at 2 in flight, or the browser's own | M | open (waits on the phone's run) |
+| FP5 | The far land's stand-in draws under the whole view, inside the window too (SF2): ~0.9 ms of the desktop's 3.6 ms draw parked — draw it only where the window doesn't (the tiles' mask) if the phone's run shows the draw is the frame | S | open |
+
 ## Round 113 (2026-10-30, `tilesfirst`) — stand-ins first, detail as fast as it comes (the streaming design, steps 1-6)
 
 The user: "Why don't we load the fast tiles first and then something is always there and swap only when the slow one is

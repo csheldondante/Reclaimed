@@ -43,6 +43,12 @@ export class Profiler {
     return this.perName;
   }
   onFrame?: (frame: number, ms: number, top: string) => void;
+  /** (round 114, framepace) more who hear each frame's GPU time once read back (src/perf/framepace.ts), the
+   *  passes valid in `lastPasses` while they run */
+  private listeners: ((frame: number, ms: number) => void)[] = [];
+  listen(fn: (frame: number, ms: number) => void): void {
+    this.listeners.push(fn);
+  }
 
   constructor(device: GPUDevice, hasTimestamps: boolean) {
     this.enabled = hasTimestamps;
@@ -143,6 +149,7 @@ export class Profiler {
             }
           this.onFrame(frameNo, frame, `${top} ${topMs.toFixed(1)}`);
         }
+        for (const l of this.listeners) l(frameNo, frame);
         this.gpuTotalMs += frame;
         this.gpuFrameMs = this.gpuFrameMs * 0.9 + frame * 0.1;
         slot.buf.unmap();

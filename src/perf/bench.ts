@@ -14,6 +14,7 @@
 // Each number: its unit, the samples, p50/p95/max. GPU times are timestamp-query's where the adapter has it; else
 // wall-clock around an isolated submit (queue.onSubmittedWorkDone), labelled so ("wall").
 
+import type { FramePace } from './framepace';
 import { landFrom } from '../atlas/atlas';
 import { stampWays } from '../atlas/ways';
 import { GPUGEN } from '../atlas/finish';
@@ -31,7 +32,7 @@ import { BGCHECK, bgShares, type BgShares } from '../render/bgcheck';
 /** (v3) vite.config.ts `define`: the build's time */
 declare const __BENCH_BUILD__: string;
 
-export const BENCH_VERSION = 5;
+export const BENCH_VERSION = 6;
 const STATE = 'reclaimed.bench.state';
 /** (v3) the build, on the start page: vite.config.ts defines it at build time */
 const BUILD: string = typeof __BENCH_BUILD__ !== 'undefined' ? __BENCH_BUILD__ : 'dev';
@@ -299,6 +300,18 @@ function tileStepOf(T: any, baked0: number, t0: number, secs: number, lead: numb
   };
 }
 
+/** (v6) the pacing probe's phases in a line: fps, slow frames, GPU span, submit to done, frames in flight */
+function paceHeadline(out: Record<string, any>): string {
+  const one = (k: string) => {
+    const r = out[k];
+    if (!r || !r.frames) return null;
+    const slow = r.slow?.n ?? 0;
+    const inf = Object.entries(r.inFlightAtStart ?? {}).map(([a, n]) => `${a}:${n}`).join(' ');
+    return `${k} ${r.fps} fps, slow ${slow}/${r.frames}, interval p99 ${r.interval?.p99}, done p50/p95 ${r.done?.p50}/${r.done?.p95}, gpu p50/p95 ${r.gpu?.p50 ?? '-'}/${r.gpu?.p95 ?? '-'}, gap p50 ${r.gap?.p50 ?? '-'}, inFlight ${inf}, held ${r.heldRafs}, slow frames' done ${r.slow?.done ?? '-'} gpu ${r.slow?.gpu ?? '-'} ticks ${r.slow?.ticks ?? '-'} vs ok ${r.ok?.done ?? '-'} / ${r.ok?.gpu ?? '-'} / ${r.ok?.ticks ?? '-'}`;
+  };
+  return ['timed', 'untimed', 'inFlight1', 'inFlight3', 'simOff'].map(one).filter(Boolean).join(' | ');
+}
+
 function makePanReport(s: BenchState): Record<string, unknown> {
   const res = s.results as Record<string, any>;
   const rows: Record<string, unknown>[] = [];
@@ -309,7 +322,7 @@ function makePanReport(s: BenchState): Record<string, unknown> {
           if (z[src]) {
             const st = (z[src].steps ?? []) as any[];
             const worstSlide = st.reduce((m, x) => Math.max(m, x.max ?? 0), 0);
-            rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, parked: z.parked ?? null, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, maxNoPopIn: z[src].maxNoPopIn, popInAt: z[src].popInAt, worstFrameMs: r3(worstSlide), overBudgetPerSlide: st.map((x) => `${x.speed}:${x.overBudgetPerSlide ?? '-'}`).join(' '), tilesPerSecond: st.map((x) => `${x.speed}:${x.tiles?.perSecond ?? '-'}`).join(' '), tileLatency: st.map((x) => `${x.speed}:${x.tiles?.total?.[0] ?? '-'}/${x.tiles?.total?.[1] ?? '-'}`).join(' '), leadOut: st.map((x) => `${x.speed}:${x.tiles?.leadOut?.[0] ?? '-'}`).join(' '), causesAtFail: z[src].causesAtFail, coverParked: z.coverParked, bgAt: z[src].bgAt ?? null, bg: st.map((x) => `${x.speed}:${x.bg ? `${r3(x.bg.bgMax * 100)}%/${x.bg.bgFrames}f` : '-'}`).join(' '), far: st.map((x) => `${x.speed}:${x.bg ? `${r3(x.bg.farMax * 100)}%` : '-'}`).join(' ') });
+            rows.push({ zoom: z.zoom, window: v.window?.w ?? null, source: src, parked: z.parked ?? null, pace: z.pace?.headline ?? null, maxSmooth: z[src].maxSmooth, failedFirst: z[src].failedFirst, at: z[src].failedAt, maxNoPopIn: z[src].maxNoPopIn, popInAt: z[src].popInAt, worstFrameMs: r3(worstSlide), overBudgetPerSlide: st.map((x) => `${x.speed}:${x.overBudgetPerSlide ?? '-'}`).join(' '), tilesPerSecond: st.map((x) => `${x.speed}:${x.tiles?.perSecond ?? '-'}`).join(' '), tileLatency: st.map((x) => `${x.speed}:${x.tiles?.total?.[0] ?? '-'}/${x.tiles?.total?.[1] ?? '-'}`).join(' '), leadOut: st.map((x) => `${x.speed}:${x.tiles?.leadOut?.[0] ?? '-'}`).join(' '), causesAtFail: z[src].causesAtFail, coverParked: z.coverParked, bgAt: z[src].bgAt ?? null, bg: st.map((x) => `${x.speed}:${x.bg ? `${r3(x.bg.bgMax * 100)}%/${x.bg.bgFrames}f` : '-'}`).join(' '), far: st.map((x) => `${x.speed}:${x.bg ? `${r3(x.bg.farMax * 100)}%` : '-'}`).join(' ') });
           }
   const plan = res.panPlan as { zooms: { zoom: number; window: number; run: boolean }[] } | undefined;
   return {
@@ -323,6 +336,8 @@ function makePanReport(s: BenchState): Record<string, unknown> {
       note: 'per zoom and land source: the fastest straight pan (cells/s) that held every criterion, and the criterion that failed first one step above',
       criteria: `smooth: rendered fps >= ${PAN_FPS}, no frame over ${PAN_MAX_FRAME} ms, p99 <= ${PAN_P99} ms and no pop-in${PAN_BG_FAILS ? ' and no background' : ''}, each step ${PAN_STEP_S} s; no pop-in: none of the screen out of detail against parked, frames as they come; overBudgetPerSlide: frames over ${PAN_BUDGET} ms per slide at each speed; bg: the share of the screen showing the background colour (nothing drawn), the step's worst frame / frames with any — flagged when the worst frame's over ${PAN_BG_FLAG * 100}%${PAN_BG_FAILS ? ', and fails smooth (?bgfail=1)' : ' (flag only; ?bgfail=1 fails smooth too)'}; far: the worst frame's share showing the flat far land`,
       device: `${res.device?.adapter?.vendor ?? '?'} ${res.device?.adapter?.architecture ?? ''}, dpr ${res.device?.devicePixelRatio}, css ${res.device?.css?.w}x${res.device?.css?.h}`,
+      // (v6) the frame pacing parked at each zoom (rows.pace in pan256.zooms[].pace in full)
+      pace: [...new Map(rows.filter((r: any) => r.pace).map((r: any) => [r.zoom, `zoom ${r.zoom}: ${r.pace}`])).values()],
       table: rows.map((r: any) => `zoom ${r.zoom} window ${r.window} ${r.source}: parked ${r.parked?.fps ?? '?'} fps p99 ${r.parked?.p99 ?? '?'}; smooth to ${r.maxSmooth ?? 'none'} c/s${r.failedFirst ? ` (then ${r.failedFirst} at ${r.at})` : ''}; no pop-in to ${r.maxNoPopIn ?? 'none'} c/s${r.popInAt ? ` (pop-in at ${r.popInAt})` : ''}; worst frame ${r.worstFrameMs} ms; tiles/s ${r.tilesPerSecond}; tile ms p50/p95 ${r.tileLatency}; leading half out ${r.leadOut}; bg ${r.bg}${r.bgAt?.length ? ` (BACKGROUND at ${r.bgAt.join(', ')} c/s)` : ''}; far ${r.far}`),
       // (round 112, bgcheck: the rows whose steps showed the background — the panel's red note)
       bgFlagged: rows.filter((r: any) => r.bgAt?.length).map((r: any) => `zoom ${r.zoom} ${r.source}: background at ${r.bgAt.join(', ')} c/s`),
@@ -1211,6 +1226,8 @@ interface LevelCtx {
   hitch: HitchBoot | null;
   /** the render scale now (main.ts resizes the targets) */
   setRenderScale: (s: number) => void;
+  /** (v6, round 114) the frame pacing probe (src/perf/framepace.ts): every frame rAF to GPU done */
+  pacer: FramePace | null;
 }
 
 /** A level page of the suite: waits for the level, runs its part, and goes to the next page. */
@@ -1325,6 +1342,72 @@ class Bench {
     this.prof = ctx.host.profiler;
     this.dev = ctx.host.gpu.device;
     this.timer = new GpuTimer(this.dev);
+    const pacer = ctx.pacer;
+    if (pacer) {
+      pacer.sources.simTick = () => this.R.core.sim.tick;
+      pacer.sources.slowSystems = () => (this.R.core.sim.systems as { name: string; period: number }[]).filter((x) => x.period > 1);
+      // (what runs now and then: the coarse world's step parts; the streamer's work — any of its counts moving)
+      const sum = (o: Record<string, unknown> | undefined) => Object.values(o ?? {}).reduce((t: number, v) => t + (typeof v === 'number' ? v : 0), 0);
+      pacer.sources.counters = { coarse: () => this.R.atlas?.coarse?.partsRun ?? 0, stream: () => sum(this.R.stream?.stats) };
+    }
+  }
+
+  /**
+   * (v6, round 114, framepace) Parked, every frame from its rAF to the GPU done (src/perf/framepace.ts): with the
+   * GPU timestamps read back (per pass) and without (as the game plays), and with `ab` the pacing's frames-in-flight
+   * limit at 1 and 3 and the sim off — what the slow frames had that the others hadn't.
+   */
+  private async paceProbe(seconds: number, ab: boolean): Promise<Record<string, unknown> | null> {
+    const pacer = this.ctx.pacer;
+    if (!pacer) return null;
+    const prof = this.prof as { active: boolean };
+    const wasActive = prof.active;
+    const out: Record<string, unknown> = {};
+    const phase = async (key: string, setup: () => () => void) => {
+      this.say(`frame pacing: ${key}…`);
+      const undo = setup();
+      try {
+        await sleep(400);
+        const m = pacer.mark();
+        await sleep(seconds * 1000);
+        await this.dev.queue.onSubmittedWorkDone();
+        await sleep(150);
+        out[key] = pacer.report(m, key);
+      } finally {
+        undo();
+      }
+    };
+    await phase('timed', () => {
+      prof.active = true;
+      return () => (prof.active = wasActive);
+    });
+    await phase('untimed', () => {
+      prof.active = false;
+      return () => (prof.active = wasActive);
+    });
+    if (ab) {
+      for (const n of [1, 3])
+        await phase(`inFlight${n}`, () => {
+          prof.active = false;
+          pacer.maxInFlight = n;
+          return () => {
+            pacer.maxInFlight = 2;
+            prof.active = wasActive;
+          };
+        });
+      const sim = this.toggles().simAll;
+      if (sim)
+        await phase('simOff', () => {
+          prof.active = false;
+          sim.off();
+          return () => {
+            sim.on();
+            prof.active = wasActive;
+          };
+        });
+    }
+    out.headline = paceHeadline(out);
+    return out;
   }
 
   private say(s: string): void {
@@ -2560,6 +2643,8 @@ class Bench {
           const fr = pk.frames as Stat | null;
           row.parked = { fps: pk.fps, p50: fr?.p50 ?? null, p99: pk.p99, max: fr?.max ?? null, overBudget: null, unit: 'rendered fps; ms' };
           this.parkedFps = pk.fps as number;
+          // (v6: the frame pacing parked — the A/B at the first zoom only)
+          row.pace = await this.paceProbe(4, z === zooms[0]);
         }
         row[src] = await this.panRamp(z, src, dir);
       }

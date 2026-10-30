@@ -2153,6 +2153,13 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
   perf/gpumem.ts (which wraps the device's create/submit/write/map calls once, at boot, only with `?hitch=1`).
   `window.reclaimedHitch` = { rec, mem, report() } for scripts. The report is one JSON (kind
   'reclaimed-hitch-report'); the dev server's /__hitch (vite.config.ts) writes it to perf-reports/.
+- **The frame pacing probe** (round 114, `framepace`; perf/framepace.ts, `?hitch=1` or `?framepace=1`): main.ts calls
+  `begin(now, inFlight)` / `end()` round `scene.frame`, `held()` for a held rAF, and resolves the frame's
+  onSubmittedWorkDone into it; it wraps `queue.submit` once (the frame's last submit) and hears the GPU through
+  `Profiler.listen` (a listener list beside the one-slot `onFrame`). Its `maxInFlight` is main.ts's pacing limit (2).
+  `sources` (simTick, slowSystems, io, counters) are lent by whoever reads it (the bench); it changes nothing.
+  `report(mark)` = per frame: interval, rAF lag, CPU, rAF to last submit, submit to done, frames in flight, GPU span,
+  the gap between frames' GPU work, sim ticks, which counters moved; the slow frames against the rest.
 - **The judge's inputs** (integrity.ts): edits, cuts, watches, lightning, cyclones and the first window's structures
   seed it; land that comes in with a slide does not (round 100). A pass judges structure boxes for at most 8 ms.
 - **The world API's mirror** (api/mirror.ts, round 100): paged sources (the layers) are read by pages round

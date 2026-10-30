@@ -538,6 +538,7 @@ export class Atlas {
     // (none until they're found: the ground the rivers are found on is made without them)
     this.riverBuf = device.createBuffer({ label: 'atlas rivers', size: (N + CRATER_BLOCK + NODE_WORDS) * 4, usage: S });
     this.coarse = new Coarse(device, p.coarseN, this.worldW, this.worldH);
+    this.coarse.timer = () => this.profiler;
     device.queue.writeBuffer(this.kcol, 0, new Float32Array(KIND_IDS.flatMap((k) => [...KINDS[k].colour, 1])));
   }
 
