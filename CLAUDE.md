@@ -49,7 +49,10 @@ stock-take.
   - `?progress=0..1` preview a menu-diorama stage
   - `?perf=1` perf overlay (or press `` ` ``), `?q=low|medium|high` quality tier (default low)
   - `?speed=N` fast-forward simulation, `?day=<s>` day length, `?tod=0..1` time of day
-- `npm run typecheck` / `npm run build`
+- `npm test` — the unit and gpu tiers in Node, no browser (~16 s; docs/TESTING.md): `npm run test:unit` (~2 s, pure TS),
+  `npm run test:gpu` (real WGSL on Dawn in Node, a tiny `WorldCore`). Run it before every commit; then `npm run smoke`
+  (the built game booted headless, ~40 s), then the integration scripts the change needs.
+- `npm run typecheck` (src and test) / `npm run build`
 - **Headless checks run on the shared runner** (`scripts/lib/runner.mjs`, round 112 — see "Running checks fast"):
   `node scripts/shot.mjs --url "/?skipmenu=1&level=atlas" --out a.png`, `node scripts/contract.mjs`,
   `node scripts/run.mjs status|build|serve|daemon|boot|selfcheck`.
