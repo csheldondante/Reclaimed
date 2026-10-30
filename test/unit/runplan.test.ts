@@ -2,17 +2,17 @@
 // the whole plan (every hero), the world state for consequences between runs. `npx vitest run src/runplan`.
 
 import { describe, expect, test } from 'vitest';
-import type { RegionNode, RunPlan } from '../api/contracts/run';
-import { freshRegion } from '../api/contracts/world';
-import { MemoryWorldState } from '../api/contracts/world-state';
-import { affordances } from './affords';
-import { finishRun, realise } from './consequences';
-import { seed1, seed1Graph, seed1World } from './fixture';
-import { borderBarrier, plainGraph } from './graph';
-import { crossCost, HEROES, heroCaps } from './heroes';
-import { planRun } from './plan';
-import { reach, routeTo } from './route';
-import { along, Journey, type Precacher } from './travel';
+import type { RegionNode, RunPlan } from '../../src/api/contracts/run';
+import { freshRegion } from '../../src/api/contracts/world';
+import { MemoryWorldState } from '../../src/api/contracts/world-state';
+import { affordances } from '../../src/runplan/affords';
+import { finishRun, realise } from '../../src/runplan/consequences';
+import { seed1, seed1Graph, seed1World } from '../support/seed1';
+import { borderBarrier, plainGraph } from '../../src/runplan/graph';
+import { crossCost, HEROES, heroCaps } from '../../src/runplan/heroes';
+import { planRun } from '../../src/runplan/plan';
+import { reach, routeTo } from '../../src/runplan/route';
+import { along, Journey, type Precacher } from '../../src/runplan/travel';
 
 const node = (id: number, x: number, y: number, kind = 'plains', extra: Partial<RegionNode> = {}): RegionNode => ({
   id, kind, land: kind !== 'ocean', centre: [x, y], area: 600, tier: 'lowland', ground: { min: 100, mean: 110, max: 120 }, rivers: 0, lava: 0, stamps: [], settlements: [], name: `R${id}`, ...extra,

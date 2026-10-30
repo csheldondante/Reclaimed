@@ -2,10 +2,10 @@
 // region graph and a fresh world — Node only (reads files).
 
 import { readFileSync } from 'node:fs';
-import type { AtlasFacts } from '../gm/atlas-facts';
-import type { WorldWiki } from '../gm/wiki';
-import { MemoryWorldState } from '../api/contracts/world-state';
-import { factsGraph } from './graph';
+import type { AtlasFacts } from '../../src/gm/atlas-facts';
+import type { WorldWiki } from '../../src/gm/wiki';
+import { MemoryWorldState } from '../../src/api/contracts/world-state';
+import { factsGraph } from '../../src/runplan/graph';
 
 const file = (rel: string) => new URL(`../../${rel}`, import.meta.url);
 

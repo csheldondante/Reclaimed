@@ -27,7 +27,7 @@ import { GLOBALS_HEAD_BYTES } from '../sim/globals';
 import { CHUNK } from '../world/layout';
 import { ROW_H } from '../world/lattice';
 import type { Camera } from './camera';
-import type { Basis, TileCache } from './tilecache';
+import { MOVING, type Basis, type TileCache } from './tilecache';
 import type { LandTimes, TileLandSource } from './tileland';
 import { TileWorld } from './tileworld';
 import type { CoverSource } from '../weather/cover';
@@ -265,6 +265,7 @@ export class TileLandGpu {
     const made = [...this.jobs.values()].filter((j) => j.made).sort((a, b) => (rank.get(`${a.rx},${a.ry}`) ?? 1e6) - (rank.get(`${b.rx},${b.ry}`) ?? 1e6));
     const gp = this.host.gridPipe();
     let baked = 0;
+    let atlasFull = false;
     for (const job of made) {
       if (baked >= BAKES || !gp) break;
       if (!job.remake && this.cache.hasTile(job.rx, job.ry, cam.azimuth)) {
@@ -275,6 +276,7 @@ export class TileLandGpu {
       job.times.cur = performance.now();
       if (!this.bake(enc, cam, B, rp, job, gp)) {
         this.stats.noSlot++;
+        atlasFull = true;
         // (round 108: the atlas full of what the screen draws — what's made for regions no longer wanted lets its slot go)
         for (const j of made) if (!rank.has(`${j.rx},${j.ry}`)) {
           this.free(j);
@@ -325,6 +327,12 @@ export class TileLandGpu {
         }
       }
     }
+    // (round 115, `tilecal`: the land the bottleneck this frame — a region wanted and not started with no scratch slot
+    // free, or the bakes at their cap — and not the atlas (no slot for a bake), the camera at rest (the zoom floor's
+    // case: a parked screenful; a pan shares the pacer's turns with the window's strips): the frame measures the rate)
+    const waits = this.slotJob.indexOf(null) < 0 && order.some((w) => !this.jobs.has(`${w.rx},${w.ry}`));
+    const [mx, my] = this.cache.motion;
+    this.cache.cal.landFrame(baked, (waits || baked >= BAKES) && !atlasFull && Math.hypot(mx, my) < MOVING);
     return baked > 0;
   }
 

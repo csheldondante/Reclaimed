@@ -1,9 +1,9 @@
 // (round 117, runplan) The play adapter at its contract: play's profiles (the shape of contracts/play.ts on `play`
 // 6c3947f) as HeroCapabilities, and a run planned with them on seed 1.
 import { describe, expect, test } from 'vitest';
-import { seed1, seed1Graph } from './fixture';
-import { capsFromProfile, type CrossingLike, type ProfileLike } from './play-adapter';
-import { planRun } from './plan';
+import { seed1, seed1Graph } from '../support/seed1';
+import { capsFromProfile, type CrossingLike, type ProfileLike } from '../../src/runplan/play-adapter';
+import { planRun } from '../../src/runplan/plan';
 
 // play's crossCost, copied verbatim from contracts/play.ts (play 6c3947f) until play is on places
 function crossCost(p: ProfileLike, c: CrossingLike): number {

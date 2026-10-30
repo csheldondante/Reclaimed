@@ -96,6 +96,21 @@ feed, with rendered images and an encoder index for text search by keyword or de
 - The user, verbatim: "Does the current system cache only what's on screen or likely to come back on screen? What is the eviction policy? At least part of the problem visually is that the effect to hide things in front of the camera is not good and generally I want the camera to slide across the heightmap towards the projection at the center of the screen which should always be visible and then dither things that block that view with some tbd formula for how much of the nearby surface they can occlude as a function of height and maybe layers. Small. Rocks are fine. A cliff or spire blocking the ground is not." → answered (the tile atlas is a fixed GPU budget, least recently drawn out; nothing
   predicts what comes back beyond the planner's look-ahead; tiles are keyed by the view's turn and never saved) and
   BACKLOG OC1, RC5.
+## 2026-10-30 — round 115 (session 5, `tilecal`) — the tiles calibrated to the hardware
+
+- The user, verbatim: "the desktop version on my wide monitor does not load all the tiles (and I assume it is
+  considerably more powerful than the phone) which seems like it is an issue with the implementation because I don't
+  think the PC streaming should be that slow if it is just a heightmap. That said I'm decently happy with it and I
+  don't want to waste any more time on this as our main project. Worth spawning one subagent to investigate on the PC
+  and see if it is an issue with settings and if so make the runtime calibrate to the hardware."
+- → Branch `tilecal` (one investigation, not a perf project): the zoom floor and the atlas were set by constants that
+  don't see the device or the screen (a fill rate of 2 tiles a frame, an atlas capped at 128 MB); now the land's fill
+  rate is measured, the floor is what that rate fills in 5 s, and the atlas grows to what the floor needs within a
+  memory budget (512 MB off a phone, 128 MB on one — asked: BACKLOG CAL3). DEVLOG round 115.
+- On the budget, verbatim: "Why limit to 512 and 128MB both should use as much as we need that the hardware
+  supports." → no policy caps: the atlas grows to what the floor needs, bounded by the device's limits (its widest
+  texture, the adapter's maximum asked for) and by allocations that succeed — an out-of-memory growth keeps the atlas
+  and is the ceiling, not retried. The phone the same rule. Also: unit tests rather than browser runs where possible.
 
 ## 2026-10-30 — round 114 (session 5, `worldstore`) — a saved world from another generator; a run's places made fresh
 

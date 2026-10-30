@@ -62,7 +62,7 @@ and what its outcomes do to the world for the next run. Code: `src/runplan/`; co
 
 ## Tests
 
-`npx vitest run src/runplan` — 21 tests, ~2 s, no browser: border rules, crossings, routes per hero on a tiny graph,
+`npm run test:unit` (test/unit/runplan.test.ts, runplan-play.test.ts; seed 1's fixture test/support/seed1.ts) — 24 tests, ~2 s, no browser: border rules, crossings, routes per hero on a tiny graph,
 seed 1's graph symmetric, affordances, a plan per hero (branching, every path to the finale, 15-50 min, routes only
 over borders the hero can cross, obstacles only crossable ones, deterministic), the plan fits the hero, a played run
 changes the world and the next plan reads it, save round trip, a sunk region → a water fill, the lich takes the map,

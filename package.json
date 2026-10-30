@@ -6,17 +6,23 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p test",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:unit": "vitest run --project unit",
+    "test:gpu": "vitest run --project gpu",
+    "test:watch": "vitest --project unit",
+    "smoke": "node scripts/smoke.mjs"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "@webgpu/types": "^0.1.74",
     "gifenc": "^1.0.3",
     "pngjs": "^7.0.0",
     "puppeteer-core": "^25.12.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.3",
-    "vitest": "^3.2.4"
+    "vitest": "^4.1.12",
+    "webgpu": "^0.6.2"
   }
 }

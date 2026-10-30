@@ -17,13 +17,15 @@ export interface Gpu {
 // 8 is the WebGPU core default, so every conformant device has it.
 export const REQUIRED_STORAGE_BUFFERS_PER_STAGE = 8;
 
-export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
-  if (!('gpu' in navigator) || !navigator.gpu) {
+/** The adapter and device the game asks for, from any `GPU` (the page's navigator.gpu, or Dawn's in Node: test/gpu) —
+ *  no canvas. initGpu adds the canvas, the fatal overlay's handlers. */
+export async function requestGpu(gpu: GPU | undefined): Promise<Omit<Gpu, 'context' | 'format'>> {
+  if (!gpu) {
     throw new UnsupportedError(
       'This browser does not expose WebGPU. Try a recent Chrome, Edge, or Safari 26+, or Firefox 141+ on Windows.',
     );
   }
-  const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
+  const adapter = await gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) {
     throw new UnsupportedError('WebGPU is present but no GPU adapter is available (it may be disabled or blocklisted).');
   }
@@ -39,8 +41,17 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
 
   // (the adapter's own buffer limits, not the defaults: a wider streamed window's mesh — ?win=, round 79 —
   // binds more than the default 128 MB where the GPU allows it; FieldMesh says so where it doesn't)
-  const requiredLimits = { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize };
+  // (round 115, tilecal: and its widest texture — the tile atlas grows to what the hardware holds, one texture's side its
+  // bound: TileCache.grow)
+  const requiredLimits = { maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize, maxBufferSize: adapter.limits.maxBufferSize, maxTextureDimension2D: adapter.limits.maxTextureDimension2D };
   const device = await adapter.requestDevice({ requiredFeatures, requiredLimits });
+  const info = adapter.info;
+  const adapterInfo = [info.vendor, info.architecture, info.description].filter(Boolean).join(' / ') || 'unknown adapter';
+  return { adapter, device, hasTimestamps, adapterInfo };
+}
+
+export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
+  const { adapter, device, hasTimestamps, adapterInfo } = await requestGpu('gpu' in navigator ? navigator.gpu : undefined);
 
   device.lost.then((info) => {
     // ('destroyed' is only ever our own device.destroy(): the benchmark lets its device go before the next page —
@@ -58,9 +69,6 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<Gpu> {
   if (!context) throw new UnsupportedError('Could not create a WebGPU canvas context.');
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: 'opaque' });
-
-  const info = adapter.info;
-  const adapterInfo = [info.vendor, info.architecture, info.description].filter(Boolean).join(' / ') || 'unknown adapter';
 
   return { adapter, device, context, format, hasTimestamps, adapterInfo };
 }

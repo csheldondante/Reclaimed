@@ -176,8 +176,9 @@ export class MemoryWorldState implements WorldState {
       seed: this.seed,
       run: this.run,
       regions: this.names.map((n) => ({ ...n, state: structuredClone(this.region(n.id)), settlements: [] })),
-      factions: [...this.factions.values()],
-      settlements: [...this.settlements],
+      // (round 118, testkit: copies — a snapshot is a save between runs; the live factions' attitudes moved it after)
+      factions: structuredClone([...this.factions.values()]),
+      settlements: structuredClone(this.settlements),
       history: this.history(),
       runs: [...this.runs],
       characters: structuredClone(this.characters()),
