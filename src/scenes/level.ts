@@ -18,6 +18,9 @@ import { Physics } from '../physics/physics';
 import type { LavaSystem } from '../sim/lava';
 import { installPhysics } from '../physics/install';
 import { installAgents } from '../agents/install';
+import { abilityHost, installInhabitants, lifeFocus, wilderness } from '../inhabitants/install';
+import type { InhabitantsGpu } from '../inhabitants/system';
+import { mountViewer } from '../inhabitants/viewer';
 import { Settlements } from '../settle/settlements';
 import { TownDebug } from '../settle/debug';
 import { AgentUnits } from '../units/agent-units';
@@ -323,6 +326,9 @@ export class LevelScene implements Scene {
   physics?: Physics;
   /** the agents layer (docs/AGENTS.md): units walking the surfaces by shared fields */
   agents!: Agents;
+  /** (round 117, ?life=: src/inhabitants) creatures with bodies — the Inhabitants contract */
+  inhabitants?: InhabitantsGpu;
+  private lifeSpawned = false;
   /** (round 88, the atlas level) the settlements, and the units (the Units contract on the agents) */
   settlements?: Settlements;
   units?: AgentUnits;
@@ -1013,6 +1019,8 @@ export class LevelScene implements Scene {
     const p = host.params;
     this.intro = !this.story && !!this.level.intro && (p.get('tutorial') === '1' || (p.get('tutorial') !== '0' && p.get('skipmenu') !== '1' && loadLevelProgress(this.level.id) === 0));
     this.agents = installAgents(core);
+    // (round 117, inhabitants: ?life=1|dragon|town|viewer — creatures with bodies round the camera; src/inhabitants/install.ts)
+    if (host.params.get('life')) this.inhabitants = installInhabitants(core);
     if (this.level.sandbox) {
       // the physics voxels (one GPU solver for every material, docs/PHYSICS.md)
       // and lava; the map's own ruins stay terrain until something touches
@@ -1304,6 +1312,10 @@ export class LevelScene implements Scene {
       editor: () => this.editor,
       // agents: agents.spawn(200, x, y, { group: 0 }); agents.goTo(0, x, y)
       agents: this.agents,
+      // (round 117, ?life=) the inhabitants: life.define(spec), life.spawnGroup(sp, [x, y], n), life.drive(g, order), life.presence(rect, cell)
+      get inhabitants() {
+        return self.inhabitants;
+      },
       // physics voxels (sandbox): phys.drop('steel', 5, 1, 10, x, y, 6) — a w × d × h box
       // of a material, its centre at world (x, y), `above` cells over the ground
       phys: {
@@ -1801,6 +1813,30 @@ export class LevelScene implements Scene {
     if (runId) void this.startRun(runId);
   }
 
+  /** (round 117, ?life=) the inhabitants each frame: spawned once the ground's first read is in, the mesh built round the view */
+  private lifeFrame(dt: number): void {
+    const life = this.inhabitants!;
+    const { core, host } = this;
+    if (!this.lifeSpawned && this.surfaceCache?.length) {
+      this.lifeSpawned = true;
+      const mode = host.params.get('life');
+      const t = core.camera.target;
+      life.setAbilityHost(
+        abilityHost(core, {
+          lavaBeam: (b) => this.lava && (this.lava.beam = b),
+          blast: (x, y, r, st, tm) => (this.worldApi ??= attachSim(core)).wind?.blast(x, y, r, st, tm),
+        }),
+      );
+      if (mode === 'viewer') {
+        this.editor?.setVisible(false);
+        mountViewer(host.ui, life, core, this.heightAt);
+      }
+      else wilderness(life, [t[0], t[1]], { herd: Number(host.params.get('lifeherd') ?? 12), dragon: mode === 'dragon', town: mode === 'town', ground: this.heightAt });
+    }
+    lifeFocus(life, core);
+    life.update(dt);
+  }
+
   /** ?run=<id>: the GM's story staged near the spawn, played as a hero (story/hero-run.ts; round 97: through story/atlas-run.ts, as any game starts one) */
   private async startRun(id: string): Promise<void> {
     const a = this.opts.atlas;
@@ -1996,6 +2032,7 @@ export class LevelScene implements Scene {
     // (round 88) the units' sync and thinking, the settlements' rounds and rates, the debug view
     // (round 94: the settlements past the window planned for the bake, whatever the streamer's doing)
     this.settlements?.farUpdate(dt);
+    if (this.inhabitants) this.lifeFrame(dt * this.speed);
     if (this.units && !this.stream?.busy) {
       this.units.update(dt * this.speed);
       timed('settle', () => this.settlements!.update(dt * this.speed));
