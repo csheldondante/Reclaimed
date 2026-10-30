@@ -41,6 +41,22 @@ await run({ name: 'terrain-shots', kind: 'behaviour', size: '1200x800' }, async 
     if (!s) continue;
     const p = await R.level({ level: 'atlas', q: R.opt('q', 'high'), tod: '0.35', at: s.at.join(','), ...extra });
     await sleep(wait);
+    // (the roads near the spot: a river's reshaping moves the macro ground the roads are planned on)
+    const roads = await p.evaluate((at) => {
+      const a = window.reclaimed.atlas;
+      const x = at[0] + 0.5;
+      const y = at[1] * 0.8660254;
+      let n = 0;
+      let near = 1e9;
+      for (const r of a.settlement.roads)
+        for (let i = 0; i < r.path.length; i += 2) {
+          const d = Math.hypot(r.path[i] - x, r.path[i + 1] - y);
+          near = Math.min(near, d);
+          if (d < 200) n++;
+        }
+      return { pointsWithin200: n, nearest: Math.round(near) };
+    }, s.at);
+    R.log(`${k} roads: ${JSON.stringify(roads)}`);
     await p.evaluate(() => {
       const ui = document.getElementById('ui');
       if (ui) ui.style.visibility = 'hidden';

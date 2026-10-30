@@ -13708,3 +13708,18 @@ riverStats.shaped), compose.wgsl (River/riverAt moved to terrain/river.wgsl; the
 the buried/molten basins), forms.wgsl (a cap may stand in a channel over the water), rivers.ts (the course and levels
 shaped before the table), atlas-view.ts (viewport(), worldAt public, onPick), main.ts (?terrain=view), level.ts
 (reclaimed.terrain).
+
+**Follow-up (main's review of the first pictures).** (1) The road at the fall spot wasn't carved away: the sites and roads
+are planned on the macro ground with the rivers in it, so the channels moved them (TR18). (2) The "trench along the cliff
+top" was a real fault: the graph's levels aren't monotone (a river through a hollow too small for a lake follows its
+floor and rises out of it), and the "only falling" pass pushed every node past such a hollow under its floor: at
+6108,14009 the whole reach to the cliff's edge stood at 263, 7-9 under the ground (base 270-272). Now a node is held
+under the one above it only where the filled ground itself fell between them (unit test: a river rising out of a hollow
+isn't cut into a trench). The river there pours off the plateau's edge into the sea (a 173-cell fall on its last segment,
+as before), facing away from the view. (3) The white columns are geysers (the user); the triangles top-left are the far
+land (in both pictures; not this track's). The first graph's 12 s was the sampler's pipeline compiling (the atlas's
+ground() shader), not the sampling: it's one dispatch and one readback, 32 ms for 512² warm; it now compiles in the
+background when the TerrainSystem is made. Phone proxy (412x915 dpr 2.6, q=low): C:/Projects/shots88/terrain/
+phone-base-fall.png, phone-r1-fall.png, phone-r2-fall.png. driveprofile (q=low, phone proxy, 30 s, desktop iGPU):
+places p50 9.8 ms, p95 16.9, GPU 11.55 ms/frame; terrain p50 9.8, p95 19.2, GPU 10.61 — within the run-to-run spread
+(the base from Pages, this from a local preview).

@@ -44,6 +44,8 @@ export class TerrainSystem implements Terrain {
   /** world units: every edit's bounds (a region's hook skips the edits that don't reach it) */
   constructor(readonly atlas: Atlas) {
     this.sampler = new LandSampler(atlas);
+    // (the sampler's pipeline compiled in the background as the system is made: the first graph doesn't wait for it)
+    if (atlas.device) void this.sampler.warm();
     atlas.stampHooks.push(async (ops, x0, y0, w, h) => this.stamp(ops, x0, y0, w, h));
   }
 

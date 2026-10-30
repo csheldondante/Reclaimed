@@ -77,4 +77,12 @@ describe('rivershape', () => {
     shapeLevels(c);
     expect(c.level[4]).toBeGreaterThanOrEqual(c.level[5]);
   });
+  it('a river rising out of a small hollow (the graph follows its floor) is not cut into a trench past it', () => {
+    const c = zigzag(30, 0.05);
+    for (const k of [5, 6, 7]) c.level[k] -= 6;
+    const base = Float32Array.from(c.level);
+    shapeLevels(c);
+    // past the hollow: the ground's level less the incision, not the hollow's floor
+    expect(base[15] - c.level[15]).toBeLessThanOrEqual(incisionFor(4) + 1e-4);
+  });
 });

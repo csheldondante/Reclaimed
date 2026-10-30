@@ -14,6 +14,12 @@ export class LandSampler {
   private kernel?: Promise<ComputeKernel>;
   constructor(readonly atlas: Atlas) {}
 
+  /** compile the kernel now (the atlas's ground() is a big shader: 6-12 s on the desktop's D3D the first time — not the
+   *  graph's to pay when a run asks for one; it's one dispatch and one readback after) */
+  warm(): Promise<unknown> {
+    return this.k();
+  }
+
   private k(): Promise<ComputeKernel> {
     const dev = this.atlas.device;
     this.kernel ??= makeComputeAsync(dev, 'terrain sampleLand', makeModule(dev, 'terrain sample', this.atlas.parts(sampleW)), { 0: 'uniform', 20: 'read', 21: 'read', 22: 'read', 23: 'read', 25: 'read', 26: 'read', 40: 'uniform', 41: 'rw' }, 'sampleLand');

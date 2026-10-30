@@ -36,6 +36,9 @@ The user: "striking to look at and interesting to explore" … "Let's make this 
 | TR15 | Caves: underground rivers and lakes, vast chambers, crumbling ceilings with light beams (shade plants via flora) | L | open |
 | TR16 | Buried props: skew stones, statues, fallen structures as External intervals and instanced meshes; a placement pass for excavation sites (structures' assets; testkit's un-burying tests) | L | open |
 | TR17 | A request's edits remake land already in the window (today only land made after it has them) | S | open |
+| TR18 | Roads and rivers: the sites and roads are planned on the macro ground with the rivers' channels in it (atlas.ts 'ground with rivers'), so TR1-TR2 moved some roads (171 roads before, 168 after; at 6108,14009 the nearest road went from 32 to 278 world units away, back to 61 after the trench fix). A road should cross a river by a ford or a bridge request (TerrainRequest), not be rerouted or dropped; plan roads on the ground before the incision or let the A* take a crossing at a cost | M | open |
+| TR19 | (structures, round 117) A road into the sea: ways.ts's road to the old town site runs straight out over the water as a brown line (shots88/structures/city-irregular-0.png, west of the city): the A* lets a road through cells under the sea's level (sites.ts: a river's mouth, a lake) — a road should end at the coast or ask for a bridge or ford | S | open |
+| TR20 | (structures, round 117) The window's water and the tiles' water beyond it differ in brightness: the window shows as a lighter diamond over the sea at wide zoom (part of the one-sea-plane work, TR7) | S | open |
 
 ## Round 117 (2026-10-30, session 5, `testkit`) — the test pyramid: unit and GPU tests in Node, a smoke test (DECISIONS round 117)
 

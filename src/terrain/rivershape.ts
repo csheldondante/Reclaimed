@@ -179,10 +179,13 @@ export function shapeLevels(c: RiverCourse): LevelStats {
     // (never under the still water it runs into: a channel lower than the lake beside it would drain it backwards)
     c.level[k] = Math.max(L, floor[k]);
   }
-  // only falling: each node no higher than the lowest upstream of it
+  // still falling where the filled ground falls: each node no higher than the node above it — but only where the
+  // ground's own level fell between them. (The graph's levels aren't monotone everywhere: a river through a hollow too
+  // small to be a lake follows its floor and rises out of it, rivers.ts. Pushing every node under the hollow's floor
+  // cut the whole reach past it into a trench — one ran 9 cells deep along a plateau's top, round 117.)
   for (const k of order) {
     const j = c.next[k];
-    if (j !== k && c.level[j] > c.level[k] && !c.still[j]) c.level[j] = c.level[k];
+    if (j !== k && !c.still[j] && base[j] <= base[k] && c.level[j] > c.level[k]) c.level[j] = c.level[k];
   }
   let falls = 0;
   for (let k = 0; k < n; k++) {
