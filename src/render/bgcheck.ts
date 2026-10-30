@@ -61,7 +61,7 @@ const WGSL = /* wgsl */ `
 @group(0) @binding(2) var<storage, read_write> acc: array<atomic<u32>, 16>;
 // x cols, y rows, z the far land's pick tag
 @group(0) @binding(3) var<uniform> P: vec4<u32>;
-// each sample's class this frame (0 drawn, 1 background, 2 far land): where on the screen, for snapshot()
+// each sample's class this frame (0 drawn, 1 background, 2 the stand-in, 3 far land nearer): where on the screen, for snapshot()
 @group(0) @binding(4) var<storage, read_write> cls: array<u32>;
 
 var<workgroup> wBg: atomic<u32>;
@@ -90,7 +90,8 @@ fn sampleGrid(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invoca
       c = 1u;
     } else if (d >= STAND_Z || (k.x == 0u && k.y == P.z)) {
       atomicAdd(&wFar, 1u);
-      c = 2u;
+      // (snapshot only: 2 at the stand-in's depth, 3 the far land's pick nearer — far.wgsl fsFar, not the stand-in)
+      c = select(3u, 2u, d >= STAND_Z);
     }
     cls[g.y * P.x + g.x] = c;
   }

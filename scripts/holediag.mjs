@@ -196,6 +196,7 @@ await run({ name: 'holediag', kind: 'behaviour', size: '412x915', dpr: 2.6 }, as
                     k = how ? `built:${how}${s.wanted ? (s.wanted[cc] ? ':w' : ':nw') : ''}${tileTag}` : `unbuilt${s.wanted ? (s.wanted[cc] ? ':w' : ':nw') : ''}${tileTag}`;
                   }
                   if (cl === 2) k = `far:${k}`;
+                  if (cl === 3) k = `farland:${k}`;
                   cnt[k] = (cnt[k] ?? 0) + 1;
                 }
               frames++;

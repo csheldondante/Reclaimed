@@ -1047,7 +1047,9 @@ export class TileCache {
         const W = h.world.w + 0.5;
         const H = h.world.h * ROW_H;
         // (round 112, TF5: the focus — the camera's target, window units — for the eye side's cut; w 0: none, flying)
-        const fo = cam.fly ? [0, 0, 0, 0] : [cam.target[0], cam.target[1], cam.target[2], 1];
+        // (round 114, covercheck: the ground the screen's centre shows — Camera.focus — not the target, whose z stays where
+        // the window placed it; none known: no cut)
+        const fo = cam.fly || !cam.focus ? [0, 0, 0, 0] : [...cam.focus, 1];
         h.device.queue.writeBuffer(this.uni, 0, new Float32Array([...B.r, this.debug ? 1 : 0, ...B.u, 0, ...B.f, B.sz, W, H, R, OVERLAP, ...fo, mside, mside * ROW_H, mnx, mny]));
         // (the candidates: the grid's chunks in its view, the voxel mesh's in view — encodeMask makes the drawn set)
         const cand = this.candData;

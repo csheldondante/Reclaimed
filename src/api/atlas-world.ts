@@ -176,6 +176,16 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
     if (dz) sleep?.settleAll(2, t);
     else sleep?.shift(dx, dy, t);
   });
+  // (round 114, covercheck: the ground the camera's focus rests on — Camera.focus, the eye side's cut's — the window's own
+  // columns' tops where they're written; none past the window, nor in a region slid in and not written yet)
+  core.camera.ground = (x, y) => {
+    const cx = Math.floor(x);
+    const cy = Math.floor(y / ROW_H);
+    if (cx < 0 || cy < 0 || cx >= dims.w || cy >= dims.h) return null;
+    const R = stream.R;
+    for (const u of stream.unwritten) if (cx >= u[0] && cx < u[0] + R && cy >= u[1] && cy < u[1] + R) return null;
+    return core.map.surface[core.ring.i(cx, cy)];
+  };
   if (opts.far !== false) {
     const far = new FarLand(host.gpu.device, atlas, core.renderer.targets);
     // (round 83: the rings draw past the window's edge — no wall down it)
@@ -186,7 +196,8 @@ export async function createAtlasWorld(host: Host, opts: AtlasWorldOptions): Pro
       far.zMax = dims.zMax;
       const c = core.camera.fly ? core.camera.fly.pos : core.camera.target;
       far.mid = [c[0], c[1]];
-      far.focus = core.camera.fly ? null : [core.camera.target[0], core.camera.target[1], core.camera.target[2]];
+      // (round 114, covercheck: the ground the screen's centre shows, not the target — Camera.focus)
+      far.focus = core.camera.fly ? null : core.camera.focus;
       far.draw(pass, clear);
     });
   }
