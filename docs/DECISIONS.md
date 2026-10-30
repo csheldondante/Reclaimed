@@ -3,6 +3,18 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 119 (session 5) — after trying the six tracks
+
+- The user, verbatim:
+
+> Let's move the old settlement code over and have them actually use the new structures. Can we get farms and smaller huts for lower population density? Is it density driven+grid based now?
+>
+> Most of this looks great. I think sea caves still need a lot of work and I had some bad performance with the birches on mobile. The creature editor and plant editor are fun but I have ideas on how to improve both. I need to actually play a generated run and try it out. Was there a link? Really awesome work overall.
+
+- → structures: settle/ moves onto the structures contract (STR15) and towns use the new buildings; farms and small huts
+  where population is thin, density from a field. flora: the birches' cost on the phone. A playable generated run: play,
+  terrain and runplan merged and a run's stages played with the heroes. Sea caves need more work (the user to say what).
+
 ## 2026-10-30 — round 118 (session 5, `play`) — the user played the sandbox
 
 - The user, verbatim, after playing branch `play` on the phone:
