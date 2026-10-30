@@ -44,7 +44,8 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
     return [lo, hi];
   };
 
-  // ---- under water: nothing built or paved (a lake shore, a river through the town: bridges are STR11's)
+  // ---- under water: nothing built or paved (a lake shore, a river through the town: bridges are STR11's); no house
+  // within a few metres of the water (a shore of yards and lanes, not walls standing in the sea)
   if (water)
     for (let q = 0; q < nq; q++) {
       const [x, y] = quadCentre(tiles, q);
@@ -54,7 +55,35 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
         wet = water(tiles.verts[v * 2], tiles.verts[v * 2 + 1]) > 0.3;
       }
       if (wet) tiles.use[q] = 'outside';
+      else if (tiles.use[q] === 'lot') {
+        const m = (spec.tile ?? 4) * 1.2;
+        for (let k = 0; k < 8; k++) if (water(x + Math.cos((k * Math.PI) / 4) * m, y + Math.sin((k * Math.PI) / 4) * m) > 0.3) tiles.use[q] = 'yard';
+      }
     }
+
+  // ---- districts: a few quarters round the middle, each its roofs' colour, its height and a landmark (the plan reads
+  // from afar: the user's "sprawling fantastic cities" need quarters, not one blob of roofs)
+  const nd = Math.max(1, Math.min(7, Math.round(R / 26)));
+  const dTurn = r() * Math.PI * 2;
+  const dCentres: V2[] = [[cx, cy]];
+  for (let k = 1; k < nd; k++) {
+    const a = dTurn + (k / (nd - 1)) * Math.PI * 2;
+    dCentres.push([cx + Math.cos(a) * R * 0.62, cy + Math.sin(a) * R * 0.62]);
+  }
+  const dRoof = dCentres.map(() => Math.floor(r() * 8));
+  const dBias = dCentres.map((_, k) => (k === 0 ? 0.6 : (r() - 0.5) * 1.6));
+  const districtOf = (x: number, y: number) => {
+    let best = 0;
+    let bd = Infinity;
+    dCentres.forEach((c, k) => {
+      const d = Math.hypot(x - c[0], y - c[1]) * (k === 0 ? 1.35 : 1) + (fbm(x * 0.03, y * 0.03, spec.seed + 21) - 0.5) * R * 0.3;
+      if (d < bd) {
+        bd = d;
+        best = k;
+      }
+    });
+    return best;
+  };
 
   // ---- which lots are built (the rest are yards: gardens, courtyards, room to grow)
   const built = new Uint8Array(nq);
@@ -97,8 +126,11 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
       }
     const [bx, by] = quadCentre(tiles, q0);
     const d = Math.min(1, Math.hypot(bx - cx, by - cy) / R);
-    const storeys = Math.max(1, Math.round(sMid + (sRim - sMid) * Math.pow(d, 0.8) + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 2.2 + (r() - 0.5) * 0.8));
-    buildings.push({ id, quads, base: hi + 0.15 - (spec.sunk ?? 0), storeys, storeyH: STOREY_H, look: Math.floor(r() * 65536) });
+    const dk = districtOf(bx, by);
+    const storeys = Math.max(1, Math.round(sMid + (sRim - sMid) * Math.pow(d, 0.8) + dBias[dk] + (fbm(bx * 0.04, by * 0.04, spec.seed + 9) - 0.5) * 2.2 + (r() - 0.5) * 0.8));
+    // (look: 12 random bits; bit 15 + bits 12-14 the district's roof colour, most of the time — a few odd ones out)
+    const look = Math.floor(r() * 4096) | (r() < 0.82 ? 0x8000 | (dRoof[dk] << 12) : 0);
+    buildings.push({ id, quads, base: hi + 0.15 - (spec.sunk ?? 0), storeys, storeyH: STOREY_H, look, district: dk });
   }
 
   // ---- landmarks (mega tiles): the tallest building near the middle becomes a tower; a fountain in the plaza
@@ -114,15 +146,27 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn): Ci
       quadTop[q] = b.base + s * b.storeyH;
     }
   if (style.towers > 0) {
-    const cand = buildings.filter((b) => b.quads.length === 1).sort((a, b) => {
-      const da = Math.hypot(quadCentre(tiles, a.quads[0])[0] - cx, quadCentre(tiles, a.quads[0])[1] - cy);
-      const db = Math.hypot(quadCentre(tiles, b.quads[0])[0] - cx, quadCentre(tiles, b.quads[0])[1] - cy);
-      return da - db;
+    // the landmarks: the style's towers near the middle, and one in each outer quarter (taller in the middle)
+    // (a lone tile with open ground beside it: a tower has a door and a lift — nav — so it needs a way in)
+    const open = (q: number) => [0, 1, 2, 3].some((s) => {
+      const n = adj[q * 4 + s];
+      return n >= 0 && (tiles.use[n] === 'street' || tiles.use[n] === 'plaza' || tiles.use[n] === 'yard');
     });
-    for (const b of cand.slice(0, style.towers)) {
+    const lone = buildings.filter((b) => b.quads.length === 1 && open(b.quads[0]));
+    const near = (c: V2) => (a: BuildingRec, b: BuildingRec) => {
+      const da = Math.hypot(quadCentre(tiles, a.quads[0])[0] - c[0], quadCentre(tiles, a.quads[0])[1] - c[1]);
+      const db = Math.hypot(quadCentre(tiles, b.quads[0])[0] - c[0], quadCentre(tiles, b.quads[0])[1] - c[1]);
+      return da - db;
+    };
+    const picks = lone.slice().sort(near([cx, cy])).slice(0, style.towers).map((b): [BuildingRec, number] => [b, 6]);
+    for (let k = 1; k < nd; k++) {
+      const b = lone.filter((x) => x.district === k && !picks.some(([p]) => p === x)).sort(near(dCentres[k]))[0];
+      if (b) picks.push([b, 3]);
+    }
+    for (const [b, extra] of picks) {
       const q = b.quads[0];
       b.mega = 'tower';
-      b.storeys = Math.max(b.storeys + 3, Math.round(sMid) + 3);
+      b.storeys = Math.max(b.storeys + extra, Math.round(sMid) + extra);
       quadStoreys[q] = b.storeys;
       quadTop[q] = b.base + b.storeys * b.storeyH;
       megas.push({ kind: 'tower', quads: [q], frame: quadCorners(tiles, q), z0: b.base, z1: quadTop[q] });
@@ -244,6 +288,7 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
     const nodes: Facade[] = [];
     const len: number[] = [];
     const street: boolean[] = [];
+    const yard: boolean[] = [];
     for (const q of b.quads) {
       const p = quadCorners(tiles, q);
       for (let s = 0; s < 4; s++) {
@@ -261,6 +306,7 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
           nodes.push({ quad: q, side: s, level: l, z0, z1, kind: 'blank', building: b.id });
           len.push(L);
           street.push(n >= 0 && (tiles.use[n] === 'street' || tiles.use[n] === 'plaza'));
+          yard.push(n >= 0 && tiles.use[n] === 'yard');
         }
       }
     }
@@ -273,8 +319,9 @@ function facadesOf(tiles: TileMesh, adj: Int32Array, buildings: BuildingRec[], q
     nodes.forEach((f, i) => {
       if (f.level !== 0) return;
       // (long enough for a door first, then facing the street, then the longest)
-      const score = (len[i] >= 1.8 ? 1000 : 0) + (street[i] ? 100 : 0) + len[i];
-      const was = front < 0 ? -1 : (len[front] >= 1.8 ? 1000 : 0) + (street[front] ? 100 : 0) + len[front];
+      const sc = (k: number) => (len[k] >= 1.8 ? 1000 : 0) + (street[k] ? 100 : yard[k] ? 50 : 0) + len[k];
+      const score = sc(i);
+      const was = front < 0 ? -1 : sc(front);
       if (score > was) front = i;
     });
     nodes.forEach((f, i) => {

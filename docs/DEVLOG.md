@@ -13692,3 +13692,22 @@ zoom cost 2.3 ms. The frame's total GPU time moved ±1 ms between runs on the sh
 times are the measure.
 
 Shots: C:\Projects\shots88\structures\city-irregular-0/1/2.png.
+
+## 2026-10-30 — round 117 (`structures`): the city reads from afar; it keeps off the water
+
+Main's review of the first city on the atlas: at the start's zoom it read as "one dense blob of roofs", and its west edge
+stood in the sea in a straight line.
+- **The sea.** The planner was told only the window's water layer; the sea isn't in it (the sea is a level, `seaZ`).
+  The host now gives the planner max(water layer, sea − ground), and no house stands within 1.2 tiles of water: the
+  shore is yards and lanes and follows the coast.
+- **Quarters.** A city of radius R gets round(R / 26) quarters (≤ 7): the middle and a ring at 0.62 R, a quarter's edge
+  noisy. Each has its roofs' colour (82% of its houses; look bit 15 + bits 12-14, structmesh.wgsl picks the roof's
+  variant from it), a height bias and a landmark tower (the middle's 6 storeys over its neighbours, the others' 3); towers
+  stand only on a tile with open ground beside it (a door, a lift: nav).
+- **Streets.** Irregular towns' main lanes are two tiles wide within 0.6 R; the plaza 2.8 tiles across in a big town.
+- Doors: the front door prefers a street, then a yard; a door step with no open tile across its side (a T-junction where
+  radial rings double) links to the nearest open ground within 6 m.
+- Not ours (listed for main): the lighter diamond of water is the streamed window's water against the tiles' water past
+  it; the straight brown line across the sea is the atlas's road to the old town (atlas/ways.ts), stamped before the city.
+
+Shots: C:\Projects\shots88\structures\city-irregular-0.png (the atlas, start zoom), dist-0.png (the viewer, r 90).

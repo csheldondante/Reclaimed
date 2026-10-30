@@ -1598,6 +1598,7 @@ export class LevelScene implements Scene {
             dims,
             ground: a.ground,
             water: a.map.water,
+            sea: core.globals.seaZ,
             dust: (x, y, z, n) => {
               const [wx, wy] = cellPos(x, y);
               core.sim.particles.burst({ kind: PK.Dust, x: wx, y: wy, z, count: n, speed: 2, spread: 1.2 });

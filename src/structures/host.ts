@@ -34,6 +34,8 @@ export interface CityHostIO {
   ground: Float32Array;
   /** the window's water depth at column (x, y), as it was made */
   water?: Float32Array;
+  /** the sea's level (window z): ground under it is under water too */
+  sea?: number;
   /** where to say something fell (dust) */
   dust?: (x: number, y: number, z: number, count: number) => void;
 }
@@ -71,7 +73,7 @@ export class CityHost {
     this.sg = new StructureGpu(io.device);
     io.renderer.enableStructures(this.sg);
     const t0 = performance.now();
-    this.plan = planCity(spec, (x, y) => this.groundAt(x, y), this.io.water ? (x, y) => this.at(this.io.water!, x, y) : undefined);
+    this.plan = planCity(spec, (x, y) => this.groundAt(x, y), this.io.water || this.io.sea !== undefined ? (x, y) => Math.max(this.io.water ? this.at(this.io.water, x, y) : 0, (this.io.sea ?? -Infinity) - this.groundAt(x, y)) : undefined);
     this.all = piecesOf(this.plan);
     this.stats.planMs = +(performance.now() - t0).toFixed(1);
     for (const c of columnsOf(this.plan)) {

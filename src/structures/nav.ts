@@ -128,6 +128,22 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
       const step = node([mx + ox * 0.4, my + oy * 0.4, f.z0], 'ground', -1);
       link(inside, step, 'door');
       if (n >= 0 && outdoor[n] >= 0) link(step, outdoor[n], 'walk');
+      else {
+        // (no open tile across the side — a T-junction where rings double, or a neighbour's house: the nearest open
+        // ground within a few metres; none, and the door opens onto nothing walkable: the planner's to avoid)
+        let best = -1;
+        let bd = 6;
+        for (let q = 0; q < nq; q++) {
+          if (outdoor[q] < 0) continue;
+          const o = nodes[outdoor[q]].at;
+          const d = Math.hypot(o[0] - nodes[step].at[0], o[1] - nodes[step].at[1]);
+          if (d < bd) {
+            bd = d;
+            best = outdoor[q];
+          }
+        }
+        if (best >= 0) link(step, best, 'walk');
+      }
     } else {
       const bal = node([mx + ox * 0.6, my + oy * 0.6, f.z0 + 0.05], 'floor', f.building);
       link(inside, bal, 'door');

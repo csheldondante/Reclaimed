@@ -121,7 +121,8 @@ function lanes(t: TileMesh, spec: CitySpec, r: () => number): void {
     let a = turn + (i / k) * Math.PI * 2 + (r() - 0.5) * 0.6;
     for (let d = tile * 1.5; d < R; d += tile * 0.4) {
       a += (fbm(d * 0.05, i * 7.3, spec.seed) - 0.5) * 0.12;
-      near(cx + Math.cos(a) * d, cy + Math.sin(a) * d, tile * 0.55);
+      // (the main lanes two tiles wide near the middle, narrowing outward: the plan reads from afar)
+      near(cx + Math.cos(a) * d, cy + Math.sin(a) * d, tile * (d < R * 0.6 ? 0.95 : 0.6));
     }
   }
   const ring = R * (0.5 + r() * 0.15);
@@ -130,7 +131,7 @@ function lanes(t: TileMesh, spec: CitySpec, r: () => number): void {
       const rr = ring * (1 + (fbm(Math.cos(a) * 2, Math.sin(a) * 2, spec.seed + 5) - 0.5) * 0.2);
       near(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr, tile * 0.55);
     }
-  for (let q = 0; q < n; q++) if (Math.hypot(centres[q][0] - cx, centres[q][1] - cy) < tile * 1.8) t.use[q] = 'plaza';
+  for (let q = 0; q < n; q++) if (Math.hypot(centres[q][0] - cx, centres[q][1] - cy) < tile * (R > tile * 10 ? 2.8 : 1.8)) t.use[q] = 'plaza';
 }
 
 // ------------------------------------------------------------------ contour Voronoi

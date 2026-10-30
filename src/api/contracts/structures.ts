@@ -93,6 +93,8 @@ export interface BuildingRec {
   look: number;
   /** a landmark (a mega tile: several tiles under one feature) */
   mega?: MegaKind;
+  /** its quarter of the city (0 the middle) */
+  district?: number;
 }
 
 /** Features several tiles big. */

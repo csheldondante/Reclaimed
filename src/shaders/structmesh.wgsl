@@ -55,7 +55,9 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   let style = o.look >> 16u;
   let pick = spHash((o.look & 0xffffu) * 31u + o.part * 7919u);
   let nVar = u32(spFetch((style * SP_PARTS + o.part) * SP_VARIANTS).w);
-  let vi = pick % max(nVar, 1u);
+  var vi = pick % max(nVar, 1u);
+  // (roofs by district: look bit 15 set → bits 12-14 are the district's roof colour, so a quarter reads from afar)
+  if (o.part == 2u && (o.look & 0x8000u) != 0u) { vi = ((o.look >> 12u) & 7u) % max(nVar, 1u); }
   o.base = spFetch((style * SP_PARTS + o.part) * SP_VARIANTS + vi).rgb;
   return o;
 }
