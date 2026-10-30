@@ -27,6 +27,8 @@ export interface LevelOptions {
   map?: MapData;
   /** sandbox: restart with a loaded map, or a fresh one (undefined) */
   onLoadMap?: (map: MapData | undefined) => void;
+  /** the loading screen: called once the level is built (0), then as it settles (to 1) */
+  progress?: (f: number) => void;
 }
 
 /** sandbox: column slots per chunk, so placed models and strata have room */
@@ -115,11 +117,12 @@ export class LevelScene implements Scene {
   /** Builds the level and settles it (rivers, slopes) before returning. */
   static async create(host: Host, audio: Ambience, perf: PerfOverlay, levelId: string, onExit: () => void, opts: LevelOptions = {}): Promise<LevelScene> {
     const s = new LevelScene(host, audio, perf, levelById(levelId), onExit, opts);
+    opts.progress?.(0);
     // ecology excluded so nothing grows during settling; ground debris (dust,
     // litter, fallen leaves) accumulates fast so the level opens with it lying about.
     // A saved map was settled when it was saved: a short prime only.
     s.core.globals.debrisBoost = opts.map ? 1 : 10;
-    await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology');
+    await s.core.warmup(opts.map ? 30 : WARMUP_TICKS, (sys) => sys.name !== 'ecology', opts.progress);
     s.core.globals.debrisBoost = 1;
     s.attach();
     return s;

@@ -17,6 +17,9 @@ import { looseIntoGrid } from '../world/loose';
 import { DayNight, type Daylight } from '../weather/daynight';
 import { Weather } from '../weather/weather';
 
+/** a warmup with a progress callback reports this many times */
+const WARMUP_SLICES = 20;
+
 export interface Quality {
   renderScale: number;
   maxDpr: number;
@@ -108,16 +111,28 @@ export class WorldCore {
     this.light = this.dayNight.light(1);
   }
 
-  /** Settle the generated world with the real systems before anyone looks. */
-  async warmup(ticks: number, filter?: (s: SimSystem) => boolean): Promise<void> {
+  /**
+   * Settle the generated world with the real systems before anyone looks.
+   * With `progress`, each slice of the ticks is reported (0..1) as the GPU
+   * finishes it: the loop submits every tick at once (~0.15 s for the level's
+   * 1800, which take the GPU ~7 s), so progress is the GPU's, not the loop's.
+   */
+  async warmup(ticks: number, filter?: (s: SimSystem) => boolean, progress?: (f: number) => void): Promise<void> {
+    const { queue } = this.host.gpu.device;
+    const slice = Math.ceil(ticks / WARMUP_SLICES);
     this.sim.prime(this.globals);
     for (let i = 0; i < ticks; i++) {
       // support needs a few ticks to propagate before collapse can be judged
       this.globals.collapseEnabled = i > 120;
       this.sim.step(this.globals, filter);
+      if (progress && (i + 1) % slice === 0 && i + 1 < ticks) {
+        const f = (i + 1) / ticks;
+        void queue.onSubmittedWorkDone().then(() => progress(f));
+      }
     }
     this.globals.collapseEnabled = true;
-    await this.host.gpu.device.queue.onSubmittedWorkDone();
+    await queue.onSubmittedWorkDone();
+    progress?.(1);
   }
 
   /** Advance light, weather and the fixed-step simulation. Returns ticks run. */

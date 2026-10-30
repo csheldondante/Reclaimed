@@ -13,6 +13,13 @@ own one and dispose it on exit (WorldGpu.destroy frees every buffer made via
 `buf()`; in-flight readbacks reject with AbortError, swallowed by
 `ignoreTeardown`).
 
+Every scene loads behind the loading screen (`ui/loader.ts`; markup in
+`index.html` so it shows before the script arrives). `main.ts` moves its bar
+at each boot stage and passes a `progress(f)` callback through
+`MenuScene.init` / `LevelOptions.progress` to `WorldCore.warmup`, which
+reports each finished slice of the warmup ticks. Switching scenes brings the
+screen back and disposes the old scene before the new one is built.
+
 ## Frame
 
 ```

@@ -2344,3 +2344,40 @@ about:config (the menu diorama draws, headless, no other prefs needed), so
 the unsupported message now says so. Checked after the change, headless
 Firefox: without the pref, the "can't run here" overlay with that text; with
 it, the menu.
+
+## 2026-10-30 — a loading screen instead of a grey page (LD1)
+
+The page sat on the grey body colour while it booted. Now `#loading` (in
+index.html, so it paints before the 420 KB script has arrived) shows the
+title, a thin bar and a caption that cycles through 22 little jobs ("Growing
+trees…", "Architecting buildings…", "Rusting the girders…") every 1.6 s, in a
+fresh order each load. `ui/loader.ts` drives it.
+
+The bar follows real stages, placed by measured time (headless Chrome,
+Linux/Vulkan, 1200×750). Menu boot: script running 52 ms, GPU up 88 ms,
+menu built 437 ms, warmup done 1101 ms (most of it the first slice: shader
+compiles). So `BAR = { script 0.03, gpu 0.07, menuBuilt 0.3 }`. For a level,
+the build is ~0.4 s and the 1800-tick warmup ~8 s, so `levelBuilt 0.05`.
+`WorldCore.warmup(ticks, filter, progress)` reports 20 slices.
+
+How the warmup reports. First try: await each slice before submitting the
+next. That left the GPU idle while the page painted. Boot to a playable
+level (?skipmenu=1): 9.4 / 11.2 / 16.4 s, against 8.4 / 8.4 / 8.9 s on main.
+Measured split: the JS loop submits all 1800 ticks in 0.11–0.19 s, and the
+GPU takes ~6.7 s to run them, finishing slices at a steady ~0.33 s each. So
+the warmup submits every tick at once, as before, and listens for each
+slice finishing (`onSubmittedWorkDone()` after its last tick). Same
+alternating runs after: boot → level 8.7 / 8.6 / 8.0 s (main 8.5 / 8.7 /
+11.7); menu → level 10.7 / 8.2 / 9.3 s (main 10.8 / 7.5 / 9.0). The only
+added wait is the 0.25 s fade-in when switching scenes.
+
+Nothing waits for an animation frame, because browsers pause those in
+background tabs. A load in a tab that stays hidden still finishes (8.8 /
+11.5 s; main 9.7 s). Switching scenes brings the screen back, then disposes
+the old scene so it stops drawing while the new one is built.
+
+Checked: Chrome boot → menu → Begin → level, the sandbox's "new" (level →
+level: one editor, one HUD after), Firefox 157 with `dom.webgpu.enabled`
+(menu), and Firefox without WebGPU (the "can't run here" overlay sits above
+the loading screen: `.fatal` z-index 100, `#loading` 40, above the editor
+panel's 20).
