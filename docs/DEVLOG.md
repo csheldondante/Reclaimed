@@ -13769,3 +13769,21 @@ draws them (stones grey, statues gold, sites ringed). Tests: src/terrain/props.t
 Tests on Dawn (no browser): test/gpu/terrain-atlas.test.ts (a 512² atlas built with the terrain's WGSL: the graph from
 the GPU's samples, the flood = CPU, columns over a river), terrain-caves.test.ts (open runs at cliffs over a whole small
 world), terrain-diag.test.ts (TERRAIN_DIAG="x,y": the default atlas probed round a point). npm test: all pass.
+
+**Follow-up: lakes kept, gorges readable, the sea only where it reaches, the gpu tier isolated.**
+- TR22: the gorges drained two plateau lakes and moved rivers and roads, because the rivers and lakes are found on the
+  macro ground and the gorges were in it. Avoid, not refill: the hydrology is the atlas's steady state, and a gorge (10-30
+  cells, under the 8-cell texel's intent) shouldn't move it world-wide; refilling with the flood would make every gorge a
+  lake touches a reservoir and still shift the rivers. The macro pass now has no gorges (AtlasP.macroPass, PARAM_BYTES
+  144 → 160); per cell a gorge stops at a lake's rim (g.lk) and under rivers (g.rx).
+- The gorges were too deep and narrow for the fixed view: the camera's focus on a gorge's floor set off the cutaway (a
+  flat plane walled by black slabs — TR23, in places' build too: the renderer's). Now 10-28 deep and half again as wide
+  (GORGE_W 0.085 → 0.13): a broad floor between tiered walls that reads from above. A Dawn probe over the whole world
+  (test/gpu/terrain-find.test.ts, TERRAIN_FIND=gorge) lists gorges to frame: 0.9 % of the world's samples. Pictures at the
+  play zoom: C:/Projects/shots88/terrain/gorge4-a.png (the floor and the tiered walls, the plateau's lakes kept),
+  gorge4-b.png (a desert gorge, hoodoos on the rim), gorge4-phone-a.png (the phone proxy).
+- terrain/sea.wgsl: the sea's water stands only where the sea reaches (its own regions and land within 24 of the coast),
+  in the window (forms.wgsl) and in the rings (lod.wgsl) alike — a basin dipping under the sea's level inland is dry until
+  flooded (the flood tool). A first step of TR7; the sea's level is still AP.sea.
+- The gpu tier: each file in a fresh worker (TK12, docs/TESTING.md). In this worktree one shared worker died as soon as a
+  second file made a WorldCore — with only places' own gpu files — and never in a fresh worktree at the same commit.

@@ -16,7 +16,7 @@
 
 /** the network's period (world units) and a gorge's half-width at the rim in the noise's units */
 const GORGE_PER: f32 = 420.0;
-const GORGE_W: f32 = 0.085;
+const GORGE_W: f32 = 0.13;
 
 struct Gorge {
   /** the ground cut down to this (1e9: no gorge) */
@@ -39,7 +39,7 @@ fn gorgeAt(u: vec2<f32>, top: f32, low: f32, dl: f32) -> Gorge {
   let wj = pworley(u * f32(pj), vec2<i32>(pj), 0.9, AP.seed + 903u);
   let hj = hf(pcg(wj.id ^ (AP.seed * 0x3c6ef372u)));
   x = clamp(x + (hj - 0.5) * 0.14, 0.0, 1.0);
-  let full = 14.0 + 30.0 * (0.5 + 0.5 * pfbm(u, perOf(300.0), 2u, AP.seed + 904u));
+  let full = 10.0 + 18.0 * (0.5 + 0.5 * pfbm(u, perOf(300.0), 2u, AP.seed + 904u));
   // (no deeper than the low ground beyond the plateau's edge: near the edge its floor meets it — a way in)
   let D = min(full * mask, max(top - low - 2.0, 0.0)) * (0.35 + 0.65 * smoothstep(0.0, 60.0, dl + 40.0));
   if (D < 3.0) { return o; }

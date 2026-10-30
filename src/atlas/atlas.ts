@@ -27,6 +27,7 @@ import composeW from './compose.wgsl?raw';
 import terrainRiverW from '../terrain/river.wgsl?raw';
 import terrainCaveW from '../terrain/cave.wgsl?raw';
 import terrainGorgeW from '../terrain/gorge.wgsl?raw';
+import terrainSeaW from '../terrain/sea.wgsl?raw';
 import formsW from './forms.wgsl?raw';
 import noiseW from './noise.wgsl?raw';
 import patsimW from './patsim.wgsl?raw';
@@ -563,7 +564,7 @@ const RIVER_SHEET: f32 = ${RIVER_SHEET.toFixed(2)};
 const RIVER_LEVEE: f32 = ${RIVER_LEVEE.toFixed(2)};
 `;
     // (round 117: terrain/river.wgsl — the rivers' course and cross-section, the terrain track's)
-    return [noiseW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, rivers, ...own];
+    return [noiseW, commonW, patternsW, composeW, terrainRiverW, terrainCaveW, terrainGorgeW, terrainSeaW, rivers, ...own];
   }
 
   writeParams(e: Extra = {}, into = this.paramBuf): void {
