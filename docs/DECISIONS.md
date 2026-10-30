@@ -3,6 +3,31 @@
 Authoritative answers from the user. Newest first. The DEVLOG records how
 each was implemented.
 
+## 2026-10-30 — round 119 (session 5) — after trying the six tracks
+
+- The user, verbatim:
+
+> Let's move the old settlement code over and have them actually use the new structures. Can we get farms and smaller huts for lower population density? Is it density driven+grid based now?
+>
+> Most of this looks great. I think sea caves still need a lot of work and I had some bad performance with the birches on mobile. The creature editor and plant editor are fun but I have ideas on how to improve both. I need to actually play a generated run and try it out. Was there a link? Really awesome work overall.
+
+- The user, verbatim, on drawing creatures larger at wide zoom (inhabitants IN13): "Keep the creature small for now I want to add larger creatures but I want to improve the generator even more and talk through increasing the quality and adding composable creatures via items and mounts." → creatures at true size; a
+  design session on the creature generator's quality and composable creatures (items, mounts) before that work starts.
+- → structures: settle/ moves onto the structures contract (STR15) and towns use the new buildings; farms and small huts
+  where population is thin, density from a field. flora: the birches' cost on the phone. A playable generated run: play,
+  terrain and runplan merged and a run's stages played with the heroes. Sea caves need more work (the user to say what).
+
+## 2026-10-30 — round 118 (session 5, `play`) — the user played the sandbox
+
+- The user, verbatim, after playing branch `play` on the phone:
+
+> I tried it and it's decent! I want to bike to be faster and to try on hills. I didn't try the grappling hook yet but can you swipe to cut it and release early? It would be cool to pull enemies in or drag them that way too or to pull up along other vehicles. Either way this is cool!
+>
+> For the lich the telekinesis controls much better. I do want the life drain to float them up in front of the lich but this is fine for now.
+
+- → BACKLOG PL11-PL14 (`play`): a faster bike, spawned on hills; the hook cut early by a swipe, enemies pulled in or dragged on
+  the line, the bike reeled up alongside other vehicles; the lich's life drain floats its victim up in front of the lich.
+
 ## 2026-10-30 — round 117 (session 5) — design session, part 1: intent for the generator tracks
 
 The six tracks of round 116 were stopped before building ("How are they running if we have not had a design session for
