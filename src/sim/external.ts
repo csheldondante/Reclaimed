@@ -34,7 +34,7 @@ export const MESHINST = typeof location !== 'undefined' && new URLSearchParams(l
 export type OwnerId = number;
 /** the resting rock (game/integrity.ts: a rigid body come to rest stays its mesh) */
 export const OWNER_ROCK: OwnerId = 1;
-/** (round 117) a city's buildings (src/structures/host.ts: one instance a building, its walls one more) */
+/** (round 117/119) the settlements' buildings (src/settle/view.ts: one instance a building, a wall run, a bridge) */
 export const OWNER_STRUCT: OwnerId = 2;
 
 export interface ExternalCol {

@@ -21,6 +21,8 @@ struct View {
 @group(0) @binding(3) var shadowSamp: sampler_comparison;
 
 fn hostNight() -> f32 { return V.sun.w; }
+// (the viewer's ground is the plan's)
+fn hostGround(xy: vec2<f32>, planned: f32) -> f32 { return planned; }
 fn spFetch(i: u32) -> vec4<f32> { return spData[i]; }
 
 fn shadowAt(wpos: vec3<f32>, n: vec3<f32>) -> f32 {

@@ -10,6 +10,7 @@ import { fbm } from '../rng';
 import { quadCorners, quadCentre } from '../tiles/builder';
 import { STYLE_IDS } from '../styles';
 import { assetPieces } from '../assets';
+import { library } from '../modules';
 import type { BuriableKind, PlacedAsset } from '../../api/contracts/structures';
 import { ViewerRenderer, type FrameView } from './render';
 import { perspective, lookAt, mul } from './mat';
@@ -153,6 +154,14 @@ async function boot(): Promise<void> {
       focusAt = [0, 0, ground(0, 0) + 4];
       reach = R + 12;
       dist = R * 2.6;
+    } else if (q.has('only')) {
+      // (?only=<module name prefix>: just those pieces — to see what a piece is)
+      const pre = q.get('only')!;
+      const lib = library();
+      r.sg.set(filter(all, (i) => lib.modules[all!.module[i]].name.startsWith(pre)));
+      focusAt = [0, 0, ground(0, 0) + 4];
+      reach = state.r + 30;
+      dist = state.r * 2.7;
     } else {
       r.sg.set(all);
       focusAt = [0, 0, ground(0, 0) + 4];
@@ -449,7 +458,7 @@ function panel() {
     ov.append(b);
   }
   el.append(ov);
-  // the city on real terrain: the game's atlas, the town nearest the start handed to this generator (src/structures/host.ts)
+  // the city on real terrain: the game's atlas, the town nearest the start planned with these settings (settle/plan.ts via Settlements.override)
   const terrain = document.createElement('a');
   terrain.className = 'terrain';
   terrain.textContent = 'on real terrain ↗';

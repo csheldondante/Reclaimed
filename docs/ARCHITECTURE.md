@@ -2102,6 +2102,10 @@ Claude subagent run with docs/GM.md as its context. Later it will be a model cal
 
 ## Settlements and units in play (round 88, branch `settlements`; docs/SYSTEMS.md 6, 7, 12)
 
+(Round 119, branch `structures`: the planning, the buildings and their stamping moved onto the structures contract —
+ARCHITECTURE "Structures", *Settlements on it*. Below, what each building is and what's stamped is as of round 88;
+the records, rights, life and rates still hold.)
+
 - **Records (atlas scale).** `Settlements` (src/settle/settlements.ts) makes one `Settlement` (settlement.ts) per
   atlas site from the world wiki built live (`buildWiki(atlasFacts(atlas))`: the ids `s<n>`, names, regions and
   realms the GM's stories use). records.ts picks each one's `CivProfile` (data/recipes/civs.json, by the realm's
@@ -2239,8 +2243,8 @@ module warps over a patch as over a tile), a radial city's keep on its plaza (it
 (STR13, `spec.sunk`): floors on the ground's low side, backs in the hill, buried walls blank. **Growth** (STR16):
 `plan.order` (the old core first) and `grown(plan, p)` — stored progress is one number. **Placed assets** (STR14): affine
 pieces (flags bit 2: a 3 × 4 transform, the module in metres) via `assetPieces`, for the terrain track's buried things.
-**Frames:** a plan's coordinates are its spec's frame; the game's host plans in the window's and moves the plan (tiles,
-nav, megas, linear) with the land on a slide (`shiftPlan`), so agents read `reclaimed.city().plan.nav` as the window is.
+**Frames:** a plan's coordinates are its spec's frame (a settlement's: its box's — settle/view.ts moves its pieces and
+claims into the window's); `shiftPlan` moves a plan's own frame where a host needs it.
 
 **The far look** (STR10): walls and roofs have a far module (`Library.lodOf`: flat openings and beams on the slab; roofs'
 tops only); `StructureGpu.draw(pass, lod)` draws the same instances with it. The game picks it by zoom
@@ -2258,11 +2262,44 @@ hill, slope), time of day; building (one building isolated: `isolate` re-works i
 city; drag to turn, wheel or pinch to zoom, right-drag or two fingers to pan; tile and nav overlays; every setting in the
 URL. scripts/structshot.mjs shoots it; scripts/perf/structures.mjs measures it.
 
-**In the game** (src/structures/host.ts `CityHost`, `?city=<system>` on the atlas level): the nearest town or city to the
-start is handed off (`Settlements.handedOff`: not stamped); the plan is made in the window's frame on its ground and
-water as made; each building's columns are one External instance (`OWNER_STRUCT`) from its foot to a metre under its
-walls' tops (what grows on the top stays inside); cut or loose → let go to rubble, its pieces gone behind dust; before
-a slide, buildings leaving let go (to air), after it the plan moves and they claim again. `reclaimed.city()`.
+**Density** (round 119; the user: "Can we get farms and smaller huts for lower population density? Is it density
+driven+grid based now?"): `planCity(spec, ground, water?, density?)` takes a `DensityFn` (people per area, 0..1). The
+tile systems (and the farmland's) are the grid; the density decides what is built on each tile: whether a lot is built
+(p = 1.6 × density), its kind — a town `house` at or over `HOUSE_D` (0.42), a thatched `hut` under it (one storey, two
+now and then near the line), a house's storeys rising from the rim's to the middle's with the density — and the
+farmland's plots: `farmstead` (a farmhouse and a barn on the plot's lots; likelier where there are more people and by the
+roads), else crop strips, orchards, pastures (fewest people: pastures and fields). No hard rings: the kinds follow the
+field, and where houses and huts meet they mix. Without a field (the viewer) `defaultDensity(spec)`: a smooth fall-off
+with noise plus a thin country out to the farmland's edge.
+
+**The farmland** (`tiles/farmland.ts`, `spec.farmland` the outer radius): Voronoi plots over the ring past the town, each
+inset by a lane; a field cut into strips 5-7 m wide along its long way, each strip a quad (its straightest corners
+dropped; a wedge left as pasture) cut every ~6 m along; a farmstead's plot cut into lots; its outline a fence or hedge
+(a linear feature, straight between its posts). Modules: `crop` (tilled soil, five ridges, in four along its length),
+`fruittree`, `fence`, `hedge`; huts (`hut:*`: daub between timbers, small shuttered windows), barns (`barn:*`: planks, a
+wide door), thatch roofs (`roof:…:thatch`, deep eaves). Parts 15-18 (Thatch, Plank, Soil, Crop).
+
+**Draped pieces** (flags bit 4): what lies on the ground — paving, crops, fences, hedges — is laid by the host on the
+ground as it is now (`hostGround`: the game's column top plus its loose ground; the viewer's the plan's), not as the plan
+saw it (a road graded, a bank eroded since).
+
+**Settlements on it** (round 119, STR15; src/settle/): one concern each —
+- `plan.ts` *plans*: a settlement's record, civ profile and box ground → `planCity` (its tile system the profile's first
+  grid style, its style from its architecture — fortified/squat: bastion; terraces, flat roofs, tall: terrace; else
+  hearth —, storeys from the profile, walls if fortified, farmland out to R + 36 m, the quarry kept out) with the density
+  from the settlement's growth field (`field.ts`, by size: a hamlet's middle reaches huts, a city's town houses, plus a
+  thin country). Then the record: each standing building a `Building` + `Instance` (the hall, the granary, the workshop,
+  the temple (the dome), an adapted ruin (a tower), houses and huts; barns are granaries), doors as spots; the frontier
+  (the last 10% of the town's build order) not up yet: two sites, the rest room to grow; fields from the farmland's crop
+  plots. `SettlementPlan.city` is the structures plan, `standing` its storeys up per building. The land gets only the
+  ground works (stalls, piles, the quarry, the camp, bare ground under fields, streets and buildings).
+- `view.ts` *shows and claims*: every planned settlement within 1400 m drawn as pieces (`Renderer.enableStructures`), each
+  standing building's columns an External instance (`OWNER_STRUCT`); cut or loose → rubble + dust, the building no longer
+  standing; slides let go and claim again. `reclaimed.settlementsView()`.
+- `life.ts` *lives*: builders raise a site storey by storey (`LifeIO.raise` → the plan's `standing` → the view), its roof
+  when the last is up; the rest as before.
+- `raster.ts` (the far land's stamps) is told where the roofs are (`rasterColumns`): buildings aren't in the columns.
+- `?city=<system>&cstyle=&cseed=&croads=&cwalls=1` plans the town nearest the start with those (`Settlements.override`).
 
 ## Instrumentation (round 100, branch `hitchrec`)
 

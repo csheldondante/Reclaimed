@@ -6,7 +6,7 @@
 // tiles, ~100 KB), made once when its land arrives, and its hard parts are sequential (WFC's propagation, growing
 // buildings tile by tile). What is large or per-frame — drawing its pieces, stamping its columns — is on the GPU.
 // Measured: data/perf/structures-*.json (plan ms per city size).
-import type { BuildingKind, BuildingRec, CityPlan, CitySpec, DensityFn, Facade, FacadeKind, GroundFn, MegaFeature, Span, TileMesh, TileUse, V2 } from '../api/contracts/structures';
+import type { BuildingKind, BuildingRec, CityPlan, CitySpec, DensityFn, Facade, FacadeKind, GroundFn, MegaFeature, Span, TileMesh, TileUse, V2, V3 } from '../api/contracts/structures';
 import { tileSystem } from './tiles/systems';
 import { farmland, mergeTiles } from './tiles/farmland';
 import { adjacency, quadArea, quadCentre, quadCorners } from './tiles/builder';
@@ -57,9 +57,33 @@ export function planCity(spec: CitySpec, ground: GroundFn, water?: GroundFn, den
     farmBlock0 = b0 + 1;
     const roadPts: V2[] = [];
     for (const f of linear) if (f.kind === 'road') for (const s of resample(f, 8)) roadPts.push([s.p[0], s.p[1]]);
-    tiles = mergeTiles(core, farmland({ spec, ground, density: dens, rIn: spec.radius, rOut: spec.farmland!, roads: roadPts, block0: farmBlock0 }));
+    const farm = farmland({ spec, ground, density: dens, rIn: spec.radius, rOut: spec.farmland!, roads: roadPts, block0: farmBlock0 });
+    tiles = mergeTiles(core, farm.mesh);
+    // the plots' fences and hedges: linear features round them (posts every ~3 m on the ground; under water, none)
+    for (const f of farm.fences) {
+      const pts: V3[] = [];
+      for (let k = 0; k < f.pts.length; k++) {
+        const a = f.pts[k];
+        const b = f.pts[(k + 1) % f.pts.length];
+        const n = Math.max(1, Math.ceil(Math.hypot(b[0] - a[0], b[1] - a[1]) / 3));
+        for (let j = 0; j < n; j++) {
+          const x = a[0] + ((b[0] - a[0]) * j) / n;
+          const y = a[1] + ((b[1] - a[1]) * j) / n;
+          pts.push([x, y, ground(x, y)]);
+        }
+      }
+      if (water && pts.some((p) => water(p[0], p[1]) > 0.3)) continue;
+      if ((spec.keepOut ?? []).some((k) => pts.some((p) => Math.hypot(p[0] - k.at[0], p[1] - k.at[1]) < k.r))) continue;
+      linear.push({ kind: f.hedge ? 'hedge' : 'fence', points: pts, ground: pts.map((p) => p[2]), width: f.hedge ? 0.7 : 0.18, closed: true });
+    }
   }
   const isFarm = (q: number) => tiles.block[q] >= farmBlock0;
+  // (what's kept out — a quarry, its spoil — is left to the ground)
+  for (const k of spec.keepOut ?? [])
+    for (let q = 0; q < tiles.use.length; q++) {
+      const [x, y] = quadCentre(tiles, q);
+      if (Math.hypot(x - k.at[0], y - k.at[1]) < k.r) tiles.use[q] = 'outside';
+    }
   const t1 = performance.now();
   const r = rng(spec.seed * 31 + 11);
   const style = styleOf(spec.style);
@@ -565,6 +589,20 @@ export function grown(plan: CityPlan, progress: number): CityPlan {
  * A plan with only these buildings (id → storeys to keep: Infinity all, a negative −k: k storeys and no roof — a site);
  * the façades worked out again for what stands (walls a missing neighbour hid are shown).
  */
+/**
+ * The town as it stands: per building its storeys up (0: not yet; fewer than its own: a site, no roof yet) — stored
+ * progress building by building (a settlement in play raises its sites storey by storey).
+ */
+export function standingPlan(plan: CityPlan, storeys: ArrayLike<number>): CityPlan {
+  const keep = new Map<number, number>();
+  for (const b of plan.buildings) {
+    const n = storeys[b.id];
+    if (n <= 0) continue;
+    keep.set(b.id, n >= b.storeys ? Infinity : -n);
+  }
+  return subset(plan, keep);
+}
+
 function subset(plan: CityPlan, keep: Map<number, number>): CityPlan {
   const nq = plan.tiles.use.length;
   const quadBuilding = new Int32Array(nq).fill(-1);

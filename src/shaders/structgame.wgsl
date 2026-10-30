@@ -6,6 +6,17 @@
 fn spFetch(i: u32) -> vec4<f32> { return bitcast<vec4<f32>>(instances[i]); }
 // (the day/night cycle's darkness: G.sky.w, 1 at night — render.wgsl haze)
 fn hostNight() -> f32 { return smoothstep(0.3, 0.8, G.sky.w); }
+// (a draped piece on the window's ground now: its column's top (the field mesh draws the ground through it); past the window,
+// the plan's)
+// (the field mesh draws soft ground up to about a cell over its column's whole-cell top: half that lifts a draped piece onto
+// it)
+const DRAPE_LIFT: f32 = 0.15;
+fn hostGround(xy: vec2<f32>, planned: f32) -> f32 {
+  let c = cellAt(xy);
+  if (!inMap(c)) { return planned; }
+  // (the loose ground lying on it too: drift, sand, soil — render.wgsl's bed)
+  return sfZ(surface[colIdxI(c)]) + driftAt(c) + DRAPE_LIFT;
+}
 
 struct SGOut {
   @builtin(position) pos: vec4<f32>,

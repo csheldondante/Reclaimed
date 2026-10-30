@@ -576,15 +576,22 @@ function barnSet(lod: boolean): Module[] {
 /** a field's strip: tilled soil, the crop in rows along it (frame: the strip; its top a height over the ground) */
 function crop(): Module {
   const k = new Kit();
-  k.box(0, 1, 0, 1, 0, 0.3, Part.Soil, 16);
-  const rows = 5;
-  for (let i = 0; i < rows; i++) {
-    const v0 = (i + 0.15) / rows;
-    const v1 = (i + 0.85) / rows;
-    const vm = (v0 + v1) / 2;
-    // a ridge of the crop: a low prism along the strip
-    k.quad([0, v0, 0.3], [1, v0, 0.3], [1, vm, 1], [0, vm, 1], Part.Crop);
-    k.quad([0, vm, 1], [1, vm, 1], [1, v1, 0.3], [0, v1, 0.3], Part.Crop);
+  // (in four along its length: a draped crop's vertices each find the ground — structmesh.wgsl hostGround — so it bends
+  // with a slope between its ends)
+  const segs = 4;
+  for (let g = 0; g < segs; g++) {
+    const u0 = g / segs;
+    const u1 = (g + 1) / segs;
+    k.box(u0, u1, 0, 1, 0, 0.3, Part.Soil, 16 | (g > 0 ? 1 : 0) | (g < segs - 1 ? 2 : 0));
+    const rows = 5;
+    for (let i = 0; i < rows; i++) {
+      const v0 = (i + 0.15) / rows;
+      const v1 = (i + 0.85) / rows;
+      const vm = (v0 + v1) / 2;
+      // a ridge of the crop: a low prism along the strip
+      k.quad([u0, v0, 0.3], [u1, v0, 0.3], [u1, vm, 1], [u0, vm, 1], Part.Crop);
+      k.quad([u0, vm, 1], [u1, vm, 1], [u1, v1, 0.3], [u0, v1, 0.3], Part.Crop);
+    }
   }
   return k.done('crop');
 }

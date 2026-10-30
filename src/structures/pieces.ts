@@ -15,6 +15,8 @@ import { resample, segFrame, WALL_WALK } from './linear';
 export const PIECE_FLOATS = 16;
 /** flags: the top is a height over the foot (paving that follows the ground) */
 export const REL = 1;
+/** flags: draped — the host lays it on the ground as it is now (structmesh.wgsl hostGround) */
+export const DRAPE = 4;
 /** a wall's thickness (m) */
 export const WALL_T = 0.35;
 /** the roof's lift over the walls' tops (m) */
@@ -221,27 +223,17 @@ export function piecesOf(plan: CityPlan): StructurePieces {
       // (the ground's own); fences or hedges round each plot, on the sides with another plot or none beside
       out.owner = -1000;
       const plotLook = styleIx * 65536 + (hashf(t.block[q], seed, 43) * 4096) | 0;
-      if (u === 'field') out.add(lib.id('crop'), p, footOf(q, 0.12), 0.42, plotLook, hashf(q, 44), REL);
+      if (u === 'field') out.add(lib.id('crop'), p, footOf(q, 0.12), 0.42, plotLook, hashf(q, 44), REL | DRAPE);
       else if (u === 'orchard') {
         const c: V2 = [(p[0][0] + p[1][0] + p[2][0] + p[3][0]) / 4, (p[0][1] + p[1][1] + p[2][1] + p[3][1]) / 4];
         const s = 2.2;
         const z = gz[t.quads[q * 4]] - 0.1;
         out.add(lib.id('fruittree'), [[c[0] - s, c[1] - s], [c[0] + s, c[1] - s], [c[0] + s, c[1] + s], [c[0] - s, c[1] + s]], z, z + 4.2, plotLook, hashf(q, 45));
       }
-      const hedged = hashf(t.block[q], seed, 46) < 0.35;
-      for (let s = 0; s < 4; s++) {
-        const n = adj[q * 4 + s];
-        if (n >= 0 && t.block[n] === t.block[q]) continue;
-        const a = p[s];
-        const b2 = p[(s + 1) % 4];
-        const za = gz[t.quads[q * 4 + s]];
-        const zb = gz[t.quads[q * 4 + ((s + 1) % 4)]];
-        out.add(lib.id(hedged ? 'hedge' : 'fence'), wallFrame(a, b2, hedged ? 0.7 : 0.18), [za - 0.1, zb - 0.1, zb - 0.1, za - 0.1], hedged ? 1.3 : 1.15, plotLook, 0, REL);
-      }
       continue;
     }
     if (u === 'street' || u === 'plaza') {
-      out.add(lib.id('pave'), p, footOf(q, 0.25), 0.37, look(-1), hashf(q, 11), REL);
+      out.add(lib.id('pave'), p, footOf(q, 0.25), 0.37, look(-1), hashf(q, 11), REL | DRAPE);
       if (u === 'street' && hashf(q, seed, 12) < 0.05) {
         const c: V2 = [(p[0][0] + p[2][0]) / 2, (p[0][1] + p[2][1]) / 2];
         const s = 0.22;
@@ -297,7 +289,15 @@ export function piecesOf(plan: CityPlan): StructurePieces {
     const L = look(-1);
     // (a wall run or a bridge is its own External instance, −2 − its index: cut, only it goes)
     out.owner = f.kind === 'wall' || f.kind === 'bridge' ? -2 - fk : -1000;
-    if (f.kind === 'road' || f.kind === 'rail') {
+    if (f.kind === 'fence' || f.kind === 'hedge') {
+      // a plot's fence or hedge: a segment between each pair of posts, on the ground at both
+      const S = resample(f, 3);
+      for (let i = 0; i + 1 < S.length; i++) {
+        const a = S[i];
+        const b = S[i + 1];
+        out.add(lib.id(f.kind), segFrame(a, b, f.width), [a.g - 0.1, b.g - 0.1, b.g - 0.1, a.g - 0.1], f.kind === 'hedge' ? 1.3 : 1.15, L, hashf(i, 20), REL | DRAPE);
+      }
+    } else if (f.kind === 'road' || f.kind === 'rail') {
       const S = resample(f, 3);
       for (let i = 0; i + 1 < S.length; i++) {
         const a = S[i];

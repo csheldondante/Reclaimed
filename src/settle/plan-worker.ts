@@ -3,7 +3,7 @@
 // planned (plan.ts, as on arrival) and rastered (raster.ts). Posts back the stamp alone.
 // (Round 102, `gpugen`: and the exact plans — ExactPlanJob — on the raw ground the GPU made of the box (Atlas.rawGround):
 // planned and rastered here, the whole plan posted back; the main thread never plans.)
-import { planSettlement, type SettlementPlan } from './plan';
+import { planSettlement, rasterColumns, type SettlementPlan } from './plan';
 import { rasterPlan } from './raster';
 import { stampWays, type Ways } from '../atlas/ways';
 import { ROW_H } from '../world/lattice';
@@ -75,7 +75,7 @@ self.onmessage = (e: MessageEvent<FarPlanInit | FarPlanJob | ExactPlanJob>) => {
       const t0 = performance.now();
       const plan = planSettlement({ ...j.seed, ground: j.ground, water: j.water, top: j.top, veg: j.veg, sea: j.sea, regionAt: regionAtIn(W, box) });
       const t1 = performance.now();
-      const stamp = rasterPlan(j.id, plan.columns, box, j.ground, j.top);
+      const stamp = rasterPlan(j.id, rasterColumns(plan, j.seed.civ.look.roof, j.seed.civ.look.foundation), box, j.ground, j.top);
       const t2 = performance.now();
       const out: ExactPlanDone = { id: j.id, plan, stamp, ms: [+(t1 - t0).toFixed(1), +(t2 - t1).toFixed(1)] };
       (self as unknown as Worker).postMessage(out, [stamp.px.buffer, stamp.px4.buffer]);
@@ -103,7 +103,7 @@ self.onmessage = (e: MessageEvent<FarPlanInit | FarPlanJob | ExactPlanJob>) => {
   const regionAt = regionAtIn(W, box);
   const plan = planSettlement({ ...j.seed, ground: j.ground, water: j.water, top: j.top, veg: j.veg, sea: j.sea, regionAt });
   const t2 = performance.now();
-  const stamp = rasterPlan(j.id, plan.columns, box, j.ground, j.top);
+  const stamp = rasterPlan(j.id, rasterColumns(plan, j.seed.civ.look.roof, j.seed.civ.look.foundation), box, j.ground, j.top);
   const t3 = performance.now();
   const out: FarPlanDone = { id: j.id, stamp, ms: [+(t1 - t0).toFixed(1), +(t2 - t1).toFixed(1), +(t3 - t2).toFixed(1)] };
   (self as unknown as Worker).postMessage(out, [stamp.px.buffer, stamp.px4.buffer]);

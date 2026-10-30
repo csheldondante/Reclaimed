@@ -218,6 +218,8 @@ export function bakeNav(plan: CityPlan, adj: Int32Array): NavGraph {
   };
   const ends: { at: V3; id: number }[] = [];
   for (const f of plan.linear) {
+    // (fences and hedges are borders, not ways)
+    if (f.kind === 'fence' || f.kind === 'hedge') continue;
     const S = resample(f, 4);
     if (S.length < 2) continue;
     const surface: NavSurface = f.kind === 'wall' ? 'rampart' : f.kind === 'bridge' ? 'bridge' : 'street';

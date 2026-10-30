@@ -13814,3 +13814,65 @@ façades worked out again for what stands (a wall a missing neighbour would hide
 number per town (`CitySpec.progress`; the game `&cgrow=`, the viewer's `grown` slider); the plan is re-made from the spec.
 Agents building a site, and progress advancing by rate × elapsed time while away, are the inhabitants' and the run's.
 Shots: grow-0.png (0.15: the core round the plaza, the temple and the towers), grow-1.png (0.55).
+
+## 2026-10-30 — round 119 (`structures`): the settlements on the structures contract; density drives what's built (STR15)
+
+The user (DECISIONS round 119): "Let's move the old settlement code over and have them actually use the new structures.
+Can we get farms and smaller huts for lower population density? Is it density driven+grid based now?"
+
+**The question, answered.**
+- *Before*: grid based, barely density driven. A settlement's districts were overlay grids (settle/grids.ts: the four
+  styles → lots → quads), a fields lattice round it. The growth field (field.ts) picked *which* lots got houses (built
+  where its intensity passed `BUILT_V` 0.35) and nudged storeys up where it was strong; every building was the same kind
+  of house in the civ's materials, stamped into the columns as voxels (build/town.ts), and the fields a ring of furrowed
+  lots. The structures track's cities (round 117) were grid based with radial fall-offs, no density input at all.
+- *Now*: grid based **and** density driven, as two separate concerns. The grid (the tile system: irregular,
+  contour-voronoi, radial or orthogonal for the town; Voronoi plots for the farmland) says *where tiles are*. The density
+  (`DensityFn`, a settlement's from its growth field) says *what's built on each*: built or a yard; a town house (dense:
+  storeys rising with the density) or a thatched hut (thin); out in the farmland a farmstead (a farmhouse and a barn) or
+  crop strips, an orchard or a pasture (thinnest). Size scales the density (a hamlet's middle reaches huts, a city's town
+  houses), the field is smooth, so the kinds blend: houses and huts mix where they meet, farmsteads string along roads.
+
+**Why one concern each.** settle/plan.ts plans (its town via `planCity` + the record's buildings, spots, jobs, sites);
+settle/view.ts shows and claims (pieces drawn, External columns); life.ts lives (builders raise a site storey by storey:
+`LifeIO.raise`, no voxels stamped). The buildings aren't stamped into the land any more (they were build/town.ts voxel
+columns: the round-117 representation argument — pieces for the look, External spans for the sims). The far land's
+raster is told where the roofs are (`rasterColumns`) since the columns no longer hold them.
+
+**What changes for other systems (contracts unchanged, data changed):**
+- `Settlement` records: the same fields; `buildings[].cells` are the plan's tile ids (were LotGrid cells); `grids` are two
+  (the town's tile system, the farmland); a building's `use` now includes huts' and barns' (barn = granary: `store`).
+- `SettlementPlan`: `city` (the structures plan) and `standing` replace `grids`; `SiteSpec` is a plan building
+  (`building`, `storeys`, `door`) — no polygon, no materials; `free` lists buildings in build order.
+- `LifeIO`: `raise(site, storeys)` replaces `townIO` (no stamping); `LiveSite` has no polygon.
+- Spots (homes, stores, posts, farm, mine, site, pile, trade) and stores' rates as before — the agents' jobs and homes,
+  the GM's facts (wiki: records only) and runplan's region fields don't read the plan. `Settlements.handedOff` and
+  src/structures/host.ts (round 117's one city) are gone: every settlement is a structures town now;
+  `?city=<system>&cstyle=…` plans the nearest town with those (`Settlements.override`).
+- build/town.ts, build/towngrid.ts and settle/grids.ts stay for the sandbox's town tool and the world API (`api/world.ts`)
+  — not the settlements'.
+
+**New in structures:** `DensityFn` and `defaultDensity`; building kinds (house, hut, farmhouse, barn) with their wall
+sets, thatch roofs, steeper hut roofs, a barn's tall storey; the farmland tile system (tiles/farmland.ts) with crop strips,
+orchards, pastures, farmsteads, fences and hedges as linear features; `keepOut` discs (a quarry); draped pieces (flags 4:
+paving, crops, fences laid on the ground as the game has it now — the plan's raw ground was up to ~3 m off where roads
+were graded and banks cut, which showed as crop rows standing in the air); bare columns under fields, streets and
+buildings (no meadow tufts through a crop).
+
+**Measured** (scripts/perf/structcity.mjs, phone proxy 412×915 dpr 2.6, q=low, every system on, parked at the city s55 —
+2356 pieces, 209k triangles full / 59k far): the world pass 2.17 → 2.34 ms with the settlements drawn at the start's
+zoom (the far look), 2.29 → 2.90 ms at ×3. Plans in the game: a city's pieces made in 12 ms when its plan arrives (main
+thread, once), a village's 4-5 ms.
+
+**Tests:** src/settle/plan.test.ts (5: a town's buildings are the plan's with records and doors, two sites and room to grow,
+fields worked; the land gets only ground works and the raster the roofs; a hamlet mostly huts, a city mostly houses,
+farmsteads; a site's roof only when its last storey is up; deterministic); structures.test.ts +3 (dense → houses, thin →
+huts, a falling density mixes them with no ring; farmland strips, fences, farmhouse + barn per farmstead, thatch).
+`npm test` 119 + 1 expected fail; `npm run smoke` passed. In the game (scripts/structtowns.mjs): city s55 (70 houses, 40
+huts, 2 farmsteads, 106 buildings claimed), town s82, village s52 (15 huts, 3 houses, a farmstead, 24 field strips).
+
+**Open:** a field on a steep or cut slope still shows its strip as a plateau with an edge (draped per vertex, 4 along a
+strip); hamlets weren't in this world's atlas to look at; quarry towns (the terrain track's carving) still open.
+
+Shots: C:\Projects\shots88\structures\towns-city-0/1.png, towns-town-0/1.png, towns-village-0/1.png,
+phone-towns-city-0/1.png (phone proxy), dens-0/1.png (viewer: houses → huts → farmland).

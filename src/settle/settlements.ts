@@ -21,15 +21,13 @@ import type { Atlas } from '../atlas/atlas';
 import type { StampOps } from '../atlas/stamps';
 import { GPUGEN } from '../atlas/finish';
 import { GrowthField } from './field';
-import { LotGrid } from './grids';
 import { ROW_H } from '../world/lattice';
 import { atlasFacts } from '../gm/atlas-facts';
 import { buildWiki, type WorldWiki } from '../gm/wiki';
 import { recordsFrom, type SettlementSeed } from './records';
 import { planSettlement, type SettlementPlan } from './plan';
 import { SettlementLife, type LiveSite, type LiveSpot, type RaidOutcome } from './life';
-import { BUILT_V, FIELD_CELL, type SiteSpec } from './plan';
-import type { TownIO } from '../build/town';
+import { BUILT_V, FIELD_CELL, rasterColumns, type SiteSpec } from './plan';
 import { derive } from '../api/contracts/compose';
 import { catalogue } from './catalogue';
 import type { AgentUnits } from '../units/agent-units';
@@ -66,8 +64,6 @@ export interface LiveIO {
   /** the ground, exactly (the world API's terrain.take / put) */
   take(at: V2, amount: number): Promise<{ material: string; amount: number }>;
   put(at: V2, material: string, amount: number): Promise<number>;
-  /** a town's io over the window's columns (what a house going up is stamped through) */
-  townIO: TownIO;
   /** bumped as the window moves */
   epoch(): number;
   /** the ground's heights are in at a window point */
@@ -87,11 +83,10 @@ export interface FarIO {
 export class Settlements {
   readonly wiki: WorldWiki;
   readonly seeds: SettlementSeed[];
-  /**
-   * (round 117, structures — a tweak for main to consolidate) settlements whose buildings another system draws (the
-   * structures track's city, src/structures/host.ts): their land isn't stamped with this system's buildings
-   */
-  readonly handedOff = new Set<string>();
+  /** (round 119) a building's storeys changed in play (a site raised, finished): the view shows it */
+  readonly onRaised: ((id: string, building: number) => void)[] = [];
+  /** (round 119) a settlement's plan made: the view draws it */
+  readonly onPlanned: ((id: string) => void)[] = [];
   private byId = new Map<string, SettlementSeed>();
   private recs = new Map<string, Settlement>();
   private plans = new Map<string, Promise<SettlementPlan>>();
@@ -172,9 +167,23 @@ export class Settlements {
       .map(([, s]) => s);
   }
 
-  /** a settlement's plan, once its land has come in (grids, columns, spots: the debug view's) */
+  /** a settlement's plan, once its land has come in (its town's structures plan, columns, spots: the debug view's) */
   plan(id: string): SettlementPlan | null {
     return this.done.get(id) ?? null;
+  }
+
+  /** (round 119) the settlements planned so far: their seed (box, civ) and plan — what the view draws */
+  plannedAll(): { seed: SettlementSeed; plan: SettlementPlan }[] {
+    const out: { seed: SettlementSeed; plan: SettlementPlan }[] = [];
+    for (const [id, plan] of this.done) out.push({ seed: this.byId.get(id)!, plan });
+    return out;
+  }
+
+  /** (the level's ?city=) plan this settlement's town with another tile system or style; before its land comes in */
+  override(id: string, spec: Partial<import('../api/contracts/structures').CitySpec>): void {
+    const s = this.byId.get(id);
+    if (!s) throw new Error(`settlements: no ${id} to override`);
+    s.override = spec;
   }
 
   /** the live settlement, if any */
@@ -235,7 +244,6 @@ export class Settlements {
   /** (round 108, TC8: `plan` false — a render-only tile's land — only the plans already made: none started here) */
   private async stampLand(ops: StampOps, x0: number, y0: number, w: number, h: number, spread: boolean, plan = true): Promise<void> {
     for (const s of this.meeting(x0, y0, w, h)) {
-      if (this.handedOff.has(s.rec.id)) continue;
       const p = plan ? await this.planOf(s, spread) : this.done.get(s.rec.id);
       if (!p) continue;
       timed('stamp', () => this.stamp(p, s, ops, x0, y0, w, h));
@@ -278,7 +286,7 @@ export class Settlements {
     });
     const plan = timed('plan', () => planSettlement({ ...s, ground, water, top, veg, sea: this.atlas.p.sea, regionAt: (x, y) => this.regionAt(x + s.box.x0, y + s.box.y0 * ROW_H) }));
     // (round 94: its tops for the land past the window — the far plan's stamp gives way to it; how alike they are)
-    const st = timed('plan', () => rasterPlan(s.rec.id, plan.columns, box, ground, top));
+    const st = timed('plan', () => rasterPlan(s.rec.id, rasterColumns(plan, s.civ.look.roof, s.civ.look.foundation), box, ground, top));
     return this.planned(s, plan, st);
   }
 
@@ -303,7 +311,6 @@ export class Settlements {
     const plan = done.plan;
     // (made live again: its classes' methods, its record the settlement's own)
     Object.setPrototypeOf(plan.field, GrowthField.prototype);
-    for (const lg of plan.grids.values()) Object.setPrototypeOf(lg, LotGrid.prototype);
     timed('plan.revive', () => {
       Object.assign(s.rec, plan.rec);
       plan.rec = s.rec;
@@ -329,6 +336,7 @@ export class Settlements {
     this.stats.planned++;
     this.stats.planMs += plan.ms;
     for (const f of this.events.built) f(s.rec, { buildings: s.rec.buildings.length, ms: plan.ms });
+    for (const f of this.onPlanned) f(s.rec.id);
     // (round 108, TC8: land made over its box before without it — a render-only tile's — is made again)
     for (const f of this.atlas.stampsChanged) f(s.box.x0, s.box.y0, s.box.w, s.box.h);
     return plan;
@@ -379,7 +387,13 @@ export class Settlements {
     const ox = s.box.x0;
     const oy = s.box.y0 * ROW_H;
     const w = (q: V2): V2 => this.toWindow([q[0] + ox, q[1] + oy]);
-    return p.sites.map((spec) => ({ spec, door: w(spec.door), poly: spec.poly.map((q) => w(q as V2)) }));
+    return p.sites.map((spec) => ({ spec, door: w(spec.door) }));
+  }
+
+  /** a site's storeys up (life.ts): the plan's standing storeys, the view told */
+  private raise(p: SettlementPlan, s: SettlementSeed, site: SiteSpec, storeys: number): void {
+    p.standing[site.building] = storeys;
+    for (const f of this.onRaised) f(s.rec.id, site.building);
   }
 
   /**
@@ -401,7 +415,7 @@ export class Settlements {
     if (next.v < BUILT_V * 0.6) return;
     p.free.shift();
     const id = `${rec.id}:site${p.sites.length}`;
-    p.sites.push({ id, poly: next.poly, storeys: Math.max(1, Math.min(2, s.civ.profile.builds.storeys[1])), door: next.door, wall: s.civ.look.wall, roof: s.civ.look.roof });
+    p.sites.push({ id, building: next.building, storeys: p.city.buildings[next.building].storeys, door: next.door });
     rec.needs.push({ kind: 'build', at: [next.door[0] + s.box.x0, next.door[1] + s.box.y0 * ROW_H], ref: id, priority: 2 });
   }
 
@@ -416,7 +430,7 @@ export class Settlements {
     this.things.set(room, { id: room, kind: 'room', parts: [], condition: 1, owner, place: { in: 'thing', thing: site.id, slot: 'room' }, history: [] });
     this.things.set(hearth, { id: hearth, kind: 'hearth', parts: [], condition: 1, owner, place: { in: 'thing', thing: site.id, slot: 'fitting' }, history: [] });
     const use = derive(catalogue(this.things), site.id).tags.filter((t) => t === 'housing');
-    rec.buildings.push({ id: site.id, thing: site.id, grid: rec.grids[0].id, cells: [], storeys: site.storeys, use });
+    rec.buildings.push({ id: site.id, thing: site.id, grid: rec.grids[0].id, cells: this.done.get(rec.id)?.city.buildings[site.building].quads.slice() ?? [], storeys: site.storeys, use });
     rec.needs = rec.needs.filter((j) => j.ref !== site.id);
     site.finished = true;
     for (const f of this.events.built) f(rec, { buildings: rec.buildings.length, ms: 0, house: site.id });
@@ -568,7 +582,7 @@ export class Settlements {
         fell: io.fell,
         take: io.take,
         put: io.put,
-        townIO: io.townIO,
+        raise: (site, n) => this.raise(p, s, site, n),
         dims: io.dims,
         epoch: io.epoch,
         ready: io.ready,

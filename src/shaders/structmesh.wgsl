@@ -3,6 +3,7 @@
 //   `fn spFetch(i: u32) -> vec4<f32>` — its data buffer's vec4 i: the palette (SP_PAL vec4s: styles × parts × variants) then 4 vec4s a piece:
 //      (x0 y0 x1 y1) (x2 y2 x3 y3) (foot z0 z1 z2 z3) (top, look, seed, flags)
 //   `fn hostNight() -> f32` — 0 by day, 1 at night (the windows and lamps glow)
+//   `fn hostGround(xy: vec2<f32>, planned: f32) -> f32` — the ground now under a draped piece (or `planned`)
 // and its own entry points, which call spVertex / spAlbedo / spEmit. A module vertex is (u, v, w, part) in the unit
 // frame; the piece warps it: x, y bilinear over the four corners (Townscaper's deformed modules), z from the foot's
 // bilinear height up to the top (flags & 1: the top is a height over the foot — paving that follows the ground; flags & 2:
@@ -43,8 +44,12 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   let xy = (1.0 - u) * (1.0 - v) * c01.xy + u * (1.0 - v) * c01.zw + u * v * c23.xy + (1.0 - u) * v * c23.zw;
   let zf = (1.0 - u) * (1.0 - v) * foot.x + u * (1.0 - v) * foot.y + u * v * foot.z + (1.0 - u) * v * foot.w;
   let rel = (u32(tp.w) & 1u) != 0u;
-  var z = mix(zf, tp.x, a.z);
-  if (rel) { z = zf + tp.x * a.z; }
+  // (flags & 4: draped — what lies on the ground (paving, a crop, a fence) follows the ground as the host has it now,
+  // not as the plan saw it: a road graded, a bank eroded since)
+  var zf2 = zf;
+  if ((u32(tp.w) & 4u) != 0u) { zf2 = hostGround(xy, zf); }
+  var z = mix(zf2, tp.x, a.z);
+  if (rel) { z = zf2 + tp.x * a.z; }
   var o: SpVert;
   o.wpos = vec3<f32>(xy, z);
   // (flags & 2: an affine piece — a buriable asset at any skew; rows 0-2 its local → world transform, the module in

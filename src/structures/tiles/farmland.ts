@@ -26,7 +26,14 @@ export interface FarmOpts {
 /** a plot's lane round it (m) */
 const LANE = 1.2;
 
-export function farmland(o: FarmOpts): TileMesh {
+/** a plot's outline: its fence (or hedge) round it, the lane's inner edge */
+export interface PlotFence {
+  pts: V2[];
+  hedge: boolean;
+}
+
+export function farmland(o: FarmOpts): { mesh: TileMesh; fences: PlotFence[] } {
+  const fences: PlotFence[] = [];
   const { spec, rIn, rOut } = o;
   const r = rng(spec.seed * 53 + 29);
   const [cx, cy] = spec.at;
@@ -70,6 +77,8 @@ export function farmland(o: FarmOpts): TileMesh {
     // likely: hamlets string along the roads); else fields, orchards, pastures by density and chance
     const hRand = hashf(i, spec.seed, 31);
     const farmstead = d > 0.08 && hRand < 0.18 + Math.min(0.5, d * 0.9) + (roadD < 20 ? 0.25 : 0);
+    // (every plot fenced round, or hedged; a farmstead's yard fenced)
+    fences.push({ pts: q, hedge: !farmstead && hashf(i, spec.seed, 46) < 0.35 });
     const ids = q.map((p) => B.vert(p[0], p[1]));
     if (farmstead) {
       // its yard round its lots (Townscaper's cut of the plot: the farmhouse and the barn go on the lots)
@@ -150,10 +159,20 @@ export function farmland(o: FarmOpts): TileMesh {
       const e1 = Math.hypot(strip[2][0] - strip[1][0], strip[2][1] - strip[1][1]);
       const e3 = Math.hypot(strip[0][0] - strip[3][0], strip[0][1] - strip[3][1]);
       const wedge = tri || Math.min(e1, e3) < Math.max(e1, e3) * 0.4;
-      B.quad(...(strip.map((p) => B.vert(p[0], p[1])) as [number, number, number, number]), wedge ? 'pasture' : 'field', block);
+      // (cut along its length every ~6 m: a strip's pieces lie on the ground between their corners, and a hill bulges
+      // or dips under a long one — its rows floated as blades over the grass)
+      const L = Math.hypot(strip[1][0] - strip[0][0], strip[1][1] - strip[0][1]);
+      const segs = Math.max(1, Math.round(L / 6));
+      const lerp = (a: V2, b: V2, t: number): V2 => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      for (let k4 = 0; k4 < segs; k4++) {
+        const t0 = k4 / segs;
+        const t1 = (k4 + 1) / segs;
+        const qd = [lerp(strip[0], strip[1], t0), lerp(strip[0], strip[1], t1), lerp(strip[3], strip[2], t1), lerp(strip[3], strip[2], t0)];
+        B.quad(...(qd.map((p) => B.vert(p[0], p[1])) as [number, number, number, number]), wedge ? 'pasture' : 'field', block);
+      }
     }
   });
-  return B.build(0.5);
+  return { mesh: B.build(0.5), fences };
 }
 
 /** Two tile meshes as one (the town's and its farmland's): vertices and quads concatenated, the second's re-indexed. */

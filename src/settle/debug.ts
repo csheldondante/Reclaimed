@@ -61,23 +61,27 @@ export class TownDebug {
         const [x, y] = P((i + 0.5) * 3, (j + 0.5) * 3, 0.2).split(',');
         out.push(`<circle cx="${x}" cy="${y}" r="${(1 + v * 3).toFixed(1)}" fill="#f80" fill-opacity="${(0.25 + 0.5 * v).toFixed(2)}"/>`);
       }
-    for (const [gid, lg] of plan.grids) {
-      const fields = gid.endsWith('fields');
-      for (const lot of lg.lots) {
-        const use = plan.lotUse.get(`${gid}:${lot.id}`);
-        if (fields && use !== 'field') continue;
-        const stroke = fields ? '#a84' : use ? '#fff' : '#fff6';
-        const [yx, yy] = this.st.toWindow([lg.centre(lot.yard[0])[0] + ox, lg.centre(lot.yard[0])[1] + oy]);
-        const zl = this.heightAt(yx, yy);
-        for (const c of lot.inner) {
-          const pts = [0, 1, 2, 3].map((k) => P(...lg.corner(c, k), 0.3, zl)).join(' ');
-          out.push(`<polygon points="${pts}" fill="none" stroke="${stroke}" stroke-width="${use ? 1.2 : 0.6}"/>`);
-        }
-        if (use && !fields) {
-          const [x, y] = P(...lot.centre, 6).split(',');
-          out.push(`<text x="${x}" y="${y}" fill="#fff" font-size="10" text-anchor="middle" style="paint-order:stroke;stroke:#000;stroke-width:2">${use}</text>`);
-        }
-      }
+    // (round 119) the town's tiles from its structures plan: buildings white (its use over it), yards faint, the farmland
+    // brown
+    const t = plan.city.tiles;
+    for (let q = 0; q < t.use.length; q++) {
+      const u = t.use[q];
+      const b = plan.city.quadBuilding[q];
+      const farm = u === 'field' || u === 'orchard' || u === 'pasture';
+      if (!farm && b < 0 && u !== 'yard') continue;
+      const stroke = farm ? '#a84' : b >= 0 ? '#fff' : '#fff6';
+      const pts = [0, 1, 2, 3].map((k) => {
+        const v = t.quads[q * 4 + k];
+        return P(t.verts[v * 2], t.verts[v * 2 + 1], 0.3);
+      }).join(' ');
+      out.push(`<polygon points="${pts}" fill="none" stroke="${stroke}" stroke-width="${b >= 0 ? 1.2 : 0.6}"/>`);
+    }
+    for (const bl of plan.city.buildings) {
+      const use = plan.lotUse.get(`b${bl.id}`);
+      if (!use || use === 'house') continue;
+      const v = t.quads[bl.quads[0] * 4];
+      const [x, y] = P(t.verts[v * 2], t.verts[v * 2 + 1], 6).split(',');
+      out.push(`<text x="${x}" y="${y}" fill="#fff" font-size="10" text-anchor="middle" style="paint-order:stroke;stroke:#000;stroke-width:2">${use}</text>`);
     }
     for (const s of plan.spots) {
       const [x, y] = P(...s.at).split(',');

@@ -58,6 +58,8 @@ export interface CitySpec {
   progress?: number;
   /** farmland round it out to this far from its centre (m; default 0: none): crop strips, orchards, pastures, farmsteads */
   farmland?: number;
+  /** discs left as they are (a quarry, its spoil): no tile there is built, paved or farmed */
+  keepOut?: { at: V2; r: number }[];
 }
 
 /** A tile's use. */
@@ -156,7 +158,7 @@ export interface NavGraph {
 }
 
 /** A linear feature: a profile extruded along a spline (roads, rails, walls, bridges, aqueducts). */
-export type LinearKind = 'road' | 'rail' | 'wall' | 'bridge';
+export type LinearKind = 'road' | 'rail' | 'wall' | 'bridge' | 'fence' | 'hedge';
 
 export interface LinearFeature {
   kind: LinearKind;

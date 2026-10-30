@@ -796,7 +796,7 @@ export class Integrity {
 
   /**
    * (round 117, structures — a tweak for main to consolidate) The CPU copy of the layers, read once if there's none yet:
-   * an owner claiming External cells at the level's start (a city, src/structures/host.ts) reads and writes it.
+   * an owner claiming External cells at the level's start (the settlements view, src/settle/view.ts) reads and writes it.
    */
   async ensureCopy(): Promise<void> {
     if (this.world.slots.length) return;

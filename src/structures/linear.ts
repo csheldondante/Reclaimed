@@ -40,7 +40,11 @@ export function resample(f: LinearFeature, step: number): Sample[] {
       const t2 = t * t;
       const t3 = t2 * t;
       const cr = (a: number, b: number, c: number, d: number) => 0.5 * (2 * b + (-a + c) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (-a + 3 * b - 3 * c + d) * t3);
-      dense.push({ p: [cr(p0[0], p1[0], p2[0], p3[0]), cr(p0[1], p1[1], p2[1], p3[1]), p1[2] + (p2[2] - p1[2]) * t], g: g1 + (g2 - g1) * t });
+      // (a fence or a hedge runs straight between its posts: a field's outline has corners, not curves)
+      const straight = f.kind === 'fence' || f.kind === 'hedge';
+      const x = straight ? p1[0] + (p2[0] - p1[0]) * t : cr(p0[0], p1[0], p2[0], p3[0]);
+      const y = straight ? p1[1] + (p2[1] - p1[1]) * t : cr(p0[1], p1[1], p2[1], p3[1]);
+      dense.push({ p: [x, y, p1[2] + (p2[2] - p1[2]) * t], g: g1 + (g2 - g1) * t });
     }
   }
   if (!f.closed) dense.push({ p: P[n - 1], g: G[n - 1] });

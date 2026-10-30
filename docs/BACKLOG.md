@@ -38,7 +38,10 @@ viewer structures.html.
 | STR12 | Mega tiles beyond one tile: a domed temple over a 4-tile patch (its frame the patch's outer corners), the keep at a radial city's heart; halls, gatehouse towers on a radial wall still to do | M | done (structures) |
 | STR13 | Cities built into the earth: spec.sunk done (backs in the hill, buried walls blank); quarry towns need the terrain track's carving contract (open) | M | wip |
 | STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) as affine pieces (`assetPieces`) any host draws; the terrain track places them and claims their cells | M | done (structures) |
-| STR15 | Migrate settle/ (the settlements' plans, stamps and life) onto this contract: the plan from CityPlan, buildings as pieces + External, agents on the baked nav | L | open |
+| STR15 | Migrate settle/ onto this contract (round 119): plan.ts plans via planCity with the growth field as density, view.ts draws pieces and claims External, life.ts raises sites storey by storey; no voxel stamping | L | done (structures) |
+| STR22 | Density drives what's built (round 119, the user: "farms and smaller huts for lower population density"): town houses, thatched huts, farmland (crop strips, orchards, pastures, fences, hedges), farmsteads (farmhouse + barn) | M | done (structures) |
+| STR23 | Agents on the baked nav (settlements' people path on plan.nav, not fields) — the inhabitants track's | M | open |
+| STR24 | A crop strip on a steep or cut slope shows as a plateau with an edge: drape every vertex finer, or leave such strips to pasture | S | open |
 | STR16 | Growth as stored progress (round 110): the plan's build order, `grown(plan, p)` (the next building a site); agents building it and progress while away are the inhabitants' and the run's | M | done (structures) |
 | STR17 | The perf tests: scripts/perf/structures.mjs (the viewer: build ms, pieces, triangles, GPU per system and size), scripts/perf/structcity.mjs (the game's frame with the city drawn and skipped) | S | done (structures) |
 | STR18 | Pieces in the render-only tiles past the window (a city half out of the window shows only its window half's columns in the tiles) | M | open |
