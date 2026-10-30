@@ -30,6 +30,12 @@ export class Controls {
   private off = false;
   /** a scripted thumb (headless tests): the stick and the buttons as if held; null: the player's own */
   script: { stick: Pt; buttons: boolean[] } | null = null;
+  /** the last pointer events and gestures (a headless check reads it; the user's bug reports could) */
+  readonly trace: string[] = [];
+  private note(s: string): void {
+    this.trace.push(s);
+    if (this.trace.length > 24) this.trace.shift();
+  }
 
   constructor(
     parent: HTMLElement,
@@ -67,6 +73,7 @@ export class Controls {
       if (this.off) return;
       e.preventDefault();
       const p: Pt = [e.clientX, e.clientY];
+      this.note(`down ${e.pointerId} ${e.pointerType} ${p.map(Math.round)}`);
       // (the mouse is the right thumb: it never grabs the stick)
       if (pad.move === 'stick' && !this.stick && e.pointerType !== 'mouse' && this.inZone(p)) {
         this.stick = { id: e.pointerId, centre: p, at: p };
@@ -81,15 +88,21 @@ export class Controls {
       if (this.stick?.id === e.pointerId) {
         this.stick.at = p;
         this.drawStick();
-      } else if (e.pointerId === this.stroke?.id) this.stroke.s.move(p, e.timeStamp / 1000);
+      } else if (e.pointerId === this.stroke?.id) {
+        this.stroke.s.move(p, e.timeStamp / 1000);
+        this.note(`move ${e.pointerId} ${p.map(Math.round)}`);
+      }
     }, sig);
     const up = (e: PointerEvent) => {
+      this.note(`${e.type} ${e.pointerId}`);
       if (this.stick?.id === e.pointerId) {
         this.stick = null;
         this.drawStick();
       } else if (e.pointerId === this.stroke?.id) {
         this.stroke.s.move([e.clientX, e.clientY], e.timeStamp / 1000);
-        this.done.push(this.stroke.s.end(e.timeStamp / 1000));
+        const g = this.stroke.s.end(e.timeStamp / 1000);
+        this.note(`gesture ${g.kind} ${Math.round((e.timeStamp / 1000 - this.stroke.s.samples[0].t) * 1000)} ms ${Math.round(this.stroke.s.length)} px`);
+        this.done.push(g);
         this.stroke = null;
       }
     };

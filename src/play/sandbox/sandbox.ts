@@ -76,6 +76,7 @@ export class PlaySandbox {
     d.units.watch(actor);
     this.draw = new VoxelDraw(d.device, d.renderer);
     this.bar = el('div', 'play-bar', d.ui);
+    this.bar.style.pointerEvents = 'none';
     const who = el('div', 'play-who', this.bar);
     for (const info of heroes()) {
       const b = el('button', 'play-chip', who) as HTMLButtonElement;
@@ -98,6 +99,7 @@ export class PlaySandbox {
     tool('👹', 'spawn raiders ahead', () => this.spawn());
     tool('⟲', 'back on its feet', () => this.respawn());
     const info = el('div', 'play-info', d.ui);
+    info.style.pointerEvents = 'none';
     this.hp = el('div', 'play-hp', info);
     this.status = el('div', 'play-status', info);
   }
@@ -300,6 +302,8 @@ export class PlaySandbox {
 
   private toast(text: string): void {
     const t = el('div', 'play-toast', this.d.ui);
+    // (inline: the UI layer's own rules give its children pointer events, and a toast over the middle ate the lich's taps)
+    t.style.pointerEvents = 'none';
     t.textContent = text;
     setTimeout(() => t.classList.add('fade'), 5000);
     setTimeout(() => t.remove(), 6500);
