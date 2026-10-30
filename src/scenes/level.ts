@@ -269,6 +269,9 @@ export class LevelScene implements Scene {
       });
       const a = this.opts.atlas?.atlas;
       if (a && !PLAN_OFF.has('pacer')) a.pacer.holes = () => this.planner!.plan.holes;
+      // (round 115, `tilecal`: the tiles' rate is measured while the pacer gives them the frame's turns for holes — a
+      // screenful filling, the zoom floor's case)
+      if (a && !PLAN_OFF.has('pacer')) TL.cal.holes = () => this.planner!.plan.holes;
     }
     const P = this.planner.update();
     // (?planoff=slide,tile,mesh,sim: a consumer left as before — the A/B of each)

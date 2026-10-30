@@ -2879,7 +2879,7 @@ class Bench {
         const slideCpu = S.trace.slice(Math.min(tr0, S.trace.length)).map((t: { t0: number; sync: number }) => r3(t.sync - t.t0));
         const whyR: Record<string, number> = {};
         for (const k in why) whyR[k] = r3(why[k]);
-        const slots = TL && ts0 ? { slots: TL.stats.slots, mb: TL.stats.mb, usedMax, drawnMax, evicted: TL.stats.evicted - ts0.evicted, noSlot: ((TL.land?.stats.noSlot as number | undefined) ?? 0) - ts0.noSlot } : null;
+        const slots = TL && ts0 ? { slots: TL.stats.slots, mb: TL.stats.mb, usedMax, drawnMax, evicted: TL.stats.evicted - ts0.evicted, noSlot: ((TL.land?.stats.noSlot as number | undefined) ?? 0) - ts0.noSlot, zoomFloor: TL.stats.zoomFloor, floorBound: TL.stats.floorBound, floorTiles: TL.stats.floorTiles, cal: { ...TL.cal.stats, rate: r3(TL.cal.stats.rate), measuredS: r3(TL.cal.stats.measuredS) } } : null;
         const pacer = pz && pc0 ? { perFrameMean: frames.length ? r3(perFrameSum / frames.length) : null, turnsPerFrame: r3((pz.tiles - pc0.tiles) / Math.max(1, frames.length)), chained: pz.chained - pc0.chained } : null;
         const tiles = TL?.land ? { ...tileStepOf(TL, baked0, t0, secs, lead), missMax: { win: r3(miss.win), ahead: r3(miss.ahead), side: r3(miss.side), behind: r3(miss.behind) }, missWhy: whyR, slots, pacer } : null;
         const geoR = { max: r3(geo.max), mean: geo.frames ? +(geo.sum / geo.frames).toFixed(5) : null, frames: geo.frames, framesAny: geo.framesAny, chunksMax: geo.chunksMax, regionsMax: geo.regionsMax };
