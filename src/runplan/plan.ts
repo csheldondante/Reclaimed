@@ -279,7 +279,9 @@ export function planRun(o: PlanOptions): RunPlan {
             if (!e.barrier) open.push({ a: e.a, b: e.b });
           }
           const kind = fun[Math.floor(rnd() * fun.length)];
-          if (open.length && crossCost(H, kind, null) > 0) {
+          // (a fun crossing is built with its passage for this hero — a ramp for the bike — so it's crossable even
+          // where the bare barrier wouldn't be)
+          if (open.length) {
             const at = open[Math.floor(rnd() * open.length)];
             pick = { a: at.a, b: at.b, barrier: kind, how: H.funCrossings![kind]! };
             crossings.push(pick);

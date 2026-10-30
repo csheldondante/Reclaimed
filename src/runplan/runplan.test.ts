@@ -125,7 +125,7 @@ describe('the planner on seed 1', () => {
       }
       // exits asked for every stage; obstacles only ones the hero can cross
       expect(p.requests.filter((r) => r.kind === 'exits')).toHaveLength(p.stages.length);
-      for (const r of p.requests) if (r.kind === 'obstacle') expect(crossCost(heroCaps(role), r.barrier, null)).toBeGreaterThan(0);
+      for (const r of p.requests) if (r.kind === 'obstacle') expect(crossCost(heroCaps(role), r.barrier, null) > 0 || !!heroCaps(role).funCrossings?.[r.barrier]).toBe(true);
       expect(planRun({ graph: g, world: snap, hero: heroCaps(role), seed: 1, from })).toEqual(p);
     });
   }
