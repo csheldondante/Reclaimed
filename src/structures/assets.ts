@@ -3,7 +3,8 @@
 // z up from its foot) plus a coarse solid of the same shape, so the terrain track can lay it at any skew, claim the cells
 // it fills as External intervals (sim/external.ts) and draw it as an instanced mesh (render/meshinst.ts part 2 takes a
 // vertex as it is). The solid is primitives, not the mesh: "is this point inside" is what a claim needs, cheaply.
-import type { BuriableAsset, BuriableKind, ColumnSpan, V3 } from '../api/contracts/structures';
+import type { BuriableAsset, BuriableKind, ColumnSpan, PlacedAsset, StructurePieces, V3 } from '../api/contracts/structures';
+import { library } from './modules';
 import { Kit, Part } from './modules';
 import { rng } from './rng';
 import { cellAt } from '../world/lattice';
@@ -130,4 +131,31 @@ export function buriable(kind: BuriableKind, seed: number): BuriableAsset {
       return [...cols.values()];
     },
   };
+}
+
+/** affine pieces: flags bit 2 (structmesh.wgsl) */
+export const AFFINE = 2;
+
+/**
+ * Placed assets as pieces: each asset's mesh a module of the library (made once a kind and seed), each placement an
+ * affine piece — its transform's three rows where a tile's corners and foot go. Drawn by the same hosts, lit and
+ * coloured as the city (the stone palette of the first style; `look` picks its variants).
+ */
+export function assetPieces(placed: PlacedAsset[], look = 0): StructurePieces {
+  const lib = library();
+  const module = new Uint16Array(placed.length);
+  const data = new Float32Array(placed.length * 16);
+  placed.forEach((pl, i) => {
+    const name = `asset:${pl.kind}:${pl.seed}`;
+    let id: number;
+    if (lib.has(name)) id = lib.id(name);
+    else {
+      const a = buriable(pl.kind, pl.seed);
+      id = lib.add({ name, verts: Array.from(a.verts), index: Array.from(a.index) });
+    }
+    module[i] = id;
+    data.set(pl.transform.subarray(0, 12), i * 16);
+    data.set([0, look, (i * 0.618) % 1, AFFINE], i * 16 + 12);
+  });
+  return { module, data, building: new Int32Array(placed.length).fill(-1000), count: placed.length };
 }

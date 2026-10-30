@@ -36,8 +36,8 @@ viewer structures.html.
 | STR11 | Linear features: roads, rails, walls and bridges extruded along splines (linear.ts): roads out of a town graded to 14%, viaducts where they stand high over valleys or water, town walls with towers and gates; nav and External columns | L | done (structures) |
 | STR20 | Linear features from the atlas's own ways (atlas/ways.ts: its graded roads, bridges, switchbacks, lift towers) drawn as these modules instead of column stamps; rails in a town (none generated yet — the module is there) | M | open |
 | STR12 | Mega tiles beyond one tile: a domed temple over a 4-tile patch (its frame the patch's outer corners), the keep at a radial city's heart; halls, gatehouse towers on a radial wall still to do | M | done (structures) |
-| STR13 | Cities built into the earth (spec.sunk): terraces cut into a slope, quarry towns with the terrain track's contract | M | open |
-| STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) placed by the terrain track as External owners, drawn by meshinst | M | wip |
+| STR13 | Cities built into the earth: spec.sunk done (backs in the hill, buried walls blank); quarry towns need the terrain track's carving contract (open) | M | wip |
+| STR14 | Buriable assets (statue, column, fallen tower, arch, bell: mesh + solid → cells under any skew) as affine pieces (`assetPieces`) any host draws; the terrain track places them and claims their cells | M | done (structures) |
 | STR15 | Migrate settle/ (the settlements' plans, stamps and life) onto this contract: the plan from CityPlan, buildings as pieces + External, agents on the baked nav | L | open |
 | STR16 | Growth as stored progress (round 110): a plan's tiles in build order, progress per tile, pieces shown up to it | M | open |
 | STR17 | The perf tests: scripts/perf/structures.mjs (the viewer: build ms, pieces, triangles, GPU per system and size), scripts/perf/structcity.mjs (the game's frame with the city drawn and skipped) | S | done (structures) |

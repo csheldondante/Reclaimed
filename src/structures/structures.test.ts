@@ -4,7 +4,7 @@ import type { CitySpec, GroundFn } from '../api/contracts/structures';
 import { planCity, isolate } from './plan';
 import { piecesOf, PIECE_FLOATS, ROOF_LIFT } from './pieces';
 import { columnsOf } from './columns';
-import { buriable } from './assets';
+import { buriable, assetPieces, AFFINE } from './assets';
 import { navPath } from './nav';
 import { library, roofHeight } from './modules';
 import { solve, WfcContradiction } from './wfc';
@@ -295,5 +295,21 @@ describe('mega tiles', () => {
     const path = navPath(g, plaza.id, top.id);
     expect(path.length).toBeGreaterThan(1);
     expect(g.links.some((l) => l.kind === 'lift')).toBe(true);
+  });
+});
+
+describe('placed assets', () => {
+  it('a kind and seed is one module however often it is placed; each placement an affine piece with its transform', () => {
+    const t = new Float32Array([0, -1, 0, 5, 1, 0, 0, 6, 0, 0, 1, 7]);
+    const pc = assetPieces([
+      { kind: 'statue', seed: 4, transform: t },
+      { kind: 'statue', seed: 4, transform: t },
+      { kind: 'bell', seed: 1, transform: t },
+    ]);
+    expect(pc.count).toBe(3);
+    expect(pc.module[0]).toBe(pc.module[1]);
+    expect(pc.module[2]).not.toBe(pc.module[0]);
+    expect(pc.data[15]).toBe(AFFINE);
+    expect(Array.from(pc.data.subarray(0, 12))).toEqual(Array.from(t));
   });
 });

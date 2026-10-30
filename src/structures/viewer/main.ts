@@ -9,6 +9,8 @@ import { piecesOf, PIECE_FLOATS } from '../pieces';
 import { fbm } from '../rng';
 import { quadCorners, quadCentre } from '../tiles/builder';
 import { STYLE_IDS } from '../styles';
+import { assetPieces } from '../assets';
+import type { BuriableKind, PlacedAsset } from '../../api/contracts/structures';
 import { ViewerRenderer, type FrameView } from './render';
 import { perspective, lookAt, mul } from './mat';
 
@@ -22,7 +24,7 @@ const state = {
   r: num('r', 56),
   storeys: num('storeys', 0),
   density: num('density', 0.8),
-  view: (q.get('view') ?? 'city') as 'building' | 'district' | 'city',
+  view: (q.get('view') ?? 'city') as 'building' | 'district' | 'city' | 'assets',
   ground: (q.get('ground') ?? 'hill') as 'flat' | 'hill' | 'slope' | 'gorge' | 'cliff',
   roads: num('roads', 3),
   walls: q.get('walls') === '1',
@@ -114,6 +116,22 @@ async function boot(): Promise<void> {
   const showView = () => {
     if (!plan || !all) return;
     const ground = GROUNDS[state.ground];
+    if (state.view === 'assets') {
+      // the buriable pieces (the terrain track lays them): each kind upright, then skewed and half sunk beside it
+      const kinds: BuriableKind[] = ['statue', 'column', 'fallen-tower', 'arch', 'bell'];
+      const placed: PlacedAsset[] = [];
+      kinds.forEach((kind, i) => {
+        const x = (i - 2) * 16;
+        placed.push({ kind, seed: state.seed + i, transform: affine(x, -10, ground(x, -10), 0.3 * i, 0, 0) });
+        const tilt = kind === 'column' ? 1.45 : 0.45;
+        placed.push({ kind, seed: state.seed + i, transform: affine(x, 12, ground(x, 12) - 1.4, 0.7 * i + 0.4, tilt, 0.15) });
+      });
+      r.sg.set(assetPieces(placed));
+      focusAt = [0, 0, ground(0, 0) + 2];
+      reach = 60;
+      dist = 70;
+      return;
+    }
     if (state.view === 'building') {
       // the building nearest the middle with a few tiles to it (a landmark tower if that's all there is)
       const b = [...plan.buildings].sort((a, c) => score(c) - score(a))[0];
@@ -236,6 +254,18 @@ async function boot(): Promise<void> {
     for (const [k, v] of Object.entries(state)) p.set(k, typeof v === 'boolean' ? (v ? '1' : '0') : typeof v === 'number' ? String(+v.toFixed(3)) : String(v));
     history.replaceState(null, '', `?${p}`);
   }
+}
+
+/** a transform's 3 rows: turn `yaw` about z, tilt `pitch` about x, `roll` about y, then move to (x, y, z) */
+function affine(x: number, y: number, z: number, yaw: number, pitch: number, roll: number): Float32Array {
+  const cz = Math.cos(yaw), sz = Math.sin(yaw), cx = Math.cos(pitch), sx = Math.sin(pitch), cy = Math.cos(roll), sy = Math.sin(roll);
+  // R = Rz · Rx · Ry
+  const m = [
+    [cz * cy - sz * sx * sy, -sz * cx, cz * sy + sz * sx * cy],
+    [sz * cy + cz * sx * sy, cz * cx, sz * sy - cz * sx * cy],
+    [-cx * sy, sx, cx * cy],
+  ];
+  return new Float32Array([m[0][0], m[0][1], m[0][2], x, m[1][0], m[1][1], m[1][2], y, m[2][0], m[2][1], m[2][2], z]);
 }
 
 /** sun, sky and night from the time of day (0 morning … 0.5 afternoon … 0.8 dusk … 1 night) */
@@ -382,7 +412,7 @@ function panel() {
   row('time', slider('tod', 0, 1, 0.01, true));
   const views = document.createElement('div');
   views.className = 'views';
-  for (const v of ['building', 'district', 'city'] as const) {
+  for (const v of ['building', 'district', 'city', 'assets'] as const) {
     const b = document.createElement('button');
     b.textContent = v;
     b.className = state.view === v ? 'on' : '';

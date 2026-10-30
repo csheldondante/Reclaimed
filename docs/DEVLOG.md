@@ -13787,3 +13787,19 @@ The user: "some WFC and mega tile features (features multiple tiles big)".
 - Landmarks' nav: every mega building has a foot, a crown (a tower's by a lift, a temple's gallery by stairs) and a door
   onto the open ground beside it.
 Shots: C:\Projects\shots88\structures\mega-0.png (the dome among the hearth roofs), mega-1.png (the radial keep).
+
+## 2026-10-30 — round 117 (`structures`): towns in the earth; buriable assets drawn (STR13, STR14)
+
+**Built into the earth** (the user: "Deep cut quarries and cities built into the earth"). `CitySpec.sunk` (≥ 0): lots up
+to three storeys of fall are built, a building may span 2.5 storeys of it, its floor on the ground's low side (less
+`sunk`) and its back in the hill, with storeys enough that its roof stands a storey clear. A wall whose ground stands over
+60% of its storey is buried: blank, never the front door. Its External claim takes only the free cells, so the buried part
+stays the hill's. The viewer's `cliff` ground shows it. Quarries (a pit cut by the terrain track, the town in its walls)
+need the terrain track's carving contract: open (STR13 stays open for that half).
+
+**Buriable assets drawn** (the user: "buried statues and fallen structures and stones … skew add visual interest"). An
+affine piece (flags bit 2): the piece's first three rows are a 3 × 4 local → world transform, the module in metres —
+so any turn, tilt or skew. `assetPieces(placed)` makes each kind + seed's mesh a library module once (`Library.add`) and
+each placement a piece; any host draws them with the city's light and palette (stone, bronze). The terrain track lays
+them: `structures.asset(kind, seed).cells(transform)` for its External claim, `structures.assetPieces([...])` to draw.
+The viewer's `assets` view: each kind upright and skewed half-sunk beside it. Shot: assets-0.png.

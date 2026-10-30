@@ -628,6 +628,8 @@ export interface Library {
   has(name: string): boolean;
   /** its far look (STR10: walls and roofs have one, made on first ask for roofs), or itself */
   lodOf(id: number): number;
+  /** a module made elsewhere (a buriable asset's mesh): its id, the same one again for the same name */
+  add(m: Module): number;
 }
 
 /** wall modules a style offers, by role */
@@ -710,6 +712,13 @@ export function library(): Library {
       return i;
     },
     has: (name: string) => byName.has(name),
+    add(m: Module): number {
+      const had = byName.get(m.name);
+      if (had !== undefined) return had;
+      modules.push(m);
+      byName.set(m.name, modules.length - 1);
+      return modules.length - 1;
+    },
     lodOf(id: number): number {
       const n = modules[id].name;
       if (n.endsWith(':lod')) return id;

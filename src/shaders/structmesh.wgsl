@@ -5,7 +5,8 @@
 //   `fn hostNight() -> f32` — 0 by day, 1 at night (the windows and lamps glow)
 // and its own entry points, which call spVertex / spAlbedo / spEmit. A module vertex is (u, v, w, part) in the unit
 // frame; the piece warps it: x, y bilinear over the four corners (Townscaper's deformed modules), z from the foot's
-// bilinear height up to the top (flags & 1: the top is a height over the foot — paving that follows the ground).
+// bilinear height up to the top (flags & 1: the top is a height over the foot — paving that follows the ground; flags & 2:
+// an affine piece, rows 0-2 a 3 × 4 transform).
 
 // (SP_PAL, SP_PARTS, SP_VARIANTS: from src/structures/gpu.ts wgsl(), the TS tables' sizes)
 
@@ -46,6 +47,12 @@ fn spVertex(a: vec4<f32>, piece: u32) -> SpVert {
   if (rel) { z = zf + tp.x * a.z; }
   var o: SpVert;
   o.wpos = vec3<f32>(xy, z);
+  // (flags & 2: an affine piece — a buriable asset at any skew; rows 0-2 its local → world transform, the module in
+  // metres: assets.ts)
+  if ((u32(tp.w) & 2u) != 0u) {
+    let l = vec4<f32>(a.xyz, 1.0);
+    o.wpos = vec3<f32>(dot(c01, l), dot(c23, l), dot(foot, l));
+  }
   o.w = a.z;
   o.part = u32(a.w + 0.5);
   o.look = u32(tp.y);

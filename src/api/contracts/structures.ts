@@ -229,6 +229,14 @@ export interface BuriableAsset {
   cells(transform: Float32Array): ColumnSpan[];
 }
 
+/** A buriable asset laid in the world: its kind and seed (its shape) and where (local → world, 3 affine rows, translation
+ *  last: any turn, tilt or skew — "These being skew add visual interest"). */
+export interface PlacedAsset {
+  kind: BuriableKind;
+  seed: number;
+  transform: Float32Array;
+}
+
 /** The system's API (src/structures/index.ts implements it). Pure functions of their inputs: no GPU, no world state. */
 export interface Structures {
   /** `water`: the depth of standing water at a point (none built or paved where it's over 0.3 m) */
@@ -238,4 +246,6 @@ export interface Structures {
   columns(plan: CityPlan): ColumnSpan[];
   /** a buriable piece */
   asset(kind: BuriableKind, seed: number): BuriableAsset;
+  /** placed assets as pieces (drawn by any StructureGpu host with the city's look) */
+  assetPieces(placed: PlacedAsset[]): StructurePieces;
 }
