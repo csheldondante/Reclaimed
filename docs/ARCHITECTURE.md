@@ -2315,6 +2315,15 @@ clears them).
   tiles.wgsl fsTile discards what rises into the line from the eye to the focus (TileU.focus: the camera's target, w 1;
   the rings' underFocus rule) — no tile is left out for it. The gate: scripts/tilegate.mjs (frames held to 60 Hz, load in
   frames, baselines by adapter).
+- (round 114, `covercheck`) **The focus** is `Camera.focus`: the ground the screen's centre shows — the view's ray through
+  the target down to the first point at or under `Camera.ground`'s top (set by api/atlas-world.ts: the window's own
+  columns' tops, `core.map.surface`, none past the window or in a region not written yet), null when it meets none.
+  The target's z is not the ground's (only a slide's tier shift moves it). TileU.focus and FarLand.focus are it (w 0 /
+  null: no cut, no pressing). **The eye side's cut** in fsTile takes a tile's point only when it's over the line to the
+  focus (the rule above), within FOCUS_HOLE (0.2 of the screen's shorter side) of the focus on the screen (nearFocus)
+  and the view's ray behind it runs into the window's footprint before the window's floor (hidesWindow) — what it opens
+  is the window's land, not the stand-in. The tile gate fails a view whose far land in a frame (the pixel check) is over
+  the geometric check's worst by `--agreemax` (0.01).
 
 ## The coverage check, and drawn versus written (round 113, `tilesfirst`; the streaming design's step 1)
 

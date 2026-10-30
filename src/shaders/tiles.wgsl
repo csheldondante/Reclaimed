@@ -291,6 +291,45 @@ fn windowDrawsAt(p: vec2<f32>) -> bool {
   return (TU.drawn[w >> 2u][w & 3u] & (1u << (k & 31u))) != 0u;
 }
 
+/**
+ * (round 114, covercheck) Does the tile's point p (window units) hide the window's own land — does the view's ray on from p,
+ * away from the eye, cross the window's footprint before it's under the window's floor (z 0)? The eye side's cut takes only
+ * that: what it opens then shows the window's land. Cut where the ray meets no window land, a tile showed the stand-in
+ * through the hole — the eye side's rule is a wedge across the whole screen's width (a band of it round the screen's
+ * middle: "a screenspace band of low detail that never loads"), not the line to the focus.
+ */
+fn hidesWindow(p: vec3<f32>) -> bool {
+  if (p.z <= 0.0 || CAM.eye.z <= 0.0) { return false; }
+  // (the segment from p to where the ray meets z 0, against the footprint [0, W] x [0, H]: Liang-Barsky)
+  let dv = -CAM.eye.xy * (p.z / CAM.eye.z);
+  var t0 = 0.0;
+  var t1 = 1.0;
+  for (var a = 0u; a < 2u; a++) {
+    let lo = -p[a];
+    let hi = TU.win[a] - p[a];
+    if (abs(dv[a]) < 1e-6) {
+      if (lo > 0.0 || hi < 0.0) { return false; }
+    } else {
+      let ta = lo / dv[a];
+      let tb = hi / dv[a];
+      t0 = max(t0, min(ta, tb));
+      t1 = min(t1, max(ta, tb));
+    }
+  }
+  return t0 <= t1;
+}
+
+/** (round 114, covercheck) the eye side's cut's hole round the focus: its radius, a share of the screen's shorter side */
+const FOCUS_HOLE: f32 = 0.2;
+
+/** (round 114) is p (window units) within the hole round the focus on the screen? */
+fn nearFocus(p: vec3<f32>) -> bool {
+  let a = CAM.viewProj * vec4<f32>(p, 1.0);
+  let b = CAM.viewProj * vec4<f32>(TU.focus.xyz, 1.0);
+  let px = (a.xy - b.xy) * 0.5 * CAM.viewport.xy;
+  return length(px) < FOCUS_HOLE * min(CAM.viewport.x, CAM.viewport.y);
+}
+
 @fragment
 fn fsTile(in: TOut) -> TFrag {
   let t = in;
@@ -312,11 +351,14 @@ fn fsTile(in: TOut) -> TFrag {
   // (round 112, `tilefix2`, TF5 — the user's option (a): on the eye's side of the focus, what rises into the line from
   // the eye to it is cut, as the rings press theirs down (far.wgsl underFocus: over 24 world units on, 0.85 of the
   // line's height); what's behind shows through, the focus with it)
+  // (round 114, covercheck: only what can hide the focus — near it on the screen (nearFocus: the line from the eye to a
+  // point is a point on the screen; the rule's wedge was the screen's whole width) — and where what's behind is the
+  // window's land (hidesWindow); the focus the ground the screen's centre shows, Camera.focus)
   if (TU.focus.w > 0.5 && CAM.pos.w < 0.5) {
     let el = max(length(CAM.eye.xy), 1e-3);
     let ah = dot(p.xy - TU.focus.xy, CAM.eye.xy / el);
     let cap = TU.focus.z + max(ah, 0.0) * CAM.eye.z / el * 0.85;
-    if (ah > 12.0 && p.z > cap) { discard; }
+    if (ah > 12.0 && p.z > cap && nearFocus(p) && hidesWindow(p)) { discard; }
   }
   let a = textureLoad(tileA, tx, 0);
   var alb = a.rgb * a.rgb * 2.0;

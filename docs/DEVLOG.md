@@ -13027,3 +13027,105 @@ nor voxels (SF8); the stand-in's sea shows (gate-sf9/desktop-z5-pan.png);
 for it, but the pixels show the stand-in: the geometric check reads 0 there (it trusts the same "drawn"). Open: SF12.
 So the reach by throughput isn't changed (a reach shrunk to one tile's latency made z5 worse: SF9's entry); SF11 stays
 open for when a `+none` shows up.
+
+## 2026-10-30 — round 114 (`covercheck`): why the geometric check missed the stand-in — the tiles' eye-side cut (SF13)
+
+**The disagreement.** On the user's Pixel 9a pan bench (places) the geometric coverage check read no pop-in up to
+640 c/s at zooms 14, 8, 5 on the disk and pool rows while the pixel check's far share was 4-10% of a frame at 160 c/s
+(z8, z5), 30-75% at 320-480 and 100% at 640. And the user, on the phone (world=new, window 384): "sometimes there is a
+screenspace band of low detail that never loads even as I pan around" (user-band-1.png, user-band-2.png).
+
+**Found, not assumed.** scripts/covshot.mjs (new) pans, and for every frame the pixel check samples it takes the
+geometric check of that same frame (bgcheck's encode hook), the classes split (render/bgcheck.ts's snapshot now tells
+the stand-in, class 2, from the far land drawn nearer, class 3), and a screenshot with the classes over it; `--stopat`
+stops the pan on the first frame with that much far and lists each far sample's region (in the window or not, its
+tile drawn or not). What it showed:
+- The far samples past the window were regions with a tile drawn this frame (holediag: `far:out+tile`), baked long
+  before (600 frames) — not missing, not stale. The far region was a horizontal band across the whole screen, tiles
+  drawn above and below it (shots88/covercheck/dbg-desktop-z14-v640.png, tiles tinted).
+- Tinting instead of discarding what fsTile's eye-side cut (TF5, round 112) takes (a temporary shader edit): the band
+  was the cut (cutdbg2-desktop-z14-v640.png, cyan). With the cut tinted, not discarded, desktop z5/z8 at 40 c/s went
+  from 2-4% stand-in a frame to 0.03-0.06%.
+- Two faults in the cut. Its focus was the camera's target, whose z stays where the window placed it while the camera
+  pans (only a slide's tier shift moves it): over land higher than that, everything on the eye's side over the line
+  was cut. And its rule is the rings' wedge (far.wgsl underFocus): a point is cut by its distance toward the eye and its
+  height, wherever it is across the screen — the eye's direction is the screen's vertical, so it's a band the screen's
+  whole width, not the line from the eye to the focus (a point on the screen). The rings press their land down, so
+  their wedge only flattens it; a tile's discard leaves a hole, and behind a tile's own land there's only the stand-in.
+- The geometric check counts a region with a drawn tile as covered, so it never saw the holes. The pixel side wasn't
+  the wrong one: the far pick is written by far.wgsl fsFar and the stand-in only, and class 3 (fsFar nearer) was
+  under 0.3% of a frame throughout.
+- Not what showed here: every far sample the stop-frame probe placed past the window was in a region with a tile drawn
+  that frame, so neither the check's reach (6 regions past the window) nor a missing or late tile; the sea (on the
+  straight route the far share over open sea is the stand-in's sea under the water: SF8/SF11 as before — the comparison
+  route below stays inland).
+
+**The fix.** (1) `Camera.focus`: the ground the screen's centre shows — down the view's ray through the target, the
+first point at or under `Camera.ground` (api/atlas-world.ts: the window's own column tops, none past it or in a region
+not written yet); null where none, and then no cut and no pressing (TileU.focus w 0, FarLand.focus null). The rings get
+the same focus. (2) fsTile cuts a point only when it is (a) over the line to the focus (the rule as was), (b) within
+FOCUS_HOLE (0.2 of the screen's shorter side) of the focus on the screen — only that can hide the focus — and (c) where
+the view's ray behind it runs into the window's footprint before the window's floor (hidesWindow): what the hole opens
+is the window's land. The hole's size is a judgement call for the user (TF5's "not hiding the focus"). No change to
+the geometric check: with the holes gone it agrees.
+
+**Measured** (desktop 1600 x 900, the gate's spot 15024,14337, back and forth over 400 cells up the screen so every run
+sees the same land, 3 s a run, every system on; the stand-in's share of a frame, mean / worst frame, against the
+geometric check's; "missed" frames with over 0.5% stand-in and the check under 0.1%):
+
+| zoom | c/s | stand-in mean / worst (before) | geometric mean / worst (before) | frames missed (before) | stand-in mean / worst (after) | geometric mean / worst (after) | frames missed (after) |
+|---|---|---|---|---|---|---|---|
+| 14 | 40 | 0.16 / 1.1% | 0.00 / 0.0% | 8/51 | 0.02 / 0.1% | 0.00 / 0.0% | 0/49 |
+| 14 | 160 | 0.54 / 7.5% | 0.17 / 10.1% | 20/108 | 0.11 / 0.7% | 0.11 / 10.4% | 9/123 |
+| 14 | 320 | 7.20 / 31.6% | 0.00 / 0.0% | 54/103 | 1.26 / 5.5% | 0.05 / 4.7% | 27/87 |
+| 14 | 640 | 5.30 / 34.0% | 0.09 / 4.0% | 46/98 | 1.20 / 5.4% | 0.45 / 32.5% | 27/79 |
+| 8 | 40 | 0.07 / 0.6% | 0.00 / 0.0% | 1/106 | 0.08 / 0.2% | 0.00 / 0.0% | 0/137 |
+| 8 | 160 | 1.79 / 7.4% | 0.05 / 5.0% | 60/95 | 0.05 / 0.9% | 0.21 / 5.0% | 2/96 |
+| 8 | 320 | 1.81 / 8.7% | 0.07 / 3.9% | 70/110 | 0.10 / 1.8% | 0.08 / 4.8% | 5/114 |
+| 8 | 640 | 6.04 / 16.6% | 0.00 / 0.0% | 77/88 | 0.32 / 3.3% | 0.06 / 4.8% | 17/85 |
+| 5 | 40 | 0.60 / 1.3% | 0.00 / 0.0% | 59/107 | 0.03 / 0.2% | 0.00 / 0.0% | 0/102 |
+| 5 | 160 | 3.36 / 7.2% | 0.00 / 0.0% | 106/106 | 0.07 / 0.4% | 0.00 / 0.0% | 0/120 |
+| 5 | 320 | 3.19 / 6.4% | 0.00 / 0.0% | 89/89 | 0.29 / 3.9% | 0.00 / 0.0% | 11/95 |
+| 5 | 640 | 4.66 / 11.8% | 0.00 / 0.0% | 85/85 | 0.82 / 4.4% | 0.00 / 0.0% | 37/95 |
+
+Phone proxy (412 x 915, dpr 2.6, q=low, window 256, a Pixel's user agent), the same route:
+
+| zoom | c/s | stand-in mean / worst (before) | geometric mean / worst (before) | frames missed (before) | stand-in mean / worst (after) | geometric mean / worst (after) | frames missed (after) |
+|---|---|---|---|---|---|---|---|
+| 14 | 160 | 0.04 / 0.5% | 0.00 / 0.0% | 1/72 | 0.03 / 0.3% | 0.00 / 0.0% | 0/62 |
+| 14 | 320 | 0.03 / 0.2% | 0.26 / 16.5% | 0/127 | 0.56 / 5.4% | 0.09 / 9.6% | 13/113 |
+| 8 | 160 | 0.05 / 1.3% | 0.10 / 7.9% | 6/133 | 0.02 / 0.1% | 0.11 / 7.9% | 0/127 |
+| 8 | 320 | 2.43 / 18.6% | 0.05 / 5.5% | 42/119 | 0.18 / 3.8% | 0.05 / 5.5% | 10/121 |
+| 5 | 160 | 0.12 / 2.1% | 0.00 / 0.0% | 3/108 | 0.16 / 0.9% | 0.00 / 0.0% | 17/102 |
+| 5 | 320 | 0.46 / 6.2% | 0.00 / 0.0% | 29/121 | 0.06 / 2.1% | 0.09 / 4.4% | 2/122 |
+
+The geometric check's worst frames of 5-30% (z14 320-640) are single frames it reads undrawn and the pixels show drawn
+— the other way round, not judged by the agreement check (SF14). At the user's own setting (phone, window 384, world=new
+from the spawn) neither build showed a band on the spawn's flat land (0.0-0.1% at z8/z5, 0-160 c/s): the band needs land
+higher than where the window placed the target, as at the gate's spot.
+
+**What's left (SF14).** At 320-640 c/s only, window chunks the CPU counts as drawn (the grid's in view, the mesh's built)
+show the stand-in for a frame or two: desktop z14 1.2% of a frame mean, 5% worst; holediag classes them
+`far:built:grid|mesh +held`. The geometric check trusts the same "drawn", so it reads 0 there.
+
+**The gate.** scripts/tilegate.mjs: `--agreemax` (0.01) — a view fails when a frame's far land (the pixel check's worst)
+is over the geometric check's worst by more than 1% of the screen: the check's blind spot, not a tolerance on pop-in.
+A fast pan view at `--fastzooms` 14, 8, 5: `--fastpan` 160 c/s back and forth over `--fastspan` 400 cells up the screen
+from the gate's spot — the same land every run and build (straight on, 160 c/s reaches the open sea in 3 s and the far
+share there is the stand-in's sea, SF8/SF11: tried, desktop z5-z1.3 3-6% far with the check at 0, phone z8/z5 26-31%
+undrawn and 37-45% far). The window-384 views (the user's setting) pan too. Desktop and phone, every system on, atlas
+and w384 views, no goldens (the shared GPU: frame checks skipped under 58 fps, no timings from this run):
+
+| fast 160 c/s view | before: far worst / geometric worst | after: far worst / geometric worst |
+|---|---|---|
+| desktop z14 | 10.10% / 0.00% — fails agreement | 1.16% / 19.65% |
+| desktop z5 | (fails undrawn 12.3%) | 9.33% / 9.76% |
+| phone z14 | 22.31% / 0.00% — fails agreement | 0.18% / 0.00% |
+| w384 phone z14 | 7.74% / 0.76% — fails agreement | 0.02% / 0.00% |
+| w384 phone z5 | 10.61% / 8.69% — fails agreement | 0.16% / 0.03% |
+
+After, no view fails the agreement; the desktop's fast pans fail the geometric check itself (z14 19.7% in 5 of 149
+frames, z8 5.3%, z5 9.8%: the window's leading chunks, `c10,*`) — z5 real (the far share agrees), z14/z8 the check
+reading undrawn what the pixels show drawn (SF14). The golden images at desktop z2.2/z1.3 and phone z2.2/z1.3 differ
+35-56% from their baselines, which were written before round 112's zoom floor (2.57 / 2.78) and show a wider view:
+not this change; w384's goldens moved 1.2-1.7% (the rings' pressing now round the ground's focus, or none).

@@ -14,7 +14,7 @@
 //      same coverage (allowed --panmiss of the screen out of detail in a frame: the arriving edge's moment) and frames.
 // Shots and diffs to --out. Exits 1 on any failure (coverage, frames, a flagged image, a page error).
 //   node scripts/tilegate.mjs [--url http://localhost:5233] [--screens desktop,phone] [--zooms 14,8,5,3.5,2.2,1.3]
-//     [--loadframes 180] [--hz 60] [--chromeargs "--disable-gpu-vsync --disable-frame-rate-limit"] [--parked 2] [--pan 20] [--panning 3] [--panmiss 0.02] [--tol 40] [--area 0.01]
+//     [--loadframes 180] [--hz 60] [--chromeargs "--disable-gpu-vsync --disable-frame-rate-limit"] [--parked 2] [--pan 20] [--fastpan 160] [--fastspan 400] [--fastzooms 14,8,5] [--agreemax 0.01] [--panning 3] [--panmiss 0.02] [--tol 40] [--area 0.01]
 //     [--out C:/Projects/shots88/tilegate] [--baselines data/baselines/tilegate] [--update] [--no-golden] [--no-pan]
 //     [--extra "&x=1"] [--wait 35000] [--shrink 8]
 // --update writes the baselines (a view's: --update --screens desktop --zooms 5); they're kept by adapter
@@ -55,6 +55,13 @@ const chromeArgs = (opt('chromeargs', '--disable-gpu-vsync --disable-frame-rate-
 const parkedS = Number(opt('parked', 2));
 // (round 113, tilesfirst: --pan a list of speeds, each a run at each of --panzooms (default the zooms))
 const panVs = String(opt('pan', 20)).split(',').map(Number);
+// (round 114, covercheck: a fast pan — the pan bench's phone rows showed the stand-in over 4-10% of a frame at 160 c/s the
+// geometric check didn't see; the checks' agreement (--agreemax) is judged there. Back and forth over --fastspan cells up
+// the screen from the spot, so every run and build sees the same land (0: straight on — from the gate's spot that reaches
+// the open sea in 3 s, the far share there the stand-in's sea: SF8, SF11); at --fastzooms, after the zoom's own pans)
+const fastV = Number(opt('fastpan', 160));
+const fastSpan = Number(opt('fastspan', 400));
+const fastZooms = String(opt('fastzooms', '14,8,5')).split(',').map(Number);
 const panZooms = opt('panzooms', null)?.split(',').map(Number) ?? null;
 const panS = Number(opt('panning', 3));
 const panMiss = Number(opt('panmiss', 0.02));
@@ -62,6 +69,9 @@ const tol = Number(opt('tol', 40));
 const areaMax = Number(opt('area', 0.01));
 const bgMax = Number(opt('bgmax', 0.001));
 const geoMax = Number(opt('geomax', 0.001));
+// (round 114, covercheck: the far land's share a frame shows over the geometric check's, allowed — the pixel grid's
+// sampling and the check's quads at a piece's middle height differ by a sliver at the edges)
+const agreeMax = Number(opt('agreemax', 0.01));
 const outDir = opt('out', 'C:/Projects/shots88/tilegate');
 // (round 112, tilefix2: baselines by GPU — vendors render 1.5-12% of a frame differently: a dir an adapter,
 // <baselines>/<vendor>-<architecture>, written the first time an adapter runs)
@@ -216,6 +226,10 @@ function judge(tag, m, missMax) {
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
   // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)
   if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')})`);
+  // (round 114, covercheck: the two checks agree — the far land the pixels show (the stand-in, the flat far land) in a
+  // frame is land drawn by neither the window nor a tile, which the geometric check must see too: a worst frame's far
+  // share over the geometric's worst by more than --agreemax is a blind spot of the check, not a tolerance)
+  if (m.bg && m.geo && m.bg.farMax > m.geo.max + agreeMax) f.push(`far land ${(m.bg.farMax * 100).toFixed(2)}% of a frame the geometric check doesn't see (its worst ${(m.geo.max * 100).toFixed(2)}%; ${m.bg.farFrames} of ${m.bg.frames} frames with any)`);
     if (f.length) fails.push(`${tag}: ${f.join('; ')}`);
     return f;
   }
@@ -226,6 +240,10 @@ function judge(tag, m, missMax) {
   if (m.bg && m.bg.max > bgMax) f.push(`background ${(m.bg.max * 100).toFixed(2)}% of the screen (worst frame; ${m.bg.framesAny} of ${m.bg.frames} frames with any)`);
   // (round 113, tilesfirst: the geometric check — undrawn land in sight — over --geomax of the screen in a frame)
   if (m.geo && m.geo.max > geoMax) f.push(`undrawn ${(m.geo.max * 100).toFixed(2)}% of the screen (geometric; ${m.geo.framesAny} of ${m.geo.frames} frames; ${m.geo.worst.join(' ')})`);
+  // (round 114, covercheck: the two checks agree — the far land the pixels show (the stand-in, the flat far land) in a
+  // frame is land drawn by neither the window nor a tile, which the geometric check must see too: a worst frame's far
+  // share over the geometric's worst by more than --agreemax is a blind spot of the check, not a tolerance)
+  if (m.bg && m.geo && m.bg.farMax > m.geo.max + agreeMax) f.push(`far land ${(m.bg.farMax * 100).toFixed(2)}% of a frame the geometric check doesn't see (its worst ${(m.geo.max * 100).toFixed(2)}%; ${m.bg.farFrames} of ${m.bg.frames} frames with any)`);
   if (m.fps < CRIT.fps) f.push(`fps ${m.fps}`);
   if (m.max > CRIT.max) f.push(`frame ${m.max} ms${m.hitches?.length ? ` (${m.hitches.join('; ')})` : ''}`);
   if (m.p99 > CRIT.p99) f.push(`p99 ${m.p99} ms`);
@@ -403,7 +421,8 @@ for (const sk0 of screens) {
       console.log(`${tag} parked: ${f.length ? 'FAIL ' + f.join('; ') : 'ok'} — ${JSON.stringify({ ...m, golden: g })}`);
     }
     // 3: panning, each zoom
-    if (doPan && mode === 'atlas')
+    // (round 114, covercheck: and the user's own phone setting, window 384 — their screenspace band was there)
+    if (doPan && (mode === 'atlas' || mode === 'w384'))
       for (const z of panZooms ?? zooms)
       for (const panV of panVs) {
         const tag = `${sk}-z${z}`;
@@ -418,10 +437,48 @@ for (const sk0 of screens) {
         }, panV);
         const m = await measure(p, panS, false);
         await p.evaluate(() => (window.reclaimed.scene.pan = null));
-        await p.screenshot({ path: path.join(outDir, `${tag}-pan.png`) });
+        await p.screenshot({ path: path.join(outDir, `${tag}-pan${panV}.png`) });
         const f = judge(`${tag} panning ${panV} c/s`, m, panMiss);
         rows.push({ view: tag, mode: `pan ${panV}`, ...m, ok: !f.length });
         console.log(`${tag} pan ${panV}: ${f.length ? 'FAIL ' + f.join('; ') : 'ok'} — ${JSON.stringify(m)}`);
+      }
+    if (doPan && fastV > 0 && (mode === 'atlas' || mode === 'w384'))
+      for (const z of fastZooms) {
+        const tag = `${sk}-z${z}`;
+        await p.evaluate((z) => (window.reclaimed.camera.zoom = z), z);
+        await frames(p, loadFrames);
+        await p.evaluate((v, span) => {
+          const R = window.reclaimed;
+          const c = R.camera;
+          const S = R.stream;
+          const [ux, uy] = c.screenDeltaToWorld(0, -1);
+          const l = Math.hypot(ux, uy) || 1;
+          const dir = [ux / l, uy / l];
+          const ROW = Math.sqrt(3) / 2;
+          const here = () => [S.origin[0] + c.target[0], S.origin[1] * ROW + c.target[1]];
+          const home = here();
+          R.scene.pan = { speed: v, dir: [...dir], t: 0, turnAt: 0, turnBy: 0, turned: 0, asked: 0 };
+          let sign = 1;
+          const steer = () => {
+            const pan = R.scene.pan;
+            if (!pan) return;
+            if (span > 0) {
+              const h = here();
+              const off = (h[0] - home[0]) * dir[0] + (h[1] - home[1]) * dir[1];
+              if (off > span && sign > 0) sign = -1;
+              else if (off < 0 && sign < 0) sign = 1;
+              pan.dir = [dir[0] * sign, dir[1] * sign];
+            }
+            requestAnimationFrame(steer);
+          };
+          requestAnimationFrame(steer);
+        }, fastV, fastSpan);
+        const m = await measure(p, panS, false);
+        await p.evaluate(() => (window.reclaimed.scene.pan = null));
+        await p.screenshot({ path: path.join(outDir, `${tag}-fast${fastV}.png`) });
+        const f = judge(`${tag} panning ${fastV} c/s over ${fastSpan || 'on'}`, m, panMiss);
+        rows.push({ view: tag, mode: `fast ${fastV}`, ...m, ok: !f.length });
+        console.log(`${tag} fast ${fastV}: ${f.length ? 'FAIL ' + f.join('; ') : 'ok'} — ${JSON.stringify(m)}`);
       }
     await p.close();
   }
