@@ -13425,3 +13425,119 @@ The merged tilegate: background 0 everywhere; parked and 20 c/s views as before 
 baselines). The 160 c/s fast views varied, so desktop z8/z5 were A/B'd, pre-merge (covercheck build) against merged,
 twice each, alternating: far land worst pre 0.04%-4.7%, merged 0.1%-4.7%; geometric worst the same 11.8% in all four
 (SF14). Run-to-run noise, not a regression. The z8 20 c/s 0.16% from the full gate didn't recur (0 in all four).
+
+## 2026-10-30 — round 115 (`tilecal`): the tiles calibrated to the device and the screen (the user's wide monitor)
+
+The user, verbatim (DECISIONS round 115): "the desktop version on my wide monitor does not load all the tiles (and I
+assume it is considerably more powerful than the phone) which seems like it is an issue with the implementation
+because I don't think the PC streaming should be that slow if it is just a heightmap. ... Worth spawning one subagent
+to investigate on the PC and see if it is an issue with settings and if so make the runtime calibrate to the hardware."
+
+**Reproduction** (this laptop's Intel Xe iGPU, D3D11; the tile gate at 1600 x 900 and three ultrawides at dpr 1 —
+2560 x 1080, 3440 x 1440, 5120 x 1440, new `--screens uw2560,uw3440,uw5120` — parked at zooms 14-1.3 and panning at
+20 and 80 c/s; places 3c850b9). Parked, every size loaded whole: 0 out of detail, 0 background (one transient 0.61% at
+5120 z5, 9 of 97 frames). What changed with the screen was the **zoom floor**: 2.57 at 1600 x 900, 3.12, 4.27, 5.2 at
+5120 x 1440 — the camera couldn't zoom out past it, and the wider the screen the closer it held. The pans showed the
+stand-in at the arriving edge on every size, 1600 x 900 too (far land 1-3% of a frame at 20-80 c/s, the SF13/SF14
+family); at 5120 z5.2 80 c/s 1.9-5.9% geometric undrawn and 7-18% far land.
+
+**The cause: two constants that don't see the hardware or the screen.**
+- The atlas budget: the phone's 24 MB scaled by the screen's css area, *capped at 128 MB* — every screen past
+  ~2000 x 1000 got the same 459 slots. The floor was then the atlas's: a wide screen's regions in 80% of a fixed
+  atlas.
+- The fill rate: `FILL_RATE` 2 tiles a frame off a phone, 0.3 on one (`FLOOR_FRAMES` 300). Measured here
+  (scripts/fillprobe.mjs: the view turned a quarter at the floor, so no tile is drawn, then frames till the
+  geometric check reads 0 for 10 frames): **~1.1-1.2 tiles a frame from nothing** — 100-112 tiles/s at the headless
+  ~90 fps, 45-65/s under the gate's 60 Hz cap at ~50 fps. The constant was 1.7 times this iGPU's; the old count of
+  the screen's regions (a square of its area, MARGIN² of it) over-counted by about as much, so it held by luck, and
+  for a 3080 it's the same 2 tiles a frame whatever the card does.
+- The screen's regions were counted as a square of its area: a 32:9 screen's ring of regions is ~1.2 times a
+  square's.
+So on this machine nothing failed to load inside the floor: the wide screen's limit was the floor, and the floor was
+the constants'. A parked view that doesn't fill on the user's PC isn't reproduced here at any of the four sizes; a
+device whose real rate is under 2 tiles a frame (a page under 60 fps — the 3080's headless runner ran 29 Hz with the
+monitor off) gets a floor it can't fill in 5 s, which the calibration below now measures instead of assuming.
+
+**What changed** (render/tilecalib.ts, `TileCache.cal`; ARCHITECTURE "The tiles' calibration"):
+- **The rate measured.** TileLandGpu.step tells the calibration each frame's bakes and whether the land was the
+  bottleneck (a region wanted with no scratch slot free, or the bakes at their cap; not the atlas full), with the
+  camera at rest and the planner's holes on (the pacer's turns all the tiles' then — a screenful filling, the floor's
+  own case; a frame whose turns the streamer's strips share isn't the fill's rate). A second of such frames is a
+  block; each block moves the estimate 30% of the way, from the tier's prior (120/s, 18/s on a phone). Tiles a second,
+  at whatever frame rate the device runs. `?tilerate=` (tiles a frame at 60 Hz) fixes it.
+- **The floor**: the screen's own regions (area and perimeter, without the margin — the look-ahead asks for them
+  first) no more than the rate makes in the fill budget (5 s, round 112's 300 frames: the gate's 3 s budget was tried
+  and narrowed every device's floor, the phone's 2.78 to 3.8, so it isn't kept); the screen with the margin in 80% of
+  the atlas. `stats.floorBound` says which held it (`rate` / `room`), `floorTiles` the screen's regions.
+- **The atlas grows.** It's made as before (24 MB by the css area, 128 MB at most) but as wide as its budget allows,
+  so a growth adds rows and every slot keeps its place: TileCache.grow copies the three planes and the slots' params
+  into the taller ones, remakes the instances' buffer and the groups, and retires the old a frame on. It grows when
+  the floor is the atlas's (`room`), the rate is measured, and the rate's own floor would take 10% more slots than it
+  has — to those slots, within the budget: 512 MB off a phone, 128 MB on one (WebGPU says nothing of a device's
+  memory, so it's a budget, not the adapter's; `?tilemb=` fixes the atlas, no growth). Grown once or twice per page.
+- Reported: TileCache.stats (`zoomFloor`, `floorBound`, `floorTiles`, `slotsMost`, `grown`, `slots`, `mb`),
+  `TileCache.cal.stats` (`rate`, `prior`, `measuredS`, `source`, `fillS`, `blocks`), the tile gate's rows (`tiles`,
+  `cal`) and the pan bench's `tiles.slots`.
+
+**Before / after.** The tile gate (60 Hz cap, this iGPU ~50 fps; `--fastpan 0 --no-golden`), shots
+C:/Projects/shots88/tilecal/before/, after6/ (phone: before-phone/):
+
+| screen | zoom floor | atlas slots / MB | parked out of detail (z5-1.3) | pans 20/80 c/s: worst geometric, worst far land | p99 median, worst frame |
+|---|---|---|---|---|---|
+| 1600 x 900 | 2.57 → **1.95** | 384 / 144 → 530 / 199 | 0 → 0 | 0.34%, 2.9% → 0.11%, 3.0% | 27.4, 35.1 → 26.5, 33.0 ms |
+| 2560 x 1080 | 3.12 → **2.67** | 459 / 172 → 795 / 298 | 0 → 0 | 0.05%, 3.5% → 0.04%, 3.3% | 25.8, 32.7 → 25.0, 31.4 |
+| 3440 x 1440 | 4.27 → **3.65** | 459 / 172 → 1007 / 378 | 0 → 0 | 0.11%, 4.4% → 0.24%, 2.9% | 25.1, 32.2 → 25.9, 31.8 |
+| 5120 x 1440 | 5.2 → **4.27** | 459 / 172 → 1007 / 378 | 0.61% (z5, transient) → 0 | **5.9%, 18.2%** → 0.15%, 4.7% | 26.7, 35.8 → 26.6, 32.4 |
+| phone proxy 412 x 915 dpr 2.6 q=low | 2.78 → 2.78 | 104 / 39 → 162 / 61 | 0 → 0 | 0.09%, 3.3% → 0.09%, 3.4% | 25.3, 32.0 → 24.3, 31.9 |
+
+Gate failures (all pans, the far-land agreement check and the arriving edge — the known stand-in family, none
+parked): desktop + ultrawides 25 → 18, the phone 1 → 1 (z1.3 80 c/s, as before). The calibrated rate there was
+45-75 tiles/s (the 60 Hz cap), the phone's 12-13.
+
+From nothing (fillprobe, headless uncapped ~90 fps, three quarter turns each, the floor as the page set it):
+
+| screen | before: floor, fill s, tiles/s | after: floor, fill s, tiles/s, calibrated rate, atlas |
+|---|---|---|
+| 1600 x 900 | 2.57, 1.7-1.9 s, 109-111 | **1.32**, 3.1-4.4 s, 113-118, 110-115/s, 530 slots / 199 MB |
+| 2560 x 1080 | 3.12, 2.0-2.2 s, 107 | **2.78**, 2.5 s, 98-109, 100-104/s, 583 / 219 MB |
+| 3440 x 1440 | 4.27, 1.9-2.0 s, 105-113 | **2.57**, 3.7-4.2 s, 104-109, 100-109/s, 1219 / 457 MB |
+| 5120 x 1440 | 5.2, 1.9-2.0 s, 98-103 | **3.25**, 3.9-4.3 s, 99-110, 99-108/s, 1219 / 457 MB |
+| phone proxy | 2.78, 1.4-1.6 s, 25 | **1.67**, 3.0-4.3 s, 26-27, 24-26/s, 162 / 61 MB |
+
+The calibrated rate agrees with the measured fill within ~5%, and every fill is inside the 5 s budget. The floor
+follows the frame rate: the same build holds 1.95 at 1600 x 900 under the gate's 60 Hz and 1.32 at ~90 fps.
+
+**Open / for the user.**
+- On the 3080: the floor and atlas are now the card's own. Check in the console on the wide monitor:
+  `reclaimed.renderer.tiles.cal.stats` (rate, source 'measured') and `reclaimed.renderer.tiles.stats` (zoomFloor,
+  floorBound, slots, mb, grown). If tiles still don't load parked inside the floor, that's a bug the gate doesn't
+  see here — a screenshot and those two lines.
+- The atlas may take up to 512 MB of GPU memory off a phone (457 MB at 3440 x 1440 / 5120 x 1440 at ~90 fps here) and
+  128 MB on a phone: a budget for the user to decide (CAL3).
+- The phone's floor widens on a phone that makes tiles faster than the prior (the proxy at 90 fps: 2.78 → 1.67), and
+  its atlas may grow to 128 MB: the phone bench should check its frames at the new floor (CAL4).
+- The pans' stand-in slivers (1-5% far land at 20-80 c/s, every size) are the known SF13/SF14 family, not the
+  rate or the atlas: unchanged by this.
+- A dark rectangle over the land at the right of the 5120 x 1440 view (before and after: uw5120-z1.3.png) —
+  not looked into.
+
+### Round 115 (`tilecal`, 2): no memory caps — the atlas bounded by the hardware; unit tests
+
+The user on the budget (BACKLOG CAL3), verbatim: "Why limit to 512 and 128MB both should use as much as we need that
+the hardware supports."
+- No policy caps, the phone the same rule. The atlas starts where it did (24 MB by the css area, at most 128 — a
+  start) and grows to the slots the measured rate's floor needs. Its bounds are the hardware's: it's as wide as the
+  device's widest texture and grows to that texture's height (device.ts now asks for the adapter's
+  maxTextureDimension2D, as it already did its buffer limits; the slots' params and instances are KB, far under
+  maxBufferSize / maxStorageBufferBindingSize), and its allocations succeed: a growth's planes and buffers are made in
+  an 'out-of-memory' error scope; out of memory, they're destroyed, the atlas stays, and the bytes are the ceiling
+  (`cal.stats.ceilingBytes`) — no growth at or over it is asked for again. Validation errors stay outside the scope,
+  fatal as ever. The copy into the new atlas runs the frame after the scope resolves (TileCache.finishGrow).
+- The floor's search is a pure function (tilecalib.ts `floorSearch`), and the estimator takes its clock
+  (`landFrame(baked, bottleneck, now)`): **unit tests without a browser** — vitest (added: `npm test`,
+  vitest.config.ts, node only), src/render/tilecalib.test.ts, 11 tests: the prior, a block's 30% step, convergence,
+  frames left out (not the bottleneck, stalls, no holes), the ceiling; the square's (side + 2)² count, the rate's test,
+  the room's test and the slots the atlas grows to, a wide screen's closer floor, a faster device's wider floor. 0.4 s.
+- One browser smoke (fillprobe, shared GPU — growth's correctness only, no timings): 1600 x 900 grew to 512 slots /
+  192 MB (floor 1.32), 5120 x 1440 to 1024 / 384 MB, the phone proxy to 256 / 96 MB; no out-of-memory, no errors.
+  The atlas now starts as whole rows of the widest texture (64 slots a row at 8192), so its first size rounds up a row.

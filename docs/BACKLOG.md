@@ -24,6 +24,20 @@ Streaming is good enough for now (places 3c850b9); these are for when gameplay a
 | RC4 | Generation partitions the map into regions with natural barriers on their borders (cliffs, water, ridges), so play is coherent within a region and the cache loads by region (RC1); the region graph is shared by map design (rooms, key and door) and streaming | L | deferred |
 | RC5 | What the tile atlas keeps today, to revisit with RC1: a fixed GPU budget of slots (desktop 384 / 144 MB, phone 104 / 39 MB), least recently drawn out (never a tile the last frame drew); the planner asks for the footprint plus look-ahead along the motion; nothing is kept for what is likely to come back besides recency; tiles are keyed by the view's turn (a turn bakes all of them again) and live on the GPU only (a reload makes them again; WV6) | S | open |
 | OC1 | The camera's view kept clear: the camera slides over the heightmap toward the ground at the centre of the screen, which is always visible (Camera.focus, round 114); what blocks the view of it is dithered by a rule for how much of the nearby surface a thing may hide, by its height and maybe its layers — small things like rocks may, a cliff or spire hiding the ground may not. Replaces the tiles' eye-side cut (FOCUS_HOLE) and the rings' pressing; one rule for the window, the tiles and the rings; uses the Dither contract (api/cutaway.ts) | M | open |
+## Round 115 (2026-10-30, `tilecal`) — the tiles calibrated to the device and the screen (DECISIONS round 115)
+
+The user: the desktop on their wide monitor "does not load all the tiles"; investigate on the PC whether it's settings,
+and if so make the runtime calibrate to the hardware.
+
+| id | item | size | status |
+|---|---|---|---|
+| CAL1 | Reproduce on wide screens (2560 x 1080, 3440 x 1440, 5120 x 1440, dpr 1) and name the cause: the zoom floor from a fixed fill rate (2 tiles a frame; measured here 1.1-1.2) and an atlas capped at 128 MB (459 slots for every screen past ~2000 x 1000) — parked views load whole inside the floor on this iGPU; the floor rose 2.57 → 5.2 with the screen | S | done (`tilecal`): tile gate `--screens uw2560,uw3440,uw5120`, scripts/fillprobe.mjs |
+| CAL2 | The runtime calibrates: the land's fill rate measured (tiles/s while it's the bottleneck, at rest, holes first), the floor by the screen's own regions (area and perimeter) in 5 s at that rate, the atlas grown in place (rows added, slots kept) when it's the floor's bound, within a memory budget; stats in TileCache.stats / cal.stats, the gate's rows and the pan bench | M | done (`tilecal`): floors 1600 x 900 2.57 → 1.95, 5120 x 1440 5.2 → 4.27 (60 Hz gate), phone 2.78 → 2.78; parked 0 out of detail everywhere |
+| CAL3 | The atlas's memory budget (was up to 512 MB off a phone, 128 MB on one) — the user: "Why limit to 512 and 128MB both should use as much as we need that the hardware supports." No policy caps: grown to need, bounded by the device's texture side (the adapter's maxTextureDimension2D asked for) and allocations that succeed (an 'out-of-memory' error scope; a failure keeps the atlas and is the ceiling, `cal.stats.ceilingBytes`); the phone the same | S | done (`tilecal`) |
+| CAL7 | Unit tests without a browser for the calibration: the rate's estimator and the floor's rate and room tests on synthetic inputs (vitest, `npm test`; src/render/tilecalib.test.ts, 11 tests) | S | done (`tilecal`) |
+| CAL4 | The phone at the calibrated floor: a phone that fills faster than the prior gets a wider floor (the proxy at 90 fps 2.78 → 1.67) and an atlas up to 128 MB — the phone bench should check its frames there | S | open |
+| CAL5 | The user's PC: `reclaimed.renderer.tiles.cal.stats` and `.stats` on the wide monitor (the rate the 3080 measures, the floor, its bound, the atlas) — and a screenshot if tiles still don't load parked inside the floor | S | asked |
+| CAL6 | A dark rectangle over the land at the right of the 5120 x 1440 view (before and after: shots88/tilecal/before/uw5120-z1.3.png) | S | open |
 
 ## Round 114 (2026-10-30, `framepace`) — the phone's parked frame drops (56-57 fps, p99 33 ms with ~1-2 ms of CPU)
 
