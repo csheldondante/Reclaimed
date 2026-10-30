@@ -67,6 +67,9 @@ const WGSL = /* wgsl */ `
 var<workgroup> wBg: atomic<u32>;
 var<workgroup> wFar: atomic<u32>;
 
+/** far.wgsl STAND_Z (the stand-in's depth) — keep the two the same */
+const STAND_Z: f32 = 0.99999976;
+
 @compute @workgroup_size(8, 8)
 fn sampleGrid(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invocation_index) li: u32) {
   if (li == 0u) {
@@ -80,14 +83,14 @@ fn sampleGrid(@builtin(global_invocation_id) g: vec3<u32>, @builtin(local_invoca
     let d = textureLoad(depthT, px, 0);
     let k = textureLoad(pickT, px, 0).xy;
     var c = 0u;
-    // (round 113, tilesfirst: the far land's pick first — the stand-in (far.wgsl vsStandIn) is drawn at the far plane
-    // without writing the depth, so its pixels keep the clear depth; they're the far land's, not the background)
-    if (k.x == 0u && k.y == P.z) {
-      atomicAdd(&wFar, 1u);
-      c = 2u;
-    } else if (d >= 1.0) {
+    // (round 113, tilesfirst: the stand-in — far.wgsl vsStandIn, at depth STAND_Z, just short of the clear — is the far
+    // land's whatever is blended over it (the water's surface writes its own pick, not the depth))
+    if (d >= 1.0) {
       atomicAdd(&wBg, 1u);
       c = 1u;
+    } else if (d >= STAND_Z || (k.x == 0u && k.y == P.z)) {
+      atomicAdd(&wFar, 1u);
+      c = 2u;
     }
     cls[g.y * P.x + g.x] = c;
   }

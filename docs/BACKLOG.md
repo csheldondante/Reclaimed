@@ -23,7 +23,7 @@ pulls back to at speed (chase.ts: 28 at rest, half at top speed: 14) — the gat
 | id | item | size | status |
 |---|---|---|---|
 | SF1 | Step 1: the chain from wanted to drawn timed (scripts/chaintime.mjs), the holes classified (scripts/holediag.mjs), the geometric coverage check (render/coverage.ts: the orthographic view's chunks and regions, drawn or not) in the pan bench (its pop-in) and the tile gate (`--geomax`), validated against the pixel check | M | done (`tilesfirst`) |
-| SF2 | Step 2: the stand-in — the far land under the whole view, inside the window too, at the far plane's depth: the background can't show | S | open |
+| SF2 | Step 2: the stand-in — the far land under the whole view, inside the window too, at the far plane's depth: the background can't show | S | done (`tilesfirst`): far.wgsl vsStandIn, depth written (the water's surface over it); gate background 0 everywhere |
 | SF3 | Step 3: tiles as cover — a window region's tile draws wherever the window doesn't draw its land this frame (chunk by chunk, the GPU's word on the mesh), the swap the frame it's ready; tiles asked for inside the window where its drawing isn't there | M | open |
 | SF4 | Step 4: the planner — one footprint, speed-scaled look-ahead per layer from measured latencies, budget steps, holes first; rendering before simulation (the user: "Prioritize rendering over simulation too") | L | open |
 | SF5 | Step 5: the height grid as its own layer — a region's column tops in a small texture the grid draws from, the moment its first generation pass lands | L | open |

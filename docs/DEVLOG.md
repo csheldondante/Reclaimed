@@ -12852,3 +12852,25 @@ speed (phone bg 8.8-19.6%, geo 10-19.8%), phone z14 passes to 80 c/s and fails a
 z14 fails from 40 (2.6%). Frames not judged: this laptop's iGPU runs the gate's pages at 47-52 fps under the 60 Hz cap.
 That is places' behaviour (BG4 (b)): this step changes nothing drawn.
 
+
+## 2026-10-30 — round 113 (`tilesfirst`, step 2): the stand-in — the far land under the whole view
+
+The design's layer 0 (the user: "this is fine but hopefully we rarely hit it"): background must be impossible.
+far.wgsl `vsStandIn` / `fsStandIn` (FarLand.standPipe; `?standin=0` off): the far land's grid (161², 32 cells apart,
+round the camera) at the land's own height everywhere — inside the window too, never sunk or pressed under the focus —
+drawn last of the far land's draws with its clip z set to STAND_Z (0.99999976, just short of the clear depth), depth
+tested and written. It shows only where nothing else drew; anything drawn is nearer. It writes the depth because the
+window's water surface is blended without writing it: holediag's first stand-in runs still read 12-20% "background" at
+z8 over the coast — the sea's surface drawn over the clear colour (its own pick, the clear depth), a real hole before
+(clsmap: shots88/tilesfirst/clsmap.png) — and with the stand-in under it it's water over land. bgcheck.ts counts the
+stand-in's depth (or the far land's pick) as the far land, the clear depth as the background.
+
+**Gate** (same as step 1: tilegate both screens, `--pan 20,40,80,160 --panzooms 14,8,5`; shots88/tilesfirst/
+gate-step2b.json): **background 0.00% in every view and every pan** (step 1: up to 19.6%); the holes now show the
+stand-in (far share = geo share: phone z8 80 19.3% far / 19.7% geo, z5 80 13.9 / 11.3, phone z14 160 55.8 / 47.9). The
+geometric check is unchanged (it counts detail, not background): pans still fail it — steps 3-5. Parked views pass;
+golden images change exactly as in step 1 (desktop and phone z2.2 35-40%, z1.3 53-56%, run views 1.1-7.1%: those
+baselines predate the zoom floor (tilefix3) — the camera at 2.57 not 1.3 — the same failures on places' tree); frames
+alike (46-50 fps under the 60 Hz cap on this iGPU, p99 24-32 ms as step 1). Cost: one more draw of the far land's grid
+(26k vertices, five texture reads each), fragments only where nothing else drew (early depth).
+
