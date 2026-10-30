@@ -66,6 +66,8 @@ import { loadRunStory, runWorld, startAtlasRun } from '../story/atlas-run';
 const CUTAWAY = new URLSearchParams(location.search).get('cutaway') === '1';
 /** (round 113) ?planner=0: no planner — each layer's own fixed look-ahead, the sim's ticks never cut */
 const PLANNER_OFF = new URLSearchParams(location.search).get('planner') === '0';
+/** (round 113, SF10) ?camclamp=1: the camera held a region in from the streamed window's edge (round 91), as before */
+const CAM_CLAMP = new URLSearchParams(location.search).get('camclamp') === '1';
 const PLAN_OFF = new Set((new URLSearchParams(location.search).get('planoff') ?? '').split(',').filter(Boolean));
 /** (round 113, tilesfirst, SF7) ?arriveprep=0: land written into the window waits READY_TICKS sim ticks for the grid, as before */
 const ARRIVE_PREP = new URLSearchParams(location.search).get('arriveprep') !== '0';
@@ -1939,12 +1941,17 @@ export class LevelScene implements Scene {
       this.ceilingFrame(dt, cpu0);
       return;
     }
-    // (round 91, the user: "I easily hit the edge of the loaded ground") A streamed window keeps the camera a region
-    // in from its edge: a pan faster than the slides waits for them there (the strip a slide brings in is a region
-    // wide and comes in over frames), instead of running on to the window's edge
-    const edge = this.stream ? REGION : 0;
-    camera.target[0] = Math.max(edge, Math.min(dims.w - edge, camera.target[0]));
-    camera.target[1] = Math.max(edge * ROW_H, Math.min((dims.h - edge) * ROW_H, camera.target[1]));
+    // (round 91, the user: "I easily hit the edge of the loaded ground": a streamed window kept the camera a region in
+    // from its edge — a pan faster than the slides waited for them there. Round 113, `tilesfirst` SF10, the user on
+    // places: "This version seems to stop me from scrolling when I get near the edge of what is loaded which is not
+    // desirable either." The stand-in and the tiles draw everything the camera sees, so it's never held back by what's
+    // loaded: a streamed world has no edge (the atlas wraps), the window slides after the camera and catches up behind
+    // it. A fixed map keeps its own bounds. ?camclamp=1 the round-91 clamp, to compare)
+    if (!this.stream || CAM_CLAMP) {
+      const edge = this.stream ? REGION : 0;
+      camera.target[0] = Math.max(edge, Math.min(dims.w - edge, camera.target[0]));
+      camera.target[1] = Math.max(edge * ROW_H, Math.min((dims.h - edge) * ROW_H, camera.target[1]));
+    }
     if (this.reach) {
       this.reachRefresh -= dt;
       if (this.reachRefresh <= 0) {

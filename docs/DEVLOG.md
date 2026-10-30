@@ -12949,3 +12949,20 @@ behind, instead of a fixed square that slides; (c) the systems dispatched over t
 already are per chunk); (d) the CPU's window-coordinate arrays (hybrid, the mesh's chunk grid, the streamer's
 per-column) addressed by page; (e) the camera's clamp gone (SF10, done separately). Gate: tilegate and the sim's
 contract tests (water across page edges).
+
+## 2026-10-30 — round 113 (`tilesfirst`, SF10): the camera is never held back by what's loaded
+
+The user on places (steps 1-3): "This version seems to stop me from scrolling when I get near the edge of what is loaded
+which is not desirable either." That was round 91's clamp (level.ts: a streamed window kept the camera a region in
+from its edge, so a pan faster than the slides waited for them). With the stand-in and the tiles drawing everything
+the camera sees, a streamed level has no clamp: the atlas wraps, the window slides after the camera and catches up
+behind it (a slide a region at a time, each when its land is made). A fixed map keeps its bounds; `?camclamp=1` the
+round-91 clamp, to compare.
+
+**Check:** scripts/panstall.mjs (phone proxy, window 256, 10 s up the screen; every 250 ms span's distance against what
+was asked, under 80% a stall). With `camclamp=1`: z14 at 160 c/s stalled in 38 spans (worst at half speed; 1559 of
+1590 cells); without: no stall at z14 or z5, 80 or 160 c/s (z14 160: 1584 of 1584 cells, 58 slides behind it;
+background 0, the geometric check 0 at z14; z5 at 80-160 c/s for 10 s 6.6-7.0% — long pans at wide zooms, SF9).
+**Gate** (gate-sf10.json): background 0; phone z14 clean to 160 (step 4's run: 23% at 160), phone z8 0-0.05%, phone z5
+0-0.6%; desktop z14 0-0.05%, z8 0-0.6% (160: 9.9 → 0.1), desktop z5 0.65-2% (SF9, as step 4's 0.8-1.6%); parked all
+pass; frames as step 4 (49-52 fps under the cap).
