@@ -1,15 +1,21 @@
 // ---- runplan/level-run.ts ---------------------------------------------------------------------------------------
-// (round 117, runplan; BACKLOG RP5, RC2, RC3) A planned run in the level: `?level=atlas&runplan=bike`. The run is
-// planned from the spawn's region on this atlas (its facts and wiki read from the live atlas, so any seed works);
-// a card says where the player is and what the stage is about; how a stage goes is picked from its outcomes (the
-// stage's play itself is the play track's — the card stands in for it); then the player picks a leg out and the travel
-// plays on the atlas map: the run's legs and stages drawn over the game's own map, the marker moving along the road,
-// each en-route event held until answered — while the streamer makes the destination's land (precacheWarp). It
-// arrives when the animation is done and the land is ready (warpReady), then warps there.
+// (round 117, runplan; BACKLOG RP5, RC2, RC3 — round 119, runplay: stages played) A planned run in the level:
+// `?level=atlas&runplan=<hero>`. The run is planned from the spawn's region on this atlas (its facts and wiki read
+// from the live atlas, so any seed works; its region graph terrain's). A card says where the player is and what the
+// stage is about; the stage is PLAYED by a StagePlayer (contracts/run.ts — src/runplay: play's hero, its controls) and
+// the outcome its play picked is the one the world gets; without a player (no units in the level) it's picked from the
+// card as before. Then the player picks a leg out: the plan's asks of terrain are made on the destination's land
+// (runplan/requests.ts, before it's made), and the travel plays on the atlas map — the run's legs and stages drawn
+// over the game's own map, the marker moving along the road, each en-route event held until answered — while the
+// streamer makes the destination's land (precacheWarp). It arrives when the animation is done and the land is ready
+// (warpReady), then warps there. The run ends on a finale, a death, a capture or the clock (the plan's deadline:
+// rules.ts RunClock), and the end card says what changed in the world.
 // The user (round 115): "have the player use the atlas map to travel from location to location. We can precache the
-// locations they go to and animate travel on that map while we load in the background."
+// locations they go to and animate travel on that map while we load in the background." (round 119): "I need to
+// actually play a generated run and try it out."
 
-import type { EncounterKind, RunPlan, RunRecord, RunStage } from '../api/contracts/run';
+import type { EncounterKind, PlayedStage, RunPlan, RunRecord, RunStage, StagePlayer } from '../api/contracts/run';
+import type { ControllerProfile } from '../api/contracts/play';
 import { MemoryWorldState } from '../api/contracts/world-state';
 import type { AtlasMap } from '../api/atlas-map';
 import type { Atlas } from '../atlas/atlas';
@@ -21,8 +27,11 @@ import { finishRun } from './consequences';
 import { runGraph } from './graph';
 import { heroCaps } from './heroes';
 import { planRun } from './plan';
+import { askTerrain } from './requests';
+import { RunClock } from './clock';
 import { Journey, type JourneyState } from './travel';
 import { describe } from './viewer-text';
+import type { RegionGraph } from '../api/contracts/run';
 
 const GLYPH: Record<EncounterKind, string> = {
   race: '»', chase: '⇝', fight: '⚔', horde: '☠', spectacle: '✷', destruction: '✸', delve: '⛏', talk: '✉', explore: '⚐', rescue: '♡',
@@ -34,11 +43,17 @@ const COLOUR: Record<EncounterKind, string> = {
 
 export interface LevelRunDeps {
   atlas: Atlas;
-  /** (runplay) the terrain system: its atlas graph is the run's region graph */
+  /** (runplay) the terrain system: its atlas graph is the run's region graph; the plan's asks are made of it */
   terrain: Terrain;
   map: AtlasMap;
   ui: HTMLElement;
   hero: string;
+  /** (runplay) the hero's body (play's profile): what terrain's requests are made for */
+  body: ControllerProfile;
+  /** (runplay) who plays the stages (absent: the card picks) */
+  player?: StagePlayer;
+  /** (runplay) the run's length, minutes (default the planner's 15-50) */
+  minutes?: [number, number];
   /** the streamer's: ask for a warp's land ahead, is it ready, warp there (world cells) */
   precache: (cx: number, cy: number) => number;
   ready: (cx: number, cy: number) => boolean;
@@ -50,14 +65,25 @@ export interface LevelRunDeps {
 const toCell = (x: number, y: number): [number, number] => [x, y / ROW_H];
 
 export class LevelRun {
-  readonly plan: RunPlan;
+  plan!: RunPlan;
   readonly world: MemoryWorldState;
-  at: string;
+  private graph: RegionGraph;
+  private spawnRegion: number;
+  at = '';
   private path: { stage: string; outcome: string }[] = [];
   private stops: { leg: string; event: string }[] = [];
+  /** the last stage's play (the card shows it) */
+  private played: (PlayedStage & { stage: string }) | null = null;
+  /** a stage is being played (the card is down) */
+  playing = false;
+  /** the plan's asks being made of terrain before a leg sets out */
+  private asking = false;
   journey: Journey | null = null;
   jstate: JourneyState | null = null;
   record: RunRecord | null = null;
+  /** the run's clock (the plan's deadline: past it, 'late') */
+  clock = new RunClock(0);
+  runs = 0;
   private card: HTMLDivElement;
   private warping = false;
   private travelScale = 1;
@@ -66,18 +92,32 @@ export class LevelRun {
   constructor(private d: LevelRunDeps) {
     const facts = atlasFacts(d.atlas);
     const wiki = buildWiki(facts);
-    const graph = runGraph(d.terrain.atlasGraph(), { names: { regions: wiki.regions, settlements: wiki.snapshot.settlements }, facts });
+    this.graph = runGraph(d.terrain.atlasGraph(), { names: { regions: wiki.regions, settlements: wiki.snapshot.settlements }, facts });
     this.world = MemoryWorldState.restore(structuredClone(wiki.snapshot));
-    const t0 = performance.now();
-    this.plan = planRun({ graph, world: this.world.snapshot(), hero: heroCaps(d.hero), seed: d.atlas.p.seed, from: wiki.spawn.region });
-    this.log.push(`plan ${this.plan.id} in ${(performance.now() - t0).toFixed(1)} ms`);
-    this.at = this.plan.start;
+    this.spawnRegion = wiki.spawn.region;
     this.card = document.createElement('div');
-    this.card.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:8px;width:min(92vw,420px);max-height:44vh;overflow:auto;z-index:60;background:rgba(18,16,12,0.9);color:#efe6d2;font:13px/1.4 system-ui,sans-serif;padding:8px 10px;border-radius:9px;border:1px solid #5a4a30;';
+    this.card.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);top:8px;width:min(92vw,420px);max-height:56vh;overflow:auto;z-index:60;background:rgba(18,16,12,0.92);color:#efe6d2;font:13px/1.4 system-ui,sans-serif;padding:8px 10px;border-radius:9px;border:1px solid #5a4a30;pointer-events:auto;';
+    this.card.addEventListener('pointerdown', (e) => e.stopPropagation());
     d.ui.appendChild(this.card);
     d.map.canWarp = false;
     d.map.overlay = (ctx, px, scale) => this.drawOnMap(ctx, px, scale);
     d.map.playerAt = () => (this.jstate ? toCell(...this.jstate.at) : null);
+    this.newPlan(this.spawnRegion);
+  }
+
+  /** a plan from `from` on the world as it is now (the first run, or the next after one ended) */
+  private newPlan(from: number): void {
+    const t0 = performance.now();
+    this.plan = planRun({ graph: this.graph, world: this.world.snapshot(), hero: heroCaps(this.d.hero), seed: this.d.atlas.p.seed, from, minutes: this.d.minutes });
+    this.log.push(`plan ${this.plan.id} in ${(performance.now() - t0).toFixed(1)} ms: ${this.plan.stages.length} stages, ${this.plan.minutes.min}-${this.plan.minutes.max} min, deadline ${this.plan.deadline}`);
+    this.at = this.plan.start;
+    this.path = [];
+    this.stops = [];
+    this.played = null;
+    this.record = null;
+    this.clock = new RunClock(this.plan.deadline);
+    this.runs++;
+    this.d.player?.hold(true);
     this.render();
   }
 
@@ -85,6 +125,7 @@ export class LevelRun {
     return this.plan.stages.find((s) => s.id === id)!;
   }
 
+  /** the card's pick (no player), or what a played stage picked */
   choose(outcome: string): void {
     const s = this.stage(this.at);
     const o = s.outcomes.find((x) => x.id === outcome)!;
@@ -94,13 +135,48 @@ export class LevelRun {
     else this.render();
   }
 
-  travel(legId: string): void {
+  /** (runplay) play the stage the run is at */
+  async playStage(): Promise<void> {
+    const P = this.d.player;
+    if (!P || this.playing || this.record) return;
+    const s = this.stage(this.at);
+    if (this.path.at(-1)?.stage === s.id) return;
+    this.playing = true;
+    this.render();
+    const r = await P.play(s);
+    this.playing = false;
+    P.hold(true);
+    this.played = { ...r, stage: s.id };
+    this.clock.stage(s.minutes, r.seconds, r.par);
+    this.log.push(`${s.id} ${r.won ? 'won' : 'lost'} (${r.line}) in ${r.seconds.toFixed(0)} s → ${r.outcome}; clock ${this.clock.minutes.toFixed(1)}/${this.plan.deadline} min`);
+    const o = s.outcomes.find((x) => x.id === r.outcome)!;
+    this.path.push({ stage: s.id, outcome: o.id });
+    if (r.runEnd) this.end(r.runEnd);
+    else if (o.ends !== 'continue') this.end();
+    else if (this.clock.late) this.end('late');
+    else this.render();
+  }
+
+  async travel(legId: string): Promise<void> {
+    if (this.journey || this.asking) return;
     const l = this.plan.legs.find((x) => x.id === legId)!;
     const to = this.stage(l.to);
+    // (runplay) the plan's asks of the destination's land made of terrain first: its edits are stamped into land made
+    // from now on, and the precache below makes it
+    this.asking = true;
+    this.render();
+    try {
+      const t0 = performance.now();
+      const lines = await askTerrain(this.d.terrain, this.plan, to, this.d.body);
+      this.log.push(`terrain asks for ${to.id} (${(performance.now() - t0).toFixed(0)} ms): ${lines.join('; ')}`);
+    } finally {
+      this.asking = false;
+    }
     const t0 = performance.now();
     this.journey = new Journey(l, to.section.at, { precache: (x, y) => { const n = this.d.precache(x, y); this.log.push(`precache ${n} regions round ${to.id} (${(performance.now() - t0).toFixed(1)} ms)`); return n; }, ready: this.d.ready }, toCell);
     this.jstate = null;
     this.log.push(`travel ${l.id}`);
+    this.d.player?.hold(true);
     if (!this.d.map.isOpen) this.d.map.open();
     // (the map zoomed to the leg: its longer side across 60% of the screen's shorter)
     const xs = l.path.map((p) => p[0]);
@@ -120,6 +196,7 @@ export class LevelRun {
   end(how?: RunRecord['end']): void {
     this.record = finishRun(this.world, this.plan, this.path, how, this.stops);
     this.log.push(`end ${this.record.end}: ${this.record.events.length} events`);
+    this.d.player?.hold(true);
     this.render();
   }
 
@@ -145,9 +222,13 @@ export class LevelRun {
         this.journey = null;
         this.jstate = null;
         this.at = to.id;
+        this.played = null;
         this.d.map.close();
+        this.d.player?.arrived();
+        this.clock.leg(leg.minutes);
         this.d.say(`${GLYPH[to.encounter]} ${to.name}`, 4);
-        this.render();
+        if (this.clock.late) this.end('late');
+        else this.render();
       });
     } else if (st.phase !== prev || (st.phase === 'event' && st.event.id !== prevEv)) this.render();
   }
@@ -155,6 +236,8 @@ export class LevelRun {
   private render(): void {
     const C = this.card;
     C.innerHTML = '';
+    // (down while a stage is played: the banner has the screen)
+    C.style.display = this.playing ? 'none' : '';
     // (on the map, the card sits at the bottom: the map's buttons are at the top)
     C.style.top = this.journey ? 'auto' : '8px';
     C.style.bottom = this.journey ? '34px' : 'auto';
@@ -165,10 +248,10 @@ export class LevelRun {
       C.appendChild(e);
       return e;
     };
-    const btn = (text: string, f: () => void) => {
+    const btn = (text: string, f: () => void, main = false) => {
       const b = document.createElement('button');
       b.textContent = text;
-      b.style.cssText = 'display:block;width:100%;text-align:left;min-height:40px;margin:4px 0;padding:6px 9px;border-radius:7px;border:1px solid #6b5b3e;background:#2a241a;color:#f3e8cf;font:13px system-ui,sans-serif;';
+      b.style.cssText = `display:block;width:100%;text-align:left;min-height:44px;margin:4px 0;padding:6px 9px;border-radius:7px;border:1px solid #6b5b3e;background:${main ? '#5a3f12' : '#2a241a'};color:#f3e8cf;font:${main ? '600 15px' : '13px'} system-ui,sans-serif;`;
       b.addEventListener('pointerdown', (e) => e.stopPropagation());
       b.onclick = (e) => {
         e.stopPropagation();
@@ -178,9 +261,10 @@ export class LevelRun {
       return b;
     };
     const muted = 'color:#a99c80;font-size:12px';
-    if (this.record) {
-      h('div', `The run ended: ${this.record.end}`, 'font:600 15px Georgia,serif');
-      for (const d of this.record.deeds) h('div', `• ${d}`, muted);
+    if (this.record) return this.renderEnd(h, btn, muted);
+    if (this.asking) {
+      h('div', 'Setting out…', 'font:600 14px Georgia,serif');
+      h('div', 'The land ahead is being shaped for the stage (terrain’s requests).', muted);
       return;
     }
     if (this.journey) {
@@ -195,22 +279,60 @@ export class LevelRun {
       return;
     }
     const s = this.stage(this.at);
-    const played = this.path.at(-1)?.stage === s.id;
+    const done = this.path.at(-1)?.stage === s.id;
     h('div', `${GLYPH[s.encounter]} ${s.name}`, `font:600 14px Georgia,serif;color:${COLOUR[s.encounter]}`);
-    h('div', `${s.minutes} min · ${s.brief}`, muted);
-    if (!played) {
-      h('div', 'How it went (the stage’s play is the play track’s; pick for now):', 'margin-top:4px;font-size:12px');
-      for (const o of s.outcomes) {
-        btn(o.text, () => this.choose(o.id)).title = describe(o);
+    h('div', `${s.brief} · run clock ${this.clock.minutes.toFixed(0)}/${this.plan.deadline} min`, muted);
+    if (!done) {
+      const P = this.d.player;
+      if (P) {
+        const pv = P.preview(s);
+        h('div', pv.goal, 'margin-top:6px;font:600 14px system-ui,sans-serif;color:#fff3c4');
+        if (pv.note) h('div', `(stand-in: ${pv.note})`, muted);
+        btn(`▶ Play`, () => void this.playStage(), true);
+      } else {
+        h('div', 'How it went (no hero in this level: pick):', 'margin-top:4px;font-size:12px');
+        for (const o of s.outcomes) btn(o.text, () => this.choose(o.id)).title = describe(o);
       }
-    } else {
-      h('div', 'Where next — travel on the map:', 'margin-top:4px;font-size:12px');
-      for (const lid of s.next) {
-        const l = this.plan.legs.find((x) => x.id === lid)!;
-        const t = this.stage(l.to);
-        btn(`${GLYPH[t.encounter]} ${t.name} (${l.events.length} on the road)`, () => this.travel(lid));
-      }
+      return;
     }
+    const o = s.outcomes.find((x) => x.id === this.path.at(-1)!.outcome)!;
+    if (this.played?.stage === s.id) h('div', `${this.played.won ? 'Won' : 'Lost'} — ${this.played.line}`, `margin-top:4px;font:700 14px system-ui,sans-serif;color:${this.played.won ? '#9be07a' : '#ff8a70'}`);
+    h('div', o.text, 'margin:2px 0 2px');
+    h('div', describe(o), muted);
+    h('div', 'Where next — travel on the map:', 'margin-top:6px;font-size:12px');
+    for (const lid of s.next) {
+      const l = this.plan.legs.find((x) => x.id === lid)!;
+      const t = this.stage(l.to);
+      btn(`${GLYPH[t.encounter]} ${t.name} (${l.events.length} on the road)`, () => void this.travel(lid));
+    }
+  }
+
+  /** the end card: how it ended and what it changed in the world (events by region, the hero's record) */
+  private renderEnd(h: (tag: string, text: string, css?: string) => HTMLElement, btn: (text: string, f: () => void, main?: boolean) => HTMLButtonElement, muted: string): void {
+    const R = this.record!;
+    const title: Record<RunRecord['end'], string> = { won: 'The run is won', lost: 'The hero fell', fled: 'The hero fled', abandoned: 'The run was abandoned', captured: 'The hero was taken', late: 'Too late' };
+    h('div', title[R.end], `font:600 16px Georgia,serif;color:${R.end === 'won' ? '#9be07a' : '#ff8a70'}`);
+    for (const d of R.deeds) h('div', `• ${d}`, 'font-size:13px');
+    h('div', 'What changed in the world', 'margin-top:8px;font:600 13px Georgia,serif');
+    const name = (id: number) => this.graph.node(id)?.name ?? `region ${id}`;
+    const seen = new Set<string>();
+    for (const e of R.events) {
+      const f = e.detail?.faction ? ` (${this.world.faction(String(e.detail.faction))?.name ?? e.detail.faction})` : '';
+      const where = e.regions.length > 3 ? `${name(e.regions[0])} and ${e.regions.length - 1} regions round it` : e.regions.map(name).join(', ');
+      const line = `${e.kind}${f}: ${where}${e.kind === 'mark' && e.detail?.name ? ` — ${e.detail.name}` : ''}`;
+      if (seen.has(line)) continue;
+      seen.add(line);
+      h('div', `· ${line}`, muted);
+    }
+    const c = this.world.character(this.plan.hero);
+    if (c) {
+      h('div', `${c.name}${c.alive ? '' : ' ✝'}`, 'margin-top:8px;font:600 13px Georgia,serif');
+      if (c.statuses.length) h('div', `statuses: ${c.statuses.join(', ')}`, muted);
+      if (c.gear.length) h('div', `gear: ${c.gear.join(', ')}`, muted);
+      for (const x of c.history.slice(-4)) h('div', `run ${x.run}: ${x.text}`, muted);
+    }
+    if (c && !c.alive) h('div', 'The hero is dead: the next run needs another (the world remembers).', 'margin-top:6px;font-size:12px');
+    else btn('▶ Another run — the world as you left it', () => this.newPlan(c?.region ?? this.spawnRegion), true);
   }
 
   private drawOnMap(ctx: CanvasRenderingContext2D, px: (cx: number, cy: number) => [number, number], _scale: number): void {

@@ -272,3 +272,34 @@ export interface RegionRealisation {
   flora: { overgrowth: number; frozen: number; shadow: number; wetness: number };
   sky: { shadow: number; storm: RegionState['storm'] };
 }
+
+// ---- (round 119, runplay) a stage played, not picked ----------------------------------------------------------------
+// The user (round 119): "I need to actually play a generated run and try it out." The run (runplan/level-run.ts) hands
+// each stage to a player (src/runplay/player.ts: play's hero in the level) and gets back which of the stage's planned
+// outcomes the play picked. Why an interface here: the run manager decides what a stage means for the world; the
+// player decides how it's played and won — neither reaches into the other.
+
+/** a stage as it came out */
+export interface PlayedStage {
+  /** the planned outcome it picked (RunStage.outcomes id) */
+  outcome: string;
+  /** the run ends this way now (death, capture, a finale's end), or goes on (null) */
+  runEnd: RunRecord['end'] | null;
+  won: boolean;
+  /** a line for the card: what the hero did */
+  line: string;
+  /** seconds played, and the par a good player takes (the run's clock) */
+  seconds: number;
+  par: number;
+}
+
+export interface StagePlayer {
+  /** what the stage will be, for the card before it (its goal; a stand-in said so) */
+  preview(stage: RunStage): { goal: string; note?: string };
+  /** play it where the hero is */
+  play(stage: RunStage): Promise<PlayedStage>;
+  /** the hero waits (the run's card is up, the map is open) or plays on */
+  hold(on: boolean): void;
+  /** the hero set down where the camera is (after the map's warp) */
+  arrived(): void;
+}

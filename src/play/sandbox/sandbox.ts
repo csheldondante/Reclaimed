@@ -11,18 +11,17 @@
 
 import type { Hero } from '../../api/contracts/hero';
 import { fun } from '../../api/contracts/play';
-import type { Actor, Units } from '../../api/contracts/units';
+import type { Units } from '../../api/contracts/units';
 import type { Sim } from '../../api/world';
 import type { Camera } from '../../render/camera';
 import type { Renderer } from '../../render/renderer';
 import type { Pt } from '../core/gestures';
-import { VoxelDraw } from '../draw/voxels';
-import { heroes, makeHero, type PlayHeroId } from '../heroes/make';
+import { heroes, type PlayHeroId } from '../heroes/make';
 import type { PlayHero } from '../heroes/base';
-import { Controls } from '../input/controls';
-import { readInput } from '../input/read';
+import type { Controls } from '../input/controls';
 import { library } from '../library';
-import { makePlayWorld, type PlayWorld } from '../world';
+import type { PlayWorld } from '../world';
+import { el, PlaySession, saveTuned } from '../session';
 import { findHills } from './hills';
 import { LAP, Rival } from './rival';
 import { BIKE_DEFAULTS } from '../controllers/hoverbike';
@@ -43,45 +42,25 @@ export interface SandboxDeps {
   tune?: boolean;
 }
 
-/** how far the camera pulls back at full speed (a share of the hero's zoom), how far it leads (s of travel), how quickly it follows (1/s) */
-// (round 118: the faster bike — pulled back further and leading further ahead, so what's coming is on screen in time)
-const CAM = { back: 0.5, lead: 0.5, leadMax: 12, follow: 6, zoomEase: 2, shake: 0.35 };
 /** raiders spawned at a time, how far ahead (cells) */
 const SPAWN = { count: 4, ahead: 18, spread: 4 };
-const STORE = 'reclaimed.play.params.';
 
+// (runplay, round 119: the hero, its controls, voxels, chase camera and health bar are play/session.ts's PlaySession —
+// shared with a played run — and the sandbox is its tools round one)
 export class PlaySandbox {
-  hero!: PlayHero;
-  controls!: Controls;
-  readonly world: PlayWorld;
-  private draw: VoxelDraw;
   private bar: HTMLElement;
-  private status: HTMLElement;
-  private hp: HTMLElement;
   private panel: HTMLDivElement | null = null;
   private chips: HTMLButtonElement[] = [];
-  private deadT = 0;
-  private zoom = 0;
   private spawned: number[] = [];
   /** (round 118) rival riders lapping near where they were called: something to hook onto and ride alongside */
   readonly rivals: Rival[] = [];
-  private keepFresh: (() => void) | null = null;
-  /** the main thread's cost of the play layer each frame (ms: its input, hero, draw writes; scripts/perf/play.mjs) */
-  readonly stats = { frames: 0, ms: 0, max: 0 };
 
-  private constructor(private d: SandboxDeps) {
-    this.world = makePlayWorld(d.api, d.units, d.camera, d.bounds);
-    // (one actor for the units to chase, whichever hero it is now)
-    const actor: Actor = {
-      id: 'hero',
-      faction: null,
-      position: () => (this.hero?.alive ? this.hero.position() : null),
-      alive: () => !!this.hero?.alive,
-      hurt: (damage, by) => this.hero?.actor.hurt(damage, by),
-    };
-    d.units.watch(actor);
-    this.draw = new VoxelDraw(d.device, d.renderer);
+  private constructor(
+    readonly d: SandboxDeps,
+    readonly session: PlaySession,
+  ) {
     this.world.vehicles = () => this.rivals.map((r) => r.vehicle());
+    session.extraParts = () => this.rivals.map((r) => r.part());
     this.bar = el('div', 'play-bar', d.ui);
     this.bar.style.pointerEvents = 'none';
     const who = el('div', 'play-who', this.bar);
@@ -107,55 +86,36 @@ export class PlaySandbox {
     tool('👹', 'spawn raiders ahead', () => this.spawn());
     tool('🏁', 'a rival rider (tap it to hook on and pull up alongside)', () => this.rival());
     tool('⟲', 'back on its feet', () => this.respawn());
-    const info = el('div', 'play-info', d.ui);
-    info.style.pointerEvents = 'none';
-    this.hp = el('div', 'play-hp', info);
-    this.status = el('div', 'play-status', info);
   }
 
   /** Waits for the ground under the camera to read back, then drops the hero there. */
   static async start(d: SandboxDeps): Promise<PlaySandbox> {
-    const t = d.api.terrain;
-    if (!t) throw new Error('play sandbox: needs the world API terrain module');
-    for (let k = 0; ; k++) {
-      await t.refresh();
-      const c = d.camera.target;
-      if (d.api.fresh && t.heightAt(c[0], c[1]) !== null) break;
-      if (k > 80) throw new Error('play sandbox: the ground under the camera never read back');
-      await new Promise((res) => setTimeout(res, 250));
-    }
-    const s = new PlaySandbox(d);
-    s.keepFresh = t.keepFresh(() => s.hero?.position() ?? null);
+    const session = await PlaySession.start({ ...d, respawnAfter: 2 });
+    const s = new PlaySandbox(d, session);
     const c: Pt = [d.camera.target[0], d.camera.target[1]];
-    // (round 118: the bike starts where there are hills to ride, if any are near)
-    s.choose(d.hero, (d.hero === 'hoverbike' ? s.hills(c, null)?.at : null) ?? s.dryNear(c));
+    // (round 118: the bike starts where there are hills to ride, if any are near — found for the hero's own climb)
+    s.session.choose(d.hero, c);
+    s.choose(d.hero, (d.hero === 'hoverbike' ? s.hills(c, null)?.at : null) ?? session.dryNear(c));
     if (d.tune) s.togglePanel();
     return s;
   }
 
-  /** A dry spot near (x, y) (a hero dropped in a lake starts badly), or (x, y). */
-  private dryNear(at: Pt): Pt {
-    for (let r = 0; r < 40; r += 2)
-      for (let k = 0; k < Math.max(1, r * 2); k++) {
-        const a = (k / Math.max(1, r * 2)) * Math.PI * 2;
-        const p: Pt = [at[0] + Math.cos(a) * r, at[1] + Math.sin(a) * r];
-        if (this.world.depth(p[0], p[1]) < 0.05) return p;
-      }
-    return at;
+  get hero(): PlayHero {
+    return this.session.hero;
+  }
+  get controls(): Controls {
+    return this.session.controls;
+  }
+  get world(): PlayWorld {
+    return this.session.world;
+  }
+  get stats() {
+    return this.session.stats;
   }
 
   /** Switch hero: dropped in where the last one was (or `at`), its parameters as last tuned in this browser. */
   choose(id: PlayHeroId, at?: Pt): void {
-    const prev = this.hero;
-    const p = prev?.position();
-    const where: Pt = at ?? (p ? [p[0], p[1]] : [this.d.camera.target[0], this.d.camera.target[1]]);
-    if (prev && 'dropAll' in prev) (prev as unknown as { dropAll(): void }).dropAll();
-    this.controls?.dispose();
-    const info = library.get(id)!;
-    const params = { ...info.defaults, ...load(id) };
-    this.hero = makeHero(id, this.world, where, params);
-    this.controls = new Controls(this.d.ui, this.hero.pad);
-    this.zoom = this.hero.camera.zoom;
+    this.session.choose(id, at);
     for (const c of this.chips) c.classList.toggle('on', c.dataset.id === id);
     this.toast(this.hero.pad.hint);
     if (this.panel) {
@@ -214,77 +174,24 @@ export class PlaySandbox {
   }
 
   respawn(): void {
-    const [x, y] = this.hero.position();
-    this.hero.place([x, y]);
-    this.hero.heal();
-    this.deadT = 0;
+    this.session.respawn();
   }
 
   /** the window slid (WorldCore.onShift's step, negated: what's kept in window coordinates moves by it) */
   shift(dx: number, dy: number, dz: number): void {
-    this.hero.shift(dx, dy, dz);
+    this.session.shift(dx, dy, dz);
     for (const r of this.rivals) r.shift(dx, dy, dz);
   }
 
   /** the atlas map's warp: dropped where the camera is */
   warped(at: Pt): void {
-    this.hero.place(at);
+    this.session.warped(at);
   }
 
   /** Each frame, before the camera's update and the draw. */
   update(dt: number): void {
-    const t0 = performance.now();
-    this.step(dt);
-    const ms = performance.now() - t0;
-    this.stats.frames++;
-    this.stats.ms += ms;
-    this.stats.max = Math.max(this.stats.max, ms);
-  }
-
-  private step(dt: number): void {
-    const h = this.hero;
-    const cam = this.d.camera;
-    const input = readInput(this.controls, {
-      project: (x, y, z) => cam.project(x, y, z),
-      screenDeltaToWorld: (dx, dy) => cam.screenDeltaToWorld(dx, dy),
-      groundAt: (s) => this.world.groundAt(s),
-      hero: () => {
-        const p = h.position();
-        return { at: p, height: 2.4, ground: this.world.floor(p[0], p[1]) };
-      },
-      zoom: () => cam.zoom,
-    });
-    h.update(dt, { move: input.dir, input });
-    this.controls.show(h.looks());
     for (const r of this.rivals) r.step(dt);
-    this.draw.draw([...h.parts(), ...this.rivals.map((r) => r.part())]);
-    // the camera: after the hero, a little ahead of it, pulled back with speed
-    const p = h.position();
-    const v = (h as unknown as { b?: { vx: number; vy: number } }).b;
-    let lead: Pt = v ? [v.vx * CAM.lead, v.vy * CAM.lead] : [0, 0];
-    // (at most `leadMax` cells ahead: a hook's reel had thrown the view off the bike)
-    const ll = Math.hypot(lead[0], lead[1]);
-    if (ll > CAM.leadMax) lead = [(lead[0] / ll) * CAM.leadMax, (lead[1] / ll) * CAM.leadMax];
-    const k = 1 - Math.exp(-CAM.follow * dt);
-    const want: [number, number, number] = [p[0] + lead[0], p[1] + lead[1], p[2]];
-    for (let i = 0; i < 3; i++) cam.target[i] += (want[i] - cam.target[i]) * k;
-    // (a jolt: the view knocked about by the hero's shake, a few cells at most, gone in a quarter second)
-    if (h.shake > 0) {
-      const j = h.shake * h.shake * CAM.shake;
-      cam.target[0] += (Math.random() - 0.5) * 2 * j;
-      cam.target[1] += (Math.random() - 0.5) * 2 * j;
-    }
-    const z = h.camera.zoom * (1 - CAM.back * h.fast());
-    this.zoom += (z - this.zoom) * (1 - Math.exp(-CAM.zoomEase * dt));
-    cam.zoom = this.zoom;
-    // the HUD
-    this.hp.style.setProperty('--hp', String(h.health / h.maxHealth));
-    const s = h.alive ? h.status() : 'DOWN — back up in a moment';
-    if (this.status.textContent !== s) this.status.textContent = s;
-    if (!h.alive) {
-      this.deadT += dt;
-      if (this.deadT > 2) this.respawn();
-    }
+    this.session.update(dt);
   }
 
   /** The tune panel: a slider per parameter, live; the profile they give above. */
@@ -307,7 +214,7 @@ export class PlaySandbox {
     };
     btn('reset', () => {
       Object.assign(h.params, info.defaults);
-      save(info.id, {});
+      saveTuned(info.id, {});
       this.togglePanel();
       this.togglePanel();
     });
@@ -352,7 +259,7 @@ export class PlaySandbox {
         val.textContent = fmt(v);
         row.classList.toggle('changed', v !== info.defaults[spec.id]);
         const changed = Object.fromEntries(Object.entries(h.params).filter(([k, x]) => info.defaults[k] !== x));
-        save(info.id, changed);
+        saveTuned(info.id, changed);
         showProfile();
       });
     }
@@ -373,35 +280,11 @@ export class PlaySandbox {
   }
 
   dispose(): void {
-    this.keepFresh?.();
-    this.controls.dispose();
-    this.draw.dispose();
+    this.session.dispose();
     this.bar.remove();
-    this.status.parentElement?.remove();
     this.panel?.remove();
     for (const id of this.spawned) this.d.units.remove(id);
   }
 }
 
-function el(tag: string, cls: string, parent: HTMLElement): HTMLElement {
-  const e = document.createElement(tag);
-  if (cls) e.className = cls;
-  parent.append(e);
-  return e;
-}
 const fmt = (v: number) => (Math.abs(v) >= 10 ? v.toFixed(0) : v.toFixed(2).replace(/\.?0+$/, ''));
-
-function load(id: string): Record<string, number> {
-  try {
-    return JSON.parse(localStorage.getItem(STORE + id) ?? '{}');
-  } catch {
-    return {};
-  }
-}
-function save(id: string, p: Record<string, number>): void {
-  try {
-    localStorage.setItem(STORE + id, JSON.stringify(p));
-  } catch {
-    // (no storage: the tuning lasts the page)
-  }
-}
