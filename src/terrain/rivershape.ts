@@ -69,7 +69,7 @@ export function mainUpstream(c: RiverCourse): Int32Array {
  * A node moves at most `maxMove` (world units) from where it was: the GPU finds a river by the nodes nearest a
  * point's texels, so a node must stay near its own texel.
  */
-export function smooth(c: RiverCourse, iters = 6, rate = 0.5, maxMove = 7): void {
+export function smooth(c: RiverCourse, iters = 10, rate = 0.5, maxMove = 11): void {
   const n = c.next.length;
   const up = mainUpstream(c);
   const x0 = Float32Array.from(c.x);

@@ -21,7 +21,7 @@ The user: "striking to look at and interesting to explore" … "Let's make this 
 |---|---|---|---|
 | TR1 | Rivers off the texel grid: nodes relaxed along their stems, the lookup warped, two segments a node (terrain/rivershape.ts, terrain/river.wgsl) | M | done (terrain) |
 | TR2 | Rivers with banks: the level incised under the plain, eroded banks (Voronoi slumps, benches), gravel bars, boulders in rapids and round pools, cascades of falls, plunge pools | M | done (terrain) |
-| TR3 | The widest rivers (half-width 10-12) still show the grid's 45-degree kinks: more relaxation (nodes moving farther than a texel if the lookup searched more texels) or a spline through the nodes | S | open |
+| TR3 | The widest rivers (half-width 10-12) showed the grid's 45-degree kinks | S | done (terrain): the courses relaxed 10 passes, nodes up to 11 cells off their texel (the lookup's two segments a node still find them) — C:/Projects/shots88/terrain/r3-wide.png; a ragged bank edge here and there remains |
 | TR4 | Rivers that sink into holes and come out of caves (an underground reach: a node flag, the cave's floor as its bed) | M | open |
 | TR5 | The region graph (api/contracts/terrain.ts): features and rooms 1-3 screens, borders with barrier kinds and measures, costs per controller (PassCaps), soft barriers; the GPU sample, the CPU partition (terrain/partition.ts) | L | done (terrain) |
 | TR6 | Reeds along the banks and the benches from flora's contract; the samples' vegetation density from flora (the stand-in is forms.wgsl's woods) | S | open (needs flora) |
