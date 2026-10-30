@@ -13844,3 +13844,10 @@ take 'silt' too (runplan's materials: water, sand, ash, silt, magma).
 panel now folds (▾/▸) and hides the atlas's panel (a button); on a narrow screen both start out of the way. The viewer's
 smoke on the phone proxy (scripts/terrain/viewer.mjs --size 412x915 --dpr 2.6): graph, an exit opened (a ford), the GPU
 flood equal to the CPU's, a flood 6 over the tapped ground (C:/Projects/shots88/terrain/viewer-phone-*.png).
+
+**Cost at the end of the round (scripts/perf/terrain.mjs, desktop iGPU, data/perf/terrain-unknown.json "terrain-final").**
+A 64² region's columns over rivers (the least of 3, median of 24): 31.3 ms with the rivers' cross-section, the caves, the
+gorges and the sea rule, against places' 28.5 (≈ +10 %, wall time including the readback, within the runs' spread so far).
+The region graph over 2048² world units at 4: the GPU sample 24.8 ms, the partition 252 ms. A 1024-reach flood on the GPU
+254 ms (fill and mark passes in batches of 32 with a readback each), equal to the CPU's texel for texel. The rivers' CPU
+pass 582 ms, the macro ground with rivers 58 ms. The phone proxy's driveprofile after TR24: p50 9.8 ms, p95 11.6.
