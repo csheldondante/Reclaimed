@@ -45,6 +45,8 @@ export const MAX_SEGS = 48;
 /** a bone: a spindle of two square rings and two tips, 16 triangles */
 export const BONE_VERTS = 48;
 export const TRI_VERTS = 3;
+/** a dark footprint on the ground under each creature (two triangles): contrast on grass, and a bird's place in the air */
+export const SHADOW_VERTS = 6;
 
 export interface RigPoint {
   role: Role;
@@ -482,7 +484,7 @@ export function buildRig(spec: SpeciesSpec): Rig {
       break;
   }
   if (b.segments.length > MAX_SEGS) throw new Error(`inhabitants: species "${spec.id}" has ${b.segments.length} segments (max ${MAX_SEGS})`);
-  const verts = b.segments.reduce((a, s) => a + (s.kind === 'bone' ? BONE_VERTS : TRI_VERTS), 0);
+  const verts = SHADOW_VERTS + b.segments.reduce((a, s) => a + (s.kind === 'bone' ? BONE_VERTS : TRI_VERTS), 0);
   const walkStep = spec.plan === 'insect' ? 0.16 : spec.plan === 'bird' ? 0.14 : 0.3 * Math.sqrt(S);
   return {
     plan: spec.plan,

@@ -202,11 +202,15 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
   var ali = vec3<f32>(0.0);
   var coh = vec3<f32>(0.0);
   var nn = 0.0;
+  // the way away from the predators it sees, weighted by nearness
   var threat = vec2<f32>(0.0);
   var threatN = 0.0;
   var preyD = 1e9;
   var preyAt = vec2<f32>(0.0);
+  var preyRuns = false;
   var alarmN = 0.0;
+  // the nearest predator sprinting at it (caught within reach: knocked down)
+  var caughtD = 1e9;
   let nb = P.binsX * P.binsY;
   let bc = binOf(pos.xy);
   for (var by = -1; by <= 1; by++) {
@@ -224,9 +228,10 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
         let d3 = o.xyz - pos;
         let d = d3.xy;
         let dist = max(length(d), 0.01);
-        let orad = hdr(osp, 4u).x;
-        // everyone keeps clear of everyone's body
-        let clear = (radius + orad) * 0.6;
+        let oh = hdr(osp, 4u);
+        let orad = oh.x;
+        // everyone keeps clear of everyone's body (its length counts: deer side by side, not through each other)
+        let clear = (max(radius, h4.y * 0.4) + max(orad, oh.y * 0.4)) * 0.6;
         if (dist < clear) { sep -= d / dist * (clear - dist) / clear; }
         if (osp == sp) {
           if (dist < 7.0) {
@@ -243,13 +248,16 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
             let ost = agents[j * AS + 2u].y;
             let seen = select(sight * 0.5, sight, ost == S_RUN);
             if (dist < seen) {
-              threat += d / dist * (1.0 - dist / seen);
+              // (away from it: d points at the predator)
+              threat -= d / dist * (1.0 - dist / seen);
               threatN += 1.0;
             }
+            if (ost == S_RUN) { caughtD = min(caughtD, dist - orad * 0.3); }
           }
           if (((preyMask >> osp) & 1u) == 1u && dist < preyD) {
             preyD = dist;
             preyAt = o.xy;
+            preyRuns = agents[j * AS + 2u].y == S_RUN;
           }
         }
       }
@@ -269,6 +277,12 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
   // fire underfoot: run
   let burning = fireAt(pos.xy) > 0.05;
 
+  // caught: a predator's sprint reached it — down (the hunt's end the player can read); it gets up and runs after
+  if (caughtD < 0.9 && state != S_DOWN && beh != B_STALK && !flies) {
+    state = S_DOWN;
+    timer = 2.5;
+    vel = vec3<f32>(nrm2(threat) * 3.0, 0.0);
+  }
   if (order == 4.0 && state != S_DOWN) {
     // a director's pace: round home at a gait (o1.x: 0 idle, 1 walk, 2 run, 3 fly)
     let gait = o1.x;
@@ -309,7 +323,7 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
     let side = select(-1.0, 1.0, rnd(seed, 5u) > 0.5);
     steer += vec3<f32>(vec2<f32>(-toHome.y, toHome.x) / max(dh, 1.0) * side * 1.5, 0.0);
     steer.z += (gz + fh - pos.z) * 1.2 - vel.z * 0.8;
-    if (threatN > 0.0 || ordered) { steer += vec3<f32>(-threat * 10.0, 2.0); }
+    if (threatN > 0.0 || ordered) { steer += vec3<f32>(threat * 10.0, 2.0); }
     desired = vel + steer * dt * 4.0;
     speedCap = runV;
     let s = length(desired.xy);
@@ -397,7 +411,8 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
         desired = vec3<f32>(d / max(length(d), 0.01) * speedCap + pack, 0.0);
       }
       // close enough: sprint
-      if (preyD < 11.0 || tgtD < 9.0) { state = S_RUN; timer = 5.0 + 2.0 * rnd(seed, u32(P.time)); }
+      // (close enough — or seen: the herd bolts, so it bursts after them)
+      if (preyD < 11.0 || tgtD < 9.0 || (preyRuns && preyD < 18.0)) { state = S_RUN; timer = 5.0 + 2.0 * rnd(seed, u32(P.time)); }
       if (timer <= 0.0 || tgtD > sight * 1.5) { state = S_REST; timer = 3.0; }
     } else if (state == S_RUN) {
       speedCap = runV;
@@ -405,7 +420,7 @@ fn behave(@builtin(global_invocation_id) gid: vec3<u32>) {
       if (preyD < 1e8) { aim = preyAt; }
       let d = aim - pos.xy;
       desired = vec3<f32>(d / max(length(d), 0.01) * runV, 0.0);
-      if (timer <= 0.0 || preyD < 0.6) { state = S_REST; timer = 6.0 + 4.0 * rnd(seed, 11u); }
+      if (timer <= 0.0 || preyD < 0.7) { state = S_REST; timer = 6.0 + 4.0 * rnd(seed, 11u); }
     }
     a3.z = 0.0;
   } else {
@@ -600,6 +615,8 @@ fn animate(@builtin(global_invocation_id) gid: vec3<u32>) {
         // R_ROOT: where behave put it; a bob with the gait; lying when knocked over; a serpent's wave
         var hgt = pp.x;
         if (state == S_DOWN) { hgt *= 0.35; }
+        // (a stalk is low: the body sinks, the legs fold under it — the knees' IK does the rest)
+        if (state == S_STALK) { hgt *= 0.72; }
         hgt += 0.03 * pp.x * cos(phase * TAU * 2.0) * clamp(speed / max(walkV, 0.1), 0.0, 1.5);
         p = a0.xyz + vec3<f32>(0.0, 0.0, hgt);
         if (pp.y > 0.0) { p += leftOf(hf) * sin(phase * TAU) * pp.y * clamp(speed / max(walkV, 0.1), 0.2, 1.0); }
@@ -810,6 +827,23 @@ fn meshIt(@builtin(global_invocation_id) gid: vec3<u32>) {
   let k = 0.88 + 0.24 * rnd(u32(agents[i * AS + 4u].y), 77u);
   var o = o0;
   let foot0 = a0.xyz;
+  // a dark footprint on the ground under it, along its heading (contrast on grass; a bird's place in the air)
+  {
+    let h4 = hdr(sp, 4u);
+    let gz = groundAt(a0.xy) + 0.06;
+    let hd = agents[i * AS + 1u].w;
+    let fw = vec3<f32>(cos(hd), sin(hd), 0.0) * max(h4.y * 0.45, h4.x * 0.5) * P.drawScale;
+    let sd = vec3<f32>(-sin(hd), cos(hd), 0.0) * h4.x * 0.55 * P.drawScale;
+    let c = vec3<f32>(a0.xy, gz);
+    let shade = 0x141a10u;
+    emit(o, c + fw, vec3<f32>(0.0, 0.0, 1.0), shade);
+    emit(o + 1u, c + sd, vec3<f32>(0.0, 0.0, 1.0), shade);
+    emit(o + 2u, c - fw, vec3<f32>(0.0, 0.0, 1.0), shade);
+    emit(o + 3u, c - fw, vec3<f32>(0.0, 0.0, 1.0), shade);
+    emit(o + 4u, c - sd, vec3<f32>(0.0, 0.0, 1.0), shade);
+    emit(o + 5u, c + fw, vec3<f32>(0.0, 0.0, 1.0), shade);
+    o += 6u;
+  }
   for (var s = 0u; s < ns; s++) {
     let A = sgA(sp, s);
     let B = sgB(sp, s);

@@ -1,7 +1,7 @@
 // The body generator at its contract (round 117): every plan and preset builds a valid rig, deterministically.
 import { describe, expect, it } from 'vitest';
 import { BODY_PLANS, type SpeciesSpec } from '../api/contracts/inhabitants';
-import { buildRig, hex, MAX_POINTS, MAX_SEGS, Role, BONE_VERTS, TRI_VERTS } from './rig';
+import { buildRig, hex, MAX_POINTS, MAX_SEGS, Role, BONE_VERTS, TRI_VERTS, SHADOW_VERTS } from './rig';
 import { PRESETS, SPECIES } from './species';
 
 const base = (plan: SpeciesSpec['plan']): SpeciesSpec => ({ id: plan, plan, palette: { body: '#806040' }, behaviour: { kind: 'wander' } });
@@ -28,7 +28,7 @@ describe('buildRig', () => {
         expect(s.colour).toBeGreaterThanOrEqual(0);
         expect(s.colour).toBeLessThan(1 << 24);
       }
-      const verts = r.segments.reduce((a, s) => a + (s.kind === 'bone' ? BONE_VERTS : TRI_VERTS), 0);
+      const verts = SHADOW_VERTS + r.segments.reduce((a, s) => a + (s.kind === 'bone' ? BONE_VERTS : TRI_VERTS), 0);
       expect(r.vertsPerAgent).toBe(verts);
       expect(r.height).toBeGreaterThan(0);
       expect(r.stride).toBeGreaterThan(0);

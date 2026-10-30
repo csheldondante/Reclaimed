@@ -21,8 +21,9 @@ export const SPECIES = {
     plan: 'quadruped',
     seed: 7,
     proportions: { size: 0.85, legs: 0.95, neck: 0.55, head: 1.25, tail: 1.4, girth: 1.05 },
-    palette: { body: '#6b6f78', belly: '#c9c4b8', accent: '#2a2a2e', eye: '#ffd23a' },
-    secondary: { fur: 0.7, fur_colour: '#4a4d55', tailFlex: 0.8 },
+    // (charcoal with a pale belly and gold eyes: it must read against grass at a phone's zoom)
+    palette: { body: '#3a3c44', belly: '#d8d2c4', accent: '#15161a', eye: '#ffd23a' },
+    secondary: { fur: 0.8, fur_colour: '#26272d', tailFlex: 0.8 },
     behaviour: { kind: 'stalker', prey: ['deer', 'goat'] },
     walk: 1.4,
     run: 11,

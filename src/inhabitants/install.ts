@@ -23,8 +23,8 @@ export function installInhabitants(core: WorldCore, opts: InhabitantsOpts = {}):
   return life;
 }
 
-const READABLE_ZOOM = 16;
-const MAX_DRAW_SCALE = 3;
+const READABLE_ZOOM = 24;
+const MAX_DRAW_SCALE = 4;
 const SCALE_PARAM = typeof location !== 'undefined' && new URLSearchParams(location.search).get('lifescale') ? Number(new URLSearchParams(location.search).get('lifescale')) : null;
 
 /** each frame: the mesh built round what the camera sees */

@@ -249,3 +249,48 @@ function segDist(p: number[], a: number[], b: number[]): number {
   const t = l2 > 0 ? Math.max(0, Math.min(1, (ap[0] * ab[0] + ap[1] * ab[1] + ap[2] * ab[2]) / l2)) : 0;
   return Math.hypot(ap[0] - ab[0] * t, ap[1] - ab[1] * t, ap[2] - ab[2] * t);
 }
+
+test('a hunt: the wolves stalk in low, sprint, and the herd scatters away from them', async () => {
+  const { w, life, step } = await world();
+  const deer = life.define(SPECIES.deer);
+  const wolf = life.define(SPECIES.wolf);
+  const herd = life.spawnGroup(deer, [20, 28], 8, { spread: 3 });
+  life.drive(herd, { kind: 'roam', around: [20, 28], radius: 6 });
+  const pack = life.spawnGroup(wolf, [50, 30], 2, { spread: 1 });
+  life.drive(pack, { kind: 'roam', around: [50, 30], radius: 4 });
+  const seen = new Set<number>();
+  const log: string[] = [];
+  let caught = false;
+  let fled = 0;
+  for (let t = 0; t < 70; t++) {
+    await step(15);
+    const ws = await life.probe(8, 0);
+    seen.add(ws.agent[9]);
+    let dmin = Infinity;
+    const st: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const a = (await life.probe(i, 0)).agent;
+      dmin = Math.min(dmin, Math.hypot(a[0] - ws.agent[0], a[1] - ws.agent[1]));
+      st.push(a[9]);
+    }
+    if (st.includes(6)) caught = true;
+    // the standing deer's mean distance from the wolf
+    let sum = 0;
+    let n = 0;
+    for (let i = 0; i < 8; i++) {
+      const a = (await life.probe(i, 0)).agent;
+      if (a[9] !== 6) (sum += Math.hypot(a[0] - ws.agent[0], a[1] - ws.agent[1])), n++;
+    }
+    fled = n ? sum / n : 0;
+    if (process.env.LIFE_LOG) log.push(`${t}: wolf ${ws.agent[9]} at ${ws.agent[0].toFixed(1)},${ws.agent[1].toFixed(1)} nearest deer ${dmin.toFixed(1)} deer ${st.join('')}`);
+  }
+  if (process.env.LIFE_LOG) console.log(log.join('\n'));
+  // it stalked (3) and sprinted (2)
+  expect(seen.has(3)).toBe(true);
+  expect(seen.has(2)).toBe(true);
+  // one was caught (knocked down: the hunt's end reads), the rest got well away
+  expect(caught).toBe(true);
+  expect(fled).toBeGreaterThan(10);
+  expect(g.takeErrors()).toEqual([]);
+  w.destroy();
+});

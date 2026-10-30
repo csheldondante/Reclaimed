@@ -41,24 +41,26 @@ await run({ name: 'perf-inhabitants', kind: 'timing' }, async (R) => {
       const deer = life.define({ id: 'deer', plan: 'quadruped', proportions: { size: 1.15 }, palette: { body: '#a0703f' }, behaviour: { kind: 'herd' } });
       const wolf = life.define({ id: 'wolf', plan: 'quadruped', proportions: { size: 0.85 }, palette: { body: '#6b6f78' }, secondary: { fur: 0.7 }, behaviour: { kind: 'stalker', prey: ['deer'] } });
       const crow = life.define({ id: 'crow', plan: 'bird', proportions: { size: 0.4 }, palette: { body: '#1d1f26' }, behaviour: { kind: 'flock' } });
-      // herds of 20 on a grid over the view (its half-sizes in world units), a wolf with each, a flock every tenth
+      // herds of 50 on a grid over the view (its half-sizes in world units), two wolves with each, a flock every tenth
+      // (≤ 256 groups: 5 000 creatures are ~100 herds and ~100 packs)
       const [tx, ty] = r.camera.target;
       const W = r.camera.viewportW / r.camera.zoom;
       const H = r.camera.viewportH / r.camera.zoom;
-      const herds = Math.ceil(n / 20);
+      const herds = Math.ceil(n / 50);
       const side = Math.ceil(Math.sqrt(herds));
       let made = 0;
       for (let k = 0; k < herds && made < n; k++) {
         const x = tx + ((k % side) / Math.max(1, side - 1) - 0.5) * W * 0.8;
         const y = ty + (Math.floor(k / side) / Math.max(1, side - 1) - 0.5) * H * 0.5;
-        const m = Math.min(20, n - made);
+        const m = Math.min(50, n - made);
         const sp = k % 10 === 9 ? crow : deer;
-        const g = life.spawnGroup(sp, [x, y], Math.max(1, m - 1));
+        const g = life.spawnGroup(sp, [x, y], Math.max(1, m - 2));
         if (sp === deer) life.drive(g, { kind: 'roam', around: [x, y], radius: 12 });
-        made += Math.max(1, m - 1);
+        made += Math.max(1, m - 2);
         if (made < n) {
-          life.spawnGroup(wolf, [x + 10, y + 6], 1);
-          made++;
+          const k2 = Math.min(2, n - made);
+          life.spawnGroup(wolf, [x + 10, y + 6], k2);
+          made += k2;
         }
       }
       return life.count;

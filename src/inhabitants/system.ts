@@ -146,7 +146,7 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
       binIt: { ...base, 42: 'rw', 44: 'rw', 46: 'rw' },
       behave: { ...base, 15: 'tex', 17: 'tex', 21: 'tex', 42: 'rw', 44: 'rw', 45: 'read', 46: 'rw', 49: 'read', 50: 'read', 51: 'read' },
       animate: { ...base, 15: 'tex', 17: 'tex', 21: 'tex', 42: 'rw', 43: 'rw', 49: 'read' },
-      meshIt: { ...base, 42: 'rw', 43: 'rw', 47: 'rw', 48: 'rw' },
+      meshIt: { ...base, 17: 'tex', 21: 'tex', 42: 'rw', 43: 'rw', 47: 'rw', 48: 'rw', 49: 'read' },
       meshArgs: { ...base, 48: 'rw' },
       shiftIt: { ...base, 42: 'rw', 43: 'rw' },
     };
@@ -407,6 +407,12 @@ export class InhabitantsGpu implements SimSystem, Inhabitants {
         const c = s[g.id * GS + 3];
         g.count = c;
         if (c > 0) g.centre = [s[g.id * GS] / (8 * c), s[g.id * GS + 1] / (8 * c), s[g.id * GS + 2] / (8 * c)];
+        // a herd that bolted settles where it ran to, not back beside the wolf (its roam moves with it)
+        if (c > 0 && s[g.id * GS + 4] > 0 && g.order.kind === 'roam') {
+          g.home = [g.centre[0], g.centre[1]];
+          g.order = { ...g.order, around: g.home };
+          this.writeOrder(g);
+        }
       }
     }, ignoreTeardown);
   }
